@@ -3,7 +3,7 @@
 > 版本: v1.2
 > 创建日期: 2025-07-23
 > 最后更新: 2025-07-23
-> 基于: MVP_Design_Draft.md 和 Autonomous_Cognitive_Canvas_Concept_v2.md
+> 基于: MVP_Design_Draft.md
 
 ## 1. 文档概述
 
@@ -59,6 +59,8 @@
 - **System.Reactive**: 响应式编程支持
 - **Microsoft.Extensions.Caching**: 缓存抽象
 - **Microsoft.Extensions.Logging**: 日志记录
+- **Lucene.Net**: 全文搜索引擎 (可选)
+- **Microsoft.ML**: 机器学习和向量检索支持 (可选)
 
 ### 1.3 命名约定
 
@@ -117,21 +119,22 @@ public readonly struct NodeId : IEquatable<NodeId>
 ```csharp
 /// <summary>
 /// 详细程度级别 (Level of Detail)
+/// 对应MVP设计中的文件存储结构
 /// </summary>
 public enum LodLevel
 {
     /// <summary>
-    /// 标题级 - 仅显示节点标题
+    /// 标题级 - 仅显示节点标题 (对应brief.md文件)
     /// </summary>
     Title = 3,
-    
+
     /// <summary>
-    /// 摘要级 - 显示标题和简要摘要
+    /// 摘要级 - 显示标题和简要摘要 (对应summary.md文件)
     /// </summary>
     Summary = 2,
-    
+
     /// <summary>
-    /// 详细级 - 显示完整内容
+    /// 详细级 - 显示完整内容 (对应full-text.md文件)
     /// </summary>
     Detail = 1
 }
@@ -1011,7 +1014,95 @@ public record NodeTreeItem
 }
 ```
 
-### 4.2 外部数据源集成
+### 4.2 异步LOD生成服务
+
+```csharp
+/// <summary>
+/// 异步LOD内容生成服务接口
+/// </summary>
+public interface ILodGenerationService
+{
+    /// <summary>
+    /// 异步生成节点的LOD内容
+    /// </summary>
+    Task<GenerationResult> GenerateLodContentAsync(NodeId nodeId, LodLevel targetLevel, string sourceContent, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 批量生成多个节点的LOD内容
+    /// </summary>
+    Task<IReadOnlyList<GenerationResult>> GenerateBatchLodContentAsync(IEnumerable<LodGenerationRequest> requests, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 获取生成任务状态
+    /// </summary>
+    Task<GenerationStatus> GetGenerationStatusAsync(string taskId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 取消生成任务
+    /// </summary>
+    Task CancelGenerationAsync(string taskId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// LOD生成请求
+/// </summary>
+public record LodGenerationRequest
+{
+    public NodeId NodeId { get; init; }
+    public LodLevel TargetLevel { get; init; }
+    public string SourceContent { get; init; } = string.Empty;
+    public LodLevel SourceLevel { get; init; }
+    public string TaskId { get; init; } = Guid.NewGuid().ToString("N")[..12];
+}
+
+/// <summary>
+/// LOD生成结果
+/// </summary>
+public record GenerationResult
+{
+    public string TaskId { get; init; } = string.Empty;
+    public NodeId NodeId { get; init; }
+    public LodLevel TargetLevel { get; init; }
+    public bool Success { get; init; }
+    public string GeneratedContent { get; init; } = string.Empty;
+    public string ErrorMessage { get; init; } = string.Empty;
+    public DateTime CompletedAt { get; init; } = DateTime.UtcNow;
+    public TimeSpan Duration { get; init; }
+}
+
+/// <summary>
+/// 生成任务状态
+/// </summary>
+public enum GenerationStatus
+{
+    /// <summary>
+    /// 等待中
+    /// </summary>
+    Pending,
+
+    /// <summary>
+    /// 生成中
+    /// </summary>
+    InProgress,
+
+    /// <summary>
+    /// 已完成
+    /// </summary>
+    Completed,
+
+    /// <summary>
+    /// 已失败
+    /// </summary>
+    Failed,
+
+    /// <summary>
+    /// 已取消
+    /// </summary>
+    Cancelled
+}
+```
+
+### 4.3 外部数据源集成
 
 ```csharp
 /// <summary>
@@ -1408,6 +1499,7 @@ public record CommitChangesRequest
 ```csharp
 /// <summary>
 /// MemoTree系统配置选项
+/// 对应MVP设计草稿中定义的Workspace结构
 /// </summary>
 public class MemoTreeOptions
 {
@@ -1417,17 +1509,17 @@ public class MemoTreeOptions
     public string WorkspaceRoot { get; set; } = "./workspace";
 
     /// <summary>
-    /// 认知节点存储目录名
+    /// 认知节点存储目录名 (对应MVP设计中的CogNodes/)
     /// </summary>
     public string CogNodesDirectory { get; set; } = "CogNodes";
 
     /// <summary>
-    /// 父子关系存储目录名
+    /// 父子关系存储目录名 (对应MVP设计中的ParentChildrens/)
     /// </summary>
     public string ParentChildrensDirectory { get; set; } = "ParentChildrens";
 
     /// <summary>
-    /// 语义关系数据存储目录名
+    /// 语义关系数据存储目录名 (对应MVP设计中的Relations/)
     /// </summary>
     public string RelationsDirectory { get; set; } = "Relations";
 
@@ -1481,19 +1573,19 @@ public class StorageOptions
     public string MetadataFileName { get; set; } = "meta.yaml";
 
     /// <summary>
-    /// 详细内容文件名
+    /// 详细内容文件名 (对应MVP设计中的full-text.md)
     /// </summary>
     public string DetailContentFileName { get; set; } = "full-text.md";
 
     /// <summary>
-    /// 摘要内容文件名
+    /// 摘要内容文件名 (对应MVP设计中的summary.md)
     /// </summary>
     public string SummaryContentFileName { get; set; } = "summary.md";
 
     /// <summary>
-    /// 简要内容文件名
+    /// 标题级内容文件名 (对应MVP设计中的brief.md)
     /// </summary>
-    public string BriefContentFileName { get; set; } = "brief.md";
+    public string TitleContentFileName { get; set; } = "brief.md";
 
     /// <summary>
     /// 外部链接文件名
@@ -1588,12 +1680,12 @@ public class RelationOptions
 public class RetrievalOptions
 {
     /// <summary>
-    /// 是否启用全文搜索
+    /// 是否启用全文搜索 (基于Lucene.Net)
     /// </summary>
     public bool EnableFullTextSearch { get; set; } = true;
 
     /// <summary>
-    /// 是否启用语义搜索
+    /// 是否启用语义搜索 (基于向量检索)
     /// </summary>
     public bool EnableSemanticSearch { get; set; } = false;
 
@@ -3014,7 +3106,3 @@ await editor.UpdateNodeContentAsync(nodeId, LodLevel.Detail, newContent);
 11. **扩展和插件**: 系统扩展性支持
 
 这些类型定义为MemoTree系统的实现提供了坚实的基础，确保了系统的可扩展性、可维护性、类型安全性和高性能。设计遵循SOLID原则，支持依赖注入，具有良好的测试性和可扩展性。
-```
-```
-```
-```
