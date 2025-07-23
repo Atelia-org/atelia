@@ -1,6 +1,6 @@
 # MemoTree 核心类型设计文档
 
-> 版本: v1.1
+> 版本: v1.2
 > 创建日期: 2025-07-23
 > 最后更新: 2025-07-23
 > 基于: MVP_Design_Draft.md 和 Autonomous_Cognitive_Canvas_Concept_v2.md
@@ -11,12 +11,22 @@
 
 ### 1.0 重要设计变更说明
 
-**关系数据集中存储 (v1.1)**
+**父子关系独立存储 + 语义关系集中存储 (v1.2)**
 
-从v1.1版本开始，节点间的关系数据从各个节点的元数据中分离出来，采用集中存储的方式：
+从v1.2版本开始，进行了重要的关系存储架构调整：
 
-- **变更前**: 关系数据存储在每个节点的 `meta.yaml` 文件的 `Relations` 属性中
-- **变更后**: 关系数据集中存储在 `Relations/` 目录下的专门文件中
+**父子关系独立存储**:
+- **变更前**: `parent_id` 存储在每个节点的 `meta.yaml` 文件中
+- **变更后**: 父子关系独立存储在 `ParentChildrens/` 目录下，每个父节点有对应的children列表文件
+- **优势**:
+  - 保证同级节点的先后顺序
+  - 父到子查询直接读取文件，子到父查询通过运行时只读索引
+  - 避免双向存储的数据不一致风险
+  - 采用图数据库的单向存储模式
+
+**语义关系集中存储**:
+- **变更前**: 语义关系数据存储在每个节点的 `meta.yaml` 文件的 `Relations` 属性中
+- **变更后**: 语义关系数据集中存储在 `Relations/` 目录下的专门文件中
 - **优势**:
   - 数据分离，关注点分离
   - 查询优化，支持高效的图遍历
@@ -24,10 +34,12 @@
   - 一致性，避免数据冗余和不一致
 
 这一变更影响了以下核心类型：
-- `NodeMetadata`: 移除了 `Relations` 属性
+- `NodeMetadata`: 移除了 `ParentId` 和 `Relations` 属性
 - `NodeRelation`: 增加了 `RelationId` 和 `SourceId` 属性
-- `INodeRelationStorage`: 重新设计了接口方法
+- 新增了 `INodeHierarchyStorage`: 专门处理父子关系
+- `INodeRelationStorage`: 重新设计为处理语义关系
 - 新增了 `IRelationManagementService` 和相关类型
+- 新增了 `ParentChildrenInfo` 等层次结构相关类型
 
 ### 1.1 设计原则
 
@@ -220,7 +232,7 @@ public readonly struct RelationId : IEquatable<RelationId>
 }
 
 /// <summary>
-/// 节点关系定义（集中存储版本）
+/// 语义关系定义（集中存储版本，不包括父子关系）
 /// </summary>
 public record NodeRelation
 {
@@ -249,16 +261,39 @@ public record RelationTypeDefinition
 }
 ```
 
-#### 2.1.5 节点元数据
+#### 2.1.5 父子关系类型
 
 ```csharp
 /// <summary>
-/// 认知节点元数据（关系数据已分离）
+/// 父子关系信息（独立存储）
+/// </summary>
+public record ParentChildrenInfo
+{
+    public NodeId ParentId { get; init; }
+    public IReadOnlyList<ChildNodeInfo> Children { get; init; } = Array.Empty<ChildNodeInfo>();
+    public DateTime LastModified { get; init; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 子节点信息
+/// </summary>
+public record ChildNodeInfo
+{
+    public NodeId NodeId { get; init; }
+    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+    public int Order { get; init; } = 0;
+}
+```
+
+#### 2.1.6 节点元数据
+
+```csharp
+/// <summary>
+/// 认知节点元数据（父子关系和语义关系数据已分离）
 /// </summary>
 public record NodeMetadata
 {
     public NodeId Id { get; init; }
-    public NodeId? ParentId { get; init; }
     public NodeType Type { get; init; }
     public string Title { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
@@ -272,7 +307,7 @@ public record NodeMetadata
 }
 ```
 
-#### 2.1.6 节点内容
+#### 2.1.7 节点内容
 
 ```csharp
 /// <summary>
@@ -288,7 +323,7 @@ public record NodeContent
 }
 ```
 
-#### 2.1.7 完整认知节点
+#### 2.1.8 完整认知节点
 
 ```csharp
 /// <summary>
@@ -468,62 +503,62 @@ public interface INodeContentStorage
 }
 
 /// <summary>
-/// 节点关系存储接口（集中存储版本）
+/// 语义关系存储接口（集中存储版本，不包括父子关系）
 /// </summary>
 public interface INodeRelationStorage
 {
     /// <summary>
-    /// 获取节点的所有出向关系
+    /// 获取节点的所有出向语义关系
     /// </summary>
     Task<IReadOnlyList<NodeRelation>> GetOutgoingRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 获取节点的所有入向关系
+    /// 获取节点的所有入向语义关系
     /// </summary>
     Task<IReadOnlyList<NodeRelation>> GetIncomingRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 获取节点的所有关系（入向+出向）
+    /// 获取节点的所有语义关系（入向+出向）
     /// </summary>
     Task<IReadOnlyList<NodeRelation>> GetAllRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 根据关系ID获取关系
+    /// 根据关系ID获取语义关系
     /// </summary>
     Task<NodeRelation?> GetRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 添加节点关系
+    /// 添加语义关系
     /// </summary>
     Task<RelationId> AddRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, string description = "", CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 更新节点关系
+    /// 更新语义关系
     /// </summary>
     Task UpdateRelationAsync(RelationId relationId, Action<NodeRelation> updateAction, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 移除节点关系
+    /// 移除语义关系
     /// </summary>
     Task RemoveRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 批量获取关系
+    /// 批量获取语义关系
     /// </summary>
     Task<IReadOnlyDictionary<RelationId, NodeRelation>> GetRelationsBatchAsync(IEnumerable<RelationId> relationIds, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 查找特定类型的关系
+    /// 查找特定类型的语义关系
     /// </summary>
     Task<IReadOnlyList<NodeRelation>> FindRelationsByTypeAsync(RelationType relationType, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 查找两个节点之间的关系
+    /// 查找两个节点之间的语义关系
     /// </summary>
     Task<IReadOnlyList<NodeRelation>> FindRelationsBetweenAsync(NodeId sourceId, NodeId targetId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 异步枚举所有关系
+    /// 异步枚举所有语义关系
     /// </summary>
     IAsyncEnumerable<NodeRelation> GetAllRelationsAsync(CancellationToken cancellationToken = default);
 }
@@ -555,24 +590,49 @@ public interface IRelationTypeStorage
 }
 
 /// <summary>
-/// 节点层次结构存储接口
+/// 节点层次结构存储接口（基于ParentChildrens文件夹的独立存储）
 /// </summary>
 public interface INodeHierarchyStorage
 {
     /// <summary>
-    /// 获取子节点ID列表
+    /// 获取父子关系信息
+    /// </summary>
+    Task<ParentChildrenInfo?> GetParentChildrenInfoAsync(NodeId parentId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 保存父子关系信息
+    /// </summary>
+    Task SaveParentChildrenInfoAsync(ParentChildrenInfo parentChildrenInfo, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 获取子节点ID列表（有序）
     /// </summary>
     Task<IReadOnlyList<NodeId>> GetChildrenAsync(NodeId parentId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 获取父节点ID
+    /// 获取父节点ID（通过运行时索引）
     /// </summary>
     Task<NodeId?> GetParentAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// 添加子节点
+    /// </summary>
+    Task AddChildAsync(NodeId parentId, NodeId childId, int? order = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 移除子节点
+    /// </summary>
+    Task RemoveChildAsync(NodeId parentId, NodeId childId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 移动节点到新父节点
     /// </summary>
-    Task MoveNodeAsync(NodeId nodeId, NodeId? newParentId, CancellationToken cancellationToken = default);
+    Task MoveNodeAsync(NodeId nodeId, NodeId? newParentId, int? newOrder = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 重新排序子节点
+    /// </summary>
+    Task ReorderChildrenAsync(NodeId parentId, IReadOnlyList<NodeId> orderedChildIds, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取节点路径（从根到节点）
@@ -583,6 +643,21 @@ public interface INodeHierarchyStorage
     /// 获取子树中的所有节点ID
     /// </summary>
     IAsyncEnumerable<NodeId> GetDescendantsAsync(NodeId rootId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 构建运行时反向索引（子节点到父节点的映射）
+    /// </summary>
+    Task<IReadOnlyDictionary<NodeId, NodeId>> BuildParentIndexAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 检查节点是否有子节点
+    /// </summary>
+    Task<bool> HasChildrenAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 获取节点的层级深度
+    /// </summary>
+    Task<int> GetDepthAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -793,14 +868,19 @@ public interface IRetrievalService
     Task<IReadOnlyList<SearchResult>> SemanticSearchAsync(string query, int maxResults = 10, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 关系搜索
+    /// 层次结构搜索
+    /// </summary>
+    Task<IReadOnlyList<NodeId>> HierarchySearchAsync(NodeId startNodeId, int maxDepth = 3, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 语义关系搜索
     /// </summary>
     Task<IReadOnlyList<NodeId>> RelationSearchAsync(NodeId startNodeId, RelationType relationType, int maxDepth = 3, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 关系图搜索
+    /// 混合图搜索（层次结构 + 语义关系）
     /// </summary>
-    Task<IReadOnlyList<SearchResult>> RelationGraphSearchAsync(NodeId startNodeId, string query, int maxDepth = 2, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<SearchResult>> MixedGraphSearchAsync(NodeId startNodeId, string query, int maxDepth = 2, bool includeHierarchy = true, bool includeSemanticRelations = true, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 重建索引
@@ -830,9 +910,9 @@ public record SearchResult
 public interface ICognitiveCanvasEditor
 {
     /// <summary>
-    /// 创建新节点
+    /// 创建新节点（自动处理层次结构）
     /// </summary>
-    Task<NodeId> CreateNodeAsync(NodeId? parentId, NodeType type, string title, string content, CancellationToken cancellationToken = default);
+    Task<NodeId> CreateNodeAsync(NodeId? parentId, NodeType type, string title, string content, int? order = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 更新节点内容
@@ -845,14 +925,14 @@ public interface ICognitiveCanvasEditor
     Task UpdateNodeMetadataAsync(NodeId nodeId, Action<NodeMetadata> updateAction, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 删除节点
+    /// 删除节点（自动处理层次结构清理）
     /// </summary>
     Task DeleteNodeAsync(NodeId nodeId, bool recursive = false, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 移动节点
+    /// 移动节点（包括层次结构调整）
     /// </summary>
-    Task MoveNodeAsync(NodeId nodeId, NodeId? newParentId, CancellationToken cancellationToken = default);
+    Task MoveNodeAsync(NodeId nodeId, NodeId? newParentId, int? newOrder = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 分割节点
@@ -907,7 +987,7 @@ public interface ICognitiveCanvasService
     Task CollapseNodeAsync(string viewName, NodeId nodeId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 获取节点树结构
+    /// 获取节点树结构（基于层次结构存储）
     /// </summary>
     Task<IReadOnlyList<NodeTreeItem>> GetNodeTreeAsync(NodeId? rootId = null, CancellationToken cancellationToken = default);
 
@@ -1342,7 +1422,12 @@ public class MemoTreeOptions
     public string CogNodesDirectory { get; set; } = "CogNodes";
 
     /// <summary>
-    /// 关系数据存储目录名
+    /// 父子关系存储目录名
+    /// </summary>
+    public string ParentChildrensDirectory { get; set; } = "ParentChildrens";
+
+    /// <summary>
+    /// 语义关系数据存储目录名
     /// </summary>
     public string RelationsDirectory { get; set; } = "Relations";
 
@@ -1416,7 +1501,12 @@ public class StorageOptions
     public string ExternalLinksFileName { get; set; } = "external-links.json";
 
     /// <summary>
-    /// 关系数据文件名
+    /// 父子关系文件扩展名
+    /// </summary>
+    public string ParentChildrensFileExtension { get; set; } = ".yaml";
+
+    /// <summary>
+    /// 语义关系数据文件名
     /// </summary>
     public string RelationsFileName { get; set; } = "relations.yaml";
 
@@ -1437,12 +1527,22 @@ public class StorageOptions
 public class RelationOptions
 {
     /// <summary>
-    /// 是否启用关系数据集中存储
+    /// 是否启用父子关系独立存储
+    /// </summary>
+    public bool EnableIndependentHierarchyStorage { get; set; } = true;
+
+    /// <summary>
+    /// 父子关系存储目录
+    /// </summary>
+    public string HierarchyStorageDirectory { get; set; } = "./ParentChildrens";
+
+    /// <summary>
+    /// 是否启用语义关系数据集中存储
     /// </summary>
     public bool EnableCentralizedRelationStorage { get; set; } = true;
 
     /// <summary>
-    /// 关系数据存储目录
+    /// 语义关系数据存储目录
     /// </summary>
     public string RelationStorageDirectory { get; set; } = "./Relations";
 
@@ -1462,12 +1562,22 @@ public class RelationOptions
     public bool EnableRelationValidation { get; set; } = true;
 
     /// <summary>
-    /// 是否自动清理孤立关系
+    /// 是否自动清理孤立的语义关系
     /// </summary>
     public bool AutoCleanupOrphanedRelations { get; set; } = true;
 
     /// <summary>
-    /// 关系缓存过期时间（分钟）
+    /// 是否启用运行时父节点索引缓存
+    /// </summary>
+    public bool EnableParentIndexCache { get; set; } = true;
+
+    /// <summary>
+    /// 父节点索引缓存过期时间（分钟）
+    /// </summary>
+    public int ParentIndexCacheExpirationMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// 语义关系缓存过期时间（分钟）
     /// </summary>
     public int RelationCacheExpirationMinutes { get; set; } = 30;
 }
@@ -1629,7 +1739,19 @@ public record NodeDeletedEvent : NodeChangeEvent
 }
 
 /// <summary>
-/// 节点关系变更事件（集中存储版本）
+/// 节点层次结构变更事件
+/// </summary>
+public record NodeHierarchyChangedEvent : NodeChangeEvent
+{
+    public NodeId? OldParentId { get; init; }
+    public NodeId? NewParentId { get; init; }
+    public int? OldOrder { get; init; }
+    public int? NewOrder { get; init; }
+    public HierarchyChangeType ChangeType { get; init; }
+}
+
+/// <summary>
+/// 节点语义关系变更事件（集中存储版本）
 /// </summary>
 public record NodeRelationChangedEvent : NodeChangeEvent
 {
@@ -1643,7 +1765,33 @@ public record NodeRelationChangedEvent : NodeChangeEvent
 }
 
 /// <summary>
-/// 关系变更类型
+/// 层次结构变更类型
+/// </summary>
+public enum HierarchyChangeType
+{
+    /// <summary>
+    /// 节点被添加到父节点
+    /// </summary>
+    ChildAdded,
+
+    /// <summary>
+    /// 节点从父节点移除
+    /// </summary>
+    ChildRemoved,
+
+    /// <summary>
+    /// 节点移动到新父节点
+    /// </summary>
+    NodeMoved,
+
+    /// <summary>
+    /// 子节点重新排序
+    /// </summary>
+    ChildrenReordered
+}
+
+/// <summary>
+/// 语义关系变更类型
 /// </summary>
 public enum RelationChangeType
 {
@@ -2519,7 +2667,7 @@ public interface IPerformanceMonitoringService
 
 3. **服务接口层**
    - 版本控制服务（Git集成）
-   - 检索服务（全文、语义、关系搜索）
+   - 检索服务（全文、语义、层次结构、语义关系搜索）
    - 认知画布编辑器和服务
    - 外部数据源集成（Roslyn、环境信息）
 
