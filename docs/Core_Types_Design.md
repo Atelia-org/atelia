@@ -1,12 +1,33 @@
 # MemoTree 核心类型设计文档
 
-> 版本: v1.0  
-> 创建日期: 2025-07-23  
+> 版本: v1.1
+> 创建日期: 2025-07-23
+> 最后更新: 2025-07-23
 > 基于: MVP_Design_Draft.md 和 Autonomous_Cognitive_Canvas_Concept_v2.md
 
 ## 1. 文档概述
 
 本文档定义了MemoTree系统的核心数据类型、接口和类结构。MemoTree是一个为LLM提供持久化、结构化上下文管理的工具，将LLM的上下文抽象为可展开/折叠的多级LOD Markdown树。
+
+### 1.0 重要设计变更说明
+
+**关系数据集中存储 (v1.1)**
+
+从v1.1版本开始，节点间的关系数据从各个节点的元数据中分离出来，采用集中存储的方式：
+
+- **变更前**: 关系数据存储在每个节点的 `meta.yaml` 文件的 `Relations` 属性中
+- **变更后**: 关系数据集中存储在 `Relations/` 目录下的专门文件中
+- **优势**:
+  - 数据分离，关注点分离
+  - 查询优化，支持高效的图遍历
+  - 扩展性，支持复杂关系类型和属性
+  - 一致性，避免数据冗余和不一致
+
+这一变更影响了以下核心类型：
+- `NodeMetadata`: 移除了 `Relations` 属性
+- `NodeRelation`: 增加了 `RelationId` 和 `SourceId` 属性
+- `INodeRelationStorage`: 重新设计了接口方法
+- 新增了 `IRelationManagementService` 和相关类型
 
 ### 1.1 设计原则
 
@@ -151,22 +172,22 @@ public enum RelationType
     /// 引用关系
     /// </summary>
     References,
-    
+
     /// <summary>
     /// 启发关系
     /// </summary>
     InspiredBy,
-    
+
     /// <summary>
     /// 矛盾关系
     /// </summary>
     Contradicts,
-    
+
     /// <summary>
     /// 扩展关系
     /// </summary>
     Extends,
-    
+
     /// <summary>
     /// 依赖关系
     /// </summary>
@@ -174,14 +195,57 @@ public enum RelationType
 }
 
 /// <summary>
-/// 节点关系定义
+/// 关系标识符
+/// </summary>
+public readonly struct RelationId : IEquatable<RelationId>
+{
+    public string Value { get; }
+
+    public RelationId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException("RelationId cannot be null or empty", nameof(value));
+        Value = value;
+    }
+
+    public static RelationId Generate() => new(Guid.NewGuid().ToString("N")[..12]);
+
+    public bool Equals(RelationId other) => Value == other.Value;
+    public override bool Equals(object? obj) => obj is RelationId other && Equals(other);
+    public override int GetHashCode() => Value.GetHashCode();
+    public override string ToString() => Value;
+
+    public static implicit operator string(RelationId relationId) => relationId.Value;
+    public static explicit operator RelationId(string value) => new(value);
+}
+
+/// <summary>
+/// 节点关系定义（集中存储版本）
 /// </summary>
 public record NodeRelation
 {
-    public RelationType Type { get; init; }
+    public RelationId Id { get; init; }
+    public NodeId SourceId { get; init; }
     public NodeId TargetId { get; init; }
+    public RelationType Type { get; init; }
     public string Description { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+    public IReadOnlyDictionary<string, object> Properties { get; init; } =
+        new Dictionary<string, object>();
+}
+
+/// <summary>
+/// 关系类型定义
+/// </summary>
+public record RelationTypeDefinition
+{
+    public RelationType Type { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public bool IsBidirectional { get; init; } = false;
+    public string Color { get; init; } = "#000000";
+    public IReadOnlyDictionary<string, object> Metadata { get; init; } =
+        new Dictionary<string, object>();
 }
 ```
 
@@ -189,7 +253,7 @@ public record NodeRelation
 
 ```csharp
 /// <summary>
-/// 认知节点元数据
+/// 认知节点元数据（关系数据已分离）
 /// </summary>
 public record NodeMetadata
 {
@@ -200,10 +264,11 @@ public record NodeMetadata
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
     public DateTime LastModified { get; init; } = DateTime.UtcNow;
     public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
-    public IReadOnlyList<NodeRelation> Relations { get; init; } = Array.Empty<NodeRelation>();
-    public IReadOnlyDictionary<LodLevel, string> ContentHashes { get; init; } = 
+    public IReadOnlyDictionary<LodLevel, string> ContentHashes { get; init; } =
         new Dictionary<LodLevel, string>();
     public bool IsDirty { get; init; } = false;
+    public IReadOnlyDictionary<string, object> CustomProperties { get; init; } =
+        new Dictionary<string, object>();
 }
 ```
 
@@ -403,29 +468,90 @@ public interface INodeContentStorage
 }
 
 /// <summary>
-/// 节点关系存储接口
+/// 节点关系存储接口（集中存储版本）
 /// </summary>
 public interface INodeRelationStorage
 {
     /// <summary>
-    /// 获取节点的所有关系
+    /// 获取节点的所有出向关系
     /// </summary>
-    Task<IReadOnlyList<NodeRelation>> GetRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<NodeRelation>> GetOutgoingRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 获取节点的所有入向关系
+    /// </summary>
+    Task<IReadOnlyList<NodeRelation>> GetIncomingRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 获取节点的所有关系（入向+出向）
+    /// </summary>
+    Task<IReadOnlyList<NodeRelation>> GetAllRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 根据关系ID获取关系
+    /// </summary>
+    Task<NodeRelation?> GetRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 添加节点关系
     /// </summary>
-    Task AddRelationAsync(NodeId sourceId, NodeRelation relation, CancellationToken cancellationToken = default);
+    Task<RelationId> AddRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, string description = "", CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 更新节点关系
+    /// </summary>
+    Task UpdateRelationAsync(RelationId relationId, Action<NodeRelation> updateAction, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 移除节点关系
     /// </summary>
-    Task RemoveRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, CancellationToken cancellationToken = default);
+    Task RemoveRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 获取指向指定节点的所有关系
+    /// 批量获取关系
     /// </summary>
-    Task<IReadOnlyList<(NodeId SourceId, NodeRelation Relation)>> GetIncomingRelationsAsync(NodeId targetId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyDictionary<RelationId, NodeRelation>> GetRelationsBatchAsync(IEnumerable<RelationId> relationIds, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 查找特定类型的关系
+    /// </summary>
+    Task<IReadOnlyList<NodeRelation>> FindRelationsByTypeAsync(RelationType relationType, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 查找两个节点之间的关系
+    /// </summary>
+    Task<IReadOnlyList<NodeRelation>> FindRelationsBetweenAsync(NodeId sourceId, NodeId targetId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 异步枚举所有关系
+    /// </summary>
+    IAsyncEnumerable<NodeRelation> GetAllRelationsAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// 关系类型定义存储接口
+/// </summary>
+public interface IRelationTypeStorage
+{
+    /// <summary>
+    /// 获取关系类型定义
+    /// </summary>
+    Task<RelationTypeDefinition?> GetRelationTypeAsync(RelationType relationType, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 保存关系类型定义
+    /// </summary>
+    Task SaveRelationTypeAsync(RelationTypeDefinition definition, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 获取所有关系类型定义
+    /// </summary>
+    Task<IReadOnlyList<RelationTypeDefinition>> GetAllRelationTypesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 删除关系类型定义
+    /// </summary>
+    Task DeleteRelationTypeAsync(RelationType relationType, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -462,7 +588,7 @@ public interface INodeHierarchyStorage
 /// <summary>
 /// 复合存储接口（组合所有存储功能）
 /// </summary>
-public interface ICognitiveNodeStorage : INodeMetadataStorage, INodeContentStorage, INodeRelationStorage, INodeHierarchyStorage
+public interface ICognitiveNodeStorage : INodeMetadataStorage, INodeContentStorage, INodeHierarchyStorage
 {
     /// <summary>
     /// 获取完整节点
@@ -507,7 +633,96 @@ public interface IViewStateStorage
 }
 ```
 
-### 3.2 版本控制接口
+### 3.2 关系管理接口
+
+```csharp
+/// <summary>
+/// 关系管理服务接口
+/// </summary>
+public interface IRelationManagementService
+{
+    /// <summary>
+    /// 创建关系
+    /// </summary>
+    Task<RelationId> CreateRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, string description = "", CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 删除关系
+    /// </summary>
+    Task DeleteRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 更新关系描述
+    /// </summary>
+    Task UpdateRelationDescriptionAsync(RelationId relationId, string description, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 获取节点的关系图
+    /// </summary>
+    Task<RelationGraph> GetRelationGraphAsync(NodeId nodeId, int maxDepth = 2, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 查找关系路径
+    /// </summary>
+    Task<IReadOnlyList<RelationPath>> FindPathsAsync(NodeId sourceId, NodeId targetId, int maxDepth = 5, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 验证关系的有效性
+    /// </summary>
+    Task<ValidationResult> ValidateRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 获取关系统计信息
+    /// </summary>
+    Task<RelationStatistics> GetRelationStatisticsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 清理孤立关系
+    /// </summary>
+    Task<int> CleanupOrphanedRelationsAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// 关系图
+/// </summary>
+public record RelationGraph
+{
+    public NodeId CenterNodeId { get; init; }
+    public IReadOnlyList<NodeRelation> Relations { get; init; } = Array.Empty<NodeRelation>();
+    public IReadOnlyList<NodeId> ConnectedNodes { get; init; } = Array.Empty<NodeId>();
+    public int MaxDepth { get; init; }
+    public DateTime GeneratedAt { get; init; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 关系路径
+/// </summary>
+public record RelationPath
+{
+    public NodeId SourceId { get; init; }
+    public NodeId TargetId { get; init; }
+    public IReadOnlyList<NodeRelation> Relations { get; init; } = Array.Empty<NodeRelation>();
+    public IReadOnlyList<NodeId> IntermediateNodes { get; init; } = Array.Empty<NodeId>();
+    public int Length { get; init; }
+    public double Weight { get; init; }
+}
+
+/// <summary>
+/// 关系统计信息
+/// </summary>
+public record RelationStatistics
+{
+    public int TotalRelations { get; init; }
+    public IReadOnlyDictionary<RelationType, int> RelationsByType { get; init; } =
+        new Dictionary<RelationType, int>();
+    public int NodesWithRelations { get; init; }
+    public int OrphanedRelations { get; init; }
+    public double AverageRelationsPerNode { get; init; }
+    public DateTime LastUpdated { get; init; } = DateTime.UtcNow;
+}
+```
+
+### 3.3 版本控制接口
 
 ```csharp
 /// <summary>
@@ -583,6 +798,11 @@ public interface IRetrievalService
     Task<IReadOnlyList<NodeId>> RelationSearchAsync(NodeId startNodeId, RelationType relationType, int maxDepth = 3, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// 关系图搜索
+    /// </summary>
+    Task<IReadOnlyList<SearchResult>> RelationGraphSearchAsync(NodeId startNodeId, string query, int maxDepth = 2, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 重建索引
     /// </summary>
     Task RebuildIndexAsync(CancellationToken cancellationToken = default);
@@ -647,12 +867,17 @@ public interface ICognitiveCanvasEditor
     /// <summary>
     /// 添加节点关系
     /// </summary>
-    Task AddRelationAsync(NodeId sourceNodeId, NodeId targetNodeId, RelationType relationType, string description = "", CancellationToken cancellationToken = default);
+    Task<RelationId> AddRelationAsync(NodeId sourceNodeId, NodeId targetNodeId, RelationType relationType, string description = "", CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 移除节点关系
     /// </summary>
-    Task RemoveRelationAsync(NodeId sourceNodeId, NodeId targetNodeId, RelationType relationType, CancellationToken cancellationToken = default);
+    Task RemoveRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 更新节点关系
+    /// </summary>
+    Task UpdateRelationAsync(RelationId relationId, string description, CancellationToken cancellationToken = default);
 }
 ```
 
@@ -1117,6 +1342,11 @@ public class MemoTreeOptions
     public string CogNodesDirectory { get; set; } = "CogNodes";
 
     /// <summary>
+    /// 关系数据存储目录名
+    /// </summary>
+    public string RelationsDirectory { get; set; } = "Relations";
+
+    /// <summary>
     /// 视图状态文件名
     /// </summary>
     public string ViewStateFileName { get; set; } = "last-view.json";
@@ -1186,9 +1416,60 @@ public class StorageOptions
     public string ExternalLinksFileName { get; set; } = "external-links.json";
 
     /// <summary>
+    /// 关系数据文件名
+    /// </summary>
+    public string RelationsFileName { get; set; } = "relations.yaml";
+
+    /// <summary>
+    /// 关系类型定义文件名
+    /// </summary>
+    public string RelationTypesFileName { get; set; } = "relation-types.yaml";
+
+    /// <summary>
     /// 内容哈希算法
     /// </summary>
     public string HashAlgorithm { get; set; } = "SHA256";
+}
+
+/// <summary>
+/// 关系管理配置选项
+/// </summary>
+public class RelationOptions
+{
+    /// <summary>
+    /// 是否启用关系数据集中存储
+    /// </summary>
+    public bool EnableCentralizedRelationStorage { get; set; } = true;
+
+    /// <summary>
+    /// 关系数据存储目录
+    /// </summary>
+    public string RelationStorageDirectory { get; set; } = "./Relations";
+
+    /// <summary>
+    /// 最大关系深度
+    /// </summary>
+    public int MaxRelationDepth { get; set; } = 10;
+
+    /// <summary>
+    /// 关系图最大节点数
+    /// </summary>
+    public int MaxRelationGraphNodes { get; set; } = 1000;
+
+    /// <summary>
+    /// 是否启用关系验证
+    /// </summary>
+    public bool EnableRelationValidation { get; set; } = true;
+
+    /// <summary>
+    /// 是否自动清理孤立关系
+    /// </summary>
+    public bool AutoCleanupOrphanedRelations { get; set; } = true;
+
+    /// <summary>
+    /// 关系缓存过期时间（分钟）
+    /// </summary>
+    public int RelationCacheExpirationMinutes { get; set; } = 30;
 }
 
 /// <summary>
@@ -1348,14 +1629,38 @@ public record NodeDeletedEvent : NodeChangeEvent
 }
 
 /// <summary>
-/// 节点关系变更事件
+/// 节点关系变更事件（集中存储版本）
 /// </summary>
 public record NodeRelationChangedEvent : NodeChangeEvent
 {
+    public RelationId RelationId { get; init; }
     public NodeId TargetNodeId { get; init; }
     public RelationType RelationType { get; init; }
-    public bool IsAdded { get; init; }
+    public RelationChangeType ChangeType { get; init; }
     public string Description { get; init; } = string.Empty;
+    public NodeRelation? OldRelation { get; init; }
+    public NodeRelation? NewRelation { get; init; }
+}
+
+/// <summary>
+/// 关系变更类型
+/// </summary>
+public enum RelationChangeType
+{
+    /// <summary>
+    /// 关系被创建
+    /// </summary>
+    Created,
+
+    /// <summary>
+    /// 关系被更新
+    /// </summary>
+    Updated,
+
+    /// <summary>
+    /// 关系被删除
+    /// </summary>
+    Deleted
 }
 ```
 
@@ -1482,34 +1787,9 @@ public interface ICognitiveNodeBuilder
     ICognitiveNodeBuilder WithContent(LodLevel level, string content);
 
     /// <summary>
-    /// 添加引用关系
+    /// 添加外部链接
     /// </summary>
-    ICognitiveNodeBuilder References(NodeId targetId, string description = "");
-
-    /// <summary>
-    /// 添加启发关系
-    /// </summary>
-    ICognitiveNodeBuilder InspiredBy(NodeId targetId, string description = "");
-
-    /// <summary>
-    /// 添加扩展关系
-    /// </summary>
-    ICognitiveNodeBuilder Extends(NodeId targetId, string description = "");
-
-    /// <summary>
-    /// 添加依赖关系
-    /// </summary>
-    ICognitiveNodeBuilder DependsOn(NodeId targetId, string description = "");
-
-    /// <summary>
-    /// 添加矛盾关系
-    /// </summary>
-    ICognitiveNodeBuilder Contradicts(NodeId targetId, string description = "");
-
-    /// <summary>
-    /// 添加自定义关系
-    /// </summary>
-    ICognitiveNodeBuilder RelatedTo(NodeId targetId, RelationType type, string description = "");
+    ICognitiveNodeBuilder WithExternalLink(string path, ExternalLinkType type, string description = "");
 
     /// <summary>
     /// 设置创建时间
@@ -2333,16 +2613,19 @@ public interface IPerformanceMonitoringService
 graph TB
     subgraph "核心数据类型"
         NodeId[NodeId]
+        RelationId[RelationId]
         CognitiveNode[CognitiveNode]
         NodeMetadata[NodeMetadata]
         NodeContent[NodeContent]
         NodeRelation[NodeRelation]
+        RelationTypeDefinition[RelationTypeDefinition]
     end
 
     subgraph "存储层"
         INodeMetadataStorage[INodeMetadataStorage]
         INodeContentStorage[INodeContentStorage]
         INodeRelationStorage[INodeRelationStorage]
+        IRelationTypeStorage[IRelationTypeStorage]
         INodeHierarchyStorage[INodeHierarchyStorage]
         ICognitiveNodeStorage[ICognitiveNodeStorage]
     end
@@ -2350,6 +2633,7 @@ graph TB
     subgraph "服务层"
         ICognitiveCanvasService[ICognitiveCanvasService]
         ICognitiveCanvasEditor[ICognitiveCanvasEditor]
+        IRelationManagementService[IRelationManagementService]
         IRetrievalService[IRetrievalService]
         IVersionControlService[IVersionControlService]
     end
@@ -2378,13 +2662,15 @@ graph TB
 
     CognitiveNode --> NodeMetadata
     CognitiveNode --> NodeContent
-    NodeMetadata --> NodeRelation
     NodeMetadata --> NodeId
 
     ICognitiveNodeStorage --> INodeMetadataStorage
     ICognitiveNodeStorage --> INodeContentStorage
-    ICognitiveNodeStorage --> INodeRelationStorage
     ICognitiveNodeStorage --> INodeHierarchyStorage
+
+    %% 关系数据现在独立管理
+    IRelationManagementService --> INodeRelationStorage
+    IRelationManagementService --> IRelationTypeStorage
 
     ICognitiveCanvasService --> ICognitiveNodeStorage
     ICognitiveCanvasEditor --> ICognitiveNodeStorage
@@ -2415,17 +2701,64 @@ var complexNode = await builder
     .WithDetailContent("SOLID原则是面向对象设计的五个基本原则...")
     .WithSummaryContent("SOLID原则包括单一职责、开闭原则等五个原则")
     .WithTitleContent("SOLID原则")
-    .References(existingNodeId, "基于依赖注入原理")
     .CreatedNow()
     .BuildAndValidateAsync(validator);
 
 if (complexNode.Validation.IsValid)
 {
     await storage.SaveCompleteNodeAsync(complexNode.Node);
+
+    // 关系现在通过关系管理服务单独创建
+    var relationService = serviceProvider.GetRequiredService<IRelationManagementService>();
+    await relationService.CreateRelationAsync(
+        complexNode.Node.Metadata.Id,
+        existingNodeId,
+        RelationType.References,
+        "基于依赖注入原理");
 }
 ```
 
-### 17.2 工具调用示例
+### 17.2 关系管理示例
+
+```csharp
+// 创建节点关系
+var relationService = serviceProvider.GetRequiredService<IRelationManagementService>();
+var relationId = await relationService.CreateRelationAsync(
+    sourceNodeId: new NodeId("node-001"),
+    targetNodeId: new NodeId("node-002"),
+    relationType: RelationType.References,
+    description: "引用了架构设计原则");
+
+// 获取节点的关系图
+var relationGraph = await relationService.GetRelationGraphAsync(
+    nodeId: new NodeId("node-001"),
+    maxDepth: 2);
+
+Console.WriteLine($"找到 {relationGraph.Relations.Count} 个关系");
+foreach (var relation in relationGraph.Relations)
+{
+    Console.WriteLine($"{relation.SourceId} --{relation.Type}--> {relation.TargetId}: {relation.Description}");
+}
+
+// 查找两个节点之间的路径
+var paths = await relationService.FindPathsAsync(
+    sourceId: new NodeId("node-001"),
+    targetId: new NodeId("node-010"),
+    maxDepth: 5);
+
+if (paths.Any())
+{
+    var shortestPath = paths.OrderBy(p => p.Length).First();
+    Console.WriteLine($"最短路径长度: {shortestPath.Length}");
+}
+
+// 获取关系统计信息
+var stats = await relationService.GetRelationStatisticsAsync();
+Console.WriteLine($"总关系数: {stats.TotalRelations}");
+Console.WriteLine($"平均每节点关系数: {stats.AverageRelationsPerNode:F2}");
+```
+
+### 17.3 工具调用示例
 
 ```csharp
 // LLM工具调用：展开节点

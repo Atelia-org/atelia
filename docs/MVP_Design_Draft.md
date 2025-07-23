@@ -24,11 +24,14 @@ Workspace/
 ├── .git/                    # Git版本控制
 ├── CogNodes/               # 认知节点存储根目录
 │   ├── node-001/          # 单个认知节点文件夹
-│   │   ├── meta.yaml      # 元数据(父节点、关系、哈希等)
+│   │   ├── meta.yaml      # 元数据(父节点、哈希等)
 │   │   ├── brief.md       # 简要内容
 │   │   ├── summary.md     # 摘要内容
 │   │   └── full-text.md   # 完整内容
 │   └── node-002/
+├── Relations/              # 节点关系集中存储目录
+│   ├── relations.yaml     # 关系数据文件
+│   └── relation-types.yaml # 关系类型定义
 ├── last-view.json         # 最近渲染视图状态
 └── index-cache.json       # 可重建的索引缓存
 ```
@@ -55,18 +58,55 @@ content_hashes:
   brief: "sha256:abc123..."
   summary: "sha256:def456..."
   full_text: "sha256:ghi789..."
-links:
-  - type: "references"
-    target_id: "node-015"
-    description: "引用了DI优点分析"
-  - type: "inspired_by"
-    target_id: "node-008"
-    description: "基于架构讨论得出"
 tags: ["architecture", "dependency-injection"]
 ```
 
+**关系数据集中存储设计**
+```yaml
+# Relations/relations.yaml
+relations:
+  - id: "rel-001"
+    source_id: "node-001"
+    target_id: "node-015"
+    type: "references"
+    description: "引用了DI优点分析"
+    created_at: "2025-07-23T10:30:00Z"
+  - id: "rel-002"
+    source_id: "node-001"
+    target_id: "node-008"
+    type: "inspired_by"
+    description: "基于架构讨论得出"
+    created_at: "2025-07-23T10:30:00Z"
+
+# Relations/relation-types.yaml
+relation_types:
+  references:
+    description: "引用关系"
+    bidirectional: false
+    color: "#3498db"
+  inspired_by:
+    description: "启发关系"
+    bidirectional: false
+    color: "#e74c3c"
+  contradicts:
+    description: "矛盾关系"
+    bidirectional: false
+    color: "#f39c12"
+  extends:
+    description: "扩展关系"
+    bidirectional: false
+    color: "#2ecc71"
+```
+
+**关系数据集中存储的设计理念**
+- **数据分离**: 将关系数据从节点元数据中分离，实现关注点分离
+- **查询优化**: 集中存储便于实现高效的图遍历算法和关系查询
+- **扩展性**: 支持复杂关系类型定义和关系属性扩展
+- **一致性**: 统一的关系管理避免数据冗余和不一致问题
+
 **扩展性考虑**
 - 未来支持分片: `CogNodes-01/`, `CogNodes-02/` 避免单目录文件过多
+- 关系数据分片: `Relations-01/`, `Relations-02/` 支持大规模关系数据
 - 多模态支持: 采用"数据结构分离"方案，媒体文件独立存储，索引串联
 
 ### 2. 内存层 (Memory Layer)
@@ -79,7 +119,7 @@ tags: ["architecture", "dependency-injection"]
 #### 2.2 检索系统
 - **全文搜索**: 基于关键字的精确查找 (可考虑集成 `Lucene.net`)
 - **语义检索**: 基于向量的模糊联想 (可考虑 `Faiss`、`HNSW` 等)
-- **关系检索**: 基于节点间 `links` 的图遍历
+- **关系检索**: 基于集中存储的关系数据进行图遍历和关系查询
 
 ### 3. 基础设施
 
@@ -144,8 +184,9 @@ views/
 
 #### 关系图谱
 - 节点间支持多种关系类型: `references`, `inspired_by`, `contradicts`, `extends`
+- 关系数据集中存储，支持高效的图遍历和复杂查询
 - 可视化知识图谱导航
-- 基于关系的智能推荐
+- 基于关系的智能推荐和路径发现
 
 ## 实施计划
 
@@ -159,15 +200,22 @@ views/
 1. 设计工具调用API
 2. 实现上下文视图管理
 3. 开发检索功能(关键字+向量)
-4. 创建开发用GUI工具
+4. **实现关系数据集中存储和管理系统**
+5. **开发多视图支持基础架构**
+6. 创建开发用GUI工具
 
 ### 第三阶段: 智能化功能
 1. 集成后台LOD生成
-2. 实现Roslyn代码分析集成
-3. 添加环境信息数据源
-4. 优化性能和用户体验
+2. **完善关系图谱可视化和智能推荐**
+3. **实现基于关系的高级查询功能**
+4. 添加环境信息数据源
+5. 优化性能和用户体验
 
-### 第四阶段: 扩展和优化
+### 第四阶段: 智能化功能
+1. 实现Roslyn代码分析集成
+2. 实现Roslyn代码重构集成
+
+### 第五阶段: 扩展和优化
 1. 多模态支持
 2. 多LLM兼容性
 3. 分布式架构支持
