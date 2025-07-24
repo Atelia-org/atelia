@@ -1,0 +1,179 @@
+{
+  "planVersion": "v1.0",
+  "lastUpdated": "2025-07-24T10:00:00Z",
+  "totalDocuments": 17,
+  "completedDocs": [
+    {
+      "name": "Phase1_CoreTypes.md",
+      "completedAt": "2025-07-24T10:00:00Z",
+      "lines": 300,
+      "status": "completed"
+    }
+  ],
+  "inProgress": "",
+  "nextUp": "Phase1_Constraints.md",
+  "issues": [],
+  "totalProgress": "1/17",
+  "progressPercentage": 5.9,
+  "phaseProgress": {
+    "Phase1": {
+      "total": 4,
+      "completed": 1,
+      "percentage": 25.0
+    },
+    "Phase2": {
+      "total": 3,
+      "completed": 0,
+      "percentage": 0.0
+    },
+    "Phase3": {
+      "total": 4,
+      "completed": 0,
+      "percentage": 0.0
+    },
+    "Phase4": {
+      "total": 3,
+      "completed": 0,
+      "percentage": 0.0
+    },
+    "Phase5": {
+      "total": 5,
+      "completed": 0,
+      "percentage": 0.0
+    }
+  },
+  "documentQueue": [
+    {
+      "name": "Phase1_Constraints.md",
+      "priority": "high",
+      "estimatedLines": 200,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第11节、NodeConstraints、SystemLimits"
+    },
+    {
+      "name": "Phase1_Exceptions.md",
+      "priority": "high",
+      "estimatedLines": 150,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第7节"
+    },
+    {
+      "name": "Phase1_Configuration.md",
+      "priority": "medium",
+      "estimatedLines": 400,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第6节"
+    },
+    {
+      "name": "Phase2_StorageInterfaces.md",
+      "priority": "high",
+      "estimatedLines": 500,
+      "dependencies": ["Phase1_CoreTypes.md", "Phase1_Exceptions.md"],
+      "sourceSection": "第3.1节 (INodeMetadataStorage, INodeContentStorage等)"
+    },
+    {
+      "name": "Phase2_RelationStorage.md",
+      "priority": "high",
+      "estimatedLines": 400,
+      "dependencies": ["Phase1_CoreTypes.md", "Phase2_StorageInterfaces.md"],
+      "sourceSection": "第3.1节 (INodeRelationStorage, INodeHierarchyStorage等)"
+    },
+    {
+      "name": "Phase2_ViewStorage.md",
+      "priority": "medium",
+      "estimatedLines": 300,
+      "dependencies": ["Phase1_CoreTypes.md", "Phase2_StorageInterfaces.md"],
+      "sourceSection": "第3.1节末尾、第10节部分"
+    },
+    {
+      "name": "Phase3_CoreServices.md",
+      "priority": "high",
+      "estimatedLines": 400,
+      "dependencies": ["Phase1_CoreTypes.md", "Phase2_StorageInterfaces.md"],
+      "sourceSection": "第4.1节 (ICognitiveCanvasService等)"
+    },
+    {
+      "name": "Phase3_RelationServices.md",
+      "priority": "high",
+      "estimatedLines": 500,
+      "dependencies": ["Phase1_CoreTypes.md", "Phase2_RelationStorage.md"],
+      "sourceSection": "第3.2节"
+    },
+    {
+      "name": "Phase3_EditingServices.md",
+      "priority": "medium",
+      "estimatedLines": 600,
+      "dependencies": ["Phase1_CoreTypes.md", "Phase3_CoreServices.md"],
+      "sourceSection": "第3.4节、第4.2节"
+    },
+    {
+      "name": "Phase3_RetrievalServices.md",
+      "priority": "medium",
+      "estimatedLines": 300,
+      "dependencies": ["Phase1_CoreTypes.md", "Phase2_StorageInterfaces.md"],
+      "sourceSection": "第3.3节"
+    },
+    {
+      "name": "Phase4_ToolCallAPI.md",
+      "priority": "high",
+      "estimatedLines": 400,
+      "dependencies": ["Phase1_CoreTypes.md", "Phase3_CoreServices.md"],
+      "sourceSection": "第5节"
+    },
+    {
+      "name": "Phase4_ExternalIntegration.md",
+      "priority": "medium",
+      "estimatedLines": 600,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第4.3节"
+    },
+    {
+      "name": "Phase4_VersionControl.md",
+      "priority": "low",
+      "estimatedLines": 200,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第3.3节"
+    },
+    {
+      "name": "Phase5_Security.md",
+      "priority": "low",
+      "estimatedLines": 600,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第13节"
+    },
+    {
+      "name": "Phase5_EventSystem.md",
+      "priority": "medium",
+      "estimatedLines": 400,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第8节"
+    },
+    {
+      "name": "Phase5_Performance.md",
+      "priority": "low",
+      "estimatedLines": 500,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第10节、第14节"
+    },
+    {
+      "name": "Phase5_Extensions.md",
+      "priority": "low",
+      "estimatedLines": 300,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第12节"
+    },
+    {
+      "name": "Phase5_Factories.md",
+      "priority": "low",
+      "estimatedLines": 300,
+      "dependencies": ["Phase1_CoreTypes.md"],
+      "sourceSection": "第9节"
+    }
+  ],
+  "notes": [
+    "Phase1_CoreTypes.md 已完成，作为示例",
+    "下一个会话应处理 Phase1_Constraints.md",
+    "保持代码完整性和依赖关系的准确性",
+    "每个文档完成后更新此进度文件"
+  ]
+}
