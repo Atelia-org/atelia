@@ -124,19 +124,26 @@ public readonly struct NodeId : IEquatable<NodeId>
 public enum LodLevel
 {
     /// <summary>
-    /// 标题级 - 仅显示节点标题 (对应brief.md文件)
+    /// 标题级 - 仅显示节点标题 (对应meta.yaml文件中的title字段)
     /// </summary>
-    Title = 3,
+    Title = 0,
+
+    /// <summary>
+    /// 简介级 - 显示标题和一句话简介 (对应brief.md文件)
+    /// </summary>
+    Brief = 1,
 
     /// <summary>
     /// 摘要级 - 显示标题和简要摘要 (对应summary.md文件)
+    /// 对于有子节点的情况，摘要是整个节点包括子节点信息的摘要，因为设计目标是为了让LLM(本程序的直接用户)用少量Token就能对这个节点有个整体了解。显示前3个子项，其余隐藏。
     /// </summary>
     Summary = 2,
 
     /// <summary>
-    /// 详细级 - 显示完整内容 (对应full-text.md文件)
+    /// 详细级 - 显示完整内容 (对应detail.md文件)
+    /// 对于有子节点的情况，从低LOD级别到达此级别时，重置所有子项为折叠状态(Title, LOD 0)
     /// </summary>
-    Detail = 1
+    Detail = 3
 }
 ```
 
@@ -1573,9 +1580,9 @@ public class StorageOptions
     public string MetadataFileName { get; set; } = "meta.yaml";
 
     /// <summary>
-    /// 详细内容文件名 (对应MVP设计中的full-text.md)
+    /// 详细内容文件名 (对应MVP设计中的detail.md)
     /// </summary>
-    public string DetailContentFileName { get; set; } = "full-text.md";
+    public string DetailContentFileName { get; set; } = "detail.md";
 
     /// <summary>
     /// 摘要内容文件名 (对应MVP设计中的summary.md)

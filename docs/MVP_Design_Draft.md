@@ -27,7 +27,7 @@ Workspace/
 │   │   ├── meta.yaml      # 元数据(哈希、标签等，不含parent_id)
 │   │   ├── brief.md       # 简要内容
 │   │   ├── summary.md     # 摘要内容
-│   │   └── full-text.md   # 完整内容
+│   │   └── detail.md   # 完整内容
 │   └── node-002/
 ├── ParentChildrens/        # 父子关系集中存储目录
 │   ├── node-root.yaml     # 根节点的子节点列表
@@ -49,12 +49,13 @@ Workspace/
 
 **LOD分离存储**
 - `meta.yaml`: 选择YAML格式提升可读性，支持注释
-- `brief.md` / `summary.md` / `full-text.md`: 按需加载特定LOD，提升内存效率
+- `brief.md` / `summary.md` / `detail.md`: 按需加载特定LOD，提升内存效率
 
 **元数据设计示例**
 ```yaml
 # CogNodes/node-001/meta.yaml
 node_id: "node-001"
+title: "AI存在的意义是什么？"
 created_at: "2025-07-23T10:30:00Z"
 last_modified: "2025-07-23T11:15:00Z"
 content_hashes:
