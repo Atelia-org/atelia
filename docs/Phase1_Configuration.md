@@ -68,9 +68,9 @@ public class MemoTreeOptions
     public bool EnableVersionControl { get; set; } = true;
 
     /// <summary>
-    /// 是否启用Roslyn集成
+    /// 是否启用Roslyn集成 (Phase 4功能，当前阶段默认关闭)
     /// </summary>
-    public bool EnableRoslynIntegration { get; set; } = true;
+    public bool EnableRoslynIntegration { get; set; } = false;
 
     /// <summary>
     /// 支持的文件扩展名
@@ -108,9 +108,9 @@ public class StorageOptions
     public string SummaryContentFileName { get; set; } = "summary.md";
 
     /// <summary>
-    /// 标题级内容文件名 (对应MVP设计中的brief.md)
+    /// 简介级内容文件名 (对应MVP设计中的brief.md和LodLevel.Brief)
     /// </summary>
-    public string TitleContentFileName { get; set; } = "brief.md";
+    public string BriefContentFileName { get; set; } = "brief.md";
 
     /// <summary>
     /// 外部链接文件名

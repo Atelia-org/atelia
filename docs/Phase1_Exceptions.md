@@ -220,6 +220,8 @@ public class VersionControlException : MemoTreeException
 ```csharp
 /// <summary>
 /// 异常处理策略枚举
+/// 注意：此枚举主要用于配置和文档化目的，实际的异常处理逻辑
+/// 仍需要在具体的try-catch块中根据上下文实现
 /// </summary>
 public enum ExceptionHandlingStrategy
 {
@@ -227,12 +229,12 @@ public enum ExceptionHandlingStrategy
     /// 重新抛出异常
     /// </summary>
     Rethrow,
-    
+
     /// <summary>
     /// 记录日志并继续
     /// </summary>
     LogAndContinue,
-    
+
     /// <summary>
     /// 记录日志并返回默认值
     /// </summary>
