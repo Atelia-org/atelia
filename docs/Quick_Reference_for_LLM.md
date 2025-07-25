@@ -5,11 +5,12 @@
 
 ## 🎯 当前任务
 
-**下一个要处理的文档**: `Phase4_ToolCallAPI.md`
-**当前进度**: 11/17 (64.7%)
+**下一个要处理的文档**: `Phase4_ExternalIntegration.md`
+**当前进度**: 12/17 (70.6%)
 **Phase1进度**: 4/4 (100%) ✅ **Phase 1 完成！**
 **Phase2进度**: 3/3 (100%) ✅ **Phase 2 完成！**
 **Phase3进度**: 4/4 (100%) ✅ **Phase 3 完成！**
+**Phase4进度**: 1/3 (33.3%)
 **预计完成时间**: 20分钟
 
 ## 📋 快速检查清单
@@ -46,21 +47,22 @@
 9. ✅ `Phase3_RelationServices.md` - 关系管理服务接口 (300行)
 10. ✅ `Phase3_EditingServices.md` - 编辑操作、LOD生成服务 (300行)
 11. ✅ `Phase3_RetrievalServices.md` - 检索服务接口、多模式搜索 (180行)
+12. ✅ `Phase4_ToolCallAPI.md` - LLM工具调用接口、请求响应类型 (400行)
 
 ### 🎉 Phase 1, 2 & 3 全部完成！
 **Phase 1 基础类型阶段已全部完成**，**Phase 2 存储层阶段已全部完成**，**Phase 3 服务层阶段已全部完成**！
 
 ### 下一个任务详情
-**文档**: `Phase4_ToolCallAPI.md`
-**内容**: 工具调用API设计
-**源位置**: 原文档第5节
-**预计行数**: ~400行
-**依赖**: Phase1_CoreTypes.md ✅, Phase3_CoreServices.md ✅
+**文档**: `Phase4_ExternalIntegration.md`
+**内容**: 外部数据源集成、Roslyn集成
+**源位置**: 原文档第4.3节
+**预计行数**: ~600行
+**依赖**: Phase1_CoreTypes.md ✅
 
 ## 📖 重要提醒
 
 ### 最新完成文档的特点
-- **Phase3_RetrievalServices.md**: 完整的检索服务接口体系，包含多模式搜索（全文、语义、层次结构、关系搜索）、混合图搜索和智能索引管理，为认知画布提供强大的信息检索能力
+- **Phase4_ToolCallAPI.md**: 完整的LLM工具调用接口体系，包含节点展开/折叠、创建/更新、搜索和提交等核心操作，支持多种搜索模式和统一的请求/响应模型，为LLM与认知画布的交互提供标准化接口
 - **Phase 1 总结**: 基础类型阶段已全部完成，包含核心类型、约束、异常和配置四大基础组件
 - **Phase 2 总结**: 存储层阶段已全部完成，包含基础存储接口、关系存储实现和视图状态存储，为整个系统提供了完整的数据持久化抽象
 - **Phase 3 总结**: 服务层阶段已全部完成，包含核心业务服务、关系管理服务、编辑操作服务和检索服务，构建了完整的业务逻辑层
@@ -95,7 +97,7 @@
 - **拆分计划**: `docs/Document_Splitting_Plan.md`
 - **进度跟踪**: `docs/splitting_progress.json`  
 - **原始文档**: `docs/Core_Types_Design.md`
-- **已完成示例**: `docs/Phase1_CoreTypes.md`, `docs/Phase1_Constraints.md`, `docs/Phase1_Exceptions.md`, `docs/Phase1_Configuration.md`, `docs/Phase2_StorageInterfaces.md`, `docs/Phase2_RelationStorage.md`, `docs/Phase2_ViewStorage.md`, `docs/Phase3_CoreServices.md`, `docs/Phase3_RelationServices.md`, `docs/Phase3_EditingServices.md`, `docs/Phase3_RetrievalServices.md`
+- **已完成示例**: `docs/Phase1_CoreTypes.md`, `docs/Phase1_Constraints.md`, `docs/Phase1_Exceptions.md`, `docs/Phase1_Configuration.md`, `docs/Phase2_StorageInterfaces.md`, `docs/Phase2_RelationStorage.md`, `docs/Phase2_ViewStorage.md`, `docs/Phase3_CoreServices.md`, `docs/Phase3_RelationServices.md`, `docs/Phase3_EditingServices.md`, `docs/Phase3_RetrievalServices.md`, `docs/Phase4_ToolCallAPI.md`
 - **Partial Class示例**: `docs/PartialClass_Example.md`
 
 ## 📞 紧急情况处理
@@ -118,5 +120,5 @@
 
 ---
 
-**最后更新**: 2025-07-25 17:30
-**下次更新**: 完成 Phase4_ToolCallAPI.md 后
+**最后更新**: 2025-07-25 18:00
+**下次更新**: 完成 Phase4_ExternalIntegration.md 后

@@ -68,13 +68,19 @@
       "completedAt": "2025-07-25T17:30:00Z",
       "lines": 180,
       "status": "completed"
+    },
+    {
+      "name": "Phase4_ToolCallAPI.md",
+      "completedAt": "2025-07-25T18:00:00Z",
+      "lines": 400,
+      "status": "completed"
     }
   ],
   "inProgress": "",
-  "nextUp": "Phase4_ToolCallAPI.md",
+  "nextUp": "Phase4_ExternalIntegration.md",
   "issues": [],
-  "totalProgress": "11/17",
-  "progressPercentage": 64.7,
+  "totalProgress": "12/17",
+  "progressPercentage": 70.6,
   "phaseProgress": {
     "Phase1": {
       "total": 4,
@@ -93,8 +99,8 @@
     },
     "Phase4": {
       "total": 3,
-      "completed": 0,
-      "percentage": 0.0
+      "completed": 1,
+      "percentage": 33.3
     },
     "Phase5": {
       "total": 5,
@@ -245,7 +251,8 @@
     "Phase3_EditingServices.md 已完成，包含编辑操作、LOD生成服务和事件系统（300行）",
     "Phase3_RetrievalServices.md 已完成，包含检索服务接口、多模式搜索和索引管理（180行）",
     "Phase 3 已全部完成！",
-    "下一个会话应处理 Phase4_ToolCallAPI.md",
+    "Phase4_ToolCallAPI.md 已完成，包含LLM工具调用接口、请求响应类型和搜索功能（400行）",
+    "下一个会话应处理 Phase4_ExternalIntegration.md",
     "保持代码完整性和依赖关系的准确性",
     "每个文档完成后更新此进度文件"
   ]
