@@ -1,117 +1,131 @@
-# Phase5_Performance.md - 性能优化和监控
+# Phase5_Performance.md - 性能优化和监控 (内存优先架构)
 
 ## 文档信息
 - **阶段**: Phase 5 - 系统优化层
-- **版本**: v1.0
+- **版本**: v1.1 (内存优先架构适配)
 - **创建日期**: 2025-07-25
 - **依赖**: Phase1_CoreTypes.md, Phase2_StorageInterfaces.md, Phase3_CoreServices.md
 
 ## 概述
 
-本文档定义了MemoTree系统的性能优化和监控相关类型，包括缓存策略、性能指标收集、系统监控和优化配置。这些类型确保系统能够高效运行并提供实时的性能监控能力。
+本文档定义了MemoTree系统基于**内存优先架构**的性能优化和监控相关类型。由于采用常驻内存+同步落盘的简化架构，性能监控重点从复杂的缓存管理转向内存使用监控、I/O性能优化和系统资源管理。
+
+### 🎯 内存优先架构的性能特点
+- **零缓存延迟**: 所有数据常驻内存，消除缓存未命中
+- **简化监控**: 重点监控内存使用、I/O性能和系统资源
+- **直接优化**: 优化内存数据结构和磁盘写入性能
+- **可选扩展**: Phase 5可选添加内存管理和冷数据处理
 
 ## 目录
 
-1. [缓存策略接口](#1-缓存策略接口)
-2. [节点缓存服务](#2-节点缓存服务)
-3. [性能监控系统](#3-性能监控系统)
-4. [性能指标类型](#4-性能指标类型)
-5. [缓存配置](#5-缓存配置)
-6. [性能常量](#6-性能常量)
-7. [使用示例](#7-使用示例)
+1. [内存管理接口](#1-内存管理接口)
+2. [性能监控系统](#2-性能监控系统)
+3. [性能指标类型](#3-性能指标类型)
+4. [内存优化配置](#4-内存优化配置)
+5. [性能常量](#5-性能常量)
+6. [使用示例](#6-使用示例)
 
 ---
 
-## 1. 缓存策略接口
+## 1. 内存管理接口
 
-### 1.1 通用缓存策略
+### 1.1 系统内存管理器
 
 ```csharp
 /// <summary>
-/// 缓存策略接口
-/// 提供统一的缓存操作抽象，支持多种缓存实现
+/// 系统内存管理器接口
+/// 提供内存使用监控和管理功能，适配内存优先架构
 /// </summary>
-/// <typeparam name="TKey">缓存键类型</typeparam>
-/// <typeparam name="TValue">缓存值类型</typeparam>
-public interface ICacheStrategy<TKey, TValue>
+public interface ISystemMemoryManager
 {
     /// <summary>
-    /// 获取缓存项
+    /// 获取当前内存使用统计
     /// </summary>
-    /// <param name="key">缓存键</param>
     /// <param name="cancellationToken">取消令牌</param>
-    /// <returns>缓存值，如果不存在则返回null</returns>
-    Task<TValue?> GetAsync(TKey key, CancellationToken cancellationToken = default);
+    /// <returns>内存使用统计信息</returns>
+    Task<SystemMemoryStats> GetMemoryStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 设置缓存项
+    /// 获取节点数据内存使用情况
     /// </summary>
-    /// <param name="key">缓存键</param>
-    /// <param name="value">缓存值</param>
-    /// <param name="expiration">过期时间，null表示使用默认过期时间</param>
     /// <param name="cancellationToken">取消令牌</param>
-    Task SetAsync(TKey key, TValue value, TimeSpan? expiration = null, CancellationToken cancellationToken = default);
+    /// <returns>节点内存统计信息</returns>
+    Task<NodeMemoryStats> GetNodeMemoryStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 移除缓存项
+    /// 检查内存使用是否超过阈值
     /// </summary>
-    /// <param name="key">缓存键</param>
+    /// <param name="thresholdBytes">内存阈值（字节）</param>
     /// <param name="cancellationToken">取消令牌</param>
-    Task RemoveAsync(TKey key, CancellationToken cancellationToken = default);
+    /// <returns>是否超过阈值</returns>
+    Task<bool> IsMemoryUsageExceedingThresholdAsync(long thresholdBytes, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 清空缓存
+    /// 触发垃圾回收（谨慎使用）
     /// </summary>
+    /// <param name="generation">GC代数，-1表示全代回收</param>
     /// <param name="cancellationToken">取消令牌</param>
-    Task ClearAsync(CancellationToken cancellationToken = default);
+    /// <returns>回收操作的任务</returns>
+    Task TriggerGarbageCollectionAsync(int generation = -1, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 获取缓存统计信息
+    /// 获取内存压力级别
     /// </summary>
     /// <param name="cancellationToken">取消令牌</param>
-    /// <returns>缓存统计信息</returns>
-    Task<CacheStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
+    /// <returns>内存压力级别</returns>
+    Task<MemoryPressureLevel> GetMemoryPressureLevelAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// 内存压力级别枚举
+/// </summary>
+public enum MemoryPressureLevel
+{
+    Low = 0,
+    Medium = 1,
+    High = 2,
+    Critical = 3
 }
 ```
 
-### 1.2 缓存统计信息
+### 1.2 系统内存统计
 
 ```csharp
 /// <summary>
-/// 缓存统计信息
-/// 提供缓存性能和使用情况的详细统计
+/// 系统内存统计信息
+/// 提供系统级别的内存使用详细统计
 /// </summary>
-public record CacheStatistics
+public record SystemMemoryStats
 {
     /// <summary>
-    /// 缓存命中次数
+    /// 总内存使用量（字节）
     /// </summary>
-    public long HitCount { get; init; }
+    public long TotalMemoryBytes { get; init; }
 
     /// <summary>
-    /// 缓存未命中次数
+    /// 节点数据内存使用量（字节）
     /// </summary>
-    public long MissCount { get; init; }
+    public long NodeMemoryBytes { get; init; }
 
     /// <summary>
-    /// 总请求次数
+    /// 视图状态内存使用量（字节）
     /// </summary>
-    public long TotalRequests { get; init; }
+    public long ViewStateMemoryBytes { get; init; }
 
     /// <summary>
-    /// 缓存命中率 (0.0 - 1.0)
+    /// 关系数据内存使用量（字节）
     /// </summary>
-    public double HitRatio { get; init; }
+    public long RelationMemoryBytes { get; init; }
 
     /// <summary>
-    /// 当前缓存项数量
+    /// 可用内存量（字节）
     /// </summary>
-    public long ItemCount { get; init; }
+    public long AvailableMemoryBytes { get; init; }
 
     /// <summary>
-    /// 内存使用量（字节）
+    /// 内存使用率 (0.0 - 1.0)
     /// </summary>
-    public long MemoryUsageBytes { get; init; }
+    public double MemoryUsageRatio { get; init; }
 
     /// <summary>
     /// 最后更新时间
@@ -122,67 +136,66 @@ public record CacheStatistics
 
 ---
 
-## 2. 节点缓存服务
+## 2. 性能监控系统
 
-### 2.1 节点缓存服务接口
+### 2.1 性能监控服务接口
 
 ```csharp
 /// <summary>
-/// 节点缓存服务接口
-/// 专门用于缓存节点相关数据，提供高效的节点访问
+/// 性能监控服务接口
+/// 提供系统性能指标的收集、分析和监控功能
 /// </summary>
-public interface INodeCacheService
+public interface IPerformanceMonitoringService
 {
     /// <summary>
-    /// 获取缓存的节点元数据
+    /// 记录性能指标
     /// </summary>
-    /// <param name="nodeId">节点ID</param>
+    /// <param name="metric">性能指标</param>
     /// <param name="cancellationToken">取消令牌</param>
-    /// <returns>节点元数据，如果不存在则返回null</returns>
-    Task<NodeMetadata?> GetMetadataAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+    Task RecordMetricAsync(PerformanceMetric metric, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 缓存节点元数据
+    /// 批量记录性能指标
     /// </summary>
-    /// <param name="nodeId">节点ID</param>
-    /// <param name="metadata">节点元数据</param>
+    /// <param name="metrics">性能指标集合</param>
     /// <param name="cancellationToken">取消令牌</param>
-    Task SetMetadataAsync(NodeId nodeId, NodeMetadata metadata, CancellationToken cancellationToken = default);
+    Task RecordMetricsAsync(IEnumerable<PerformanceMetric> metrics, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 获取缓存的节点内容
+    /// 获取系统性能统计
     /// </summary>
-    /// <param name="nodeId">节点ID</param>
-    /// <param name="level">LOD级别</param>
     /// <param name="cancellationToken">取消令牌</param>
-    /// <returns>节点内容，如果不存在则返回null</returns>
-    Task<NodeContent?> GetContentAsync(NodeId nodeId, LodLevel level, CancellationToken cancellationToken = default);
+    /// <returns>系统性能统计信息</returns>
+    Task<SystemPerformanceStats> GetSystemStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 缓存节点内容
+    /// 获取指定时间范围内的性能指标
     /// </summary>
-    /// <param name="nodeId">节点ID</param>
-    /// <param name="level">LOD级别</param>
-    /// <param name="content">节点内容</param>
+    /// <param name="metricType">指标类型</param>
+    /// <param name="startTime">开始时间</param>
+    /// <param name="endTime">结束时间</param>
     /// <param name="cancellationToken">取消令牌</param>
-    Task SetContentAsync(NodeId nodeId, LodLevel level, NodeContent content, CancellationToken cancellationToken = default);
+    /// <returns>性能指标集合</returns>
+    Task<IReadOnlyList<PerformanceMetric>> GetMetricsAsync(
+        MetricType metricType,
+        DateTime startTime,
+        DateTime endTime,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 使节点缓存失效
-    /// 当节点被修改时调用，确保缓存一致性
+    /// 开始性能监控会话
     /// </summary>
-    /// <param name="nodeId">节点ID</param>
+    /// <param name="sessionName">会话名称</param>
     /// <param name="cancellationToken">取消令牌</param>
-    Task InvalidateNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+    /// <returns>监控会话ID</returns>
+    Task<string> StartMonitoringSessionAsync(string sessionName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 预加载相关节点
-    /// 根据节点关系预加载可能需要的节点，提高访问性能
+    /// 结束性能监控会话
     /// </summary>
-    /// <param name="nodeId">起始节点ID</param>
-    /// <param name="depth">预加载深度，默认为1</param>
+    /// <param name="sessionId">会话ID</param>
     /// <param name="cancellationToken">取消令牌</param>
-    Task PreloadRelatedNodesAsync(NodeId nodeId, int depth = 1, CancellationToken cancellationToken = default);
+    Task EndMonitoringSessionAsync(string sessionId, CancellationToken cancellationToken = default);
 }
 ```
 
@@ -399,10 +412,10 @@ public static class MetricNames
     public const string NodeDeleted = "memo_tree.node.deleted";
     public const string NodeLoaded = "memo_tree.node.loaded";
 
-    // 缓存指标
-    public const string CacheHit = "memo_tree.cache.hit";
-    public const string CacheMiss = "memo_tree.cache.miss";
-    public const string CacheEviction = "memo_tree.cache.eviction";
+    // 内存管理指标
+    public const string MemoryAllocated = "memo_tree.memory.allocated";
+    public const string MemoryReleased = "memo_tree.memory.released";
+    public const string MemoryPressure = "memo_tree.memory.pressure";
 
     // 搜索指标
     public const string SearchExecuted = "memo_tree.search.executed";
@@ -423,78 +436,68 @@ public static class MetricNames
 
 ---
 
-## 5. 缓存配置
+## 4. 内存优化配置
 
-### 5.1 缓存配置选项
+### 4.1 内存管理配置选项
 
 ```csharp
 /// <summary>
-/// 缓存配置选项
-/// 定义缓存行为的配置参数
+/// 内存管理配置选项 - 内存优先架构
+/// 定义内存使用和管理行为的配置参数
 /// </summary>
 public partial class MemoTreeConfiguration
 {
     /// <summary>
-    /// 索引缓存文件名
+    /// 内存使用统计文件名
     /// </summary>
-    public string IndexCacheFileName { get; set; } = "index-cache.json";
+    public string MemoryStatsFileName { get; set; } = "memory-stats.json";
 
     /// <summary>
-    /// 是否启用运行时父节点索引缓存
+    /// 内存使用警告阈值（字节）
     /// </summary>
-    public bool EnableParentIndexCache { get; set; } = true;
+    public long MemoryWarningThresholdBytes { get; set; } = 1024L * 1024 * 1024 * 2; // 2GB
 
     /// <summary>
-    /// 父节点索引缓存过期时间（分钟）
+    /// 内存使用临界阈值（字节）
     /// </summary>
-    public int ParentIndexCacheExpirationMinutes { get; set; } = 15;
+    public long MemoryCriticalThresholdBytes { get; set; } = 1024L * 1024 * 1024 * 4; // 4GB
 
     /// <summary>
-    /// 语义关系缓存过期时间（分钟）
+    /// 是否启用内存使用监控
     /// </summary>
-    public int RelationCacheExpirationMinutes { get; set; } = 30;
+    public bool EnableMemoryMonitoring { get; set; } = true;
 
     /// <summary>
-    /// 节点内容缓存过期时间（分钟）
+    /// 内存统计收集间隔（秒）
     /// </summary>
-    public int NodeContentCacheExpirationMinutes { get; set; } = 60;
+    public int MemoryStatsCollectionIntervalSeconds { get; set; } = 30;
 
     /// <summary>
-    /// 最大缓存项数量
+    /// 是否启用自动垃圾回收
     /// </summary>
-    public int MaxCacheItems { get; set; } = 10000;
+    public bool EnableAutoGarbageCollection { get; set; } = false;
 
     /// <summary>
-    /// 缓存清理间隔（分钟）
+    /// 批量操作的最大大小
     /// </summary>
-    public int CacheCleanupIntervalMinutes { get; set; } = 30;
+    public int MaxBatchOperationSize { get; set; } = 1000;
 
-    /// <summary>
-    /// 是否启用缓存预热
-    /// </summary>
-    public bool EnableCacheWarmup { get; set; } = true;
-
-    /// <summary>
-    /// 缓存预热节点数量
-    /// </summary>
-    public int CacheWarmupNodeCount { get; set; } = 100;
-}
-```
-
-### 5.2 性能配置选项
-
-```csharp
-/// <summary>
-/// 性能配置选项
-/// 定义性能监控和优化的配置参数
-/// </summary>
-public partial class MemoTreeConfiguration
-{
     /// <summary>
     /// 是否启用性能监控
     /// </summary>
     public bool EnablePerformanceMonitoring { get; set; } = true;
+}
+```
 
+### 4.2 性能监控配置选项
+
+```csharp
+/// <summary>
+/// 性能监控配置选项 - 内存优先架构
+/// 定义性能监控和优化的配置参数
+/// </summary>
+public partial class MemoTreeConfiguration
+{
     /// <summary>
     /// 性能指标收集间隔（秒）
     /// </summary>
@@ -511,54 +514,59 @@ public partial class MemoTreeConfiguration
     public bool EnableDetailedPerformanceTracking { get; set; } = false;
 
     /// <summary>
-    /// 慢查询阈值（毫秒）
+    /// 慢操作阈值（毫秒）
     /// </summary>
-    public int SlowQueryThresholdMs { get; set; } = 1000;
+    public int SlowOperationThresholdMs { get; set; } = 1000;
 
     /// <summary>
-    /// 批处理大小
+    /// I/O操作超时时间（毫秒）
     /// </summary>
-    public int BatchSize { get; set; } = 50;
+    public int IoOperationTimeoutMs { get; set; } = 5000;
 
     /// <summary>
     /// 并发度限制
     /// </summary>
     public int MaxConcurrency { get; set; } = Environment.ProcessorCount * 2;
+
+    /// <summary>
+    /// 是否启用内存压力监控
+    /// </summary>
+    public bool EnableMemoryPressureMonitoring { get; set; } = true;
 }
 ```
 
 ---
 
-## 6. 性能常量
+## 5. 性能常量
 
-### 6.1 性能限制常量
+### 5.1 性能限制常量
 
 ```csharp
 /// <summary>
-/// 性能相关常量定义
+/// 性能相关常量定义 - 内存优先架构
 /// 定义系统性能限制和默认值
 /// </summary>
 public static partial class MemoTreeConstants
 {
     /// <summary>
-    /// 缓存项最大生存时间（小时）
+    /// 内存统计数据最大保留时间（小时）
     /// </summary>
-    public const int MaxCacheItemLifetimeHours = 24;
+    public const int MaxMemoryStatsRetentionHours = 24;
 
     /// <summary>
     /// 最大批处理大小
     /// </summary>
-    public const int MaxBatchSize = 50;
+    public const int MaxBatchSize = 1000;
 
     /// <summary>
-    /// 默认缓存容量
+    /// 默认内存监控间隔（秒）
     /// </summary>
-    public const int DefaultCacheCapacity = 1000;
+    public const int DefaultMemoryMonitoringIntervalSeconds = 30;
 
     /// <summary>
-    /// 最大预加载深度
+    /// 最大节点预加载深度
     /// </summary>
-    public const int MaxPreloadDepth = 3;
+    public const int MaxNodePreloadDepth = 3;
 
     /// <summary>
     /// 性能监控采样率 (0.0 - 1.0)
@@ -584,50 +592,81 @@ public static partial class MemoTreeConstants
 
 ---
 
-## 7. 使用示例
+## 6. 使用示例
 
-### 7.1 缓存服务使用示例
+### 6.1 内存管理服务使用示例
 
 ```csharp
-// 使用节点缓存服务
+// 使用内存管理服务 - 内存优先架构
 public class NodeService
 {
-    private readonly INodeCacheService _cacheService;
+    private readonly ISystemMemoryManager _memoryManager;
     private readonly INodeStorage _storage;
+    private readonly IPerformanceMonitoringService _monitoring;
 
-    public NodeService(INodeCacheService cacheService, INodeStorage storage)
+    public NodeService(
+        ISystemMemoryManager memoryManager,
+        INodeStorage storage,
+        IPerformanceMonitoringService monitoring)
     {
-        _cacheService = cacheService;
+        _memoryManager = memoryManager;
         _storage = storage;
+        _monitoring = monitoring;
     }
 
     public async Task<NodeMetadata?> GetNodeMetadataAsync(NodeId nodeId, CancellationToken ct = default)
     {
-        // 首先尝试从缓存获取
-        var cached = await _cacheService.GetMetadataAsync(nodeId, ct);
-        if (cached != null)
-        {
-            return cached;
-        }
+        var stopwatch = Stopwatch.StartNew();
 
-        // 缓存未命中，从存储加载
-        var metadata = await _storage.GetMetadataAsync(nodeId, ct);
-        if (metadata != null)
+        try
         {
-            // 缓存结果
-            await _cacheService.SetMetadataAsync(nodeId, metadata, ct);
-        }
+            // 直接从内存存储获取（零延迟）
+            var metadata = await _storage.GetMetadataAsync(nodeId, ct);
 
-        return metadata;
+            // 记录性能指标
+            await _monitoring.RecordMetricAsync(new PerformanceMetric
+            {
+                Name = MetricNames.NodeLoaded,
+                Value = stopwatch.ElapsedMilliseconds,
+                Type = MetricType.Timer,
+                Timestamp = DateTime.UtcNow
+            }, ct);
+
+            return metadata;
+        }
+        finally
+        {
+            stopwatch.Stop();
+        }
     }
 
     public async Task UpdateNodeAsync(NodeId nodeId, NodeContent content, CancellationToken ct = default)
     {
-        // 更新存储
+        // 检查内存压力
+        var memoryPressure = await _memoryManager.GetMemoryPressureLevelAsync(ct);
+        if (memoryPressure == MemoryPressureLevel.Critical)
+        {
+            // 记录内存压力警告
+            await _monitoring.RecordMetricAsync(new PerformanceMetric
+            {
+                Name = MetricNames.MemoryPressure,
+                Value = (double)memoryPressure,
+                Type = MetricType.Gauge,
+                Timestamp = DateTime.UtcNow
+            }, ct);
+        }
+
+        // 更新存储（内存+同步落盘）
         await _storage.UpdateContentAsync(nodeId, content, ct);
 
-        // 使缓存失效
-        await _cacheService.InvalidateNodeAsync(nodeId, ct);
+        // 记录更新操作
+        await _monitoring.RecordMetricAsync(new PerformanceMetric
+        {
+            Name = MetricNames.NodeUpdated,
+            Value = 1,
+            Type = MetricType.Counter,
+            Timestamp = DateTime.UtcNow
+        }, ct);
     }
 }
 ```
@@ -687,97 +726,148 @@ public class SearchService
 }
 ```
 
-### 7.3 缓存策略实现示例
+### 6.3 内存管理器实现示例
 
 ```csharp
-// 内存缓存策略实现
-public class MemoryCacheStrategy<TKey, TValue> : ICacheStrategy<TKey, TValue>
-    where TKey : notnull
+// 系统内存管理器实现 - 内存优先架构
+public class SystemMemoryManager : ISystemMemoryManager
 {
-    private readonly MemoryCache _cache;
-    private readonly CacheStatistics _statistics = new();
-    private long _hitCount;
-    private long _missCount;
+    private readonly IPerformanceMonitoringService _monitoring;
+    private readonly ILogger<SystemMemoryManager> _logger;
 
-    public MemoryCacheStrategy(IOptions<MemoryCacheOptions> options)
+    public SystemMemoryManager(
+        IPerformanceMonitoringService monitoring,
+        ILogger<SystemMemoryManager> logger)
     {
-        _cache = new MemoryCache(options.Value);
+        _monitoring = monitoring;
+        _logger = logger;
     }
 
-    public Task<TValue?> GetAsync(TKey key, CancellationToken cancellationToken = default)
+    public Task<SystemMemoryStats> GetMemoryStatsAsync(CancellationToken cancellationToken = default)
     {
-        if (_cache.TryGetValue(key, out var value))
+        var totalMemory = GC.GetTotalMemory(false);
+        var availableMemory = GC.GetTotalMemory(true); // 强制GC后的内存
+
+        var stats = new SystemMemoryStats
         {
-            Interlocked.Increment(ref _hitCount);
-            return Task.FromResult((TValue?)value);
-        }
-
-        Interlocked.Increment(ref _missCount);
-        return Task.FromResult(default(TValue));
-    }
-
-    public Task SetAsync(TKey key, TValue value, TimeSpan? expiration = null, CancellationToken cancellationToken = default)
-    {
-        var options = new MemoryCacheEntryOptions();
-        if (expiration.HasValue)
-        {
-            options.AbsoluteExpirationRelativeToNow = expiration;
-        }
-
-        _cache.Set(key, value, options);
-        return Task.CompletedTask;
-    }
-
-    public Task RemoveAsync(TKey key, CancellationToken cancellationToken = default)
-    {
-        _cache.Remove(key);
-        return Task.CompletedTask;
-    }
-
-    public Task ClearAsync(CancellationToken cancellationToken = default)
-    {
-        _cache.Dispose();
-        return Task.CompletedTask;
-    }
-
-    public Task<CacheStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
-    {
-        var hitCount = Interlocked.Read(ref _hitCount);
-        var missCount = Interlocked.Read(ref _missCount);
-        var totalRequests = hitCount + missCount;
-
-        var statistics = new CacheStatistics
-        {
-            HitCount = hitCount,
-            MissCount = missCount,
-            TotalRequests = totalRequests,
-            HitRatio = totalRequests > 0 ? (double)hitCount / totalRequests : 0.0,
-            ItemCount = _cache.Count,
-            MemoryUsageBytes = GC.GetTotalMemory(false), // 近似值
+            TotalMemoryBytes = totalMemory,
+            NodeMemoryBytes = EstimateNodeMemoryUsage(),
+            ViewStateMemoryBytes = EstimateViewStateMemoryUsage(),
+            RelationMemoryBytes = EstimateRelationMemoryUsage(),
+            AvailableMemoryBytes = availableMemory,
+            MemoryUsageRatio = (double)totalMemory / (totalMemory + availableMemory),
             LastUpdated = DateTime.UtcNow
         };
 
-        return Task.FromResult(statistics);
+        return Task.FromResult(stats);
+    }
+
+    public async Task<bool> IsMemoryUsageExceedingThresholdAsync(long thresholdBytes, CancellationToken cancellationToken = default)
+    {
+        var stats = await GetMemoryStatsAsync(cancellationToken);
+        var isExceeding = stats.TotalMemoryBytes > thresholdBytes;
+
+        if (isExceeding)
+        {
+            _logger.LogWarning("Memory usage {MemoryUsage} MB exceeds threshold {Threshold} MB",
+                stats.TotalMemoryBytes / 1024 / 1024,
+                thresholdBytes / 1024 / 1024);
+
+            // 记录内存压力指标
+            await _monitoring.RecordMetricAsync(new PerformanceMetric
+            {
+                Name = MetricNames.MemoryPressure,
+                Value = stats.MemoryUsageRatio,
+                Type = MetricType.Gauge,
+                Timestamp = DateTime.UtcNow
+            }, cancellationToken);
+        }
+
+        return isExceeding;
+    }
+
+    public Task<MemoryPressureLevel> GetMemoryPressureLevelAsync(CancellationToken cancellationToken = default)
+    {
+        var totalMemory = GC.GetTotalMemory(false);
+        var level = totalMemory switch
+        {
+            < 1024 * 1024 * 1024 => MemoryPressureLevel.Low,      // < 1GB
+            < 2048 * 1024 * 1024 => MemoryPressureLevel.Medium,   // < 2GB
+            < 4096 * 1024 * 1024 => MemoryPressureLevel.High,     // < 4GB
+            _ => MemoryPressureLevel.Critical                       // >= 4GB
+        };
+
+        return Task.FromResult(level);
+    }
+
+    public async Task TriggerGarbageCollectionAsync(int generation = -1, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Triggering garbage collection for generation {Generation}", generation);
+
+        var beforeMemory = GC.GetTotalMemory(false);
+
+        if (generation == -1)
+        {
+            GC.Collect();
+        }
+        else
+        {
+            GC.Collect(generation);
+        }
+
+        var afterMemory = GC.GetTotalMemory(true);
+        var freedMemory = beforeMemory - afterMemory;
+
+        _logger.LogInformation("Garbage collection completed. Freed {FreedMemory} MB",
+            freedMemory / 1024 / 1024);
+
+        // 记录GC指标
+        await _monitoring.RecordMetricAsync(new PerformanceMetric
+        {
+            Name = MetricNames.MemoryReleased,
+            Value = freedMemory,
+            Type = MetricType.Counter,
+            Timestamp = DateTime.UtcNow
+        }, cancellationToken);
+    }
+
+    private long EstimateNodeMemoryUsage()
+    {
+        // 估算节点数据内存使用量的实现
+        // 这里可以根据实际的节点数据结构进行精确计算
+        return GC.GetTotalMemory(false) / 3; // 简化估算
+    }
+
+    private long EstimateViewStateMemoryUsage()
+    {
+        // 估算视图状态内存使用量的实现
+        return GC.GetTotalMemory(false) / 6; // 简化估算
+    }
+
+    private long EstimateRelationMemoryUsage()
+    {
+        // 估算关系数据内存使用量的实现
+        return GC.GetTotalMemory(false) / 6; // 简化估算
     }
 }
 ```
 
 ---
 
-## 8. 总结
+## 7. 总结
 
-本文档定义了MemoTree系统的性能优化和监控架构，包括：
+本文档定义了MemoTree系统基于**内存优先架构**的性能优化和监控体系，包括：
 
-### 8.1 核心组件
+### 7.1 核心组件
 
-1. **缓存策略接口** - 提供统一的缓存抽象
-2. **节点缓存服务** - 专门的节点数据缓存
-3. **性能监控系统** - 全面的性能指标收集
-4. **配置选项** - 灵活的性能调优配置
+1. **内存管理接口** - 提供系统内存监控和管理功能
+2. **性能监控系统** - 全面的性能指标收集和分析
+3. **内存优化配置** - 适配内存优先架构的配置选项
+4. **性能常量** - 内存管理相关的系统限制和默认值
 
-### 8.2 设计特点
+### 7.2 设计特点
 
-- **多层缓存** - 支持不同级别的缓存策略
+- **内存优先** - 所有数据常驻内存，零延迟访问
 - **实时监控** - 提供实时性能指标收集
 - **可配置性** - 丰富的配置选项支持不同场景
 - **类型安全** - 强类型设计确保编译时检查

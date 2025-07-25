@@ -1,25 +1,31 @@
-# MemoTree 视图状态存储和缓存策略 (Phase 2)
+# MemoTree 视图状态存储 (Phase 2) - 内存优先架构
 
-> **版本**: v1.0
+> **版本**: v1.1 (内存优先架构)
 > **创建时间**: 2025-07-25
 > **依赖**: Phase1_CoreTypes.md, Phase1_Configuration.md, Phase2_StorageInterfaces.md
 > **阶段**: Phase 2 - Storage Layer
 
 ## 概述
 
-本文档定义了MemoTree系统的视图状态存储和缓存策略，包括视图状态的持久化、缓存管理和性能优化。视图状态存储负责保存用户的界面状态，包括节点的展开/折叠状态、LOD级别、焦点节点等信息，确保用户体验的连续性。
+本文档定义了MemoTree系统的视图状态存储，采用**内存优先架构**提供高性能的视图状态管理。视图状态包括节点的展开/折叠状态、LOD级别、焦点节点等信息，全部常驻内存以确保流畅的用户体验。
+
+### 🎯 内存优先视图存储特点
+- **即时响应**: 视图状态常驻内存，UI操作零延迟
+- **自动持久化**: 状态变更立即同步到磁盘，确保数据安全
+- **简化架构**: 移除复杂的缓存层，专注于核心功能
+- **批量优化**: 支持批量状态更新，提升大规模操作性能
 
 视图存储系统包含：
 - **视图状态存储**: 持久化用户的界面状态和偏好设置
-- **缓存策略**: 提供高性能的数据访问和内存管理
-- **节点缓存服务**: 专门针对认知节点的缓存优化
+- **内存状态管理**: 高效的内存数据结构和访问模式
+- **同步落盘机制**: 确保状态变更的持久化和一致性
 
 ### 类型引用说明
 
 本文档中使用的核心类型定义位置：
 - **NodeId, LodLevel, NodeMetadata, NodeContent**: 定义于 [Phase1_CoreTypes.md](Phase1_CoreTypes.md)
 - **ViewOptions, RelationOptions**: 定义于 [Phase1_Configuration.md](Phase1_Configuration.md)
-- **CacheStatistics**: 本文档中定义的缓存统计信息类型
+- **MemoryUsageStats, NodeMemoryStats**: 本文档中定义的内存统计信息类型
 - **NodeViewState, CanvasViewState**: 本文档中定义的视图状态类型
 
 ## 视图状态数据类型
@@ -112,146 +118,178 @@ public interface IViewStateStorage
 }
 ```
 
-## 缓存策略接口
+## 内存管理接口
 
-### 通用缓存策略
+### 视图状态内存管理
 
 ```csharp
 /// <summary>
-/// 缓存策略接口
+/// 视图状态内存管理接口
+/// 提供视图状态的内存使用统计和管理功能
 /// </summary>
-public interface ICacheStrategy<TKey, TValue>
+public interface IViewStateMemoryManager
 {
     /// <summary>
-    /// 获取缓存项
+    /// 获取内存使用统计
     /// </summary>
-    Task<TValue?> GetAsync(TKey key, CancellationToken cancellationToken = default);
+    Task<MemoryUsageStats> GetMemoryStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 设置缓存项
+    /// 获取视图状态数量统计
     /// </summary>
-    Task SetAsync(TKey key, TValue value, TimeSpan? expiration = null, CancellationToken cancellationToken = default);
+    Task<ViewStateStats> GetViewStateStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 移除缓存项
+    /// 预加载常用视图状态（Phase 5可选实现）
     /// </summary>
-    Task RemoveAsync(TKey key, CancellationToken cancellationToken = default);
+    Task PreloadFrequentViewStatesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 清空缓存
+    /// 清理未使用的视图状态（Phase 5可选实现）
     /// </summary>
-    Task ClearAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取缓存统计信息
-    /// </summary>
-    Task<CacheStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 批量获取缓存项
-    /// </summary>
-    Task<IReadOnlyDictionary<TKey, TValue>> GetMultipleAsync(
-        IEnumerable<TKey> keys, 
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 批量设置缓存项
-    /// </summary>
-    Task SetMultipleAsync(
-        IReadOnlyDictionary<TKey, TValue> items, 
-        TimeSpan? expiration = null, 
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 检查缓存项是否存在
-    /// </summary>
-    Task<bool> ExistsAsync(TKey key, CancellationToken cancellationToken = default);
+    Task CleanupUnusedViewStatesAsync(TimeSpan unusedThreshold, CancellationToken cancellationToken = default);
 }
 ```
 
-### 缓存统计信息
+### 内存使用统计
 
 ```csharp
 /// <summary>
-/// 缓存统计信息
+/// 内存使用统计信息
 /// </summary>
-public record CacheStatistics
+public record MemoryUsageStats
 {
-    public long HitCount { get; init; }
-    public long MissCount { get; init; }
-    public long TotalRequests { get; init; }
-    public double HitRatio { get; init; }
-    public long ItemCount { get; init; }
-    public long MemoryUsageBytes { get; init; }
+    /// <summary>
+    /// 视图状态占用内存字节数
+    /// </summary>
+    public long ViewStateMemoryBytes { get; init; }
+
+    /// <summary>
+    /// 节点状态数量
+    /// </summary>
+    public int NodeStateCount { get; init; }
+
+    /// <summary>
+    /// 画布状态数量
+    /// </summary>
+    public int CanvasStateCount { get; init; }
+
+    /// <summary>
+    /// 最后更新时间
+    /// </summary>
     public DateTime LastUpdated { get; init; } = DateTime.UtcNow;
-    public TimeSpan AverageAccessTime { get; init; }
-    public long EvictionCount { get; init; }
+
+    /// <summary>
+    /// 平均每个状态的内存占用
+    /// </summary>
+    public double AverageStateMemoryBytes => NodeStateCount > 0 ? (double)ViewStateMemoryBytes / NodeStateCount : 0;
+}
+
+/// <summary>
+/// 视图状态统计信息
+/// </summary>
+public record ViewStateStats
+{
+    /// <summary>
+    /// 活跃视图状态数量
+    /// </summary>
+    public int ActiveViewStates { get; init; }
+
+    /// <summary>
+    /// 总视图状态数量
+    /// </summary>
+    public int TotalViewStates { get; init; }
+
+    /// <summary>
+    /// 最近访问的视图状态数量
+    /// </summary>
+    public int RecentlyAccessedStates { get; init; }
+
+    /// <summary>
+    /// 统计时间
+    /// </summary>
+    public DateTime StatisticsTime { get; init; } = DateTime.UtcNow;
 }
 ```
 
-## 节点缓存服务
+## 节点内存服务
 
-### INodeCacheService 接口
+### INodeMemoryService 接口
 
 ```csharp
 /// <summary>
-/// 节点缓存服务接口
+/// 节点内存服务接口
+/// 提供节点数据的内存管理和快速访问功能
 /// </summary>
-public interface INodeCacheService
+public interface INodeMemoryService
 {
     /// <summary>
-    /// 获取缓存的节点元数据
+    /// 检查节点是否已加载到内存
     /// </summary>
-    Task<NodeMetadata?> GetMetadataAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+    Task<bool> IsNodeLoadedAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 缓存节点元数据
+    /// 获取已加载节点的数量
     /// </summary>
-    Task SetMetadataAsync(NodeId nodeId, NodeMetadata metadata, CancellationToken cancellationToken = default);
+    Task<int> GetLoadedNodeCountAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 获取缓存的节点内容
+    /// 获取节点内存使用统计
     /// </summary>
-    Task<NodeContent?> GetContentAsync(NodeId nodeId, LodLevel level, CancellationToken cancellationToken = default);
+    Task<NodeMemoryStats> GetNodeMemoryStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 缓存节点内容
-    /// </summary>
-    Task SetContentAsync(NodeId nodeId, LodLevel level, NodeContent content, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 使节点缓存失效
-    /// </summary>
-    Task InvalidateNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 预加载相关节点
+    /// 预加载相关节点到内存（Phase 5可选实现）
     /// </summary>
     Task PreloadRelatedNodesAsync(NodeId nodeId, int depth = 1, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 批量获取节点元数据
+    /// 批量检查节点加载状态
     /// </summary>
-    Task<IReadOnlyDictionary<NodeId, NodeMetadata>> GetMultipleMetadataAsync(
-        IEnumerable<NodeId> nodeIds, 
+    Task<IReadOnlyDictionary<NodeId, bool>> CheckMultipleNodesLoadedAsync(
+        IEnumerable<NodeId> nodeIds,
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 批量缓存节点元数据
+    /// 获取内存中所有已加载节点的ID列表
     /// </summary>
-    Task SetMultipleMetadataAsync(
-        IReadOnlyDictionary<NodeId, NodeMetadata> metadataMap, 
-        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<NodeId>> GetLoadedNodeIdsAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// 节点内存统计信息
+/// </summary>
+public record NodeMemoryStats
+{
+    /// <summary>
+    /// 已加载节点数量
+    /// </summary>
+    public int LoadedNodeCount { get; init; }
 
     /// <summary>
-    /// 获取缓存使用情况
+    /// 节点数据占用内存字节数
     /// </summary>
-    Task<CacheStatistics> GetCacheStatisticsAsync(CancellationToken cancellationToken = default);
+    public long NodeMemoryBytes { get; init; }
 
     /// <summary>
-    /// 清理过期缓存
+    /// 平均每个节点的内存占用
     /// </summary>
-    Task CleanupExpiredCacheAsync(CancellationToken cancellationToken = default);
+    public double AverageNodeMemoryBytes => LoadedNodeCount > 0 ? (double)NodeMemoryBytes / LoadedNodeCount : 0;
+
+    /// <summary>
+    /// 最大节点内存占用
+    /// </summary>
+    public long MaxNodeMemoryBytes { get; init; }
+
+    /// <summary>
+    /// 最小节点内存占用
+    /// </summary>
+    public long MinNodeMemoryBytes { get; init; }
+
+    /// <summary>
+    /// 统计时间
+    /// </summary>
+    public DateTime StatisticsTime { get; init; } = DateTime.UtcNow;
 }
 ```
 
@@ -265,22 +303,26 @@ public interface INodeCacheService
 
 ```csharp
 /// <summary>
-/// 视图状态专用配置选项
+/// 视图状态专用配置选项 - 内存优先架构
 /// 详细定义请参考 Phase1_Configuration.md 中的 ViewOptions 类
 /// </summary>
 public class ViewOptions
 {
     // 文件名配置
     public string ViewStateFileName { get; set; } = "last-view.json";
-    public string IndexCacheFileName { get; set; } = "index-cache.json";
+    public string ViewStateBackupFileName { get; set; } = "view-state-backup.json";
 
-    // 缓存配置
-    public int ViewStateCacheExpirationMinutes { get; set; } = 60;
-    public int MaxCachedViewStates { get; set; } = 10;
+    // 内存管理配置
+    public int MaxInMemoryViewStates { get; set; } = 1000;
+    public bool EnableViewStateCompression { get; set; } = false;
 
     // 自动保存配置
     public bool EnableAutoSaveViewState { get; set; } = true;
     public int ViewStateAutoSaveIntervalSeconds { get; set; } = 30;
+
+    // 性能配置
+    public bool EnableBatchViewStateUpdates { get; set; } = true;
+    public int BatchUpdateIntervalMilliseconds { get; set; } = 100;
 
     // 其他视图相关配置...
 }
@@ -290,17 +332,18 @@ public class ViewOptions
 
 ```csharp
 /// <summary>
-/// 关系缓存相关配置选项
+/// 关系管理相关配置选项 - 内存优先架构
 /// 详细定义请参考 Phase1_Configuration.md 中的 RelationOptions 类
 /// </summary>
 public class RelationOptions
 {
-    // 父节点索引缓存配置
-    public bool EnableParentIndexCache { get; set; } = true;
-    public int ParentIndexCacheExpirationMinutes { get; set; } = 15;
+    // 关系存储配置
+    public bool EnableIndependentHierarchyStorage { get; set; } = true;
+    public int MaxRelationDepth { get; set; } = 10;
 
-    // 语义关系缓存配置
-    public int RelationCacheExpirationMinutes { get; set; } = 30;
+    // 内存管理配置
+    public int MaxInMemoryRelations { get; set; } = 10000;
+    public bool EnableRelationIndexing { get; set; } = true;
 
     // 其他关系管理配置...
 }
@@ -308,57 +351,58 @@ public class RelationOptions
 
 > **配置引用说明**:
 > - 视图状态专用配置请使用 `ViewOptions` 类
-> - 关系缓存配置请使用 `RelationOptions` 类
+> - 关系管理配置请使用 `RelationOptions` 类
+> - 内存优先架构移除了缓存过期时间等复杂配置
 > - 完整的配置定义请参考 [Phase1_Configuration.md](Phase1_Configuration.md)
 
-## 缓存策略实现指南
+## 内存优先架构实施指南
 
-### 1. 内存缓存策略
-- **LRU (Least Recently Used)**: 适用于视图状态缓存
-- **TTL (Time To Live)**: 适用于临时数据缓存
-- **Size-based**: 基于内存使用量的缓存清理
+### 1. 内存数据结构选择
+- **ConcurrentDictionary**: 用于线程安全的节点状态存储
+- **ImmutableDictionary**: 用于只读的视图状态快照
+- **Memory Pool**: 减少频繁的内存分配和回收
 
-### 2. 分层缓存策略
-- **L1缓存**: 内存中的快速访问缓存
-- **L2缓存**: 本地文件系统缓存
-- **L3缓存**: 可选的分布式缓存
+### 2. 同步落盘策略
+- **Write-Through**: 写操作立即同步到磁盘
+- **Batch Write**: 可选的批量写入优化（Phase 5）
+- **Atomic Write**: 确保写操作的原子性
 
-### 3. 缓存失效策略
-- **主动失效**: 数据更新时主动清理相关缓存
-- **被动失效**: 基于TTL的自动过期
-- **依赖失效**: 基于数据依赖关系的级联失效
+### 3. 内存管理策略
+- **启动预加载**: 系统启动时异步加载常用状态
+- **内存监控**: 实时监控内存使用情况
+- **优雅降级**: 内存不足时的处理策略（Phase 5）
 
 ## 性能优化建议
 
 ### 1. 视图状态优化
 - 使用增量更新减少序列化开销
 - 实现视图状态的差异化存储
-- 支持视图状态的压缩存储
+- 支持视图状态的压缩存储（可选）
 
-### 2. 缓存优化
-- 实现预加载策略提高响应速度
-- 使用批量操作减少I/O次数
-- 实现智能缓存预热机制
+### 2. 内存访问优化
+- 使用高效的数据结构（Dictionary vs List）
+- 实现批量操作减少锁竞争
+- 优化序列化/反序列化性能
 
-### 3. 内存管理
-- 监控缓存内存使用情况
-- 实现自适应的缓存大小调整
-- 提供缓存统计和监控接口
+### 3. 持久化优化
+- 异步写入避免阻塞UI线程
+- 使用文件锁确保并发安全
+- 实现写入失败的重试机制
 
 ## 实施优先级
 
 ### 高优先级 (Phase 2.3.1)
 1. **IViewStateStorage** - 基础视图状态存储
-2. **基础缓存策略** - 内存缓存实现
-3. **视图状态配置** - 基本配置选项
+2. **内存数据结构** - ConcurrentDictionary等核心结构
+3. **同步落盘机制** - Write-Through持久化
 
 ### 中优先级 (Phase 2.3.2)
-1. **INodeCacheService** - 节点专用缓存服务
+1. **INodeMemoryService** - 节点内存管理服务
 2. **批量操作支持** - 提高批量访问性能
-3. **缓存统计功能** - 监控和诊断支持
+3. **内存统计功能** - 监控和诊断支持
 
 ### 低优先级 (Phase 2.3.3)
-1. **分层缓存策略** - 多级缓存实现
+1. **内存优化策略** - 冷数据卸载等高级功能（Phase 5）
 2. **智能预加载** - 基于使用模式的预加载
 3. **缓存压缩** - 减少内存使用的压缩策略
 

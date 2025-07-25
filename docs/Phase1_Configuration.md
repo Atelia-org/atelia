@@ -194,19 +194,19 @@ public class RelationOptions
     public bool AutoCleanupOrphanedRelations { get; set; } = true;
 
     /// <summary>
-    /// 是否启用运行时父节点索引缓存
+    /// 最大内存中关系数量
     /// </summary>
-    public bool EnableParentIndexCache { get; set; } = true;
+    public int MaxInMemoryRelations { get; set; } = 10000;
 
     /// <summary>
-    /// 父节点索引缓存过期时间（分钟）
+    /// 是否启用关系索引优化
     /// </summary>
-    public int ParentIndexCacheExpirationMinutes { get; set; } = 15;
+    public bool EnableRelationIndexing { get; set; } = true;
 
     /// <summary>
-    /// 语义关系缓存过期时间（分钟）
+    /// 关系数据批量写入大小
     /// </summary>
-    public int RelationCacheExpirationMinutes { get; set; } = 30;
+    public int RelationBatchWriteSize { get; set; } = 100;
 }
 ```
 
@@ -258,8 +258,8 @@ public class RetrievalOptions
 
 ```csharp
 /// <summary>
-/// 视图状态配置选项
-/// 对应Phase2_ViewStorage.md中定义的视图状态存储和缓存策略
+/// 视图状态配置选项 - 内存优先架构
+/// 对应Phase2_ViewStorage.md中定义的视图状态存储和内存管理
 /// </summary>
 public class ViewOptions
 {
@@ -269,19 +269,14 @@ public class ViewOptions
     public string ViewStateFileName { get; set; } = "last-view.json";
 
     /// <summary>
-    /// 索引缓存文件名
+    /// 视图状态备份文件名
     /// </summary>
-    public string IndexCacheFileName { get; set; } = "index-cache.json";
+    public string ViewStateBackupFileName { get; set; } = "view-state-backup.json";
 
     /// <summary>
-    /// 视图状态缓存过期时间（分钟）
+    /// 最大内存中视图状态数量
     /// </summary>
-    public int ViewStateCacheExpirationMinutes { get; set; } = 60;
-
-    /// <summary>
-    /// 最大缓存视图状态数量
-    /// </summary>
-    public int MaxCachedViewStates { get; set; } = 10;
+    public int MaxInMemoryViewStates { get; set; } = 1000;
 
     /// <summary>
     /// 是否启用视图状态自动保存
@@ -294,9 +289,14 @@ public class ViewOptions
     public int ViewStateAutoSaveIntervalSeconds { get; set; } = 30;
 
     /// <summary>
-    /// 视图状态缓存策略类型
+    /// 是否启用批量视图状态更新
     /// </summary>
-    public string CacheStrategyType { get; set; } = "LRU";
+    public bool EnableBatchViewStateUpdates { get; set; } = true;
+
+    /// <summary>
+    /// 批量更新间隔（毫秒）
+    /// </summary>
+    public int BatchUpdateIntervalMilliseconds { get; set; } = 100;
 
     /// <summary>
     /// 是否启用视图状态压缩存储
@@ -369,8 +369,8 @@ public class ViewOptions
    ```csharp
    var perfOptions = new RelationOptions
    {
-       EnableParentIndexCache = true,
-       ParentIndexCacheExpirationMinutes = 30,
+       MaxInMemoryRelations = 10000,
+       EnableRelationIndexing = true,
        MaxRelationGraphNodes = 2000,
        AutoCleanupOrphanedRelations = true
    };
@@ -509,8 +509,8 @@ Storage:
 Relations:
   EnableIndependentHierarchyStorage: true
   MaxRelationDepth: 10
-  EnableParentIndexCache: true
-  ParentIndexCacheExpirationMinutes: 15
+  MaxInMemoryRelations: 10000
+  EnableRelationIndexing: true
 
 Retrieval:
   EnableFullTextSearch: true
@@ -519,11 +519,11 @@ Retrieval:
 
 View:
   ViewStateFileName: "last-view.json"
-  IndexCacheFileName: "index-cache.json"
-  ViewStateCacheExpirationMinutes: 60
-  MaxCachedViewStates: 10
+  ViewStateBackupFileName: "view-state-backup.json"
+  MaxInMemoryViewStates: 1000
   EnableAutoSaveViewState: true
   ViewStateAutoSaveIntervalSeconds: 30
+  EnableBatchViewStateUpdates: true
 ```
 
 ---
