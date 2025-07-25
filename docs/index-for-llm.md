@@ -139,7 +139,7 @@ Phase3_CoreServices.md
 - **总行数**: 6,294行
 - **完成状态**: 🎉 100% 完成
 - **最后更新**: 2025-07-25
-- **原始文档**: Core_Types_Design.md (3116行) → 成功拆分
+- **原始文档**: Core_Types_Design.md (3116行) → 成功拆分成若干Phase_XXX.md。已删除，git中有旧档。
 
 ## 🔍 快速搜索提示
 
