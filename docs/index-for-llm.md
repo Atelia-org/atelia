@@ -1,7 +1,7 @@
 # MemoTree项目LLM索引
 
 > **目的**: 为LLM提供项目整体认知的快速索引
-> **更新**: 2025-07-25 23:15 (约束层次验证机制实施)
+> **更新**: 2025-07-25 23:45 (接口定义整合优化)
 > **状态**: 🎉 项目完成 (19/19 文档)
 
 ## 🎯 项目核心概念
@@ -57,8 +57,8 @@ MemoTree系统架构
 - **Phase1_Configuration.md** (351行) - 配置选项、系统设置
 
 ### Phase 2: 存储层 (3/3 完成)
-- **Phase2_StorageInterfaces.md** (316行) - 存储接口定义体系
-- **Phase2_RelationStorage.md** (449行) - 关系存储实现
+- **Phase2_StorageInterfaces.md** (396行) - 存储接口定义体系（权威源）
+- **Phase2_RelationStorage.md** (601行) - 关系管理服务、关系图、事件系统
 - **Phase2_ViewStorage.md** (299行) - 视图状态存储、缓存策略
 
 ### Phase 3: 服务层 (4/4 完成)
@@ -148,7 +148,7 @@ Phase3_CoreServices.md
 ## 📋 项目状态
 
 - **总文档数**: 19个
-- **总行数**: 6,294行
+- **总行数**: 6,446行
 - **完成状态**: 🎉 100% 完成
 - **最后更新**: 2025-07-25
 - **原始文档**: Core_Types_Design.md (3116行) → 成功拆分成若干Phase_XXX.md。已删除，git中有旧档。
@@ -158,6 +158,7 @@ Phase3_CoreServices.md
   - Roslyn集成默认关闭，符合Phase 4实施计划
   - 实施约束层次验证机制：硬约束(SystemLimits/NodeConstraints) > 软约束(配置选项)
   - 澄清Token限制：单个CogNode(8K) vs 整个MemoTree视图(128K-200K)
+  - **接口定义整合**: 将重复的存储接口定义整合到Phase2_StorageInterfaces.md，确保单一数据源原则
 
 ## 🔍 快速搜索提示
 

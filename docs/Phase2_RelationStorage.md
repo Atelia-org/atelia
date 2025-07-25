@@ -1,307 +1,39 @@
 # MemoTree 关系存储实现 (Phase 2)
 
-> **版本**: v2.0  
-> **创建日期**: 2025-07-25  
-> **依赖**: Phase1_CoreTypes.md, Phase2_StorageInterfaces.md  
-> **状态**: 设计阶段  
+> **版本**: v2.1.1
+> **创建日期**: 2025-07-25
+> **最后更新**: 2025-07-25
+> **依赖**: Phase1_CoreTypes.md, **Phase2_StorageInterfaces.md**
+> **状态**: 设计阶段
 
 ## 概述
 
-本文档定义了 MemoTree 系统中关系存储层的核心实现，包括语义关系存储、关系类型定义存储和节点层次结构存储。这些存储接口专门处理节点间的各种关系，支持复杂的关系查询、管理和维护操作。
+本文档定义了 MemoTree 系统中关系存储层的高级服务实现，包括关系管理服务、关系图数据结构和相关事件系统。
+
+> **重要说明**:
+> - 基础存储接口（`INodeRelationStorage`、`IRelationTypeStorage`、`INodeHierarchyStorage`）的定义请参考 **Phase2_StorageInterfaces.md** 文档
+> - 基础数据类型（`NodeId`、`NodeRelation`、`RelationType`、`RelationId` 等）的定义请参考 **Phase1_CoreTypes.md** 和 **Phase2_StorageInterfaces.md** 文档
+> - 本文档专注于基于这些基础定义的高级服务和数据传输对象
 
 ### 设计特点
 
-- **关系分离**: 语义关系与层次关系分别存储和管理
-- **类型化关系**: 支持丰富的关系类型定义和元数据
-- **高效查询**: 提供多种查询模式和批量操作支持
-- **事务性**: 支持关系的原子性操作和一致性保证
-- **可扩展性**: 支持自定义关系类型和属性扩展
+- **服务导向**: 基于存储接口构建高级关系管理服务
+- **图数据结构**: 提供关系图和路径查找功能
+- **事件驱动**: 支持关系变更事件和通知机制
+- **性能优化**: 缓存策略和批量操作支持
+- **可扩展性**: 支持自定义关系分析和处理逻辑
 
-## 1. 语义关系存储接口
+### 类型依赖说明
 
-### 1.1 INodeRelationStorage
+本文档中使用的基础类型定义位置：
+- **Phase1_CoreTypes.md**: `NodeId`, `RelationId`, `RelationType`, `NodeRelation`
+- **Phase2_StorageInterfaces.md**: `INodeRelationStorage`, `IRelationTypeStorage`, `INodeHierarchyStorage`
 
-语义关系存储接口负责管理节点间的语义关系，不包括父子层次关系。
+## 1. 关系管理服务
 
-```csharp
-/// <summary>
-/// 语义关系存储接口（集中存储版本，不包括父子关系）
-/// </summary>
-public interface INodeRelationStorage
-{
-    /// <summary>
-    /// 获取节点的所有出向语义关系
-    /// </summary>
-    Task<IReadOnlyList<NodeRelation>> GetOutgoingRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+### 1.1 IRelationManagementService
 
-    /// <summary>
-    /// 获取节点的所有入向语义关系
-    /// </summary>
-    Task<IReadOnlyList<NodeRelation>> GetIncomingRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取节点的所有语义关系（入向+出向）
-    /// </summary>
-    Task<IReadOnlyList<NodeRelation>> GetAllRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 根据关系ID获取语义关系
-    /// </summary>
-    Task<NodeRelation?> GetRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 添加语义关系
-    /// </summary>
-    Task<RelationId> AddRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, string description = "", CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 更新语义关系
-    /// </summary>
-    Task UpdateRelationAsync(RelationId relationId, Action<NodeRelation> updateAction, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 移除语义关系
-    /// </summary>
-    Task RemoveRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 批量获取语义关系
-    /// </summary>
-    Task<IReadOnlyDictionary<RelationId, NodeRelation>> GetRelationsBatchAsync(IEnumerable<RelationId> relationIds, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 查找特定类型的语义关系
-    /// </summary>
-    Task<IReadOnlyList<NodeRelation>> FindRelationsByTypeAsync(RelationType relationType, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 查找两个节点之间的语义关系
-    /// </summary>
-    Task<IReadOnlyList<NodeRelation>> FindRelationsBetweenAsync(NodeId sourceId, NodeId targetId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 异步枚举所有语义关系
-    /// </summary>
-    IAsyncEnumerable<NodeRelation> GetAllRelationsAsync(CancellationToken cancellationToken = default);
-}
-```
-
-### 1.2 核心数据类型
-
-#### NodeRelation - 语义关系定义
-
-```csharp
-/// <summary>
-/// 语义关系定义（集中存储版本，不包括父子关系）
-/// </summary>
-public record NodeRelation
-{
-    public RelationId Id { get; init; }
-    public NodeId SourceId { get; init; }
-    public NodeId TargetId { get; init; }
-    public RelationType Type { get; init; }
-    public string Description { get; init; } = string.Empty;
-    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
-    public IReadOnlyDictionary<string, object> Properties { get; init; } =
-        new Dictionary<string, object>();
-}
-```
-
-#### RelationId - 关系标识符
-
-```csharp
-/// <summary>
-/// 关系标识符
-/// </summary>
-public readonly struct RelationId : IEquatable<RelationId>
-{
-    public string Value { get; }
-
-    public RelationId(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            throw new ArgumentException("RelationId cannot be null or empty", nameof(value));
-        Value = value;
-    }
-
-    public static RelationId Generate() => new(Guid.NewGuid().ToString("N")[..12]);
-
-    public bool Equals(RelationId other) => Value == other.Value;
-    public override bool Equals(object? obj) => obj is RelationId other && Equals(other);
-    public override int GetHashCode() => Value.GetHashCode();
-    public override string ToString() => Value;
-
-    public static implicit operator string(RelationId relationId) => relationId.Value;
-    public static explicit operator RelationId(string value) => new(value);
-}
-```
-
-## 2. 关系类型定义存储
-
-### 2.1 IRelationTypeStorage
-
-关系类型定义存储接口负责管理关系类型的元数据和配置信息。
-
-```csharp
-/// <summary>
-/// 关系类型定义存储接口
-/// </summary>
-public interface IRelationTypeStorage
-{
-    /// <summary>
-    /// 获取关系类型定义
-    /// </summary>
-    Task<RelationTypeDefinition?> GetRelationTypeAsync(RelationType relationType, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 保存关系类型定义
-    /// </summary>
-    Task SaveRelationTypeAsync(RelationTypeDefinition definition, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取所有关系类型定义
-    /// </summary>
-    Task<IReadOnlyList<RelationTypeDefinition>> GetAllRelationTypesAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 删除关系类型定义
-    /// </summary>
-    Task DeleteRelationTypeAsync(RelationType relationType, CancellationToken cancellationToken = default);
-}
-```
-
-### 2.2 RelationTypeDefinition - 关系类型定义
-
-```csharp
-/// <summary>
-/// 关系类型定义
-/// </summary>
-public record RelationTypeDefinition
-{
-    public RelationType Type { get; init; }
-    public string Name { get; init; } = string.Empty;
-    public string Description { get; init; } = string.Empty;
-    public bool IsBidirectional { get; init; } = false;
-    public string Color { get; init; } = "#000000";
-    public IReadOnlyDictionary<string, object> Metadata { get; init; } =
-        new Dictionary<string, object>();
-}
-```
-
-## 3. 节点层次结构存储
-
-### 3.1 INodeHierarchyStorage
-
-节点层次结构存储接口专门处理父子关系，基于独立的存储机制。
-
-```csharp
-/// <summary>
-/// 节点层次结构存储接口（基于ParentChildrens文件夹的独立存储）
-/// </summary>
-public interface INodeHierarchyStorage
-{
-    /// <summary>
-    /// 获取父子关系信息
-    /// </summary>
-    Task<ParentChildrenInfo?> GetParentChildrenInfoAsync(NodeId parentId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 保存父子关系信息
-    /// </summary>
-    Task SaveParentChildrenInfoAsync(ParentChildrenInfo parentChildrenInfo, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取子节点ID列表（有序）
-    /// </summary>
-    Task<IReadOnlyList<NodeId>> GetChildrenAsync(NodeId parentId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取父节点ID（通过运行时索引）
-    /// </summary>
-    Task<NodeId?> GetParentAsync(NodeId nodeId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 添加子节点
-    /// </summary>
-    Task AddChildAsync(NodeId parentId, NodeId childId, int? order = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 移除子节点
-    /// </summary>
-    Task RemoveChildAsync(NodeId parentId, NodeId childId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 移动节点到新父节点
-    /// </summary>
-    Task MoveNodeAsync(NodeId nodeId, NodeId? newParentId, int? newOrder = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 重新排序子节点
-    /// </summary>
-    Task ReorderChildrenAsync(NodeId parentId, IReadOnlyList<NodeId> orderedChildIds, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取节点路径（从根到节点）
-    /// </summary>
-    Task<IReadOnlyList<NodeId>> GetPathAsync(NodeId nodeId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取子树中的所有节点ID
-    /// </summary>
-    IAsyncEnumerable<NodeId> GetDescendantsAsync(NodeId rootId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 构建运行时反向索引（子节点到父节点的映射）
-    /// </summary>
-    Task<IReadOnlyDictionary<NodeId, NodeId>> BuildParentIndexAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 检查节点是否有子节点
-    /// </summary>
-    Task<bool> HasChildrenAsync(NodeId nodeId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取节点的层级深度
-    /// </summary>
-    Task<int> GetDepthAsync(NodeId nodeId, CancellationToken cancellationToken = default);
-}
-```
-
-### 3.2 层次结构数据类型
-
-#### ParentChildrenInfo - 父子关系信息
-
-```csharp
-/// <summary>
-/// 父子关系信息（独立存储）
-/// </summary>
-public record ParentChildrenInfo
-{
-    public NodeId ParentId { get; init; }
-    public IReadOnlyList<ChildNodeInfo> Children { get; init; } = Array.Empty<ChildNodeInfo>();
-    public DateTime LastModified { get; init; } = DateTime.UtcNow;
-}
-```
-
-#### ChildNodeInfo - 子节点信息
-
-```csharp
-/// <summary>
-/// 子节点信息
-/// </summary>
-public record ChildNodeInfo
-{
-    public NodeId NodeId { get; init; }
-    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
-    public int Order { get; init; } = 0;
-}
-```
-
-## 4. 关系管理服务接口
-
-### 4.1 IRelationManagementService
-
-关系管理服务提供高级的关系操作和查询功能，整合了语义关系和层次关系的管理。
+关系管理服务提供高级的关系操作和分析功能，基于底层存储接口构建。
 
 ```csharp
 /// <summary>
@@ -310,168 +42,478 @@ public record ChildNodeInfo
 public interface IRelationManagementService
 {
     /// <summary>
-    /// 创建关系
+    /// 创建关系图
     /// </summary>
-    Task<RelationId> CreateRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, string description = "", CancellationToken cancellationToken = default);
+    Task<RelationGraph> BuildRelationGraphAsync(NodeId rootNodeId, int maxDepth = 3, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 删除关系
+    /// 查找节点间的路径
     /// </summary>
-    Task DeleteRelationAsync(RelationId relationId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 更新关系描述
-    /// </summary>
-    Task UpdateRelationDescriptionAsync(RelationId relationId, string description, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取节点的关系图
-    /// </summary>
-    Task<RelationGraph> GetRelationGraphAsync(NodeId nodeId, int maxDepth = 2, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 查找关系路径
-    /// </summary>
-    Task<IReadOnlyList<RelationPath>> FindPathsAsync(NodeId sourceId, NodeId targetId, int maxDepth = 5, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 验证关系的有效性
-    /// </summary>
-    Task<ValidationResult> ValidateRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, CancellationToken cancellationToken = default);
+    Task<RelationPath?> FindPathAsync(NodeId fromNodeId, NodeId toNodeId, int maxDepth = 5, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取关系统计信息
     /// </summary>
-    Task<RelationStatistics> GetRelationStatisticsAsync(CancellationToken cancellationToken = default);
+    Task<RelationStatistics> GetRelationStatisticsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 清理孤立关系
+    /// 批量创建关系
     /// </summary>
-    Task<int> CleanupOrphanedRelationsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<RelationId>> CreateRelationsBatchAsync(IEnumerable<CreateRelationRequest> requests, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 验证关系的一致性
+    /// </summary>
+    Task<RelationValidationResult> ValidateRelationsAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 分析关系模式
+    /// </summary>
+    Task<RelationPatternAnalysis> AnalyzeRelationPatternsAsync(IEnumerable<NodeId> nodeIds, CancellationToken cancellationToken = default);
 }
 ```
 
-### 4.2 关系分析数据类型
+### 1.2 关系图数据结构
 
 #### RelationGraph - 关系图
 
 ```csharp
 /// <summary>
-/// 关系图
+/// 关系图数据结构
 /// </summary>
-public record RelationGraph
+public class RelationGraph
 {
-    public NodeId CenterNodeId { get; init; }
-    public IReadOnlyList<NodeRelation> Relations { get; init; } = Array.Empty<NodeRelation>();
-    public IReadOnlyList<NodeId> ConnectedNodes { get; init; } = Array.Empty<NodeId>();
+    /// <summary>
+    /// 根节点ID
+    /// </summary>
+    public NodeId RootNodeId { get; init; }
+
+    /// <summary>
+    /// 图中的所有节点
+    /// </summary>
+    public IReadOnlySet<NodeId> Nodes { get; init; } = new HashSet<NodeId>();
+
+    /// <summary>
+    /// 图中的所有关系
+    /// </summary>
+    public IReadOnlyList<NodeRelation> Relations { get; init; } = new List<NodeRelation>();
+
+    /// <summary>
+    /// 节点的邻接表（出向关系）
+    /// </summary>
+    public IReadOnlyDictionary<NodeId, IReadOnlyList<NodeRelation>> OutgoingRelations { get; init; } =
+        new Dictionary<NodeId, IReadOnlyList<NodeRelation>>();
+
+    /// <summary>
+    /// 节点的邻接表（入向关系）
+    /// </summary>
+    public IReadOnlyDictionary<NodeId, IReadOnlyList<NodeRelation>> IncomingRelations { get; init; } =
+        new Dictionary<NodeId, IReadOnlyList<NodeRelation>>();
+
+    /// <summary>
+    /// 图的深度
+    /// </summary>
     public int MaxDepth { get; init; }
-    public DateTime GeneratedAt { get; init; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 创建时间
+    /// </summary>
+    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 }
 ```
 
-#### RelationPath - 关系路径
+## 2. 关系路径和分析
+
+### 2.1 RelationPath - 关系路径
 
 ```csharp
 /// <summary>
-/// 关系路径
+/// 关系路径数据结构
 /// </summary>
-public record RelationPath
+public class RelationPath
 {
-    public NodeId SourceId { get; init; }
-    public NodeId TargetId { get; init; }
-    public IReadOnlyList<NodeRelation> Relations { get; init; } = Array.Empty<NodeRelation>();
-    public IReadOnlyList<NodeId> IntermediateNodes { get; init; } = Array.Empty<NodeId>();
-    public int Length { get; init; }
+    /// <summary>
+    /// 起始节点ID
+    /// </summary>
+    public NodeId StartNodeId { get; init; }
+
+    /// <summary>
+    /// 目标节点ID
+    /// </summary>
+    public NodeId EndNodeId { get; init; }
+
+    /// <summary>
+    /// 路径中的节点序列
+    /// </summary>
+    public IReadOnlyList<NodeId> NodePath { get; init; } = new List<NodeId>();
+
+    /// <summary>
+    /// 路径中的关系序列
+    /// </summary>
+    public IReadOnlyList<NodeRelation> Relations { get; init; } = new List<NodeRelation>();
+
+    /// <summary>
+    /// 路径长度（跳数）
+    /// </summary>
+    public int Length => Relations.Count;
+
+    /// <summary>
+    /// 路径权重（可用于路径排序）
+    /// </summary>
     public double Weight { get; init; }
+
+    /// <summary>
+    /// 路径类型（直接、间接等）
+    /// </summary>
+    public PathType Type { get; init; }
 }
 ```
 
-#### RelationStatistics - 关系统计信息
+### 2.2 关系统计信息
 
 ```csharp
 /// <summary>
 /// 关系统计信息
 /// </summary>
-public record RelationStatistics
+public class RelationStatistics
 {
-    public int TotalRelations { get; init; }
-    public IReadOnlyDictionary<RelationType, int> RelationsByType { get; init; } =
-        new Dictionary<RelationType, int>();
-    public int NodesWithRelations { get; init; }
-    public int OrphanedRelations { get; init; }
-    public double AverageRelationsPerNode { get; init; }
-    public DateTime LastUpdated { get; init; } = DateTime.UtcNow;
+    /// <summary>
+    /// 出向关系数量
+    /// </summary>
+    public int OutgoingCount { get; init; }
+
+    /// <summary>
+    /// 入向关系数量
+    /// </summary>
+    public int IncomingCount { get; init; }
+
+    /// <summary>
+    /// 按类型分组的出向关系统计
+    /// </summary>
+    public IReadOnlyDictionary<RelationType, int> OutgoingByType { get; init; } = new Dictionary<RelationType, int>();
+
+    /// <summary>
+    /// 按类型分组的入向关系统计
+    /// </summary>
+    public IReadOnlyDictionary<RelationType, int> IncomingByType { get; init; } = new Dictionary<RelationType, int>();
+
+    /// <summary>
+    /// 最后更新时间
+    /// </summary>
+    public DateTime LastUpdated { get; init; }
 }
 ```
 
-## 5. 事件系统支持
+## 3. 事件系统
 
-### 5.1 关系变更事件
-
-#### NodeRelationChangedEvent - 语义关系变更事件
+### 3.1 关系变更事件
 
 ```csharp
 /// <summary>
-/// 节点语义关系变更事件（集中存储版本）
+/// 节点关系变更事件
 /// </summary>
-public record NodeRelationChangedEvent : NodeChangeEvent
+public class NodeRelationChangedEvent
 {
-    public RelationId RelationId { get; init; }
-    public NodeId TargetNodeId { get; init; }
-    public RelationType RelationType { get; init; }
+    /// <summary>
+    /// 事件ID
+    /// </summary>
+    public string EventId { get; init; } = Guid.NewGuid().ToString();
+
+    /// <summary>
+    /// 变更类型
+    /// </summary>
     public RelationChangeType ChangeType { get; init; }
-    public string Description { get; init; } = string.Empty;
-    public NodeRelation? OldRelation { get; init; }
-    public NodeRelation? NewRelation { get; init; }
+
+    /// <summary>
+    /// 涉及的关系
+    /// </summary>
+    public NodeRelation Relation { get; init; } = null!;
+
+    /// <summary>
+    /// 变更前的关系状态（更新操作时使用）
+    /// </summary>
+    public NodeRelation? PreviousRelation { get; init; }
+
+    /// <summary>
+    /// 事件发生时间
+    /// </summary>
+    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 触发变更的用户或系统
+    /// </summary>
+    public string? TriggeredBy { get; init; }
+
+    /// <summary>
+    /// 变更原因或上下文
+    /// </summary>
+    public string? Reason { get; init; }
 }
 ```
 
-#### NodeHierarchyChangedEvent - 层次结构变更事件
+### 3.2 关系变更类型
+
+```csharp
+/// <summary>
+/// 关系变更类型
+/// </summary>
+public enum RelationChangeType
+{
+    /// <summary>
+    /// 关系创建
+    /// </summary>
+    Created,
+
+    /// <summary>
+    /// 关系更新
+    /// </summary>
+    Updated,
+
+    /// <summary>
+    /// 关系删除
+    /// </summary>
+    Deleted,
+
+    /// <summary>
+    /// 批量操作
+    /// </summary>
+    BatchOperation
+}
+```
+
+### 3.3 路径类型
+
+```csharp
+/// <summary>
+/// 路径类型枚举
+/// </summary>
+public enum PathType
+{
+    /// <summary>
+    /// 直接路径（一跳）
+    /// </summary>
+    Direct,
+
+    /// <summary>
+    /// 间接路径（多跳）
+    /// </summary>
+    Indirect,
+
+    /// <summary>
+    /// 最短路径
+    /// </summary>
+    Shortest,
+
+    /// <summary>
+    /// 加权路径
+    /// </summary>
+    Weighted
+}
+```
+
+## 4. 请求和响应类型
+
+### 4.1 创建关系请求
+
+```csharp
+/// <summary>
+/// 创建关系请求
+/// </summary>
+public class CreateRelationRequest
+{
+    /// <summary>
+    /// 源节点ID
+    /// </summary>
+    public NodeId SourceId { get; init; }
+
+    /// <summary>
+    /// 目标节点ID
+    /// </summary>
+    public NodeId TargetId { get; init; }
+
+    /// <summary>
+    /// 关系类型
+    /// </summary>
+    public RelationType RelationType { get; init; }
+
+    /// <summary>
+    /// 关系描述
+    /// </summary>
+    public string Description { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 关系属性
+    /// </summary>
+    public IReadOnlyDictionary<string, object> Properties { get; init; } = new Dictionary<string, object>();
+}
+```
+
+### 4.2 关系验证结果
+
+```csharp
+/// <summary>
+/// 关系验证结果
+/// </summary>
+public class RelationValidationResult
+{
+    /// <summary>
+    /// 验证是否通过
+    /// </summary>
+    public bool IsValid { get; init; }
+
+    /// <summary>
+    /// 验证错误信息
+    /// </summary>
+    public IReadOnlyList<string> Errors { get; init; } = new List<string>();
+
+    /// <summary>
+    /// 验证警告信息
+    /// </summary>
+    public IReadOnlyList<string> Warnings { get; init; } = new List<string>();
+
+    /// <summary>
+    /// 验证时间
+    /// </summary>
+    public DateTime ValidatedAt { get; init; } = DateTime.UtcNow;
+}
+```
+
+### 4.3 关系模式分析
+
+```csharp
+/// <summary>
+/// 关系模式分析结果
+/// </summary>
+public class RelationPatternAnalysis
+{
+    /// <summary>
+    /// 分析的节点集合
+    /// </summary>
+    public IReadOnlySet<NodeId> AnalyzedNodes { get; init; } = new HashSet<NodeId>();
+
+    /// <summary>
+    /// 发现的关系模式
+    /// </summary>
+    public IReadOnlyList<RelationPattern> Patterns { get; init; } = new List<RelationPattern>();
+
+    /// <summary>
+    /// 关系密度（关系数/可能的最大关系数）
+    /// </summary>
+    public double RelationDensity { get; init; }
+
+    /// <summary>
+    /// 聚类系数
+    /// </summary>
+    public double ClusteringCoefficient { get; init; }
+
+    /// <summary>
+    /// 分析时间
+    /// </summary>
+    public DateTime AnalyzedAt { get; init; } = DateTime.UtcNow;
+}
+```
+
+## 5. 关系模式定义
+
+### 5.1 关系模式
+
+```csharp
+/// <summary>
+/// 关系模式定义
+/// </summary>
+public class RelationPattern
+{
+    /// <summary>
+    /// 模式名称
+    /// </summary>
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 模式描述
+    /// </summary>
+    public string Description { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 涉及的关系类型
+    /// </summary>
+    public IReadOnlySet<RelationType> RelationTypes { get; init; } = new HashSet<RelationType>();
+
+    /// <summary>
+    /// 模式中的节点数量
+    /// </summary>
+    public int NodeCount { get; init; }
+
+    /// <summary>
+    /// 模式出现频率
+    /// </summary>
+    public int Frequency { get; init; }
+
+    /// <summary>
+    /// 模式强度（0-1之间）
+    /// </summary>
+    public double Strength { get; init; }
+}
+```
+
+### 5.2 层次结构变更事件
 
 ```csharp
 /// <summary>
 /// 节点层次结构变更事件
 /// </summary>
-public record NodeHierarchyChangedEvent : NodeChangeEvent
+public class NodeHierarchyChangedEvent
 {
-    public NodeId? OldParentId { get; init; }
-    public NodeId? NewParentId { get; init; }
-    public int? OldOrder { get; init; }
-    public int? NewOrder { get; init; }
+    /// <summary>
+    /// 事件ID
+    /// </summary>
+    public string EventId { get; init; } = Guid.NewGuid().ToString();
+
+    /// <summary>
+    /// 变更的节点ID
+    /// </summary>
+    public NodeId NodeId { get; init; }
+
+    /// <summary>
+    /// 变更类型
+    /// </summary>
     public HierarchyChangeType ChangeType { get; init; }
+
+    /// <summary>
+    /// 原父节点ID（移动操作时使用）
+    /// </summary>
+    public NodeId? OldParentId { get; init; }
+
+    /// <summary>
+    /// 新父节点ID（移动操作时使用）
+    /// </summary>
+    public NodeId? NewParentId { get; init; }
+
+    /// <summary>
+    /// 原顺序位置（重排序操作时使用）
+    /// </summary>
+    public int? OldOrder { get; init; }
+
+    /// <summary>
+    /// 新顺序位置（重排序操作时使用）
+    /// </summary>
+    public int? NewOrder { get; init; }
+
+    /// <summary>
+    /// 事件发生时间
+    /// </summary>
+    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 触发变更的用户或系统
+    /// </summary>
+    public string? TriggeredBy { get; init; }
+
+    /// <summary>
+    /// 变更原因或上下文
+    /// </summary>
+    public string? Reason { get; init; }
 }
-```
 
-### 5.2 变更类型枚举
-
-#### RelationChangeType - 语义关系变更类型
-
-```csharp
-/// <summary>
-/// 语义关系变更类型
-/// </summary>
-public enum RelationChangeType
-{
-    /// <summary>
-    /// 关系被创建
-    /// </summary>
-    Created,
-
-    /// <summary>
-    /// 关系被更新
-    /// </summary>
-    Updated,
-
-    /// <summary>
-    /// 关系被删除
-    /// </summary>
-    Deleted
-}
-```
-
-#### HierarchyChangeType - 层次结构变更类型
-
-```csharp
 /// <summary>
 /// 层次结构变更类型
 /// </summary>
@@ -502,52 +544,57 @@ public enum HierarchyChangeType
 ## 实施优先级
 
 ### 高优先级 (Phase 2.1)
-1. **INodeRelationStorage** - 语义关系的基础存储功能
-2. **INodeHierarchyStorage** - 层次结构的基础存储功能
-3. **核心数据类型** - NodeRelation, ParentChildrenInfo 等基础类型
+1. **基础存储接口** - 参考 Phase2_StorageInterfaces.md 中的接口定义
+2. **关系管理服务** - IRelationManagementService 的核心功能
+3. **关系图数据结构** - RelationGraph 和 RelationPath 基础实现
 
 ### 中优先级 (Phase 2.2)
-1. **IRelationTypeStorage** - 关系类型定义管理
-2. **IRelationManagementService** - 高级关系管理服务
-3. **关系分析功能** - RelationGraph, RelationPath 等
+1. **关系分析功能** - 关系统计和模式分析
+2. **事件系统集成** - 关系变更事件的完整支持
+3. **验证和请求类型** - 完整的请求响应体系
 
 ### 低优先级 (Phase 2.3)
-1. **事件系统集成** - 关系变更事件的完整支持
+1. **高级分析功能** - 复杂的关系模式识别
 2. **性能优化** - 批量操作和缓存策略
-3. **高级查询** - 复杂关系查询和分析功能
+3. **扩展功能** - 自定义关系类型和属性
 
 ## 最佳实践
 
-### 存储设计原则
-1. **分离关注点**: 语义关系与层次关系分别存储
-2. **原子性操作**: 确保关系操作的事务性
-3. **索引优化**: 为常用查询模式建立适当索引
-4. **数据一致性**: 维护关系数据的引用完整性
+### 架构设计原则
+1. **接口分离**: 基础存储接口与高级服务分离
+2. **单一职责**: 每个服务专注于特定的关系管理功能
+3. **依赖倒置**: 服务层依赖于存储接口抽象
+4. **开闭原则**: 支持关系类型和分析算法的扩展
 
-### 性能考虑
-1. **批量操作**: 优先使用批量接口减少I/O开销
-2. **异步枚举**: 使用 IAsyncEnumerable 处理大量数据
-3. **缓存策略**: 对频繁访问的关系数据进行缓存
-4. **延迟加载**: 按需加载关系详细信息
-
-### 扩展性设计
-1. **接口隔离**: 每个存储接口专注于特定职责
-2. **类型安全**: 使用强类型标识符和枚举
-3. **元数据支持**: 支持关系和类型的自定义属性
-4. **版本兼容**: 考虑未来的架构演进需求
-
-### 关系管理策略
-1. **关系验证**: 在创建关系前验证节点存在性和关系合法性
-2. **循环检测**: 防止在层次关系中创建循环依赖
-3. **孤立清理**: 定期清理指向不存在节点的孤立关系
-4. **统计维护**: 实时或定期更新关系统计信息
-
-### 事务处理
-1. **原子操作**: 确保复杂关系操作的原子性
-2. **回滚机制**: 支持操作失败时的完整回滚
+### 数据一致性
+1. **引用完整性**: 确保关系引用的节点存在
+2. **事务边界**: 明确定义关系操作的事务范围
 3. **并发控制**: 处理多用户同时修改关系的情况
-4. **一致性检查**: 定期验证关系数据的一致性
+4. **一致性检查**: 定期验证关系数据的完整性
+
+### 性能优化
+1. **批量操作**: 优先使用批量接口减少I/O开销
+2. **缓存策略**: 对频繁访问的关系图进行缓存
+3. **异步处理**: 使用异步模式处理大量关系数据
+4. **索引优化**: 为常用查询模式建立适当索引
+
+### 扩展性考虑
+1. **插件化设计**: 支持自定义关系分析算法
+2. **配置驱动**: 通过配置控制关系管理行为
+3. **版本兼容**: 考虑关系数据结构的演进
+4. **国际化支持**: 支持多语言的关系描述和错误信息
 
 ---
 
-**下一阶段**: [Phase2_ViewStorage.md](Phase2_ViewStorage.md) - 视图状态存储和缓存策略
+## 相关文档
+
+- **[Phase1_CoreTypes.md](Phase1_CoreTypes.md)** - 基础数据类型定义（NodeId, RelationId, RelationType, NodeRelation）
+- **[Phase2_StorageInterfaces.md](Phase2_StorageInterfaces.md)** - 基础存储接口定义（权威源）
+- **[Phase3_RelationServices.md](Phase3_RelationServices.md)** - 关系服务层实现
+- **[Phase2_ViewStorage.md](Phase2_ViewStorage.md)** - 视图状态存储和缓存策略
+
+## 变更日志
+
+- **v2.1.1 (2025-07-25)**: 修复类型依赖说明，完善层次结构变更事件，修复RelationPath属性命名冲突
+- **v2.1 (2025-07-25)**: 重构文档结构，移除重复的接口定义，专注于高级服务和数据传输对象
+- **v2.0 (2025-07-25)**: 初始版本，包含完整的关系存储实现
