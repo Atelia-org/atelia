@@ -14,45 +14,17 @@
 - **结构化思考**: 层次化的知识图谱组织
 - **扩展性**: 支持Roslyn代码分析、环境信息等数据源
 
-## 🏗️ 系统架构骨干
-
-```
-MemoTree系统架构
-├── Phase1: 基础设施层 (Foundation)
-│   ├── 核心数据类型 (NodeId, CognitiveNode, LOD级别)
-│   ├── 约束验证系统 (NodeConstraints, ValidationRules)
-│   ├── 异常处理体系 (MemoTreeException层次)
-│   └── 配置管理 (MemoTreeOptions, 存储配置)
-│
-├── Phase2: 存储抽象层 (Storage)
-│   ├── 基础存储接口 (元数据、内容、复合存储)
-│   ├── 关系存储 (语义关系、层次结构、关系类型)
-│   └── 视图状态存储 (缓存策略、节点缓存)
-│
-├── Phase3: 业务服务层 (Services)
-│   ├── 核心服务 (认知画布、LOD生成、环境信息)
-│   ├── 关系服务 (关系管理、图遍历、路径查找)
-│   ├── 编辑服务 (画布编辑器、内容生成、事件系统)
-│   └── 检索服务 (多模式搜索、索引管理)
-│
-├── Phase4: 集成接口层 (Integration)
-│   ├── LLM工具调用API (请求响应、搜索功能)
-│   ├── 外部数据源集成 (Roslyn分析、Agent环境)
-│   └── 版本控制集成 (Git操作、提交管理)
-│
-└── Phase5: 企业特性层 (Enterprise)
-    ├── 安全权限管理 (RBAC、审计日志、安全策略)
-    ├── 事件驱动架构 (发布订阅、异步处理)
-    ├── 性能优化 (多层缓存、监控系统)
-    ├── 插件扩展系统 (插件接口、扩展点)
-    └── 工厂构建器模式 (对象创建、流畅API)
-```
-
-## � 类型定义索引
+## 🏗️ 系统架构与类型索引
 
 > **核心价值**: 一次加载，全局认知 - LLM只需读取此索引即可建立完整的项目类型认知
+### Phase1: 基础设施层 (Foundation)
+- 核心数据类型 (NodeId, CognitiveNode, LOD级别)
+- 约束验证系统 (NodeConstraints, ValidationRules)
+- 异常处理体系 (MemoTreeException层次)
+- 配置管理 (MemoTreeOptions, 存储配置)
 
-### Phase1_CoreTypes.md (基础数据类型)
+#### Phase1_CoreTypes.md (基础数据类型)
+(285行) 核心数据类型、枚举、标识符
 - `NodeId` - 认知节点的唯一标识符，支持字符串格式和相等性比较
 - `RelationId` - 关系标识符，用于唯一标识节点间的语义关系
 - `LodLevel` - LOD级别枚举，定义内容详细程度(Title/Brief/Detail/Full)
@@ -60,7 +32,8 @@ MemoTree系统架构
 - `RelationType` - 节点间关系类型枚举，定义引用、依赖、组合等语义关系
 - `NodeConstraints` - 节点约束定义类，包含ID长度、标题长度等硬限制常量
 
-### Phase1_Constraints.md (约束验证系统)
+#### Phase1_Constraints.md (约束验证系统)
+(202行) 约束定义、验证规则、系统限制
 - `INodeValidator` - 节点验证器接口，提供元数据和内容验证功能
 - `IBusinessRuleValidator` - 业务规则验证器接口，验证节点创建和关系建立规则
 - `NodeConstraints` - 节点约束定义类，定义节点各字段的长度和格式限制
@@ -68,7 +41,8 @@ MemoTree系统架构
 - `IConfigurationValidator` - 配置验证器接口，确保配置值不超过系统硬限制
 - `DefaultConfigurationValidator` - 默认配置验证器实现，提供标准的配置验证逻辑
 
-### Phase1_Exceptions.md (异常处理体系)
+#### Phase1_Exceptions.md (异常处理体系)
+(243行) 异常类型定义、错误处理
 - `MemoTreeException` - 所有MemoTree异常的抽象基类，提供错误代码和上下文支持
 - `NodeNotFoundException` - 节点不存在异常，包含未找到的节点ID信息
 - `NodeContentNotFoundException` - 节点内容不存在异常，包含节点ID和LOD级别信息
@@ -77,7 +51,8 @@ MemoTree系统架构
 - `VersionControlException` - 版本控制操作失败异常，处理Git相关错误
 - `ExceptionHandlingStrategy` - 异常处理策略枚举，MVP阶段采用Fast Fail模式
 
-### Phase1_Configuration.md (配置管理系统)
+#### Phase1_Configuration.md (配置管理系统)
+(532行) 配置选项、系统设置，新增ViewOptions类
 - `MemoTreeOptions` - 主配置类，包含工作空间路径、存储配置等核心选项
 - `StorageOptions` - 存储配置选项，定义文件名、目录结构等存储相关设置
 - `RelationOptions` - 关系管理配置，控制父子关系存储、关系类型管理等选项
@@ -87,7 +62,13 @@ MemoTree系统架构
 - `IMemoTreeConfigurationValidator` - MemoTree专用配置验证器接口，验证各配置模块
 - `NodeStorageService` - 节点存储服务示例，展示配置注入和使用模式
 
-### Phase2_StorageInterfaces.md (存储接口定义)
+### Phase2: 存储抽象层 (Storage)
+- 基础存储接口 (元数据、内容、复合存储)
+- 关系存储 (语义关系、层次结构、关系类型)
+- 视图状态存储 (缓存策略、节点缓存)
+ 
+#### Phase2_StorageInterfaces.md (存储接口定义)
+(396行) - 存储接口定义体系（权威源）
 - `INodeMetadataStorage` - 节点元数据存储接口，提供节点基础信息的CRUD操作
 - `INodeContentStorage` - 节点内容存储接口，支持多级LOD内容的存储和检索
 - `INodeRelationStorage` - 语义关系存储接口，管理节点间的语义关系数据
@@ -96,7 +77,8 @@ MemoTree系统架构
 - `ICognitiveNodeStorage` - 复合存储接口，组合所有存储功能提供统一访问
 - `IViewStateStorage` - 视图状态存储接口，管理认知画布的视图状态持久化
 
-### Phase2_RelationStorage.md (关系管理服务)
+#### Phase2_RelationStorage.md (关系管理服务)
+(601行) - 关系管理服务、关系图、事件系统
 - `IRelationManagementService` - 关系管理服务接口，提供关系图构建和路径查找功能
 - `RelationGraph` - 关系图数据结构，表示节点间的关系网络和连接信息
 - `RelationPath` - 关系路径数据结构，描述节点间的连接路径和路径属性
@@ -111,7 +93,8 @@ MemoTree系统架构
 - `NodeHierarchyChangedEvent` - 节点层次结构变更事件，支持父子关系变更通知
 - `HierarchyChangeType` - 层次结构变更类型枚举，定义添加、移除、移动等操作
 
-### Phase2_ViewStorage.md (视图状态存储)
+#### Phase2_ViewStorage.md (视图状态存储)
+(377行) - 视图状态存储、缓存策略，优化配置引用
 - `NodeViewState` - 节点在视图中的状态记录，包含展开状态、可见性等属性
 - `CanvasViewState` - 认知画布视图状态记录，管理整个画布的显示状态
 - `IViewStateStorage` - 视图状态存储接口，提供视图状态的持久化和恢复功能
@@ -121,7 +104,14 @@ MemoTree系统架构
 - `ViewOptions` - 视图配置选项类，管理视图相关的配置参数（引用自Phase1）
 - `RelationOptions` - 关系配置选项类，管理关系缓存相关配置（引用自Phase1）
 
-### Phase3_CoreServices.md (核心业务服务)
+### Phase3: 业务服务层 (Services)
+- 核心服务 (认知画布、LOD生成、环境信息)
+- 关系服务 (关系管理、图遍历、路径查找)
+- 编辑服务 (画布编辑器、内容生成、事件系统)
+- 检索服务 (多模式搜索、索引管理)
+
+#### Phase3_CoreServices.md (核心业务服务)
+(407行) 核心业务服务接口
 - `ICognitiveCanvasService` - 认知画布核心服务接口，提供视图渲染和节点树构建功能
 - `NodeTreeItem` - 节点树项记录，表示节点在树形结构中的显示信息
 - `ILodGenerationService` - 异步LOD内容生成服务接口，支持多级内容的智能生成
@@ -148,7 +138,8 @@ MemoTree系统架构
 - `SystemStatusInfo` - 系统状态信息记录，提供时间、位置、内存使用等系统信息
 - `UserPreferences` - 用户偏好设置记录，管理默认LOD级别、自动保存等用户配置
 
-### Phase3_RelationServices.md (关系管理服务)
+#### Phase3_RelationServices.md (关系管理服务)
+(219行) 关系管理服务接口
 - `IRelationManagementService` - 关系管理服务接口，提供关系图构建和路径查找功能
 - `RelationGraph` - 关系图记录，表示以中心节点为核心的关系网络结构
 - `RelationPath` - 关系路径记录，描述节点间的连接路径和路径权重信息
@@ -156,7 +147,8 @@ MemoTree系统架构
 - `RelationTypeDefinition` - 关系类型定义记录，包含关系类型的元数据和约束信息
 - `RelationOptions` - 关系配置选项类，管理关系存储和缓存相关配置（引用自Phase1）
 
-### Phase3_EditingServices.md (编辑操作服务)
+#### Phase3_EditingServices.md (编辑操作服务)
+(299行) 编辑操作、LOD生成服务
 - `ICognitiveCanvasEditor` - 认知画布编辑器接口，提供节点CRUD和批量操作功能
 - `ILodGenerationService` - LOD生成服务接口，支持异步的多级内容生成和管理
 - `LodGenerationRequest` - LOD生成请求记录，封装内容生成的输入参数和配置
@@ -173,7 +165,8 @@ MemoTree系统架构
 - `IEventPublisher` - 事件发布器接口，提供事件的发布和批量发布功能
 - `IEventSubscriber` - 事件订阅器接口，支持特定类型事件和全局事件的订阅
 
-### Phase3_RetrievalServices.md (检索服务)
+#### Phase3_RetrievalServices.md (检索服务)
+(155行) 检索服务接口、多模式搜索
 - `IRetrievalService` - 检索服务接口，提供多模式节点搜索和索引管理功能
 - `SearchResult` - 搜索结果记录，包含匹配节点的相关性评分和匹配信息
 - `SearchNodesRequest` - 节点搜索请求记录，封装搜索查询和过滤条件
@@ -181,7 +174,13 @@ MemoTree系统架构
 - `RetrievalOptions` - 检索配置选项类，管理搜索引擎和索引相关配置（引用自Phase1）
 - `RetrievalException` - 检索异常类，处理搜索和索引操作中的错误情况
 
-### Phase4_ToolCallAPI.md (LLM工具调用接口)
+### Phase4: 集成接口层 (Integration)
+- LLM工具调用API (请求响应、搜索功能)
+- 外部数据源集成 (Roslyn分析、Agent环境)
+- 版本控制集成 (Git操作、提交管理)
+
+#### Phase4_ToolCallAPI.md (LLM工具调用接口)
+(454行) LLM工具调用接口、请求响应类型
 - `ILlmToolCallService` - LLM工具调用服务接口，提供节点操作和搜索的API端点
 - `ToolCallResult` - 工具调用结果记录，包含操作成功状态和返回数据
 - `ExpandNodeRequest` - 展开节点请求记录，封装节点展开操作的参数
@@ -195,7 +194,8 @@ MemoTree系统架构
 - `UpdateMode` - 更新模式枚举，定义替换、追加、插入等不同更新方式
 - `CommitAuthor` - 提交作者记录，包含Git提交的作者姓名和邮箱信息
 
-### Phase4_ExternalIntegration.md (外部数据源集成)
+#### Phase4_ExternalIntegration.md (外部数据源集成)
+(294行) 外部数据源集成、Roslyn集成
 - `IRoslynIntegrationService` - Roslyn集成服务接口，提供代码分析和重构功能
 - `CodebaseStructure` - 代码库结构记录，描述解决方案的整体组织结构
 - `ProjectInfo` - 项目信息记录，包含项目的基本信息和命名空间列表
@@ -216,7 +216,8 @@ MemoTree系统架构
 - `SystemStatusInfo` - 系统状态信息记录，提供时间、位置、内存等系统信息
 - `UserPreferences` - 用户偏好记录，管理用户的个性化配置和默认设置
 
-### Phase4_VersionControl.md (版本控制集成)
+#### Phase4_VersionControl.md (版本控制集成)
+(229行) Git版本控制集成、提交管理
 - `IVersionControlService` - 版本控制服务接口，提供Git操作和分支管理功能
 - `CommitInfo` - 提交信息记录，包含Git提交的详细信息和变更统计
 - `VersionControlException` - 版本控制异常类，处理Git操作中的错误情况
@@ -224,7 +225,15 @@ MemoTree系统架构
 - `CreateNodeRequest` - 创建节点请求记录，用于版本控制上下文中的节点创建
 - `UpdateNodeRequest` - 更新节点请求记录，用于版本控制上下文中的节点更新
 
-### Phase5_Security.md (安全权限管理)
+### Phase5: 企业特性层 (Enterprise)
+- 安全权限管理 (RBAC、审计日志、安全策略)
+- 事件驱动架构 (发布订阅、异步处理)
+- 性能优化 (多层缓存、监控系统)
+- 插件扩展系统 (插件接口、扩展点)
+- 工厂构建器模式 (对象创建、流畅API)
+
+#### Phase5_Security.md (安全权限管理)
+(660行) 权限管理、安全策略、审计日志
 - `Permission` - 权限枚举（标志位），定义读取、写入、删除等基础权限
 - `ResourceType` - 资源类型枚举，区分节点、关系、视图等不同资源类型
 - `PermissionContext` - 权限上下文记录，包含用户、资源和操作的权限检查信息
@@ -239,7 +248,8 @@ MemoTree系统架构
 - `SecurityOptions` - 安全配置选项类，管理权限检查、审计等安全相关配置
 - `SecurityMiddleware` - 安全中间件类，提供请求级别的权限验证和审计
 
-### Phase5_EventSystem.md (事件驱动架构)
+#### Phase5_EventSystem.md (事件驱动架构)
+(226行) 事件系统、发布订阅机制
 - `NodeCreatedEvent` - 节点创建事件记录，继承自NodeChangeEvent，包含创建信息
 - `NodeUpdatedEvent` - 节点更新事件记录，继承自NodeChangeEvent，包含变更详情
 - `NodeDeletedEvent` - 节点删除事件记录，继承自NodeChangeEvent，包含删除信息
@@ -250,7 +260,8 @@ MemoTree系统架构
 - `IEventPublisher` - 事件发布器接口，提供异步事件发布和批量发布功能
 - `IEventSubscriber` - 事件订阅器接口，支持类型化事件订阅和全局事件监听
 
-### Phase5_Performance.md (性能优化监控)
+#### Phase5_Performance.md (性能优化监控)
+(657行) 性能优化、缓存策略、监控系统
 - `ICacheStrategy<TKey, TValue>` - 泛型缓存策略接口，定义缓存操作的标准规范
 - `CacheStatistics` - 缓存统计记录，提供命中率、请求数等缓存性能指标
 - `INodeCacheService` - 节点缓存服务接口，提供多层缓存和智能预加载功能
@@ -262,7 +273,8 @@ MemoTree系统架构
 - `SearchService` - 搜索服务示例类，展示性能监控的集成和使用模式
 - `MemoryCacheStrategy<TKey, TValue>` - 内存缓存策略实现类，提供基于内存的缓存功能
 
-### Phase5_Extensions.md (插件扩展系统)
+#### Phase5_Extensions.md (插件扩展系统)
+(269行) 插件系统、扩展机制、数据源插件
 - `IMemoTreePlugin` - MemoTree插件基础接口，定义插件的生命周期和基本功能
 - `IDataSourcePlugin` - 数据源插件接口，继承自IMemoTreePlugin，提供外部数据集成
 - `DataSourceInfo` - 数据源信息记录，描述数据源的类型、连接和配置信息
@@ -275,41 +287,10 @@ MemoTree系统架构
 - `IExtensionPoint<T>` - 泛型扩展点接口，定义系统扩展点的标准规范
 - `INodeProcessingExtension` - 节点处理扩展接口，提供节点处理流程的扩展能力
 
-### Phase5_Factories.md (工厂构建器模式)
+#### Phase5_Factories.md (工厂构建器模式)
+(280行) 工厂模式、构建器模式
 - `ICognitiveNodeFactory` - 认知节点工厂接口，提供节点创建的标准化工厂方法
 - `ICognitiveNodeBuilder` - 认知节点构建器接口，提供流畅API风格的节点构建功能
-
-## �📚 文档地图 (19个文档)
-
-### Phase 1: 基础设施 (4/4 完成)
-- **Phase1_CoreTypes.md** (285行) - 核心数据类型、枚举、标识符
-- **Phase1_Constraints.md** (202行) - 约束定义、验证规则、系统限制
-- **Phase1_Exceptions.md** (243行) - 异常类型定义、错误处理
-- **Phase1_Configuration.md** (532行) - 配置选项、系统设置，新增ViewOptions类
-
-### Phase 2: 存储层 (3/3 完成)
-- **Phase2_StorageInterfaces.md** (396行) - 存储接口定义体系（权威源）
-- **Phase2_RelationStorage.md** (601行) - 关系管理服务、关系图、事件系统
-- **Phase2_ViewStorage.md** (377行) - 视图状态存储、缓存策略，优化配置引用
-
-### Phase 3: 服务层 (4/4 完成)
-- **Phase3_CoreServices.md** (407行) - 核心业务服务接口
-- **Phase3_RelationServices.md** (219行) - 关系管理服务接口
-- **Phase3_EditingServices.md** (299行) - 编辑操作、LOD生成服务
-- **Phase3_RetrievalServices.md** (155行) - 检索服务接口、多模式搜索
-
-### Phase 4: 集成层 (3/3 完成)
-- **Phase4_ToolCallAPI.md** (454行) - LLM工具调用接口、请求响应类型
-- **Phase4_ExternalIntegration.md** (294行) - 外部数据源集成、Roslyn集成
-- **Phase4_VersionControl.md** (229行) - Git版本控制集成、提交管理
-
-### Phase 5: 企业特性 (5/5 完成)
-- **Phase5_Security.md** (660行) - 权限管理、安全策略、审计日志
-- **Phase5_EventSystem.md** (226行) - 事件系统、发布订阅机制
-- **Phase5_Performance.md** (657行) - 性能优化、缓存策略、监控系统
-- **Phase5_Extensions.md** (269行) - 插件系统、扩展机制、数据源插件
-- **Phase5_Factories.md** (280行) - 工厂模式、构建器模式
-
 
 
 ## 💡 核心设计模式
