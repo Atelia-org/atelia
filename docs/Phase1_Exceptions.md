@@ -1,20 +1,54 @@
 # MemoTree 异常类型定义 (Phase 1)
 
-> **版本**: v1.2  
-> **创建日期**: 2025-07-24  
-> **基于**: Core_Types_Design.md 第7节  
-> **依赖**: [Phase1_CoreTypes.md](Phase1_CoreTypes.md)  
-> **状态**: 🚧 开发中  
+> **版本**: v1.3
+> **创建日期**: 2025-07-24
+> **更新日期**: 2025-07-25 (添加MVP Fast Fail策略)
+> **基于**: Core_Types_Design.md 第7节
+> **依赖**: [Phase1_CoreTypes.md](Phase1_CoreTypes.md)
+> **状态**: ✅ MVP策略确定
 
 ## 概述
 
-本文档定义了MemoTree系统中的异常类型体系和错误处理机制。这些异常类型为系统提供了完整的错误处理和恢复机制，确保系统的稳定性和可维护性。作为Phase 1的基础设施组件，这些异常类型将被所有其他组件使用。
+本文档定义了MemoTree系统中的异常类型体系和错误处理机制。
+
+**🎯 MVP阶段关键决策：Fast Fail策略**
+
+为优化LLM代码理解和维护效率，MVP阶段(Phase 1-4)采用Fast Fail异常处理模式：
+- **所有异常直接向上传播**，保持故障现场完整性
+- **简化代码逻辑**，避免复杂的try-catch嵌套
+- **便于调试定位**，异常信息清晰直接
+- **延迟复杂处理**，完整的异常处理和恢复机制在Phase 5实现
+
+这种策略牺牲了部分用户体验的平滑性，换取了开发效率和代码可维护性的显著提升。
+
+## MVP Fast Fail策略详述
+
+### 策略原则
+1. **快速失败**: 遇到异常立即停止执行，保护数据一致性
+2. **完整上下文**: 保留完整的调用栈和异常信息
+3. **简化实现**: 避免复杂的重试、降级、恢复逻辑
+4. **延迟优化**: 将异常处理作为Phase 5的企业级特性
+
+### 适用范围
+- **文件IO操作**: 直接传播IOException，不实现重试
+- **网络请求**: 直接传播网络异常，不实现指数退避
+- **数据验证**: 立即抛出验证异常，不尝试修复
+- **资源访问**: 直接传播权限异常，不实现降级访问
+
+### 实施约定
+```csharp
+// 统一的TODO标记格式，标识Phase 5增强点
+// TODO: Phase5-ExceptionHandling - 添加重试逻辑和降级策略
+// TODO: Phase5-ExceptionHandling - 添加详细的错误日志记录
+// TODO: Phase5-ExceptionHandling - 实现网络异常的指数退避重试
+```
 
 ## 实施优先级
 
 1. **立即实现**: MemoTreeException基类、NodeNotFoundException、StorageException
-2. **第一周**: NodeContentNotFoundException、RetrievalException  
+2. **第一周**: NodeContentNotFoundException、RetrievalException
 3. **第二周**: VersionControlException、扩展异常类型
+4. **Phase 5**: 完整的异常处理、重试机制、降级策略
 
 ## 1. 基础异常类型
 
@@ -220,23 +254,23 @@ public class VersionControlException : MemoTreeException
 ```csharp
 /// <summary>
 /// 异常处理策略枚举
-/// 注意：此枚举主要用于配置和文档化目的，实际的异常处理逻辑
-/// 仍需要在具体的try-catch块中根据上下文实现
+/// MVP阶段：仅支持Rethrow模式(Fast Fail策略)
+/// Phase 5：将支持完整的异常处理策略
 /// </summary>
 public enum ExceptionHandlingStrategy
 {
     /// <summary>
-    /// 重新抛出异常
+    /// 重新抛出异常 (MVP阶段默认且唯一策略)
     /// </summary>
     Rethrow,
 
     /// <summary>
-    /// 记录日志并继续
+    /// 记录日志并继续 (Phase 5功能)
     /// </summary>
     LogAndContinue,
 
     /// <summary>
-    /// 记录日志并返回默认值
+    /// 记录日志并返回默认值 (Phase 5功能)
     /// </summary>
     LogAndReturnDefault,
     

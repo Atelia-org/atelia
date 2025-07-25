@@ -1,7 +1,7 @@
 # MemoTree项目LLM索引
 
 > **目的**: 为LLM提供项目整体认知的快速索引
-> **更新**: 2025-07-25 22:15 (Review建议修改)
+> **更新**: 2025-07-25 22:30 (MVP Fast Fail策略确定)
 > **状态**: 🎉 项目完成 (19/19 文档)
 
 ## 🎯 项目核心概念
@@ -117,6 +117,18 @@ Phase3_CoreServices.md
 - **ICognitiveCanvasService**: 认知画布服务，核心交互接口
 - **ILodGenerationService**: LOD生成服务，异步内容生成
 
+### 🎯 MVP关键架构决策：Fast Fail异常处理策略
+
+**决策背景**: 为优化LLM代码理解和维护效率，简化MVP实现复杂度
+**核心原则**:
+- 所有异常直接向上传播，保持故障现场完整性
+- 避免复杂的try-catch嵌套，提高代码可读性
+- 延迟复杂异常处理到Phase 5企业级特性
+- 使用统一的TODO标记标识后期增强点
+
+**适用范围**: Phase 1-4 MVP阶段
+**后期规划**: Phase 5实现完整的异常处理、重试机制、降级策略
+
 ## 🎯 使用指南
 
 ### 快速定位
@@ -140,7 +152,10 @@ Phase3_CoreServices.md
 - **完成状态**: 🎉 100% 完成
 - **最后更新**: 2025-07-25
 - **原始文档**: Core_Types_Design.md (3116行) → 成功拆分成若干Phase_XXX.md。已删除，git中有旧档。
-- **最近修改**: 基于Review建议优化配置一致性和异常处理文档
+- **重要决策**:
+  - 基于Review建议优化配置一致性 (TitleContentFileName→BriefContentFileName)
+  - 确定MVP Fast Fail异常处理策略，优化LLM代码理解和维护效率
+  - Roslyn集成默认关闭，符合Phase 4实施计划
 
 ## 🔍 快速搜索提示
 

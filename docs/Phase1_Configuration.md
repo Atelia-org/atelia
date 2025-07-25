@@ -73,6 +73,13 @@ public class MemoTreeOptions
     public bool EnableRoslynIntegration { get; set; } = false;
 
     /// <summary>
+    /// MVP模式：使用Fast Fail异常处理策略
+    /// true: 所有异常直接向上传播，保持故障现场完整性
+    /// false: 使用完整的异常处理和恢复机制 (Phase 5功能)
+    /// </summary>
+    public bool UseMvpFastFailMode { get; set; } = true;
+
+    /// <summary>
     /// 支持的文件扩展名
     /// </summary>
     public IList<string> SupportedFileExtensions { get; set; } = new List<string>
