@@ -43,16 +43,6 @@ public class MemoTreeOptions
     public string RelationsDirectory { get; set; } = "Relations";
 
     /// <summary>
-    /// 视图状态文件名
-    /// </summary>
-    public string ViewStateFileName { get; set; } = "last-view.json";
-
-    /// <summary>
-    /// 索引缓存文件名
-    /// </summary>
-    public string IndexCacheFileName { get; set; } = "index-cache.json";
-
-    /// <summary>
     /// 单个认知节点的默认最大上下文Token数
     /// 用于限制单个CogNode内容的Token数量，不能超过SystemLimits.DefaultMaxContextTokens
     /// </summary>
@@ -262,9 +252,72 @@ public class RetrievalOptions
 }
 ```
 
-## 5. 配置验证和最佳实践
+## 5. 视图状态配置
 
-### 5.1 配置验证规则
+### 视图状态配置选项
+
+```csharp
+/// <summary>
+/// 视图状态配置选项
+/// 对应Phase2_ViewStorage.md中定义的视图状态存储和缓存策略
+/// </summary>
+public class ViewOptions
+{
+    /// <summary>
+    /// 视图状态文件名
+    /// </summary>
+    public string ViewStateFileName { get; set; } = "last-view.json";
+
+    /// <summary>
+    /// 索引缓存文件名
+    /// </summary>
+    public string IndexCacheFileName { get; set; } = "index-cache.json";
+
+    /// <summary>
+    /// 视图状态缓存过期时间（分钟）
+    /// </summary>
+    public int ViewStateCacheExpirationMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// 最大缓存视图状态数量
+    /// </summary>
+    public int MaxCachedViewStates { get; set; } = 10;
+
+    /// <summary>
+    /// 是否启用视图状态自动保存
+    /// </summary>
+    public bool EnableAutoSaveViewState { get; set; } = true;
+
+    /// <summary>
+    /// 视图状态自动保存间隔（秒）
+    /// </summary>
+    public int ViewStateAutoSaveIntervalSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// 视图状态缓存策略类型
+    /// </summary>
+    public string CacheStrategyType { get; set; } = "LRU";
+
+    /// <summary>
+    /// 是否启用视图状态压缩存储
+    /// </summary>
+    public bool EnableViewStateCompression { get; set; } = false;
+
+    /// <summary>
+    /// 视图状态批量操作的最大数量
+    /// </summary>
+    public int MaxBatchViewStateOperations { get; set; } = 20;
+
+    /// <summary>
+    /// 是否启用视图状态预加载
+    /// </summary>
+    public bool EnableViewStatePreloading { get; set; } = true;
+}
+```
+
+## 6. 配置验证和最佳实践
+
+### 6.1 配置验证规则
 
 配置类型应遵循以下验证规则：
 
@@ -286,7 +339,7 @@ public class RetrievalOptions
    - 相关功能的依赖关系检查
    - 例如：启用语义搜索时必须配置向量维度
 
-### 5.2 配置最佳实践
+### 6.2 配置最佳实践
 
 1. **开发环境配置**
    ```csharp
@@ -323,9 +376,9 @@ public class RetrievalOptions
    };
    ```
 
-## 6. 配置扩展性
+## 7. 配置扩展性
 
-### 6.1 自定义配置支持
+### 7.1 自定义配置支持
 
 系统支持通过以下方式扩展配置：
 
@@ -396,9 +449,9 @@ public class RetrievalOptions
    - 提供测试专用的配置预设
    - 支持配置的模拟和覆盖
 
-## 7. 配置集成示例
+## 8. 配置集成示例
 
-### 7.1 依赖注入配置
+### 8.1 依赖注入配置
 
 ```csharp
 // Program.cs 或 Startup.cs
@@ -406,9 +459,10 @@ services.Configure<MemoTreeOptions>(configuration.GetSection("MemoTree"));
 services.Configure<StorageOptions>(configuration.GetSection("Storage"));
 services.Configure<RelationOptions>(configuration.GetSection("Relations"));
 services.Configure<RetrievalOptions>(configuration.GetSection("Retrieval"));
+services.Configure<ViewOptions>(configuration.GetSection("View"));
 ```
 
-### 7.2 配置使用示例
+### 8.2 配置使用示例
 
 ```csharp
 public class NodeStorageService
@@ -435,7 +489,7 @@ public class NodeStorageService
 }
 ```
 
-### 7.3 配置文件示例
+### 8.3 配置文件示例
 
 ```yaml
 # appsettings.yml
@@ -462,6 +516,14 @@ Retrieval:
   EnableFullTextSearch: true
   EnableSemanticSearch: false
   MaxSearchResults: 50
+
+View:
+  ViewStateFileName: "last-view.json"
+  IndexCacheFileName: "index-cache.json"
+  ViewStateCacheExpirationMinutes: 60
+  MaxCachedViewStates: 10
+  EnableAutoSaveViewState: true
+  ViewStateAutoSaveIntervalSeconds: 30
 ```
 
 ---

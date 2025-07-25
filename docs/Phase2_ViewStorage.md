@@ -1,9 +1,9 @@
 # MemoTree 视图状态存储和缓存策略 (Phase 2)
 
-> **版本**: v1.0  
-> **创建时间**: 2025-07-25  
-> **依赖**: Phase1_CoreTypes.md, Phase2_StorageInterfaces.md  
-> **阶段**: Phase 2 - Storage Layer  
+> **版本**: v1.0
+> **创建时间**: 2025-07-25
+> **依赖**: Phase1_CoreTypes.md, Phase1_Configuration.md, Phase2_StorageInterfaces.md
+> **阶段**: Phase 2 - Storage Layer
 
 ## 概述
 
@@ -13,6 +13,14 @@
 - **视图状态存储**: 持久化用户的界面状态和偏好设置
 - **缓存策略**: 提供高性能的数据访问和内存管理
 - **节点缓存服务**: 专门针对认知节点的缓存优化
+
+### 类型引用说明
+
+本文档中使用的核心类型定义位置：
+- **NodeId, LodLevel, NodeMetadata, NodeContent**: 定义于 [Phase1_CoreTypes.md](Phase1_CoreTypes.md)
+- **ViewOptions, RelationOptions**: 定义于 [Phase1_Configuration.md](Phase1_Configuration.md)
+- **CacheStatistics**: 本文档中定义的缓存统计信息类型
+- **NodeViewState, CanvasViewState**: 本文档中定义的视图状态类型
 
 ## 视图状态数据类型
 
@@ -249,54 +257,59 @@ public interface INodeCacheService
 
 ## 视图状态配置
 
-### 视图状态相关配置选项
+### 配置选项归属说明
+
+视图状态存储相关的配置选项分布在以下配置类中：
+
+#### ViewOptions 配置类 (定义于 Phase1_Configuration.md)
 
 ```csharp
 /// <summary>
-/// 视图状态文件名配置
+/// 视图状态专用配置选项
+/// 详细定义请参考 Phase1_Configuration.md 中的 ViewOptions 类
 /// </summary>
-public string ViewStateFileName { get; set; } = "last-view.json";
+public class ViewOptions
+{
+    // 文件名配置
+    public string ViewStateFileName { get; set; } = "last-view.json";
+    public string IndexCacheFileName { get; set; } = "index-cache.json";
 
-/// <summary>
-/// 索引缓存文件名配置
-/// </summary>
-public string IndexCacheFileName { get; set; } = "index-cache.json";
+    // 缓存配置
+    public int ViewStateCacheExpirationMinutes { get; set; } = 60;
+    public int MaxCachedViewStates { get; set; } = 10;
 
-/// <summary>
-/// 是否启用运行时父节点索引缓存
-/// </summary>
-public bool EnableParentIndexCache { get; set; } = true;
+    // 自动保存配置
+    public bool EnableAutoSaveViewState { get; set; } = true;
+    public int ViewStateAutoSaveIntervalSeconds { get; set; } = 30;
 
-/// <summary>
-/// 父节点索引缓存过期时间（分钟）
-/// </summary>
-public int ParentIndexCacheExpirationMinutes { get; set; } = 15;
-
-/// <summary>
-/// 语义关系缓存过期时间（分钟）
-/// </summary>
-public int RelationCacheExpirationMinutes { get; set; } = 30;
-
-/// <summary>
-/// 视图状态缓存过期时间（分钟）
-/// </summary>
-public int ViewStateCacheExpirationMinutes { get; set; } = 60;
-
-/// <summary>
-/// 最大缓存视图状态数量
-/// </summary>
-public int MaxCachedViewStates { get; set; } = 10;
-
-/// <summary>
-/// 是否启用视图状态自动保存
-/// </summary>
-public bool EnableAutoSaveViewState { get; set; } = true;
-
-/// <summary>
-/// 视图状态自动保存间隔（秒）
-/// </summary>
-public int ViewStateAutoSaveIntervalSeconds { get; set; } = 30;
+    // 其他视图相关配置...
+}
 ```
+
+#### RelationOptions 配置类 (定义于 Phase1_Configuration.md)
+
+```csharp
+/// <summary>
+/// 关系缓存相关配置选项
+/// 详细定义请参考 Phase1_Configuration.md 中的 RelationOptions 类
+/// </summary>
+public class RelationOptions
+{
+    // 父节点索引缓存配置
+    public bool EnableParentIndexCache { get; set; } = true;
+    public int ParentIndexCacheExpirationMinutes { get; set; } = 15;
+
+    // 语义关系缓存配置
+    public int RelationCacheExpirationMinutes { get; set; } = 30;
+
+    // 其他关系管理配置...
+}
+```
+
+> **配置引用说明**:
+> - 视图状态专用配置请使用 `ViewOptions` 类
+> - 关系缓存配置请使用 `RelationOptions` 类
+> - 完整的配置定义请参考 [Phase1_Configuration.md](Phase1_Configuration.md)
 
 ## 缓存策略实现指南
 
