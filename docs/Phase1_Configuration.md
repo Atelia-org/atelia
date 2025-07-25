@@ -53,9 +53,16 @@ public class MemoTreeOptions
     public string IndexCacheFileName { get; set; } = "index-cache.json";
 
     /// <summary>
-    /// 默认最大上下文Token数
+    /// 单个认知节点的默认最大上下文Token数
+    /// 用于限制单个CogNode内容的Token数量，不能超过SystemLimits.DefaultMaxContextTokens
     /// </summary>
     public int DefaultMaxContextTokens { get; set; } = 8000;
+
+    /// <summary>
+    /// 整个MemoTree视图的最大Token数
+    /// 用于限制整个视图展开后的总Token数量，范围应在128K-200K之间
+    /// </summary>
+    public int MaxMemoTreeViewTokens { get; set; } = 150_000;
 
     /// <summary>
     /// 自动保存间隔（分钟）
@@ -268,6 +275,10 @@ public class RetrievalOptions
 
 2. **数值配置验证**
    - Token数量、时间间隔等数值配置必须为正数
+   - 单个节点Token数不能超过SystemLimits.DefaultMaxContextTokens (8000)
+   - MemoTree视图Token数必须在128K-200K范围内
+   - 关系图节点数不能超过NodeConstraints.MaxChildrenCount (1000)
+   - 关系深度不能超过NodeConstraints.MaxTreeDepth (20)
    - 缓存过期时间不应小于1分钟
    - 最大节点数等限制应根据系统资源合理设置
 
@@ -284,7 +295,8 @@ public class RetrievalOptions
        WorkspaceRoot = "./dev-workspace",
        AutoSaveIntervalMinutes = 1,
        EnableVersionControl = false,
-       DefaultMaxContextTokens = 4000
+       DefaultMaxContextTokens = 4000,        // 单个节点Token限制
+       MaxMemoTreeViewTokens = 128_000        // 整个视图Token限制
    };
    ```
 
@@ -295,7 +307,8 @@ public class RetrievalOptions
        WorkspaceRoot = "/var/memotree/workspace",
        AutoSaveIntervalMinutes = 5,
        EnableVersionControl = true,
-       DefaultMaxContextTokens = 8000
+       DefaultMaxContextTokens = 8000,        // 单个节点Token限制
+       MaxMemoTreeViewTokens = 180_000        // 整个视图Token限制
    };
    ```
 
@@ -326,6 +339,14 @@ public class RetrievalOptions
    public interface IConfigurationValidator<T>
    {
        ValidationResult Validate(T configuration);
+   }
+
+   // 专用的MemoTree配置验证器
+   public interface IMemoTreeConfigurationValidator
+   {
+       ValidationResult ValidateMemoTreeOptions(MemoTreeOptions options);
+       ValidationResult ValidateRelationOptions(RelationOptions options);
+       ValidationResult ValidateTokenLimits(int nodeTokens, int viewTokens);
    }
    ```
 
@@ -421,7 +442,8 @@ public class NodeStorageService
 MemoTree:
   WorkspaceRoot: "./workspace"
   CogNodesDirectory: "CogNodes"
-  DefaultMaxContextTokens: 8000
+  DefaultMaxContextTokens: 8000          # 单个节点Token限制
+  MaxMemoTreeViewTokens: 150000          # 整个视图Token限制
   AutoSaveIntervalMinutes: 5
   EnableVersionControl: true
 

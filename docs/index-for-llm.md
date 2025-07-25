@@ -1,7 +1,7 @@
 # MemoTree项目LLM索引
 
 > **目的**: 为LLM提供项目整体认知的快速索引
-> **更新**: 2025-07-25 22:30 (MVP Fast Fail策略确定)
+> **更新**: 2025-07-25 23:15 (约束层次验证机制实施)
 > **状态**: 🎉 项目完成 (19/19 文档)
 
 ## 🎯 项目核心概念
@@ -156,6 +156,8 @@ Phase3_CoreServices.md
   - 基于Review建议优化配置一致性 (TitleContentFileName→BriefContentFileName)
   - 确定MVP Fast Fail异常处理策略，优化LLM代码理解和维护效率
   - Roslyn集成默认关闭，符合Phase 4实施计划
+  - 实施约束层次验证机制：硬约束(SystemLimits/NodeConstraints) > 软约束(配置选项)
+  - 澄清Token限制：单个CogNode(8K) vs 整个MemoTree视图(128K-200K)
 
 ## 🔍 快速搜索提示
 
