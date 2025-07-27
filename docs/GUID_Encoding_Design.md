@@ -368,7 +368,7 @@ public NodeId GenerateUniqueId(int maxRetries = 10)
     for (int i = 0; i < maxRetries; i++)
     {
         var guid = Guid.NewGuid();
-        var fullId = GuidEncoder.ToBase64String(guid);
+        var fullId = GuidEncoder.ToIdString(guid);
         var shortId = fullId[..4]; // 尝试4字符前缀
 
         if (!_idManager.IsShortIdTaken(shortId))
@@ -690,12 +690,97 @@ var nodeId = NodeId.GenerateBase4096CJK(); // 11字符汉字编码
 translator.RegisterId(nodeId.Value); // 检索层自动适配
 ```
 
+## NodeId.Root设计优化
+
+### 问题分析
+当前`NodeId.Root`使用硬编码字符串`"root"`存在以下问题：
+1. **Magic String**: 需要在所有处理NodeId的地方进行特殊判断
+2. **潜在冲突**: 理论上可能与用户创建的节点ID冲突
+3. **架构不一致**: 与GUID生成的其他NodeId设计不一致
+
+### 优化方案：特殊GUID根节点
+
+```csharp
+/// <summary>
+/// 认知节点的唯一标识符 - 优化版本
+/// </summary>
+public readonly struct NodeId : IEquatable<NodeId>
+{
+    public string Value { get; }
+
+    public NodeId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException("NodeId cannot be null or empty", nameof(value));
+        Value = value;
+    }
+
+    /// <summary>
+    /// 生成新的NodeId，使用统一的GUID编码
+    /// </summary>
+    public static NodeId Generate() => new(GuidEncoder.ToIdString(Guid.NewGuid()));
+
+    /// <summary>
+    /// 根节点的特殊ID - 使用Guid.Empty确保唯一性
+    /// 当前编码: AAAAAAAAAAAAAAAAAAAAAA (22个A)
+    /// </summary>
+    public static NodeId Root => new(RootValue);
+
+    /// <summary>
+    /// 根节点ID的字符串值（缓存以提高性能）
+    /// </summary>
+    private static readonly string RootValue = GuidEncoder.ToIdString(Guid.Empty);
+
+    /// <summary>
+    /// 检查是否为根节点
+    /// </summary>
+    public bool IsRoot => Value == RootValue;
+
+    // ... 其他方法保持不变
+}
+```
+
+### 优化效果
+1. **消除Magic String**: 根节点ID也使用GUID格式，保持一致性
+2. **零冲突风险**: Guid.Empty永远不会与Guid.NewGuid()冲突
+3. **简化验证**: 无需特殊处理"root"字符串
+4. **保持兼容**: 通过GuidEncoder统一编码，支持未来格式升级
+
+### 迁移策略
+```csharp
+public static class NodeIdRootMigration
+{
+    private static readonly string OldRootValue = "root";
+    private static readonly string NewRootValue = GuidEncoder.ToIdString(Guid.Empty);
+
+    /// <summary>
+    /// 检测并迁移旧的根节点ID
+    /// </summary>
+    public static NodeId MigrateRootId(string value)
+    {
+        return value == OldRootValue ? NodeId.Root : new NodeId(value);
+    }
+
+    /// <summary>
+    /// 批量迁移文件系统中的根节点引用
+    /// </summary>
+    public static async Task MigrateRootReferencesAsync(string workspaceRoot)
+    {
+        // 1. 重命名根节点目录: CogNodes/root -> CogNodes/AAAAAAAAAAAAAAAAAAAAAA
+        // 2. 更新ParentChildrens/中的根节点引用
+        // 3. 更新所有节点元数据中的parent_id引用
+        // TODO: 实现具体迁移逻辑
+    }
+}
+```
+
 ## 兼容性考虑
 
 ### 向后兼容
 - 保持现有12位十六进制ID的解析能力
 - 提供ID格式检测和自动转换工具
 - 数据迁移脚本和策略
+- **新增**: 支持旧"root"字符串到新根节点ID的自动迁移
 
 ### 跨系统兼容
 - 确保生成的ID在文件系统中安全使用

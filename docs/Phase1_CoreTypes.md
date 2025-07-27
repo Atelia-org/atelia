@@ -20,10 +20,11 @@
 public static class GuidEncoder
 {
     /// <summary>
-    /// 将GUID编码为字符串表示
+    /// 将GUID编码为ID字符串表示
     /// 当前实现：Base64编码，移除末尾填充，生成22个字符
+    /// 未来可切换为Base4096-CJK编码，生成11个汉字字符
     /// </summary>
-    public static string ToBase64String(Guid guid)
+    public static string ToIdString(Guid guid)
     {
         var bytes = guid.ToByteArray();
         var base64 = Convert.ToBase64String(bytes);
@@ -31,9 +32,9 @@ public static class GuidEncoder
     }
 
     /// <summary>
-    /// 从字符串解码回GUID（用于调试和验证）
+    /// 从ID字符串解码回GUID（用于调试和验证）
     /// </summary>
-    public static Guid FromBase64String(string encoded)
+    public static Guid FromIdString(string encoded)
     {
         if (encoded.Length != 22)
             throw new ArgumentException($"Invalid encoded GUID length: {encoded.Length}, expected 22");
@@ -42,6 +43,18 @@ public static class GuidEncoder
         var bytes = Convert.FromBase64String(withPadding);
         return new Guid(bytes);
     }
+
+    /// <summary>
+    /// 将GUID编码为字符串表示（已弃用，使用ToIdString代替）
+    /// </summary>
+    [Obsolete("Use ToIdString instead for better abstraction")]
+    public static string ToBase64String(Guid guid) => ToIdString(guid);
+
+    /// <summary>
+    /// 从字符串解码回GUID（已弃用，使用FromIdString代替）
+    /// </summary>
+    [Obsolete("Use FromIdString instead for better abstraction")]
+    public static Guid FromBase64String(string encoded) => FromIdString(encoded);
 
     /// <summary>
     /// 检测编码格式类型（用于未来多格式支持）
@@ -75,26 +88,66 @@ public enum GuidEncodingType
 ```csharp
 /// <summary>
 /// 认知节点的唯一标识符
+/// 使用统一的GUID编码策略，包括根节点的特殊处理
 /// </summary>
 public readonly struct NodeId : IEquatable<NodeId>
 {
     public string Value { get; }
-    
+
     public NodeId(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
             throw new ArgumentException("NodeId cannot be null or empty", nameof(value));
         Value = value;
     }
-    
-    public static NodeId Generate() => new(GuidEncoder.ToBase64String(Guid.NewGuid()));
-    public static NodeId Root => new("root");
-    
+
+    /// <summary>
+    /// 生成新的NodeId，使用统一的GUID编码
+    /// </summary>
+    public static NodeId Generate() => new(GuidEncoder.ToIdString(Guid.NewGuid()));
+
+    /// <summary>
+    /// 根节点的特殊ID - 使用Guid.Empty确保唯一性
+    /// 当前编码结果: AAAAAAAAAAAAAAAAAAAAAA (22个A字符)
+    /// 优势: 1) 零冲突风险 2) 格式一致性 3) 简化验证逻辑
+    /// </summary>
+    public static NodeId Root => new(RootValue);
+
+    /// <summary>
+    /// 根节点ID的字符串值（缓存以提高性能）
+    /// </summary>
+    private static readonly string RootValue = GuidEncoder.ToIdString(Guid.Empty);
+
+    /// <summary>
+    /// 检查当前NodeId是否为根节点
+    /// </summary>
+    public bool IsRoot => Value == RootValue;
+
+    /// <summary>
+    /// 验证ID格式是否有效（支持向后兼容）
+    /// </summary>
+    public static bool IsValidFormat(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        // 检测编码类型并验证
+        var encodingType = GuidEncoder.DetectEncodingType(value);
+        if (encodingType != GuidEncodingType.Unknown)
+            return true;
+
+        // 兼容旧的"root"字符串（迁移期间）
+        if (value == "root")
+            return true;
+
+        return false;
+    }
+
     public bool Equals(NodeId other) => Value == other.Value;
     public override bool Equals(object? obj) => obj is NodeId other && Equals(other);
     public override int GetHashCode() => Value.GetHashCode();
     public override string ToString() => Value;
-    
+
     public static implicit operator string(NodeId nodeId) => nodeId.Value;
     public static explicit operator NodeId(string value) => new(value);
 }
@@ -117,7 +170,7 @@ public readonly struct RelationId : IEquatable<RelationId>
         Value = value;
     }
 
-    public static RelationId Generate() => new(GuidEncoder.ToBase64String(Guid.NewGuid()));
+    public static RelationId Generate() => new(GuidEncoder.ToIdString(Guid.NewGuid()));
 
     public bool Equals(RelationId other) => Value == other.Value;
     public override bool Equals(object? obj) => obj is RelationId other && Equals(other);

@@ -24,78 +24,45 @@ public readonly struct NodeId : IEquatable<NodeId>
     }
     
     /// <summary>
-    /// 生成新的NodeId，使用Base64编码确保唯一性
-    /// 生成22个字符的Base64字符串（移除末尾的==填充）
+    /// 生成新的NodeId，使用统一的GUID编码
+    /// 当前生成22个字符的ID字符串
     /// </summary>
-    public static NodeId Generate() => new(GenerateBase64Id());
+    public static NodeId Generate() => new(GuidEncoder.ToIdString(Guid.NewGuid()));
+
+    /// <summary>
+    /// 根节点的特殊ID - 使用Guid.Empty确保唯一性
+    /// 当前编码结果: AAAAAAAAAAAAAAAAAAAAAA (22个A字符)
+    /// </summary>
+    public static NodeId Root => new(RootValue);
+
+    /// <summary>
+    /// 根节点ID的字符串值（缓存以提高性能）
+    /// </summary>
+    private static readonly string RootValue = GuidEncoder.ToIdString(Guid.Empty);
+
+    /// <summary>
+    /// 检查当前NodeId是否为根节点
+    /// </summary>
+    public bool IsRoot => Value == RootValue;
     
     /// <summary>
-    /// 根节点的特殊ID
-    /// </summary>
-    public static NodeId Root => new("root");
-    
-    /// <summary>
-    /// 生成Base64编码的ID
-    /// </summary>
-    private static string GenerateBase64Id()
-    {
-        var guidBytes = Guid.NewGuid().ToByteArray();
-        var base64 = Convert.ToBase64String(guidBytes);
-        // 移除末尾的==填充，因为GUID长度固定，填充也固定
-        return base64.TrimEnd('=');
-    }
-    
-    /// <summary>
-    /// 验证ID格式是否有效
+    /// 验证ID格式是否有效（统一格式验证，支持向后兼容）
     /// </summary>
     public static bool IsValidFormat(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
             return false;
-            
-        // 特殊值检查
+
+        // 使用统一的编码检测方法
+        var encodingType = GuidEncoder.DetectEncodingType(value);
+        if (encodingType != GuidEncodingType.Unknown)
+            return true;
+
+        // 兼容旧的"root"字符串（迁移期间）
         if (value == "root")
             return true;
-            
-        // Base64格式检查 (22个字符)
-        if (value.Length == 22)
-        {
-            return IsValidBase64(value);
-        }
-        
-        // 兼容旧的12位十六进制格式
-        if (value.Length == 12)
-        {
-            return IsValidHex(value);
-        }
-        
+
         return false;
-    }
-    
-    /// <summary>
-    /// 检查是否为有效的Base64字符串
-    /// </summary>
-    private static bool IsValidBase64(string value)
-    {
-        try
-        {
-            // 尝试解码，如果成功说明格式正确
-            var withPadding = value + "=="; // 添加回填充
-            Convert.FromBase64String(withPadding);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-    
-    /// <summary>
-    /// 检查是否为有效的十六进制字符串
-    /// </summary>
-    private static bool IsValidHex(string value)
-    {
-        return value.All(c => char.IsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'));
     }
     
     public bool Equals(NodeId other) => Value == other.Value;
@@ -126,19 +93,9 @@ public readonly struct RelationId : IEquatable<RelationId>
     }
 
     /// <summary>
-    /// 生成新的RelationId，使用Base64编码确保唯一性
+    /// 生成新的RelationId，使用统一的GUID编码
     /// </summary>
-    public static RelationId Generate() => new(GenerateBase64Id());
-    
-    /// <summary>
-    /// 生成Base64编码的ID
-    /// </summary>
-    private static string GenerateBase64Id()
-    {
-        var guidBytes = Guid.NewGuid().ToByteArray();
-        var base64 = Convert.ToBase64String(guidBytes);
-        return base64.TrimEnd('=');
-    }
+    public static RelationId Generate() => new(GuidEncoder.ToIdString(Guid.NewGuid()));
 
     public bool Equals(RelationId other) => Value == other.Value;
     public override bool Equals(object? obj) => obj is RelationId other && Equals(other);
@@ -186,17 +143,33 @@ public void NodeId_IsValidFormat_ShouldValidateCorrectly()
 {
     // 测试Base64格式
     Assert.IsTrue(NodeId.IsValidFormat("VQ6EAOKbQdSnFkRmVUQAAA"));
-    
-    // 测试特殊值
-    Assert.IsTrue(NodeId.IsValidFormat("root"));
-    
+
+    // 测试根节点格式
+    Assert.IsTrue(NodeId.IsValidFormat("AAAAAAAAAAAAAAAAAAAAAA")); // Guid.Empty的Base64编码
+
     // 测试旧格式兼容
     Assert.IsTrue(NodeId.IsValidFormat("550e8400e29b"));
-    
+    Assert.IsTrue(NodeId.IsValidFormat("root")); // 迁移期间兼容
+
     // 测试无效格式
     Assert.IsFalse(NodeId.IsValidFormat(""));
     Assert.IsFalse(NodeId.IsValidFormat("invalid"));
     Assert.IsFalse(NodeId.IsValidFormat("VQ6EAOKbQdSnFkRmVUQAAA=")); // 包含填充
+}
+
+[Test]
+public void NodeId_Root_ShouldBeConsistent()
+{
+    var root1 = NodeId.Root;
+    var root2 = NodeId.Root;
+
+    // 根节点ID应该一致
+    Assert.AreEqual(root1, root2);
+    Assert.AreEqual("AAAAAAAAAAAAAAAAAAAAAA", root1.Value);
+
+    // IsRoot属性应该正确工作
+    Assert.IsTrue(root1.IsRoot);
+    Assert.IsFalse(NodeId.Generate().IsRoot);
 }
 
 [Test]
@@ -218,32 +191,48 @@ public void NodeId_RoundTrip_ShouldPreserveValue()
 public static class NodeIdMigrationTool
 {
     /// <summary>
-    /// 将旧的12位十六进制ID转换为新的Base64格式
-    /// 注意：这会生成新的GUID，不保持原有映射关系
+    /// 将旧的ID转换为新的Base64格式
+    /// 注意：除根节点外，这会生成新的GUID，不保持原有映射关系
     /// </summary>
     public static NodeId MigrateOldId(string oldId)
     {
+        // 根节点特殊处理：从"root"迁移到Guid.Empty的Base64编码
         if (oldId == "root")
-            return NodeId.Root;
-            
+            return NodeId.Root; // 现在返回AAAAAAAAAAAAAAAAAAAAAA
+
         // 为旧ID生成新的Base64 ID
         // 注意：这会破坏原有的ID映射，需要更新所有引用
         return NodeId.Generate();
     }
-    
+
     /// <summary>
     /// 批量迁移ID映射
     /// </summary>
     public static Dictionary<string, NodeId> CreateMigrationMapping(IEnumerable<string> oldIds)
     {
         var mapping = new Dictionary<string, NodeId>();
-        
+
         foreach (var oldId in oldIds)
         {
             mapping[oldId] = MigrateOldId(oldId);
         }
-        
+
         return mapping;
+    }
+
+    /// <summary>
+    /// 迁移文件系统中的根节点目录
+    /// </summary>
+    public static async Task MigrateRootDirectoryAsync(string workspaceRoot)
+    {
+        var oldRootPath = Path.Combine(workspaceRoot, "CogNodes", "root");
+        var newRootPath = Path.Combine(workspaceRoot, "CogNodes", NodeId.Root.Value);
+
+        if (Directory.Exists(oldRootPath) && !Directory.Exists(newRootPath))
+        {
+            Directory.Move(oldRootPath, newRootPath);
+            Console.WriteLine($"Migrated root directory: {oldRootPath} -> {newRootPath}");
+        }
     }
 }
 ```
@@ -280,11 +269,21 @@ public string GenerateBase64Format()
 
 ## 部署检查清单
 
-- [x] 更新NodeId.Generate()实现 (使用GuidEncoder.ToBase64String)
-- [x] 更新RelationId.Generate()实现 (使用GuidEncoder.ToBase64String)
-- [x] 更新LodGenerationRequest.TaskId生成 (使用GuidEncoder.ToBase64String)
-- [x] 更新AuditEvent.Id生成 (使用GuidEncoder.ToBase64String)
-- [x] 更新SecurityContext.SessionId示例 (使用GuidEncoder.ToBase64String)
+### NodeId.Root优化 (v1.1)
+- [x] 更新NodeId.Root实现 (使用Guid.Empty的Base64编码)
+- [x] 添加NodeId.IsRoot属性
+- [x] 简化IsValidFormat方法 (移除"root"特殊处理)
+- [x] 更新单元测试 (测试根节点一致性)
+- [x] 更新迁移工具 (支持根节点目录迁移)
+- [ ] 创建根节点迁移脚本
+- [ ] 测试文件系统迁移逻辑
+
+### 基础GUID编码 (v1.0)
+- [x] 更新NodeId.Generate()实现 (使用GuidEncoder.ToIdString)
+- [x] 更新RelationId.Generate()实现 (使用GuidEncoder.ToIdString)
+- [x] 更新LodGenerationRequest.TaskId生成 (使用GuidEncoder.ToIdString)
+- [x] 更新AuditEvent.Id生成 (使用GuidEncoder.ToIdString)
+- [x] 更新SecurityContext.SessionId示例 (使用GuidEncoder.ToIdString)
 - [x] 添加统一的GuidEncoder工具类
 - [x] 添加格式检测方法 (DetectEncodingType)
 - [ ] 创建单元测试

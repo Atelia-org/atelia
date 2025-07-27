@@ -331,7 +331,7 @@ public record AuditEvent
     /// <summary>
     /// 事件唯一标识符
     /// </summary>
-    public string Id { get; init; } = GuidEncoder.ToBase64String(Guid.NewGuid());
+    public string Id { get; init; } = GuidEncoder.ToIdString(Guid.NewGuid());
 
     /// <summary>
     /// 事件类型

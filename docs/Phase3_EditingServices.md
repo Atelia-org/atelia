@@ -123,7 +123,7 @@ public record LodGenerationRequest
     public LodLevel TargetLevel { get; init; }
     public string SourceContent { get; init; } = string.Empty;
     public LodLevel SourceLevel { get; init; }
-    public string TaskId { get; init; } = GuidEncoder.ToBase64String(Guid.NewGuid());
+    public string TaskId { get; init; } = GuidEncoder.ToIdString(Guid.NewGuid());
 }
 
 /// <summary>
