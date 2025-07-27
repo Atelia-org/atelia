@@ -198,7 +198,9 @@ relation_types:
 
 #### 版本控制集成
 - 每个操作可选择性地映射为Git commit
-- API设计示例: `canvas.add_node(parent, content, commit_message="Add DI analysis")`
+- API设计示例: 
+  - `canvas.CreateNodeAsync(parent, content)`
+  - `canvas.GitCommitAsync(commit_message="Add DI analysis")`
 - 支持历史回滚和分支管理
 
 #### 异步处理
