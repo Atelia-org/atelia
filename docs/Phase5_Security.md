@@ -331,7 +331,7 @@ public record AuditEvent
     /// <summary>
     /// 事件唯一标识符
     /// </summary>
-    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string Id { get; init; } = GuidEncoder.ToBase64String(Guid.NewGuid());
 
     /// <summary>
     /// 事件类型
@@ -608,7 +608,7 @@ var securityContext = new SecurityContext
     UserId = "user-123",
     UserName = "john.doe",
     Roles = new[] { "developer", "content-editor" },
-    SessionId = Guid.NewGuid().ToString(),
+    SessionId = GuidEncoder.ToBase64String(Guid.NewGuid()),
     IpAddress = "192.168.1.100",
     Claims = new Dictionary<string, object>
     {

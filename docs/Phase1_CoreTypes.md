@@ -10,6 +10,66 @@
 
 ## 1. 基础标识符类型
 
+### 1.0 GUID编码工具
+
+```csharp
+/// <summary>
+/// 统一的GUID编码工具，确保项目中所有GUID到字符串的转换使用相同的编码方式
+/// 当前使用Base64编码(22字符)，未来可无缝切换到Base4096-CJK编码(11字符)
+/// </summary>
+public static class GuidEncoder
+{
+    /// <summary>
+    /// 将GUID编码为字符串表示
+    /// 当前实现：Base64编码，移除末尾填充，生成22个字符
+    /// </summary>
+    public static string ToBase64String(Guid guid)
+    {
+        var bytes = guid.ToByteArray();
+        var base64 = Convert.ToBase64String(bytes);
+        return base64.TrimEnd('='); // 移除固定的==填充
+    }
+
+    /// <summary>
+    /// 从字符串解码回GUID（用于调试和验证）
+    /// </summary>
+    public static Guid FromBase64String(string encoded)
+    {
+        if (encoded.Length != 22)
+            throw new ArgumentException($"Invalid encoded GUID length: {encoded.Length}, expected 22");
+
+        var withPadding = encoded + "=="; // 添加回填充
+        var bytes = Convert.FromBase64String(withPadding);
+        return new Guid(bytes);
+    }
+
+    /// <summary>
+    /// 检测编码格式类型（用于未来多格式支持）
+    /// </summary>
+    public static GuidEncodingType DetectEncodingType(string encoded)
+    {
+        return encoded.Length switch
+        {
+            22 => GuidEncodingType.Base64,
+            11 when encoded.All(c => c >= '\u4e00' && c <= '\u9fff') => GuidEncodingType.Base4096CJK,
+            12 when encoded.All(c => char.IsDigit(c) || (c >= 'a' && c <= 'f')) => GuidEncodingType.HexTruncated,
+            _ => GuidEncodingType.Unknown
+        };
+    }
+}
+
+/// <summary>
+/// GUID编码类型枚举
+/// </summary>
+public enum GuidEncodingType
+{
+    Unknown,
+    Base64,
+    Base4096CJK,
+    HexTruncated // 旧的12位十六进制格式
+}
+```
+
 ### 1.1 节点标识符
 
 ```csharp
@@ -27,7 +87,7 @@ public readonly struct NodeId : IEquatable<NodeId>
         Value = value;
     }
     
-    public static NodeId Generate() => new(Guid.NewGuid().ToString("N")[..12]);
+    public static NodeId Generate() => new(GuidEncoder.ToBase64String(Guid.NewGuid()));
     public static NodeId Root => new("root");
     
     public bool Equals(NodeId other) => Value == other.Value;
@@ -57,7 +117,7 @@ public readonly struct RelationId : IEquatable<RelationId>
         Value = value;
     }
 
-    public static RelationId Generate() => new(Guid.NewGuid().ToString("N")[..12]);
+    public static RelationId Generate() => new(GuidEncoder.ToBase64String(Guid.NewGuid()));
 
     public bool Equals(RelationId other) => Value == other.Value;
     public override bool Equals(object? obj) => obj is RelationId other && Equals(other);
