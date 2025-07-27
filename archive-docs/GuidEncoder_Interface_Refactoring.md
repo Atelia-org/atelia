@@ -54,18 +54,6 @@ public static class GuidEncoder
         var bytes = Convert.FromBase64String(withPadding);
         return new Guid(bytes);
     }
-
-    /// <summary>
-    /// 将GUID编码为字符串表示（已弃用，使用ToIdString代替）
-    /// </summary>
-    [Obsolete("Use ToIdString instead for better abstraction")]
-    public static string ToBase64String(Guid guid) => ToIdString(guid);
-
-    /// <summary>
-    /// 从字符串解码回GUID（已弃用，使用FromIdString代替）
-    /// </summary>
-    [Obsolete("Use FromIdString instead for better abstraction")]
-    public static Guid FromBase64String(string encoded) => FromIdString(encoded);
 }
 ```
 

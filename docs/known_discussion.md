@@ -58,32 +58,6 @@
 
 ---
 
-### **1. `Phase1_CoreTypes.md` - 核心数据类型**
-
-#### **问题 1: `NodeId` 的生成方式存在风险**
-
-- **问题描述**: `NodeId.Generate()` 实现为 `new(Guid.NewGuid().ToString("N")[..12])`。截取GUID的前12位会**严重破坏其全局唯一性**。虽然12位十六进制字符（48位）的冲突概率在小规模数据下很低，但随着节点数量增长到数十万或数百万级别，"生日问题"效应将使冲突概率变得不可忽视。这是一个潜在的数据损坏风险。
-- **候选解决方案**:
-    1.  **（推荐）使用完整GUID**: 直接使用 `Guid.NewGuid().ToString("N")` (32位字符)。这是最简单、最健壮的方案。现代文件系统对长文件名支持良好，为了数据完整性，这点长度开销是值得的。
-    2.  **（备选）使用短ID生成库**: 如果确实需要更短的ID，可以引入专门的库，如 `shortid` 或 `nanoid` 的.NET实现。它们被设计用于在一定冲突概率下生成URL友好的短ID。
-    3.  **（备选）使用Base64编码GUID**: `Convert.ToBase64String(Guid.NewGuid().ToByteArray())` 可以将GUID压缩到约22个字符，且是URL安全的。
-
-#### **问题 2: `NodeId.Root` 的 "magic string" 设计**
-
-- **问题描述**: `NodeId.Root` 被硬编码为字符串 `"root"`。这引入了一个特殊值，需要在所有处理 `NodeId` 的地方进行特殊判断，并且可能与用户未来创建的、ID恰好为`"root"`的节点冲突（尽管概率低）。
-- **候选解决方案**:
-    1.  **（推荐）使用特殊GUID**: 将Root ID定义为 `new(Guid.Empty.ToString())`。这保证了它不会与任何 `Guid.NewGuid()` 生成的ID冲突，使其成为一个真正唯一的、保留的标识符。
-    2.  **（备选）逻辑上的根，而非ID上的根**: 在内存模型中，树结构本身可以有一个 `RootNode` 属性，而不需要一个特殊的ID。磁盘上，`ParentChildrens/` 目录下的根文件可以有一个特殊的文件名，如 `_root.yaml` 或 `root.yaml`，在加载时进行识别，而不是依赖ID值。
-
-#### **问题 3: `NodeMetadata.CustomProperties` 的类型安全**
-
-- **问题描述**: `IReadOnlyDictionary<string, object> CustomProperties` 非常灵活，但完全放弃了类型安全。这会导致频繁的类型转换、`is/as` 检查和潜在的 `InvalidCastException`，并且序列化/反序列化（特别是对于复杂对象）可能变得复杂。
-- **候选解决方案**:
-    1.  **（MVP适用）维持现状，但文档化约定**: 对于MVP，`object` 是可接受的。但应在文档中明确约定支持的类型（如基本类型、`string`、`DateTime`），并规定所有消费者必须进行安全的类型检查。
-    2.  **（长期方案）使用 `JsonElement`**: 如果使用 `System.Text.Json`，可以将类型改为 `IReadOnlyDictionary<string, JsonElement>`。这保留了JSON的结构化信息，并提供了安全的类型提取方法（如 `TryGetString`, `TryGetInt32`），避免了硬编码的 `(string)obj` 转换。
-
----
-
 ### **2. `Phase1_Exceptions.md` - 异常类型**
 
 #### **问题 1: 静态工厂方法中的不安全类型转换**

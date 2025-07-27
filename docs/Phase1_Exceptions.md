@@ -1,11 +1,11 @@
 # MemoTree 异常类型定义 (Phase 1)
 
-> **版本**: v1.3
+> **版本**: v1.4
 > **创建日期**: 2025-07-24
-> **更新日期**: 2025-07-25 (添加MVP Fast Fail策略)
+> **更新日期**: 2025-07-27 (WithContext类型安全重构)
 > **基于**: Core_Types_Design.md 第7节
 > **依赖**: [Phase1_CoreTypes.md](Phase1_CoreTypes.md)
-> **状态**: ✅ MVP策略确定
+> **状态**: ✅ 类型安全优化完成
 
 ## 概述
 
@@ -20,6 +20,14 @@
 - **延迟复杂处理**，完整的异常处理和恢复机制在Phase 5实现
 
 这种策略牺牲了部分用户体验的平滑性，换取了开发效率和代码可维护性的显著提升。
+
+**🛡️ v1.4 类型安全重构**
+
+基于设计Review反馈，实施了WithContext方法的类型安全重构：
+- **泛型扩展方法**：将实例方法改为泛型扩展方法，确保类型安全
+- **消除as转换**：移除静态工厂方法中的`as`类型转换，避免潜在的NullReferenceException
+- **编译时检查**：通过泛型约束在编译时确保类型正确性
+- **向后兼容**：保留原实例方法并标记为Obsolete，提供平滑迁移路径
 
 ## MVP Fast Fail策略详述
 
@@ -77,12 +85,35 @@ public abstract class MemoTreeException : Exception
         : base(message, innerException) { }
 
     /// <summary>
-    /// 添加上下文信息
+    /// 添加上下文信息 (已弃用，请使用扩展方法)
     /// </summary>
+    [Obsolete("Use the generic extension method WithContext<T> instead", false)]
     public MemoTreeException WithContext(string key, object? value)
     {
         Context[key] = value;
         return this;
+    }
+}
+
+/// <summary>
+/// MemoTree异常扩展方法
+/// 提供类型安全的上下文信息添加功能
+/// </summary>
+public static class MemoTreeExceptionExtensions
+{
+    /// <summary>
+    /// 添加上下文信息 (类型安全版本)
+    /// </summary>
+    /// <typeparam name="T">异常类型，必须继承自MemoTreeException</typeparam>
+    /// <param name="exception">异常实例</param>
+    /// <param name="key">上下文键</param>
+    /// <param name="value">上下文值</param>
+    /// <returns>原异常实例，支持链式调用</returns>
+    public static T WithContext<T>(this T exception, string key, object? value)
+        where T : MemoTreeException
+    {
+        exception.Context[key] = value;
+        return exception;
     }
 }
 ```
@@ -165,7 +196,7 @@ public class StorageException : MemoTreeException
     /// </summary>
     public static StorageException ConnectionFailed(string connectionString, Exception innerException)
         => new StorageException("Failed to connect to storage", innerException)
-            .WithContext("ConnectionString", connectionString) as StorageException;
+            .WithContext("ConnectionString", connectionString);
 
     /// <summary>
     /// 存储操作超时异常
@@ -173,7 +204,7 @@ public class StorageException : MemoTreeException
     public static StorageException OperationTimeout(string operation, TimeSpan timeout)
         => new StorageException($"Storage operation '{operation}' timed out after {timeout}")
             .WithContext("Operation", operation)
-            .WithContext("Timeout", timeout) as StorageException;
+            .WithContext("Timeout", timeout);
 }
 ```
 
@@ -201,7 +232,7 @@ public class RetrievalException : MemoTreeException
     public static RetrievalException InvalidQuery(string query, string reason)
         => new RetrievalException($"Invalid search query: {reason}")
             .WithContext("Query", query)
-            .WithContext("Reason", reason) as RetrievalException;
+            .WithContext("Reason", reason);
 
     /// <summary>
     /// 搜索结果过多异常
@@ -209,7 +240,7 @@ public class RetrievalException : MemoTreeException
     public static RetrievalException TooManyResults(int resultCount, int maxAllowed)
         => new RetrievalException($"Search returned {resultCount} results, maximum allowed is {maxAllowed}")
             .WithContext("ResultCount", resultCount)
-            .WithContext("MaxAllowed", maxAllowed) as RetrievalException;
+            .WithContext("MaxAllowed", maxAllowed);
 }
 ```
 
@@ -236,14 +267,14 @@ public class VersionControlException : MemoTreeException
     /// </summary>
     public static VersionControlException CommitConflict(string conflictDetails)
         => new VersionControlException($"Commit conflict detected: {conflictDetails}")
-            .WithContext("ConflictDetails", conflictDetails) as VersionControlException;
+            .WithContext("ConflictDetails", conflictDetails);
 
     /// <summary>
     /// 分支不存在异常
     /// </summary>
     public static VersionControlException BranchNotFound(string branchName)
         => new VersionControlException($"Branch '{branchName}' not found")
-            .WithContext("BranchName", branchName) as VersionControlException;
+            .WithContext("BranchName", branchName);
 }
 ```
 
@@ -319,6 +350,16 @@ catch (StorageException ex)
     logger.LogError(ex, "Storage error occurred");
     throw; // 重新抛出让上层处理
 }
+
+// 类型安全的WithContext使用示例
+var customException = new StorageException("Database connection failed")
+    .WithContext("DatabaseName", "MemoTreeDB")
+    .WithContext("ConnectionTimeout", TimeSpan.FromSeconds(30))
+    .WithContext("RetryCount", 3);
+
+// 静态工厂方法自动返回正确类型，无需类型转换
+var timeoutException = StorageException.OperationTimeout("SaveNode", TimeSpan.FromMinutes(5));
+var connectionException = StorageException.ConnectionFailed("Server=localhost;Database=MemoTree", innerEx);
 ```
 
 ---

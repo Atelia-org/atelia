@@ -1,7 +1,7 @@
 # MemoTree项目LLM索引
 
 > **目的**: 为LLM提供项目整体认知的快速索引
-> **更新**: 2025-07-27 (CustomProperties类型安全优化)
+> **更新**: 2025-07-27 (WithContext异常处理类型安全重构)
 > **状态**: 正在逐项处理设计Review中得到的反馈
 
 ## 🎯 项目核心概念
@@ -50,13 +50,14 @@
 - `DefaultConfigurationValidator` - 默认配置验证器实现，提供标准的配置验证逻辑
 
 #### Phase1_Exceptions.md (异常处理体系)
-(243行) 异常类型定义、错误处理
+(365行) 异常类型定义、错误处理，v1.4类型安全重构
 - `MemoTreeException` - 所有MemoTree异常的抽象基类，提供错误代码和上下文支持
+- `MemoTreeExceptionExtensions` - 异常扩展方法类，提供类型安全的WithContext<T>泛型扩展方法
 - `NodeNotFoundException` - 节点不存在异常，包含未找到的节点ID信息
 - `NodeContentNotFoundException` - 节点内容不存在异常，包含节点ID和LOD级别信息
-- `StorageException` - 存储操作失败异常，封装底层存储错误
-- `RetrievalException` - 检索操作失败异常，处理搜索和查询错误
-- `VersionControlException` - 版本控制操作失败异常，处理Git相关错误
+- `StorageException` - 存储操作失败异常，封装底层存储错误，静态工厂方法已优化类型安全
+- `RetrievalException` - 检索操作失败异常，处理搜索和查询错误，静态工厂方法已优化类型安全
+- `VersionControlException` - 版本控制操作失败异常，处理Git相关错误，静态工厂方法已优化类型安全
 - `ExceptionHandlingStrategy` - 异常处理策略枚举，MVP阶段采用Fast Fail模式
 
 #### Phase1_Configuration.md (配置管理系统)
@@ -375,7 +376,7 @@
 - **总行数**: 6,627行 + 设计文档
 - **完成状态**: 🎉 100% 完成 (核心架构)
 - **类型索引**: ✅ 重构完成 (150+个类型)
-- **最后更新**: 2025-07-27 (CustomProperties类型安全优化)
+- **最后更新**: 2025-07-27 (WithContext异常处理类型安全重构)
 - **原始文档**: Core_Types_Design.md (3116行) → 成功拆分成若干Phase_XXX.md。已删除，git中有旧档。
 - **重构成果**:
   - ✅ **类型索引重构完成**: 建立完整的类型定义索引体系，实现"一次加载，全局认知"
@@ -395,6 +396,7 @@
   - **🎯 NodeId.Root优化 (v1.3)**: 解决Magic String问题，将根节点ID从硬编码"root"改为Guid.Empty的Base64编码"AAAAAAAAAAAAAAAAAAAAAA"，消除冲突风险，提升架构一致性，简化验证逻辑
   - **🔧 GuidEncoder接口化 (v1.4)**: 将ToBase64String重构为ToIdString抽象接口，消除方法名与具体算法的绑定，为未来切换Base4096-CJK等编码算法提供无缝支持，保持向后兼容
   - **🛡️ CustomProperties类型安全优化 (v1.5)**: 针对NodeMetadata.CustomProperties和NodeRelation.Properties的类型安全问题，提供MVP阶段的安全访问扩展方法(CustomPropertiesExtensions)，明确类型约定，规划Phase 5的JsonElement升级方案，在保持灵活性的同时显著提升类型安全性
+  - **🔧 WithContext异常处理类型安全重构 (v1.6)**: 基于设计Review反馈，将WithContext实例方法重构为泛型扩展方法，消除静态工厂方法中的`as`类型转换风险，通过泛型约束实现编译时类型检查，避免潜在的NullReferenceException，提升异常处理的类型安全性和代码可维护性
 
 ## 🔍 快速搜索提示
 

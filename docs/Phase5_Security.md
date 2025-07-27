@@ -618,7 +618,7 @@ var securityContext = new SecurityContext
     UserId = "user-123",
     UserName = "john.doe",
     Roles = new[] { "developer", "content-editor" },
-    SessionId = GuidEncoder.ToBase64String(Guid.NewGuid()),
+    SessionId = GuidEncoder.ToBaseIdString(Guid.NewGuid()),
     IpAddress = "192.168.1.100",
     Claims = new Dictionary<string, object>
     {
