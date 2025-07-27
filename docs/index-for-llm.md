@@ -1,7 +1,7 @@
 # MemoTree项目LLM索引
 
 > **目的**: 为LLM提供项目整体认知的快速索引
-> **更新**: 2025-07-27 (解决‘配置项冗余和职责不清’的问题)
+> **更新**: 2025-07-27 (Git命令直接映射)
 > **状态**: 正在逐项处理设计Review中得到的反馈
 
 ## 🎯 项目核心概念
@@ -190,17 +190,24 @@
 - 版本控制集成 (Git操作、提交管理)
 
 #### Phase4_ToolCallAPI.md (LLM工具调用接口)
-(454行) LLM工具调用接口、请求响应类型
-- `ILlmToolCallService` - LLM工具调用服务接口，提供节点操作和搜索的API端点
+(908行) LLM工具调用接口、请求响应类型，v2.1 Git命令直接映射
+- `ILlmToolCallService` - LLM工具调用服务接口，提供节点操作、搜索和Git命令的直接映射API
 - `ToolCallResult` - 工具调用结果记录，包含操作成功状态和返回数据
 - `ExpandNodeRequest` - 展开节点请求记录，封装节点展开操作的参数
 - `CollapseNodeRequest` - 折叠节点请求记录，封装节点折叠操作的参数
-- `CreateNodeRequest` - 创建节点请求记录，包含新节点的类型、标题和内容信息
-- `UpdateNodeRequest` - 更新节点请求记录，封装节点内容和元数据的更新参数
+- `CreateNodeRequest` - 创建节点请求记录，包含新节点的类型、标题和内容信息（编辑时落盘但不commit）
+- `UpdateNodeRequest` - 更新节点请求记录，封装节点内容和元数据的更新参数（编辑时落盘但不commit）
 - `SearchNodesRequest` - 搜索节点请求记录，包含搜索查询和过滤条件
 - `SearchType` - 搜索类型枚举，定义全文、语义、标签等不同搜索模式
 - `SearchScope` - 搜索范围枚举，定义当前视图、全局等不同搜索范围
-- `CommitChangesRequest` - 提交变更请求记录，封装Git提交操作的参数信息
+- `PendingChange` - 未提交变更记录，表示工作区中已修改但未提交的节点变更
+- `NodeChangeDetails` - 节点变更详情记录，包含节点的具体变更内容和差异信息
+- `PropertyChange<T>` - 属性变更记录，记录属性的前后值变化
+- `RelationChange` - 关系变更记录，记录节点关系的变更信息
+- `ChangeType` - 变更类型枚举，定义新增、修改、删除、移动等变更操作
+- `GitDiffRequest` - Git差异查看请求，等同于git diff命令，用于获取节点的详细变更内容
+- `GitCommitRequest` - Git提交请求，等同于git commit命令，用于将工作区变更提交到仓库
+- `GitCheckoutRequest` - Git检出请求，等同于git checkout命令，用于丢弃指定节点的未提交变更
 - `UpdateMode` - 更新模式枚举，定义替换、追加、插入等不同更新方式
 - `CommitAuthor` - 提交作者记录，包含Git提交的作者姓名和邮箱信息
 
@@ -227,13 +234,13 @@
 - `UserPreferences` - 用户偏好记录，管理用户的个性化配置和默认设置
 
 #### Phase4_VersionControl.md (版本控制集成)
-(229行) Git版本控制集成、提交管理
+(291行) Git版本控制集成、提交管理，与Git命令直接映射
 - `IVersionControlService` - 版本控制服务接口，提供Git操作和分支管理功能
 - `CommitInfo` - 提交信息记录，包含Git提交的详细信息和变更统计
 - `VersionControlException` - 版本控制异常类，处理Git操作中的错误情况
-- `CommitChangesRequest` - 提交变更请求记录，封装Git提交的参数和选项
-- `CreateNodeRequest` - 创建节点请求记录，用于版本控制上下文中的节点创建
-- `UpdateNodeRequest` - 更新节点请求记录，用于版本控制上下文中的节点更新
+- `GitCommitRequest` - Git提交请求记录，等同于git commit命令，封装Git提交的参数和选项
+- `CreateNodeRequest` - 创建节点请求记录，用于版本控制上下文中的节点创建（不包含CommitMessage）
+- `UpdateNodeRequest` - 更新节点请求记录，用于版本控制上下文中的节点更新（不包含CommitMessage）
 
 ### Phase5: 企业特性层 (Enterprise)
 - 安全权限管理 (RBAC、审计日志、安全策略)
@@ -372,11 +379,11 @@
 
 ## 📋 项目状态
 
-- **总文档数**: 22个 (新增GuidEncoder接口化重构)
-- **总行数**: 6,627行 + 设计文档
+- **总文档数**: 22个 (Git命令直接映射)
+- **总行数**: 7,099行 + 设计文档 (修复语法错误和类型一致性)
 - **完成状态**: 🎉 100% 完成 (核心架构)
-- **类型索引**: ✅ 重构完成 (150+个类型)
-- **最后更新**: 2025-07-27 (约束验证逻辑优化)
+- **类型索引**: ✅ 重构完成 (160+个类型)
+- **最后更新**: 2025-07-27 (Git命令直接映射)
 - **原始文档**: Core_Types_Design.md (3116行) → 成功拆分成若干Phase_XXX.md。已删除，git中有旧档。
 - **重构成果**:
   - ✅ **类型索引重构完成**: 建立完整的类型定义索引体系，实现"一次加载，全局认知"
@@ -399,6 +406,8 @@
   - **🔧 WithContext异常处理类型安全重构 (v1.6)**: 基于设计Review反馈，将WithContext实例方法重构为泛型扩展方法，消除静态工厂方法中的`as`类型转换风险，通过泛型约束实现编译时类型检查，避免潜在的NullReferenceException，提升异常处理的类型安全性和代码可维护性
   - **🏗️ 配置职责分离优化 (v1.7)**: 基于设计Review反馈，移除RelationOptions中的冗余路径配置项(HierarchyStorageDirectory/RelationStorageDirectory)，明确职责分离：MemoTreeOptions负责物理布局，RelationOptions负责行为逻辑，通过依赖注入组合使用，消除配置冗余和潜在冲突
   - **🔧 约束验证逻辑优化 (v1.8)**: 基于设计Review反馈，重构DefaultConfigurationValidator以减少代码重复和提升可维护性，提取验证辅助方法统一错误处理模式，保持MVP阶段零依赖的简单性，规划Phase 5引入FluentValidation支持复杂验证场景
+  - **🔄 Git风格工作流重构 (v2.0)**: 基于用户反馈采用更符合Git哲学的设计，编辑操作落盘但不commit，新增GetPendingChanges/GetNodeChanges/Commit/DiscardChanges等API，类似git status/diff/commit/checkout，直接向LLM暴露Git概念，支持选择性提交和变更管理，显著提升版本控制的直观性和灵活性
+  - **🎯 Git命令直接映射 (v2.1)**: 基于用户建议将API命名与Git命令完全一致，GitStatus/GitDiff/GitCommit/GitCheckout等，MemoTree作为Git workspace的LLM友好映射层，将文件路径映射为GUID、文件内容映射为Markdown节点，设计简单透明，LLM理解成本极低
 
 ## 🔍 快速搜索提示
 

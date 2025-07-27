@@ -148,10 +148,10 @@ public class VersionControlException : MemoTreeException
 
 ```csharp
 /// <summary>
-/// 提交更改请求
-/// 用于LLM工具调用API中的版本控制操作
+/// Git提交请求（引用自Phase4_ToolCallAPI.md）
+/// 用于版本控制服务中的Git提交操作，等同于 git commit
 /// </summary>
-public record CommitChangesRequest
+public record GitCommitRequest
 {
     /// <summary>
     /// 提交消息
@@ -159,10 +159,30 @@ public record CommitChangesRequest
     public string Message { get; init; } = string.Empty;
 
     /// <summary>
-    /// 指定要提交的节点ID列表（可选）
-    /// 如果为null，则提交所有更改
+    /// 要提交的节点ID列表（可选）
+    /// 如果为空，则提交所有未提交的变更
     /// </summary>
-    public IReadOnlyList<NodeId>? SpecificNodes { get; init; }
+    public IReadOnlyList<NodeId>? NodeIds { get; init; }
+
+    /// <summary>
+    /// 提交作者信息（可选）
+    /// </summary>
+    public CommitAuthor? Author { get; init; }
+
+    /// <summary>
+    /// 是否创建版本标签
+    /// </summary>
+    public bool CreateTag { get; init; } = false;
+
+    /// <summary>
+    /// 版本标签名称
+    /// </summary>
+    public string? TagName { get; init; }
+
+    /// <summary>
+    /// 标签描述
+    /// </summary>
+    public string? TagDescription { get; init; }
 }
 ```
 
@@ -170,22 +190,22 @@ public record CommitChangesRequest
 
 ```csharp
 /// <summary>
-/// 创建节点请求（包含版本控制信息）
+/// 创建节点请求（版本控制上下文）
+/// 编辑操作只落盘，不直接commit，符合Git工作流
 /// </summary>
 public record CreateNodeRequest
 {
     public string Title { get; init; } = string.Empty;
     public string Content { get; init; } = string.Empty;
     public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
-    
-    /// <summary>
-    /// 提交消息（用于版本控制）
-    /// </summary>
-    public string CommitMessage { get; init; } = string.Empty;
+
+    // 注意：不包含CommitMessage，编辑操作不直接commit
+    // 使用GitCommitAsync进行独立的提交操作
 }
 
 /// <summary>
-/// 更新节点请求（包含版本控制信息）
+/// 更新节点请求（版本控制上下文）
+/// 编辑操作只落盘，不直接commit，符合Git工作流
 /// </summary>
 public record UpdateNodeRequest
 {
@@ -193,11 +213,9 @@ public record UpdateNodeRequest
     public string? Content { get; init; }
     public string? Title { get; init; }
     public IReadOnlyList<string>? Tags { get; init; }
-    
-    /// <summary>
-    /// 提交消息（用于版本控制）
-    /// </summary>
-    public string CommitMessage { get; init; } = string.Empty;
+
+    // 注意：不包含CommitMessage，编辑操作不直接commit
+    // 使用GitCommitAsync进行独立的提交操作
 }
 ```
 

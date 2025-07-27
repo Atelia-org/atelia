@@ -1,10 +1,11 @@
 # MemoTree 工具调用API设计 (Phase 4)
 
-> **文档版本**: v1.0  
-> **创建日期**: 2025-07-25  
-> **依赖文档**: [Phase1_CoreTypes.md](./Phase1_CoreTypes.md), [Phase3_CoreServices.md](./Phase3_CoreServices.md)  
-> **阶段**: Phase 4 - Integration (集成层阶段)  
-> **预计行数**: ~400行
+> **文档版本**: v2.1 (Git命令直接映射)
+> **创建日期**: 2025-07-25
+> **最后更新**: 2025-07-27
+> **依赖文档**: [Phase1_CoreTypes.md](./Phase1_CoreTypes.md), [Phase3_CoreServices.md](./Phase3_CoreServices.md)
+> **阶段**: Phase 4 - Integration (集成层阶段)
+> **实际行数**: 908行
 
 ## 概述
 
@@ -69,12 +70,39 @@ public interface ILlmToolCallService
     Task<ToolCallResult> SearchNodesAsync(SearchNodesRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 提交当前会话的所有更改
+    /// Git Status - 查询当前工作区状态
+    /// 显示所有已修改但未提交的节点，等同于 git status
     /// </summary>
-    /// <param name="request">提交更改请求</param>
+    /// <param name="cancellationToken">取消令牌</param>
+    /// <returns>包含工作区状态的工具调用结果</returns>
+    Task<ToolCallResult> GitStatusAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Git Diff - 查看节点变更差异
+    /// 显示指定节点的具体变更内容，等同于 git diff
+    /// </summary>
+    /// <param name="request">差异查看请求</param>
+    /// <param name="cancellationToken">取消令牌</param>
+    /// <returns>包含变更差异的工具调用结果</returns>
+    Task<ToolCallResult> GitDiffAsync(GitDiffRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Git Commit - 提交变更到仓库
+    /// 将工作区的变更提交到Git仓库，等同于 git commit
+    /// </summary>
+    /// <param name="request">提交请求</param>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>工具调用结果</returns>
-    Task<ToolCallResult> CommitChangesAsync(CommitChangesRequest request, CancellationToken cancellationToken = default);
+    Task<ToolCallResult> GitCommitAsync(GitCommitRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Git Checkout - 丢弃工作区变更
+    /// 恢复指定节点到最后一次提交的状态，等同于 git checkout -- <file>
+    /// </summary>
+    /// <param name="request">检出请求</param>
+    /// <param name="cancellationToken">取消令牌</param>
+    /// <returns>工具调用结果</returns>
+    Task<ToolCallResult> GitCheckoutAsync(GitCheckoutRequest request, CancellationToken cancellationToken = default);
 }
 ```
 
@@ -245,10 +273,7 @@ public record CreateNodeRequest
     /// </summary>
     public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
 
-    /// <summary>
-    /// 提交消息
-    /// </summary>
-    public string CommitMessage { get; init; } = string.Empty;
+
 
     /// <summary>
     /// 初始LOD级别
@@ -296,10 +321,7 @@ public record UpdateNodeRequest
     /// </summary>
     public IReadOnlyList<string>? Tags { get; init; }
 
-    /// <summary>
-    /// 提交消息
-    /// </summary>
-    public string CommitMessage { get; init; } = string.Empty;
+
 
     /// <summary>
     /// 是否重新生成摘要
@@ -434,10 +456,203 @@ public enum SearchScope
 
 ```csharp
 /// <summary>
-/// 提交更改请求
-/// 用于将当前会话的更改持久化到存储
+/// 未提交变更信息
+/// 表示工作区中已修改但未提交的节点变更
 /// </summary>
-public record CommitChangesRequest
+public record PendingChange
+{
+    /// <summary>
+    /// 变更的节点ID
+    /// </summary>
+    public NodeId NodeId { get; init; }
+
+    /// <summary>
+    /// 节点标题
+    /// </summary>
+    public string Title { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 变更类型
+    /// </summary>
+    public ChangeType ChangeType { get; init; }
+
+    /// <summary>
+    /// 变更时间戳
+    /// </summary>
+    public DateTimeOffset Timestamp { get; init; }
+
+    /// <summary>
+    /// 变更摘要描述
+    /// </summary>
+    public string Summary { get; init; } = string.Empty;
+}
+```
+
+### 变更类型枚举
+
+```csharp
+/// <summary>
+/// 变更类型
+/// 定义节点的变更操作类型
+/// </summary>
+public enum ChangeType
+{
+    /// <summary>
+    /// 新增节点
+    /// </summary>
+    Added,
+
+    /// <summary>
+    /// 修改节点
+    /// </summary>
+    Modified,
+
+    /// <summary>
+    /// 删除节点
+    /// </summary>
+    Deleted,
+
+    /// <summary>
+    /// 移动节点（层次结构变更）
+    /// </summary>
+    Moved
+}
+```
+
+### Git Diff 请求
+
+```csharp
+/// <summary>
+/// Git Diff 请求
+/// 用于获取指定节点的变更差异，等同于 git diff
+/// </summary>
+public record GitDiffRequest
+{
+    /// <summary>
+    /// 要查看差异的节点ID（可选）
+    /// 如果为空，显示所有变更节点的差异
+    /// </summary>
+    public NodeId? NodeId { get; init; }
+
+    /// <summary>
+    /// 是否包含内容差异
+    /// </summary>
+    public bool IncludeContentDiff { get; init; } = true;
+
+    /// <summary>
+    /// 是否包含关系变更
+    /// </summary>
+    public bool IncludeRelationChanges { get; init; } = true;
+
+    /// <summary>
+    /// 是否显示简化格式
+    /// </summary>
+    public bool Brief { get; init; } = false;
+}
+```
+
+### 节点变更详情
+
+```csharp
+/// <summary>
+/// 节点变更详情
+/// 包含节点的具体变更内容和差异信息
+/// </summary>
+public record NodeChangeDetails
+{
+    /// <summary>
+    /// 节点ID
+    /// </summary>
+    public NodeId NodeId { get; init; }
+
+    /// <summary>
+    /// 变更类型
+    /// </summary>
+    public ChangeType ChangeType { get; init; }
+
+    /// <summary>
+    /// 标题变更（如果有）
+    /// </summary>
+    public PropertyChange<string>? TitleChange { get; init; }
+
+    /// <summary>
+    /// 内容变更（如果有）
+    /// </summary>
+    public PropertyChange<string>? ContentChange { get; init; }
+
+    /// <summary>
+    /// 标签变更（如果有）
+    /// </summary>
+    public PropertyChange<IReadOnlyList<string>>? TagsChange { get; init; }
+
+    /// <summary>
+    /// 关系变更列表
+    /// </summary>
+    public IReadOnlyList<RelationChange> RelationChanges { get; init; } = Array.Empty<RelationChange>();
+}
+```
+
+### 属性变更记录
+
+```csharp
+/// <summary>
+/// 属性变更记录
+/// 记录属性的前后值变化
+/// </summary>
+/// <typeparam name="T">属性类型</typeparam>
+public record PropertyChange<T>
+{
+    /// <summary>
+    /// 变更前的值
+    /// </summary>
+    public T? OldValue { get; init; }
+
+    /// <summary>
+    /// 变更后的值
+    /// </summary>
+    public T? NewValue { get; init; }
+}
+```
+
+### 关系变更记录
+
+```csharp
+/// <summary>
+/// 关系变更记录
+/// 记录节点关系的变更信息
+/// </summary>
+public record RelationChange
+{
+    /// <summary>
+    /// 关系ID
+    /// </summary>
+    public RelationId RelationId { get; init; }
+
+    /// <summary>
+    /// 变更类型
+    /// </summary>
+    public ChangeType ChangeType { get; init; }
+
+    /// <summary>
+    /// 目标节点ID
+    /// </summary>
+    public NodeId TargetNodeId { get; init; }
+
+    /// <summary>
+    /// 关系类型
+    /// </summary>
+    public RelationType RelationType { get; init; }
+}
+```
+
+### Git Commit 请求
+
+```csharp
+/// <summary>
+/// Git Commit 请求
+/// 用于将工作区变更提交到Git仓库，等同于 git commit
+/// </summary>
+public record GitCommitRequest
 {
     /// <summary>
     /// 提交消息
@@ -445,10 +660,15 @@ public record CommitChangesRequest
     public string Message { get; init; } = string.Empty;
 
     /// <summary>
-    /// 特定节点ID列表（可选）
-    /// 如果指定，则只提交这些节点的更改
+    /// 要提交的节点ID列表（可选）
+    /// 如果为空，则提交所有未提交的变更
     /// </summary>
-    public IReadOnlyList<NodeId>? SpecificNodes { get; init; }
+    public IReadOnlyList<NodeId>? NodeIds { get; init; }
+
+    /// <summary>
+    /// 提交作者信息（可选）
+    /// </summary>
+    public CommitAuthor? Author { get; init; }
 
     /// <summary>
     /// 是否创建版本标签
@@ -456,14 +676,35 @@ public record CommitChangesRequest
     public bool CreateTag { get; init; } = false;
 
     /// <summary>
-    /// 版本标签名称（当CreateTag为true时）
+    /// 版本标签名称
     /// </summary>
     public string? TagName { get; init; }
 
     /// <summary>
-    /// 提交作者信息
+    /// 标签描述
     /// </summary>
-    public CommitAuthor? Author { get; init; }
+    public string? TagDescription { get; init; }
+}
+```
+
+### Git Checkout 请求
+
+```csharp
+/// <summary>
+/// Git Checkout 请求
+/// 用于丢弃指定节点的未提交变更，等同于 git checkout -- <file>
+/// </summary>
+public record GitCheckoutRequest
+{
+    /// <summary>
+    /// 要丢弃变更的节点ID列表
+    /// </summary>
+    public IReadOnlyList<NodeId> NodeIds { get; init; } = Array.Empty<NodeId>();
+
+    /// <summary>
+    /// 是否确认丢弃（安全检查）
+    /// </summary>
+    public bool Confirmed { get; init; } = false;
 }
 ```
 
@@ -523,6 +764,126 @@ public record CommitAuthor
 }
 ```
 
+## 使用模式
+
+### MemoTree = Git Workspace 映射层
+
+MemoTree为LLM提供了Git工作区的直观映射：
+- **文件路径** → **NodeId (GUID)**
+- **文件内容** → **Markdown节点**
+- **Git命令** → **对应的API调用**
+
+### 标准Git工作流
+
+```csharp
+// 1. 编辑操作（等同于修改文件，自动落盘但不commit）
+await service.CreateNodeAsync(new CreateNodeRequest
+{
+    Title = "依赖注入模块重构",
+    Content = "重构整个依赖注入系统..."
+});
+
+await service.CreateNodeAsync(new CreateNodeRequest
+{
+    ParentId = parentNodeId,
+    Title = "接口定义",
+    Content = "定义新的服务接口..."
+});
+
+await service.UpdateNodeAsync(new UpdateNodeRequest
+{
+    NodeId = existingNodeId,
+    Content = "更新相关文档..."
+});
+
+// 2. git status - 查看工作区状态
+var statusResult = await service.GitStatusAsync();
+var changes = statusResult.Data as IReadOnlyList<PendingChange>;
+
+Console.WriteLine($"Changes not staged for commit:");
+foreach (var change in changes)
+{
+    Console.WriteLine($"  {change.ChangeType}: {change.Title} ({change.NodeId})");
+}
+
+// 3. git diff - 查看具体变更
+var diffResult = await service.GitDiffAsync(new GitDiffRequest
+{
+    NodeId = someNodeId,
+    IncludeContentDiff = true
+});
+
+// 4. git commit - 提交变更
+await service.GitCommitAsync(new GitCommitRequest
+{
+    Message = "Refactored the dependency injection module",
+    CreateTag = true,
+    TagName = "v1.2.0"
+});
+```
+
+### 选择性提交（git add + git commit）
+
+```csharp
+// 编辑多个节点（等同于修改多个文件）
+await service.CreateNodeAsync(new CreateNodeRequest { Title = "Feature A" });
+await service.CreateNodeAsync(new CreateNodeRequest { Title = "Feature B" });
+await service.UpdateNodeAsync(new UpdateNodeRequest { NodeId = nodeC, Content = "Updated C" });
+
+// git status - 查看所有变更
+var status = await service.GitStatusAsync();
+
+// 选择性提交Feature A（等同于 git add <specific-files> && git commit）
+await service.GitCommitAsync(new GitCommitRequest
+{
+    Message = "Add Feature A implementation",
+    NodeIds = new[] { featureANodeId }  // 指定要提交的节点
+});
+
+// 稍后提交其他变更（等同于 git add . && git commit）
+await service.GitCommitAsync(new GitCommitRequest
+{
+    Message = "Add Feature B and update documentation"
+    // NodeIds为空时提交所有剩余变更
+});
+```
+
+### Git命令映射表
+
+| Git命令 | MemoTree API | 说明 |
+|---------|-------------|------|
+| `git status` | `GitStatusAsync()` | 查看工作区状态 |
+| `git diff` | `GitDiffAsync()` | 查看变更差异 |
+| `git diff <file>` | `GitDiffAsync(new GitDiffRequest { NodeId = nodeId })` | 查看特定节点差异 |
+| `git commit -m "msg"` | `GitCommitAsync(new GitCommitRequest { Message = "msg" })` | 提交所有变更 |
+| `git commit <files> -m "msg"` | `GitCommitAsync(new GitCommitRequest { NodeIds = [...], Message = "msg" })` | 选择性提交 |
+| `git checkout -- <file>` | `GitCheckoutAsync(new GitCheckoutRequest { NodeIds = [...] })` | 丢弃变更 |
+
+### 实际使用示例
+
+```csharp
+// git status
+var status = await service.GitStatusAsync();
+
+// git diff
+var allDiff = await service.GitDiffAsync(new GitDiffRequest());
+
+// git diff <specific-node>
+var nodeDiff = await service.GitDiffAsync(new GitDiffRequest
+{
+    NodeId = targetNodeId,
+    IncludeContentDiff = true,
+    IncludeRelationChanges = true
+});
+
+// git checkout -- <node>
+await service.GitCheckoutAsync(new GitCheckoutRequest
+{
+    NodeIds = new[] { unwantedNodeId },
+    Confirmed = true
+});
+```
+
 ## 实施优先级
 
 ### 高优先级 (P0)
@@ -531,9 +892,11 @@ public record CommitAuthor
 3. **基础请求类型**：ExpandNodeRequest, CollapseNodeRequest, CreateNodeRequest, UpdateNodeRequest
 
 ### 中优先级 (P1)
-1. **搜索相关类型**：SearchNodesRequest, SearchType, SearchScope
-2. **提交相关类型**：CommitChangesRequest, UpdateMode, CommitAuthor
-3. **扩展属性**：IncludeChildren, IncludeRelations等增强功能
+1. **Git命令API**：GitStatusAsync, GitDiffAsync, GitCommitAsync, GitCheckoutAsync
+2. **Git请求类型**：GitDiffRequest, GitCommitRequest, GitCheckoutRequest
+3. **变更管理类型**：PendingChange, NodeChangeDetails, PropertyChange, RelationChange, ChangeType
+4. **搜索相关类型**：SearchNodesRequest, SearchType, SearchScope
+5. **扩展属性**：IncludeChildren, IncludeRelations等增强功能
 
 ### 低优先级 (P2)
 1. **高级搜索功能**：混合搜索、语义搜索优化
