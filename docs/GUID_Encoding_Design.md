@@ -52,113 +52,245 @@ public static NodeId Generate() =>
 Base4096: 德衍丙唐宏嵩刃尘必嬷一
 ```
 
-### 方案三：智能短名称 + 碰撞检测 (候选方案)
+### 方案三：智能检索层 (正式设计)
 
 ```csharp
-public static class SmartShortIdService
+/// <summary>
+/// 智能ID检索服务 - 支持LLM使用部分ID片段进行精确查找
+/// 核心思路：维护会话中已知ID列表，通过智能检索而非复杂映射来解决部分匹配问题
+/// </summary>
+public class SmartIdResolver
 {
-    // 运行时索引：短名称 -> 完整GUID映射
-    private static readonly ConcurrentDictionary<string, string> _shortToFull = new();
-    // 反向索引：完整GUID -> 短名称映射
-    private static readonly ConcurrentDictionary<string, string> _fullToShort = new();
+    private readonly HashSet<string> _knownIds = new();
+    private readonly IIdSearchEngine _searchEngine;
 
-    public static string GetShortId(string fullGuid, int preferredLength = 6)
+    public SmartIdResolver(IIdSearchEngine searchEngine = null)
     {
-        // 如果已有映射，直接返回
-        if (_fullToShort.TryGetValue(fullGuid, out var existing))
-            return existing;
+        _searchEngine = searchEngine ?? new SimpleIdSearchEngine();
+    }
 
-        // 尝试生成短名称，碰撞时递增长度
-        for (int len = preferredLength; len <= fullGuid.Length; len++)
+    /// <summary>
+    /// 注册新的ID到检索系统
+    /// </summary>
+    public void RegisterId(string fullId)
+    {
+        if (_knownIds.Add(fullId))
         {
-            var shortId = fullGuid[..len];
-            if (_shortToFull.TryAdd(shortId, fullGuid))
+            _searchEngine.Index(fullId);
+        }
+    }
+
+    /// <summary>
+    /// 解析LLM输入的ID片段，返回完整ID
+    /// </summary>
+    public string ResolveFragment(string fragment)
+    {
+        // 精确匹配优先
+        if (_knownIds.Contains(fragment))
+            return fragment;
+
+        // 智能检索匹配
+        var matches = _searchEngine.Search(fragment);
+
+        return matches.Count switch
+        {
+            0 => HandleNotFound(fragment),
+            1 => matches[0],
+            _ => HandleAmbiguous(fragment, matches)
+        };
+    }
+
+    private string HandleNotFound(string fragment)
+    {
+        var suggestions = _searchEngine.GetSuggestions(fragment);
+        var message = $"ID fragment '{fragment}' not found.";
+        if (suggestions.Any())
+            message += $" Did you mean: {string.Join(", ", suggestions)}?";
+        throw new IdNotFoundException(message);
+    }
+
+    private string HandleAmbiguous(string fragment, List<string> matches)
+    {
+        var message = $"ID fragment '{fragment}' matches multiple IDs:\n" +
+            string.Join("\n", matches.Select((id, i) => $"{i + 1}. {id[..Math.Min(12, id.Length)]}..."));
+        throw new AmbiguousIdException(message);
+    }
+}
+
+/// <summary>
+/// ID搜索引擎接口
+/// </summary>
+public interface IIdSearchEngine
+{
+    void Index(string id);
+    List<string> Search(string query);
+    List<string> GetSuggestions(string query);
+}
+
+/// <summary>
+/// 简单的ID搜索引擎实现
+/// </summary>
+public class SimpleIdSearchEngine : IIdSearchEngine
+{
+    private readonly List<string> _ids = new();
+
+    public void Index(string id)
+    {
+        if (!_ids.Contains(id))
+            _ids.Add(id);
+    }
+
+    public List<string> Search(string query)
+    {
+        return _ids
+            .Where(id => id.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(id => id.IndexOf(query, StringComparison.OrdinalIgnoreCase)) // 前缀匹配优先
+            .ThenBy(id => id.Length) // 短ID优先
+            .ToList();
+    }
+
+    public List<string> GetSuggestions(string query)
+    {
+        return _ids
+            .Where(id => LevenshteinDistance(id, query) <= Math.Max(2, query.Length / 3))
+            .OrderBy(id => LevenshteinDistance(id, query))
+            .Take(3)
+            .ToList();
+    }
+
+    private static int LevenshteinDistance(string s1, string s2)
+    {
+        // 简化的编辑距离实现
+        if (s1.Length == 0) return s2.Length;
+        if (s2.Length == 0) return s1.Length;
+
+        var matrix = new int[s1.Length + 1, s2.Length + 1];
+
+        for (int i = 0; i <= s1.Length; i++) matrix[i, 0] = i;
+        for (int j = 0; j <= s2.Length; j++) matrix[0, j] = j;
+
+        for (int i = 1; i <= s1.Length; i++)
+        {
+            for (int j = 1; j <= s2.Length; j++)
             {
-                _fullToShort[fullGuid] = shortId;
-                return shortId;
+                int cost = s1[i - 1] == s2[j - 1] ? 0 : 1;
+                matrix[i, j] = Math.Min(Math.Min(
+                    matrix[i - 1, j] + 1,      // deletion
+                    matrix[i, j - 1] + 1),     // insertion
+                    matrix[i - 1, j - 1] + cost); // substitution
             }
         }
 
-        // 极端情况：使用完整ID
-        return fullGuid;
+        return matrix[s1.Length, s2.Length];
     }
 }
 ```
 
 **特点**:
-- 长度: 动态，通常4-8个字符，碰撞时自动扩展
-- 唯一性: 通过运行时索引保证唯一性
-- 实现复杂度: 中等，需要维护双向索引
-- LLM友好度: 极高，大多数情况下只需要很短的前缀
+- 长度: LLM可使用任意长度的ID片段(通常4-8字符即可精确匹配)
+- 唯一性: 基于完整GUID的唯一性，检索层不改变ID本身
+- 实现复杂度: 低，只需维护简单的ID列表和检索逻辑
+- LLM友好度: 极高，支持部分匹配、模糊匹配和友好错误提示
 
-**示例**:
+**示例交互**:
 ```
-完整GUID: VQ6EAOKbQdSnFkRmVUQAAA
-智能短名: VQ6E (4字符，无碰撞)
+LLM输入: "展开节点 VQ6E"
+系统响应: ✅ 找到匹配: VQ6EAOKbQdSnFkRmVUQAAA
 
-完整GUID: VQ6FXYKbQdSnFkRmVUQAAA
-智能短名: VQ6F (4字符，与上面区分)
+LLM输入: "展开节点 VQ6"
+系统响应: ❌ 找到多个匹配:
+          1. VQ6EAOKbQdSnFkRmVUQAAA
+          2. VQ6FXYKbQdSnFkRmVUQAAA
+          请提供更多字符以明确指定
 
-完整GUID: VQ6EABCbQdSnFkRmVUQAAA
-智能短名: VQ6EAB (6字符，因为VQ6E已被占用)
+LLM输入: "展开节点 XYZ"
+系统响应: ❌ 未找到匹配的ID
+          您是否想要: VQ6FXYKbQdSnFkRmVUQAAA?
 ```
 
 **核心优势**:
-- **极致简洁**: 绝大多数情况下只需4-6个字符
-- **智能扩展**: 碰撞时自动增长，无需人工干预
-- **双向查找**: 支持短名称→完整ID和完整ID→短名称的快速查找
-- **现实世界类比**: 类似域名注册、商标注册的避让机制
+- **极致简洁**: LLM可使用任意长度的ID片段，通常4-6字符即可
+- **智能检索**: 支持前缀匹配、包含匹配、模糊匹配等多种策略
+- **友好反馈**: 提供清晰的错误信息和建议，帮助LLM快速定位正确ID
+- **架构正交**: 与底层编码方案(Base64/Base4096-CJK)完全解耦，工作在检索层
 
-## 智能短名称方案详细设计
+## 智能检索层方案详细设计
 
 ### 核心机制
 
-#### 1. 双向索引系统
+#### 1. 会话级ID注册与检索系统
 ```csharp
-public class SmartIdManager
+/// <summary>
+/// LLM交互的ID翻译器 - 集成智能检索功能
+/// </summary>
+public class LlmIdTranslator
 {
-    // 主索引：短名称 -> 完整GUID
-    private readonly ConcurrentDictionary<string, string> _shortToFull = new();
+    private readonly SmartIdResolver _resolver;
 
-    // 反向索引：完整GUID -> 短名称
-    private readonly ConcurrentDictionary<string, string> _fullToShort = new();
-
-    // 碰撞统计（用于优化）
-    private readonly ConcurrentDictionary<int, int> _collisionStats = new();
-
-    public string RegisterId(string fullGuid, int startLength = 4)
+    public LlmIdTranslator()
     {
-        // 如果已注册，直接返回
-        if (_fullToShort.TryGetValue(fullGuid, out var existing))
-            return existing;
-
-        // 尝试不同长度，直到找到无碰撞的短名称
-        for (int len = startLength; len <= fullGuid.Length; len++)
-        {
-            var candidate = GenerateShortName(fullGuid, len);
-
-            if (_shortToFull.TryAdd(candidate, fullGuid))
-            {
-                _fullToShort[fullGuid] = candidate;
-                RecordCollisionStats(len, startLength);
-                return candidate;
-            }
-        }
-
-        // 极端情况：返回完整GUID
-        return fullGuid;
+        _resolver = new SmartIdResolver();
     }
 
-    private string GenerateShortName(string fullGuid, int length)
+    /// <summary>
+    /// 创建新节点时注册ID
+    /// </summary>
+    public NodeId CreateNode()
     {
-        // 策略1: 前缀 (默认)
-        if (length <= fullGuid.Length)
-            return fullGuid[..length];
+        var nodeId = NodeId.Generate(); // 使用现有的Base64生成
+        _resolver.RegisterId(nodeId.Value);
+        return nodeId;
+    }
 
-        // 策略2: 前缀+后缀 (可选)
-        // return $"{fullGuid[..3]}...{fullGuid[^(length-6)..]}";
+    /// <summary>
+    /// 解析LLM输入的ID片段
+    /// </summary>
+    public string ResolveUserInput(string userInput)
+    {
+        try
+        {
+            return _resolver.ResolveFragment(userInput);
+        }
+        catch (IdNotFoundException ex)
+        {
+            // 可以记录日志，提供更多上下文信息
+            throw new LlmIdResolutionException($"无法解析ID '{userInput}': {ex.Message}");
+        }
+        catch (AmbiguousIdException ex)
+        {
+            // 可以提供交互式澄清机制
+            throw new LlmIdResolutionException($"ID '{userInput}' 不够明确: {ex.Message}");
+        }
+    }
 
-        return fullGuid;
+    /// <summary>
+    /// 批量处理LLM生成的内容中的ID引用
+    /// </summary>
+    public string TranslateContent(string llmContent)
+    {
+        // 匹配可能的ID片段 (可以根据实际情况调整正则)
+        var idPattern = @"\b[A-Za-z0-9+/]{4,22}\b";
+
+        return Regex.Replace(llmContent, idPattern, match =>
+        {
+            try
+            {
+                var resolved = _resolver.ResolveFragment(match.Value);
+                return resolved; // 替换为完整ID
+            }
+            catch
+            {
+                return match.Value; // 保持原样，可能不是ID
+            }
+        });
+    }
+
+    /// <summary>
+    /// 获取当前会话中所有已知的ID (用于调试)
+    /// </summary>
+    public IReadOnlyList<string> GetKnownIds()
+    {
+        return _resolver.GetAllIds();
     }
 }
 ```
@@ -289,166 +421,174 @@ public static class Base4096CJK
 }
 ```
 
-## 智能短名称方案分析
+## 智能检索层方案分析
 
 ### 优势分析
 
 #### 1. 极致的LLM友好性
-- **超短长度**: 大多数情况下只需4-6个字符，比Base64的22字符短70-80%
-- **渐进式扩展**: 只在真正碰撞时才增长，避免不必要的长度浪费
-- **上下文稳定**: 在同一会话中，短名称保持一致，LLM可以建立稳定的引用关系
+- **灵活长度**: LLM可使用任意长度的ID片段，从4字符到完整22字符都支持
+- **智能匹配**: 支持前缀匹配、包含匹配、模糊匹配等多种检索策略
+- **友好反馈**: 提供清晰的错误信息和建议，帮助LLM快速纠正和定位
 
-#### 2. 智能化程度高
-- **自适应长度**: 系统自动找到最短的无碰撞长度
-- **双向查找**: 支持从短名称快速定位完整ID，也支持反向查找
-- **模糊匹配**: 可以支持LLM的"近似"引用，增强容错性
+#### 2. 架构简洁性
+- **无状态持久化**: 只维护会话级的临时ID列表，无需复杂的持久化机制
+- **无分布式同步**: 每个会话独立维护，避免了分布式一致性问题
+- **正交设计**: 与底层编码方案完全解耦，可与任何GUID编码方案配合使用
 
-#### 3. 现实世界类比
-- **域名系统**: 类似DNS的层次化命名，短名称在本地上下文中唯一
-- **商标注册**: 新注册时自动避让已有名称，符合人类直觉
-- **昵称系统**: 像人类社交中的昵称，简短但在特定群体中唯一
+#### 3. 实现简单性
+- **成熟技术栈**: 可使用现有的搜索库(Lucene.NET, Elasticsearch等)
+- **渐进式优化**: 从简单的字符串匹配开始，逐步升级到更智能的算法
+- **易于调试**: 检索逻辑清晰，问题容易定位和解决
 
 ### 挑战和风险
 
-#### 1. 状态管理复杂性
+#### 1. 会话管理
 ```csharp
-// 需要维护的状态
-public class IdManagerState
+// 会话级ID管理 - 简单且高效
+public class SessionIdManager
 {
-    // 核心索引（内存中）
-    ConcurrentDictionary<string, string> ShortToFull;
-    ConcurrentDictionary<string, string> FullToShort;
+    // 只需维护当前会话中的ID列表
+    private readonly HashSet<string> _sessionIds = new();
 
-    // 持久化需求
-    // 问题：重启后如何恢复索引？
-    // 方案：定期序列化到磁盘，或从现有数据重建
-}
-```
-
-#### 2. 并发安全问题
-```csharp
-// 竞态条件示例
-// 线程A和B同时尝试注册相同的短名称
-var shortId = "VQ6E";
-if (!_shortToFull.ContainsKey(shortId)) // A和B都通过检查
-{
-    _shortToFull[shortId] = fullGuidA; // A先执行
-    _shortToFull[shortId] = fullGuidB; // B覆盖A，导致数据不一致
-}
-
-// 解决方案：使用TryAdd原子操作
-if (_shortToFull.TryAdd(shortId, fullGuid))
-{
-    // 成功注册
-}
-```
-
-#### 3. 持久化和恢复
-```csharp
-public class IdManagerPersistence
-{
-    // 问题1：如何持久化索引？
-    public async Task SaveIndexAsync()
+    public void RegisterId(string fullId)
     {
-        var snapshot = new
-        {
-            ShortToFull = _shortToFull.ToArray(),
-            FullToShort = _fullToShort.ToArray(),
-            Timestamp = DateTime.UtcNow
-        };
-
-        await File.WriteAllTextAsync("id_index.json",
-            JsonSerializer.Serialize(snapshot));
+        _sessionIds.Add(fullId); // 简单的集合操作
     }
 
-    // 问题2：启动时如何重建索引？
-    public async Task RebuildIndexAsync()
+    public void ClearSession()
     {
-        // 方案A：从持久化文件恢复
-        if (File.Exists("id_index.json"))
-        {
-            var snapshot = await LoadSnapshotAsync();
-            RestoreFromSnapshot(snapshot);
-        }
-        else
-        {
-            // 方案B：扫描所有现有数据重建
-            await RebuildFromExistingDataAsync();
-        }
+        _sessionIds.Clear(); // 会话结束时清理
+    }
+
+    // 无需持久化，无需分布式同步
+    // 会话结束后自动清理，内存占用可控
+}
+```
+
+#### 2. 检索精度平衡
+```csharp
+// 挑战：如何平衡检索的精确性和容错性
+public class SearchPrecisionChallenge
+{
+    // 过于严格：LLM输入"VQ6E"找不到"VQ6EA..."
+    public List<string> StrictSearch(string query)
+    {
+        return _ids.Where(id => id.StartsWith(query)).ToList();
+    }
+
+    // 过于宽松：LLM输入"VQ"可能匹配太多结果
+    public List<string> LooseSearch(string query)
+    {
+        return _ids.Where(id => id.Contains(query)).ToList();
+    }
+
+    // 解决方案：分层检索策略
+    public List<string> SmartSearch(string query)
+    {
+        // 1. 精确匹配
+        var exact = _ids.Where(id => id == query).ToList();
+        if (exact.Any()) return exact;
+
+        // 2. 前缀匹配
+        var prefix = _ids.Where(id => id.StartsWith(query)).ToList();
+        if (prefix.Count <= 5) return prefix;
+
+        // 3. 包含匹配（限制结果数量）
+        return _ids.Where(id => id.Contains(query)).Take(5).ToList();
     }
 }
 ```
 
-#### 4. 内存使用量
+#### 3. 内存使用量（大幅降低）
 ```csharp
-// 内存占用估算
+// 内存占用估算 - 智能检索方案
 public class MemoryUsageAnalysis
 {
-    // 假设100万个节点
-    const int NodeCount = 1_000_000;
+    // 假设单个会话中100个活跃节点（典型场景）
+    const int SessionNodeCount = 100;
 
-    // 每个映射条目的内存占用
-    // 短名称(平均6字符) + 完整ID(22字符) + 字典开销
-    const int BytesPerEntry = (6 + 22) * 2 + 64; // 约120字节
+    // 每个ID的内存占用：22字符 + HashSet开销
+    const int BytesPerEntry = 22 * 2 + 32; // 约76字节
 
-    // 双向索引总内存
-    long TotalMemory = NodeCount * BytesPerEntry * 2; // 约240MB
+    // 单会话总内存
+    long SessionMemory = SessionNodeCount * BytesPerEntry; // 约7.6KB
 
-    // 结论：对于大型系统，内存占用不可忽视
+    // 结论：内存占用极低，可忽略不计
 }
 ```
 
-### 潜在的重要缺陷
+### 潜在的挑战
 
-#### 1. 分布式系统挑战
+#### 1. 跨会话一致性（已解决）
 ```csharp
-// 问题：多个服务实例如何同步短名称索引？
-public class DistributedIdManager
+// 智能检索方案的优势：无跨会话一致性问题
+public class SessionIsolation
 {
-    // 挑战：
-    // - 不同实例可能生成相同的短名称
-    // - 索引同步的延迟和一致性问题
-    // - 网络分区时的行为
+    // 每个会话独立维护ID列表
+    // 会话A和会话B的"VQ6E"片段可能指向不同的完整ID
+    // 这是特性而非缺陷：符合会话隔离的设计原则
 
-    // 可能的解决方案：
-    // 1. 中心化ID分配服务
-    // 2. 基于实例前缀的分区策略
-    // 3. 最终一致性 + 冲突解决机制
+    public class SessionA
+    {
+        // VQ6E -> VQ6EAOKbQdSnFkRmVUQAAA
+    }
+
+    public class SessionB
+    {
+        // VQ6E -> VQ6EXYZbQdSnFkRmVUQBBB (不同的完整ID)
+    }
+
+    // 无需同步，无需一致性保证
 }
 ```
 
-#### 2. 调试和运维复杂性
+#### 2. 检索歧义处理
 ```csharp
-// 问题：如何调试短名称相关的问题？
-public class DebuggingChallenges
+// 挑战：如何处理模糊匹配的歧义
+public class AmbiguityResolution
 {
-    // 挑战1：日志中的短名称难以追踪
-    // 日志：Error processing node VQ6E
-    // 问题：VQ6E对应哪个完整ID？在哪个时间点？
+    // 问题：LLM输入"VQ6"匹配多个ID
+    public string HandleAmbiguity(string fragment, List<string> matches)
+    {
+        // 策略1：要求澄清（推荐）
+        if (matches.Count > 1)
+        {
+            var message = $"'{fragment}' matches multiple IDs:\n" +
+                string.Join("\n", matches.Select((id, i) =>
+                    $"{i+1}. {id[..8]}... (Node: {GetNodeTitle(id)})"));
+            throw new AmbiguousIdException(message);
+        }
 
-    // 挑战2：跨会话的引用失效
-    // 会话A中的VQ6E可能与会话B中的VQ6E不同
-
-    // 挑战3：索引损坏的恢复
-    // 如果索引文件损坏，如何恢复？
+        // 策略2：智能排序（可选）
+        // 根据最近使用、节点重要性等因素排序
+        return matches.OrderByDescending(GetRelevanceScore).First();
+    }
 }
 ```
 
-#### 3. LLM理解的一致性问题
+#### 3. 性能考虑
 ```csharp
-// 问题：LLM可能对短名称产生错误的"理解"
-public class LlmConsistencyIssues
+// 大会话中的检索性能
+public class PerformanceConsiderations
 {
-    // 场景1：LLM可能认为VQ6E和VQ6F是"相关"的
-    // 实际上它们可能完全无关
+    // 场景：单个会话中有1000+个节点
+    private readonly List<string> _largeIdSet = new(); // 1000+ IDs
 
-    // 场景2：短名称变化时的混淆
-    // 原来的VQ6E因为碰撞变成VQ6EA
-    // LLM可能仍然尝试使用VQ6E
+    // 挑战：线性搜索可能较慢
+    public List<string> LinearSearch(string query) // O(n)
+    {
+        return _largeIdSet.Where(id => id.Contains(query)).ToList();
+    }
 
-    // 场景3：模糊匹配的歧义
-    // LLM输入"VQ6"，系统找到VQ6E和VQ6F两个候选
-    // 如何选择？如何向LLM反馈？
+    // 解决方案：使用更高效的数据结构
+    private readonly Dictionary<string, List<string>> _prefixIndex = new();
+
+    public List<string> IndexedSearch(string query) // O(1) to O(log n)
+    {
+        // 预建立前缀索引，快速检索
+        return _prefixIndex.GetValueOrDefault(query[..4], new List<string>())
+            .Where(id => id.Contains(query)).ToList();
+    }
 }
 ```
 
@@ -509,22 +649,46 @@ public static class NodeIdGenerator
 
 ## 三种方案对比总结
 
-| 维度 | Base64 | Base4096-CJK | 智能短名称 |
+| 维度 | Base64 | Base4096-CJK | 智能检索层 |
 |------|--------|--------------|------------|
-| **长度** | 22字符 | 11字符 | 4-8字符(动态) |
+| **长度** | 22字符 | 11字符 | 4-8字符(灵活) |
 | **LLM友好度** | 中等 | 高 | 极高 |
-| **实现复杂度** | 低 | 中等 | 高 |
-| **内存占用** | 无额外占用 | 无额外占用 | 中等(索引) |
-| **分布式友好** | 高 | 高 | 低 |
-| **调试难度** | 低 | 低 | 高 |
-| **碰撞风险** | 无 | 无 | 运行时处理 |
-| **持久化需求** | 无 | 无 | 需要索引持久化 |
+| **实现复杂度** | 低 | 中等 | 低 |
+| **内存占用** | 无额外占用 | 无额外占用 | 极低(会话级) |
+| **分布式友好** | 高 | 高 | 高(会话隔离) |
+| **调试难度** | 低 | 低 | 低 |
+| **碰撞风险** | 无 | 无 | 智能处理 |
+| **持久化需求** | 无 | 无 | 无(会话级) |
+| **架构耦合** | 编码层 | 编码层 | 检索层(正交) |
 
 ### 推荐使用场景
 
-- **Base64**: 生产环境、分布式系统、需要稳定性的场景
-- **Base4096-CJK**: 单机环境、LLM交互频繁、token成本敏感的场景
-- **智能短名称**: 原型开发、交互式会话、用户体验优先的场景
+- **Base64**: 当前生产环境、需要稳定性的场景、作为其他方案的基础
+- **Base4096-CJK**: LLM交互频繁、token成本敏感、追求极致编码效率的场景
+- **智能检索层**: 所有场景推荐，与底层编码方案正交，显著提升LLM交互体验
+
+### 组合使用建议
+
+**最佳实践**: Base64编码 + 智能检索层
+```csharp
+// 底层使用Base64确保稳定性
+var nodeId = NodeId.Generate(); // 生成Base64编码的ID
+
+// 上层使用智能检索提升用户体验
+var translator = new LlmIdTranslator();
+translator.RegisterId(nodeId.Value);
+
+// LLM可以使用任意长度的片段
+var resolved = translator.ResolveUserInput("VQ6E"); // 智能匹配
+```
+
+**未来升级**: Base4096-CJK编码 + 智能检索层
+```csharp
+// 当Base4096-CJK方案成熟后，可无缝切换底层编码
+// 智能检索层无需任何修改
+var nodeId = NodeId.GenerateBase4096CJK(); // 11字符汉字编码
+translator.RegisterId(nodeId.Value); // 检索层自动适配
+```
 
 ## 兼容性考虑
 
@@ -568,31 +732,31 @@ public static class NodeIdGenerator
 
 1. **✅ 已实施Base64方案**解决当前的冲突风险
 2. **🔄 并行开发Base4096-CJK方案**作为长期目标
-3. **新增智能短名称方案**作为创新探索方向
+3. **✅ 新增智能检索层方案**作为正式设计，与编码层正交
 4. **📋 已提供统一编码工具**支持未来灵活切换
 5. **📊 持续评估**三种方案在实际使用中的效果
 
 ### 方案选择建议
 
-**智能短名称方案**是一个非常有创意的思路，它试图在LLM友好性和系统复杂度之间找到平衡点。这个方案的核心价值在于：
+**智能检索层方案**是一个优雅的解决方案，它通过架构分层完美解决了LLM友好性问题。这个方案的核心价值在于：
 
-- **极致简洁**: 4-6字符的长度对LLM来说几乎是理想的
-- **智能适应**: 系统自动处理碰撞，无需人工干预
-- **现实类比**: 符合人类对命名系统的直觉理解
+- **极致简洁**: LLM可使用4-6字符片段，比完整ID短80%以上
+- **智能检索**: 支持多种匹配策略，提供友好的错误反馈
+- **架构正交**: 与底层编码方案完全解耦，可与任何GUID编码配合使用
 
-但同时也面临一些挑战：
-- **状态管理**: 需要维护运行时索引，增加系统复杂度
-- **分布式难题**: 在多实例环境中同步索引是个挑战
-- **调试复杂**: 短名称的动态性可能增加问题排查难度
+关键优势：
+- **实现简单**: 无需复杂的状态管理和持久化机制
+- **会话隔离**: 每个会话独立，无分布式同步问题
+- **渐进优化**: 可从简单实现开始，逐步升级到更智能的算法
 
 ### 实施路径建议
 
-1. **短期(当前)**: 继续使用Base64方案，稳定可靠
-2. **中期(1-2个月)**: 完成Base4096-CJK方案，进行A/B测试
-3. **长期(3-6个月)**: 实现智能短名称原型，在受控环境中验证
-4. **最终**: 基于实际数据选择最优方案，或提供多方案并存的配置选项
+1. **立即实施**: 智能检索层方案，与现有Base64编码配合使用
+2. **中期(1-2个月)**: 完成Base4096-CJK方案，进行编码层A/B测试
+3. **长期优化**: 基于使用数据优化检索算法，集成更智能的搜索引擎
+4. **最终形态**: Base4096-CJK编码 + 智能检索层，实现极致的LLM友好性
 
-基于MemoTree项目的LLM优先原则，三个方案都有其价值。Base64解决了当前问题，Base4096-CJK提供了token效率优势，而智能短名称则可能是未来LLM-代码交互的一个创新方向。
+基于MemoTree项目的LLM优先原则，**智能检索层方案应该立即实施**。它与现有架构完美兼容，显著提升LLM交互体验，且实现简单。这个方案代表了LLM-代码交互的一个重要创新方向。
 
 ## 实施状态
 
