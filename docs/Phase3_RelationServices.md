@@ -140,7 +140,9 @@ public record RelationTypeDefinition
 
 ```csharp
 /// <summary>
-/// 关系管理配置选项
+/// 关系管理配置选项 (引用自Phase1_Configuration.md)
+/// 专注于关系处理的行为逻辑，不包含路径信息
+/// 路径信息由MemoTreeOptions统一管理
 /// </summary>
 public class RelationOptions
 {
@@ -150,19 +152,9 @@ public class RelationOptions
     public bool EnableIndependentHierarchyStorage { get; set; } = true;
 
     /// <summary>
-    /// 父子关系存储目录
-    /// </summary>
-    public string HierarchyStorageDirectory { get; set; } = "./ParentChildrens";
-
-    /// <summary>
     /// 是否启用语义关系数据集中存储
     /// </summary>
     public bool EnableCentralizedRelationStorage { get; set; } = true;
-
-    /// <summary>
-    /// 语义关系数据存储目录
-    /// </summary>
-    public string RelationStorageDirectory { get; set; } = "./Relations";
 
     /// <summary>
     /// 最大关系深度

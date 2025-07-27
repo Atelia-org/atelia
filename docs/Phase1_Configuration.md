@@ -150,6 +150,8 @@ public class StorageOptions
 ```csharp
 /// <summary>
 /// 关系管理配置选项
+/// 专注于关系处理的行为逻辑，不包含路径信息
+/// 路径信息由MemoTreeOptions统一管理
 /// </summary>
 public class RelationOptions
 {
@@ -159,19 +161,9 @@ public class RelationOptions
     public bool EnableIndependentHierarchyStorage { get; set; } = true;
 
     /// <summary>
-    /// 父子关系存储目录
-    /// </summary>
-    public string HierarchyStorageDirectory { get; set; } = "./ParentChildrens";
-
-    /// <summary>
     /// 是否启用语义关系数据集中存储
     /// </summary>
     public bool EnableCentralizedRelationStorage { get; set; } = true;
-
-    /// <summary>
-    /// 语义关系数据存储目录
-    /// </summary>
-    public string RelationStorageDirectory { get; set; } = "./Relations";
 
     /// <summary>
     /// 最大关系深度
@@ -485,6 +477,51 @@ public class NodeStorageService
             _memoTreeOptions.CogNodesDirectory,
             nodeId.Value,
             _storageOptions.MetadataFileName);
+    }
+}
+
+/// <summary>
+/// 关系存储服务示例 - 展示多配置注入的正确模式
+/// </summary>
+public class RelationStorageService
+{
+    private readonly MemoTreeOptions _memoTreeOptions;
+    private readonly RelationOptions _relationOptions;
+
+    public RelationStorageService(
+        IOptions<MemoTreeOptions> memoTreeOptions,
+        IOptions<RelationOptions> relationOptions)
+    {
+        _memoTreeOptions = memoTreeOptions.Value;
+        _relationOptions = relationOptions.Value;
+    }
+
+    /// <summary>
+    /// 获取父子关系存储路径
+    /// 路径信息来自MemoTreeOptions，行为配置来自RelationOptions
+    /// </summary>
+    public string GetHierarchyStoragePath()
+    {
+        if (!_relationOptions.EnableIndependentHierarchyStorage)
+            throw new InvalidOperationException("父子关系独立存储未启用");
+
+        return Path.Combine(
+            _memoTreeOptions.WorkspaceRoot,
+            _memoTreeOptions.ParentChildrensDirectory);
+    }
+
+    /// <summary>
+    /// 获取语义关系存储路径
+    /// 路径信息来自MemoTreeOptions，行为配置来自RelationOptions
+    /// </summary>
+    public string GetRelationStoragePath()
+    {
+        if (!_relationOptions.EnableCentralizedRelationStorage)
+            throw new InvalidOperationException("语义关系集中存储未启用");
+
+        return Path.Combine(
+            _memoTreeOptions.WorkspaceRoot,
+            _memoTreeOptions.RelationsDirectory);
     }
 }
 ```

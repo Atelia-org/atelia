@@ -1,7 +1,7 @@
 # MemoTree项目LLM索引
 
 > **目的**: 为LLM提供项目整体认知的快速索引
-> **更新**: 2025-07-27 (WithContext异常处理类型安全重构)
+> **更新**: 2025-07-27 (解决‘配置项冗余和职责不清’的问题)
 > **状态**: 正在逐项处理设计Review中得到的反馈
 
 ## 🎯 项目核心概念
@@ -64,7 +64,7 @@
 (532行) 配置选项、系统设置，新增ViewOptions类
 - `MemoTreeOptions` - 主配置类，包含工作空间路径、存储配置等核心选项
 - `StorageOptions` - 存储配置选项，定义文件名、目录结构等存储相关设置
-- `RelationOptions` - 关系管理配置，控制父子关系存储、关系类型管理等选项
+- `RelationOptions` - 关系管理配置，控制关系处理行为逻辑（启用状态、深度限制等），不包含路径信息
 - `RetrievalOptions` - 检索配置选项，控制全文搜索、索引策略等检索功能
 - `ViewOptions` - 视图配置选项，管理视图状态存储、缓存策略等视图相关设置
 - `IConfigurationValidator<T>` - 泛型配置验证器接口，提供类型安全的配置验证
@@ -376,7 +376,7 @@
 - **总行数**: 6,627行 + 设计文档
 - **完成状态**: 🎉 100% 完成 (核心架构)
 - **类型索引**: ✅ 重构完成 (150+个类型)
-- **最后更新**: 2025-07-27 (WithContext异常处理类型安全重构)
+- **最后更新**: 2025-07-27 (配置职责分离优化)
 - **原始文档**: Core_Types_Design.md (3116行) → 成功拆分成若干Phase_XXX.md。已删除，git中有旧档。
 - **重构成果**:
   - ✅ **类型索引重构完成**: 建立完整的类型定义索引体系，实现"一次加载，全局认知"
@@ -397,6 +397,7 @@
   - **🔧 GuidEncoder接口化 (v1.4)**: 将ToBase64String重构为ToIdString抽象接口，消除方法名与具体算法的绑定，为未来切换Base4096-CJK等编码算法提供无缝支持，保持向后兼容
   - **🛡️ CustomProperties类型安全优化 (v1.5)**: 针对NodeMetadata.CustomProperties和NodeRelation.Properties的类型安全问题，提供MVP阶段的安全访问扩展方法(CustomPropertiesExtensions)，明确类型约定，规划Phase 5的JsonElement升级方案，在保持灵活性的同时显著提升类型安全性
   - **🔧 WithContext异常处理类型安全重构 (v1.6)**: 基于设计Review反馈，将WithContext实例方法重构为泛型扩展方法，消除静态工厂方法中的`as`类型转换风险，通过泛型约束实现编译时类型检查，避免潜在的NullReferenceException，提升异常处理的类型安全性和代码可维护性
+  - **🏗️ 配置职责分离优化 (v1.7)**: 基于设计Review反馈，移除RelationOptions中的冗余路径配置项(HierarchyStorageDirectory/RelationStorageDirectory)，明确职责分离：MemoTreeOptions负责物理布局，RelationOptions负责行为逻辑，通过依赖注入组合使用，消除配置冗余和潜在冲突
 
 ## 🔍 快速搜索提示
 
