@@ -304,6 +304,14 @@ public record UserPreferences
     public bool AutoSaveEnabled { get; init; } = true;
     public TimeSpan AutoSaveInterval { get; init; } = TimeSpan.FromMinutes(5);
     public string PreferredLanguage { get; init; } = "zh-CN";
+    /// <summary>
+    /// 用户自定义设置
+    ///
+    /// 类型约定与 NodeMetadata.CustomProperties 相同：
+    /// - 支持基本类型：string, int, long, double, bool, DateTime
+    /// - 支持集合类型：string[], List&lt;string&gt;
+    /// - 使用 CustomPropertiesExtensions 提供的安全访问方法
+    /// </summary>
     public IReadOnlyDictionary<string, object> CustomSettings { get; init; } =
         new Dictionary<string, object>();
 }

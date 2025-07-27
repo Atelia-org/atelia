@@ -304,6 +304,18 @@ public record NodeMetadata
     public IReadOnlyDictionary<LodLevel, string> ContentHashes { get; init; } =
         new Dictionary<LodLevel, string>();
     public bool IsDirty { get; init; } = false;
+
+    /// <summary>
+    /// 自定义属性字典
+    ///
+    /// MVP阶段类型约定：
+    /// - 支持基本类型：string, int, long, double, bool, DateTime
+    /// - 支持集合类型：string[], List&lt;string&gt;
+    /// - 避免复杂对象，优先使用JSON字符串存储
+    /// - 所有访问都应使用 CustomPropertiesExtensions 提供的安全方法
+    ///
+    /// 长期规划：Phase 5将升级为 IReadOnlyDictionary&lt;string, JsonElement&gt; 提供完整类型安全
+    /// </summary>
     public IReadOnlyDictionary<string, object> CustomProperties { get; init; } =
         new Dictionary<string, object>();
 }
@@ -339,6 +351,21 @@ public record NodeRelation
     public RelationType Type { get; init; }
     public string Description { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 关系属性字典
+    ///
+    /// 类型约定与 NodeMetadata.CustomProperties 相同：
+    /// - 支持基本类型：string, int, long, double, bool, DateTime
+    /// - 支持集合类型：string[], List&lt;string&gt;
+    /// - 使用 CustomPropertiesExtensions 提供的安全访问方法
+    ///
+    /// 常见关系属性示例：
+    /// - "weight": 关系权重 (double)
+    /// - "confidence": 置信度 (double, 0.0-1.0)
+    /// - "bidirectional": 是否双向关系 (bool)
+    /// - "created_by": 创建者 (string)
+    /// </summary>
     public IReadOnlyDictionary<string, object> Properties { get; init; } =
         new Dictionary<string, object>();
 }
@@ -366,6 +393,211 @@ public record ChildNodeInfo
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
     public int Order { get; init; } = 0;
 }
+```
+
+## 3.5 CustomProperties 类型安全扩展方法
+
+```csharp
+/// <summary>
+/// NodeMetadata.CustomProperties 的类型安全访问扩展方法
+/// 提供MVP阶段的类型安全访问模式，避免直接类型转换
+/// </summary>
+public static class CustomPropertiesExtensions
+{
+    /// <summary>
+    /// 安全获取字符串属性
+    /// </summary>
+    public static string? GetString(this IReadOnlyDictionary<string, object> properties, string key)
+    {
+        return properties.TryGetValue(key, out var value) ? value as string : null;
+    }
+
+    /// <summary>
+    /// 安全获取整数属性
+    /// </summary>
+    public static int? GetInt32(this IReadOnlyDictionary<string, object> properties, string key)
+    {
+        if (!properties.TryGetValue(key, out var value)) return null;
+        return value switch
+        {
+            int intValue => intValue,
+            long longValue when longValue >= int.MinValue && longValue <= int.MaxValue => (int)longValue,
+            string strValue when int.TryParse(strValue, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// 安全获取长整数属性
+    /// </summary>
+    public static long? GetInt64(this IReadOnlyDictionary<string, object> properties, string key)
+    {
+        if (!properties.TryGetValue(key, out var value)) return null;
+        return value switch
+        {
+            long longValue => longValue,
+            int intValue => intValue,
+            string strValue when long.TryParse(strValue, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// 安全获取双精度浮点数属性
+    /// </summary>
+    public static double? GetDouble(this IReadOnlyDictionary<string, object> properties, string key)
+    {
+        if (!properties.TryGetValue(key, out var value)) return null;
+        return value switch
+        {
+            double doubleValue => doubleValue,
+            float floatValue => floatValue,
+            int intValue => intValue,
+            long longValue => longValue,
+            string strValue when double.TryParse(strValue, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// 安全获取布尔属性
+    /// </summary>
+    public static bool? GetBoolean(this IReadOnlyDictionary<string, object> properties, string key)
+    {
+        if (!properties.TryGetValue(key, out var value)) return null;
+        return value switch
+        {
+            bool boolValue => boolValue,
+            string strValue when bool.TryParse(strValue, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// 安全获取日期时间属性
+    /// </summary>
+    public static DateTime? GetDateTime(this IReadOnlyDictionary<string, object> properties, string key)
+    {
+        if (!properties.TryGetValue(key, out var value)) return null;
+        return value switch
+        {
+            DateTime dateValue => dateValue,
+            string strValue when DateTime.TryParse(strValue, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// 安全获取字符串数组属性
+    /// </summary>
+    public static string[]? GetStringArray(this IReadOnlyDictionary<string, object> properties, string key)
+    {
+        if (!properties.TryGetValue(key, out var value)) return null;
+        return value switch
+        {
+            string[] arrayValue => arrayValue,
+            List<string> listValue => listValue.ToArray(),
+            IEnumerable<string> enumValue => enumValue.ToArray(),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// 安全获取属性，带默认值
+    /// </summary>
+    public static T GetValueOrDefault<T>(this IReadOnlyDictionary<string, object> properties, string key, T defaultValue)
+    {
+        if (!properties.TryGetValue(key, out var value)) return defaultValue;
+        try
+        {
+            return value is T typedValue ? typedValue : defaultValue;
+        }
+        catch
+        {
+            return defaultValue;
+        }
+    }
+
+    /// <summary>
+    /// 检查属性是否存在且为指定类型
+    /// </summary>
+    public static bool HasProperty<T>(this IReadOnlyDictionary<string, object> properties, string key)
+    {
+        return properties.TryGetValue(key, out var value) && value is T;
+    }
+}
+```
+
+### 使用示例
+
+```csharp
+// 安全的属性访问
+var metadata = new NodeMetadata { /* ... */ };
+
+// 推荐的安全访问方式
+string? author = metadata.CustomProperties.GetString("author");
+int? priority = metadata.CustomProperties.GetInt32("priority");
+long? fileSize = metadata.CustomProperties.GetInt64("fileSize");
+double? weight = metadata.CustomProperties.GetDouble("weight");
+bool isPublic = metadata.CustomProperties.GetValueOrDefault("isPublic", false);
+DateTime? deadline = metadata.CustomProperties.GetDateTime("deadline");
+string[] categories = metadata.CustomProperties.GetStringArray("categories") ?? Array.Empty<string>();
+
+// 类型检查
+if (metadata.CustomProperties.HasProperty<string>("description"))
+{
+    // 安全处理
+}
+
+// ❌ 避免直接转换（容易出错）
+// var author = (string)metadata.CustomProperties["author"]; // 可能抛异常
+// var priority = metadata.CustomProperties["priority"] as int?; // 可能返回null
+```
+
+### 长期方案：JsonElement 类型安全升级
+
+```csharp
+// Phase 5 长期方案：使用 JsonElement 提供完整类型安全
+// 将在 Phase5_Extensions.md 中详细定义
+// 需要引用：using System.Text.Json;
+
+/// <summary>
+/// Phase 5 升级版本的节点元数据（类型安全版本）
+/// </summary>
+public record NodeMetadataV2
+{
+    // ... 其他属性保持不变
+
+    /// <summary>
+    /// 类型安全的自定义属性字典
+    /// 使用 JsonElement 保留结构化信息，提供安全的类型提取
+    /// </summary>
+    public IReadOnlyDictionary<string, JsonElement> CustomProperties { get; init; } =
+        new Dictionary<string, JsonElement>();
+}
+
+/// <summary>
+/// JsonElement 扩展方法，提供安全的类型提取
+/// </summary>
+public static class JsonElementExtensions
+{
+    public static string? TryGetString(this JsonElement element) =>
+        element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+
+    public static int? TryGetInt32(this JsonElement element) =>
+        element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var value) ? value : null;
+
+    public static bool? TryGetBoolean(this JsonElement element) =>
+        element.ValueKind == JsonValueKind.True ? true :
+        element.ValueKind == JsonValueKind.False ? false : null;
+
+    // ... 更多类型安全方法
+}
+
+// 使用示例（Phase 5）
+var author = metadata.CustomProperties.TryGetValue("author", out var authorElement)
+    ? authorElement.TryGetString()
+    : null;
 ```
 
 ## 4. 复合类型

@@ -1,7 +1,7 @@
 # MemoTree项目LLM索引
 
 > **目的**: 为LLM提供项目整体认知的快速索引
-> **更新**: 2025-07-25 (改进NodeId设计)
+> **更新**: 2025-07-27 (CustomProperties类型安全优化)
 > **状态**: 正在逐项处理设计Review中得到的反馈
 
 ## 🎯 项目核心概念
@@ -375,7 +375,7 @@
 - **总行数**: 6,627行 + 设计文档
 - **完成状态**: 🎉 100% 完成 (核心架构)
 - **类型索引**: ✅ 重构完成 (150+个类型)
-- **最后更新**: 2025-07-27 (GuidEncoder接口化重构)
+- **最后更新**: 2025-07-27 (CustomProperties类型安全优化)
 - **原始文档**: Core_Types_Design.md (3116行) → 成功拆分成若干Phase_XXX.md。已删除，git中有旧档。
 - **重构成果**:
   - ✅ **类型索引重构完成**: 建立完整的类型定义索引体系，实现"一次加载，全局认知"
@@ -394,6 +394,7 @@
   - **🆔 GUID编码优化 (v1.2)**: 识别当前12位截取方案的冲突风险，设计了三种LLM友好方案：Base64编码(22字符,已实施)、Base4096-CJK编码(11字符,开发中)、智能检索层(4-8字符灵活匹配,正式设计)，实现编码层与检索层的正交架构
   - **🎯 NodeId.Root优化 (v1.3)**: 解决Magic String问题，将根节点ID从硬编码"root"改为Guid.Empty的Base64编码"AAAAAAAAAAAAAAAAAAAAAA"，消除冲突风险，提升架构一致性，简化验证逻辑
   - **🔧 GuidEncoder接口化 (v1.4)**: 将ToBase64String重构为ToIdString抽象接口，消除方法名与具体算法的绑定，为未来切换Base4096-CJK等编码算法提供无缝支持，保持向后兼容
+  - **🛡️ CustomProperties类型安全优化 (v1.5)**: 针对NodeMetadata.CustomProperties和NodeRelation.Properties的类型安全问题，提供MVP阶段的安全访问扩展方法(CustomPropertiesExtensions)，明确类型约定，规划Phase 5的JsonElement升级方案，在保持灵活性的同时显著提升类型安全性
 
 ## 🔍 快速搜索提示
 

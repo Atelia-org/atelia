@@ -138,6 +138,14 @@ public record DataChangeEvent
     public string ItemId { get; init; } = string.Empty;
     public ChangeType ChangeType { get; init; }
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
+    /// <summary>
+    /// 变更数据
+    ///
+    /// 类型约定与 NodeMetadata.CustomProperties 相同：
+    /// - 支持基本类型：string, int, long, double, bool, DateTime
+    /// - 支持集合类型：string[], List&lt;string&gt;
+    /// - 使用 CustomPropertiesExtensions 提供的安全访问方法
+    /// </summary>
     public IReadOnlyDictionary<string, object> Data { get; init; } =
         new Dictionary<string, object>();
 }
@@ -222,6 +230,14 @@ public record PluginInfo
     public string AssemblyPath { get; init; } = string.Empty;
     public string TypeName { get; init; } = string.Empty;
     public IReadOnlyList<string> Dependencies { get; init; } = Array.Empty<string>();
+    /// <summary>
+    /// 插件元数据
+    ///
+    /// 类型约定与 NodeMetadata.CustomProperties 相同：
+    /// - 支持基本类型：string, int, long, double, bool, DateTime
+    /// - 支持集合类型：string[], List&lt;string&gt;
+    /// - 使用 CustomPropertiesExtensions 提供的安全访问方法
+    /// </summary>
     public IReadOnlyDictionary<string, object> Metadata { get; init; } =
         new Dictionary<string, object>();
 }

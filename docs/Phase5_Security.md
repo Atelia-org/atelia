@@ -243,6 +243,11 @@ public record SecurityContext
     
     /// <summary>
     /// 用户声明信息
+    ///
+    /// 类型约定与 NodeMetadata.CustomProperties 相同：
+    /// - 支持基本类型：string, int, long, double, bool, DateTime
+    /// - 支持集合类型：string[], List&lt;string&gt;
+    /// - 使用 CustomPropertiesExtensions 提供的安全访问方法
     /// </summary>
     public IReadOnlyDictionary<string, object> Claims { get; init; } =
         new Dictionary<string, object>();
@@ -375,6 +380,11 @@ public record AuditEvent
 
     /// <summary>
     /// 详细信息
+    ///
+    /// 类型约定与 NodeMetadata.CustomProperties 相同：
+    /// - 支持基本类型：string, int, long, double, bool, DateTime
+    /// - 支持集合类型：string[], List&lt;string&gt;
+    /// - 使用 CustomPropertiesExtensions 提供的安全访问方法
     /// </summary>
     public IReadOnlyDictionary<string, object> Details { get; init; } =
         new Dictionary<string, object>();
