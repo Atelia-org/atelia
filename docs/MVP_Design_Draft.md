@@ -96,16 +96,17 @@ Workspace/
 - `meta.yaml`: 选择YAML格式提升可读性，支持注释
 - `brief.md` / `summary.md` / `detail.md`: 按需加载特定LOD，提升内存效率
 
-**🆔 GUID编码优化 (v1.4)**
-- **NodeId**: 使用GuidEncoder.ToIdString生成，当前Base64编码(22字符)
-- **根节点ID**: 从硬编码"root"改为Guid.Empty的Base64编码"AAAAAAAAAAAAAAAAAAAAAA"
-- **编码接口化**: 支持未来切换到Base4096-CJK(11字符)等编码算法
-- **智能检索层**: 支持4-8字符片段精确匹配完整GUID
+**🆔 GUID编码优化 (v1.5)**
+- **NodeId**: 使用GuidEncoder.ToIdString生成，**推荐Base4096-CJK编码(11字符)**
+- **根节点ID**: 使用Guid.Empty编码，Base4096-CJK格式为"一一一一一一一一一一一"
+- **编码优势**: 解决Base64的文件系统兼容性、URL安全性、路径长度等问题
+- **智能检索层**: 支持汉字片段精确匹配，如"一二三四"匹配完整NodeId
+- **向后兼容**: 智能识别Base64和Base4096-CJK格式，平滑迁移
 
 **元数据设计示例**
 ```yaml
-# CogNodes/ABCD1234EFGH5678IJKL90/meta.yaml
-node_id: "ABCD1234EFGH5678IJKL90"  # Base64编码的GUID
+# CogNodes/一二三四五六七八九十丁/meta.yaml
+node_id: "一二三四五六七八九十丁"  # Base4096-CJK编码的GUID
 title: "AI存在的意义是什么？"
 created_at: "2025-07-27T10:30:00Z"
 last_modified: "2025-07-27T11:15:00Z"
@@ -353,7 +354,7 @@ views/
 - **存储**: 文件系统 + Git (LibGit2Sharp)
 - **DI容器**: Microsoft.Extensions.DependencyInjection
 - **元数据格式**: YAML (YamlDotNet)
-- **GUID编码**: Base64编码(22字符)，支持未来切换Base4096-CJK(11字符)
+- **GUID编码**: 推荐Base4096-CJK编码(11字符)，解决文件系统兼容性问题
 - **GUI框架**: WPF/Avalonia/MAUI (待定)
 
 ### 可选增强
@@ -386,10 +387,11 @@ views/
 - 同步落盘确保数据一致性
 - 消除缓存一致性问题，减少30-40%相关代码
 
-### v1.4 GUID编码优化
-- 从12位截取改为Base64编码(22字符)
+### v1.5 GUID编码优化
+- 推荐从day1采用Base4096-CJK编码(11字符)
+- 解决Base64的文件系统兼容性和URL安全性问题
 - 根节点ID使用Guid.Empty编码，消除Magic String
-- 接口化设计支持未来算法切换
+- 智能格式识别支持平滑迁移
 
 ### v2.1 Git命令直接映射
 - API命名与Git命令完全一致

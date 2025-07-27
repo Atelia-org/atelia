@@ -15,29 +15,48 @@
 ```csharp
 /// <summary>
 /// 统一的GUID编码工具，确保项目中所有GUID到字符串的转换使用相同的编码方式
-/// 当前使用Base64编码(22字符)，未来可无缝切换到Base4096-CJK编码(11字符)
+/// 推荐使用Base4096-CJK编码(11字符)解决Base64的文件系统兼容性和URL安全性问题
 /// </summary>
 public static class GuidEncoder
 {
     /// <summary>
     /// 将GUID编码为ID字符串表示
-    /// 当前实现：Base64编码，移除末尾填充，生成22个字符
-    /// 未来可切换为Base4096-CJK编码，生成11个汉字字符
+    /// 推荐实现：Base4096-CJK编码，生成11个语义中性汉字字符
+    /// 优势：文件系统安全、URL相对安全、路径长度减半、LLM友好
+    /// 备选：Base64编码(22字符)，但存在文件系统兼容性问题
     /// </summary>
     public static string ToIdString(Guid guid)
     {
+        // TODO: 实现Base4096-CJK编码 (推荐)
+        // return ToBase4096CJK(guid);
+
+        // 临时使用Base64编码，待Base4096-CJK实现后切换
         var bytes = guid.ToByteArray();
         var base64 = Convert.ToBase64String(bytes);
         return base64.TrimEnd('='); // 移除固定的==填充
     }
 
     /// <summary>
-    /// 从ID字符串解码回GUID（用于调试和验证）
+    /// 从ID字符串解码回GUID（智能识别编码格式）
     /// </summary>
     public static Guid FromIdString(string encoded)
     {
+        var encodingType = DetectEncodingType(encoded);
+        return encodingType switch
+        {
+            GuidEncodingType.Base4096CJK => FromBase4096CJK(encoded),
+            GuidEncodingType.Base64 => FromBase64(encoded),
+            _ => throw new ArgumentException($"Unknown encoding format: {encoded}")
+        };
+    }
+
+    /// <summary>
+    /// Base64解码实现（向后兼容）
+    /// </summary>
+    private static Guid FromBase64(string encoded)
+    {
         if (encoded.Length != 22)
-            throw new ArgumentException($"Invalid encoded GUID length: {encoded.Length}, expected 22");
+            throw new ArgumentException($"Invalid Base64 GUID length: {encoded.Length}, expected 22");
 
         var withPadding = encoded + "=="; // 添加回填充
         var bytes = Convert.FromBase64String(withPadding);
@@ -45,29 +64,48 @@ public static class GuidEncoder
     }
 
     /// <summary>
-    /// 检测编码格式类型（用于未来多格式支持）
+    /// Base4096-CJK解码实现（推荐格式）
+    /// </summary>
+    private static Guid FromBase4096CJK(string encoded)
+    {
+        // TODO: 实现Base4096-CJK解码逻辑
+        throw new NotImplementedException("Base4096-CJK decoding not yet implemented");
+    }
+
+    /// <summary>
+    /// 检测编码格式类型（智能格式识别）
     /// </summary>
     public static GuidEncodingType DetectEncodingType(string encoded)
     {
         return encoded.Length switch
         {
-            22 => GuidEncodingType.Base64,
             11 when encoded.All(c => c >= '\u4e00' && c <= '\u9fff') => GuidEncodingType.Base4096CJK,
+            22 => GuidEncodingType.Base64,
             12 when encoded.All(c => char.IsDigit(c) || (c >= 'a' && c <= 'f')) => GuidEncodingType.HexTruncated,
             _ => GuidEncodingType.Unknown
         };
     }
+
+    /// <summary>
+    /// 生成URL安全的Base64编码（用于Web传输）
+    /// </summary>
+    public static string ToUrlSafeString(Guid guid)
+    {
+        var bytes = guid.ToByteArray();
+        var base64 = Convert.ToBase64String(bytes);
+        return base64.TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
 }
 
 /// <summary>
-/// GUID编码类型枚举
+/// GUID编码类型枚举（按推荐优先级排序）
 /// </summary>
 public enum GuidEncodingType
 {
     Unknown,
-    Base64,
-    Base4096CJK,
-    HexTruncated // 旧的12位十六进制格式
+    Base4096CJK,    // 推荐：11字符，文件系统安全，LLM友好
+    Base64,         // 备选：22字符，存在兼容性问题
+    HexTruncated    // 已废弃：12位十六进制格式，存在冲突风险
 }
 ```
 

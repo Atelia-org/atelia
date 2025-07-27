@@ -31,7 +31,7 @@
 
 #### Phase1_CoreTypes.md (基础数据类型)
 (285行) 核心数据类型、枚举、标识符
-- `GuidEncoder` - 统一GUID编码工具类，提供ToIdString抽象接口，当前使用Base64编码(22字符)，支持未来切换到Base4096-CJK(11字符)
+- `GuidEncoder` - 统一GUID编码工具类，提供ToIdString抽象接口，**推荐从day1使用Base4096-CJK编码(11字符)**，解决Base64的文件系统兼容性和URL安全性问题
 - `GuidEncodingType` - GUID编码类型枚举，支持Base64、Base4096-CJK和旧格式检测
 - `NodeId` - 认知节点的唯一标识符，使用GuidEncoder.ToIdString生成，支持字符串格式和相等性比较
 - `RelationId` - 关系标识符，使用GuidEncoder.ToIdString生成，用于唯一标识节点间的语义关系
@@ -400,7 +400,7 @@
   - **配置选项归属优化**: 新增ViewOptions配置类，明确视图相关配置归属，优化文档间类型引用
   - **类型索引驱动**: 重构为类型索引驱动的架构认知模式，优化LLM使用体验
   - **🚀 内存优先架构 (v1.1)**: 采用常驻内存+同步落盘架构，移除复杂缓存层，简化MVP实现，充分利用现代硬件优势
-  - **🆔 GUID编码优化 (v1.2)**: 识别当前12位截取方案的冲突风险，设计了三种LLM友好方案：Base64编码(22字符,已实施)、Base4096-CJK编码(11字符,开发中)、智能检索层(4-8字符灵活匹配,正式设计)，实现编码层与检索层的正交架构
+  - **🆔 GUID编码优化 (v1.2)**: 识别Base64编码的文件系统兼容性和URL安全性问题，**推荐从day1采用Base4096-CJK编码(11字符)**，解决路径长度、特殊字符、大小写敏感等问题，配合智能检索层(4-8字符灵活匹配)实现最佳LLM体验
   - **🎯 NodeId.Root优化 (v1.3)**: 解决Magic String问题，将根节点ID从硬编码"root"改为Guid.Empty的Base64编码"AAAAAAAAAAAAAAAAAAAAAA"，消除冲突风险，提升架构一致性，简化验证逻辑
   - **🔧 GuidEncoder接口化 (v1.4)**: 将ToBase64String重构为ToIdString抽象接口，消除方法名与具体算法的绑定，为未来切换Base4096-CJK等编码算法提供无缝支持，保持向后兼容
   - **🛡️ CustomProperties类型安全优化 (v1.5)**: 针对NodeMetadata.CustomProperties和NodeRelation.Properties的类型安全问题，提供MVP阶段的安全访问扩展方法(CustomPropertiesExtensions)，明确类型约定，规划Phase 5的JsonElement升级方案，在保持灵活性的同时显著提升类型安全性
