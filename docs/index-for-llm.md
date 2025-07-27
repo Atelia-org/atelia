@@ -376,7 +376,7 @@
 - **总行数**: 6,627行 + 设计文档
 - **完成状态**: 🎉 100% 完成 (核心架构)
 - **类型索引**: ✅ 重构完成 (150+个类型)
-- **最后更新**: 2025-07-27 (配置职责分离优化)
+- **最后更新**: 2025-07-27 (约束验证逻辑优化)
 - **原始文档**: Core_Types_Design.md (3116行) → 成功拆分成若干Phase_XXX.md。已删除，git中有旧档。
 - **重构成果**:
   - ✅ **类型索引重构完成**: 建立完整的类型定义索引体系，实现"一次加载，全局认知"
@@ -398,6 +398,7 @@
   - **🛡️ CustomProperties类型安全优化 (v1.5)**: 针对NodeMetadata.CustomProperties和NodeRelation.Properties的类型安全问题，提供MVP阶段的安全访问扩展方法(CustomPropertiesExtensions)，明确类型约定，规划Phase 5的JsonElement升级方案，在保持灵活性的同时显著提升类型安全性
   - **🔧 WithContext异常处理类型安全重构 (v1.6)**: 基于设计Review反馈，将WithContext实例方法重构为泛型扩展方法，消除静态工厂方法中的`as`类型转换风险，通过泛型约束实现编译时类型检查，避免潜在的NullReferenceException，提升异常处理的类型安全性和代码可维护性
   - **🏗️ 配置职责分离优化 (v1.7)**: 基于设计Review反馈，移除RelationOptions中的冗余路径配置项(HierarchyStorageDirectory/RelationStorageDirectory)，明确职责分离：MemoTreeOptions负责物理布局，RelationOptions负责行为逻辑，通过依赖注入组合使用，消除配置冗余和潜在冲突
+  - **🔧 约束验证逻辑优化 (v1.8)**: 基于设计Review反馈，重构DefaultConfigurationValidator以减少代码重复和提升可维护性，提取验证辅助方法统一错误处理模式，保持MVP阶段零依赖的简单性，规划Phase 5引入FluentValidation支持复杂验证场景
 
 ## 🔍 快速搜索提示
 

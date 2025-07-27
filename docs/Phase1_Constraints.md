@@ -268,6 +268,8 @@ public interface IConfigurationValidator
 
 /// <summary>
 /// 默认配置验证器实现
+/// MVP阶段：采用简单直接的验证逻辑，优化代码结构但保持零依赖
+/// TODO Phase5: 考虑引入FluentValidation以支持更复杂的验证场景
 /// </summary>
 public class DefaultConfigurationValidator : IConfigurationValidator
 {
@@ -276,18 +278,16 @@ public class DefaultConfigurationValidator : IConfigurationValidator
         var errors = new List<ValidationError>();
 
         // 验证Token限制
-        if (options.DefaultMaxContextTokens > SystemLimits.DefaultMaxContextTokens)
-        {
-            errors.Add(new ValidationError
-            {
-                Code = "TOKEN_LIMIT_EXCEEDED",
-                Message = $"配置的DefaultMaxContextTokens ({options.DefaultMaxContextTokens}) 超过系统硬限制 ({SystemLimits.DefaultMaxContextTokens})",
-                PropertyName = nameof(options.DefaultMaxContextTokens),
-                AttemptedValue = options.DefaultMaxContextTokens
-            });
-        }
+        ValidateTokenLimit(
+            errors,
+            options.DefaultMaxContextTokens,
+            SystemLimits.DefaultMaxContextTokens,
+            nameof(options.DefaultMaxContextTokens),
+            "TOKEN_LIMIT_EXCEEDED",
+            "DefaultMaxContextTokens"
+        );
 
-        return errors.Count == 0 ? ValidationResult.Success() : ValidationResult.Failure(errors.ToArray());
+        return CreateValidationResult(errors);
     }
 
     public ValidationResult ValidateRelationOptions(RelationOptions options)
@@ -295,59 +295,139 @@ public class DefaultConfigurationValidator : IConfigurationValidator
         var errors = new List<ValidationError>();
 
         // 验证关系图节点数不超过子节点限制
-        if (options.MaxRelationGraphNodes > NodeConstraints.MaxChildrenCount)
-        {
-            errors.Add(new ValidationError
-            {
-                Code = "RELATION_GRAPH_SIZE_EXCEEDED",
-                Message = $"配置的MaxRelationGraphNodes ({options.MaxRelationGraphNodes}) 超过节点子节点硬限制 ({NodeConstraints.MaxChildrenCount})",
-                PropertyName = nameof(options.MaxRelationGraphNodes),
-                AttemptedValue = options.MaxRelationGraphNodes
-            });
-        }
+        ValidateMaxLimit(
+            errors,
+            options.MaxRelationGraphNodes,
+            NodeConstraints.MaxChildrenCount,
+            nameof(options.MaxRelationGraphNodes),
+            "RELATION_GRAPH_SIZE_EXCEEDED",
+            "MaxRelationGraphNodes",
+            "节点子节点硬限制"
+        );
 
         // 验证关系深度合理性
-        if (options.MaxRelationDepth > NodeConstraints.MaxTreeDepth)
-        {
-            errors.Add(new ValidationError
-            {
-                Code = "RELATION_DEPTH_EXCEEDED",
-                Message = $"配置的MaxRelationDepth ({options.MaxRelationDepth}) 超过树深度硬限制 ({NodeConstraints.MaxTreeDepth})",
-                PropertyName = nameof(options.MaxRelationDepth),
-                AttemptedValue = options.MaxRelationDepth
-            });
-        }
+        ValidateMaxLimit(
+            errors,
+            options.MaxRelationDepth,
+            NodeConstraints.MaxTreeDepth,
+            nameof(options.MaxRelationDepth),
+            "RELATION_DEPTH_EXCEEDED",
+            "MaxRelationDepth",
+            "树深度硬限制"
+        );
 
-        return errors.Count == 0 ? ValidationResult.Success() : ValidationResult.Failure(errors.ToArray());
+        return CreateValidationResult(errors);
     }
 
     public ValidationResult ValidateTokenLimits(int nodeTokens, int viewTokens)
     {
         var errors = new List<ValidationError>();
 
-        if (viewTokens < SystemLimits.MinMemoTreeViewTokens)
-        {
-            errors.Add(new ValidationError
-            {
-                Code = "VIEW_TOKENS_TOO_LOW",
-                Message = $"MemoTree视图Token数 ({viewTokens}) 低于最小限制 ({SystemLimits.MinMemoTreeViewTokens})",
-                PropertyName = "ViewTokens",
-                AttemptedValue = viewTokens
-            });
-        }
+        // 验证视图Token下限
+        ValidateMinLimit(
+            errors,
+            viewTokens,
+            SystemLimits.MinMemoTreeViewTokens,
+            "ViewTokens",
+            "VIEW_TOKENS_TOO_LOW",
+            "MemoTree视图Token数",
+            "最小限制"
+        );
 
-        if (viewTokens > SystemLimits.MaxMemoTreeViewTokens)
-        {
-            errors.Add(new ValidationError
-            {
-                Code = "VIEW_TOKENS_TOO_HIGH",
-                Message = $"MemoTree视图Token数 ({viewTokens}) 超过最大限制 ({SystemLimits.MaxMemoTreeViewTokens})",
-                PropertyName = "ViewTokens",
-                AttemptedValue = viewTokens
-            });
-        }
+        // 验证视图Token上限
+        ValidateMaxLimit(
+            errors,
+            viewTokens,
+            SystemLimits.MaxMemoTreeViewTokens,
+            "ViewTokens",
+            "VIEW_TOKENS_TOO_HIGH",
+            "MemoTree视图Token数",
+            "最大限制"
+        );
 
-        return errors.Count == 0 ? ValidationResult.Success() : ValidationResult.Failure(errors.ToArray());
+        return CreateValidationResult(errors);
+    }
+
+    // MVP阶段的验证辅助方法：减少重复代码，保持简单直接
+    private static void ValidateTokenLimit(
+        List<ValidationError> errors,
+        int actualValue,
+        int limitValue,
+        string propertyName,
+        string errorCode,
+        string configName)
+    {
+        if (actualValue > limitValue)
+        {
+            errors.Add(CreateValidationError(
+                errorCode,
+                $"配置的{configName} ({actualValue}) 超过系统硬限制 ({limitValue})",
+                propertyName,
+                actualValue
+            ));
+        }
+    }
+
+    private static void ValidateMaxLimit(
+        List<ValidationError> errors,
+        int actualValue,
+        int maxValue,
+        string propertyName,
+        string errorCode,
+        string configName,
+        string limitDescription)
+    {
+        if (actualValue > maxValue)
+        {
+            errors.Add(CreateValidationError(
+                errorCode,
+                $"配置的{configName} ({actualValue}) 超过{limitDescription} ({maxValue})",
+                propertyName,
+                actualValue
+            ));
+        }
+    }
+
+    private static void ValidateMinLimit(
+        List<ValidationError> errors,
+        int actualValue,
+        int minValue,
+        string propertyName,
+        string errorCode,
+        string configName,
+        string limitDescription)
+    {
+        if (actualValue < minValue)
+        {
+            errors.Add(CreateValidationError(
+                errorCode,
+                $"{configName} ({actualValue}) 低于{limitDescription} ({minValue})",
+                propertyName,
+                actualValue
+            ));
+        }
+    }
+
+    private static ValidationError CreateValidationError(
+        string code,
+        string message,
+        string propertyName,
+        object attemptedValue)
+    {
+        return new ValidationError
+        {
+            Code = code,
+            Message = message,
+            PropertyName = propertyName,
+            AttemptedValue = attemptedValue
+        };
+    }
+
+    private static ValidationResult CreateValidationResult(List<ValidationError> errors)
+    {
+        return errors.Count == 0
+            ? ValidationResult.Success()
+            : ValidationResult.Failure(errors.ToArray());
     }
 }
 ```
@@ -410,6 +490,79 @@ public class DefaultConfigurationValidator : IConfigurationValidator
 - 缓存验证结果以提高性能
 - 配置验证结果可缓存，避免重复验证
 
+## 8. 验证架构演进策略
+
+### 8.1 MVP阶段 (当前实现)
+**设计原则**: 简单直接，零外部依赖，易于理解和调试
+
+**优势**:
+- ✅ **零依赖**: 不引入外部验证库，减少项目复杂度
+- ✅ **高性能**: 直接的条件判断，无反射开销
+- ✅ **调试友好**: 验证逻辑一目了然，便于问题定位
+- ✅ **测试简单**: 每个验证规则独立，易于单元测试
+
+**当前优化**:
+- 提取验证辅助方法，减少重复代码
+- 统一错误创建模式，提高代码一致性
+- 按验证类型分组，提升代码可读性
+
+### 8.2 Phase 5 演进方案
+**触发条件**: 验证规则超过10个，或需要复杂的组合验证逻辑
+
+**候选技术方案**:
+
+#### 方案A: FluentValidation (推荐)
+```csharp
+// 示例：声明式验证规则
+public class RelationOptionsValidator : AbstractValidator<RelationOptions>
+{
+    public RelationOptionsValidator()
+    {
+        RuleFor(x => x.MaxRelationDepth)
+            .LessThanOrEqualTo(NodeConstraints.MaxTreeDepth)
+            .WithMessage($"不能超过树深度硬限制 ({NodeConstraints.MaxTreeDepth})");
+
+        RuleFor(x => x.MaxRelationGraphNodes)
+            .LessThanOrEqualTo(NodeConstraints.MaxChildrenCount)
+            .WithMessage($"不能超过子节点硬限制 ({NodeConstraints.MaxChildrenCount})");
+    }
+}
+```
+
+**优势**:
+- 声明式语法，规则清晰易读
+- 丰富的内置验证器
+- 支持复杂的条件验证和组合规则
+- 优秀的错误消息本地化支持
+
+#### 方案B: 自定义验证框架
+```csharp
+// 示例：基于特性的验证
+public class RelationOptions
+{
+    [MaxValue(NodeConstraints.MaxTreeDepth, ErrorCode = "RELATION_DEPTH_EXCEEDED")]
+    public int MaxRelationDepth { get; set; }
+
+    [MaxValue(NodeConstraints.MaxChildrenCount, ErrorCode = "RELATION_GRAPH_SIZE_EXCEEDED")]
+    public int MaxRelationGraphNodes { get; set; }
+}
+```
+
+**优势**:
+- 完全控制验证逻辑
+- 与现有错误处理体系无缝集成
+- 可针对MemoTree特定需求优化
+
+### 8.3 迁移策略
+1. **保持接口兼容**: `IConfigurationValidator`接口保持不变
+2. **渐进式迁移**: 先迁移复杂验证规则，简单规则可保持现状
+3. **性能基准测试**: 确保新方案不降低验证性能
+4. **向后兼容**: 提供配置开关，允许回退到简单实现
+
+### 8.4 决策建议
+**当前阶段**: 保持现有实现，专注于核心功能开发
+**未来规划**: 当验证规则复杂度达到阈值时，优先考虑FluentValidation
+
 ---
-**下一阶段**: [Phase1_Exceptions.md](Phase1_Exceptions.md)  
+**下一阶段**: [Phase1_Exceptions.md](Phase1_Exceptions.md)
 **相关文档**: [Phase1_CoreTypes.md](Phase1_CoreTypes.md), [Phase2_StorageInterfaces.md](Phase2_StorageInterfaces.md)
