@@ -14,7 +14,7 @@
 
 ## 候选方案对比
 
-### 方案一：Base64编码 (已实施)
+### 方案一：Base64编码（保留为可选方案）
 
 ```csharp
 public static NodeId Generate() => 
@@ -33,7 +33,7 @@ public static NodeId Generate() =>
 Base64:   VQ6EAOKbQdSnFkRmVUQAAA
 ```
 
-### 方案二：Base4096-CJK编码 (开发中)
+### 方案二：Base4096-CJK编码（当前默认方案）
 
 ```csharp
 public static NodeId Generate() => 
@@ -618,8 +618,9 @@ public enum NodeIdEncodingType
 
 public static class NodeIdGenerator
 {
-    public static NodeIdEncodingType DefaultEncoding { get; set; } = NodeIdEncodingType.Base64;
-    
+    // 项目默认采用 Base4096-CJK 编码；可通过配置切换
+    public static NodeIdEncodingType DefaultEncoding { get; set; } = NodeIdEncodingType.Base4096CJK;
+
     public static NodeId Generate(NodeIdEncodingType? encoding = null)
     {
         var actualEncoding = encoding ?? DefaultEncoding;
@@ -669,7 +670,7 @@ public static class NodeIdGenerator
 
 ### 组合使用建议
 
-**最佳实践**: Base64编码 + 智能检索层
+**最佳实践（当前默认）**: Base4096-CJK编码 + 智能检索层
 ```csharp
 // 底层使用Base64确保稳定性
 var nodeId = NodeId.Generate(); // 生成Base64编码的ID
@@ -682,7 +683,7 @@ translator.RegisterId(nodeId.Value);
 var resolved = translator.ResolveUserInput("VQ6E"); // 智能匹配
 ```
 
-**未来升级**: Base4096-CJK编码 + 智能检索层
+**可选兼容**: Base64编码 + 智能检索层（兼容性需求或跨系统集成时）
 ```csharp
 // 当Base4096-CJK方案成熟后，可无缝切换底层编码
 // 智能检索层无需任何修改
@@ -815,7 +816,7 @@ public static class NodeIdRootMigration
 
 ## 结论和建议
 
-1. **✅ 已实施Base64方案**解决当前的冲突风险
+1. **✅ 已实施Base4096-CJK为默认方案**，并提供Base64作为兼容选项
 2. **🔄 并行开发Base4096-CJK方案**作为长期目标
 3. **✅ 新增智能检索层方案**作为正式设计，与编码层正交
 4. **📋 已提供统一编码工具**支持未来灵活切换
@@ -836,7 +837,7 @@ public static class NodeIdRootMigration
 
 ### 实施路径建议
 
-1. **立即实施**: 智能检索层方案，与现有Base64编码配合使用
+1. **立即实施**: 智能检索层方案（已与Base4096-CJK默认集成；Base64作为可选兼容方案）
 2. **中期(1-2个月)**: 完成Base4096-CJK方案，进行编码层A/B测试
 3. **长期优化**: 基于使用数据优化检索算法，集成更智能的搜索引擎
 4. **最终形态**: Base4096-CJK编码 + 智能检索层，实现极致的LLM友好性
@@ -865,6 +866,6 @@ public static class NodeIdRootMigration
 
 **下一步行动**:
 1. ✅ ~~实施Base64编码方案~~ (已完成)
-2. 🔄 完善Base4096-CJK字符集构建工具
+2. 🔄 完善Base4096-CJK字符集构建工具（默认方案已启用，持续优化字符集与实现）
 3. 📊 创建编码性能基准测试
 4. 🧪 与LLM集成测试框架

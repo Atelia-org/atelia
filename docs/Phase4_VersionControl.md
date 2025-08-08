@@ -287,6 +287,11 @@ public static partial class SystemLimits
 - 提供有意义的错误消息
 - 记录详细的操作日志
 
+### MVP 冲突处理假设
+- MVP阶段默认假设单用户/单写入者场景，不处理复杂的跨分支/跨协作者合并冲突
+- 若出现冲突，建议人工介入处理；后续将在Phase 5提供语义级冲突可视化与“将冲突翻译为LLM任务”的解决方案
+- TODO: Phase5-VersionControl-ConflictResolution — 设计并实现冲突检测、语义合并、对话式解决流程
+
 ---
 
 **下一阶段**: [Phase5_Security.md](Phase5_Security.md) - 安全与权限管理

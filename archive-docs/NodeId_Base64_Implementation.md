@@ -31,7 +31,7 @@ public readonly struct NodeId : IEquatable<NodeId>
 
     /// <summary>
     /// 根节点的特殊ID - 使用Guid.Empty确保唯一性
-    /// 当前编码结果: AAAAAAAAAAAAAAAAAAAAAA (22个A字符)
+    /// 编码结果由 GuidEncoder.ToIdString 决定（当前默认：Base4096‑CJK；兼容：Base64）
     /// </summary>
     public static NodeId Root => new(RootValue);
 

@@ -99,43 +99,24 @@ public enum SearchType
 }
 ```
 
-## 4. 检索配置选项
+## 4. 检索配置选项（引用）
+
+本模块使用的检索配置定义于 Phase1_Configuration.md，并通过依赖注入进行传递，避免重复定义，确保“单一权威来源”。
+
+- 类型来源：Phase1_Configuration.md → RetrievalOptions
+- 注入方式：IOptions<RetrievalOptions>
+
+示例：
 
 ```csharp
-/// <summary>
-/// 检索配置选项
-/// </summary>
-public class RetrievalOptions
+public class RetrievalService : IRetrievalService
 {
-    /// <summary>
-    /// 是否启用全文搜索 (基于Lucene.Net)
-    /// </summary>
-    public bool EnableFullTextSearch { get; set; } = true;
-
-    /// <summary>
-    /// 是否启用语义搜索 (基于向量检索)
-    /// </summary>
-    public bool EnableSemanticSearch { get; set; } = false;
-
-    /// <summary>
-    /// 全文搜索索引目录
-    /// </summary>
-    public string FullTextIndexDirectory { get; set; } = "./indexes/fulltext";
-
-    /// <summary>
-    /// 语义搜索向量维度
-    /// </summary>
-    public int VectorDimension { get; set; } = 768;
-
-    /// <summary>
-    /// 语义搜索索引目录
-    /// </summary>
-    public string SemanticIndexDirectory { get; set; } = "./indexes/semantic";
-
-    /// <summary>
-    /// 搜索结果最大数量
-    /// </summary>
-    public int MaxSearchResults { get; set; } = 50;
+    private readonly RetrievalOptions _options;
+    public RetrievalService(IOptions<RetrievalOptions> options)
+    {
+        _options = options.Value;
+    }
+    // ... 其余实现
 }
 ```
 
