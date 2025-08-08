@@ -1,0 +1,78 @@
+🎯 Generation Attention Analysis Report
+==================================================
+Context: 我是小红帽，今天要去看望生病的奶奶。我正在森林里的小屋中准备礼物。突然，我听到了敲门声。我心想这么晚了会是谁呢？我
+Generated: æīĵå¼Ģ éĹ¨ ï¼Į åıĳçİ° æĺ¯ çĭ¼ ãĢĤ çĭ¼ è¯´ ï¼ļâĢľ å°ı çº¢
+
+📊 Step-by-Step Attention Analysis:
+----------------------------------------
+Step 1: Generated 'æīĵå¼Ģ'
+  Most related context tokens:
+    1. 'æĪĳ' (pos 41): 0.2947
+    2. 'ï¼Ł' (pos 40): 0.1648
+    3. 'åĳ¢' (pos 39): 0.0678
+
+Step 2: Generated 'éĹ¨'
+  Most related context tokens:
+    1. 'æĪĳ' (pos 41): 0.1816
+    2. 'ï¼Ł' (pos 40): 0.1273
+    3. 'ãĢĤ' (pos 31): 0.0590
+
+Step 3: Generated 'ï¼Į'
+  Most related context tokens:
+    1. 'æĪĳ' (pos 41): 0.1833
+    2. 'ï¼Ł' (pos 40): 0.1216
+    3. 'äºĨ' (pos 36): 0.0609
+
+Step 4: Generated 'åıĳçİ°'
+  Most related context tokens:
+    1. 'ï¼Ł' (pos 40): 0.1221
+    2. 'æĪĳ' (pos 41): 0.0763
+    3. 'ï¼Į' (pos 24): 0.0709
+
+Step 5: Generated 'æĺ¯'
+  Most related context tokens:
+    1. 'ï¼Ł' (pos 40): 0.1417
+    2. 'æĪĳ' (pos 41): 0.1206
+    3. 'æĺ¯è°ģ' (pos 38): 0.0522
+
+Step 6: Generated 'çĭ¼'
+  Most related context tokens:
+    1. 'ï¼Ł' (pos 40): 0.1282
+    2. 'æĪĳ' (pos 41): 0.0899
+    3. 'æĪĳ' (pos 32): 0.0553
+
+Step 7: Generated 'ãĢĤ'
+  Most related context tokens:
+    1. 'ï¼Ł' (pos 40): 0.0894
+    2. 'ãĢĤ' (pos 31): 0.0663
+    3. 'æĪĳ' (pos 41): 0.0623
+
+Step 8: Generated 'çĭ¼'
+  Most related context tokens:
+    1. 'ï¼Ł' (pos 40): 0.0981
+    2. 'ãĢĤ' (pos 31): 0.0687
+    3. 'äºĨ' (pos 36): 0.0550
+
+Step 9: Generated 'è¯´'
+  Most related context tokens:
+    1. 'ï¼Ł' (pos 40): 0.0724
+    2. 'æĪĳ' (pos 41): 0.0660
+    3. 'äºĨ' (pos 36): 0.0651
+
+Step 10: Generated 'ï¼ļâĢľ'
+  Most related context tokens:
+    1. 'æĪĳ' (pos 41): 0.0809
+    2. 'ï¼Ł' (pos 40): 0.0776
+    3. 'ãĢĤ' (pos 31): 0.0581
+
+Step 11: Generated 'å°ı'
+  Most related context tokens:
+    1. 'ï¼Ł' (pos 40): 0.1417
+    2. 'ãĢĤ' (pos 31): 0.0660
+    3. 'æĪĳ' (pos 41): 0.0656
+
+Step 12: Generated 'çº¢'
+  Most related context tokens:
+    1. 'ï¼Ł' (pos 40): 0.0816
+    2. 'æĪĳ' (pos 41): 0.0582
+    3. 'äºĨ' (pos 36): 0.0529

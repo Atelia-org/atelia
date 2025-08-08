@@ -6,3 +6,5 @@ agent-memory
 agent-memory/
 MemoryOS
 MemoryOS/
+bin/
+attention_heatmap/*.png
