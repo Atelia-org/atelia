@@ -98,7 +98,7 @@ namespace MemoTree.Core.Storage.Views
         /// <summary>
         /// 画布状态数量
         /// </summary>
-        public int CanvasStateCount { get; init; }
+        public int ViewStateCount { get; init; }
 
         /// <summary>
         /// 最后更新时间

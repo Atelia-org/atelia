@@ -288,7 +288,7 @@
     "Phase2_RelationStorage.md 已完成，包含语义关系存储、关系类型定义存储和节点层次结构存储",
     "Phase2_ViewStorage.md 已完成，包含视图状态存储、缓存策略和节点缓存服务",
     "Phase 2 已全部完成！",
-    "Phase3_CoreServices.md 已完成，包含核心业务服务接口（认知画布、LOD生成、外部集成、环境信息）",
+    "Phase3_CoreServices.md 已完成，包含核心业务服务接口（bian、LOD生成、外部集成、环境信息）",
     "Phase3_RelationServices.md 已完成，包含关系管理服务接口、关系图、路径查找和统计功能",
     "Phase3_EditingServices.md 已完成，包含编辑操作、LOD生成服务和事件系统（300行）",
     "Phase3_RetrievalServices.md 已完成，包含检索服务接口、多模式搜索和索引管理（180行）",

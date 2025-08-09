@@ -26,7 +26,7 @@
 - **NodeId, LodLevel, NodeMetadata, NodeContent**: 定义于 [Phase1_CoreTypes.md](Phase1_CoreTypes.md)
 - **ViewOptions, RelationOptions**: 定义于 [Phase1_Configuration.md](Phase1_Configuration.md)
 - **MemoryUsageStats, NodeMemoryStats**: 本文档中定义的内存统计信息类型
-- **NodeViewState, CanvasViewState**: 本文档中定义的视图状态类型
+- **NodeViewState, MemoTreeViewState**: 本文档中定义的视图状态类型
 
 ## 视图状态数据类型
 
@@ -46,13 +46,13 @@ public record NodeViewState
 }
 ```
 
-### 认知画布视图状态
+### MemoTree视图状态
 
 ```csharp
 /// <summary>
-/// 认知画布视图状态
+/// MemoTree视图状态
 /// </summary>
-public record CanvasViewState
+public record MemoTreeViewState
 {
     public string Name { get; init; } = "default";
     public DateTime LastModified { get; init; } = DateTime.UtcNow;
@@ -76,12 +76,12 @@ public interface IViewStateStorage
     /// <summary>
     /// 获取视图状态
     /// </summary>
-    Task<CanvasViewState?> GetViewStateAsync(string viewName, CancellationToken cancellationToken = default);
+    Task<MemoTreeViewState?> GetViewStateAsync(string viewName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 保存视图状态
     /// </summary>
-    Task SaveViewStateAsync(CanvasViewState viewState, CancellationToken cancellationToken = default);
+    Task SaveViewStateAsync(MemoTreeViewState viewState, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取所有视图名称
@@ -106,14 +106,14 @@ public interface IViewStateStorage
     /// <summary>
     /// 批量获取视图状态
     /// </summary>
-    Task<IReadOnlyDictionary<string, CanvasViewState>> GetMultipleViewStatesAsync(
-        IEnumerable<string> viewNames, 
+    Task<IReadOnlyDictionary<string, MemoTreeViewState>> GetMultipleViewStatesAsync(
+        IEnumerable<string> viewNames,
         CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 复制视图状态
     /// </summary>
-    Task<CanvasViewState> CopyViewStateAsync(string sourceViewName, string targetViewName, 
+    Task<MemoTreeViewState> CopyViewStateAsync(string sourceViewName, string targetViewName,
         CancellationToken cancellationToken = default);
 }
 ```
@@ -172,7 +172,7 @@ public record MemoryUsageStats
     /// <summary>
     /// 画布状态数量
     /// </summary>
-    public int CanvasStateCount { get; init; }
+    public int ViewStateCount { get; init; }
 
     /// <summary>
     /// 最后更新时间

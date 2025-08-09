@@ -88,7 +88,7 @@ Infrastructure/       # 基础设施
 
 #### 3.1 Phase3_CoreServices.md
 - **内容**: 核心业务服务接口
-- **源位置**: 原文档第4.1节 (ICognitiveCanvasService等)
+- **源位置**: 原文档第4.1节 (IMemoTreeService等)
 - **预计行数**: ~400行
 
 #### 3.2 Phase3_RelationServices.md

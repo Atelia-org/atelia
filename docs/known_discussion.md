@@ -37,10 +37,10 @@
 1.  **Commit的粒度**: `add_node` 自带 `commit_message` 暗示了每个操作都是一次commit。这可能会产生大量细碎的commit历史。
     *   **建议**: 是否可以提供一种“事务性”的编辑模式？比如：
         ```csharp
-        canvas.start_transaction();
-        canvas.add_node(...); // 不立即commit
-        canvas.update_node(...); // 不立即commit
-        canvas.commit("Refactored the dependency injection module."); // 执行一次Git commit
+        memoTree.start_transaction();
+        memoTree.add_node(...); // 不立即commit
+        memoTree.update_node(...); // 不立即commit
+        memoTree.commit("Refactored the dependency injection module."); // 执行一次Git commit
         ```
         这让用户（或LLM）可以把一组相关的操作合并成一个有意义的commit。
 

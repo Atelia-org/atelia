@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MemoTree.Core.Json;
 
 namespace MemoTree.Core.Storage.Versioned
 {
@@ -29,7 +30,8 @@ namespace MemoTree.Core.Storage.Versioned
             _jsonOptions = new JsonSerializerOptions
             {
                 WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                Converters = { new NodeIdJsonConverter() }
             };
             
             // 确保目录结构存在

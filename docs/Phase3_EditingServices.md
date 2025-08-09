@@ -8,24 +8,25 @@
 
 ## 概述
 
-本文档定义了MemoTree系统中的编辑操作服务接口，包括认知画布编辑器、异步LOD生成服务以及相关的事件系统。这些服务提供了完整的节点编辑、内容生成和事件通知功能。
+本文档定义了MemoTree系统中的编辑操作服务接口，包括MemoTree编辑器、异步LOD生成服务以及相关的事件系统。这些服务提供了完整的节点编辑、内容生成和事件通知功能。
 
 ### 核心组件
 
-1. **ICognitiveCanvasEditor** - 认知画布编辑器接口
+1. **IMemoTreeEditor** - MemoTree编辑器接口
 2. **ILodGenerationService** - 异步LOD内容生成服务
 3. **编辑事件系统** - 节点变更事件定义
 4. **事件发布订阅接口** - 事件通信机制
 
-## 1. 认知画布编辑器接口
+## 1. MemoTree编辑器接口
 
 ### 1.1 核心编辑接口
 
 ```csharp
 /// <summary>
-/// 认知画布编辑器接口
+/// MemoTree编辑器接口
+/// 提供节点的创建、更新、删除等编辑操作
 /// </summary>
-public interface ICognitiveCanvasEditor
+public interface IMemoTreeEditor
 {
     /// <summary>
     /// 创建新节点（自动处理层次结构）
@@ -339,7 +340,7 @@ public interface IEventSubscriber
 ## 实施优先级
 
 ### 高优先级 (P0)
-- ICognitiveCanvasEditor 基础CRUD操作
+- IMemoTreeEditor 基础CRUD操作
 - NodeChangeEvent 事件系统基础
 - IEventPublisher/IEventSubscriber 基础实现
 

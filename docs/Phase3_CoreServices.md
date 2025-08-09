@@ -7,24 +7,25 @@
 
 ## 概述
 
-本文档定义了MemoTree系统的核心业务服务接口，包括认知画布服务、LOD生成服务、外部集成服务和环境信息服务。这些服务构成了系统的核心业务逻辑层，为上层应用提供高级的业务功能抽象。
+本文档定义了MemoTree系统的核心业务服务接口，包括MemoTree核心服务、LOD生成服务、外部集成服务和环境信息服务。这些服务构成了系统的核心业务逻辑层，为上层应用提供高级的业务功能抽象。
 
 ### 核心服务组件
 
-1. **认知画布服务** (`ICognitiveCanvasService`) - 核心画布渲染和节点操作
+1. **MemoTree核心服务** (`IMemoTreeService`) - 核心视图渲染和节点操作
 2. **LOD生成服务** (`ILodGenerationService`) - 异步内容层次生成
 3. **外部集成服务** (`IRoslynIntegrationService`) - 代码分析集成
 4. **环境信息服务** (`IAgentEnvironmentService`) - 系统状态和用户偏好
 
-## 1. 认知画布核心服务
+## 1. MemoTree核心服务
 
-### 1.1 ICognitiveCanvasService 接口
+### 1.1 IMemoTreeService 接口
 
 ```csharp
 /// <summary>
-/// 认知画布核心服务
+/// MemoTree核心服务
+/// 提供视图渲染、节点操作和树结构管理功能
 /// </summary>
-public interface ICognitiveCanvasService
+public interface IMemoTreeService
 {
     /// <summary>
     /// 渲染指定视图的Markdown内容
@@ -457,7 +458,7 @@ public record UserPreferences
 ## 实施优先级
 
 ### 高优先级 (Phase 3.1)
-1. **ICognitiveCanvasService** - 核心画布功能，系统的核心交互接口
+1. **IMemoTreeService** - 核心MemoTree功能，系统的核心交互接口
 2. **ILodGenerationService** - LOD内容生成，支持渐进式内容展示
 
 ### 中优先级 (Phase 3.2)
@@ -479,7 +480,7 @@ public record UserPreferences
 
 #### 性能考虑
 - LOD生成服务支持批量操作和任务状态跟踪
-- 认知画布服务集成缓存策略，优化渲染性能
+- MemoTree核心服务集成缓存策略，优化渲染性能
 - 环境信息服务提供轻量级的状态查询接口
 
 ---

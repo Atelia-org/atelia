@@ -332,7 +332,7 @@ graph TD
 
     E[INodeRelationStorage] --> F[NodeRelation]
     G[IRelationTypeStorage] --> H[RelationTypeDefinition]
-    I[IViewStateStorage] --> J[CanvasViewState]
+    I[IViewStateStorage] --> J[MemoTreeViewState]
 
     B --> K[NodeMetadata]
     C --> L[NodeContent]

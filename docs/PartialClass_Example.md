@@ -9,23 +9,23 @@
 
 ## 1. 复杂服务类的拆分示例
 
-### 1.1 主文件：CognitiveCanvasService.Core.cs
+### 1.1 主文件：MemoTreeService.Core.cs
 ```csharp
 namespace MemoTree.Services
 {
     /// <summary>
-    /// 认知画布核心服务 - 核心功能
+    /// MemoTree核心服务 - 核心功能
     /// </summary>
-    public partial class CognitiveCanvasService : ICognitiveCanvasService
+    public partial class MemoTreeService : IMemoTreeService
     {
         private readonly ICognitiveNodeStorage _storage;
         private readonly INodeCacheService _cache;
         private readonly ILogger<CognitiveCanvasService> _logger;
 
-        public CognitiveCanvasService(
+        public MemoTreeService(
             ICognitiveNodeStorage storage,
             INodeCacheService cache,
-            ILogger<CognitiveCanvasService> logger)
+            ILogger<MemoTreeService> logger)
         {
             _storage = storage;
             _cache = cache;
@@ -58,14 +58,14 @@ namespace MemoTree.Services
 }
 ```
 
-### 1.2 节点操作：CognitiveCanvasService.NodeOperations.cs
+### 1.2 节点操作：MemoTreeService.NodeOperations.cs
 ```csharp
 namespace MemoTree.Services
 {
     /// <summary>
-    /// 认知画布服务 - 节点操作功能
+    /// MemoTree服务 - 节点操作功能
     /// </summary>
-    public partial class CognitiveCanvasService
+    public partial class MemoTreeService
     {
         /// <summary>
         /// 展开节点到指定LOD级别
@@ -131,14 +131,14 @@ namespace MemoTree.Services
 }
 ```
 
-### 1.3 树结构操作：CognitiveCanvasService.TreeOperations.cs
+### 1.3 树结构操作：MemoTreeService.TreeOperations.cs
 ```csharp
 namespace MemoTree.Services
 {
     /// <summary>
-    /// 认知画布服务 - 树结构操作功能
+    /// MemoTree服务 - 树结构操作功能
     /// </summary>
-    public partial class CognitiveCanvasService
+    public partial class MemoTreeService
     {
         /// <summary>
         /// 获取节点树结构（基于层次结构存储）
@@ -199,14 +199,14 @@ namespace MemoTree.Services
 }
 ```
 
-### 1.4 FIFO策略：CognitiveCanvasService.FifoStrategy.cs
+### 1.4 FIFO策略：MemoTreeService.FifoStrategy.cs
 ```csharp
 namespace MemoTree.Services
 {
     /// <summary>
-    /// 认知画布服务 - FIFO上下文管理策略
+    /// MemoTree服务 - FIFO上下文管理策略
     /// </summary>
-    public partial class CognitiveCanvasService
+    public partial class MemoTreeService
     {
         /// <summary>
         /// 应用FIFO策略管理上下文窗口
@@ -253,7 +253,7 @@ namespace MemoTree.Services
             _logger.LogInformation("FIFO strategy completed, final tokens: {FinalTokens}", currentTokens);
         }
 
-        private async Task<int> CalculateCurrentTokensAsync(CanvasViewState viewState, CancellationToken cancellationToken)
+        private async Task<int> CalculateCurrentTokensAsync(MemoTreeViewState viewState, CancellationToken cancellationToken)
         {
             int totalTokens = 0;
 

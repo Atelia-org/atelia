@@ -4,7 +4,7 @@ namespace MemoTree.Core.Storage.Interfaces
 {
     /// <summary>
     /// 视图状态存储接口
-    /// 管理认知画布的视图状态持久化
+    /// 管理MemoTree的视图状态持久化
     /// </summary>
     public interface IViewStateStorage
     {
@@ -14,8 +14,8 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="viewName">视图名称</param>
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>视图状态，如果不存在则返回null</returns>
-        Task<CanvasViewState?> GetViewStateAsync(
-            string viewName, 
+        Task<MemoTreeViewState?> GetViewStateAsync(
+            string viewName,
             CancellationToken cancellationToken = default);
 
         /// <summary>
@@ -23,7 +23,7 @@ namespace MemoTree.Core.Storage.Interfaces
         /// </summary>
         /// <param name="viewState">视图状态</param>
         /// <param name="cancellationToken">取消令牌</param>
-        Task SaveViewStateAsync(CanvasViewState viewState, CancellationToken cancellationToken = default);
+        Task SaveViewStateAsync(MemoTreeViewState viewState, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// 获取所有视图名称
@@ -53,7 +53,7 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="sourceViewName">源视图名称</param>
         /// <param name="targetViewName">目标视图名称</param>
         /// <param name="cancellationToken">取消令牌</param>
-        Task<CanvasViewState> CopyViewStateAsync(
+        Task<MemoTreeViewState> CopyViewStateAsync(
             string sourceViewName,
             string targetViewName,
             CancellationToken cancellationToken = default);
@@ -85,7 +85,7 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="viewNames">视图名称集合</param>
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>视图名称到视图状态的映射</returns>
-        Task<IReadOnlyDictionary<string, CanvasViewState>> GetMultipleViewStatesAsync(
+        Task<IReadOnlyDictionary<string, MemoTreeViewState>> GetMultipleViewStatesAsync(
             IEnumerable<string> viewNames,
             CancellationToken cancellationToken = default);
 

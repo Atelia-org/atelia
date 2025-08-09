@@ -138,7 +138,7 @@ LOD机制是MemoTree的核心特性之一，它允许AI根据当前需要动态�
 **文件系统结构示例：**
 
 ```
-cognitive_canvas.git/
+memotree.git/
 ├── concepts/
 │   ├── artificial_intelligence/
 │   │   ├── metadata.json
@@ -175,11 +175,11 @@ cognitive_canvas.git/
 {
   "links": [
     {
-      "path": "src/Core/CognitiveCanvas.cs",
+      "path": "src/Core/MemoTreeService.cs",
       "type": "source_file",
       "content_hash": "sha256:abc123...",
       "last_checked": "2025-07-14T10:30:00Z",
-      "roslyn_symbols": ["CognitiveCanvas", "EditOperation", "RenderContext"]
+      "roslyn_symbols": ["MemoTreeService", "EditOperation", "RenderContext"]
     },
     {
       "path": "docs/architecture.md",
@@ -209,7 +209,7 @@ cognitive_canvas.git/
 
 ```csharp
 // 认知操作 → Roslyn重构映射
-canvas.RenameNode("PaymentService", "PaymentProcessor")
+memoTree.RenameNode("PaymentService", "PaymentProcessor")
 ↓
 RoslynRefactoring.RenameSymbol("PaymentService", "PaymentProcessor", scope: Project)
 ↓
@@ -227,7 +227,7 @@ RoslynRefactoring.RenameSymbol("PaymentService", "PaymentProcessor", scope: Proj
 **基础操作（映射到文件系统与Git）：**
 
 ```python
-class CanvasEditor:
+class MemoTreeEditor:
     # 创建目录和元数据文件，然后执行 git add/commit
     def insert_section(self, parent_id: str, title: str, content: str, position: int = -1) -> str
     # 删除目录，然后执行 git add/commit
@@ -275,7 +275,7 @@ class CanvasEditor:
 **LOD查询与渲染：**
 
 ```python
-class CanvasRenderer:
+class MemoTreeRenderer:
     def render_context(self, root_ids: List[str], lod_config: Dict[str, int]) -> str
     def generate_mermaid_graph(self, center_id: str, depth: int = 2) -> str
     def build_gemini_content_parts(self, section_ids: List[str]) -> List[ContentPart]
@@ -1248,7 +1248,7 @@ AI-A: "但是你没有考虑到Z因素..."
 
 ```bash
 # AI-A向AI-B展示自己的认知演化
-git log --oneline cognitive_canvas/concept_X/
+git log --oneline memotree/concept_X/
 a1b2c3d 重新理解了概念X与Y的关系
 d4e5f6g 基于用户反馈调整了对X的认知
 g7h8i9j 初次形成对概念X的理解
@@ -1351,7 +1351,7 @@ git merge AI-B/alternative_understanding
 AI-Alice: "我想和你分享我对'爱'这个概念的理解历程"
 AI-Bob: "太好了！让我clone你的love_concept分支看看"
 
-# Bob执行：git clone alice_canvas love_analysis
+# Bob执行：git clone alice_memotree love_analysis
 # Bob分析Alice的认知结构
 
 AI-Bob: "有趣！你的'爱'概念主要基于关怀和奉献，我的更侧重于连接和理解"

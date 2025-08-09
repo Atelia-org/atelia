@@ -28,26 +28,20 @@ namespace MemoTree.Core.Types
         public bool IsVisible { get; init; } = true;
 
         /// <summary>
-        /// 在视图中的显示顺序
+        /// 在视图中的显示顺序（树形结构中的兄弟节点排序）
         /// </summary>
         public int Order { get; init; } = 0;
 
         /// <summary>
-        /// 节点在画布中的位置（可选）
+        /// 最后访问时间（用于FIFO策略和热度计算）
         /// </summary>
-        public (double X, double Y)? Position { get; init; }
-
-        /// <summary>
-        /// 节点的视觉样式设置
-        /// </summary>
-        public IReadOnlyDictionary<string, object> StyleSettings { get; init; } =
-            new Dictionary<string, object>();
+        public DateTime LastAccessTime { get; init; } = DateTime.UtcNow;
     }
 
     /// <summary>
-    /// 认知画布视图状态
+    /// MemoTree视图状态
     /// </summary>
-    public record CanvasViewState
+    public record MemoTreeViewState
     {
         /// <summary>
         /// 视图名称
@@ -72,18 +66,8 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 视图的全局设置
         /// </summary>
-        public IReadOnlyDictionary<string, object> ViewSettings { get; init; } = 
+        public IReadOnlyDictionary<string, object> ViewSettings { get; init; } =
             new Dictionary<string, object>();
-
-        /// <summary>
-        /// 视图的缩放级别
-        /// </summary>
-        public double ZoomLevel { get; init; } = 1.0;
-
-        /// <summary>
-        /// 视图的中心点位置
-        /// </summary>
-        public (double X, double Y) CenterPosition { get; init; } = (0, 0);
 
         /// <summary>
         /// 视图的描述信息
@@ -94,5 +78,15 @@ namespace MemoTree.Core.Types
         /// 视图创建时间
         /// </summary>
         public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// 当前视图的根节点ID（用于树形渲染的起点）
+        /// </summary>
+        public NodeId? RootNodeId { get; init; }
+
+        /// <summary>
+        /// 视图的最大展开深度（控制树形结构的显示层次）
+        /// </summary>
+        public int MaxExpandDepth { get; init; } = 3;
     }
 }

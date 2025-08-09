@@ -9,7 +9,7 @@
 
 ## 概述
 
-本文档定义了MemoTree系统的工具调用API设计，为LLM提供标准化的节点操作接口。这些API支持节点的展开、折叠、创建、更新、搜索和提交等核心操作，是LLM与认知画布交互的主要入口。
+本文档定义了MemoTree系统的工具调用API设计，为LLM提供标准化的节点操作接口。这些API支持节点的展开、折叠、创建、更新、搜索和提交等核心操作，是LLM与MemoTree系统交互的主要入口。
 
 工具调用API设计遵循以下原则：
 - **统一的请求/响应模型**：所有操作使用一致的结果类型
@@ -25,12 +25,15 @@
 ```csharp
 /// <summary>
 /// LLM工具调用服务接口
-/// 为LLM提供标准化的认知画布操作接口
+/// 为LLM提供标准化的MemoTree操作接口
+/// 注意：此接口是对底层服务(IMemoTreeService, IMemoTreeEditor)的包装层，
+/// 不包含业务逻辑，只负责请求转换和结果包装
 /// </summary>
 public interface ILlmToolCallService
 {
     /// <summary>
     /// 展开节点到指定的LOD级别
+    /// 内部调用 IMemoTreeService.ExpandNodeAsync()
     /// </summary>
     /// <param name="request">展开节点请求</param>
     /// <param name="cancellationToken">取消令牌</param>
@@ -39,6 +42,7 @@ public interface ILlmToolCallService
 
     /// <summary>
     /// 折叠节点到最小显示状态
+    /// 内部调用 IMemoTreeService.CollapseNodeAsync()
     /// </summary>
     /// <param name="request">折叠节点请求</param>
     /// <param name="cancellationToken">取消令牌</param>
@@ -47,6 +51,7 @@ public interface ILlmToolCallService
 
     /// <summary>
     /// 创建新的认知节点
+    /// 内部调用 IMemoTreeEditor.CreateNodeAsync()
     /// </summary>
     /// <param name="request">创建节点请求</param>
     /// <param name="cancellationToken">取消令牌</param>
@@ -55,6 +60,7 @@ public interface ILlmToolCallService
 
     /// <summary>
     /// 更新现有节点的内容或属性
+    /// 内部调用 IMemoTreeEditor.UpdateNodeAsync()
     /// </summary>
     /// <param name="request">更新节点请求</param>
     /// <param name="cancellationToken">取消令牌</param>
