@@ -45,7 +45,7 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="viewName">视图名称</param>
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>如果视图存在则返回true</returns>
-        Task<bool> ExistsAsync(string viewName, CancellationToken cancellationToken = default);
+        Task<bool> ViewExistsAsync(string viewName, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// 复制视图状态
@@ -53,9 +53,9 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="sourceViewName">源视图名称</param>
         /// <param name="targetViewName">目标视图名称</param>
         /// <param name="cancellationToken">取消令牌</param>
-        Task CopyViewStateAsync(
-            string sourceViewName, 
-            string targetViewName, 
+        Task<CanvasViewState> CopyViewStateAsync(
+            string sourceViewName,
+            string targetViewName,
             CancellationToken cancellationToken = default);
 
         /// <summary>
@@ -75,8 +75,8 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="viewName">视图名称</param>
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>最后修改时间，如果视图不存在则返回null</returns>
-        Task<DateTime?> GetLastModifiedAsync(
-            string viewName, 
+        Task<DateTime?> GetViewLastModifiedAsync(
+            string viewName,
             CancellationToken cancellationToken = default);
 
         /// <summary>
@@ -85,8 +85,8 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="viewNames">视图名称集合</param>
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>视图名称到视图状态的映射</returns>
-        Task<IReadOnlyDictionary<string, CanvasViewState>> GetViewStatesBatchAsync(
-            IEnumerable<string> viewNames, 
+        Task<IReadOnlyDictionary<string, CanvasViewState>> GetMultipleViewStatesAsync(
+            IEnumerable<string> viewNames,
             CancellationToken cancellationToken = default);
 
         /// <summary>

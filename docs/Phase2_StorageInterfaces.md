@@ -295,33 +295,8 @@ public interface ICognitiveNodeStorage : INodeMetadataStorage, INodeContentStora
 
 ### 视图状态存储接口
 
-```csharp
-/// <summary>
-/// 视图状态存储接口
-/// </summary>
-public interface IViewStateStorage
-{
-    /// <summary>
-    /// 获取视图状态
-    /// </summary>
-    Task<CanvasViewState?> GetViewStateAsync(string viewName, CancellationToken cancellationToken = default);
+> 注意：IViewStateStorage 的完整签名定义与使用示例请参考 Phase2_ViewStorage.md 的权威版本；为避免重复定义，此处不再重复列出代码。
 
-    /// <summary>
-    /// 保存视图状态
-    /// </summary>
-    Task SaveViewStateAsync(CanvasViewState viewState, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取所有视图名称
-    /// </summary>
-    Task<IReadOnlyList<string>> GetViewNamesAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 删除视图状态
-    /// </summary>
-    Task DeleteViewStateAsync(string viewName, CancellationToken cancellationToken = default);
-}
-```
 
 ## 存储接口设计原则
 
