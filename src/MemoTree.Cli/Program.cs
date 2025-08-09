@@ -1,6 +1,9 @@
 using System.CommandLine;
 using MemoTree.Cli.Commands;
 using MemoTree.Cli.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using MemoTree.Services;
 
 namespace MemoTree.Cli;
 
@@ -43,17 +46,15 @@ class Program
                 return 1;
             }
 
-            // TODO: 实现实际的渲染逻辑
-            Console.WriteLine("# MemoTree Workspace");
-            Console.WriteLine();
-            Console.WriteLine($"**Workspace**: {workspaceRoot}");
-            Console.WriteLine($"**Status**: Empty workspace (no nodes yet)");
-            Console.WriteLine();
-            Console.WriteLine("Create your first node with:");
-            Console.WriteLine("```");
-            Console.WriteLine("memotree create \"My First Node\"");
-            Console.WriteLine("```");
+            // 使用服务层渲染视图
+            var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+            services.AddLogging(b => b.AddConsole());
+            services.AddMemoTreeServices(workspaceRoot);
+            var provider = services.BuildServiceProvider();
 
+            var svc = provider.GetRequiredService<IMemoTreeService>();
+            var output = await svc.RenderViewAsync("default");
+            Console.WriteLine(output);
             return 0;
         }
         catch (Exception ex)

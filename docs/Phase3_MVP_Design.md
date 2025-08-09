@@ -167,8 +167,7 @@ src/
 │   ├── MemoTreeService.cs
 │   ├── MemoTreeEditor.cs
 │   ├── Models/
-│   │   ├── SimpleCognitiveNode.cs
-│   │   ├── SimpleViewState.cs
+│   │   ├── MemoTreeViewState.cs
 │   │   └── ViewStats.cs
 │   └── ServiceCollectionExtensions.cs
 └── MemoTree.Cli/           # 新增：CLI工具
@@ -187,9 +186,9 @@ src/
 
 ## 📋 实施优先级
 
-### P0 (本次会话目标)
+### P0 (正在实现中)
 1. **创建MemoTree.Services项目**
-2. **实现SimpleCognitiveNode和相关模型**
+2. **实现MemoTree.Core.Types.CognitiveNode的基础部分和相关模型**
 3. **实现简化版IMemoTreeService**
 4. **创建CLI项目框架**
 5. **实现init和create命令**
