@@ -11,19 +11,19 @@ namespace MemoTree.Core.Configuration
         public string MetadataFileName { get; set; } = "meta.yaml";
 
         /// <summary>
-        /// 详细内容文件名 (对应MVP设计中的detail.md)
+        /// 要点级内容文件名 (对应LodLevel.Gist)
         /// </summary>
-        public string DetailContentFileName { get; set; } = "detail.md";
+        public string GistContentFileName { get; set; } = "gist.md";
 
         /// <summary>
-        /// 摘要内容文件名 (对应MVP设计中的summary.md)
+        /// 摘要级内容文件名 (对应LodLevel.Summary)
         /// </summary>
         public string SummaryContentFileName { get; set; } = "summary.md";
 
         /// <summary>
-        /// 简介级内容文件名 (对应MVP设计中的brief.md和LodLevel.Brief)
+        /// 完整级内容文件名 (对应LodLevel.Full)
         /// </summary>
-        public string BriefContentFileName { get; set; } = "brief.md";
+        public string FullContentFileName { get; set; } = "full.md";
 
         /// <summary>
         /// 外部链接文件名

@@ -78,26 +78,22 @@ namespace MemoTree.Core.Types
 
         /// <summary>
         /// LOD级别内容长度限制
+        /// 注意：Title始终显式，不受LOD级别限制，这里只限制正文内容
         /// </summary>
         public static class LodLimits
         {
             /// <summary>
-            /// Title级别内容最大长度
+            /// Gist级别内容最大长度 - 1-2句核心要点
             /// </summary>
-            public const int TitleMaxLength = 200;
+            public const int GistMaxLength = 500;
 
             /// <summary>
-            /// Brief级别内容最大长度
+            /// Summary级别内容最大长度 - 要点 + 关键细节摘要
             /// </summary>
-            public const int BriefMaxLength = 1_000;
+            public const int SummaryMaxLength = 5_000;
 
             /// <summary>
-            /// Detail级别内容最大长度
-            /// </summary>
-            public const int DetailMaxLength = 10_000;
-
-            /// <summary>
-            /// Full级别内容最大长度
+            /// Full级别内容最大长度 - 所有正文内容
             /// </summary>
             public const int FullMaxLength = MaxContentLength;
         }
@@ -142,6 +138,7 @@ namespace MemoTree.Core.Types
 
         /// <summary>
         /// 验证LOD级别内容长度
+        /// 注意：这里验证的是正文内容，Title作为元数据单独验证
         /// </summary>
         public static bool IsValidLodContent(LodLevel level, string content)
         {
@@ -149,9 +146,8 @@ namespace MemoTree.Core.Types
 
             return level switch
             {
-                LodLevel.Title => content.Length <= LodLimits.TitleMaxLength,
-                LodLevel.Brief => content.Length <= LodLimits.BriefMaxLength,
-                LodLevel.Detail => content.Length <= LodLimits.DetailMaxLength,
+                LodLevel.Gist => content.Length <= LodLimits.GistMaxLength,
+                LodLevel.Summary => content.Length <= LodLimits.SummaryMaxLength,
                 LodLevel.Full => content.Length <= LodLimits.FullMaxLength,
                 _ => false
             };

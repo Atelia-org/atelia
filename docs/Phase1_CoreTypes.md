@@ -215,29 +215,31 @@ public readonly struct RelationId : IEquatable<RelationId>
 ```csharp
 /// <summary>
 /// 详细程度级别 (Level of Detail)
-/// 对应MVP设计中的文件存储结构
+/// 定义认知节点正文内容的详细程度层次
+/// 注意：Title始终显式，与LOD级别正交，属于元数据
 /// </summary>
 public enum LodLevel
 {
     /// <summary>
-    /// 标题级 - 仅显示节点标题 (对应meta.yaml文件中的title字段)
+    /// 要点级别 - 1-2句核心要点 (对应gist.md文件)
+    /// 最小可理解的正文内容单元
+    /// 子节点策略：不显示子节点
     /// </summary>
-    Title = 0,
+    Gist = 0,
 
     /// <summary>
-    /// 简介级 - 显示标题和一句话简介 (对应brief.md文件)
+    /// 摘要级别 - 要点 + 关键细节摘要 (对应summary.md文件)
+    /// 中等详细的正文内容，适合快速理解和决策
+    /// 子节点策略：显示直接子节点的Gist级别
     /// </summary>
-    Brief = 1,
+    Summary = 1,
 
     /// <summary>
-    /// 摘要级 - 显示标题和简要摘要 (对应summary.md文件)
+    /// 完整级别 - 所有正文内容 (对应full.md文件)
+    /// 完整的正文展示，适合深度阅读和编辑
+    /// 子节点策略：显示完整子节点层次
     /// </summary>
-    Summary = 2,
-
-    /// <summary>
-    /// 详细级 - 显示完整内容 (对应detail.md文件)
-    /// </summary>
-    Detail = 3
+    Full = 2
 }
 ```
 

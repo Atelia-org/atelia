@@ -24,14 +24,6 @@ namespace MemoTree.Core.Exceptions
         protected MemoTreeException(string message, Exception innerException) 
             : base(message, innerException) { }
 
-        /// <summary>
-        /// 添加上下文信息 (已弃用，请使用扩展方法)
-        /// </summary>
-        [Obsolete("Use the generic extension method WithContext<T> instead", false)]
-        public MemoTreeException WithContext(string key, object? value)
-        {
-            Context[key] = value;
-            return this;
-        }
+
     }
 }

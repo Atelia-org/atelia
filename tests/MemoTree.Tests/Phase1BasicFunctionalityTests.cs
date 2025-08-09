@@ -68,6 +68,29 @@ namespace MemoTree.Tests
         }
 
         [Fact]
+        public void LodLevel_NewDesign_ShouldWork()
+        {
+            // Test new LOD levels
+            Assert.Equal(0, (int)LodLevel.Gist);
+            Assert.Equal(1, (int)LodLevel.Summary);
+            Assert.Equal(2, (int)LodLevel.Full);
+
+            // Test display names
+            Assert.Equal("要点", LodLevel.Gist.GetDisplayName());
+            Assert.Equal("摘要", LodLevel.Summary.GetDisplayName());
+            Assert.Equal("完整", LodLevel.Full.GetDisplayName());
+
+            // Test child node strategies
+            Assert.False(LodLevel.Gist.ShouldShowChildren());
+            Assert.True(LodLevel.Summary.ShouldShowChildren());
+            Assert.True(LodLevel.Full.ShouldShowChildren());
+
+            // Test child LOD levels
+            Assert.Equal(LodLevel.Gist, LodLevel.Summary.GetChildrenLodLevel());
+            Assert.Equal(LodLevel.Full, LodLevel.Full.GetChildrenLodLevel());
+        }
+
+        [Fact]
         public void ValidationResult_Success_ShouldWork()
         {
             // Arrange & Act

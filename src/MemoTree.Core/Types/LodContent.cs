@@ -80,10 +80,9 @@ namespace MemoTree.Core.Types
         {
             return Level switch
             {
-                LodLevel.Title => !string.IsNullOrWhiteSpace(Content) && Content.Length <= 200,
-                LodLevel.Brief => !string.IsNullOrWhiteSpace(Content) && Content.Length <= 1000,
-                LodLevel.Detail => !string.IsNullOrWhiteSpace(Content) && Content.Length <= 5000,
-                LodLevel.Full => !string.IsNullOrWhiteSpace(Content),
+                LodLevel.Gist => !string.IsNullOrWhiteSpace(Content) && Content.Length <= NodeConstraints.LodLimits.GistMaxLength,
+                LodLevel.Summary => !string.IsNullOrWhiteSpace(Content) && Content.Length <= NodeConstraints.LodLimits.SummaryMaxLength,
+                LodLevel.Full => !string.IsNullOrWhiteSpace(Content) && Content.Length <= NodeConstraints.LodLimits.FullMaxLength,
                 _ => false
             };
         }
