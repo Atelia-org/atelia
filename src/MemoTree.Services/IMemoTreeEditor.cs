@@ -1,5 +1,4 @@
 using MemoTree.Core.Types;
-using MemoTree.Services.Models;
 
 namespace MemoTree.Services;
 
@@ -64,7 +63,7 @@ public interface IMemoTreeEditor
     /// <param name="nodeId">节点ID</param>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>节点信息，如果不存在则返回null</returns>
-    Task<SimpleCognitiveNode?> GetNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default);
+    Task<CognitiveNode?> GetNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 检查节点是否存在
@@ -80,12 +79,12 @@ public interface IMemoTreeEditor
     /// <param name="parentId">父节点ID，null表示获取根节点的子节点</param>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>子节点列表</returns>
-    Task<IReadOnlyList<SimpleCognitiveNode>> GetChildrenAsync(NodeId? parentId = null, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<CognitiveNode>> GetChildrenAsync(NodeId? parentId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取所有节点 (用于统计和搜索)
     /// </summary>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>所有节点列表</returns>
-    Task<IReadOnlyList<SimpleCognitiveNode>> GetAllNodesAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<CognitiveNode>> GetAllNodesAsync(CancellationToken cancellationToken = default);
 }

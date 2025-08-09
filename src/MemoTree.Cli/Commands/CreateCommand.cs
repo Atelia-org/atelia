@@ -88,16 +88,13 @@ public static class CreateCommand
                 }
 
                 // TODO: 这里需要实际的服务实现
-                // 现在先创建一个模拟的节点ID
-                var newNodeId = NodeId.Generate();
+                // 现在先创建一个模拟的节点
+                var newNode = CognitiveNode.Create(nodeType, title);
                 
-                Console.WriteLine($"Created node: {newNodeId}");
-                Console.WriteLine($"Title: {title}");
-                if (parentId != null)
-                {
-                    Console.WriteLine($"Parent: {parentId}");
-                }
-                Console.WriteLine($"Type: {nodeType}");
+                Console.WriteLine($"Created node: {newNode.Metadata.Id}");
+                Console.WriteLine($"Title: {newNode.Metadata.Title}");
+                // TODO: 添加父节点和内容设置逻辑
+                Console.WriteLine($"Type: {newNode.Metadata.Type}");
                 if (!string.IsNullOrEmpty(content))
                 {
                     Console.WriteLine($"Content: {content.Length} characters");

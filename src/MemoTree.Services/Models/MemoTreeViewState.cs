@@ -3,10 +3,10 @@ using MemoTree.Core.Types;
 namespace MemoTree.Services.Models;
 
 /// <summary>
-/// 简化版视图状态 (MVP版本)
+/// MemoTree视图状态 (MVP实现版本)
 /// 管理节点的展开/折叠状态和统计信息
 /// </summary>
-public record SimpleViewState
+public record MemoTreeViewState
 {
     /// <summary>
     /// 节点的LOD状态映射
@@ -40,15 +40,15 @@ public record SimpleViewState
     /// <summary>
     /// 设置节点的LOD级别
     /// </summary>
-    public SimpleViewState WithNodeLodLevel(NodeId nodeId, LodLevel level)
+    public MemoTreeViewState WithNodeLodLevel(NodeId nodeId, LodLevel level)
     {
         var newStates = new Dictionary<NodeId, LodLevel>(NodeStates)
         {
             [nodeId] = level
         };
 
-        return this with 
-        { 
+        return this with
+        {
             NodeStates = newStates,
             LastAccessTime = DateTime.UtcNow
         };
@@ -57,13 +57,13 @@ public record SimpleViewState
     /// <summary>
     /// 移除节点的LOD状态 (当节点变为不可见时)
     /// </summary>
-    public SimpleViewState WithoutNode(NodeId nodeId)
+    public MemoTreeViewState WithoutNode(NodeId nodeId)
     {
         var newStates = new Dictionary<NodeId, LodLevel>(NodeStates);
         newStates.Remove(nodeId);
 
-        return this with 
-        { 
+        return this with
+        {
             NodeStates = newStates,
             LastAccessTime = DateTime.UtcNow
         };
@@ -72,10 +72,10 @@ public record SimpleViewState
     /// <summary>
     /// 设置焦点节点
     /// </summary>
-    public SimpleViewState WithFocus(NodeId? focusNodeId)
+    public MemoTreeViewState WithFocus(NodeId? focusNodeId)
     {
-        return this with 
-        { 
+        return this with
+        {
             FocusNodeId = focusNodeId,
             LastAccessTime = DateTime.UtcNow
         };
@@ -100,9 +100,9 @@ public record SimpleViewState
     /// <summary>
     /// 创建默认视图状态
     /// </summary>
-    public static SimpleViewState CreateDefault(string viewName = "default")
+    public static MemoTreeViewState CreateDefault(string viewName = "default")
     {
-        return new SimpleViewState
+        return new MemoTreeViewState
         {
             ViewName = viewName,
             LastAccessTime = DateTime.UtcNow
