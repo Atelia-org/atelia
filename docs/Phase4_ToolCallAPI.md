@@ -905,4 +905,7 @@ await service.GitCheckoutAsync(new GitCheckoutRequest
 
 ---
 
+> 版本控制冲突说明：MVP 阶段默认假设单用户/单写入者，不处理复杂合并冲突；详见 [Phase4_VersionControl.md](./Phase4_VersionControl.md) 的“MVP 冲突处理假设”。
+
+
 **下一阶段**: [Phase4_ExternalIntegration.md](./Phase4_ExternalIntegration.md) - 外部数据源集成设计

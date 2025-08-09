@@ -98,7 +98,7 @@ Workspace/
 
 **🆔 GUID编码优化 (v1.5)**
 - **NodeId**: 使用GuidEncoder.ToIdString生成，**推荐Base4096-CJK编码(11字符)**
-- **根节点ID**: 使用Guid.Empty编码，Base4096-CJK格式为"一一一一一一一一一一一"
+- **根节点ID**: 使用Guid.Empty编码，经 GuidEncoder.ToIdString 输出（当前默认 Base4096‑CJK；兼容 Base64）
 - **编码优势**: 解决Base64的文件系统兼容性、URL安全性、路径长度等问题
 - **智能检索层**: 支持汉字片段精确匹配，如"一二三四"匹配完整NodeId
 - **向后兼容**: 智能识别Base64和Base4096-CJK格式，平滑迁移
