@@ -2,6 +2,8 @@ using System.CommandLine;
 using MemoTree.Cli.Services;
 using MemoTree.Core.Types;
 using MemoTree.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace MemoTree.Cli.Commands;
 
@@ -32,7 +34,7 @@ public static class CreateCommand
             {
                 var workspaceManager = new WorkspaceManager();
                 var workspaceRoot = workspaceManager.FindWorkspaceRoot();
-                
+
                 if (workspaceRoot == null)
                 {
                     Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
@@ -77,7 +79,7 @@ public static class CreateCommand
                     {
                         Console.WriteLine("Enter content (press Ctrl+D or Ctrl+Z to finish):");
                     }
-                    
+
                     var lines = new List<string>();
                     string? line;
                     while ((line = Console.ReadLine()) != null)
@@ -87,18 +89,28 @@ public static class CreateCommand
                     content = string.Join(Environment.NewLine, lines);
                 }
 
-                // TODO: 这里需要实际的服务实现
-                // 现在先创建一个模拟的节点
-                var newNode = CognitiveNode.Create(nodeType, title);
-                
-                Console.WriteLine($"Created node: {newNode.Metadata.Id}");
-                Console.WriteLine($"Title: {newNode.Metadata.Title}");
-                // TODO: 添加父节点和内容设置逻辑
-                Console.WriteLine($"Type: {newNode.Metadata.Type}");
+                // 构建服务并创建节点
+                var services = new ServiceCollection();
+                services.AddLogging(b => b.AddConsole());
+                services.AddMemoTreeServices(workspaceRoot);
+                var provider = services.BuildServiceProvider();
+
+                var editor = provider.GetRequiredService<IMemoTreeEditor>();
+                var nodeId = await editor.CreateNodeAsync(title, content, parentId, nodeType);
+
+                Console.WriteLine($"Created node: {nodeId}");
+                Console.WriteLine($"Title: {title}");
+                Console.WriteLine($"Type: {nodeType}");
                 if (!string.IsNullOrEmpty(content))
                 {
                     Console.WriteLine($"Content: {content.Length} characters");
                 }
+
+                // 创建后默认渲染一次
+                var svc = provider.GetRequiredService<IMemoTreeService>();
+                var output = await svc.RenderViewAsync("default");
+                Console.WriteLine();
+                Console.WriteLine(output);
             }
             catch (Exception ex)
             {

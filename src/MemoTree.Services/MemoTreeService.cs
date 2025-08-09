@@ -152,12 +152,19 @@ public class MemoTreeService : IMemoTreeService
                 return $"[节点 {nodeId} 不存在]";
 
             var content = await _storage.GetAsync(nodeId, level, cancellationToken);
-            
-            if (level == LodLevel.Gist || content == null)
+
+            if (content == null)
             {
-                return metadata.Title;
+                // Gist/Summary 尚未创建摘要时：
+                if (level == LodLevel.Gist)
+                    return "尚未创建Gist内容"; // 占位提示
+                if (level == LodLevel.Summary)
+                    return ""; // Summary 级别跳过，交由调用者决定不渲染
+
+                // Full 尚未创建：返回空（不应常见）
+                return "";
             }
-            
+
             return content.Content;
         }
         catch (Exception ex)

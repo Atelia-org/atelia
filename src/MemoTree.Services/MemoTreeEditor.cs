@@ -48,15 +48,7 @@ public class MemoTreeEditor : IMemoTreeEditor
             var nodeContent = new Dictionary<LodLevel, NodeContent>();
             if (!string.IsNullOrEmpty(content))
             {
-                // MVP版本：将内容同时保存为Gist和Full级别
-                nodeContent[LodLevel.Gist] = new NodeContent
-                {
-                    Id = nodeId,
-                    Level = LodLevel.Gist,
-                    Content = title, // Gist级别只显示标题
-                    LastModified = now
-                };
-
+                // MVP：仅保存 Full 正文；Gist/Summary 不创建文件（保持为“尚未摘要”状态）
                 nodeContent[LodLevel.Full] = new NodeContent
                 {
                     Id = nodeId,
@@ -148,16 +140,8 @@ public class MemoTreeEditor : IMemoTreeEditor
 
             await _storage.SaveAsync(updatedMetadata, cancellationToken);
 
-            // 更新Gist级别的内容（标题）
-            var gistContent = new NodeContent
-            {
-                Id = nodeId,
-                Level = LodLevel.Gist,
-                Content = title,
-                LastModified = DateTime.UtcNow
-            };
-
-            await _storage.SaveAsync(gistContent, cancellationToken);
+            // 标题与Gist/内容正交：更新标题不应自动写入Gist文件
+            // MVP阶段：不创建Gist文件，保持“尚未摘要”状态
 
             _logger.LogInformation("Updated title for node {NodeId} to '{Title}'", nodeId, title);
         }

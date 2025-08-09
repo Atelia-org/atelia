@@ -15,7 +15,9 @@ class Program
         var rootCommand = new RootCommand("MemoTree - Hierarchical context management for LLMs")
         {
             InitCommand.Create(),
-            CreateCommand.Create()
+            CreateCommand.Create(),
+            ViewCommands.CreateExpandCommand(),
+            ViewCommands.CreateCollapseCommand()
         };
 
         // 如果没有参数，默认执行渲染命令
