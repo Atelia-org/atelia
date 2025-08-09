@@ -209,10 +209,8 @@ namespace MemoTree.Core.Storage.Versioned
                     // 2. 执行操作
                     var result = await operation(targetVersion);
                     
-                    // 3. 标记完成
-                    await MarkOperationCompleteAsync(logFile, cancellationToken);
-                    
-                    // 4. 清理日志
+                    // 3. 清理日志 - 删除日志文件本身就是操作完成的标记
+                    // 之前的 MarkOperationCompleteAsync 调用是冗余的，因为紧接着就删除了日志文件
                     File.Delete(logFile);
                     
                     _logger.LogDebug("Completed atomic operation {OperationType} with {KeyCount} keys, new version {Version}",
@@ -251,20 +249,8 @@ namespace MemoTree.Core.Storage.Versioned
             await File.WriteAllTextAsync(logFile, json, cancellationToken);
         }
         
-        private async Task MarkOperationCompleteAsync(string logFile, CancellationToken cancellationToken)
-        {
-            if (!File.Exists(logFile)) return;
-            
-            var json = await File.ReadAllTextAsync(logFile, cancellationToken);
-            var log = JsonSerializer.Deserialize<OperationLog>(json, _jsonOptions);
-            
-            if (log != null)
-            {
-                var completedLog = log with { Completed = true };
-                var completedJson = JsonSerializer.Serialize(completedLog, _jsonOptions);
-                await File.WriteAllTextAsync(logFile, completedJson, cancellationToken);
-            }
-        }
+        // 已移除 MarkOperationCompleteAsync 方法 - 删除日志文件本身就是操作完成的标记，
+        // 无需额外设置 Completed 字段然后又立即删除整个文件
         
         private async Task UpdateVersionPointerAsync(long version, string comment, CancellationToken cancellationToken)
         {
@@ -347,17 +333,10 @@ namespace MemoTree.Core.Storage.Versioned
             {
                 try
                 {
-                    if (await IsOperationCompleteAsync(journalFile, cancellationToken))
-                    {
-                        // 操作已完成但日志未删除，直接删除
-                        File.Delete(journalFile);
-                    }
-                    else
-                    {
-                        // 操作未完成，需要回滚
-                        await RollbackOperationAsync(journalFile, cancellationToken);
-                        recoveredCount++;
-                    }
+                    // 日志文件存在就意味着操作未完成，需要回滚
+                    // 之前的 IsOperationCompleteAsync 检查是冗余的，因为如果操作完成了，日志文件就应该被删除
+                    await RollbackOperationAsync(journalFile, cancellationToken);
+                    recoveredCount++;
                 }
                 catch (Exception ex)
                 {
@@ -368,19 +347,7 @@ namespace MemoTree.Core.Storage.Versioned
             return recoveredCount;
         }
         
-        private async Task<bool> IsOperationCompleteAsync(string journalFile, CancellationToken cancellationToken)
-        {
-            try
-            {
-                var json = await File.ReadAllTextAsync(journalFile, cancellationToken);
-                var log = JsonSerializer.Deserialize<OperationLog>(json, _jsonOptions);
-                return log?.Completed == true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        // 已移除 IsOperationCompleteAsync 方法 - 简化为：日志文件存在 = 操作未完成，需要回滚
         
         private async Task RollbackOperationAsync(string journalFile, CancellationToken cancellationToken)
         {

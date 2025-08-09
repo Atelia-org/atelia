@@ -20,7 +20,8 @@ namespace MemoTree.Core.Storage.Versioned
         public long TargetVersion { get; init; }
         public List<string> AffectedKeys { get; init; } = new();
         public DateTime StartTime { get; init; } = DateTime.UtcNow;
-        public bool Completed { get; init; } = false;
+        // 已移除 Completed 字段 - 日志文件的存在性本身就是操作状态的标记
+        // 文件存在 = 操作未完成，文件不存在 = 操作已完成
         public string Description { get; init; } = string.Empty;
     }
 
