@@ -170,10 +170,56 @@ public interface IKeySerializer<TKey>
     /// </summary>
     TKey Deserialize(string serialized);
     
+}
+```
+
+### 4. 版本格式化接口
+
+```csharp
+/// <summary>
+/// 版本号格式化器接口，用于统一处理版本号的编码和解码
+/// </summary>
+public interface IVersionFormatter
+{
     /// <summary>
-    /// 尝试从文件名解析键和版本
+    /// 将版本号格式化为文件名中的字符串
     /// </summary>
-    (TKey key, long version)? TryParseFileName(string fileName);
+    string FormatVersion(long version);
+
+    /// <summary>
+    /// 从文件名中的字符串解析版本号
+    /// </summary>
+    long? ParseVersion(string versionString);
+}
+
+/// <summary>
+/// 十进制版本号格式化器（向后兼容）
+/// </summary>
+public class DecimalVersionFormatter : IVersionFormatter
+{
+    public string FormatVersion(long version) => version.ToString();
+
+    public long? ParseVersion(string versionString)
+    {
+        if (long.TryParse(versionString, out var version) && version >= 1)
+            return version;
+        return null;
+    }
+}
+
+/// <summary>
+/// 十六进制版本号格式化器（更短的文件名，默认使用）
+/// </summary>
+public class HexVersionFormatter : IVersionFormatter
+{
+    public string FormatVersion(long version) => version.ToString("X");
+
+    public long? ParseVersion(string versionString)
+    {
+        if (long.TryParse(versionString, NumberStyles.HexNumber, null, out var version) && version >= 1)
+            return version;
+        return null;
+    }
 }
 ```
 
@@ -189,13 +235,16 @@ public class VersionedStoragePathProvider<TKey>
 {
     private readonly VersionedStorageOptions _options;
     private readonly IKeySerializer<TKey> _keySerializer;
+    private readonly IVersionFormatter _versionFormatter;
 
     public VersionedStoragePathProvider(
         VersionedStorageOptions options,
-        IKeySerializer<TKey> keySerializer)
+        IKeySerializer<TKey> keySerializer,
+        IVersionFormatter versionFormatter)
     {
         _options = options;
         _keySerializer = keySerializer;
+        _versionFormatter = versionFormatter;
     }
 
     /// <summary>
@@ -227,8 +276,46 @@ public class VersionedStoragePathProvider<TKey>
     public string GetDataFilePath(TKey key, long version)
     {
         var keyString = _keySerializer.Serialize(key);
-        var fileName = $"{keyString}.{version}{_options.FileExtension}";
+        var versionString = _versionFormatter.FormatVersion(version);
+        var fileName = $"{keyString}.{versionString}{_options.FileExtension}";
         return Path.Combine(GetDataDirectory(), fileName);
+    }
+
+    /// <summary>
+    /// 尝试从文件名解析键和版本
+    /// 文件名格式：{serialized-key}.{version}
+    /// </summary>
+    public (TKey key, long version)? TryParseFileName(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return null;
+
+        var parts = fileName.Split('.');
+        if (parts.Length != 2)
+            return null;
+
+        var keyPart = parts[0];
+        var versionPart = parts[1];
+
+        // 验证key部分
+        if (string.IsNullOrWhiteSpace(keyPart))
+            return null;
+
+        // 验证版本部分
+        var version = _versionFormatter.ParseVersion(versionPart);
+        if (!version.HasValue)
+            return null;
+
+        try
+        {
+            var key = _keySerializer.Deserialize(keyPart);
+            return (key, version.Value);
+        }
+        catch
+        {
+            // key反序列化失败
+            return null;
+        }
     }
 
     /// <summary>
@@ -397,6 +484,8 @@ new VersionedStorageOptions
 5. **可维护性**: 清晰的目录结构和数据分离
 6. **简单性**: MVP阶段无并发支持，专注单会话LLM使用场景
 7. **扩展性**: 根路径概念便于日后添加新的存储实例
+8. **职责分离**: 键序列化、版本格式化、路径管理各司其职
+9. **格式灵活**: 支持十进制和十六进制版本格式，默认使用更短的十六进制
 
 ### 4. 原子操作管理器
 
@@ -663,17 +752,47 @@ public class NodeIdKeySerializer : IKeySerializer<NodeId>
 
     public NodeId Deserialize(string serialized) => new NodeId(serialized);
 
-    public (NodeId key, long version)? TryParseFileName(string fileName)
+}
+```
+
+## 版本格式化器性能对比
+
+对于大版本号，十六进制格式可以显著减少文件名长度：
+
+| 版本号 | 十进制格式 | 十六进制格式 | 节省字符数 |
+|--------|------------|--------------|------------|
+| 1,000,000 | `1000000` (7字符) | `F4240` (5字符) | 2字符 |
+| 1,000,000,000 | `1000000000` (10字符) | `3B9ACA00` (8字符) | 2字符 |
+| long.MaxValue | `9223372036854775807` (19字符) | `7FFFFFFFFFFFFFFF` (16字符) | 3字符 |
+
+## 工厂方法更新
+
+```csharp
+/// <summary>
+/// 版本化存储工厂（支持版本格式化器）
+/// </summary>
+public static class VersionedStorageFactory
+{
+    /// <summary>
+    /// 创建NodeId到ParentChildrenInfo的版本化存储
+    /// </summary>
+    public static async Task<IVersionedStorage<NodeId, ParentChildrenInfo>> CreateHierarchyStorageAsync(
+        string workspaceRoot,
+        ILogger<VersionedStorageImpl<NodeId, ParentChildrenInfo>> logger,
+        IVersionFormatter? versionFormatter = null)
     {
-        var parts = fileName.Split('.');
-        if (parts.Length != 2) return null;
-
-        if (long.TryParse(parts[1], out var version))
+        var options = new VersionedStorageOptions
         {
-            return (new NodeId(parts[0]), version);
-        }
+            StorageRoot = Path.Combine(workspaceRoot, "hierarchy"),
+            EnableConcurrency = false // MVP阶段单会话使用
+        };
 
-        return null;
+        var keySerializer = new NodeIdKeySerializer();
+        var formatter = versionFormatter ?? new HexVersionFormatter(); // 默认使用十六进制
+        var storage = new VersionedStorageImpl<NodeId, ParentChildrenInfo>(options, keySerializer, formatter, logger);
+
+        await storage.InitializeAsync();
+        return storage;
     }
 }
 ```
