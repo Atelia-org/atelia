@@ -33,9 +33,9 @@ public class MemoTreeOptions
     public string CogNodesDirectory { get; set; } = "CogNodes";
 
     /// <summary>
-    /// 父子关系存储目录名 (对应MVP设计中的ParentChildrens/)
+    /// 父子关系存储目录名 (对应MVP设计中的Hierarchy/)
     /// </summary>
-    public string ParentChildrensDirectory { get; set; } = "ParentChildrens";
+    public string HierarchyDirectory { get; set; } = "Hierarchy";
 
     /// <summary>
     /// 语义关系数据存储目录名 (对应MVP设计中的Relations/)
@@ -124,7 +124,7 @@ public class StorageOptions
     /// <summary>
     /// 父子关系文件扩展名
     /// </summary>
-    public string ParentChildrensFileExtension { get; set; } = ".yaml";
+    public string HierarchyFileExtension { get; set; } = ".yaml";
 
     /// <summary>
     /// 语义关系数据文件名
@@ -510,7 +510,7 @@ public class RelationStorageService
 
         return Path.Combine(
             _memoTreeOptions.WorkspaceRoot,
-            _memoTreeOptions.ParentChildrensDirectory);
+            _memoTreeOptions.HierarchyDirectory);
     }
 
     /// <summary>

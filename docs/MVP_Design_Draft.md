@@ -74,7 +74,7 @@ Workspace/
 │   │   ├── summary.md     # 摘要内容
 │   │   └── detail.md   # 完整内容
 │   └── node-002/
-├── ParentChildrens/        # 父子关系集中存储目录
+├── Hierarchy/        # 父子关系集中存储目录
 │   ├── node-root.yaml     # 根节点的子节点列表
 │   ├── node-001.yaml      # node-001的子节点列表
 │   └── node-002.yaml      # node-002的子节点列表(如果有子节点)
@@ -122,7 +122,7 @@ custom_properties:
 
 **父子关系存储设计示例**
 ```yaml
-# ParentChildrens/node-root.yaml
+# Hierarchy/node-root.yaml
 parent_id: "node-root"
 children:
   - node_id: "node-001"
@@ -132,7 +132,7 @@ children:
   - node_id: "node-003"
     created_at: "2025-07-23T10:40:00Z"
 
-# ParentChildrens/node-001.yaml
+# Hierarchy/node-001.yaml
 parent_id: "node-001"
 children:
   - node_id: "node-004"
@@ -192,7 +192,7 @@ relation_types:
 
 **扩展性考虑**
 - 未来支持分片: `CogNodes-01/`, `CogNodes-02/` 避免单目录文件过多
-- 父子关系分片: `ParentChildrens-01/`, `ParentChildrens-02/` 支持大规模层次结构
+- 父子关系分片: `Hierarchy-01/`, `Hierarchy-02/` 支持大规模层次结构
 - 其他关系数据分片: `Relations-01/`, `Relations-02/` 支持大规模语义关系数据
 - 多模态支持: 采用"数据结构分离"方案，媒体文件独立存储，索引串联
 
@@ -213,7 +213,7 @@ relation_types:
 #### 2.3 检索系统
 - **全文搜索**: 基于关键字的精确查找 (可考虑集成 `Lucene.net`)
 - **语义检索**: 基于向量的模糊联想 (可考虑 `Faiss`、`HNSW` 等)
-- **层次结构检索**: 基于ParentChildrens文件夹的树形遍历和路径查询
+- **层次结构检索**: 基于Hierarchy文件夹的树形遍历和路径查询
 - **语义关系检索**: 基于Relations文件夹的关系数据进行图遍历和关系查询
 - **反向索引**: 运行时构建子节点到父节点的只读索引，支持快速反向查找
 - **智能检索层**: 支持4-8字符片段精确匹配完整GUID，LLM友好交互
@@ -304,7 +304,7 @@ views/
 ```
 
 #### 关系图谱
-- **层次结构关系**: 父子关系通过ParentChildrens文件夹管理，保证顺序和一致性
+- **层次结构关系**: 父子关系通过Hierarchy文件夹管理，保证顺序和一致性
 - **语义关系**: 支持多种关系类型如`references`, `inspired_by`, `contradicts`, `extends`
 - **混合图遍历**: 同时支持树形层次遍历和语义关系图遍历
 - **可视化导航**: 区分显示层次结构和语义关系的知识图谱

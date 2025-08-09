@@ -7,7 +7,7 @@ namespace MemoTree.Core.Types
     /// <summary>
     /// 父子关系信息（独立存储）
     /// </summary>
-    public record ParentChildrenInfo
+    public record HierarchyInfo
     {
         public NodeId ParentId { get; init; }
         public IReadOnlyList<ChildNodeInfo> Children { get; init; } = Array.Empty<ChildNodeInfo>();
@@ -26,9 +26,9 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 创建新的父子关系信息
         /// </summary>
-        public static ParentChildrenInfo Create(NodeId parentId, IEnumerable<ChildNodeInfo>? children = null)
+        public static HierarchyInfo Create(NodeId parentId, IEnumerable<ChildNodeInfo>? children = null)
         {
-            return new ParentChildrenInfo
+            return new HierarchyInfo
             {
                 ParentId = parentId,
                 Children = children?.ToList() ?? new List<ChildNodeInfo>(),
@@ -39,7 +39,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 添加子节点
         /// </summary>
-        public ParentChildrenInfo AddChild(NodeId childId, int? order = null)
+        public HierarchyInfo AddChild(NodeId childId, int? order = null)
         {
             if (HasChild(childId))
                 return this;
@@ -65,7 +65,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 移除子节点
         /// </summary>
-        public ParentChildrenInfo RemoveChild(NodeId childId)
+        public HierarchyInfo RemoveChild(NodeId childId)
         {
             if (!HasChild(childId))
                 return this;
@@ -82,7 +82,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 更新子节点顺序
         /// </summary>
-        public ParentChildrenInfo UpdateChildOrder(NodeId childId, int newOrder)
+        public HierarchyInfo UpdateChildOrder(NodeId childId, int newOrder)
         {
             var childIndex = Children.ToList().FindIndex(c => c.NodeId == childId);
             if (childIndex == -1)
@@ -101,7 +101,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 重新排序所有子节点
         /// </summary>
-        public ParentChildrenInfo ReorderChildren(IEnumerable<NodeId> orderedChildIds)
+        public HierarchyInfo ReorderChildren(IEnumerable<NodeId> orderedChildIds)
         {
             var childDict = Children.ToDictionary(c => c.NodeId, c => c);
             var newChildren = new List<ChildNodeInfo>();
@@ -184,7 +184,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 移动子节点到指定位置
         /// </summary>
-        public ParentChildrenInfo MoveChildToPosition(NodeId childId, int newPosition)
+        public HierarchyInfo MoveChildToPosition(NodeId childId, int newPosition)
         {
             if (!HasChild(childId) || newPosition < 0 || newPosition >= Children.Count)
                 return this;

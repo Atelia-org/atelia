@@ -21,7 +21,7 @@ NodeId.Root 的 "magic string" 设计
 
 候选解决方案:
 （推荐）使用特殊GUID: 将Root ID定义为 new(Guid.Empty.ToString())。这保证了它不会与任何 Guid.NewGuid() 生成的ID冲突，使其成为一个真正唯一的、保留的标识符。
-（备选）逻辑上的根，而非ID上的根: 在内存模型中，树结构本身可以有一个 RootNode 属性，而不需要一个特殊的ID。磁盘上，ParentChildrens/ 目录下的根文件可以有一个特殊的文件名，如 _root.yaml 或 root.yaml，在加载时进行识别，而不是依赖ID值。
+（备选）逻辑上的根，而非ID上的根: 在内存模型中，树结构本身可以有一个 RootNode 属性，而不需要一个特殊的ID。磁盘上，Hierarchy/ 目录下的根文件可以有一个特殊的文件名，如 _root.yaml 或 root.yaml，在加载时进行识别，而不是依赖ID值。
 ```
 
 ## 优化方案：特殊GUID根节点
@@ -169,14 +169,14 @@ public static class NodeIdRootMigration
     }
     
     /// <summary>
-    /// 批量更新ParentChildrens/中的根节点引用
+    /// 批量更新Hierarchy/中的根节点引用
     /// </summary>
-    public static async Task MigrateParentChildrenReferencesAsync(string workspaceRoot)
+    public static async Task MigrateHierarchyReferencesAsync(string workspaceRoot)
     {
-        var parentChildrenDir = Path.Combine(workspaceRoot, "ParentChildrens");
-        if (!Directory.Exists(parentChildrenDir)) return;
+        var hierarchyDir = Path.Combine(workspaceRoot, "hierarchy");
+        if (!Directory.Exists(hierarchyDir)) return;
         
-        foreach (var file in Directory.GetFiles(parentChildrenDir, "*.yaml"))
+        foreach (var file in Directory.GetFiles(hierarchyDir, "*.yaml"))
         {
             var content = await File.ReadAllTextAsync(file);
             if (content.Contains($"parent_id: {OldRootValue}") || 

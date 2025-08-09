@@ -8,3 +8,4 @@ MemoryOS
 MemoryOS/
 bin/
 attention_heatmap/*.png
+.memotree/

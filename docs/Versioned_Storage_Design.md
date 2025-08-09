@@ -454,7 +454,7 @@ public class VersionedStorageMemoryManager<TKey, TValue>
 
 ### 1. 父子关系存储
 - **Key**: `NodeId`
-- **Value**: `ParentChildrenInfo`
+- **Value**: `HierarchyInfo`
 - **StorageRoot**: `"workspace/hierarchy"`
 - **配置示例**:
 ```csharp
@@ -774,11 +774,11 @@ public class NodeIdKeySerializer : IKeySerializer<NodeId>
 public static class VersionedStorageFactory
 {
     /// <summary>
-    /// 创建NodeId到ParentChildrenInfo的版本化存储
+    /// 创建NodeId到HierarchyInfo的版本化存储
     /// </summary>
-    public static async Task<IVersionedStorage<NodeId, ParentChildrenInfo>> CreateHierarchyStorageAsync(
+    public static async Task<IVersionedStorage<NodeId, HierarchyInfo>> CreateHierarchyStorageAsync(
         string workspaceRoot,
-        ILogger<VersionedStorageImpl<NodeId, ParentChildrenInfo>> logger,
+        ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>> logger,
         IVersionFormatter? versionFormatter = null)
     {
         var options = new VersionedStorageOptions
@@ -789,7 +789,7 @@ public static class VersionedStorageFactory
 
         var keySerializer = new NodeIdKeySerializer();
         var formatter = versionFormatter ?? new HexVersionFormatter(); // 默认使用十六进制
-        var storage = new VersionedStorageImpl<NodeId, ParentChildrenInfo>(options, keySerializer, formatter, logger);
+        var storage = new VersionedStorageImpl<NodeId, HierarchyInfo>(options, keySerializer, formatter, logger);
 
         await storage.InitializeAsync();
         return storage;
@@ -801,7 +801,7 @@ public static class VersionedStorageFactory
 
 1. **实现通用版本化存储组件** - 创建核心接口和实现类
 2. **为NodeId实现键序列化器** - 支持NodeId作为存储键
-3. **基于通用组件实现父子关系存储** - 具体应用到ParentChildrens
+3. **基于通用组件实现父子关系存储** - 具体应用到Hierarchy
 4. **添加垃圾回收和监控功能** - 完善运维能力
 5. **编写单元测试** - 确保组件可靠性
 
@@ -816,7 +816,7 @@ public static class VersionedStorageFactory
 ✅ **文件较短适合全量重写**: Copy-on-Write策略的理想场景
 
 **配置参数**:
-1. **数据目录**: DataDirectory (如"ParentChildrens")
+1. **数据目录**: DataDirectory (如"Hierarchy")
 2. **根指针文件**: VersionPointerFile (如"hierarchy.version.json")
 3. **事务日志目录**: OperationLogDirectory (如"operation-logs")
 

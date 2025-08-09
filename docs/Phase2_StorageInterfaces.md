@@ -193,19 +193,19 @@ public interface IRelationTypeStorage
 
 ```csharp
 /// <summary>
-/// 节点层次结构存储接口（基于ParentChildrens文件夹的独立存储）
+/// 节点层次结构存储接口（基于Hierarchy文件夹的独立存储）
 /// </summary>
 public interface INodeHierarchyStorage
 {
     /// <summary>
     /// 获取父子关系信息
     /// </summary>
-    Task<ParentChildrenInfo?> GetParentChildrenInfoAsync(NodeId parentId, CancellationToken cancellationToken = default);
+    Task<HierarchyInfo?> GetHierarchyInfoAsync(NodeId parentId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 保存父子关系信息
     /// </summary>
-    Task SaveParentChildrenInfoAsync(ParentChildrenInfo parentChildrenInfo, CancellationToken cancellationToken = default);
+    Task SaveHierarchyInfoAsync(HierarchyInfo HierarchyInfo, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取子节点ID列表（有序）
@@ -336,7 +336,7 @@ graph TD
 
     B --> K[NodeMetadata]
     C --> L[NodeContent]
-    D --> M[ParentChildrenInfo]
+    D --> M[HierarchyInfo]
 ```
 
 ## 实施优先级

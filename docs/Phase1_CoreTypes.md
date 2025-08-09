@@ -405,7 +405,7 @@ public record NodeRelation
 /// <summary>
 /// 父子关系信息（独立存储）
 /// </summary>
-public record ParentChildrenInfo
+public record HierarchyInfo
 {
     public NodeId ParentId { get; init; }
     public IReadOnlyList<ChildNodeInfo> Children { get; init; } = Array.Empty<ChildNodeInfo>();

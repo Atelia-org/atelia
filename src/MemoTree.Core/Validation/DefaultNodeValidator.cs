@@ -241,14 +241,14 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证父子关系信息
         /// </summary>
-        public Task<ValidationResult> ValidateParentChildrenInfoAsync(ParentChildrenInfo parentChildrenInfo, CancellationToken cancellationToken = default)
+        public Task<ValidationResult> ValidateHierarchyInfoAsync(HierarchyInfo HierarchyInfo, CancellationToken cancellationToken = default)
         {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(ParentChildrenInfo))
-                .ForObjectId(parentChildrenInfo.ParentId.Value);
+                .ForObjectType(nameof(HierarchyInfo))
+                .ForObjectId(HierarchyInfo.ParentId.Value);
 
             // 验证父节点ID
-            var parentIdResult = ValidateNodeId(parentChildrenInfo.ParentId);
+            var parentIdResult = ValidateNodeId(HierarchyInfo.ParentId);
             if (!parentIdResult.IsValid)
             {
                 foreach (var error in parentIdResult.Errors)
@@ -257,12 +257,12 @@ namespace MemoTree.Core.Validation
 
             // 验证子节点数量
             builder.AddErrorIf(
-                parentChildrenInfo.ChildCount > NodeConstraints.MaxChildNodeCount,
-                ValidationError.ForRange("ChildCount", parentChildrenInfo.ChildCount, 0, NodeConstraints.MaxChildNodeCount)
+                HierarchyInfo.ChildCount > NodeConstraints.MaxChildNodeCount,
+                ValidationError.ForRange("ChildCount", HierarchyInfo.ChildCount, 0, NodeConstraints.MaxChildNodeCount)
             );
 
             // 验证每个子节点
-            foreach (var child in parentChildrenInfo.Children)
+            foreach (var child in HierarchyInfo.Children)
             {
                 var childIdResult = ValidateNodeId(child.NodeId);
                 if (!childIdResult.IsValid)
@@ -273,13 +273,13 @@ namespace MemoTree.Core.Validation
 
                 // 验证子节点不是父节点自己
                 builder.AddErrorIf(
-                    child.NodeId == parentChildrenInfo.ParentId,
+                    child.NodeId == HierarchyInfo.ParentId,
                     ValidationError.ForBusinessRule("SelfParent", "Node cannot be parent of itself")
                 );
             }
 
             // 验证子节点ID唯一性
-            var duplicateIds = parentChildrenInfo.Children
+            var duplicateIds = HierarchyInfo.Children
                 .GroupBy(c => c.NodeId)
                 .Where(g => g.Count() > 1)
                 .Select(g => g.Key);

@@ -767,7 +767,7 @@ public static class NodeIdRootMigration
     public static async Task MigrateRootReferencesAsync(string workspaceRoot)
     {
         // 1. 重命名根节点目录: CogNodes/root -> CogNodes/AAAAAAAAAAAAAAAAAAAAAA
-        // 2. 更新ParentChildrens/中的根节点引用
+        // 2. 更新Hierarchy/中的根节点引用
         // 3. 更新所有节点元数据中的parent_id引用
         // TODO: 实现具体迁移逻辑
     }

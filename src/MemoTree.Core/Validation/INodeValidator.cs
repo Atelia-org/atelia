@@ -55,10 +55,10 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证父子关系信息
         /// </summary>
-        /// <param name="parentChildrenInfo">要验证的父子关系信息</param>
+        /// <param name="HierarchyInfo">要验证的父子关系信息</param>
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>验证结果</returns>
-        Task<ValidationResult> ValidateParentChildrenInfoAsync(ParentChildrenInfo parentChildrenInfo, CancellationToken cancellationToken = default);
+        Task<ValidationResult> ValidateHierarchyInfoAsync(HierarchyInfo HierarchyInfo, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// 验证节点ID格式

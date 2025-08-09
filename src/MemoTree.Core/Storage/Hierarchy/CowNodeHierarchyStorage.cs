@@ -11,11 +11,11 @@ namespace MemoTree.Core.Storage.Hierarchy
     /// </summary>
     public class CowNodeHierarchyStorage : INodeHierarchyStorage
     {
-        private readonly IVersionedStorage<NodeId, ParentChildrenInfo> _versionedStorage;
+        private readonly IVersionedStorage<NodeId, HierarchyInfo> _versionedStorage;
         private readonly ILogger<CowNodeHierarchyStorage> _logger;
         
         public CowNodeHierarchyStorage(
-            IVersionedStorage<NodeId, ParentChildrenInfo> versionedStorage,
+            IVersionedStorage<NodeId, HierarchyInfo> versionedStorage,
             ILogger<CowNodeHierarchyStorage> logger)
         {
             _versionedStorage = versionedStorage ?? throw new ArgumentNullException(nameof(versionedStorage));
@@ -25,7 +25,7 @@ namespace MemoTree.Core.Storage.Hierarchy
         /// <summary>
         /// 获取父子关系信息
         /// </summary>
-        public async Task<ParentChildrenInfo?> GetParentChildrenInfoAsync(
+        public async Task<HierarchyInfo?> GetHierarchyInfoAsync(
             NodeId parentId, 
             CancellationToken cancellationToken = default)
         {
@@ -35,20 +35,20 @@ namespace MemoTree.Core.Storage.Hierarchy
         /// <summary>
         /// 保存父子关系信息
         /// </summary>
-        public async Task SaveParentChildrenInfoAsync(
-            ParentChildrenInfo parentChildrenInfo, 
+        public async Task SaveHierarchyInfoAsync(
+            HierarchyInfo HierarchyInfo, 
             CancellationToken cancellationToken = default)
         {
-            var updates = new Dictionary<NodeId, ParentChildrenInfo>
+            var updates = new Dictionary<NodeId, HierarchyInfo>
             {
-                [parentChildrenInfo.ParentId] = parentChildrenInfo
+                [HierarchyInfo.ParentId] = HierarchyInfo
             };
             
-            var description = $"Save parent-children info for {parentChildrenInfo.ParentId}";
+            var description = $"Save parent-children info for {HierarchyInfo.ParentId}";
             await _versionedStorage.UpdateManyAsync(updates, description, cancellationToken);
             
             _logger.LogDebug("Saved parent-children info for {ParentId} with {ChildCount} children",
-                parentChildrenInfo.ParentId, parentChildrenInfo.ChildCount);
+                HierarchyInfo.ParentId, HierarchyInfo.ChildCount);
         }
         
         /// <summary>
@@ -58,7 +58,7 @@ namespace MemoTree.Core.Storage.Hierarchy
             NodeId parentId, 
             CancellationToken cancellationToken = default)
         {
-            var parentInfo = await GetParentChildrenInfoAsync(parentId, cancellationToken);
+            var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken);
             if (parentInfo == null)
                 return Array.Empty<NodeId>();
             
@@ -97,7 +97,7 @@ namespace MemoTree.Core.Storage.Hierarchy
             NodeId parentId, 
             CancellationToken cancellationToken = default)
         {
-            var parentInfo = await GetParentChildrenInfoAsync(parentId, cancellationToken);
+            var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken);
             return parentInfo?.HasChildren == true;
         }
         
@@ -108,14 +108,14 @@ namespace MemoTree.Core.Storage.Hierarchy
             NodeId parentId, 
             CancellationToken cancellationToken = default)
         {
-            var parentInfo = await GetParentChildrenInfoAsync(parentId, cancellationToken);
+            var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken);
             return parentInfo?.ChildCount ?? 0;
         }
         
         /// <summary>
         /// 删除父子关系信息
         /// </summary>
-        public async Task DeleteParentChildrenInfoAsync(
+        public async Task DeleteHierarchyInfoAsync(
             NodeId parentId, 
             CancellationToken cancellationToken = default)
         {
@@ -134,11 +134,11 @@ namespace MemoTree.Core.Storage.Hierarchy
             int? order = null,
             CancellationToken cancellationToken = default)
         {
-            var parentInfo = await GetParentChildrenInfoAsync(parentId, cancellationToken)
-                ?? ParentChildrenInfo.Create(parentId);
+            var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken)
+                ?? HierarchyInfo.Create(parentId);
 
             var updatedInfo = parentInfo.AddChild(childId, order);
-            await SaveParentChildrenInfoAsync(updatedInfo, cancellationToken);
+            await SaveHierarchyInfoAsync(updatedInfo, cancellationToken);
 
             _logger.LogDebug("Added child {ChildId} to parent {ParentId}", childId, parentId);
         }
@@ -151,11 +151,11 @@ namespace MemoTree.Core.Storage.Hierarchy
             NodeId childId,
             CancellationToken cancellationToken = default)
         {
-            var parentInfo = await GetParentChildrenInfoAsync(parentId, cancellationToken);
+            var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken);
             if (parentInfo != null && parentInfo.HasChild(childId))
             {
                 var updatedInfo = parentInfo.RemoveChild(childId);
-                await SaveParentChildrenInfoAsync(updatedInfo, cancellationToken);
+                await SaveHierarchyInfoAsync(updatedInfo, cancellationToken);
 
                 _logger.LogDebug("Removed child {ChildId} from parent {ParentId}", childId, parentId);
             }
@@ -186,12 +186,12 @@ namespace MemoTree.Core.Storage.Hierarchy
             int? newOrder = null,
             CancellationToken cancellationToken = default)
         {
-            var updates = new Dictionary<NodeId, ParentChildrenInfo>();
+            var updates = new Dictionary<NodeId, HierarchyInfo>();
             
             // 从旧父节点移除
             if (oldParentId.HasValue)
             {
-                var oldParentInfo = await GetParentChildrenInfoAsync(oldParentId.Value, cancellationToken);
+                var oldParentInfo = await GetHierarchyInfoAsync(oldParentId.Value, cancellationToken);
                 if (oldParentInfo != null && oldParentInfo.HasChild(nodeId))
                 {
                     updates[oldParentId.Value] = oldParentInfo.RemoveChild(nodeId);
@@ -201,8 +201,8 @@ namespace MemoTree.Core.Storage.Hierarchy
             // 添加到新父节点
             if (newParentId.HasValue)
             {
-                var newParentInfo = await GetParentChildrenInfoAsync(newParentId.Value, cancellationToken) 
-                    ?? ParentChildrenInfo.Create(newParentId.Value);
+                var newParentInfo = await GetHierarchyInfoAsync(newParentId.Value, cancellationToken) 
+                    ?? HierarchyInfo.Create(newParentId.Value);
                 updates[newParentId.Value] = newParentInfo.AddChild(nodeId, newOrder);
             }
             
@@ -224,7 +224,7 @@ namespace MemoTree.Core.Storage.Hierarchy
         /// 批量更新父子关系（原子操作）
         /// </summary>
         public async Task<long> UpdateHierarchyAtomicAsync(
-            IEnumerable<ParentChildrenInfo> updates,
+            IEnumerable<HierarchyInfo> updates,
             string comment = "",
             CancellationToken cancellationToken = default)
         {
@@ -271,11 +271,11 @@ namespace MemoTree.Core.Storage.Hierarchy
             IReadOnlyList<NodeId> orderedChildIds,
             CancellationToken cancellationToken = default)
         {
-            var parentInfo = await GetParentChildrenInfoAsync(parentId, cancellationToken);
+            var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken);
             if (parentInfo != null)
             {
                 var reorderedInfo = parentInfo.ReorderChildren(orderedChildIds);
-                await SaveParentChildrenInfoAsync(reorderedInfo, cancellationToken);
+                await SaveHierarchyInfoAsync(reorderedInfo, cancellationToken);
 
                 _logger.LogDebug("Reordered children for parent {ParentId}", parentId);
             }

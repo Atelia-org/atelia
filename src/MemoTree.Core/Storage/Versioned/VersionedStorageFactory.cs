@@ -9,11 +9,11 @@ namespace MemoTree.Core.Storage.Versioned
     public static class VersionedStorageFactory
     {
         /// <summary>
-        /// 创建NodeId到ParentChildrenInfo的版本化存储
+        /// 创建NodeId到HierarchyInfo的版本化存储
         /// </summary>
-        public static async Task<IVersionedStorage<NodeId, ParentChildrenInfo>> CreateHierarchyStorageAsync(
+        public static async Task<IVersionedStorage<NodeId, HierarchyInfo>> CreateHierarchyStorageAsync(
             string workspaceRoot,
-            ILogger<VersionedStorageImpl<NodeId, ParentChildrenInfo>> logger,
+            ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>> logger,
             IVersionFormatter? versionFormatter = null)
         {
             var options = new VersionedStorageOptions
@@ -29,7 +29,7 @@ namespace MemoTree.Core.Storage.Versioned
             
             var keySerializer = new NodeIdKeySerializer();
             var formatter = versionFormatter ?? new HexVersionFormatter();
-            var storage = new VersionedStorageImpl<NodeId, ParentChildrenInfo>(options, keySerializer, formatter, logger);
+            var storage = new VersionedStorageImpl<NodeId, HierarchyInfo>(options, keySerializer, formatter, logger);
             
             // 初始化存储
             await storage.InitializeAsync();

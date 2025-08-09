@@ -33,7 +33,7 @@ namespace MemoTree.Core.Configuration
         /// <summary>
         /// 父子关系文件扩展名
         /// </summary>
-        public string ParentChildrensFileExtension { get; set; } = ".yaml";
+        public string HierarchyFileExtension { get; set; } = ".yaml";
 
         /// <summary>
         /// 语义关系数据文件名

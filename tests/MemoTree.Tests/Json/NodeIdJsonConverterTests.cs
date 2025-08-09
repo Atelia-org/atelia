@@ -60,16 +60,16 @@ namespace MemoTree.Tests.Json
         }
 
         [Fact]
-        public void SerializeDeserialize_ParentChildrenInfo_ShouldPreserveNodeIds()
+        public void SerializeDeserialize_HierarchyInfo_ShouldPreserveNodeIds()
         {
             // Arrange
             var parentId = NodeId.Generate();
             var childId = NodeId.Generate();
-            var parentInfo = ParentChildrenInfo.Create(parentId).AddChild(childId);
+            var parentInfo = HierarchyInfo.Create(parentId).AddChild(childId);
 
             // Act
             var json = JsonSerializer.Serialize(parentInfo, _jsonOptions);
-            var deserialized = JsonSerializer.Deserialize<ParentChildrenInfo>(json, _jsonOptions);
+            var deserialized = JsonSerializer.Deserialize<HierarchyInfo>(json, _jsonOptions);
 
             // Assert
             Assert.NotNull(deserialized);

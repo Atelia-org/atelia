@@ -3,7 +3,7 @@ using MemoTree.Core.Types;
 namespace MemoTree.Core.Storage.Interfaces
 {
     /// <summary>
-    /// 节点层次结构存储接口（基于ParentChildrens文件夹的独立存储）
+    /// 节点层次结构存储接口（基于Hierarchy文件夹的独立存储）
     /// 专门处理父子关系和树形结构
     /// </summary>
     public interface INodeHierarchyStorage
@@ -14,17 +14,17 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="parentId">父节点ID</param>
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>父子关系信息，如果不存在则返回null</returns>
-        Task<ParentChildrenInfo?> GetParentChildrenInfoAsync(
+        Task<HierarchyInfo?> GetHierarchyInfoAsync(
             NodeId parentId, 
             CancellationToken cancellationToken = default);
 
         /// <summary>
         /// 保存父子关系信息
         /// </summary>
-        /// <param name="parentChildrenInfo">父子关系信息</param>
+        /// <param name="HierarchyInfo">父子关系信息</param>
         /// <param name="cancellationToken">取消令牌</param>
-        Task SaveParentChildrenInfoAsync(
-            ParentChildrenInfo parentChildrenInfo, 
+        Task SaveHierarchyInfoAsync(
+            HierarchyInfo HierarchyInfo, 
             CancellationToken cancellationToken = default);
 
         /// <summary>

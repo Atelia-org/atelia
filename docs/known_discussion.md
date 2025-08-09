@@ -2,7 +2,7 @@
 
 1.  **原子性操作 (Atomicity)**: 这是一个需要关注的关键点。例如，创建一个新节点涉及多个文件操作：
     1.  创建 `CogNodes/node-xxx/` 目录及内部文件。
-    2.  修改 `ParentChildrens/parent-node.yaml` 文件，添加新的子节点。
+    2.  修改 `Hierarchy/parent-node.yaml` 文件，添加新的子节点。
     
     如果步骤1成功，但步骤2失败（例如，因为磁盘满了或权限问题），系统状态就会不一致（出现一个“孤儿”节点）。
     *   **建议**: 考虑一个简单的事务机制。例如，所有文件操作先在一个临时的“暂存”或“事务”目录中完成，成功后再通过`rename`操作（通常是原子性的）移动到最终位置。或者引入一个简单的日志文件来记录操作意图，以便在程序重启后进行恢复。
@@ -90,7 +90,7 @@
 
 #### **问题 1: 配置项冗余和职责不清**
 
-- **问题描述**: `RelationOptions` 中定义了 `HierarchyStorageDirectory` 和 `RelationStorageDirectory`。而 `MemoTreeOptions` 中已经定义了 `ParentChildrensDirectory` 和 `RelationsDirectory`。这造成了信息重复和潜在的冲突。一个服务的最终路径需要组合 `WorkspaceRoot` + `DirectoryName`，这两个信息不应分散在不同的配置类中。
+- **问题描述**: `RelationOptions` 中定义了 `HierarchyStorageDirectory` 和 `RelationStorageDirectory`。而 `MemoTreeOptions` 中已经定义了 `HierarchyDirectory` 和 `RelationsDirectory`。这造成了信息重复和潜在的冲突。一个服务的最终路径需要组合 `WorkspaceRoot` + `DirectoryName`，这两个信息不应分散在不同的配置类中。
 - **候选解决方案**:
     - **（推荐）移除冗余项**: 从 `RelationOptions` 中**删除** `HierarchyStorageDirectory` 和 `RelationStorageDirectory`。
     - **明确职责**:

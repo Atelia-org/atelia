@@ -9,7 +9,7 @@ namespace MemoTree.Tests.Storage.Versioned
     public class VersionedStorageTests : IDisposable
     {
         private readonly string _testWorkspace;
-        private readonly ILogger<VersionedStorageImpl<NodeId, ParentChildrenInfo>> _logger;
+        private readonly ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>> _logger;
         
         public VersionedStorageTests()
         {
@@ -17,7 +17,7 @@ namespace MemoTree.Tests.Storage.Versioned
             Directory.CreateDirectory(_testWorkspace);
             
             using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-            _logger = loggerFactory.CreateLogger<VersionedStorageImpl<NodeId, ParentChildrenInfo>>();
+            _logger = loggerFactory.CreateLogger<VersionedStorageImpl<NodeId, HierarchyInfo>>();
         }
         
         [Fact]
@@ -40,10 +40,10 @@ namespace MemoTree.Tests.Storage.Versioned
             var parentId = NodeId.Generate();
             var childId = NodeId.Generate();
             
-            var parentInfo = ParentChildrenInfo.Create(parentId)
+            var parentInfo = HierarchyInfo.Create(parentId)
                 .AddChild(childId);
             
-            var updates = new Dictionary<NodeId, ParentChildrenInfo>
+            var updates = new Dictionary<NodeId, HierarchyInfo>
             {
                 [parentId] = parentInfo
             };
@@ -72,10 +72,10 @@ namespace MemoTree.Tests.Storage.Versioned
             var child1 = NodeId.Generate();
             var child2 = NodeId.Generate();
             
-            var updates = new Dictionary<NodeId, ParentChildrenInfo>
+            var updates = new Dictionary<NodeId, HierarchyInfo>
             {
-                [parent1] = ParentChildrenInfo.Create(parent1).AddChild(child1),
-                [parent2] = ParentChildrenInfo.Create(parent2).AddChild(child2)
+                [parent1] = HierarchyInfo.Create(parent1).AddChild(child1),
+                [parent2] = HierarchyInfo.Create(parent2).AddChild(child2)
             };
             
             // Act
@@ -96,8 +96,8 @@ namespace MemoTree.Tests.Storage.Versioned
             var parentId = NodeId.Generate();
             var childId = NodeId.Generate();
             
-            var parentInfo = ParentChildrenInfo.Create(parentId).AddChild(childId);
-            await storage.UpdateManyAsync(new Dictionary<NodeId, ParentChildrenInfo> { [parentId] = parentInfo });
+            var parentInfo = HierarchyInfo.Create(parentId).AddChild(childId);
+            await storage.UpdateManyAsync(new Dictionary<NodeId, HierarchyInfo> { [parentId] = parentInfo });
             
             // Act
             var deleteVersion = await storage.DeleteAsync(parentId, "Test delete");
@@ -118,12 +118,12 @@ namespace MemoTree.Tests.Storage.Versioned
             // Arrange
             var parentId = NodeId.Generate();
             var childId = NodeId.Generate();
-            var parentInfo = ParentChildrenInfo.Create(parentId).AddChild(childId);
+            var parentInfo = HierarchyInfo.Create(parentId).AddChild(childId);
             
             // Act - Create first instance and save data
             {
                 var storage1 = await VersionedStorageFactory.CreateHierarchyStorageAsync(_testWorkspace, _logger);
-                await storage1.UpdateManyAsync(new Dictionary<NodeId, ParentChildrenInfo> { [parentId] = parentInfo });
+                await storage1.UpdateManyAsync(new Dictionary<NodeId, HierarchyInfo> { [parentId] = parentInfo });
             }
             
             // Act - Create second instance and verify data persists
