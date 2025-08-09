@@ -4,6 +4,9 @@
 
 展示如何使用 C# partial class 功能来组织复杂的类型定义，使其更适合 LLM 按功能维度查看和修改。
 
+
+> 架构说明（内存优先）：本示例以 partial class 展示拆分方式，代码中的 INodeCacheService 仅代表“派生结果/索引类的轻量缓存或视图聚合”，不建议作为独立的二级数据缓存。MemoTree 的主数据（已加载节点）常驻内存且与磁盘同步，避免与缓存产生一致性分叉。
+
 ## 1. 复杂服务类的拆分示例
 
 ### 1.1 主文件：CognitiveCanvasService.Core.cs
@@ -35,7 +38,7 @@ namespace MemoTree.Services
         public async Task<string> RenderViewAsync(string viewName, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Rendering view: {ViewName}", viewName);
-            
+
             var viewState = await GetViewStateAsync(viewName, cancellationToken);
             if (viewState == null)
             {
@@ -84,10 +87,10 @@ namespace MemoTree.Services
             }
 
             // 更新节点状态
-            var updatedNodeState = nodeState with 
-            { 
-                CurrentLevel = level, 
-                IsExpanded = level > LodLevel.Title 
+            var updatedNodeState = nodeState with
+            {
+                CurrentLevel = level,
+                IsExpanded = level > LodLevel.Title
             };
 
             await UpdateNodeStateAsync(viewName, updatedNodeState, cancellationToken);
@@ -116,10 +119,10 @@ namespace MemoTree.Services
             }
 
             // 折叠到标题级别
-            var updatedNodeState = nodeState with 
-            { 
-                CurrentLevel = LodLevel.Title, 
-                IsExpanded = false 
+            var updatedNodeState = nodeState with
+            {
+                CurrentLevel = LodLevel.Title,
+                IsExpanded = false
             };
 
             await UpdateNodeStateAsync(viewName, updatedNodeState, cancellationToken);
@@ -146,7 +149,7 @@ namespace MemoTree.Services
 
             var actualRootId = rootId ?? NodeId.Root;
             var rootMetadata = await _storage.GetAsync(actualRootId, cancellationToken);
-            
+
             if (rootMetadata == null)
             {
                 return Array.Empty<NodeTreeItem>();
@@ -154,7 +157,7 @@ namespace MemoTree.Services
 
             var treeItems = new List<NodeTreeItem>();
             await BuildTreeRecursiveAsync(actualRootId, 0, treeItems, cancellationToken);
-            
+
             return treeItems;
         }
 
@@ -186,7 +189,7 @@ namespace MemoTree.Services
                 {
                     await BuildTreeRecursiveAsync(childId, level + 1, childItems, cancellationToken);
                 }
-                
+
                 // 更新树项的子节点
                 var updatedTreeItem = treeItem with { Children = childItems };
                 treeItems[treeItems.Count - 1] = updatedTreeItem;
@@ -239,11 +242,11 @@ namespace MemoTree.Services
                 if (currentTokens <= maxTokens) break;
 
                 await CollapseNodeAsync(viewName, nodeState.Id, cancellationToken);
-                
+
                 // 重新计算Token数
                 var updatedViewState = await GetViewStateAsync(viewName, cancellationToken);
                 currentTokens = await CalculateCurrentTokensAsync(updatedViewState!, cancellationToken);
-                
+
                 _logger.LogDebug("Collapsed node {NodeId}, current tokens: {CurrentTokens}", nodeState.Id, currentTokens);
             }
 
@@ -253,7 +256,7 @@ namespace MemoTree.Services
         private async Task<int> CalculateCurrentTokensAsync(CanvasViewState viewState, CancellationToken cancellationToken)
         {
             int totalTokens = 0;
-            
+
             foreach (var nodeState in viewState.NodeStates.Where(n => n.IsVisible))
             {
                 var content = await GetNodeContentForLevelAsync(nodeState.Id, nodeState.CurrentLevel, cancellationToken);

@@ -1,9 +1,9 @@
 # MemoTree 检索服务接口 (Phase 3)
 
-> **版本**: v1.0  
-> **阶段**: Phase 3 - 服务层  
-> **依赖**: Phase1_CoreTypes.md, Phase2_StorageInterfaces.md  
-> **状态**: 设计完成  
+> **版本**: v1.0
+> **阶段**: Phase 3 - 服务层
+> **依赖**: Phase1_CoreTypes.md, Phase2_StorageInterfaces.md
+> **状态**: 设计完成
 
 ## 概述
 
@@ -98,6 +98,10 @@ public enum SearchType
     Relation
 }
 ```
+
+> 结果数量上限说明：实际返回数量 = min(request.MaxResults, RetrievalOptions.MaxSearchResults)。
+> 默认值：SearchNodesRequest.MaxResults = 10；RetrievalOptions.MaxSearchResults = 50（可通过配置调整）。
+
 
 ## 4. 检索配置选项（引用）
 

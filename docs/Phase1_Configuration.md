@@ -1,9 +1,9 @@
 # MemoTree 配置选项和系统设置 (Phase 1)
 
-> 版本: v1.0  
-> 创建日期: 2025-07-25  
-> 基于: Core_Types_Design.md 第6节  
-> 依赖: Phase1_CoreTypes.md  
+> 版本: v1.0
+> 创建日期: 2025-07-25
+> 基于: Core_Types_Design.md 第6节
+> 依赖: Phase1_CoreTypes.md
 
 ## 概述
 
@@ -309,6 +309,9 @@ public class ViewOptions
 
 ## 6. 配置验证和最佳实践
 
+> MVP 验证策略：采用“启动时配置校验 + Fast Fail”的方式尽早暴露问题；运行时热重载与复杂校验机制在 Phase 3+ 实施。
+
+
 ### 6.1 配置验证规则
 
 配置类型应遵循以下验证规则：
@@ -324,7 +327,7 @@ public class ViewOptions
    - MemoTree视图Token数必须在128K-200K范围内
    - 关系图节点数不能超过NodeConstraints.MaxChildrenCount (1000)
    - 关系深度不能超过NodeConstraints.MaxTreeDepth (20)
-   - 缓存过期时间不应小于1分钟
+   - 若使用允许的轻量结果/索引缓存（仅限外部系统/昂贵查询），其过期时间不应小于1分钟；不引入独立二级缓存
    - 最大节点数等限制应根据系统资源合理设置
 
 3. **功能开关验证**

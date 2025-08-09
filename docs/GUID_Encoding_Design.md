@@ -672,22 +672,21 @@ public static class NodeIdGenerator
 
 **最佳实践（当前默认）**: Base4096-CJK编码 + 智能检索层
 ```csharp
-// 底层使用Base64确保稳定性
-var nodeId = NodeId.Generate(); // 生成Base64编码的ID
+// 默认：底层使用 Base4096-CJK 确保 LLM 友好与路径安全
+var nodeId = NodeId.Generate(); // 默认生成 Base4096-CJK 编码
 
-// 上层使用智能检索提升用户体验
+// 上层使用智能检索提升用户体验（短片段匹配）
 var translator = new LlmIdTranslator();
 translator.RegisterId(nodeId.Value);
 
-// LLM可以使用任意长度的片段
-var resolved = translator.ResolveUserInput("VQ6E"); // 智能匹配
+// 片段示例（不硬编码具体字符集）：
+var resolved = translator.ResolveUserInput("片段"); // 智能匹配
 ```
 
 **可选兼容**: Base64编码 + 智能检索层（兼容性需求或跨系统集成时）
 ```csharp
-// 当Base4096-CJK方案成熟后，可无缝切换底层编码
-// 智能检索层无需任何修改
-var nodeId = NodeId.GenerateBase4096CJK(); // 11字符汉字编码
+// 兼容选项：在跨系统集成或特殊场景下使用 Base64
+var nodeId = NodeIdGenerator.Generate(NodeIdEncodingType.Base64);
 translator.RegisterId(nodeId.Value); // 检索层自动适配
 ```
 
@@ -723,7 +722,7 @@ public readonly struct NodeId : IEquatable<NodeId>
 
     /// <summary>
     /// 根节点的特殊ID - 使用Guid.Empty确保唯一性
-    /// 当前编码: AAAAAAAAAAAAAAAAAAAAAA (22个A)
+    /// 编码结果由 GuidEncoder.ToIdString 决定（当前默认：Base4096‑CJK；兼容：Base64）
     /// </summary>
     public static NodeId Root => new(RootValue);
 
