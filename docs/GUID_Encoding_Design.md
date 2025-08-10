@@ -555,7 +555,7 @@ public class AmbiguityResolution
         {
             var message = $"'{fragment}' matches multiple IDs:\n" +
                 string.Join("\n", matches.Select((id, i) =>
-                    $"{i+1}. {id[..8]}... (Node: {GetNodeTitle(id)})"));
+                    $"{i+1}. {id} (Node: {GetNodeTitle(id)})"));
             throw new AmbiguousIdException(message);
         }
 

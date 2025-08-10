@@ -12,11 +12,11 @@
 2. **直接基于设计文档编码** - Phase文档已提供完整的类型定义和接口设计
 3. **任务管理工具辅助** - 利用会话任务管理功能跟踪具体进度
 
-### 关键架构决策 (2025-01-10)
+### 关键架构决策 (2025-08-10)
 **存储策略**：
 - 节点内容/元数据：稳定文件路径存储（Git友好）
-- 层次关系：版本化存储（CowNodeHierarchyStorage）
-- MVP阶段：InMemoryHierarchyStorage占位，正式版切换
+- 层次关系：版本化存储（CowNodeHierarchyStorage）✅
+- ~~MVP阶段：InMemoryHierarchyStorage占位，正式版切换~~ **已完成切换**
 
 **LOD分层策略**：
 - 标题：属于元数据，独立于正文LOD，始终显示
@@ -45,8 +45,8 @@
 ### Phase 3: 业务服务层 (Services) ✅
 **目标**: 实现核心服务、关系服务、编辑服务、检索服务
 **文档**: Phase3_CoreServices.md, Phase3_RelationServices.md, Phase3_EditingServices.md, Phase3_RetrievalServices.md
-**状态**: MVP实现完成
-**实际**: 本会话完成MVP版本
+**状态**: MVP实现完成，CowNodeHierarchyStorage集成完成
+**实际**: 本会话完成MVP版本 + 层次关系持久化
 
 ### Phase 4: 集成接口层 (Integration) ⏳
 **目标**: LLM工具调用API、外部数据源集成、版本控制集成
@@ -77,6 +77,18 @@
   - MemoTree.Services项目：接口定义、数据模型、服务框架
   - MemoTree.Cli项目：工作空间管理、init命令、create命令
   - 成功测试：`memotree init`、`memotree create`、管道输入支持
+- ✅ **CowNodeHierarchyStorage集成**: 完成层次关系持久化存储！
+  - 替换InMemoryHierarchyStorage为CowNodeHierarchyStorage
+  - 解决NodeId和集合类型的YAML序列化问题
+  - 实现多层次父子关系显示（根节点→子节点→孙子节点）
+  - 版本化存储正常工作，支持expand/collapse功能
+  - 成功测试：父子关系创建、持久化、树形显示
+- ✅ **用户体验优化**: 完成基础体验改进！
+  - JSON序列化不转义中文，保持NodeId的CJK原文形式
+  - NodeId完整显示，不再截断为8字符
+  - Markdown标题层级渲染（##/###/####）配合缩进
+  - LOD状态统一显示（[Gist/Summary/Full]）
+  - 创建UX优化路线图，规划后续体验改进
 
 ### 进行中
 - 🚧 **Phase3.0 MVP主干**: 基础框架已完成，需要实现服务层逻辑

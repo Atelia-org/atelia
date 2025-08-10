@@ -31,6 +31,7 @@ namespace MemoTree.Core.Storage.Versioned
             {
                 WriteIndented = true,
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // 不转义中文字符
                 Converters = { new NodeIdJsonConverter() }
             };
             

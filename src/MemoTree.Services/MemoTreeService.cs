@@ -253,10 +253,17 @@ public class MemoTreeService : IMemoTreeService
         var indent = new string(' ', level * 2);
         var currentLevel = viewState.NodeStates.GetValueOrDefault(node.Metadata.Id, LodLevel.Gist);
         var isExpanded = currentLevel == LodLevel.Full;
-        
-        // 渲染节点标题
-        var expandedMarker = isExpanded ? "[EXPANDED]" : "";
-        sb.AppendLine($"{indent}## {node.Metadata.Title} [{node.Metadata.Id.Value[..8]}] {expandedMarker}");
+
+        // 渲染节点标题 - 使用Markdown标题层级 + 缩进
+        var headingLevel = new string('#', Math.Min(level + 2, 6)); // 从##开始，最多到######
+        var lodMarker = currentLevel switch
+        {
+            LodLevel.Gist => "[Gist]",
+            LodLevel.Summary => "[Summary]",
+            LodLevel.Full => "[Full]",
+            _ => "[Gist]"
+        };
+        sb.AppendLine($"{indent}{headingLevel} {node.Metadata.Title} [{node.Metadata.Id.Value}] {lodMarker}");
         
         // 如果展开，渲染内容
         if (isExpanded && node.Contents.TryGetValue(LodLevel.Full, out var fullContent))
