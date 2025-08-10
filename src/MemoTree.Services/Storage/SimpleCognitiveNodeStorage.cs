@@ -25,7 +25,7 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
     private readonly ILogger<SimpleCognitiveNodeStorage> _logger;
     private readonly ISerializer _yamlSerializer;
     private readonly IDeserializer _yamlDeserializer;
-    private readonly JsonSerializerOptions _jsonOptions;
+    // Note: JSON options removed as YAML is used for metadata; keep IO consistent
     private readonly INodeHierarchyStorage _hierarchy;
 
     public SimpleCognitiveNodeStorage(
@@ -51,12 +51,7 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
             .WithTypeConverter(new NodeIdYamlConverter())
             .Build();
 
-        _jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            Converters = { new NodeIdJsonConverter() }
-        };
+    // no JSON options needed here
     }
 
     #region INodeMetadataStorage Implementation
@@ -89,7 +84,7 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         try
         {
             var yamlContent = _yamlSerializer.Serialize(metadata);
-            await File.WriteAllTextAsync(metadataPath, yamlContent, cancellationToken);
+            await WriteTextAtomicAsync(metadataPath, yamlContent, cancellationToken);
             _logger.LogDebug("Saved metadata for node {NodeId}", metadata.Id);
         }
         catch (Exception ex)
@@ -258,7 +253,7 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
         try
         {
-            await File.WriteAllTextAsync(contentPath, content.Content, cancellationToken);
+            await WriteTextAtomicAsync(contentPath, content.Content, cancellationToken);
             _logger.LogDebug("Saved content for node {NodeId} at level {Level}", content.Id, content.Level);
         }
         catch (Exception ex)
@@ -562,6 +557,21 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         }
 
         _logger.LogDebug("Deleted complete node {NodeId} and cleaned up hierarchy", nodeId);
+
+        // 3) 清理空目录
+        try
+        {
+            var nodeDir = GetNodeDirectory(nodeId);
+            if (Directory.Exists(nodeDir) && !Directory.EnumerateFileSystemEntries(nodeDir).Any())
+            {
+                Directory.Delete(nodeDir);
+                _logger.LogDebug("Deleted empty node directory for {NodeId}", nodeId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete empty node directory for {NodeId}", nodeId);
+        }
     }
 
     public async Task<IReadOnlyDictionary<NodeId, CognitiveNode>> GetCompleteNodesBatchAsync(
@@ -752,5 +762,41 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
     return _pathService.GetNodeContentPath(nodeId, level);
     }
 
+    #endregion
+
+    #region Atomic IO helpers
+    private static async Task WriteTextAtomicAsync(string targetPath, string content, CancellationToken ct)
+    {
+        var tempPath = targetPath + ".tmp";
+        var encoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        await File.WriteAllTextAsync(tempPath, content, encoding, ct);
+
+        // Ensure target directory exists
+        var dir = Path.GetDirectoryName(targetPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        // Replace or move atomically where possible
+        if (File.Exists(targetPath))
+        {
+            // On Windows, File.Replace offers atomic semantics
+            var backup = targetPath + ".bak";
+            try
+            {
+                File.Replace(tempPath, targetPath, backup, ignoreMetadataErrors: true);
+                // Best-effort cleanup
+                if (File.Exists(backup)) File.Delete(backup);
+            }
+            catch
+            {
+                // Fallback: move over
+                if (File.Exists(targetPath)) File.Delete(targetPath);
+                File.Move(tempPath, targetPath);
+            }
+        }
+        else
+        {
+            File.Move(tempPath, targetPath);
+        }
+    }
     #endregion
 }

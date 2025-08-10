@@ -134,6 +134,12 @@ namespace MemoTree.Core.Storage.Hierarchy
             int? order = null,
             CancellationToken cancellationToken = default)
         {
+            // guard: prevent cycles
+            if (await WouldCreateCycleAsync(parentId, childId, cancellationToken))
+            {
+                throw new InvalidOperationException($"Adding child {childId} to parent {parentId} would create a cycle");
+            }
+
             var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken)
                 ?? HierarchyInfo.Create(parentId);
 
@@ -172,6 +178,12 @@ namespace MemoTree.Core.Storage.Hierarchy
         {
             // 找到当前父节点
             var currentParentId = await GetParentAsync(nodeId, cancellationToken);
+
+            // guard: prevent cycles if moving under a descendant
+            if (newParentId.HasValue && await WouldCreateCycleAsync(newParentId.Value, nodeId, cancellationToken))
+            {
+                throw new InvalidOperationException($"Moving node {nodeId} under {newParentId} would create a cycle");
+            }
 
             await MoveNodeAtomicAsync(nodeId, currentParentId, newParentId, newOrder, cancellationToken);
         }
