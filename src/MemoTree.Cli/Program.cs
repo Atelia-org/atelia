@@ -12,13 +12,24 @@ class Program
     static async Task<int> Main(string[] args)
     {
         // 创建根命令
+        var viewCommand = new Command("view", "View management commands")
+        {
+            ViewCommands.CreateExpandCommand(),
+            ViewCommands.CreateCollapseCommand(),
+            ViewCommands.CreateViewCreateCommand(),
+            ViewCommands.CreateViewSetDescriptionCommand(),
+        };
+
         var rootCommand = new RootCommand("MemoTree - Hierarchical context management for LLMs")
         {
             InitCommand.Create(),
             CreateCommand.Create(),
             ConnectCommand.Create(),
+            // Back-compat top-level node view ops
             ViewCommands.CreateExpandCommand(),
-            ViewCommands.CreateCollapseCommand()
+            ViewCommands.CreateCollapseCommand(),
+            // Grouped view management commands
+            viewCommand
         };
 
         // 如果没有参数，默认执行渲染命令

@@ -65,6 +65,22 @@ public interface IMemoTreeService
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>匹配的节点ID列表</returns>
     Task<IReadOnlyList<NodeId>> FindNodesByTitleAsync(string title, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 创建新的视图（若已存在则抛出异常）
+    /// </summary>
+    /// <param name="viewName">视图名称</param>
+    /// <param name="description">可选描述</param>
+    /// <param name="cancellationToken">取消令牌</param>
+    Task CreateViewAsync(string viewName, string? description = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 更新已存在视图的描述（若不存在则抛出异常）
+    /// </summary>
+    /// <param name="viewName">视图名称</param>
+    /// <param name="description">新的描述</param>
+    /// <param name="cancellationToken">取消令牌</param>
+    Task UpdateViewDescriptionAsync(string viewName, string description, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -34,23 +34,56 @@ public class MemoTreeService : IMemoTreeService
         {
             var viewState = await GetOrLoadViewStateAsync(viewName, cancellationToken);
             var topLevelNodes = await GetTopLevelNodesAsync(cancellationToken);
-            
-            if (!topLevelNodes.Any())
-            {
-                return "# MemoTree认知空间 [空]\n\n暂无认知节点。使用 `memotree create \"标题\"` 创建第一个节点。";
-            }
-
             var stats = await GetViewStatsAsync(viewName, cancellationToken);
             var sb = new StringBuilder();
 
-            // 渲染标题和统计信息
-            sb.AppendLine($"# MemoTree认知空间 [{stats.TotalNodes} nodes, {stats.ExpandedNodes} expanded, {stats.TotalCharacters} chars]");
-            sb.AppendLine();
+            // 视图面板（Meta）：当前视图 + 描述 + 其他视图（前N个）
+            // MVP 暂不做截断；显示数量做轻约束
+            const int maxOtherViews = 5;
+            var meta = new StringBuilder();
 
-            // 渲染节点树
-            foreach (var topLevelNode in topLevelNodes)
+            var otherViewNames = (await _viewStorage.GetViewNamesAsync(cancellationToken))
+                .Where(n => !string.Equals(n, viewName, StringComparison.OrdinalIgnoreCase))
+                .Take(maxOtherViews)
+                .ToList();
+
+            meta.AppendLine($"# MemoTree 视图面板");
+            meta.AppendLine($"- 当前视图: {viewState.Name}");
+            if (!string.IsNullOrWhiteSpace(viewState.Description))
+                meta.AppendLine($"- 说明: {viewState.Description}");
+            meta.AppendLine($"- 统计: {stats.TotalNodes} nodes, {stats.ExpandedNodes} expanded, {stats.TotalCharacters} chars");
+            if (otherViewNames.Any())
             {
-                await RenderNodeTreeAsync(sb, topLevelNode, 0, viewState, cancellationToken);
+                meta.AppendLine("- 其他可用视图:");
+                foreach (var name in otherViewNames)
+                {
+                    var vs = await _viewStorage.GetViewStateAsync(name, cancellationToken);
+                    var desc = vs?.Description ?? string.Empty;
+                    var last = await _viewStorage.GetViewLastModifiedAsync(name, cancellationToken);
+                    meta.AppendLine($"  - {name}{(string.IsNullOrWhiteSpace(desc) ? string.Empty : $" — {desc}")} {(last.HasValue ? $"(last: {last.Value:yyyy-MM-dd HH:mm})" : string.Empty)}");
+                }
+            }
+            meta.AppendLine("- 操作提示: 使用 switch-view/rename-view/delete-view 等命令进行视图管理");
+            meta.AppendLine();
+
+            sb.Append(meta.ToString());
+
+            // 树内容或空引导
+            if (!topLevelNodes.Any())
+            {
+                sb.AppendLine("# MemoTree认知空间 [空]");
+                sb.AppendLine();
+                sb.AppendLine("暂无认知节点。使用 `memotree create \"标题\"` 创建第一个节点。");
+            }
+            else
+            {
+                sb.AppendLine($"# MemoTree认知空间 [{stats.TotalNodes} nodes, {stats.ExpandedNodes} expanded, {stats.TotalCharacters} chars]");
+                sb.AppendLine();
+
+                foreach (var topLevelNode in topLevelNodes)
+                {
+                    await RenderNodeTreeAsync(sb, topLevelNode, 0, viewState, cancellationToken);
+                }
             }
 
             return sb.ToString();
@@ -203,6 +236,44 @@ public class MemoTreeService : IMemoTreeService
             _logger.LogError(ex, "Failed to find nodes by title {Title}", title);
             throw;
         }
+    }
+
+    public async Task CreateViewAsync(string viewName, string? description = null, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(viewName))
+            throw new ArgumentException("viewName is required", nameof(viewName));
+
+        // 已存在则报错
+        if (await _viewStorage.ViewExistsAsync(viewName, cancellationToken))
+            throw new InvalidOperationException($"View '{viewName}' already exists.");
+
+        var state = new ViewState
+        {
+            Name = viewName,
+            Description = description ?? string.Empty,
+            LastModified = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow,
+            NodeStates = Array.Empty<VNodeState>(),
+        };
+
+        await _viewStorage.SaveViewStateAsync(state, cancellationToken);
+        _viewStates[viewName] = state;
+        _logger.LogInformation("Created view {ViewName}", viewName);
+    }
+
+    public async Task UpdateViewDescriptionAsync(string viewName, string description, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(viewName))
+            throw new ArgumentException("viewName is required", nameof(viewName));
+
+        var state = await _viewStorage.GetViewStateAsync(viewName, cancellationToken);
+        if (state == null)
+            throw new InvalidOperationException($"View '{viewName}' not found.");
+
+        var updated = state with { Description = description ?? string.Empty, LastModified = DateTime.UtcNow };
+        await _viewStorage.SaveViewStateAsync(updated, cancellationToken);
+        _viewStates[viewName] = updated;
+        _logger.LogInformation("Updated view description {ViewName}", viewName);
     }
 
     #region Private Helper Methods

@@ -22,6 +22,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MemoTree.Core\MemoTree.Core.csproj" />
+  <ProjectReference Include="..\..\src\MemoTree.Services\MemoTree.Services.csproj" />
+  <ProjectReference Include="..\..\src\MemoTree.Cli\MemoTree.Cli.csproj" />
   </ItemGroup>
 
 </Project>
