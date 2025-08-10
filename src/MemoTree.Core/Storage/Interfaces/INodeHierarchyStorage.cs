@@ -138,11 +138,11 @@ namespace MemoTree.Core.Storage.Interfaces
         Task<int> GetDepthAsync(NodeId nodeId, CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// 获取所有根节点
+        /// 获取所有顶层节点（无父节点的节点）
         /// </summary>
         /// <param name="cancellationToken">取消令牌</param>
-        /// <returns>所有根节点ID列表</returns>
-        Task<IReadOnlyList<NodeId>> GetRootNodesAsync(CancellationToken cancellationToken = default);
+        /// <returns>所有顶层节点ID列表</returns>
+        Task<IReadOnlyList<NodeId>> GetTopLevelNodesAsync(CancellationToken cancellationToken = default);
 
         /// <summary>
         /// 检查是否存在循环引用
@@ -155,13 +155,5 @@ namespace MemoTree.Core.Storage.Interfaces
             NodeId parentId,
             NodeId childId,
             CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// 检查指定节点是否为根节点
-        /// </summary>
-        /// <param name="nodeId">节点ID</param>
-        /// <param name="cancellationToken">取消令牌</param>
-        /// <returns>如果是根节点则返回true</returns>
-        Task<bool> IsRootNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default);
     }
 }

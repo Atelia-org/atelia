@@ -202,21 +202,15 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage
         return GetNodeDepthAsync(nodeId, cancellationToken);
     }
 
-    public Task<IReadOnlyList<NodeId>> GetRootNodesAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<NodeId>> GetTopLevelNodesAsync(CancellationToken cancellationToken = default)
     {
-        var roots = _parent.Where(kv => kv.Value == null).Select(kv => kv.Key).Distinct().ToList();
-        return Task.FromResult<IReadOnlyList<NodeId>>(roots);
+        var topLevelNodes = _parent.Where(kv => kv.Value == null).Select(kv => kv.Key).Distinct().ToList();
+        return Task.FromResult<IReadOnlyList<NodeId>>(topLevelNodes);
     }
 
     public Task<bool> WouldCreateCycleAsync(NodeId nodeId, NodeId potentialParentId, CancellationToken cancellationToken = default)
     {
         return HasCycleAsync(nodeId, potentialParentId, cancellationToken);
-    }
-
-    public Task<bool> IsRootNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default)
-    {
-        var parent = _parent.GetValueOrDefault(nodeId);
-        return Task.FromResult(parent == null);
     }
 
     private List<NodeId> GetChildrenUnsafe(NodeId parent)

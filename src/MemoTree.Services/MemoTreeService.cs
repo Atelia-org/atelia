@@ -29,24 +29,24 @@ public class MemoTreeService : IMemoTreeService
         try
         {
             var viewState = GetOrCreateViewState(viewName);
-            var rootNodes = await GetRootNodesAsync(cancellationToken);
+            var topLevelNodes = await GetTopLevelNodesAsync(cancellationToken);
             
-            if (!rootNodes.Any())
+            if (!topLevelNodes.Any())
             {
                 return "# MemoTree认知空间 [空]\n\n暂无认知节点。使用 `memotree create \"标题\"` 创建第一个节点。";
             }
 
             var stats = await GetViewStatsAsync(viewName, cancellationToken);
             var sb = new StringBuilder();
-            
+
             // 渲染标题和统计信息
             sb.AppendLine($"# MemoTree认知空间 [{stats.TotalNodes} nodes, {stats.ExpandedNodes} expanded, {stats.TotalCharacters} chars]");
             sb.AppendLine();
 
             // 渲染节点树
-            foreach (var rootNode in rootNodes)
+            foreach (var topLevelNode in topLevelNodes)
             {
-                await RenderNodeTreeAsync(sb, rootNode, 0, viewState, cancellationToken);
+                await RenderNodeTreeAsync(sb, topLevelNode, 0, viewState, cancellationToken);
             }
 
             return sb.ToString();
@@ -76,8 +76,8 @@ public class MemoTreeService : IMemoTreeService
     {
         try
         {
-            var nodes = rootId == null 
-                ? await GetRootNodesAsync(cancellationToken)
+            var nodes = rootId == null
+                ? await GetTopLevelNodesAsync(cancellationToken)
                 : new[] { await _storage.GetCompleteNodeAsync(rootId.Value, cancellationToken) }.Where(n => n != null).Cast<CognitiveNode>();
 
             var treeItems = new List<NodeTreeItem>();
@@ -222,25 +222,22 @@ public class MemoTreeService : IMemoTreeService
         return viewState;
     }
 
-    private async Task<IEnumerable<CognitiveNode>> GetRootNodesAsync(CancellationToken cancellationToken)
+    private async Task<IEnumerable<CognitiveNode>> GetTopLevelNodesAsync(CancellationToken cancellationToken)
     {
-        // MVP版本：简化实现，返回所有没有父节点的节点
-        var rootNodes = new List<CognitiveNode>();
+        // 获取所有顶层节点（无父节点的节点）
+        var topLevelNodeIds = await _storage.GetTopLevelNodesAsync(cancellationToken);
+        var topLevelNodes = new List<CognitiveNode>();
 
-        await foreach (var metadata in _storage.GetAllAsync(cancellationToken))
+        foreach (var nodeId in topLevelNodeIds)
         {
-            var parent = await _storage.GetParentAsync(metadata.Id, cancellationToken);
-            if (parent == null)
+            var node = await _storage.GetCompleteNodeAsync(nodeId, cancellationToken);
+            if (node != null)
             {
-                var node = await _storage.GetCompleteNodeAsync(metadata.Id, cancellationToken);
-                if (node != null)
-                {
-                    rootNodes.Add(node);
-                }
+                topLevelNodes.Add(node);
             }
         }
 
-        return rootNodes;
+        return topLevelNodes;
     }
 
     private async Task RenderNodeTreeAsync(

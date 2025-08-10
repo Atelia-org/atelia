@@ -226,8 +226,8 @@ public class MemoTreeEditor : IMemoTreeEditor
 
             if (parentId == null)
             {
-                // 如果没有指定父节点，返回所有根节点
-                childIds = await _storage.GetRootNodesAsync(cancellationToken);
+                // 如果没有指定父节点，返回所有顶层节点
+                childIds = await _storage.GetTopLevelNodesAsync(cancellationToken);
             }
             else
             {

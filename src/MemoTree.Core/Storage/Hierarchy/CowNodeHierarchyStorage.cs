@@ -366,25 +366,25 @@ namespace MemoTree.Core.Storage.Hierarchy
         }
 
         /// <summary>
-        /// 获取所有根节点
+        /// 获取所有顶层节点（无父节点的节点）
         /// </summary>
-        public async Task<IReadOnlyList<NodeId>> GetRootNodesAsync(CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<NodeId>> GetTopLevelNodesAsync(CancellationToken cancellationToken = default)
         {
             var parentIndex = await BuildParentIndexAsync(cancellationToken);
             var allParentIds = await GetAllParentIdsAsync(cancellationToken);
 
-            // 找出所有不在parentIndex中的节点，这些就是根节点
-            var rootNodes = new List<NodeId>();
+            // 找出所有不在parentIndex中的节点，这些就是顶层节点
+            var topLevelNodes = new List<NodeId>();
 
             foreach (var parentId in allParentIds)
             {
                 if (!parentIndex.ContainsKey(parentId))
                 {
-                    rootNodes.Add(parentId);
+                    topLevelNodes.Add(parentId);
                 }
             }
 
-            return rootNodes;
+            return topLevelNodes;
         }
 
         /// <summary>
@@ -407,15 +407,6 @@ namespace MemoTree.Core.Storage.Hierarchy
             }
 
             return false;
-        }
-
-        /// <summary>
-        /// 检查指定节点是否为根节点
-        /// </summary>
-        public async Task<bool> IsRootNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default)
-        {
-            var parent = await GetParentAsync(nodeId, cancellationToken);
-            return parent == null;
         }
     }
 }

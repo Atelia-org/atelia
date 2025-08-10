@@ -463,34 +463,28 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         return Task.FromResult(0);
     }
 
-    public async Task<IReadOnlyList<NodeId>> GetRootNodesAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<NodeId>> GetTopLevelNodesAsync(CancellationToken cancellationToken = default)
     {
         // MVP版本：返回所有没有父节点的节点
         var allNodeIds = await GetAllNodeIdsAsync(cancellationToken);
-        var rootNodes = new List<NodeId>();
+        var topLevelNodes = new List<NodeId>();
 
         foreach (var nodeId in allNodeIds)
         {
             var parent = await GetParentAsync(nodeId, cancellationToken);
             if (parent == null)
             {
-                rootNodes.Add(nodeId);
+                topLevelNodes.Add(nodeId);
             }
         }
 
-        return rootNodes;
+        return topLevelNodes;
     }
 
     public Task<bool> WouldCreateCycleAsync(NodeId nodeId, NodeId potentialParentId, CancellationToken cancellationToken = default)
     {
         // MVP版本：暂时返回false
         return Task.FromResult(false);
-    }
-
-    public async Task<bool> IsRootNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default)
-    {
-        var parent = await GetParentAsync(nodeId, cancellationToken);
-        return parent == null;
     }
 
     #endregion
