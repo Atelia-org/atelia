@@ -487,6 +487,12 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         return Task.FromResult(false);
     }
 
+    public async Task<bool> IsRootNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+    {
+        var parent = await GetParentAsync(nodeId, cancellationToken);
+        return parent == null;
+    }
+
     #endregion
 
     #region ICognitiveNodeStorage Implementation

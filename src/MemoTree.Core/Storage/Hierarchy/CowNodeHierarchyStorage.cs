@@ -408,5 +408,14 @@ namespace MemoTree.Core.Storage.Hierarchy
 
             return false;
         }
+
+        /// <summary>
+        /// 检查指定节点是否为根节点
+        /// </summary>
+        public async Task<bool> IsRootNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+        {
+            var parent = await GetParentAsync(nodeId, cancellationToken);
+            return parent == null;
+        }
     }
 }

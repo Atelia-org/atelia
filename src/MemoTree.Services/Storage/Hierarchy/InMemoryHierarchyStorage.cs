@@ -213,6 +213,12 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage
         return HasCycleAsync(nodeId, potentialParentId, cancellationToken);
     }
 
+    public Task<bool> IsRootNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+    {
+        var parent = _parent.GetValueOrDefault(nodeId);
+        return Task.FromResult(parent == null);
+    }
+
     private List<NodeId> GetChildrenUnsafe(NodeId parent)
     {
         if (!_children.TryGetValue(parent, out var list))

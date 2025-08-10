@@ -222,7 +222,19 @@ public class MemoTreeEditor : IMemoTreeEditor
     {
         try
         {
-            var childIds = await _storage.GetChildrenAsync(parentId ?? NodeId.Root, cancellationToken);
+            IReadOnlyList<NodeId> childIds;
+
+            if (parentId == null)
+            {
+                // 如果没有指定父节点，返回所有根节点
+                childIds = await _storage.GetRootNodesAsync(cancellationToken);
+            }
+            else
+            {
+                // 获取指定父节点的子节点
+                childIds = await _storage.GetChildrenAsync(parentId.Value, cancellationToken);
+            }
+
             var children = new List<CognitiveNode>();
 
             foreach (var childId in childIds)

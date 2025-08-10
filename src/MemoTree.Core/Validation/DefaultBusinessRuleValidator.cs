@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using MemoTree.Core.Services;
 using MemoTree.Core.Types;
 
 namespace MemoTree.Core.Validation
@@ -11,77 +12,118 @@ namespace MemoTree.Core.Validation
     /// </summary>
     public class DefaultBusinessRuleValidator : IBusinessRuleValidator
     {
+        private readonly IRootNodeService? _rootNodeService;
+
+        public DefaultBusinessRuleValidator(IRootNodeService? rootNodeService = null)
+        {
+            _rootNodeService = rootNodeService;
+        }
         /// <summary>
         /// 验证节点创建规则
         /// </summary>
-        public Task<ValidationResult> ValidateNodeCreationAsync(NodeType type, NodeId? parentId, CancellationToken cancellationToken = default)
+        public async Task<ValidationResult> ValidateNodeCreationAsync(NodeType type, NodeId? parentId, CancellationToken cancellationToken = default)
         {
             var builder = new ValidationResultBuilder()
                 .ForObjectType("NodeCreation")
                 .ForObjectId($"{type}");
 
             // 验证根节点创建规则
-            if (parentId == null || parentId.Value.IsRoot)
+            if (parentId == null)
             {
-                // 只有容器类型可以作为根节点
+                // 没有父节点，创建根节点
                 builder.AddWarningIf(
                     type != NodeType.Container,
                     ValidationWarning.ForBestPractice($"Creating root node of type {type}. Consider using Container type for better organization.")
                 );
             }
-
-            // 验证节点类型兼容性
-            if (parentId != null && !parentId.Value.IsRoot)
+            else if (_rootNodeService != null)
             {
-                // 这里需要实际的父节点类型，暂时跳过具体验证
-                // 在实际实现中，需要从存储层获取父节点信息
-                builder.AddWarning(ValidationWarning.Create("PARENT_TYPE_CHECK_SKIPPED", 
-                    "Parent node type compatibility check requires storage access", "ParentType"));
+                // 检查父节点是否为根节点
+                var isParentRoot = await _rootNodeService.IsRootNodeAsync(parentId.Value, cancellationToken);
+                if (isParentRoot)
+                {
+                    builder.AddWarningIf(
+                        type != NodeType.Container,
+                        ValidationWarning.ForBestPractice($"Creating child of root node with type {type}. Consider using Container type for better organization.")
+                    );
+                }
+                else
+                {
+                    // 这里需要实际的父节点类型，暂时跳过具体验证
+                    builder.AddWarning(ValidationWarning.Create("PARENT_TYPE_CHECK_SKIPPED",
+                        "Parent node type compatibility check requires storage access", "ParentType"));
+                }
+            }
+            else
+            {
+                // 没有根节点服务，跳过根节点相关验证
+                builder.AddWarning(ValidationWarning.Create("ROOT_NODE_CHECK_SKIPPED",
+                    "Root node validation requires IRootNodeService", "RootNodeService"));
             }
 
-            return Task.FromResult(builder.Build());
+            return builder.Build();
         }
 
         /// <summary>
         /// 验证节点删除规则
         /// </summary>
-        public Task<ValidationResult> ValidateNodeDeletionAsync(NodeId nodeId, bool recursive, CancellationToken cancellationToken = default)
+        public async Task<ValidationResult> ValidateNodeDeletionAsync(NodeId nodeId, bool recursive, CancellationToken cancellationToken = default)
         {
             var builder = new ValidationResultBuilder()
                 .ForObjectType("NodeDeletion")
                 .ForObjectId(nodeId.Value);
 
             // 验证根节点删除
-            builder.AddErrorIf(
-                nodeId.IsRoot,
-                ValidationError.ForBusinessRule("RootNodeDeletion", "Root node cannot be deleted")
-            );
+            if (_rootNodeService != null)
+            {
+                var isRoot = await _rootNodeService.IsRootNodeAsync(nodeId, cancellationToken);
+                builder.AddErrorIf(
+                    isRoot,
+                    ValidationError.ForBusinessRule("RootNodeDeletion", "Root node cannot be deleted")
+                );
+            }
+            else
+            {
+                // 没有根节点服务，跳过根节点删除验证
+                builder.AddWarning(ValidationWarning.Create("ROOT_NODE_DELETE_CHECK_SKIPPED",
+                    "Root node deletion validation requires IRootNodeService", "RootNodeService"));
+            }
 
             // 如果不是递归删除，需要检查是否有子节点
             if (!recursive)
             {
                 // 这里需要实际的子节点检查，暂时添加警告
-                builder.AddWarning(ValidationWarning.Create("CHILDREN_CHECK_SKIPPED", 
+                builder.AddWarning(ValidationWarning.Create("CHILDREN_CHECK_SKIPPED",
                     "Child nodes existence check requires storage access", "HasChildren"));
             }
 
-            return Task.FromResult(builder.Build());
+            return builder.Build();
         }
 
         /// <summary>
         /// 验证节点移动规则
         /// </summary>
-        public Task<ValidationResult> ValidateNodeMoveAsync(NodeId nodeId, NodeId? newParentId, CancellationToken cancellationToken = default)
+        public async Task<ValidationResult> ValidateNodeMoveAsync(NodeId nodeId, NodeId? newParentId, CancellationToken cancellationToken = default)
         {
             var builder = new ValidationResultBuilder()
                 .ForObjectType("NodeMove")
                 .ForObjectId(nodeId.Value);
 
             // 验证根节点移动
-            builder.AddErrorIf(
-                nodeId.IsRoot,
-                ValidationError.ForBusinessRule("RootNodeMove", "Root node cannot be moved")
-            );
+            if (_rootNodeService != null)
+            {
+                var isRoot = await _rootNodeService.IsRootNodeAsync(nodeId, cancellationToken);
+                builder.AddErrorIf(
+                    isRoot,
+                    ValidationError.ForBusinessRule("RootNodeMove", "Root node cannot be moved")
+                );
+            }
+            else
+            {
+                // 没有根节点服务，跳过根节点移动验证
+                builder.AddWarning(ValidationWarning.Create("ROOT_NODE_MOVE_CHECK_SKIPPED",
+                    "Root node move validation requires IRootNodeService", "RootNodeService"));
+            }
 
             // 验证移动到自己
             if (newParentId != null)
@@ -95,11 +137,11 @@ namespace MemoTree.Core.Validation
             // 循环引用检查需要存储层支持
             if (newParentId != null)
             {
-                builder.AddWarning(ValidationWarning.Create("CIRCULAR_REFERENCE_CHECK_SKIPPED", 
+                builder.AddWarning(ValidationWarning.Create("CIRCULAR_REFERENCE_CHECK_SKIPPED",
                     "Circular reference check requires storage access", "CircularReference"));
             }
 
-            return Task.FromResult(builder.Build());
+            return builder.Build();
         }
 
         /// <summary>
