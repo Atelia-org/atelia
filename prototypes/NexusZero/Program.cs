@@ -21,13 +21,34 @@ record Message(
     [property: JsonPropertyName("content")] string Content
 );
 
+/// <summary>
+/// 最简上下文接口。
+/// 每一项都是基本和必要的。
+/// </summary>
 interface ILlmContext {
+    /// <summary>
+    /// 至少得有能力为LLM提供System Instruction。
+    /// </summary>
+    /// <returns>可以返回空，许多API当不填System Instruction时会使用默认的内置System Instruction</returns>
     public string? GetSystemInstruction();
 
+    /// <summary>
+    /// 至少得有能力为LLM提供一组Messages。
+    /// </summary>
+    /// <returns></returns>
     public IEnumerable<Message> GetMessages();
 
-    void AddAssistant(string content);
+    /// <summary>
+    /// 需要能向尾部添加用户消息。
+    /// </summary>
+    /// <param name="content"></param>
     void AddUser(string content);
+
+    /// <summary>
+    /// 需要能容纳LLM的回复消息。
+    /// </summary>
+    /// <param name="content"></param>
+    void AddAssistant(string content);
 }
 
 class SimpleLlmContext : ILlmContext {
@@ -61,6 +82,7 @@ class SimpleLlmContext : ILlmContext {
 /// 有待进一步设计和实现。
 /// </summary>
 class ComposedLlmContext : ILlmContext {
+    public IMemoTreeService? MemoTree { get; set; }
     #region ILlmContext
     public string? GetSystemInstruction() {
         throw new NotImplementedException();
@@ -88,18 +110,17 @@ interface IChatClient {
 
 public static class Program {
     public static async Task<int> Main(string[] args) {
-        // 1) 演示：构建 DI 容器并解析 IMemoTreeService（教学用，写法尽量直白）
         // 假设当前工作目录在一个有效的 MemoTree 工作区下
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddConsole());
-        // 这里简单起见，直接把当前目录作为工作区根；真实应用可用 WorkspaceManager 自动探测
+        // 这里简单起见，直接把当前目录作为工作区根
         var workspaceRoot = Directory.GetCurrentDirectory();
         services.AddMemoTreeServices(workspaceRoot);
         var provider = services.BuildServiceProvider();
 
         // 解析核心服务并尝试渲染默认视图
+        var memoTree = provider.GetRequiredService<IMemoTreeService>();
         try {
-            var memoTree = provider.GetRequiredService<IMemoTreeService>();
             var markdown = await memoTree.RenderViewAsync("default");
             Console.WriteLine("=== MemoTree Render (default) ===");
             Console.WriteLine(markdown);
@@ -108,11 +129,11 @@ public static class Program {
             Console.WriteLine($"[MemoTree] 无法渲染默认视图：{ex.Message}");
         }
 
-        // 2) 原有 LLM 示例（保留，方便对比）
+        // 基本的LLM调用功能构建
         IChatClient client = new OpenRouterClient();
         var llmContext = new SimpleLlmContext();
 
-        // 初始化上下文
+        // 以下仅是一次简单调用示例
         llmContext.SystemInstruction = "You are not just a helpful assistant.";
         llmContext.AddUser("Hi from C#. Please reply with a short greeting and your model name if available.");
 
@@ -125,6 +146,15 @@ public static class Program {
         Console.WriteLine("=== Assistant ===");
         Console.WriteLine(content);
         Console.WriteLine("=================");
+
+        // 真实NexusZero Agent核心会是一个循环。
+        // ComposedLlmContext composedContext = new ComposedLlmContext();
+        // composedContext.MemoTree = memoTree;
+        //for(; ; ) {
+            // 获取各种事件和状态，比如控制台输入、当前时间等，注入composedContext。
+            // string? llmOutput = await client.Call(composedContext); // 内部在ComposedLlmContext.GetMessages()中复合MemoTree等所有IRenderSource的信息生成调用LLM的完整上下文。
+            // 解析llmOutput，执行相应的各种工具调用（包括对MemoTree的读写），并将结果注入composedContext。
+        // }
         return 0;
     }
 }
