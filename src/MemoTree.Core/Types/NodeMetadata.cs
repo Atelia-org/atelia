@@ -14,8 +14,8 @@ namespace MemoTree.Core.Types
         public string Title { get; init; } = string.Empty;
         public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
         public DateTime LastModified { get; init; } = DateTime.UtcNow;
-        public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
-        public IReadOnlyDictionary<LodLevel, string> ContentHashes { get; init; } =
+        public List<string> Tags { get; init; } = new List<string>();
+        public Dictionary<LodLevel, string> ContentHashes { get; init; } =
             new Dictionary<LodLevel, string>();
         public bool IsDirty { get; init; } = false;
 
@@ -30,7 +30,7 @@ namespace MemoTree.Core.Types
         ///
         /// 长期规划：Phase 5将升级为 IReadOnlyDictionary&lt;string, JsonElement&gt; 提供完整类型安全
         /// </summary>
-        public IReadOnlyDictionary<string, object> CustomProperties { get; init; } =
+        public Dictionary<string, object> CustomProperties { get; init; } =
             new Dictionary<string, object>();
 
         /// <summary>
@@ -134,7 +134,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 更新自定义属性
         /// </summary>
-        public NodeMetadata WithCustomProperties(IReadOnlyDictionary<string, object> newProperties)
+        public NodeMetadata WithCustomProperties(Dictionary<string, object> newProperties)
         {
             return this with
             {

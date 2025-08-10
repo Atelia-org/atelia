@@ -1,5 +1,8 @@
 using MemoTree.Core.Configuration;
 using MemoTree.Core.Storage.Interfaces;
+using MemoTree.Core.Storage.Hierarchy;
+using MemoTree.Core.Storage.Versioned;
+using MemoTree.Core.Types;
 using MemoTree.Services.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
@@ -22,8 +25,21 @@ public static class ServiceCollectionExtensions
         services.Configure<MemoTreeOptions>(options => configuration.GetSection("MemoTree").Bind(options));
         services.Configure<StorageOptions>(options => configuration.GetSection("Storage").Bind(options));
 
-        // 层次结构存储（MVP：内存实现；正式版：CowNodeHierarchyStorage）
-        services.AddSingleton<INodeHierarchyStorage, MemoTree.Services.Storage.Hierarchy.InMemoryHierarchyStorage>();
+        // 层次结构存储：使用CowNodeHierarchyStorage实现持久化
+        services.AddSingleton<INodeHierarchyStorage>(provider =>
+        {
+            var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
+            var memoTreeOptions = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<MemoTreeOptions>>().Value;
+
+            // 创建版本化存储
+            var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
+                memoTreeOptions.WorkspaceRoot,
+                provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>());
+
+            var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
+
+            return new CowNodeHierarchyStorage(hierarchyStorage, logger);
+        });
 
         // 节点复合存储：MVP使用 SimpleCognitiveNodeStorage（Content/Metadata基于文件，Hierarchy通过上面的实现）
         services.AddSingleton<ICognitiveNodeStorage, SimpleCognitiveNodeStorage>();
@@ -66,6 +82,21 @@ public static class ServiceCollectionExtensions
             options.RelationsFileName = "relations.yaml";
             options.RelationTypesFileName = "relation-types.yaml";
             options.HashAlgorithm = "SHA256";
+        });
+
+        // 层次结构存储：使用CowNodeHierarchyStorage实现持久化
+        services.AddSingleton<INodeHierarchyStorage>(provider =>
+        {
+            var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
+
+            // 创建版本化存储
+            var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
+                workspaceRoot,
+                provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>());
+
+            var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
+
+            return new CowNodeHierarchyStorage(hierarchyStorage, logger);
         });
 
         // 存储服务

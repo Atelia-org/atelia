@@ -9,3 +9,4 @@ MemoryOS/
 bin/
 attention_heatmap/*.png
 .memotree/
+test-workspace/

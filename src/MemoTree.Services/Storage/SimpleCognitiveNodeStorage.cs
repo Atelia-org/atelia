@@ -1,6 +1,8 @@
 using MemoTree.Core.Storage.Interfaces;
 using MemoTree.Core.Types;
 using MemoTree.Core.Configuration;
+using MemoTree.Core.Json;
+using MemoTree.Services.Yaml;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
@@ -36,16 +38,19 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
         _yamlSerializer = new SerializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .WithTypeConverter(new NodeIdYamlConverter())
             .Build();
 
         _yamlDeserializer = new DeserializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .WithTypeConverter(new NodeIdYamlConverter())
             .Build();
 
         _jsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Converters = { new NodeIdJsonConverter() }
         };
     }
 
@@ -354,34 +359,32 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
     public Task<HierarchyInfo?> GetHierarchyInfoAsync(NodeId parentId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回空的层次信息，后续会集成CowNodeHierarchyStorage
-        return Task.FromResult<HierarchyInfo?>(HierarchyInfo.Create(parentId));
+        // 委托给注入的层次结构存储
+        return _hierarchy.GetHierarchyInfoAsync(parentId, cancellationToken);
     }
 
     public Task SaveHierarchyInfoAsync(HierarchyInfo hierarchyInfo, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时不实现，后续会集成CowNodeHierarchyStorage
-        _logger.LogWarning("SaveHierarchyInfoAsync not implemented in MVP version");
-        return Task.CompletedTask;
+        // 委托给注入的层次结构存储
+        return _hierarchy.SaveHierarchyInfoAsync(hierarchyInfo, cancellationToken);
     }
 
     public Task<IReadOnlyList<NodeId>> GetChildrenAsync(NodeId parentId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回空列表，后续会集成CowNodeHierarchyStorage
-        return Task.FromResult<IReadOnlyList<NodeId>>(Array.Empty<NodeId>());
+        // 委托给注入的层次结构存储
+        return _hierarchy.GetChildrenAsync(parentId, cancellationToken);
     }
 
     public Task<NodeId?> GetParentAsync(NodeId nodeId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回null，后续会集成CowNodeHierarchyStorage
-        return Task.FromResult<NodeId?>(null);
+        // 委托给注入的层次结构存储
+        return _hierarchy.GetParentAsync(nodeId, cancellationToken);
     }
 
     public Task AddChildAsync(NodeId parentId, NodeId childId, int? order = null, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时不实现，后续会集成CowNodeHierarchyStorage
-        _logger.LogWarning("AddChildAsync not implemented in MVP version");
-        return Task.CompletedTask;
+        // 委托给注入的层次结构存储
+        return _hierarchy.AddChildAsync(parentId, childId, order, cancellationToken);
     }
 
     public Task RemoveChildAsync(NodeId parentId, NodeId childId, CancellationToken cancellationToken = default)

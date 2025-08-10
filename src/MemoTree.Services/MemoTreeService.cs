@@ -269,7 +269,16 @@ public class MemoTreeService : IMemoTreeService
             sb.AppendLine();
         }
 
-        // 渲染子节点（MVP版本暂时跳过，因为层次结构未完全实现）
+        // 渲染子节点
+        var children = await _storage.GetChildrenAsync(node.Metadata.Id, cancellationToken);
+        foreach (var childId in children)
+        {
+            var childNode = await _storage.GetCompleteNodeAsync(childId, cancellationToken);
+            if (childNode != null)
+            {
+                await RenderNodeTreeAsync(sb, childNode, level + 1, viewState, cancellationToken);
+            }
+        }
     }
 
     private async Task<NodeTreeItem> BuildNodeTreeItemAsync(
