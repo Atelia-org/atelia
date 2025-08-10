@@ -21,10 +21,19 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <summary>
         /// 保存父子关系信息
         /// </summary>
-        /// <param name="HierarchyInfo">父子关系信息</param>
+        /// <param name="hierarchyInfo">父子关系信息</param>
         /// <param name="cancellationToken">取消令牌</param>
         Task SaveHierarchyInfoAsync(
-            HierarchyInfo HierarchyInfo, 
+            HierarchyInfo hierarchyInfo, 
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// 删除指定父节点的父子关系信息记录（如果存在）
+        /// </summary>
+        /// <param name="parentId">父节点ID</param>
+        /// <param name="cancellationToken">取消令牌</param>
+        Task DeleteHierarchyInfoAsync(
+            NodeId parentId,
             CancellationToken cancellationToken = default);
 
         /// <summary>

@@ -227,6 +227,21 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage
         return Task.CompletedTask;
     }
 
+    public Task DeleteHierarchyInfoAsync(NodeId parentId, CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            if (_children.TryRemove(parentId, out var removedChildren))
+            {
+                foreach (var child in removedChildren)
+                {
+                    _parent.TryRemove(child, out _);
+                }
+            }
+        }
+        return Task.CompletedTask;
+    }
+
     private List<NodeId> GetChildrenUnsafe(NodeId parent)
     {
         if (!_children.TryGetValue(parent, out var list))

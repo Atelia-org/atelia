@@ -481,6 +481,11 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         return _hierarchy.EnsureNodeExistsInHierarchyAsync(nodeId, cancellationToken);
     }
 
+    public Task DeleteHierarchyInfoAsync(NodeId parentId, CancellationToken cancellationToken = default)
+    {
+        return _hierarchy.DeleteHierarchyInfoAsync(parentId, cancellationToken);
+    }
+
     #endregion
 
     #region ICognitiveNodeStorage Implementation
@@ -547,17 +552,13 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         }
 
         // 2) 删除自身的层级记录（若作为父节点存在记录）
-        // 尝试删除自身的层级记录（仅当实现支持时）
-        if (_hierarchy is CowNodeHierarchyStorage cow)
+        try
         {
-            try
-            {
-                await cow.DeleteHierarchyInfoAsync(nodeId, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to delete hierarchy info for node {NodeId}", nodeId);
-            }
+            await _hierarchy.DeleteHierarchyInfoAsync(nodeId, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete hierarchy info for node {NodeId}", nodeId);
         }
 
         _logger.LogDebug("Deleted complete node {NodeId} and cleaned up hierarchy", nodeId);
@@ -633,18 +634,36 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
             allMetadataList.Add(metadata);
         }
 
-        var nodeTypeDistribution = allMetadataList.GroupBy(m => m.Type)
+        long totalContentSize = 0;
+        var contentLevelDistribution = new Dictionary<LodLevel, int>();
+        int maxDepth = 0;
+
+        foreach (var meta in allMetadataList)
+        {
+            var sizeStats = await GetContentSizeStatsAsync(meta.Id, cancellationToken);
+            foreach (var kv in sizeStats)
+            {
+                totalContentSize += kv.Value;
+                contentLevelDistribution[kv.Key] = contentLevelDistribution.TryGetValue(kv.Key, out var c) ? c + 1 : 1;
+            }
+
+            var depth = await _hierarchy.GetDepthAsync(meta.Id, cancellationToken);
+            if (depth > maxDepth) maxDepth = depth;
+        }
+
+        var nodeTypeDistribution = allMetadataList
+            .GroupBy(m => m.Type)
             .ToDictionary(g => g.Key, g => g.Count());
 
         return new StorageStatistics
         {
             TotalNodes = allMetadataList.Count,
-            TotalRelations = 0, // MVP版本暂时不统计关系
-            TotalContentSize = 0, // MVP版本暂时不统计内容大小
-            MaxDepth = 0, // MVP版本暂时不计算深度
+            TotalRelations = 0, // 关系暂不统计
+            TotalContentSize = totalContentSize,
+            MaxDepth = maxDepth,
             LastModified = allMetadataList.Count > 0 ? allMetadataList.Max(m => m.LastModified) : DateTime.UtcNow,
             NodeTypeDistribution = nodeTypeDistribution,
-            ContentLevelDistribution = new Dictionary<LodLevel, int>()
+            ContentLevelDistribution = contentLevelDistribution
         };
     }
 
@@ -655,15 +674,48 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
         try
         {
-            var allNodeIds = await GetAllNodeIdsAsync(cancellationToken);
-
-            foreach (var nodeId in allNodeIds)
+            var cogNodesPath = _pathService.GetCogNodesDirectory();
+            if (!Directory.Exists(cogNodesPath))
             {
-                // 检查元数据是否存在
-                var metadata = await GetAsync(nodeId, cancellationToken);
-                if (metadata == null)
+                warnings.Add($"CogNodes directory not found: {cogNodesPath}");
+            }
+            else
+            {
+                var allDirs = Directory.GetDirectories(cogNodesPath);
+                foreach (var dir in allDirs)
                 {
-                    errors.Add($"Node {nodeId} has directory but no metadata");
+                    var dirName = Path.GetFileName(dir);
+                    NodeId parsedId;
+                    try
+                    {
+                        parsedId = new NodeId(dirName);
+                    }
+                    catch
+                    {
+                        warnings.Add($"Invalid node directory name: {dirName}");
+                        continue;
+                    }
+
+                    var metadataPath = Path.Combine(dir, _storageOptions.MetadataFileName);
+                    if (!File.Exists(metadataPath))
+                    {
+                        errors.Add($"Directory {dirName} missing metadata file {_storageOptions.MetadataFileName}");
+                        continue;
+                    }
+
+                    try
+                    {
+                        var yaml = await File.ReadAllTextAsync(metadataPath, cancellationToken);
+                        var meta = _yamlDeserializer.Deserialize<NodeMetadata>(yaml);
+                        if (meta.Id != parsedId)
+                        {
+                            errors.Add($"Metadata Id mismatch in {dirName}: dir={parsedId}, meta={meta.Id}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add($"Failed to parse metadata {dirName}/{_storageOptions.MetadataFileName}: {ex.Message}");
+                    }
                 }
             }
         }

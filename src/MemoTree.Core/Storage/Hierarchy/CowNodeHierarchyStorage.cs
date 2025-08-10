@@ -36,19 +36,19 @@ namespace MemoTree.Core.Storage.Hierarchy
         /// 保存父子关系信息
         /// </summary>
         public async Task SaveHierarchyInfoAsync(
-            HierarchyInfo HierarchyInfo, 
+            HierarchyInfo hierarchyInfo, 
             CancellationToken cancellationToken = default)
         {
             var updates = new Dictionary<NodeId, HierarchyInfo>
             {
-                [HierarchyInfo.ParentId] = HierarchyInfo
+                [hierarchyInfo.ParentId] = hierarchyInfo
             };
             
-            var description = $"Save parent-children info for {HierarchyInfo.ParentId}";
+            var description = $"Save parent-children info for {hierarchyInfo.ParentId}";
             await _versionedStorage.UpdateManyAsync(updates, description, cancellationToken);
             
             _logger.LogDebug("Saved parent-children info for {ParentId} with {ChildCount} children",
-                HierarchyInfo.ParentId, HierarchyInfo.ChildCount);
+                hierarchyInfo.ParentId, hierarchyInfo.ChildCount);
         }
         
         /// <summary>
