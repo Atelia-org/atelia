@@ -3,6 +3,8 @@ using MemoTree.Core.Storage.Versioned;
 using MemoTree.Core.Types;
 using Microsoft.Extensions.Logging;
 using System.Threading; // added for SemaphoreSlim
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 
 namespace MemoTree.Core.Storage.Hierarchy
 {
@@ -19,6 +21,35 @@ namespace MemoTree.Core.Storage.Hierarchy
         private IReadOnlyDictionary<NodeId, NodeId>? _parentIndexCache;
         private long _parentIndexVersion = -1;
         private readonly SemaphoreSlim _parentIndexLock = new(1, 1);
+
+        // Metrics instruments (static, shared across instances)
+        private static readonly Meter s_meter = new("MemoTree.Core.Storage.Hierarchy", "1.0.0");
+        private static readonly Counter<long> s_parentIndexRebuilds = s_meter.CreateCounter<long>(
+            name: "cow_hierarchy_parent_index_rebuilds",
+            unit: "count",
+            description: "Number of times the parent index runtime cache was rebuilt.");
+        private static readonly Counter<long> s_parentIndexInvalidations = s_meter.CreateCounter<long>(
+            name: "cow_hierarchy_parent_index_invalidations",
+            unit: "count",
+            description: "Number of times the parent index runtime cache was invalidated.");
+        private static readonly Histogram<double> s_parentIndexRebuildDurationMs = s_meter.CreateHistogram<double>(
+            name: "cow_hierarchy_parent_index_rebuild_duration_ms",
+            unit: "ms",
+            description: "Elapsed time to rebuild the parent index runtime cache.");
+        private static readonly Counter<long> s_parentIndexHits = s_meter.CreateCounter<long>(
+            name: "cow_hierarchy_parent_index_hits",
+            unit: "count",
+            description: "Cache hits for parent index lookups (GetParentAsync)."
+        );
+        private static readonly Counter<long> s_parentIndexMisses = s_meter.CreateCounter<long>(
+            name: "cow_hierarchy_parent_index_misses",
+            unit: "count",
+            description: "Cache misses for parent index lookups (GetParentAsync)."
+        );
+
+        // Lightweight local counters for logging/inspection
+        private long _parentIndexRebuildCount;
+        private double _lastParentIndexRebuildMs;
         
         public CowNodeHierarchyStorage(
             IVersionedStorage<NodeId, HierarchyInfo> versionedStorage,
@@ -86,8 +117,10 @@ namespace MemoTree.Core.Storage.Hierarchy
             await EnsureParentIndexUpToDateAsync(cancellationToken);
             if (_parentIndexCache != null && _parentIndexCache.TryGetValue(nodeId, out var parentId))
             {
+                s_parentIndexHits.Add(1);
                 return parentId;
             }
+            s_parentIndexMisses.Add(1);
             return null;
         }
         
@@ -469,10 +502,33 @@ namespace MemoTree.Core.Storage.Hierarchy
                 if (_parentIndexCache != null && _parentIndexVersion == currentVersion)
                     return;
 
-                _logger.LogDebug("Rebuilding parent index cache for version {Version}", currentVersion);
+                var previousVersion = _parentIndexVersion;
+                var sw = Stopwatch.StartNew();
+                _logger.LogDebug("Rebuilding parent index cache for version {Version} (prev {PrevVersion})", currentVersion, previousVersion);
                 var fresh = await BuildParentIndexAsync(cancellationToken);
+                sw.Stop();
+
                 _parentIndexCache = fresh;
                 _parentIndexVersion = currentVersion;
+
+                _parentIndexRebuildCount++;
+                _lastParentIndexRebuildMs = sw.Elapsed.TotalMilliseconds;
+                s_parentIndexRebuilds.Add(1);
+                s_parentIndexRebuildDurationMs.Record(_lastParentIndexRebuildMs);
+
+                // Log at Information if rebuild took noticeable time, otherwise Debug
+                if (_lastParentIndexRebuildMs >= 50)
+                {
+                    _logger.LogInformation(
+                        "Parent index cache rebuilt in {ElapsedMs} ms, size {Size}, version {Version} (prev {PrevVersion}), total rebuilds {Rebuilds}",
+                        _lastParentIndexRebuildMs, _parentIndexCache.Count, _parentIndexVersion, previousVersion, _parentIndexRebuildCount);
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "Parent index cache rebuilt in {ElapsedMs} ms, size {Size}, version {Version} (prev {PrevVersion}), total rebuilds {Rebuilds}",
+                        _lastParentIndexRebuildMs, _parentIndexCache.Count, _parentIndexVersion, previousVersion, _parentIndexRebuildCount);
+                }
             }
             finally
             {
@@ -482,7 +538,13 @@ namespace MemoTree.Core.Storage.Hierarchy
 
         private void InvalidateParentIndexCache()
         {
-            _parentIndexVersion = -1;
+            // Only count/log when transitioning from a non-invalid state to invalid
+            var prev = Interlocked.Exchange(ref _parentIndexVersion, -1);
+            if (prev != -1)
+            {
+                s_parentIndexInvalidations.Add(1);
+                _logger.LogTrace("Parent index cache invalidated (prev version {PrevVersion})", prev);
+            }
         }
     }
 }
