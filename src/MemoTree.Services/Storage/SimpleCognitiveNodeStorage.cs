@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using System.Text.Json;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
+using MemoTree.Core.Storage.Hierarchy;
 
 namespace MemoTree.Services.Storage;
 
@@ -98,7 +99,7 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         }
     }
 
-    public async Task DeleteAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+    public Task DeleteAsync(NodeId nodeId, CancellationToken cancellationToken = default)
     {
         var metadataPath = GetNodeMetadataPath(nodeId);
         if (File.Exists(metadataPath))
@@ -106,6 +107,7 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
             File.Delete(metadataPath);
             _logger.LogDebug("Deleted metadata for node {NodeId}", nodeId);
         }
+        return Task.CompletedTask;
     }
 
     public async Task<IReadOnlyDictionary<NodeId, NodeMetadata>> GetBatchAsync(
@@ -136,10 +138,10 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         }
     }
 
-    public async Task<bool> ExistsAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+    public Task<bool> ExistsAsync(NodeId nodeId, CancellationToken cancellationToken = default)
     {
         var metadataPath = GetNodeMetadataPath(nodeId);
-        return File.Exists(metadataPath);
+        return Task.FromResult(File.Exists(metadataPath));
     }
 
     public async Task<IReadOnlyList<NodeId>> GetAllNodeIdsAsync(CancellationToken cancellationToken = default)
@@ -214,7 +216,8 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
     public async IAsyncEnumerable<NodeMetadata> FindByTagAsync(string tag, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时不支持标签搜索，返回空序列
+        // MVP版本：暂不支持标签搜索；加入一次最小await以消除编译器告警
+        await Task.Yield();
         yield break;
     }
 
@@ -402,66 +405,55 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
     public Task RemoveChildAsync(NodeId parentId, NodeId childId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时不实现，后续会集成CowNodeHierarchyStorage
-        _logger.LogWarning("RemoveChildAsync not implemented in MVP version");
-        return Task.CompletedTask;
+    // 委托给持久化的层级存储实现
+    return _hierarchy.RemoveChildAsync(parentId, childId, cancellationToken);
     }
 
     public Task MoveNodeAsync(NodeId nodeId, NodeId? newParentId, int? newOrder = null, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时不实现，后续会集成CowNodeHierarchyStorage
-        _logger.LogWarning("MoveNodeAsync not implemented in MVP version");
-        return Task.CompletedTask;
+    // 委托给持久化的层级存储实现
+    return _hierarchy.MoveNodeAsync(nodeId, newParentId, newOrder, cancellationToken);
     }
 
     public Task<IReadOnlyList<NodeId>> GetNodePathAsync(NodeId nodeId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回只包含节点自身的路径
-        return Task.FromResult<IReadOnlyList<NodeId>>(new[] { nodeId });
+        // 非接口方法，仅为兼容：委托到 GetPathAsync
+        return _hierarchy.GetPathAsync(nodeId, cancellationToken);
     }
 
     public Task<int> GetNodeDepthAsync(NodeId nodeId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回深度0
-        return Task.FromResult(0);
+        // 非接口方法，仅为兼容：委托到底层
+        return _hierarchy.GetDepthAsync(nodeId, cancellationToken);
     }
 
     public Task<bool> IsAncestorAsync(NodeId ancestorId, NodeId descendantId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回false
-        return Task.FromResult(false);
+        // 简化实现：沿父链检查；委托组合
+        return _hierarchy.WouldCreateCycleAsync(descendantId, ancestorId, cancellationToken);
     }
 
     public Task<bool> HasCycleAsync(NodeId nodeId, NodeId potentialParentId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回false
-        return Task.FromResult(false);
+        return _hierarchy.WouldCreateCycleAsync(potentialParentId, nodeId, cancellationToken);
     }
 
     public Task ReorderChildrenAsync(NodeId parentId, IReadOnlyList<NodeId> newOrder, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时不实现
-        _logger.LogWarning("ReorderChildrenAsync not implemented in MVP version");
-        return Task.CompletedTask;
+        return _hierarchy.ReorderChildrenAsync(parentId, newOrder, cancellationToken);
     }
 
     public Task<IReadOnlyList<NodeId>> GetPathAsync(NodeId nodeId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回只包含节点自身的路径
-        return Task.FromResult<IReadOnlyList<NodeId>>(new[] { nodeId });
+        return _hierarchy.GetPathAsync(nodeId, cancellationToken);
     }
 
-    public async IAsyncEnumerable<NodeId> GetDescendantsAsync(NodeId nodeId, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        // MVP版本：暂时返回空序列
-        yield break;
-    }
+    public IAsyncEnumerable<NodeId> GetDescendantsAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+        => _hierarchy.GetDescendantsAsync(nodeId, cancellationToken);
 
     public Task<IReadOnlyDictionary<NodeId, NodeId>> BuildParentIndexAsync(CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回空字典
-        _logger.LogWarning("BuildParentIndexAsync not implemented in MVP version");
-        return Task.FromResult<IReadOnlyDictionary<NodeId, NodeId>>(new Dictionary<NodeId, NodeId>());
+        return _hierarchy.BuildParentIndexAsync(cancellationToken);
     }
 
     public async Task<bool> HasChildrenAsync(NodeId nodeId, CancellationToken cancellationToken = default)
@@ -472,32 +464,15 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
     public Task<int> GetDepthAsync(NodeId nodeId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回深度0
-        return Task.FromResult(0);
+        return _hierarchy.GetDepthAsync(nodeId, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<NodeId>> GetTopLevelNodesAsync(CancellationToken cancellationToken = default)
-    {
-        // MVP版本：返回所有没有父节点的节点
-        var allNodeIds = await GetAllNodeIdsAsync(cancellationToken);
-        var topLevelNodes = new List<NodeId>();
-
-        foreach (var nodeId in allNodeIds)
-        {
-            var parent = await GetParentAsync(nodeId, cancellationToken);
-            if (parent == null)
-            {
-                topLevelNodes.Add(nodeId);
-            }
-        }
-
-        return topLevelNodes;
-    }
+    public Task<IReadOnlyList<NodeId>> GetTopLevelNodesAsync(CancellationToken cancellationToken = default)
+        => _hierarchy.GetTopLevelNodesAsync(cancellationToken);
 
     public Task<bool> WouldCreateCycleAsync(NodeId nodeId, NodeId potentialParentId, CancellationToken cancellationToken = default)
     {
-        // MVP版本：暂时返回false
-        return Task.FromResult(false);
+        return _hierarchy.WouldCreateCycleAsync(nodeId, potentialParentId, cancellationToken);
     }
 
     public Task EnsureNodeExistsInHierarchyAsync(NodeId nodeId, CancellationToken cancellationToken = default)
@@ -563,8 +538,29 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         // 删除元数据
         await DeleteAsync(nodeId, cancellationToken);
 
-        // 删除层次信息（MVP版本暂时跳过）
-        _logger.LogDebug("Deleted complete node {NodeId}", nodeId);
+        // 清理层级关系：
+        // 1) 从父节点的子列表中移除自身
+        var parentId = await _hierarchy.GetParentAsync(nodeId, cancellationToken);
+        if (parentId.HasValue)
+        {
+            await _hierarchy.RemoveChildAsync(parentId.Value, nodeId, cancellationToken);
+        }
+
+        // 2) 删除自身的层级记录（若作为父节点存在记录）
+        // 尝试删除自身的层级记录（仅当实现支持时）
+        if (_hierarchy is CowNodeHierarchyStorage cow)
+        {
+            try
+            {
+                await cow.DeleteHierarchyInfoAsync(nodeId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete hierarchy info for node {NodeId}", nodeId);
+            }
+        }
+
+        _logger.LogDebug("Deleted complete node {NodeId} and cleaned up hierarchy", nodeId);
     }
 
     public async Task<IReadOnlyDictionary<NodeId, CognitiveNode>> GetCompleteNodesBatchAsync(

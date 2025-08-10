@@ -1,5 +1,5 @@
 using System.CommandLine;
-using System.Text.Json;
+using MemoTree.Cli.Services;
 
 namespace MemoTree.Cli.Commands
 {
@@ -37,47 +37,13 @@ namespace MemoTree.Cli.Commands
 
         private static async Task ExecuteAsync(string targetPath)
         {
-            // 验证目标路径
+            var workspaceManager = new WorkspaceManager();
             var fullTargetPath = Path.GetFullPath(targetPath);
-            if (!Directory.Exists(fullTargetPath))
-            {
-                throw new DirectoryNotFoundException($"目标路径不存在: {fullTargetPath}");
-            }
 
-            // 检查目标路径是否为有效的MemoTree工作空间
-            var targetWorkspaceDir = Path.Combine(fullTargetPath, ".memotree");
-            if (!Directory.Exists(targetWorkspaceDir))
-            {
-                throw new InvalidOperationException($"目标路径不是有效的MemoTree工作空间: {fullTargetPath}");
-            }
+            // 复用 WorkspaceManager 的连接与校验逻辑
+            var connectedRoot = await workspaceManager.ConnectWorkspaceAsync(fullTargetPath);
 
-            // 确保当前目录有.memotree目录
-            var currentDir = Directory.GetCurrentDirectory();
-            var currentWorkspaceDir = Path.Combine(currentDir, ".memotree");
-            
-            if (!Directory.Exists(currentWorkspaceDir))
-            {
-                // 如果当前目录没有.memotree，创建一个
-                Directory.CreateDirectory(currentWorkspaceDir);
-                Console.WriteLine("Created .memotree directory in current location");
-            }
-
-            // 创建链接配置
-            var linkConfig = new
-            {
-                target = fullTargetPath,
-                created = DateTime.UtcNow,
-                description = $"Link to MemoTree workspace at {fullTargetPath}"
-            };
-
-            var linkConfigPath = Path.Combine(currentWorkspaceDir, "link.json");
-            var linkConfigJson = JsonSerializer.Serialize(linkConfig, new JsonSerializerOptions 
-            { 
-                WriteIndented = true 
-            });
-
-            await File.WriteAllTextAsync(linkConfigPath, linkConfigJson);
-
+            var linkConfigPath = Path.Combine(connectedRoot, ".memotree", "link.json");
             Console.WriteLine($"✅ 成功连接到工作空间: {fullTargetPath}");
             Console.WriteLine($"📁 链接配置已保存到: {linkConfigPath}");
             Console.WriteLine();

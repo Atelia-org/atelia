@@ -26,15 +26,21 @@ public static class ServiceCollectionExtensions
         services.Configure<MemoTreeOptions>(options => configuration.GetSection("MemoTree").Bind(options));
         services.Configure<StorageOptions>(options => configuration.GetSection("Storage").Bind(options));
 
+    // 路径管理服务（必须）：供存储与层级使用，并支持链接工作空间
+    services.AddSingleton<IWorkspacePathService, WorkspacePathService>();
+
         // 层次结构存储：使用CowNodeHierarchyStorage实现持久化
         services.AddSingleton<INodeHierarchyStorage>(provider =>
         {
             var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
-            var memoTreeOptions = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<MemoTreeOptions>>().Value;
+            var pathService = provider.GetRequiredService<IWorkspacePathService>();
+
+            // 通过路径服务获取层级关系持久化目录（自动处理链接工作空间）
+            var hierarchyDirectory = pathService.GetHierarchyDirectoryAsync().GetAwaiter().GetResult();
 
             // 创建版本化存储
             var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
-                memoTreeOptions.WorkspaceRoot,
+                hierarchyDirectory,
                 provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>());
 
             var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
