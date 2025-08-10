@@ -29,7 +29,9 @@ class Program
             ViewCommands.CreateExpandCommand(),
             ViewCommands.CreateCollapseCommand(),
             // Grouped view management commands
-            viewCommand
+            viewCommand,
+            // Integrity commands
+            IntegrityCommands.CreateIntegrityRoot()
         };
 
         // 如果没有参数，默认执行渲染命令
