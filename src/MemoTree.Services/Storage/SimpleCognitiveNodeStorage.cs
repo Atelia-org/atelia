@@ -682,9 +682,11 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         var errors = new List<string>();
         var warnings = new List<string>();
 
+        // 收集有效节点集合，并进行基础文件/元数据校验
+        var validNodes = new HashSet<NodeId>();
+        var cogNodesPath = _pathService.GetCogNodesDirectory();
         try
         {
-            var cogNodesPath = _pathService.GetCogNodesDirectory();
             if (!Directory.Exists(cogNodesPath))
             {
                 warnings.Add($"CogNodes directory not found: {cogNodesPath}");
@@ -713,25 +715,169 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
                         continue;
                     }
 
+                    NodeMetadata? meta = null;
                     try
                     {
                         var yaml = await File.ReadAllTextAsync(metadataPath, cancellationToken);
-                        var meta = _yamlDeserializer.Deserialize<NodeMetadata>(yaml);
+                        meta = _yamlDeserializer.Deserialize<NodeMetadata>(yaml);
                         if (meta.Id != parsedId)
                         {
                             errors.Add($"Metadata Id mismatch in {dirName}: dir={parsedId}, meta={meta.Id}");
+                        }
+                        else
+                        {
+                            validNodes.Add(parsedId);
                         }
                     }
                     catch (Exception ex)
                     {
                         errors.Add($"Failed to parse metadata {dirName}/{_storageOptions.MetadataFileName}: {ex.Message}");
                     }
+
+                    // 校验内容文件与哈希
+                    if (meta != null)
+                    {
+                        foreach (var level in Enum.GetValues<LodLevel>())
+                        {
+                            var contentPath = GetNodeContentPath(parsedId, level);
+                            var hasFile = File.Exists(contentPath);
+                            var hasHash = meta.ContentHashes.TryGetValue(level, out var declaredHash) && !string.IsNullOrEmpty(declaredHash);
+
+                            if (hasFile && !hasHash)
+                            {
+                                warnings.Add($"Node {parsedId} has {level} content file but no hash in metadata");
+                            }
+                            else if (!hasFile && hasHash)
+                            {
+                                warnings.Add($"Node {parsedId} metadata declares {level} content but file is missing");
+                            }
+                            else if (hasFile && hasHash)
+                            {
+                                try
+                                {
+                                    var text = await File.ReadAllTextAsync(contentPath, cancellationToken);
+                                    var actualHash = ComputeSha256Base64(text);
+                                    if (!string.Equals(actualHash, declaredHash, StringComparison.Ordinal))
+                                    {
+                                        errors.Add($"Node {parsedId} {level} content hash mismatch: meta={declaredHash}, actual={actualHash}");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    errors.Add($"Failed to read/verify content for node {parsedId} {level}: {ex.Message}");
+                                }
+                            }
+                        }
+
+                        // 检查未知额外文件（非标准文件名）
+                        try
+                        {
+                            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                _storageOptions.MetadataFileName,
+                                _storageOptions.GistContentFileName,
+                                _storageOptions.SummaryContentFileName,
+                                _storageOptions.FullContentFileName,
+                                _storageOptions.ExternalLinksFileName,
+                                _storageOptions.RelationsFileName
+                            };
+                            var files = Directory.GetFiles(dir).Select(Path.GetFileName);
+                            foreach (var f in files)
+                            {
+                                if (f != null && !known.Contains(f))
+                                {
+                                    warnings.Add($"Node {parsedId} has unrecognized file: {f}");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            warnings.Add($"Failed to scan extra files for node {parsedId}: {ex.Message}");
+                        }
+                    }
                 }
             }
         }
         catch (Exception ex)
         {
-            errors.Add($"Failed to validate integrity: {ex.Message}");
+            errors.Add($"Failed to validate files/metadata: {ex.Message}");
+        }
+
+        // 层级一致性与循环检测
+        try
+        {
+            var parentIndex = await _hierarchy.BuildParentIndexAsync(cancellationToken);
+            var parentSet = new HashSet<NodeId>(parentIndex.Values);
+
+            // 引用缺失节点检测
+            foreach (var kv in parentIndex)
+            {
+                if (!validNodes.Contains(kv.Key))
+                    errors.Add($"Hierarchy references missing child node: {kv.Key}");
+                if (!validNodes.Contains(kv.Value))
+                    errors.Add($"Hierarchy references missing parent node: {kv.Value}");
+            }
+
+            var topLevels = await _hierarchy.GetTopLevelNodesAsync(cancellationToken);
+            foreach (var top in topLevels)
+            {
+                if (!validNodes.Contains(top))
+                    warnings.Add($"Top-level hierarchy node missing metadata/content: {top}");
+            }
+
+            // 构建邻接表并进行循环检测（DFS）
+            var adjacency = new Dictionary<NodeId, List<NodeId>>();
+            foreach (var parentId in parentSet)
+            {
+                try
+                {
+                    var children = await _hierarchy.GetChildrenAsync(parentId, cancellationToken);
+                    adjacency[parentId] = children.ToList();
+                }
+                catch (Exception ex)
+                {
+                    warnings.Add($"Failed to enumerate children of {parentId}: {ex.Message}");
+                }
+            }
+
+            // 节点全集：有效节点 + 所有在层级中出现的节点
+            var allHierarchyNodes = new HashSet<NodeId>(validNodes);
+            foreach (var p in adjacency.Keys) allHierarchyNodes.Add(p);
+            foreach (var ch in adjacency.Values.SelectMany(x => x)) allHierarchyNodes.Add(ch);
+
+            var visiting = new HashSet<NodeId>();
+            var visited = new HashSet<NodeId>();
+            bool Dfs(NodeId node)
+            {
+                if (visiting.Contains(node))
+                    return true; // cycle
+                if (visited.Contains(node))
+                    return false;
+                visiting.Add(node);
+                if (adjacency.TryGetValue(node, out var chs))
+                {
+                    foreach (var c in chs)
+                    {
+                        if (Dfs(c)) return true;
+                    }
+                }
+                visiting.Remove(node);
+                visited.Add(node);
+                return false;
+            }
+
+            foreach (var n in allHierarchyNodes)
+            {
+                if (!visited.Contains(n) && Dfs(n))
+                {
+                    errors.Add($"Hierarchy cycle detected involving node {n}");
+                    break; // 报告一次即可
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Failed to validate hierarchy: {ex.Message}");
         }
 
         return new StorageIntegrityResult
@@ -797,6 +943,15 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         {
             File.Move(tempPath, targetPath);
         }
+    }
+
+    private static string ComputeSha256Base64(string content)
+    {
+        if (string.IsNullOrEmpty(content)) return string.Empty;
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+        var hash = sha.ComputeHash(bytes);
+        return Convert.ToBase64String(hash);
     }
     #endregion
 }

@@ -13,16 +13,18 @@ public static class IntegrityCommands
     {
         var root = new Command("integrity", "Integrity checking commands")
         {
-            CreateValidateCommand()
+            CreateValidateCommand(),
+            CreateRepairCommand()
         };
         return root;
     }
 
     public static Command CreateValidateCommand()
     {
-        var cmd = new Command("validate", "Validate storage integrity and print a report");
+    var jsonOpt = new Option<bool>("--json", () => false, description: "Output result as JSON");
+    var cmd = new Command("validate", "Validate storage integrity and print a report") { jsonOpt };
 
-        cmd.SetHandler(async () =>
+    cmd.SetHandler(async (bool json) =>
         {
             try
             {
@@ -43,23 +45,41 @@ public static class IntegrityCommands
                 var storage = provider.GetRequiredService<ICognitiveNodeStorage>();
                 var result = await storage.ValidateIntegrityAsync();
 
-                Console.WriteLine($"Integrity validation at {result.ValidatedAt:u}");
-                Console.WriteLine(result.IsValid ? "Status: OK" : "Status: ISSUES FOUND");
-
-                if (result.Warnings.Count > 0)
+                if (json)
                 {
-                    Console.WriteLine();
-                    Console.WriteLine($"Warnings ({result.Warnings.Count}):");
-                    foreach (var w in result.Warnings)
-                        Console.WriteLine($"  - {w}");
+                    var payload = new
+                    {
+                        validatedAt = result.ValidatedAt,
+                        isValid = result.IsValid,
+                        warnings = result.Warnings,
+                        errors = result.Errors
+                    };
+                    var text = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions
+                    {
+                        WriteIndented = true
+                    });
+                    Console.WriteLine(text);
                 }
-
-                if (result.Errors.Count > 0)
+                else
                 {
-                    Console.WriteLine();
-                    Console.WriteLine($"Errors ({result.Errors.Count}):");
-                    foreach (var e in result.Errors)
-                        Console.WriteLine($"  - {e}");
+                    Console.WriteLine($"Integrity validation at {result.ValidatedAt:u}");
+                    Console.WriteLine(result.IsValid ? "Status: OK" : "Status: ISSUES FOUND");
+
+                    if (result.Warnings.Count > 0)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine($"Warnings ({result.Warnings.Count}):");
+                        foreach (var w in result.Warnings)
+                            Console.WriteLine($"  - {w}");
+                    }
+
+                    if (result.Errors.Count > 0)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine($"Errors ({result.Errors.Count}):");
+                        foreach (var e in result.Errors)
+                            Console.WriteLine($"  - {e}");
+                    }
                 }
 
                 Environment.ExitCode = result.IsValid ? 0 : 2;
@@ -69,8 +89,21 @@ public static class IntegrityCommands
                 Console.Error.WriteLine($"Error: {ex.Message}");
                 Environment.Exit(1);
             }
-        });
+        }, jsonOpt);
 
+        return cmd;
+    }
+    
+    public static Command CreateRepairCommand()
+    {
+        var dryRun = new Option<bool>("--dry-run", () => true, "Show planned fixes without changing files");
+        var cmd = new Command("repair", "Scan and propose repairs for common integrity issues (preview)") { dryRun };
+        cmd.SetHandler(async (bool _dryRun) =>
+        {
+            Console.WriteLine("Repair is not implemented yet. Use 'integrity validate --json' to inspect issues.");
+            Environment.ExitCode = 3;
+            await Task.CompletedTask;
+        }, dryRun);
         return cmd;
     }
 }
