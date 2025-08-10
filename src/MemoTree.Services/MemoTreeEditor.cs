@@ -193,7 +193,7 @@ public class MemoTreeEditor : IMemoTreeEditor
         }
     }
 
-    public async Task MoveNodeAsync(NodeId nodeId, NodeId? newParentId, int newOrder = 0, CancellationToken cancellationToken = default)
+    public Task MoveNodeAsync(NodeId nodeId, NodeId? newParentId, int newOrder = 0, CancellationToken cancellationToken = default)
     {
         // MVP版本：暂时不实现移动功能
         _logger.LogWarning("MoveNodeAsync not implemented in MVP version");

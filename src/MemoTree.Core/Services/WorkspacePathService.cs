@@ -38,10 +38,10 @@ namespace MemoTree.Core.Services
         /// <summary>
         /// 获取工作空间根目录（.memotree目录）
         /// </summary>
-        public async Task<string> GetWorkspaceRootAsync()
+        public Task<string> GetWorkspaceRootAsync()
         {
             if (_cachedWorkspaceRoot != null)
-                return _cachedWorkspaceRoot;
+                return Task.FromResult(_cachedWorkspaceRoot);
 
             // 基于配置的WorkspaceRoot查找.memotree目录
             var projectRoot = _options.WorkspaceRoot;
@@ -54,7 +54,7 @@ namespace MemoTree.Core.Services
 
             _cachedWorkspaceRoot = workspaceDir;
             _logger.LogDebug("Using workspace directory: {WorkspaceDir}", workspaceDir);
-            return workspaceDir;
+            return Task.FromResult(workspaceDir);
         }
 
 
@@ -245,7 +245,7 @@ namespace MemoTree.Core.Services
         /// <summary>
         /// 向上查找工作空间目录
         /// </summary>
-        private async Task<string?> FindWorkspaceDirectoryAsync(string startDirectory)
+    private Task<string?> FindWorkspaceDirectoryAsync(string startDirectory)
         {
             var currentDir = new DirectoryInfo(startDirectory);
             
@@ -255,14 +255,14 @@ namespace MemoTree.Core.Services
                 if (Directory.Exists(workspaceDir))
                 {
                     _logger.LogDebug("Found workspace directory: {WorkspaceDir}", workspaceDir);
-                    return workspaceDir;
+            return Task.FromResult<string?>(workspaceDir);
                 }
                 
                 currentDir = currentDir.Parent;
             }
 
             _logger.LogDebug("Workspace directory not found starting from: {StartDirectory}", startDirectory);
-            return null;
+        return Task.FromResult<string?>(null);
         }
     }
 }

@@ -1,9 +1,10 @@
 using MemoTree.Core.Storage.Interfaces;
 using MemoTree.Core.Types;
-using MemoTree.Services.Models;
 using Microsoft.Extensions.Logging;
 using System.Text;
-using ViewState = MemoTree.Services.Models.MemoTreeViewState;
+using ViewState = MemoTree.Core.Types.MemoTreeViewState;
+using VNodeState = MemoTree.Core.Types.NodeViewState;
+using MemoTree.Services.Models;
 
 namespace MemoTree.Services;
 
@@ -14,13 +15,16 @@ public class MemoTreeService : IMemoTreeService
 {
     private readonly ICognitiveNodeStorage _storage;
     private readonly ILogger<MemoTreeService> _logger;
+    private readonly IViewStateStorage _viewStorage;
     private readonly Dictionary<string, ViewState> _viewStates = new();
 
     public MemoTreeService(
-        ICognitiveNodeStorage storage,
-        ILogger<MemoTreeService> logger)
+    ICognitiveNodeStorage storage,
+    IViewStateStorage viewStorage,
+    ILogger<MemoTreeService> logger)
     {
         _storage = storage ?? throw new ArgumentNullException(nameof(storage));
+        _viewStorage = viewStorage ?? throw new ArgumentNullException(nameof(viewStorage));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -28,7 +32,7 @@ public class MemoTreeService : IMemoTreeService
     {
         try
         {
-            var viewState = GetOrCreateViewState(viewName);
+            var viewState = await GetOrLoadViewStateAsync(viewName, cancellationToken);
             var topLevelNodes = await GetTopLevelNodesAsync(cancellationToken);
             
             if (!topLevelNodes.Any())
@@ -60,15 +64,19 @@ public class MemoTreeService : IMemoTreeService
 
     public async Task ExpandNodeAsync(NodeId nodeId, string viewName = "default", CancellationToken cancellationToken = default)
     {
-        var viewState = GetOrCreateViewState(viewName);
-        viewState.NodeStates[nodeId] = LodLevel.Full;
+        var viewState = await GetOrLoadViewStateAsync(viewName, cancellationToken);
+        var updated = SetNodeLevel(viewState, nodeId, LodLevel.Full);
+        _viewStates[viewName] = updated;
+        await _viewStorage.SaveViewStateAsync(updated, cancellationToken);
         _logger.LogDebug("Expanded node {NodeId} in view {ViewName}", nodeId, viewName);
     }
 
     public async Task CollapseNodeAsync(NodeId nodeId, string viewName = "default", CancellationToken cancellationToken = default)
     {
-        var viewState = GetOrCreateViewState(viewName);
-        viewState.NodeStates[nodeId] = LodLevel.Gist;
+        var viewState = await GetOrLoadViewStateAsync(viewName, cancellationToken);
+        var updated = SetNodeLevel(viewState, nodeId, LodLevel.Gist);
+        _viewStates[viewName] = updated;
+        await _viewStorage.SaveViewStateAsync(updated, cancellationToken);
         _logger.LogDebug("Collapsed node {NodeId} in view {ViewName}", nodeId, viewName);
     }
 
@@ -101,22 +109,22 @@ public class MemoTreeService : IMemoTreeService
     {
         try
         {
-            var viewState = GetOrCreateViewState(viewName);
+            var viewState = await GetOrLoadViewStateAsync(viewName, cancellationToken);
             var allNodeIds = new List<NodeId>();
             await foreach (var metadata in _storage.GetAllAsync(cancellationToken))
             {
                 allNodeIds.Add(metadata.Id);
             }
 
-            var expandedNodes = viewState.NodeStates.Count(kvp => kvp.Value == LodLevel.Full);
+            var expandedNodes = viewState.NodeStates.Count(s => s.CurrentLevel == LodLevel.Full);
             var totalCharacters = 0;
 
             // 计算字符数（简化版本，只计算当前展开的节点）
-            foreach (var (nodeId, level) in viewState.NodeStates)
+            foreach (var s in viewState.NodeStates)
             {
-                if (level == LodLevel.Full)
+                if (s.CurrentLevel == LodLevel.Full)
                 {
-                    var content = await _storage.GetAsync(nodeId, level, cancellationToken);
+                    var content = await _storage.GetAsync(s.Id, LodLevel.Full, cancellationToken);
                     if (content != null)
                     {
                         totalCharacters += content.Content.Length;
@@ -144,8 +152,8 @@ public class MemoTreeService : IMemoTreeService
     {
         try
         {
-            var viewState = GetOrCreateViewState(viewName);
-            var level = viewState.NodeStates.GetValueOrDefault(nodeId, LodLevel.Gist);
+            var viewState = await GetOrLoadViewStateAsync(viewName, cancellationToken);
+            var level = GetNodeLevelOrDefault(viewState, nodeId, LodLevel.Gist);
             
             var metadata = await _storage.GetAsync(nodeId, cancellationToken);
             if (metadata == null)
@@ -199,27 +207,52 @@ public class MemoTreeService : IMemoTreeService
 
     #region Private Helper Methods
 
-    private ViewState GetOrCreateViewState(string viewName)
+    private async Task<ViewState> GetOrLoadViewStateAsync(string viewName, CancellationToken ct)
     {
         if (!_viewStates.TryGetValue(viewName, out var viewState))
         {
-            viewState = new ViewState
-            {
-                ViewName = viewName,
-                NodeStates = new Dictionary<NodeId, LodLevel>(),
-                FocusNodeId = null,
-                LastAccessTime = DateTime.UtcNow
-            };
+            viewState = await _viewStorage.GetViewStateAsync(viewName, ct)
+                        ?? new ViewState { Name = viewName, LastModified = DateTime.UtcNow, NodeStates = Array.Empty<VNodeState>() };
             _viewStates[viewName] = viewState;
         }
         else
         {
-            // 更新访问时间
-            viewState = viewState with { LastAccessTime = DateTime.UtcNow };
+            // 更新修改时间为访问时间（近似处理）
+            viewState = viewState with { LastModified = DateTime.UtcNow };
             _viewStates[viewName] = viewState;
         }
 
         return viewState;
+    }
+
+    private static ViewState SetNodeLevel(ViewState state, NodeId id, LodLevel level)
+    {
+        var list = state.NodeStates.ToList();
+        var idx = list.FindIndex(s => s.Id == id);
+        if (idx >= 0)
+        {
+            var existing = list[idx];
+            list[idx] = existing with { CurrentLevel = level, IsExpanded = (level == LodLevel.Full), LastAccessTime = DateTime.UtcNow };
+        }
+        else
+        {
+            list.Add(new VNodeState
+            {
+                Id = id,
+                CurrentLevel = level,
+                IsExpanded = (level == LodLevel.Full),
+                IsVisible = true,
+                Order = 0,
+                LastAccessTime = DateTime.UtcNow
+            });
+        }
+        return state with { NodeStates = list, LastModified = DateTime.UtcNow };
+    }
+
+    private static LodLevel GetNodeLevelOrDefault(ViewState state, NodeId id, LodLevel @default)
+    {
+        var st = state.NodeStates.FirstOrDefault(s => s.Id == id);
+        return st is null or default(VNodeState) ? @default : st.CurrentLevel;
     }
 
     private async Task<IEnumerable<CognitiveNode>> GetTopLevelNodesAsync(CancellationToken cancellationToken)
@@ -258,7 +291,7 @@ public class MemoTreeService : IMemoTreeService
         CancellationToken cancellationToken)
     {
         var indent = new string(' ', level * 2);
-        var currentLevel = viewState.NodeStates.GetValueOrDefault(node.Metadata.Id, LodLevel.Gist);
+        var currentLevel = GetNodeLevelOrDefault(viewState, node.Metadata.Id, LodLevel.Gist);
         var isExpanded = currentLevel == LodLevel.Full;
 
         // 渲染节点标题 - 使用Markdown标题层级 + 缩进

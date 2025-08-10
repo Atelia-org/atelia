@@ -51,6 +51,9 @@ public static class ServiceCollectionExtensions
         // 节点复合存储：MVP使用 SimpleCognitiveNodeStorage（Content/Metadata基于文件，Hierarchy通过上面的实现）
         services.AddSingleton<ICognitiveNodeStorage, SimpleCognitiveNodeStorage>();
 
+        // 视图状态存储
+        services.AddSingleton<IViewStateStorage, FileViewStateStorage>();
+
         // 业务服务
         services.AddScoped<IMemoTreeService, MemoTreeService>();
         services.AddScoped<IMemoTreeEditor, MemoTreeEditor>();
@@ -115,6 +118,7 @@ public static class ServiceCollectionExtensions
 
         // 存储服务
         services.AddSingleton<ICognitiveNodeStorage, SimpleCognitiveNodeStorage>();
+    services.AddSingleton<IViewStateStorage, MemoTree.Services.Storage.FileViewStateStorage>();
 
         // 业务服务
         services.AddScoped<IMemoTreeService, MemoTreeService>();
