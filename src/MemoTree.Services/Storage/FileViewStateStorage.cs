@@ -5,6 +5,7 @@ using MemoTree.Core.Storage.Interfaces;
 using MemoTree.Core.Types;
 using Microsoft.Extensions.Logging;
 using System.Text.Encodings.Web;
+using MemoTree.Core.Exceptions; // added
 
 namespace MemoTree.Services.Storage;
 
@@ -51,8 +52,10 @@ public class FileViewStateStorage : IViewStateStorage
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to read view state {View}", viewName);
-            return null;
+            _logger.LogError(ex, "Failed to read view state {View}", viewName);
+            throw new StorageException($"Failed to read view state '{viewName}'", ex)
+                .WithContext("ViewName", viewName)
+                .WithContext("Path", path);
         }
     }
 

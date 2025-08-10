@@ -10,6 +10,7 @@ using System.Text.Json;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using MemoTree.Core.Storage.Hierarchy;
+using MemoTree.Core.Exceptions; // added
 
 namespace MemoTree.Services.Storage;
 
@@ -70,7 +71,9 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to load metadata for node {NodeId}", nodeId);
-            return null;
+            throw new StorageException($"Failed to load metadata for node {nodeId}", ex)
+                .WithContext("NodeId", nodeId)
+                .WithContext("Path", metadataPath);
         }
     }
 
@@ -240,7 +243,10 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to load content for node {NodeId} at level {Level}", nodeId, level);
-            return null;
+            throw new StorageException($"Failed to load content for node {nodeId} at level {level}", ex)
+                .WithContext("NodeId", nodeId)
+                .WithContext("Level", level)
+                .WithContext("Path", contentPath);
         }
     }
 

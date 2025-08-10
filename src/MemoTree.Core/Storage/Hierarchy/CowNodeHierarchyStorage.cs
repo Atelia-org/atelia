@@ -2,6 +2,7 @@ using MemoTree.Core.Storage.Interfaces;
 using MemoTree.Core.Storage.Versioned;
 using MemoTree.Core.Types;
 using Microsoft.Extensions.Logging;
+using System.Threading; // added for SemaphoreSlim
 
 namespace MemoTree.Core.Storage.Hierarchy
 {
@@ -13,6 +14,11 @@ namespace MemoTree.Core.Storage.Hierarchy
     {
         private readonly IVersionedStorage<NodeId, HierarchyInfo> _versionedStorage;
         private readonly ILogger<CowNodeHierarchyStorage> _logger;
+        
+        // Runtime reverse index cache: child -> parent, version-aware
+        private IReadOnlyDictionary<NodeId, NodeId>? _parentIndexCache;
+        private long _parentIndexVersion = -1;
+        private readonly SemaphoreSlim _parentIndexLock = new(1, 1);
         
         public CowNodeHierarchyStorage(
             IVersionedStorage<NodeId, HierarchyInfo> versionedStorage,
@@ -49,6 +55,7 @@ namespace MemoTree.Core.Storage.Hierarchy
             
             _logger.LogDebug("Saved parent-children info for {ParentId} with {ChildCount} children",
                 hierarchyInfo.ParentId, hierarchyInfo.ChildCount);
+            InvalidateParentIndexCache();
         }
         
         /// <summary>
@@ -72,21 +79,15 @@ namespace MemoTree.Core.Storage.Hierarchy
         /// 获取父节点ID（通过运行时索引）
         /// </summary>
         public async Task<NodeId?> GetParentAsync(
-            NodeId nodeId, 
+            NodeId nodeId,
             CancellationToken cancellationToken = default)
         {
-            // 遍历所有父子关系信息，查找包含指定子节点的父节点
-            var allKeys = await _versionedStorage.GetAllKeysAsync(cancellationToken);
-            
-            foreach (var parentId in allKeys)
+            // Use runtime reverse index cache to avoid full scan
+            await EnsureParentIndexUpToDateAsync(cancellationToken);
+            if (_parentIndexCache != null && _parentIndexCache.TryGetValue(nodeId, out var parentId))
             {
-                var parentInfo = await _versionedStorage.GetAsync(parentId, cancellationToken);
-                if (parentInfo != null && parentInfo.HasChild(nodeId))
-                {
-                    return parentId;
-                }
+                return parentId;
             }
-            
             return null;
         }
         
@@ -116,13 +117,14 @@ namespace MemoTree.Core.Storage.Hierarchy
         /// 删除父子关系信息
         /// </summary>
         public async Task DeleteHierarchyInfoAsync(
-            NodeId parentId, 
+            NodeId parentId,
             CancellationToken cancellationToken = default)
         {
             var description = $"Delete parent-children info for {parentId}";
             await _versionedStorage.DeleteAsync(parentId, description, cancellationToken);
-            
+
             _logger.LogDebug("Deleted parent-children info for {ParentId}", parentId);
+            InvalidateParentIndexCache();
         }
         
         /// <summary>
@@ -147,6 +149,7 @@ namespace MemoTree.Core.Storage.Hierarchy
             await SaveHierarchyInfoAsync(updatedInfo, cancellationToken);
 
             _logger.LogDebug("Added child {ChildId} to parent {ParentId}", childId, parentId);
+            InvalidateParentIndexCache();
         }
 
         /// <summary>
@@ -164,6 +167,7 @@ namespace MemoTree.Core.Storage.Hierarchy
                 await SaveHierarchyInfoAsync(updatedInfo, cancellationToken);
 
                 _logger.LogDebug("Removed child {ChildId} from parent {ParentId}", childId, parentId);
+                InvalidateParentIndexCache();
             }
         }
 
@@ -225,7 +229,8 @@ namespace MemoTree.Core.Storage.Hierarchy
                 
                 _logger.LogInformation("Moved node {NodeId} from {OldParent} to {NewParent}, version {Version}",
                     nodeId, oldParentId, newParentId, version);
-                
+                InvalidateParentIndexCache();
+
                 return version;
             }
             
@@ -241,7 +246,7 @@ namespace MemoTree.Core.Storage.Hierarchy
             CancellationToken cancellationToken = default)
         {
             var updateDict = updates.ToDictionary(info => info.ParentId, info => info);
-            
+
             if (updateDict.Any())
             {
                 var description = string.IsNullOrEmpty(comment) 
@@ -252,7 +257,8 @@ namespace MemoTree.Core.Storage.Hierarchy
                 
                 _logger.LogInformation("Updated {Count} parent-children relationships atomically, version {Version}",
                     updateDict.Count, version);
-                
+                InvalidateParentIndexCache();
+
                 return version;
             }
             
@@ -290,6 +296,7 @@ namespace MemoTree.Core.Storage.Hierarchy
                 await SaveHierarchyInfoAsync(reorderedInfo, cancellationToken);
 
                 _logger.LogDebug("Reordered children for parent {ParentId}", parentId);
+                InvalidateParentIndexCache();
             }
         }
 
@@ -382,7 +389,8 @@ namespace MemoTree.Core.Storage.Hierarchy
         /// </summary>
         public async Task<IReadOnlyList<NodeId>> GetTopLevelNodesAsync(CancellationToken cancellationToken = default)
         {
-            var parentIndex = await BuildParentIndexAsync(cancellationToken);
+            await EnsureParentIndexUpToDateAsync(cancellationToken);
+            var parentIndex = _parentIndexCache ?? new Dictionary<NodeId, NodeId>();
             var allParentIds = await GetAllParentIdsAsync(cancellationToken);
 
             _logger.LogDebug("GetTopLevelNodesAsync: Found {AllCount} total nodes, {ParentIndexCount} child nodes",
@@ -443,7 +451,38 @@ namespace MemoTree.Core.Storage.Hierarchy
                 var hierarchyInfo = HierarchyInfo.Create(nodeId);
                 await SaveHierarchyInfoAsync(hierarchyInfo, cancellationToken);
                 _logger.LogDebug("Created hierarchy record for top-level node {NodeId}", nodeId);
+                InvalidateParentIndexCache();
             }
+        }
+
+        // --- cache helpers ---
+        private async Task EnsureParentIndexUpToDateAsync(CancellationToken cancellationToken)
+        {
+            var currentVersion = await _versionedStorage.GetCurrentVersionAsync(cancellationToken);
+            if (_parentIndexCache != null && _parentIndexVersion == currentVersion)
+                return;
+
+            await _parentIndexLock.WaitAsync(cancellationToken);
+            try
+            {
+                currentVersion = await _versionedStorage.GetCurrentVersionAsync(cancellationToken);
+                if (_parentIndexCache != null && _parentIndexVersion == currentVersion)
+                    return;
+
+                _logger.LogDebug("Rebuilding parent index cache for version {Version}", currentVersion);
+                var fresh = await BuildParentIndexAsync(cancellationToken);
+                _parentIndexCache = fresh;
+                _parentIndexVersion = currentVersion;
+            }
+            finally
+            {
+                _parentIndexLock.Release();
+            }
+        }
+
+        private void InvalidateParentIndexCache()
+        {
+            _parentIndexVersion = -1;
         }
     }
 }
