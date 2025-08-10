@@ -4,13 +4,24 @@
 > **维护者**: 刘德智  
 > **目的**: 跨会话编码进度追踪和认知连续性保障  
 
-## 🎯 实施策略
+## 🎯 实施策略与关键决策
 
 ### 核心方法
 **轻量级计划 + 直接编码**的混合方案：
 1. **简化进度追踪** - 基于19个Phase文档的检查清单，而非详细实施计划
 2. **直接基于设计文档编码** - Phase文档已提供完整的类型定义和接口设计
 3. **任务管理工具辅助** - 利用会话任务管理功能跟踪具体进度
+
+### 关键架构决策 (2025-01-10)
+**存储策略**：
+- 节点内容/元数据：稳定文件路径存储（Git友好）
+- 层次关系：版本化存储（CowNodeHierarchyStorage）
+- MVP阶段：InMemoryHierarchyStorage占位，正式版切换
+
+**LOD分层策略**：
+- 标题：属于元数据，独立于正文LOD，始终显示
+- 正文：Gist/Summary/Full三级，MVP仅Full落盘
+- 未摘要状态：不创建文件，区分"尚未摘要"vs"摘要为空"
 
 ### 会话间认知连续性保障
 - **进度文件** - 本文档记录关键进度和决策
@@ -19,23 +30,23 @@
 
 ## 📋 实施阶段概览
 
-### Phase 1: 基础设施层 (Foundation) 🚧
+### Phase 1: 基础设施层 (Foundation) ✅
 **目标**: 建立核心数据类型、约束验证、异常处理、配置管理
 **文档**: Phase1_CoreTypes.md, Phase1_Constraints.md, Phase1_Exceptions.md, Phase1_Configuration.md
-**状态**: 准备开始
-**预计**: 2-3个会话
+**状态**: 已完成
+**实际**: 1个会话完成
 
-### Phase 2: 存储抽象层 (Storage) ⏳
+### Phase 2: 存储抽象层 (Storage) ✅
 **目标**: 实现存储接口、关系存储、视图状态存储
 **文档**: Phase2_StorageInterfaces.md, Phase2_RelationStorage.md, Phase2_ViewStorage.md
-**状态**: 等待Phase1完成
-**预计**: 2-3个会话
+**状态**: 已完成
+**实际**: 与Phase1同会话完成
 
-### Phase 3: 业务服务层 (Services) ⏳
+### Phase 3: 业务服务层 (Services) ✅
 **目标**: 实现核心服务、关系服务、编辑服务、检索服务
 **文档**: Phase3_CoreServices.md, Phase3_RelationServices.md, Phase3_EditingServices.md, Phase3_RetrievalServices.md
-**状态**: 等待Phase2完成
-**预计**: 3-4个会话
+**状态**: MVP实现完成
+**实际**: 本会话完成MVP版本
 
 ### Phase 4: 集成接口层 (Integration) ⏳
 **目标**: LLM工具调用API、外部数据源集成、版本控制集成
