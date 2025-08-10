@@ -33,16 +33,16 @@ public class FileViewStateStorage : IViewStateStorage
         _jsonOptions.Converters.Add(new NodeIdJsonConverter());
     }
 
-    private async Task<string> GetViewFilePathAsync(string viewName)
+    private string GetViewFilePath(string viewName)
     {
-        var dir = await _paths.GetViewsDirectoryAsync();
+        var dir = _paths.GetViewsDirectory();
         Directory.CreateDirectory(dir);
         return Path.Combine(dir, viewName + ".json");
     }
 
     public async Task<MemoTreeViewState?> GetViewStateAsync(string viewName, CancellationToken cancellationToken = default)
     {
-        var path = await GetViewFilePathAsync(viewName);
+        var path = GetViewFilePath(viewName);
         if (!File.Exists(path)) return null;
         try
         {
@@ -58,34 +58,35 @@ public class FileViewStateStorage : IViewStateStorage
 
     public async Task SaveViewStateAsync(MemoTreeViewState viewState, CancellationToken cancellationToken = default)
     {
-        var path = await GetViewFilePathAsync(viewState.Name);
+        var path = GetViewFilePath(viewState.Name);
         var updated = viewState with { LastModified = DateTime.UtcNow };
         var json = JsonSerializer.Serialize(updated, _jsonOptions);
         await File.WriteAllTextAsync(path, json, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<string>> GetViewNamesAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<string>> GetViewNamesAsync(CancellationToken cancellationToken = default)
     {
-        var dir = await _paths.GetViewsDirectoryAsync();
-        if (!Directory.Exists(dir)) return Array.Empty<string>();
+        var dir = _paths.GetViewsDirectory();
+        if (!Directory.Exists(dir)) return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
         var names = Directory.GetFiles(dir, "*.json")
             .Select(f => Path.GetFileNameWithoutExtension(f))
             .Where(n => !string.IsNullOrWhiteSpace(n))
             .Cast<string>()
             .ToList();
-        return names;
+        return Task.FromResult<IReadOnlyList<string>>(names);
     }
 
-    public async Task DeleteViewStateAsync(string viewName, CancellationToken cancellationToken = default)
+    public Task DeleteViewStateAsync(string viewName, CancellationToken cancellationToken = default)
     {
-        var path = await GetViewFilePathAsync(viewName);
+        var path = GetViewFilePath(viewName);
         if (File.Exists(path)) File.Delete(path);
+        return Task.CompletedTask;
     }
 
-    public async Task<bool> ViewExistsAsync(string viewName, CancellationToken cancellationToken = default)
+    public Task<bool> ViewExistsAsync(string viewName, CancellationToken cancellationToken = default)
     {
-        var path = await GetViewFilePathAsync(viewName);
-        return File.Exists(path);
+        var path = GetViewFilePath(viewName);
+        return Task.FromResult(File.Exists(path));
     }
 
     public async Task<MemoTreeViewState> CopyViewStateAsync(string sourceViewName, string targetViewName, CancellationToken cancellationToken = default)
@@ -98,8 +99,8 @@ public class FileViewStateStorage : IViewStateStorage
 
     public async Task RenameViewAsync(string oldName, string newName, CancellationToken cancellationToken = default)
     {
-        var oldPath = await GetViewFilePathAsync(oldName);
-        var newPath = await GetViewFilePathAsync(newName);
+        var oldPath = GetViewFilePath(oldName);
+        var newPath = GetViewFilePath(newName);
         if (File.Exists(oldPath))
         {
             // 读写以更新内部名称
@@ -109,10 +110,10 @@ public class FileViewStateStorage : IViewStateStorage
         }
     }
 
-    public async Task<DateTime?> GetViewLastModifiedAsync(string viewName, CancellationToken cancellationToken = default)
+    public Task<DateTime?> GetViewLastModifiedAsync(string viewName, CancellationToken cancellationToken = default)
     {
-        var path = await GetViewFilePathAsync(viewName);
-        return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : (DateTime?)null;
+        var path = GetViewFilePath(viewName);
+        return Task.FromResult(File.Exists(path) ? File.GetLastWriteTimeUtc(path) : (DateTime?)null);
     }
 
     public async Task<IReadOnlyDictionary<string, MemoTreeViewState>> GetMultipleViewStatesAsync(IEnumerable<string> viewNames, CancellationToken cancellationToken = default)
@@ -126,10 +127,10 @@ public class FileViewStateStorage : IViewStateStorage
         return dict;
     }
 
-    public async Task<int> CleanupOldViewsAsync(DateTime olderThan, CancellationToken cancellationToken = default)
+    public Task<int> CleanupOldViewsAsync(DateTime olderThan, CancellationToken cancellationToken = default)
     {
-        var dir = await _paths.GetViewsDirectoryAsync();
-        if (!Directory.Exists(dir)) return 0;
+        var dir = _paths.GetViewsDirectory();
+        if (!Directory.Exists(dir)) return Task.FromResult(0);
         var count = 0;
         foreach (var file in Directory.GetFiles(dir, "*.json"))
         {
@@ -140,21 +141,21 @@ public class FileViewStateStorage : IViewStateStorage
                 count++;
             }
         }
-        return count;
+        return Task.FromResult(count);
     }
 
-    public async Task<long?> GetViewSizeAsync(string viewName, CancellationToken cancellationToken = default)
+    public Task<long?> GetViewSizeAsync(string viewName, CancellationToken cancellationToken = default)
     {
-        var path = await GetViewFilePathAsync(viewName);
-        return File.Exists(path) ? new FileInfo(path).Length : (long?)null;
+        var path = GetViewFilePath(viewName);
+        return Task.FromResult(File.Exists(path) ? new FileInfo(path).Length : (long?)null);
     }
 
-    public async Task<ViewStorageStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
+    public Task<ViewStorageStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
-        var dir = await _paths.GetViewsDirectoryAsync();
+        var dir = _paths.GetViewsDirectory();
         if (!Directory.Exists(dir))
         {
-            return new ViewStorageStatistics
+            return Task.FromResult(new ViewStorageStatistics
             {
                 TotalViews = 0,
                 TotalSize = 0,
@@ -163,13 +164,13 @@ public class FileViewStateStorage : IViewStateStorage
                 LargestView = null,
                 LargestViewSize = 0,
                 AverageViewSize = 0,
-            };
+            });
         }
 
         var files = Directory.GetFiles(dir, "*.json");
         if (files.Length == 0)
         {
-            return new ViewStorageStatistics
+            return Task.FromResult(new ViewStorageStatistics
             {
                 TotalViews = 0,
                 TotalSize = 0,
@@ -178,7 +179,7 @@ public class FileViewStateStorage : IViewStateStorage
                 LargestView = null,
                 LargestViewSize = 0,
                 AverageViewSize = 0,
-            };
+            });
         }
 
         long total = 0;
@@ -197,7 +198,7 @@ public class FileViewStateStorage : IViewStateStorage
             if (time > newest) newest = time;
         }
 
-        return new ViewStorageStatistics
+    return Task.FromResult(new ViewStorageStatistics
         {
             TotalViews = files.Length,
             TotalSize = total,
@@ -206,6 +207,6 @@ public class FileViewStateStorage : IViewStateStorage
             LargestView = largest,
             LargestViewSize = maxSize,
             AverageViewSize = files.Length > 0 ? (double)total / files.Length : 0,
-        };
+    });
     }
 }

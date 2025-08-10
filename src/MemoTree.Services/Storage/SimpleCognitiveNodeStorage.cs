@@ -144,15 +144,15 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         return Task.FromResult(File.Exists(metadataPath));
     }
 
-    public async Task<IReadOnlyList<NodeId>> GetAllNodeIdsAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<NodeId>> GetAllNodeIdsAsync(CancellationToken cancellationToken = default)
     {
-        var cogNodesPath = await _pathService.GetCogNodesDirectoryAsync();
+        var cogNodesPath = _pathService.GetCogNodesDirectory();
         _logger.LogDebug("GetAllNodeIdsAsync: Using CogNodes path: {CogNodesPath}", cogNodesPath);
 
         if (!Directory.Exists(cogNodesPath))
         {
             _logger.LogDebug("GetAllNodeIdsAsync: CogNodes directory does not exist");
-            return Array.Empty<NodeId>();
+            return Task.FromResult<IReadOnlyList<NodeId>>(Array.Empty<NodeId>());
         }
 
         var nodeIds = new List<NodeId>();
@@ -180,7 +180,7 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         }
 
         _logger.LogDebug("GetAllNodeIdsAsync: Returning {NodeCount} nodes", nodeIds.Count);
-        return nodeIds;
+    return Task.FromResult<IReadOnlyList<NodeId>>(nodeIds);
     }
 
     public async IAsyncEnumerable<NodeMetadata> GetAllAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -687,18 +687,17 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
     private string GetNodeDirectory(NodeId nodeId)
     {
-        // 暂时使用同步方法，避免大规模重构
-        return _pathService.GetNodeDirectoryAsync(nodeId).GetAwaiter().GetResult();
+    return _pathService.GetNodeDirectory(nodeId);
     }
 
     private string GetNodeMetadataPath(NodeId nodeId)
     {
-        return _pathService.GetNodeMetadataPathAsync(nodeId).GetAwaiter().GetResult();
+    return _pathService.GetNodeMetadataPath(nodeId);
     }
 
     private string GetNodeContentPath(NodeId nodeId, LodLevel level)
     {
-        return _pathService.GetNodeContentPathAsync(nodeId, level).GetAwaiter().GetResult();
+    return _pathService.GetNodeContentPath(nodeId, level);
     }
 
     #endregion

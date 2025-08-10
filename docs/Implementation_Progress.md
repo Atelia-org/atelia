@@ -180,6 +180,13 @@
 
 ---
 
-**最后更新**: 2025-08-09 23:31
-**当前成就**: 🎉 Phase3.0 MVP主干框架完成！包含基础CLI工具和服务框架，已可运行基础命令
-**下次会话目标**: 实现MemoTreeService和MemoTreeEditor的具体业务逻辑，完善CLI渲染和展开/折叠功能
+**最后更新**: 2025-08-10 17:10
+**当前成就**:
+- 视图状态持久化落地（FileViewStateStorage + MemoTreeService 集成），CLI expand/collapse 跨进程持久化
+- 视图 JSON 禁止 CJK 转义，便于调试和检索
+- 路径服务 API 收敛：移除 IWorkspacePathService 上的异步方法，保留同步只读路径接口；完成所有调用点同步化（FileViewStateStorage、SimpleCognitiveNodeStorage 等）
+- 新增集成测试：验证 expand/collapse 持久化
+**验证**: 构建成功，全部 78/78 测试通过
+**下次会话目标**:
+- 继续收敛调用处对同步路径 API 的使用，减少不必要的 async 表面
+- 评估并添加 CLI 视图管理命令（list-views / rename-view）

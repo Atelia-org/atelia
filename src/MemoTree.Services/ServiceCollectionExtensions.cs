@@ -36,7 +36,7 @@ public static class ServiceCollectionExtensions
             var pathService = provider.GetRequiredService<IWorkspacePathService>();
 
             // 通过路径服务获取层级关系持久化目录（自动处理链接工作空间）
-            var hierarchyDirectory = pathService.GetHierarchyDirectoryAsync().GetAwaiter().GetResult();
+            var hierarchyDirectory = pathService.GetHierarchyDirectory();
 
             // 创建版本化存储
             var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
@@ -101,7 +101,7 @@ public static class ServiceCollectionExtensions
             var pathService = provider.GetRequiredService<IWorkspacePathService>();
 
             // 获取层次关系存储目录
-            var hierarchyDirectory = pathService.GetHierarchyDirectoryAsync().GetAwaiter().GetResult();
+            var hierarchyDirectory = pathService.GetHierarchyDirectory();
 
             // 创建版本化存储
             var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
