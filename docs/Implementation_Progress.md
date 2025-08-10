@@ -186,7 +186,10 @@
 - 视图 JSON 禁止 CJK 转义，便于调试和检索
 - 路径服务 API 收敛：移除 IWorkspacePathService 上的异步方法，保留同步只读路径接口；完成所有调用点同步化（FileViewStateStorage、SimpleCognitiveNodeStorage 等）
 - 新增集成测试：验证 expand/collapse 持久化
-**验证**: 构建成功，全部 78/78 测试通过
+**新增**:
+- Context UI M1：渲染顶部注入“视图面板”，展示当前视图、Description、其他视图和使用提示；空树也显示。
+- CLI 新增：`view create <name> [--description]`、`view set-description <name> <text>`；同时保留顶层 `expand`/`collapse` 以兼容旧脚本。
+**验证**: 构建成功，全部 79/79 测试通过
 **下次会话目标**:
-- 继续收敛调用处对同步路径 API 的使用，减少不必要的 async 表面
-- 评估并添加 CLI 视图管理命令（list-views / rename-view）
+- M2：抽象渲染流水线（IRenderSource/RenderContext/RenderSection），引入 EnvInfoSource；规划 Action Tokens 注入但不落地。
+- CLI：补充 list-views / rename-view；文档化使用示例。
