@@ -54,7 +54,6 @@ public class WorkspaceManager
 
         // 创建.memotree目录结构
         Directory.CreateDirectory(workspaceDir);
-        Directory.CreateDirectory(Path.Combine(workspaceDir, "data"));
         Directory.CreateDirectory(Path.Combine(workspaceDir, "views"));
 
         // 创建默认配置文件

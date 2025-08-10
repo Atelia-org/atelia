@@ -155,5 +155,12 @@ namespace MemoTree.Core.Storage.Interfaces
             NodeId parentId,
             NodeId childId,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// 确保节点在层次关系存储中存在（用于顶层节点）
+        /// </summary>
+        /// <param name="nodeId">节点ID</param>
+        /// <param name="cancellationToken">取消令牌</param>
+        Task EnsureNodeExistsInHierarchyAsync(NodeId nodeId, CancellationToken cancellationToken = default);
     }
 }

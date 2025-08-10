@@ -213,6 +213,20 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage
         return HasCycleAsync(nodeId, potentialParentId, cancellationToken);
     }
 
+    public Task EnsureNodeExistsInHierarchyAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+    {
+        // 在内存存储中，确保节点存在于父子关系映射中
+        if (!_parent.ContainsKey(nodeId))
+        {
+            _parent[nodeId] = null; // 顶层节点，父节点为null
+        }
+        if (!_children.ContainsKey(nodeId))
+        {
+            _children[nodeId] = new List<NodeId>();
+        }
+        return Task.CompletedTask;
+    }
+
     private List<NodeId> GetChildrenUnsafe(NodeId parent)
     {
         if (!_children.TryGetValue(parent, out var list))

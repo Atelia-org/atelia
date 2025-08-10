@@ -71,10 +71,18 @@ public class MemoTreeEditor : IMemoTreeEditor
             // 保存节点
             await _storage.SaveCompleteNodeAsync(cognitiveNode, cancellationToken);
 
-            // 如果有父节点，添加到父节点的子节点列表
+            // 确保节点在层次关系存储中有记录
             if (parentId != null)
             {
+                // 有父节点，添加到父节点的子节点列表
+                _logger.LogDebug("Adding child {NodeId} to parent {ParentId}", nodeId, parentId);
                 await _storage.AddChildAsync(parentId.Value, nodeId, null, cancellationToken);
+            }
+            else
+            {
+                // 顶层节点，确保在层次关系存储中有记录（即使没有子节点）
+                _logger.LogDebug("Ensuring top-level node {NodeId} exists in hierarchy", nodeId);
+                await _storage.EnsureNodeExistsInHierarchyAsync(nodeId, cancellationToken);
             }
 
             _logger.LogInformation("Created node {NodeId} with title '{Title}'", nodeId, title);

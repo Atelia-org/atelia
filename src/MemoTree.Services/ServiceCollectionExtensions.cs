@@ -1,4 +1,5 @@
 using MemoTree.Core.Configuration;
+using MemoTree.Core.Services;
 using MemoTree.Core.Storage.Interfaces;
 using MemoTree.Core.Storage.Hierarchy;
 using MemoTree.Core.Storage.Versioned;
@@ -88,16 +89,23 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<INodeHierarchyStorage>(provider =>
         {
             var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
+            var pathService = provider.GetRequiredService<IWorkspacePathService>();
+
+            // 获取层次关系存储目录
+            var hierarchyDirectory = pathService.GetHierarchyDirectoryAsync().GetAwaiter().GetResult();
 
             // 创建版本化存储
             var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
-                workspaceRoot,
+                hierarchyDirectory,
                 provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>());
 
             var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
 
             return new CowNodeHierarchyStorage(hierarchyStorage, logger);
         });
+
+        // 路径管理服务
+        services.AddSingleton<IWorkspacePathService, WorkspacePathService>();
 
         // 存储服务
         services.AddSingleton<ICognitiveNodeStorage, SimpleCognitiveNodeStorage>();

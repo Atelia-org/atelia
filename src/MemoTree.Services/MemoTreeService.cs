@@ -224,8 +224,12 @@ public class MemoTreeService : IMemoTreeService
 
     private async Task<IEnumerable<CognitiveNode>> GetTopLevelNodesAsync(CancellationToken cancellationToken)
     {
+        _logger.LogDebug("MemoTreeService.GetTopLevelNodesAsync called");
+
         // 获取所有顶层节点（无父节点的节点）
         var topLevelNodeIds = await _storage.GetTopLevelNodesAsync(cancellationToken);
+        _logger.LogDebug("Found {Count} top-level node IDs", topLevelNodeIds.Count);
+
         var topLevelNodes = new List<CognitiveNode>();
 
         foreach (var nodeId in topLevelNodeIds)
@@ -234,9 +238,15 @@ public class MemoTreeService : IMemoTreeService
             if (node != null)
             {
                 topLevelNodes.Add(node);
+                _logger.LogDebug("Loaded top-level node: {NodeId} - {Title}", nodeId, node.Metadata.Title);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to load top-level node: {NodeId}", nodeId);
             }
         }
 
+        _logger.LogDebug("Returning {Count} top-level nodes", topLevelNodes.Count);
         return topLevelNodes;
     }
 

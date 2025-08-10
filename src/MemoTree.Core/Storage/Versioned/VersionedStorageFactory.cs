@@ -12,13 +12,13 @@ namespace MemoTree.Core.Storage.Versioned
         /// 创建NodeId到HierarchyInfo的版本化存储
         /// </summary>
         public static async Task<IVersionedStorage<NodeId, HierarchyInfo>> CreateHierarchyStorageAsync(
-            string workspaceRoot,
+            string hierarchyStorageRoot,
             ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>> logger,
             IVersionFormatter? versionFormatter = null)
         {
             var options = new VersionedStorageOptions
             {
-                StorageRoot = Path.Combine(workspaceRoot, "hierarchy"),
+                StorageRoot = hierarchyStorageRoot,
                 DataDirectory = "data",
                 VersionFile = "version.json",
                 JournalsDirectory = "journals",

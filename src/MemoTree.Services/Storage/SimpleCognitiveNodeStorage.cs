@@ -2,6 +2,7 @@ using MemoTree.Core.Storage.Interfaces;
 using MemoTree.Core.Types;
 using MemoTree.Core.Configuration;
 using MemoTree.Core.Json;
+using MemoTree.Core.Services;
 using MemoTree.Services.Yaml;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -19,6 +20,7 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 {
     private readonly MemoTreeOptions _options;
     private readonly StorageOptions _storageOptions;
+    private readonly IWorkspacePathService _pathService;
     private readonly ILogger<SimpleCognitiveNodeStorage> _logger;
     private readonly ISerializer _yamlSerializer;
     private readonly IDeserializer _yamlDeserializer;
@@ -28,11 +30,13 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
     public SimpleCognitiveNodeStorage(
         IOptions<MemoTreeOptions> options,
         IOptions<StorageOptions> storageOptions,
+        IWorkspacePathService pathService,
         INodeHierarchyStorage hierarchy,
         ILogger<SimpleCognitiveNodeStorage> logger)
     {
         _options = options.Value;
         _storageOptions = storageOptions.Value;
+        _pathService = pathService ?? throw new ArgumentNullException(nameof(pathService));
         _hierarchy = hierarchy;
         _logger = logger;
 
@@ -140,12 +144,18 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
     public async Task<IReadOnlyList<NodeId>> GetAllNodeIdsAsync(CancellationToken cancellationToken = default)
     {
-        var cogNodesPath = Path.Combine(_options.WorkspaceRoot, _options.CogNodesDirectory);
+        var cogNodesPath = await _pathService.GetCogNodesDirectoryAsync();
+        _logger.LogDebug("GetAllNodeIdsAsync: Using CogNodes path: {CogNodesPath}", cogNodesPath);
+
         if (!Directory.Exists(cogNodesPath))
+        {
+            _logger.LogDebug("GetAllNodeIdsAsync: CogNodes directory does not exist");
             return Array.Empty<NodeId>();
+        }
 
         var nodeIds = new List<NodeId>();
         var directories = Directory.GetDirectories(cogNodesPath);
+        _logger.LogDebug("GetAllNodeIdsAsync: Found {DirectoryCount} directories", directories.Length);
 
         foreach (var dir in directories)
         {
@@ -157,14 +167,17 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
                 if (File.Exists(metadataPath))
                 {
                     nodeIds.Add(nodeId);
+                    _logger.LogDebug("GetAllNodeIdsAsync: Found valid node: {NodeId}", nodeId);
                 }
             }
             catch
             {
                 // 忽略无效的目录名
+                _logger.LogDebug("GetAllNodeIdsAsync: Ignoring invalid directory: {DirName}", dirName);
             }
         }
 
+        _logger.LogDebug("GetAllNodeIdsAsync: Returning {NodeCount} nodes", nodeIds.Count);
         return nodeIds;
     }
 
@@ -487,6 +500,12 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         return Task.FromResult(false);
     }
 
+    public Task EnsureNodeExistsInHierarchyAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+    {
+        // 委托给层次关系存储
+        return _hierarchy.EnsureNodeExistsInHierarchyAsync(nodeId, cancellationToken);
+    }
+
     #endregion
 
     #region ICognitiveNodeStorage Implementation
@@ -672,25 +691,18 @@ public class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
 
     private string GetNodeDirectory(NodeId nodeId)
     {
-        return Path.Combine(_options.WorkspaceRoot, _options.CogNodesDirectory, nodeId.Value);
+        // 暂时使用同步方法，避免大规模重构
+        return _pathService.GetNodeDirectoryAsync(nodeId).GetAwaiter().GetResult();
     }
 
     private string GetNodeMetadataPath(NodeId nodeId)
     {
-        return Path.Combine(GetNodeDirectory(nodeId), _storageOptions.MetadataFileName);
+        return _pathService.GetNodeMetadataPathAsync(nodeId).GetAwaiter().GetResult();
     }
 
     private string GetNodeContentPath(NodeId nodeId, LodLevel level)
     {
-        var fileName = level switch
-        {
-            LodLevel.Gist => _storageOptions.GistContentFileName,
-            LodLevel.Summary => _storageOptions.SummaryContentFileName,
-            LodLevel.Full => _storageOptions.FullContentFileName,
-            _ => throw new ArgumentException($"Unsupported LOD level: {level}")
-        };
-
-        return Path.Combine(GetNodeDirectory(nodeId), fileName);
+        return _pathService.GetNodeContentPathAsync(nodeId, level).GetAwaiter().GetResult();
     }
 
     #endregion

@@ -16,6 +16,7 @@ class Program
         {
             InitCommand.Create(),
             CreateCommand.Create(),
+            ConnectCommand.Create(),
             ViewCommands.CreateExpandCommand(),
             ViewCommands.CreateCollapseCommand()
         };

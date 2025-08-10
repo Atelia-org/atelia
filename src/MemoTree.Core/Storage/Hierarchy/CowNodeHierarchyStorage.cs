@@ -373,6 +373,9 @@ namespace MemoTree.Core.Storage.Hierarchy
             var parentIndex = await BuildParentIndexAsync(cancellationToken);
             var allParentIds = await GetAllParentIdsAsync(cancellationToken);
 
+            _logger.LogDebug("GetTopLevelNodesAsync: Found {AllCount} total nodes, {ParentIndexCount} child nodes",
+                allParentIds.Count, parentIndex.Count);
+
             // 找出所有不在parentIndex中的节点，这些就是顶层节点
             var topLevelNodes = new List<NodeId>();
 
@@ -381,9 +384,15 @@ namespace MemoTree.Core.Storage.Hierarchy
                 if (!parentIndex.ContainsKey(parentId))
                 {
                     topLevelNodes.Add(parentId);
+                    _logger.LogDebug("Found top-level node: {NodeId}", parentId);
+                }
+                else
+                {
+                    _logger.LogDebug("Node {NodeId} is a child of {ParentId}", parentId, parentIndex[parentId]);
                 }
             }
 
+            _logger.LogDebug("GetTopLevelNodesAsync: Found {TopLevelCount} top-level nodes", topLevelNodes.Count);
             return topLevelNodes;
         }
 
@@ -407,6 +416,22 @@ namespace MemoTree.Core.Storage.Hierarchy
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// 确保节点在层次关系存储中存在（用于顶层节点）
+        /// </summary>
+        public async Task EnsureNodeExistsInHierarchyAsync(NodeId nodeId, CancellationToken cancellationToken = default)
+        {
+            // 检查节点是否已经存在
+            var exists = await _versionedStorage.ContainsKeyAsync(nodeId, cancellationToken);
+            if (!exists)
+            {
+                // 创建一个空的HierarchyInfo
+                var hierarchyInfo = HierarchyInfo.Create(nodeId);
+                await SaveHierarchyInfoAsync(hierarchyInfo, cancellationToken);
+                _logger.LogDebug("Created hierarchy record for top-level node {NodeId}", nodeId);
+            }
         }
     }
 }
