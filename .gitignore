@@ -11,3 +11,5 @@ attention_heatmap/*.png
 .memotree/
 test-workspace/
 *.trx
+docs/qwen3coder_tool_parser.py
+temp_review.md
