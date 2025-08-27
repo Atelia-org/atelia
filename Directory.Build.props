@@ -1,0 +1,19 @@
+<Project>
+  <!-- Global analyzer/reference settings -->
+  <ItemGroup>
+    <!-- Global custom analyzer (exclude the analyzer project itself). Use MSBuildThisFileDirectory to anchor path at repo root -->
+  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj"
+            Condition="'$(MSBuildProjectName)' != 'MemoTree.Analyzers' AND '$(MSBuildProjectName)' != 'MemoTree.Analyzers.CodeFixes'"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+  <!-- Include CodeFix assembly so dotnet format can discover and apply custom fixes (contains no DiagnosticAnalyzer, only CodeFixProvider) -->
+  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Analyzers/MemoTree.Analyzers.CodeFixes/MemoTree.Analyzers.CodeFixes.csproj"
+            Condition="'$(MSBuildProjectName)' != 'MemoTree.Analyzers' AND '$(MSBuildProjectName)' != 'MemoTree.Analyzers.CodeFixes'"
+            OutputItemType="Analyzer"
+            ReferenceOutputAssembly="false"
+            PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- (StyleCop removed) Placeholder for future shared analyzers or source generators -->
+</Project>
