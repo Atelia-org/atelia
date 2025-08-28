@@ -32,9 +32,9 @@ public sealed class X0001OpenParenNewLineCodeFix : CodeFixProvider {
     }
 
     private static async Task<Document> FixAsync(Document doc, SyntaxNode root, SyntaxToken open, CancellationToken ct) {
-    var indentTrivia = await IndentationHelper.ComputeIndentTriviaAsync(doc, open, 1, ct).ConfigureAwait(false);
+        var indentTrivia = await IndentationHelper.ComputeIndentTriviaAsync(doc, open, 1, ct).ConfigureAwait(false);
 
-    var newOpen = open.WithTrailingTrivia(SyntaxFactory.ElasticCarriageReturnLineFeed, indentTrivia);
+        var newOpen = open.WithTrailingTrivia(SyntaxFactory.ElasticCarriageReturnLineFeed, indentTrivia);
         var newRoot = root.ReplaceToken(open, newOpen);
         return doc.WithSyntaxRoot(newRoot);
     }

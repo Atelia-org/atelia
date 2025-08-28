@@ -21,7 +21,7 @@ public class X000XExperimentalFormattingTests {
     public async Task X0001_CodeFix_AddsNewline() {
         var code = "class C{void M(int a,\n int b){} }";
         var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, "MemoTree.Analyzers.X0001OpenParenNewLineAnalyzer", new X0001OpenParenNewLineCodeFix(), "X0001");
-    Assert.Matches(@"\(\r?\n\s+int a", fixedText);
+        Assert.Matches(@"\(\r?\n\s+int a", fixedText);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public class X000XExperimentalFormattingTests {
     public async Task X0002_CodeFix_MovesCloseParen() {
         var code = "class C{void M(\n int a,\n int b){} }";
         var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, "MemoTree.Analyzers.X0002ConditionalCloseParenAnalyzer", new X0002ConditionalCloseParenCodeFix(), "X0002");
-    // Allow optional blank line or indentation before '{'
-    Assert.Matches(@"int b\r?\n\)\r?\n\s*\{", fixedText);
+        // Allow optional blank line or indentation before '{'
+        Assert.Matches(@"int b\r?\n\)\r?\n\s*\{", fixedText);
     }
 }

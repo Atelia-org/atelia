@@ -13,7 +13,9 @@ internal static class IndentationHelper {
         try {
             var provider = doc.Project.AnalyzerOptions.AnalyzerConfigOptionsProvider;
             var opts = provider.GetOptions(tree);
-            if (opts.TryGetValue("indent_size", out var raw) && int.TryParse(raw, out var v) && v > 0 && v < 16) return v; // guard upper bound
+            if (opts.TryGetValue("indent_size", out var raw) && int.TryParse(raw, out var v) && v > 0 && v < 16) {
+                return v; // guard upper bound
+            }
         } catch { }
         return 4;
     }
@@ -22,7 +24,10 @@ internal static class IndentationHelper {
         var line = text.Lines.GetLineFromPosition(position);
         var lineText = line.ToString();
         int baseIndent = 0;
-        while (baseIndent < lineText.Length && char.IsWhiteSpace(lineText[baseIndent])) baseIndent++;
+        while (baseIndent < lineText.Length && char.IsWhiteSpace(lineText[baseIndent])) {
+            baseIndent++;
+        }
+
         int total = baseIndent + Math.Max(0, additionalLevels) * indentSize;
         return Microsoft.CodeAnalysis.CSharp.SyntaxFactory.Whitespace(new string(' ', total));
     }

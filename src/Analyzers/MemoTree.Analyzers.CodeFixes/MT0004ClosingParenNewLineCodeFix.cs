@@ -54,8 +54,8 @@ public sealed class MT0004ClosingParenNewLineCodeFix : CodeFixProvider {
             _ => closeParen
         };
 
-    var text = await doc.GetTextAsync(ct).ConfigureAwait(false);
-    var indentTrivia = await IndentationHelper.ComputeIndentTriviaAsync(doc, anchorToken, 0, ct).ConfigureAwait(false);
+        var text = await doc.GetTextAsync(ct).ConfigureAwait(false);
+        var indentTrivia = await IndentationHelper.ComputeIndentTriviaAsync(doc, anchorToken, 0, ct).ConfigureAwait(false);
 
         // If already on its own line, no-op
         var closeLine = text.Lines.GetLineFromPosition(closeParen.SpanStart).LineNumber;
