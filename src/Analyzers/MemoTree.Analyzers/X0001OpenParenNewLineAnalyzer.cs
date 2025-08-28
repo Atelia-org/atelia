@@ -38,6 +38,7 @@ public sealed class X0001OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
         context.RegisterSyntaxNodeAction(AnalyzeOperator, SyntaxKind.OperatorDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeConversionOperator, SyntaxKind.ConversionOperatorDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeRecord, SyntaxKind.RecordDeclaration);
+    context.RegisterSyntaxNodeAction(AnalyzeLambda, SyntaxKind.ParenthesizedLambdaExpression);
     }
 
     private static void AnalyzeInvocation(SyntaxNodeAnalysisContext ctx) {
@@ -66,6 +67,11 @@ public sealed class X0001OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
     }
     private static void AnalyzeRecord(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is RecordDeclarationSyntax r && r.ParameterList is { } pl && pl.Parameters.Count > 0) AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.First().GetFirstToken());
+    }
+    private static void AnalyzeLambda(SyntaxNodeAnalysisContext ctx) {
+        if (ctx.Node is ParenthesizedLambdaExpressionSyntax l && l.ParameterList is { } pl && pl.Parameters.Count > 0) {
+            AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.First().GetFirstToken());
+        }
     }
 
     private static void AnalyzeList(SyntaxNodeAnalysisContext ctx, SyntaxToken open, SyntaxToken close, SyntaxToken? firstItem) {

@@ -32,17 +32,9 @@ public sealed class X0001OpenParenNewLineCodeFix : CodeFixProvider {
     }
 
     private static async Task<Document> FixAsync(Document doc, SyntaxNode root, SyntaxToken open, CancellationToken ct) {
-        // Determine base indent from line of owner expression
-        var text = await doc.GetTextAsync(ct).ConfigureAwait(false);
-        var line = text.Lines.GetLineFromPosition(open.SpanStart);
-        var lineText = line.ToString();
-        int baseIndent = 0;
-        while (baseIndent < lineText.Length && char.IsWhiteSpace(lineText[baseIndent])) {
-            baseIndent++;
-        }
-        var indentTrivia = SyntaxFactory.Whitespace(new string(' ', baseIndent + 4));
+    var indentTrivia = await IndentationHelper.ComputeIndentTriviaAsync(doc, open, 1, ct).ConfigureAwait(false);
 
-        var newOpen = open.WithTrailingTrivia(SyntaxFactory.ElasticCarriageReturnLineFeed, indentTrivia);
+    var newOpen = open.WithTrailingTrivia(SyntaxFactory.ElasticCarriageReturnLineFeed, indentTrivia);
         var newRoot = root.ReplaceToken(open, newOpen);
         return doc.WithSyntaxRoot(newRoot);
     }
