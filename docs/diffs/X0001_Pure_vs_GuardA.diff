@@ -1,0 +1,356 @@
+diff --git a/src/MemoTree.Core/Storage/Hierarchy/CowNodeHierarchyStorage.cs b/src/MemoTree.Core/Storage/Hierarchy/CowNodeHierarchyStorage.cs
+index 4cf6363..10bf18d 100644
+--- a/src/MemoTree.Core/Storage/Hierarchy/CowNodeHierarchyStorage.cs
++++ b/src/MemoTree.Core/Storage/Hierarchy/CowNodeHierarchyStorage.cs
+@@ -84,8 +84,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
+             var description = $"Save parent-children info for {hierarchyInfo.ParentId}";
+             await _versionedStorage.UpdateManyAsync(updates, description, cancellationToken);
+ 
+-            _logger.LogDebug(
+-                "Saved parent-children info for {ParentId} with {ChildCount} children",
++            _logger.LogDebug("Saved parent-children info for {ParentId} with {ChildCount} children",
+                 hierarchyInfo.ParentId, hierarchyInfo.ChildCount
+             );
+             InvalidateParentIndexCache();
+@@ -255,8 +254,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
+                 var description = $"Move node {nodeId} from {oldParentId} to {newParentId}";
+                 var version = await _versionedStorage.UpdateManyAsync(updates, description, cancellationToken);
+ 
+-                _logger.LogInformation(
+-                    "Moved node {NodeId} from {OldParent} to {NewParent}, version {Version}",
++                _logger.LogInformation("Moved node {NodeId} from {OldParent} to {NewParent}, version {Version}",
+                     nodeId, oldParentId, newParentId, version
+                 );
+                 InvalidateParentIndexCache();
+@@ -284,8 +282,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
+ 
+                 var version = await _versionedStorage.UpdateManyAsync(updateDict, description, cancellationToken);
+ 
+-                _logger.LogInformation(
+-                    "Updated {Count} parent-children relationships atomically, version {Version}",
++                _logger.LogInformation("Updated {Count} parent-children relationships atomically, version {Version}",
+                     updateDict.Count, version
+                 );
+                 InvalidateParentIndexCache();
+@@ -414,8 +411,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
+             var parentIndex = _parentIndexCache ?? new Dictionary<NodeId, NodeId>();
+             var allParentIds = await GetAllParentIdsAsync(cancellationToken);
+ 
+-            _logger.LogDebug(
+-                "GetTopLevelNodesAsync: Found {AllCount} total nodes, {ParentIndexCount} child nodes",
++            _logger.LogDebug("GetTopLevelNodesAsync: Found {AllCount} total nodes, {ParentIndexCount} child nodes",
+                 allParentIds.Count, parentIndex.Count
+             );
+ 
+diff --git a/src/MemoTree.Core/Storage/Versioned/VersionedStorageImpl.cs b/src/MemoTree.Core/Storage/Versioned/VersionedStorageImpl.cs
+index 5eb87a9..7049495 100644
+--- a/src/MemoTree.Core/Storage/Versioned/VersionedStorageImpl.cs
++++ b/src/MemoTree.Core/Storage/Versioned/VersionedStorageImpl.cs
+@@ -201,8 +201,7 @@ namespace MemoTree.Core.Storage.Versioned {
+                     // 之前的 MarkOperationCompleteAsync 调用是冗余的，因为紧接着就删除了日志文件
+                     File.Delete(logFile);
+ 
+-                    _logger.LogDebug(
+-                        "Completed atomic operation {OperationType} with {KeyCount} keys, new version {Version}",
++                    _logger.LogDebug("Completed atomic operation {OperationType} with {KeyCount} keys, new version {Version}",
+                         operationType, affectedKeys.Count(), targetVersion
+                     );
+ 
+diff --git a/src/MemoTree.Core/Validation/DefaultBusinessRuleValidator.cs b/src/MemoTree.Core/Validation/DefaultBusinessRuleValidator.cs
+index a3833ee..7be2d36 100644
+--- a/src/MemoTree.Core/Validation/DefaultBusinessRuleValidator.cs
++++ b/src/MemoTree.Core/Validation/DefaultBusinessRuleValidator.cs
+@@ -43,10 +43,9 @@ namespace MemoTree.Core.Validation {
+             if (!recursive) {
+                 // 这里需要实际的子节点检查，暂时添加警告
+                 builder.AddWarning(
+-                    ValidationWarning.Create(
+-                        "CHILDREN_CHECK_SKIPPED",
++                    ValidationWarning.Create("CHILDREN_CHECK_SKIPPED",
+                         "Child nodes existence check requires storage access", "HasChildren"
+-                )
++                    )
+                 );
+             }
+ 
+@@ -74,10 +73,9 @@ namespace MemoTree.Core.Validation {
+             // 循环引用检查需要存储层支持
+             if (newParentId != null) {
+                 builder.AddWarning(
+-                    ValidationWarning.Create(
+-                        "CIRCULAR_REFERENCE_CHECK_SKIPPED",
++                    ValidationWarning.Create("CIRCULAR_REFERENCE_CHECK_SKIPPED",
+                         "Circular reference check requires storage access", "CircularReference"
+-                )
++                    )
+                 );
+             }
+ 
+@@ -100,10 +98,9 @@ namespace MemoTree.Core.Validation {
+ 
+             // 间接循环引用检查需要图遍历，需要存储层支持
+             builder.AddWarning(
+-                ValidationWarning.Create(
+-                    "INDIRECT_CIRCULAR_CHECK_SKIPPED",
++                ValidationWarning.Create("INDIRECT_CIRCULAR_CHECK_SKIPPED",
+                     "Indirect circular reference check requires graph traversal", "IndirectCircular"
+-            )
++                )
+             );
+ 
+             return Task.FromResult(builder.Build());
+@@ -129,7 +126,7 @@ namespace MemoTree.Core.Validation {
+                     builder.AddWarning(
+                         ValidationWarning.ForBestPractice(
+                             "Inheritance relations should be used carefully to maintain clear hierarchies"
+-                    )
++                        )
+                     );
+                     break;
+ 
+@@ -137,7 +134,7 @@ namespace MemoTree.Core.Validation {
+                     builder.AddWarning(
+                         ValidationWarning.ForBestPractice(
+                             "Composition relations create strong coupling between nodes"
+-                    )
++                        )
+                     );
+                     break;
+             }
+@@ -155,10 +152,9 @@ namespace MemoTree.Core.Validation {
+ 
+             // 深度检查需要遍历整个层次结构，需要存储层支持
+             builder.AddWarning(
+-                ValidationWarning.Create(
+-                    "DEPTH_CHECK_SKIPPED",
++                ValidationWarning.Create("DEPTH_CHECK_SKIPPED",
+                     "Hierarchy depth check requires storage access", "Depth"
+-            )
++                )
+             );
+ 
+             return Task.FromResult(builder.Build());
+@@ -174,10 +170,9 @@ namespace MemoTree.Core.Validation {
+ 
+             // 子节点数量检查需要存储层支持
+             builder.AddWarning(
+-                ValidationWarning.Create(
+-                    "CHILDREN_COUNT_CHECK_SKIPPED",
++                ValidationWarning.Create("CHILDREN_COUNT_CHECK_SKIPPED",
+                     "Children count check requires storage access", "ChildrenCount"
+-            )
++                )
+             );
+ 
+             return Task.FromResult(builder.Build());
+@@ -217,17 +212,16 @@ namespace MemoTree.Core.Validation {
+ 
+             if (!isCompatible) {
+                 builder.AddError(
+-                    ValidationError.ForBusinessRule(
+-                        "IncompatibleNodeTypes",
++                    ValidationError.ForBusinessRule("IncompatibleNodeTypes",
+                         $"Node type {childType} is not compatible with parent type {parentType}"
+-                )
++                    )
+                 );
+             } else if ((parentType, childType) is not (NodeType.Container, _) and not (_, NodeType.Note)) {
+                 // 对于非明确兼容的组合给出警告
+                 builder.AddWarning(
+                     ValidationWarning.ForBestPractice(
+                         $"Consider the appropriateness of placing {childType} under {parentType}"
+-                )
++                    )
+                 );
+             }
+ 
+@@ -267,7 +261,7 @@ namespace MemoTree.Core.Validation {
+                 builder.AddWarning(
+                     ValidationWarning.ForBestPractice(
+                         $"Relation {relationType} between {sourceType} and {targetType} may not be the most appropriate choice"
+-                )
++                    )
+                 );
+             }
+ 
+@@ -284,10 +278,9 @@ namespace MemoTree.Core.Validation {
+ 
+             // 重复关系检查需要存储层支持
+             builder.AddWarning(
+-                ValidationWarning.Create(
+-                    "DUPLICATE_CHECK_SKIPPED",
++                ValidationWarning.Create("DUPLICATE_CHECK_SKIPPED",
+                     "Duplicate relation check requires storage access", "Duplicate"
+-            )
++                )
+             );
+ 
+             return Task.FromResult(builder.Build());
+@@ -303,10 +296,9 @@ namespace MemoTree.Core.Validation {
+ 
+             // 权限检查需要安全上下文，MVP阶段跳过
+             builder.AddWarning(
+-                ValidationWarning.Create(
+-                    "PERMISSION_CHECK_SKIPPED",
++                ValidationWarning.Create("PERMISSION_CHECK_SKIPPED",
+                     "Permission check requires security context (MVP phase)", "Permission"
+-            )
++                )
+             );
+ 
+             return Task.FromResult(builder.Build());
+diff --git a/src/MemoTree.Core/Validation/DefaultConfigurationValidator.cs b/src/MemoTree.Core/Validation/DefaultConfigurationValidator.cs
+index cb74878..1f06e75 100644
+--- a/src/MemoTree.Core/Validation/DefaultConfigurationValidator.cs
++++ b/src/MemoTree.Core/Validation/DefaultConfigurationValidator.cs
+@@ -85,8 +85,7 @@ namespace MemoTree.Core.Validation {
+             if (IsTokenRelatedConfiguration(configurationKey)) {
+                 builder.AddErrorIf(
+                     value > SystemLimits.MaxTokensPerNode,
+-                    ValidationError.Create(
+-                        "SYSTEM_LIMIT_EXCEEDED",
++                    ValidationError.Create("SYSTEM_LIMIT_EXCEEDED",
+                         $"{configurationKey} value {value} exceeds system limit {SystemLimits.MaxTokensPerNode}",
+                         configurationKey, value
+                     )
+@@ -113,8 +112,7 @@ namespace MemoTree.Core.Validation {
+             if (IsMemoryRelatedConfiguration(configurationKey)) {
+                 builder.AddErrorIf(
+                     value > SystemLimits.MaxMemoryUsageBytes,
+-                    ValidationError.Create(
+-                        "SYSTEM_LIMIT_EXCEEDED",
++                    ValidationError.Create("SYSTEM_LIMIT_EXCEEDED",
+                         $"{configurationKey} value {value} exceeds system limit {SystemLimits.MaxMemoryUsageBytes}",
+                         configurationKey, value
+                     )
+@@ -124,8 +122,7 @@ namespace MemoTree.Core.Validation {
+             if (IsFileSizeRelatedConfiguration(configurationKey)) {
+                 builder.AddErrorIf(
+                     value > SystemLimits.MaxFileSizeBytes,
+-                    ValidationError.Create(
+-                        "SYSTEM_LIMIT_EXCEEDED",
++                    ValidationError.Create("SYSTEM_LIMIT_EXCEEDED",
+                         $"{configurationKey} value {value} exceeds system limit {SystemLimits.MaxFileSizeBytes}",
+                         configurationKey, value
+                     )
+@@ -180,16 +177,14 @@ namespace MemoTree.Core.Validation {
+                 if (mustExist) {
+                     builder.AddErrorIf(
+                         !Directory.Exists(fullPath) && !File.Exists(fullPath),
+-                        ValidationError.Create(
+-                            "PATH_NOT_EXISTS",
++                        ValidationError.Create("PATH_NOT_EXISTS",
+                             $"Path {path} does not exist", configurationKey, path
+                         )
+                     );
+                 }
+             } catch (Exception ex) {
+                 builder.AddError(
+-                    ValidationError.Create(
+-                        "INVALID_PATH",
++                    ValidationError.Create("INVALID_PATH",
+                         $"Invalid path format: {ex.Message}", configurationKey, path
+                 )
+                 );
+@@ -219,8 +214,7 @@ namespace MemoTree.Core.Validation {
+             if (allowedSchemes != null && allowedSchemes.Length > 0) {
+                 builder.AddErrorIf(
+                     !allowedSchemes.Contains(uri.Scheme, StringComparer.OrdinalIgnoreCase),
+-                    ValidationError.Create(
+-                        "INVALID_SCHEME",
++                    ValidationError.Create("INVALID_SCHEME",
+                         $"URL scheme {uri.Scheme} is not allowed. Allowed schemes: {string.Join(", ", allowedSchemes)}",
+                         configurationKey, url
+                     )
+@@ -240,8 +234,7 @@ namespace MemoTree.Core.Validation {
+ 
+             builder.AddErrorIf(
+                 !Enum.IsDefined(typeof(TEnum), value),
+-                ValidationError.Create(
+-                    "INVALID_ENUM_VALUE",
++                ValidationError.Create("INVALID_ENUM_VALUE",
+                     $"Invalid enum value {value} for type {typeof(TEnum).Name}",
+                     configurationKey, value
+                 )
+@@ -273,8 +266,7 @@ namespace MemoTree.Core.Validation {
+ 
+             builder.AddErrorIf(
+                 value.TotalMilliseconds > SystemLimits.MaxTimeoutMilliseconds,
+-                ValidationError.Create(
+-                    "SYSTEM_LIMIT_EXCEEDED",
++                ValidationError.Create("SYSTEM_LIMIT_EXCEEDED",
+                     $"{configurationKey} timeout {value.TotalMilliseconds}ms exceeds system limit {SystemLimits.MaxTimeoutMilliseconds}ms",
+                     configurationKey, value
+                 )
+diff --git a/tests/MemoTree.Tests/Analyzers/TestData/X0001_MultiScenario_Input.cs b/tests/MemoTree.Tests/Analyzers/TestData/X0001_MultiScenario_Input.cs
+index 963483e..5cf1c37 100644
+--- a/tests/MemoTree.Tests/Analyzers/TestData/X0001_MultiScenario_Input.cs
++++ b/tests/MemoTree.Tests/Analyzers/TestData/X0001_MultiScenario_Input.cs
+@@ -5,8 +5,7 @@
+ class X0001MultiScenarioSamples {
+     // 1. Invocation
+     void InvokeSamples() {
+-        Target(
+-            1,
++        Target(1,
+             2
+         );
+     }
+@@ -15,8 +14,7 @@ class X0001MultiScenarioSamples {
+ 
+     // 2. Object creation
+     void ObjectCreation() {
+-        var obj = new Sample(
+-            10,
++        var obj = new Sample(10,
+             20
+         );
+     }
+@@ -24,41 +22,35 @@ class X0001MultiScenarioSamples {
+     record Sample(int A, int B);
+ 
+     // 3. Method declaration
+-    void Decl(
+-        int a,
++    void Decl(int a,
+         int b
+     ) { }
+ 
+     // 4. Local function
+     void Outer() {
+-        int Local(
+-            int x,
++        int Local(int x,
+             int y
+         ) => x + y;
+     }
+ 
+     // 5. Delegate declaration
+-    delegate int D(
+-        int a,
++    delegate int D(int a,
+         int b
+     );
+ 
+     // 6. Operator
+-    public static X0001MultiScenarioSamples operator +(
+-        X0001MultiScenarioSamples l,
++    public static X0001MultiScenarioSamples operator +(X0001MultiScenarioSamples l,
+         X0001MultiScenarioSamples r
+     ) => l;
+ 
+     // 7. Record primary constructor (already above) + additional record example
+-    record R2(
+-        int X,
++    record R2(int X,
+         int Y
+     );
+ 
+     // 8. Parenthesized lambda
+     void Lambda() {
+-        var f = (
+-            int a,
++        var f = (int a,
+             int b) => a + b;
+     }
+ }
