@@ -20,7 +20,8 @@ public sealed class X0001OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
     // Development-time switch: when true, even if every item is single-line we still require
     // a newline if any item contains a block body (lambda with { }) or an initializer expression.
     // Default false = pure AllItemsSingleLine exemption (Guard A only).
-    private const bool GUARD_BLOCK_OR_INITIALIZER = false; // flip to true to evaluate Guard B
+    // private const bool GUARD_BLOCK_OR_INITIALIZER = false; // flip to true to evaluate Guard B
+    private const bool GUARD_BLOCK_OR_INITIALIZER = true; // flip to false to evaluate Guard A
 
     private static readonly DiagnosticDescriptor Rule = new(
         DiagnosticId,
@@ -136,7 +137,10 @@ public sealed class X0001OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
 
     private static bool AllItemsSingleLine(IEnumerable<SyntaxNode> items, SourceText text) {
         foreach (var item in items) {
-            if (item == null) continue;
+            if (item == null) {
+                continue;
+            }
+
             var firstTok = item.GetFirstToken();
             var lastTok = item.GetLastToken();
             var startLine = text.Lines.GetLineFromPosition(firstTok.SpanStart).LineNumber;
@@ -150,10 +154,15 @@ public sealed class X0001OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
 
     private static bool ContainsBlockOrInitializer(IEnumerable<SyntaxNode> items) {
         foreach (var item in items) {
-            if (item == null) continue;
+            if (item == null) {
+                continue;
+            }
             // ArgumentSyntax -> inspect argument.Expression; ParameterSyntax usually simple; fall back to descendant search.
-                SyntaxNode inspect = item is ArgumentSyntax a && a.Expression != null ? (SyntaxNode)a.Expression : item;
-            if (inspect == null) continue;
+            SyntaxNode inspect = item is ArgumentSyntax a && a.Expression != null ? (SyntaxNode)a.Expression : item;
+            if (inspect == null) {
+                continue;
+            }
+
             if (inspect.DescendantNodesAndSelf().Any(n => n is BlockSyntax || n is InitializerExpressionSyntax)) {
                 return true;
             }
