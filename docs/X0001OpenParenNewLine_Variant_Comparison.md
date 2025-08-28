@@ -2,10 +2,12 @@
 
 本报告客观汇总当前代码库中三种变体（Pure、GuardA、GuardB）对非 Analyzer / CodeFix 代码的影响，并分析差异、优劣与采纳考量。目标是在无需引入配置项的前提下，择优确定唯一方案。
 
-### 1. 变体简述
-- **Pure**: 最激进；对所有符合规则触发条件的参数列表一律格式化。
-- **GuardA**: 在 Pure 基础上，对“仅包含单行成员（arguments 或 parameters）”的参数列表豁免，减少不必要换行 / 重排。
-- **GuardB**: 在 GuardA 基础上，取消对 Block / Initializer 场景的额外豁免（即仍然应用规则）。在当前代码库的非 Analyzer 代码中尚未体现额外差异（现有文件未触及该特例触发点），因此对非 Analyzer 部分的实际变更 == GuardA。
+### 1. 变体简述（纠正说明）
+先前描述混淆了 Pure 与 GuardA 的含义，这里修正：
+
+- **Pure (无豁免)**: 只要参数/实参列表是多行且首个参数仍与 '(' 同行，就强制在 '(' 后换行，让首参数独占下一行（形成完全竖排对称块）。
+- **GuardA (AllItemsSingleLine 豁免)**: 若列表中所有参数/实参各自都是单行（多行只是因为分隔符换行），允许首参数继续内联，不强制换行；否则退回与 Pure 相同处理。
+- **GuardB**: 在 GuardA 基础上，如果这些单行项中存在含 block（`{}`）或 initializer 的结构，则撤销豁免继续强制换行。当前代码库未触发与 GuardA 的差异，因此 GuardB == GuardA（现状）。
 
 ### 2. 统计范围与方法
 基线: `main` 分支；排除 `src/Analyzers/**/X0001OpenParenNewLine*`。
@@ -31,27 +33,27 @@ git diff --stat X0001OpenParenNewLine-GuardA..X0001OpenParenNewLine-GuardB -- . 
 
 ### 4. 差异类型分类
 Pure 专有增量（被 GuardA/B 回退的部分）主要表现为：
-1. 将原本保持紧凑的单行参数列表/调用拆分为多行（括号后换行）。
-2. 对含少量简单参数（无嵌套、无长表达式）的方法签名或调用进行重新缩进与折行。
-3. 测试输入文件中（`X0001_MultiScenario_Input.cs`）的多场景样本被统一“展开”，增加视觉高度。
+1. 将“首参数留在首行 + 后续每行一个”的紧凑模式改写为“首参数另起一行” 的完全竖排模式。
+2. 对短小参数列表（两个或少量简单标识符、常量、短调用）造成额外垂直高度。
+3. 测试样本（`X0001_MultiScenario_Input.cs`）中本可视为“全部单行项”的分布被完全展开。
 
-回退之后（GuardA/B）：
-- 短参数列表保持单行紧凑。
-- 统一性略降（出现“部分多行/部分单行”并存）。
+GuardA/B 回退后：
+- 保留紧凑行（首行内联首参数）作为“简单性”信号。
+- 仍对内部存在多行结构/复杂项的列表执行换行，保持结构突出。
 
 ### 5. 评估维度对比
-| 维度 | Pure | GuardA | GuardB (与 GuardA 相同部分仅列差异) |
+| 维度 | Pure (无豁免) | GuardA (单行集豁免) | GuardB (当前与 GuardA 等同) |
 |------|------|--------|-------------------------------------|
-| 视觉一致性 | 最高：所有触发点统一格式 | 中等：短小参数列表保持紧凑，与多行形成对比 | 与 GuardA 相同（当前代码库） |
+| 视觉一致性 | 最高：全部竖排统一 | 中：短列表紧凑，复杂列表竖排 | 相同 |
 | 行数膨胀 | 最大 | 较小 | 相同 |
-| Git blame 噪声 | 初次引入更高 | 较低 | 相同 |
-| Merge 冲突风险 | 稍高 | 较低 | 相同 |
-| 阅读聚焦 | 统一，快速识别模式 | 单/多行对比提供语义暗示 | 相同 |
-| 学习成本 | 低（绝对规则） | 中（需理解豁免条件） | 稍高（未来若出现 Block/Initializer 特例） |
-| 惊讶度 | 低 | 中 | 可能略高（若将来出现特例） |
-| 可扩展性 | 添加豁免会破坏一致性 | 既有豁免框架，可增量调整 | 同 GuardA |
-| 对长参数列表可读性 | 良好 | 良好 | 良好 |
-| 对短参数列表可读性 | 可能过度占行 | 紧凑 | 紧凑 |
+| Git blame 噪声 | 初次更高 | 较低 | 相同 |
+| Merge 冲突风险 | 略高 | 较低 | 相同 |
+| 阅读聚焦 | 统一但可能稀释“复杂”信号 | 简单 vs 复杂对比明显 | 相同 |
+| 学习成本 | 低（单一规则） | 中（理解豁免） | 略高（未来若触发特例） |
+| 惊讶度 | 低 | 中 | 可能略高 |
+| 可扩展性 | 后加豁免=风格转弯 | 可迭代微调 | 同 GuardA |
+| 对长参数列表 | 良好 | 良好 | 良好 |
+| 对短参数列表 | 冗余风险 | 紧凑 | 紧凑 |
 
 ### 6. GuardB 的现实有效性
 当前非 Analyzer 代码中，GuardB 特有逻辑未触发任何额外差异：
@@ -101,96 +103,60 @@ tests/MemoTree.Tests/Analyzers/TestData/X0001_MultiScenario_Input.cs
    - 多参数/复杂表达式被强制换行。
 4. 考虑添加脚本：检测大规模格式化差异，避免误触发额外风格变动。
 
-### 13. 附录：典型差异代码片段（Pure 独有的附加格式化）
-以下摘自 `X0001_Pure_vs_GuardA.diff`，展示 Pure 拆分而 GuardA/GuardB 保持单行的代表性模式：
+### 13. 附录：典型差异代码片段（GuardA vs Pure）
+展示 GuardA（紧凑豁免） vs Pure（强制竖排）差异：
 
-1) 日志调用括号参数列表
+1) 日志调用
 ```
-- _logger.LogDebug(
--     "Saved parent-children info for {ParentId} with {ChildCount} children",
--     hierarchyInfo.ParentId, hierarchyInfo.ChildCount
-- );
-+ _logger.LogDebug("Saved parent-children info for {ParentId} with {ChildCount} children",
-+     hierarchyInfo.ParentId, hierarchyInfo.ChildCount
-+ );
+GuardA: _logger.LogDebug("Saved parent-children info for {ParentId} with {ChildCount} children",
+         hierarchyInfo.ParentId, hierarchyInfo.ChildCount);
+Pure:   _logger.LogDebug(
+         "Saved parent-children info for {ParentId} with {ChildCount} children",
+         hierarchyInfo.ParentId, hierarchyInfo.ChildCount
+      );
 ```
-特征: 方法名 + 字符串常量 + 少量参数；Pure 将方法名与第一个参数不分行（保持在一行）并移除前置换行，保留后续参数换行缩进；GuardA/GuardB 在这些案例中保留了原始多行头部吗？(原始 main 中为多行；GuardA 回退为多行头部，Pure 收敛为首行紧凑)。
 
-2) Validation 构造器调用
+2) 工厂方法
 ```
-- ValidationWarning.Create(
--     "CHILDREN_CHECK_SKIPPED",
--     "Child nodes existence check requires storage access", "HasChildren"
-- )
-+ ValidationWarning.Create("CHILDREN_CHECK_SKIPPED",
-+     "Child nodes existence check requires storage access", "HasChildren"
-+ )
+GuardA: ValidationWarning.Create("CHILDREN_CHECK_SKIPPED",
+         "Child nodes existence check requires storage access", "HasChildren");
+Pure:   ValidationWarning.Create(
+         "CHILDREN_CHECK_SKIPPED",
+         "Child nodes existence check requires storage access", "HasChildren"
+      );
 ```
-特征: 工厂方法 + 纯字面量参数；Pure 内联第一个参数，使调用头更短；GuardA/GuardB 保持分行，强调每个参数列对齐。
 
-3) 简短方法/本地函数/委托/record 声明参数列表
+3) 短方法声明
 ```
-- void Decl(
--     int a,
--     int b
-- ) { }
-+ void Decl(int a,
-+     int b
-+ ) { }
-
-- int Local(
--     int x,
--     int y
-- ) => x + y;
-+ int Local(int x,
-+     int y
-+ ) => x + y;
-
-- delegate int D(
--     int a,
--     int b
-- );
-+ delegate int D(int a,
-+     int b
-+ );
+GuardA: void Decl(int a, int b);
+Pure:   void Decl(
+         int a,
+         int b
+      );
 ```
-特征: 参数极短（两个简单标识符）；Pure 将第一个参数上移到签名行；GuardA/GuardB 认为该列表是“单行成员集合”而豁免，不触发收敛（保持所有参数各占一行）。
 
-4) 对象/方法调用示例
+4) 简单调用/构造
 ```
-- Target(
--     1,
--     2
-- );
-+ Target(1,
-+     2
-+ );
-
-- var obj = new Sample(
--     10,
--     20
-- );
-+ var obj = new Sample(10,
-+     20
-+ );
+GuardA: Target(1,
+            2);
+Pure:   Target(
+         1,
+         2
+      );
 ```
-特征: 简单数值参数；Pure 将首个实参内联；GuardA/GuardB 保持竖排样式。
 
-5) Lambda 参数列表
+5) 简短 lambda
 ```
-- var f = (
--     int a,
--     int b
-- ) => a + b;
-+ var f = (int a,
-+     int b
-+ ) => a + b;
+GuardA: var f = (int a, int b) => a + b;
+Pure:   var f = (
+         int a,
+         int b
+      ) => a + b;
 ```
-特征: 括号参数列表 + 箭头函数主体极短；Pure 内联首参数。
 
-总结: Pure 模式倾向“把第一参数与方法/类型头放同一行”，并保留后续参数纵向排列；GuardA/GuardB 则在“短列表”场景维持完全竖排的对齐块，以保持视觉分组。差异集中于首行是否拥挤 vs 是否保留一个视觉锚点列。
+总结: Pure = 绝对对称（更统一但更高行数）；GuardA = 保留“简单=紧凑”信号（减少噪声）。当前仓库 GuardB 与 GuardA 无差异。
 
-对选择的影响: 若团队更偏好在扫描签名或调用时立即看到首个参数（提升横向密度），Pure 得分更高；若强调结构列对齐（便于逐行比对、减少首行过长），GuardA/GuardB 更符合。
+选择指引: 若团队期望最大统一性与工具“不可辩驳”风格 → Pure；若期望在保持结构突出同时最小化无意义 diff → GuardA。
 
 ---
 （完）
