@@ -136,7 +136,10 @@ public sealed class X0001OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
 
     private static bool AllItemsSingleLine(IEnumerable<SyntaxNode> items, SourceText text) {
         foreach (var item in items) {
-            if (item == null) continue;
+            if (item == null) {
+                continue;
+            }
+
             var firstTok = item.GetFirstToken();
             var lastTok = item.GetLastToken();
             var startLine = text.Lines.GetLineFromPosition(firstTok.SpanStart).LineNumber;
@@ -150,10 +153,15 @@ public sealed class X0001OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
 
     private static bool ContainsBlockOrInitializer(IEnumerable<SyntaxNode> items) {
         foreach (var item in items) {
-            if (item == null) continue;
+            if (item == null) {
+                continue;
+            }
             // ArgumentSyntax -> inspect argument.Expression; ParameterSyntax usually simple; fall back to descendant search.
-                SyntaxNode inspect = item is ArgumentSyntax a && a.Expression != null ? (SyntaxNode)a.Expression : item;
-            if (inspect == null) continue;
+            SyntaxNode inspect = item is ArgumentSyntax a && a.Expression != null ? (SyntaxNode)a.Expression : item;
+            if (inspect == null) {
+                continue;
+            }
+
             if (inspect.DescendantNodesAndSelf().Any(n => n is BlockSyntax || n is InitializerExpressionSyntax)) {
                 return true;
             }

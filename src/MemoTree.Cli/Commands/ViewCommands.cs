@@ -12,30 +12,31 @@ public static class ViewCommands {
         var idArg = new Argument<string>("id", "Node ID to expand");
         var cmd = new Command("expand", "Expand a node in the current view") { idArg };
 
-        cmd.SetHandler(async (string id) => {
-            try {
-                var workspaceManager = new WorkspaceManager();
-                var root = workspaceManager.FindWorkspaceRoot();
-                if (root == null) {
-                    Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
-                    Environment.Exit(1);
-                    return;
-                }
-                var nodeId = NodeId.FromString(id);
-                var services = new ServiceCollection();
-                services.AddLogging(b => b.AddConsole());
-                services.AddMemoTreeServices(root);
-                var provider = services.BuildServiceProvider();
-                var svc = provider.GetRequiredService<IMemoTreeService>();
+        cmd.SetHandler(
+            async (string id) => {
+                try {
+                    var workspaceManager = new WorkspaceManager();
+                    var root = workspaceManager.FindWorkspaceRoot();
+                    if (root == null) {
+                        Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
+                        Environment.Exit(1);
+                        return;
+                    }
+                    var nodeId = NodeId.FromString(id);
+                    var services = new ServiceCollection();
+                    services.AddLogging(b => b.AddConsole());
+                    services.AddMemoTreeServices(root);
+                    var provider = services.BuildServiceProvider();
+                    var svc = provider.GetRequiredService<IMemoTreeService>();
 
-                await svc.ExpandNodeAsync(nodeId, "default");
-                var output = await svc.RenderViewAsync("default");
-                Console.WriteLine(output);
-            } catch (Exception ex) {
-                Console.Error.WriteLine($"Error: {ex.Message}");
-                Environment.Exit(1);
-            }
-        }, idArg
+                    await svc.ExpandNodeAsync(nodeId, "default");
+                    var output = await svc.RenderViewAsync("default");
+                    Console.WriteLine(output);
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"Error: {ex.Message}");
+                    Environment.Exit(1);
+                }
+            }, idArg
         );
 
         return cmd;
@@ -45,30 +46,31 @@ public static class ViewCommands {
         var idArg = new Argument<string>("id", "Node ID to collapse");
         var cmd = new Command("collapse", "Collapse a node in the current view") { idArg };
 
-        cmd.SetHandler(async (string id) => {
-            try {
-                var workspaceManager = new WorkspaceManager();
-                var root = workspaceManager.FindWorkspaceRoot();
-                if (root == null) {
-                    Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
-                    Environment.Exit(1);
-                    return;
-                }
-                var nodeId = NodeId.FromString(id);
-                var services = new ServiceCollection();
-                services.AddLogging(b => b.AddConsole());
-                services.AddMemoTreeServices(root);
-                var provider = services.BuildServiceProvider();
-                var svc = provider.GetRequiredService<IMemoTreeService>();
+        cmd.SetHandler(
+            async (string id) => {
+                try {
+                    var workspaceManager = new WorkspaceManager();
+                    var root = workspaceManager.FindWorkspaceRoot();
+                    if (root == null) {
+                        Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
+                        Environment.Exit(1);
+                        return;
+                    }
+                    var nodeId = NodeId.FromString(id);
+                    var services = new ServiceCollection();
+                    services.AddLogging(b => b.AddConsole());
+                    services.AddMemoTreeServices(root);
+                    var provider = services.BuildServiceProvider();
+                    var svc = provider.GetRequiredService<IMemoTreeService>();
 
-                await svc.CollapseNodeAsync(nodeId, "default");
-                var output = await svc.RenderViewAsync("default");
-                Console.WriteLine(output);
-            } catch (Exception ex) {
-                Console.Error.WriteLine($"Error: {ex.Message}");
-                Environment.Exit(1);
-            }
-        }, idArg
+                    await svc.CollapseNodeAsync(nodeId, "default");
+                    var output = await svc.RenderViewAsync("default");
+                    Console.WriteLine(output);
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"Error: {ex.Message}");
+                    Environment.Exit(1);
+                }
+            }, idArg
         );
 
         return cmd;
@@ -79,29 +81,30 @@ public static class ViewCommands {
         var descOpt = new Option<string?>(new[] { "--description", "-d" }, () => null, "Optional description for the view");
         var cmd = new Command("create", "Create a new view") { nameArg, descOpt };
 
-        cmd.SetHandler(async (string name, string? description) => {
-            try {
-                var workspaceManager = new WorkspaceManager();
-                var root = workspaceManager.FindWorkspaceRoot();
-                if (root == null) {
-                    Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
-                    Environment.Exit(1);
-                    return;
-                }
-                var services = new ServiceCollection();
-                services.AddLogging(b => b.AddConsole());
-                services.AddMemoTreeServices(root);
-                var provider = services.BuildServiceProvider();
-                var svc = provider.GetRequiredService<IMemoTreeService>();
+        cmd.SetHandler(
+            async (string name, string? description) => {
+                try {
+                    var workspaceManager = new WorkspaceManager();
+                    var root = workspaceManager.FindWorkspaceRoot();
+                    if (root == null) {
+                        Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
+                        Environment.Exit(1);
+                        return;
+                    }
+                    var services = new ServiceCollection();
+                    services.AddLogging(b => b.AddConsole());
+                    services.AddMemoTreeServices(root);
+                    var provider = services.BuildServiceProvider();
+                    var svc = provider.GetRequiredService<IMemoTreeService>();
 
-                await svc.CreateViewAsync(name, description);
-                var output = await svc.RenderViewAsync(name);
-                Console.WriteLine(output);
-            } catch (Exception ex) {
-                Console.Error.WriteLine($"Error: {ex.Message}");
-                Environment.Exit(1);
-            }
-        }, nameArg, descOpt
+                    await svc.CreateViewAsync(name, description);
+                    var output = await svc.RenderViewAsync(name);
+                    Console.WriteLine(output);
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"Error: {ex.Message}");
+                    Environment.Exit(1);
+                }
+            }, nameArg, descOpt
         );
 
         return cmd;
@@ -112,29 +115,30 @@ public static class ViewCommands {
         var descArg = new Argument<string>("description", "New description");
         var cmd = new Command("set-description", "Update description of a view") { nameArg, descArg };
 
-        cmd.SetHandler(async (string name, string description) => {
-            try {
-                var workspaceManager = new WorkspaceManager();
-                var root = workspaceManager.FindWorkspaceRoot();
-                if (root == null) {
-                    Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
-                    Environment.Exit(1);
-                    return;
-                }
-                var services = new ServiceCollection();
-                services.AddLogging(b => b.AddConsole());
-                services.AddMemoTreeServices(root);
-                var provider = services.BuildServiceProvider();
-                var svc = provider.GetRequiredService<IMemoTreeService>();
+        cmd.SetHandler(
+            async (string name, string description) => {
+                try {
+                    var workspaceManager = new WorkspaceManager();
+                    var root = workspaceManager.FindWorkspaceRoot();
+                    if (root == null) {
+                        Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
+                        Environment.Exit(1);
+                        return;
+                    }
+                    var services = new ServiceCollection();
+                    services.AddLogging(b => b.AddConsole());
+                    services.AddMemoTreeServices(root);
+                    var provider = services.BuildServiceProvider();
+                    var svc = provider.GetRequiredService<IMemoTreeService>();
 
-                await svc.UpdateViewDescriptionAsync(name, description);
-                var output = await svc.RenderViewAsync(name);
-                Console.WriteLine(output);
-            } catch (Exception ex) {
-                Console.Error.WriteLine($"Error: {ex.Message}");
-                Environment.Exit(1);
-            }
-        }, nameArg, descArg
+                    await svc.UpdateViewDescriptionAsync(name, description);
+                    var output = await svc.RenderViewAsync(name);
+                    Console.WriteLine(output);
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"Error: {ex.Message}");
+                    Environment.Exit(1);
+                }
+            }, nameArg, descArg
         );
 
         return cmd;

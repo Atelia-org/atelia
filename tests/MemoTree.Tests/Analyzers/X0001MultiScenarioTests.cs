@@ -17,17 +17,17 @@ public class X0001MultiScenarioTests {
     public void X0001_Reports_On_All_InlineFirst_Multiline_Constructs() {
         var code = LoadSource();
         var (diags, _) = AnalyzerTestHost.RunAnalyzer(code, "MemoTree.Analyzers.X0001OpenParenNewLineAnalyzer");
-    // Expect at least one diagnostic per applicable construct (8 scenarios after removing invalid conversion case)
-    Assert.True(diags.Count(d => d.Id == "X0001") >= 6);
+        // Expect at least one diagnostic per applicable construct (8 scenarios after removing invalid conversion case)
+        Assert.True(diags.Count(d => d.Id == "X0001") >= 6);
     }
 
     [Fact]
     public async Task X0001_CodeFix_Applies_To_First_Diagnostic_Iteratively() {
         var code = LoadSource();
-    var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, "MemoTree.Analyzers.X0001OpenParenNewLineAnalyzer", new X0001OpenParenNewLineCodeFix(), "X0001");
+        var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, "MemoTree.Analyzers.X0001OpenParenNewLineAnalyzer", new X0001OpenParenNewLineCodeFix(), "X0001");
         // After fixes, rerun analyzer should have zero diagnostics
         var (afterDiags, _) = AnalyzerTestHost.RunAnalyzer(fixedText, "MemoTree.Analyzers.X0001OpenParenNewLineAnalyzer");
-    Assert.DoesNotContain(afterDiags, d => d.Id == "X0001");
+        Assert.DoesNotContain(afterDiags, d => d.Id == "X0001");
     }
 }
 
@@ -38,7 +38,10 @@ internal static class TestContextHelper {
     private static string LocateRoot() {
         var dir = new DirectoryInfo(System.AppContext.BaseDirectory);
         for (int i = 0; i < 8 && dir != null; i++) {
-            if (File.Exists(Path.Combine(dir.FullName, "MemoTree.sln"))) return dir.FullName;
+            if (File.Exists(Path.Combine(dir.FullName, "MemoTree.sln"))) {
+                return dir.FullName;
+            }
+
             dir = dir.Parent!;
         }
         return System.AppContext.BaseDirectory; // fallback

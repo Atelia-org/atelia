@@ -26,80 +26,81 @@ public static class CreateCommand {
             contentOption
  };
 
-        command.SetHandler(async (string title, string? parentIdStr, string typeStr, bool openEditor) => {
-            try {
-                var workspaceManager = new WorkspaceManager();
-                var workspaceRoot = workspaceManager.FindWorkspaceRoot();
+        command.SetHandler(
+            async (string title, string? parentIdStr, string typeStr, bool openEditor) => {
+                try {
+                    var workspaceManager = new WorkspaceManager();
+                    var workspaceRoot = workspaceManager.FindWorkspaceRoot();
 
-                if (workspaceRoot == null) {
-                    Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
-                    Environment.Exit(1);
-                    return;
-                }
-
-                // 解析节点类型
-                if (!Enum.TryParse<NodeType>(typeStr, true, out var nodeType)) {
-                    Console.Error.WriteLine($"Error: Invalid node type '{typeStr}'. Valid types: concept, entity, process, attribute");
-                    Environment.Exit(1);
-                    return;
-                }
-
-                // 解析父节点ID
-                NodeId? parentId = null;
-                if (!string.IsNullOrEmpty(parentIdStr)) {
-                    try {
-                        parentId = NodeId.FromString(parentIdStr);
-                    } catch {
-                        Console.Error.WriteLine($"Error: Invalid parent node ID '{parentIdStr}'");
+                    if (workspaceRoot == null) {
+                        Console.Error.WriteLine("Error: Not in a MemoTree workspace. Run 'memotree init' first.");
                         Environment.Exit(1);
                         return;
                     }
-                }
 
-                // 获取内容
-                string content = "";
-                if (openEditor) {
-                    content = await GetContentFromEditorAsync();
-                } else {
-                    // 检查是否有管道输入
-                    if (!Console.IsInputRedirected) {
-                        Console.WriteLine("Enter content (press Ctrl+D or Ctrl+Z to finish):");
+                    // 解析节点类型
+                    if (!Enum.TryParse<NodeType>(typeStr, true, out var nodeType)) {
+                        Console.Error.WriteLine($"Error: Invalid node type '{typeStr}'. Valid types: concept, entity, process, attribute");
+                        Environment.Exit(1);
+                        return;
                     }
 
-                    var lines = new List<string>();
-                    string? line;
-                    while ((line = Console.ReadLine()) != null) {
-                        lines.Add(line);
+                    // 解析父节点ID
+                    NodeId? parentId = null;
+                    if (!string.IsNullOrEmpty(parentIdStr)) {
+                        try {
+                            parentId = NodeId.FromString(parentIdStr);
+                        } catch {
+                            Console.Error.WriteLine($"Error: Invalid parent node ID '{parentIdStr}'");
+                            Environment.Exit(1);
+                            return;
+                        }
                     }
-                    content = string.Join(Environment.NewLine, lines);
+
+                    // 获取内容
+                    string content = "";
+                    if (openEditor) {
+                        content = await GetContentFromEditorAsync();
+                    } else {
+                        // 检查是否有管道输入
+                        if (!Console.IsInputRedirected) {
+                            Console.WriteLine("Enter content (press Ctrl+D or Ctrl+Z to finish):");
+                        }
+
+                        var lines = new List<string>();
+                        string? line;
+                        while ((line = Console.ReadLine()) != null) {
+                            lines.Add(line);
+                        }
+                        content = string.Join(Environment.NewLine, lines);
+                    }
+
+                    // 构建服务并创建节点
+                    var services = new ServiceCollection();
+                    services.AddLogging(b => b.AddConsole());
+                    services.AddMemoTreeServices(workspaceRoot);
+                    var provider = services.BuildServiceProvider();
+
+                    var editor = provider.GetRequiredService<IMemoTreeEditor>();
+                    var nodeId = await editor.CreateNodeAsync(title, content, parentId, nodeType);
+
+                    Console.WriteLine($"Created node: {nodeId}");
+                    Console.WriteLine($"Title: {title}");
+                    Console.WriteLine($"Type: {nodeType}");
+                    if (!string.IsNullOrEmpty(content)) {
+                        Console.WriteLine($"Content: {content.Length} characters");
+                    }
+
+                    // 创建后默认渲染一次
+                    var svc = provider.GetRequiredService<IMemoTreeService>();
+                    var output = await svc.RenderViewAsync("default");
+                    Console.WriteLine();
+                    Console.WriteLine(output);
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"Error: {ex.Message}");
+                    Environment.Exit(1);
                 }
-
-                // 构建服务并创建节点
-                var services = new ServiceCollection();
-                services.AddLogging(b => b.AddConsole());
-                services.AddMemoTreeServices(workspaceRoot);
-                var provider = services.BuildServiceProvider();
-
-                var editor = provider.GetRequiredService<IMemoTreeEditor>();
-                var nodeId = await editor.CreateNodeAsync(title, content, parentId, nodeType);
-
-                Console.WriteLine($"Created node: {nodeId}");
-                Console.WriteLine($"Title: {title}");
-                Console.WriteLine($"Type: {nodeType}");
-                if (!string.IsNullOrEmpty(content)) {
-                    Console.WriteLine($"Content: {content.Length} characters");
-                }
-
-                // 创建后默认渲染一次
-                var svc = provider.GetRequiredService<IMemoTreeService>();
-                var output = await svc.RenderViewAsync("default");
-                Console.WriteLine();
-                Console.WriteLine(output);
-            } catch (Exception ex) {
-                Console.Error.WriteLine($"Error: {ex.Message}");
-                Environment.Exit(1);
-            }
-        }, titleArgument, parentOption, typeOption, contentOption
+            }, titleArgument, parentOption, typeOption, contentOption
         );
 
         return command;
@@ -115,11 +116,13 @@ public static class CreateCommand {
             (OperatingSystem.IsWindows() ? "notepad" : "nano");
 
             // 启动编辑器
-            var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
-                FileName = editor,
-                Arguments = tempFile,
-                UseShellExecute = true
-            });
+            var process = System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo {
+                    FileName = editor,
+                    Arguments = tempFile,
+                    UseShellExecute = true
+                }
+            );
 
             if (process != null) {
                 await process.WaitForExitAsync();

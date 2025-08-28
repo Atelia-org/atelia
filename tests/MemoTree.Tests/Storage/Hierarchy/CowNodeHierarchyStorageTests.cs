@@ -32,9 +32,11 @@ namespace MemoTree.Tests.Storage.Hierarchy {
             await storage.AddChildAsync(a, b);
 
             // attempt to create cycle: add A under B
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-                await storage.AddChildAsync(b, a);
-            });
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => {
+                    await storage.AddChildAsync(b, a);
+                }
+            );
         }
 
         [Fact]
@@ -50,9 +52,11 @@ namespace MemoTree.Tests.Storage.Hierarchy {
             await storage.AddChildAsync(b, c);
 
             // move A under C would form a cycle A->B->C->A
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-                await storage.MoveNodeAsync(a, c);
-            });
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => {
+                    await storage.MoveNodeAsync(a, c);
+                }
+            );
         }
 
         public void Dispose() {
