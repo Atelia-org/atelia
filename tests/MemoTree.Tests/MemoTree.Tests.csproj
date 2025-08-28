@@ -14,6 +14,8 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.10.0" />
+  <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.10.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,6 +26,8 @@
     <ProjectReference Include="..\..\src\MemoTree.Core\MemoTree.Core.csproj" />
   <ProjectReference Include="..\..\src\MemoTree.Services\MemoTree.Services.csproj" />
   <ProjectReference Include="..\..\src\MemoTree.Cli\MemoTree.Cli.csproj" />
+  <ProjectReference Include="..\..\src\Analyzers\MemoTree.Analyzers\MemoTree.Analyzers.csproj" />
+  <ProjectReference Include="..\..\src\Analyzers\MemoTree.Analyzers.CodeFixes\MemoTree.Analyzers.CodeFixes.csproj" />
   </ItemGroup>
 
 </Project>

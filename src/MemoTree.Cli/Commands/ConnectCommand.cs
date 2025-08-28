@@ -1,42 +1,36 @@
 using System.CommandLine;
 using MemoTree.Cli.Services;
 
-namespace MemoTree.Cli.Commands
-{
+namespace MemoTree.Cli.Commands {
     /// <summary>
     /// Connect命令：连接到另一个MemoTree工作空间
     /// </summary>
-    public static class ConnectCommand
-    {
-        public static Command Create()
-        {
+    public static class ConnectCommand {
+        public static Command Create() {
             var targetPathArgument = new Argument<string>(
                 name: "target-path",
-                description: "目标工作空间的路径");
+                description: "目标工作空间的路径"
+            );
 
             var command = new Command("connect", "连接到另一个MemoTree工作空间")
             {
                 targetPathArgument
-            };
+ };
 
-            command.SetHandler(async (string targetPath) =>
-            {
-                try
-                {
+            command.SetHandler(async (string targetPath) => {
+                try {
                     await ExecuteAsync(targetPath);
-                }
-                catch (Exception ex)
-                {
+                } catch (Exception ex) {
                     Console.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }
-            }, targetPathArgument);
+            }, targetPathArgument
+            );
 
             return command;
         }
 
-        private static async Task ExecuteAsync(string targetPath)
-        {
+        private static async Task ExecuteAsync(string targetPath) {
             var workspaceManager = new WorkspaceManager();
             var fullTargetPath = Path.GetFullPath(targetPath);
 

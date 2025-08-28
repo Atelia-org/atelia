@@ -7,21 +7,17 @@ using MemoTree.Services;
 
 namespace MemoTree.Cli;
 
-class Program
-{
-    static async Task<int> Main(string[] args)
-    {
+internal class Program {
+    private static async Task<int> Main(string[] args) {
         // 创建根命令
-        var viewCommand = new Command("view", "View management commands")
-        {
+        var viewCommand = new Command("view", "View management commands") {
             ViewCommands.CreateExpandCommand(),
             ViewCommands.CreateCollapseCommand(),
             ViewCommands.CreateViewCreateCommand(),
             ViewCommands.CreateViewSetDescriptionCommand(),
-        };
+};
 
-        var rootCommand = new RootCommand("MemoTree - Hierarchical context management for LLMs")
-        {
+        var rootCommand = new RootCommand("MemoTree - Hierarchical context management for LLMs") {
             InitCommand.Create(),
             CreateCommand.Create(),
             ConnectCommand.Create(),
@@ -35,8 +31,7 @@ class Program
         };
 
         // 如果没有参数，默认执行渲染命令
-        if (args.Length == 0)
-        {
+        if (args.Length == 0) {
             return await HandleDefaultRenderAsync();
         }
 
@@ -47,15 +42,12 @@ class Program
     /// <summary>
     /// 处理默认的渲染命令 (memotree 不带参数)
     /// </summary>
-    private static async Task<int> HandleDefaultRenderAsync()
-    {
-        try
-        {
+    private static async Task<int> HandleDefaultRenderAsync() {
+        try {
             var workspaceManager = new WorkspaceManager();
-            var workspaceRoot = workspaceManager.FindWorkspaceRoot();
-            
-            if (workspaceRoot == null)
-            {
+            string? workspaceRoot = workspaceManager.FindWorkspaceRoot();
+
+            if (workspaceRoot == null) {
                 Console.Error.WriteLine("Error: Not in a MemoTree workspace.");
                 Console.Error.WriteLine("Run 'memotree init' to initialize a workspace, or");
                 Console.Error.WriteLine("Run 'memotree --help' to see available commands.");
@@ -66,15 +58,13 @@ class Program
             var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
             services.AddLogging(b => b.AddConsole());
             services.AddMemoTreeServices(workspaceRoot);
-            var provider = services.BuildServiceProvider();
+            ServiceProvider provider = services.BuildServiceProvider();
 
-            var svc = provider.GetRequiredService<IMemoTreeService>();
-            var output = await svc.RenderViewAsync("default");
+            IMemoTreeService svc = provider.GetRequiredService<IMemoTreeService>();
+            string output = await svc.RenderViewAsync("default");
             Console.WriteLine(output);
             return 0;
-        }
-        catch (Exception ex)
-        {
+        } catch (Exception ex) {
             Console.Error.WriteLine($"Error: {ex.Message}");
             return 1;
         }
