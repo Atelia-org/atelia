@@ -42,8 +42,12 @@ namespace MemoTree.Core.Validation {
             // 如果不是递归删除，需要检查是否有子节点
             if (!recursive) {
                 // 这里需要实际的子节点检查，暂时添加警告
-                builder.AddWarning(ValidationWarning.Create("CHILDREN_CHECK_SKIPPED",
-                    "Child nodes existence check requires storage access", "HasChildren"));
+                builder.AddWarning(
+                    ValidationWarning.Create(
+                        "CHILDREN_CHECK_SKIPPED",
+                        "Child nodes existence check requires storage access", "HasChildren"
+                )
+                );
             }
 
             return Task.FromResult(builder.Build());
@@ -69,8 +73,12 @@ namespace MemoTree.Core.Validation {
 
             // 循环引用检查需要存储层支持
             if (newParentId != null) {
-                builder.AddWarning(ValidationWarning.Create("CIRCULAR_REFERENCE_CHECK_SKIPPED",
-                    "Circular reference check requires storage access", "CircularReference"));
+                builder.AddWarning(
+                    ValidationWarning.Create(
+                        "CIRCULAR_REFERENCE_CHECK_SKIPPED",
+                        "Circular reference check requires storage access", "CircularReference"
+                )
+                );
             }
 
             return Task.FromResult(builder.Build());
@@ -91,8 +99,12 @@ namespace MemoTree.Core.Validation {
             );
 
             // 间接循环引用检查需要图遍历，需要存储层支持
-            builder.AddWarning(ValidationWarning.Create("INDIRECT_CIRCULAR_CHECK_SKIPPED",
-                "Indirect circular reference check requires graph traversal", "IndirectCircular"));
+            builder.AddWarning(
+                ValidationWarning.Create(
+                    "INDIRECT_CIRCULAR_CHECK_SKIPPED",
+                    "Indirect circular reference check requires graph traversal", "IndirectCircular"
+            )
+            );
 
             return Task.FromResult(builder.Build());
         }
@@ -114,13 +126,19 @@ namespace MemoTree.Core.Validation {
             // 验证关系类型的合理性
             switch (relationType) {
                 case RelationType.InheritsFrom:
-                    builder.AddWarning(ValidationWarning.ForBestPractice(
-                        "Inheritance relations should be used carefully to maintain clear hierarchies"));
+                    builder.AddWarning(
+                        ValidationWarning.ForBestPractice(
+                            "Inheritance relations should be used carefully to maintain clear hierarchies"
+                    )
+                    );
                     break;
 
                 case RelationType.ComposedOf:
-                    builder.AddWarning(ValidationWarning.ForBestPractice(
-                        "Composition relations create strong coupling between nodes"));
+                    builder.AddWarning(
+                        ValidationWarning.ForBestPractice(
+                            "Composition relations create strong coupling between nodes"
+                    )
+                    );
                     break;
             }
 
@@ -136,8 +154,12 @@ namespace MemoTree.Core.Validation {
             .ForObjectId(nodeId.Value);
 
             // 深度检查需要遍历整个层次结构，需要存储层支持
-            builder.AddWarning(ValidationWarning.Create("DEPTH_CHECK_SKIPPED",
-                "Hierarchy depth check requires storage access", "Depth"));
+            builder.AddWarning(
+                ValidationWarning.Create(
+                    "DEPTH_CHECK_SKIPPED",
+                    "Hierarchy depth check requires storage access", "Depth"
+            )
+            );
 
             return Task.FromResult(builder.Build());
         }
@@ -151,8 +173,12 @@ namespace MemoTree.Core.Validation {
             .ForObjectId(parentId.Value);
 
             // 子节点数量检查需要存储层支持
-            builder.AddWarning(ValidationWarning.Create("CHILDREN_COUNT_CHECK_SKIPPED",
-                "Children count check requires storage access", "ChildrenCount"));
+            builder.AddWarning(
+                ValidationWarning.Create(
+                    "CHILDREN_COUNT_CHECK_SKIPPED",
+                    "Children count check requires storage access", "ChildrenCount"
+            )
+            );
 
             return Task.FromResult(builder.Build());
         }
@@ -190,12 +216,19 @@ namespace MemoTree.Core.Validation {
             };
 
             if (!isCompatible) {
-                builder.AddError(ValidationError.ForBusinessRule("IncompatibleNodeTypes",
-                    $"Node type {childType} is not compatible with parent type {parentType}"));
+                builder.AddError(
+                    ValidationError.ForBusinessRule(
+                        "IncompatibleNodeTypes",
+                        $"Node type {childType} is not compatible with parent type {parentType}"
+                )
+                );
             } else if ((parentType, childType) is not (NodeType.Container, _) and not (_, NodeType.Note)) {
                 // 对于非明确兼容的组合给出警告
-                builder.AddWarning(ValidationWarning.ForBestPractice(
-                    $"Consider the appropriateness of placing {childType} under {parentType}"));
+                builder.AddWarning(
+                    ValidationWarning.ForBestPractice(
+                        $"Consider the appropriateness of placing {childType} under {parentType}"
+                )
+                );
             }
 
             return builder.Build();
@@ -231,8 +264,11 @@ namespace MemoTree.Core.Validation {
             };
 
             if (!isRecommended) {
-                builder.AddWarning(ValidationWarning.ForBestPractice(
-                    $"Relation {relationType} between {sourceType} and {targetType} may not be the most appropriate choice"));
+                builder.AddWarning(
+                    ValidationWarning.ForBestPractice(
+                        $"Relation {relationType} between {sourceType} and {targetType} may not be the most appropriate choice"
+                )
+                );
             }
 
             return builder.Build();
@@ -247,8 +283,12 @@ namespace MemoTree.Core.Validation {
             .ForObjectId($"{sourceId}-{relationType}->{targetId}");
 
             // 重复关系检查需要存储层支持
-            builder.AddWarning(ValidationWarning.Create("DUPLICATE_CHECK_SKIPPED",
-                "Duplicate relation check requires storage access", "Duplicate"));
+            builder.AddWarning(
+                ValidationWarning.Create(
+                    "DUPLICATE_CHECK_SKIPPED",
+                    "Duplicate relation check requires storage access", "Duplicate"
+            )
+            );
 
             return Task.FromResult(builder.Build());
         }
@@ -262,8 +302,12 @@ namespace MemoTree.Core.Validation {
             .ForObjectId($"{nodeId}-{operation}");
 
             // 权限检查需要安全上下文，MVP阶段跳过
-            builder.AddWarning(ValidationWarning.Create("PERMISSION_CHECK_SKIPPED",
-                "Permission check requires security context (MVP phase)", "Permission"));
+            builder.AddWarning(
+                ValidationWarning.Create(
+                    "PERMISSION_CHECK_SKIPPED",
+                    "Permission check requires security context (MVP phase)", "Permission"
+            )
+            );
 
             return Task.FromResult(builder.Build());
         }

@@ -175,28 +175,32 @@ public class FileViewStateStorage : IViewStateStorage {
     public Task<ViewStorageStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) {
         var dir = _paths.GetViewsDirectory();
         if (!Directory.Exists(dir)) {
-            return Task.FromResult(new ViewStorageStatistics {
-                TotalViews = 0,
-                TotalSize = 0,
-                OldestView = DateTime.UtcNow,
-                NewestView = DateTime.UtcNow,
-                LargestView = null,
-                LargestViewSize = 0,
-                AverageViewSize = 0,
-            });
+            return Task.FromResult(
+                new ViewStorageStatistics {
+                    TotalViews = 0,
+                    TotalSize = 0,
+                    OldestView = DateTime.UtcNow,
+                    NewestView = DateTime.UtcNow,
+                    LargestView = null,
+                    LargestViewSize = 0,
+                    AverageViewSize = 0,
+                }
+            );
         }
 
         var files = Directory.GetFiles(dir, "*.json");
         if (files.Length == 0) {
-            return Task.FromResult(new ViewStorageStatistics {
-                TotalViews = 0,
-                TotalSize = 0,
-                OldestView = DateTime.UtcNow,
-                NewestView = DateTime.UtcNow,
-                LargestView = null,
-                LargestViewSize = 0,
-                AverageViewSize = 0,
-            });
+            return Task.FromResult(
+                new ViewStorageStatistics {
+                    TotalViews = 0,
+                    TotalSize = 0,
+                    OldestView = DateTime.UtcNow,
+                    NewestView = DateTime.UtcNow,
+                    LargestView = null,
+                    LargestViewSize = 0,
+                    AverageViewSize = 0,
+                }
+            );
         }
 
         long total = 0;
@@ -222,14 +226,16 @@ public class FileViewStateStorage : IViewStateStorage {
             }
         }
 
-        return Task.FromResult(new ViewStorageStatistics {
-            TotalViews = files.Length,
-            TotalSize = total,
-            OldestView = oldest,
-            NewestView = newest,
-            LargestView = largest,
-            LargestViewSize = maxSize,
-            AverageViewSize = files.Length > 0 ? (double)total / files.Length : 0,
-        });
+        return Task.FromResult(
+            new ViewStorageStatistics {
+                TotalViews = files.Length,
+                TotalSize = total,
+                OldestView = oldest,
+                NewestView = newest,
+                LargestView = largest,
+                LargestViewSize = maxSize,
+                AverageViewSize = files.Length > 0 ? (double)total / files.Length : 0,
+            }
+        );
     }
 }

@@ -201,7 +201,8 @@ namespace MemoTree.Core.Storage.Versioned {
                     // 之前的 MarkOperationCompleteAsync 调用是冗余的，因为紧接着就删除了日志文件
                     File.Delete(logFile);
 
-                    _logger.LogDebug("Completed atomic operation {OperationType} with {KeyCount} keys, new version {Version}",
+                    _logger.LogDebug(
+                        "Completed atomic operation {OperationType} with {KeyCount} keys, new version {Version}",
                         operationType, affectedKeys.Count(), targetVersion
                     );
 

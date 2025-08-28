@@ -104,18 +104,22 @@ namespace MemoTree.Core.Types {
 
             foreach (var childId in orderedChildIds) {
                 if (childDict.TryGetValue(childId, out var child)) {
-                    newChildren.Add(child with {
-                        Order = order++
-                    });
+                    newChildren.Add(
+                        child with {
+                            Order = order++
+                        }
+                    );
                 }
             }
 
             // 添加未在新顺序中指定的子节点
             foreach (var child in Children) {
                 if (!orderedChildIds.Contains(child.NodeId)) {
-                    newChildren.Add(child with {
-                        Order = order++
-                    });
+                    newChildren.Add(
+                        child with {
+                            Order = order++
+                        }
+                    );
                 }
             }
 

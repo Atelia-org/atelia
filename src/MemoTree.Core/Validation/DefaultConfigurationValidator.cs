@@ -16,9 +16,11 @@ namespace MemoTree.Core.Validation {
         /// </summary>
         public Task<ValidationResult> ValidateConfigurationAsync<T>(T configuration, CancellationToken cancellationToken = default) where T : class {
             if (configuration == null) {
-                return Task.FromResult(ValidationResult.Failure(
-                    ValidationError.ForRequired("Configuration")
-                ));
+                return Task.FromResult(
+                    ValidationResult.Failure(
+                        ValidationError.ForRequired("Configuration")
+                )
+                );
             }
 
             var builder = new ValidationResultBuilder()
@@ -83,7 +85,8 @@ namespace MemoTree.Core.Validation {
             if (IsTokenRelatedConfiguration(configurationKey)) {
                 builder.AddErrorIf(
                     value > SystemLimits.MaxTokensPerNode,
-                    ValidationError.Create("SYSTEM_LIMIT_EXCEEDED",
+                    ValidationError.Create(
+                        "SYSTEM_LIMIT_EXCEEDED",
                         $"{configurationKey} value {value} exceeds system limit {SystemLimits.MaxTokensPerNode}",
                         configurationKey, value
                     )
@@ -110,7 +113,8 @@ namespace MemoTree.Core.Validation {
             if (IsMemoryRelatedConfiguration(configurationKey)) {
                 builder.AddErrorIf(
                     value > SystemLimits.MaxMemoryUsageBytes,
-                    ValidationError.Create("SYSTEM_LIMIT_EXCEEDED",
+                    ValidationError.Create(
+                        "SYSTEM_LIMIT_EXCEEDED",
                         $"{configurationKey} value {value} exceeds system limit {SystemLimits.MaxMemoryUsageBytes}",
                         configurationKey, value
                     )
@@ -120,7 +124,8 @@ namespace MemoTree.Core.Validation {
             if (IsFileSizeRelatedConfiguration(configurationKey)) {
                 builder.AddErrorIf(
                     value > SystemLimits.MaxFileSizeBytes,
-                    ValidationError.Create("SYSTEM_LIMIT_EXCEEDED",
+                    ValidationError.Create(
+                        "SYSTEM_LIMIT_EXCEEDED",
                         $"{configurationKey} value {value} exceeds system limit {SystemLimits.MaxFileSizeBytes}",
                         configurationKey, value
                     )
@@ -175,15 +180,19 @@ namespace MemoTree.Core.Validation {
                 if (mustExist) {
                     builder.AddErrorIf(
                         !Directory.Exists(fullPath) && !File.Exists(fullPath),
-                        ValidationError.Create("PATH_NOT_EXISTS",
+                        ValidationError.Create(
+                            "PATH_NOT_EXISTS",
                             $"Path {path} does not exist", configurationKey, path
                         )
                     );
                 }
             } catch (Exception ex) {
-                builder.AddError(ValidationError.Create("INVALID_PATH",
-                    $"Invalid path format: {ex.Message}", configurationKey, path
-                ));
+                builder.AddError(
+                    ValidationError.Create(
+                        "INVALID_PATH",
+                        $"Invalid path format: {ex.Message}", configurationKey, path
+                )
+                );
             }
 
             return builder.Build();
@@ -210,7 +219,8 @@ namespace MemoTree.Core.Validation {
             if (allowedSchemes != null && allowedSchemes.Length > 0) {
                 builder.AddErrorIf(
                     !allowedSchemes.Contains(uri.Scheme, StringComparer.OrdinalIgnoreCase),
-                    ValidationError.Create("INVALID_SCHEME",
+                    ValidationError.Create(
+                        "INVALID_SCHEME",
                         $"URL scheme {uri.Scheme} is not allowed. Allowed schemes: {string.Join(", ", allowedSchemes)}",
                         configurationKey, url
                     )
@@ -230,7 +240,8 @@ namespace MemoTree.Core.Validation {
 
             builder.AddErrorIf(
                 !Enum.IsDefined(typeof(TEnum), value),
-                ValidationError.Create("INVALID_ENUM_VALUE",
+                ValidationError.Create(
+                    "INVALID_ENUM_VALUE",
                     $"Invalid enum value {value} for type {typeof(TEnum).Name}",
                     configurationKey, value
                 )
@@ -262,7 +273,8 @@ namespace MemoTree.Core.Validation {
 
             builder.AddErrorIf(
                 value.TotalMilliseconds > SystemLimits.MaxTimeoutMilliseconds,
-                ValidationError.Create("SYSTEM_LIMIT_EXCEEDED",
+                ValidationError.Create(
+                    "SYSTEM_LIMIT_EXCEEDED",
                     $"{configurationKey} timeout {value.TotalMilliseconds}ms exceeds system limit {SystemLimits.MaxTimeoutMilliseconds}ms",
                     configurationKey, value
                 )

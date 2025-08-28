@@ -84,7 +84,8 @@ namespace MemoTree.Core.Storage.Hierarchy {
             var description = $"Save parent-children info for {hierarchyInfo.ParentId}";
             await _versionedStorage.UpdateManyAsync(updates, description, cancellationToken);
 
-            _logger.LogDebug("Saved parent-children info for {ParentId} with {ChildCount} children",
+            _logger.LogDebug(
+                "Saved parent-children info for {ParentId} with {ChildCount} children",
                 hierarchyInfo.ParentId, hierarchyInfo.ChildCount
             );
             InvalidateParentIndexCache();
@@ -254,7 +255,8 @@ namespace MemoTree.Core.Storage.Hierarchy {
                 var description = $"Move node {nodeId} from {oldParentId} to {newParentId}";
                 var version = await _versionedStorage.UpdateManyAsync(updates, description, cancellationToken);
 
-                _logger.LogInformation("Moved node {NodeId} from {OldParent} to {NewParent}, version {Version}",
+                _logger.LogInformation(
+                    "Moved node {NodeId} from {OldParent} to {NewParent}, version {Version}",
                     nodeId, oldParentId, newParentId, version
                 );
                 InvalidateParentIndexCache();
@@ -282,7 +284,8 @@ namespace MemoTree.Core.Storage.Hierarchy {
 
                 var version = await _versionedStorage.UpdateManyAsync(updateDict, description, cancellationToken);
 
-                _logger.LogInformation("Updated {Count} parent-children relationships atomically, version {Version}",
+                _logger.LogInformation(
+                    "Updated {Count} parent-children relationships atomically, version {Version}",
                     updateDict.Count, version
                 );
                 InvalidateParentIndexCache();
@@ -411,7 +414,8 @@ namespace MemoTree.Core.Storage.Hierarchy {
             var parentIndex = _parentIndexCache ?? new Dictionary<NodeId, NodeId>();
             var allParentIds = await GetAllParentIdsAsync(cancellationToken);
 
-            _logger.LogDebug("GetTopLevelNodesAsync: Found {AllCount} total nodes, {ParentIndexCount} child nodes",
+            _logger.LogDebug(
+                "GetTopLevelNodesAsync: Found {AllCount} total nodes, {ParentIndexCount} child nodes",
                 allParentIds.Count, parentIndex.Count
             );
 
