@@ -20,8 +20,8 @@ public sealed class X0001OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
     // Development-time switch: when true, even if every item is single-line we still require
     // a newline if any item contains a block body (lambda with { }) or an initializer expression.
     // Default false = pure AllItemsSingleLine exemption (Guard A only).
-    // private const bool GUARD_BLOCK_OR_INITIALIZER = false; // flip to true to evaluate Guard B
-    private const bool GUARD_BLOCK_OR_INITIALIZER = true; // flip to false to evaluate Guard A
+    private const bool GUARD_BLOCK_OR_INITIALIZER = false; // flip to true to evaluate Guard B
+    // private const bool GUARD_BLOCK_OR_INITIALIZER = true; // flip to false to evaluate Guard A
 
     private static readonly DiagnosticDescriptor Rule = new(
         DiagnosticId,
