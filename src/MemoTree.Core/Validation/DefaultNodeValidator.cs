@@ -5,29 +5,26 @@ using System.Threading;
 using System.Threading.Tasks;
 using MemoTree.Core.Types;
 
-namespace MemoTree.Core.Validation
-{
+namespace MemoTree.Core.Validation {
     /// <summary>
     /// 默认节点验证器实现
     /// 提供基础的节点数据验证功能
     /// </summary>
-    public class DefaultNodeValidator : INodeValidator
-    {
+    public class DefaultNodeValidator : INodeValidator {
         /// <summary>
         /// 验证节点元数据
         /// </summary>
-        public Task<ValidationResult> ValidateMetadataAsync(NodeMetadata metadata, CancellationToken cancellationToken = default)
-        {
+        public Task<ValidationResult> ValidateMetadataAsync(NodeMetadata metadata, CancellationToken cancellationToken = default) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(NodeMetadata))
-                .ForObjectId(metadata.Id.Value);
+            .ForObjectType(nameof(NodeMetadata))
+            .ForObjectId(metadata.Id.Value);
 
             // 验证节点ID
             var nodeIdResult = ValidateNodeId(metadata.Id);
-            if (!nodeIdResult.IsValid)
-            {
-                foreach (var error in nodeIdResult.Errors)
+            if (!nodeIdResult.IsValid) {
+                foreach (var error in nodeIdResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证标题
@@ -47,8 +44,7 @@ namespace MemoTree.Core.Validation
                 ValidationError.ForRange(nameof(metadata.Tags), metadata.Tags.Count, 0, NodeConstraints.MaxTagCount)
             );
 
-            foreach (var tag in metadata.Tags)
-            {
+            foreach (var tag in metadata.Tags) {
                 builder.AddErrorIf(
                     string.IsNullOrWhiteSpace(tag),
                     ValidationError.ForProperty("Tag", "Tag cannot be empty")
@@ -62,10 +58,10 @@ namespace MemoTree.Core.Validation
 
             // 验证自定义属性
             var propertiesResult = ValidateCustomProperties(metadata.CustomProperties);
-            if (!propertiesResult.IsValid)
-            {
-                foreach (var error in propertiesResult.Errors)
+            if (!propertiesResult.IsValid) {
+                foreach (var error in propertiesResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             return Task.FromResult(builder.Build());
@@ -74,18 +70,17 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证节点内容
         /// </summary>
-        public Task<ValidationResult> ValidateContentAsync(NodeContent content, CancellationToken cancellationToken = default)
-        {
+        public Task<ValidationResult> ValidateContentAsync(NodeContent content, CancellationToken cancellationToken = default) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(NodeContent))
-                .ForObjectId(content.Id.Value);
+            .ForObjectType(nameof(NodeContent))
+            .ForObjectId(content.Id.Value);
 
             // 验证节点ID
             var nodeIdResult = ValidateNodeId(content.Id);
-            if (!nodeIdResult.IsValid)
-            {
-                foreach (var error in nodeIdResult.Errors)
+            if (!nodeIdResult.IsValid) {
+                foreach (var error in nodeIdResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证内容长度
@@ -96,10 +91,10 @@ namespace MemoTree.Core.Validation
 
             // 验证LOD级别内容
             var lodResult = ValidateLodContent(LodContent.Create(content.Level, content.Content));
-            if (!lodResult.IsValid)
-            {
-                foreach (var error in lodResult.Errors)
+            if (!lodResult.IsValid) {
+                foreach (var error in lodResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证内容哈希
@@ -114,28 +109,26 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证完整节点
         /// </summary>
-        public async Task<ValidationResult> ValidateNodeAsync(CognitiveNode node, CancellationToken cancellationToken = default)
-        {
+        public async Task<ValidationResult> ValidateNodeAsync(CognitiveNode node, CancellationToken cancellationToken = default) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(CognitiveNode))
-                .ForObjectId(node.Id.Value);
+            .ForObjectType(nameof(CognitiveNode))
+            .ForObjectId(node.Id.Value);
 
             // 验证元数据
             var metadataResult = await ValidateMetadataAsync(node.Metadata, cancellationToken);
-            if (!metadataResult.IsValid)
-            {
-                foreach (var error in metadataResult.Errors)
+            if (!metadataResult.IsValid) {
+                foreach (var error in metadataResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证所有内容
-            foreach (var content in node.Contents.Values)
-            {
+            foreach (var content in node.Contents.Values) {
                 var contentResult = await ValidateContentAsync(content, cancellationToken);
-                if (!contentResult.IsValid)
-                {
-                    foreach (var error in contentResult.Errors)
+                if (!contentResult.IsValid) {
+                    foreach (var error in contentResult.Errors) {
                         builder.AddError(error);
+                    }
                 }
             }
 
@@ -151,34 +144,33 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证节点关系
         /// </summary>
-        public Task<ValidationResult> ValidateRelationAsync(NodeRelation relation, CancellationToken cancellationToken = default)
-        {
+        public Task<ValidationResult> ValidateRelationAsync(NodeRelation relation, CancellationToken cancellationToken = default) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(NodeRelation))
-                .ForObjectId(relation.Id.Value);
+            .ForObjectType(nameof(NodeRelation))
+            .ForObjectId(relation.Id.Value);
 
             // 验证关系ID
             var relationIdResult = ValidateRelationId(relation.Id);
-            if (!relationIdResult.IsValid)
-            {
-                foreach (var error in relationIdResult.Errors)
+            if (!relationIdResult.IsValid) {
+                foreach (var error in relationIdResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证源节点ID
             var sourceIdResult = ValidateNodeId(relation.SourceId);
-            if (!sourceIdResult.IsValid)
-            {
-                foreach (var error in sourceIdResult.Errors)
+            if (!sourceIdResult.IsValid) {
+                foreach (var error in sourceIdResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证目标节点ID
             var targetIdResult = ValidateNodeId(relation.TargetId);
-            if (!targetIdResult.IsValid)
-            {
-                foreach (var error in targetIdResult.Errors)
+            if (!targetIdResult.IsValid) {
+                foreach (var error in targetIdResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证自引用
@@ -195,10 +187,10 @@ namespace MemoTree.Core.Validation
 
             // 验证关系属性
             var propertiesResult = ValidateCustomProperties(relation.Properties);
-            if (!propertiesResult.IsValid)
-            {
-                foreach (var error in propertiesResult.Errors)
+            if (!propertiesResult.IsValid) {
+                foreach (var error in propertiesResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             return Task.FromResult(builder.Build());
@@ -207,26 +199,25 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证节点关系（通过ID和类型）
         /// </summary>
-        public Task<ValidationResult> ValidateRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, CancellationToken cancellationToken = default)
-        {
+        public Task<ValidationResult> ValidateRelationAsync(NodeId sourceId, NodeId targetId, RelationType relationType, CancellationToken cancellationToken = default) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType("NodeRelation")
-                .ForObjectId($"{sourceId}->{targetId}");
+            .ForObjectType("NodeRelation")
+            .ForObjectId($"{sourceId}->{targetId}");
 
             // 验证源节点ID
             var sourceIdResult = ValidateNodeId(sourceId);
-            if (!sourceIdResult.IsValid)
-            {
-                foreach (var error in sourceIdResult.Errors)
+            if (!sourceIdResult.IsValid) {
+                foreach (var error in sourceIdResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证目标节点ID
             var targetIdResult = ValidateNodeId(targetId);
-            if (!targetIdResult.IsValid)
-            {
-                foreach (var error in targetIdResult.Errors)
+            if (!targetIdResult.IsValid) {
+                foreach (var error in targetIdResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证自引用
@@ -241,18 +232,17 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证父子关系信息
         /// </summary>
-        public Task<ValidationResult> ValidateHierarchyInfoAsync(HierarchyInfo HierarchyInfo, CancellationToken cancellationToken = default)
-        {
+        public Task<ValidationResult> ValidateHierarchyInfoAsync(HierarchyInfo HierarchyInfo, CancellationToken cancellationToken = default) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(HierarchyInfo))
-                .ForObjectId(HierarchyInfo.ParentId.Value);
+            .ForObjectType(nameof(HierarchyInfo))
+            .ForObjectId(HierarchyInfo.ParentId.Value);
 
             // 验证父节点ID
             var parentIdResult = ValidateNodeId(HierarchyInfo.ParentId);
-            if (!parentIdResult.IsValid)
-            {
-                foreach (var error in parentIdResult.Errors)
+            if (!parentIdResult.IsValid) {
+                foreach (var error in parentIdResult.Errors) {
                     builder.AddError(error);
+                }
             }
 
             // 验证子节点数量
@@ -262,13 +252,12 @@ namespace MemoTree.Core.Validation
             );
 
             // 验证每个子节点
-            foreach (var child in HierarchyInfo.Children)
-            {
+            foreach (var child in HierarchyInfo.Children) {
                 var childIdResult = ValidateNodeId(child.NodeId);
-                if (!childIdResult.IsValid)
-                {
-                    foreach (var error in childIdResult.Errors)
+                if (!childIdResult.IsValid) {
+                    foreach (var error in childIdResult.Errors) {
                         builder.AddError(error);
+                    }
                 }
 
                 // 验证子节点不是父节点自己
@@ -280,12 +269,11 @@ namespace MemoTree.Core.Validation
 
             // 验证子节点ID唯一性
             var duplicateIds = HierarchyInfo.Children
-                .GroupBy(c => c.NodeId)
-                .Where(g => g.Count() > 1)
-                .Select(g => g.Key);
+            .GroupBy(c => c.NodeId)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key);
 
-            foreach (var duplicateId in duplicateIds)
-            {
+            foreach (var duplicateId in duplicateIds) {
                 builder.AddError(ValidationError.ForBusinessRule("DuplicateChild", $"Duplicate child node ID: {duplicateId}"));
             }
 
@@ -295,11 +283,10 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证节点ID格式
         /// </summary>
-        public ValidationResult ValidateNodeId(NodeId nodeId)
-        {
+        public ValidationResult ValidateNodeId(NodeId nodeId) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(NodeId))
-                .ForObjectId(nodeId.Value);
+            .ForObjectType(nameof(NodeId))
+            .ForObjectId(nodeId.Value);
 
             builder.AddErrorIf(
                 string.IsNullOrWhiteSpace(nodeId.Value),
@@ -322,11 +309,10 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证关系ID格式
         /// </summary>
-        public ValidationResult ValidateRelationId(RelationId relationId)
-        {
+        public ValidationResult ValidateRelationId(RelationId relationId) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(RelationId))
-                .ForObjectId(relationId.Value);
+            .ForObjectType(nameof(RelationId))
+            .ForObjectId(relationId.Value);
 
             builder.AddErrorIf(
                 string.IsNullOrWhiteSpace(relationId.Value),
@@ -349,10 +335,9 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证LOD内容
         /// </summary>
-        public ValidationResult ValidateLodContent(LodContent lodContent)
-        {
+        public ValidationResult ValidateLodContent(LodContent lodContent) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType(nameof(LodContent));
+            .ForObjectType(nameof(LodContent));
 
             builder.AddErrorIf(
                 !lodContent.IsValidForLevel(),
@@ -365,18 +350,16 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 验证自定义属性
         /// </summary>
-        public ValidationResult ValidateCustomProperties(IReadOnlyDictionary<string, object> properties)
-        {
+        public ValidationResult ValidateCustomProperties(IReadOnlyDictionary<string, object> properties) {
             var builder = new ValidationResultBuilder()
-                .ForObjectType("CustomProperties");
+            .ForObjectType("CustomProperties");
 
             builder.AddErrorIf(
                 properties.Count > NodeConstraints.MaxCustomPropertyCount,
                 ValidationError.ForRange("PropertyCount", properties.Count, 0, NodeConstraints.MaxCustomPropertyCount)
             );
 
-            foreach (var kvp in properties)
-            {
+            foreach (var kvp in properties) {
                 builder.AddErrorIf(
                     string.IsNullOrWhiteSpace(kvp.Key),
                     ValidationError.ForProperty("PropertyKey", "Property key cannot be empty")
@@ -388,8 +371,7 @@ namespace MemoTree.Core.Validation
                 );
 
                 // 验证字符串值长度
-                if (kvp.Value is string stringValue)
-                {
+                if (kvp.Value is string stringValue) {
                     builder.AddErrorIf(
                         stringValue.Length > NodeConstraints.MaxCustomPropertyStringValueLength,
                         ValidationError.ForLength($"Property[{kvp.Key}]", stringValue.Length, NodeConstraints.MaxCustomPropertyStringValueLength)

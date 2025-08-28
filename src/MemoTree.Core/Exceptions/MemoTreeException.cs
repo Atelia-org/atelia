@@ -1,14 +1,12 @@
 using System;
 using System.Collections.Generic;
 
-namespace MemoTree.Core.Exceptions
-{
+namespace MemoTree.Core.Exceptions {
     /// <summary>
     /// MemoTree基础异常
     /// 所有MemoTree特定异常的基类
     /// </summary>
-    public abstract class MemoTreeException : Exception
-    {
+    public abstract class MemoTreeException : Exception {
         /// <summary>
         /// 异常代码，用于程序化处理
         /// </summary>
@@ -20,9 +18,9 @@ namespace MemoTree.Core.Exceptions
         public Dictionary<string, object?> Context { get; } = new();
 
         protected MemoTreeException(string message) : base(message) { }
-        
-        protected MemoTreeException(string message, Exception innerException) 
-            : base(message, innerException) { }
+
+        protected MemoTreeException(string message, Exception innerException)
+        : base(message, innerException) { }
 
 
     }

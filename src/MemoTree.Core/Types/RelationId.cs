@@ -1,18 +1,19 @@
 using System;
 
-namespace MemoTree.Core.Types
-{
+namespace MemoTree.Core.Types {
     /// <summary>
     /// 关系标识符
     /// </summary>
-    public readonly struct RelationId : IEquatable<RelationId>
-    {
-        public string Value { get; }
+    public readonly struct RelationId : IEquatable<RelationId> {
+        public string Value {
+            get;
+        }
 
-        public RelationId(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
+        public RelationId(string value) {
+            if (string.IsNullOrWhiteSpace(value)) {
                 throw new ArgumentException("RelationId cannot be null or empty", nameof(value));
+            }
+
             Value = value;
         }
 
@@ -24,10 +25,10 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 验证ID格式是否有效
         /// </summary>
-        public static bool IsValidFormat(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
+        public static bool IsValidFormat(string value) {
+            if (string.IsNullOrWhiteSpace(value)) {
                 return false;
+            }
 
             var encodingType = GuidEncoder.DetectEncodingType(value);
             return encodingType != GuidEncodingType.Unknown;
@@ -36,10 +37,11 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 从字符串创建RelationId，验证格式
         /// </summary>
-        public static RelationId FromString(string value)
-        {
-            if (!IsValidFormat(value))
+        public static RelationId FromString(string value) {
+            if (!IsValidFormat(value)) {
                 throw new ArgumentException($"Invalid RelationId format: {value}", nameof(value));
+            }
+
             return new RelationId(value);
         }
 

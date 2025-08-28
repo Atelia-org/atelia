@@ -1,19 +1,20 @@
 using System;
 
-namespace MemoTree.Core.Types
-{
+namespace MemoTree.Core.Types {
     /// <summary>
     /// 认知节点的唯一标识符
     /// 使用统一的GUID编码策略，包括根节点的特殊处理
     /// </summary>
-    public readonly struct NodeId : IEquatable<NodeId>
-    {
-        public string Value { get; }
+    public readonly struct NodeId : IEquatable<NodeId> {
+        public string Value {
+            get;
+        }
 
-        public NodeId(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
+        public NodeId(string value) {
+            if (string.IsNullOrWhiteSpace(value)) {
                 throw new ArgumentException("NodeId cannot be null or empty", nameof(value));
+            }
+
             Value = value;
         }
 
@@ -25,10 +26,10 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 验证ID格式是否有效
         /// </summary>
-        public static bool IsValidFormat(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
+        public static bool IsValidFormat(string value) {
+            if (string.IsNullOrWhiteSpace(value)) {
                 return false;
+            }
 
             // 检测编码类型并验证
             var encodingType = GuidEncoder.DetectEncodingType(value);
@@ -38,10 +39,11 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 从字符串创建NodeId，验证格式
         /// </summary>
-        public static NodeId FromString(string value)
-        {
-            if (!IsValidFormat(value))
+        public static NodeId FromString(string value) {
+            if (!IsValidFormat(value)) {
                 throw new ArgumentException($"Invalid NodeId format: {value}", nameof(value));
+            }
+
             return new NodeId(value);
         }
 

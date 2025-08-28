@@ -13,8 +13,7 @@ namespace MemoTree.Services.Storage;
 /// 简化的认知节点存储实现 (MVP版本)
 /// 基于文件系统的直接存储，不使用版本化存储
 /// </summary>
-public partial class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
-{
+public partial class SimpleCognitiveNodeStorage : ICognitiveNodeStorage {
     private readonly MemoTreeOptions _options;
     private readonly StorageOptions _storageOptions;
     private readonly IWorkspacePathService _pathService;
@@ -29,8 +28,8 @@ public partial class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         IOptions<StorageOptions> storageOptions,
         IWorkspacePathService pathService,
         INodeHierarchyStorage hierarchy,
-        ILogger<SimpleCognitiveNodeStorage> logger)
-    {
+        ILogger<SimpleCognitiveNodeStorage> logger
+    ) {
         _options = options.Value;
         _storageOptions = storageOptions.Value;
         _pathService = pathService ?? throw new ArgumentNullException(nameof(pathService));
@@ -38,15 +37,15 @@ public partial class SimpleCognitiveNodeStorage : ICognitiveNodeStorage
         _logger = logger;
 
         _yamlSerializer = new SerializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .WithTypeConverter(new NodeIdYamlConverter())
-            .Build();
+        .WithNamingConvention(CamelCaseNamingConvention.Instance)
+        .WithTypeConverter(new NodeIdYamlConverter())
+        .Build();
 
         _yamlDeserializer = new DeserializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .WithTypeConverter(new NodeIdYamlConverter())
-            .Build();
+        .WithNamingConvention(CamelCaseNamingConvention.Instance)
+        .WithTypeConverter(new NodeIdYamlConverter())
+        .Build();
 
-    // no JSON options needed here
+        // no JSON options needed here
     }
 }

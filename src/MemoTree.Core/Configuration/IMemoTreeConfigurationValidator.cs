@@ -1,12 +1,10 @@
 using MemoTree.Core.Validation;
 
-namespace MemoTree.Core.Configuration
-{
+namespace MemoTree.Core.Configuration {
     /// <summary>
     /// 专用的MemoTree配置验证器接口
     /// </summary>
-    public interface IMemoTreeConfigurationValidator
-    {
+    public interface IMemoTreeConfigurationValidator {
         /// <summary>
         /// 验证MemoTree主配置
         /// </summary>

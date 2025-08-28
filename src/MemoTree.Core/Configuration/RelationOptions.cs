@@ -1,12 +1,10 @@
-namespace MemoTree.Core.Configuration
-{
+namespace MemoTree.Core.Configuration {
     /// <summary>
     /// 关系管理配置选项
     /// 专注于关系处理的行为逻辑，不包含路径信息
     /// 路径信息由MemoTreeOptions统一管理
     /// </summary>
-    public class RelationOptions
-    {
+    public class RelationOptions {
         /// <summary>
         /// 是否启用父子关系独立存储
         /// </summary>

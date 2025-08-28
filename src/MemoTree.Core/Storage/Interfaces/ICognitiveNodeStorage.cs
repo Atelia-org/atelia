@@ -1,13 +1,11 @@
 using MemoTree.Core.Types;
 
-namespace MemoTree.Core.Storage.Interfaces
-{
+namespace MemoTree.Core.Storage.Interfaces {
     /// <summary>
     /// 复合存储接口（组合所有存储功能）
     /// 提供统一的认知节点数据访问接口
     /// </summary>
-    public interface ICognitiveNodeStorage : INodeMetadataStorage, INodeContentStorage, INodeHierarchyStorage
-    {
+    public interface ICognitiveNodeStorage : INodeMetadataStorage, INodeContentStorage, INodeHierarchyStorage {
         /// <summary>
         /// 获取完整节点
         /// </summary>
@@ -15,8 +13,9 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>完整的认知节点，如果不存在则返回null</returns>
         Task<CognitiveNode?> GetCompleteNodeAsync(
-            NodeId nodeId, 
-            CancellationToken cancellationToken = default);
+            NodeId nodeId,
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 保存完整节点
@@ -40,8 +39,9 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>操作结果</returns>
         Task<T> ExecuteInTransactionAsync<T>(
-            Func<ICognitiveNodeStorage, CancellationToken, Task<T>> operation, 
-            CancellationToken cancellationToken = default);
+            Func<ICognitiveNodeStorage, CancellationToken, Task<T>> operation,
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 事务性操作（无返回值）
@@ -49,8 +49,9 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="operation">事务操作</param>
         /// <param name="cancellationToken">取消令牌</param>
         Task ExecuteInTransactionAsync(
-            Func<ICognitiveNodeStorage, CancellationToken, Task> operation, 
-            CancellationToken cancellationToken = default);
+            Func<ICognitiveNodeStorage, CancellationToken, Task> operation,
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 批量获取完整节点
@@ -59,8 +60,9 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>节点ID到完整节点的映射</returns>
         Task<IReadOnlyDictionary<NodeId, CognitiveNode>> GetCompleteNodesBatchAsync(
-            IEnumerable<NodeId> nodeIds, 
-            CancellationToken cancellationToken = default);
+            IEnumerable<NodeId> nodeIds,
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 批量保存完整节点
@@ -68,8 +70,9 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="nodes">认知节点集合</param>
         /// <param name="cancellationToken">取消令牌</param>
         Task SaveCompleteNodesBatchAsync(
-            IEnumerable<CognitiveNode> nodes, 
-            CancellationToken cancellationToken = default);
+            IEnumerable<CognitiveNode> nodes,
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 创建新节点
@@ -83,7 +86,8 @@ namespace MemoTree.Core.Storage.Interfaces
             NodeMetadata metadata,
             NodeContent? content = null,
             NodeId? parentId = null,
-            CancellationToken cancellationToken = default);
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 复制节点（包括子树）
@@ -97,7 +101,8 @@ namespace MemoTree.Core.Storage.Interfaces
             NodeId sourceId,
             NodeId? targetParentId = null,
             bool includeSubtree = true,
-            CancellationToken cancellationToken = default);
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 获取存储统计信息
@@ -117,25 +122,39 @@ namespace MemoTree.Core.Storage.Interfaces
     /// <summary>
     /// 存储统计信息
     /// </summary>
-    public record StorageStatistics
-    {
-        public int TotalNodes { get; init; }
-        public int TotalRelations { get; init; }
-        public long TotalContentSize { get; init; }
-        public int MaxDepth { get; init; }
-        public DateTime LastModified { get; init; }
-        public IReadOnlyDictionary<NodeType, int> NodeTypeDistribution { get; init; } = 
-            new Dictionary<NodeType, int>();
-        public IReadOnlyDictionary<LodLevel, int> ContentLevelDistribution { get; init; } = 
-            new Dictionary<LodLevel, int>();
+    public record StorageStatistics {
+        public int TotalNodes {
+            get; init;
+        }
+        public int TotalRelations {
+            get; init;
+        }
+        public long TotalContentSize {
+            get; init;
+        }
+        public int MaxDepth {
+            get; init;
+        }
+        public DateTime LastModified {
+            get; init;
+        }
+        public IReadOnlyDictionary<NodeType, int> NodeTypeDistribution {
+            get; init;
+        } =
+        new Dictionary<NodeType, int>();
+        public IReadOnlyDictionary<LodLevel, int> ContentLevelDistribution {
+            get; init;
+        } =
+        new Dictionary<LodLevel, int>();
     }
 
     /// <summary>
     /// 存储完整性验证结果
     /// </summary>
-    public record StorageIntegrityResult
-    {
-        public bool IsValid { get; init; }
+    public record StorageIntegrityResult {
+        public bool IsValid {
+            get; init;
+        }
         public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
         public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
         public DateTime ValidatedAt { get; init; } = DateTime.UtcNow;

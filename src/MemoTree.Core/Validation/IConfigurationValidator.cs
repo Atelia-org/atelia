@@ -1,14 +1,12 @@
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MemoTree.Core.Validation
-{
+namespace MemoTree.Core.Validation {
     /// <summary>
     /// 配置验证器接口
     /// 确保配置值不超过系统硬限制
     /// </summary>
-    public interface IConfigurationValidator
-    {
+    public interface IConfigurationValidator {
         /// <summary>
         /// 验证配置对象
         /// </summary>
@@ -108,8 +106,7 @@ namespace MemoTree.Core.Validation
     /// 提供类型安全的配置验证
     /// </summary>
     /// <typeparam name="T">配置类型</typeparam>
-    public interface IConfigurationValidator<T> where T : class
-    {
+    public interface IConfigurationValidator<T> where T : class {
         /// <summary>
         /// 验证配置对象
         /// </summary>
@@ -130,8 +127,7 @@ namespace MemoTree.Core.Validation
     /// MemoTree专用配置验证器接口
     /// 验证各配置模块
     /// </summary>
-    public interface IMemoTreeConfigurationValidator
-    {
+    public interface IMemoTreeConfigurationValidator {
         /// <summary>
         /// 验证主配置
         /// </summary>

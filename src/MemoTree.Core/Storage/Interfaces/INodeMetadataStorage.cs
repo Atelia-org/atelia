@@ -1,13 +1,11 @@
 using MemoTree.Core.Types;
 
-namespace MemoTree.Core.Storage.Interfaces
-{
+namespace MemoTree.Core.Storage.Interfaces {
     /// <summary>
     /// 节点元数据存储接口
     /// 提供节点基础信息的CRUD操作
     /// </summary>
-    public interface INodeMetadataStorage
-    {
+    public interface INodeMetadataStorage {
         /// <summary>
         /// 获取节点元数据
         /// </summary>
@@ -37,8 +35,9 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>节点ID到元数据的映射</returns>
         Task<IReadOnlyDictionary<NodeId, NodeMetadata>> GetBatchAsync(
-            IEnumerable<NodeId> nodeIds, 
-            CancellationToken cancellationToken = default);
+            IEnumerable<NodeId> nodeIds,
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 异步枚举所有元数据
@@ -69,8 +68,9 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>指定类型的所有节点元数据</returns>
         IAsyncEnumerable<NodeMetadata> FindByTypeAsync(
-            NodeType nodeType, 
-            CancellationToken cancellationToken = default);
+            NodeType nodeType,
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
         /// 根据标签查找节点
@@ -79,7 +79,8 @@ namespace MemoTree.Core.Storage.Interfaces
         /// <param name="cancellationToken">取消令牌</param>
         /// <returns>包含指定标签的所有节点元数据</returns>
         IAsyncEnumerable<NodeMetadata> FindByTagAsync(
-            string tag, 
-            CancellationToken cancellationToken = default);
+            string tag,
+            CancellationToken cancellationToken = default
+        );
     }
 }

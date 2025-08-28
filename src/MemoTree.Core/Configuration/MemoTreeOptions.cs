@@ -1,13 +1,11 @@
 using System.Collections.Generic;
 
-namespace MemoTree.Core.Configuration
-{
+namespace MemoTree.Core.Configuration {
     /// <summary>
     /// MemoTree系统配置选项
     /// 对应MVP设计草稿中定义的Workspace结构
     /// </summary>
-    public class MemoTreeOptions
-    {
+    public class MemoTreeOptions {
         /// <summary>
         /// 工作空间根目录路径
         /// </summary>
@@ -65,8 +63,9 @@ namespace MemoTree.Core.Configuration
         /// <summary>
         /// 支持的文件扩展名
         /// </summary>
-        public IList<string> SupportedFileExtensions { get; set; } = new List<string>
-        {
+        public IList<string> SupportedFileExtensions {
+            get; set;
+        } = new List<string> {
             ".md", ".txt", ".cs", ".json", ".yaml", ".yml"
         };
     }

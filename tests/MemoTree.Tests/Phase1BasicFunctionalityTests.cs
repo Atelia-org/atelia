@@ -4,17 +4,14 @@ using MemoTree.Core.Configuration;
 using MemoTree.Core.Exceptions;
 using MemoTree.Core.Validation;
 
-namespace MemoTree.Tests
-{
+namespace MemoTree.Tests {
     /// <summary>
     /// Phase1基础功能测试
     /// 验证Phase1基础设施层的核心功能
     /// </summary>
-    public class Phase1BasicFunctionalityTests
-    {
+    public class Phase1BasicFunctionalityTests {
         [Fact]
-        public void NodeId_Creation_ShouldWork()
-        {
+        public void NodeId_Creation_ShouldWork() {
             // Arrange & Act
             var nodeId = NodeId.Generate();
 
@@ -24,8 +21,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void CognitiveNode_Creation_ShouldWork()
-        {
+        public void CognitiveNode_Creation_ShouldWork() {
             // Arrange & Act
             var node = CognitiveNode.Create(NodeType.Concept, "测试节点");
 
@@ -36,8 +32,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void MemoTreeOptions_DefaultValues_ShouldBeValid()
-        {
+        public void MemoTreeOptions_DefaultValues_ShouldBeValid() {
             // Arrange & Act
             var options = new MemoTreeOptions();
 
@@ -52,8 +47,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void NodeNotFoundException_WithContext_ShouldWork()
-        {
+        public void NodeNotFoundException_WithContext_ShouldWork() {
             // Arrange
             var nodeId = NodeId.Generate();
 
@@ -68,8 +62,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void LodLevel_NewDesign_ShouldWork()
-        {
+        public void LodLevel_NewDesign_ShouldWork() {
             // Test new LOD levels
             Assert.Equal(0, (int)LodLevel.Gist);
             Assert.Equal(1, (int)LodLevel.Summary);
@@ -91,8 +84,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void ValidationResult_Success_ShouldWork()
-        {
+        public void ValidationResult_Success_ShouldWork() {
             // Arrange & Act
             var result = ValidationResult.Success();
 
@@ -103,8 +95,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void ValidationResult_WithErrors_ShouldWork()
-        {
+        public void ValidationResult_WithErrors_ShouldWork() {
             // Arrange
             var error = ValidationError.Create("TEST_ERROR", "测试错误消息");
 
@@ -119,8 +110,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void GuidEncoder_ToIdString_ShouldReturnConsistentResults()
-        {
+        public void GuidEncoder_ToIdString_ShouldReturnConsistentResults() {
             // Arrange
             var guid = Guid.NewGuid();
 
@@ -134,8 +124,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void NodeConstraints_Values_ShouldBeReasonable()
-        {
+        public void NodeConstraints_Values_ShouldBeReasonable() {
             // Assert
             Assert.True(NodeConstraints.MaxTitleLength > 0);
             Assert.True(NodeConstraints.MaxContentLength > 0);
@@ -145,8 +134,7 @@ namespace MemoTree.Tests
         }
 
         [Fact]
-        public void SystemLimits_Values_ShouldBeReasonable()
-        {
+        public void SystemLimits_Values_ShouldBeReasonable() {
             // Assert
             Assert.True(SystemLimits.MaxTokensPerNode > 0);
             Assert.True(SystemLimits.MaxTokensPerView > SystemLimits.MaxTokensPerNode);

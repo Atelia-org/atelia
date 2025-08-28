@@ -1,17 +1,17 @@
 using System.Collections.Generic;
 
-namespace MemoTree.Core.Types
-{
+namespace MemoTree.Core.Types {
     /// <summary>
     /// 关系类型定义
     /// 定义关系类型的元数据和行为特征
     /// </summary>
-    public record RelationTypeDefinition
-    {
+    public record RelationTypeDefinition {
         /// <summary>
         /// 关系类型
         /// </summary>
-        public RelationType Type { get; init; }
+        public RelationType Type {
+            get; init;
+        }
 
         /// <summary>
         /// 关系类型名称
@@ -36,8 +36,10 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 关系类型的扩展元数据
         /// </summary>
-        public IReadOnlyDictionary<string, object> Metadata { get; init; } =
-            new Dictionary<string, object>();
+        public IReadOnlyDictionary<string, object> Metadata {
+            get; init;
+        } =
+        new Dictionary<string, object>();
 
         /// <summary>
         /// 创建时间

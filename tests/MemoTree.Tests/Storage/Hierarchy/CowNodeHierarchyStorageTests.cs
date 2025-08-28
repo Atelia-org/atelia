@@ -7,17 +7,14 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using Xunit;
 
-namespace MemoTree.Tests.Storage.Hierarchy
-{
-    public class CowNodeHierarchyStorageTests : IDisposable
-    {
+namespace MemoTree.Tests.Storage.Hierarchy {
+    public class CowNodeHierarchyStorageTests : IDisposable {
         private readonly string _testWorkspace;
-    private readonly ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>> _versionedLogger;
-    private readonly ILogger<CowNodeHierarchyStorage> _hierarchyLogger;
-    private readonly ILoggerFactory _loggerFactory;
+        private readonly ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>> _versionedLogger;
+        private readonly ILogger<CowNodeHierarchyStorage> _hierarchyLogger;
+        private readonly ILoggerFactory _loggerFactory;
 
-        public CowNodeHierarchyStorageTests()
-        {
+        public CowNodeHierarchyStorageTests() {
             _testWorkspace = Path.Combine(Path.GetTempPath(), "MemoTreeTests", Guid.NewGuid().ToString());
             Directory.CreateDirectory(_testWorkspace);
             _loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
@@ -25,8 +22,7 @@ namespace MemoTree.Tests.Storage.Hierarchy
             _hierarchyLogger = _loggerFactory.CreateLogger<CowNodeHierarchyStorage>();
         }
         [Fact]
-        public async Task AddChild_ShouldThrow_WhenCreatesCycle()
-        {
+        public async Task AddChild_ShouldThrow_WhenCreatesCycle() {
             var versioned = await VersionedStorageFactory.CreateHierarchyStorageAsync(_testWorkspace, _versionedLogger);
             var storage = new CowNodeHierarchyStorage(versioned, _hierarchyLogger);
 
@@ -36,15 +32,13 @@ namespace MemoTree.Tests.Storage.Hierarchy
             await storage.AddChildAsync(a, b);
 
             // attempt to create cycle: add A under B
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () => {
                 await storage.AddChildAsync(b, a);
             });
         }
 
         [Fact]
-        public async Task MoveNode_ShouldThrow_WhenCreatesCycle()
-        {
+        public async Task MoveNode_ShouldThrow_WhenCreatesCycle() {
             var versioned = await VersionedStorageFactory.CreateHierarchyStorageAsync(_testWorkspace, _versionedLogger);
             var storage = new CowNodeHierarchyStorage(versioned, _hierarchyLogger);
 
@@ -56,16 +50,13 @@ namespace MemoTree.Tests.Storage.Hierarchy
             await storage.AddChildAsync(b, c);
 
             // move A under C would form a cycle A->B->C->A
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () => {
                 await storage.MoveNodeAsync(a, c);
             });
         }
 
-        public void Dispose()
-        {
-            if (Directory.Exists(_testWorkspace))
-            {
+        public void Dispose() {
+            if (Directory.Exists(_testWorkspace)) {
                 Directory.Delete(_testWorkspace, true);
             }
             _loggerFactory.Dispose();

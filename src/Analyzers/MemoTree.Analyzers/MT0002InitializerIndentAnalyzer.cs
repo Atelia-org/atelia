@@ -17,6 +17,7 @@ namespace MemoTree.Analyzers;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class MT0002InitializerIndentAnalyzer : DiagnosticAnalyzer {
     public const string DiagnosticId = "MT0002";
+    public const string CanonicalName = "IndentInitializerElements"; // DocAlias: IndentInitializers
     private static readonly LocalizableString Title = "Initializer indentation inconsistent";
     private static readonly LocalizableString Message = "Initializer element indentation inconsistent";
     private static readonly DiagnosticDescriptor Rule = new(

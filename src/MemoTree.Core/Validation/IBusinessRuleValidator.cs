@@ -2,14 +2,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using MemoTree.Core.Types;
 
-namespace MemoTree.Core.Validation
-{
+namespace MemoTree.Core.Validation {
     /// <summary>
     /// 业务规则验证器接口
     /// 提供业务逻辑相关的验证功能
     /// </summary>
-    public interface IBusinessRuleValidator
-    {
+    public interface IBusinessRuleValidator {
         /// <summary>
         /// 验证节点创建规则
         /// </summary>
@@ -113,8 +111,7 @@ namespace MemoTree.Core.Validation
     /// <summary>
     /// 节点操作类型
     /// </summary>
-    public enum NodeOperation
-    {
+    public enum NodeOperation {
         /// <summary>
         /// 读取
         /// </summary>

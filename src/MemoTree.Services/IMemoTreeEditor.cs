@@ -6,8 +6,7 @@ namespace MemoTree.Services;
 /// MemoTree编辑器接口 (MVP版本)
 /// 提供节点的创建、更新、删除等编辑操作
 /// </summary>
-public interface IMemoTreeEditor
-{
+public interface IMemoTreeEditor {
     /// <summary>
     /// 创建新节点
     /// </summary>
@@ -18,11 +17,12 @@ public interface IMemoTreeEditor
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>新创建的节点ID</returns>
     Task<NodeId> CreateNodeAsync(
-        string title, 
-        string content = "", 
-        NodeId? parentId = null, 
+        string title,
+        string content = "",
+        NodeId? parentId = null,
         NodeType type = NodeType.Concept,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// 更新节点内容

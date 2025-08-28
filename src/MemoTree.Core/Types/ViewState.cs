@@ -1,16 +1,16 @@
 using System.Collections.Generic;
 
-namespace MemoTree.Core.Types
-{
+namespace MemoTree.Core.Types {
     /// <summary>
     /// 节点在视图中的状态
     /// </summary>
-    public record NodeViewState
-    {
+    public record NodeViewState {
         /// <summary>
         /// 节点ID
         /// </summary>
-        public NodeId Id { get; init; }
+        public NodeId Id {
+            get; init;
+        }
 
         /// <summary>
         /// 当前显示的LOD级别
@@ -41,8 +41,7 @@ namespace MemoTree.Core.Types
     /// <summary>
     /// MemoTree视图状态
     /// </summary>
-    public record MemoTreeViewState
-    {
+    public record MemoTreeViewState {
         /// <summary>
         /// 视图名称
         /// </summary>
@@ -61,13 +60,17 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 当前聚焦的节点ID
         /// </summary>
-        public NodeId? FocusedNodeId { get; init; }
+        public NodeId? FocusedNodeId {
+            get; init;
+        }
 
         /// <summary>
         /// 视图的全局设置
         /// </summary>
-        public IReadOnlyDictionary<string, object> ViewSettings { get; init; } =
-            new Dictionary<string, object>();
+        public IReadOnlyDictionary<string, object> ViewSettings {
+            get; init;
+        } =
+        new Dictionary<string, object>();
 
         /// <summary>
         /// 视图的描述信息
@@ -82,7 +85,9 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 当前视图的根节点ID（用于树形渲染的起点）
         /// </summary>
-        public NodeId? RootNodeId { get; init; }
+        public NodeId? RootNodeId {
+            get; init;
+        }
 
         /// <summary>
         /// 视图的最大展开深度（控制树形结构的显示层次）

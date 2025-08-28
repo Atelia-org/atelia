@@ -4,10 +4,8 @@ using MemoTree.Core.Types;
 
 namespace MemoTree.Tests.Storage;
 
-public class ViewStateStorageContractTests
-{
-    private sealed class DummyViewStateStorage : IViewStateStorage
-    {
+public class ViewStateStorageContractTests {
+    private sealed class DummyViewStateStorage : IViewStateStorage {
         public Task<MemoTreeViewState?> GetViewStateAsync(string viewName, CancellationToken cancellationToken = default) => Task.FromResult<MemoTreeViewState?>(null);
         public Task SaveViewStateAsync(MemoTreeViewState viewState, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<IReadOnlyList<string>> GetViewNamesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
@@ -23,8 +21,7 @@ public class ViewStateStorageContractTests
     }
 
     [Fact]
-    public async Task Interface_Signature_Should_Be_Implementable()
-    {
+    public async Task Interface_Signature_Should_Be_Implementable() {
         IViewStateStorage storage = new DummyViewStateStorage();
         var exists = await storage.ViewExistsAsync("default");
         var names = await storage.GetViewNamesAsync();

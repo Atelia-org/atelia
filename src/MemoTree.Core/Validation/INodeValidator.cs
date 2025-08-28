@@ -2,14 +2,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using MemoTree.Core.Types;
 
-namespace MemoTree.Core.Validation
-{
+namespace MemoTree.Core.Validation {
     /// <summary>
     /// 节点验证器接口
     /// 提供节点数据的验证功能
     /// </summary>
-    public interface INodeValidator
-    {
+    public interface INodeValidator {
         /// <summary>
         /// 验证节点元数据
         /// </summary>

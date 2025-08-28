@@ -1,10 +1,8 @@
-namespace MemoTree.Core.Encoding
-{
+namespace MemoTree.Core.Encoding {
     /// <summary>
     /// 默认字符集集合
     /// </summary>
-    public static class DefaultCharsets
-    {
+    public static class DefaultCharsets {
         /// <summary>
         /// Base4096默认字符集：4096个语义中性的常用汉字
         /// 注意：此处先用占位符，稍后请手工替换为真实的4096字符序列

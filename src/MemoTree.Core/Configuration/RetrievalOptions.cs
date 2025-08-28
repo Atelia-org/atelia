@@ -1,10 +1,8 @@
-namespace MemoTree.Core.Configuration
-{
+namespace MemoTree.Core.Configuration {
     /// <summary>
     /// 检索配置选项
     /// </summary>
-    public class RetrievalOptions
-    {
+    public class RetrievalOptions {
         /// <summary>
         /// 是否启用全文搜索 (基于Lucene.Net)
         /// </summary>

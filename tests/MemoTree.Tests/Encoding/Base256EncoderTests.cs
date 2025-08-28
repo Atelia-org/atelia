@@ -3,12 +3,9 @@ using System.Linq;
 using MemoTree.Core.Encoding;
 using Xunit;
 
-namespace MemoTree.Tests.Encoding
-{
-    public class Base256EncoderTests
-    {
-        private static string CreateCharset256()
-        {
+namespace MemoTree.Tests.Encoding {
+    public class Base256EncoderTests {
+        private static string CreateCharset256() {
             // 使用代码点0..255依次构造，确保256个唯一字符
             return new string(Enumerable.Range(0, 256).Select(i => (char)i).ToArray());
         }
@@ -16,8 +13,7 @@ namespace MemoTree.Tests.Encoding
         private readonly Base256Encoder _encoder = new(CreateCharset256());
 
         [Fact]
-        public void EncodeDecode_EmptyBytes_ReturnsEmpty()
-        {
+        public void EncodeDecode_EmptyBytes_ReturnsEmpty() {
             var encoded = _encoder.EncodeBytes(Array.Empty<byte>());
             Assert.Equal(string.Empty, encoded);
 
@@ -26,8 +22,7 @@ namespace MemoTree.Tests.Encoding
         }
 
         [Fact]
-        public void Roundtrip_RandomBytes()
-        {
+        public void Roundtrip_RandomBytes() {
             var rnd = new Random(42);
             var bytes = new byte[1024];
             rnd.NextBytes(bytes);
@@ -39,8 +34,7 @@ namespace MemoTree.Tests.Encoding
         }
 
         [Fact]
-        public void Decode_InvalidChar_Throws()
-        {
+        public void Decode_InvalidChar_Throws() {
             // 字符\u0100不在0..255范围内，因此应当抛出异常
             Assert.Throws<ArgumentException>(() => _encoder.DecodeString("\u0100"));
         }

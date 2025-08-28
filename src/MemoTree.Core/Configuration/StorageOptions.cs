@@ -1,10 +1,8 @@
-namespace MemoTree.Core.Configuration
-{
+namespace MemoTree.Core.Configuration {
     /// <summary>
     /// 存储配置选项
     /// </summary>
-    public class StorageOptions
-    {
+    public class StorageOptions {
         /// <summary>
         /// 元数据文件名
         /// </summary>

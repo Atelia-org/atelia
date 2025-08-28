@@ -11,10 +11,8 @@ using Xunit;
 
 namespace MemoTree.Tests.Views;
 
-public class ViewManagementTests
-{
-    private ServiceProvider BuildServices(string workspaceRoot)
-    {
+public class ViewManagementTests {
+    private ServiceProvider BuildServices(string workspaceRoot) {
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddConsole());
         services.AddMemoTreeServices(workspaceRoot);
@@ -22,8 +20,7 @@ public class ViewManagementTests
     }
 
     [Fact]
-    public async Task CanCreateViewAndUpdateDescription()
-    {
+    public async Task CanCreateViewAndUpdateDescription() {
         // Arrange: 创建临时工作区
         var tempDir = Path.Combine(Path.GetTempPath(), "memotree-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);

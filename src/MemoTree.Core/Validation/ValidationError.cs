@@ -1,13 +1,11 @@
 using System;
 
-namespace MemoTree.Core.Validation
-{
+namespace MemoTree.Core.Validation {
     /// <summary>
     /// 验证错误
     /// 表示验证过程中发现的错误信息
     /// </summary>
-    public record ValidationError
-    {
+    public record ValidationError {
         /// <summary>
         /// 错误代码
         /// </summary>
@@ -26,7 +24,9 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 尝试设置的值
         /// </summary>
-        public object? AttemptedValue { get; init; }
+        public object? AttemptedValue {
+            get; init;
+        }
 
         /// <summary>
         /// 错误严重级别
@@ -36,10 +36,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建验证错误
         /// </summary>
-        public static ValidationError Create(string code, string message, string? propertyName = null, object? attemptedValue = null)
-        {
-            return new ValidationError
-            {
+        public static ValidationError Create(string code, string message, string? propertyName = null, object? attemptedValue = null) {
+            return new ValidationError {
                 Code = code,
                 Message = message,
                 PropertyName = propertyName ?? string.Empty,
@@ -51,10 +49,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建属性验证错误
         /// </summary>
-        public static ValidationError ForProperty(string propertyName, string message, object? attemptedValue = null)
-        {
-            return new ValidationError
-            {
+        public static ValidationError ForProperty(string propertyName, string message, object? attemptedValue = null) {
+            return new ValidationError {
                 Code = $"PROPERTY_{propertyName.ToUpperInvariant()}_INVALID",
                 Message = message,
                 PropertyName = propertyName,
@@ -66,10 +62,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建长度验证错误
         /// </summary>
-        public static ValidationError ForLength(string propertyName, int actualLength, int maxLength)
-        {
-            return new ValidationError
-            {
+        public static ValidationError ForLength(string propertyName, int actualLength, int maxLength) {
+            return new ValidationError {
                 Code = "LENGTH_EXCEEDED",
                 Message = $"{propertyName} length {actualLength} exceeds maximum allowed length {maxLength}",
                 PropertyName = propertyName,
@@ -81,10 +75,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建必填字段验证错误
         /// </summary>
-        public static ValidationError ForRequired(string propertyName)
-        {
-            return new ValidationError
-            {
+        public static ValidationError ForRequired(string propertyName) {
+            return new ValidationError {
                 Code = "REQUIRED_FIELD_MISSING",
                 Message = $"{propertyName} is required",
                 PropertyName = propertyName,
@@ -96,10 +88,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建格式验证错误
         /// </summary>
-        public static ValidationError ForFormat(string propertyName, string expectedFormat, object? attemptedValue = null)
-        {
-            return new ValidationError
-            {
+        public static ValidationError ForFormat(string propertyName, string expectedFormat, object? attemptedValue = null) {
+            return new ValidationError {
                 Code = "INVALID_FORMAT",
                 Message = $"{propertyName} has invalid format. Expected: {expectedFormat}",
                 PropertyName = propertyName,
@@ -111,10 +101,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建范围验证错误
         /// </summary>
-        public static ValidationError ForRange(string propertyName, object attemptedValue, object minValue, object maxValue)
-        {
-            return new ValidationError
-            {
+        public static ValidationError ForRange(string propertyName, object attemptedValue, object minValue, object maxValue) {
+            return new ValidationError {
                 Code = "VALUE_OUT_OF_RANGE",
                 Message = $"{propertyName} value {attemptedValue} is out of range [{minValue}, {maxValue}]",
                 PropertyName = propertyName,
@@ -126,10 +114,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建业务规则验证错误
         /// </summary>
-        public static ValidationError ForBusinessRule(string ruleName, string message)
-        {
-            return new ValidationError
-            {
+        public static ValidationError ForBusinessRule(string ruleName, string message) {
+            return new ValidationError {
                 Code = $"BUSINESS_RULE_{ruleName.ToUpperInvariant()}",
                 Message = message,
                 PropertyName = string.Empty,
@@ -141,15 +127,16 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 转换为字符串表示
         /// </summary>
-        public override string ToString()
-        {
+        public override string ToString() {
             var parts = new List<string> { $"[{Code}]", Message };
-            
-            if (!string.IsNullOrEmpty(PropertyName))
+
+            if (!string.IsNullOrEmpty(PropertyName)) {
                 parts.Add($"Property: {PropertyName}");
-            
-            if (AttemptedValue != null)
+            }
+
+            if (AttemptedValue != null) {
                 parts.Add($"Value: {AttemptedValue}");
+            }
 
             return string.Join(" | ", parts);
         }
@@ -159,8 +146,7 @@ namespace MemoTree.Core.Validation
     /// 验证警告
     /// 表示验证过程中发现的警告信息
     /// </summary>
-    public record ValidationWarning
-    {
+    public record ValidationWarning {
         /// <summary>
         /// 警告代码
         /// </summary>
@@ -184,10 +170,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建验证警告
         /// </summary>
-        public static ValidationWarning Create(string code, string message, string? propertyName = null)
-        {
-            return new ValidationWarning
-            {
+        public static ValidationWarning Create(string code, string message, string? propertyName = null) {
+            return new ValidationWarning {
                 Code = code,
                 Message = message,
                 PropertyName = propertyName ?? string.Empty,
@@ -198,10 +182,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建性能警告
         /// </summary>
-        public static ValidationWarning ForPerformance(string message)
-        {
-            return new ValidationWarning
-            {
+        public static ValidationWarning ForPerformance(string message) {
+            return new ValidationWarning {
                 Code = "PERFORMANCE_WARNING",
                 Message = message,
                 PropertyName = string.Empty,
@@ -212,10 +194,8 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 创建最佳实践警告
         /// </summary>
-        public static ValidationWarning ForBestPractice(string message)
-        {
-            return new ValidationWarning
-            {
+        public static ValidationWarning ForBestPractice(string message) {
+            return new ValidationWarning {
                 Code = "BEST_PRACTICE_WARNING",
                 Message = message,
                 PropertyName = string.Empty,
@@ -226,12 +206,12 @@ namespace MemoTree.Core.Validation
         /// <summary>
         /// 转换为字符串表示
         /// </summary>
-        public override string ToString()
-        {
+        public override string ToString() {
             var parts = new List<string> { $"[{Code}]", Message };
-            
-            if (!string.IsNullOrEmpty(PropertyName))
+
+            if (!string.IsNullOrEmpty(PropertyName)) {
                 parts.Add($"Property: {PropertyName}");
+            }
 
             return string.Join(" | ", parts);
         }
@@ -240,8 +220,7 @@ namespace MemoTree.Core.Validation
     /// <summary>
     /// 验证严重级别
     /// </summary>
-    public enum ValidationSeverity
-    {
+    public enum ValidationSeverity {
         /// <summary>
         /// 信息
         /// </summary>

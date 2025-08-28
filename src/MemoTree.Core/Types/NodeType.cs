@@ -1,11 +1,9 @@
-namespace MemoTree.Core.Types
-{
+namespace MemoTree.Core.Types {
     /// <summary>
     /// 认知节点类型枚举
     /// 定义不同类型的认知节点，用于分类和处理
     /// </summary>
-    public enum NodeType
-    {
+    public enum NodeType {
         /// <summary>
         /// 概念节点 - 表示抽象的概念、理论或想法
         /// 例如：设计模式、算法概念、业务规则等
@@ -70,15 +68,12 @@ namespace MemoTree.Core.Types
     /// <summary>
     /// 节点类型扩展方法
     /// </summary>
-    public static class NodeTypeExtensions
-    {
+    public static class NodeTypeExtensions {
         /// <summary>
         /// 获取节点类型的显示名称
         /// </summary>
-        public static string GetDisplayName(this NodeType nodeType)
-        {
-            return nodeType switch
-            {
+        public static string GetDisplayName(this NodeType nodeType) {
+            return nodeType switch {
                 NodeType.Concept => "概念",
                 NodeType.Entity => "实体",
                 NodeType.Process => "过程",
@@ -96,10 +91,8 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 获取节点类型的英文名称
         /// </summary>
-        public static string GetEnglishName(this NodeType nodeType)
-        {
-            return nodeType switch
-            {
+        public static string GetEnglishName(this NodeType nodeType) {
+            return nodeType switch {
                 NodeType.Concept => "Concept",
                 NodeType.Entity => "Entity",
                 NodeType.Process => "Process",
@@ -117,10 +110,8 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 获取节点类型的描述
         /// </summary>
-        public static string GetDescription(this NodeType nodeType)
-        {
-            return nodeType switch
-            {
+        public static string GetDescription(this NodeType nodeType) {
+            return nodeType switch {
                 NodeType.Concept => "表示抽象的概念、理论或想法",
                 NodeType.Entity => "表示具体的实体或对象",
                 NodeType.Process => "表示流程、步骤或操作",
@@ -138,20 +129,17 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 检查节点类型是否为结构性类型（容器类型）
         /// </summary>
-        public static bool IsStructural(this NodeType nodeType)
-        {
+        public static bool IsStructural(this NodeType nodeType) {
             return nodeType == NodeType.Container;
         }
 
         /// <summary>
         /// 检查节点类型是否为内容性类型
         /// </summary>
-        public static bool IsContent(this NodeType nodeType)
-        {
-            return nodeType switch
-            {
-                NodeType.Concept or NodeType.Entity or NodeType.Process or 
-                NodeType.Property or NodeType.Event or NodeType.Resource or 
+        public static bool IsContent(this NodeType nodeType) {
+            return nodeType switch {
+                NodeType.Concept or NodeType.Entity or NodeType.Process or
+                NodeType.Property or NodeType.Event or NodeType.Resource or
                 NodeType.Issue or NodeType.Solution or NodeType.Note => true,
                 _ => false
             };

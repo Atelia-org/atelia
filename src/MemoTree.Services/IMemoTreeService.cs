@@ -7,8 +7,7 @@ namespace MemoTree.Services;
 /// MemoTree核心服务接口 (MVP版本)
 /// 提供视图渲染、节点操作和树结构管理功能
 /// </summary>
-public interface IMemoTreeService
-{
+public interface IMemoTreeService {
     /// <summary>
     /// 渲染指定视图的Markdown内容
     /// </summary>
@@ -86,15 +85,28 @@ public interface IMemoTreeService
 /// <summary>
 /// 节点树项 (简化版)
 /// </summary>
-public record NodeTreeItem
-{
-    public NodeId Id { get; init; }
+public record NodeTreeItem {
+    public NodeId Id {
+        get; init;
+    }
     public string Title { get; init; } = string.Empty;
-    public NodeType Type { get; init; }
-    public int Level { get; init; }
-    public bool HasChildren { get; init; }
-    public bool IsExpanded { get; init; }
-    public int CharacterCount { get; init; }
-    public int EstimatedExpandCharacters { get; init; }
+    public NodeType Type {
+        get; init;
+    }
+    public int Level {
+        get; init;
+    }
+    public bool HasChildren {
+        get; init;
+    }
+    public bool IsExpanded {
+        get; init;
+    }
+    public int CharacterCount {
+        get; init;
+    }
+    public int EstimatedExpandCharacters {
+        get; init;
+    }
     public IReadOnlyList<NodeTreeItem> Children { get; init; } = Array.Empty<NodeTreeItem>();
 }

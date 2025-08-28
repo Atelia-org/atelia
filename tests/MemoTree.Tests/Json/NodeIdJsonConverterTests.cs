@@ -3,24 +3,19 @@ using MemoTree.Core.Json;
 using MemoTree.Core.Types;
 using Xunit;
 
-namespace MemoTree.Tests.Json
-{
-    public class NodeIdJsonConverterTests
-    {
+namespace MemoTree.Tests.Json {
+    public class NodeIdJsonConverterTests {
         private readonly JsonSerializerOptions _jsonOptions;
 
-        public NodeIdJsonConverterTests()
-        {
-            _jsonOptions = new JsonSerializerOptions
-            {
+        public NodeIdJsonConverterTests() {
+            _jsonOptions = new JsonSerializerOptions {
                 Converters = { new NodeIdJsonConverter() },
                 Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
             };
         }
 
         [Fact]
-        public void Serialize_NodeId_ShouldProduceStringValue()
-        {
+        public void Serialize_NodeId_ShouldProduceStringValue() {
             // Arrange
             var nodeId = NodeId.Generate();
 
@@ -32,8 +27,7 @@ namespace MemoTree.Tests.Json
         }
 
         [Fact]
-        public void Deserialize_StringValue_ShouldProduceNodeId()
-        {
+        public void Deserialize_StringValue_ShouldProduceNodeId() {
             // Arrange
             var originalNodeId = NodeId.Generate();
             var json = $"\"{originalNodeId.Value}\"";
@@ -46,8 +40,7 @@ namespace MemoTree.Tests.Json
         }
 
         [Fact]
-        public void Deserialize_ObjectWithValueProperty_ShouldProduceNodeId()
-        {
+        public void Deserialize_ObjectWithValueProperty_ShouldProduceNodeId() {
             // Arrange
             var nodeId = NodeId.Generate();
             var json = $"{{\"value\":\"{nodeId.Value}\"}}";
@@ -60,8 +53,7 @@ namespace MemoTree.Tests.Json
         }
 
         [Fact]
-        public void SerializeDeserialize_HierarchyInfo_ShouldPreserveNodeIds()
-        {
+        public void SerializeDeserialize_HierarchyInfo_ShouldPreserveNodeIds() {
             // Arrange
             var parentId = NodeId.Generate();
             var childId = NodeId.Generate();
@@ -79,25 +71,25 @@ namespace MemoTree.Tests.Json
         }
 
         [Fact]
-        public void Deserialize_EmptyString_ShouldThrowJsonException()
-        {
+        public void Deserialize_EmptyString_ShouldThrowJsonException() {
             // Arrange
             var json = "\"\"";
 
             // Act & Assert
-            Assert.Throws<JsonException>(() => 
-                JsonSerializer.Deserialize<NodeId>(json, _jsonOptions));
+            Assert.Throws<JsonException>(() =>
+                JsonSerializer.Deserialize<NodeId>(json, _jsonOptions)
+            );
         }
 
         [Fact]
-        public void Deserialize_ObjectWithoutValue_ShouldThrowJsonException()
-        {
+        public void Deserialize_ObjectWithoutValue_ShouldThrowJsonException() {
             // Arrange
             var json = "{\"notValue\":\"test\"}";
 
             // Act & Assert
-            Assert.Throws<JsonException>(() => 
-                JsonSerializer.Deserialize<NodeId>(json, _jsonOptions));
+            Assert.Throws<JsonException>(() =>
+                JsonSerializer.Deserialize<NodeId>(json, _jsonOptions)
+            );
         }
     }
 }

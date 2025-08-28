@@ -4,16 +4,25 @@ Custom Roslyn analyzers & code fixes for MemoTree's LLM-centric development styl
 
 ## Implemented Rules
 
-| ID | Title | Category | AutoFix | Notes |
-|----|-------|----------|---------|-------|
-| MT0001 | Multiple statements on one line | Formatting | Yes | One physical line = max one simple statement. |
-| MT0002 | Initializer indentation normalization | Formatting | Yes | Ensures each element line indented exactly one level (+4 spaces). |
+Canonical naming convention: see `docs/AnalyzerRules/NamingConvention.md`.
+
+| ID | CanonicalName | Alias | Category | AutoFix | Notes |
+|----|---------------|-------|----------|---------|-------|
+| MT0001 | StatementSinglePerLine | SingleStatementPerLine | Formatting | Yes | One physical line = max one simple statement. |
+| MT0002 | IndentInitializerElements | IndentInitializers | Formatting | Yes | Each initializer element line exactly one indent (+4) from `{` line. |
+| MT0003 | IndentMultilineParameterList | IndentMultilineParams | Formatting | Yes | Declaration parameter + invocation argument lists (temporary): each parameter line (excluding '(' line) indented one level; comment-start lines ignored. |
 
 ## Roadmap (Draft)
 - MT0003 Multiple variable declarators -> split lines.
 - MT0004 Enforce single indent inside switch case blocks (with braces).
 - MT0005 Normalize trailing commas in multi-line constructs.
 - MT0006 Expand single-line blocks when containing nested statements.
+
+### Rule Decision Records
+Design rationales for proposed / implemented rules live under `docs/AnalyzerRules/`.
+Current:
+- `MT0004_NewLineClosingParenMultilineParameterList.md` – closing parenthesis on its own line (proposed).
+- `NamingConvention.md` – rule naming system.
 
 ## Usage
 Project references (or analyzer package once packed) will activate rules automatically. Run `dotnet build` to see diagnostics or apply code fixes in IDE / via `dotnet format` (future custom tooling).
@@ -46,14 +55,14 @@ Troubleshooting:
 * Delete the `bin` / `obj` folders and repeat both steps if you suspect stale output.
 
 ### Applying CodeFixes via CLI
-Use `dotnet format analyzers` to batch apply available code fixes (MT0001 / MT0002):
+Use `dotnet format analyzers` to batch apply available code fixes (MT0001 / MT0002 / MT0003):
 ```
-dotnet format analyzers --severity info --diagnostics MT0001,MT0002
+dotnet format analyzers --severity info --diagnostics MT0001,MT0002,MT0003
 ```
 To include self-analysis at the same time for the analyzer project itself, combine:
 ```
 dotnet build src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj -p:UseSelfAnalyzers=true
-dotnet format analyzers --severity info --diagnostics MT0001,MT0002
+dotnet format analyzers --severity info --diagnostics MT0001,MT0002,MT0003
 ```
 Add `--verify-no-changes` in CI to fail if formatting is required.
 
@@ -63,7 +72,7 @@ Add `--verify-no-changes` in CI to fail if formatting is required.
 | Build (normal) | `dotnet build src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj` |
 | Self-analyze | `dotnet build src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj -p:UseSelfAnalyzers=true` |
 | Apply fixes all projects | `dotnet format analyzers --severity info` |
-| Apply only MT0001 & MT0002 | `dotnet format analyzers --diagnostics MT0001,MT0002 --severity info` |
+| Apply only MT0001 & MT0002 & MT0003 | `dotnet format analyzers --diagnostics MT0001,MT0002,MT0003 --severity info` |
 | CI verify clean | `dotnet format analyzers --verify-no-changes --severity info` |
 
 ### Internal Implementation Note

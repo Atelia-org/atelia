@@ -3,20 +3,17 @@ using MemoTree.Core.Storage.Relations;
 
 namespace MemoTree.Tests.Storage;
 
-public class RelationGraphAndPathTests
-{
+public class RelationGraphAndPathTests {
     [Fact]
-    public void GetRelationTypes_Should_Return_Set_Of_Types()
-    {
+    public void GetRelationTypes_Should_Return_Set_Of_Types() {
         var a = NodeId.Generate();
         var b = NodeId.Generate();
         var r = NodeRelation.Create(a, b, RelationType.References);
-        var path = new RelationPath
-        {
+        var path = new RelationPath {
             StartNodeId = a,
             EndNodeId = b,
-            NodePath = new [] { a, b },
-            Relations = new [] { r }
+            NodePath = new[] { a, b },
+            Relations = new[] { r }
         };
 
         var types = path.GetRelationTypes();
@@ -25,23 +22,19 @@ public class RelationGraphAndPathTests
     }
 
     [Fact]
-    public void AreDirectlyConnected_Should_Work_For_Direct_Edges()
-    {
+    public void AreDirectlyConnected_Should_Work_For_Direct_Edges() {
         var a = NodeId.Generate();
         var b = NodeId.Generate();
         var r = NodeRelation.Create(a, b, RelationType.References);
 
-        var graph = new RelationGraph
-        {
+        var graph = new RelationGraph {
             RootNodeId = a,
             Nodes = new HashSet<NodeId> { a, b },
-            Relations = new [] { r },
-            OutgoingRelations = new Dictionary<NodeId, IReadOnlyList<NodeRelation>>
-            {
+            Relations = new[] { r },
+            OutgoingRelations = new Dictionary<NodeId, IReadOnlyList<NodeRelation>> {
                 [a] = new List<NodeRelation> { r }
             },
-            IncomingRelations = new Dictionary<NodeId, IReadOnlyList<NodeRelation>>
-            {
+            IncomingRelations = new Dictionary<NodeId, IReadOnlyList<NodeRelation>> {
                 [b] = new List<NodeRelation> { r }
             },
             MaxDepth = 1

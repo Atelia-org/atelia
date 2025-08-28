@@ -1,11 +1,9 @@
-namespace MemoTree.Core.Types
-{
+namespace MemoTree.Core.Types {
     /// <summary>
     /// 节点间关系类型枚举
     /// 定义认知节点之间的语义关系
     /// </summary>
-    public enum RelationType
-    {
+    public enum RelationType {
         /// <summary>
         /// 引用关系 - 一个节点引用另一个节点
         /// 例如：代码引用、文档引用、概念引用等
@@ -106,15 +104,12 @@ namespace MemoTree.Core.Types
     /// <summary>
     /// 关系类型扩展方法
     /// </summary>
-    public static class RelationTypeExtensions
-    {
+    public static class RelationTypeExtensions {
         /// <summary>
         /// 获取关系类型的显示名称
         /// </summary>
-        public static string GetDisplayName(this RelationType relationType)
-        {
-            return relationType switch
-            {
+        public static string GetDisplayName(this RelationType relationType) {
+            return relationType switch {
                 RelationType.References => "引用",
                 RelationType.DependsOn => "依赖",
                 RelationType.ComposedOf => "组合",
@@ -138,10 +133,8 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 获取关系类型的英文名称
         /// </summary>
-        public static string GetEnglishName(this RelationType relationType)
-        {
-            return relationType switch
-            {
+        public static string GetEnglishName(this RelationType relationType) {
+            return relationType switch {
                 RelationType.References => "References",
                 RelationType.DependsOn => "Depends On",
                 RelationType.ComposedOf => "Composed Of",
@@ -165,10 +158,8 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 获取关系类型的描述
         /// </summary>
-        public static string GetDescription(this RelationType relationType)
-        {
-            return relationType switch
-            {
+        public static string GetDescription(this RelationType relationType) {
+            return relationType switch {
                 RelationType.References => "一个节点引用另一个节点",
                 RelationType.DependsOn => "一个节点依赖于另一个节点",
                 RelationType.ComposedOf => "一个节点是另一个节点的组成部分",
@@ -192,10 +183,8 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 检查关系是否为有向关系
         /// </summary>
-        public static bool IsDirected(this RelationType relationType)
-        {
-            return relationType switch
-            {
+        public static bool IsDirected(this RelationType relationType) {
+            return relationType switch {
                 RelationType.References or RelationType.DependsOn or RelationType.ComposedOf or
                 RelationType.InheritsFrom or RelationType.Implements or RelationType.Precedes or
                 RelationType.Follows or RelationType.Replaces or RelationType.Extends or
@@ -209,10 +198,8 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 获取关系的反向类型（如果存在）
         /// </summary>
-        public static RelationType? GetInverse(this RelationType relationType)
-        {
-            return relationType switch
-            {
+        public static RelationType? GetInverse(this RelationType relationType) {
+            return relationType switch {
                 RelationType.Precedes => RelationType.Follows,
                 RelationType.Follows => RelationType.Precedes,
                 RelationType.Contains => RelationType.ComposedOf,

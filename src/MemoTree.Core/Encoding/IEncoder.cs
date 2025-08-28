@@ -1,12 +1,10 @@
 using System;
 
-namespace MemoTree.Core.Encoding
-{
+namespace MemoTree.Core.Encoding {
     /// <summary>
     /// 编码器接口：最纯粹的编码/解码抽象
     /// </summary>
-    public interface IEncoder
-    {
+    public interface IEncoder {
         /// <summary>
         /// 将字节数据编码为字符串
         /// </summary>
@@ -24,12 +22,16 @@ namespace MemoTree.Core.Encoding
         /// <summary>
         /// 每个字符的位数
         /// </summary>
-        float BitsPerChar { get; }
+        float BitsPerChar {
+            get;
+        }
 
         /// <summary>
         /// 编码模式名称
         /// </summary>
-        string ModeName { get; }
+        string ModeName {
+            get;
+        }
 
         /// <summary>
         /// 编码UUID/GUID（默认实现）

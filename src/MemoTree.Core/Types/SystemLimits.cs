@@ -1,11 +1,9 @@
-namespace MemoTree.Core.Types
-{
+namespace MemoTree.Core.Types {
     /// <summary>
     /// 系统硬限制常量类
     /// 定义系统级别的不可配置上限，这些限制不能通过配置修改
     /// </summary>
-    public static class SystemLimits
-    {
+    public static class SystemLimits {
         /// <summary>
         /// 单个认知节点的最大Token数量
         /// 基于当前LLM模型的上下文窗口限制
@@ -87,8 +85,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 数据库相关限制
         /// </summary>
-        public static class Database
-        {
+        public static class Database {
             /// <summary>
             /// 最大连接池大小
             /// </summary>
@@ -113,8 +110,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 网络相关限制
         /// </summary>
-        public static class Network
-        {
+        public static class Network {
             /// <summary>
             /// 最大HTTP请求大小（字节）
             /// </summary>
@@ -139,8 +135,7 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 安全相关限制
         /// </summary>
-        public static class Security
-        {
+        public static class Security {
             /// <summary>
             /// 最大登录尝试次数
             /// </summary>
@@ -165,64 +160,56 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 验证系统限制值是否在合理范围内
         /// </summary>
-        public static bool IsValidTokenCount(int tokenCount)
-        {
+        public static bool IsValidTokenCount(int tokenCount) {
             return tokenCount >= 0 && tokenCount <= MaxTokensPerNode;
         }
 
         /// <summary>
         /// 验证视图Token数量是否在限制内
         /// </summary>
-        public static bool IsValidViewTokenCount(int tokenCount)
-        {
+        public static bool IsValidViewTokenCount(int tokenCount) {
             return tokenCount >= 0 && tokenCount <= MaxTokensPerView;
         }
 
         /// <summary>
         /// 验证文件大小是否在限制内
         /// </summary>
-        public static bool IsValidFileSize(long sizeBytes)
-        {
+        public static bool IsValidFileSize(long sizeBytes) {
             return sizeBytes >= 0 && sizeBytes <= MaxFileSizeBytes;
         }
 
         /// <summary>
         /// 验证内存使用量是否在限制内
         /// </summary>
-        public static bool IsValidMemoryUsage(long memoryBytes)
-        {
+        public static bool IsValidMemoryUsage(long memoryBytes) {
             return memoryBytes >= 0 && memoryBytes <= MaxMemoryUsageBytes;
         }
 
         /// <summary>
         /// 验证并发操作数是否在限制内
         /// </summary>
-        public static bool IsValidConcurrentOperations(int operationCount)
-        {
+        public static bool IsValidConcurrentOperations(int operationCount) {
             return operationCount >= 0 && operationCount <= MaxConcurrentOperations;
         }
 
         /// <summary>
         /// 验证搜索结果数量是否在限制内
         /// </summary>
-        public static bool IsValidSearchResultCount(int resultCount)
-        {
+        public static bool IsValidSearchResultCount(int resultCount) {
             return resultCount >= 0 && resultCount <= MaxSearchResults;
         }
 
         /// <summary>
         /// 验证批量操作大小是否在限制内
         /// </summary>
-        public static bool IsValidBatchSize(int batchSize)
-        {
+        public static bool IsValidBatchSize(int batchSize) {
             return batchSize >= 0 && batchSize <= MaxBatchOperationSize;
         }
 
         /// <summary>
         /// 验证关系深度是否在限制内
         /// </summary>
-        public static bool IsValidRelationDepth(int depth)
-        {
+        public static bool IsValidRelationDepth(int depth) {
             return depth >= 0 && depth <= MaxRelationDepth;
         }
     }

@@ -2,15 +2,12 @@ using System;
 using MemoTree.Core.Encoding;
 using Xunit;
 
-namespace MemoTree.Tests.Encoding
-{
-    public class Base64EncoderTests
-    {
+namespace MemoTree.Tests.Encoding {
+    public class Base64EncoderTests {
         private readonly Base64Encoder _encoder = new();
 
         [Fact]
-        public void EncodeDecode_EmptyBytes_ReturnsEmpty()
-        {
+        public void EncodeDecode_EmptyBytes_ReturnsEmpty() {
             var encoded = _encoder.EncodeBytes(Array.Empty<byte>());
             Assert.Equal(string.Empty, encoded);
 
@@ -22,13 +19,11 @@ namespace MemoTree.Tests.Encoding
         [InlineData("", "")] // 空
         [InlineData("000102", null)]
         [InlineData("00112233445566778899aabbccddeeff", null)] // 16字节
-        public void Roundtrip_HexStrings(string hex, string? expectedEncoded)
-        {
+        public void Roundtrip_HexStrings(string hex, string? expectedEncoded) {
             var bytes = string.IsNullOrEmpty(hex) ? Array.Empty<byte>() : Convert.FromHexString(hex);
             var encoded = _encoder.EncodeBytes(bytes);
 
-            if (expectedEncoded != null)
-            {
+            if (expectedEncoded != null) {
                 Assert.Equal(expectedEncoded, encoded);
             }
 
@@ -37,8 +32,7 @@ namespace MemoTree.Tests.Encoding
         }
 
         [Fact]
-        public void Uuid_ShortForm_EncodeRemovesPadding()
-        {
+        public void Uuid_ShortForm_EncodeRemovesPadding() {
             var guid = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
             var full = _encoder.EncodeBytes(guid.ToByteArray());
             var shortForm = _encoder.EncodeUuid(guid);
@@ -47,8 +41,7 @@ namespace MemoTree.Tests.Encoding
         }
 
         [Fact]
-        public void Uuid_Decode_AcceptsShortAndFull()
-        {
+        public void Uuid_Decode_AcceptsShortAndFull() {
             var guid = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
             var shortForm = _encoder.EncodeUuid(guid);
             var full = shortForm + "==";

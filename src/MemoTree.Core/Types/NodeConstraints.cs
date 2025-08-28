@@ -1,11 +1,9 @@
-namespace MemoTree.Core.Types
-{
+namespace MemoTree.Core.Types {
     /// <summary>
     /// 节点约束定义
     /// 定义系统中各种数据的硬限制
     /// </summary>
-    public static class NodeConstraints
-    {
+    public static class NodeConstraints {
         /// <summary>
         /// 节点ID最大长度
         /// 基于Base4096-CJK编码(11字符)和Base64编码(22字符)的最大值
@@ -80,8 +78,7 @@ namespace MemoTree.Core.Types
         /// LOD级别内容长度限制
         /// 注意：Title始终显式，不受LOD级别限制，这里只限制正文内容
         /// </summary>
-        public static class LodLimits
-        {
+        public static class LodLimits {
             /// <summary>
             /// Gist级别内容最大长度 - 1-2句核心要点
             /// </summary>
@@ -101,51 +98,47 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 验证节点ID格式和长度
         /// </summary>
-        public static bool IsValidNodeId(string nodeId)
-        {
+        public static bool IsValidNodeId(string nodeId) {
             return !string.IsNullOrWhiteSpace(nodeId) &&
-                   nodeId.Length <= MaxNodeIdLength &&
-                   NodeId.IsValidFormat(nodeId);
+            nodeId.Length <= MaxNodeIdLength &&
+            NodeId.IsValidFormat(nodeId);
         }
 
         /// <summary>
         /// 验证关系ID格式和长度
         /// </summary>
-        public static bool IsValidRelationId(string relationId)
-        {
+        public static bool IsValidRelationId(string relationId) {
             return !string.IsNullOrWhiteSpace(relationId) &&
-                   relationId.Length <= MaxRelationIdLength &&
-                   RelationId.IsValidFormat(relationId);
+            relationId.Length <= MaxRelationIdLength &&
+            RelationId.IsValidFormat(relationId);
         }
 
         /// <summary>
         /// 验证标题长度
         /// </summary>
-        public static bool IsValidTitle(string title)
-        {
+        public static bool IsValidTitle(string title) {
             return !string.IsNullOrWhiteSpace(title) &&
-                   title.Length <= MaxTitleLength;
+            title.Length <= MaxTitleLength;
         }
 
         /// <summary>
         /// 验证内容长度
         /// </summary>
-        public static bool IsValidContent(string content)
-        {
+        public static bool IsValidContent(string content) {
             return content != null &&
-                   content.Length <= MaxContentLength;
+            content.Length <= MaxContentLength;
         }
 
         /// <summary>
         /// 验证LOD级别内容长度
         /// 注意：这里验证的是正文内容，Title作为元数据单独验证
         /// </summary>
-        public static bool IsValidLodContent(LodLevel level, string content)
-        {
-            if (content == null) return false;
+        public static bool IsValidLodContent(LodLevel level, string content) {
+            if (content == null) {
+                return false;
+            }
 
-            return level switch
-            {
+            return level switch {
                 LodLevel.Gist => content.Length <= LodLimits.GistMaxLength,
                 LodLevel.Summary => content.Length <= LodLimits.SummaryMaxLength,
                 LodLevel.Full => content.Length <= LodLimits.FullMaxLength,
@@ -156,76 +149,72 @@ namespace MemoTree.Core.Types
         /// <summary>
         /// 验证标签
         /// </summary>
-        public static bool IsValidTag(string tag)
-        {
+        public static bool IsValidTag(string tag) {
             return !string.IsNullOrWhiteSpace(tag) &&
-                   tag.Length <= MaxTagLength;
+            tag.Length <= MaxTagLength;
         }
 
         /// <summary>
         /// 验证标签集合
         /// </summary>
-        public static bool IsValidTagCollection(IEnumerable<string> tags)
-        {
-            if (tags == null) return true;
+        public static bool IsValidTagCollection(IEnumerable<string> tags) {
+            if (tags == null) {
+                return true;
+            }
 
             var tagList = tags.ToList();
             return tagList.Count <= MaxTagCount &&
-                   tagList.All(IsValidTag) &&
-                   tagList.Distinct().Count() == tagList.Count; // 无重复
+            tagList.All(IsValidTag) &&
+            tagList.Distinct().Count() == tagList.Count; // 无重复
         }
 
         /// <summary>
         /// 验证关系描述
         /// </summary>
-        public static bool IsValidRelationDescription(string description)
-        {
+        public static bool IsValidRelationDescription(string description) {
             return description != null &&
-                   description.Length <= MaxRelationDescriptionLength;
+            description.Length <= MaxRelationDescriptionLength;
         }
 
         /// <summary>
         /// 验证自定义属性键名
         /// </summary>
-        public static bool IsValidCustomPropertyKey(string key)
-        {
+        public static bool IsValidCustomPropertyKey(string key) {
             return !string.IsNullOrWhiteSpace(key) &&
-                   key.Length <= MaxCustomPropertyKeyLength;
+            key.Length <= MaxCustomPropertyKeyLength;
         }
 
         /// <summary>
         /// 验证自定义属性字符串值
         /// </summary>
-        public static bool IsValidCustomPropertyStringValue(string value)
-        {
+        public static bool IsValidCustomPropertyStringValue(string value) {
             return value != null &&
-                   value.Length <= MaxCustomPropertyStringValueLength;
+            value.Length <= MaxCustomPropertyStringValueLength;
         }
 
         /// <summary>
         /// 验证自定义属性集合
         /// </summary>
-        public static bool IsValidCustomPropertyCollection(IReadOnlyDictionary<string, object> properties)
-        {
-            if (properties == null) return true;
+        public static bool IsValidCustomPropertyCollection(IReadOnlyDictionary<string, object> properties) {
+            if (properties == null) {
+                return true;
+            }
 
             return properties.Count <= MaxCustomPropertyCount &&
-                   properties.Keys.All(IsValidCustomPropertyKey);
+            properties.Keys.All(IsValidCustomPropertyKey);
         }
 
         /// <summary>
         /// 验证子节点数量
         /// </summary>
-        public static bool IsValidChildNodeCount(int count)
-        {
+        public static bool IsValidChildNodeCount(int count) {
             return count >= 0 && count <= MaxChildNodeCount;
         }
 
         /// <summary>
         /// 验证节点层次深度
         /// </summary>
-        public static bool IsValidHierarchyDepth(int depth)
-        {
+        public static bool IsValidHierarchyDepth(int depth) {
             return depth >= 0 && depth <= MaxNodeHierarchyDepth;
         }
     }

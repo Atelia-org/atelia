@@ -13,25 +13,23 @@ namespace MemoTree.Services;
 /// <summary>
 /// 服务注册扩展方法
 /// </summary>
-public static class ServiceCollectionExtensions
-{
+public static class ServiceCollectionExtensions {
     /// <summary>
     /// 添加MemoTree服务 (MVP版本)
     /// </summary>
     public static IServiceCollection AddMemoTreeServices(
         this IServiceCollection services,
-        IConfiguration configuration)
-    {
+        IConfiguration configuration
+    ) {
         // 配置选项
         services.Configure<MemoTreeOptions>(options => configuration.GetSection("MemoTree").Bind(options));
         services.Configure<StorageOptions>(options => configuration.GetSection("Storage").Bind(options));
 
-    // 路径管理服务（必须）：供存储与层级使用，并支持链接工作空间
-    services.AddSingleton<IWorkspacePathService, WorkspacePathService>();
+        // 路径管理服务（必须）：供存储与层级使用，并支持链接工作空间
+        services.AddSingleton<IWorkspacePathService, WorkspacePathService>();
 
         // 层次结构存储：使用CowNodeHierarchyStorage实现持久化
-        services.AddSingleton<INodeHierarchyStorage>(provider =>
-        {
+        services.AddSingleton<INodeHierarchyStorage>(provider => {
             var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
             var pathService = provider.GetRequiredService<IWorkspacePathService>();
 
@@ -41,7 +39,8 @@ public static class ServiceCollectionExtensions
             // 创建版本化存储
             var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
                 hierarchyDirectory,
-                provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>());
+                provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>()
+            );
 
             var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
 
@@ -66,11 +65,10 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddMemoTreeServices(
         this IServiceCollection services,
-        string workspaceRoot)
-    {
+        string workspaceRoot
+    ) {
         // 配置选项
-        services.Configure<MemoTreeOptions>(options =>
-        {
+        services.Configure<MemoTreeOptions>(options => {
             options.WorkspaceRoot = workspaceRoot;
             options.CogNodesDirectory = "CogNodes";
             options.RelationsDirectory = "Relations";
@@ -81,8 +79,7 @@ public static class ServiceCollectionExtensions
             options.EnableVersionControl = true;
         });
 
-        services.Configure<StorageOptions>(options =>
-        {
+        services.Configure<StorageOptions>(options => {
             options.MetadataFileName = "meta.yaml";
             options.GistContentFileName = "gist.md";
             options.SummaryContentFileName = "summary.md";
@@ -95,8 +92,7 @@ public static class ServiceCollectionExtensions
         });
 
         // 层次结构存储：使用CowNodeHierarchyStorage实现持久化
-        services.AddSingleton<INodeHierarchyStorage>(provider =>
-        {
+        services.AddSingleton<INodeHierarchyStorage>(provider => {
             var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
             var pathService = provider.GetRequiredService<IWorkspacePathService>();
 
@@ -106,7 +102,8 @@ public static class ServiceCollectionExtensions
             // 创建版本化存储
             var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
                 hierarchyDirectory,
-                provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>());
+                provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>()
+            );
 
             var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
 
@@ -118,7 +115,7 @@ public static class ServiceCollectionExtensions
 
         // 存储服务
         services.AddSingleton<ICognitiveNodeStorage, SimpleCognitiveNodeStorage>();
-    services.AddSingleton<IViewStateStorage, MemoTree.Services.Storage.FileViewStateStorage>();
+        services.AddSingleton<IViewStateStorage, MemoTree.Services.Storage.FileViewStateStorage>();
 
         // 业务服务
         services.AddScoped<IMemoTreeService, MemoTreeService>();

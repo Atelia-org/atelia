@@ -10,6 +10,7 @@ namespace MemoTree.Analyzers;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class MT0001MultipleStatementsAnalyzer : DiagnosticAnalyzer {
     public const string DiagnosticId = "MT0001";
+    public const string CanonicalName = "StatementSinglePerLine"; // DocAlias: SingleStatementPerLine
     private static readonly LocalizableString Title = "Multiple statements on one line";
     private static readonly LocalizableString MessageFormat = "Split multiple statements onto separate lines";
     private static readonly LocalizableString Description = "Improves debugging (line breakpoints) and diff granularity by ensuring one statement per line.";

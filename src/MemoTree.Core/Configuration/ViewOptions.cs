@@ -1,11 +1,9 @@
-namespace MemoTree.Core.Configuration
-{
+namespace MemoTree.Core.Configuration {
     /// <summary>
     /// 视图状态配置选项 - 内存优先架构
     /// 对应Phase2_ViewStorage.md中定义的视图状态存储和内存管理
     /// </summary>
-    public class ViewOptions
-    {
+    public class ViewOptions {
         /// <summary>
         /// 视图状态文件名
         /// </summary>

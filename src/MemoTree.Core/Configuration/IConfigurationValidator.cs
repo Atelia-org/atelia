@@ -1,13 +1,11 @@
 using MemoTree.Core.Validation;
 
-namespace MemoTree.Core.Configuration
-{
+namespace MemoTree.Core.Configuration {
     /// <summary>
     /// 泛型配置验证器接口
     /// </summary>
     /// <typeparam name="T">配置类型</typeparam>
-    public interface IConfigurationValidator<T>
-    {
+    public interface IConfigurationValidator<T> {
         /// <summary>
         /// 验证配置
         /// </summary>
