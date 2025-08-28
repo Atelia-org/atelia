@@ -29,23 +29,25 @@ public static class ServiceCollectionExtensions {
         services.AddSingleton<IWorkspacePathService, WorkspacePathService>();
 
         // 层次结构存储：使用CowNodeHierarchyStorage实现持久化
-        services.AddSingleton<INodeHierarchyStorage>(provider => {
-            var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
-            var pathService = provider.GetRequiredService<IWorkspacePathService>();
+        services.AddSingleton<INodeHierarchyStorage>(
+            provider => {
+                var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
+                var pathService = provider.GetRequiredService<IWorkspacePathService>();
 
-            // 通过路径服务获取层级关系持久化目录（自动处理链接工作空间）
-            var hierarchyDirectory = pathService.GetHierarchyDirectory();
+                // 通过路径服务获取层级关系持久化目录（自动处理链接工作空间）
+                var hierarchyDirectory = pathService.GetHierarchyDirectory();
 
-            // 创建版本化存储
-            var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
-                hierarchyDirectory,
-                provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>()
-            );
+                // 创建版本化存储
+                var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
+                    hierarchyDirectory,
+                    provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>()
+                );
 
-            var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
+                var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
 
-            return new CowNodeHierarchyStorage(hierarchyStorage, logger);
-        });
+                return new CowNodeHierarchyStorage(hierarchyStorage, logger);
+            }
+        );
 
         // 节点复合存储：MVP使用 SimpleCognitiveNodeStorage（Content/Metadata基于文件，Hierarchy通过上面的实现）
         services.AddSingleton<ICognitiveNodeStorage, SimpleCognitiveNodeStorage>();
@@ -68,47 +70,53 @@ public static class ServiceCollectionExtensions {
         string workspaceRoot
     ) {
         // 配置选项
-        services.Configure<MemoTreeOptions>(options => {
-            options.WorkspaceRoot = workspaceRoot;
-            options.CogNodesDirectory = "CogNodes";
-            options.RelationsDirectory = "Relations";
-            // ViewsDirectory 在MVP版本中暂时不需要
-            options.DefaultMaxContextTokens = 8000;
-            options.MaxMemoTreeViewTokens = 150000;
-            options.AutoSaveIntervalMinutes = 5;
-            options.EnableVersionControl = true;
-        });
+        services.Configure<MemoTreeOptions>(
+            options => {
+                options.WorkspaceRoot = workspaceRoot;
+                options.CogNodesDirectory = "CogNodes";
+                options.RelationsDirectory = "Relations";
+                // ViewsDirectory 在MVP版本中暂时不需要
+                options.DefaultMaxContextTokens = 8000;
+                options.MaxMemoTreeViewTokens = 150000;
+                options.AutoSaveIntervalMinutes = 5;
+                options.EnableVersionControl = true;
+            }
+        );
 
-        services.Configure<StorageOptions>(options => {
-            options.MetadataFileName = "meta.yaml";
-            options.GistContentFileName = "gist.md";
-            options.SummaryContentFileName = "summary.md";
-            options.FullContentFileName = "full.md";
-            options.ExternalLinksFileName = "external-links.json";
-            options.HierarchyFileExtension = ".yaml";
-            options.RelationsFileName = "relations.yaml";
-            options.RelationTypesFileName = "relation-types.yaml";
-            options.HashAlgorithm = "SHA256";
-        });
+        services.Configure<StorageOptions>(
+            options => {
+                options.MetadataFileName = "meta.yaml";
+                options.GistContentFileName = "gist.md";
+                options.SummaryContentFileName = "summary.md";
+                options.FullContentFileName = "full.md";
+                options.ExternalLinksFileName = "external-links.json";
+                options.HierarchyFileExtension = ".yaml";
+                options.RelationsFileName = "relations.yaml";
+                options.RelationTypesFileName = "relation-types.yaml";
+                options.HashAlgorithm = "SHA256";
+            }
+        );
 
         // 层次结构存储：使用CowNodeHierarchyStorage实现持久化
-        services.AddSingleton<INodeHierarchyStorage>(provider => {
-            var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
-            var pathService = provider.GetRequiredService<IWorkspacePathService>();
+        services.AddSingleton<INodeHierarchyStorage>(
+            provider => {
+                var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CowNodeHierarchyStorage>>();
+                var pathService = provider.GetRequiredService<IWorkspacePathService>();
 
-            // 获取层次关系存储目录
-            var hierarchyDirectory = pathService.GetHierarchyDirectory();
+                // 获取层次关系存储目录
+                var hierarchyDirectory = pathService.GetHierarchyDirectory();
 
-            // 创建版本化存储
-            var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
-                hierarchyDirectory,
-                provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>()
-            );
+                // 创建版本化存储
+                var hierarchyStorageTask = VersionedStorageFactory.CreateHierarchyStorageAsync(
+                    hierarchyDirectory,
+                    provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VersionedStorageImpl<NodeId, HierarchyInfo>>>()
+                );
 
-            var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
+                var hierarchyStorage = hierarchyStorageTask.GetAwaiter().GetResult();
 
-            return new CowNodeHierarchyStorage(hierarchyStorage, logger);
-        });
+                return new CowNodeHierarchyStorage(hierarchyStorage, logger);
+            }
+        );
 
         // 路径管理服务
         services.AddSingleton<IWorkspacePathService, WorkspacePathService>();

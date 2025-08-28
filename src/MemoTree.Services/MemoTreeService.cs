@@ -277,14 +277,16 @@ public class MemoTreeService : IMemoTreeService {
                 LastAccessTime = DateTime.UtcNow
             };
         } else {
-            list.Add(new VNodeState {
-                Id = id,
-                CurrentLevel = level,
-                IsExpanded = (level == LodLevel.Full),
-                IsVisible = true,
-                Order = 0,
-                LastAccessTime = DateTime.UtcNow
-            });
+            list.Add(
+                new VNodeState {
+                    Id = id,
+                    CurrentLevel = level,
+                    IsExpanded = (level == LodLevel.Full),
+                    IsVisible = true,
+                    Order = 0,
+                    LastAccessTime = DateTime.UtcNow
+                }
+            );
         }
         return state with {
             NodeStates = list,

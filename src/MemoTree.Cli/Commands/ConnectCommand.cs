@@ -17,14 +17,15 @@ namespace MemoTree.Cli.Commands {
                 targetPathArgument
  };
 
-            command.SetHandler(async (string targetPath) => {
-                try {
-                    await ExecuteAsync(targetPath);
-                } catch (Exception ex) {
-                    Console.WriteLine($"Error: {ex.Message}");
-                    Environment.Exit(1);
-                }
-            }, targetPathArgument
+            command.SetHandler(
+                async (string targetPath) => {
+                    try {
+                        await ExecuteAsync(targetPath);
+                    } catch (Exception ex) {
+                        Console.WriteLine($"Error: {ex.Message}");
+                        Environment.Exit(1);
+                    }
+                }, targetPathArgument
             );
 
             return command;
