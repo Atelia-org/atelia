@@ -46,4 +46,30 @@ class X0001MultiScenarioSamples {
         var f = (int a,
             int b) => a + b;
     }
+
+    // 9. GuardA vs GuardB differentiation cases
+    // Each argument/parameter is single-line, but contains a block lambda or an initializer.
+    // GuardA (no block/initializer guard) should EXEMPT these (no X0001) because AllItemsSingleLine == true.
+    // GuardB (with guard) should DIAGNOSE (X0001) because block/initializer present.
+    void GuardVariantSamples() {
+        // Block lambda arguments
+        ProcessFuncs(x => { return x + 1; },
+            y => { return y * 2; }
+        );
+
+        // Object initializer arguments
+        UseObjects(new O { A = 1 },
+            new O { B = 2 }
+        );
+
+        // Collection initializer arguments
+        UseLists(new List<int> { 1, 2 },
+            new List<int> { 3, 4 }
+        );
+    }
+
+    void ProcessFuncs(Func<int,int> f1, Func<int,int> f2) { }
+    void UseObjects(O a, O b) { }
+    void UseLists(List<int> a, List<int> b) { }
+    class O { public int A { get; set; } public int B { get; set; } }
 }
