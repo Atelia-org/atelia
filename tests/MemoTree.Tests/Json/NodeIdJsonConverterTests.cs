@@ -76,7 +76,8 @@ namespace MemoTree.Tests.Json {
             var json = "\"\"";
 
             // Act & Assert
-            Assert.Throws<JsonException>(() =>
+            Assert.Throws<JsonException>(
+                () =>
                 JsonSerializer.Deserialize<NodeId>(json, _jsonOptions)
             );
         }
@@ -87,7 +88,8 @@ namespace MemoTree.Tests.Json {
             var json = "{\"notValue\":\"test\"}";
 
             // Act & Assert
-            Assert.Throws<JsonException>(() =>
+            Assert.Throws<JsonException>(
+                () =>
                 JsonSerializer.Deserialize<NodeId>(json, _jsonOptions)
             );
         }

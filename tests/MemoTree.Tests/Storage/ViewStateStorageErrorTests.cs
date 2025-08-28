@@ -20,12 +20,14 @@ public class ViewStateStorageErrorTests {
         public string GetNodeDirectory(MemoTree.Core.Types.NodeId nodeId) => Path.Combine(GetCogNodesDirectory(), nodeId.Value);
         public string GetNodeMetadataPath(MemoTree.Core.Types.NodeId nodeId) => Path.Combine(GetNodeDirectory(nodeId), "metadata.yml");
         public string GetNodeContentPath(MemoTree.Core.Types.NodeId nodeId, MemoTree.Core.Types.LodLevel level)
-            => Path.Combine(GetNodeDirectory(nodeId), level switch {
-                MemoTree.Core.Types.LodLevel.Gist => "gist.md",
-                MemoTree.Core.Types.LodLevel.Summary => "summary.md",
-                MemoTree.Core.Types.LodLevel.Full => "full.md",
-                _ => "content.md"
-            });
+            => Path.Combine(
+                GetNodeDirectory(nodeId), level switch {
+                    MemoTree.Core.Types.LodLevel.Gist => "gist.md",
+                    MemoTree.Core.Types.LodLevel.Summary => "summary.md",
+                    MemoTree.Core.Types.LodLevel.Full => "full.md",
+                    _ => "content.md"
+                }
+            );
         public bool IsWorkspace(string? directory = null) => Directory.Exists(GetWorkspaceRoot());
         public bool IsLinkedWorkspace() => false;
         public string? GetLinkTarget() => null;

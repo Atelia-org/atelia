@@ -6,7 +6,8 @@ class X0001MultiScenarioSamples {
     // 1. Invocation
     void InvokeSamples() {
         Target(1,
-            2);
+            2
+        );
     }
 
     void Target(int a, int b) { }
@@ -14,32 +15,38 @@ class X0001MultiScenarioSamples {
     // 2. Object creation
     void ObjectCreation() {
         var obj = new Sample(10,
-            20);
+            20
+        );
     }
 
     record Sample(int A, int B);
 
     // 3. Method declaration
     void Decl(int a,
-        int b) { }
+        int b
+    ) { }
 
     // 4. Local function
     void Outer() {
         int Local(int x,
-            int y) => x + y;
+            int y
+        ) => x + y;
     }
 
     // 5. Delegate declaration
     delegate int D(int a,
-        int b);
+        int b
+    );
 
     // 6. Operator
     public static X0001MultiScenarioSamples operator +(X0001MultiScenarioSamples l,
-        X0001MultiScenarioSamples r) => l;
+        X0001MultiScenarioSamples r
+    ) => l;
 
     // 7. Record primary constructor (already above) + additional record example
     record R2(int X,
-        int Y);
+        int Y
+    );
 
     // 8. Parenthesized lambda
     void Lambda() {
