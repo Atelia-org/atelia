@@ -41,13 +41,25 @@ DoWork(42,
 
 Multiple multiline arguments (only first enforced):
 ```csharp
-Process(prepare, first => {
-    Init();
-}, second => {
-    Execute();
-}, tail);
+Process(prepare,
+    first => {
+        Init();
+    }, second => {
+        Execute();
+    }, tail);
 ```
-(Second multiline `second => { ... }` can remain inlined – no diagnostic.)
+(First multiline `first => { ... }` forced to new line; later multiline `second => { ... }` may remain inlined with preceding comma.)
+
+Allowed variant (newline after '(', first multiline shares line with a simple arg that also moved):
+```csharp
+Process(
+    prepare, first => {
+        Init();
+    }, second => {
+        Execute();
+    }, tail);
+```
+This style is already compliant because the first multiline argument is not on the same line as the opening parenthesis.
 
 No diagnostic (no multiline argument):
 ```csharp
