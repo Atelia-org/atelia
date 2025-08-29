@@ -10,19 +10,7 @@ public class X000XExperimentalFormattingTests {
     private static (System.Collections.Generic.IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> diags, Microsoft.CodeAnalysis.Compilation comp) RunAnalyzer(string src, string analyzer)
         => AnalyzerTestHost.RunAnalyzer(src, analyzer);
 
-    [Fact]
-    public void X0001_Diagnostic_When_OpenInlineAndMultiline() {
-        var code = "class C{void M(int a,\n int b){} }"; // '(' and first parameter on same line, list spans multiple lines
-        var (d, _) = RunAnalyzer(code, "MemoTree.Analyzers.X0001OpenParenNewLineAnalyzer");
-        Assert.Contains(d, x => x.Id == "X0001");
-    }
-
-    [Fact]
-    public async Task X0001_CodeFix_AddsNewline() {
-        var code = "class C{void M(int a,\n int b){} }";
-        var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, "MemoTree.Analyzers.X0001OpenParenNewLineAnalyzer", new X0001OpenParenNewLineCodeFix(), "X0001");
-        Assert.Matches(@"\(\r?\n\s+int a", fixedText);
-    }
+    // MT0005 (former X0001) archived / disabled-by-default; no active tests retained.
 
     [Fact]
     public void X0002_Diagnostic_When_OpeningHasNewlineButCloseInline() {
