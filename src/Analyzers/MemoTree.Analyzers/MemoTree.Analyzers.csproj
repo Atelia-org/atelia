@@ -20,6 +20,7 @@
   <ItemGroup>
     <Compile Remove="MT0001MultipleStatementsCodeFix.cs" />
     <Compile Remove="MT0002InitializerIndentCodeFix.cs" />
+    <Compile Remove="X0001OpenParenNewLineAnalyzer.cs" />
   </ItemGroup>
   <ItemGroup>
     <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />

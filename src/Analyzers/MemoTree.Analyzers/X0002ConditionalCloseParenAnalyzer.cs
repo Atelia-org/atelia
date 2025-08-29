@@ -89,8 +89,11 @@ public sealed class X0002ConditionalCloseParenAnalyzer : DiagnosticAnalyzer {
         if (lastItem == null) {
             return;
         }
-
-        var text = open.SyntaxTree.GetText(ctx.CancellationToken);
+        var tree = open.SyntaxTree;
+        if (tree is null) {
+            return; // defensive: malformed token
+        }
+        var text = tree.GetText(ctx.CancellationToken);
         var openLine = text.Lines.GetLineFromPosition(open.SpanStart).LineNumber;
         var closeLine = text.Lines.GetLineFromPosition(close.SpanStart).LineNumber;
         if (openLine == closeLine) {

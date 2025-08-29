@@ -103,7 +103,11 @@ public sealed class MT0004ClosingParenNewLineAnalyzer : DiagnosticAnalyzer {
         if (lastItemToken == null) {
             return; // empty list or no items
         }
-        var text = open.SyntaxTree.GetText(ctx.CancellationToken);
+        var tree = open.SyntaxTree;
+        if (tree is null) {
+            return; // defensive: malformed token
+        }
+        var text = tree.GetText(ctx.CancellationToken);
         int openLine = text.Lines.GetLineFromPosition(open.SpanStart).LineNumber;
         int closeLine = text.Lines.GetLineFromPosition(close.SpanStart).LineNumber;
         if (openLine == closeLine) {

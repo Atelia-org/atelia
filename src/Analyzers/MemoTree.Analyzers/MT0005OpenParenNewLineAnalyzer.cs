@@ -13,9 +13,12 @@ namespace MemoTree.Analyzers;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class MT0005OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
     public const string DiagnosticId = "MT0005";
+    public const string CanonicalName = "NewLineAfterOpenParenMultilineList"; // See NamingConvention.md
+    public const string DocAlias = "OpenParenNewLine"; // Short alias used in docs/examples
     private static readonly LocalizableString Title = "Place newline after '(' for multiline list";
     private static readonly LocalizableString Message = "Add newline after '(' for multiline parameter/argument list";
-    private const string Category = "Formatting.NewLine";
+    // Category kept consistent with release tracking table (Formatting) to avoid RS2001 mismatches.
+    private const string Category = "Formatting";
 
     private static readonly DiagnosticDescriptor Rule = new(
         DiagnosticId,
@@ -98,7 +101,11 @@ public sealed class MT0005OpenParenNewLineAnalyzer : DiagnosticAnalyzer {
         SyntaxToken open,
         SyntaxToken close,
         SyntaxToken firstItemToken) {
-        var text = open.SyntaxTree.GetText(ctx.CancellationToken);
+        var tree = open.SyntaxTree;
+        if (tree is null) {
+            return; // defensive
+        }
+        var text = tree.GetText(ctx.CancellationToken);
         var openLine = text.Lines.GetLineFromPosition(open.SpanStart).LineNumber;
         var closeLine = text.Lines.GetLineFromPosition(close.SpanStart).LineNumber;
         if (openLine == closeLine) {
