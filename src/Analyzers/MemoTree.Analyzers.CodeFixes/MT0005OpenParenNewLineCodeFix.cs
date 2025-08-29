@@ -20,10 +20,16 @@ public sealed class MT0005OpenParenNewLineCodeFix : CodeFixProvider {
 
     public override async Task RegisterCodeFixesAsync(CodeFixContext context) {
         var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
-        if (root == null) return;
+        if (root == null) {
+            return;
+        }
+
         var diag = context.Diagnostics.First();
         var token = root.FindToken(diag.Location.SourceSpan.Start);
-        if (!token.IsKind(SyntaxKind.OpenParenToken)) return;
+        if (!token.IsKind(SyntaxKind.OpenParenToken)) {
+            return;
+        }
+
         context.RegisterCodeFix(CodeAction.Create("Add newline after '('", ct => FixAsync(context.Document, root, token, ct), "AddNewlineAfterOpen"), diag);
     }
 

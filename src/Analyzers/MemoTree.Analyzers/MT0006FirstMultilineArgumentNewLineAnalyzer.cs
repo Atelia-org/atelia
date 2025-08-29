@@ -63,7 +63,9 @@ public sealed class MT0006FirstMultilineArgumentNewLineAnalyzer : DiagnosticAnal
         foreach (var arg in args) {
             if (IsMultiline(arg, text)) { firstMultiline = arg; break; }
         }
-        if (firstMultiline == null) return; // no multiline => nothing
+        if (firstMultiline == null) {
+            return; // no multiline => nothing
+        }
 
         var firstTok = firstMultiline.GetFirstToken();
         int firstTokLine = text.Lines.GetLineFromPosition(firstTok.SpanStart).LineNumber;
