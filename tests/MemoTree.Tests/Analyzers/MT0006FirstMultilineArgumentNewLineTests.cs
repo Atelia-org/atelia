@@ -21,21 +21,30 @@ public class MT0006FirstMultilineArgumentNewLineTests {
 
     [Fact]
     public void FirstMultiline_Inlined_Diagnostic() {
-        var code = @"class C { void M(){ Foo(1, x => {\n    x++;\n}, 3); } void Foo(int a,System.Action<int> b,int c){} }";
+        var code = @"class C { void M(){ Foo(1, x => {
+    x++;
+}, 3); } void Foo(int a,System.Action<int> b,int c){} }";
         var (d, _) = RunAnalyzer(code);
         Assert.Single(d, x => x.Id == Id);
     }
 
     [Fact]
     public void FirstMultiline_AlreadyOnNewLine_NoDiagnostic() {
-        var code = @"class C { void M(){ Foo(\n    1, x => {\n        x++;\n    }, 3); } void Foo(int a,System.Action<int> b,int c){} }";
+        var code = @"class C { void M(){ Foo(
+    1, x => {
+        x++;
+    }, 3); } void Foo(int a,System.Action<int> b,int c){} }";
         var (d, _) = RunAnalyzer(code);
         Assert.DoesNotContain(d, x => x.Id == Id);
     }
 
     [Fact]
     public void MultipleMultiline_OnlyFirstChecked() {
-        var code = @"class C { void M(){ Foo(1, x => {\n    x++;\n}, y => {\n    y++;\n}, 9); } void Foo(int a,System.Action<int> b,System.Action<int> c,int d){} }";
+        var code = @"class C { void M(){ Foo(1, x => {
+    x++;
+}, y => {
+    y++;
+}, 9); } void Foo(int a,System.Action<int> b,System.Action<int> c,int d){} }";
         var (d, _) = RunAnalyzer(code);
         // Only one diagnostic for the first multiline (x => ...)
         Assert.Single(d, x => x.Id == Id);
@@ -43,15 +52,20 @@ public class MT0006FirstMultilineArgumentNewLineTests {
 
     [Fact]
     public async Task CodeFix_InlinedFirstMultiline_Fixes() {
-        var code = @"class C { void M(){ Foo(1, x => {\n    x++;\n}, 3); } void Foo(int a,System.Action<int> b,int c){} }";
+        var code = @"class C { void M(){ Foo(1, x => {
+    x++;
+}, 3); } void Foo(int a,System.Action<int> b,int c){} }";
         var fixedText = await ApplyAllCodeFixesAsync(code);
-        // Expect newline inserted before 'x =>' while keeping the rest intact.
-        Assert.Contains("Foo(\n    1, x => {", fixedText.Replace("\r", ""));
+        // Expect newline inserted before 'x =>' while keeping leading simple argument '1,' on original line.
+        Assert.Contains("Foo(1,\n    x => {", fixedText.Replace("\r", ""));
     }
 
     [Fact]
     public async Task CodeFix_Idempotent() {
-        var code = @"class C { void M(){ Foo(\n    1, x => {\n        x++;\n    }, 3); } void Foo(int a,System.Action<int> b,int c){} }";
+        var code = @"class C { void M(){ Foo(
+    1, x => {
+        x++;
+    }, 3); } void Foo(int a,System.Action<int> b,int c){} }";
         var fixedText = await ApplyAllCodeFixesAsync(code);
         // Already compliant -> unchanged
         Assert.Equal(code, fixedText);

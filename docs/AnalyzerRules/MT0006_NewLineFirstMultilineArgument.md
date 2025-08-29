@@ -30,10 +30,10 @@ DoWork(42, x => {
     return x + 1;
 }, more);
 ```
-Fixed:
+Fixed (minimal anchor; preceding simple argument remains inline):
 ```csharp
-DoWork(
-    42, x => {
+DoWork(42,
+    x => {
         Log(x);
         return x + 1;
     }, more);
@@ -41,14 +41,13 @@ DoWork(
 
 Multiple multiline arguments (only first enforced):
 ```csharp
-Process(
-    setup => {
-        Init();
-    }, run => {
-        Execute();
-    }, tail);
+Process(prepare, first => {
+    Init();
+}, second => {
+    Execute();
+}, tail);
 ```
-(Second multiline `run => { ... }` may remain inlined – no diagnostic.)
+(Second multiline `second => { ... }` can remain inlined – no diagnostic.)
 
 No diagnostic (no multiline argument):
 ```csharp
