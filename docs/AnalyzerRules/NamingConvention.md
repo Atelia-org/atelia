@@ -21,6 +21,7 @@ Pattern (CanonicalName): `<Category><Object><Condition><Qualifier?>`
 | MT0004 | NewLineClosingParenMultilineParameterList | NewLineClosingParenParams | Closing parenthesis isolated on its own line for multiline parameter/argument lists. |
 | MT0005 (disabled) | NewLineAfterOpenParenMultilineList | NewLineAfterOpenParen | Pure symmetric opening newline for any multiline parameter/argument list (opt-in; pairs with MT0004). |
 | MT0006 | NewLineFirstMultilineArgument | FirstMultilineArgNewLine | First multiline argument must start on its own line (minimal anchor). |
+| MT0007 | IndentClosingParenMultilineParameterList | ClosingParenAlign | Closing ')' of multiline parameter/argument list must align with construct start line indentation. |
 
 ## Principles
 1. No mixed `ParameterArgument` compounds—prefer picking one domain noun. We currently anchor on `ParameterList` and document the temporary broader scope.

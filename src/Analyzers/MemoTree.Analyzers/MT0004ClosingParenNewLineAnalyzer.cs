@@ -24,8 +24,8 @@ public sealed class MT0004ClosingParenNewLineAnalyzer : DiagnosticAnalyzer {
         DiagnosticId,
         Title,
         Message,
-        Category,
-        DiagnosticSeverity.Warning,
+    Category,
+    DiagnosticSeverity.Info,
         isEnabledByDefault: true,
         description: Description);
 

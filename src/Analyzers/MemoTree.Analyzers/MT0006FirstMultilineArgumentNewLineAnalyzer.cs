@@ -27,8 +27,8 @@ public sealed class MT0006FirstMultilineArgumentNewLineAnalyzer : DiagnosticAnal
         DiagnosticId,
         Title,
         Message,
-        Category,
-        DiagnosticSeverity.Warning,
+    Category,
+    DiagnosticSeverity.Info,
         isEnabledByDefault: true,
         description: Description);
 

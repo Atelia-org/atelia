@@ -21,8 +21,8 @@ public sealed class MT0003ArgumentIndentAnalyzer : DiagnosticAnalyzer {
         DiagnosticId,
         Title,
         Message,
-        category: "Formatting",
-        defaultSeverity: DiagnosticSeverity.Warning,
+    category: "Formatting",
+    defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true,
         description: "In multiline argument lists, each parameter line (excluding the line containing '(') must be indented exactly one level beyond the invocation line.");
 

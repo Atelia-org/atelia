@@ -20,8 +20,8 @@ public sealed class MT0001MultipleStatementsAnalyzer : DiagnosticAnalyzer {
         DiagnosticId,
         Title,
         MessageFormat,
-        Category,
-        DiagnosticSeverity.Warning,
+    Category,
+    DiagnosticSeverity.Info,
         isEnabledByDefault: true,
         description: Description);
 

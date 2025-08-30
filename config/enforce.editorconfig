@@ -5,3 +5,4 @@ dotnet_diagnostic.MT0002.severity = warning
 dotnet_diagnostic.MT0003.severity = warning
 dotnet_diagnostic.MT0004.severity = warning
 dotnet_diagnostic.MT0006.severity = warning
+dotnet_diagnostic.MT0007.severity = warning
