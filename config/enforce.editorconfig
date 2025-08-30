@@ -6,3 +6,7 @@ dotnet_diagnostic.MT0003.severity = warning
 dotnet_diagnostic.MT0004.severity = warning
 dotnet_diagnostic.MT0006.severity = warning
 dotnet_diagnostic.MT0007.severity = warning
+
+# GPT调整: 将必须使用大括号升级为 error, 减少后续插入语句时风险 (支持: Gemini+Claude+GPT 共识: ALWAYS BRACES)
+csharp_prefer_braces = true:warning
+dotnet_diagnostic.IDE0011.severity = warning
