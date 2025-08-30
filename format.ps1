@@ -17,7 +17,11 @@
 后续可扩展: 白名单 / FailOnChanges / 报告输出 / 并行等。
 !#>
 param(
-    [ValidateSet('full','diff')][string]$Scope = 'full',
+    # Scope:
+    #   full   -> 全仓所有已跟踪的 *.cs (git ls-files)
+    #   diff   -> 工作区/暂存/未跟踪改动合集 (unstaged + staged + untracked)
+    #   staged -> 仅当前已暂存准备提交的 *.cs (git diff --cached)
+    [ValidateSet('full','diff','staged')][string]$Scope = 'full',
     [int]$MaxIterations = 5,                 # 单文件最大迭代次数
     [int]$MaxFilesPerRun = 512,              # 每次运行最大文件数（软上限）
     [int]$MaxCmdChars = 30000,               # 非响应文件模式下的命令行字符上限
@@ -100,8 +104,20 @@ function Get-DiffFiles(){
     return $files
 }
 
+function Get-StagedFiles(){
+    # 仅取已暂存的更改/新增（排除删除的路径）
+    $staged = git diff --name-only --cached | Where-Object { $_ }
+    $files = $staged | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_) }
+    return $files
+}
+
 try {
-    $allFiles = if($Scope -eq 'full'){ Get-FullFiles } else { Get-DiffFiles }
+    $allFiles = switch($Scope){
+        'full'   { Get-FullFiles; break }
+        'diff'   { Get-DiffFiles; break }
+        'staged' { Get-StagedFiles; break }
+        default  { throw "未知 Scope: $Scope" }
+    }
     if(-not $allFiles -or $allFiles.Count -eq 0){ Write-Ok '无目标文件，结束。'; exit 0 }
 
     Write-Info "Scope=$Scope 文件数: $($allFiles.Count)"
