@@ -25,12 +25,41 @@ $ErrorActionPreference = 'Stop'
 
 # 常量
 $MaxIterations = 5
-$BatchSize = 60
+$BatchSize = 96
+
+# 计时起点
+$scriptStart = Get-Date
 
 function Write-Info($m){ Write-Host $m -ForegroundColor Cyan }
 function Write-Warn($m){ Write-Host $m -ForegroundColor Yellow }
 function Write-Ok($m){ Write-Host $m -ForegroundColor Green }
 function Write-Err($m){ Write-Host $m -ForegroundColor Red }
+
+# 解析 dotnet format --report 生成的 JSON（数组）并返回是否有修改
+function Parse-FormatReport {
+    param(
+        [Parameter(Mandatory)][string]$Path
+    )
+    if(-not (Test-Path $Path)){
+        throw "报告文件不存在: $Path"
+    }
+    $raw = Get-Content $Path -Raw
+    if(-not $raw.Trim()){
+        return [pscustomobject]@{ HasChanges=$false; FileCount=0; ChangeCount=0; Items=@() }
+    }
+    try { $data = $raw | ConvertFrom-Json } catch { throw "报告 JSON 解析失败: $Path - $($_.Exception.Message)" }
+    if(-not $data){ return [pscustomobject]@{ HasChanges=$false; FileCount=0; ChangeCount=0; Items=@() } }
+    # 按当前格式：数组元素含 FileChanges
+    $changedItems = $data | Where-Object { $_.FileChanges -and $_.FileChanges.Count -gt 0 }
+    $changeCount = 0
+    if($changedItems){ $changeCount = ($changedItems | ForEach-Object { $_.FileChanges.Count } | Measure-Object -Sum).Sum }
+    return [pscustomobject]@{
+        HasChanges  = ($changedItems.Count -gt 0)
+        FileCount   = $changedItems.Count
+        ChangeCount = $changeCount
+        Items       = $changedItems
+    }
+}
 
 # 解决方案发现
 $solution = Get-ChildItem -Path . -Filter *.sln -File | Select-Object -First 1
@@ -39,7 +68,7 @@ if($solution){ Write-Info "使用解决方案: $($solution.Name)" } else { Write
 # 合并 enforce 配置
 $editorConfig = '.editorconfig'
 $overrideFile = 'config/enforce.editorconfig'
-$backup = "$editorConfig.__devbak"
+$backup = "gitignore/$editorConfig.__devbak"
 $usingEnforce = $false
 if((Test-Path $editorConfig) -and (Test-Path $overrideFile)){
     Write-Info '应用 enforce 覆盖...'
@@ -82,39 +111,88 @@ try {
     $globalError = $false
     $nonConverged = @()
     $batchIndex = 0
+    $totalIterations = 0
 
     foreach($batch in $batches){
         $batchIndex++
+        $batchStart = Get-Date
         Write-Info "处理批次 $batchIndex/$($batches.Count) (文件数: $($batch.Count))"
         $iteration = 0
         while($iteration -lt $MaxIterations){
             $iteration++
+            $totalIterations++
             Write-Info "  迭代 #$iteration ..."
-            # $args = @('format','analyzers')
-            $args = @('format')
-            if($solution){ $args += $solution.FullName }
-            $args += '--include'
-            $args += $batch
-            # 调试输出（可注释）
-            # Write-Info ("    执行: dotnet " + ($args -join ' '))
-            & dotnet @args
-            $exit = $LASTEXITCODE
-            if($exit -eq 0){ Write-Info '  无修改，批次收敛'; break }
-            elseif($exit -eq 2){ Write-Info '  已应用修改，继续迭代'; continue }
-            else { Write-Err "  dotnet format 异常退出码: $exit"; $globalError = $true; break }
+
+            # 使用单次格式化 + 报告方式判断是否还有修改
+            if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
+            $reportPath = Join-Path 'gitignore' 'format-report.json'
+            if(Test-Path $reportPath){ Remove-Item $reportPath -Force -ErrorAction SilentlyContinue }
+
+            $formatArgs = @('format')
+            if($solution){ $formatArgs += $solution.FullName }
+            $formatArgs += '--include'; $formatArgs += $batch
+            $formatArgs += '--report'; $formatArgs += $reportPath
+            $formatArgs += '--verbosity'; $formatArgs += 'minimal'
+
+            & dotnet @formatArgs
+            $formatExit = $LASTEXITCODE
+            if($formatExit -ne 0){
+                Write-Err "  dotnet format 退出码: $formatExit"
+                $globalError = $true
+                break
+            }
+
+            $changedThisIteration = $false
+            try {
+                $report = Parse-FormatReport -Path $reportPath
+                if($report.HasChanges){
+                    Write-Info "  本轮修改: 文件=$($report.FileCount) 条目=$($report.ChangeCount) -> 继续迭代"
+                    $changedThisIteration = $true
+                } else {
+                    Write-Info '  无修改，批次收敛'
+                    break
+                }
+            } catch {
+                Write-Warn "  报告解析失败，退回哈希/时间戳快速检测"
+                # 回退: 使用 LastWriteTime 判断（简单版）
+                $anyTouched = $false
+                foreach($f in $batch){
+                    # 简易：若在过去 5 秒内更新，视为修改（可进一步增强为哈希）
+                    if((Get-Item $f).LastWriteTime -gt (Get-Date).AddSeconds(-5)) { $anyTouched = $true; break }
+                }
+                if($anyTouched){
+                    Write-Info '  估测有修改(回退策略)，继续迭代'
+                    $changedThisIteration = $true
+                } else {
+                    Write-Info '  回退检测：无修改，批次收敛'
+                    break
+                }
+            }
         }
         if($globalError){ break }
-        if($iteration -ge $MaxIterations -and $exit -eq 2){
+        # 批次耗时与速率
+        $batchElapsed = (Get-Date) - $batchStart
+        $seconds = [Math]::Max($batchElapsed.TotalSeconds, 0.0001)
+        $rate = '{0:N2}' -f ($batch.Count / $seconds)
+        Write-Info ("批次完成: 耗时={0:s\.fff} 文件/秒={1} 迭代={2}" -f $batchElapsed,$rate,$iteration)
+        if($iteration -ge $MaxIterations -and $changedThisIteration){
             Write-Warn '  达到最大迭代仍有修改（可能存在来回改动的 CodeFix）'
             $nonConverged += ,@{ Batch=$batchIndex; Files=$batch }
         }
     }
 
-    if($globalError){ Write-Err '格式化过程中出现错误'; exit 1 }
+    $totalElapsed = (Get-Date) - $scriptStart
+    if($globalError){
+        Write-Err ("格式化过程中出现错误 (总耗时={0:c})" -f $totalElapsed)
+        exit 1
+    }
     if($nonConverged.Count -gt 0){
         Write-Warn "存在未收敛批次: $($nonConverged.Count)"
     }
-    Write-Ok '格式化完成'
+    $totalFiles = $allFiles.Count
+    $tSeconds = [Math]::Max($totalElapsed.TotalSeconds,0.0001)
+    $overallRate = '{0:N2}' -f ($totalFiles / $tSeconds)
+    Write-Ok ("格式化完成: 总文件={0} 批次={1} 迭代总数={2} 总耗时={3:c} 平均文件/秒={4}" -f $totalFiles,$batches.Count,$totalIterations,$totalElapsed,$overallRate)
     exit 0
 }
 finally {
