@@ -1,0 +1,6 @@
+# Diagnostics whitelist for dotnet format (style/analyzers) safe auto-fix
+MT0001
+MT0002
+MT0003
+MT0004
+MT0006

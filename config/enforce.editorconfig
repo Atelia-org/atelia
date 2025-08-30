@@ -1,0 +1,7 @@
+# Formatting enforce overrides (only severities to escalate in enforce mode)
+
+dotnet_diagnostic.MT0001.severity = warning
+dotnet_diagnostic.MT0002.severity = warning
+dotnet_diagnostic.MT0003.severity = warning
+dotnet_diagnostic.MT0004.severity = warning
+dotnet_diagnostic.MT0006.severity = warning
