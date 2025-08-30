@@ -20,10 +20,15 @@ public sealed class MT0007ClosingParenIndentCodeFix : CodeFixProvider {
 
     public override async Task RegisterCodeFixesAsync(CodeFixContext context) {
         var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
-        if (root == null) return;
+        if (root == null) {
+            return;
+        }
+
         var diag = context.Diagnostics.First();
         var closeParen = root.FindToken(diag.Location.SourceSpan.Start);
-        if (!closeParen.IsKind(SyntaxKind.CloseParenToken)) return;
+        if (!closeParen.IsKind(SyntaxKind.CloseParenToken)) {
+            return;
+        }
 
         context.RegisterCodeFix(
             CodeAction.Create(
@@ -35,7 +40,9 @@ public sealed class MT0007ClosingParenIndentCodeFix : CodeFixProvider {
 
     private static async Task<Document> FixAsync(Document doc, SyntaxNode root, SyntaxToken closeParen, CancellationToken ct) {
         var parent = closeParen.Parent;
-        if (parent == null) return doc;
+        if (parent == null) {
+            return doc;
+        }
 
         // Determine anchor token analogous to analyzer logic
         SyntaxToken anchorToken = parent switch {
@@ -55,8 +62,14 @@ public sealed class MT0007ClosingParenIndentCodeFix : CodeFixProvider {
         var text = await doc.GetTextAsync(ct).ConfigureAwait(false);
         var closeLine = text.Lines.GetLineFromPosition(closeParen.SpanStart);
         var lineText = closeLine.ToString();
-        int currentIndent = 0; while (currentIndent < lineText.Length && char.IsWhiteSpace(lineText[currentIndent])) currentIndent++;
-        if (indentTrivia.ToString().Length == currentIndent) return doc;
+        int currentIndent = 0;
+        while (currentIndent < lineText.Length && char.IsWhiteSpace(lineText[currentIndent])) {
+            currentIndent++;
+        }
+
+        if (indentTrivia.ToString().Length == currentIndent) {
+            return doc;
+        }
 
         // Replace leading trivia of close paren line: remove existing leading whitespace trivia up to token
         var leading = closeParen.LeadingTrivia;
@@ -70,7 +83,7 @@ public sealed class MT0007ClosingParenIndentCodeFix : CodeFixProvider {
         } else {
             newLeading = SyntaxFactory.TriviaList(SyntaxFactory.ElasticCarriageReturnLineFeed, indentTrivia);
         }
-    var newToken = closeParen.WithLeadingTrivia(newLeading);
+        var newToken = closeParen.WithLeadingTrivia(newLeading);
         var newRoot = root.ReplaceToken(closeParen, newToken);
         return doc.WithSyntaxRoot(newRoot);
     }

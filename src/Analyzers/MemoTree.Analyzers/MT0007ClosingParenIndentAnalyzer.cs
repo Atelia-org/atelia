@@ -105,15 +105,22 @@ public sealed class MT0007ClosingParenIndentAnalyzer : DiagnosticAnalyzer {
 
     private static void AnalyzeList(SyntaxNodeAnalysisContext ctx, SyntaxToken open, SyntaxToken close, SyntaxToken anchorToken, SyntaxToken lastItemToken) {
         var tree = open.SyntaxTree;
-        if (tree == null) return;
+        if (tree == null) {
+            return;
+        }
+
         var text = tree.GetText(ctx.CancellationToken);
         int openLine = text.Lines.GetLineFromPosition(open.SpanStart).LineNumber;
         int closeLine = text.Lines.GetLineFromPosition(close.SpanStart).LineNumber;
-        if (openLine == closeLine) return; // single-line list => out of scope
+        if (openLine == closeLine) {
+            return; // single-line list => out of scope
+        }
 
         // If close paren shares line with last item => MT0004 handles newline responsibility; skip here.
         int lastItemLine = text.Lines.GetLineFromPosition(lastItemToken.Span.End).LineNumber;
-        if (lastItemLine == closeLine) return;
+        if (lastItemLine == closeLine) {
+            return;
+        }
 
         // Compute indentation column of anchor line.
         var anchorLine = text.Lines.GetLineFromPosition(anchorToken.SpanStart).LineNumber;
@@ -128,6 +135,11 @@ public sealed class MT0007ClosingParenIndentAnalyzer : DiagnosticAnalyzer {
     }
 
     private static int LeadingWhitespaceWidth(string line) {
-        int i = 0; while (i < line.Length && char.IsWhiteSpace(line[i])) i++; return i;
+        int i = 0;
+        while (i < line.Length && char.IsWhiteSpace(line[i])) {
+            i++;
+        }
+
+        return i;
     }
 }
