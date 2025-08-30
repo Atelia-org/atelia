@@ -22,18 +22,16 @@ param(
     #   diff   -> 工作区/暂存/未跟踪改动合集 (unstaged + staged + untracked)
     #   staged -> 仅当前已暂存准备提交的 *.cs (git diff --cached)
     [ValidateSet('full','diff','staged')][string]$Scope = 'full',
-    [int]$MaxIterations = 5,                 # 单文件最大迭代次数
-    [int]$MaxFilesPerRun = 512,              # 每次运行最大文件数（软上限）
-    [int]$MaxCmdChars = 30000,               # 非响应文件模式下的命令行字符上限
-    [switch]$UseResponseFile                 # 使用响应文件规避命令行长度限制（默认开启；传 -UseResponseFile:$false 关闭）
+    [ValidateRange(1,100)][int]$MaxIterations = 5,       # 单文件最大迭代次数
+    [ValidateRange(1,4096)][int]$MaxFilesPerRun = 512,   # 每批最大文件数
+    [string]$SummaryJson = 'gitignore/format-summary.json' # 汇总输出路径
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# 常量 (BatchSize 已被长度/数量双阈值替换，仅保留注释说明)
-# 旧参数 BatchSize -> 以 $MaxFilesPerRun / $MaxCmdChars / 响应文件 组合实现动态批次
-if(-not $PSBoundParameters.ContainsKey('UseResponseFile')){ $UseResponseFile = $true }
+# 始终使用响应文件模式（移除 UseResponseFile 参数）
+$UseResponseFile = $true
 
 # 计时起点
 $scriptStart = Get-Date
@@ -89,9 +87,12 @@ if((Test-Path $editorConfig) -and (Test-Path $overrideFile)){
     Write-Warn '缺少 .editorconfig 或 enforce 覆盖文件，跳过合并。'
 }
 
+function Normalize-Path([string]$p){ return ([IO.Path]::GetFullPath($p)) }
+
 function Get-FullFiles(){
-    # 使用 git ls-files 提供稳定列表
-    $files = (& git ls-files *.cs 2>$null) | Where-Object { $_ }
+    # 使用 git ls-files (全部) 然后过滤扩展，确保递归；避免 "git ls-files *.cs" 只匹配根目录的问题
+    $files = (& git ls-files 2>$null) | Where-Object { $_ }
+    $files = $files | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' }
     return $files
 }
 
@@ -111,151 +112,141 @@ function Get-StagedFiles(){
     return $files
 }
 
+function Invoke-FormatBatch {
+    param(
+        [string[]]$Files,
+        [string]$ReportPath,
+        [System.IO.FileInfo]$Solution
+    )
+    # 生成响应文件（全部路径加引号，处理空格）
+    $rspPath = Join-Path 'gitignore' 'format_args.rsp'
+    if(Test-Path $rspPath){ Remove-Item $rspPath -Force -ErrorAction SilentlyContinue }
+    $rspLines = @('format')
+    if($Solution){ $rspLines += $Solution.FullName }
+    $rspLines += '--include'
+    # 仅在包含空格时加引号，避免被当成字面字符
+    foreach($f in $Files){
+        if($f -match '\s'){ $rspLines += '"{0}"' -f $f } else { $rspLines += $f }
+    }
+    $rspLines += '--report'; $rspLines += $ReportPath
+    $rspLines += '--verbosity'; $rspLines += 'minimal'
+    $rspLines | Set-Content $rspPath -Encoding UTF8
+    & dotnet "@$rspPath"
+    return $LASTEXITCODE
+}
+
+function Write-SummaryJson {
+    param(
+        [string]$Path,
+        [hashtable]$Data
+    )
+    try {
+        ($Data | ConvertTo-Json -Depth 4) | Set-Content $Path -Encoding UTF8
+        Write-Info "已写入汇总 JSON: $Path"
+    } catch {
+        Write-Warn "写入汇总 JSON 失败: $($_.Exception.Message)"
+    }
+}
+
+$summary = @{}
+$globalError = $false
 try {
     $allFiles = switch($Scope){
-        'full'   { Get-FullFiles; break }
-        'diff'   { Get-DiffFiles; break }
-        'staged' { Get-StagedFiles; break }
+        'full'   { Get-FullFiles }
+        'diff'   { Get-DiffFiles }
+        'staged' { Get-StagedFiles }
         default  { throw "未知 Scope: $Scope" }
     }
-    if(-not $allFiles -or $allFiles.Count -eq 0){ Write-Ok '无目标文件，结束。'; exit 0 }
+    if(-not $allFiles -or $allFiles.Count -eq 0){ Write-Ok '无目标文件，结束。'; $summary = @{ total=0 }; return }
 
     Write-Info "Scope=$Scope 文件数: $($allFiles.Count)"
 
-    # ===== 单循环 + 顶部统一动态补位策略 =====
-    $globalError = $false
-    $totalRuns = 0
-    $state = @{}                       # path -> @{ Iter = <int> }
-    $converged = New-Object System.Collections.ArrayList
-    $nonConverged = New-Object System.Collections.ArrayList
-    $carry = New-Object System.Collections.ArrayList  # 上轮需要继续 (changed) 的文件
-    $script:pendingIndex = 0
-
-    function New-RunFiles([System.Collections.ArrayList]$carryOver){
-        $run = New-Object System.Collections.ArrayList
-        foreach($f in $carryOver){ [void]$run.Add($f) }
-        if($UseResponseFile){
-            while($run.Count -lt $MaxFilesPerRun -and $script:pendingIndex -lt $allFiles.Count){
-                $cand = $allFiles[$script:pendingIndex]; $script:pendingIndex++
-                if(-not $state.ContainsKey($cand)){ $state[$cand] = @{ Iter = 0 } }
-                if(-not $run.Contains($cand)){ [void]$run.Add($cand) }
-            }
-            return ,$run
-        }
-        # 非响应文件模式: 基于命令行长度动态填充
-        $baseArgs = @('format')
-        if($solution){ $baseArgs += $solution.FullName }
-        $baseArgs += '--include'
-        function Get-Len([object[]]$arr){ (($arr -join ' ') | Measure-Object -Character).Characters }
-        $currentLen = Get-Len ($baseArgs + $run)
-        while($script:pendingIndex -lt $allFiles.Count -and $run.Count -lt $MaxFilesPerRun){
-            $cand = $allFiles[$script:pendingIndex]
-            $increment = $cand.Length + 1  # 近似: 空格 + 路径
-            if(($currentLen + $increment) -gt $MaxCmdChars){
-                if($run.Count -eq 0){ # 强制至少一个
-                    $script:pendingIndex++
-                    if(-not $state.ContainsKey($cand)){ $state[$cand] = @{ Iter = 0 } }
-                    [void]$run.Add($cand)
-                }
-                break
-            }
-            $script:pendingIndex++
-            if(-not $state.ContainsKey($cand)){ $state[$cand] = @{ Iter = 0 } }
-            [void]$run.Add($cand)
-            $currentLen += $increment
-        }
-        return ,$run
+    # 初始化队列 & 状态
+    $queue = [System.Collections.Generic.Queue[string]]::new() # 保存相对路径
+    $state = @{}   # 绝对规范路径 -> @{ Iter = <int> }
+    foreach($f in $allFiles){
+        $abs = Normalize-Path $f
+        $queue.Enqueue($f)      # 使用原始（git 输出的）相对路径以便 include
+        $state[$abs] = @{ Iter = 0 }
     }
+    $converged = New-Object System.Collections.Generic.List[string]
+    $nonConverged = New-Object System.Collections.Generic.List[string]
+    $totalRuns = 0
 
-    while($true){
-        $runFiles = New-RunFiles $carry
-        if($runFiles.Count -eq 0){ Write-Info '无待处理文件，结束循环。'; break }
-        $carry = New-Object System.Collections.ArrayList  # 清空，待本轮结果填充
+    while($queue.Count -gt 0){
+        $batch = @()  # 相对路径集合
+        while($queue.Count -gt 0 -and $batch.Count -lt $MaxFilesPerRun){
+            $batch += $queue.Dequeue()  # 相对路径
+        }
         $totalRuns++
-        $runStart = Get-Date
-        $remainingPending = $allFiles.Count - $script:pendingIndex
-        Write-Info ("运行 #$totalRuns 文件数={0} CarryOver={1} Pending={2} (UseRsp={3})" -f $runFiles.Count,($carry.Count),$remainingPending,$UseResponseFile)
+        Write-Info ("运行 #$totalRuns 文件数={0} 队列剩余={1}" -f $batch.Count,$queue.Count)
 
         if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
         $reportPath = Join-Path 'gitignore' 'format-report.json'
         if(Test-Path $reportPath){ Remove-Item $reportPath -Force -ErrorAction SilentlyContinue }
 
-        if($UseResponseFile){
-            $rspPath = Join-Path 'gitignore' 'format_args.rsp'
-            if(Test-Path $rspPath){ Remove-Item $rspPath -Force -ErrorAction SilentlyContinue }
-            $rspLines = @('format')
-            if($solution){ $rspLines += $solution.FullName }
-            $rspLines += '--include'
-            $rspLines += $runFiles
-            $rspLines += '--report'; $rspLines += $reportPath
-            $rspLines += '--verbosity'; $rspLines += 'minimal'
-            $rspLines | Set-Content $rspPath -Encoding UTF8
-            & dotnet "@$rspPath"
-        } else {
-            $formatArgs = @('format')
-            if($solution){ $formatArgs += $solution.FullName }
-            $formatArgs += '--include'; $formatArgs += $runFiles
-            $formatArgs += '--report'; $formatArgs += $reportPath
-            $formatArgs += '--verbosity'; $formatArgs += 'minimal'
-            & dotnet @formatArgs
-        }
-        $formatExit = $LASTEXITCODE
-        if($formatExit -ne 0){ Write-Err "  dotnet format 退出码: $formatExit"; $globalError = $true; break }
+    $exit = Invoke-FormatBatch -Files $batch -ReportPath $reportPath -Solution $solution
+        if($exit -ne 0){ Write-Err "dotnet format 退出码: $exit"; $globalError = $true; break }
 
-        $report = $null
-        $changed = @{}
-        $changeFileCount = 0
-        $changeEntryCount = 0
+        $changeFileCount = 0; $changeEntryCount = 0
+        $changedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         try {
             $report = Parse-FormatReport -Path $reportPath
             if($report.HasChanges){
                 $changeFileCount = $report.FileCount
                 $changeEntryCount = $report.ChangeCount
-                foreach($item in $report.Items){
-                    $changed[[IO.Path]::GetFullPath($item.FilePath).ToLowerInvariant()] = $true
-                }
+                foreach($item in $report.Items){ $null = $changedSet.Add( (Normalize-Path $item.FilePath) ) }
             }
         } catch {
-            Write-Warn "  报告解析失败: $($_.Exception.Message) -> 假定全部变更继续"
-            foreach($f in $runFiles){ $changed[[IO.Path]::GetFullPath($f).ToLowerInvariant()] = $true }
-            $changeFileCount = $runFiles.Count
+            Write-Err "报告解析失败: $($_.Exception.Message)"; $globalError = $true; break
         }
 
-        $kept = 0
-        foreach($f in $runFiles){
-            $fullKey = [IO.Path]::GetFullPath($f).ToLowerInvariant()
-            if($changed.ContainsKey($fullKey)){
-                if(-not $state.ContainsKey($f)){ $state[$f] = @{ Iter = 0 } }
-                $state[$f].Iter++
-                if($state[$f].Iter -lt $MaxIterations){ [void]$carry.Add($f); $kept++ } else { [void]$nonConverged.Add($f); Write-Warn "  未收敛: $f (迭代=$($state[$f].Iter))" }
+        $requeue = 0
+        foreach($rel in $batch){
+            $absKey = Normalize-Path $rel
+            if($changedSet.Contains($absKey)){
+                if(-not $state.ContainsKey($absKey)){ $state[$absKey] = @{ Iter = 0 } }
+                $state[$absKey].Iter++
+                if($state[$absKey].Iter -lt $MaxIterations){
+                    $queue.Enqueue($rel); $requeue++
+                } else {
+                    $nonConverged.Add($rel); Write-Warn "  未收敛: $rel (迭代=$($state[$absKey].Iter))"
+                }
             } else {
-                [void]$converged.Add($f)
+                $converged.Add($rel)
             }
         }
-
-        $runElapsed = (Get-Date) - $runStart
-        $seconds = [Math]::Max($runElapsed.TotalSeconds,0.0001)
-        $rate = '{0:N2}' -f ($runFiles.Count / $seconds)
-        Write-Info ("  本轮: 改动文件={0} 改动条目={1} 保留继续={2} 耗时={3:c} 速率={4} 文件/秒" -f $changeFileCount,$changeEntryCount,$kept,$runElapsed,$rate)
-
-        if($carry.Count -eq 0 -and $script:pendingIndex -ge $allFiles.Count){
-            Write-Info '所有文件收敛/处理完毕。'
-            break
-        }
+        Write-Info ("  本轮: 改动文件={0} 改动条目={1} 重新入队={2}" -f $changeFileCount,$changeEntryCount,$requeue)
     }
 
-    $totalElapsed = (Get-Date) - $scriptStart
-    if($globalError){ Write-Err ("格式化过程中出现错误 (总耗时={0:c})" -f $totalElapsed); exit 1 }
+    $elapsed = (Get-Date) - $scriptStart
     $processed = $converged.Count + $nonConverged.Count
-    $tSeconds = [Math]::Max($totalElapsed.TotalSeconds,0.0001)
-    $overallRate = '{0:N2}' -f ($processed / $tSeconds)
-    if($nonConverged.Count -gt 0){ Write-Warn ("未收敛文件: {0}" -f $nonConverged.Count) }
-    Write-Ok ("格式化完成: 总文件={0} 已处理={1} 收敛={2} 未收敛={3} 运行次数={4} 总耗时={5:c} 平均文件/秒={6} (Rsp={7})" -f $allFiles.Count,$processed,$converged.Count,$nonConverged.Count,$totalRuns,$totalElapsed,$overallRate,$UseResponseFile)
-    exit 0
+    $rate = if($elapsed.TotalSeconds -gt 0){ '{0:N2}' -f ($processed / $elapsed.TotalSeconds) } else { 'N/A' }
+    if($nonConverged.Count -gt 0){ Write-Warn "未收敛文件: $($nonConverged.Count)" }
+    if(-not $globalError){
+        Write-Ok ("格式化完成: 总文件={0} 已处理={1} 收敛={2} 未收敛={3} 运行次数={4} 总耗时={5:c} 平均文件/秒={6}" -f $allFiles.Count,$processed,$converged.Count,$nonConverged.Count,$totalRuns,$elapsed,$rate)
+    }
+
+    $summary = @{
+        scope = $Scope
+        totalFiles = $allFiles.Count
+        processedFiles = $processed
+        convergedFiles = $converged.Count
+        nonConvergedFiles = $nonConverged.Count
+        runs = $totalRuns
+        elapsedSeconds = [Math]::Round($elapsed.TotalSeconds,3)
+        filesPerSecond = $rate
+        nonConvergedList = $nonConverged
+        maxIterations = $MaxIterations
+        timestamp = (Get-Date).ToString('o')
+        success = (-not $globalError)
+    }
 }
 finally {
     if($usingEnforce -and (Test-Path $backup)){
         Write-Info '恢复原始 .editorconfig'
         Move-Item -Force $backup $editorConfig
     }
+    if($SummaryJson){ Write-SummaryJson -Path $SummaryJson -Data $summary }
+    if($globalError){ exit 1 } else { exit 0 }
 }
