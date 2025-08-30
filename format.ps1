@@ -24,6 +24,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # 常量
+# $MaxIterations 语义调整为: 单文件允许的最大格式化迭代次数 (防止振荡)
 $MaxIterations = 5
 $BatchSize = 96
 
@@ -102,82 +103,129 @@ try {
 
     Write-Info "Scope=$Scope 文件数: $($allFiles.Count)"
 
-    # 批次分组
-    $batches = @()
-    for($i=0; $i -lt $allFiles.Count; $i += $BatchSize){
-        $batches += ,($allFiles[$i..([Math]::Min($i+$BatchSize-1,$allFiles.Count-1))])
+    # ===== 动态补位批次机制 =====
+    $globalError = $false
+    $totalRuns = 0                # 执行 dotnet format 次数
+    $state = @{}                  # path -> @{ Iter = <int> }
+    $converged = New-Object System.Collections.ArrayList
+    $nonConverged = New-Object System.Collections.ArrayList
+    $active = New-Object System.Collections.ArrayList
+    $script:pendingIndex = 0      # 指向 $allFiles 中尚未进入 active 的起始位置 (script 作用域)
+
+    function Add-Active([string]$f){
+        if(-not $state.ContainsKey($f)){
+            [void]$active.Add($f)
+            $state[$f] = @{ Iter = 0 }
+        }
+    }
+    function Fill-Active(){
+        while($active.Count -lt $BatchSize -and $script:pendingIndex -lt $allFiles.Count){
+            $next = $allFiles[$script:pendingIndex]
+            $script:pendingIndex++
+            Add-Active $next
+        }
     }
 
-    $globalError = $false
-    $nonConverged = @()
-    $batchIndex = 0
-    $totalIterations = 0
+    Fill-Active
+    if($active.Count -eq 0){
+        Write-Ok '无目标文件 (active 空)，结束。'
+        exit 0
+    }
 
-    foreach($batch in $batches){
-        $batchIndex++
-        $batchStart = Get-Date
-        Write-Info "处理批次 $batchIndex/$($batches.Count) (文件数: $($batch.Count))"
-        $iteration = 0
-        while($iteration -lt $MaxIterations){
-            $iteration++
-            $totalIterations++
-            Write-Info "  迭代 #$iteration ..."
+    $repoRoot = (Get-Location).ProviderPath
 
-            # 使用单次格式化 + 报告方式判断是否还有修改
-            if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
-            $reportPath = Join-Path 'gitignore' 'format-report.json'
-            if(Test-Path $reportPath){ Remove-Item $reportPath -Force -ErrorAction SilentlyContinue }
+    while($active.Count -gt 0){
+        $runStart = Get-Date
+        $totalRuns++
+    # 剩余待进入的文件数（不含当前 active / 已收敛 / 未收敛）
+    $remainingPending = $allFiles.Count - $script:pendingIndex
+        Write-Info ("运行 #$totalRuns Active={0} Pending={1}" -f $active.Count,$remainingPending)
 
-            $formatArgs = @('format')
-            if($solution){ $formatArgs += $solution.FullName }
-            $formatArgs += '--include'; $formatArgs += $batch
-            $formatArgs += '--report'; $formatArgs += $reportPath
-            $formatArgs += '--verbosity'; $formatArgs += 'minimal'
+        # 准备报告文件
+        if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
+        $reportPath = Join-Path 'gitignore' 'format-report.json'
+        if(Test-Path $reportPath){ Remove-Item $reportPath -Force -ErrorAction SilentlyContinue }
 
-            & dotnet @formatArgs
-            $formatExit = $LASTEXITCODE
-            if($formatExit -ne 0){
-                Write-Err "  dotnet format 退出码: $formatExit"
-                $globalError = $true
-                break
+        # 组装 format 参数
+        $formatArgs = @('format')
+        if($solution){ $formatArgs += $solution.FullName }
+        $formatArgs += '--include'; $formatArgs += @($active)
+        $formatArgs += '--report'; $formatArgs += $reportPath
+        $formatArgs += '--verbosity'; $formatArgs += 'minimal'
+
+        & dotnet @formatArgs
+        $formatExit = $LASTEXITCODE
+        if($formatExit -ne 0){
+            Write-Err "  dotnet format 退出码: $formatExit"
+            $globalError = $true
+            break
+        }
+
+        $report = $null
+        $changedFull = @{}
+        $changeFileCount = 0
+        $changeEntryCount = 0
+        try {
+            $report = Parse-FormatReport -Path $reportPath
+            if($report.HasChanges){
+                $changeFileCount = $report.FileCount
+                $changeEntryCount = $report.ChangeCount
+                foreach($item in $report.Items){
+                    $full = [IO.Path]::GetFullPath($item.FilePath)
+                    $changedFull[$full.ToLowerInvariant()] = $true
+                }
             }
+        } catch {
+            Write-Warn "  报告解析失败: $($_.Exception.Message)"
+            # 若解析失败，退化为全部 active 继续一次（计入迭代）
+            foreach($f in $active){
+                $full = [IO.Path]::GetFullPath($f)
+                $changedFull[$full.ToLowerInvariant()] = $true
+            }
+            $changeFileCount = $active.Count
+        }
 
-            $changedThisIteration = $false
-            try {
-                $report = Parse-FormatReport -Path $reportPath
-                if($report.HasChanges){
-                    Write-Info "  本轮修改: 文件=$($report.FileCount) 条目=$($report.ChangeCount) -> 继续迭代"
-                    $changedThisIteration = $true
+        $nextActive = New-Object System.Collections.ArrayList
+        $kept = 0
+        $newlyAdded = 0
+
+        foreach($f in @($active)){
+            $full = [IO.Path]::GetFullPath($f).ToLowerInvariant()
+            if($changedFull.ContainsKey($full)){
+                $state[$f].Iter++
+                if($state[$f].Iter -lt $MaxIterations){
+                    [void]$nextActive.Add($f)
+                    $kept++
                 } else {
-                    Write-Info '  无修改，批次收敛'
-                    break
+                    Write-Warn "  未收敛: $f (迭代=$($state[$f].Iter))"
+                    [void]$nonConverged.Add($f)
                 }
-            } catch {
-                Write-Warn "  报告解析失败，退回哈希/时间戳快速检测"
-                # 回退: 使用 LastWriteTime 判断（简单版）
-                $anyTouched = $false
-                foreach($f in $batch){
-                    # 简易：若在过去 5 秒内更新，视为修改（可进一步增强为哈希）
-                    if((Get-Item $f).LastWriteTime -gt (Get-Date).AddSeconds(-5)) { $anyTouched = $true; break }
-                }
-                if($anyTouched){
-                    Write-Info '  估测有修改(回退策略)，继续迭代'
-                    $changedThisIteration = $true
-                } else {
-                    Write-Info '  回退检测：无修改，批次收敛'
-                    break
-                }
+            } else {
+                [void]$converged.Add($f)
             }
         }
-        if($globalError){ break }
-        # 批次耗时与速率
-        $batchElapsed = (Get-Date) - $batchStart
-        $seconds = [Math]::Max($batchElapsed.TotalSeconds, 0.0001)
-        $rate = '{0:N2}' -f ($batch.Count / $seconds)
-        Write-Info ("批次完成: 耗时={0:s\.fff} 文件/秒={1} 迭代={2}" -f $batchElapsed,$rate,$iteration)
-        if($iteration -ge $MaxIterations -and $changedThisIteration){
-            Write-Warn '  达到最大迭代仍有修改（可能存在来回改动的 CodeFix）'
-            $nonConverged += ,@{ Batch=$batchIndex; Files=$batch }
+
+        # 用 pending 填充
+        while($nextActive.Count -lt $BatchSize -and $script:pendingIndex -lt $allFiles.Count){
+            $candidate = $allFiles[$script:pendingIndex]
+            $script:pendingIndex++
+            if(-not $state.ContainsKey($candidate)){
+                $state[$candidate] = @{ Iter = 0 }
+                [void]$nextActive.Add($candidate)
+                $newlyAdded++
+            }
+        }
+
+        $runElapsed = (Get-Date) - $runStart
+        $seconds = [Math]::Max($runElapsed.TotalSeconds,0.0001)
+        $rate = '{0:N2}' -f ($active.Count / $seconds)
+    Write-Info ("  本轮: 改动文件={0} 改动条目={1} 保留继续={2} 新增补位={3} 耗时={4:c} 处理速率={5} 文件/秒" -f $changeFileCount,$changeEntryCount,$kept,$newlyAdded,$runElapsed,$rate)
+
+        $active = $nextActive
+
+    if($active.Count -eq 0 -and $script:pendingIndex -ge $allFiles.Count){
+            Write-Info '所有文件均收敛/终止，结束循环。'
+            break
         }
     }
 
@@ -186,13 +234,14 @@ try {
         Write-Err ("格式化过程中出现错误 (总耗时={0:c})" -f $totalElapsed)
         exit 1
     }
-    if($nonConverged.Count -gt 0){
-        Write-Warn "存在未收敛批次: $($nonConverged.Count)"
-    }
-    $totalFiles = $allFiles.Count
+
+    $processed = $converged.Count + $nonConverged.Count
     $tSeconds = [Math]::Max($totalElapsed.TotalSeconds,0.0001)
-    $overallRate = '{0:N2}' -f ($totalFiles / $tSeconds)
-    Write-Ok ("格式化完成: 总文件={0} 批次={1} 迭代总数={2} 总耗时={3:c} 平均文件/秒={4}" -f $totalFiles,$batches.Count,$totalIterations,$totalElapsed,$overallRate)
+    $overallRate = '{0:N2}' -f ($processed / $tSeconds)
+    if($nonConverged.Count -gt 0){
+        Write-Warn ("未收敛文件: {0}" -f $nonConverged.Count)
+    }
+    Write-Ok ("格式化完成: 总文件={0} 已处理={1} 收敛={2} 未收敛={3} 运行次数={4} 总耗时={5:c} 平均文件/秒={6}" -f $allFiles.Count,$processed,$converged.Count,$nonConverged.Count,$totalRuns,$totalElapsed,$overallRate)
     exit 0
 }
 finally {
