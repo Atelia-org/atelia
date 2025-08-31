@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 // MT0005: Require newline immediately after '(' when a parameter/argument list spans multiple lines
 // (Pure symmetric opening rule). Disabled by default; pairs with MT0004 (closing paren on its own line).

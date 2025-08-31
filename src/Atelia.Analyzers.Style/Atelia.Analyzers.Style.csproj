@@ -5,8 +5,8 @@
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
-    <AssemblyName>MemoTree.Analyzers</AssemblyName>
-    <PackageId>MemoTree.Analyzers</PackageId>
+    <AssemblyName>Atelia.Analyzers.Style</AssemblyName>
+    <PackageId>Atelia.Analyzers.Style</PackageId>
     <Description>Custom analyzers and code fixes optimized for LLM-assisted development in MemoTree.</Description>
     <Version>0.1.0</Version>
     <Authors>MemoTree</Authors>

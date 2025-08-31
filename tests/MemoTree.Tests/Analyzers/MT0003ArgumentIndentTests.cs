@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
-using MemoTree.Analyzers;
+using Atelia.Analyzers.Style;
 using System.Threading.Tasks;
 using MemoTree.Tests.Analyzers.TestHelpers;
 using Microsoft.CodeAnalysis.CodeFixes;
@@ -10,9 +10,9 @@ namespace MemoTree.Tests.Analyzers;
 public class MT0003ArgumentIndentTests {
     private const string Id = "MT0003";
     private static (IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> diags, Microsoft.CodeAnalysis.Compilation comp) RunAnalyzer(string src)
-        => AnalyzerTestHost.RunAnalyzer(src, "MemoTree.Analyzers.MT0003ArgumentIndentAnalyzer");
+        => AnalyzerTestHost.RunAnalyzer(src, "Atelia.Analyzers.Style.MT0003ArgumentIndentAnalyzer");
     private static Task<string> ApplyAllCodeFixesAsync(string src)
-        => AnalyzerTestHost.ApplyAllCodeFixesAsync(src, "MemoTree.Analyzers.MT0003ArgumentIndentAnalyzer", new MT0003ArgumentIndentCodeFix(), Id);
+        => AnalyzerTestHost.ApplyAllCodeFixesAsync(src, "Atelia.Analyzers.Style.MT0003ArgumentIndentAnalyzer", new MT0003ArgumentIndentCodeFix(), Id);
 
     // 1. 正确缩进：调用行有 8 个空格，参数行应 12 个空格 (indent_size=4)
     [Fact]

@@ -4,7 +4,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 // MT0007 / CanonicalName: IndentClosingParenMultilineParameterList
 // Rule intent: When a parameter/argument list spans multiple lines and the closing parenthesis is already

@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 // MT0003: 规范多行参数列表中参数行的缩进：
 // 规则：如果调用/创建的参数列表跨越多行（即 '(' 与 ')' 不在同一行），则除首行外所有参数起始行都应当缩进为 调用起始行 + 一个 indent_size。

@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 // MT0006 / CanonicalName: NewLineFirstMultilineArgument
 // Rule: The first multiline argument (one whose span crosses multiple lines) must start on a new line

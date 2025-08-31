@@ -1,6 +1,6 @@
 using System.Linq;
 using System.Threading.Tasks;
-using MemoTree.Analyzers;
+using Atelia.Analyzers.Style;
 using MemoTree.Tests.Analyzers.TestHelpers;
 using Xunit;
 
@@ -15,14 +15,14 @@ public class X000XExperimentalFormattingTests {
     [Fact]
     public void X0002_Diagnostic_When_OpeningHasNewlineButCloseInline() {
         var code = "class C{void M(\n int a,\n int b){} }"; // ')' inline with last param -> should report
-        var (d, _) = RunAnalyzer(code, "MemoTree.Analyzers.X0002ConditionalCloseParenAnalyzer");
+        var (d, _) = RunAnalyzer(code, "Atelia.Analyzers.Style.X0002ConditionalCloseParenAnalyzer");
         Assert.Contains(d, x => x.Id == "X0002");
     }
 
     [Fact]
     public async Task X0002_CodeFix_MovesCloseParen() {
         var code = "class C{void M(\n int a,\n int b){} }";
-        var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, "MemoTree.Analyzers.X0002ConditionalCloseParenAnalyzer", new X0002ConditionalCloseParenCodeFix(), "X0002");
+        var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, "Atelia.Analyzers.Style.X0002ConditionalCloseParenAnalyzer", new X0002ConditionalCloseParenCodeFix(), "X0002");
         // Allow optional blank line or indentation before '{'
         Assert.Matches(@"int b\r?\n\)\r?\n\s*\{", fixedText);
     }

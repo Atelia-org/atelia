@@ -1,4 +1,4 @@
-# MemoTree.Analyzers
+# Atelia.Analyzers.Style
 
 Custom Roslyn analyzers & code fixes for MemoTree's LLM-centric development style.
 
@@ -32,18 +32,18 @@ Normally the analyzer project does NOT load itself (avoids circular references &
 
 1. Regular build (produces fresh DLL):
 	```
-	dotnet build src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj
+	dotnet build src/Atelia.Analyzers.Style/Atelia.Analyzers.Style.csproj
 	```
 2. Self-analysis build (re-loads the just-built DLLs as analyzers):
 	```
-	dotnet build src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj -p:UseSelfAnalyzers=true
+	dotnet build src/Atelia.Analyzers.Style/Atelia.Analyzers.Style.csproj -p:UseSelfAnalyzers=true
 	```
 
 What happens in step 2:
-* `Directory.Build.targets` detects `UseSelfAnalyzers=true` AND project name == `MemoTree.Analyzers`.
+* `Directory.Build.targets` detects `UseSelfAnalyzers=true` AND project name == `Atelia.Analyzers.Style`.
 * It injects these assemblies (if present) as analyzer inputs:
-  - `MemoTree.Analyzers.dll`
-  - `MemoTree.Analyzers.CodeFixes.dll`
+  - `Atelia.Analyzers.Style.dll`
+  - `Atelia.Analyzers.Style.CodeFixes.dll`
 * The compiler then re-runs with your rules applied to their own source.
 
 Why not always on?
@@ -61,7 +61,7 @@ dotnet format analyzers --severity info --diagnostics MT0001,MT0002,MT0003
 ```
 To include self-analysis at the same time for the analyzer project itself, combine:
 ```
-dotnet build src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj -p:UseSelfAnalyzers=true
+dotnet build src/Atelia.Analyzers.Style/Atelia.Analyzers.Style.csproj -p:UseSelfAnalyzers=true
 dotnet format analyzers --severity info --diagnostics MT0001,MT0002,MT0003
 ```
 Add `--verify-no-changes` in CI to fail if formatting is required.
@@ -69,8 +69,8 @@ Add `--verify-no-changes` in CI to fail if formatting is required.
 ### Quick Reference
 | Task | Command |
 |------|---------|
-| Build (normal) | `dotnet build src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj` |
-| Self-analyze | `dotnet build src/Analyzers/MemoTree.Analyzers/MemoTree.Analyzers.csproj -p:UseSelfAnalyzers=true` |
+| Build (normal) | `dotnet build src/Atelia.Analyzers.Style/Atelia.Analyzers.Style.csproj` |
+| Self-analyze | `dotnet build src/Atelia.Analyzers.Style/Atelia.Analyzers.Style.csproj -p:UseSelfAnalyzers=true` |
 | Apply fixes all projects | `dotnet format analyzers --severity info` |
 | Apply only MT0001 & MT0002 & MT0003 | `dotnet format analyzers --diagnostics MT0001,MT0002,MT0003 --severity info` |
 | CI verify clean | `dotnet format analyzers --verify-no-changes --severity info` |

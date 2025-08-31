@@ -4,15 +4,15 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
-    <AssemblyName>MemoTree.Analyzers.CodeFixes</AssemblyName>
-    <PackageId>MemoTree.Analyzers.CodeFixes</PackageId>
+    <AssemblyName>Atelia.Analyzers.Style.CodeFixes</AssemblyName>
+    <PackageId>Atelia.Analyzers.Style.CodeFixes</PackageId>
     <Description>Code fix providers for MemoTree analyzers.</Description>
     <Version>0.1.0</Version>
     <Authors>MemoTree</Authors>
     <DevelopmentDependency>true</DevelopmentDependency>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\MemoTree.Analyzers\MemoTree.Analyzers.csproj" />
+    <ProjectReference Include="..\Atelia.Analyzers.Style\Atelia.Analyzers.Style.csproj" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.10.0" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
   </ItemGroup>

@@ -6,15 +6,15 @@
   </PropertyGroup>
 
   <!-- When explicitly requested, add the freshly built analyzer + codefix assemblies back so the analyzer project self-analyzes. -->
-  <!-- <ItemGroup Condition="'$(UseSelfAnalyzers)'=='true' AND '$(MSBuildProjectName)'=='MemoTree.Analyzers'"> -->
+  <!-- <ItemGroup Condition="'$(UseSelfAnalyzers)'=='true' AND '$(MSBuildProjectName)'=='Atelia.Analyzers.Style'"> -->
   <ItemGroup Condition="'$(UseSelfAnalyzers)'=='true'">
     <!-- Use absolute (repo-root anchored) paths; assumes default Configuration & target framework -->
-    <Analyzer Include="$(MSBuildThisFileDirectory)src/Analyzers/MemoTree.Analyzers/bin/$(Configuration)/netstandard2.0/MemoTree.Analyzers.dll" Condition="Exists('$(MSBuildThisFileDirectory)src/Analyzers/MemoTree.Analyzers/bin/$(Configuration)/netstandard2.0/MemoTree.Analyzers.dll')" />
-    <Analyzer Include="$(MSBuildThisFileDirectory)src/Analyzers/MemoTree.Analyzers.CodeFixes/bin/$(Configuration)/netstandard2.0/MemoTree.Analyzers.CodeFixes.dll" Condition="Exists('$(MSBuildThisFileDirectory)src/Analyzers/MemoTree.Analyzers.CodeFixes/bin/$(Configuration)/netstandard2.0/MemoTree.Analyzers.CodeFixes.dll')" />
+    <Analyzer Include="$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.dll" Condition="Exists('$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.dll')" />
+    <Analyzer Include="$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style.CodeFixes/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.CodeFixes.dll" Condition="Exists('$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style.CodeFixes/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.CodeFixes.dll')" />
   </ItemGroup>
 
   <!-- Helpful message -->
-  <Target Name="_ReportSelfAnalyzers" BeforeTargets="CoreCompile" Condition="'$(UseSelfAnalyzers)'=='true' AND '$(MSBuildProjectName)'=='MemoTree.Analyzers'">
+  <Target Name="_ReportSelfAnalyzers" BeforeTargets="CoreCompile" Condition="'$(UseSelfAnalyzers)'=='true' AND '$(MSBuildProjectName)'=='Atelia.Analyzers.Style'">
     <Message Importance="High" Text="[MemoTree] Self-analysis enabled: using analyzer + codefix DLLs from previous build output." />
   </Target>
 </Project>

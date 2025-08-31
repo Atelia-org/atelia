@@ -8,7 +8,7 @@ using Microsoft.CodeAnalysis.CodeActions;
 using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 [ExportCodeFixProvider(LanguageNames.CSharp, Name = nameof(X0002ConditionalCloseParenCodeFix))]
 [Shared]

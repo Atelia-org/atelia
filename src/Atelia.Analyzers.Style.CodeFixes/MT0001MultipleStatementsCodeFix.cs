@@ -10,7 +10,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Formatting;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 [ExportCodeFixProvider(LanguageNames.CSharp, Name = nameof(MT0001MultipleStatementsCodeFix))]
 [Shared]

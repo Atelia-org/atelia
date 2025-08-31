@@ -7,7 +7,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.CodeAnalysis.Diagnostics;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 // Experimental: Enforce newline immediately after '(' for multiline parameter / argument lists.
 [DiagnosticAnalyzer(LanguageNames.CSharp)]

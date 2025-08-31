@@ -1,6 +1,6 @@
 using System.Linq;
 using System.Threading.Tasks;
-using MemoTree.Analyzers;
+using Atelia.Analyzers.Style;
 using MemoTree.Tests.Analyzers.TestHelpers;
 
 namespace MemoTree.Tests.Analyzers;
@@ -8,9 +8,9 @@ namespace MemoTree.Tests.Analyzers;
 public class MT0004ClosingParenNewLineTests {
     private const string Id = "MT0004";
     private static (System.Collections.Generic.IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> diags, Microsoft.CodeAnalysis.Compilation comp) RunAnalyzer(string src)
-        => AnalyzerTestHost.RunAnalyzer(src, "MemoTree.Analyzers.MT0004ClosingParenNewLineAnalyzer");
+        => AnalyzerTestHost.RunAnalyzer(src, "Atelia.Analyzers.Style.MT0004ClosingParenNewLineAnalyzer");
     private static Task<string> ApplyAllCodeFixesAsync(string src)
-        => AnalyzerTestHost.ApplyAllCodeFixesAsync(src, "MemoTree.Analyzers.MT0004ClosingParenNewLineAnalyzer", new MT0004ClosingParenNewLineCodeFix(), Id);
+        => AnalyzerTestHost.ApplyAllCodeFixesAsync(src, "Atelia.Analyzers.Style.MT0004ClosingParenNewLineAnalyzer", new MT0004ClosingParenNewLineCodeFix(), Id);
 
     [Fact]
     public void SingleLine_NoDiagnostic() {

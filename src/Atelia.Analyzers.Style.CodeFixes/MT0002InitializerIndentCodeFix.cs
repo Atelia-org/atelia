@@ -9,7 +9,7 @@ using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 [ExportCodeFixProvider(LanguageNames.CSharp, Name = nameof(MT0002InitializerIndentCodeFix)), Shared]
 public sealed class MT0002InitializerIndentCodeFix : CodeFixProvider {

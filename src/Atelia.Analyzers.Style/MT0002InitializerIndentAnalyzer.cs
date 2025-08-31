@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 // MT0002: 规范对象 / 集合 / 数组初始化器的元素缩进：
 // 规则：多行初始化器中，每个元素应当位于独立行，其缩进 = 初始化器 '{' 所在行缩进 + 一个 indent_size (默认4)。

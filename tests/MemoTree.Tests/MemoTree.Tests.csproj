@@ -26,8 +26,8 @@
     <ProjectReference Include="..\..\src\MemoTree.Core\MemoTree.Core.csproj" />
   <ProjectReference Include="..\..\src\MemoTree.Services\MemoTree.Services.csproj" />
   <ProjectReference Include="..\..\src\MemoTree.Cli\MemoTree.Cli.csproj" />
-  <ProjectReference Include="..\..\src\Analyzers\MemoTree.Analyzers\MemoTree.Analyzers.csproj" />
-  <ProjectReference Include="..\..\src\Analyzers\MemoTree.Analyzers.CodeFixes\MemoTree.Analyzers.CodeFixes.csproj" />
+  <ProjectReference Include="..\..\src\Atelia.Analyzers.Style\Atelia.Analyzers.Style.csproj" />
+  <ProjectReference Include="..\..\src\Atelia.Analyzers.Style.CodeFixes\Atelia.Analyzers.Style.CodeFixes.csproj" />
   </ItemGroup>
 
 </Project>

@@ -76,9 +76,9 @@ public static class AnalyzerTestHost {
         var baseDir = AppContext.BaseDirectory;
         var dir = new DirectoryInfo(baseDir);
         for (int i = 0; i < 6 && dir != null; i++) {
-            var candidate = Path.Combine(dir.FullName, "src", "Analyzers", "MemoTree.Analyzers", "bin");
+            var candidate = Path.Combine(dir.FullName, "src", "Analyzers", "Atelia.Analyzers.Style", "bin");
             if (Directory.Exists(candidate)) {
-                var dll = Directory.GetFiles(candidate, "MemoTree.Analyzers.dll", SearchOption.AllDirectories)
+                var dll = Directory.GetFiles(candidate, "Atelia.Analyzers.Style.dll", SearchOption.AllDirectories)
                     .OrderByDescending(File.GetLastWriteTimeUtc)
                     .FirstOrDefault();
                 if (dll != null) {
@@ -87,7 +87,7 @@ public static class AnalyzerTestHost {
             }
             dir = dir.Parent!;
         }
-        throw new InvalidOperationException("Unable to locate MemoTree.Analyzers.dll for tests.");
+        throw new InvalidOperationException("Unable to locate Atelia.Analyzers.Style.dll for tests.");
     }
 
     private static List<MetadataReference> GetMetadataReferences() => AppDomain.CurrentDomain.GetAssemblies()

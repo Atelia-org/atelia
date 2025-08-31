@@ -5,7 +5,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 internal static class IndentationHelper {
     // Try get indent_size from analyzer config; fallback 4.

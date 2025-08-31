@@ -5,29 +5,23 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
-// MT0004 / CanonicalName: NewLineClosingParenMultilineParameterList
-// Rule: For multiline parameter (and argument) lists the closing parenthesis ')' must appear on its own line
-// aligned with the start line indentation of the invocation / declaration. (Brace placement unchanged.)
+// Experimental: Only enforce closing parenthesis newline if the '(' was already followed by a newline ("Scheme B").
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
-public sealed class MT0004ClosingParenNewLineAnalyzer : DiagnosticAnalyzer {
-    public const string DiagnosticId = "MT0004";
-    public const string CanonicalName = "NewLineClosingParenMultilineParameterList"; // DocAlias: NewLineClosingParenParams
+public sealed class X0002ConditionalCloseParenAnalyzer : DiagnosticAnalyzer {
+    public const string DiagnosticId = "X0002"; // Experimental ID
+    private static readonly LocalizableString Title = ") should be on its own line (conditional)";
+    private static readonly LocalizableString Message = "Place ')' on its own line to mirror opening newline (experimental)";
+    private const string Category = "Formatting.Experimental";
 
-    private static readonly LocalizableString Title = "Closing parenthesis should be on its own line";
-    private static readonly LocalizableString Message = "Place closing parenthesis of multiline parameter list on its own line";
-    private static readonly LocalizableString Description = "Improves visual enclosure and diff stability by isolating the closing parenthesis of multiline parameter / argument lists.";
-    private const string Category = "Formatting";
-
-    public static readonly DiagnosticDescriptor Rule = new(
+    private static readonly DiagnosticDescriptor Rule = new(
         DiagnosticId,
         Title,
         Message,
-    Category,
-    DiagnosticSeverity.Info,
-        isEnabledByDefault: true,
-        description: Description);
+        Category,
+        DiagnosticSeverity.Info,
+        isEnabledByDefault: true); // enable for experimental evaluation
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(Rule);
 
@@ -47,75 +41,71 @@ public sealed class MT0004ClosingParenNewLineAnalyzer : DiagnosticAnalyzer {
 
     private static void AnalyzeInvocation(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is InvocationExpressionSyntax inv && inv.ArgumentList is { } args) {
-            AnalyzeParenList(ctx, args.OpenParenToken, args.CloseParenToken, args.Arguments.LastOrDefault()?.GetLastToken());
+            AnalyzeList(ctx, args.OpenParenToken, args.CloseParenToken, args.Arguments.LastOrDefault()?.GetLastToken());
         }
     }
-
     private static void AnalyzeObjectCreation(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is ObjectCreationExpressionSyntax oc && oc.ArgumentList is { } args) {
-            AnalyzeParenList(ctx, args.OpenParenToken, args.CloseParenToken, args.Arguments.LastOrDefault()?.GetLastToken());
+            AnalyzeList(ctx, args.OpenParenToken, args.CloseParenToken, args.Arguments.LastOrDefault()?.GetLastToken());
         }
     }
-
     private static void AnalyzeMethod(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is MethodDeclarationSyntax m && m.ParameterList is { } pl && pl.Parameters.Count > 0) {
-            AnalyzeParenList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
+            AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
         }
     }
-
     private static void AnalyzeLocalFunction(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is LocalFunctionStatementSyntax l && l.ParameterList is { } pl && pl.Parameters.Count > 0) {
-            AnalyzeParenList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
+            AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
         }
     }
-
     private static void AnalyzeCtor(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is ConstructorDeclarationSyntax c && c.ParameterList is { } pl && pl.Parameters.Count > 0) {
-            AnalyzeParenList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
+            AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
         }
     }
-
     private static void AnalyzeDelegate(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is DelegateDeclarationSyntax d && d.ParameterList is { } pl && pl.Parameters.Count > 0) {
-            AnalyzeParenList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
+            AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
         }
     }
-
     private static void AnalyzeOperator(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is OperatorDeclarationSyntax o && o.ParameterList is { } pl && pl.Parameters.Count > 0) {
-            AnalyzeParenList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
+            AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
         }
     }
-
     private static void AnalyzeConversionOperator(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is ConversionOperatorDeclarationSyntax co && co.ParameterList is { } pl && pl.Parameters.Count > 0) {
-            AnalyzeParenList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
+            AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
         }
     }
-
     private static void AnalyzeRecord(SyntaxNodeAnalysisContext ctx) {
         if (ctx.Node is RecordDeclarationSyntax r && r.ParameterList is { } pl && pl.Parameters.Count > 0) {
-            AnalyzeParenList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
+            AnalyzeList(ctx, pl.OpenParenToken, pl.CloseParenToken, pl.Parameters.Last().GetLastToken());
         }
     }
 
-    private static void AnalyzeParenList(SyntaxNodeAnalysisContext ctx, SyntaxToken open, SyntaxToken close, SyntaxToken? lastItemToken) {
-        if (lastItemToken == null) {
-            return; // empty list or no items
+    private static void AnalyzeList(SyntaxNodeAnalysisContext ctx, SyntaxToken open, SyntaxToken close, SyntaxToken? lastItem) {
+        if (lastItem == null) {
+            return;
         }
         var tree = open.SyntaxTree;
         if (tree is null) {
             return; // defensive: malformed token
         }
         var text = tree.GetText(ctx.CancellationToken);
-        int openLine = text.Lines.GetLineFromPosition(open.SpanStart).LineNumber;
-        int closeLine = text.Lines.GetLineFromPosition(close.SpanStart).LineNumber;
+        var openLine = text.Lines.GetLineFromPosition(open.SpanStart).LineNumber;
+        var closeLine = text.Lines.GetLineFromPosition(close.SpanStart).LineNumber;
         if (openLine == closeLine) {
-            return; // single-line list
+            return; // single-line
         }
-        int lastItemLine = text.Lines.GetLineFromPosition(lastItemToken.Value.Span.End).LineNumber;
-        if (lastItemLine == closeLine) {
-            // Closing paren shares a line with the last parameter/argument => diagnostic
+        // Only enforce if '(' is followed immediately by newline (no inline items)
+        if (!open.TrailingTrivia.ToFullString().Contains("\n")) {
+            return; // scheme B condition not met
+        }
+
+        var lastLine = text.Lines.GetLineFromPosition(lastItem.Value.Span.End).LineNumber;
+        if (lastLine == closeLine) {
             ctx.ReportDiagnostic(Diagnostic.Create(Rule, close.GetLocation()));
         }
     }

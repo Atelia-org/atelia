@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 
-namespace MemoTree.Analyzers;
+namespace Atelia.Analyzers.Style;
 
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class MT0001MultipleStatementsAnalyzer : DiagnosticAnalyzer {

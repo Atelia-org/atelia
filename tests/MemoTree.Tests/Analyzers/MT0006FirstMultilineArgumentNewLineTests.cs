@@ -1,6 +1,6 @@
 using System.Linq;
 using System.Threading.Tasks;
-using MemoTree.Analyzers;
+using Atelia.Analyzers.Style;
 using MemoTree.Tests.Analyzers.TestHelpers;
 
 namespace MemoTree.Tests.Analyzers;
@@ -8,9 +8,9 @@ namespace MemoTree.Tests.Analyzers;
 public class MT0006FirstMultilineArgumentNewLineTests {
     private const string Id = "MT0006";
     private static (System.Collections.Generic.IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> diags, Microsoft.CodeAnalysis.Compilation comp) RunAnalyzer(string src)
-        => AnalyzerTestHost.RunAnalyzer(src, "MemoTree.Analyzers.MT0006FirstMultilineArgumentNewLineAnalyzer");
+        => AnalyzerTestHost.RunAnalyzer(src, "Atelia.Analyzers.Style.MT0006FirstMultilineArgumentNewLineAnalyzer");
     private static Task<string> ApplyAllCodeFixesAsync(string src)
-        => AnalyzerTestHost.ApplyAllCodeFixesAsync(src, "MemoTree.Analyzers.MT0006FirstMultilineArgumentNewLineAnalyzer", new MT0006FirstMultilineArgumentNewLineCodeFix(), Id);
+        => AnalyzerTestHost.ApplyAllCodeFixesAsync(src, "Atelia.Analyzers.Style.MT0006FirstMultilineArgumentNewLineAnalyzer", new MT0006FirstMultilineArgumentNewLineCodeFix(), Id);
 
     [Fact]
     public void NoMultiline_NoDiagnostic() {
