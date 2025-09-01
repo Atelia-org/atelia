@@ -17,7 +17,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoTree.Services", "src\Me
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoTree.Cli", "src\MemoTree.Cli\MemoTree.Cli.csproj", "{C9F3A4B2-5D6E-4F7A-9B0C-2D3E4F5A6B7C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Atelia.Memory", "src\Atelia.Memory\Atelia.Memory.csproj", "{DA736EA8-3C87-4E95-B095-2BCB2AEACC8C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Atelia.Data", "src\Atelia.Data\Atelia.Data.csproj", "{DA736EA8-3C87-4E95-B095-2BCB2AEACC8C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeOutline.Cli", "src\CodeOutline.Cli\CodeOutline.Cli.csproj", "{5A9DE4C7-0A4F-4F42-9E8E-1234567890AB}"
 EndProject

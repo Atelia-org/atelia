@@ -200,7 +200,7 @@ Checklist（本次需要覆盖的点）:
 
 Robird: 类型设计的最初，确实有按OS Page对齐和管理的意图，只是在实现过程中没找到合适API来达成此目标，阶段性的形成了目前的实现。如果基于mmap或其他API搞个自己的PagedArrayPool实现并不急迫。我倾向于暂时放弃对齐OS Memory Page这一目标，并简化PageSize/MinChunkPages/MaxChunkPages逻辑为MinChunkSize/MaxChunkSize，以及对应的改名为ChunkedReservableWriter。我也可以封装Chunk划分策略为独立的Kit类型，以预留未来实现真正的“OS Paged”功能的扩展点。目前整个项目都还是草稿阶段，无需担忧兼容性和接口变更的问题。你怎么想？
 
-GitHub Copilot: 我将搜索代码库里对 PagedReservableWriter 及其 Options 的引用以评估改名影响。 我将列出 Atelia.Memory 目录查看涉及的测试与实现文件，准备批量重命名。 
+GitHub Copilot: 我将搜索代码库里对 PagedReservableWriter 及其 Options 的引用以评估改名影响。 我将列出 Atelia.Data 目录查看涉及的测试与实现文件，准备批量重命名。 
 
 Robird: 先不急于动手开始实施，我们先探讨方案并商议决策。批量改名这种重构，我用IDE提供的重构功能更容易。请先帮我分析实现真正“OS Paged”的技术可行性问题。
 
@@ -592,7 +592,7 @@ GitHub Copilot: 我将搜索代码中对旧选项属性的引用，以评估是�
 
 Robird: 请继续实施“更新/删除依赖 PageSize 的测试并新增针对 Min/MaxChunkSize 与增长策略的测试。”
 
-GitHub Copilot: 我将读取相关测试文件内容以定位需要更新的 PageSize 相关引用，并准备新增测试。 我将读取另一测试文件查找 page 相关断言。 我将读取 PagedReservableWriterOptionsTests 之外的其他测试文件，确认是否还有 PageSize 相关引用。 我将读取 PagedReservableWriterOptionsTests 末尾测试以确认没有更多 page 相关逻辑。 我将读取 Atelia.Memory.csproj 以确认测试运行环境配置。 我将修改测试文件 PagedReservableWriterOptionsTests，替换页面相关测试为 Min/MaxChunkSize 与增长策略测试。 
+GitHub Copilot: 我将读取相关测试文件内容以定位需要更新的 PageSize 相关引用，并准备新增测试。 我将读取另一测试文件查找 page 相关断言。 我将读取 PagedReservableWriterOptionsTests 之外的其他测试文件，确认是否还有 PageSize 相关引用。 我将读取 PagedReservableWriterOptionsTests 末尾测试以确认没有更多 page 相关逻辑。 我将读取 Atelia.Data.csproj 以确认测试运行环境配置。 我将修改测试文件 PagedReservableWriterOptionsTests，替换页面相关测试为 Min/MaxChunkSize 与增长策略测试。 
 ```
 
 

@@ -78,7 +78,7 @@ public class ViewStatePersistenceTests {
     private static string FindCliProject() {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null) {
-            var sln = Path.Combine(dir.FullName, "MemoTree.sln");
+            var sln = Path.Combine(dir.FullName, "Atelia.sln");
             if (File.Exists(sln)) {
                 var cli = Path.Combine(dir.FullName, "src", "MemoTree.Cli", "MemoTree.Cli.csproj");
                 if (!File.Exists(cli)) {
@@ -89,6 +89,6 @@ public class ViewStatePersistenceTests {
             }
             dir = dir.Parent;
         }
-        throw new DirectoryNotFoundException("Could not locate repository root (MemoTree.sln)");
+        throw new DirectoryNotFoundException("Could not locate repository root (Atelia.sln)");
     }
 }
