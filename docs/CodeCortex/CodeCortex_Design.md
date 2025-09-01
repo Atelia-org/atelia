@@ -1,8 +1,20 @@
 <!--
-  CodeCortex_Design.md  (Version 0.4 – Hash 分层 & Diff 分类 & Alias 机制)
-  0.4 变更摘要:
+  CodeCortex_Design.md  (Version 0.5 – 分类/传播拆分, implHash 规范化, Drift 状态, Alias/SCC 生命周期, 附录)
+  0.5 变更摘要:
+    * ChangeClass 与传播原因拆分: 新增 propagatedCause (DependencyStructure 等)，本地改动分类保持 Structure / PublicBehavior / Internal / Docs / Cosmetic
+    * internalDriftState: {count, firstAt, lastAt} 持久化；Internal 漂移阈值策略正式化
+    * implHash 规范: implHash = H("v1|" + publicImplHash + "|" + internalImplHash)；cosmetic 不纳入；hashVersion 记录
+    * 新增 outlineVersion + 原子写入说明；Outline 仍不进入 semanticState 状态机
+    * Alias 生命周期: 检测 -> 迁移 -> 链折叠 -> 清理旧文件 (tombstone) -> 依赖重写；新增 alias 链折叠策略
+    * SCC 重组流程：拓扑重算→组拆分/合并→旧组语义归档 semantic/archive/
+    * 语义模板正式化：段落顺序与 “NO SEMANTIC CHANGE” 判定条件明确（仅在 Internal 触发语义任务时）
+    * 优先级公式正式：Priority = max(old*0.7, (fanInWeight*fanIn + baseWeight(ChangeClass, propagatedCause)) / (1+depth))
+    * 新风险补充 & 缓解：Prompt 震荡、Alias 连环漂移、Pack 扩散、队列恢复等
+    * config.schema / hash_inputs / state_transitions 三个附录文件新增并引用
+    * 统一配置字段命名：includeInternalForDependencies → includeInternalInStructureHash? / internalImplAffectsSemantic / semanticDocsAffect (更正 semanticDocAffects)
+  0.4 变更摘要（历史保留）:
     * implHash 拆分：publicImplHash / internalImplHash / cosmeticHash（implHash 仍保留为汇总）
-    * 新增变更分类 ChangeClass: Structure / PublicBehavior / Internal / Docs / Cosmetic / Structure-Dependency
+    * 新增变更分类 ChangeClass: Structure / PublicBehavior / Internal / Docs / Cosmetic / Structure-Dependency (已在 0.5 拆分传播原因)
     * Internal 变更默认不使 semanticState = stale，而标记 internalChanged；支持 Internal 漂移阈值和延迟刷新
     * index.json: 扩展 publicImplHash / internalImplHash / cosmeticHash / changeClass / lastSemanticBase / files[] / internalChanged
     * partial 类型支持：记录全部 files；合并后再做 hash
@@ -70,7 +82,7 @@
 | Operation(Op) | 长任务跟踪实体 | `ops/<opId>.json` |
 | Alias 映射 | 历史 TypeId→当前 TypeId | `aliases.json` |
 
-### 3.1 index.json（精简 Schema，0.4 修订）
+### 3.1 index.json（精简 Schema，0.5 修订）
 ```jsonc
 {
   "schemaVersion": "1.0",
@@ -89,10 +101,16 @@
       "publicImplHash": "11AA22BB",          // 公开/保护成员主体
       "internalImplHash": "33CC44DD",        // 内部/私有成员主体
       "cosmeticHash": "55EE66FF",            // 注释/空白
-      "implHash": "5BC19F77",                // 汇总兼容 = H(publicImplHash:internalImplHash)
+      "implHash": "5BC19F77",                // 汇总兼容 = H("v1|"+publicImplHash+"|"+internalImplHash)
       "xmlDocHash": "17AD90B2",              // 文档哈希
       "changeClass": "PublicBehavior",       // 最近一次变更分类
       "internalChanged": false,               // 是否有未处理 Internal 累积
+      "propagatedCause": null,                // 传播失效原因: DependencyStructure 等
+      "internalDriftState": {                 // Internal 漂移累计状态
+        "count": 0,
+        "firstAt": null,
+        "lastAt": null
+      },
       "lastSemanticBase": {                   // 上次语义生成基准指纹
         "structureHash": "9F2A441C",
         "publicImplHash": "11AA22BB",
@@ -101,7 +119,8 @@
       },
       "semanticState": "cached",
       "semanticGroupId": null,
-      "depthHint": 2
+      "depthHint": 2,
+      "outlineVersion": 3                    // Outline 生成版本号（结构变动或文档变动时递增）
     }
   ],
   "packs": [
@@ -110,31 +129,45 @@
   "configSnapshot": {
     "hashVersion": "1",
     "structureHashIncludesXmlDoc": false,
-  "includeInternalForDependencies": false,
-  "internalImplAffectsSemantic": false,
-  "semanticDocAffects": false
+    "includeInternalInStructureHash": false,      // 是否在 structureHash 纳入 internal 成员签名
+    "internalImplAffectsSemantic": false,         // Internal 改动是否立即 stale
+    "semanticDocsAffect": false,                  // 文档变化是否触发语义刷新
+    "internalDrift": { "count": 5, "hours": 24 },
+    "fanInWeight": 0.5,
+    "baseWeights": {
+      "Structure": 4.0,
+      "PublicBehavior": 3.0,
+      "Internal": 1.0,
+      "DependencyStructure": 2.5
+    },
+    "priorityDecay": 0.7
   }
 }
 ```
 
-### 3.2 状态机：semanticState（0.4 扩展）
+### 3.2 状态机：semanticState（0.5 扩展）
 ```
 none ──enqueue──> pending ──dispatch──> generating ──success──> cached
   ^                         └─cancel/error──> pending (或记录失败计数) │
   │                                        invalidate                │
   └─────────<────────────── stale ◄─────────────── invalidate ◄──────┘
 ```
-触发 invalidate 条件（分类驱动）：
-1. structureHash 变化 → ChangeClass=Structure → outline regenerate + semantic stale
-2. publicImplHash 变化（结构不变）→ ChangeClass=PublicBehavior → semantic stale
-3. internalImplHash 变化（仅内部）→ ChangeClass=Internal → internalChanged=true（默认不 stale）
-4. xmlDocHash 变化 → ChangeClass=Docs → outline regenerate（可配置触发语义）
-5. 仅 cosmeticHash 变化 → ChangeClass=Cosmetic → 忽略
-6. 依赖类型 structureHash 变化 → ChangeClass=Structure-Dependency → semantic stale
+触发 invalidate 条件（本地 changeClass 与传播 propagatedCause 分离）：
+本地 changeClass（互斥，优先级：Structure > PublicBehavior > Internal > Docs > Cosmetic）
+1. structureHash 变化 → changeClass=Structure → outline regenerate + semantic stale
+2. publicImplHash 变化（结构不变）→ changeClass=PublicBehavior → semantic stale
+3. internalImplHash 变化（仅内部）→ changeClass=Internal → internalChanged=true（默认不 stale）
+4. xmlDocHash 变化 → changeClass=Docs → outline regenerate（semantic 受配置 semanticDocsAffect）
+5. 仅 cosmeticHash 变化 → changeClass=Cosmetic → 忽略
+
+传播原因 propagatedCause（独立字段，可与上面并存）：
+* DependencyStructure：某依赖类型 Structure 变化导致当前类型语义潜在失效 → semantic stale（优先级次于直接 Structure）
+
+Internal 漂移触发：满足 internalDrift.count≥阈值 或 firstAt 超过 hours 阈值 → semantic stale（changeClass 仍为 Internal，propagatedCause=null）。
 
 SCC：组内任一类型 structureHash 变化 → 组 semantic stale；仅 implHash 变化 → 组 semantic stale（整体再生）；拓扑改变导致组拆分将在下一轮调度预处理阶段识别并拆分为单类型任务（占位：P3 实现）。
 
-### 3.3 Hash 策略（0.4 修订）
+### 3.3 Hash 策略（0.5 修订）
 | 哈希 | 输入内容 | 目的 |
 |------|----------|------|
 | fileHash | 归一化源码文本 (LF) | 变更检测基础 |
@@ -142,7 +175,7 @@ SCC：组内任一类型 structureHash 变化 → 组 semantic stale；仅 implH
 | publicImplHash | 公开/保护成员主体 + 公开/保护属性访问器 + 可见字段/常量初始化 | 语义（公共行为）失效 |
 | internalImplHash | 内部/私有成员主体 + 私有字段初始化 + 局部函数 | 内部漂移监控 |
 | cosmeticHash | 注释 / 空白 / 仅格式 | 噪声分类 |
-| implHash | 汇总（兼容字段） | 兼容显示 |
+| implHash | 汇总（兼容字段）= H("v1|"+publicImplHash+"|"+internalImplHash) | 兼容显示 |
 | xmlDocHash | XML 文档节点文本（空白归一） | 文档变更检测 |
 算法：SHA256 → 前 8 bytes → Base32（去易混字符）→ 8 字符截断；冲突自动扩展至 12 字符并记录 `hash_conflicts.log`。
 
@@ -186,20 +219,33 @@ RECOMMENDATIONS:
 ```
 环 (SCC) 情况：若多类型同组 → 使用 `semantic/<GroupHash>.md`，头部列出 `Types: <TypeId,...>`；组级失效按 3.2 规则整体再生。组内任一 Structure/PublicBehavior 触发全组 stale；纯 Internal 变化累积到阈值或时间窗口再刷新。
 
-### 3.6 变更分类（ChangeClass）与漂移控制
-枚举：Structure / PublicBehavior / Internal / Docs / Cosmetic / Structure-Dependency。
+### 3.6 变更分类（changeClass）/ 传播原因（propagatedCause）与漂移控制
+changeClass 枚举（互斥）：Structure / PublicBehavior / Internal / Docs / Cosmetic
 
-Internal 漂移策略：记录 internalImplHash 与 lastSemanticBase.internalImplHash 差异次数；达到阈值（默认5次或 24h）升级 stale。
+propagatedCause 枚举（可选，与 changeClass 并行）：DependencyStructure
 
-语义刷新矩阵：
-| 分类 | semanticState | internalChanged | 优先级 |
-|------|---------------|-----------------|--------|
-| Structure | stale | false | 高 |
-| PublicBehavior | stale | false | 中 |
-| Internal | cached | true  | 低（延迟合并） |
-| Docs | cached | false | - |
+Internal 漂移策略：比较 new.internalImplHash 与 lastSemanticBase.internalImplHash；差异即计数+1；首次差异记录 firstAt；每次差异更新 lastAt。达到 【count ≥ internalDrift.count】 或 【当前时间 - firstAt ≥ internalDrift.hours】 → semantic stale（若尚未 stale）。刷新后 internalDriftState 重置。
+
+语义刷新矩阵（合并 changeClass 与 propagatedCause）：
+| 触发 | semanticState | internalChanged | 优先级权重来源 |
+|------|---------------|-----------------|----------------|
+| Structure | stale | false | baseWeights.Structure |
+| PublicBehavior | stale | false | baseWeights.PublicBehavior |
+| Internal (未达漂移阈值) | cached | true | baseWeights.Internal (延迟) |
+| Internal (达漂移阈值) | stale | false | baseWeights.Internal |
+| Docs (semanticDocsAffect=true) | stale | false | baseWeights.PublicBehavior*0.5 |
+| Docs (semanticDocsAffect=false) | cached | false | - |
 | Cosmetic | cached | false | - |
-| Structure-Dependency | stale | false | 中/高 |
+| propagatedCause=DependencyStructure | stale | false | baseWeights.DependencyStructure |
+
+优先级公式：
+```
+raw = (fanInWeight * fanIn + baseWeight) / (1 + depth)
+priority = max(prevPriority * priorityDecay, raw)
+```
+fanIn = 引用该类型的直接类型数；depth 为拓扑深度（无出边=0）。
+
+附录参见：Appendix_State_Transitions.md。
 
 ## 4. 符号路径与 ID 策略
 
@@ -238,7 +284,7 @@ CanonicalSignature 规范：
 ```
 忽略：参数名称、文档注释；可选参数默认值不进入 CanonicalSignature，但其表达式体被 implHash 捕获。
 
-### 4.5 Alias 机制（新）
+### 4.5 Alias 机制（新 / 0.5 扩展生命周期）
 目的：在类型 Rename / Namespace 移动 / 层级调整时保持缓存连续性与引用可追溯性。
 
 检测：
@@ -246,12 +292,17 @@ CanonicalSignature 规范：
 2. 结构相似度：公开成员签名集合 Jaccard ≥ 0.85 且 数量差 ≤ 2。
 3. 满足则生成映射 `{ oldTypeId, newTypeId, detectedAt, reason }` 存入 `aliases.json`。
 
-应用：
-* ResolveSymbol：未找到 → 查 alias → 返回重定向（附 redirectedFrom）。
-* 缓存迁移：`git mv` 旧 outline/semantic → 新文件，保持历史。
-* 依赖重写：index 重建时用 alias 替换 DependsOn / Dependencies 中旧 TypeId。
+应用 & 生命周期：
+1. 生成草案映射 (draft)
+2. 链折叠：若 A→B, B→C 形成链，则输出 A→C 并标记 collapsed=true
+3. 缓存迁移：移动 outline / semantic / access 记录；旧文件生成 tombstone 注释头
+4. 依赖重写：更新 index 中 DependsOn / Dependencies / semanticGroup 记录
+5. 记录 final alias 至 `aliases.json`；冲突写 `logs/alias_conflicts.log`
+6. 清理：超过 N（默认30）天未被访问的旧 alias 可归档到 `aliases_archive.json`
 
-冲突：多新候选同分相似度 → 选最高；写 `alias_conflicts.log` 供人工复核。
+ResolveSymbol：未直接命中 → alias 查找（单步 + 链折叠后终点）。响应加 `redirectedFrom`。
+
+冲突：多新候选同分相似度 → 选最高；其余写 `alias_conflicts.log` 供人工复核。
 
 ## 5. 增量与失效传播
 
@@ -260,32 +311,32 @@ CanonicalSignature 规范：
 - 编辑操作提交回写
 - 外部命令触发（手动 invalidate）
 
-### 5.2 处理流程（含 Diff 分类）
+### 5.2 处理流程（含 Diff 分类，0.5 调整）
 ```
 FsChange Batch(≤800ms) -> Parse Changed Files -> Recompute fileHash ->
   For each affected Type:
     Collect partial files -> 合并语法视图
     计算 structureHash / publicImplHash / internalImplHash / cosmeticHash / xmlDocHash
-    分类 ChangeClass:
-       * 签名/可见性/特性 变化 → Structure
-       * 公开/保护成员主体变化 → PublicBehavior（若非 Structure）
-       * 仅内部成员主体变化 → Internal
-       * 仅 XML 文档变化 → Docs
-       * 仅注释/空白 → Cosmetic
-    更新 index（hash + changeClass + internalChanged）
-    Outline regenerate: Structure 或 Docs（受配置）
-    Semantic stale: Structure / PublicBehavior（Internal 视配置 / 漂移阈值）
+   确定 changeClass (互斥，按优先级判定):
+     Structure > PublicBehavior > Internal > Docs > Cosmetic
+   更新 index（hash + changeClass + internalChanged + internalDriftState）
+   计算受影响下游：若本类型 changeClass=Structure → 下游 types propagatedCause=DependencyStructure（若未已有更高优先级失效）
+   Outline regenerate: Structure 或 Docs（受配置 semanticDocsAffect）
+   Semantic stale: Structure / PublicBehavior / 达阈值 Internal / propagatedCause=DependencyStructure / (配置允许的 Docs)
 Internal 合并窗口：聚合 10 分钟内多次 Internal 改动；窗口结束或漂移阈值达成再评估刷新。
 漂移阈值：Internal 变化计数 ≥5 或 24h 未刷新 → 强制 stale。
 Propagate: reverseDependencyGraph（结构引用）结构变动 → 下游 stale（Structure-Dependency）。
 Enqueue semantic jobs priority = 引用计数 / (1 + depth) * 分类权重（Structure=2, PublicBehavior=1.5, Dependency=1.2, Internal=0.5）。
 ```
 
-### 5.3 任务调度
+### 5.3 任务调度（含优先级公式 0.5）
 ```
 MaxConcurrentSemantic = min(4, logicalProcessors/2)
-Queue = 按 priority desc + FIFO 次序
-Retry: 指数退避，最多 3 次；失败后记录 error 字段
+rawPriority = (fanInWeight * fanIn + baseWeight) / (1 + depth)
+priority = max(prevPriority * priorityDecay, rawPriority)
+调度排序: priority desc, then enqueueOrder asc
+Retry: 指数退避 (base 10s, 2^(attempt-1)), 最多 3 次；失败记录 error + lastAttemptAt
+持久化: 队列周期性 snapshot (queue.snapshot.json)；重启恢复 pending/generating→pending
 ```
 
 ## 6. RPC 与 CLI 契约（v1）
@@ -322,29 +373,33 @@ SCC 组合：对强连通分量一次性收集所有 outline（仅结构 hash）
 
 优先级 = 引用计数 / (1 + depth)；depth = 最短路径到叶节点（无出边）层数，多父取最小；depthHint 缓存懒更新。
 
-生成步骤：
+生成步骤（模板 0.5 正式化）：
 1. Gather Context：目标类型(或组) + 直接依赖的已缓存 ROLE/LIFECYCLE。
-2. 构建增量模板：
+2. 构建增量模板（严格顺序 / 解析器依赖）：
   ```
   === PREVIOUS SEMANTIC (TRIMMED) ===
-  <旧语义：ROLE/LIFECYCLE/LIMITATIONS/RECOMMENDATIONS>
+  <ROLE / LIFECYCLE / LIMITATIONS / RECOMMENDATIONS 精简>
 
-  === CHANGE CLASS ===
-  <ChangeClass>
-  AffectedMembers:
-    - <Signature> (<diff summary>)
+  === CHANGE ===
+  changeClass: <Structure|PublicBehavior|Internal|Docs|Cosmetic>
+  propagatedCause: <DependencyStructure|null>
+  drift: <count=X;hours=Y;triggered={true|false}>
+  affectedMembers:
+    - <Signature1> <diffSummary1>
+    - <Signature2> <diffSummary2>
 
-  === DIFF SNIPPETS (TRIMMED) ===
-  @@ Member FooAsync(int)
-  - old line
-  + new line
+  === DIFF ===
+  @@ <MemberOrSection>
+  - old
+  + new
 
   === CURRENT OUTLINE (CONDENSED) ===
-  <最新公开 API 列表>
+  <公开 API 列表>
 
   === TASK ===
-  若 ChangeClass=Internal 且不影响外部行为，输出: NO SEMANTIC CHANGE。
-  否则仅更新受影响段落，未提及段落保持不变；保留原有写作风格与结构。
+  若 changeClass=Internal 且 drift.triggered=false 且外部可见行为未改变，输出 EXACT: NO SEMANTIC CHANGE
+  否则仅更新需要修改的段落；未出现段落保持原样；保留标题与顺序。
+  输出必须包含：ROLE:, LIFECYCLE:, EDGE_CASES:, LIMITATIONS:, RECOMMENDATIONS:
   ```
 3. 调用 LLM（token 预算与 AffectedMembers 数量线性缩放）。
 4. 解析结果：
@@ -377,7 +432,7 @@ recent = sortBy(weightedScore(lastAccess, dependencyFanIn))
 for t in recent: appendIfFits(outlineOrSemantic(t))
 writeFileAtomic(output)
 ```
-优先保留：Outline > Semantic ROLE > LIFECYCLE > LIMITATIONS > RECOMMENDATIONS；预算不足时仅保 Outline + ROLE。
+优先保留：Outline > Semantic ROLE > LIFECYCLE > LIMITATIONS > RECOMMENDATIONS；当剩余预算 < 15% 时进入降级：仅保留每类型 Outline + ROLE。
 
 Pack 集成：若激活某 Pack，则其类型在 recent 排序中权重 +W（默认 1.5x）。
 
@@ -424,7 +479,7 @@ token    = /[A-Za-z0-9_.*+?\-]+/ ;
 
 Status RPC 返回关键 P95、队列深度、内存占用。告警阈值：解析 P95 >100ms；队列长度>50；内存>2GB。Schema 占位：`{ uptimeSec, projects, typesIndexed, semanticQueueLength, p95ResolveMs, memoryMB, recentSemanticFailures }`。
 
-## 12. 风险与缓解
+## 12. 风险与缓解（0.5 更新）
 
 | 风险 | 等级 | 缓解 |
 |------|------|------|
@@ -438,6 +493,11 @@ Status RPC 返回关键 P95、队列深度、内存占用。告警阈值：解�
 | 误分类导致语义缺失 | 中 | 未识别分类回退 PublicBehavior 刷新；记录日志 |
 | Internal 漂移放大差异 | 低 | 漂移阈值 N 次或 24h 强制刷新 |
 | Alias 误匹配 | 低 | 相似度阈值 + 冲突日志人工复核 |
+| Alias 连环漂移 | 低 | 链折叠 + 归档清理策略 |
+| Prompt 预算震荡 | 低 | pin 操作速率限制 + 批量合并写入 |
+| Pack 依赖扩散 | 中 | 限制补全层级 + truncated 标志 |
+| 队列崩溃恢复 | 中 | queue.snapshot.json 周期性持久化重启恢复 |
+| Internal 饥饿不刷新 | 中 | 漂移阈值 count/hours 双条件保障 |
 
 ## 13. 路线图与最小落地 (Next Sprint)
 
@@ -518,6 +578,13 @@ Investigate("Query bottlenecks?", scope=["MemoTree.Query"]) → semantic 扩展
 
 保持“符号路径优先、可读缓存文件、增量新鲜度”三原始原则，并新增“最小语义扰动（Diff 驱动增量）”为第四原则。
 
+附录：
+- Appendix_Config_Schema.md
+- Appendix_Hash_Inputs.md
+- Appendix_State_Transitions.md
+
+版本 0.5 之后若无破坏性字段，可继续追加补丁；出现字段删除需 bump schemaVersion。
+
 ## 18. 后续改进候选
 1. Outline/semantic JSON 索引加速（可选二级缓存）。
 2. Pack token 估算采用模型特定分词器差异化策略。
@@ -527,4 +594,4 @@ Investigate("Query bottlenecks?", scope=["MemoTree.Query"]) → semantic 扩展
 
 ---
 
-（文档结束 / version 0.4）
+（文档结束 / version 0.5）
