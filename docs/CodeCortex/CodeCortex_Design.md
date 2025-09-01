@@ -1,6 +1,15 @@
 <!--
-  CodeCortex_Design.md  (Version 0.2 – Restructured / Spec Consolidated)
-  说明：本版本对原始文档进行了结构重排、去重、补全关键规格与状态机，统一 RPC 命名。
+  CodeCortex_Design.md  (Version 0.3 – P0/P1 Spec Refinements)
+  0.3 变更摘要:
+    * summaryState 重命名 semanticState；Outline 不入状态机
+    * structureHash 排除 XML 文档；新增 xmlDocHash（文档改动不级联 semantic）
+    * 明确 structure / impl / xmlDoc Hash 归一化输入与排序规范
+    * index.json 增加 xmlDocHash / depthHint / configSnapshot
+    * SCC 失效策略 clarified；组拆分占位
+    * 失效传播基于结构（includeInternal 可配置）
+    * Prompt 窗口原子写入 + Pinned 软预算
+    * ops/<opId>.json schema 占位
+    * LRU 访问持久化 access.json 占位
 -->
 
 # CodeCortex 顶层设计（本地“语义 IDE” for LLM Coder）
@@ -46,11 +55,11 @@
 | SCC Group | 强连通分量组标识 | semanticGroupId (可选) |
 | Pack | 一组类型上下文打包 | index.packs[] & `.context/packs/<name>.md` (后期) |
 | Prompt Window | LLM 注入窗口聚合文本 | `.context/prompt_window.md` |
-| summaryState | 语义文件生成状态机字段 | none/pending/generating/cached/stale |
+| semanticState | 语义文件生成状态机字段（仅语义，不含 outline） | none/pending/generating/cached/stale |
 | Operation(Op) | 长任务跟踪实体 | `ops/<opId>.json` |
 | Alias 映射 | 历史 TypeId→当前 TypeId | `aliases.json` |
 
-### 3.1 index.json（精简 Schema）
+### 3.1 index.json（精简 Schema，0.3 修订）
 ```jsonc
 {
   "schemaVersion": "1.0",
@@ -65,19 +74,26 @@
       "projectId": "P1",
       "kind": "class",
       "file": "src/MemoTree.Core/NodeStore.cs",
-      "structureHash": "9F2A441C",      // 结构（签名）哈希
-      "implHash": "5BC19F77",            // 实现体哈希（方法体+内部私有改动）
-      "summaryState": "cached",
-      "semanticGroupId": null
+  "structureHash": "9F2A441C",      // 结构（签名）哈希（排除 XML 文档）
+  "implHash": "5BC19F77",            // 实现体哈希（方法体+内部私有改动）
+  "xmlDocHash": "17AD90B2",          // 文档哈希（不进入 structureHash）
+  "semanticState": "cached",
+  "semanticGroupId": null,
+  "depthHint": 2
     }
   ],
   "packs": [
     { "name": "core-memory", "tokenEstimate": 1820, "lastBuild": "2025-09-01T12:01:00Z", "typeIds": ["T_ab12cd34"] }
-  ]
+  ],
+  "configSnapshot": {
+    "hashVersion": "1",
+    "structureHashIncludesXmlDoc": false,
+    "includeInternalForDependencies": false
+  }
 }
 ```
 
-### 3.2 状态机：summaryState
+### 3.2 状态机：semanticState（0.3 修订）
 ```
 none ──enqueue──> pending ──dispatch──> generating ──success──> cached
   ^                         └─cancel/error──> pending (或记录失败计数) │
@@ -85,22 +101,33 @@ none ──enqueue──> pending ──dispatch──> generating ──success
   └─────────<────────────── stale ◄─────────────── invalidate ◄──────┘
 ```
 触发 invalidate 条件：
-1. structureHash 变化 → outline + semantic → stale（若存在）
-2. implHash 变化（structureHash 不变）→ 仅 semantic stale
-3. 下游依赖者所依赖类型 structureHash 变化 → 下游 semantic stale
+1. structureHash 变化 → outline 即时重新生成（不入状态机） + semantic stale
+2. implHash 变化（structureHash 不变）→ semantic stale（outline 不变）
+3. xmlDocHash 变化（structureHash 不变）→ 仅 outline 更新（不触发 semantic，除非配置允许）
+4. 下游依赖者所依赖类型 structureHash 变化 → 下游 semantic stale
 
-### 3.3 Hash 策略
+SCC：组内任一类型 structureHash 变化 → 组 semantic stale；仅 implHash 变化 → 组 semantic stale（整体再生）；拓扑改变导致组拆分将在下一轮调度预处理阶段识别并拆分为单类型任务（占位：P3 实现）。
+
+### 3.3 Hash 策略（0.3 修订）
 | 哈希 | 输入内容 | 目的 |
 |------|----------|------|
 | fileHash | 归一化源码文本 (LF) | 变更检测基础 |
-| structureHash | 公开可见签名（类型/成员声明、可见性、特性、XML 摘要短摘要） | 增量结构失效 |
-| implHash | 所有成员语法节点（含私有实现体，但排除空白/注释） | 语义失效 | 
-算法：SHA256 → 取前 8 bytes → Base32（不含易混字符） → 8 字符截断；若冲突（极少）自动扩展至 12 字符并写入 `hash_conflicts.log`。
+| structureHash | 公开可见 API 结构：类型 + 可访问成员签名（public/protected/internal* 可配置）+ 可见性 + 特性；排序归一；排除 XML 文档 | 增量结构失效 |
+| implHash | 全部成员主体 + 私有字段/属性初始化 + 常量值表达式；忽略空白/注释/声明顺序 | 语义失效 | 
+| xmlDocHash | 提取合并的 XML 文档节点文本（空白归一） | 文档变更检测 |
+算法：SHA256 → 前 8 bytes → Base32（去易混字符）→ 8 字符截断；冲突自动扩展至 12 字符并记录 `hash_conflicts.log`。
+
+归一化要点：
+1. 成员集合 Canonical 排序：Kind 优先级(Type > Field > Property > Event > Method)；同类按签名字典序。
+2. implHash 构建时：忽略语法 trivia；分部类型合并后统一排序。
+3. 默认参数值表达式并入 implHash（不影响 structureHash）。
+4. `structureHashIncludesXmlDoc=false`（默认）时 XML 仅影响 xmlDocHash；可经配置切换行为。
 
 ### 3.4 Outline 文件格式（抽象）
 ```
 # <FQN> <TypeId>
 Kind: <kind> | File: <relative> | Assembly: <asm> | StructureHash: <structureHash> | ImplHash: <implHash>
+XmlDocHash: <xmlDocHash>
 XMLDOC: <raw first line> (可折叠)
 
 Public API:
@@ -124,7 +151,7 @@ EDGE_CASES:
 LIMITATIONS:
 RECOMMENDATIONS:
 ```
-环 (SCC) 情况：若多类型同组 → 使用 `semantic/<GroupHash>.md`，头部列出 `Types: <TypeId,...>`。
+环 (SCC) 情况：若多类型同组 → 使用 `semantic/<GroupHash>.md`，头部列出 `Types: <TypeId,...>`；组级失效按 3.2 规则整体再生（0.3 clarified）。
 
 ## 4. 符号路径与 ID 策略
 
@@ -143,7 +170,7 @@ Case          = 不区分大小写
 3. 通配符匹配（`NodeStore.Get*`）
 4. 模糊/编辑距离（距离阈值 ≤ 2）
 
-消歧排序：命名空间深度 > 公共访问级别 > 最近访问 LRU 权重 > 名称长度。
+消歧排序：命名空间深度 > 公共访问级别 > 最近访问 LRU 权重 > 名称长度。（LRU 可选持久化：`access.json`；缺失时跨重启结果可能轻微抖动）
 
 ### 4.3 性能结构
 索引：
@@ -156,12 +183,12 @@ cache:       路径解析结果 5 分钟 TTL
 
 ### 4.4 ID 定义
 - TypeId = `T_` + Base32( SHA256(FQN + Kind + Arity) )[0:8] （冲突扩展）
-- MemberId = TypeId + '_' + Base32( SHA256(CanonicalSignature) )[0:6]
+- MemberId = TypeId + '_' + Base32( SHA256(CanonicalSignature) )[0:6] （冲突同策略：扩展长度并记录日志）
 CanonicalSignature 规范：
 ```
 [Accessibility] [Modifiers sorted] ReturnType DeclaringType.MemberName(<ParamType1,ParamType2,...>) [GenericArity] [NullableAnnotations]
 ```
-忽略：参数名称、可选参数默认值表达式、文档注释。
+忽略：参数名称、文档注释；可选参数默认值不进入 CanonicalSignature，但其表达式体被 implHash 捕获。
 
 ## 5. 增量与失效传播
 
@@ -177,7 +204,7 @@ FsChange Batch(≤800ms) -> Parse Changed Files -> Recompute fileHash ->
     Recompute structureHash & implHash
     if structureHash changed: outline regenerate + semantic stale
     else if implHash changed: semantic stale
-Propagate: reverseDependencyGraph → mark downstream semantic stale
+Propagate: reverseDependencyGraph（基于结构引用；includeInternal 可配置） → mark downstream semantic stale
 Enqueue semantic jobs with priority = (refCount / (1 + depth))
 ```
 
@@ -220,19 +247,19 @@ Retry: 指数退避，最多 3 次；失败后记录 error 字段
 
 SCC 组合：对强连通分量一次性收集所有 outline（仅结构 hash），合并 prompt 发送给 LLM。
 
-优先级 = 引用计数 / (1 + 层次深度)；引用计数来自依赖反向图统计；深度 = 距离叶节点层数。
+优先级 = 引用计数 / (1 + depth)；depth = 最短路径到叶节点（无出边）层数，多父取最小；depthHint 缓存懒更新。
 
 生成步骤：
 1. Gather Context：目标类型(或组) + 直接依赖的 ROLE 摘要（若已有）。
 2. 模板填充 → 调用 LLM（maxTokens = 配置/每类型 upper）。
 3. 结果解析（YAML 或段落标签）→ 字段齐全性校验。
-4. 写入 semantic 文件；更新 summaryState=cached；反向依赖 stale 标记已处理计数减一。
+4. 写入 semantic 文件（临时文件后原子 rename）；更新 semanticState=cached；反向依赖 stale 标记已处理计数减一。
 
 失败策略：记录 `lastError`；进入 pending，指数退避 (2^attempt * baseDelay)。
 
 ## 8. Prompt 窗口策略
 
-配置：`promptWindow.maxChars`（字符预算），Pinned 无硬限制但可预留软预算阈值；Recent 区域裁剪。
+配置：`promptWindow.maxChars`（字符预算），Pinned 软预算（默认不超过 60%）；超出时提示并不再追加新 pinned 文本直到释放空间；Recent 区域裁剪。
 
 裁剪伪代码：
 ```
@@ -246,9 +273,9 @@ for t in recent:
   if block.size > remaining: block = truncateSemantic(block, remaining)
   append(block)
   remaining -= block.size
-writeFile(output)
+writeFileAtomic(output)
 ```
-优先保留：Outline > Semantic ROLE > LIFECYCLE > LIMITATIONS > RECOMMENDATIONS（尾部可截断）。
+优先保留：Outline > Semantic ROLE > LIFECYCLE > LIMITATIONS > RECOMMENDATIONS（尾部可截断；不足预算时仅保 Outline + ROLE）。
 
 Pack 集成：若激活某 Pack，则其类型在 recent 排序中权重 +W（默认 1.5x）。
 
@@ -263,7 +290,7 @@ Pack 集成：若激活某 Pack，则其类型在 recent 排序中权重 +W（�
 6. 原子写入 & 触发增量
 7. 回滚：失败时用临时快照恢复
 
-事务：后期支持 `BeginEditBatch` → 多操作合并为单次写回。
+事务：后期支持 `BeginEditBatch` → 多操作合并为单次写回；批次期间 watcher 事件抑制（聚合后统一 diff）。
 
 ## 10. Pack 过滤语法与配置
 
@@ -293,7 +320,7 @@ token    = /[A-Za-z0-9_.*+?\-]+/ ;
 - prompt.budget.usage.ratio
 - edit.apply.success.rate / edit.rollback.count
 
-Status RPC 返回关键 P95、队列深度、内存占用。告警阈值：解析 P95 >100ms；队列长度>50；内存>2GB。
+Status RPC 返回关键 P95、队列深度、内存占用。告警阈值：解析 P95 >100ms；队列长度>50；内存>2GB。Schema 占位：`{ uptimeSec, projects, typesIndexed, semanticQueueLength, p95ResolveMs, memoryMB, recentSemanticFailures }`。
 
 ## 12. 风险与缓解
 
@@ -383,4 +410,4 @@ Investigate("Query bottlenecks?", scope=["MemoTree.Query"]) → semantic 扩展
 
 ---
 
-（文档结束 / version 0.2）
+（文档结束 / version 0.3）
