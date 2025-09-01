@@ -1,69 +1,75 @@
-# CodeCortex 顶层设计（面向 LLM Coder 的本地“语义 IDE”）
+<!--
+  CodeCortex_Design.md  (Version 0.2 – Restructured / Spec Consolidated)
+  说明：本版本对原始文档进行了结构重排、去重、补全关键规格与状态机，统一 RPC 命名。
+-->
 
-> 目标：把大型 .NET 代码库转化为 **LLM 友好、最小充分、可增量维护** 的结构与语义上下文，并在后期提供受控的语法/语义级变更（重构 & 代码生成），成为 AI Coder 的“离线 IDE 语义服务器 + 上下文编排器”。
+# CodeCortex 顶层设计（本地“语义 IDE” for LLM Coder）
 
-## 1. 愿景一句话
-让 LLM 与人类开发者在没有完整 IDE 交互的情况下，也能高效、低噪、最新地理解并操作真实工程。
+> 目标：将大型 .NET 代码库转化为 **LLM 友好、最小充分、可增量维护** 的结构/语义上下文，并提供受控的 AST 级读写能力，充当 AI Coder 的 “离线语义 IDE 服务层”。
 
-## 2. 核心价值支柱
-| 支柱 | 说明 | 关键度量 |
-|------|------|----------|
-| 精准结构 | 基于 Roslyn 真实语义（非纯文本/向量近似） | 结构正确率（随机抽样校验）> 99% |
-| 增量更新 | 哈希 + 依赖图 + 受影响传播 | 修改后可见延迟 < 3s（中型项目） |
-| 稳定引用 | 稳定 Type/Member ID，避免语义漂移 | ID 再生成稳定率 100%（非破坏性变更） |
-| 语义增强 | LLM 生成“超出 Roslyn”的行为/角色/用法说明 | 语义回答命中率提升 vs baseline |
-| 上下文预算 | Token 预算裁剪与打包策略 | 有效信息密度（信息/Token）提高 > 3x |
-| 受控编辑 | 未来提供安全的 AST 级重构/生成 | 编辑失败回滚率 < 0.5% |
+---
 
-## 3. 分阶段路线图
-| 阶段 | 里程碑 | 主要产物 |
-|------|--------|----------|
-| P0 原型 | 单项目 Outline | `outline` 命令 + `.context/types/*.outline.md` |
-| P1 缓存/增量 | index + hash + 变更检测 | `index.json` + 增量生成器 |
-| P2 服务化 | 常驻 service + JSON-RPC | 服务进程 + CLI 查询/pack |
-| P3 语义层 | 语义分析任务 / 依赖图传播 | `*.semantic.md` / 调查任务队列 |
-| P4 Prompt 窗口 | 动态上下文显示/Pin/滚动 | `.context/prompt_window.txt` |
-| P5 编辑 Alpha | 只读→受控 AST 操作（重命名 / 提取） | `edit` 命令 + Patch 校验管线 |
-| P6 高级智能 | 自动调查 / 模式识别 / 用法综合 | 结构+语义混合推理缓存 |
+## 1. 愿景与范围
+一句话：让 LLM 与人类在“无完整交互式 IDE”环境下，也能稳定、低噪、最新地理解并安全修改真实 .NET 工程。
 
-## 4. 体系结构视图
-```
-┌──────────────────────────────────────────────┐
-│                   CLI / Frontends            │
-│  (Terminal, Agent Plugin, VS Code Proxy)     │
-└──────────────┬───────────────────────────────┘
-               │ JSON-RPC (StreamJsonRpc)
-┌──────────────▼───────────────────────────────┐
-│              CodeCortex Service              │
-│  - Request Router                            │
-│  - Cache Manager (.context/*)                │
-│  - Task / Op Registry                        │
-│  - File Watchers (project + deps)            │
-└───────┬──────────┬──────────┬────────────────┘
-        │          │          │
-  ┌─────▼───┐ ┌────▼────┐ ┌───▼────────┐
-  │Roslyn   │ │Assembly │ │Semantic    │
-  │Extraction││Introspect││Analysis    │
-  │(Project) │ │(Dll/Pdb)│ │(LLM Jobs)  │
-  └─────┬────┘ └────┬────┘ └────┬───────┘
-        │           │          │
-        ▼           ▼          ▼
-   Outline Gen  ─→ Index ─→ Packs ─→ Prompt Window
-        │                      ▲          │
-        └──────────Hash/Diff───┴──────────┘
-```
+边界：
+- 语言：首期仅 C#（Roslyn C# 编译器语义模型）。
+- 输入：单/多 .sln 或 .csproj；后期支持增量附加引用程序集。
+- 产物：结构 Outline、语义说明、Prompt 窗口聚合、（后期）受控编辑补丁。
+- 不做：运行时行为分析 / 动态 Profiler（留待插件）。
 
-## 5. 关键数据结构（Schema 草案）
-### 5.1 index.json
-```json
+非目标（当前阶段）：
+- 跨语言（F# / VB）支持。
+- 端到端自动重构完成后直接提交 PR（需要人工 Gate）。
+
+## 2. 分层架构与阶段映射
+
+| 层 / 能力 | 原始动机层次映射 | 当前阶段 | 说明 |
+|-----------|------------------|----------|------|
+| L0 项目加载 | 第1~2层前置 | P0 | MSBuildWorkspace 解析、过滤文件集 |
+| L1 Outline 抽取 | 第1层 | P0 | 生成 per-type outline markdown |
+| L2 缓存 + 增量 | 第2层 | P1 | hash + index.json + watcher + 状态机 |
+| L3 服务化 RPC | 第3层 | P2 | 常驻进程 / JSON-RPC / CLI 前端 |
+| L4 语义生成 | “语义功能” | P3 | 依赖拓扑 + LLM 语义缓存（semantic.md） |
+| L5 Prompt 窗口 | 第5层 | P4 | pinned + recent + pack 合并裁剪 |
+| L6 AST 编辑 | “编辑方向” | P5 | 受控变更管线（rename / extract） |
+| L7 调查任务 / 高级分析 | “调查任务” | P6 | 复杂查询 → 生成并缓存调查结果 |
+
+## 3. 术语与核心数据模型
+
+| 术语 | 定义 | 文件/表示 |
+|------|------|-----------|
+| TypeId | 稳定内部类型ID（哈希截断） | index.types[].id / 文件名片段 |
+| MemberId | 类型内成员稳定 ID | 组合 TypeId + 成员签名 hash |
+| Outline | 类型结构摘要（公开 API + XML doc 摘要） | `types/<TypeId>.outline.md` |
+| Semantic | 角色/生命周期/边界等 LLM 生成语义 | `types/<TypeId>.semantic.md` 或 SCC 合并文件 |
+| SCC Group | 强连通分量组标识 | semanticGroupId (可选) |
+| Pack | 一组类型上下文打包 | index.packs[] & `.context/packs/<name>.md` (后期) |
+| Prompt Window | LLM 注入窗口聚合文本 | `.context/prompt_window.md` |
+| summaryState | 语义文件生成状态机字段 | none/pending/generating/cached/stale |
+| Operation(Op) | 长任务跟踪实体 | `ops/<opId>.json` |
+| Alias 映射 | 历史 TypeId→当前 TypeId | `aliases.json` |
+
+### 3.1 index.json（精简 Schema）
+```jsonc
 {
-  "version": 1,
+  "schemaVersion": "1.0",
   "generatedAt": "2025-09-01T12:00:00Z",
   "projects": [
-    { "id": "P1", "name": "MemoTree.Core", "path": "src/MemoTree.Core/MemoTree.Core.csproj", "tfm": "net9.0", "hash": "..." }
+    { "id": "P1", "name": "MemoTree.Core", "path": "src/MemoTree.Core/MemoTree.Core.csproj", "tfm": "net9.0", "hash": "<ProjectHash>" }
   ],
   "types": [
-    { "id": "T_ab12cd34", "projectId": "P1", "fqn": "MemoTree.Core.NodeStore", "kind": "class", "file": "src/.../NodeStore.cs", "hash": "...", "summaryState": "none" }
+    {
+      "id": "T_ab12cd34",
+      "fqn": "MemoTree.Core.NodeStore",
+      "projectId": "P1",
+      "kind": "class",
+      "file": "src/MemoTree.Core/NodeStore.cs",
+      "structureHash": "9F2A441C",      // 结构（签名）哈希
+      "implHash": "5BC19F77",            // 实现体哈希（方法体+内部私有改动）
+      "summaryState": "cached",
+      "semanticGroupId": null
+    }
   ],
   "packs": [
     { "name": "core-memory", "tokenEstimate": 1820, "lastBuild": "2025-09-01T12:01:00Z", "typeIds": ["T_ab12cd34"] }
@@ -71,167 +77,310 @@
 }
 ```
 
-### 5.2 类型 Outline 文件（`types/<TypeId>.outline.md`）
+### 3.2 状态机：summaryState
 ```
-# MemoTree.Core.NodeStore <T_ab12cd34>
-Kind: class  | File: src/.../NodeStore.cs | Assembly: MemoTree.Core | Hash: 9F2A441C
+none ──enqueue──> pending ──dispatch──> generating ──success──> cached
+  ^                         └─cancel/error──> pending (或记录失败计数) │
+  │                                        invalidate                │
+  └─────────<────────────── stale ◄─────────────── invalidate ◄──────┘
+```
+触发 invalidate 条件：
+1. structureHash 变化 → outline + semantic → stale（若存在）
+2. implHash 变化（structureHash 不变）→ 仅 semantic stale
+3. 下游依赖者所依赖类型 structureHash 变化 → 下游 semantic stale
 
-/// XML doc 原文
-/// AI-SUMMARY: (可空，后置填充)
+### 3.3 Hash 策略
+| 哈希 | 输入内容 | 目的 |
+|------|----------|------|
+| fileHash | 归一化源码文本 (LF) | 变更检测基础 |
+| structureHash | 公开可见签名（类型/成员声明、可见性、特性、XML 摘要短摘要） | 增量结构失效 |
+| implHash | 所有成员语法节点（含私有实现体，但排除空白/注释） | 语义失效 | 
+算法：SHA256 → 取前 8 bytes → Base32（不含易混字符） → 8 字符截断；若冲突（极少）自动扩展至 12 字符并写入 `hash_conflicts.log`。
+
+### 3.4 Outline 文件格式（抽象）
+```
+# <FQN> <TypeId>
+Kind: <kind> | File: <relative> | Assembly: <asm> | StructureHash: <structureHash> | ImplHash: <implHash>
+XMLDOC: <raw first line> (可折叠)
 
 Public API:
-  + ctor NodeStore(IMemoryBackend backend)
-  + Task<Node?> GetAsync(NodeId id, CancellationToken ct)
-  + IAsyncEnumerable<Node> EnumerateAsync(PrefixQuery query, CancellationToken ct)
+  + <signature1>
+  + <signature2>
 
-Implements: IMemoryReader, IDisposable
-DependsOn: MemoIndex, MemoryBackend
+Implements: <interfaces>
+DependsOn: <TypeFQN list (Top-N 公共依赖)>
 ```
 
-### 5.3 语义文件（`types/<TypeId>.semantic.md`）
+### 3.5 Semantic 文件格式
 ```
-# Semantic: NodeStore <T_ab12cd34>
-SourceHash: 9F2A441C
-Dependencies: T_ff991122 T_7788aa33
+# Semantic: <FQN> <TypeId>
+StructureHash: <structureHash>
+ImplHash: <implHash>
+Dependencies: <TypeId...>
 
-ROLE: 维护从 NodeId → Node 的持久化/缓存映射
+ROLE:
 LIFECYCLE:
-  1. 构造时加载最小元数据索引
-  2. 读路径命中内存后短路
-  3. 写路径追加 WAL → 后台合并
-EDGE CASES:
-  - 空索引启动
-  - 节点损坏（校验失败）
+EDGE_CASES:
 LIMITATIONS:
-  - 未实现并发写冲突合并
 RECOMMENDATIONS:
-  - 引入写批次压缩
+```
+环 (SCC) 情况：若多类型同组 → 使用 `semantic/<GroupHash>.md`，头部列出 `Types: <TypeId,...>`。
+
+## 4. 符号路径与 ID 策略
+
+### 4.1 符号路径语法
+```
+TypePath      = Namespace '.' TypeName ( '+' NestedType )*
+MemberPath    = TypePath '.' MemberName [ '(' OverloadSignature? ')' ]
+Wildcard      = 可在任意段使用 * 或 ?
+Generic       = TypeName '<T1,...>' 可省略类型实参（解析时忽略）
+Case          = 不区分大小写
 ```
 
-### 5.4 操作 / 任务状态（`ops/<opId>.json`）
-```json
-{
-  "id": "op_b73f1", "kind": "semantic", "target": "T_ab12cd34",
-  "state": "running", "started": "2025-09-01T12:05:00Z",
-  "dependsOn": ["T_ff991122"],
-  "progress": { "phase": "llm-call", "current": 1, "total": 3 }
-}
+### 4.2 解析优先级
+1. 精确匹配 (FQN)
+2. 后缀唯一匹配（`NodeStore` → 唯一）
+3. 通配符匹配（`NodeStore.Get*`）
+4. 模糊/编辑距离（距离阈值 ≤ 2）
+
+消歧排序：命名空间深度 > 公共访问级别 > 最近访问 LRU 权重 > 名称长度。
+
+### 4.3 性能结构
+索引：
+```
+nameIndex:  symbolLower -> [TypeId/MemberRef]
+suffixIndex: reversedName trie
+recentLRU:   512 容量 (TypeId)
+cache:       路径解析结果 5 分钟 TTL
 ```
 
-## 6. ID 策略
-| 实体 | 组成 | 示例 | 变更策略 |
-|------|------|------|----------|
-| TypeId | `Base32(Hash(FQN+Kind+Arity))[:8]` | T_ab12cd34 | 重命名→新 ID（旧映射保留别名） |
-| MemberId | `TypeId + '_' + ShortHash(Signature)` | M_ab12cd34_ef90 | 签名改变→新 ID |
-| PackId | Pack 名 slug | core-memory | 可重建 |
-
-别名表（aliases.json）保留历史 ID → 现行 ID，防止历史引用失效。
-
-## 7. 增量与失效传播
-1. 监听文件改动 → 计算新 Hash；未变直接跳过。
-2. Type Hash 改变 → 标记语义文件 stale → 其依赖者（反向依赖图）入队。
-3. 批处理窗口（默认 800ms）内聚合多次改动再执行。
-4. LLM 语义任务：工作队列按“被引用次数 / stale 深度”优先级调度。
-
-## 8. RPC 接口（初稿）
-| 方法 | 描述 |
-|------|------|
-| OutlineType(fqn or TypeId) → OutlineText | 返回 outline（必要时触发生成） |
-| SearchTypes(query, limit) → [TypeRef] | 名称/前缀/模糊匹配 |
-| BuildPack(name, filterSpec) → PackResult | 构建/重建打包上下文 |
-| ListPacks() → [PackInfo] | 列出现有 pack |
-| StreamOp(opId) → progress events | 监听长任务进度 |
-| GetSemantic(typeId) | 获取语义文件（生成或返回缓存） |
-| Investigate(question, scope) → opId | 触发调查（多类型） |
-| Pin(typeId) / Unpin(typeId) | 管理 Prompt 窗口固定 |
-| GetPromptWindow() | 返回当前滚动窗口文本 |
-
-## 9. Prompt 窗口策略
-- 结构：Pinned 区 + Recent 区（按最近访问时间）
-- 限额：字符阈值（默认 60k）→ 超出时从 Recent 尾部裁剪
-- 输出合成顺序：Pinned → 最近使用类型 Outline → 最近 semantic 片段 → Pack meta
-- LLM Friendly 头部：
+### 4.4 ID 定义
+- TypeId = `T_` + Base32( SHA256(FQN + Kind + Arity) )[0:8] （冲突扩展）
+- MemberId = TypeId + '_' + Base32( SHA256(CanonicalSignature) )[0:6]
+CanonicalSignature 规范：
 ```
-# CodeCortex WINDOW (GeneratedAt=...)
-TYPES (Pinned=2 / Recent=8) | BudgetUsed=54,321 chars
+[Accessibility] [Modifiers sorted] ReturnType DeclaringType.MemberName(<ParamType1,ParamType2,...>) [GenericArity] [NullableAnnotations]
+```
+忽略：参数名称、可选参数默认值表达式、文档注释。
+
+## 5. 增量与失效传播
+
+### 5.1 事件来源
+- 文件系统 watcher（.cs）
+- 编辑操作提交回写
+- 外部命令触发（手动 invalidate）
+
+### 5.2 处理流程
+```
+FsChange Batch(≤800ms) -> Parse Changed Files -> Recompute fileHash ->
+  For each Type in file:
+    Recompute structureHash & implHash
+    if structureHash changed: outline regenerate + semantic stale
+    else if implHash changed: semantic stale
+Propagate: reverseDependencyGraph → mark downstream semantic stale
+Enqueue semantic jobs with priority = (refCount / (1 + depth))
 ```
 
-## 10. 编辑阶段（预研）
-安全管线：
-1. 用户/LLM 发起 edit 请求（Target: MemberId / TypeId）
-2. 解析意图 → 生成 Roslyn 变换（SyntaxRewriter / CodeAction）
-3. Dry-run：应用到 Workspace（内存）→ 编译 → 诊断过滤（阻断高风险警告/错误）
-4. 生成 Patch（Unified Diff）→ 审批（可人工/自动策略）
-5. 真正写回磁盘 → 触发增量管线 → 自动刷新相关上下文
-
-## 11. LLM 语义生成策略
-- 依赖调度：拓扑层次 + 强连通分量整体（环内一次性汇总提供上下文）
-- Prompt 模板（示例）：
+### 5.3 任务调度
 ```
-SYSTEM: 你是资深 C# 架构师，基于提供的类型 Outline 输出职责/角色/生命周期/边界/风险。
-USER:
-<OUTLINE:NodeStore>
-...outline...
-<DEPENDENCIES>
-TypeA: summary
-TypeB: summary
-```
-- 结果解析：用 YAML 分区 → 验证所需字段齐全
-
-## 12. 配置（CodeCortex.yaml）
-```yaml
-version: 1
-include:
-  - src/**.cs
-exclude:
-  - **/bin/**
-  - **/obj/**
-semantic:
-  provider: openai
-  model: gpt-4o-mini
-  maxTokensPerType: 256
-packs:
-  - name: core-memory
-    filter: "namespace:MemoTree.Core"
-    tokenBudget: 4000
-promptWindow:
-  maxChars: 60000
-  pinned: []
+MaxConcurrentSemantic = min(4, logicalProcessors/2)
+Queue = 按 priority desc + FIFO 次序
+Retry: 指数退避，最多 3 次；失败后记录 error 字段
 ```
 
-## 13. 关键决策列表（追踪表）
-| 决策 | 选项 | 结论 | 复审点 |
-|------|------|------|--------|
-| 项目加载 | MSBuildWorkspace vs Buildalyzer | 先 MSBuild，后期叠加 Buildalyzer 预热 | P2 |
-| RPC 协议 | StreamJsonRpc(JSON) | ✅ | P4 评估二进制 |
-| Type ID | Hash(FQN) 截断 | ✅ | 观察冲突率 |
-| 语义缓存格式 | Markdown + FrontMatter? | 纯 Markdown + header 行 | P3 再评 YAML |
-| Prompt 窗口存储 | 单文本文件 | ✅ | P5 分块 | 
-| 编辑变更验证 | Roslyn 编译 + 诊断白名单 | ✅ | P5 |
-| 生成器产物 | 默认过滤 | ✅ | 引入白名单 P2 |
+## 6. RPC 与 CLI 契约（v1）
 
-## 14. 风险与缓解
+所有外部调用使用“符号路径优先”，允许可选 `id` 短路；响应统一包含 `"resolved": { path, typeId, memberId? }`。
+
+| 方法 | 请求参数（关键） | 响应 | 说明 |
+|------|------------------|------|------|
+| ResolveSymbol | path | {candidates[], resolved?} | 模糊/通配符解析（不生成） |
+| GetOutline | path or typeId | outlineText | 若缺失则生成并缓存 |
+| GetMemberOutline | memberPath or memberId | text | 精细成员级输出（节省 token） |
+| SearchSymbols | query, limit | [SymbolRef] | 名称/前缀/模糊混合搜索 |
+| FindUsages | path/id, maxResults | [UsageSnippet] | 用法片段（后期实现） |
+| GetSemantic | path/id | semanticText | 若 stale → 触发任务并返回旧缓存 + 状态 |
+| BuildPack | name, filterSpec | PackResult | 构建或重建 pack 文件 |
+| ListPacks | - | [PackInfo] | 列出现有 packs |
+| GetPromptWindow | - | windowText | 返回当前窗口内容 |
+| Pin | path/id | success | 加入 pinned 列表 |
+| Unpin | path/id | success | 移除 pinned |
+| Dismiss | path/id | success | 临时从 recent 区移除 |
+| Investigate | question, scopePaths[] | opId | 创建调查操作（异步） |
+| StreamOp | opId | event stream | 长任务进度事件 |
+| Status | - | 服务状态指标 | 供 CLI `status` 命令 |
+
+### 6.1 错误格式
+```
+{ "error": { "code": "SymbolNotFound", "message": "'NodeStroe' not found", "suggestions": ["NodeStore","MemoTree.Core.NodeStore"] } }
+```
+错误代码枚举：SymbolNotFound, AmbiguousSymbol, AccessDenied, Busy, InvalidFilter, InternalError.
+
+## 7. 语义任务调度
+
+SCC 组合：对强连通分量一次性收集所有 outline（仅结构 hash），合并 prompt 发送给 LLM。
+
+优先级 = 引用计数 / (1 + 层次深度)；引用计数来自依赖反向图统计；深度 = 距离叶节点层数。
+
+生成步骤：
+1. Gather Context：目标类型(或组) + 直接依赖的 ROLE 摘要（若已有）。
+2. 模板填充 → 调用 LLM（maxTokens = 配置/每类型 upper）。
+3. 结果解析（YAML 或段落标签）→ 字段齐全性校验。
+4. 写入 semantic 文件；更新 summaryState=cached；反向依赖 stale 标记已处理计数减一。
+
+失败策略：记录 `lastError`；进入 pending，指数退避 (2^attempt * baseDelay)。
+
+## 8. Prompt 窗口策略
+
+配置：`promptWindow.maxChars`（字符预算），Pinned 无硬限制但可预留软预算阈值；Recent 区域裁剪。
+
+裁剪伪代码：
+```
+output = []
+emitAll(pinned sorted by addedTime)
+remaining = maxChars - size(output)
+recent = sortBy(lastAccess desc)
+for t in recent:
+  if remaining <= 0: break
+  block = outline(t)
+  if block.size > remaining: block = truncateSemantic(block, remaining)
+  append(block)
+  remaining -= block.size
+writeFile(output)
+```
+优先保留：Outline > Semantic ROLE > LIFECYCLE > LIMITATIONS > RECOMMENDATIONS（尾部可截断）。
+
+Pack 集成：若激活某 Pack，则其类型在 recent 排序中权重 +W（默认 1.5x）。
+
+## 9. 编辑管线（预研规格）
+
+阶段：
+1. 解析 & 符号定位
+2. 生成 Roslyn CodeAction / 自定义 SyntaxRewriter
+3. Dry-run：内存应用 → 编译（获取 Diagnostics）
+4. 诊断过滤（允许集：Info/Warning 可忽略列表）
+5. 补丁生成：统一 diff（UTF8 LF）
+6. 原子写入 & 触发增量
+7. 回滚：失败时用临时快照恢复
+
+事务：后期支持 `BeginEditBatch` → 多操作合并为单次写回。
+
+## 10. Pack 过滤语法与配置
+
+### 10.1 过滤语法（EBNF）
+```
+expr     = term { ("OR"|"or"|"||") term } ;
+term     = factor { ("AND"|"and"|"&&") factor } ;
+factor   = ["!"] primary | '(' expr ')';
+primary  = ( 'namespace:' | 'type:' | 'access:' | 'tag:' | 'depends:' ) token;
+token    = /[A-Za-z0-9_.*+?\-]+/ ;
+默认 AND；通配符支持 * ?；大小写不敏感。
+```
+
+### 10.2 构建算法
+1. 初选：过滤器匹配类型集合。
+2. 依赖补全：包含直接公共依赖（结构 hash 不重复）。
+3. Token 预算：估算= outlineTokens + semanticTokens；超限按“引用次数 & 依赖深度”排序裁剪 semantic，必要时剔除尾部类型。
+4. 顺序：拓扑排序（上游依赖先出现）。
+5. 缓存：pack 文件 hash 不变即复用。
+
+## 11. Telemetry & 运行监控
+
+指标：
+- symbol.resolve.ms (P50/P95)
+- outline.gen.count / outline.cache.hitRatio
+- semantic.queue.length / semantic.gen.ms / semantic.fail.count
+- prompt.budget.usage.ratio
+- edit.apply.success.rate / edit.rollback.count
+
+Status RPC 返回关键 P95、队列深度、内存占用。告警阈值：解析 P95 >100ms；队列长度>50；内存>2GB。
+
+## 12. 风险与缓解
+
 | 风险 | 等级 | 缓解 |
 |------|------|------|
-| 大型解决方案初次加载慢 | 中 | 延迟按需提取 + 缓存快照 | 
-| 语义文件过多 IO | 中 | 目录分层 / 批写 / hash 跳过 |
-| LLM 成本失控 | 高 | 优先级队列 + 手动触发模式 |
-| Prompt 窗口污染（旧信息残留） | 中 | 每次重建窗口写入生成时间 + 过期检测 |
-| ID 冲突（截断） | 低 | 冲突检测，必要时扩展长度 |
+| 初次加载慢 | 中 | 渐进解析 + 按需 outline 生成 + 缓存快照 |
+| 语义生成成本 | 高 | 优先级队列 + 手动触发模式 + 配额限制 |
+| Token 预算溢出 | 中 | 分级裁剪 + 语义段落优先级 |
+| ID 冲突 | 低 | 启动检测 + 自动扩展长度 + 冲突日志 |
+| 依赖环复杂 | 中 | SCC 合并一次性生成 |
+| 编辑 race 条件 | 中 | 单写入线程 + watcher 抑制窗口 |
+| 缓存老化 | 低 | hash 对比 + stale 标记 + 背景刷新 |
 
-## 15. 度量与 Telemetry（后期）
-- extraction.duration.ms
-- types.outline.count / stale.count
-- semantic.queue.length / throughput
-- prompt.budget.usage.ratio
-- edit.apply.success / rollback.count
+## 13. 路线图与最小落地 (Next Sprint)
 
-## 16. 最小落地路线（下一个 Sprint）
-1. 创建 Contracts 项（基础 DTO + 接口）
-2. `outline` 命令：加载 .csproj → 输出单类型 Outline
-3. `.context/index.json` + 写入一个类型 outline 文件
-4. Watcher：监控文件更改 → 重建受影响类型
-5. CLI 查询：按 FQN 返回 outline 文本
+P0→P1 最小任务：
+1. 项目加载 & 过滤（MSBuildWorkspace）
+2. 单类型 outline 提取命令：`codecortex outline <symbol>`
+3. index.json（structureHash/implHash 计算）
+4. watcher + 800ms 批处理 + 结构/实现分类
+5. 符号解析器（精确+后缀+通配符）
+6. CLI: GetOutline + ResolveSymbol
+
+预留（后续）：semantic job skeleton / prompt window writer stub。
+
+## 14. 决策记录 (ADR 摘要)
+
+| 决策 | 结论 | 理由 | 复审点 |
+|------|------|------|--------|
+| 外部接口采用符号路径 | ✅ | 人类与 LLM 自然引用 | 性能 P1 验证 |
+| Hash 截断 8 字符 | ✅ | 可读 + 足够低冲突 | 冲突>0 → 延长 |
+| 语义缓存 Markdown | ✅ | Git diff 友好 | P3 评 YAML 前言 |
+| JSON-RPC StreamJsonRpc | ✅ | 生态成熟 | P4 评二进制 |
+| Prompt 单文件 | ✅ | 简单 / 低维护 | P5 评分块 |
+| 编辑前 dry-run 编译 | ✅ | 安全 | 按诊断白名单 |
+
+## 15. 工作流示例（精简）
+
+### 15.1 新功能探索（简化）
+```
+GetOutline("MemoTree.Core.Node") → 结构
+SearchSymbols("import", 10) → 候选
+GetSemantic("MemoTree.Core.NodeStore") → 行为限制
+Investigate("How are large batches processed?", scope=["MemoTree.Core"]) → opId
+StreamOp(opId) → 完成后 semantic 缓存
+```
+
+### 15.2 性能排查
+```
+GetOutline("...QueryProcessor.Execute")
+FindUsages("...BTreeIndex.Search", 5)
+GetSemantic("...BTreeIndex")
+SearchSymbols("cache", 10)
+Investigate("Query bottlenecks?", scope=["MemoTree.Query"]) → semantic 扩展
+```
+
+## 16. 错误代码对照
+| code | 说明 | 建议补充字段 |
+|------|------|--------------|
+| SymbolNotFound | 未找到符号 | suggestions[] |
+| AmbiguousSymbol | 多匹配 | candidates[] |
+| AccessDenied | 类型/成员不可访问 | publicAlternatives[] |
+| Busy | 系统索引/加载中 | progress% |
+| InvalidFilter | pack 过滤语法错误 | position, hint |
+| InternalError | 未分类内部异常 | traceId |
+
+## 17. 与最初动机映射
+
+| 初稿层次 (RoslynForLLM) | 当前章节 | 差异说明 |
+|--------------------------|----------|----------|
+| 类型 outline 生成 | 3 / 4 | 增补 hash 分层结构/实现 |
+| 缓存+git 友好 | 3 / 5 | 引入 structureHash/implHash 双层 |
+| service + CLI | 2 / 6 | 统一 RPC 契约+错误格式 |
+| Prompt 文件窗口 | 8 | 增强裁剪算法与优先级 |
+| 语义增强 | 7 | 引入 SCC / 优先队列 | 
+| 编辑 AST | 9 | 设定安全管线草案 |
+| 调查任务 | 7 / 15 | 统一 Investigate 为 Op |
+
+保持“符号路径优先、可读缓存文件、增量新鲜度”三原始原则。
+
+## 18. 后续改进候选
+1. Outline/semantic JSON 索引加速（可选二级缓存）。
+2. Pack token 估算采用模型特定分词器差异化策略。
+3. Investigate 结果结构化（结论 / 证据 / 路径引用）。
+4. 编辑操作安全白名单配置化。
+5. 提供 Graph 导出（Mermaid / DOT）。
 
 ---
-（此文档为活动设计文档，随着阶段推进补全 Schema 细节与性能数据。）
+
+（文档结束 / version 0.2）
