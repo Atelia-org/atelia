@@ -53,16 +53,46 @@ function Parse-FormatReport {
     if(-not $raw.Trim()){
         return [pscustomobject]@{ HasChanges=$false; FileCount=0; ChangeCount=0; Items=@() }
     }
-    try { $data = $raw | ConvertFrom-Json } catch { throw "报告 JSON 解析失败: $Path - $($_.Exception.Message)" }
+    try { $data = $raw | ConvertFrom-Json -ErrorAction Stop } catch { throw "报告 JSON 解析失败: $Path - $($_.Exception.Message)" }
     if(-not $data){ return [pscustomobject]@{ HasChanges=$false; FileCount=0; ChangeCount=0; Items=@() } }
-    # 按当前格式：数组元素含 FileChanges
-    $changedItems = $data | Where-Object { $_.FileChanges -and $_.FileChanges.Count -gt 0 }
-    $changeCount = 0
-    if($changedItems){ $changeCount = ($changedItems | ForEach-Object { $_.FileChanges.Count } | Measure-Object -Sum).Sum }
+
+    # 兼容两种形态：数组根 或 单对象根
+    if($data -isnot [System.Collections.IEnumerable] -or $data -is [string]){
+        $data = @($data)
+    }
+
+    $changedItems = @()
+    $totalEntryCount = 0
+    foreach($item in $data){
+        if(-not $item){ continue }
+        # 优先使用 FileChanges 属性（dotnet format 现有输出）
+        if($item.PSObject.Properties.Name -contains 'FileChanges' -and $item.FileChanges){
+            $fc = $item.FileChanges | Where-Object { $_ }
+            if($fc.Count -gt 0){
+                $changedItems += $item
+                $totalEntryCount += $fc.Count
+                continue
+            }
+        }
+        # 退化：有 FilePath 且标记了 Changed / Formatted 等信息
+        $maybeFilePath = $item.FilePath
+        $flagProps = @('Changed','Formatted','Updated','Fixed') | Where-Object { $item.PSObject.Properties.Name -contains $_ }
+        $isChanged = $false
+        foreach($p in $flagProps){ if($item.$p){ $isChanged = $true; break } }
+        if($maybeFilePath -and $isChanged){
+            # 人工包装成 FileChanges 兼容后续逻辑
+            if(-not ($item.PSObject.Properties.Name -contains 'FileChanges')){
+                $item | Add-Member -NotePropertyName FileChanges -NotePropertyValue @(@{ Id='(unknown)'; Description='(inferred change)'; })
+            }
+            $changedItems += $item
+            $totalEntryCount += 1
+        }
+    }
+
     return [pscustomobject]@{
         HasChanges  = ($changedItems.Count -gt 0)
         FileCount   = $changedItems.Count
-        ChangeCount = $changeCount
+        ChangeCount = $totalEntryCount
         Items       = $changedItems
     }
 }
@@ -172,6 +202,9 @@ try {
     $converged = New-Object System.Collections.Generic.List[string]
     $nonConverged = New-Object System.Collections.Generic.List[string]
     $totalRuns = 0
+    $runReports = New-Object System.Collections.Generic.List[string]
+    $reportDir = 'gitignore/format-reports'
+    if(-not (Test-Path $reportDir)){ New-Item -ItemType Directory -Path $reportDir | Out-Null }
 
     while($queue.Count -gt 0){
         $batch = @()  # 相对路径集合
@@ -181,9 +214,11 @@ try {
         $totalRuns++
         Write-Info ("运行 #$totalRuns 文件数={0} 队列剩余={1}" -f $batch.Count,$queue.Count)
 
-        if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
-        $reportPath = Join-Path 'gitignore' 'format-report.json'
-        if(Test-Path $reportPath){ Remove-Item $reportPath -Force -ErrorAction SilentlyContinue }
+    if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
+    # 为每次运行生成独立报告文件，保留历史供调试
+    $reportPath = Join-Path $reportDir ('format-report_run{0:000}.json' -f $totalRuns)
+    if(Test-Path $reportPath){ Remove-Item $reportPath -Force -ErrorAction SilentlyContinue }
+    $runReports.Add($reportPath) | Out-Null
 
     $exit = Invoke-FormatBatch -Files $batch -ReportPath $reportPath -Solution $solution
         if($exit -ne 0){ Write-Err "dotnet format 退出码: $exit"; $globalError = $true; break }
@@ -237,6 +272,7 @@ try {
         elapsedSeconds = [Math]::Round($elapsed.TotalSeconds,3)
         filesPerSecond = $rate
         nonConvergedList = $nonConverged
+    reportFiles = $runReports
         maxIterations = $MaxIterations
         timestamp = (Get-Date).ToString('o')
         success = (-not $globalError)
