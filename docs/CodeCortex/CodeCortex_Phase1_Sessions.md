@@ -94,11 +94,18 @@ Manifest: 记录每个源文件 LastWriteUtcTicks (后续增量基础)
 偏差与说明：当前仅使用时间戳；未启用内容哈希以降低 IO；后续 L2/L3 将引入差异集合与局部更新。
 
 ### S4 符号解析
+// （原计划含 suffixTrie / LRU 缓存，因规模较小暂缓，实现以线性集合为主）
 - 任务：
-  - [ ] 构建 nameIndex / fqnIndex / suffixTrie (可简化 List 前缀过滤起步)
-  - [ ] 模糊匹配距=1；>12长度距=2
-  - [ ] CLI `resolve` 输出 JSON（或 table）
-- 测试：4 类逻辑 + Ambiguous/NotFound。
+  - [x] `SymbolResolver`：Exact → ExactIgnoreCase → Suffix → Wildcard → Fuzzy 管线
+  - [x] Ambiguous 标记（简单名多后缀：全量收集后再截断并标记）
+  - [x] Fuzzy 距离阈值：len ≤12 →1；>12 →2（二维 DP，移除不安全早退）
+  - [x] CLI `resolve` 命令（--limit / --json，退出码：0 成功、2 缺索引、3 未找到）
+  - [x] 复用模式扩展：CLI 级已有 exists|timestamp|hash|none（与解析共存验证）
+- 测试：
+  - [x] 基础 7 用例（Exact/IgnoreCase/Suffix/Wildcard/Fuzzy/NotFound/Ambiguous）
+  - [x] 高级 21→合计 28 用例：排序与截断稳定、Wildcard 禁用 Fuzzy、阈值边界、`*` 截断、FQN tie-break、长度差早退、截断下仍 Ambiguous、距离=2 修复。
+  - [x] Levenshtein 误判回归测试（距离=2 真实命中）。
+ - 验证：全部 28 测试通过；CLI 输出含 IsAmbiguous 标记。
 
 ### S5 Watcher & 增量
 - 任务：
@@ -151,7 +158,7 @@ Manifest: 记录每个源文件 LastWriteUtcTicks (后续增量基础)
 | S2 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | Hash/Outline 实现+单测修复 & 调试开关添加 |
 | S3 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | Index+AtomicIO+基本复用 |
 | S3.5 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | 时间戳快速失效 (FileManifest) |
-| S4 | | | | | ☐ | |
+| S4 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | 符号解析 + CLI resolve + 高级测试覆盖 |
 | S5 | | | | | ☐ | |
 | S6 | | | | | ☐ | |
 | S7 | | | | | ☐ | |
@@ -213,3 +220,67 @@ Milestones:
 
 ---
 (End of CodeCortex Phase1 Sessions Plan)
+
+---
+## S4 实施补充说明
+### 实现要点
+- `SymbolResolver` 支持匹配顺序：Exact → ExactIgnoreCase → Suffix → Wildcard → Fuzzy。
+- Fuzzy 阈值：查询长度 ≤12 → 1；>12 → 2。
+- 歧义标记：当查询为简单名且 suffix 全量匹配结果 >1 时，为这些结果设置 `IsAmbiguous=true`（即便 limit 截断后仍保留标记：先收集全量再裁剪）。
+- 引入 `_byId` 缓存避免重复线性查找；移除原不稳定早退的 Levenshtein；替换为保证正确性 2D DP（仍含阈值剪枝）。
+- CLI 新增 `resolve`：`codecortex resolve <query> [--limit N] [--json]`，退出码：0=成功，2=缺少索引，3=未找到。
+
+### 新增/更新测试
+`SymbolResolverTests` 覆盖基础 7 用例；`SymbolResolverAdvancedTests` 覆盖：
+1. Limit 截断与排序稳定
+2. Wildcard 禁用 Fuzzy
+3. Fuzzy 阈值边界（长度 13 支持距离=2；长度 12 拒绝距离=2）
+4. 全通配 `*` 限制截断
+5. 同 Rank tie-break (FQN 排序)
+6. 长度差导致早退（不产生 Fuzzy）
+7. 截断情况下 Ambiguous 仍标记
+
+### 质量状态
+- 全部 28 个测试通过（含高级 8 项）。
+- 解析性能：当前实现 O(n * m) DP；Phase1 类型规模下可接受；后续若需优化可替换为 banded 算法重新引入安全早退。
+
+### 后续可演进点
+- 区分 `resolve` 与 `search`（更宽松返回）。
+- 可配置 Fuzzy 阈值与开关（未来 `SymbolResolverOptions`）。
+- 增加解析日志统计（匹配阶段计数、距离分布）。
+
+---
+## Dev Notes / 开发经验记录 (新增)
+> 本节用于记录在实现与调试过程中出现的易错点、操作习惯提醒与后续改进想法。
+
+### 测试迭代注意事项
+- 避免在修改核心实现后立即使用 `dotnet test --no-build` 进行验证；会导致旧二进制被复用而产生“代码已改但行为未变”的假象。
+- 推荐工作流：
+  1. `dotnet test -c Debug -v minimal`（默认先构建）
+  2. 如需加速，仅在确认实现代码未改动、只增删测试文件时使用 `--no-build`。
+  3. 频繁核心算法（解析/哈希）迭代阶段禁用 `--no-build`。
+
+### 模糊匹配算法演进
+- 初版早退（行最小值 > limit 即退出）在距离=2 场景下可能误判；原因：行首初始化值偏大导致提前放弃；现已移除并替换完整 DP。
+- 若后续需要性能提升，可实现 banded DP：仅计算 |i-j|<=limit 带宽区域，结合安全行/列最小值判断。
+
+### 歧义标记策略
+- 先收集全量 suffix 再截断，保证 Ambiguous 标记稳定；避免依赖截断后集合大小。
+- 后续如增加 Fuzzy Ambiguous，可复用相同模式（先全量再截）。
+
+### 复用策略演进提醒
+- 当前 reuse-mode 已支持：exists|timestamp|hash|none。
+- 计划中的 auto：根据文件数阈值与变更概率自适应选择 timestamp 或 hash。
+
+### 推荐追加指标
+| 指标 | 说明 | 价值 |
+|------|------|------|
+| resolveDurationMs | 单次解析耗时 | 识别解析退化 | 
+| fuzzyCandidates | 进入模糊阶段的候选数 | 调优阈值 | 
+| wildcardResultCount | 通配符初始匹配数量 | 评估是否需要分页 | 
+
+### 潜在工具改进
+- 增加本地命令别名脚本：`alias dtest="dotnet test -c Debug"` 减少误用 `--no-build`。
+- 在测试项目添加自定义前置脚本，检测核心源码时间戳新于测试 DLL 时拒绝无构建测试。
+
+---

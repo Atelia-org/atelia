@@ -278,3 +278,28 @@ Phase 2 引入：语义文件目录 `semantic/`、index 扩展字段、队列与
 | [Appendix_AtomicIO_and_FileLayout_P1](./Appendix_AtomicIO_and_FileLayout_P1.md) | 运行期目录结构、原子写协议、并发/锁策略、损坏恢复 |
 | [Appendix_Test_Fixtures_Plan_P1](./Appendix_Test_Fixtures_Plan_P1.md) | 各测试组最小夹具构造策略与样例代码结构 |
 
+---
+## 开发经验与注意事项 (新增)
+### 构建 / 测试工作流提醒
+- 修改核心实现（解析 / 哈希 / 复用策略）后务必执行带构建的测试：`dotnet test`（不要直接 `--no-build`）。
+- 仅当确认只新增/修改测试文件且核心源码未改时，才可使用 `--no-build` 加速。
+- 若需要频繁局部验证某单测：`dotnet test -c Debug --filter FullyQualifiedName~SymbolResolver`。
+
+### 符号解析实现要点快照
+- 匹配顺序：Exact → ExactIgnoreCase → Suffix → Wildcard → Fuzzy。
+- Fuzzy 阈值策略：len(query) ≤12 → 1；>12 → 2。
+- Ambiguous 标记：基于“完整 suffix 结果”而不是截断结果，先收集再裁剪。
+- 当前采用完整 DP Levenshtein 保证正确性；性能可接受，后续可换 banded 实现。
+
+### 未来改进候选
+- `resolve` / `search` 行为差异化（search 不提前短路、返回更宽集合）。
+- `SymbolResolverOptions`：可配置阈值、禁用 Fuzzy、限制通配符上限。
+- 解析阶段统计指标：resolveDurationMs / fuzzyCandidates / wildcardResultCount。
+
+### 常见易错点
+| 场景 | 风险 | 提示 |
+|------|------|------|
+| 使用 `--no-build` 运行旧二进制 | 测试未真正覆盖新改动 | 变更核心代码后先完整构建 |
+| 修改 Levenshtein 早退策略 | 产生距离=2 误判 | 保留完整 DP 或添加单测覆盖边界 |
+| 歧义标记基于截断集合 | 误判或不稳定 | 始终全量收集再标记再截断 |
+

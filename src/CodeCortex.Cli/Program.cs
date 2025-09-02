@@ -3,6 +3,8 @@ using CodeCortex.Workspace;
 using Microsoft.CodeAnalysis;
 using System.Linq;
 using CodeCortex.Core.Index;
+using CodeCortex.Core.Symbols;
+using System.Text.Json;
 
 var root = new RootCommand("CodeCortex CLI (Phase1 - S1-S3 Scan+Index)");
 
@@ -130,5 +132,42 @@ outlineAll.SetHandler(
 );
 
 root.Add(outlineAll);
+
+// resolve command (S4 symbol resolution)
+var queryArg = new Argument<string>("query", description: "Symbol query: exact FQN, simple name, suffix, wildcard (* ?), or fuzzy (small typos)");
+var limitOption = new Option<int>("--limit", () => 20, "Maximum results to return");
+var jsonOption = new Option<bool>("--json", () => false, "Output JSON array (Fqn, Kind, Match, Distance, Id)");
+var resolveCmd = new Command("resolve", "Resolve symbol name(s) against existing index (.codecortex)") { queryArg, limitOption, jsonOption };
+resolveCmd.SetHandler(
+    (string query, int limit, bool json) => {
+        var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
+        var store = new CodeCortex.Core.Index.IndexStore(ctxRoot);
+        var index = store.TryLoad(out var reason);
+        if (index == null) {
+            Console.Error.WriteLine("Index not found (.codecortex/index.json). Run 'scan' first.");
+            Environment.ExitCode = 2;
+            return;
+        }
+        var resolver = new SymbolResolver(index);
+        var matches = resolver.Resolve(query, limit);
+        if (json) {
+            var payload = matches.Select(m => new { m.Fqn, m.Kind, Match = m.MatchKind.ToString(), m.Distance, m.Id, m.IsAmbiguous });
+            Console.WriteLine(JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+            Environment.ExitCode = matches.Count > 0 ? 0 : 3;
+            return;
+        }
+        if (matches.Count == 0) {
+            Console.Error.WriteLine("No matches.");
+            Environment.ExitCode = 3;
+            return;
+        }
+        Console.WriteLine($"Matches ({matches.Count}):");
+        foreach (var m in matches) {
+            var amb = m.IsAmbiguous ? " *AMB*" : string.Empty;
+            Console.WriteLine($"{m.MatchKind,-14} {m.Fqn} [{m.Kind}] (Id={m.Id}{(m.Distance != null ? $",d={m.Distance}" : "")}){amb}");
+        }
+    }, queryArg, limitOption, jsonOption
+);
+root.Add(resolveCmd);
 
 await root.InvokeAsync(args);
