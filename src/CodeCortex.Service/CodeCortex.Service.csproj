@@ -8,6 +8,6 @@
   <ItemGroup>
     <ProjectReference Include="..\CodeCortex.Core\CodeCortex.Core.csproj" />
     <ProjectReference Include="..\CodeCortex.Workspace\CodeCortex.Workspace.csproj" />
-    <PackageReference Include="StreamJsonRpc" Version="2.19.116" />
+  <PackageReference Include="StreamJsonRpc" Version="2.20.17" />
   </ItemGroup>
 </Project>

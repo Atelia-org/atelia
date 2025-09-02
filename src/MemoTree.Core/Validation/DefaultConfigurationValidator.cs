@@ -16,9 +16,11 @@ namespace MemoTree.Core.Validation {
         /// </summary>
         public Task<ValidationResult> ValidateConfigurationAsync<T>(T configuration, CancellationToken cancellationToken = default) where T : class {
             if (configuration == null) {
-                return Task.FromResult(ValidationResult.Failure(
-                    ValidationError.ForRequired("Configuration")
-                ));
+                return Task.FromResult(
+                    ValidationResult.Failure(
+                        ValidationError.ForRequired("Configuration")
+                    )
+                );
             }
 
             var builder = new ValidationResultBuilder()
@@ -181,9 +183,11 @@ namespace MemoTree.Core.Validation {
                     );
                 }
             } catch (Exception ex) {
-                builder.AddError(ValidationError.Create("INVALID_PATH",
-                    $"Invalid path format: {ex.Message}", configurationKey, path
-                ));
+                builder.AddError(
+                    ValidationError.Create("INVALID_PATH",
+                        $"Invalid path format: {ex.Message}", configurationKey, path
+                    )
+                );
             }
 
             return builder.Build();

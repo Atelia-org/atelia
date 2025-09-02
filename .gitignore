@@ -17,3 +17,4 @@ discussion_examples/
 src/CodeOutline.Cli/
 gitignore/
 .github/copilot-instructions.md
+.codecortex/logs/

@@ -1,7 +1,6 @@
 namespace CodeCortex.Service;
 
-public static class RpcMethods
-{
+public static class RpcMethods {
     public const string ResolveSymbol = "resolveSymbol";
     public const string GetOutline = "getOutline";
     public const string SearchSymbols = "searchSymbols";

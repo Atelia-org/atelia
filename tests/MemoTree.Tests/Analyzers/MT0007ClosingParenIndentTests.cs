@@ -65,8 +65,8 @@ public class MT0007ClosingParenIndentTests {
     int b
         ){} }";
         var fixedText = await ApplyAllCodeFixesAsync(code);
-    var (afterDiags, _) = RunAnalyzer(fixedText);
-    Assert.DoesNotContain(afterDiags, d => d.Id == Id);
+        var (afterDiags, _) = RunAnalyzer(fixedText);
+        Assert.DoesNotContain(afterDiags, d => d.Id == Id);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public class MT0007ClosingParenIndentTests {
     2
         ); } void Foo(int a,int b){} }";
         var fixedText = await ApplyAllCodeFixesAsync(code);
-    var (afterDiags, _) = RunAnalyzer(fixedText);
-    Assert.DoesNotContain(afterDiags, d => d.Id == Id);
+        var (afterDiags, _) = RunAnalyzer(fixedText);
+        Assert.DoesNotContain(afterDiags, d => d.Id == Id);
     }
 }
