@@ -33,21 +33,46 @@
 ### S1 Workspace & 扫描
 - 目标：加载 .sln / .csproj 并枚举所有 `INamedTypeSymbol`（公共+内部）。
 - 任务清单：
-  - [ ] `MsBuildWorkspaceLoader` 添加日志 + 失败重试
-  - [ ] 简单枚举器：`ITypeEnumerator` 接口与实现
-  - [ ] 输出统计：项目数 / 类型数 → `index_build.log`
+  - [x] `MsBuildWorkspaceLoader` 添加日志 + 失败重试 (实现：3 次尝试 + 线性退避 + Auto 模式回退 Fallback)
+  - [x] 简单枚举器：`ITypeEnumerator` 接口与实现 (`RoslynTypeEnumerator` 递归命名空间/嵌套类型)
+  - [x] 输出统计：项目数 / 类型数 → `index_build.log` (`Summary Projects=14 Types=240 DurationMs=8.5~11.7s`)
 - 产出文件：`WorkspaceLoader.cs` (扩充), `TypeEnumerator.cs` (新)
 - 引用：附录 *Incremental Flow* (初始化段) / *AtomicIO*
 - 退出标准：运行命令 (临时 console) 打印 “Projects=X Types=Y”。
 
+执行摘要：
+```
+Force 模式一次完整加载: Projects=14 Types=240 Duration≈11.7s
+Auto 模式加载: Projects=14 Types=240 Duration≈8.6s
+Fallback 模式验证（空/异常路径）: Adhoc Projects=1 Types≈272 (聚合 .cs 文件)
+记录日志文件: .codecortex/logs/index_build.log (包含 Attempt/Error/Warning/ Summary 行)
+```
+偏差与说明：初次耗时高于 Phase1 目标基线（≤5s）——哈希/并行化与延迟引用解析优化将在 S2/S3 引入，不在 S1 优化范围。
+
 ### S2 Hash & Outline
 - 任务：
-  - [ ] `TypeHasher`: 实现 5 类 hash (结构暂可最简; 留 TODO 完整化)
-  - [ ] `OutlineExtractor`: 生成符合附录格式的 Markdown
-  - [ ] `TypeId` 生成工具类 (含冲突日志)
-  - [ ] 初次全量写入 `types/<TypeId>.outline.md`
+  - [x] `TypeHasher`: 5 类 hash (结构哈希已加入规范排序+成员签名格式；TODO: 更精细 Trivia 归一)
+  - [x] `OutlineExtractor`: 按 Phase1 格式输出（Public API 列表）
+  - [x] `TypeId` 生成工具类 (含冲突日志 `hash_conflicts.log`)
+  - [x] 全量 Outline 写入命令：`codecortex outline-all <sln>` 生成 `.codecortex/types/*.outline.md`
 - 验证：手工 diff 一个类型的结构 vs 修改内部实现 hash 差异。
 - 风险：Roslyn 语法异常。缓解：try/catch。
+
+执行摘要：
+```
+新增命令: outline-all  (与 scan --gen-outlines 并存)
+结构哈希：成员排序优先级=NestedType>Field>Property>Event>Method，签名去参数名，仅类型序列；可稳定重建
+可测试性：引入 HasherIntermediate/IHashFunction/ITriviaStripper，测试覆盖结构稳定与实现变化
+初次生成：Outlines≈(public+internal 类型计数)；日志条目 OutlineAll Projects=.. Outlines=.. DurationMs=..
+```
+偏差与说明：CosmeticHash 仍为粗粒度（全文拼接）。后续阶段可替换为统一格式归一。
+
+调试开关：
+```
+环境变量: CODECORTEX_TYPEHASH_DEBUG=1  (仍兼容旧的 CODECORTEX_DEBUG=1)
+作用: TypeHasher 在 Collect/Hash 阶段输出结构行、成员枚举及方法主体采集预览（截断）。
+使用场景: 调试结构哈希不变 / 实现哈希未区分的问题；默认不设置避免噪声。
+```
 
 ### S3 Index 构建
 - 任务：
@@ -110,8 +135,8 @@
 ## 滚动进度与里程碑
 | Session | Planned Start | Actual Start | Planned Finish | Actual Finish | Status | Notes |
 |---------|---------------|--------------|----------------|---------------|--------|-------|
-| S1 | | | | | ☐ | |
-| S2 | | | | | ☐ | |
+| S1 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | 初次加载耗时>5s, 待后续并行/延迟符号解析优化 |
+| S2 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | Hash/Outline 实现+单测修复 & 调试开关添加 |
 | S3 | | | | | ☐ | |
 | S4 | | | | | ☐ | |
 | S5 | | | | | ☐ | |

@@ -29,14 +29,30 @@ public sealed partial class MsBuildWorkspaceLoader : IWorkspaceLoader {
         }
 
         EnsureMsBuildRegistered();
-        try {
-            var solution = await LoadViaMsBuild(entryPath, ct).ConfigureAwait(false);
-            IndexBuildLogger.Log($"WorkspaceLoad.MSBuild path={entryPath} Projects={solution.Projects.Count}");
-            return solution;
-        } catch (Exception ex) when (_mode == MsBuildMode.Auto) {
-            IndexBuildLogger.Log($"WorkspaceLoad.MSBuild.Fail {ex.GetType().Name} {ex.Message} -> fallback");
+        var attempt = 0;
+        var maxAttempts = _mode == MsBuildMode.Force ? 1 : 3;
+        Exception? last = null;
+        while (attempt < maxAttempts) {
+            attempt++;
+            try {
+                IndexBuildLogger.Log($"WorkspaceLoad.Attempt={attempt} path={entryPath}");
+                var solution = await LoadViaMsBuild(entryPath, ct).ConfigureAwait(false);
+                IndexBuildLogger.Log($"WorkspaceLoad.MSBuild path={entryPath} Projects={solution.Projects.Count}");
+                return solution;
+            } catch (Exception ex) when (_mode != MsBuildMode.Force) {
+                last = ex;
+                IndexBuildLogger.Log($"WorkspaceLoad.Error attempt={attempt} {ex.GetType().Name} {ex.Message}");
+                // brief backoff except last
+                if (attempt < maxAttempts) {
+                    try { await Task.Delay(TimeSpan.FromMilliseconds((100 * attempt)), ct); } catch { }
+                }
+            }
+        }
+        if (_mode == MsBuildMode.Auto) {
+            IndexBuildLogger.Log($"WorkspaceLoad.MSBuild.Fail {last?.GetType().Name} {last?.Message} -> fallback");
             return EnsureFallback(entryPath);
         }
+        throw last ?? new InvalidOperationException("Workspace load failed with unknown error");
     }
 
     private static void EnsureMsBuildRegistered() {
