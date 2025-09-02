@@ -18,6 +18,7 @@
 | S1 Workspace & 扫描 | 解决方案加载 + 类型枚举 | `WorkspaceLoader` 初版 / 枚举日志 | Incremental Flow §1~4 | 输出类型计数日志 | 0.5d |
 | S2 Hash & Outline | Hash 计算 stub + 初次 Outline | `ITypeHasher` 实现 / `IOutlineExtractor` / 1 个 outline 文件 | TypeId & Hash Rules | ≥1 类型 outline 生成 | 1d |
 | S3 Index 构建 | 写入 `index.json` + 复用 | Index Writer/Reader + AtomicIO | AtomicIO & FileLayout | 重启后复用成功 | 0.5d |
+| S3.5 Quick Invalidation | Timestamp 级快速失效判定 | FileManifest + ReuseDecider + 测试 | Incremental Flow 附录 §Manifest | 未变→复用 变更→重建 日志含 Files/Changed | 0.25d |
 | S4 符号解析 | 精确/后缀/通配/模糊 | `SymbolResolver` + 测试 | Symbol Resolve Algorithms | 4 类查询测试过 | 0.5d |
 | S5 Watcher & 增量 | 文件变更 → hash & outline 更新 | WatcherBatcher / ChangeDetector / IncrementalProcessor | Incremental Flow | 修改1文件 <300ms | 1d |
 | S6 Prompt 窗口 | Outline-only Prompt Window | AccessTracker / PromptWindowBuilder | Status Metrics (预算提及) | 生成窗口文件 | 0.5d |
@@ -76,10 +77,21 @@ Fallback 模式验证（空/异常路径）: Adhoc Projects=1 Types≈272 (聚�
 
 ### S3 Index 构建
 - 任务：
-  - [ ] `IndexModel` + `IndexStore` (Load/Save)
-  - [ ] 原子写 + 损坏回退
-  - [ ] 启动时判断是否已存在 index → 复用
+  - [x] `IndexModel` + `IndexStore` (Load/Save)
+  - [x] 原子写 + 损坏回退 (AtomicFile.Replace + .bak 回退)
+  - [x] 启动时存在 index 基础复用 (L0)
+  - [x] S3.5: FileManifest 时间戳快速失效 (L1) + `IndexReuseDecider`
+  - [x] 单测：复用 / 修改文件失效 / 删除文件失效
 - 验证：删进程重启 outline 不重算（比较计时）。
+
+执行摘要：
+```
+初次构建: Summary Projects=.. Types=.. DurationMs=..
+复用判定日志: ReuseDecision OK Files=N Changed=0 或 ReuseDecision REBUILD Files=N Changed=k
+CLI 输出: Index reuse (timestamp): Files=N Changed=0 Projects=.. Types=..
+Manifest: 记录每个源文件 LastWriteUtcTicks (后续增量基础)
+```
+偏差与说明：当前仅使用时间戳；未启用内容哈希以降低 IO；后续 L2/L3 将引入差异集合与局部更新。
 
 ### S4 符号解析
 - 任务：
@@ -137,7 +149,8 @@ Fallback 模式验证（空/异常路径）: Adhoc Projects=1 Types≈272 (聚�
 |---------|---------------|--------------|----------------|---------------|--------|-------|
 | S1 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | 初次加载耗时>5s, 待后续并行/延迟符号解析优化 |
 | S2 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | Hash/Outline 实现+单测修复 & 调试开关添加 |
-| S3 | | | | | ☐ | |
+| S3 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | Index+AtomicIO+基本复用 |
+| S3.5 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | 时间戳快速失效 (FileManifest) |
 | S4 | | | | | ☐ | |
 | S5 | | | | | ☐ | |
 | S6 | | | | | ☐ | |
@@ -162,6 +175,7 @@ Milestones:
 | 解析歧义多 | CLI 体验差 | 排序+提示建议 | Ambiguous 计数 | 未触发 |
 | 日志过大 | IO 影响 | 5MB 轮转 | 文件大小监控 | 未触发 |
 | 内存膨胀 | 稳定性 | 无缓存上限 → LRU | memoryMB | 未触发 |
+| 时间戳精度碰撞 | 变更误判复用 | 后续引入可选内容哈希 | reuseMismatchCount | 未触发 |
 
 ---
 ## 度量采集清单
@@ -172,6 +186,30 @@ Milestones:
 | watcherQueueDepth | Status 查询 | WatcherBatcher | ☐ |
 | outlineCacheHitRatio | Outline 请求 | OutlineCache | ☐ |
 | memoryMB | Status 查询 | StatusProvider | ☐ |
+
+---
+## 增量 / 失效策略层级规划 (Added S3.5)
+| Level | 名称 | 判定策略 | 行为 | 适用阶段 | 状态 |
+|-------|------|----------|------|----------|------|
+| L0 | Exists Only | 仅检测 index.json 是否存在 | 永远复用或全量重建 | S3 初始 | 归档 |
+| L1 | Timestamp Quick Invalidation | FileManifest: 路径 + LastWriteUtcTicks 全匹配 | 若全部匹配→复用；任一不同→全量重建 | S3.5 | 已实现 |
+| L2 | Diff Collection | 在 L1 基础收集 changedFiles 列表 | 仍执行全量，但输出差异日志指标 | 过渡到 S5 | 待定 |
+| L3 | Partial Incremental | 针对 changedFiles 重新哈希受影响类型 / 更新 Index 子集 | 局部更新 manifest & outlines | S5 | 规划 |
+| L4 | Optimized Incremental | 并行 + Debounce + 批量统计 (lastIncrementalMs, changedTypeCount) | 低延迟迭代 | S5+ | 规划 |
+| L5 | Hybrid Hash Cache | 结构/实现哈希分层缓存 + 热类型优先 | 降低热区重建成本 | S6+ | 概念 |
+
+说明：当前处于 L1；进入 S4 前无需更复杂策略。S5 实现 L3 时需：
+1) 变更分类 (新增/修改/删除/重命名)
+2) 映射类型→文件的反向索引 (可派生自 TypeEntry.Files 构建内存字典)
+3) 受影响类型哈希 + Outline 局部重写 + NameMaps/FqnIndex 更新
+4) Manifest 增量更新（添加/移除/更新时间戳）
+5) 指标：lastIncrementalMs / changedTypeCount / reuseMismatchCount
+
+风险缓解路径：
+- 时间戳误判：添加可选 ContentHash (小文件阈值，或按概率抽样)
+- 批量风暴：Debounce 聚合 <=400ms；超出上限（例如 >N 文件）回退全量
+- 哈希退化：结构哈希失败 fallback 到 PublicImplHash + 文件长度
+
 
 ---
 (End of CodeCortex Phase1 Sessions Plan)
