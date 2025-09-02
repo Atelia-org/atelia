@@ -21,7 +21,7 @@ param(
     #   full   -> 全仓所有已跟踪的 *.cs (git ls-files)
     #   diff   -> 工作区/暂存/未跟踪改动合集 (unstaged + staged + untracked)
     #   staged -> 仅当前已暂存准备提交的 *.cs (git diff --cached)
-    [ValidateSet('full','diff','staged')][string]$Scope = 'full',
+    [ValidateSet('full','diff','staged')][string]$Scope = 'diff',
     [ValidateRange(1,100)][int]$MaxIterations = 5,       # 单文件最大迭代次数
     [ValidateRange(1,4096)][int]$MaxFilesPerRun = 512,   # 每批最大文件数
     [string]$SummaryJson = 'gitignore/format-summary.json' # 汇总输出路径
