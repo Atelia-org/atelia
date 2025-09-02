@@ -27,6 +27,7 @@ class X0001MultiScenarioSamples {
     void Outer() {
         int Local(int x,
             int y) => x + y;
+        Local(0, 1);
     }
 
     // 5. Delegate declaration
