@@ -82,14 +82,21 @@ public sealed class IndexBuilder {
         index.Build.GeneratedAtUtc = request.Clock.UtcNow;
         // Populate file manifest for quick reuse invalidation (Level 1)
         try {
+            bool wantHash = Environment.GetEnvironmentVariable("CODECORTEX_REUSE_HASH") == "1";
             var allFiles = index.Types.SelectMany(t => t.Files).Where(f => !string.IsNullOrWhiteSpace(f))
                 .Distinct(StringComparer.OrdinalIgnoreCase);
             foreach (var file in allFiles) {
                 try {
-                    var exists = System.IO.File.Exists(file);
-                    if (!exists) { continue; }
+                    if (!System.IO.File.Exists(file)) {
+                        continue;
+                    }
+
                     var ticks = System.IO.File.GetLastWriteTimeUtc(file).Ticks;
-                    index.FileManifest[file] = new CodeCortex.Core.Index.FileEntry { LastWriteUtcTicks = ticks };
+                    var fe = new CodeCortex.Core.Index.FileEntry { LastWriteUtcTicks = ticks };
+                    if (wantHash) {
+                        fe.ContentHash = CodeCortex.Core.Index.IndexReuseDecider.ComputeContentHash(file);
+                    }
+                    index.FileManifest[file] = fe;
                 } catch { /* ignore per-file errors */ }
             }
         } catch { /* ignore manifest population errors */ }

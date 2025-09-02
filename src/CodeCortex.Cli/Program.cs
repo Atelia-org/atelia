@@ -8,12 +8,14 @@ var root = new RootCommand("CodeCortex CLI (Phase1 - S1-S3 Scan+Index)");
 
 var modeOption = new Option<string>("--msbuild-mode", () => "auto", "MSBuild mode: auto|force|fallback");
 var pathArg = new Argument<string>("path", ".sln or .csproj path");
+var reuseModeOption = new Option<string>("--reuse-mode", () => "timestamp", "Index reuse strategy: exists|timestamp|hash|none");
 var scanCmd = new Command("scan", "Load solution/project and enumerate types; optionally generate first outline") { pathArg, modeOption };
 var genAllOption = new Option<bool>("--gen-outlines", () => false, "Generate outlines for all public/internal types (Phase1 S2)");
 scanCmd.AddOption(genAllOption);
+scanCmd.AddOption(reuseModeOption);
 
 scanCmd.SetHandler(
-    async (string path, string mode, bool genOutlines) => {
+    async (string path, string mode, bool genOutlines, string reuseMode) => {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         IndexBuildLogger.Initialize(Directory.GetCurrentDirectory());
         var originalPath = path;
@@ -40,15 +42,20 @@ scanCmd.SetHandler(
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
         Directory.CreateDirectory(ctxRoot);
         var scanStore = new CodeCortex.Core.Index.IndexStore(ctxRoot);
+        var reuseModeNorm = (reuseMode ?? "timestamp").ToLowerInvariant();
         var reused = scanStore.TryLoad(out var scanLoadReason);
-        if (reused != null) {
-            if (CodeCortex.Core.Index.IndexReuseDecider.IsReusable(reused, out var changed, out var total)) {
+        if (reused != null && reuseModeNorm != "none") {
+            bool reuse = false;
+            int changed = 0, total = 0, hashChecked = 0;
+            string modeTag = reuseModeNorm;
+            if (reuseModeNorm == "exists") { reuse = true; } else if (reuseModeNorm == "timestamp") { reuse = CodeCortex.Core.Index.IndexReuseDecider.IsReusable(reused, out changed, out total); } else if (reuseModeNorm == "hash") { reuse = CodeCortex.Core.Index.IndexReuseDecider.IsReusableHash(reused, out changed, out total, out hashChecked); }
+            if (reuse) {
                 reused.Build.Reused = true;
-                Console.WriteLine($"Index reuse (timestamp): Files={total} Changed=0 Projects={reused.Stats.ProjectCount} Types={reused.Stats.TypeCount} Reason={scanLoadReason}");
-                IndexBuildLogger.Log($"ReuseDecision OK Files={total} Changed=0");
+                Console.WriteLine($"Index reuse ({modeTag}): Files={(total == 0 ? reused.FileManifest.Count : total)} Changed=0 Projects={reused.Stats.ProjectCount} Types={reused.Stats.TypeCount} Reason={scanLoadReason}");
+                IndexBuildLogger.Log($"ReuseDecision OK Mode={modeTag} Files={(total == 0 ? reused.FileManifest.Count : total)} Changed=0 HashChecked={hashChecked}");
                 return;
             } else {
-                IndexBuildLogger.Log($"ReuseDecision REBUILD Files={total} Changed={changed}");
+                IndexBuildLogger.Log($"ReuseDecision REBUILD Mode={modeTag} Files={total} Changed={changed} HashChecked={hashChecked}");
             }
         }
         var loader = new MsBuildWorkspaceLoader(msMode);
@@ -62,15 +69,16 @@ scanCmd.SetHandler(
         sw.Stop();
         IndexBuildLogger.Log($"Summary Projects={index.Stats.ProjectCount} Types={index.Stats.TypeCount} DurationMs={sw.ElapsedMilliseconds} Outlines={(genOutlines ? index.Stats.TypeCount : 0)}");
         Console.WriteLine($"Mode={msMode} Projects={index.Stats.ProjectCount} Types={index.Stats.TypeCount} Outlines={(genOutlines ? index.Stats.TypeCount : 0)} DurationMs={sw.ElapsedMilliseconds}");
-    }, pathArg, modeOption, genAllOption
+    }, pathArg, modeOption, genAllOption, reuseModeOption
 );
 
 root.Add(scanCmd);
 
 // outline-all command (full generation independent of scan metrics)
 var outlineAll = new Command("outline-all", "Generate outlines for all public/internal types") { pathArg, modeOption };
+outlineAll.AddOption(reuseModeOption);
 outlineAll.SetHandler(
-    async (string path, string mode) => {
+    async (string path, string mode, string reuseMode) => {
         IndexBuildLogger.Initialize(Directory.GetCurrentDirectory());
         if (Directory.Exists(path)) {
             var slns = Directory.GetFiles(path, "*.sln", SearchOption.TopDirectoryOnly);
@@ -87,15 +95,27 @@ outlineAll.SetHandler(
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
         Directory.CreateDirectory(ctxRoot);
         var outlineStore = new CodeCortex.Core.Index.IndexStore(ctxRoot);
+        var reuseModeNorm = (reuseMode ?? "timestamp").ToLowerInvariant();
         var existing = outlineStore.TryLoad(out var reason);
-        if (existing != null) {
-            if (CodeCortex.Core.Index.IndexReuseDecider.IsReusable(existing, out var changed, out var total)) {
+        if (existing != null && reuseModeNorm != "none") {
+            bool reuse = false;
+            int changed = 0, total = 0, hashChecked = 0;
+            string modeTag = reuseModeNorm;
+            if (reuseModeNorm == "exists") {
+                reuse = true;
+            } else if (reuseModeNorm == "timestamp") {
+                reuse = CodeCortex.Core.Index.IndexReuseDecider.IsReusable(existing, out changed, out total);
+            } else if (reuseModeNorm == "hash") {
+                reuse = CodeCortex.Core.Index.IndexReuseDecider.IsReusableHash(existing, out changed, out total, out hashChecked);
+            }
+
+            if (reuse) {
                 existing.Build.Reused = true;
-                Console.WriteLine($"Index reuse (timestamp): Files={total} Changed=0 Projects={existing.Stats.ProjectCount} Types={existing.Stats.TypeCount} Reason={reason}");
-                IndexBuildLogger.Log($"ReuseDecision OK Files={total} Changed=0");
+                Console.WriteLine($"Index reuse ({modeTag}): Files={(total == 0 ? existing.FileManifest.Count : total)} Changed=0 Projects={existing.Stats.ProjectCount} Types={existing.Stats.TypeCount} Reason={reason}");
+                IndexBuildLogger.Log($"ReuseDecision OK Mode={modeTag} Files={(total == 0 ? existing.FileManifest.Count : total)} Changed=0 HashChecked={hashChecked}");
                 return;
             } else {
-                IndexBuildLogger.Log($"ReuseDecision REBUILD Files={total} Changed={changed}");
+                IndexBuildLogger.Log($"ReuseDecision REBUILD Mode={modeTag} Files={total} Changed={changed} HashChecked={hashChecked}");
             }
         }
         var outDir = Path.Combine(ctxRoot, "types");
@@ -106,7 +126,7 @@ outlineAll.SetHandler(
         sw.Stop();
         IndexBuildLogger.Log($"OutlineAll Projects={index.Stats.ProjectCount} Outlines={index.Stats.TypeCount} DurationMs={sw.ElapsedMilliseconds}");
         Console.WriteLine($"Generated {index.Stats.TypeCount} outlines in {sw.ElapsedMilliseconds} ms");
-    }, pathArg, modeOption
+    }, pathArg, modeOption, reuseModeOption
 );
 
 root.Add(outlineAll);
