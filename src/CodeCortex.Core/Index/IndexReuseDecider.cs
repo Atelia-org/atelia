@@ -5,25 +5,27 @@ namespace CodeCortex.Core.Index;
 /// Level 1 strategy: all recorded files must still exist and have identical LastWriteUtc ticks.
 /// </summary>
 #pragma warning disable 1591
+using CodeCortex.Core.IO;
 public static class IndexReuseDecider {
-    public static bool IsReusable(CodeCortexIndex existing, out int changedCount, out int totalFiles) {
+    public static bool IsReusable(CodeCortexIndex existing, out int changedCount, out int totalFiles, IFileSystem? fs = null) {
         changedCount = 0;
         totalFiles = 0;
         if (existing.FileManifest == null || existing.FileManifest.Count == 0) {
             return false; // no manifest -> cannot trust
         }
+        fs ??= new DefaultFileSystem();
         foreach (var kvp in existing.FileManifest) {
             totalFiles++;
             var path = kvp.Key;
             var meta = kvp.Value;
             try {
-                if (!System.IO.File.Exists(path)) {
+                if (!fs.FileExists(path)) {
                     changedCount++;
                     if (changedCount > 0) {
                         return false;
                     }
                 } else {
-                    var ticks = System.IO.File.GetLastWriteTimeUtc(path).Ticks;
+                    var ticks = fs.GetLastWriteTicks(path);
                     if (ticks != meta.LastWriteUtcTicks) {
                         changedCount++;
                         if (changedCount > 0) {
@@ -38,7 +40,7 @@ public static class IndexReuseDecider {
         }
         return changedCount == 0;
     }
-    public static bool IsReusableHash(CodeCortexIndex existing, out int changedCount, out int totalFiles, out int hashChecked) {
+    public static bool IsReusableHash(CodeCortexIndex existing, out int changedCount, out int totalFiles, out int hashChecked, IFileSystem? fs = null) {
         changedCount = 0;
         totalFiles = 0;
         hashChecked = 0;
@@ -46,12 +48,13 @@ public static class IndexReuseDecider {
             return false;
         }
 
+        fs ??= new DefaultFileSystem();
         foreach (var kvp in existing.FileManifest) {
             totalFiles++;
             var path = kvp.Key;
             var meta = kvp.Value;
             try {
-                if (!System.IO.File.Exists(path)) {
+                if (!fs.FileExists(path)) {
                     changedCount++;
                     return false;
                 }
@@ -59,7 +62,7 @@ public static class IndexReuseDecider {
                     changedCount++;
                     return false;
                 }
-                var cur = ComputeContentHash(path);
+                var cur = ComputeContentHash(path, fs);
                 hashChecked++;
                 if (!string.Equals(cur, meta.ContentHash, System.StringComparison.OrdinalIgnoreCase)) {
                     changedCount++;
@@ -72,10 +75,11 @@ public static class IndexReuseDecider {
         }
         return changedCount == 0;
     }
-    public static string ComputeContentHash(string filePath) {
+    public static string ComputeContentHash(string filePath, IFileSystem? fs = null) {
+        fs ??= new DefaultFileSystem();
         using var sha = System.Security.Cryptography.SHA256.Create();
-        using var fs = System.IO.File.OpenRead(filePath);
-        var hash = sha.ComputeHash(fs);
+        using var stream = fs.OpenRead(filePath);
+        var hash = sha.ComputeHash(stream);
         char[] chars = new char[hash.Length * 2];
         int i = 0;
         foreach (var b in hash) {

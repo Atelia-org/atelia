@@ -5,20 +5,27 @@ using System.Text.Json;
 namespace CodeCortex.Core.Index;
 
 /// <summary>Load/Save for CodeCortex index with corruption fallback.</summary>
+using CodeCortex.Core.IO;
+
+#pragma warning disable 1591
 public sealed class IndexStore {
     private readonly JsonSerializerOptions _opts = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public string RootDir { get; }
     public string IndexPath => Path.Combine(RootDir, "index.json");
-    public IndexStore(string rootDir) { RootDir = rootDir; }
+    private readonly IFileSystem _fs;
+    public IndexStore(string rootDir, IFileSystem? fs = null) {
+        RootDir = rootDir;
+        _fs = fs ?? new DefaultFileSystem();
+    }
 
     public CodeCortexIndex? TryLoad(out string reason) {
         reason = string.Empty;
         try {
-            if (!File.Exists(IndexPath)) {
+            if (!_fs.FileExists(IndexPath)) {
                 reason = "missing";
                 return null;
             }
-            var json = File.ReadAllText(IndexPath);
+            var json = _fs.ReadAllText(IndexPath);
             var model = JsonSerializer.Deserialize<CodeCortexIndex>(json, _opts);
             if (model == null || model.Types.Count == 0) {
                 reason = "empty";
@@ -28,9 +35,9 @@ public sealed class IndexStore {
         } catch (Exception ex) {
             reason = "corrupt:" + ex.GetType().Name;
             var bak = IndexPath + ".bak";
-            if (File.Exists(bak)) {
+            if (_fs.FileExists(bak)) {
                 try {
-                    var json = File.ReadAllText(bak);
+                    var json = _fs.ReadAllText(bak);
                     var model = JsonSerializer.Deserialize<CodeCortexIndex>(json, _opts);
                     if (model != null) {
                         return model;
@@ -43,12 +50,12 @@ public sealed class IndexStore {
 
     public void Save(CodeCortexIndex index) {
         var json = JsonSerializer.Serialize(index, _opts);
-        AtomicFile.WriteAtomic(IndexPath, json, Validate);
+        AtomicFile.WriteAtomic(IndexPath, json, Validate, _fs);
     }
 
     private bool Validate(string tmpPath) {
         try {
-            var json = File.ReadAllText(tmpPath);
+            var json = _fs.ReadAllText(tmpPath);
             var model = JsonSerializer.Deserialize<CodeCortexIndex>(json, _opts);
             return model != null && model.SchemaVersion == "1.0";
         } catch { return false; }
