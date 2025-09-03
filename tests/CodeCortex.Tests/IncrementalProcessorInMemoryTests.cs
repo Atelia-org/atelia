@@ -84,12 +84,14 @@ public class IncrementalProcessorInMemoryTests {
             if (!string.IsNullOrEmpty(dir) && !_fs.Directory.Exists(dir)) {
                 _fs.Directory.CreateDirectory(dir);
             }
-
             _fs.File.WriteAllText(path, content);
         }
         public bool TryDelete(string path) {
             _fs.File.Delete(path);
             return true;
+        }
+        public void CreateDirectory(string path) {
+            _fs.Directory.CreateDirectory(path);
         }
     }
 }

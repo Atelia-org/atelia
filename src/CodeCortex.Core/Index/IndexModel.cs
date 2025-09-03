@@ -51,6 +51,8 @@ public sealed class IncrementalInfo {
     public long LastIncrementalMs { get; set; }
     public int LastChangedTypeCount { get; set; }
     public int LastRemovedTypeCount { get; set; }
+    public int LastOutlineWrittenCount { get; set; } = 0;
+    public int LastOutlineSkippedCount { get; set; } = 0;
 }
 
 #pragma warning restore 1591

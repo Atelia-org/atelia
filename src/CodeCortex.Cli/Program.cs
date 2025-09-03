@@ -42,7 +42,8 @@ scanCmd.SetHandler(
         };
         // Phase1 S3: attempt reuse of existing index (short-circuit heavy work)
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
-        Directory.CreateDirectory(ctxRoot);
+        var fs = new CodeCortex.Workspace.Incremental.DefaultFileSystem();
+        fs.CreateDirectory(ctxRoot);
         var scanStore = new CodeCortex.Core.Index.IndexStore(ctxRoot);
         var reuseModeNorm = (reuseMode ?? "timestamp").ToLowerInvariant();
         var reused = scanStore.TryLoad(out var scanLoadReason);
@@ -64,6 +65,7 @@ scanCmd.SetHandler(
         var loaded = await loader.LoadAsync(path);
         CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var outDir = Path.Combine(ctxRoot, "types");
+        fs.CreateDirectory(outDir);
         var builder = new CodeCortex.Workspace.IndexBuilder(new RoslynTypeEnumerator(), new CodeCortex.Core.Hashing.TypeHasher(), new CodeCortex.Core.Outline.OutlineExtractor());
         var req = new CodeCortex.Core.Index.IndexBuildRequest(path, loaded.Projects.ToList(), genOutlines, new CodeCortex.Core.Hashing.HashConfig(), new CodeCortex.Core.Outline.OutlineOptions(), CodeCortex.Core.Index.SystemClock.Instance, new CodeCortex.Core.Index.FileOutlineWriter(outDir));
         var index = builder.Build(req);
@@ -95,7 +97,8 @@ outlineAll.SetHandler(
         var loaded = await loader.LoadAsync(path);
         CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
-        Directory.CreateDirectory(ctxRoot);
+        var fs = new CodeCortex.Workspace.Incremental.DefaultFileSystem();
+        fs.CreateDirectory(ctxRoot);
         var outlineStore = new CodeCortex.Core.Index.IndexStore(ctxRoot);
         var reuseModeNorm = (reuseMode ?? "timestamp").ToLowerInvariant();
         var existing = outlineStore.TryLoad(out var reason);
@@ -184,9 +187,10 @@ watchCmd.SetHandler(
         var msMode = mode.ToLowerInvariant() switch { "force" => MsBuildMode.Force, "fallback" => MsBuildMode.Fallback, _ => MsBuildMode.Auto };
         CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
-        Directory.CreateDirectory(ctxRoot);
+        var fs = new CodeCortex.Workspace.Incremental.DefaultFileSystem();
+        fs.CreateDirectory(ctxRoot);
         var typesDir = Path.Combine(ctxRoot, "types");
-        Directory.CreateDirectory(typesDir);
+        fs.CreateDirectory(typesDir);
         var store = new CodeCortex.Core.Index.IndexStore(ctxRoot);
         var existing = store.TryLoad(out _);
         if (existing == null) {

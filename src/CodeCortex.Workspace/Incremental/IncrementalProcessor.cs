@@ -5,15 +5,17 @@ using CodeCortex.Core.Ids;
 using Microsoft.CodeAnalysis;
 namespace CodeCortex.Workspace.Incremental;
 #pragma warning disable 1591
-public sealed record IncrementalResult(int ChangedTypeCount, int RemovedTypeCount, long DurationMs);
+public sealed record IncrementalResult(int ChangedTypeCount, int RemovedTypeCount, long DurationMs, int OutlineWrittenCount, int OutlineSkippedCount);
 public interface IIncrementalProcessor { IncrementalResult Process(CodeCortexIndex index, ImpactResult impact, ITypeHasher hasher, IOutlineExtractor outline, Func<string, INamedTypeSymbol?> resolveById, string outlineDir, IFileSystem fs, CancellationToken ct); }
 public sealed class IncrementalProcessor : IIncrementalProcessor {
     public IncrementalResult Process(CodeCortexIndex index, ImpactResult impact, ITypeHasher hasher, IOutlineExtractor outline, Func<string, INamedTypeSymbol?> resolveById, string outlineDir, IFileSystem fs, CancellationToken ct) {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         if (!fs.FileExists(outlineDir)) {
-            System.IO.Directory.CreateDirectory(outlineDir);
+            fs.CreateDirectory(outlineDir);
         }
         int changed = 0;
+        int outlineWritten = 0;
+        int outlineSkipped = 0;
         // 1. 先处理已知受影响类型
         foreach (var id in impact.AffectedTypeIds) {
             var symbol = resolveById(id);
@@ -29,6 +31,7 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
                 index.Types.Add(entry);
             }
             var oldFiles = entry.Files.ToList();
+            bool structureChanged = entry.StructureHash != hashes.Structure;
             entry.StructureHash = hashes.Structure;
             entry.PublicImplHash = hashes.PublicImpl;
             entry.InternalImplHash = hashes.InternalImpl;
@@ -36,8 +39,13 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
             entry.Files = symbol.DeclaringSyntaxReferences.Select(r => r.SyntaxTree.FilePath).Distinct().ToList();
             // ensure maps reflect latest fqn
             index.Maps.FqnIndex[fqn] = id;
-            var md = outline.BuildOutline(symbol, hashes, new CodeCortex.Core.Outline.OutlineOptions());
-            fs.WriteAllText(System.IO.Path.Combine(outlineDir, id + ".outline.md"), md);
+            if (structureChanged) {
+                var md = outline.BuildOutline(symbol, hashes, new CodeCortex.Core.Outline.OutlineOptions());
+                fs.WriteAllText(System.IO.Path.Combine(outlineDir, id + ".outline.md"), md);
+                outlineWritten++;
+            } else {
+                outlineSkipped++;
+            }
             changed++;
             // Update name maps (simple ensure exists)
             if (!index.Maps.FqnIndex.ContainsKey(fqn)) {
@@ -100,6 +108,7 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
 
             var md = outline.BuildOutline(symbol, hashes, new CodeCortex.Core.Outline.OutlineOptions());
             fs.WriteAllText(System.IO.Path.Combine(outlineDir, newId + ".outline.md"), md);
+            outlineWritten++;
             changed++;
             foreach (var file in entry.Files) {
                 try {
@@ -151,7 +160,9 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
         index.Incremental.LastIncrementalMs = sw.ElapsedMilliseconds;
         index.Incremental.LastChangedTypeCount = changed;
         index.Incremental.LastRemovedTypeCount = removed;
-        return new IncrementalResult(changed, removed, sw.ElapsedMilliseconds);
+        index.Incremental.LastOutlineWrittenCount = outlineWritten;
+        index.Incremental.LastOutlineSkippedCount = outlineSkipped;
+        return new IncrementalResult(changed, removed, sw.ElapsedMilliseconds, outlineWritten, outlineSkipped);
     }
 }
 
@@ -160,6 +171,7 @@ public interface IFileSystem {
     long GetLastWriteTicks(string path);
     void WriteAllText(string path, string content);
     bool TryDelete(string path);
+    void CreateDirectory(string path);
 }
 
 public sealed class DefaultFileSystem : IFileSystem {
@@ -177,6 +189,9 @@ public sealed class DefaultFileSystem : IFileSystem {
             System.IO.File.Delete(path);
             return true;
         } catch { return false; }
+    }
+    public void CreateDirectory(string path) {
+        System.IO.Directory.CreateDirectory(path);
     }
 }
 #pragma warning restore 1591
