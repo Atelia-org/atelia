@@ -170,4 +170,95 @@ resolveCmd.SetHandler(
 );
 root.Add(resolveCmd);
 
+// watch command (S5 initial incremental prototype - partial incremental rebuild)
+var watchPathArg = new Argument<string>("path", () => ".", "Solution or project path (or directory) to watch");
+var watchCmd = new Command("watch", "Watch source tree for .cs changes and perform incremental outline rebuild (Phase1 S5 prototype)") { watchPathArg, modeOption };
+watchCmd.SetHandler(
+    async (string path, string mode) => {
+        IndexBuildLogger.Initialize(Directory.GetCurrentDirectory());
+        if (Directory.Exists(path)) {
+            var slns = Directory.GetFiles(path, "*.sln", SearchOption.TopDirectoryOnly);
+            if (slns.Length == 1) { path = slns[0]; }
+        }
+        path = Path.GetFullPath(path);
+        var msMode = mode.ToLowerInvariant() switch { "force" => MsBuildMode.Force, "fallback" => MsBuildMode.Fallback, _ => MsBuildMode.Auto };
+        CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
+        var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
+        Directory.CreateDirectory(ctxRoot);
+        var typesDir = Path.Combine(ctxRoot, "types");
+        Directory.CreateDirectory(typesDir);
+        var store = new CodeCortex.Core.Index.IndexStore(ctxRoot);
+        var existing = store.TryLoad(out _);
+        if (existing == null) {
+            Console.WriteLine("No existing index. Building full index first...");
+            var loader0 = new MsBuildWorkspaceLoader(msMode);
+            var loaded0 = await loader0.LoadAsync(path);
+            var builder0 = new CodeCortex.Workspace.IndexBuilder(new RoslynTypeEnumerator(), new CodeCortex.Core.Hashing.TypeHasher(), new CodeCortex.Core.Outline.OutlineExtractor());
+            var req0 = new CodeCortex.Core.Index.IndexBuildRequest(path, loaded0.Projects.ToList(), true, new CodeCortex.Core.Hashing.HashConfig(), new CodeCortex.Core.Outline.OutlineOptions(), CodeCortex.Core.Index.SystemClock.Instance, new CodeCortex.Core.Index.FileOutlineWriter(typesDir));
+            existing = builder0.Build(req0);
+            store.Save(existing);
+        }
+        // Prepare workspace loader for project resolution; keep solution in memory for simple mapping.
+        var loader = new MsBuildWorkspaceLoader(msMode);
+        var loaded = await loader.LoadAsync(path);
+        var sol = loaded.Solution;
+        Project? ResolveProject(string file) {
+            // naive: find first project containing a document with matching path
+            foreach (var p in sol.Projects) {
+                if (p.Documents.Any(d => string.Equals(d.FilePath, file, StringComparison.OrdinalIgnoreCase))) {
+                    return p;
+                }
+            }
+            return null;
+        }
+        INamedTypeSymbol? ResolveById(string id) {
+            // Phase1 simplified: linear scan (acceptable for small scale)
+            foreach (var p in sol.Projects) {
+                var comp = p.GetCompilationAsync().GetAwaiter().GetResult();
+                if (comp == null) {
+                    continue;
+                }
+
+                foreach (var t in new RoslynTypeEnumerator().Enumerate(comp)) {
+                    var tid = CodeCortex.Core.Ids.TypeIdGenerator.GetId(t);
+                    if (tid == id) {
+                        return t;
+                    }
+                }
+            }
+            return null;
+        }
+        var batcher = new CodeCortex.Workspace.Incremental.DebounceFileChangeBatcher();
+        var classifier = new CodeCortex.Workspace.Incremental.ChangeClassifier();
+        var impactAnalyzer = new CodeCortex.Workspace.Incremental.ImpactAnalyzer();
+        var incr = new CodeCortex.Workspace.Incremental.IncrementalProcessor();
+        var revCache = new CodeCortex.Workspace.Incremental.ReverseIndexCache(existing);
+        batcher.Flushed += raw => {
+            try {
+                var classified = classifier.Classify(raw);
+                var impact = impactAnalyzer.Analyze(existing!, classified, ResolveProject, CancellationToken.None);
+                if (impact.AffectedTypeIds.Count == 0 && impact.RemovedTypeIds.Count == 0) {
+                    Console.WriteLine($"Incremental: No affected types (Files={classified.Count})");
+                    return;
+                }
+                var result = incr.Process(existing!, impact, new CodeCortex.Core.Hashing.TypeHasher(), new CodeCortex.Core.Outline.OutlineExtractor(), ResolveById, typesDir, CancellationToken.None);
+                store.Save(existing!);
+                Console.WriteLine($"Incremental: Files={classified.Count} ChangedTypes={result.ChangedTypeCount} Removed={result.RemovedTypeCount} DurationMs={result.DurationMs}");
+            } catch (Exception ex) {
+                Console.Error.WriteLine("Incremental batch error: " + ex.Message);
+            }
+        };
+        using var watcher = new CodeCortex.Workspace.Incremental.SolutionFileWatcher(Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory(), batcher);
+        watcher.Start();
+        Console.WriteLine("Watching for changes. Press Ctrl+C to exit.");
+        var done = new TaskCompletionSource();
+        Console.CancelKeyPress += (s, e) => {
+            e.Cancel = true;
+            done.TrySetResult();
+        };
+        await done.Task.ConfigureAwait(false);
+    }, watchPathArg, modeOption
+);
+root.Add(watchCmd);
+
 await root.InvokeAsync(args);

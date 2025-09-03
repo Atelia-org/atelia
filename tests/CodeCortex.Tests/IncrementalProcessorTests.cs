@@ -1,0 +1,41 @@
+using CodeCortex.Core.Hashing;
+using CodeCortex.Core.Index;
+using CodeCortex.Core.Outline;
+using CodeCortex.Workspace.Incremental;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Xunit;
+
+namespace CodeCortex.Tests;
+
+public class IncrementalProcessorTests {
+    private sealed class DummyWriter : IOutlineWriter {
+        public int Writes; public void EnsureDirectory() { }
+        public void Write(string typeId, string outlineMarkdown) { Writes++; }
+    }
+    private static INamedTypeSymbol MakeType(string code, out Compilation comp) {
+        var tree = CSharpSyntaxTree.ParseText(code);
+        var refs = new[] { MetadataReference.CreateFromFile(typeof(object).Assembly.Location) };
+        comp = CSharpCompilation.Create("t", new[] { tree }, refs);
+        var model = comp.GetSemanticModel(tree);
+        var cls = tree.GetRoot().DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax>().First();
+        return (INamedTypeSymbol)model.GetDeclaredSymbol(cls)!;
+    }
+
+    [Fact]
+    public void Processor_WritesOutline_AndUpdatesManifest() {
+        var idx = new CodeCortexIndex();
+        var writer = new DummyWriter();
+        var hasher = new TypeHasher();
+        var outline = new OutlineExtractor();
+        var code = "namespace N { public class C {} }";
+        var sym = MakeType(code, out var comp);
+        INamedTypeSymbol? Resolver(string id) => sym; // 短路解析
+        var impact = new ImpactResult(new HashSet<string> { "ID1" }, new List<string>(), new List<ClassifiedFileChange>());
+        var proc = new IncrementalProcessor();
+        var res = proc.Process(idx, impact, hasher, outline, Resolver, Path.GetTempPath(), default, writer);
+        Assert.Equal(1, res.ChangedTypeCount);
+        Assert.True(idx.Maps.FqnIndex.ContainsKey(sym.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "")));
+        Assert.Equal(1, writer.Writes);
+    }
+}

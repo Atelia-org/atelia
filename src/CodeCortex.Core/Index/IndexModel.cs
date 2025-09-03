@@ -12,6 +12,7 @@ public sealed class CodeCortexIndex {
     // Quick invalidation manifest: path -> metadata (timestamps / optional hash)
     public Dictionary<string, FileEntry> FileManifest { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, object> FutureReserved { get; set; } = new();
+    public IncrementalInfo Incremental { get; set; } = new();
 }
 
 public sealed class BuildInfo {
@@ -43,6 +44,13 @@ public sealed class FileEntry {
     public long LastWriteUtcTicks { get; set; }
     // Reserved for future stronger validation (content hash / length)
     public string? ContentHash { get; set; }
+}
+
+public sealed class IncrementalInfo {
+    public long OutlineVersion { get; set; }
+    public long LastIncrementalMs { get; set; }
+    public int LastChangedTypeCount { get; set; }
+    public int LastRemovedTypeCount { get; set; }
 }
 
 #pragma warning restore 1591
