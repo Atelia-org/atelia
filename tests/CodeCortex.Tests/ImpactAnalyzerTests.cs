@@ -2,15 +2,12 @@ using CodeCortex.Core.Index;
 using CodeCortex.Workspace.Incremental;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
 namespace CodeCortex.Tests;
 
 public class ImpactAnalyzerTests {
-    private sealed class FakeCompProvider : ICompilationProvider {
-        private readonly Compilation _comp; public FakeCompProvider(Compilation comp) { _comp = comp; }
-        public Compilation? GetCompilation(Project project, CancellationToken ct) => _comp;
-    }
     private static (Compilation comp, string tmpFile) MakeCompilationWithFile(string code) {
         var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".cs");
         File.WriteAllText(tmp, code);
@@ -25,12 +22,15 @@ public class ImpactAnalyzerTests {
         var fqn = "N.A";
         idx.Types.Add(new TypeEntry { Id = "T1", Fqn = fqn, Kind = "Class", Files = new List<string> { file } });
         idx.Maps.FqnIndex[fqn] = "T1";
-        var analyzer = new ImpactAnalyzer(new FakeCompProvider(comp));
+        var analyzer = new ImpactAnalyzer();
         var changes = new List<ClassifiedFileChange> { new ClassifiedFileChange(file, ClassifiedKind.Modify) };
-        // 提供一个最小的 Adhoc Project（Compilation 将由 FakeCompProvider 覆盖返回）
+        // 关键：Project 必须包含该文件
         var ws = new Microsoft.CodeAnalysis.AdhocWorkspace();
         var proj = ws.AddProject("P", Microsoft.CodeAnalysis.LanguageNames.CSharp);
-        var r = analyzer.Analyze(idx, changes, _ => proj, default);
+        var doc = ws.AddDocument(proj.Id, "A.cs", SourceText.From(System.IO.File.ReadAllText(file)));
+        var newSolution = ws.CurrentSolution.WithDocumentFilePath(doc.Id, file);
+        ws.TryApplyChanges(newSolution);
+        var r = analyzer.Analyze(idx, changes, _ => ws.CurrentSolution.GetProject(proj.Id), default);
         Assert.Contains("T1", r.AffectedTypeIds);
     }
 }

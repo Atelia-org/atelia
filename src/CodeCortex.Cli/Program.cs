@@ -241,7 +241,7 @@ watchCmd.SetHandler(
                     Console.WriteLine($"Incremental: No affected types (Files={classified.Count})");
                     return;
                 }
-                var result = incr.Process(existing!, impact, new CodeCortex.Core.Hashing.TypeHasher(), new CodeCortex.Core.Outline.OutlineExtractor(), ResolveById, typesDir, CancellationToken.None);
+                var result = incr.Process(existing!, impact, new CodeCortex.Core.Hashing.TypeHasher(), new CodeCortex.Core.Outline.OutlineExtractor(), ResolveById, typesDir, new CodeCortex.Workspace.Incremental.DefaultFileSystem(), CancellationToken.None);
                 store.Save(existing!);
                 Console.WriteLine($"Incremental: Files={classified.Count} ChangedTypes={result.ChangedTypeCount} Removed={result.RemovedTypeCount} DurationMs={result.DurationMs}");
             } catch (Exception ex) {

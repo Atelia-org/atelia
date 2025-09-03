@@ -4,28 +4,16 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace CodeCortex.Workspace.Incremental;
 #pragma warning disable 1591
-public sealed record ImpactResult(HashSet<string> AffectedTypeIds, List<string> RemovedTypeIds, List<ClassifiedFileChange> Changes);
-public interface ICompilationProvider { Compilation? GetCompilation(Project project, CancellationToken ct); }
-public sealed class DefaultCompilationProvider : ICompilationProvider { public Compilation? GetCompilation(Project project, CancellationToken ct) => project.GetCompilationAsync(ct).GetAwaiter().GetResult(); }
-public interface IFileSystem { bool FileExists(string path); long GetLastWriteTicks(string path); void WriteAllText(string path, string content); bool TryDelete(string path); }
-public sealed class RealFileSystem : IFileSystem {
-    public bool FileExists(string path) => File.Exists(path);
-    public long GetLastWriteTicks(string path) => File.GetLastWriteTimeUtc(path).Ticks;
-    public void WriteAllText(string path, string content) => File.WriteAllText(path, content);
-    public bool TryDelete(string path) {
-        try {
-            if (File.Exists(path)) {
-                File.Delete(path);
-            }
-
-            return true;
-        } catch { return false; }
-    }
-}
+public sealed record ImpactResult(
+    HashSet<string> AffectedTypeIds,
+    List<string> RemovedTypeIds,
+    List<ClassifiedFileChange> Changes,
+    List<string> AddedTypeFqns,
+    List<string> RemovedTypeFqns,
+    List<string> RetainedTypeFqns
+);
 public interface IImpactAnalyzer { ImpactResult Analyze(CodeCortexIndex index, IReadOnlyList<ClassifiedFileChange> changes, Func<string, Project?> resolveProject, CancellationToken ct); }
 public sealed class ImpactAnalyzer : IImpactAnalyzer {
-    private readonly ICompilationProvider _compProvider;
-    public ImpactAnalyzer(ICompilationProvider? compProvider = null) { _compProvider = compProvider ?? new DefaultCompilationProvider(); }
     private static IEnumerable<string> GetTypeFqnsInFile(Compilation comp, SyntaxTree tree) {
         var model = comp.GetSemanticModel(tree, ignoreAccessibility: true);
         var root = tree.GetRoot();
@@ -42,8 +30,13 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
     public ImpactResult Analyze(CodeCortexIndex index, IReadOnlyList<ClassifiedFileChange> changes, Func<string, Project?> resolveProject, CancellationToken ct) {
         var affected = new HashSet<string>(StringComparer.Ordinal);
         var removed = new List<string>();
-        // Build reverse index file -> types
+        var addedFqns = new List<string>();
+        var removedFqns = new List<string>();
+        var retainedFqns = new List<string>();
+        // Build reverse index file -> types and FQN
         var rev = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var fileToFqns = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var fqnToFiles = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var t in index.Types) {
             foreach (var f in t.Files) {
                 if (!rev.TryGetValue(f, out var list)) {
@@ -51,14 +44,24 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
                     rev[f] = list;
                 }
                 list.Add(t.Id);
+                if (!fileToFqns.TryGetValue(f, out var fqns)) {
+                    fqns = new();
+                    fileToFqns[f] = fqns;
+                }
+                fqns.Add(t.Fqn);
+                if (!fqnToFiles.TryGetValue(t.Fqn, out var files)) {
+                    files = new();
+                    fqnToFiles[t.Fqn] = files;
+                }
+                files.Add(f);
             }
         }
         foreach (var ch in changes) {
+            var path = ch.Path;
             switch (ch.Kind) {
                 case ClassifiedKind.Add:
                 case ClassifiedKind.Modify:
                 case ClassifiedKind.Rename:
-                    var path = ch.Path;
                     if (!File.Exists(path)) {
                         continue;
                     }
@@ -68,7 +71,7 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
                         continue;
                     }
 
-                    var comp = _compProvider.GetCompilation(proj, ct);
+                    var comp = proj.GetCompilationAsync(ct).GetAwaiter().GetResult();
                     if (comp == null) {
                         continue;
                     }
@@ -77,39 +80,50 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
                     if (tree == null) {
                         continue;
                     }
-                    // find FQNs declared in this file and mark corresponding TypeIds
-                    var fqns = GetTypeFqnsInFile(comp, tree).ToList();
-                    if (fqns.Count == 0) {
-                        // fallback: any types referencing this file (partial) still affected
-                        if (rev.TryGetValue(path, out var list2)) {
-                            foreach (var id in list2) {
-                                affected.Add(id);
+
+                    var newFqns = new HashSet<string>(GetTypeFqnsInFile(comp, tree));
+                    var oldFqns = fileToFqns.TryGetValue(path, out var oldSet) ? oldSet : new HashSet<string>();
+                    var added = newFqns.Except(oldFqns).ToList();
+                    var removedSet = oldFqns.Except(newFqns).ToList();
+                    var retained = newFqns.Intersect(oldFqns).ToList();
+                    addedFqns.AddRange(added);
+                    removedFqns.AddRange(removedSet);
+                    retainedFqns.AddRange(retained);
+                    // 新增类型：无须受影响（后续增量处理会新建 TypeEntry）
+                    // 删除类型：需判定 partial 是否所有文件都被删
+                    foreach (var fqn in removedSet) {
+                        if (fqnToFiles.TryGetValue(fqn, out var allFiles)) {
+                            var stillExists = allFiles.Any(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase) && File.Exists(f));
+                            if (!stillExists && index.Maps.FqnIndex.TryGetValue(fqn, out var id)) {
+                                removed.Add(id);
                             }
                         }
-
-                        break;
                     }
-                    foreach (var fqn in fqns) {
+                    // 保留类型：如结构有变，affected
+                    foreach (var fqn in retained) {
                         if (index.Maps.FqnIndex.TryGetValue(fqn, out var id)) {
                             affected.Add(id);
-                        } else {
-                            // new type added -> find by file mapping (partial/new) and add all from this file
-                            if (rev.TryGetValue(path, out var list3)) {
-                                foreach (var id2 in list3) {
-                                    affected.Add(id2);
+                        }
+                    }
+                    // 新增类型不在 index，后续增量处理会补全
+                    break;
+                case ClassifiedKind.Delete:
+                    // 文件被删除，所有类型需判定 partial
+                    if (fileToFqns.TryGetValue(path, out var oldFqnsDel)) {
+                        foreach (var fqn in oldFqnsDel) {
+                            if (fqnToFiles.TryGetValue(fqn, out var allFiles)) {
+                                var stillExists = allFiles.Any(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase) && File.Exists(f));
+                                if (!stillExists && index.Maps.FqnIndex.TryGetValue(fqn, out var id)) {
+                                    removed.Add(id);
+                                    removedFqns.Add(fqn);
                                 }
                             }
                         }
                     }
                     break;
-                case ClassifiedKind.Delete:
-                    if (rev.TryGetValue(ch.Path, out var list)) {
-                        foreach (var id in list) { removed.Add(id); }
-                    }
-                    break;
             }
         }
-        return new ImpactResult(affected, removed, changes.ToList());
+        return new ImpactResult(affected, removed, changes.ToList(), addedFqns, removedFqns, retainedFqns);
     }
 }
 #pragma warning restore 1591
