@@ -5,7 +5,7 @@ namespace CodeCortex.Core.Prompt {
     /// <summary>
     /// 维护最近访问的类型（LRU），用于 Prompt 窗口 Focus/Recent 区域。
     /// </summary>
-    public class AccessTracker<T> {
+    public class AccessTracker<T> where T : notnull {
         private readonly int _capacity;
         private readonly LinkedList<T> _list = new();
         private readonly HashSet<T> _set = new();
@@ -13,6 +13,13 @@ namespace CodeCortex.Core.Prompt {
 
         public AccessTracker(int capacity = 32) {
             _capacity = capacity;
+        }
+
+        public AccessTracker(int capacity, IEnumerable<T> initial) {
+            _capacity = capacity;
+            foreach (var item in initial) {
+                Access(item);
+            }
         }
 
         public void Access(T item) {
@@ -49,5 +56,12 @@ namespace CodeCortex.Core.Prompt {
         }
 
         public IReadOnlyList<T> GetAll() => new List<T>(_list);
+        // 序列化为 List<T>
+        public List<T> ToList() => new List<T>(_list);
+
+        // 反序列化（静态工厂）
+        public static AccessTracker<T> FromList(IEnumerable<T> items, int capacity = 32) {
+            return new AccessTracker<T>(capacity, items);
+        }
     }
 }
