@@ -12,10 +12,13 @@ namespace CodeCortex.Core.Prompt {
         private readonly string? _persistPath;
         private readonly CodeCortex.Core.IO.IFileSystem _fs;
 
-        public PinnedSet(string? persistPath = null, CodeCortex.Core.IO.IFileSystem? fs = null) {
+
+        public PinnedSet(string? persistPath = null, CodeCortex.Core.IO.IFileSystem? fs = null, IEnumerable<T>? initial = null) {
             _persistPath = persistPath;
             _fs = fs ?? new CodeCortex.Core.IO.DefaultFileSystem();
-            if (!string.IsNullOrEmpty(_persistPath) && _fs.FileExists(_persistPath)) {
+            if (initial != null) {
+                _set = new HashSet<T>(initial);
+            } else if (!string.IsNullOrEmpty(_persistPath) && _fs.FileExists(_persistPath)) {
                 try {
                     var json = _fs.ReadAllText(_persistPath);
                     var items = JsonSerializer.Deserialize<HashSet<T>>(json);
