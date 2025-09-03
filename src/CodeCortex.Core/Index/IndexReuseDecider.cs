@@ -1,11 +1,11 @@
 namespace CodeCortex.Core.Index;
 
+#pragma warning disable 1591
+using CodeCortex.Core.IO;
 /// <summary>
 /// Quick timestamp-based validation for deciding whether an existing index can be reused.
 /// Level 1 strategy: all recorded files must still exist and have identical LastWriteUtc ticks.
 /// </summary>
-#pragma warning disable 1591
-using CodeCortex.Core.IO;
 public static class IndexReuseDecider {
     public static bool IsReusable(CodeCortexIndex existing, out int changedCount, out int totalFiles, IFileSystem? fs = null) {
         changedCount = 0;

@@ -4,10 +4,10 @@ using System.Text.Json;
 
 namespace CodeCortex.Core.Index;
 
-/// <summary>Load/Save for CodeCortex index with corruption fallback.</summary>
 using CodeCortex.Core.IO;
 
 #pragma warning disable 1591
+/// <summary>Load/Save for CodeCortex index with corruption fallback.</summary>
 public sealed class IndexStore {
     private readonly JsonSerializerOptions _opts = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public string RootDir { get; }
