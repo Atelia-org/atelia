@@ -109,9 +109,12 @@ Manifest: 记录每个源文件 LastWriteUtcTicks (后续增量基础)
 
 ### S5 Watcher & 增量
 - 任务：
-  - [ ] FileSystemWatcher + 400ms debounce
-  - [ ] Batch 处理逻辑 & 统计 lastIncrementalMs
-  - [ ] 全变更分类布尔判断 + outlineVersion++
+  - [x] FileSystemWatcher + 400ms debounce
+  - [x] Batch 处理逻辑 & 统计 lastIncrementalMs
+  - [x] 全变更分类布尔判断 + outlineVersion++
+  - [x] 增量链路所有文件/目录操作已适配 IFileSystem，CLI/测试可灵活注入
+  - [ ] ImpactAnalyzer 文件存在性判断适配 IFileSystem
+  - [ ] Core 层 IndexStore/AtomicFile/IndexReuseDecider 等 IO 适配（可选/后续）
 - 性能测量：修改一个文件计时 <300ms。
 
 ### S6 Prompt 窗口 (Outline Only)

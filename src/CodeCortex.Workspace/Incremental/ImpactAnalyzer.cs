@@ -1,4 +1,5 @@
 using CodeCortex.Core.Index;
+using CodeCortex.Core.IO;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -14,6 +15,8 @@ public sealed record ImpactResult(
 );
 public interface IImpactAnalyzer { ImpactResult Analyze(CodeCortexIndex index, IReadOnlyList<ClassifiedFileChange> changes, Func<string, Project?> resolveProject, CancellationToken ct); }
 public sealed class ImpactAnalyzer : IImpactAnalyzer {
+    private readonly IFileSystem _fs;
+    public ImpactAnalyzer(IFileSystem? fs = null) { _fs = fs ?? new DefaultFileSystem(); }
     private static IEnumerable<string> GetTypeFqnsInFile(Compilation comp, SyntaxTree tree) {
         var model = comp.GetSemanticModel(tree, ignoreAccessibility: true);
         var root = tree.GetRoot();
@@ -62,7 +65,7 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
                 case ClassifiedKind.Add:
                 case ClassifiedKind.Modify:
                 case ClassifiedKind.Rename:
-                    if (!File.Exists(path)) {
+                    if (!_fs.FileExists(path)) {
                         continue;
                     }
 
@@ -93,7 +96,7 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
                     // 删除类型：需判定 partial 是否所有文件都被删
                     foreach (var fqn in removedSet) {
                         if (fqnToFiles.TryGetValue(fqn, out var allFiles)) {
-                            var stillExists = allFiles.Any(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase) && File.Exists(f));
+                            var stillExists = allFiles.Any(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase) && _fs.FileExists(f));
                             if (!stillExists && index.Maps.FqnIndex.TryGetValue(fqn, out var id)) {
                                 removed.Add(id);
                             }
@@ -112,7 +115,7 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
                     if (fileToFqns.TryGetValue(path, out var oldFqnsDel)) {
                         foreach (var fqn in oldFqnsDel) {
                             if (fqnToFiles.TryGetValue(fqn, out var allFiles)) {
-                                var stillExists = allFiles.Any(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase) && File.Exists(f));
+                                var stillExists = allFiles.Any(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase) && _fs.FileExists(f));
                                 if (!stillExists && index.Maps.FqnIndex.TryGetValue(fqn, out var id)) {
                                     removed.Add(id);
                                     removedFqns.Add(fqn);

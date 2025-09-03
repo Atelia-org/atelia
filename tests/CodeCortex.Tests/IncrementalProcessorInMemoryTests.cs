@@ -1,6 +1,7 @@
 using CodeCortex.Core.Hashing;
 using CodeCortex.Core.Index;
 using CodeCortex.Core.Outline;
+using CodeCortex.Core.IO;
 using CodeCortex.Workspace.Incremental;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
