@@ -4,7 +4,7 @@ namespace CodeCortex.Core.Index;
 internal static class AtomicFile {
     public static void WriteAtomic(string finalPath, string contentUtf8, Func<string, bool> validate, IFileSystem? fs = null) {
         fs ??= new DefaultFileSystem();
-        var dir = System.IO.Path.GetDirectoryName(finalPath)!;
+        var dir = Path.GetDirectoryName(finalPath)!;
         fs.CreateDirectory(dir);
         var tmp = finalPath + ".tmp";
         fs.WriteAllText(tmp, contentUtf8, System.Text.Encoding.UTF8);
