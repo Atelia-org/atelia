@@ -4,9 +4,17 @@ using Microsoft.CodeAnalysis;
 using System.Linq;
 using CodeCortex.Core.Index;
 using CodeCortex.Core.Symbols;
+using CodeCortex.Core.IO;
+
+using CodeCortex.Cli;
 using System.Text.Json;
 
-var root = new RootCommand("CodeCortex CLI (Phase1 - S1-S3 Scan+Index)");
+var root = new RootCommand("CodeCortex CLI (Phase1 - S1-S6 Scan+Index+PromptWindow)");
+// 注册 window 命令（Prompt 窗口生成）
+var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
+var outlineDir = Path.Combine(ctxRoot, "types");
+var pinnedPath = Path.Combine(ctxRoot, "pinned.json");
+root.Add(WindowCommand.Create(ctxRoot, outlineDir, pinnedPath));
 
 var modeOption = new Option<string>("--msbuild-mode", () => "auto", "MSBuild mode: auto|force|fallback");
 var pathArg = new Argument<string>("path", ".sln or .csproj path");
@@ -42,7 +50,7 @@ scanCmd.SetHandler(
         };
         // Phase1 S3: attempt reuse of existing index (short-circuit heavy work)
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
-        var fs = new CodeCortex.Workspace.Incremental.DefaultFileSystem();
+        var fs = new DefaultFileSystem();
         fs.CreateDirectory(ctxRoot);
         var scanStore = new CodeCortex.Core.Index.IndexStore(ctxRoot);
         var reuseModeNorm = (reuseMode ?? "timestamp").ToLowerInvariant();
@@ -97,7 +105,7 @@ outlineAll.SetHandler(
         var loaded = await loader.LoadAsync(path);
         CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
-        var fs = new CodeCortex.Workspace.Incremental.DefaultFileSystem();
+        var fs = new DefaultFileSystem();
         fs.CreateDirectory(ctxRoot);
         var outlineStore = new CodeCortex.Core.Index.IndexStore(ctxRoot);
         var reuseModeNorm = (reuseMode ?? "timestamp").ToLowerInvariant();
@@ -187,7 +195,7 @@ watchCmd.SetHandler(
         var msMode = mode.ToLowerInvariant() switch { "force" => MsBuildMode.Force, "fallback" => MsBuildMode.Fallback, _ => MsBuildMode.Auto };
         CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
-        var fs = new CodeCortex.Workspace.Incremental.DefaultFileSystem();
+        var fs = new DefaultFileSystem();
         fs.CreateDirectory(ctxRoot);
         var typesDir = Path.Combine(ctxRoot, "types");
         fs.CreateDirectory(typesDir);
@@ -245,7 +253,7 @@ watchCmd.SetHandler(
                     Console.WriteLine($"Incremental: No affected types (Files={classified.Count})");
                     return;
                 }
-                var result = incr.Process(existing!, impact, new CodeCortex.Core.Hashing.TypeHasher(), new CodeCortex.Core.Outline.OutlineExtractor(), ResolveById, typesDir, new CodeCortex.Workspace.Incremental.DefaultFileSystem(), CancellationToken.None);
+                var result = incr.Process(existing!, impact, new CodeCortex.Core.Hashing.TypeHasher(), new CodeCortex.Core.Outline.OutlineExtractor(), ResolveById, typesDir, new DefaultFileSystem(), CancellationToken.None);
                 store.Save(existing!);
                 Console.WriteLine($"Incremental: Files={classified.Count} ChangedTypes={result.ChangedTypeCount} Removed={result.RemovedTypeCount} DurationMs={result.DurationMs}");
             } catch (Exception ex) {
