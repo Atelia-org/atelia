@@ -130,8 +130,10 @@ function Get-DiffFiles(){
     $unstaged = git diff --name-only | Where-Object { $_ }
     $staged   = git diff --name-only --cached | Where-Object { $_ }
     $untracked= git ls-files --others --exclude-standard | Where-Object { $_ }
-    $all = @($unstaged + $staged + $untracked) | Sort-Object -Unique
-    $files =@($all) | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_) }
+    $all = (@($unstaged) + @($staged) + @($untracked)) | Sort-Object -Unique
+    $files =@($all) | Where-Object {
+        [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_)
+    }
     return $files
 }
 
