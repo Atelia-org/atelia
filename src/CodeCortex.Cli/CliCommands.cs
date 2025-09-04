@@ -8,7 +8,7 @@ namespace CodeCortex.Cli {
     public static class CliCommands {
         public static async Task ResolveAsync(string query, int limit, string host, int port) {
             var req = new ResolveRequest(query);
-            var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeWithParameterObjectAsync<List<SymbolMatch>>(RpcMethods.ResolveSymbol, req));
+            var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeAsync<List<SymbolMatch>>(RpcMethods.ResolveSymbol, req));
             foreach (var m in result) {
                 var amb = m.IsAmbiguous ? " *AMB*" : string.Empty;
                 Console.WriteLine($"{m.MatchKind,-14} {m.Fqn} [{m.Kind}] (Id={m.Id}{(m.Distance != null ? $",d={m.Distance}" : "")}){amb}");
@@ -17,7 +17,7 @@ namespace CodeCortex.Cli {
 
         public static async Task OutlineAsync(string idOrFqn, string host, int port) {
             var req = new OutlineRequest(idOrFqn);
-            var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeWithParameterObjectAsync<string?>(RpcMethods.GetOutline, req));
+            var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeAsync<string?>(RpcMethods.GetOutline, req));
             if (result == null) {
                 Console.WriteLine("未找到Outline");
             } else {
@@ -27,7 +27,7 @@ namespace CodeCortex.Cli {
 
         public static async Task SearchAsync(string query, int limit, string host, int port) {
             var req = new SearchRequest(query, limit);
-            var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeWithParameterObjectAsync<List<SymbolMatch>>(RpcMethods.SearchSymbols, req));
+            var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeAsync<List<SymbolMatch>>(RpcMethods.SearchSymbols, req));
             foreach (var m in result) {
                 Console.WriteLine($"{m.Fqn} [{m.Kind}] (Id={m.Id})");
             }

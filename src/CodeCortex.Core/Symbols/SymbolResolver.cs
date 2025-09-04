@@ -34,7 +34,14 @@ public sealed class SymbolResolver : ISymbolResolver {
             .ToDictionary(g => g.Key, g => g.First().Value, StringComparer.OrdinalIgnoreCase);
         _all = index.Types.Select(t => (t.Fqn, t.Id, t.Kind, Simple: ExtractSimpleName(t.Fqn))).ToList();
         _simpleNames = _all.Select(a => a.Simple).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _byId = index.Types.ToDictionary(t => t.Id, t => t, StringComparer.Ordinal);
+
+        // 处理重复ID的情况：使用第一个遇到的
+        _byId = new Dictionary<string, TypeEntry>(StringComparer.Ordinal);
+        foreach (var type in index.Types) {
+            if (!_byId.ContainsKey(type.Id)) {
+                _byId[type.Id] = type;
+            }
+        }
     }
 #pragma warning restore 1591
 

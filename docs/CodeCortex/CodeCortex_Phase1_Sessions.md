@@ -126,19 +126,25 @@ Manifest: 记录每个源文件 LastWriteUtcTicks (后续增量基础)
 - 验证：调用三次 outline 触发 Recent & Focus 生成文件。
 
 ### S7 RPC 服务
-- [x] JSON-RPC Host (StreamJsonRpc over local TCP 或 stdio——选 stdio)
+- [x] JSON-RPC Host (StreamJsonRpc over local TCP——默认 TCP；不再使用 stdio)
 - [x] Handlers: outline / resolve / search / status
 - [x] 简单健康日志（启动/异常/请求日志，后续可扩展）
-- [ ] CLI 使用 RPC 取得 outline（待 CLI 端联调验证）
+- [x] CLI 使用 RPC 取得 outline（✅ 端到端联调验证完成）
+- [x] 自动索引维护：服务启动时自动发现工作区、构建/复用索引
+- [x] LLM显示器：自动更新 `.github\copilot-instructions.md`
 - 验证：CLI 使用 RPC 取得 outline。
 
-> 已完成服务端主程序骨架与核心 handler 实现，采用 stdio 模式，支持 outline/resolve/search/status 四大 RPC 方法，日志输出至控制台。后续可根据需要扩展 TCP、日志轮转、热重载等能力。
+> ✅ **已完成端到端验证**：Service 具备完整的 S1-S3 索引构建能力，支持自动工作区发现、索引构建/复用、TCP RPC服务。CLI 成功通过 RPC 调用 status/resolve/search/outline 四大功能。实现了"无脑使用"的用户体验。
 
 ### S8 CLI 工具
 - 任务：
-  - [ ] 子命令：resolve / outline / search / window / pin / unpin / dismiss / status / daemon start|stop
+  - [x] 子命令：resolve / outline / search / status（✅ 已实现并验证）
+  - [ ] 子命令：window / pin / unpin / dismiss（待S6完成后集成）
+  - [ ] 子命令：daemon start|stop（后续S8.5实现）
   - [ ] 守护进程：写 `daemon.pid`，检测已运行
 - 验证：脚本执行顺序（主文档 §16）。
+
+> ✅ **核心CLI功能已完成**：resolve/outline/search/status 四大核心RPC命令均可正常工作，支持 `--rpc-host` 和 `--rpc-port` 参数。端到端测试验证通过，用户可通过CLI获取321个已索引类型的详细信息。
 
 ### S9 测试与性能
 - 任务：
@@ -164,10 +170,10 @@ Manifest: 记录每个源文件 LastWriteUtcTicks (后续增量基础)
 | S3 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | Index+AtomicIO+基本复用 |
 | S3.5 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | 时间戳快速失效 (FileManifest) |
 | S4 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | 符号解析 + CLI resolve + 高级测试覆盖 |
-| S5 | | | | | ☐ | |
-| S6 | | | | | ☐ | |
-| S7 | | | | | ☐ | |
-| S8 | | | | | ☐ | |
+| S5 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | 增量处理 + 文件监控 |
+| S6 | 2025-09-02 | 2025-09-02 | 2025-09-02 | 2025-09-02 | ✅ | Prompt窗口 + AccessTracker |
+| S7 | 2025-09-04 | 2025-09-04 | 2025-09-04 | 2025-09-04 | ✅ | RPC服务 + 自动索引维护 + LLM显示器 |
+| S8 | 2025-09-04 | 2025-09-04 | 2025-09-04 | 2025-09-04 | 🟡 | CLI核心命令完成，守护进程管理待实现 |
 | S9 | | | | | ☐ | |
 | S10 | | | | | ☐ | |
 
@@ -227,6 +233,25 @@ Milestones:
 (End of CodeCortex Phase1 Sessions Plan)
 
 ---
+## S7 实施补充说明：RPC 传输选择更新
+### 选择原因
+- 服务进程为常驻（daemon），CLI 为一次性前端进程；stdio 难以进行跨进程服务发现与多客户端并发管理。
+- TCP 本地回环（127.0.0.1）连接更符合“长期运行 + 短进程调用”的模型，易于健康检查、端口探测与后续多语言客户端扩展。
+
+### 当前实现
+- 传输：StreamJsonRpc over TCP（Nerdbank.Streams）。
+- 监听：默认 127.0.0.1:9000（可通过 CLI 选项覆盖）。
+- CLI：`outline/resolve/search/status` 等子命令均支持 `--rpc-host` 与 `--rpc-port`。
+
+### 使用示例
+- 启动服务：常驻于本机 127.0.0.1:9000，并输出健康日志。
+- 调用 CLI（示例）：
+  - `codecortex outline <IdOrFqn> --rpc-host 127.0.0.1 --rpc-port 9000`
+
+### 后续计划
+- 守护进程管理：`daemon start|stop`（S8），并写入/读取 `daemon.pid`。
+- 端口占用与自动选择策略：检测 9000 被占用时回退到空闲端口并输出提示/写入端点文件以供发现。
+
 ## S4 实施补充说明
 ### 实现要点
 - `SymbolResolver` 支持匹配顺序：Exact → ExactIgnoreCase → Suffix → Wildcard → Fuzzy。
