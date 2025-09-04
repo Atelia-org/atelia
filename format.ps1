@@ -67,7 +67,7 @@ function Parse-FormatReport {
         if(-not $item){ continue }
         # 优先使用 FileChanges 属性（dotnet format 现有输出）
         if($item.PSObject.Properties.Name -contains 'FileChanges' -and $item.FileChanges){
-            $fc = $item.FileChanges | Where-Object { $_ }
+            $fc = @($item.FileChanges) | Where-Object { $_ }
             if($fc.Count -gt 0){
                 $changedItems += $item
                 $totalEntryCount += $fc.Count
@@ -121,16 +121,16 @@ function Normalize-Path([string]$p){ return ([IO.Path]::GetFullPath($p)) }
 
 function Get-FullFiles(){
     # 使用 git ls-files (全部) 然后过滤扩展，确保递归；避免 "git ls-files *.cs" 只匹配根目录的问题
-    $files = (& git ls-files 2>$null) | Where-Object { $_ }
+    $files = @(& git ls-files 2>$null) | Where-Object { $_ }
     $files = @($files) | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' }
     return $files
 }
 
 function Get-DiffFiles(){
-    $unstaged = git diff --name-only | Where-Object { $_ }
-    $staged   = git diff --name-only --cached | Where-Object { $_ }
-    $untracked= git ls-files --others --exclude-standard | Where-Object { $_ }
-    $all = (@($unstaged) + @($staged) + @($untracked)) | Sort-Object -Unique
+    $unstaged = @(git diff --name-only) | Where-Object { $_ }
+    $staged   = @(git diff --name-only --cached) | Where-Object { $_ }
+    $untracked= @(git ls-files --others --exclude-standard) | Where-Object { $_ }
+    $all = @(@($unstaged) + @($staged) + @($untracked)) | Sort-Object -Unique
     $files =@($all) | Where-Object {
         [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_)
     }
@@ -139,7 +139,7 @@ function Get-DiffFiles(){
 
 function Get-StagedFiles(){
     # 仅取已暂存的更改/新增（排除删除的路径）
-    $staged = git diff --name-only --cached | Where-Object { $_ }
+    $staged = @(git diff --name-only --cached) | Where-Object { $_ }
     $files = @($staged) | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_) }
     return $files
 }
