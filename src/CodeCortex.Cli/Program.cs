@@ -1,14 +1,13 @@
 
 using System.CommandLine;
-using System.CommandLine.Invocation;
-using System.Text.Json;
-using CodeCortex.Service; // 引用 RpcContracts.cs 中的 SymbolMatch/MatchKind
 using CodeCortex.Cli;
 
 var root = new RootCommand("CodeCortex CLI (纯RPC模式)");
 
 var rpcHostOption = new Option<string>("--rpc-host", () => "127.0.0.1", "RPC服务端主机名");
 var rpcPortOption = new Option<int>("--rpc-port", () => 9000, "RPC服务端端口");
+
+var rpcEndpointBinder = new RpcEndpointBinder(rpcHostOption, rpcPortOption);
 
 // resolve 命令
 var resolveQueryArg = new Argument<string>("query", "符号名/后缀/通配/模糊");
@@ -17,13 +16,8 @@ var resolveCmd = new Command("resolve", "通过RPC解析符号");
 resolveCmd.AddArgument(resolveQueryArg);
 resolveCmd.AddOption(resolveLimitOpt);
 resolveCmd.SetHandler(
-    async (InvocationContext ctx) => {
-        var query = ctx.ParseResult.GetValueForArgument<string>(resolveQueryArg);
-        var limit = ctx.ParseResult.GetValueForOption<int>(resolveLimitOpt);
-        var host = ctx.ParseResult.GetValueForOption<string>(rpcHostOption);
-        var port = ctx.ParseResult.GetValueForOption<int>(rpcPortOption);
-        await CliCommands.ResolveAsync(query, limit, host, port);
-    }
+    (string query, int limit, RpcEndpoint ep) => CliCommands.ResolveAsync(query, limit, ep.Host, ep.Port),
+    resolveQueryArg, resolveLimitOpt, rpcEndpointBinder
 );
 root.Add(resolveCmd);
 
@@ -32,12 +26,8 @@ var outlineIdArg = new Argument<string>("idOrFqn", "类型Id或FQN");
 var outlineCmd = new Command("outline", "通过RPC获取类型Outline");
 outlineCmd.AddArgument(outlineIdArg);
 outlineCmd.SetHandler(
-    async (InvocationContext ctx) => {
-        var idOrFqn = ctx.ParseResult.GetValueForArgument<string>(outlineIdArg);
-        var host = ctx.ParseResult.GetValueForOption<string>(rpcHostOption);
-        var port = ctx.ParseResult.GetValueForOption<int>(rpcPortOption);
-        await CliCommands.OutlineAsync(idOrFqn, host, port);
-    }
+    (string idOrFqn, RpcEndpoint ep) => CliCommands.OutlineAsync(idOrFqn, ep.Host, ep.Port),
+    outlineIdArg, rpcEndpointBinder
 );
 root.Add(outlineCmd);
 
@@ -48,24 +38,16 @@ var searchCmd = new Command("search", "通过RPC搜索符号");
 searchCmd.AddArgument(searchQueryArg);
 searchCmd.AddOption(searchLimitOpt);
 searchCmd.SetHandler(
-    async (InvocationContext ctx) => {
-        var query = ctx.ParseResult.GetValueForArgument<string>(searchQueryArg);
-        var limit = ctx.ParseResult.GetValueForOption<int>(searchLimitOpt);
-        var host = ctx.ParseResult.GetValueForOption<string>(rpcHostOption);
-        var port = ctx.ParseResult.GetValueForOption<int>(rpcPortOption);
-        await CliCommands.SearchAsync(query, limit, host, port);
-    }
+    (string query, int limit, RpcEndpoint ep) => CliCommands.SearchAsync(query, limit, ep.Host, ep.Port),
+    searchQueryArg, searchLimitOpt, rpcEndpointBinder
 );
 root.Add(searchCmd);
 
 // status 命令
 var statusCmd = new Command("status", "查询RPC服务状态");
 statusCmd.SetHandler(
-    async (InvocationContext ctx) => {
-        var host = ctx.ParseResult.GetValueForOption<string>(rpcHostOption);
-        var port = ctx.ParseResult.GetValueForOption<int>(rpcPortOption);
-        await CliCommands.StatusAsync(host, port);
-    }
+    (RpcEndpoint ep) => CliCommands.StatusAsync(ep.Host, ep.Port),
+    rpcEndpointBinder
 );
 root.Add(statusCmd);
 
