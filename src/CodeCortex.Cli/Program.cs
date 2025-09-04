@@ -1,14 +1,14 @@
+
 using System.CommandLine;
 using System.CommandLine.Invocation;
-using System.Diagnostics;
 using System.Text.Json;
-using StreamJsonRpc;
 using CodeCortex.Service; // 引用 RpcContracts.cs 中的 SymbolMatch/MatchKind
+using CodeCortex.Cli;
 
 var root = new RootCommand("CodeCortex CLI (纯RPC模式)");
 
-var rpcExeOption = new Option<string>("--rpc-exe", () => "CodeCortex.Service.exe", "RPC服务端可执行文件路径");
-var rpcArgsOption = new Option<string>("--rpc-args", () => "", "RPC服务端启动参数");
+var rpcHostOption = new Option<string>("--rpc-host", () => "127.0.0.1", "RPC服务端主机名");
+var rpcPortOption = new Option<int>("--rpc-port", () => 9000, "RPC服务端端口");
 
 // resolve 命令
 var resolveQueryArg = new Argument<string>("query", "符号名/后缀/通配/模糊");
@@ -20,13 +20,10 @@ resolveCmd.SetHandler(async (InvocationContext ctx) =>
 {
     var query = ctx.ParseResult.GetValueForArgument<string>(resolveQueryArg);
     var limit = ctx.ParseResult.GetValueForOption<int>(resolveLimitOpt);
-    var rpcExe = ctx.ParseResult.GetValueForOption<string>(rpcExeOption);
-    var rpcArgs = ctx.ParseResult.GetValueForOption<string>(rpcArgsOption);
-    using var proc = StartRpcProcess(rpcExe, rpcArgs);
-    using var rpc = new JsonRpc(proc.StandardInput.BaseStream, proc.StandardOutput.BaseStream);
-    rpc.StartListening();
+    var host = ctx.ParseResult.GetValueForOption<string>(rpcHostOption);
+    var port = ctx.ParseResult.GetValueForOption<int>(rpcPortOption);
     var req = new ResolveRequest(query);
-    var result = await rpc.InvokeWithParameterObjectAsync<List<SymbolMatch>>(RpcMethods.ResolveSymbol, req);
+    var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeWithParameterObjectAsync<List<SymbolMatch>>(RpcMethods.ResolveSymbol, req));
     foreach (var m in result)
     {
         var amb = m.IsAmbiguous ? " *AMB*" : string.Empty;
@@ -42,13 +39,10 @@ outlineCmd.AddArgument(outlineIdArg);
 outlineCmd.SetHandler(async (InvocationContext ctx) =>
 {
     var idOrFqn = ctx.ParseResult.GetValueForArgument<string>(outlineIdArg);
-    var rpcExe = ctx.ParseResult.GetValueForOption<string>(rpcExeOption);
-    var rpcArgs = ctx.ParseResult.GetValueForOption<string>(rpcArgsOption);
-    using var proc = StartRpcProcess(rpcExe, rpcArgs);
-    using var rpc = new JsonRpc(proc.StandardInput.BaseStream, proc.StandardOutput.BaseStream);
-    rpc.StartListening();
+    var host = ctx.ParseResult.GetValueForOption<string>(rpcHostOption);
+    var port = ctx.ParseResult.GetValueForOption<int>(rpcPortOption);
     var req = new OutlineRequest(idOrFqn);
-    var result = await rpc.InvokeWithParameterObjectAsync<string?>(RpcMethods.GetOutline, req);
+    var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeWithParameterObjectAsync<string?>(RpcMethods.GetOutline, req));
     if (result == null)
         Console.WriteLine("未找到Outline");
     else
@@ -66,13 +60,10 @@ searchCmd.SetHandler(async (InvocationContext ctx) =>
 {
     var query = ctx.ParseResult.GetValueForArgument<string>(searchQueryArg);
     var limit = ctx.ParseResult.GetValueForOption<int>(searchLimitOpt);
-    var rpcExe = ctx.ParseResult.GetValueForOption<string>(rpcExeOption);
-    var rpcArgs = ctx.ParseResult.GetValueForOption<string>(rpcArgsOption);
-    using var proc = StartRpcProcess(rpcExe, rpcArgs);
-    using var rpc = new JsonRpc(proc.StandardInput.BaseStream, proc.StandardOutput.BaseStream);
-    rpc.StartListening();
+    var host = ctx.ParseResult.GetValueForOption<string>(rpcHostOption);
+    var port = ctx.ParseResult.GetValueForOption<int>(rpcPortOption);
     var req = new SearchRequest(query, limit);
-    var result = await rpc.InvokeWithParameterObjectAsync<List<SymbolMatch>>(RpcMethods.SearchSymbols, req);
+    var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeWithParameterObjectAsync<List<SymbolMatch>>(RpcMethods.SearchSymbols, req));
     foreach (var m in result)
     {
         Console.WriteLine($"{m.Fqn} [{m.Kind}] (Id={m.Id})");
@@ -82,14 +73,13 @@ root.Add(searchCmd);
 
 // status 命令
 var statusCmd = new Command("status", "查询RPC服务状态");
-statusCmd.SetHandler(async (string rpcExe, string rpcArgs) =>
+statusCmd.SetHandler(async (InvocationContext ctx) =>
 {
-    using var proc = StartRpcProcess(rpcExe, rpcArgs);
-    using var rpc = new JsonRpc(proc.StandardInput.BaseStream, proc.StandardOutput.BaseStream);
-    rpc.StartListening();
-    var result = await rpc.InvokeAsync<StatusResponse>(RpcMethods.Status);
+    var host = ctx.ParseResult.GetValueForOption<string>(rpcHostOption);
+    var port = ctx.ParseResult.GetValueForOption<int>(rpcPortOption);
+    var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeAsync<StatusResponse>(RpcMethods.Status));
     Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-}, rpcExeOption, rpcArgsOption);
+});
 root.Add(statusCmd);
 
 // 守护进程管理命令（start/stop/status）
@@ -117,16 +107,7 @@ daemonStatusCmd.SetHandler(() =>
 daemonCmd.AddCommand(daemonStatusCmd);
 root.Add(daemonCmd);
 
-return await root.InvokeAsync(args);
+root.AddGlobalOption(rpcHostOption);
+root.AddGlobalOption(rpcPortOption);
 
-static Process StartRpcProcess(string exe, string args)
-{
-    var psi = new ProcessStartInfo(exe, args)
-    {
-        RedirectStandardInput = true,
-        RedirectStandardOutput = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-    };
-    return Process.Start(psi) ?? throw new Exception($"无法启动RPC服务进程: {exe}");
-}
+return await root.InvokeAsync(args);

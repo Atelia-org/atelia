@@ -118,9 +118,9 @@ public static class Program {
             return;
         }
         var service = new RpcService(index, outlineDir);
-        using var rpc = new JsonRpc(Console.OpenStandardOutput(), Console.OpenStandardInput(), service);
-        rpc.StartListening();
-        Console.WriteLine("[CodeCortex.Service] JSON-RPC 服务已启动 (stdio)");
-        await Task.Delay(-1);
+        int port = 9000;
+        if (args.Length > 0 && int.TryParse(args[0], out var argPort))
+            port = argPort;
+        await TcpRpcHost.StartAsync(service, port);
     }
 }
