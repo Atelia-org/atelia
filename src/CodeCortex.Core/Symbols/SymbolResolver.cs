@@ -8,7 +8,7 @@ namespace CodeCortex.Core.Symbols;
 
 // Phase1: suppress XML doc warnings for fast iteration
 #pragma warning disable 1591
-public enum MatchKind { Exact = 0, ExactIgnoreCase = 1, Suffix = 2, Wildcard = 3, Fuzzy = 4 }
+public enum MatchKind { Exact = 0, ExactIgnoreCase = 1, Suffix = 2, Wildcard = 3, GenericBase = 4, Fuzzy = 5 }
 
 public sealed record SymbolMatch(string Id, string Fqn, string Kind, MatchKind MatchKind, int RankScore, int? Distance, bool IsAmbiguous = false);
 
@@ -121,6 +121,26 @@ public sealed class SymbolResolver : ISymbolResolver {
             }
         }
 
+        // 6. Generic base name matching (now ordered before fuzzy in final sort via enum value)
+        // Normalize query to generic base: take simple name, then strip `<...>` or ``n suffix
+        if (results.Count < limit) {
+            var simple = ExtractSimpleName(query);
+            var baseName = ExtractGenericBase(simple);
+            if (!string.IsNullOrEmpty(baseName) && _index.Maps.GenericBaseNameIndex.TryGetValue(baseName, out var genericIds)) {
+                foreach (var gId in genericIds) {
+                    if (addedIds.Contains(gId)) {
+                        continue;
+                    }
+
+                    var t = _byId[gId];
+                    Add(results, addedIds, new SymbolMatch(t.Id, t.Fqn, t.Kind, MatchKind.GenericBase, 50, null));
+                    if (results.Count >= limit) {
+                        break;
+                    }
+                }
+            }
+        }
+
         // Ambiguous marking (only for suffix group when query is simple name and we had >1 suffix total)
         if (!query.Contains('.') && allSuffix != null && allSuffix.Count > 1) {
             var suffixIds = allSuffix.Select(s => s.Id).ToHashSet();
@@ -151,8 +171,24 @@ public sealed class SymbolResolver : ISymbolResolver {
             list.Add(match);
             return true;
         }
-
         return false;
+    }
+
+    private static string ExtractGenericBase(string name) {
+        if (string.IsNullOrEmpty(name)) {
+            return name;
+        }
+        // Handle metadata arity suffix: Foo`1
+        var tick = name.IndexOf('`');
+        if (tick >= 0) {
+            return name.Substring(0, tick);
+        }
+        // Handle generic syntax: Foo<...>
+        var lt = name.IndexOf('<');
+        if (lt >= 0) {
+            return name.Substring(0, lt);
+        }
+        return name;
     }
 
     private static bool ContainsWildcard(string q) => q.Contains('*') || q.Contains('?');

@@ -30,3 +30,14 @@ service exe 与 cli exe 之间用StreamJsonRpc + Nerdbank.Streams通信。
 提供语义查询接口。
 能直接使用现有信息回答的，就直接回答。
 无法直接回答的，开启一个“调查任务”，由内部Agent执行。对于形成的结果，同样和其他认知一样缓存成文件，并记录对其他文件的依赖关系。这样随着查询，这个库会加深对项目的理解，并自动维护新鲜度。
+
+
+### 更新：泛型基础名匹配（GenericBase）
+在符号解析中新增对“泛型基础名”的支持：
+- 允许输入 `List` / `List<int>` / `List<` / `System.Collections.Generic.List<int>` 这类查询，统一归一化为基础名 `List` 后进行匹配。
+- 匹配基于索引中的 `GenericBaseNameIndex`，收录所有泛型族（同名不同命名空间会返回多条）。
+- 排序优先级调整为：`GenericBase` 优先于 `Fuzzy`（以更快地命中如 `List<T>`）。
+- CLI 输出会显示 `MatchKind`，例如：
+  - `GenericBase   System.Collections.Generic.List1 [class] (Id=...)`
+
+更多细节见附录：`Appendix_SymbolResolveAlgorithms_P1.md`。

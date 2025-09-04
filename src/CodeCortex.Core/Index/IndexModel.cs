@@ -36,6 +36,7 @@ public sealed class TypeEntry {
 public sealed class NameMaps {
     public Dictionary<string, List<string>> NameIndex { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> FqnIndex { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, List<string>> GenericBaseNameIndex { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class Stats { public int ProjectCount { get; set; } public int TypeCount { get; set; } }

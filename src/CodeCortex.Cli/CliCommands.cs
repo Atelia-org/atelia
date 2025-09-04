@@ -37,7 +37,8 @@ namespace CodeCortex.Cli {
                 return;
             }
             foreach (var m in result) {
-                Console.WriteLine($"{m.Fqn} [{m.Kind}] (Id={m.Id})");
+                var amb = m.IsAmbiguous ? " *AMB*" : string.Empty;
+                Console.WriteLine($"{m.MatchKind,-14} {m.Fqn} [{m.Kind}] (Id={m.Id}{(m.Distance != null ? $",d={m.Distance}" : "")}){amb}");
             }
         }
 

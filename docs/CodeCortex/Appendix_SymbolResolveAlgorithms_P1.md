@@ -20,6 +20,7 @@
 | ExactIgnoreCase | FQN 忽略大小写匹配 | `a.b.c.typex` | 仅在 Exact 为空时 |
 | Suffix | `fqn.EndsWith(query, OrdinalIgnoreCase)` | `TypeX` / `C.TypeX` | 支持简单名 & 部分命名空间后缀 |
 | Wildcard | query 含 `*` 或 `?` | `*Service`, `A.*Repo` | 转换为正则匹配 FQN |
+| GenericBase | 对简单名归一化后命中 `GenericBaseNameIndex` | `List`, `List<int>`, `List<`, `System.Collections.Generic.List<int>` | 泛型基础名（剥离 `<...>` 或 ``n）匹配；排序上优先于 Fuzzy |
 | Fuzzy | 非通配且前面累计结果 < limit | `Srvce` → `Service` | 对 simple name 做 Levenshtein |
 
 ---
@@ -57,7 +58,14 @@ resolve(query, limit):
     regex = Wildcard->Regex
     scan _all 按 FQN 测试；add 直到 limit
 
-  // 5 Fuzzy
+  // 5 GenericBase
+  if results.Count < limit:
+    simple = ExtractSimpleName(query)
+    baseName = ExtractGenericBase(simple) // 剥离 `n 与 <...>
+    if baseName in GenericBaseNameIndex:
+      add all ids as MatchKind.GenericBase (RankScore=50) 直到 limit
+
+  // 6 Fuzzy
   if !hasWildcard && results.Count < limit:
     threshold = (query.Length > 12 ? 2 : 1)
     for each a in _all:
@@ -97,6 +105,7 @@ resolve(query, limit):
 | MatchKind | RankScore 规则 | 说明 |
 |-----------|---------------|------|
 | Exact / ExactIgnoreCase / Suffix / Wildcard | 0 | 主要靠枚举先后顺序 |
+| GenericBase | 50 | 在排序上优先于 Fuzzy；同 RankScore 再按 FQN 次序 |
 | Fuzzy | 100 + distance | 确保全部排在其他模式之后；同距再按 FQN 次序 |
 
 最终排序键：`(MatchKindOrdinal, RankScore, FqnOrdinal)` → 稳定可测试。

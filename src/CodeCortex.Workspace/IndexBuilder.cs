@@ -68,6 +68,17 @@ public sealed class IndexBuilder {
             }
             list.Add(id);
             index.Maps.FqnIndex[fqn] = id;
+
+            // 为泛型类型构建基础名称索引
+            if (t.Arity > 0) {
+                var baseName = t.Name; // 不带泛型参数的基础名称
+                if (!index.Maps.GenericBaseNameIndex.TryGetValue(baseName, out var genericList)) {
+                    genericList = new List<string>();
+                    index.Maps.GenericBaseNameIndex[baseName] = genericList;
+                }
+                genericList.Add(id);
+            }
+
             _observer.OnTypeAdded(id, fqn);
             if (request.GenerateOutlines) {
                 request.OutlineWriter.EnsureDirectory();
