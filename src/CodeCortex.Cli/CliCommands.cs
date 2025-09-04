@@ -10,11 +10,11 @@ namespace CodeCortex.Cli {
             var req = new ResolveRequest(query);
             var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeAsync<List<SymbolMatch>>(RpcMethods.ResolveSymbol, req));
             if (result.Count == 0) {
-                Console.WriteLine("未找到匹配的符号");
+                Console.WriteLine("未在当前项目中找到匹配的符号（仅索引工作空间内类型）");
                 return;
             }
             foreach (var m in result) {
-                var amb = m.IsAmbiguous ? " *AMB*" : string.Empty;
+                var amb = m.IsAmbiguous ? " [存在歧义]" : string.Empty;
                 Console.WriteLine($"{m.MatchKind,-14} {m.Fqn} [{m.Kind}] (Id={m.Id}{(m.Distance != null ? $",d={m.Distance}" : "")}){amb}");
             }
         }
@@ -23,7 +23,7 @@ namespace CodeCortex.Cli {
             var req = new OutlineRequest(idOrFqn);
             var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeAsync<string?>(RpcMethods.GetOutline, req));
             if (result == null) {
-                Console.WriteLine("未找到Outline");
+                Console.WriteLine("未在当前项目中找到该类型（仅索引工作空间内类型）");
             } else {
                 Console.WriteLine(result);
             }
@@ -33,11 +33,11 @@ namespace CodeCortex.Cli {
             var req = new SearchRequest(query, limit);
             var result = await TcpRpcClient.InvokeAsync(host, port, rpc => rpc.InvokeAsync<List<SymbolMatch>>(RpcMethods.SearchSymbols, req));
             if (result.Count == 0) {
-                Console.WriteLine("未找到匹配的符号");
+                Console.WriteLine("未在当前项目中找到匹配的符号（仅索引工作空间内类型）");
                 return;
             }
             foreach (var m in result) {
-                var amb = m.IsAmbiguous ? " *AMB*" : string.Empty;
+                var amb = m.IsAmbiguous ? " [存在歧义]" : string.Empty;
                 Console.WriteLine($"{m.MatchKind,-14} {m.Fqn} [{m.Kind}] (Id={m.Id}{(m.Distance != null ? $",d={m.Distance}" : "")}){amb}");
             }
         }
