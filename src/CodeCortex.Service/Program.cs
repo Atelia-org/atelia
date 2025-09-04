@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using StreamJsonRpc;
 using CodeCortex.Service;
 using CodeCortex.Core.Index;
-using CodeCortex.Core.Symbols;
+using CodeCortex.Core.Symbols; // 仅用于 SymbolResolver，不再用于 SymbolMatch/MatchKind
 using CodeCortex.Core.Outline;
 
 namespace CodeCortex.Service {
@@ -21,9 +21,24 @@ namespace CodeCortex.Service {
         }
 
         [JsonRpcMethod(RpcMethods.ResolveSymbol)]
+
         public Task<List<SymbolMatch>> ResolveSymbolAsync(ResolveRequest req) {
             var matches = _resolver.Resolve(req.Query, 20);
-            return Task.FromResult(new List<SymbolMatch>(matches));
+            var mapped = new List<SymbolMatch>();
+            foreach (var m in matches) {
+                mapped.Add(
+                    new SymbolMatch(
+                        m.Id,
+                        m.Fqn,
+                        m.Kind,
+                        (MatchKind)(int)m.MatchKind,
+                        m.RankScore,
+                        m.Distance,
+                        m.IsAmbiguous
+                    )
+                );
+            }
+            return Task.FromResult(mapped);
         }
 
         [JsonRpcMethod(RpcMethods.GetOutline)]
@@ -43,9 +58,24 @@ namespace CodeCortex.Service {
         }
 
         [JsonRpcMethod(RpcMethods.SearchSymbols)]
+
         public Task<List<SymbolMatch>> SearchSymbolsAsync(SearchRequest req) {
             var matches = _resolver.Search(req.Query, req.Limit);
-            return Task.FromResult(new List<SymbolMatch>(matches));
+            var mapped = new List<SymbolMatch>();
+            foreach (var m in matches) {
+                mapped.Add(
+                    new SymbolMatch(
+                        m.Id,
+                        m.Fqn,
+                        m.Kind,
+                        (MatchKind)(int)m.MatchKind,
+                        m.RankScore,
+                        m.Distance,
+                        m.IsAmbiguous
+                    )
+                );
+            }
+            return Task.FromResult(mapped);
         }
 
         [JsonRpcMethod(RpcMethods.Status)]

@@ -1,4 +1,9 @@
+
 namespace CodeCortex.Service;
+
+public enum MatchKind { Exact = 0, ExactIgnoreCase = 1, Suffix = 2, Wildcard = 3, Fuzzy = 4 }
+
+public sealed record SymbolMatch(string Id, string Fqn, string Kind, MatchKind MatchKind, int RankScore, int? Distance, bool IsAmbiguous = false);
 
 public static class RpcMethods {
     public const string ResolveSymbol = "resolveSymbol";
