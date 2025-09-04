@@ -155,7 +155,7 @@ public static class Program {
         }
 
         // 配置默认输出到 LLM 显示器
-        await UpdateLlmDisplayAsync(index);
+        // await UpdateLlmDisplayAsync(index); 暂且关闭此功能尝试，因为“.github\copilot-instructions.md”的值只伴随user消息注入，而不随着LLM进行工具调用而刷新注入的内容，暂时无法把这文件当成面向LLM的实时显示器用了。
 
         var service = new RpcService(index, outlineDir);
         await TcpRpcHost.StartAsync(service, port);
