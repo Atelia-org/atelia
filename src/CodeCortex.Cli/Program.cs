@@ -11,10 +11,34 @@ using System.Text.Json;
 
 var root = new RootCommand("CodeCortex CLI (Phase1 - S1-S6 Scan+Index+PromptWindow)");
 // 注册 window 命令（Prompt 窗口生成）
-var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
-var outlineDir = Path.Combine(ctxRoot, "types");
-var pinnedPath = Path.Combine(ctxRoot, "pinned.json");
-root.Add(WindowCommand.Create(ctxRoot, outlineDir, pinnedPath));
+
+var windowOutlineOption = new Option<string>("--outline-dir", () => Path.Combine(Directory.GetCurrentDirectory(), ".codecortex", "types"), "Outline 文件目录");
+var windowPinnedOption = new Option<string>("--pinned-path", () => Path.Combine(Directory.GetCurrentDirectory(), ".codecortex", "pinned.json"), "Pinned 列表路径");
+var windowRecentOption = new Option<string>("--recent-path", () => Path.Combine(Directory.GetCurrentDirectory(), ".codecortex", "recent.json"), "Recent 访问路径（可选）");
+var windowCmd = new System.CommandLine.Command("window", "生成 Prompt 窗口 markdown 文件 (Pinned/Focus/Recent)");
+windowCmd.AddOption(windowOutlineOption);
+windowCmd.AddOption(windowPinnedOption);
+windowCmd.AddOption(windowRecentOption);
+windowCmd.SetHandler(
+    (string outlineDir, string pinnedPath, string recentPath) => {
+        var ctxRoot = Path.GetDirectoryName(outlineDir) ?? Directory.GetCurrentDirectory();
+        var fs = new DefaultFileSystem();
+        // 加载 pinned
+        var pinnedSet = new CodeCortex.Core.Prompt.PinnedSet<string>(pinnedPath, fs);
+        var pinned = pinnedSet.Items.ToList();
+        // recentPath 预留，当前未用
+        var accessTracker = new CodeCortex.Core.Prompt.AccessTracker<string>(32); // TODO: recentPath 持久化
+        var focus = accessTracker.GetRecent(8);
+        var recent = accessTracker.GetAll().Except(pinned).Except(focus).ToList();
+        var builder = new CodeCortex.Core.Prompt.PromptWindowBuilder(outlineDir, fs);
+        var content = builder.BuildWindow(pinned, focus, recent);
+        var outPath = Path.Combine(ctxRoot, "prompt", "prompt_window.md");
+        fs.CreateDirectory(Path.GetDirectoryName(outPath)!);
+        fs.WriteAllText(outPath, content);
+        Console.WriteLine($"Prompt 窗口已生成: {outPath} (Length={content.Length})");
+    }, windowOutlineOption, windowPinnedOption, windowRecentOption
+);
+root.Add(windowCmd);
 
 var modeOption = new Option<string>("--msbuild-mode", () => "auto", "MSBuild mode: auto|force|fallback");
 var pathArg = new Argument<string>("path", ".sln or .csproj path");
