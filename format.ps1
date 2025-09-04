@@ -122,7 +122,7 @@ function Normalize-Path([string]$p){ return ([IO.Path]::GetFullPath($p)) }
 function Get-FullFiles(){
     # 使用 git ls-files (全部) 然后过滤扩展，确保递归；避免 "git ls-files *.cs" 只匹配根目录的问题
     $files = (& git ls-files 2>$null) | Where-Object { $_ }
-    $files = $files | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' }
+    $files = @($files) | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' }
     return $files
 }
 
@@ -131,14 +131,14 @@ function Get-DiffFiles(){
     $staged   = git diff --name-only --cached | Where-Object { $_ }
     $untracked= git ls-files --others --exclude-standard | Where-Object { $_ }
     $all = @($unstaged + $staged + $untracked) | Sort-Object -Unique
-    $files = $all | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_) }
+    $files =@($all) | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_) }
     return $files
 }
 
 function Get-StagedFiles(){
     # 仅取已暂存的更改/新增（排除删除的路径）
     $staged = git diff --name-only --cached | Where-Object { $_ }
-    $files = $staged | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_) }
+    $files = @($staged) | Where-Object { [IO.Path]::GetExtension($_) -eq '.cs' -and (Test-Path $_) }
     return $files
 }
 
