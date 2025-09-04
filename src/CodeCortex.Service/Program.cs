@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using CodeCortex.Core.IO;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using StreamJsonRpc;
@@ -14,11 +15,13 @@ public class RpcService {
     private readonly CodeCortexIndex _index;
     private readonly SymbolResolver _resolver;
     private readonly string _outlineDir;
+    private readonly IFileSystem _fs;
 
-    public RpcService(CodeCortexIndex index, string outlineDir) {
+    public RpcService(CodeCortexIndex index, string outlineDir, IFileSystem? fs = null) {
         _index = index;
         _resolver = new SymbolResolver(index);
         _outlineDir = outlineDir;
+        _fs = fs ?? new DefaultFileSystem();
     }
 
     [JsonRpcMethod(RpcMethods.ResolveSymbol)]
@@ -49,12 +52,10 @@ public class RpcService {
         if (type == null) {
             return Task.FromResult<string?>(null);
         }
-
-        var path = Path.Combine(_outlineDir, type.Id + ".outline.md");
-        if (File.Exists(path)) {
-            return Task.FromResult<string?>(File.ReadAllText(path));
+        var path = System.IO.Path.Combine(_outlineDir, type.Id + ".outline.md");
+        if (_fs.FileExists(path)) {
+            return Task.FromResult<string?>(_fs.ReadAllText(path));
         }
-
         return Task.FromResult<string?>(null);
     }
 
@@ -104,23 +105,32 @@ public static class Program {
 
     private static async Task MainAsync(string[] args) {
         Console.WriteLine($"[CodeCortex.Service] 启动于 {DateTime.Now:O}");
-        var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
-        var indexPath = Path.Combine(ctxRoot, "index.json");
-        var outlineDir = Path.Combine(ctxRoot, "types");
-        if (!File.Exists(indexPath)) {
+        // 支持通过参数注入 index 路径、outline 目录、端口
+        string ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
+        string indexPath = Path.Combine(ctxRoot, "index.json");
+        string outlineDir = Path.Combine(ctxRoot, "types");
+        int port = 9000;
+        for (int i = 0; i < args.Length; i++) {
+            if (args[i] == "--index" && i + 1 < args.Length) {
+                indexPath = args[++i];
+            } else if (args[i] == "--outline" && i + 1 < args.Length) {
+                outlineDir = args[++i];
+            } else if ((args[i] == "--port" || args[i] == "-p") && i + 1 < args.Length && int.TryParse(args[i + 1], out var p)) {
+                port = p;
+                i++;
+            }
+        }
+        if (!System.IO.File.Exists(indexPath)) {
             await Console.Error.WriteLineAsync($"[FATAL] 未找到 index.json: {indexPath}");
             return;
         }
-        var json = File.ReadAllText(indexPath);
+        var json = System.IO.File.ReadAllText(indexPath);
         var index = System.Text.Json.JsonSerializer.Deserialize<CodeCortexIndex>(json);
         if (index == null) {
             await Console.Error.WriteLineAsync("[FATAL] index.json 解析失败");
             return;
         }
         var service = new RpcService(index, outlineDir);
-        int port = 9000;
-        if (args.Length > 0 && int.TryParse(args[0], out var argPort))
-            port = argPort;
         await TcpRpcHost.StartAsync(service, port);
     }
 }
