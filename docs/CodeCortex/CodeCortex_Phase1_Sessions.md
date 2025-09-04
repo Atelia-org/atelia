@@ -119,10 +119,10 @@ Manifest: 记录每个源文件 LastWriteUtcTicks (后续增量基础)
 
 ### S6 Prompt 窗口 (Outline Only)
 - 任务：
-  - [ ] AccessTracker: 最近访问 LRU
-  - [ ] Pinned 列表（内存+持久化 JSON 简化可延后）
-  - [ ] WindowBuilder: Pinned > Focus(最近 N=8) > Recent
-  - [ ] 预算字符：默认 40k char，上溢裁剪 Recent
+  - [x] AccessTracker: 最近访问 LRU
+  - [x] Pinned 列表（内存+持久化 JSON 简化可延后）
+  - [x] WindowBuilder: Pinned > Focus(最近 N=8) > Recent
+  - [x] 预算字符：默认 40k char，上溢裁剪 Recent
 - 验证：调用三次 outline 触发 Recent & Focus 生成文件。
 
 ### S7 RPC 服务
