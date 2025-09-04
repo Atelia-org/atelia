@@ -187,7 +187,12 @@ try {
         'staged' { Get-StagedFiles }
         default  { throw "未知 Scope: $Scope" }
     }
-    if(-not $allFiles -or $allFiles.Count -eq 0){ Write-Ok '无目标文件，结束。'; $summary = @{ total=0 }; return }
+    $allFiles = @($allFiles)  # 保证始终为数组，防止单文件降级为字符串
+    if(-not $allFiles -or $allFiles.Count -eq 0){
+        Write-Ok '无目标文件，结束。';
+        $summary = @{ total=0 };
+        return;
+    }
 
     Write-Info "Scope=$Scope 文件数: $($allFiles.Count)"
 
@@ -277,8 +282,9 @@ try {
         timestamp = (Get-Date).ToString('o')
         success = (-not $globalError)
     }
-}
-finally {
+ } catch {
+    Write-Warn "主循环异常: $($_.Exception.Message)"
+ } finally {
     if($usingEnforce -and (Test-Path $backup)){
         Write-Info '恢复原始 .editorconfig'
         Move-Item -Force $backup $editorConfig
