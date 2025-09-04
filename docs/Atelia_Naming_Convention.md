@@ -17,6 +17,7 @@ This document defines the naming conventions for all subsystems within the Ateli
 ```
 /src/
   /CodeCortex/
+  /CodeCortex.DevCli/
   /CodeCortex.Cli/
   /MemoTree/
   /MemoTree.Contracts/

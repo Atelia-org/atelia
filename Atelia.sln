@@ -31,7 +31,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeCortex.Workspace", "src
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeCortex.Service", "src\CodeCortex.Service\CodeCortex.Service.csproj", "{7A8B9C0D-1E2F-4A5B-8C7D-6E5F4A3B2C1D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeCortex.Cli", "src\CodeCortex.Cli\CodeCortex.Cli.csproj", "{12345678-90AB-CDEF-1234-567890ABCDEF}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeCortex.DevCli", "src\CodeCortex.DevCli\CodeCortex.DevCli.csproj", "{12345678-90AB-CDEF-1234-567890ABCDEF}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeCortex.Tests", "tests\CodeCortex.Tests\CodeCortex.Tests.csproj", "{0F9E8D7C-6B5A-4C3D-2E1F-0A9B8C7D6E5F}"
 EndProject

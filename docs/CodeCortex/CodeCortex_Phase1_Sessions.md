@@ -126,6 +126,12 @@ Manifest: 记录每个源文件 LastWriteUtcTicks (后续增量基础)
 - 验证：调用三次 outline 触发 Recent & Focus 生成文件。
 
 ### S7 RPC 服务
+- [x] JSON-RPC Host (StreamJsonRpc over local TCP 或 stdio——选 stdio)
+- [x] Handlers: outline / resolve / search / status
+- [x] 简单健康日志（启动/异常/请求日志，后续可扩展）
+- [ ] CLI 使用 RPC 取得 outline（待 CLI 端联调验证）
+
+> 已完成服务端主程序骨架与核心 handler 实现，采用 stdio 模式，支持 outline/resolve/search/status 四大 RPC 方法，日志输出至控制台。后续可根据需要扩展 TCP、日志轮转、热重载等能力。
 - 任务：
   - [ ] JSON-RPC Host (StreamJsonRpc over local TCP 或 stdio——选一)
   - [ ] Handlers: outline / resolve / search / status

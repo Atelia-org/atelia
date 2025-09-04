@@ -6,7 +6,7 @@ using CodeCortex.Core.Index;
 using CodeCortex.Core.Symbols;
 using CodeCortex.Core.IO;
 
-using CodeCortex.Cli;
+using CodeCortex.DevCli;
 using System.Text.Json;
 
 var root = new RootCommand("CodeCortex CLI (Phase1 - S1-S6 Scan+Index+PromptWindow)");

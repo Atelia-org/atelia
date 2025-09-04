@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using CodeCortex.Core.Prompt;
 
-namespace CodeCortex.Cli {
+namespace CodeCortex.DevCli {
     public static class WindowCommand {
         public static Command Create(string ctxRoot, string outlineDir, string pinnedPath, CodeCortex.Core.IO.IFileSystem? fs = null) {
             var cmd = new Command("window", "生成 Prompt 窗口 markdown 文件 (Pinned/Focus/Recent)");
