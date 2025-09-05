@@ -13,7 +13,7 @@ namespace CodeCortex.Core.Outline;
 /// Phase1 outline extractor producing markdown summary per design spec (reduced fields).
 /// </summary>
 public sealed class OutlineExtractor : IOutlineExtractor {
-    /// <inheritdoc />
+    /// &lt;inheritdoc /&gt;
     public string BuildOutline(INamedTypeSymbol symbol, TypeHashes hashes, OutlineOptions options) {
         var id = TypeIdGenerator.GetId(symbol);
         var fqn = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);

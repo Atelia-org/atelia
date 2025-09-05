@@ -25,7 +25,7 @@ public sealed class TypeHasher : ITypeHasher {
         _trivia = triviaStripper ?? new DefaultTriviaStripper();
     }
 
-    /// <inheritdoc />
+    /// &lt;inheritdoc /&gt;
     public TypeHashes Compute(INamedTypeSymbol symbol, IReadOnlyList<string> partialFilePaths, HashConfig config) {
         try {
             var intermediate = Collect(symbol, config);

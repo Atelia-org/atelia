@@ -5,7 +5,7 @@ namespace CodeCortex.Core.Hashing;
 /// </summary>
 public interface IHashFunction {
     /// <summary>
-    /// Compute a hash digest for <paramref name="input"/> and return a Base32-like truncated string of given <paramref name="length"/>.
+    /// Compute a hash digest for &lt;paramref name="input"/&gt; and return a Base32-like truncated string of given &lt;paramref name="length"/&gt;.
     /// </summary>
     string Compute(string input, int length = 8);
 }

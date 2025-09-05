@@ -24,7 +24,7 @@ public sealed record TypeRecord(
     int DepthHint
 ) {
     /// <summary>
-    /// 工厂方法：将可枚举 <paramref name="files"/> 归一为不可变数组后创建记录。
+    /// 工厂方法：将可枚举 &lt;paramref name="files"/&gt; 归一为不可变数组后创建记录。
     /// </summary>
     public static TypeRecord Create(string id, string fqn, string projectId, string kind, IEnumerable<string> files, TypeHashes hashes, int outlineVersion, int depthHint)
         => new(id, fqn, projectId, kind, files.ToImmutableArray(), hashes, outlineVersion, depthHint);

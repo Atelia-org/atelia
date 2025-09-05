@@ -11,7 +11,7 @@ namespace MemoTree.Services.Storage;
 
 /// <summary>
 /// 基于文件的视图状态存储（MVP）
-/// 存放于 Views 目录，命名为 <viewName>.json
+/// 存放于 Views 目录，命名为 &lt;viewName&gt;.json
 /// </summary>
 public class FileViewStateStorage : IViewStateStorage {
     private readonly IWorkspacePathService _paths;

@@ -11,7 +11,7 @@ namespace CodeCortex.Core.Hashing;
 public sealed class DefaultTriviaStripper : ITriviaStripper {
     private static readonly System.Text.RegularExpressions.Regex BlockComment = new(@"/\*.*?\*/", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.Singleline);
     private static readonly System.Text.RegularExpressions.Regex Ws = new(@"\s+", System.Text.RegularExpressions.RegexOptions.Compiled);
-    /// <inheritdoc />
+    /// &lt;inheritdoc /&gt;
     public string Strip(string codeFragment) {
         if (string.IsNullOrWhiteSpace(codeFragment)) {
             return string.Empty;
