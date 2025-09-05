@@ -10,3 +10,4 @@ MT0005  | Formatting | Disabled | (Reserved) NewLineAfterOpenParenMultilineList
 MT0006  | NewLine    | Info | First multiline argument starts on its own line (anchor rule)
 MT0007  | Indent     | Info | Closing parenthesis alignment with construct start line
 X0002   | Formatting.Experimental | Info | Experimental conditional close paren prototype
+MT0101  | Documentation | Info | Escape unescaped angle brackets in XML doc text
