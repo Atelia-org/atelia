@@ -6,7 +6,8 @@ namespace CodeCortex.Tests.Util;
 
 internal static class RoslynTestHost {
     public static (Compilation compilation, INamedTypeSymbol type) CreateSingleType(string source, string typeName) {
-        var tree = CSharpSyntaxTree.ParseText(source);
+        var parseOptions = new CSharpParseOptions(documentationMode: DocumentationMode.Diagnose);
+        var tree = CSharpSyntaxTree.ParseText(source, parseOptions);
         var refs = new List<MetadataReference> {
             MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location),
