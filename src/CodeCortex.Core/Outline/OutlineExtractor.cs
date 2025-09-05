@@ -13,7 +13,7 @@ namespace CodeCortex.Core.Outline;
 /// <summary>
 /// Phase1 outline extractor producing markdown summary per design spec (reduced fields).
 /// </summary>
-public sealed class OutlineExtractor : IOutlineExtractor {
+public sealed partial class OutlineExtractor : IOutlineExtractor {
     /// &lt;inheritdoc /&gt;
     public string BuildOutline(INamedTypeSymbol symbol, TypeHashes hashes, OutlineOptions options) {
         var id = TypeIdGenerator.GetId(symbol);
@@ -56,8 +56,16 @@ public sealed class OutlineExtractor : IOutlineExtractor {
                 var typeStr = ps.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
                 line = $"{typeStr} {namePart} {acc}";
             } else if (m is INamedTypeSymbol nt && (nt.TypeKind == TypeKind.Class || nt.TypeKind == TypeKind.Struct || nt.TypeKind == TypeKind.Interface || nt.TypeKind == TypeKind.Enum || nt.TypeKind == TypeKind.Delegate)) {
-                var display = nt.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-                line = $"{TypeKindKeyword(nt.TypeKind)} {display}";
+                if (nt.TypeKind == TypeKind.Delegate) {
+                    var invoke = nt.DelegateInvokeMethod;
+                    var ret = invoke?.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat) ?? "void";
+                    var nameDisplay = nt.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+                    var parms = invoke == null ? string.Empty : string.Join(", ", invoke.Parameters.Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat) + " " + p.Name));
+                    line = $"delegate {ret} {nameDisplay}({parms})";
+                } else {
+                    var display = nt.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+                    line = $"{TypeKindKeyword(nt.TypeKind)} {display}";
+                }
             } else {
                 line = m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
             }
@@ -65,8 +73,14 @@ public sealed class OutlineExtractor : IOutlineExtractor {
             var mlines = GetSummaryLines(m);
             foreach (var ml in mlines) {
                 var tr = ml.TrimStart();
-                if (tr.StartsWith("- ") || System.Text.RegularExpressions.Regex.IsMatch(tr, @"^\s*\d+[.)]\s") || tr.StartsWith("| ")) sb.AppendLine("    " + ml); // 2级缩进，2*2个空格
-                else sb.AppendLine("    - " + ml); // 2级缩进，2*2个空格
+                if (IsStructuralLine(tr)) {
+                    if (!HasStructuralPayload(tr)) continue;
+                    sb.AppendLine("    " + ml);
+                } else {
+                    var txt = ml.Trim();
+                    if (txt.Length == 0) continue;
+                    sb.AppendLine("    - " + txt);
+                }
             }
             // Params / Returns / Exceptions sections
             AppendPredefinedSections(sb, m);
@@ -203,9 +217,48 @@ public sealed class OutlineExtractor : IOutlineExtractor {
     }
 
     private static bool IsStructuralLine(string line) {
+        if (string.IsNullOrEmpty(line)) return false;
         var tr = line.TrimStart();
-        return tr.StartsWith("- ") || tr.StartsWith("1.") || tr.StartsWith("| ");
+        return RxBulletLine().IsMatch(tr) || RxOrderedLine().IsMatch(tr) || RxTableLine().IsMatch(tr);
     }
+
+    private static bool HasStructuralPayload(string line) {
+        var tr = line.TrimStart();
+        if (RxBulletLine().IsMatch(tr)) {
+            var payload = RxBulletPrefix().Replace(tr, string.Empty);
+            return payload.Trim().Length > 0;
+        }
+        if (RxOrderedLine().IsMatch(tr)) {
+            var payload = RxOrderedPrefix().Replace(tr, string.Empty);
+            return payload.Trim().Length > 0;
+        }
+        if (RxTableLine().IsMatch(tr)) {
+            // payload if any non '|' or whitespace char exists (incl. '-' or ':')
+            return RxTableHasPayload().IsMatch(tr);
+        }
+        return line.Trim().Length > 0;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*-\s+")]
+    private static partial System.Text.RegularExpressions.Regex RxBulletLine();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*\d+[.)]\s+")]
+    private static partial System.Text.RegularExpressions.Regex RxOrderedLine();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*\|")]
+    private static partial System.Text.RegularExpressions.Regex RxTableLine();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*-\s+")]
+    private static partial System.Text.RegularExpressions.Regex RxBulletPrefix();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*\d+[.)]\s+")]
+    private static partial System.Text.RegularExpressions.Regex RxOrderedPrefix();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"[^\|\s]")]
+    private static partial System.Text.RegularExpressions.Regex RxTableHasPayload();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"`[0-9]+")]
+    private static partial System.Text.RegularExpressions.Regex RxGenericArity();
 
     private static string InlineParagraph(List<string> lines) {
         var sb = new StringBuilder();
@@ -244,9 +297,19 @@ public sealed class OutlineExtractor : IOutlineExtractor {
                     var first = lines[0];
                     sb.AppendLine($"        - {name} — {first}");
                     for (int i = 1; i < lines.Count; i++) {
-                        var tr = lines[i].TrimStart();
-                        if (IsStructuralLine(tr)) sb.AppendLine("          " + lines[i]);
-                        else sb.AppendLine("          - " + lines[i]);
+                        var raw = lines[i];
+                        if (string.IsNullOrWhiteSpace(raw)) continue;
+                        var tr = raw.TrimStart();
+                        if (IsStructuralLine(tr)) {
+                            if (tr.StartsWith("- ") && string.IsNullOrWhiteSpace(tr.Length > 2 ? tr.Substring(2) : string.Empty)) continue;
+                            if (tr.StartsWith("1.") && string.IsNullOrWhiteSpace(tr.Length > 2 ? tr.Substring(2).TrimStart() : string.Empty)) continue;
+                            if (tr.StartsWith("| ") && string.IsNullOrWhiteSpace(tr.Replace("|", "").Replace("-", "").Trim())) continue;
+                            sb.AppendLine("          " + raw);
+                        } else {
+                            var text = raw.Trim();
+                            if (text.Length == 0) continue;
+                            sb.AppendLine("          - " + text);
+                        }
                     }
                 }
                 sb.AppendLine();
@@ -266,9 +329,18 @@ public sealed class OutlineExtractor : IOutlineExtractor {
                     sb.AppendLine("        - " + InlineParagraph(lines));
                 } else {
                     foreach (var line in lines) {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
                         var tr = line.TrimStart();
-                        if (IsStructuralLine(tr)) sb.AppendLine("        " + line);
-                        else sb.AppendLine("        - " + line);
+                        if (IsStructuralLine(tr)) {
+                            if (tr.StartsWith("- ") && string.IsNullOrWhiteSpace(tr.Length > 2 ? tr.Substring(2) : string.Empty)) continue;
+                            if (tr.StartsWith("1.") && string.IsNullOrWhiteSpace(tr.Length > 2 ? tr.Substring(2).TrimStart() : string.Empty)) continue;
+                            if (tr.StartsWith("| ") && string.IsNullOrWhiteSpace(tr.Replace("|", "").Replace("-", "").Trim())) continue;
+                            sb.AppendLine("        " + line);
+                        } else {
+                            var text = line.Trim();
+                            if (text.Length == 0) continue;
+                            sb.AppendLine("        - " + text);
+                        }
                     }
                 }
                 sb.AppendLine();
@@ -290,11 +362,39 @@ public sealed class OutlineExtractor : IOutlineExtractor {
                 else if (lines.All(l => !IsStructuralLine(l))) {
                     sb.AppendLine($"        - {type} — {InlineParagraph(lines)}");
                 } else {
-                    sb.AppendLine($"        - {type} — {lines[0]}");
-                    for (int i = 1; i < lines.Count; i++) {
-                        var tr = lines[i].TrimStart();
-                        if (IsStructuralLine(tr)) sb.AppendLine("          " + lines[i]);
-                        else sb.AppendLine("          - " + lines[i]);
+                    var firstLine = lines[0];
+                    var firstTrim = firstLine.TrimStart();
+                    if (IsStructuralLine(firstTrim)) {
+                        // First content is structural (table/list). Show type alone, then render structure from the first line.
+                        sb.AppendLine($"        - {type}");
+                        for (int i = 0; i < lines.Count; i++) {
+                            var raw = lines[i];
+                            if (string.IsNullOrWhiteSpace(raw)) continue;
+                            var tr = raw.TrimStart();
+                            if (IsStructuralLine(tr)) {
+                                if (!HasStructuralPayload(tr)) continue;
+                                sb.AppendLine("          " + raw);
+                            } else {
+                                var text = raw.Trim();
+                                if (text.Length == 0) continue;
+                                sb.AppendLine("          - " + text);
+                            }
+                        }
+                    } else {
+                        sb.AppendLine($"        - {type} — {firstLine}");
+                        for (int i = 1; i < lines.Count; i++) {
+                            var raw = lines[i];
+                            if (string.IsNullOrWhiteSpace(raw)) continue;
+                            var tr = raw.TrimStart();
+                            if (IsStructuralLine(tr)) {
+                                if (!HasStructuralPayload(tr)) continue;
+                                sb.AppendLine("          " + raw);
+                            } else {
+                                var text = raw.Trim();
+                                if (text.Length == 0) continue;
+                                sb.AppendLine("          - " + text);
+                            }
+                        }
                     }
                 }
                 sb.AppendLine();
@@ -325,7 +425,7 @@ public sealed class OutlineExtractor : IOutlineExtractor {
         int colon = s.IndexOf(':');
         if (colon >= 0 && colon + 1 < s.Length) s = s[(colon + 1)..];
         // Normalize generics: Foo`1 -> Foo<T>
-        s = System.Text.RegularExpressions.Regex.Replace(s, "`[0-9]+", _ => "<T>");
+        s = RxGenericArity().Replace(s, "<T>");
         // Method with parameter list?
         int paren = s.IndexOf('(');
         if (paren >= 0) {
