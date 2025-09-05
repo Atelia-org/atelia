@@ -146,7 +146,7 @@ public class MarkdownRendererAndExtractorTests {
         var text = extractor.BuildOutline(type, hashes, new OutlineOptions());
         var norm = text.Replace("\r\n", "\n");
         System.Console.WriteLine("[DBG InlineSee Test]\n" + norm);
-        Assert.Contains("  - Bullet item B with string and `inline code`", norm);
+        Assert.Contains("  - Bullet item B with [string] and `inline code`", norm);
     }
 
     private sealed class FakeHash : IHashFunction {

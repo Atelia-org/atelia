@@ -66,7 +66,11 @@ internal static partial class XmlDocLinesExtractor {
                         AppendText(lines, LangwordToDisplay(lang!));
                     } else {
                         var cref = e.Attribute("cref")?.Value;
-                        AppendText(lines, CrefToDisplay(cref));
+                        var disp = CrefToDisplay(cref);
+                        if (!string.IsNullOrEmpty(disp)) {
+                            // Render <see cref="..."/> as markdown [cref value]
+                            AppendText(lines, "[" + disp + "]");
+                        }
                     }
                 } else if (name == "typeparamref" || name == "paramref") {
                     var nm = e.Attribute("name")?.Value;
