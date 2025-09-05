@@ -189,6 +189,8 @@ try {
         'staged' { Get-StagedFiles }
         default  { throw "未知 Scope: $Scope" }
     }
+    # 剔除路径中包含"TestData"的文件
+    $allFiles = @($allFiles)| Where-Object { $_ -notmatch 'TestData' }
     $allFiles = @($allFiles)  # 保证始终为数组，防止单文件降级为字符串
     if(-not $allFiles -or $allFiles.Count -eq 0){
         Write-Ok '无目标文件，结束。';
@@ -213,6 +215,7 @@ try {
     $reportDir = 'gitignore/format-reports'
     if(-not (Test-Path $reportDir)){ New-Item -ItemType Directory -Path $reportDir | Out-Null }
 
+    $now = Get-Date -Format 'yyyyMMdd_HHmmss'
     while($queue.Count -gt 0){
         $batch = @()  # 相对路径集合
         while($queue.Count -gt 0 -and $batch.Count -lt $MaxFilesPerRun){
@@ -221,13 +224,13 @@ try {
         $totalRuns++
         Write-Info ("运行 #$totalRuns 文件数={0} 队列剩余={1}" -f $batch.Count,$queue.Count)
 
-    if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
-    # 为每次运行生成独立报告文件，保留历史供调试
-    $reportPath = Join-Path $reportDir ('format-report_run{0:000}.json' -f $totalRuns)
-    if(Test-Path $reportPath){ Remove-Item $reportPath -Force -ErrorAction SilentlyContinue }
-    $runReports.Add($reportPath) | Out-Null
+        if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
+        # 为每次运行生成独立报告文件，保留历史供调试
+        $reportPath = Join-Path $reportDir ("{0}_{1:00}.json" -f $now, $totalRuns)
+        if(Test-Path $reportPath){ Remove-Item $reportPath -Force -ErrorAction SilentlyContinue }
+        $runReports.Add($reportPath) | Out-Null
 
-    $exit = Invoke-FormatBatch -Files $batch -ReportPath $reportPath -Solution $solution
+        $exit = Invoke-FormatBatch -Files $batch -ReportPath $reportPath -Solution $solution
         if($exit -ne 0){ Write-Err "dotnet format 退出码: $exit"; $globalError = $true; break }
 
         $changeFileCount = 0; $changeEntryCount = 0
