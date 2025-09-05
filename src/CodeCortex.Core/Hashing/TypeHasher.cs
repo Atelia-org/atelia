@@ -1,8 +1,10 @@
+
 using System.Text;
 using CodeCortex.Core.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Atelia.Diagnostics;
 
 namespace CodeCortex.Core.Hashing;
 
@@ -13,11 +15,9 @@ namespace CodeCortex.Core.Hashing;
 public sealed class TypeHasher : ITypeHasher {
     private readonly IHashFunction _hash;
     private readonly ITriviaStripper _trivia;
-    // Debug flag (set CODECORTEX_TYPEHASH_DEBUG=1). Backward compat: also respects legacy CODECORTEX_DEBUG for this class.
-    private const string DebugEnvVar = "CODECORTEX_TYPEHASH_DEBUG";
-    private static bool IsTypeHashDebug() =>
-        Environment.GetEnvironmentVariable(DebugEnvVar) == "1" ||
-        Environment.GetEnvironmentVariable("CODECORTEX_DEBUG") == "1"; // legacy fallback
+
+    // 调试输出统一入口
+    private static void DebugPrint(string msg) => DebugUtil.Print("TypeHash", msg);
 
     /// <summary>Create a TypeHasher with optional injected hash and trivia stripping strategies.</summary>
     public TypeHasher(IHashFunction? hashFunction = null, ITriviaStripper? triviaStripper = null) {
@@ -48,16 +48,12 @@ public sealed class TypeHasher : ITypeHasher {
             .ThenBy(m => m.Name, StringComparer.Ordinal)
             .ThenBy(m => m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat));
 
-        if (IsTypeHashDebug()) {
-            Console.WriteLine($"[DBG Collect] Type={symbol.Name} MembersRaw=" + string.Join(",", symbol.GetMembers().Where(m => !m.IsImplicitlyDeclared).Select(m => $"{m.Kind}:{m.Name}")));
-        }
+        DebugPrint($"Collect Type={symbol.Name} MembersRaw=" + string.Join(",", symbol.GetMembers().Where(m => !m.IsImplicitlyDeclared).Select(m => $"{m.Kind}:{m.Name}")));
 
         foreach (var member in members) {
             switch (member) {
                 case IMethodSymbol ms when ms.MethodKind is not MethodKind.PropertyGet and not MethodKind.PropertySet and not MethodKind.EventAdd and not MethodKind.EventRemove and not MethodKind.EventRaise and not MethodKind.StaticConstructor:
-                    if (IsTypeHashDebug()) {
-                        Console.WriteLine($"[DBG Method] {ms.Name} Kind={ms.MethodKind} PublicLike={IsPublicLike(ms)}");
-                    }
+                    DebugPrint($"Method {ms.Name} Kind={ms.MethodKind} PublicLike={IsPublicLike(ms)}");
 
                     if (IsConsideredStructure(ms, config)) {
                         structureLines.Add(BuildMethodSignature(ms, config));
@@ -66,9 +62,7 @@ public sealed class TypeHasher : ITypeHasher {
                     CollectBody(ms, publicBodies, internalBodies);
                     break;
                 case IPropertySymbol ps:
-                    if (IsTypeHashDebug()) {
-                        Console.WriteLine($"[DBG Prop] {ps.Name} PublicLike={IsPublicLike(ps)}");
-                    }
+                    DebugPrint($"Prop {ps.Name} PublicLike={IsPublicLike(ps)}");
 
                     if (IsConsideredStructure(ps, config)) {
                         structureLines.Add(BuildPropertySignature(ps));
@@ -77,9 +71,7 @@ public sealed class TypeHasher : ITypeHasher {
                     CollectAccessorBodies(ps, publicBodies, internalBodies);
                     break;
                 case IFieldSymbol fs:
-                    if (IsTypeHashDebug()) {
-                        Console.WriteLine($"[DBG Field] {fs.Name} PublicLike={IsPublicLike(fs)}");
-                    }
+                    DebugPrint($"Field {fs.Name} PublicLike={IsPublicLike(fs)}");
 
                     if (IsConsideredStructure(fs, config)) {
                         structureLines.Add(BuildFieldSignature(fs));
@@ -87,9 +79,7 @@ public sealed class TypeHasher : ITypeHasher {
 
                     break;
                 case IEventSymbol es:
-                    if (IsTypeHashDebug()) {
-                        Console.WriteLine($"[DBG Event] {es.Name} PublicLike={IsPublicLike(es)}");
-                    }
+                    DebugPrint($"Event {es.Name} PublicLike={IsPublicLike(es)}");
 
                     if (IsConsideredStructure(es, config)) {
                         structureLines.Add(BuildEventSignature(es));
@@ -97,9 +87,7 @@ public sealed class TypeHasher : ITypeHasher {
 
                     break;
                 case INamedTypeSymbol nts:
-                    if (IsTypeHashDebug()) {
-                        Console.WriteLine($"[DBG NestedType] {nts.Name} PublicLike={IsPublicLike(nts)}");
-                    }
+                    DebugPrint($"NestedType {nts.Name} PublicLike={IsPublicLike(nts)}");
 
                     if (IsConsideredStructure(nts, config)) {
                         structureLines.Add("nested " + nts.TypeKind + " " + nts.Name + GenericArity(nts));
@@ -177,21 +165,17 @@ public sealed class TypeHasher : ITypeHasher {
 
         var xml = symbol.GetDocumentationCommentXml() ?? string.Empty;
         var xmlFirst = ExtractFirstLine(xml);
-        if (IsTypeHashDebug()) {
-            Console.WriteLine("[DBG Result.StructureLines]" + string.Join("|", structureLines));
-            Console.WriteLine("[DBG Result.PublicBodiesCount]" + publicBodies.Count + " InternalBodiesCount=" + internalBodies.Count);
-            if (publicBodies.Count > 0) {
-                Console.WriteLine("[DBG Result.PublicBodiesHashPreviews]" + string.Join("|", publicBodies.Select(b => _hash.Compute(b).Substring(0, 4))));
-            }
+        DebugPrint("Result.StructureLines " + string.Join("|", structureLines));
+        DebugPrint("Result.PublicBodiesCount " + publicBodies.Count + " InternalBodiesCount=" + internalBodies.Count);
+        if (publicBodies.Count > 0) {
+            DebugPrint("Result.PublicBodiesHashPreviews " + string.Join("|", publicBodies.Select(b => _hash.Compute(b).Substring(0, 4))));
         }
         return new HasherIntermediate(structureLines, publicBodies, internalBodies, xmlFirst, cosmeticSb.ToString());
     }
 
     /// <summary>Hash intermediate data to final TypeHashes.</summary>
     public TypeHashes Hash(HasherIntermediate intermediate) {
-        if (IsTypeHashDebug()) {
-            Console.WriteLine("[DBG Hash] StructLineCount=" + intermediate.StructureLines.Count + " First=" + (intermediate.StructureLines.FirstOrDefault() ?? "<none>"));
-        }
+        DebugPrint("Hash StructLineCount=" + intermediate.StructureLines.Count + " First=" + (intermediate.StructureLines.FirstOrDefault() ?? "<none>"));
 
         var structureHash = _hash.Compute("STRUCT|" + string.Join("\n", intermediate.StructureLines));
         var publicImplHash = _hash.Compute("PUB|" + string.Join("\n", intermediate.PublicBodies));
@@ -219,9 +203,7 @@ public sealed class TypeHasher : ITypeHasher {
             if (r.GetSyntax() is MethodDeclarationSyntax mds) {
                 var body = mds.Body != null ? mds.Body.ToFullString() : mds.ExpressionBody?.Expression.ToFullString() ?? string.Empty;
                 body = _trivia.Strip(body);
-                if (IsTypeHashDebug()) {
-                    Console.WriteLine($"[DBG Body] {method.Name} RawLen={body.Length} HashInputPreview={(body.Length > 40 ? body.Substring(0, 40) : body)}");
-                }
+                DebugPrint($"Body {method.Name} RawLen={body.Length} HashInputPreview={(body.Length > 40 ? body.Substring(0, 40) : body)}");
 
                 if (IsPublicLike(method)) {
                     publicBodies.Add(body);

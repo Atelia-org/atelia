@@ -25,7 +25,7 @@ public class C {
         var hashes = hasher.Compute(type, System.Array.Empty<string>(), new HashConfig());
         var extractor = new OutlineExtractor();
         var text = extractor.BuildOutline(type, hashes, new OutlineOptions());
-        System.Console.WriteLine("[DBG Outline]\n" + text);
+        Atelia.Diagnostics.DebugUtil.Print("Outline", text);
         Assert.Contains("Add(int a, int b)", text);
         Assert.Contains("P { get;", text); // property accessor signature (allow formatting variance)
         Assert.DoesNotContain("Hidden", text);

@@ -38,7 +38,7 @@ public class MarkdownRendererAndExtractorTests {
         var hashes = hasher.Compute(type, System.Array.Empty<string>(), new HashConfig());
         var extractor = new OutlineExtractor();
         var text = extractor.BuildOutline(type, hashes, new OutlineOptions());
-        System.Console.WriteLine("[DBG MyOutline Summary Test]\n" + text);
+        Atelia.Diagnostics.DebugUtil.Print("MyOutlineSummaryTest", text);
         Assert.Contains("XMLDOC:", text);
         Assert.Contains("1. Step 1", text);
         Assert.Contains("2. Step 2", text);
@@ -52,7 +52,7 @@ public class MarkdownRendererAndExtractorTests {
         var hashes = hasher.Compute(type, System.Array.Empty<string>(), new HashConfig());
         var extractor = new OutlineExtractor();
         var text = extractor.BuildOutline(type, hashes, new OutlineOptions());
-        System.Console.WriteLine("[DBG MyOutline Exceptions Test]\n" + text);
+        Atelia.Diagnostics.DebugUtil.Print("MyOutlineExceptionsTest", text);
         // Should not join em dash with table header on first structural line
         Assert.DoesNotContain("ArgumentException — |", text);
         Assert.Contains("System.ArgumentException", text);
@@ -145,7 +145,7 @@ public class MarkdownRendererAndExtractorTests {
         var extractor = new OutlineExtractor();
         var text = extractor.BuildOutline(type, hashes, new OutlineOptions());
         var norm = text.Replace("\r\n", "\n");
-        System.Console.WriteLine("[DBG InlineSee Test]\n" + norm);
+        Atelia.Diagnostics.DebugUtil.Print("InlineSeeTest", norm);
         Assert.Contains("  - Bullet item B with [string] and `inline code`", norm);
     }
 
