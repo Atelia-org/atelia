@@ -31,7 +31,9 @@ namespace CodeCortex.Service
                 rpc.StartListening();
                 try
                 {
-                    await rpc.Completion;
+#pragma warning disable VSTHRD003 // JsonRpc.Completion is a "foreign" Task; no sync context/UI thread here, deadlock risk is not applicable.
+                    await rpc.Completion.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
                 }
                 catch (Exception ex)
                 {
