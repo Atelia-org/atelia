@@ -11,7 +11,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CodeActions;
 
-namespace MemoTree.Tests.Analyzers.TestHelpers;
+namespace Atelia.Analyzers.Style.Tests.TestHelpers;
 
 /// <summary>
 /// Lightweight host to run a single analyzer + optional codefix on an in-memory C# snippet.

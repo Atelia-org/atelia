@@ -92,7 +92,7 @@ src/MemoTree.Core/Storage/Hierarchy/CowNodeHierarchyStorage.cs
 src/MemoTree.Core/Storage/Versioned/VersionedStorageImpl.cs
 src/MemoTree.Core/Validation/DefaultBusinessRuleValidator.cs
 src/MemoTree.Core/Validation/DefaultConfigurationValidator.cs
-tests/MemoTree.Tests/Analyzers/TestData/X0001_MultiScenario_Input.cs
+tests/Analyzers.Style.Tests/TestData/X0001_MultiScenario_Input.cs
 ```
 
 ### 12. 若最终选择 GuardA 的清理步骤

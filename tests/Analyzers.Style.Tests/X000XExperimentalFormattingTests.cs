@@ -1,10 +1,10 @@
 using System.Linq;
 using System.Threading.Tasks;
 using Atelia.Analyzers.Style;
-using MemoTree.Tests.Analyzers.TestHelpers;
+using Atelia.Analyzers.Style.Tests.TestHelpers;
 using Xunit;
 
-namespace MemoTree.Tests.Analyzers;
+namespace Atelia.Analyzers.Style.Tests;
 
 public class X000XExperimentalFormattingTests {
     private static (System.Collections.Generic.IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> diags, Microsoft.CodeAnalysis.Compilation comp) RunAnalyzer(string src, string analyzer)

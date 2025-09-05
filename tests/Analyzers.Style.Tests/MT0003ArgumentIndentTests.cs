@@ -2,10 +2,10 @@ using System.Collections.Generic;
 using System.Linq;
 using Atelia.Analyzers.Style;
 using System.Threading.Tasks;
-using MemoTree.Tests.Analyzers.TestHelpers;
+using Atelia.Analyzers.Style.Tests.TestHelpers;
 using Microsoft.CodeAnalysis.CodeFixes;
 
-namespace MemoTree.Tests.Analyzers;
+namespace Atelia.Analyzers.Style.Tests;
 
 public class MT0003ArgumentIndentTests {
     private const string Id = "MT0003";

@@ -1,9 +1,9 @@
 using System.Linq;
 using System.Threading.Tasks;
 using Atelia.Analyzers.Style;
-using MemoTree.Tests.Analyzers.TestHelpers;
+using Atelia.Analyzers.Style.Tests.TestHelpers;
 
-namespace MemoTree.Tests.Analyzers;
+namespace Atelia.Analyzers.Style.Tests;
 
 public class MT0004ClosingParenNewLineTests {
     private const string Id = "MT0004";
