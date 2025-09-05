@@ -9,8 +9,8 @@
   <!-- <ItemGroup Condition="'$(UseSelfAnalyzers)'=='true' AND '$(MSBuildProjectName)'=='Atelia.Analyzers.Style'"> -->
   <ItemGroup Condition="'$(UseSelfAnalyzers)'=='true'">
     <!-- Use absolute (repo-root anchored) paths; assumes default Configuration & target framework -->
-    <Analyzer Include="$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.dll" Condition="Exists('$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.dll')" />
-    <Analyzer Include="$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style.CodeFixes/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.CodeFixes.dll" Condition="Exists('$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style.CodeFixes/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.CodeFixes.dll')" />
+    <Analyzer Include="$(MSBuildThisFileDirectory)src/Analyzers.Style/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.dll" Condition="Exists('$(MSBuildThisFileDirectory)src/Analyzers.Style/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.dll')" />
+    <Analyzer Include="$(MSBuildThisFileDirectory)src/Analyzers.Style.CodeFixes/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.CodeFixes.dll" Condition="Exists('$(MSBuildThisFileDirectory)src/Analyzers.Style.CodeFixes/bin/$(Configuration)/netstandard2.0/Atelia.Analyzers.Style.CodeFixes.dll')" />
   </ItemGroup>
 
   <!-- Helpful message -->

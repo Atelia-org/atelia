@@ -193,10 +193,10 @@ ChunkedReservableWriter体现了以下设计原则：
 
 ## 🔗 **相关资源**
 
-- **源码**: `src/Atelia.Data/ChunkedReservableWriter.cs`
-- **接口定义**: `src/Atelia.Data/IReservableBufferWriter.cs`
-- **配置选项**: `src/Atelia.Data/ChunkedReservableWriterOptions.cs`
-- **测试用例**: `src/Atelia.Data/*Tests.cs`
+- **源码**: `src/Data/ChunkedReservableWriter.cs`
+- **接口定义**: `src/Data/IReservableBufferWriter.cs`
+- **配置选项**: `src/Data/ChunkedReservableWriterOptions.cs`
+- **测试用例**: `src/Data/*Tests.cs`
 - **设计讨论**: `docs/MessageHistoryStorage/`
 
 ---

@@ -1,72 +1,88 @@
+
 # Atelia Project Naming Convention
 
 **Audience:** LLM Agents & Developers
-**Version:** 1.0
+**Version:** 1.1
 
-This document defines the naming conventions for all subsystems within the Atelia project. Adherence is mandatory for maintaining structural consistency and predictability.
+本规范定义 Atelia 项目所有子系统的命名与结构一致性要求。遵循本规范有助于维护结构统一性、可预测性和自动化。
 
 ---
 
-## 1. Directory Structure
+## 1. 目录结构
 
-- **Rule:** Project source code directories are placed directly under `src/`. They use the short project name **without** the `Atelia.` prefix.
-- **Format:** `src/{ProjectName}/`
-- **Rationale:** Minimizes path length for better CLI and IDE experience.
+- **规则：** 项目源码目录直接放在 `src/` 或 `tests/` 下，目录名为短项目名（不带 Atelia 前缀）。
+- **格式：** `src/{ProjectName}/`、`tests/{ProjectName}.Tests/`
+- **理由：** 路径简短，便于 CLI/IDE 操作。
 
-**Example:**
+**示例：**
 ```
-/src/
-  /CodeCortex/
-  /CodeCortex.DevCli/
-  /CodeCortex.Cli/
-  /MemoTree/
-  /MemoTree.Contracts/
+src/
+  CodeCortex/
+  CodeCortex.DevCli/
+  MemoTree/
+  MemoTree.Contracts/
+tests/
+  CodeCortex.Tests/
+  MemoTree.Tests/
 ```
 
-## 2. Namespaces
+## 2. 命名空间
 
-- **Rule:** All namespaces **must** start with `Atelia.`.
-- **Format:** `Atelia.{ProjectName}.{OptionalFeatureArea}`
-- **Rationale:** Ensures global uniqueness and brand consistency.
+- **规则：** 所有命名空间必须以 `Atelia.` 开头。
+- **格式：** `Atelia.{ProjectName}[.FeatureArea]`
+- **理由：** 保证全局唯一性与品牌一致性。
 
-**Example:**
+**示例：**
 ```csharp
-// In src/CodeCortex/
+// src/CodeCortex/
 namespace Atelia.CodeCortex;
-
-// In src/CodeCortex.Cli/
+// src/CodeCortex.Cli/
 namespace Atelia.CodeCortex.Cli;
 ```
 
-## 3. Assembly Names
+## 3. 程序集名与包名
 
-- **Rule:** The assembly name **must** match its root namespace. This is configured in the `.csproj` file.
-- **Format:** `<AssemblyName>Atelia.{ProjectName}.{OptionalFeatureArea}</AssemblyName>`
-- **Rationale:** Predictability. A `using` statement directly maps to a required assembly reference. Prevents output collisions.
+- **规则：** 程序集名、根命名空间、NuGet 包名三者保持一致，均为 `Atelia.{ProjectName}[.FeatureArea]`。
+- **配置方式：** 统一在 `Directory.Build.props` 中集中设置：
+  - `<AssemblyName>Atelia.$(MSBuildProjectName)</AssemblyName>`
+  - `<RootNamespace>Atelia.$(MSBuildProjectName)</RootNamespace>`
+  - `<PackageId>Atelia.$(MSBuildProjectName)</PackageId>`
+- **项目文件名：** 不带 Atelia 前缀，直接用短名（如 `CodeCortex.csproj`）。
+- **CLI/特殊项目例外：** 可在各自 `.csproj` 内覆盖上述属性。
 
-**Example (`CodeCortex.csproj`):**
+**示例（以 CodeCortex.csproj 为例）：**
 ```xml
+<!-- src/CodeCortex/CodeCortex.csproj -->
+<!-- Directory.Build.props 已统一配置，无需重复写 AssemblyName/RootNamespace -->
+```
+
+**CLI 例外示例：**
+```xml
+<!-- src/CodeCortex.DevCli/CodeCortex.DevCli.csproj -->
 <PropertyGroup>
-  <AssemblyName>Atelia.CodeCortex</AssemblyName>
+  <AssemblyName>Atelia.CodeCortex.DevCli</AssemblyName>
+  <!-- 如需特殊命名空间可加 RootNamespace -->
 </PropertyGroup>
 ```
 
-## 4. NuGet Package IDs
+## 4. 一致性守护
 
-- **Rule:** The NuGet package ID **must** match the assembly name.
-- **Format:** `Atelia.{ProjectName}.{OptionalFeatureArea}`
-- **Rationale:** Consistency across the entire lifecycle (discovery, installation, usage). Enables NuGet prefix reservation.
-
-**Example:**
-- The `Atelia.CodeCortex` assembly is packaged as the `Atelia.CodeCortex` NuGet package.
+- **建议：**
+  - 通过 Directory.Build.props 集中管理命名规则，减少项目侧样板。
+  - 可选：添加构建前校验，防止命名空间前缀走样。
+  - 迁移时优先移除项目内重复的 AssemblyName/RootNamespace。
 
 ---
 
-## Summary Table
+## 总结表
 
-| Artifact             | Format                                     | Example (`CodeCortex.Cli` project)      |
-|----------------------|--------------------------------------------|-----------------------------------------|
-| **Directory**        | `src/{ProjectName}.{FeatureArea}/`         | `src/CodeCortex.Cli/`                   |
-| **Namespace**        | `Atelia.{ProjectName}.{FeatureArea}`       | `Atelia.CodeCortex.Cli`                 |
-| **Assembly Name**    | `Atelia.{ProjectName}.{FeatureArea}`       | `Atelia.CodeCortex.Cli`                 |
-| **NuGet Package ID** | `Atelia.{ProjectName}.{FeatureArea}`       | `Atelia.CodeCortex.Cli`                 |
+| 工件                | 格式                                 | 示例（CodeCortex.Cli 项目）         |
+|---------------------|--------------------------------------|-------------------------------------|
+| **目录**            | `src/{ProjectName}[.FeatureArea]/`   | `src/CodeCortex.Cli/`               |
+| **命名空间**        | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.CodeCortex.Cli`             |
+| **程序集名**        | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.CodeCortex.Cli`             |
+| **NuGet 包名**      | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.CodeCortex.Cli`             |
+
+---
+
+> 本规范已采纳统一 props 规则，项目文件名不带 Atelia 前缀，CLI/特殊项目可例外覆盖。

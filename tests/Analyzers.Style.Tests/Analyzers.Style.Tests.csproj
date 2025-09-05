@@ -21,8 +21,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Analyzers.Style\Atelia.Analyzers.Style.csproj" />
-    <ProjectReference Include="..\..\src\Analyzers.Style.CodeFixes\Atelia.Analyzers.Style.CodeFixes.csproj" />
+    <ProjectReference Include="..\..\src\Analyzers.Style/Analyzers.Style.csproj" />
+    <ProjectReference Include="..\..\src\Analyzers.Style.CodeFixes/Analyzers.Style.CodeFixes.csproj" />
   </ItemGroup>
 
 </Project>

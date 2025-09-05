@@ -2,18 +2,35 @@
   <!-- Global analyzer/reference settings -->
   <ItemGroup>
     <!-- Global custom analyzer (exclude the analyzer project itself). Use MSBuildThisFileDirectory to anchor path at repo root -->
-  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Analyzers.Style/Atelia.Analyzers.Style.csproj"
-            Condition="'$(MSBuildProjectName)' != 'Atelia.Analyzers.Style' AND '$(MSBuildProjectName)' != 'Atelia.Analyzers.Style.CodeFixes'"
+  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Analyzers.Style/Analyzers.Style.csproj"
+            Condition="'$(MSBuildProjectName)' != 'Analyzers.Style' AND '$(MSBuildProjectName)' != 'Analyzers.Style.CodeFixes'"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
                       PrivateAssets="all" />
   <!-- Include CodeFix assembly so dotnet format can discover and apply custom fixes (contains no DiagnosticAnalyzer, only CodeFixProvider) -->
-  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Analyzers.Style.CodeFixes/Atelia.Analyzers.Style.CodeFixes.csproj"
-            Condition="'$(MSBuildProjectName)' != 'Atelia.Analyzers.Style' AND '$(MSBuildProjectName)' != 'Atelia.Analyzers.Style.CodeFixes'"
+  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Analyzers.Style.CodeFixes/Analyzers.Style.CodeFixes.csproj"
+            Condition="'$(MSBuildProjectName)' != 'Analyzers.Style' AND '$(MSBuildProjectName)' != 'Analyzers.Style.CodeFixes'"
             OutputItemType="Analyzer"
             ReferenceOutputAssembly="false"
             PrivateAssets="all" />
   </ItemGroup>
+
+
+    <!-- 统一程序集、命名空间、包名规则 -->
+  <PropertyGroup>
+    <!-- 默认程序集名、命名空间、包名均为 Atelia.{项目名} -->
+    <AssemblyName>Atelia.$(MSBuildProjectName)</AssemblyName>
+    <RootNamespace>Atelia.$(MSBuildProjectName)</RootNamespace>
+    <PackageId>Atelia.$(MSBuildProjectName)</PackageId>
+  </PropertyGroup>
+
+  <!-- CLI 工具等例外项目可在各自 .csproj 内覆盖 AssemblyName/RootNamespace/PackageId -->
+
+  <!-- 可选：构建前校验命名空间前缀（防走样）-->
+  <Target Name="ValidateAteliaNamespace" BeforeTargets="CoreCompile">
+  <Error Condition="!$([System.String]::Copy('$(RootNamespace)').StartsWith('Atelia.'))"
+       Text="RootNamespace 必须以 'Atelia.' 开头，当前为 '$(RootNamespace)'" />
+  </Target>
 
   <!-- (StyleCop removed) Placeholder for future shared analyzers or source generators -->
 </Project>
