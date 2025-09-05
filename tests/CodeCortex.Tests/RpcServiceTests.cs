@@ -49,4 +49,33 @@ public class RpcServiceTests {
         var result = await svc.GetOutlineAsync(new OutlineRequest("T2"));
         Assert.Null(result);
     }
+
+    [Fact]
+    public async Task GetOutlineAsync_UsesSymbolResolver_WhenExactMatchFailsAsync() {
+        // Setup index with a generic type that won't match exactly
+        var index = new CodeCortexIndex {
+            Types = new List<TypeEntry> {
+                new TypeEntry { Id = "T_GENERIC", Fqn = "System.Collections.Generic.List<T>", Kind = "class" }
+            }
+        };
+
+        // Populate the maps as IndexBuilder would
+        index.Maps.FqnIndex["System.Collections.Generic.List<T>"] = "T_GENERIC";
+        index.Maps.NameIndex["List<T>"] = new List<string> { "T_GENERIC" };
+        index.Maps.GenericBaseNameIndex["List"] = new List<string> { "T_GENERIC" };
+
+        // Setup file system with outline content
+        var mockFs = new MockFileSystem();
+        var fs = new InMemoryFileSystem(mockFs);
+        string outlineDir = "/outlines";
+        string outlinePath = $"{outlineDir}/T_GENERIC.outline.md";
+        fs.CreateDirectory(outlineDir);
+        fs.WriteAllText(outlinePath, "# Generic List Outline");
+
+        var svc = new RpcService(index, outlineDir, fs);
+
+        // Query with base name should find the generic type via SymbolResolver
+        var result = await svc.GetOutlineAsync(new OutlineRequest("List"));
+        Assert.Equal("# Generic List Outline", result);
+    }
 }

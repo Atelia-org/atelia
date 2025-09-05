@@ -69,10 +69,23 @@ public class RpcService {
     [JsonRpcMethod(RpcMethods.GetOutline)]
     public Task<string?> GetOutlineAsync(OutlineRequest req) {
         var idOrFqn = req.QueryOrId;
+
+        // 1. Try exact match first (fast path for known TypeId or exact FQN)
         var type = _index.Types.Find(t => t.Id == idOrFqn || t.Fqn == idOrFqn);
+
+        // 2. If exact match fails, use SymbolResolver for intelligent matching
+        if (type == null) {
+            var matches = _resolver.Resolve(idOrFqn, 1); // limit=1 for outline
+            if (matches.Count > 0) {
+                var match = matches[0];
+                type = _index.Types.Find(t => t.Id == match.Id);
+            }
+        }
+
         if (type == null) {
             return Task.FromResult<string?>(null);
         }
+
         var path = System.IO.Path.Combine(_outlineDir, type.Id + ".outline.md");
         if (_fs.FileExists(path)) {
             return Task.FromResult<string?>(_fs.ReadAllText(path));

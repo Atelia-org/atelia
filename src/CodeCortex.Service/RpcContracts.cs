@@ -1,7 +1,7 @@
 
 namespace CodeCortex.Service;
 
-public enum MatchKind { Exact = 0, ExactIgnoreCase = 1, Suffix = 2, Wildcard = 3, Fuzzy = 4 }
+public enum MatchKind { Exact = 0, ExactIgnoreCase = 1, Suffix = 2, Wildcard = 3, GenericBase = 4, Fuzzy = 5 }
 
 public sealed record SymbolMatch(string Id, string Fqn, string Kind, MatchKind MatchKind, int RankScore, int? Distance, bool IsAmbiguous = false);
 
