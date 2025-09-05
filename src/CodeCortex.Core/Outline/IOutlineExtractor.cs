@@ -18,7 +18,7 @@ public interface IOutlineExtractor {
 }
 
 /// <summary>
-/// Outline 生成选项。
+/// Outline 生成选项（表格前空行已固定开启以符合块级元素规范）。
 /// </summary>
 /// <param name="IncludeXmlDocFirstLine">是否在 Outline 顶部包含 XML 文档首行摘要。</param>
 public sealed record OutlineOptions(bool IncludeXmlDocFirstLine = true);

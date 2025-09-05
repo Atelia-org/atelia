@@ -26,10 +26,10 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
         sb.AppendLine($"PublicImplHash: {hashes.PublicImpl} | InternalImplHash: {hashes.InternalImpl} | ImplHash: {hashes.Impl}");
         sb.AppendLine($"XmlDocHash: {hashes.XmlDoc}");
         if (options.IncludeXmlDocFirstLine) {
-            var lines = GetSummaryLines(symbol);
+            var lines = XmlDocLinesExtractor.GetSummaryLines(symbol);
             if (lines.Count > 0) {
                 sb.AppendLine("XMLDOC:");
-                foreach (var l in lines) sb.AppendLine("  " + l);
+                MarkdownRenderer.RenderLinesWithStructure(sb, lines, "  ", bulletizePlain: false, startIndex: 0, insertBlankBeforeTable: true);
             }
         }
         sb.AppendLine();
@@ -43,8 +43,14 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
             if (m is IPropertySymbol ps) {
                 var acc = new StringBuilder();
                 acc.Append("{ ");
-                if (ps.GetMethod != null && IsPublicApiMember(ps.GetMethod)) acc.Append("get; ");
-                if (ps.SetMethod != null && IsPublicApiMember(ps.SetMethod)) acc.Append("set; ");
+                if (ps.GetMethod != null && IsPublicApiMember(ps.GetMethod)) {
+                    acc.Append("get; ");
+                }
+
+                if (ps.SetMethod != null && IsPublicApiMember(ps.SetMethod)) {
+                    acc.Append("set; ");
+                }
+
                 acc.Append("}");
                 string namePart;
                 if (ps.IsIndexer) {
@@ -70,18 +76,8 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
                 line = m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
             }
             sb.AppendLine("  + " + line); // 1级缩进，2个空格
-            var mlines = GetSummaryLines(m);
-            foreach (var ml in mlines) {
-                var tr = ml.TrimStart();
-                if (IsStructuralLine(tr)) {
-                    if (!HasStructuralPayload(tr)) continue;
-                    sb.AppendLine("    " + ml);
-                } else {
-                    var txt = ml.Trim();
-                    if (txt.Length == 0) continue;
-                    sb.AppendLine("    - " + txt);
-                }
-            }
+            var mlines = XmlDocLinesExtractor.GetSummaryLines(m);
+            MarkdownRenderer.RenderLinesWithStructure(sb, mlines, "    ", bulletizePlain: true, startIndex: 0, insertBlankBeforeTable: true);
             // Params / Returns / Exceptions sections
             AppendPredefinedSections(sb, m);
             sb.AppendLine();
@@ -92,191 +88,24 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
     private static bool IsPublicApiMember(ISymbol s) => s.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal && !s.IsImplicitlyDeclared;
 
     private static List<string> GetSummaryLines(ISymbol symbol) {
-        var xml = symbol.GetDocumentationCommentXml() ?? string.Empty;
-        var lines = ExtractSummaryLinesFromXml(xml);
-        if (lines.Count == 0) {
-            var fb = TryExtractSummaryLinesFromTrivia(symbol);
-            lines = fb;
-        }
-        // Html decode and trim each line; drop empties
-        var result = new List<string>(lines.Count);
-        foreach (var l in lines) {
-            var t = WebUtility.HtmlDecode(l).Trim();
-            if (!string.IsNullOrWhiteSpace(t)) result.Add(t);
-        }
-        return result;
+        return XmlDocLinesExtractor.GetSummaryLines(symbol);
     }
 
-    private static List<string> ExtractSummaryLinesFromXml(string xml) {
-        var list = new List<string>();
-        if (string.IsNullOrWhiteSpace(xml)) return list;
-        try {
-            var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
-            var summary = doc.Descendants("summary").FirstOrDefault();
-            if (summary == null) return list;
-            AppendNodeText(summary, list, 0);
-        } catch { }
-        // Trim trailing empties
-        TrimTrailingEmpty(list);
-        return list;
-    }
 
-    // Recursively append text; insert newlines around structural elements like <para/>
-    private static void AppendNodeText(XNode node, List<string> lines, int level) {
-        switch (node) {
-            case XText t:
-                AppendText(lines, t.Value);
-                break;
-            case XElement e:
-                var name = e.Name.LocalName.ToLowerInvariant();
-                if (name == "para" || name == "br") {
-                    NewLine(lines);
-                    foreach (var n in e.Nodes()) AppendNodeText(n, lines, level);
-                    NewLine(lines);
-                } else if (name == "see") {
-                    var lang = e.Attribute("langword")?.Value;
-                    if (!string.IsNullOrEmpty(lang)) {
-                        AppendText(lines, LangwordToDisplay(lang!));
-                    } else {
-                        var cref = e.Attribute("cref")?.Value;
-                        AppendText(lines, CrefToDisplay(cref));
-                    }
-                } else if (name == "typeparamref" || name == "paramref") {
-                    var nm = e.Attribute("name")?.Value;
-                    if (!string.IsNullOrEmpty(nm)) AppendText(lines, nm!);
-                } else if (name == "c") {
-                    AppendText(lines, "`" + e.Value + "`");
-                } else if (name == "code") {
-                    NewLine(lines);
-                    AppendText(lines, "`" + e.Value + "`");
-                    NewLine(lines);
-                } else if (name == "list") {
-                    RenderList(e, lines, level);
-                } else {
-                    foreach (var n in e.Nodes()) AppendNodeText(n, lines, level);
-                }
-                break;
-            default:
-                // skip comments/processing
-                break;
-        }
-    }
 
-    private static void RenderList(XElement list, List<string> lines, int level) {
-        var type = (list.Attribute("type")?.Value ?? "bullet").ToLowerInvariant();
-        if (type == "table") {
-            RenderTableList(list, lines, level);
-            return;
-        }
-        // bullet or number
-        var items = list.Elements("item").ToList();
-        foreach (var item in items) {
-            string content = string.Empty;
-            var term = item.Element("term")?.Value?.Trim();
-            var desc = item.Element("description")?.Value?.Trim();
-            if (!string.IsNullOrEmpty(term) || !string.IsNullOrEmpty(desc)) {
-                content = (term ?? string.Empty) + (string.IsNullOrEmpty(desc) ? string.Empty : " — " + desc);
-            } else {
-                // Fallback: raw concatenated value
-                content = (item.Value ?? string.Empty).Trim();
-            }
-            var indent = new string(' ', level * 2);
-            var prefix = type == "number" ? "1. " : "- ";
-            lines.Add(indent + prefix + content);
-            // Nested lists inside item
-            foreach (var childList in item.Elements("list")) {
-                RenderList(childList, lines, level + 1);
-            }
-        }
-    }
 
-    private static void RenderTableList(XElement list, List<string> lines, int level) {
-        var indent = new string(' ', level * 2);
-        var header = list.Element("listheader");
-        var headers = header?.Elements("term").Select(t => t.Value.Trim()).ToList() ?? new List<string>();
-        if (headers.Count > 0) {
-            lines.Add(indent + "| " + string.Join(" | ", headers) + " |");
-            lines.Add(indent + "|" + string.Join("|", headers.Select(_ => "---")) + "|");
-        }
-        foreach (var item in list.Elements("item")) {
-            var cells = item.Elements("term").Select(t => t.Value.Trim()).ToList();
-            if (cells.Count == 0) {
-                var d = item.Element("description")?.Value?.Trim();
-                if (!string.IsNullOrEmpty(d)) cells.Add(d!);
-            }
-            if (cells.Count > 0) lines.Add(indent + "| " + string.Join(" | ", cells) + " |");
-        }
-    }
 
-    private static void TrimTrailingEmpty(List<string> list) {
-        while (list.Count > 0 && string.IsNullOrWhiteSpace(list[^1])) list.RemoveAt(list.Count - 1);
-    }
 
-    private static void TrimLeadingEmpty(List<string> list) {
-        while (list.Count > 0 && string.IsNullOrWhiteSpace(list[0])) list.RemoveAt(0);
-    }
 
-    private static bool IsStructuralLine(string line) {
-        if (string.IsNullOrEmpty(line)) return false;
-        var tr = line.TrimStart();
-        return RxBulletLine().IsMatch(tr) || RxOrderedLine().IsMatch(tr) || RxTableLine().IsMatch(tr);
-    }
-
-    private static bool HasStructuralPayload(string line) {
-        var tr = line.TrimStart();
-        if (RxBulletLine().IsMatch(tr)) {
-            var payload = RxBulletPrefix().Replace(tr, string.Empty);
-            return payload.Trim().Length > 0;
-        }
-        if (RxOrderedLine().IsMatch(tr)) {
-            var payload = RxOrderedPrefix().Replace(tr, string.Empty);
-            return payload.Trim().Length > 0;
-        }
-        if (RxTableLine().IsMatch(tr)) {
-            // payload if any non '|' or whitespace char exists (incl. '-' or ':')
-            return RxTableHasPayload().IsMatch(tr);
-        }
-        return line.Trim().Length > 0;
-    }
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*-\s+")]
-    private static partial System.Text.RegularExpressions.Regex RxBulletLine();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*\d+[.)]\s+")]
-    private static partial System.Text.RegularExpressions.Regex RxOrderedLine();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*\|")]
-    private static partial System.Text.RegularExpressions.Regex RxTableLine();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*-\s+")]
-    private static partial System.Text.RegularExpressions.Regex RxBulletPrefix();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*\d+[.)]\s+")]
-    private static partial System.Text.RegularExpressions.Regex RxOrderedPrefix();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"[^\|\s]")]
-    private static partial System.Text.RegularExpressions.Regex RxTableHasPayload();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"`[0-9]+")]
-    private static partial System.Text.RegularExpressions.Regex RxGenericArity();
-
-    private static string InlineParagraph(List<string> lines) {
-        var sb = new StringBuilder();
-        foreach (var l in lines) {
-            var t = l.Trim();
-            if (t.Length == 0) continue;
-            if (sb.Length > 0) sb.Append(' ');
-            sb.Append(t);
-        }
-        return sb.ToString();
-    }
 
     private static void AppendPredefinedSections(StringBuilder sb, ISymbol m) {
         var xml = m.GetDocumentationCommentXml();
-        if (string.IsNullOrWhiteSpace(xml)) return;
+        if (string.IsNullOrWhiteSpace(xml)) {
+            return;
+        }
+
         XDocument doc;
-        try { doc = XDocument.Parse(xml!, LoadOptions.PreserveWhitespace); }
-        catch { return; }
+        try { doc = XDocument.Parse(xml!, LoadOptions.PreserveWhitespace); } catch { return; }
 
         // Params
         var paramEls = doc.Descendants("param").ToList();
@@ -285,30 +114,27 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
             foreach (var p in paramEls) {
                 var name = p.Attribute("name")?.Value ?? string.Empty;
                 var lines = new List<string>();
-                foreach (var n in p.Nodes()) AppendNodeText(n, lines, 0);
-                TrimLeadingEmpty(lines);
-                TrimTrailingEmpty(lines);
+                foreach (var n in p.Nodes()) {
+                    XmlDocLinesExtractor.AppendNodeText(n, lines, 0);
+                }
+
+                XmlDocLinesExtractor.TrimLeadingEmpty(lines);
+                XmlDocLinesExtractor.TrimTrailingEmpty(lines);
                 if (lines.Count == 0) {
                     sb.AppendLine($"        - {name}");
-                } else if (lines.All(l => !IsStructuralLine(l))) {
-                    var para = InlineParagraph(lines);
+                } else if (lines.All(l => !MarkdownRenderer.IsStructuralLine(l))) {
+                    var para = MarkdownRenderer.InlineParagraph(lines);
                     sb.AppendLine($"        - {name} — {para}");
                 } else {
                     var first = lines[0];
-                    sb.AppendLine($"        - {name} — {first}");
-                    for (int i = 1; i < lines.Count; i++) {
-                        var raw = lines[i];
-                        if (string.IsNullOrWhiteSpace(raw)) continue;
-                        var tr = raw.TrimStart();
-                        if (IsStructuralLine(tr)) {
-                            if (tr.StartsWith("- ") && string.IsNullOrWhiteSpace(tr.Length > 2 ? tr.Substring(2) : string.Empty)) continue;
-                            if (tr.StartsWith("1.") && string.IsNullOrWhiteSpace(tr.Length > 2 ? tr.Substring(2).TrimStart() : string.Empty)) continue;
-                            if (tr.StartsWith("| ") && string.IsNullOrWhiteSpace(tr.Replace("|", "").Replace("-", "").Trim())) continue;
-                            sb.AppendLine("          " + raw);
-                        } else {
-                            var text = raw.Trim();
-                            if (text.Length == 0) continue;
-                            sb.AppendLine("          - " + text);
+                    var firstTrim = first.TrimStart();
+                    if (MarkdownRenderer.IsStructuralLine(firstTrim)) {
+                        sb.AppendLine($"        - {name}");
+                        MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 0, insertBlankBeforeTable: true);
+                    } else {
+                        sb.AppendLine($"        - {name} — {first}");
+                        if (lines.Count > 1) {
+                            MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 1, insertBlankBeforeTable: true);
                         }
                     }
                 }
@@ -320,26 +146,24 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
         var returnsEl = doc.Descendants("returns").FirstOrDefault();
         if (returnsEl != null) {
             var lines = new List<string>();
-            foreach (var n in returnsEl.Nodes()) AppendNodeText(n, lines, 0);
-            TrimLeadingEmpty(lines);
-            TrimTrailingEmpty(lines);
+            foreach (var n in returnsEl.Nodes()) {
+                XmlDocLinesExtractor.AppendNodeText(n, lines, 0);
+            }
+
+            XmlDocLinesExtractor.TrimLeadingEmpty(lines);
+            XmlDocLinesExtractor.TrimTrailingEmpty(lines);
             if (lines.Count > 0) {
                 sb.AppendLine("      Returns:");
-                if (lines.All(l => !IsStructuralLine(l))) {
-                    sb.AppendLine("        - " + InlineParagraph(lines));
+                if (lines.All(l => !MarkdownRenderer.IsStructuralLine(l))) {
+                    sb.AppendLine("        - " + MarkdownRenderer.InlineParagraph(lines));
                 } else {
-                    foreach (var line in lines) {
-                        if (string.IsNullOrWhiteSpace(line)) continue;
-                        var tr = line.TrimStart();
-                        if (IsStructuralLine(tr)) {
-                            if (tr.StartsWith("- ") && string.IsNullOrWhiteSpace(tr.Length > 2 ? tr.Substring(2) : string.Empty)) continue;
-                            if (tr.StartsWith("1.") && string.IsNullOrWhiteSpace(tr.Length > 2 ? tr.Substring(2).TrimStart() : string.Empty)) continue;
-                            if (tr.StartsWith("| ") && string.IsNullOrWhiteSpace(tr.Replace("|", "").Replace("-", "").Trim())) continue;
-                            sb.AppendLine("        " + line);
-                        } else {
-                            var text = line.Trim();
-                            if (text.Length == 0) continue;
-                            sb.AppendLine("        - " + text);
+                    var firstTrim = lines[0].TrimStart();
+                    if (MarkdownRenderer.IsStructuralLine(firstTrim)) {
+                        MarkdownRenderer.RenderLinesWithStructure(sb, lines, "        ", bulletizePlain: false, startIndex: 0, insertBlankBeforeTable: true);
+                    } else {
+                        sb.AppendLine("        - " + lines[0].Trim());
+                        if (lines.Count > 1) {
+                            MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 1, insertBlankBeforeTable: true);
                         }
                     }
                 }
@@ -353,47 +177,29 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
             sb.AppendLine("      Exceptions:");
             foreach (var ex in exEls) {
                 var cref = ex.Attribute("cref")?.Value;
-                var type = CrefToDisplay(cref);
+                var type = XmlDocLinesExtractor.CrefToDisplay(cref);
                 var lines = new List<string>();
-                foreach (var n in ex.Nodes()) AppendNodeText(n, lines, 0);
-                TrimLeadingEmpty(lines);
-                TrimTrailingEmpty(lines);
-                if (lines.Count == 0) sb.AppendLine($"        - {type}");
-                else if (lines.All(l => !IsStructuralLine(l))) {
-                    sb.AppendLine($"        - {type} — {InlineParagraph(lines)}");
+                foreach (var n in ex.Nodes()) {
+                    XmlDocLinesExtractor.AppendNodeText(n, lines, 0);
+                }
+
+                XmlDocLinesExtractor.TrimLeadingEmpty(lines);
+                XmlDocLinesExtractor.TrimTrailingEmpty(lines);
+                if (lines.Count == 0) {
+                    sb.AppendLine($"        - {type}");
+                } else if (lines.All(l => !MarkdownRenderer.IsStructuralLine(l))) {
+                    sb.AppendLine($"        - {type} — {MarkdownRenderer.InlineParagraph(lines)}");
                 } else {
                     var firstLine = lines[0];
                     var firstTrim = firstLine.TrimStart();
-                    if (IsStructuralLine(firstTrim)) {
+                    if (MarkdownRenderer.IsStructuralLine(firstTrim)) {
                         // First content is structural (table/list). Show type alone, then render structure from the first line.
                         sb.AppendLine($"        - {type}");
-                        for (int i = 0; i < lines.Count; i++) {
-                            var raw = lines[i];
-                            if (string.IsNullOrWhiteSpace(raw)) continue;
-                            var tr = raw.TrimStart();
-                            if (IsStructuralLine(tr)) {
-                                if (!HasStructuralPayload(tr)) continue;
-                                sb.AppendLine("          " + raw);
-                            } else {
-                                var text = raw.Trim();
-                                if (text.Length == 0) continue;
-                                sb.AppendLine("          - " + text);
-                            }
-                        }
+                        MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 0, insertBlankBeforeTable: true);
                     } else {
                         sb.AppendLine($"        - {type} — {firstLine}");
-                        for (int i = 1; i < lines.Count; i++) {
-                            var raw = lines[i];
-                            if (string.IsNullOrWhiteSpace(raw)) continue;
-                            var tr = raw.TrimStart();
-                            if (IsStructuralLine(tr)) {
-                                if (!HasStructuralPayload(tr)) continue;
-                                sb.AppendLine("          " + raw);
-                            } else {
-                                var text = raw.Trim();
-                                if (text.Length == 0) continue;
-                                sb.AppendLine("          - " + text);
-                            }
+                        if (lines.Count > 1) {
+                            MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 1, insertBlankBeforeTable: true);
                         }
                     }
                 }
@@ -402,81 +208,8 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
         }
     }
 
-    private static void AppendText(List<string> lines, string text) {
-        if (string.IsNullOrEmpty(text)) return;
-        if (lines.Count == 0) lines.Add(string.Empty);
-        // preserve author-intended newlines within text
-        var parts = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-        for (int i = 0; i < parts.Length; i++) {
-            if (i > 0) NewLine(lines);
-            lines[^1] += parts[i];
-        }
-    }
-    private static void NewLine(List<string> lines) {
-        // only add a new line if current line has content or previous was also break
-        if (lines.Count == 0 || lines[^1].Length > 0) lines.Add(string.Empty);
-        else lines.Add(string.Empty);
-    }
 
-    private static string CrefToDisplay(string? cref) {
-        if (string.IsNullOrEmpty(cref)) return string.Empty;
-        // Remove member kind prefix (e.g., "M:", "T:")
-        var s = cref;
-        int colon = s.IndexOf(':');
-        if (colon >= 0 && colon + 1 < s.Length) s = s[(colon + 1)..];
-        // Normalize generics: Foo`1 -> Foo<T>
-        s = RxGenericArity().Replace(s, "<T>");
-        // Method with parameter list?
-        int paren = s.IndexOf('(');
-        if (paren >= 0) {
-            var namePart = s.Substring(0, paren);
-            var paramPart = s.Substring(paren + 1).TrimEnd(')');
-            var simpleName = namePart.Contains('.') ? namePart[(namePart.LastIndexOf('.') + 1)..] : namePart;
-            var paramNames = new List<string>();
-            foreach (var p in paramPart.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)) {
-                var t = p.Trim();
-                // Strip namespaces
-                var last = t.Contains('.') ? t[(t.LastIndexOf('.') + 1)..] : t;
-                // Map common BCL types to C# keywords
-                last = last switch {
-                    "Boolean" => "bool",
-                    "Int32" => "int",
-                    "Int64" => "long",
-                    "Double" => "double",
-                    "Single" => "float",
-                    "String" => "string",
-                    "Object" => "object",
-                    "Void" => "void",
-                    _ => last
-                };
-                paramNames.Add(last);
-            }
-            return paramNames.Count == 0 ? simpleName + "()" : simpleName + "(" + string.Join(", ", paramNames) + ")";
-        }
-        // If ends with ')' but no '(' (malformed), strip trailing ')'
-        if (s.EndsWith(")")) s = s.TrimEnd(')');
-        // Otherwise show last identifier (with keyword mapping)
-        var ident = s.Contains('.') ? s[(s.LastIndexOf('.') + 1)..] : s;
-        ident = ident switch {
-            "Boolean" => "bool",
-            "Int32" => "int",
-            "Int64" => "long",
-            "Double" => "double",
-            "Single" => "float",
-            "String" => "string",
-            "Object" => "object",
-            "Void" => "void",
-            _ => ident
-        };
-        return ident;
-    }
 
-    private static string LangwordToDisplay(string word) => word switch {
-        "true" => "true",
-        "false" => "false",
-        "null" => "null",
-        _ => word
-    };
 
     private static string TypeKindKeyword(TypeKind k) => k switch {
         TypeKind.Class => "class",
@@ -487,36 +220,6 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
         _ => k.ToString().ToLowerInvariant()
     };
 
-    private static bool IsBadlyFormedXmlMarker(string line)
-        => line.StartsWith("<!-- Badly formed XML comment ignored", StringComparison.Ordinal);
 
-    private static List<string> TryExtractSummaryLinesFromTrivia(ISymbol symbol) {
-        var result = new List<string>();
-        var decl = symbol.DeclaringSyntaxReferences.FirstOrDefault();
-        if (decl == null) return result;
-        var node = decl.GetSyntax();
-        var trivia = node.GetLeadingTrivia().FirstOrDefault(t => t.HasStructure && t.GetStructure() is DocumentationCommentTriviaSyntax);
-        if (trivia.Equals(default(SyntaxTrivia))) return result;
-        var text = trivia.GetStructure()!.ToFullString();
-        var stripped = StripXmlTags(text);
-        foreach (var line in stripped.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')) {
-            var t = line.TrimEnd();
-            if (t.Length == 0 && (result.Count == 0 || string.IsNullOrWhiteSpace(result[^1]))) continue;
-            result.Add(t);
-        }
-        return result;
-    }
 
-    private static string StripXmlTags(string s) {
-        if (string.IsNullOrEmpty(s)) return string.Empty;
-        var sb = new StringBuilder(s.Length);
-        bool inTag = false;
-        for (int i = 0; i < s.Length; i++) {
-            var ch = s[i];
-            if (ch == '<') { inTag = true; continue; }
-            if (ch == '>') { inTag = false; continue; }
-            if (!inTag) sb.Append(ch);
-        }
-        return sb.ToString();
-    }
 }
