@@ -1,5 +1,6 @@
-## 0.0.0
+## Release 0.1.0
 
 ### New Rules
 
-// (No shipped rules yet — pre-release phase)
+Rule ID | Category | Severity | Notes
+--------|----------|----------|--------------------

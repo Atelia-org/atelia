@@ -46,3 +46,17 @@ Pattern (CanonicalName): `<Category><Object><Condition><Qualifier?>`
 
 ## Rationale
 This convention aligns with `.editorconfig` option grouping (indent / new_line / space domains) while retaining semantic precision for custom structural rules that cannot be expressed as pure formatter options.
+
+## 要点记录
+
+### RS2007 AnalyzerReleases 文件格式陷阱 (2025-01-05)
+**背景**：GPT-5 在处理 RS2007 警告时折腾半天未果，看了参考文档、爬了 GitHub 项目都没搞定。
+
+**核心问题**：RS2007 对格式要求极其严格，容易踩坑：
+- `AnalyzerReleases.Shipped.md` 必须用 `## Release x.y.z` 格式（不是 `## x.y.z`）
+- 章节标题必须精确匹配：`### New Rules`、`### Removed Rules`、`### Changed Rules`
+- 表头必须四列：`Rule ID | Category | Severity | Notes`
+- 分隔行的管道符数量必须与表头列数一致
+- Unshipped 文件绝对不能包含 `## Release` 标头
+
+**教训**：即使是高级 AI 模型，在面对严格的格式规范时也容易被细节绊倒。规范文档要仔细读，格式要严格遵守。
