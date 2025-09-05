@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
@@ -10,12 +10,10 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-  <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.10.0" />
-  <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.10.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.10.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.10.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,9 +21,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\MemoTree.Core\MemoTree.Core.csproj" />
-    <ProjectReference Include="..\..\src\MemoTree.Services\MemoTree.Services.csproj" />
-    <ProjectReference Include="..\..\src\MemoTree.Cli\MemoTree.Cli.csproj" />
+    <ProjectReference Include="..\..\src\Atelia.Analyzers.Style\Atelia.Analyzers.Style.csproj" />
+    <ProjectReference Include="..\..\src\Atelia.Analyzers.Style.CodeFixes\Atelia.Analyzers.Style.CodeFixes.csproj" />
   </ItemGroup>
 
 </Project>
+
