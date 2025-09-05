@@ -21,9 +21,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Atelia.Data", "src\Atelia.D
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeOutline.Cli", "src\CodeOutline.Cli\CodeOutline.Cli.csproj", "{5A9DE4C7-0A4F-4F42-9E8E-1234567890AB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Atelia.Analyzers.Style", "src\Atelia.Analyzers.Style\Atelia.Analyzers.Style.csproj", "{A0B4529F-0147-4262-9622-E13A50933C8F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Analyzers.Style", "src\Analyzers.Style\Atelia.Analyzers.Style.csproj", "{A0B4529F-0147-4262-9622-E13A50933C8F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Atelia.Analyzers.Style.CodeFixes", "src\Atelia.Analyzers.Style.CodeFixes\Atelia.Analyzers.Style.CodeFixes.csproj", "{13C81059-73DE-481A-9302-BBE49D5D1908}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Analyzers.Style.CodeFixes", "src\Analyzers.Style.CodeFixes\Atelia.Analyzers.Style.CodeFixes.csproj", "{13C81059-73DE-481A-9302-BBE49D5D1908}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeCortex.Core", "src\CodeCortex.Core\CodeCortex.Core.csproj", "{E1A4E9C8-9F5F-4F74-A4B5-6D6F9E5A1C10}"
 EndProject

@@ -76,7 +76,7 @@ public static class AnalyzerTestHost {
         var baseDir = AppContext.BaseDirectory;
         var dir = new DirectoryInfo(baseDir);
         for (int i = 0; i < 6 && dir != null; i++) {
-            var candidate = Path.Combine(dir.FullName, "src", "Atelia.Analyzers.Style", "bin");
+            var candidate = Path.Combine(dir.FullName, "src", "Analyzers.Style", "bin");
             if (Directory.Exists(candidate)) {
                 var dll = Directory.GetFiles(candidate, "Atelia.Analyzers.Style.dll", SearchOption.AllDirectories)
                     .OrderByDescending(File.GetLastWriteTimeUtc)

@@ -2,13 +2,13 @@
   <!-- Global analyzer/reference settings -->
   <ItemGroup>
     <!-- Global custom analyzer (exclude the analyzer project itself). Use MSBuildThisFileDirectory to anchor path at repo root -->
-  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style/Atelia.Analyzers.Style.csproj"
+  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Analyzers.Style/Atelia.Analyzers.Style.csproj"
             Condition="'$(MSBuildProjectName)' != 'Atelia.Analyzers.Style' AND '$(MSBuildProjectName)' != 'Atelia.Analyzers.Style.CodeFixes'"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
                       PrivateAssets="all" />
   <!-- Include CodeFix assembly so dotnet format can discover and apply custom fixes (contains no DiagnosticAnalyzer, only CodeFixProvider) -->
-  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Atelia.Analyzers.Style.CodeFixes/Atelia.Analyzers.Style.CodeFixes.csproj"
+  <ProjectReference Include="$(MSBuildThisFileDirectory)src/Analyzers.Style.CodeFixes/Atelia.Analyzers.Style.CodeFixes.csproj"
             Condition="'$(MSBuildProjectName)' != 'Atelia.Analyzers.Style' AND '$(MSBuildProjectName)' != 'Atelia.Analyzers.Style.CodeFixes'"
             OutputItemType="Analyzer"
             ReferenceOutputAssembly="false"
