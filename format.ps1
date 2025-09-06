@@ -200,12 +200,12 @@ try {
 
     Write-Info "Scope=$Scope 文件数: $($allFiles.Count)"
 
-    # 初始化队列 & 状态
-    $queue = [System.Collections.Generic.Queue[string]]::new() # 保存相对路径
+    # 初始化栈 & 状态
+    $pendingFiles = [System.Collections.Generic.Stack[string]]::new() # 保存相对路径
     $state = @{}   # 绝对规范路径 -> @{ Iter = <int> }
     foreach($f in $allFiles){
         $abs = Normalize-Path $f
-        $queue.Enqueue($f)      # 使用原始（git 输出的）相对路径以便 include
+        $pendingFiles.Push($f)         # 使用原始（git 输出的）相对路径以便 include
         $state[$abs] = @{ Iter = 0 }
     }
     $converged = New-Object System.Collections.Generic.List[string]
@@ -216,13 +216,13 @@ try {
     if(-not (Test-Path $reportDir)){ New-Item -ItemType Directory -Path $reportDir | Out-Null }
 
     $now = Get-Date -Format 'yyyyMMdd_HHmmss'
-    while($queue.Count -gt 0){
+    while($pendingFiles.Count -gt 0){
         $batch = @()  # 相对路径集合
-        while($queue.Count -gt 0 -and $batch.Count -lt $MaxFilesPerRun){
-            $batch += $queue.Dequeue()  # 相对路径
+        while($pendingFiles.Count -gt 0 -and $batch.Count -lt $MaxFilesPerRun){
+            $batch += $pendingFiles.Pop()      # 相对路径
         }
         $totalRuns++
-        Write-Info ("运行 #$totalRuns 文件数={0} 队列剩余={1}" -f $batch.Count,$queue.Count)
+        Write-Info ("运行 #$totalRuns 文件数={0} 栈剩余={1}" -f $batch.Count,$pendingFiles.Count)
 
         if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
         # 为每次运行生成独立报告文件，保留历史供调试
@@ -253,7 +253,7 @@ try {
                 if(-not $state.ContainsKey($absKey)){ $state[$absKey] = @{ Iter = 0 } }
                 $state[$absKey].Iter++
                 if($state[$absKey].Iter -lt $MaxIterations){
-                    $queue.Enqueue($rel); $requeue++
+                    $pendingFiles.Push($rel); $requeue++
                 } else {
                     $nonConverged.Add($rel); Write-Warn "  未收敛: $rel (迭代=$($state[$absKey].Iter))"
                 }
