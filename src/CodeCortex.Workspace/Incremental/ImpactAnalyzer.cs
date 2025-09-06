@@ -3,6 +3,7 @@ using CodeCortex.Core.IO;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Atelia.Diagnostics;
 namespace CodeCortex.Workspace.Incremental;
 #pragma warning disable 1591
 public sealed record ImpactResult(
@@ -61,16 +62,19 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
         }
         foreach (var ch in changes) {
             var path = ch.Path;
+            DebugUtil.Print("Incremental", $"Analyzing change: {ch.Kind} {path}");
             switch (ch.Kind) {
                 case ClassifiedKind.Add:
                 case ClassifiedKind.Modify:
                 case ClassifiedKind.Rename:
                     if (!_fs.FileExists(path)) {
+                        DebugUtil.Print("Incremental", $"File does not exist: {path}");
                         continue;
                     }
 
                     var proj = resolveProject(path);
                     if (proj == null) {
+                        DebugUtil.Print("Incremental", $"No project resolved for: {path}");
                         continue;
                     }
 

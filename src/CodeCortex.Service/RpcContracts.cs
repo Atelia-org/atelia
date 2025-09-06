@@ -15,4 +15,4 @@ public static class RpcMethods {
 public sealed record ResolveRequest(string Query);
 public sealed record OutlineRequest(string QueryOrId);
 public sealed record SearchRequest(string Query, int Limit = 20);
-public sealed record StatusResponse(int Projects, int TypesIndexed, long InitialIndexDurationMs, long LastIncrementalMs, int WatcherQueueDepth, double OutlineCacheHitRatio, long MemoryMB);
+public sealed record StatusResponse(int Projects, int TypesIndexed, long InitialIndexDurationMs, long LastIncrementalMs, int WatcherQueueDepth, double OutlineCacheHitRatio, long MemoryMB, bool IsUpdating);

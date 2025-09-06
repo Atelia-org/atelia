@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Atelia.Diagnostics;
 namespace CodeCortex.Workspace.Incremental;
 #pragma warning disable 1591
 public interface IFileChangeBatcher { void OnRaw(RawFileChange change); event Action<IReadOnlyList<RawFileChange>>? Flushed; int PendingCount { get; } }
@@ -11,10 +12,12 @@ public sealed class DebounceFileChangeBatcher : IFileChangeBatcher, IDisposable 
     public int PendingCount { get { lock (_sync) { return _buffer.Count; } } }
     public DebounceFileChangeBatcher(TimeSpan? debounce = null) { _debounce = debounce ?? TimeSpan.FromMilliseconds(400); }
     public void OnRaw(RawFileChange change) {
+        DebugUtil.Print("Watcher", $"Batcher received: {change.Kind} {change.Path}");
         lock (_sync) {
             _buffer.Add(change);
             _timer?.Dispose();
             _timer = new System.Threading.Timer(_ => FlushInternal(), null, _debounce, Timeout.InfiniteTimeSpan);
+            DebugUtil.Print("Watcher", $"Batcher buffer size: {_buffer.Count}, debounce timer set for {_debounce.TotalMilliseconds}ms");
         }
     }
     public void FlushNow() {
@@ -27,10 +30,19 @@ public sealed class DebounceFileChangeBatcher : IFileChangeBatcher, IDisposable 
             _buffer.Clear();
         }
         if (snapshot.Length == 0) {
+            DebugUtil.Print("Watcher", "Batcher flush: no changes to process");
             return;
         }
 
-        try { Flushed?.Invoke(snapshot); } catch { /* swallow */ }
+        DebugUtil.Print("Watcher", $"Batcher flushing {snapshot.Length} changes");
+        try {
+            var handlers = Flushed?.GetInvocationList()?.Length ?? 0;
+            DebugUtil.Print("Watcher", $"Batcher invoking Flushed ({handlers} handlers) with {snapshot.Length} changes");
+            Flushed?.Invoke(snapshot);
+            DebugUtil.Print("Watcher", "Batcher Flushed handlers executed");
+        } catch (Exception ex) {
+            DebugUtil.Print("Watcher", $"Batcher Flushed handlers threw: {ex.Message}");
+        }
     }
     public void Dispose() {
         lock (_sync) {

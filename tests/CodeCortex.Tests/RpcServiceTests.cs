@@ -23,7 +23,8 @@ public class RpcServiceTests {
         fs.WriteAllText(outlinePath, "OUTLINE_CONTENT");
 
         // 注入依赖
-        var svc = new RpcService(index, outlineDir, fs);
+        var mgr = new ServiceIndexManager(index, "/index.json", outlineDir, fs);
+        var svc = new RpcService(mgr, outlineDir, null, fs);
 
         // 调用并断言
         var result = await svc.GetOutlineAsync(new OutlineRequest("T1"));
@@ -34,7 +35,8 @@ public class RpcServiceTests {
     public async Task GetOutlineAsync_ReturnsNull_WhenTypeNotFoundAsync() {
         var index = new CodeCortexIndex();
         var fs = new InMemoryFileSystem(new MockFileSystem());
-        var svc = new RpcService(index, "/outlines", fs);
+        var mgr = new ServiceIndexManager(index, "/index.json", "/outlines", fs);
+        var svc = new RpcService(mgr, "/outlines", null, fs);
         var result = await svc.GetOutlineAsync(new OutlineRequest("NotExist"));
         Assert.Null(result);
     }
@@ -45,7 +47,8 @@ public class RpcServiceTests {
             Types = new List<TypeEntry> { new TypeEntry { Id = "T2", Fqn = "Test.Type2", Kind = "class" } }
         };
         var fs = new InMemoryFileSystem(new MockFileSystem());
-        var svc = new RpcService(index, "/outlines", fs);
+        var mgr = new ServiceIndexManager(index, "/index.json", "/outlines", fs);
+        var svc = new RpcService(mgr, "/outlines", null, fs);
         var result = await svc.GetOutlineAsync(new OutlineRequest("T2"));
         Assert.Null(result);
     }
@@ -72,7 +75,8 @@ public class RpcServiceTests {
         fs.CreateDirectory(outlineDir);
         fs.WriteAllText(outlinePath, "# Generic List Outline");
 
-        var svc = new RpcService(index, outlineDir, fs);
+        var mgr = new ServiceIndexManager(index, "/index.json", outlineDir, fs);
+        var svc = new RpcService(mgr, outlineDir, null, fs);
 
         // Query with base name should find the generic type via SymbolResolver
         var result = await svc.GetOutlineAsync(new OutlineRequest("List"));

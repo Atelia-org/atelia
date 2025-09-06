@@ -33,100 +33,123 @@ public class ServiceIndexBuildObserver : IIndexBuildObserver {
 }
 
 public class RpcService {
-    private readonly CodeCortexIndex _index;
-    private readonly SymbolResolver _resolver;
+    private readonly ServiceIndexManager _indexManager;
+    private readonly IncrementalHost? _incrementalHost;
     private readonly string _outlineDir;
     private readonly IFileSystem _fs;
 
-    public RpcService(CodeCortexIndex index, string outlineDir, IFileSystem? fs = null) {
-        _index = index;
-        _resolver = new SymbolResolver(index);
+    public RpcService(ServiceIndexManager indexManager, string outlineDir, IncrementalHost? incrementalHost = null, IFileSystem? fs = null) {
+        _indexManager = indexManager ?? throw new ArgumentNullException(nameof(indexManager));
+        _incrementalHost = incrementalHost;
         _outlineDir = outlineDir;
         _fs = fs ?? new DefaultFileSystem();
     }
 
     [JsonRpcMethod(RpcMethods.ResolveSymbol)]
-
     public Task<List<SymbolMatch>> ResolveSymbolAsync(ResolveRequest req) {
-        var matches = _resolver.Resolve(req.Query, 20);
-        var mapped = new List<SymbolMatch>();
-        foreach (var m in matches) {
-            mapped.Add(
-                new SymbolMatch(
-                    m.Id,
-                    m.Fqn,
-                    m.Kind,
-                    (MatchKind)(int)m.MatchKind,
-                    m.RankScore,
-                    m.Distance,
-                    m.IsAmbiguous
-                )
-            );
-        }
-        return Task.FromResult(mapped);
+        return Task.FromResult(
+            _indexManager.ReadIndex(
+                index => {
+                    var resolver = new SymbolResolver(index);
+                    var matches = resolver.Resolve(req.Query, 20);
+                    var mapped = new List<SymbolMatch>();
+                    foreach (var m in matches) {
+                        mapped.Add(
+                            new SymbolMatch(
+                                m.Id,
+                                m.Fqn,
+                                m.Kind,
+                                (MatchKind)(int)m.MatchKind,
+                                m.RankScore,
+                                m.Distance,
+                                m.IsAmbiguous
+                            )
+                        );
+                    }
+                    return mapped;
+                }
+            )
+        );
     }
 
     [JsonRpcMethod(RpcMethods.GetOutline)]
     public Task<string?> GetOutlineAsync(OutlineRequest req) {
-        var idOrFqn = req.QueryOrId;
+        return Task.FromResult(
+            _indexManager.ReadIndex(
+                index => {
+                    var idOrFqn = req.QueryOrId;
 
-        // 1. Try exact match first (fast path for known TypeId or exact FQN)
-        var type = _index.Types.Find(t => t.Id == idOrFqn || t.Fqn == idOrFqn);
+                    // 1. Try exact match first (fast path for known TypeId or exact FQN)
+                    var type = index.Types.Find(t => t.Id == idOrFqn || t.Fqn == idOrFqn);
 
-        // 2. If exact match fails, use SymbolResolver for intelligent matching
-        if (type == null) {
-            var matches = _resolver.Resolve(idOrFqn, 1); // limit=1 for outline
-            if (matches.Count > 0) {
-                var match = matches[0];
-                type = _index.Types.Find(t => t.Id == match.Id);
-            }
-        }
+                    // 2. If exact match fails, use SymbolResolver for intelligent matching
+                    if (type == null) {
+                        var resolver = new SymbolResolver(index);
+                        var matches = resolver.Resolve(idOrFqn, 1); // limit=1 for outline
+                        if (matches.Count > 0) {
+                            var match = matches[0];
+                            type = index.Types.Find(t => t.Id == match.Id);
+                        }
+                    }
 
-        if (type == null) {
-            return Task.FromResult<string?>(null);
-        }
+                    if (type == null) {
+                        return null;
+                    }
 
-        var path = System.IO.Path.Combine(_outlineDir, type.Id + ".outline.md");
-        if (_fs.FileExists(path)) {
-            return Task.FromResult<string?>(_fs.ReadAllText(path));
-        }
-        return Task.FromResult<string?>(null);
+                    var path = System.IO.Path.Combine(_outlineDir, type.Id + ".outline.md");
+                    if (_fs.FileExists(path)) {
+                        return _fs.ReadAllText(path);
+                    }
+                    return null;
+                }
+            )
+        );
     }
 
     [JsonRpcMethod(RpcMethods.SearchSymbols)]
-
     public Task<List<SymbolMatch>> SearchSymbolsAsync(SearchRequest req) {
-        var matches = _resolver.Search(req.Query, req.Limit);
-        var mapped = new List<SymbolMatch>();
-        foreach (var m in matches) {
-            mapped.Add(
-                new SymbolMatch(
-                    m.Id,
-                    m.Fqn,
-                    m.Kind,
-                    (MatchKind)(int)m.MatchKind,
-                    m.RankScore,
-                    m.Distance,
-                    m.IsAmbiguous
-                )
-            );
-        }
-        return Task.FromResult(mapped);
+        return Task.FromResult(
+            _indexManager.ReadIndex(
+                index => {
+                    var resolver = new SymbolResolver(index);
+                    var matches = resolver.Search(req.Query, req.Limit);
+                    var mapped = new List<SymbolMatch>();
+                    foreach (var m in matches) {
+                        mapped.Add(
+                            new SymbolMatch(
+                                m.Id,
+                                m.Fqn,
+                                m.Kind,
+                                (MatchKind)(int)m.MatchKind,
+                                m.RankScore,
+                                m.Distance,
+                                m.IsAmbiguous
+                            )
+                        );
+                    }
+                    return mapped;
+                }
+            )
+        );
     }
 
     [JsonRpcMethod(RpcMethods.Status)]
     public Task<StatusResponse> StatusAsync() {
-        var s = _index.Stats;
-        // 这里只做最基础实现，后续可采集更多指标
         return Task.FromResult(
-            new StatusResponse(
-                s.ProjectCount,
-                s.TypeCount,
-                _index.Build.DurationMs,
-                _index.Incremental.LastIncrementalMs,
-                0, // watcherQueueDepth
-                1.0, // outlineCacheHitRatio (stub)
-                GC.GetTotalMemory(false) / (1024 * 1024)
+            _indexManager.ReadIndex(
+                index => {
+                    var s = index.Stats;
+                    return new StatusResponse(
+                        s.ProjectCount,
+                        s.TypeCount,
+                        index.Build.DurationMs,
+                        index.Incremental.LastIncrementalMs,
+                        _incrementalHost?.QueueDepth ?? 0,
+                        1.0, // outlineCacheHitRatio (stub)
+                        GC.GetTotalMemory(false) / (1024 * 1024),
+                        _indexManager.IsUpdating
+                    );
+                }
             )
         );
     }
@@ -139,6 +162,11 @@ public static class Program {
 
     private static async Task MainAsync(string[] args) {
         Console.WriteLine($"[CodeCortex.Service] 启动于 {DateTime.Now:O}");
+
+        // 清空调试日志文件
+        Atelia.Diagnostics.DebugUtil.ClearLog("Incremental");
+        Atelia.Diagnostics.DebugUtil.ClearLog("Watcher");
+        Atelia.Diagnostics.DebugUtil.ClearLog("IndexManager");
 
         // 支持通过参数注入 index 路径、outline 目录、端口
         string ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
@@ -170,8 +198,28 @@ public static class Program {
         // 配置默认输出到 LLM 显示器
         // await UpdateLlmDisplayAsync(index); 暂且关闭此功能尝试，因为“.github\copilot-instructions.md”的值只伴随user消息注入，而不随着LLM进行工具调用而刷新注入的内容，暂时无法把这文件当成面向LLM的实时显示器用了。
 
-        var service = new RpcService(index, outlineDir);
-        await TcpRpcHost.StartAsync(service, port);
+        // 创建ServiceIndexManager
+        using var indexManager = new ServiceIndexManager(index, indexPath, outlineDir);
+
+        // 查找解决方案路径以启动文件监控
+        var solutionPath = FindWorkspaceRoot(Directory.GetCurrentDirectory());
+        IncrementalHost? incrementalHost = null;
+
+        if (!string.IsNullOrEmpty(solutionPath)) {
+            try {
+                incrementalHost = await IncrementalHost.CreateAsync(indexManager, solutionPath, outlineDir);
+                incrementalHost.Start();
+                Console.WriteLine($"[监控] 文件监控已启动: {solutionPath}");
+            } catch (Exception ex) {
+                Console.WriteLine($"[监控] 文件监控启动失败: {ex.Message}");
+                // 继续运行，但没有增量更新功能
+            }
+        }
+
+        using (incrementalHost) {
+            var service = new RpcService(indexManager, outlineDir, incrementalHost);
+            await TcpRpcHost.StartAsync(service, port);
+        }
     }
 
     private static async Task<CodeCortexIndex?> EnsureIndexAsync(string indexPath, string outlineDir) {
