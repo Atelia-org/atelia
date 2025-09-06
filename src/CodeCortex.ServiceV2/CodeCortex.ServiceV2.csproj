@@ -1,14 +1,15 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
-    <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
     <LangVersion>preview</LangVersion>
-    <OutputType>Exe</OutputType>
   </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\CodeCortex.Core\CodeCortex.Core.csproj" />
     <ProjectReference Include="..\CodeCortex.Workspace\CodeCortex.Workspace.csproj" />
-  <PackageReference Include="StreamJsonRpc" Version="2.20.17" />
   </ItemGroup>
+
 </Project>

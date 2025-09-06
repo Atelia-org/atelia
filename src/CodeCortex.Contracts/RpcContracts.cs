@@ -1,4 +1,3 @@
-
 namespace CodeCortex.Service;
 
 public enum MatchKind { Exact = 0, ExactIgnoreCase = 1, Suffix = 2, Wildcard = 3, GenericBase = 4, Fuzzy = 5 }
@@ -16,3 +15,4 @@ public sealed record ResolveRequest(string Query);
 public sealed record OutlineRequest(string QueryOrId);
 public sealed record SearchRequest(string Query, int Limit = 20);
 public sealed record StatusResponse(int Projects, int TypesIndexed, long InitialIndexDurationMs, long LastIncrementalMs, int WatcherQueueDepth, double OutlineCacheHitRatio, long MemoryMB, bool IsUpdating);
+

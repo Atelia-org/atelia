@@ -9,7 +9,7 @@
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <PackageReference Include="StreamJsonRpc" Version="2.20.17" />
-    <ProjectReference Include="..\CodeCortex.Service\CodeCortex.Service.csproj" />
+    <ProjectReference Include="..\CodeCortex.Contracts\CodeCortex.Contracts.csproj" />
     <ProjectReference Include="..\CodeCortex.Core\CodeCortex.Core.csproj" />
   </ItemGroup>
 </Project>
