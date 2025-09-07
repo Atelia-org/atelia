@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>preview</LangVersion>
+    <RootNamespace>Atelia.CodeCortex.RpcHost</RootNamespace>
+    <AssemblyName>Atelia.CodeCortex.RpcHost</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CodeCortex.ServiceV2\CodeCortex.ServiceV2.csproj" />
+    <ProjectReference Include="..\CodeCortex.Contracts\CodeCortex.Contracts.csproj" />
+    <PackageReference Include="StreamJsonRpc" Version="2.20.17" />
+  </ItemGroup>
+</Project>
+
