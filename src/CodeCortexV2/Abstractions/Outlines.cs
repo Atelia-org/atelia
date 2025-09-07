@@ -7,7 +7,16 @@ public sealed record SearchHit(
     string? Assembly,
     SymbolId SymbolId,
     MatchKind MatchKind,
+    bool IsAmbiguous,
     double Score
+);
+
+public sealed record SearchResults(
+    IReadOnlyList<SearchHit> Items,
+    int Total,
+    int Offset,
+    int Limit,
+    int? NextOffset
 );
 
 public sealed record Location(string FilePath, int Start, int Length);
