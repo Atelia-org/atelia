@@ -37,59 +37,7 @@ search2Cmd.SetHandler(
 root.Add(search2Cmd);
 
 
-// v2: status2
-var status2Cmd = new Command("status2", "调用 status2() 查询宿主状态");
-status2Cmd.SetHandler((RpcEndpoint ep) => CliCommands.Status2Async(ep.Host, ep.Port), rpcEndpointBinder);
-root.Add(status2Cmd);
 
-// 旧v1命令（保留占位，可逐步移除）
-var resolveQueryArg = new Argument<string>("query", "符号名/后缀/通配/模糊");
-var resolveLimitOpt = new Option<int>("--limit", () => 20, "最大返回数量");
-var resolveCmd = new Command("resolve", "[v1] 通过RPC解析符号（v1服务已下线，保留占位）");
-resolveCmd.AddArgument(resolveQueryArg);
-resolveCmd.AddOption(resolveLimitOpt);
-resolveCmd.SetHandler(
-    (string query, int limit, RpcEndpoint ep) => CliCommands.ResolveAsync(query, limit, ep.Host, ep.Port),
-    resolveQueryArg, resolveLimitOpt, rpcEndpointBinder
-);
-root.Add(resolveCmd);
-
-var outlineIdArg = new Argument<string>("idOrFqn", "类型Id或FQN");
-var outlineCmd = new Command("outline", "[v1] 通过RPC获取类型Outline（v1服务已下线，保留占位）");
-outlineCmd.AddArgument(outlineIdArg);
-outlineCmd.SetHandler(
-    (string idOrFqn, RpcEndpoint ep) => CliCommands.OutlineAsync(idOrFqn, ep.Host, ep.Port),
-    outlineIdArg, rpcEndpointBinder
-);
-root.Add(outlineCmd);
-
-var searchQueryArg = new Argument<string>("query", "搜索关键字");
-var searchLimitOpt = new Option<int>("--limit", () => 20, "最大返回数量");
-var searchCmd = new Command("search", "[v1] 通过RPC搜索符号（v1服务已下线，保留占位）");
-searchCmd.AddArgument(searchQueryArg);
-searchCmd.AddOption(searchLimitOpt);
-searchCmd.SetHandler(
-    (string query, int limit, RpcEndpoint ep) => CliCommands.SearchAsync(query, limit, ep.Host, ep.Port),
-    searchQueryArg, searchLimitOpt, rpcEndpointBinder
-);
-root.Add(searchCmd);
-
-var statusCmd = new Command("status", "[v1] 查询RPC服务状态（v1服务已下线，保留占位）");
-statusCmd.SetHandler((RpcEndpoint ep) => CliCommands.StatusAsync(ep.Host, ep.Port), rpcEndpointBinder);
-root.Add(statusCmd);
-
-// 守护进程管理命令（start/stop/status）占位
-var daemonCmd = new Command("daemon", "管理RPC服务守护进程");
-var startCmd = new Command("start", "启动守护进程");
-startCmd.SetHandler(() => Console.WriteLine("[TODO] 守护进程启动实现"));
-daemonCmd.AddCommand(startCmd);
-var stopCmd = new Command("stop", "停止守护进程");
-stopCmd.SetHandler(() => Console.WriteLine("[TODO] 守护进程停止实现"));
-daemonCmd.AddCommand(stopCmd);
-var daemonStatusCmd = new Command("status", "查询守护进程状态");
-daemonStatusCmd.SetHandler(() => Console.WriteLine("[TODO] 守护进程状态查询实现"));
-daemonCmd.AddCommand(daemonStatusCmd);
-root.Add(daemonCmd);
 
 root.AddGlobalOption(rpcHostOption);
 root.AddGlobalOption(rpcPortOption);

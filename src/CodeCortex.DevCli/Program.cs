@@ -7,6 +7,7 @@ using CodeCortex.Core.Symbols;
 using CodeCortex.Core.IO;
 
 using CodeCortex.DevCli;
+using CodeCortex.DevCli.Util;
 using System.Text.Json;
 
 var root = new RootCommand("CodeCortex Dev CLI (Phase1 + ServiceV2 on-demand)");
@@ -63,14 +64,8 @@ scanCmd.SetHandler(
             await Console.Error.WriteLineAsync("ERROR: path argument is empty.");
             return;
         }
-        // Normalize path: if directory passed, try find single .sln inside.
-        if (Directory.Exists(path)) {
-            var slns = Directory.GetFiles(path, "*.sln", SearchOption.TopDirectoryOnly);
-            if (slns.Length == 1) {
-                path = slns[0];
-            }
-        }
-        try { path = Path.GetFullPath(path); } catch { }
+        // Normalize path (directory -> unique .sln)
+        path = SlnPathHelper.ResolveEntryPath(path);
         IndexBuildLogger.Log($"CLI.Scan Start mode={mode} rawPath={originalPath} normalized={path}");
 
         var msMode = mode.ToLowerInvariant() switch {
@@ -122,13 +117,8 @@ outlineAll.AddOption(reuseModeOption);
 outlineAll.SetHandler(
     async (string path, string mode, string reuseMode) => {
         IndexBuildLogger.Initialize(Directory.GetCurrentDirectory());
-        if (Directory.Exists(path)) {
-            var slns = Directory.GetFiles(path, "*.sln", SearchOption.TopDirectoryOnly);
-            if (slns.Length == 1) {
-                path = slns[0];
-            }
-        }
-        path = Path.GetFullPath(path);
+        // Normalize path (directory -> unique .sln)
+        path = SlnPathHelper.ResolveEntryPath(path);
         var msMode = mode.ToLowerInvariant() switch { "force" => MsBuildMode.Force, "fallback" => MsBuildMode.Fallback, _ => MsBuildMode.Auto };
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var loader = new MsBuildWorkspaceLoader(msMode);
@@ -217,11 +207,8 @@ var watchCmd = new Command("watch", "Watch source tree for .cs changes and perfo
 watchCmd.SetHandler(
     async (string path, string mode) => {
         IndexBuildLogger.Initialize(Directory.GetCurrentDirectory());
-        if (Directory.Exists(path)) {
-            var slns = Directory.GetFiles(path, "*.sln", SearchOption.TopDirectoryOnly);
-            if (slns.Length == 1) { path = slns[0]; }
-        }
-        path = Path.GetFullPath(path);
+        // Normalize path (directory -> unique .sln)
+        path = SlnPathHelper.ResolveEntryPath(path);
         var msMode = mode.ToLowerInvariant() switch { "force" => MsBuildMode.Force, "fallback" => MsBuildMode.Fallback, _ => MsBuildMode.Auto };
         CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var ctxRoot = Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
