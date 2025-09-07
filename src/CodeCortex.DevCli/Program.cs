@@ -9,7 +9,13 @@ using CodeCortex.Core.IO;
 using CodeCortex.DevCli;
 using System.Text.Json;
 
-var root = new RootCommand("CodeCortex CLI (Phase1 - S1-S6 Scan+Index+PromptWindow)");
+var root = new RootCommand("CodeCortex Dev CLI (Phase1 + ServiceV2 on-demand)");
+// v2: outline2 (on-demand, no cache)
+root.Add(CodeCortex.DevCli.V2Commands.CreateOutline2());
+// v2: e2e-sim (simulate mutation + verify outline)
+root.Add(CodeCortex.DevCli.V2Commands.CreateE2eSim());
+
+
 // 注册 window 命令（Prompt 窗口生成）
 
 var windowOutlineOption = new Option<string>("--outline-dir", () => Path.Combine(Directory.GetCurrentDirectory(), ".codecortex", "types"), "Outline 文件目录");

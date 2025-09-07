@@ -8,7 +8,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\CodeCortex.Core\CodeCortex.Core.csproj" />
-  <ProjectReference Include="..\CodeCortex.Workspace\CodeCortex.Workspace.csproj" />
+    <ProjectReference Include="..\CodeCortex.Workspace\CodeCortex.Workspace.csproj" />
+    <ProjectReference Include="..\CodeCortex.ServiceV2\CodeCortex.ServiceV2.csproj" />
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>
 </Project>
