@@ -12,6 +12,7 @@ public interface ISymbolIndex
 }
 
 public enum SymbolKind { Namespace, Type, Method, Property, Field, Event, Unknown }
+public enum MatchKind { Id = 0, Exact = 1, ExactIgnoreCase = 2, Suffix = 3, Wildcard = 4, GenericBase = 5, Fuzzy = 6 }
 
 public interface IMemberOutlineProvider
 {
