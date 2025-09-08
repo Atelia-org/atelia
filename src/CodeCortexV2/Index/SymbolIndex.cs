@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 using CodeCortexV2.Abstractions;
 using Microsoft.CodeAnalysis;
+using Atelia.Diagnostics;
 
 namespace CodeCortexV2.Index;
 
@@ -82,10 +84,13 @@ public sealed class SymbolIndex : ISymbolIndex {
             return new SearchResults(Array.Empty<SearchHit>(), 0, 0, limit, 0);
         }
 
+        var sw = Stopwatch.StartNew();
         query = query.Trim();
         var added = new HashSet<string>(StringComparer.Ordinal);
         var results = new List<SearchHit>(256);
         bool hasWildcard = ContainsWildcard(query);
+        bool hasDot = query.Contains('.');
+        DebugUtil.Print("Search", $"query='{query}', kind={(kindFilter?.ToString() ?? "null")}, limit={limit}, offset={offset}");
 
         // 0) Try treat as SymbolKey (direct id)
         if (TryResolveSymbolId(query, out var idSym)) {
@@ -112,7 +117,48 @@ public sealed class SymbolIndex : ISymbolIndex {
                 AddResult(results, added, e.ToHit(MatchKind.ExactIgnoreCase, 10), limit);
             }
         }
-        // 3) Suffix
+        // 3) Prefix (FQN) when query contains '.'
+        if (hasDot && results.Count < limit) {
+            // 3a) raw FQN（忽略 global::）
+            foreach (var e in _all) {
+                var fqn = e.Fqn;
+                var fqnNoGlobal = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
+                if (fqnNoGlobal.StartsWith(query, StringComparison.OrdinalIgnoreCase)) {
+                    AddResult(results, added, e.ToHit(MatchKind.Prefix, fqnNoGlobal.Length - query.Length), limit);
+                }
+            }
+            // 3b) base FQN（去泛型）
+            if (results.Count < limit) {
+                foreach (var e in _all) {
+                    var fqnBase = NormalizeFqnBase(e.Fqn);
+                    if (fqnBase.StartsWith(query, StringComparison.OrdinalIgnoreCase)) {
+                        AddResult(results, added, e.ToHit(MatchKind.Prefix, (fqnBase.Length - query.Length) + 5), limit);
+                    }
+                }
+            }
+        }
+        // 4) Contains (FQN) when query contains '.'
+        if (hasDot && results.Count < limit) {
+            // 4a) raw FQN（忽略 global::）
+            foreach (var e in _all) {
+                var fqn = e.Fqn;
+                var fqnNoGlobal = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
+                if (fqnNoGlobal.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) {
+                    AddResult(results, added, e.ToHit(MatchKind.Contains, fqnNoGlobal.Length), limit);
+                }
+            }
+            // 4b) base FQN（去泛型）
+            if (results.Count < limit) {
+                foreach (var e in _all) {
+                    var fqnBase = NormalizeFqnBase(e.Fqn);
+                    if (fqnBase.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) {
+                        AddResult(results, added, e.ToHit(MatchKind.Contains, fqnBase.Length + 5), limit);
+                    }
+                }
+            }
+        }
+
+        // 5) Suffix
         List<Entry>? allSuffix = null;
         if (results.Count < limit) {
             allSuffix = _all.Where(a => a.Fqn.EndsWith(query, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -120,7 +166,7 @@ public sealed class SymbolIndex : ISymbolIndex {
                 AddResult(results, added, e.ToHit(MatchKind.Suffix, e.Fqn.Length - query.Length), limit);
             }
         }
-        // 4) Wildcard
+        // 6) Wildcard
         if (hasWildcard && results.Count < limit) {
             var rx = WildcardToRegex(query);
             foreach (var e in _all) {
@@ -129,7 +175,7 @@ public sealed class SymbolIndex : ISymbolIndex {
                 }
             }
         }
-        // 5) GenericBase (higher than fuzzy)
+        // 7) GenericBase (higher than fuzzy)
         if (results.Count < limit) {
             var simple = ExtractSimpleName(query);
             var baseName = ExtractGenericBase(simple);
@@ -142,7 +188,7 @@ public sealed class SymbolIndex : ISymbolIndex {
                 }
             }
         }
-        // 6) Fuzzy (simple name only)
+        // 8) Fuzzy (simple name only)
         if (!hasWildcard && results.Count < limit) {
             int threshold = ComputeFuzzyThreshold(query);
             foreach (var e in _all) {
@@ -165,6 +211,10 @@ public sealed class SymbolIndex : ISymbolIndex {
                 }
             }
         }
+        // Kind filter (currently types only)
+        if (kindFilter is not null) {
+            results = results.Where(r => r.Kind == kindFilter).ToList();
+        }
         // Order and paginate
         var orderedAll = results
             .OrderBy(m => (int)m.MatchKind)
@@ -176,6 +226,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         var lim = Math.Max(0, limit);
         var page = orderedAll.Skip(off).Take(lim).ToList();
         int? nextOff = off + lim < total ? off + lim : null;
+        DebugUtil.Print("Search", $"done: total={total}, page={page.Count}, off={off}, lim={lim}, elapsed={sw.ElapsedMilliseconds}ms");
         return new SearchResults(page, total, off, lim, nextOff);
     }
 
@@ -233,6 +284,7 @@ public sealed class SymbolIndex : ISymbolIndex {
                     rowBest = val;
                 }
             }
+
             if (rowBest > limit) {
                 return -1;
             }
@@ -254,6 +306,8 @@ public sealed class SymbolIndex : ISymbolIndex {
         var tick = name.IndexOf('`');
         if (tick >= 0) {
             return name.Substring(0, tick);
+
+
         }
 
         var lt = name.IndexOf('<');
@@ -277,6 +331,8 @@ public sealed class SymbolIndex : ISymbolIndex {
     private bool TryResolveSymbolId(string id, out ISymbol symbol) {
         symbol = null!;
         if (string.IsNullOrEmpty(id)) {
+
+
             return false;
         }
         // Support documentation comment id for types: "T:Namespace.Type`1" (nested uses '+')
@@ -293,6 +349,27 @@ public sealed class SymbolIndex : ISymbolIndex {
         return false;
     }
 
+    private static string NormalizeFqnBase(string fqn) {
+        if (string.IsNullOrEmpty(fqn)) {
+            return fqn;
+        }
+        // strip global:: prefix
+        var s = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
+        // split by '.' and trim generic arity from each segment
+        var parts = s.Split('.');
+        for (int i = 0; i < parts.Length; i++) {
+            var seg = parts[i];
+            var tick = seg.IndexOf('`');
+            if (tick >= 0) {
+                seg = seg.Substring(0, tick);
+            }
+
+            parts[i] = seg;
+        }
+        return string.Join(".", parts);
+    }
+
+
     private static void AddResult(List<SearchHit> list, HashSet<string> added, SearchHit hit, int limit) {
         if (added.Add(hit.SymbolId.Value)) {
             list.Add(hit);
@@ -306,6 +383,8 @@ public sealed class SymbolIndex : ISymbolIndex {
             Namespace: null,
             Assembly: Assembly,
             SymbolId: new SymbolId(SymbolId),
+
+
             MatchKind: matchKind,
             IsAmbiguous: false,
             Score: score

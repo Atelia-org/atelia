@@ -6,7 +6,7 @@ using CodeCortexV2.Workspace;
 if (args.Length == 0 || args[0] is "-h" or "--help") {
     Console.WriteLine(
         "CodeCortexV2.DevCli - dev-time one-shot CLI\n" +
-                      "Usage:\n  ccv2 <sln|csproj> find <query> [--limit N] [--offset M] [--json]\n  ccv2 <sln|csproj> outline <query-or-id> [--limit N] [--offset M] [--json|--md]\n  ccv2 <sln|csproj> source <typeId>\n"
+                      "Usage:\n  ccv2 <sln|csproj> find <query> [--limit N] [--offset M] [--kind namespace|type|method|property|field|event] [--json]\n  ccv2 <sln|csproj> outline <query-or-id> [--limit N] [--offset M] [--json|--md]\n  ccv2 <sln|csproj> source <typeId>\n"
     );
     return 0;
 }
@@ -30,6 +30,7 @@ switch (cmd) {
         int limit = 30;
         int offset = 0;
         bool json = false;
+        CodeCortexV2.Abstractions.SymbolKind? kind = null;
         for (int i = 3; i < args.Length; i++) {
             if (args[i] == "--json") {
                 json = true;
@@ -39,10 +40,18 @@ switch (cmd) {
             } else if (args[i] == "--offset" && i + 1 < args.Length && int.TryParse(args[i + 1], out var m)) {
                 offset = m;
                 i++;
+            } else if (args[i] == "--kind" && i + 1 < args.Length) {
+                var v = args[i + 1];
+                i++;
+                if (Enum.TryParse<CodeCortexV2.Abstractions.SymbolKind>(v, true, out var parsed)) {
+                    kind = parsed;
+                } else {
+                    Console.WriteLine($"Unknown --kind '{v}', ignored. Use: namespace|type|method|property|field|event");
+                }
             }
         }
         var index = await SymbolIndex.BuildAsync(host.Workspace.CurrentSolution, cts.Token);
-        var page = await index.SearchAsync(query, null, limit, offset, cts.Token);
+        var page = await index.SearchAsync(query, kind, limit, offset, cts.Token);
         if (json) {
             var jsonStr = JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true });
             Console.WriteLine(jsonStr);
@@ -79,7 +88,7 @@ switch (cmd) {
             }
         }
         var index = await SymbolIndex.BuildAsync(host.Workspace.CurrentSolution, cts.Token);
-        var page = await index.SearchAsync(query, null, limit, offset, cts.Token);
+        var page = await index.SearchAsync(query, CodeCortexV2.Abstractions.SymbolKind.Type, limit, offset, cts.Token);
         if (page.Total == 0) {
             Console.WriteLine("未找到匹配。注意：目前仅支持查询 workspace 中定义的类型（DocCommentId T:...）。");
             return 0;

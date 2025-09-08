@@ -10,7 +10,17 @@ public interface ISymbolIndex {
 }
 
 public enum SymbolKind { Namespace, Type, Method, Property, Field, Event, Unknown }
-public enum MatchKind { Id = 0, Exact = 1, ExactIgnoreCase = 2, Suffix = 3, Wildcard = 4, GenericBase = 5, Fuzzy = 6 }
+public enum MatchKind {
+    Id = 0,
+    Exact = 1,
+    ExactIgnoreCase = 2,
+    Prefix = 3,
+    Contains = 4,
+    Suffix = 5,
+    Wildcard = 6,
+    GenericBase = 7,
+    Fuzzy = 8
+}
 
 public interface IMemberOutlineProvider {
     Task<MemberOutline> GetMemberOutlineAsync(SymbolId memberId, OutlineOptions? options, CancellationToken ct);
