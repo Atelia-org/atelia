@@ -9,7 +9,8 @@
     <ProjectReference Include="..\..\src\CodeCortex.Core\CodeCortex.Core.csproj" />
     <ProjectReference Include="..\..\src\CodeCortex.Workspace\CodeCortex.Workspace.csproj" />
     <ProjectReference Include="..\..\src\CodeCortex.Contracts\CodeCortex.Contracts.csproj" />
-  <ProjectReference Include="..\..\src\Diagnostics\Diagnostics.csproj" />
+    <ProjectReference Include="..\..\src\Diagnostics\Diagnostics.csproj" />
+    <ProjectReference Include="..\..\src\CodeCortexV2\CodeCortexV2.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.IO.Abstractions.TestingHelpers" Version="19.2.50" />
