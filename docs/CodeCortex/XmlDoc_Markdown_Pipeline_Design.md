@@ -17,7 +17,7 @@
 ## 0. 总览
 
 分层阶段（输入 → 输出）：
-1) CaptureXml：从符号抓取 XML 文本（含 fallback）→ RawXml
+1) ExtractXml：从符号抓取 XML 文本（含 fallback）→ RawXml
 2) ParseXml：解析为 XDocument（保留空白）→ XmlDom
 3) Normalize：HTML 实体解码、空白规范化、可选 include/inheritdoc 展开 → NormalizedXmlDom
 4) ResolveRefs：解析 cref/langword/href、类型显示名映射（可选：System.Int32→int）→ ResolvedXmlDom
@@ -50,7 +50,7 @@
 
 ## 2. 阶段职责与契约
 
-### 2.1 CaptureXml
+### 2.1 ExtractXml
 - 输入：ISymbol
 - 输出：RawXml
 - 职责：优先 `ISymbol.GetDocumentationCommentXml()`；若为空，尝试从 LeadingTrivia 清洗出 XML。
