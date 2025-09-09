@@ -28,7 +28,7 @@ public sealed class TypeOutlineProvider : ITypeOutlineProvider {
         // Prepend type metadata as a SectionBlock for a fully uniform block tree
         var typeMeta = BuildTypeMetadataSection(sym);
         typeBlocks.Insert(0, typeMeta);
-        var typeSummaryMd = MarkdownLayout.RenderBlocksToMarkdown(typeBlocks, string.Empty, RenderMode.Final, baseHeadingLevel: 3);
+        var typeSummaryMd = MarkdownLayout.RenderBlocksToMarkdown(typeBlocks, string.Empty, baseHeadingLevel: 3, maxAtxLevel: 4);
         var typeMember = new MemberOutline(
             Kind: TypeKindKeyword(sym.TypeKind),
             Name: name,

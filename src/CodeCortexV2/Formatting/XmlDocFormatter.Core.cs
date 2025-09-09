@@ -82,14 +82,14 @@ internal static partial class XmlDocFormatter {
         }
 
         var sb = new StringBuilder();
-        MarkdownRenderer.RenderLinesWithStructure(sb, lines, indent: string.Empty, bulletizePlain: false, startIndex: 0, insertBlankBeforeTable: false);
+        MarkdownRenderer.RenderLinesWithStructure(sb, lines, indent: string.Empty, bulletizePlain: false, startIndex: 0);
         return sb.ToString().TrimEnd();
     }
 
     public static string BuildDetailedMemberMarkdown(ISymbol symbol) {
         var blocks = BuildMemberBlocks(symbol);
-        // Default external rendering uses Final mode with ATX headers; base level 3 works well inside outline lists
-        return MarkdownLayout.RenderBlocksToMarkdown(blocks, indent: string.Empty, mode: RenderMode.Final, baseHeadingLevel: 3);
+        // Default rendering uses ATX headers up to maxAtxLevel; base level 3 works well inside outline lists
+        return MarkdownLayout.RenderBlocksToMarkdown(blocks, indent: string.Empty, baseHeadingLevel: 3, maxAtxLevel: 4);
     }
 
     public static List<Block> BuildMemberBlocks(ISymbol symbol) {
@@ -116,12 +116,7 @@ internal static partial class XmlDocFormatter {
         blocks.AddRange(BuildBlocksFromDocument(doc));
         try {
             var symName = symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-            var preview = JsonFormatter.RenderBlocksToJson(blocks, indented: false);
-            if (preview.Length > 400) {
-                preview = preview.Substring(0, 400) + "...";
-            }
-
-            DebugUtil.Print("XmlDocPipeline", $"Built {blocks.Count} blocks for {symName}: {preview}");
+            DebugUtil.Print("XmlDocPipeline", $"Built {blocks.Count} blocks for {symName}.");
         } catch { /* logging must not break pipeline */ }
         return blocks;
     }

@@ -12,7 +12,7 @@ namespace CodeCortexV2.Formatting;
 // - General rule: insert a single blank line between heterogeneous blocks for readability.
 // - Do NOT: decode HTML entities or parse XML; only formatting decisions live here.
 
-public enum RenderMode { Preview, Final }
+
 
 public static class MarkdownLayout {
     public static string RenderTypeOutline(TypeOutline outline) {
@@ -24,18 +24,13 @@ public static class MarkdownLayout {
             sb.AppendLine(outline.Summary.TrimEnd());
             sb.AppendLine();
         }
-        // Members
+        // Members as sections: Signature as heading, XmlDoc as body
         for (int i = 0; i < outline.Members.Count; i++) {
             MemberOutline m = outline.Members[i];
-            sb.AppendLine($"- `{m.Signature}`");
+            sb.AppendLine($"## `{m.Signature}`");
             if (!string.IsNullOrWhiteSpace(m.Summary)) {
-                // Preserve provider-rendered markdown exactly; only apply visual indentation.
-                var lines = m.Summary.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-                foreach (var line in lines) {
-                    sb.AppendLine("  " + line);
-                }
+                sb.AppendLine(m.Summary.TrimEnd());
             }
-            // Ensure exactly one blank line between members
             if (i < outline.Members.Count - 1) {
                 sb.AppendLine();
             }
@@ -44,12 +39,12 @@ public static class MarkdownLayout {
     }
 
     public static string RenderBlocksToMarkdown(List<Block> blocks, string indent = "") {
-        return RenderBlocksToMarkdown(blocks, indent, RenderMode.Preview, baseHeadingLevel: 2);
+        return RenderBlocksToMarkdown(blocks, indent, baseHeadingLevel: 2, maxAtxLevel: 3);
     }
 
-    public static string RenderBlocksToMarkdown(List<Block> blocks, string indent, RenderMode mode, int baseHeadingLevel) {
+    public static string RenderBlocksToMarkdown(List<Block> blocks, string indent, int baseHeadingLevel, int maxAtxLevel) {
         var sb = new StringBuilder();
-        RenderBlocks(sb, blocks, indent, mode, baseHeadingLevel, depth: 0);
+        RenderBlocks(sb, blocks, indent, baseHeadingLevel, maxAtxLevel, depth: 0);
         return sb.ToString().TrimEnd();
     }
 
@@ -58,7 +53,7 @@ public static class MarkdownLayout {
         return XmlDocFormatter.BuildMemberBlocks(symbol);
     }
 
-    private static void RenderBlocks(StringBuilder sb, List<Block> blocks, string indent, RenderMode mode, int baseHeadingLevel, int depth) {
+    private static void RenderBlocks(StringBuilder sb, List<Block> blocks, string indent, int baseHeadingLevel, int maxAtxLevel, int depth) {
         string D(string? s) => s ?? string.Empty;
         for (int i = 0; i < blocks.Count; i++) {
             switch (blocks[i]) {
@@ -80,16 +75,16 @@ public static class MarkdownLayout {
                     sb.AppendLine(indent + fence);
                     break;
                 case SequenceBlock seq:
-                    RenderBlocks(sb, seq.Children, indent, mode, baseHeadingLevel, depth);
+                    RenderBlocks(sb, seq.Children, indent, baseHeadingLevel, maxAtxLevel, depth);
                     break;
                 case ListBlock list:
                     if (list.Ordered) {
                         for (int idx = 0; idx < list.Items.Count; idx++) {
-                            RenderListItem(sb, indent, isOrdered: true, index: idx + 1, list.Items[idx], mode, baseHeadingLevel, depth);
+                            RenderListItem(sb, indent, isOrdered: true, index: idx + 1, list.Items[idx], baseHeadingLevel, maxAtxLevel, depth);
                         }
                     } else {
                         for (int idx = 0; idx < list.Items.Count; idx++) {
-                            RenderListItem(sb, indent, isOrdered: false, index: idx + 1, list.Items[idx], mode, baseHeadingLevel, depth);
+                            RenderListItem(sb, indent, isOrdered: false, index: idx + 1, list.Items[idx], baseHeadingLevel, maxAtxLevel, depth);
                         }
                     }
                     break;
@@ -104,14 +99,14 @@ public static class MarkdownLayout {
                     break;
                 case SectionBlock sec:
                     var heading = D(sec.Heading?.TrimEnd(':'));
-                    if (mode == RenderMode.Final) {
-                        int level = Math.Max(1, baseHeadingLevel + depth);
+                    int level = Math.Max(1, baseHeadingLevel + depth);
+                    if (level <= maxAtxLevel) {
                         sb.AppendLine(indent + new string('#', level) + " " + heading);
                     } else {
                         sb.AppendLine(indent + heading + ":");
                     }
                     if (sec.Body.Children.Count > 0) {
-                        RenderBlocks(sb, sec.Body.Children, indent + "  ", mode, baseHeadingLevel, depth + 1);
+                        RenderBlocks(sb, sec.Body.Children, indent + "  ", baseHeadingLevel, maxAtxLevel, depth + 1);
                     }
                     break;
             }
@@ -127,7 +122,7 @@ public static class MarkdownLayout {
         }
     }
 
-    private static void RenderListItem(StringBuilder sb, string indent, bool isOrdered, int index, SequenceBlock content, RenderMode mode, int baseHeadingLevel, int depth) {
+    private static void RenderListItem(StringBuilder sb, string indent, bool isOrdered, int index, SequenceBlock content, int baseHeadingLevel, int maxAtxLevel, int depth) {
         // If first child is a single paragraph, render tight: "- text"; render remaining children indented
         string marker = isOrdered ? ($"{index}. ") : "- ";
         if (content.Children.Count == 0) {
@@ -137,11 +132,11 @@ public static class MarkdownLayout {
         if (content.Children[0] is ParagraphBlock p0) {
             sb.AppendLine(indent + marker + (p0.Text ?? string.Empty));
             if (content.Children.Count > 1) {
-                RenderBlocks(sb, content.Children.Skip(1).ToList(), indent + "  ", mode, baseHeadingLevel, depth + 1);
+                RenderBlocks(sb, content.Children.Skip(1).ToList(), indent + "  ", baseHeadingLevel, maxAtxLevel, depth + 1);
             }
         } else {
             sb.AppendLine(indent + marker.TrimEnd());
-            RenderBlocks(sb, content.Children, indent + "  ", mode, baseHeadingLevel, depth + 1);
+            RenderBlocks(sb, content.Children, indent + "  ", baseHeadingLevel, maxAtxLevel, depth + 1);
         }
     }
 }

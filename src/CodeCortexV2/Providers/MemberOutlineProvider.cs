@@ -53,7 +53,7 @@ public sealed class MemberOutlineProvider : IMemberOutlineProvider {
         }
 
         var sb = new StringBuilder();
-        MarkdownRenderer.RenderLinesWithStructure(sb, lines, indent: string.Empty, bulletizePlain: false, startIndex: 0, insertBlankBeforeTable: true);
+        MarkdownRenderer.RenderLinesWithStructure(sb, lines, indent: string.Empty, bulletizePlain: false, startIndex: 0);
         return sb.ToString().TrimEnd();
     }
 

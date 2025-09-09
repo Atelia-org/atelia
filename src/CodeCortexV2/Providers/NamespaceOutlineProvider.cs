@@ -10,21 +10,17 @@ namespace CodeCortexV2.Providers;
 /// - Then direct children only: child namespaces and direct public/protected types (no type members)
 /// This allows reusing the existing MarkdownLayout.RenderTypeOutline pipeline.
 /// </summary>
-public sealed class NamespaceOutlineProvider
-{
+public sealed class NamespaceOutlineProvider {
     private readonly Func<SymbolId, ISymbol?> _resolve;
 
-    public NamespaceOutlineProvider(Func<SymbolId, ISymbol?> symbolResolver)
-    {
+    public NamespaceOutlineProvider(Func<SymbolId, ISymbol?> symbolResolver) {
         _resolve = symbolResolver;
     }
 
-    public Task<TypeOutline> GetNamespaceAsTypeOutlineAsync(SymbolId namespaceId, OutlineOptions? options, CancellationToken ct)
-    {
+    public Task<TypeOutline> GetNamespaceAsTypeOutlineAsync(SymbolId namespaceId, OutlineOptions? options, CancellationToken ct) {
         options ??= new OutlineOptions();
         var sym = _resolve(namespaceId) as INamespaceSymbol;
-        if (sym is null)
-        {
+        if (sym is null) {
             throw new InvalidOperationException($"Namespace symbol not found: {namespaceId}");
         }
 
@@ -35,7 +31,7 @@ public sealed class NamespaceOutlineProvider
         var nsBlocks = MarkdownLayout.BuildMemberBlocks(sym);
         var nsMeta = BuildNamespaceMetadataSection(sym);
         nsBlocks.Insert(0, nsMeta);
-        var nsSummaryMd = MarkdownLayout.RenderBlocksToMarkdown(nsBlocks, string.Empty, RenderMode.Final, baseHeadingLevel: 3);
+        var nsSummaryMd = MarkdownLayout.RenderBlocksToMarkdown(nsBlocks, string.Empty, baseHeadingLevel: 3, maxAtxLevel: 4);
         var parent = new MemberOutline(
             Kind: "namespace",
             Name: nsName,
@@ -47,43 +43,44 @@ public sealed class NamespaceOutlineProvider
         var members = new List<MemberOutline> { parent };
 
         // 1) Direct child namespaces (alphabetical)
-        foreach (var sub in sym.GetNamespaceMembers().OrderBy(n => n.Name))
-        {
+        foreach (var sub in sym.GetNamespaceMembers().OrderBy(n => n.Name)) {
             ct.ThrowIfCancellationRequested();
             var blocks = MarkdownLayout.BuildMemberBlocks(sub);
-            var sum = MarkdownLayout.RenderBlocksToMarkdown(blocks, string.Empty, RenderMode.Final, baseHeadingLevel: 3);
-            members.Add(new MemberOutline(
-                Kind: "namespace",
-                Name: sub.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                Signature: SignatureFormatter.RenderSignature(sub),
-                Summary: sum,
-                DeclaredIn: new CodeCortexV2.Abstractions.Location(string.Empty, 0, 0)
-            ));
+            var sum = MarkdownLayout.RenderBlocksToMarkdown(blocks, string.Empty, baseHeadingLevel: 3, maxAtxLevel: 4);
+            members.Add(
+                new MemberOutline(
+                    Kind: "namespace",
+                    Name: sub.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                    Signature: SignatureFormatter.RenderSignature(sub),
+                    Summary: sum,
+                    DeclaredIn: new CodeCortexV2.Abstractions.Location(string.Empty, 0, 0)
+                )
+            );
         }
 
         // 2) Direct public/protected types (alphabetical)
         foreach (var t in sym.GetTypeMembers()
                      .Where(t => IsPublicApi(t))
-                     .OrderBy(t => t.Name))
-        {
+                     .OrderBy(t => t.Name)) {
             ct.ThrowIfCancellationRequested();
             // Only type-level metadata + xml doc (no members)
             var typeBlocks = XmlDocFormatter.BuildMemberBlocks(t);
             var typeMeta = BuildTypeMetadataSection(t);
             typeBlocks.Insert(0, typeMeta);
-            var typeSummaryMd = MarkdownLayout.RenderBlocksToMarkdown(typeBlocks, string.Empty, RenderMode.Final, baseHeadingLevel: 3);
-            members.Add(new MemberOutline(
-                Kind: TypeKindKeyword(t.TypeKind),
-                Name: t.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                Signature: SignatureFormatter.RenderSignature(t),
-                Summary: typeSummaryMd,
-                DeclaredIn: ToLocation(t)
-            ));
+            var typeSummaryMd = MarkdownLayout.RenderBlocksToMarkdown(typeBlocks, string.Empty, baseHeadingLevel: 3, maxAtxLevel: 4);
+            members.Add(
+                new MemberOutline(
+                    Kind: TypeKindKeyword(t.TypeKind),
+                    Name: t.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                    Signature: SignatureFormatter.RenderSignature(t),
+                    Summary: typeSummaryMd,
+                    DeclaredIn: ToLocation(t)
+                )
+            );
         }
 
         // Optional truncation
-        if (options.MaxItems is int max && max > 0 && members.Count > max)
-        {
+        if (options.MaxItems is int max && max > 0 && members.Count > max) {
             members = members.Take(max).ToList();
         }
 
@@ -94,8 +91,7 @@ public sealed class NamespaceOutlineProvider
     private static bool IsPublicApi(INamedTypeSymbol s)
         => s.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal;
 
-    private static string TypeKindKeyword(TypeKind k) => k switch
-    {
+    private static string TypeKindKeyword(TypeKind k) => k switch {
         TypeKind.Class => "class",
         TypeKind.Struct => "struct",
         TypeKind.Interface => "interface",
@@ -104,52 +100,43 @@ public sealed class NamespaceOutlineProvider
         _ => k.ToString().ToLowerInvariant()
     };
 
-    private static CodeCortexV2.Abstractions.Location ToLocation(ISymbol s)
-    {
+    private static CodeCortexV2.Abstractions.Location ToLocation(ISymbol s) {
         var file = s.Locations.FirstOrDefault(l => l.IsInSource)?.SourceTree?.FilePath ?? string.Empty;
         return new CodeCortexV2.Abstractions.Location(file, 0, 0);
     }
 
-    private static SectionBlock BuildNamespaceMetadataSection(INamespaceSymbol sym)
-    {
+    private static SectionBlock BuildNamespaceMetadataSection(INamespaceSymbol sym) {
         var fqn = sym.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty);
         var docId = DocumentationCommentId.CreateDeclarationId(sym) ?? ("N:" + fqn);
 
         var inner = new List<Block>();
-        if (!string.IsNullOrEmpty(fqn))
-        {
+        if (!string.IsNullOrEmpty(fqn)) {
             inner.Add(new SectionBlock("FQN", new SequenceBlock(new List<Block> { new ParagraphBlock(fqn) })));
         }
-        if (!string.IsNullOrEmpty(docId))
-        {
+        if (!string.IsNullOrEmpty(docId)) {
             inner.Add(new SectionBlock("DocId", new SequenceBlock(new List<Block> { new ParagraphBlock(docId) })));
         }
 
         return new SectionBlock("Namespace Metadata", new SequenceBlock(inner));
     }
 
-    private static SectionBlock BuildTypeMetadataSection(INamedTypeSymbol sym)
-    {
+    private static SectionBlock BuildTypeMetadataSection(INamedTypeSymbol sym) {
         var fqn = sym.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty);
         var docId = Microsoft.CodeAnalysis.DocumentationCommentId.CreateDeclarationId(sym) ?? fqn;
         var asm = sym.ContainingAssembly?.Name ?? string.Empty;
         var file = sym.Locations.FirstOrDefault(l => l.IsInSource)?.SourceTree?.FilePath;
 
         var inner = new List<Block>();
-        if (!string.IsNullOrEmpty(fqn))
-        {
+        if (!string.IsNullOrEmpty(fqn)) {
             inner.Add(new SectionBlock("FQN", new SequenceBlock(new List<Block> { new ParagraphBlock(fqn) })));
         }
-        if (!string.IsNullOrEmpty(docId))
-        {
+        if (!string.IsNullOrEmpty(docId)) {
             inner.Add(new SectionBlock("DocId", new SequenceBlock(new List<Block> { new ParagraphBlock(docId) })));
         }
-        if (!string.IsNullOrEmpty(asm))
-        {
+        if (!string.IsNullOrEmpty(asm)) {
             inner.Add(new SectionBlock("Assembly", new SequenceBlock(new List<Block> { new ParagraphBlock(asm) })));
         }
-        if (!string.IsNullOrEmpty(file))
-        {
+        if (!string.IsNullOrEmpty(file)) {
             inner.Add(new SectionBlock("File", new SequenceBlock(new List<Block> { new ParagraphBlock(System.IO.Path.GetFileName(file)) })));
         }
 
