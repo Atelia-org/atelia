@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Diagnostics;
+using System.Linq;
 using CodeCortexV2.Abstractions;
 using Microsoft.CodeAnalysis;
 using Atelia.Diagnostics;
@@ -10,7 +11,7 @@ public sealed class SymbolIndex : ISymbolIndex {
     private readonly Solution _solution;
     private readonly List<Compilation> _compilations = new();
 
-    private readonly List<Entry> _all = new();
+    private readonly Dictionary<string, Entry> _all = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _fqnCaseSensitive = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _fqnIgnoreCase = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HashSet<string>> _byGenericBase = new(StringComparer.OrdinalIgnoreCase);
@@ -36,6 +37,7 @@ public sealed class SymbolIndex : ISymbolIndex {
 
     private void EnumerateTypes(Compilation compilation, CancellationToken ct) {
         void WalkNamespace(INamespaceSymbol ns) {
+            AddNamespace(ns);
             foreach (var t in ns.GetTypeMembers()) {
                 WalkType(t);
             }
@@ -57,25 +59,50 @@ public sealed class SymbolIndex : ISymbolIndex {
     private void AddType(INamedTypeSymbol t) {
         var fqn = t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var simple = t.Name;
-        var kind = t.TypeKind.ToString();
         var asm = t.ContainingAssembly?.Name ?? string.Empty;
-        var docId = Microsoft.CodeAnalysis.DocumentationCommentId.CreateDeclarationId(t) ?? $"T:{fqn}";
-        var entry = new Entry(docId, fqn, simple, kind, asm, ExtractGenericBase(simple));
-        _all.Add(entry);
+        var docId = Microsoft.CodeAnalysis.DocumentationCommentId.CreateDeclarationId(t)
+            ?? "T:" + fqn.Replace("global::", string.Empty);
+        var parentNs = t.ContainingNamespace?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            ?.Replace("global::", string.Empty) ?? string.Empty;
+        var entry = new Entry(docId, fqn, simple, Abstractions.SymbolKind.Type, asm, ExtractGenericBase(simple), parentNs);
+        if (!_all.ContainsKey(docId)) {
+            _all[docId] = entry;
+        }
         if (!_fqnCaseSensitive.ContainsKey(fqn)) {
             _fqnCaseSensitive[fqn] = docId;
         }
-
         if (!_fqnIgnoreCase.ContainsKey(fqn)) {
             _fqnIgnoreCase[fqn] = docId;
         }
-
         if (!string.IsNullOrEmpty(entry.GenericBase)) {
             if (!_byGenericBase.TryGetValue(entry.GenericBase, out var set)) {
                 set = new HashSet<string>(StringComparer.Ordinal);
                 _byGenericBase[entry.GenericBase] = set;
             }
             set.Add(docId);
+        }
+    }
+
+    private void AddNamespace(INamespaceSymbol ns) {
+        if (ns.IsGlobalNamespace) {
+            return; // skip indexing the global (root) namespace
+        }
+        var fqn = ns.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var simple = ns.Name;
+        var asm = string.Empty;
+        var fqnNoGlobal = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
+        var docId = "N:" + fqnNoGlobal;
+        var lastDot = fqnNoGlobal.LastIndexOf('.');
+        var parentNs = lastDot > 0 ? fqnNoGlobal.Substring(0, lastDot) : string.Empty;
+        var entry = new Entry(docId, fqn, simple, Abstractions.SymbolKind.Namespace, asm, string.Empty, parentNs);
+        if (!_all.ContainsKey(docId)) {
+            _all[docId] = entry;
+        }
+        if (!_fqnCaseSensitive.ContainsKey(fqn)) {
+            _fqnCaseSensitive[fqn] = docId;
+        }
+        if (!_fqnIgnoreCase.ContainsKey(fqn)) {
+            _fqnIgnoreCase[fqn] = docId;
         }
     }
 
@@ -94,9 +121,18 @@ public sealed class SymbolIndex : ISymbolIndex {
 
         // 0) Try treat as SymbolKey (direct id)
         if (TryResolveSymbolId(query, out var idSym)) {
+            if (idSym is INamespaceSymbol nss) {
+                var disp = nss.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty);
+                var docId = "N:" + disp;
+                var lastDot = disp.LastIndexOf('.');
+                string? parentNs = lastDot > 0 ? disp.Substring(0, lastDot) : null;
+                AddResult(results, added, new SearchHit(disp, ToKind(nss), Namespace: parentNs, Assembly: null, new SymbolId(docId), MatchKind.Id, IsAmbiguous: false, Score: 0), limit);
+                var orderedNs = results.OrderBy(m => (int)m.MatchKind).ThenBy(m => m.Score).ThenBy(m => m.Name, StringComparer.Ordinal).ToList();
+                return new SearchResults(orderedNs, orderedNs.Count, 0, orderedNs.Count, null);
+            }
             if (idSym is INamedTypeSymbol nts) {
                 var disp = nts.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty);
-                var docId = Microsoft.CodeAnalysis.DocumentationCommentId.CreateDeclarationId(nts) ?? disp;
+                var docId = Microsoft.CodeAnalysis.DocumentationCommentId.CreateDeclarationId(nts) ?? ("T:" + disp);
                 AddResult(results, added, new SearchHit(disp, ToKind(nts), nts.ContainingNamespace?.ToDisplayString(), nts.ContainingAssembly?.Name, new SymbolId(docId), MatchKind.Id, IsAmbiguous: false, Score: 0), limit);
                 var orderedId = results.OrderBy(m => (int)m.MatchKind).ThenBy(m => m.Score).ThenBy(m => m.Name, StringComparer.Ordinal).ToList();
                 return new SearchResults(orderedId, orderedId.Count, 0, orderedId.Count, null);
@@ -120,7 +156,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         // 3) Prefix (FQN) when query contains '.'
         if (hasDot && results.Count < limit) {
             // 3a) raw FQN（忽略 global::）
-            foreach (var e in _all) {
+            foreach (var e in _all.Values) {
                 var fqn = e.Fqn;
                 var fqnNoGlobal = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
                 if (fqnNoGlobal.StartsWith(query, StringComparison.OrdinalIgnoreCase)) {
@@ -129,7 +165,7 @@ public sealed class SymbolIndex : ISymbolIndex {
             }
             // 3b) base FQN（去泛型）
             if (results.Count < limit) {
-                foreach (var e in _all) {
+                foreach (var e in _all.Values) {
                     var fqnBase = NormalizeFqnBase(e.Fqn);
                     if (fqnBase.StartsWith(query, StringComparison.OrdinalIgnoreCase)) {
                         AddResult(results, added, e.ToHit(MatchKind.Prefix, (fqnBase.Length - query.Length) + 5), limit);
@@ -140,7 +176,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         // 4) Contains (FQN) when query contains '.'
         if (hasDot && results.Count < limit) {
             // 4a) raw FQN（忽略 global::）
-            foreach (var e in _all) {
+            foreach (var e in _all.Values) {
                 var fqn = e.Fqn;
                 var fqnNoGlobal = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
                 if (fqnNoGlobal.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) {
@@ -149,7 +185,7 @@ public sealed class SymbolIndex : ISymbolIndex {
             }
             // 4b) base FQN（去泛型）
             if (results.Count < limit) {
-                foreach (var e in _all) {
+                foreach (var e in _all.Values) {
                     var fqnBase = NormalizeFqnBase(e.Fqn);
                     if (fqnBase.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) {
                         AddResult(results, added, e.ToHit(MatchKind.Contains, fqnBase.Length + 5), limit);
@@ -161,7 +197,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         // 5) Suffix
         List<Entry>? allSuffix = null;
         if (results.Count < limit) {
-            allSuffix = _all.Where(a => a.Fqn.EndsWith(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            allSuffix = _all.Values.Where(a => a.Fqn.EndsWith(query, StringComparison.OrdinalIgnoreCase)).ToList();
             foreach (var e in allSuffix) {
                 AddResult(results, added, e.ToHit(MatchKind.Suffix, e.Fqn.Length - query.Length), limit);
             }
@@ -169,7 +205,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         // 6) Wildcard
         if (hasWildcard && results.Count < limit) {
             var rx = WildcardToRegex(query);
-            foreach (var e in _all) {
+            foreach (var e in _all.Values) {
                 if (rx.IsMatch(e.Fqn)) {
                     AddResult(results, added, e.ToHit(MatchKind.Wildcard, e.Fqn.Length), limit);
                 }
@@ -191,7 +227,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         // 8) Fuzzy (simple name only)
         if (!hasWildcard && results.Count < limit) {
             int threshold = ComputeFuzzyThreshold(query);
-            foreach (var e in _all) {
+            foreach (var e in _all.Values) {
                 if (!added.Contains(e.SymbolId) && Math.Abs(e.Simple.Length - query.Length) <= threshold) {
                     int dist = BoundedLevenshtein(e.Simple, query, threshold);
                     if (dist >= 0 && dist <= threshold) {
@@ -239,7 +275,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         return null;
     }
 
-    private Entry? FindEntry(string id) => _all.FirstOrDefault(a => a.SymbolId == id);
+    private Entry? FindEntry(string id) => _all.TryGetValue(id, out var e) ? e : null;
 
     private static int ComputeFuzzyThreshold(string q) => q.Length > 12 ? 2 : 1;
 
@@ -331,8 +367,6 @@ public sealed class SymbolIndex : ISymbolIndex {
     private bool TryResolveSymbolId(string id, out ISymbol symbol) {
         symbol = null!;
         if (string.IsNullOrEmpty(id)) {
-
-
             return false;
         }
         // Support documentation comment id for types: "T:Namespace.Type`1" (nested uses '+')
@@ -342,6 +376,40 @@ public sealed class SymbolIndex : ISymbolIndex {
                 var t = comp.GetTypeByMetadataName(meta);
                 if (t is not null) {
                     symbol = t;
+                    return true;
+                }
+            }
+        }
+        // Support documentation comment id for namespaces: "N:Namespace.SubNamespace"
+        if (id.StartsWith("N:", StringComparison.Ordinal)) {
+            var name = id.Substring(2);
+            if (name.StartsWith("global::", StringComparison.Ordinal)) {
+                name = name.Substring(8);
+            }
+            var parts = name.Split('.', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) {
+                return false;
+            }
+            foreach (var comp in _compilations) {
+                var current = comp.Assembly.GlobalNamespace;
+                INamespaceSymbol? cur = current;
+                bool ok = true;
+                foreach (var p in parts) {
+                    INamespaceSymbol? next = null;
+                    foreach (var sub in cur.GetNamespaceMembers()) {
+                        if (string.Equals(sub.Name, p, StringComparison.Ordinal)) {
+                            next = sub;
+                            break;
+                        }
+                    }
+                    if (next is null) {
+                        ok = false;
+                        break;
+                    }
+                    cur = next;
+                }
+                if (ok && cur is not null && !cur.IsGlobalNamespace) {
+                    symbol = cur;
                     return true;
                 }
             }
@@ -376,15 +444,13 @@ public sealed class SymbolIndex : ISymbolIndex {
         }
     }
 
-    private sealed record Entry(string SymbolId, string Fqn, string Simple, string Kind, string Assembly, string GenericBase) {
+    private sealed record Entry(string SymbolId, string Fqn, string Simple, Abstractions.SymbolKind Kind, string Assembly, string GenericBase, string ParentNamespace) {
         public SearchHit ToHit(MatchKind matchKind, int score) => new(
             Name: Fqn.Replace("global::", string.Empty),
-            Kind: Abstractions.SymbolKind.Type,
-            Namespace: null,
+            Kind: Kind,
+            Namespace: string.IsNullOrEmpty(ParentNamespace) ? null : ParentNamespace,
             Assembly: Assembly,
             SymbolId: new SymbolId(SymbolId),
-
-
             MatchKind: matchKind,
             IsAmbiguous: false,
             Score: score
