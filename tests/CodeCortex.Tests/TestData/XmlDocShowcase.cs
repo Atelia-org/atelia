@@ -15,13 +15,15 @@ namespace Atelia.DocSamples;
 ///   <item>Step 2</item>
 /// </list>
 /// <list type="table">
-///   &lt;listheader&gt;
+///   <listheader>
 ///     <term>Key</term><term>Value</term>
-///   &lt;/listheader&gt;
+///   </listheader>
 ///   <item><term>A</term><term>Alpha</term></item>
 ///   <item><term>B</term><term>Beta</term></item>
 /// </list>
 /// </summary>
+/// <see cref="T:CodeCortex.Core.Outline.MarkdownRenderer"/>
+/// <see cref="T:CodeCortexV2.Formatting.MarkdownRenderer"/>
 public class XmlDocShowcase<T> {
     /// <summary>
     /// Initializes with a name.
@@ -39,12 +41,12 @@ public class XmlDocShowcase<T> {
     /// <summary>
     /// Combine two values into a tuple.
     /// </summary>
-    /// <param name="key">The &lt;typeparamref name="TKey"/&gt; key.</param>
-    /// <param name="value">The &lt;typeparamref name="TValue"/&gt; value.</param>
+    /// <param name="key">The <typeparamref name="TKey"/> key.</param>
+    /// <param name="value">The <typeparamref name="TValue"/> value.</param>
     /// <typeparam name="TKey">Key type.</typeparam>
     /// <typeparam name="TValue">Value type.</typeparam>
-    /// <returns>A tuple of (&lt;paramref name="key"/&gt;, &lt;paramref name="value"/&gt;).</returns>
-    /// <exception cref="ArgumentNullException">If &lt;paramref name="key"/&gt; is null for reference types.</exception>
+    /// <returns>A tuple of (<paramref name="key"/>, <paramref name="value"/>).</returns>
+    /// <exception cref="ArgumentNullException">If <paramref name="key"/> is null for reference types.</exception>
     public (TKey, TValue) Combine<TKey, TValue>(TKey key, TValue value) {
         throw new NotImplementedException();
     }
@@ -92,7 +94,7 @@ public class XmlDocShowcase<T> {
     /// <typeparam name="TIn">Input type.</typeparam>
     /// <param name="value">The input value.</param>
     /// <returns>Formatted string.</returns>
-    /// <exception cref="ArgumentNullException">If &lt;paramref name="value"/&gt; is null for reference types.</exception>
+    /// <exception cref="ArgumentNullException">If <paramref name="value"/> is null for reference types.</exception>
     public delegate string Formatter<in TIn>(TIn value);
     /// <summary>
     /// Showcase with tables in returns and exceptions.
@@ -100,14 +102,14 @@ public class XmlDocShowcase<T> {
     /// <param name="count">Item count.</param>
     /// <returns>
     /// <list type="table">
-    ///   &lt;listheader&gt;<term>State</term><term>Meaning</term>&lt;/listheader&gt;
+    ///   <listheader><term>State</term><term>Meaning</term></listheader>
     ///   <item><term>Empty</term><term>No items</term></item>
     ///   <item><term>NonEmpty</term><term>Has items</term></item>
     /// </list>
     /// </returns>
     /// <exception cref="ArgumentException">
     /// <list type="table">
-    ///   &lt;listheader&gt;<term>Param</term><term>Rule</term>&lt;/listheader&gt;
+    ///   <listheader><term>Param</term><term>Rule</term></listheader>
     ///   <item><term>count</term><term>Must be &gt;= 0</term></item>
     /// </list>
     /// </exception>
