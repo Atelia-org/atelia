@@ -69,8 +69,9 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
         return new WorkspaceTextInterface(host, index);
     }
 
+#pragma warning disable 1998 //此异步方法缺少 "await" 运算符，将以同 步方式运行
     public async Task<string> FindAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = _index.SearchAsync(query, limit, offset, kinds: SymbolKinds.All);
+        var page = _index.Search(query, limit, offset, kinds: SymbolKinds.All);
         if (json) {
             return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true });
         }
@@ -83,10 +84,11 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
         }
         return sb.ToString().TrimEnd();
     }
+#pragma warning restore 1998
 
     public async Task<string> GetOutlineAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = _index.SearchAsync(query, limit, offset, kinds: SymbolKinds.All);
-        if (page.Total != 1) {
+        var page = _index.Search(query, limit, offset, kinds: SymbolKinds.All);
+        if (page.Total != 1 || page.Items[0].MatchKind == MatchKind.Fuzzy) {
             // Return search results when not unique (or none)
             return await FindAsync(query, limit, offset, json, ct).ConfigureAwait(false);
         }

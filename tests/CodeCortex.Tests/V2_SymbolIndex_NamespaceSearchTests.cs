@@ -38,7 +38,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         var (solution, _) = await CreateSolutionAsync(Sample);
         var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
 
-        var page = idx.SearchAsync("N:Foo.Bar", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
+        var page = idx.Search("N:Foo.Bar", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
         Assert.Equal(1, page.Total);
         var item = page.Items[0];
         Assert.Equal(SymbolKinds.Namespace, item.Kind);
@@ -52,7 +52,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         var (solution, _) = await CreateSolutionAsync(Sample);
         var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
 
-        var page = idx.SearchAsync("Foo.Bar", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
+        var page = idx.Search("Foo.Bar", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
         Assert.True(page.Total >= 1);
         Assert.All(page.Items, it => Assert.Equal(SymbolKinds.Namespace, it.Kind));
         Assert.Contains(page.Items, it => it.Name == "Foo.Bar");
@@ -63,7 +63,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         var (solution, _) = await CreateSolutionAsync(Sample);
         var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
 
-        var page = idx.SearchAsync("Baz", limit: 10, offset: 0, kinds: SymbolKinds.All);
+        var page = idx.Search("Baz", limit: 10, offset: 0, kinds: SymbolKinds.All);
         Assert.True(page.Total >= 1);
         var item = page.Items.First(i => i.Name.EndsWith("Baz", StringComparison.Ordinal));
         Assert.Equal(SymbolKinds.Type, item.Kind);
@@ -76,8 +76,9 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         var (solution, _) = await CreateSolutionAsync(Sample);
         var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
 
-        var page = idx.SearchAsync("Baz", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
-        Assert.Equal(0, page.Total);
+        var page = idx.Search("Baz", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
+        // 不再要求空集；允许在无其它命中时提供 Fuzzy 命名空间提示，但应无非Fuzzy命中
+        Assert.DoesNotContain(page.Items, it => it.MatchKind != MatchKind.Fuzzy);
     }
 
 }

@@ -106,7 +106,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         }
     }
 
-    public SearchResults SearchAsync(string query, int limit, int offset, SymbolKinds kinds) {
+    public SearchResults Search(string query, int limit, int offset, SymbolKinds kinds) {
         if (string.IsNullOrWhiteSpace(query)) {
             return new SearchResults(Array.Empty<SearchHit>(), 0, 0, limit, 0);
         }
@@ -121,7 +121,7 @@ public sealed class SymbolIndex : ISymbolIndex {
 
         // 0) Try treat as SymbolKey (direct id)
         if (TryResolveSymbolId(query, out var idSym)) {
-            if (idSym is INamespaceSymbol nss) {
+            if (idSym is INamespaceSymbol nss && (kinds & SymbolKinds.Namespace) != 0) {
                 var disp = nss.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty);
                 var docId = "N:" + disp;
                 var lastDot = disp.LastIndexOf('.');
@@ -130,7 +130,7 @@ public sealed class SymbolIndex : ISymbolIndex {
                 var orderedNs = results.OrderBy(m => (int)m.MatchKind).ThenBy(m => m.Score).ThenBy(m => m.Name, StringComparer.Ordinal).ToList();
                 return new SearchResults(orderedNs, orderedNs.Count, 0, orderedNs.Count, null);
             }
-            if (idSym is INamedTypeSymbol nts) {
+            if (idSym is INamedTypeSymbol nts && (kinds & SymbolKinds.Type) != 0) {
                 var disp = nts.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty);
                 var docId = Microsoft.CodeAnalysis.DocumentationCommentId.CreateDeclarationId(nts) ?? ("T:" + disp);
                 AddResult(results, added, new SearchHit(disp, ToKind(nts), nts.ContainingNamespace?.ToDisplayString(), nts.ContainingAssembly?.Name, new SymbolId(docId), MatchKind.Id, IsAmbiguous: false, Score: 0), limit);
@@ -142,14 +142,14 @@ public sealed class SymbolIndex : ISymbolIndex {
         // 1) Exact FQN (case)
         if (_fqnCaseSensitive.TryGetValue(query, out var id1)) {
             var e = FindEntry(id1);
-            if (e != null) {
+            if (e != null && (kinds & e.Kind) != 0) {
                 AddResult(results, added, e.ToHit(MatchKind.Exact, 0), limit);
             }
         }
         // 2) Exact FQN (ignore case)
         if (results.Count < limit && _fqnIgnoreCase.TryGetValue(query, out var id2)) {
             var e = FindEntry(id2);
-            if (e != null) {
+            if (e != null && (kinds & e.Kind) != 0) {
                 AddResult(results, added, e.ToHit(MatchKind.ExactIgnoreCase, 10), limit);
             }
         }
@@ -157,6 +157,10 @@ public sealed class SymbolIndex : ISymbolIndex {
         if (hasDot && results.Count < limit) {
             // 3a) raw FQN（忽略 global::）
             foreach (var e in _all.Values) {
+                if ((kinds & e.Kind) == 0) {
+                    continue;
+                }
+
                 var fqn = e.Fqn;
                 var fqnNoGlobal = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
                 if (fqnNoGlobal.StartsWith(query, StringComparison.OrdinalIgnoreCase)) {
@@ -166,6 +170,10 @@ public sealed class SymbolIndex : ISymbolIndex {
             // 3b) base FQN（去泛型）
             if (results.Count < limit) {
                 foreach (var e in _all.Values) {
+                    if ((kinds & e.Kind) == 0) {
+                        continue;
+                    }
+
                     var fqnBase = NormalizeFqnBase(e.Fqn);
                     if (fqnBase.StartsWith(query, StringComparison.OrdinalIgnoreCase)) {
                         AddResult(results, added, e.ToHit(MatchKind.Prefix, (fqnBase.Length - query.Length) + 5), limit);
@@ -177,6 +185,10 @@ public sealed class SymbolIndex : ISymbolIndex {
         if (hasDot && results.Count < limit) {
             // 4a) raw FQN（忽略 global::）
             foreach (var e in _all.Values) {
+                if ((kinds & e.Kind) == 0) {
+                    continue;
+                }
+
                 var fqn = e.Fqn;
                 var fqnNoGlobal = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
                 if (fqnNoGlobal.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) {
@@ -186,6 +198,10 @@ public sealed class SymbolIndex : ISymbolIndex {
             // 4b) base FQN（去泛型）
             if (results.Count < limit) {
                 foreach (var e in _all.Values) {
+                    if ((kinds & e.Kind) == 0) {
+                        continue;
+                    }
+
                     var fqnBase = NormalizeFqnBase(e.Fqn);
                     if (fqnBase.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) {
                         AddResult(results, added, e.ToHit(MatchKind.Contains, fqnBase.Length + 5), limit);
@@ -197,7 +213,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         // 5) Suffix
         List<Entry>? allSuffix = null;
         if (results.Count < limit) {
-            allSuffix = _all.Values.Where(a => a.Fqn.EndsWith(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            allSuffix = _all.Values.Where(a => (kinds & a.Kind) != 0 && a.Fqn.EndsWith(query, StringComparison.OrdinalIgnoreCase)).ToList();
             foreach (var e in allSuffix) {
                 AddResult(results, added, e.ToHit(MatchKind.Suffix, e.Fqn.Length - query.Length), limit);
             }
@@ -206,6 +222,10 @@ public sealed class SymbolIndex : ISymbolIndex {
         if (hasWildcard && results.Count < limit) {
             var rx = WildcardToRegex(query);
             foreach (var e in _all.Values) {
+                if ((kinds & e.Kind) == 0) {
+                    continue;
+                }
+
                 if (rx.IsMatch(e.Fqn)) {
                     AddResult(results, added, e.ToHit(MatchKind.Wildcard, e.Fqn.Length), limit);
                 }
@@ -218,16 +238,19 @@ public sealed class SymbolIndex : ISymbolIndex {
             if (!string.IsNullOrEmpty(baseName) && _byGenericBase.TryGetValue(baseName, out var ids)) {
                 foreach (var id in ids) {
                     var e = FindEntry(id);
-                    if (e != null) {
+                    if (e != null && (kinds & e.Kind) != 0) {
                         AddResult(results, added, e.ToHit(MatchKind.GenericBase, 50), limit);
                     }
                 }
             }
         }
-        // 8) Fuzzy (simple name only)
-        if (!hasWildcard && results.Count < limit) {
+        // 8) Fuzzy (simple name only) - only when no other matches found
+        if (!hasWildcard && results.Count == 0) {
             int threshold = ComputeFuzzyThreshold(query);
             foreach (var e in _all.Values) {
+                if ((kinds & e.Kind) == 0) {
+                    continue;
+                }
                 if (!added.Contains(e.SymbolId) && Math.Abs(e.Simple.Length - query.Length) <= threshold) {
                     int dist = BoundedLevenshtein(e.Simple, query, threshold);
                     if (dist >= 0 && dist <= threshold) {

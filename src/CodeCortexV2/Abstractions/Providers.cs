@@ -7,7 +7,7 @@ public readonly record struct SymbolId(string Value) {
 }
 
 public interface ISymbolIndex {
-    SearchResults SearchAsync(string query, int limit, int offset, SymbolKinds kinds);
+    SearchResults Search(string query, int limit, int offset, SymbolKinds kinds);
 }
 
 [Flags]
