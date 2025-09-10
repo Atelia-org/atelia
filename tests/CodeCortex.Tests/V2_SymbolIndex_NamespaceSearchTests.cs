@@ -26,7 +26,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         adhoc.AddDocument(projId, "Test.cs", SourceText.From(source));
         var sol = adhoc.CurrentSolution;
         var proj = sol.GetProject(projId)!;
-        // Force compilation to materialize for BuildAsync
+        // Force compilation to materialize for synchronizer initial build
         _ = await proj.GetCompilationAsync(CancellationToken.None).ConfigureAwait(false);
         return (sol, proj);
     }
@@ -36,7 +36,9 @@ public class V2_SymbolIndex_NamespaceSearchTests {
     [Fact]
     public async Task Search_ByNamespaceDocId_ReturnsNamespace() {
         var (solution, _) = await CreateSolutionAsync(Sample);
-        var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
+        using var ws = solution.Workspace;
+        var sync = await IndexSynchronizer.CreateAsync(ws, CancellationToken.None);
+        var idx = sync.Current;
 
         var page = idx.Search("N:Foo.Bar", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
         Assert.Equal(1, page.Total);
@@ -50,7 +52,9 @@ public class V2_SymbolIndex_NamespaceSearchTests {
     [Fact]
     public async Task Search_ByNamespaceName_WithFilter_ReturnsOnlyNamespace() {
         var (solution, _) = await CreateSolutionAsync(Sample);
-        var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
+        using var ws = solution.Workspace;
+        var sync = await IndexSynchronizer.CreateAsync(ws, CancellationToken.None);
+        var idx = sync.Current;
 
         var page = idx.Search("Foo.Bar", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
         Assert.True(page.Total >= 1);
@@ -61,7 +65,9 @@ public class V2_SymbolIndex_NamespaceSearchTests {
     [Fact]
     public async Task Search_TypeSuffix_StillWorks_AndHasNamespace() {
         var (solution, _) = await CreateSolutionAsync(Sample);
-        var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
+        using var ws = solution.Workspace;
+        var sync = await IndexSynchronizer.CreateAsync(ws, CancellationToken.None);
+        var idx = sync.Current;
 
         var page = idx.Search("Baz", limit: 10, offset: 0, kinds: SymbolKinds.All);
         Assert.True(page.Total >= 1);
@@ -74,7 +80,9 @@ public class V2_SymbolIndex_NamespaceSearchTests {
     [Fact]
     public async Task Search_TypeSuffix_WithNamespaceFilter_ReturnsEmpty() {
         var (solution, _) = await CreateSolutionAsync(Sample);
-        var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
+        using var ws = solution.Workspace;
+        var sync = await IndexSynchronizer.CreateAsync(ws, CancellationToken.None);
+        var idx = sync.Current;
 
         var page = idx.Search("Baz", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
         // 不再要求空集；允许在无其它命中时提供 Fuzzy 命名空间提示，但应无非Fuzzy命中
