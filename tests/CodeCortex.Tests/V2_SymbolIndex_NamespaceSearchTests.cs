@@ -38,10 +38,10 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         var (solution, _) = await CreateSolutionAsync(Sample);
         var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
 
-        var page = await idx.SearchAsync("N:Foo.Bar", CodeCortexV2.Abstractions.SymbolKinds.Namespace, limit: 10, offset: 0, CancellationToken.None);
+        var page = await idx.SearchAsync("N:Foo.Bar", limit: 10, offset: 0, kinds: SymbolKinds.Namespace, ct: CancellationToken.None);
         Assert.Equal(1, page.Total);
         var item = page.Items[0];
-        Assert.Equal(CodeCortexV2.Abstractions.SymbolKinds.Namespace, item.Kind);
+        Assert.Equal(SymbolKinds.Namespace, item.Kind);
         Assert.Equal("Foo.Bar", item.Name);
         Assert.Equal("Foo", item.Namespace); // parent namespace captured
         Assert.Null(item.Assembly); // namespace assembly is undefined/null
@@ -52,9 +52,9 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         var (solution, _) = await CreateSolutionAsync(Sample);
         var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
 
-        var page = await idx.SearchAsync("Foo.Bar", CodeCortexV2.Abstractions.SymbolKinds.Namespace, limit: 10, offset: 0, CancellationToken.None);
+        var page = await idx.SearchAsync("Foo.Bar", limit: 10, offset: 0, kinds: SymbolKinds.Namespace, ct: CancellationToken.None);
         Assert.True(page.Total >= 1);
-        Assert.All(page.Items, it => Assert.Equal(CodeCortexV2.Abstractions.SymbolKinds.Namespace, it.Kind));
+        Assert.All(page.Items, it => Assert.Equal(SymbolKinds.Namespace, it.Kind));
         Assert.Contains(page.Items, it => it.Name == "Foo.Bar");
     }
 
@@ -63,10 +63,10 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         var (solution, _) = await CreateSolutionAsync(Sample);
         var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
 
-        var page = await idx.SearchAsync("Baz", kinds: CodeCortexV2.Abstractions.SymbolKinds.All, limit: 10, offset: 0, CancellationToken.None);
+        var page = await idx.SearchAsync("Baz", limit: 10, offset: 0, kinds: SymbolKinds.All, ct: CancellationToken.None);
         Assert.True(page.Total >= 1);
         var item = page.Items.First(i => i.Name.EndsWith("Baz", StringComparison.Ordinal));
-        Assert.Equal(CodeCortexV2.Abstractions.SymbolKinds.Type, item.Kind);
+        Assert.Equal(SymbolKinds.Type, item.Kind);
         Assert.Equal("Foo.Bar", item.Namespace);
         Assert.Equal("Foo.Bar.Baz", item.Name);
     }
@@ -76,7 +76,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         var (solution, _) = await CreateSolutionAsync(Sample);
         var idx = await SymbolIndex.BuildAsync(solution, CancellationToken.None);
 
-        var page = await idx.SearchAsync("Baz", kinds: CodeCortexV2.Abstractions.SymbolKinds.Namespace, limit: 10, offset: 0, CancellationToken.None);
+        var page = await idx.SearchAsync("Baz", limit: 10, offset: 0, kinds: SymbolKinds.Namespace, ct: CancellationToken.None);
         Assert.Equal(0, page.Total);
     }
 

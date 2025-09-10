@@ -74,8 +74,8 @@ public static class MarkdownLayout {
 
     private static SectionBlock BuildMetadataBlock(SymbolOutline node) {
         string header = node.Kind switch {
-            CodeCortexV2.Abstractions.SymbolKinds.Namespace => "Namespace Metadata",
-            CodeCortexV2.Abstractions.SymbolKinds.Type => "Type Metadata",
+            SymbolKinds.Namespace => "Namespace Metadata",
+            SymbolKinds.Type => "Type Metadata",
             _ => "Symbol Metadata"
         };
         var inner = new List<Block>();

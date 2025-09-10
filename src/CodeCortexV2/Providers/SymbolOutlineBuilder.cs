@@ -30,7 +30,7 @@ public static class SymbolOutlineBuilder {
             }
         }
 
-        return new SymbolOutline(CodeCortexV2.Abstractions.SymbolKinds.Type, name, signature, xmlBlocks, members, metadata);
+        return new SymbolOutline(SymbolKinds.Type, name, signature, xmlBlocks, members, metadata);
     }
 
     public static SymbolOutline BuildForNamespace(INamespaceSymbol ns, bool includeChildren = true, CancellationToken ct = default) {
@@ -44,7 +44,7 @@ public static class SymbolOutlineBuilder {
             foreach (var sub in ns.GetNamespaceMembers().OrderBy(n => n.Name)) {
                 ct.ThrowIfCancellationRequested();
                 var child = new SymbolOutline(
-                    CodeCortexV2.Abstractions.SymbolKinds.Namespace,
+                    SymbolKinds.Namespace,
                     sub.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
                     SignatureFormatter.RenderSignature(sub),
                     XmlDocFormatter.BuildMemberBlocks(sub),
@@ -62,18 +62,18 @@ public static class SymbolOutlineBuilder {
             }
         }
 
-        return new SymbolOutline(CodeCortexV2.Abstractions.SymbolKinds.Namespace, name, signature, xmlBlocks, members, metadata);
+        return new SymbolOutline(SymbolKinds.Namespace, name, signature, xmlBlocks, members, metadata);
     }
 
     public static SymbolOutline BuildForMember(ISymbol member) {
         var kind = member switch {
-            INamespaceSymbol => CodeCortexV2.Abstractions.SymbolKinds.Namespace,
-            INamedTypeSymbol => CodeCortexV2.Abstractions.SymbolKinds.Type,
-            IMethodSymbol => CodeCortexV2.Abstractions.SymbolKinds.Method,
-            IPropertySymbol => CodeCortexV2.Abstractions.SymbolKinds.Property,
-            IFieldSymbol => CodeCortexV2.Abstractions.SymbolKinds.Field,
-            IEventSymbol => CodeCortexV2.Abstractions.SymbolKinds.Event,
-            _ => CodeCortexV2.Abstractions.SymbolKinds.Unknown
+            INamespaceSymbol => SymbolKinds.Namespace,
+            INamedTypeSymbol => SymbolKinds.Type,
+            IMethodSymbol => SymbolKinds.Method,
+            IPropertySymbol => SymbolKinds.Property,
+            IFieldSymbol => SymbolKinds.Field,
+            IEventSymbol => SymbolKinds.Event,
+            _ => SymbolKinds.Unknown
         };
         var name = member.Name;
         var signature = SignatureFormatter.RenderSignature(member);
