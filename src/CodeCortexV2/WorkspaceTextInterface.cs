@@ -70,7 +70,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
     }
 
     public async Task<string> FindAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = await _index.SearchAsync(query, kindFilter: null, limit, offset, ct).ConfigureAwait(false);
+        var page = await _index.SearchAsync(query, kinds: CodeCortexV2.Abstractions.SymbolKinds.All, limit, offset, ct).ConfigureAwait(false);
         if (json) {
             return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true });
         }
@@ -85,7 +85,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
     }
 
     public async Task<string> GetOutlineAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = await _index.SearchAsync(query, kindFilter: null, limit, offset, ct).ConfigureAwait(false);
+        var page = await _index.SearchAsync(query, kinds: CodeCortexV2.Abstractions.SymbolKinds.All, limit, offset, ct).ConfigureAwait(false);
         if (page.Total != 1) {
             // Return search results when not unique (or none)
             return await FindAsync(query, limit, offset, json, ct).ConfigureAwait(false);
@@ -147,7 +147,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
             return null;
         }
 
-        if (hit.Kind == Abstractions.SymbolKind.Type) {
+        if (hit.Kind == Abstractions.SymbolKinds.Type) {
             var provider = new TypeOutlineProvider(DocIdResolver);
             var outline = await provider.GetTypeOutlineAsync(hit.SymbolId, new OutlineOptions(Markdown: !json), ct).ConfigureAwait(false);
             if (json) {
@@ -156,7 +156,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
             }
             return MarkdownLayout.RenderSymbolOutline(outline, baseHeadingLevel: 2, maxAtxLevel: 3);
         }
-        if (hit.Kind == Abstractions.SymbolKind.Namespace) {
+        if (hit.Kind == Abstractions.SymbolKinds.Namespace) {
             var provider = new NamespaceOutlineProvider(DocIdResolver);
             var outline = await provider.GetNamespaceOutlineAsync(hit.SymbolId, new OutlineOptions(Markdown: !json), ct).ConfigureAwait(false);
             if (json) {

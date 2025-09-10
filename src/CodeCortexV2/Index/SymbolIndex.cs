@@ -64,7 +64,7 @@ public sealed class SymbolIndex : ISymbolIndex {
             ?? "T:" + fqn.Replace("global::", string.Empty);
         var parentNs = t.ContainingNamespace?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
             ?.Replace("global::", string.Empty) ?? string.Empty;
-        var entry = new Entry(docId, fqn, simple, Abstractions.SymbolKind.Type, asm, ExtractGenericBase(simple), parentNs);
+        var entry = new Entry(docId, fqn, simple, Abstractions.SymbolKinds.Type, asm, ExtractGenericBase(simple), parentNs);
         if (!_all.ContainsKey(docId)) {
             _all[docId] = entry;
         }
@@ -94,7 +94,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         var docId = "N:" + fqnNoGlobal;
         var lastDot = fqnNoGlobal.LastIndexOf('.');
         var parentNs = lastDot > 0 ? fqnNoGlobal.Substring(0, lastDot) : string.Empty;
-        var entry = new Entry(docId, fqn, simple, Abstractions.SymbolKind.Namespace, asm, string.Empty, parentNs);
+        var entry = new Entry(docId, fqn, simple, Abstractions.SymbolKinds.Namespace, asm, string.Empty, parentNs);
         if (!_all.ContainsKey(docId)) {
             _all[docId] = entry;
         }
@@ -106,7 +106,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         }
     }
 
-    public async Task<SearchResults> SearchAsync(string query, CodeCortexV2.Abstractions.SymbolKind? kindFilter, int limit, int offset, CancellationToken ct) {
+    public async Task<SearchResults> SearchAsync(string query, CodeCortexV2.Abstractions.SymbolKinds kinds, int limit, int offset, CancellationToken ct) {
         if (string.IsNullOrWhiteSpace(query)) {
             return new SearchResults(Array.Empty<SearchHit>(), 0, 0, limit, 0);
         }
@@ -117,7 +117,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         var results = new List<SearchHit>(256);
         bool hasWildcard = ContainsWildcard(query);
         bool hasDot = query.Contains('.');
-        DebugUtil.Print("Search", $"query='{query}', kind={(kindFilter?.ToString() ?? "null")}, limit={limit}, offset={offset}");
+        DebugUtil.Print("Search", $"query='{query}', kinds={kinds}, limit={limit}, offset={offset}");
 
         // 0) Try treat as SymbolKey (direct id)
         if (TryResolveSymbolId(query, out var idSym)) {
@@ -247,9 +247,9 @@ public sealed class SymbolIndex : ISymbolIndex {
                 }
             }
         }
-        // Kind filter (currently types only)
-        if (kindFilter is not null) {
-            results = results.Where(r => r.Kind == kindFilter).ToList();
+        // Kind filter (flags)
+        if (kinds != Abstractions.SymbolKinds.All && kinds != Abstractions.SymbolKinds.None) {
+            results = results.Where(r => (kinds & r.Kind) != 0).ToList();
         }
         // Order and paginate
         var orderedAll = results
@@ -267,7 +267,7 @@ public sealed class SymbolIndex : ISymbolIndex {
     }
 
     public async Task<SymbolId?> ResolveAsync(string identifierOrName, CancellationToken ct) {
-        var page = await SearchAsync(identifierOrName, null, limit: 2, offset: 0, ct).ConfigureAwait(false);
+        var page = await SearchAsync(identifierOrName, Abstractions.SymbolKinds.All, limit: 2, offset: 0, ct).ConfigureAwait(false);
         if (page.Total == 1) {
             return page.Items[0].SymbolId;
         }
@@ -354,14 +354,14 @@ public sealed class SymbolIndex : ISymbolIndex {
         return name;
     }
 
-    private static CodeCortexV2.Abstractions.SymbolKind ToKind(ISymbol s) => s switch {
-        INamespaceSymbol => Abstractions.SymbolKind.Namespace,
-        INamedTypeSymbol => Abstractions.SymbolKind.Type,
-        IMethodSymbol => Abstractions.SymbolKind.Method,
-        IPropertySymbol => Abstractions.SymbolKind.Property,
-        IFieldSymbol => Abstractions.SymbolKind.Field,
-        IEventSymbol => Abstractions.SymbolKind.Event,
-        _ => Abstractions.SymbolKind.Unknown
+    private static CodeCortexV2.Abstractions.SymbolKinds ToKind(ISymbol s) => s switch {
+        INamespaceSymbol => Abstractions.SymbolKinds.Namespace,
+        INamedTypeSymbol => Abstractions.SymbolKinds.Type,
+        IMethodSymbol => Abstractions.SymbolKinds.Method,
+        IPropertySymbol => Abstractions.SymbolKinds.Property,
+        IFieldSymbol => Abstractions.SymbolKinds.Field,
+        IEventSymbol => Abstractions.SymbolKinds.Event,
+        _ => Abstractions.SymbolKinds.Unknown
     };
 
     private bool TryResolveSymbolId(string id, out ISymbol symbol) {
@@ -444,7 +444,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         }
     }
 
-    private sealed record Entry(string SymbolId, string Fqn, string Simple, Abstractions.SymbolKind Kind, string Assembly, string GenericBase, string ParentNamespace) {
+    private sealed record Entry(string SymbolId, string Fqn, string Simple, Abstractions.SymbolKinds Kind, string Assembly, string GenericBase, string ParentNamespace) {
         public SearchHit ToHit(MatchKind matchKind, int score) => new(
             Name: Fqn.Replace("global::", string.Empty),
             Kind: Kind,

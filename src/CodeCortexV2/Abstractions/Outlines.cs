@@ -2,7 +2,7 @@ namespace CodeCortexV2.Abstractions;
 
 public sealed record SearchHit(
     string Name,
-    SymbolKind Kind,
+    SymbolKinds Kind,
     string? Namespace,
     string? Assembly,
     SymbolId SymbolId,
@@ -70,7 +70,7 @@ public sealed record SymbolMetadata(
 );
 
 public sealed record SymbolOutline(
-    SymbolKind Kind,
+    SymbolKinds Kind,
     string Name,
     string Signature,
     IReadOnlyList<CodeCortexV2.Formatting.Block> XmlDocBlocks,

@@ -1,3 +1,5 @@
+using System;
+
 namespace CodeCortexV2.Abstractions;
 
 public readonly record struct SymbolId(string Value) {
@@ -5,11 +7,22 @@ public readonly record struct SymbolId(string Value) {
 }
 
 public interface ISymbolIndex {
-    Task<SearchResults> SearchAsync(string query, SymbolKind? kindFilter, int limit, int offset, CancellationToken ct);
+    Task<SearchResults> SearchAsync(string query, SymbolKinds kinds, int limit, int offset, CancellationToken ct);
     Task<SymbolId?> ResolveAsync(string identifierOrName, CancellationToken ct);
 }
 
-public enum SymbolKind { Namespace, Type, Method, Property, Field, Event, Unknown }
+[Flags]
+public enum SymbolKinds {
+    None = 0,
+    Namespace = 1 << 0,
+    Type = 1 << 1,
+    Method = 1 << 2,
+    Property = 1 << 3,
+    Field = 1 << 4,
+    Event = 1 << 5,
+    Unknown = 1 << 6,
+    All = Namespace | Type | Method | Property | Field | Event | Unknown
+}
 public enum MatchKind {
     Id = 0,
     Exact = 1,
