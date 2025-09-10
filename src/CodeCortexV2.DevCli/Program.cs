@@ -15,7 +15,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help") {
                       "  ccv2 e2e-doc-removed\n" +
                       "  ccv2 e2e-partial-type-remove\n" +
                       "  ccv2 e2e-namespace-deep-cascade\n" +
-                      "  ccv2 e2e-suffix-ambiguity\n"
+                      "  ccv2 e2e-suffix-ambiguity\n" +
+                      "  ccv2 e2e-case-insensitive-exact\n"
     );
     return 0;
 }
@@ -38,6 +39,9 @@ if (args[0] == "e2e-namespace-deep-cascade") {
 }
 if (args[0] == "e2e-suffix-ambiguity") {
     return await CodeCortexV2.DevCli.E2eSuffixAmbiguityCommand.RunAsync();
+}
+if (args[0] == "e2e-case-insensitive-exact") {
+    return await CodeCortexV2.DevCli.E2eCaseInsensitiveExactCommand.RunAsync();
 }
 
 var sln = args[0];
