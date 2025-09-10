@@ -56,22 +56,22 @@ public interface IWorkspaceTextInterface {
 /// </summary>
 public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
     private readonly RoslynWorkspaceHost _host;
-    private readonly SymbolIndex _index;
+    private readonly IIndexProvider _provider;
 
-    private WorkspaceTextInterface(RoslynWorkspaceHost host, SymbolIndex index) {
+    private WorkspaceTextInterface(RoslynWorkspaceHost host, IIndexProvider provider) {
         _host = host;
-        _index = index;
+        _provider = provider;
     }
 
     public static async Task<WorkspaceTextInterface> CreateAsync(string slnOrProjectPath, CancellationToken ct) {
         var host = await RoslynWorkspaceHost.LoadAsync(slnOrProjectPath, ct).ConfigureAwait(false);
-        var index = await SymbolIndex.BuildAsync(host.Workspace.CurrentSolution, ct).ConfigureAwait(false);
-        return new WorkspaceTextInterface(host, index);
+        var sync = await IndexSynchronizer.CreateAsync(host.Workspace, ct).ConfigureAwait(false);
+        return new WorkspaceTextInterface(host, sync);
     }
 
 #pragma warning disable 1998 //此异步方法缺少 "await" 运算符，将以同 步方式运行
     public async Task<string> FindAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = _index.Search(query, limit, offset, kinds: SymbolKinds.All);
+        var page = _provider.Current.Search(query, limit, offset, kinds: SymbolKinds.All);
         if (json) {
             return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true });
         }
@@ -87,7 +87,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
 #pragma warning restore 1998
 
     public async Task<string> GetOutlineAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = _index.Search(query, limit, offset, kinds: SymbolKinds.All);
+        var page = _provider.Current.Search(query, limit, offset, kinds: SymbolKinds.All);
         if (page.Total != 1 || page.Items[0].MatchKind == MatchKind.Fuzzy) {
             // Return search results when not unique (or none)
             return await FindAsync(query, limit, offset, json, ct).ConfigureAwait(false);
