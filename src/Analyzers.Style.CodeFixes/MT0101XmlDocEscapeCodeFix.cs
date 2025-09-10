@@ -51,8 +51,14 @@ namespace Atelia.Analyzers.Style {
             }
 
             var known = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase) {
-                "summary","remarks","para","c","code","see","seealso","list","item","term","description",
-                "example","exception","include","param","typeparam","permission","value","returns","note"
+                // Core XML doc tags (keep in sync with analyzer)
+                "summary","remarks","para","c","code","see","seealso",
+                // list & structure
+                "list","listheader","item","term","description",
+                // blocks & members
+                "example","exception","include","param","paramref","typeparam","typeparamref","permission","value","returns",
+                // others
+                "inheritdoc","note"
             };
             var sb = new System.Text.StringBuilder(s.Length + 16);
             int i = 0;

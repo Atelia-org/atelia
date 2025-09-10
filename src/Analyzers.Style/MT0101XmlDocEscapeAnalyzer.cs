@@ -52,9 +52,14 @@ namespace Atelia.Analyzers.Style {
         }
 
         private static readonly HashSet<string> KnownTags = new(StringComparer.OrdinalIgnoreCase) {
-            // Core XML doc tags
-            "summary","remarks","para","c","code","see","seealso","list","item","term","description",
-            "example","exception","include","param","typeparam","permission","value","returns","note"
+            // Core XML doc tags (keep in sync with MT0101XmlDocEscapeCodeFix)
+            "summary","remarks","para","c","code","see","seealso",
+            // list & structure
+            "list","listheader","item","term","description",
+            // blocks & members
+            "example","exception","include","param","paramref","typeparam","typeparamref","permission","value","returns",
+            // others
+            "inheritdoc","note"
         };
 
         // Escape '<' and '>' which are not part of known documentation tags.
