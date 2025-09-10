@@ -70,7 +70,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
     }
 
     public async Task<string> FindAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = await _index.SearchAsync(query, limit, offset, kinds: SymbolKinds.All, ct: ct).ConfigureAwait(false);
+        var page = _index.SearchAsync(query, limit, offset, kinds: SymbolKinds.All);
         if (json) {
             return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true });
         }
@@ -85,7 +85,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
     }
 
     public async Task<string> GetOutlineAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = await _index.SearchAsync(query, limit, offset, kinds: SymbolKinds.All, ct: ct).ConfigureAwait(false);
+        var page = _index.SearchAsync(query, limit, offset, kinds: SymbolKinds.All);
         if (page.Total != 1) {
             // Return search results when not unique (or none)
             return await FindAsync(query, limit, offset, json, ct).ConfigureAwait(false);

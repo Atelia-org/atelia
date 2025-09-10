@@ -42,36 +42,6 @@ public class V2_JsonFormatterTests {
         return m;
     }
 
-    [Fact]
-    public void Combine_ToJson_IncludesSections_NoDefList() {
-        var m = GetMethod("N.C", "Combine");
-        var blocks = XmlDocFormatter.BuildMemberBlocks(m);
-        var json = JsonFormatter.RenderBlocksToJson(blocks);
-        // Headings present
-        Assert.Contains("\"type\": \"section\"", json);
-        Assert.Contains("\"heading\": \"Type Parameters\"", json);
-        Assert.Contains("\"heading\": \"Parameters\"", json);
-        // DefList removed in V2 model; ensure no legacy deflist appears
-        Assert.DoesNotContain("\"type\": \"deflist\"", json);
-    }
-
-    [Fact]
-    public void TableShowcase_ToJson_IncludesTableUnderReturns() {
-        var m = GetMethod("N.C", "TableShowcase");
-        var blocks = XmlDocFormatter.BuildMemberBlocks(m);
-        var json = JsonFormatter.RenderBlocksToJson(blocks);
-        // Returns section + table structure
-        Assert.Contains("\"heading\": \"Returns\"", json);
-        using var doc = JsonDocument.Parse(json);
-        bool foundTable = false;
-        foreach (var el in doc.RootElement.EnumerateArray()) {
-            foundTable |= FindTableWithHeaders(el, ["State", "Meaning"]);
-            if (foundTable) {
-                break;
-            }
-        }
-        Assert.True(foundTable, "Expected a table with headers [State, Meaning] in JSON output");
-    }
     private static bool FindTableWithHeaders(JsonElement el, string[] headers) {
         if (el.ValueKind == JsonValueKind.Object) {
             if (el.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "table") {

@@ -106,7 +106,7 @@ public sealed class SymbolIndex : ISymbolIndex {
         }
     }
 
-    public async Task<SearchResults> SearchAsync(string query, int limit, int offset, SymbolKinds kinds, CancellationToken ct) {
+    public SearchResults SearchAsync(string query, int limit, int offset, SymbolKinds kinds) {
         if (string.IsNullOrWhiteSpace(query)) {
             return new SearchResults(Array.Empty<SearchHit>(), 0, 0, limit, 0);
         }
@@ -264,15 +264,6 @@ public sealed class SymbolIndex : ISymbolIndex {
         int? nextOff = off + lim < total ? off + lim : null;
         DebugUtil.Print("Search", $"done: total={total}, page={page.Count}, off={off}, lim={lim}, elapsed={sw.ElapsedMilliseconds}ms");
         return new SearchResults(page, total, off, lim, nextOff);
-    }
-
-    public async Task<SymbolId?> ResolveAsync(string identifierOrName, CancellationToken ct) {
-        var page = await SearchAsync(identifierOrName, limit: 2, offset: 0, kinds: SymbolKinds.All, ct: ct).ConfigureAwait(false);
-        if (page.Total == 1) {
-            return page.Items[0].SymbolId;
-        }
-
-        return null;
     }
 
     private Entry? FindEntry(string id) => _all.TryGetValue(id, out var e) ? e : null;

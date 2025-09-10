@@ -7,8 +7,7 @@ public readonly record struct SymbolId(string Value) {
 }
 
 public interface ISymbolIndex {
-    Task<SearchResults> SearchAsync(string query, int limit, int offset, SymbolKinds kinds, CancellationToken ct);
-    Task<SymbolId?> ResolveAsync(string identifierOrName, CancellationToken ct);
+    SearchResults SearchAsync(string query, int limit, int offset, SymbolKinds kinds);
 }
 
 [Flags]
