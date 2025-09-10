@@ -58,3 +58,22 @@ public sealed record TypeSourcePart(
     int Length
 );
 
+
+
+// Unified outline model for Markdown/JSON dual pipeline
+
+public sealed record SymbolMetadata(
+    string Fqn,
+    string DocId,
+    string? Assembly,
+    string? FilePath
+);
+
+public sealed record SymbolOutline(
+    SymbolKind Kind,
+    string Name,
+    string Signature,
+    IReadOnlyList<CodeCortexV2.Formatting.Block> XmlDocBlocks,
+    IReadOnlyList<SymbolOutline> Members,
+    SymbolMetadata Metadata
+);

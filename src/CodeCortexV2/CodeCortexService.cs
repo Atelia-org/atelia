@@ -51,8 +51,8 @@ public sealed class CodeCortexService {
             }
 
             var nsProvider = new NamespaceOutlineProvider(id => ResolveSymbolByDocId(_host.Workspace.CurrentSolution, id.Value));
-            var nsOutline = await nsProvider.GetNamespaceAsTypeOutlineAsync(nsId.Value, new OutlineOptions(Markdown: true), ct).ConfigureAwait(false);
-            var md = MarkdownLayout.RenderTypeOutline(nsOutline);
+            var nsOutline = await nsProvider.GetNamespaceOutlineAsync(nsId.Value, new OutlineOptions(Markdown: true), ct).ConfigureAwait(false);
+            var md = MarkdownLayout.RenderSymbolOutline(nsOutline, baseHeadingLevel, maxAtxLevel);
             return md;
         }
         if (page.Total > 1) {
@@ -75,8 +75,71 @@ public sealed class CodeCortexService {
         }
         var provider = new TypeOutlineProvider(id => id.Value == unique.SymbolId.Value ? typeSym : ResolveTypeByDocId(_host.Workspace.CurrentSolution, id.Value));
         var outline = await provider.GetTypeOutlineAsync(unique.SymbolId, new OutlineOptions(Markdown: true), ct).ConfigureAwait(false);
-        var mdOutline = MarkdownLayout.RenderTypeOutline(outline);
+        var mdOutline = MarkdownLayout.RenderSymbolOutline(outline, baseHeadingLevel, maxAtxLevel);
         return mdOutline;
+    }
+
+    public async Task<object> GetOutlineJsonObjectAsync(string queryOrId, int limit, int offset, CancellationToken ct) {
+        var page = await _index.SearchAsync(queryOrId, CodeCortexV2.Abstractions.SymbolKind.Type, limit, offset, ct).ConfigureAwait(false);
+        if (page.Total == 0) {
+            var nsId = await _index.ResolveAsync(queryOrId, ct).ConfigureAwait(false);
+            if (nsId is null && !queryOrId.StartsWith("N:", StringComparison.Ordinal)) {
+                nsId = await _index.ResolveAsync("N:" + queryOrId, ct).ConfigureAwait(false);
+            }
+            if (nsId is null) {
+                return new Dictionary<string, object?> {
+                    ["error"] = "未找到匹配。支持：类型 (T:...) 与命名空间 (N:... 或 FQN)。"
+                };
+            }
+            var nsProvider = new NamespaceOutlineProvider(id => ResolveSymbolByDocId(_host.Workspace.CurrentSolution, id.Value));
+            var nsOutline = await nsProvider.GetNamespaceOutlineAsync(nsId.Value, new OutlineOptions(Markdown: false), ct).ConfigureAwait(false);
+            return JsonProjection.ToPlainObject(nsOutline);
+        }
+        if (page.Total > 1) {
+            var items = new List<Dictionary<string, object?>>();
+            foreach (var h in page.Items) {
+                items.Add(
+                    new Dictionary<string, object?> {
+                        ["symbolId"] = h.SymbolId.Value,
+                        ["kind"] = h.Kind.ToString(),
+                        ["matchKind"] = h.MatchKind.ToString(),
+                        ["assembly"] = h.Assembly,
+                        ["ambiguous"] = h.IsAmbiguous
+                    }
+                );
+            }
+            return new Dictionary<string, object?> {
+                ["kind"] = "searchResults",
+                ["total"] = page.Total,
+                ["offset"] = page.Offset,
+                ["limit"] = page.Limit,
+                ["nextOffset"] = page.NextOffset,
+                ["items"] = items
+            };
+        }
+        var unique = page.Items[0];
+        var typeSym = ResolveTypeByDocId(_host.Workspace.CurrentSolution, unique.SymbolId.Value);
+        if (typeSym is null) {
+            return new Dictionary<string, object?> { ["error"] = "找到 1 个匹配，但未能解析类型符号。" };
+        }
+        var provider = new TypeOutlineProvider(id => id.Value == unique.SymbolId.Value ? typeSym : ResolveTypeByDocId(_host.Workspace.CurrentSolution, id.Value));
+        var outline = await provider.GetTypeOutlineAsync(unique.SymbolId, new OutlineOptions(Markdown: false), ct).ConfigureAwait(false);
+        return JsonProjection.ToPlainObject(outline);
+    }
+
+    public async Task<string> GetOutlineJsonTextAsync(string queryOrId, int limit, int offset, bool indented, CancellationToken ct) {
+        var obj = await GetOutlineJsonObjectAsync(queryOrId, limit, offset, ct).ConfigureAwait(false);
+        var options = new JsonSerializerOptions { WriteIndented = indented };
+        return JsonSerializer.Serialize(obj, options);
+    }
+
+    // Wrapper for DevCli: unified outline with --json switch
+    public async Task<string> GetOutlineAsync(string query, CodeCortexV2.Abstractions.SymbolKind? kind, int limit, int offset, bool json, CancellationToken ct) {
+        // v1: ignore kind; follow existing behavior (type-first, then namespace)
+        if (json) {
+            return await GetOutlineJsonTextAsync(query, limit, offset, indented: true, ct).ConfigureAwait(false);
+        }
+        return await GetOutlineMarkdownAsync(query, limit, offset, baseHeadingLevel: 2, maxAtxLevel: 3, ct).ConfigureAwait(false);
     }
 
     private static INamedTypeSymbol? ResolveTypeByDocId(Solution solution, string docId) {

@@ -38,6 +38,61 @@ public static class MarkdownLayout {
         return sb.ToString().TrimEnd();
     }
 
+    // New unified renderer for SymbolOutline (hierarchical)
+    public static string RenderSymbolOutline(SymbolOutline outline, int baseHeadingLevel = 2, int maxAtxLevel = 4) {
+        var sb = new StringBuilder();
+        // Root title by name
+        sb.AppendLine($"# {outline.Name}");
+        // Render root signature/doc at first member level
+        RenderSymbolNode(sb, outline, baseHeadingLevel, maxAtxLevel);
+        return sb.ToString().TrimEnd();
+    }
+
+    private static void RenderSymbolNode(StringBuilder sb, SymbolOutline node, int level, int maxAtxLevel) {
+        if (!string.IsNullOrWhiteSpace(node.Signature)) {
+            int lv = Math.Clamp(level, 1, maxAtxLevel);
+            sb.AppendLine(new string('#', lv) + " `" + node.Signature + "`");
+        }
+        // Compose metadata block (if any) + XmlDoc blocks
+        var blocks = new List<Block>();
+        if (!string.IsNullOrEmpty(node.Metadata.Fqn) || !string.IsNullOrEmpty(node.Metadata.DocId) || !string.IsNullOrEmpty(node.Metadata.Assembly) || !string.IsNullOrEmpty(node.Metadata.FilePath)) {
+            blocks.Add(BuildMetadataBlock(node));
+        }
+        if (node.XmlDocBlocks != null && node.XmlDocBlocks.Count > 0) {
+            blocks.AddRange(node.XmlDocBlocks);
+        }
+        if (blocks.Count > 0) {
+            // Doc sections appear under the signature heading
+            RenderBlocks(sb, blocks, indent: string.Empty, baseHeadingLevel: level + 1, maxAtxLevel: maxAtxLevel, depth: 0);
+        }
+        // Children
+        for (int i = 0; i < node.Members.Count; i++) {
+            sb.AppendLine();
+            RenderSymbolNode(sb, node.Members[i], level + 1, maxAtxLevel);
+        }
+    }
+
+    private static SectionBlock BuildMetadataBlock(SymbolOutline node) {
+        string header = node.Kind switch {
+            CodeCortexV2.Abstractions.SymbolKind.Namespace => "Namespace Metadata",
+            CodeCortexV2.Abstractions.SymbolKind.Type => "Type Metadata",
+            _ => "Symbol Metadata"
+        };
+        var inner = new List<Block>();
+        void AddKV(string key, string? val) {
+            if (!string.IsNullOrWhiteSpace(val)) {
+                inner.Add(new SectionBlock(key, new SequenceBlock(new List<Block> { new ParagraphBlock(val!) })));
+            }
+        }
+        AddKV("FQN", node.Metadata.Fqn);
+        AddKV("DocId", node.Metadata.DocId);
+        AddKV("Assembly", node.Metadata.Assembly);
+        if (!string.IsNullOrWhiteSpace(node.Metadata.FilePath)) {
+            inner.Add(new SectionBlock("File", new SequenceBlock(new List<Block> { new ParagraphBlock(System.IO.Path.GetFileName(node.Metadata.FilePath!)) })));
+        }
+        return new SectionBlock(header, new SequenceBlock(inner));
+    }
+
     public static string RenderBlocksToMarkdown(List<Block> blocks, string indent = "") {
         return RenderBlocksToMarkdown(blocks, indent, baseHeadingLevel: 2, maxAtxLevel: 3);
     }

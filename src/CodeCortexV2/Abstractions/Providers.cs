@@ -22,16 +22,17 @@ public enum MatchKind {
     Fuzzy = 8
 }
 
+// New unified providers returning SymbolOutline
 public interface IMemberOutlineProvider {
-    Task<MemberOutline> GetMemberOutlineAsync(SymbolId memberId, OutlineOptions? options, CancellationToken ct);
+    Task<SymbolOutline> GetMemberOutlineAsync(SymbolId memberId, OutlineOptions? options, CancellationToken ct);
 }
 
 public interface ITypeOutlineProvider {
-    Task<TypeOutline> GetTypeOutlineAsync(SymbolId typeId, OutlineOptions? options, CancellationToken ct);
+    Task<SymbolOutline> GetTypeOutlineAsync(SymbolId typeId, OutlineOptions? options, CancellationToken ct);
 }
 
 public interface INamespaceOutlineProvider {
-    Task<NamespaceOutline> GetNamespaceOutlineAsync(SymbolId namespaceId, OutlineOptions? options, CancellationToken ct);
+    Task<SymbolOutline> GetNamespaceOutlineAsync(SymbolId namespaceId, OutlineOptions? options, CancellationToken ct);
 }
 
 public interface IAssemblyOutlineProvider {

@@ -5,7 +5,7 @@ using CodeCortexV2;
 if (args.Length == 0 || args[0] is "-h" or "--help") {
     Console.WriteLine(
         "CodeCortexV2.DevCli - dev-time one-shot CLI\n" +
-                      "Usage:\n  ccv2 <sln|csproj> find <query> [--limit N] [--offset M] [--kind namespace|type|method|property|field|event] [--json]\n  ccv2 <sln|csproj> outline <query-or-id> [--limit N] [--offset M]\n  ccv2 <sln|csproj> source <typeId>\n"
+                      "Usage:\n  ccv2 <sln|csproj> find <query> [--limit N] [--offset M] [--kind namespace|type|method|property|field|event] [--json]\n  ccv2 <sln|csproj> outline <query-or-id> [--limit N] [--offset M] [--json]\n  ccv2 <sln|csproj> source <typeId>\n"
     );
     return 0;
 }
@@ -65,14 +65,17 @@ switch (cmd) {
     }
     case "outline": {
         if (args.Length < 3) {
-            Console.WriteLine("Missing query-or-id. Usage: ccv2 <sln> outline <query-or-id> [--limit N] [--offset M]");
+            Console.WriteLine("Missing query-or-id. Usage: ccv2 <sln> outline <query-or-id> [--limit N] [--offset M] [--json]");
             return 1;
         }
         var query = args[2];
         int limit = 30;
         int offset = 0;
+        bool json = false;
         for (int i = 3; i < args.Length; i++) {
-            if (args[i] == "--limit" && i + 1 < args.Length && int.TryParse(args[i + 1], out var n)) {
+            if (args[i] == "--json") {
+                json = true;
+            } else if (args[i] == "--limit" && i + 1 < args.Length && int.TryParse(args[i + 1], out var n)) {
                 limit = n;
                 i++;
             } else if (args[i] == "--offset" && i + 1 < args.Length && int.TryParse(args[i + 1], out var m)) {
@@ -80,8 +83,8 @@ switch (cmd) {
                 i++;
             }
         }
-        var md = await service.GetOutlineMarkdownAsync(query, limit, offset, baseHeadingLevel: 3, maxAtxLevel: 4, cts.Token);
-        Console.WriteLine(md);
+        var output = await service.GetOutlineAsync(query, kind: null, limit, offset, json, cts.Token);
+        Console.WriteLine(output);
         return 0;
     }
     default:
