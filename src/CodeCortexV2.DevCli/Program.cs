@@ -20,7 +20,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help") {
                       "  ccv2 e2e-wildcard-search\n" +
                       "  ccv2 e2e-fuzzy-fallback\n" +
                       "  ccv2 e2e-debounce-batch\n" +
-                      "  ccv2 e2e-with-delta-upsert-order\n"
+                      "  ccv2 e2e-with-delta-upsert-order\n" +
+                      "  ccv2 e2e-project-removed\n"
     );
     return 0;
 }
@@ -58,6 +59,9 @@ if (args[0] == "e2e-debounce-batch") {
 }
 if (args[0] == "e2e-with-delta-upsert-order") {
     return await CodeCortexV2.DevCli.E2eWithDeltaUpsertOrderCommand.RunAsync();
+}
+if (args[0] == "e2e-project-removed") {
+    return await CodeCortexV2.DevCli.E2eProjectRemovedCommand.RunAsync();
 }
 
 var sln = args[0];
