@@ -16,7 +16,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help") {
                       "  ccv2 e2e-partial-type-remove\n" +
                       "  ccv2 e2e-namespace-deep-cascade\n" +
                       "  ccv2 e2e-suffix-ambiguity\n" +
-                      "  ccv2 e2e-case-insensitive-exact\n"
+                      "  ccv2 e2e-case-insensitive-exact\n" +
+                      "  ccv2 e2e-wildcard-search\n"
     );
     return 0;
 }
@@ -24,6 +25,9 @@ if (args.Length == 0 || args[0] is "-h" or "--help") {
 // E2E commands (no-arg; defaulted paths)
 if (args[0] == "e2e-add-method") {
     return await RunE2eAddMethodAsync();
+}
+if (args[0] == "e2e-wildcard-search") {
+    return await CodeCortexV2.DevCli.E2eWildcardSearchCommand.RunAsync();
 }
 if (args[0] == "e2e-generic-base-search") {
     return await CodeCortexV2.DevCli.E2eGenericBaseSearchCommand.RunAsync();
