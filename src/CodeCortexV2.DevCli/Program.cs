@@ -7,7 +7,7 @@ using Microsoft.CodeAnalysis;
 if (args.Length == 0 || args[0] is "-h" or "--help") {
     Console.WriteLine(
         "CodeCortexV2.DevCli - dev-time one-shot CLI\n" +
-                      "Usage:\n  ccv2 <sln|csproj> find <query> [--limit N] [--offset M] [--json]\n  ccv2 <sln|csproj> outline <query-or-id> [--limit N] [--offset M] [--json]\n\n  # E2E test commands (no arguments; use defaults)\n  ccv2 e2e-add-method\n"
+              "Usage:\n  ccv2 <sln|csproj> find <query> [--limit N] [--offset M] [--json]\n  ccv2 <sln|csproj> outline <query-or-id> [--limit N] [--offset M] [--json]\n\n  # E2E test commands (no arguments; use defaults)\n  ccv2 e2e-add-method\n  ccv2 e2e-doc-removed\n"
     );
     return 0;
 }
@@ -15,6 +15,9 @@ if (args.Length == 0 || args[0] is "-h" or "--help") {
 // E2E commands (no-arg; defaulted paths)
 if (args[0] == "e2e-add-method") {
     return await RunE2eAddMethodAsync();
+}
+if (args[0] == "e2e-doc-removed") {
+    return await CodeCortexV2.DevCli.E2eDocRemovedCommand.RunAsync();
 }
 
 var sln = args[0];
