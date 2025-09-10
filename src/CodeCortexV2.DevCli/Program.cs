@@ -18,7 +18,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help") {
                       "  ccv2 e2e-suffix-ambiguity\n" +
                       "  ccv2 e2e-case-insensitive-exact\n" +
                       "  ccv2 e2e-wildcard-search\n" +
-                      "  ccv2 e2e-fuzzy-fallback\n"
+                      "  ccv2 e2e-fuzzy-fallback\n" +
+                      "  ccv2 e2e-with-delta-upsert-order\n"
     );
     return 0;
 }
@@ -50,6 +51,9 @@ if (args[0] == "e2e-case-insensitive-exact") {
 }
 if (args[0] == "e2e-fuzzy-fallback") {
     return await CodeCortexV2.DevCli.E2eFuzzyFallbackCommand.RunAsync();
+}
+if (args[0] == "e2e-with-delta-upsert-order") {
+    return await CodeCortexV2.DevCli.E2eWithDeltaUpsertOrderCommand.RunAsync();
 }
 
 var sln = args[0];
