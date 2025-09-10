@@ -62,13 +62,13 @@ public class V2_OutlineFormattingTests {
         var norm = md.Replace("\r\n", "\n");
         Atelia.Diagnostics.DebugUtil.Print("V2OutlineTest", "TableShowcase()\n" + norm);
         // Parameters rendered (Section-of-Sections in V2)
-        Assert.Contains("Parameters:", norm);
-        Assert.Contains("count:", norm);
+        Assert.Contains("Parameters", norm);
+        Assert.Contains("count", norm);
         Assert.Contains("Item count.", norm);
         // Ensure no triple blank lines after headings (robust against presence/absence of returns/exceptions)
-        Assert.DoesNotContain("Parameters:\n\n\n", norm);
-        Assert.DoesNotContain("Returns:\n\n\n|", norm);
-        Assert.DoesNotContain("Exceptions:\n\n\n|", norm);
+        Assert.DoesNotContain("Parameters\n\n\n", norm);
+        Assert.DoesNotContain("Returns\n\n\n|", norm);
+        Assert.DoesNotContain("Exceptions\n\n\n|", norm);
     }
 }
 
