@@ -79,18 +79,36 @@ public sealed class SymbolIndex : ISymbolIndex {
             }
         }
 
-        // 1) Exact FQN (case)
-        if (_fqnCaseSensitive.TryGetValue(query, out var id1)) {
-            var e = FindEntry(id1);
-            if (e != null && (kinds & e.Kind) != 0) {
-                AddResult(results, added, e.ToHit(MatchKind.Exact, 0));
+        // 1) Exact FQN (case) + quick path without 'global::' prefix
+        var qHasGlobal = query.StartsWith("global::", StringComparison.Ordinal);
+        var qWithGlobal = qHasGlobal ? query : "global::" + query;
+        {
+            string? id1final = null;
+            if (_fqnCaseSensitive.TryGetValue(query, out var tCase1)) {
+                id1final = tCase1;
+            } else if (!qHasGlobal && _fqnCaseSensitive.TryGetValue(qWithGlobal, out var tCase2)) {
+                id1final = tCase2;
+            }
+            if (id1final is not null) {
+                var e = FindEntry(id1final);
+                if (e != null && (kinds & e.Kind) != 0) {
+                    AddResult(results, added, e.ToHit(MatchKind.Exact, 0));
+                }
             }
         }
-        // 2) Exact FQN (ignore case)
-        if (results.Count < limit && _fqnIgnoreCase.TryGetValue(query, out var id2)) {
-            var e = FindEntry(id2);
-            if (e != null && (kinds & e.Kind) != 0) {
-                AddResult(results, added, e.ToHit(MatchKind.ExactIgnoreCase, 10));
+        // 2) Exact FQN (ignore case) + quick path without 'global::' prefix
+        if (results.Count < limit) {
+            string? id2final = null;
+            if (_fqnIgnoreCase.TryGetValue(query, out var tICase1)) {
+                id2final = tICase1;
+            } else if (!qHasGlobal && _fqnIgnoreCase.TryGetValue(qWithGlobal, out var tICase2)) {
+                id2final = tICase2;
+            }
+            if (id2final is not null) {
+                var e = FindEntry(id2final);
+                if (e != null && (kinds & e.Kind) != 0) {
+                    AddResult(results, added, e.ToHit(MatchKind.ExactIgnoreCase, 10));
+                }
             }
         }
         // 3) Prefix (FQN) when query contains '.'
