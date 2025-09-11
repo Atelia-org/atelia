@@ -10,6 +10,7 @@ public static class E2eAllCommand {
             ("e2e-namespace-deep-cascade", E2eNamespaceDeepCascadeCommand.RunAsync),
             ("e2e-suffix-ambiguity", E2eSuffixAmbiguityCommand.RunAsync),
             ("e2e-case-insensitive-exact", E2eCaseInsensitiveExactCommand.RunAsync),
+            ("e2e-exact-without-global", E2eExactWithoutGlobalCommand.RunAsync),
             ("e2e-wildcard-search", E2eWildcardSearchCommand.RunAsync),
             ("e2e-fuzzy-fallback", E2eFuzzyFallbackCommand.RunAsync),
             ("e2e-debounce-batch", E2eDebounceBatchCommand.RunAsync),

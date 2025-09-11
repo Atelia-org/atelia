@@ -17,6 +17,7 @@ if (args.Length == 0 || args[0] is "-h" or "--help") {
                       "  ccv2 e2e-namespace-deep-cascade\n" +
                       "  ccv2 e2e-suffix-ambiguity\n" +
                       "  ccv2 e2e-case-insensitive-exact\n" +
+                      "  ccv2 e2e-exact-without-global\n" +
                       "  ccv2 e2e-wildcard-search\n" +
                       "  ccv2 e2e-fuzzy-fallback\n" +
                       "  ccv2 e2e-debounce-batch\n" +
@@ -51,6 +52,9 @@ if (args[0] == "e2e-suffix-ambiguity") {
 }
 if (args[0] == "e2e-case-insensitive-exact") {
     return await CodeCortexV2.DevCli.E2eCaseInsensitiveExactCommand.RunAsync();
+}
+if (args[0] == "e2e-exact-without-global") {
+    return await CodeCortexV2.DevCli.E2eExactWithoutGlobalCommand.RunAsync();
 }
 if (args[0] == "e2e-fuzzy-fallback") {
     return await CodeCortexV2.DevCli.E2eFuzzyFallbackCommand.RunAsync();
