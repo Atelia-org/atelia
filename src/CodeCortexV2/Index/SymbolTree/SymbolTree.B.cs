@@ -14,20 +14,18 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
     internal sealed class SymbolTreeB {
         private readonly ImmutableArray<NodeB> _nodes;
         private readonly NameTable _names;
-        private readonly ImmutableArray<SymbolEntry> _entries;
+
         private readonly Dictionary<string, ImmutableArray<int>> _exactAliasToNodes;    // case-sensitive aliases
         private readonly Dictionary<string, ImmutableArray<int>> _nonExactAliasToNodes; // generic-base / ignore-case etc.
 
         private SymbolTreeB(
             ImmutableArray<NodeB> nodes,
             NameTable names,
-            ImmutableArray<SymbolEntry> entries,
             Dictionary<string, ImmutableArray<int>> exactAliasToNodes,
             Dictionary<string, ImmutableArray<int>> nonExactAliasToNodes
         ) {
             _nodes = nodes;
             _names = names;
-            _entries = entries;
             _exactAliasToNodes = exactAliasToNodes;
             _nonExactAliasToNodes = nonExactAliasToNodes;
         }
@@ -35,7 +33,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         public static SymbolTreeB Empty { get; } = new(
             ImmutableArray<NodeB>.Empty,
             NameTable.Empty,
-            ImmutableArray<SymbolEntry>.Empty,
             new Dictionary<string, ImmutableArray<int>>(StringComparer.Ordinal),
             new Dictionary<string, ImmutableArray<int>>(StringComparer.Ordinal)
         );
@@ -133,16 +130,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         }
 
         private void CollectEntriesAtNode(int nodeIdx, List<SearchHit> acc, MatchKind kind, SymbolKinds filter) {
-            var n = _nodes[nodeIdx];
-            if (n.EntryIndex < 0) {
+            var entry = _nodes[nodeIdx].Entry;
+            if (entry is null) {
                 return;
             }
-
-            var entry = _entries[n.EntryIndex];
             if ((filter & entry.Kind) == 0) {
                 return;
             }
-
             acc.Add(entry.ToHit(kind, 0));
         }
 
@@ -270,14 +264,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         /// </summary>
         public static SymbolTreeB FromEntries(IEnumerable<SymbolEntry> entries) {
             var arr = entries?.ToImmutableArray() ?? ImmutableArray<SymbolEntry>.Empty;
-            var idToEntry = new Dictionary<string, int>(StringComparer.Ordinal);
-            for (int i = 0; i < arr.Length; i++) {
-                var id = arr[i].SymbolId;
-                if (!string.IsNullOrEmpty(id)) {
-                    idToEntry[id] = i;
-                }
-            }
-
             // Name table
             var canonical = new List<string>();
             var aliasToId = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -466,12 +452,12 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 }
             }
 
-            // Seal nodes (NodeB keeps a single entry index)
+            // Seal nodes (NodeB keeps a single entry reference)
             var sealedNodes = new List<NodeB>(nodes.Count);
             for (int i = 0; i < nodes.Count; i++) {
                 var n = nodes[i];
-                int entryIndex = n.Entries.Count > 0 ? n.Entries[0] : -1;
-                sealedNodes.Add(new NodeB(n.NameId, n.Parent, n.FirstChild, n.NextSibling, n.Kind, entryIndex));
+                var entry = n.Entries.Count > 0 ? arr[n.Entries[0]] : null;
+                sealedNodes.Add(new NodeB(n.NameId, n.Parent, n.FirstChild, n.NextSibling, n.Kind, entry));
             }
 
             // Seal tables
@@ -489,7 +475,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             return new SymbolTreeB(
                 sealedNodes.ToImmutableArray(),
                 nameTable,
-                arr,
                 exact,
                 nonExact
             );

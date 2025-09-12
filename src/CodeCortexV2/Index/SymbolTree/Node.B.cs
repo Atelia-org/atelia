@@ -1,29 +1,27 @@
-using System.Collections.Immutable;
+using CodeCortexV2.Index;
 
-namespace CodeCortexV2.Index.SymbolTreeInternal {
-    /// <summary>
-    /// Node variant for the Tick-Tock B implementation.
-    /// - Holds at most one entry (EntryIndex), favoring simplicity over indirection.
-    /// - For duplicate types across assemblies, multiple sibling nodes will exist.
-    /// </summary>
-    internal readonly struct NodeB {
-        public readonly int NameId;
-        public readonly int Parent;      // -1 for root
-        public readonly int FirstChild;  // -1 if none
-        public readonly int NextSibling; // -1 if none
-        public readonly NodeKind Kind;   // Namespace or Type
-        public readonly int EntryIndex;  // -1 if none
+namespace CodeCortexV2.Index.SymbolTreeInternal;
 
-        public NodeB(int nameId, int parent, int firstChild, int nextSibling, NodeKind kind, int entryIndex) {
-            NameId = nameId;
-            Parent = parent;
-            FirstChild = firstChild;
-            NextSibling = nextSibling;
-            Kind = kind;
-            EntryIndex = entryIndex;
-        }
+/// <summary>
+/// Node variant for the Tick-Tock B implementation.
+/// - Holds at most one entry (EntryIndex), favoring simplicity over indirection.
+/// - For duplicate types across assemblies, multiple sibling nodes will exist.
+/// </summary>
+internal readonly struct NodeB {
+    public readonly int NameId;
+    public readonly int Parent;      // -1 for root
+    public readonly int FirstChild;  // -1 if none
+    public readonly int NextSibling; // -1 if none
+    public readonly NodeKind Kind;   // Namespace or Type
+    public readonly SymbolEntry? Entry;  // null if none
 
-        public bool HasEntry => EntryIndex >= 0;
+    public NodeB(int nameId, int parent, int firstChild, int nextSibling, NodeKind kind, global::CodeCortexV2.Index.SymbolEntry? entry) {
+        NameId = nameId;
+        Parent = parent;
+        FirstChild = firstChild;
+        NextSibling = nextSibling;
+        Kind = kind;
+        Entry = entry;
     }
 }
 
