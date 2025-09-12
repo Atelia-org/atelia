@@ -10,6 +10,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using CodeCortexV2.Abstractions;
 using Atelia.Diagnostics;
 using RoslynWorkspace = Microsoft.CodeAnalysis.Workspace;
+using CodeCortexV2.Index.SymbolTreeInternal;
 
 namespace CodeCortexV2.Index;
 
@@ -49,9 +50,34 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     private ImmutableDictionary<string, ImmutableHashSet<DocumentId>> _typeIdToDocs =
         ImmutableDictionary.Create<string, ImmutableHashSet<DocumentId>>(StringComparer.Ordinal);
 
+    // Maintain a map of all current entries to allow building SymbolTree snapshots for A/B.
+    private ImmutableDictionary<string, SymbolEntry> _entriesMap =
+        ImmutableDictionary.Create<string, SymbolEntry>(StringComparer.Ordinal);
+
+    // Maintain a list snapshot that preserves duplicates across assemblies (same DocId in multiple projects)
+    private ImmutableArray<SymbolEntry> _entriesList = ImmutableArray<SymbolEntry>.Empty;
+
+    /// <summary>When true, CurrentSearchEngine will use the SymbolTree engine instead of SymbolIndex.</summary>
+    public bool UseSymbolTreeForSearch { get; set; } = false;
+
+    /// <summary>Current search engine for A/B: either SymbolIndex (default) or SymbolTree snapshot built from entries.</summary>
+    public ISymbolIndex CurrentSearchEngine => UseSymbolTreeForSearch
+        ? SymbolTree.FromEntries(_entriesMap.Values)
+        : Current;
+
+
+
     private SymbolIndex _current = SymbolIndex.Empty;
     /// &lt;inheritdoc /&gt;
     public SymbolIndex Current => System.Threading.Volatile.Read(ref _current);
+
+
+    /// <summary>Expose current flat entries for building alternative engines (e.g., SymbolTreeB) without exposing internal maps.</summary>
+    public IEnumerable<SymbolEntry> CurrentEntries => _entriesMap.Values;
+
+    /// <summary>Expose current entries including duplicates across assemblies (for SymbolTreeB A/B snapshots).</summary>
+    public IEnumerable<SymbolEntry> CurrentEntriesWithDuplicates => _entriesList;
+
 
     /// <summary>Debounce duration in milliseconds for coalescing workspace events.</summary>
     public int DebounceMs { get; set; } = 500;
@@ -101,6 +127,22 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         var full = await ComputeFullDeltaAsync(_workspace.CurrentSolution, ct).ConfigureAwait(false);
         var next = Current.WithDelta(full);
         System.Threading.Volatile.Write(ref _current, next); // publish
+        // Build entries map from full adds
+        var mapB = _entriesMap.ToBuilder();
+        foreach (var e in full.TypeAdds) {
+            if (!string.IsNullOrEmpty(e.SymbolId)) {
+                mapB[e.SymbolId] = e;
+            }
+        }
+        foreach (var e in full.NamespaceAdds) {
+            if (!string.IsNullOrEmpty(e.SymbolId)) {
+                mapB[e.SymbolId] = e;
+            }
+        }
+        _entriesMap = mapB.ToImmutable();
+        // Build duplicate-preserving list snapshot for SymbolTreeB
+        _entriesList = full.TypeAdds.Concat(full.NamespaceAdds).ToImmutableArray();
+
         // Build doc/type maps
         await RebuildDocTypeMapsAsync(_workspace.CurrentSolution, ct).ConfigureAwait(false);
         DebugUtil.Print("IndexSync", $"Initial build done: types={full.TypeAdds.Count}, namespaces={full.NamespaceAdds.Count}, elapsed={sw.ElapsedMilliseconds}ms");
@@ -115,6 +157,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         while (_pending.TryDequeue(out var e)) {
             batch.Add(e);
         }
+
 
         if (batch.Count == 0) {
             return;
@@ -135,6 +178,59 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             DebugUtil.Print("IndexSync", $"Batch: events={batch.Count}, docs={affected.Count}");
             var delta = await ComputeDeltaAsync(affected, ct).ConfigureAwait(false);
             DebugUtil.Print("IndexSync", $"Delta: +T={delta.TypeAdds.Count}, -T={delta.TypeRemovals.Count}, +N={delta.NamespaceAdds.Count}, -N={delta.NamespaceRemovals.Count}");
+            // Update entries map for A/B tree snapshots
+            var mapB = _entriesMap.ToBuilder();
+            if (delta.TypeRemovals is { Count: > 0 }) {
+                foreach (var id in delta.TypeRemovals) {
+                    if (!string.IsNullOrEmpty(id)) {
+                        mapB.Remove(id);
+                    }
+                }
+            }
+            if (delta.NamespaceRemovals is { Count: > 0 }) {
+                foreach (var id in delta.NamespaceRemovals) {
+                    if (!string.IsNullOrEmpty(id)) {
+                        mapB.Remove(id);
+                    }
+                }
+            }
+            if (delta.TypeAdds is { Count: > 0 }) {
+                foreach (var e in delta.TypeAdds) {
+                    if (!string.IsNullOrEmpty(e.SymbolId)) {
+                        mapB[e.SymbolId] = e;
+                    }
+                }
+            }
+            if (delta.NamespaceAdds is { Count: > 0 }) {
+                foreach (var e in delta.NamespaceAdds) {
+                    if (!string.IsNullOrEmpty(e.SymbolId)) {
+                        mapB[e.SymbolId] = e;
+                    }
+                }
+            }
+            _entriesMap = mapB.ToImmutable();
+
+            // Update duplicate-preserving list snapshot
+            var list = _entriesList.ToList();
+            if (delta.TypeRemovals is { Count: > 0 }) {
+                list.RemoveAll(e => e.Kind == SymbolKinds.Type && delta.TypeRemovals.Contains(e.SymbolId));
+            }
+
+            if (delta.NamespaceRemovals is { Count: > 0 }) {
+                list.RemoveAll(e => e.Kind == SymbolKinds.Namespace && delta.NamespaceRemovals.Contains(e.SymbolId));
+            }
+
+            if (delta.TypeAdds is { Count: > 0 }) {
+                list.AddRange(delta.TypeAdds);
+            }
+
+            if (delta.NamespaceAdds is { Count: > 0 }) {
+                list.AddRange(delta.NamespaceAdds);
+            }
+
+            _entriesList = list.ToImmutableArray();
+
+
             var next = Current.WithDelta(delta);
             System.Threading.Volatile.Write(ref _current, next); // publish (single-writer model)
             DebugUtil.Print("IndexSync", $"Applied in {sw.ElapsedMilliseconds}ms");

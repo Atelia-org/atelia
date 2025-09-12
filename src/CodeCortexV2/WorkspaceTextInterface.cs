@@ -9,6 +9,8 @@ using Microsoft.CodeAnalysis;
 
 namespace CodeCortexV2;
 
+public enum SearchEngineMode { SymbolIndex, SymbolTree, SymbolTreeB }
+
 /// <summary>
 /// Text-based UI for AI Coder to explore a .NET workspace/codebase.
 /// - String-only outputs (Markdown/JSON/plain) for console/RPC/file sinks.
@@ -22,7 +24,7 @@ namespace CodeCortexV2;
 /// </remarks>
 public interface IWorkspaceTextInterface {
     /// <summary>
-    /// Search symbols via SymbolIndex and return formatted text.
+    /// Search symbols via the selected engine and return formatted text.
     /// json=true returns pretty JSON; otherwise a human-friendly listing.
     /// </summary>
     /// <param name="query">Identifier/FQN/doc-id (T:/N:)/pattern.</param>
@@ -57,21 +59,42 @@ public interface IWorkspaceTextInterface {
 public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
     private readonly RoslynWorkspaceHost _host;
     private readonly IIndexProvider _provider;
+    private readonly IndexSynchronizer? _sync; // concrete provider for engine switching
+    private readonly SearchEngineMode _engineMode;
 
-    private WorkspaceTextInterface(RoslynWorkspaceHost host, IIndexProvider provider) {
+    private WorkspaceTextInterface(RoslynWorkspaceHost host, IIndexProvider provider, SearchEngineMode engineMode) {
         _host = host;
         _provider = provider;
+        _sync = provider as IndexSynchronizer;
+        _engineMode = engineMode;
     }
 
     public static async Task<WorkspaceTextInterface> CreateAsync(string slnOrProjectPath, CancellationToken ct) {
+        return await CreateAsync(slnOrProjectPath, SearchEngineMode.SymbolIndex, ct).ConfigureAwait(false);
+    }
+
+    public static async Task<WorkspaceTextInterface> CreateAsync(string slnOrProjectPath, SearchEngineMode engineMode, CancellationToken ct) {
         var host = await RoslynWorkspaceHost.LoadAsync(slnOrProjectPath, ct).ConfigureAwait(false);
         var sync = await IndexSynchronizer.CreateAsync(host.Workspace, ct).ConfigureAwait(false);
-        return new WorkspaceTextInterface(host, sync);
+        if (engineMode == SearchEngineMode.SymbolTree) {
+            sync.UseSymbolTreeForSearch = true;
+        }
+        return new WorkspaceTextInterface(host, sync, engineMode);
     }
 
 #pragma warning disable 1998 //此异步方法缺少 "await" 运算符，将以同 步方式运行
     public async Task<string> FindAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = _provider.Current.Search(query, limit, offset, kinds: SymbolKinds.All);
+        SearchResults page;
+        if (_engineMode == SearchEngineMode.SymbolTree && _sync is not null) {
+            var engine = _sync.CurrentSearchEngine;
+            page = engine.Search(query, limit, offset, kinds: SymbolKinds.All);
+        } else if (_engineMode == SearchEngineMode.SymbolTreeB && _sync is not null) {
+            var entries = _sync.CurrentEntriesWithDuplicates;
+            var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
+            page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
+        } else {
+            page = _provider.Current.Search(query, limit, offset, kinds: SymbolKinds.All);
+        }
         if (json) {
             return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true });
         }
@@ -87,7 +110,17 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
 #pragma warning restore 1998
 
     public async Task<string> GetOutlineAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
-        var page = _provider.Current.Search(query, limit, offset, kinds: SymbolKinds.All);
+        SearchResults page;
+        if (_engineMode == SearchEngineMode.SymbolTree && _sync is not null) {
+            var engine = _sync.CurrentSearchEngine;
+            page = engine.Search(query, limit, offset, kinds: SymbolKinds.All);
+        } else if (_engineMode == SearchEngineMode.SymbolTreeB && _sync is not null) {
+            var entries = _sync.CurrentEntriesWithDuplicates;
+            var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
+            page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
+        } else {
+            page = _provider.Current.Search(query, limit, offset, kinds: SymbolKinds.All);
+        }
         if (page.Total != 1 || page.Items[0].MatchKind == MatchKind.Fuzzy) {
             // Return search results when not unique (or none)
             return await FindAsync(query, limit, offset, json, ct).ConfigureAwait(false);
