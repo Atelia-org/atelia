@@ -114,20 +114,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             return (baseName, arity);
         }
 
-        private static string BuildPseudoGeneric(string baseName, int arity) {
-            if (arity <= 0) {
-                return baseName;
-            }
-            if (arity == 1) {
-                return baseName + "<T>";
-            }
-            var parts = new string[arity];
-            for (int i = 0; i < arity; i++) {
-                parts[i] = i == 0 ? "T" : "T" + (i + 1).ToString();
-            }
-            return baseName + "<" + string.Join(",", parts) + ">";
-        }
-
         private int[] ToAncestorSegIds(string[] segs) {
             int count = Math.Max(0, segs.Length - 1);
             var ids = new int[count];
