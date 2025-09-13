@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Runtime.InteropServices;
+
 using Atelia.Diagnostics;
 using CodeCortexV2.Abstractions;
 
@@ -284,18 +286,18 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             int root = NewNode(string.Empty, -1, NodeKind.Namespace);
 
             // Alias buckets (store relations with flags)
-            var exactBuckets = new Dictionary<string, List<AliasRelation>>(StringComparer.Ordinal);
-            var nonExactBuckets = new Dictionary<string, List<AliasRelation>>(StringComparer.Ordinal);
-            static void Bucket(Dictionary<string, List<AliasRelation>> dict, string alias, int nodeIdx, MatchFlags kind) {
+            // NOTE (extension point): 可在“别名层”引入 Member 级别的别名关系，或为命名空间命中支持“展开子树”语义；当前版本不实现，仅记录扩展点。
+            var exactBuckets = new Dictionary<string, Dictionary<int, MatchFlags>>(StringComparer.Ordinal);
+            var nonExactBuckets = new Dictionary<string, Dictionary<int, MatchFlags>>(StringComparer.Ordinal);
+            static void Bucket(Dictionary<string, Dictionary<int, MatchFlags>> dict, string alias, int nodeIdx, MatchFlags kind) {
                 if (string.IsNullOrEmpty(alias)) {
                     return;
                 }
-
-                if (!dict.TryGetValue(alias, out var list)) {
-                    list = new List<AliasRelation>();
-                    dict[alias] = list;
-                }
-                list.Add(new AliasRelation(kind, nodeIdx));
+                // Fast-path insert/merge using CollectionsMarshal to avoid double lookups and extra allocations.
+                ref var perNode = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, alias, out _);
+                perNode ??= new Dictionary<int, MatchFlags>();
+                ref var flagsRef = ref CollectionsMarshal.GetValueRefOrAddDefault(perNode, nodeIdx, out _);
+                flagsRef |= kind;
             }
 
             static IEnumerable<string> SplitNs(string? ns)
@@ -328,8 +330,10 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
                 }
                 if ((e.Kind & SymbolKinds.Type) != 0) {
+                    var nsSegments2 = SplitNs(e.ParentNamespace).ToArray();
                     int parent = root;
-                    foreach (var ns in SplitNs(e.ParentNamespace)) {
+                    for (int ni = 0; ni < nsSegments2.Length; ni++) {
+                        var ns = nsSegments2[ni];
                         parent = GetOrAddNode(parent, ns, NodeKind.Namespace);
                         Bucket(exactBuckets, ns, parent, MatchFlags.None);
                         var lowerNs = ns.ToLowerInvariant();
@@ -339,9 +343,9 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     }
                     // Build type segments strictly from DocId ("T:"-prefixed). No fallback to FQN; callers must ensure DocId is present.
                     System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(e.SymbolId) && e.SymbolId.StartsWith("T:", StringComparison.Ordinal), "Type entries must have DocId starting with 'T:'");
-                    var s = e.SymbolId.Substring(2);
+                    var s = e.SymbolId[2..];
                     var allSegs = QueryPreprocessor.SplitSegments(s);
-                    var nsCount = SplitNs(e.ParentNamespace).Count();
+                    var nsCount = nsSegments2.Length;
                     if (nsCount < 0 || nsCount > allSegs.Length) {
                         nsCount = 0;
                     }
@@ -399,18 +403,10 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 sealedNodes.Add(new NodeB(n.Name, n.Parent, n.FirstChild, n.NextSibling, n.Kind, entry));
             }
 
-            static Dictionary<string, ImmutableArray<AliasRelation>> SealBuckets(Dictionary<string, List<AliasRelation>> buckets) {
+            static Dictionary<string, ImmutableArray<AliasRelation>> SealBuckets(Dictionary<string, Dictionary<int, MatchFlags>> buckets) {
                 var result = new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal);
                 foreach (var kv in buckets) {
-                    var perNode = new Dictionary<int, MatchFlags>();
-                    foreach (var rel in kv.Value) {
-                        if (perNode.TryGetValue(rel.NodeId, out var existing)) {
-                            perNode[rel.NodeId] = existing | rel.Kind;
-                        } else {
-                            perNode[rel.NodeId] = rel.Kind;
-                        }
-                    }
-                    var arr2 = perNode.Select(p => new AliasRelation(p.Value, p.Key)).ToImmutableArray();
+                    var arr2 = kv.Value.Select(p => new AliasRelation(p.Value, p.Key)).ToImmutableArray();
                     result[kv.Key] = arr2;
                 }
                 return result;
