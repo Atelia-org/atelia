@@ -54,18 +54,6 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     private ImmutableDictionary<string, SymbolEntry> _entriesMap =
         ImmutableDictionary.Create<string, SymbolEntry>(StringComparer.Ordinal);
 
-    // Maintain a list snapshot that preserves duplicates across assemblies (same DocId in multiple projects)
-    private ImmutableArray<SymbolEntry> _entriesList = ImmutableArray<SymbolEntry>.Empty;
-
-    /// <summary>When true, CurrentSearchEngine will use the SymbolTree engine instead of SymbolIndex.</summary>
-    public bool UseSymbolTreeForSearch { get; set; } = false;
-
-    /// <summary>Current search engine for A/B: either SymbolIndex (default) or SymbolTree snapshot built from entries.</summary>
-    public ISymbolIndex CurrentSearchEngine => UseSymbolTreeForSearch
-        ? SymbolTree.FromEntries(_entriesMap.Values)
-        : Current;
-
-
 
     private SymbolIndex _current = SymbolIndex.Empty;
     /// &lt;inheritdoc /&gt;
@@ -74,10 +62,6 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
 
     /// <summary>Expose current flat entries for building alternative engines (e.g., SymbolTreeB) without exposing internal maps.</summary>
     public IEnumerable<SymbolEntry> CurrentEntries => _entriesMap.Values;
-
-    /// <summary>Expose current entries including duplicates across assemblies (for SymbolTreeB A/B snapshots).</summary>
-    public IEnumerable<SymbolEntry> CurrentEntriesWithDuplicates => _entriesList;
-
 
     /// <summary>Debounce duration in milliseconds for coalescing workspace events.</summary>
     public int DebounceMs { get; set; } = 500;
@@ -140,9 +124,6 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             }
         }
         _entriesMap = mapB.ToImmutable();
-        // Build duplicate-preserving list snapshot for SymbolTreeB
-        _entriesList = full.TypeAdds.Concat(full.NamespaceAdds).ToImmutableArray();
-
         // Build doc/type maps
         await RebuildDocTypeMapsAsync(_workspace.CurrentSolution, ct).ConfigureAwait(false);
         DebugUtil.Print("IndexSync", $"Initial build done: types={full.TypeAdds.Count}, namespaces={full.NamespaceAdds.Count}, elapsed={sw.ElapsedMilliseconds}ms");
@@ -209,27 +190,6 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 }
             }
             _entriesMap = mapB.ToImmutable();
-
-            // Update duplicate-preserving list snapshot
-            var list = _entriesList.ToList();
-            if (delta.TypeRemovals is { Count: > 0 }) {
-                list.RemoveAll(e => e.Kind == SymbolKinds.Type && delta.TypeRemovals.Contains(e.SymbolId));
-            }
-
-            if (delta.NamespaceRemovals is { Count: > 0 }) {
-                list.RemoveAll(e => e.Kind == SymbolKinds.Namespace && delta.NamespaceRemovals.Contains(e.SymbolId));
-            }
-
-            if (delta.TypeAdds is { Count: > 0 }) {
-                list.AddRange(delta.TypeAdds);
-            }
-
-            if (delta.NamespaceAdds is { Count: > 0 }) {
-                list.AddRange(delta.NamespaceAdds);
-            }
-
-            _entriesList = list.ToImmutableArray();
-
 
             var next = Current.WithDelta(delta);
             System.Threading.Volatile.Write(ref _current, next); // publish (single-writer model)

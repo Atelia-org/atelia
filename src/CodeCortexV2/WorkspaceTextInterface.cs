@@ -76,20 +76,16 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
     public static async Task<WorkspaceTextInterface> CreateAsync(string slnOrProjectPath, SearchEngineMode engineMode, CancellationToken ct) {
         var host = await RoslynWorkspaceHost.LoadAsync(slnOrProjectPath, ct).ConfigureAwait(false);
         var sync = await IndexSynchronizer.CreateAsync(host.Workspace, ct).ConfigureAwait(false);
-        if (engineMode == SearchEngineMode.SymbolTree) {
-            sync.UseSymbolTreeForSearch = true;
-        }
-        return new WorkspaceTextInterface(host, sync, engineMode);
+        // Map legacy SymbolTree mode to SymbolTreeB since the old engine is removed
+        var effectiveMode = engineMode == SearchEngineMode.SymbolTree ? SearchEngineMode.SymbolTreeB : engineMode;
+        return new WorkspaceTextInterface(host, sync, effectiveMode);
     }
 
 #pragma warning disable 1998 //此异步方法缺少 "await" 运算符，将以同 步方式运行
     public async Task<string> FindAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
         SearchResults page;
-        if (_engineMode == SearchEngineMode.SymbolTree && _sync is not null) {
-            var engine = _sync.CurrentSearchEngine;
-            page = engine.Search(query, limit, offset, kinds: SymbolKinds.All);
-        } else if (_engineMode == SearchEngineMode.SymbolTreeB && _sync is not null) {
-            var entries = _sync.CurrentEntriesWithDuplicates;
+        if ((_engineMode == SearchEngineMode.SymbolTree || _engineMode == SearchEngineMode.SymbolTreeB) && _sync is not null) {
+            var entries = _sync.CurrentEntries;
             var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
             page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
         } else {
@@ -111,11 +107,8 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
 
     public async Task<string> GetOutlineAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
         SearchResults page;
-        if (_engineMode == SearchEngineMode.SymbolTree && _sync is not null) {
-            var engine = _sync.CurrentSearchEngine;
-            page = engine.Search(query, limit, offset, kinds: SymbolKinds.All);
-        } else if (_engineMode == SearchEngineMode.SymbolTreeB && _sync is not null) {
-            var entries = _sync.CurrentEntriesWithDuplicates;
+        if ((_engineMode == SearchEngineMode.SymbolTree || _engineMode == SearchEngineMode.SymbolTreeB) && _sync is not null) {
+            var entries = _sync.CurrentEntries;
             var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
             page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
         } else {
