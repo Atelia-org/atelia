@@ -270,13 +270,10 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
                     seen.Add(nid);
                     var flags = rel.Kind;
-                    if (lastLower) {
-                        flags |= AliasKinds.IgnoreCase;
-                    }
 
                     var mk = (flags & AliasKinds.OmitArity) != 0
                         ? MatchKind.GenericBase
-                        : ((flags & AliasKinds.IgnoreCase) != 0 ? MatchKind.ExactIgnoreCase : MatchKind.Exact);
+                        : MatchKind.Exact;
                     CollectEntriesAtNode(nid, hits, mk, kinds);
                     if (hits.Count >= effLimit + effOffset) {
                         break;
@@ -306,14 +303,12 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     }
 
                     var flags = rel.Kind;
-                    if (lastIsLower) {
-                        flags |= AliasKinds.IgnoreCase;
-                    }
 
                     if ((flags & AliasKinds.OmitArity) != 0) {
                         CollectSubtreeEntries(nid, hits, MatchKind.Prefix, effLimit + effOffset, kinds);
                     } else {
-                        CollectEntriesAtNode(nid, hits, MatchKind.ExactIgnoreCase, kinds);
+                        var mk = (flags & AliasKinds.IgnoreCase) != 0 ? MatchKind.ExactIgnoreCase : MatchKind.Exact;
+                        CollectEntriesAtNode(nid, hits, mk, kinds);
                     }
                     if (hits.Count >= effLimit + effOffset) {
                         break;
