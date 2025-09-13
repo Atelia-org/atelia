@@ -15,26 +15,22 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
     /// </summary>
     internal sealed class SymbolTreeB : ISymbolIndex {
         private readonly ImmutableArray<NodeB> _nodes;
-        private readonly NameTable _names;
 
         private readonly Dictionary<string, ImmutableArray<AliasRelation>> _exactAliasToNodes;    // case-sensitive aliases
         private readonly Dictionary<string, ImmutableArray<AliasRelation>> _nonExactAliasToNodes; // generic-base / ignore-case etc.
 
         private SymbolTreeB(
             ImmutableArray<NodeB> nodes,
-            NameTable names,
             Dictionary<string, ImmutableArray<AliasRelation>> exactAliasToNodes,
             Dictionary<string, ImmutableArray<AliasRelation>> nonExactAliasToNodes
         ) {
             _nodes = nodes;
-            _names = names;
             _exactAliasToNodes = exactAliasToNodes;
             _nonExactAliasToNodes = nonExactAliasToNodes;
         }
 
         public static SymbolTreeB Empty { get; } = new(
             ImmutableArray<NodeB>.Empty,
-            NameTable.Empty,
             new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal),
             new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal)
         );
@@ -77,18 +73,18 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             return j >= 0 ? s[..j] : s;
         }
 
-        private int[] ToAncestorSegIds(string[] segs) {
+        private static string[] ToAncestorSegNames(string[] segs) {
             int count = Math.Max(0, segs.Length - 1);
-            var ids = new int[count];
-            for (int i = 0; i < count; i++) {
-                var canon = BaseName(segs[i]);
-                if (_names.TryGetId(canon, out var id)) {
-                    ids[i] = id;
-                } else {
-                    return Array.Empty<int>();
-                }
+            if (count == 0) {
+                return Array.Empty<string>();
             }
-            return ids;
+
+            var names = new string[count];
+            for (int i = 0; i < count; i++) {
+                // Legacy helper; no longer used after unified pruning
+                names[i] = segs[i];
+            }
+            return names;
         }
 
         private IEnumerable<AliasRelation> CandidatesExact(string last) {
@@ -106,28 +102,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             return Array.Empty<AliasRelation>();
         }
 
-        private bool AncestorsMatch(int nodeIdx, int[] ancestorSegIds, bool requireRoot) {
-            int i = ancestorSegIds.Length - 1;
-            int cur = _nodes[nodeIdx].Parent;
-            while (i >= 0 && cur >= 0) {
-                var n = _nodes[cur];
-                if (n.NameId != ancestorSegIds[i]) {
-                    return false;
-                }
-
-                i--;
-                cur = n.Parent;
-            }
-            if (i >= 0) {
-                return false; // ran out of ancestors
-            }
-
-            if (requireRoot) {
-                return cur == 0; // attach to root
-            }
-
-            return true;
-        }
+        // AncestorsMatch removed; replaced by unified segment candidates + right-to-left pruning
 
         private void CollectEntriesAtNode(int nodeIdx, List<SearchHit> acc, MatchFlags kind, SymbolKinds filter) {
             var entry = _nodes[nodeIdx].Entry;
@@ -155,8 +130,8 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         }
 
         /// <summary>
-        /// Execute search with two stages: Exact → NonExact (fallback).
-        /// Note: This minimal version implements Exact + Prefix (anchored subtree) behaviors consistent with SymbolTree.
+        /// Execute search via two passes: (1) exact-only per-segment, (2) include non-exact.
+        /// Both passes build candidates for each segment and prune right-to-left by parent relation.
         /// </summary>
         public SearchResults Search(string query, int limit, int offset, SymbolKinds kinds) {
             var effLimit = Math.Max(0, limit);
@@ -195,60 +170,70 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
             }
 
-            var ancestorIds = ToAncestorSegIds(segs);
-            if (ancestorIds.Length == 0 && segs.Length > 1) {
-                // Ancestor segments could not be resolved → no matches
-                return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-            }
+            SearchResults RunUnified(bool exactOnly) {
+                int segCount = segs.Length;
+                var perSeg = new Dictionary<int, MatchFlags>[segCount];
 
-            // Stage 1: Exact (case-sensitive alias); last segment already normalized to DocId-like when generic
-            {
-                var last = segs[^1];
-                var hits = new List<SearchHit>();
-                var seen = new HashSet<int>();
-                foreach (var rel in CandidatesExact(last)) {
-                    var nid = rel.NodeId;
-                    if (seen.Contains(nid)) {
-                        continue;
-                    }
-
-                    if (!AncestorsMatch(nid, ancestorIds, rootConstraint)) {
-                        continue;
-                    }
-
-                    seen.Add(nid);
-                    var flags = rel.Kind;
-
-                    CollectEntriesAtNode(nid, hits, flags, kinds);
-                    if (hits.Count >= effLimit + effOffset) {
-                        break;
+                for (int i = 0; i < segCount; i++) {
+                    perSeg[i] = BuildSegmentCandidates(
+                        segNormalized: qi.SegmentsNormalized[i],
+                        segOriginal: qi.SegmentsOriginal[i],
+                        segIsLower: qi.SegmentIsLower[i],
+                        exactOnly: exactOnly
+                    );
+                    if (perSeg[i].Count == 0) {
+                        return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
                     }
                 }
-                if (hits.Count > 0) {
-                    var ordered = hits.OrderBy(h => h.Name, StringComparer.Ordinal).ThenBy(h => h.Assembly).ToList();
-                    var total = ordered.Count;
-                    var page = ordered.Skip(effOffset).Take(effLimit).ToArray();
-                    int? nextOff = effOffset + effLimit < total ? effOffset + effLimit : null;
-                    return new SearchResults(page, total, effOffset, effLimit, nextOff);
+
+                // Start with last segment nodes and prune by matching parents
+                var survivors = new Dictionary<int, MatchFlags>(perSeg[segCount - 1]);
+                for (int i = segCount - 2; i >= 0 && survivors.Count > 0; i--) {
+                    var allowedParents = new HashSet<int>(perSeg[i].Keys);
+                    var toRemove = new List<int>();
+                    foreach (var kv in survivors) {
+                        var nid = kv.Key;
+                        var parent = _nodes[nid].Parent;
+                        if (!allowedParents.Contains(parent)) {
+                            toRemove.Add(nid);
+                        }
+                    }
+                    foreach (var nid in toRemove) {
+                        survivors.Remove(nid);
+                    }
                 }
-            }
 
-            // Stage 2: Non-exact. Try original key first, then lower(original) if original isn't all-lowercase.
-            {
-                var hits = new List<SearchHit>();
-                var lastOrig = qi.LastOriginal;
-                var lastLowerStr = lastOrig.ToLowerInvariant();
-                var lastIsLower = qi.LastIsLower;
+                if (survivors.Count == 0) {
+                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
+                }
 
-                // Try original key
-                foreach (var rel in CandidatesNonExact(lastOrig)) {
-                    var nid = rel.NodeId;
-                    if (!AncestorsMatch(nid, ancestorIds, rootConstraint)) {
-                        continue;
+                // Root constraint: verify the chain above the first segment reaches root (index 0)
+                if (rootConstraint) {
+                    var toRemove = new List<int>();
+                    foreach (var nid in survivors.Keys) {
+                        int cur = nid;
+                        for (int step = 0; step < segs.Length && cur >= 0; step++) {
+                            cur = _nodes[cur].Parent;
+                        }
+
+                        if (cur != 0) {
+                            toRemove.Add(nid);
+                        }
+                    }
+                    foreach (var nid in toRemove) {
+                        survivors.Remove(nid);
                     }
 
-                    var flags = rel.Kind;
+                    if (survivors.Count == 0) {
+                        return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
+                    }
+                }
 
+                // Collect results
+                var hits = new List<SearchHit>();
+                foreach (var kv in survivors) {
+                    var nid = kv.Key;
+                    var flags = kv.Value;
                     if ((flags & MatchFlags.IgnoreGenericArity) != 0) {
                         CollectSubtreeEntries(nid, hits, flags | MatchFlags.Partial, effLimit + effOffset, kinds);
                     } else {
@@ -259,37 +244,95 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     }
                 }
 
-                // Try lower(original) if needed
-                if (hits.Count < effLimit + effOffset && !lastIsLower) {
-                    foreach (var rel in CandidatesNonExact(lastLowerStr)) {
-                        var nid = rel.NodeId;
-                        if (!AncestorsMatch(nid, ancestorIds, rootConstraint)) {
-                            continue;
-                        }
-
-                        var flags = rel.Kind; // user intent indicates ignore-case by using lower
-                        // Note: we do not forcibly OR here; builder already marks lower-key relations with IgnoreCase.
-                        if ((flags & MatchFlags.IgnoreGenericArity) != 0) {
-                            CollectSubtreeEntries(nid, hits, flags | MatchFlags.Partial, effLimit + effOffset, kinds);
-                        } else {
-                            CollectEntriesAtNode(nid, hits, flags, kinds);
-                        }
-                        if (hits.Count >= effLimit + effOffset) {
-                            break;
-                        }
-                    }
+                if (hits.Count == 0) {
+                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
                 }
 
-                if (hits.Count > 0) {
-                    var ordered = hits.OrderBy(h => h.Name, StringComparer.Ordinal).ThenBy(h => h.Assembly).ToList();
-                    var total = ordered.Count;
-                    var page = ordered.Skip(effOffset).Take(effLimit).ToArray();
-                    int? nextOff = effOffset + effLimit < total ? effOffset + effLimit : null;
-                    return new SearchResults(page, total, effOffset, effLimit, nextOff);
+                var ordered = hits.OrderBy(h => h.Name, StringComparer.Ordinal).ThenBy(h => h.Assembly).ToList();
+                var total = ordered.Count;
+                var page = ordered.Skip(effOffset).Take(effLimit).ToArray();
+                int? nextOff = effOffset + effLimit < total ? effOffset + effLimit : null;
+                return new SearchResults(page, total, effOffset, effLimit, nextOff);
+            }
+
+            // Pass 1: exact-only
+            var res1 = RunUnified(exactOnly: true);
+            if (res1.Total > 0) {
+                return res1;
+            }
+
+            // Pass 2: include non-exact
+            var res2 = RunUnified(exactOnly: false);
+            return res2;
+        }
+
+        // Build candidate nodes for a single segment using exact aliases and optional non-exact fallbacks.
+        private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string segOriginal, bool segIsLower, bool exactOnly) {
+            var map = new Dictionary<int, MatchFlags>();
+
+            void Add(IEnumerable<AliasRelation> rels, bool requireNameMatch, StringComparison cmp, Func<MatchFlags, bool>? flagFilter = null) {
+                foreach (var rel in rels) {
+                    if (flagFilter != null && !flagFilter(rel.Kind)) {
+                        continue;
+                    }
+
+                    var nid = rel.NodeId;
+                    if (requireNameMatch && !string.Equals(_nodes[nid].Name, segNormalized, cmp)) {
+                        continue;
+                    }
+                    if (map.TryGetValue(nid, out var f)) {
+                        map[nid] = f | rel.Kind;
+                    } else {
+                        map[nid] = rel.Kind;
+                    }
                 }
             }
 
-            return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
+            // Exact: normalized key (bn or bn`n). Ensure node name equals normalized for arity-sensitive semantics.
+            Add(CandidatesExact(segNormalized), requireNameMatch: true, cmp: StringComparison.Ordinal);
+
+            bool hasArity = segNormalized.IndexOf('`') >= 0;
+
+            if (exactOnly) {
+                // Ancestor-specific ignore-case intent: if the user typed this segment in lower-case,
+                // allow case-insensitive exact matches for this segment only (no generic-base expansion).
+                if (segIsLower) {
+                    if (hasArity) {
+                        var lowerDoc = segNormalized.ToLowerInvariant();
+                        // Exclude IgnoreGenericArity to keep exact-only semantics
+                        Add(CandidatesNonExact(lowerDoc), requireNameMatch: true, cmp: StringComparison.OrdinalIgnoreCase,
+                            flagFilter: flags => (flags & MatchFlags.IgnoreGenericArity) == 0
+                        );
+                    } else {
+                        var lowerBase = segNormalized.ToLowerInvariant();
+                        Add(CandidatesNonExact(lowerBase), requireNameMatch: true, cmp: StringComparison.OrdinalIgnoreCase,
+                            flagFilter: flags => (flags & MatchFlags.IgnoreGenericArity) == 0
+                        );
+                    }
+                }
+                return map;
+            }
+
+            // Inclusive pass: generic-base anchors and lowercase variants.
+            if (hasArity) {
+                // Case-insensitive exact for generic (lower "bn`n")
+                if (segIsLower) {
+                    var lowerDoc = segNormalized.ToLowerInvariant();
+                    Add(CandidatesNonExact(lowerDoc), requireNameMatch: false, cmp: StringComparison.Ordinal);
+                }
+            } else {
+                // Generic-base anchors via original base and its lower variant
+                // Use segNormalized (bn) for non-exact base key
+                if (!string.IsNullOrEmpty(segNormalized)) {
+                    Add(CandidatesNonExact(segNormalized), requireNameMatch: false, cmp: StringComparison.Ordinal);
+                }
+                if (segIsLower) {
+                    var lowerBase = segNormalized.ToLowerInvariant();
+                    Add(CandidatesNonExact(lowerBase), requireNameMatch: false, cmp: StringComparison.Ordinal);
+                }
+            }
+
+            return map;
         }
 
         public ISymbolIndex WithDelta(SymbolsDelta delta) {
@@ -302,42 +345,31 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         /// </summary>
         public static SymbolTreeB FromEntries(IEnumerable<SymbolEntry> entries) {
             var arr = entries?.ToImmutableArray() ?? ImmutableArray<SymbolEntry>.Empty;
-            // Name table
-            var canonical = new List<string>();
-            var aliasToId = new Dictionary<string, int>(StringComparer.Ordinal);
-            int EnsureName(string canon) {
-                if (!aliasToId.TryGetValue(canon, out var id)) {
-                    id = canonical.Count;
-                    canonical.Add(canon);
-                    aliasToId[canon] = id;
-                }
-                return id;
-            }
 
-            // Mutable node list
-            var nodes = new List<(int NameId, int Parent, int FirstChild, int NextSibling, NodeKind Kind, List<int> Entries)>();
+            // Mutable node list with string names
+            var nodes = new List<(string Name, int Parent, int FirstChild, int NextSibling, NodeKind Kind, List<int> Entries)>();
             var keyToIndex = new Dictionary<string, int>(StringComparer.Ordinal);
-            int NewNode(int nameId, int parent, NodeKind kind) {
+            int NewNode(string name, int parent, NodeKind kind) {
                 var idx = nodes.Count;
-                nodes.Add((nameId, parent, -1, -1, kind, new List<int>()));
+                nodes.Add((name, parent, -1, -1, kind, new List<int>()));
                 if (parent >= 0) {
                     var p = nodes[parent];
-                    nodes[parent] = (p.NameId, p.Parent, idx, p.FirstChild, p.Kind, p.Entries);
-                    nodes[idx] = (nameId, parent, -1, p.FirstChild, kind, nodes[idx].Entries);
+                    nodes[parent] = (p.Name, p.Parent, idx, p.FirstChild, p.Kind, p.Entries);
+                    nodes[idx] = (name, parent, -1, p.FirstChild, kind, nodes[idx].Entries);
                 }
                 return idx;
             }
-            int GetOrAddNode(int parent, int nameId, NodeKind kind) {
-                var key = parent.ToString() + "|" + nameId.ToString() + "|" + ((int)kind).ToString();
+            int GetOrAddNode(int parent, string name, NodeKind kind) {
+                var key = parent.ToString() + "|" + name + "|" + ((int)kind).ToString();
                 if (!keyToIndex.TryGetValue(key, out var idx)) {
-                    idx = NewNode(nameId, parent, kind);
+                    idx = NewNode(name, parent, kind);
                     keyToIndex[key] = idx;
                 }
                 return idx;
             }
 
             // Root
-            int root = NewNode(-1, -1, NodeKind.Namespace);
+            int root = NewNode(string.Empty, -1, NodeKind.Namespace);
 
             // Alias buckets (store relations with flags)
             var exactBuckets = new Dictionary<string, List<AliasRelation>>(StringComparer.Ordinal);
@@ -396,8 +428,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     int parent = root;
                     for (int i = 0; i < nsSegments.Length; i++) {
                         var canon = nsSegments[i];
-                        var id = EnsureName(canon);
-                        var idx = GetOrAddNode(parent, id, NodeKind.Namespace);
+                        var idx = GetOrAddNode(parent, canon, NodeKind.Namespace);
                         // aliases for this namespace segment
                         Bucket(exactBuckets, canon, idx, MatchFlags.None);
                         var lower = canon.ToLowerInvariant();
@@ -419,9 +450,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 if ((e.Kind & SymbolKinds.Type) != 0) {
                     int parent = root;
                     foreach (var ns in SplitNs(e.ParentNamespace)) {
-
-                        var id = EnsureName(ns);
-                        parent = GetOrAddNode(parent, id, NodeKind.Namespace);
+                        parent = GetOrAddNode(parent, ns, NodeKind.Namespace);
                         Bucket(exactBuckets, ns, parent, MatchFlags.None);
                         var lowerNs = ns.ToLowerInvariant();
                         if (!string.Equals(lowerNs, ns, StringComparison.Ordinal)) {
@@ -447,13 +476,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     int lastTypeNode = parent;
                     for (int i = 0; i < typeSegs.Length; i++) {
                         var (bn, ar) = ParseTypeSegment(typeSegs[i]);
-                        var id = EnsureName(bn);
+                        var nodeName = ar > 0 ? bn + "`" + ar.ToString() : bn;
                         bool isLast = i == typeSegs.Length - 1;
                         int idx;
                         if (isLast) {
-                            idx = NewNode(id, lastTypeNode, NodeKind.Type); // allow duplicates per entry
+                            idx = NewNode(nodeName, lastTypeNode, NodeKind.Type); // allow duplicates per entry
                         } else {
-                            idx = GetOrAddNode(lastTypeNode, id, NodeKind.Type);
+                            idx = GetOrAddNode(lastTypeNode, nodeName, NodeKind.Type);
                         }
                         // aliases for this type segment (apply to actual created node)
                         if (ar > 0) {
@@ -497,11 +526,8 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             for (int i = 0; i < nodes.Count; i++) {
                 var n = nodes[i];
                 var entry = n.Entries.Count > 0 ? arr[n.Entries[0]] : null;
-                sealedNodes.Add(new NodeB(n.NameId, n.Parent, n.FirstChild, n.NextSibling, n.Kind, entry));
+                sealedNodes.Add(new NodeB(n.Name, n.Parent, n.FirstChild, n.NextSibling, n.Kind, entry));
             }
-
-            // Seal tables with NodeId de-dup and flags OR aggregation
-            var nameTable = new NameTable(canonical.ToImmutableArray(), aliasToId);
 
             static Dictionary<string, ImmutableArray<AliasRelation>> SealBuckets(Dictionary<string, List<AliasRelation>> buckets) {
                 var result = new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal);
@@ -514,8 +540,8 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                             perNode[rel.NodeId] = rel.Kind;
                         }
                     }
-                    var arr = perNode.Select(p => new AliasRelation(p.Value, p.Key)).ToImmutableArray();
-                    result[kv.Key] = arr;
+                    var arr2 = perNode.Select(p => new AliasRelation(p.Value, p.Key)).ToImmutableArray();
+                    result[kv.Key] = arr2;
                 }
                 return result;
             }
@@ -525,7 +551,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
             return new SymbolTreeB(
                 sealedNodes.ToImmutableArray(),
-                nameTable,
                 exact,
                 nonExact
             );

@@ -10,15 +10,15 @@ internal enum NodeKind { Namespace = 1, Type = 2 }
 /// - For duplicate types across assemblies, multiple sibling nodes will exist.
 /// </summary>
 internal readonly struct NodeB {
-    public readonly int NameId;
+    public readonly string Name;
     public readonly int Parent;      // -1 for root
     public readonly int FirstChild;  // -1 if none
     public readonly int NextSibling; // -1 if none
     public readonly NodeKind Kind;   // Namespace or Type
     public readonly SymbolEntry? Entry;  // null if none
 
-    public NodeB(int nameId, int parent, int firstChild, int nextSibling, NodeKind kind, SymbolEntry? entry) {
-        NameId = nameId;
+    public NodeB(string name, int parent, int firstChild, int nextSibling, NodeKind kind, SymbolEntry? entry) {
+        Name = name;
         Parent = parent;
         FirstChild = firstChild;
         NextSibling = nextSibling;
