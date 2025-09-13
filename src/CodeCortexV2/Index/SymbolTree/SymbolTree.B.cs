@@ -85,35 +85,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             return j >= 0 ? s[..j] : s;
         }
 
-        private static (string baseName, int arity) ParseTypeSegment(string seg) {
-            if (string.IsNullOrEmpty(seg)) {
-                return (seg, 0);
-            }
-            var baseName = seg;
-            int arity = 0;
-            var back = seg.IndexOf('`');
-            if (back >= 0) {
-                baseName = seg.Substring(0, back);
-                var numStr = new string(seg.Skip(back + 1).TakeWhile(char.IsDigit).ToArray());
-                if (int.TryParse(numStr, out var n1)) {
-                    arity = n1;
-                }
-            }
-            var lt = seg.IndexOf('<');
-            if (lt >= 0) {
-                baseName = seg.Substring(0, lt);
-                var inside = seg.Substring(lt + 1);
-                var rt = inside.LastIndexOf('>');
-                if (rt >= 0) {
-                    inside = inside.Substring(0, rt);
-                }
-                if (inside.Length > 0) {
-                    arity = inside.Count(c => c == ',') + 1;
-                }
-            }
-            return (baseName, arity);
-        }
-
         private int[] ToAncestorSegIds(string[] segs) {
             int count = Math.Max(0, segs.Length - 1);
             var ids = new int[count];
