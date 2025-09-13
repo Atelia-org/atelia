@@ -306,93 +306,94 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
 
 
+            // Build namespace chain and add alias buckets; returns the last namespace node index
+            int BuildNamespaceChainAndAliases(int startParent, string[] segments) {
+                int parent = startParent;
+                for (int i = 0; i < segments.Length; i++) {
+                    var seg = segments[i];
+                    var idx = GetOrAddNode(parent, seg, NodeKind.Namespace);
+                    Bucket(exactBuckets, seg, idx, MatchFlags.None);
+                    var lower = seg.ToLowerInvariant();
+                    if (!string.Equals(lower, seg, StringComparison.Ordinal)) {
+                        Bucket(nonExactBuckets, lower, idx, MatchFlags.IgnoreCase);
+                    }
+                    parent = idx;
+                }
+                return parent;
+            }
+
+            // Build type chain from type segments (bn or bn`n), add alias buckets; returns the last type node index
+            int BuildTypeChainAndAliases(int namespaceParent, string[] typeSegs) {
+                int lastTypeNode = namespaceParent;
+                for (int i = 0; i < typeSegs.Length; i++) {
+                    var (bn, ar) = QueryPreprocessor.ParseTypeSegment(typeSegs[i]);
+                    var nodeName = ar > 0 ? bn + "`" + ar.ToString() : bn;
+                    bool isLast = i == typeSegs.Length - 1;
+                    int idx = isLast ? NewNode(nodeName, lastTypeNode, NodeKind.Type) : GetOrAddNode(lastTypeNode, nodeName, NodeKind.Type);
+
+                    if (ar > 0) {
+                        // Exact: DocId-like form only (bn`n)
+                        var docIdSeg = nodeName;
+                        Bucket(exactBuckets, docIdSeg, idx, MatchFlags.None);
+
+                        // NonExact:
+                        // 1) Generic base name anchors (Prefix semantics)
+                        Bucket(nonExactBuckets, bn, idx, MatchFlags.IgnoreGenericArity);
+                        var lowerBn = bn.ToLowerInvariant();
+                        if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
+                            Bucket(nonExactBuckets, lowerBn, idx, MatchFlags.IgnoreGenericArity | MatchFlags.IgnoreCase);
+                        }
+                        // 2) Case-insensitive exact for DocId-like form (lower-cased)
+                        var lowerDocIdSeg = docIdSeg.ToLowerInvariant();
+                        if (!string.Equals(lowerDocIdSeg, docIdSeg, StringComparison.Ordinal)) {
+                            Bucket(nonExactBuckets, lowerDocIdSeg, idx, MatchFlags.IgnoreCase);
+                        }
+                    } else {
+                        // Non-generic simple name
+                        Bucket(exactBuckets, bn, idx, MatchFlags.None);
+                        var lowerBn = bn.ToLowerInvariant();
+                        if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
+                            Bucket(nonExactBuckets, lowerBn, idx, MatchFlags.IgnoreCase);
+                        }
+                    }
+
+                    lastTypeNode = idx;
+                }
+                return lastTypeNode;
+            }
+
             for (int ei = 0; ei < arr.Length; ei++) {
                 var e = arr[ei];
-                if ((e.Kind & SymbolKinds.Namespace) != 0) {
-                    var nsSegments = SplitNs(e.FqnNoGlobal).ToArray();
-                    int parent = root;
-                    for (int i = 0; i < nsSegments.Length; i++) {
-                        var canon = nsSegments[i];
-                        var idx = GetOrAddNode(parent, canon, NodeKind.Namespace);
-                        // aliases for this namespace segment
-                        Bucket(exactBuckets, canon, idx, MatchFlags.None);
-                        var lower = canon.ToLowerInvariant();
-                        if (!string.Equals(lower, canon, StringComparison.Ordinal)) {
-                            Bucket(nonExactBuckets, lower, idx, MatchFlags.IgnoreCase);
-                        }
+                bool isNs = (e.Kind & SymbolKinds.Namespace) != 0;
+                bool isType = (e.Kind & SymbolKinds.Type) != 0;
+                if (!isNs && !isType) {
+                    continue; // current index only materializes Namespace and Type
 
-                        parent = idx;
-                    }
+                }
+
+                // 1) Build namespace chain once
+                string[] nsSegments = isType ? SplitNs(e.ParentNamespace).ToArray() : SplitNs(e.FqnNoGlobal).ToArray();
+                int parent = BuildNamespaceChainAndAliases(root, nsSegments);
+
+                if (isNs) {
+                    // Namespace entry: attach to the namespace node
                     if (nsSegments.Length > 0) {
                         nodes[parent].Entries.Add(ei);
                     }
-
-
+                    continue;
                 }
-                if ((e.Kind & SymbolKinds.Type) != 0) {
-                    var nsSegments2 = SplitNs(e.ParentNamespace).ToArray();
-                    int parent = root;
-                    for (int ni = 0; ni < nsSegments2.Length; ni++) {
-                        var ns = nsSegments2[ni];
-                        parent = GetOrAddNode(parent, ns, NodeKind.Namespace);
-                        Bucket(exactBuckets, ns, parent, MatchFlags.None);
-                        var lowerNs = ns.ToLowerInvariant();
-                        if (!string.Equals(lowerNs, ns, StringComparison.Ordinal)) {
-                            Bucket(nonExactBuckets, lowerNs, parent, MatchFlags.IgnoreCase);
-                        }
-                    }
-                    // Build type segments strictly from DocId ("T:"-prefixed). No fallback to FQN; callers must ensure DocId is present.
-                    System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(e.SymbolId) && e.SymbolId.StartsWith("T:", StringComparison.Ordinal), "Type entries must have DocId starting with 'T:'");
-                    var s = e.SymbolId[2..];
-                    var allSegs = QueryPreprocessor.SplitSegments(s);
-                    var nsCount = nsSegments2.Length;
-                    if (nsCount < 0 || nsCount > allSegs.Length) {
-                        nsCount = 0;
-                    }
-                    string[] typeSegs = allSegs.Skip(nsCount).ToArray();
-                    int lastTypeNode = parent;
-                    for (int i = 0; i < typeSegs.Length; i++) {
-                        var (bn, ar) = QueryPreprocessor.ParseTypeSegment(typeSegs[i]);
-                        var nodeName = ar > 0 ? bn + "`" + ar.ToString() : bn;
-                        bool isLast = i == typeSegs.Length - 1;
-                        int idx;
-                        if (isLast) {
-                            idx = NewNode(nodeName, lastTypeNode, NodeKind.Type); // allow duplicates per entry
-                        } else {
-                            idx = GetOrAddNode(lastTypeNode, nodeName, NodeKind.Type);
-                        }
-                        // aliases for this type segment (apply to actual created node)
-                        if (ar > 0) {
-                            // Exact: DocId-like form only (bn`n)
-                            var docIdSeg = bn + "`" + ar.ToString();
-                            Bucket(exactBuckets, docIdSeg, idx, MatchFlags.None);
 
-                            // NonExact:
-                            // 1) Generic base name anchors (Prefix semantics)
-                            Bucket(nonExactBuckets, bn, idx, MatchFlags.IgnoreGenericArity);
-                            var lowerBn = bn.ToLowerInvariant();
-                            if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
-                                Bucket(nonExactBuckets, lowerBn, idx, MatchFlags.IgnoreGenericArity | MatchFlags.IgnoreCase);
-                            }
-                            // 2) Case-insensitive exact for DocId-like form (lower-cased)
-                            var lowerDocIdSeg = docIdSeg.ToLowerInvariant();
-                            if (!string.Equals(lowerDocIdSeg, docIdSeg, StringComparison.Ordinal)) {
-                                Bucket(nonExactBuckets, lowerDocIdSeg, idx, MatchFlags.IgnoreCase);
-                            }
-                        } else {
-                            // Non-generic simple name
-                            Bucket(exactBuckets, bn, idx, MatchFlags.None);
-                            var lowerBn = bn.ToLowerInvariant();
-                            if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
-                                Bucket(nonExactBuckets, lowerBn, idx, MatchFlags.IgnoreCase);
-                            }
-                        }
-                        lastTypeNode = idx;
-                    }
-                    nodes[lastTypeNode].Entries.Add(ei);
-
-
+                // 2) Build type chain from DocId strictly ("T:"-prefixed)
+                System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(e.SymbolId) && e.SymbolId.StartsWith("T:", StringComparison.Ordinal), "Type entries must have DocId starting with 'T:'");
+                var s = e.SymbolId[2..];
+                var allSegs = QueryPreprocessor.SplitSegments(s);
+                var nsCount = nsSegments.Length;
+                if (nsCount < 0 || nsCount > allSegs.Length) {
+                    nsCount = 0;
                 }
+                string[] typeSegs = allSegs.Skip(nsCount).ToArray();
+                int lastTypeNode = BuildTypeChainAndAliases(parent, typeSegs);
+                nodes[lastTypeNode].Entries.Add(ei);
             }
 
             // Seal nodes (NodeB keeps a single entry reference)
