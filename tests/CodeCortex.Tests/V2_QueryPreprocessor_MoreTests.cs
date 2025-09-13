@@ -10,7 +10,6 @@ namespace CodeCortex.Tests {
         [InlineData("   ")]
         public void Empty_Or_Whitespace_Returns_Empty(string q) {
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.False(qi.IsDocId);
             Assert.False(qi.RootConstraint);
             Assert.Empty(qi.SegmentsNormalized);
             Assert.Empty(qi.SegmentsOriginal);
@@ -20,18 +19,19 @@ namespace CodeCortex.Tests {
         public void DocId_Namespace_IsDetected() {
             var q = "N:System.Collections";
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.True(qi.IsDocId);
             Assert.Equal(QueryPreprocessor.DocIdKind.Namespace, qi.Kind);
-            Assert.Equal(q, qi.Effective);
+            Assert.True(qi.RootConstraint);
+            Assert.Equal("System.Collections", qi.Effective);
+            Assert.Equal(new[] { "System", "Collections" }, qi.SegmentsNormalized);
         }
 
         [Fact]
         public void DocId_Member_IsDetected() {
             var q = "M:System.String.Length";
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.True(qi.IsDocId);
             Assert.Equal(QueryPreprocessor.DocIdKind.Member, qi.Kind);
-            Assert.Equal(q, qi.Effective);
+            Assert.True(qi.RootConstraint);
+            Assert.Equal("System.String.Length", qi.Effective);
         }
 
         [Fact]

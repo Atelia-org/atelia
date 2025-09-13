@@ -9,17 +9,17 @@ namespace CodeCortex.Tests {
         public void DocId_Type_IsDetected() {
             var q = "T:System.Collections.Generic.List`1";
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.True(qi.IsDocId);
             Assert.Equal(QueryPreprocessor.DocIdKind.Type, qi.Kind);
-            Assert.Equal(q, qi.Effective);
-            Assert.Empty(qi.SegmentsNormalized);
+            // New behavior: Effective excludes DocId prefix ("T:") and segments are populated
+            Assert.True(qi.RootConstraint);
+            Assert.Equal("System.Collections.Generic.List`1", qi.Effective);
+            Assert.Equal(new[] { "System", "Collections", "Generic", "List`1" }, qi.SegmentsNormalized);
         }
 
         [Fact]
         public void GlobalRoot_And_Generic_To_DocId_Arity() {
             var q = "global::System.Collections.Generic.List<int>";
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.False(qi.IsDocId);
             Assert.True(qi.RootConstraint);
             Assert.Equal(new[] { "System", "Collections", "Generic", "List`1" }, qi.SegmentsNormalized);
             Assert.False(qi.LastIsLower);
@@ -30,7 +30,6 @@ namespace CodeCortex.Tests {
         public void Nested_Generic_Segments_Normalized() {
             var q = "Namespace.Outer<T1>.Inner<T2>";
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.False(qi.IsDocId);
             Assert.False(qi.RootConstraint);
             Assert.Equal(new[] { "Namespace", "Outer`1", "Inner`1" }, qi.SegmentsNormalized);
         }
@@ -39,7 +38,6 @@ namespace CodeCortex.Tests {
         public void Lowercase_Intent_IsTracked() {
             var q = "system.collections.generic.list<int>";
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.False(qi.IsDocId);
             Assert.True(qi.SegmentIsLower.All(b => b));
             Assert.True(qi.LastIsLower);
             Assert.Equal("list`1", qi.LastNormalized);
@@ -49,7 +47,6 @@ namespace CodeCortex.Tests {
         public void Unbalanced_Generic_Is_Rejected() {
             var q = "System.Func<T"; // missing closing '>'
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.False(qi.IsDocId);
             Assert.False(qi.RootConstraint);
             Assert.Empty(qi.SegmentsNormalized);
             Assert.Empty(qi.SegmentsOriginal);

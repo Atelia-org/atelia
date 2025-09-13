@@ -35,58 +35,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal)
         );
 
-        // --- Query helpers ---
-        private static string[] SplitSegments(string q) {
-            if (string.IsNullOrEmpty(q)) {
-                return Array.Empty<string>();
-            }
-
-            var parts = q.Split('.', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) {
-                return parts;
-            }
-
-            var last = parts[^1];
-            var typeSegs = last.Split('+', StringSplitOptions.RemoveEmptyEntries);
-            if (typeSegs.Length == 1) {
-                return parts;
-            }
-
-            var list = new List<string>(parts.Length - 1 + typeSegs.Length);
-            for (int i = 0; i < parts.Length - 1; i++) {
-                list.Add(parts[i]);
-            }
-
-            list.AddRange(typeSegs);
-            return list.ToArray();
-        }
-
-        private static string BaseName(string s) {
-            if (string.IsNullOrEmpty(s)) {
-                return s;
-            }
-            var i = s.IndexOf('`');
-            if (i >= 0) {
-                return s[..i];
-            }
-            var j = s.IndexOf('<');
-            return j >= 0 ? s[..j] : s;
-        }
-
-        private static string[] ToAncestorSegNames(string[] segs) {
-            int count = Math.Max(0, segs.Length - 1);
-            if (count == 0) {
-                return Array.Empty<string>();
-            }
-
-            var names = new string[count];
-            for (int i = 0; i < count; i++) {
-                // Legacy helper; no longer used after unified pruning
-                names[i] = segs[i];
-            }
-            return names;
-        }
-
         private IEnumerable<AliasRelation> CandidatesExact(string last) {
             if (_exactAliasToNodes.TryGetValue(last, out var rels)) {
                 return rels;
@@ -101,8 +49,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
             return Array.Empty<AliasRelation>();
         }
-
-        // AncestorsMatch removed; replaced by unified segment candidates + right-to-left pruning
 
         private void CollectEntriesAtNode(int nodeIdx, List<SearchHit> acc, MatchFlags kind, SymbolKinds filter) {
             var entry = _nodes[nodeIdx].Entry;
@@ -145,24 +91,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
             // Centralized query preprocessing
             var qi = QueryPreprocessor.Preprocess(query);
-
-            // DocId handling via exact-alias dictionary (supports duplicates across assemblies)
-            if (qi.IsDocId) {
-                var rels = CandidatesExact(qi.Effective).ToArray();
-                if (rels.Length == 0) {
-                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-                }
-
-                var all = new List<SearchHit>(rels.Length);
-                foreach (var rel in rels) {
-                    CollectEntriesAtNode(rel.NodeId, all, MatchFlags.None, kinds);
-                }
-
-                var total = all.Count;
-                var page = all.Skip(effOffset).Take(effLimit).ToArray();
-                int? nextOff = effOffset + effLimit < total ? effOffset + effLimit : null;
-                return new SearchResults(page, total, effOffset, effLimit, nextOff);
-            }
 
             bool rootConstraint = qi.RootConstraint;
             var segs = qi.SegmentsNormalized;

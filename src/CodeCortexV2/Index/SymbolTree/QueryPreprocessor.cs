@@ -19,7 +19,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         public readonly record struct QueryInfo(
             string Raw,
             string Effective,
-            bool IsDocId,
             DocIdKind Kind,
             bool RootConstraint,
             string[] SegmentsNormalized,
@@ -34,26 +33,26 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         public static QueryInfo Preprocess(string? query) {
             var raw = (query ?? string.Empty).Trim();
             if (raw.Length == 0) {
-                return new QueryInfo(string.Empty, string.Empty, false, DocIdKind.None, false, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
-            }
-
-            // DocId detection (kept verbatim)
-            if (raw.Length > 2 && raw[1] == ':' && (raw[0] == 'T' || raw[0] == 'N' || raw[0] == 'M')) {
-                var kind = raw[0] == 'T' ? DocIdKind.Type : (raw[0] == 'N' ? DocIdKind.Namespace : DocIdKind.Member);
-                return new QueryInfo(raw, raw, true, kind, false, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
+                return new QueryInfo(string.Empty, string.Empty, DocIdKind.None, false, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
             }
 
             bool root = false;
+            DocIdKind docIdKind = DocIdKind.None;
             var eff = raw;
             const string RootPrefix = "global::";
             if (eff.StartsWith(RootPrefix, StringComparison.Ordinal)) {
                 root = true;
                 eff = eff.Substring(RootPrefix.Length);
+            } else if (raw.Length > 2 && raw[1] == ':' && (raw[0] == 'T' || raw[0] == 'N' || raw[0] == 'M')) {
+                // DocId detection (kept verbatim)
+                docIdKind = raw[0] == 'T' ? DocIdKind.Type : (raw[0] == 'N' ? DocIdKind.Namespace : DocIdKind.Member);
+                root = true;
+                eff = eff.Substring(2); // 2="X:".Length
             }
 
             var segsOrig = SplitSegments(eff);
             if (segsOrig.Length == 0) {
-                return new QueryInfo(raw, eff, false, DocIdKind.None, root, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
+                return new QueryInfo(raw, eff, DocIdKind.None, root, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
             }
 
             // MVP reject malformed generic segments (unbalanced '<' '>')
@@ -65,7 +64,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 }
             }
             if (invalid) {
-                return new QueryInfo(raw, eff, false, DocIdKind.None, root, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
+                return new QueryInfo(raw, eff, DocIdKind.None, root, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
             }
 
             var segsNorm = new string[segsOrig.Length];
@@ -77,7 +76,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 segsNorm[i] = ar > 0 ? bn + "`" + ar.ToString() : bn;
             }
 
-            return new QueryInfo(raw, eff, false, DocIdKind.None, root, segsNorm, segsOrig, isLower);
+            return new QueryInfo(raw, eff, docIdKind, root, segsNorm, segsOrig, isLower);
         }
 
         // --- Helpers ---
