@@ -6,10 +6,6 @@ public readonly record struct SymbolId(string Value) {
     public override string ToString() => Value;
 }
 
-public interface ISymbolIndex {
-    SearchResults Search(string query, int limit, int offset, SymbolKinds kinds);
-}
-
 [Flags]
 public enum SymbolKinds {
     None = 0,
@@ -21,17 +17,6 @@ public enum SymbolKinds {
     Event = 1 << 5,
     Unknown = 1 << 6,
     All = Namespace | Type | Method | Property | Field | Event | Unknown
-}
-public enum MatchKind {
-    Id = 0,
-    Exact = 1,
-    ExactIgnoreCase = 2,
-    Prefix = 3,
-    Contains = 4,
-    Suffix = 5,
-    Wildcard = 6,
-    GenericBase = 7,
-    Fuzzy = 8
 }
 
 // New unified providers returning SymbolOutline

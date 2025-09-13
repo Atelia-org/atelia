@@ -1,6 +1,4 @@
-using CodeCortexV2.Abstractions;
-
-namespace CodeCortexV2.Index;
+namespace CodeCortexV2.Abstractions;
 
 /// <summary>
 /// Immutable snapshot entry describing a single symbol (namespace or type).

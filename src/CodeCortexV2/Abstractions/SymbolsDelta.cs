@@ -1,6 +1,5 @@
-using CodeCortexV2.Abstractions;
+namespace CodeCortexV2.Abstractions;
 
-namespace CodeCortexV2.Index;
 /// <summary>
 /// Immutable change-set for <see cref="SymbolIndex"/> snapshots.
 /// Produced by the synchronizer from Roslyn changes and applied via <c>SymbolIndex.WithDelta</c>.

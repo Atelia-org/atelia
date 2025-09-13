@@ -22,7 +22,7 @@ public interface IIndexProvider {
     /// <summary>
     /// The current immutable <see cref="SymbolIndex"/> snapshot. Always safe to read on any thread.
     /// </summary>
-    SymbolIndex Current { get; }
+    ISymbolIndex Current { get; }
 }
 
 /// <summary>
@@ -55,9 +55,9 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         ImmutableDictionary.Create<string, SymbolEntry>(StringComparer.Ordinal);
 
 
-    private SymbolIndex _current = SymbolIndex.Empty;
+    private ISymbolIndex _current = SymbolTreeB.Empty;
     /// &lt;inheritdoc /&gt;
-    public SymbolIndex Current => System.Threading.Volatile.Read(ref _current);
+    public ISymbolIndex Current => System.Threading.Volatile.Read(ref _current);
 
 
     /// <summary>Expose current flat entries for building alternative engines (e.g., SymbolTreeB) without exposing internal maps.</summary>

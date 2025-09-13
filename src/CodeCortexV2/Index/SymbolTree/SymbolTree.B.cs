@@ -21,7 +21,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
     /// - Structure layer: immutable Node array + entry refs
     /// - Alias layer: exact vs non-exact alias → node ids
     /// </summary>
-    internal sealed class SymbolTreeB {
+    internal sealed class SymbolTreeB : ISymbolIndex {
         private readonly ImmutableArray<NodeB> _nodes;
         private readonly NameTable _names;
 
@@ -305,7 +305,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
         }
 
-        public SymbolTreeB WithDelta(SymbolsDelta delta) {
+        public ISymbolIndex WithDelta(SymbolsDelta delta) {
             // Placeholder: to be wired with a builder that only rebuilds affected subtrees and alias buckets.
             return this;
         }
