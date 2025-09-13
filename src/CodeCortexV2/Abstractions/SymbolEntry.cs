@@ -30,16 +30,16 @@ public sealed record SymbolEntry(
     /// - <see cref="SearchHit.Namespace"/> becomes <c>null</c> when empty.
     /// - <see cref="SearchHit.Name"/> uses <see cref="FqnNoGlobal"/>.
     /// </summary>
-    /// <param name="matchKind">How the query matched this entry.</param>
-    /// <param name="score">Secondary sort score (lower is better) within the same &lt;paramref name="matchKind"/&gt;.</param>
+    /// <param name="MatchFlags">How the query matched this entry.</param>
+    /// <param name="score">Secondary sort score (lower is better) within the same &lt;paramref name="MatchFlags"/&gt;.</param>
     /// <returns>A consistent, transport-friendly hit.</returns>
-    public SearchHit ToHit(MatchKind matchKind, int score) => new(
+    public SearchHit ToHit(MatchFlags MatchFlags, int score) => new(
         Name: FqnNoGlobal,
         Kind: Kind,
         Namespace: string.IsNullOrEmpty(ParentNamespace) ? null : ParentNamespace,
         Assembly: string.IsNullOrEmpty(Assembly) ? null : Assembly,
         SymbolId: new SymbolId(SymbolId),
-        MatchKind: matchKind,
+        MatchFlags: MatchFlags,
         IsAmbiguous: false,
         Score: score
     );

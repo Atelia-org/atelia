@@ -1,5 +1,7 @@
 using System.Text.Json;
 using CodeCortexV2;
+using CodeCortexV2.Abstractions;
+
 
 namespace CodeCortexV2.DevCli;
 
@@ -37,13 +39,14 @@ public static class E2eWildcardSearchCommand {
                 return false;
             }
             foreach (var it in items.EnumerateArray()) {
-                // MatchKind: Wildcard == 6 per ordering (Id=0, Exact=1, ExactIgnoreCase=2, Prefix=3, Contains=4, Suffix=5, Wildcard=6, GenericBase=7, Fuzzy=8)
-                var mk = it.TryGetProperty("MatchKind", out var m) ? m.GetInt32() : -1;
+                // Bitwise check for Wildcard flag (V2 flags enum)
+                var flagsVal = it.TryGetProperty("MatchFlags", out var m) ? m.GetInt32() : 0;
                 var name = it.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
-                if (mk == 6 && name.Contains(mustContain, StringComparison.Ordinal)) {
+                if ((flagsVal & (int)MatchFlags.Wildcard) != 0 && name.Contains(mustContain, StringComparison.Ordinal)) {
                     return true;
                 }
             }
+
         } catch { }
         return false;
     }

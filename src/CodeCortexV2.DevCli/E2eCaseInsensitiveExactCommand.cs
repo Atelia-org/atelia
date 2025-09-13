@@ -37,7 +37,7 @@ public static class E2eCaseInsensitiveExactCommand {
                 return false;
             }
             // Validations:
-            // - First item should be ExactIgnoreCase (enum value likely 2) OR have score==10 (as assigned for case-insensitive path)
+            // - First item should have IgnoreCase flag
             // - Name should equal the expected FQN (no global::)
             if (items.GetArrayLength() == 0) {
                 return false;
@@ -45,12 +45,10 @@ public static class E2eCaseInsensitiveExactCommand {
 
             var first = items[0];
             var name = first.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
-            var matchKind = first.TryGetProperty("MatchKind", out var mk) ? mk.GetInt32() : -1;
-            var score = first.TryGetProperty("Score", out var sc) ? sc.GetInt32() : int.MinValue;
+            var flagsVal = first.TryGetProperty("MatchFlags", out var mk) ? mk.GetInt32() : -1;
             var nameOk = string.Equals(name, expectedFqnNoGlobal, StringComparison.Ordinal);
-            var mkOk = matchKind == 2; // ExactIgnoreCase expected
-            var scoreOk = score == 10; // SymbolIndex assigns 10 for ExactIgnoreCase
-            return nameOk && (mkOk || scoreOk);
+            var mkOk = (flagsVal & (int)CodeCortexV2.Abstractions.MatchFlags.IgnoreCase) != 0; // V2: bitwise check for IgnoreCase
+            return nameOk && mkOk;
         } catch {
             return false;
         }

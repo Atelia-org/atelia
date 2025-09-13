@@ -36,12 +36,11 @@ public static class E2eExactWithoutGlobalCommand {
 
             var first = items[0];
             var name = first.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
-            var matchKind = first.TryGetProperty("MatchKind", out var mk) ? mk.GetInt32() : -1;
-            var score = first.TryGetProperty("Score", out var sc) ? sc.GetInt32() : int.MinValue;
+            var flagsVal = first.TryGetProperty("MatchFlags", out var mk) ? mk.GetInt32() : -1;
             var nameOk = string.Equals(name, expectedFqnNoGlobal, StringComparison.Ordinal);
-            var mkOk = matchKind == 1; // Exact
-            var scoreOk = score == 0;  // Exact path assigns 0
-            return nameOk && mkOk && scoreOk;
+            // V2: exact means no flags are set
+            var mkOk = flagsVal == 0;
+            return nameOk && mkOk;
         } catch {
             return false;
         }

@@ -41,11 +41,11 @@ public static class E2eFuzzyFallbackCommand {
                 return false;
             }
 
-            // Expect: only fuzzy layer produces results (MatchKind == 8), and at least one ends with .TypeA
+            // Expect: only fuzzy layer produces results ((flags & Fuzzy) != 0), and at least one ends with .TypeA
             bool anyExpected = false;
             foreach (var it in items.EnumerateArray()) {
-                var mk = it.TryGetProperty("MatchKind", out var m) ? m.GetInt32() : -1;
-                if (mk != 8) {
+                var flagsVal = it.TryGetProperty("MatchFlags", out var m) ? m.GetInt32() : -1;
+                if ((flagsVal & (int)CodeCortexV2.Abstractions.MatchFlags.Fuzzy) == 0) {
                     return false; // found a non-fuzzy result, not a fallback
                 }
 

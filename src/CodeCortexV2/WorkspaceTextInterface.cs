@@ -9,7 +9,6 @@ using Microsoft.CodeAnalysis;
 
 namespace CodeCortexV2;
 
-public enum SearchEngineMode { SymbolIndex, SymbolTree, SymbolTreeB }
 
 /// <summary>
 /// Text-based UI for AI Coder to explore a .NET workspace/codebase.
@@ -58,38 +57,26 @@ public interface IWorkspaceTextInterface {
 /// </summary>
 public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
     private readonly RoslynWorkspaceHost _host;
-    private readonly IIndexProvider _provider;
-    private readonly IndexSynchronizer? _sync; // concrete provider for engine switching
-    private readonly SearchEngineMode _engineMode;
+    private readonly IndexSynchronizer _sync;
 
-    private WorkspaceTextInterface(RoslynWorkspaceHost host, IIndexProvider provider, SearchEngineMode engineMode) {
+    private WorkspaceTextInterface(RoslynWorkspaceHost host, IndexSynchronizer sync) {
         _host = host;
-        _provider = provider;
-        _sync = provider as IndexSynchronizer;
-        _engineMode = engineMode;
+        _sync = sync;
     }
 
     public static async Task<WorkspaceTextInterface> CreateAsync(string slnOrProjectPath, CancellationToken ct) {
-        return await CreateAsync(slnOrProjectPath, SearchEngineMode.SymbolIndex, ct).ConfigureAwait(false);
-    }
-
-    public static async Task<WorkspaceTextInterface> CreateAsync(string slnOrProjectPath, SearchEngineMode engineMode, CancellationToken ct) {
         var host = await RoslynWorkspaceHost.LoadAsync(slnOrProjectPath, ct).ConfigureAwait(false);
         var sync = await IndexSynchronizer.CreateAsync(host.Workspace, ct).ConfigureAwait(false);
-        // Map legacy SymbolTree mode to SymbolTreeB since the old engine is removed
-        var effectiveMode = engineMode == SearchEngineMode.SymbolTree ? SearchEngineMode.SymbolTreeB : engineMode;
-        return new WorkspaceTextInterface(host, sync, effectiveMode);
+        return new WorkspaceTextInterface(host, sync);
     }
 
 #pragma warning disable 1998 //此异步方法缺少 "await" 运算符，将以同 步方式运行
     public async Task<string> FindAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
         SearchResults page;
-        if ((_engineMode == SearchEngineMode.SymbolTree || _engineMode == SearchEngineMode.SymbolTreeB) && _sync is not null) {
+        {
             var entries = _sync.CurrentEntries;
             var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
             page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
-        } else {
-            page = _provider.Current.Search(query, limit, offset, kinds: SymbolKinds.All);
         }
         if (json) {
             return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true });
@@ -99,7 +86,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
         foreach (var h in page.Items) {
             var id = h.SymbolId.Value ?? string.Empty;
             var amb = h.IsAmbiguous ? " !ambiguous" : string.Empty;
-            sb.AppendLine($"- [{h.Kind}/{h.MatchKind}] {id}{amb} {(string.IsNullOrEmpty(h.Assembly) ? string.Empty : "(asm: " + h.Assembly + ")")}");
+            sb.AppendLine($"- [{h.Kind}/{h.MatchFlags}] {id}{amb} {(string.IsNullOrEmpty(h.Assembly) ? string.Empty : "(asm: " + h.Assembly + ")")}");
         }
         return sb.ToString().TrimEnd();
     }
@@ -107,14 +94,12 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
 
     public async Task<string> GetOutlineAsync(string query, int limit, int offset, bool json, CancellationToken ct) {
         SearchResults page;
-        if ((_engineMode == SearchEngineMode.SymbolTree || _engineMode == SearchEngineMode.SymbolTreeB) && _sync is not null) {
+        {
             var entries = _sync.CurrentEntries;
             var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
             page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
-        } else {
-            page = _provider.Current.Search(query, limit, offset, kinds: SymbolKinds.All);
         }
-        if (page.Total != 1 || page.Items[0].MatchKind == MatchKind.Fuzzy) {
+        if (page.Total != 1 || page.Items[0].MatchFlags == MatchFlags.Fuzzy) {
             // Return search results when not unique (or none)
             return await FindAsync(query, limit, offset, json, ct).ConfigureAwait(false);
         }

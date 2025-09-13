@@ -71,8 +71,8 @@ public static class E2eGenericBaseSearchCommand {
             }
             foreach (var it in items.EnumerateArray()) {
                 var name = it.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
-                // MatchKind is serialized as a number; GenericBase == 7 per V2 enum
-                var mk = it.TryGetProperty("MatchKind", out var m) ? m.GetInt32() : -1;
+                // MatchFlags is serialized as a number; GenericBase == 7 per V2 enum
+                var mk = it.TryGetProperty("MatchFlags", out var m) ? m.GetInt32() : -1;
                 if (mk == 7 && name.Contains($"{ns}.{typeName}", StringComparison.Ordinal)) {
                     return true;
                 }

@@ -86,7 +86,7 @@
 
 //         var page = idx.Search("Baz", limit: 10, offset: 0, kinds: SymbolKinds.Namespace);
 //         // 不再要求空集；允许在无其它命中时提供 Fuzzy 命名空间提示，但应无非Fuzzy命中
-//         Assert.DoesNotContain(page.Items, it => it.MatchKind != MatchKind.Fuzzy);
+//         Assert.DoesNotContain(page.Items, it => it.MatchFlags != MatchFlags.Fuzzy);
 //     }
 
 // }

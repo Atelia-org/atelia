@@ -73,8 +73,8 @@
 //         if ((query.StartsWith("T:", StringComparison.Ordinal) || query.StartsWith("N:", StringComparison.Ordinal))
 //             && _all.TryGetValue(query, out var e0)) {
 //             if ((kinds & e0.Kind) != 0) {
-//                 AddResult(results, added, e0.ToHit(MatchKind.Id, 0));
-//                 var ordered = results.OrderBy(m => (int)m.MatchKind).ThenBy(m => m.Score).ThenBy(m => m.Name, StringComparer.Ordinal).ToList();
+//                 AddResult(results, added, e0.ToHit(MatchFlags.Id, 0));
+//                 var ordered = results.OrderBy(m => (int)m.MatchFlags).ThenBy(m => m.Score).ThenBy(m => m.Name, StringComparer.Ordinal).ToList();
 //                 return new SearchResults(ordered, ordered.Count, 0, ordered.Count, null);
 //             }
 //         }
@@ -92,7 +92,7 @@
 //             if (id1final is not null) {
 //                 var e = FindEntry(id1final);
 //                 if (e != null && (kinds & e.Kind) != 0) {
-//                     AddResult(results, added, e.ToHit(MatchKind.Exact, 0));
+//                     AddResult(results, added, e.ToHit(MatchFlags.Exact, 0));
 //                 }
 //             }
 //         }
@@ -107,7 +107,7 @@
 //             if (id2final is not null) {
 //                 var e = FindEntry(id2final);
 //                 if (e != null && (kinds & e.Kind) != 0) {
-//                     AddResult(results, added, e.ToHit(MatchKind.ExactIgnoreCase, 10));
+//                     AddResult(results, added, e.ToHit(MatchFlags.ExactIgnoreCase, 10));
 //                 }
 //             }
 //         }
@@ -121,7 +121,7 @@
 
 //                 var fqnNoGlobal = e.FqnNoGlobal;
 //                 if (fqnNoGlobal.StartsWith(query, StringComparison.OrdinalIgnoreCase)) {
-//                     AddResult(results, added, e.ToHit(MatchKind.Prefix, fqnNoGlobal.Length - query.Length));
+//                     AddResult(results, added, e.ToHit(MatchFlags.Prefix, fqnNoGlobal.Length - query.Length));
 //                 }
 //             }
 //             // 3b) base FQN（去泛型）
@@ -133,7 +133,7 @@
 
 //                     var fqnBase = e.FqnBase;
 //                     if (fqnBase.StartsWith(query, StringComparison.OrdinalIgnoreCase)) {
-//                         AddResult(results, added, e.ToHit(MatchKind.Prefix, (fqnBase.Length - query.Length) + 5));
+//                         AddResult(results, added, e.ToHit(MatchFlags.Prefix, (fqnBase.Length - query.Length) + 5));
 //                     }
 //                 }
 //             }
@@ -148,7 +148,7 @@
 
 //                 var fqnNoGlobal = e.FqnNoGlobal;
 //                 if (fqnNoGlobal.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) {
-//                     AddResult(results, added, e.ToHit(MatchKind.Contains, fqnNoGlobal.Length));
+//                     AddResult(results, added, e.ToHit(MatchFlags.Contains, fqnNoGlobal.Length));
 //                 }
 //             }
 //             // 4b) base FQN（去泛型）
@@ -160,7 +160,7 @@
 
 //                     var fqnBase = e.FqnBase;
 //                     if (fqnBase.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) {
-//                         AddResult(results, added, e.ToHit(MatchKind.Contains, fqnBase.Length + 5));
+//                         AddResult(results, added, e.ToHit(MatchFlags.Contains, fqnBase.Length + 5));
 //                     }
 //                 }
 //             }
@@ -180,7 +180,7 @@
 //                 var fqnNoGlobal = e.FqnNoGlobal;
 //                 if (fqnNoGlobal.EndsWith(query, StringComparison.OrdinalIgnoreCase)) {
 //                     suffixTotalMatches++;
-//                     AddResult(results, added, e.ToHit(MatchKind.Suffix, fqnNoGlobal.Length - query.Length));
+//                     AddResult(results, added, e.ToHit(MatchFlags.Suffix, fqnNoGlobal.Length - query.Length));
 //                     if (needAmbiguity) {
 //                         suffixIdsForAmbiguity ??= new HashSet<string>(StringComparer.Ordinal);
 //                         suffixIdsForAmbiguity.Add(e.SymbolId);
@@ -197,7 +197,7 @@
 //                 }
 
 //                 if (rx.IsMatch(e.Fqn)) {
-//                     AddResult(results, added, e.ToHit(MatchKind.Wildcard, e.Fqn.Length));
+//                     AddResult(results, added, e.ToHit(MatchFlags.Wildcard, e.Fqn.Length));
 //                 }
 //             }
 //         }
@@ -209,7 +209,7 @@
 //                 foreach (var id in ids) {
 //                     var e = FindEntry(id);
 //                     if (e != null && (kinds & e.Kind) != 0) {
-//                         AddResult(results, added, e.ToHit(MatchKind.GenericBase, 50));
+//                         AddResult(results, added, e.ToHit(MatchFlags.GenericBase, 50));
 //                     }
 //                 }
 //             }
@@ -224,7 +224,7 @@
 //                 if (!added.Contains(e.SymbolId) && Math.Abs(e.Simple.Length - query.Length) <= threshold) {
 //                     int dist = BoundedLevenshtein(e.Simple, query, threshold);
 //                     if (dist >= 0 && dist <= threshold) {
-//                         AddResult(results, added, e.ToHit(MatchKind.Fuzzy, 100 + dist));
+//                         AddResult(results, added, e.ToHit(MatchFlags.Fuzzy, 100 + dist));
 //                     }
 //                 }
 //             }
@@ -235,7 +235,7 @@
 //             var suffixIds = suffixIdsForAmbiguity;
 //             for (int i = 0; i < results.Count; i++) {
 //                 var r = results[i];
-//                 if (r.MatchKind == MatchKind.Suffix && suffixIds.Contains(r.SymbolId.Value)) {
+//                 if (r.MatchFlags == MatchFlags.Suffix && suffixIds.Contains(r.SymbolId.Value)) {
 //                     results[i] = r with { IsAmbiguous = true };
 //                 }
 //             }
@@ -246,7 +246,7 @@
 //         }
 //         // Order and paginate
 //         var orderedAll = results
-//             .OrderBy(m => (int)m.MatchKind)
+//             .OrderBy(m => (int)m.MatchFlags)
 //             .ThenBy(m => m.Score)
 //             .ThenBy(m => m.Name, StringComparer.Ordinal)
 //             .ToList();

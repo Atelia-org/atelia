@@ -69,7 +69,7 @@
 //         Assert.Equal(1, page.Total);
 //         var hit = Assert.Single(page.Items);
 //         Assert.Equal(SymbolKinds.Type, hit.Kind);
-//         Assert.Equal(MatchKind.Id, hit.MatchKind);
+//         Assert.Equal(MatchFlags.Id, hit.MatchFlags);
 //         Assert.Equal("System.Collections.Generic", hit.Namespace);
 //         Assert.Equal("System.Collections", hit.Assembly);
 //     }
@@ -79,7 +79,7 @@
 //         var tree = BuildSample();
 //         var page = tree.Search("global::System.Collections.Generic.List<T>", 10, 0, SymbolKinds.All);
 //         Assert.True(page.Total >= 1);
-//         Assert.Contains(page.Items, h => h.Kind == SymbolKinds.Type && h.MatchKind is MatchKind.Exact or MatchKind.ExactIgnoreCase);
+//         Assert.Contains(page.Items, h => h.Kind == SymbolKinds.Type && h.MatchFlags is MatchFlags.Exact or MatchFlags.ExactIgnoreCase);
 //     }
 
 //     [Fact]

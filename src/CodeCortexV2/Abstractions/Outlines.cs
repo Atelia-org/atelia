@@ -6,7 +6,7 @@ public sealed record SearchHit(
     string? Namespace,
     string? Assembly,
     SymbolId SymbolId,
-    MatchKind MatchKind,
+    MatchFlags MatchFlags,
     bool IsAmbiguous,
     double Score
 );

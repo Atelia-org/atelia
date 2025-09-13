@@ -57,7 +57,7 @@
 //             // DocId fast path
 //             if (query.Length > 2 && (query[1] == ':') && (query[0] == 'T' || query[0] == 'N')) {
 //                 if (_idToEntryIndex.TryGetValue(query, out var idx)) {
-//                     var hit = _entries[idx].ToHit(MatchKind.Id, 0);
+//                     var hit = _entries[idx].ToHit(MatchFlags.Id, 0);
 //                     var total = 1;
 //                     var page = (effOffset == 0 && effLimit > 0) ? new[] { hit } : Array.Empty<SearchHit>();
 //                     int? nextOff = effOffset + effLimit < total ? effOffset + effLimit : null;
@@ -146,7 +146,7 @@
 //                 return true;
 //             }
 
-//             void CollectEntriesAtNode(int nodeIdx, List<SearchHit> acc, MatchKind kind) {
+//             void CollectEntriesAtNode(int nodeIdx, List<SearchHit> acc, MatchFlags kind) {
 //                 var n = _nodes[nodeIdx];
 //                 if (n.EntryCount <= 0) {
 //                     return;
@@ -163,7 +163,7 @@
 //                 }
 //             }
 
-//             void CollectSubtreeEntries(int nodeIdx, List<SearchHit> acc, MatchKind kind, int maxCount) {
+//             void CollectSubtreeEntries(int nodeIdx, List<SearchHit> acc, MatchFlags kind, int maxCount) {
 //                 var stack = new Stack<int>();
 //                 stack.Push(nodeIdx);
 //                 while (stack.Count > 0 && acc.Count < maxCount) {
@@ -193,7 +193,7 @@
 //                             continue;
 //                         }
 
-//                         CollectEntriesAtNode(nid, hits, ignoreCase ? MatchKind.ExactIgnoreCase : MatchKind.Exact);
+//                         CollectEntriesAtNode(nid, hits, ignoreCase ? MatchFlags.ExactIgnoreCase : MatchFlags.Exact);
 //                         if (hits.Count >= effLimit + effOffset) {
 //                             break;
 //                         }
@@ -222,7 +222,7 @@
 //                             continue;
 //                         }
 
-//                         CollectSubtreeEntries(nid, hits, MatchKind.Prefix, effLimit + effOffset);
+//                         CollectSubtreeEntries(nid, hits, MatchFlags.Prefix, effLimit + effOffset);
 //                         if (hits.Count >= effLimit + effOffset) {
 //                             break;
 //                         }
