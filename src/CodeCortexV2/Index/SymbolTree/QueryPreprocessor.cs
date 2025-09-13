@@ -7,7 +7,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
     /// <summary>
     /// Lightweight parser/preprocessor for SymbolTree queries.
     /// Responsibilities:
-    /// - Detect DocId queries (e.g., "T:...", "N:...") and return as-is
+    /// - Detect DocId-style prefixes (e.g., "T:", "N:") to set DocIdKind and root-constraint; no DocId fast-path is used
     /// - Handle global:: root constraint
     /// - Split into namespace/type segments, expanding nested types ('+')
     /// - For each segment, if generic arity can be parsed from `n or &lt;...&gt;, normalize to DocId-like form: base`arity
@@ -19,7 +19,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         public readonly record struct QueryInfo(
             string Raw, // 用户输入的原始查询文本
             SymbolKinds DocIdKind, // Represents kinds implied by DocId prefix; merged by OR with caller filter. 用户通过DocId风格前缀制定要**额外包含**的符号类别，也就是“T:”/"N:"那些。如果用户没输入这样的前缀，就为SymbolKinds.None。后面使用时会合并入Search函数传入的SymbolKinds参数。举例来说若Query为“T:Ns.Tpy”同时Search传入的SymbolKinds为Namespace，则结果应为并集，Namespace和Type类型的Symbol都是合法结果。
-            bool IsRootAnchored, // 如果Query有“global::”或“T:”/“N:”等DocId风格的“根部前缀”，则表示结果都应以根节点开始，是匹配条件。
+            bool IsRootAnchored, // 如果Query有“global::”或“T:”/“N:”等DocId风格的“根部前缀”，则表示结果都应以根节点开始，是匹配条件。DocId风格前缀不触发任何“快速路径”，不会绕过标准化匹配流程。
             string[] NormalizedSegments, // 原始输入去掉“根部前缀”后，按命名空间层次分段，逐段处理。如果某一段是泛型，则统一标准化为“`n”形式，有类型形参“<T>” / 无类参数名<,> / 有类型实参<int>”都是合法的输入，方便用户直接粘贴文本。
             string[] LowerNormalizedSegments, // 在SegmentsNormalized的基础上逐段ToLower。
             string? RejectionReason // 非空表示这是一个被拒绝/无效的查询，并给出人类可读原因

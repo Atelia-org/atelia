@@ -260,7 +260,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
             // Mutable node list with string names
             var nodes = new List<(string Name, int Parent, int FirstChild, int NextSibling, NodeKind Kind, List<int> Entries)>();
-            var keyToIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+            var keyToIndex = new Dictionary<(int Parent, string Name, NodeKind Kind), int>();
             int NewNode(string name, int parent, NodeKind kind) {
                 var idx = nodes.Count;
                 nodes.Add((name, parent, -1, -1, kind, new List<int>()));
@@ -272,7 +272,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 return idx;
             }
             int GetOrAddNode(int parent, string name, NodeKind kind) {
-                var key = parent.ToString() + "|" + name + "|" + ((int)kind).ToString();
+                var key = (parent, name, kind);
                 if (!keyToIndex.TryGetValue(key, out var idx)) {
                     idx = NewNode(name, parent, kind);
                     keyToIndex[key] = idx;
@@ -301,36 +301,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             static IEnumerable<string> SplitNs(string? ns)
                 => string.IsNullOrEmpty(ns) ? Array.Empty<string>() : ns!.Split('.', StringSplitOptions.RemoveEmptyEntries);
 
-            static (string baseName, int arity) ParseTypeSegment(string seg) {
-                if (string.IsNullOrEmpty(seg)) {
-                    return (seg, 0);
-                }
 
-                var baseName = seg;
-                int arity = 0;
-                var back = seg.IndexOf('`');
-                if (back >= 0) {
-                    baseName = seg.Substring(0, back);
-                    var numStr = new string(seg.Skip(back + 1).TakeWhile(char.IsDigit).ToArray());
-                    if (int.TryParse(numStr, out var n1)) {
-                        arity = n1;
-                    }
-                }
-                var lt = seg.IndexOf('<');
-                if (lt >= 0) {
-                    baseName = seg.Substring(0, lt);
-                    var inside = seg.Substring(lt + 1);
-                    var rt = inside.LastIndexOf('>');
-                    if (rt >= 0) {
-                        inside = inside.Substring(0, rt);
-                    }
-
-                    if (inside.Length > 0) {
-                        arity = inside.Count(c => c == ',') + 1;
-                    }
-                }
-                return (baseName, arity);
-            }
 
 
             for (int ei = 0; ei < arr.Length; ei++) {
@@ -353,10 +324,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     if (nsSegments.Length > 0) {
                         nodes[parent].Entries.Add(ei);
                     }
-                    // DocId as exact alias for namespace (supports duplicates across assemblies)
-                    if (!string.IsNullOrEmpty(e.SymbolId) && e.SymbolId.StartsWith("N:", StringComparison.Ordinal)) {
-                        Bucket(exactBuckets, e.SymbolId, parent, MatchFlags.None);
-                    }
+
 
                 }
                 if ((e.Kind & SymbolKinds.Type) != 0) {
@@ -369,25 +337,18 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                             Bucket(nonExactBuckets, lowerNs, parent, MatchFlags.IgnoreCase);
                         }
                     }
-                    var fqn = e.FqnNoGlobal ?? string.Empty;
-                    // Prefer DocId for nested chain (uses '+'), fallback to FQN
-                    string typeChain;
-                    if (!string.IsNullOrEmpty(e.SymbolId) && e.SymbolId.StartsWith("T:", StringComparison.Ordinal)) {
-                        var s = e.SymbolId.Substring(2);
-                        if (!string.IsNullOrEmpty(e.ParentNamespace) && s.StartsWith(e.ParentNamespace + ".", StringComparison.Ordinal)) {
-                            typeChain = s.Substring(e.ParentNamespace.Length + 1); // keep full nested chain like Outer`1.Inner
-                        } else {
-                            var lastDotDoc = s.LastIndexOf('.');
-                            typeChain = lastDotDoc >= 0 ? s.Substring(lastDotDoc + 1) : s;
-                        }
-                    } else {
-                        var dot = fqn.LastIndexOf('.');
-                        typeChain = dot >= 0 ? fqn[(dot + 1)..] : fqn;
+                    // Build type segments strictly from DocId ("T:"-prefixed). No fallback to FQN; callers must ensure DocId is present.
+                    System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(e.SymbolId) && e.SymbolId.StartsWith("T:", StringComparison.Ordinal), "Type entries must have DocId starting with 'T:'");
+                    var s = e.SymbolId.Substring(2);
+                    var allSegs = QueryPreprocessor.SplitSegments(s);
+                    var nsCount = SplitNs(e.ParentNamespace).Count();
+                    if (nsCount < 0 || nsCount > allSegs.Length) {
+                        nsCount = 0;
                     }
-                    var typeSegs = typeChain.Split('.', StringSplitOptions.RemoveEmptyEntries);
+                    string[] typeSegs = allSegs.Skip(nsCount).ToArray();
                     int lastTypeNode = parent;
                     for (int i = 0; i < typeSegs.Length; i++) {
-                        var (bn, ar) = ParseTypeSegment(typeSegs[i]);
+                        var (bn, ar) = QueryPreprocessor.ParseTypeSegment(typeSegs[i]);
                         var nodeName = ar > 0 ? bn + "`" + ar.ToString() : bn;
                         bool isLast = i == typeSegs.Length - 1;
                         int idx;
@@ -425,10 +386,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         lastTypeNode = idx;
                     }
                     nodes[lastTypeNode].Entries.Add(ei);
-                    // DocId as exact alias for type (supports duplicates across assemblies)
-                    if (!string.IsNullOrEmpty(e.SymbolId) && e.SymbolId.StartsWith("T:", StringComparison.Ordinal)) {
-                        Bucket(exactBuckets, e.SymbolId, lastTypeNode, MatchFlags.None);
-                    }
+
 
                 }
             }
