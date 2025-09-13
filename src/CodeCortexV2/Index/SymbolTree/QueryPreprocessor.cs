@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CodeCortexV2.Abstractions;
 
 namespace CodeCortexV2.Index.SymbolTreeInternal {
     /// <summary>
@@ -10,73 +11,80 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
     /// - Handle global:: root constraint
     /// - Split into namespace/type segments, expanding nested types ('+')
     /// - For each segment, if generic arity can be parsed from `n or &lt;...&gt;, normalize to DocId-like form: base`arity
-    /// - Track original segments and whether each segment is already lower-cased (for IgnoreCase intent)
+    /// - Provide lower-cased variants for inclusive case-insensitive matching (no "intent" semantics).  LowerNormalizedSegments 用于 inclusive 阶段的忽略大小写匹配
     /// - MVP: reject malformed generic segments (unbalanced '&lt;' '&gt;')
     /// </summary>
     public static class QueryPreprocessor {
-        public enum DocIdKind { None, Type, Namespace, Member /* future */ }
 
         public readonly record struct QueryInfo(
-            string Raw,
-            string Effective,
-            DocIdKind Kind,
-            bool RootConstraint,
-            string[] SegmentsNormalized,
-            string[] SegmentsOriginal,
-            bool[] SegmentIsLower
+            string Raw, // 用户输入的原始查询文本
+            SymbolKinds DocIdKind, // Represents kinds implied by DocId prefix; merged by OR with caller filter. 用户通过DocId风格前缀制定要**额外包含**的符号类别，也就是“T:”/"N:"那些。如果用户没输入这样的前缀，就为SymbolKinds.None。后面使用时会合并入Search函数传入的SymbolKinds参数。举例来说若Query为“T:Ns.Tpy”同时Search传入的SymbolKinds为Namespace，则结果应为并集，Namespace和Type类型的Symbol都是合法结果。
+            bool IsRootAnchored, // 如果Query有“global::”或“T:”/“N:”等DocId风格的“根部前缀”，则表示结果都应以根节点开始，是匹配条件。
+            string[] NormalizedSegments, // 原始输入去掉“根部前缀”后，按命名空间层次分段，逐段处理。如果某一段是泛型，则统一标准化为“`n”形式，有类型形参“<T>” / 无类参数名<,> / 有类型实参<int>”都是合法的输入，方便用户直接粘贴文本。
+            string[] LowerNormalizedSegments, // 在SegmentsNormalized的基础上逐段ToLower。
+            string? RejectionReason // 非空表示这是一个被拒绝/无效的查询，并给出人类可读原因
         ) {
-            public string LastOriginal => SegmentsOriginal.Length > 0 ? SegmentsOriginal[^1] : string.Empty;
-            public string LastNormalized => SegmentsNormalized.Length > 0 ? SegmentsNormalized[^1] : string.Empty;
-            public bool LastIsLower => SegmentIsLower.Length > 0 && SegmentIsLower[^1];
+            public bool IsRejected => !string.IsNullOrEmpty(RejectionReason);
         }
 
         public static QueryInfo Preprocess(string? query) {
             var raw = (query ?? string.Empty).Trim();
             if (raw.Length == 0) {
-                return new QueryInfo(string.Empty, string.Empty, DocIdKind.None, false, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
+                return new QueryInfo(string.Empty, SymbolKinds.None, false, Array.Empty<string>(), Array.Empty<string>(), null);
             }
 
             bool root = false;
-            DocIdKind docIdKind = DocIdKind.None;
+            SymbolKinds kinds = SymbolKinds.None;
             var eff = raw;
             const string RootPrefix = "global::";
             if (eff.StartsWith(RootPrefix, StringComparison.Ordinal)) {
                 root = true;
                 eff = eff.Substring(RootPrefix.Length);
-            } else if (raw.Length > 2 && raw[1] == ':' && (raw[0] == 'T' || raw[0] == 'N' || raw[0] == 'M')) {
-                // DocId detection (kept verbatim)
-                docIdKind = raw[0] == 'T' ? DocIdKind.Type : (raw[0] == 'N' ? DocIdKind.Namespace : DocIdKind.Member);
-                root = true;
-                eff = eff.Substring(2); // 2="X:".Length
+            }
+
+            // DocId-style prefix: N:/T:/M:/P:/F:/E:; reject "!:" explicitly
+            if (eff.Length > 2 && eff[1] == ':') {
+                if (eff[0] == '!') {
+                    return new QueryInfo(raw, SymbolKinds.None, true, Array.Empty<string>(), Array.Empty<string>(), "Unsupported DocId prefix '!:' (internal Roslyn-only). Use N:/T:/M:/P:/F:/E:");
+                }
+                if (eff[0] == 'N' || eff[0] == 'T' || eff[0] == 'M' || eff[0] == 'P' || eff[0] == 'F' || eff[0] == 'E') {
+                    root = true; // DocId implies root constraint
+                    kinds = eff[0] switch {
+                        'N' => SymbolKinds.Namespace,
+                        'T' => SymbolKinds.Type,
+                        'M' => SymbolKinds.Method,
+                        'P' => SymbolKinds.Property,
+                        'F' => SymbolKinds.Field,
+                        'E' => SymbolKinds.Event,
+                        _ => kinds,
+                    };
+                    eff = eff.Substring(2); // strip "X:"
+                }
             }
 
             var segsOrig = SplitSegments(eff);
             if (segsOrig.Length == 0) {
-                return new QueryInfo(raw, eff, DocIdKind.None, root, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
+                return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), null);
             }
 
             // MVP reject malformed generic segments (unbalanced '<' '>')
-            bool invalid = false;
             foreach (var s in segsOrig) {
                 if (!IsBalancedAngles(s)) {
-                    invalid = true;
-                    break;
+                    return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), "Unbalanced generic angle brackets: '<' '>'");
                 }
-            }
-            if (invalid) {
-                return new QueryInfo(raw, eff, DocIdKind.None, root, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<bool>());
             }
 
             var segsNorm = new string[segsOrig.Length];
-            var isLower = new bool[segsOrig.Length];
+            var segsLower = new string[segsOrig.Length];
             for (int i = 0; i < segsOrig.Length; i++) {
                 var s = segsOrig[i];
-                isLower[i] = s == s.ToLowerInvariant();
                 var (bn, ar) = ParseTypeSegment(s);
-                segsNorm[i] = ar > 0 ? bn + "`" + ar.ToString() : bn;
+                var norm = ar > 0 ? bn + "`" + ar.ToString() : bn;
+                segsNorm[i] = norm;
+                segsLower[i] = norm.ToLowerInvariant();
             }
 
-            return new QueryInfo(raw, eff, docIdKind, root, segsNorm, segsOrig, isLower);
+            return new QueryInfo(raw, kinds, root, segsNorm, segsLower, null);
         }
 
         // --- Helpers ---

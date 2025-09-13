@@ -91,12 +91,17 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
             // Centralized query preprocessing
             var qi = QueryPreprocessor.Preprocess(query);
+            if (!string.IsNullOrEmpty(qi.RejectionReason)) {
+                return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
+            }
 
-            bool rootConstraint = qi.RootConstraint;
-            var segs = qi.SegmentsNormalized;
+
+            bool rootConstraint = qi.IsRootAnchored;
+            var segs = qi.NormalizedSegments;
             if (segs.Length == 0) {
                 return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
             }
+            var filterKinds = kinds | qi.DocIdKind;
 
             SearchResults RunUnified(bool exactOnly) {
                 int segCount = segs.Length;
@@ -104,9 +109,8 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
                 for (int i = 0; i < segCount; i++) {
                     perSeg[i] = BuildSegmentCandidates(
-                        segNormalized: qi.SegmentsNormalized[i],
-                        segOriginal: qi.SegmentsOriginal[i],
-                        segIsLower: qi.SegmentIsLower[i],
+                        segNormalized: qi.NormalizedSegments[i],
+                        segNormalizedLowered: qi.LowerNormalizedSegments[i],
                         exactOnly: exactOnly
                     );
                     if (perSeg[i].Count == 0) {
@@ -163,9 +167,9 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     var nid = kv.Key;
                     var flags = kv.Value;
                     if ((flags & MatchFlags.IgnoreGenericArity) != 0) {
-                        CollectSubtreeEntries(nid, hits, flags | MatchFlags.Partial, effLimit + effOffset, kinds);
+                        CollectSubtreeEntries(nid, hits, flags | MatchFlags.Partial, effLimit + effOffset, filterKinds);
                     } else {
-                        CollectEntriesAtNode(nid, hits, flags, kinds);
+                        CollectEntriesAtNode(nid, hits, flags, filterKinds);
                     }
                     if (hits.Count >= effLimit + effOffset) {
                         break;
@@ -195,7 +199,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         }
 
         // Build candidate nodes for a single segment using exact aliases and optional non-exact fallbacks.
-        private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string segOriginal, bool segIsLower, bool exactOnly) {
+        private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string? segNormalizedLowered, bool exactOnly) {
             var map = new Dictionary<int, MatchFlags>();
 
             void Add(IEnumerable<AliasRelation> rels, bool requireNameMatch, StringComparison cmp, Func<MatchFlags, bool>? flagFilter = null) {
@@ -222,42 +226,22 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             bool hasArity = segNormalized.IndexOf('`') >= 0;
 
             if (exactOnly) {
-                // Ancestor-specific ignore-case intent: if the user typed this segment in lower-case,
-                // allow case-insensitive exact matches for this segment only (no generic-base expansion).
-                if (segIsLower) {
-                    if (hasArity) {
-                        var lowerDoc = segNormalized.ToLowerInvariant();
-                        // Exclude IgnoreGenericArity to keep exact-only semantics
-                        Add(CandidatesNonExact(lowerDoc), requireNameMatch: true, cmp: StringComparison.OrdinalIgnoreCase,
-                            flagFilter: flags => (flags & MatchFlags.IgnoreGenericArity) == 0
-                        );
-                    } else {
-                        var lowerBase = segNormalized.ToLowerInvariant();
-                        Add(CandidatesNonExact(lowerBase), requireNameMatch: true, cmp: StringComparison.OrdinalIgnoreCase,
-                            flagFilter: flags => (flags & MatchFlags.IgnoreGenericArity) == 0
-                        );
-                    }
-                }
+                // In exact-only pass, do not add case-insensitive or generic-base fallbacks
                 return map;
             }
 
             // Inclusive pass: generic-base anchors and lowercase variants.
             if (hasArity) {
                 // Case-insensitive exact for generic (lower "bn`n")
-                if (segIsLower) {
-                    var lowerDoc = segNormalized.ToLowerInvariant();
-                    Add(CandidatesNonExact(lowerDoc), requireNameMatch: false, cmp: StringComparison.Ordinal);
-                }
+                var lowerDoc = segNormalizedLowered ?? segNormalized.ToLowerInvariant();
+                Add(CandidatesNonExact(lowerDoc), requireNameMatch: false, cmp: StringComparison.Ordinal);
             } else {
                 // Generic-base anchors via original base and its lower variant
-                // Use segNormalized (bn) for non-exact base key
                 if (!string.IsNullOrEmpty(segNormalized)) {
                     Add(CandidatesNonExact(segNormalized), requireNameMatch: false, cmp: StringComparison.Ordinal);
                 }
-                if (segIsLower) {
-                    var lowerBase = segNormalized.ToLowerInvariant();
-                    Add(CandidatesNonExact(lowerBase), requireNameMatch: false, cmp: StringComparison.Ordinal);
-                }
+                var lowerBase = segNormalizedLowered ?? segNormalized.ToLowerInvariant();
+                Add(CandidatesNonExact(lowerBase), requireNameMatch: false, cmp: StringComparison.Ordinal);
             }
 
             return map;
