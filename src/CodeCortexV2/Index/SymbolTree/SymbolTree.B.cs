@@ -232,27 +232,19 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             // Exact: normalized key (bn or bn`n). Ensure node name equals normalized for arity-sensitive semantics.
             Add(CandidatesExact(segNormalized), cmp: StringComparison.Ordinal);
 
-            bool hasArity = segNormalized.IndexOf('`') >= 0;
-
+            // Non-exact phase: no need to branch by arity; buckets already encode
+            // - generic base anchors (bn → IgnoreGenericArity)
+            // - lower-cased doc-id exact for generic (lower "bn`n" → IgnoreCase)
             if (exactOnly) {
-                // In exact-only pass, do not add case-insensitive or generic-base fallbacks
                 return map;
             }
 
-            // Inclusive pass: generic-base anchors and lowercase variants.
-            if (hasArity) {
-                // Case-insensitive exact for generic (lower "bn`n")
-                var lowerDoc = segNormalizedLowered ?? segNormalized.ToLowerInvariant();
-                Add(CandidatesNonExact(lowerDoc), cmp: StringComparison.Ordinal);
-            } else {
-                // Generic-base anchors via original base and its lower variant (avoid duplicate when lower == original)
-                if (!string.IsNullOrEmpty(segNormalized)) {
-                    Add(CandidatesNonExact(segNormalized), cmp: StringComparison.Ordinal);
-                }
-                var lowerBase = segNormalizedLowered ?? segNormalized.ToLowerInvariant();
-                if (!string.Equals(lowerBase, segNormalized, StringComparison.Ordinal)) {
-                    Add(CandidatesNonExact(lowerBase), cmp: StringComparison.Ordinal);
-                }
+            if (!string.IsNullOrEmpty(segNormalized)) {
+                Add(CandidatesNonExact(segNormalized), cmp: StringComparison.Ordinal);
+            }
+            var lower = segNormalizedLowered ?? segNormalized.ToLowerInvariant();
+            if (!string.Equals(lower, segNormalized, StringComparison.Ordinal)) {
+                Add(CandidatesNonExact(lower), cmp: StringComparison.Ordinal);
             }
 
             return map;
