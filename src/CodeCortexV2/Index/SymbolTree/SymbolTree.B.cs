@@ -63,20 +63,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             acc.Add(entry.ToHit(kind, 0));
         }
 
-        private void CollectSubtreeEntries(int nodeIdx, List<SearchHit> acc, MatchFlags kind, int maxCount, SymbolKinds filter) {
-            var stack = new Stack<int>();
-            stack.Push(nodeIdx);
-            while (stack.Count > 0 && acc.Count < maxCount) {
-                var cur = stack.Pop();
-                CollectEntriesAtNode(cur, acc, kind, filter);
-                var child = _nodes[cur].FirstChild;
-                while (child >= 0) {
-                    stack.Push(child);
-                    child = _nodes[child].NextSibling;
-                }
-            }
-        }
-
         /// <summary>
         /// Execute search with per-segment exact-first fallback:
         /// - For each segment, try exact candidates; if empty, include non-exact alias candidates for that segment only.
@@ -174,19 +160,20 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 }
 
                 // Collect results
+                // Semantics note:
+                // - IgnoreGenericArity ONLY means "arity-insensitive type equality" (e.g., List matches List`1/List`2 as separate nodes).
+                // - It does NOT imply subtree expansion; nested types are NOT included unless the query explicitly targets them via segments.
+                // - We intentionally DO NOT call CollectSubtreeEntries here to avoid misinterpreting base-name anchors as "prefix-of-nested".
                 var hits = new List<SearchHit>();
                 foreach (var kv in survivors) {
                     var nid = kv.Key;
                     var flags = kv.Value;
-                    if ((flags & MatchFlags.IgnoreGenericArity) != 0) {
-                        CollectSubtreeEntries(nid, hits, flags | MatchFlags.Partial, effLimit + effOffset, filterKinds);
-                    } else {
-                        CollectEntriesAtNode(nid, hits, flags, filterKinds);
-                    }
+                    CollectEntriesAtNode(nid, hits, flags, filterKinds);
                     if (hits.Count >= effLimit + effOffset) {
                         break;
                     }
                 }
+
 
                 if (hits.Count == 0) {
                     return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
@@ -225,9 +212,9 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             // Exact: normalized key (bn or bn`n). Ensure node name equals normalized for arity-sensitive semantics.
             Add(CandidatesExact(segNormalized), cmp: StringComparison.Ordinal);
 
-            // Non-exact phase: no need to branch by arity; buckets already encode
-            // - generic base anchors (bn → IgnoreGenericArity)
-            // - lower-cased doc-id exact for generic (lower "bn`n" → IgnoreCase)
+            // Non-exact phase: no need to branch by arity; buckets already encode:
+            // - Generic base anchors (bn → IgnoreGenericArity). NOTE: arity-insensitive equality ONLY; no subtree expansion.
+            // - Lower-cased DocId exact for generic (lower "bn`n" → IgnoreCase)
             if (map.Count > 0) {
                 return map;
             }
@@ -330,7 +317,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         Bucket(exactBuckets, docIdSeg, idx, MatchFlags.None);
 
                         // NonExact:
-                        // 1) Generic base name anchors (Prefix semantics)
+                        // 1) Generic base-name anchors (arity-insensitive equality ONLY; no subtree expansion)
                         Bucket(nonExactBuckets, bn, idx, MatchFlags.IgnoreGenericArity);
                         var lowerBn = bn.ToLowerInvariant();
                         if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
