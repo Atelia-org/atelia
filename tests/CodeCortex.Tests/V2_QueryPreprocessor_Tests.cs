@@ -37,8 +37,9 @@ namespace CodeCortex.Tests {
         public void Lowercase_Intent_IsTracked() {
             var q = "system.collections.generic.list<int>";
             var qi = QueryPreprocessor.Preprocess(q);
-            Assert.Equal(qi.NormalizedSegments.Select(s => s.ToLowerInvariant()).ToArray(), qi.LowerNormalizedSegments);
-            Assert.Equal("list`1", qi.LowerNormalizedSegments[^1]);
+            // New semantics: per segment, LowerNormalizedSegments[i] is null if the lowercased value equals the normalized segment; otherwise it's the lowercased value.
+            Assert.All(qi.LowerNormalizedSegments, s => Assert.Null(s));
+            Assert.Null(qi.LowerNormalizedSegments[^1]);
         }
 
         [Fact]

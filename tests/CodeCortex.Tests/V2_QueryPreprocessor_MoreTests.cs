@@ -61,7 +61,7 @@ namespace CodeCortex.Tests {
         [Fact]
         public void Lowercase_Intent_Per_Segment_Mixed() {
             var qi = QueryPreprocessor.Preprocess("system.Collections.generic.List<int>");
-            Assert.Equal(new[] { "system", "collections", "generic", "list`1" }, qi.LowerNormalizedSegments);
+            Assert.Equal(new string?[] { null, "collections", null, "list`1" }, qi.LowerNormalizedSegments);
             Assert.Equal("list`1", qi.LowerNormalizedSegments[^1]);
         }
 
