@@ -78,8 +78,9 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         }
 
         /// <summary>
-        /// Execute search via two passes: (1) exact-only per-segment, (2) include non-exact.
-        /// Both passes build candidates for each segment and prune right-to-left by parent relation.
+        /// Execute search with per-segment exact-first fallback:
+        /// - For each segment, try exact candidates; if empty, include non-exact alias candidates for that segment only.
+        /// - Then prune right-to-left by matching parent relation.
         /// </summary>
         public SearchResults Search(string query, int limit, int offset, SymbolKinds kinds) {
             var effLimit = Math.Max(0, limit);
@@ -105,15 +106,14 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             }
             var filterKinds = kinds | qi.DocIdKind;
 
-            SearchResults RunUnified(bool exactOnly) {
+            SearchResults RunUnified() {
                 int segCount = segs.Length;
                 var perSeg = new Dictionary<int, MatchFlags>[segCount];
 
                 for (int i = 0; i < segCount; i++) {
                     perSeg[i] = BuildSegmentCandidates(
                         segNormalized: qi.NormalizedSegments[i],
-                        segNormalizedLowered: qi.LowerNormalizedSegments[i],
-                        exactOnly: exactOnly
+                        segNormalizedLowered: qi.LowerNormalizedSegments[i]
                     );
                     if (perSeg[i].Count == 0) {
                         return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
@@ -199,19 +199,12 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 return new SearchResults(page, total, effOffset, effLimit, nextOff);
             }
 
-            // Pass 1: exact-only
-            var res1 = RunUnified(exactOnly: true);
-            if (res1.Total > 0) {
-                return res1;
-            }
-
-            // Pass 2: include non-exact
-            var res2 = RunUnified(exactOnly: false);
-            return res2;
+            // Single pass with per-segment exact-first fallback
+            return RunUnified();
         }
 
         // Build candidate nodes for a single segment using exact aliases and optional non-exact fallbacks.
-        private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string? segNormalizedLowered, bool exactOnly) {
+        private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string? segNormalizedLowered) {
             var map = new Dictionary<int, MatchFlags>();
 
             void Add(IEnumerable<AliasRelation> rels, StringComparison cmp, Func<MatchFlags, bool>? flagFilter = null) {
@@ -235,16 +228,15 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             // Non-exact phase: no need to branch by arity; buckets already encode
             // - generic base anchors (bn → IgnoreGenericArity)
             // - lower-cased doc-id exact for generic (lower "bn`n" → IgnoreCase)
-            if (exactOnly) {
+            if (map.Count > 0) {
                 return map;
             }
 
             if (!string.IsNullOrEmpty(segNormalized)) {
                 Add(CandidatesNonExact(segNormalized), cmp: StringComparison.Ordinal);
             }
-            var lower = segNormalizedLowered ?? segNormalized.ToLowerInvariant();
-            if (!string.Equals(lower, segNormalized, StringComparison.Ordinal)) {
-                Add(CandidatesNonExact(lower), cmp: StringComparison.Ordinal);
+            if (!string.IsNullOrEmpty(segNormalizedLowered)) {
+                Add(CandidatesNonExact(segNormalizedLowered), cmp: StringComparison.Ordinal);
             }
 
             return map;

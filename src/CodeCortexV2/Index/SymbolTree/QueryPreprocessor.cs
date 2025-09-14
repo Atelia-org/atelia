@@ -11,7 +11,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
     /// - Handle global:: root constraint
     /// - Split into namespace/type segments, expanding nested types ('+')
     /// - For each segment, if generic arity can be parsed from `n or &lt;...&gt;, normalize to DocId-like form: base`arity
-    /// - Provide lower-cased variants for inclusive case-insensitive matching (no "intent" semantics).  LowerNormalizedSegments 用于 inclusive 阶段的忽略大小写匹配
+    /// - Provide lower-cased variants for inclusive case-insensitive matching (no "intent" semantics). LowerNormalizedSegments 用于 inclusive 阶段的忽略大小写匹配（当小写与标准化段相同则记为 null）
     /// - MVP: reject malformed generic segments (unbalanced '&lt;' '&gt;')
     /// </summary>
     public static class QueryPreprocessor {
@@ -21,7 +21,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             SymbolKinds DocIdKind, // Represents kinds implied by DocId prefix; merged by OR with caller filter. 用户通过DocId风格前缀制定要**额外包含**的符号类别，也就是“T:”/"N:"那些。如果用户没输入这样的前缀，就为SymbolKinds.None。后面使用时会合并入Search函数传入的SymbolKinds参数。举例来说若Query为“T:Ns.Tpy”同时Search传入的SymbolKinds为Namespace，则结果应为并集，Namespace和Type类型的Symbol都是合法结果。
             bool IsRootAnchored, // 如果Query有“global::”或“T:”/“N:”等DocId风格的“根部前缀”，则表示结果都应以根节点开始，是匹配条件。DocId风格前缀不触发任何“快速路径”，不会绕过标准化匹配流程。
             string[] NormalizedSegments, // 原始输入去掉“根部前缀”后，按命名空间层次分段，逐段处理。如果某一段是泛型，则统一标准化为“`n”形式，有类型形参“<T>” / 无类参数名<,> / 有类型实参<int>”都是合法的输入，方便用户直接粘贴文本。
-            string[] LowerNormalizedSegments, // 在SegmentsNormalized的基础上逐段ToLower。
+            string?[] LowerNormalizedSegments, // 在 SegmentsNormalized 的基础上逐段 ToLower；当小写结果与标准化段相同（即不存在大小写差异）时，该位置为 null，用于防止误用并避免无意义的重复匹配。
             string? RejectionReason // 非空表示这是一个被拒绝/无效的查询，并给出人类可读原因
         ) {
             public bool IsRejected => !string.IsNullOrEmpty(RejectionReason);
@@ -75,13 +75,14 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             }
 
             var segsNorm = new string[segsOrig.Length];
-            var segsLower = new string[segsOrig.Length];
+            var segsLower = new string?[segsOrig.Length];
             for (int i = 0; i < segsOrig.Length; i++) {
                 var s = segsOrig[i];
                 var (bn, ar) = ParseTypeSegment(s);
                 var norm = ar > 0 ? bn + "`" + ar.ToString() : bn;
                 segsNorm[i] = norm;
-                segsLower[i] = norm.ToLowerInvariant();
+                var lower = norm.ToLowerInvariant();
+                segsLower[i] = lower == norm ? null : lower;
             }
 
             return new QueryInfo(raw, kinds, root, segsNorm, segsLower, null);
