@@ -120,42 +120,60 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     }
                 }
 
-                // Start with last segment nodes and prune by matching parents
-                var survivors = new Dictionary<int, MatchFlags>(perSeg[segCount - 1]);
-                for (int i = segCount - 2; i >= 0 && survivors.Count > 0; i--) {
-                    var allowedParents = new HashSet<int>(perSeg[i].Keys);
-                    var toRemove = new List<int>();
-                    foreach (var kv in survivors) {
-                        var nid = kv.Key;
-                        var parent = _nodes[nid].Parent;
-                        if (!allowedParents.Contains(parent)) {
-                            toRemove.Add(nid);
-                        }
-                    }
-                    foreach (var nid in toRemove) {
-                        survivors.Remove(nid);
-                    }
+                // Start with last segment nodes and prune by matching ancestor chain segment-by-segment (right-to-left)
+                // Maintain a mapping from the original last-node id to its "current ancestor" as we move left.
+                var survivorsAdv = new Dictionary<int, (MatchFlags flags, int cur)>(perSeg[segCount - 1].Count);
+                foreach (var kv in perSeg[segCount - 1]) {
+                    survivorsAdv[kv.Key] = (kv.Value, kv.Key); // cur starts at the last node itself
                 }
 
-                if (survivors.Count == 0) {
+                for (int i = segCount - 2; i >= 0 && survivorsAdv.Count > 0; i--) {
+                    var allowed = perSeg[i];
+                    var next = new Dictionary<int, (MatchFlags flags, int cur)>(survivorsAdv.Count);
+                    foreach (var kv in survivorsAdv) {
+                        var lastNid = kv.Key;
+                        var state = kv.Value;
+                        var parent = _nodes[state.cur].Parent; // move one level up on the ancestor chain
+                        if (allowed.ContainsKey(parent)) {
+                            // Keep the original last node id as the key; advance current ancestor to parent
+                            next[lastNid] = (state.flags /* | allowed[parent] */ , parent);
+                        }
+                    }
+                    survivorsAdv = next;
+                }
+
+                if (survivorsAdv.Count == 0) {
                     return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
                 }
 
-                // Root constraint: verify the chain above the first segment reaches root (index 0)
+                // Project back to <nodeId, flags> for the remaining pipeline (collection/sorting/paging)
+                var survivors = new Dictionary<int, MatchFlags>(survivorsAdv.Count);
+                foreach (var kv in survivorsAdv) {
+                    survivors[kv.Key] = kv.Value.flags;
+                }
+
+                // Root constraint: verify the chain above the first segment reaches beyond root (parent == -1)
                 if (rootConstraint) {
                     var toRemove = new List<int>();
                     foreach (var nid in survivors.Keys) {
                         int cur = nid;
-                        for (int step = 0; step < segs.Length && cur >= 0; step++) {
+                        for (int step = 0; step < segs.Length; step++) {
+                            if (cur < 0) {
+                                break;
+                            }
+
                             cur = _nodes[cur].Parent;
                         }
 
-                        if (cur != 0) {
+                        if (cur != -1) {
                             toRemove.Add(nid);
                         }
                     }
-                    foreach (var nid in toRemove) {
-                        survivors.Remove(nid);
+                    if (toRemove.Count > 0) {
+                        foreach (var nid in toRemove) {
+                            survivors.Remove(nid);
+                        }
+                        DebugUtil.Print("SymbolTreeB.Root", $"root-anchored filter removed={toRemove.Count}, kept={survivors.Count}");
                     }
 
                     if (survivors.Count == 0) {
