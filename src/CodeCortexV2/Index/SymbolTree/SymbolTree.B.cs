@@ -152,20 +152,12 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     survivors[kv.Key] = kv.Value.flags;
                 }
 
-                // Root constraint: verify the chain above the first segment reaches beyond root (parent == -1)
+                // Root constraint: the ancestor of the first segment must be root (parent == -1)
                 if (rootConstraint) {
                     var toRemove = new List<int>();
                     foreach (var nid in survivors.Keys) {
-                        int cur = nid;
-                        for (int step = 0; step < segs.Length; step++) {
-                            if (cur < 0) {
-                                break;
-                            }
-
-                            cur = _nodes[cur].Parent;
-                        }
-
-                        if (cur != -1) {
+                        var curAncestor = survivorsAdv[nid].cur;
+                        if (_nodes[curAncestor].Parent != -1) {
                             toRemove.Add(nid);
                         }
                     }
@@ -222,16 +214,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string? segNormalizedLowered, bool exactOnly) {
             var map = new Dictionary<int, MatchFlags>();
 
-            void Add(IEnumerable<AliasRelation> rels, bool requireNameMatch, StringComparison cmp, Func<MatchFlags, bool>? flagFilter = null) {
+            void Add(IEnumerable<AliasRelation> rels, StringComparison cmp, Func<MatchFlags, bool>? flagFilter = null) {
                 foreach (var rel in rels) {
                     if (flagFilter != null && !flagFilter(rel.Kind)) {
                         continue;
                     }
 
                     var nid = rel.NodeId;
-                    if (requireNameMatch && !string.Equals(_nodes[nid].Name, segNormalized, cmp)) {
-                        continue;
-                    }
                     if (map.TryGetValue(nid, out var f)) {
                         map[nid] = f | rel.Kind;
                     } else {
@@ -241,7 +230,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             }
 
             // Exact: normalized key (bn or bn`n). Ensure node name equals normalized for arity-sensitive semantics.
-            Add(CandidatesExact(segNormalized), requireNameMatch: true, cmp: StringComparison.Ordinal);
+            Add(CandidatesExact(segNormalized), cmp: StringComparison.Ordinal);
 
             bool hasArity = segNormalized.IndexOf('`') >= 0;
 
@@ -254,14 +243,16 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             if (hasArity) {
                 // Case-insensitive exact for generic (lower "bn`n")
                 var lowerDoc = segNormalizedLowered ?? segNormalized.ToLowerInvariant();
-                Add(CandidatesNonExact(lowerDoc), requireNameMatch: false, cmp: StringComparison.Ordinal);
+                Add(CandidatesNonExact(lowerDoc), cmp: StringComparison.Ordinal);
             } else {
-                // Generic-base anchors via original base and its lower variant
+                // Generic-base anchors via original base and its lower variant (avoid duplicate when lower == original)
                 if (!string.IsNullOrEmpty(segNormalized)) {
-                    Add(CandidatesNonExact(segNormalized), requireNameMatch: false, cmp: StringComparison.Ordinal);
+                    Add(CandidatesNonExact(segNormalized), cmp: StringComparison.Ordinal);
                 }
                 var lowerBase = segNormalizedLowered ?? segNormalized.ToLowerInvariant();
-                Add(CandidatesNonExact(lowerBase), requireNameMatch: false, cmp: StringComparison.Ordinal);
+                if (!string.Equals(lowerBase, segNormalized, StringComparison.Ordinal)) {
+                    Add(CandidatesNonExact(lowerBase), cmp: StringComparison.Ordinal);
+                }
             }
 
             return map;
