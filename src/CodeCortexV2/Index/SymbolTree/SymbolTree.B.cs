@@ -101,6 +101,15 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         segNormalized: qi.NormalizedSegments[i],
                         segNormalizedLowered: qi.LowerNormalizedSegments[i]
                     );
+                    // B) Root-anchored early filtering: the first segment must be directly under root
+                    if (rootConstraint && i == 0 && perSeg[i].Count > 0) {
+                        var keys = perSeg[i].Keys.ToArray();
+                        foreach (var id in keys) {
+                            if (_nodes[id].Parent != -1) {
+                                perSeg[i].Remove(id);
+                            }
+                        }
+                    }
                     if (perSeg[i].Count == 0) {
                         return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
                     }
@@ -109,8 +118,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 // Start with last segment nodes and prune by matching ancestor chain segment-by-segment (right-to-left)
                 // Maintain a mapping from the original last-node id to its "current ancestor" as we move left.
                 var survivorsAdv = new Dictionary<int, (MatchFlags flags, int cur)>(perSeg[segCount - 1].Count);
+                // C) Initialize survivors with last-segment kinds filtering to reduce work early.
                 foreach (var kv in perSeg[segCount - 1]) {
-                    survivorsAdv[kv.Key] = (kv.Value, kv.Key); // cur starts at the last node itself
+                    var nid = kv.Key;
+                    var entry = _nodes[nid].Entry;
+                    if (entry is not null && (filterKinds & entry.Kind) != 0) {
+                        survivorsAdv[nid] = (kv.Value, nid); // cur starts at the last node itself
+                    }
                 }
 
                 for (int i = segCount - 2; i >= 0 && survivorsAdv.Count > 0; i--) {
