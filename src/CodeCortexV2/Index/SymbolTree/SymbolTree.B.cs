@@ -94,41 +94,74 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
             SearchResults RunUnified() {
                 int segCount = segs.Length;
-                var perSeg = new Dictionary<int, MatchFlags>[segCount];
 
-                for (int i = 0; i < segCount; i++) {
-                    perSeg[i] = BuildSegmentCandidates(
-                        segNormalized: qi.NormalizedSegments[i],
-                        segNormalizedLowered: qi.LowerNormalizedSegments[i]
-                    );
-                    // B) Root-anchored early filtering: the first segment must be directly under root
-                    if (rootConstraint && i == 0 && perSeg[i].Count > 0) {
-                        var keys = perSeg[i].Keys.ToArray();
-                        foreach (var id in keys) {
-                            if (_nodes[id].Parent != -1) {
-                                perSeg[i].Remove(id);
-                            }
+                // Lazy build: start from the last segment only
+                int lastIdx = segCount - 1;
+                var lastMap = BuildSegmentCandidates(
+                    segNormalized: qi.NormalizedSegments[lastIdx],
+                    segNormalizedLowered: qi.LowerNormalizedSegments[lastIdx]
+                );
+                if (lastMap.Count == 0) {
+                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
+                }
+                DebugUtil.Print("SymbolTreeB.Lazy", $"lastMap candidates={lastMap.Count}");
+
+                // Single-segment root-anchored early filter: keep nodes directly under root
+                if (rootConstraint && segCount == 1 && lastMap.Count > 0) {
+                    var keys = lastMap.Keys.ToArray();
+                    int removed = 0;
+                    foreach (var id in keys) {
+                        if (_nodes[id].Parent != -1) {
+                            lastMap.Remove(id);
+                            removed++;
                         }
                     }
-                    if (perSeg[i].Count == 0) {
+                    if (removed > 0) {
+                        DebugUtil.Print("SymbolTreeB.Lazy", $"root filter (single seg) removed={removed}, kept={lastMap.Count}");
+                    }
+                    if (lastMap.Count == 0) {
                         return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
                     }
                 }
 
                 // Start with last segment nodes and prune by matching ancestor chain segment-by-segment (right-to-left)
                 // Maintain a mapping from the original last-node id to its "current ancestor" as we move left.
-                var survivorsAdv = new Dictionary<int, (MatchFlags flags, int cur)>(perSeg[segCount - 1].Count);
+                var survivorsAdv = new Dictionary<int, (MatchFlags flags, int cur)>(lastMap.Count);
                 // C) Initialize survivors with last-segment kinds filtering to reduce work early.
-                foreach (var kv in perSeg[segCount - 1]) {
+                foreach (var kv in lastMap) {
                     var nid = kv.Key;
                     var entry = _nodes[nid].Entry;
                     if (entry is not null && (filterKinds & entry.Kind) != 0) {
                         survivorsAdv[nid] = (kv.Value, nid); // cur starts at the last node itself
                     }
                 }
+                if (survivorsAdv.Count == 0) {
+                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
+                }
 
                 for (int i = segCount - 2; i >= 0 && survivorsAdv.Count > 0; i--) {
-                    var allowed = perSeg[i];
+                    // Lazy build the candidates for the current segment
+                    var allowed = BuildSegmentCandidates(
+                        segNormalized: qi.NormalizedSegments[i],
+                        segNormalizedLowered: qi.LowerNormalizedSegments[i]
+                    );
+                    // Apply root-anchored early filtering at the first segment
+                    if (rootConstraint && i == 0 && allowed.Count > 0) {
+                        var keys = allowed.Keys.ToArray();
+                        int removed = 0;
+                        foreach (var id in keys) {
+                            if (_nodes[id].Parent != -1) {
+                                allowed.Remove(id);
+                                removed++;
+                            }
+                        }
+                        if (removed > 0) {
+                            DebugUtil.Print("SymbolTreeB.Lazy", $"root filter (i==0) removed={removed}, kept={allowed.Count}");
+                        }
+                    }
+                    if (allowed.Count == 0) {
+                        return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
+                    }
                     var next = new Dictionary<int, (MatchFlags flags, int cur)>(survivorsAdv.Count);
                     foreach (var kv in survivorsAdv) {
                         var lastNid = kv.Key;
@@ -141,6 +174,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         }
                     }
                     survivorsAdv = next;
+                    DebugUtil.Print("SymbolTreeB.Lazy", $"i={i}, allowed={allowed.Count}, survivors(after)={survivorsAdv.Count}");
                 }
 
                 if (survivorsAdv.Count == 0) {
