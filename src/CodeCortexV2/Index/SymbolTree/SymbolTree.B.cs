@@ -120,9 +120,10 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         var lastNid = kv.Key;
                         var state = kv.Value;
                         var parent = _nodes[state.cur].Parent; // move one level up on the ancestor chain
-                        if (allowed.ContainsKey(parent)) {
+                        if (allowed.TryGetValue(parent, out var segFlags)) {
                             // Keep the original last node id as the key; advance current ancestor to parent
-                            next[lastNid] = (state.flags /* | allowed[parent] */ , parent);
+                            // Merge flags from the current segment into the accumulated flags to reflect non-exact sources across the whole chain.
+                            next[lastNid] = (state.flags | segFlags, parent);
                         }
                     }
                     survivorsAdv = next;
@@ -194,7 +195,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string? segNormalizedLowered) {
             var map = new Dictionary<int, MatchFlags>();
 
-            void Add(IEnumerable<AliasRelation> rels, StringComparison cmp, Func<MatchFlags, bool>? flagFilter = null) {
+            void Add(IEnumerable<AliasRelation> rels, Func<MatchFlags, bool>? flagFilter = null) {
                 foreach (var rel in rels) {
                     if (flagFilter != null && !flagFilter(rel.Kind)) {
                         continue;
@@ -210,7 +211,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             }
 
             // Exact: normalized key (bn or bn`n). Ensure node name equals normalized for arity-sensitive semantics.
-            Add(CandidatesExact(segNormalized), cmp: StringComparison.Ordinal);
+            Add(CandidatesExact(segNormalized));
 
             // Non-exact phase: no need to branch by arity; buckets already encode:
             // - Generic base anchors (bn → IgnoreGenericArity). NOTE: arity-insensitive equality ONLY; no subtree expansion.
@@ -220,10 +221,10 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             }
 
             if (!string.IsNullOrEmpty(segNormalized)) {
-                Add(CandidatesNonExact(segNormalized), cmp: StringComparison.Ordinal);
+                Add(CandidatesNonExact(segNormalized));
             }
             if (!string.IsNullOrEmpty(segNormalizedLowered)) {
-                Add(CandidatesNonExact(segNormalizedLowered), cmp: StringComparison.Ordinal);
+                Add(CandidatesNonExact(segNormalizedLowered));
             }
 
             return map;
