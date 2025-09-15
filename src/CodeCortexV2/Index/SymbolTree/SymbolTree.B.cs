@@ -106,12 +106,14 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 }
                 DebugUtil.Print("SymbolTreeB.Lazy", $"lastMap candidates={lastMap.Count}");
 
-                // Single-segment root-anchored early filter: keep nodes directly under root
+                // Single-segment root-anchored early filter: keep nodes whose parent is the root (root.Parent == -1)
                 if (rootConstraint && segCount == 1 && lastMap.Count > 0) {
                     var keys = lastMap.Keys.ToArray();
                     int removed = 0;
                     foreach (var id in keys) {
-                        if (_nodes[id].Parent != -1) {
+                        var p = _nodes[id].Parent;
+                        // remove if no parent or the parent is not the root (i.e., parent.Parent != -1)
+                        if (p < 0 || _nodes[p].Parent != -1) {
                             lastMap.Remove(id);
                             removed++;
                         }
@@ -145,12 +147,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         segNormalized: qi.NormalizedSegments[i],
                         segNormalizedLowered: qi.LowerNormalizedSegments[i]
                     );
-                    // Apply root-anchored early filtering at the first segment
+                    // Apply root-anchored early filtering at the first segment: keep nodes whose parent is the root
                     if (rootConstraint && i == 0 && allowed.Count > 0) {
                         var keys = allowed.Keys.ToArray();
                         int removed = 0;
                         foreach (var id in keys) {
-                            if (_nodes[id].Parent != -1) {
+                            var p = _nodes[id].Parent;
+                            if (p < 0 || _nodes[p].Parent != -1) {
                                 allowed.Remove(id);
                                 removed++;
                             }
@@ -187,12 +190,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     survivors[kv.Key] = kv.Value.flags;
                 }
 
-                // Root constraint: the ancestor of the first segment must be root (parent == -1)
+                // Root constraint: the ancestor of the first segment must be directly under the root
                 if (rootConstraint) {
                     var toRemove = new List<int>();
                     foreach (var nid in survivors.Keys) {
                         var curAncestor = survivorsAdv[nid].cur;
-                        if (_nodes[curAncestor].Parent != -1) {
+                        var p = _nodes[curAncestor].Parent;
+                        if (p < 0 || _nodes[p].Parent != -1) {
                             toRemove.Add(nid);
                         }
                     }
