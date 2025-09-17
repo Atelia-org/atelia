@@ -142,26 +142,23 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 }
 
                 for (int i = segCount - 2; i >= 0 && survivorsAdv.Count > 0; i--) {
-                    // Lazy build the candidates for the current segment
-                    var allowed = BuildSegmentCandidates(
-                        segNormalized: qi.NormalizedSegments[i],
-                        segNormalizedLowered: qi.LowerNormalizedSegments[i]
-                    );
-                    // Apply root-anchored early filtering at the first segment: keep nodes whose parent is the root
-                    if (rootConstraint && i == 0 && allowed.Count > 0) {
-                        var keys = allowed.Keys.ToArray();
-                        int removed = 0;
-                        foreach (var id in keys) {
-                            var p = _nodes[id].Parent;
-                            if (p < 0 || _nodes[p].Parent != -1) {
-                                allowed.Remove(id);
-                                removed++;
-                            }
-                        }
-                        if (removed > 0) {
-                            DebugUtil.Print("SymbolTreeB.Lazy", $"root filter (i==0) removed={removed}, kept={allowed.Count}");
+                    // Pre-compute the set of parents we will actually probe this round (restrict construction to this set).
+                    var parents = new HashSet<int>(survivorsAdv.Count);
+                    foreach (var kv in survivorsAdv) {
+                        var parentId = _nodes[kv.Value.cur].Parent;
+                        if (parentId >= 0) {
+                            parents.Add(parentId); // -1 cannot match any node key
                         }
                     }
+
+                    // Lazy build the candidates for the current segment, restricted to the parent set and (optionally) root-first constraint.
+                    var allowed = BuildSegmentCandidates(
+                        segNormalized: qi.NormalizedSegments[i],
+                        segNormalizedLowered: qi.LowerNormalizedSegments[i],
+                        restrictTo: parents,
+                        rootFirst: rootConstraint && i == 0
+                    );
+
                     if (allowed.Count == 0) {
                         return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
                     }
@@ -177,7 +174,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         }
                     }
                     survivorsAdv = next;
-                    DebugUtil.Print("SymbolTreeB.Lazy", $"i={i}, allowed={allowed.Count}, survivors(after)={survivorsAdv.Count}");
+                    DebugUtil.Print("SymbolTreeB.Lazy", $"i={i}, parents={parents.Count}, allowed={allowed.Count}, survivors(after)={survivorsAdv.Count}");
                 }
 
                 if (survivorsAdv.Count == 0) {
@@ -244,8 +241,34 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         }
 
         // Build candidate nodes for a single segment using exact aliases and optional non-exact fallbacks.
-        private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string? segNormalizedLowered) {
-            var map = new Dictionary<int, MatchFlags>();
+        private Dictionary<int, MatchFlags> BuildSegmentCandidates(string segNormalized, string? segNormalizedLowered)
+            => BuildSegmentCandidates(segNormalized, segNormalizedLowered, restrictTo: null, rootFirst: false);
+
+        // Restricted variant to reduce construction and lookup cost by building only what will be probed.
+        private Dictionary<int, MatchFlags> BuildSegmentCandidates(
+            string segNormalized,
+            string? segNormalizedLowered,
+            ISet<int>? restrictTo,
+            bool rootFirst
+        ) {
+            var map = new Dictionary<int, MatchFlags>(restrictTo?.Count ?? 0);
+
+            bool ShouldKeep(int nid) {
+                if (restrictTo is not null && !restrictTo.Contains(nid)) {
+                    return false;
+                }
+
+                if (rootFirst) {
+                    var p = _nodes[nid].Parent;
+                    if (p < 0 || _nodes[p].Parent != -1) {
+                        return false; // keep only nodes whose parent is directly under root
+                    }
+                }
+                return true;
+            }
+
+            int matchedRestrict = 0;
+            int restrictGoal = restrictTo?.Count ?? int.MaxValue;
 
             void Add(IEnumerable<AliasRelation> rels, Func<MatchFlags, bool>? flagFilter = null) {
                 foreach (var rel in rels) {
@@ -254,10 +277,21 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     }
 
                     var nid = rel.NodeId;
+                    if (!ShouldKeep(nid)) {
+                        continue;
+                    }
+
                     if (map.TryGetValue(nid, out var f)) {
                         map[nid] = f | rel.Kind;
                     } else {
                         map[nid] = rel.Kind;
+                        if (restrictTo is not null) {
+                            matchedRestrict++;
+                            if (matchedRestrict >= restrictGoal) {
+                                // All restrict targets matched; no need to keep scanning this bucket.
+                                break;
+                            }
+                        }
                     }
                 }
             }
