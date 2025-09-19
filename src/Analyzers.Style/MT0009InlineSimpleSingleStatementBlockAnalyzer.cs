@@ -74,19 +74,41 @@ public sealed class MT0009InlineSimpleSingleStatementBlockAnalyzer : DiagnosticA
         if (!IsAllowedSimpleStatement(stmt)) return false;
 
         // 语句单物理行（first/last token 在同一行）
-    // 使用语句自身的 Span（不含 trailing trivia）来判断单物理行，避免因行尾注释或换行被误判。
-    var stmtLineSpan = stmt.GetLocation().GetLineSpan();
-    if (stmtLineSpan.StartLinePosition.Line != stmtLineSpan.EndLinePosition.Line) return false;
+        // 使用语句自身的 Span（不含 trailing trivia）来判断单物理行，避免因行尾注释或换行被误判。
+        var stmtLineSpan = stmt.GetLocation().GetLineSpan();
+        if (stmtLineSpan.StartLinePosition.Line != stmtLineSpan.EndLinePosition.Line) return false;
 
         // “{ 与语句首 token 之间”与“语句末 token 与 } 之间”不得出现注释/指令；允许空白与至多一个换行。
         var open = block.OpenBraceToken;
         var close = block.CloseBraceToken;
         if (open.IsMissing || close.IsMissing) return false;
 
-    if (!IsTriviallyCompactableLeading(open.TrailingTrivia, stmt.GetFirstToken(includeZeroWidth: true).LeadingTrivia)) return false;
-    if (!IsTriviallyCompactableTrailing(stmt.GetLastToken(includeZeroWidth: true).TrailingTrivia, close.LeadingTrivia)) return false;
+        if (!IsTriviallyCompactableLeading(open.TrailingTrivia, stmt.GetFirstToken(includeZeroWidth: true).LeadingTrivia)) return false;
+        if (!IsTriviallyCompactableTrailing(stmt.GetLastToken(includeZeroWidth: true).TrailingTrivia, close.LeadingTrivia)) return false;
+
+        // 幂等性保障：仅当块内部确实存在换行需要被移除时才报告。
+        // 即："{" 与语句首 token 之间，或 语句末 token 与 "}" 之间 至少包含一个 EndOfLine。
+        if (!HasInnerNewline(block)) return false;
 
         return true;
+    }
+
+    private static bool HasInnerNewline(BlockSyntax block) {
+        var stmt = block.Statements.Count == 1 ? block.Statements[0] : null;
+        if (stmt is null) return false;
+
+        var firstTokenLeading = stmt.GetFirstToken(includeZeroWidth: true).LeadingTrivia;
+        var lastTokenTrailing = stmt.GetLastToken(includeZeroWidth: true).TrailingTrivia;
+
+        // "{" 之后到语句前
+        if (block.OpenBraceToken.TrailingTrivia.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia))) return true;
+        if (firstTokenLeading.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia))) return true;
+
+        // 语句后到 "}" 之前
+        if (lastTokenTrailing.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia))) return true;
+        if (block.CloseBraceToken.LeadingTrivia.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia))) return true;
+
+        return false;
     }
 
     private static bool IsAllowedSimpleStatement(StatementSyntax stmt) {

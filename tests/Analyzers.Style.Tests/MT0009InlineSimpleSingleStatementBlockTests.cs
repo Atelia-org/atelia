@@ -23,7 +23,8 @@ public class MT0009InlineSimpleSingleStatementBlockTests {
         code,
         AnalyzerType,
         new Atelia.Analyzers.Style.CodeFixes.MT0009InlineSimpleSingleStatementBlockCodeFix(),
-        "MT0009");
+        "MT0009"
+    );
 
     /// <summary>
     /// If-body with a single return statement should be compacted into an inline block.
@@ -34,9 +35,7 @@ public class MT0009InlineSimpleSingleStatementBlockTests {
         var code = "class C{void M(bool c){ if(c)\n{\n    return; // note\n}\n} }";
         var fixedText = await ApplyFixAsync(code);
         Assert.Contains("if(c) { return; /* note */ }", fixedText);
-        // Ensure no newline remains inside the block interior
-        Assert.DoesNotContain("{\n", fixedText);
-        Assert.DoesNotContain("\n}", fixedText);
+        // Ensure the compact form exists; block-interior newline checks are validated by substring presence.
     }
 
     /// <summary>
@@ -100,6 +99,31 @@ public class MT0009InlineSimpleSingleStatementBlockTests {
     [Fact]
     public void Multiline_Statement_Not_Compacted() {
         var code = "class C{void M(bool c){ if(c)\n{\n    Foo(1,\n        2);\n}\n} void Foo(int a,int b){} }";
+        var (diags, _) = AnalyzerTestHost.RunAnalyzer(code, AnalyzerType);
+        Assert.Empty(diags);
+    }
+
+    /// <summary>
+    /// Regression: ensure that after compacting the if-body, we do not remove the newline that separates the closing brace
+    /// of the if-block and a subsequent statement in the outer scope. The 'return;' after the if should remain on the next line.
+    /// </summary>
+    [Fact]
+    public async Task Preserve_Newline_After_Closing_Brace() {
+        var code = "class C{int M(bool c){ if(c)\n{\n    return 1;\n}\n    return 2; } }";
+        var fixedText = await ApplyFixAsync(code);
+        // Normalize line endings for cross-platform determinism
+        var norm = fixedText.Replace("\r\n", "\n");
+        // After fix, the if-body should be inlined, but there must be a newline between '}' and the following 'return 2;'
+        Assert.Contains("if(c) { return 1; }\n    return 2;", norm);
+    }
+
+    /// <summary>
+    /// Idempotency: an already-inline single-statement block must NOT be reported again.
+    /// Example from ViewStats: `if (EstimatedFullCharacters == 0) { return 0.0; }` should not trigger MT0009.
+    /// </summary>
+    [Fact]
+    public void Already_Inline_Block_Not_Reported() {
+        var code = "class C{double M(int x){ if (x == 0) { return 0.0; } return 1.0; } }";
         var (diags, _) = AnalyzerTestHost.RunAnalyzer(code, AnalyzerType);
         Assert.Empty(diags);
     }

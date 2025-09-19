@@ -47,8 +47,32 @@ public sealed class MT0009InlineSimpleSingleStatementBlockCodeFix : CodeFixProvi
     private static Task<Document> InlineBlockAsync(Document document, SyntaxNode root, BlockSyntax block, CancellationToken ct) {
         if (block.Statements.Count != 1) return Task.FromResult(document);
 
+        // 工具函数：判断在整个 if 语句之后是否需要显式添加一个换行
+        static bool ContainsEol(SyntaxTriviaList list) => list.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia));
+        static bool EnsureEolAfterIf(IfStatementSyntax ifsNode) {
+            if (ifsNode.Parent is BlockSyntax outer) {
+                var idx = outer.Statements.IndexOf(ifsNode);
+                if (idx >= 0 && idx < outer.Statements.Count - 1) {
+                    var nextStmt = outer.Statements[idx + 1];
+                    var nextLead = nextStmt.GetFirstToken(includeZeroWidth: true).LeadingTrivia;
+                    return !ContainsEol(nextLead);
+                }
+                // if 是最后一条语句，下一 token 为外层块的 '}'，若其 leading 没有换行，则补一个
+                var closeLead = outer.CloseBraceToken.LeadingTrivia;
+                return !ContainsEol(closeLead);
+            }
+            return false; // 保守
+        }
+
+        // 计算是否需要在该 if/else 内联块之后补换行
+        bool needEolAfterIf = block.Parent is IfStatementSyntax ifParent
+            ? EnsureEolAfterIf(ifParent)
+            : block.Parent is ElseClauseSyntax els && els.Parent is IfStatementSyntax ifFromEls
+                ? EnsureEolAfterIf(ifFromEls)
+                : false;
+
         // 构造当前目标块的新内联块
-        var newBlock = BuildInlineBlock(block);
+        var newBlock = BuildInlineBlock(block, needEolAfterIf);
 
         // 同时移除 if/else 头与 '{' 之间的换行；如果是 if，还尝试同时内联 else 的单语句块（若存在）。
         SyntaxNode replacedParent;
@@ -60,7 +84,7 @@ public sealed class MT0009InlineSimpleSingleStatementBlockCodeFix : CodeFixProvi
 
             // 如果存在 else 且其主体也是单语句块，也一并内联，避免需要第二次诊断迭代。
             if (ifs.Else is { Statement: BlockSyntax elseBlock } && elseBlock.Statements.Count == 1) {
-                var inlinedElseBlock = BuildInlineBlock(elseBlock);
+                var inlinedElseBlock = BuildInlineBlock(elseBlock, needEolAfterIf);
                 var newElse = ifs.Else
                     .WithElseKeyword(NormalizeTrailingToSingleSpace(ifs.Else.ElseKeyword))
                     .WithStatement(inlinedElseBlock);
@@ -72,10 +96,10 @@ public sealed class MT0009InlineSimpleSingleStatementBlockCodeFix : CodeFixProvi
             }
             replacedParent = newIf;
         }
-        else if (block.Parent is ElseClauseSyntax els && els.Statement == block) {
-            var newEls = els
-                .WithElseKeyword(NormalizeTrailingToSingleSpace(els.ElseKeyword))
-                .WithStatement(newBlock);
+        else if (block.Parent is ElseClauseSyntax els2 && els2.Statement == block) {
+            var newEls = els2
+                .WithElseKeyword(NormalizeTrailingToSingleSpace(els2.ElseKeyword))
+                .WithStatement(BuildInlineBlock(block, needEolAfterIf));
             replacedParent = newEls;
         }
         else {
@@ -89,7 +113,7 @@ public sealed class MT0009InlineSimpleSingleStatementBlockCodeFix : CodeFixProvi
         return Task.FromResult(document.WithSyntaxRoot(newRoot));
     }
 
-    private static BlockSyntax BuildInlineBlock(BlockSyntax block) {
+    private static BlockSyntax BuildInlineBlock(BlockSyntax block, bool ensureTrailingEol) {
         var stmt = block.Statements[0];
         // 构造最小内联形态："{ " + stmt(without leading/trailing) + preEolComments + " }"，并把 postEol 附到闭括号 trailing。
         var cleanedStmt = stmt.WithLeadingTrivia(SyntaxFactory.TriviaList()).WithTrailingTrivia(SyntaxFactory.TriviaList());
@@ -99,6 +123,9 @@ public sealed class MT0009InlineSimpleSingleStatementBlockCodeFix : CodeFixProvi
         int firstEol = trailingList.FindIndex(t => t.IsKind(SyntaxKind.EndOfLineTrivia));
         var preEol = firstEol >= 0 ? trailingList.Take(firstEol) : trailingList;
         var postEol = firstEol >= 0 ? trailingList.Skip(firstEol) : Enumerable.Empty<SyntaxTrivia>();
+
+        // 保留原先块闭括号之后的 trailing（通常包含换行与缩进），避免将后续语句“吸附”到同一行
+        var originalCloseTrailing = block.CloseBraceToken.TrailingTrivia;
 
         // 行内注释转换并安置在 '}' 之前
         var closeLeading = new List<SyntaxTrivia> { SyntaxFactory.Space };
@@ -125,10 +152,16 @@ public sealed class MT0009InlineSimpleSingleStatementBlockCodeFix : CodeFixProvi
             .WithLeadingTrivia(SyntaxFactory.TriviaList())
             .WithTrailingTrivia(SyntaxFactory.Space);
 
-        // '}'：leading 带上 preEol 注释，trailing 保留 postEol
+        // '}'：leading 带上 preEol 注释；trailing 仅保留原闭括号原有的 trailing，避免把语句自身的 post-EOL 搬到 '}' 后导致重复换行。
+        // 原设计将 postEol 附到 '}'，但这会与 originalCloseTrailing 中的换行叠加，出现双换行。
+        var combinedTrailing = SyntaxFactory.TriviaList(originalCloseTrailing);
+        // 仅在需要时且当前 trailing 中没有换行时补一个换行，避免与后续外部语句粘连。
+        if (ensureTrailingEol && !combinedTrailing.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia))) {
+            combinedTrailing = combinedTrailing.Add(SyntaxFactory.EndOfLine("\n"));
+        }
         var close = SyntaxFactory.Token(SyntaxKind.CloseBraceToken)
             .WithLeadingTrivia(SyntaxFactory.TriviaList(closeLeading))
-            .WithTrailingTrivia(SyntaxFactory.TriviaList(postEol));
+            .WithTrailingTrivia(combinedTrailing);
 
         return SyntaxFactory.Block(open, SyntaxFactory.List(new[] { cleanedStmt }), close);
     }
