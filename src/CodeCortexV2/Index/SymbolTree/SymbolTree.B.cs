@@ -54,13 +54,44 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
         private void CollectEntriesAtNode(int nodeIdx, List<SearchHit> acc, MatchFlags kind, SymbolKinds filter) {
             var entry = _nodes[nodeIdx].Entry;
-            if (entry is null) {
-                return;
+            if (entry is null) { return; }
+            if ((filter & entry.Kind) == 0) { return; }
+            // Compute a simple additive score from MatchFlags bits: lower score means more exact.
+            // Rationale: exact (None) = 0; arity-insensitive/ignore-case/partial/wildcard/fuzzy add increasing penalties.
+            var score = ComputeScore(kind);
+            acc.Add(entry.ToHit(kind, score));
+        }
+
+        // ---- Simple scoring model (lower is better) ----
+        // Each fallback bit contributes a positive penalty. Exact match has score 0.
+        private const int ScoreIgnoreGenericArity = 10;
+        private const int ScoreIgnoreCase = 20;
+        private const int ScorePartial = 40;
+        private const int ScoreWildcard = 60;
+        private const int ScoreFuzzy = 80;
+
+        // Only these bits participate in scoring; future bits won't affect score unless added here.
+        private const int RelevantFlagsMask =
+            (int)(MatchFlags.IgnoreGenericArity | MatchFlags.IgnoreCase | MatchFlags.Partial | MatchFlags.Wildcard | MatchFlags.Fuzzy);
+
+        // Precomputed score lookup for 5 scoring bits (32 entries). Index is (int)flags & RelevantFlagsMask.
+        private static readonly int[] ScoreLut = BuildScoreLut();
+
+        private static int ComputeScore(MatchFlags flags)
+            => ScoreLut[((int)flags) & RelevantFlagsMask];
+
+        private static int[] BuildScoreLut() {
+            var lut = new int[32];
+            for (int i = 0; i < lut.Length; i++) {
+                int s = 0;
+                if ((i & (int)MatchFlags.IgnoreGenericArity) != 0) { s += ScoreIgnoreGenericArity; }
+                if ((i & (int)MatchFlags.IgnoreCase) != 0) { s += ScoreIgnoreCase; }
+                if ((i & (int)MatchFlags.Partial) != 0) { s += ScorePartial; }
+                if ((i & (int)MatchFlags.Wildcard) != 0) { s += ScoreWildcard; }
+                if ((i & (int)MatchFlags.Fuzzy) != 0) { s += ScoreFuzzy; }
+                lut[i] = s;
             }
-            if ((filter & entry.Kind) == 0) {
-                return;
-            }
-            acc.Add(entry.ToHit(kind, 0));
+            return lut;
         }
 
         /// <summary>
@@ -229,7 +260,12 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
                 }
 
-                var ordered = hits.OrderBy(h => h.Name, StringComparer.Ordinal).ThenBy(h => h.Assembly).ToList();
+                // Rank by score (lower is better), then A→Z by Name, then Assembly.
+                var ordered = hits
+                    .OrderBy(h => h.Score)
+                    .ThenBy(h => h.Name, StringComparer.Ordinal)
+                    .ThenBy(h => h.Assembly)
+                    .ToList();
                 var total = ordered.Count;
                 var page = ordered.Skip(effOffset).Take(effLimit).ToArray();
                 int? nextOff = effOffset + effLimit < total ? effOffset + effLimit : null;
