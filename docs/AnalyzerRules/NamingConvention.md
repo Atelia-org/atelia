@@ -23,6 +23,7 @@ Pattern (CanonicalName): `<Category><Object><Condition><Qualifier?>`
 | MT0006 | NewLineFirstMultilineArgument | FirstMultilineArgNewLine | First multiline argument must start on its own line (minimal anchor). |
 | MT0007 | IndentClosingParenMultilineParameterList | ClosingParenAlign | Closing ')' of multiline parameter/argument list must align with construct start line indentation. |
 | MT0008 | BraceRequireForEmbeddedStatement | BracesNoNewLine | Require braces for embedded statements; code fix inserts braces without introducing new lines. |
+| MT0009 | InlineSimpleSingleStatementBlock | CompactSingleStatementBlocks | Collapse if/else blocks that contain exactly one simple statement into a single inline block. Category: Brace. |
 | MT0101 | XmlDocEscapeAngleBrackets | XmlDocEscape | Escape raw '<' or '>' in XML doc comments unless they belong to known documentation tags. |
 
 ## Principles
@@ -31,6 +32,8 @@ Pattern (CanonicalName): `<Category><Object><Condition><Qualifier?>`
 3. One rule = one dominant Category. If a behavior spans multiple concerns, split into multiple rules.
 4. Avoid filler words (`For`, `Of`, `Before`) unless clarity would suffer.
 5. Stable CanonicalName: once published, avoid renaming; if semantics shift materially, deprecate old ID and introduce new rule.
+
+Note on MT0009 naming review: CanonicalName follows the existing rule document and analyzer source (`InlineSimpleSingleStatementBlock`). While most rules begin with the Category prefix (e.g., `Brace…`, `Indent…`, `NewLine…`), MT0009 mirrors the exception pattern seen in MT0101. If we later enforce strict Category prefixes, the natural candidate would be `BraceInlineSimpleSingleStatementBlock`; for now we retain the current CanonicalName to preserve stability.
 
 ## Adding a New Rule Checklist
 - Pick Category ensuring ≥80% of the rule's effect lies in that dimension.
