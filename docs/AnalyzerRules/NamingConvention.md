@@ -22,6 +22,7 @@ Pattern (CanonicalName): `<Category><Object><Condition><Qualifier?>`
 | MT0005 (disabled) | NewLineAfterOpenParenMultilineList | NewLineAfterOpenParen | Pure symmetric opening newline for any multiline parameter/argument list (opt-in; pairs with MT0004). |
 | MT0006 | NewLineFirstMultilineArgument | FirstMultilineArgNewLine | First multiline argument must start on its own line (minimal anchor). |
 | MT0007 | IndentClosingParenMultilineParameterList | ClosingParenAlign | Closing ')' of multiline parameter/argument list must align with construct start line indentation. |
+| MT0008 | BraceRequireForEmbeddedStatement | BracesNoNewLine | Require braces for embedded statements; code fix inserts braces without introducing new lines. |
 | MT0101 | XmlDocEscapeAngleBrackets | XmlDocEscape | Escape raw '<' or '>' in XML doc comments unless they belong to known documentation tags. |
 
 ## Principles

@@ -14,6 +14,7 @@ Canonical naming convention: see `docs/AnalyzerRules/NamingConvention.md`.
 | MT0004 | NewLineClosingParenMultilineParameterList | NewLineClosingParenParams | Formatting | Yes | Closing ')' of a multiline parameter/argument list must be on its own line. |
 | MT0006 | NewLineFirstMultilineArgument | FirstMultilineArgNewLine | NewLine | Yes | First multiline argument must start on its own line (anchor rule). |
 | MT0007 | IndentClosingParenMultilineParameterList | ClosingParenAlign | Indent | Yes | Closing ')' line indentation aligns with construct start line.
+| MT0008 | BraceRequireForEmbeddedStatement | BracesNoNewLine | Brace | Yes | Prefer braces for embedded statements; code fix adds braces inline (no newline added).
 | MT0101 | XmlDocEscapeAngleBrackets | XmlDocEscape | Documentation | Yes | Escape raw '<' or '>' in XML doc text unless part of known doc tags. |
 
 ## Roadmap (Draft)
@@ -62,14 +63,14 @@ Troubleshooting:
 * Delete the `bin` / `obj` folders and repeat both steps if you suspect stale output.
 
 ### Applying CodeFixes via CLI
-Use `dotnet format analyzers` to batch apply available code fixes (MT0001 / MT0002 / MT0003 / MT0004 / MT0006 / MT0007):
+Use `dotnet format analyzers` to batch apply available code fixes (MT0001 / MT0002 / MT0003 / MT0004 / MT0006 / MT0007 / MT0008):
 ```
- dotnet format analyzers --severity info --diagnostics MT0001,MT0002,MT0003,MT0004,MT0006,MT0007
+ dotnet format analyzers --severity info --diagnostics MT0001,MT0002,MT0003,MT0004,MT0006,MT0007,MT0008
 ```
 To include self-analysis at the same time for the analyzer project itself, combine:
 ```
  dotnet build src/Analyzers.Style/Analyzers.Style.csproj -p:UseSelfAnalyzers=true
- dotnet format analyzers --severity info --diagnostics MT0001,MT0002,MT0003,MT0004,MT0006,MT0007
+ dotnet format analyzers --severity info --diagnostics MT0001,MT0002,MT0003,MT0004,MT0006,MT0007,MT0008
 ```
 Add `--verify-no-changes` in CI to fail if formatting is required.
 
@@ -79,7 +80,7 @@ Add `--verify-no-changes` in CI to fail if formatting is required.
 | Build (normal) | `dotnet build src/Analyzers.Style/Analyzers.Style.csproj` |
 | Self-analyze | `dotnet build src/Analyzers.Style/Analyzers.Style.csproj -p:UseSelfAnalyzers=true` |
 | Apply fixes all projects | `dotnet format analyzers --severity info` |
-| Apply MT0001/2/3/4/6/7 only | `dotnet format analyzers --diagnostics MT0001,MT0002,MT0003,MT0004,MT0006,MT0007 --severity info` |
+| Apply MT0001/2/3/4/6/7/8 only | `dotnet format analyzers --diagnostics MT0001,MT0002,MT0003,MT0004,MT0006,MT0007,MT0008 --severity info` |
 | CI verify clean | `dotnet format analyzers --verify-no-changes --severity info` |
 
 ### Internal Implementation Note
