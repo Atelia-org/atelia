@@ -6,7 +6,7 @@ We use a structured naming scheme to keep rules machine-friendly, human-scannabl
 Pattern (CanonicalName): `<Category><Object><Condition><Qualifier?>`
 
 - Category: Fixed small set indicating dominant dimension.
-  - `Statement` | `Indent` | `NewLine` | `Space` | `Comma` | `Brace` | `Block` (future additions must update this file)
+  - `Statement` | `Indent` | `NewLine` | `Space` | `Comma` | `Brace` | `Block` | `Documentation` (future additions must update this file)
 - Object: Roslyn / structural noun (e.g. `InitializerElements`, `ParameterList`, `ClosingParen`, `SingleLineBlock`).
 - Condition: Optional scoping word (e.g. `Multiline`, `Nested`, `PerLine`, `Between`).
 - Qualifier: Optional disambiguator when needed.
@@ -22,6 +22,7 @@ Pattern (CanonicalName): `<Category><Object><Condition><Qualifier?>`
 | MT0005 (disabled) | NewLineAfterOpenParenMultilineList | NewLineAfterOpenParen | Pure symmetric opening newline for any multiline parameter/argument list (opt-in; pairs with MT0004). |
 | MT0006 | NewLineFirstMultilineArgument | FirstMultilineArgNewLine | First multiline argument must start on its own line (minimal anchor). |
 | MT0007 | IndentClosingParenMultilineParameterList | ClosingParenAlign | Closing ')' of multiline parameter/argument list must align with construct start line indentation. |
+| MT0101 | XmlDocEscapeAngleBrackets | XmlDocEscape | Escape raw '<' or '>' in XML doc comments unless they belong to known documentation tags. |
 
 ## Principles
 1. No mixed `ParameterArgument` compounds—prefer picking one domain noun. We currently anchor on `ParameterList` and document the temporary broader scope.
