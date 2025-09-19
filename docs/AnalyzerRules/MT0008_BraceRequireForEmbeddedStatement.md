@@ -49,9 +49,10 @@ For LLM-assisted workflows and dense code windows, the extra line breaks reduce 
 
 ### Trivia migration rules (implementation-aligned)
 - No EndOfLine trivia is added or removed — the total number of newlines remains unchanged.
-- The embedded statement's leading trivia becomes the trailing trivia of the opening brace `{` (so newlines move inside the block, appearing immediately after `{`).
+- The embedded statement's leading trivia becomes the trailing trivia of the opening brace `{`.
+  - Important: The newline between the control header and the embedded statement (e.g., `if (c)\nstmt;`) belongs to the control statement's trailing trivia, so it stays before `{`. You will observe `if (c)\n { ... }` (newline before `{`). The statement's own leading trivia (indent/comments) appears after `{` on the next line(s).
 - The embedded statement's trailing trivia is split at the first EndOfLine:
-  - Pre-EOL (same physical line): attached immediately before `}`. `//` comments are converted to `/* ... */`; multi-line comments retain their form; non-comment whitespace is minimized; multiple comments are separated by a single space.
+  - Pre-EOL (same physical line): attached immediately before `}`. `//` comments are converted to `/* ... */` (with `*/` sanitized to `* /` if present); multi-line comments retain their form; non-comment whitespace is minimized; multiple comments are separated by a single space.
   - Post-EOL (from the first newline onwards): attached as the trailing trivia of `}` intact, preserving the original newline count.
 - Minimal spacing: one space before `{`, and at least one space before `}`.
 
@@ -137,6 +138,19 @@ For LLM-assisted workflows and dense code windows, the extra line breaks reduce 
   ```csharp
   if (c) { return; /* note */ }
   ```
+
+### Do-While with same-line EOL comment (sanitization)
+- Before:
+  ```csharp
+  do i++; // note */ while(i < 2);
+  ```
+- After (conceptual layout):
+  ```csharp
+  do { i++; /* note * / while(i < 2); */ }
+  ```
+  Notes:
+  - Because a single-line `//` comment lexically consumes the rest of the physical line, the trailing `while(i < 2);` text is part of the comment. MT0008 converts that EOL comment into a block comment and sanitizes any `*/` into `* /` to avoid premature termination.
+  - The block's closing brace `}` appears after the converted comment (and any post-EOL trivia), maintaining the original newline count.
 
 ## Configuration
 
