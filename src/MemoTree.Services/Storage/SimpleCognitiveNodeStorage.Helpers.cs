@@ -42,7 +42,8 @@ public partial class SimpleCognitiveNodeStorage {
                 if (File.Exists(backup)) {
                     File.Delete(backup);
                 }
-            } catch {
+            }
+            catch {
                 // Fallback: move over
                 if (File.Exists(targetPath)) {
                     File.Delete(targetPath);
@@ -50,16 +51,14 @@ public partial class SimpleCognitiveNodeStorage {
 
                 File.Move(tempPath, targetPath);
             }
-        } else {
+        }
+        else {
             File.Move(tempPath, targetPath);
         }
     }
 
     private static string ComputeSha256Base64(string content) {
-        if (string.IsNullOrEmpty(content)) {
-            return string.Empty;
-        }
-
+        if (string.IsNullOrEmpty(content)) { return string.Empty; }
         using var sha = System.Security.Cryptography.SHA256.Create();
         var bytes = System.Text.Encoding.UTF8.GetBytes(content);
         var hash = sha.ComputeHash(bytes);

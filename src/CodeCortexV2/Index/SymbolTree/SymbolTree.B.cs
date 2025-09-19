@@ -38,17 +38,11 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         );
 
         private IEnumerable<AliasRelation> CandidatesExact(string last) {
-            if (_exactAliasToNodes.TryGetValue(last, out var rels)) {
-                return rels;
-            }
-
+            if (_exactAliasToNodes.TryGetValue(last, out var rels)) { return rels; }
             return Array.Empty<AliasRelation>();
         }
         private IEnumerable<AliasRelation> CandidatesNonExact(string last) {
-            if (_nonExactAliasToNodes.TryGetValue(last, out var rels)) {
-                return rels;
-            }
-
+            if (_nonExactAliasToNodes.TryGetValue(last, out var rels)) { return rels; }
             return Array.Empty<AliasRelation>();
         }
 
@@ -56,8 +50,6 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             var entry = _nodes[nodeIdx].Entry;
             if (entry is null) { return; }
             if ((filter & entry.Kind) == 0) { return; }
-            // Compute a simple additive score from MatchFlags bits: lower score means more exact.
-            // Rationale: exact (None) = 0; arity-insensitive/ignore-case/partial/wildcard/fuzzy add increasing penalties.
             var score = ComputeScore(kind);
             acc.Add(entry.ToHit(kind, score));
         }
@@ -102,25 +94,17 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         public SearchResults Search(string query, int limit, int offset, SymbolKinds kinds) {
             var effLimit = Math.Max(0, limit);
             var effOffset = Math.Max(0, offset);
-            if (string.IsNullOrWhiteSpace(query)) {
-                return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-            }
+            if (string.IsNullOrWhiteSpace(query)) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
             var sw = System.Diagnostics.Stopwatch.StartNew();
             query = query.Trim();
             DebugUtil.Print("SymbolTreeB.Search", $"q='{query}', kinds={kinds}, limit={effLimit}, offset={effOffset}");
 
             // Centralized query preprocessing
             var qi = QueryPreprocessor.Preprocess(query);
-            if (!string.IsNullOrEmpty(qi.RejectionReason)) {
-                return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-            }
-
-
+            if (!string.IsNullOrEmpty(qi.RejectionReason)) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
             bool rootConstraint = qi.IsRootAnchored;
             var segs = qi.NormalizedSegments;
-            if (segs.Length == 0) {
-                return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-            }
+            if (segs.Length == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
             var filterKinds = kinds | qi.DocIdKind;
 
             SearchResults RunUnified() {
@@ -132,9 +116,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     segNormalized: qi.NormalizedSegments[lastIdx],
                     segNormalizedLowered: qi.LowerNormalizedSegments[lastIdx]
                 );
-                if (lastMap.Count == 0) {
-                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-                }
+                if (lastMap.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                 DebugUtil.Print("SymbolTreeB.Lazy", $"lastMap candidates={lastMap.Count}");
 
                 // Single-segment root-anchored early filter: keep nodes whose parent is the root (root.Parent == -1)
@@ -152,9 +134,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     if (removed > 0) {
                         DebugUtil.Print("SymbolTreeB.Lazy", $"root filter (single seg) removed={removed}, kept={lastMap.Count}");
                     }
-                    if (lastMap.Count == 0) {
-                        return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-                    }
+                    if (lastMap.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                 }
 
                 // Start with last segment nodes and prune by matching ancestor chain segment-by-segment (right-to-left)
@@ -168,10 +148,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         survivorsAdv[nid] = (kv.Value, nid); // cur starts at the last node itself
                     }
                 }
-                if (survivorsAdv.Count == 0) {
-                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-                }
-
+                if (survivorsAdv.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                 for (int i = segCount - 2; i >= 0 && survivorsAdv.Count > 0; i--) {
                     // Pre-compute the set of parents we will actually probe this round (restrict construction to this set).
                     var parents = new HashSet<int>(survivorsAdv.Count);
@@ -190,9 +167,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         rootFirst: rootConstraint && i == 0
                     );
 
-                    if (allowed.Count == 0) {
-                        return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-                    }
+                    if (allowed.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                     var next = new Dictionary<int, (MatchFlags flags, int cur)>(survivorsAdv.Count);
                     foreach (var kv in survivorsAdv) {
                         var lastNid = kv.Key;
@@ -208,11 +183,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     DebugUtil.Print("SymbolTreeB.Lazy", $"i={i}, parents={parents.Count}, allowed={allowed.Count}, survivors(after)={survivorsAdv.Count}");
                 }
 
-                if (survivorsAdv.Count == 0) {
-                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-                }
-
-                // Project back to <nodeId, flags> for the remaining pipeline (collection/sorting/paging)
+                if (survivorsAdv.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                 var survivors = new Dictionary<int, MatchFlags>(survivorsAdv.Count);
                 foreach (var kv in survivorsAdv) {
                     survivors[kv.Key] = kv.Value.flags;
@@ -235,9 +206,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         DebugUtil.Print("SymbolTreeB.Root", $"root-anchored filter removed={toRemove.Count}, kept={survivors.Count}");
                     }
 
-                    if (survivors.Count == 0) {
-                        return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-                    }
+                    if (survivors.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                 }
 
                 // Collect results
@@ -250,17 +219,11 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     var nid = kv.Key;
                     var flags = kv.Value;
                     CollectEntriesAtNode(nid, hits, flags, filterKinds);
-                    if (hits.Count >= effLimit + effOffset) {
-                        break;
-                    }
+                    if (hits.Count >= effLimit + effOffset) { break; }
                 }
 
 
-                if (hits.Count == 0) {
-                    return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null);
-                }
-
-                // Rank by score (lower is better), then A→Z by Name, then Assembly.
+                if (hits.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                 var ordered = hits
                     .OrderBy(h => h.Score)
                     .ThenBy(h => h.Name, StringComparer.Ordinal)
@@ -290,15 +253,10 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             var map = new Dictionary<int, MatchFlags>(restrictTo?.Count ?? 0);
 
             bool ShouldKeep(int nid) {
-                if (restrictTo is not null && !restrictTo.Contains(nid)) {
-                    return false;
-                }
-
+                if (restrictTo is not null && !restrictTo.Contains(nid)) { return false; }
                 if (rootFirst) {
                     var p = _nodes[nid].Parent;
-                    if (p < 0 || _nodes[p].Parent != -1) {
-                        return false; // keep only nodes whose parent is directly under root
-                    }
+                    if (p < 0 || _nodes[p].Parent != -1) { return false; /* keep only nodes whose parent is directly under root */ }
                 }
                 return true;
             }
@@ -308,18 +266,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
             void Add(IEnumerable<AliasRelation> rels, Func<MatchFlags, bool>? flagFilter = null) {
                 foreach (var rel in rels) {
-                    if (flagFilter != null && !flagFilter(rel.Kind)) {
-                        continue;
-                    }
-
+                    if (flagFilter != null && !flagFilter(rel.Kind)) { continue; }
                     var nid = rel.NodeId;
-                    if (!ShouldKeep(nid)) {
-                        continue;
-                    }
-
+                    if (!ShouldKeep(nid)) { continue; }
                     if (map.TryGetValue(nid, out var f)) {
                         map[nid] = f | rel.Kind;
-                    } else {
+                    }
+                    else {
                         map[nid] = rel.Kind;
                         if (restrictTo is not null) {
                             matchedRestrict++;
@@ -338,10 +291,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             // Non-exact phase: no need to branch by arity; buckets already encode:
             // - Generic base anchors (bn → IgnoreGenericArity). NOTE: arity-insensitive equality ONLY; no subtree expansion.
             // - Lower-cased DocId exact for generic (lower "bn`n" → IgnoreCase)
-            if (map.Count > 0) {
-                return map;
-            }
-
+            if (map.Count > 0) { return map; }
             if (!string.IsNullOrEmpty(segNormalized)) {
                 Add(CandidatesNonExact(segNormalized));
             }
@@ -393,10 +343,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             var exactBuckets = new Dictionary<string, Dictionary<int, MatchFlags>>(StringComparer.Ordinal);
             var nonExactBuckets = new Dictionary<string, Dictionary<int, MatchFlags>>(StringComparer.Ordinal);
             static void Bucket(Dictionary<string, Dictionary<int, MatchFlags>> dict, string alias, int nodeIdx, MatchFlags kind) {
-                if (string.IsNullOrEmpty(alias)) {
-                    return;
-                }
-                // Fast-path insert/merge using CollectionsMarshal to avoid double lookups and extra allocations.
+                if (string.IsNullOrEmpty(alias)) { return; }
                 ref var perNode = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, alias, out _);
                 perNode ??= new Dictionary<int, MatchFlags>();
                 ref var flagsRef = ref CollectionsMarshal.GetValueRefOrAddDefault(perNode, nodeIdx, out _);
@@ -451,7 +398,8 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         if (!string.Equals(lowerDocIdSeg, docIdSeg, StringComparison.Ordinal)) {
                             Bucket(nonExactBuckets, lowerDocIdSeg, idx, MatchFlags.IgnoreCase);
                         }
-                    } else {
+                    }
+                    else {
                         // Non-generic simple name
                         Bucket(exactBuckets, bn, idx, MatchFlags.None);
                         var lowerBn = bn.ToLowerInvariant();
@@ -469,12 +417,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 var e = arr[ei];
                 bool isNs = (e.Kind & SymbolKinds.Namespace) != 0;
                 bool isType = (e.Kind & SymbolKinds.Type) != 0;
-                if (!isNs && !isType) {
-                    continue; // current index only materializes Namespace and Type
-
-                }
-
-                // 1) Build namespace chain once
+                if (!isNs && !isType) { continue; /* current index only materializes Namespace and Type */ }
                 string[] nsSegments = isType ? SplitNs(e.ParentNamespace).ToArray() : SplitNs(e.FqnNoGlobal).ToArray();
                 int parent = BuildNamespaceChainAndAliases(root, nsSegments);
 

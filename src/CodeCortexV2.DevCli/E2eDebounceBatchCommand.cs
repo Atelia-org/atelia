@@ -28,10 +28,7 @@ public static class E2eDebounceBatchCommand {
             INamedTypeSymbol? sym = null;
             foreach (var p in host.Workspace.CurrentSolution.Projects) {
                 var comp = await p.GetCompilationAsync(cts.Token).ConfigureAwait(false);
-                if (comp is null) {
-                    continue;
-                }
-
+                if (comp is null) { continue; }
                 var candidate = comp.GetTypeByMetadataName($"{ns}.{originalType}");
                 if (candidate is not null) {
                     sym = candidate;
@@ -60,9 +57,7 @@ public static class E2eDebounceBatchCommand {
                 var patterns = new[] { $"class {oldName}", $"record {oldName}", $"struct {oldName}" };
                 foreach (var pat in patterns) {
                     var idx = text.IndexOf(pat, StringComparison.Ordinal);
-                    if (idx >= 0) {
-                        return text.Substring(0, idx) + pat.Replace(oldName, newName, StringComparison.Ordinal) + text.Substring(idx + pat.Length);
-                    }
+                    if (idx >= 0) { return text.Substring(0, idx) + pat.Replace(oldName, newName, StringComparison.Ordinal) + text.Substring(idx + pat.Length); }
                 }
                 return text; // no change
             }
@@ -109,13 +104,15 @@ public static class E2eDebounceBatchCommand {
             }
             Console.Error.WriteLine($"[e2e] FAIL: okFinal={okFinal} noN1={okNoN1} noN2={okNoN2} noOriginal={okNoOriginal}");
             return 5;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             try {
                 if (filePath != null && originalText != null) {
                     File.WriteAllText(filePath, originalText);
                 }
-            } catch { }
+            }
+            catch { }
             return 2;
         }
     }
@@ -124,19 +121,15 @@ public static class E2eDebounceBatchCommand {
         var json = await wti.FindAsync(id, limit: 2, offset: 0, json: true, CancellationToken.None).ConfigureAwait(false);
         try {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) {
-                return false;
-            }
-
+            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) { return false; }
             foreach (var it in items.EnumerateArray()) {
                 if (it.TryGetProperty("SymbolId", out var sid) && sid.ValueKind == JsonValueKind.Object) {
                     var val = sid.TryGetProperty("Value", out var v) ? v.GetString() : null;
-                    if (string.Equals(val, id, StringComparison.Ordinal)) {
-                        return true;
-                    }
+                    if (string.Equals(val, id, StringComparison.Ordinal)) { return true; }
                 }
             }
             return false;
-        } catch { return false; }
+        }
+        catch { return false; }
     }
 }

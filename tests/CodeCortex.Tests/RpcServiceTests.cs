@@ -10,16 +10,10 @@ public class RpcServiceTests {
     private static string? ResolveOutline(CodeCortexIndex index, string outlineDir, InMemoryFileSystem fs, string query) {
         var resolver = new SymbolResolver(index);
         var match = resolver.Resolve(query, limit: 1);
-        if (match.Count == 0) {
-            return null;
-        }
-
+        if (match.Count == 0) { return null; }
         var id = match[0].Id;
         var path = $"{outlineDir}/{id}.outline.md";
-        if (!fs.FileExists(path)) {
-            return null;
-        }
-
+        if (!fs.FileExists(path)) { return null; }
         return fs.ReadAllText(path);
     }
 

@@ -17,10 +17,12 @@ internal static class AtomicFile {
         try {
             if (fs.FileExists(finalPath)) {
                 fs.Replace(tmp, finalPath, bak, true);
-            } else {
+            }
+            else {
                 fs.Move(tmp, finalPath, true);
             }
-        } catch {
+        }
+        catch {
             if (fs.FileExists(tmp) && !fs.FileExists(finalPath)) {
                 fs.Move(tmp, finalPath, true);
             }

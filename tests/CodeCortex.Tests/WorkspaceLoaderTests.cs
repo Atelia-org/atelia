@@ -12,10 +12,7 @@ public class WorkspaceLoaderTests {
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Atelia.sln"))) {
             dir = dir.Parent;
         }
-        if (dir == null) {
-            throw new FileNotFoundException("Cannot locate Atelia.sln from test base directory");
-        }
-
+        if (dir == null) { throw new FileNotFoundException("Cannot locate Atelia.sln from test base directory"); }
         return Path.Combine(dir.FullName, "Atelia.sln");
     }
 

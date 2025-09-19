@@ -193,11 +193,13 @@ public class MT0008InlineBracesTests {
     public async Task DoWhile_Newline_Body_Preserved() {
         var code = "class C{void M(bool c){ int i=0; do\nSystem.Console.WriteLine(i++); while(i<2); }}";
         var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, AnalyzerType, new Atelia.Analyzers.Style.CodeFixes.MT0008InlineBracesCodeFix(), "MT0008");
-    Assert.Contains("do\n {", fixedText);
-    Assert.True(ContainsEither(fixedText, "{ System.Console.WriteLine(i++);", "{System.Console.WriteLine(i++);"));
+        Assert.Contains("do\n {", fixedText);
+        Assert.True(ContainsEither(fixedText, "{ System.Console.WriteLine(i++);", "{System.Console.WriteLine(i++);"));
         // 验证 "} while" 的相对顺序（允许有空格差异）
-        Assert.True(ContainsEither(fixedText, "} while", "}while") ||
-                    (fixedText.IndexOf('}') >= 0 && fixedText.IndexOf("while(i<2)") > fixedText.IndexOf('}')));
+        Assert.True(
+            ContainsEither(fixedText, "} while", "}while") ||
+                    (fixedText.IndexOf('}') >= 0 && fixedText.IndexOf("while(i<2)") > fixedText.IndexOf('}'))
+        );
     }
 
     [Fact]

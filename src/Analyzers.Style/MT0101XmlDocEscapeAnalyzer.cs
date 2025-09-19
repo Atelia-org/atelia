@@ -108,16 +108,19 @@ namespace Atelia.Analyzers.Style {
                         sb.Append("&lt;");
                         i++;
                         continue;
-                    } else if (ch == '>') {
+                    }
+                    else if (ch == '>') {
                         sb.Append("&gt;");
                         i++;
                         continue;
-                    } else {
+                    }
+                    else {
                         sb.Append(ch);
                         i++;
                         continue;
                     }
-                } else {
+                }
+                else {
                     // not used in this simple state machine; kept for clarity
                     sb.Append(ch);
                     i++;

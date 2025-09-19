@@ -89,10 +89,7 @@ public static class SignatureFormatter {
     }
 
     private static string QualifiedName(ISymbol s, SignatureOptions options) {
-        if (options.NameStyle == NameStyle.FullyQualified) {
-            return s.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty);
-        }
-        // Short name: optionally include containing type or namespace
+        if (options.NameStyle == NameStyle.FullyQualified) { return s.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty); }
         var parts = new System.Collections.Generic.List<string>();
         if (options.IncludeNamespace && s.ContainingNamespace != null && !s.ContainingNamespace.IsGlobalNamespace) {
             parts.Add(s.ContainingNamespace.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat));

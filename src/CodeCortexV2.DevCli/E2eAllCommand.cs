@@ -25,7 +25,8 @@ public static class E2eAllCommand {
             if (code != 0) {
                 failures++;
                 Console.Error.WriteLine($"[e2e-all] {step.Name} FAILED (exit {code})");
-            } else {
+            }
+            else {
                 Console.WriteLine($"[e2e-all] {step.Name} OK");
             }
         }

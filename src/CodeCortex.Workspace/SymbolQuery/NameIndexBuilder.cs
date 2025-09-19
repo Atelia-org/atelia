@@ -12,10 +12,10 @@ namespace CodeCortex.Workspace.SymbolQuery {
             foreach (var proj in loaded.Projects) {
                 ct.ThrowIfCancellationRequested();
                 var comp = await proj.GetCompilationAsync(ct).ConfigureAwait(false);
-                if (comp is null) continue;
+                if (comp is null) { continue; }
                 foreach (var t in new RoslynTypeEnumerator().Enumerate(comp, ct)) {
                     var fqn = t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                    if (!string.IsNullOrEmpty(fqn)) fqns.Add(fqn);
+                    if (!string.IsNullOrEmpty(fqn)) { fqns.Add(fqn); }
                 }
             }
             fqns = fqns.Distinct(StringComparer.Ordinal).ToList();

@@ -10,10 +10,9 @@ namespace CodeCortex.Workspace.SymbolQuery {
         public static string GetStoreDir(string solutionPath) {
             try {
                 var dir = Path.GetDirectoryName(solutionPath);
-                if (!string.IsNullOrEmpty(dir)) {
-                    return Path.Combine(dir!, ".codecortex");
-                }
-            } catch { }
+                if (!string.IsNullOrEmpty(dir)) { return Path.Combine(dir!, ".codecortex"); }
+            }
+            catch { }
             return Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
         }
 
@@ -22,12 +21,13 @@ namespace CodeCortex.Workspace.SymbolQuery {
 
         public NameIndex? TryLoad(string solutionPath) {
             var path = GetIndexPath(solutionPath);
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(path)) { return null; }
             try {
                 var json = File.ReadAllText(path);
                 var index = JsonSerializer.Deserialize<NameIndex>(json);
                 return index;
-            } catch { return null; }
+            }
+            catch { return null; }
         }
 
         public bool Save(NameIndex index) {
@@ -38,7 +38,8 @@ namespace CodeCortex.Workspace.SymbolQuery {
                 var json = JsonSerializer.Serialize(index, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(path, json);
                 return true;
-            } catch { return false; }
+            }
+            catch { return false; }
         }
     }
 }

@@ -51,7 +51,8 @@ public static class E2eProjectRemovedCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             return 2;
         }
@@ -60,13 +61,10 @@ public static class E2eProjectRemovedCommand {
     private static bool HasAnyItem(string json) {
         try {
             using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("Total", out var total) && total.GetInt32() > 0) {
-                return true;
-            }
-            if (doc.RootElement.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array) {
-                return items.GetArrayLength() > 0;
-            }
-        } catch { }
+            if (doc.RootElement.TryGetProperty("Total", out var total) && total.GetInt32() > 0) { return true; }
+            if (doc.RootElement.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array) { return items.GetArrayLength() > 0; }
+        }
+        catch { }
         return false;
     }
 
@@ -100,11 +98,7 @@ public static class E2eProjectRemovedCommand {
             outLines.Add(line);
         }
 
-        if (string.IsNullOrEmpty(projectGuid)) {
-            return sln; // nothing removed
-        }
-
-        // Second pass: remove ProjectConfigurationPlatforms entries for GUID
+        if (string.IsNullOrEmpty(projectGuid)) { return sln; /* nothing removed */ }
         lines = outLines;
         outLines = new List<string>(lines.Count);
         foreach (var line in lines) {
@@ -121,9 +115,7 @@ public static class E2eProjectRemovedCommand {
             }
             if (inProjectConfigs) {
                 // drop any line containing the GUID (case-insensitive)
-                if (line.ToUpperInvariant().Contains(guidUpper)) {
-                    continue;
-                }
+                if (line.ToUpperInvariant().Contains(guidUpper)) { continue; }
                 outLines.Add(line);
                 continue;
             }

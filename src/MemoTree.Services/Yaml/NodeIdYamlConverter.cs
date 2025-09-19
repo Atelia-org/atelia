@@ -17,10 +17,7 @@ namespace MemoTree.Services.Yaml {
                 parser.MoveNext();
 
                 if (string.IsNullOrEmpty(scalar.Value)) {
-                    if (type == typeof(NodeId?)) {
-                        return null;
-                    }
-
+                    if (type == typeof(NodeId?)) { return null; }
                     throw new YamlException("NodeId value cannot be null or empty");
                 }
 
@@ -42,17 +39,15 @@ namespace MemoTree.Services.Yaml {
                         }
 
                         parser.MoveNext(); // 移动到下一个键或结束
-                    } else {
+                    }
+                    else {
                         parser.MoveNext(); // 跳过其他类型的节点
                     }
                 }
 
                 parser.MoveNext(); // 跳过 MappingEnd
 
-                if (!string.IsNullOrEmpty(nodeIdValue)) {
-                    return new NodeId(nodeIdValue);
-                }
-
+                if (!string.IsNullOrEmpty(nodeIdValue)) { return new NodeId(nodeIdValue); }
                 throw new YamlException("NodeId object must contain a 'value' property");
             }
 
@@ -62,11 +57,11 @@ namespace MemoTree.Services.Yaml {
         public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer nestedObjectSerializer) {
             if (value is NodeId nodeId) {
                 emitter.Emit(new Scalar(nodeId.Value));
-            } else if (value == null && type == typeof(NodeId?)) {
-                emitter.Emit(new Scalar(""));
-            } else {
-                throw new YamlException($"Expected NodeId, got {value?.GetType().Name}");
             }
+            else if (value == null && type == typeof(NodeId?)) {
+                emitter.Emit(new Scalar(""));
+            }
+            else { throw new YamlException($"Expected NodeId, got {value?.GetType().Name}"); }
         }
     }
 }

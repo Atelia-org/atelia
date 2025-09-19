@@ -59,14 +59,8 @@ namespace MemoTree.Core.Types {
         /// 获取内容的摘要（前N个字符）
         /// </summary>
         public string GetSummary(int maxLength = 100) {
-            if (string.IsNullOrWhiteSpace(Content)) {
-                return string.Empty;
-            }
-
-            if (Content.Length <= maxLength) {
-                return Content;
-            }
-
+            if (string.IsNullOrWhiteSpace(Content)) { return string.Empty; }
+            if (Content.Length <= maxLength) { return Content; }
             return Content.Substring(0, maxLength) + "...";
         }
 

@@ -36,9 +36,7 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
         sb.AppendLine("Public API:");
         foreach (var m in symbol.GetMembers().Where(IsPublicApiMember).OrderBy(m => m.Name)) {
             // Skip accessor/event access methods; properties/events will be shown as single logical items
-            if (m is IMethodSymbol ms && (ms.MethodKind == MethodKind.PropertyGet || ms.MethodKind == MethodKind.PropertySet || ms.MethodKind == MethodKind.EventAdd || ms.MethodKind == MethodKind.EventRemove)) {
-                continue;
-            }
+            if (m is IMethodSymbol ms && (ms.MethodKind == MethodKind.PropertyGet || ms.MethodKind == MethodKind.PropertySet || ms.MethodKind == MethodKind.EventAdd || ms.MethodKind == MethodKind.EventRemove)) { continue; }
             string line;
             if (m is IPropertySymbol ps) {
                 var acc = new StringBuilder();
@@ -56,23 +54,27 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
                 if (ps.IsIndexer) {
                     var parms = string.Join(", ", ps.Parameters.Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat) + " " + p.Name));
                     namePart = $"this[{parms}]";
-                } else {
+                }
+                else {
                     namePart = ps.Name;
                 }
                 var typeStr = ps.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
                 line = $"{typeStr} {namePart} {acc}";
-            } else if (m is INamedTypeSymbol nt && (nt.TypeKind == TypeKind.Class || nt.TypeKind == TypeKind.Struct || nt.TypeKind == TypeKind.Interface || nt.TypeKind == TypeKind.Enum || nt.TypeKind == TypeKind.Delegate)) {
+            }
+            else if (m is INamedTypeSymbol nt && (nt.TypeKind == TypeKind.Class || nt.TypeKind == TypeKind.Struct || nt.TypeKind == TypeKind.Interface || nt.TypeKind == TypeKind.Enum || nt.TypeKind == TypeKind.Delegate)) {
                 if (nt.TypeKind == TypeKind.Delegate) {
                     var invoke = nt.DelegateInvokeMethod;
                     var ret = invoke?.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat) ?? "void";
                     var nameDisplay = nt.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
                     var parms = invoke == null ? string.Empty : string.Join(", ", invoke.Parameters.Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat) + " " + p.Name));
                     line = $"delegate {ret} {nameDisplay}({parms})";
-                } else {
+                }
+                else {
                     var display = nt.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
                     line = $"{TypeKindKeyword(nt.TypeKind)} {display}";
                 }
-            } else {
+            }
+            else {
                 line = m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
             }
             sb.AppendLine("  + " + line); // 1级缩进，2个空格
@@ -100,10 +102,7 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
 
     private static void AppendPredefinedSections(StringBuilder sb, ISymbol m) {
         var xml = m.GetDocumentationCommentXml();
-        if (string.IsNullOrWhiteSpace(xml)) {
-            return;
-        }
-
+        if (string.IsNullOrWhiteSpace(xml)) { return; }
         XDocument doc;
         try { doc = XDocument.Parse(xml!, LoadOptions.PreserveWhitespace); } catch { return; }
 
@@ -122,16 +121,19 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
                 XmlDocLinesExtractor.TrimTrailingEmpty(lines);
                 if (lines.Count == 0) {
                     sb.AppendLine($"        - {name}");
-                } else if (lines.All(l => !MarkdownRenderer.IsStructuralLine(l))) {
+                }
+                else if (lines.All(l => !MarkdownRenderer.IsStructuralLine(l))) {
                     var para = MarkdownRenderer.InlineParagraph(lines);
                     sb.AppendLine($"        - {name} — {para}");
-                } else {
+                }
+                else {
                     var first = lines[0];
                     var firstTrim = first.TrimStart();
                     if (MarkdownRenderer.IsStructuralLine(firstTrim)) {
                         sb.AppendLine($"        - {name}");
                         MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 0, insertBlankBeforeTable: true);
-                    } else {
+                    }
+                    else {
                         sb.AppendLine($"        - {name} — {first}");
                         if (lines.Count > 1) {
                             MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 1, insertBlankBeforeTable: true);
@@ -156,11 +158,13 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
                 sb.AppendLine("      Returns:");
                 if (lines.All(l => !MarkdownRenderer.IsStructuralLine(l))) {
                     sb.AppendLine("        - " + MarkdownRenderer.InlineParagraph(lines));
-                } else {
+                }
+                else {
                     var firstTrim = lines[0].TrimStart();
                     if (MarkdownRenderer.IsStructuralLine(firstTrim)) {
                         MarkdownRenderer.RenderLinesWithStructure(sb, lines, "        ", bulletizePlain: false, startIndex: 0, insertBlankBeforeTable: true);
-                    } else {
+                    }
+                    else {
                         sb.AppendLine("        - " + lines[0].Trim());
                         if (lines.Count > 1) {
                             MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 1, insertBlankBeforeTable: true);
@@ -187,16 +191,19 @@ public sealed partial class OutlineExtractor : IOutlineExtractor {
                 XmlDocLinesExtractor.TrimTrailingEmpty(lines);
                 if (lines.Count == 0) {
                     sb.AppendLine($"        - {type}");
-                } else if (lines.All(l => !MarkdownRenderer.IsStructuralLine(l))) {
+                }
+                else if (lines.All(l => !MarkdownRenderer.IsStructuralLine(l))) {
                     sb.AppendLine($"        - {type} — {MarkdownRenderer.InlineParagraph(lines)}");
-                } else {
+                }
+                else {
                     var firstLine = lines[0];
                     var firstTrim = firstLine.TrimStart();
                     if (MarkdownRenderer.IsStructuralLine(firstTrim)) {
                         // First content is structural (table/list). Show type alone, then render structure from the first line.
                         sb.AppendLine($"        - {type}");
                         MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 0, insertBlankBeforeTable: true);
-                    } else {
+                    }
+                    else {
                         sb.AppendLine($"        - {type} — {firstLine}");
                         if (lines.Count > 1) {
                             MarkdownRenderer.RenderLinesWithStructure(sb, lines, "          ", bulletizePlain: true, startIndex: 1, insertBlankBeforeTable: true);

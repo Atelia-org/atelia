@@ -57,30 +57,32 @@ public static class E2eSuffixAmbiguityCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             return 2;
-        } finally {
+        }
+        finally {
             // Cleanup temp files
             try {
                 if (file1 != null && File.Exists(file1)) {
                     File.Delete(file1);
                 }
-            } catch { }
+            }
+            catch { }
             try {
                 if (file2 != null && File.Exists(file2)) {
                     File.Delete(file2);
                 }
-            } catch { }
+            }
+            catch { }
         }
     }
 
     private static bool IsAmbiguitySatisfied(string json, string className) {
         try {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) {
-                return false;
-            }
+            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) { return false; }
             int suffixCount = 0;
             int ambiguousCount = 0;
             foreach (var it in items.EnumerateArray()) {
@@ -90,13 +92,12 @@ public static class E2eSuffixAmbiguityCommand {
                 bool suffix = name.Equals(className, StringComparison.Ordinal) || name.EndsWith("." + className, StringComparison.Ordinal);
                 if (suffix) {
                     suffixCount++;
-                    if (isAmb) {
-                        ambiguousCount++;
-                    }
+                    if (isAmb) { ambiguousCount++; }
                 }
             }
             return suffixCount >= 2 && ambiguousCount >= 2;
-        } catch {
+        }
+        catch {
             return false;
         }
     }

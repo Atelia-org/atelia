@@ -53,7 +53,8 @@ public static class IntegrityCommands {
                             }
                         );
                         Console.WriteLine(text);
-                    } else {
+                    }
+                    else {
                         Console.WriteLine($"Integrity validation at {result.ValidatedAt:u}");
                         Console.WriteLine(result.IsValid ? "Status: OK" : "Status: ISSUES FOUND");
 
@@ -75,7 +76,8 @@ public static class IntegrityCommands {
                     }
 
                     Environment.ExitCode = result.IsValid ? 0 : 2;
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }

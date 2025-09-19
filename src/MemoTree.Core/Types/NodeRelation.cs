@@ -76,10 +76,7 @@ namespace MemoTree.Core.Types {
         /// 设置关系属性
         /// </summary>
         public NodeRelation SetProperty(string key, object value) {
-            if (string.IsNullOrWhiteSpace(key)) {
-                return this;
-            }
-
+            if (string.IsNullOrWhiteSpace(key)) { return this; }
             var newProperties = new Dictionary<string, object>(Properties) {
                 [key] = value
             };
@@ -93,10 +90,7 @@ namespace MemoTree.Core.Types {
         /// 移除关系属性
         /// </summary>
         public NodeRelation RemoveProperty(string key) {
-            if (string.IsNullOrWhiteSpace(key) || !Properties.ContainsKey(key)) {
-                return this;
-            }
-
+            if (string.IsNullOrWhiteSpace(key) || !Properties.ContainsKey(key)) { return this; }
             var newProperties = new Dictionary<string, object>(Properties);
             newProperties.Remove(key);
 
@@ -173,14 +167,8 @@ namespace MemoTree.Core.Types {
         /// 获取关系的另一端节点
         /// </summary>
         public NodeId? GetOtherNode(NodeId nodeId) {
-            if (SourceId == nodeId) {
-                return TargetId;
-            }
-
-            if (TargetId == nodeId) {
-                return SourceId;
-            }
-
+            if (SourceId == nodeId) { return TargetId; }
+            if (TargetId == nodeId) { return SourceId; }
             return null;
         }
 
@@ -188,14 +176,8 @@ namespace MemoTree.Core.Types {
         /// 检查关系方向（从指定节点的角度）
         /// </summary>
         public RelationDirection GetDirection(NodeId nodeId) {
-            if (SourceId == nodeId) {
-                return RelationDirection.Outgoing;
-            }
-
-            if (TargetId == nodeId) {
-                return RelationDirection.Incoming;
-            }
-
+            if (SourceId == nodeId) { return RelationDirection.Outgoing; }
+            if (TargetId == nodeId) { return RelationDirection.Incoming; }
             return RelationDirection.None;
         }
 

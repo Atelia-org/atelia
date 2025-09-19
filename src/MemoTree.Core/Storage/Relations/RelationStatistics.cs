@@ -103,10 +103,7 @@ namespace MemoTree.Core.Storage.Relations {
             var allStats = GetAllTypeStatistics();
             var total = allStats.Values.Sum();
 
-            if (total == 0) {
-                return new Dictionary<RelationType, double>();
-            }
-
+            if (total == 0) { return new Dictionary<RelationType, double>(); }
             return allStats.ToDictionary(
                 kvp => kvp.Key,
                 kvp => (double)kvp.Value / total * 100
@@ -131,11 +128,7 @@ namespace MemoTree.Core.Storage.Relations {
         /// </summary>
         /// <returns>活跃度分数（0-1之间）</returns>
         public double GetActivityScore() {
-            if (TotalCount == 0) {
-                return 0;
-            }
-
-            // 基于关系数量和多样性计算活跃度
+            if (TotalCount == 0) { return 0; }
             var countScore = Math.Min(TotalCount / 20.0, 1.0); // 20个关系为满分
             var diversityScore = DiversityIndex / Math.Log(Enum.GetValues<RelationType>().Length);
 

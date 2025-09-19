@@ -10,10 +10,7 @@ public partial class SimpleCognitiveNodeStorage {
 
     public async Task<NodeContent?> GetAsync(NodeId nodeId, LodLevel level, CancellationToken cancellationToken = default) {
         var contentPath = GetNodeContentPath(nodeId, level);
-        if (!File.Exists(contentPath)) {
-            return null;
-        }
-
+        if (!File.Exists(contentPath)) { return null; }
         try {
             var content = await File.ReadAllTextAsync(contentPath, cancellationToken);
             return new NodeContent {
@@ -22,7 +19,8 @@ public partial class SimpleCognitiveNodeStorage {
                 Content = content,
                 LastModified = File.GetLastWriteTimeUtc(contentPath)
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to load content for node {NodeId} at level {Level}", nodeId, level);
             throw new StorageException($"Failed to load content for node {nodeId} at level {level}", ex)
             .WithContext("NodeId", nodeId)
@@ -40,7 +38,8 @@ public partial class SimpleCognitiveNodeStorage {
         try {
             await WriteTextAtomicAsync(contentPath, content.Content, cancellationToken);
             _logger.LogDebug("Saved content for node {NodeId} at level {Level}", content.Id, content.Level);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to save content for node {NodeId} at level {Level}", content.Id, content.Level);
             throw;
         }

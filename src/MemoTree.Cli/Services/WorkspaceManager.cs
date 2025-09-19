@@ -25,9 +25,7 @@ public class WorkspaceManager {
         var current = new DirectoryInfo(startDirectory);
 
         while (current != null) {
-            if (Directory.Exists(Path.Combine(current.FullName, WorkspaceDirectoryName))) {
-                return current.FullName;
-            }
+            if (Directory.Exists(Path.Combine(current.FullName, WorkspaceDirectoryName))) { return current.FullName; }
             current = current.Parent;
         }
 
@@ -41,11 +39,7 @@ public class WorkspaceManager {
         directory ??= Directory.GetCurrentDirectory();
         var workspaceDir = Path.Combine(directory, WorkspaceDirectoryName);
 
-        if (Directory.Exists(workspaceDir)) {
-            throw new InvalidOperationException($"MemoTree workspace already exists at {directory}");
-        }
-
-        // 创建.memotree目录结构
+        if (Directory.Exists(workspaceDir)) { throw new InvalidOperationException($"MemoTree workspace already exists at {directory}"); }
         Directory.CreateDirectory(workspaceDir);
         Directory.CreateDirectory(Path.Combine(workspaceDir, "views"));
 
@@ -70,20 +64,10 @@ public class WorkspaceManager {
         directory ??= Directory.GetCurrentDirectory();
         var workspaceDir = Path.Combine(directory, WorkspaceDirectoryName);
 
-        if (Directory.Exists(workspaceDir)) {
-            throw new InvalidOperationException($"MemoTree workspace already exists at {directory}");
-        }
-
-        if (!Directory.Exists(targetWorkspacePath)) {
-            throw new DirectoryNotFoundException($"Target workspace not found: {targetWorkspacePath}");
-        }
-
+        if (Directory.Exists(workspaceDir)) { throw new InvalidOperationException($"MemoTree workspace already exists at {directory}"); }
+        if (!Directory.Exists(targetWorkspacePath)) { throw new DirectoryNotFoundException($"Target workspace not found: {targetWorkspacePath}"); }
         var targetMemoTreeDir = Path.Combine(targetWorkspacePath, WorkspaceDirectoryName);
-        if (!Directory.Exists(targetMemoTreeDir)) {
-            throw new InvalidOperationException($"Target directory is not a MemoTree workspace: {targetWorkspacePath}");
-        }
-
-        // 创建软链接 (在Windows上需要管理员权限，这里先用简单的配置文件方式)
+        if (!Directory.Exists(targetMemoTreeDir)) { throw new InvalidOperationException($"Target directory is not a MemoTree workspace: {targetWorkspacePath}"); }
         Directory.CreateDirectory(workspaceDir);
 
         var linkConfigPath = Path.Combine(workspaceDir, "link.json");
@@ -114,9 +98,7 @@ public class WorkspaceManager {
 
             if (linkConfig?.TryGetValue("target", out var targetObj) == true && targetObj is System.Text.Json.JsonElement targetElement) {
                 var targetPath = targetElement.GetString();
-                if (!string.IsNullOrEmpty(targetPath)) {
-                    return Path.Combine(targetPath, WorkspaceDirectoryName, "data");
-                }
+                if (!string.IsNullOrEmpty(targetPath)) { return Path.Combine(targetPath, WorkspaceDirectoryName, "data"); }
             }
         }
 
@@ -140,9 +122,7 @@ public class WorkspaceManager {
 
             if (linkConfig?.TryGetValue("target", out var targetObj) == true && targetObj is System.Text.Json.JsonElement targetElement) {
                 var targetPath = targetElement.GetString();
-                if (!string.IsNullOrEmpty(targetPath)) {
-                    return Path.Combine(targetPath, WorkspaceDirectoryName, "views");
-                }
+                if (!string.IsNullOrEmpty(targetPath)) { return Path.Combine(targetPath, WorkspaceDirectoryName, "views"); }
             }
         }
 

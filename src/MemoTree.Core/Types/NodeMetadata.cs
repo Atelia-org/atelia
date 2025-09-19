@@ -80,10 +80,7 @@ namespace MemoTree.Core.Types {
         /// 添加标签
         /// </summary>
         public NodeMetadata AddTag(string tag) {
-            if (string.IsNullOrWhiteSpace(tag) || Tags.Contains(tag)) {
-                return this;
-            }
-
+            if (string.IsNullOrWhiteSpace(tag) || Tags.Contains(tag)) { return this; }
             var newTags = Tags.ToList();
             newTags.Add(tag);
 
@@ -98,10 +95,7 @@ namespace MemoTree.Core.Types {
         /// 移除标签
         /// </summary>
         public NodeMetadata RemoveTag(string tag) {
-            if (string.IsNullOrWhiteSpace(tag) || !Tags.Contains(tag)) {
-                return this;
-            }
-
+            if (string.IsNullOrWhiteSpace(tag) || !Tags.Contains(tag)) { return this; }
             var newTags = Tags.Where(t => t != tag).ToList();
 
             return this with {
@@ -141,10 +135,7 @@ namespace MemoTree.Core.Types {
         /// 设置自定义属性
         /// </summary>
         public NodeMetadata SetCustomProperty(string key, object value) {
-            if (string.IsNullOrWhiteSpace(key)) {
-                return this;
-            }
-
+            if (string.IsNullOrWhiteSpace(key)) { return this; }
             var newProperties = new Dictionary<string, object>(CustomProperties) {
                 [key] = value
             };
@@ -160,10 +151,7 @@ namespace MemoTree.Core.Types {
         /// 移除自定义属性
         /// </summary>
         public NodeMetadata RemoveCustomProperty(string key) {
-            if (string.IsNullOrWhiteSpace(key) || !CustomProperties.ContainsKey(key)) {
-                return this;
-            }
-
+            if (string.IsNullOrWhiteSpace(key) || !CustomProperties.ContainsKey(key)) { return this; }
             var newProperties = new Dictionary<string, object>(CustomProperties);
             newProperties.Remove(key);
 

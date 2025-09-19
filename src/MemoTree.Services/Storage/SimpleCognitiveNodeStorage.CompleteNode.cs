@@ -11,11 +11,7 @@ public partial class SimpleCognitiveNodeStorage {
     public async Task<CognitiveNode?> GetCompleteNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default) {
         // 获取元数据
         var metadata = await GetAsync(nodeId, cancellationToken);
-        if (metadata == null) {
-            return null;
-        }
-
-        // 获取所有级别的内容
+        if (metadata == null) { return null; }
         var allContent = await GetAllLevelsAsync(nodeId, cancellationToken);
 
         return new CognitiveNode {
@@ -67,7 +63,8 @@ public partial class SimpleCognitiveNodeStorage {
         // 2) 删除自身的层级记录（若作为父节点存在记录）
         try {
             await _hierarchy.DeleteHierarchyInfoAsync(nodeId, cancellationToken);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogWarning(ex, "Failed to delete hierarchy info for node {NodeId}", nodeId);
         }
 
@@ -80,7 +77,8 @@ public partial class SimpleCognitiveNodeStorage {
                 Directory.Delete(nodeDir);
                 _logger.LogDebug("Deleted empty node directory for {NodeId}", nodeId);
             }
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogWarning(ex, "Failed to delete empty node directory for {NodeId}", nodeId);
         }
     }
@@ -190,14 +188,16 @@ public partial class SimpleCognitiveNodeStorage {
         try {
             if (!Directory.Exists(cogNodesPath)) {
                 warnings.Add($"CogNodes directory not found: {cogNodesPath}");
-            } else {
+            }
+            else {
                 var allDirs = Directory.GetDirectories(cogNodesPath);
                 foreach (var dir in allDirs) {
                     var dirName = Path.GetFileName(dir);
                     NodeId parsedId;
                     try {
                         parsedId = new NodeId(dirName);
-                    } catch {
+                    }
+                    catch {
                         warnings.Add($"Invalid node directory name: {dirName}");
                         continue;
                     }
@@ -214,10 +214,12 @@ public partial class SimpleCognitiveNodeStorage {
                         meta = _yamlDeserializer.Deserialize<NodeMetadata>(yaml);
                         if (meta.Id != parsedId) {
                             errors.Add($"Metadata Id mismatch in {dirName}: dir={parsedId}, meta={meta.Id}");
-                        } else {
+                        }
+                        else {
                             validNodes.Add(parsedId);
                         }
-                    } catch (Exception ex) {
+                    }
+                    catch (Exception ex) {
                         errors.Add($"Failed to parse metadata {dirName}/{_storageOptions.MetadataFileName}: {ex.Message}");
                     }
 
@@ -230,16 +232,19 @@ public partial class SimpleCognitiveNodeStorage {
 
                             if (hasFile && !hasHash) {
                                 warnings.Add($"Node {parsedId} has {level} content file but no hash in metadata");
-                            } else if (!hasFile && hasHash) {
+                            }
+                            else if (!hasFile && hasHash) {
                                 warnings.Add($"Node {parsedId} metadata declares {level} content but file is missing");
-                            } else if (hasFile && hasHash) {
+                            }
+                            else if (hasFile && hasHash) {
                                 try {
                                     var text = await File.ReadAllTextAsync(contentPath, cancellationToken);
                                     var actualHash = ComputeSha256Base64(text);
                                     if (!string.Equals(actualHash, declaredHash, StringComparison.Ordinal)) {
                                         errors.Add($"Node {parsedId} {level} content hash mismatch: meta={declaredHash}, actual={actualHash}");
                                     }
-                                } catch (Exception ex) {
+                                }
+                                catch (Exception ex) {
                                     errors.Add($"Failed to read/verify content for node {parsedId} {level}: {ex.Message}");
                                 }
                             }
@@ -262,13 +267,15 @@ public partial class SimpleCognitiveNodeStorage {
                                     warnings.Add($"Node {parsedId} has unrecognized file: {f}");
                                 }
                             }
-                        } catch (Exception ex) {
+                        }
+                        catch (Exception ex) {
                             warnings.Add($"Failed to scan extra files for node {parsedId}: {ex.Message}");
                         }
                     }
                 }
             }
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             errors.Add($"Failed to validate files/metadata: {ex.Message}");
         }
 
@@ -301,7 +308,8 @@ public partial class SimpleCognitiveNodeStorage {
                 try {
                     var children = await _hierarchy.GetChildrenAsync(parentId, cancellationToken);
                     adjacency[parentId] = children.ToList();
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     warnings.Add($"Failed to enumerate children of {parentId}: {ex.Message}");
                 }
             }
@@ -319,20 +327,12 @@ public partial class SimpleCognitiveNodeStorage {
             var visiting = new HashSet<NodeId>();
             var visited = new HashSet<NodeId>();
             bool Dfs(NodeId node) {
-                if (visiting.Contains(node)) {
-                    return true; // cycle
-                }
-
-                if (visited.Contains(node)) {
-                    return false;
-                }
-
+                if (visiting.Contains(node)) { return true; /* cycle */ }
+                if (visited.Contains(node)) { return false; }
                 visiting.Add(node);
                 if (adjacency.TryGetValue(node, out var chs)) {
                     foreach (var c in chs) {
-                        if (Dfs(c)) {
-                            return true;
-                        }
+                        if (Dfs(c)) { return true; }
                     }
                 }
                 visiting.Remove(node);
@@ -346,7 +346,8 @@ public partial class SimpleCognitiveNodeStorage {
                     break; // 报告一次即可
                 }
             }
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             warnings.Add($"Failed to validate hierarchy: {ex.Message}");
         }
 

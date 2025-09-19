@@ -51,33 +51,33 @@ public static class E2eGenericBaseSearchCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             return 2;
-        } finally {
+        }
+        finally {
             try {
                 if (file != null && File.Exists(file)) {
                     File.Delete(file);
                 }
-            } catch { }
+            }
+            catch { }
         }
     }
 
     private static bool IsGenericBaseSatisfied(string json, string ns, string typeName) {
         try {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != System.Text.Json.JsonValueKind.Array) {
-                return false;
-            }
+            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != System.Text.Json.JsonValueKind.Array) { return false; }
             foreach (var it in items.EnumerateArray()) {
                 var name = it.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
                 // MatchFlags is serialized as a number; GenericBase == 7 per V2 enum
                 var mk = it.TryGetProperty("MatchFlags", out var m) ? m.GetInt32() : -1;
-                if (mk == 7 && name.Contains($"{ns}.{typeName}", StringComparison.Ordinal)) {
-                    return true;
-                }
+                if (mk == 7 && name.Contains($"{ns}.{typeName}", StringComparison.Ordinal)) { return true; }
             }
-        } catch { }
+        }
+        catch { }
         return false;
     }
 }

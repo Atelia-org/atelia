@@ -29,10 +29,12 @@ public class ViewStatePersistenceTests {
             RunCli(tempDir, $"collapse {nodeId}");
             var json2 = File.ReadAllText(viewPath);
             Assert.Contains("\"currentLevel\": 0", json2); // Gist
-        } finally {
+        }
+        finally {
             try {
                 Directory.Delete(tempDir, recursive: true);
-            } catch { }
+            }
+            catch { }
         }
     }
 
@@ -49,9 +51,7 @@ public class ViewStatePersistenceTests {
         var stdout = p.StandardOutput.ReadToEnd();
         var stderr = p.StandardError.ReadToEnd();
         p.WaitForExit(60000);
-        if (p.ExitCode != 0) {
-            throw new Xunit.Sdk.XunitException($"CLI exited with code {p.ExitCode}.\nArgs: {args}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
-        }
+        if (p.ExitCode != 0) { throw new Xunit.Sdk.XunitException($"CLI exited with code {p.ExitCode}.\nArgs: {args}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"); }
     }
 
     private static void RunCliWithInput(string cwd, string args, string input) {
@@ -70,9 +70,7 @@ public class ViewStatePersistenceTests {
         var stdout = p.StandardOutput.ReadToEnd();
         var stderr = p.StandardError.ReadToEnd();
         p.WaitForExit(60000);
-        if (p.ExitCode != 0) {
-            throw new Xunit.Sdk.XunitException($"CLI exited with code {p.ExitCode}.\nArgs: {args}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
-        }
+        if (p.ExitCode != 0) { throw new Xunit.Sdk.XunitException($"CLI exited with code {p.ExitCode}.\nArgs: {args}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"); }
     }
 
     private static string FindCliProject() {
@@ -81,10 +79,7 @@ public class ViewStatePersistenceTests {
             var sln = Path.Combine(dir.FullName, "Atelia.sln");
             if (File.Exists(sln)) {
                 var cli = Path.Combine(dir.FullName, "src", "MemoTree.Cli", "MemoTree.Cli.csproj");
-                if (!File.Exists(cli)) {
-                    throw new FileNotFoundException($"CLI project not found at {cli}");
-                }
-
+                if (!File.Exists(cli)) { throw new FileNotFoundException($"CLI project not found at {cli}"); }
                 return cli;
             }
             dir = dir.Parent;

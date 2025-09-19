@@ -40,7 +40,8 @@ public sealed class DebounceFileChangeBatcher : IFileChangeBatcher, IDisposable 
             DebugUtil.Print("Watcher", $"Batcher invoking Flushed ({handlers} handlers) with {snapshot.Length} changes");
             Flushed?.Invoke(snapshot);
             DebugUtil.Print("Watcher", "Batcher Flushed handlers executed");
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             DebugUtil.Print("Watcher", $"Batcher Flushed handlers threw: {ex.Message}");
         }
     }

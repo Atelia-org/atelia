@@ -38,10 +38,7 @@ namespace MemoTree.Core.Types {
         /// 添加子节点
         /// </summary>
         public HierarchyInfo AddChild(NodeId childId, int? order = null) {
-            if (HasChild(childId)) {
-                return this;
-            }
-
+            if (HasChild(childId)) { return this; }
             var newOrder = order ?? GetNextOrder();
             var newChild = new ChildNodeInfo {
                 NodeId = childId,
@@ -62,10 +59,7 @@ namespace MemoTree.Core.Types {
         /// 移除子节点
         /// </summary>
         public HierarchyInfo RemoveChild(NodeId childId) {
-            if (!HasChild(childId)) {
-                return this;
-            }
-
+            if (!HasChild(childId)) { return this; }
             var newChildren = Children.Where(c => c.NodeId != childId).ToList();
 
             return this with {
@@ -79,10 +73,7 @@ namespace MemoTree.Core.Types {
         /// </summary>
         public HierarchyInfo UpdateChildOrder(NodeId childId, int newOrder) {
             var childIndex = Children.ToList().FindIndex(c => c.NodeId == childId);
-            if (childIndex == -1) {
-                return this;
-            }
-
+            if (childIndex == -1) { return this; }
             var newChildren = Children.ToList();
             newChildren[childIndex] = newChildren[childIndex] with {
                 Order = newOrder
@@ -177,18 +168,11 @@ namespace MemoTree.Core.Types {
         /// 移动子节点到指定位置
         /// </summary>
         public HierarchyInfo MoveChildToPosition(NodeId childId, int newPosition) {
-            if (!HasChild(childId) || newPosition < 0 || newPosition >= Children.Count) {
-                return this;
-            }
-
+            if (!HasChild(childId) || newPosition < 0 || newPosition >= Children.Count) { return this; }
             var orderedChildren = Children.OrderBy(c => c.Order).ToList();
             var currentPosition = orderedChildren.FindIndex(c => c.NodeId == childId);
 
-            if (currentPosition == newPosition) {
-                return this;
-            }
-
-            // 移除并重新插入
+            if (currentPosition == newPosition) { return this; }
             var child = orderedChildren[currentPosition];
             orderedChildren.RemoveAt(currentPosition);
             orderedChildren.Insert(newPosition, child);

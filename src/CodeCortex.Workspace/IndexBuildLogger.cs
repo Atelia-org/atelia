@@ -18,16 +18,14 @@ public static class IndexBuildLogger {
 
     public static void Log(string message) {
         try {
-            if (_logDir == null) {
-                return; // Not initialized; best-effort.
-            }
-
+            if (_logDir == null) { return; /* Not initialized; best-effort. */ }
             var line = $"[{DateTime.UtcNow:O}] {message}" + Environment.NewLine;
             var path = Path.Combine(_logDir, "index_build.log");
             lock (_gate) {
                 File.AppendAllText(path, line, Encoding.UTF8);
             }
-        } catch {
+        }
+        catch {
             // Swallow logging errors in S1.
         }
     }

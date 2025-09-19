@@ -119,7 +119,8 @@ public static class MarkdownLayout {
                     var fence = "```";
                     if (!string.IsNullOrEmpty(code.Language)) {
                         sb.AppendLine(indent + fence + code.Language);
-                    } else {
+                    }
+                    else {
                         sb.AppendLine(indent + fence);
                     }
 
@@ -137,7 +138,8 @@ public static class MarkdownLayout {
                         for (int idx = 0; idx < list.Items.Count; idx++) {
                             RenderListItem(sb, indent, isOrdered: true, index: idx + 1, list.Items[idx], baseHeadingLevel, maxAtxLevel, depth);
                         }
-                    } else {
+                    }
+                    else {
                         for (int idx = 0; idx < list.Items.Count; idx++) {
                             RenderListItem(sb, indent, isOrdered: false, index: idx + 1, list.Items[idx], baseHeadingLevel, maxAtxLevel, depth);
                         }
@@ -157,7 +159,8 @@ public static class MarkdownLayout {
                     int level = Math.Max(1, baseHeadingLevel + depth);
                     if (level <= maxAtxLevel) {
                         sb.AppendLine(indent + new string('#', level) + " " + heading);
-                    } else {
+                    }
+                    else {
                         sb.AppendLine(indent + heading + ":");
                     }
                     if (sec.Body.Children.Count > 0) {
@@ -189,7 +192,8 @@ public static class MarkdownLayout {
             if (content.Children.Count > 1) {
                 RenderBlocks(sb, content.Children.Skip(1).ToList(), indent + "  ", baseHeadingLevel, maxAtxLevel, depth + 1);
             }
-        } else {
+        }
+        else {
             sb.AppendLine(indent + marker.TrimEnd());
             RenderBlocks(sb, content.Children, indent + "  ", baseHeadingLevel, maxAtxLevel, depth + 1);
         }

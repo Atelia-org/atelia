@@ -31,11 +31,7 @@ internal class Program {
         };
 
         // 如果没有参数，默认执行渲染命令
-        if (args.Length == 0) {
-            return await HandleDefaultRenderAsync();
-        }
-
-        // 执行命令
+        if (args.Length == 0) { return await HandleDefaultRenderAsync(); }
         return await rootCommand.InvokeAsync(args);
     }
 
@@ -64,7 +60,8 @@ internal class Program {
             string output = await svc.RenderViewAsync("default");
             Console.WriteLine(output);
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine($"Error: {ex.Message}");
             return 1;
         }

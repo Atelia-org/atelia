@@ -126,7 +126,8 @@ public sealed class MT0003ArgumentIndentCodeFix : CodeFixProvider {
             for (; j < leading.Count; j++) {
                 builder.Add(leading[j]);
             }
-        } else {
+        }
+        else {
             // 行首没有换行（少见），直接重写前导空白
             int k = 0;
             while (k < leading.Count && leading[k].IsKind(SyntaxKind.WhitespaceTrivia)) {
@@ -249,7 +250,8 @@ public sealed class MT0003ArgumentIndentCodeFix : CodeFixProvider {
             for (; j < leading.Count; j++) {
                 listTrivia.Add(leading[j]);
             }
-        } else {
+        }
+        else {
             int k = 0;
             while (k < leading.Count && leading[k].IsKind(SyntaxKind.WhitespaceTrivia)) {
                 k++;

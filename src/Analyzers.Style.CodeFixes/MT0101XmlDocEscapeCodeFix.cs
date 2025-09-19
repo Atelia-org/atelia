@@ -94,11 +94,13 @@ namespace Atelia.Analyzers.Style {
                     sb.Append("&lt;");
                     i++;
                     continue;
-                } else if (ch == '>') {
+                }
+                else if (ch == '>') {
                     sb.Append("&gt;");
                     i++;
                     continue;
-                } else {
+                }
+                else {
                     sb.Append(ch);
                     i++;
                     continue;

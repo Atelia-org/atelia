@@ -29,10 +29,7 @@ public static class TypeIdGenerator {
     private static string CreateId(INamedTypeSymbol symbol, string fqn) {
         var baseInput = fqn + "|" + symbol.TypeKind + "|" + symbol.Arity;
         var id = "T_" + HashUtil.Sha256Base32Trunc(baseInput, 8);
-        if (_idToFqn.TryAdd(id, fqn)) {
-            return id;
-        }
-        // collision: extend length
+        if (_idToFqn.TryAdd(id, fqn)) { return id; }
         id = "T_" + HashUtil.Sha256Base32Trunc(baseInput, 12);
         if (!_idToFqn.TryAdd(id, fqn)) {
             // extremely unlikely: log and append random suffix
@@ -44,11 +41,9 @@ public static class TypeIdGenerator {
 
     private static void LogConflict(string fqn, string id) {
         try {
-            if (_logDir == null) {
-                return;
-            }
-
+            if (_logDir == null) { return; }
             File.AppendAllText(Path.Combine(_logDir, "hash_conflicts.log"), $"[{DateTime.UtcNow:O}] TypeIdConflict id={id} fqn={fqn}\n");
-        } catch { }
+        }
+        catch { }
     }
 }

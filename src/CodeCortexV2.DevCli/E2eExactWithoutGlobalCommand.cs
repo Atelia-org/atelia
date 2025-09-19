@@ -18,7 +18,8 @@ public static class E2eExactWithoutGlobalCommand {
             }
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             return 2;
         }
@@ -27,13 +28,8 @@ public static class E2eExactWithoutGlobalCommand {
     private static bool IsExactSatisfied(string json, string expectedFqnNoGlobal) {
         try {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) {
-                return false;
-            }
-            if (items.GetArrayLength() == 0) {
-                return false;
-            }
-
+            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) { return false; }
+            if (items.GetArrayLength() == 0) { return false; }
             var first = items[0];
             var name = first.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
             var flagsVal = first.TryGetProperty("MatchFlags", out var mk) ? mk.GetInt32() : -1;
@@ -41,7 +37,8 @@ public static class E2eExactWithoutGlobalCommand {
             // V2: exact means no flags are set
             var mkOk = flagsVal == 0;
             return nameOk && mkOk;
-        } catch {
+        }
+        catch {
             return false;
         }
     }

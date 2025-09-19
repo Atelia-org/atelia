@@ -35,10 +35,7 @@ namespace MemoTree.Core.Services {
 
         // 同步（只读路径）API
         public string GetWorkspaceRoot() {
-            if (_cachedWorkspaceRoot != null) {
-                return _cachedWorkspaceRoot;
-            }
-
+            if (_cachedWorkspaceRoot != null) { return _cachedWorkspaceRoot; }
             var projectRoot = _options.WorkspaceRoot;
             var workspaceDir = Path.Combine(projectRoot, WorkspaceDirectoryName);
             if (!Directory.Exists(workspaceDir)) {
@@ -116,17 +113,13 @@ namespace MemoTree.Core.Services {
         public string? GetLinkTarget() {
             var workspaceRoot = GetWorkspaceRoot();
             var linkConfigPath = Path.Combine(workspaceRoot, LinkConfigFileName);
-            if (!File.Exists(linkConfigPath)) {
-                return null;
-            }
-
+            if (!File.Exists(linkConfigPath)) { return null; }
             try {
                 var linkConfigJson = File.ReadAllText(linkConfigPath);
                 var linkConfig = JsonSerializer.Deserialize<Dictionary<string, object>>(linkConfigJson);
-                if (linkConfig?.TryGetValue("target", out var targetObj) == true && targetObj is JsonElement targetElement) {
-                    return targetElement.GetString();
-                }
-            } catch (Exception ex) {
+                if (linkConfig?.TryGetValue("target", out var targetObj) == true && targetObj is JsonElement targetElement) { return targetElement.GetString(); }
+            }
+            catch (Exception ex) {
                 _logger.LogWarning(ex, "Failed to read link configuration from {LinkConfigPath}", linkConfigPath);
             }
             return null;

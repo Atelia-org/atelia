@@ -182,7 +182,8 @@ namespace MemoTree.Core.Validation {
                         )
                     );
                 }
-            } catch (Exception ex) {
+            }
+            catch (Exception ex) {
                 builder.AddError(
                     ValidationError.Create("INVALID_PATH",
                         $"Invalid path format: {ex.Message}", configurationKey, path

@@ -17,9 +17,7 @@ public sealed class NamespaceOutlineProvider : INamespaceOutlineProvider {
     public Task<SymbolOutline> GetNamespaceOutlineAsync(SymbolId namespaceId, OutlineOptions? options, CancellationToken ct) {
         options ??= new OutlineOptions();
         var sym = _resolve(namespaceId) as INamespaceSymbol;
-        if (sym is null) {
-            throw new InvalidOperationException($"Namespace symbol not found: {namespaceId}");
-        }
+        if (sym is null) { throw new InvalidOperationException($"Namespace symbol not found: {namespaceId}"); }
         var outline = SymbolOutlineBuilder.BuildForNamespace(sym, includeChildren: true, ct);
         // Optional truncation
         if (options.MaxItems is int max && max > 0 && outline.Members.Count > max) {

@@ -23,9 +23,7 @@ public static class SymbolOutlineBuilder {
         if (includeMembers) {
             foreach (var m in type.GetMembers().Where(IsPublicApiMember).OrderBy(m => m.Name)) {
                 ct.ThrowIfCancellationRequested();
-                if (m is IMethodSymbol ms && (ms.MethodKind == MethodKind.PropertyGet || ms.MethodKind == MethodKind.PropertySet || ms.MethodKind == MethodKind.EventAdd || ms.MethodKind == MethodKind.EventRemove)) {
-                    continue;
-                }
+                if (m is IMethodSymbol ms && (ms.MethodKind == MethodKind.PropertyGet || ms.MethodKind == MethodKind.PropertySet || ms.MethodKind == MethodKind.EventAdd || ms.MethodKind == MethodKind.EventRemove)) { continue; }
                 members.Add(BuildForMember(m));
             }
         }

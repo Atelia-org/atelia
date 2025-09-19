@@ -36,19 +36,13 @@ public sealed class ServiceIndexManager : IDisposable {
     }
 
     public T ReadIndex<T>(Func<CodeCortexIndex, T> reader) {
-        if (reader == null) {
-            throw new ArgumentNullException(nameof(reader));
-        }
-
+        if (reader == null) { throw new ArgumentNullException(nameof(reader)); }
         _lock.EnterReadLock();
         try { return reader(_index); } finally { _lock.ExitReadLock(); }
     }
 
     public void UpdateIndex(Action<CodeCortexIndex> updater) {
-        if (updater == null) {
-            throw new ArgumentNullException(nameof(updater));
-        }
-
+        if (updater == null) { throw new ArgumentNullException(nameof(updater)); }
         var sw = System.Diagnostics.Stopwatch.StartNew();
         _lock.EnterWriteLock();
         try {
@@ -59,10 +53,12 @@ public sealed class ServiceIndexManager : IDisposable {
             SaveIndexToDisk();
             sw.Stop();
             DebugUtil.Print("IndexManager", $"Index update completed in {sw.ElapsedMilliseconds}ms");
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             DebugUtil.Print("IndexManager", $"Index update failed: {ex.Message}");
             throw;
-        } finally {
+        }
+        finally {
             _isUpdating = false;
             _lock.ExitWriteLock();
         }
@@ -78,7 +74,8 @@ public sealed class ServiceIndexManager : IDisposable {
             _fs.WriteAllText(tmp, json, System.Text.Encoding.UTF8);
             try { _fs.Replace(tmp, _indexPath, bak, ignoreMetadataErrors: true); } catch { _fs.Move(tmp, _indexPath, overwrite: true); }
             DebugUtil.Print("IndexManager", $"Index saved to {_indexPath}");
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             DebugUtil.Print("IndexManager", $"Failed to save index: {ex.Message}");
             throw;
         }

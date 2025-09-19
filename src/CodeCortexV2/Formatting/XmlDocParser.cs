@@ -89,7 +89,8 @@ internal static partial class XmlDocFormatter {
                     var href = sa.Attribute("href")?.Value;
                     if (!string.IsNullOrEmpty(href)) {
                         text = $"[{href}]({href})";
-                    } else {
+                    }
+                    else {
                         var disp = CrefToDisplay(sa.Attribute("cref")?.Value);
                         if (!string.IsNullOrWhiteSpace(disp)) {
                             text = "[" + disp + "]";
@@ -136,19 +137,24 @@ internal static partial class XmlDocFormatter {
                         if (!string.IsNullOrWhiteSpace(pt)) {
                             result.Add(new ParagraphBlock(pt));
                         }
-                    } else if (name == "br") {
+                    }
+                    else if (name == "br") {
                         FlushParagraph();
-                    } else if (name == "c") {
+                    }
+                    else if (name == "c") {
                         sb.Append('`').Append(e.Value).Append('`');
-                    } else if (name == "code") {
+                    }
+                    else if (name == "code") {
                         FlushParagraph();
                         var codeText = e.Value ?? string.Empty;
                         result.Add(new CodeBlock(codeText));
-                    } else if (name == "see" || name == "seealso") {
+                    }
+                    else if (name == "see" || name == "seealso") {
                         var lang = e.Attribute("langword")?.Value;
                         if (!string.IsNullOrEmpty(lang)) {
                             sb.Append(LangwordToDisplay(lang!));
-                        } else {
+                        }
+                        else {
                             var href = e.Attribute("href")?.Value;
                             if (!string.IsNullOrEmpty(href)) {
                                 var text = MapInlineNodesToText(e.Nodes());
@@ -157,7 +163,8 @@ internal static partial class XmlDocFormatter {
                                 }
 
                                 sb.Append('[').Append(text).Append("](").Append(href).Append(')');
-                            } else {
+                            }
+                            else {
                                 var cref = e.Attribute("cref")?.Value;
                                 var disp = CrefToDisplay(cref);
                                 if (!string.IsNullOrEmpty(disp)) {
@@ -165,12 +172,14 @@ internal static partial class XmlDocFormatter {
                                 }
                             }
                         }
-                    } else if (name == "paramref" || name == "typeparamref") {
+                    }
+                    else if (name == "paramref" || name == "typeparamref") {
                         var nm = e.Attribute("name")?.Value;
                         if (!string.IsNullOrEmpty(nm)) {
                             sb.Append(nm);
                         }
-                    } else if (name == "list") {
+                    }
+                    else if (name == "list") {
                         FlushParagraph();
                         var type = (e.Attribute("type")?.Value ?? "bullet").ToLowerInvariant();
                         if (type == "table") {
@@ -180,10 +189,12 @@ internal static partial class XmlDocFormatter {
                                 DebugUtil.Print("XmlDocPipeline", $"Table downgrade: lifted {liftedBlocks.Count} blocks from table cells.");
                                 result.AddRange(liftedBlocks);
                             }
-                        } else {
+                        }
+                        else {
                             result.Add(BuildListBlock(e, ordered: type == "number"));
                         }
-                    } else {
+                    }
+                    else {
                         // unknown: recurse; but separate from current paragraph
                         FlushParagraph();
                         var sub = MapNodesToBlocks(e.Nodes());
@@ -211,11 +222,13 @@ internal static partial class XmlDocFormatter {
                     var name = e.Name.LocalName.ToLowerInvariant();
                     if (name == "c") {
                         sb.Append('`').Append(e.Value).Append('`');
-                    } else if (name == "see" || name == "seealso") {
+                    }
+                    else if (name == "see" || name == "seealso") {
                         var lang = e.Attribute("langword")?.Value;
                         if (!string.IsNullOrEmpty(lang)) {
                             sb.Append(LangwordToDisplay(lang!));
-                        } else {
+                        }
+                        else {
                             var href = e.Attribute("href")?.Value;
                             if (!string.IsNullOrEmpty(href)) {
                                 var text = MapInlineNodesToText(e.Nodes());
@@ -224,7 +237,8 @@ internal static partial class XmlDocFormatter {
                                 }
 
                                 sb.Append('[').Append(text).Append("](").Append(href).Append(')');
-                            } else {
+                            }
+                            else {
                                 var cref = e.Attribute("cref")?.Value;
                                 var disp = CrefToDisplay(cref);
                                 if (!string.IsNullOrEmpty(disp)) {
@@ -232,14 +246,17 @@ internal static partial class XmlDocFormatter {
                                 }
                             }
                         }
-                    } else if (name == "paramref" || name == "typeparamref") {
+                    }
+                    else if (name == "paramref" || name == "typeparamref") {
                         var nm = e.Attribute("name")?.Value;
                         if (!string.IsNullOrEmpty(nm)) {
                             sb.Append(nm);
                         }
-                    } else if (name == "para" || name == "br") {
+                    }
+                    else if (name == "para" || name == "br") {
                         sb.Append(' ');
-                    } else {
+                    }
+                    else {
                         // inline fallback: recurse children inline
                         var inner = MapInlineNodesToText(e.Nodes());
                         if (!string.IsNullOrEmpty(inner)) {
@@ -282,7 +299,8 @@ internal static partial class XmlDocFormatter {
                     if (lifted.Count > 0) {
                         liftedBlocks.AddRange(lifted);
                     }
-                } else {
+                }
+                else {
                     var t = MapInlineNodesToText(c.Nodes());
                     cells.Add(new ParagraphBlock(t));
                 }
@@ -298,13 +316,8 @@ internal static partial class XmlDocFormatter {
         foreach (var n in nodes) {
             if (n is XElement el) {
                 var name = el.Name.LocalName.ToLowerInvariant();
-                if (name == "code" || name == "list" || name == "para") {
-                    return true;
-                }
-
-                if (HasBlockLevelContent(el.Nodes())) {
-                    return true;
-                }
+                if (name == "code" || name == "list" || name == "para") { return true; }
+                if (HasBlockLevelContent(el.Nodes())) { return true; }
             }
         }
         return false;
@@ -324,36 +337,44 @@ internal static partial class XmlDocFormatter {
                     }
 
                     NewLine(lines);
-                } else if (name == "see" || name == "seealso") {
+                }
+                else if (name == "see" || name == "seealso") {
                     var lang = e.Attribute("langword")?.Value;
                     if (!string.IsNullOrEmpty(lang)) {
                         AppendText(lines, LangwordToDisplay(lang!));
-                    } else {
+                    }
+                    else {
                         var cref = e.Attribute("cref")?.Value;
                         var disp = CrefToDisplay(cref);
                         if (!string.IsNullOrEmpty(disp)) {
                             AppendText(lines, "[" + disp + "]");
                         }
                     }
-                } else if (name == "typeparamref") {
+                }
+                else if (name == "typeparamref") {
                     var nm = e.Attribute("name")?.Value;
                     if (!string.IsNullOrEmpty(nm)) {
                         AppendText(lines, "[" + nm + "]");
                     }
-                } else if (name == "paramref") {
+                }
+                else if (name == "paramref") {
                     var nm = e.Attribute("name")?.Value;
                     if (!string.IsNullOrEmpty(nm)) {
                         AppendText(lines, "[" + nm + "]");
                     }
-                } else if (name == "c") {
+                }
+                else if (name == "c") {
                     AppendText(lines, "`" + e.Value + "`");
-                } else if (name == "code") {
+                }
+                else if (name == "code") {
                     NewLine(lines);
                     AppendText(lines, "`" + e.Value + "`");
                     NewLine(lines);
-                } else if (name == "list") {
+                }
+                else if (name == "list") {
                     RenderList(e, lines, level);
-                } else {
+                }
+                else {
                     foreach (var n in e.Nodes()) {
                         AppendNodeText(n, lines, level);
                     }
@@ -365,10 +386,7 @@ internal static partial class XmlDocFormatter {
     }
 
     private static void AppendText(List<string> lines, string text) {
-        if (string.IsNullOrEmpty(text)) {
-            return;
-        }
-
+        if (string.IsNullOrEmpty(text)) { return; }
         if (lines.Count == 0) {
             lines.Add(string.Empty);
         }
@@ -387,16 +405,14 @@ internal static partial class XmlDocFormatter {
     private static void NewLine(List<string> lines) {
         if (lines.Count == 0 || lines[^1].Length > 0) {
             lines.Add(string.Empty);
-        } else {
+        }
+        else {
             lines.Add(string.Empty);
         }
     }
 
     public static string CrefToDisplay(string? cref) {
-        if (string.IsNullOrEmpty(cref)) {
-            return string.Empty;
-        }
-
+        if (string.IsNullOrEmpty(cref)) { return string.Empty; }
         var s = cref;
         int colon = s.IndexOf(':');
         if (colon >= 0 && colon + 1 < s.Length) {
@@ -420,10 +436,7 @@ internal static partial class XmlDocFormatter {
             return simpleName + "(" + inside + ")";
         }
         var mapped = MapToCSharpKeyword(s);
-        if (mapped != null) {
-            return mapped;
-        }
-
+        if (mapped != null) { return mapped; }
         var lastOnly = s.Contains('.') ? s[(s.LastIndexOf('.') + 1)..] : s;
         mapped = MapToCSharpKeyword(lastOnly);
         return mapped ?? s;

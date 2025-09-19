@@ -40,14 +40,12 @@ public class FileViewStateStorage : IViewStateStorage {
 
     public async Task<MemoTreeViewState?> GetViewStateAsync(string viewName, CancellationToken cancellationToken = default) {
         var path = GetViewFilePath(viewName);
-        if (!File.Exists(path)) {
-            return null;
-        }
-
+        if (!File.Exists(path)) { return null; }
         try {
             var json = await File.ReadAllTextAsync(path, cancellationToken);
             return JsonSerializer.Deserialize<MemoTreeViewState>(json, _jsonOptions);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to read view state {View}", viewName);
             throw new StorageException($"Failed to read view state '{viewName}'", ex)
             .WithContext("ViewName", viewName)
@@ -66,10 +64,7 @@ public class FileViewStateStorage : IViewStateStorage {
 
     public Task<IReadOnlyList<string>> GetViewNamesAsync(CancellationToken cancellationToken = default) {
         var dir = _paths.GetViewsDirectory();
-        if (!Directory.Exists(dir)) {
-            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
-        }
-
+        if (!Directory.Exists(dir)) { return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>()); }
         var names = Directory.GetFiles(dir, "*.json")
         .Select(f => Path.GetFileNameWithoutExtension(f))
         .Where(n => !string.IsNullOrWhiteSpace(n))
@@ -105,11 +100,7 @@ public class FileViewStateStorage : IViewStateStorage {
     public async Task RenameViewAsync(string oldName, string newName, CancellationToken cancellationToken = default) {
         var oldPath = GetViewFilePath(oldName);
         var newPath = GetViewFilePath(newName);
-        if (!File.Exists(oldPath)) {
-            return; // 原文件不存在，直接返回
-        }
-
-        // 如果新名称已存在，避免覆盖 —— 这里选择简单返回；也可改为抛出异常或生成唯一名称
+        if (!File.Exists(oldPath)) { return; /* 原文件不存在，直接返回 */ }
         if (File.Exists(newPath)) {
             _logger.LogWarning("Skip rename: target view already exists. {Old} -> {New}", oldName, newName);
             return;
@@ -129,7 +120,8 @@ public class FileViewStateStorage : IViewStateStorage {
             if (File.Exists(oldPath)) {
                 File.Delete(oldPath);
             }
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to delete old view file after rename {Old} -> {New}", oldName, newName);
         }
     }
@@ -152,10 +144,7 @@ public class FileViewStateStorage : IViewStateStorage {
 
     public Task<int> CleanupOldViewsAsync(DateTime olderThan, CancellationToken cancellationToken = default) {
         var dir = _paths.GetViewsDirectory();
-        if (!Directory.Exists(dir)) {
-            return Task.FromResult(0);
-        }
-
+        if (!Directory.Exists(dir)) { return Task.FromResult(0); }
         var count = 0;
         foreach (var file in Directory.GetFiles(dir, "*.json")) {
             var last = File.GetLastWriteTimeUtc(file);

@@ -11,10 +11,7 @@ namespace MemoTree.Core.Json {
         public override NodeId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
             if (reader.TokenType == JsonTokenType.String) {
                 var value = reader.GetString();
-                if (string.IsNullOrEmpty(value)) {
-                    throw new JsonException("NodeId value cannot be null or empty");
-                }
-
+                if (string.IsNullOrEmpty(value)) { throw new JsonException("NodeId value cannot be null or empty"); }
                 return new NodeId(value);
             }
 
@@ -23,10 +20,7 @@ namespace MemoTree.Core.Json {
                 string? nodeIdValue = null;
 
                 while (reader.Read()) {
-                    if (reader.TokenType == JsonTokenType.EndObject) {
-                        break;
-                    }
-
+                    if (reader.TokenType == JsonTokenType.EndObject) { break; }
                     if (reader.TokenType == JsonTokenType.PropertyName) {
                         var propertyName = reader.GetString();
                         reader.Read(); // 移动到属性值
@@ -37,10 +31,7 @@ namespace MemoTree.Core.Json {
                     }
                 }
 
-                if (string.IsNullOrEmpty(nodeIdValue)) {
-                    throw new JsonException("NodeId object must contain a 'value' property");
-                }
-
+                if (string.IsNullOrEmpty(nodeIdValue)) { throw new JsonException("NodeId object must contain a 'value' property"); }
                 return new NodeId(nodeIdValue);
             }
 

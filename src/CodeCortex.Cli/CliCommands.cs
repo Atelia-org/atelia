@@ -17,7 +17,8 @@ namespace CodeCortex.Cli {
         public static async Task Outline2Async(string query, string? pathOpt, string host, int port) {
             // 先按 search2 语义执行；若唯一匹配则输出 outline，否则输出列表
             string path;
-            try { path = SlnPathHelper.ResolveSlnOrThrow(pathOpt); } catch (Exception ex) {
+            try { path = SlnPathHelper.ResolveSlnOrThrow(pathOpt); }
+            catch (Exception ex) {
                 await Console.Error.WriteLineAsync(ex.Message);
                 return;
             }
@@ -41,7 +42,8 @@ namespace CodeCortex.Cli {
 
         public static async Task Search2Async(string pattern, string? pathOpt, int offset, int limit, bool json, string host, int port) {
             string path;
-            try { path = SlnPathHelper.ResolveSlnOrThrow(pathOpt); } catch (Exception ex) {
+            try { path = SlnPathHelper.ResolveSlnOrThrow(pathOpt); }
+            catch (Exception ex) {
                 await Console.Error.WriteLineAsync(ex.Message);
                 return;
             }

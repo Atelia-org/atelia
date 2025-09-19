@@ -26,10 +26,7 @@ namespace MemoTree.Core.Types {
         /// 安全获取整数属性
         /// </summary>
         public static int? GetInt32(this IReadOnlyDictionary<string, object> properties, string key) {
-            if (!properties.TryGetValue(key, out var value)) {
-                return null;
-            }
-
+            if (!properties.TryGetValue(key, out var value)) { return null; }
             return value switch {
                 int intValue => intValue,
                 long longValue when longValue >= int.MinValue && longValue <= int.MaxValue => (int)longValue,
@@ -50,10 +47,7 @@ namespace MemoTree.Core.Types {
         /// 安全获取长整数属性
         /// </summary>
         public static long? GetInt64(this IReadOnlyDictionary<string, object> properties, string key) {
-            if (!properties.TryGetValue(key, out var value)) {
-                return null;
-            }
-
+            if (!properties.TryGetValue(key, out var value)) { return null; }
             return value switch {
                 long longValue => longValue,
                 int intValue => intValue,
@@ -74,10 +68,7 @@ namespace MemoTree.Core.Types {
         /// 安全获取双精度浮点数属性
         /// </summary>
         public static double? GetDouble(this IReadOnlyDictionary<string, object> properties, string key) {
-            if (!properties.TryGetValue(key, out var value)) {
-                return null;
-            }
-
+            if (!properties.TryGetValue(key, out var value)) { return null; }
             return value switch {
                 double doubleValue => doubleValue,
                 float floatValue => floatValue,
@@ -99,10 +90,7 @@ namespace MemoTree.Core.Types {
         /// 安全获取布尔属性
         /// </summary>
         public static bool? GetBoolean(this IReadOnlyDictionary<string, object> properties, string key) {
-            if (!properties.TryGetValue(key, out var value)) {
-                return null;
-            }
-
+            if (!properties.TryGetValue(key, out var value)) { return null; }
             return value switch {
                 bool boolValue => boolValue,
                 string stringValue when bool.TryParse(stringValue, out var parsed) => parsed,
@@ -123,10 +111,7 @@ namespace MemoTree.Core.Types {
         /// 安全获取日期时间属性
         /// </summary>
         public static DateTime? GetDateTime(this IReadOnlyDictionary<string, object> properties, string key) {
-            if (!properties.TryGetValue(key, out var value)) {
-                return null;
-            }
-
+            if (!properties.TryGetValue(key, out var value)) { return null; }
             return value switch {
                 DateTime dateTimeValue => dateTimeValue,
                 string stringValue when DateTime.TryParse(stringValue, out var parsed) => parsed,
@@ -145,10 +130,7 @@ namespace MemoTree.Core.Types {
         /// 安全获取字符串数组属性
         /// </summary>
         public static string[]? GetStringArray(this IReadOnlyDictionary<string, object> properties, string key) {
-            if (!properties.TryGetValue(key, out var value)) {
-                return null;
-            }
-
+            if (!properties.TryGetValue(key, out var value)) { return null; }
             return value switch {
                 string[] stringArray => stringArray,
                 List<string> stringList => stringList.ToArray(),
@@ -205,10 +187,7 @@ namespace MemoTree.Core.Types {
         /// 获取属性的类型名称
         /// </summary>
         public static string? GetPropertyTypeName(this IReadOnlyDictionary<string, object> properties, string key) {
-            if (!properties.TryGetValue(key, out var value) || value == null) {
-                return null;
-            }
-
+            if (!properties.TryGetValue(key, out var value) || value == null) { return null; }
             return value.GetType().Name;
         }
     }

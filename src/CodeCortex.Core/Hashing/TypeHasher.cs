@@ -30,7 +30,8 @@ public sealed class TypeHasher : ITypeHasher {
         try {
             var intermediate = Collect(symbol, config);
             return Hash(intermediate);
-        } catch {
+        }
+        catch {
             return TypeHashes.Empty; // Phase1 swallow
         }
     }
@@ -111,10 +112,7 @@ public sealed class TypeHasher : ITypeHasher {
                     foreach (var m in tds.Members.OfType<MethodDeclarationSyntax>()) {
                         var mods = m.Modifiers.ToString();
                         bool isPublicLike = mods.Contains("public") || mods.Contains("protected");
-                        if (!isPublicLike) {
-                            continue;
-                        }
-
+                        if (!isPublicLike) { continue; }
                         var paramTypes = string.Join(',', m.ParameterList.Parameters.Select(p => p.Type?.ToString() ?? "?"));
                         var candidate = "public " + (m.ReturnType?.ToString() ?? "void") + " " + m.Identifier.Text + "(" + paramTypes + ")";
                         if (!structureLines.Any(l => l.Contains(m.Identifier.Text + "("))) {
@@ -132,7 +130,8 @@ public sealed class TypeHasher : ITypeHasher {
                     }
                 }
             }
-        } catch { /* non-fatal */ }
+        }
+        catch { /* non-fatal */ }
 
         // Fallback: if we somehow failed to capture any method bodies though methods exist, re-scan syntax.
         if (publicBodies.Count == 0 && internalBodies.Count == 0) {
@@ -142,14 +141,12 @@ public sealed class TypeHasher : ITypeHasher {
                         var accessibility = m.Modifiers.ToString();
                         bool isPublicLike = accessibility.Contains("public") || accessibility.Contains("protected");
                         var bodyText = (m.Body != null ? m.Body.ToFullString() : m.ExpressionBody?.Expression.ToFullString()) ?? string.Empty;
-                        if (string.IsNullOrWhiteSpace(bodyText)) {
-                            continue;
-                        }
-
+                        if (string.IsNullOrWhiteSpace(bodyText)) { continue; }
                         bodyText = _trivia.Strip(bodyText);
                         if (isPublicLike) {
                             publicBodies.Add(bodyText);
-                        } else {
+                        }
+                        else {
                             internalBodies.Add(bodyText);
                         }
                         // Ensure structure line has at least method name if missing
@@ -195,10 +192,7 @@ public sealed class TypeHasher : ITypeHasher {
     }
 
     private void CollectBody(IMethodSymbol method, List<string> publicBodies, List<string> internalBodies) {
-        if (method.DeclaringSyntaxReferences.Length == 0) {
-            return;
-        }
-
+        if (method.DeclaringSyntaxReferences.Length == 0) { return; }
         foreach (var r in method.DeclaringSyntaxReferences) {
             if (r.GetSyntax() is MethodDeclarationSyntax mds) {
                 var body = mds.Body != null ? mds.Body.ToFullString() : mds.ExpressionBody?.Expression.ToFullString() ?? string.Empty;
@@ -207,7 +201,8 @@ public sealed class TypeHasher : ITypeHasher {
 
                 if (IsPublicLike(method)) {
                     publicBodies.Add(body);
-                } else {
+                }
+                else {
                     internalBodies.Add(body);
                 }
             }
@@ -219,14 +214,12 @@ public sealed class TypeHasher : ITypeHasher {
             if (r.GetSyntax() is PropertyDeclarationSyntax pds) {
                 foreach (var acc in pds.AccessorList?.Accessors ?? default!) {
                     var body = acc.Body != null ? acc.Body.ToFullString() : acc.ExpressionBody?.Expression.ToFullString() ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(body)) {
-                        continue;
-                    }
-
+                    if (string.IsNullOrWhiteSpace(body)) { continue; }
                     body = _trivia.Strip(body);
                     if (IsPublicLike(prop)) {
                         publicBodies.Add(body);
-                    } else {
+                    }
+                    else {
                         internalBodies.Add(body);
                     }
                 }
@@ -266,7 +259,8 @@ public sealed class TypeHasher : ITypeHasher {
 
         if (ms.IsAbstract) {
             sb.Append("abstract ");
-        } else if (ms.IsVirtual && !ms.IsOverride) {
+        }
+        else if (ms.IsVirtual && !ms.IsOverride) {
             sb.Append("virtual ");
         }
 
@@ -306,7 +300,8 @@ public sealed class TypeHasher : ITypeHasher {
         sb.Append(BuildAccessibility(fs));
         if (fs.IsConst) {
             sb.Append("const ");
-        } else if (fs.IsStatic) {
+        }
+        else if (fs.IsStatic) {
             sb.Append("static ");
         }
 
@@ -330,18 +325,12 @@ public sealed class TypeHasher : ITypeHasher {
     private static string NormalizeWhitespaceForCosmetic(string text) => text; // TODO: implement minimal normalization
 
     private static string ExtractFirstLine(string xml) {
-        if (string.IsNullOrWhiteSpace(xml)) {
-            return string.Empty;
-        }
-
+        if (string.IsNullOrWhiteSpace(xml)) { return string.Empty; }
         using var reader = new System.IO.StringReader(xml);
         string? line;
         while ((line = reader.ReadLine()) != null) {
             var t = line.Trim();
-            if (t.Length == 0) {
-                continue;
-            }
-
+            if (t.Length == 0) { continue; }
             return t.Length > 160 ? t[..160] : t;
         }
         return string.Empty;

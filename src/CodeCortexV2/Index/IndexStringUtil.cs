@@ -18,10 +18,7 @@ public static class IndexStringUtil {
     /// Example: "global::A.B.List`1" -&gt; "A.B.List".
     /// </summary>
     public static string NormalizeFqnBase(string fqn) {
-        if (string.IsNullOrEmpty(fqn)) {
-            return fqn;
-        }
-
+        if (string.IsNullOrEmpty(fqn)) { return fqn; }
         var s = StripGlobal(fqn);
         var parts = s.Split('.', StringSplitOptions.RemoveEmptyEntries);
         for (int i = 0; i < parts.Length; i++) {
@@ -40,20 +37,11 @@ public static class IndexStringUtil {
     /// Examples: "List`1" -&gt; "List", "Dictionary&lt;TKey, TValue&gt;" -&gt; "Dictionary".
     /// </summary>
     public static string ExtractGenericBase(string name) {
-        if (string.IsNullOrEmpty(name)) {
-            return name;
-        }
-
+        if (string.IsNullOrEmpty(name)) { return name; }
         var tick = name.IndexOf('`');
-        if (tick >= 0) {
-            return name.Substring(0, tick);
-        }
-
+        if (tick >= 0) { return name.Substring(0, tick); }
         var lt = name.IndexOf('<');
-        if (lt >= 0) {
-            return name.Substring(0, lt);
-        }
-
+        if (lt >= 0) { return name.Substring(0, lt); }
         return name;
     }
 }

@@ -15,10 +15,7 @@ namespace MemoTree.Core.Encoding {
         public override string ModeName => "base256";
 
         public override string EncodeBytes(byte[] data) {
-            if (data == null || data.Length == 0) {
-                return string.Empty;
-            }
-
+            if (data == null || data.Length == 0) { return string.Empty; }
             var chars = new char[data.Length];
             for (int i = 0; i < data.Length; i++) {
                 chars[i] = Charset[data[i]];
@@ -27,17 +24,11 @@ namespace MemoTree.Core.Encoding {
         }
 
         public override byte[] DecodeString(string encoded) {
-            if (string.IsNullOrEmpty(encoded)) {
-                return Array.Empty<byte>();
-            }
-
+            if (string.IsNullOrEmpty(encoded)) { return Array.Empty<byte>(); }
             var result = new byte[encoded.Length];
             for (int i = 0; i < encoded.Length; i++) {
                 var ch = encoded[i];
-                if (!CharToIndex.TryGetValue(ch, out int idx)) {
-                    throw new ArgumentException($"无效字符: {ch}", nameof(encoded));
-                }
-
+                if (!CharToIndex.TryGetValue(ch, out int idx)) { throw new ArgumentException($"无效字符: {ch}", nameof(encoded)); }
                 result[i] = (byte)idx;
             }
             return result;

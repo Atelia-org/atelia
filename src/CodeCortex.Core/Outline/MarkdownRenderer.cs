@@ -4,18 +4,12 @@ namespace CodeCortex.Core.Outline;
 
 internal static partial class MarkdownRenderer {
     public static void RenderLinesWithStructure(StringBuilder sb, List<string> lines, string indent, bool bulletizePlain, int startIndex = 0, bool insertBlankBeforeTable = true) {
-        if (lines == null || lines.Count == 0) {
-            return;
-        }
-
+        if (lines == null || lines.Count == 0) { return; }
         bool emittedSomething = false;
         bool lastWasTable = false;
         for (int i = startIndex; i < lines.Count; i++) {
             var raw = lines[i];
-            if (string.IsNullOrWhiteSpace(raw)) {
-                continue;
-            }
-
+            if (string.IsNullOrWhiteSpace(raw)) { continue; }
             var tr = raw.TrimStart();
             bool isTable = RxTableLine().IsMatch(tr) && HasStructuralPayload(tr);
             if (insertBlankBeforeTable && isTable && emittedSomething && !lastWasTable) {
@@ -23,22 +17,18 @@ internal static partial class MarkdownRenderer {
                 sb.AppendLine();
             }
             if (IsStructuralLine(tr)) {
-                if (!HasStructuralPayload(tr)) {
-                    continue;
-                }
-
+                if (!HasStructuralPayload(tr)) { continue; }
                 sb.AppendLine(indent + raw);
                 emittedSomething = true;
                 lastWasTable = isTable;
-            } else {
+            }
+            else {
                 var text = raw.Trim();
-                if (text.Length == 0) {
-                    continue;
-                }
-
+                if (text.Length == 0) { continue; }
                 if (bulletizePlain) {
                     sb.AppendLine(indent + "- " + text);
-                } else {
+                }
+                else {
                     sb.AppendLine(indent + text);
                 }
 
@@ -49,10 +39,7 @@ internal static partial class MarkdownRenderer {
     }
 
     public static bool IsStructuralLine(string line) {
-        if (string.IsNullOrEmpty(line)) {
-            return false;
-        }
-
+        if (string.IsNullOrEmpty(line)) { return false; }
         var tr = line.TrimStart();
         return RxBulletLine().IsMatch(tr) || RxOrderedLine().IsMatch(tr) || RxTableLine().IsMatch(tr);
     }
@@ -78,10 +65,7 @@ internal static partial class MarkdownRenderer {
         var sb = new StringBuilder();
         foreach (var l in lines) {
             var t = l.Trim();
-            if (t.Length == 0) {
-                continue;
-            }
-
+            if (t.Length == 0) { continue; }
             if (sb.Length > 0) {
                 sb.Append(' ');
             }

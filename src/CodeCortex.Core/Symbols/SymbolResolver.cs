@@ -52,10 +52,7 @@ public sealed class SymbolResolver : ISymbolResolver {
 
 #pragma warning disable 1591
     public IReadOnlyList<SymbolMatch> Resolve(string query, int limit = 20) {
-        if (string.IsNullOrWhiteSpace(query)) {
-            return Array.Empty<SymbolMatch>();
-        }
-
+        if (string.IsNullOrWhiteSpace(query)) { return Array.Empty<SymbolMatch>(); }
         query = query.Trim();
         var results = new List<SymbolMatch>();
         var addedIds = new HashSet<string>();
@@ -80,9 +77,7 @@ public sealed class SymbolResolver : ISymbolResolver {
                 .Select(a => new SymbolMatch(a.Id, a.Fqn, a.Kind, MatchKind.Suffix, a.Fqn.Length - query.Length, null))
                 .ToList();
             foreach (var m in allSuffix) {
-                if (Add(results, addedIds, m) && results.Count >= limit) {
-                    break;
-                }
+                if (Add(results, addedIds, m) && results.Count >= limit) { break; }
             }
         }
 
@@ -92,9 +87,7 @@ public sealed class SymbolResolver : ISymbolResolver {
             var wc = _all.Where(a => regex.IsMatch(a.Fqn))
                 .Select(a => new SymbolMatch(a.Id, a.Fqn, a.Kind, MatchKind.Wildcard, a.Fqn.Length, null));
             foreach (var m in wc) {
-                if (Add(results, addedIds, m) && results.Count >= limit) {
-                    break;
-                }
+                if (Add(results, addedIds, m) && results.Count >= limit) { break; }
             }
         }
 
@@ -102,21 +95,13 @@ public sealed class SymbolResolver : ISymbolResolver {
         if (!hasWildcard && results.Count < limit) {
             int threshold = ComputeFuzzyThreshold(query);
             foreach (var a in _all) {
-                if (addedIds.Contains(a.Id)) {
-                    continue;
-                }
-
+                if (addedIds.Contains(a.Id)) { continue; }
                 var simple = a.Simple;
-                if (Math.Abs(simple.Length - query.Length) > threshold) {
-                    continue;
-                }
-
+                if (Math.Abs(simple.Length - query.Length) > threshold) { continue; }
                 int dist = BoundedLevenshtein(simple, query, threshold);
                 if (dist >= 0 && dist <= threshold) {
                     Add(results, addedIds, new SymbolMatch(a.Id, a.Fqn, a.Kind, MatchKind.Fuzzy, 100 + dist, dist));
-                    if (results.Count >= limit) {
-                        break;
-                    }
+                    if (results.Count >= limit) { break; }
                 }
             }
         }
@@ -128,15 +113,10 @@ public sealed class SymbolResolver : ISymbolResolver {
             var baseName = ExtractGenericBase(simple);
             if (!string.IsNullOrEmpty(baseName) && _index.Maps.GenericBaseNameIndex.TryGetValue(baseName, out var genericIds)) {
                 foreach (var gId in genericIds) {
-                    if (addedIds.Contains(gId)) {
-                        continue;
-                    }
-
+                    if (addedIds.Contains(gId)) { continue; }
                     var t = _byId[gId];
                     Add(results, addedIds, new SymbolMatch(t.Id, t.Fqn, t.Kind, MatchKind.GenericBase, 50, null));
-                    if (results.Count >= limit) {
-                        break;
-                    }
+                    if (results.Count >= limit) { break; }
                 }
             }
         }
@@ -175,19 +155,11 @@ public sealed class SymbolResolver : ISymbolResolver {
     }
 
     private static string ExtractGenericBase(string name) {
-        if (string.IsNullOrEmpty(name)) {
-            return name;
-        }
-        // Handle metadata arity suffix: Foo`1
+        if (string.IsNullOrEmpty(name)) { return name; }
         var tick = name.IndexOf('`');
-        if (tick >= 0) {
-            return name.Substring(0, tick);
-        }
-        // Handle generic syntax: Foo<...>
+        if (tick >= 0) { return name.Substring(0, tick); }
         var lt = name.IndexOf('<');
-        if (lt >= 0) {
-            return name.Substring(0, lt);
-        }
+        if (lt >= 0) { return name.Substring(0, lt); }
         return name;
     }
 
@@ -200,19 +172,10 @@ public sealed class SymbolResolver : ISymbolResolver {
 
     /// <summary>Bounded Levenshtein distance; returns -1 if exceeds limit.</summary>
     public static int BoundedLevenshtein(string a, string b, int limit) {
-        if (a == b) {
-            return 0;
-        }
-
+        if (a == b) { return 0; }
         int m = a.Length, n = b.Length;
-        if (Math.Abs(m - n) > limit) {
-            return -1;
-        }
-
-        if (limit == 0) {
-            return -1;
-        }
-
+        if (Math.Abs(m - n) > limit) { return -1; }
+        if (limit == 0) { return -1; }
         var dp = new int[m + 1, n + 1];
         for (int i = 0; i <= m; i++) {
             dp[i, 0] = i;
@@ -233,9 +196,7 @@ public sealed class SymbolResolver : ISymbolResolver {
                 }
             }
             // Optional pruning: if minimum so far in row already exceeds limit and (m-i) cannot reduce below limit, early exit
-            if (rowBest > limit) {
-                return -1;
-            }
+            if (rowBest > limit) { return -1; }
         }
         var d = dp[m, n];
         return d > limit ? -1 : d;

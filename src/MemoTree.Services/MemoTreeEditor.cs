@@ -70,7 +70,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
                 // 有父节点，添加到父节点的子节点列表
                 _logger.LogDebug("Adding child {NodeId} to parent {ParentId}", nodeId, parentId);
                 await _storage.AddChildAsync(parentId.Value, nodeId, null, cancellationToken);
-            } else {
+            }
+            else {
                 // 顶层节点，确保在层次关系存储中有记录（即使没有子节点）
                 _logger.LogDebug("Ensuring top-level node {NodeId} exists in hierarchy", nodeId);
                 await _storage.EnsureNodeExistsInHierarchyAsync(nodeId, cancellationToken);
@@ -78,7 +79,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
 
             _logger.LogInformation("Created node {NodeId} with title '{Title}'", nodeId, title);
             return nodeId;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to create node with title '{Title}'", title);
             throw;
         }
@@ -87,11 +89,7 @@ public class MemoTreeEditor : IMemoTreeEditor {
     public async Task UpdateNodeContentAsync(NodeId nodeId, string content, CancellationToken cancellationToken = default) {
         try {
             var existingNode = await _storage.GetCompleteNodeAsync(nodeId, cancellationToken);
-            if (existingNode == null) {
-                throw new NodeNotFoundException(nodeId);
-            }
-
-            // 更新Full级别的内容
+            if (existingNode == null) { throw new NodeNotFoundException(nodeId); }
             var updatedContent = new NodeContent {
                 Id = nodeId,
                 Level = LodLevel.Full,
@@ -108,7 +106,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
             await _storage.SaveAsync(updatedMetadata, cancellationToken);
 
             _logger.LogInformation("Updated content for node {NodeId}", nodeId);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to update content for node {NodeId}", nodeId);
             throw;
         }
@@ -117,11 +116,7 @@ public class MemoTreeEditor : IMemoTreeEditor {
     public async Task UpdateNodeTitleAsync(NodeId nodeId, string title, CancellationToken cancellationToken = default) {
         try {
             var existingNode = await _storage.GetCompleteNodeAsync(nodeId, cancellationToken);
-            if (existingNode == null) {
-                throw new NodeNotFoundException(nodeId);
-            }
-
-            // 更新元数据
+            if (existingNode == null) { throw new NodeNotFoundException(nodeId); }
             var updatedMetadata = existingNode.Metadata with {
                 Title = title,
                 LastModified = DateTime.UtcNow
@@ -133,7 +128,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
             // MVP阶段：不创建Gist文件，保持“尚未摘要”状态
 
             _logger.LogInformation("Updated title for node {NodeId} to '{Title}'", nodeId, title);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to update title for node {NodeId}", nodeId);
             throw;
         }
@@ -159,7 +155,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
             await _storage.DeleteCompleteNodeAsync(nodeId, cancellationToken);
 
             _logger.LogInformation("Deleted node {NodeId} (recursive: {Recursive})", nodeId, recursive);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to delete node {NodeId}", nodeId);
             throw;
         }
@@ -174,7 +171,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
     public async Task<CognitiveNode?> GetNodeAsync(NodeId nodeId, CancellationToken cancellationToken = default) {
         try {
             return await _storage.GetCompleteNodeAsync(nodeId, cancellationToken);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to get node {NodeId}", nodeId);
             throw;
         }
@@ -183,7 +181,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
     public async Task<bool> NodeExistsAsync(NodeId nodeId, CancellationToken cancellationToken = default) {
         try {
             return await _storage.ExistsAsync(nodeId, cancellationToken);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to check existence of node {NodeId}", nodeId);
             throw;
         }
@@ -196,7 +195,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
             if (parentId == null) {
                 // 如果没有指定父节点，返回所有顶层节点
                 childIds = await _storage.GetTopLevelNodesAsync(cancellationToken);
-            } else {
+            }
+            else {
                 // 获取指定父节点的子节点
                 childIds = await _storage.GetChildrenAsync(parentId.Value, cancellationToken);
             }
@@ -211,7 +211,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
             }
 
             return children;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to get children for parent {ParentId}", parentId);
             throw;
         }
@@ -229,7 +230,8 @@ public class MemoTreeEditor : IMemoTreeEditor {
             }
 
             return nodes;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to get all nodes");
             throw;
         }

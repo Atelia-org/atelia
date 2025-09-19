@@ -46,16 +46,10 @@ namespace MemoTree.Core.Encoding {
         /// <param name="encoded">编码的字符串</param>
         /// <returns>解码后的GUID</returns>
         public virtual Guid DecodeUuid(string encoded) {
-            if (string.IsNullOrEmpty(encoded)) {
-                throw new ArgumentException("编码字符串不能为空", nameof(encoded));
-            }
-
+            if (string.IsNullOrEmpty(encoded)) { throw new ArgumentException("编码字符串不能为空", nameof(encoded)); }
             var guidBytes = DecodeString(encoded);
 
-            if (guidBytes.Length != 16) {
-                throw new ArgumentException($"解码结果长度错误: {guidBytes.Length} bytes，期望16 bytes", nameof(encoded));
-            }
-
+            if (guidBytes.Length != 16) { throw new ArgumentException($"解码结果长度错误: {guidBytes.Length} bytes，期望16 bytes", nameof(encoded)); }
             return new Guid(guidBytes);
         }
     }

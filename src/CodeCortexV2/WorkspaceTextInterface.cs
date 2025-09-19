@@ -78,9 +78,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
             var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
             page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
         }
-        if (json) {
-            return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true });
-        }
+        if (json) { return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true }); }
         var sb = new StringBuilder();
         sb.AppendLine($"Results {page.Items.Count}/{page.Total}, offset={page.Offset}, limit={page.Limit}{(page.NextOffset is int no ? ", nextOffset=" + no : string.Empty)}:");
         foreach (var h in page.Items) {
@@ -108,23 +106,15 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
         // Inline doc-id resolver (no fuzzy, no guessing)
         ISymbol? DocIdResolver(SymbolId id) {
             var val = id.Value;
-            if (string.IsNullOrEmpty(val)) {
-                return null;
-            }
-
+            if (string.IsNullOrEmpty(val)) { return null; }
             var solution = _host.Workspace.CurrentSolution;
             if (val.StartsWith("T:", StringComparison.Ordinal)) {
                 var meta = val.Substring(2);
                 foreach (var proj in solution.Projects) {
                     var comp = proj.GetCompilationAsync().GetAwaiter().GetResult();
-                    if (comp is null) {
-                        continue;
-                    }
-
+                    if (comp is null) { continue; }
                     var t = comp.GetTypeByMetadataName(meta);
-                    if (t is not null) {
-                        return t;
-                    }
+                    if (t is not null) { return t; }
                 }
                 return null;
             }
@@ -137,10 +127,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
                 var parts = name.Split('.', StringSplitOptions.RemoveEmptyEntries);
                 foreach (var proj in solution.Projects) {
                     var comp = proj.GetCompilationAsync().GetAwaiter().GetResult();
-                    if (comp is null) {
-                        continue;
-                    }
-
+                    if (comp is null) { continue; }
                     INamespaceSymbol cur = comp.Assembly.GlobalNamespace;
                     bool ok = true;
                     foreach (var seg in parts) {
@@ -151,9 +138,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
                         }
                         cur = next;
                     }
-                    if (ok && !cur.IsGlobalNamespace) {
-                        return cur;
-                    }
+                    if (ok && !cur.IsGlobalNamespace) { return cur; }
                 }
                 return null;
             }

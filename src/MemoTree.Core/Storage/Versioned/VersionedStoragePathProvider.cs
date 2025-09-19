@@ -79,33 +79,21 @@ namespace MemoTree.Core.Storage.Versioned {
         /// 文件名格式：{serialized-key}.{version}
         /// </summary>
         public (TKey key, long version)? TryParseFileName(string fileName) {
-            if (string.IsNullOrWhiteSpace(fileName)) {
-                return null;
-            }
-
+            if (string.IsNullOrWhiteSpace(fileName)) { return null; }
             var parts = fileName.Split('.');
-            if (parts.Length != 2) {
-                return null;
-            }
-
+            if (parts.Length != 2) { return null; }
             var keyPart = parts[0];
             var versionPart = parts[1];
 
             // 验证key部分
-            if (string.IsNullOrWhiteSpace(keyPart)) {
-                return null;
-            }
-
-            // 验证版本部分
+            if (string.IsNullOrWhiteSpace(keyPart)) { return null; }
             var version = _versionFormatter.ParseVersion(versionPart);
-            if (!version.HasValue) {
-                return null;
-            }
-
+            if (!version.HasValue) { return null; }
             try {
                 var key = _keySerializer.Deserialize(keyPart);
                 return (key, version.Value);
-            } catch {
+            }
+            catch {
                 // key反序列化失败
                 return null;
             }

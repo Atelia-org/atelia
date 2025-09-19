@@ -18,14 +18,16 @@ namespace CodeCortex.Core.Prompt {
             _fs = fs ?? new CodeCortex.Core.IO.DefaultFileSystem();
             if (initial != null) {
                 _set = new HashSet<T>(initial);
-            } else if (!string.IsNullOrEmpty(_persistPath) && _fs.FileExists(_persistPath)) {
+            }
+            else if (!string.IsNullOrEmpty(_persistPath) && _fs.FileExists(_persistPath)) {
                 try {
                     var json = _fs.ReadAllText(_persistPath);
                     var items = JsonSerializer.Deserialize<HashSet<T>>(json);
                     if (items != null) {
                         _set = items;
                     }
-                } catch { /* ignore */ }
+                }
+                catch { /* ignore */ }
             }
         }
 
@@ -54,7 +56,8 @@ namespace CodeCortex.Core.Prompt {
             if (!string.IsNullOrEmpty(_persistPath)) {
                 try {
                     _fs.WriteAllText(_persistPath, JsonSerializer.Serialize(_set));
-                } catch { /* ignore */ }
+                }
+                catch { /* ignore */ }
             }
         }
     }

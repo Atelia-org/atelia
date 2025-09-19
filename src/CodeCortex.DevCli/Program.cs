@@ -90,7 +90,8 @@ scanCmd.SetHandler(
                 Console.WriteLine($"Index reuse ({modeTag}): Files={(total == 0 ? reused.FileManifest.Count : total)} Changed=0 Projects={reused.Stats.ProjectCount} Types={reused.Stats.TypeCount} Reason={scanLoadReason}");
                 IndexBuildLogger.Log($"ReuseDecision OK Mode={modeTag} Files={(total == 0 ? reused.FileManifest.Count : total)} Changed=0 HashChecked={hashChecked}");
                 return;
-            } else {
+            }
+            else {
                 IndexBuildLogger.Log($"ReuseDecision REBUILD Mode={modeTag} Files={total} Changed={changed} HashChecked={hashChecked}");
             }
         }
@@ -136,9 +137,11 @@ outlineAll.SetHandler(
             string modeTag = reuseModeNorm;
             if (reuseModeNorm == "exists") {
                 reuse = true;
-            } else if (reuseModeNorm == "timestamp") {
+            }
+            else if (reuseModeNorm == "timestamp") {
                 reuse = CodeCortex.Core.Index.IndexReuseDecider.IsReusable(existing, out changed, out total);
-            } else if (reuseModeNorm == "hash") {
+            }
+            else if (reuseModeNorm == "hash") {
                 reuse = CodeCortex.Core.Index.IndexReuseDecider.IsReusableHash(existing, out changed, out total, out hashChecked);
             }
 
@@ -147,7 +150,8 @@ outlineAll.SetHandler(
                 Console.WriteLine($"Index reuse ({modeTag}): Files={(total == 0 ? existing.FileManifest.Count : total)} Changed=0 Projects={existing.Stats.ProjectCount} Types={existing.Stats.TypeCount} Reason={reason}");
                 IndexBuildLogger.Log($"ReuseDecision OK Mode={modeTag} Files={(total == 0 ? existing.FileManifest.Count : total)} Changed=0 HashChecked={hashChecked}");
                 return;
-            } else {
+            }
+            else {
                 IndexBuildLogger.Log($"ReuseDecision REBUILD Mode={modeTag} Files={total} Changed={changed} HashChecked={hashChecked}");
             }
         }
@@ -234,9 +238,7 @@ watchCmd.SetHandler(
         Project? ResolveProject(string file) {
             // naive: find first project containing a document with matching path
             foreach (var p in sol.Projects) {
-                if (p.Documents.Any(d => string.Equals(d.FilePath, file, StringComparison.OrdinalIgnoreCase))) {
-                    return p;
-                }
+                if (p.Documents.Any(d => string.Equals(d.FilePath, file, StringComparison.OrdinalIgnoreCase))) { return p; }
             }
             return null;
         }
@@ -244,15 +246,10 @@ watchCmd.SetHandler(
             // Phase1 simplified: linear scan (acceptable for small scale)
             foreach (var p in sol.Projects) {
                 var comp = p.GetCompilationAsync().GetAwaiter().GetResult();
-                if (comp == null) {
-                    continue;
-                }
-
+                if (comp == null) { continue; }
                 foreach (var t in new RoslynTypeEnumerator().Enumerate(comp)) {
                     var tid = CodeCortex.Core.Ids.TypeIdGenerator.GetId(t);
-                    if (tid == id) {
-                        return t;
-                    }
+                    if (tid == id) { return t; }
                 }
             }
             return null;
@@ -273,7 +270,8 @@ watchCmd.SetHandler(
                 var result = incr.Process(existing!, impact, new CodeCortex.Core.Hashing.TypeHasher(), new CodeCortex.Core.Outline.OutlineExtractor(), ResolveById, typesDir, new DefaultFileSystem(), CancellationToken.None);
                 store.Save(existing!);
                 Console.WriteLine($"Incremental: Files={classified.Count} ChangedTypes={result.ChangedTypeCount} Removed={result.RemovedTypeCount} DurationMs={result.DurationMs}");
-            } catch (Exception ex) {
+            }
+            catch (Exception ex) {
                 Console.Error.WriteLine("Incremental batch error: " + ex.Message);
             }
         };

@@ -24,10 +24,7 @@ public sealed partial class MsBuildWorkspaceLoader : IWorkspaceLoader {
     public MsBuildWorkspaceLoader(MsBuildMode mode = MsBuildMode.Auto) => _mode = mode;
 
     public async Task<LoadedSolution> LoadAsync(string entryPath, CancellationToken ct = default) {
-        if (_mode == MsBuildMode.Fallback) {
-            return EnsureFallback(entryPath);
-        }
-
+        if (_mode == MsBuildMode.Fallback) { return EnsureFallback(entryPath); }
         EnsureMsBuildRegistered();
         var attempt = 0;
         var maxAttempts = _mode == MsBuildMode.Force ? 1 : 3;
@@ -39,7 +36,8 @@ public sealed partial class MsBuildWorkspaceLoader : IWorkspaceLoader {
                 var solution = await LoadViaMsBuild(entryPath, ct).ConfigureAwait(false);
                 IndexBuildLogger.Log($"WorkspaceLoad.MSBuild path={entryPath} Projects={solution.Projects.Count}");
                 return solution;
-            } catch (Exception ex) when (_mode != MsBuildMode.Force) {
+            }
+            catch (Exception ex) when (_mode != MsBuildMode.Force) {
                 last = ex;
                 IndexBuildLogger.Log($"WorkspaceLoad.Error attempt={attempt} {ex.GetType().Name} {ex.Message}");
                 // brief backoff except last
@@ -56,10 +54,7 @@ public sealed partial class MsBuildWorkspaceLoader : IWorkspaceLoader {
     }
 
     private static void EnsureMsBuildRegistered() {
-        if (Interlocked.Exchange(ref _registered, 1) == 1) {
-            return;
-        }
-
+        if (Interlocked.Exchange(ref _registered, 1) == 1) { return; }
         if (!MSBuildLocator.IsRegistered) {
             MSBuildLocator.RegisterDefaults();
             IndexBuildLogger.Log("MSBuildLocator.RegisteredDefaults");
@@ -67,21 +62,18 @@ public sealed partial class MsBuildWorkspaceLoader : IWorkspaceLoader {
     }
 
     private static async Task<LoadedSolution> LoadViaMsBuild(string entryPath, CancellationToken ct) {
-        if (string.IsNullOrWhiteSpace(entryPath)) {
-            throw new ArgumentException("entryPath empty", nameof(entryPath));
-        }
-
+        if (string.IsNullOrWhiteSpace(entryPath)) { throw new ArgumentException("entryPath empty", nameof(entryPath)); }
         using var ws = MSBuildWorkspace.Create();
         ws.WorkspaceFailed += (s, e) => IndexBuildLogger.Log($"WorkspaceWarning {e.Diagnostic.Kind} {e.Diagnostic.Message}");
         Solution solution;
         if (entryPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)) {
             solution = await ws.OpenSolutionAsync(entryPath, cancellationToken: ct).ConfigureAwait(false);
-        } else if (entryPath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) {
+        }
+        else if (entryPath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) {
             var project = await ws.OpenProjectAsync(entryPath, cancellationToken: ct).ConfigureAwait(false);
             solution = project.Solution;
-        } else {
-            throw new ArgumentException("Entry path must be a .sln or .csproj", nameof(entryPath));
         }
+        else { throw new ArgumentException("Entry path must be a .sln or .csproj", nameof(entryPath)); }
         return new LoadedSolution(solution, solution.Projects.ToList());
     }
 
@@ -102,9 +94,11 @@ internal static class FallbackBuilder {
             string rootDir;
             if (Directory.Exists(entryPath)) {
                 rootDir = entryPath;
-            } else if (File.Exists(entryPath)) {
+            }
+            else if (File.Exists(entryPath)) {
                 rootDir = Path.GetDirectoryName(Path.GetFullPath(entryPath)) ?? Directory.GetCurrentDirectory();
-            } else {
+            }
+            else {
                 rootDir = Directory.GetCurrentDirectory();
             }
 
@@ -135,7 +129,8 @@ internal static class FallbackBuilder {
             }
             var sol = proj.Solution;
             return new LoadedSolution(sol, sol.Projects.ToList());
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             IndexBuildLogger.Log($"WorkspaceLoad.Fallback.Error {ex.Message}");
             return null;
         }

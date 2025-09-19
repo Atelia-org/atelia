@@ -23,10 +23,7 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
         var root = tree.GetRoot();
         foreach (var decl in root.DescendantNodes().OfType<TypeDeclarationSyntax>()) {
             var symbol = model.GetDeclaredSymbol(decl) as INamedTypeSymbol;
-            if (symbol == null) {
-                continue;
-            }
-
+            if (symbol == null) { continue; }
             var fqn = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "", StringComparison.Ordinal);
             yield return fqn;
         }
@@ -79,15 +76,9 @@ public sealed class ImpactAnalyzer : IImpactAnalyzer {
                     }
 
                     var comp = proj.GetCompilationAsync(ct).GetAwaiter().GetResult();
-                    if (comp == null) {
-                        continue;
-                    }
-
+                    if (comp == null) { continue; }
                     var tree = comp.SyntaxTrees.FirstOrDefault(t => string.Equals(t.FilePath, path, StringComparison.OrdinalIgnoreCase));
-                    if (tree == null) {
-                        continue;
-                    }
-
+                    if (tree == null) { continue; }
                     var newFqns = new HashSet<string>(GetTypeFqnsInFile(comp, tree));
                     var oldFqns = fileToFqns.TryGetValue(path, out var oldSet) ? oldSet : new HashSet<string>();
                     var added = newFqns.Except(oldFqns).ToList();

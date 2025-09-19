@@ -80,7 +80,8 @@ public sealed class MT0007ClosingParenIndentCodeFix : CodeFixProvider {
         SyntaxTriviaList newLeading;
         if (prevEndsWithNewLine) {
             newLeading = SyntaxFactory.TriviaList(indentTrivia);
-        } else {
+        }
+        else {
             newLeading = SyntaxFactory.TriviaList(SyntaxFactory.ElasticCarriageReturnLineFeed, indentTrivia);
         }
         var newToken = closeParen.WithLeadingTrivia(newLeading);

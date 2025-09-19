@@ -71,23 +71,14 @@ namespace MemoTree.Core.Storage.Relations {
         /// </summary>
         /// <returns>如果路径有效则返回true</returns>
         public bool IsValid() {
-            if (NodePath.Count < 2 || Relations.Count != NodePath.Count - 1) {
-                return false;
-            }
-
-            if (NodePath.First() != StartNodeId || NodePath.Last() != EndNodeId) {
-                return false;
-            }
-
-            // 验证路径连续性
+            if (NodePath.Count < 2 || Relations.Count != NodePath.Count - 1) { return false; }
+            if (NodePath.First() != StartNodeId || NodePath.Last() != EndNodeId) { return false; }
             for (int i = 0; i < Relations.Count; i++) {
                 var relation = Relations[i];
                 var currentNode = NodePath[i];
                 var nextNode = NodePath[i + 1];
 
-                if (relation.SourceId != currentNode || relation.TargetId != nextNode) {
-                    return false;
-                }
+                if (relation.SourceId != currentNode || relation.TargetId != nextNode) { return false; }
             }
 
             return true;
@@ -106,10 +97,7 @@ namespace MemoTree.Core.Storage.Relations {
         /// </summary>
         /// <returns>路径描述字符串</returns>
         public string GetDescription() {
-            if (!Relations.Any()) {
-                return "空路径";
-            }
-
+            if (!Relations.Any()) { return "空路径"; }
             var relationDescriptions = Relations.Select(r => r.Type.GetDisplayName());
             return string.Join(" → ", relationDescriptions);
         }
@@ -119,11 +107,7 @@ namespace MemoTree.Core.Storage.Relations {
         /// </summary>
         /// <returns>复杂度分数</returns>
         public double CalculateComplexity() {
-            if (!Relations.Any()) {
-                return 0;
-            }
-
-            // 基于路径长度和关系类型多样性计算复杂度
+            if (!Relations.Any()) { return 0; }
             var lengthFactor = Math.Log(Length + 1);
             var diversityFactor = GetRelationTypes().Count / (double)Relations.Count;
 

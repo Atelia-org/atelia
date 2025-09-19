@@ -29,10 +29,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
         public static QueryInfo Preprocess(string? query) {
             var raw = (query ?? string.Empty).Trim();
-            if (raw.Length == 0) {
-                return new QueryInfo(string.Empty, SymbolKinds.None, false, Array.Empty<string>(), Array.Empty<string>(), null);
-            }
-
+            if (raw.Length == 0) { return new QueryInfo(string.Empty, SymbolKinds.None, false, Array.Empty<string>(), Array.Empty<string>(), null); }
             bool root = false;
             SymbolKinds kinds = SymbolKinds.None;
             var eff = raw;
@@ -44,9 +41,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
             // DocId-style prefix: N:/T:/M:/P:/F:/E:; reject "!:" explicitly
             if (eff.Length > 2 && eff[1] == ':') {
-                if (eff[0] == '!') {
-                    return new QueryInfo(raw, SymbolKinds.None, true, Array.Empty<string>(), Array.Empty<string>(), "Unsupported DocId prefix '!:' (internal Roslyn-only). Use N:/T:/M:/P:/F:/E:");
-                }
+                if (eff[0] == '!') { return new QueryInfo(raw, SymbolKinds.None, true, Array.Empty<string>(), Array.Empty<string>(), "Unsupported DocId prefix '!:' (internal Roslyn-only). Use N:/T:/M:/P:/F:/E:"); }
                 if (eff[0] == 'N' || eff[0] == 'T' || eff[0] == 'M' || eff[0] == 'P' || eff[0] == 'F' || eff[0] == 'E') {
                     root = true; // DocId implies root constraint
                     kinds = eff[0] switch {
@@ -63,15 +58,9 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             }
 
             var segsOrig = SplitSegments(eff);
-            if (segsOrig.Length == 0) {
-                return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), null);
-            }
-
-            // MVP reject malformed generic segments (unbalanced '<' '>')
+            if (segsOrig.Length == 0) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), null); }
             foreach (var s in segsOrig) {
-                if (!IsBalancedAngles(s)) {
-                    return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), "Unbalanced generic angle brackets: '<' '>'");
-                }
+                if (!IsBalancedAngles(s)) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), "Unbalanced generic angle brackets: '<' '>'"); }
             }
 
             var segsNorm = new string[segsOrig.Length];
@@ -90,21 +79,12 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
 
         // --- Helpers ---
         public static string[] SplitSegments(string q) {
-            if (string.IsNullOrEmpty(q)) {
-                return Array.Empty<string>();
-            }
-
+            if (string.IsNullOrEmpty(q)) { return Array.Empty<string>(); }
             var parts = q.Split('.', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) {
-                return parts;
-            }
-
+            if (parts.Length == 0) { return parts; }
             var last = parts[^1];
             var typeSegs = last.Split('+', StringSplitOptions.RemoveEmptyEntries);
-            if (typeSegs.Length == 1) {
-                return parts;
-            }
-
+            if (typeSegs.Length == 1) { return parts; }
             var list = new List<string>(parts.Length - 1 + typeSegs.Length);
             for (int i = 0; i < parts.Length - 1; i++) {
                 list.Add(parts[i]);
@@ -115,10 +95,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         }
 
         public static (string baseName, int arity) ParseTypeSegment(string seg) {
-            if (string.IsNullOrEmpty(seg)) {
-                return (seg, 0);
-            }
-
+            if (string.IsNullOrEmpty(seg)) { return (seg, 0); }
             var baseName = seg;
             int arity = 0;
             var back = seg.IndexOf('`');
@@ -136,7 +113,8 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 var rt = inside.LastIndexOf('>');
                 if (rt < 0) {
                     // unbalanced, let caller reject via IsBalancedAngles
-                } else {
+                }
+                else {
                     inside = inside.Substring(0, rt);
                     if (inside.Length > 0) {
                         arity = inside.Count(c => c == ',') + 1;
@@ -149,15 +127,9 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
         private static bool IsBalancedAngles(string seg) {
             int bal = 0;
             foreach (var ch in seg) {
-                if (ch == '<') {
-                    bal++;
-                } else if (ch == '>') {
-                    bal--;
-                }
-
-                if (bal < 0) {
-                    return false;
-                }
+                if (ch == '<') { bal++; }
+                else if (ch == '>') { bal--; }
+                if (bal < 0) { return false; }
             }
             return bal == 0;
         }

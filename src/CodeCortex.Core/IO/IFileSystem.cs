@@ -44,7 +44,8 @@ public sealed class DefaultFileSystem : IFileSystem {
         try {
             System.IO.File.Delete(path);
             return true;
-        } catch { return false; }
+        }
+        catch { return false; }
     }
     public void CreateDirectory(string path) {
         System.IO.Directory.CreateDirectory(path);

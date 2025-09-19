@@ -48,16 +48,10 @@ namespace CodeCortex.Core.Prompt {
             var result = new List<string>();
             int total = 0;
             foreach (var (title, outlines) in sections) {
-                if (outlines.Count == 0) {
-                    continue;
-                }
-
+                if (outlines.Count == 0) { continue; }
                 result.Add($"# {title}");
                 foreach (var outline in outlines) {
-                    if (total + outline.Length > maxChars && title == "Recent") {
-                        break;
-                    }
-
+                    if (total + outline.Length > maxChars && title == "Recent") { break; }
                     result.Add(outline);
                     total += outline.Length;
                 }
@@ -81,16 +75,10 @@ namespace CodeCortex.Core.Prompt {
             var result = new List<string>();
             int total = 0;
             foreach (var (title, outlines) in sections) {
-                if (outlines.Count == 0) {
-                    continue;
-                }
-
+                if (outlines.Count == 0) { continue; }
                 result.Add($"# {title}");
                 foreach (var outline in outlines) {
-                    if (total + outline.Length > maxChars && title == "Recent") {
-                        break;
-                    }
-
+                    if (total + outline.Length > maxChars && title == "Recent") { break; }
                     result.Add(outline);
                     total += outline.Length;
                 }

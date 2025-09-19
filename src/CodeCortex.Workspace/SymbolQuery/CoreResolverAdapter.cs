@@ -30,7 +30,7 @@ namespace CodeCortex.Workspace.SymbolQuery {
             if (index != null) {
                 var core = new CoreSymbolResolver(index);
                 int fetch = Math.Max(limit + offset, 200);
-                if (fetch <= 0) fetch = 200;
+                if (fetch <= 0) { fetch = 200; }
                 var coreMatches = core.Search(pattern, fetch);
                 var mapped = coreMatches.Select(m => new SymbolMatch(m.Fqn, MapKind(m.MatchKind))).ToArray();
                 return Page(mapped, offset, limit);
@@ -52,7 +52,7 @@ namespace CodeCortex.Workspace.SymbolQuery {
             static string ExtractSimple(string fqn) {
                 var s = fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring(8) : fqn;
                 var i = s.LastIndexOf('.');
-                return i >= 0 ? s[(i+1)..] : s;
+                return i >= 0 ? s[(i + 1)..] : s;
             }
         }
 
@@ -74,7 +74,8 @@ namespace CodeCortex.Workspace.SymbolQuery {
                     var dir = Path.GetDirectoryName(solPath)!;
                     return Path.Combine(dir, ".codecortex");
                 }
-            } catch { }
+            }
+            catch { }
             return Path.Combine(Directory.GetCurrentDirectory(), ".codecortex");
         }
 

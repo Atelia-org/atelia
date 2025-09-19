@@ -47,21 +47,16 @@ public class V2_JsonFormatterTests {
             if (el.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "table") {
                 if (el.TryGetProperty("headers", out var hdrProp) && hdrProp.ValueKind == JsonValueKind.Array) {
                     var hs = hdrProp.EnumerateArray().Select(x => x.GetString()).ToArray();
-                    if (hs.SequenceEqual(headers)) {
-                        return true;
-                    }
+                    if (hs.SequenceEqual(headers)) { return true; }
                 }
             }
             foreach (var prop in el.EnumerateObject()) {
-                if (FindTableWithHeaders(prop.Value, headers)) {
-                    return true;
-                }
+                if (FindTableWithHeaders(prop.Value, headers)) { return true; }
             }
-        } else if (el.ValueKind == JsonValueKind.Array) {
+        }
+        else if (el.ValueKind == JsonValueKind.Array) {
             foreach (var child in el.EnumerateArray()) {
-                if (FindTableWithHeaders(child, headers)) {
-                    return true;
-                }
+                if (FindTableWithHeaders(child, headers)) { return true; }
             }
         }
         return false;

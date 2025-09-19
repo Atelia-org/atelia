@@ -74,14 +74,8 @@ namespace MemoTree.Core.Types {
         /// 获取内容的摘要（前N个字符）
         /// </summary>
         public string GetSummary(int maxLength = 100) {
-            if (string.IsNullOrWhiteSpace(Content)) {
-                return string.Empty;
-            }
-
-            if (Content.Length <= maxLength) {
-                return Content;
-            }
-
+            if (string.IsNullOrWhiteSpace(Content)) { return string.Empty; }
+            if (Content.Length <= maxLength) { return Content; }
             return Content.Substring(0, maxLength) + "...";
         }
 
@@ -101,10 +95,7 @@ namespace MemoTree.Core.Types {
         /// 计算内容的SHA256哈希值
         /// </summary>
         private static string ComputeHash(string content) {
-            if (string.IsNullOrEmpty(content)) {
-                return string.Empty;
-            }
-
+            if (string.IsNullOrEmpty(content)) { return string.Empty; }
             using var sha256 = SHA256.Create();
             var bytes = System.Text.Encoding.UTF8.GetBytes(content);
             var hashBytes = sha256.ComputeHash(bytes);
@@ -115,10 +106,7 @@ namespace MemoTree.Core.Types {
         /// 比较两个内容是否相同（基于哈希值）
         /// </summary>
         public bool HasSameContent(NodeContent other) {
-            if (other == null) {
-                return false;
-            }
-
+            if (other == null) { return false; }
             return ContentHash == other.ContentHash && !string.IsNullOrEmpty(ContentHash);
         }
 

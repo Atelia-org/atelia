@@ -74,9 +74,11 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         _debounce.Elapsed += async (_, __) => {
             try {
                 await FlushAsync().ConfigureAwait(false);
-            } catch (OperationCanceledException) {
+            }
+            catch (OperationCanceledException) {
                 // ignore during shutdown
-            } catch (ObjectDisposedException) {
+            }
+            catch (ObjectDisposedException) {
                 // timer or resources disposed during shutdown
             }
         };
@@ -94,10 +96,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     }
 
     private void OnWorkspaceChanged(object? sender, WorkspaceChangeEventArgs e) {
-        if (_cts.IsCancellationRequested) {
-            return;
-        }
-
+        if (_cts.IsCancellationRequested) { return; }
         _pending.Enqueue(e);
         // reset debounce
         _debounce.Interval = DebounceMs;
@@ -130,24 +129,19 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     }
 
     private async Task FlushAsync() {
-        if (_cts.IsCancellationRequested) {
-            return;
-        }
-
+        if (_cts.IsCancellationRequested) { return; }
         List<WorkspaceChangeEventArgs> batch = new();
         while (_pending.TryDequeue(out var e)) {
             batch.Add(e);
         }
 
 
-        if (batch.Count == 0) {
-            return;
-        }
-
+        if (batch.Count == 0) { return; }
         await _writer.WaitAsync(_cts.Token).ConfigureAwait(false);
         try {
             await ApplyBatchAsync(batch, _cts.Token).ConfigureAwait(false);
-        } finally {
+        }
+        finally {
             _writer.Release();
         }
     }
@@ -194,7 +188,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             var next = Current.WithDelta(delta);
             System.Threading.Volatile.Write(ref _current, next); // publish (single-writer model)
             DebugUtil.Print("IndexSync", $"Applied in {sw.ElapsedMilliseconds}ms");
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             DebugUtil.Print("IndexSync", $"ERROR applying batch: {ex.Message}");
             if (FullRebuildFallbackOnError) {
                 try {
@@ -203,7 +198,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                     System.Threading.Volatile.Write(ref _current, next);
                     await RebuildDocTypeMapsAsync(_workspace.CurrentSolution, ct).ConfigureAwait(false);
                     DebugUtil.Print("IndexSync", $"Fallback full rebuild succeeded");
-                } catch (Exception ex2) {
+                }
+                catch (Exception ex2) {
                     DebugUtil.Print("IndexSync", $"Fallback full rebuild failed: {ex2.Message}");
                 }
             }
@@ -213,7 +209,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     public void Dispose() {
         try {
             _workspace.WorkspaceChanged -= OnWorkspaceChanged;
-        } catch { }
+        }
+        catch { }
         _debounce.Stop();
         _debounce.Dispose();
         _cts.Cancel();
@@ -274,10 +271,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         foreach (var project in solution.Projects) {
             ct.ThrowIfCancellationRequested();
             var comp = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-            if (comp is null) {
-                continue;
-            }
-
+            if (comp is null) { continue; }
             WalkNamespace(comp.Assembly.GlobalNamespace);
 
             void WalkNamespace(INamespaceSymbol ns) {
@@ -331,15 +325,9 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         var groups = docs.GroupBy(d => d.ProjectId);
         foreach (var g in groups) {
             var proj = solution.GetProject(g.Key);
-            if (proj is null) {
-                continue;
-            }
-
+            if (proj is null) { continue; }
             var comp = await proj.GetCompilationAsync(ct).ConfigureAwait(false);
-            if (comp is null) {
-                continue;
-            }
-
+            if (comp is null) { continue; }
             foreach (var docId in g) {
                 var doc = solution.GetDocument(docId);
                 if (doc is null) {
@@ -354,10 +342,12 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                                     var parentNs = GetParentNamespaceFromTypeDocId(id);
                                     CascadeNamespaceRemovalsIfEmpty(parentNs, nsRemovals, pendingTypeRemovals: typeRemovals);
                                     _typeIdToDocs = _typeIdToDocs.Remove(id);
-                                } else {
+                                }
+                                else {
                                     _typeIdToDocs = _typeIdToDocs.SetItem(id, nds);
                                 }
-                            } else {
+                            }
+                            else {
                                 // No mapping -> conservatively mark removal
                                 typeRemovals.Add(id);
                                 var parentNs = GetParentNamespaceFromTypeDocId(id);
@@ -371,23 +361,13 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 }
 
                 var model = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                if (model is null) {
-                    continue;
-                }
-
-                // Extract current types from syntax
+                if (model is null) { continue; }
                 var root = await doc.GetSyntaxRootAsync(ct).ConfigureAwait(false);
-                if (root is null) {
-                    continue;
-                }
-
+                if (root is null) { continue; }
                 var declared = new List<(string Id, SymbolEntry Entry, string ParentNs)>();
                 foreach (var node in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>()) {
                     var sym = model.GetDeclaredSymbol(node, ct) as INamedTypeSymbol;
-                    if (sym is null) {
-                        continue;
-                    }
-
+                    if (sym is null) { continue; }
                     var fqn = sym.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                     var fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
                     var fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
@@ -423,7 +403,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                             var parentNs = GetParentNamespaceFromTypeDocId(id);
                             CascadeNamespaceRemovalsIfEmpty(parentNs, nsRemovals, pendingTypeRemovals: typeRemovals);
                         }
-                    } else {
+                    }
+                    else {
                         // unknown mapping -> treat as removable
                         typeRemovals.Add(id);
                     }
@@ -442,7 +423,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                         var nds = ds.Remove(docId);
                         if (nds.IsEmpty) {
                             _typeIdToDocs = _typeIdToDocs.Remove(id);
-                        } else {
+                        }
+                        else {
                             _typeIdToDocs = _typeIdToDocs.SetItem(id, nds);
                         }
                     }
@@ -461,22 +443,13 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             ct.ThrowIfCancellationRequested();
             foreach (var doc in project.Documents) {
                 var model = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                if (model is null) {
-                    continue;
-                }
-
+                if (model is null) { continue; }
                 var root = await doc.GetSyntaxRootAsync(ct).ConfigureAwait(false);
-                if (root is null) {
-                    continue;
-                }
-
+                if (root is null) { continue; }
                 var setBuilder = ImmutableHashSet.CreateBuilder<string>(StringComparer.Ordinal);
                 foreach (var node in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>()) {
                     var sym = model.GetDeclaredSymbol(node, ct) as INamedTypeSymbol;
-                    if (sym is null) {
-                        continue;
-                    }
-
+                    if (sym is null) { continue; }
                     var fqn = sym.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                     var fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
                     var sid = DocumentationCommentId.CreateDeclarationId(sym) ?? "T:" + fqnNoGlobal;
@@ -499,10 +472,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     }
 
     private static void EnsureNamespaceChain(string parentNs, List<SymbolEntry> nsAdds) {
-        if (string.IsNullOrEmpty(parentNs)) {
-            return;
-        }
-
+        if (string.IsNullOrEmpty(parentNs)) { return; }
         var parts = parentNs.Split('.', StringSplitOptions.RemoveEmptyEntries);
         string cur = string.Empty;
         for (int i = 0; i < parts.Length; i++) {
@@ -524,9 +494,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 nsRemovals.Add("N:" + cur);
                 var lastDot = cur.LastIndexOf('.');
                 cur = lastDot > 0 ? cur.Substring(0, lastDot) : string.Empty;
-            } else {
-                break; // stop cascading upward when current ns still has other children
             }
+            else { break; /* stop cascading upward when current ns still has other children */ }
         }
     }
 
@@ -534,15 +503,9 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         // If there are any descendants other than the pending type removals, keep the namespace.
         var q = ns + "."; // ensure dot so prefix branch is used in Search
         var page = Current.Search(q, limit: 10, offset: 0, kinds: SymbolKinds.All);
-        if (page.Total == 0) {
-            return true;
-        }
-        // if all returned items are type hits and in pending removals, we still need to see if more exist beyond limit; use a second probe when total>page
+        if (page.Total == 0) { return true; }
         bool allPending = page.Items.All(h => h.Kind == SymbolKinds.Type && pendingTypeRemovals.Contains(h.SymbolId.Value ?? string.Empty));
-        if (!allPending) {
-            return false;
-        }
-        // If page.Total > page.Items.Count, there are more children than we saw; assume we cannot remove
+        if (!allPending) { return false; }
         return page.Total <= page.Items.Count;
     }
 
@@ -550,14 +513,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
 
     private static string GetParentNamespaceFromTypeDocId(string typeDocId) {
         // typeDocId examples: "T:Ns1.Ns2.Type", "T:Ns1.Outer+Inner", "T:Ns1.Ns2.Generic`1"
-        if (string.IsNullOrEmpty(typeDocId)) {
-            return string.Empty;
-        }
-
-        if (!typeDocId.StartsWith("T:", StringComparison.Ordinal)) {
-            return string.Empty;
-        }
-
+        if (string.IsNullOrEmpty(typeDocId)) { return string.Empty; }
+        if (!typeDocId.StartsWith("T:", StringComparison.Ordinal)) { return string.Empty; }
         var rest = typeDocId.Substring(2);
         var lastDot = rest.LastIndexOf('.');
         return lastDot > 0 ? rest.Substring(0, lastDot) : string.Empty;

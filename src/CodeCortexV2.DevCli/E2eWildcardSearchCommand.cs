@@ -26,7 +26,8 @@ public static class E2eWildcardSearchCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             return 2;
         }
@@ -35,19 +36,16 @@ public static class E2eWildcardSearchCommand {
     private static bool HasWildcardHit(string json, string mustContain) {
         try {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) {
-                return false;
-            }
+            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) { return false; }
             foreach (var it in items.EnumerateArray()) {
                 // Bitwise check for Wildcard flag (V2 flags enum)
                 var flagsVal = it.TryGetProperty("MatchFlags", out var m) ? m.GetInt32() : 0;
                 var name = it.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
-                if ((flagsVal & (int)MatchFlags.Wildcard) != 0 && name.Contains(mustContain, StringComparison.Ordinal)) {
-                    return true;
-                }
+                if ((flagsVal & (int)MatchFlags.Wildcard) != 0 && name.Contains(mustContain, StringComparison.Ordinal)) { return true; }
             }
 
-        } catch { }
+        }
+        catch { }
         return false;
     }
 }

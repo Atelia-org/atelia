@@ -99,10 +99,7 @@ namespace MemoTree.Core.Types {
         /// 设置节点内容对象
         /// </summary>
         public CognitiveNode SetContent(NodeContent content) {
-            if (content.Id != Id) {
-                throw new ArgumentException($"Content node ID {content.Id} does not match cognitive node ID {Id}");
-            }
-
+            if (content.Id != Id) { throw new ArgumentException($"Content node ID {content.Id} does not match cognitive node ID {Id}"); }
             var newContents = new Dictionary<LodLevel, NodeContent>(Contents) {
                 [content.Level] = content
             };
@@ -120,10 +117,7 @@ namespace MemoTree.Core.Types {
         /// 移除指定LOD级别的内容
         /// </summary>
         public CognitiveNode RemoveContent(LodLevel level) {
-            if (!HasContent(level)) {
-                return this;
-            }
-
+            if (!HasContent(level)) { return this; }
             var newContents = new Dictionary<LodLevel, NodeContent>(Contents);
             newContents.Remove(level);
 
@@ -144,10 +138,7 @@ namespace MemoTree.Core.Types {
         /// 更新元数据
         /// </summary>
         public CognitiveNode WithMetadata(NodeMetadata newMetadata) {
-            if (newMetadata.Id != Id) {
-                throw new ArgumentException($"Metadata node ID {newMetadata.Id} does not match cognitive node ID {Id}");
-            }
-
+            if (newMetadata.Id != Id) { throw new ArgumentException($"Metadata node ID {newMetadata.Id} does not match cognitive node ID {Id}"); }
             return this with {
                 Metadata = newMetadata
             };
@@ -248,23 +239,11 @@ namespace MemoTree.Core.Types {
         public bool IsValid() {
             // 检查元数据和内容的一致性
             foreach (var (level, content) in Contents) {
-                if (content.Id != Id) {
-                    return false;
-                }
-
-                if (content.Level != level) {
-                    return false;
-                }
-
-                if (!content.IsValidForLevel()) {
-                    return false;
-                }
-
-                // 检查哈希值是否匹配
+                if (content.Id != Id) { return false; }
+                if (content.Level != level) { return false; }
+                if (!content.IsValidForLevel()) { return false; }
                 if (Metadata.ContentHashes.TryGetValue(level, out var expectedHash) &&
-                expectedHash != content.ContentHash) {
-                    return false;
-                }
+                expectedHash != content.ContentHash) { return false; }
             }
 
             return true;

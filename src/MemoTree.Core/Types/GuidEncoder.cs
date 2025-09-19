@@ -37,10 +37,7 @@ namespace MemoTree.Core.Types {
         /// 检测编码格式类型（智能格式识别）
         /// </summary>
         public static GuidEncodingType DetectEncodingType(string encoded) {
-            if (string.IsNullOrWhiteSpace(encoded)) {
-                return GuidEncodingType.Unknown;
-            }
-
+            if (string.IsNullOrWhiteSpace(encoded)) { return GuidEncodingType.Unknown; }
             return encoded.Length switch {
                 11 when encoded.All(c => c >= '\u4e00' && c <= '\u9fff') => GuidEncodingType.Base4096CJK,
                 22 when IsBase64String(encoded) => GuidEncodingType.Base64,
@@ -73,18 +70,14 @@ namespace MemoTree.Core.Types {
                 var withPadding = value + "==";
                 Convert.FromBase64String(withPadding);
                 return true;
-            } catch {
+            }
+            catch {
                 return false;
             }
         }
 
         private static Guid FromHexTruncated(string encoded) {
-            if (encoded.Length != 12) {
-                throw new ArgumentException($"Invalid hex truncated GUID length: {encoded.Length}, expected 12");
-            }
-
-            // 这是一个已废弃的格式，仅用于向后兼容
-            // 由于截取了GUID的一部分，无法完全恢复原始GUID
+            if (encoded.Length != 12) { throw new ArgumentException($"Invalid hex truncated GUID length: {encoded.Length}, expected 12"); }
             throw new NotSupportedException("Hex truncated format is deprecated and cannot be reliably decoded");
         }
     }

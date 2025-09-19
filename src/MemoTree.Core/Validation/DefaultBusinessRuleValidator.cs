@@ -216,7 +216,8 @@ namespace MemoTree.Core.Validation {
                         $"Node type {childType} is not compatible with parent type {parentType}"
                     )
                 );
-            } else if ((parentType, childType) is not (NodeType.Container, _) and not (_, NodeType.Note)) {
+            }
+            else if ((parentType, childType) is not (NodeType.Container, _) and not (_, NodeType.Note)) {
                 // 对于非明确兼容的组合给出警告
                 builder.AddWarning(
                     ValidationWarning.ForBestPractice(

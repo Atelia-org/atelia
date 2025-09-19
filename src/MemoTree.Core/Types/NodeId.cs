@@ -11,10 +11,7 @@ namespace MemoTree.Core.Types {
         }
 
         public NodeId(string value) {
-            if (string.IsNullOrWhiteSpace(value)) {
-                throw new ArgumentException("NodeId cannot be null or empty", nameof(value));
-            }
-
+            if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException("NodeId cannot be null or empty", nameof(value)); }
             Value = value;
         }
 
@@ -27,11 +24,7 @@ namespace MemoTree.Core.Types {
         /// 验证ID格式是否有效
         /// </summary>
         public static bool IsValidFormat(string value) {
-            if (string.IsNullOrWhiteSpace(value)) {
-                return false;
-            }
-
-            // 检测编码类型并验证
+            if (string.IsNullOrWhiteSpace(value)) { return false; }
             var encodingType = GuidEncoder.DetectEncodingType(value);
             return encodingType != GuidEncodingType.Unknown;
         }
@@ -40,10 +33,7 @@ namespace MemoTree.Core.Types {
         /// 从字符串创建NodeId，验证格式
         /// </summary>
         public static NodeId FromString(string value) {
-            if (!IsValidFormat(value)) {
-                throw new ArgumentException($"Invalid NodeId format: {value}", nameof(value));
-            }
-
+            if (!IsValidFormat(value)) { throw new ArgumentException($"Invalid NodeId format: {value}", nameof(value)); }
             return new NodeId(value);
         }
 

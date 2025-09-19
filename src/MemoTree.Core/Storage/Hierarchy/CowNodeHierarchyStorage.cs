@@ -98,10 +98,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
             CancellationToken cancellationToken = default
         ) {
             var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken);
-            if (parentInfo == null) {
-                return Array.Empty<NodeId>();
-            }
-
+            if (parentInfo == null) { return Array.Empty<NodeId>(); }
             return parentInfo.Children
             .OrderBy(c => c.Order)
             .Select(c => c.NodeId)
@@ -171,10 +168,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
             CancellationToken cancellationToken = default
         ) {
             // guard: prevent cycles
-            if (await WouldCreateCycleAsync(parentId, childId, cancellationToken)) {
-                throw new InvalidOperationException($"Adding child {childId} to parent {parentId} would create a cycle");
-            }
-
+            if (await WouldCreateCycleAsync(parentId, childId, cancellationToken)) { throw new InvalidOperationException($"Adding child {childId} to parent {parentId} would create a cycle"); }
             var parentInfo = await GetHierarchyInfoAsync(parentId, cancellationToken)
             ?? HierarchyInfo.Create(parentId);
 
@@ -216,10 +210,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
             var currentParentId = await GetParentAsync(nodeId, cancellationToken);
 
             // guard: prevent cycles if moving under a descendant
-            if (newParentId.HasValue && await WouldCreateCycleAsync(newParentId.Value, nodeId, cancellationToken)) {
-                throw new InvalidOperationException($"Moving node {nodeId} under {newParentId} would create a cycle");
-            }
-
+            if (newParentId.HasValue && await WouldCreateCycleAsync(newParentId.Value, nodeId, cancellationToken)) { throw new InvalidOperationException($"Moving node {nodeId} under {newParentId} would create a cycle"); }
             await MoveNodeAtomicAsync(nodeId, currentParentId, newParentId, newOrder, cancellationToken);
         }
 
@@ -392,10 +383,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
 
             while (currentId.HasValue) {
                 var parentId = await GetParentAsync(currentId.Value, cancellationToken);
-                if (parentId == null) {
-                    break;
-                }
-
+                if (parentId == null) { break; }
                 depth++;
                 currentId = parentId;
             }
@@ -422,7 +410,8 @@ namespace MemoTree.Core.Storage.Hierarchy {
                 if (!parentIndex.ContainsKey(parentId)) {
                     topLevelNodes.Add(parentId);
                     _logger.LogDebug("Found top-level node: {NodeId}", parentId);
-                } else {
+                }
+                else {
                     _logger.LogDebug("Node {NodeId} is a child of {ParentId}", parentId, parentIndex[parentId]);
                 }
             }
@@ -443,10 +432,7 @@ namespace MemoTree.Core.Storage.Hierarchy {
             var currentId = (NodeId?)parentId;
 
             while (currentId.HasValue) {
-                if (currentId.Value == childId) {
-                    return true;
-                }
-
+                if (currentId.Value == childId) { return true; }
                 currentId = await GetParentAsync(currentId.Value, cancellationToken);
             }
 
@@ -471,17 +457,11 @@ namespace MemoTree.Core.Storage.Hierarchy {
         // --- cache helpers ---
         private async Task EnsureParentIndexUpToDateAsync(CancellationToken cancellationToken) {
             var currentVersion = await _versionedStorage.GetCurrentVersionAsync(cancellationToken);
-            if (_parentIndexCache != null && _parentIndexVersion == currentVersion) {
-                return;
-            }
-
+            if (_parentIndexCache != null && _parentIndexVersion == currentVersion) { return; }
             await _parentIndexLock.WaitAsync(cancellationToken);
             try {
                 currentVersion = await _versionedStorage.GetCurrentVersionAsync(cancellationToken);
-                if (_parentIndexCache != null && _parentIndexVersion == currentVersion) {
-                    return;
-                }
-
+                if (_parentIndexCache != null && _parentIndexVersion == currentVersion) { return; }
                 var previousVersion = _parentIndexVersion;
                 var sw = Stopwatch.StartNew();
                 _logger.LogDebug("Rebuilding parent index cache for version {Version} (prev {PrevVersion})", currentVersion, previousVersion);
@@ -502,13 +482,15 @@ namespace MemoTree.Core.Storage.Hierarchy {
                         "Parent index cache rebuilt in {ElapsedMs} ms, size {Size}, version {Version} (prev {PrevVersion}), total rebuilds {Rebuilds}",
                         _lastParentIndexRebuildMs, _parentIndexCache.Count, _parentIndexVersion, previousVersion, _parentIndexRebuildCount
                     );
-                } else {
+                }
+                else {
                     _logger.LogDebug(
                         "Parent index cache rebuilt in {ElapsedMs} ms, size {Size}, version {Version} (prev {PrevVersion}), total rebuilds {Rebuilds}",
                         _lastParentIndexRebuildMs, _parentIndexCache.Count, _parentIndexVersion, previousVersion, _parentIndexRebuildCount
                     );
                 }
-            } finally {
+            }
+            finally {
                 _parentIndexLock.Release();
             }
         }

@@ -42,10 +42,7 @@ public static class AnalyzerTestHost {
             var withAnalyzers = compilation.WithAnalyzers(ImmutableArray.Create(analyzer));
             var diags = await withAnalyzers.GetAnalyzerDiagnosticsAsync();
             var targets = diags.Where(d => d.Id == diagnosticId).OrderBy(d => d.Location.SourceSpan.Start).ToArray();
-            if (targets.Length == 0) {
-                break;
-            }
-
+            if (targets.Length == 0) { break; }
             var workspace = new AdhocWorkspace();
             var projId = ProjectId.CreateNewId();
             var docId = DocumentId.CreateNewId(projId);
@@ -81,9 +78,7 @@ public static class AnalyzerTestHost {
                 var dll = Directory.GetFiles(candidate, "Atelia.Analyzers.Style.dll", SearchOption.AllDirectories)
                     .OrderByDescending(File.GetLastWriteTimeUtc)
                     .FirstOrDefault();
-                if (dll != null) {
-                    return System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromAssemblyPath(dll);
-                }
+                if (dll != null) { return System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromAssemblyPath(dll); }
             }
             dir = dir.Parent!;
         }

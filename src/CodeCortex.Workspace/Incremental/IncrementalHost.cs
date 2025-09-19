@@ -83,7 +83,8 @@ public sealed class IncrementalHost : IDisposable {
         try {
             _watcher.Start();
             DebugUtil.Print("Watcher", $"File watcher started for {_solutionRoot}");
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             DebugUtil.Print("Watcher", $"Failed to start file watcher: {ex.Message}");
             throw;
         }
@@ -119,7 +120,8 @@ public sealed class IncrementalHost : IDisposable {
                             compilationCache[project.Id] = comp;
                             compBuilds++;
                             return comp;
-                        } catch (Exception ex) {
+                        }
+                        catch (Exception ex) {
                             DebugUtil.Print("Incremental", $"Error getting compilation for project {project.Name}: {ex.Message}");
                             compilationCache[project.Id] = null;
                             compBuilds++;
@@ -136,16 +138,10 @@ public sealed class IncrementalHost : IDisposable {
                         set.Add(fqn);
                     }
                     INamedTypeSymbol? ResolveUsingCache(string typeId) {
-                        if (_solution == null) {
-                            return null;
-                        }
-
+                        if (_solution == null) { return null; }
                         resolveAttempts++;
                         var typeEntry = index.Types.FirstOrDefault(t => t.Id == typeId);
-                        if (typeEntry == null) {
-                            return null;
-                        }
-
+                        if (typeEntry == null) { return null; }
                         var fqn = typeEntry.Fqn;
                         foreach (var project in _solution.Projects) {
                             if (SeenNegative(project.Id, fqn)) {
@@ -175,7 +171,8 @@ public sealed class IncrementalHost : IDisposable {
                     DebugUtil.Print("Incremental", $"Resolve: attempts={resolveAttempts}, hits={resolveHits}");
                 }
             );
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             DebugUtil.Print("Incremental", $"Incremental update failed: {ex.Message}");
         }
     }
@@ -187,7 +184,8 @@ public sealed class IncrementalHost : IDisposable {
             var loaded = await loader.LoadAsync(_solutionRoot).ConfigureAwait(false);
             _solution = loaded.Solution;
             DebugUtil.Print("Incremental", $"Solution loaded: {loaded.Projects.Count} projects");
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             DebugUtil.Print("Incremental", $"Failed to load solution: {ex.Message}\n{ex}");
             _solution = null;
         }
@@ -210,39 +208,29 @@ public sealed class IncrementalHost : IDisposable {
 
     private void ApplyDocumentUpdates(IReadOnlyList<ClassifiedFileChange> classified) {
         try {
-            if (_solution == null) {
-                return;
-            }
-
+            if (_solution == null) { return; }
             var paths = classified.Where(c => c.Kind != ClassifiedKind.Delete).Select(c => c.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (paths.Count == 0) {
-                return;
-            }
-
+            if (paths.Count == 0) { return; }
             var solution = _solution;
             int applied = 0;
             foreach (var path in paths) {
                 try {
                     var doc = solution.Projects.SelectMany(p => p.Documents).FirstOrDefault(d => string.Equals(d.FilePath, path, StringComparison.OrdinalIgnoreCase));
-                    if (doc == null) {
-                        continue;
-                    }
-
-                    if (!_fs.FileExists(path)) {
-                        continue;
-                    }
-
+                    if (doc == null) { continue; }
+                    if (!_fs.FileExists(path)) { continue; }
                     var text = _fs.ReadAllText(path);
                     var src = SourceText.From(text, Encoding.UTF8);
                     solution = solution.WithDocumentText(doc.Id, src, PreservationMode.PreserveValue);
                     applied++;
-                } catch (Exception ex) { DebugUtil.Print("Incremental", $"ApplyDocumentUpdates failed for {path}: {ex.Message}"); }
+                }
+                catch (Exception ex) { DebugUtil.Print("Incremental", $"ApplyDocumentUpdates failed for {path}: {ex.Message}"); }
             }
             if (applied > 0) {
                 _solution = solution;
                 DebugUtil.Print("Incremental", $"Applied document updates: {applied}");
             }
-        } catch (Exception ex) { DebugUtil.Print("Incremental", $"ApplyDocumentUpdates error: {ex.Message}"); }
+        }
+        catch (Exception ex) { DebugUtil.Print("Incremental", $"ApplyDocumentUpdates error: {ex.Message}"); }
     }
 
     public void Dispose() {
@@ -250,7 +238,8 @@ public sealed class IncrementalHost : IDisposable {
             _batcher?.Dispose();
             _watcher?.Dispose();
             DebugUtil.Print("Incremental", "IncrementalHost disposed");
-        } catch (Exception ex) { DebugUtil.Print("Incremental", $"Error during disposal: {ex.Message}"); }
+        }
+        catch (Exception ex) { DebugUtil.Print("Incremental", $"Error during disposal: {ex.Message}"); }
     }
 }
 

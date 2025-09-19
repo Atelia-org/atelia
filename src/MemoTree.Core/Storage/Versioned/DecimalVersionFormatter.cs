@@ -10,9 +10,7 @@ namespace MemoTree.Core.Storage.Versioned {
         }
 
         public long? ParseVersion(string versionString) {
-            if (long.TryParse(versionString, out var version) && version >= 1) {
-                return version;
-            }
+            if (long.TryParse(versionString, out var version) && version >= 1) { return version; }
             return null;
         }
     }

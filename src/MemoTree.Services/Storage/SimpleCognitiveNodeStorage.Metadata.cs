@@ -10,14 +10,12 @@ public partial class SimpleCognitiveNodeStorage {
 
     public async Task<NodeMetadata?> GetAsync(NodeId nodeId, CancellationToken cancellationToken = default) {
         var metadataPath = GetNodeMetadataPath(nodeId);
-        if (!File.Exists(metadataPath)) {
-            return null;
-        }
-
+        if (!File.Exists(metadataPath)) { return null; }
         try {
             var yamlContent = await File.ReadAllTextAsync(metadataPath, cancellationToken);
             return _yamlDeserializer.Deserialize<NodeMetadata>(yamlContent);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to load metadata for node {NodeId}", nodeId);
             throw new StorageException($"Failed to load metadata for node {nodeId}", ex)
             .WithContext("NodeId", nodeId)
@@ -35,7 +33,8 @@ public partial class SimpleCognitiveNodeStorage {
             var yamlContent = _yamlSerializer.Serialize(metadata);
             await WriteTextAtomicAsync(metadataPath, yamlContent, cancellationToken);
             _logger.LogDebug("Saved metadata for node {NodeId}", metadata.Id);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to save metadata for node {NodeId}", metadata.Id);
             throw;
         }
@@ -102,7 +101,8 @@ public partial class SimpleCognitiveNodeStorage {
                     nodeIds.Add(nodeId);
                     _logger.LogDebug("GetAllNodeIdsAsync: Found valid node: {NodeId}", nodeId);
                 }
-            } catch {
+            }
+            catch {
                 // 忽略无效的目录名
                 _logger.LogDebug("GetAllNodeIdsAsync: Ignoring invalid directory: {DirName}", dirName);
             }

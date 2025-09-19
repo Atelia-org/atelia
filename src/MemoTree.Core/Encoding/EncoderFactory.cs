@@ -28,18 +28,9 @@ namespace MemoTree.Core.Encoding {
         /// 自动选择编码器：根据字符集大小选择最佳编码（无字符集则使用Base4096默认字符集）
         /// </summary>
         public static IEncoder CreateAuto(string? charset = null) {
-            if (charset == null) {
-                return new Base4096Encoder(null);
-            }
-
-            if (charset.Length >= 4096) {
-                return new Base4096Encoder(charset);
-            }
-
-            if (charset.Length >= 256) {
-                return new Base256Encoder(charset);
-            }
-
+            if (charset == null) { return new Base4096Encoder(null); }
+            if (charset.Length >= 4096) { return new Base4096Encoder(charset); }
+            if (charset.Length >= 256) { return new Base256Encoder(charset); }
             throw new ArgumentException("自动模式需要至少256个字符的字符集，或不提供字符集以使用Base4096默认字符集", nameof(charset));
         }
     }

@@ -25,10 +25,7 @@ public static class E2eAddMethodCommand {
             INamedTypeSymbol? target = null;
             foreach (var proj in host.Workspace.CurrentSolution.Projects) {
                 var comp = await proj.GetCompilationAsync(cts.Token).ConfigureAwait(false);
-                if (comp is null) {
-                    continue;
-                }
-
+                if (comp is null) { continue; }
                 var t = comp.GetTypeByMetadataName(targetFqn);
                 if (t is not null) {
                     target = t;
@@ -57,7 +54,8 @@ public static class E2eAddMethodCommand {
             const string marker = "// E2E_INSERT_HERE";
             if (mutated.Contains(marker)) {
                 mutated = mutated.Replace(marker, methodCode + "    " + marker);
-            } else {
+            }
+            else {
                 var lastBrace = mutated.LastIndexOf('}');
                 if (lastBrace <= 0) {
                     Console.Error.WriteLine("[e2e] cannot find insertion point.");
@@ -96,7 +94,8 @@ public static class E2eAddMethodCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             return 2;
         }

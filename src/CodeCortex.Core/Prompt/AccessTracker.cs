@@ -27,7 +27,8 @@ namespace CodeCortex.Core.Prompt {
                 var node = _map[item];
                 _list.Remove(node);
                 _list.AddFirst(node);
-            } else {
+            }
+            else {
                 if (_list.Count >= _capacity) {
                     var last = _list.Last;
                     if (last != null) {

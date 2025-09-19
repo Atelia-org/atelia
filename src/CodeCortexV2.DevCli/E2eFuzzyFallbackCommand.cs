@@ -25,7 +25,8 @@ public static class E2eFuzzyFallbackCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             return 2;
         }
@@ -34,28 +35,20 @@ public static class E2eFuzzyFallbackCommand {
     private static bool ValidateFuzzy(string json, string expectedSuffix) {
         try {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) {
-                return false;
-            }
-            if (items.GetArrayLength() == 0) {
-                return false;
-            }
-
-            // Expect: only fuzzy layer produces results ((flags & Fuzzy) != 0), and at least one ends with .TypeA
+            if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) { return false; }
+            if (items.GetArrayLength() == 0) { return false; }
             bool anyExpected = false;
             foreach (var it in items.EnumerateArray()) {
                 var flagsVal = it.TryGetProperty("MatchFlags", out var m) ? m.GetInt32() : -1;
-                if ((flagsVal & (int)CodeCortexV2.Abstractions.MatchFlags.Fuzzy) == 0) {
-                    return false; // found a non-fuzzy result, not a fallback
-                }
-
+                if ((flagsVal & (int)CodeCortexV2.Abstractions.MatchFlags.Fuzzy) == 0) { return false; /* found a non-fuzzy result, not a fallback */ }
                 var name = it.TryGetProperty("Name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
                 if (name.EndsWith(expectedSuffix, StringComparison.Ordinal)) {
                     anyExpected = true;
                 }
             }
             return anyExpected;
-        } catch {
+        }
+        catch {
             return false;
         }
     }

@@ -81,7 +81,9 @@ public static class Program {
                     }, cts.Token
                 );
             }
-        } catch (OperationCanceledException) { } finally {
+        }
+        catch (OperationCanceledException) { }
+        finally {
             listener.Stop();
         }
     }

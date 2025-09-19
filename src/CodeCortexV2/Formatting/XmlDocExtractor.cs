@@ -34,10 +34,7 @@ internal static partial class XmlDocFormatter {
     }
 
     private static string StripDocCommentPrefixes(string xml) {
-        if (string.IsNullOrEmpty(xml)) {
-            return string.Empty;
-        }
-
+        if (string.IsNullOrEmpty(xml)) { return string.Empty; }
         var sb = new StringBuilder(xml.Length);
         var lines = xml.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         foreach (var line in lines) {
@@ -50,7 +47,8 @@ internal static partial class XmlDocFormatter {
                 }
 
                 sb.AppendLine(rest);
-            } else {
+            }
+            else {
                 sb.AppendLine(line);
             }
         }

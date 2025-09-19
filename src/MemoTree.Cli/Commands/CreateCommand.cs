@@ -50,7 +50,8 @@ public static class CreateCommand {
                     if (!string.IsNullOrEmpty(parentIdStr)) {
                         try {
                             parentId = NodeId.FromString(parentIdStr);
-                        } catch {
+                        }
+                        catch {
                             Console.Error.WriteLine($"Error: Invalid parent node ID '{parentIdStr}'");
                             Environment.Exit(1);
                             return;
@@ -61,7 +62,8 @@ public static class CreateCommand {
                     string content = "";
                     if (openEditor) {
                         content = await GetContentFromEditorAsync();
-                    } else {
+                    }
+                    else {
                         // 检查是否有管道输入
                         if (!Console.IsInputRedirected) {
                             Console.WriteLine("Enter content (press Ctrl+D or Ctrl+Z to finish):");
@@ -96,7 +98,8 @@ public static class CreateCommand {
                     var output = await svc.RenderViewAsync("default");
                     Console.WriteLine();
                     Console.WriteLine(output);
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }
@@ -127,13 +130,12 @@ public static class CreateCommand {
             if (process != null) {
                 await process.WaitForExitAsync();
 
-                if (File.Exists(tempFile)) {
-                    return await File.ReadAllTextAsync(tempFile);
-                }
+                if (File.Exists(tempFile)) { return await File.ReadAllTextAsync(tempFile); }
             }
 
             return "";
-        } finally {
+        }
+        finally {
             if (File.Exists(tempFile)) {
                 File.Delete(tempFile);
             }

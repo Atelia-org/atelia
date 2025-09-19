@@ -159,10 +159,7 @@ namespace MemoTree.Core.Validation {
         /// 合并验证结果
         /// </summary>
         public ValidationResult Merge(ValidationResult other) {
-            if (other == null) {
-                return this;
-            }
-
+            if (other == null) { return this; }
             var newErrors = new List<ValidationError>(Errors);
             newErrors.AddRange(other.Errors);
 
@@ -182,16 +179,14 @@ namespace MemoTree.Core.Validation {
         /// 获取格式化的错误消息
         /// </summary>
         public string GetErrorMessage() {
-            if (IsValid) {
-                return string.Empty;
-            }
-
+            if (IsValid) { return string.Empty; }
             var messages = new List<string>();
 
             if (!string.IsNullOrEmpty(ObjectType) || !string.IsNullOrEmpty(ObjectId)) {
                 var identifier = string.IsNullOrEmpty(ObjectId) ? ObjectType : $"{ObjectType}({ObjectId})";
                 messages.Add($"Validation failed for {identifier}:");
-            } else {
+            }
+            else {
                 messages.Add("Validation failed:");
             }
 
@@ -204,16 +199,14 @@ namespace MemoTree.Core.Validation {
         /// 获取格式化的警告消息
         /// </summary>
         public string GetWarningMessage() {
-            if (!HasWarnings) {
-                return string.Empty;
-            }
-
+            if (!HasWarnings) { return string.Empty; }
             var messages = new List<string>();
 
             if (!string.IsNullOrEmpty(ObjectType) || !string.IsNullOrEmpty(ObjectId)) {
                 var identifier = string.IsNullOrEmpty(ObjectId) ? ObjectType : $"{ObjectType}({ObjectId})";
                 messages.Add($"Validation warnings for {identifier}:");
-            } else {
+            }
+            else {
                 messages.Add("Validation warnings:");
             }
 
@@ -243,14 +236,8 @@ namespace MemoTree.Core.Validation {
         /// 转换为字符串表示
         /// </summary>
         public override string ToString() {
-            if (IsValid && !HasWarnings) {
-                return "Valid";
-            }
-
-            if (IsValid && HasWarnings) {
-                return $"Valid with {WarningCount} warning(s)";
-            }
-
+            if (IsValid && !HasWarnings) { return "Valid"; }
+            if (IsValid && HasWarnings) { return $"Valid with {WarningCount} warning(s)"; }
             return $"Invalid with {ErrorCount} error(s)" +
             (HasWarnings ? $" and {WarningCount} warning(s)" : "");
         }

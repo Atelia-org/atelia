@@ -28,19 +28,14 @@ internal static partial class XmlDocLinesExtractor {
 
     public static List<string> ExtractSummaryLinesFromXml(string xml) {
         var list = new List<string>();
-        if (string.IsNullOrWhiteSpace(xml)) {
-            return list;
-        }
-
+        if (string.IsNullOrWhiteSpace(xml)) { return list; }
         try {
             var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
             var summary = doc.Descendants("summary").FirstOrDefault();
-            if (summary == null) {
-                return list;
-            }
-
+            if (summary == null) { return list; }
             AppendNodeText(summary, list, 0);
-        } catch { }
+        }
+        catch { }
         // Trim trailing empties
         TrimTrailingEmpty(list);
         return list;
@@ -60,11 +55,13 @@ internal static partial class XmlDocLinesExtractor {
                     }
 
                     NewLine(lines);
-                } else if (name == "see") {
+                }
+                else if (name == "see") {
                     var lang = e.Attribute("langword")?.Value;
                     if (!string.IsNullOrEmpty(lang)) {
                         AppendText(lines, LangwordToDisplay(lang!));
-                    } else {
+                    }
+                    else {
                         var cref = e.Attribute("cref")?.Value;
                         var disp = CrefToDisplay(cref);
                         if (!string.IsNullOrEmpty(disp)) {
@@ -72,20 +69,25 @@ internal static partial class XmlDocLinesExtractor {
                             AppendText(lines, "[" + disp + "]");
                         }
                     }
-                } else if (name == "typeparamref" || name == "paramref") {
+                }
+                else if (name == "typeparamref" || name == "paramref") {
                     var nm = e.Attribute("name")?.Value;
                     if (!string.IsNullOrEmpty(nm)) {
                         AppendText(lines, nm!);
                     }
-                } else if (name == "c") {
+                }
+                else if (name == "c") {
                     AppendText(lines, "`" + e.Value + "`");
-                } else if (name == "code") {
+                }
+                else if (name == "code") {
                     NewLine(lines);
                     AppendText(lines, "`" + e.Value + "`");
                     NewLine(lines);
-                } else if (name == "list") {
+                }
+                else if (name == "list") {
                     RenderList(e, lines, level);
-                } else {
+                }
+                else {
                     foreach (var n in e.Nodes()) {
                         AppendNodeText(n, lines, level);
                     }
@@ -112,11 +114,14 @@ internal static partial class XmlDocLinesExtractor {
             var desc = item.Element("description")?.Value?.Trim();
             if (!string.IsNullOrEmpty(term) && !string.IsNullOrEmpty(desc)) {
                 content = term + " — " + desc;
-            } else if (!string.IsNullOrEmpty(desc)) {
+            }
+            else if (!string.IsNullOrEmpty(desc)) {
                 content = desc!;
-            } else if (!string.IsNullOrEmpty(term)) {
+            }
+            else if (!string.IsNullOrEmpty(term)) {
                 content = term!;
-            } else {
+            }
+            else {
                 // Fallback: build inline text from child nodes to preserve <see/> and <c>
                 var tmp = new List<string>();
                 foreach (var n in item.Nodes()) {
@@ -173,10 +178,7 @@ internal static partial class XmlDocLinesExtractor {
     }
 
     public static string CrefToDisplay(string? cref) {
-        if (string.IsNullOrEmpty(cref)) {
-            return string.Empty;
-        }
-        // Remove member kind prefix (e.g., "M:", "T:")
+        if (string.IsNullOrEmpty(cref)) { return string.Empty; }
         var s = cref;
         int colon = s.IndexOf(':');
         if (colon >= 0 && colon + 1 < s.Length) {
@@ -205,10 +207,7 @@ internal static partial class XmlDocLinesExtractor {
         }
         // No parameter list: could be a type/member. Prefer keyword for common BCL types.
         var mapped = MapToCSharpKeyword(s);
-        if (mapped != null) {
-            return mapped;
-        }
-
+        if (mapped != null) { return mapped; }
         var lastOnly = s.Contains('.') ? s[(s.LastIndexOf('.') + 1)..] : s;
         mapped = MapToCSharpKeyword(lastOnly);
         return mapped ?? s;
@@ -296,7 +295,8 @@ internal static partial class XmlDocLinesExtractor {
                             TrimTrailingEmpty(list);
                             return list;
                         }
-                    } catch { }
+                    }
+                    catch { }
                 }
             }
         }
@@ -304,10 +304,7 @@ internal static partial class XmlDocLinesExtractor {
     }
 
     private static void AppendText(List<string> lines, string text) {
-        if (string.IsNullOrEmpty(text)) {
-            return;
-        }
-
+        if (string.IsNullOrEmpty(text)) { return; }
         if (lines.Count == 0) {
             lines.Add(string.Empty);
         }
@@ -326,16 +323,14 @@ internal static partial class XmlDocLinesExtractor {
         // only add a new line if current line has content or previous was also break
         if (lines.Count == 0 || lines[^1].Length > 0) {
             lines.Add(string.Empty);
-        } else {
+        }
+        else {
             lines.Add(string.Empty);
         }
     }
 
     private static string StripDocCommentPrefixes(string xml) {
-        if (string.IsNullOrEmpty(xml)) {
-            return string.Empty;
-        }
-
+        if (string.IsNullOrEmpty(xml)) { return string.Empty; }
         var sb = new StringBuilder(xml.Length);
         var lines = xml.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         foreach (var line in lines) {
@@ -349,7 +344,8 @@ internal static partial class XmlDocLinesExtractor {
                 }
 
                 sb.AppendLine(rest);
-            } else {
+            }
+            else {
                 sb.AppendLine(line);
             }
         }

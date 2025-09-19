@@ -32,17 +32,17 @@ public sealed class IndexStore {
                 return null;
             }
             return model;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             reason = "corrupt:" + ex.GetType().Name;
             var bak = IndexPath + ".bak";
             if (_fs.FileExists(bak)) {
                 try {
                     var json = _fs.ReadAllText(bak);
                     var model = JsonSerializer.Deserialize<CodeCortexIndex>(json, _opts);
-                    if (model != null) {
-                        return model;
-                    }
-                } catch { }
+                    if (model != null) { return model; }
+                }
+                catch { }
             }
             return null;
         }
@@ -58,7 +58,8 @@ public sealed class IndexStore {
             var json = _fs.ReadAllText(tmpPath);
             var model = JsonSerializer.Deserialize<CodeCortexIndex>(json, _opts);
             return model != null && model.SchemaVersion == "1.0";
-        } catch { return false; }
+        }
+        catch { return false; }
     }
 }
 

@@ -10,9 +10,7 @@ public static class IndexReuseDecider {
     public static bool IsReusable(CodeCortexIndex existing, out int changedCount, out int totalFiles, IFileSystem? fs = null) {
         changedCount = 0;
         totalFiles = 0;
-        if (existing.FileManifest == null || existing.FileManifest.Count == 0) {
-            return false; // no manifest -> cannot trust
-        }
+        if (existing.FileManifest == null || existing.FileManifest.Count == 0) { return false; /* no manifest -> cannot trust */ }
         fs ??= new DefaultFileSystem();
         foreach (var kvp in existing.FileManifest) {
             totalFiles++;
@@ -21,19 +19,17 @@ public static class IndexReuseDecider {
             try {
                 if (!fs.FileExists(path)) {
                     changedCount++;
-                    if (changedCount > 0) {
-                        return false;
-                    }
-                } else {
+                    if (changedCount > 0) { return false; }
+                }
+                else {
                     var ticks = fs.GetLastWriteTicks(path);
                     if (ticks != meta.LastWriteUtcTicks) {
                         changedCount++;
-                        if (changedCount > 0) {
-                            return false;
-                        }
+                        if (changedCount > 0) { return false; }
                     }
                 }
-            } catch {
+            }
+            catch {
                 changedCount++;
                 return false; // any IO exception -> treat as invalid
             }
@@ -44,10 +40,7 @@ public static class IndexReuseDecider {
         changedCount = 0;
         totalFiles = 0;
         hashChecked = 0;
-        if (existing.FileManifest == null || existing.FileManifest.Count == 0) {
-            return false;
-        }
-
+        if (existing.FileManifest == null || existing.FileManifest.Count == 0) { return false; }
         fs ??= new DefaultFileSystem();
         foreach (var kvp in existing.FileManifest) {
             totalFiles++;
@@ -68,7 +61,8 @@ public static class IndexReuseDecider {
                     changedCount++;
                     return false;
                 }
-            } catch {
+            }
+            catch {
                 changedCount++;
                 return false;
             }

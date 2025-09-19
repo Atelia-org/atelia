@@ -35,14 +35,9 @@ public static class E2ePartialTypeRemoveCommand {
             INamedTypeSymbol? target = null;
             foreach (var proj in host.Workspace.CurrentSolution.Projects) {
                 var comp = await proj.GetCompilationAsync(cts.Token).ConfigureAwait(false);
-                if (comp is null) {
-                    continue;
-                }
-
+                if (comp is null) { continue; }
                 target = comp.GetTypeByMetadataName(targetFqn);
-                if (target is not null) {
-                    break;
-                }
+                if (target is not null) { break; }
             }
             if (target is null) {
                 Console.Error.WriteLine("[e2e] target type not found via Roslyn.");
@@ -99,7 +94,8 @@ public static class E2ePartialTypeRemoveCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             try { await CleanupAsync(originalPath, originalBak, partialPath); } catch { }
             return 2;
@@ -144,7 +140,8 @@ public static class E2ePartialTypeRemoveCommand {
                 total = t.GetInt32();
                 return true;
             }
-        } catch { }
+        }
+        catch { }
         total = -1;
         return false;
     }

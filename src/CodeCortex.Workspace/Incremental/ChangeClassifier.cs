@@ -13,9 +13,11 @@ public sealed class ChangeClassifier : IChangeClassifier {
                 case FileChangeKind.Changed:
                     if (!map.TryGetValue(r.Path, out var existing)) {
                         map[r.Path] = new ClassifiedFileChange(r.Path, ClassifiedKind.Modify);
-                    } else if (existing.Kind is ClassifiedKind.Add or ClassifiedKind.Modify) {
+                    }
+                    else if (existing.Kind is ClassifiedKind.Add or ClassifiedKind.Modify) {
                         // stay Add/Modify
-                    } else if (existing.Kind == ClassifiedKind.Delete) {
+                    }
+                    else if (existing.Kind == ClassifiedKind.Delete) {
                         // delete then change -> treat final as modify
                         map[r.Path] = new ClassifiedFileChange(r.Path, ClassifiedKind.Modify);
                     }
@@ -27,7 +29,8 @@ public sealed class ChangeClassifier : IChangeClassifier {
                     if (!string.IsNullOrEmpty(r.OldPath)) {
                         map[r.OldPath] = new ClassifiedFileChange(r.OldPath, ClassifiedKind.Rename, r.Path);
                         map[r.Path] = new ClassifiedFileChange(r.Path, ClassifiedKind.Add, r.OldPath); // treat new path as add
-                    } else {
+                    }
+                    else {
                         map[r.Path] = new ClassifiedFileChange(r.Path, ClassifiedKind.Modify);
                     }
                     break;

@@ -11,18 +11,12 @@ namespace MemoTree.Core.Encoding {
         public override string ModeName => "base64";
 
         public override string EncodeBytes(byte[] data) {
-            if (data == null || data.Length == 0) {
-                return string.Empty;
-            }
-
+            if (data == null || data.Length == 0) { return string.Empty; }
             return Convert.ToBase64String(data);
         }
 
         public override byte[] DecodeString(string encoded) {
-            if (string.IsNullOrEmpty(encoded)) {
-                return Array.Empty<byte>();
-            }
-
+            if (string.IsNullOrEmpty(encoded)) { return Array.Empty<byte>(); }
             return Convert.FromBase64String(encoded);
         }
 
@@ -35,20 +29,14 @@ namespace MemoTree.Core.Encoding {
         }
 
         public override Guid DecodeUuid(string encoded) {
-            if (string.IsNullOrEmpty(encoded)) {
-                throw new ArgumentException("空编码无法解码为UUID", nameof(encoded));
-            }
-
+            if (string.IsNullOrEmpty(encoded)) { throw new ArgumentException("空编码无法解码为UUID", nameof(encoded)); }
             int expectedDataLen = (int)Math.Ceiling(128.0 / 6.0); // 22
             string encodedFull = encoded.Length == expectedDataLen
             ? encoded + "=="
             : encoded;
 
             var bytes = DecodeString(encodedFull);
-            if (bytes.Length != 16) {
-                throw new ArgumentException($"解码结果长度错误: {bytes.Length} bytes，期望16 bytes", nameof(encoded));
-            }
-
+            if (bytes.Length != 16) { throw new ArgumentException($"解码结果长度错误: {bytes.Length} bytes，期望16 bytes", nameof(encoded)); }
             return new Guid(bytes);
         }
     }

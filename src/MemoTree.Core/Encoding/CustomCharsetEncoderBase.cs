@@ -16,16 +16,9 @@ namespace MemoTree.Core.Encoding {
         /// </summary>
         /// <param name="charset">字符集序列</param>
         protected CustomCharsetEncoderBase(string charset) {
-            if (string.IsNullOrEmpty(charset)) {
-                throw new ArgumentException("字符集不能为空", nameof(charset));
-            }
-
-            // 验证字符集中没有重复字符
+            if (string.IsNullOrEmpty(charset)) { throw new ArgumentException("字符集不能为空", nameof(charset)); }
             var charArray = charset.ToCharArray();
-            if (charArray.Length != charArray.Distinct().Count()) {
-                throw new ArgumentException("字符集中包含重复字符", nameof(charset));
-            }
-
+            if (charArray.Length != charArray.Distinct().Count()) { throw new ArgumentException("字符集中包含重复字符", nameof(charset)); }
             Charset = charArray;
             Base = Charset.Length;
             CharToIndex = new Dictionary<char, int>();
@@ -41,9 +34,7 @@ namespace MemoTree.Core.Encoding {
         /// <param name="minSize">最小字符集大小</param>
         /// <param name="encoderName">编码器名称（用于错误信息）</param>
         protected void ValidateCharsetSize(int minSize, string encoderName) {
-            if (Charset.Length < minSize) {
-                throw new ArgumentException($"{encoderName}需要至少{minSize}个字符，当前只有{Charset.Length}个");
-            }
+            if (Charset.Length < minSize) { throw new ArgumentException($"{encoderName}需要至少{minSize}个字符，当前只有{Charset.Length}个"); }
         }
     }
 }

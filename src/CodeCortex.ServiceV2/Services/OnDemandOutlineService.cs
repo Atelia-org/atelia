@@ -35,17 +35,10 @@ public sealed class OnDemandOutlineService : IOnDemandOutlineService {
         var loaded = await _loader.LoadAsync(entryPath, ct).ConfigureAwait(false);
         foreach (var project in loaded.Projects) {
             var comp = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-            if (comp == null) {
-                continue;
-            }
-
+            if (comp == null) { continue; }
             foreach (var t in _types.Enumerate(comp, ct)) {
                 var fqn = t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                if (NormalizeFqn(fqn) != targetFqn) {
-                    continue;
-                }
-
-                // Compute hashes (no cache path)
+                if (NormalizeFqn(fqn) != targetFqn) { continue; }
                 var hashes = _hasher.Compute(t, Array.Empty<string>(), new HashConfig());
                 var md = _outline.BuildOutline(t, hashes, new OutlineOptions());
                 return md;
@@ -55,10 +48,7 @@ public sealed class OnDemandOutlineService : IOnDemandOutlineService {
     }
 
     private static string NormalizeFqn(string fqn) {
-        if (string.IsNullOrWhiteSpace(fqn)) {
-            return string.Empty;
-        }
-
+        if (string.IsNullOrWhiteSpace(fqn)) { return string.Empty; }
         var s = fqn.Trim();
         // Roslyn FullyQualifiedFormat prefixes with global::
         if (!s.StartsWith("global::", StringComparison.Ordinal)) {

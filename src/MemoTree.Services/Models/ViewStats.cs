@@ -70,10 +70,7 @@ public record ViewStats {
     /// 获取展开比例 (0.0 - 1.0)
     /// </summary>
     public double GetExpandedRatio() {
-        if (TotalNodes == 0) {
-            return 0.0;
-        }
-
+        if (TotalNodes == 0) { return 0.0; }
         return (double)ExpandedNodes / TotalNodes;
     }
 
@@ -81,10 +78,7 @@ public record ViewStats {
     /// 获取字符使用比例 (相对于预估的完全展开状态)
     /// </summary>
     public double GetCharacterUsageRatio() {
-        if (EstimatedFullCharacters == 0) {
-            return 0.0;
-        }
-
+        if (EstimatedFullCharacters == 0) { return 0.0; }
         return (double)TotalCharacters / EstimatedFullCharacters;
     }
 

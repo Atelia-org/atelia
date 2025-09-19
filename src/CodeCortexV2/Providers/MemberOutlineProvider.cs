@@ -14,9 +14,7 @@ public sealed class MemberOutlineProvider : IMemberOutlineProvider {
     public Task<SymbolOutline> GetMemberOutlineAsync(SymbolId memberId, OutlineOptions? options, CancellationToken ct) {
         options ??= new OutlineOptions();
         var sym = _resolve(memberId);
-        if (sym is null) {
-            throw new InvalidOperationException($"Symbol not found: {memberId}");
-        }
+        if (sym is null) { throw new InvalidOperationException($"Symbol not found: {memberId}"); }
         var outline = SymbolOutlineBuilder.BuildForMember(sym);
         return Task.FromResult(outline);
     }

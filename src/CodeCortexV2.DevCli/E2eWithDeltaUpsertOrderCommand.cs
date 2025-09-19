@@ -22,10 +22,7 @@ public static class E2eWithDeltaUpsertOrderCommand {
             INamedTypeSymbol? target = null;
             foreach (var proj in host.Workspace.CurrentSolution.Projects) {
                 var comp = await proj.GetCompilationAsync(cts.Token).ConfigureAwait(false);
-                if (comp is null) {
-                    continue;
-                }
-
+                if (comp is null) { continue; }
                 var t = comp.GetTypeByMetadataName(oldFqn);
                 if (t is not null) {
                     target = t;
@@ -83,7 +80,8 @@ public static class E2eWithDeltaUpsertOrderCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             if (filePath != null && original != null) {
                 try { await File.WriteAllTextAsync(filePath, original); } catch { }
@@ -96,6 +94,7 @@ public static class E2eWithDeltaUpsertOrderCommand {
         try {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
             return doc.RootElement.TryGetProperty("Total", out var t) ? t.GetInt32() : -1;
-        } catch { return -1; }
+        }
+        catch { return -1; }
     }
 }

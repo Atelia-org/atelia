@@ -20,7 +20,8 @@ public class PinnedSetAndAccessTrackerTests {
             var set2 = new PinnedSet<string>(path);
             Assert.True(set2.Contains("B"));
             Assert.False(set2.Contains("A"));
-        } finally { File.Delete(path); }
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]

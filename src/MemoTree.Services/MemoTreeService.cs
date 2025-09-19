@@ -70,7 +70,8 @@ public class MemoTreeService : IMemoTreeService {
                 sb.AppendLine("# MemoTree认知空间 [空]");
                 sb.AppendLine();
                 sb.AppendLine("暂无认知节点。使用 `memotree create \"标题\"` 创建第一个节点。");
-            } else {
+            }
+            else {
                 sb.AppendLine($"# MemoTree认知空间 [{stats.TotalNodes} nodes, {stats.ExpandedNodes} expanded, {stats.TotalCharacters} chars]");
                 sb.AppendLine();
 
@@ -80,7 +81,8 @@ public class MemoTreeService : IMemoTreeService {
             }
 
             return sb.ToString();
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to render view {ViewName}", viewName);
             throw;
         }
@@ -116,7 +118,8 @@ public class MemoTreeService : IMemoTreeService {
             }
 
             return treeItems;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to get node tree for root {RootId}", rootId);
             throw;
         }
@@ -150,7 +153,8 @@ public class MemoTreeService : IMemoTreeService {
                 TotalCharacters = totalCharacters,
                 LastUpdated = DateTime.UtcNow
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to get view stats for {ViewName}", viewName);
             throw;
         }
@@ -162,28 +166,19 @@ public class MemoTreeService : IMemoTreeService {
             var level = GetNodeLevelOrDefault(viewState, nodeId, LodLevel.Gist);
 
             var metadata = await _storage.GetAsync(nodeId, cancellationToken);
-            if (metadata == null) {
-                return $"[节点 {nodeId} 不存在]";
-            }
-
+            if (metadata == null) { return $"[节点 {nodeId} 不存在]"; }
             var content = await _storage.GetAsync(nodeId, level, cancellationToken);
 
             if (content == null) {
                 // Gist/Summary 尚未创建摘要时：
-                if (level == LodLevel.Gist) {
-                    return "尚未创建Gist内容"; // 占位提示
-                }
-
-                if (level == LodLevel.Summary) {
-                    return ""; // Summary 级别跳过，交由调用者决定不渲染
-                }
-
-                // Full 尚未创建：返回空（不应常见）
+                if (level == LodLevel.Gist) { return "尚未创建Gist内容"; /* 占位提示 */ }
+                if (level == LodLevel.Summary) { return ""; /* Summary 级别跳过，交由调用者决定不渲染 */ }
                 return "";
             }
 
             return content.Content;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to get render content for node {NodeId}", nodeId);
             throw;
         }
@@ -200,22 +195,16 @@ public class MemoTreeService : IMemoTreeService {
             }
 
             return matchingNodes;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             _logger.LogError(ex, "Failed to find nodes by title {Title}", title);
             throw;
         }
     }
 
     public async Task CreateViewAsync(string viewName, string? description = null, CancellationToken cancellationToken = default) {
-        if (string.IsNullOrWhiteSpace(viewName)) {
-            throw new ArgumentException("viewName is required", nameof(viewName));
-        }
-
-        // 已存在则报错
-        if (await _viewStorage.ViewExistsAsync(viewName, cancellationToken)) {
-            throw new InvalidOperationException($"View '{viewName}' already exists.");
-        }
-
+        if (string.IsNullOrWhiteSpace(viewName)) { throw new ArgumentException("viewName is required", nameof(viewName)); }
+        if (await _viewStorage.ViewExistsAsync(viewName, cancellationToken)) { throw new InvalidOperationException($"View '{viewName}' already exists."); }
         var state = new ViewState {
             Name = viewName,
             Description = description ?? string.Empty,
@@ -230,15 +219,9 @@ public class MemoTreeService : IMemoTreeService {
     }
 
     public async Task UpdateViewDescriptionAsync(string viewName, string description, CancellationToken cancellationToken = default) {
-        if (string.IsNullOrWhiteSpace(viewName)) {
-            throw new ArgumentException("viewName is required", nameof(viewName));
-        }
-
+        if (string.IsNullOrWhiteSpace(viewName)) { throw new ArgumentException("viewName is required", nameof(viewName)); }
         var state = await _viewStorage.GetViewStateAsync(viewName, cancellationToken);
-        if (state == null) {
-            throw new InvalidOperationException($"View '{viewName}' not found.");
-        }
-
+        if (state == null) { throw new InvalidOperationException($"View '{viewName}' not found."); }
         var updated = state with {
             Description = description ?? string.Empty,
             LastModified = DateTime.UtcNow
@@ -255,7 +238,8 @@ public class MemoTreeService : IMemoTreeService {
             viewState = await _viewStorage.GetViewStateAsync(viewName, ct)
             ?? new ViewState { Name = viewName, LastModified = DateTime.UtcNow, NodeStates = Array.Empty<VNodeState>() };
             _viewStates[viewName] = viewState;
-        } else {
+        }
+        else {
             // 更新修改时间为访问时间（近似处理）
             viewState = viewState with {
                 LastModified = DateTime.UtcNow
@@ -276,7 +260,8 @@ public class MemoTreeService : IMemoTreeService {
                 IsExpanded = (level == LodLevel.Full),
                 LastAccessTime = DateTime.UtcNow
             };
-        } else {
+        }
+        else {
             list.Add(
                 new VNodeState {
                     Id = id,
@@ -313,7 +298,8 @@ public class MemoTreeService : IMemoTreeService {
             if (node != null) {
                 topLevelNodes.Add(node);
                 _logger.LogDebug("Loaded top-level node: {NodeId} - {Title}", nodeId, node.Metadata.Title);
-            } else {
+            }
+            else {
                 _logger.LogWarning("Failed to load top-level node: {NodeId}", nodeId);
             }
         }

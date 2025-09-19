@@ -21,7 +21,8 @@ namespace MemoTree.Cli.Commands {
                 async (string targetPath) => {
                     try {
                         await ExecuteAsync(targetPath);
-                    } catch (Exception ex) {
+                    }
+                    catch (Exception ex) {
                         Console.WriteLine($"Error: {ex.Message}");
                         Environment.Exit(1);
                     }

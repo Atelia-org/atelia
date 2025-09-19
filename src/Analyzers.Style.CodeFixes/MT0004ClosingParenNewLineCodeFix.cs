@@ -78,7 +78,8 @@ public sealed class MT0004ClosingParenNewLineCodeFix : CodeFixProvider {
             // Remove any leading trivia so '{' immediately follows ')'
             var adjustedNext = next.WithLeadingTrivia();
             newRoot = root.ReplaceTokens(new[] { closeParen, next }, (orig, _) => orig == closeParen ? newClose : adjustedNext);
-        } else {
+        }
+        else {
             newRoot = root.ReplaceToken(closeParen, newClose);
         }
         return doc.WithSyntaxRoot(newRoot);

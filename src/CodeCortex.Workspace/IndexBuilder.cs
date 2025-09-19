@@ -31,16 +31,10 @@ public sealed class IndexBuilder {
         var all = new List<INamedTypeSymbol>();
         foreach (var p in request.Projects) {
             var comp = p.HasDocuments ? p.GetCompilationAsync().GetAwaiter().GetResult() : null;
-            if (comp == null) {
-                continue;
-            }
-
+            if (comp == null) { continue; }
             index.Stats.ProjectCount++;
             foreach (var t in _enumerator.Enumerate(comp)) {
-                if (t.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal)) {
-                    continue;
-                }
-
+                if (t.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal)) { continue; }
                 all.Add(t);
             }
         }
@@ -98,19 +92,18 @@ public sealed class IndexBuilder {
                 .Distinct(StringComparer.OrdinalIgnoreCase);
             foreach (var file in allFiles) {
                 try {
-                    if (!System.IO.File.Exists(file)) {
-                        continue;
-                    }
-
+                    if (!System.IO.File.Exists(file)) { continue; }
                     var ticks = System.IO.File.GetLastWriteTimeUtc(file).Ticks;
                     var fe = new CodeCortex.Core.Index.FileEntry { LastWriteUtcTicks = ticks };
                     if (wantHash) {
                         fe.ContentHash = CodeCortex.Core.Index.IndexReuseDecider.ComputeContentHash(file);
                     }
                     index.FileManifest[file] = fe;
-                } catch { /* ignore per-file errors */ }
+                }
+                catch { /* ignore per-file errors */ }
             }
-        } catch { /* ignore manifest population errors */ }
+        }
+        catch { /* ignore manifest population errors */ }
         _observer.OnCompleted(index, sw.ElapsedMilliseconds);
         return index;
     }

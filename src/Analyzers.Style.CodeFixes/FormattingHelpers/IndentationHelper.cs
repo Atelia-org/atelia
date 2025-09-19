@@ -16,7 +16,8 @@ internal static class IndentationHelper {
             if (opts.TryGetValue("indent_size", out var raw) && int.TryParse(raw, out var v) && v > 0 && v < 16) {
                 return v; // guard upper bound
             }
-        } catch { }
+        }
+        catch { }
         return 4;
     }
 

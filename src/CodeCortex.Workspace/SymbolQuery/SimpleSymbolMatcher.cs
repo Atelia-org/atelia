@@ -19,7 +19,7 @@ namespace CodeCortex.Workspace.SymbolQuery {
 
     public static class SimpleSymbolMatcher {
         public static IReadOnlyList<SymbolMatch> Match(IReadOnlyList<TypeEntry> entries, string pattern) {
-            if (entries == null || entries.Count == 0) return Array.Empty<SymbolMatch>();
+            if (entries == null || entries.Count == 0) { return Array.Empty<SymbolMatch>(); }
             pattern ??= string.Empty;
             var hasWildcard = pattern.IndexOfAny(new[] { '*', '?' }) >= 0;
             var results = new List<SymbolMatch>(entries.Count);
@@ -37,21 +37,28 @@ namespace CodeCortex.Workspace.SymbolQuery {
                 if (hasWildcard) {
                     if (rx!.IsMatch(fqn)) {
                         results.Add(new SymbolMatch(fqn, MatchCategory.WildcardFqn));
-                    } else if (rx.IsMatch(fqnNoPrefix)) {
+                    }
+                    else if (rx.IsMatch(fqnNoPrefix)) {
                         results.Add(new SymbolMatch(fqn, MatchCategory.WildcardFqnNoPrefix));
-                    } else if (rx.IsMatch(simple)) {
+                    }
+                    else if (rx.IsMatch(simple)) {
                         results.Add(new SymbolMatch(fqn, MatchCategory.WildcardSimple));
                     }
-                } else {
+                }
+                else {
                     if (string.Equals(fqn, pattern, StringComparison.Ordinal) || string.Equals(fqnNoPrefix, pattern, StringComparison.Ordinal)) {
                         results.Add(new SymbolMatch(fqn, MatchCategory.Exact));
-                    } else if (string.Equals(simple, pattern, StringComparison.Ordinal)) {
+                    }
+                    else if (string.Equals(simple, pattern, StringComparison.Ordinal)) {
                         results.Add(new SymbolMatch(fqn, MatchCategory.SimpleExact));
-                    } else if (fqn.StartsWith(pattern, StringComparison.Ordinal)) {
+                    }
+                    else if (fqn.StartsWith(pattern, StringComparison.Ordinal)) {
                         results.Add(new SymbolMatch(fqn, MatchCategory.Prefix));
-                    } else if (fqn.EndsWith(pattern, StringComparison.Ordinal)) {
+                    }
+                    else if (fqn.EndsWith(pattern, StringComparison.Ordinal)) {
                         results.Add(new SymbolMatch(fqn, MatchCategory.Suffix));
-                    } else if (fqn.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0) {
+                    }
+                    else if (fqn.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0) {
                         results.Add(new SymbolMatch(fqn, MatchCategory.Contains));
                     }
                 }

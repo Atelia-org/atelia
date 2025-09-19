@@ -16,10 +16,7 @@ namespace MemoTree.Core.Storage.Versioned {
         /// 从字符串反序列化NodeId
         /// </summary>
         public NodeId Deserialize(string serialized) {
-            if (string.IsNullOrWhiteSpace(serialized)) {
-                throw new ArgumentException("Serialized value cannot be null or empty", nameof(serialized));
-            }
-
+            if (string.IsNullOrWhiteSpace(serialized)) { throw new ArgumentException("Serialized value cannot be null or empty", nameof(serialized)); }
             return new NodeId(serialized);
         }
     }

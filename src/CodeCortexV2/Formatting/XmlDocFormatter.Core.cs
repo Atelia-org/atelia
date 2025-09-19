@@ -32,19 +32,14 @@ internal static partial class XmlDocFormatter {
 
     public static List<string> ExtractSummaryLinesFromXml(string xml) {
         var list = new List<string>();
-        if (string.IsNullOrWhiteSpace(xml)) {
-            return list;
-        }
-
+        if (string.IsNullOrWhiteSpace(xml)) { return list; }
         try {
             var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
             var summary = doc.Descendants("summary").FirstOrDefault();
-            if (summary == null) {
-                return list;
-            }
-
+            if (summary == null) { return list; }
             AppendNodeText(summary, list, 0);
-        } catch { }
+        }
+        catch { }
         TrimTrailingEmpty(list);
         return list;
     }
@@ -67,7 +62,8 @@ internal static partial class XmlDocFormatter {
                             TrimTrailingEmpty(list);
                             return list;
                         }
-                    } catch { }
+                    }
+                    catch { }
                 }
             }
         }
@@ -77,10 +73,7 @@ internal static partial class XmlDocFormatter {
 
     public static string BuildSummaryMarkdown(ISymbol symbol) {
         var lines = GetSummaryLines(symbol);
-        if (lines.Count == 0) {
-            return string.Empty;
-        }
-
+        if (lines.Count == 0) { return string.Empty; }
         var sb = new StringBuilder();
         MarkdownRenderer.RenderLinesWithStructure(sb, lines, indent: string.Empty, bulletizePlain: false, startIndex: 0);
         return sb.ToString().TrimEnd();
@@ -117,7 +110,8 @@ internal static partial class XmlDocFormatter {
         try {
             var symName = symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
             DebugUtil.Print("XmlDocPipeline", $"Built {blocks.Count} blocks for {symName}.");
-        } catch { /* logging must not break pipeline */ }
+        }
+        catch { /* logging must not break pipeline */ }
         return blocks;
     }
 

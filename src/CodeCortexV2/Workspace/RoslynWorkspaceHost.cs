@@ -5,20 +5,16 @@ using Atelia.Diagnostics; // DebugUtil
 
 namespace CodeCortexV2.Workspace;
 
-public sealed class RoslynWorkspaceHost
-{
+public sealed class RoslynWorkspaceHost {
     public MSBuildWorkspace Workspace { get; }
 
-    private RoslynWorkspaceHost(MSBuildWorkspace workspace)
-    {
+    private RoslynWorkspaceHost(MSBuildWorkspace workspace) {
         Workspace = workspace;
     }
 
-    public static async Task<RoslynWorkspaceHost> LoadAsync(string solutionPath, CancellationToken ct)
-    {
+    public static async Task<RoslynWorkspaceHost> LoadAsync(string solutionPath, CancellationToken ct) {
         // Ensure MSBuild registered
-        if (!MSBuildLocator.IsRegistered)
-        {
+        if (!MSBuildLocator.IsRegistered) {
             var instance = MSBuildLocator.RegisterDefaults();
             DebugUtil.Print("Workspace", $"MSBuild registered: {instance.MSBuildPath}");
         }

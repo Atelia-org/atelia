@@ -52,10 +52,12 @@ public class ViewStateStorageErrorTests {
             var ex = await Assert.ThrowsAsync<StorageException>(() => storage.GetViewStateAsync("bad"));
             Assert.Equal("bad", ex.Context["ViewName"] as string);
             Assert.EndsWith(Path.Combine("views", "bad.json"), ex.Context["Path"] as string);
-        } finally {
+        }
+        finally {
             try {
                 Directory.Delete(tmp, true);
-            } catch { }
+            }
+            catch { }
         }
     }
 }

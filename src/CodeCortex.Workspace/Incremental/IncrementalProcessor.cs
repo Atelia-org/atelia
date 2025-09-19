@@ -19,10 +19,7 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
         // 1. 先处理已知受影响类型
         foreach (var id in impact.AffectedTypeIds) {
             var symbol = resolveById(id);
-            if (symbol == null) {
-                continue;
-            }
-
+            if (symbol == null) { continue; }
             var hashes = hasher.Compute(symbol, Array.Empty<string>(), new CodeCortex.Core.Hashing.HashConfig());
             var fqn = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "", StringComparison.Ordinal);
             var entry = index.Types.FirstOrDefault(t => t.Id == id);
@@ -43,9 +40,8 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
                 var md = outline.BuildOutline(symbol, hashes, new CodeCortex.Core.Outline.OutlineOptions());
                 fs.WriteAllText(System.IO.Path.Combine(outlineDir, id + ".outline.md"), md);
                 outlineWritten++;
-            } else {
-                outlineSkipped++;
             }
+            else { outlineSkipped++; }
             changed++;
             // Update name maps (simple ensure exists)
             if (!index.Maps.FqnIndex.ContainsKey(fqn)) {
@@ -66,15 +62,13 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
                     if (fs.FileExists(file)) {
                         index.FileManifest[file] = new FileEntry { LastWriteUtcTicks = fs.GetLastWriteTicks(file) };
                     }
-                } catch { }
+                }
+                catch { }
             }
         }
         // 2. 自动补全新增类型（AddedTypeFqns）
         foreach (var fqn in impact.AddedTypeFqns) {
-            if (index.Maps.FqnIndex.ContainsKey(fqn)) {
-                continue; // 已存在
-            }
-            // 尝试 resolve
+            if (index.Maps.FqnIndex.ContainsKey(fqn)) { continue; /* 已存在 */ }
             INamedTypeSymbol? symbol = null;
             foreach (var id in index.Types.Select(t => t.Id)) {
                 var s = resolveById(id);
@@ -83,10 +77,7 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
                     break;
                 }
             }
-            if (symbol == null) {
-                continue; // 无法定位
-            }
-
+            if (symbol == null) { continue; /* 无法定位 */ }
             var newId = CodeCortex.Core.Ids.TypeIdGenerator.GetId(symbol);
             var hashes = hasher.Compute(symbol, Array.Empty<string>(), new CodeCortex.Core.Hashing.HashConfig());
             var entry = new TypeEntry { Id = newId, Fqn = fqn, Kind = symbol.TypeKind.ToString() };
@@ -115,7 +106,8 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
                     if (fs.FileExists(file)) {
                         index.FileManifest[file] = new FileEntry { LastWriteUtcTicks = fs.GetLastWriteTicks(file) };
                     }
-                } catch { }
+                }
+                catch { }
             }
         }
         int removed = 0;
@@ -138,7 +130,8 @@ public sealed class IncrementalProcessor : IIncrementalProcessor {
                     if (fs.FileExists(outlinePath)) {
                         fs.TryDelete(outlinePath);
                     }
-                } catch { }
+                }
+                catch { }
             }
             removed = impact.RemovedTypeIds.Count;
         }

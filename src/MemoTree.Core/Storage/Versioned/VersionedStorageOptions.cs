@@ -42,25 +42,11 @@ namespace MemoTree.Core.Storage.Versioned {
         /// 验证配置有效性
         /// </summary>
         public void Validate() {
-            if (string.IsNullOrWhiteSpace(StorageRoot)) {
-                throw new ArgumentException("StorageRoot cannot be null or empty", nameof(StorageRoot));
-            }
-
-            if (string.IsNullOrWhiteSpace(DataDirectory)) {
-                throw new ArgumentException("DataDirectory cannot be null or empty", nameof(DataDirectory));
-            }
-
-            if (string.IsNullOrWhiteSpace(VersionFile)) {
-                throw new ArgumentException("VersionFile cannot be null or empty", nameof(VersionFile));
-            }
-
-            if (string.IsNullOrWhiteSpace(JournalsDirectory)) {
-                throw new ArgumentException("JournalsDirectory cannot be null or empty", nameof(JournalsDirectory));
-            }
-
-            if (KeepVersionCount < 1) {
-                throw new ArgumentException("KeepVersionCount must be at least 1", nameof(KeepVersionCount));
-            }
+            if (string.IsNullOrWhiteSpace(StorageRoot)) { throw new ArgumentException("StorageRoot cannot be null or empty", nameof(StorageRoot)); }
+            if (string.IsNullOrWhiteSpace(DataDirectory)) { throw new ArgumentException("DataDirectory cannot be null or empty", nameof(DataDirectory)); }
+            if (string.IsNullOrWhiteSpace(VersionFile)) { throw new ArgumentException("VersionFile cannot be null or empty", nameof(VersionFile)); }
+            if (string.IsNullOrWhiteSpace(JournalsDirectory)) { throw new ArgumentException("JournalsDirectory cannot be null or empty", nameof(JournalsDirectory)); }
+            if (KeepVersionCount < 1) { throw new ArgumentException("KeepVersionCount must be at least 1", nameof(KeepVersionCount)); }
         }
     }
 }

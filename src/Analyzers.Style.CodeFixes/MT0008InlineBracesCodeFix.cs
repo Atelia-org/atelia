@@ -137,18 +137,18 @@ public sealed class MT0008InlineBracesCodeFix : CodeFixProvider {
             .WithLeadingTrivia(SyntaxFactory.Space)
             .WithTrailingTrivia(leading);
 
-    // 按首个换行把 trailing 拆成两段：
-    // - preEol：首个换行之前（同一物理行）的 trivia（如空格 + // 注释 或 /* 注释 */）——放入 “}” 之前；
-    // - postEol：从首个换行起及其后续——保留在 “}” 之后。
+        // 按首个换行把 trailing 拆成两段：
+        // - preEol：首个换行之前（同一物理行）的 trivia（如空格 + // 注释 或 /* 注释 */）——放入 “}” 之前；
+        // - postEol：从首个换行起及其后续——保留在 “}” 之后。
         var trailingList = trailing.ToList();
         var firstEolIdx = trailingList.FindIndex(t => t.IsKind(SyntaxKind.EndOfLineTrivia));
         var preEol = firstEolIdx >= 0 ? trailingList.Take(firstEolIdx) : trailingList;
         var postEol = firstEolIdx >= 0 ? trailingList.Skip(firstEolIdx) : Enumerable.Empty<SyntaxTrivia>();
 
-    // 将 preEol 中的单行注释转换为块注释，并安置在 “}” 之前；
-    // 其余非常见 trivia（空白等）不保留，仅在注释前后提供最小空格。
+        // 将 preEol 中的单行注释转换为块注释，并安置在 “}” 之前；
+        // 其余非常见 trivia（空白等）不保留，仅在注释前后提供最小空格。
         var closeLeading = new List<SyntaxTrivia>();
-    // 至少保证语句与 “}” 之间有一个空格
+        // 至少保证语句与 “}” 之间有一个空格
         closeLeading.Add(SyntaxFactory.Space);
 
         foreach (var triv in preEol) {

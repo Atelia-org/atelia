@@ -24,7 +24,8 @@ public static class V2Commands {
                         return;
                     }
                     Console.WriteLine(md);
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine("outline2 error: " + ex.Message);
                     Environment.ExitCode = 2;
                 }
@@ -74,10 +75,7 @@ public static class V2Commands {
                     INamedTypeSymbol? target = null;
                     foreach (var p in loaded.Projects) {
                         var comp = await p.GetCompilationAsync();
-                        if (comp == null) {
-                            continue;
-                        }
-
+                        if (comp == null) { continue; }
                         foreach (var t in new RoslynTypeEnumerator().Enumerate(comp)) {
                             var tfqn = t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                             if (tfqn == (fqn.StartsWith("global::") ? fqn : "global::" + fqn)) {
@@ -85,9 +83,7 @@ public static class V2Commands {
                                 break;
                             }
                         }
-                        if (target != null) {
-                            break;
-                        }
+                        if (target != null) { break; }
                     }
                     if (target == null) {
                         Console.Error.WriteLine("[e2e] Type not found.");
@@ -114,14 +110,16 @@ public static class V2Commands {
                         const string marker = "// E2E_INSERT_HERE";
                         if (mutated.Contains(marker)) {
                             mutated = mutated.Replace(marker, method + "    " + marker);
-                        } else {
+                        }
+                        else {
                             // fallback: insert before last '}'
                             var idx = mutated.LastIndexOf('}');
                             if (idx > 0) {
                                 mutated = mutated.Insert(idx, method);
                             }
                         }
-                    } else if (action == "xml-doc") {
+                    }
+                    else if (action == "xml-doc") {
                         // naive: toggle a trailing xml doc line
                         mutated = mutated.Replace("/// <summary>", "/// <summary>\n/// (e2e xml-doc change)");
                     }
@@ -159,13 +157,15 @@ public static class V2Commands {
                         Console.WriteLine("[e2e] Reverted mutation.");
                     }
                     Console.WriteLine("[e2e] Done.");
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine("[e2e] Error: " + ex.Message);
                     if (revert && filePath != null && original != null) {
                         try {
                             await File.WriteAllTextAsync(filePath, original);
                             Console.WriteLine("[e2e] Reverted due to error.");
-                        } catch { }
+                        }
+                        catch { }
                     }
                     Environment.ExitCode = 2;
                 }

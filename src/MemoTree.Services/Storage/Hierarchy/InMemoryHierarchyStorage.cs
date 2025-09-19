@@ -51,7 +51,8 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage {
             if (!list.Contains(childId)) {
                 if (order.HasValue && order.Value >= 0 && order.Value <= list.Count) {
                     list.Insert(order.Value, childId);
-                } else {
+                }
+                else {
                     list.Add(childId);
                 }
             }
@@ -82,13 +83,15 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage {
                 var newList = GetChildrenUnsafe(newParentId.Value);
                 if (newOrder.HasValue && newOrder.Value >= 0 && newOrder.Value <= newList.Count) {
                     newList.Insert(newOrder.Value, nodeId);
-                } else {
+                }
+                else {
                     newList.Add(nodeId);
                 }
 
                 _children[newParentId.Value] = newList;
                 _parent[nodeId] = newParentId;
-            } else {
+            }
+            else {
                 _parent[nodeId] = null;
             }
         }
@@ -111,10 +114,7 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage {
         while (true) {
             path.Add(current);
             var p = _parent.TryGetValue(current, out var parent) ? parent : null;
-            if (p == null) {
-                break;
-            }
-
+            if (p == null) { break; }
             current = p.Value;
         }
         path.Reverse();
@@ -126,10 +126,7 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage {
         var current = nodeId;
         while (true) {
             var p = _parent.TryGetValue(current, out var parent) ? parent : null;
-            if (p == null) {
-                break;
-            }
-
+            if (p == null) { break; }
             depth++;
             current = p.Value;
         }
@@ -140,14 +137,8 @@ public class InMemoryHierarchyStorage : INodeHierarchyStorage {
         var current = descendantId;
         while (true) {
             var p = _parent.TryGetValue(current, out var parent) ? parent : null;
-            if (p == null) {
-                return Task.FromResult(false);
-            }
-
-            if (p.Value == ancestorId) {
-                return Task.FromResult(true);
-            }
-
+            if (p == null) { return Task.FromResult(false); }
+            if (p.Value == ancestorId) { return Task.FromResult(true); }
             current = p.Value;
         }
     }

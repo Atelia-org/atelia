@@ -31,7 +31,8 @@ public static class InitCommand {
                     Console.WriteLine("Next steps:");
                     Console.WriteLine("  memotree create \"My First Node\"  # Create your first node");
                     Console.WriteLine("  memotree                          # View the tree structure");
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }

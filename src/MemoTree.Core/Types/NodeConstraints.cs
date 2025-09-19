@@ -134,10 +134,7 @@ namespace MemoTree.Core.Types {
         /// 注意：这里验证的是正文内容，Title作为元数据单独验证
         /// </summary>
         public static bool IsValidLodContent(LodLevel level, string content) {
-            if (content == null) {
-                return false;
-            }
-
+            if (content == null) { return false; }
             return level switch {
                 LodLevel.Gist => content.Length <= LodLimits.GistMaxLength,
                 LodLevel.Summary => content.Length <= LodLimits.SummaryMaxLength,
@@ -158,10 +155,7 @@ namespace MemoTree.Core.Types {
         /// 验证标签集合
         /// </summary>
         public static bool IsValidTagCollection(IEnumerable<string> tags) {
-            if (tags == null) {
-                return true;
-            }
-
+            if (tags == null) { return true; }
             var tagList = tags.ToList();
             return tagList.Count <= MaxTagCount &&
             tagList.All(IsValidTag) &&
@@ -196,10 +190,7 @@ namespace MemoTree.Core.Types {
         /// 验证自定义属性集合
         /// </summary>
         public static bool IsValidCustomPropertyCollection(IReadOnlyDictionary<string, object> properties) {
-            if (properties == null) {
-                return true;
-            }
-
+            if (properties == null) { return true; }
             return properties.Count <= MaxCustomPropertyCount &&
             properties.Keys.All(IsValidCustomPropertyKey);
         }

@@ -34,14 +34,9 @@ public static class E2eDocRemovedCommand {
             INamedTypeSymbol? target = null;
             foreach (var proj in host.Workspace.CurrentSolution.Projects) {
                 var comp = await proj.GetCompilationAsync(cts.Token).ConfigureAwait(false);
-                if (comp is null) {
-                    continue;
-                }
-
+                if (comp is null) { continue; }
                 target = comp.GetTypeByMetadataName(targetFqn);
-                if (target is not null) {
-                    break;
-                }
+                if (target is not null) { break; }
             }
             if (target is null) {
                 Console.Error.WriteLine("[e2e] target type not found via Roslyn.");
@@ -83,7 +78,8 @@ public static class E2eDocRemovedCommand {
                         if (HasTotal(nsSelf, out var nsSelfTotal) && nsSelfTotal != 0) {
                             Console.Error.WriteLine($"[e2e] namespace expected to be removed but still present: {nsId}");
                             // not a hard failure: keep as warning because other children might exist transiently
-                        } else {
+                        }
+                        else {
                             Console.WriteLine($"[e2e] namespace removed as expected (no children): {nsId}");
                         }
                     }
@@ -103,14 +99,16 @@ public static class E2eDocRemovedCommand {
 
             Console.WriteLine("[e2e] PASS.");
             return 0;
-        } catch (Exception ex) {
+        }
+        catch (Exception ex) {
             Console.Error.WriteLine("[e2e] error: " + ex.Message);
             try {
                 if (movedPath is not null && filePath is not null && !File.Exists(filePath) && File.Exists(movedPath)) {
                     File.Move(movedPath, filePath);
                     Console.WriteLine("[e2e] restored file after error.");
                 }
-            } catch { }
+            }
+            catch { }
             return 2;
         }
     }
@@ -127,7 +125,8 @@ public static class E2eDocRemovedCommand {
                 total = t.GetInt32();
                 return true;
             }
-        } catch { }
+        }
+        catch { }
         total = -1;
         return false;
     }

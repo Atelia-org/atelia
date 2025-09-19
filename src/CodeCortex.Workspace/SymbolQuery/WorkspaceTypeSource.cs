@@ -18,8 +18,7 @@ namespace CodeCortex.Workspace.SymbolQuery {
             foreach (var proj in loaded.Projects) {
                 ct.ThrowIfCancellationRequested();
                 var comp = await proj.GetCompilationAsync(ct).ConfigureAwait(false);
-                if (comp is null) continue;
-
+                if (comp is null) { continue; }
                 var enumerator = new RoslynTypeEnumerator();
                 foreach (var t in enumerator.Enumerate(comp, ct)) {
                     var fqn = t.ToDisplayString(FqnFormat);

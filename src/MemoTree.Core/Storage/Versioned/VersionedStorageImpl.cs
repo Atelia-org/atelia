@@ -73,7 +73,8 @@ namespace MemoTree.Core.Storage.Versioned {
                     RecoveredOperationCount = recoveredCount,
                     LoadDuration = duration
                 };
-            } catch (Exception ex) {
+            }
+            catch (Exception ex) {
                 _logger.LogError(ex, "Failed to initialize versioned storage");
                 throw;
             }
@@ -111,10 +112,7 @@ namespace MemoTree.Core.Storage.Versioned {
             string operationDescription = "",
             CancellationToken cancellationToken = default
         ) {
-            if (updates == null || !updates.Any()) {
-                return _memoryManager.CurrentVersion;
-            }
-
+            if (updates == null || !updates.Any()) { return _memoryManager.CurrentVersion; }
             return await ExecuteAtomicOperationAsync(
                 "UpdateMany",
                 updates.Keys,
@@ -145,10 +143,7 @@ namespace MemoTree.Core.Storage.Versioned {
             CancellationToken cancellationToken = default
         ) {
             var keyList = keys.ToList();
-            if (!keyList.Any()) {
-                return _memoryManager.CurrentVersion;
-            }
-
+            if (!keyList.Any()) { return _memoryManager.CurrentVersion; }
             return await ExecuteAtomicOperationAsync(
                 "DeleteMany",
                 keyList,
@@ -206,11 +201,13 @@ namespace MemoTree.Core.Storage.Versioned {
                     );
 
                     return result;
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     _logger.LogError(ex, "Failed atomic operation {OperationType}, log preserved for recovery", operationType);
                     throw;
                 }
-            } finally {
+            }
+            finally {
                 _operationLock.Release();
             }
         }
@@ -259,7 +256,8 @@ namespace MemoTree.Core.Storage.Versioned {
                 var json = await File.ReadAllTextAsync(versionFile, cancellationToken);
                 var versionPointer = JsonSerializer.Deserialize<VersionPointer>(json, _jsonOptions);
                 return versionPointer?.CurrentVersion ?? 1;
-            } catch (Exception ex) {
+            }
+            catch (Exception ex) {
                 _logger.LogWarning(ex, "Failed to load version pointer, defaulting to version 1");
                 return 1;
             }
@@ -287,7 +285,8 @@ namespace MemoTree.Core.Storage.Versioned {
                     if (value != null) {
                         loadedData[latestFile.Key] = value;
                     }
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     _logger.LogWarning(ex, "Failed to load data file {FilePath}", latestFile.FilePath);
                 }
             }
@@ -305,7 +304,8 @@ namespace MemoTree.Core.Storage.Versioned {
                     // 之前的 IsOperationCompleteAsync 检查是冗余的，因为如果操作完成了，日志文件就应该被删除
                     await RollbackOperationAsync(journalFile, cancellationToken);
                     recoveredCount++;
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     _logger.LogWarning(ex, "Failed to recover operation from journal {JournalFile}", journalFile);
                 }
             }
@@ -332,7 +332,8 @@ namespace MemoTree.Core.Storage.Versioned {
                 File.Delete(journalFile);
 
                 _logger.LogInformation("Rolled back incomplete operation from {JournalFile}", journalFile);
-            } catch (Exception ex) {
+            }
+            catch (Exception ex) {
                 _logger.LogError(ex, "Failed to rollback operation from {JournalFile}", journalFile);
             }
         }

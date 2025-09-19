@@ -32,7 +32,8 @@ public static class ViewCommands {
                     await svc.ExpandNodeAsync(nodeId, "default");
                     var output = await svc.RenderViewAsync("default");
                     Console.WriteLine(output);
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }
@@ -66,7 +67,8 @@ public static class ViewCommands {
                     await svc.CollapseNodeAsync(nodeId, "default");
                     var output = await svc.RenderViewAsync("default");
                     Console.WriteLine(output);
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }
@@ -100,7 +102,8 @@ public static class ViewCommands {
                     await svc.CreateViewAsync(name, description);
                     var output = await svc.RenderViewAsync(name);
                     Console.WriteLine(output);
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }
@@ -134,7 +137,8 @@ public static class ViewCommands {
                     await svc.UpdateViewDescriptionAsync(name, description);
                     var output = await svc.RenderViewAsync(name);
                     Console.WriteLine(output);
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     Console.Error.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }
