@@ -159,28 +159,31 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                         }
                     }
 
-                    // Lazy build the candidates for the current segment, restricted to the parent set and (optionally) root-first constraint.
-                    var allowed = BuildSegmentCandidates(
+                    // Lazy build the candidates for the current segment (split by exact/non-exact),
+                    // restricted to the parent set and (optionally) root-first constraint.
+                    var (allowedExact, allowedNonExact) = BuildSegmentCandidatesSplit(
                         segNormalized: qi.NormalizedSegments[i],
                         segNormalizedLowered: qi.LowerNormalizedSegments[i],
                         restrictTo: parents,
                         rootFirst: rootConstraint && i == 0
                     );
 
-                    if (allowed.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
+                    if (allowedExact.Count == 0 && allowedNonExact.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                     var next = new Dictionary<int, (MatchFlags flags, int cur)>(survivorsAdv.Count);
                     foreach (var kv in survivorsAdv) {
                         var lastNid = kv.Key;
                         var state = kv.Value;
                         var parent = _nodes[state.cur].Parent; // move one level up on the ancestor chain
-                        if (allowed.TryGetValue(parent, out var segFlags)) {
-                            // Keep the original last node id as the key; advance current ancestor to parent
-                            // Merge flags from the current segment into the accumulated flags to reflect non-exact sources across the whole chain.
-                            next[lastNid] = (state.flags | segFlags, parent);
+                        // Per-parent fallback: prefer exact; if no exact, fallback to non-exact
+                        if (allowedExact.TryGetValue(parent, out var segFlagsExact)) {
+                            next[lastNid] = (state.flags | segFlagsExact, parent);
+                        }
+                        else if (allowedNonExact.TryGetValue(parent, out var segFlagsNonExact)) {
+                            next[lastNid] = (state.flags | segFlagsNonExact, parent);
                         }
                     }
                     survivorsAdv = next;
-                    DebugUtil.Print("SymbolTreeB.Lazy", $"i={i}, parents={parents.Count}, allowed={allowed.Count}, survivors(after)={survivorsAdv.Count}");
+                    DebugUtil.Print("SymbolTreeB.Lazy", $"i={i}, parents={parents.Count}, allowedExact={allowedExact.Count}, allowedNonExact={allowedNonExact.Count}, survivors(after)={survivorsAdv.Count}");
                 }
 
                 if (survivorsAdv.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
@@ -302,6 +305,86 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             }
 
             return map;
+        }
+
+        // Split variant: build exact and non-exact maps separately for per-parent fallback semantics.
+        private (Dictionary<int, MatchFlags> exact, Dictionary<int, MatchFlags> nonExact) BuildSegmentCandidatesSplit(
+            string segNormalized,
+            string? segNormalizedLowered,
+            ISet<int>? restrictTo,
+            bool rootFirst
+        ) {
+            var exact = new Dictionary<int, MatchFlags>(restrictTo?.Count ?? 0);
+            var nonExact = new Dictionary<int, MatchFlags>(restrictTo?.Count ?? 0);
+
+            bool ShouldKeep(int nid) {
+                if (restrictTo is not null && !restrictTo.Contains(nid)) { return false; }
+                if (rootFirst) {
+                    var p = _nodes[nid].Parent;
+                    if (p < 0 || _nodes[p].Parent != -1) { return false; /* keep only nodes whose parent is directly under root */ }
+                }
+                return true;
+            }
+
+            int matchedRestrict = 0;
+            int restrictGoal = restrictTo?.Count ?? int.MaxValue;
+
+            void AddTo(Dictionary<int, MatchFlags> target, IEnumerable<AliasRelation> rels) {
+                foreach (var rel in rels) {
+                    var nid = rel.NodeId;
+                    if (!ShouldKeep(nid)) { continue; }
+                    if (target.TryGetValue(nid, out var f)) {
+                        target[nid] = f | rel.Kind;
+                    }
+                    else {
+                        target[nid] = rel.Kind;
+                        if (restrictTo is not null) {
+                            matchedRestrict++;
+                            if (matchedRestrict >= restrictGoal) {
+                                // All restrict targets matched; no need to keep scanning this bucket.
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Exact phase
+            if (!string.IsNullOrEmpty(segNormalized)) {
+                AddTo(exact, CandidatesExact(segNormalized));
+            }
+
+            // Non-exact phase: only add parents not already covered by exact
+            bool CoveredByExact(int nid) => exact.ContainsKey(nid);
+
+            void AddNonExact(IEnumerable<AliasRelation> rels) {
+                foreach (var rel in rels) {
+                    var nid = rel.NodeId;
+                    if (!ShouldKeep(nid)) { continue; }
+                    if (CoveredByExact(nid)) { continue; }
+                    if (nonExact.TryGetValue(nid, out var f)) {
+                        nonExact[nid] = f | rel.Kind;
+                    }
+                    else {
+                        nonExact[nid] = rel.Kind;
+                        if (restrictTo is not null) {
+                            matchedRestrict++;
+                            if (matchedRestrict >= restrictGoal) { break; }
+                        }
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(segNormalized)) {
+                AddNonExact(CandidatesNonExact(segNormalized));
+                if (restrictTo is not null && matchedRestrict >= restrictGoal) { return (exact, nonExact); }
+            }
+            if (!string.IsNullOrEmpty(segNormalizedLowered)) {
+                AddNonExact(CandidatesNonExact(segNormalizedLowered));
+                if (restrictTo is not null && matchedRestrict >= restrictGoal) { return (exact, nonExact); }
+            }
+
+            return (exact, nonExact);
         }
 
         public ISymbolIndex WithDelta(SymbolsDelta delta) {
