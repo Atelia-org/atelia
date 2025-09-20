@@ -6,6 +6,12 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
+# Resolve script path robustly (works when invoked via shim)
+$ScriptPath = $MyInvocation.MyCommand.Path
+if (-not $ScriptPath -or -not (Test-Path $ScriptPath)) {
+  Write-Host "Pre-commit PowerShell script invoked incorrectly. Please reinstall hooks via scripts/git-hooks/install.ps1" -ForegroundColor Yellow
+}
+
 function Write-Info($m){ Write-Host $m -ForegroundColor Cyan }
 function Write-Warn($m){ Write-Host $m -ForegroundColor Yellow }
 function Write-Err($m){ Write-Host $m -ForegroundColor Red }
@@ -31,7 +37,7 @@ try {
   # Run repository formatter on staged .cs files only (fast & minimal)
   if (Test-Path "$repoRoot/format.ps1") {
     Write-Info "Formatting staged C# files via ./format.ps1 -Scope staged"
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "$repoRoot/format.ps1" -Scope staged | Out-Host
+    & "$repoRoot/format.ps1" -Scope staged | Out-Host
     if ($LASTEXITCODE -ne 0) {
       Write-Err "Formatter failed. Aborting commit."
       exit 1
