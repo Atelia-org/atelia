@@ -119,14 +119,14 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 if (lastMap.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
                 DebugUtil.Print("SymbolTreeB.Lazy", $"lastMap candidates={lastMap.Count}");
 
-                // Single-segment root-anchored early filter: keep nodes whose parent is the root (root.Parent == -1)
+                // Single-segment root-anchored early filter: keep only namespaces whose parent is directly under root (root.Parent == -1)
                 if (rootConstraint && segCount == 1 && lastMap.Count > 0) {
                     var keys = lastMap.Keys.ToArray();
                     int removed = 0;
                     foreach (var id in keys) {
                         var p = _nodes[id].Parent;
-                        // remove if no parent or the parent is not the root (i.e., parent.Parent != -1)
-                        if (p < 0 || _nodes[p].Parent != -1) {
+                        // remove when parent invalid, parent not root, or node is not a namespace
+                        if (p < 0 || _nodes[p].Parent != -1 || _nodes[id].Kind != NodeKind.Namespace) {
                             lastMap.Remove(id);
                             removed++;
                         }
@@ -189,8 +189,8 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                     survivors[kv.Key] = kv.Value.flags;
                 }
 
-                // Root constraint: the ancestor of the first segment must be directly under the root
-                if (rootConstraint) {
+                // Root constraint: for multi-segment only, the ancestor of the first segment must be directly under the root
+                if (rootConstraint && segCount > 1) {
                     var toRemove = new List<int>();
                     foreach (var nid in survivors.Keys) {
                         var curAncestor = survivorsAdv[nid].cur;
@@ -294,9 +294,11 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             if (map.Count > 0) { return map; }
             if (!string.IsNullOrEmpty(segNormalized)) {
                 Add(CandidatesNonExact(segNormalized));
+                if (restrictTo is not null && matchedRestrict >= restrictGoal) { return map; }
             }
             if (!string.IsNullOrEmpty(segNormalizedLowered)) {
                 Add(CandidatesNonExact(segNormalizedLowered));
+                if (restrictTo is not null && matchedRestrict >= restrictGoal) { return map; }
             }
 
             return map;
