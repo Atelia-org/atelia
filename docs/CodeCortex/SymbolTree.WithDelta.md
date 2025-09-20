@@ -263,3 +263,16 @@
 
 - FromEntries = 全量构建器；WithDelta 的“新增节点 + 别名规则”与之保持一致。
 - 短期可在 WithDelta 内设阈值：当 delta 很大时调用一个“受限 FromEntries”作为临时降级（需要一组 entries 源）；目前 entries 由 IndexSynchronizer 维护的 `_entriesMap` 持有，上层已经存在“失败时 full rebuild”的路径，建议先复用上层。
+
+## 进度（粗粒度）
+
+- 2025-09-21
+  - 实施 P0 版本 `SymbolTreeB.WithDelta`：
+    - 基于局部路径遍历 + 兄弟链修补，实现删除优先、随后添加/Upsert 的流程；
+    - 别名层采用写时复制（per-key 不可变数组替换），同步维护 Namespace 与 Type 的别名项；
+    - 节点采用头插法新增子节点，删除时将目标节点“脱链”为墓碑（Entry=null, Parent=-1, NextSibling=-1）；
+    - 保持幂等：重复应用同一 delta 结构不变；
+    - 初次空快照且仅有 Add 的情况下，P0 退化调用 FromEntries 构建。
+  - 后续 P1/P2：
+    - P1：父级子表索引、惰性覆写（ImmutableArray + 覆写字典）、按 docId 的临时小索引；
+    - P2：墓碑压缩/重建阈值与后台任务、超大 delta 的降级策略。
