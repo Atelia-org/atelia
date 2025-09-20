@@ -10,6 +10,15 @@ using CodeCortexV2.Abstractions;
 namespace CodeCortexV2.Index.SymbolTreeInternal;
 
 partial class SymbolTreeB {
+    /// <summary>
+    /// Apply a pre-normalized <see cref="SymbolsDelta"/> to the current immutable tree and return a new snapshot.
+    /// Expectations:
+    /// - Pure application: do not perform global scans to decide namespace removals/additions; trust the delta closure.
+    /// - Locality: time/memory costs should scale with the size of <paramref name="delta"/>, not the whole index.
+    /// - Idempotency: applying the same delta repeatedly should not change the resulting state.
+    /// - Optional defensive checks: implementations MAY include lightweight validations limited to impacted subtrees
+    ///   (guarded by a debug/consistency option) and emit diagnostics via DebugUtil. No full-index traversal.
+    /// </summary>
     public ISymbolIndex WithDelta(SymbolsDelta delta) {
         // Placeholder: to be wired with a builder that only rebuilds affected subtrees and alias buckets.
         return this;

@@ -26,16 +26,17 @@ public interface IIndexProvider {
 }
 
 /// <summary>
-/// Bridges Roslyn Workspace and immutable SymbolIndex by computing SymbolsDelta
-/// and swapping an immutable snapshot atomically.
-/// - Single-writer, multi-reader; reads are lock-free via Current.
-/// - Writes are serialized via a background queue and debounce.
-/// - Robust to errors: failures don't affect Current; optional full rebuild fallback.
-/// </summary>
-/// <summary>
-/// Bridges Roslyn Workspace to <see cref="SymbolIndex"/> by computing and applying <see cref="SymbolsDelta"/>.
-/// Single-writer, multi-reader: reads are lock-free via <see cref="Current"/>; writes are serialized with a semaphore.
-/// Debounces workspace change events and is resilient to failures (optional full rebuild fallback).
+/// Bridges Roslyn Workspace and the immutable <see cref="ISymbolIndex"/> by computing normalized, closed-over <see cref="SymbolsDelta"/>s
+/// and atomically publishing new snapshots.
+/// Responsibilities and contract:
+/// - Single-writer, multi-reader: reads are lock-free via <see cref="Current"/>; writes are serialized and debounced.
+/// - Produces self-consistent deltas that are closure-complete:
+///   - Ensure ancestor namespace chains for additions are present.
+///   - Determine namespace removals (including conservative cascading) when they become empty due to this batch.
+///   - Represent renames as remove(oldId) + add(newEntry).
+///   - Avoid contradictory operations within the same delta and preserve idempotency.
+/// - Consumers (e.g., <c>ISymbolIndex.WithDelta</c>) are expected to apply the delta without global re-inference.
+/// - Robust to errors: failures don't affect <see cref="Current"/>; can fall back to a full rebuild when configured.
 /// </summary>
 public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     private readonly RoslynWorkspace _workspace;
