@@ -16,18 +16,14 @@ public class V2_SymbolIndex_NamespaceSearchTests {
     // 构造命名空间条目（与 V2_SymbolTree_SearchTests 中保持一致风格）
     private static SymbolEntry Ns(string name, string? parent = null) {
         var fqn = "global::" + name;
-        var fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
         var simple = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
         return new SymbolEntry(
-            SymbolId: "N:" + name,
-            Fqn: fqn,
-            FqnNoGlobal: name,
-            FqnBase: fqnBase,
-            Simple: simple,
-            Kind: SymbolKinds.Namespace,
+            DocCommentId: "N:" + name,
             Assembly: string.Empty,
-            GenericBase: string.Empty,
-            ParentNamespace: parent ?? (name.Contains('.') ? name[..name.LastIndexOf('.')] : string.Empty)
+            Kind: SymbolKinds.Namespace,
+            ParentNamespaceNoGlobal: parent ?? (name.Contains('.') ? name[..name.LastIndexOf('.')] : string.Empty),
+            FqnNoGlobal: name,
+            FqnLeaf: simple
         );
     }
 
@@ -38,19 +34,15 @@ public class V2_SymbolIndex_NamespaceSearchTests {
             ? $"global::{ns}.{nameBase}<T{(arity > 1 ? "," + string.Join(",", Enumerable.Range(2, arity - 1).Select(i => "T" + i)) : string.Empty)}>"
             : $"global::{ns}.{nameBase}";
         string fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
-        string fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
         string simple = nameBase;
         string parentNs = ns;
         return new SymbolEntry(
-            SymbolId: docId,
-            Fqn: fqn,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnBase: fqnBase,
-            Simple: simple,
-            Kind: SymbolKinds.Type,
+            DocCommentId: docId,
             Assembly: assembly,
-            GenericBase: IndexStringUtil.ExtractGenericBase(simple),
-            ParentNamespace: parentNs
+            Kind: SymbolKinds.Type,
+            ParentNamespaceNoGlobal: parentNs,
+            FqnNoGlobal: fqnNoGlobal,
+            FqnLeaf: simple
         );
     }
 

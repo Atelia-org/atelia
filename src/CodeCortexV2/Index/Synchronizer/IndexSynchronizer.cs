@@ -112,13 +112,13 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         // Build entries map from full adds
         var mapB = _entriesMap.ToBuilder();
         foreach (var e in full.TypeAdds) {
-            if (!string.IsNullOrEmpty(e.SymbolId)) {
-                mapB[e.SymbolId] = e;
+            if (!string.IsNullOrEmpty(e.DocCommentId)) {
+                mapB[e.DocCommentId] = e;
             }
         }
         foreach (var e in full.NamespaceAdds) {
-            if (!string.IsNullOrEmpty(e.SymbolId)) {
-                mapB[e.SymbolId] = e;
+            if (!string.IsNullOrEmpty(e.DocCommentId)) {
+                mapB[e.DocCommentId] = e;
             }
         }
         _entriesMap = mapB.ToImmutable();
@@ -170,15 +170,15 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             }
             if (delta.TypeAdds is { Count: > 0 }) {
                 foreach (var e in delta.TypeAdds) {
-                    if (!string.IsNullOrEmpty(e.SymbolId)) {
-                        mapB[e.SymbolId] = e;
+                    if (!string.IsNullOrEmpty(e.DocCommentId)) {
+                        mapB[e.DocCommentId] = e;
                     }
                 }
             }
             if (delta.NamespaceAdds is { Count: > 0 }) {
                 foreach (var e in delta.NamespaceAdds) {
-                    if (!string.IsNullOrEmpty(e.SymbolId)) {
-                        mapB[e.SymbolId] = e;
+                    if (!string.IsNullOrEmpty(e.DocCommentId)) {
+                        mapB[e.DocCommentId] = e;
                     }
                 }
             }
@@ -277,12 +277,11 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 if (!ns.IsGlobalNamespace) {
                     var fqn = ns.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                     var fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
-                    var fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
                     var simple = ns.Name;
                     var docId = "N:" + fqnNoGlobal;
                     var lastDot = fqnNoGlobal.LastIndexOf('.');
                     var parentNs = lastDot > 0 ? fqnNoGlobal.Substring(0, lastDot) : string.Empty;
-                    nsAdds.Add(new SymbolEntry(docId, fqn, fqnNoGlobal, fqnBase, simple, SymbolKinds.Namespace, string.Empty, string.Empty, parentNs));
+                    nsAdds.Add(new SymbolEntry(DocCommentId: docId, Assembly: string.Empty, Kind: SymbolKinds.Namespace, ParentNamespaceNoGlobal: parentNs, FqnNoGlobal: fqnNoGlobal, FqnLeaf: simple));
                 }
                 foreach (var t in ns.GetTypeMembers()) {
                     WalkType(t);
@@ -297,12 +296,11 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             void WalkType(INamedTypeSymbol t) {
                 var fqn = t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                 var fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
-                var fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
-                var simple = t.Name;
+                var fqnLeaf = t.Name;
                 var asm = t.ContainingAssembly?.Name ?? string.Empty;
                 var docId = DocumentationCommentId.CreateDeclarationId(t) ?? "T:" + fqnNoGlobal;
                 var parentNs = t.ContainingNamespace?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)?.Replace("global::", string.Empty) ?? string.Empty;
-                typeAdds.Add(new SymbolEntry(docId, fqn, fqnNoGlobal, fqnBase, simple, SymbolKinds.Type, asm, IndexStringUtil.ExtractGenericBase(simple), parentNs));
+                typeAdds.Add(new SymbolEntry(DocCommentId: docId, Assembly: asm, Kind: SymbolKinds.Type, ParentNamespaceNoGlobal: parentNs, FqnNoGlobal: fqnNoGlobal, FqnLeaf: fqnLeaf));
                 foreach (var nt in t.GetTypeMembers()) {
                     ct.ThrowIfCancellationRequested();
                     WalkType(nt);
@@ -369,12 +367,11 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                     if (sym is null) { continue; }
                     var fqn = sym.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                     var fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
-                    var fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
                     var simple = sym.Name;
                     var asm = sym.ContainingAssembly?.Name ?? string.Empty;
                     var sid = DocumentationCommentId.CreateDeclarationId(sym) ?? "T:" + fqnNoGlobal;
                     var parentNs = sym.ContainingNamespace?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)?.Replace("global::", string.Empty) ?? string.Empty;
-                    var entry = new SymbolEntry(sid, fqn, fqnNoGlobal, fqnBase, simple, SymbolKinds.Type, asm, IndexStringUtil.ExtractGenericBase(simple), parentNs);
+                    var entry = new SymbolEntry(DocCommentId: sid, Assembly: asm, Kind: SymbolKinds.Type, ParentNamespaceNoGlobal: parentNs, FqnNoGlobal: fqnNoGlobal, FqnLeaf: simple);
                     declared.Add((sid, entry, parentNs));
                 }
 
@@ -476,12 +473,10 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         string cur = string.Empty;
         for (int i = 0; i < parts.Length; i++) {
             cur = i == 0 ? parts[0] : cur + "." + parts[i];
-            var fqn = "global::" + cur;
-            var fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
             var docId = "N:" + cur;
             var lastDot = cur.LastIndexOf('.');
             var parent = lastDot > 0 ? cur.Substring(0, lastDot) : string.Empty;
-            nsAdds.Add(new SymbolEntry(docId, fqn, cur, fqnBase, parts[i], SymbolKinds.Namespace, string.Empty, string.Empty, parent));
+            nsAdds.Add(new SymbolEntry(DocCommentId: docId, Assembly: string.Empty, Kind: SymbolKinds.Namespace, ParentNamespaceNoGlobal: parent, FqnNoGlobal: cur, FqnLeaf: parts[i]));
         }
     }
 
@@ -513,10 +508,10 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         var nsPrefix = ns + ".";
         foreach (var e in _entriesMap.Values) {
             if ((e.Kind & SymbolKinds.Type) == 0) { continue; }
-            var pns = e.ParentNamespace;
+            var pns = e.ParentNamespaceNoGlobal;
             if (string.Equals(pns, ns, StringComparison.Ordinal) || (pns?.StartsWith(nsPrefix, StringComparison.Ordinal) == true)) {
                 // If this type is NOT being removed in this batch, then namespace cannot be removed.
-                if (!pending.Contains(e.SymbolId)) { return false; }
+                if (!pending.Contains(e.DocCommentId)) { return false; }
             }
         }
 

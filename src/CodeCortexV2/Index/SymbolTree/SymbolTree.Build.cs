@@ -225,7 +225,7 @@ partial class SymbolTreeB {
                         int nid = r.NodeId;
                         if (nid < 0 || nid >= nodes.Count) { continue; }
                         var entry = nodes[nid].Entry;
-                        if (entry is not null && string.Equals(entry.SymbolId, docId, StringComparison.Ordinal)) {
+                        if (entry is not null && string.Equals(entry.DocCommentId, docId, StringComparison.Ordinal)) {
                             // remove aliases first, then detach
                             RemoveAliasesForTypeNode(nid);
                             DetachNode(nid);
@@ -285,11 +285,11 @@ partial class SymbolTreeB {
                 bool isType = (e.Kind & SymbolKinds.Type) != 0;
                 if (!isType) { continue; }
                 // 1) Ensure namespaces
-                var nsSegs = SplitNs(e.ParentNamespace);
+                var nsSegs = SplitNs(e.ParentNamespaceNoGlobal);
                 int nsParent = EnsureNamespaceChain(nsSegs);
 
                 // 2) Build/ensure type chain from docId
-                var s = e.SymbolId?.StartsWith("T:", StringComparison.Ordinal) == true ? e.SymbolId![2..] : e.FqnNoGlobal;
+                var s = e.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true ? e.DocCommentId![2..] : e.FqnNoGlobal;
                 var allSegs = QueryPreprocessor.SplitSegments(s);
                 int skip = nsSegs.Length;
                 if (skip < 0 || skip > allSegs.Length) { skip = 0; }
@@ -308,7 +308,7 @@ partial class SymbolTreeB {
                         // Upsert semantics: if an existing node matches docId+assembly, update its entry; otherwise create a sibling
                         var existing = nodes[child];
                         if (existing.Entry is not null &&
-                            string.Equals(existing.Entry.SymbolId, e.SymbolId, StringComparison.Ordinal) &&
+                            string.Equals(existing.Entry.DocCommentId, e.DocCommentId, StringComparison.Ordinal) &&
                             string.Equals(existing.Entry.Assembly, e.Assembly, StringComparison.Ordinal)) {
                             ReplaceNode(child, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, e));
                         }
@@ -443,7 +443,7 @@ partial class SymbolTreeB {
             bool isNs = (e.Kind & SymbolKinds.Namespace) != 0;
             bool isType = (e.Kind & SymbolKinds.Type) != 0;
             if (!isNs && !isType) { continue; /* current index only materializes Namespace and Type */ }
-            string[] nsSegments = isType ? SplitNs(e.ParentNamespace).ToArray() : SplitNs(e.FqnNoGlobal).ToArray();
+            string[] nsSegments = isType ? SplitNs(e.ParentNamespaceNoGlobal).ToArray() : SplitNs(e.FqnNoGlobal).ToArray();
             int parent = BuildNamespaceChainAndAliases(root, nsSegments);
 
             if (isNs) {
@@ -455,8 +455,8 @@ partial class SymbolTreeB {
             }
 
             // 2) Build type chain from DocId strictly ("T:"-prefixed)
-            System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(e.SymbolId) && e.SymbolId.StartsWith("T:", StringComparison.Ordinal), "Type entries must have DocId starting with 'T:'");
-            var s = e.SymbolId[2..];
+            System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(e.DocCommentId) && e.DocCommentId.StartsWith("T:", StringComparison.Ordinal), "Type entries must have DocId starting with 'T:'");
+            var s = e.DocCommentId[2..];
             var allSegs = QueryPreprocessor.SplitSegments(s);
             var nsCount = nsSegments.Length;
             if (nsCount < 0 || nsCount > allSegs.Length) {

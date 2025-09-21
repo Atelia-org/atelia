@@ -11,18 +11,14 @@ namespace CodeCortex.Tests;
 public class V2_SymbolTree_SearchTests {
     private static SymbolEntry Ns(string name, string? parent = null) {
         var fqn = "global::" + name;
-        var fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
         var simple = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
         return new SymbolEntry(
-            SymbolId: "N:" + name,
-            Fqn: fqn,
-            FqnNoGlobal: name,
-            FqnBase: fqnBase,
-            Simple: simple,
-            Kind: SymbolKinds.Namespace,
+            DocCommentId: "N:" + name,
             Assembly: string.Empty,
-            GenericBase: string.Empty,
-            ParentNamespace: parent ?? (name.Contains('.') ? name[..name.LastIndexOf('.')] : string.Empty)
+            Kind: SymbolKinds.Namespace,
+            ParentNamespaceNoGlobal: parent ?? (name.Contains('.') ? name[..name.LastIndexOf('.')] : string.Empty),
+            FqnNoGlobal: name,
+            FqnLeaf: simple
         );
     }
 
@@ -35,19 +31,15 @@ public class V2_SymbolTree_SearchTests {
             ? $"global::{ns}.{nameBase}<T{(arity > 1 ? "," + string.Join(",", Enumerable.Range(2, arity - 1).Select(i => "T" + i)) : string.Empty)}>"
             : $"global::{ns}.{nameBase}";
         string fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
-        string fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
         string simple = nameBase; // Roslyn's INamedTypeSymbol.Name returns base without `n
         string parentNs = ns;
         return new SymbolEntry(
-            SymbolId: docId,
-            Fqn: fqn,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnBase: fqnBase,
-            Simple: simple,
-            Kind: SymbolKinds.Type,
+            DocCommentId: docId,
             Assembly: assembly,
-            GenericBase: IndexStringUtil.ExtractGenericBase(simple),
-            ParentNamespace: parentNs
+            Kind: SymbolKinds.Type,
+            ParentNamespaceNoGlobal: parentNs,
+            FqnNoGlobal: fqnNoGlobal,
+            FqnLeaf: simple
         );
     }
 
@@ -77,31 +69,27 @@ public class V2_SymbolTree_SearchTests {
             : string.Empty;
         string fqn = $"global::{ns}.{outerBase}{outerGenericParams}.{innerBase}{innerGenericParams}";
         string fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
-        string fqnBase = IndexStringUtil.NormalizeFqnBase(fqn);
         string simple = innerBase;
         string parentNs = ns;
         return new SymbolEntry(
-            SymbolId: docId,
-            Fqn: fqn,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnBase: fqnBase,
-            Simple: simple,
-            Kind: SymbolKinds.Type,
+            DocCommentId: docId,
             Assembly: assembly,
-            GenericBase: IndexStringUtil.ExtractGenericBase(simple),
-            ParentNamespace: parentNs
+            Kind: SymbolKinds.Type,
+            ParentNamespaceNoGlobal: parentNs,
+            FqnNoGlobal: fqnNoGlobal,
+            FqnLeaf: simple
         );
     }
 
     private static SymbolTreeB BuildSampleWithNested() {
-        var entries = new List<SymbolEntry>
-        {
+        var entries = new List<SymbolEntry> {
             Ns("System"),
             Ns("System.Collections", "System"),
             Ns("System.Collections.Generic", "System.Collections"),
+            // Test
             Ty("System.Collections.Generic", "List", 1, "System.Collections"),
             // Nested: List<T>.Enumerator
-			TyNested("System.Collections.Generic", "List", 1, "Enumerator", 0, "System.Collections")
+            TyNested("System.Collections.Generic", "List", 1, "Enumerator", 0, "System.Collections")
         };
         return SymbolTreeB.FromEntries(entries);
     }
