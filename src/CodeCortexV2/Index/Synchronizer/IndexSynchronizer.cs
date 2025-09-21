@@ -116,15 +116,10 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 mapB[e.DocCommentId] = e;
             }
         }
-        foreach (var e in full.NamespaceAdds) {
-            if (!string.IsNullOrEmpty(e.DocCommentId)) {
-                mapB[e.DocCommentId] = e;
-            }
-        }
         _entriesMap = mapB.ToImmutable();
         // Build doc/type maps
         await RebuildDocTypeMapsAsync(_workspace.CurrentSolution, ct).ConfigureAwait(false);
-        DebugUtil.Print("IndexSync", $"Initial build done: types={full.TypeAdds.Count}, namespaces={full.NamespaceAdds.Count}, elapsed={sw.ElapsedMilliseconds}ms");
+        DebugUtil.Print("IndexSync", $"Initial build done: types={full.TypeAdds.Count}, elapsed={sw.ElapsedMilliseconds}ms");
     }
 
     private async Task FlushAsync() {
@@ -143,6 +138,13 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         finally {
             _writer.Release();
         }
+
+        // If new events were enqueued during processing (e.g., retries), schedule another flush.
+        if (!_cts.IsCancellationRequested && !_pending.IsEmpty) {
+            _debounce.Interval = DebounceMs;
+            _debounce.Stop();
+            _debounce.Start();
+        }
     }
 
     private async Task ApplyBatchAsync(List<WorkspaceChangeEventArgs> batch, CancellationToken ct) {
@@ -150,8 +152,10 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         try {
             var affected = CollectAffectedDocuments(batch, _workspace.CurrentSolution);
             DebugUtil.Print("IndexSync", $"Batch: events={batch.Count}, docs={affected.Count}");
+            var swDelta = Stopwatch.StartNew();
             var delta = await ComputeDeltaAsync(affected, ct).ConfigureAwait(false);
-            DebugUtil.Print("IndexSync", $"Delta: +T={delta.TypeAdds.Count}, -T={delta.TypeRemovals.Count}, +N={delta.NamespaceAdds.Count}, -N={delta.NamespaceRemovals.Count}");
+            swDelta.Stop();
+            DebugUtil.Print("IndexSync", $"Delta: +T={delta.TypeAdds.Count}, -T={delta.TypeRemovals.Count}, compute={swDelta.ElapsedMilliseconds}ms");
             // Update entries map for A/B tree snapshots
             var mapB = _entriesMap.ToBuilder();
             if (delta.TypeRemovals is { Count: > 0 }) {
@@ -161,22 +165,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                     }
                 }
             }
-            if (delta.NamespaceRemovals is { Count: > 0 }) {
-                foreach (var id in delta.NamespaceRemovals) {
-                    if (!string.IsNullOrEmpty(id)) {
-                        mapB.Remove(id);
-                    }
-                }
-            }
             if (delta.TypeAdds is { Count: > 0 }) {
                 foreach (var e in delta.TypeAdds) {
-                    if (!string.IsNullOrEmpty(e.DocCommentId)) {
-                        mapB[e.DocCommentId] = e;
-                    }
-                }
-            }
-            if (delta.NamespaceAdds is { Count: > 0 }) {
-                foreach (var e in delta.NamespaceAdds) {
                     if (!string.IsNullOrEmpty(e.DocCommentId)) {
                         mapB[e.DocCommentId] = e;
                     }
@@ -265,7 +255,6 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
 
     private async Task<SymbolsDelta> ComputeFullDeltaAsync(Solution solution, CancellationToken ct) {
         var typeAdds = new List<SymbolEntry>(1024);
-        var nsAdds = new List<SymbolEntry>(256);
 
         foreach (var project in solution.Projects) {
             ct.ThrowIfCancellationRequested();
@@ -274,15 +263,6 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             WalkNamespace(comp.Assembly.GlobalNamespace);
 
             void WalkNamespace(INamespaceSymbol ns) {
-                if (!ns.IsGlobalNamespace) {
-                    var fqn = ns.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                    var fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
-                    var simple = ns.Name;
-                    var docId = "N:" + fqnNoGlobal;
-                    var lastDot = fqnNoGlobal.LastIndexOf('.');
-                    var parentNs = lastDot > 0 ? fqnNoGlobal.Substring(0, lastDot) : string.Empty;
-                    nsAdds.Add(new SymbolEntry(DocCommentId: docId, Assembly: string.Empty, Kind: SymbolKinds.Namespace, ParentNamespaceNoGlobal: parentNs, FqnNoGlobal: fqnNoGlobal, FqnLeaf: simple));
-                }
                 foreach (var t in ns.GetTypeMembers()) {
                     WalkType(t);
                 }
@@ -308,15 +288,13 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             }
         }
 
-        return new SymbolsDelta(typeAdds, Array.Empty<string>(), nsAdds, Array.Empty<string>());
+        return new SymbolsDelta(typeAdds, Array.Empty<string>());
     }
 
     private async Task<SymbolsDelta> ComputeDeltaAsync(HashSet<DocumentId> docs, CancellationToken ct) {
         var solution = _workspace.CurrentSolution;
         var typeAdds = new List<SymbolEntry>();
         var typeRemovals = new List<string>();
-        var nsAdds = new List<SymbolEntry>();
-        var nsRemovals = new List<string>();
 
         // Group by project and reuse compilation
         var groups = docs.GroupBy(d => d.ProjectId);
@@ -326,18 +304,20 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             var comp = await proj.GetCompilationAsync(ct).ConfigureAwait(false);
             if (comp is null) { continue; }
             foreach (var docId in g) {
-                var doc = solution.GetDocument(docId);
+                if (docId is null) { continue; }
+                var docIdNN = docId; // assert non-null for analyzers
+                var doc = solution.GetDocument(docIdNN);
+                DebugUtil.Print("IndexSync", $"ComputeDelta: handling doc={docId?.Id.ToString() ?? "<null>"} hasDoc={(doc != null)}");
                 if (doc is null) {
                     // Document has been removed from the workspace. Remove all types declared solely in this document.
-                    if (_docToTypeIds.TryGetValue(docId, out var oldSetRemoved) && oldSetRemoved is { Count: > 0 }) {
+                    if (_docToTypeIds.TryGetValue(docIdNN, out var oldSetRemoved) && oldSetRemoved is { Count: > 0 }) {
+                        DebugUtil.Print("IndexSync", $"DocRemoved: old type ids count={oldSetRemoved.Count}");
                         foreach (var id in oldSetRemoved) {
                             if (_typeIdToDocs.TryGetValue(id, out var ds)) {
-                                var nds = ds.Remove(docId);
+                                var nds = ds.Remove(docIdNN);
                                 if (nds.IsEmpty) {
-                                    // last declaration removed -> remove type and consider cascading namespace removals
+                                    // last declaration removed -> remove type
                                     typeRemovals.Add(id);
-                                    var parentNs = GetParentNamespaceFromTypeDocId(id);
-                                    CascadeNamespaceRemovalsIfEmpty(parentNs, nsRemovals, pendingTypeRemovals: typeRemovals);
                                     _typeIdToDocs = _typeIdToDocs.Remove(id);
                                 }
                                 else {
@@ -347,20 +327,30 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                             else {
                                 // No mapping -> conservatively mark removal
                                 typeRemovals.Add(id);
-                                var parentNs = GetParentNamespaceFromTypeDocId(id);
-                                CascadeNamespaceRemovalsIfEmpty(parentNs, nsRemovals, pendingTypeRemovals: typeRemovals);
                             }
                         }
                         // finally drop the document mapping
-                        _docToTypeIds = _docToTypeIds.Remove(docId);
+                        _docToTypeIds = _docToTypeIds.Remove(docIdNN);
+                    }
+                    else {
+                        DebugUtil.Print("IndexSync", $"DocRemoved: no mapping found; nothing to remove");
                     }
                     continue;
                 }
 
                 var model = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                if (model is null) { continue; }
+                if (model is null) {
+                    // Semantic model not ready yet (e.g., freshly added document in the same batch).
+                    // Re-enqueue this document to retry on the next debounce tick to avoid dropping adds.
+                    _pending.Enqueue(new WorkspaceChangeEventArgs(WorkspaceChangeKind.DocumentChanged, _workspace.CurrentSolution, _workspace.CurrentSolution, doc.Project.Id, docId));
+                    continue;
+                }
                 var root = await doc.GetSyntaxRootAsync(ct).ConfigureAwait(false);
-                if (root is null) { continue; }
+                if (root is null) {
+                    // Syntax root not ready yet; retry later.
+                    _pending.Enqueue(new WorkspaceChangeEventArgs(WorkspaceChangeKind.DocumentChanged, _workspace.CurrentSolution, _workspace.CurrentSolution, doc.Project.Id, docId));
+                    continue;
+                }
                 var declared = new List<(string Id, SymbolEntry Entry, string ParentNs)>();
                 foreach (var node in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>()) {
                     var sym = model.GetDeclaredSymbol(node, ct) as INamedTypeSymbol;
@@ -376,28 +366,26 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 }
 
                 var newIds = declared.Select(d => d.Id).ToImmutableHashSet(StringComparer.Ordinal);
-                _docToTypeIds.TryGetValue(docId, out var oldSet);
+                _docToTypeIds.TryGetValue(docIdNN, out var oldSet);
                 oldSet ??= ImmutableHashSet<string>.Empty;
 
                 var addedIds = newIds.Except(oldSet);
                 var removedIds = oldSet.Except(newIds);
+                DebugUtil.Print("IndexSync", $"DocChanged: added={string.Join(", ", addedIds)} removed={string.Join(", ", removedIds)}");
+                DebugUtil.Print("IndexSync", $"Doc {docIdNN.Id}: declared={newIds.Count}, +={addedIds.Count()}, -={removedIds.Count()}");
 
                 // Adds
                 foreach (var id in addedIds) {
                     var e = declared.First(d => d.Id == id).Entry;
                     typeAdds.Add(e);
-                    // ensure namespace chain
-                    EnsureNamespaceChain(declared.First(d => d.Id == id).ParentNs, nsAdds);
                 }
 
                 // Removals with partial check
                 foreach (var id in removedIds) {
                     if (_typeIdToDocs.TryGetValue(id, out var docsSet)) {
-                        var left = docsSet.Remove(docId);
+                        var left = docsSet.Remove(docIdNN);
                         if (left.IsEmpty) {
                             typeRemovals.Add(id);
-                            var parentNs = GetParentNamespaceFromTypeDocId(id);
-                            CascadeNamespaceRemovalsIfEmpty(parentNs, nsRemovals, pendingTypeRemovals: typeRemovals);
                         }
                     }
                     else {
@@ -407,16 +395,16 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 }
 
                 // Update maps for this document
-                _docToTypeIds = _docToTypeIds.SetItem(docId, newIds);
+                _docToTypeIds = _docToTypeIds.SetItem(docIdNN, newIds);
                 // update typeId -> docs mapping for added/removed
                 foreach (var id in addedIds) {
                     _typeIdToDocs.TryGetValue(id, out var ds);
-                    ds = (ds ?? ImmutableHashSet<DocumentId>.Empty).Add(docId);
+                    ds = (ds ?? ImmutableHashSet<DocumentId>.Empty).Add(docIdNN);
                     _typeIdToDocs = _typeIdToDocs.SetItem(id, ds);
                 }
                 foreach (var id in removedIds) {
                     if (_typeIdToDocs.TryGetValue(id, out var ds)) {
-                        var nds = ds.Remove(docId);
+                        var nds = ds.Remove(docIdNN);
                         if (nds.IsEmpty) {
                             _typeIdToDocs = _typeIdToDocs.Remove(id);
                         }
@@ -428,7 +416,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             }
         }
 
-        return new SymbolsDelta(typeAdds, typeRemovals, nsAdds, nsRemovals);
+        DebugUtil.Print("IndexSync", $"ComputeDelta: result +T={typeAdds.Count} -T={typeRemovals.Count}");
+        return new SymbolsDelta(typeAdds, typeRemovals);
     }
 
     private async Task RebuildDocTypeMapsAsync(Solution solution, CancellationToken ct) {
@@ -467,66 +456,5 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         _typeIdToDocs = typeTo.ToImmutable();
     }
 
-    private static void EnsureNamespaceChain(string parentNs, List<SymbolEntry> nsAdds) {
-        if (string.IsNullOrEmpty(parentNs)) { return; }
-        var parts = parentNs.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        string cur = string.Empty;
-        for (int i = 0; i < parts.Length; i++) {
-            cur = i == 0 ? parts[0] : cur + "." + parts[i];
-            var docId = "N:" + cur;
-            var lastDot = cur.LastIndexOf('.');
-            var parent = lastDot > 0 ? cur.Substring(0, lastDot) : string.Empty;
-            nsAdds.Add(new SymbolEntry(DocCommentId: docId, Assembly: string.Empty, Kind: SymbolKinds.Namespace, ParentNamespaceNoGlobal: parent, FqnNoGlobal: cur, FqnLeaf: parts[i]));
-        }
-    }
-
-    private void CascadeNamespaceRemovalsIfEmpty(string parentNs, List<string> nsRemovals, List<string> pendingTypeRemovals) {
-        // conservative check using Search: only remove when the namespace appears to have no children except those being removed in this batch
-        var cur = parentNs;
-        while (!string.IsNullOrEmpty(cur)) {
-            if (CanRemoveNamespaceConservatively(cur, pendingTypeRemovals)) {
-                nsRemovals.Add("N:" + cur);
-                var lastDot = cur.LastIndexOf('.');
-                cur = lastDot > 0 ? cur.Substring(0, lastDot) : string.Empty;
-            }
-            else { break; /* stop cascading upward when current ns still has other children */ }
-        }
-    }
-
-    private bool CanRemoveNamespaceConservatively(string ns, List<string> pendingTypeRemovals) {
-        // Determine emptiness using current entries snapshot instead of Search semantics.
-        // A namespace can be removed when, after applying this batch's type removals, there will be
-        // no remaining type entries under this namespace (including descendant namespaces).
-        if (string.IsNullOrEmpty(ns)) { return false; /* never remove root via cascade */ }
-
-        // Build a local set for O(1) lookup.
-        var pending = pendingTypeRemovals is List<string> l && l.Count < 32
-            ? new HashSet<string>(l, StringComparer.Ordinal)
-            : new HashSet<string>(pendingTypeRemovals ?? new List<string>(), StringComparer.Ordinal);
-
-        // Check for any surviving type entries under ns (ns or ns.*)
-        var nsPrefix = ns + ".";
-        foreach (var e in _entriesMap.Values) {
-            if ((e.Kind & SymbolKinds.Type) == 0) { continue; }
-            var pns = e.ParentNamespaceNoGlobal;
-            if (string.Equals(pns, ns, StringComparison.Ordinal) || (pns?.StartsWith(nsPrefix, StringComparison.Ordinal) == true)) {
-                // If this type is NOT being removed in this batch, then namespace cannot be removed.
-                if (!pending.Contains(e.DocCommentId)) { return false; }
-            }
-        }
-
-        // No surviving types remain under this namespace after the batch → safe to remove it.
-        return true;
-    }
-
-    // helpers moved to IndexStringUtil
-
-    private static string GetParentNamespaceFromTypeDocId(string typeDocId) {
-        // typeDocId examples: "T:Ns1.Ns2.Type", "T:Ns1.Outer+Inner", "T:Ns1.Ns2.Generic`1"
-        if (string.IsNullOrEmpty(typeDocId)) { return string.Empty; }
-        if (!typeDocId.StartsWith("T:", StringComparison.Ordinal)) { return string.Empty; }
-        var rest = typeDocId.Substring(2);
-        var lastDot = rest.LastIndexOf('.');
-        return lastDot > 0 ? rest.Substring(0, lastDot) : string.Empty;
-    }
+    // Note: Namespace chain materialization and namespace cascade removals are handled inside ISymbolIndex.WithDelta.
 }

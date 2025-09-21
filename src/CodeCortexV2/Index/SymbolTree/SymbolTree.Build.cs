@@ -267,6 +267,9 @@ partial class SymbolTreeB {
                         if (entry is not null && string.Equals(entry.DocCommentId, docId, StringComparison.Ordinal)) {
                             // capture namespace ancestor before detaching
                             int nsAncestor = FindNearestNamespaceAncestor(nid);
+                            if (nsAncestor > 0) {
+                                DebugUtil.Print("SymbolTree.WithDelta", $"Type removal matched node={nid} name={nodes[nid].Name}, nsAncestorId={nsAncestor} nsName={nodes[nsAncestor].Name}");
+                            }
                             // remove aliases first, then detach
                             DebugUtil.Print("SymbolTree.WithDelta", $"Removing type node nid={nid}, name={nodes[nid].Name}, docId={entry.DocCommentId}, nsAncestor={nsAncestor}");
                             RemoveAliasesForTypeNode(nid);
@@ -282,11 +285,40 @@ partial class SymbolTreeB {
         // Helper: ensure namespace chain exists; return last ns node id.
         int EnsureNamespaceChain(string[] segs) {
             int cur = 0; // root
-            foreach (var seg in segs) {
+            if (segs.Length == 0) { return cur; }
+            string curNs = string.Empty; // build FQN progressively for Namespace entries
+            for (int i = 0; i < segs.Length; i++) {
+                var seg = segs[i];
                 int next = FindChildByNameKind(cur, seg, NodeKind.Namespace);
+                curNs = i == 0 ? seg : (curNs + "." + seg);
+                var parentNs = curNs.Contains('.') ? curNs.Substring(0, curNs.LastIndexOf('.')) : string.Empty;
                 if (next < 0) {
-                    next = NewChild(cur, seg, NodeKind.Namespace, null);
+                    // Create namespace node with a concrete Namespace entry so that N: queries work incrementally
+                    var nsEntry = new SymbolEntry(
+                        DocCommentId: "N:" + curNs,
+                        Assembly: string.Empty,
+                        Kind: SymbolKinds.Namespace,
+                        ParentNamespaceNoGlobal: parentNs,
+                        FqnNoGlobal: curNs,
+                        FqnLeaf: seg
+                    );
+                    next = NewChild(cur, seg, NodeKind.Namespace, nsEntry);
                     AddAliasesForNamespaceNode(next);
+                }
+                else {
+                    // If this namespace node was created previously without an entry, backfill it now
+                    var n = nodes[next];
+                    if (n.Entry is null) {
+                        var nsEntry = new SymbolEntry(
+                            DocCommentId: "N:" + curNs,
+                            Assembly: string.Empty,
+                            Kind: SymbolKinds.Namespace,
+                            ParentNamespaceNoGlobal: parentNs,
+                            FqnNoGlobal: curNs,
+                            FqnLeaf: seg
+                        );
+                        ReplaceNode(next, new NodeB(n.Name, n.Parent, n.FirstChild, n.NextSibling, n.Kind, nsEntry));
+                    }
                 }
                 cur = next;
             }
@@ -383,7 +415,9 @@ partial class SymbolTreeB {
             foreach (var cand in cascadeCandidates) {
                 int cur = cand;
                 while (cur > 0) { // stop at root (0)
-                    if (!NamespaceHasAnyTypeEntry(cur)) {
+                    bool hasType = NamespaceHasAnyTypeEntry(cur);
+                    DebugUtil.Print("SymbolTree.WithDelta", $"Cascade check nsId={cur} nsName={nodes[cur].Name}, hasType={hasType}");
+                    if (!hasType) {
                         // remove aliases for the whole namespace subtree, then detach this namespace node
                         int parentBefore = nodes[cur].Parent;
                         RemoveAliasesSubtree(cur);

@@ -26,9 +26,5 @@ namespace CodeCortexV2.Abstractions;
 /// </remarks>
 public sealed record SymbolsDelta(
     IReadOnlyList<SymbolEntry> TypeAdds,
-    IReadOnlyList<string> TypeRemovals,
-    [property: Obsolete("NamespaceAdds is deprecated; emit leaf-only deltas (types) and let ISymbolIndex handle namespace materialization.")]
-    IReadOnlyList<SymbolEntry> NamespaceAdds,
-    [property: Obsolete("NamespaceRemovals is deprecated; emit leaf-only deltas (types) and let ISymbolIndex handle cascading removals.")]
-    IReadOnlyList<string> NamespaceRemovals
+    IReadOnlyList<string> TypeRemovals
 );
