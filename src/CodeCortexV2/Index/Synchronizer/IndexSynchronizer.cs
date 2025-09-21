@@ -26,16 +26,14 @@ public interface IIndexProvider {
 }
 
 /// <summary>
-/// Bridges Roslyn Workspace and the immutable <see cref="ISymbolIndex"/> by computing normalized, closed-over <see cref="SymbolsDelta"/>s
-/// and atomically publishing new snapshots.
+/// Bridges Roslyn Workspace and the immutable <see cref="ISymbolIndex"/> by computing leaf-oriented <see cref="SymbolsDelta"/>s
+/// (types only) and atomically publishing new snapshots.
 /// Responsibilities and contract:
 /// - Single-writer, multi-reader: reads are lock-free via <see cref="Current"/>; writes are serialized and debounced.
-/// - Produces self-consistent deltas that are closure-complete:
-///   - Ensure ancestor namespace chains for additions are present.
-///   - Determine namespace removals (including conservative cascading) when they become empty due to this batch.
-///   - Represent renames as remove(oldId) + add(newEntry).
-///   - Avoid contradictory operations within the same delta and preserve idempotency.
-/// - Consumers (e.g., <c>ISymbolIndex.WithDelta</c>) are expected to apply the delta without global re-inference.
+/// - Produce self-consistent deltas primarily with <c>TypeAdds</c>/<c>TypeRemovals</c>; namespace fields are deprecated.
+/// - Represent renames as remove(oldId) + add(newEntry); avoid contradictory operations within a batch; ensure idempotency.
+/// - Consumers (e.g., <c>ISymbolIndex.WithDelta</c>) handle namespace chain materialization and cascading empty-namespace removal
+///   internally and locally (impacted subtrees only).
 /// - Robust to errors: failures don't affect <see cref="Current"/>; can fall back to a full rebuild when configured.
 /// </summary>
 public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
@@ -501,13 +499,29 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     }
 
     private bool CanRemoveNamespaceConservatively(string ns, List<string> pendingTypeRemovals) {
-        // If there are any descendants other than the pending type removals, keep the namespace.
-        var q = ns + "."; // ensure dot so prefix branch is used in Search
-        var page = Current.Search(q, limit: 10, offset: 0, kinds: SymbolKinds.All);
-        if (page.Total == 0) { return true; }
-        bool allPending = page.Items.All(h => h.Kind == SymbolKinds.Type && pendingTypeRemovals.Contains(h.SymbolId.Value ?? string.Empty));
-        if (!allPending) { return false; }
-        return page.Total <= page.Items.Count;
+        // Determine emptiness using current entries snapshot instead of Search semantics.
+        // A namespace can be removed when, after applying this batch's type removals, there will be
+        // no remaining type entries under this namespace (including descendant namespaces).
+        if (string.IsNullOrEmpty(ns)) { return false; /* never remove root via cascade */ }
+
+        // Build a local set for O(1) lookup.
+        var pending = pendingTypeRemovals is List<string> l && l.Count < 32
+            ? new HashSet<string>(l, StringComparer.Ordinal)
+            : new HashSet<string>(pendingTypeRemovals ?? new List<string>(), StringComparer.Ordinal);
+
+        // Check for any surviving type entries under ns (ns or ns.*)
+        var nsPrefix = ns + ".";
+        foreach (var e in _entriesMap.Values) {
+            if ((e.Kind & SymbolKinds.Type) == 0) { continue; }
+            var pns = e.ParentNamespace;
+            if (string.Equals(pns, ns, StringComparison.Ordinal) || (pns?.StartsWith(nsPrefix, StringComparison.Ordinal) == true)) {
+                // If this type is NOT being removed in this batch, then namespace cannot be removed.
+                if (!pending.Contains(e.SymbolId)) { return false; }
+            }
+        }
+
+        // No surviving types remain under this namespace after the batch → safe to remove it.
+        return true;
     }
 
     // helpers moved to IndexStringUtil
