@@ -1,3 +1,4 @@
+using System;
 namespace CodeCortexV2.Abstractions;
 
 /// <summary>
@@ -6,29 +7,28 @@ namespace CodeCortexV2.Abstractions;
 /// </summary>
 /// <param name="TypeAdds">New or updated type entries to upsert.</param>
 /// <param name="TypeRemovals">Type doc-ids (e.g., <c>T:Ns.Type</c>) to remove.</param>
-/// <param name="NamespaceAdds">New namespaces to upsert (debounced and normalized).</param>
-/// <param name="NamespaceRemovals">Namespace doc-ids (e.g., <c>N:Ns.Sub</c>) to remove.</param>
+/// <param name="NamespaceAdds">DEPRECATED – Implementations MAY ignore. Historically used to materialize namespace chains.</param>
+/// <param name="NamespaceRemovals">DEPRECATED – Implementations MAY ignore. Historically used for cascading empty-namespace removals.</param>
 /// <remarks>
-/// Contract and invariants (expected to be ensured by the producer, e.g., IndexSynchronizer):
-/// - Normalization & closure completeness:
-///   - <paramref name="NamespaceAdds"/> MUST include any missing ancestors required for the added entries (i.e., the full namespace chain).
-///   - <paramref name="NamespaceRemovals"/> MUST include namespaces that become empty due to this batch, including conservative cascading removals
-///     per the chosen policy (e.g., considering other documents' remaining types).
+/// Updated contract (leaf-only delta preferred):
+/// - Producers SHOULD populate only <see cref="TypeAdds"/> and <see cref="TypeRemovals"/>. Namespace-related fields are deprecated and SHOULD be empty.
+/// - Consumers (e.g., <c>ISymbolIndex.WithDelta</c>) SHOULD handle, internally and locally, namespace chain materialization
+///   and cascading empty-namespace removal during application of the leaf delta.
 /// - Idempotency & self-consistency:
-///   - Within the same delta, do not include contradictory operations on the same id (e.g., add and remove simultaneously).
+///   - Within the same delta, avoid contradictory operations on the same id (e.g., add and remove simultaneously).
 ///   - Applying this delta repeatedly yields the same resulting index state.
 /// - Rename representation:
-///   - A rename is represented as <c>remove(oldId)</c> + <c>add(newEntry)</c>. Namespace changes due to rename are reflected in the corresponding
-///     namespace adds/removals per the closure rules.
+///   - Represented as <c>remove(oldId)</c> + <c>add(newEntry)</c>.
 /// - Debounce/coalescing resilience:
-///   - When multiple workspace events are coalesced, the resulting delta remains self-consistent and closed.
+///   - When multiple workspace events are coalesced, the resulting delta remains self-consistent.
 ///
-/// Consumers (e.g., ISymbolIndex.WithDelta) should treat the delta as authoritative and avoid re-inference via full-index scans.
-/// Optional defensive validations may be employed in debug/testing configurations with diagnostic logging.
+/// Back-compat: Implementations MAY still honor NamespaceAdds/NamespaceRemovals if provided, but new code SHOULD NOT rely on them.
 /// </remarks>
 public sealed record SymbolsDelta(
     IReadOnlyList<SymbolEntry> TypeAdds,
     IReadOnlyList<string> TypeRemovals,
+    [property: Obsolete("NamespaceAdds is deprecated; emit leaf-only deltas (types) and let ISymbolIndex handle namespace materialization.")]
     IReadOnlyList<SymbolEntry> NamespaceAdds,
+    [property: Obsolete("NamespaceRemovals is deprecated; emit leaf-only deltas (types) and let ISymbolIndex handle cascading removals.")]
     IReadOnlyList<string> NamespaceRemovals
 );
