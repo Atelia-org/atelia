@@ -191,6 +191,37 @@ partial class SymbolTreeB {
             // - It does NOT imply subtree expansion; nested types are NOT included unless the query explicitly targets them via segments.
             // - We intentionally DO NOT call CollectSubtreeEntries here to avoid misinterpreting base-name anchors as "prefix-of-nested".
             var hits = new List<SearchHit>();
+
+            // Tailing-dot semantics: when requested, return direct children of matched nodes (post-pruning survivors)
+            if (qi.RequireDirectChildren) {
+                // survivors: keys are the "last segment" nodes that match；我们需要它们的直接子节点
+                foreach (var kv in survivors) {
+                    var parentId = kv.Key;
+                    int child = _nodes[parentId].FirstChild;
+                    while (child >= 0) {
+                        var entry = _nodes[child].Entry;
+                        if (entry is not null && (filterKinds & entry.Kind) != 0) {
+                            // 子项的匹配标记：沿用父节点路径累计下来的 flags 即可
+                            var flags = kv.Value;
+                            var score = ComputeScore(flags);
+                            hits.Add(entry.ToHit(flags, score));
+                            if (hits.Count >= effLimit + effOffset) { break; }
+                        }
+                        child = _nodes[child].NextSibling;
+                    }
+                    if (hits.Count >= effLimit + effOffset) { break; }
+                }
+                if (hits.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
+                var orderedC = hits
+                    .OrderBy(h => h.Score)
+                    .ThenBy(h => h.Name, StringComparer.Ordinal)
+                    .ThenBy(h => h.Assembly)
+                    .ToList();
+                var totalC = orderedC.Count;
+                var pageC = orderedC.Skip(effOffset).Take(effLimit).ToArray();
+                int? nextOffC = effOffset + effLimit < totalC ? effOffset + effLimit : null;
+                return new SearchResults(pageC, totalC, effOffset, effLimit, nextOffC);
+            }
             foreach (var kv in survivors) {
                 var nid = kv.Key;
                 var flags = kv.Value;

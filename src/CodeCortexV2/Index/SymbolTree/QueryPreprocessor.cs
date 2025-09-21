@@ -22,14 +22,15 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             bool IsRootAnchored, // 如果Query有“global::”或“T:”/“N:”等DocId风格的“根部前缀”，则表示结果都应以根节点开始，是匹配条件。DocId风格前缀不触发任何“快速路径”，不会绕过标准化匹配流程。
             string[] NormalizedSegments, // 原始输入去掉“根部前缀”后，按命名空间层次分段，逐段处理。如果某一段是泛型，则统一标准化为“`n”形式，有类型形参“<T>” / 无类参数名<,> / 有类型实参<int>”都是合法的输入，方便用户直接粘贴文本。
             string?[] LowerNormalizedSegments, // 在 SegmentsNormalized 的基础上逐段 ToLower；当小写结果与标准化段相同（即不存在大小写差异）时，该位置为 null，用于防止误用并避免无意义的重复匹配。
-            string? RejectionReason // 非空表示这是一个被拒绝/无效的查询，并给出人类可读原因
+            string? RejectionReason, // 非空表示这是一个被拒绝/无效的查询，并给出人类可读原因
+            bool RequireDirectChildren // 若为 true，表示查询意图为“返回最后一段匹配节点的直接子项（尾随点语义）”
         ) {
             public bool IsRejected => !string.IsNullOrEmpty(RejectionReason);
         }
 
         public static QueryInfo Preprocess(string? query) {
             var raw = (query ?? string.Empty).Trim();
-            if (raw.Length == 0) { return new QueryInfo(string.Empty, SymbolKinds.None, false, Array.Empty<string>(), Array.Empty<string>(), null); }
+            if (raw.Length == 0) { return new QueryInfo(string.Empty, SymbolKinds.None, false, Array.Empty<string>(), Array.Empty<string>(), null, false); }
             bool root = false;
             SymbolKinds kinds = SymbolKinds.None;
             var eff = raw;
@@ -39,9 +40,16 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 eff = eff.Substring(RootPrefix.Length);
             }
 
+            // 尾随点：表示请求“直接子项”。处理顺序置于 DocId 解析之前或之后均可，这里选择在 DocId 剥离之后再检查。
+            // 支持如："N.", "Foo.Bar.", "T:Ns.Type." 等。多重点尾随与单点等价。
+            bool requireChildren = eff.EndsWith('.');
+            if (requireChildren) {
+                eff = eff.TrimEnd('.');
+            }
+
             // DocId-style prefix: N:/T:/M:/P:/F:/E:; reject "!:" explicitly
             if (eff.Length > 2 && eff[1] == ':') {
-                if (eff[0] == '!') { return new QueryInfo(raw, SymbolKinds.None, true, Array.Empty<string>(), Array.Empty<string>(), "Unsupported DocId prefix '!:' (internal Roslyn-only). Use N:/T:/M:/P:/F:/E:"); }
+                if (eff[0] == '!') { return new QueryInfo(raw, SymbolKinds.None, true, Array.Empty<string>(), Array.Empty<string>(), "Unsupported DocId prefix '!:' (internal Roslyn-only). Use N:/T:/M:/P:/F:/E:", requireChildren); }
                 if (eff[0] == 'N' || eff[0] == 'T' || eff[0] == 'M' || eff[0] == 'P' || eff[0] == 'F' || eff[0] == 'E') {
                     root = true; // DocId implies root constraint
                     kinds = eff[0] switch {
@@ -58,9 +66,9 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             }
 
             var segsOrig = SplitSegments(eff);
-            if (segsOrig.Length == 0) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), null); }
+            if (segsOrig.Length == 0) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), null, requireChildren); }
             foreach (var s in segsOrig) {
-                if (!IsBalancedAngles(s)) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), "Unbalanced generic angle brackets: '<' '>'"); }
+                if (!IsBalancedAngles(s)) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), "Unbalanced generic angle brackets: '<' '>'", requireChildren); }
             }
 
             var segsNorm = new string[segsOrig.Length];
@@ -74,7 +82,7 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
                 segsLower[i] = lower == norm ? null : lower;
             }
 
-            return new QueryInfo(raw, kinds, root, segsNorm, segsLower, null);
+            return new QueryInfo(raw, kinds, root, segsNorm, segsLower, null, requireChildren);
         }
 
         // --- Helpers ---
