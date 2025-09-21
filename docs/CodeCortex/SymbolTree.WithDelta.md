@@ -71,76 +71,57 @@
   - 持有一个 `List<NodeB>`，初始为 `_nodes` 拷贝（浅拷贝引用即可，因为 NodeB 是 struct，复制不可避免；但我们只会改动少数索引，内存仍是局部的）。
   - GET：读取父、子、兄弟等字段无需额外结构。
   - SET：
-    - UpdateParentFirstChild(parentIdx, newFirstChild)
-    - UpdateNextSibling(nodeIdx, newNextSibling)
+  ## 目标
+  `SymbolTreeB.WithDelta` 的增量应用策略（生产可用）：仅依赖叶子级变更（TypeAdds/TypeRemovals），在索引内部完成命名空间的按需创建与级联删除；避免全量扫描，保证幂等与局部性，并与 `FromEntries` 的别名与节点命名规则保持一致。
     - UpdateEntry(nodeIdx, SymbolEntry? newEntry)
-    - NewNode(name, parent, kind, entry, insertAsFirstChild: true): 追加到 `nodes` 末尾，修补 parent.FirstChild 与新节点.NextSibling。
-  - 注意：`NodeB` 为 readonly struct，任何“更新”都需要在该索引处“重建一个新的 NodeB 实例”覆盖写入，不可原地改字段。
-  - 辅助扫描
-    - 遍历父的单链表查找：
-      - FindChild(parent, kind, name): 返回第一个匹配的子节点索引或 -1（Namespace/Type 通用）。
-      - FindPrevSibling(parent, target): 为删除/脱链寻找前驱（若 target 是 firstChild，无前驱）。
+  ## 现状回顾与约束
+  -- Delta 合同（来自 ISymbolIndex 与 SymbolsDelta）
+    - 仅叶子级 delta：Producer（例如 IndexSynchronizer）优先仅产生 `TypeAdds` 与 `TypeRemovals`；`NamespaceAdds`/`NamespaceRemovals` 已弃用，可能为空或被忽略。
+    - Rename 表示为 remove(oldId)+add(newEntry)。
+    - Consumer（WithDelta）需要在本地内部完成：
+      - 对新增类型的“命名空间链按需创建”；
+      - 对删除导致的“空命名空间级联删除”（放在流程末尾统一执行）。
+    - 不做全量扫描，保持局部性与幂等性。
       - FindChildrenByName(parent, kind, name): 返回同名列表（类型场景下可能多实例：跨程序集）。
-    - 惰性“父级子表索引”缓存（可选优化）：Dictionary<(parentId, kind), Dictionary<string, List<int>>>，仅对本次 delta 涉及的少量父节点构建，后续重复查询 O(1)。
-
-- AliasBuilder（仅替换受影响 key）
-  - 输入：原 `_exactAliasToNodes`、`_nonExactAliasToNodes`。
-  - 维护两个“写时复制”映射：
-    - 顶层字典采用“延迟浅拷贝”的写时复制：
-      - 初始阶段仅持有旧字典引用；当发生“首次写入”时，先执行顶层浅拷贝构造新字典实例（以确保旧快照不被修改），之后才对具体 key 进行增删；
-      - 例如：`exactOut = new Dictionary<string, ImmutableArray<AliasRelation>>(_exactAliasToNodes, StringComparer.Ordinal)`（non-exact 同理）。
-    - 对某个 alias key 进行增删时：
+  ## WithDelta 的总体策略
+  顺序：先删后加，最后统一做“命名空间级联删除”。
+  不全量复制：
+    - 节点数组按需复制；别名字典 shallow copy 顶层字典，按 key 替换桶（ImmutableArray）。
+  不“重新推断”全局闭包：
+    - 空命名空间的判断仅在受影响祖先集合内进行；不做全树扫描。
       - 取出现存 `ImmutableArray<AliasRelation>`，转临时 `List<AliasRelation>`；
-      - 增：若不存在某 nodeId，追加（或合并 flags：对相同 nodeId 进行按位或）。
-      - 删：移除该 nodeId 或清除 flag（当前 flag 设计为覆盖型，无需保留子集，简单删除项即可）。
+  ## 新增共识要点（2025-09-22）
+  - Upsert 原则与确定性：当 Add 命中同父同名且 Entry.DocCommentId 与 Assembly 相同的节点时，原位更新 Entry（幂等）；否则允许并存同名兄弟类型节点（跨程序集）。
       - 回写新的 `ImmutableArray<AliasRelation>` 给对应 key；空集合时可直接移除此 key（节省空间）。
-  - Public:
-    - AddNamespaceAliases(name, nodeId)
-    - RemoveNamespaceAliases(name, nodeId)
-    - AddTypeAliases(nodeName, nodeId)
-    - RemoveTypeAliases(nodeName, nodeId)
-  - Type 别名的 rule 同 FromEntries：对 `nodeName` 解析 `bn`,`arity` 来生成上文列举的 alias 项。
-  - 可选“确定性”建议：对每个 alias key 下的列表按 NodeId 升序排序，便于快照比对与调试（非功能性要求）。
-
-- DocId 解析与路径分解
-  - Namespace：
-    - "N:Ns.Sub" -> segments: ["Ns", "Sub"]。
-  - Type：
-    - "T:Ns1.Ns2.Outer+Inner`1" -> nsSegments: ["Ns1","Ns2"]；typeSegments: ["Outer","Inner`1"]。
-    - 最后段 `nodeName` 必须为 DocId 规范（bn 或 bn`n），用它决定别名集。
-
-提示：我们不新增全局 docId->node 索引，优先保证简单与局部性；如需更快“按 docId 找节点”，可在后续迭代加入快照内“docId->List<int>”的只读索引，并在 WithDelta 时仅按 delta 更新。
-
-## 具体流程
-
-- 初始化
+  ## 具体流程（三阶段）
+  - 删除阶段
+    - 仅处理 `TypeRemovals`：
+      - 通过最后一段 exact 别名桶定位候选节点（bn 或 bn`n），以 `Entry.DocCommentId` 精确比对删除，避免误伤。
+      - 对每个被删除的类型节点，先移除类型别名，再从父链表摘除该节点（修补父/兄指针）。
+      - 收集“级联删除检查点”：记录最近的命名空间祖先，用于末尾统一判断是否需要删除空命名空间。
+  - 添加阶段
   - 若当前 `_nodes` 为空（初次构建）：先创建根节点 idx=0（Name=""，Parent=-1，Kind=Namespace，Entry=null）。
-  - 建立 NodeBuilder 与 AliasBuilder（别名层采用“延迟浅拷贝”的写时复制：直到首个变更发生时才 shallow copy 顶层字典，然后对受影响的 key 进行不可变数组替换）。
+      - 不再处理 NamespaceAdds：命名空间链由消费者内部按需创建。
+    - Types（for each entry in delta.TypeAdds）：
+      - 先确保命名空间链存在：逐段 GetOrAdd Namespace，缺段时创建并添加命名空间别名。
+      - 再类型链：
+        - 非叶类型节点仅创建结构节点（Entry=null，不添加别名）。
+        - 叶类型节点写入 Entry，并依照 `FromEntries` 规则添加类型别名。
+        - 同父同名时：若已有同 docId+Assembly 的节点则原位更新 Entry；否则创建并存兄弟节点（跨程序集场景）。
+  - 末尾级联删除阶段
+    - 对收集到的命名空间检查点去重，逐个自下而上判断空命名空间：
+      - 若整棵子树不含任何带 Entry 的类型节点，则先 DFS 移除该子树全部别名，再将该命名空间节点从父链表中摘除。
+      - 碰到非空或根节点即停止。
 
-- 删除阶段（先删）
-  - Types（for each docId in delta.TypeRemovals）：
-    - 解析 docId -> nsSegments + typeSegments。
-    - 自 root 逐段向下：
-      - 先命名空间链：用 FindChild(parent, Namespace, seg)。
-      - 再类型链（嵌套类型）：对除最后段外依次 FindChild(parent, Type, seg)。
-      - 最后一段：`candidates = FindChildrenByName(parent, Type, lastName)`。
-        - 在 candidates 中筛选 Entry?.SymbolId == docId 的节点（可能 0 或多个；多个时全部删除，符合“该 docId 已从全工作区消失”的约定）。
-        - 对每个命中的 nodeId：
-          - 修补父链：若是 firstChild -> 更新 parent.FirstChild = node.NextSibling；否则 FindPrevSibling 修补 prev.NextSibling = node.NextSibling。
-          - 别名：AliasBuilder.RemoveTypeAliases(node.Name, nodeId)。
-          - 置空 Entry 与断开 NextSibling（Entry=null, NextSibling=-1），Parent 可保留（节点成为“墓碑”且不再可达）。
-  - Namespaces（for each docId in delta.NamespaceRemovals）：
-    - 解析 "N:Ns.Sub" -> segments，按 Namespace 链逐段下钻找到 nodeId。
-    - 校验（Debug 可选）：node.FirstChild == -1（或本批次也会删光子节点）。
+  -- 收尾与封装
     - 修补父链，如上。
     - 别名：AliasBuilder.RemoveNamespaceAliases(node.Name, nodeId)。
     - 置空 Entry，并断开 NextSibling；Kind/Name 保留（墓碑）。
 
-- 添加阶段（后加）
-  - Namespaces（for each entry in delta.NamespaceAdds）：
-    - 基于 entry.FqnNoGlobal 拆分命名空间段。
-    - 逐段 GetOrAdd：
-      - FindChild(parent, Namespace, seg)；若不存在则 NodeBuilder.NewNode(seg, parent, Namespace, entry: null) 并 AliasBuilder.AddNamespaceAliases(seg, newId)。
+  ## 测试清单（单测优先）
+  - 级联删除命名空间（由 consumer 内部实现）：删除后父层仍正确联通（firstChild/nextSibling 指针无误）。
+  ## 与 FromEntries 的衔接
+  - 空快照优化：当当前快照为空且只有 TypeAdds 时，WithDelta 会从 TypeAdds 合成命名空间条目（N:），再统一调用 `FromEntries` 构建，以避免依赖已弃用的 NamespaceAdds/Removals 字段。
     - 在叶节点：
       - 若 Entry 为空：UpdateEntry(nodeId, entry)。
       - 若 Entry 非空但非同一 docId（理论不应发生，因命名空间 docId 唯一），则覆盖为最新值（或 Debug 日志）。

@@ -29,11 +29,39 @@ partial class SymbolTreeB {
 
         var nodes = _nodes.ToList(); // node array copy
         if (nodes.Count == 0) {
-            // Corner: empty snapshot → when only adds exist, we can fallback to FromEntries for P0 simplicity.
-            if ((delta.TypeAdds?.Count ?? 0) > 0 || (delta.NamespaceAdds?.Count ?? 0) > 0) {
-                var all = new List<SymbolEntry>();
-                if (delta.NamespaceAdds is not null) { all.AddRange(delta.NamespaceAdds); }
-                if (delta.TypeAdds is not null) { all.AddRange(delta.TypeAdds); }
+            // Corner: empty snapshot → synthesize namespaces from TypeAdds and build from flat entries.
+            var typeAdds = delta.TypeAdds ?? Array.Empty<SymbolEntry>();
+            if (typeAdds.Count > 0) {
+                var all = new List<SymbolEntry>(typeAdds.Count * 2);
+                // Synthesize namespace entries from types (doc-id "N:<ns>") so that namespace search works without NamespaceAdds.
+                var nsSeen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var t in typeAdds) {
+                    if ((t.Kind & SymbolKinds.Type) == 0) { continue; }
+                    var ns = t.ParentNamespaceNoGlobal;
+                    if (string.IsNullOrEmpty(ns)) { continue; }
+                    // chain: A, A.B, A.B.C ...
+                    var parts = ns.Split('.', StringSplitOptions.RemoveEmptyEntries);
+                    string cur = string.Empty;
+                    for (int i = 0; i < parts.Length; i++) {
+                        cur = i == 0 ? parts[0] : cur + "." + parts[i];
+                        var docId = "N:" + cur;
+                        if (nsSeen.Add(docId)) {
+                            var lastDot = cur.LastIndexOf('.');
+                            var parent = lastDot > 0 ? cur.Substring(0, lastDot) : string.Empty;
+                            all.Add(
+                                new SymbolEntry(
+                                    DocCommentId: docId,
+                                    Assembly: string.Empty,
+                                    Kind: SymbolKinds.Namespace,
+                                    ParentNamespaceNoGlobal: parent,
+                                    FqnNoGlobal: cur,
+                                    FqnLeaf: parts[i]
+                                )
+                            );
+                        }
+                    }
+                }
+                all.AddRange(typeAdds);
                 return FromEntries(all);
             }
             return this; // nothing to do
@@ -213,8 +241,19 @@ partial class SymbolTreeB {
         }
 
         // --- Removals ---
-        // Types: use last-segment exact alias bucket to find candidates, then match full docId via Entry.SymbolId.
+        // Types: use last-segment exact alias bucket to find candidates, then match full docId via Entry.DocCommentId.
+        var cascadeCandidates = new HashSet<int>(); // namespace nodeIds to check later
+
+        int FindNearestNamespaceAncestor(int nodeId) {
+            int cur = (nodeId >= 0 && nodeId < nodes.Count) ? nodes[nodeId].Parent : -1;
+            while (cur >= 0 && nodes[cur].Kind != NodeKind.Namespace) {
+                cur = nodes[cur].Parent;
+            }
+            return cur; // -1 if none, 0 is root
+        }
+
         if (delta.TypeRemovals is not null) {
+            DebugUtil.Print("SymbolTree.WithDelta", $"TypeRemovals detail: [{string.Join(", ", delta.TypeRemovals.Take(8))}] total={delta.TypeRemovals.Count}");
             foreach (var docId in delta.TypeRemovals) {
                 if (string.IsNullOrEmpty(docId) || !docId.StartsWith("T:", StringComparison.Ordinal)) { continue; }
                 var s = docId[2..];
@@ -226,28 +265,15 @@ partial class SymbolTreeB {
                         if (nid < 0 || nid >= nodes.Count) { continue; }
                         var entry = nodes[nid].Entry;
                         if (entry is not null && string.Equals(entry.DocCommentId, docId, StringComparison.Ordinal)) {
+                            // capture namespace ancestor before detaching
+                            int nsAncestor = FindNearestNamespaceAncestor(nid);
                             // remove aliases first, then detach
+                            DebugUtil.Print("SymbolTree.WithDelta", $"Removing type node nid={nid}, name={nodes[nid].Name}, docId={entry.DocCommentId}, nsAncestor={nsAncestor}");
                             RemoveAliasesForTypeNode(nid);
                             DetachNode(nid);
+                            if (nsAncestor > 0) { cascadeCandidates.Add(nsAncestor); }
                         }
                     }
-                }
-            }
-        }
-
-        // Namespaces: walk chain by names (namespace-only), identify the last node and remove.
-        if (delta.NamespaceRemovals is not null) {
-            foreach (var nsDocId in delta.NamespaceRemovals) {
-                if (string.IsNullOrEmpty(nsDocId) || !nsDocId.StartsWith("N:", StringComparison.Ordinal)) { continue; }
-                var s = nsDocId[2..];
-                var segs = SplitNs(s);
-                int cur = 0; // root assumed at 0
-                for (int i = 0; i < segs.Length && cur >= 0; i++) {
-                    cur = FindChildByNameKind(cur, segs[i], NodeKind.Namespace);
-                }
-                if (cur > 0) {
-                    RemoveAliasesForNamespaceNode(cur);
-                    DetachNode(cur);
                 }
             }
         }
@@ -265,19 +291,6 @@ partial class SymbolTreeB {
                 cur = next;
             }
             return cur;
-        }
-
-        if (delta.NamespaceAdds is not null) {
-            foreach (var e in delta.NamespaceAdds) {
-                bool isNs = (e.Kind & SymbolKinds.Namespace) != 0;
-                if (!isNs) { continue; }
-                var segs = SplitNs(e.FqnNoGlobal);
-                if (segs.Length == 0) { continue; }
-                int last = EnsureNamespaceChain(segs);
-                // Attach/overwrite entry on the namespace node
-                var n = nodes[last];
-                ReplaceNode(last, new NodeB(n.Name, n.Parent, n.FirstChild, n.NextSibling, n.Kind, e));
-            }
         }
 
         if (delta.TypeAdds is not null) {
@@ -322,6 +335,68 @@ partial class SymbolTreeB {
                 }
             }
         }
+
+        // --- Cascading namespace deletion (post-phase) ---
+        bool NamespaceHasAnyTypeEntry(int nsNodeId) {
+            if (nsNodeId <= 0 || nsNodeId >= nodes.Count) { return false; }
+            // Traverse descendants and detect any Type node with non-null Entry
+            var stack = new Stack<int>();
+            // seed: direct children of the namespace
+            int c = nodes[nsNodeId].FirstChild;
+            while (c >= 0) {
+                stack.Push(c);
+                c = nodes[c].NextSibling;
+            }
+            while (stack.Count > 0) {
+                int id = stack.Pop();
+                var n = nodes[id];
+                if (n.Kind == NodeKind.Type && n.Entry is not null) { return true; }
+                // continue DFS
+                int ch = n.FirstChild;
+                while (ch >= 0) {
+                    stack.Push(ch);
+                    ch = nodes[ch].NextSibling;
+                }
+            }
+            return false;
+        }
+
+        void RemoveAliasesSubtree(int rootId) {
+            if (rootId < 0 || rootId >= nodes.Count) { return; }
+            var stack = new Stack<int>();
+            stack.Push(rootId);
+            while (stack.Count > 0) {
+                int id = stack.Pop();
+                var n = nodes[id];
+                if (n.Kind == NodeKind.Type) { RemoveAliasesForTypeNode(id); }
+                else { RemoveAliasesForNamespaceNode(id); }
+                int ch = n.FirstChild;
+                while (ch >= 0) {
+                    stack.Push(ch);
+                    ch = nodes[ch].NextSibling;
+                }
+            }
+        }
+
+        int deletedNsCount = 0;
+        if (cascadeCandidates.Count > 0) {
+            foreach (var cand in cascadeCandidates) {
+                int cur = cand;
+                while (cur > 0) { // stop at root (0)
+                    if (!NamespaceHasAnyTypeEntry(cur)) {
+                        // remove aliases for the whole namespace subtree, then detach this namespace node
+                        int parentBefore = nodes[cur].Parent;
+                        RemoveAliasesSubtree(cur);
+                        DetachNode(cur);
+                        deletedNsCount++;
+                        cur = parentBefore;
+                    }
+                    else { break; }
+                }
+            }
+        }
+
+        DebugUtil.Print("SymbolTree.WithDelta", $"TypeAdds={delta.TypeAdds?.Count ?? 0}, TypeRemovals={delta.TypeRemovals?.Count ?? 0}, CascadeCandidates={cascadeCandidates.Count}, DeletedNamespaces={deletedNsCount}");
 
         // Produce the new immutable snapshot
         var newTree = new SymbolTreeB(
