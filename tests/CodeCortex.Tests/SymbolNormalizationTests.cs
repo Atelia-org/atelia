@@ -73,9 +73,10 @@ namespace CodeCortex.Tests {
         }
 
         [Theory]
-        [InlineData("List", null)]
-        [InlineData("List`1", null)]
-        [InlineData("MyType", null)]
+        [InlineData("List", "list")]
+        [InlineData("list", null)]
+        [InlineData("List`1", "list`1")]
+        [InlineData("list`1", null)]
         [InlineData("MyTYPE", "mytype")]
         public void ToLowerIfDifferent_Tests(string input, string? expectedNullable) {
             Assert.Equal(expectedNullable, SymbolNormalization.ToLowerIfDifferent(input));
