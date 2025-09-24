@@ -74,7 +74,10 @@ partial class SymbolTreeB {
         static string[] SplitNs(string? ns)
             => string.IsNullOrEmpty(ns) ? Array.Empty<string>() : ns!.Split('.', StringSplitOptions.RemoveEmptyEntries);
 
-        static (string bn, int ar) ParseName(string seg) => QueryPreprocessor.ParseTypeSegment(seg);
+        static (string bn, int ar) ParseName(string seg) {
+            var (b, a, _) = SymbolNormalization.ParseGenericArity(seg);
+            return (b, a);
+        }
 
         int FindChildByNameKind(int parent, string name, NodeKind kind) {
             if (parent < 0 || parent >= nodes.Count) { return -1; }
@@ -181,72 +184,31 @@ partial class SymbolTreeB {
             }
         }
 
-        void AddAliasesForNamespaceNode(int nodeId) {
-            var seg = nodes[nodeId].Name;
-            AddAliasExact(seg, nodeId, MatchFlags.None);
-            var lower = seg.ToLowerInvariant();
-            if (!string.Equals(lower, seg, StringComparison.Ordinal)) {
-                AddAliasNonExact(lower, nodeId, MatchFlags.IgnoreCase);
+        void AddAliasesForNode(int nodeId) {
+            if (nodeId < 0 || nodeId >= nodes.Count) { return; }
+            var n = nodes[nodeId];
+            IEnumerable<AliasGeneration.AliasSpec> specs = n.Kind switch {
+                NodeKind.Namespace => AliasGeneration.GetNamespaceAliases(n.Name),
+                NodeKind.Type => AliasGeneration.GetTypeAliases(n.Name),
+                _ => Array.Empty<AliasGeneration.AliasSpec>()
+            };
+            foreach (var spec in specs) {
+                if (spec.IsExact) { AddAliasExact(spec.Key, nodeId, spec.Flags); }
+                else { AddAliasNonExact(spec.Key, nodeId, spec.Flags); }
             }
         }
 
-        void AddAliasesForTypeNode(int nodeId) {
-            var seg = nodes[nodeId].Name; // bn or bn`n
-            var (bn, ar) = ParseName(seg);
-            if (ar > 0) {
-                // exact: bn`n
-                AddAliasExact(seg, nodeId, MatchFlags.None);
-                // non-exact: bn (arity-insensitive), lower(bn), lower(bn`n)
-                AddAliasNonExact(bn, nodeId, MatchFlags.IgnoreGenericArity);
-                var lowerBn = bn.ToLowerInvariant();
-                if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
-                    AddAliasNonExact(lowerBn, nodeId, MatchFlags.IgnoreGenericArity | MatchFlags.IgnoreCase);
-                }
-                var lowerSeg = seg.ToLowerInvariant();
-                if (!string.Equals(lowerSeg, seg, StringComparison.Ordinal)) {
-                    AddAliasNonExact(lowerSeg, nodeId, MatchFlags.IgnoreCase);
-                }
-            }
-            else {
-                // non-generic simple
-                AddAliasExact(bn, nodeId, MatchFlags.None);
-                var lowerBn = bn.ToLowerInvariant();
-                if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
-                    AddAliasNonExact(lowerBn, nodeId, MatchFlags.IgnoreCase);
-                }
-            }
-        }
-
-        void RemoveAliasesForNamespaceNode(int nodeId) {
-            var seg = nodes[nodeId].Name;
-            RemoveAliasExact(seg, nodeId);
-            var lower = seg.ToLowerInvariant();
-            if (!string.Equals(lower, seg, StringComparison.Ordinal)) {
-                RemoveAliasNonExact(lower, nodeId);
-            }
-        }
-
-        void RemoveAliasesForTypeNode(int nodeId) {
-            var seg = nodes[nodeId].Name; // bn or bn`n
-            var (bn, ar) = ParseName(seg);
-            if (ar > 0) {
-                RemoveAliasExact(seg, nodeId);
-                RemoveAliasNonExact(bn, nodeId);
-                var lowerBn = bn.ToLowerInvariant();
-                if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
-                    RemoveAliasNonExact(lowerBn, nodeId);
-                }
-                var lowerSeg = seg.ToLowerInvariant();
-                if (!string.Equals(lowerSeg, seg, StringComparison.Ordinal)) {
-                    RemoveAliasNonExact(lowerSeg, nodeId);
-                }
-            }
-            else {
-                RemoveAliasExact(bn, nodeId);
-                var lowerBn = bn.ToLowerInvariant();
-                if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
-                    RemoveAliasNonExact(lowerBn, nodeId);
-                }
+        void RemoveAliasesForNode(int nodeId) {
+            if (nodeId < 0 || nodeId >= nodes.Count) { return; }
+            var n = nodes[nodeId];
+            IEnumerable<AliasGeneration.AliasSpec> specs = n.Kind switch {
+                NodeKind.Namespace => AliasGeneration.GetNamespaceAliases(n.Name),
+                NodeKind.Type => AliasGeneration.GetTypeAliases(n.Name),
+                _ => Array.Empty<AliasGeneration.AliasSpec>()
+            };
+            foreach (var spec in specs) {
+                if (spec.IsExact) { RemoveAliasExact(spec.Key, nodeId); }
+                else { RemoveAliasNonExact(spec.Key, nodeId); }
             }
         }
 
@@ -268,7 +230,7 @@ partial class SymbolTreeB {
                 if (string.IsNullOrEmpty(typeKey.DocCommentId) || !typeKey.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) { continue; }
                 // Use the same segmentation semantics as QueryPreprocessor to correctly handle nested types with '+'
                 var s = typeKey.DocCommentId[2..];
-                var segs = QueryPreprocessor.SplitSegments(s);
+                var segs = SymbolNormalization.SplitSegmentsWithNested(s);
                 var leaf = segs.Length > 0 ? segs[^1] : s;
                 var (bn0, ar0) = ParseName(leaf);
                 var aliasKey = ar0 > 0 ? (bn0 + "`" + ar0.ToString()) : bn0;
@@ -316,7 +278,7 @@ partial class SymbolTreeB {
                         FqnLeaf: seg
                     );
                     next = NewChild(cur, seg, NodeKind.Namespace, nsEntry);
-                    AddAliasesForNamespaceNode(next);
+                    AddAliasesForNode(next);
                 }
                 else {
                     // If this namespace node was created previously without an entry, backfill it now
@@ -351,7 +313,7 @@ partial class SymbolTreeB {
                     DebugUtil.Print("SymbolTree.WithDelta", $"Warning: TypeAdd without 'T:' DocId. Falling back to FqnNoGlobal. Name={e.FqnNoGlobal} Assembly={e.Assembly}");
                 }
                 var s = e.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true ? e.DocCommentId![2..] : e.FqnNoGlobal;
-                var allSegs = QueryPreprocessor.SplitSegments(s);
+                var allSegs = SymbolNormalization.SplitSegmentsWithNested(s);
                 int skip = nsSegs.Length;
                 if (skip < 0 || skip > allSegs.Length) { skip = 0; }
                 string[] typeSegs = allSegs.Skip(skip).ToArray();
@@ -363,7 +325,7 @@ partial class SymbolTreeB {
                     int child = FindChildByNameKind(parent, nodeName, NodeKind.Type);
                     if (child < 0) {
                         child = isLast ? NewChild(parent, nodeName, NodeKind.Type, e) : NewChild(parent, nodeName, NodeKind.Type, null);
-                        AddAliasesForTypeNode(child);
+                        AddAliasesForNode(child);
                     }
                     else if (isLast) {
                         // Upsert semantics: if an existing node matches docId+assembly, update its entry; otherwise create a sibling
@@ -376,7 +338,7 @@ partial class SymbolTreeB {
                         else {
                             // create a new sibling at head for this assembly variant
                             child = NewChild(parent, nodeName, NodeKind.Type, e);
-                            AddAliasesForTypeNode(child);
+                            AddAliasesForNode(child);
                         }
                     }
                     parent = child;
@@ -416,8 +378,7 @@ partial class SymbolTreeB {
             while (stack.Count > 0) {
                 int id = stack.Pop();
                 var n = nodes[id];
-                if (n.Kind == NodeKind.Type) { RemoveAliasesForTypeNode(id); }
-                else { RemoveAliasesForNamespaceNode(id); }
+                if (n.Kind == NodeKind.Type || n.Kind == NodeKind.Namespace) { RemoveAliasesForNode(id); }
                 int ch = n.FirstChild;
                 while (ch >= 0) {
                     stack.Push(ch);
@@ -512,10 +473,8 @@ partial class SymbolTreeB {
             for (int i = 0; i < segments.Length; i++) {
                 var seg = segments[i];
                 var idx = GetOrAddNode(parent, seg, NodeKind.Namespace);
-                Bucket(exactBuckets, seg, idx, MatchFlags.None);
-                var lower = seg.ToLowerInvariant();
-                if (!string.Equals(lower, seg, StringComparison.Ordinal)) {
-                    Bucket(nonExactBuckets, lower, idx, MatchFlags.IgnoreCase);
+                foreach (var spec in AliasGeneration.GetNamespaceAliases(seg)) {
+                    if (spec.IsExact) { Bucket(exactBuckets, spec.Key, idx, spec.Flags); } else { Bucket(nonExactBuckets, spec.Key, idx, spec.Flags); }
                 }
                 parent = idx;
             }
@@ -526,36 +485,12 @@ partial class SymbolTreeB {
         int BuildTypeChainAndAliases(int namespaceParent, string[] typeSegs) {
             int lastTypeNode = namespaceParent;
             for (int i = 0; i < typeSegs.Length; i++) {
-                var (bn, ar) = QueryPreprocessor.ParseTypeSegment(typeSegs[i]);
+                var (bn, ar, _) = SymbolNormalization.ParseGenericArity(typeSegs[i]);
                 var nodeName = ar > 0 ? bn + "`" + ar.ToString() : bn;
                 bool isLast = i == typeSegs.Length - 1;
                 int idx = isLast ? NewNode(nodeName, lastTypeNode, NodeKind.Type) : GetOrAddNode(lastTypeNode, nodeName, NodeKind.Type);
-
-                if (ar > 0) {
-                    // Exact: DocId-like form only (bn`n)
-                    var docIdSeg = nodeName;
-                    Bucket(exactBuckets, docIdSeg, idx, MatchFlags.None);
-
-                    // NonExact:
-                    // 1) Generic base-name anchors (arity-insensitive equality ONLY; no subtree expansion)
-                    Bucket(nonExactBuckets, bn, idx, MatchFlags.IgnoreGenericArity);
-                    var lowerBn = bn.ToLowerInvariant();
-                    if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
-                        Bucket(nonExactBuckets, lowerBn, idx, MatchFlags.IgnoreGenericArity | MatchFlags.IgnoreCase);
-                    }
-                    // 2) Case-insensitive exact for DocId-like form (lower-cased)
-                    var lowerDocIdSeg = docIdSeg.ToLowerInvariant();
-                    if (!string.Equals(lowerDocIdSeg, docIdSeg, StringComparison.Ordinal)) {
-                        Bucket(nonExactBuckets, lowerDocIdSeg, idx, MatchFlags.IgnoreCase);
-                    }
-                }
-                else {
-                    // Non-generic simple name
-                    Bucket(exactBuckets, bn, idx, MatchFlags.None);
-                    var lowerBn = bn.ToLowerInvariant();
-                    if (!string.Equals(lowerBn, bn, StringComparison.Ordinal)) {
-                        Bucket(nonExactBuckets, lowerBn, idx, MatchFlags.IgnoreCase);
-                    }
+                foreach (var spec in AliasGeneration.GetTypeAliases(nodeName)) {
+                    if (spec.IsExact) { Bucket(exactBuckets, spec.Key, idx, spec.Flags); } else { Bucket(nonExactBuckets, spec.Key, idx, spec.Flags); }
                 }
 
                 lastTypeNode = idx;
@@ -582,7 +517,7 @@ partial class SymbolTreeB {
             // 2) Build type chain from DocId strictly ("T:"-prefixed)
             System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(e.DocCommentId) && e.DocCommentId.StartsWith("T:", StringComparison.Ordinal), "Type entries must have DocId starting with 'T:'");
             var s = e.DocCommentId[2..];
-            var allSegs = QueryPreprocessor.SplitSegments(s);
+            var allSegs = SymbolNormalization.SplitSegmentsWithNested(s);
             var nsCount = nsSegments.Length;
             if (nsCount < 0 || nsCount > allSegs.Length) {
                 nsCount = 0;

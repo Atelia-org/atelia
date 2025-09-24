@@ -34,112 +34,54 @@ namespace CodeCortexV2.Index.SymbolTreeInternal {
             bool root = false;
             SymbolKinds kinds = SymbolKinds.None;
             var eff = raw;
-            const string RootPrefix = "global::";
-            if (eff.StartsWith(RootPrefix, StringComparison.Ordinal)) {
+            // global:: 前缀（区分大小写）
+            var stripped = SymbolNormalization.StripGlobalPrefix(eff);
+            if (!ReferenceEquals(stripped, eff)) {
                 root = true;
-                eff = eff.Substring(RootPrefix.Length);
+                eff = stripped;
             }
 
             // 尾随点：表示请求“直接子项”。处理顺序置于 DocId 解析之前或之后均可，这里选择在 DocId 剥离之后再检查。
             // 支持如："N.", "Foo.Bar.", "T:Ns.Type." 等。多重点尾随与单点等价。
-            bool requireChildren = eff.EndsWith('.');
+            bool requireChildren = SymbolNormalization.HasTrailingDirectChildMarker(eff, out var withoutMarker);
             if (requireChildren) {
-                eff = eff.TrimEnd('.');
+                eff = withoutMarker;
             }
 
             // DocId-style prefix: N:/T:/M:/P:/F:/E:; reject "!:" explicitly
-            if (eff.Length > 2 && eff[1] == ':') {
-                if (eff[0] == '!') { return new QueryInfo(raw, SymbolKinds.None, true, Array.Empty<string>(), Array.Empty<string>(), "Unsupported DocId prefix '!:' (internal Roslyn-only). Use N:/T:/M:/P:/F:/E:", requireChildren); }
-                if (eff[0] == 'N' || eff[0] == 'T' || eff[0] == 'M' || eff[0] == 'P' || eff[0] == 'F' || eff[0] == 'E') {
-                    root = true; // DocId implies root constraint
-                    kinds = eff[0] switch {
-                        'N' => SymbolKinds.Namespace,
-                        'T' => SymbolKinds.Type,
-                        'M' => SymbolKinds.Method,
-                        'P' => SymbolKinds.Property,
-                        'F' => SymbolKinds.Field,
-                        'E' => SymbolKinds.Event,
-                        _ => kinds,
-                    };
-                    eff = eff.Substring(2); // strip "X:"
-                }
+            if (SymbolNormalization.TryParseDocIdPrefix(eff, out var pkind, out var remainder)) {
+                root = true; // DocId implies root constraint
+                kinds = pkind;
+                eff = remainder;
             }
+            else if (eff.Length > 2 && eff[1] == ':' && eff[0] == '!') { return new QueryInfo(raw, SymbolKinds.None, true, Array.Empty<string>(), Array.Empty<string>(), "Unsupported DocId prefix '!:' (internal Roslyn-only). Use N:/T:/M:/P:/F:/E:", requireChildren); }
 
-            var segsOrig = SplitSegments(eff);
+            var segsOrig = SymbolNormalization.SplitSegmentsWithNested(eff);
             if (segsOrig.Length == 0) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), null, requireChildren); }
             foreach (var s in segsOrig) {
-                if (!IsBalancedAngles(s)) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), "Unbalanced generic angle brackets: '<' '>'", requireChildren); }
+                if (!SymbolNormalization.IsBalancedGenericAngles(s)) { return new QueryInfo(raw, kinds, root, Array.Empty<string>(), Array.Empty<string>(), "Unbalanced generic angle brackets: '<' '>'", requireChildren); }
             }
 
             var segsNorm = new string[segsOrig.Length];
             var segsLower = new string?[segsOrig.Length];
             for (int i = 0; i < segsOrig.Length; i++) {
                 var s = segsOrig[i];
-                var (bn, ar) = ParseTypeSegment(s);
+                var (bn, ar, _) = SymbolNormalization.ParseGenericArity(s);
                 var norm = ar > 0 ? bn + "`" + ar.ToString() : bn;
                 segsNorm[i] = norm;
-                var lower = norm.ToLowerInvariant();
-                segsLower[i] = lower == norm ? null : lower;
+                segsLower[i] = SymbolNormalization.ToLowerIfDifferent(norm);
             }
 
             return new QueryInfo(raw, kinds, root, segsNorm, segsLower, null, requireChildren);
         }
 
         // --- Helpers ---
-        public static string[] SplitSegments(string q) {
-            if (string.IsNullOrEmpty(q)) { return Array.Empty<string>(); }
-            var parts = q.Split('.', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) { return parts; }
-            var last = parts[^1];
-            var typeSegs = last.Split('+', StringSplitOptions.RemoveEmptyEntries);
-            if (typeSegs.Length == 1) { return parts; }
-            var list = new List<string>(parts.Length - 1 + typeSegs.Length);
-            for (int i = 0; i < parts.Length - 1; i++) {
-                list.Add(parts[i]);
-            }
-
-            list.AddRange(typeSegs);
-            return list.ToArray();
-        }
-
+        // 旧的内部解析 Helper 已迁移至 SymbolNormalization；保留空壳以兼容现有测试引用（如果有）。
+        [Obsolete("Use SymbolNormalization.SplitSegmentsWithNested")] public static string[] SplitSegments(string q) => SymbolNormalization.SplitSegmentsWithNested(q);
+        [Obsolete("Use SymbolNormalization.ParseGenericArity")]
         public static (string baseName, int arity) ParseTypeSegment(string seg) {
-            if (string.IsNullOrEmpty(seg)) { return (seg, 0); }
-            var baseName = seg;
-            int arity = 0;
-            var back = seg.IndexOf('`');
-            if (back >= 0) {
-                baseName = seg.Substring(0, back);
-                var numStr = new string(seg.Skip(back + 1).TakeWhile(char.IsDigit).ToArray());
-                if (int.TryParse(numStr, out var n1)) {
-                    arity = n1;
-                }
-            }
-            var lt = seg.IndexOf('<');
-            if (lt >= 0) {
-                baseName = seg.Substring(0, lt);
-                var inside = seg.Substring(lt + 1);
-                var rt = inside.LastIndexOf('>');
-                if (rt < 0) {
-                    // unbalanced, let caller reject via IsBalancedAngles
-                }
-                else {
-                    inside = inside.Substring(0, rt);
-                    if (inside.Length > 0) {
-                        arity = inside.Count(c => c == ',') + 1;
-                    }
-                }
-            }
-            return (baseName, arity);
-        }
-
-        private static bool IsBalancedAngles(string seg) {
-            int bal = 0;
-            foreach (var ch in seg) {
-                if (ch == '<') { bal++; }
-                else if (ch == '>') { bal--; }
-                if (bal < 0) { return false; }
-            }
-            return bal == 0;
+            var (b, a, _) = SymbolNormalization.ParseGenericArity(seg);
+            return (b, a);
         }
     }
 }
