@@ -383,9 +383,55 @@ partial class SymbolTreeB {
         }
 
         if (delta.TypeAdds is not null) {
+            // Helper method to create SymbolEntry for intermediate type nodes
+            SymbolEntry CreateIntermediateTypeEntry(string[] nsSegs, string[] typeSegs, int currentTypeIndex, string assembly) {
+                DebugUtil.Print("SymbolTreeB.WithDelta", $"CreateIntermediateTypeEntry被调用: currentTypeIndex={currentTypeIndex}, typeSegs=[{string.Join(",", typeSegs)}]");
+
+                // Build the DocCommentId for the intermediate type
+                var nsPrefix = nsSegs.Length > 0 ? string.Join(".", nsSegs) + "." : "";
+                var typePrefix = string.Join("+", typeSegs.Take(currentTypeIndex + 1));
+                var docId = "T:" + nsPrefix + typePrefix;
+
+                DebugUtil.Print("SymbolTreeB.WithDelta", $"创建中间类型 DocId: {docId}");
+
+                // Build FQN for intermediate type
+                var fqnParts = new List<string>();
+                if (nsSegs.Length > 0) {
+                    fqnParts.Add(string.Join(".", nsSegs));
+                }
+
+                // Convert type segments to FQN format
+                for (int i = 0; i <= currentTypeIndex; i++) {
+                    var typeSeg = typeSegs[i];
+                    var (baseName, arity) = ParseName(typeSeg);
+                    if (arity > 0) {
+                        var genericParams = string.Join(",", Enumerable.Range(1, arity).Select(n => "T"));
+                        fqnParts.Add($"{baseName}<{genericParams}>");
+                    }
+                    else {
+                        fqnParts.Add(baseName);
+                    }
+                }
+
+                var fqnNoGlobal = string.Join(".", fqnParts);
+                var leafName = typeSegs[currentTypeIndex];
+                var (leafBaseName, _) = ParseName(leafName);
+                var parentNs = nsSegs.Length > 0 ? string.Join(".", nsSegs) : "";
+
+                return new SymbolEntry(
+                    DocCommentId: docId,
+                    Assembly: assembly,
+                    Kind: SymbolKinds.Type,
+                    ParentNamespaceNoGlobal: parentNs,
+                    FqnNoGlobal: fqnNoGlobal,
+                    FqnLeaf: leafBaseName
+                );
+            }
+
             foreach (var e in delta.TypeAdds) {
                 bool isType = (e.Kind & SymbolKinds.Type) != 0;
                 if (!isType) { continue; }
+
                 // 1) Ensure namespaces
                 var nsSegs = SplitNs(e.ParentNamespaceNoGlobal);
                 int nsParent = EnsureNamespaceChain(nsSegs);
@@ -404,9 +450,16 @@ partial class SymbolTreeB {
                     var (bn, ar) = ParseName(typeSegs[i]);
                     var nodeName = ar > 0 ? bn + "`" + ar.ToString() : bn;
                     bool isLast = i == typeSegs.Length - 1;
+                    DebugUtil.Print("SymbolTreeB.WithDelta", $"处理类型段 {i}: nodeName='{nodeName}', isLast={isLast}");
+
                     int child = FindChildByNameKind(parent, nodeName, NodeKind.Type);
+                    DebugUtil.Print("SymbolTreeB.WithDelta", $"FindChildByNameKind结果: child={child}");
+
                     if (child < 0) {
-                        child = isLast ? NewChild(parent, nodeName, NodeKind.Type, e) : NewChild(parent, nodeName, NodeKind.Type, null);
+                        SymbolEntry nodeEntry = isLast
+                            ? e
+                            : CreateIntermediateTypeEntry(nsSegs, typeSegs, i, e.Assembly);
+                        child = NewChild(parent, nodeName, NodeKind.Type, nodeEntry);
                         AddAliasesForNode(child);
                     }
                     else if (isLast) {
@@ -421,6 +474,14 @@ partial class SymbolTreeB {
                             // create a new sibling at head for this assembly variant
                             child = NewChild(parent, nodeName, NodeKind.Type, e);
                             AddAliasesForNode(child);
+                        }
+                    }
+                    else {
+                        // 中间节点存在但可能没有Entry，确保它有正确的Entry
+                        var existing = nodes[child];
+                        if (existing.Entry is null) {
+                            var intermediateEntry = CreateIntermediateTypeEntry(nsSegs, typeSegs, i, e.Assembly);
+                            ReplaceNode(child, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, intermediateEntry));
                         }
                     }
                     parent = child;
@@ -539,6 +600,88 @@ partial class SymbolTreeB {
     /// </summary>
     public static SymbolTreeB FromEntries(IEnumerable<SymbolEntry> entries) {
         var arr = entries?.ToImmutableArray() ?? ImmutableArray<SymbolEntry>.Empty;
+
+        // Expand nested types: add intermediate type entries for nested types
+        var expandedEntries = new List<SymbolEntry>();
+        var processedDocIds = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var entry in arr) {
+            expandedEntries.Add(entry);
+
+            // If this is a nested type, create intermediate type entries
+            if ((entry.Kind & SymbolKinds.Type) != 0 &&
+                entry.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true) {
+
+                var typeId = entry.DocCommentId[2..]; // Remove "T:" prefix
+                if (typeId.Contains('+')) {
+                    // This is a nested type, create intermediate entries
+                    var allSegs = SymbolNormalization.SplitSegmentsWithNested(typeId);
+                    var nsSegments = string.IsNullOrEmpty(entry.ParentNamespaceNoGlobal)
+                        ? Array.Empty<string>()
+                        : entry.ParentNamespaceNoGlobal.Split('.', StringSplitOptions.RemoveEmptyEntries);
+                    var typeSegs = allSegs.Skip(nsSegments.Length).ToArray();
+
+                    // Create intermediate entries for all type segments except the last one
+                    for (int i = 0; i < typeSegs.Length - 1; i++) {
+                        var intermediateDocId = CreateIntermediateDocId(nsSegments, typeSegs, i);
+
+                        if (processedDocIds.Add(intermediateDocId)) {
+                            var intermediateEntry = CreateIntermediateTypeEntryForFromEntries(
+                                nsSegments, typeSegs, i, entry.Assembly
+                            );
+                            expandedEntries.Add(intermediateEntry);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Use the expanded entries
+        arr = expandedEntries.ToImmutableArray();
+
+        // Helper methods for FromEntries expansion
+        static string CreateIntermediateDocId(string[] nsSegs, string[] typeSegs, int currentTypeIndex) {
+            var nsPrefix = nsSegs.Length > 0 ? string.Join(".", nsSegs) + "." : "";
+            var typePrefix = string.Join("+", typeSegs.Take(currentTypeIndex + 1));
+            return "T:" + nsPrefix + typePrefix;
+        }
+
+        static SymbolEntry CreateIntermediateTypeEntryForFromEntries(string[] nsSegs, string[] typeSegs, int currentTypeIndex, string assembly) {
+            var docId = CreateIntermediateDocId(nsSegs, typeSegs, currentTypeIndex);
+
+            // Build FQN for intermediate type
+            var fqnParts = new List<string>();
+            if (nsSegs.Length > 0) {
+                fqnParts.Add(string.Join(".", nsSegs));
+            }
+
+            // Convert type segments to FQN format
+            for (int i = 0; i <= currentTypeIndex; i++) {
+                var typeSeg = typeSegs[i];
+                var (baseName, arity, _) = SymbolNormalization.ParseGenericArity(typeSeg);
+                if (arity > 0) {
+                    var genericParams = string.Join(",", Enumerable.Range(1, arity).Select(n => "T"));
+                    fqnParts.Add($"{baseName}<{genericParams}>");
+                }
+                else {
+                    fqnParts.Add(baseName);
+                }
+            }
+
+            var fqnNoGlobal = string.Join(".", fqnParts);
+            var leafName = typeSegs[currentTypeIndex];
+            var (leafBaseName, _, _) = SymbolNormalization.ParseGenericArity(leafName);
+            var parentNs = nsSegs.Length > 0 ? string.Join(".", nsSegs) : "";
+
+            return new SymbolEntry(
+                DocCommentId: docId,
+                Assembly: assembly,
+                Kind: SymbolKinds.Type,
+                ParentNamespaceNoGlobal: parentNs,
+                FqnNoGlobal: fqnNoGlobal,
+                FqnLeaf: leafBaseName
+            );
+        }
 
         // Mutable node list with string names
         var nodes = new List<(string Name, int Parent, int FirstChild, int NextSibling, NodeKind Kind, List<int> Entries)>();
