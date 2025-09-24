@@ -228,28 +228,39 @@ partial class SymbolTreeB {
             DebugUtil.Print("SymbolTree.WithDelta", $"TypeRemovals detail: [{string.Join(", ", delta.TypeRemovals.Take(8))}] total={delta.TypeRemovals.Count}");
             foreach (var typeKey in delta.TypeRemovals) {
                 if (string.IsNullOrEmpty(typeKey.DocCommentId) || !typeKey.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) { continue; }
+                if (string.IsNullOrEmpty(typeKey.Assembly)) {
+                    // 按契约 Assembly 不能为空；若为空则跳过以避免误删所有变体
+                    DebugUtil.Print("SymbolTree.WithDelta", $"Warning: skip removal because Assembly is empty for docId={typeKey.DocCommentId}");
+                    continue;
+                }
                 // Use the same segmentation semantics as QueryPreprocessor to correctly handle nested types with '+'
                 var s = typeKey.DocCommentId[2..];
                 var segs = SymbolNormalization.SplitSegmentsWithNested(s);
                 var leaf = segs.Length > 0 ? segs[^1] : s;
                 var (bn0, ar0) = ParseName(leaf);
                 var aliasKey = ar0 > 0 ? (bn0 + "`" + ar0.ToString()) : bn0;
+                // aliasKey 命中的是同名节点集合；其中可能包含多个不同 Assembly 的并行变体。
                 if (exact.TryGetValue(aliasKey, out var rels) && !rels.IsDefaultOrEmpty) {
                     foreach (var r in rels) {
                         int nid = r.NodeId;
                         if (nid < 0 || nid >= nodes.Count) { continue; }
                         var entry = nodes[nid].Entry;
-                        if (entry is not null && string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
-                            // capture namespace ancestor before detaching
-                            int nsAncestor = FindNearestNamespaceAncestor(nid);
+                        if (entry is null) { continue; }
+                        // 精确匹配 (DocId, Assembly)；之前版本仅按 DocId 匹配会误删所有 Assembly 变体。
+                        if (string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal) &&
+                            string.Equals(entry.Assembly, typeKey.Assembly, StringComparison.Ordinal)) {
+                            int nsAncestor = FindNearestNamespaceAncestor(nid); // capture before detach
                             if (nsAncestor > 0) {
                                 DebugUtil.Print("SymbolTree.WithDelta", $"Type removal matched node={nid} name={nodes[nid].Name}, nsAncestorId={nsAncestor} nsName={nodes[nsAncestor].Name}");
                             }
-                            // remove aliases first, then detach
-                            DebugUtil.Print("SymbolTree.WithDelta", $"Removing type subtree nid={nid}, name={nodes[nid].Name}, docId={entry.DocCommentId}, nsAncestor={nsAncestor}");
+                            DebugUtil.Print("SymbolTree.WithDelta", $"Removing type subtree nid={nid}, name={nodes[nid].Name}, docId={entry.DocCommentId}, asm={entry.Assembly}, nsAncestor={nsAncestor}");
                             RemoveAliasesSubtree(nid);
                             DetachNode(nid);
                             if (nsAncestor > 0) { cascadeCandidates.Add(nsAncestor); }
+                        }
+                        else if (string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
+                            // DocId 相同但 Assembly 不同，显式记录跳过，方便诊断
+                            DebugUtil.Print("SymbolTree.WithDelta", $"Skip removal for docId={entry.DocCommentId}: existingAsm={entry.Assembly} != targetAsm={typeKey.Assembly}");
                         }
                     }
                 }
