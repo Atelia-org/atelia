@@ -140,8 +140,18 @@ partial class SymbolTreeB {
         }
 
         static ImmutableArray<AliasRelation> AddAliasToBucket(ImmutableArray<AliasRelation> bucket, int nodeId, MatchFlags flags) {
+            // If the node already exists in the bucket, OR-merge flags to keep semantics consistent with FromEntries
             if (!bucket.IsDefaultOrEmpty) {
-                foreach (var r in bucket) { if (r.NodeId == nodeId) { return bucket; } }
+                for (int i = 0; i < bucket.Length; i++) {
+                    var r = bucket[i];
+                    if (r.NodeId == nodeId) {
+                        var merged = new AliasRelation(r.Kind | flags, r.NodeId);
+                        if (merged.Kind == r.Kind) { return bucket; /* no change */ }
+                        var list0 = bucket.ToBuilder();
+                        list0[i] = merged;
+                        return list0.ToImmutable();
+                    }
+                }
             }
             var list = bucket.IsDefaultOrEmpty ? new List<AliasRelation>() : bucket.ToList();
             list.Add(new AliasRelation(flags, nodeId));
@@ -254,25 +264,28 @@ partial class SymbolTreeB {
 
         if (delta.TypeRemovals is not null) {
             DebugUtil.Print("SymbolTree.WithDelta", $"TypeRemovals detail: [{string.Join(", ", delta.TypeRemovals.Take(8))}] total={delta.TypeRemovals.Count}");
-            foreach (var docId in delta.TypeRemovals) {
-                if (string.IsNullOrEmpty(docId) || !docId.StartsWith("T:", StringComparison.Ordinal)) { continue; }
-                var s = docId[2..];
-                int dot = s.LastIndexOf('.');
-                var lastSeg = dot >= 0 ? s[(dot + 1)..] : s; // bn or bn`n
-                if (_exactAliasToNodes.TryGetValue(lastSeg, out var rels) && !rels.IsDefaultOrEmpty) {
+            foreach (var typeKey in delta.TypeRemovals) {
+                if (string.IsNullOrEmpty(typeKey.DocCommentId) || !typeKey.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) { continue; }
+                // Use the same segmentation semantics as QueryPreprocessor to correctly handle nested types with '+'
+                var s = typeKey.DocCommentId[2..];
+                var segs = QueryPreprocessor.SplitSegments(s);
+                var leaf = segs.Length > 0 ? segs[^1] : s;
+                var (bn0, ar0) = ParseName(leaf);
+                var aliasKey = ar0 > 0 ? (bn0 + "`" + ar0.ToString()) : bn0;
+                if (exact.TryGetValue(aliasKey, out var rels) && !rels.IsDefaultOrEmpty) {
                     foreach (var r in rels) {
                         int nid = r.NodeId;
                         if (nid < 0 || nid >= nodes.Count) { continue; }
                         var entry = nodes[nid].Entry;
-                        if (entry is not null && string.Equals(entry.DocCommentId, docId, StringComparison.Ordinal)) {
+                        if (entry is not null && string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
                             // capture namespace ancestor before detaching
                             int nsAncestor = FindNearestNamespaceAncestor(nid);
                             if (nsAncestor > 0) {
                                 DebugUtil.Print("SymbolTree.WithDelta", $"Type removal matched node={nid} name={nodes[nid].Name}, nsAncestorId={nsAncestor} nsName={nodes[nsAncestor].Name}");
                             }
                             // remove aliases first, then detach
-                            DebugUtil.Print("SymbolTree.WithDelta", $"Removing type node nid={nid}, name={nodes[nid].Name}, docId={entry.DocCommentId}, nsAncestor={nsAncestor}");
-                            RemoveAliasesForTypeNode(nid);
+                            DebugUtil.Print("SymbolTree.WithDelta", $"Removing type subtree nid={nid}, name={nodes[nid].Name}, docId={entry.DocCommentId}, nsAncestor={nsAncestor}");
+                            RemoveAliasesSubtree(nid);
                             DetachNode(nid);
                             if (nsAncestor > 0) { cascadeCandidates.Add(nsAncestor); }
                         }
@@ -334,6 +347,9 @@ partial class SymbolTreeB {
                 int nsParent = EnsureNamespaceChain(nsSegs);
 
                 // 2) Build/ensure type chain from docId
+                if (!(e.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true)) {
+                    DebugUtil.Print("SymbolTree.WithDelta", $"Warning: TypeAdd without 'T:' DocId. Falling back to FqnNoGlobal. Name={e.FqnNoGlobal} Assembly={e.Assembly}");
+                }
                 var s = e.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true ? e.DocCommentId![2..] : e.FqnNoGlobal;
                 var allSegs = QueryPreprocessor.SplitSegments(s);
                 int skip = nsSegs.Length;

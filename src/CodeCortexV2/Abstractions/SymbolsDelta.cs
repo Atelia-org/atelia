@@ -6,7 +6,7 @@ namespace CodeCortexV2.Abstractions;
 /// Produced by the synchronizer from Roslyn changes and applied via <c>SymbolIndex.WithDelta</c>.
 /// </summary>
 /// <param name="TypeAdds">New or updated type entries to upsert.</param>
-/// <param name="TypeRemovals">Type doc-ids (e.g., <c>T:Ns.Type</c>) to remove.</param>
+/// <param name="TypeRemovals">Types to remove, identified by DocId + Assembly (assembly is REQUIRED).</param>
 /// <param name="NamespaceAdds">DEPRECATED – Implementations MAY ignore. Historically used to materialize namespace chains.</param>
 /// <param name="NamespaceRemovals">DEPRECATED – Implementations MAY ignore. Historically used for cascading empty-namespace removals.</param>
 /// <remarks>
@@ -26,5 +26,5 @@ namespace CodeCortexV2.Abstractions;
 /// </remarks>
 public sealed record SymbolsDelta(
     IReadOnlyList<SymbolEntry> TypeAdds,
-    IReadOnlyList<string> TypeRemovals
+    IReadOnlyList<TypeKey> TypeRemovals
 );

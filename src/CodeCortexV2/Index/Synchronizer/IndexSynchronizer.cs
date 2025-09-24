@@ -43,11 +43,10 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     private readonly ConcurrentQueue<WorkspaceChangeEventArgs> _pending = new();
 
     private readonly System.Timers.Timer _debounce;
-
-    private ImmutableDictionary<DocumentId, ImmutableHashSet<string>> _docToTypeIds =
-        ImmutableDictionary.Create<DocumentId, ImmutableHashSet<string>>();
-    private ImmutableDictionary<string, ImmutableHashSet<DocumentId>> _typeIdToDocs =
-        ImmutableDictionary.Create<string, ImmutableHashSet<DocumentId>>(StringComparer.Ordinal);
+    private ImmutableDictionary<DocumentId, ImmutableHashSet<TypeKey>> _docToTypeKeys =
+        ImmutableDictionary.Create<DocumentId, ImmutableHashSet<TypeKey>>();
+    private ImmutableDictionary<TypeKey, ImmutableHashSet<DocumentId>> _typeKeyToDocs =
+        ImmutableDictionary.Create<TypeKey, ImmutableHashSet<DocumentId>>();
 
     // --- Atomic snapshot: single source of truth for Index + Entries ---
     private sealed record IndexSnapshot(
@@ -188,8 +187,11 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             var currSnap = System.Threading.Volatile.Read(ref _snap);
             var mapB = currSnap.Entries.ToBuilder();
             if (delta.TypeRemovals is { Count: > 0 }) {
-                foreach (var id in delta.TypeRemovals) {
-                    if (!string.IsNullOrEmpty(id)) {
+                foreach (var r in delta.TypeRemovals) {
+                    var id = r.DocCommentId;
+                    var asm = r.Assembly;
+                    if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(asm)) { continue; }
+                    if (mapB.TryGetValue(id, out var existing) && string.Equals(existing.Assembly, asm, StringComparison.Ordinal)) {
                         mapB.Remove(id);
                     }
                 }
@@ -358,13 +360,13 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             }
         }
 
-        return new SymbolsDelta(typeAdds, Array.Empty<string>());
+        return new SymbolsDelta(typeAdds, Array.Empty<TypeKey>());
     }
 
     private async Task<SymbolsDelta> ComputeDeltaAsync(HashSet<DocumentId> docs, CancellationToken ct) {
         var solution = _workspace.CurrentSolution;
         var typeAdds = new List<SymbolEntry>();
-        var typeRemovals = new List<string>();
+        var typeRemovals = new List<Abstractions.TypeKey>();
 
         foreach (var docId in docs) {
             if (docId is null) { continue; }
@@ -373,35 +375,35 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             DebugUtil.Print("IndexSync", $"ComputeDelta: handling doc={docId?.Id.ToString() ?? "<null>"} hasDoc={(doc != null)}");
             if (doc is null) {
                 // Document has been removed from the workspace. Remove all types declared solely in this document.
-                if (_docToTypeIds.TryGetValue(docIdNN, out var oldSetRemoved) && oldSetRemoved is { Count: > 0 }) {
-                    DebugUtil.Print("IndexSync", $"DocRemoved: old type ids count={oldSetRemoved.Count}");
-                    foreach (var id in oldSetRemoved) {
-                        if (_typeIdToDocs.TryGetValue(id, out var ds)) {
+                if (_docToTypeKeys.TryGetValue(docIdNN, out var oldSetRemoved) && oldSetRemoved is { Count: > 0 }) {
+                    DebugUtil.Print("IndexSync", $"DocRemoved: old type keys count={oldSetRemoved.Count}");
+                    foreach (var key in oldSetRemoved) {
+                        if (_typeKeyToDocs.TryGetValue(key, out var ds)) {
                             var nds = ds.Remove(docIdNN);
                             if (nds.IsEmpty) {
-                                // last declaration removed -> remove type
-                                typeRemovals.Add(id);
-                                _typeIdToDocs = _typeIdToDocs.Remove(id);
+                                // last declaration removed -> remove precise type (DocId+Assembly)
+                                typeRemovals.Add(new Abstractions.TypeKey(key.DocCommentId, key.Assembly));
+                                _typeKeyToDocs = _typeKeyToDocs.Remove(key);
                             }
                             else {
                                 // There are still declarations elsewhere. Since the index does not support per-declaration multiplicity removal,
                                 // we replace the type by remove+add using one remaining declaration to keep the final assembly consistent.
-                                typeRemovals.Add(id);
+                                typeRemovals.Add(new Abstractions.TypeKey(key.DocCommentId, key.Assembly));
                                 var remainingDoc = nds.First();
-                                var rebuilt = await TryBuildEntryForTypeIdInDocumentAsync(solution, remainingDoc, id, ct).ConfigureAwait(false);
+                                var rebuilt = await TryBuildEntryForTypeIdInDocumentAsync(solution, remainingDoc, key.DocCommentId, ct).ConfigureAwait(false);
                                 if (rebuilt is not null) {
                                     typeAdds.Add(rebuilt);
                                 }
-                                _typeIdToDocs = _typeIdToDocs.SetItem(id, nds);
+                                _typeKeyToDocs = _typeKeyToDocs.SetItem(key, nds);
                             }
                         }
                         else {
                             // No mapping -> conservatively mark removal
-                            typeRemovals.Add(id);
+                            typeRemovals.Add(new Abstractions.TypeKey(key.DocCommentId, key.Assembly));
                         }
                     }
                     // finally drop the document mapping
-                    _docToTypeIds = _docToTypeIds.Remove(docIdNN);
+                    _docToTypeKeys = _docToTypeKeys.Remove(docIdNN);
                 }
                 else {
                     DebugUtil.Print("IndexSync", $"DocRemoved: no mapping found; nothing to remove");
@@ -422,7 +424,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 _pending.Enqueue(new WorkspaceChangeEventArgs(WorkspaceChangeKind.DocumentChanged, _workspace.CurrentSolution, _workspace.CurrentSolution, doc.Project.Id, docId));
                 continue;
             }
-            var declared = new List<(string Id, SymbolEntry Entry, string ParentNs)>();
+            var declared = new List<(TypeKey Key, SymbolEntry Entry, string ParentNs)>();
             foreach (var node in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>()) {
                 var sym = model.GetDeclaredSymbol(node, ct) as INamedTypeSymbol;
                 if (sym is null) { continue; }
@@ -434,54 +436,54 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 var parentNsFqn = sym.ContainingNamespace?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? string.Empty;
                 var parentNs = IndexStringUtil.StripGlobal(parentNsFqn);
                 var entry = new SymbolEntry(DocCommentId: sid, Assembly: asm, Kind: SymbolKinds.Type, ParentNamespaceNoGlobal: parentNs, FqnNoGlobal: fqnNoGlobal, FqnLeaf: simple);
-                declared.Add((sid, entry, parentNs));
+                declared.Add((new TypeKey(sid, asm), entry, parentNs));
             }
 
-            var newIds = declared.Select(d => d.Id).ToImmutableHashSet(StringComparer.Ordinal);
-            _docToTypeIds.TryGetValue(docIdNN, out var oldSet);
-            oldSet ??= ImmutableHashSet<string>.Empty;
+            var newKeys = declared.Select(d => d.Key).ToImmutableHashSet();
+            _docToTypeKeys.TryGetValue(docIdNN, out var oldSet);
+            oldSet ??= ImmutableHashSet<TypeKey>.Empty;
 
-            var addedIds = newIds.Except(oldSet);
-            var removedIds = oldSet.Except(newIds);
-            DebugUtil.Print("IndexSync", $"DocChanged: added={string.Join(", ", addedIds)} removed={string.Join(", ", removedIds)}");
-            DebugUtil.Print("IndexSync", $"Doc {docIdNN.Id}: declared={newIds.Count}, +={addedIds.Count()}, -={removedIds.Count()}");
+            var added = newKeys.Except(oldSet);
+            var removed = oldSet.Except(newKeys);
+            DebugUtil.Print("IndexSync", $"DocChanged: +={added.Count()} -={removed.Count()}");
+            DebugUtil.Print("IndexSync", $"Doc {docIdNN.Id}: declared={newKeys.Count}, +={added.Count()}, -={removed.Count()}");
 
             // Adds
-            foreach (var id in addedIds) {
-                var e = declared.First(d => d.Id == id).Entry;
+            foreach (var key in added) {
+                var e = declared.First(d => d.Key.Equals(key)).Entry;
                 typeAdds.Add(e);
             }
 
             // Removals with partial check
-            foreach (var id in removedIds) {
-                if (_typeIdToDocs.TryGetValue(id, out var docsSet)) {
+            foreach (var key in removed) {
+                if (_typeKeyToDocs.TryGetValue(key, out var docsSet)) {
                     var left = docsSet.Remove(docIdNN);
                     if (left.IsEmpty) {
-                        typeRemovals.Add(id);
+                        typeRemovals.Add(new Abstractions.TypeKey(key.DocCommentId, key.Assembly));
                     }
                 }
                 else {
                     // unknown mapping -> treat as removable
-                    typeRemovals.Add(id);
+                    typeRemovals.Add(new Abstractions.TypeKey(key.DocCommentId, key.Assembly));
                 }
             }
 
             // Update maps for this document
-            _docToTypeIds = _docToTypeIds.SetItem(docIdNN, newIds);
+            _docToTypeKeys = _docToTypeKeys.SetItem(docIdNN, newKeys);
             // update typeId -> docs mapping for added/removed
-            foreach (var id in addedIds) {
-                _typeIdToDocs.TryGetValue(id, out var ds);
+            foreach (var key in added) {
+                _typeKeyToDocs.TryGetValue(key, out var ds);
                 ds = (ds ?? ImmutableHashSet<DocumentId>.Empty).Add(docIdNN);
-                _typeIdToDocs = _typeIdToDocs.SetItem(id, ds);
+                _typeKeyToDocs = _typeKeyToDocs.SetItem(key, ds);
             }
-            foreach (var id in removedIds) {
-                if (_typeIdToDocs.TryGetValue(id, out var ds)) {
+            foreach (var key in removed) {
+                if (_typeKeyToDocs.TryGetValue(key, out var ds)) {
                     var nds = ds.Remove(docIdNN);
                     if (nds.IsEmpty) {
-                        _typeIdToDocs = _typeIdToDocs.Remove(id);
+                        _typeKeyToDocs = _typeKeyToDocs.Remove(key);
                     }
                     else {
-                        _typeIdToDocs = _typeIdToDocs.SetItem(id, nds);
+                        _typeKeyToDocs = _typeKeyToDocs.SetItem(key, nds);
                     }
                 }
             }
@@ -522,8 +524,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     }
 
     internal async Task RebuildDocTypeMapsAsync(Solution solution, CancellationToken ct) {
-        var docTo = ImmutableDictionary.CreateBuilder<DocumentId, ImmutableHashSet<string>>();
-        var typeTo = ImmutableDictionary.CreateBuilder<string, ImmutableHashSet<DocumentId>>();
+        var docTo = ImmutableDictionary.CreateBuilder<DocumentId, ImmutableHashSet<TypeKey>>();
+        var typeTo = ImmutableDictionary.CreateBuilder<TypeKey, ImmutableHashSet<DocumentId>>();
 
         foreach (var project in solution.Projects) {
             ct.ThrowIfCancellationRequested();
@@ -532,50 +534,51 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 if (model is null) { continue; }
                 var root = await doc.GetSyntaxRootAsync(ct).ConfigureAwait(false);
                 if (root is null) { continue; }
-                var setBuilder = ImmutableHashSet.CreateBuilder<string>(StringComparer.Ordinal);
+                var setBuilder = ImmutableHashSet.CreateBuilder<TypeKey>();
                 foreach (var node in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>()) {
                     var sym = model.GetDeclaredSymbol(node, ct) as INamedTypeSymbol;
                     if (sym is null) { continue; }
                     var fqn = sym.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                     var fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
                     var sid = DocumentationCommentId.CreateDeclarationId(sym) ?? "T:" + fqnNoGlobal;
-                    setBuilder.Add(sid);
+                    var asm = sym.ContainingAssembly?.Name ?? string.Empty;
+                    setBuilder.Add(new TypeKey(sid, asm));
                 }
                 var set = setBuilder.ToImmutable();
                 docTo[doc.Id] = set;
-                foreach (var id in set) {
-                    if (!typeTo.TryGetValue(id, out var ds)) {
+                foreach (var key in set) {
+                    if (!typeTo.TryGetValue(key, out var ds)) {
                         ds = ImmutableHashSet<DocumentId>.Empty;
                     }
 
-                    typeTo[id] = ds.Add(doc.Id);
+                    typeTo[key] = ds.Add(doc.Id);
                 }
             }
         }
 
-        _docToTypeIds = docTo.ToImmutable();
-        _typeIdToDocs = typeTo.ToImmutable();
+        _docToTypeKeys = docTo.ToImmutable();
+        _typeKeyToDocs = typeTo.ToImmutable();
 
         // Health stats & reconciliation log
         var solDocIds = new HashSet<DocumentId>(solution.Projects.SelectMany(p => p.DocumentIds));
-        var mapDocIds = new HashSet<DocumentId>(_docToTypeIds.Keys);
+        var mapDocIds = new HashSet<DocumentId>(_docToTypeKeys.Keys);
         var outOfSolutionDocIdsInDocMap = mapDocIds.Where(id => !solDocIds.Contains(id)).Count();
-        var outOfSolutionDocIdsInTypeMap = _typeIdToDocs.SelectMany(kv => kv.Value).Where(id => !solDocIds.Contains(id)).Distinct().Count();
-        var orphanTypeIds = _typeIdToDocs.Count(kv => kv.Value == null || kv.Value.IsEmpty);
+        var outOfSolutionDocIdsInTypeMap = _typeKeyToDocs.SelectMany(kv => kv.Value).Where(id => !solDocIds.Contains(id)).Distinct().Count();
+        var orphanTypeIds = _typeKeyToDocs.Count(kv => kv.Value == null || kv.Value.IsEmpty);
         var docsMissingInDocMap = solDocIds.Count - mapDocIds.Count;
-        DebugUtil.Print("IndexSync", $"RebuildDocTypeMaps: docMap={mapDocIds.Count}, typeMap={_typeIdToDocs.Count}, outDoc(docMap)={outOfSolutionDocIdsInDocMap}, outDoc(typeMap)={outOfSolutionDocIdsInTypeMap}, orphanTypes={orphanTypeIds}, solDocs={solDocIds.Count}, docsMissingInDocMap={docsMissingInDocMap}");
+        DebugUtil.Print("IndexSync", $"RebuildDocTypeMaps: docMap={mapDocIds.Count}, typeMap={_typeKeyToDocs.Count}, outDoc(docMap)={outOfSolutionDocIdsInDocMap}, outDoc(typeMap)={outOfSolutionDocIdsInTypeMap}, orphanTypes={orphanTypeIds}, solDocs={solDocIds.Count}, docsMissingInDocMap={docsMissingInDocMap}");
     }
 
     // Internal health snapshot for tests/diagnostics.
     internal (int DocMapCount, int TypeMapCount, int OutDocInDocMap, int OutDocInTypeMap, int OrphanTypeIds, int SolutionDocCount, int DocsMissingInDocMap)
         GetMappingHealth(Solution solution) {
         var solDocIds = new HashSet<DocumentId>(solution.Projects.SelectMany(p => p.DocumentIds));
-        var mapDocIds = new HashSet<DocumentId>(_docToTypeIds.Keys);
+        var mapDocIds = new HashSet<DocumentId>(_docToTypeKeys.Keys);
         var outOfSolutionDocIdsInDocMap = mapDocIds.Where(id => !solDocIds.Contains(id)).Count();
-        var outOfSolutionDocIdsInTypeMap = _typeIdToDocs.SelectMany(kv => kv.Value).Where(id => !solDocIds.Contains(id)).Distinct().Count();
-        var orphanTypeIds = _typeIdToDocs.Count(kv => kv.Value == null || kv.Value.IsEmpty);
+        var outOfSolutionDocIdsInTypeMap = _typeKeyToDocs.SelectMany(kv => kv.Value).Where(id => !solDocIds.Contains(id)).Distinct().Count();
+        var orphanTypeIds = _typeKeyToDocs.Count(kv => kv.Value == null || kv.Value.IsEmpty);
         var docsMissingInDocMap = solDocIds.Count - mapDocIds.Count;
-        return (mapDocIds.Count, _typeIdToDocs.Count, outOfSolutionDocIdsInDocMap, outOfSolutionDocIdsInTypeMap, orphanTypeIds, solDocIds.Count, docsMissingInDocMap);
+        return (mapDocIds.Count, _typeKeyToDocs.Count, outOfSolutionDocIdsInDocMap, outOfSolutionDocIdsInTypeMap, orphanTypeIds, solDocIds.Count, docsMissingInDocMap);
     }
 
     // Note: Namespace chain materialization and namespace cascade removals are handled inside ISymbolIndex.WithDelta.

@@ -1,6 +1,16 @@
 namespace CodeCortexV2.Abstractions;
 
 /// <summary>
+/// Track by precise type key: DocCommentId + Assembly, to support precise removals
+/// </summary>
+/// <param name="DocCommentId">Type doc-id (e.g., T:Ns.Type or T:Ns.Outer+Inner`1)</param>
+/// <param name="Assembly">Containing assembly name (REQUIRED)</param>
+public readonly record struct TypeKey(
+    string DocCommentId,
+    string Assembly
+);
+
+/// <summary>
 /// Immutable snapshot entry describing a single symbol (namespace or type).
 /// All string fields are pre-normalized for fast search without extra allocations.
 /// </summary>
