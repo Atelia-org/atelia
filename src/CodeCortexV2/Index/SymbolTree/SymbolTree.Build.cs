@@ -224,10 +224,48 @@ partial class SymbolTreeB {
             return cur; // -1 if none, 0 is root
         }
 
+        // 检查指定节点是否有匹配特定DocCommentId的后代节点（包括以targetDocId+为前缀的嵌套类型）
+        bool HasMatchingDescendant(int nodeId, string targetDocId) {
+            if (nodeId < 0 || nodeId >= nodes.Count) { return false; }
+
+            var stack = new Stack<int>();
+            // 从直接子节点开始
+            int child = nodes[nodeId].FirstChild;
+            while (child >= 0) {
+                stack.Push(child);
+                child = nodes[child].NextSibling;
+            }
+
+            while (stack.Count > 0) {
+                int id = stack.Pop();
+                var n = nodes[id];
+
+                // 检查当前节点
+                if (n.Entry?.DocCommentId != null) {
+                    var docId = n.Entry.DocCommentId;
+                    // 精确匹配或嵌套类型匹配（以targetDocId+开头）
+                    if (string.Equals(docId, targetDocId, StringComparison.Ordinal) ||
+                        docId.StartsWith(targetDocId + "+", StringComparison.Ordinal)) { return true; }
+                }
+
+                // 添加子节点到栈中继续DFS
+                int ch = n.FirstChild;
+                while (ch >= 0) {
+                    stack.Push(ch);
+                    ch = nodes[ch].NextSibling;
+                }
+            }
+
+            return false;
+        }
         if (delta.TypeRemovals is not null) {
             DebugUtil.Print("SymbolTree.WithDelta", $"TypeRemovals detail: [{string.Join(", ", delta.TypeRemovals.Take(8))}] total={delta.TypeRemovals.Count}");
             foreach (var typeKey in delta.TypeRemovals) {
-                if (string.IsNullOrEmpty(typeKey.DocCommentId) || !typeKey.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) { continue; }
+                DebugUtil.Print("SymbolTree.Removal.Trace", $"Processing removal: docId={typeKey.DocCommentId} assembly={typeKey.Assembly}");
+                if (string.IsNullOrEmpty(typeKey.DocCommentId) || !typeKey.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) {
+                    DebugUtil.Print("SymbolTree.Removal.Trace", $"Skipping invalid docId: {typeKey.DocCommentId}");
+                    continue;
+                }
                 if (string.IsNullOrEmpty(typeKey.Assembly)) {
                     // 按契约 Assembly 不能为空；若为空则跳过以避免误删所有变体
                     DebugUtil.Print("SymbolTree.WithDelta", $"Warning: skip removal because Assembly is empty for docId={typeKey.DocCommentId}");
@@ -236,33 +274,66 @@ partial class SymbolTreeB {
                 // Use the same segmentation semantics as QueryPreprocessor to correctly handle nested types with '+'
                 var s = typeKey.DocCommentId[2..];
                 var segs = SymbolNormalization.SplitSegmentsWithNested(s);
+                DebugUtil.Print("SymbolTree.Removal.Trace", $"Segmented '{s}' into: [{string.Join(", ", segs)}]");
                 var leaf = segs.Length > 0 ? segs[^1] : s;
                 var (bn0, ar0) = ParseName(leaf);
                 var aliasKey = ar0 > 0 ? (bn0 + "`" + ar0.ToString()) : bn0;
+                DebugUtil.Print("SymbolTree.Removal.Trace", $"Generated aliasKey='{aliasKey}' from leaf='{leaf}' (bn={bn0}, ar={ar0})");
                 // aliasKey 命中的是同名节点集合；其中可能包含多个不同 Assembly 的并行变体。
+                DebugUtil.Print("SymbolTree.Removal.Trace", $"Looking up aliasKey='{aliasKey}' in exact alias bucket");
                 if (exact.TryGetValue(aliasKey, out var rels) && !rels.IsDefaultOrEmpty) {
+                    DebugUtil.Print("SymbolTree.Removal.Trace", $"Found {rels.Length} candidates in alias bucket '{aliasKey}': [{string.Join(", ", rels.Select(r => $"nodeId={r.NodeId}"))}]");
                     foreach (var r in rels) {
                         int nid = r.NodeId;
-                        if (nid < 0 || nid >= nodes.Count) { continue; }
+                        if (nid < 0 || nid >= nodes.Count) {
+                            DebugUtil.Print("SymbolTree.Removal.Trace", $"Skipping invalid nodeId={nid}");
+                            continue;
+                        }
                         var entry = nodes[nid].Entry;
-                        if (entry is null) { continue; }
-                        // 精确匹配 (DocId, Assembly)；之前版本仅按 DocId 匹配会误删所有 Assembly 变体。
-                        if (string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal) &&
-                            string.Equals(entry.Assembly, typeKey.Assembly, StringComparison.Ordinal)) {
+
+                        bool shouldRemove = false;
+                        if (entry is not null) {
+                            DebugUtil.Print("SymbolTree.Removal.Trace", $"Checking nodeId={nid}: docId='{entry.DocCommentId}' assembly='{entry.Assembly}' against target docId='{typeKey.DocCommentId}' assembly='{typeKey.Assembly}'");
+                            // 精确匹配 (DocId, Assembly)；之前版本仅按 DocId 匹配会误删所有 Assembly 变体。
+                            if (string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal) &&
+                                string.Equals(entry.Assembly, typeKey.Assembly, StringComparison.Ordinal)) {
+                                shouldRemove = true;
+                            }
+                            else if (string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
+                                // DocId 相同但 Assembly 不同，显式记录跳过，方便诊断
+                                DebugUtil.Print("SymbolTree.WithDelta", $"Skip removal for docId={entry.DocCommentId}: existingAsm={entry.Assembly} != targetAsm={typeKey.Assembly}");
+                            }
+                        }
+                        else {
+                            // 对于没有entry的路径节点，检查是否有匹配的后代
+                            DebugUtil.Print("SymbolTree.Removal.Trace", $"Checking path node {nid} (name={nodes[nid].Name}) for matching descendants");
+                            if (HasMatchingDescendant(nid, typeKey.DocCommentId)) {
+                                shouldRemove = true;
+                                DebugUtil.Print("SymbolTree.Removal.Trace", $"Will remove path node {nid} because it has matching descendant");
+                            }
+                            else {
+                                DebugUtil.Print("SymbolTree.Removal.Trace", $"Skipping nodeId={nid} with null entry (no matching descendants)");
+                            }
+                        }
+
+                        if (shouldRemove) {
                             int nsAncestor = FindNearestNamespaceAncestor(nid); // capture before detach
                             if (nsAncestor > 0) {
                                 DebugUtil.Print("SymbolTree.WithDelta", $"Type removal matched node={nid} name={nodes[nid].Name}, nsAncestorId={nsAncestor} nsName={nodes[nsAncestor].Name}");
                             }
-                            DebugUtil.Print("SymbolTree.WithDelta", $"Removing type subtree nid={nid}, name={nodes[nid].Name}, docId={entry.DocCommentId}, asm={entry.Assembly}, nsAncestor={nsAncestor}");
-                            RemoveAliasesSubtree(nid);
-                            DetachNode(nid);
+                            DebugUtil.Print("SymbolTree.WithDelta", $"Removing type subtree nid={nid}, name={nodes[nid].Name}, docId={entry?.DocCommentId ?? "null"}, asm={entry?.Assembly ?? "null"}, nsAncestor={nsAncestor}");
+                            DebugUtil.Print("SymbolTree.Removal.Trace", $"About to call RemoveTypeSubtree for nid={nid}");
+                            RemoveTypeSubtree(nid);
                             if (nsAncestor > 0) { cascadeCandidates.Add(nsAncestor); }
                         }
-                        else if (string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
+                        else if (entry is not null && string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
                             // DocId 相同但 Assembly 不同，显式记录跳过，方便诊断
                             DebugUtil.Print("SymbolTree.WithDelta", $"Skip removal for docId={entry.DocCommentId}: existingAsm={entry.Assembly} != targetAsm={typeKey.Assembly}");
                         }
                     }
+                }
+                else {
+                    DebugUtil.Print("SymbolTree.Removal.Trace", $"No candidates found for aliasKey='{aliasKey}' (bucket empty or missing)");
                 }
             }
         }
@@ -398,6 +469,41 @@ partial class SymbolTreeB {
             }
         }
 
+        // 彻底删除类型（含其嵌套类型）子树：移除别名并依次 Detach 所有节点（自叶到根避免重复 sibling 修补）
+        void RemoveTypeSubtree(int rootTypeId) {
+            if (rootTypeId < 0 || rootTypeId >= nodes.Count) { return; }
+            if (nodes[rootTypeId].Kind != NodeKind.Type) { return; }
+
+            // 收集所有需要删除的节点（先序遍历）
+            var toDelete = new List<int>();
+            var stack = new Stack<int>();
+            stack.Push(rootTypeId);
+            while (stack.Count > 0) {
+                int id = stack.Pop();
+                toDelete.Add(id);
+                var n = nodes[id];
+
+                // 将所有子节点压栈
+                int ch = n.FirstChild;
+                while (ch >= 0) {
+                    stack.Push(ch);
+                    ch = nodes[ch].NextSibling;
+                }
+            }
+
+            // 反转为后序（子节点先删除）
+            toDelete.Reverse();
+
+            // 先移除所有别名
+            foreach (var id in toDelete) {
+                RemoveAliasesForNode(id);
+            }
+
+            // 再按后序删除节点（子节点先删除，避免父子关系断裂问题）
+            foreach (var id in toDelete) {
+                DetachNode(id);
+            }
+        }
         int deletedNsCount = 0;
         if (cascadeCandidates.Count > 0) {
             foreach (var cand in cascadeCandidates) {
@@ -420,7 +526,6 @@ partial class SymbolTreeB {
 
         DebugUtil.Print("SymbolTree.WithDelta", $"TypeAdds={delta.TypeAdds?.Count ?? 0}, TypeRemovals={delta.TypeRemovals?.Count ?? 0}, CascadeCandidates={cascadeCandidates.Count}, DeletedNamespaces={deletedNsCount}");
 
-        // Produce the new immutable snapshot
         var newTree = new SymbolTreeB(
             nodes.ToImmutableArray(),
             exact,
