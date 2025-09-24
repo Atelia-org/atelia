@@ -32,6 +32,12 @@ internal sealed partial class SymbolTreeB : ISymbolIndex {
         _nonExactAliasToNodes = nonExactAliasToNodes;
     }
 
+    private SymbolTreeBuilder CloneBuilder() => new(
+        _nodes.ToList(),
+        new Dictionary<string, ImmutableArray<AliasRelation>>(_exactAliasToNodes, _exactAliasToNodes.Comparer),
+        new Dictionary<string, ImmutableArray<AliasRelation>>(_nonExactAliasToNodes, _nonExactAliasToNodes.Comparer)
+    );
+
     public static SymbolTreeB Empty { get; } = new(
         ImmutableArray<NodeB>.Empty,
         new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal),
