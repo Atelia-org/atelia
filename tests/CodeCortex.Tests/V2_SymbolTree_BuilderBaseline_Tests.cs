@@ -19,7 +19,7 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
 
         var delta = new SymbolsDelta(entries, Array.Empty<TypeKey>());
         var viaDelta = ApplyDeltas(SymbolTreeB.Empty, delta);
-        var viaFull = SymbolTreeB.FromEntries(entries);
+        var viaFull = BuildTreeFromAdds(entries);
 
         AssertSnapshotsEqual(viaFull, viaDelta);
     }
@@ -40,7 +40,7 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
         var expectedEntries = new[] {
             TypeEntry("Stage0", "Beta", 0, "Asm")
         };
-        var viaFull = SymbolTreeB.FromEntries(expectedEntries);
+        var viaFull = BuildTreeFromAdds(expectedEntries);
 
         AssertSnapshotsEqual(viaFull, finalTree);
     }
@@ -55,7 +55,7 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
 
         var delta = new SymbolsDelta(entries, Array.Empty<TypeKey>());
         var viaDelta = ApplyDeltas(SymbolTreeB.Empty, delta);
-        var viaFull = SymbolTreeB.FromEntries(entries);
+        var viaFull = BuildTreeFromAdds(entries);
 
         AssertSnapshotsEqual(viaFull, viaDelta);
 
@@ -93,6 +93,12 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
                 hit => (hit.MatchFlags & expectedFlag) == expectedFlag
             );
         }
+    }
+
+    private static SymbolTreeB BuildTreeFromAdds(IEnumerable<SymbolEntry> entries) {
+        var typeAdds = entries?.ToArray() ?? Array.Empty<SymbolEntry>();
+        var delta = new SymbolsDelta(typeAdds, Array.Empty<TypeKey>());
+        return (SymbolTreeB)SymbolTreeB.Empty.WithDelta(delta);
     }
 
     private static SymbolEntry TypeEntry(string ns, string nameBase, int arity, string assembly) {

@@ -1,7 +1,9 @@
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using CodeCortexV2.Abstractions;
 using CodeCortexV2.Index;
+using CodeCortexV2.Index.SymbolTreeInternal;
 using CodeCortexV2.Providers;
 using CodeCortexV2.Workspace;
 using CodeCortexV2.Formatting;
@@ -75,7 +77,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
         SearchResults page;
         {
             var entries = _sync.CurrentEntries;
-            var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
+            var tree = BuildTreeFromEntries(entries);
             page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
         }
         if (json) { return JsonSerializer.Serialize(page, new JsonSerializerOptions { WriteIndented = true }); }
@@ -94,7 +96,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
         SearchResults page;
         {
             var entries = _sync.CurrentEntries;
-            var tree = CodeCortexV2.Index.SymbolTreeInternal.SymbolTreeB.FromEntries(entries);
+            var tree = BuildTreeFromEntries(entries);
             page = tree.Search(query, limit, offset, kinds: SymbolKinds.All);
         }
         if (page.Total != 1 || page.Items[0].MatchFlags == MatchFlags.Fuzzy) {
@@ -166,5 +168,10 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
 
         return $"不支持的符号类型用于大纲: {hit.Kind}";
     }
+
+    private static SymbolTreeB BuildTreeFromEntries(IEnumerable<SymbolEntry>? entries)
+        => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
+            new SymbolsDelta(entries?.ToArray() ?? System.Array.Empty<SymbolEntry>(), System.Array.Empty<TypeKey>())
+        );
 }
 

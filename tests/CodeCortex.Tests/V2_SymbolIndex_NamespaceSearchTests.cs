@@ -53,7 +53,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
             Ns("Foo.Bar", "Foo"),
             Ty("Foo.Bar", "Baz", 0, "TestAsm")
         };
-        return SymbolTreeB.FromEntries(entries);
+        return BuildTree(entries);
     }
 
     /// <summary>
@@ -120,5 +120,10 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         Assert.Equal(0, page.Total);
         Assert.Empty(page.Items);
     }
+
+    private static SymbolTreeB BuildTree(IEnumerable<SymbolEntry> entries)
+        => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
+            new SymbolsDelta(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
+        );
 }
 

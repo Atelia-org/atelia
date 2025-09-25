@@ -51,7 +51,7 @@ public class V2_SymbolTree_SearchTests {
             Ns("System.Collections.Generic", "System.Collections"),
             Ty("System.Collections.Generic", "List", 1, "System.Collections")
         };
-        return SymbolTreeB.FromEntries(entries);
+        return BuildTree(entries);
     }
 
     private static SymbolEntry TyNested(string ns, string outerBase, int outerArity, string innerBase, int innerArity, string assembly) {
@@ -91,7 +91,7 @@ public class V2_SymbolTree_SearchTests {
             // Nested: List<T>.Enumerator
             TyNested("System.Collections.Generic", "List", 1, "Enumerator", 0, "System.Collections")
         };
-        return SymbolTreeB.FromEntries(entries);
+        return BuildTree(entries);
     }
 
     /// <summary>
@@ -264,5 +264,10 @@ public class V2_SymbolTree_SearchTests {
         Assert.Equal("System.Collections.Generic.List<T>.Enumerator", hit.Name);
         Assert.True((hit.MatchFlags & MatchFlags.IgnoreGenericArity) != 0);
     }
+
+    private static SymbolTreeB BuildTree(IEnumerable<SymbolEntry> entries)
+        => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
+            new SymbolsDelta(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
+        );
 }
 

@@ -42,15 +42,4 @@ partial class SymbolTreeB {
         );
         return newTree;
     }
-
-    public static SymbolTreeB FromEntries(IEnumerable<SymbolEntry> entries) {
-        var builder = SymbolTreeBuilder.CreateEmpty();
-        builder.SeedFromEntries(entries);
-
-        return new SymbolTreeB(
-            builder.Nodes.ToImmutableArray(),
-            builder.ExactAliases,
-            builder.NonExactAliases
-        );
-    }
 }

@@ -27,26 +27,28 @@ public class SymbolTreeNestedTypesTests {
         .ToArray();
 
     [Fact]
-    public void WithDelta_ShouldMatch_FromEntries_ForSingleNestedType() {
+    public void WithDelta_ShouldExposeExpectedSymbols_ForSingleNestedType() {
         var nestedEntry = CreateSymbol("T:TestNs.Outer`1+Inner", AssemblyName);
+        var tree = BuildTreeWithDelta(nestedEntry);
 
-        var fromEntriesTree = SymbolTreeB.FromEntries(new[] { nestedEntry });
-        var withDeltaTree = BuildTreeWithDelta(nestedEntry);
+        var expectations = new Dictionary<string, string[]>(StringComparer.Ordinal) {
+            ["T:TestNs.Outer`1+Inner"] = new[] { "T:TestNs.Outer`1+Inner" },
+            ["T:TestNs.Outer`1"] = new[] { "T:TestNs.Outer`1" },
+            ["TestNs.Outer`1"] = new[] { "T:TestNs.Outer`1" },
+            ["Outer`1"] = new[] { "T:TestNs.Outer`1" },
+            ["Inner"] = new[] { "T:TestNs.Outer`1+Inner" }
+        };
 
-        foreach (var query in SingleNestedQueries) {
-            var fromEntries = fromEntriesTree.Search(query, 10, 0, SymbolKinds.All);
-            var fromDelta = withDeltaTree.Search(query, 10, 0, SymbolKinds.All);
+        foreach (var (query, expectedIds) in expectations) {
+            var results = tree.Search(query, 10, 0, SymbolKinds.All);
+            DebugUtil.Print(DebugCategory, $"Query '{query}' returned {results.Total} results");
 
-            DebugUtil.Print(DebugCategory, $"Query '{query}' | FromEntries={fromEntries.Total}, WithDelta={fromDelta.Total}");
+            Assert.True(results.Total > 0, $"Expected query '{query}' to return at least one result");
 
-            Assert.True(
-                fromEntries.Total == fromDelta.Total,
-                $"Query '{query}' mismatch: FromEntries={fromEntries.Total}, WithDelta={fromDelta.Total}"
-            );
-
-            var expectedIds = fromEntries.Items.Select(i => i.SymbolId.Value).OrderBy(id => id).ToArray();
-            var actualIds = fromDelta.Items.Select(i => i.SymbolId.Value).OrderBy(id => id).ToArray();
-            Assert.Equal(expectedIds, actualIds);
+            var actualIds = new HashSet<string>(results.Items.Select(i => i.SymbolId.Value), StringComparer.Ordinal);
+            foreach (var expectedId in expectedIds) {
+                Assert.Contains(expectedId, actualIds);
+            }
         }
     }
 
@@ -69,26 +71,21 @@ public class SymbolTreeNestedTypesTests {
     }
 
     [Fact]
-    public void WithDelta_ShouldAlignOuterTypeDetails_WithFromEntries() {
+    public void WithDelta_ShouldExposeOuterTypeDetails() {
         var nestedEntry = CreateSymbol("T:TestNs.Outer`1+Inner", AssemblyName);
+        var tree = BuildTreeWithDelta(nestedEntry);
 
-        var fromEntriesTree = SymbolTreeB.FromEntries(new[] { nestedEntry });
-        var withDeltaTree = BuildTreeWithDelta(nestedEntry);
+        var results = tree.Search("T:TestNs.Outer`1", 10, 0, SymbolKinds.All);
+        Assert.True(results.Total > 0, "WithDelta should expose the outer type");
 
-        var expected = fromEntriesTree.Search("T:TestNs.Outer`1", 10, 0, SymbolKinds.All);
-        var actual = withDeltaTree.Search("T:TestNs.Outer`1", 10, 0, SymbolKinds.All);
+        var hit = results.Items[0];
+        var expectedName = $"{NamespaceName}.{FormatGenericName("Outer`1")}";
 
-        Assert.True(expected.Total > 0, "Control tree should expose the outer type");
-        Assert.True(actual.Total > 0, "WithDelta should expose the outer type");
-
-        var expectedHit = expected.Items[0];
-        var actualHit = actual.Items[0];
-
-        Assert.Equal(expectedHit.Kind, actualHit.Kind);
-        Assert.Equal(expectedHit.Name, actualHit.Name);
-        Assert.Equal(expectedHit.Namespace, actualHit.Namespace);
-        Assert.Equal(expectedHit.Assembly, actualHit.Assembly);
-        Assert.Equal(expectedHit.SymbolId.Value, actualHit.SymbolId.Value);
+        Assert.Equal(SymbolKinds.Type, hit.Kind);
+        Assert.Equal(expectedName, hit.Name);
+        Assert.Equal(NamespaceName, hit.Namespace);
+        Assert.Equal(AssemblyName, hit.Assembly);
+        Assert.Equal("T:TestNs.Outer`1", hit.SymbolId.Value);
     }
 
     [Fact]

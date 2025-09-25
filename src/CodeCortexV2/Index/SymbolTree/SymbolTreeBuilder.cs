@@ -9,7 +9,7 @@ using CodeCortexV2.Abstractions;
 namespace CodeCortexV2.Index.SymbolTreeInternal;
 
 /// <summary>
-/// Mutable construction surface shared by <see cref="SymbolTreeB.WithDelta"/> 和 <see cref="SymbolTreeB.FromEntries"/>。
+/// Mutable construction surface shared by <see cref="SymbolTreeB.WithDelta"/>。
 /// 承载节点数组、别名桶与常用辅助操作，后续阶段将进一步拓展至完整 Builder 生命周期。
 /// 当前阶段仅由 <see cref="SymbolTreeB.WithDelta"/> 使用，保持逻辑不变。
 /// </summary>
