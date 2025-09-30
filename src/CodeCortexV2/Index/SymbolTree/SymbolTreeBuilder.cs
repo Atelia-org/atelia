@@ -207,7 +207,7 @@ internal sealed class SymbolTreeBuilder {
                         }
 
                         var intermediateEntry = CreateIntermediateTypeEntry(nsSegs, typeSegs, i, e.Assembly ?? string.Empty);
-                        EnsureTypeEntryNode(structuralParent, nodeName, intermediateEntry, allowDuplicate: true);
+                        EnsureTypeEntryNode(structuralParent, nodeName, intermediateEntry);
 
                         currentParent = structuralNode;
                         continue;
@@ -330,9 +330,8 @@ internal sealed class SymbolTreeBuilder {
         return -1;
     }
 
-    private void EnsureTypeEntryNode(int parent, string name, SymbolEntry entry, bool allowDuplicate = false) {
+    private void EnsureTypeEntryNode(int parent, string name, SymbolEntry entry) {
         if (TryReuseEntryNodeFromPool(entry, out var reusedNode)) {
-            var existingReuse = Nodes[reusedNode];
             ReplaceNodeEntry(reusedNode, entry, refreshAliases: true);
             return;
         }

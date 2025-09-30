@@ -22,7 +22,9 @@ namespace CodeCortex.Tests {
             Assert.True(qi.IsRootAnchored);
             Assert.Equal(new[] { "System", "Collections", "Generic", "List`1" }, qi.NormalizedSegments);
             Assert.Equal("list`1", qi.LowerNormalizedSegments[^1]);
-            Assert.Equal("List<T>", QueryPreprocessor.ParseTypeSegment(qi.NormalizedSegments[^1]).baseName + "<T>");
+            var (baseName, arity, _) = SymbolNormalization.ParseGenericArity(qi.NormalizedSegments[^1]);
+            Assert.Equal("List<T>", baseName + "<T>");
+            Assert.Equal(1, arity);
         }
 
         [Fact]
