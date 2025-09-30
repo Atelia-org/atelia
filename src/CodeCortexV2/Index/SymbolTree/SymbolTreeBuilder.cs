@@ -240,6 +240,11 @@ internal sealed class SymbolTreeBuilder {
         }
     }
 
+    /// <summary>
+    /// Cascade-delete empty namespace nodes after type removals.
+    /// Relies on the invariant that <see cref="RemoveTypeSubtree"/> detaches every structural child,
+    /// so an empty namespace is observable via <c>FirstChild &lt; 0</c> without scanning descendants.
+    /// </summary>
     private int CascadeEmptyNamespaces(HashSet<int> cascadeCandidates) {
         if (cascadeCandidates.Count == 0) { return 0; }
 
@@ -247,9 +252,9 @@ internal sealed class SymbolTreeBuilder {
         foreach (var cand in cascadeCandidates) {
             int cur = cand;
             while (cur > 0) {
-                bool hasType = NamespaceHasAnyTypeEntry(cur);
-                DebugUtil.Print("SymbolTree.WithDelta", $"Cascade check nsId={cur} nsName={Nodes[cur].Name}, hasType={hasType}");
-                if (!hasType) {
+                bool hasAnyChild = Nodes[cur].FirstChild >= 0;
+                DebugUtil.Print("SymbolTree.WithDelta", $"Cascade check nsId={cur} nsName={Nodes[cur].Name}, hasChild={hasAnyChild}");
+                if (!hasAnyChild) {
                     int parentBefore = Nodes[cur].Parent;
                     RemoveAliasesSubtree(cur);
                     DetachNode(cur);
@@ -676,29 +681,6 @@ internal sealed class SymbolTreeBuilder {
             FqnNoGlobal: fqnNoGlobal,
             FqnLeaf: leafWithArity
         );
-    }
-
-    internal bool NamespaceHasAnyTypeEntry(int nsNodeId) {
-        if (nsNodeId <= 0 || nsNodeId >= Nodes.Count) { return false; }
-        var stack = new Stack<int>();
-        int child = Nodes[nsNodeId].FirstChild;
-        while (child >= 0) {
-            stack.Push(child);
-            child = Nodes[child].NextSibling;
-        }
-
-        while (stack.Count > 0) {
-            int id = stack.Pop();
-            var node = Nodes[id];
-            if (node.Kind == NodeKind.Type && node.Entry is not null) { return true; }
-            int nextChild = node.FirstChild;
-            while (nextChild >= 0) {
-                stack.Push(nextChild);
-                nextChild = Nodes[nextChild].NextSibling;
-            }
-        }
-
-        return false;
     }
 
     internal void RemoveAliasesSubtree(int rootId) {
