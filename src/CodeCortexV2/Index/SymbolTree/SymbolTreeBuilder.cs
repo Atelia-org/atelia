@@ -626,8 +626,9 @@ internal sealed class SymbolTreeBuilder {
         }
 
         var fqnNoGlobal = string.Join('.', fqnParts);
-        var leafName = typeSegments[currentTypeIndex];
-        var (leafBaseName, _) = ParseName(leafName);
+        var leafSegment = typeSegments[currentTypeIndex];
+        var (leafBaseName, leafArity) = ParseName(leafSegment);
+        var leafWithArity = leafArity > 0 ? leafBaseName + "`" + leafArity.ToString() : leafBaseName;
         var parentNamespace = nsSegments.Length > 0 ? string.Join('.', nsSegments) : string.Empty;
 
         return new SymbolEntry(
@@ -636,7 +637,7 @@ internal sealed class SymbolTreeBuilder {
             Kind: SymbolKinds.Type,
             ParentNamespaceNoGlobal: parentNamespace,
             FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: leafBaseName
+            FqnLeaf: leafWithArity
         );
     }
 

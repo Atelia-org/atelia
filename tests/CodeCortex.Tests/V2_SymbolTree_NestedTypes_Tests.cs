@@ -111,6 +111,30 @@ public class SymbolTreeNestedTypesTests {
         Assert.True(results.Total > 0, $"Expected alias '{query}' to resolve to at least one symbol");
     }
 
+    [Fact]
+    public void CreateIntermediateTypeEntry_ShouldRetainGenericArityInLeaf() {
+        var builder = SymbolTreeBuilder.CreateEmpty();
+        var nsSegments = SymbolTreeBuilder.SplitNamespace(NamespaceName);
+        var typeSegments = new[] { "Outer`1", "Inner" };
+
+        var entry = builder.CreateIntermediateTypeEntry(nsSegments, typeSegments, currentTypeIndex: 0, assembly: AssemblyName);
+
+        Assert.Equal("Outer`1", entry.FqnLeaf);
+        Assert.Equal("T:TestNs.Outer`1", entry.DocCommentId);
+    }
+
+    [Fact]
+    public void CreateIntermediateTypeEntry_ShouldRetainGenericArityForDeeperLevels() {
+        var builder = SymbolTreeBuilder.CreateEmpty();
+        var nsSegments = SymbolTreeBuilder.SplitNamespace(NamespaceName);
+        var typeSegments = new[] { "Outer`1", "Middle`2", "Inner" };
+
+        var entry = builder.CreateIntermediateTypeEntry(nsSegments, typeSegments, currentTypeIndex: 1, assembly: AssemblyName);
+
+        Assert.Equal("Middle`2", entry.FqnLeaf);
+        Assert.Equal("T:TestNs.Outer`1+Middle`2", entry.DocCommentId);
+    }
+
     public static IEnumerable<object[]> GetAliasQueries() {
         foreach (var query in AliasQueries) {
             yield return new object[] { query };
