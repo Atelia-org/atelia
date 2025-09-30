@@ -16,7 +16,10 @@ partial class SymbolTreeB {
     ///   limited to impacted subtrees; avoid full-index scans in production.
     /// - Locality: time/memory costs should scale with the size of <paramref name="delta"/>, not the whole index.
     /// - Idempotency: applying the same delta repeatedly should not change the resulting state.
-    /// - Optional defensive checks: lightweight validations and DebugUtil diagnostics are allowed.
+    /// - Ordering precondition: <paramref name="delta"/>.TypeAdds is sorted by ascending DocCommentId length and
+    ///   TypeRemovals is sorted by descending length (DocIds start with "T:"). The builder assumes parents are
+    ///   materialized before nested types and may assert/throw when the contract is violated.
+    /// - Optional defensive checks: lightweight validations (Debug.Assert, exceptions) and DebugUtil diagnostics are allowed.
     /// </summary>
     public ISymbolIndex WithDelta(SymbolsDelta delta) {
         if (delta is null) { return this; }

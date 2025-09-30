@@ -171,7 +171,7 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
 
     private static SymbolTreeB BuildTreeFromEntries(IEnumerable<SymbolEntry>? entries)
         => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
-            new SymbolsDelta(entries?.ToArray() ?? System.Array.Empty<SymbolEntry>(), System.Array.Empty<TypeKey>())
+            SymbolsDeltaContract.Normalize(entries?.ToArray() ?? System.Array.Empty<SymbolEntry>(), System.Array.Empty<TypeKey>())
         );
 }
 

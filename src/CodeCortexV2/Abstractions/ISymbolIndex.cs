@@ -7,13 +7,18 @@ public interface ISymbolIndex {
     /// Updated contract (leaf-only deltas; namespace operations deprecated):
     /// - Producers SHOULD emit leaf-only deltas: <c>TypeAdds</c> and <c>TypeRemovals</c>. Namespace-related fields in
     ///   <see cref="SymbolsDelta"/> are DEPRECATED and MAY be ignored by implementations.
+    /// - Ordering invariant: <c>TypeAdds</c> MUST be sorted in ascending order by <c>DocCommentId.Length</c> so that
+    ///   outer types are materialized before nested types; <c>TypeRemovals</c> MUST be sorted in the reverse order.
+    ///   Doc ids MUST start with <c>"T:"</c>. These guarantees allow consumers to assume parents exist when processing
+    ///   nested leaves.
     /// - Implementations of <c>WithDelta</c> SHOULD handle, internally and locally (impacted subtrees only):
     ///   - Namespace chain materialization for added types.
     ///   - Cascading deletion of empty namespaces after type removals.
     /// - Idempotency: applying the same delta multiple times yields the same resulting index state.
     /// - Locality: time/memory complexity should be proportional to the size of the delta, not the whole index.
-    /// - Defensive checks: implementations MAY include lightweight validations with diagnostics, but MUST NOT rely on
-    ///   full-index traversal in production.
+    /// - Defensive checks: implementations MAY include lightweight validations with diagnostics. When ordering
+    ///   invariants or parent availability are violated, implementations are encouraged to fail-fast (e.g., via
+    ///   assertions or exceptions) instead of silently healing the delta.
     ///
     /// Producer notes (e.g., <c>IndexSynchronizer</c>):
     /// - Deduplicate/conflict-resolve within a batch (e.g., avoid simultaneous add+remove for the same id); a rename is

@@ -11,7 +11,9 @@ namespace CodeCortexV2.Index.SymbolTreeInternal;
 /// <summary>
 /// Mutable construction surface shared by <see cref="SymbolTreeB.WithDelta"/>。
 /// 承载节点数组、别名桶与常用辅助操作，后续阶段将进一步拓展至完整 Builder 生命周期。
-/// 当前阶段仅由 <see cref="SymbolTreeB.WithDelta"/> 使用，保持逻辑不变。
+/// 当前阶段仅由 <see cref="SymbolTreeB.WithDelta"/> 使用，保持逻辑不变。调用方必须遵守 <see cref="SymbolsDelta"/>
+/// 的排序契约（TypeAdds 按 DocCommentId.Length 升序、TypeRemovals 降序，DocId 起始为 "T:"）；当发现违背
+/// 契约或父节点缺失时，本 Builder 会优先选择 fail-fast（Debug.Assert 或抛异常）。
 /// </summary>
 internal sealed class SymbolTreeBuilder {
     internal List<NodeB> Nodes { get; }
@@ -65,6 +67,9 @@ internal sealed class SymbolTreeBuilder {
     internal DeltaStats ApplyDelta(SymbolsDelta delta) {
         if (delta is null) { return new DeltaStats(0, 0, 0, 0, 0, 0); }
 
+        ValidateTypeAddsContract(delta.TypeAdds);
+        ValidateTypeRemovalsContract(delta.TypeRemovals);
+
         _freedThisDelta = 0;
         _reusedThisDelta = 0;
 
@@ -83,6 +88,38 @@ internal sealed class SymbolTreeBuilder {
         );
     }
 
+    private static void ValidateTypeAddsContract(IReadOnlyList<SymbolEntry>? additions) {
+        if (additions is null || additions.Count == 0) { return; }
+
+        int previousLength = -1;
+        for (int i = 0; i < additions.Count; i++) {
+            var entry = additions[i];
+            var docId = entry.DocCommentId;
+            if (string.IsNullOrEmpty(docId) || !docId.StartsWith("T:", StringComparison.Ordinal)) { throw new InvalidOperationException($"TypeAdds[{i}] must have a DocCommentId starting with 'T:' (DocCommentId='{docId ?? "<null>"}')"); }
+            if (string.IsNullOrWhiteSpace(entry.Assembly)) { throw new InvalidOperationException($"TypeAdds[{i}] '{docId}' must specify Assembly"); }
+
+            int length = docId.Length;
+            if (previousLength > length) { throw new InvalidOperationException($"TypeAdds must be sorted by ascending DocCommentId length. Violation at index {i} for '{docId}' (length={length}, previousLength={previousLength})."); }
+            previousLength = length;
+        }
+    }
+
+    private static void ValidateTypeRemovalsContract(IReadOnlyList<TypeKey>? removals) {
+        if (removals is null || removals.Count == 0) { return; }
+
+        int previousLength = int.MaxValue;
+        for (int i = 0; i < removals.Count; i++) {
+            var entry = removals[i];
+            var docId = entry.DocCommentId;
+            if (string.IsNullOrEmpty(docId) || !docId.StartsWith("T:", StringComparison.Ordinal)) { throw new InvalidOperationException($"TypeRemovals[{i}] must have a DocCommentId starting with 'T:' (DocCommentId='{docId ?? "<null>"}')"); }
+            if (string.IsNullOrWhiteSpace(entry.Assembly)) { throw new InvalidOperationException($"TypeRemovals[{i}] '{docId}' must specify Assembly"); }
+
+            int length = docId.Length;
+            if (previousLength < length) { throw new InvalidOperationException($"TypeRemovals must be sorted by descending DocCommentId length. Violation at index {i} for '{docId}' (length={length}, previousLength={previousLength})."); }
+            previousLength = length;
+        }
+    }
+
     private void ApplyTypeRemovals(IReadOnlyList<TypeKey>? removals, HashSet<int> cascadeCandidates) {
         if (removals is null || removals.Count == 0) { return; }
 
@@ -90,14 +127,8 @@ internal sealed class SymbolTreeBuilder {
 
         foreach (var typeKey in removals) {
             DebugUtil.Print("SymbolTree.Removal.Trace", $"Processing removal: docId={typeKey.DocCommentId} assembly={typeKey.Assembly}");
-            if (string.IsNullOrEmpty(typeKey.DocCommentId) || !typeKey.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) {
-                DebugUtil.Print("SymbolTree.Removal.Trace", $"Skipping invalid docId: {typeKey.DocCommentId}");
-                continue;
-            }
-            if (string.IsNullOrEmpty(typeKey.Assembly)) {
-                DebugUtil.Print("SymbolTree.WithDelta", $"Warning: skip removal because Assembly is empty for docId={typeKey.DocCommentId}");
-                continue;
-            }
+            if (string.IsNullOrEmpty(typeKey.DocCommentId) || !typeKey.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) { throw new InvalidOperationException($"TypeRemovals entry must have a DocCommentId starting with 'T:' (DocCommentId='{typeKey.DocCommentId ?? "<null>"}')"); }
+            if (string.IsNullOrWhiteSpace(typeKey.Assembly)) { throw new InvalidOperationException($"TypeRemovals entry '{typeKey.DocCommentId}' must specify Assembly"); }
 
             var s = typeKey.DocCommentId[2..];
             var segs = SymbolNormalization.SplitSegmentsWithNested(s);
@@ -164,11 +195,15 @@ internal sealed class SymbolTreeBuilder {
         if (additions is null || additions.Count == 0) { return; }
 
         var reusePool = new Dictionary<(string DocId, string Assembly), List<int>>();
+        var materializedDocIds = new HashSet<string>(StringComparer.Ordinal);
         for (int idx = 0; idx < Nodes.Count; idx++) {
             var node = Nodes[idx];
             if (node.Parent < 0) { continue; }
             var entry = node.Entry;
             if (entry is null) { continue; }
+            if (!string.IsNullOrEmpty(entry.DocCommentId) && entry.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) {
+                materializedDocIds.Add(entry.DocCommentId);
+            }
             var key = (entry.DocCommentId ?? string.Empty, entry.Assembly ?? string.Empty);
             if (!reusePool.TryGetValue(key, out var list)) {
                 list = new List<int>();
@@ -187,11 +222,10 @@ internal sealed class SymbolTreeBuilder {
                 var nsSegs = SplitNamespace(e.ParentNamespaceNoGlobal);
                 int nsParent = EnsureNamespaceChain(nsSegs);
 
-                if (!(e.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true)) {
-                    DebugUtil.Print("SymbolTree.WithDelta", $"Warning: TypeAdd without 'T:' DocId. Falling back to FqnNoGlobal. Name={e.FqnNoGlobal} Assembly={e.Assembly}");
-                }
+                if (!(e.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true)) { throw new InvalidOperationException($"TypeAdds entry must have a DocCommentId starting with 'T:' (DocCommentId='{e.DocCommentId ?? "<null>"}')"); }
+                if (string.IsNullOrWhiteSpace(e.Assembly)) { throw new InvalidOperationException($"TypeAdds entry '{e.DocCommentId}' must specify Assembly"); }
 
-                var s = e.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true ? e.DocCommentId![2..] : e.FqnNoGlobal;
+                var s = e.DocCommentId[2..];
                 var allSegs = SymbolNormalization.SplitSegmentsWithNested(s);
                 int skip = nsSegs.Length;
                 if (skip < 0 || skip > allSegs.Length) { skip = 0; }
@@ -226,8 +260,8 @@ internal sealed class SymbolTreeBuilder {
                             EnsureTypeEntryNode(structuralParent, nodeName, preservedEntry);
                         }
 
-                        var intermediateEntry = CreateIntermediateTypeEntry(nsSegs, typeSegs, i, e.Assembly ?? string.Empty);
-                        EnsureTypeEntryNode(structuralParent, nodeName, intermediateEntry);
+                        var intermediateDocId = BuildIntermediateTypeDocId(nsSegs, typeSegs, i);
+                        if (!materializedDocIds.Contains(intermediateDocId)) { throw new InvalidOperationException($"TypeAdds entry '{e.DocCommentId}' depends on missing parent '{intermediateDocId}'. Ensure parent types are materialized earlier in the delta."); }
 
                         currentParent = structuralNode;
                         continue;
@@ -236,21 +270,32 @@ internal sealed class SymbolTreeBuilder {
                     string docId = e.DocCommentId ?? string.Empty;
                     string assembly = e.Assembly ?? string.Empty;
                     int placeholderNode;
+                    int targetNode;
                     if (TryReuseEntryNodeFromPool(e, out var reusedLeaf)) {
-                        ReplaceNodeEntry(reusedLeaf, e, refreshAliases: true);
-                        continue;
-                    }
-                    int entryNode = FindTypeEntryNode(currentParent, nodeName, docId, assembly, out placeholderNode);
-                    if (entryNode >= 0) {
-                        ReplaceNodeEntry(entryNode, e, refreshAliases: true);
-                    }
-                    else if (placeholderNode >= 0) {
-                        ReplaceNodeEntry(placeholderNode, e, refreshAliases: true);
+                        targetNode = reusedLeaf;
+                        ReplaceNodeEntry(targetNode, e, refreshAliases: true);
                     }
                     else {
-                        entryNode = NewChild(currentParent, nodeName, NodeKind.Type, e);
-                        AddAliasesForNode(entryNode);
+                        int entryNode = FindTypeEntryNode(currentParent, nodeName, docId, assembly, out placeholderNode);
+                        if (entryNode >= 0) {
+                            targetNode = entryNode;
+                            ReplaceNodeEntry(targetNode, e, refreshAliases: true);
+                        }
+                        else if (placeholderNode >= 0) {
+                            targetNode = placeholderNode;
+                            ReplaceNodeEntry(targetNode, e, refreshAliases: true);
+                        }
+                        else {
+                            targetNode = NewChild(currentParent, nodeName, NodeKind.Type, e);
+                            AddAliasesForNode(targetNode);
+                        }
                     }
+
+                    materializedDocIds.Add(docId);
+                }
+
+                if (!string.IsNullOrEmpty(e.DocCommentId)) {
+                    materializedDocIds.Add(e.DocCommentId);
                 }
             }
         }
@@ -298,6 +343,12 @@ internal sealed class SymbolTreeBuilder {
     internal static (string BaseName, int Arity) ParseName(string segment) {
         var (baseName, arity, _) = SymbolNormalization.ParseGenericArity(segment);
         return (baseName, arity);
+    }
+
+    private static string BuildIntermediateTypeDocId(string[] nsSegments, string[] typeSegments, int currentTypeIndex) {
+        var nsPrefix = nsSegments.Length > 0 ? string.Join('.', nsSegments) + "." : string.Empty;
+        var typePrefix = string.Join("+", typeSegments.Take(currentTypeIndex + 1));
+        return "T:" + nsPrefix + typePrefix;
     }
 
     // --- Node helpers ---
@@ -719,9 +770,7 @@ internal sealed class SymbolTreeBuilder {
     internal SymbolEntry CreateIntermediateTypeEntry(string[] nsSegments, string[] typeSegments, int currentTypeIndex, string assembly) {
         DebugUtil.Print("SymbolTreeB.WithDelta", $"CreateIntermediateTypeEntry被调用: currentTypeIndex={currentTypeIndex}, typeSegs=[{string.Join(",", typeSegments)}]");
 
-        var nsPrefix = nsSegments.Length > 0 ? string.Join('.', nsSegments) + "." : string.Empty;
-        var typePrefix = string.Join("+", typeSegments.Take(currentTypeIndex + 1));
-        var docId = "T:" + nsPrefix + typePrefix;
+        var docId = BuildIntermediateTypeDocId(nsSegments, typeSegments, currentTypeIndex);
 
         DebugUtil.Print("SymbolTreeB.WithDelta", $"创建中间类型 DocId: {docId}");
 

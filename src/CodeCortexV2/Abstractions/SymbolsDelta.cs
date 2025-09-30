@@ -12,6 +12,8 @@ namespace CodeCortexV2.Abstractions;
 /// <remarks>
 /// Updated contract (leaf-only delta preferred):
 /// - Producers SHOULD populate only <see cref="TypeAdds"/> and <see cref="TypeRemovals"/>. Namespace-related fields are deprecated and SHOULD be empty.
+/// - Ordering invariant: <see cref="TypeAdds"/> MUST be sorted by ascending <see cref="SymbolEntry.DocCommentId"/> length (outer types before nested types).
+///   <see cref="TypeRemovals"/> MUST be sorted by descending <see cref="TypeKey.DocCommentId"/> length. Doc ids MUST begin with <c>"T:"</c>.
 /// - Consumers (e.g., <c>ISymbolIndex.WithDelta</c>) SHOULD handle, internally and locally, namespace chain materialization
 ///   and cascading empty-namespace removal during application of the leaf delta.
 /// - Idempotency & self-consistency:
@@ -21,6 +23,8 @@ namespace CodeCortexV2.Abstractions;
 ///   - Represented as <c>remove(oldId)</c> + <c>add(newEntry)</c>.
 /// - Debounce/coalescing resilience:
 ///   - When multiple workspace events are coalesced, the resulting delta remains self-consistent.
+/// - Validation: Consumers are encouraged to treat ordering or doc-id violations as fatal (assert or throw) rather than silently
+///   repairing inconsistent deltas.
 ///
 /// Back-compat: Implementations MAY still honor NamespaceAdds/NamespaceRemovals if provided, but new code SHOULD NOT rely on them.
 /// </remarks>
