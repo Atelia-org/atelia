@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Atelia.Diagnostics;
+using CodeCortex.Tests.Util;
 using CodeCortexV2.Abstractions;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
@@ -133,6 +134,25 @@ public class SymbolTreeNestedTypesTests {
 
         Assert.Equal("Middle`2", entry.FqnLeaf);
         Assert.Equal("T:TestNs.Outer`1+Middle`2", entry.DocCommentId);
+    }
+
+    [Fact]
+    public void WithDelta_ShouldAvoidDuplicateIntermediateEntries() {
+        var firstNested = CreateSymbol("T:TestNs.Outer`1+First", AssemblyName);
+        var secondNested = CreateSymbol("T:TestNs.Outer`1+Second", AssemblyName);
+
+        var tree = SymbolTreeB.Empty.WithDelta(
+            new SymbolsDelta(
+                TypeAdds: new[] { firstNested, secondNested },
+                TypeRemovals: Array.Empty<TypeKey>()
+            )
+        );
+
+        var snapshot = SymbolTreeSnapshot.Capture((SymbolTreeB)tree);
+        var outerFingerprint = $"DocId=T:TestNs.Outer`1|Asm={AssemblyName}";
+        var outerCount = snapshot.NodeFingerprints.Count(fp => fp.Contains(outerFingerprint, StringComparison.Ordinal));
+
+        Assert.Equal(1, outerCount);
     }
 
     public static IEnumerable<object[]> GetAliasQueries() {

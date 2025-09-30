@@ -339,9 +339,11 @@ internal sealed class SymbolTreeBuilder {
         string assembly = entry.Assembly ?? string.Empty;
         int existing = FindTypeEntryNode(parent, name, docId, assembly, out int placeholderNode);
 
-        if (!allowDuplicate && existing >= 0) {
+        if (existing >= 0) {
             var existingNode = Nodes[existing];
-            ReplaceNode(existing, new NodeB(existingNode.Name, existingNode.Parent, existingNode.FirstChild, existingNode.NextSibling, existingNode.Kind, entry));
+            if (!ReferenceEquals(existingNode.Entry, entry)) {
+                ReplaceNode(existing, new NodeB(existingNode.Name, existingNode.Parent, existingNode.FirstChild, existingNode.NextSibling, existingNode.Kind, entry));
+            }
             return;
         }
 
