@@ -63,49 +63,6 @@ internal sealed class SymbolTreeBuilder {
         );
     }
 
-    internal void SeedFromEntries(IEnumerable<SymbolEntry>? entries) {
-        if (entries is null) { return; }
-
-        var namespaceEntries = new List<SymbolEntry>();
-        var namespaceSeen = new HashSet<(string Key, string Assembly)>();
-
-        var typeEntries = new List<SymbolEntry>();
-        var typeSeen = new HashSet<(string Key, string Assembly)>();
-
-        foreach (var entry in entries) {
-            bool isNamespace = (entry.Kind & SymbolKinds.Namespace) != 0;
-            bool isType = (entry.Kind & SymbolKinds.Type) != 0;
-
-            if (isNamespace) {
-                var nsKey = !string.IsNullOrEmpty(entry.DocCommentId)
-                    ? entry.DocCommentId!
-                    : (!string.IsNullOrEmpty(entry.FqnNoGlobal) ? entry.FqnNoGlobal! : entry.FqnLeaf);
-                var nsKeyTuple = (nsKey ?? string.Empty, entry.Assembly ?? string.Empty);
-                if (namespaceSeen.Add(nsKeyTuple)) {
-                    namespaceEntries.Add(entry);
-                }
-            }
-
-            if (isType) {
-                var docKey = !string.IsNullOrEmpty(entry.DocCommentId)
-                    ? entry.DocCommentId!
-                    : (!string.IsNullOrEmpty(entry.FqnNoGlobal) ? "FQN:" + entry.FqnNoGlobal : "FQL:" + (entry.FqnLeaf ?? string.Empty));
-                var typeKeyTuple = (docKey ?? string.Empty, entry.Assembly ?? string.Empty);
-                if (typeSeen.Add(typeKeyTuple)) {
-                    typeEntries.Add(entry);
-                }
-            }
-        }
-
-        if (namespaceEntries.Count > 0) {
-            ApplyNamespaceEntries(namespaceEntries);
-        }
-
-        if (typeEntries.Count > 0) {
-            ApplyTypeAdds(typeEntries);
-        }
-    }
-
     private void ApplyTypeRemovals(IReadOnlyList<TypeKey>? removals, HashSet<int> cascadeCandidates) {
         if (removals is null || removals.Count == 0) { return; }
 
@@ -179,22 +136,6 @@ internal sealed class SymbolTreeBuilder {
             }
             else {
                 DebugUtil.Print("SymbolTree.Removal.Trace", $"No candidates found for aliasKey='{aliasKey}' (bucket empty or missing)");
-            }
-        }
-    }
-
-    private void ApplyNamespaceEntries(IReadOnlyList<SymbolEntry> namespaces) {
-        if (namespaces is null || namespaces.Count == 0) { return; }
-
-        var assigned = new HashSet<int>();
-        foreach (var entry in namespaces) {
-            var segments = SplitNamespace(entry.FqnNoGlobal);
-            if (segments.Length == 0) { continue; }
-
-            int nodeId = EnsureNamespaceChain(segments);
-            if (assigned.Add(nodeId)) {
-                var node = Nodes[nodeId];
-                ReplaceNode(nodeId, new NodeB(node.Name, node.Parent, node.FirstChild, node.NextSibling, node.Kind, entry));
             }
         }
     }
