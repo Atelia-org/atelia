@@ -31,14 +31,20 @@ partial class SymbolTreeB {
             : CloneBuilder();
         var stats = builder.ApplyDelta(delta);
 
-        if (stats.TypeAddCount == 0 && stats.TypeRemovalCount == 0 && stats.CascadeCandidateCount == 0 && stats.DeletedNamespaceCount == 0) { return this; }
+        if (stats.TypeAddCount == 0 &&
+            stats.TypeRemovalCount == 0 &&
+            stats.CascadeCandidateCount == 0 &&
+            stats.DeletedNamespaceCount == 0 &&
+            stats.ReusedNodeCount == 0 &&
+            stats.FreedNodeCount == 0) { return this; }
 
-        DebugUtil.Print("SymbolTree.WithDelta", $"EmptySnapshot={wasEmptySnapshot}, TypeAdds={stats.TypeAddCount}, TypeRemovals={stats.TypeRemovalCount}, CascadeCandidates={stats.CascadeCandidateCount}, DeletedNamespaces={stats.DeletedNamespaceCount}");
+        DebugUtil.Print("SymbolTree.WithDelta", $"EmptySnapshot={wasEmptySnapshot}, TypeAdds={stats.TypeAddCount}, TypeRemovals={stats.TypeRemovalCount}, CascadeCandidates={stats.CascadeCandidateCount}, DeletedNamespaces={stats.DeletedNamespaceCount}, ReusedNodes={stats.ReusedNodeCount}, FreedNodes={stats.FreedNodeCount}");
 
         var newTree = new SymbolTreeB(
             builder.Nodes.ToImmutableArray(),
             builder.ExactAliases,
-            builder.NonExactAliases
+            builder.NonExactAliases,
+            builder.FreeHead
         );
         return newTree;
     }

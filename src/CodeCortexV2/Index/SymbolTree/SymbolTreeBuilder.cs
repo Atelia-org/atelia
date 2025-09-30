@@ -18,6 +18,14 @@ internal sealed class SymbolTreeBuilder {
     internal Dictionary<string, ImmutableArray<AliasRelation>> ExactAliases { get; }
     internal Dictionary<string, ImmutableArray<AliasRelation>> NonExactAliases { get; }
 
+    // Sentinel parent value (< -1) used to mark nodes stored in the freelist. This keeps the
+    // invariant that any node with Parent < 0 is detached from the logical tree, while allowing
+    // us to piggy-back FirstChild as the "next" pointer in the freelist chain.
+    private const int FreeParentSentinel = -2;
+    private int _freeHead;
+    private int _freedThisDelta;
+    private int _reusedThisDelta;
+
     private Dictionary<(string DocId, string Assembly), List<int>>? _entryReusePool;
     private Dictionary<(string DocId, string Assembly), int>? _entryReuseCursor;
 
@@ -27,28 +35,38 @@ internal sealed class SymbolTreeBuilder {
                 new NodeB(string.Empty, parent: -1, firstChild: -1, nextSibling: -1, NodeKind.Namespace, entry: null)
             },
             new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal),
-            new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal)
+            new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal),
+            freeHead: -1
         );
 
     internal readonly record struct DeltaStats(
         int TypeAddCount,
         int TypeRemovalCount,
         int CascadeCandidateCount,
-        int DeletedNamespaceCount
+        int DeletedNamespaceCount,
+        int ReusedNodeCount,
+        int FreedNodeCount
     );
 
     internal SymbolTreeBuilder(
         List<NodeB> nodes,
         Dictionary<string, ImmutableArray<AliasRelation>> exactAliases,
-        Dictionary<string, ImmutableArray<AliasRelation>> nonExactAliases
+        Dictionary<string, ImmutableArray<AliasRelation>> nonExactAliases,
+        int freeHead
     ) {
         Nodes = nodes ?? throw new ArgumentNullException(nameof(nodes));
         ExactAliases = exactAliases ?? throw new ArgumentNullException(nameof(exactAliases));
         NonExactAliases = nonExactAliases ?? throw new ArgumentNullException(nameof(nonExactAliases));
+        _freeHead = freeHead;
     }
 
+    internal int FreeHead => _freeHead;
+
     internal DeltaStats ApplyDelta(SymbolsDelta delta) {
-        if (delta is null) { return new DeltaStats(0, 0, 0, 0); }
+        if (delta is null) { return new DeltaStats(0, 0, 0, 0, 0, 0); }
+
+        _freedThisDelta = 0;
+        _reusedThisDelta = 0;
 
         var cascadeCandidates = new HashSet<int>();
         ApplyTypeRemovals(delta.TypeRemovals, cascadeCandidates);
@@ -59,7 +77,9 @@ internal sealed class SymbolTreeBuilder {
             delta.TypeAdds?.Count ?? 0,
             delta.TypeRemovals?.Count ?? 0,
             cascadeCandidates.Count,
-            deletedNamespaces
+            deletedNamespaces,
+            _reusedThisDelta,
+            _freedThisDelta
         );
     }
 
@@ -423,8 +443,17 @@ internal sealed class SymbolTreeBuilder {
 
     internal int NewChild(int parent, string name, NodeKind kind, SymbolEntry? entry) {
         int oldFirst = Nodes[parent].FirstChild;
-        int newIndex = Nodes.Count;
-        Nodes.Add(new NodeB(name, parent, -1, oldFirst, kind, entry));
+        var newNode = new NodeB(name, parent, firstChild: -1, nextSibling: oldFirst, kind, entry);
+
+        int newIndex;
+        if (TryPopFreeNode(out var reused)) {
+            newIndex = reused;
+            ReplaceNode(newIndex, newNode);
+        }
+        else {
+            newIndex = Nodes.Count;
+            Nodes.Add(newNode);
+        }
 
         var parentNode = Nodes[parent];
         ReplaceNode(parent, new NodeB(parentNode.Name, parentNode.Parent, newIndex, parentNode.NextSibling, parentNode.Kind, parentNode.Entry));
@@ -456,6 +485,52 @@ internal sealed class SymbolTreeBuilder {
         }
 
         ReplaceNode(nodeId, new NodeB(node.Name, -1, node.FirstChild, -1, node.Kind, null));
+        ReleaseNode(nodeId);
+    }
+
+    private bool TryPopFreeNode(out int nodeId) {
+        nodeId = -1;
+        if (_freeHead < 0) { return false; }
+
+        int current = _freeHead;
+        if (current < 0 || current >= Nodes.Count) {
+            _freeHead = -1;
+            return false;
+        }
+
+        var freeNode = Nodes[current];
+        if (freeNode.Parent != FreeParentSentinel) {
+            _freeHead = -1;
+            return false;
+        }
+
+        // Rehydrate the freelist head, relying on FirstChild as our "next" pointer.
+        _freeHead = freeNode.FirstChild;
+        nodeId = current;
+        _reusedThisDelta++;
+        return true;
+    }
+
+    private void ReleaseNode(int nodeId) {
+        if (nodeId <= 0 || nodeId >= Nodes.Count) { return; }
+
+        var existing = Nodes[nodeId];
+        if (existing.Parent == FreeParentSentinel) { return; /* already released */ }
+
+        // Overwrite the detached slot so future allocations can reuse it. We intentionally drop
+        // name/entry metadata here; callers will rebuild those fields when assigning the node.
+        ReplaceNode(nodeId,
+            new NodeB(
+                name: string.Empty,
+                parent: FreeParentSentinel,
+                firstChild: _freeHead,
+                nextSibling: -1,
+                kind: NodeKind.Type,
+                entry: null
+            )
+        );
+        _freeHead = nodeId;
+        _freedThisDelta++;
     }
 
     // --- Alias helpers ---
