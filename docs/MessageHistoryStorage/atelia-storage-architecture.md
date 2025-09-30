@@ -17,7 +17,7 @@
 - 4字节对齐优化
 - 无文件系统依赖，可用于内存、网络流
 
-**格式**：`Magic(4) | EnvLen(4) | Envelope | Padding(0~3) | EnvLen(4) | CRC32C(4)`
+**格式**：`Magic(4) | EnveLen(4) | Envelope | EnvePad(0~3) | EnveLen(4) | CRC32C(4)`
 
 ### 第1层：Atelia.IO.LogStorage
 **职责**：通用日志存储抽象
