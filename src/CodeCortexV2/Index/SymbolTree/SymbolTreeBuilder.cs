@@ -198,7 +198,7 @@ internal sealed class SymbolTreeBuilder {
                             if (existing.Entry is SymbolEntry existingEntry) {
                                 removedEntry = existingEntry;
                                 RemoveNodeFromPool(existingEntry, structuralNode);
-                                ReplaceNode(structuralNode, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, null));
+                                ReplaceNodeEntry(structuralNode, null, refreshAliases: false);
                             }
                         }
 
@@ -217,18 +217,15 @@ internal sealed class SymbolTreeBuilder {
                     string assembly = e.Assembly ?? string.Empty;
                     int placeholderNode;
                     if (TryReuseEntryNodeFromPool(e, out var reusedLeaf)) {
-                        var existing = Nodes[reusedLeaf];
-                        ReplaceNode(reusedLeaf, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, e));
+                        ReplaceNodeEntry(reusedLeaf, e, refreshAliases: true);
                         continue;
                     }
                     int entryNode = FindTypeEntryNode(currentParent, nodeName, docId, assembly, out placeholderNode);
                     if (entryNode >= 0) {
-                        var existing = Nodes[entryNode];
-                        ReplaceNode(entryNode, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, e));
+                        ReplaceNodeEntry(entryNode, e, refreshAliases: true);
                     }
                     else if (placeholderNode >= 0) {
-                        var existing = Nodes[placeholderNode];
-                        ReplaceNode(placeholderNode, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, e));
+                        ReplaceNodeEntry(placeholderNode, e, refreshAliases: true);
                     }
                     else {
                         entryNode = NewChild(currentParent, nodeName, NodeKind.Type, e);
@@ -331,7 +328,7 @@ internal sealed class SymbolTreeBuilder {
     private void EnsureTypeEntryNode(int parent, string name, SymbolEntry entry, bool allowDuplicate = false) {
         if (TryReuseEntryNodeFromPool(entry, out var reusedNode)) {
             var existingReuse = Nodes[reusedNode];
-            ReplaceNode(reusedNode, new NodeB(existingReuse.Name, existingReuse.Parent, existingReuse.FirstChild, existingReuse.NextSibling, existingReuse.Kind, entry));
+            ReplaceNodeEntry(reusedNode, entry, refreshAliases: true);
             return;
         }
 
@@ -342,14 +339,13 @@ internal sealed class SymbolTreeBuilder {
         if (existing >= 0) {
             var existingNode = Nodes[existing];
             if (!ReferenceEquals(existingNode.Entry, entry)) {
-                ReplaceNode(existing, new NodeB(existingNode.Name, existingNode.Parent, existingNode.FirstChild, existingNode.NextSibling, existingNode.Kind, entry));
+                ReplaceNodeEntry(existing, entry, refreshAliases: true);
             }
             return;
         }
 
         if (placeholderNode >= 0) {
-            var placeholder = Nodes[placeholderNode];
-            ReplaceNode(placeholderNode, new NodeB(placeholder.Name, placeholder.Parent, placeholder.FirstChild, placeholder.NextSibling, placeholder.Kind, entry));
+            ReplaceNodeEntry(placeholderNode, entry, refreshAliases: true);
             return;
         }
 
@@ -357,6 +353,10 @@ internal sealed class SymbolTreeBuilder {
         AddAliasesForNode(newNode);
     }
 
+    /// <summary>
+    /// Retrieve the next cached node (matched by DocId+Assembly) that can be reused for the provided entry.
+    /// Nodes are collected during <see cref="ApplyTypeAdds"/> to minimize churn when types are updated.
+    /// </summary>
     private bool TryReuseEntryNodeFromPool(SymbolEntry entry, out int nodeId) {
         nodeId = -1;
         if (_entryReusePool is null || _entryReuseCursor is null) { return false; }
@@ -379,6 +379,9 @@ internal sealed class SymbolTreeBuilder {
         return false;
     }
 
+    /// <summary>
+    /// Remove a node from the reuse pool once it has been repurposed, keeping cursor state consistent.
+    /// </summary>
     private void RemoveNodeFromPool(SymbolEntry entry, int nodeId) {
         if (_entryReusePool is null || _entryReuseCursor is null) { return; }
 
@@ -396,6 +399,23 @@ internal sealed class SymbolTreeBuilder {
 
     internal void ReplaceNode(int index, NodeB node)
         => Nodes[index] = node;
+
+    /// <summary>
+    /// Replace the <see cref="SymbolEntry"/> attached to an existing node and optionally rebuild its alias buckets.
+    /// </summary>
+    /// <param name="nodeId">Target node to mutate.</param>
+    /// <param name="entry">New entry payload; <c>null</c> clears the node payload but leaves the structural shell.</param>
+    /// <param name="refreshAliases">
+    /// Set to <c>true</c> when alias membership may need deduplication (e.g., node reuse for a new symbol).
+    /// Use <c>false</c> when only clearing an entry for a structural placeholder to avoid redundant churn.
+    /// </param>
+    private void ReplaceNodeEntry(int nodeId, SymbolEntry? entry, bool refreshAliases) {
+        var existing = Nodes[nodeId];
+        ReplaceNode(nodeId, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, entry));
+        if (refreshAliases) {
+            RefreshAliasesForNode(nodeId);
+        }
+    }
 
     internal int NewChild(int parent, string name, NodeKind kind, SymbolEntry? entry) {
         int oldFirst = Nodes[parent].FirstChild;
@@ -435,6 +455,17 @@ internal sealed class SymbolTreeBuilder {
     }
 
     // --- Alias helpers ---
+
+    /// <summary>
+    /// Rebuild the alias bucket entries for a node by removing and re-adding specs derived from <see cref="NodeB.Name"/>.
+    /// This keeps alias state consistent when nodes are reused for different symbol entries.
+    /// </summary>
+    private void RefreshAliasesForNode(int nodeId) {
+        if (nodeId < 0 || nodeId >= Nodes.Count) { return; }
+        if (nodeId != 0 && Nodes[nodeId].Parent < 0) { return; }
+        RemoveAliasesForNode(nodeId);
+        AddAliasesForNode(nodeId);
+    }
 
     private static ImmutableArray<AliasRelation> RemoveAliasFromBucket(ImmutableArray<AliasRelation> bucket, int nodeId) {
         if (bucket.IsDefaultOrEmpty) { return bucket; }
@@ -492,6 +523,10 @@ internal sealed class SymbolTreeBuilder {
         }
     }
 
+    /// <remarks>
+    /// AliasGeneration currently derives aliases solely from <see cref="NodeB.Name"/>.
+    /// If future changes make aliases depend on entry metadata, refresh logic must be revisited.
+    /// </remarks>
     internal void AddAliasesForNode(int nodeId) {
         if (nodeId < 0 || nodeId >= Nodes.Count) { return; }
         var node = Nodes[nodeId];
@@ -592,7 +627,7 @@ internal sealed class SymbolTreeBuilder {
                         FqnNoGlobal: currentNamespace,
                         FqnLeaf: segment
                     );
-                    ReplaceNode(next, new NodeB(node.Name, node.Parent, node.FirstChild, node.NextSibling, node.Kind, nsEntry));
+                    ReplaceNodeEntry(next, nsEntry, refreshAliases: true);
                 }
             }
 
