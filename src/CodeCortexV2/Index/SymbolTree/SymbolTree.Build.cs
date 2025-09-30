@@ -16,7 +16,10 @@ partial class SymbolTreeB {
     ///   limited to impacted subtrees; avoid full-index scans in production.
     /// - Locality: time/memory costs should scale with the size of <paramref name="delta"/>, not the whole index.
     /// - Idempotency: applying the same delta repeatedly should not change the resulting state.
-    /// - Optional defensive checks: lightweight validations and DebugUtil diagnostics are allowed.
+    /// - Ordering precondition: <paramref name="delta"/>.TypeAdds is sorted by ascending DocCommentId length and
+    ///   TypeRemovals is sorted by descending length (DocIds start with "T:"). The builder assumes parents are
+    ///   materialized before nested types and may assert/throw when the contract is violated.
+    /// - Optional defensive checks: lightweight validations (Debug.Assert, exceptions) and DebugUtil diagnostics are allowed.
     /// </summary>
     public ISymbolIndex WithDelta(SymbolsDelta delta) {
         if (delta is null) { return this; }
@@ -31,14 +34,20 @@ partial class SymbolTreeB {
             : CloneBuilder();
         var stats = builder.ApplyDelta(delta);
 
-        if (stats.TypeAddCount == 0 && stats.TypeRemovalCount == 0 && stats.CascadeCandidateCount == 0 && stats.DeletedNamespaceCount == 0) { return this; }
+        if (stats.TypeAddCount == 0 &&
+            stats.TypeRemovalCount == 0 &&
+            stats.CascadeCandidateCount == 0 &&
+            stats.DeletedNamespaceCount == 0 &&
+            stats.ReusedNodeCount == 0 &&
+            stats.FreedNodeCount == 0) { return this; }
 
-        DebugUtil.Print("SymbolTree.WithDelta", $"EmptySnapshot={wasEmptySnapshot}, TypeAdds={stats.TypeAddCount}, TypeRemovals={stats.TypeRemovalCount}, CascadeCandidates={stats.CascadeCandidateCount}, DeletedNamespaces={stats.DeletedNamespaceCount}");
+        DebugUtil.Print("SymbolTree.WithDelta", $"EmptySnapshot={wasEmptySnapshot}, TypeAdds={stats.TypeAddCount}, TypeRemovals={stats.TypeRemovalCount}, CascadeCandidates={stats.CascadeCandidateCount}, DeletedNamespaces={stats.DeletedNamespaceCount}, ReusedNodes={stats.ReusedNodeCount}, FreedNodes={stats.FreedNodeCount}");
 
         var newTree = new SymbolTreeB(
             builder.Nodes.ToImmutableArray(),
             builder.ExactAliases,
-            builder.NonExactAliases
+            builder.NonExactAliases,
+            builder.FreeHead
         );
         return newTree;
     }

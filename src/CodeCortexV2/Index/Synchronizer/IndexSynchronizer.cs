@@ -360,7 +360,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             }
         }
 
-        return new SymbolsDelta(typeAdds, Array.Empty<TypeKey>());
+        return SymbolsDeltaContract.Normalize(typeAdds, Array.Empty<TypeKey>());
     }
 
     private async Task<SymbolsDelta> ComputeDeltaAsync(HashSet<DocumentId> docs, CancellationToken ct) {
@@ -490,7 +490,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         }
 
         DebugUtil.Print("IndexSync", $"ComputeDelta: result +T={typeAdds.Count} -T={typeRemovals.Count}");
-        return new SymbolsDelta(typeAdds, typeRemovals);
+        return SymbolsDeltaContract.Normalize(typeAdds, typeRemovals);
     }
 
     private static async Task<SymbolEntry?> TryBuildEntryForTypeIdInDocumentAsync(Solution solution, DocumentId docId, string typeDocId, CancellationToken ct) {

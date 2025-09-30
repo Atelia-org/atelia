@@ -29,8 +29,9 @@ public class SymbolTreeNestedTypesTests {
 
     [Fact]
     public void WithDelta_ShouldExposeExpectedSymbols_ForSingleNestedType() {
+        var outerEntry = CreateSymbol("T:TestNs.Outer`1", AssemblyName);
         var nestedEntry = CreateSymbol("T:TestNs.Outer`1+Inner", AssemblyName);
-        var tree = BuildTreeWithDelta(nestedEntry);
+        var tree = BuildTreeWithDelta(outerEntry, nestedEntry);
 
         var expectations = new Dictionary<string, string[]>(StringComparer.Ordinal) {
             ["T:TestNs.Outer`1+Inner"] = new[] { "T:TestNs.Outer`1+Inner" },
@@ -55,9 +56,10 @@ public class SymbolTreeNestedTypesTests {
 
     [Fact]
     public void WithDelta_ShouldCreateOuterTypeSymbolEntry() {
+        var outerEntry = CreateSymbol("T:TestNs.Outer`1", AssemblyName);
         var nestedEntry = CreateSymbol("T:TestNs.Outer`1+Inner", AssemblyName);
 
-        var tree = BuildTreeWithDelta(nestedEntry);
+        var tree = BuildTreeWithDelta(outerEntry, nestedEntry);
 
         var results = tree.Search("T:TestNs.Outer`1", 10, 0, SymbolKinds.All);
         DebugUtil.Print(DebugCategory, $"Outer type query returned {results.Total} results");
@@ -73,8 +75,9 @@ public class SymbolTreeNestedTypesTests {
 
     [Fact]
     public void WithDelta_ShouldExposeOuterTypeDetails() {
+        var outerEntry = CreateSymbol("T:TestNs.Outer`1", AssemblyName);
         var nestedEntry = CreateSymbol("T:TestNs.Outer`1+Inner", AssemblyName);
-        var tree = BuildTreeWithDelta(nestedEntry);
+        var tree = BuildTreeWithDelta(outerEntry, nestedEntry);
 
         var results = tree.Search("T:TestNs.Outer`1", 10, 0, SymbolKinds.All);
         Assert.True(results.Total > 0, "WithDelta should expose the outer type");
@@ -91,9 +94,11 @@ public class SymbolTreeNestedTypesTests {
 
     [Fact]
     public void WithDelta_ShouldIndexAllNestedLevels() {
+        var outerEntry = CreateSymbol("T:TestNs.Outer`1", AssemblyName);
+        var middleEntry = CreateSymbol("T:TestNs.Outer`1+Middle", AssemblyName);
         var tripleNestedEntry = CreateSymbol("T:TestNs.Outer`1+Middle+Inner", AssemblyName);
 
-        var tree = BuildTreeWithDelta(tripleNestedEntry);
+        var tree = BuildTreeWithDelta(outerEntry, middleEntry, tripleNestedEntry);
 
         AssertSearchSucceeds(tree, "T:TestNs.Outer`1", "Outer level should be queryable");
         AssertSearchSucceeds(tree, "T:TestNs.Outer`1+Middle", "Middle level should be queryable");
@@ -103,8 +108,9 @@ public class SymbolTreeNestedTypesTests {
     [Theory]
     [MemberData(nameof(GetAliasQueries))]
     public void WithDelta_ShouldSupportCommonSearchAliases(string query) {
+        var outerEntry = CreateSymbol("T:TestNs.Outer`1", AssemblyName);
         var nestedEntry = CreateSymbol("T:TestNs.Outer`1+Inner", AssemblyName);
-        var tree = BuildTreeWithDelta(nestedEntry);
+        var tree = BuildTreeWithDelta(outerEntry, nestedEntry);
 
         var results = tree.Search(query, 10, 0, SymbolKinds.All);
         DebugUtil.Print(DebugCategory, $"Alias query '{query}' returned {results.Total} results");
@@ -138,13 +144,16 @@ public class SymbolTreeNestedTypesTests {
 
     [Fact]
     public void WithDelta_ShouldAvoidDuplicateIntermediateEntries() {
+        var outer = CreateSymbol("T:TestNs.Outer`1", AssemblyName);
         var firstNested = CreateSymbol("T:TestNs.Outer`1+First", AssemblyName);
         var secondNested = CreateSymbol("T:TestNs.Outer`1+Second", AssemblyName);
 
         var tree = SymbolTreeB.Empty.WithDelta(
-            new SymbolsDelta(
-                TypeAdds: new[] { firstNested, secondNested },
-                TypeRemovals: Array.Empty<TypeKey>()
+            SymbolsDeltaContract.Normalize(
+                new SymbolsDelta(
+                    TypeAdds: new[] { outer, firstNested, secondNested },
+                    TypeRemovals: Array.Empty<TypeKey>()
+                )
             )
         );
 
@@ -190,12 +199,14 @@ public class SymbolTreeNestedTypesTests {
     }
 
     private static ISymbolIndex BuildTreeWithDelta(params SymbolEntry[] entries) {
-        return SymbolTreeB.Empty.WithDelta(
+        var delta = SymbolsDeltaContract.Normalize(
             new SymbolsDelta(
                 TypeAdds: entries,
                 TypeRemovals: Array.Empty<TypeKey>()
             )
         );
+
+        return SymbolTreeB.Empty.WithDelta(delta);
     }
 
     private static void AssertSearchSucceeds(ISymbolIndex tree, string query, string failureMessage) {

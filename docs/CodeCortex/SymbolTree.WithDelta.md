@@ -38,7 +38,9 @@
   - Producer（同步器）已做闭包与一致性处理：
     - Adds 确保祖先命名空间链存在；Removals 会包含批次导致为空的命名空间（含保守级联）。
     - Rename 表示为 remove(oldId)+add(newEntry)。
+    - TypeAdds 必须按 DocCommentId.Length 升序排序（确保外层先于内层）；TypeRemovals 按长度降序排序。DocCommentId 必须以 "T:" 开头。
   - Consumer（WithDelta）只需“局部应用”，不做全局推断或扫描。可做轻量防御校验并打印诊断（DebugUtil），但不能全树遍历。
+    - Ordering 或 DocId 约束若被打破，消费者可以 Debug.Assert 或直接抛异常（fail-fast），而不是尝试自动修复。
 
 - 搜索逻辑
   - Query 层用别名桶获得候选节点，再做父链约束修剪；不做“子树展开”来解释 GenericBase 锚点。
