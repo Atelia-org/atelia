@@ -267,7 +267,10 @@ try {
     $elapsed = (Get-Date) - $scriptStart
     $processed = $converged.Count + $nonConverged.Count
     $rate = if($elapsed.TotalSeconds -gt 0){ '{0:N2}' -f ($processed / $elapsed.TotalSeconds) } else { 'N/A' }
-    if($nonConverged.Count -gt 0){ Write-Warn "未收敛文件: $($nonConverged.Count)" }
+    if($nonConverged.Count -gt 0){
+        Write-Err "未收敛文件: $($nonConverged.Count) —— 将以非零退出码结束。"
+        $globalError = $true
+    }
     if(-not $globalError){
         Write-Ok ("格式化完成: 总文件={0} 已处理={1} 收敛={2} 未收敛={3} 运行次数={4} 总耗时={5:c} 平均文件/秒={6}" -f $allFiles.Count,$processed,$converged.Count,$nonConverged.Count,$totalRuns,$elapsed,$rate)
     }
@@ -286,6 +289,9 @@ try {
         maxIterations = $MaxIterations
         timestamp = (Get-Date).ToString('o')
         success = (-not $globalError)
+    }
+    if($globalError -and $nonConverged.Count -gt 0){
+        $summary.failureReason = 'NonConvergedFiles'
     }
  } catch {
     Write-Warn "主循环异常: $($_.Exception.Message)"
