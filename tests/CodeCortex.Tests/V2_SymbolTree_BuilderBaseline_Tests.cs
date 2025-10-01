@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using CodeCortex.Tests.Util;
 using CodeCortexV2.Abstractions;
@@ -14,10 +15,11 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
         var entries = new[] {
             TypeEntry("Sample.One", "Foo", 0, "AsmA"),
             TypeEntry("Sample.One.Two", "Bar", 1, "AsmA"),
+            TypeEntry("Sample.Deep", "Outer", 1, "AsmB"),
             NestedTypeEntry("Sample.Deep", "Outer", 1, "Inner", 0, "AsmB")
         };
 
-        var delta = new SymbolsDelta(entries, Array.Empty<TypeKey>());
+        var delta = SymbolsDeltaContract.Normalize(entries, Array.Empty<TypeKey>());
         var viaDelta = ApplyDeltas(SymbolTreeB.Empty, delta);
         var viaFull = BuildTreeFromAdds(entries);
 
@@ -26,12 +28,12 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
 
     [Fact]
     public void RenameSequence_ShouldMatch_FromEntries() {
-        var initial = new SymbolsDelta(
+        var initial = SymbolsDeltaContract.Normalize(
             new[] { TypeEntry("Stage0", "Alpha", 0, "Asm") },
             Array.Empty<TypeKey>()
         );
 
-        var rename = new SymbolsDelta(
+        var rename = SymbolsDeltaContract.Normalize(
             new[] { TypeEntry("Stage0", "Beta", 0, "Asm") },
             new[] { new TypeKey("T:Stage0.Alpha", "Asm") }
         );
@@ -53,7 +55,7 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
             TypeEntry("System.Collections", "ObservableCollection", 1, "SystemObjectModel")
         };
 
-        var delta = new SymbolsDelta(entries, Array.Empty<TypeKey>());
+        var delta = SymbolsDeltaContract.Normalize(entries, Array.Empty<TypeKey>());
         var viaDelta = ApplyDeltas(SymbolTreeB.Empty, delta);
         var viaFull = BuildTreeFromAdds(entries);
 
@@ -61,6 +63,31 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
 
         var queryTree = (SymbolTreeB)viaDelta;
         AssertAliasSearchParity(queryTree);
+    }
+
+    [Fact]
+    public void AliasBuckets_ShouldRemainSortedByNodeId() {
+        var builder = SymbolTreeBuilder.CreateEmpty();
+
+        var typeA = TypeEntry("Sample", "Widget", 0, "AsmA");
+        var typeB = TypeEntry("Sample", "Widget", 0, "AsmB");
+        var typeC = TypeEntry("Sample", "Widget", 0, "AsmC");
+
+        builder.ApplyDelta(SymbolsDeltaContract.Normalize(new[] { typeA, typeB, typeC }, Array.Empty<TypeKey>()));
+        builder.ApplyDelta(SymbolsDeltaContract.Normalize(Array.Empty<SymbolEntry>(), new[] { new TypeKey(typeB.DocCommentId, typeB.Assembly) }));
+        builder.ApplyDelta(SymbolsDeltaContract.Normalize(new[] { typeB }, Array.Empty<TypeKey>()));
+
+        Assert.True(builder.ExactAliases.TryGetValue("Widget", out var exactBucket) && !exactBucket.IsDefaultOrEmpty, "Expected exact alias bucket for 'Widget'");
+        Assert.True(builder.NonExactAliases.TryGetValue("widget", out var nonExactBucket) && !nonExactBucket.IsDefaultOrEmpty, "Expected non-exact alias bucket for 'widget'");
+
+        AssertAliasesSorted(exactBucket);
+        AssertAliasesSorted(nonExactBucket);
+    }
+
+    private static void AssertAliasesSorted(ImmutableArray<AliasRelation> bucket) {
+        var nodeIds = bucket.Select(r => r.NodeId).ToArray();
+        var sorted = nodeIds.OrderBy(id => id).ToArray();
+        Assert.Equal(sorted, nodeIds);
     }
 
     private static ISymbolIndex ApplyDeltas(ISymbolIndex seed, params SymbolsDelta[] deltas) {
@@ -97,7 +124,7 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
 
     private static SymbolTreeB BuildTreeFromAdds(IEnumerable<SymbolEntry> entries) {
         var typeAdds = entries?.ToArray() ?? Array.Empty<SymbolEntry>();
-        var delta = new SymbolsDelta(typeAdds, Array.Empty<TypeKey>());
+        var delta = SymbolsDeltaContract.Normalize(typeAdds, Array.Empty<TypeKey>());
         return (SymbolTreeB)SymbolTreeB.Empty.WithDelta(delta);
     }
 

@@ -13,20 +13,6 @@ namespace CodeCortex.Tests;
 /// 仅覆盖当前已实现能力：精确匹配、大小写不敏感、泛型元数不敏感（不包含 Partial/Wildcard/Fuzzy）。
 /// </summary>
 public class V2_SymbolIndex_NamespaceSearchTests {
-    // 构造命名空间条目（与 V2_SymbolTree_SearchTests 中保持一致风格）
-    private static SymbolEntry Ns(string name, string? parent = null) {
-        var fqn = "global::" + name;
-        var simple = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
-        return new SymbolEntry(
-            DocCommentId: "N:" + name,
-            Assembly: string.Empty,
-            Kind: SymbolKinds.Namespace,
-            ParentNamespaceNoGlobal: parent ?? (name.Contains('.') ? name[..name.LastIndexOf('.')] : string.Empty),
-            FqnNoGlobal: name,
-            FqnLeaf: simple
-        );
-    }
-
     // 构造类型条目（与 V2_SymbolTree_SearchTests 一致）
     private static SymbolEntry Ty(string ns, string nameBase, int arity, string assembly) {
         string docId = arity > 0 ? $"T:{ns}.{nameBase}`{arity}" : $"T:{ns}.{nameBase}";
@@ -47,10 +33,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
     }
 
     private static SymbolTreeB BuildFooBarSample() {
-        var entries = new List<SymbolEntry>
-        {
-            Ns("Foo"),
-            Ns("Foo.Bar", "Foo"),
+        var entries = new[] {
             Ty("Foo.Bar", "Baz", 0, "TestAsm")
         };
         return BuildTree(entries);
@@ -123,7 +106,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
 
     private static SymbolTreeB BuildTree(IEnumerable<SymbolEntry> entries)
         => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
-            new SymbolsDelta(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
+            SymbolsDeltaContract.Normalize(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
         );
 }
 

@@ -25,8 +25,18 @@ public static class SymbolsDeltaContract {
     /// Normalize individual collections.
     /// </summary>
     public static SymbolsDelta Normalize(IReadOnlyList<SymbolEntry>? typeAdds, IReadOnlyList<TypeKey>? typeRemovals) {
-        var adds = CopyAndValidate(typeAdds, static entry => entry.DocCommentId, "TypeAdds");
-        var removals = CopyAndValidate(typeRemovals, static key => key.DocCommentId, "TypeRemovals");
+        var adds = CopyAndValidate(
+            typeAdds,
+            static entry => entry.DocCommentId,
+            static entry => entry.Assembly,
+            "TypeAdds"
+        );
+        var removals = CopyAndValidate(
+            typeRemovals,
+            static key => key.DocCommentId,
+            static key => key.Assembly,
+            "TypeRemovals"
+        );
 
         if (adds.Count > 1) {
             adds.Sort(static (left, right) => left.DocCommentId.Length.CompareTo(right.DocCommentId.Length));
@@ -38,7 +48,12 @@ public static class SymbolsDeltaContract {
         return new SymbolsDelta(adds, removals);
     }
 
-    private static List<T> CopyAndValidate<T>(IReadOnlyList<T>? source, Func<T, string?> docIdSelector, string fieldName) {
+    private static List<T> CopyAndValidate<T>(
+        IReadOnlyList<T>? source,
+        Func<T, string?> docIdSelector,
+        Func<T, string?>? assemblySelector,
+        string fieldName
+    ) {
         if (source is null || source.Count == 0) { return new List<T>(); }
 
         var list = new List<T>(source.Count);
@@ -49,6 +64,14 @@ public static class SymbolsDeltaContract {
                 var message = $"{fieldName}[{i}] must have a DocCommentId starting with 'T:'";
                 Debug.Assert(false, message);
                 throw new InvalidOperationException(message);
+            }
+            if (assemblySelector is not null) {
+                var assembly = assemblySelector(item);
+                if (string.IsNullOrWhiteSpace(assembly)) {
+                    var message = $"{fieldName}[{i}] ('{docId}') must specify Assembly";
+                    Debug.Assert(false, message);
+                    throw new InvalidOperationException(message);
+                }
             }
             list.Add(item);
         }

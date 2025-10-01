@@ -17,9 +17,9 @@ public class SymbolTreeFreelistTests {
         var removalKey = new TypeKey(entry.DocCommentId, entry.Assembly);
 
         var addStats = builder.ApplyDelta(
-            new SymbolsDelta(
-                TypeAdds: new[] { entry },
-                TypeRemovals: Array.Empty<TypeKey>()
+            SymbolsDeltaContract.Normalize(
+                new[] { entry },
+                Array.Empty<TypeKey>()
             )
         );
         Assert.Equal(0, addStats.FreedNodeCount);
@@ -27,18 +27,18 @@ public class SymbolTreeFreelistTests {
         var nodeCountAfterAdd = builder.Nodes.Count;
 
         var removeStats = builder.ApplyDelta(
-            new SymbolsDelta(
-                TypeAdds: Array.Empty<SymbolEntry>(),
-                TypeRemovals: new[] { removalKey }
+            SymbolsDeltaContract.Normalize(
+                Array.Empty<SymbolEntry>(),
+                new[] { removalKey }
             )
         );
         Assert.True(removeStats.FreedNodeCount > 0, "Removing the type should free at least one node");
         var nodeCountAfterRemove = builder.Nodes.Count;
 
         var reAddStats = builder.ApplyDelta(
-            new SymbolsDelta(
-                TypeAdds: new[] { entry },
-                TypeRemovals: Array.Empty<TypeKey>()
+            SymbolsDeltaContract.Normalize(
+                new[] { entry },
+                Array.Empty<TypeKey>()
             )
         );
         Assert.True(reAddStats.ReusedNodeCount > 0, "Re-adding the type should reuse freed nodes");

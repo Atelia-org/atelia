@@ -35,12 +35,10 @@
   - 别名仅定位到“节点”，不是“Entry”；Query 层按右至左约束父子关系。
 
 - Delta 合同（来自 ISymbolIndex 与 SymbolsDelta）
-  - Producer（同步器）已做闭包与一致性处理：
-    - Adds 确保祖先命名空间链存在；Removals 会包含批次导致为空的命名空间（含保守级联）。
-    - Rename 表示为 remove(oldId)+add(newEntry)。
-    - TypeAdds 必须按 DocCommentId.Length 升序排序（确保外层先于内层）；TypeRemovals 按长度降序排序。DocCommentId 必须以 "T:" 开头。
-  - Consumer（WithDelta）只需“局部应用”，不做全局推断或扫描。可做轻量防御校验并打印诊断（DebugUtil），但不能全树遍历。
-    - Ordering 或 DocId 约束若被打破，消费者可以 Debug.Assert 或直接抛异常（fail-fast），而不是尝试自动修复。
+  - Producer（同步器）负责生成**叶子级** delta：仅填充 `TypeAdds` 与 `TypeRemovals`，命名空间字段保持空集合。每个条目必须提供 `DocCommentId`（前缀 `"T:"`）与 Assembly，并在批次内部做去重/冲突解决（rename 仍表示为 remove(old)+add(new)）。
+  - 排序约束：`TypeAdds` 按 `DocCommentId.Length` 升序（外层→内层），`TypeRemovals` 按长度降序（内层→外层）。若生产侧无法直接保证，可调用 `SymbolsDeltaContract.Normalize` 获取规范化副本。
+  - Consumer（WithDelta）只做局部应用：按顺序执行“先删后加”，在本地补齐命名空间链并在末尾级联删除空命名空间。实现可包含轻量防御校验与 `DebugUtil` 日志，但不得依赖全树扫描。
+    - 一旦发现排序或 DocId 约束被破坏，消费者应选择 fail-fast（Debug.Assert 或抛出异常），避免悄然容忍非法 delta。
 
 - 搜索逻辑
   - Query 层用别名桶获得候选节点，再做父链约束修剪；不做“子树展开”来解释 GenericBase 锚点。
@@ -78,12 +76,12 @@
     - UpdateEntry(nodeIdx, SymbolEntry? newEntry)
   ## 现状回顾与约束
   -- Delta 合同（来自 ISymbolIndex 与 SymbolsDelta）
-    - 仅叶子级 delta：Producer（例如 IndexSynchronizer）优先仅产生 `TypeAdds` 与 `TypeRemovals`；`NamespaceAdds`/`NamespaceRemovals` 已弃用，可能为空或被忽略。
-    - Rename 表示为 remove(oldId)+add(newEntry)。
+    - Producer（例如 IndexSynchronizer）只产生叶子级 `TypeAdds` / `TypeRemovals`，命名空间字段一律留空，并保证 DocCommentId 以 `"T:"` 开头、Assembly 非空。排序规则同上：Adds 按 DocId 长度升序，Removals 按长度降序。
+    - Rename 仍表示为 remove(oldId)+add(newEntry)。若生产侧存在乱序或缺失字段，可调用 `SymbolsDeltaContract.Normalize` 获得规范化副本。
     - Consumer（WithDelta）需要在本地内部完成：
       - 对新增类型的“命名空间链按需创建”；
       - 对删除导致的“空命名空间级联删除”（放在流程末尾统一执行）。
-    - 不做全量扫描，保持局部性与幂等性。
+    - 不做全量扫描，保持局部性与幂等性；若检测到非法 delta 应直接 fail-fast。
       - FindChildrenByName(parent, kind, name): 返回同名列表（类型场景下可能多实例：跨程序集）。
   ## WithDelta 的总体策略
   顺序：先删后加，最后统一做“命名空间级联删除”。
@@ -103,7 +101,7 @@
       - 收集“级联删除检查点”：记录最近的命名空间祖先，用于末尾统一判断是否需要删除空命名空间。
   - 添加阶段
   - 若当前 `_nodes` 为空（初次构建）：先创建根节点 idx=0（Name=""，Parent=-1，Kind=Namespace，Entry=null）。
-      - 不再处理 NamespaceAdds：命名空间链由消费者内部按需创建。
+  - 命名空间链由消费者内部按需创建（Producer 不再发送 NamespaceAdds）。
     - Types（for each entry in delta.TypeAdds）：
       - 先确保命名空间链存在：逐段 GetOrAdd Namespace，缺段时创建并添加命名空间别名。
       - 再类型链：
@@ -123,7 +121,7 @@
   ## 测试清单（单测优先）
   - 级联删除命名空间（由 consumer 内部实现）：删除后父层仍正确联通（firstChild/nextSibling 指针无误）。
   ## 与 FromEntries 的衔接
-  - 空快照优化：当当前快照为空且只有 TypeAdds 时，WithDelta 会从 TypeAdds 合成命名空间条目（N:），再统一调用 `FromEntries` 构建，以避免依赖已弃用的 NamespaceAdds/Removals 字段。
+  - 空快照优化：当当前快照为空且只有 TypeAdds 时，WithDelta 会从 TypeAdds 合成命名空间条目（N:），再统一调用 `FromEntries` 构建，无需依赖已移除的 NamespaceAdds/Removals 字段。
     - 在叶节点：
       - 若 Entry 为空：UpdateEntry(nodeId, entry)。
       - 若 Entry 非空但非同一 docId（理论不应发生，因命名空间 docId 唯一），则覆盖为最新值（或 Debug 日志）。
@@ -178,6 +176,8 @@
 
 ## 可选演进点
 
+> 更细的阶段规划与优先级见 `SymbolTree_Stage4Plus.md`（Stage4+ backlog）。
+
 - 快路径索引（快照内）
   - docId -> List<nodeId>（Type/Namespace 各一）：WithDelta 中 O(1) 找到末段候选；delta 更新仅改动少量条目。
   - (parentId, kind, name) -> List<childId>：父级子表索引直接常数时间查找；WithDelta 在发生该父下的改动时局部更新。
@@ -230,6 +230,7 @@
 - 一致性测试：随机 delta 序列后，与 `FromEntries` 的全量重建结果对比（节点结构与别名桶集合应一致）。
 - 并发安全测试：在高并发读（查询）与并发 `WithDelta` 构建下，验证旧快照可读性与新快照正确性。
 - 长时运行与墓碑累积：模拟长时间增量应用，观测墓碑比例与绝对数量，并验证阈值触发后的重建/压缩路径正确性。
+- 多程序集 / 极端嵌套：`SymbolTreeSingleNodePrototypeTests.SingleNode_ExtremeNestingAndAssemblies_RemainsConsistent` 提供覆盖，可作为回归基线。
 
 ## 风险与注意事项（务必落实）
 

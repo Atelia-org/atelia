@@ -55,18 +55,18 @@ public class V2_SymbolTree_WithDelta_Tests {
     [Fact]
     public void Removal_NestedType_RemovesSubtreeAliases() {
         ISymbolIndex tree = SymbolTreeB.Empty;
-        var add = new SymbolsDelta(
-            TypeAdds: new[] { TyNested("Ns", "Outer", 1, "Inner", 0, "Asm") },
-            TypeRemovals: Array.Empty<TypeKey>()
+        var add = SymbolsDeltaContract.Normalize(
+            new[] { Ty("Ns", "Outer", 1, "Asm"), TyNested("Ns", "Outer", 1, "Inner", 0, "Asm") },
+            Array.Empty<TypeKey>()
         );
         tree = tree.WithDelta(add);
 
         var before = tree.Search("T:Ns.Outer`1+Inner", 10, 0, SymbolKinds.All);
         Assert.Equal(1, before.Total);
 
-        var remove = new SymbolsDelta(
-            TypeAdds: Array.Empty<SymbolEntry>(),
-            TypeRemovals: new TypeKey[] { new TypeKey("T:Ns.Outer`1", "Asm") }
+        var remove = SymbolsDeltaContract.Normalize(
+            Array.Empty<SymbolEntry>(),
+            new TypeKey[] { new TypeKey("T:Ns.Outer`1", "Asm") }
         );
         tree = tree.WithDelta(remove);
 
@@ -80,16 +80,16 @@ public class V2_SymbolTree_WithDelta_Tests {
     [Fact]
     public void Cascade_Namespace_Removal_WhenEmpty() {
         ISymbolIndex tree = SymbolTreeB.Empty;
-        var add = new SymbolsDelta(
-            TypeAdds: new[] { Ty("A.B", "C", 0, "Asm") },
-            TypeRemovals: Array.Empty<TypeKey>()
+        var add = SymbolsDeltaContract.Normalize(
+            new[] { Ty("A.B", "C", 0, "Asm") },
+            Array.Empty<TypeKey>()
         );
         tree = tree.WithDelta(add);
         Assert.Equal(1, tree.Search("A.B", 10, 0, SymbolKinds.Namespace).Total);
 
-        var remove = new SymbolsDelta(
-            TypeAdds: Array.Empty<SymbolEntry>(),
-            TypeRemovals: new TypeKey[] { new TypeKey("T:A.B.C", "Asm") }
+        var remove = SymbolsDeltaContract.Normalize(
+            Array.Empty<SymbolEntry>(),
+            new TypeKey[] { new TypeKey("T:A.B.C", "Asm") }
         );
         tree = tree.WithDelta(remove);
 
@@ -100,18 +100,18 @@ public class V2_SymbolTree_WithDelta_Tests {
     [Fact]
     public void CrossAssembly_DocId_Removal_Precise() {
         ISymbolIndex tree = SymbolTreeB.Empty;
-        var add = new SymbolsDelta(
-            TypeAdds: new[] { Ty("A", "C", 0, "Asm1"), Ty("A", "C", 0, "Asm2") },
-            TypeRemovals: Array.Empty<TypeKey>()
+        var add = SymbolsDeltaContract.Normalize(
+            new[] { Ty("A", "C", 0, "Asm1"), Ty("A", "C", 0, "Asm2") },
+            Array.Empty<TypeKey>()
         );
         tree = tree.WithDelta(add);
         var before = tree.Search("T:A.C", 10, 0, SymbolKinds.All);
         Assert.True(before.Total >= 2);
         Assert.True(before.Items.Select(h => h.Assembly).Where(a => a != null).Distinct().Count() >= 2);
 
-        var remove = new SymbolsDelta(
-            TypeAdds: Array.Empty<SymbolEntry>(),
-            TypeRemovals: new TypeKey[] { new TypeKey("T:A.C", "Asm1") }
+        var remove = SymbolsDeltaContract.Normalize(
+            Array.Empty<SymbolEntry>(),
+            new TypeKey[] { new TypeKey("T:A.C", "Asm1") }
         );
         tree = tree.WithDelta(remove);
 
@@ -122,16 +122,16 @@ public class V2_SymbolTree_WithDelta_Tests {
     [Fact]
     public void Idempotent_Removal_RepeatDelta() {
         ISymbolIndex tree = SymbolTreeB.Empty;
-        var add = new SymbolsDelta(
-            TypeAdds: new[] { Ty("X", "Y", 0, "Asm") },
-            TypeRemovals: Array.Empty<TypeKey>()
+        var add = SymbolsDeltaContract.Normalize(
+            new[] { Ty("X", "Y", 0, "Asm") },
+            Array.Empty<TypeKey>()
         );
         tree = tree.WithDelta(add);
         Assert.Equal(1, tree.Search("T:X.Y", 10, 0, SymbolKinds.All).Total);
 
-        var remove = new SymbolsDelta(
-            TypeAdds: Array.Empty<SymbolEntry>(),
-            TypeRemovals: new TypeKey[] { new TypeKey("T:X.Y", "Asm") }
+        var remove = SymbolsDeltaContract.Normalize(
+            Array.Empty<SymbolEntry>(),
+            new TypeKey[] { new TypeKey("T:X.Y", "Asm") }
         );
         tree = tree.WithDelta(remove);
         Assert.Equal(0, tree.Search("T:X.Y", 10, 0, SymbolKinds.All).Total);

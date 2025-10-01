@@ -24,13 +24,13 @@ An immutable record representing a single symbol (namespace or type) within a sn
 Projection to user-facing results is done via `ToHit(matchKind, score)`, which standardizes Assembly/Namespace nullability and uses `FqnNoGlobal` as Name.
 
 ### SymbolsDelta
-A minimal change-set applied to a `SymbolIndex`:
-- TypeAdds: upserts for type entries
-- TypeRemovals: type doc-ids to remove
-- NamespaceAdds: upserts for namespaces
-- NamespaceRemovals: namespace doc-ids to remove
+A minimal, leaf-oriented change-set applied to a `SymbolIndex`:
+- **TypeAdds** – upserts for concrete type entries. Producers MUST supply DocCommentIds starting with `"T:"`, include the owning assembly, and order the collection by `DocCommentId.Length` ascending so outer types arrive before nested types.
+- **TypeRemovals** – removals for concrete type keys (`DocCommentId + Assembly`). The list MUST be ordered by `DocCommentId.Length` descending so inner-most types are pruned before their parents.
 
-`SymbolIndex.WithDelta(delta)` applies removals first, then upserts, returning a new immutable snapshot.
+Namespace-related fields are deprecated and SHOULD be omitted (empty collections). The helper `SymbolsDeltaContract.Normalize` enforces the ordering/validation contract when producers cannot emit canonical deltas directly.
+
+`SymbolIndex.WithDelta(delta)` applies removals first, then upserts, materializing any missing namespace chain and cascading empty namespace cleanup internally. The operation is idempotent: feeding the same delta repeatedly yields the same snapshot.
 
 ### SymbolIndex
 A pure, Roslyn-free, immutable index with query logic only.
