@@ -83,7 +83,6 @@ writer.Write("}"u8);
 var options = new ChunkedReservableWriterOptions {
     MinChunkSize = 4096,        // 最小块大小
     MaxChunkSize = 65536,       // 最大块大小  
-    EnforceStrictAdvance = true, // 严格模式：验证Advance参数
     Pool = ArrayPool<byte>.Shared // 自定义内存池
 };
 
@@ -92,8 +91,8 @@ using var writer = new ChunkedReservableWriter(innerWriter, options);
 
 ### **关键配置说明**
 - **MinChunkSize/MaxChunkSize**: 控制内存块大小，影响内存使用和性能
-- **EnforceStrictAdvance**: 开启后严格验证Advance调用，有助于调试
 - **Pool**: 可注入自定义ArrayPool，用于测试或特殊场景
+- **严格调用约定**: `GetSpan`/`GetMemory` 必须与 `Advance` 严格配对；若需要放弃缓冲，可调用 `Advance(0)`。`ReserveSpan` 只能在没有未 `Advance` 的缓冲时调用，否则会抛出 `InvalidOperationException`。
 
 ---
 
@@ -134,9 +133,10 @@ writer.IsPassthrough        // 是否处于透传模式
 ## ⚠️ **使用注意事项**
 
 ### **必须遵守的规则**
-1. **按顺序提交**: 预留必须按创建顺序提交，不能跳跃
-2. **及时提交**: 长时间不提交会阻塞数据flush
-3. **正确Dispose**: 使用using语句或手动调用Dispose释放资源
+1. **先 Advance 再下一步**: 每次 `GetSpan`/`GetMemory` 后必须调用 `Advance`（可用 `Advance(0)` 释放未使用的缓冲），否则下一次 `GetSpan` 或 `ReserveSpan` 将抛出异常。
+2. **按顺序提交**: 预留必须按创建顺序提交，不能跳跃
+3. **及时提交**: 长时间不提交会阻塞数据flush
+4. **正确Dispose**: 使用using语句或手动调用Dispose释放资源
 
 ### **常见错误**
 ```csharp

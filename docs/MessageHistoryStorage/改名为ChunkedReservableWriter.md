@@ -421,7 +421,6 @@ GitHub Copilot: 以下是重构方案设计（仅设计，不改代码），聚�
 - int MinChunkSize = 4096 (默认，可讨论 4096 / 8192；目标：足够 amortize 管理开销)
 - int MaxChunkSize = 131072 (128KB，避免 LOH，安全落在 SOH；> 85KB 可能进入 LOH，视需要可调 64KB)
 - double GrowthFactor = 2.0（可选；=1 表示固定；>1 表示逐次增长，直到 MaxChunkSize）
-- bool EnforceStrictAdvance（保留）
 - ArrayPool<byte>? Pool（保留）
 
 验证规则：
@@ -431,6 +430,8 @@ GitHub Copilot: 以下是重构方案设计（仅设计，不改代码），聚�
 - 若 MaxChunkSize >= LOH 阈值（~85_000），可在 Debug 提醒：可能触发 LOH。
 
 Clone() 更新字段。
+
+> 说明：严格的 `GetSpan`/`Advance` 顺序校验已内建进实现，不再作为可选开关暴露。
 
 ## 3. Chunk 尺寸选择策略
 核心函数：SelectChunkSize(int sizeHint)
