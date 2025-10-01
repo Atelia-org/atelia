@@ -128,6 +128,18 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
         return (SymbolTreeB)SymbolTreeB.Empty.WithDelta(delta);
     }
 
+    private static string[] BuildNamespaceSegments(string ns)
+        => string.IsNullOrEmpty(ns)
+            ? Array.Empty<string>()
+            : ns.Split('.', StringSplitOptions.RemoveEmptyEntries);
+
+    private static string[] BuildTypeSegments(string docId, int namespaceSegmentCount) {
+        var body = docId.Substring(2);
+        var all = SymbolNormalization.SplitSegmentsWithNested(body);
+        if (namespaceSegmentCount == 0) { return all; }
+        return all.Skip(namespaceSegmentCount).ToArray();
+    }
+
     private static SymbolEntry TypeEntry(string ns, string nameBase, int arity, string assembly) {
         string docId = arity > 0 ? $"T:{ns}.{nameBase}`{arity}" : $"T:{ns}.{nameBase}";
         string outerGenericParams = arity > 0
@@ -135,13 +147,15 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
             : string.Empty;
         string fqn = $"global::{ns}.{nameBase}{outerGenericParams}";
         string fqnNoGlobal = CodeCortexV2.Index.IndexStringUtil.StripGlobal(fqn);
+        var namespaceSegments = BuildNamespaceSegments(ns);
         return new SymbolEntry(
             DocCommentId: docId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: ns,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: nameBase
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: BuildTypeSegments(docId, namespaceSegments.Length),
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: nameBase
         );
     }
 
@@ -159,14 +173,16 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
 
         string fqn = $"global::{ns}.{outerBase}{outerGenerics}.{innerBase}{innerGenerics}";
         string fqnNoGlobal = CodeCortexV2.Index.IndexStringUtil.StripGlobal(fqn);
+        var namespaceSegments = BuildNamespaceSegments(ns);
 
         return new SymbolEntry(
             DocCommentId: docId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: ns,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: innerBase
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: BuildTypeSegments(docId, namespaceSegments.Length),
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: innerBase
         );
     }
 }

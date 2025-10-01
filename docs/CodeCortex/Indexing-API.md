@@ -10,18 +10,19 @@ This document describes the public, text-oriented indexing API that powers searc
 ## Main Types
 
 ### SymbolEntry
-An immutable record representing a single symbol (namespace or type) within a snapshot.
-- SymbolId: documentation comment id, e.g., `N:Foo.Bar`, `T:Foo.Bar.Baz`
-- Fqn: fully-qualified name with `global::` prefix (Roslyn display style)
-- FqnNoGlobal: FQN without `global::` (external display style)
-- FqnBase: FQN with generic arity trimmed per segment, e.g., `Ns.List`1.Item` → `Ns.List.Item`
-- Simple: simple name (last segment), e.g., `Baz`
-- Kind: symbol kind; current snapshots materialize Type and Namespace
-- Assembly: containing assembly for types; empty string for namespaces (UI normalizes to null)
-- GenericBase: simple name stripped of generic arity/arguments, e.g., `List`1` → `List`
-- ParentNamespace: parent namespace without `global::`; empty for root
+An immutable record representing a single symbol (namespace or type) within a snapshot. Internally the index treats the
+documentation comment id as the sole canonical key; every other field is derived from it for transport or UI purposes.
+- **DocCommentId** (`SymbolId`): documentation comment id, e.g., `N:Foo.Bar`, `T:Foo.Bar.Baz`
+- **FullDisplayName**: fully-qualified display string without the `global::` prefix (external/UI style)
+- **DisplayName**: final segment in display form (preserving generic arity, e.g., ``List`1``)
+- **Kind**: symbol kind; current snapshots materialize Type and Namespace
+- **Assembly**: containing assembly for types; empty string for namespaces (UI normalizes to null)
+- **ParentNamespace** (legacy): namespace string without `global::`; pending replacement by `NamespaceSegments` and
+  `TypeSegments` arrays derived from the doc-id
 
-Projection to user-facing results is done via `ToHit(matchKind, score)`, which standardizes Assembly/Namespace nullability and uses `FqnNoGlobal` as Name.
+Projection to user-facing results is done via `ToHit(matchKind, score)`, which standardizes Assembly/Namespace nullability
+and uses `FullDisplayName` as the search/display name. Upcoming refactors will replace the legacy namespace string with
+DocCommentId-derived segment arrays to keep structural logic fully DocId-based.
 
 ### SymbolsDelta
 A minimal, leaf-oriented change-set applied to a `SymbolIndex`:

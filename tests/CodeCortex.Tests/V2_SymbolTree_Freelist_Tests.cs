@@ -50,17 +50,25 @@ public class SymbolTreeFreelistTests {
         if (!docCommentId.StartsWith("T:", StringComparison.Ordinal)) { throw new ArgumentException("DocCommentId must start with 'T:'", nameof(docCommentId)); }
 
         var body = docCommentId.Substring(2);
-        var segments = body.Split('.');
-        var ns = string.Join('.', segments[..^1]);
-        var leaf = segments[^1];
+        var namespaceParts = body.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var namespaceSegments = namespaceParts.Length > 1
+            ? namespaceParts[..^1]
+            : Array.Empty<string>();
+        var ns = namespaceSegments.Length > 0 ? string.Join('.', namespaceSegments) : string.Empty;
+        var leaf = namespaceParts[^1];
+        var typeSegments = SymbolNormalization
+            .SplitSegmentsWithNested(body)
+            .Skip(namespaceSegments.Length)
+            .ToArray();
 
         return new SymbolEntry(
             DocCommentId: docCommentId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: ns,
-            FqnNoGlobal: string.IsNullOrEmpty(ns) ? leaf : docCommentId.Substring(2).Replace('+', '.'),
-            FqnLeaf: leaf
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: typeSegments,
+            FullDisplayName: string.IsNullOrEmpty(ns) ? leaf : docCommentId.Substring(2).Replace('+', '.'),
+            DisplayName: leaf
         );
     }
 }

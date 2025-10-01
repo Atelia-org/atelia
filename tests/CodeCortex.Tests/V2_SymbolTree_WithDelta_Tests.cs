@@ -8,6 +8,18 @@ using Xunit;
 namespace CodeCortex.Tests;
 
 public class V2_SymbolTree_WithDelta_Tests {
+    private static string[] BuildNamespaceSegments(string ns)
+        => string.IsNullOrEmpty(ns)
+            ? Array.Empty<string>()
+            : ns.Split('.', StringSplitOptions.RemoveEmptyEntries);
+
+    private static string[] BuildTypeSegments(string docId, int namespaceSegmentCount) {
+        var body = docId.Substring(2);
+        var all = SymbolNormalization.SplitSegmentsWithNested(body);
+        if (namespaceSegmentCount == 0) { return all; }
+        return all.Skip(namespaceSegmentCount).ToArray();
+    }
+
     private static SymbolEntry Ty(string ns, string nameBase, int arity, string assembly) {
         string docId = arity > 0 ? $"T:{ns}.{nameBase}`{arity}" : $"T:{ns}.{nameBase}";
         string fqn = arity > 0
@@ -15,14 +27,15 @@ public class V2_SymbolTree_WithDelta_Tests {
             : $"global::{ns}.{nameBase}";
         string fqnNoGlobal = CodeCortexV2.Index.IndexStringUtil.StripGlobal(fqn);
         string simple = nameBase;
-        string parentNs = ns;
+        var namespaceSegments = BuildNamespaceSegments(ns);
         return new SymbolEntry(
             DocCommentId: docId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: parentNs,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: simple
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: BuildTypeSegments(docId, namespaceSegments.Length),
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: simple
         );
     }
 
@@ -41,14 +54,15 @@ public class V2_SymbolTree_WithDelta_Tests {
         string fqn = $"global::{ns}.{outerBase}{outerGenericParams}.{innerBase}{innerGenericParams}";
         string fqnNoGlobal = CodeCortexV2.Index.IndexStringUtil.StripGlobal(fqn);
         string simple = innerBase;
-        string parentNs = ns;
+        var namespaceSegments = BuildNamespaceSegments(ns);
         return new SymbolEntry(
             DocCommentId: docId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: parentNs,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: simple
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: BuildTypeSegments(docId, namespaceSegments.Length),
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: simple
         );
     }
 

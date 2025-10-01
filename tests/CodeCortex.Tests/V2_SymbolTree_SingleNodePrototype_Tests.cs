@@ -328,13 +328,22 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
             ? string.Join('.', formatted)
             : $"{ns}.{string.Join('.', formatted)}";
 
+        var namespaceSegments = string.IsNullOrEmpty(ns)
+            ? Array.Empty<string>()
+            : ns.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var typeSegments = SymbolNormalization
+            .SplitSegmentsWithNested(body)
+            .Skip(namespaceSegments.Length)
+            .ToArray();
+
         return new SymbolEntry(
             DocCommentId: docCommentId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: ns,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: StripGenericArity(typeNames[^1])
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: typeSegments,
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: StripGenericArity(typeNames[^1])
         );
     }
 
@@ -387,7 +396,6 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
         var body = docCommentId.Substring(2);
         var segments = SymbolNormalization.SplitSegmentsWithNested(body);
         var typeSegment = segments[namespaceSegmentCount + segmentIndex];
-        var (baseName, arity) = SymbolTreeBuilder.ParseName(typeSegment);
-        return arity > 0 ? $"{baseName}`{arity}" : baseName;
+        return typeSegment;
     }
 }
