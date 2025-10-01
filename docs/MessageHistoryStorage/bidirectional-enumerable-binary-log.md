@@ -116,6 +116,8 @@ RecordFramer 不再直接管理裸 `Span` 缓冲；扩容与分片完全交由 `
 - `Commit` 成功后要更新“连续前缀已提交”状态：若实现选择即时 flush，应立即把可写区推送到底层；若实现选择延迟 flush，也必须保证后续 `Flush` 能据此状态一次性输出正确的连续前缀。
 - `Reset`/`Dispose` 需确保归还所有租借缓冲，并在存在未提交 reservation 时提供显式诊断（抛异常或记录日志）。
 - 若实现涉及内部扩容，必须确保此前发出的 `Span`/`Memory` 不会跨 chunk，避免调用方 `Advance` 时写越界。
+- `ReserveSpan` 返回的内存块在对应 reservation `Commit`、实现的 `Reset` 或 `Dispose` 之前不得搬移或重定位；实现若需要扩容，必须保留原地址直至生命周期结束。
+- 若实现选择延迟 flush，需要维护“连续前缀水位”，确保显式调用 `Flush()` 时按 FIFO 顺序输出所有已提交的前缀数据，不得跳跃或重排。
 
 #### CRC32C 适配层
 - `RecordFramer` 并不直接依赖 `System.IO.Hashing.Crc32C`，而是通过一个最小化的接口（草案命名为 `ICrc32C`）来追加数据、获取 hash，并在 `Reset` 时回收对象。
