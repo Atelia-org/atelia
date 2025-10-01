@@ -88,6 +88,17 @@ public ref struct RecordFramer
 - `EndEnvelope` 会验证所有 reservation 均已 `Commit`，否则抛出包含 `tag` 的诊断异常，确保写入前缀的完整性。
 - **线程模型**：`RecordFramer` 与绝大多数 `IReservableBufferWriter` 实现仅支持单线程顺序写入。Reserve、Advance、Commit 以及 End 必须由同一调用线程按 FIFO 顺序执行；若需要跨线程协作，应在更高层通过消息队列或同步原语串联调用，而不是在核心分帧层尝试并发访问。
 - **同步栈约束**：一条 Record 的写入必须在单个同步调用栈内完成；若调用方需要异步写入或跨线程拆分，应先在同步路径内完成分帧，再由外层按需封装异步发送逻辑。
+
+**RecordFramer 生命周期状态表（衔接 `IReservableBufferWriter` 语义）：**
+
+| 阶段 | 可调用成员 | 说明 |
+| --- | --- | --- |
+| 初始/空闲 | `BeginEnvelope()` | 进入记录写入流程并写入 Magic/头部占位；禁止重复调用。 |
+| 已 Begin、无未提交的普通缓冲 | `GetSpan()` / `GetMemory()`；`ReserveSpan()` | 需要遵守接口层约定：如果选择 `GetSpan`/`GetMemory`，必须先 `Advance` 后才能继续；若选择 `ReserveSpan`，要求当前不存在“待 Advance”的普通缓冲。 |
+| 待 Advance | `Advance()`（可传 0 退出） | 完成后回到“已 Begin、无未提交的普通缓冲”阶段，可继续请求新的缓冲或创建 reservation。 |
+| 持有未提交 reservation | `ReserveSpan()`（嵌套排队）、`Commit(token)` | 允许同时存在多段 reservation，但必须按 token 调用 `Commit`；`EndEnvelope` 前必须全部提交。 |
+| 准备结束 | `EndEnvelope()` | 验证所有 reservation 均已提交，计算 Pad、写尾长和 CRC，并通知底层 writer；调用后回到初始状态。 |
+
 RecordFramer 不再直接管理裸 `Span` 缓冲；扩容与分片完全交由 `IReservableBufferWriter` 实现（例如 `ChunkedReservableWriter` 可按需租借 ArrayPool chunk）。
 
 #### `IReservableBufferWriter` 交互约定
