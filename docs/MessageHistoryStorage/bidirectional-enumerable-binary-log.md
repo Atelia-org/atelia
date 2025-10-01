@@ -5,14 +5,14 @@
 Bidirectional-Enumerable Binary Log
 简单说就是Magic开头，载荷两端都记录长度，载荷补0到4字节对齐，CRC32C封尾
 
-每条Record定义为如下序列：Magic | EnvLen | Envelope | EnvPad | EnvLen | CRC32C\
+每条Record定义为如下序列：Magic | EnveLen | Envelope | EnvePad | EnveLen | CRC32C\
 多条紧密排列的Record序列构成Body：Record | Record | ... | Record
 
 Magic: 4 字节固定常量"ELOG"，用于记录同步。固定值，简化设计。
-EnvLen: uint32 LE，Envelope的字节长度。前后双写用于高效双向遍历。
+EnveLen: uint32 LE，Envelope的字节长度。前后双写用于高效双向遍历。
 Envelope：向上层承载的数据载荷。
-EnvPad：在Envelope的尾部补0~3个字节的0，以实现4字节对齐。
-CRC32C：**不包含头部的EnvLen**，为流式数据写入再回填创造机会。连续覆盖Envelope、EnvPad、尾部的EnvLen。固定hash算法，简化设计。
+EnvePad：在Envelope的尾部补0~3个字节的0，以实现4字节对齐。
+CRC32C：**不包含头部的EnveLen**，为流式数据写入再回填创造机会。连续覆盖Envelope、EnvePad、尾部的EnveLen。固定hash算法，简化设计。
 
 ### 设计原则
 本设计遵循以下核心原则：
@@ -48,39 +48,101 @@ CRC32C：**不包含头部的EnvLen**，为流式数据写入再回填创造机�
 │  - BufferedStreamingSink (非 Seek 回退)      │
 ├──────────────────────────────────────────────┤
 │ 核心层 (Core Framing & Navigation)           │
-│  - RecordFramer (ref struct, IBufferWriter)  │
+│  - RecordFramer (ref struct, 驱动 IReservableBufferWriter) │
 │  - FrameNavigator / RecordParser             │
 │  - BinaryLogFormat / Crc32CAdapter           │
 └──────────────────────────────────────────────┘
 ```
 
-核心层只做：在一块可写连续内存上构建单条 **Record**；或在只读内存/随机访问字节序列上解析与双向遍历。其生命周期限定在栈帧内（`ref struct`），无 I/O、副作用纯净，易 fuzz / property test。
+核心层只做：基于 `IReservableBufferWriter` 把一条 **Record** 的协议字段写入任意可扩展缓冲；或在只读内存/随机访问字节序列上解析与双向遍历。其生命周期限定在栈帧内（`ref struct`），无 I/O、副作用纯净，易 fuzz / property test。
 
 ### 核心类型概要
 #### RecordFramer（ref struct）
-职责：在调用方提供的可扩展缓冲（`Span`/`byte[]`/`IMemoryOwner<byte>`）上构建 1 条完整 Record。
+职责：驱动一条 Record 的分帧协议，将写入请求转译到调用方提供的 `IReservableBufferWriter`；内部仅维护协议状态（Magic、长度占位、CRC）。
 
 核心状态：
-- `_buffer`：底层字节存储（调用方管理生命周期）
-- `_pos`：已写游标
-- `_envLenOffset`：头部长度字段位置
+- `_writer`：遵循 `IReservableBufferWriter` 的后端（由调用方注入，推荐使用 `ChunkedReservableWriter` 等原生支持 reservation 语义的实现；若底层只有普通 `IBufferWriter<byte>`，需在适配层显式补齐 reservation/flush 语义，而非简单一层包装）
 - `_crc`：增量 CRC32C 状态
+- `_envelopeReservation`：头部长度占位的 reservation token
+- `_writtenEnvelopeLength`：Envelope 已写入的字节数（供 pad/校验使用）
 
 最小 API（示意）：
 ```csharp
 public ref struct RecordFramer
 {
-    public RecordFramer(Span<byte> initialBuffer, int growthHint = 0);
-    public void BeginEnvelope();                 // 写 Magic + 头长占位（4B 0）
-    public Span<byte> GetSpan(int sizeHint);     // IBufferWriter 语义
-    public void Advance(int count);              // 追踪长度 + CRC
-    public Span<byte> Reserve(int size);         // 直接推进 _pos 并返回可原地写入的区域（全 0 初始）
-    public void EndEnvelope();                   // 计算 pad, 写尾长, CRC, 回填头长
-    public ReadOnlySpan<byte> GetRecord();       // 返回完整帧 (Magic..CRC)
-    public int RecordLength { get; }             // 总长度
+    public RecordFramer(IReservableBufferWriter writer, int? envelopeLengthHint = null);
+    public void BeginEnvelope();                         // 写 Magic，并通过 ReserveSpan 预留头长
+    public Span<byte> GetSpan(int sizeHint);             // 透传到 writer.GetSpan，配合 Advance
+    public void Advance(int count);                      // 更新已写长度与 CRC
+    public Span<byte> ReserveSpan(int size, out int token, string? tag = null);
+    public void Commit(int token);                       // 显式提交占位区，解除 flush 阻塞
+    public void EndEnvelope();                           // 计算 pad，写尾长，写 CRC，并回填头长 reservation
+    public int RecordLength { get; }                     // 返回本条记录的总长度（含补齐与 CRC）
 }
 ```
-扩容策略（若需要）由外部包装（例如 `ResizableFramerBuffer`）负责——核心不直接持有池，也不做租还。
+
+**调用约定补充**
+- `ReserveSpan` 会立即把指定长度纳入 Envelope 长度累计，调用方不应再对同一段调用 `Advance`；只需在填充完毕后执行 `Commit`。此处的“计入”指 `RecordFramer` 内部维护的 `_writtenEnvelopeLength`，与底层 `IReservableBufferWriter` 的实现无关；底层 writer 只负责提供可写缓冲与 flush 次序控制。`ChunkedReservableWriter` 通过为每个 reservation 锁定所属 chunk，确保后续的 `GetSpan`/`ReserveSpan` 不会迁移已预留区域，因此可以在写入其他内容后再回填该 `Span`；但一旦 `Commit`、`Reset` 或 `Dispose`，原始 `Span` 就不应再被使用。
+- `GetSpan`/`GetMemory` 返回的缓冲在下一次请求或显式 `Advance(0)` 后即视为失效；`ReserveSpan` 返回的 `Span<byte>` 在 reservation 活跃期间保持有效，但若 writer 进入 `Reset`、被释放，或调用方完成 `Commit` 导致区域落盘，就必须停止访问该 `Span`。
+- 若 `_enforceStrictAdvance` 为 true，则任何“在上一次 `GetSpan` 之后未调用 `Advance` 就再次索取缓冲”的行为都会抛出异常，有助于序列化器在开发期暴露顺序错误。
+- `EndEnvelope` 会验证所有 reservation 均已 `Commit`，否则抛出包含 `tag` 的诊断异常，确保写入前缀的完整性。
+- **线程模型**：`RecordFramer` 与绝大多数 `IReservableBufferWriter` 实现仅支持单线程顺序写入。Reserve、Advance、Commit 以及 End 必须由同一调用线程按 FIFO 顺序执行；若需要跨线程协作，应在更高层通过消息队列或同步原语串联调用，而不是在核心分帧层尝试并发访问。
+RecordFramer 不再直接管理裸 `Span` 缓冲；扩容与分片完全交由 `IReservableBufferWriter` 实现（例如 `ChunkedReservableWriter` 可按需租借 ArrayPool chunk）。
+
+#### `IReservableBufferWriter` 交互约定
+- **单线程语义**：实例仅支持单生产者顺序写入，所有 `GetSpan`/`ReserveSpan`/`Advance`/`Commit` 调用必须在同一线程上依次执行；`GetSpan`/`GetMemory` 返回的 buffer 会在下一次请求或执行 `Advance(0)` 时失效。
+- **基本调用流程**：`GetSpan`/`GetMemory` → 写入 → `Advance`。当 writer 开启 `_enforceStrictAdvance` 时，若在 `Advance` 前再次索取 buffer，会立即抛出异常，有助于定位序列化器误用。
+- **Reservation 生命周期**：`ReserveSpan` 立即切出固定区域供回填，调用方需在适当时机写入并调用 `Commit(token)`。未提交的 reservation 会阻挡前缀 flush；虽然 `Commit` 可乱序执行，但只有所有更早的 reservation 都提交后，数据才会向下游 writer 推进。
+- **Flush 策略**：是否在 `Commit` 当下触发向下游写入由具体实现决定。`ChunkedReservableWriter` 会在连续前缀全部提交时立即复制到 `_innerWriter`，而面向磁盘或网络的自定义 writer 可以选择延迟到显式 `FlushAsync`/`Dispose` 才落盘，只要能保证记录的前缀顺序不被破坏。文档默认假设调用方允许存在这种延迟，因此上层若需要强一致刷新，必须在关键位置显式调用 sink 的 `FlushAsync`。
+- **Envelope 长度与 CRC**：Envelope 的长度统计与 CRC 计算完全由 `RecordFramer` 负责；`IReservableBufferWriter` 不感知“Envelope”概念。`RecordFramer` 在调用 `ReserveSpan` 时会增加 `_writtenEnvelopeLength` 并记录等待在 `Commit` 时纳入 CRC 的区段，因此实现自定义 writer 时无需维护额外的 Envelope 级别计数。
+- **结束守卫**：`RecordFramer.EndEnvelope`、`ChunkedReservableWriter.Reset/Dispose` 等都会检查是否仍有未提交的 reservation，若存在则抛出 `InvalidOperationException` 并包含 `tag` 信息。推荐在调试阶段为关键 reservation 设置 tag，结合 `DebugUtil.Print` 快速定位遗漏。
+- **调试建议**：`ChunkedReservableWriterOptions.DebugLog` 可直接绑定 `DebugUtil.Print`（或其它回调），内部会在 `Advance`/`ReserveSpan`/`Commit`/flush 等关键路径输出调试信息；若实现自定义 `IReservableBufferWriter`，也建议提供类似钩子以便统一排障。
+- **适配普通 IBufferWriter**：除非能完整复现 reservation/commit 的阻塞语义，否则不要直接“轻量包装”普通 `IBufferWriter<byte>`；推荐在适配层实例化 `ChunkedReservableWriter` 承接写入，再将已提交前缀批量推送到底层 `IBufferWriter`。
+
+**实现者注意事项（Checklist）**
+- `ReserveSpan` 必须为每个 token 维持独立状态，并阻止旧 token 未提交时的数据 flush；重复 `Commit` 或未知 token 应抛出异常。
+- `Commit` 成功后要更新“连续前缀已提交”状态：若实现选择即时 flush，应立即把可写区推送到底层；若实现选择延迟 flush，也必须保证后续 `Flush` 能据此状态一次性输出正确的连续前缀。
+- `Reset`/`Dispose` 需确保归还所有租借缓冲，并在存在未提交 reservation 时提供显式诊断（抛异常或记录日志）。
+- 若实现涉及内部扩容，必须确保此前发出的 `Span`/`Memory` 不会跨 chunk，避免调用方 `Advance` 时写越界。
+
+#### CRC32C 适配层
+- `RecordFramer` 并不直接依赖 `System.IO.Hashing.Crc32C`，而是通过一个最小化的接口（草案命名为 `ICrc32C`）来追加数据、获取 hash，并在 `Reset` 时回收对象。
+- 默认实现 `DefaultCrc32CAdapter` 只是对 `System.IO.Hashing.Crc32C` 的薄包装，便于在 .NET 7+/8+ 上零成本启用硬件加速；但在单元测试或实验场景下，可替换为“空实现”“自定义校验算法”或“记录 Append 调用序列”的适配器，用于 fuzz、对拍等工作流。
+- 通过构造 `RecordFramer` 时注入 CRC 适配器，可以在不修改核心分帧逻辑的前提下扩展出“CRC 关闭”“强校验”“双写核对”等策略，同时也避免在热路径上产生不必要的分配。
+
+#### Flush 顺序示例
+
+以下片段演示 reservation 的阻塞行为；只有最早的 reservation 被 `Commit` 后，前缀数据才会 flush 到下游 `innerWriter`。
+
+```csharp
+using System.Buffers.Binary;
+
+var inner = new ArrayBufferWriter<byte>();
+var writer = new ChunkedReservableWriter(inner, new ChunkedReservableWriterOptions {
+    DebugLog = Atelia.Diagnostics.DebugUtil.Print,
+    DebugCategory = "BinaryLog"
+});
+
+// 1. 预留 4 字节用于稍后写入长度
+var header = writer.ReserveSpan(4, out var headerToken, tag: "length");
+
+// 2. 写入实际 payload（顺序写 + Advance）
+var payload = writer.GetSpan(10);
+payload.Fill(0x42);
+writer.Advance(10);
+
+// 此时 header 未提交，FlushCommittedData 不会把任何字节推给 inner。
+Debug.Assert(writer.PendingReservationCount == 1);
+Debug.Assert(inner.WrittenCount == 0);
+
+// 3. 回填 header 并 Commit，触发前缀 flush
+BinaryPrimitives.WriteInt32LittleEndian(header, 10);
+writer.Commit(headerToken);
+
+// Commit 后 flush 发生，innerWriter 立即拿到完整的 14 字节（4 + 10）。
+Debug.Assert(writer.PendingReservationCount == 0);
+Debug.Assert(inner.WrittenCount == 14);
+```
 
 #### FrameNavigator / RecordParser
 针对只读数据：
@@ -110,19 +172,27 @@ public ref struct FrameNavigator
 写入路径中大部分错误以 `ArgumentException` / `InvalidOperationException` 体现（例如二次 Begin / 未 Begin 调用 End / 缓冲不足且未提供扩展）。
 
 ### I/O 适配层接口
-包装层负责把“内存中已成形的 Record” 推向某个终端：
+包装层负责把“已分帧的 Record” 推向某个终端，同时提供在未知长度/非 Seek 场景下的缓冲支撑：
+
 ```csharp
 public interface IEnvelopeSink
 {
     // 一次推送一条完整 Record；实现可立即落盘、排队、异步 flush 等
     void WriteRecord(ReadOnlySpan<byte> record);
     ValueTask WriteRecordAsync(ReadOnlyMemory<byte> record, CancellationToken ct = default);
+
+    // 可选：提供 reservable writer，便于 RecordFramer 直接写入并延迟 commit
+    IReservableBufferWriter? TryCreateReservableWriter(int? sizeHint = null);
+
+    // 可选：显式刷新，在非 Seek 流场景推动底层写入；默认实现可返回已完成任务
+    ValueTask FlushAsync(CancellationToken ct = default);
 }
 ```
+
 典型实现：
-- `SeekableStreamSink`：直接 `stream.Write(record)`。
-- `BufferedStreamingSink`：网络/非 Seek；内部队列 + 背景 flush。
-- `MemorySink`：追加到 `IMemoryOwner<byte>` / `List<byte>` 用于测试。
+- `SeekableStreamSink`：`WriteRecord*` 直接写入；若调用 `TryCreateReservableWriter`，返回一个对底层 stream 做 seek/回填的 `EnvelopeScope`。
+- `BufferedStreamingSink`：针对非 Seek/网络场景，内部实例化 `ChunkedReservableWriter`（ArrayPool-backed）承接 RecordFramer 写入，所有阻塞 reservation 提交后触发异步 flush，并实现 `FlushAsync` 以便显式冲刷。
+- `MemorySink`：返回聚合到 `List<byte>` 或 `IMemoryOwner<byte>` 的 writer，用于测试和属性验证。
 
 ### 高级便捷包装（Facade）
 `BinaryLogFileAppender`：
@@ -138,42 +208,69 @@ public sealed class BinaryLogFileAppender
 `BinaryLog`（静态枚举）：基于 `FrameNavigator` 提供 `IEnumerable<ReadOnlyMemory<byte>> ReadBackward(...)` 等高层 API（当前文档已有，迁移内部实现到新解析器）。
 
 ### 同步 vs 异步策略
-核心 `RecordFramer` 永远同步（栈上，单函数帧内完成）。异步仅发生在外层 `IEnvelopeSink.WriteRecordAsync`。
+核心 `RecordFramer` 永远同步（栈上，单函数帧内完成）。异步仅发生在外层 `IEnvelopeSink.WriteRecordAsync` / `FlushAsync` 或 `TryCreateReservableWriter` 返回的缓冲实现（如 `ChunkedReservableWriter`）上。
 优点：
 - 避免在核心层引入 `await` 导致的状态机与逃逸；
 - 异步缓冲/回压统一放入 sink，实现可替换；
+- 非 Seek/未知长度场景下，可借助 `ChunkedReservableWriter` 将 Record 写入 ArrayPool chunk，待 Commit 后一次性 flush 到真实终端；
 - 测试核心算法无需异步基建；
 - 允许极致场景（内存拼装 → 多播 N 个 sink）。
 
 ### 典型使用示例
-#### 1) 内存里构建 + 追加到文件
+#### 1) 已知长度一次性写入
 ```csharp
-var envelope = GetUserSerializedEnvelope(); // 上层序列化器负责
-Span<byte> scratch = stackalloc byte[envelope.Length + 32];
-var framer = new RecordFramer(scratch);
-framer.BeginEnvelope();
-framer.GetSpan(envelope.Length).CopyFrom(envelope); // 或 Reserve + BinaryPrimitives 写 header
-framer.Advance(envelope.Length);
-framer.EndEnvelope();
-fileSink.WriteRecord(framer.GetRecord());
+var writer = new BinaryLogWriter(stream);
+writer.WriteEnvelope(envelopeBytes); // 内部自动写 Magic/长度/Pad/CRC
 ```
-#### 2) 动态构建（含回填）
+
+#### 2) 作用域写入 + reservation 回填
 ```csharp
-Span<byte> buf = stackalloc byte[256];
-var framer = new RecordFramer(buf);
-framer.BeginEnvelope();
-// 预留头
-var hdr = framer.Reserve(8); // 全 0
-// 写 body
-var span = framer.GetSpan(payload.Length);
-payload.CopyTo(span); framer.Advance(payload.Length);
-// 回填头部字段
-BinaryPrimitives.WriteInt32LittleEndian(hdr, version);
-BinaryPrimitives.WriteInt32LittleEndian(hdr[4..], flags);
-framer.EndEnvelope();
-sink.WriteRecord(framer.GetRecord());
+var writer = new BinaryLogWriter(stream);
+using (var scope = writer.BeginEnvelope()) // BeginEnvelope 返回实现 IReservableBufferWriter 的作用域
+{
+    // 预留头部字段，在稍后填写
+    var headerSpan = scope.ReserveSpan(8, out var headerToken, tag: "header");
+
+    // 写入正文 payload
+    var payloadSpan = scope.GetSpan(payload.Length);
+    payload.CopyTo(payloadSpan);
+    scope.Advance(payload.Length);
+
+    // 回填头部并提交 reservation
+    BinaryPrimitives.WriteInt32LittleEndian(headerSpan, version);
+    BinaryPrimitives.WriteInt32LittleEndian(headerSpan[4..], flags);
+    scope.Commit(headerToken);
+} // Dispose 自动补齐 pad、尾长，并回填头部长度
 ```
-#### 3) 解析并反向遍历
+
+#### 3) 非 Seek 流 + `ChunkedReservableWriter`
+```csharp
+IEnvelopeSink sink = new BufferedStreamingSink(networkStream);
+// SinkBackpressureWriter: 小型适配器，将 sink 的 WriteRecord* 包装成 IBufferWriter<byte>
+IReservableBufferWriter writer = sink.TryCreateReservableWriter()
+    ?? new ChunkedReservableWriter(
+        new SinkBackpressureWriter(sink),
+        new ChunkedReservableWriterOptions {
+            DebugLog = Atelia.Diagnostics.DebugUtil.Print,
+            DebugCategory = "BinaryLog"
+        });
+
+var framer = new RecordFramer(writer);
+framer.BeginEnvelope();
+
+int flags = ComputeFlags(payload);
+var headerSpan = framer.ReserveSpan(4, out var headerToken, tag: "flags");
+var bodySpan = framer.GetSpan(payload.Length);
+payload.CopyTo(bodySpan);
+framer.Advance(payload.Length);
+BinaryPrimitives.WriteInt32LittleEndian(headerSpan, flags);
+framer.Commit(headerToken);
+
+framer.EndEnvelope();
+await sink.FlushAsync(); // 由 sink 决定具体 flush 策略
+```
+
+#### 4) 解析并反向遍历
 ```csharp
 ReadOnlySpan<byte> fileBytes = mmapSpan; // 或一次性读取
 var nav = new FrameNavigator(fileBytes, startFromEnd: true);
@@ -208,6 +305,7 @@ while (nav.TryReadCurrent(out var env, verifyCrc: true))
 - 破坏尾部 CRC / 尾长 / Magic → Parser 应给出对应错误码（或 false + LastError）。
 - 反向遍历与正向遍历产生的 envelope 集合逆序一致。
 - Fuzz：在 Record 任意注入随机字节翻转 N% 后尝试重同步；验证不会越界崩溃。
+- `IReservableBufferWriter` 语义：多段 `ReserveSpan` / `Commit`，确保未提交 reservation 阻止 flush；模拟丢失 `Commit` 时 `EnvelopeScope.Dispose` 抛出；验证乱序 `Commit`、重复 `Commit` 的防御，并确认 flush 始终遵循 FIFO 前缀。
 
 ### 分工（执行计划占位）
 - GPT-5：本章节主笔 + 后续统一术语（已完成初稿）。
@@ -228,7 +326,7 @@ while (nav.TryReadCurrent(out var env, verifyCrc: true))
 （本章节为演进提案，后续如实现细节与最初文档早期段落存在轻微不一致，以本节描述的“分层架构”作为后续代码实现基准。）
 
 ### API与关键实现示意
-以下列出主要类型签名与少量关键逻辑（.NET 7+/8+，使用 System.IO.Hashing.Crc32C）。本版以 IBufferWriter<byte> 为核心写入接口，并引入 BinaryLogCursor 以支持正/反向读取。
+以下列出主要类型签名与少量关键逻辑（.NET 7+/8+，使用 System.IO.Hashing.Crc32C）。本版以 `IReservableBufferWriter` 为核心写入接口，并引入 BinaryLogCursor 以支持正/反向读取。
 
 ```csharp
 using System;
@@ -241,8 +339,8 @@ using System.Threading;
 using System.Threading.Tasks;
 
 // 常量与格式约定（确定）
-// Record = Magic(4) | EnvLen(4, LE) | Envelope | EnvPad(0~3) | EnvLen(4, LE) | CRC32C(4, LE)
-// CRC32C 覆盖: Envelope + EnvPad + 尾部的 EnvLen；不含头部的 EnvLen 与 Magic。
+// Record = Magic(4) | EnveLen(4, LE) | Envelope | EnvePad(0~3) | EnveLen(4, LE) | CRC32C(4, LE)
+// CRC32C 覆盖: Envelope + EnvePad + 尾部的 EnveLen；不含头部的 EnveLen 与 Magic。
 internal static class BinaryLogFormat
 {
     public const uint MAGIC = 0x474F4C45u; // 'E''L''O''G' (LE)
@@ -266,13 +364,14 @@ public sealed class BinaryLogWriter
     // 构造两种底座：
     public BinaryLogWriter(Stream stream);
     public BinaryLogWriter(Stream stream, BinaryLogWriterOptions options);
-    public BinaryLogWriter(IBufferWriter<byte> bufferWriter);
+    public BinaryLogWriter(IEnvelopeSink sink);
+    public BinaryLogWriter(IReservableBufferWriter writer);
 
     // 最常用：一次性写完整 Envelope
     public void WriteEnvelope(ReadOnlySpan<byte> envelope);
     public ValueTask WriteEnvelopeAsync(ReadOnlyMemory<byte> envelope, CancellationToken ct = default);
 
-    // 作用域写入（可流式）：结束时自动补齐并写入尾长与 CRC32C
+    // 作用域写入（可流式）：返回 EnvelopeScope（IReservableBufferWriter），结束时自动补齐并写入尾长与 CRC32C
     public EnvelopeScope BeginEnvelope(int knownLength = -1);
 
     // 内部/测试可见：
@@ -280,17 +379,44 @@ public sealed class BinaryLogWriter
 }
 
 // Envelope 作用域（确定 using/Dispose 触发 End）
-public ref struct EnvelopeScope : IBufferWriter<byte>, IDisposable, IAsyncDisposable
+// 自身不再维护协议状态，仅把 RecordFramer 暴露为 IReservableBufferWriter 供调用方使用，并在 Dispose 阶段完成 flush。
+public readonly ref struct EnvelopeScope
 {
-    // IBufferWriter<byte>：序列化器通过 GetSpan/GetMemory 写入，然后 Advance(n)
-    public Span<byte> GetSpan(int sizeHint = 0);
-    public Memory<byte> GetMemory(int sizeHint = 0);
-    public void Advance(int count);
+    private readonly RecordFramer _framer;
+    private readonly IEnvelopeSink _sink;
+    private readonly bool _flushOnDispose;
+    private readonly bool _seekable;
+    private readonly Action<RecordWriteResult>? _onCompleted;
 
-    // 结束（同步或异步）：写入 Padding、尾部 EnvLen、CRC32C，并在可 Seek 时回填头长
-    public void Dispose();
-    public ValueTask DisposeAsync();
+    public EnvelopeScope(RecordFramer framer, IEnvelopeSink sink, bool flushOnDispose, bool seekable, Action<RecordWriteResult>? onCompleted = null);
+
+    // 底层写入：简单转发到 RecordFramer
+    public Span<byte> GetSpan(int sizeHint = 0) => _framer.GetSpan(sizeHint);
+    public Memory<byte> GetMemory(int sizeHint = 0) => _framer.GetMemory(sizeHint);
+    public void Advance(int count) => _framer.Advance(count);
+    public Span<byte> ReserveSpan(int count, out int reservationToken, string? tag = null)
+        => _framer.ReserveSpan(count, out reservationToken, tag);
+    public void Commit(int reservationToken) => _framer.Commit(reservationToken);
+
+    // 结束：调用 RecordFramer 完成协议写入，随后交由 sink 处理 flush/seek 回填
+    public void Dispose()
+    {
+        var result = _framer.CompleteEnvelope();
+        _onCompleted?.Invoke(result);
+        if (_flushOnDispose) { _sink.Flush(result); }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        var result = _framer.CompleteEnvelope();
+        _onCompleted?.Invoke(result);
+        return _flushOnDispose ? _sink.FlushAsync(result) : ValueTask.CompletedTask;
+    }
 }
+
+若 `CompleteEnvelope` 时检测到仍有未提交的 reservation，会抛出 `InvalidOperationException` 并拒绝落盘，以保障写入的连续前缀安全。
+
+> 说明：所有协议字段（Magic/长度/Pad/CRC）都集中在 `RecordFramer` 内部维护；`EnvelopeScope` 仅负责生命周期与 sink 通知。如需自定义写入策略，请直接组合或扩展 `RecordFramer`，而不是在作用域包装层重复实现协议逻辑。
 
 // 低级API：面向高级用户的精确控制接口
 // 注：BinaryLogReader 不实现 IDisposable，不承担 Stream 的所有权和关闭义务
@@ -314,7 +440,7 @@ public sealed class BinaryLogReader
     // 返回的 Stream 在下一次移动操作前有效，支持 Seek 和 Length
     public bool TryOpenCurrentStream(out Stream envelopeStream, bool verifyCrc = true);
 
-    // 仅通过 Magic + EnvLen 进行定位（快速移动，不做 CRC）
+    // 仅通过 Magic + EnveLen 进行定位（快速移动，不做 CRC）
     // 注意：这些操作会改变 Reader 的内部状态
     public bool TryMoveNext();
     public bool TryMovePrevious();
@@ -352,53 +478,34 @@ public static IEnumerable<ReadOnlyMemory<byte>> ReadBackward(Stream stream, bool
 */
 
 // 关键逻辑片段（伪代码/示意）
-// BeginEnvelope/Dispose 路径（确定部分）
+// BeginEnvelope/Dispose 路径（围绕 RecordFramer）
 /*
 BinaryLogWriter.BeginEnvelope(int knownLength)
 {
     WriteUInt32LE(MAGIC);
-    if (knownLength >= 0) {
-        WriteUInt32LE((uint)knownLength); // 头部长度
-    // 返回作用域（IBufferWriter）：序列化器直接写 payload；Advance 时累加 CRC 与落盘
-    } else if (CanSeek) {
-        // 记录头部长度占位位置，先写 0；Dispose 时回填
-        int placeToken = WritePlaceholder32();
-        // 返回作用域，累计 writtenLen
-    } else {
-        // 非 seek 且未知长度：提供可选的内存缓冲回退
-        // 根据 WriterOptions.AllowMemoryBuffering 决定是否启用内存缓冲
-        // 若禁用则抛异常，若启用则使用内部 MemoryStream 缓冲
-        if (!_options.AllowMemoryBuffering) {
-            throw new InvalidOperationException("Unknown length on non-seekable stream requires AllowMemoryBuffering=true");
-        }
-        // 返回基于内存缓冲的作用域
-    }
+    WriteUInt32LE(knownLength >= 0 ? (uint)knownLength : 0u);
+
+    var writer = _sink.TryCreateReservableWriter(knownLength >= 0 ? knownLength : null)
+        ?? _chunkedFallback; // 缺省回退到 ChunkedReservableWriter + inner writer
+
+    var framer = new RecordFramer(writer, envelopeLengthHint: knownLength >= 0 ? knownLength : null);
+    framer.BeginEnvelope();
+    return new EnvelopeScope(
+        framer,
+        _sink,
+        flushOnDispose: true,
+        seekable: _canSeek,
+        onCompleted: result => {
+            if (result.CanPatchHeader && _canSeek) {
+                FillPlaceholder32(result.HeaderReservationToken, result.EnvelopeLength);
+            }
+        });
 }
 
 EnvelopeScope.Dispose() // End
 {
-    // 计算 padding
-    uint len = _writtenLength;
-    int pad = BinaryLogFormat.PaddingOf4(len);
-    WriteZeroBytes(pad);
-
-    // 写尾部长度（LE），并将该 4B 也纳入 CRC 计算范围
-    Span<byte> tmp = stackalloc byte[4];
-    BinaryPrimitives.WriteUInt32LittleEndian(tmp, len);
-    _crc.Append(tmp);
-    Write(tmp);
-
-    // 取 CRC32C（4B）并以 LE 写入
-    Span<byte> crc = stackalloc byte[4];
-    _crc.GetCurrentHash(crc); // System.IO.Hashing.Crc32C
-    uint crc32c = BinaryPrimitives.ReadUInt32LittleEndian(crc);
-    BinaryPrimitives.WriteUInt32LittleEndian(tmp, crc32c);
-    Write(tmp);
-
-    // 若支持回填头长（seek），回到占位位置写入 len
-    if (_canSeek) FillPlaceholder32(_lenPlaceToken, len);
-
-    Flush();
+    // 记录所有协议字段写入由 RecordFramer.CompleteEnvelope 完成；
+    // EnvelopeScope.Dispose 仅负责调用 sink.Flush（若需要），并根据回调执行 seek 回填。
 }
 */
 
@@ -430,10 +537,9 @@ BinaryLogWriter.WriteEnvelope(ReadOnlySpan<byte> env)
 */
 ```
 
-注：
-- 若底层不支持seek且BeginEnvelope时未知长度，则抛异常。为的是简化内部逻辑，此时让应用自己处理传冲更明确和灵活。若knownLength与我们内部追踪写入统计得出的EnvelopLength不同，则抛异常。
-- EnvelopeScope 以 IBufferWriter<byte> 为唯一写入入口；如需 Stream 适配可选择性提供包装。
-- Reader 的 TryReadCurrent 默认执行 CRC 校验；TryMoveNext/TryMovePrevious 仅依赖 Magic 与 EnvLen 进行快速移动。
+- 非 seek 场景由 sink/适配层决定是否创建 `ChunkedReservableWriter` 作为缓冲回退，核心层只负责驱动协议。
+- BeginEnvelope 对外仅暴露 `IReservableBufferWriter` 入口；如需 Stream 适配可选择性提供包装或桥接。
+- Reader 的 TryReadCurrent 默认执行 CRC 校验；TryMoveNext/TryMovePrevious 仅依赖 Magic 与 EnveLen 进行快速移动。
 - Reader 在检测到尾部不完整记录时应标记 IncompleteTailDetected，供调用方选择截断或忽略。
 
 ## API设计决策说明
@@ -521,7 +627,7 @@ public enum MirrorPolicy
 ```
 实现要点：
 - **核心基于 Stream 实现**：所有检查和修复逻辑的核心实现都基于 `Stream` 接口，便于测试（可使用 `MemoryStream`）和提高灵活性。文件路径版本的重载内部通过打开 `FileStream` 调用核心 Stream 版本实现。
-- **Tail 检查**：从文件尾向前探测 `| EnvLen | CRC32C |`，计算上溯起点，校验 Magic 与头长一致；若校验失败，在 `resyncWindowBytes` 范围内按字节回退重同步；超出窗口则判为 CorruptedTail。
+- **Tail 检查**：从文件尾向前探测 `| EnveLen | CRC32C |`，计算上溯起点，校验 Magic 与头长一致；若校验失败，在 `resyncWindowBytes` 范围内按字节回退重同步；超出窗口则判为 CorruptedTail。
 - **Tail 修复**：仅做截断（`Stream.SetLength`），不改写中间内容；若策略含重同步，则先应用"在窗口内找到的下一条可信帧"的边界再截断。
 - **镜像比对**：同时扫描两文件的公共前缀边界与各自最后一条完整记录；若分歧，依据策略：
     - PreferLongerValidTail：选取拥有更长有效尾部的副本，复制差异块或将另一侧截断至相同边界；
@@ -529,7 +635,7 @@ public enum MirrorPolicy
 - **并发与安全**：修复操作要求独占访问（可选加文件锁）；提供 dryRun 预演计划，便于审计/回滚。
 
 ## 位移公式与寻址（明确）
-- 记 `len = EnvLen`，`pad = (4 - (len & 3)) & 3`，等价于 `pad = BinaryLogFormat.PaddingOf4(len)`；`aligned = BinaryLogFormat.AlignedLength4(len) = len + pad`。
+- 记 `len = EnveLen`，`pad = (4 - (len & 3)) & 3`，等价于 `pad = BinaryLogFormat.PaddingOf4(len)`；`aligned = BinaryLogFormat.AlignedLength4(len) = len + pad`。
 - 前向步进：`next = pos + 4 /*Magic*/ + 4 /*HeadLen*/ + len + pad + 4 /*TailLen*/ + 4 /*CRC*/`。
 - 反向定位：`tailLenPos = pos - 8`；`prevLen = u32LE(tailLenPos)`；`prevPad = BinaryLogFormat.PaddingOf4(prevLen)`；`start = tailLenPos - (8 + prevLen + prevPad)`，再校验 `[start] == MAGIC` 且 头长==`prevLen`（可选再做 CRC）。
 
@@ -589,10 +695,10 @@ Reader/Writer 默认在打开时执行“最小校验”，遇到上述任一错
       }
   } // stream 在此处被正确关闭
   ```
-- Writer 对 Stream 建议包裹缓冲（如 BufferedStream 或自管 ArrayPool<byte> 缓冲），减少小块写；对 IBufferWriter 路径尽量批量 Append 计算 CRC 再写入。
+- Writer 对 Stream 建议包裹缓冲（如 BufferedStream 或自管 ArrayPool<byte> 缓冲），减少小块写；对 `IReservableBufferWriter` 路径尽量批量 Append/Commit，避免频繁触发 flush。
 
 ## 边界与限制（明确）
-- EnvLen 为 uint32（LE）：理论上最大 4 GiB-1；实践中建议配置上限（例如 1 GiB）以免误写造成内存压力。
+- EnveLen 为 uint32（LE）：理论上最大 4 GiB-1；实践中建议配置上限（例如 1 GiB）以免误写造成内存压力。
 - 允许零长度 Envelope（pad=0）；需要测试覆盖。
 - CRC32C 仅用于错误检测而非抗篡改；加密/认证放在上层 Envelope。
 
@@ -625,5 +731,6 @@ Reader/Writer 默认在打开时执行“最小校验”，遇到上述任一错
 - 对齐：len=1..5 的 pad 正确；下一条 Magic 位于 4 字节边界。
 - 尾部异常：缺 CRC、缺尾长、缺部分 payload，能检测并（通过工具）安全截断。
 - 中间损坏：随机翻转若干字节，能靠重同步跳过损坏块并继续遍历。
-- Seek/非Seek：非 Seek + 未知长度抛错；Seek 路径能回填头长。
+- Seek/非Seek：非 Seek + 未知长度时，通过 `ChunkedReservableWriter` 缓冲并验证 flush 触发；Seek 路径能回填头长且不漏写。
+- Reservable 契约：多 reservation、乱序 `Commit`、重复 `Commit`、提前 `Dispose` 等场景下，确认 `ChunkedReservableWriter` 与 `EnvelopeScope` 行为符合预期（未提交数据不会被 flush，释放后归还 ArrayPool chunk）。
 - 大尺寸：>100MB 连续写读，内存占用与吞吐可接受。
