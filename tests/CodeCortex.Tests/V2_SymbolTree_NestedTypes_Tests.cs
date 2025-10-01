@@ -126,7 +126,7 @@ public class SymbolTreeNestedTypesTests {
 
         var entry = builder.CreateIntermediateTypeEntry(nsSegments, typeSegments, currentTypeIndex: 0, assembly: AssemblyName);
 
-        Assert.Equal("Outer`1", entry.FqnLeaf);
+        Assert.Equal("Outer`1", entry.DisplayName);
         Assert.Equal("T:TestNs.Outer`1", entry.DocCommentId);
     }
 
@@ -138,7 +138,7 @@ public class SymbolTreeNestedTypesTests {
 
         var entry = builder.CreateIntermediateTypeEntry(nsSegments, typeSegments, currentTypeIndex: 1, assembly: AssemblyName);
 
-        Assert.Equal("Middle`2", entry.FqnLeaf);
+        Assert.Equal("Middle`2", entry.DisplayName);
         Assert.Equal("T:TestNs.Outer`1+Middle`2", entry.DocCommentId);
     }
 
@@ -188,13 +188,22 @@ public class SymbolTreeNestedTypesTests {
             ? string.Join('.', formatted)
             : $"{ns}.{string.Join('.', formatted)}";
 
+        var namespaceSegments = string.IsNullOrEmpty(ns)
+            ? Array.Empty<string>()
+            : ns.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var typeSegments = SymbolNormalization
+            .SplitSegmentsWithNested(body)
+            .Skip(namespaceSegments.Length)
+            .ToArray();
+
         return new SymbolEntry(
             DocCommentId: docCommentId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: ns,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: StripGenericArity(typeNames[^1])
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: typeSegments,
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: StripGenericArity(typeNames[^1])
         );
     }
 

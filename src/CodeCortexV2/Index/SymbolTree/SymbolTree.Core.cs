@@ -42,6 +42,8 @@ internal sealed partial class SymbolTreeB : ISymbolIndex {
         _freeHead
     );
 
+    internal ImmutableArray<NodeB> DebugNodes => _nodes;
+
     public static SymbolTreeB Empty { get; } = new(
         ImmutableArray<NodeB>.Empty,
         new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal),

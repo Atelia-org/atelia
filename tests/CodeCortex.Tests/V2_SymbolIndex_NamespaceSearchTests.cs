@@ -13,18 +13,16 @@ namespace CodeCortex.Tests;
 /// 仅覆盖当前已实现能力：精确匹配、大小写不敏感、泛型元数不敏感（不包含 Partial/Wildcard/Fuzzy）。
 /// </summary>
 public class V2_SymbolIndex_NamespaceSearchTests {
-    // 构造命名空间条目（与 V2_SymbolTree_SearchTests 中保持一致风格）
-    private static SymbolEntry Ns(string name, string? parent = null) {
-        var fqn = "global::" + name;
-        var simple = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
-        return new SymbolEntry(
-            DocCommentId: "N:" + name,
-            Assembly: string.Empty,
-            Kind: SymbolKinds.Namespace,
-            ParentNamespaceNoGlobal: parent ?? (name.Contains('.') ? name[..name.LastIndexOf('.')] : string.Empty),
-            FqnNoGlobal: name,
-            FqnLeaf: simple
-        );
+    private static string[] BuildNamespaceSegments(string ns)
+        => string.IsNullOrEmpty(ns)
+            ? Array.Empty<string>()
+            : ns.Split('.', StringSplitOptions.RemoveEmptyEntries);
+
+    private static string[] BuildTypeSegments(string docId, int namespaceSegmentCount) {
+        var body = docId.Substring(2);
+        var all = SymbolNormalization.SplitSegmentsWithNested(body);
+        if (namespaceSegmentCount == 0) { return all; }
+        return all.Skip(namespaceSegmentCount).ToArray();
     }
 
     // 构造类型条目（与 V2_SymbolTree_SearchTests 一致）
@@ -35,22 +33,20 @@ public class V2_SymbolIndex_NamespaceSearchTests {
             : $"global::{ns}.{nameBase}";
         string fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
         string simple = nameBase;
-        string parentNs = ns;
+        var namespaceSegments = BuildNamespaceSegments(ns);
         return new SymbolEntry(
             DocCommentId: docId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: parentNs,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: simple
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: BuildTypeSegments(docId, namespaceSegments.Length),
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: simple
         );
     }
 
     private static SymbolTreeB BuildFooBarSample() {
-        var entries = new List<SymbolEntry>
-        {
-            Ns("Foo"),
-            Ns("Foo.Bar", "Foo"),
+        var entries = new[] {
             Ty("Foo.Bar", "Baz", 0, "TestAsm")
         };
         return BuildTree(entries);
@@ -123,7 +119,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
 
     private static SymbolTreeB BuildTree(IEnumerable<SymbolEntry> entries)
         => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
-            new SymbolsDelta(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
+            SymbolsDeltaContract.Normalize(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
         );
 }
 

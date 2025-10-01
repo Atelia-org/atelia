@@ -11,11 +11,16 @@ namespace CodeCortexV2.Index.SymbolTreeInternal;
 /// <summary>
 /// Mutable construction surface shared by <see cref="SymbolTreeB.WithDelta"/>。
 /// 承载节点数组、别名桶与常用辅助操作，后续阶段将进一步拓展至完整 Builder 生命周期。
-/// 当前阶段仅由 <see cref="SymbolTreeB.WithDelta"/> 使用，保持逻辑不变。调用方必须遵守 <see cref="SymbolsDelta"/>
-/// 的排序契约（TypeAdds 按 DocCommentId.Length 升序、TypeRemovals 降序，DocId 起始为 "T:"）；当发现违背
-/// 契约或父节点缺失时，本 Builder 会优先选择 fail-fast（Debug.Assert 或抛异常）。
+/// 当前阶段仅由 <see cref="SymbolTreeB.WithDelta"/> 使用，并默认运行“单节点”拓扑：
+/// - 每个类型节点直接承载结构与条目信息（DocCommentId + Assembly 唯一）；
+/// - 旧版占位节点（Entry 为 null）只会在加载历史快照时短暂存在，并会在下一次 delta
+///   通过 <see cref="TidyTypeSiblings"/>/<see cref="CollapseEmptyTypeAncestors"/> 被回收；
+/// - 调用方必须遵守 <see cref="SymbolsDelta"/> 的排序契约（TypeAdds 按 DocCommentId.Length 升序、
+///   TypeRemovals 降序，DocId 起始为 "T:"）。当发现违背契约或父节点缺失时，本 Builder 会优先选择
+///   fail-fast（Debug.Assert 或抛异常）。
 /// </summary>
 internal sealed class SymbolTreeBuilder {
+
     internal List<NodeB> Nodes { get; }
     internal Dictionary<string, ImmutableArray<AliasRelation>> ExactAliases { get; }
     internal Dictionary<string, ImmutableArray<AliasRelation>> NonExactAliases { get; }
@@ -27,9 +32,6 @@ internal sealed class SymbolTreeBuilder {
     private int _freeHead;
     private int _freedThisDelta;
     private int _reusedThisDelta;
-
-    private Dictionary<(string DocId, string Assembly), List<int>>? _entryReusePool;
-    private Dictionary<(string DocId, string Assembly), int>? _entryReuseCursor;
 
     internal static SymbolTreeBuilder CreateEmpty()
         => new(
@@ -75,8 +77,15 @@ internal sealed class SymbolTreeBuilder {
 
         var cascadeCandidates = new HashSet<int>();
         ApplyTypeRemovals(delta.TypeRemovals, cascadeCandidates);
-        ApplyTypeAdds(delta.TypeAdds);
+        ApplyTypeAddsSingleNode(delta.TypeAdds);
         int deletedNamespaces = CascadeEmptyNamespaces(cascadeCandidates);
+
+        if (_reusedThisDelta > 0 || _freedThisDelta > 0) {
+            DebugUtil.Print(
+                "SymbolTree.SingleNode.Freelist",
+                $"Delta freelist stats: reused={_reusedThisDelta}, freed={_freedThisDelta}, freeHead={_freeHead}"
+            );
+        }
 
         return new DeltaStats(
             delta.TypeAdds?.Count ?? 0,
@@ -134,10 +143,10 @@ internal sealed class SymbolTreeBuilder {
             var segs = SymbolNormalization.SplitSegmentsWithNested(s);
             DebugUtil.Print("SymbolTree.Removal.Trace", $"Segmented '{s}' into: [{string.Join(", ", segs)}]");
             var leaf = segs.Length > 0 ? segs[^1] : s;
-            var (bn0, ar0) = ParseName(leaf);
-            var aliasKey = ar0 > 0 ? (bn0 + "`" + ar0.ToString()) : bn0;
-            DebugUtil.Print("SymbolTree.Removal.Trace", $"Generated aliasKey='{aliasKey}' from leaf='{leaf}' (bn={bn0}, ar={ar0})");
+            var aliasKey = string.IsNullOrEmpty(leaf) ? s : leaf;
+            DebugUtil.Print("SymbolTree.Removal.Trace", $"Generated aliasKey='{aliasKey}' from leaf='{leaf}'");
 
+            bool removedAny = false;
             if (ExactAliases.TryGetValue(aliasKey, out var rels) && !rels.IsDefaultOrEmpty) {
                 DebugUtil.Print("SymbolTree.Removal.Trace", $"Found {rels.Length} candidates in alias bucket '{aliasKey}': [{string.Join(", ", rels.Select(r => $"nodeId={r.NodeId}"))}]");
                 foreach (var r in rels) {
@@ -171,6 +180,10 @@ internal sealed class SymbolTreeBuilder {
                     }
 
                     if (shouldRemove) {
+                        int parentBefore = Nodes[nid].Parent;
+                        string removedName = Nodes[nid].Name;
+                        string removedDocId = entry?.DocCommentId ?? typeKey.DocCommentId;
+                        string removedAssembly = entry?.Assembly ?? typeKey.Assembly ?? string.Empty;
                         int nsAncestor = FindNearestNamespaceAncestor(nid);
                         if (nsAncestor > 0) {
                             DebugUtil.Print("SymbolTree.WithDelta", $"Type removal matched node={nid} name={Nodes[nid].Name}, nsAncestorId={nsAncestor} nsName={Nodes[nsAncestor].Name}");
@@ -178,7 +191,12 @@ internal sealed class SymbolTreeBuilder {
                         DebugUtil.Print("SymbolTree.WithDelta", $"Removing type subtree nid={nid}, name={Nodes[nid].Name}, docId={entry?.DocCommentId ?? "null"}, asm={entry?.Assembly ?? "null"}, nsAncestor={nsAncestor}");
                         DebugUtil.Print("SymbolTree.Removal.Trace", $"About to call RemoveTypeSubtree for nid={nid}");
                         RemoveTypeSubtree(nid);
+                        if (parentBefore >= 0) {
+                            TidyTypeSiblings(parentBefore, removedName, removedDocId, removedAssembly, keepNodeId: -1);
+                            CollapseEmptyTypeAncestors(parentBefore);
+                        }
                         if (nsAncestor > 0) { cascadeCandidates.Add(nsAncestor); }
+                        removedAny = true;
                     }
                     else if (entry is not null && string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
                         DebugUtil.Print("SymbolTree.WithDelta", $"Skip removal for docId={entry.DocCommentId}: existingAsm={entry.Assembly} != targetAsm={typeKey.Assembly}");
@@ -188,120 +206,108 @@ internal sealed class SymbolTreeBuilder {
             else {
                 DebugUtil.Print("SymbolTree.Removal.Trace", $"No candidates found for aliasKey='{aliasKey}' (bucket empty or missing)");
             }
+
+            if (!removedAny) {
+                int existingNode = FindNodeByDocIdAndAssembly(typeKey.DocCommentId, typeKey.Assembly);
+                if (existingNode >= 0) { throw new InvalidOperationException($"TypeRemovals entry '{typeKey.DocCommentId}' (assembly '{typeKey.Assembly}') exists in index but alias lookup failed. Aborting to avoid divergence."); }
+            }
         }
     }
 
-    private void ApplyTypeAdds(IReadOnlyList<SymbolEntry>? additions) {
+    private void ApplyTypeAddsSingleNode(IReadOnlyList<SymbolEntry>? additions) {
         if (additions is null || additions.Count == 0) { return; }
 
-        var reusePool = new Dictionary<(string DocId, string Assembly), List<int>>();
-        var materializedDocIds = new HashSet<string>(StringComparer.Ordinal);
-        for (int idx = 0; idx < Nodes.Count; idx++) {
-            var node = Nodes[idx];
-            if (node.Parent < 0) { continue; }
-            var entry = node.Entry;
-            if (entry is null) { continue; }
-            if (!string.IsNullOrEmpty(entry.DocCommentId) && entry.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) {
-                materializedDocIds.Add(entry.DocCommentId);
-            }
-            var key = (entry.DocCommentId ?? string.Empty, entry.Assembly ?? string.Empty);
-            if (!reusePool.TryGetValue(key, out var list)) {
-                list = new List<int>();
-                reusePool[key] = list;
-            }
-            list.Add(idx);
-        }
+        int createdCount = 0;
+        int convertedCount = 0;
+        int reusedCount = 0;
 
-        _entryReusePool = reusePool;
-        _entryReuseCursor = new Dictionary<(string DocId, string Assembly), int>();
+        foreach (var e in additions) {
+            var identifier = !string.IsNullOrEmpty(e.DocCommentId)
+                ? e.DocCommentId
+                : (string.IsNullOrEmpty(e.FullDisplayName) ? "<unknown>" : e.FullDisplayName);
 
-        try {
-            foreach (var e in additions) {
-                if ((e.Kind & SymbolKinds.Type) == 0) { continue; }
+            if ((e.Kind & SymbolKinds.Type) == 0) { throw new InvalidOperationException($"TypeAdds entry '{identifier}' must have Kind=Type."); }
 
-                var nsSegs = SplitNamespace(e.ParentNamespaceNoGlobal);
-                int nsParent = EnsureNamespaceChain(nsSegs);
+            if (string.IsNullOrEmpty(e.DocCommentId) || !e.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) { throw new InvalidOperationException($"TypeAdds entry '{identifier}' must provide a DocCommentId starting with 'T:'."); }
 
-                if (!(e.DocCommentId?.StartsWith("T:", StringComparison.Ordinal) == true)) { throw new InvalidOperationException($"TypeAdds entry must have a DocCommentId starting with 'T:' (DocCommentId='{e.DocCommentId ?? "<null>"}')"); }
-                if (string.IsNullOrWhiteSpace(e.Assembly)) { throw new InvalidOperationException($"TypeAdds entry '{e.DocCommentId}' must specify Assembly"); }
+            var nsSegs = e.NamespaceSegments ?? Array.Empty<string>();
+            int currentParent = EnsureNamespaceChain(nsSegs);
 
-                var s = e.DocCommentId[2..];
-                var allSegs = SymbolNormalization.SplitSegmentsWithNested(s);
+            string[] typeSegs = e.TypeSegments ?? Array.Empty<string>();
+            if (typeSegs.Length == 0) {
+                var docIdBody = e.DocCommentId[2..];
+                var allSegs = SymbolNormalization.SplitSegmentsWithNested(docIdBody);
                 int skip = nsSegs.Length;
                 if (skip < 0 || skip > allSegs.Length) { skip = 0; }
-                string[] typeSegs = allSegs.Skip(skip).ToArray();
-
-                int currentParent = nsParent;
-                for (int i = 0; i < typeSegs.Length; i++) {
-                    var (bn, ar) = ParseName(typeSegs[i]);
-                    var nodeName = ar > 0 ? bn + "`" + ar.ToString() : bn;
-                    bool isLast = i == typeSegs.Length - 1;
-                    DebugUtil.Print("SymbolTreeB.WithDelta", $"处理类型段 {i}: nodeName='{nodeName}', isLast={isLast}");
-
-                    if (!isLast) {
-                        int structuralParent = currentParent;
-                        int structuralNode = FindTypeChildPreferStructural(structuralParent, nodeName);
-                        SymbolEntry? removedEntry = null;
-
-                        if (structuralNode < 0) {
-                            structuralNode = NewChild(structuralParent, nodeName, NodeKind.Type, entry: null);
-                            AddAliasesForNode(structuralNode);
-                        }
-                        else {
-                            var existing = Nodes[structuralNode];
-                            if (existing.Entry is SymbolEntry existingEntry) {
-                                removedEntry = existingEntry;
-                                RemoveNodeFromPool(existingEntry, structuralNode);
-                                ReplaceNodeEntry(structuralNode, null, refreshAliases: false);
-                            }
-                        }
-
-                        if (removedEntry is SymbolEntry preservedEntry) {
-                            EnsureTypeEntryNode(structuralParent, nodeName, preservedEntry);
-                        }
-
-                        var intermediateDocId = BuildIntermediateTypeDocId(nsSegs, typeSegs, i);
-                        if (!materializedDocIds.Contains(intermediateDocId)) { throw new InvalidOperationException($"TypeAdds entry '{e.DocCommentId}' depends on missing parent '{intermediateDocId}'. Ensure parent types are materialized earlier in the delta."); }
-
-                        currentParent = structuralNode;
-                        continue;
-                    }
-
-                    string docId = e.DocCommentId ?? string.Empty;
-                    string assembly = e.Assembly ?? string.Empty;
-                    int placeholderNode;
-                    int targetNode;
-                    if (TryReuseEntryNodeFromPool(e, out var reusedLeaf)) {
-                        targetNode = reusedLeaf;
-                        ReplaceNodeEntry(targetNode, e, refreshAliases: true);
-                    }
-                    else {
-                        int entryNode = FindTypeEntryNode(currentParent, nodeName, docId, assembly, out placeholderNode);
-                        if (entryNode >= 0) {
-                            targetNode = entryNode;
-                            ReplaceNodeEntry(targetNode, e, refreshAliases: true);
-                        }
-                        else if (placeholderNode >= 0) {
-                            targetNode = placeholderNode;
-                            ReplaceNodeEntry(targetNode, e, refreshAliases: true);
-                        }
-                        else {
-                            targetNode = NewChild(currentParent, nodeName, NodeKind.Type, e);
-                            AddAliasesForNode(targetNode);
-                        }
-                    }
-
-                    materializedDocIds.Add(docId);
-                }
-
-                if (!string.IsNullOrEmpty(e.DocCommentId)) {
-                    materializedDocIds.Add(e.DocCommentId);
+                typeSegs = allSegs.Skip(skip).ToArray();
+                if (typeSegs.Length == 0) {
+                    typeSegs = new[] { docIdBody };
                 }
             }
+
+            string assembly = e.Assembly ?? string.Empty;
+
+            for (int i = 0; i < typeSegs.Length; i++) {
+                var nodeName = typeSegs[i];
+                bool isLast = i == typeSegs.Length - 1;
+                var targetEntry = isLast
+                    ? e
+                    : CreateIntermediateTypeEntry(nsSegs, typeSegs, i, assembly);
+
+                var docId = targetEntry.DocCommentId ?? string.Empty;
+                int parentBefore = currentParent;
+
+                int structuralNode = FindStructuralTypeChild(parentBefore, nodeName);
+                if (structuralNode >= 0) {
+                    var structuralEntry = Nodes[structuralNode].Entry;
+                    bool alreadyMatches = structuralEntry is not null &&
+                        string.Equals(structuralEntry.DocCommentId, docId, StringComparison.Ordinal) &&
+                        string.Equals(structuralEntry.Assembly ?? string.Empty, assembly, StringComparison.Ordinal);
+                    if (!ReferenceEquals(structuralEntry, targetEntry)) {
+                        ReplaceNodeEntry(structuralNode, targetEntry, refreshAliases: true);
+                    }
+
+                    currentParent = structuralNode;
+                    TidyTypeSiblings(parentBefore, nodeName, docId, assembly, structuralNode);
+                    if (alreadyMatches) { reusedCount++; }
+                    else { convertedCount++; }
+                    continue;
+                }
+
+                int placeholderNode;
+                int existing = FindTypeEntryNode(parentBefore, nodeName, docId, assembly, out placeholderNode);
+                if (existing >= 0) {
+                    var existingEntry = Nodes[existing].Entry;
+                    if (!ReferenceEquals(existingEntry, targetEntry)) {
+                        ReplaceNodeEntry(existing, targetEntry, refreshAliases: true);
+                    }
+                    currentParent = existing;
+                    TidyTypeSiblings(parentBefore, nodeName, docId, assembly, existing);
+                    reusedCount++;
+                    continue;
+                }
+
+                if (placeholderNode >= 0) {
+                    ReplaceNodeEntry(placeholderNode, targetEntry, refreshAliases: true);
+                    currentParent = placeholderNode;
+                    TidyTypeSiblings(parentBefore, nodeName, docId, assembly, placeholderNode);
+                    convertedCount++;
+                    continue;
+                }
+
+                int newNode = NewChild(parentBefore, nodeName, NodeKind.Type, targetEntry);
+                AddAliasesForNode(newNode);
+                currentParent = newNode;
+                TidyTypeSiblings(parentBefore, nodeName, docId, assembly, newNode);
+                createdCount++;
+            }
         }
-        finally {
-            _entryReusePool = null;
-            _entryReuseCursor = null;
+
+        if (createdCount > 0 || convertedCount > 0 || reusedCount > 0) {
+            DebugUtil.Print(
+                "SymbolTree.SingleNode",
+                $"Prototype adds: created={createdCount}, converted={convertedCount}, reused={reusedCount}"
+            );
         }
     }
 
@@ -340,11 +346,6 @@ internal sealed class SymbolTreeBuilder {
             ? Array.Empty<string>()
             : ns!.Split('.', StringSplitOptions.RemoveEmptyEntries);
 
-    internal static (string BaseName, int Arity) ParseName(string segment) {
-        var (baseName, arity, _) = SymbolNormalization.ParseGenericArity(segment);
-        return (baseName, arity);
-    }
-
     private static string BuildIntermediateTypeDocId(string[] nsSegments, string[] typeSegments, int currentTypeIndex) {
         var nsPrefix = nsSegments.Length > 0 ? string.Join('.', nsSegments) + "." : string.Empty;
         var typePrefix = string.Join("+", typeSegments.Take(currentTypeIndex + 1));
@@ -364,19 +365,84 @@ internal sealed class SymbolTreeBuilder {
         return -1;
     }
 
-    private int FindTypeChildPreferStructural(int parent, string name) {
+    private int FindStructuralTypeChild(int parent, string name) {
         if (parent < 0 || parent >= Nodes.Count) { return -1; }
         int current = Nodes[parent].FirstChild;
-        int fallback = -1;
         while (current >= 0) {
             var node = Nodes[current];
-            if (node.Kind == NodeKind.Type && string.Equals(node.Name, name, StringComparison.Ordinal)) {
-                if (node.Entry is null) { return current; }
-                if (fallback < 0) { fallback = current; }
-            }
+            if (node.Kind == NodeKind.Type && node.Entry is null && string.Equals(node.Name, name, StringComparison.Ordinal)) { return current; }
             current = node.NextSibling;
         }
-        return fallback;
+        return -1;
+    }
+
+    private void TidyTypeSiblings(int parentId, string nodeName, string docId, string assembly, int keepNodeId = -1) {
+        if (parentId < 0 || parentId >= Nodes.Count) { return; }
+        int current = Nodes[parentId].FirstChild;
+        string assemblyNorm = assembly ?? string.Empty;
+
+        while (current >= 0) {
+            int next = Nodes[current].NextSibling;
+            if (keepNodeId >= 0 && current == keepNodeId) {
+                current = next;
+                continue;
+            }
+
+            var node = Nodes[current];
+            if (node.Kind != NodeKind.Type || !string.Equals(node.Name, nodeName, StringComparison.Ordinal)) {
+                current = next;
+                continue;
+            }
+
+            var entry = node.Entry;
+            bool matchesDoc = entry is not null &&
+                !string.IsNullOrEmpty(docId) &&
+                string.Equals(entry.DocCommentId, docId, StringComparison.Ordinal) &&
+                string.Equals(entry.Assembly ?? string.Empty, assemblyNorm, StringComparison.Ordinal);
+
+            if (matchesDoc) {
+                DebugUtil.Print("SymbolTree.SingleNode", $"Removing duplicate type nodeId={current} docId={docId} assembly={assemblyNorm}");
+                RemoveAliasesForNode(current);
+                DetachNode(current);
+            }
+            else if (entry is null && node.FirstChild < 0) {
+                DebugUtil.Print("SymbolTree.SingleNode", $"Removing empty structural placeholder nodeId={current} name={nodeName}");
+                RemoveAliasesForNode(current);
+                DetachNode(current);
+            }
+
+            current = next;
+        }
+    }
+
+    private void CollapseEmptyTypeAncestors(int startNodeId) {
+        int current = startNodeId;
+        while (current > 0 && current < Nodes.Count) {
+            var node = Nodes[current];
+            if (node.Parent < 0) { break; }
+
+            if (node.Kind != NodeKind.Type) {
+                current = node.Parent;
+                continue;
+            }
+
+            if (node.Entry is null && node.FirstChild < 0) {
+                int parent = node.Parent;
+                DebugUtil.Print("SymbolTree.SingleNode", $"Removing empty ancestor type nodeId={current} name={node.Name}");
+                RemoveAliasesForNode(current);
+                DetachNode(current);
+                current = parent;
+                continue;
+            }
+
+            if (node.Entry is SymbolEntry entry) {
+                var docId = entry.DocCommentId ?? string.Empty;
+                var assembly = entry.Assembly ?? string.Empty;
+                TidyTypeSiblings(node.Parent, node.Name, docId, assembly, keepNodeId: current);
+            }
+
+            current = node.Parent;
+        }
     }
 
     private int FindTypeEntryNode(int parent, string name, string docId, string assembly, out int placeholderNode) {
@@ -401,75 +467,18 @@ internal sealed class SymbolTreeBuilder {
         return -1;
     }
 
-    private void EnsureTypeEntryNode(int parent, string name, SymbolEntry entry) {
-        if (TryReuseEntryNodeFromPool(entry, out var reusedNode)) {
-            ReplaceNodeEntry(reusedNode, entry, refreshAliases: true);
-            return;
+    internal int FindNodeByDocIdAndAssembly(string docCommentId, string? assembly) {
+        if (string.IsNullOrEmpty(docCommentId)) { return -1; }
+        string assemblyNorm = assembly ?? string.Empty;
+        for (int i = 0; i < Nodes.Count; i++) {
+            if (Nodes[i].Kind != NodeKind.Type) { continue; }
+            var entry = Nodes[i].Entry;
+            if (entry is null) { continue; }
+            if (!string.Equals(entry.DocCommentId, docCommentId, StringComparison.Ordinal)) { continue; }
+            var entryAsm = entry.Assembly ?? string.Empty;
+            if (string.Equals(entryAsm, assemblyNorm, StringComparison.Ordinal)) { return i; }
         }
-
-        string docId = entry.DocCommentId ?? string.Empty;
-        string assembly = entry.Assembly ?? string.Empty;
-        int existing = FindTypeEntryNode(parent, name, docId, assembly, out int placeholderNode);
-
-        if (existing >= 0) {
-            var existingNode = Nodes[existing];
-            if (!ReferenceEquals(existingNode.Entry, entry)) {
-                ReplaceNodeEntry(existing, entry, refreshAliases: true);
-            }
-            return;
-        }
-
-        if (placeholderNode >= 0) {
-            ReplaceNodeEntry(placeholderNode, entry, refreshAliases: true);
-            return;
-        }
-
-        int newNode = NewChild(parent, name, NodeKind.Type, entry);
-        AddAliasesForNode(newNode);
-    }
-
-    /// <summary>
-    /// Retrieve the next cached node (matched by DocId+Assembly) that can be reused for the provided entry.
-    /// Nodes are collected during <see cref="ApplyTypeAdds"/> to minimize churn when types are updated.
-    /// </summary>
-    private bool TryReuseEntryNodeFromPool(SymbolEntry entry, out int nodeId) {
-        nodeId = -1;
-        if (_entryReusePool is null || _entryReuseCursor is null) { return false; }
-
-        var key = (entry.DocCommentId ?? string.Empty, entry.Assembly ?? string.Empty);
-        if (!_entryReusePool.TryGetValue(key, out var list) || list is null) { return false; }
-
-        if (!_entryReuseCursor.TryGetValue(key, out var cursor)) { cursor = 0; }
-        while (cursor < list.Count) {
-            int candidate = list[cursor];
-            cursor++;
-            if (candidate >= 0 && candidate < Nodes.Count && Nodes[candidate].Parent >= 0) {
-                _entryReuseCursor[key] = cursor;
-                nodeId = candidate;
-                return true;
-            }
-        }
-
-        _entryReuseCursor[key] = cursor;
-        return false;
-    }
-
-    /// <summary>
-    /// Remove a node from the reuse pool once it has been repurposed, keeping cursor state consistent.
-    /// </summary>
-    private void RemoveNodeFromPool(SymbolEntry entry, int nodeId) {
-        if (_entryReusePool is null || _entryReuseCursor is null) { return; }
-
-        var key = (entry.DocCommentId ?? string.Empty, entry.Assembly ?? string.Empty);
-        if (!_entryReusePool.TryGetValue(key, out var list) || list is null) { return; }
-
-        int index = list.IndexOf(nodeId);
-        if (index < 0) { return; }
-
-        list.RemoveAt(index);
-        if (_entryReuseCursor.TryGetValue(key, out var cursor) && cursor > index) {
-            _entryReuseCursor[key] = cursor - 1;
-        }
+        return -1;
     }
 
     internal void ReplaceNode(int index, NodeB node)
@@ -621,7 +630,15 @@ internal sealed class SymbolTreeBuilder {
         }
 
         var list = bucket.IsDefaultOrEmpty ? new List<AliasRelation>() : bucket.ToList();
-        list.Add(new AliasRelation(flags, nodeId));
+        var relationToInsert = new AliasRelation(flags, nodeId);
+        int insertIndex = list.Count;
+        for (int i = 0; i < list.Count; i++) {
+            if (nodeId < list[i].NodeId) {
+                insertIndex = i;
+                break;
+            }
+        }
+        list.Insert(insertIndex, relationToInsert);
         return list.ToImmutableArray();
     }
 
@@ -727,21 +744,24 @@ internal sealed class SymbolTreeBuilder {
         int current = 0; // root
         if (segments.Length == 0) { return current; }
 
-        string currentNamespace = string.Empty;
         for (int i = 0; i < segments.Length; i++) {
             var segment = segments[i];
             int next = FindChildByNameKind(current, segment, NodeKind.Namespace);
-            currentNamespace = i == 0 ? segment : currentNamespace + "." + segment;
-            var parentNamespace = currentNamespace.Contains('.') ? currentNamespace[..currentNamespace.LastIndexOf('.')] : string.Empty;
+
+            var namespaceSegments = new string[i + 1];
+            Array.Copy(segments, 0, namespaceSegments, 0, i + 1);
+            var docId = "N:" + string.Join('.', namespaceSegments);
+            var fullDisplay = string.Join('.', namespaceSegments);
 
             if (next < 0) {
                 var nsEntry = new SymbolEntry(
-                    DocCommentId: "N:" + currentNamespace,
+                    DocCommentId: docId,
                     Assembly: string.Empty,
                     Kind: SymbolKinds.Namespace,
-                    ParentNamespaceNoGlobal: parentNamespace,
-                    FqnNoGlobal: currentNamespace,
-                    FqnLeaf: segment
+                    NamespaceSegments: namespaceSegments,
+                    TypeSegments: Array.Empty<string>(),
+                    FullDisplayName: fullDisplay,
+                    DisplayName: segment
                 );
                 next = NewChild(current, segment, NodeKind.Namespace, nsEntry);
                 AddAliasesForNode(next);
@@ -750,12 +770,13 @@ internal sealed class SymbolTreeBuilder {
                 var node = Nodes[next];
                 if (node.Entry is null) {
                     var nsEntry = new SymbolEntry(
-                        DocCommentId: "N:" + currentNamespace,
+                        DocCommentId: docId,
                         Assembly: string.Empty,
                         Kind: SymbolKinds.Namespace,
-                        ParentNamespaceNoGlobal: parentNamespace,
-                        FqnNoGlobal: currentNamespace,
-                        FqnLeaf: segment
+                        NamespaceSegments: namespaceSegments,
+                        TypeSegments: Array.Empty<string>(),
+                        FullDisplayName: fullDisplay,
+                        DisplayName: segment
                     );
                     ReplaceNodeEntry(next, nsEntry, refreshAliases: true);
                 }
@@ -774,35 +795,21 @@ internal sealed class SymbolTreeBuilder {
 
         DebugUtil.Print("SymbolTreeB.WithDelta", $"创建中间类型 DocId: {docId}");
 
-        var fqnParts = new List<string>();
-        if (nsSegments.Length > 0) {
-            fqnParts.Add(string.Join('.', nsSegments));
-        }
-        for (int i = 0; i <= currentTypeIndex; i++) {
-            var typeSegment = typeSegments[i];
-            var (baseName, arity) = ParseName(typeSegment);
-            if (arity > 0) {
-                var genericParams = string.Join(',', Enumerable.Range(1, arity).Select(n => "T"));
-                fqnParts.Add($"{baseName}<{genericParams}>");
-            }
-            else {
-                fqnParts.Add(baseName);
-            }
-        }
+        var docIdWithoutPrefix = docId.Length > 2 ? docId[2..] : string.Empty;
+        var fqnNoGlobal = docIdWithoutPrefix.Replace('+', '.');
+        var leafWithArity = typeSegments[currentTypeIndex];
 
-        var fqnNoGlobal = string.Join('.', fqnParts);
-        var leafSegment = typeSegments[currentTypeIndex];
-        var (leafBaseName, leafArity) = ParseName(leafSegment);
-        var leafWithArity = leafArity > 0 ? leafBaseName + "`" + leafArity.ToString() : leafBaseName;
-        var parentNamespace = nsSegments.Length > 0 ? string.Join('.', nsSegments) : string.Empty;
+        var typePrefix = new string[currentTypeIndex + 1];
+        Array.Copy(typeSegments, 0, typePrefix, 0, currentTypeIndex + 1);
 
         return new SymbolEntry(
             DocCommentId: docId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: parentNamespace,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: leafWithArity
+            NamespaceSegments: nsSegments,
+            TypeSegments: typePrefix,
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: leafWithArity
         );
     }
 

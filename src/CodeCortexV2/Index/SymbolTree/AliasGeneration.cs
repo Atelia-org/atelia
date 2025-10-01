@@ -5,7 +5,7 @@ using CodeCortexV2.Abstractions;
 namespace CodeCortexV2.Index.SymbolTreeInternal;
 
 /// <summary>
-/// 统一别名生成：供 WithDelta 与 FromEntries 共用。
+/// 统一别名生成：供 WithDelta。
 /// 输入为节点的“标准化名称”（命名空间段或类型段：类型段可能带反引号 arity）。
 /// </summary>
 internal static class AliasGeneration {

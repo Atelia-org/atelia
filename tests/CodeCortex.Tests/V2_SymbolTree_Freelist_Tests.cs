@@ -17,9 +17,9 @@ public class SymbolTreeFreelistTests {
         var removalKey = new TypeKey(entry.DocCommentId, entry.Assembly);
 
         var addStats = builder.ApplyDelta(
-            new SymbolsDelta(
-                TypeAdds: new[] { entry },
-                TypeRemovals: Array.Empty<TypeKey>()
+            SymbolsDeltaContract.Normalize(
+                new[] { entry },
+                Array.Empty<TypeKey>()
             )
         );
         Assert.Equal(0, addStats.FreedNodeCount);
@@ -27,18 +27,18 @@ public class SymbolTreeFreelistTests {
         var nodeCountAfterAdd = builder.Nodes.Count;
 
         var removeStats = builder.ApplyDelta(
-            new SymbolsDelta(
-                TypeAdds: Array.Empty<SymbolEntry>(),
-                TypeRemovals: new[] { removalKey }
+            SymbolsDeltaContract.Normalize(
+                Array.Empty<SymbolEntry>(),
+                new[] { removalKey }
             )
         );
         Assert.True(removeStats.FreedNodeCount > 0, "Removing the type should free at least one node");
         var nodeCountAfterRemove = builder.Nodes.Count;
 
         var reAddStats = builder.ApplyDelta(
-            new SymbolsDelta(
-                TypeAdds: new[] { entry },
-                TypeRemovals: Array.Empty<TypeKey>()
+            SymbolsDeltaContract.Normalize(
+                new[] { entry },
+                Array.Empty<TypeKey>()
             )
         );
         Assert.True(reAddStats.ReusedNodeCount > 0, "Re-adding the type should reuse freed nodes");
@@ -50,17 +50,25 @@ public class SymbolTreeFreelistTests {
         if (!docCommentId.StartsWith("T:", StringComparison.Ordinal)) { throw new ArgumentException("DocCommentId must start with 'T:'", nameof(docCommentId)); }
 
         var body = docCommentId.Substring(2);
-        var segments = body.Split('.');
-        var ns = string.Join('.', segments[..^1]);
-        var leaf = segments[^1];
+        var namespaceParts = body.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var namespaceSegments = namespaceParts.Length > 1
+            ? namespaceParts[..^1]
+            : Array.Empty<string>();
+        var ns = namespaceSegments.Length > 0 ? string.Join('.', namespaceSegments) : string.Empty;
+        var leaf = namespaceParts[^1];
+        var typeSegments = SymbolNormalization
+            .SplitSegmentsWithNested(body)
+            .Skip(namespaceSegments.Length)
+            .ToArray();
 
         return new SymbolEntry(
             DocCommentId: docCommentId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: ns,
-            FqnNoGlobal: string.IsNullOrEmpty(ns) ? leaf : docCommentId.Substring(2).Replace('+', '.'),
-            FqnLeaf: leaf
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: typeSegments,
+            FullDisplayName: string.IsNullOrEmpty(ns) ? leaf : docCommentId.Substring(2).Replace('+', '.'),
+            DisplayName: leaf
         );
     }
 }

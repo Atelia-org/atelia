@@ -9,17 +9,16 @@ using Xunit;
 namespace CodeCortex.Tests;
 
 public class V2_SymbolTree_SearchTests {
-    private static SymbolEntry Ns(string name, string? parent = null) {
-        var fqn = "global::" + name;
-        var simple = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
-        return new SymbolEntry(
-            DocCommentId: "N:" + name,
-            Assembly: string.Empty,
-            Kind: SymbolKinds.Namespace,
-            ParentNamespaceNoGlobal: parent ?? (name.Contains('.') ? name[..name.LastIndexOf('.')] : string.Empty),
-            FqnNoGlobal: name,
-            FqnLeaf: simple
-        );
+    private static string[] BuildNamespaceSegments(string ns)
+        => string.IsNullOrEmpty(ns)
+            ? Array.Empty<string>()
+            : ns.Split('.', StringSplitOptions.RemoveEmptyEntries);
+
+    private static string[] BuildTypeSegments(string docId, int namespaceSegmentCount) {
+        var body = docId.Substring(2);
+        var all = SymbolNormalization.SplitSegmentsWithNested(body);
+        if (namespaceSegmentCount == 0) { return all; }
+        return all.Skip(namespaceSegmentCount).ToArray();
     }
 
     private static SymbolEntry Ty(string ns, string nameBase, int arity, string assembly) {
@@ -32,23 +31,20 @@ public class V2_SymbolTree_SearchTests {
             : $"global::{ns}.{nameBase}";
         string fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
         string simple = nameBase; // Roslyn's INamedTypeSymbol.Name returns base without `n
-        string parentNs = ns;
+        var namespaceSegments = BuildNamespaceSegments(ns);
         return new SymbolEntry(
             DocCommentId: docId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: parentNs,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: simple
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: BuildTypeSegments(docId, namespaceSegments.Length),
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: simple
         );
     }
 
     private static SymbolTreeB BuildSample() {
-        var entries = new List<SymbolEntry>
-        {
-            Ns("System"),
-            Ns("System.Collections", "System"),
-            Ns("System.Collections.Generic", "System.Collections"),
+        var entries = new[] {
             Ty("System.Collections.Generic", "List", 1, "System.Collections")
         };
         return BuildTree(entries);
@@ -70,25 +66,21 @@ public class V2_SymbolTree_SearchTests {
         string fqn = $"global::{ns}.{outerBase}{outerGenericParams}.{innerBase}{innerGenericParams}";
         string fqnNoGlobal = IndexStringUtil.StripGlobal(fqn);
         string simple = innerBase;
-        string parentNs = ns;
+        var namespaceSegments = BuildNamespaceSegments(ns);
         return new SymbolEntry(
             DocCommentId: docId,
             Assembly: assembly,
             Kind: SymbolKinds.Type,
-            ParentNamespaceNoGlobal: parentNs,
-            FqnNoGlobal: fqnNoGlobal,
-            FqnLeaf: simple
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: BuildTypeSegments(docId, namespaceSegments.Length),
+            FullDisplayName: fqnNoGlobal,
+            DisplayName: simple
         );
     }
 
     private static SymbolTreeB BuildSampleWithNested() {
-        var entries = new List<SymbolEntry> {
-            Ns("System"),
-            Ns("System.Collections", "System"),
-            Ns("System.Collections.Generic", "System.Collections"),
-            // Test
+        var entries = new[] {
             Ty("System.Collections.Generic", "List", 1, "System.Collections"),
-            // Nested: List<T>.Enumerator
             TyNested("System.Collections.Generic", "List", 1, "Enumerator", 0, "System.Collections")
         };
         return BuildTree(entries);
@@ -267,7 +259,7 @@ public class V2_SymbolTree_SearchTests {
 
     private static SymbolTreeB BuildTree(IEnumerable<SymbolEntry> entries)
         => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
-            new SymbolsDelta(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
+            SymbolsDeltaContract.Normalize(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
         );
 }
 

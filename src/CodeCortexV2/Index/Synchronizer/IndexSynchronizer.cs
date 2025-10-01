@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics;
@@ -352,7 +353,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 var docId = DocumentationCommentId.CreateDeclarationId(t) ?? "T:" + fqnNoGlobal;
                 var parentNsFqn = t.ContainingNamespace?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? string.Empty;
                 var parentNs = IndexStringUtil.StripGlobal(parentNsFqn);
-                typeAdds.Add(new SymbolEntry(DocCommentId: docId, Assembly: asm, Kind: SymbolKinds.Type, ParentNamespaceNoGlobal: parentNs, FqnNoGlobal: fqnNoGlobal, FqnLeaf: fqnLeaf));
+                typeAdds.Add(CreateTypeEntry(docId, asm, parentNs, fqnNoGlobal, fqnLeaf));
                 foreach (var nt in t.GetTypeMembers()) {
                     ct.ThrowIfCancellationRequested();
                     WalkType(nt);
@@ -424,7 +425,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 _pending.Enqueue(new WorkspaceChangeEventArgs(WorkspaceChangeKind.DocumentChanged, _workspace.CurrentSolution, _workspace.CurrentSolution, doc.Project.Id, docId));
                 continue;
             }
-            var declared = new List<(TypeKey Key, SymbolEntry Entry, string ParentNs)>();
+            var declared = new List<(TypeKey Key, SymbolEntry Entry)>();
             foreach (var node in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>()) {
                 var sym = model.GetDeclaredSymbol(node, ct) as INamedTypeSymbol;
                 if (sym is null) { continue; }
@@ -435,8 +436,8 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                 var sid = DocumentationCommentId.CreateDeclarationId(sym) ?? "T:" + fqnNoGlobal;
                 var parentNsFqn = sym.ContainingNamespace?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? string.Empty;
                 var parentNs = IndexStringUtil.StripGlobal(parentNsFqn);
-                var entry = new SymbolEntry(DocCommentId: sid, Assembly: asm, Kind: SymbolKinds.Type, ParentNamespaceNoGlobal: parentNs, FqnNoGlobal: fqnNoGlobal, FqnLeaf: simple);
-                declared.Add((new TypeKey(sid, asm), entry, parentNs));
+                var entry = CreateTypeEntry(sid, asm, parentNs, fqnNoGlobal, simple);
+                declared.Add((Key: new TypeKey(sid, asm), Entry: entry));
             }
 
             var newKeys = declared.Select(d => d.Key).ToImmutableHashSet();
@@ -510,13 +511,12 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
             var asm = sym.ContainingAssembly?.Name ?? string.Empty;
             var parentNsFqn = sym.ContainingNamespace?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? string.Empty;
             var parentNs = IndexStringUtil.StripGlobal(parentNsFqn);
-            var entry = new SymbolEntry(
-                DocCommentId: sid,
-                Assembly: asm,
-                Kind: SymbolKinds.Type,
-                ParentNamespaceNoGlobal: parentNs,
-                FqnNoGlobal: fqnNoGlobal,
-                FqnLeaf: sym.Name
+            var entry = CreateTypeEntry(
+                docCommentId: sid,
+                assembly: asm,
+                parentNamespaceNoGlobal: parentNs,
+                fullDisplayName: fqnNoGlobal,
+                displayName: sym.Name
             );
             return entry;
         }
@@ -579,6 +579,34 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         var orphanTypeIds = _typeKeyToDocs.Count(kv => kv.Value == null || kv.Value.IsEmpty);
         var docsMissingInDocMap = solDocIds.Count - mapDocIds.Count;
         return (mapDocIds.Count, _typeKeyToDocs.Count, outOfSolutionDocIdsInDocMap, outOfSolutionDocIdsInTypeMap, orphanTypeIds, solDocIds.Count, docsMissingInDocMap);
+    }
+
+    private static SymbolEntry CreateTypeEntry(string docCommentId, string assembly, string parentNamespaceNoGlobal, string fullDisplayName, string displayName) {
+        var namespaceSegments = BuildNamespaceSegments(parentNamespaceNoGlobal);
+        var typeSegments = BuildTypeSegments(docCommentId, namespaceSegments.Length);
+        return new SymbolEntry(
+            DocCommentId: docCommentId,
+            Assembly: assembly,
+            Kind: SymbolKinds.Type,
+            NamespaceSegments: namespaceSegments,
+            TypeSegments: typeSegments,
+            FullDisplayName: fullDisplayName,
+            DisplayName: displayName
+        );
+    }
+
+    private static string[] BuildNamespaceSegments(string namespaceNoGlobal) {
+        if (string.IsNullOrEmpty(namespaceNoGlobal)) { return Array.Empty<string>(); }
+        return namespaceNoGlobal.Split('.', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static string[] BuildTypeSegments(string docCommentId, int namespaceSegmentCount) {
+        if (string.IsNullOrEmpty(docCommentId) || docCommentId.Length < 3) { return Array.Empty<string>(); }
+        var body = docCommentId.Substring(2);
+        var allSegments = SymbolNormalization.SplitSegmentsWithNested(body);
+        if (namespaceSegmentCount <= 0) { return allSegments; }
+        if (namespaceSegmentCount >= allSegments.Length) { return Array.Empty<string>(); }
+        return allSegments.Skip(namespaceSegmentCount).ToArray();
     }
 
     // Note: Namespace chain materialization and namespace cascade removals are handled inside ISymbolIndex.WithDelta.
