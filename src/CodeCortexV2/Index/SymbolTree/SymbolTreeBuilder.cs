@@ -99,15 +99,8 @@ internal sealed class SymbolTreeBuilder {
         ApplyTypeAddsSingleNode(delta.TypeAdds);
         int deletedNamespaces = CascadeEmptyNamespaces(cascadeCandidates);
 
-        // 清理历史快照中残留的占位节点（Entry is null 的空类型节点）
-        int cleanedPlaceholders = CleanupLegacyPlaceholders();
-
-        if (_reusedThisDelta > 0 || _freedThisDelta > 0) {
-            DebugUtil.Print(
-                "SymbolTree.SingleNode.Freelist",
-                $"Delta freelist stats: reused={_reusedThisDelta}, freed={_freedThisDelta}, freeHead={_freeHead}, cleanedPlaceholders={cleanedPlaceholders}"
-            );
-        }
+        // Debug 专用：清理历史占位节点 + 输出 freelist 统计（Release 构建完全移除）
+        PerformDebugDiagnostics();
 
         return new DeltaStats(
             delta.TypeAdds?.Count ?? 0,
@@ -148,6 +141,31 @@ internal sealed class SymbolTreeBuilder {
             int length = docId.Length;
             if (previousLength < length) { throw new InvalidOperationException($"TypeRemovals must be sorted by descending DocCommentId length. Violation at index {i} for '{docId}' (length={length}, previousLength={previousLength})."); }
             previousLength = length;
+        }
+    }
+
+    /// <summary>
+    /// 【Debug 专用】执行诊断性维护任务，包括清理历史占位节点和输出 freelist 统计。
+    ///
+    /// <para>&lt;b&gt;包含操作&lt;/b&gt;：</para>
+    /// 1. 清理历史快照中残留的占位节点（Entry is null 的类型节点）—— O(n) 全树扫描
+    /// 2. 输出 freelist 复用/释放统计（通过 <see cref="DebugUtil"/>）
+    ///
+    /// <para>&lt;b&gt;性能考虑&lt;/b&gt;：</para>
+    /// 使用 <see cref="System.Diagnostics.ConditionalAttribute"/> 确保 Release 构建完全移除此方法调用（零开销）。
+    /// 占位节点清理仅在"加载历史快照"时有意义；新设计通过 Fail-Fast 策略禁止创建占位节点。
+    /// </summary>
+    [System.Diagnostics.Conditional("DEBUG")]
+    private void PerformDebugDiagnostics() {
+        // 清理历史快照中残留的占位节点（Entry is null 的空类型节点）
+        int cleanedPlaceholders = CleanupLegacyPlaceholders();
+
+        // 输出 freelist 统计信息（便于监控节点复用效率）
+        if (_reusedThisDelta > 0 || _freedThisDelta > 0 || cleanedPlaceholders > 0) {
+            DebugUtil.Print(
+                "SymbolTree.SingleNode.Freelist",
+                $"Delta freelist stats: reused={_reusedThisDelta}, freed={_freedThisDelta}, freeHead={_freeHead}, cleanedPlaceholders={cleanedPlaceholders}"
+            );
         }
     }
 
@@ -376,13 +394,15 @@ internal sealed class SymbolTreeBuilder {
     }
 
     /// <summary>
-    /// 清理历史快照中残留的占位节点（Entry is null 的类型节点）。
+    /// 【Debug 专用】清理历史快照中残留的占位节点（Entry is null 的类型节点）。
     /// 这些节点是旧版设计的遗留物，在新设计中不应该存在。
     /// 此方法提供向后兼容性，确保从历史快照加载的数据能够收敛到一致状态。
     ///
-    /// 清理策略：
+    /// <para>&lt;b&gt;清理策略&lt;/b&gt;：</para>
     /// - 删除所有 Entry is null 的类型节点（无论是否有子节点）
     /// - 如果占位节点有子节点，子节点会随之被标记为孤立（Parent=-1），稍后被 freelist 回收
+    ///
+    /// <para>&lt;b&gt;性能警告&lt;/b&gt;：O(n) 全树扫描，仅由 <see cref="PerformDebugDiagnostics"/> 调用（Debug 模式）。</para>
     /// </summary>
     private int CleanupLegacyPlaceholders() {
         int cleanedCount = 0;
