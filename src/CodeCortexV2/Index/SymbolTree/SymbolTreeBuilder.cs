@@ -229,9 +229,29 @@ internal sealed class SymbolTreeBuilder {
                 DebugUtil.Print("SymbolTree.Removal.Trace", $"No candidates found for aliasKey='{aliasKey}' (bucket empty or missing)");
             }
 
-            if (!removedAny) {
-                int existingNode = FindNodeByDocIdAndAssembly(typeKey.DocCommentId, typeKey.Assembly);
-                if (existingNode >= 0) { throw new InvalidOperationException($"TypeRemovals entry '{typeKey.DocCommentId}' (assembly '{typeKey.Assembly}') exists in index but alias lookup failed. Aborting to avoid divergence."); }
+            // 契约验证：仅在 Debug 模式下检查别名索引一致性（避免 Release 模式的 O(n) 全树扫描）
+            VerifyRemovalCompleteness(removedAny, typeKey);
+        }
+    }
+
+    /// <summary>
+    /// 【Debug 专用】验证类型移除的完整性：如果别名查找失败（removedAny=false），检查节点是否真的不存在。
+    /// 若节点存在但别名查找失败，说明别名索引损坏，抛出异常防止索引不一致。
+    ///
+    /// <para>&lt;b&gt;性能考虑&lt;/b&gt;：</para>
+    /// 使用 O(n) 全树扫描，仅在 DEBUG 模式编译。Release 构建会完全移除此方法调用（零开销）。
+    /// 生产环境信任别名索引的确定性逻辑；开发/测试环境通过此检查尽早发现索引不一致。
+    /// </summary>
+    [System.Diagnostics.Conditional("DEBUG")]
+    private void VerifyRemovalCompleteness(bool removedAny, TypeKey typeKey) {
+        if (!removedAny) {
+            int existingNode = FindNodeByDocIdAndAssembly(typeKey.DocCommentId, typeKey.Assembly);
+            if (existingNode >= 0) {
+                throw new InvalidOperationException(
+                    $"[DEBUG] Alias index inconsistency detected: TypeRemovals entry '{typeKey.DocCommentId}' " +
+                    $"(assembly '{typeKey.Assembly}') exists at node {existingNode} but alias lookup failed. " +
+                    $"This indicates alias index corruption. Aborting to prevent divergence."
+                );
             }
         }
     }
@@ -522,6 +542,12 @@ internal sealed class SymbolTreeBuilder {
         return -1;
     }
 
+    /// <summary>
+    /// 【诊断专用】通过全树扫描查找匹配 DocCommentId 和 Assembly 的类型节点。
+    ///
+    /// <para>&lt;b&gt;性能警告&lt;/b&gt;：O(n) 全树扫描，仅用于 Debug 模式的一致性验证（<see cref="VerifyRemovalCompleteness"/>）。</para>
+    /// 正常路径应通过别名索引查找（O(1)）。此方法存在是为了在开发阶段检测别名索引损坏。
+    /// </summary>
     internal int FindNodeByDocIdAndAssembly(string docCommentId, string? assembly) {
         if (string.IsNullOrEmpty(docCommentId)) { return -1; }
         string assemblyNorm = assembly ?? string.Empty;
