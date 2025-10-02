@@ -25,15 +25,6 @@ if (-not $repoRoot) {
 
 Push-Location $repoRoot
 try {
-  Write-Info "Running pre-commit checks (whitespace & EOL)"
-  # Check staged snapshot for whitespace errors first (fast fail)
-  $stagedCheck = git diff --cached --check 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host $stagedCheck -ForegroundColor Red
-    Write-Err "Whitespace/EOL issues in staged changes. Please fix or run the formatter."
-    exit 1
-  }
-
   # Run repository formatter on staged .cs files only (fast & minimal)
   if (Test-Path "$repoRoot/format.ps1") {
     Write-Info "Formatting staged C# files via ./format.ps1 -Scope staged"
@@ -59,6 +50,46 @@ try {
     }
   } else {
     Write-Warn "format.ps1 not found at repo root. Skipping auto-format step."
+  }
+
+  Write-Info "Running pre-commit checks (whitespace & EOL)"
+
+  # Auto-fix trailing whitespace in non-Markdown files
+  $filesToClean = @(git diff --cached --name-only --diff-filter=ACM) |
+    Where-Object {
+      $_ -and
+      $_ -notmatch '\.(md|mdx)$' -and
+      (Test-Path $_)
+    }
+
+  if ($filesToClean.Count -gt 0) {
+    Write-Info "Auto-fixing trailing whitespace in $($filesToClean.Count) file(s)"
+    $cleanedCount = 0
+    foreach ($file in $filesToClean) {
+      try {
+        $content = Get-Content $file -Raw -ErrorAction Stop
+        if ($null -ne $content -and $content -match '[ \t]+(\r?\n|$)') {
+          # Remove trailing whitespace from each line, preserve line endings
+          $cleaned = $content -replace '[ \t]+(\r?\n)', '$1' -replace '[ \t]+$', ''
+          [System.IO.File]::WriteAllText($file, $cleaned, [System.Text.UTF8Encoding]::new($false))
+          git add $file | Out-Null
+          $cleanedCount++
+        }
+      } catch {
+        Write-Warn "Failed to clean $file : $($_.Exception.Message)"
+      }
+    }
+    if ($cleanedCount -gt 0) {
+      Write-Info "Cleaned trailing whitespace from $cleanedCount file(s)"
+    }
+  }
+
+  # Check staged snapshot for whitespace errors (should pass now after auto-fix)
+  $stagedCheck = git diff --cached --check 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host $stagedCheck -ForegroundColor Red
+    Write-Err "Whitespace/EOL issues in staged changes. Please fix or run the formatter."
+    exit 1
   }
 
   # Optional strict CRLF enforcement (disabled by default)
