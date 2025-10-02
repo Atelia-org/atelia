@@ -12,8 +12,12 @@ namespace CodeCortexV2.Abstractions;
 /// <remarks>
 /// Updated contract (leaf-only delta preferred):
 /// - Producers SHOULD populate only <see cref="TypeAdds"/> and <see cref="TypeRemovals"/>. Namespace-related fields are deprecated and SHOULD be empty.
-/// - Ordering invariant: <see cref="TypeAdds"/> MUST be sorted by ascending <see cref="SymbolEntry.DocCommentId"/> length (outer types before nested types).
-///   <see cref="TypeRemovals"/> MUST be sorted by descending <see cref="TypeKey.DocCommentId"/> length. Doc ids MUST begin with <c>"T:"</c>.
+/// - Ordering invariant (CRITICAL for correct processing):
+///   * <see cref="TypeAdds"/> MUST be sorted by ascending <see cref="SymbolEntry.DocCommentId"/> length (outer types before nested types).
+///   * <see cref="TypeRemovals"/> MUST be sorted by descending <see cref="TypeKey.DocCommentId"/> length (nested types before outer types).
+///   * Doc ids MUST begin with <c>"T:"</c> and Assembly MUST be provided.
+///   * Rationale: This ordering ensures parent types are always processed before their nested children during adds,
+///     preventing the need for placeholder nodes and maintaining index consistency. Violations will trigger fail-fast exceptions.
 /// - Consumers (e.g., <c>ISymbolIndex.WithDelta</c>) SHOULD handle, internally and locally, namespace chain materialization
 ///   and cascading empty-namespace removal during application of the leaf delta.
 /// - Idempotency & self-consistency:

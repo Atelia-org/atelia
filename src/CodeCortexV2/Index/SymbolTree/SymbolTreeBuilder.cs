@@ -11,13 +11,31 @@ namespace CodeCortexV2.Index.SymbolTreeInternal;
 /// <summary>
 /// Mutable construction surface shared by <see cref="SymbolTreeB.WithDelta"/>。
 /// 承载节点数组、别名桶与常用辅助操作，后续阶段将进一步拓展至完整 Builder 生命周期。
-/// 当前阶段仅由 <see cref="SymbolTreeB.WithDelta"/> 使用，并默认运行“单节点”拓扑：
-/// - 每个类型节点直接承载结构与条目信息（DocCommentId + Assembly 唯一）；
-/// - 旧版占位节点（Entry 为 null）只会在加载历史快照时短暂存在，并会在下一次 delta
-///   通过 <see cref="TidyTypeSiblings"/>/<see cref="CollapseEmptyTypeAncestors"/> 被回收；
-/// - 调用方必须遵守 <see cref="SymbolsDelta"/> 的排序契约（TypeAdds 按 DocCommentId.Length 升序、
-///   TypeRemovals 降序，DocId 起始为 "T:"）。当发现违背契约或父节点缺失时，本 Builder 会优先选择
-///   fail-fast（Debug.Assert 或抛异常）。
+///
+/// <para>&lt;b&gt;单节点拓扑（Single-Node Topology）&lt;/b&gt;</para>
+/// 当前设计运行"单节点"拓扑：每个类型节点直接承载完整的 <see cref="SymbolEntry"/>（DocCommentId + Assembly 唯一）。
+/// 我们不再为嵌套类型的外层类型创建"占位节点+Entry双节点"结构，而是合并为单一节点。
+///
+/// <para>&lt;b&gt;严格的契约与 Fail-Fast 策略&lt;/b&gt;</para>
+/// 调用方（通常是 <see cref="IndexSynchronizer"/>）必须遵守 <see cref="SymbolsDelta"/> 的排序契约：
+/// - <c>TypeAdds</c> 按 DocCommentId.Length 升序（外层类型先于嵌套类型）
+/// - <c>TypeRemovals</c> 按 DocCommentId.Length 降序（嵌套类型先于外层类型）
+/// - 所有 DocId 起始为 "T:"，且必须提供 Assembly
+///
+/// <para>&lt;b&gt;为何拒绝创建占位节点（Design Rationale）&lt;/b&gt;</para>
+/// 当处理嵌套类型的中间节点时，如果父类型节点不存在，本 Builder 会抛出异常而非创建占位节点。原因：
+/// 1. &lt;b&gt;防止故障扩散&lt;/b&gt;：占位节点（Entry 为 null）会导致索引处于不一致状态，使得后续查询返回不完整的类型信息，
+///    进而引发级联故障。在早期发现契约违反（fail-fast）比传播脏数据更易于诊断和修复。
+/// 2. &lt;b&gt;保证元数据完整性&lt;/b&gt;：只有 <see cref="IndexSynchronizer"/> 中的 <c>INamedTypeSymbol.ToDisplayString()</c>
+///    才能正确生成包含泛型形参的准确 DisplayName（如 <c>Dictionary&lt;TKey, TValue&gt;</c>）。
+///    由 Builder 自行构造的占位节点无法获得这些关键的类型元数据，会产生不完整或错误的展示名称。
+/// 3. &lt;b&gt;简化维护&lt;/b&gt;：占位节点引入了复杂的状态转换逻辑（占位→实体→回收），是典型的技术债务（屎山代码）。
+///    通过严格契约将责任前移到 Delta 生成端，使得 Builder 逻辑更清晰、更易测试。
+///
+/// <para>&lt;b&gt;历史占位节点的清理&lt;/b&gt;</para>
+/// 旧版设计中的占位节点（Entry 为 null）只会在加载历史快照时短暂存在，并会在下一次 Delta 应用时
+/// 通过 <see cref="TidyTypeSiblings"/>/<see cref="CollapseEmptyTypeAncestors"/> 被自动回收。
+/// 后续重构将系统性地移除所有"占位节点"相关的概念和代码路径。
 /// </summary>
 internal sealed class SymbolTreeBuilder {
 
@@ -80,10 +98,13 @@ internal sealed class SymbolTreeBuilder {
         ApplyTypeAddsSingleNode(delta.TypeAdds);
         int deletedNamespaces = CascadeEmptyNamespaces(cascadeCandidates);
 
+        // 清理历史快照中残留的占位节点（Entry is null 的空类型节点）
+        int cleanedPlaceholders = CleanupLegacyPlaceholders();
+
         if (_reusedThisDelta > 0 || _freedThisDelta > 0) {
             DebugUtil.Print(
                 "SymbolTree.SingleNode.Freelist",
-                $"Delta freelist stats: reused={_reusedThisDelta}, freed={_freedThisDelta}, freeHead={_freeHead}"
+                $"Delta freelist stats: reused={_reusedThisDelta}, freed={_freedThisDelta}, freeHead={_freeHead}, cleanedPlaceholders={cleanedPlaceholders}"
             );
         }
 
@@ -218,7 +239,6 @@ internal sealed class SymbolTreeBuilder {
         if (additions is null || additions.Count == 0) { return; }
 
         int createdCount = 0;
-        int convertedCount = 0;
         int reusedCount = 0;
 
         foreach (var e in additions) {
@@ -251,15 +271,15 @@ internal sealed class SymbolTreeBuilder {
                 var nodeName = typeSegs[i];
                 bool isLast = i == typeSegs.Length - 1;
 
-                // 对于中间节点（非最后一段），必须已经存在对应的父类型节点
-                // 如果不存在，说明违反了 SymbolsDelta 的排序契约（父类型应该先于子类型被添加）
+                // 对于中间节点（非最后一段），必须已经存在对应的父类型节点。
+                // 如果不存在，说明违反了 SymbolsDelta 的排序契约（父类型应该先于子类型被添加）。
+                //
+                // 【设计决策】我们选择 fail-fast 而非创建占位节点，原因参见类注释：
+                // 1. 占位节点会导致索引不一致，使故障扩散；
+                // 2. 只有 IndexSynchronizer 能正确生成 DisplayName（含泛型形参）；
+                // 3. 占位节点逻辑复杂，是技术债务（屎山代码）。
                 if (!isLast) {
-                    // 首先尝试查找结构节点（Entry is null）
-                    int intermediateNode = FindStructuralTypeChild(currentParent, nodeName);
-                    // 如果没找到结构节点，尝试查找任何匹配名称的类型节点（可能已经有 Entry）
-                    if (intermediateNode < 0) {
-                        intermediateNode = FindAnyTypeChild(currentParent, nodeName);
-                    }
+                    int intermediateNode = FindTypeChild(currentParent, nodeName);
                     if (intermediateNode < 0) {
                         throw new InvalidOperationException(
                             $"Parent type node '{nodeName}' not found when processing '{e.DocCommentId}'. " +
@@ -276,25 +296,8 @@ internal sealed class SymbolTreeBuilder {
                 var docId = targetEntry.DocCommentId ?? string.Empty;
                 int parentBefore = currentParent;
 
-                int structuralNode = FindStructuralTypeChild(parentBefore, nodeName);
-                if (structuralNode >= 0) {
-                    var structuralEntry = Nodes[structuralNode].Entry;
-                    bool alreadyMatches = structuralEntry is not null &&
-                        string.Equals(structuralEntry.DocCommentId, docId, StringComparison.Ordinal) &&
-                        string.Equals(structuralEntry.Assembly ?? string.Empty, assembly, StringComparison.Ordinal);
-                    if (!ReferenceEquals(structuralEntry, targetEntry)) {
-                        ReplaceNodeEntry(structuralNode, targetEntry);
-                    }
-
-                    currentParent = structuralNode;
-                    TidyTypeSiblings(parentBefore, nodeName, docId, assembly, structuralNode);
-                    if (alreadyMatches) { reusedCount++; }
-                    else { convertedCount++; }
-                    continue;
-                }
-
-                int placeholderNode;
-                int existing = FindTypeEntryNode(parentBefore, nodeName, docId, assembly, out placeholderNode);
+                // 查找已存在的匹配节点
+                int existing = FindTypeEntryNode(parentBefore, nodeName, docId, assembly);
                 if (existing >= 0) {
                     var existingEntry = Nodes[existing].Entry;
                     if (!ReferenceEquals(existingEntry, targetEntry)) {
@@ -306,14 +309,7 @@ internal sealed class SymbolTreeBuilder {
                     continue;
                 }
 
-                if (placeholderNode >= 0) {
-                    ReplaceNodeEntry(placeholderNode, targetEntry);
-                    currentParent = placeholderNode;
-                    TidyTypeSiblings(parentBefore, nodeName, docId, assembly, placeholderNode);
-                    convertedCount++;
-                    continue;
-                }
-
+                // 创建新节点
                 int newNode = NewChild(parentBefore, nodeName, NodeKind.Type, targetEntry);
                 AddAliasesForNode(newNode);
                 currentParent = newNode;
@@ -322,10 +318,10 @@ internal sealed class SymbolTreeBuilder {
             }
         }
 
-        if (createdCount > 0 || convertedCount > 0 || reusedCount > 0) {
+        if (createdCount > 0 || reusedCount > 0) {
             DebugUtil.Print(
                 "SymbolTree.SingleNode",
-                $"Prototype adds: created={createdCount}, converted={convertedCount}, reused={reusedCount}"
+                $"Prototype adds: created={createdCount}, reused={reusedCount}"
             );
         }
     }
@@ -358,6 +354,50 @@ internal sealed class SymbolTreeBuilder {
         return deletedNsCount;
     }
 
+    /// <summary>
+    /// 清理历史快照中残留的占位节点（Entry is null 的类型节点）。
+    /// 这些节点是旧版设计的遗留物，在新设计中不应该存在。
+    /// 此方法提供向后兼容性，确保从历史快照加载的数据能够收敛到一致状态。
+    ///
+    /// 清理策略：
+    /// - 删除所有 Entry is null 的类型节点（无论是否有子节点）
+    /// - 如果占位节点有子节点，子节点会随之被标记为孤立（Parent=-1），稍后被 freelist 回收
+    /// </summary>
+    private int CleanupLegacyPlaceholders() {
+        int cleanedCount = 0;
+        var toRemove = new List<int>();
+
+        // 收集所有需要清理的占位节点
+        for (int i = 1; i < Nodes.Count; i++) {
+            var node = Nodes[i];
+            if (node.Parent < 0) { continue; } // 已detached
+            if (node.Kind != NodeKind.Type) { continue; }
+            if (node.Entry is null) {
+                toRemove.Add(i);
+            }
+        }
+
+        // 清理收集到的节点及其子树
+        foreach (var nodeId in toRemove) {
+            var node = Nodes[nodeId];
+            if (node.FirstChild < 0) {
+                DebugUtil.Print("SymbolTree.SingleNode", $"Cleaning up empty legacy placeholder nodeId={nodeId} name={node.Name}");
+            }
+            else {
+                DebugUtil.Print("SymbolTree.SingleNode", $"Cleaning up legacy placeholder subtree nodeId={nodeId} name={node.Name}");
+                // 移除整个子树（包括占位节点本身）
+                RemoveTypeSubtree(nodeId);
+                cleanedCount++;
+                continue;
+            }
+            RemoveAliasesForNode(nodeId);
+            DetachNode(nodeId);
+            cleanedCount++;
+        }
+
+        return cleanedCount;
+    }
+
     // --- Shared static helpers ---
 
     internal static string[] SplitNamespace(string? ns)
@@ -378,27 +418,17 @@ internal sealed class SymbolTreeBuilder {
         return -1;
     }
 
-    private int FindStructuralTypeChild(int parent, string name) {
-        if (parent < 0 || parent >= Nodes.Count) { return -1; }
-        int current = Nodes[parent].FirstChild;
-        while (current >= 0) {
-            var node = Nodes[current];
-            if (node.Kind == NodeKind.Type && node.Entry is null && string.Equals(node.Name, name, StringComparison.Ordinal)) { return current; }
-            current = node.NextSibling;
-        }
-        return -1;
-    }
-
     /// <summary>
-    /// 查找任何匹配名称的类型子节点（无论是否有 Entry）。
+    /// 查找匹配名称的类型子节点（必须有 Entry）。
     /// 用于在处理嵌套类型时查找已经存在的父类型节点。
+    /// 忽略占位节点（Entry 为 null），因为当前设计不再创建占位节点。
     /// </summary>
-    private int FindAnyTypeChild(int parent, string name) {
+    private int FindTypeChild(int parent, string name) {
         if (parent < 0 || parent >= Nodes.Count) { return -1; }
         int current = Nodes[parent].FirstChild;
         while (current >= 0) {
             var node = Nodes[current];
-            if (node.Kind == NodeKind.Type && string.Equals(node.Name, name, StringComparison.Ordinal)) { return current; }
+            if (node.Kind == NodeKind.Type && node.Entry is not null && string.Equals(node.Name, name, StringComparison.Ordinal)) { return current; }
             current = node.NextSibling;
         }
         return -1;
@@ -473,8 +503,10 @@ internal sealed class SymbolTreeBuilder {
         }
     }
 
-    private int FindTypeEntryNode(int parent, string name, string docId, string assembly, out int placeholderNode) {
-        placeholderNode = -1;
+    /// <summary>
+    /// 查找匹配 DocCommentId 和 Assembly 的类型节点。
+    /// </summary>
+    private int FindTypeEntryNode(int parent, string name, string docId, string assembly) {
         if (parent < 0 || parent >= Nodes.Count) { return -1; }
         string assemblyNorm = assembly ?? string.Empty;
         int current = Nodes[parent].FirstChild;
@@ -485,9 +517,6 @@ internal sealed class SymbolTreeBuilder {
                 if (entry is not null && string.Equals(entry.DocCommentId, docId, StringComparison.Ordinal)) {
                     var entryAsm = entry.Assembly ?? string.Empty;
                     if (string.Equals(entryAsm, assemblyNorm, StringComparison.Ordinal)) { return current; }
-                    if (string.IsNullOrEmpty(entryAsm) && placeholderNode < 0) {
-                        placeholderNode = current;
-                    }
                 }
             }
             current = node.NextSibling;
