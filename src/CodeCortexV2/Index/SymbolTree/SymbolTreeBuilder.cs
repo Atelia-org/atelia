@@ -264,7 +264,7 @@ internal sealed class SymbolTreeBuilder {
                         string.Equals(structuralEntry.DocCommentId, docId, StringComparison.Ordinal) &&
                         string.Equals(structuralEntry.Assembly ?? string.Empty, assembly, StringComparison.Ordinal);
                     if (!ReferenceEquals(structuralEntry, targetEntry)) {
-                        ReplaceNodeEntry(structuralNode, targetEntry, refreshAliases: true);
+                        ReplaceNodeEntry(structuralNode, targetEntry);
                     }
 
                     currentParent = structuralNode;
@@ -279,7 +279,7 @@ internal sealed class SymbolTreeBuilder {
                 if (existing >= 0) {
                     var existingEntry = Nodes[existing].Entry;
                     if (!ReferenceEquals(existingEntry, targetEntry)) {
-                        ReplaceNodeEntry(existing, targetEntry, refreshAliases: true);
+                        ReplaceNodeEntry(existing, targetEntry);
                     }
                     currentParent = existing;
                     TidyTypeSiblings(parentBefore, nodeName, docId, assembly, existing);
@@ -288,7 +288,7 @@ internal sealed class SymbolTreeBuilder {
                 }
 
                 if (placeholderNode >= 0) {
-                    ReplaceNodeEntry(placeholderNode, targetEntry, refreshAliases: true);
+                    ReplaceNodeEntry(placeholderNode, targetEntry);
                     currentParent = placeholderNode;
                     TidyTypeSiblings(parentBefore, nodeName, docId, assembly, placeholderNode);
                     convertedCount++;
@@ -485,20 +485,17 @@ internal sealed class SymbolTreeBuilder {
         => Nodes[index] = node;
 
     /// <summary>
-    /// Replace the <see cref="SymbolEntry"/> attached to an existing node and optionally rebuild its alias buckets.
+    /// Replace the <see cref="SymbolEntry"/> attached to an existing node without altering its tree connectivity.
     /// </summary>
     /// <param name="nodeId">Target node to mutate.</param>
     /// <param name="entry">New entry payload; <c>null</c> clears the node payload but leaves the structural shell.</param>
-    /// <param name="refreshAliases">
-    /// Set to <c>true</c> when alias membership may need deduplication (e.g., node reuse for a new symbol).
-    /// Use <c>false</c> when only clearing an entry for a structural placeholder to avoid redundant churn.
-    /// </param>
-    private void ReplaceNodeEntry(int nodeId, SymbolEntry? entry, bool refreshAliases) {
+    /// <remarks>
+    /// Aliases are derived solely from <see cref="NodeB.Name"/> and <see cref="NodeB.Kind"/> (see <see cref="AliasGeneration"/>).
+    /// Since this method keeps both fields unchanged, alias refresh is unnecessary—aliases remain valid after Entry replacement.
+    /// </remarks>
+    private void ReplaceNodeEntry(int nodeId, SymbolEntry? entry) {
         var existing = Nodes[nodeId];
         ReplaceNode(nodeId, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, entry));
-        if (refreshAliases) {
-            RefreshAliasesForNode(nodeId);
-        }
     }
 
     internal int NewChild(int parent, string name, NodeKind kind, SymbolEntry? entry) {
@@ -594,17 +591,6 @@ internal sealed class SymbolTreeBuilder {
     }
 
     // --- Alias helpers ---
-
-    /// <summary>
-    /// Rebuild the alias bucket entries for a node by removing and re-adding specs derived from <see cref="NodeB.Name"/>.
-    /// This keeps alias state consistent when nodes are reused for different symbol entries.
-    /// </summary>
-    private void RefreshAliasesForNode(int nodeId) {
-        if (nodeId < 0 || nodeId >= Nodes.Count) { return; }
-        if (nodeId != 0 && Nodes[nodeId].Parent < 0) { return; }
-        RemoveAliasesForNode(nodeId);
-        AddAliasesForNode(nodeId);
-    }
 
     private static ImmutableArray<AliasRelation> RemoveAliasFromBucket(ImmutableArray<AliasRelation> bucket, int nodeId) {
         if (bucket.IsDefaultOrEmpty) { return bucket; }
@@ -778,7 +764,7 @@ internal sealed class SymbolTreeBuilder {
                         FullDisplayName: fullDisplay,
                         DisplayName: segment
                     );
-                    ReplaceNodeEntry(next, nsEntry, refreshAliases: true);
+                    ReplaceNodeEntry(next, nsEntry);
                 }
             }
 
