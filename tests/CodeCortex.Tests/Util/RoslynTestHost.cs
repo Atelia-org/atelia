@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace CodeCortex.Tests.Util;
+namespace Atelia.CodeCortex.Tests.Util;
 
 internal static class RoslynTestHost {
     public static (Compilation compilation, INamedTypeSymbol type) CreateSingleType(string source, string typeName) {

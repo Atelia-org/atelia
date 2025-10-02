@@ -1,8 +1,8 @@
 using Xunit;
 using CodeCortex.Core.Hashing;
-using CodeCortex.Tests.Util;
+using Atelia.CodeCortex.Tests.Util;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class TypeHasherTests {
     // Use real newlines so that methods are not swallowed by a line comment.

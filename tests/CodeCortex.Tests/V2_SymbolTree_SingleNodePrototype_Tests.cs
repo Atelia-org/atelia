@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
-using CodeCortex.Tests.Util;
+using Atelia.CodeCortex.Tests.Util;
 using CodeCortexV2.Abstractions;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public sealed class SymbolTreeSingleNodePrototypeTests {
     private const string AssemblyName = "ProtoAsm";

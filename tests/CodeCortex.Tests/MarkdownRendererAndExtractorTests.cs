@@ -3,9 +3,9 @@ using CodeCortex.Core.Hashing;
 using CodeCortex.Core.Outline;
 using CodeCortex.Core.Models;
 using CodeCortex.Core.Ids;
-using CodeCortex.Tests.Util;
+using Atelia.CodeCortex.Tests.Util;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class MarkdownRendererAndExtractorTests {
     private const string Source = @"namespace N {

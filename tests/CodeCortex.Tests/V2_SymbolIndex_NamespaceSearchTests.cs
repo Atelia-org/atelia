@@ -6,7 +6,7 @@ using CodeCortexV2.Index;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 /// <summary>
 /// 这些测试从旧的 SymbolIndex 测试迁移而来，改为直接针对新的 SymbolTreeB。

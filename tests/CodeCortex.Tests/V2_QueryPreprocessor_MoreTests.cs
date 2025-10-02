@@ -4,7 +4,7 @@ using CodeCortexV2.Abstractions;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 
-namespace CodeCortex.Tests {
+namespace Atelia.CodeCortex.Tests {
     public class V2_QueryPreprocessor_MoreTests {
         [Theory]
         [InlineData("")]

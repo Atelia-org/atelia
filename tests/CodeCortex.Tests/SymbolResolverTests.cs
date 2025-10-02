@@ -5,7 +5,7 @@ using CodeCortex.Core.Index;
 using CodeCortex.Core.Symbols;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class SymbolResolverTests {
     private CodeCortexIndex MakeIndex(params (string Id, string Fqn, string Kind)[] entries) {

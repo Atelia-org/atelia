@@ -1,7 +1,7 @@
 using CodeCortex.Core.IO;
 using System.IO.Abstractions.TestingHelpers;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 internal class InMemoryFileSystem : IFileSystem {
     private readonly MockFileSystem _fs;

@@ -8,7 +8,7 @@ using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 using Xunit.Sdk;
 
-namespace CodeCortex.Tests.Util;
+namespace Atelia.CodeCortex.Tests.Util;
 
 internal sealed class SymbolTreeSnapshot {
     private SymbolTreeSnapshot(

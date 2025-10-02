@@ -5,7 +5,7 @@ using CodeCortexV2.Abstractions;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 /// <summary>
 /// Tests for Use-After-Free (UAF) scenarios in SymbolTreeBuilder.

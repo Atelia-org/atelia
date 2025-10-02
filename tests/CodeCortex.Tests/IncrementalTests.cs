@@ -2,7 +2,7 @@ using CodeCortex.Core.Index;
 using CodeCortex.Workspace.Incremental;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class IncrementalTests {
     [Fact]

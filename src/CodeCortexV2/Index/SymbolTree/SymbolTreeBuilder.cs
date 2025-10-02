@@ -250,10 +250,29 @@ internal sealed class SymbolTreeBuilder {
             for (int i = 0; i < typeSegs.Length; i++) {
                 var nodeName = typeSegs[i];
                 bool isLast = i == typeSegs.Length - 1;
-                var targetEntry = isLast
-                    ? e
-                    : CreateIntermediateTypeEntry(nsSegs, typeSegs, i, assembly);
 
+                // 对于中间节点（非最后一段），必须已经存在对应的父类型节点
+                // 如果不存在，说明违反了 SymbolsDelta 的排序契约（父类型应该先于子类型被添加）
+                if (!isLast) {
+                    // 首先尝试查找结构节点（Entry is null）
+                    int intermediateNode = FindStructuralTypeChild(currentParent, nodeName);
+                    // 如果没找到结构节点，尝试查找任何匹配名称的类型节点（可能已经有 Entry）
+                    if (intermediateNode < 0) {
+                        intermediateNode = FindAnyTypeChild(currentParent, nodeName);
+                    }
+                    if (intermediateNode < 0) {
+                        throw new InvalidOperationException(
+                            $"Parent type node '{nodeName}' not found when processing '{e.DocCommentId}'. " +
+                            $"This violates the SymbolsDelta ordering contract: all parent types must be added before their nested types. " +
+                            $"Current path: {string.Join(".", nsSegs.Concat(typeSegs.Take(i + 1)))}"
+                        );
+                    }
+                    currentParent = intermediateNode;
+                    continue;
+                }
+
+                // 最后一段：使用实际的 entry
+                var targetEntry = e;
                 var docId = targetEntry.DocCommentId ?? string.Empty;
                 int parentBefore = currentParent;
 
@@ -346,12 +365,6 @@ internal sealed class SymbolTreeBuilder {
             ? Array.Empty<string>()
             : ns!.Split('.', StringSplitOptions.RemoveEmptyEntries);
 
-    private static string BuildIntermediateTypeDocId(string[] nsSegments, string[] typeSegments, int currentTypeIndex) {
-        var nsPrefix = nsSegments.Length > 0 ? string.Join('.', nsSegments) + "." : string.Empty;
-        var typePrefix = string.Join("+", typeSegments.Take(currentTypeIndex + 1));
-        return "T:" + nsPrefix + typePrefix;
-    }
-
     // --- Node helpers ---
 
     internal int FindChildByNameKind(int parent, string name, NodeKind kind) {
@@ -371,6 +384,21 @@ internal sealed class SymbolTreeBuilder {
         while (current >= 0) {
             var node = Nodes[current];
             if (node.Kind == NodeKind.Type && node.Entry is null && string.Equals(node.Name, name, StringComparison.Ordinal)) { return current; }
+            current = node.NextSibling;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// 查找任何匹配名称的类型子节点（无论是否有 Entry）。
+    /// 用于在处理嵌套类型时查找已经存在的父类型节点。
+    /// </summary>
+    private int FindAnyTypeChild(int parent, string name) {
+        if (parent < 0 || parent >= Nodes.Count) { return -1; }
+        int current = Nodes[parent].FirstChild;
+        while (current >= 0) {
+            var node = Nodes[current];
+            if (node.Kind == NodeKind.Type && string.Equals(node.Name, name, StringComparison.Ordinal)) { return current; }
             current = node.NextSibling;
         }
         return -1;
@@ -772,31 +800,6 @@ internal sealed class SymbolTreeBuilder {
         }
 
         return current;
-    }
-
-    internal SymbolEntry CreateIntermediateTypeEntry(string[] nsSegments, string[] typeSegments, int currentTypeIndex, string assembly) {
-        DebugUtil.Print("SymbolTreeB.WithDelta", $"CreateIntermediateTypeEntry被调用: currentTypeIndex={currentTypeIndex}, typeSegs=[{string.Join(",", typeSegments)}]");
-
-        var docId = BuildIntermediateTypeDocId(nsSegments, typeSegments, currentTypeIndex);
-
-        DebugUtil.Print("SymbolTreeB.WithDelta", $"创建中间类型 DocId: {docId}");
-
-        var docIdWithoutPrefix = docId.Length > 2 ? docId[2..] : string.Empty;
-        var fqnNoGlobal = docIdWithoutPrefix.Replace('+', '.');
-        var leafWithArity = typeSegments[currentTypeIndex];
-
-        var typePrefix = new string[currentTypeIndex + 1];
-        Array.Copy(typeSegments, 0, typePrefix, 0, currentTypeIndex + 1);
-
-        return new SymbolEntry(
-            DocCommentId: docId,
-            Assembly: assembly,
-            Kind: SymbolKinds.Type,
-            NamespaceSegments: nsSegments,
-            TypeSegments: typePrefix,
-            FullDisplayName: fqnNoGlobal,
-            DisplayName: leafWithArity
-        );
     }
 
     internal void RemoveAliasesSubtree(int rootId) {

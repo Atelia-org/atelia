@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Atelia.Diagnostics;
-using CodeCortex.Tests.Util;
+using Atelia.CodeCortex.Tests.Util;
 using CodeCortexV2.Abstractions;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class SymbolTreeNestedTypesTests {
     private const string AssemblyName = "TestAsm";
@@ -116,30 +116,6 @@ public class SymbolTreeNestedTypesTests {
         DebugUtil.Print(DebugCategory, $"Alias query '{query}' returned {results.Total} results");
 
         Assert.True(results.Total > 0, $"Expected alias '{query}' to resolve to at least one symbol");
-    }
-
-    [Fact]
-    public void CreateIntermediateTypeEntry_ShouldRetainGenericArityInLeaf() {
-        var builder = SymbolTreeBuilder.CreateEmpty();
-        var nsSegments = SymbolTreeBuilder.SplitNamespace(NamespaceName);
-        var typeSegments = new[] { "Outer`1", "Inner" };
-
-        var entry = builder.CreateIntermediateTypeEntry(nsSegments, typeSegments, currentTypeIndex: 0, assembly: AssemblyName);
-
-        Assert.Equal("Outer`1", entry.DisplayName);
-        Assert.Equal("T:TestNs.Outer`1", entry.DocCommentId);
-    }
-
-    [Fact]
-    public void CreateIntermediateTypeEntry_ShouldRetainGenericArityForDeeperLevels() {
-        var builder = SymbolTreeBuilder.CreateEmpty();
-        var nsSegments = SymbolTreeBuilder.SplitNamespace(NamespaceName);
-        var typeSegments = new[] { "Outer`1", "Middle`2", "Inner" };
-
-        var entry = builder.CreateIntermediateTypeEntry(nsSegments, typeSegments, currentTypeIndex: 1, assembly: AssemblyName);
-
-        Assert.Equal("Middle`2", entry.DisplayName);
-        Assert.Equal("T:TestNs.Outer`1+Middle`2", entry.DocCommentId);
     }
 
     [Fact]

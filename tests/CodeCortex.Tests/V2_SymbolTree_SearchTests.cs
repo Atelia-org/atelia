@@ -6,7 +6,7 @@ using CodeCortexV2.Index;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class V2_SymbolTree_SearchTests {
     private static string[] BuildNamespaceSegments(string ns)

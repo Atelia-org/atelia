@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using CodeCortex.Core.Prompt;
 using Xunit;
 
-namespace CodeCortex.Tests {
+namespace Atelia.CodeCortex.Tests {
     public class PromptWindowBuilderTests {
         [Fact]
         public void BuildWindowFromContents_BasicOrderAndBudget() {

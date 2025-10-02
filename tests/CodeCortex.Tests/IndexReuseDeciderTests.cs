@@ -5,12 +5,13 @@ using System.Threading;
 using CodeCortex.Core.Hashing;
 using CodeCortex.Core.Index;
 using CodeCortex.Core.Outline;
+using CodeCortex.Core.Ids;
 using CodeCortex.Workspace;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class IndexReuseDeciderTests {
     private (Microsoft.CodeAnalysis.Project project, AdhocWorkspace ws, string filePath) CreatePhysicalProject(string code) {
@@ -28,9 +29,9 @@ public class IndexReuseDeciderTests {
     }
 
     private CodeCortexIndex BuildIndex(params Microsoft.CodeAnalysis.Project[] projects) {
-        CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
+        TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var b = new IndexBuilder(new RoslynTypeEnumerator(), new TypeHasher(), new OutlineExtractor());
-        var req = new IndexBuildRequest("test.sln", projects, false, new HashConfig(), new CodeCortex.Core.Outline.OutlineOptions(), new FixedClock(), new NoOpOutlineWriter());
+        var req = new IndexBuildRequest("test.sln", projects, false, new HashConfig(), new OutlineOptions(), new FixedClock(), new NoOpOutlineWriter());
         return b.Build(req);
     }
 

@@ -1,7 +1,7 @@
 using Xunit;
 using CodeCortex.Core.Index;
 using CodeCortex.Core.Symbols;
-using CodeCortex.Tests; // InMemoryFileSystem
+using Atelia.CodeCortex.Tests; // InMemoryFileSystem
 using System.Collections.Generic;
 using System.IO.Abstractions.TestingHelpers;
 using System.Threading.Tasks;

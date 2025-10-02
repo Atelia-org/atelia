@@ -7,7 +7,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using System.IO.Abstractions.TestingHelpers;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public partial class IncrementalProcessorInMemoryTests {
     [Fact]

@@ -3,7 +3,7 @@ using CodeCortexV2.Index.SymbolTreeInternal;
 using CodeCortexV2.Abstractions;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class SymbolNormalizationTests {
     [Theory]

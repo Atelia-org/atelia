@@ -3,7 +3,7 @@ using Xunit;
 using CodeCortex.Workspace;
 using System.IO;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class WorkspaceLoaderTests {
     private static string GetSolutionPath() {

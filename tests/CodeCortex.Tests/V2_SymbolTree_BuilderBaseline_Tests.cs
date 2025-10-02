@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using CodeCortex.Tests.Util;
+using Atelia.CodeCortex.Tests.Util;
 using CodeCortexV2.Abstractions;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class V2_SymbolTree_BuilderBaseline_Tests {
     [Fact]

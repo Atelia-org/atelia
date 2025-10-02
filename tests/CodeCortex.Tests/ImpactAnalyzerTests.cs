@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class ImpactAnalyzerTests {
     private static (Compilation comp, string tmpFile) MakeCompilationWithFile(string code) {

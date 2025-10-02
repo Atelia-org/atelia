@@ -1,8 +1,8 @@
 using Xunit;
 using CodeCortex.Core.Ids;
-using CodeCortex.Tests.Util;
+using Atelia.CodeCortex.Tests.Util;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class TypeIdGeneratorTests {
     [Fact]

@@ -1,7 +1,9 @@
+
 using CodeCortex.Core.Hashing;
 using CodeCortex.Core.Index;
 using CodeCortex.Core.Outline;
 using CodeCortex.Workspace;
+using CodeCortex.Core.Ids;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
@@ -9,7 +11,8 @@ using Xunit;
 using System.Linq;
 using System.Collections.Generic;
 using System.IO;
-namespace CodeCortex.Tests; public class IndexBuilderTests {
+namespace Atelia.CodeCortex.Tests;
+public class IndexBuilderTests {
     private (Project project, AdhocWorkspace ws) CreateProject(string code) {
         var ws = new AdhocWorkspace();
         var projId = ProjectId.CreateNewId();
@@ -19,11 +22,11 @@ namespace CodeCortex.Tests; public class IndexBuilderTests {
         var project = ws.CurrentSolution.GetProject(projId)!;
         return (project, ws);
     }
-    private IndexBuildRequest MakeRequest(params Project[] projects) => new("test.sln", projects, true, new HashConfig(), new CodeCortex.Core.Outline.OutlineOptions(), new FakeClock(), new MemoryOutlineWriter()); [Fact]
+    private IndexBuildRequest MakeRequest(params Project[] projects) => new("test.sln", projects, true, new HashConfig(), new OutlineOptions(), new FakeClock(), new MemoryOutlineWriter()); [Fact]
     public void Build_SingleType() {
         var code = "namespace A { public class Foo { public void M(){} } }";
         var (p, _) = CreateProject(code);
-        CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
+        TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var builder = new IndexBuilder(new RoslynTypeEnumerator(), new TypeHasher(), new OutlineExtractor());
         var req = MakeRequest(p);
         var index = builder.Build(req);
@@ -37,7 +40,7 @@ namespace CodeCortex.Tests; public class IndexBuilderTests {
         var code2 = "namespace N2 { public class X{} }";
         var (p1, _) = CreateProject(code1);
         var (p2, _) = CreateProject(code2);
-        CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
+        TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var builder = new IndexBuilder(new RoslynTypeEnumerator(), new TypeHasher(), new OutlineExtractor());
         var req = MakeRequest(p1, p2);
         var index = builder.Build(req);
@@ -48,7 +51,7 @@ namespace CodeCortex.Tests; public class IndexBuilderTests {
     public void DeterministicOrdering() {
         var code = "namespace O { public class B{} public class A{} }";
         var (p, _) = CreateProject(code);
-        CodeCortex.Core.Ids.TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
+        TypeIdGenerator.Initialize(Directory.GetCurrentDirectory());
         var b = new IndexBuilder(new RoslynTypeEnumerator(), new TypeHasher(), new OutlineExtractor());
         var req = MakeRequest(p);
         var i1 = b.Build(req);

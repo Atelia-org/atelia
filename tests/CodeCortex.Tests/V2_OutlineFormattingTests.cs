@@ -1,9 +1,9 @@
 using Xunit;
-using CodeCortex.Tests.Util;
+using Atelia.CodeCortex.Tests.Util;
 using Microsoft.CodeAnalysis;
 using CodeCortexV2.Formatting;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class V2_OutlineFormattingTests {
     private const string Source = @"namespace N {

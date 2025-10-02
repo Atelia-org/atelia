@@ -4,7 +4,7 @@ using CodeCortexV2.Abstractions;
 using CodeCortexV2.Index.SymbolTreeInternal;
 using Xunit;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class SymbolTreeFreelistTests {
     private const string AssemblyName = "FreelistAsm";

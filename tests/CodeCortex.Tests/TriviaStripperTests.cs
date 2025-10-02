@@ -1,7 +1,7 @@
 using Xunit;
 using CodeCortex.Core.Hashing;
 
-namespace CodeCortex.Tests;
+namespace Atelia.CodeCortex.Tests;
 
 public class TriviaStripperTests {
     [Fact]
