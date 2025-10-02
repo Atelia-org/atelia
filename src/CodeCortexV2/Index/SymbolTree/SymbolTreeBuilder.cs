@@ -37,6 +37,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal;
 /// 旧版设计中的占位节点（Entry 为 null）只会在加载历史快照时短暂存在，并会在下一次 Delta 应用时
 /// 通过 <see cref="TidyTypeSiblings"/>/<see cref="CollapseEmptyTypeAncestors"/> 被自动回收。
 /// 后续重构将系统性地移除所有"占位节点"相关的概念和代码路径。
+///
+/// <para>&lt;b&gt;线程安全性（Thread Safety）&lt;/b&gt;</para>
+/// SymbolTreeBuilder 是可变的（mutable），&lt;b&gt;不支持并发修改&lt;/b&gt;。调用方必须确保单线程访问：
+/// - &lt;b&gt;构建阶段&lt;/b&gt;：所有 <see cref="ApplyDelta"/> 调用必须在同一线程中顺序执行。
+/// - &lt;b&gt;查询阶段&lt;/b&gt;：构建完成后，通过 <see cref="SymbolTreeB"/> 实例化不可变快照，该快照支持并发读取。
+/// - &lt;b&gt;典型用法&lt;/b&gt;：单个后台线程负责构建（<c>SymbolTreeBuilder.ApplyDelta</c>），
+///   构建完成后发布到共享的 <c>SymbolTreeB</c> 实例供多个查询线程并发访问。
 /// </summary>
 internal sealed class SymbolTreeBuilder {
 
@@ -96,7 +103,7 @@ internal sealed class SymbolTreeBuilder {
 
         var cascadeCandidates = new HashSet<int>();
         ApplyTypeRemovals(delta.TypeRemovals, cascadeCandidates);
-        ApplyTypeAddsSingleNode(delta.TypeAdds);
+        ApplyTypeAdds(delta.TypeAdds);
         int deletedNamespaces = CascadeEmptyNamespaces(cascadeCandidates);
 
         // Debug 专用：清理历史占位节点 + 输出 freelist 统计（Release 构建完全移除）
@@ -179,76 +186,136 @@ internal sealed class SymbolTreeBuilder {
             if (string.IsNullOrEmpty(typeKey.DocCommentId) || !typeKey.DocCommentId.StartsWith("T:", StringComparison.Ordinal)) { throw new InvalidOperationException($"TypeRemovals entry must have a DocCommentId starting with 'T:' (DocCommentId='{typeKey.DocCommentId ?? "<null>"}')"); }
             if (string.IsNullOrWhiteSpace(typeKey.Assembly)) { throw new InvalidOperationException($"TypeRemovals entry '{typeKey.DocCommentId}' must specify Assembly"); }
 
-            var s = typeKey.DocCommentId[2..];
-            var segs = SymbolNormalization.SplitSegmentsWithNested(s);
-            DebugUtil.Print("SymbolTree.Removal.Trace", $"Segmented '{s}' into: [{string.Join(", ", segs)}]");
-            var leaf = segs.Length > 0 ? segs[^1] : s;
-            var aliasKey = string.IsNullOrEmpty(leaf) ? s : leaf;
-            DebugUtil.Print("SymbolTree.Removal.Trace", $"Generated aliasKey='{aliasKey}' from leaf='{leaf}'");
-
-            bool removedAny = false;
-            if (ExactAliases.TryGetValue(aliasKey, out var rels) && !rels.IsDefaultOrEmpty) {
-                DebugUtil.Print("SymbolTree.Removal.Trace", $"Found {rels.Length} candidates in alias bucket '{aliasKey}': [{string.Join(", ", rels.Select(r => $"nodeId={r.NodeId}"))}]");
-                foreach (var r in rels) {
-                    int nid = r.NodeId;
-                    if (nid < 0 || nid >= Nodes.Count) {
-                        DebugUtil.Print("SymbolTree.Removal.Trace", $"Skipping invalid nodeId={nid}");
-                        continue;
-                    }
-
-                    var entry = Nodes[nid].Entry;
-                    bool shouldRemove = false;
-                    if (entry is not null) {
-                        DebugUtil.Print("SymbolTree.Removal.Trace", $"Checking nodeId={nid}: docId='{entry.DocCommentId}' assembly='{entry.Assembly}' against target docId='{typeKey.DocCommentId}' assembly='{typeKey.Assembly}'");
-                        if (string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal) &&
-                            string.Equals(entry.Assembly, typeKey.Assembly, StringComparison.Ordinal)) {
-                            shouldRemove = true;
-                        }
-                        else if (string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
-                            DebugUtil.Print("SymbolTree.WithDelta", $"Skip removal for docId={entry.DocCommentId}: existingAsm={entry.Assembly} != targetAsm={typeKey.Assembly}");
-                        }
-                    }
-                    else {
-                        DebugUtil.Print("SymbolTree.Removal.Trace", $"Checking path node {nid} (name={Nodes[nid].Name}) for matching descendants");
-                        if (HasMatchingDescendant(nid, typeKey.DocCommentId)) {
-                            shouldRemove = true;
-                            DebugUtil.Print("SymbolTree.Removal.Trace", $"Will remove path node {nid} because it has matching descendant");
-                        }
-                        else {
-                            DebugUtil.Print("SymbolTree.Removal.Trace", $"Skipping nodeId={nid} with null entry (no matching descendants)");
-                        }
-                    }
-
-                    if (shouldRemove) {
-                        int parentBefore = Nodes[nid].Parent;
-                        string removedName = Nodes[nid].Name;
-                        string removedDocId = entry?.DocCommentId ?? typeKey.DocCommentId;
-                        string removedAssembly = entry?.Assembly ?? typeKey.Assembly ?? string.Empty;
-                        int nsAncestor = FindNearestNamespaceAncestor(nid);
-                        if (nsAncestor > 0) {
-                            DebugUtil.Print("SymbolTree.WithDelta", $"Type removal matched node={nid} name={Nodes[nid].Name}, nsAncestorId={nsAncestor} nsName={Nodes[nsAncestor].Name}");
-                        }
-                        DebugUtil.Print("SymbolTree.WithDelta", $"Removing type subtree nid={nid}, name={Nodes[nid].Name}, docId={entry?.DocCommentId ?? "null"}, asm={entry?.Assembly ?? "null"}, nsAncestor={nsAncestor}");
-                        DebugUtil.Print("SymbolTree.Removal.Trace", $"About to call RemoveTypeSubtree for nid={nid}");
-                        RemoveTypeSubtree(nid);
-                        if (parentBefore >= 0) {
-                            TidyTypeSiblings(parentBefore, removedName, removedDocId, removedAssembly, keepNodeId: -1);
-                            CollapseEmptyTypeAncestors(parentBefore);
-                        }
-                        if (nsAncestor > 0) { cascadeCandidates.Add(nsAncestor); }
-                        removedAny = true;
-                    }
-                    else if (entry is not null && string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal)) {
-                        DebugUtil.Print("SymbolTree.WithDelta", $"Skip removal for docId={entry.DocCommentId}: existingAsm={entry.Assembly} != targetAsm={typeKey.Assembly}");
-                    }
-                }
-            }
-            else {
-                DebugUtil.Print("SymbolTree.Removal.Trace", $"No candidates found for aliasKey='{aliasKey}' (bucket empty or missing)");
-            }
+            var aliasKey = GenerateAliasKeyFromDocId(typeKey.DocCommentId);
+            bool removedAny = TryRemoveMatchingNodes(typeKey, aliasKey, cascadeCandidates);
 
             // 契约验证：仅在 Debug 模式下检查别名索引一致性（避免 Release 模式的 O(n) 全树扫描）
             VerifyRemovalCompleteness(removedAny, typeKey);
+        }
+    }
+
+    /// <summary>
+    /// 从 DocCommentId 生成用于别名查找的键。
+    /// 提取最后一段作为别名键（例如 "T:Ns.Outer+Inner" → "Inner"）。
+    /// </summary>
+    private string GenerateAliasKeyFromDocId(string docCommentId) {
+        var s = docCommentId[2..]; // 移除 "T:" 前缀
+        var segs = SymbolNormalization.SplitSegmentsWithNested(s);
+        DebugUtil.Print("SymbolTree.Removal.Trace", $"Segmented '{s}' into: [{string.Join(", ", segs)}]");
+
+        var leaf = segs.Length > 0 ? segs[^1] : s;
+        var aliasKey = string.IsNullOrEmpty(leaf) ? s : leaf;
+        DebugUtil.Print("SymbolTree.Removal.Trace", $"Generated aliasKey='{aliasKey}' from leaf='{leaf}'");
+
+        return aliasKey;
+    }
+
+    /// <summary>
+    /// 尝试删除与 <paramref name="typeKey"/> 匹配的所有节点。
+    /// 通过 <paramref name="aliasKey"/> 在别名桶中查找候选节点，逐个检查并删除匹配节点。
+    /// </summary>
+    /// <returns>如果删除了至少一个节点则返回 <c>true</c>，否则返回 <c>false</c>。</returns>
+    private bool TryRemoveMatchingNodes(TypeKey typeKey, string aliasKey, HashSet<int> cascadeCandidates) {
+        if (!ExactAliases.TryGetValue(aliasKey, out var rels) || rels.IsDefaultOrEmpty) {
+            DebugUtil.Print("SymbolTree.Removal.Trace", $"No candidates found for aliasKey='{aliasKey}' (bucket empty or missing)");
+            return false;
+        }
+
+        DebugUtil.Print("SymbolTree.Removal.Trace", $"Found {rels.Length} candidates in alias bucket '{aliasKey}': [{string.Join(", ", rels.Select(r => $"nodeId={r.NodeId}"))}]");
+
+        bool removedAny = false;
+        foreach (var r in rels) {
+            int nodeId = r.NodeId;
+            if (nodeId < 0 || nodeId >= Nodes.Count) {
+                DebugUtil.Print("SymbolTree.Removal.Trace", $"Skipping invalid nodeId={nodeId}");
+                continue;
+            }
+
+            if (ShouldRemoveNode(nodeId, typeKey)) {
+                RemoveTypeNodeAndPropagate(nodeId, typeKey, cascadeCandidates);
+                removedAny = true;
+            }
+        }
+
+        return removedAny;
+    }
+
+    /// <summary>
+    /// 检查节点是否应该被删除（匹配 <paramref name="typeKey"/> 的 DocCommentId 和 Assembly）。
+    /// </summary>
+    private bool ShouldRemoveNode(int nodeId, TypeKey typeKey) {
+        var entry = Nodes[nodeId].Entry;
+
+        if (entry is not null) {
+            DebugUtil.Print("SymbolTree.Removal.Trace",
+                $"Checking nodeId={nodeId}: docId='{entry.DocCommentId}' assembly='{entry.Assembly}' " +
+                $"against target docId='{typeKey.DocCommentId}' assembly='{typeKey.Assembly}'"
+            );
+
+            bool docIdMatches = string.Equals(entry.DocCommentId, typeKey.DocCommentId, StringComparison.Ordinal);
+            bool assemblyMatches = string.Equals(entry.Assembly, typeKey.Assembly, StringComparison.Ordinal);
+
+            if (docIdMatches && assemblyMatches) { return true; }
+
+            if (docIdMatches && !assemblyMatches) {
+                DebugUtil.Print("SymbolTree.WithDelta",
+                    $"Skip removal for docId={entry.DocCommentId}: existingAsm={entry.Assembly} != targetAsm={typeKey.Assembly}"
+                );
+            }
+
+            return false;
+        }
+
+        // 处理占位节点（历史兼容性）：检查是否有匹配的子孙节点
+        DebugUtil.Print("SymbolTree.Removal.Trace",
+            $"Checking path node {nodeId} (name={Nodes[nodeId].Name}) for matching descendants"
+        );
+
+        if (HasMatchingDescendant(nodeId, typeKey.DocCommentId)) {
+            DebugUtil.Print("SymbolTree.Removal.Trace",
+                $"Will remove path node {nodeId} because it has matching descendant"
+            );
+            return true;
+        }
+
+        DebugUtil.Print("SymbolTree.Removal.Trace",
+            $"Skipping nodeId={nodeId} with null entry (no matching descendants)"
+        );
+        return false;
+    }
+
+    /// <summary>
+    /// 删除指定节点及其子树，并执行后续清理操作（TidyTypeSiblings, CollapseEmptyTypeAncestors）。
+    /// 如果节点有命名空间祖先，将其添加到级联候选集合中。
+    /// </summary>
+    private void RemoveTypeNodeAndPropagate(int nodeId, TypeKey typeKey, HashSet<int> cascadeCandidates) {
+        int parentBefore = Nodes[nodeId].Parent;
+        string removedName = Nodes[nodeId].Name;
+        var entry = Nodes[nodeId].Entry;
+        string removedDocId = entry?.DocCommentId ?? typeKey.DocCommentId;
+        string removedAssembly = entry?.Assembly ?? typeKey.Assembly ?? string.Empty;
+
+        int nsAncestor = FindNearestNamespaceAncestor(nodeId);
+        if (nsAncestor > 0) {
+            DebugUtil.Print("SymbolTree.WithDelta",
+                $"Type removal matched node={nodeId} name={Nodes[nodeId].Name}, nsAncestorId={nsAncestor} nsName={Nodes[nsAncestor].Name}"
+            );
+        }
+
+        DebugUtil.Print("SymbolTree.WithDelta",
+            $"Removing type subtree nid={nodeId}, name={Nodes[nodeId].Name}, docId={entry?.DocCommentId ?? "null"}, asm={entry?.Assembly ?? "null"}, nsAncestor={nsAncestor}"
+        );
+        DebugUtil.Print("SymbolTree.Removal.Trace", $"About to call RemoveTypeSubtree for nid={nodeId}");
+
+        RemoveTypeSubtree(nodeId);
+
+        if (parentBefore >= 0) {
+            TidyTypeSiblings(parentBefore, removedName, removedDocId, removedAssembly, keepNodeId: -1);
+            CollapseEmptyTypeAncestors(parentBefore);
+        }
+
+        if (nsAncestor > 0) {
+            cascadeCandidates.Add(nsAncestor);
         }
     }
 
@@ -274,7 +341,7 @@ internal sealed class SymbolTreeBuilder {
         }
     }
 
-    private void ApplyTypeAddsSingleNode(IReadOnlyList<SymbolEntry>? additions) {
+    private void ApplyTypeAdds(IReadOnlyList<SymbolEntry>? additions) {
         if (additions is null || additions.Count == 0) { return; }
 
         int createdCount = 0;
@@ -462,8 +529,21 @@ internal sealed class SymbolTreeBuilder {
     /// <summary>
     /// 查找匹配名称的类型子节点（必须有 Entry）。
     /// 用于在处理嵌套类型时查找已经存在的父类型节点。
-    /// 忽略占位节点（Entry 为 null），因为当前设计不再创建占位节点。
+    ///
+    /// <para>&lt;b&gt;历史兼容性说明&lt;/b&gt;：</para>
+    /// 检查 <c>Entry is not null</c> 用于兼容历史快照中可能存在的占位节点（旧版设计遗留），
+    /// 但当前设计（单节点拓扑）已不再创建占位节点。新增的类型节点始终携带完整的 <see cref="SymbolEntry"/>。
+    /// 占位节点会在 <see cref="CleanupLegacyPlaceholders"/> 中被全局清理。
+    ///
+    /// <para>&lt;b&gt;查找策略&lt;/b&gt;：</para>
+    /// 只返回同时满足以下条件的节点：
+    /// - 节点类型为 <see cref="NodeKind.Type"/>
+    /// - 节点名称匹配（精确匹配）
+    /// - 节点包含有效的 <see cref="SymbolEntry"/>（Entry is not null）
     /// </summary>
+    /// <param name="parent">父节点索引</param>
+    /// <param name="name">要查找的类型名称（段名称，不含命名空间）</param>
+    /// <returns>匹配的节点索引，未找到则返回 -1</returns>
     private int FindTypeChild(int parent, string name) {
         if (parent < 0 || parent >= Nodes.Count) { return -1; }
         int current = Nodes[parent].FirstChild;
@@ -504,11 +584,19 @@ internal sealed class SymbolTreeBuilder {
                 RemoveAliasesForNode(current);
                 DetachNode(current);
             }
-            // 🏗️ Design invariant: In single-node topology, all type nodes must have Entry
-            // Legacy placeholder nodes are cleaned up globally by CleanupLegacyPlaceholders
-            Debug.Assert(entry is not null || node.FirstChild >= 0,
-                $"Unexpected empty placeholder node in TidyTypeSiblings: nodeId={current}, name={nodeName}"
-            );
+            else {
+                // 🏗️ 单节点拓扑不变量（Single-Node Topology Invariant）：
+                // 所有类型节点必须有 Entry 或子节点。这是索引一致性的核心保证。
+                // 空占位节点（Entry=null 且 FirstChild<0）表示索引损坏，必须立即中止以防止数据污染。
+                if (entry is null && node.FirstChild < 0) {
+                    throw new InvalidOperationException(
+                        $"Index corruption detected: empty placeholder node in TidyTypeSiblings. " +
+                        $"nodeId={current}, name={nodeName}, parentId={parentId}. " +
+                        $"This violates single-node topology invariant (type nodes must have Entry or children). " +
+                        $"Likely caused by: (1) loading corrupted snapshot, (2) concurrent modification, or (3) Delta ordering violation."
+                    );
+                }
+            }
 
             current = next;
         }
@@ -525,11 +613,16 @@ internal sealed class SymbolTreeBuilder {
                 continue;
             }
 
-            // 🏗️ Design invariant: In single-node topology, type nodes must have Entry or children
-            // Legacy placeholder nodes are cleaned up globally by CleanupLegacyPlaceholders
-            Debug.Assert(node.Entry is not null || node.FirstChild >= 0,
-                $"Unexpected empty placeholder node in CollapseEmptyTypeAncestors: nodeId={current}, name={node.Name}"
-            );
+            // 🏗️ 单节点拓扑不变量（Single-Node Topology Invariant）：
+            // 类型节点必须有 Entry 或子节点。空占位节点表示索引损坏。
+            if (node.Entry is null && node.FirstChild < 0) {
+                throw new InvalidOperationException(
+                    $"Index corruption detected: empty placeholder node in CollapseEmptyTypeAncestors. " +
+                    $"nodeId={current}, name={node.Name}, parentId={node.Parent}. " +
+                    $"This violates single-node topology invariant (type nodes must have Entry or children). " +
+                    $"Likely caused by: (1) loading corrupted snapshot, (2) concurrent modification, or (3) Delta ordering violation."
+                );
+            }
 
             if (node.Entry is SymbolEntry entry) {
                 var docId = entry.DocCommentId ?? string.Empty;
