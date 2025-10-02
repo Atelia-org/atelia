@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Linq;
 
 using Atelia.Diagnostics;
@@ -463,11 +464,11 @@ internal sealed class SymbolTreeBuilder {
                 RemoveAliasesForNode(current);
                 DetachNode(current);
             }
-            else if (entry is null && node.FirstChild < 0) {
-                DebugUtil.Print("SymbolTree.SingleNode", $"Removing empty structural placeholder nodeId={current} name={nodeName}");
-                RemoveAliasesForNode(current);
-                DetachNode(current);
-            }
+            // 🏗️ Design invariant: In single-node topology, all type nodes must have Entry
+            // Legacy placeholder nodes are cleaned up globally by CleanupLegacyPlaceholders
+            Debug.Assert(entry is not null || node.FirstChild >= 0,
+                $"Unexpected empty placeholder node in TidyTypeSiblings: nodeId={current}, name={nodeName}"
+            );
 
             current = next;
         }
@@ -484,14 +485,11 @@ internal sealed class SymbolTreeBuilder {
                 continue;
             }
 
-            if (node.Entry is null && node.FirstChild < 0) {
-                int parent = node.Parent;
-                DebugUtil.Print("SymbolTree.SingleNode", $"Removing empty ancestor type nodeId={current} name={node.Name}");
-                RemoveAliasesForNode(current);
-                DetachNode(current);
-                current = parent;
-                continue;
-            }
+            // 🏗️ Design invariant: In single-node topology, type nodes must have Entry or children
+            // Legacy placeholder nodes are cleaned up globally by CleanupLegacyPlaceholders
+            Debug.Assert(node.Entry is not null || node.FirstChild >= 0,
+                $"Unexpected empty placeholder node in CollapseEmptyTypeAncestors: nodeId={current}, name={node.Name}"
+            );
 
             if (node.Entry is SymbolEntry entry) {
                 var docId = entry.DocCommentId ?? string.Empty;
@@ -810,19 +808,13 @@ internal sealed class SymbolTreeBuilder {
                 AddAliasesForNode(next);
             }
             else {
-                var node = Nodes[next];
-                if (node.Entry is null) {
-                    var nsEntry = new SymbolEntry(
-                        DocCommentId: docId,
-                        Assembly: string.Empty,
-                        Kind: SymbolKinds.Namespace,
-                        NamespaceSegments: namespaceSegments,
-                        TypeSegments: Array.Empty<string>(),
-                        FullDisplayName: fullDisplay,
-                        DisplayName: segment
-                    );
-                    ReplaceNodeEntry(next, nsEntry);
-                }
+                // 命名空间节点在创建时总是带有 Entry（除根节点外，见 Line 57）。
+                // 此断言验证不变量：已存在的命名空间节点应该有 Entry。
+                System.Diagnostics.Debug.Assert(
+                    Nodes[next].Entry is not null,
+                    $"Namespace node '{segment}' at index {next} unexpectedly has null Entry. " +
+                    $"This should never happen in normal operation."
+                );
             }
 
             current = next;
