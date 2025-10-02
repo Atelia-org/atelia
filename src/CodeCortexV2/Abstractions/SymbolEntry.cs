@@ -41,14 +41,29 @@ public sealed record SymbolEntry(
     /// <param name="MatchFlags">How the query matched this entry.</param>
     /// <param name="score">Secondary sort score (lower is better) within the same &lt;paramref name="MatchFlags"/&gt;.</param>
     /// <returns>A consistent, transport-friendly hit.</returns>
-    public SearchHit ToHit(MatchFlags MatchFlags, int score) => new(
-        Name: FullDisplayName,
-        Kind: Kind,
-    Namespace: NamespaceSegments is { Length: > 0 } nsSegments ? string.Join('.', nsSegments) : null,
-        Assembly: string.IsNullOrEmpty(Assembly) ? null : Assembly,
-        SymbolId: new SymbolId(DocCommentId),
-        MatchFlags: MatchFlags,
-        IsAmbiguous: false,
-        Score: score
-    );
+    public SearchHit ToHit(MatchFlags MatchFlags, int score) {
+        string? ns;
+        if (Kind == SymbolKinds.Namespace) {
+            // For namespace entries, NamespaceSegments contains the full path including itself.
+            // The Namespace field should represent the parent namespace (all segments except the last).
+            ns = NamespaceSegments is { Length: > 1 }
+                ? string.Join('.', NamespaceSegments.Take(NamespaceSegments.Length - 1))
+                : null;
+        }
+        else {
+            // For type entries, NamespaceSegments already represents the containing namespace.
+            ns = NamespaceSegments is { Length: > 0 } nsSegments ? string.Join('.', nsSegments) : null;
+        }
+
+        return new(
+            Name: FullDisplayName,
+            Kind: Kind,
+            Namespace: ns,
+            Assembly: string.IsNullOrEmpty(Assembly) ? null : Assembly,
+            SymbolId: new SymbolId(DocCommentId),
+            MatchFlags: MatchFlags,
+            IsAmbiguous: false,
+            Score: score
+        );
+    }
 }
