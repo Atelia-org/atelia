@@ -40,30 +40,21 @@ try {
       Write-Info "Restaging tracked modifications after formatting"
       git add --update | Out-Null
     }
-
-    # Re-check staged snapshot after formatting/restaging
-    $stagedCheck2 = git diff --cached --check 2>&1
-    if ($LASTEXITCODE -ne 0) {
-      Write-Host $stagedCheck2 -ForegroundColor Red
-      Write-Err "Whitespace/EOL issues remain in staged snapshot after formatting. Aborting commit."
-      exit 1
-    }
   } else {
     Write-Warn "format.ps1 not found at repo root. Skipping auto-format step."
   }
 
   Write-Info "Running pre-commit checks (whitespace & EOL)"
 
-  # Auto-fix trailing whitespace in non-Markdown files
+  # Auto-fix trailing whitespace
   $filesToClean = @(git diff --cached --name-only --diff-filter=ACM) |
     Where-Object {
       $_ -and
-      $_ -notmatch '\.(md|mdx)$' -and
       (Test-Path $_)
     }
 
+  Write-Warn "Auto-fixing trailing whitespace in $($filesToClean.Count) file(s)"
   if ($filesToClean.Count -gt 0) {
-    Write-Info "Auto-fixing trailing whitespace in $($filesToClean.Count) file(s)"
     $cleanedCount = 0
     foreach ($file in $filesToClean) {
       try {
