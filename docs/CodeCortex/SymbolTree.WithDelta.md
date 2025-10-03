@@ -7,7 +7,7 @@
   - (src\CodeCortexV2\Abstractions\SymbolEntry.cs)
   - (src/CodeCortexV2/Index/SymbolTree/SymbolTree.Core.cs) 关键，要构建出的不可变类型的数据结构定义
   - (src/CodeCortexV2/Index/SymbolTree/SymbolTree.Build.cs) 关键，要实现`SymbolTree.WithDelta`的位置，现有的`SymbolTreeBFromEntries`函数的实现
-  - (src/CodeCortexV2/Index/SymbolTree/Node.B.cs)
+  - (src/CodeCortexV2/Index/SymbolTree/Node.cs)
   - (src/CodeCortexV2/Abstractions/MatchFlags.cs)
   - (src/CodeCortexV2/Index/Synchronizer/IndexSynchronizer.cs) 构建SymbolsDelta实例的具体实现
 
