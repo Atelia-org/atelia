@@ -20,7 +20,7 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
         };
 
         var delta = SymbolsDeltaContract.Normalize(entries, Array.Empty<TypeKey>());
-        var viaDelta = ApplyDeltas(SymbolTreeB.Empty, delta);
+        var viaDelta = ApplyDeltas(SymbolTree.Empty, delta);
         var viaFull = BuildTreeFromAdds(entries);
 
         AssertSnapshotsEqual(viaFull, viaDelta);
@@ -38,7 +38,7 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
             new[] { new TypeKey("T:Stage0.Alpha", "Asm") }
         );
 
-        var finalTree = ApplyDeltas(SymbolTreeB.Empty, initial, rename);
+        var finalTree = ApplyDeltas(SymbolTree.Empty, initial, rename);
         var expectedEntries = new[] {
             TypeEntry("Stage0", "Beta", 0, "Asm")
         };
@@ -56,12 +56,12 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
         };
 
         var delta = SymbolsDeltaContract.Normalize(entries, Array.Empty<TypeKey>());
-        var viaDelta = ApplyDeltas(SymbolTreeB.Empty, delta);
+        var viaDelta = ApplyDeltas(SymbolTree.Empty, delta);
         var viaFull = BuildTreeFromAdds(entries);
 
         AssertSnapshotsEqual(viaFull, viaDelta);
 
-        var queryTree = (SymbolTreeB)viaDelta;
+        var queryTree = (SymbolTree)viaDelta;
         AssertAliasSearchParity(queryTree);
     }
 
@@ -98,14 +98,14 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
         return current;
     }
 
-    private static void AssertSnapshotsEqual(SymbolTreeB expected, ISymbolIndex actualIndex) {
-        var actual = Assert.IsType<SymbolTreeB>(actualIndex);
+    private static void AssertSnapshotsEqual(SymbolTree expected, ISymbolIndex actualIndex) {
+        var actual = Assert.IsType<SymbolTree>(actualIndex);
         var expectedSnap = SymbolTreeSnapshot.Capture(expected);
         var actualSnap = SymbolTreeSnapshot.Capture(actual);
         SymbolTreeSnapshotAssert.Equal(expectedSnap, actualSnap);
     }
 
-    private static void AssertAliasSearchParity(SymbolTreeB tree) {
+    private static void AssertAliasSearchParity(SymbolTree tree) {
         var queries = new (string Query, MatchFlags Flags)[] {
             ("T:System.Collections.Generic.List`1", MatchFlags.None),
             ("System.Collections.Generic.List", MatchFlags.IgnoreGenericArity),
@@ -122,10 +122,10 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
         }
     }
 
-    private static SymbolTreeB BuildTreeFromAdds(IEnumerable<SymbolEntry> entries) {
+    private static SymbolTree BuildTreeFromAdds(IEnumerable<SymbolEntry> entries) {
         var typeAdds = entries?.ToArray() ?? Array.Empty<SymbolEntry>();
         var delta = SymbolsDeltaContract.Normalize(typeAdds, Array.Empty<TypeKey>());
-        return (SymbolTreeB)SymbolTreeB.Empty.WithDelta(delta);
+        return (SymbolTree)SymbolTree.Empty.WithDelta(delta);
     }
 
     private static string[] BuildNamespaceSegments(string ns)

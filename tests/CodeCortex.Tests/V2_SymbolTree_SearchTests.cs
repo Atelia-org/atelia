@@ -43,7 +43,7 @@ public class V2_SymbolTree_SearchTests {
         );
     }
 
-    private static SymbolTreeB BuildSample() {
+    private static SymbolTree BuildSample() {
         var entries = new[] {
             Ty("System.Collections.Generic", "List", 1, "System.Collections")
         };
@@ -78,7 +78,7 @@ public class V2_SymbolTree_SearchTests {
         );
     }
 
-    private static SymbolTreeB BuildSampleWithNested() {
+    private static SymbolTree BuildSampleWithNested() {
         var entries = new[] {
             Ty("System.Collections.Generic", "List", 1, "System.Collections"),
             TyNested("System.Collections.Generic", "List", 1, "Enumerator", 0, "System.Collections")
@@ -257,8 +257,8 @@ public class V2_SymbolTree_SearchTests {
         Assert.True((hit.MatchFlags & MatchFlags.IgnoreGenericArity) != 0);
     }
 
-    private static SymbolTreeB BuildTree(IEnumerable<SymbolEntry> entries)
-        => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
+    private static SymbolTree BuildTree(IEnumerable<SymbolEntry> entries)
+        => (SymbolTree)SymbolTree.Empty.WithDelta(
             SymbolsDeltaContract.Normalize(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
         );
 }

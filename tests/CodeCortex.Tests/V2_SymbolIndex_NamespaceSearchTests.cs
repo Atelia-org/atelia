@@ -9,7 +9,7 @@ using Xunit;
 namespace Atelia.CodeCortex.Tests;
 
 /// <summary>
-/// 这些测试从旧的 SymbolIndex 测试迁移而来，改为直接针对新的 SymbolTreeB。
+/// 这些测试从旧的 SymbolIndex 测试迁移而来，改为直接针对新的 SymbolTree。
 /// 仅覆盖当前已实现能力：精确匹配、大小写不敏感、泛型元数不敏感（不包含 Partial/Wildcard/Fuzzy）。
 /// </summary>
 public class V2_SymbolIndex_NamespaceSearchTests {
@@ -45,7 +45,7 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         );
     }
 
-    private static SymbolTreeB BuildFooBarSample() {
+    private static SymbolTree BuildFooBarSample() {
         var entries = new[] {
             Ty("Foo.Bar", "Baz", 0, "TestAsm")
         };
@@ -117,8 +117,8 @@ public class V2_SymbolIndex_NamespaceSearchTests {
         Assert.Empty(page.Items);
     }
 
-    private static SymbolTreeB BuildTree(IEnumerable<SymbolEntry> entries)
-        => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
+    private static SymbolTree BuildTree(IEnumerable<SymbolEntry> entries)
+        => (SymbolTree)SymbolTree.Empty.WithDelta(
             SymbolsDeltaContract.Normalize(entries?.ToArray() ?? Array.Empty<SymbolEntry>(), Array.Empty<TypeKey>())
         );
 }

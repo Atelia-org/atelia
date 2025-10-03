@@ -15,7 +15,7 @@ This note captures the medium-term ideas that were factored out of the single-no
 - **Parent child slot index**: cache `(parentId, name, kind) -> childIds` for touched parents inside a delta to avoid repeated sibling scans.
 - **DocId lookup map**: maintain a temporary map of `DocCommentId -> nodeIds` while applying a delta to accelerate add/remove matching.
 - **Deterministic alias ordering**: keep alias buckets naturally sorted (already done) and extend determinism to any future auxiliary indexes.
-- **NodeBuilder lazy overlays**: switch `List<NodeB>` cloning to a copy-on-write layout (immutable array + sparse override dictionary).
+- **NodeBuilder lazy overlays**: switch `List<Node>` cloning to a copy-on-write layout (immutable array + sparse override dictionary).
 
 ### P2 – Long running maintenance
 - **Tombstone compaction**: define thresholds (percentage + absolute count) to trigger subtree rebuild or freelist trimming during low-traffic periods.

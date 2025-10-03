@@ -219,7 +219,7 @@ grep -r "NodeKind.Namespace.*entry:\s*null" src/ tests/
 
 # 结果：仅有根节点 (Line 57)
 src/CodeCortexV2/Index/SymbolTree/SymbolTreeBuilder.cs:57:
-    new NodeB(string.Empty, parent: -1, firstChild: -1, nextSibling: -1, NodeKind.Namespace, entry: null)
+    new Node(string.Empty, parent: -1, firstChild: -1, nextSibling: -1, NodeKind.Namespace, entry: null)
 ```
 
 #### 移除风险评估

@@ -9,7 +9,7 @@ using CodeCortexV2.Abstractions;
 
 namespace CodeCortexV2.Index.SymbolTreeInternal;
 
-partial class SymbolTreeB {
+partial class SymbolTree {
     private IEnumerable<AliasRelation> CandidatesExact(string last) {
         if (_exactAliasToNodes.TryGetValue(last, out var rels)) { return rels; }
         return Array.Empty<AliasRelation>();
@@ -70,7 +70,7 @@ partial class SymbolTreeB {
         if (string.IsNullOrWhiteSpace(query)) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
         var sw = System.Diagnostics.Stopwatch.StartNew();
         query = query.Trim();
-        DebugUtil.Print("SymbolTreeB.Search", $"q='{query}', kinds={kinds}, limit={effLimit}, offset={effOffset}");
+        DebugUtil.Print("SymbolTree.Search", $"q='{query}', kinds={kinds}, limit={effLimit}, offset={effOffset}");
 
         // Centralized query preprocessing
         var qi = QueryPreprocessor.Preprocess(query);
@@ -90,7 +90,7 @@ partial class SymbolTreeB {
                 segNormalizedLowered: qi.LowerNormalizedSegments[lastIdx]
             );
             if (lastMap.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
-            DebugUtil.Print("SymbolTreeB.Lazy", $"lastMap candidates={lastMap.Count}");
+            DebugUtil.Print("SymbolTree.Lazy", $"lastMap candidates={lastMap.Count}");
 
             // Single-segment root-anchored early filter: keep only namespaces whose parent is directly under root (root.Parent == -1)
             if (rootConstraint && segCount == 1 && lastMap.Count > 0) {
@@ -105,7 +105,7 @@ partial class SymbolTreeB {
                     }
                 }
                 if (removed > 0) {
-                    DebugUtil.Print("SymbolTreeB.Lazy", $"root filter (single seg) removed={removed}, kept={lastMap.Count}");
+                    DebugUtil.Print("SymbolTree.Lazy", $"root filter (single seg) removed={removed}, kept={lastMap.Count}");
                 }
                 if (lastMap.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
             }
@@ -156,7 +156,7 @@ partial class SymbolTreeB {
                     }
                 }
                 survivorsAdv = next;
-                DebugUtil.Print("SymbolTreeB.Lazy", $"i={i}, parents={parents.Count}, allowedExact={allowedExact.Count}, allowedNonExact={allowedNonExact.Count}, survivors(after)={survivorsAdv.Count}");
+                DebugUtil.Print("SymbolTree.Lazy", $"i={i}, parents={parents.Count}, allowedExact={allowedExact.Count}, allowedNonExact={allowedNonExact.Count}, survivors(after)={survivorsAdv.Count}");
             }
 
             if (survivorsAdv.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }
@@ -179,7 +179,7 @@ partial class SymbolTreeB {
                     foreach (var nid in toRemove) {
                         survivors.Remove(nid);
                     }
-                    DebugUtil.Print("SymbolTreeB.Root", $"root-anchored filter removed={toRemove.Count}, kept={survivors.Count}");
+                    DebugUtil.Print("SymbolTree.Root", $"root-anchored filter removed={toRemove.Count}, kept={survivors.Count}");
                 }
 
                 if (survivors.Count == 0) { return new SearchResults(Array.Empty<SearchHit>(), 0, effOffset, effLimit, null); }

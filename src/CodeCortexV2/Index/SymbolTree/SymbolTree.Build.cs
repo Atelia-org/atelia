@@ -8,7 +8,7 @@ using CodeCortexV2.Abstractions;
 
 namespace CodeCortexV2.Index.SymbolTreeInternal;
 
-partial class SymbolTreeB {
+partial class SymbolTree {
     /// <summary>
     /// Apply a leaf-oriented <see cref="SymbolsDelta"/> to the current immutable tree and return a new snapshot.
     /// Expectations (namespace fields on delta are deprecated):
@@ -25,7 +25,7 @@ partial class SymbolTreeB {
         if (delta is null) { return this; }
 
         // P0 implementation notes:
-        // - Localized edits on a mutable copy of nodes (List<NodeB>), patching only affected parents/siblings.
+        // - Localized edits on a mutable copy of nodes (List<Node>), patching only affected parents/siblings.
         // - Alias maps: for simplicity, we shallow-copy whole dictionaries, then replace mutated buckets per-key.
         //   This is O(#alias-keys) copy once; acceptable for P0 and will be optimized later with true COW.
         bool wasEmptySnapshot = _nodes.Length == 0;
@@ -43,7 +43,7 @@ partial class SymbolTreeB {
 
         DebugUtil.Print("SymbolTree.WithDelta", $"EmptySnapshot={wasEmptySnapshot}, TypeAdds={stats.TypeAddCount}, TypeRemovals={stats.TypeRemovalCount}, CascadeCandidates={stats.CascadeCandidateCount}, DeletedNamespaces={stats.DeletedNamespaceCount}, ReusedNodes={stats.ReusedNodeCount}, FreedNodes={stats.FreedNodeCount}");
 
-        var newTree = new SymbolTreeB(
+        var newTree = new SymbolTree(
             builder.Nodes.ToImmutableArray(),
             builder.ExactAliases,
             builder.NonExactAliases,

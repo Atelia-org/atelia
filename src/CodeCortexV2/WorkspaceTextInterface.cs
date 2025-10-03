@@ -169,8 +169,8 @@ public sealed class WorkspaceTextInterface : IWorkspaceTextInterface {
         return $"不支持的符号类型用于大纲: {hit.Kind}";
     }
 
-    private static SymbolTreeB BuildTreeFromEntries(IEnumerable<SymbolEntry>? entries)
-        => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
+    private static SymbolTree BuildTreeFromEntries(IEnumerable<SymbolEntry>? entries)
+        => (SymbolTree)SymbolTree.Empty.WithDelta(
             SymbolsDeltaContract.Normalize(entries?.ToArray() ?? System.Array.Empty<SymbolEntry>(), System.Array.Empty<TypeKey>())
         );
 }

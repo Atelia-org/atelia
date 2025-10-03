@@ -57,7 +57,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     );
 
     private IndexSnapshot _snap = new(
-        SymbolTreeB.Empty,
+        SymbolTree.Empty,
         ImmutableDictionary.Create<string, SymbolEntry>(StringComparer.Ordinal),
         0
     );
@@ -65,7 +65,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
     /// &lt;inheritdoc /&gt;
     public ISymbolIndex Current => System.Threading.Volatile.Read(ref _snap).Index;
 
-    /// <summary>Expose current flat entries for building alternative engines (e.g., SymbolTreeB) without exposing internal maps.</summary>
+    /// <summary>Expose current flat entries for building alternative engines (e.g., SymbolTree) without exposing internal maps.</summary>
     public IEnumerable<SymbolEntry> CurrentEntries => System.Threading.Volatile.Read(ref _snap).Entries.Values;
 
     /// <summary>Debounce duration in milliseconds for coalescing workspace events.</summary>
@@ -135,7 +135,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
         DebugUtil.Print("IndexSync", $"Initial build started");
         var full = await ComputeFullDeltaAsync(_workspace.CurrentSolution, ct).ConfigureAwait(false);
         // Replace-style snapshot build: start from empty index and rebuild entries
-        var nextIndex = SymbolTreeB.Empty.WithDelta(full);
+        var nextIndex = SymbolTree.Empty.WithDelta(full);
         var entriesB = ImmutableDictionary.CreateBuilder<string, SymbolEntry>(StringComparer.Ordinal);
         foreach (var e in full.TypeAdds) {
             if (!string.IsNullOrEmpty(e.DocCommentId)) {
@@ -221,7 +221,7 @@ public sealed class IndexSynchronizer : IIndexProvider, IDisposable {
                             entriesB[e.DocCommentId] = e;
                         }
                     }
-                    var rebuiltIndex = SymbolTreeB.Empty.WithDelta(full);
+                    var rebuiltIndex = SymbolTree.Empty.WithDelta(full);
                     var curr = System.Threading.Volatile.Read(ref _snap);
                     var rebuiltSnap = new IndexSnapshot(rebuiltIndex, entriesB.ToImmutable(), curr.Version + 1);
                     System.Threading.Interlocked.Exchange(ref _snap, rebuiltSnap);

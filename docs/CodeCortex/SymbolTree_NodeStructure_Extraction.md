@@ -16,7 +16,7 @@
 
 ## 非目标
 - 不在本次重构中改写别名维护策略或引入新数据结构。
-- 不立即替换 `NodeB` 的存储形态（初期仍使用 `List<NodeB>` 作为工作副本）。
+- 不立即替换 `Node` 的存储形态（初期仍使用 `List<Node>` 作为工作副本）。
 - 不改变现有调试入口（`DebugUtil` 等），只调整其调用位置。
 
 ## 设计细节
@@ -34,9 +34,9 @@ digraph G {
 
 - `MutableSymbolTree` 提供纯结构操作，保持对节点数组与 freelist 的独占所有权。
 - 别名字典与结构层解耦；Builder 根据结构层返回的结果更新别名桶、统计信息与调试输出。
-- 访问节点序列需通过结构层提供的受控迭代器/结果对象，禁止直接操纵底层 `List<NodeB>`。
+- 访问节点序列需通过结构层提供的受控迭代器/结果对象，禁止直接操纵底层 `List<Node>`。
 - 命名约定：`Ensure*` 表示“若不存在则创建”，`TryFind*` 通过 `out` 返回索引并返回 `bool`，`Get*` 必须存在，否则抛出异常。
-- 命名空间规划：后续计划将构建期类型聚合于 `CodeCortexV2.Index.SymbolTreeInternal.Mutable` 命名空间，便于与查询期快照（`SymbolTreeB`）及潜在别名模块区分职责。
+- 命名空间规划：后续计划将构建期类型聚合于 `CodeCortexV2.Index.SymbolTreeInternal.Mutable` 命名空间，便于与查询期快照（`SymbolTree`）及潜在别名模块区分职责。
 - 命名空间落地清单：
   - `CodeCortexV2.Index.SymbolTreeInternal.Mutable`：结构层主体类型（`MutableSymbolTree`、`MutableNodeCursor`、`MutableTraversalStack` 等）。
   - `CodeCortexV2.Index.SymbolTreeInternal.Diagnostics`：结构层健康监控、调试断言协作类型（`StructureHealthMonitor`、`SymbolTreeIntegrityReport`）。
@@ -46,15 +46,15 @@ digraph G {
 ### 2. 所有权与生命周期
 - **创建阶段**：
   - `MutableSymbolTree.CreateEmpty()`：构建空索引（含根命名空间）。
-  - `MutableSymbolTree.Clone(ImmutableArray<NodeB> snapshot, int freeHead)`：从不可变快照克隆到工作副本，所有权从快照转移到 Builder。
+  - `MutableSymbolTree.Clone(ImmutableArray<Node> snapshot, int freeHead)`：从不可变快照克隆到工作副本，所有权从快照转移到 Builder。
 - **使用阶段**：Builder 在 `WithDelta` 内持有结构层的唯一引用，所有结构性修改通过其公开 API 完成。
 - **完成阶段**：
-  - `ImmutableArray<NodeB> MutableSymbolTree.ToImmutable(out int freeHead)`：将内部 `List<NodeB>` 转回不可变数组，并输出新的 freelist 头；调用后结构层转入只读状态。
+  - `ImmutableArray<Node> MutableSymbolTree.ToImmutable(out int freeHead)`：将内部 `List<Node>` 转回不可变数组，并输出新的 freelist 头；调用后结构层转入只读状态。
   - 结构层通过返回值（如 `SubtreeRemovalResult`）或统计对象上报 `_freedThisDelta` / `_reusedThisDelta` 等数据，避免跨层字段共享。
 - **扩展空间**：未来若实现 Copy-on-Write，可在 `Clone`/`ToImmutable` 中复用未修改的段。
 
 ### 3. API 草案
-- `ref readonly NodeB GetNode(int nodeId)`：只读访问节点；调用方需保证索引有效。
+- `ref readonly Node GetNode(int nodeId)`：只读访问节点；调用方需保证索引有效。
 - `bool TryFindChildByNameKind(int parentId, string name, NodeKind kind, out int childId)`：无副作用查询。
 - `bool TryFindTypeChild(int parentId, string name, out int childId)`：类型限定查询，过滤历史遗留占位节点。
 - `int EnsureNamespaceChain(ReadOnlySpan<string> segments, Func<string[], SymbolEntry> entryFactory)`：逐段创建缺失命名空间节点并返回末尾索引。
@@ -83,7 +83,7 @@ digraph G {
 ### 5. Builder 集成流程
 ```mermaid
 sequenceDiagram
-    participant B as SymbolTreeB
+    participant B as SymbolTree
     participant Builder
     participant Structure as MutableSymbolTree
     participant Aliases
@@ -93,13 +93,13 @@ sequenceDiagram
     Structure-->>Builder: SubtreeRemovalResult / stats
     Builder->>Aliases: Update buckets & metrics
     Builder->>Structure: ToImmutable(out freeHead')
-    Builder->>B: new SymbolTreeB(immutableNodes, aliases, freeHead')
+    Builder->>B: new SymbolTree(immutableNodes, aliases, freeHead')
 ```
 
 流程保证数据流单向：结构层不直接操作别名字典，Builder 也不会触碰结构层内部存储，实现关注点分离。
 
 ### 6. Copy-on-Write 预留路线
-1. 将内部容器替换为 `ImmutableArray<NodeB>.Builder` 或自定义 `struct Span<NodeB>`，记录被修改的段。
+1. 将内部容器替换为 `ImmutableArray<Node>.Builder` 或自定义 `struct Span<Node>`，记录被修改的段。
 2. 在 `Clone` 阶段标记“借用”源快照的区间，首次写入时再分配新内存。
 3. 在 `ToImmutable` 阶段复用未修改的区间，降低分配与拷贝成本。
 4. 引入 `NodeHandle`（包装索引）便于未来跨内存布局迁移。
@@ -160,7 +160,7 @@ sequenceDiagram
 - **健康报告噪声**：通过 `StructureHealthMonitor` 记录 `IntegrityViolations` 触发频次，超过阈值（默认每小时 5 次）升级为 Warning 并附带最近一次 `SubtreeRemovalResult` 摘要，便于排查误报。
 
 ## 关键设计决策（草拟 ADR）
-- **ADR-001：继续使用 `List<NodeB>` 作为工作副本**
+- **ADR-001：继续使用 `List<Node>` 作为工作副本**
   - 决策原因：保持与现有实现一致，降低初次迁移风险；便于通过索引器高效读写。
   - 后续演进：在 Copy-on-Write 阶段再考虑替换容器。
 - **ADR-002：别名维护仍由 `SymbolTreeBuilder` 负责**
@@ -180,7 +180,7 @@ sequenceDiagram
 
 ### 1. `MutableSymbolTree` 的最终命名
 - **方案 A：保留 `MutableSymbolTree`，待 Phase 2 复盘后再定案**
-  - 优点：与 `SymbolTreeB` 构成直观的 Mutable/Immutable 对照，迁移期间无需额外重命名；可以在职责真正稳定后，以 ADR 形式一次性敲定命名。
+  - 优点：与 `SymbolTree` 构成直观的 Mutable/Immutable 对照，迁移期间无需额外重命名；可以在职责真正稳定后，以 ADR 形式一次性敲定命名。
   - 风险：若 Phase 2 期间引入别名子模块，`Mutable` 标识的语义可能不够突出“结构存储层”，持续时间越长越可能造成命名空间内的概念冲突。
 - **方案 B：在 Phase 1 期间提前重命名为 `SymbolTreeStorage`（或类似存储语义的名称）**
   - 优点：及时强调类型的结构存储职责，与未来可能的别名模块形成更清晰的边界；可以同步完成命名空间梳理，减少后续大范围重命名的需求。

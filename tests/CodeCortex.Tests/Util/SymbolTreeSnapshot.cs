@@ -25,17 +25,17 @@ internal sealed class SymbolTreeSnapshot {
     public IReadOnlyList<string> ExactAliasFingerprints { get; }
     public IReadOnlyList<string> NonExactAliasFingerprints { get; }
 
-    public static SymbolTreeSnapshot Capture(SymbolTreeB tree) {
+    public static SymbolTreeSnapshot Capture(SymbolTree tree) {
         if (tree is null) { throw new ArgumentNullException(nameof(tree)); }
 
-        var nodesField = typeof(SymbolTreeB).GetField("_nodes", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("SymbolTreeB._nodes field not found");
-        var exactField = typeof(SymbolTreeB).GetField("_exactAliasToNodes", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("SymbolTreeB._exactAliasToNodes field not found");
-        var nonExactField = typeof(SymbolTreeB).GetField("_nonExactAliasToNodes", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("SymbolTreeB._nonExactAliasToNodes field not found");
+        var nodesField = typeof(SymbolTree).GetField("_nodes", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("SymbolTree._nodes field not found");
+        var exactField = typeof(SymbolTree).GetField("_exactAliasToNodes", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("SymbolTree._exactAliasToNodes field not found");
+        var nonExactField = typeof(SymbolTree).GetField("_nonExactAliasToNodes", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("SymbolTree._nonExactAliasToNodes field not found");
 
-        var nodes = (ImmutableArray<NodeB>)nodesField.GetValue(tree)!;
+        var nodes = (ImmutableArray<Node>)nodesField.GetValue(tree)!;
         var exact = (Dictionary<string, ImmutableArray<AliasRelation>>)exactField.GetValue(tree)!;
         var nonExact = (Dictionary<string, ImmutableArray<AliasRelation>>)nonExactField.GetValue(tree)!;
 
@@ -46,7 +46,7 @@ internal sealed class SymbolTreeSnapshot {
         return new SymbolTreeSnapshot(nodeFingerprints, exactAliases, nonExactAliases);
     }
 
-    private static IReadOnlyList<string> BuildNodeFingerprints(ImmutableArray<NodeB> nodes) {
+    private static IReadOnlyList<string> BuildNodeFingerprints(ImmutableArray<Node> nodes) {
         var fingerprints = new List<string>(nodes.Length);
         for (int i = 0; i < nodes.Length; i++) {
             if (i == 0 && nodes[i].Parent < 0 && string.IsNullOrEmpty(nodes[i].Name)) { continue; /* Skip synthetic root */ }
@@ -82,7 +82,7 @@ internal sealed class SymbolTreeSnapshot {
 
     private static IReadOnlyList<string> BuildAliasFingerprints(
         string bucketPrefix,
-        ImmutableArray<NodeB> nodes,
+        ImmutableArray<Node> nodes,
         Dictionary<string, ImmutableArray<AliasRelation>> aliases
     ) {
         var list = new List<string>();
@@ -107,7 +107,7 @@ internal sealed class SymbolTreeSnapshot {
         return list;
     }
 
-    private static NodePath ComputePath(ImmutableArray<NodeB> nodes, int nodeId) {
+    private static NodePath ComputePath(ImmutableArray<Node> nodes, int nodeId) {
         var nsSegments = new Stack<string>();
         var typeSegments = new Stack<string>();
         int current = nodeId;

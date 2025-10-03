@@ -65,7 +65,7 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
             new SymbolsDelta(new[] { outerEntry, innerEntry }, Array.Empty<TypeKey>())
         );
 
-        var updated = (SymbolTreeB)legacyTree.WithDelta(delta);
+        var updated = (SymbolTree)legacyTree.WithDelta(delta);
 
         var activeTypeNodes = updated.DebugNodes
             .Select((node, index) => (node, index))
@@ -114,7 +114,7 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
         var baseline = BuildTree(SymbolsDeltaContract.Normalize(new SymbolsDelta(new[] { outer, firstNested }, Array.Empty<TypeKey>())));
 
         var secondNested = CreateSymbol($"T:{NamespaceName}.Outer`1+Second", AssemblyName);
-        var updated = (SymbolTreeB)baseline.WithDelta(
+        var updated = (SymbolTree)baseline.WithDelta(
             SymbolsDeltaContract.Normalize(new SymbolsDelta(new[] { secondNested }, Array.Empty<TypeKey>()))
         );
 
@@ -133,7 +133,7 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
         var delta = SymbolsDeltaContract.Normalize(new SymbolsDelta(entries, Array.Empty<TypeKey>()));
 
         var tree = BuildTree(delta);
-        var replay = (SymbolTreeB)tree.WithDelta(delta);
+        var replay = (SymbolTree)tree.WithDelta(delta);
 
         AssertAllEntriesMaterialized(replay, out var activeTypeNodes);
 
@@ -153,7 +153,7 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
 
         var tree = BuildTree(SymbolsDeltaContract.Normalize(new SymbolsDelta(new[] { outer, inner, leaf }, Array.Empty<TypeKey>())));
 
-        var afterLeafRemoval = (SymbolTreeB)tree.WithDelta(
+        var afterLeafRemoval = (SymbolTree)tree.WithDelta(
             SymbolsDeltaContract.Normalize(
                 new SymbolsDelta(Array.Empty<SymbolEntry>(), new[] { new TypeKey(leaf.DocCommentId, AssemblyName) })
             )
@@ -162,7 +162,7 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
         Assert.Equal(0, afterLeafRemoval.Search(leaf.DocCommentId, 8, 0, SymbolKinds.All).Total);
         Assert.DoesNotContain(afterLeafRemoval.DebugNodes, node => node.Kind == NodeKind.Type && node.Parent >= 0 && node.Entry is null && node.FirstChild < 0);
 
-        var afterInnerRemoval = (SymbolTreeB)afterLeafRemoval.WithDelta(
+        var afterInnerRemoval = (SymbolTree)afterLeafRemoval.WithDelta(
             SymbolsDeltaContract.Normalize(
                 new SymbolsDelta(Array.Empty<SymbolEntry>(), new[] { new TypeKey(inner.DocCommentId, AssemblyName) })
             )
@@ -199,7 +199,7 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
             new SymbolsDelta(Array.Empty<SymbolEntry>(), new[] { new TypeKey(docId, assemblyA) })
         );
 
-        var afterRemoval = (SymbolTreeB)tree.WithDelta(removalDelta);
+        var afterRemoval = (SymbolTree)tree.WithDelta(removalDelta);
 
         var remainingNodes = afterRemoval.DebugNodes
             .Select((node, index) => (node, index))
@@ -269,7 +269,7 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
         var removalDelta = SymbolsDeltaContract.Normalize(
             new SymbolsDelta(Array.Empty<SymbolEntry>(), docIds.Select(docId => new TypeKey(docId, assemblyA)).ToArray())
         );
-        var afterRemoval = (SymbolTreeB)baseline.WithDelta(removalDelta);
+        var afterRemoval = (SymbolTree)baseline.WithDelta(removalDelta);
 
         AssertAllEntriesMaterialized(afterRemoval, out var afterRemovalEntries);
 
@@ -290,15 +290,15 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
         Assert.DoesNotContain(afterRemoval.DebugNodes, node => node.Kind == NodeKind.Type && node.Parent >= 0 && node.Entry is null && node.FirstChild < 0);
     }
 
-    private static SymbolTreeB BuildTree(SymbolsDelta delta)
-        => (SymbolTreeB)SymbolTreeB.Empty.WithDelta(delta);
+    private static SymbolTree BuildTree(SymbolsDelta delta)
+        => (SymbolTree)SymbolTree.Empty.WithDelta(delta);
 
-    private static HashSet<string> CollectSymbolIds(SymbolTreeB tree, string query) {
+    private static HashSet<string> CollectSymbolIds(SymbolTree tree, string query) {
         var results = tree.Search(query, 16, 0, SymbolKinds.All);
         return results.Items.Select(hit => hit.SymbolId.Value).ToHashSet(StringComparer.Ordinal);
     }
 
-    private static void AssertAllEntriesMaterialized(SymbolTreeB tree, out List<(SymbolEntry Entry, int NodeId)> entries) {
+    private static void AssertAllEntriesMaterialized(SymbolTree tree, out List<(SymbolEntry Entry, int NodeId)> entries) {
         var activeTypeNodes = tree.DebugNodes
             .Select((node, index) => (node, index))
             .Where(pair => pair.node.Kind == NodeKind.Type && pair.node.Parent >= 0)
@@ -370,12 +370,12 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
         return value[..index];
     }
 
-    private static SymbolTreeB InstantiateTree(SymbolTreeBuilder builder) {
-        var ctor = typeof(SymbolTreeB).GetConstructor(
+    private static SymbolTree InstantiateTree(SymbolTreeBuilder builder) {
+        var ctor = typeof(SymbolTree).GetConstructor(
             BindingFlags.Instance | BindingFlags.NonPublic,
             binder: null,
             new[] {
-                typeof(ImmutableArray<NodeB>),
+                typeof(ImmutableArray<Node>),
                 typeof(Dictionary<string, ImmutableArray<AliasRelation>>),
                 typeof(Dictionary<string, ImmutableArray<AliasRelation>>),
                 typeof(int)
@@ -389,7 +389,7 @@ public sealed class SymbolTreeSingleNodePrototypeTests {
         var exact = builder.ExactAliases.ToDictionary(pair => pair.Key, pair => pair.Value);
         var nonExact = builder.NonExactAliases.ToDictionary(pair => pair.Key, pair => pair.Value);
 
-        return (SymbolTreeB)ctor!.Invoke(new object[] { nodes, exact, nonExact, builder.FreeHead });
+        return (SymbolTree)ctor!.Invoke(new object[] { nodes, exact, nonExact, builder.FreeHead });
     }
 
     private static string BuildNodeName(string docCommentId, int namespaceSegmentCount, int segmentIndex) {

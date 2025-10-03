@@ -68,7 +68,7 @@ public class V2_SymbolTree_WithDelta_Tests {
 
     [Fact]
     public void Removal_NestedType_RemovesSubtreeAliases() {
-        ISymbolIndex tree = SymbolTreeB.Empty;
+        ISymbolIndex tree = SymbolTree.Empty;
         var add = SymbolsDeltaContract.Normalize(
             new[] { Ty("Ns", "Outer", 1, "Asm"), TyNested("Ns", "Outer", 1, "Inner", 0, "Asm") },
             Array.Empty<TypeKey>()
@@ -93,7 +93,7 @@ public class V2_SymbolTree_WithDelta_Tests {
 
     [Fact]
     public void Cascade_Namespace_Removal_WhenEmpty() {
-        ISymbolIndex tree = SymbolTreeB.Empty;
+        ISymbolIndex tree = SymbolTree.Empty;
         var add = SymbolsDeltaContract.Normalize(
             new[] { Ty("A.B", "C", 0, "Asm") },
             Array.Empty<TypeKey>()
@@ -113,7 +113,7 @@ public class V2_SymbolTree_WithDelta_Tests {
 
     [Fact]
     public void CrossAssembly_DocId_Removal_Precise() {
-        ISymbolIndex tree = SymbolTreeB.Empty;
+        ISymbolIndex tree = SymbolTree.Empty;
         var add = SymbolsDeltaContract.Normalize(
             new[] { Ty("A", "C", 0, "Asm1"), Ty("A", "C", 0, "Asm2") },
             Array.Empty<TypeKey>()
@@ -135,7 +135,7 @@ public class V2_SymbolTree_WithDelta_Tests {
 
     [Fact]
     public void Idempotent_Removal_RepeatDelta() {
-        ISymbolIndex tree = SymbolTreeB.Empty;
+        ISymbolIndex tree = SymbolTree.Empty;
         var add = SymbolsDeltaContract.Normalize(
             new[] { Ty("X", "Y", 0, "Asm") },
             Array.Empty<TypeKey>()

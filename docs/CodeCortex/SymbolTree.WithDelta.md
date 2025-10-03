@@ -1,12 +1,12 @@
 ## 目标
-一套面向增量、可演进到生产的设计方案，用于实现 `SymbolTreeB.WithDelta`：目标是在不做全量扫描的前提下，对当前不可变快照进行“闭包完备”的 delta 应用，保证幂等与局部性，同时为后续优化留出扩展点。
+一套面向增量、可演进到生产的设计方案，用于实现 `SymbolTree.WithDelta`：目标是在不做全量扫描的前提下，对当前不可变快照进行“闭包完备”的 delta 应用，保证幂等与局部性，同时为后续优化留出扩展点。
 
 ## 构建操作直接相关源码
   - (src\CodeCortexV2\Abstractions\ISymbolIndex.cs) 关键，目标接口定义
   - (src\CodeCortexV2\Abstractions\SymbolsDelta.cs) 关键，输入数据定义
   - (src\CodeCortexV2\Abstractions\SymbolEntry.cs)
   - (src/CodeCortexV2/Index/SymbolTree/SymbolTree.Core.cs) 关键，要构建出的不可变类型的数据结构定义
-  - (src/CodeCortexV2/Index/SymbolTree/SymbolTree.Build.cs) 关键，要实现`SymbolTreeB.WithDelta`的位置，现有的`SymbolTreeBFromEntries`函数的实现
+  - (src/CodeCortexV2/Index/SymbolTree/SymbolTree.Build.cs) 关键，要实现`SymbolTree.WithDelta`的位置，现有的`SymbolTreeBFromEntries`函数的实现
   - (src/CodeCortexV2/Index/SymbolTree/Node.B.cs)
   - (src/CodeCortexV2/Abstractions/MatchFlags.cs)
   - (src/CodeCortexV2/Index/Synchronizer/IndexSynchronizer.cs) 构建SymbolsDelta实例的具体实现
@@ -18,7 +18,7 @@
 ## 现状回顾与约束
 
 - 树结构
-  - `NodeB` 为不可变节点，字段：Name、Parent、FirstChild、NextSibling、Kind、Entry（每节点最多 1 个 Entry）。
+  - `Node` 为不可变节点，字段：Name、Parent、FirstChild、NextSibling、Kind、Entry（每节点最多 1 个 Entry）。
   - 同名类型在不同程序集可出现为多个兄弟节点（以 Entry.Assembly 区分）。
   - 根节点是一个 `Namespace`，Name == ""，Parent == -1（FromEntries 中约定 index 0 即 root）。
 
@@ -48,7 +48,7 @@
 - 顺序：先删后加。
   - Removals 保证不留悬挂别名/指针；Adds 依赖 Removals 后的结构。
 - 不全量复制：
-  - 节点数组采用“按需拷贝”：只对受影响的节点（父、被删/新建节点、以及其前驱兄弟）重建 `NodeB` 实例；绝大多数节点原位复用索引与对象实例，保持索引稳定。
+  - 节点数组采用“按需拷贝”：只对受影响的节点（父、被删/新建节点、以及其前驱兄弟）重建 `Node` 实例；绝大多数节点原位复用索引与对象实例，保持索引稳定。
   - 别名字典只对受影响的 key 做不可变数组的替换；其他 key 原样复用。
 - 不“重新推断”闭包：
   - 不会逆向扫描来发现新的空命名空间；仅按 delta 描述操作。
@@ -59,7 +59,7 @@
 - 防“幽灵命中”的别名同步删除：类型/命名空间删除时，必须同步移除该节点生成的所有别名（类型的 bn、bn`n、lower 组合；命名空间的原名与 lower）。文档中的 RemoveTypeAliases/RemoveNamespaceAliases 为必做步骤。
 - Upsert 原则与确定性：当 Add 命中同父同名且 Entry.SymbolId 相同的节点时，应原位 UpdateEntry（幂等不重复建节点）；别名列表需去重，且建议按 NodeId 升序排序以提升快照确定性（非功能性，但有助调试和测试稳定）。
 - 删除查找的按需小索引（P1）：首版可用兄弟链扫描保证正确性；优化时仅为本次 delta 涉及的父节点/名称构建“父级子表索引”，或为涉及的 docId 构建临时映射，避免全量或全局索引。
-- NodeBuilder 的 COW 形态（P1）：除当前 List<NodeB> 拷贝外，可引入“ImmutableArray 原始 + Dictionary<int, NodeB> modified”的惰性覆写以减少大快照的拷贝成本，小 delta 场景下更省内存。
+- NodeBuilder 的 COW 形态（P1）：除当前 List<Node> 拷贝外，可引入“ImmutableArray 原始 + Dictionary<int, Node> modified”的惰性覆写以减少大快照的拷贝成本，小 delta 场景下更省内存。
 - 别名层原子性：无需复杂事务接口；采用“首次写入时浅拷贝顶层字典 + 针对变更 key 生成新的 ImmutableArray 值”的策略即可，严禁在旧快照字典或其值上就地修改。
 - 墓碑压缩触发策略（P2）：采用“比例阈值 + 绝对数阈值”双条件，例如当墓碑占比与数量同时超标时触发压缩/重建；压缩将批量重写别名桶，建议作为后台维护或上层触发的全量重建路径。
 
@@ -68,11 +68,11 @@
 为实现“局部拷贝 + 指针修补”，在 `WithDelta` 中引入轻量 builder（不暴露为公共 API）：
 
 - NodeBuilder（快照内可变视图，索引保持不变）
-  - 持有一个 `List<NodeB>`，初始为 `_nodes` 拷贝（浅拷贝引用即可，因为 NodeB 是 struct，复制不可避免；但我们只会改动少数索引，内存仍是局部的）。
+  - 持有一个 `List<Node>`，初始为 `_nodes` 拷贝（浅拷贝引用即可，因为 Node 是 struct，复制不可避免；但我们只会改动少数索引，内存仍是局部的）。
   - GET：读取父、子、兄弟等字段无需额外结构。
   - SET：
   ## 目标
-  `SymbolTreeB.WithDelta` 的增量应用策略（生产可用）：仅依赖叶子级变更（TypeAdds/TypeRemovals），在索引内部完成命名空间的按需创建与级联删除；避免全量扫描，保证幂等与局部性，并与 `FromEntries` 的别名与节点命名规则保持一致。
+  `SymbolTree.WithDelta` 的增量应用策略（生产可用）：仅依赖叶子级变更（TypeAdds/TypeRemovals），在索引内部完成命名空间的按需创建与级联删除；避免全量扫描，保证幂等与局部性，并与 `FromEntries` 的别名与节点命名规则保持一致。
     - UpdateEntry(nodeIdx, SymbolEntry? newEntry)
   ## 现状回顾与约束
   -- Delta 合同（来自 ISymbolIndex 与 SymbolsDelta）
@@ -137,9 +137,9 @@
         - 否则新建：NodeBuilder.NewNode(lastName, parent, Type, entry)；AliasBuilder.AddTypeAliases(lastName, newId)。
 
 - 收尾与封装
-  - 将 NodeBuilder 的 List<NodeB> 封装为 `ImmutableArray<NodeB>`。
+  - 将 NodeBuilder 的 List<Node> 封装为 `ImmutableArray<Node>`。
   - AliasBuilder 提供最终 `Dictionary<string, ImmutableArray<AliasRelation>>`（exact / non-exact），仅替换发生过变更的 key；其他 key 仍共享旧实例，达到局部拷贝的效果。
-  - 返回新的 `SymbolTreeB` 实例。
+  - 返回新的 `SymbolTree` 实例。
 
 ## 幂等性与局部性说明
 
@@ -152,7 +152,7 @@
 
 ## 线程安全与并发保证
 
-- 快照不可变：`SymbolTreeB` 的节点数组与别名字典均为不可变表示（或在语义上只读），旧快照在 `WithDelta` 执行期间不会被修改，支持并发读。
+- 快照不可变：`SymbolTree` 的节点数组与别名字典均为不可变表示（或在语义上只读），旧快照在 `WithDelta` 执行期间不会被修改，支持并发读。
 - 增量构建隔离：`WithDelta` 在局部复制/新建受影响的数据结构后，封装为新的快照对象返回；确保顶层字典实例替换且 value 为新 `ImmutableArray`，避免写入旧实例。
 - 并发 `WithDelta`：允许对同一旧快照并发执行多个 `WithDelta` 调用（它们彼此独立）；但实现中不得使用跨实例的可变全局缓存（例如静态临时索引）。
 
@@ -162,7 +162,7 @@
   - 添加/删除一个符号：O(S + B)（B 项来自父子链表的扫描与指针修补；可用父级子表索引将其摊销到接近 O(S)）。
   - 别名更新：对每个新/删节点，常数个 alias key 更新（Namespace：≤2；Type：≤4），每个 key 的列表操作为 O(候选节点数量)；一般很小。
 - 内存：
-  - NodeB 局部拷贝（只改动的节点 + 少量新节点），别名字典仅替换少数 value（ImmutableArray）。
+  - Node 局部拷贝（只改动的节点 + 少量新节点），别名字典仅替换少数 value（ImmutableArray）。
 
 ## 边界与防御性校验
 
@@ -210,9 +210,9 @@
 ## 日志与诊断
 
 - 类别建议：
-  - "SymbolTreeB.Delta"：每批次统计与关键操作（+T/-T/+N/-N 数量、节点新增/删除 id 等）。
-  - "SymbolTreeB.Alias"：别名桶 key 更新统计（变更 key 数、每 key 新旧元素计数）。
-  - "SymbolTreeB.Debug"：可选一致性检查（如 Namespace 删除时仍有子节点）。
+  - "SymbolTree.Delta"：每批次统计与关键操作（+T/-T/+N/-N 数量、节点新增/删除 id 等）。
+  - "SymbolTree.Alias"：别名桶 key 更新统计（变更 key 数、每 key 新旧元素计数）。
+  - "SymbolTree.Debug"：可选一致性检查（如 Namespace 删除时仍有子节点）。
 - 通过环境变量 ATELIA_DEBUG_CATEGORIES 控制打印级别（参见 AGENTS.md）。
 
 ## 测试清单（单测优先）
@@ -235,7 +235,7 @@
 ## 风险与注意事项（务必落实）
 
 - 别名字典的不变性：返回的新快照必须持有“新”的顶层字典实例，严禁在旧实例上写入；采用“首次写入时浅拷贝”的策略可以同时满足性能与不变性。
-- NodeB 更新语义：`NodeB` 为 readonly struct，修改任何字段均需“重建该索引的节点”并覆盖写入；不要尝试原地改字段。
+- Node 更新语义：`Node` 为 readonly struct，修改任何字段均需“重建该索引的节点”并覆盖写入；不要尝试原地改字段。
 - 删除为墓碑且修补指针：删除节点务必先修补父链/前驱兄弟，再将目标节点置为墓碑（Entry=null, NextSibling=-1）；Parent/FirstChild 可保留，节点将不可达。
 - 命名空间删除的一致性：若删除 N: 节点时仍有子节点，仅打印 Debug 诊断，不进行全树扫描或强制清理（闭包由 Producer 负责）。
 - DocId 解析准确性：类型嵌套用 '+' 分割，末段可能带反引号 arity；非泛型与泛型段需生成不同 alias 组合（与 FromEntries 保持一致）。
@@ -251,7 +251,7 @@
 ## 进度（粗粒度）
 
 - 2025-09-21
-  - 实施 P0 版本 `SymbolTreeB.WithDelta`：
+  - 实施 P0 版本 `SymbolTree.WithDelta`：
     - 基于局部路径遍历 + 兄弟链修补，实现删除优先、随后添加/Upsert 的流程；
     - 别名层采用写时复制（per-key 不可变数组替换），同步维护 Namespace 与 Type 的别名项；
     - 节点采用头插法新增子节点，删除时将目标节点“脱链”为墓碑（Entry=null, Parent=-1, NextSibling=-1）；

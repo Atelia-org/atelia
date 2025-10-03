@@ -10,7 +10,7 @@ using CodeCortexV2.Abstractions;
 namespace CodeCortexV2.Index.SymbolTreeInternal;
 
 /// <summary>
-/// Mutable construction surface shared by <see cref="SymbolTreeB.WithDelta"/>。
+/// Mutable construction surface shared by <see cref="SymbolTree.WithDelta"/>。
 /// 承载节点数组、别名桶与常用辅助操作，后续阶段将进一步拓展至完整 Builder 生命周期。
 ///
 /// <para>&lt;b&gt;单节点拓扑（Single-Node Topology）&lt;/b&gt;</para>
@@ -41,13 +41,13 @@ namespace CodeCortexV2.Index.SymbolTreeInternal;
 /// <para>&lt;b&gt;线程安全性（Thread Safety）&lt;/b&gt;</para>
 /// SymbolTreeBuilder 是可变的（mutable），&lt;b&gt;不支持并发修改&lt;/b&gt;。调用方必须确保单线程访问：
 /// - &lt;b&gt;构建阶段&lt;/b&gt;：所有 <see cref="ApplyDelta"/> 调用必须在同一线程中顺序执行。
-/// - &lt;b&gt;查询阶段&lt;/b&gt;：构建完成后，通过 <see cref="SymbolTreeB"/> 实例化不可变快照，该快照支持并发读取。
+/// - &lt;b&gt;查询阶段&lt;/b&gt;：构建完成后，通过 <see cref="SymbolTree"/> 实例化不可变快照，该快照支持并发读取。
 /// - &lt;b&gt;典型用法&lt;/b&gt;：单个后台线程负责构建（<c>SymbolTreeBuilder.ApplyDelta</c>），
-///   构建完成后发布到共享的 <c>SymbolTreeB</c> 实例供多个查询线程并发访问。
+///   构建完成后发布到共享的 <c>SymbolTree</c> 实例供多个查询线程并发访问。
 /// </summary>
 internal sealed class SymbolTreeBuilder {
 
-    internal List<NodeB> Nodes { get; }
+    internal List<Node> Nodes { get; }
     internal Dictionary<string, ImmutableArray<AliasRelation>> ExactAliases { get; }
     internal Dictionary<string, ImmutableArray<AliasRelation>> NonExactAliases { get; }
 
@@ -61,8 +61,8 @@ internal sealed class SymbolTreeBuilder {
 
     internal static SymbolTreeBuilder CreateEmpty()
         => new(
-            new List<NodeB>(capacity: 1) {
-                new NodeB(string.Empty, parent: -1, firstChild: -1, nextSibling: -1, NodeKind.Namespace, entry: null)
+            new List<Node>(capacity: 1) {
+                new Node(string.Empty, parent: -1, firstChild: -1, nextSibling: -1, NodeKind.Namespace, entry: null)
             },
             new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal),
             new Dictionary<string, ImmutableArray<AliasRelation>>(StringComparer.Ordinal),
@@ -79,7 +79,7 @@ internal sealed class SymbolTreeBuilder {
     );
 
     internal SymbolTreeBuilder(
-        List<NodeB> nodes,
+        List<Node> nodes,
         Dictionary<string, ImmutableArray<AliasRelation>> exactAliases,
         Dictionary<string, ImmutableArray<AliasRelation>> nonExactAliases,
         int freeHead
@@ -675,7 +675,7 @@ internal sealed class SymbolTreeBuilder {
         return -1;
     }
 
-    internal void ReplaceNode(int index, NodeB node)
+    internal void ReplaceNode(int index, Node node)
         => Nodes[index] = node;
 
     /// <summary>
@@ -684,17 +684,17 @@ internal sealed class SymbolTreeBuilder {
     /// <param name="nodeId">Target node to mutate.</param>
     /// <param name="entry">New entry payload; <c>null</c> clears the node payload but leaves the structural shell.</param>
     /// <remarks>
-    /// Aliases are derived solely from <see cref="NodeB.Name"/> and <see cref="NodeB.Kind"/> (see <see cref="AliasGeneration"/>).
+    /// Aliases are derived solely from <see cref="Node.Name"/> and <see cref="Node.Kind"/> (see <see cref="AliasGeneration"/>).
     /// Since this method keeps both fields unchanged, alias refresh is unnecessary—aliases remain valid after Entry replacement.
     /// </remarks>
     private void ReplaceNodeEntry(int nodeId, SymbolEntry? entry) {
         var existing = Nodes[nodeId];
-        ReplaceNode(nodeId, new NodeB(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, entry));
+        ReplaceNode(nodeId, new Node(existing.Name, existing.Parent, existing.FirstChild, existing.NextSibling, existing.Kind, entry));
     }
 
     internal int NewChild(int parent, string name, NodeKind kind, SymbolEntry? entry) {
         int oldFirst = Nodes[parent].FirstChild;
-        var newNode = new NodeB(name, parent, firstChild: -1, nextSibling: oldFirst, kind, entry);
+        var newNode = new Node(name, parent, firstChild: -1, nextSibling: oldFirst, kind, entry);
 
         int newIndex;
         if (TryPopFreeNode(out var reused)) {
@@ -707,7 +707,7 @@ internal sealed class SymbolTreeBuilder {
         }
 
         var parentNode = Nodes[parent];
-        ReplaceNode(parent, new NodeB(parentNode.Name, parentNode.Parent, newIndex, parentNode.NextSibling, parentNode.Kind, parentNode.Entry));
+        ReplaceNode(parent, new Node(parentNode.Name, parentNode.Parent, newIndex, parentNode.NextSibling, parentNode.Kind, parentNode.Entry));
         return newIndex;
     }
 
@@ -721,21 +721,21 @@ internal sealed class SymbolTreeBuilder {
         if (firstChild == nodeId) {
             int next = node.NextSibling;
             var parentNode = Nodes[parent];
-            ReplaceNode(parent, new NodeB(parentNode.Name, parentNode.Parent, next, parentNode.NextSibling, parentNode.Kind, parentNode.Entry));
+            ReplaceNode(parent, new Node(parentNode.Name, parentNode.Parent, next, parentNode.NextSibling, parentNode.Kind, parentNode.Entry));
         }
         else {
             int current = firstChild;
             while (current >= 0) {
                 var sibling = Nodes[current];
                 if (sibling.NextSibling == nodeId) {
-                    ReplaceNode(current, new NodeB(sibling.Name, sibling.Parent, sibling.FirstChild, node.NextSibling, sibling.Kind, sibling.Entry));
+                    ReplaceNode(current, new Node(sibling.Name, sibling.Parent, sibling.FirstChild, node.NextSibling, sibling.Kind, sibling.Entry));
                     break;
                 }
                 current = sibling.NextSibling;
             }
         }
 
-        ReplaceNode(nodeId, new NodeB(node.Name, -1, node.FirstChild, -1, node.Kind, null));
+        ReplaceNode(nodeId, new Node(node.Name, -1, node.FirstChild, -1, node.Kind, null));
         ReleaseNode(nodeId);
     }
 
@@ -771,7 +771,7 @@ internal sealed class SymbolTreeBuilder {
         // Overwrite the detached slot so future allocations can reuse it. We intentionally drop
         // name/entry metadata here; callers will rebuild those fields when assigning the node.
         ReplaceNode(nodeId,
-            new NodeB(
+            new Node(
                 name: string.Empty,
                 parent: FreeParentSentinel,
                 firstChild: _freeHead,
@@ -851,7 +851,7 @@ internal sealed class SymbolTreeBuilder {
     }
 
     /// <remarks>
-    /// AliasGeneration currently derives aliases solely from <see cref="NodeB.Name"/>.
+    /// AliasGeneration currently derives aliases solely from <see cref="Node.Name"/>.
     /// If future changes make aliases depend on entry metadata, refresh logic must be revisited.
     /// </remarks>
     internal void AddAliasesForNode(int nodeId) {

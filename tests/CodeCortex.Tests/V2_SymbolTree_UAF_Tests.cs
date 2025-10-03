@@ -28,7 +28,7 @@ public class V2_SymbolTree_UAF_Tests {
             Array.Empty<TypeKey>()
         );
 
-        var tree = (SymbolTreeB)SymbolTreeB.Empty.WithDelta(addDelta);
+        var tree = (SymbolTree)SymbolTree.Empty.WithDelta(addDelta);
 
         // Verify all three types are present
         Assert.Equal(1, tree.Search("T:TestNs.Outer", 10, 0, SymbolKinds.All).Total);
@@ -69,7 +69,7 @@ public class V2_SymbolTree_UAF_Tests {
             Array.Empty<TypeKey>()
         );
 
-        var tree = (SymbolTreeB)SymbolTreeB.Empty.WithDelta(addDelta);
+        var tree = (SymbolTree)SymbolTree.Empty.WithDelta(addDelta);
 
         // Verify both assemblies are present
         var searchResults = tree.Search("T:TestNs.MyType", 10, 0, SymbolKinds.All).Items.ToList();
@@ -100,7 +100,7 @@ public class V2_SymbolTree_UAF_Tests {
             Array.Empty<TypeKey>()
         );
 
-        var tree = (SymbolTreeB)SymbolTreeB.Empty.WithDelta(addDelta);
+        var tree = (SymbolTree)SymbolTree.Empty.WithDelta(addDelta);
         Assert.Equal(1, tree.Search("T:TestNs.TestType", 10, 0, SymbolKinds.All).Total);
 
         var removeDelta = SymbolsDeltaContract.Normalize(
@@ -132,7 +132,7 @@ public class V2_SymbolTree_UAF_Tests {
         }
 
         var addDelta = SymbolsDeltaContract.Normalize(entries.ToArray(), Array.Empty<TypeKey>());
-        var tree = (SymbolTreeB)SymbolTreeB.Empty.WithDelta(addDelta);
+        var tree = (SymbolTree)SymbolTree.Empty.WithDelta(addDelta);
 
         // Verify all levels exist
         foreach (var entry in entries) {
@@ -160,12 +160,12 @@ public class V2_SymbolTree_UAF_Tests {
             CreateSymbol($"T:{NamespaceName}.Type2+Nested2", AssemblyName),
         };
 
-        var tree = (SymbolTreeB)SymbolTreeB.Empty.WithDelta(
+        var tree = (SymbolTree)SymbolTree.Empty.WithDelta(
             SymbolsDeltaContract.Normalize(phase1Entries, Array.Empty<TypeKey>())
         );
 
         // Act: Remove Type1 tree
-        tree = (SymbolTreeB)tree.WithDelta(
+        tree = (SymbolTree)tree.WithDelta(
             SymbolsDeltaContract.Normalize(
                 Array.Empty<SymbolEntry>(),
                 new[] {
@@ -176,7 +176,7 @@ public class V2_SymbolTree_UAF_Tests {
         );
 
         // Add Type3 (should reuse freed nodes)
-        tree = (SymbolTreeB)tree.WithDelta(
+        tree = (SymbolTree)tree.WithDelta(
             SymbolsDeltaContract.Normalize(
                 new[] {
                     CreateSymbol($"T:{NamespaceName}.Type3", AssemblyName),
@@ -187,7 +187,7 @@ public class V2_SymbolTree_UAF_Tests {
         );
 
         // Remove all remaining types
-        tree = (SymbolTreeB)tree.WithDelta(
+        tree = (SymbolTree)tree.WithDelta(
             SymbolsDeltaContract.Normalize(
                 Array.Empty<SymbolEntry>(),
                 new[] {

@@ -11,7 +11,7 @@
 void WalkType(INamedTypeSymbol t) {
     // ... 为当前类型创建 entry
     typeAdds.Add(CreateTypeEntry(docId, asm, parentNs, fqnNoGlobal, fqnLeaf));
-    
+
     // 递归处理嵌套类型
     foreach (var nt in t.GetTypeMembers()) {
         ct.ThrowIfCancellationRequested();
@@ -38,13 +38,13 @@ foreach (var node in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
 ```csharp
 // TypeAdds 按 DocCommentId.Length 升序排序
 if (adds.Count > 1) {
-    adds.Sort(static (left, right) => 
+    adds.Sort(static (left, right) =>
         left.DocCommentId.Length.CompareTo(right.DocCommentId.Length));
 }
 
 // TypeRemovals 按 DocCommentId.Length 降序排序
 if (removals.Count > 1) {
-    removals.Sort(static (left, right) => 
+    removals.Sort(static (left, right) =>
         right.DocCommentId.Length.CompareTo(left.DocCommentId.Length));
 }
 ```
@@ -65,7 +65,7 @@ for (int i = 0; i < typeSegs.Length; i++) {
     var targetEntry = isLast
         ? e  // 最后一段：使用传入的 entry（来自 IndexSynchronizer）
         : CreateIntermediateTypeEntry(nsSegs, typeSegs, i, assembly); // 中间段：创建中间 entry
-    
+
     // ...
 }
 ```
@@ -118,7 +118,7 @@ for (int i = 0; i < typeSegs.Length; i++) {
 for (int i = 0; i < typeSegs.Length; i++) {
     var nodeName = typeSegs[i];
     bool isLast = i == typeSegs.Length - 1;
-    
+
     if (!isLast) {
         // 中间节点必须已经存在，否则抛异常
         int parentNode = FindStructuralTypeChild(currentParent, nodeName);
@@ -131,7 +131,7 @@ for (int i = 0; i < typeSegs.Length; i++) {
         currentParent = parentNode;
         continue;
     }
-    
+
     // 最后一段：正常处理
     var targetEntry = e;
     // ...
@@ -151,11 +151,11 @@ var targetEntry = isLast
     : CreateIntermediateTypeEntryWithWarning(nsSegs, typeSegs, i, assembly);
 
 internal SymbolEntry CreateIntermediateTypeEntryWithWarning(...) {
-    DebugUtil.Print("SymbolTreeB.Warning", 
+    DebugUtil.Print("SymbolTree.Warning",
         $"CreateIntermediateTypeEntry called - this indicates a potential " +
         $"violation of SymbolsDelta ordering contract!");
     Debug.Assert(false, "Unexpected intermediate type creation");
-    
+
     // ... 原有逻辑
 }
 ```
@@ -173,10 +173,10 @@ internal SymbolEntry CreateIntermediateTypeEntryWithWarning(...) {
 public void IndexSynchronizer_ShouldCreateEntriesForAllNestedTypes() {
     // 创建包含嵌套类型的代码
     var code = "class Outer<T> { class Inner { } }";
-    
+
     // 获取 delta
     var delta = await sync.ComputeFullDeltaAsync(solution, ct);
-    
+
     // 验证包含两个 entry
     Assert.Equal(2, delta.TypeAdds.Count);
     Assert.Contains(delta.TypeAdds, e => e.DocCommentId == "T:Ns.Outer`1");
@@ -187,10 +187,10 @@ public void IndexSynchronizer_ShouldCreateEntriesForAllNestedTypes() {
 public void SymbolsDelta_Normalize_ShouldSortByLength() {
     var outer = CreateEntry("T:Ns.Outer`1");
     var inner = CreateEntry("T:Ns.Outer`1+Inner");
-    
+
     // 故意乱序
     var delta = SymbolsDeltaContract.Normalize([inner, outer], []);
-    
+
     // 验证排序
     Assert.Equal("T:Ns.Outer`1", delta.TypeAdds[0].DocCommentId);
     Assert.Equal("T:Ns.Outer`1+Inner", delta.TypeAdds[1].DocCommentId);

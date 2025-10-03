@@ -124,7 +124,7 @@ public class SymbolTreeNestedTypesTests {
         var firstNested = CreateSymbol("T:TestNs.Outer`1+First", AssemblyName);
         var secondNested = CreateSymbol("T:TestNs.Outer`1+Second", AssemblyName);
 
-        var tree = SymbolTreeB.Empty.WithDelta(
+        var tree = SymbolTree.Empty.WithDelta(
             SymbolsDeltaContract.Normalize(
                 new SymbolsDelta(
                     TypeAdds: new[] { outer, firstNested, secondNested },
@@ -133,7 +133,7 @@ public class SymbolTreeNestedTypesTests {
             )
         );
 
-        var snapshot = SymbolTreeSnapshot.Capture((SymbolTreeB)tree);
+        var snapshot = SymbolTreeSnapshot.Capture((SymbolTree)tree);
         var outerFingerprint = $"DocId=T:TestNs.Outer`1|Asm={AssemblyName}";
         var outerCount = snapshot.NodeFingerprints.Count(fp => fp.Contains(outerFingerprint, StringComparison.Ordinal));
 
@@ -191,7 +191,7 @@ public class SymbolTreeNestedTypesTests {
             )
         );
 
-        return SymbolTreeB.Empty.WithDelta(delta);
+        return SymbolTree.Empty.WithDelta(delta);
     }
 
     private static void AssertSearchSucceeds(ISymbolIndex tree, string query, string failureMessage) {
