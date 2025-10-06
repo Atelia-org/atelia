@@ -37,7 +37,9 @@ public class InfoSection {
     public List<InfoSection> Children { get; }
 
     /// <summary>
-    /// 计算值，在树中的绝对深度
+    /// 计算值，在树中的绝对深度（根节点为0）
+    /// 实现：每次访问时向上遍历到根节点计算，不缓存
+    /// 移动节点时需进行无环检查
     /// </summary>
     public int Depth { get; }
 
@@ -60,6 +62,10 @@ public class InfoSection {
 
     /// <summary>
     /// 缓存的解析成内存对象后的Content内容
+    /// 生命周期：设置Content时会根据ContentFormat自动触发解析
+    /// - 解析成功：ParsedContent = 对应格式的内存对象
+    /// - 解析失败：ParsedContent = null
+    /// 由对应格式的Importer负责解析（如MarkdownImporter、JsonImporter）
     /// </summary>
     public object? ParsedContent { get; set; }
 }
@@ -116,14 +122,23 @@ Info DOM 的根通常是一个特殊的 `InfoSection`：
 ```csharp
 var root = new InfoSection {
     Id = Guid.NewGuid(),
-    Title = null,  // 或空字符串，表示整个文档
+    Title = null,  // 或使用文件名等有意义的标题
     Content = null,
     Children = [/* 顶级节点 */]
 };
 ```
 
+**导入规则**：
+- 根节点的 `Title` 可以为 `null`（便于导入），也可以设置为文件名或其他标识
+- 文档自身的标题（如 Markdown 的 `# Project Documentation`）统一作为根节点的**第一个子节点**，避免特化逻辑
+
 ## 导入Content时解析
 导入Content时，根据ContentFormat自动选择相应的Importer解析受支持的结构化格式，自动创建InfoSection子树。
+
+**解析策略**：
+- **Markdown**：标题创建层级结构，标题下的内容（段落、列表等）作为该节点的 `Content` 属性按原样保留
+- **JSON**：MVP 阶段暂不实现自动子树展开，保留为字符串形式（未来可通过约定如 `"title"` 属性来创建子树）
+- **Plain**：不进行结构化解析，直接作为内容保留
 
 ## 导出时内联
 导出时，若目标导出格式与ContentFormat相同，则作为子对象内联而非普通字符串，目的是尽量减少转义的使用和格式一致性。
@@ -162,6 +177,40 @@ Info DOM 本身不包含导入/导出逻辑，这些功能由独立的适配器�
 - **Markdown 导入器**：将 Markdown 文档转换为 InfoSection 树（详见 [markdown-import.md](./markdown-import.md)）
 - **JSON 导入器**：从结构化 JSON 构建 InfoSection 树
 - **其他格式**：AsciiDoc、reStructuredText 等（未来扩展）
+
+### Markdown 导入的层级映射规则
+
+对于以下 Markdown 文档：
+
+```markdown
+# Title
+
+## Subtitle
+
+Content here.
+
+- List item 1
+- List item 2
+
+### Sub-subtitle
+
+More content.
+```
+
+导入后的 InfoSection 树结构：
+
+```
+InfoSection (Title)
+  └─ InfoSection (Subtitle)
+      ├─ Content: "Content here.\n\n- List item 1\n- List item 2"
+      └─ InfoSection (Sub-subtitle)
+          └─ Content: "More content."
+```
+
+**规则说明**：
+- 标题创建新的 `InfoSection` 节点，标题文本作为 `Title`
+- 标题下的内容（段落、列表、代码块等）作为该节点的 `Content` 属性，按原样保留为 Markdown 字符串
+- 子标题创建嵌套的子节点
 
 ### 示例：多格式并存
 
@@ -223,10 +272,24 @@ Markdown 只是 Info DOM 支持的格式之一，不是核心依赖。
 
 ## 下一步
 
-- **编辑 API 设计**：定义 CRUD 操作接口
+- **编辑 API 设计**：定义 CRUD 操作接口（Prototype 阶段直接在内存对象上操作，不实现事务机制）
 - **查询 API 设计**：按 ID、Title、路径查找节点
-- **ID 编码方案**：Base4096 或其他 LLM 友好的编码
+- **ID 编码方案**：
+  - **GUID 编码**：使用 Base4096 将 GUID 编码为 11 个字符（每字符 1 Token），适合作为操作锚点
+  - **结构化路径**：支持类似文件系统的路径查询（如 `"Overview/Background"`），适合语义化查询
+  - 两种方式互补：GUID 稳定不变，路径富有语义但可能随编辑变动
 - **序列化格式**：定义 Info DOM 的原生持久化格式
+
+## Prototype 阶段的简化
+
+当前原型聚焦于核心功能验证，以下特性暂不实现：
+
+- ❌ 事务和回滚机制（直接在内存对象上操作）
+- ❌ 并发编辑和冲突解决
+- ❌ JSON 内容的自动子树展开
+- ❌ 编辑预览、取消、Undo 功能
+
+未来可通过新 Project 或 Feature 分支逐步增强功能。
 
 # TODO
 Id生成与渲染设计
