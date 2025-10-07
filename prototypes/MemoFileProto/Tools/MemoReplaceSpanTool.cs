@@ -1,0 +1,216 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using MemoFileProto.Models;
+
+namespace MemoFileProto.Tools;
+
+/// <summary>
+/// MemoReplaceSpan 工具
+/// 精确定位的区域替换工具，适用于需要上下文锚定的复杂编辑场景
+/// </summary>
+public class MemoReplaceSpan : ITool {
+    private readonly Func<string> _getMemory;
+    private readonly Action<string> _setMemory;
+
+    public MemoReplaceSpan(Func<string> getMemory, Action<string> setMemory) {
+        _getMemory = getMemory;
+        _setMemory = setMemory;
+    }
+
+    public string Name => "memo_replace_span";
+
+    public string Description => @"通过上下文精确定位并替换记忆中的区域。
+
+使用场景：
+- 要替换的内容在记忆中出现多次，需要通过上下文区分
+- 需要修改一个大段落中的部分内容，避免完整复述整个段落
+- 担心空格/Tab/标点符号导致精确匹配失败
+
+参数：
+- old_span_start: 要替换区域的起始标记（必需）
+- old_span_end: 要替换区域的结束标记（必需）
+- new_text: 替换后的新文本（需要包含替换后希望出现的首尾内容）
+- search_after: (可选) 从此文本之后开始搜索 old_span_start，用于在多个匹配中精确定位
+
+行为：
+- 默认替换 old_span_start 和 old_span_end 之间的内容（**包含**这两个标记本身）
+- 如果提供了 search_after，会先定位该文本，再在其后查找 old_span_start
+- search_after=''（空字符串）表示从文档开头查找 old_span_start
+- 如果在定位范围内找到多个 old_span_start，工具会返回这些位置的上下文，提示使用 search_after 精确定位
+
+示例 1 - 修改特定章节：
+    old_span_start: '### 技术栈'
+    old_span_end: '### 团队协作'
+    new_text: '### 技术栈\n主要使用 Rust 和 TypeScript\n### 团队协作'
+
+示例 2 - 使用上下文精确定位：
+    search_after: '## 2024年总结'
+    old_span_start: '### 技术栈'
+    old_span_end: '### 团队'
+    new_text: '### 技术栈\n已全面切换到 Rust\n### 团队'
+
+示例 3 - 替换包含标记的整个块：
+    old_span_start: '<!-- BEGIN OLD SECTION -->'
+    old_span_end: '<!-- END OLD SECTION -->'
+    new_text: '<!-- NEW SECTION -->\n新内容\n<!-- END NEW -->'";
+
+    public Tool GetToolDefinition() {
+        return new Tool {
+            Type = "function",
+            Function = new FunctionDefinition {
+                Name = Name,
+                Description = Description,
+                Parameters = new {
+                    type = "object",
+                    properties = new {
+                        old_span_start = new {
+                            type = "string",
+                            description = "要替换区域的起始标记"
+                        },
+                        old_span_end = new {
+                            type = "string",
+                            description = "要替换区域的结束标记"
+                        },
+                        new_text = new {
+                            type = "string",
+                            description = "替换后的新文本（需要连同新的首尾内容一起提供）"
+                        },
+                        search_after = new {
+                            type = "string",
+                            description = "(可选) 从此文本之后开始搜索 old_span_start，用于在多个匹配中精确定位"
+                        }
+                    },
+                    required = new[] { "old_span_start", "old_span_end", "new_text" }
+                }
+            }
+        };
+    }
+
+    public async Task<string> ExecuteAsync(string arguments) {
+        await Task.CompletedTask;
+
+        try {
+            var args = JsonSerializer.Deserialize<UpdateRegionArgs>(arguments);
+            if (args == null) { return "Error: Invalid arguments"; }
+
+            var regionStart = TextToolUtilities.NormalizeLineEndings(args.OldSpanStart ?? string.Empty);
+            var regionEnd = TextToolUtilities.NormalizeLineEndings(args.OldSpanEnd ?? string.Empty);
+            var newText = TextToolUtilities.NormalizeLineEndings(args.NewText ?? string.Empty);
+            var rawSearchAfter = args.SearchAfter;
+            var searchAfter = rawSearchAfter != null ? TextToolUtilities.NormalizeLineEndings(rawSearchAfter) : null;
+            var currentMemory = TextToolUtilities.NormalizeLineEndings(_getMemory() ?? string.Empty);
+            var anchor = TextToolUtilities.ResolveAnchor(currentMemory, searchAfter);
+
+            if (string.IsNullOrEmpty(regionStart) || string.IsNullOrEmpty(regionEnd)) { return "Error: old_span_start 和 old_span_end 不能为空"; }
+
+            if (!anchor.Success) { return anchor.ErrorMessage!; }
+
+            // 查找区域
+            var result = FindRegion(currentMemory, regionStart, regionEnd, anchor.SearchStart, anchor.IsRequested, rawSearchAfter);
+            if (!result.Success) { return result.ErrorMessage!; }
+
+            // 确定替换范围
+            var replaceStart = true ? result.StartIndex : result.StartIndex + regionStart.Length;
+            var replaceEnd = true ? result.EndIndex + regionEnd.Length : result.EndIndex;
+            var replaceLength = replaceEnd - replaceStart;
+
+            // 执行替换
+            var updatedMemory = currentMemory.Remove(replaceStart, replaceLength)
+                                             .Insert(replaceStart, newText);
+            _setMemory(updatedMemory);
+
+            return $"记忆区域已更新。\n" +
+                   $"- 原始长度: {currentMemory.Length} 字符\n" +
+                   $"- 更新后长度: {updatedMemory.Length} 字符\n" +
+                   $"- 替换范围: [{replaceStart}, {replaceEnd})\n\n" +
+                   $"更新后的记忆：\n{updatedMemory}";
+        }
+        catch (Exception ex) {
+            return $"Error: {ex.Message}";
+        }
+    }
+
+    private record FindResult(
+        bool Success,
+        int StartIndex = -1,
+        int EndIndex = -1,
+        string? ErrorMessage = null
+    );
+
+    private FindResult FindRegion(
+        string memory,
+        string regionStart,
+        string regionEnd,
+        int searchStart,
+        bool anchorRequested,
+        string? rawSearchAfter
+    ) {
+        var startMatches = FindAllMatchesFrom(memory, regionStart, searchStart);
+
+        if (startMatches.Count == 0) {
+            var anchorLabel = anchorRequested
+                ? rawSearchAfter is null
+                    ? "search_after"
+                    : rawSearchAfter.Length == 0
+                        ? "search_after=''"
+                        : $"search_after '{rawSearchAfter}'"
+                : null;
+
+            var message = $"Error: 找不到 old_span_start: '{regionStart}'";
+            if (anchorLabel != null) {
+                message += $" (在 {anchorLabel} 之后)";
+            }
+
+            return new FindResult(false, ErrorMessage: message);
+        }
+
+        if (startMatches.Count > 1) {
+            var contextInfo = TextToolUtilities.FormatMatchesForError(startMatches, memory, regionStart.Length, 80);
+            return new FindResult(
+                false,
+                ErrorMessage: $"Error: 找到 {startMatches.Count} 个 old_span_start 匹配。\n\n{contextInfo}\n\n" +
+                              "请设置 search_after 锚点或提供更精确的标记来定位目标区域。"
+            );
+        }
+
+        var startIndex = startMatches[0];
+        var endIndex = memory.IndexOf(regionEnd, startIndex + regionStart.Length, StringComparison.Ordinal);
+        if (endIndex < 0) {
+            return new FindResult(
+                false,
+                ErrorMessage: $"Error: 找不到 old_span_end: '{regionEnd}' (在 old_span_start 之后)\n\n" +
+                              $"old_span_start 位置的上下文：\n{TextToolUtilities.GetContext(memory, startIndex, regionStart.Length, 80)}"
+            );
+        }
+
+        return new FindResult(true, startIndex, endIndex);
+    }
+
+    private static List<int> FindAllMatchesFrom(string text, string pattern, int searchStart) {
+        var matches = new List<int>();
+        var index = searchStart;
+
+        while (index <= text.Length) {
+            var found = text.IndexOf(pattern, index, StringComparison.Ordinal);
+            if (found < 0) { break; }
+            matches.Add(found);
+            index = found + pattern.Length;
+        }
+
+        return matches;
+    }
+
+    private class UpdateRegionArgs {
+        [JsonPropertyName("old_span_start")]
+        public string? OldSpanStart { get; set; }
+
+        [JsonPropertyName("old_span_end")]
+        public string? OldSpanEnd { get; set; }
+
+        [JsonPropertyName("new_text")]
+        public string? NewText { get; set; }
+
+        [JsonPropertyName("search_after")]
+        public string? SearchAfter { get; set; }
+    }
+}

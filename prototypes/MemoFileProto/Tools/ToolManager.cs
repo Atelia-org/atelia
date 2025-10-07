@@ -7,12 +7,7 @@ public class ToolManager {
     private readonly Dictionary<string, ITool> _tools = new();
 
     public ToolManager() {
-        // 注册内置工具
-        RegisterTool(new StringReplaceTool());
-
-        // 未来可以在这里添加更多工具
-        // RegisterTool(new FileReadTool());
-        // RegisterTool(new FileWriteTool());
+        // 工具由外部注册，不再在构造函数中硬编码
     }
 
     /// <summary>
