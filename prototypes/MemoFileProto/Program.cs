@@ -42,12 +42,6 @@ class Program {
     private static ToolManager _toolManager => _toolManagerLazy.Value;
 
     static async Task Main(string[] args) {
-        // 如果传入 "test" 参数，运行测试
-        if (args.Length > 0 && args[0] == "test") {
-            await MemoReplaceLiteralTest.RunTests();
-            return;
-        }
-
         Console.OutputEncoding = Encoding.UTF8;
         Console.InputEncoding = Encoding.UTF8;
         Console.WriteLine("=== MemoFileProto - 多轮LLM对话原型 ===");
