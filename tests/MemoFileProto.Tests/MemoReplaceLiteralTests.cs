@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using MemoFileProto.Tools;
 
 namespace Atelia.MemoFileProto.Tests.Tools;
 
@@ -11,7 +12,7 @@ public class MemoReplaceLiteralTests {
         var result = await tool.ExecuteAsync("""{"old_text": "项目状态：进行中", "new_text": "项目状态：已完成"}""");
 
         Assert.Equal("项目状态：已完成\n任务数：5", store.Value);
-        Assert.Contains("记忆已更新", result);
+        Assert.Contains(ToolMessages.Updated, result);
     }
 
     [Fact]
@@ -55,7 +56,7 @@ __m256i vec = _mm256_loadu_si256(&data[8]);
 
         var result = await tool.ExecuteAsync("""{"old_text": "__m256i vec = _mm256_loadu_si256(&data[0]);", "new_text": "__m256i vec = _mm256_load_si256(&data[0]);", "search_after": ""}""");
 
-        Assert.Contains("记忆已更新", result);
+        Assert.Contains(ToolMessages.Updated, result);
         Assert.Equal(
             """
 __m256i vec = _mm256_load_si256(&data[0]);
@@ -80,7 +81,7 @@ void Func2() {
 
         var result = await tool.ExecuteAsync("""{"old_text": "int result = 0;", "new_text": "int result = 2;", "search_after": "void Func2() {"}""");
 
-        Assert.Contains("记忆已更新", result);
+        Assert.Contains(ToolMessages.Updated, result);
         Assert.Equal(
             """
 void Func1() {
@@ -100,7 +101,7 @@ void Func2() {
 
         var result = await tool.ExecuteAsync("""{"old_text": "", "new_text": "## 第二章\n新内容"}""");
 
-        Assert.Contains("已追加内容", result);
+        Assert.Contains(ToolMessages.ContentAppended, result);
         Assert.Equal("## 第一章\n内容\n## 第二章\n新内容", store.Value);
     }
 }

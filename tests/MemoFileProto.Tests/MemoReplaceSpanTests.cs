@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using MemoFileProto.Tools;
 
 namespace Atelia.MemoFileProto.Tests.Tools;
 
@@ -16,7 +17,7 @@ public class MemoReplaceSpanTests {
 
         var result = await tool.ExecuteAsync("""{"old_span_start": "### 技术栈", "old_span_end": "### 团队协作", "new_text": "### 技术栈\n主要使用 Rust\n### 团队协作"}""");
 
-        Assert.Contains("记忆区域已更新", result);
+        Assert.Contains(ToolMessages.Updated, result);
         Assert.Equal(
             """
 ### 技术栈
@@ -44,7 +45,7 @@ second block
 
         var result = await tool.ExecuteAsync("""{"old_span_start": "<!-- BEGIN -->", "old_span_end": "<!-- END -->", "new_text": "<!-- BEGIN -->\nupdated block\n<!-- END -->", "search_after": "-- marker --"}""");
 
-        Assert.Contains("记忆区域已更新", result);
+        Assert.Contains(ToolMessages.Updated, result);
         Assert.Equal(
             """
 <!-- BEGIN -->

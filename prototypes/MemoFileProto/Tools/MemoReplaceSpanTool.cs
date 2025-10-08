@@ -11,10 +11,12 @@ namespace MemoFileProto.Tools;
 public class MemoReplaceSpan : ITool {
     private readonly Func<string> _getMemory;
     private readonly Action<string> _setMemory;
+    private readonly TextReplacementEngine _engine;
 
     public MemoReplaceSpan(Func<string> getMemory, Action<string> setMemory) {
         _getMemory = getMemory;
         _setMemory = setMemory;
+        _engine = new TextReplacementEngine(_getMemory, _setMemory);
     }
 
     public string Name => "memo_replace_span";
@@ -93,111 +95,29 @@ public class MemoReplaceSpan : ITool {
             var args = JsonSerializer.Deserialize<UpdateRegionArgs>(arguments);
             if (args == null) { return "Error: Invalid arguments"; }
 
-            var regionStart = TextToolUtilities.NormalizeLineEndings(args.OldSpanStart ?? string.Empty);
-            var regionEnd = TextToolUtilities.NormalizeLineEndings(args.OldSpanEnd ?? string.Empty);
-            var newText = TextToolUtilities.NormalizeLineEndings(args.NewText ?? string.Empty);
-            var rawSearchAfter = args.SearchAfter;
-            var searchAfter = rawSearchAfter != null ? TextToolUtilities.NormalizeLineEndings(rawSearchAfter) : null;
-            var currentMemory = TextToolUtilities.NormalizeLineEndings(_getMemory() ?? string.Empty);
-            var anchor = TextToolUtilities.ResolveAnchor(currentMemory, searchAfter);
+            var rawStart = args.OldSpanStart ?? string.Empty;
+            var rawEnd = args.OldSpanEnd ?? string.Empty;
 
-            if (string.IsNullOrEmpty(regionStart) || string.IsNullOrEmpty(regionEnd)) { return "Error: old_span_start 和 old_span_end 不能为空"; }
+            if (string.IsNullOrEmpty(rawStart) || string.IsNullOrEmpty(rawEnd)) { return "Error: old_span_start 和 old_span_end 不能为空"; }
 
-            if (!anchor.Success) { return anchor.ErrorMessage!; }
+            var normalizedStart = TextToolUtilities.NormalizeLineEndings(rawStart);
+            var normalizedEnd = TextToolUtilities.NormalizeLineEndings(rawEnd);
 
-            // 查找区域
-            var result = FindRegion(currentMemory, regionStart, regionEnd, anchor.SearchStart, anchor.IsRequested, rawSearchAfter);
-            if (!result.Success) { return result.ErrorMessage!; }
+            var request = new ReplacementRequest(
+                normalizedStart,
+                args.NewText ?? string.Empty,
+                args.SearchAfter,
+                false,
+                "memo_replace_span"
+            );
 
-            // 确定替换范围
-            var replaceStart = true ? result.StartIndex : result.StartIndex + regionStart.Length;
-            var replaceEnd = true ? result.EndIndex + regionEnd.Length : result.EndIndex;
-            var replaceLength = replaceEnd - replaceStart;
-
-            // 执行替换
-            var updatedMemory = currentMemory.Remove(replaceStart, replaceLength)
-                                             .Insert(replaceStart, newText);
-            _setMemory(updatedMemory);
-
-            return $"记忆区域已更新。\n" +
-                   $"- 原始长度: {currentMemory.Length} 字符\n" +
-                   $"- 更新后长度: {updatedMemory.Length} 字符\n" +
-                   $"- 替换范围: [{replaceStart}, {replaceEnd})\n\n" +
-                   $"更新后的记忆：\n{updatedMemory}";
+            var locator = new SpanRegionLocator(normalizedStart, normalizedEnd);
+            var outcome = _engine.Execute(request, locator);
+            return outcome.Message;
         }
         catch (Exception ex) {
             return $"Error: {ex.Message}";
         }
-    }
-
-    private record FindResult(
-        bool Success,
-        int StartIndex = -1,
-        int EndIndex = -1,
-        string? ErrorMessage = null
-    );
-
-    private FindResult FindRegion(
-        string memory,
-        string regionStart,
-        string regionEnd,
-        int searchStart,
-        bool anchorRequested,
-        string? rawSearchAfter
-    ) {
-        var startMatches = FindAllMatchesFrom(memory, regionStart, searchStart);
-
-        if (startMatches.Count == 0) {
-            var anchorLabel = anchorRequested
-                ? rawSearchAfter is null
-                    ? "search_after"
-                    : rawSearchAfter.Length == 0
-                        ? "search_after=''"
-                        : $"search_after '{rawSearchAfter}'"
-                : null;
-
-            var message = $"Error: 找不到 old_span_start: '{regionStart}'";
-            if (anchorLabel != null) {
-                message += $" (在 {anchorLabel} 之后)";
-            }
-
-            return new FindResult(false, ErrorMessage: message);
-        }
-
-        if (startMatches.Count > 1) {
-            var contextInfo = TextToolUtilities.FormatMatchesForError(startMatches, memory, regionStart.Length, 80);
-            return new FindResult(
-                false,
-                ErrorMessage: $"Error: 找到 {startMatches.Count} 个 old_span_start 匹配。\n\n{contextInfo}\n\n" +
-                              "请设置 search_after 锚点或提供更精确的标记来定位目标区域。"
-            );
-        }
-
-        var startIndex = startMatches[0];
-        var endIndex = memory.IndexOf(regionEnd, startIndex + regionStart.Length, StringComparison.Ordinal);
-        if (endIndex < 0) {
-            return new FindResult(
-                false,
-                ErrorMessage: $"Error: 找不到 old_span_end: '{regionEnd}' (在 old_span_start 之后)\n\n" +
-                              $"old_span_start 位置的上下文：\n{TextToolUtilities.GetContext(memory, startIndex, regionStart.Length, 80)}"
-            );
-        }
-
-        return new FindResult(true, startIndex, endIndex);
-    }
-
-    private static List<int> FindAllMatchesFrom(string text, string pattern, int searchStart) {
-        var matches = new List<int>();
-        var index = searchStart;
-
-        while (index <= text.Length) {
-            var found = text.IndexOf(pattern, index, StringComparison.Ordinal);
-            if (found < 0) { break; }
-            matches.Add(found);
-            index = found + pattern.Length;
-        }
-
-        return matches;
     }
 
     private class UpdateRegionArgs {
