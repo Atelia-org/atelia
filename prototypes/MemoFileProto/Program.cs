@@ -1,45 +1,21 @@
+using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Threading.Tasks;
+using MemoFileProto.Agent;
 using MemoFileProto.Models;
 using MemoFileProto.Services;
-using MemoFileProto.Tools;
 
 namespace MemoFileProto;
 
 class Program {
-    private static readonly List<ChatMessage> _conversationHistory = new();
-    private static readonly HttpClient _sharedHttpClient = CreateHttpClient();
-    private static readonly OpenAIClient _client = new(_sharedHttpClient);
-
-    private static string _systemInstruction = @"你是一个有帮助的AI助手。
-
-## 关于消息格式
-你会收到结构化的 Markdown 格式消息，其中包含：
-
-1. **你的记忆**：这是用第一人称（'我'）记录的长期记忆文档，包含重要的事实、偏好和历史信息。这些记忆是关于你自己的，虽然用'我'表述，但这就是你的记忆。
-
-2. **当前时间**：每条消息创建时的时间戳。
-
-3. **收到用户发来的消息**：用户的实际输入内容。
-
-请根据这些结构化信息提供有帮助的回答。你可以引用自己的记忆，也可以根据上下文进行推理。";
-
-    private static string _memoryFile = "（尚无记忆）";
-
-    // 延迟初始化 ToolManager，以便传递 _memoryFile 的访问委托
-    private static readonly Lazy<ToolManager> _toolManagerLazy = new(() => {
-        var manager = new ToolManager();
-        manager.RegisterTool(
-            new MemoReplaceLiteral(
-                getMemory: () => _memoryFile,
-                setMemory: (newMemory) => _memoryFile = newMemory
-            )
-        );
-        return manager;
-    });
-    private static ToolManager _toolManager => _toolManagerLazy.Value;
+    private static readonly JsonSerializerOptions PrettyJsonOptions = new() {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     static async Task Main(string[] args) {
         Console.OutputEncoding = Encoding.UTF8;
@@ -56,13 +32,9 @@ class Program {
         Console.WriteLine("  /exit 或 /quit - 退出程序");
         Console.WriteLine();
 
-        // 添加系统提示词到历史
-        _conversationHistory.Add(
-            new ChatMessage {
-                Role = "system",
-                Content = _systemInstruction
-            }
-        );
+        using var httpClient = CreateHttpClient();
+        using var client = new OpenAIClient(httpClient);
+        var agent = new LlmAgent(client);
 
         while (true) {
             Console.Write("User> ");
@@ -70,49 +42,41 @@ class Program {
 
             if (string.IsNullOrWhiteSpace(input)) { continue; }
 
-            // 处理命令
             if (input.StartsWith("/")) {
-                if (!HandleCommand(input)) { break; /* 退出程序 */ }
+                if (!HandleCommand(agent, input)) { break; }
                 continue;
             }
 
-            var rollbackIndex = _conversationHistory.Count;
-            var messageTimestamp = DateTime.Now;
-
-            // 构建结构化的用户消息并存入历史（仅保留历史碎片）
-            var structuredContent = BuildHistoricUserEnvelope(input, messageTimestamp);
-            _conversationHistory.Add(
-                new ChatMessage {
-                    Role = "user",
-                    Content = structuredContent,
-                    Timestamp = messageTimestamp,
-                    RawInput = input
-                }
-            );
-
             try {
-                Console.Write("Assistant> ");
-                var requiresFollowUp = await ProcessAssistantResponseAsync();
-                while (requiresFollowUp) {
-                    Console.WriteLine();
-                    Console.Write("Assistant> ");
-                    requiresFollowUp = await ProcessAssistantResponseAsync();
-                }
+                await agent.SendAsync(
+                    input,
+                    onAssistantTurnStart: isFollowUp => {
+                        if (isFollowUp) {
+                            Console.WriteLine();
+                            Console.WriteLine();
+                        }
+                        Console.Write("Assistant> ");
+                    },
+                    onContentDelta: delta => Console.Write(delta),
+                    onToolCall: call => {
+                        Console.WriteLine($"\n[工具调用] {call.Function.Name}");
+                        Console.WriteLine("[参数]\n" + FormatToolArguments(call.Function.Arguments));
+                    },
+                    onToolResult: result => Console.WriteLine($"[工具结果] {result}")
+                );
             }
             catch (Exception ex) {
                 Console.WriteLine($"\n[错误] 获取助手响应失败: {ex.Message}");
-                TrimConversationHistory(rollbackIndex);
             }
 
             Console.WriteLine();
             Console.WriteLine();
         }
 
-        _client.Dispose();
         Console.WriteLine("再见！");
     }
 
-    private static bool HandleCommand(string command) {
+    private static bool HandleCommand(LlmAgent agent, string command) {
         var parts = command.Split(' ', 2);
         var cmd = parts[0].ToLower();
 
@@ -122,13 +86,7 @@ class Program {
                 return false;
 
             case "/clear":
-                _conversationHistory.Clear();
-                _conversationHistory.Add(
-                    new ChatMessage {
-                        Role = "system",
-                        Content = _systemInstruction
-                    }
-                );
+                agent.ResetConversation();
                 Console.WriteLine("对话历史已清空。");
                 return true;
 
@@ -137,28 +95,16 @@ class Program {
                     Console.WriteLine("用法: /system <提示词>");
                     return true;
                 }
-                _systemInstruction = parts[1];
-                _conversationHistory.Clear();
-                _conversationHistory.Add(
-                    new ChatMessage {
-                        Role = "system",
-                        Content = _systemInstruction
-                    }
-                );
-                Console.WriteLine($"系统提示词已设置为: {_systemInstruction}");
+                agent.SetSystemInstruction(parts[1]);
+                Console.WriteLine($"系统提示词已设置为: {parts[1]}");
                 return true;
 
             case "/history":
-                Console.WriteLine("\n=== 对话历史 ===");
-                for (int i = 0; i < _conversationHistory.Count; i++) {
-                    var msg = _conversationHistory[i];
-                    Console.WriteLine($"[{i}] {msg.Role}: {msg.Content}");
-                }
-                Console.WriteLine("===============\n");
+                PrintHistory(agent.ConversationHistory);
                 return true;
 
             case "/memory":
-                HandleMemoryCommand(parts.Length > 1 ? parts[1] : "view");
+                HandleMemoryCommand(agent, parts.Length > 1 ? parts[1] : "view");
                 return true;
 
             default:
@@ -167,15 +113,16 @@ class Program {
         }
     }
 
-    private static void HandleMemoryCommand(string subCommand) {
+    private static void HandleMemoryCommand(LlmAgent agent, string subCommand) {
         var cmd = string.IsNullOrWhiteSpace(subCommand)
             ? "view"
             : subCommand.ToLower();
 
         if (cmd is "view" or "v") {
+            var memory = agent.MemorySnapshot;
             Console.WriteLine("\n=== 你的记忆文档 ===");
-            Console.WriteLine(_memoryFile);
-            Console.WriteLine($"\n字符数: {_memoryFile.Length}");
+            Console.WriteLine(memory);
+            Console.WriteLine($"\n字符数: {memory.Length}");
             Console.WriteLine("====================\n");
             return;
         }
@@ -184,88 +131,13 @@ class Program {
         Console.WriteLine("当前版本仅支持查看记忆：/memory 或 /memory view");
     }
 
-    private static async Task<bool> ProcessAssistantResponseAsync(CancellationToken cancellationToken = default) {
-        var assistantMessage = new ChatMessage {
-            Role = "assistant",
-            Content = ""
-        };
-
-        var tools = _toolManager.GetToolDefinitions();
-        var toolAccumulator = new ToolCallAccumulator();
-        string? finishReason = null;
-
-        // 构建动态上下文（最后一条 user message 注入 MemoryFile）
-        var context = BuildContext();
-
-        // 流式获取响应
-        await foreach (var delta in _client.StreamChatCompletionAsync(context, tools, cancellationToken)) {
-            if (!string.IsNullOrEmpty(delta.Content)) {
-                Console.Write(delta.Content);
-                assistantMessage.Content += delta.Content;
-            }
-
-            if (delta.ToolCalls is { Count: > 0 }) {
-                foreach (var toolDelta in delta.ToolCalls) {
-                    toolAccumulator.AddDelta(toolDelta);
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(delta.FinishReason)) {
-                finishReason = delta.FinishReason;
-            }
+    private static void PrintHistory(IReadOnlyList<ChatMessage> history) {
+        Console.WriteLine("\n=== 对话历史 ===");
+        for (int i = 0; i < history.Count; i++) {
+            var msg = history[i];
+            Console.WriteLine($"[{i}] {msg.Role}: {msg.Content}");
         }
-
-        var requiresToolCall = finishReason?.Equals("tool_calls", StringComparison.OrdinalIgnoreCase) == true
-            && toolAccumulator.HasPendingToolCalls;
-
-        if (requiresToolCall) {
-            var toolCalls = toolAccumulator.BuildFinalCalls();
-            assistantMessage.ToolCalls = toolCalls.ToList();
-            _conversationHistory.Add(assistantMessage);
-
-            foreach (var call in toolCalls) {
-                Console.WriteLine($"\n[工具调用] {call.Function.Name}");
-                Console.WriteLine("[参数]\n" + FormatToolArguments(call.Function.Arguments));
-                var toolResult = await ExecuteToolSafelyAsync(call);
-                _conversationHistory.Add(
-                    new ChatMessage {
-                        Role = "tool",
-                        ToolCallId = call.Id,
-                        Content = toolResult
-                    }
-                );
-                Console.WriteLine($"[工具结果] {toolResult}");
-            }
-
-            return true;
-        }
-
-        _conversationHistory.Add(assistantMessage);
-        return false;
-    }
-
-    private static async Task<string> ExecuteToolSafelyAsync(ToolCall call) {
-        try {
-            return await _toolManager.ExecuteToolAsync(call.Function.Name, call.Function.Arguments);
-        }
-        catch (Exception ex) {
-            return $"Error: {ex.Message}";
-        }
-    }
-
-    private static void TrimConversationHistory(int startIndex) {
-        if (startIndex < 0 || startIndex >= _conversationHistory.Count) { return; }
-
-        _conversationHistory.RemoveRange(startIndex, _conversationHistory.Count - startIndex);
-
-        if (_conversationHistory.Count == 0) {
-            _conversationHistory.Add(
-                new ChatMessage {
-                    Role = "system",
-                    Content = _systemInstruction
-                }
-            );
-        }
+        Console.WriteLine("===============\n");
     }
 
     private static HttpClient CreateHttpClient() {
@@ -273,11 +145,6 @@ class Program {
             Timeout = TimeSpan.FromSeconds(120)
         };
     }
-
-    private static readonly JsonSerializerOptions PrettyJsonOptions = new() {
-        WriteIndented = true,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
 
     private static string FormatToolArguments(string rawArguments) {
         if (string.IsNullOrWhiteSpace(rawArguments)) { return "(无参数)"; }
@@ -291,93 +158,4 @@ class Program {
         }
     }
 
-    /// <summary>
-    /// 动态构建 LLM 调用上下文
-    /// </summary>
-    private static List<ChatMessage> BuildContext() {
-        var context = new List<ChatMessage> {
-            new ChatMessage {
-                Role = "system",
-                Content = _systemInstruction
-            }
-        };
-
-        var lastUserIndex = GetLastUserMessageIndex();
-
-        for (int i = 0; i < _conversationHistory.Count; i++) {
-            var msg = _conversationHistory[i];
-
-            if (msg.Role == "system") { continue; }
-
-            if (msg.Role == "user" && i == lastUserIndex) {
-                var combinedContent = BuildUserContentForContext(msg);
-                context.Add(
-                    new ChatMessage {
-                        Role = "user",
-                        Content = combinedContent
-                    }
-                );
-                continue;
-            }
-
-            context.Add(msg);
-        }
-
-        return context;
-    }
-
-    private static string BuildHistoricUserEnvelope(string rawInput, DateTime timestamp) {
-        var sb = new StringBuilder();
-
-        sb.AppendLine("## 当前时间");
-        sb.AppendLine(timestamp.ToString("yyyy-MM-dd HH:mm:ss"));
-        sb.AppendLine();
-
-        sb.AppendLine("## 收到用户发来的消息");
-        sb.AppendLine(rawInput);
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string BuildVolatileUserEnvelope(string rawInput, DateTime timestamp) {
-        _ = rawInput;
-        _ = timestamp;
-        if (string.IsNullOrEmpty(_memoryFile)) { return string.Empty; }
-
-        var sb = new StringBuilder();
-        sb.AppendLine("## 你的记忆");
-        sb.AppendLine(_memoryFile);
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string BuildUserContentForContext(ChatMessage message) {
-        var historicContent = message.Content;
-        if (string.IsNullOrWhiteSpace(historicContent)) { return historicContent ?? string.Empty; }
-
-        var rawInput = message.RawInput ?? message.Content;
-        var timestamp = message.Timestamp ?? DateTime.Now;
-        var volatileContent = BuildVolatileUserEnvelope(rawInput, timestamp);
-
-        return CombineContentBlocks(volatileContent, historicContent);
-    }
-
-    private static string CombineContentBlocks(string? volatileBlock, string? historicBlock) {
-        var historic = historicBlock?.TrimEnd();
-        var volatileSection = volatileBlock?.TrimEnd();
-
-        if (string.IsNullOrEmpty(volatileSection)) { return historicBlock ?? string.Empty; }
-
-        if (string.IsNullOrEmpty(historic)) { return volatileSection; }
-
-        return string.Join("\n\n", new[] { volatileSection, historic }).TrimEnd();
-    }
-
-    private static int GetLastUserMessageIndex() {
-        for (int i = _conversationHistory.Count - 1; i >= 0; i--) {
-            if (_conversationHistory[i].Role == "user") { return i; }
-        }
-
-        return -1;
-    }
 }
