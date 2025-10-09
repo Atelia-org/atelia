@@ -9,30 +9,30 @@ namespace MemoFileProto.Tools;
 /// 支持唯一匹配与锚点定位的字面文本替换工具
 /// </summary>
 public class MemoReplaceLiteral : ITool {
-    private readonly Func<string> _getMemory;
-    private readonly Action<string> _setMemory;
+    private readonly Func<string> _getNotes;
+    private readonly Action<string> _setNotes;
     private readonly TextReplacementEngine _engine;
 
-    public MemoReplaceLiteral(Func<string> getMemory, Action<string> setMemory) {
-        _getMemory = getMemory;
-        _setMemory = setMemory;
-        _engine = new TextReplacementEngine(_getMemory, _setMemory);
+    public MemoReplaceLiteral(Func<string> getNotes, Action<string> setNotes) {
+        _getNotes = getNotes;
+        _setNotes = setNotes;
+        _engine = new TextReplacementEngine(_getNotes, _setNotes);
     }
 
-    public string Name => "memo_replace_literal";
+    public string Name => "memory_notebook_replace";
 
-    public string Description => @"在记忆中查找并替换字面文本。支持唯一性检查和锚点定位两种模式。
+    public string Description => @"在[Memory Notebook]中查找并替换字面文本。支持唯一性检查和锚点定位两种模式。
 
 参数：
-- old_text: 要替换的旧文本（必须精确匹配）。如果为空，则将 new_text 追加到记忆末尾。
+- old_text: 要替换的旧文本（必须精确匹配）。如果为空，则将 new_text 追加到[Memory Notebook]末尾。
 - new_text: 替换后的新文本（可以为空字符串表示删除）
 - search_after: (可选) 定位锚点，用于在多个匹配中精确定位目标
-  * 未提供/null: 要求 old_text 在记忆中唯一存在，否则报错
+  * 未提供/null: 要求 old_text 在[Memory Notebook]中唯一存在，否则报错
   * 空字符串 '''': 从文档开头取第一个 old_text 匹配项
   * 非空字符串: 先找到该锚点，再在其后取第一个 old_text 匹配项
 
 使用场景：
-- 简单场景：old_text 在记忆中唯一 → 直接调用，无需 search_after
+- 简单场景：old_text 在[Memory Notebook]中唯一 → 直接调用，无需 search_after
 - 消歧场景：old_text 有多个匹配 → 添加 search_after 锚点来定位
 - 开头匹配：需要替换文档开头的重复文本 → 使用 search_after=''''
 
@@ -52,7 +52,7 @@ public class MemoReplaceLiteral : ITool {
 
 提示：
 - 如果遇到多匹配错误，工具会展示所有匹配位置的上下文，帮助你选择合适的 search_after
-- 如果需要替换一个大区域，考虑使用 memo_replace_span 工具";
+- 如果需要替换一个大区域，考虑使用 memory_notebook_replace_span 工具";
 
     public Tool GetToolDefinition() {
         return new Tool {
@@ -65,7 +65,7 @@ public class MemoReplaceLiteral : ITool {
                     properties = new {
                         old_text = new {
                             type = "string",
-                            description = "要替换的旧文本（精确匹配）。如果为空字符串，则追加 new_text 到记忆末尾。"
+                            description = "要替换的旧文本（精确匹配）。如果为空字符串，则追加 new_text 到[Memory Notebook]末尾。"
                         },
                         new_text = new {
                             type = "string",
@@ -86,7 +86,7 @@ public class MemoReplaceLiteral : ITool {
         await Task.CompletedTask; // 异步占位
 
         try {
-            var args = JsonSerializer.Deserialize<EditMemoryArgs>(arguments);
+            var args = JsonSerializer.Deserialize<EditNotesArgs>(arguments);
             if (args == null) { return "Error: Invalid arguments"; }
             var rawOldText = args.OldText ?? string.Empty;
             var normalizedOldText = TextToolUtilities.NormalizeLineEndings(rawOldText);
@@ -95,7 +95,7 @@ public class MemoReplaceLiteral : ITool {
                 args.NewText ?? string.Empty,
                 args.SearchAfter,
                 string.IsNullOrEmpty(normalizedOldText),
-                "memo_replace_literal"
+                "memory_notebook_replace"
             );
 
             var locator = string.IsNullOrEmpty(normalizedOldText)
@@ -110,7 +110,7 @@ public class MemoReplaceLiteral : ITool {
         }
     }
 
-    private class EditMemoryArgs {
+    private class EditNotesArgs {
         [JsonPropertyName("old_text")]
         public string OldText { get; set; } = string.Empty;
 

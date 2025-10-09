@@ -115,7 +115,7 @@ stateDiagram-v2
 
 **示例交互**：
 ```
-Tool: memo_replace_literal
+Tool: memory_notebook_replace
 Args: { "old_text": "result = 0", "new_text": "result = initial" }
 
 返回：
@@ -158,15 +158,15 @@ Args: { "old_text": "result = 0", "new_text": "result = initial" }
 ```
 开始任务：memo_begin_task("修改配置以启用新功能")
   ↓
-执行编辑：memo_replace_literal(...)
+执行编辑：memory_notebook_replace(...)
   ↓
 发现依赖：memo_begin_task("先检查依赖版本")  ← 嵌套
     ↓
-  解决依赖：memo_replace_literal(...)
+  解决依赖：memory_notebook_replace(...)
     ↓
   结束子任务：memo_commit("依赖版本已更新")  ← pop 子任务
   ↓
-继续主任务：memo_replace_literal(...)
+继续主任务：memory_notebook_replace(...)
   ↓
 完成主任务：memo_commit("新功能配置完成")  ← pop 主任务
 ```
@@ -197,14 +197,14 @@ User: 请修改配置
 Assistant: 我先检查依赖版本
 Tool: memo_read
 Result: [完整配置文件 2000 字符]
-Tool: memo_replace_literal(...)
+Tool: memory_notebook_replace(...)
 Result: 找到 3 个匹配...
-Tool: memo_replace_literal(match_id="B")
+Tool: memory_notebook_replace(match_id="B")
 Result: 预览: ...
 Tool: memo_commit("依赖版本已更新")
 Result: 已提交
 Assistant: 现在更新配置参数
-Tool: memo_replace_literal(...)
+Tool: memory_notebook_replace(...)
 ...
 ```
 
@@ -253,7 +253,7 @@ User: 请修改配置
 
 ### 5.2 修改现有工具
 
-#### `memo_replace_literal / memo_replace_span`
+#### `memory_notebook_replace / memory_notebook_replace_span`
 - **新增参数**：
   - `match_id?: string`：字母索引（A-Z）
   - `preview_only?: bool`：仅预览不进入编辑状态
@@ -290,7 +290,7 @@ User: 请修改配置
   "next_actions": [
     "memo_commit(summary)",
     "memo_revert(reason)",
-    "memo_replace_literal(..., match_id)"
+    "memory_notebook_replace(..., match_id)"
   ]
 }
 ```
@@ -460,7 +460,7 @@ Result:
 ───────────────────────────────────────────────────────────────────
 Assistant: 我需要在 experimental 数组中添加 "X"
 
-Tool: memo_replace_literal
+Tool: memory_notebook_replace
 Args: {
   "old_text": "\"experimental\": []",
   "new_text": "\"experimental\": [\"X\"]"
@@ -521,7 +521,7 @@ Assistant (最终): 已完成！配置文件已更新，实验性功能 X 现已
 User: 请将所有 timeout 从 30 改为 60
 
 ───────────────────────────────────────────────────────────────────
-Tool: memo_replace_literal
+Tool: memory_notebook_replace
 Args: {
   "old_text": "timeout: 30",
   "new_text": "timeout: 60"
@@ -546,7 +546,7 @@ Result:
 ───────────────────────────────────────────────────────────────────
 Assistant: 我需要修改所有三处，先从第一个开始
 
-Tool: memo_replace_literal
+Tool: memory_notebook_replace
 Args: {
   "old_text": "timeout: 30",
   "new_text": "timeout: 60",
@@ -558,7 +558,7 @@ Result:
 [A] 替换 "timeout: 30" → "timeout: 60" (第 12 行)
 
 ───────────────────────────────────────────────────────────────────
-Tool: memo_replace_literal
+Tool: memory_notebook_replace
 Args: {
   "old_text": "timeout: 30",
   "new_text": "timeout: 60",
@@ -571,7 +571,7 @@ Result:
 [B] 替换 "timeout: 30" → "timeout: 60" (第 45 行)
 
 ───────────────────────────────────────────────────────────────────
-Tool: memo_replace_literal
+Tool: memory_notebook_replace
 Args: {
   "old_text": "timeout: 30",
   "new_text": "timeout: 60",

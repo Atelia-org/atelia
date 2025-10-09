@@ -6,20 +6,20 @@ namespace MemoFileProto.Tools;
 /// </summary>
 public static class ToolMessages {
     // 成功消息前缀
-    public const string Updated = "记忆已更新";
-    public const string ContentAppended = "已追加内容到记忆末尾";
+    public const string Updated = "[Memory Notebook]已更新";
+    public const string ContentAppended = "已追加内容到[Memory Notebook]末尾";
     public const string NoNewContent = "无新内容追加";
 
     // 格式化成功消息
     public static string FormatUpdate(int startIndex, int replaceLength, int newMemoryLength) {
-        return $"{Updated}: 起始位置 {startIndex}, 替换长度 {replaceLength}, 新记忆长度 {newMemoryLength}";
+        return $"{Updated}: 起始位置 {startIndex}, 替换长度 {replaceLength}, 新[Memory Notebook]长度 {newMemoryLength}";
     }
 
     public static string FormatAppendSuccess(int newMemoryLength) {
-        return $"{ContentAppended}。当前记忆长度: {newMemoryLength}";
+        return $"{ContentAppended}。当前[Memory Notebook]长度: {newMemoryLength}";
     }
 
     public static string FormatNoContentToAppend(int currentMemoryLength) {
-        return $"{NoNewContent}。当前记忆长度: {currentMemoryLength}";
+        return $"{NoNewContent}。当前[Memory Notebook]长度: {currentMemoryLength}";
     }
 }

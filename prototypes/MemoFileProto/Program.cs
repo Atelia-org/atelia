@@ -26,7 +26,7 @@ class Program {
         Console.WriteLine();
         Console.WriteLine("命令:");
         Console.WriteLine("  /system <提示词> - 设置系统提示词");
-        Console.WriteLine("  /memory [view] - 查看记忆文档");
+        Console.WriteLine("  /memory [view] - 查看[Memory Notebook]");
         Console.WriteLine("  /clear - 清空对话历史");
         Console.WriteLine("  /history - 查看对话历史");
         Console.WriteLine("  /exit 或 /quit - 退出程序");
@@ -119,16 +119,16 @@ class Program {
             : subCommand.ToLower();
 
         if (cmd is "view" or "v") {
-            var memory = agent.MemorySnapshot;
-            Console.WriteLine("\n=== 你的记忆文档 ===");
-            Console.WriteLine(memory);
-            Console.WriteLine($"\n字符数: {memory.Length}");
+            var notes = agent.NotesSnapshot;
+            Console.WriteLine("\n=== [Memory Notebook] ===");
+            Console.WriteLine(notes);
+            Console.WriteLine($"\n字符数: {notes.Length}");
             Console.WriteLine("====================\n");
             return;
         }
 
         Console.WriteLine($"未知子命令: {subCommand}");
-        Console.WriteLine("当前版本仅支持查看记忆：/memory 或 /memory view");
+        Console.WriteLine("当前版本仅支持查看[Memory Notebook]：/memory 或 /memory view");
     }
 
     private static void PrintHistory(IReadOnlyList<ChatMessage> history) {

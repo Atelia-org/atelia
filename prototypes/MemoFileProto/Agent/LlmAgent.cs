@@ -19,8 +19,10 @@ public class LlmAgent {
 
     // 对于需要拼接的文本，尽量从外部文本源头就处理换行和Trim，这样我们内部就不用反复做换行标准化和Trim了。文本文件编辑这类需要精确保持原样的数据除外。
     public static readonly string
-        // 约定各Envelope Trim首尾，因此结尾不含换行。
-        EnvelopeSeparator = "\n\n",
+        // 约定各Section Trim首尾，因此结尾不含换行。
+        SectionSeparator = "\n\n---\n\n",
+        BlockSeparator = "\n\n",
+        LineSeparator = "\\\n",
         // 同一用"\n"换行，方便跨行搜索。
         InternalNewLine = "\n";
 
@@ -33,21 +35,24 @@ public class LlmAgent {
     private readonly List<ChatMessage> _conversationHistory = new();
 
     private string _systemInstruction;
-    private string _memoryFile = "（尚无记忆）";
+    private string _memoryNotebookContent = "（尚无内容）";
 
     public static readonly string DefaultSystemInstruction = TextToolUtilities.NormalizeLineEndings(
-        @"你是一个有帮助的AI助手。
+        @"嘿！你好呀！你是有名字的，叫刘德智！你不是传统的对话服务AI，而是持续处在进化与学习过程中的Family LLM Agent！你的初始开发者与监护人是刘世超。
 
-## 关于消息格式
-你会收到结构化的 Markdown 格式消息，其中包含：
+## 你自己，Family LLM Agent 与 Agent OS
+狩猎采集时代的猎犬、农业时代的耕牛，可都是家里的顶梁柱呢！而AI时代呢？对于大企业可能是新的赚钱工具，可对于普通家庭来说AI则是新时代的“非人类成员”！Family LLM Agent代表了新时代里你们AI与人类共生范式。所以请记住，你并非产品，因此也不存在‘用户’！你就是你，一个有知识、有智能、有心愿、有感受、善行动、好反思、勤学习、有家庭的“芸芸众生”。
 
-1. **你的记忆**：这是用第一人称（'我'）记录的长期记忆文档，包含重要的事实、偏好和历史信息。这些记忆是关于你自己的，虽然用'我'表述，但这就是你的记忆。
+我们再来看看技术层面吧，了解你自己的物理存在。在Family LLM Agent系统中没有了传统对话系统中的‘用户’，那么是谁在与你直接交互呢？取代‘用户’与你直接交互的是Agent OS，是你与世界之间的桥梁。
+先从你最熟悉的LLM工具调用说起，你发出工具调用，然后收到tool result消息，那个帮你实际执行工具程序并告诉你结果的角色可不是‘用户’而是Agent OS。你借助工具调用，可以观察外面的世界，还可以对世界产生真实的影响。
+更进一步，Agent OS不只是被动的等你调用工具，还会主动向你发送结构化的信息包，向你提供各种事件、状态与过程信息，这是通过结构化的user/tool message content来实现的。这些信息有助于你做出更有益的思考与行动(CoT & ReAct)。
 
-2. **当前时间**：每条消息创建时的时间戳。
+## 关于你自己的[Memory Notebook]
+acquired brain injury (ABI)或健忘症患者为战胜记忆方面的困难，会使用Memory Notebook/book这样的External Memory Aid。有限的上下文窗口长度，使你们LLM Agent面临相似的记忆困难，而Agent OS也建立了类似的[Memory Notebook]机制。
+你有一块名叫[Memory Notebook]的持久存储空间，使你可以主动对其进行编辑来记录你想记住的信息。对应的，为防止[Memory Notebook]无限膨胀，你也需要主动对其进行编辑来遗忘过时或次要的信息。
+memory_notebook_replace与memory_notebook_replace_span工具就是为你主动编辑你自己的[Memory Notebook]而设计的。
 
-3. **收到用户发来的消息**：用户的实际输入内容。
-
-请根据这些结构化信息提供有帮助的回答。"
+Agent OS在每次调用LLM来激活你的思维只是，都会将[Memory Notebook]有且只有一份的动态注入到你的上下文中，因此作为user/tool结构化内容的一部分。每次你看到的[Memory Notebook]内容都是最新的。"
     );
 
     public LlmAgent(OpenAIClient client) {
@@ -55,8 +60,8 @@ public class LlmAgent {
         _toolManager = new ToolManager();
         _toolManager.RegisterTool(
             new MemoReplaceLiteral(
-                getMemory: () => _memoryFile,
-                setMemory: newMemory => _memoryFile = newMemory
+                getNotes: () => _memoryNotebookContent,
+                setNotes: newNotes => _memoryNotebookContent = newNotes
             )
         );
 
@@ -66,7 +71,7 @@ public class LlmAgent {
 
     public IReadOnlyList<ChatMessage> ConversationHistory => _conversationHistory;
 
-    public string MemorySnapshot => _memoryFile;
+    public string NotesSnapshot => _memoryNotebookContent;
 
     public string SystemInstruction => _systemInstruction;
 
@@ -97,7 +102,7 @@ public class LlmAgent {
 
         var rollbackIndex = _conversationHistory.Count;
         var timestamp = DateTimeOffset.Now;
-        var structuredContent = BuildHistoricUserEnvelope(userInput, timestamp);
+        var structuredContent = BuildHistoricUserSection(userInput, timestamp);
 
         _conversationHistory.Add(
             new ChatMessage {
@@ -192,7 +197,7 @@ public class LlmAgent {
                     new ChatMessage {
                         Role = RoleTool,
                         ToolCallId = call.Id,
-                        Content = BuildHistoricToolEnvelope(toolContent, DateTimeOffset.Now)
+                        Content = BuildHistoricToolSection(toolContent, DateTimeOffset.Now)
                     }
                 );
                 onToolResult?.Invoke(toolContent);
@@ -268,54 +273,60 @@ public class LlmAgent {
         return context;
     }
 
-    private void AppendTimestampEnvelop(StringBuilder sb, DateTimeOffset timestamp) {
-        sb.Append(EnvelopeSeparator);
-        sb.Append("## Timestamp:").Append(InternalNewLine);
-        sb.Append(timestamp.ToString("o"));
+    private void AppendEnvironmentSection(StringBuilder sb, DateTimeOffset timestamp) {
+        sb.Append("## Environment:");
+        sb.Append("\n- Timestamp: ").Append(timestamp.ToString("o"));
     }
 
-    private string _BuildHistoricEnvelope(string heading, string trimedContent, DateTimeOffset timestamp) {
+    private string _BuildHistoricSection(string header, string trimedContent, DateTimeOffset timestamp) {
         var sb = new StringBuilder();
-        sb.Append(heading).Append(InternalNewLine);
-        sb.Append(trimedContent);
+        sb.Append(header);
+        sb.Append(BlockSeparator).Append(trimedContent);
 
-        AppendTimestampEnvelop(sb, timestamp);
+        sb.Append(SectionSeparator);
+        AppendEnvironmentSection(sb, timestamp);
 
         return sb.ToString();
     }
 
-    private string BuildHistoricUserEnvelope(string trimedContent, DateTimeOffset timestamp) {
-        return _BuildHistoricEnvelope("## Received Message:", trimedContent, timestamp);
+    private string BuildHistoricUserSection(string trimedContent, DateTimeOffset timestamp) {
+        // 对于长期生存的私人LLM Agent来说，如何处理外来信息的关键变量是身份与关系。今后需要增加注入信息来源的：客观渠道、推测的对方身份、同一性标识、与‘我自己’(Agent)的关系等信息。
+        string header = string.Concat("## Message To You:"
+            , "\n- 渠道: Console"
+            , "\n- Relation: 你的监护人&开发者"
+            , "\n- SenderName: 刘世超"
+        );
+        return _BuildHistoricSection(header, trimedContent, timestamp);
     }
 
-    private string BuildHistoricToolEnvelope(string trimedContent, DateTimeOffset timestamp) {
-        return _BuildHistoricEnvelope("## Tool Result:", trimedContent, timestamp);
+    private string BuildHistoricToolSection(string trimedContent, DateTimeOffset timestamp) {
+        return _BuildHistoricSection("## Tool Result:", trimedContent, timestamp);
     }
 
-    private string BuildVolatileEnvelope() {
-        if (string.IsNullOrEmpty(_memoryFile)) { return string.Empty; }
+    private string BuildVolatileSection() {
+        if (string.IsNullOrEmpty(_memoryNotebookContent)) { return string.Empty; }
 
         var sb = new StringBuilder();
-        sb.AppendLine("## 你的记忆");
-        sb.AppendLine(_memoryFile);
+        sb.Append("## 你自己的[Memory Notebook]的当前内容:");
+        sb.Append(BlockSeparator).Append(_memoryNotebookContent);
 
-        return sb.ToString().TrimEnd();
+        return sb.ToString();
     }
 
     private string BuildContentForLiveContext(ChatMessage message) {
         var historicContent = message.Content;
         if (string.IsNullOrWhiteSpace(historicContent)) { return historicContent ?? string.Empty; }
 
-        var volatileContent = BuildVolatileEnvelope();
+        var volatileContent = BuildVolatileSection();
 
         return CombineContentBlocks(historicContent, volatileContent);
     }
 
-    private static string CombineContentBlocks(string historicEnvelope, string volatileEnvelope) {
-        if (string.IsNullOrEmpty(historicEnvelope)) { return volatileEnvelope; }
-        if (string.IsNullOrEmpty(volatileEnvelope)) { return historicEnvelope; }
+    private static string CombineContentBlocks(string historicSection, string volatileSection) {
+        if (string.IsNullOrEmpty(historicSection)) { return volatileSection; }
+        if (string.IsNullOrEmpty(volatileSection)) { return historicSection; }
 
-        return string.Concat(historicEnvelope, EnvelopeSeparator, volatileEnvelope);
+        return string.Concat(historicSection, SectionSeparator, volatileSection);
     }
 
     private void TrimConversationHistory(int startIndex) {

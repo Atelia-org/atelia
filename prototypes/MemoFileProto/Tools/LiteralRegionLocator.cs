@@ -20,7 +20,7 @@ internal sealed class LiteralRegionLocator : IRegionLocator {
 
     private RegionLocateResult LocateUnique(string memory, ReplacementRequest request) {
         var matches = FindAllMatches(memory, _oldText);
-        if (matches.Count == 0) { return RegionLocateResult.Failure("Error: 找不到要替换的文本。请确认 old_text 精确匹配记忆内容。"); }
+        if (matches.Count == 0) { return RegionLocateResult.Failure("Error: 找不到要替换的文本。请确认 old_text 精确匹配[Memory Notebook]内容。"); }
 
         if (matches.Count > 1) {
             var contextInfo = TextToolUtilities.FormatMatchesForError(matches, memory, _oldText.Length, 80);

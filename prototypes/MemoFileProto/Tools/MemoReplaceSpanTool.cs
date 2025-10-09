@@ -9,22 +9,22 @@ namespace MemoFileProto.Tools;
 /// 精确定位的区域替换工具，适用于需要上下文锚定的复杂编辑场景
 /// </summary>
 public class MemoReplaceSpan : ITool {
-    private readonly Func<string> _getMemory;
-    private readonly Action<string> _setMemory;
+    private readonly Func<string> _getNotes;
+    private readonly Action<string> _setNotes;
     private readonly TextReplacementEngine _engine;
 
-    public MemoReplaceSpan(Func<string> getMemory, Action<string> setMemory) {
-        _getMemory = getMemory;
-        _setMemory = setMemory;
-        _engine = new TextReplacementEngine(_getMemory, _setMemory);
+    public MemoReplaceSpan(Func<string> getNotes, Action<string> setNotes) {
+        _getNotes = getNotes;
+        _setNotes = setNotes;
+        _engine = new TextReplacementEngine(_getNotes, _setNotes);
     }
 
-    public string Name => "memo_replace_span";
+    public string Name => "memory_notebook_replace_span";
 
-    public string Description => @"通过上下文精确定位并替换记忆中的区域。
+    public string Description => @"通过上下文精确定位并替换[Memory Notebook]中的区域。
 
 使用场景：
-- 要替换的内容在记忆中出现多次，需要通过上下文区分
+- 要替换的内容在[Memory Notebook]中出现多次，需要通过上下文区分
 - 需要修改一个大段落中的部分内容，避免完整复述整个段落
 - 担心空格/Tab/标点符号导致精确匹配失败
 
@@ -108,7 +108,7 @@ public class MemoReplaceSpan : ITool {
                 args.NewText ?? string.Empty,
                 args.SearchAfter,
                 false,
-                "memo_replace_span"
+                "memory_notebook_replace_span"
             );
 
             var locator = new SpanRegionLocator(normalizedStart, normalizedEnd);

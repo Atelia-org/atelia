@@ -35,14 +35,14 @@ User> /memory view
 
 ### 🤖 让 LLM 自主编辑记忆
 
-LLM 可以通过 `memo_replace_literal ` 工具自主管理记忆。
+LLM 可以通过 `memory_notebook_replace ` 工具自主管理记忆。
 
 #### 示例对话
 ```
 User> Remember that I like minimalist design
 
 Assistant> (调用工具)
-[工具调用] memo_replace_literal
+[工具调用] memory_notebook_replace
 [参数]
 {
   "old_text": "",
@@ -58,7 +58,7 @@ Assistant> (调用工具)
 User> Actually, I prefer modern design, not minimalist
 
 Assistant> (调用工具)
-[工具调用] memo_replace_literal
+[工具调用] memory_notebook_replace
 [参数]
 {
   "old_text": "我喜欢极简设计风格。",
@@ -74,7 +74,7 @@ Assistant> (调用工具)
 User> Forget about my design preference
 
 Assistant> (调用工具)
-[工具调用] memo_replace_literal
+[工具调用] memory_notebook_replace
 [参数]
 {
   "old_text": "我喜欢现代设计风格。\n",
@@ -193,13 +193,13 @@ Can you help me with async/await?
 1. **用英文测试**：避免终端 UTF-8 编码问题
 2. **定期检查记忆**：使用 `/memory view` 查看记忆状态
 3. **手动备份**：重要对话前用 `/memory view` 保存记忆
-4. **观察工具调用**：留意 LLM 何时主动调用 `memo_replace_literal `
+4. **观察工具调用**：留意 LLM 何时主动调用 `memory_notebook_replace `
 
 ---
 
 ## 故障排查
 
-### LLM 不调用 memo_replace_literal  工具
+### LLM 不调用 memory_notebook_replace  工具
 
 **可能原因**：
 - 模型不支持工具调用

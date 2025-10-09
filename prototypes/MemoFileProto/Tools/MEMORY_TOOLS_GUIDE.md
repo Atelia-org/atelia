@@ -14,7 +14,7 @@
 
 ---
 
-## 工具一：`memo_replace_literal `
+## 工具一：`memory_notebook_replace `
 
 ### 定位
 **简单直接的文本替换工具**，适用于要替换的内容在记忆中"唯一存在"的场景。
@@ -58,8 +58,8 @@
 
 #### ❌ 不适合的场景
 
-1. **内容出现多次**：会报错并提示使用 `memo_replace_span`
-2. **担心格式问题**（空格/Tab 混淆）：建议用 `memo_replace_span` 的区域锚定
+1. **内容出现多次**：会报错并提示使用 `memory_notebook_replace_span`
+2. **担心格式问题**（空格/Tab 混淆）：建议用 `memory_notebook_replace_span` 的区域锚定
 
 ### 行为特性
 
@@ -68,11 +68,11 @@
 - **换行符归一化**：所有输入和记忆内容统一转换为 `\n`
 - **友好的错误提示**：
   - 找不到匹配：显示当前记忆全文
-  - 多个匹配：显示匹配位置和上下文，提示使用 `memo_replace_span`
+  - 多个匹配：显示匹配位置和上下文，提示使用 `memory_notebook_replace_span`
 
 ---
 
-## 工具二：`memo_replace_span`
+## 工具二：`memory_notebook_replace_span`
 
 ### 定位
 **精确定位的区域替换工具**，适用于需要上下文锚定的复杂编辑场景。
@@ -159,8 +159,8 @@
 
 | 工具 | 策略 |
 |------|------|
-| `memo_replace_literal ` | **强制唯一**：多个匹配时失败 |
-| `memo_replace_span` | **允许多个**：通过上下文定位其中一个 |
+| `memory_notebook_replace ` | **强制唯一**：多个匹配时失败 |
+| `memory_notebook_replace_span` | **允许多个**：通过上下文定位其中一个 |
 
 **理由**：
 - 简单工具应该保守，避免意外批量修改
@@ -177,7 +177,7 @@
 ```
 Error: 找到多个匹配项（至少在位置 42 和 156）。
 
-此工具仅支持唯一匹配。请改用 memo_replace_span 工具，并配合 `search_after` 参数或更精确的标记来定位。
+此工具仅支持唯一匹配。请改用 memory_notebook_replace_span 工具，并配合 `search_after` 参数或更精确的标记来定位。
 
 第一处匹配的上下文：
 ...技术栈：主要使用 Python...
@@ -189,8 +189,8 @@ Error: 找到多个匹配项（至少在位置 42 和 156）。
 
 | 方案 | Input Tokens | 说明 |
 |------|-------------|------|
-| `memo_replace_literal ` 完整复述 | ~500 | 需要完整复述整段 |
-| `memo_replace_span` 首尾锚定 | ~30 | 仅需复述首尾标记 |
+| `memory_notebook_replace ` 完整复述 | ~500 | 需要完整复述整段 |
+| `memory_notebook_replace_span` 首尾锚定 | ~30 | 仅需复述首尾标记 |
 | **Token 节省** | **94%** | 长期收益巨大 |
 
 ---
@@ -201,7 +201,7 @@ Error: 找到多个匹配项（至少在位置 42 和 156）。
 
 1. **优先尝试简单工具**
    ```
-   memo_replace_literal  → 失败(多匹配) → memo_replace_span
+   memory_notebook_replace  → 失败(多匹配) → memory_notebook_replace_span
    ```
 
 2. **选择好的锚点**
@@ -265,7 +265,7 @@ Error: 找到多个匹配项（至少在位置 42 和 156）。
 
 ## 总结
 
-| 特性 | `memo_replace_literal ` | `memo_replace_span` |
+| 特性 | `memory_notebook_replace ` | `memory_notebook_replace_span` |
 |------|-------------------|---------------------|
 | **复杂度** | 简单 | 高级 |
 | **参数数量** | 2 个必需 | 3 个必需 + 3 个可选 |
