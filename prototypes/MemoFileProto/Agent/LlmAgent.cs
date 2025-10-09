@@ -147,17 +147,32 @@ public class LlmAgent {
             assistantMessage.ToolCalls = toolCalls.ToList();
             _conversationHistory.Add(assistantMessage);
 
+            bool encounteredFailure = false;
+
             foreach (var call in toolCalls) {
                 onToolCall?.Invoke(call);
-                var toolResult = await ExecuteToolSafelyAsync(call);
+
+                string toolContent;
+                if (encounteredFailure) {
+                    toolContent = "Skipped: not executed because a previous tool call failed.";
+                }
+                else {
+                    var executionResult = await ExecuteToolSafelyAsync(call);
+                    toolContent = executionResult.Content;
+
+                    if (!executionResult.Success) {
+                        encounteredFailure = true;
+                    }
+                }
+
                 _conversationHistory.Add(
                     new ChatMessage {
                         Role = "tool",
                         ToolCallId = call.Id,
-                        Content = toolResult
+                        Content = toolContent
                     }
                 );
-                onToolResult?.Invoke(toolResult);
+                onToolResult?.Invoke(toolContent);
             }
 
             return true;
@@ -167,14 +182,17 @@ public class LlmAgent {
         return false;
     }
 
-    private async Task<string> ExecuteToolSafelyAsync(ToolCall call) {
+    private async Task<ToolExecutionResult> ExecuteToolSafelyAsync(ToolCall call) {
         try {
-            return await _toolManager.ExecuteToolAsync(call.Function.Name, call.Function.Arguments);
+            var content = await _toolManager.ExecuteToolAsync(call.Function.Name, call.Function.Arguments);
+            return new ToolExecutionResult(true, content);
         }
         catch (Exception ex) {
-            return $"Error: {ex.Message}";
+            return new ToolExecutionResult(false, $"Error: {ex.Message}");
         }
     }
+
+    private readonly record struct ToolExecutionResult(bool Success, string Content);
 
     private List<ChatMessage> BuildContext() {
         var context = new List<ChatMessage> {
