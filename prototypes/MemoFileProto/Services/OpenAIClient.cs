@@ -14,7 +14,7 @@ public class OpenAIClient : IDisposable {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    public OpenAIClient(HttpClient? httpClient = null, string baseUrl = "http://localhost:4000/openai/v1", string model = "gpt-4.1") {
+    public OpenAIClient(HttpClient? httpClient = null, string baseUrl = "http://localhost:4000/openai/v1", string model = "vscode-lm-proxy") {
         _httpClient = httpClient ?? new HttpClient {
             Timeout = TimeSpan.FromSeconds(100)
         };
