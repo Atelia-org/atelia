@@ -25,7 +25,7 @@ public class ChatMessage {
     /// 消息创建时间（元数据，不发送给 LLM）
     /// </summary>
     [JsonIgnore]
-    public DateTime? Timestamp { get; set; }
+    public DateTimeOffset? Timestamp { get; set; }
 
     /// <summary>
     /// 用户原始输入（仅本地使用，避免重复包装）

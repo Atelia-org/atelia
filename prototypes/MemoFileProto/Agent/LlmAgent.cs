@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -11,6 +12,23 @@ using MemoFileProto.Tools;
 namespace MemoFileProto.Agent;
 
 public class LlmAgent {
+    public static readonly string
+        RoleSystem = "system",
+        RoleAssistant = "assistant",
+        RoleUser = "user",
+        RoleTool = "tool";
+
+    // 对于需要拼接的文本，尽量从外部文本源头就处理换行和Trim，这样我们内部就不用反复做换行标准化和Trim了。文本文件编辑这类需要精确保持原样的数据除外。
+    public static readonly string
+        // 约定各Envelope Trim首尾，因此结尾不含换行。
+        EnvelopeSeparator = "\n\n",
+        // 同一用"\n"换行，方便跨行搜索。
+        InternalNewLine = "\n";
+
+    internal static StringBuilder NormalizeLineEndings(StringBuilder sb) {
+        return sb.Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
     private readonly OpenAIClient _client;
     private readonly ToolManager _toolManager;
     private readonly List<ChatMessage> _conversationHistory = new();
@@ -18,7 +36,8 @@ public class LlmAgent {
     private string _systemInstruction;
     private string _memoryFile = "（尚无记忆）";
 
-    public const string DefaultSystemInstruction = @"你是一个有帮助的AI助手。
+    public static readonly string DefaultSystemInstruction = TextToolUtilities.NormalizeLineEndings(
+        @"你是一个有帮助的AI助手。
 
 ## 关于消息格式
 你会收到结构化的 Markdown 格式消息，其中包含：
@@ -29,7 +48,8 @@ public class LlmAgent {
 
 3. **收到用户发来的消息**：用户的实际输入内容。
 
-请根据这些结构化信息提供有帮助的回答。";
+请根据这些结构化信息提供有帮助的回答。"
+    );
 
     public LlmAgent(OpenAIClient client) {
         _client = client;
@@ -55,7 +75,7 @@ public class LlmAgent {
         _conversationHistory.Clear();
         _conversationHistory.Add(
             new ChatMessage {
-                Role = "system",
+                Role = RoleSystem,
                 Content = _systemInstruction
             }
         );
@@ -77,12 +97,12 @@ public class LlmAgent {
         if (string.IsNullOrWhiteSpace(userInput)) { return; }
 
         var rollbackIndex = _conversationHistory.Count;
-        var timestamp = DateTime.Now;
+        var timestamp = DateTimeOffset.Now;
         var structuredContent = BuildHistoricUserEnvelope(userInput, timestamp);
 
         _conversationHistory.Add(
             new ChatMessage {
-                Role = "user",
+                Role = RoleUser,
                 Content = structuredContent,
                 Timestamp = timestamp,
                 RawInput = userInput
@@ -112,20 +132,16 @@ public class LlmAgent {
         Action<string>? onToolResult,
         CancellationToken cancellationToken
     ) {
-        var assistantMessage = new ChatMessage {
-            Role = "assistant",
-            Content = string.Empty
-        };
 
         var tools = _toolManager.GetToolDefinitions();
         var toolAccumulator = new ToolCallAccumulator();
         string? finishReason = null;
-        var context = BuildContext();
 
-        await foreach (var delta in _client.StreamChatCompletionAsync(context, tools, cancellationToken)) {
+        var sb = new StringBuilder();
+        await foreach (var delta in _client.StreamChatCompletionAsync(BuildLiveContext(), tools, cancellationToken)) {
             if (!string.IsNullOrEmpty(delta.Content)) {
                 onContentDelta?.Invoke(delta.Content);
-                assistantMessage.Content += delta.Content;
+                sb.Append(delta.Content);
             }
 
             if (delta.ToolCalls is { Count: > 0 }) {
@@ -138,6 +154,12 @@ public class LlmAgent {
                 finishReason = delta.FinishReason;
             }
         }
+
+        var assistantMessage = new ChatMessage {
+            Role = RoleAssistant,
+            // 从源头就Trim
+            Content = NormalizeLineEndings(sb).ToString().Trim()
+        };
 
         var requiresToolCall = finishReason?.Equals("tool_calls", StringComparison.OrdinalIgnoreCase) == true
             && toolAccumulator.HasPendingToolCalls;
@@ -167,9 +189,9 @@ public class LlmAgent {
 
                 _conversationHistory.Add(
                     new ChatMessage {
-                        Role = "tool",
+                        Role = RoleTool,
                         ToolCallId = call.Id,
-                        Content = toolContent
+                        Content = BuildHistoricToolEnvelope(toolContent, DateTimeOffset.Now)
                     }
                 );
                 onToolResult?.Invoke(toolContent);
@@ -194,28 +216,52 @@ public class LlmAgent {
 
     private readonly record struct ToolExecutionResult(bool Success, string Content);
 
-    private List<ChatMessage> BuildContext() {
+    /// <summary>
+    /// SenseMessage指的是role为"user"或"tool"的消息，是LLM感知外界环境的渠道。
+    /// </summary>
+    private int GetLastSenseMessageIndex() {
+        for (int i = _conversationHistory.Count - 1; i >= 0; i--) {
+            string msgRole = _conversationHistory[i].Role;
+            if (msgRole == RoleUser || msgRole == RoleTool) { return i; }
+        }
+
+        return -1;
+    }
+
+    private List<ChatMessage> BuildLiveContext() {
         var context = new List<ChatMessage> {
             new ChatMessage {
-                Role = "system",
+                Role = RoleSystem,
                 Content = _systemInstruction
             }
         };
 
-        var lastUserIndex = GetLastUserMessageIndex();
+        var lastUserIndex = GetLastSenseMessageIndex();
 
         for (int i = 0; i < _conversationHistory.Count; i++) {
             var msg = _conversationHistory[i];
-            if (msg.Role == "system") { continue; }
+            if (msg.Role == RoleSystem) { continue; }
 
-            if (msg.Role == "user" && i == lastUserIndex) {
-                var combinedContent = BuildUserContentForContext(msg);
-                context.Add(
-                    new ChatMessage {
-                        Role = "user",
-                        Content = combinedContent
-                    }
-                );
+            if (i == lastUserIndex) {
+                Debug.Assert(msg.Role == RoleUser || msg.Role == RoleTool);
+                var combinedContent = BuildContentForLiveContext(msg);
+                if (msg.Role == RoleUser) {
+                    context.Add(
+                        new ChatMessage {
+                            Role = msg.Role,
+                            Content = combinedContent
+                        }
+                    );
+                }
+                else if (msg.Role == RoleUser) {
+                    context.Add(
+                        new ChatMessage {
+                            Role = msg.Role,
+                            ToolCallId = msg.ToolCallId,
+                            Content = combinedContent
+                        }
+                    );
+                }
                 continue;
             }
 
@@ -231,22 +277,31 @@ public class LlmAgent {
         return context;
     }
 
-    private string BuildHistoricUserEnvelope(string rawInput, DateTime timestamp) {
-        var sb = new StringBuilder();
-
-        sb.AppendLine("## 当前时间");
-        sb.AppendLine(timestamp.ToString("yyyy-MM-dd HH:mm:ss"));
-        sb.AppendLine();
-
-        sb.AppendLine("## 收到用户发来的消息");
-        sb.AppendLine(rawInput);
-
-        return sb.ToString().TrimEnd();
+    private void AppendTimestampEnvelop(StringBuilder sb, DateTimeOffset timestamp) {
+        sb.Append(EnvelopeSeparator);
+        sb.Append("## Timestamp:").Append(InternalNewLine);
+        sb.Append(timestamp.ToString("o"));
     }
 
-    private string BuildVolatileUserEnvelope(string rawInput, DateTime timestamp) {
-        _ = rawInput;
-        _ = timestamp;
+    private string _BuildHistoricEnvelope(string heading, string trimedContent, DateTimeOffset timestamp) {
+        var sb = new StringBuilder();
+        sb.Append(heading).Append(InternalNewLine);
+        sb.Append(trimedContent);
+
+        AppendTimestampEnvelop(sb, timestamp);
+
+        return sb.ToString();
+    }
+
+    private string BuildHistoricUserEnvelope(string trimedContent, DateTimeOffset timestamp) {
+        return _BuildHistoricEnvelope("## Received Message:", trimedContent, timestamp);
+    }
+
+    private string BuildHistoricToolEnvelope(string trimedContent, DateTimeOffset timestamp) {
+        return _BuildHistoricEnvelope("## Tool Result:", trimedContent, timestamp);
+    }
+
+    private string BuildVolatileEnvelope() {
         if (string.IsNullOrEmpty(_memoryFile)) { return string.Empty; }
 
         var sb = new StringBuilder();
@@ -256,33 +311,20 @@ public class LlmAgent {
         return sb.ToString().TrimEnd();
     }
 
-    private string BuildUserContentForContext(ChatMessage message) {
+    private string BuildContentForLiveContext(ChatMessage message) {
         var historicContent = message.Content;
         if (string.IsNullOrWhiteSpace(historicContent)) { return historicContent ?? string.Empty; }
 
-        var rawInput = message.RawInput ?? message.Content;
-        var timestamp = message.Timestamp ?? DateTime.Now;
-        var volatileContent = BuildVolatileUserEnvelope(rawInput, timestamp);
+        var volatileContent = BuildVolatileEnvelope();
 
-        return CombineContentBlocks(volatileContent, historicContent);
+        return CombineContentBlocks(historicContent, volatileContent);
     }
 
-    private static string CombineContentBlocks(string? volatileBlock, string? historicBlock) {
-        var historic = historicBlock?.TrimEnd();
-        var volatileSection = volatileBlock?.TrimEnd();
+    private static string CombineContentBlocks(string historicEnvelope, string volatileEnvelope) {
+        if (string.IsNullOrEmpty(historicEnvelope)) { return volatileEnvelope; }
+        if (string.IsNullOrEmpty(volatileEnvelope)) { return historicEnvelope; }
 
-        if (string.IsNullOrEmpty(volatileSection)) { return historicBlock ?? string.Empty; }
-        if (string.IsNullOrEmpty(historic)) { return volatileSection ?? string.Empty; }
-
-        return string.Join("\n\n", new[] { volatileSection, historic }).TrimEnd();
-    }
-
-    private int GetLastUserMessageIndex() {
-        for (int i = _conversationHistory.Count - 1; i >= 0; i--) {
-            if (_conversationHistory[i].Role == "user") { return i; }
-        }
-
-        return -1;
+        return string.Concat(historicEnvelope, EnvelopeSeparator, volatileEnvelope);
     }
 
     private void TrimConversationHistory(int startIndex) {
@@ -293,7 +335,7 @@ public class LlmAgent {
         if (_conversationHistory.Count == 0) {
             _conversationHistory.Add(
                 new ChatMessage {
-                    Role = "system",
+                    Role = RoleSystem,
                     Content = _systemInstruction
                 }
             );
