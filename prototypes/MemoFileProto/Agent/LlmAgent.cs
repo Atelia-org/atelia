@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -216,34 +215,15 @@ public class LlmAgent {
 
     private readonly record struct ToolExecutionResult(bool Success, string Content);
 
-    /// <summary>
-    /// SenseMessage指的是role为"user"或"tool"的消息，是LLM感知外界环境的渠道。
-    /// </summary>
-    private int GetLastSenseMessageIndex() {
-        for (int i = _conversationHistory.Count - 1; i >= 0; i--) {
-            string msgRole = _conversationHistory[i].Role;
-            if (msgRole == RoleUser || msgRole == RoleTool) { return i; }
-        }
-
-        return -1;
-    }
-
     private List<ChatMessage> BuildLiveContext() {
-        var context = new List<ChatMessage> {
-            new ChatMessage {
-                Role = RoleSystem,
-                Content = _systemInstruction
-            }
-        };
+        var context = new List<ChatMessage>(_conversationHistory.Count + 1);
+        var hasDecoratedLastSenseMessage = false;
 
-        var lastUserIndex = GetLastSenseMessageIndex();
-
-        for (int i = 0; i < _conversationHistory.Count; i++) {
+        for (int i = _conversationHistory.Count; --i >= 0;) {
             var msg = _conversationHistory[i];
             if (msg.Role == RoleSystem) { continue; }
 
-            if (i == lastUserIndex) {
-                Debug.Assert(msg.Role == RoleUser || msg.Role == RoleTool);
+            if (!hasDecoratedLastSenseMessage && (msg.Role == RoleUser || msg.Role == RoleTool)) {
                 var combinedContent = BuildContentForLiveContext(msg);
                 if (msg.Role == RoleUser) {
                     context.Add(
@@ -253,7 +233,7 @@ public class LlmAgent {
                         }
                     );
                 }
-                else if (msg.Role == RoleUser) {
+                else {
                     context.Add(
                         new ChatMessage {
                             Role = msg.Role,
@@ -262,18 +242,22 @@ public class LlmAgent {
                         }
                     );
                 }
+
+                hasDecoratedLastSenseMessage = true;
                 continue;
             }
 
-            context.Add(
-                new ChatMessage {
-                    Role = msg.Role,
-                    Content = msg.Content,
-                    ToolCalls = msg.ToolCalls
-                }
-            );
+            context.Add(msg);
         }
 
+        context.Add(
+            new ChatMessage {
+                Role = RoleSystem,
+                Content = _systemInstruction
+            }
+        );
+
+        context.Reverse();
         return context;
     }
 
