@@ -4,7 +4,7 @@ namespace MemoFileProto.Models;
 
 public class ChatRequest {
     [JsonPropertyName("model")]
-    public string Model { get; set; } = "gpt-4.1";
+    public string Model { get; set; } = "vscode-lm-proxy";
 
     [JsonPropertyName("messages")]
     public List<ChatMessage> Messages { get; set; } = new();

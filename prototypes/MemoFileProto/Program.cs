@@ -22,7 +22,7 @@ class Program {
         Console.InputEncoding = Encoding.UTF8;
         Console.WriteLine("=== MemoFileProto - 多轮LLM对话原型 ===");
         Console.WriteLine("使用本地OpenAI兼容端点: http://localhost:4000/openai/v1");
-        Console.WriteLine("模型: gpt-4.1");
+        Console.WriteLine("模型: vscode-lm-proxy");
         Console.WriteLine();
         Console.WriteLine("命令:");
         Console.WriteLine("  /system <提示词> - 设置系统提示词");
