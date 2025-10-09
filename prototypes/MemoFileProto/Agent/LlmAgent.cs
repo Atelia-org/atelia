@@ -154,19 +154,21 @@ public class LlmAgent {
             }
         }
 
-        var assistantMessage = new ChatMessage {
-            Role = RoleAssistant,
-            // 从源头就Trim
-            Content = NormalizeLineEndings(sb).ToString().Trim()
-        };
+        // 从源头就Trim
+        string normalizedLlmOutput = NormalizeLineEndings(sb).ToString().Trim();
 
         var requiresToolCall = finishReason?.Equals("tool_calls", StringComparison.OrdinalIgnoreCase) == true
             && toolAccumulator.HasPendingToolCalls;
 
         if (requiresToolCall) {
             var toolCalls = toolAccumulator.BuildFinalCalls();
-            assistantMessage.ToolCalls = toolCalls.ToList();
-            _conversationHistory.Add(assistantMessage);
+            _conversationHistory.Add(
+                new ChatMessage {
+                    Role = RoleAssistant,
+                    Content = normalizedLlmOutput,
+                    ToolCalls = toolCalls
+                }
+            );
 
             bool encounteredFailure = false;
 
@@ -199,7 +201,12 @@ public class LlmAgent {
             return true;
         }
 
-        _conversationHistory.Add(assistantMessage);
+        _conversationHistory.Add(
+            new ChatMessage {
+                Role = RoleAssistant,
+                Content = normalizedLlmOutput
+            }
+        );
         return false;
     }
 

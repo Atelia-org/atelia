@@ -33,7 +33,7 @@ public class ToolCallAccumulator {
 
     public bool HasPendingToolCalls => !_builders.IsEmpty;
 
-    public IReadOnlyList<ToolCall> BuildFinalCalls() {
+    public List<ToolCall> BuildFinalCalls() {
         return _builders.Values
             .OrderBy(b => b.Sequence)
             .Select(
