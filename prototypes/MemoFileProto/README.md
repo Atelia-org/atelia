@@ -51,7 +51,7 @@ dotnet run
 ### 命令列表
 
 - `/system <提示词>` - 设置或修改系统提示词
-- `/memory` - 查看当前记忆文档（当前仅支持查看）
+- `/notebook` - 查看当前记忆文档（当前仅支持查看）
 - `/clear` - 清空对话历史
 - `/history` - 查看完整对话历史
 - `/exit` 或 `/quit` - 退出程序
@@ -199,7 +199,7 @@ private static readonly Lazy<ToolManager> _toolManagerLazy = new(() => {
 ## 下一步扩展方向
 
 1. ~~**实现 `EditMyMemory` 工具**~~ ✅ 已完成
-2. ~~**添加 `/memory` 命令**~~ ✅ 已完成
+2. ~~**添加 `/notebook` 命令**~~ ✅ 已完成
 3. **测试 LLM 记忆编辑能力**：验证 LLM 是否能自主选择遗忘和记忆
 4. **添加更多感官数据**：工作目录、文件列表、环境变量等
 5. **实现对话历史截断策略**：防止上下文溢出

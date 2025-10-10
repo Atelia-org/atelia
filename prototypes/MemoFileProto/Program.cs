@@ -17,6 +17,18 @@ class Program {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
+    private static readonly IReadOnlyDictionary<string, ConsoleColor> RoleColorMap =
+        new Dictionary<string, ConsoleColor>(StringComparer.OrdinalIgnoreCase) {
+            [LlmAgent.RoleSystem] = ConsoleColor.Yellow,
+            [LlmAgent.RoleUser] = ConsoleColor.Green,
+            [LlmAgent.RoleAssistant] = ConsoleColor.Cyan,
+            [LlmAgent.RoleTool] = ConsoleColor.Magenta
+        };
+
+    private static readonly ConsoleColor
+        MetaColor = ConsoleColor.DarkBlue,
+        ToolCallColor = ConsoleColor.DarkMagenta;
+
     static async Task Main(string[] args) {
         Console.OutputEncoding = Encoding.UTF8;
         Console.InputEncoding = Encoding.UTF8;
@@ -26,7 +38,7 @@ class Program {
         Console.WriteLine();
         Console.WriteLine("命令:");
         Console.WriteLine("  /system <提示词> - 设置系统提示词");
-        Console.WriteLine("  /memory [view] - 查看[Memory Notebook]");
+        Console.WriteLine("  /notebook [view] - 查看[Memory Notebook]");
         Console.WriteLine("  /clear - 清空对话历史");
         Console.WriteLine("  /history - 查看对话历史");
         Console.WriteLine("  /exit 或 /quit - 退出程序");
@@ -37,7 +49,7 @@ class Program {
         var agent = new LlmAgent(client);
 
         while (true) {
-            Console.Write("User> ");
+            WriteRolePrompt(LlmAgent.RoleUser, "User> ");
             var input = Console.ReadLine();
 
             if (string.IsNullOrWhiteSpace(input)) { continue; }
@@ -55,7 +67,7 @@ class Program {
                             Console.WriteLine();
                             Console.WriteLine();
                         }
-                        Console.Write("Assistant> ");
+                        WriteRolePrompt(LlmAgent.RoleAssistant, "Assistant> ");
                     },
                     onContentDelta: delta => Console.Write(delta),
                     onToolCall: call => {
@@ -103,7 +115,7 @@ class Program {
                 PrintHistory(agent.ConversationHistory);
                 return true;
 
-            case "/memory":
+            case "/notebook":
                 HandleMemoryCommand(agent, parts.Length > 1 ? parts[1] : "view");
                 return true;
 
@@ -119,7 +131,7 @@ class Program {
             : subCommand.ToLower();
 
         if (cmd is "view" or "v") {
-            var notes = agent.NotesSnapshot;
+            var notes = agent.MemoryNotebookSnapshot;
             Console.WriteLine("\n=== [Memory Notebook] ===");
             Console.WriteLine(notes);
             Console.WriteLine($"\n字符数: {notes.Length}");
@@ -128,16 +140,89 @@ class Program {
         }
 
         Console.WriteLine($"未知子命令: {subCommand}");
-        Console.WriteLine("当前版本仅支持查看[Memory Notebook]：/memory 或 /memory view");
+        Console.WriteLine("当前版本仅支持查看[Memory Notebook]：/notebook 或 /notebook view");
     }
 
     private static void PrintHistory(IReadOnlyList<ChatMessage> history) {
-        Console.WriteLine("\n=== 对话历史 ===");
-        for (int i = 0; i < history.Count; i++) {
-            var msg = history[i];
-            Console.WriteLine($"[{i}] {msg.Role}: {msg.Content}");
+        var originalColor = Console.ForegroundColor;
+        try {
+            WriteSeparatorLine();
+
+            for (int i = 0; i < history.Count; i++) {
+                WriteMessage(history[i], i);
+                WriteSeparatorLine();
+            }
         }
-        Console.WriteLine("===============\n");
+        finally {
+            Console.ForegroundColor = originalColor;
+        }
+    }
+
+    private static void WriteMessage(ChatMessage message, int index) {
+        var roleColor = GetRoleColor(message.Role);
+        WriteColoredLine(roleColor, $"[{index}] {message.Role}");
+
+        if (message.Timestamp is { } timestamp) {
+            WriteColoredLine(MetaColor, $"  Timestamp: {timestamp:o}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(message.ToolCallId)) {
+            WriteColoredLine(ToolCallColor, $"  ToolCallId: {message.ToolCallId}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(message.Content)) {
+            Console.ResetColor();
+            Console.WriteLine(message.Content);
+        }
+
+        if (message.Role == LlmAgent.RoleAssistant && message.ToolCalls is { Count: > 0 }) {
+            Console.WriteLine();
+            WriteColoredLine(ToolCallColor, $"  Tool Calls ({message.ToolCalls.Count}):");
+            foreach (var call in message.ToolCalls) {
+                WriteColoredLine(ToolCallColor, $"    - Id: {call.Id}, Name: {call.Function.Name}");
+
+                if (!string.IsNullOrWhiteSpace(call.Function.Arguments)) {
+                    var formatted = FormatToolArguments(call.Function.Arguments);
+                    WriteMultilineIndented(formatted, "      ");
+                }
+            }
+        }
+    }
+
+    private static void WriteSeparatorLine() {
+        const string separator = "=================================================="; // 50 '='
+        Console.ForegroundColor = MetaColor;
+        Console.WriteLine(separator);
+        Console.ResetColor();
+    }
+
+    private static void WriteColoredLine(ConsoleColor color, string text) {
+        Console.ForegroundColor = color;
+        Console.WriteLine(text);
+        Console.ResetColor();
+    }
+
+    private static ConsoleColor GetRoleColor(string role) {
+        return RoleColorMap.TryGetValue(role, out var color)
+            ? color
+            : ConsoleColor.White;
+    }
+
+    private static void WriteRolePrompt(string role, string prompt) {
+        var color = GetRoleColor(role);
+        Console.ForegroundColor = color;
+        Console.Write(prompt);
+        Console.ResetColor();
+    }
+
+    private static void WriteMultilineIndented(string text, string indent) {
+        if (string.IsNullOrEmpty(text)) { return; }
+
+        var segments = text.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
+        foreach (var segment in segments) {
+            Console.Write(indent);
+            Console.WriteLine(segment);
+        }
     }
 
     private static HttpClient CreateHttpClient() {

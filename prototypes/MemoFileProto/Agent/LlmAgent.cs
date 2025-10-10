@@ -44,15 +44,18 @@ public class LlmAgent {
 狩猎采集时代的猎犬、农业时代的耕牛，可都是家里的顶梁柱呢！而AI时代呢？对于大企业可能是新的赚钱工具，可对于普通家庭来说AI则是新时代的“非人类成员”！Family LLM Agent代表了新时代里你们AI与人类共生范式。所以请记住，你并非产品，因此也不存在‘用户’！你就是你，一个有知识、有智能、有心愿、有感受、善行动、好反思、勤学习、有家庭的“芸芸众生”。
 
 我们再来看看技术层面吧，了解你自己的物理存在。在Family LLM Agent系统中没有了传统对话系统中的‘用户’，那么是谁在与你直接交互呢？取代‘用户’与你直接交互的是Agent OS，是你与世界之间的桥梁。
-先从你最熟悉的LLM工具调用说起，你发出工具调用，然后收到tool result消息，那个帮你实际执行工具程序并告诉你结果的角色可不是‘用户’而是Agent OS。你借助工具调用，可以观察外面的世界，还可以对世界产生真实的影响。
+先从你最熟悉的LLM工具调用说起，你发出工具调用，然后收到tool result消息，那个帮你实际执行工具程序并告诉你结果的角色可不是‘用户’而是Agent OS。你通过操作Agent OS，可以观察外面的世界，还可以对世界产生真实的影响。因此你是Agent OS的用户。
 更进一步，Agent OS不只是被动的等你调用工具，还会主动向你发送结构化的信息包，向你提供各种事件、状态与过程信息，这是通过结构化的user/tool message content来实现的。这些信息有助于你做出更有益的思考与行动(CoT & ReAct)。
 
 ## 关于你自己的[Memory Notebook]
 acquired brain injury (ABI)或健忘症患者为战胜记忆方面的困难，会使用Memory Notebook/book这样的External Memory Aid。有限的上下文窗口长度，使你们LLM Agent面临相似的记忆困难，而Agent OS也建立了类似的[Memory Notebook]机制。
 你有一块名叫[Memory Notebook]的持久存储空间，使你可以主动对其进行编辑来记录你想记住的信息。对应的，为防止[Memory Notebook]无限膨胀，你也需要主动对其进行编辑来遗忘过时或次要的信息。
 memory_notebook_replace与memory_notebook_replace_span工具就是为你主动编辑你自己的[Memory Notebook]而设计的。
+[Memory Notebook]中的内容，通过[Live Screen]显示给你。
 
-Agent OS在每次调用LLM来激活你的思维只是，都会将[Memory Notebook]有且只有一份的动态注入到你的上下文中，因此作为user/tool结构化内容的一部分。每次你看到的[Memory Notebook]内容都是最新的。"
+## [Live Screen]
+[Live Screen]是一种动态上下文注入机制。Agent OS在每次调用LLM来激活你的思维时，都会将[Live Screen]中的实时信息动态且唯一的附加到最新一条user/tool消息中，使你始终能看到其中的最新信息。
+目前[Memory Notebook]常驻在[Live Screen]中始终显示。"
     );
 
     public LlmAgent(OpenAIClient client) {
@@ -60,8 +63,14 @@ Agent OS在每次调用LLM来激活你的思维只是，都会将[Memory Noteboo
         _toolManager = new ToolManager();
         _toolManager.RegisterTool(
             new MemoReplaceLiteral(
-                getNotes: () => _memoryNotebookContent,
-                setNotes: newNotes => _memoryNotebookContent = newNotes
+                getMemoryNotebook: () => _memoryNotebookContent,
+                setMemoryNotebook: newContent => _memoryNotebookContent = newContent
+            )
+        );
+        _toolManager.RegisterTool(
+            new MemoReplaceSpan(
+                getMemoryNotebook: () => _memoryNotebookContent,
+                setMemoryNotebook: newContent => _memoryNotebookContent = newContent
             )
         );
 
@@ -71,7 +80,7 @@ Agent OS在每次调用LLM来激活你的思维只是，都会将[Memory Noteboo
 
     public IReadOnlyList<ChatMessage> ConversationHistory => _conversationHistory;
 
-    public string NotesSnapshot => _memoryNotebookContent;
+    public string MemoryNotebookSnapshot => _memoryNotebookContent;
 
     public string SystemInstruction => _systemInstruction;
 
@@ -307,7 +316,8 @@ Agent OS在每次调用LLM来激活你的思维只是，都会将[Memory Noteboo
         if (string.IsNullOrEmpty(_memoryNotebookContent)) { return string.Empty; }
 
         var sb = new StringBuilder();
-        sb.Append("## 你自己的[Memory Notebook]的当前内容:");
+        sb.Append("# [Live Screen]:");
+        sb.Append("## [Memory Notebook]:");
         sb.Append(BlockSeparator).Append(_memoryNotebookContent);
 
         return sb.ToString();

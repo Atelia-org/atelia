@@ -22,11 +22,11 @@ Assistant> (LLM 的响应)
 
 #### 查看记忆
 ```
-User> /memory
+User> /notebook
 ```
 或显式写成：
 ```
-User> /memory view
+User> /notebook view
 ```
 
 > 当前 MVP 不提供命令行形式的手动编辑/清空操作，如需修改记忆，请通过 LLM 工具调用或直接调整代码。后续若有真实需求，再扩展子命令。
@@ -191,8 +191,8 @@ Can you help me with async/await?
 ### 💡 最佳实践
 
 1. **用英文测试**：避免终端 UTF-8 编码问题
-2. **定期检查记忆**：使用 `/memory view` 查看记忆状态
-3. **手动备份**：重要对话前用 `/memory view` 保存记忆
+2. **定期检查记忆**：使用 `/notebook view` 查看记忆状态
+3. **手动备份**：重要对话前用 `/notebook view` 保存记忆
 4. **观察工具调用**：留意 LLM 何时主动调用 `memory_notebook_replace `
 
 ---
@@ -217,7 +217,7 @@ Can you help me with async/await?
 - 记忆文档中有多处匹配（会替换所有出现）
 
 **解决方案**：
-- 使用 `/memory view` 查看精确内容
+- 使用 `/notebook view` 查看精确内容
 - 让 LLM 使用更长的 `old_text` 确保唯一匹配
 
 ### 程序崩溃
