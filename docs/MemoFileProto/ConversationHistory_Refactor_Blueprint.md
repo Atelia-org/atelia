@@ -257,6 +257,7 @@ static class ContextMessageLiveScreenHelper {
         public DateTimeOffset Timestamp => Inner.Timestamp;
         public IReadOnlyDictionary<string, object?> Metadata => Inner.Metadata;
         string? ILiveScreenCarrier.LiveScreen => LiveScreen;
+        IContextMessage ILiveScreenCarrier.InnerMessage => Inner;
     }
 }
 ```
@@ -276,7 +277,7 @@ static class ContextMessageLiveScreenHelper {
 - **SystemInstructionMessage** 仅在上下文渲染阶段创建，用于向 Provider 暴露当前系统指令；后续若需要分版本或多段系统指令，可再引入稳定标识或扩展结构。
 - **补充说明**：`ToolCallRequest` 仅作为 `ModelOutputEntry.ToolCalls` 的嵌套结构存在，不会追加独立的 `ToolCallRequest` 历史条目。
 - **RenderLiveContext 副本**：如需注入 LiveScreen 内容，`ContextMessageLiveScreenHelper` 会返回实现 `ILiveScreenCarrier` 的包装对象，原始历史条目保持精简且不会被误追加回历史。
-- `LiveScreenDecoratedMessage` 是一个仅实现 `IContextMessage` 与 `ILiveScreenCarrier` 的轻量包装，可携带 LiveScreen，并引用原始条目，从而避免被再次追加到 `AgentHistory`。
+- `LiveScreenDecoratedMessage` 是一个仅实现 `IContextMessage` 与 `ILiveScreenCarrier` 的轻量包装，可携带 LiveScreen，并通过 `ILiveScreenCarrier.InnerMessage` 引用原始条目，从而既避免被再次追加到 `AgentHistory`，又允许 Provider 继续访问原始条目的角色化接口。
 
 ## ContextMessage 层接口深化
 
@@ -351,7 +352,7 @@ interface IToolResultsMessage : IContextMessage {
 
 ### 可选能力接口（mix-in）
 
-- `ILiveScreenCarrier`：`string? LiveScreen`，承载 Planner/工具的临时屏幕渲染信息，由 `RenderLiveContext()` 根据需要用装饰器附加。**设计理由**：不同厂商对 LiveScreen 注入位置和格式要求不同（例如 Gemini 可用 Content/Parts 显式分隔并用不可见 Token 结构化；Anthropic 聚合多个 ToolResult 时 LiveScreen 应注入哪一条尚未确定），因此用独立字段呈现给 `IProviderClient`，由其决定最终拼装策略，而非在 History 层写死到单一文本字段中。不同模型的提示词工程可能也不同。
+- `ILiveScreenCarrier`：`string? LiveScreen` 和 `IContextMessage InnerMessage`。LiveScreen 承载 Planner/工具的临时屏幕渲染信息；`InnerMessage` 在存在装饰器时指向被包装的实际消息（否则返回自身），便于 Provider 在需要时继续访问 `IModelInputMessage`、`IModelOutputMessage` 等角色化接口。**设计理由**：不同厂商对 LiveScreen 注入位置和格式要求不同（例如 Gemini 可用 Content/Parts 显式分隔并用不可见 Token 结构化；Anthropic 聚合多个 ToolResult 时 LiveScreen 应注入哪一条尚未确定），因此用独立字段呈现给 `IProviderClient`，由其决定最终拼装策略，而非在 History 层写死到单一文本字段中。不同模型的提示词工程可能也不同。
 - `IToolCallCarrier`：`IReadOnlyList<ToolCallRequest> ToolCalls`，供 Provider 探测输出中是否包含工具调用；由 `IModelOutputMessage` 默认实现。
 - `ITokenUsageCarrier`：`TokenUsage? Usage`，用于 Provider 在响应结束后补写 token 统计。
 
@@ -364,6 +365,7 @@ interface IToolResultsMessage : IContextMessage {
 ```csharp
 interface ILiveScreenCarrier {
     string? LiveScreen { get; }
+    IContextMessage InnerMessage { get; }
 }
 
 interface IToolCallCarrier {
@@ -388,6 +390,7 @@ interface ITokenUsageCarrier {
 - `RenderLiveContext()` 输出的条目应尽量沿用 History 层对象，必要时通过轻量包装类附加 `ILiveScreenCarrier` 等能力。
 - `Metadata` 作为双方共享的轻量信息通道，禁止写入体量过大的结构（> 2 KB）；较大的数据应改用附件或单独条目。
 - Provider 可通过接口检测来决定拼装逻辑：例如仅对实现了 `IToolCallCarrier` 的条目尝试解析 `ToolCalls`。
+- 当消息实现了 `ILiveScreenCarrier` 时，Provider 应先读取 `InnerMessage` 再尝试角色化接口的强制转换，确保 LiveScreen 装饰不会影响后续逻辑。
 - `ModelOutputEntry` 原样实现接口，用于传递模型响应及潜在的工具调用请求。
 - `MemoryNotebookEntry` 等永远不应该出现在上下文中的历史条目不实现 `IContextMessage`，从编译期阻止它们进入 Provider 管线。
 
@@ -419,8 +422,9 @@ interface IContextAttachment { }
 - **History → Context**：`AgentHistory.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口；当历史条目本身已实现目标接口时直接复用，无法复用时则通过只读包装补足字段，并在必要时附加 `ILiveScreenCarrier` 等能力。系统指令视为运行时投影，通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
 - **Context → Provider**：Provider 仅消费 `IContextMessage` 层接口，即可完成请求拼装与 delta 解析。它们通过接口检测判定角色（`IModelInputMessage`、`IModelOutputMessage` 等），按需解释 `ContentSections`、`Contents` 等字段，对实现 `IToolCallCarrier` 的条目解析 `ToolCalls`，并在推理结束后根据 `ITokenUsageCarrier` 或 `Metadata` 回写统计信息。
 - **Provider → History**：模型响应结束后，由调用协调层基于 Provider 返回的 delta 聚合出新的 `ModelOutputEntry`、`ToolResultsEntry` 等，并追加到 History。这样可以保证 History 层仅包含最终定稿的条目，而流式阶段的装饰数据只存在于 Context 层。
-- **动态工具描述**：策略详见“Tool 描述动态注入（暂缓实现）”，本阶段仅记录需求并暂不实现。
 - **附件/富内容**：附件体系说明见“结构化附属数据（暂缓实现）”，目前 `Attachments` 返回空集合，待后续统一扩展。
+
+动态工具描述的暂缓策略统一记录在“Tool 描述动态注入（暂缓实现）”一节。
 
 ## Provider 客户端设计
 
@@ -435,9 +439,10 @@ interface IProviderClient {
 }
 ```
 
-- `ModelOutputDelta` 是对原有 `ChatResponseDelta` 的更名，当前阶段保持最小字段集合（文本片段、工具调用片段等），为未来细分铺路。
+- 流式 delta 统一表示为 `ModelOutputDelta`，关于更名与字段约束详见下文“ModelOutputDelta 管线”。
 - Provider 客户端封装底层 SDK 或 HTTP 细节，对外统一为流式 delta；测试场景可通过假实现返回预设 delta 序列。
 - Provider 实现需把 `AgentHistory` 视为只读，并消费预先构建好的 `IContextMessage` 列表；同时负责将 `ToolCallRequest.RawArguments` 解析为 `Arguments` 字典（失败时留空并记录错误），补全 `ModelOutputEntry.Invocation`，并禁止直接修改或回写历史条目。
+- 处理上下文时若遇到实现了 `ILiveScreenCarrier` 的条目，应先读取 `InnerMessage` 再做角色化接口判定，防止 LiveScreen 装饰影响原有逻辑。
 - 解析失败时的错误处理约定：Provider 需要生成失败状态的 `ToolCallResult`，在结果文本中附上原始参数与错误原因；上层可以据此选择重试、提示 Planner 调整输出或请求人工介入。
 - 为减少重复解析代码，计划提供共享的 `ToolArgumentParser` 辅助器（例如 `GetRequired(...)`、`ParseList(...)`、`ParseJsonSafely(...)` 等），供 Provider 和工具实现重复利用。
 - Provider 层维护"规范 → 参数解析策略"的静态映射：`ModelOutputEntry.Invocation` 提供规范标识，具体的格式解析与工具调用出参推断交由各 Provider 内部实现，使 History 保持供应商无关的抽象。
@@ -613,7 +618,7 @@ class AgentHistory {
 
 - 历史层始终只落原始文本（`RawArguments` 等），不承担结构化解析。
 - Provider 扮演"解释器"，负责把原始文本解析成统一的 `IReadOnlyDictionary<string, string>`，解析失败时透明地返回错误信息。
-- 工具接口仅依赖解析后的键值对输入，避免直接接触原始文本；工具输出同样使用字符串或键值对，保持输入输出的一致性。
+- 工具接口仅依赖解析后的键值对输入，避免直接接触原始文本；工具输出同样使用字符串或键值对，保持输入输出的一致性（关于动态工具描述的规划请参见“Tool 描述动态注入（暂缓实现）”一节）。
 - TODO：待消息存储层落地后，按“顺序与稳定标识策略”统一恢复顺序号生成与持久化逻辑，并补回相关测试。
 - **Live Context + History 协调**：HistoryEntry 可以新增 `LiveContextInjectedEntry`，记录每次调用附带的 Live Context，方便调试。
 - **Memory Notebook**：将 Memory 操作也抽象为 `HistoryEntry`，便于回溯记忆编辑过程。
