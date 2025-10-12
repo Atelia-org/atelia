@@ -78,6 +78,60 @@ public sealed class AgentOrchestratorTests {
         Assert.IsType<ToolResultsEntry>(state.History[2]);
     }
 
+    [Fact]
+    public async Task InvokeAsync_PassesLiveScreenDecoratedMessagesToProvider() {
+        var timestamps = new Queue<DateTimeOffset>(
+            new[] {
+                DateTimeOffset.Parse("2025-10-13T02:00:00Z"),
+                DateTimeOffset.Parse("2025-10-13T02:05:00Z"),
+                DateTimeOffset.Parse("2025-10-13T02:06:00Z"),
+                DateTimeOffset.Parse("2025-10-13T02:07:00Z")
+            }
+        );
+
+        var state = AgentState.CreateDefault(timestampProvider: () => timestamps.Dequeue());
+        state.UpdateMemoryNotebook("- Notebook snapshot");
+        state.UpdateLiveInfoSection("Planner Summary", "- Phase 3 cross-provider");
+
+        state.AppendModelInput(
+            new ModelInputEntry(
+                new[] {
+                    new KeyValuePair<string, string>("default", "检查 LiveScreen")
+                }
+            )
+        );
+
+        var provider = new LiveScreenAwareProvider();
+        var router = new ProviderRouter(
+            new[] {
+                new ProviderRouteDefinition(
+                    ProviderRouter.DefaultStubStrategy,
+                    "stub-test",
+                    "spec/liveinfo",
+                    "stub-model",
+                    provider,
+                    default
+                )
+            }
+        );
+
+        var orchestrator = new AgentOrchestrator(state, router);
+
+        await orchestrator.InvokeAsync(
+            new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy),
+            CancellationToken.None
+        );
+
+        Assert.True(provider.SawLiveScreen);
+        Assert.True(provider.InnerMessageWasModelInput);
+        Assert.NotNull(provider.LastRequest);
+
+        var liveScreen = provider.ObservedLiveScreen;
+        Assert.False(string.IsNullOrWhiteSpace(liveScreen));
+        Assert.Contains("Planner Summary", liveScreen!, StringComparison.Ordinal);
+        Assert.Contains("Memory Notebook", liveScreen!, StringComparison.Ordinal);
+    }
+
     private sealed class TestProviderClient : IProviderClient {
         public List<ProviderRequest> Requests { get; } = new();
 
@@ -109,6 +163,35 @@ public sealed class AgentOrchestratorTests {
                 )
             );
             yield return ModelOutputDelta.Usage(new TokenUsage(50, 10));
+        }
+    }
+
+    private sealed class LiveScreenAwareProvider : IProviderClient {
+        public bool SawLiveScreen { get; private set; }
+        public bool InnerMessageWasModelInput { get; private set; }
+        public string? ObservedLiveScreen { get; private set; }
+        public ProviderRequest? LastRequest { get; private set; }
+
+        public IAsyncEnumerable<ModelOutputDelta> CallModelAsync(ProviderRequest request, CancellationToken cancellationToken) {
+            LastRequest = request;
+
+            foreach (var message in request.Context) {
+                if (message is ILiveScreenCarrier carrier) {
+                    SawLiveScreen = !string.IsNullOrWhiteSpace(carrier.LiveScreen);
+                    ObservedLiveScreen = carrier.LiveScreen;
+                    if (carrier.InnerMessage is IModelInputMessage) {
+                        InnerMessageWasModelInput = true;
+                    }
+                }
+            }
+
+            return ProduceAsync();
+        }
+
+        private static async IAsyncEnumerable<ModelOutputDelta> ProduceAsync() {
+            await Task.Yield();
+            yield return ModelOutputDelta.Content("ack", endSegment: true);
+            yield return ModelOutputDelta.Usage(new TokenUsage(10, 5));
         }
     }
 }

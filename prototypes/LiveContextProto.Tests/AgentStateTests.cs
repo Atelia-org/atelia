@@ -94,6 +94,115 @@ public sealed class AgentStateTests {
     }
 
     [Fact]
+    public void RenderLiveContext_SystemInstructionUpdateMaintainsLiveScreen() {
+        var timestamps = new[] {
+            DateTimeOffset.Parse("2025-10-12T14:00:00Z"),
+            DateTimeOffset.Parse("2025-10-12T14:05:00Z"),
+            DateTimeOffset.Parse("2025-10-12T14:10:00Z"),
+            DateTimeOffset.Parse("2025-10-12T14:15:00Z")
+        };
+
+        var queue = new Queue<DateTimeOffset>(timestamps);
+        var state = AgentState.CreateDefault(timestampProvider: () => queue.Dequeue());
+        state.UpdateMemoryNotebook("- 继续保持 LiveScreen 校验");
+
+        state.AppendModelInput(
+            new ModelInputEntry(
+                new[] {
+                    new KeyValuePair<string, string>("default", "旧指令下的输入")
+                }
+            )
+        );
+
+        state.SetSystemInstruction("New system directive");
+
+        state.AppendModelInput(
+            new ModelInputEntry(
+                new[] {
+                    new KeyValuePair<string, string>("default", "新指令后的输入")
+                }
+            )
+        );
+
+        var context = state.RenderLiveContext();
+
+        Assert.Equal(3, context.Count);
+
+        var system = Assert.IsAssignableFrom<ISystemMessage>(context[0]);
+        Assert.Equal("New system directive", system.Instruction);
+
+        var decorated = Assert.IsAssignableFrom<ILiveScreenCarrier>(context[^1]);
+        Assert.Contains("Memory Notebook", decorated.LiveScreen, StringComparison.Ordinal);
+        var inputMessage = Assert.IsAssignableFrom<IModelInputMessage>(decorated.InnerMessage);
+        Assert.Equal("新指令后的输入", inputMessage.ContentSections[0].Value);
+    }
+
+    [Fact]
+    public void RenderLiveContext_LiveScreenAggregatesMultipleSections() {
+        var timestamps = new[] {
+            DateTimeOffset.Parse("2025-10-12T15:00:00Z"),
+            DateTimeOffset.Parse("2025-10-12T15:05:00Z"),
+            DateTimeOffset.Parse("2025-10-12T15:10:00Z"),
+            DateTimeOffset.Parse("2025-10-12T15:15:00Z")
+        };
+
+        var queue = new Queue<DateTimeOffset>(timestamps);
+        var state = AgentState.CreateDefault(timestampProvider: () => queue.Dequeue());
+        state.UpdateMemoryNotebook("- Notebook 要点");
+        state.UpdateLiveInfoSection("Planner Summary", "- 规划阶段：执行中");
+        state.UpdateLiveInfoSection("Diagnostics", "Token usage compress pending");
+
+        state.AppendModelInput(
+            new ModelInputEntry(
+                new[] {
+                    new KeyValuePair<string, string>("default", "检查 LiveInfo 组合")
+                }
+            )
+        );
+
+        state.AppendModelOutput(
+            new ModelOutputEntry(
+                new[] { "ack" },
+                Array.Empty<ToolCallRequest>(),
+                new ModelInvocationDescriptor("stub", "spec", "stub-model")
+            )
+        );
+
+        var context = state.RenderLiveContext();
+
+        var liveScreenCarrier = Assert.Single(context.OfType<ILiveScreenCarrier>());
+        var liveScreen = liveScreenCarrier.LiveScreen;
+        Assert.False(string.IsNullOrWhiteSpace(liveScreen));
+        Assert.Contains("## [Memory Notebook]", liveScreen!, StringComparison.Ordinal);
+        Assert.Contains("## [Planner Summary]", liveScreen!, StringComparison.Ordinal);
+        Assert.Contains("## [Diagnostics]", liveScreen!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateLiveInfoSection_AddsAndRemovesSections() {
+        var state = AgentState.CreateDefault(timestampProvider: () => DateTimeOffset.UtcNow);
+
+        state.UpdateLiveInfoSection("Planner", "- step1");
+        Assert.True(state.LiveInfoSections.ContainsKey("Planner"));
+
+        state.UpdateLiveInfoSection("Planner", null);
+        Assert.False(state.LiveInfoSections.ContainsKey("Planner"));
+    }
+
+    [Fact]
+    public void Reset_ClearsLiveInfoAndNotebook() {
+        var state = AgentState.CreateDefault(timestampProvider: () => DateTimeOffset.UtcNow);
+        state.UpdateMemoryNotebook("- something");
+        state.UpdateLiveInfoSection("Planner", "- summary");
+
+        state.Reset();
+
+        Assert.Empty(state.History);
+        Assert.Empty(state.LiveInfoSections);
+        Assert.Equal("（暂无 Memory Notebook 内容）", state.MemoryNotebookSnapshot);
+    }
+
+    [Fact]
     public void RenderLiveContext_SkipsLiveScreenWhenNotebookEmpty() {
         var timestamps = new[] {
             DateTimeOffset.Parse("2025-10-12T12:00:00Z"),

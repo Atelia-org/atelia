@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Provider;
@@ -62,6 +63,11 @@ internal sealed class AgentLoop {
                 continue;
             }
 
+            if (line.StartsWith("/liveinfo", StringComparison.OrdinalIgnoreCase)) {
+                HandleLiveInfoCommand(line);
+                continue;
+            }
+
             if (string.Equals(line, "/reset", StringComparison.OrdinalIgnoreCase)) {
                 _state.Reset();
                 _output.WriteLine("[state] 已清空历史。");
@@ -75,8 +81,8 @@ internal sealed class AgentLoop {
     }
 
     private void PrintIntro() {
-        _output.WriteLine("=== LiveContextProto Phase 2 (Provider Stub & Router) ===");
-        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/stub <script> [文本]，/exit 退出。");
+        _output.WriteLine("=== LiveContextProto Phase 3 (LiveScreen & LiveInfo) ===");
+        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/liveinfo list|set|clear，/stub <script> [文本]，/exit 退出。");
         _output.WriteLine();
         _output.WriteLine("输入任意文本将通过 Stub Provider 触发一次模型调用，你也可用 /stub 指定脚本。");
         _output.WriteLine();
@@ -241,6 +247,74 @@ internal sealed class AgentLoop {
         _output.WriteLine("[notebook] 当前内容如下：");
         _output.WriteLine(snapshot);
         _output.WriteLine($"[notebook] 长度: {snapshot.Length}");
+    }
+
+    private void HandleLiveInfoCommand(string commandLine) {
+        var payload = commandLine.Length <= 9
+            ? string.Empty
+            : commandLine[9..];
+
+        var argument = payload.Trim();
+
+        if (argument.Length == 0 || argument.Equals("list", StringComparison.OrdinalIgnoreCase)) {
+            PrintLiveInfoSections();
+            return;
+        }
+
+        if (argument.StartsWith("set", StringComparison.OrdinalIgnoreCase)) {
+            var remainder = argument.Length > 3 ? argument[3..].TrimStart() : string.Empty;
+            var splitIndex = remainder.IndexOf(' ');
+
+            if (splitIndex <= 0 || splitIndex == remainder.Length - 1) {
+                _output.WriteLine("用法: /liveinfo set <节名称> <内容>");
+                return;
+            }
+
+            var section = remainder[..splitIndex].Trim();
+            var content = remainder[(splitIndex + 1)..];
+
+            if (string.IsNullOrWhiteSpace(section)) {
+                _output.WriteLine("节名称不能为空。");
+                return;
+            }
+
+            _state.UpdateLiveInfoSection(section, content);
+            _output.WriteLine($"[liveinfo] 已更新节 '{section}'。");
+            return;
+        }
+
+        if (argument.StartsWith("clear", StringComparison.OrdinalIgnoreCase)) {
+            var remainder = argument.Length > 5 ? argument[5..].TrimStart() : string.Empty;
+            if (string.IsNullOrWhiteSpace(remainder)) {
+                _output.WriteLine("用法: /liveinfo clear <节名称>");
+                return;
+            }
+
+            _state.UpdateLiveInfoSection(remainder.Trim(), null);
+            _output.WriteLine($"[liveinfo] 已移除节 '{remainder.Trim()}'。");
+            return;
+        }
+
+        _output.WriteLine("用法: /liveinfo [list|set <节名称> <内容>|clear <节名称>]");
+    }
+
+    private void PrintLiveInfoSections() {
+        _output.WriteLine("[liveinfo] 当前节一览：");
+
+        var sections = _state.LiveInfoSections
+            .OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (sections.Count == 0) {
+            _output.WriteLine("  (暂无附加 LiveInfo 节)");
+        }
+        else {
+            foreach (var (key, value) in sections) {
+                _output.WriteLine($"  - {key} (长度 {value.Length})");
+            }
+        }
+
+        _output.WriteLine($"  * Memory Notebook: 长度 {_state.MemoryNotebookSnapshot.Length}");
     }
 
     private void HandleToolCommand(string commandLine) {

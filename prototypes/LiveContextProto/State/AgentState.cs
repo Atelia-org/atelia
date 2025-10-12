@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Collections.ObjectModel;
+using System.Linq;
 using System.Text;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
@@ -10,6 +12,7 @@ namespace Atelia.LiveContextProto.State;
 internal sealed class AgentState {
     private readonly List<HistoryEntry> _history = new();
     private readonly Func<DateTimeOffset> _timestampProvider;
+    private readonly Dictionary<string, string> _liveInfoSections = new(StringComparer.OrdinalIgnoreCase);
     private string? _memoryNotebook;
 
     private const string DefaultMemoryNotebookSnapshot = "（暂无 Memory Notebook 内容）";
@@ -27,6 +30,9 @@ internal sealed class AgentState {
     public string MemoryNotebookSnapshot => _memoryNotebook is null
         ? DefaultMemoryNotebookSnapshot
         : _memoryNotebook;
+
+    public IReadOnlyDictionary<string, string> LiveInfoSections
+        => new ReadOnlyDictionary<string, string>(_liveInfoSections);
 
     public static AgentState CreateDefault(string? systemInstruction = null, Func<DateTimeOffset>? timestampProvider = null) {
         var instruction = string.IsNullOrWhiteSpace(systemInstruction)
@@ -69,8 +75,32 @@ internal sealed class AgentState {
         DebugUtil.Print("History", $"Memory notebook updated length={(sanitized?.Length ?? 0)}");
     }
 
+    public void UpdateLiveInfoSection(string sectionName, string? content) {
+        if (string.IsNullOrWhiteSpace(sectionName)) { throw new ArgumentException("Section name is required.", nameof(sectionName)); }
+
+        var key = sectionName.Trim();
+        var sanitized = string.IsNullOrWhiteSpace(content)
+            ? null
+            : content.TrimEnd();
+
+        if (sanitized is null) {
+            if (_liveInfoSections.Remove(key)) {
+                DebugUtil.Print("History", $"LiveInfo section removed name={key}");
+            }
+            else {
+                DebugUtil.Print("History", $"LiveInfo section skip remove name={key}");
+            }
+            return;
+        }
+
+        _liveInfoSections[key] = sanitized;
+        DebugUtil.Print("History", $"LiveInfo section updated name={key} length={sanitized.Length}");
+    }
+
     public void Reset() {
         _history.Clear();
+        _memoryNotebook = null;
+        _liveInfoSections.Clear();
         DebugUtil.Print("History", "AgentState history cleared");
     }
 
@@ -118,14 +148,34 @@ internal sealed class AgentState {
         => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
 
     private string? BuildLiveScreenSnapshot() {
-        if (string.IsNullOrWhiteSpace(_memoryNotebook)) { return null; }
+        var sections = new List<(string Title, string Content)>();
+
+        if (!string.IsNullOrWhiteSpace(_memoryNotebook)) {
+            sections.Add(("Memory Notebook", _memoryNotebook!));
+        }
+
+        foreach (var pair in _liveInfoSections.OrderBy(static entry => entry.Key, StringComparer.OrdinalIgnoreCase)) {
+            if (!string.IsNullOrWhiteSpace(pair.Value)) {
+                sections.Add((pair.Key, pair.Value));
+            }
+        }
+
+        if (sections.Count == 0) { return null; }
 
         var builder = new StringBuilder();
         builder.AppendLine("# [Live Screen]");
-        builder.AppendLine("## [Memory Notebook]");
-        builder.AppendLine();
-        builder.Append(_memoryNotebook);
 
-        return builder.ToString();
+        for (var index = 0; index < sections.Count; index++) {
+            var (title, content) = sections[index];
+            builder.AppendLine($"## [{title}]");
+            builder.AppendLine();
+            builder.AppendLine(content);
+
+            if (index < sections.Count - 1) {
+                builder.AppendLine();
+            }
+        }
+
+        return builder.ToString().TrimEnd();
     }
 }

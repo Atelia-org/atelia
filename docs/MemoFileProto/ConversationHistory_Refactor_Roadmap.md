@@ -26,7 +26,7 @@
 | Phase 0：环境与骨架 | [x] | 创建 LiveContextProto 项目与基础目录，搭建最小 Console 驱动循环 | 项目骨架、DebugUtil 初始化、`AgentState` 空壳 |
 | Phase 1：History & Context MVP | [x] | 实现 HistoryEntry 分层 + RenderLiveContext 最小路径，输出可观察的上下文列表 | `AgentState` 语义化追加 API、上下文快照打印、基础单测 |
 | Phase 2：Provider Stub & Router | [x] | 引入 `IProviderClient` 接口与路由占位，实现模拟模型流式输出 | Stub Provider、`ModelOutputDelta` 聚合器、回写历史逻辑 |
-| Phase 3：LiveScreen & LiveInfo 扩展 | [>] | 接入 LiveScreen 装饰与 Memory Notebook 快照，验证渲染装饰器 | LiveScreen 注入策略、Notebook Mock、上下文断言测试 |
+| Phase 3：LiveScreen & LiveInfo 扩展 | [x] | 接入 LiveScreen 装饰与 Memory Notebook 快照，验证渲染装饰器 | LiveScreen 注入策略、Notebook Mock、上下文断言测试 |
 | Phase 4：工具链与诊断 | [ ] | 模拟工具调用生命周期，采集 DebugUtil/Metadata，并总结迁移指南 | 工具调用流水、诊断日志回顾、经验小结文档 |
 
 ## 阶段规划细节
@@ -67,19 +67,19 @@
 	- [x] 新增单元测试验证 delta 聚合与 Orchestrator 回写路径。
 - **经验沉淀**：Stub Provider 机制已验证完整的流式调用流程，包括内容片段、工具调用声明、工具结果与 TokenUsage 聚合。控制台命令 `/stub <script>` 可自由切换脚本场景，为后续真实 Provider 接入奠定基础。
 
-### Phase 3：LiveScreen & LiveInfo 扩展（[>]）
+### Phase 3：LiveScreen & LiveInfo 扩展（[x]）
 - **目标**：在 MVP 上引入 LiveScreen 装饰与 Memory Notebook 投影，验证接口装饰协作。
 - **任务要点**：
 	- [x] 实现 Notebook Mock（内存字段），提供更新接口 `UpdateMemoryNotebook`。
 	- [x] 在 AgentState 中追加 Notebook LiveInfo 字段，并在 `RenderLiveContext` 中附加 LiveScreen。
 	- [x] 增加测试覆盖：Notebook 更新时 LiveScreen 变化；保持历史条目不受影响。
 	- [x] Console Demo：通过 `/notebook` 命令展示 Notebook 编辑 → 下一轮上下文 LiveScreen 更新。
-	- [ ] 补充更多 LiveInfo 扩展场景测试（如系统指令热更新、多种 LiveInfo 组合）。
-	- [ ] 验证跨 Provider 的 LiveScreen 兼容性（准备真实 Provider 适配前的验收）。
+	- [x] 补充更多 LiveInfo 扩展场景测试（如系统指令热更新、多种 LiveInfo 组合）。
+	- [x] 验证跨 Provider 的 LiveScreen 兼容性（准备真实 Provider 适配前的验收）。
 - **交付验收**：
 	- [x] LiveScreen Decorator 生效，在最新输入或工具结果条目上成功注入。
 	- [x] 上下文列表保持可读性，装饰器透明访问 `InnerMessage`。
-	- [ ] 跨多个 LiveInfo 场景的集成测试通过。
+	- [x] 跨多个 LiveInfo 场景的集成测试通过。
 - **学习目标**：明确 Notebook 事件化前的协作模式，为蓝图 Deferred 项提供依据；评估 LiveInfo 自动记账的接口设计需求。
 
 ### Phase 4：工具链与诊断（[ ]）
@@ -116,7 +116,9 @@
 - **协作接口**：后续若引入实际模型调用，需与凭据管理/环境配置团队对齐。
 
 ## 里程碑追踪
+- 2025-10-13：**Phase 3 完成验收（[x]）**，LiveScreen 现支持多节 LiveInfo 聚合，新增 `/liveinfo` 命令与 `UpdateLiveInfoSection` API；单元测试覆盖系统指令热更新、LiveInfo 组合以及跨 Provider LiveScreen 兼容性，AgentOrchestrator Stub Provider 验收同步通过。
 ### 本轮更新
+- 2025-10-13：**Phase 3 完成验收（[x]）**，新增 `UpdateLiveInfoSection` API 与 `/liveinfo` 控制台命令，LiveScreen 支持多节聚合，并补齐系统指令热更新、跨 Provider 兼容与多 LiveInfo 组合的单元测试。
 - 2025-10-13：**Phase 2 完成验收（[x]）**，所有交付物已实现并通过测试：`IProviderClient`、`ProviderRouter`、Stub Provider（支持 JSON 脚本与占位符）、`ModelOutputAccumulator`（聚合内容/工具调用/TokenUsage）、Console Demo 流式调用闭环。**Phase 3 基础功能已实现（[>]）**，LiveScreen 装饰器与 Memory Notebook 集成已验证，控制台 `/notebook` 命令可演示 LiveInfo 动态注入；尚需补充更多扩展场景测试与跨 Provider 兼容性验收。
 - 2025-10-13：Phase 2 启动（[>]），落地 `IProviderClient`、`ProviderRouter`、Stub JSON 脚本与 `ModelOutputAccumulator`；控制台改为通过 Stub Provider 流式生成响应，并新增对应单元测试。
 - 2025-10-12：Phase 1 Demo 扩展，新增 `/tool` 与 `/demo` 命令、工具结果样例及 LiveScreen 测试用例，控制台脚本可直接复现双轮对话流程。
@@ -129,6 +131,6 @@
 - 无（路线图 V2 首次立项）。
 
 ### 下一步计划
+- 启动 Phase 4：设计工具调用流水模拟与 Debug 元数据回写路径，明确最小实现范围。
 - 扩充 Stub Provider 脚本库，覆盖工具失败分支与多段内容分段，验证聚合器的错误路径。
 - 梳理真实 Provider 适配需求（OpenAI/Anthropic），准备抽象层对接测试桩。
-- 规划 Phase 3 输入：明确 Notebook 事件化前的 LiveScreen 扩展测试与 Demo 场景。
