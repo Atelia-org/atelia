@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Text;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
 
@@ -9,6 +10,9 @@ namespace Atelia.LiveContextProto.State;
 internal sealed class AgentState {
     private readonly List<HistoryEntry> _history = new();
     private readonly Func<DateTimeOffset> _timestampProvider;
+    private string? _memoryNotebook;
+
+    private const string DefaultMemoryNotebookSnapshot = "（暂无 Memory Notebook 内容）";
 
     private AgentState(Func<DateTimeOffset> timestampProvider, string systemInstruction) {
         _timestampProvider = timestampProvider;
@@ -19,6 +23,10 @@ internal sealed class AgentState {
     public string SystemInstruction { get; private set; }
 
     public IReadOnlyList<HistoryEntry> History => _history;
+
+    public string MemoryNotebookSnapshot => _memoryNotebook is null
+        ? DefaultMemoryNotebookSnapshot
+        : _memoryNotebook;
 
     public static AgentState CreateDefault(string? systemInstruction = null, Func<DateTimeOffset>? timestampProvider = null) {
         var instruction = string.IsNullOrWhiteSpace(systemInstruction)
@@ -52,6 +60,15 @@ internal sealed class AgentState {
         DebugUtil.Print("History", $"System instruction updated length={instruction.Length}");
     }
 
+    public void UpdateMemoryNotebook(string? content) {
+        var sanitized = string.IsNullOrWhiteSpace(content)
+            ? null
+            : content.TrimEnd();
+
+        _memoryNotebook = sanitized;
+        DebugUtil.Print("History", $"Memory notebook updated length={(sanitized?.Length ?? 0)}");
+    }
+
     public void Reset() {
         _history.Clear();
         DebugUtil.Print("History", "AgentState history cleared");
@@ -59,11 +76,21 @@ internal sealed class AgentState {
 
     public IReadOnlyList<IContextMessage> RenderLiveContext() {
         var messages = new List<IContextMessage>(_history.Count + 1);
+        var liveScreen = BuildLiveScreenSnapshot();
+        var shouldDecorate = !string.IsNullOrWhiteSpace(liveScreen);
+        var liveScreenInjected = false;
 
-        foreach (var entry in _history) {
-            if (entry is ContextualHistoryEntry contextual) {
-                messages.Add(contextual);
+        for (var index = _history.Count - 1; index >= 0; index--) {
+            if (_history[index] is not ContextualHistoryEntry contextual) { continue; }
+
+            IContextMessage message = contextual;
+
+            if (!liveScreenInjected && shouldDecorate && ShouldDecorateWithLiveScreen(contextual)) {
+                message = ContextMessageLiveScreenHelper.AttachLiveScreen(contextual, liveScreen);
+                liveScreenInjected = true;
             }
+
+            messages.Add(message);
         }
 
         var systemMessage = new SystemInstructionMessage(SystemInstruction) {
@@ -71,7 +98,8 @@ internal sealed class AgentState {
             Metadata = ImmutableDictionary<string, object?>.Empty
         };
 
-        messages.Insert(0, systemMessage);
+        messages.Add(systemMessage);
+        messages.Reverse();
         return messages;
     }
 
@@ -84,5 +112,20 @@ internal sealed class AgentState {
         _history.Add(finalized);
         DebugUtil.Print("History", $"Appended {finalized.Role} entry (count={_history.Count})");
         return finalized;
+    }
+
+    private static bool ShouldDecorateWithLiveScreen(ContextualHistoryEntry entry)
+        => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
+
+    private string? BuildLiveScreenSnapshot() {
+        if (string.IsNullOrWhiteSpace(_memoryNotebook)) { return null; }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("# [Live Screen]");
+        builder.AppendLine("## [Memory Notebook]");
+        builder.AppendLine();
+        builder.Append(_memoryNotebook);
+
+        return builder.ToString();
     }
 }

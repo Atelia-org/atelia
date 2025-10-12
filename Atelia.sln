@@ -57,7 +57,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoFileProto", "prototypes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LiveContextProto", "prototypes\LiveContextProto\LiveContextProto.csproj", "{C2BE8FA8-7F6E-41C6-9791-0F0DB2E9032B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LiveContextProto.Tests", "prototypes\LiveContextProto.Tests\LiveContextProto.Tests.csproj", "{4F81E8A4-E19E-4C88-9D23-BCDC29F6DA17}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Atelia.LiveContextProto.Tests", "prototypes\LiveContextProto.Tests\Atelia.LiveContextProto.Tests.csproj", "{4F81E8A4-E19E-4C88-9D23-BCDC29F6DA17}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
