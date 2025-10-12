@@ -12,8 +12,8 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 本次重构的目标：
 
-1. 引入 **强类型的 HistoryEntry 分层**，让不同事件拥有清晰的数据模型，并以追加式的 AgentHistory 统一持有。
-2. 将“历史存储”与“供应商调用”解耦，Provider 客户端只感知 AgentHistory 并负责完成模型调用。
+1. 引入 **强类型的 HistoryEntry 分层**，让不同事件拥有清晰的数据模型，并以追加式的 AgentState 统一持有。
+2. 将“历史存储”与“供应商调用”解耦，Provider 客户端只感知 AgentState 并负责完成模型调用。
 3. 支撑在单个会话内 **混合多种模型/功能接口**（例如规划走 Claude，执行走 OpenAI Function Calling），同时保持一致的历史视图。
 4. 为后续的 Live Context、工具遥测、记忆系统等能力打好基础，同时保持原型期的实现简洁。
 
@@ -35,13 +35,13 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
            │ append events
            ▼
 ┌────────────────────────┐
-│ [1] AgentHistory       │
+│ [1] AgentState         │
 └──────────┬─────────────┘
            │ RenderLiveContext()
            ▼
 ┌────────────────────────┐
 │ [2] Context Projection │
-│   (IContextMessage list) │
+│ (IContextMessage list) │
 └──────────┬─────────────┘
            │ CallModelAsync()
            ▼
@@ -60,16 +60,16 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 │  Orchestrator feedback │
 └──────────┬─────────────┘
            │
-           └────────────▶ AgentHistory (new events)
+           └────────────▶ AgentState (new history entries)
 ```
 
 这幅图展示了最新的三段式请求流水线：
 
-- **[1] AgentHistory**：负责维护仅追加的事件日志和运行时快照（System Instruction、Memory Notebook 等），是唯一的真相源。
+- **[1] AgentState**：负责维护仅追加的事件日志和运行时快照（System Instruction、Memory Notebook 等），是唯一的真相源。
 - **[2] Context Projection**：由 `RenderLiveContext()` 按当前调用需要生成 `IContextMessage` 只读列表，注入 LiveScreen、内存摘录等易变信息，但不修改历史。
 - **[3] Provider Router**：根据调用策略挑选具体的 `IProviderClient`，把 `IContextMessage` 投影重写成供应商协议（OpenAI、Anthropic 等），并将流式增量解析为统一的 `ModelOutputDelta`。
 
-底部的 **Orchestrator feedback** 表示调用协调层在流式推理结束后聚合 `ModelOutputDelta` 与工具结果，再次通过领域方法将新事件追加到 AgentHistory，从而闭合“读取视图 → 调用模型 → 回写事实”的循环。
+底部的 **Orchestrator feedback** 表示调用协调层在流式推理结束后聚合 `ModelOutputDelta` 与工具结果，再次通过领域方法将新事件追加到 AgentState，从而闭合“读取视图 → 调用模型 → 回写事实”的循环。
 
 上述三个阶段共同构成完整的模型调用循环，职责细节在后文“History ↔ Context ↔ Provider 协作”一节中展开。这种分层有助于在不修改 Long History 的情况下灵活调整 Live 层注入策略或替换底层 Provider，也便于后续对不同模型实现差异化处理。
 
@@ -83,7 +83,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 | MVVM 层次 | 本方案对应层 | 职责 |
 | --- | --- | --- |
-| **Model** | **AgentHistory** | 持有不可变的原始数据，是"唯一的真相源"（Single Source of Truth） |
+| **Model** | **AgentState** | 持有不可变的原始数据，是"唯一的真相源"（Single Source of Truth） |
 | **ViewModel** | **RenderLiveContext() 输出** | 将 Model 转换为适合特定场景的视图；可动态注入、聚合、过滤数据；不修改 Model |
 | **View** | **Provider Client** | 消费 ViewModel 提供的接口，转换为特定平台格式（OpenAI API、Anthropic API 等） |
 
@@ -91,17 +91,17 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 - **单向数据流**：History → Context → Provider Request，避免循环依赖。
 - **分离关注点**：History 不知道 Provider 的协议差异，Provider 通过 `IContextMessage` 接口间接消费历史。
-- **多视图支持**：同一份 AgentHistory 可渲染为不同 Provider 所需的格式，就像同一个 Model 可绑定多个 UI 框架。
+- **多视图支持**：同一份 AgentState 可渲染为不同 Provider 所需的格式，就像同一个 Model 可绑定多个 UI 框架。
 
 ### Event Sourcing（事件溯源）模式
 
-`AgentHistory` 的设计直接借鉴了 Event Sourcing 的核心理念：
+`AgentState.History` 的设计直接借鉴了 Event Sourcing 的核心理念：
 
-- **不可变事件日志**：`EventLog` 字段（`List<HistoryEntry>`）以仅追加方式记录所有历史条目，永不修改已有数据。
+- **不可变事件日志**：`History` 字段（`List<HistoryEntry>`）以仅追加方式记录所有历史条目，永不修改已有数据。
 - **状态重建能力**：当前的 `_systemInstruction`、`_memoryNotebookContent` 等状态字段可视为"聚合根的内存快照"，后续可通过重放事件日志完整恢复任意时刻的状态（尽管当前阶段暂不实现时间穿越）。
 - **系统指令的暂时策略**：目前系统指令仅以运行时字段形式维护，并在上下文渲染时生成 `SystemInstructionMessage`，重放时需依赖默认配置或额外快照；待真实需求出现后再补充专门的历史条目或稳定标识。
 - **领域事件语义**：`ModelInputEntry`、`ModelOutputEntry` 等类型明确表达"发生了什么"，而非简单的 CRUD 操作。
-- **顺序号延后引入**：单调递增的序列号将交由后续的正式存储/审计层管理，本轮原型暂不实现，避免维护未显式需求的特性。
+- **顺序号延后引入**：策略详见“顺序与稳定标识策略”一节；当前阶段暂缓引入顺序号与 StableId。
 
 ### CQRS（命令查询职责分离）
 
@@ -113,11 +113,11 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 ### Repository（仓储）模式
 
-`AgentHistory` 本质上扮演了"内存中的领域对象仓储"角色：
+`AgentState` 本质上扮演了"内存中的领域对象仓储"角色：
 
 - **封装持久化细节**：尽管当前阶段仅在内存中操作，但接口设计（追加、查询、状态管理）为后续引入持久化层（JSON 文件、SQLite、事件存储）预留了空间。
 - **领域驱动接口**：`AppendModelInput()` 等方法使用领域术语而非泛型的 `Add()`/`Save()`，提升代码可读性。
-- **聚合根管理**：`AgentHistory` 统一管理所有条目与运行时状态，外部无法绕过它直接修改内部集合。
+- **聚合根管理**：`AgentState` 统一管理所有条目与运行时状态，外部无法绕过它直接修改内部集合。
 
 ### Strategy（策略）+ Adapter（适配器）模式
 
@@ -147,14 +147,24 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 **小结**：本方案并非"为了用模式而用模式"，而是在解决实际问题（多模型支持、历史可追溯、协议差异隔离）时自然收敛到这些经过验证的设计模式上。理解这些关联有助于你在后续实现中做出符合架构意图的决策。
 
-## AgentHistory 角色划分
+## AgentState 角色划分
 
-- **不可篡改的追加式结构**：对外仅公开读取与追加 API，不提供任意位置编辑或删除历史的能力。
-- **顺序号与稳定标识**：具体策略见后文“顺序与稳定标识策略”，本阶段不引入 `SequenceNumber`、`StableId` 等字段。
-- **持有运行时状态**：内部维护 `_systemInstruction`、`_memoryNotebookContent` 等"最新状态"字段；`SetSystemInstruction()` 直接更新该字段（当前阶段不追加历史条目），`MemoryNotebookEntry` 则通过追加的方式同步更新。
-- **Live 数据渲染**：保留 `BuildLiveContext()` 风格的读取接口（产出 `IReadOnlyList<IContextMessage>`），在渲染阶段合并 [Memory Notebook] 等动态信息并生成只读副本；此过程不会修改历史中原始的 `HistoryEntry`。
-- **单线程约束**：默认挂靠在单线程 Agent 管理循环上，不支持并发写入；如需并发需在调用方自行加锁。本阶段利用该前提直接在 `AgentHistory` 内部渲染上下文，而不额外生成快照对象。
+- **统一的状态聚合器**：集中封装一次 LLM 调用所需的全部上游信息，包括 LiveInfo 组件与追加式历史列表，外部通过有限的领域方法与之交互。
+- **追加式历史记录**：`_history` 以仅追加方式保存所有 `HistoryEntry`，不提供编辑或删除入口，确保事件轨迹可追溯。
+- **LiveInfo 管理**：内部维护 `_systemInstruction`、`_memoryNotebookContent` 等 LiveInfo 的最新视图，为上下文渲染阶段提供即时内容；这些 LiveInfo 在设计上应同时负责记录自身的变更轨迹。
+- **LiveInfo 变更约定**：LiveInfo 更新时须在 `_history` 中落下一条匹配的条目，以保证 `RenderLiveContext()` 能重建历史语义；当前实现仍依赖调用方自觉遵守，后续将通过专门的接口或回调补齐约束。
+- **上下文渲染职责**：沿用 `MemoFileProto.Agent.LlmAgent.BuildLiveContext()` 的思路，在 `RenderLiveContext()` 中把历史条目与各 LiveInfo 的即时内容投影成 `IReadOnlyList<IContextMessage>`；该过程不修改 `_history` 本身。
+- **单线程约束**：默认挂靠在单线程 Agent 管理循环上，不支持并发写入；如需并发需在调用方自行加锁。本阶段利用该前提直接在 `AgentState` 内部渲染上下文，而不额外生成快照对象。
 - **暂不支持历史回放**：本阶段不提供历史状态重建/时间穿越能力，后续再根据原型需求拆分。
+
+> 目前的 `SetSystemInstruction()` 与 `SetMemoryNotebook()` 仍是临时实现，仅更新 LiveInfo 的即时值，没有自动生成历史条目；在引入统一的 LiveInfo 接口后会补全这一行为。
+
+### LiveInfo 约定
+
+- **渲染职责**：每个 LiveInfo 至少需提供一个“最新视图”的只读投影（如 `IReadOnlyList<KeyValuePair<string,string>>`），用于在 `ModelInputEntry.ContentSections` 或其他上下文位置注入动态内容。
+- **变更记账**：LiveInfo 在自身状态发生变化时应追加一条描述性 `HistoryEntry` 到 `_history`，以便历史时间线反映这些调整；在正式接口落地前，此步骤由调用方或 LiveInfo 实现手动调用完成。
+- **外部交互**：部分 LiveInfo（例如工具注册表、Memory Notebook 编辑器）可能需要暴露操作方法供 Agent 之外的组件调用。调用方必须在执行修改后遵守“变更记账”约定，以避免 `_history` 与实际状态脱节。
+- **开放问题**：变更通知的机制化保证（回调、事件或事务包装）、多 LiveInfo 之间的顺序协调以及并发访问策略仍在评估中，待后续迭代在“具体技术方案”章节中给出详细设计。
 
 ### 顺序与稳定标识策略
 
@@ -170,15 +180,12 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 abstract record HistoryEntry {
     public DateTimeOffset Timestamp { get; init; }
     public abstract HistoryEntryKind Kind { get; }
-    public IReadOnlyDictionary<string, object?> Metadata { get; init; }
+    public ImmutableDictionary<string, object?> Metadata { get; init; }
+        = ImmutableDictionary<string, object?>.Empty;
 }
 
 abstract record ContextualHistoryEntry : HistoryEntry, IContextMessage {
     public abstract ContextMessageRole Role { get; }
-}
-
-record MemoryNotebookEntry(string Content) : HistoryEntry {
-    public override HistoryEntryKind Kind => HistoryEntryKind.MemoryNotebook;
 }
 
 record ModelInputEntry(
@@ -218,7 +225,6 @@ record ToolCallResult(
 );
 
 record ToolResultsEntry(
-    string OverallResult,
     IReadOnlyList<ToolCallResult> Results,
     string? ExecuteError // 非null表示遇到错误导致未全部执行
 ) : ContextualHistoryEntry, IToolResultsMessage {
@@ -239,7 +245,7 @@ record SystemInstructionMessage(
 ) : ISystemMessage {
     public ContextMessageRole Role => ContextMessageRole.System;
     public DateTimeOffset Timestamp { get; init; }
-    public IReadOnlyDictionary<string, object?> Metadata { get; init; }
+    public ImmutableDictionary<string, object?> Metadata { get; init; }
         = ImmutableDictionary<string, object?>.Empty;
 }
 
@@ -255,7 +261,7 @@ static class ContextMessageLiveScreenHelper {
     ) : IContextMessage, ILiveScreenCarrier {
         public ContextMessageRole Role => Inner.Role;
         public DateTimeOffset Timestamp => Inner.Timestamp;
-        public IReadOnlyDictionary<string, object?> Metadata => Inner.Metadata;
+        public ImmutableDictionary<string, object?> Metadata => Inner.Metadata;
         string? ILiveScreenCarrier.LiveScreen => LiveScreen;
         IContextMessage ILiveScreenCarrier.InnerMessage => Inner;
     }
@@ -266,18 +272,19 @@ static class ContextMessageLiveScreenHelper {
 
 - **顺序策略**：如“顺序与稳定标识策略”小节所述，当前不在 `HistoryEntry` 中维护序列号，后续会随持久化层补齐。
 - `Kind` 属性由各派生类型以常量形式覆写，调用方无需在构造时手动赋值，同时为日志与序列化保留稳定标签。
-- **Metadata** 用于附加可选信息（例如来源、耗时、Token 统计），保持向后兼容。
+- **Metadata** 用于附加可选信息（例如来源、耗时、Token 统计），默认初始化为空的 `ImmutableDictionary<string, object?>`，保持向后兼容。
 - **ToolCallRequest.RawArguments** 永远保留模型输出的原始文本；`Arguments` 则由 Provider 成功解析后提供的弱类型键值对（解析失败时为 `null`），工具层只消费该字典。`ParseError` 字段在解析成功时为 `null`，失败时包含错误信息，从而区分"工具不需要参数"与"参数解析失败"两种情况。
 - **ModelOutputEntry.Invocation** 记录触发本次响应时所选用的 Provider / 规范 / 模型三元组，便于在历史层面还原调用上下文，而无需在每个工具调用上重复写入。
 - **ModelInvocationDescriptor** 记录 Provider-Specification-Model 三元组。`Specification` 字段用于区分同一 Provider 的不同协议规范（例如 OpenAI 的 "v1" vs "responses" 端点，Qwen 系列的 "json" vs "xml" 格式），这是快速演进的 AI 行业带来的必要复杂性。注意：`IProviderClient` 的一个实现对应 (Provider, Specification) 组合，如 `OpenAiV1Client` 和 `OpenAiResponsesClient` 是两个独立实现。
 - **ModelInputEntry.ContentSections** 用有序键值对承载提示分段，可用于区分 Planner 指令、环境变量、任务描述等；列表默认为空，Provider 在最终拼装时再决定呈现方式。
 - **ModelOutputEntry** 内部聚合同一轮推理生成的 `ToolCallRequest` 序列，并通过 `Invocation` 字段标记本次模型调用的供应商语义，同时以 `Contents` 保留分段文本，便于 Provider 自行组装提示或多模态片段。
-- **ToolCallResult** 一一对应单个工具调用的执行结果，并记录耗时等诊断信息；`ToolResultsEntry.Results` 代表一次模型响应内的整体结果汇总，按顺序与 `ModelOutputEntry.ToolCalls` 配对，`OverallResult` 概述整轮调用状态，若整体失败可通过 `ExecuteError` 给出说明。
-- **MemoryNotebookEntry** 负责记录全局状态类变更并通过 `AgentHistory` 领域方法写入；系统指令则以 `_systemInstruction` 字段维护，并在渲染阶段生成对应的 `SystemInstructionMessage` 注入上下文。
+- **ToolCallResult** 一一对应单个工具调用的执行结果，并记录耗时等诊断信息；`ToolResultsEntry.Results` 代表一次模型响应内的整体结果汇总，按顺序与 `ModelOutputEntry.ToolCalls` 配对，若有任何失败可通过 `ExecuteError` 给出说明。
+- 系统指令则以 `_systemInstruction` 字段维护，并在渲染阶段生成对应的 `SystemInstructionMessage` 注入上下文。
 - **SystemInstructionMessage** 仅在上下文渲染阶段创建，用于向 Provider 暴露当前系统指令；后续若需要分版本或多段系统指令，可再引入稳定标识或扩展结构。
 - **补充说明**：`ToolCallRequest` 仅作为 `ModelOutputEntry.ToolCalls` 的嵌套结构存在，不会追加独立的 `ToolCallRequest` 历史条目。
 - **RenderLiveContext 副本**：如需注入 LiveScreen 内容，`ContextMessageLiveScreenHelper` 会返回实现 `ILiveScreenCarrier` 的包装对象，原始历史条目保持精简且不会被误追加回历史。
-- `LiveScreenDecoratedMessage` 是一个仅实现 `IContextMessage` 与 `ILiveScreenCarrier` 的轻量包装，可携带 LiveScreen，并通过 `ILiveScreenCarrier.InnerMessage` 引用原始条目，从而既避免被再次追加到 `AgentHistory`，又允许 Provider 继续访问原始条目的角色化接口。
+- **显式接口实现留有弹性**：`ModelInputEntry`、`ModelOutputEntry` 等通过显式实现 `IModelInputMessage`、`IModelOutputMessage` 成员，即便当前属性一一对应，也可在未来需要压缩、裁剪或缓存上下文时覆盖接口返回值而无需更改记录类型构造，保持 History 层与 Context 层的解耦空间。
+- `LiveScreenDecoratedMessage` 是一个仅实现 `IContextMessage` 与 `ILiveScreenCarrier` 的轻量包装，可携带 LiveScreen，并通过 `ILiveScreenCarrier.InnerMessage` 引用原始条目，从而既避免被再次追加到 `AgentState.History`，又允许 Provider 继续访问原始条目的角色化接口。
 
 ## ContextMessage 层接口深化
 
@@ -297,7 +304,7 @@ static class ContextMessageLiveScreenHelper {
 interface IContextMessage {
     ContextMessageRole Role { get; }
     DateTimeOffset Timestamp { get; }
-    IReadOnlyDictionary<string, object?> Metadata { get; }
+    ImmutableDictionary<string, object?> Metadata { get; }
 }
 
 enum ContextMessageRole {
@@ -322,7 +329,7 @@ enum ContextMessageRole {
 | `IModelOutputMessage` | `ModelInvocationDescriptor Invocation`、`IReadOnlyList<string> Contents`、`IReadOnlyList<ToolCallRequest> ToolCalls` | 记录本次响应使用的 Provider 语义、文本片段及潜在工具调用请求。 |
 | `IToolResultsMessage` | `IReadOnlyList<ToolCallResult> Results`、`string? ExecuteError` | 汇总一次模型调用的工具返回；`ExecuteError` 为整体失败原因（若有）。 |
 
-> ⚠️ 附件接口 `IContextAttachment` 暂不实现（见“结构化附属数据”小节）。为了避免本阶段的复杂度，我们在实现时可令 `Attachments` 返回空集合或通过辅助类型返回空枚举。
+> ⚠️ 附件接口 `IContextAttachment` 暂未落地，具体约定见“结构化附属数据（暂缓实现）”小节。
 
 示例定义：
 
@@ -379,7 +386,7 @@ interface ITokenUsageCarrier {
 
 ### 结构化附属数据（暂缓实现）
 
-- **`IContextAttachment`**：规划为描述富媒体、JSON 片段等结构化输入的接口，避免 Provider 用字符串猜测格式。为了减轻本轮重构范围，附件机制仅在接口层预留，文档中记为“暂不实现”。本文档底部保留一个空接口占位符，后续迭代（预计 Phase 4 之后）将补充具体的附件类型与序列化策略。
+- **`IContextAttachment`**：规划为描述富媒体、JSON 片段等结构化输入的接口，避免 Provider 用字符串猜测格式。当前阶段仅在接口层预留为占位，调用方应返回空集合或通过辅助类型提供空枚举以保持兼容；本文档底部保留一个空接口占位符，待后续迭代（预计 Phase 4 之后）补充具体的附件类型与序列化策略。
 
 ### Tool 描述动态注入（暂缓实现）
 
@@ -388,17 +395,21 @@ interface ITokenUsageCarrier {
 ### 接口协同要点
 
 - `RenderLiveContext()` 输出的条目应尽量沿用 History 层对象，必要时通过轻量包装类附加 `ILiveScreenCarrier` 等能力。
-- `Metadata` 作为双方共享的轻量信息通道，禁止写入体量过大的结构（> 2 KB）；较大的数据应改用附件或单独条目。
+- `Metadata` 使用 `ImmutableDictionary<string, object?>` 承载轻量信息，并默认初始化为空字典，禁止写入体量过大的结构（> 2 KB）；较大的数据应改用附件或单独条目。
 - Provider 可通过接口检测来决定拼装逻辑：例如仅对实现了 `IToolCallCarrier` 的条目尝试解析 `ToolCalls`。
-- 当消息实现了 `ILiveScreenCarrier` 时，Provider 应先读取 `InnerMessage` 再尝试角色化接口的强制转换，确保 LiveScreen 装饰不会影响后续逻辑。
+- LiveScreen 处理遵循“LiveScreen 处理约定”小节，保持装饰器与角色接口解耦。
 - `ModelOutputEntry` 原样实现接口，用于传递模型响应及潜在的工具调用请求。
-- `MemoryNotebookEntry` 等永远不应该出现在上下文中的历史条目不实现 `IContextMessage`，从编译期阻止它们进入 Provider 管线。
+- 除模型输入、模型输出及工具结果外的其他历史条目不实现 `IContextMessage`，从编译期阻止它们进入 Provider 管线。
+
+#### LiveScreen 处理约定
+
+- 当上下文条目实现 `ILiveScreenCarrier` 时，消费方必须先读取 `InnerMessage` 再进行角色化接口判定，确保 LiveScreen 装饰不会阻断对 `IModelInputMessage`、`IModelOutputMessage` 等接口的访问。
+- Provider 客户端在处理上下文时同样遵循这一约定，以便在需要时访问原始消息并按需读取 LiveScreen 数据。
 
 ### 辅助类型
 
 ```csharp
 enum HistoryEntryKind {
-    MemoryNotebook,
     ModelInput,
     ModelOutput,
     ToolResult,
@@ -419,10 +430,10 @@ interface IContextAttachment { }
 
 ## History ↔ Context ↔ Provider 协作
 
-- **History → Context**：`AgentHistory.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口；当历史条目本身已实现目标接口时直接复用，无法复用时则通过只读包装补足字段，并在必要时附加 `ILiveScreenCarrier` 等能力。系统指令视为运行时投影，通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
+- **History → Context**：`AgentState.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口，并融合各 LiveInfo 暴露的最新视图；当历史条目本身已实现目标接口时直接复用，无法复用时则通过只读包装补足字段，并在必要时附加 `ILiveScreenCarrier` 等能力。系统指令视为运行时投影，通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
 - **Context → Provider**：Provider 仅消费 `IContextMessage` 层接口，即可完成请求拼装与 delta 解析。它们通过接口检测判定角色（`IModelInputMessage`、`IModelOutputMessage` 等），按需解释 `ContentSections`、`Contents` 等字段，对实现 `IToolCallCarrier` 的条目解析 `ToolCalls`，并在推理结束后根据 `ITokenUsageCarrier` 或 `Metadata` 回写统计信息。
 - **Provider → History**：模型响应结束后，由调用协调层基于 Provider 返回的 delta 聚合出新的 `ModelOutputEntry`、`ToolResultsEntry` 等，并追加到 History。这样可以保证 History 层仅包含最终定稿的条目，而流式阶段的装饰数据只存在于 Context 层。
-- **附件/富内容**：附件体系说明见“结构化附属数据（暂缓实现）”，目前 `Attachments` 返回空集合，待后续统一扩展。
+- **附件/富内容**：附件体系说明统一记录在“结构化附属数据（暂缓实现）”小节。
 
 动态工具描述的暂缓策略统一记录在“Tool 描述动态注入（暂缓实现）”一节。
 
@@ -441,8 +452,8 @@ interface IProviderClient {
 
 - 流式 delta 统一表示为 `ModelOutputDelta`，关于更名与字段约束详见下文“ModelOutputDelta 管线”。
 - Provider 客户端封装底层 SDK 或 HTTP 细节，对外统一为流式 delta；测试场景可通过假实现返回预设 delta 序列。
-- Provider 实现需把 `AgentHistory` 视为只读，并消费预先构建好的 `IContextMessage` 列表；同时负责将 `ToolCallRequest.RawArguments` 解析为 `Arguments` 字典（失败时留空并记录错误），补全 `ModelOutputEntry.Invocation`，并禁止直接修改或回写历史条目。
-- 处理上下文时若遇到实现了 `ILiveScreenCarrier` 的条目，应先读取 `InnerMessage` 再做角色化接口判定，防止 LiveScreen 装饰影响原有逻辑。
+- Provider 实现需避免直接引用 `AgentState` ，而是消费预先构建好的 `IContextMessage` 列表；同时负责将 `ToolCallRequest.RawArguments` 解析为 `Arguments` 字典（失败时留空并记录错误），补全 `ModelOutputEntry.Invocation`，并禁止直接修改或回写历史条目。
+- 处理上下文时若遇到实现了 `ILiveScreenCarrier` 的条目，请遵循“LiveScreen 处理约定”中的回退流程，避免装饰器干扰角色判定。
 - 解析失败时的错误处理约定：Provider 需要生成失败状态的 `ToolCallResult`，在结果文本中附上原始参数与错误原因；上层可以据此选择重试、提示 Planner 调整输出或请求人工介入。
 - 为减少重复解析代码，计划提供共享的 `ToolArgumentParser` 辅助器（例如 `GetRequired(...)`、`ParseList(...)`、`ParseJsonSafely(...)` 等），供 Provider 和工具实现重复利用。
 - Provider 层维护"规范 → 参数解析策略"的静态映射：`ModelOutputEntry.Invocation` 提供规范标识，具体的格式解析与工具调用出参推断交由各 Provider 内部实现，使 History 保持供应商无关的抽象。
@@ -469,17 +480,17 @@ interface IProviderClient {
 
 - **最小化改动**：短期内仅将现有 `ChatResponseDelta` 重命名为 `ModelOutputDelta`，沿用既有字段（文本增量、工具调用片段等），将复杂的细粒度分类推迟到后续迭代。
 - **历史落盘策略**：在模型流式完成后，再由上层把累计的 delta 汇总成单个 `ModelOutputEntry` 与一条 `ToolResultsEntry`（其中含多个 `ToolCallResult`），保持一次推理完整性。
-- **信息注入**：如需在流式阶段插入额外调试或分析数据，先在 delta 管线完成后再统一写入 AgentHistory，避免 Provider 客户端与历史结构耦合。
+- **信息注入**：如需在流式阶段插入额外调试或分析数据，先在 delta 管线完成后再统一写入 AgentState，避免 Provider 客户端与历史结构耦合。
 
-## AgentHistory API 草案
+## AgentState API 草案
 
 ```csharp
-class AgentHistory {
-    private readonly List<HistoryEntry> _eventLog = new();
+class AgentState {
+    private readonly List<HistoryEntry> _history = new();
     private string _systemInstruction = LlmAgent.DefaultSystemInstruction;
     private string _memoryNotebookContent = "（尚无内容）";
 
-    public IReadOnlyList<HistoryEntry> EventLog => _eventLog;
+    public IReadOnlyList<HistoryEntry> History => _history;
     public string SystemInstruction => _systemInstruction;
     public string MemoryNotebookContent => _memoryNotebookContent;
 
@@ -488,40 +499,27 @@ class AgentHistory {
         // TODO: 待引入 SystemInstruction 相关历史条目或快照后，再在此处追加持久化逻辑。
     }
 
-    public void SetMemoryNotebookContent(string content) {
-        var entry = new MemoryNotebookEntry(content) {
-            Timestamp = DateTimeOffset.Now
-        };
-        _eventLog.Add(entry);
+    public void SetMemoryNotebook(string content) {
+        // 同SetSystemInstruction，待引入 SystemInstruction 相关历史条目或快照后，再在此处追加持久化逻辑。
+        // var entry = new MemoryNotebookChangedEntry(content) {
+        //     Timestamp = DateTimeOffset.Now
+        // };
+        // _history.Add(entry);
         _memoryNotebookContent = content;
     }
 
-    public void AppendModelInput(ModelInputEntry entry) {
-        _eventLog.Add(entry with {
-            Timestamp = DateTimeOffset.Now
-        });
-    }
-
-    public void AppendModelOutput(ModelOutputEntry entry) {
-        _eventLog.Add(entry with {
-            Timestamp = DateTimeOffset.Now
-        });
-    }
-
-    public void AppendToolResults(ToolResultsEntry entry) {
-        _eventLog.Add(entry with {
-            Timestamp = DateTimeOffset.Now
-        });
+    public void AppendHistory(HistoryEntry entry) {
+        _history.Add(entry);
     }
 
     public IReadOnlyList<IContextMessage> RenderLiveContext() {
         // 当前阶段：单 pass 反向遍历，照搬 LlmAgent.BuildLiveContext() 实现
         // 暂不实现 Recent 截断功能，等需求分析完成后在后续阶段引入
-        var context = new List<IContextMessage>(_eventLog.Count + 1);
+        var context = new List<IContextMessage>(_history.Count + 1);
         bool hasDecoratedLastSense = false;
 
-        for (int i = _eventLog.Count; --i >= 0;) {
-            var entry = _eventLog[i];
+        for (int i = _history.Count; --i >= 0;) {
+            var entry = _history[i];
             if (entry is not ContextualHistoryEntry ctx) continue;
             if (ctx.Role == ContextMessageRole.System) continue;
 
@@ -555,14 +553,14 @@ class AgentHistory {
 ```
 
 **设计要点**：
-- **领域方法优于通用 Append**：`SetSystemInstruction`、`AppendModelInput` 等专用方法提供类型安全和清晰的调用语义，避免调用方直接构造 Entry 导致的错误。
+- **领域方法优于通用 Append**：目标状态会提供 `AppendModelInput()` 等语义化入口以封装 `_history` 追加，避免调用方直接构造条目；当前草稿暂以 `AppendHistory()` 代替，待 LiveInfo 与 Entry 类型稳定后再拆分专用方法。
 - **顺序策略复用**：当前示例仅演示时间戳注入，关于顺序号/稳定标识的安排沿用“顺序与稳定标识策略”的统一约定。
-- **EventLog 语义**：`_eventLog` / `EventLog` 明确了"不可变事件日志"的领域语义，与 Event Sourcing 术语一致，强调这是历史条目的原始存储而非展示视图。
+- **History 语义**：`_history` / `History` 明确了"不可变事件日志"的领域语义，与 Event Sourcing 术语一致，强调这是历史条目的原始存储而非展示视图。
 - **状态同步封装**：`SetSystemInstruction` 等方法内部同步更新对应的运行时字段，保持数据一致性。
 - **时间戳自动注入**：避免调用方手动传递 `Timestamp`，减少出错机会。
 - **暂不提供 Rollback**：历史回滚的语义（如何恢复 `_systemInstruction` 等状态？）尚未明确，推迟到历史快照/回放功能设计完成后，在独立重构中引入。
 
-当前阶段将潜在的 `AgentHistorySnapshot` 设计推迟，以缩小本轮重构的落地范围；待历史回放或跨线程读取需求明确后，再集中梳理持久化格式与快照语义，从而一次性引入更内聚的方案。
+当前阶段将潜在的 `AgentStateSnapshot` 设计推迟，以缩小本轮重构的落地范围；待历史回放或跨线程读取需求明确后，再集中梳理持久化格式与快照语义，从而一次性引入更内聚的方案。
 
 ## 迁移计划（分阶段）
 
@@ -572,11 +570,11 @@ class AgentHistory {
 - **注意**：当前项目没有存储会话功能，因此无需担心旧数据迁移问题。
 
 ### Phase 1：引入 HistoryEntry 类型与核心接口
-- 实现新的 `HistoryEntry` 层次和 `AgentHistory` 类。
+- 实现新的 `HistoryEntry` 层次和 `AgentState` 类。
 - **核心接口落地**：在 Phase 1 内实现 `IContextMessage`、`ISystemMessage`、`IModelInputMessage`、`IModelOutputMessage`、`IToolResultsMessage`、`IToolCallCarrier`、`ILiveScreenCarrier` 等接口，确保示例代码可编译并支撑新的类型体系。
 - **轻量实现约束**：此阶段的接口实现保持最小化——例如 `IContextAttachment` 返回空集合、`IToolResultsMessage.ExecuteError` 允许为 null、`ILiveScreenCarrier` 仅作为装饰存在；后续迭代再按需扩展 `ITokenUsageCarrier` 等附加能力，避免接口爆炸。
-- **顺序与标识策略**：依照“顺序与稳定标识策略”的约定，Phase 1 不引入 `IRevisionableEntry`、`Guid StableId` 或顺序号字段，后续随持久化能力一并评估。
-- **命名约定**：继续沿用 EventLog 术语（`_eventLog` / `EventLog`），保持与 Event Sourcing 最佳实践的一致性；顺序号将由未来的存储层提供。
+- **顺序与标识策略**：遵循“顺序与稳定标识策略”一节，Phase 1 暂缓引入顺序号与 StableId 等字段。
+- **命名约定**：继续沿用 History 术语（`_history` / `History`），保持与 Event Sourcing 最佳实践的一致性；顺序号将由未来的存储层提供。
 - 在 `LlmAgent` 中新增 `_history` 字段，写入与 `_conversationHistory` 同步的条目（双写期）。
 - 编写单元测试覆盖基本条目追加行为，验证时间戳与状态同步正确性；顺序相关断言留待存储层接入后补充。
 
@@ -601,7 +599,7 @@ class AgentHistory {
 - OpenAI 流程：确认多工具调用仍然按多条 `tool` 消息输出，`finish_reason=tool_calls` 工作正常。
 - Anthropic 流程：单条 Tool 消息包含所有工具结果，保证奇偶交错。
 - 混合会话：先运行 Claude 规划，再调用 OpenAI 工具执行；历史应按时间顺序正确记录。
-- 状态同步：`SetSystemInstruction` / `SetMemoryNotebookContent` 后，`RenderLiveContext()` 应反映最新值。
+- 状态同步：`SetSystemInstruction` / `SetMemoryNotebook` 后，`RenderLiveContext()` 应反映最新值。
 
 ## 风险与缓解
 
@@ -627,7 +625,7 @@ class AgentHistory {
 
 ## 下一步建议
 
-1. 完成 Phase 0~1 的代码草稿，把 HistoryEntry 与 AgentHistory 骨架跑通。
+1. 完成 Phase 0~1 的代码草稿，把 HistoryEntry 与 AgentState 骨架跑通。
 2. 对已有会话数据做一次"格式转换"演练，验证类型设计能覆盖现状。
 3. 改造 OpenAI/Anthropic Provider 客户端，确认 `ModelOutputDelta` 流程跑通并通过回归测试。
 4. 更新 CLI `/history` 输出，让开发者在调试时直观看出新的术语与 HistoryEntry 类型。
