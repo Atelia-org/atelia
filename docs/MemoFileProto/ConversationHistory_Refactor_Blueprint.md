@@ -1,5 +1,5 @@
 # Memo: Conversation History 抽象重构蓝图
-
+实施路线图在另外的文档中[Memo: Conversation History 抽象重构实施路线图](docs\MemoFileProto\ConversationHistory_Refactor_Roadmap.md)
 *版本：0.1 · 更新日期：2025-10-10*
 
 ## 背景与目标
@@ -235,6 +235,7 @@ record ToolResultsEntry(
 
 record ToolCallRequest(
     string ToolName,
+    string ToolCallId,
     string RawArguments,
     IReadOnlyDictionary<string, string>? Arguments,  // null = 解析失败
     string? ParseError  // 非 null 时说明解析出错
@@ -561,76 +562,3 @@ class AgentState {
 - **暂不提供 Rollback**：历史回滚的语义（如何恢复 `_systemInstruction` 等状态？）尚未明确，推迟到历史快照/回放功能设计完成后，在独立重构中引入。
 
 当前阶段将潜在的 `AgentStateSnapshot` 设计推迟，以缩小本轮重构的落地范围；待历史回放或跨线程读取需求明确后，再集中梳理持久化格式与快照语义，从而一次性引入更内聚的方案。
-
-## 迁移计划（分阶段）
-
-### Phase 0：准备
-- 梳理现有 `_conversationHistory` 使用点，标记读取/写入的位置。
-- 编写临时 Adapter，便于在迁移期间同时维护旧结构和新结构。
-- **注意**：当前项目没有存储会话功能，因此无需担心旧数据迁移问题。
-
-### Phase 1：引入 HistoryEntry 类型与核心接口
-- 实现新的 `HistoryEntry` 层次和 `AgentState` 类。
-- **核心接口落地**：在 Phase 1 内实现 `IContextMessage`、`ISystemMessage`、`IModelInputMessage`、`IModelOutputMessage`、`IToolResultsMessage`、`IToolCallCarrier`、`ILiveScreenCarrier` 等接口，确保示例代码可编译并支撑新的类型体系。
-- **轻量实现约束**：此阶段的接口实现保持最小化——例如 `IContextAttachment` 返回空集合、`IToolResultsMessage.ExecuteError` 允许为 null、`ILiveScreenCarrier` 仅作为装饰存在；后续迭代再按需扩展 `ITokenUsageCarrier` 等附加能力，避免接口爆炸。
-- **顺序与标识策略**：遵循“顺序与稳定标识策略”一节，Phase 1 暂缓引入顺序号与 StableId 等字段。
-- **命名约定**：继续沿用 History 术语（`_history` / `History`），保持与 Event Sourcing 最佳实践的一致性；顺序号将由未来的存储层提供。
-- 在 `LlmAgent` 中新增 `_history` 字段，写入与 `_conversationHistory` 同步的条目（双写期）。
-- 编写单元测试覆盖基本条目追加行为，验证时间戳与状态同步正确性；顺序相关断言留待存储层接入后补充。
-
-### Phase 2：Provider 客户端改造
-- 定义统一的 `IProviderClient.CallModelAsync` 接口，返回 `ModelOutputDelta` 序列（同步完成 `ChatResponseDelta` → `ModelOutputDelta` 更名）。
-- 基于现有 OpenAI 客户端实现适配，确保只需要少量改动即可输出新的 delta 类型。
-- 为 Anthropic 客户端实现聚合逻辑，保证奇偶交错同时减轻上层负担。
-
-### Phase 3：供应商切换管线
-- 引入一个 `ProviderRouter`，根据所需模型类型选择对应 Provider 客户端。
-- 替换 `_client.StreamChatCompletionAsync` 的调用入口，使之调用统一的 Provider 接口。
-- 验证同一会话内轮流调用 OpenAI/Anthropic 的可行性。
-
-### Phase 4：清理与增强
-- 移除旧的 `_conversationHistory` 结构。
-- 扩展工具执行管线，记录更多元数据（耗时、输入参数摘要、错误堆栈）。
-- 更新 CLI `/history` 命令，使其按照新的术语（ModelInput/ModelOutput 等）展示。
-- **后续独立评估**：历史回滚（`Rollback`）、快照/回放能力、`StableId` 引入等，需等明确使用场景后再设计。
-
-## 回归测试要点
-
-- OpenAI 流程：确认多工具调用仍然按多条 `tool` 消息输出，`finish_reason=tool_calls` 工作正常。
-- Anthropic 流程：单条 Tool 消息包含所有工具结果，保证奇偶交错。
-- 混合会话：先运行 Claude 规划，再调用 OpenAI 工具执行；历史应按时间顺序正确记录。
-- 状态同步：`SetSystemInstruction` / `SetMemoryNotebook` 后，`RenderLiveContext()` 应反映最新值。
-
-## 风险与缓解
-
-| 风险 | 说明 | 缓解策略 |
-| --- | --- | --- |
-| 类型膨胀导致维护负担 | `HistoryEntry` 细分过多 | 以最小足够集合起步，并通过 Metadata 兼容扩展 |
-| Provider 实现差异 | 多供应商接口各有约束 | 编写测试用例逐条验证协议约定，并集中维护文档 |
-| 双写期间状态同步 | 迁移阶段 `_conversationHistory` 与 `_history` 需同步 | 通过装饰器或中间层统一写入，确保二者一致 |
-| 性能开销 | 流式 delta 解析与构造增加遍历次数 | 历史条目数量有限（本地代理），影响可忽略；如需优化可缓存最近输出 |
-
-## 未来扩展
-
-在正式实现过程中，还需遵循以下通用约定，以保持各层职责清晰：
-
-- 历史层始终只落原始文本（`RawArguments` 等），不承担结构化解析。
-- Provider 扮演"解释器"，负责把原始文本解析成统一的 `IReadOnlyDictionary<string, string>`，解析失败时透明地返回错误信息。
-- 工具接口仅依赖解析后的键值对输入，避免直接接触原始文本；工具输出同样使用字符串或键值对，保持输入输出的一致性（关于动态工具描述的规划请参见“Tool 描述动态注入（暂缓实现）”一节）。
-- TODO：待消息存储层落地后，按“顺序与稳定标识策略”统一恢复顺序号生成与持久化逻辑，并补回相关测试。
-- **Live Context + History 协调**：HistoryEntry 可以新增 `LiveContextInjectedEntry`，记录每次调用附带的 Live Context，方便调试。
-- **Memory Notebook**：将 Memory 操作也抽象为 `HistoryEntry`，便于回溯记忆编辑过程。
-- **多模型策略**：在 ProviderRouter 上层增加 Strategy 层，例如"规划模型""执行模型""评审模型"各自使用不同 Provider 客户端。
-- **与 Semantic Kernel 集成评估**：若未来需要 Planner/Skill 生态，可将 SK 作为 orchestrator，内部依旧透过 Provider 客户端调用底层模型。
-
-## 下一步建议
-
-1. 完成 Phase 0~1 的代码草稿，把 HistoryEntry 与 AgentState 骨架跑通。
-2. 对已有会话数据做一次"格式转换"演练，验证类型设计能覆盖现状。
-3. 改造 OpenAI/Anthropic Provider 客户端，确认 `ModelOutputDelta` 流程跑通并通过回归测试。
-4. 更新 CLI `/history` 输出，让开发者在调试时直观看出新的术语与 HistoryEntry 类型。
-5. 在重构过程中配合 DebugUtil 记录新的历史条目，方便检查。
-
----
-
-*附注：本文档定位为纲领性方案，后续每个 Phase 应补充更细的设计与测试用例说明。*
