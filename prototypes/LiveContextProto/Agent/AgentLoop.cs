@@ -1,23 +1,27 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Tools;
 
 namespace Atelia.LiveContextProto.Agent;
 
 internal sealed class AgentLoop {
     private readonly AgentState _state;
     private readonly AgentOrchestrator _orchestrator;
+    private readonly ToolExecutor _toolExecutor;
     private readonly TextReader _input;
     private readonly TextWriter _output;
 
-    public AgentLoop(AgentState state, AgentOrchestrator orchestrator, TextReader? input = null, TextWriter? output = null) {
+    public AgentLoop(AgentState state, AgentOrchestrator orchestrator, ToolExecutor toolExecutor, TextReader? input = null, TextWriter? output = null) {
         _state = state;
         _orchestrator = orchestrator;
+        _toolExecutor = toolExecutor;
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
     }
@@ -81,8 +85,8 @@ internal sealed class AgentLoop {
     }
 
     private void PrintIntro() {
-        _output.WriteLine("=== LiveContextProto Phase 3 (LiveScreen & LiveInfo) ===");
-        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/liveinfo list|set|clear，/stub <script> [文本]，/exit 退出。");
+        _output.WriteLine("=== LiveContextProto Phase 4 (Tools & Diagnostics) ===");
+        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/liveinfo list|set|clear，/stub <script> [文本]，/tool sample|fail，/exit 退出。");
         _output.WriteLine();
         _output.WriteLine("输入任意文本将通过 Stub Provider 触发一次模型调用，你也可用 /stub 指定脚本。");
         _output.WriteLine();
@@ -325,52 +329,62 @@ internal sealed class AgentLoop {
         var argument = payload.Trim();
 
         if (argument.Length == 0 || argument.Equals("sample", StringComparison.OrdinalIgnoreCase)) {
-            AppendMockToolResults(includeError: false);
+            ExecuteInteractiveTool(includeError: false);
             return;
         }
 
         if (argument.Equals("fail", StringComparison.OrdinalIgnoreCase)) {
-            AppendMockToolResults(includeError: true);
+            ExecuteInteractiveTool(includeError: true);
             return;
         }
 
         _output.WriteLine("用法: /tool [sample|fail]");
     }
 
-    private void AppendMockToolResults(bool includeError) {
-        ToolResultsEntry entry;
-
-        if (includeError) {
-            entry = new ToolResultsEntry(Array.Empty<ToolCallResult>(), "模拟工具执行失败：超时 3.5s");
-        }
-        else {
-            var results = new[] {
-                new ToolCallResult(
+    private void ExecuteInteractiveTool(bool includeError) {
+        var requests = includeError
+            ? new[] {
+                new ToolCallRequest(
+                    "diagnostics.raise",
+                    GenerateConsoleToolCallId(),
+                    "{\"reason\":\"Console trigger\"}",
+                    new Dictionary<string, string> { { "reason", "Console trigger" } },
+                    null
+                )
+            }
+            : new[] {
+                new ToolCallRequest(
                     "memory.search",
-                    "toolcall-demo-1",
-                    ToolExecutionStatus.Success,
-                    "找到 2 条相关记忆片段",
-                    TimeSpan.FromMilliseconds(180)
-                ),
-                new ToolCallResult(
-                    "planner.summarize",
-                    "toolcall-demo-2",
-                    ToolExecutionStatus.Skipped,
-                    "跳过：策略判断无需调用",
-                    TimeSpan.FromMilliseconds(25)
+                    GenerateConsoleToolCallId(),
+                    "{\"query\":\"LiveContextProto 核心阶段\"}",
+                    new Dictionary<string, string> { { "query", "LiveContextProto 核心阶段" } },
+                    null
                 )
             };
 
-            entry = new ToolResultsEntry(results, null);
+        var records = _toolExecutor.ExecuteBatchAsync(requests, CancellationToken.None).GetAwaiter().GetResult();
+        if (records.Count == 0) {
+            _output.WriteLine("[tool] 工具执行器未返回结果。");
+            return;
         }
 
+        var results = records.Select(static record => record.CallResult).ToArray();
+        var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
+        var entry = new ToolResultsEntry(results, failure?.Result) {
+            Metadata = ToolResultMetadataHelper.PopulateSummary(records, ImmutableDictionary<string, object?>.Empty)
+        };
+
         _state.AppendToolResults(entry);
+
         _output.WriteLine(
-            includeError
-            ? "[tool] 已记录模拟失败的工具结果。"
-            : "[tool] 已记录模拟工具结果。"
+            failure is null
+                ? $"[tool] 已执行 {results.Length} 个工具调用。"
+                : $"[tool] 工具执行失败：{failure.Result}"
         );
     }
+
+    private static string GenerateConsoleToolCallId()
+        => $"console-{Guid.NewGuid():N}";
 
     private void HandleDemoCommand(string commandLine) {
         var payload = commandLine.Length <= 5

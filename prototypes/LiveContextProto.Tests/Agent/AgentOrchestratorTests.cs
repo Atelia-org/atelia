@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,6 +8,7 @@ using Atelia.LiveContextProto.Agent;
 using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Tools;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests.Agent;
@@ -47,7 +49,8 @@ public sealed class AgentOrchestratorTests {
         }
         );
 
-        var orchestrator = new AgentOrchestrator(state, router);
+        var toolExecutor = new ToolExecutor(Array.Empty<IToolHandler>());
+        var orchestrator = new AgentOrchestrator(state, router, toolExecutor);
 
         var result = await orchestrator.InvokeAsync(
             new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy),
@@ -115,7 +118,8 @@ public sealed class AgentOrchestratorTests {
             }
         );
 
-        var orchestrator = new AgentOrchestrator(state, router);
+        var toolExecutor = new ToolExecutor(Array.Empty<IToolHandler>());
+        var orchestrator = new AgentOrchestrator(state, router, toolExecutor);
 
         await orchestrator.InvokeAsync(
             new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy),
@@ -130,6 +134,69 @@ public sealed class AgentOrchestratorTests {
         Assert.False(string.IsNullOrWhiteSpace(liveScreen));
         Assert.Contains("Planner Summary", liveScreen!, StringComparison.Ordinal);
         Assert.Contains("Memory Notebook", liveScreen!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ExecutesToolCallsWhenProviderOmitsResults() {
+        var timestamps = new Queue<DateTimeOffset>(
+            new[] {
+                DateTimeOffset.Parse("2025-10-13T03:00:00Z"),
+                DateTimeOffset.Parse("2025-10-13T03:01:00Z"),
+                DateTimeOffset.Parse("2025-10-13T03:02:00Z"),
+                DateTimeOffset.Parse("2025-10-13T03:03:00Z")
+            }
+        );
+
+        var state = AgentState.CreateDefault(timestampProvider: () => timestamps.Dequeue());
+        state.AppendModelInput(
+            new ModelInputEntry(
+                new[] {
+                    new KeyValuePair<string, string>("default", "触发工具执行")
+                }
+            )
+        );
+
+        var provider = new ToolDeclarationOnlyProvider();
+        var handler = new RecordingToolHandler();
+        var toolExecutor = new ToolExecutor(new IToolHandler[] { handler });
+        var router = new ProviderRouter(
+            new[] {
+                new ProviderRouteDefinition(
+                    ProviderRouter.DefaultStubStrategy,
+                    "stub-tools",
+                    "spec/tools",
+                    "stub-model",
+                    provider,
+                    default
+                )
+            }
+        );
+
+        var orchestrator = new AgentOrchestrator(state, router, toolExecutor);
+
+        var result = await orchestrator.InvokeAsync(
+            new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy),
+            CancellationToken.None
+        );
+
+        Assert.Equal(1, handler.InvocationCount);
+
+        Assert.NotNull(result.ToolResults);
+        var toolResults = result.ToolResults!;
+        Assert.Single(toolResults.Results);
+        var executed = toolResults.Results[0];
+        Assert.Equal("memory.search", executed.ToolName);
+        Assert.Equal(ToolExecutionStatus.Success, executed.Status);
+        Assert.Contains("RecordingToolHandler", executed.Result, StringComparison.Ordinal);
+
+        Assert.True(toolResults.Metadata.ContainsKey("tool_call_count"));
+        Assert.Equal(1, toolResults.Metadata["tool_call_count"]);
+        Assert.True(toolResults.Metadata.ContainsKey("per_call_metadata"));
+
+        Assert.Equal(3, state.History.Count);
+        Assert.IsType<ModelInputEntry>(state.History[0]);
+        Assert.IsType<ModelOutputEntry>(state.History[1]);
+        Assert.IsType<ToolResultsEntry>(state.History[2]);
     }
 
     private sealed class TestProviderClient : IProviderClient {
@@ -192,6 +259,38 @@ public sealed class AgentOrchestratorTests {
             await Task.Yield();
             yield return ModelOutputDelta.Content("ack", endSegment: true);
             yield return ModelOutputDelta.Usage(new TokenUsage(10, 5));
+        }
+    }
+
+    private sealed class ToolDeclarationOnlyProvider : IProviderClient {
+        public IAsyncEnumerable<ModelOutputDelta> CallModelAsync(ProviderRequest request, CancellationToken cancellationToken)
+            => ProduceAsync();
+
+        private static async IAsyncEnumerable<ModelOutputDelta> ProduceAsync() {
+            await Task.Yield();
+            yield return ModelOutputDelta.Content("Tool invocation planned", endSegment: true);
+            yield return ModelOutputDelta.ToolCall(
+                new ToolCallRequest(
+                    "memory.search",
+                    "tool-exec-1",
+                    "{\"query\":\"phase 4 diagnostics\"}",
+                    new Dictionary<string, string> { { "query", "phase 4 diagnostics" } },
+                    null
+                )
+            );
+        }
+    }
+
+    private sealed class RecordingToolHandler : IToolHandler {
+        public int InvocationCount { get; private set; }
+        public string ToolName => "memory.search";
+
+        public ValueTask<ToolHandlerResult> ExecuteAsync(ToolCallRequest request, CancellationToken cancellationToken) {
+            InvocationCount++;
+            var metadata = ImmutableDictionary<string, object?>.Empty
+                .SetItem("invocation", InvocationCount);
+            var message = $"RecordingToolHandler 执行 {request.ToolCallId}";
+            return ValueTask.FromResult(new ToolHandlerResult(ToolExecutionStatus.Success, message, metadata));
         }
     }
 }

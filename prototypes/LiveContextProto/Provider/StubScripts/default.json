@@ -22,16 +22,6 @@
       }
     },
     {
-      "type": "toolResult",
-      "toolResult": {
-        "toolName": "memory.search",
-        "toolCallId": "stub-tool-1",
-        "status": "Success",
-        "result": "模拟返回 1 条记忆片段",
-        "elapsedMilliseconds": 140
-      }
-    },
-    {
       "type": "content",
       "content": "结合记忆片段，建议步骤：\n- 使用 Stub Provider 聚合增量。\n- 回写模型输出与工具结果。\n- 更新路线图状态。\n",
       "endSegment": true
