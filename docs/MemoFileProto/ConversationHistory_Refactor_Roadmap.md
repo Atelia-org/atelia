@@ -23,34 +23,35 @@
 
 | 阶段 | 状态 | 核心目标 | 关键交付物 |
 | --- | --- | --- | --- |
-| Phase 0：环境与骨架 | 🟢 | 创建 LiveContextProto 项目与基础目录，搭建最小 Console 驱动循环 | 项目骨架、DebugUtil 初始化、`AgentState` 空壳 |
-| Phase 1：History & Context MVP | 🟡 | 实现 HistoryEntry 分层 + RenderLiveContext 最小路径，输出可观察的上下文列表 | `AgentState` 语义化追加 API、上下文快照打印、基础单测 |
+| Phase 0：环境与骨架 | ✅ | 创建 LiveContextProto 项目与基础目录，搭建最小 Console 驱动循环 | 项目骨架、DebugUtil 初始化、`AgentState` 空壳 |
+| Phase 1：History & Context MVP | � | 实现 HistoryEntry 分层 + RenderLiveContext 最小路径，输出可观察的上下文列表 | `AgentState` 语义化追加 API、上下文快照打印、基础单测 |
 | Phase 2：Provider Stub & Router | 🟡 | 引入 `IProviderClient` 接口与路由占位，实现模拟模型流式输出 | Stub Provider、`ModelOutputDelta` 聚合器、回写历史逻辑 |
 | Phase 3：LiveScreen & LiveInfo 扩展 | 🟡 | 接入 LiveScreen 装饰与 Memory Notebook 快照，验证渲染装饰器 | LiveScreen 注入策略、Notebook Mock、上下文断言测试 |
 | Phase 4：工具链与诊断 | 🟡 | 模拟工具调用生命周期，采集 DebugUtil/Metadata，并总结迁移指南 | 工具调用流水、诊断日志回顾、经验小结文档 |
 
 ## 阶段规划细节
 
-### Phase 0：环境与骨架（🟢）
+### Phase 0：环境与骨架（✅）
 - **目标**：搭建基础框架，确保后续迭代无需再处理基础设施问题。
 - **任务要点**：
 	1. 使用 `dotnet new console` 创建项目，配置 `Directory.Build.props` 继承、全局隐式命名空间等基础设置。
 	2. 引入 `DebugUtil`，验证日志落盘与类别控制正常。
 	3. 定义 `AgentLoop`（可同步）驱动：示范读取输入、调用 Agent、打印结果。
 	4. 搭建最小版 `AgentState`、`HistoryEntry` 占位类型，保留 TODO 标记。
-- **交付验收**：项目可编译运行，输出“Hello AgentState”级别信息；`ATELIA_DEBUG_CATEGORIES=History` 时可看到初始化日志。
-- **经验沉淀**：记录与 MemoFileProto 共用配置的差异（如启动脚本、调试脚本）。
+- **交付验收**：项目已可编译运行并输出占位 Agent 信息，`ATELIA_DEBUG_CATEGORIES=History` 时可看到初始化日志与 AgentLoop 启动/退出记录。
+- **经验沉淀**：LiveContextProto 复用了共享 `Directory.Build.props` 与 `DebugUtil`，无需额外脚本；与 MemoFileProto 相比，入口更精简（仅保留 Echo 循环），后续可在 Phase 1 补齐系统命令解析。
 
-### Phase 1：History & Context MVP（🟡）
+### Phase 1：History & Context MVP（�）
 - **目标**：让 AgentState 能追加/渲染基础上下文，覆盖蓝图中“历史只追加、上下文纯读”的核心原则。
 - **任务要点**：
-	1. 按蓝图引入 `HistoryEntry` 派生（ModelInput/ModelOutput/ToolResults），实现时间戳自动注入。
-	2. 完成 `AppendModelInput/AppendModelOutput/AppendToolResults` 等语义化入口，带 DebugUtil 打点。
-	3. 实现 `RenderLiveContext()`：反向遍历、注入系统指令、可选 LiveScreen 装饰。
-	4. 编写 xUnit 测试覆盖：条目顺序、LiveScreen 装饰、上下文幂等。
-	5. Console Demo：模拟两轮对话，打印上下文快照。
-- **交付验收**：`dotnet test` 通过，控制台输出显示上下文列表与 LiveScreen（若配置）。
-- **学习目标**：理解时间戳注入、装饰器透明性，验证设计文档是否充分。
+	- ✅ 按蓝图引入 `HistoryEntry` 派生（ModelInput/ModelOutput/ToolResults），通过统一时间戳注入保持有序性。
+	- ✅ 落地 `AppendModelInput/AppendModelOutput/AppendToolResults` 语义化入口，并新增 DebugUtil 打点。
+	- 🟡 实现 `RenderLiveContext()` 并输出系统指令 + 历史条目，后续补充 LiveScreen 注入策略。
+	- ✅ 编写 xUnit 测试覆盖时间戳注入与上下文顺序，验证幂等性。
+	- 🟡 Console Demo：已联通基础命令行展示，待补两轮对话与 LiveScreen 观测脚本。
+- **交付验收**：`dotnet test` 通过，控制台 `/history` 输出显示系统消息与模型输入，LiveScreen 待 Phase 1 收尾补充。
+- **经验沉淀**：在 AgentState 内引入可注入时钟，有助于未来回放/快照测试；`RenderLiveContext()` 默认返回系统消息，调用方需注意避免重复插入。
+- **学习目标**：理解时间戳注入、装饰器透明性，并验证设计文档是否充分；下一步聚焦 LiveScreen 装饰与模型输出回写示例。
 
 ### Phase 2：Provider Stub & Router（🟡）
 - **目标**：引入统一的 Provider 接口与路由逻辑，先以 Stub 模拟流式输出，确保调用流程闭环。
@@ -110,12 +111,14 @@
 
 ## 里程碑追踪
 ### 本轮更新
+- 2025-10-12：Phase 1 启动，落地 HistoryEntry 分层、语义化追加 API、上下文渲染与 xUnit 测试，控制台 `/history` 命令展示最新上下文。
+- 2025-10-12：完成 Phase 0 骨架实现，新增 `prototypes/LiveContextProto` 控制台项目与 AgentState 占位结构，并将 DebugUtil 接入最小循环。
 - 2025-10-12：重写路线图，转向 LiveContextProto 原型，定义 5 个阶段与各阶段验收标准、风险缓解策略。
 
 ### 既往里程碑
 - 无（路线图 V2 首次立项）。
 
 ### 下一步计划
-- 启动 Phase 0：创建 `prototypes/LiveContextProto` 项目骨架，完成 DebugUtil 接入与最小 AgentLoop。
-- 编写 Phase 0 清单对应的 Issue/任务条目，安排责任人与时间窗口。
-- 准备阶段验收模板（用于记录 Demo 输出、测试结果和经验要点）。
+- 完成 Phase 1 余项：补齐 LiveScreen 装饰注入、模型输出/工具结果演示与对应测试。
+- 拆分 Phase 1 Issue 列表（LiveScreen 装饰测试、控制台多轮演示脚本），明确责任人和预计完成时间。
+- 准备 Phase 1 验收素材：更新测试快照、整理 DebugUtil 日志截屏，并记录控制台两轮对话示例。
