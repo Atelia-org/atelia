@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using Atelia.Diagnostics;
@@ -137,6 +139,8 @@ internal sealed class AgentLoop {
                     _output.WriteLine($"        {line}");
                 }
             }
+
+            WriteMetadataBlock(displayMessage.Metadata);
         }
     }
 
@@ -168,10 +172,12 @@ internal sealed class AgentLoop {
         _output.WriteLine("[assistant] (stub) 输出如下：");
         WriteOutputContents(result.Output);
         PrintTokenUsage(result.Output);
+        WriteMetadataBlock(result.Output.Metadata);
 
         if (result.ToolResults is not null) {
             WriteToolResults(result.ToolResults);
             PrintTokenUsage(result.ToolResults);
+            WriteMetadataBlock(result.ToolResults.Metadata);
         }
     }
 
@@ -213,6 +219,80 @@ internal sealed class AgentLoop {
         foreach (var result in tools.Results) {
             _output.WriteLine($"        - {result.ToolName} ({result.ToolCallId}) => {result.Status}: {result.Result}");
         }
+    }
+
+    private void WriteMetadataBlock(IReadOnlyDictionary<string, object?> metadata) {
+        var entries = metadata
+            .Where(static pair => !string.Equals(pair.Key, "token_usage", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (entries.Length == 0) { return; }
+
+        _output.WriteLine("      [metadata]");
+        foreach (var entry in entries) {
+            WriteMetadataValue(entry.Key, entry.Value, "        ");
+        }
+    }
+
+    private void WriteMetadataValue(string key, object? value, string indent) {
+        switch (value) {
+            case null:
+                _output.WriteLine($"{indent}- {key}: (null)");
+                break;
+            case TokenUsage usage:
+                _output.WriteLine($"{indent}- {key}: prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, cached={(usage.CachedPromptTokens?.ToString(CultureInfo.InvariantCulture) ?? "0")}");
+                break;
+            case IReadOnlyDictionary<string, object?> nested when nested.Count > 0:
+                _output.WriteLine($"{indent}- {key}:");
+                WriteMetadataNested(nested, indent + "  ");
+                break;
+            case IReadOnlyDictionary<string, object?>:
+                _output.WriteLine($"{indent}- {key}: {{}}");
+                break;
+            case IEnumerable sequence when value is not string:
+                WriteMetadataSequence(key, sequence, indent);
+                break;
+            default:
+                _output.WriteLine($"{indent}- {key}: {FormatMetadataPrimitive(value)}");
+                break;
+        }
+    }
+
+    private void WriteMetadataNested(IReadOnlyDictionary<string, object?> metadata, string indent) {
+        foreach (var entry in metadata.OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)) {
+            WriteMetadataValue(entry.Key, entry.Value, indent);
+        }
+    }
+
+    private void WriteMetadataSequence(string key, IEnumerable sequence, string indent) {
+        var items = new List<string>();
+        foreach (var item in sequence) {
+            items.Add(FormatMetadataPrimitive(item));
+        }
+
+        if (items.Count == 0) {
+            _output.WriteLine($"{indent}- {key}: []");
+            return;
+        }
+
+        _output.WriteLine($"{indent}- {key}: [{string.Join(", ", items)}]");
+    }
+
+    private static string FormatMetadataPrimitive(object? value) {
+        return value switch {
+            null => "(null)",
+            string s => s,
+            bool b => b ? "true" : "false",
+            double d => d.ToString("0.###", CultureInfo.InvariantCulture),
+            float f => f.ToString("0.###", CultureInfo.InvariantCulture),
+            decimal m => m.ToString("0.###", CultureInfo.InvariantCulture),
+            TimeSpan span => $"{span.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)} ms",
+            DateTimeOffset dto => dto.ToString("O", CultureInfo.InvariantCulture),
+            DateTime dt => dt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+            TokenUsage usage => $"prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, cached={(usage.CachedPromptTokens?.ToString(CultureInfo.InvariantCulture) ?? "0")}",
+            _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? "(null)"
+        };
     }
 
     private void HandleNotebookCommand(string commandLine) {
@@ -374,13 +454,17 @@ internal sealed class AgentLoop {
             Metadata = ToolResultMetadataHelper.PopulateSummary(records, ImmutableDictionary<string, object?>.Empty)
         };
 
-        _state.AppendToolResults(entry);
+        var appended = _state.AppendToolResults(entry);
 
         _output.WriteLine(
             failure is null
                 ? $"[tool] 已执行 {results.Length} 个工具调用。"
                 : $"[tool] 工具执行失败：{failure.Result}"
         );
+
+        WriteToolResults(appended);
+        PrintTokenUsage(appended);
+        WriteMetadataBlock(appended.Metadata);
     }
 
     private static string GenerateConsoleToolCallId()

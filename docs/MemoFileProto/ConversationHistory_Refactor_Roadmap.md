@@ -27,7 +27,7 @@
 | Phase 1：History & Context MVP | [x] | 实现 HistoryEntry 分层 + RenderLiveContext 最小路径，输出可观察的上下文列表 | `AgentState` 语义化追加 API、上下文快照打印、基础单测 |
 | Phase 2：Provider Stub & Router | [x] | 引入 `IProviderClient` 接口与路由占位，实现模拟模型流式输出 | Stub Provider、`ModelOutputDelta` 聚合器、回写历史逻辑 |
 | Phase 3：LiveScreen & LiveInfo 扩展 | [x] | 接入 LiveScreen 装饰与 Memory Notebook 快照，验证渲染装饰器 | LiveScreen 注入策略、Notebook Mock、上下文断言测试 |
-| Phase 4：工具链与诊断 | [>] | 模拟工具调用生命周期，采集 DebugUtil/Metadata，并总结迁移指南 | 工具调用流水、诊断日志回顾、经验小结文档 |
+| Phase 4：工具链与诊断 | [x] | 模拟工具调用生命周期，采集 DebugUtil/Metadata，并总结迁移指南 | 工具调用流水、诊断日志回顾、经验小结文档 |
 
 ## 阶段规划细节
 
@@ -82,13 +82,13 @@
 	- [x] 跨多个 LiveInfo 场景的集成测试通过。
 - **学习目标**：明确 Notebook 事件化前的协作模式，为蓝图 Deferred 项提供依据；评估 LiveInfo 自动记账的接口设计需求。
 
-### Phase 4：工具链与诊断（[>]）
+### Phase 4：工具链与诊断（[x]）
 - **目标**：模拟工具调用生命周期，采集诊断信息，并形成迁移建议。
 - **任务要点**：
 	- [x] 扩展 Stub Provider 支持输出工具调用增量，回写 `ToolCallRequest`。
 	- [x] 实现工具执行器（可同步），返回 `ToolCallResult`，包含耗时/状态。
-	- [x] 在 AgentState 中记录 Metadata（token 占位、工具耗时），并输出 DebugUtil 日志。
-	- [ ] 汇总本阶段经验，撰写迁移建议（如何将 LiveContextProto 成果落地 MemoFileProto）。
+	- [x] 在 AgentState 中记录 Metadata（token 占位、工具耗时），控制台 `/history` 与调用结果同步展示摘要，并输出 DebugUtil 日志。
+	- [x] 汇总本阶段经验，撰写迁移建议（如何将 LiveContextProto 成果落地 MemoFileProto），详见 `prototypes/LiveContextProto/Phase4_Diagnostics_Summary.md`。
 - **交付验收**：Console Demo 展示模型调用→工具执行→历史回写；日志包含耗时信息。
 - **学习目标**：验证工具调用配对流程、诊断信息裁剪策略。
 
@@ -118,6 +118,7 @@
 ## 里程碑追踪
 - 2025-10-13：**Phase 3 完成验收（[x]）**，LiveScreen 现支持多节 LiveInfo 聚合，新增 `/liveinfo` 命令与 `UpdateLiveInfoSection` API；单元测试覆盖系统指令热更新、LiveInfo 组合以及跨 Provider LiveScreen 兼容性，AgentOrchestrator Stub Provider 验收同步通过。
 ### 本轮更新
+- 2025-10-13：**Phase 4 完成验收（[x]）**，控制台现可直接查看模型输出与工具结果的 Metadata 摘要（含耗时、失败计数、per-call 诊断），Stub Provider/ToolExecutor 流程整合完成；新增文档 `prototypes/LiveContextProto/Phase4_Diagnostics_Summary.md` 汇总迁移建议。
 - 2025-10-13：**Phase 4 启动（[>]）**，默认 Stub 脚本改为仅声明工具调用，内置 `ToolExecutor` 执行 `memory.search`/`diagnostics.raise`，将耗时、失败计数与每次调用元数据写入 `ToolResultsEntry.Metadata`；新增单元测试覆盖“Provider 仅声明工具调用”路径，Console `/tool` 命令与 Stub Provider 共用同一工具流水线。
 - 2025-10-13：**Phase 3 完成验收（[x]）**，新增 `UpdateLiveInfoSection` API 与 `/liveinfo` 控制台命令，LiveScreen 支持多节聚合，并补齐系统指令热更新、跨 Provider 兼容与多 LiveInfo 组合的单元测试。
 - 2025-10-13：**Phase 2 完成验收（[x]）**，所有交付物已实现并通过测试：`IProviderClient`、`ProviderRouter`、Stub Provider（支持 JSON 脚本与占位符）、`ModelOutputAccumulator`（聚合内容/工具调用/TokenUsage）、Console Demo 流式调用闭环。**Phase 3 基础功能已实现（[>]）**，LiveScreen 装饰器与 Memory Notebook 集成已验证，控制台 `/notebook` 命令可演示 LiveInfo 动态注入；尚需补充更多扩展场景测试与跨 Provider 兼容性验收。
@@ -132,6 +133,6 @@
 - 无（路线图 V2 首次立项）。
 
 ### 下一步计划
-- 完成 Phase 4 收尾：整理 ToolExecutor 引入后的经验沉淀，撰写迁移建议并明确 MemoFileProto 主线的接入步骤。
+- 根据 Phase 4 总结文档梳理 MemoFileProto 主线迁移 checklist，识别阻塞项并安排回写节奏。
 - 扩充 Stub Provider 脚本库，增加多工具/失败/高延迟场景，覆盖 ToolExecutor 失败路径与聚合器边界测试。
 - 梳理真实 Provider 适配需求（OpenAI/Anthropic），评估工具执行元数据的透传方式并筹备对接测试桩。
