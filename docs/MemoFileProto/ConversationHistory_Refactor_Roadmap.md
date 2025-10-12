@@ -1,5 +1,5 @@
 # Memo: Conversation History 抽象重构实施路线图 · LiveContextProto
-*版本：0.1-draft · 更新日期：2025-10-12*
+*版本：0.1-draft · 更新日期：2025-10-13*
 
 > 本路线图围绕新建的 `prototypes/LiveContextProto` 项目展开，目标是在一张白纸上验证蓝图 V2 所定义的三阶段流水线（AgentState → Context Projection → Provider Router）。蓝图详见《Memo: Conversation History 抽象重构蓝图 · V2》，Roadmap 聚焦“如何一步步落地”。
 
@@ -19,19 +19,19 @@
 	- Provider 模拟优先，以快速验证上下游契约；真实 SDK 接入延后。
 
 ## 执行策略总览
-> 状态图例：🟡 = 规划中，🟢 = 进行中，✅ = 完成。
+> 状态图例：[ ] = 规划中，[>] = 进行中，[x] = 完成。
 
 | 阶段 | 状态 | 核心目标 | 关键交付物 |
 | --- | --- | --- | --- |
-| Phase 0：环境与骨架 | ✅ | 创建 LiveContextProto 项目与基础目录，搭建最小 Console 驱动循环 | 项目骨架、DebugUtil 初始化、`AgentState` 空壳 |
-| Phase 1：History & Context MVP | ✅ | 实现 HistoryEntry 分层 + RenderLiveContext 最小路径，输出可观察的上下文列表 | `AgentState` 语义化追加 API、上下文快照打印、基础单测 |
-| Phase 2：Provider Stub & Router | 🟡 | 引入 `IProviderClient` 接口与路由占位，实现模拟模型流式输出 | Stub Provider、`ModelOutputDelta` 聚合器、回写历史逻辑 |
-| Phase 3：LiveScreen & LiveInfo 扩展 | 🟡 | 接入 LiveScreen 装饰与 Memory Notebook 快照，验证渲染装饰器 | LiveScreen 注入策略、Notebook Mock、上下文断言测试 |
-| Phase 4：工具链与诊断 | 🟡 | 模拟工具调用生命周期，采集 DebugUtil/Metadata，并总结迁移指南 | 工具调用流水、诊断日志回顾、经验小结文档 |
+| Phase 0：环境与骨架 | [x] | 创建 LiveContextProto 项目与基础目录，搭建最小 Console 驱动循环 | 项目骨架、DebugUtil 初始化、`AgentState` 空壳 |
+| Phase 1：History & Context MVP | [x] | 实现 HistoryEntry 分层 + RenderLiveContext 最小路径，输出可观察的上下文列表 | `AgentState` 语义化追加 API、上下文快照打印、基础单测 |
+| Phase 2：Provider Stub & Router | [x] | 引入 `IProviderClient` 接口与路由占位，实现模拟模型流式输出 | Stub Provider、`ModelOutputDelta` 聚合器、回写历史逻辑 |
+| Phase 3：LiveScreen & LiveInfo 扩展 | [>] | 接入 LiveScreen 装饰与 Memory Notebook 快照，验证渲染装饰器 | LiveScreen 注入策略、Notebook Mock、上下文断言测试 |
+| Phase 4：工具链与诊断 | [ ] | 模拟工具调用生命周期，采集 DebugUtil/Metadata，并总结迁移指南 | 工具调用流水、诊断日志回顾、经验小结文档 |
 
 ## 阶段规划细节
 
-### Phase 0：环境与骨架（✅）
+### Phase 0：环境与骨架（[x]）
 - **目标**：搭建基础框架，确保后续迭代无需再处理基础设施问题。
 - **任务要点**：
 	1. 使用 `dotnet new console` 创建项目，配置 `Directory.Build.props` 继承、全局隐式命名空间等基础设置。
@@ -41,42 +41,48 @@
 - **交付验收**：项目已可编译运行并输出占位 Agent 信息，`ATELIA_DEBUG_CATEGORIES=History` 时可看到初始化日志与 AgentLoop 启动/退出记录。
 - **经验沉淀**：LiveContextProto 复用了共享 `Directory.Build.props` 与 `DebugUtil`，无需额外脚本；与 MemoFileProto 相比，入口更精简（仅保留 Echo 循环），后续可在 Phase 1 补齐系统命令解析。
 
-### Phase 1：History & Context MVP（✅）
-- **目标**：让 AgentState 能追加/渲染基础上下文，覆盖蓝图中“历史只追加、上下文纯读”的核心原则。
+### Phase 1：History & Context MVP（[x]）
+- **目标**：让 AgentState 能追加/渲染基础上下文，覆盖蓝图中"历史只追加、上下文纯读"的核心原则。
 - **任务要点**：
-	- ✅ 按蓝图引入 `HistoryEntry` 派生（ModelInput/ModelOutput/ToolResults），通过统一时间戳注入保持有序性。
-	- ✅ 落地 `AppendModelInput/AppendModelOutput/AppendToolResults` 语义化入口，并新增 DebugUtil 打点。
-	- ✅ 实现 `RenderLiveContext()`，在保持系统指令首位的同时对最新可装饰条目注入 LiveScreen，并复用历史实例。
-	- ✅ 编写 xUnit 测试覆盖时间戳注入、上下文顺序及 LiveScreen 装饰幂等性。
-	- ✅ Console Demo：命令行新增 `/tool sample|fail` 与 `/demo conversation`，可一键构造两轮对话、Notebook 快照与工具结果，便于观察 LiveScreen 注入效果。
+	- [x] 按蓝图引入 `HistoryEntry` 派生（ModelInput/ModelOutput/ToolResults），通过统一时间戳注入保持有序性。
+	- [x] 落地 `AppendModelInput/AppendModelOutput/AppendToolResults` 语义化入口，并新增 DebugUtil 打点。
+	- [x] 实现 `RenderLiveContext()`，在保持系统指令首位的同时对最新可装饰条目注入 LiveScreen，并复用历史实例。
+	- [x] 编写 xUnit 测试覆盖时间戳注入、上下文顺序及 LiveScreen 装饰幂等性。
+	- [x] Console Demo：命令行新增 `/tool sample|fail` 与 `/demo conversation`，可一键构造两轮对话、Notebook 快照与工具结果，便于观察 LiveScreen 注入效果。
 - **交付验收**：`dotnet test` 通过，控制台 `/history` 展示系统消息、用户输入、占位助手输出、模拟工具结果与（存在笔记时的）LiveScreen 装饰，命令 `/demo conversation` 生成的脚本日志可复现验收场景。
 - **经验沉淀**：确认 LiveScreen 始终装饰最新的输入或工具结果，Notebook 更新走受控 API；工具结果追加后 Demo/命令行均能复现上下游契约。
 - **学习目标**：筹备 Phase 2 Provider Stub：固化 `ModelOutputEntry`/`ToolResultsEntry` 聚合示例，并梳理路由与增量解析待办。
 
-### Phase 2：Provider Stub & Router（🟡）
+### Phase 2：Provider Stub & Router（[x]）
 - **目标**：引入统一的 Provider 接口与路由逻辑，先以 Stub 模拟流式输出，确保调用流程闭环。
 - **任务要点**：
-	1. 定义 `IProviderClient.CallModelAsync`（基于 `IAsyncEnumerable<ModelOutputDelta>`）。
-	2. 实现 `ProviderRouter`：根据策略标签选择 Stub Provider。
-	3. 编写 Stub Provider：从脚本/预设 JSON 读取增量，生成 `ModelOutputDelta` 流。
-	4. 聚合 delta：在 Orchestrator 中合并为 `ModelOutputEntry` 和 `ToolResultsEntry`，回写 AgentState。
-	5. Console Demo：展示请求上下文→ Stub 响应 → 历史回写 的全流程。
+	- [x] 定义 `IProviderClient.CallModelAsync`（基于 `IAsyncEnumerable<ModelOutputDelta>`）。
+	- [x] 实现 `ProviderRouter`：根据策略标签选择 Stub Provider 并输出模型元信息。
+	- [x] 编写 Stub Provider：从预设 JSON 脚本读取增量并支持占位符替换，生成 `ModelOutputDelta` 流。
+	- [x] 聚合 delta：通过 `ModelOutputAccumulator` 汇总文本/工具调用/TokenUsage，回写 `AgentState`。
+	- [x] Console Demo：默认用户输入即触发 Stub 流式调用，展示上下文→模型输出→历史回写的闭环。
 - **交付验收**：
-	- Demo 输出体现模型输出与工具占位（无真实工具）。
-	- Debug 日志展示 Router 选择、delta 聚合过程。
-- **学习目标**：检验蓝图中的 Provider 契约是否易于实现；沉淀 Stub 工具以便回归测试。
+	- [x] 控制台实时打印 Stub 模型输出、工具声明与聚合结果，`/history` 可复现相同序列。
+	- [x] Debug 日志覆盖 Router 解析、delta 聚合与 Stub 脚本执行。
+	- [x] 新增单元测试验证 delta 聚合与 Orchestrator 回写路径。
+- **经验沉淀**：Stub Provider 机制已验证完整的流式调用流程，包括内容片段、工具调用声明、工具结果与 TokenUsage 聚合。控制台命令 `/stub <script>` 可自由切换脚本场景，为后续真实 Provider 接入奠定基础。
 
-### Phase 3：LiveScreen & LiveInfo 扩展（🟡）
+### Phase 3：LiveScreen & LiveInfo 扩展（[>]）
 - **目标**：在 MVP 上引入 LiveScreen 装饰与 Memory Notebook 投影，验证接口装饰协作。
 - **任务要点**：
-	1. 实现 Notebook Mock（例如从文件读取或内存集合），提供更新接口。
-	2. 在 AgentState 中追加 Notebook LiveInfo 字段，并在 `RenderLiveContext` 中附加 LiveScreen。
-	3. 增加测试覆盖：Notebook 更新时 LiveScreen 变化；保持历史条目不受影响。
-	4. Console Demo：展示 Notebook 编辑 → 下一轮上下文 LiveScreen 更新。
-- **交付验收**：LiveScreen Decorator 生效；上下文列表保持可读性；测试验证装饰器透明性。
-- **学习目标**：明确 Notebook 事件化前的协作模式，为蓝图 Deferred 项提供依据。
+	- [x] 实现 Notebook Mock（内存字段），提供更新接口 `UpdateMemoryNotebook`。
+	- [x] 在 AgentState 中追加 Notebook LiveInfo 字段，并在 `RenderLiveContext` 中附加 LiveScreen。
+	- [x] 增加测试覆盖：Notebook 更新时 LiveScreen 变化；保持历史条目不受影响。
+	- [x] Console Demo：通过 `/notebook` 命令展示 Notebook 编辑 → 下一轮上下文 LiveScreen 更新。
+	- [ ] 补充更多 LiveInfo 扩展场景测试（如系统指令热更新、多种 LiveInfo 组合）。
+	- [ ] 验证跨 Provider 的 LiveScreen 兼容性（准备真实 Provider 适配前的验收）。
+- **交付验收**：
+	- [x] LiveScreen Decorator 生效，在最新输入或工具结果条目上成功注入。
+	- [x] 上下文列表保持可读性，装饰器透明访问 `InnerMessage`。
+	- [ ] 跨多个 LiveInfo 场景的集成测试通过。
+- **学习目标**：明确 Notebook 事件化前的协作模式，为蓝图 Deferred 项提供依据；评估 LiveInfo 自动记账的接口设计需求。
 
-### Phase 4：工具链与诊断（🟡）
+### Phase 4：工具链与诊断（[ ]）
 - **目标**：模拟工具调用生命周期，采集诊断信息，并形成迁移建议。
 - **任务要点**：
 	1. 扩展 Stub Provider 支持输出工具调用增量，回写 `ToolCallRequest`。
@@ -111,6 +117,8 @@
 
 ## 里程碑追踪
 ### 本轮更新
+- 2025-10-13：**Phase 2 完成验收（[x]）**，所有交付物已实现并通过测试：`IProviderClient`、`ProviderRouter`、Stub Provider（支持 JSON 脚本与占位符）、`ModelOutputAccumulator`（聚合内容/工具调用/TokenUsage）、Console Demo 流式调用闭环。**Phase 3 基础功能已实现（[>]）**，LiveScreen 装饰器与 Memory Notebook 集成已验证，控制台 `/notebook` 命令可演示 LiveInfo 动态注入；尚需补充更多扩展场景测试与跨 Provider 兼容性验收。
+- 2025-10-13：Phase 2 启动（[>]），落地 `IProviderClient`、`ProviderRouter`、Stub JSON 脚本与 `ModelOutputAccumulator`；控制台改为通过 Stub Provider 流式生成响应，并新增对应单元测试。
 - 2025-10-12：Phase 1 Demo 扩展，新增 `/tool` 与 `/demo` 命令、工具结果样例及 LiveScreen 测试用例，控制台脚本可直接复现双轮对话流程。
 - 2025-10-12：LiveContextProto Phase 1 更新，`RenderLiveContext` 支持 LiveScreen 注入；新增 `/notebook` 命令、占位助手回写与 xUnit 测试覆盖相关行为。
 - 2025-10-12：Phase 1 启动，落地 HistoryEntry 分层、语义化追加 API、上下文渲染与 xUnit 测试，控制台 `/history` 命令展示最新上下文。
@@ -121,6 +129,6 @@
 - 无（路线图 V2 首次立项）。
 
 ### 下一步计划
-- 启动 Phase 2：定义 `IProviderClient` 与 `ModelOutputDelta` 聚合骨架，拆分路由与 Stub Provider 任务。
-- 设计 Stub Provider 数据脚本与控制台演示流程，确保可展示增量输出与工具调用占位。
-- 梳理 Phase 2 测试策略：确定针对 delta 聚合、历史回写以及失败分支的最小 xUnit 覆盖面。
+- 扩充 Stub Provider 脚本库，覆盖工具失败分支与多段内容分段，验证聚合器的错误路径。
+- 梳理真实 Provider 适配需求（OpenAI/Anthropic），准备抽象层对接测试桩。
+- 规划 Phase 3 输入：明确 Notebook 事件化前的 LiveScreen 扩展测试与 Demo 场景。

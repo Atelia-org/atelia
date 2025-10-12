@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Atelia.Diagnostics;
+using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
 
@@ -8,11 +10,13 @@ namespace Atelia.LiveContextProto.Agent;
 
 internal sealed class AgentLoop {
     private readonly AgentState _state;
+    private readonly AgentOrchestrator _orchestrator;
     private readonly TextReader _input;
     private readonly TextWriter _output;
 
-    public AgentLoop(AgentState state, TextReader? input = null, TextWriter? output = null) {
+    public AgentLoop(AgentState state, AgentOrchestrator orchestrator, TextReader? input = null, TextWriter? output = null) {
         _state = state;
+        _orchestrator = orchestrator;
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
     }
@@ -53,6 +57,11 @@ internal sealed class AgentLoop {
                 continue;
             }
 
+            if (line.StartsWith("/stub", StringComparison.OrdinalIgnoreCase)) {
+                HandleStubCommand(line);
+                continue;
+            }
+
             if (string.Equals(line, "/reset", StringComparison.OrdinalIgnoreCase)) {
                 _state.Reset();
                 _output.WriteLine("[state] 已清空历史。");
@@ -66,10 +75,10 @@ internal sealed class AgentLoop {
     }
 
     private void PrintIntro() {
-        _output.WriteLine("=== LiveContextProto Phase 1 (History & Context MVP) ===");
-        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/exit 退出。");
+        _output.WriteLine("=== LiveContextProto Phase 2 (Provider Stub & Router) ===");
+        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/stub <script> [文本]，/exit 退出。");
         _output.WriteLine();
-        _output.WriteLine("输入任意文本触发占位会话循环，系统将生成示例助手响应。");
+        _output.WriteLine("输入任意文本将通过 Stub Provider 触发一次模型调用，你也可用 /stub 指定脚本。");
         _output.WriteLine();
         _output.WriteLine($"[system] {_state.SystemInstruction}");
         _output.WriteLine();
@@ -121,7 +130,7 @@ internal sealed class AgentLoop {
         }
     }
 
-    private void AppendUserInput(string text) {
+    private void AppendUserInput(string text, string? stubScript = null) {
         var sections = new List<KeyValuePair<string, string>>
         {
             new("default", text)
@@ -129,19 +138,40 @@ internal sealed class AgentLoop {
 
         _state.AppendModelInput(new ModelInputEntry(sections));
         _output.WriteLine($"[state] 已记录用户输入（长度 {text.Length}）。");
-        AppendMockAssistantResponse(text);
+
+        InvokeStubProvider(stubScript);
     }
 
-    private void AppendMockAssistantResponse(string userText) {
-        var contents = new[] { $"Echo: {userText}" };
-        var entry = new ModelOutputEntry(
-            contents,
-            Array.Empty<ToolCallRequest>(),
-            new ModelInvocationDescriptor("debug", "echo-demo", "livecontextproto/echo")
-        );
+    private void InvokeStubProvider(string? stubScript) {
+        try {
+            var options = new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy, stubScript);
+            var result = _orchestrator.InvokeAsync(options, CancellationToken.None).GetAwaiter().GetResult();
+            PrintInvocationResult(result);
+        }
+        catch (Exception ex) {
+            DebugUtil.Print("Provider", $"Stub provider invocation failed: {ex}");
+            _output.WriteLine($"[error] 模拟模型调用失败：{ex.Message}");
+        }
+    }
 
-        _state.AppendModelOutput(entry);
-        _output.WriteLine("[assistant] (mock) 已生成占位响应。");
+    private void PrintInvocationResult(AgentInvocationResult result) {
+        _output.WriteLine("[assistant] (stub) 输出如下：");
+        WriteOutputContents(result.Output);
+        PrintTokenUsage(result.Output);
+
+        if (result.ToolResults is not null) {
+            WriteToolResults(result.ToolResults);
+            PrintTokenUsage(result.ToolResults);
+        }
+    }
+
+    private void PrintTokenUsage(IContextMessage message) {
+        if (!message.Metadata.TryGetValue("token_usage", out var value)) { return; }
+        if (value is not TokenUsage usage) { return; }
+
+        _output.WriteLine(
+            $"      [usage] prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, cached={(usage.CachedPromptTokens?.ToString() ?? "0")}"
+        );
     }
 
     private void WriteInputSections(IReadOnlyList<KeyValuePair<string, string>> sections) {
@@ -289,36 +319,35 @@ internal sealed class AgentLoop {
         _state.Reset();
         _state.UpdateMemoryNotebook("- Phase 1 MVP 已完成\n- 准备进入 Provider Stub 阶段\n- 记得补充工具聚合测试");
 
-        AppendDemoExchange(
-            "我们当前的 LiveContextProto 处于什么阶段？",
-            "Phase 1 已完成：支持上下文渲染、LiveScreen 与 Notebook 管理。"
-        );
-
-        AppendMockToolResults(includeError: false);
-
-        AppendDemoExchange(
-            "下一步需要验证哪些能力？",
-            "需要实现 Provider Stub、模拟模型增量流并回写 ToolResults。"
-        );
+        AppendUserInput("我们当前的 LiveContextProto 处于什么阶段？");
+        AppendUserInput("下一步需要验证哪些能力？");
 
         _output.WriteLine("[demo] 示例构造完毕，可使用 /history 查看上下文，或 /notebook view 查看记忆笔记。");
     }
 
-    private void AppendDemoExchange(string userMessage, string assistantResponse) {
-        var sections = new List<KeyValuePair<string, string>> {
-            new("default", userMessage)
-        };
+    private void HandleStubCommand(string commandLine) {
+        // 形态：/stub <scriptName> [message text]
+        var payload = commandLine.Length <= 5 ? string.Empty : commandLine[5..];
+        var trimmed = payload.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) {
+            _output.WriteLine("用法: /stub <scriptName> [文本] ；示例：/stub default 现在是什么阶段?");
+            return;
+        }
 
-        _state.AppendModelInput(new ModelInputEntry(sections));
+        var firstSpace = trimmed.IndexOf(' ');
+        if (firstSpace < 0) {
+            // 仅指定脚本，不追加新输入，直接用当前上下文触发一次调用
+            InvokeStubProvider(trimmed);
+            return;
+        }
 
-        var entry = new ModelOutputEntry(
-            new[] { assistantResponse },
-            Array.Empty<ToolCallRequest>(),
-            new ModelInvocationDescriptor("demo", "scripted", "livecontextproto/demo")
-        );
+        var script = trimmed.Substring(0, firstSpace);
+        var message = trimmed.Substring(firstSpace + 1).Trim();
+        if (string.IsNullOrWhiteSpace(message)) {
+            InvokeStubProvider(script);
+            return;
+        }
 
-        _state.AppendModelOutput(entry);
-
-        _output.WriteLine($"[demo] 已追加示例对话：{userMessage}");
+        AppendUserInput(message, script);
     }
 }

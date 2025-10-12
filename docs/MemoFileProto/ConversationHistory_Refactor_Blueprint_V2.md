@@ -82,13 +82,13 @@
 
 | 设计主题 | 状态 | 简述 | 详细章节 |
 | --- | --- | --- | --- |
-| AgentState 历史层抽象 | ✅ | HistoryEntry 分层、追加式 AgentState 及其单向数据流已定稿，等待全面替换旧 `_conversationHistory`。 | [目标架构（Target Design）](#目标架构target-design) |
+| AgentState 历史层抽象 | ✅ | HistoryEntry 分层、追加式 AgentState 及其单向数据流已定稿，语义化追加 API 已全面实现并通过测试。 | [目标架构（Target Design）](#目标架构target-design) |
 | ContextMessage 接口束 | ✅ | 基础接口、角色化派生与 mix-in 能力已定稿，并与 HistoryEntry 抽象保持一致。 | [ContextMessage 层接口设计（✅）](#contextmessage-层接口设计) |
-| Context 渲染/投影 | 🛠️ | RenderLiveContext 流程与 LiveScreen 装饰策略已锁定，还需在实现阶段验证多模型兼容性。 | [数据与交互流](#数据与交互流) |
-| Provider 抽象与路由 | 🛠️ | IProviderClient、ModelOutputDelta 管线设计完成，ProviderRouter 及增量聚合正准备落地。 | [目标架构（Target Design）](#目标架构target-design) |
-| AgentState 语义化追加 API | 🛠️ | 拆分 `AppendModelInput/Output/ToolResults` 等领域方法的契约已确定，等待替换临时 `AppendHistory`。 | [AgentState 与 LiveInfo 职责](#agentstate-与-liveinfo-职责) |
-| LiveInfo 与附加能力 | ⏳ | Memory Notebook、Tool Manifest、附件体系等延后至阶段 4+ 统一评估。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
-| 诊断与元数据策略 | ⏳ | Metadata、TokenUsage、DebugUtil 深度集成尚未定稿，需要与遥测方案协同。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
+| Context 渲染/投影 | ✅ | RenderLiveContext 流程与 LiveScreen 装饰策略已实现并验证，支持 Memory Notebook 动态注入。 | [数据与交互流](#数据与交互流) |
+| Provider 抽象与路由 | ✅ | IProviderClient、ModelOutputDelta 管线与 ProviderRouter 已落地，Stub Provider 完整验证流式调用闭环。 | [目标架构（Target Design）](#目标架构target-design) |
+| AgentState 语义化追加 API | ✅ | `AppendModelInput/Output/ToolResults` 等领域方法已实现，替代临时 `AppendHistory`，并集成时间戳注入与 DebugUtil 打点。 | [AgentState 与 LiveInfo 职责](#agentstate-与-liveinfo-职责) |
+| LiveInfo 与附加能力 | 🛠️ | LiveScreen 装饰器与基础 Notebook 投影已实现，附件体系、Notebook 事件化、动态工具 manifest 等延后至阶段 4+。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
+| 诊断与元数据策略 | 🛠️ | DebugUtil 集成与 TokenUsage 初步支持已完成，深度遥测方案（计费、缓存命中）尚未定稿。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
 
 状态标签释义：
 - ✅ 表示设计与约束已冻结，可直接作为实现基准。
@@ -743,15 +743,16 @@ interface IContextAttachment { }
 
 ## 重构进度追踪
 ### 本轮更新
-- 2025-10-12：修正“设计状态总览”中 ContextMessage 章节锚点，恢复状态表与正文之间的跳转一致性。
-- 2025-10-12：为 Provider 客户端与 AgentState 章节补充状态标识与目录标注，使蓝图主体与“设计状态总览”保持一致的成熟度提示。
-- 对照 V1 蓝图补写“Event Sourcing”“CQRS 与 Repository”“Strategy + Adapter”章节，明确事件语义、读写分离与供应商适配流程。
+- 2025-10-13：**设计状态总览更新**，根据 LiveContextProto 实际代码进度同步状态标记：AgentState 历史层抽象、ContextMessage 接口束、Context 渲染/投影、Provider 抽象与路由、AgentState 语义化追加 API 已全部标记为 ✅（已完成并验证）；LiveInfo 与附加能力、诊断与元数据策略升级为 🛠️（基础功能已实现，扩展功能待补充）。与路线图 Phase 2 完成、Phase 3 进行中的实际进度保持一致。
+- 2025-10-12：修正"设计状态总览"中 ContextMessage 章节锚点，恢复状态表与正文之间的跳转一致性。
+- 2025-10-12：为 Provider 客户端与 AgentState 章节补充状态标识与目录标注，使蓝图主体与"设计状态总览"保持一致的成熟度提示。
+- 对照 V1 蓝图补写"Event Sourcing""CQRS 与 Repository""Strategy + Adapter"章节，明确事件语义、读写分离与供应商适配流程。
 - 将 DebugUtil 打点、`IClock` 注入、策略路由等细节显式写入设计模式章节，便于实现团队直接引用。
 
 ### 既往里程碑
-- 2025-10-12（第 1 轮）：新增“与 V1 蓝图的差异对照”表、补充设计验收准则，并完成目录与状态标识的统一整理。
+- 2025-10-12（第 1 轮）：新增"与 V1 蓝图的差异对照"表、补充设计验收准则，并完成目录与状态标识的统一整理。
 
 ### 下一步计划
-- 盘点“已完成设计”章节与现有代码实现的差距，补上接口示例或链接，并在迭代中定期校验状态总览与正文锚点的一致性。
-- 与 Roadmap V2 草稿同步更新章节引用，保证阶段规划与蓝图状态总览一致。
-- 继续梳理 Deferred 项（尤其是 LiveInfo 事件化、附件体系）的设计前置条件，准备后续迭代所需的待办列表。
+- 在 Phase 3 完整验收后，评估真实 Provider（OpenAI/Anthropic）接入的准备工作，补充跨供应商兼容性测试用例。
+- 梳理 Deferred 项（尤其是 LiveInfo 事件化、附件体系、动态工具 manifest）的设计前置条件，准备 Phase 4 所需的待办列表。
+- 定期校验蓝图与路线图的状态总览一致性，确保设计真相源与实施进度同步更新。

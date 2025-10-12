@@ -1,6 +1,9 @@
+using System.IO;
 using System.Text;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Agent;
+using Atelia.LiveContextProto.Provider;
+using Atelia.LiveContextProto.Provider.Stub;
 using Atelia.LiveContextProto.State;
 
 namespace Atelia.LiveContextProto;
@@ -15,7 +18,11 @@ internal static class Program {
         DebugUtil.Print(DebugCategory, "LiveContextProto bootstrap starting");
 
         var agentState = AgentState.CreateDefault();
-        var loop = new AgentLoop(agentState);
+        var stubScriptsDirectory = Path.Combine(AppContext.BaseDirectory, "Provider", "StubScripts");
+        var stubProvider = new StubProviderClient(stubScriptsDirectory);
+        var router = ProviderRouter.CreateDefault(stubProvider);
+        var orchestrator = new AgentOrchestrator(agentState, router);
+        var loop = new AgentLoop(agentState, orchestrator);
 
         loop.Run();
 

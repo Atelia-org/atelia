@@ -1,0 +1,8 @@
+{
+  "deltas": [
+    { "type": "content", "content": "多段输出：首段\n", "endSegment": false },
+    { "type": "content", "content": "第二段\n", "endSegment": true },
+    { "type": "content", "content": "第三段（无工具）", "endSegment": true },
+    { "type": "tokenUsage", "tokenUsage": { "promptTokens": 55, "completionTokens": 20 } }
+  ]
+}
