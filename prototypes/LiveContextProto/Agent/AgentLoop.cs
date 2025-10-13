@@ -1,31 +1,20 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
-using System.Threading;
 using Atelia.Diagnostics;
-using Atelia.LiveContextProto.Provider;
-using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
-using Atelia.LiveContextProto.Tools;
 
 namespace Atelia.LiveContextProto.Agent;
 
-internal sealed class AgentLoop {
-    private readonly AgentState _state;
-    private readonly AgentOrchestrator _orchestrator;
-    private readonly ToolExecutor _toolExecutor;
-    private readonly ToolCatalog _toolCatalog;
+internal sealed class ConsoleTui {
+    private readonly LlmAgent _agent;
     private readonly TextReader _input;
     private readonly TextWriter _output;
 
-    public AgentLoop(AgentState state, AgentOrchestrator orchestrator, ToolExecutor toolExecutor, ToolCatalog toolCatalog, TextReader? input = null, TextWriter? output = null) {
-        _state = state;
-        _orchestrator = orchestrator;
-        _toolExecutor = toolExecutor;
-        _toolCatalog = toolCatalog ?? throw new ArgumentNullException(nameof(toolCatalog));
+    public ConsoleTui(LlmAgent agent, TextReader? input = null, TextWriter? output = null) {
+        _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
     }
@@ -77,7 +66,7 @@ internal sealed class AgentLoop {
             }
 
             if (string.Equals(line, "/reset", StringComparison.OrdinalIgnoreCase)) {
-                _state.Reset();
+                _agent.Reset();
                 _output.WriteLine("[state] 已清空历史。");
                 continue;
             }
@@ -94,14 +83,14 @@ internal sealed class AgentLoop {
         _output.WriteLine();
         _output.WriteLine("输入任意文本将通过 Stub Provider 触发一次模型调用，你也可用 /stub 指定脚本。");
         _output.WriteLine();
-        _output.WriteLine($"[system] {_state.SystemInstruction}");
+        _output.WriteLine($"[system] {_agent.SystemInstruction}");
         _output.WriteLine();
 
-        DebugUtil.Print("History", "AgentLoop intro displayed");
+        DebugUtil.Print("History", "ConsoleTui intro displayed");
     }
 
     private void PrintHistory() {
-        var context = _state.RenderLiveContext();
+        var context = _agent.RenderLiveContext();
         if (context.Count == 0) {
             _output.WriteLine("[history] 暂无上下文消息。");
             return;
@@ -147,27 +136,10 @@ internal sealed class AgentLoop {
     }
 
     private void AppendUserInput(string text, string? stubScript = null) {
-        var sections = new List<KeyValuePair<string, string>>
-        {
-            new("default", text)
-        };
-
-        _state.AppendModelInput(new ModelInputEntry(sections));
+        _agent.AppendUserInput(text);
         _output.WriteLine($"[state] 已记录用户输入（长度 {text.Length}）。");
 
-        InvokeStubProvider(stubScript);
-    }
-
-    private void InvokeStubProvider(string? stubScript) {
-        try {
-            var options = new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy, stubScript);
-            var result = _orchestrator.InvokeAsync(options, CancellationToken.None).GetAwaiter().GetResult();
-            PrintInvocationResult(result);
-        }
-        catch (Exception ex) {
-            DebugUtil.Print("Provider", $"Stub provider invocation failed: {ex}");
-            _output.WriteLine($"[error] 模拟模型调用失败：{ex.Message}");
-        }
+        InvokeStubAndDisplay(stubScript);
     }
 
     private void PrintInvocationResult(AgentInvocationResult result) {
@@ -310,7 +282,7 @@ internal sealed class AgentLoop {
         }
 
         if (argument.Equals("clear", StringComparison.OrdinalIgnoreCase)) {
-            _state.UpdateMemoryNotebook(null);
+            _agent.UpdateMemoryNotebook(null);
             _output.WriteLine("[notebook] 已清空记忆笔记。");
             return;
         }
@@ -320,7 +292,7 @@ internal sealed class AgentLoop {
                 ? argument[3..].TrimStart()
                 : string.Empty;
 
-            _state.UpdateMemoryNotebook(newContent);
+            _agent.UpdateMemoryNotebook(newContent);
             _output.WriteLine("[notebook] 记忆笔记已更新。");
             return;
         }
@@ -329,7 +301,7 @@ internal sealed class AgentLoop {
     }
 
     private void PrintNotebookSnapshot() {
-        var snapshot = _state.MemoryNotebookSnapshot;
+        var snapshot = _agent.MemoryNotebookSnapshot;
         _output.WriteLine("[notebook] 当前内容如下：");
         _output.WriteLine(snapshot);
         _output.WriteLine($"[notebook] 长度: {snapshot.Length}");
@@ -364,7 +336,7 @@ internal sealed class AgentLoop {
                 return;
             }
 
-            _state.UpdateLiveInfoSection(section, content);
+            _agent.UpdateLiveInfoSection(section, content);
             _output.WriteLine($"[liveinfo] 已更新节 '{section}'。");
             return;
         }
@@ -376,7 +348,7 @@ internal sealed class AgentLoop {
                 return;
             }
 
-            _state.UpdateLiveInfoSection(remainder.Trim(), null);
+            _agent.UpdateLiveInfoSection(remainder.Trim(), null);
             _output.WriteLine($"[liveinfo] 已移除节 '{remainder.Trim()}'。");
             return;
         }
@@ -387,7 +359,7 @@ internal sealed class AgentLoop {
     private void PrintLiveInfoSections() {
         _output.WriteLine("[liveinfo] 当前节一览：");
 
-        var sections = _state.LiveInfoSections
+        var sections = _agent.LiveInfoSections
             .OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -400,7 +372,7 @@ internal sealed class AgentLoop {
             }
         }
 
-        _output.WriteLine($"  * Memory Notebook: 长度 {_state.MemoryNotebookSnapshot.Length}");
+        _output.WriteLine($"  * Memory Notebook: 长度 {_agent.MemoryNotebookSnapshot.Length}");
     }
 
     private void HandleToolCommand(string commandLine) {
@@ -424,47 +396,32 @@ internal sealed class AgentLoop {
     }
 
     private void ExecuteInteractiveTool(bool includeError) {
-        var toolName = includeError ? "diagnostics.raise" : "memory.search";
+        var execution = _agent.ExecuteInteractiveTool(includeError);
 
-        if (!_toolCatalog.TryGet(toolName, out var tool)) {
-            _output.WriteLine($"[tool] 工具未注册：{toolName}");
-            return;
+        switch (execution.Status) {
+            case AgentToolExecutionResultStatus.ToolNotRegistered:
+                _output.WriteLine($"[tool] 工具未注册：{execution.ToolName}");
+                return;
+            case AgentToolExecutionResultStatus.NoResults:
+                _output.WriteLine("[tool] 工具执行器未返回结果。");
+                return;
+            case AgentToolExecutionResultStatus.Success when execution.Entry is null:
+                _output.WriteLine("[tool] 工具执行结果不可用。");
+                return;
+            case AgentToolExecutionResultStatus.Success:
+                var message = execution.FailureMessage is null
+                    ? $"[tool] 已执行 {execution.Entry!.Results.Count} 个工具调用。"
+                    : $"[tool] 工具执行失败：{execution.FailureMessage}";
+                _output.WriteLine(message);
+
+                WriteToolResults(execution.Entry!);
+                PrintTokenUsage(execution.Entry!);
+                WriteMetadataBlock(execution.Entry!.Metadata);
+                return;
+            default:
+                return;
         }
-
-        var rawArguments = includeError
-            ? "{\"reason\":\"Console trigger\"}"
-            : "{\"query\":\"LiveContextProto 核心阶段\"}";
-
-        var request = ToolArgumentParser.CreateRequest(tool, GenerateConsoleToolCallId(), rawArguments);
-        var requests = new[] { request };
-
-        var records = _toolExecutor.ExecuteBatchAsync(requests, CancellationToken.None).GetAwaiter().GetResult();
-        if (records.Count == 0) {
-            _output.WriteLine("[tool] 工具执行器未返回结果。");
-            return;
-        }
-
-        var results = records.Select(static record => record.CallResult).ToArray();
-        var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
-        var entry = new ToolResultsEntry(results, failure?.Result) {
-            Metadata = ToolResultMetadataHelper.PopulateSummary(records, ImmutableDictionary<string, object?>.Empty)
-        };
-
-        var appended = _state.AppendToolResults(entry);
-
-        _output.WriteLine(
-            failure is null
-                ? $"[tool] 已执行 {results.Length} 个工具调用。"
-                : $"[tool] 工具执行失败：{failure.Result}"
-        );
-
-        WriteToolResults(appended);
-        PrintTokenUsage(appended);
-        WriteMetadataBlock(appended.Metadata);
     }
-
-    private static string GenerateConsoleToolCallId()
-        => $"console-{Guid.NewGuid():N}";
 
     private void HandleDemoCommand(string commandLine) {
         var payload = commandLine.Length <= 5
@@ -484,8 +441,8 @@ internal sealed class AgentLoop {
     private void RunDemoConversation() {
         _output.WriteLine("[demo] 正在重置状态并注入示例历史……");
 
-        _state.Reset();
-        _state.UpdateMemoryNotebook("- Phase 1 MVP 已完成\n- 准备进入 Provider Stub 阶段\n- 记得补充工具聚合测试");
+        _agent.Reset();
+        _agent.UpdateMemoryNotebook("- Phase 1 MVP 已完成\n- 准备进入 Provider Stub 阶段\n- 记得补充工具聚合测试");
 
         AppendUserInput("我们当前的 LiveContextProto 处于什么阶段？");
         AppendUserInput("下一步需要验证哪些能力？");
@@ -505,17 +462,29 @@ internal sealed class AgentLoop {
         var firstSpace = trimmed.IndexOf(' ');
         if (firstSpace < 0) {
             // 仅指定脚本，不追加新输入，直接用当前上下文触发一次调用
-            InvokeStubProvider(trimmed);
+            InvokeStubAndDisplay(trimmed);
             return;
         }
 
         var script = trimmed.Substring(0, firstSpace);
         var message = trimmed.Substring(firstSpace + 1).Trim();
         if (string.IsNullOrWhiteSpace(message)) {
-            InvokeStubProvider(script);
+            InvokeStubAndDisplay(script);
             return;
         }
 
         AppendUserInput(message, script);
+    }
+
+    private void InvokeStubAndDisplay(string? stubScript) {
+        var invocation = _agent.InvokeStubProvider(stubScript);
+        if (!invocation.Success) {
+            _output.WriteLine($"[error] 模拟模型调用失败：{invocation.Exception?.Message}");
+            return;
+        }
+
+        if (invocation.Result is not null) {
+            PrintInvocationResult(invocation.Result);
+        }
     }
 }

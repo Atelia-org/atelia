@@ -33,7 +33,8 @@ internal static class Program {
         var toolExecutor = new ToolExecutor(toolCatalog.CreateHandlers());
 
         var orchestrator = new AgentOrchestrator(agentState, router, toolExecutor, toolCatalog);
-        var loop = new AgentLoop(agentState, orchestrator, toolExecutor, toolCatalog);
+        var agent = new LlmAgent(agentState, orchestrator, toolExecutor, toolCatalog);
+        var loop = new ConsoleTui(agent);
 
         loop.Run();
 
