@@ -23,15 +23,17 @@ internal static class Program {
         var stubProvider = new StubProviderClient(stubScriptsDirectory);
         var router = ProviderRouter.CreateDefault(stubProvider);
 
-        var toolExecutor = new ToolExecutor(
-            new IToolHandler[] {
-                new SampleMemorySearchToolHandler(),
-                new SampleFailingToolHandler()
-        }
+        var toolCatalog = ToolCatalog.Create(
+            new ITool[] {
+                new SampleMemorySearchTool(),
+                new SampleDiagnosticsTool()
+            }
         );
 
-        var orchestrator = new AgentOrchestrator(agentState, router, toolExecutor);
-        var loop = new AgentLoop(agentState, orchestrator, toolExecutor);
+        var toolExecutor = new ToolExecutor(toolCatalog.CreateHandlers());
+
+        var orchestrator = new AgentOrchestrator(agentState, router, toolExecutor, toolCatalog);
+        var loop = new AgentLoop(agentState, orchestrator, toolExecutor, toolCatalog);
 
         loop.Run();
 

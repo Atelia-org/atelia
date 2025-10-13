@@ -49,8 +49,15 @@ public sealed class AgentOrchestratorTests {
         }
         );
 
+        var toolCatalog = ToolCatalog.Create(
+            new ITool[] {
+                new SampleMemorySearchTool(),
+                new SampleDiagnosticsTool()
+        }
+        );
+
         var toolExecutor = new ToolExecutor(Array.Empty<IToolHandler>());
-        var orchestrator = new AgentOrchestrator(state, router, toolExecutor);
+        var orchestrator = new AgentOrchestrator(state, router, toolExecutor, toolCatalog);
 
         var result = await orchestrator.InvokeAsync(
             new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy),
@@ -118,8 +125,15 @@ public sealed class AgentOrchestratorTests {
             }
         );
 
+        var toolCatalog = ToolCatalog.Create(
+            new ITool[] {
+                new SampleMemorySearchTool(),
+                new SampleDiagnosticsTool()
+        }
+        );
+
         var toolExecutor = new ToolExecutor(Array.Empty<IToolHandler>());
-        var orchestrator = new AgentOrchestrator(state, router, toolExecutor);
+        var orchestrator = new AgentOrchestrator(state, router, toolExecutor, toolCatalog);
 
         await orchestrator.InvokeAsync(
             new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy),
@@ -158,6 +172,13 @@ public sealed class AgentOrchestratorTests {
 
         var provider = new ToolDeclarationOnlyProvider();
         var handler = new RecordingToolHandler();
+        var toolCatalog = ToolCatalog.Create(
+            new ITool[] {
+                new SampleMemorySearchTool(),
+                new SampleDiagnosticsTool()
+        }
+        );
+
         var toolExecutor = new ToolExecutor(new IToolHandler[] { handler });
         var router = new ProviderRouter(
             new[] {
@@ -172,7 +193,7 @@ public sealed class AgentOrchestratorTests {
             }
         );
 
-        var orchestrator = new AgentOrchestrator(state, router, toolExecutor);
+        var orchestrator = new AgentOrchestrator(state, router, toolExecutor, toolCatalog);
 
         var result = await orchestrator.InvokeAsync(
             new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy),
@@ -216,7 +237,8 @@ public sealed class AgentOrchestratorTests {
                     "memory.search",
                     "call-42",
                     "{\"query\":\"phase\"}",
-                    new Dictionary<string, string> { { "query", "phase" } },
+                    new Dictionary<string, object?> { { "query", "phase" } },
+                    null,
                     null
                 )
             );
@@ -274,7 +296,8 @@ public sealed class AgentOrchestratorTests {
                     "memory.search",
                     "tool-exec-1",
                     "{\"query\":\"phase 4 diagnostics\"}",
-                    new Dictionary<string, string> { { "query", "phase 4 diagnostics" } },
+                    new Dictionary<string, object?> { { "query", "phase 4 diagnostics" } },
+                    null,
                     null
                 )
             );

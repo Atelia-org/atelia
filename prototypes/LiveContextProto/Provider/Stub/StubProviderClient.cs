@@ -88,14 +88,15 @@ internal sealed class StubProviderClient : IProviderClient {
     private static ToolCallRequest CreateToolCall(StubToolCall stub) {
         var arguments = stub.Arguments is null
             ? null
-            : new Dictionary<string, string>(stub.Arguments, StringComparer.OrdinalIgnoreCase);
+            : new Dictionary<string, object?>(stub.Arguments, StringComparer.OrdinalIgnoreCase);
 
         return new ToolCallRequest(
             stub.ToolName ?? throw new InvalidOperationException("toolCall.toolName is required."),
             stub.ToolCallId ?? throw new InvalidOperationException("toolCall.toolCallId is required."),
             stub.RawArguments ?? string.Empty,
             arguments,
-            stub.ParseError
+            stub.ParseError,
+            stub.ParseWarning
         );
     }
 
@@ -171,8 +172,9 @@ internal sealed class StubProviderClient : IProviderClient {
         public string? ToolName { get; set; }
         public string? ToolCallId { get; set; }
         public string? RawArguments { get; set; }
-        public Dictionary<string, string>? Arguments { get; set; }
+        public Dictionary<string, object?>? Arguments { get; set; }
         public string? ParseError { get; set; }
+        public string? ParseWarning { get; set; }
     }
 
     private sealed class StubToolResult {

@@ -38,8 +38,8 @@ dotnet run --project prototypes/LiveContextProto/LiveContextProto.csproj
   - `ModelOutputAccumulator`：聚合 delta → `ModelOutputEntry`/`ToolResultsEntry`，并回填 `TokenUsage` 元数据。
   - `Stub/StubProviderClient`：从 JSON 脚本产生增量，支持占位符 `{{last_user_input}}`。
 - `Tools/`：
-  - `ToolExecutor`：根据 `ToolCallRequest` 查找注册的 `IToolHandler`，记录耗时并生成 `ToolCallResult`。
-  - `SampleMemorySearchToolHandler` / `SampleFailingToolHandler`：控制台与 Stub Provider 的示例工具处理器。
+  - `ToolExecutor`：根据 `ToolCallRequest` 查找注册的工具适配器，记录耗时并生成 `ToolCallResult`。
+  - `SampleMemorySearchTool` / `SampleDiagnosticsTool`：控制台与 Stub Provider 的示例工具实现。
   - `ToolResultMetadataHelper`：为工具结果追加统计信息（调用数量、失败数量、耗时等）。
 
 ## 测试

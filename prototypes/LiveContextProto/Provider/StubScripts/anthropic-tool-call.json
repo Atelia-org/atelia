@@ -1,0 +1,30 @@
+{
+  "deltas": [
+    {
+      "type": "content",
+      "content": "I'll check the weather for you. ",
+      "delayMilliseconds": 50
+    },
+    {
+      "type": "toolCall",
+      "toolCall": {
+        "toolName": "get_weather",
+        "toolCallId": "toolu_01A2B3C4D5E6F7",
+        "rawArguments": "{\"location\":\"Tokyo\",\"unit\":\"celsius\"}",
+        "arguments": {
+          "location": "Tokyo",
+          "unit": "celsius"
+        }
+      },
+      "delayMilliseconds": 100
+    },
+    {
+      "type": "tokenUsage",
+      "tokenUsage": {
+        "promptTokens": 312,
+        "completionTokens": 45,
+        "cachedPromptTokens": 256
+      }
+    }
+  ]
+}

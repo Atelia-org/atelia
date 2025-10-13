@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Diagnostics;
@@ -21,11 +23,13 @@ internal sealed class AgentOrchestrator {
     private readonly AgentState _state;
     private readonly ProviderRouter _router;
     private readonly ToolExecutor _toolExecutor;
+    private readonly ToolCatalog _toolCatalog;
 
-    public AgentOrchestrator(AgentState state, ProviderRouter router, ToolExecutor toolExecutor) {
+    public AgentOrchestrator(AgentState state, ProviderRouter router, ToolExecutor toolExecutor, ToolCatalog toolCatalog) {
         _state = state;
         _router = router;
         _toolExecutor = toolExecutor;
+        _toolCatalog = toolCatalog ?? throw new ArgumentNullException(nameof(toolCatalog));
     }
 
     public async Task<AgentInvocationResult> InvokeAsync(
@@ -40,8 +44,9 @@ internal sealed class AgentOrchestrator {
 
         var deltas = plan.Client.CallModelAsync(request, cancellationToken);
         var aggregate = await ModelOutputAccumulator.AggregateAsync(deltas, plan.Invocation, cancellationToken);
+        var normalizedOutput = NormalizeToolCalls(aggregate.OutputEntry);
 
-        var outputEntry = _state.AppendModelOutput(aggregate.OutputEntry);
+        var outputEntry = _state.AppendModelOutput(normalizedOutput);
         ToolResultsEntry? toolResultsEntry = null;
 
         if (aggregate.ToolResultsEntry is not null) {
@@ -78,5 +83,38 @@ internal sealed class AgentOrchestrator {
         var metadata = ToolResultMetadataHelper.PopulateSummary(entry.Results, entry.Metadata);
         entry = entry with { Metadata = metadata };
         return _state.AppendToolResults(entry);
+    }
+
+    private ModelOutputEntry NormalizeToolCalls(ModelOutputEntry entry) {
+        if (entry.ToolCalls is not { Count: > 0 }) { return entry; }
+
+        var builder = ImmutableArray.CreateBuilder<ToolCallRequest>(entry.ToolCalls.Count);
+
+        foreach (var request in entry.ToolCalls) {
+            builder.Add(NormalizeToolCall(request));
+        }
+
+        return entry with { ToolCalls = builder.ToImmutable() };
+    }
+
+    private ToolCallRequest NormalizeToolCall(ToolCallRequest request) {
+        if (!_toolCatalog.TryGet(request.ToolName, out var tool)) {
+            return request with {
+                ParseWarning = CombineMessages(request.ParseWarning, "tool_definition_missing")
+            };
+        }
+
+        var parsed = ToolArgumentParser.ParseArguments(tool, request.RawArguments);
+        return request with {
+            Arguments = parsed.Arguments,
+            ParseError = CombineMessages(request.ParseError, parsed.ParseError),
+            ParseWarning = CombineMessages(request.ParseWarning, parsed.ParseWarning)
+        };
+    }
+
+    private static string? CombineMessages(string? first, string? second) {
+        if (string.IsNullOrWhiteSpace(first)) { return second; }
+        if (string.IsNullOrWhiteSpace(second)) { return first; }
+        return string.Concat(first, "; ", second);
     }
 }

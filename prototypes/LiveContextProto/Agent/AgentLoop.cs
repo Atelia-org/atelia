@@ -17,13 +17,15 @@ internal sealed class AgentLoop {
     private readonly AgentState _state;
     private readonly AgentOrchestrator _orchestrator;
     private readonly ToolExecutor _toolExecutor;
+    private readonly ToolCatalog _toolCatalog;
     private readonly TextReader _input;
     private readonly TextWriter _output;
 
-    public AgentLoop(AgentState state, AgentOrchestrator orchestrator, ToolExecutor toolExecutor, TextReader? input = null, TextWriter? output = null) {
+    public AgentLoop(AgentState state, AgentOrchestrator orchestrator, ToolExecutor toolExecutor, ToolCatalog toolCatalog, TextReader? input = null, TextWriter? output = null) {
         _state = state;
         _orchestrator = orchestrator;
         _toolExecutor = toolExecutor;
+        _toolCatalog = toolCatalog ?? throw new ArgumentNullException(nameof(toolCatalog));
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
     }
@@ -422,25 +424,19 @@ internal sealed class AgentLoop {
     }
 
     private void ExecuteInteractiveTool(bool includeError) {
-        var requests = includeError
-            ? new[] {
-                new ToolCallRequest(
-                    "diagnostics.raise",
-                    GenerateConsoleToolCallId(),
-                    "{\"reason\":\"Console trigger\"}",
-                    new Dictionary<string, string> { { "reason", "Console trigger" } },
-                    null
-                )
-            }
-            : new[] {
-                new ToolCallRequest(
-                    "memory.search",
-                    GenerateConsoleToolCallId(),
-                    "{\"query\":\"LiveContextProto 核心阶段\"}",
-                    new Dictionary<string, string> { { "query", "LiveContextProto 核心阶段" } },
-                    null
-                )
-            };
+        var toolName = includeError ? "diagnostics.raise" : "memory.search";
+
+        if (!_toolCatalog.TryGet(toolName, out var tool)) {
+            _output.WriteLine($"[tool] 工具未注册：{toolName}");
+            return;
+        }
+
+        var rawArguments = includeError
+            ? "{\"reason\":\"Console trigger\"}"
+            : "{\"query\":\"LiveContextProto 核心阶段\"}";
+
+        var request = ToolArgumentParser.CreateRequest(tool, GenerateConsoleToolCallId(), rawArguments);
+        var requests = new[] { request };
 
         var records = _toolExecutor.ExecuteBatchAsync(requests, CancellationToken.None).GetAwaiter().GetResult();
         if (records.Count == 0) {

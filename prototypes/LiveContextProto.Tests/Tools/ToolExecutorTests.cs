@@ -18,7 +18,8 @@ public sealed class ToolExecutorTests {
             "memory.search",
             "test-call-1",
             "{\"query\":\"metadata\"}",
-            new Dictionary<string, string> { { "query", "metadata" } },
+            new Dictionary<string, object?> { { "query", "metadata" } },
+            null,
             null
         );
 
@@ -43,7 +44,7 @@ public sealed class ToolExecutorTests {
             InvocationCount++;
             var query = "(missing)";
             if (request.Arguments is { } args && args.TryGetValue("query", out var parsed)) {
-                query = parsed;
+                query = parsed as string ?? parsed?.ToString() ?? "(missing)";
             }
 
             var metadata = ImmutableDictionary<string, object?>.Empty

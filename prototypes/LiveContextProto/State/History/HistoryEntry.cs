@@ -62,8 +62,9 @@ internal record ToolCallRequest(
     string ToolName,
     string ToolCallId,
     string RawArguments,
-    IReadOnlyDictionary<string, string>? Arguments,
-    string? ParseError
+    IReadOnlyDictionary<string, object?>? Arguments,
+    string? ParseError,
+    string? ParseWarning
 );
 
 internal enum ToolExecutionStatus {

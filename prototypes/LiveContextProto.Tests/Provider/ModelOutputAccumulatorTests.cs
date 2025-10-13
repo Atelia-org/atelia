@@ -19,7 +19,8 @@ public sealed class ModelOutputAccumulatorTests {
                     "memory.search",
                     "call-1",
                     "{\"query\":\"status\"}",
-                    new Dictionary<string, string> { { "query", "status" } },
+                    new Dictionary<string, object?> { { "query", "status" } },
+                    null,
                     null
                 )
             ),
