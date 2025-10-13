@@ -63,34 +63,31 @@ public class MemoReplaceSpan : ITool {
 - 如果定位到多个 old_span_start，工具会返回候选上下文，按提示调整 search_after。
 - 当 old_span_start/old_span_end 包含换行或缩进时，可先在 new_text 中草拟最终排版，避免出现多余缩进。";
 
-    public Tool GetToolDefinition() {
-        return new Tool {
-            Type = "function",
-            Function = new FunctionDefinition {
-                Name = Name,
-                Description = Description,
-                Parameters = new {
-                    type = "object",
-                    properties = new {
-                        old_span_start = new {
-                            type = "string",
-                            description = "要替换区域的起始标记"
-                        },
-                        old_span_end = new {
-                            type = "string",
-                            description = "要替换区域的结束标记"
-                        },
-                        new_text = new {
-                            type = "string",
-                            description = "替换后的新文本，需要包含希望保留的首尾内容"
-                        },
-                        search_after = new {
-                            type = "string",
-                            description = "(可选) 锚点文本。省略=按全文查找；空字符串 \"\"=从文档开头；非空=从该锚点之后"
-                        }
+    public UniversalTool GetToolDefinition() {
+        return new UniversalTool {
+            Name = Name,
+            Description = Description,
+            Parameters = new {
+                type = "object",
+                properties = new {
+                    old_span_start = new {
+                        type = "string",
+                        description = "要替换区域的起始标记"
                     },
-                    required = new[] { "old_span_start", "old_span_end", "new_text" }
-                }
+                    old_span_end = new {
+                        type = "string",
+                        description = "要替换区域的结束标记"
+                    },
+                    new_text = new {
+                        type = "string",
+                        description = "替换后的新文本，需要包含希望保留的首尾内容"
+                    },
+                    search_after = new {
+                        type = "string",
+                        description = "(可选) 锚点文本。省略=按全文查找；空字符串 \"\"=从文档开头；非空=从该锚点之后"
+                    }
+                },
+                required = new[] { "old_span_start", "old_span_end", "new_text" }
             }
         };
     }

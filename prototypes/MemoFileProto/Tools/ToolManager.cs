@@ -20,7 +20,7 @@ public class ToolManager {
     /// <summary>
     /// 获取所有工具定义
     /// </summary>
-    public List<Models.Tool> GetToolDefinitions() {
+    public List<Models.UniversalTool> GetToolDefinitions() {
         return _tools.Values.Select(t => t.GetToolDefinition()).ToList();
     }
 

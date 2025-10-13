@@ -13,30 +13,27 @@ public class StringReplaceTool : ITool {
 
     public string Description => "替换字符串中的文本。接受三个参数：text（原始文本），old_value（要替换的文本），new_value（替换后的文本）。";
 
-    public Tool GetToolDefinition() {
-        return new Tool {
-            Type = "function",
-            Function = new FunctionDefinition {
-                Name = Name,
-                Description = Description,
-                Parameters = new {
-                    type = "object",
-                    properties = new {
-                        text = new {
-                            type = "string",
-                            description = "原始文本"
-                        },
-                        old_value = new {
-                            type = "string",
-                            description = "要替换的文本"
-                        },
-                        new_value = new {
-                            type = "string",
-                            description = "替换后的文本"
-                        }
+    public UniversalTool GetToolDefinition() {
+        return new UniversalTool {
+            Name = Name,
+            Description = Description,
+            Parameters = new {
+                type = "object",
+                properties = new {
+                    text = new {
+                        type = "string",
+                        description = "原始文本"
                     },
-                    required = new[] { "text", "old_value", "new_value" }
-                }
+                    old_value = new {
+                        type = "string",
+                        description = "要替换的文本"
+                    },
+                    new_value = new {
+                        type = "string",
+                        description = "替换后的文本"
+                    }
+                },
+                required = new[] { "text", "old_value", "new_value" }
             }
         };
     }

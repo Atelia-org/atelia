@@ -17,9 +17,9 @@ public interface ITool {
     string Description { get; }
 
     /// <summary>
-    /// 获取工具定义（用于 OpenAI API）
+    /// 获取工具定义（Provider 无关格式）
     /// </summary>
-    Tool GetToolDefinition();
+    UniversalTool GetToolDefinition();
 
     /// <summary>
     /// 执行工具

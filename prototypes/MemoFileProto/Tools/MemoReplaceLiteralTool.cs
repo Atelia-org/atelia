@@ -55,30 +55,27 @@ public class MemoReplaceLiteral : ITool {
 - 如果出现多匹配错误，工具会展示匹配上下文，方便挑选合适的 search_after。
 - 当需要替换较大区域或跨多个段落时，考虑使用 memory_notebook_replace_span 工具。";
 
-    public Tool GetToolDefinition() {
-        return new Tool {
-            Type = "function",
-            Function = new FunctionDefinition {
-                Name = Name,
-                Description = Description,
-                Parameters = new {
-                    type = "object",
-                    properties = new {
-                        old_text = new {
-                            type = "string",
-                            description = "要替换的旧文本（精确匹配）。空字符串 \"\" 表示直接将 new_text 追加到文档末尾。"
-                        },
-                        new_text = new {
-                            type = "string",
-                            description = "替换后的新文本。可以为空字符串表示删除 old_text。"
-                        },
-                        search_after = new {
-                            type = "string",
-                            description = "(可选) 定位锚点。省略=要求 old_text 唯一；空字符串 \"\"=从文档开头取第一个匹配；非空=从锚点后取第一个。"
-                        }
+    public UniversalTool GetToolDefinition() {
+        return new UniversalTool {
+            Name = Name,
+            Description = Description,
+            Parameters = new {
+                type = "object",
+                properties = new {
+                    old_text = new {
+                        type = "string",
+                        description = "要替换的旧文本（精确匹配）。空字符串 \"\" 表示直接将 new_text 追加到文档末尾。"
                     },
-                    required = new[] { "old_text", "new_text" }
-                }
+                    new_text = new {
+                        type = "string",
+                        description = "替换后的新文本。可以为空字符串表示删除 old_text。"
+                    },
+                    search_after = new {
+                        type = "string",
+                        description = "(可选) 定位锚点。省略=要求 old_text 唯一；空字符串 \"\"=从文档开头取第一个匹配；非空=从锚点后取第一个。"
+                    }
+                },
+                required = new[] { "old_text", "new_text" }
             }
         };
     }

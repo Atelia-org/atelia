@@ -1,31 +1,34 @@
 using System.Text.Json.Serialization;
 
-namespace MemoFileProto.Models;
+namespace MemoFileProto.Models.OpenAI;
 
-public class ChatRequest {
+/// <summary>
+/// OpenAI 特定的请求格式
+/// </summary>
+public class OpenAIRequest {
     [JsonPropertyName("model")]
     public string Model { get; set; } = "vscode-lm-proxy";
 
     [JsonPropertyName("messages")]
-    public List<ChatMessage> Messages { get; set; } = new();
+    public List<OpenAIMessage> Messages { get; set; } = new();
 
     [JsonPropertyName("stream")]
     public bool Stream { get; set; } = true;
 
     [JsonPropertyName("tools")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public List<Tool>? Tools { get; set; }
+    public List<OpenAITool>? Tools { get; set; }
 }
 
-public class Tool {
+public class OpenAITool {
     [JsonPropertyName("type")]
     public string Type { get; set; } = "function";
 
     [JsonPropertyName("function")]
-    public FunctionDefinition Function { get; set; } = new();
+    public OpenAIFunctionDefinition Function { get; set; } = new();
 }
 
-public class FunctionDefinition {
+public class OpenAIFunctionDefinition {
     [JsonPropertyName("name")]
     public string Name { get; set; } = string.Empty;
 

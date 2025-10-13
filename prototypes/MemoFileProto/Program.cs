@@ -71,8 +71,8 @@ class Program {
                     },
                     onContentDelta: delta => Console.Write(delta),
                     onToolCall: call => {
-                        Console.WriteLine($"\n[工具调用] {call.Function.Name}");
-                        Console.WriteLine("[参数]\n" + FormatToolArguments(call.Function.Arguments));
+                        Console.WriteLine($"\n[工具调用] {call.Name} (Id: {call.Id})");
+                        Console.WriteLine("[参数]\n" + FormatToolArguments(call.Arguments));
                     },
                     onToolResult: result => Console.WriteLine($"[工具结果] {result}")
                 );
@@ -143,7 +143,7 @@ class Program {
         Console.WriteLine("当前版本仅支持查看[Memory Notebook]：/notebook 或 /notebook view");
     }
 
-    private static void PrintHistory(IReadOnlyList<ChatMessage> history) {
+    private static void PrintHistory(IReadOnlyList<UniversalMessage> history) {
         var originalColor = Console.ForegroundColor;
         try {
             WriteSeparatorLine();
@@ -158,7 +158,7 @@ class Program {
         }
     }
 
-    private static void WriteMessage(ChatMessage message, int index) {
+    private static void WriteMessage(UniversalMessage message, int index) {
         var roleColor = GetRoleColor(message.Role);
         WriteColoredLine(roleColor, $"[{index}] {message.Role}");
 
@@ -166,24 +166,36 @@ class Program {
             WriteColoredLine(MetaColor, $"  Timestamp: {timestamp:o}");
         }
 
-        if (!string.IsNullOrWhiteSpace(message.ToolCallId)) {
-            WriteColoredLine(ToolCallColor, $"  ToolCallId: {message.ToolCallId}");
-        }
-
         if (!string.IsNullOrWhiteSpace(message.Content)) {
             Console.ResetColor();
             Console.WriteLine(message.Content);
         }
 
-        if (message.Role == LlmAgent.RoleAssistant && message.ToolCalls is { Count: > 0 }) {
+        if (message.ToolCalls is { Count: > 0 }) {
             Console.WriteLine();
             WriteColoredLine(ToolCallColor, $"  Tool Calls ({message.ToolCalls.Count}):");
             foreach (var call in message.ToolCalls) {
-                WriteColoredLine(ToolCallColor, $"    - Id: {call.Id}, Name: {call.Function.Name}");
+                WriteColoredLine(ToolCallColor, $"    - Id: {call.Id}, Name: {call.Name}");
 
-                if (!string.IsNullOrWhiteSpace(call.Function.Arguments)) {
-                    var formatted = FormatToolArguments(call.Function.Arguments);
+                if (!string.IsNullOrWhiteSpace(call.Arguments)) {
+                    var formatted = FormatToolArguments(call.Arguments);
                     WriteMultilineIndented(formatted, "      ");
+                }
+            }
+        }
+
+        if (message.ToolResults is { Count: > 0 }) {
+            Console.WriteLine();
+            WriteColoredLine(ToolCallColor, $"  Tool Results ({message.ToolResults.Count}):");
+            foreach (var result in message.ToolResults) {
+                var status = result.IsError ? " [Error]" : string.Empty;
+                WriteColoredLine(
+                    ToolCallColor,
+                    $"    - ToolCallId: {result.ToolCallId}, Name: {result.ToolName ?? "(unknown)"}{status}"
+                );
+
+                if (!string.IsNullOrWhiteSpace(result.Content)) {
+                    WriteMultilineIndented(result.Content, "      ");
                 }
             }
         }

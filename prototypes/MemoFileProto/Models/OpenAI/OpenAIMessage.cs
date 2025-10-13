@@ -1,8 +1,11 @@
 using System.Text.Json.Serialization;
 
-namespace MemoFileProto.Models;
+namespace MemoFileProto.Models.OpenAI;
 
-public class ChatMessage {
+/// <summary>
+/// OpenAI 特定的消息格式
+/// </summary>
+public class OpenAIMessage {
     [JsonPropertyName("role")]
     public string Role { get; init; } = string.Empty;
 
@@ -11,7 +14,7 @@ public class ChatMessage {
 
     [JsonPropertyName("tool_calls")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public List<ToolCall>? ToolCalls { get; init; }
+    public List<OpenAIToolCall>? ToolCalls { get; init; }
 
     [JsonPropertyName("tool_call_id")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -20,21 +23,9 @@ public class ChatMessage {
     [JsonPropertyName("name")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; init; }
-
-    /// <summary>
-    /// 消息创建时间（元数据，不发送给 LLM）
-    /// </summary>
-    [JsonIgnore]
-    public DateTimeOffset? Timestamp { get; init; }
-
-    /// <summary>
-    /// 用户原始输入（仅本地使用，避免重复包装）
-    /// </summary>
-    [JsonIgnore]
-    public string? RawInput { get; init; }
 }
 
-public class ToolCall {
+public class OpenAIToolCall {
     [JsonPropertyName("id")]
     public string Id { get; init; } = string.Empty;
 
@@ -42,10 +33,10 @@ public class ToolCall {
     public string Type { get; init; } = "function";
 
     [JsonPropertyName("function")]
-    public FunctionCall Function { get; init; } = new();
+    public OpenAIFunctionCall Function { get; init; } = new();
 }
 
-public class FunctionCall {
+public class OpenAIFunctionCall {
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
 

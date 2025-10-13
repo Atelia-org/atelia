@@ -30,9 +30,9 @@ public class LlmAgent {
         return sb.Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
-    private readonly OpenAIClient _client;
+    private readonly ILLMClient _client;
     private readonly ToolManager _toolManager;
-    private readonly List<ChatMessage> _conversationHistory = new();
+    private readonly List<UniversalMessage> _conversationHistory = new();
 
     private string _systemInstruction;
     private string _memoryNotebookContent = "（尚无内容）";
@@ -58,7 +58,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 目前[Memory Notebook]常驻在[Live Screen]中始终显示。"
     );
 
-    public LlmAgent(OpenAIClient client) {
+    public LlmAgent(ILLMClient client) {
         _client = client;
         _toolManager = new ToolManager();
         _toolManager.RegisterTool(
@@ -78,7 +78,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         ResetConversation();
     }
 
-    public IReadOnlyList<ChatMessage> ConversationHistory => _conversationHistory;
+    public IReadOnlyList<UniversalMessage> ConversationHistory => _conversationHistory;
 
     public string MemoryNotebookSnapshot => _memoryNotebookContent;
 
@@ -87,7 +87,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     public void ResetConversation() {
         _conversationHistory.Clear();
         _conversationHistory.Add(
-            new ChatMessage {
+            new UniversalMessage {
                 Role = RoleSystem,
                 Content = _systemInstruction
             }
@@ -103,7 +103,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         string userInput,
         Action<bool>? onAssistantTurnStart,
         Action<string>? onContentDelta,
-        Action<ToolCall>? onToolCall,
+        Action<UniversalToolCall>? onToolCall,
         Action<string>? onToolResult,
         CancellationToken cancellationToken = default
     ) {
@@ -114,7 +114,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         var structuredContent = BuildHistoricUserSection(userInput, timestamp);
 
         _conversationHistory.Add(
-            new ChatMessage {
+            new UniversalMessage {
                 Role = RoleUser,
                 Content = structuredContent,
                 Timestamp = timestamp,
@@ -141,7 +141,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 
     private async Task<bool> ProcessAssistantResponseAsync(
         Action<string>? onContentDelta,
-        Action<ToolCall>? onToolCall,
+        Action<UniversalToolCall>? onToolCall,
         Action<string>? onToolResult,
         CancellationToken cancellationToken
     ) {
@@ -150,8 +150,15 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         var toolAccumulator = new ToolCallAccumulator();
         string? finishReason = null;
 
+        var request = new UniversalRequest {
+            Model = "vscode-lm-proxy",
+            Messages = BuildLiveContext(),
+            Tools = tools,
+            Stream = true
+        };
+
         var sb = new StringBuilder();
-        await foreach (var delta in _client.StreamChatCompletionAsync(BuildLiveContext(), tools, cancellationToken)) {
+        await foreach (var delta in _client.StreamChatCompletionAsync(request, cancellationToken)) {
             if (!string.IsNullOrEmpty(delta.Content)) {
                 onContentDelta?.Invoke(delta.Content);
                 sb.Append(delta.Content);
@@ -177,7 +184,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (requiresToolCall) {
             var toolCalls = toolAccumulator.BuildFinalCalls();
             _conversationHistory.Add(
-                new ChatMessage {
+                new UniversalMessage {
                     Role = RoleAssistant,
                     Content = normalizedLlmOutput,
                     ToolCalls = toolCalls
@@ -185,38 +192,49 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
             );
 
             bool encounteredFailure = false;
+            var aggregatedToolResults = new List<UniversalToolResult>();
 
             foreach (var call in toolCalls) {
                 onToolCall?.Invoke(call);
 
                 string toolContent;
+                bool isError;
                 if (encounteredFailure) {
                     toolContent = "Skipped: not executed because a previous tool call failed.";
+                    isError = true;
                 }
                 else {
                     var executionResult = await ExecuteToolSafelyAsync(call);
                     toolContent = executionResult.Content;
-
+                    isError = !executionResult.Success;
                     if (!executionResult.Success) {
                         encounteredFailure = true;
                     }
                 }
 
-                _conversationHistory.Add(
-                    new ChatMessage {
-                        Role = RoleTool,
+                aggregatedToolResults.Add(
+                    new UniversalToolResult {
                         ToolCallId = call.Id,
-                        Content = BuildHistoricToolSection(toolContent, DateTimeOffset.Now)
+                        ToolName = call.Name,
+                        Content = BuildHistoricToolSection(toolContent, DateTimeOffset.Now),
+                        IsError = isError
                     }
                 );
                 onToolResult?.Invoke(toolContent);
             }
 
+            _conversationHistory.Add(
+                new UniversalMessage {
+                    Role = RoleTool,
+                    ToolResults = aggregatedToolResults
+                }
+            );
+
             return true;
         }
 
         _conversationHistory.Add(
-            new ChatMessage {
+            new UniversalMessage {
                 Role = RoleAssistant,
                 Content = normalizedLlmOutput
             }
@@ -224,9 +242,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return false;
     }
 
-    private async Task<ToolExecutionResult> ExecuteToolSafelyAsync(ToolCall call) {
+    private async Task<ToolExecutionResult> ExecuteToolSafelyAsync(UniversalToolCall call) {
         try {
-            var content = await _toolManager.ExecuteToolAsync(call.Function.Name, call.Function.Arguments);
+            var content = await _toolManager.ExecuteToolAsync(call.Name, call.Arguments);
             return new ToolExecutionResult(true, content);
         }
         catch (Exception ex) {
@@ -236,8 +254,8 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 
     private readonly record struct ToolExecutionResult(bool Success, string Content);
 
-    private List<ChatMessage> BuildLiveContext() {
-        var context = new List<ChatMessage>(_conversationHistory.Count + 1);
+    private List<UniversalMessage> BuildLiveContext() {
+        var context = new List<UniversalMessage>(_conversationHistory.Count + 1);
         var hasDecoratedLastSenseMessage = false;
 
         for (int i = _conversationHistory.Count; --i >= 0;) {
@@ -248,17 +266,18 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
                 var combinedContent = BuildContentForLiveContext(msg);
                 if (msg.Role == RoleUser) {
                     context.Add(
-                        new ChatMessage {
+                        new UniversalMessage {
                             Role = msg.Role,
                             Content = combinedContent
                         }
                     );
                 }
                 else {
+                    // Tool 消息需要保留 ToolResults
                     context.Add(
-                        new ChatMessage {
+                        new UniversalMessage {
                             Role = msg.Role,
-                            ToolCallId = msg.ToolCallId,
+                            ToolResults = msg.ToolResults,
                             Content = combinedContent
                         }
                     );
@@ -272,7 +291,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         }
 
         context.Add(
-            new ChatMessage {
+            new UniversalMessage {
                 Role = RoleSystem,
                 Content = _systemInstruction
             }
@@ -323,7 +342,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return sb.ToString();
     }
 
-    private string BuildContentForLiveContext(ChatMessage message) {
+    private string BuildContentForLiveContext(UniversalMessage message) {
         var historicContent = message.Content;
         if (string.IsNullOrWhiteSpace(historicContent)) { return historicContent ?? string.Empty; }
 
@@ -346,7 +365,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 
         if (_conversationHistory.Count == 0) {
             _conversationHistory.Add(
-                new ChatMessage {
+                new UniversalMessage {
                     Role = RoleSystem,
                     Content = _systemInstruction
                 }

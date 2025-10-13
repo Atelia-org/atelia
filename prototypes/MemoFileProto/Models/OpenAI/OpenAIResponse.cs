@@ -1,8 +1,11 @@
 using System.Text.Json.Serialization;
 
-namespace MemoFileProto.Models;
+namespace MemoFileProto.Models.OpenAI;
 
-public class ChatResponse {
+/// <summary>
+/// OpenAI 特定的响应格式
+/// </summary>
+public class OpenAIResponse {
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
@@ -16,20 +19,20 @@ public class ChatResponse {
     public string Model { get; set; } = string.Empty;
 
     [JsonPropertyName("choices")]
-    public List<Choice> Choices { get; set; } = new();
+    public List<OpenAIChoice> Choices { get; set; } = new();
 }
 
-public class Choice {
+public class OpenAIChoice {
     [JsonPropertyName("index")]
     public int Index { get; set; }
 
     [JsonPropertyName("delta")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public ChatMessage? Delta { get; set; }
+    public OpenAIMessage? Delta { get; set; }
 
     [JsonPropertyName("message")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public ChatMessage? Message { get; set; }
+    public OpenAIMessage? Message { get; set; }
 
     [JsonPropertyName("finish_reason")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

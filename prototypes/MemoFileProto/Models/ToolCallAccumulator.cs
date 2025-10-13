@@ -4,46 +4,37 @@ using System.Text;
 namespace MemoFileProto.Models;
 
 /// <summary>
-/// 累积助手流式响应中的工具调用片段，组装成完整的 <see cref="ToolCall"/>。
+/// 累积助手流式响应中的工具调用片段，组装成完整的 <see cref="UniversalToolCall"/>。
 /// </summary>
 public class ToolCallAccumulator {
     private readonly ConcurrentDictionary<string, ToolCallBuilder> _builders = new();
     private int _autoId;
 
-    public void AddDelta(ToolCall delta) {
+    public void AddDelta(UniversalToolCall delta) {
         if (delta is null) { return; }
 
         var id = string.IsNullOrWhiteSpace(delta.Id) ? GetNextId() : delta.Id;
         var builder = _builders.GetOrAdd(id, key => new ToolCallBuilder(key));
 
-        if (!string.IsNullOrWhiteSpace(delta.Type)) {
-            builder.Type = delta.Type;
+        if (!string.IsNullOrWhiteSpace(delta.Name)) {
+            builder.FunctionName = delta.Name;
         }
 
-        if (delta.Function is null) { return; }
-
-        if (!string.IsNullOrWhiteSpace(delta.Function.Name)) {
-            builder.FunctionName = delta.Function.Name;
-        }
-
-        if (!string.IsNullOrEmpty(delta.Function.Arguments)) {
-            builder.Arguments.Append(delta.Function.Arguments);
+        if (!string.IsNullOrEmpty(delta.Arguments)) {
+            builder.Arguments.Append(delta.Arguments);
         }
     }
 
     public bool HasPendingToolCalls => !_builders.IsEmpty;
 
-    public List<ToolCall> BuildFinalCalls() {
+    public List<UniversalToolCall> BuildFinalCalls() {
         return _builders.Values
             .OrderBy(b => b.Sequence)
             .Select(
-            b => new ToolCall {
+            b => new UniversalToolCall {
                 Id = b.Id,
-                Type = string.IsNullOrWhiteSpace(b.Type) ? "function" : b.Type,
-                Function = new FunctionCall {
-                    Name = b.FunctionName,
-                    Arguments = b.Arguments.ToString()
-                }
+                Name = b.FunctionName,
+                Arguments = b.Arguments.ToString()
             }
         )
             .ToList();
@@ -69,7 +60,6 @@ public class ToolCallAccumulator {
 
         public string Id { get; }
         public long Sequence { get; }
-        public string? Type { get; set; }
         public string FunctionName { get; set; } = string.Empty;
         public StringBuilder Arguments { get; } = new();
     }
