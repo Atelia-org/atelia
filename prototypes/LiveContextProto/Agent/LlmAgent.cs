@@ -50,17 +50,21 @@ internal sealed class LlmAgent {
         return _state.AppendModelInput(new ModelInputEntry(sections));
     }
 
-    public AgentInvocationOutcome InvokeStubProvider(string? stubScript, CancellationToken cancellationToken = default) {
+    public AgentInvocationOutcome InvokeProvider(ProviderInvocationOptions options, CancellationToken cancellationToken = default) {
+        if (options is null) { throw new ArgumentNullException(nameof(options)); }
+
         try {
-            var options = new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy, stubScript);
             var result = _orchestrator.InvokeAsync(options, cancellationToken).GetAwaiter().GetResult();
             return new AgentInvocationOutcome(result, null);
         }
         catch (Exception ex) {
-            DebugUtil.Print(ProviderDebugCategory, $"Stub provider invocation failed: {ex}");
+            DebugUtil.Print(ProviderDebugCategory, $"Provider invocation failed (strategy={options.StrategyId}): {ex}");
             return new AgentInvocationOutcome(null, ex);
         }
     }
+
+    public AgentInvocationOutcome InvokeStubProvider(string? stubScript, CancellationToken cancellationToken = default)
+        => InvokeProvider(new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy, stubScript), cancellationToken);
 
     public AgentToolExecutionResult ExecuteInteractiveTool(bool includeError, CancellationToken cancellationToken = default) {
         var toolName = includeError ? "diagnostics.raise" : "memory.search";

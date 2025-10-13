@@ -16,6 +16,7 @@ internal sealed record ProviderRouteDefinition(
 
 internal sealed class ProviderRouter {
     public const string DefaultStubStrategy = "stub/script";
+    public const string DefaultAnthropicStrategy = "anthropic-v1";
 
     private readonly Dictionary<string, ProviderRouteDefinition> _routes;
 
@@ -48,6 +49,18 @@ internal sealed class ProviderRouter {
                 Model: "livecontextproto-stub",
                 Client: stubProvider,
                 DefaultStubScriptName: "default"
+            )
+        });
+
+    public static ProviderRouter CreateAnthropic(IProviderClient anthropicProvider, string model, string specification = "messages-v1", string providerId = "anthropic")
+        => new(new[] {
+            new ProviderRouteDefinition(
+                DefaultAnthropicStrategy,
+                ProviderId: providerId,
+                Specification: specification,
+                Model: model,
+                Client: anthropicProvider,
+                DefaultStubScriptName: null
             )
         });
 }

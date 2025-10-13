@@ -4,21 +4,18 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Atelia.Diagnostics;
-using Atelia.LiveContextProto.Provider;
+using Atelia.LiveContextProto.Agent;
 using Atelia.LiveContextProto.State.History;
-using System.IO;
 
-namespace Atelia.LiveContextProto.Agent;
+namespace Atelia.LiveContextProto.Demo.Agent;
 
-internal sealed class ConsoleTui {
+internal sealed class DemoConsoleTui {
     private readonly LlmAgent _agent;
-    private readonly ProviderInvocationOptions _defaultInvocation;
     private readonly TextReader _input;
     private readonly TextWriter _output;
 
-    public ConsoleTui(LlmAgent agent, ProviderInvocationOptions defaultInvocation, TextReader? input = null, TextWriter? output = null) {
+    public DemoConsoleTui(LlmAgent agent, TextReader? input = null, TextWriter? output = null) {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
-        _defaultInvocation = defaultInvocation ?? throw new ArgumentNullException(nameof(defaultInvocation));
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
     }
@@ -49,6 +46,21 @@ internal sealed class ConsoleTui {
                 continue;
             }
 
+            if (line.StartsWith("/tool", StringComparison.OrdinalIgnoreCase)) {
+                HandleToolCommand(line);
+                continue;
+            }
+
+            if (line.StartsWith("/demo", StringComparison.OrdinalIgnoreCase)) {
+                HandleDemoCommand(line);
+                continue;
+            }
+
+            if (line.StartsWith("/stub", StringComparison.OrdinalIgnoreCase)) {
+                HandleStubCommand(line);
+                continue;
+            }
+
             if (line.StartsWith("/liveinfo", StringComparison.OrdinalIgnoreCase)) {
                 HandleLiveInfoCommand(line);
                 continue;
@@ -67,10 +79,10 @@ internal sealed class ConsoleTui {
     }
 
     private void PrintIntro() {
-        _output.WriteLine("=== LiveContextProto Anthropic Runner ===");
-        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/liveinfo list|set|clear，/exit 退出。");
+        _output.WriteLine("=== LiveContextProto Phase 4 (Tools & Diagnostics) ===");
+        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/liveinfo list|set|clear，/stub <script> [文本]，/tool sample|fail，/exit 退出。");
         _output.WriteLine();
-        _output.WriteLine("输入任意文本将调用当前配置的模型，并把输出回写到历史。");
+        _output.WriteLine("输入任意文本将通过 Stub Provider 触发一次模型调用，你也可用 /stub 指定脚本。");
         _output.WriteLine();
         _output.WriteLine($"[system] {_agent.SystemInstruction}");
         _output.WriteLine();
@@ -124,15 +136,15 @@ internal sealed class ConsoleTui {
         }
     }
 
-    private void AppendUserInput(string text) {
+    private void AppendUserInput(string text, string? stubScript = null) {
         _agent.AppendUserInput(text);
         _output.WriteLine($"[state] 已记录用户输入（长度 {text.Length}）。");
 
-        InvokeProviderAndDisplay(_defaultInvocation);
+        InvokeStubAndDisplay(stubScript);
     }
 
     private void PrintInvocationResult(AgentInvocationResult result) {
-        _output.WriteLine("[assistant] 输出如下：");
+        _output.WriteLine("[assistant] (stub) 输出如下：");
         WriteOutputContents(result.Output);
         PrintTokenUsage(result.Output);
         WriteMetadataBlock(result.Output.Metadata);
@@ -364,10 +376,111 @@ internal sealed class ConsoleTui {
         _output.WriteLine($"  * Memory Notebook: 长度 {_agent.MemoryNotebookSnapshot.Length}");
     }
 
-    private void InvokeProviderAndDisplay(ProviderInvocationOptions options) {
-        var invocation = _agent.InvokeProvider(options);
+    private void HandleToolCommand(string commandLine) {
+        var payload = commandLine.Length <= 5
+            ? string.Empty
+            : commandLine[5..];
+
+        var argument = payload.Trim();
+
+        if (argument.Length == 0 || argument.Equals("sample", StringComparison.OrdinalIgnoreCase)) {
+            ExecuteInteractiveTool(includeError: false);
+            return;
+        }
+
+        if (argument.Equals("fail", StringComparison.OrdinalIgnoreCase)) {
+            ExecuteInteractiveTool(includeError: true);
+            return;
+        }
+
+        _output.WriteLine("用法: /tool [sample|fail]");
+    }
+
+    private void ExecuteInteractiveTool(bool includeError) {
+        var execution = _agent.ExecuteInteractiveTool(includeError);
+
+        switch (execution.Status) {
+            case AgentToolExecutionResultStatus.ToolNotRegistered:
+                _output.WriteLine($"[tool] 工具未注册：{execution.ToolName}");
+                return;
+            case AgentToolExecutionResultStatus.NoResults:
+                _output.WriteLine("[tool] 工具执行器未返回结果。");
+                return;
+            case AgentToolExecutionResultStatus.Success when execution.Entry is null:
+                _output.WriteLine("[tool] 工具执行结果不可用。");
+                return;
+            case AgentToolExecutionResultStatus.Success:
+                var message = execution.FailureMessage is null
+                    ? $"[tool] 已执行 {execution.Entry!.Results.Count} 个工具调用。"
+                    : $"[tool] 工具执行失败：{execution.FailureMessage}";
+                _output.WriteLine(message);
+
+                WriteToolResults(execution.Entry!);
+                PrintTokenUsage(execution.Entry!);
+                WriteMetadataBlock(execution.Entry!.Metadata);
+                return;
+            default:
+                return;
+        }
+    }
+
+    private void HandleDemoCommand(string commandLine) {
+        var payload = commandLine.Length <= 5
+            ? string.Empty
+            : commandLine[5..];
+
+        var argument = payload.Trim();
+
+        if (argument.Length == 0 || argument.Equals("conversation", StringComparison.OrdinalIgnoreCase)) {
+            RunDemoConversation();
+            return;
+        }
+
+        _output.WriteLine("用法: /demo [conversation]");
+    }
+
+    private void RunDemoConversation() {
+        _output.WriteLine("[demo] 正在重置状态并注入示例历史……");
+
+        _agent.Reset();
+        _agent.UpdateMemoryNotebook("- Phase 1 MVP 已完成\n- 准备进入 Provider Stub 阶段\n- 记得补充工具聚合测试");
+
+        AppendUserInput("我们当前的 LiveContextProto 处于什么阶段？");
+        AppendUserInput("下一步需要验证哪些能力？");
+
+        _output.WriteLine("[demo] 示例构造完毕，可使用 /history 查看上下文，或 /notebook view 查看记忆笔记。");
+    }
+
+    private void HandleStubCommand(string commandLine) {
+        // 形态：/stub <scriptName> [message text]
+        var payload = commandLine.Length <= 5 ? string.Empty : commandLine[5..];
+        var trimmed = payload.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) {
+            _output.WriteLine("用法: /stub <scriptName> [文本] ；示例：/stub default 现在是什么阶段?");
+            return;
+        }
+
+        var firstSpace = trimmed.IndexOf(' ');
+        if (firstSpace < 0) {
+            // 仅指定脚本，不追加新输入，直接用当前上下文触发一次调用
+            InvokeStubAndDisplay(trimmed);
+            return;
+        }
+
+        var script = trimmed.Substring(0, firstSpace);
+        var message = trimmed.Substring(firstSpace + 1).Trim();
+        if (string.IsNullOrWhiteSpace(message)) {
+            InvokeStubAndDisplay(script);
+            return;
+        }
+
+        AppendUserInput(message, script);
+    }
+
+    private void InvokeStubAndDisplay(string? stubScript) {
+        var invocation = _agent.InvokeStubProvider(stubScript);
         if (!invocation.Success) {
-            _output.WriteLine($"[error] 模型调用失败：{invocation.Exception?.Message ?? "(unknown)"}");
+            _output.WriteLine($"[error] 模拟模型调用失败：{invocation.Exception?.Message}");
             return;
         }
 

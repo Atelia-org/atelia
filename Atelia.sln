@@ -59,6 +59,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LiveContextProto", "prototy
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Atelia.LiveContextProto.Tests", "prototypes\LiveContextProto.Tests\Atelia.LiveContextProto.Tests.csproj", "{4F81E8A4-E19E-4C88-9D23-BCDC29F6DA17}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LiveContextProto.Demo", "prototypes\LiveContextProto.Demo\LiveContextProto.Demo.csproj", "{1CBF64E7-07F5-47C4-AAE7-81993B680328}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -369,6 +371,18 @@ Global
 		{4F81E8A4-E19E-4C88-9D23-BCDC29F6DA17}.Release|x64.Build.0 = Release|Any CPU
 		{4F81E8A4-E19E-4C88-9D23-BCDC29F6DA17}.Release|x86.ActiveCfg = Release|Any CPU
 		{4F81E8A4-E19E-4C88-9D23-BCDC29F6DA17}.Release|x86.Build.0 = Release|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Debug|x64.Build.0 = Debug|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Debug|x86.Build.0 = Debug|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Release|x64.ActiveCfg = Release|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Release|x64.Build.0 = Release|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Release|x86.ActiveCfg = Release|Any CPU
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -399,6 +413,7 @@ Global
 		{5147AC8E-CD30-41CD-9882-898D350315A5} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
 		{C2BE8FA8-7F6E-41C6-9791-0F0DB2E9032B} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
 		{4F81E8A4-E19E-4C88-9D23-BCDC29F6DA17} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
+		{1CBF64E7-07F5-47C4-AAE7-81993B680328} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {27F8332B-5246-4251-9E70-572DD61ADC4C}
