@@ -63,37 +63,6 @@ internal sealed class LlmAgent {
         }
     }
 
-    public AgentInvocationOutcome InvokeStubProvider(string? stubScript, CancellationToken cancellationToken = default)
-        => InvokeProvider(new ProviderInvocationOptions(ProviderRouter.DefaultStubStrategy, stubScript), cancellationToken);
-
-    public AgentToolExecutionResult ExecuteInteractiveTool(bool includeError, CancellationToken cancellationToken = default) {
-        var toolName = includeError ? "diagnostics.raise" : "memory.search";
-
-        if (!_toolCatalog.TryGet(toolName, out var tool)) { return AgentToolExecutionResult.ToolNotRegistered(toolName); }
-
-        var rawArguments = includeError
-            ? "{\"reason\":\"Console trigger\"}"
-            : "{\"query\":\"LiveContextProto 核心阶段\"}";
-
-        var request = ToolArgumentParser.CreateRequest(tool, GenerateConsoleToolCallId(), rawArguments);
-        var requests = new[] { request };
-
-        var records = _toolExecutor.ExecuteBatchAsync(requests, cancellationToken).GetAwaiter().GetResult();
-        if (records.Count == 0) { return AgentToolExecutionResult.NoResults(); }
-
-        var results = records.Select(static record => record.CallResult).ToArray();
-        var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
-        var entry = new ToolResultsEntry(results, failure?.Result) {
-            Metadata = ToolResultMetadataHelper.PopulateSummary(records, ImmutableDictionary<string, object?>.Empty)
-        };
-
-        var appended = _state.AppendToolResults(entry);
-
-        return failure is null
-            ? AgentToolExecutionResult.Success(appended)
-            : AgentToolExecutionResult.SuccessWithFailure(appended, failure.Result);
-    }
-
     public AgentToolExecutionResult ExecuteTool(ToolCallRequest request, CancellationToken cancellationToken = default) {
         var executionRecords = _toolExecutor.ExecuteBatchAsync(new[] { request }, cancellationToken).GetAwaiter().GetResult();
         if (executionRecords.Count == 0) { return AgentToolExecutionResult.NoResults(); }
@@ -109,8 +78,6 @@ internal sealed class LlmAgent {
             : AgentToolExecutionResult.SuccessWithFailure(appended, failure.Result);
     }
 
-    private static string GenerateConsoleToolCallId()
-        => $"console-{Guid.NewGuid():N}";
 }
 
 internal readonly record struct AgentInvocationOutcome(AgentInvocationResult? Result, Exception? Exception) {

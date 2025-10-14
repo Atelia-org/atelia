@@ -10,12 +10,10 @@ internal sealed record ProviderRouteDefinition(
     string ProviderId,
     string Specification,
     string Model,
-    IProviderClient Client,
-    string? DefaultStubScriptName
+    IProviderClient Client
 );
 
 internal sealed class ProviderRouter {
-    public const string DefaultStubStrategy = "stub/script";
     public const string DefaultAnthropicStrategy = "anthropic-v1";
 
     private readonly Dictionary<string, ProviderRouteDefinition> _routes;
@@ -32,25 +30,12 @@ internal sealed class ProviderRouter {
     public ProviderInvocationPlan Resolve(ProviderInvocationOptions options) {
         if (!_routes.TryGetValue(options.StrategyId, out var definition)) { throw new InvalidOperationException($"Unknown provider strategy '{options.StrategyId}'."); }
 
-        var script = options.StubScriptName ?? definition.DefaultStubScriptName;
         var invocation = new ModelInvocationDescriptor(definition.ProviderId, definition.Specification, definition.Model);
 
-        DebugUtil.Print("Provider", $"[Router] Strategy={options.StrategyId} resolved to provider={invocation.ProviderId}, spec={invocation.Specification}, model={invocation.Model}, script={script ?? "(default-null)"}");
+        DebugUtil.Print("Provider", $"[Router] Strategy={options.StrategyId} resolved to provider={invocation.ProviderId}, spec={invocation.Specification}, model={invocation.Model}");
 
-        return new ProviderInvocationPlan(definition.StrategyId, definition.Client, invocation, script);
+        return new ProviderInvocationPlan(definition.StrategyId, definition.Client, invocation);
     }
-
-    public static ProviderRouter CreateDefault(IProviderClient stubProvider)
-        => new(new[] {
-            new ProviderRouteDefinition(
-                DefaultStubStrategy,
-                ProviderId: "stub",
-                Specification: "script/default",
-                Model: "livecontextproto-stub",
-                Client: stubProvider,
-                DefaultStubScriptName: "default"
-            )
-        });
 
     public static ProviderRouter CreateAnthropic(IProviderClient anthropicProvider, string model, string providerId = "anthropic")
         => new(new[] {
@@ -59,8 +44,7 @@ internal sealed class ProviderRouter {
                 ProviderId: providerId,
                 Specification: "messages-v1",
                 Model: model,
-                Client: anthropicProvider,
-                DefaultStubScriptName: null
+                Client: anthropicProvider
             )
         });
 }

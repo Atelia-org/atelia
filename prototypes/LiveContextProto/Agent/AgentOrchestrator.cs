@@ -40,7 +40,7 @@ internal sealed class AgentOrchestrator {
         DebugUtil.Print(DebugCategory, $"[Orchestrator] Rendering context count={context.Count}");
 
         var plan = _router.Resolve(options);
-        var request = new ProviderRequest(plan.StrategyId, plan.Invocation, context, plan.StubScriptName);
+        var request = new ProviderRequest(plan.StrategyId, plan.Invocation, context);
 
         var deltas = plan.Client.CallModelAsync(request, cancellationToken);
         var aggregate = await ModelOutputAccumulator.AggregateAsync(deltas, plan.Invocation, cancellationToken);
