@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.LiveContextProto.State.History;
@@ -10,15 +11,18 @@ namespace Atelia.LiveContextProto.Provider.Anthropic.Examples;
 /// Anthropic Provider 集成示例。
 /// </summary>
 internal static class AnthropicIntegrationExample {
+    private const string ProxyStrategyId = "anthropic-v1";
+    private const string DefaultProxyAnthropicUrl = "http://localhost:4000/anthropic/";
+    private const string DefaultProxySpecification = "messages-v1";
+    private const string DefaultProxyProviderId = "llm-proxy";
+    private const string DefaultProxyModel = "vscode-lm-proxy";
+
     /// <summary>
     /// 演示基础的对话调用。
     /// </summary>
     public static async Task SimpleConversationExample() {
         // 1. 初始化客户端
-        var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
-            ?? throw new InvalidOperationException("ANTHROPIC_API_KEY environment variable is required.");
-
-        var client = new AnthropicProviderClient(apiKey);
+        var client = CreateProxyClient();
 
         // 2. 构建上下文
         var context = new List<IContextMessage> {
@@ -35,16 +39,7 @@ internal static class AnthropicIntegrationExample {
         };
 
         // 3. 创建请求
-        var request = new ProviderRequest(
-            StrategyId: "anthropic-v1",
-            Invocation: new ModelInvocationDescriptor(
-                ProviderId: "anthropic",
-                Specification: "messages-v1",
-                Model: "claude-3-5-sonnet-20241022"
-            ),
-            Context: context,
-            StubScriptName: null
-        );
+        var request = CreateProviderRequest(context);
 
         // 4. 流式调用
         Console.WriteLine("=== Anthropic Response ===");
@@ -75,8 +70,7 @@ internal static class AnthropicIntegrationExample {
     /// 演示多轮对话与工具调用（需要真实工具执行器配合）。
     /// </summary>
     public static async Task MultiTurnWithToolsExample() {
-        var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")!;
-        var client = new AnthropicProviderClient(apiKey);
+        var client = CreateProxyClient();
 
         var context = new List<IContextMessage> {
             new SystemInstructionMessage("You are an AI assistant with access to weather tools.") {
@@ -91,12 +85,7 @@ internal static class AnthropicIntegrationExample {
             }
         };
 
-        var request = new ProviderRequest(
-            StrategyId: "anthropic-v1",
-            Invocation: new ModelInvocationDescriptor("anthropic", "messages-v1", "claude-3-5-sonnet-20241022"),
-            Context: context,
-            StubScriptName: null
-        );
+        var request = CreateProviderRequest(context);
 
         Console.WriteLine("=== User: What's the weather in Tokyo? ===");
 
@@ -152,12 +141,7 @@ internal static class AnthropicIntegrationExample {
 
             Console.WriteLine("\n=== Assistant (after tool execution): ===");
 
-            var followUpRequest = new ProviderRequest(
-                StrategyId: "anthropic-v1",
-                Invocation: new ModelInvocationDescriptor("anthropic", "messages-v1", "claude-3-5-sonnet-20241022"),
-                Context: context,
-                StubScriptName: null
-            );
+            var followUpRequest = CreateProviderRequest(context);
 
             await foreach (var delta in client.CallModelAsync(followUpRequest, CancellationToken.None)) {
                 if (delta.Kind == ModelOutputDeltaKind.Content) {
@@ -173,8 +157,7 @@ internal static class AnthropicIntegrationExample {
     /// 演示 LiveScreen 注入。
     /// </summary>
     public static async Task LiveScreenExample() {
-        var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")!;
-        var client = new AnthropicProviderClient(apiKey);
+        var client = CreateProxyClient();
 
         var input = new ModelInputEntry(
             new List<KeyValuePair<string, string>> {
@@ -204,12 +187,7 @@ internal static class AnthropicIntegrationExample {
             decoratedInput
         };
 
-        var request = new ProviderRequest(
-            StrategyId: "anthropic-v1",
-            Invocation: new ModelInvocationDescriptor("anthropic", "messages-v1", "claude-3-5-sonnet-20241022"),
-            Context: context,
-            StubScriptName: null
-        );
+        var request = CreateProviderRequest(context);
 
         Console.WriteLine("=== LiveScreen Injection Example ===");
         await foreach (var delta in client.CallModelAsync(request, CancellationToken.None)) {
@@ -219,4 +197,44 @@ internal static class AnthropicIntegrationExample {
         }
         Console.WriteLine("\n=== End ===");
     }
+
+    private static AnthropicProviderClient CreateProxyClient() {
+        var endpoint = ResolveProxyEndpoint();
+        var httpClient = new HttpClient { BaseAddress = endpoint };
+        return new AnthropicProviderClient(apiKey: null, httpClient: httpClient);
+    }
+
+    private static ProviderRequest CreateProviderRequest(List<IContextMessage> context)
+        => new(
+            StrategyId: ProxyStrategyId,
+            Invocation: new ModelInvocationDescriptor(
+                ResolveProviderId(),
+                ResolveSpecification(),
+                ResolveModel()
+            ),
+            Context: context,
+            StubScriptName: null
+        );
+
+    private static Uri ResolveProxyEndpoint() {
+        var anthropicUrl = Environment.GetEnvironmentVariable("LLM_PROXY_ANTHROPIC_URL");
+        if (!string.IsNullOrWhiteSpace(anthropicUrl) && Uri.TryCreate(EnsureTrailingSlash(anthropicUrl), UriKind.Absolute, out var explicitUri)) { return explicitUri; }
+
+        var proxyBaseUrl = Environment.GetEnvironmentVariable("LLM_PROXY_BASE_URL");
+        if (!string.IsNullOrWhiteSpace(proxyBaseUrl) && Uri.TryCreate(EnsureTrailingSlash(proxyBaseUrl), UriKind.Absolute, out var proxyBase)) { return new Uri(proxyBase, "anthropic/"); }
+
+        return new Uri(DefaultProxyAnthropicUrl);
+    }
+
+    private static string ResolveSpecification()
+        => Environment.GetEnvironmentVariable("LLM_PROXY_SPEC") ?? DefaultProxySpecification;
+
+    private static string ResolveProviderId()
+        => Environment.GetEnvironmentVariable("LLM_PROXY_PROVIDER_ID") ?? DefaultProxyProviderId;
+
+    private static string ResolveModel()
+        => Environment.GetEnvironmentVariable("LLM_PROXY_MODEL") ?? DefaultProxyModel;
+
+    private static string EnsureTrailingSlash(string value)
+        => value.EndsWith('/') ? value : value + "/";
 }

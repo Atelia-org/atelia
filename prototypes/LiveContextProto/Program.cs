@@ -1,3 +1,5 @@
+using System;
+using System.Net.Http;
 using System.Text;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Agent;
@@ -10,6 +12,9 @@ namespace Atelia.LiveContextProto;
 
 internal static class Program {
     private const string DebugCategory = "History";
+    private const string DefaultProxyModel = "vscode-lm-proxy";
+    private const string AnthropicProxyUrl = "http://localhost:4000/anthropic/";
+    private const string AnthropicProxyProviderId = "anthropic-proxy";
 
     public static int Main(string[] args) {
         Console.InputEncoding = Encoding.UTF8;
@@ -17,19 +22,10 @@ internal static class Program {
 
         DebugUtil.Print(DebugCategory, "LiveContextProto bootstrap starting");
 
-        var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        if (string.IsNullOrWhiteSpace(apiKey)) {
-            Console.Error.WriteLine("[error] 环境变量 ANTHROPIC_API_KEY 未设置，无法启动 Anthropic Provider。");
-            return 1;
-        }
-
-        var model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-3-5-sonnet-20241022";
-        var specification = Environment.GetEnvironmentVariable("ANTHROPIC_SPEC") ?? "messages-v1";
-        var providerId = Environment.GetEnvironmentVariable("ANTHROPIC_PROVIDER_ID") ?? "anthropic";
-
         var agentState = AgentState.CreateDefault();
-        var anthropicClient = new AnthropicProviderClient(apiKey);
-        var router = ProviderRouter.CreateAnthropic(anthropicClient, model, specification, providerId);
+
+        var anthropicClient = new AnthropicProviderClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
+        var router = ProviderRouter.CreateAnthropic(anthropicClient, DefaultProxyModel, AnthropicProxyProviderId);
 
         var toolCatalog = ToolCatalog.Create(Array.Empty<ITool>());
         var toolExecutor = new ToolExecutor(toolCatalog.CreateHandlers());
@@ -44,4 +40,7 @@ internal static class Program {
         DebugUtil.Print(DebugCategory, "LiveContextProto shutdown");
         return 0;
     }
+
+    private static string EnsureTrailingSlash(string value)
+        => value.EndsWith('/') ? value : value + "/";
 }

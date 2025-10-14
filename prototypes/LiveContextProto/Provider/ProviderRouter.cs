@@ -52,12 +52,12 @@ internal sealed class ProviderRouter {
             )
         });
 
-    public static ProviderRouter CreateAnthropic(IProviderClient anthropicProvider, string model, string specification = "messages-v1", string providerId = "anthropic")
+    public static ProviderRouter CreateAnthropic(IProviderClient anthropicProvider, string model, string providerId = "anthropic")
         => new(new[] {
             new ProviderRouteDefinition(
                 DefaultAnthropicStrategy,
                 ProviderId: providerId,
-                Specification: specification,
+                Specification: "messages-v1",
                 Model: model,
                 Client: anthropicProvider,
                 DefaultStubScriptName: null

@@ -28,15 +28,17 @@ internal sealed class AnthropicProviderClient : IProviderClient {
     };
 
     private readonly HttpClient _httpClient;
-    private readonly string _apiKey;
+    private readonly string? _apiKey;
     private readonly string _apiVersion;
 
-    public AnthropicProviderClient(string apiKey, HttpClient? httpClient = null, string? apiVersion = null) {
-        _apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey));
-        _httpClient = httpClient ?? new HttpClient { BaseAddress = new Uri("https://api.anthropic.com/") };
-        _apiVersion = apiVersion ?? DefaultApiVersion;
+    public AnthropicProviderClient(string? apiKey, HttpClient? httpClient = null, string? apiVersion = null, Uri? baseAddress = null) {
+        _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+        _httpClient = httpClient ?? new HttpClient();
+        _httpClient.BaseAddress = baseAddress ?? new Uri("https://api.anthropic.com/");
 
-        DebugUtil.Print(DebugCategory, $"[Anthropic] Client initialized version={_apiVersion}");
+        _apiVersion = string.IsNullOrWhiteSpace(apiVersion) ? DefaultApiVersion : apiVersion;
+
+        DebugUtil.Print(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}");
     }
 
     public async IAsyncEnumerable<ModelOutputDelta> CallModelAsync(
@@ -88,8 +90,13 @@ internal sealed class AnthropicProviderClient : IProviderClient {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))
         };
 
-        request.Headers.Add("x-api-key", _apiKey);
-        request.Headers.Add("anthropic-version", _apiVersion);
+        if (!string.IsNullOrWhiteSpace(_apiKey)) {
+            request.Headers.Add("x-api-key", _apiKey);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_apiVersion)) {
+            request.Headers.Add("anthropic-version", _apiVersion);
+        }
 
         return request;
     }
