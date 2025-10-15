@@ -49,11 +49,6 @@ internal sealed class ConsoleTui {
                 continue;
             }
 
-            if (line.StartsWith("/liveinfo", StringComparison.OrdinalIgnoreCase)) {
-                HandleLiveInfoCommand(line);
-                continue;
-            }
-
             if (string.Equals(line, "/reset", StringComparison.OrdinalIgnoreCase)) {
                 _agent.Reset();
                 _output.WriteLine("[state] 已清空历史。");
@@ -68,7 +63,7 @@ internal sealed class ConsoleTui {
 
     private void PrintIntro() {
         _output.WriteLine("=== LiveContextProto Anthropic Runner ===");
-        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set|clear，/liveinfo list|set|clear，/exit 退出。");
+        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set，/exit 退出。");
         _output.WriteLine();
         _output.WriteLine("输入任意文本将调用当前配置的模型，并把输出回写到历史。");
         _output.WriteLine();
@@ -270,12 +265,6 @@ internal sealed class ConsoleTui {
             return;
         }
 
-        if (argument.Equals("clear", StringComparison.OrdinalIgnoreCase)) {
-            _agent.UpdateMemoryNotebook(null);
-            _output.WriteLine("[notebook] 已清空记忆笔记。");
-            return;
-        }
-
         if (argument.StartsWith("set", StringComparison.OrdinalIgnoreCase)) {
             var newContent = argument.Length > 3
                 ? argument[3..].TrimStart()
@@ -286,7 +275,7 @@ internal sealed class ConsoleTui {
             return;
         }
 
-        _output.WriteLine("用法: /notebook [view|set <内容>|clear]");
+        _output.WriteLine("用法: /notebook [view|set <内容>]");
     }
 
     private void PrintNotebookSnapshot() {
@@ -294,74 +283,6 @@ internal sealed class ConsoleTui {
         _output.WriteLine("[notebook] 当前内容如下：");
         _output.WriteLine(snapshot);
         _output.WriteLine($"[notebook] 长度: {snapshot.Length}");
-    }
-
-    private void HandleLiveInfoCommand(string commandLine) {
-        var payload = commandLine.Length <= 9
-            ? string.Empty
-            : commandLine[9..];
-
-        var argument = payload.Trim();
-
-        if (argument.Length == 0 || argument.Equals("list", StringComparison.OrdinalIgnoreCase)) {
-            PrintLiveInfoSections();
-            return;
-        }
-
-        if (argument.StartsWith("set", StringComparison.OrdinalIgnoreCase)) {
-            var remainder = argument.Length > 3 ? argument[3..].TrimStart() : string.Empty;
-            var splitIndex = remainder.IndexOf(' ');
-
-            if (splitIndex <= 0 || splitIndex == remainder.Length - 1) {
-                _output.WriteLine("用法: /liveinfo set <节名称> <内容>");
-                return;
-            }
-
-            var section = remainder[..splitIndex].Trim();
-            var content = remainder[(splitIndex + 1)..];
-
-            if (string.IsNullOrWhiteSpace(section)) {
-                _output.WriteLine("节名称不能为空。");
-                return;
-            }
-
-            _agent.UpdateLiveInfoSection(section, content);
-            _output.WriteLine($"[liveinfo] 已更新节 '{section}'。");
-            return;
-        }
-
-        if (argument.StartsWith("clear", StringComparison.OrdinalIgnoreCase)) {
-            var remainder = argument.Length > 5 ? argument[5..].TrimStart() : string.Empty;
-            if (string.IsNullOrWhiteSpace(remainder)) {
-                _output.WriteLine("用法: /liveinfo clear <节名称>");
-                return;
-            }
-
-            _agent.UpdateLiveInfoSection(remainder.Trim(), null);
-            _output.WriteLine($"[liveinfo] 已移除节 '{remainder.Trim()}'。");
-            return;
-        }
-
-        _output.WriteLine("用法: /liveinfo [list|set <节名称> <内容>|clear <节名称>]");
-    }
-
-    private void PrintLiveInfoSections() {
-        _output.WriteLine("[liveinfo] 当前节一览：");
-
-        var sections = _agent.LiveInfoSections
-            .OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (sections.Count == 0) {
-            _output.WriteLine("  (暂无附加 LiveInfo 节)");
-        }
-        else {
-            foreach (var (key, value) in sections) {
-                _output.WriteLine($"  - {key} (长度 {value.Length})");
-            }
-        }
-
-        _output.WriteLine($"  * Memory Notebook: 长度 {_agent.MemoryNotebookSnapshot.Length}");
     }
 
     private void InvokeProviderAndDisplay(ProviderInvocationOptions options) {

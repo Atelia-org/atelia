@@ -27,9 +27,8 @@ dotnet run --project prototypes/LiveContextProto/LiveContextProto.csproj
 ## 控制台命令
 - 直接输入文本：触发 Anthropic Provider 调用，并将输出/工具结果回写至历史。
 - /history：打印当前上下文（包含系统指令、用户输入、助手输出、工具结果与 LiveScreen 装饰），并递归展示每条消息的 Metadata 摘要（例如耗时、失败计数、per-call 诊断）。
-- /reset：清空历史与 LiveInfo。
+- /reset：清空历史并重置记忆笔记。
 - /notebook view|set <内容>|clear：查看/设置/清空记忆笔记；下次渲染会以 LiveScreen 装饰附加到最新输入或工具结果。
-- /liveinfo list|set <节名称> <内容>|clear <节名称>：查看或维护附加 LiveInfo 节（例如 Planner 摘要），LiveScreen 会在 Notebook 后附加展示。
 - /exit：退出。
 
 > 小贴士：命令输出的 Metadata 会跳过重复的 `token_usage` 字段，若需更详细的调试日志，可同时开启 `ATELIA_DEBUG_CATEGORIES=History,Provider,Tools`。

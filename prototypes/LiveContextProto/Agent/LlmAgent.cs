@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using Atelia.Diagnostics;
@@ -30,15 +29,11 @@ internal sealed class LlmAgent {
 
     public string MemoryNotebookSnapshot => _state.MemoryNotebookSnapshot;
 
-    public IReadOnlyDictionary<string, string> LiveInfoSections => _state.LiveInfoSections;
-
     public IReadOnlyList<IContextMessage> RenderLiveContext() => _state.RenderLiveContext();
 
     public void Reset() => _state.Reset();
 
     public void UpdateMemoryNotebook(string? content) => _state.UpdateMemoryNotebook(content);
-
-    public void UpdateLiveInfoSection(string sectionName, string? content) => _state.UpdateLiveInfoSection(sectionName, content);
 
     public ModelInputEntry AppendUserInput(string text) {
         if (string.IsNullOrWhiteSpace(text)) { throw new ArgumentException("Value cannot be null or whitespace.", nameof(text)); }

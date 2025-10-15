@@ -149,22 +149,24 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 ## AgentState 角色划分
 
-- **统一的状态聚合器**：集中封装一次 LLM 调用所需的全部上游信息，包括 LiveInfo 组件与追加式历史列表，外部通过有限的领域方法与之交互。
+- **统一的状态聚合器**：集中封装一次 LLM 调用所需的全部上游信息，包括 Widget 子系统（例如 `MemoryNotebookWidget`）与追加式历史列表，外部通过有限的领域方法与之交互。
 - **追加式历史记录**：`_history` 以仅追加方式保存所有 `HistoryEntry`，不提供编辑或删除入口，确保事件轨迹可追溯。
-- **LiveInfo 管理**：内部维护 `_systemInstruction`、`_memoryNotebookContent` 等 LiveInfo 的最新视图，为上下文渲染阶段提供即时内容；这些 LiveInfo 在设计上应同时负责记录自身的变更轨迹。
-- **LiveInfo 变更约定**：LiveInfo 更新时须在 `_history` 中落下一条匹配的条目，以保证 `RenderLiveContext()` 能重建历史语义；当前实现仍依赖调用方自觉遵守，后续将通过专门的接口或回调补齐约束。
-- **上下文渲染职责**：沿用 `MemoFileProto.Agent.LlmAgent.BuildLiveContext()` 的思路，在 `RenderLiveContext()` 中把历史条目与各 LiveInfo 的即时内容投影成 `IReadOnlyList<IContextMessage>`；该过程不修改 `_history` 本身。
+- **Widget 协同管理**：内部持有实现 `IWidget` 的组件（首版为 `MemoryNotebookWidget`），并维护 `_systemInstruction` 等运行时字段；Widget 负责自身状态与工具暴露，AgentState 负责协调访问与生命周期。
+- **Widget 变更约定**：Widget 在自身状态发生变化时应通过受控入口（例如 `ExecuteTool`）驱动 AgentState 追加描述性 `HistoryEntry`，以保证 `RenderLiveContext()` 能重建历史语义；当前阶段由 `memory_notebook_replace` 覆盖 Notebook 更新。
+- **上下文渲染职责**：沿用 `MemoFileProto.Agent.LlmAgent.BuildLiveContext()` 的思路，在 `RenderLiveContext()` 中把历史条目与各 Widget 的 `RenderLiveScreen()` 输出投影成 `IReadOnlyList<IContextMessage>`；该过程不修改 `_history` 本身。
 - **单线程约束**：默认挂靠在单线程 Agent 管理循环上，不支持并发写入；如需并发需在调用方自行加锁。本阶段利用该前提直接在 `AgentState` 内部渲染上下文，而不额外生成快照对象。
 - **暂不支持历史回放**：本阶段不提供历史状态重建/时间穿越能力，后续再根据原型需求拆分。
 
-> 目前的 `SetSystemInstruction()` 与 `SetMemoryNotebook()` 仍是临时实现，仅更新 LiveInfo 的即时值，没有自动生成历史条目；在引入统一的 LiveInfo 接口后会补全这一行为。
+> 目前的 `SetSystemInstruction()` 与 `SetMemoryNotebook()` 仍是临时实现，仅更新运行时字段，没有通过 Widget 工具管线自动写入历史；待 `MemoryNotebookWidget` 全量接管后，将改由 `ExecuteTool` 驱动并附带匹配的历史条目。
 
-### LiveInfo 约定
+### Widget 约定
 
-- **渲染职责**：每个 LiveInfo 至少需提供一个“最新视图”的只读投影（如 `IReadOnlyList<KeyValuePair<string,string>>`），用于在 `ModelInputEntry.ContentSections` 或其他上下文位置注入动态内容。
-- **变更记账**：LiveInfo 在自身状态发生变化时应追加一条描述性 `HistoryEntry` 到 `_history`，以便历史时间线反映这些调整；在正式接口落地前，此步骤由调用方或 LiveInfo 实现手动调用完成。
-- **外部交互**：部分 LiveInfo（例如工具注册表、Memory Notebook 编辑器）可能需要暴露操作方法供 Agent 之外的组件调用。调用方必须在执行修改后遵守“变更记账”约定，以避免 `_history` 与实际状态脱节。
-- **开放问题**：变更通知的机制化保证（回调、事件或事务包装）、多 LiveInfo 之间的顺序协调以及并发访问策略仍在评估中，待后续迭代在“具体技术方案”章节中给出详细设计。
+与《LiveContextProto Widget 设计概念草案》保持一致，首版约定如下：
+
+- **渲染职责**：每个 Widget 实现 `RenderLiveScreen(WidgetRenderContext)`，返回 Markdown 或纯文本片段；`AgentState.RenderLiveContext()` 将其作为 LiveScreen 注入，并与历史条目合成 `IReadOnlyList<IContextMessage>`。
+- **状态变更记账**：Widget 通过 `ExecuteTool` 更新内部状态时，应驱动 AgentState 追加对应的 `HistoryEntry`（例如 `MemoryNotebookWidget` 在完成 `memory_notebook_replace` 后记录 Notebook 替换事件），确保历史时间线可还原。
+- **外部交互**：Widget 暴露的 `Tools` 列表供 Planner/LLM 调用；调用方需遵循工具参数约定，避免绕过 Widget 直接修改 AgentState 字段，以免破坏单一事实源。
+- **开放问题**：Widget 之间的顺序协调、事件通知与并发访问策略仍在评估中，后续可能通过统一的 Widget Registry 或事件流补齐。
 
 ### 顺序与稳定标识策略
 
@@ -431,7 +433,7 @@ interface IContextAttachment { }
 
 ## History ↔ Context ↔ Provider 协作
 
-- **History → Context**：`AgentState.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口，并融合各 LiveInfo 暴露的最新视图；当历史条目本身已实现目标接口时直接复用，无法复用时则通过只读包装补足字段，并在必要时附加 `ILiveScreenCarrier` 等能力。系统指令视为运行时投影，通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
+- **History → Context**：`AgentState.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口，并叠加各 Widget 通过 `RenderLiveScreen()` 暴露的最新视图；当历史条目本身已实现目标接口时直接复用，无法复用时则通过只读包装补足字段，并在必要时附加 `ILiveScreenCarrier` 等能力。系统指令视为运行时投影，通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
 - **Context → Provider**：Provider 仅消费 `IContextMessage` 层接口，即可完成请求拼装与 delta 解析。它们通过接口检测判定角色（`IModelInputMessage`、`IModelOutputMessage` 等），按需解释 `ContentSections`、`Contents` 等字段，对实现 `IToolCallCarrier` 的条目解析 `ToolCalls`，并在推理结束后根据 `ITokenUsageCarrier` 或 `Metadata` 回写统计信息。
 - **Provider → History**：模型响应结束后，由调用协调层基于 Provider 返回的 delta 聚合出新的 `ModelOutputEntry`、`ToolResultsEntry` 等，并追加到 History。这样可以保证 History 层仅包含最终定稿的条目，而流式阶段的装饰数据只存在于 Context 层。
 - **附件/富内容**：附件体系说明统一记录在“结构化附属数据（暂缓实现）”小节。
@@ -486,75 +488,106 @@ interface IProviderClient {
 ## AgentState API 草案
 
 ```csharp
-class AgentState {
+internal sealed class AgentState {
     private readonly List<HistoryEntry> _history = new();
-    private string _systemInstruction = LlmAgent.DefaultSystemInstruction;
-    private string _memoryNotebookContent = "（尚无内容）";
+    private readonly Func<DateTimeOffset> _timestampProvider;
+    private readonly MemoryNotebookWidget _memoryNotebookWidget;
+    private readonly ImmutableArray<IWidget> _widgets;
 
+    private AgentState(Func<DateTimeOffset> timestampProvider, string systemInstruction) {
+        _timestampProvider = timestampProvider;
+        SystemInstruction = systemInstruction;
+        _memoryNotebookWidget = new MemoryNotebookWidget();
+        _widgets = ImmutableArray.Create<IWidget>(_memoryNotebookWidget);
+    }
+
+    public string SystemInstruction { get; private set; }
     public IReadOnlyList<HistoryEntry> History => _history;
-    public string SystemInstruction => _systemInstruction;
-    public string MemoryNotebookContent => _memoryNotebookContent;
+    public MemoryNotebookWidget MemoryNotebookWidget => _memoryNotebookWidget;
+    public string MemoryNotebookSnapshot => _memoryNotebookWidget.GetSnapshot();
+
+    public static AgentState CreateDefault(string? systemInstruction = null, Func<DateTimeOffset>? timestampProvider = null)
+        => new AgentState(timestampProvider ?? static () => DateTimeOffset.UtcNow, systemInstruction ?? LlmAgent.DefaultSystemInstruction);
 
     public void SetSystemInstruction(string instruction) {
-        _systemInstruction = instruction;
-        // TODO: 待引入 SystemInstruction 相关历史条目或快照后，再在此处追加持久化逻辑。
+        SystemInstruction = instruction;
+        DebugUtil.Print("History", $"System instruction updated length={instruction.Length}");
     }
 
-    public void SetMemoryNotebook(string content) {
-        // 同SetSystemInstruction，待引入 SystemInstruction 相关历史条目或快照后，再在此处追加持久化逻辑。
-        // var entry = new MemoryNotebookChangedEntry(content) {
-        //     Timestamp = DateTimeOffset.Now
-        // };
-        // _history.Add(entry);
-        _memoryNotebookContent = content;
-    }
-
-    public void AppendHistory(HistoryEntry entry) {
-        _history.Add(entry);
-    }
+    public void UpdateMemoryNotebook(string? content)
+        => _memoryNotebookWidget.ReplaceNotebookFromHost(content);
 
     public IReadOnlyList<IContextMessage> RenderLiveContext() {
-        // 当前阶段：单 pass 反向遍历，照搬 LlmAgent.BuildLiveContext() 实现
-        // 暂不实现 Recent 截断功能，等需求分析完成后在后续阶段引入
         var context = new List<IContextMessage>(_history.Count + 1);
-        bool hasDecoratedLastSense = false;
+        var hasDecoratedLiveScreen = false;
 
-        for (int i = _history.Count; --i >= 0;) {
-            var entry = _history[i];
-            if (entry is not ContextualHistoryEntry ctx) continue;
-            if (ctx.Role == ContextMessageRole.System) continue;
-
-            if (!hasDecoratedLastSense &&
-                (ctx.Role == ContextMessageRole.ModelInput || ctx.Role == ContextMessageRole.ToolResult)) {
-                var liveScreen = BuildVolatileSection();
-                context.Add(ContextMessageLiveScreenHelper.AttachLiveScreen(ctx, liveScreen));
-                hasDecoratedLastSense = true;
-            } else {
-                context.Add(ctx);
+        for (var index = _history.Count; --index >= 0;) {
+            if (_history[index] is not ContextualHistoryEntry entry || entry.Role == ContextMessageRole.System) {
+                continue;
             }
+
+            if (!hasDecoratedLiveScreen && ShouldDecorate(entry)) {
+                var liveScreen = BuildLiveScreenSnapshot();
+                context.Add(ContextMessageLiveScreenHelper.AttachLiveScreen(entry, liveScreen));
+                hasDecoratedLiveScreen = true;
+                continue;
+            }
+
+            context.Add(entry);
         }
 
-        // 注入 System Instruction
-        var systemMessage = new SystemInstructionMessage(
-            Instruction: _systemInstruction
-        ) {
-            Timestamp = DateTimeOffset.Now
-        };
-        context.Add(systemMessage);
+        context.Add(new SystemInstructionMessage(SystemInstruction) {
+            Timestamp = _timestampProvider()
+        });
 
         context.Reverse();
         return context;
     }
 
-    private string BuildVolatileSection() {
-        if (string.IsNullOrEmpty(_memoryNotebookContent)) return string.Empty;
-        return $"# [Live Screen]:\n## [Memory Notebook]:\n\n{_memoryNotebookContent}";
+    private string? BuildLiveScreenSnapshot() {
+        var fragments = new List<string>();
+        var renderContext = new WidgetRenderContext(this, ImmutableDictionary<string, object?>.Empty);
+
+        foreach (var widget in _widgets) {
+            var fragment = widget.RenderLiveScreen(renderContext);
+            if (!string.IsNullOrWhiteSpace(fragment)) {
+                fragments.Add(fragment.TrimEnd());
+            }
+        }
+
+        if (fragments.Count == 0) {
+            return null;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("# [Live Screen]");
+        builder.AppendLine();
+
+        for (var i = 0; i < fragments.Count; i++) {
+            builder.AppendLine(fragments[i]);
+            if (i < fragments.Count - 1) {
+                builder.AppendLine();
+            }
+        }
+
+        return builder.ToString().TrimEnd();
     }
+
+    internal IEnumerable<ITool> EnumerateWidgetTools() {
+        foreach (var widget in _widgets) {
+            foreach (var tool in widget.Tools) {
+                yield return tool;
+            }
+        }
+    }
+
+    private static bool ShouldDecorate(ContextualHistoryEntry entry)
+        => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
 }
 ```
 
 **设计要点**：
-- **领域方法优于通用 Append**：目标状态会提供 `AppendModelInput()` 等语义化入口以封装 `_history` 追加，避免调用方直接构造条目；当前草稿暂以 `AppendHistory()` 代替，待 LiveInfo 与 Entry 类型稳定后再拆分专用方法。
+- **领域方法优于通用 Append**：目标状态会提供 `AppendModelInput()` 等语义化入口以封装 `_history` 追加，避免调用方直接构造条目；当前草稿暂以 `AppendHistory()` 代替，待 Widget 与 Entry 类型稳定后再拆分专用方法。
 - **顺序策略复用**：当前示例仅演示时间戳注入，关于顺序号/稳定标识的安排沿用“顺序与稳定标识策略”的统一约定。
 - **History 语义**：`_history` / `History` 明确了"不可变事件日志"的领域语义，与 Event Sourcing 术语一致，强调这是历史条目的原始存储而非展示视图。
 - **状态同步封装**：`SetSystemInstruction` 等方法内部同步更新对应的运行时字段，保持数据一致性。

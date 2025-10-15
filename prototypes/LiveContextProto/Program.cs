@@ -27,7 +27,7 @@ internal static class Program {
         var anthropicClient = new AnthropicProviderClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
         var router = ProviderRouter.CreateAnthropic(anthropicClient, DefaultProxyModel, AnthropicProxyProviderId);
 
-        var toolCatalog = ToolCatalog.Create(Array.Empty<ITool>());
+        var toolCatalog = ToolCatalog.Create(agentState.EnumerateWidgetTools());
         var toolExecutor = new ToolExecutor(toolCatalog.CreateHandlers());
 
         var orchestrator = new AgentOrchestrator(agentState, router, toolExecutor, toolCatalog);

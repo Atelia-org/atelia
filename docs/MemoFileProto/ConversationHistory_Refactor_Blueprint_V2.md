@@ -39,8 +39,8 @@
       - [CQRS 与 Repository（🛠️）](#cqrs-与-repository️)
       - [Strategy + Adapter（🛠️）](#strategy--adapter️)
       - [Decorator（✅）](#decorator)
-    - [AgentState 与 LiveInfo 职责（🛠️）](#agentstate-与-liveinfo-职责️)
-      - [LiveInfo 约定（🛠️）](#liveinfo-约定️)
+    - [AgentState 与 Widget 职责（🛠️）](#agentstate-与-widget-职责️)
+      - [Widget 约定（🛠️）](#widget-约定️)
       - [顺序与稳定标识策略（⏳）](#顺序与稳定标识策略)
       - [AgentState 目标 API 轮廓（🛠️）](#agentstate-目标-api-轮廓️)
         - [示例：AgentState 骨架草图（🛠️）](#示例agentstate-骨架草图️)
@@ -86,8 +86,8 @@
 | ContextMessage 接口束 | ✅ | 基础接口、角色化派生与 mix-in 能力已定稿，并与 HistoryEntry 抽象保持一致。 | [ContextMessage 层接口设计（✅）](#contextmessage-层接口设计) |
 | Context 渲染/投影 | ✅ | RenderLiveContext 流程与 LiveScreen 装饰策略已实现并验证，支持 Memory Notebook 动态注入。 | [数据与交互流](#数据与交互流) |
 | Provider 抽象与路由 | ✅ | IProviderClient、ModelOutputDelta 管线与 ProviderRouter 已落地，Stub Provider 完整验证流式调用闭环。 | [目标架构（Target Design）](#目标架构target-design) |
-| AgentState 语义化追加 API | ✅ | `AppendModelInput/Output/ToolResults` 等领域方法已实现，替代临时 `AppendHistory`，并集成时间戳注入与 DebugUtil 打点。 | [AgentState 与 LiveInfo 职责](#agentstate-与-liveinfo-职责) |
-| LiveInfo 与附加能力 | 🛠️ | LiveScreen 装饰器与基础 Notebook 投影已实现，附件体系、Notebook 事件化、动态工具 manifest 等延后至阶段 4+。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
+| AgentState 语义化追加 API | ✅ | `AppendModelInput/Output/ToolResults` 等领域方法已实现，替代临时 `AppendHistory`，并集成时间戳注入与 DebugUtil 打点。 | [AgentState 与 Widget 职责](#agentstate-与-widget-职责️) |
+| Widget 体系与附加能力 | 🛠️ | MemoryNotebookWidget 与 Widget 工具清单已投入使用，LiveScreen 装饰整合完毕；附件体系、Notebook 事件化、动态工具 manifest 等延后至阶段 4+。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
 | 诊断与元数据策略 | 🛠️ | DebugUtil 集成与 TokenUsage 初步支持已完成，深度遥测方案（计费、缓存命中）尚未定稿。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
 
 状态标签释义：
@@ -127,7 +127,7 @@ MemoFileProto 在早期直接沿用 OpenAI Chat Completion 的消息结构作为
 ## 目标架构（Target Design）
 ### 核心原则
 - **供应商无关性**：所有领域模型围绕 `HistoryEntry` 与 `IContextMessage` 定义，不暴露任何厂商特定字段，便于在同一会话内切换或并行多个 Provider。
-- **单一事实源**：AgentState 以追加式 HistoryEntry 保存全部历史，LiveInfo 仅作为可重建的运行时快照。
+- **单一事实源**：AgentState 以追加式 HistoryEntry 保存全部历史，Widget 作为受控的运行时组件封装状态、工具与呈现，状态可由 AgentState 重建。
 - **分层解耦**：History ↔ Context ↔ Provider 之间只通过接口交互，禁止跨层依赖具体实现，确保多供应商并存。
 - **渐进扩展**：默认提供最小可行模型（文本 + 工具调用），附加能力（LiveScreen、附件、TokenUsage）通过可选接口扩展。
 - **回放友好**：所有时间戳由 AgentState 注入，后续若接入持久化或事件回放，无需修改 Provider 层协议。
@@ -139,7 +139,7 @@ MemoFileProto 在早期直接沿用 OpenAI Chat Completion 的消息结构作为
 - **装饰器透明性**：LiveScreen 等装饰必须维持 `InnerMessage` 的接口能力，任何消费方都需以“先解包、再判断角色”的模式处理，确保上下游协作稳定。
 ### 系统构成摘要
 Conversation History 的目标架构延续 v1 文档的“三段式流水线”，但将每一层的契约重新梳理为稳定的接口集合：
-- **AgentState**：负责历史持久与 LiveInfo 管理，暴露追加式 API（`AppendModelInput`、`AppendModelOutput` 等）以及上下文渲染入口。所有可追溯事件都以 `HistoryEntry` 形式落盘；系统指令、记忆 Notebook 等 LiveInfo 可在必要时重放重建。
+- **AgentState**：负责历史持久与 Widget 宿主管理，暴露追加式 API（`AppendModelInput`、`AppendModelOutput` 等）以及上下文渲染入口。所有可追溯事件都以 `HistoryEntry` 形式落盘；系统指令由宿主字段维护，而 Notebook 等运行态视图则通过 Widget（如 `MemoryNotebookWidget`）封装并可在必要时重放重建。
 - **Context Projection**：`RenderLiveContext()` 读取 AgentState，并按调用需求生成 `IContextMessage` 序列，可通过装饰器临时注入 LiveScreen。该层对外表现为纯函数，不产生副作用。
 - **Provider Router**：根据策略选择具体 `IProviderClient` 实现，并在 delta 汇总后回写标准化的 `ModelOutputEntry` / `ToolResultsEntry`。路由逻辑可以依据模型家族、任务阶段或策略标签扩展。
 - **Provider Clients**：对接 OpenAI、Anthropic 等底层 SDK，将通用上下文转换为厂商协议，并解析增量流。所有解析出的工具调用以统一的 `ToolCallRequest` 表达。
@@ -156,9 +156,9 @@ Conversation History 的目标架构延续 v1 文档的“三段式流水线”�
 | 能力 | 最终目标 | 已交付内容 | 尚需工作 |
 | --- | --- | --- | --- |
 | 历史事件模型 | 使用分层 `HistoryEntry` 表达所有可追溯事件，并支持回放和扩展 | 记录类型、Metadata 约定及追加式 AgentState 已完成，正在双写阶段验证 | 引入序列号/StableId 及回放策略，绑定持久化方案 |
-| 上下文渲染管线 | 以 `RenderLiveContext()` 将历史和 LiveInfo 转换为供应商无关上下文，支持 LiveScreen 注入与 Token 裁剪 | 基础渲染流程与 LiveScreen 装饰策略已就绪 | Token 预算驱动的裁剪、跨 Provider 兼容性验收、LiveInfo 自动记账 |
+| 上下文渲染管线 | 以 `RenderLiveContext()` 将历史与 Widget 渲染的 LiveScreen 转换为供应商无关上下文，支持 Token 裁剪 | 基础渲染流程与 LiveScreen 装饰策略已就绪 | Token 预算驱动的裁剪、跨 Provider 兼容性验收、Widget 状态自动记账 |
 | Provider 抽象层 | 通过 `IProviderClient` + `ProviderRouter` 统一调度多家模型，并归并 `ModelOutputDelta` | 契约、delta 更名与 OpenAI/Anthropic 适配策略已定稿 | 实现 Router、聚合工具调用诊断、完善混合会话测试 |
-| LiveInfo 与辅助能力 | 将 Memory Notebook、工具清单、附件等纳入统一 LiveInfo/Attachment 体系 | LiveScreen 装饰器、基础 Notebook 投影方案已经纳入渲染流程 | 定义附件协议、Notebook 事件条目化、动态工具 manifest 注入 |
+| Widget 生态与辅助能力 | 将 Memory Notebook、工具清单、附件等纳入统一 Widget/Attachment 体系 | LiveScreen 装饰器、基础 Notebook Widget 化方案已经纳入渲染流程 | 定义附件协议、Notebook 事件条目化、动态工具 manifest 注入 |
 
 ### 与 V1 蓝图的差异对照
 | 主题 | V1 蓝图侧重 | V2 调整 | 状态影响 |
@@ -166,7 +166,7 @@ Conversation History 的目标架构延续 v1 文档的“三段式流水线”�
 | 文档职责 | 设计要点与阶段计划混杂，同一章节兼顾目标与节奏 | 明确把路线规划迁出，蓝图仅保留目标、已交付与待定设计 | ✅ 蓝图成为长期的“单一真相源”，路线节奏在 Roadmap 中维护 |
 | 状态标识 | 通过文字段落隐含进度 | 新增状态表与章节标签（✅/🛠️/⏳） | ✅ 方便快速掌握边界，也便于例会同步与排期讨论 |
 | Provider 抽象 | 着重描述 OpenAI/Anthropic 差异，缺乏统一验收口径 | 引入 `IProviderClient` 契约、ModelOutputDelta 聚合及诊断字段 | 🛠️ 直接驱动 Phase 2-3 的代码改造与测试要求 |
-| LiveInfo 体系 | Notebook/系统指令散落在段落描述中 | 将 LiveInfo 约定、装饰策略及延后事项拆分成独立小节 | 🛠️ 明确 Phase 4 的前置条件，降低实现歧义 |
+| Widget 体系 | Notebook/系统指令散落在段落描述中 | 将 Widget 约定、装饰策略及延后事项拆分成独立小节 | 🛠️ 明确 Phase 4 的前置条件，降低实现歧义 |
 | 验收视角 | 缺少面向落地的完成定义 | 新增“设计验收准则”章节，列出判定标准 | 🛠️ 测试与代码评审可据此建立核对清单 |
 | 历史 vs. 上下文 | 强调单向数据流但未细化操作约束 | 固化“历史只追加、上下文纯读、Provider 只读消费”等不变量 | ✅ 当前双写阶段的唯一操作准则 |
 ### 数据与交互流
@@ -219,7 +219,8 @@ Conversation History 的目标架构延续 v1 文档的“三段式流水线”�
 - **接口分层**：仅实现 `IContextMessage` 的历史条目才会进入上下文列表；非上下文型事件（如未来的配置更新）默认被过滤，形成天然的职责分界。Provider 在消费装饰过的消息时需回退到 `ILiveScreenCarrier.InnerMessage`，保证角色化接口 (`IModelInputMessage`、`IModelOutputMessage` 等) 可被正确识别。
 - **上下文复用**：`RenderLiveContext()` 优先返回历史条目的原始实例，只有在注入 LiveScreen 或临时 Metadata 时才会生成轻量包装，避免频繁复制。未来在引入 Token 限额时，可在此层实现统一的裁剪策略而不触碰 Provider。
 - **回写一致性**：模型推理完成后，Orchestrator 必须先聚合全部增量再调用 AgentState 追加条目，禁止 Provider 自行写入 `_history`，以确保每轮推理对应一条 `ModelOutputEntry` 与可选的 `ToolResultsEntry`。
-- **LiveInfo 对齐**：系统指令、记忆 Notebook 等 LiveInfo 在渲染阶段以附加段落或装饰呈现，不直接落盘；当 LiveInfo 发生结构性升级（例如 Notebook 进入事件驱动模式）时，可新增专门的 `HistoryEntryKind` 而不会影响既有 Provider 协议。
+- **Widget 对齐**：系统指令维持宿主字段，而 Notebook 等运行态数据由 Widget 渲染为 LiveScreen 段落，不直接落盘；当 Widget 需要事件化（例如 Notebook 切换为事件流）时，可新增专门的 `HistoryEntryKind` 而不会影响既有 Provider 协议。
+- **Widget ↔ 工具执行**：Widget 暴露的 `ITool` 通过 `AgentState.EnumerateWidgetTools()` 汇总，供 Planner 与 ToolExecutor 统一调度；Widget 执行结果仍以 `ToolResultsEntry` 回写，保证历史视图的一致性。
 
 #### LiveScreen 处理约定
 - 渲染阶段仅在最新一次模型输入或工具结果条目上附加 LiveScreen，避免重复展示；若会话暂未生成新的输入，则保留上一次装饰结果。
@@ -332,7 +333,7 @@ interface ITokenUsageCarrier {
 - 随后若引入更细粒度的 delta 类型（如多模态 Part），将在保持向后兼容的前提下扩展结构，而不会影响既有 Provider 实现。
 
 ### 组件责任边界
-- **AgentState（✅历史事实源）**：管理 `_history` 与 LiveInfo 的一致性，负责时间戳注入、DebugUtil 打点以及只读视图暴露；禁止外部直接篡改集合，任何追加必须经过语义化入口。
+- **AgentState（✅历史事实源）**：管理 `_history` 与 Widget 宿主的一致性，负责时间戳注入、DebugUtil 打点以及只读视图暴露；禁止外部直接篡改集合，任何追加必须经过语义化入口。
 - **Context Projection（🛠️渲染层）**：通过 `RenderLiveContext()` 实现从历史→上下文的单向转换，可插入 LiveScreen 或其他临时视图，但不产生副作用；后续 Token 裁剪、去重逻辑也将集中在此处。
 - **Provider Router（🛠️调度层）**：根据模型策略选择 `IProviderClient`，对输入执行协议适配，对输出聚合 `ModelOutputDelta` 并反馈统一结构；仍需补齐混合供应商的故障转移与指标上报。
 - **Orchestrator（🛠️业务协调）**：封装模型调用生命周期，触发上下文渲染、驱动 Provider 调用，并在推理结束后统一回写历史；需要在实现阶段补充失败重试、工具链超时等跨层策略。
@@ -343,7 +344,7 @@ interface ITokenUsageCarrier {
 
 | MVVM 层次 | Conversation History 角色 | 主要职责 |
 | --- | --- | --- |
-| Model | AgentState | 持有不可变历史与 LiveInfo，是单一事实源 |
+| Model | AgentState | 持有不可变历史与 Widget 宿主，是单一事实源 |
 | ViewModel | `RenderLiveContext()` 输出 | 将历史投影成上下文视图，可按需注入 LiveScreen / 记忆片段 |
 | View | Provider 客户端 | 消费 `IContextMessage` 列表，转换为供应商协议并驱动推理 |
 
@@ -353,7 +354,7 @@ interface ITokenUsageCarrier {
 HistoryEntry 以仅追加方式记录事件，运行时快照（系统指令、记忆 Notebook 等）可通过重放恢复。当前阶段仅注入时间戳；顺序号与 StableId 延后到持久化方案落地时统一引入，避免早期维护冗余字段。
 
 - `ModelInputEntry` / `ModelOutputEntry` / `ToolResultsEntry` 被明确视作领域事件，命名中保留业务语义，避免回到 CRUD 式的模糊表示。
-- 系统指令与记忆 Notebook 仍作为运行时字段维护，渲染阶段生成 `SystemInstructionMessage`；一旦 LiveInfo 事件模型敲定，将把这些变更补记到历史中以确保可回放性。
+- 系统指令与记忆 Notebook 分别由宿主字段与 Widget 维护，渲染阶段生成 `SystemInstructionMessage`；一旦 Widget 事件模型敲定，将把这些变更补记到历史中以确保可回放性。
 - 在缺省环境下依赖 `_clock.Now` 注入时间戳，单元测试可替换 `IClock` 模拟，保证事件时间线稳定；后续若引入序列号，将复用同一注入点。
 - DebugUtil 打点绑定在事件追加流程中，结合事件日志可追溯调用链与工具执行，契合 Event Sourcing“事件即审计记录”的目标。
 
@@ -376,53 +377,55 @@ AgentState 内部将写入接口（`AppendModelInput/Output/ToolResults` 等）�
 #### Decorator（✅）
 `ContextMessageLiveScreenHelper` 使用装饰器包装上下文条目，将 LiveScreen 等临时能力附加其上而不改变原始记录类型。消费方通过 `ILiveScreenCarrier.InnerMessage` 访问原始接口，确保角色判定和复用不受影响。
 
-### AgentState 与 LiveInfo 职责（🛠️）
-- **状态聚合器**：AgentState 维护 `_history` 与各类 LiveInfo（系统指令、记忆 Notebook 等），通过受控入口暴露更新能力，确保“唯一事实源”。
-- **追加式历史**：所有历史事件都需通过 AgentState 追加，禁止外部直接编辑或删除；LiveInfo 的变更将在未来以匹配的 HistoryEntry 记账，保持可回放性。
-- **上下文渲染约束**：`RenderLiveContext()` 默认运行在单线程 orchestrator 上，反向遍历历史并挑选最新输入或工具条目附加 LiveScreen。若需并发或 Token 限制，调用方必须自行加锁或提供裁剪策略。
-- **LiveInfo 变更约定**：沿用早期协议，LiveInfo 更新需落地相应历史条目，当前阶段由调用方自觉追加；待统一接口落地后改由 AgentState 自动记账。
+### AgentState 与 Widget 职责（🛠️）
+- **状态聚合器**：AgentState 维护 `_history` 并作为 Widget 宿主，统一创建、持有并暴露受控访问器（当前包含 `MemoryNotebookWidget`），确保“唯一事实源”。
+- **追加式历史**：所有历史事件都需通过 AgentState 追加，禁止外部直接编辑或删除；Widget 在更新自身状态时必须委托 AgentState 的写入入口，以保持历史与运行态一致。
+- **上下文渲染约束**：`RenderLiveContext()` 默认运行在单线程 orchestrator 上，反向遍历历史并挑选最新输入或工具条目附加 LiveScreen；Widget 通过 `RenderLiveScreen` 输出 Markdown 片段，由 AgentState 统一注入。
+- **Widget 工具桥接**：AgentState 提供 `EnumerateWidgetTools()` 将所有 Widget 暴露的 `ITool` 组合成只读清单，供 Planner/LLM 在调用阶段发现与执行。
+- **宿主配置变更**：系统指令等宿主字段仍由 AgentState 直接维护；Widget 负责自身的运行态快照（例如 Notebook 内容），必要时可将变更透出为历史元数据或 Debug 日志。
 - **单线程假设**：依赖 orchestrator 的串行执行模型，内部不加锁；未来若引入多线程，需要在调用方增加同步层或引入事务包装。
-- **回放预留**：暂不支持历史回放/快照，但所有追加接口都集中在 AgentState，后续可在同一点扩展序列号、快照与 rollback 能力。
+- **回放预留**：暂不支持历史回放/快照，但所有追加接口与 Widget 状态入口都集中在 AgentState，后续可在同一点扩展序列号、快照与 rollback 能力。
 
-#### LiveInfo 约定（🛠️）
-- 每个 LiveInfo 必须暴露“最新视图”的只读投影（例如 `IReadOnlyList<KeyValuePair<string,string>>`），以便在上下文中注入 Planner 指令、记忆摘录等动态信息。
-- 在 LiveInfo 状态发生改变时，应追加一条描述性 `HistoryEntry`（目前通过调用方手动触发），保证回放时可以还原语义；正式的 LiveInfo 接口将把这一流程合并。
-- 某些 LiveInfo（如 Memory Notebook）需要对外公开编辑 API，调用方在修改后必须遵守变更记账约定，避免 `_history` 与实际状态脱节。
-- 并发访问依旧遵循单线程假设；当未来引入跨线程写入时，需通过事件或事务包装协调多个 LiveInfo 的顺序与一致性。
+#### Widget 约定（🛠️）
+- Widget 必须实现 `IWidget` 接口并提供稳定的 `Name`、`Description` 与只读 `Tools` 集合，供发现与能力曝光。
+- `RenderLiveScreen(WidgetRenderContext)` 负责将 Widget 内部状态序列化为 Markdown 片段；返回 `null` 或空字符串表示不注入 LiveScreen。
+- `ExecuteTool(toolName, ToolExecutionContext)` 用于派发工具执行；Widget 内部需要验证工具名称，并在成功或失败路径上通过 `ToolHandlerResult` 明确结果。
+- Widget 可以访问 `WidgetRenderContext.AgentState` 的只读视图读取历史或其他 Widget 快照，但不得直接修改 `_history`；任何状态变更需通过宿主提供的受控方法（如 `ReplaceNotebookFromHost`）完成。
+- Widget 应在关键操作中调用 `DebugUtil`，为运行时追踪提供统一日志入口（推荐使用 `MemoryNotebookWidget` 等专用类别）。
+- 当前阶段默认 `AgentState` 以固定顺序遍历 `_widgets` 并拼接 LiveScreen；未来若需要优先级或分组，可扩展 `WidgetMetadata`。
+- Widget 接口草案与更详细的职责说明可参考《[LiveContextProto Widget 设计概念草案](../LiveContextProto/WidgetConcept.md)》。
 
 #### 顺序与稳定标识策略（⏳）
 - 当前阶段不维护单调序列号或稳定 Guid，以避免在尚未启用持久化功能前引入额外负担。
 - 待事件存储或快照方案明确后，将在追加入口集中注入 `SequenceNumber`、`StableId` 等字段，并配套测试与回放机制。
 - 领域方法已保留统一的时间戳注入路径，后续扩展顺序号或其他元数据时可复用相同的注入点。
 
-- **暂缓能力**：历史回放、快照恢复、LiveInfo 自动记账等能力被统一纳入 Deferred 范畴，待事件存储方案明确后再设计，以免分散当前阶段的实现精力。
+- **暂缓能力**：历史回放、快照恢复、Widget 状态自动记账等能力被统一纳入 Deferred 范畴，待事件存储方案明确后再设计，以免分散当前阶段的实现精力。
 
 #### AgentState 目标 API 轮廓（🛠️）
-> 目标：在 Phase 1 尾声替换临时的 `AppendHistory`，让 orchestrator 仅依赖语义化追加入口，便于审计与测试。
+> 目标：在 Phase 1 尾声替换临时的 `AppendHistory`，让 orchestrator 仅依赖语义化追加入口，并显式暴露 Widget 宿主能力。
 
-- `AppendModelInput(ModelInputEntry entry, LiveContextProjectionOptions options)`
-  - **输入**：已填充业务字段的 `ModelInputEntry`；可选 `options` 控制是否插入 LiveScreen 或裁剪内容。
-  - **输出**：在注入时间戳与默认 Metadata 后写入 `_history`，并返回最终写入的条目引用，供调用方追加调试信息。
-  - **错误模式**：拒绝 `ContentSections` 为空的条目，触发 `ArgumentException` 并记录 Debug 日志，防止空输入污染历史。
-- `AppendModelOutput(ModelOutputEntry entry, IReadOnlyList<ModelOutputDelta> deltas)`
-  - **输入**：聚合后的模型输出条目与原始 delta 序列；entry 必须至少包含正文或工具调用其一。
-  - **行为**：在追加前校验 `ToolCalls` 顺序与 delta 对齐，完成时间戳注入后写入 `_history`，并在需要时触发 `DebugUtil.Print("History", ...)`。
-  - **边界**：当存在工具调用但缺少配对 delta 时，在 Metadata 中记录 `tool_call_mismatch=true` 便于审计。
+- `AppendModelInput(ModelInputEntry entry)`
+  - **输入**：已填充业务字段的 `ModelInputEntry`，至少包含一段 `ContentSections`。
+  - **行为**：在注入时间戳与默认 Metadata 后写入 `_history`，并记录 DebugUtil 打点。
+  - **错误模式**：当 `ContentSections` 为空时抛出 `ArgumentException`，阻止空输入污染历史。
+- `AppendModelOutput(ModelOutputEntry entry)`
+  - **输入**：聚合后的模型输出条目，至少包含正文或工具调用其一。
+  - **行为**：写入 `_history` 前执行最小校验，后续可在调用方注入 delta 统计等 Metadata。
+  - **错误模式**：当正文与工具调用同时为空时抛出 `ArgumentException`。
 - `AppendToolResults(ToolResultsEntry entry)`
-  - **职责**：保证工具执行结果与最近的模型输出一一对应；若 `ExecuteError` 非空则写入统一错误码，方便上层重试策略识别。
-- `SetSystemInstruction` / `SetMemoryNotebook`
-  - **约定**：保留轻量实现，同时规划在内部生成 `SystemInstructionUpdatedEntry` 等历史条目，避免 LiveInfo 变更被遗漏。
+  - **职责**：保证工具执行结果与上一条 `ModelOutputEntry.ToolCalls` 对齐；支持仅写入 `ExecuteError` 的失败场景。
+  - **行为**：统一注入时间戳并追加到 `_history`。
+- `SetSystemInstruction(string instruction)`
+  - **行为**：更新系统指令宿主字段并写入 Debug 日志；后续计划通过专门的 HistoryEntry 记账。
+- `UpdateMemoryNotebook(string? content)`
+  - **职责**：由宿主调用以同步 Notebook 最新内容，内部委托 `MemoryNotebookWidget.ReplaceNotebookFromHost`。
+- `EnumerateWidgetTools()`
+  - **行为**：遍历 `_widgets` 聚合所有 `ITool`，供 Planner 或 ToolExecutor 获取 Widget 能力清单。
+- `RenderLiveContext()`
+  - **行为**：反向遍历历史生成上下文列表，并通过 `_widgets` 构建统一的 LiveScreen 片段后附着在最新输入或工具结果上。
 
-上述方法共用私有 `AppendInternal(ContextualHistoryEntry entry)`，负责统一注入时间戳、更新只读视图缓存并写入 Debug 日志：
-
-```csharp
-private void AppendInternal(ContextualHistoryEntry entry)
-{
-    var finalized = entry with { Timestamp = _clock.Now };
-    _history.Add(finalized);
-    DebugUtil.Print("History", $"Appended {finalized.Kind}: {finalized.Metadata}");
-}
-```
+上述方法共用私有 `AppendContextualEntry<T>`，负责统一注入时间戳并写入 Debug 日志；Widget 状态写入统一通过宿主辅助方法完成。
 
 **边界场景**：
 
@@ -437,91 +440,113 @@ private void AppendInternal(ContextualHistoryEntry entry)
 sealed class AgentState
 {
   private readonly List<HistoryEntry> _history = new();
-  private readonly IClock _clock;
-  private string _systemInstruction;
-  private string _memoryNotebookContent = "（尚无内容）";
+  private readonly Func<DateTimeOffset> _timestampProvider;
+  private readonly ImmutableArray<IWidget> _widgets;
 
-  public AgentState(IClock clock, string defaultSystemInstruction)
+  public AgentState(Func<DateTimeOffset> timestampProvider, string systemInstruction)
   {
-    _clock = clock;
-    _systemInstruction = defaultSystemInstruction;
+    _timestampProvider = timestampProvider;
+    SystemInstruction = systemInstruction;
+
+    var notebook = new MemoryNotebookWidget();
+    _widgets = ImmutableArray.Create<IWidget>(notebook);
+    MemoryNotebookWidget = notebook;
   }
 
+  public string SystemInstruction { get; private set; }
+  public MemoryNotebookWidget MemoryNotebookWidget { get; }
   public IReadOnlyList<HistoryEntry> History => _history;
 
-  public ModelInputEntry AppendModelInput(ModelInputEntry entry, LiveContextProjectionOptions projection)
+  public ModelInputEntry AppendModelInput(ModelInputEntry entry)
   {
-    var finalized = (ModelInputEntry)AppendInternal(entry);
-    if (projection.InjectLiveScreen)
+    if (entry.ContentSections is not { Count: > 0 })
     {
-      DebugUtil.Print("LiveScreen", "Projection requested for latest input");
+      throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry));
     }
-    return finalized;
+
+    return AppendContextualEntry(entry);
   }
 
-  public ModelOutputEntry AppendModelOutput(ModelOutputEntry entry, IReadOnlyList<ModelOutputDelta> deltas)
+  public ModelOutputEntry AppendModelOutput(ModelOutputEntry entry)
   {
-    EnsureToolCallAlignment(entry.ToolCalls, deltas);
-    return (ModelOutputEntry)AppendInternal(entry with
+    if ((entry.Contents is null || entry.Contents.Count == 0) &&
+        (entry.ToolCalls is null || entry.ToolCalls.Count == 0))
     {
-      Metadata = entry.Metadata.SetItem("delta_count", deltas.Count)
-    });
+      throw new ArgumentException("ModelOutputEntry must include content or tool calls.", nameof(entry));
+    }
+
+    return AppendContextualEntry(entry);
   }
-
-  public ToolResultsEntry AppendToolResults(ToolResultsEntry entry)
-    => (ToolResultsEntry)AppendInternal(entry);
-
-  public void SetSystemInstruction(string instruction)
-    => _systemInstruction = instruction;
 
   public IReadOnlyList<IContextMessage> RenderLiveContext()
   {
-    var context = new List<IContextMessage>(_history.Count + 1);
-    var liveScreenInjected = false;
+    var messages = new List<IContextMessage>(_history.Count + 1);
+    var liveScreen = BuildLiveScreenSnapshot();
+    var injected = false;
 
-    for (var i = _history.Count; --i >= 0;)
+    for (var index = _history.Count - 1; index >= 0; index--)
     {
-      if (_history[i] is not ContextualHistoryEntry ctx) continue;
+      if (_history[index] is not ContextualHistoryEntry contextual)
+      {
+        continue;
+      }
 
-      if (!liveScreenInjected && ShouldDecorateWithLiveScreen(ctx))
+      var message = contextual;
+      if (!injected && !string.IsNullOrWhiteSpace(liveScreen) && ShouldDecorateWithLiveScreen(contextual))
       {
-        context.Add(ContextMessageLiveScreenHelper.AttachLiveScreen(ctx, BuildLiveScreenSnapshot()));
-        liveScreenInjected = true;
+        message = ContextMessageLiveScreenHelper.AttachLiveScreen(contextual, liveScreen);
+        injected = true;
       }
-      else
-      {
-        context.Add(ctx);
-      }
+
+      messages.Add(message);
     }
 
-    context.Add(new SystemInstructionMessage(_systemInstruction)
+    messages.Add(new SystemInstructionMessage(SystemInstruction)
     {
-      Timestamp = _clock.Now
+      Timestamp = _timestampProvider()
     });
 
-    context.Reverse();
-    return context;
+    messages.Reverse();
+    return messages;
   }
 
-  private ContextualHistoryEntry AppendInternal(ContextualHistoryEntry entry)
+  private T AppendContextualEntry<T>(T entry) where T : ContextualHistoryEntry
   {
-    var finalized = entry with { Timestamp = _clock.Now };
+    var finalized = entry with { Timestamp = _timestampProvider() };
     _history.Add(finalized);
-    DebugUtil.Print("History", $"append {finalized.Kind}");
+    DebugUtil.Print("History", $"Appended {finalized.Role} entry (count={_history.Count})");
     return finalized;
   }
 
-  private static bool ShouldDecorateWithLiveScreen(ContextualHistoryEntry ctx)
-    => ctx.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
+  private static bool ShouldDecorateWithLiveScreen(ContextualHistoryEntry entry)
+    => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
 
-  private string BuildLiveScreenSnapshot()
-    => string.IsNullOrEmpty(_memoryNotebookContent)
-      ? string.Empty
-      : $"# [Live Screen]:\n## [Memory Notebook]:\n\n{_memoryNotebookContent}";
+  private string? BuildLiveScreenSnapshot()
+  {
+    var context = new WidgetRenderContext(this, ImmutableDictionary<string, object?>.Empty);
+    var fragments = _widgets
+      .Select(widget => widget.RenderLiveScreen(context))
+      .Where(fragment => !string.IsNullOrWhiteSpace(fragment))
+      .ToArray();
+
+    if (fragments.Length == 0)
+    {
+      return null;
+    }
+
+    var builder = new StringBuilder();
+    builder.AppendLine("# [Live Screen]");
+    builder.AppendLine();
+    builder.AppendLine(string.Join(Environment.NewLine + Environment.NewLine, fragments));
+    return builder.ToString().TrimEnd();
+  }
+
+  internal IEnumerable<ITool> EnumerateWidgetTools()
+    => _widgets.SelectMany(widget => widget.Tools);
 }
 ```
 
-- **暂缓功能**：历史回放、快照恢复、LiveInfo 自动记账等能力被列入 Deferred 范畴，避免干扰当前阶段的核心实现。
+- **暂缓功能**：历史回放、快照恢复、Widget 状态事件化等能力被列入 Deferred 范畴，避免干扰当前阶段的核心实现。
 
 ## 已完成设计（Delivered Scope）
 ### 落地组件一览
@@ -671,14 +696,14 @@ interface IContextAttachment { }
 - **上下文渲染**：`RenderLiveContext()` 在给定固定输入时必须具备幂等性，同一历史集应生成完全一致的 `IContextMessage` 列表；验收以快照测试或语义比较断言为准。
 - **Provider 契约**：实现 `IProviderClient` 的类需通过统一契约测试，覆盖文本增量、工具调用解析失败、LiveScreen 装饰回退等场景；若任一场景失败则视作未达成设计要求。
 - **ToolCalls 配对**：`ModelOutputEntry.ToolCalls` 与 `ToolResultsEntry.Results` 必须在回写阶段完成一一对应校验，并在 Metadata 中记录异常；验收测试需模拟对齐与错位两种情况。
-- **LiveInfo 记账**：系统指令、记忆 Notebook 的变更必须能在历史中追踪（当前阶段允许人工触发），验收时需检查历史条目能够重建最新 LiveInfo 值。
+- **Widget 记账**：Widget 引起的状态变更（如 Notebook 更新）必须能在历史中追踪（当前阶段允许人工触发），验收时需检查历史条目能够重建最新 Widget 视图。
 - **调试输出**：关键写入路径需调用 `DebugUtil` 打点，并允许通过 `ATELIA_DEBUG_CATEGORIES=History` 精确开启；若新增路径未打点须补齐。
 
 ### 实现约束与注意事项
 - 当前实现仍与旧 `_conversationHistory` 并行，需要双写同步；完成 Provider 管线改造后方可移除旧结构。
 - AgentState 假定运行在单线程 orchestrator 上，未在内部加锁；如需跨线程写入，必须由调用方提供同步机制。
 - RenderLiveContext 暂未实现基于 Token 的截断策略，长对话需依赖上层策略控制上下文长度；后续由 Provider 或 Router 根据预算裁剪。
-- 系统指令与记忆 Notebook 仍以 LiveInfo 字段维护，尚未追加对应的 HistoryEntry；在引入统一 LiveInfo 模型前需由调用方保证一致性。
+- 系统指令仍由宿主字段维护，记忆 Notebook 已由 Widget 封装，尚未追加对应的 HistoryEntry；在引入统一 Widget 事件模型前需由调用方保证一致性。
 - HistoryEntry 的序列号、StableId 暂缺省，相关字段需等待持久化设计落定后统一引入。
 - 单元测试在 Phase 1 内应围绕语义化追加接口构造用例（时间戳注入、ToolCall 对齐、LiveScreen 装饰判定），并利用 DebugUtil 日志辅助排查；关于顺序号/回放的断言延后至持久化阶段再补齐。
 - 集成测试需覆盖“规划模型 + 执行模型”混合流程，验证双 Provider 场景下 HistoryEntry 顺序、LiveScreen 装饰及 ToolResult 配对均保持稳定。
@@ -698,10 +723,10 @@ interface IContextAttachment { }
   - 依赖：需要 Planner/Executor 在运行期公开工具注册信息，并由 Provider Router 决定注入时机；待 Router 稳定后再设计上下文入口。
 - **Memory Notebook 事件化（⏳）**
   - 目标：将 Notebook 编辑操作记录为 `HistoryEntry`，支持审计、撤销与跨线程同步。
-  - 现状：Phase 1 仍使用 LiveInfo 字段，调用方需手动保证 Notebook 内容与历史描述一致。
+  - 现状：Phase 1 使用 `MemoryNotebookWidget` 保持内存态，调用方需手动保证 Notebook 内容与历史描述一致。
 - **Live Context 与 History 协调（⏳）**
   - 目标：记录每次调用注入的 Live Context 片段，便于调试与回放时比对上下文差异。
-  - 约束：需要确定 Live Context 的持久化策略与裁剪逻辑，避免引入过多冗余条目；待 Provider Router 与 LiveInfo 统一接口稳定后评估实现窗口。
+  - 约束：需要确定 Live Context 的持久化策略与裁剪逻辑，避免引入过多冗余条目；待 Provider Router 与 Widget 统一接口稳定后评估实现窗口。
 - **TokenUsage / 调试遥测整合（⏳）**
   - 议题：统一 token 统计、缓存命中与 DebugUtil 输出，避免在 Provider 层重复采集。
   - 依赖：全局遥测与计费策略确定责任边界后，再决定由 Provider 还是 AgentState 聚合统计。
@@ -728,7 +753,8 @@ interface IContextAttachment { }
 
 ## 术语与参考资料
 - **AgentState**：管理对话历史与运行时状态的聚合对象，是 Conversation History 的唯一事实来源。
-- **LiveInfo**：无需持久化的即时视图（系统指令、记忆 Notebook 等），可由历史重建。
+- **Widget**：封装运行态状态、工具集合与 LiveScreen 呈现的组件，目前包含 `MemoryNotebookWidget`，未来将扩展更多能力。
+- **LiveInfo（Legacy）**：旧版本对运行态快照的称谓，现已由 Widget 体系接手其职责。
 - **LiveScreen**：在上下文中暂时展示的高优先级信息，通过装饰器附加在最近的上下文条目上。
 - **Provider Router**：根据策略选择底层模型供应商的调度层，标准接口为 `IProviderClient`。
 - **ModelOutputDelta**：供应商返回的流式增量统一表示，最终汇总为 `ModelOutputEntry`。
@@ -743,7 +769,7 @@ interface IContextAttachment { }
 
 ## 重构进度追踪
 ### 本轮更新
-- 2025-10-13：**设计状态总览更新**，根据 LiveContextProto 实际代码进度同步状态标记：AgentState 历史层抽象、ContextMessage 接口束、Context 渲染/投影、Provider 抽象与路由、AgentState 语义化追加 API 已全部标记为 ✅（已完成并验证）；LiveInfo 与附加能力、诊断与元数据策略升级为 🛠️（基础功能已实现，扩展功能待补充）。与路线图 Phase 2 完成、Phase 3 进行中的实际进度保持一致。
+- 2025-10-13：**设计状态总览更新**，根据 LiveContextProto 实际代码进度同步状态标记：AgentState 历史层抽象、ContextMessage 接口束、Context 渲染/投影、Provider 抽象与路由、AgentState 语义化追加 API 已全部标记为 ✅（已完成并验证）；Widget 体系与附加能力、诊断与元数据策略升级为 🛠️（基础功能已实现，扩展功能待补充）。与路线图 Phase 2 完成、Phase 3 进行中的实际进度保持一致。
 - 2025-10-12：修正"设计状态总览"中 ContextMessage 章节锚点，恢复状态表与正文之间的跳转一致性。
 - 2025-10-12：为 Provider 客户端与 AgentState 章节补充状态标识与目录标注，使蓝图主体与"设计状态总览"保持一致的成熟度提示。
 - 对照 V1 蓝图补写"Event Sourcing""CQRS 与 Repository""Strategy + Adapter"章节，明确事件语义、读写分离与供应商适配流程。
@@ -754,5 +780,5 @@ interface IContextAttachment { }
 
 ### 下一步计划
 - 在 Phase 3 完整验收后，评估真实 Provider（OpenAI/Anthropic）接入的准备工作，补充跨供应商兼容性测试用例。
-- 梳理 Deferred 项（尤其是 LiveInfo 事件化、附件体系、动态工具 manifest）的设计前置条件，准备 Phase 4 所需的待办列表。
+- 梳理 Deferred 项（尤其是 Widget 事件化、附件体系、动态工具 manifest）的设计前置条件，准备 Phase 4 所需的待办列表。
 - 定期校验蓝图与路线图的状态总览一致性，确保设计真相源与实施进度同步更新。

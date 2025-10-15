@@ -1,25 +1,27 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Tools;
+using Atelia.LiveContextProto.Widgets;
 
 namespace Atelia.LiveContextProto.State;
 
 internal sealed class AgentState {
     private readonly List<HistoryEntry> _history = new();
     private readonly Func<DateTimeOffset> _timestampProvider;
-    private readonly Dictionary<string, string> _liveInfoSections = new(StringComparer.OrdinalIgnoreCase);
-    private string? _memoryNotebook;
-
-    private const string DefaultMemoryNotebookSnapshot = "（暂无 Memory Notebook 内容）";
+    private readonly MemoryNotebookWidget _memoryNotebookWidget;
+    private readonly ImmutableArray<IWidget> _widgets;
 
     private AgentState(Func<DateTimeOffset> timestampProvider, string systemInstruction) {
         _timestampProvider = timestampProvider;
         SystemInstruction = systemInstruction;
+        _memoryNotebookWidget = new MemoryNotebookWidget();
+        _widgets = ImmutableArray.Create<IWidget>(_memoryNotebookWidget);
+
         DebugUtil.Print("History", $"AgentState initialized with instruction length={systemInstruction.Length}");
     }
 
@@ -27,12 +29,9 @@ internal sealed class AgentState {
 
     public IReadOnlyList<HistoryEntry> History => _history;
 
-    public string MemoryNotebookSnapshot => _memoryNotebook is null
-        ? DefaultMemoryNotebookSnapshot
-        : _memoryNotebook;
+    public string MemoryNotebookSnapshot => _memoryNotebookWidget.GetSnapshot();
 
-    public IReadOnlyDictionary<string, string> LiveInfoSections
-        => new ReadOnlyDictionary<string, string>(_liveInfoSections);
+    public MemoryNotebookWidget MemoryNotebookWidget => _memoryNotebookWidget;
 
     public static AgentState CreateDefault(string? systemInstruction = null, Func<DateTimeOffset>? timestampProvider = null) {
         var instruction = string.IsNullOrWhiteSpace(systemInstruction)
@@ -66,41 +65,12 @@ internal sealed class AgentState {
         DebugUtil.Print("History", $"System instruction updated length={instruction.Length}");
     }
 
-    public void UpdateMemoryNotebook(string? content) {
-        var sanitized = string.IsNullOrWhiteSpace(content)
-            ? null
-            : content.TrimEnd();
-
-        _memoryNotebook = sanitized;
-        DebugUtil.Print("History", $"Memory notebook updated length={(sanitized?.Length ?? 0)}");
-    }
-
-    public void UpdateLiveInfoSection(string sectionName, string? content) {
-        if (string.IsNullOrWhiteSpace(sectionName)) { throw new ArgumentException("Section name is required.", nameof(sectionName)); }
-
-        var key = sectionName.Trim();
-        var sanitized = string.IsNullOrWhiteSpace(content)
-            ? null
-            : content.TrimEnd();
-
-        if (sanitized is null) {
-            if (_liveInfoSections.Remove(key)) {
-                DebugUtil.Print("History", $"LiveInfo section removed name={key}");
-            }
-            else {
-                DebugUtil.Print("History", $"LiveInfo section skip remove name={key}");
-            }
-            return;
-        }
-
-        _liveInfoSections[key] = sanitized;
-        DebugUtil.Print("History", $"LiveInfo section updated name={key} length={sanitized.Length}");
-    }
+    public void UpdateMemoryNotebook(string? content)
+        => _memoryNotebookWidget.ReplaceNotebookFromHost(content);
 
     public void Reset() {
         _history.Clear();
-        _memoryNotebook = null;
-        _liveInfoSections.Clear();
+        _memoryNotebookWidget.Reset();
         DebugUtil.Print("History", "AgentState history cleared");
     }
 
@@ -148,34 +118,38 @@ internal sealed class AgentState {
         => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
 
     private string? BuildLiveScreenSnapshot() {
-        var sections = new List<(string Title, string Content)>();
+        var fragments = new List<string>();
+        var renderContext = new WidgetRenderContext(this, ImmutableDictionary<string, object?>.Empty);
 
-        if (!string.IsNullOrWhiteSpace(_memoryNotebook)) {
-            sections.Add(("Memory Notebook", _memoryNotebook!));
-        }
-
-        foreach (var pair in _liveInfoSections.OrderBy(static entry => entry.Key, StringComparer.OrdinalIgnoreCase)) {
-            if (!string.IsNullOrWhiteSpace(pair.Value)) {
-                sections.Add((pair.Key, pair.Value));
+        foreach (var widget in _widgets) {
+            var fragment = widget.RenderLiveScreen(renderContext);
+            if (!string.IsNullOrWhiteSpace(fragment)) {
+                fragments.Add(fragment.TrimEnd());
             }
         }
 
-        if (sections.Count == 0) { return null; }
+        if (fragments.Count == 0) { return null; }
 
-        var builder = new StringBuilder();
-        builder.AppendLine("# [Live Screen]");
+        var liveScreenBuilder = new StringBuilder();
+        liveScreenBuilder.AppendLine("# [Live Screen]");
+        liveScreenBuilder.AppendLine();
 
-        for (var index = 0; index < sections.Count; index++) {
-            var (title, content) = sections[index];
-            builder.AppendLine($"## [{title}]");
-            builder.AppendLine();
-            builder.AppendLine(content);
+        for (var index = 0; index < fragments.Count; index++) {
+            liveScreenBuilder.AppendLine(fragments[index]);
 
-            if (index < sections.Count - 1) {
-                builder.AppendLine();
+            if (index < fragments.Count - 1) {
+                liveScreenBuilder.AppendLine();
             }
         }
 
-        return builder.ToString().TrimEnd();
+        return liveScreenBuilder.ToString().TrimEnd();
+    }
+
+    internal IEnumerable<ITool> EnumerateWidgetTools() {
+        foreach (var widget in _widgets) {
+            foreach (var tool in widget.Tools) {
+                yield return tool;
+            }
+        }
     }
 }
