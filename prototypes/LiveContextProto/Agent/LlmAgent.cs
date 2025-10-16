@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Atelia.Diagnostics;
@@ -39,9 +38,7 @@ internal sealed class LlmAgent {
     public ModelInputEntry AppendUserInput(string text) {
         if (string.IsNullOrWhiteSpace(text)) { throw new ArgumentException("Value cannot be null or whitespace.", nameof(text)); }
 
-        var sections = new List<KeyValuePair<string, string>> {
-            new("default", text)
-        };
+        var sections = LevelOfDetailSections.FromSingleSection("default", text);
 
         return _state.AppendModelInput(new ModelInputEntry(sections));
     }
@@ -63,15 +60,33 @@ internal sealed class LlmAgent {
         var executionRecords = _toolExecutor.ExecuteBatchAsync(new[] { request }, cancellationToken).GetAwaiter().GetResult();
         if (executionRecords.Count == 0) { return AgentToolExecutionResult.NoResults(); }
 
-        var results = executionRecords.Select(static record => record.CallResult).ToArray();
+        var results = executionRecords
+            .Select(static record => CreateHistoryResult(record))
+            .ToArray();
+
         var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
-        var entry = new ToolResultsEntry(results, failure?.Result);
+        var failureMessage = failure is null
+            ? null
+            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Full));
+
+        var entry = new ToolResultsEntry(results, failureMessage);
         entry = entry with { Metadata = ToolResultMetadataHelper.PopulateSummary(executionRecords, entry.Metadata) };
 
         var appended = _state.AppendToolResults(entry);
         return failure is null
             ? AgentToolExecutionResult.Success(appended)
-            : AgentToolExecutionResult.SuccessWithFailure(appended, failure.Result);
+            : AgentToolExecutionResult.SuccessWithFailure(appended, failureMessage);
+    }
+
+    private static HistoryToolCallResult CreateHistoryResult(ToolExecutionRecord record) {
+        var sections = LevelOfDetailSections.CreateUniform(record.CallResult.Result);
+        return new HistoryToolCallResult(
+            record.CallResult.ToolName,
+            record.CallResult.ToolCallId,
+            record.CallResult.Status,
+            sections,
+            record.CallResult.Elapsed
+        );
     }
 
 }

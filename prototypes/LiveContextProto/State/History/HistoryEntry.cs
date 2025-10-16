@@ -22,12 +22,11 @@ internal abstract record ContextualHistoryEntry : HistoryEntry, IContextMessage 
 }
 
 internal sealed record ModelInputEntry(
-    IReadOnlyList<KeyValuePair<string, string>> ContentSections
-) : ContextualHistoryEntry, IModelInputMessage {
+    LevelOfDetailSections ContentSections
+) : ContextualHistoryEntry {
     public override HistoryEntryKind Kind => HistoryEntryKind.ModelInput;
     public override ContextMessageRole Role => ContextMessageRole.ModelInput;
     public IReadOnlyList<IContextAttachment> Attachments { get; init; } = Array.Empty<IContextAttachment>();
-    IReadOnlyList<KeyValuePair<string, string>> IModelInputMessage.ContentSections => ContentSections;
 }
 
 internal sealed record ModelOutputEntry(
@@ -43,13 +42,11 @@ internal sealed record ModelOutputEntry(
 }
 
 internal sealed record ToolResultsEntry(
-    IReadOnlyList<ToolCallResult> Results,
+    IReadOnlyList<HistoryToolCallResult> Results,
     string? ExecuteError
-) : ContextualHistoryEntry, IToolResultsMessage {
+) : ContextualHistoryEntry {
     public override HistoryEntryKind Kind => HistoryEntryKind.ToolResult;
     public override ContextMessageRole Role => ContextMessageRole.ToolResult;
-    IReadOnlyList<ToolCallResult> IToolResultsMessage.Results => Results;
-    string? IToolResultsMessage.ExecuteError => ExecuteError;
 }
 
 internal sealed record SystemInstructionMessage(string Instruction) : ISystemMessage {
@@ -58,16 +55,10 @@ internal sealed record SystemInstructionMessage(string Instruction) : ISystemMes
     public ImmutableDictionary<string, object?> Metadata { get; init; } = ImmutableDictionary<string, object?>.Empty;
 }
 
-internal static class ContextMessageLiveScreenHelper {
-    public static IContextMessage AttachLiveScreen(IContextMessage message, string? liveScreen)
-        => string.IsNullOrWhiteSpace(liveScreen) ? message : new LiveScreenDecoratedMessage(message, liveScreen);
-
-    private sealed record LiveScreenDecoratedMessage(IContextMessage Inner, string? LiveScreen)
-        : IContextMessage, ILiveScreenCarrier {
-        public ContextMessageRole Role => Inner.Role;
-        public DateTimeOffset Timestamp => Inner.Timestamp;
-        public ImmutableDictionary<string, object?> Metadata => Inner.Metadata;
-        string? ILiveScreenCarrier.LiveScreen => LiveScreen;
-        IContextMessage ILiveScreenCarrier.InnerMessage => Inner;
-    }
-}
+internal sealed record HistoryToolCallResult(
+    string ToolName,
+    string ToolCallId,
+    ToolExecutionStatus Status,
+    LevelOfDetailSections Result,
+    TimeSpan? Elapsed
+);

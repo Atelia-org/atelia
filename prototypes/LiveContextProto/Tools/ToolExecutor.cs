@@ -71,7 +71,7 @@ internal sealed class ToolExecutor {
                 request.ToolName,
                 request.ToolCallId,
                 ToolExecutionStatus.Failed,
-                $"未找到工具处理器: {request.ToolName}",
+                CreateDefaultSections($"未找到工具处理器: {request.ToolName}"),
                 null
             );
 
@@ -96,7 +96,7 @@ internal sealed class ToolExecutor {
                 request.ToolName,
                 request.ToolCallId,
                 handlerResult.Status,
-                handlerResult.Result,
+                CreateDefaultSections(handlerResult.Result),
                 stopwatch.Elapsed
             );
 
@@ -114,7 +114,7 @@ internal sealed class ToolExecutor {
                 request.ToolName,
                 request.ToolCallId,
                 ToolExecutionStatus.Skipped,
-                "工具执行被取消",
+                CreateDefaultSections("工具执行被取消"),
                 stopwatch.Elapsed
             );
 
@@ -131,7 +131,7 @@ internal sealed class ToolExecutor {
                 request.ToolName,
                 request.ToolCallId,
                 ToolExecutionStatus.Failed,
-                $"工具执行异常: {ex.Message}",
+                CreateDefaultSections($"工具执行异常: {ex.Message}"),
                 stopwatch.Elapsed
             );
 
@@ -142,4 +142,7 @@ internal sealed class ToolExecutor {
             return new ToolExecutionRecord(callResult, metadata);
         }
     }
+
+    private static IReadOnlyList<KeyValuePair<string, string>> CreateDefaultSections(string content)
+        => new[] { new KeyValuePair<string, string>(string.Empty, content ?? string.Empty) };
 }

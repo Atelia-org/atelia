@@ -133,9 +133,10 @@ internal sealed class ConsoleTui {
         WriteMetadataBlock(result.Output.Metadata);
 
         if (result.ToolResults is not null) {
-            WriteToolResults(result.ToolResults);
-            PrintTokenUsage(result.ToolResults);
-            WriteMetadataBlock(result.ToolResults.Metadata);
+            var toolMessage = new ToolResultsMessage(result.ToolResults, LevelOfDetail.Full, liveScreen: null);
+            WriteToolResults(toolMessage);
+            PrintTokenUsage(toolMessage);
+            WriteMetadataBlock(toolMessage.Metadata);
         }
     }
 
@@ -175,7 +176,12 @@ internal sealed class ConsoleTui {
 
         _output.WriteLine("      [tool-results]");
         foreach (var result in tools.Results) {
-            _output.WriteLine($"        - {result.ToolName} ({result.ToolCallId}) => {result.Status}: {result.Result}");
+            var content = LevelOfDetailSections.ToPlainText(result.Result);
+            _output.WriteLine($"        - {result.ToolName} ({result.ToolCallId}) => {result.Status}: {content}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(tools.ExecuteError)) {
+            _output.WriteLine($"      [tool-error] {tools.ExecuteError}");
         }
     }
 

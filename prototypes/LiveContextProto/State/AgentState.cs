@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Text;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
@@ -44,7 +43,7 @@ internal sealed class AgentState {
     }
 
     public ModelInputEntry AppendModelInput(ModelInputEntry entry) {
-        if (entry.ContentSections is not { Count: > 0 }) { throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry)); }
+        if (entry.ContentSections?.Full is not { Count: > 0 }) { throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry)); }
 
         return AppendContextualEntry(entry);
     }
@@ -80,18 +79,34 @@ internal sealed class AgentState {
         var liveScreen = BuildLiveScreenSnapshot();
         var shouldDecorate = !string.IsNullOrWhiteSpace(liveScreen);
         var liveScreenInjected = false;
+        var detailOrdinal = 0;
 
         for (var index = _history.Count - 1; index >= 0; index--) {
             if (_history[index] is not ContextualHistoryEntry contextual) { continue; }
 
-            IContextMessage message = contextual;
+            var liveScreenForEntry = !liveScreenInjected && shouldDecorate && ShouldDecorateWithLiveScreen(contextual)
+                ? liveScreen
+                : null;
 
-            if (!liveScreenInjected && shouldDecorate && ShouldDecorateWithLiveScreen(contextual)) {
-                message = ContextMessageLiveScreenHelper.AttachLiveScreen(contextual, liveScreen);
+            if (liveScreenForEntry is not null) {
                 liveScreenInjected = true;
             }
 
-            messages.Add(message);
+            switch (contextual) {
+                case ModelInputEntry modelInputEntry:
+                    var inputDetail = ResolveDetailLevel(detailOrdinal++);
+                    messages.Add(new ModelInputMessage(modelInputEntry, inputDetail, liveScreenForEntry));
+                    break;
+
+                case ToolResultsEntry toolResultsEntry:
+                    var toolDetail = ResolveDetailLevel(detailOrdinal++);
+                    messages.Add(new ToolResultsMessage(toolResultsEntry, toolDetail, liveScreenForEntry));
+                    break;
+
+                default:
+                    messages.Add(contextual);
+                    break;
+            }
         }
 
         var systemMessage = new SystemInstructionMessage(SystemInstruction) {
@@ -117,6 +132,13 @@ internal sealed class AgentState {
 
     private static bool ShouldDecorateWithLiveScreen(ContextualHistoryEntry entry)
         => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
+
+    private static LevelOfDetail ResolveDetailLevel(int ordinal)
+        => ordinal switch {
+            0 => LevelOfDetail.Full,
+            1 or 2 => LevelOfDetail.Summary,
+            _ => LevelOfDetail.Gist
+        };
 
     private string? BuildLiveScreenSnapshot() {
         var fragments = new List<string>();

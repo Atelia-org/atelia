@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Diagnostics;
@@ -85,9 +86,14 @@ internal sealed class AgentOrchestrator {
         var executionRecords = await _toolExecutor.ExecuteBatchAsync(outputEntry.ToolCalls, cancellationToken).ConfigureAwait(false);
         if (executionRecords.Count == 0) { return null; }
 
-        var results = executionRecords.Select(record => record.CallResult).ToArray();
+        var results = executionRecords
+            .Select(static record => CreateHistoryResult(record.CallResult))
+            .ToArray();
+
         var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
-        var executeError = failure is null ? null : failure.Result;
+        var executeError = failure is null
+            ? null
+            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Full));
 
         var entry = new ToolResultsEntry(results, executeError);
         entry = entry with { Metadata = ToolResultMetadataHelper.PopulateSummary(executionRecords, entry.Metadata) };
@@ -134,5 +140,16 @@ internal sealed class AgentOrchestrator {
         if (string.IsNullOrWhiteSpace(first)) { return second; }
         if (string.IsNullOrWhiteSpace(second)) { return first; }
         return string.Concat(first, "; ", second);
+    }
+
+    private static HistoryToolCallResult CreateHistoryResult(ToolCallResult result) {
+        var sections = LevelOfDetailSections.CreateUniform(result.Result);
+        return new HistoryToolCallResult(
+            result.ToolName,
+            result.ToolCallId,
+            result.Status,
+            sections,
+            result.Elapsed
+        );
     }
 }

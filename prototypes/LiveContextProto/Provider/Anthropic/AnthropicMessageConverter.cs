@@ -148,7 +148,7 @@ internal static class AnthropicMessageConverter {
             blocks.Add(
                 new AnthropicToolResultBlock {
                     ToolUseId = result.ToolCallId,
-                    Content = result.Result,
+                    Content = LevelOfDetailSections.ToPlainText(result.Result),
                     IsError = isError ? true : null // 仅在出错时写入
                 }
             );
