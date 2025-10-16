@@ -10,6 +10,32 @@ internal enum LevelOfDetail {
     Gist
 }
 
+internal sealed class LevelOfDetailContent {
+    public LevelOfDetailContent(
+        string live,
+        string summary,
+        string gist
+    ) {
+        Live = live ?? throw new ArgumentNullException(nameof(live));
+        Summary = summary ?? throw new ArgumentNullException(nameof(summary));
+        Gist = gist ?? throw new ArgumentNullException(nameof(gist));
+    }
+
+    public string Live { get; }
+
+    public string Summary { get; }
+
+    public string Gist { get; }
+
+    public string GetContent(LevelOfDetail detail)
+        => detail switch {
+            LevelOfDetail.Live => Live,
+            LevelOfDetail.Summary => Summary,
+            LevelOfDetail.Gist => Gist,
+            _ => Live
+        };
+}
+
 internal sealed class LevelOfDetailSections {
     public LevelOfDetailSections(
         IReadOnlyList<KeyValuePair<string, string>> live,

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
@@ -87,7 +88,7 @@ internal sealed class AgentOrchestrator {
         if (executionRecords.Count == 0) { return null; }
 
         var results = executionRecords
-            .Select(static record => CreateHistoryResult(record.CallResult))
+            .Select(static record => CreateHistoryResult(record))
             .ToArray();
 
         var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
@@ -142,14 +143,16 @@ internal sealed class AgentOrchestrator {
         return string.Concat(first, "; ", second);
     }
 
-    private static HistoryToolCallResult CreateHistoryResult(ToolCallResult result) {
-        var sections = LevelOfDetailSections.CreateUniform(result.Result);
+    private static HistoryToolCallResult CreateHistoryResult(ToolExecutionRecord record) {
+        var sections = LevelOfDetailSections.CreateUniform(
+            new[] { new KeyValuePair<string, string>(string.Empty, record.Result.Live) }
+        );
         return new HistoryToolCallResult(
-            result.ToolName,
-            result.ToolCallId,
-            result.Status,
+            record.ToolName,
+            record.ToolCallId,
+            record.Status,
             sections,
-            result.Elapsed
+            record.Elapsed
         );
     }
 }

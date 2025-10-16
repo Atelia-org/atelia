@@ -22,13 +22,12 @@ internal static class ToolResultMetadataHelper {
         IReadOnlyList<ToolExecutionRecord> executionRecords,
         ImmutableDictionary<string, object?> metadata
     ) {
-        var results = executionRecords.Select(static record => record.CallResult).ToArray();
-        metadata = PopulateSummary(results, metadata);
+        metadata = PopulateSummaryCore(executionRecords, metadata, static record => record.Status, static record => record.Elapsed);
 
         var perCallBuilder = ImmutableDictionary.CreateBuilder<string, object?>();
         foreach (var record in executionRecords) {
             if (record.Metadata.Count == 0) { continue; }
-            perCallBuilder[record.CallResult.ToolCallId] = record.Metadata;
+            perCallBuilder[record.ToolCallId] = record.Metadata;
         }
 
         if (perCallBuilder.Count > 0 && !metadata.ContainsKey("per_call_metadata")) {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Atelia.Diagnostics;
@@ -79,13 +80,15 @@ internal sealed class LlmAgent {
     }
 
     private static HistoryToolCallResult CreateHistoryResult(ToolExecutionRecord record) {
-        var sections = LevelOfDetailSections.CreateUniform(record.CallResult.Result);
+        var sections = LevelOfDetailSections.CreateUniform(
+            new[] { new KeyValuePair<string, string>(string.Empty, record.Result.Live) }
+        );
         return new HistoryToolCallResult(
-            record.CallResult.ToolName,
-            record.CallResult.ToolCallId,
-            record.CallResult.Status,
+            record.ToolName,
+            record.ToolCallId,
+            record.Status,
             sections,
-            record.CallResult.Elapsed
+            record.Elapsed
         );
     }
 

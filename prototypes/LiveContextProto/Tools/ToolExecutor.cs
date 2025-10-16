@@ -16,16 +16,29 @@ internal interface IToolHandler {
 
 internal sealed record ToolHandlerResult(
     ToolExecutionStatus Status,
-    string Result,
+    LevelOfDetailContent Result,
     ImmutableDictionary<string, object?> Metadata
 ) {
     public ToolHandlerResult(ToolExecutionStatus status, string result)
-        : this(status, result, ImmutableDictionary<string, object?>.Empty) {
+        : this(status, CreateUniformContent(result)) {
+    }
+
+    public ToolHandlerResult(ToolExecutionStatus status, LevelOfDetailContent result)
+        : this(status, result ?? throw new ArgumentNullException(nameof(result)), ImmutableDictionary<string, object?>.Empty) {
+    }
+
+    private static LevelOfDetailContent CreateUniformContent(string result) {
+        var value = result ?? string.Empty;
+        return new LevelOfDetailContent(value, value, value);
     }
 }
 
 internal sealed record ToolExecutionRecord(
-    ToolCallResult CallResult,
+    string ToolName,
+    string ToolCallId,
+    ToolExecutionStatus Status,
+    LevelOfDetailContent Result,
+    TimeSpan? Elapsed,
     ImmutableDictionary<string, object?> Metadata
 );
 
@@ -67,18 +80,18 @@ internal sealed class ToolExecutor {
 
         if (!_handlers.TryGetValue(request.ToolName, out var handler)) {
             DebugUtil.Print(DebugCategory, $"[Executor] Missing handler toolName={request.ToolName}");
-            var callResult = new ToolCallResult(
-                request.ToolName,
-                request.ToolCallId,
-                ToolExecutionStatus.Failed,
-                CreateDefaultSections($"未找到工具处理器: {request.ToolName}"),
-                null
-            );
 
             var metadata = ImmutableDictionary<string, object?>.Empty
                 .Add("error", "handler_not_found");
 
-            return new ToolExecutionRecord(callResult, metadata);
+            return new ToolExecutionRecord(
+                request.ToolName,
+                request.ToolCallId,
+                ToolExecutionStatus.Failed,
+                CreateUniformContent($"未找到工具处理器: {request.ToolName}"),
+                null,
+                metadata
+            );
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -92,57 +105,56 @@ internal sealed class ToolExecutor {
                 $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={handlerResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            var callResult = new ToolCallResult(
-                request.ToolName,
-                request.ToolCallId,
-                handlerResult.Status,
-                CreateDefaultSections(handlerResult.Result),
-                stopwatch.Elapsed
-            );
-
-            var metadata = handlerResult.Metadata;
+            var metadata = handlerResult.Metadata ?? ImmutableDictionary<string, object?>.Empty;
             if (!metadata.ContainsKey("elapsed_ms")) {
                 metadata = metadata.SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds);
             }
 
-            return new ToolExecutionRecord(callResult, metadata);
+            return new ToolExecutionRecord(
+                request.ToolName,
+                request.ToolCallId,
+                handlerResult.Status,
+                handlerResult.Result,
+                stopwatch.Elapsed,
+                metadata
+            );
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
             DebugUtil.Print(DebugCategory, $"[Executor] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId}");
-            var callResult = new ToolCallResult(
-                request.ToolName,
-                request.ToolCallId,
-                ToolExecutionStatus.Skipped,
-                CreateDefaultSections("工具执行被取消"),
-                stopwatch.Elapsed
-            );
-
             var metadata = ImmutableDictionary<string, object?>.Empty
                 .SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds)
                 .SetItem("error", "cancelled");
 
-            return new ToolExecutionRecord(callResult, metadata);
+            return new ToolExecutionRecord(
+                request.ToolName,
+                request.ToolCallId,
+                ToolExecutionStatus.Skipped,
+                CreateUniformContent("工具执行被取消"),
+                stopwatch.Elapsed,
+                metadata
+            );
         }
         catch (Exception ex) {
             stopwatch.Stop();
             DebugUtil.Print(DebugCategory, $"[Executor] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={ex.Message}");
-            var callResult = new ToolCallResult(
-                request.ToolName,
-                request.ToolCallId,
-                ToolExecutionStatus.Failed,
-                CreateDefaultSections($"工具执行异常: {ex.Message}"),
-                stopwatch.Elapsed
-            );
-
             var metadata = ImmutableDictionary<string, object?>.Empty
                 .SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds)
                 .SetItem("error", ex.GetType().Name);
 
-            return new ToolExecutionRecord(callResult, metadata);
+            return new ToolExecutionRecord(
+                request.ToolName,
+                request.ToolCallId,
+                ToolExecutionStatus.Failed,
+                CreateUniformContent($"工具执行异常: {ex.Message}"),
+                stopwatch.Elapsed,
+                metadata
+            );
         }
     }
 
-    private static IReadOnlyList<KeyValuePair<string, string>> CreateDefaultSections(string content)
-        => new[] { new KeyValuePair<string, string>(string.Empty, content ?? string.Empty) };
+    private static LevelOfDetailContent CreateUniformContent(string? content) {
+        var value = content ?? string.Empty;
+        return new LevelOfDetailContent(value, value, value);
+    }
 }

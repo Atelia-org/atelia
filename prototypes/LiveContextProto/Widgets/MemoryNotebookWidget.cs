@@ -59,7 +59,7 @@ internal sealed class MemoryNotebookWidget : IWidget {
             DebugUtil.Print(DebugCategory, $"[Execute] tool={toolName} not supported");
             return new ToolHandlerResult(
                 ToolExecutionStatus.Failed,
-                $"未注册的工具: {toolName}",
+                CreateUniformContent($"未注册的工具: {toolName}"),
                 ImmutableDictionary<string, object?>.Empty.SetItem("error", "tool_not_registered")
             );
         }
@@ -67,7 +67,7 @@ internal sealed class MemoryNotebookWidget : IWidget {
             DebugUtil.Print(DebugCategory, $"[Execute] tool={toolName} exception={ex.Message}");
             return new ToolHandlerResult(
                 ToolExecutionStatus.Failed,
-                $"MemoryNotebookWidget 执行异常: {ex.Message}",
+                CreateUniformContent($"MemoryNotebookWidget 执行异常: {ex.Message}"),
                 ImmutableDictionary<string, object?>.Empty.SetItem("error", ex.GetType().Name)
             );
         }
@@ -143,7 +143,7 @@ internal sealed class MemoryNotebookWidget : IWidget {
         if (ReferenceEquals(updated, current) || string.Equals(updated, current, StringComparison.Ordinal)) {
             return new ToolHandlerResult(
                 ToolExecutionStatus.Success,
-                appended ? "未追加任何内容：new_text 为空。" : "替换内容未发生变化。",
+                CreateUniformContent(appended ? "未追加任何内容：new_text 为空。" : "替换内容未发生变化。"),
                 BuildMetadata(current, updated, appended, searchAfter)
             );
         }
@@ -152,9 +152,11 @@ internal sealed class MemoryNotebookWidget : IWidget {
 
         return new ToolHandlerResult(
             ToolExecutionStatus.Success,
-            appended
-                ? "已追加新的记忆段落。"
-                : "已完成记忆文本替换。",
+            CreateUniformContent(
+                appended
+                    ? "已追加新的记忆段落。"
+                    : "已完成记忆文本替换。"
+            ),
             BuildMetadata(current, _notebookContent ?? string.Empty, appended, searchAfter)
         );
     }
@@ -237,8 +239,11 @@ internal sealed class MemoryNotebookWidget : IWidget {
 
     private ToolHandlerResult Failure(string message, string errorCode) {
         var metadata = ImmutableDictionary<string, object?>.Empty.SetItem("error", errorCode);
-        return new ToolHandlerResult(ToolExecutionStatus.Failed, message, metadata);
+        return new ToolHandlerResult(ToolExecutionStatus.Failed, CreateUniformContent(message), metadata);
     }
+
+    private static LevelOfDetailContent CreateUniformContent(string? text)
+        => new(text ?? string.Empty, text ?? string.Empty, text ?? string.Empty);
 
     private sealed class MemoryNotebookReplaceTool : ITool {
         private readonly MemoryNotebookWidget _owner;
