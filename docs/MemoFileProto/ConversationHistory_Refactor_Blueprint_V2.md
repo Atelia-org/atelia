@@ -1,5 +1,5 @@
 # Memo: Conversation History 抽象重构蓝图 · V2
-*版本：0.2-draft · 更新日期：2025-10-12*
+*版本：0.2-draft · 更新日期：2025-10-16*
 
 > 本文档专注于“Conversation History”重构的目标架构、已交付设计与待定设计。实施阶段安排请参阅《Memo: Conversation History 抽象重构实施路线图》V2。
 
@@ -38,7 +38,7 @@
       - [Event Sourcing 思维（🛠️）](#event-sourcing-思维️)
       - [CQRS 与 Repository（🛠️）](#cqrs-与-repository️)
       - [Strategy + Adapter（🛠️）](#strategy--adapter️)
-      - [Decorator（✅）](#decorator)
+      - [Decorator（历史回顾）](#decorator历史回顾)
     - [AgentState 与 Widget 职责（🛠️）](#agentstate-与-widget-职责️)
       - [Widget 约定（🛠️）](#widget-约定️)
       - [顺序与稳定标识策略（⏳）](#顺序与稳定标识策略)
@@ -84,10 +84,10 @@
 | --- | --- | --- | --- |
 | AgentState 历史层抽象 | ✅ | HistoryEntry 分层、追加式 AgentState 及其单向数据流已定稿，语义化追加 API 已全面实现并通过测试。 | [目标架构（Target Design）](#目标架构target-design) |
 | ContextMessage 接口束 | ✅ | 基础接口、角色化派生与 mix-in 能力已定稿，并与 HistoryEntry 抽象保持一致。 | [ContextMessage 层接口设计（✅）](#contextmessage-层接口设计) |
-| Context 渲染/投影 | ✅ | RenderLiveContext 流程与 LiveScreen 装饰策略已实现并验证，支持 Memory Notebook 动态注入。 | [数据与交互流](#数据与交互流) |
-| Provider 抽象与路由 | ✅ | IProviderClient、ModelOutputDelta 管线与 ProviderRouter 已落地，Stub Provider 完整验证流式调用闭环。 | [目标架构（Target Design）](#目标架构target-design) |
+| Context 渲染/投影 | ✅ | RenderLiveContext 流程与 LOD 裁剪策略已实现并验证，LiveScreen 以 `"[LiveScreen]"` Section 在写入阶段落盘，支持 Memory Notebook 动态注入。 | [数据与交互流](#数据与交互流) |
+| Provider 抽象与路由 | ✅ | IProviderClient、ModelOutputDelta 管线与 ProviderRouter 已落地，Anthropic Provider 通过代理验证流式调用闭环。 | [目标架构（Target Design）](#目标架构target-design) |
 | AgentState 语义化追加 API | ✅ | `AppendModelInput/Output/ToolResults` 等领域方法已实现，替代临时 `AppendHistory`，并集成时间戳注入与 DebugUtil 打点。 | [AgentState 与 Widget 职责](#agentstate-与-widget-职责️) |
-| Widget 体系与附加能力 | 🛠️ | MemoryNotebookWidget 与 Widget 工具清单已投入使用，LiveScreen 装饰整合完毕；附件体系、Notebook 事件化、动态工具 manifest 等延后至阶段 4+。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
+| Widget 体系与附加能力 | 🛠️ | MemoryNotebookWidget 与 Widget 工具清单已投入使用，LiveScreen Section 注入已完成；附件体系、Notebook 事件化、动态工具 manifest 等延后至阶段 4+。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
 | 诊断与元数据策略 | 🛠️ | DebugUtil 集成与 TokenUsage 初步支持已完成，深度遥测方案（计费、缓存命中）尚未定稿。 | [待定设计（Deferred & TBD）](#待定设计deferred--tbd) |
 
 状态标签释义：
@@ -136,12 +136,12 @@ MemoFileProto 在早期直接沿用 OpenAI Chat Completion 的消息结构作为
 - **History 不可逆**：写入路径统一通过 AgentState 的语义化 API，禁止直接修改 `_history` 集合；任何热修或调试脚本都必须通过追加新条目完成。
 - **上下文纯读**：`RenderLiveContext()` 必须保持纯函数特性，不得缓存跨调用状态或修改历史条目，便于在诊断和回放中复现相同结果。
 - **Provider 只读消费**：`IProviderClient` 视图以不可变 `IContextMessage` 集合传入，客户端不得更改消息内容或 Metadata，新增信息需通过回写新条目表达。
-- **装饰器透明性**：LiveScreen 等装饰必须维持 `InnerMessage` 的接口能力，任何消费方都需以“先解包、再判断角色”的模式处理，确保上下游协作稳定。
+- **LiveScreen Section 化**：LiveScreen 在写入阶段以 `LevelOfDetailSections.Full` 中的 `"[LiveScreen]"` Section 存档，消费方应使用 `WithoutLiveScreen` 等扩展读取正文与附加片段，避免额外的装饰器协议。
 ### 系统构成摘要
 Conversation History 的目标架构延续 v1 文档的“三段式流水线”，但将每一层的契约重新梳理为稳定的接口集合：
 - **AgentState**：负责历史持久与 Widget 宿主管理，暴露追加式 API（`AppendModelInput`、`AppendModelOutput` 等）以及上下文渲染入口。所有可追溯事件都以 `HistoryEntry` 形式落盘；系统指令由宿主字段维护，而 Notebook 等运行态视图则通过 Widget（如 `MemoryNotebookWidget`）封装并可在必要时重放重建。
-- **Context Projection**：`RenderLiveContext()` 读取 AgentState，并按调用需求生成 `IContextMessage` 序列，可通过装饰器临时注入 LiveScreen。该层对外表现为纯函数，不产生副作用。
-- **Provider Router**：根据策略选择具体 `IProviderClient` 实现，并在 delta 汇总后回写标准化的 `ModelOutputEntry` / `ToolResultsEntry`。路由逻辑可以依据模型家族、任务阶段或策略标签扩展。
+- **Context Projection**：`RenderLiveContext()` 读取 AgentState，并按调用需求生成 `IContextMessage` 序列，会根据条目在会话中的相对位置选择合适的 `LevelOfDetail`，LiveScreen 已在写入阶段嵌入 Section，无需额外装饰。该层对外表现为纯函数，不产生副作用。
+- **Provider Router**：根据策略选择具体 `IProviderClient` 实现，并协调 Orchestrator 在 delta 汇总后回写标准化的 `ModelOutputEntry` / `ToolResultsEntry`。路由逻辑可以依据模型家族、任务阶段或策略标签扩展。
 - **Provider Clients**：对接 OpenAI、Anthropic 等底层 SDK，将通用上下文转换为厂商协议，并解析增量流。所有解析出的工具调用以统一的 `ToolCallRequest` 表达。
 - **Orchestrator Feedback Loop**：LlmAgent 或更高层 orchestrator 聚合 Provider 回传结果，调用 AgentState 追加新的历史条目，形成稳定的“读取 → 推理 → 回写”循环。
 
@@ -156,9 +156,9 @@ Conversation History 的目标架构延续 v1 文档的“三段式流水线”�
 | 能力 | 最终目标 | 已交付内容 | 尚需工作 |
 | --- | --- | --- | --- |
 | 历史事件模型 | 使用分层 `HistoryEntry` 表达所有可追溯事件，并支持回放和扩展 | 记录类型、Metadata 约定及追加式 AgentState 已完成，正在双写阶段验证 | 引入序列号/StableId 及回放策略，绑定持久化方案 |
-| 上下文渲染管线 | 以 `RenderLiveContext()` 将历史与 Widget 渲染的 LiveScreen 转换为供应商无关上下文，支持 Token 裁剪 | 基础渲染流程与 LiveScreen 装饰策略已就绪 | Token 预算驱动的裁剪、跨 Provider 兼容性验收、Widget 状态自动记账 |
+| 上下文渲染管线 | 以 `RenderLiveContext()` 将历史与 Widget 渲染的 LiveScreen Sections 转换为供应商无关上下文，支持 Token 裁剪 | 基础渲染流程与 LOD 裁剪策略已就绪，LiveScreen 在写入阶段落盘 | Token 预算驱动的裁剪、跨 Provider 兼容性验收、Widget 状态自动记账 |
 | Provider 抽象层 | 通过 `IProviderClient` + `ProviderRouter` 统一调度多家模型，并归并 `ModelOutputDelta` | 契约、delta 更名与 OpenAI/Anthropic 适配策略已定稿 | 实现 Router、聚合工具调用诊断、完善混合会话测试 |
-| Widget 生态与辅助能力 | 将 Memory Notebook、工具清单、附件等纳入统一 Widget/Attachment 体系 | LiveScreen 装饰器、基础 Notebook Widget 化方案已经纳入渲染流程 | 定义附件协议、Notebook 事件条目化、动态工具 manifest 注入 |
+| Widget 生态与辅助能力 | 将 Memory Notebook、工具清单、附件等纳入统一 Widget/Attachment 体系 | LiveScreen Section 注入机制、基础 Notebook Widget 化方案已经纳入渲染流程 | 定义附件协议、Notebook 事件条目化、动态工具 manifest 注入 |
 
 ### 与 V1 蓝图的差异对照
 | 主题 | V1 蓝图侧重 | V2 调整 | 状态影响 |
@@ -166,7 +166,7 @@ Conversation History 的目标架构延续 v1 文档的“三段式流水线”�
 | 文档职责 | 设计要点与阶段计划混杂，同一章节兼顾目标与节奏 | 明确把路线规划迁出，蓝图仅保留目标、已交付与待定设计 | ✅ 蓝图成为长期的“单一真相源”，路线节奏在 Roadmap 中维护 |
 | 状态标识 | 通过文字段落隐含进度 | 新增状态表与章节标签（✅/🛠️/⏳） | ✅ 方便快速掌握边界，也便于例会同步与排期讨论 |
 | Provider 抽象 | 着重描述 OpenAI/Anthropic 差异，缺乏统一验收口径 | 引入 `IProviderClient` 契约、ModelOutputDelta 聚合及诊断字段 | 🛠️ 直接驱动 Phase 2-3 的代码改造与测试要求 |
-| Widget 体系 | Notebook/系统指令散落在段落描述中 | 将 Widget 约定、装饰策略及延后事项拆分成独立小节 | 🛠️ 明确 Phase 4 的前置条件，降低实现歧义 |
+| Widget 体系 | Notebook/系统指令散落在段落描述中 | 将 Widget 约定、LiveScreen Section 策略及延后事项拆分成独立小节 | 🛠️ 明确 Phase 4 的前置条件，降低实现歧义 |
 | 验收视角 | 缺少面向落地的完成定义 | 新增“设计验收准则”章节，列出判定标准 | 🛠️ 测试与代码评审可据此建立核对清单 |
 | 历史 vs. 上下文 | 强调单向数据流但未细化操作约束 | 固化“历史只追加、上下文纯读、Provider 只读消费”等不变量 | ✅ 当前双写阶段的唯一操作准则 |
 ### 数据与交互流
@@ -207,30 +207,31 @@ Conversation History 的目标架构延续 v1 文档的“三段式流水线”�
            └────────────▶ AgentState (new history entries)
 ```
 
-- **1. 历史读取**：Orchestrator 触发模型调用时，请求 AgentState 生成上下文；AgentState 反向遍历 HistoryEntry，筛选实现 `IContextMessage` 的条目并执行必要的 LiveScreen 装饰。该步骤保留时间戳与 Metadata，避免重复构造。
-- **2. 上下文渲染**：渲染结果始终包含当前系统指令 (`ISystemMessage`)，以及最近相关的输入、输出、工具结果；RenderLiveContext 不修改历史，仅返回快照。如有记忆 Notebook，可通过 LiveScreen 装饰附着在最新的输入/工具条目上。
-- **3. Provider 调用**：ProviderRouter 将 `IReadOnlyList<IContextMessage>` 转换为厂商消息结构，调用 `IProviderClient.CallModelAsync()` 并获得 `ModelOutputDelta` 流；所有供应商必须遵循同一 `CancellationToken`、流式增量协议。
-- **4. 增量解析**：ProviderClient 聚合文本、工具调用片段，生成标准化的 `ModelOutputEntry` 与 `ToolResultsEntry` 候选，同时记录 `ModelInvocationDescriptor`。工具参数解析失败时需保留原始字符串并回填 `ParseError`。
+- **1. 历史读取**：Orchestrator 触发模型调用时，请求 AgentState 生成上下文；AgentState 反向遍历 HistoryEntry，筛选实现 `IContextMessage` 的条目，并保留写入阶段已经落盘的 Level-of-Detail Sections 与 `"[LiveScreen]"` 片段。该步骤保留时间戳与 Metadata，避免重复构造。
+- **2. 上下文渲染**：渲染结果始终包含当前系统指令 (`ISystemMessage`)，以及最近相关的输入、输出、工具结果；`RenderLiveContext` 根据条目位置选择 `Full/Summary/Gist` 粒度，同时保持 LiveScreen Section 原样返回。消费方若需拆分 LiveScreen，可使用扩展方法提取，不会修改历史。
+- **3. Provider 调用**：ProviderRouter 将渲染好的上下文封装为 `LlmRequest`（携带策略、`ModelInvocationDescriptor` 及工具清单），调用 `IProviderClient.CallModelAsync(request, cancellationToken)` 并获得 `ModelOutputDelta` 流；所有供应商必须遵循统一的 `CancellationToken` 与流式增量协议。
+- **4. 增量解析**：ProviderClient 在流式阶段输出文本、工具调用片段和诊断增量，同时保留原始参数（必要时填入 `ParseError`）。Orchestrator 随后使用 `ModelOutputAccumulator` 聚合 delta，生成标准化的 `ModelOutputEntry`，并在工具执行完成后写入对应的 `ToolResultsEntry`。
 - **5. 历史回写**：Orchestrator 在推理结束后调用 AgentState 追加模型输出和工具结果，实现“读取 → 推理 → 回写”的闭环。追加方法负责注入最终时间戳并触发 DebugUtil 记录。
 - **6. 反馈与调试**：若 Provider 提供 TokenUsage 或调试元数据，可在回写前通过 `Metadata` 或 mix-in 接口补充，确保诊断信息伴随历史条目存档。
 - 未来会在本节补充架构图：`![Conversation History 流程图草案](./media/conversation-history-v2.png)`（待绘制）。
 
 ### History ↔ Context ↔ Provider 协作
-- **接口分层**：仅实现 `IContextMessage` 的历史条目才会进入上下文列表；非上下文型事件（如未来的配置更新）默认被过滤，形成天然的职责分界。Provider 在消费装饰过的消息时需回退到 `ILiveScreenCarrier.InnerMessage`，保证角色化接口 (`IModelInputMessage`、`IModelOutputMessage` 等) 可被正确识别。
-- **上下文复用**：`RenderLiveContext()` 优先返回历史条目的原始实例，只有在注入 LiveScreen 或临时 Metadata 时才会生成轻量包装，避免频繁复制。未来在引入 Token 限额时，可在此层实现统一的裁剪策略而不触碰 Provider。
+- **接口分层**：仅实现 `IContextMessage` 的历史条目才会进入上下文列表；非上下文型事件（如未来的配置更新）默认被过滤，形成天然的职责分界。ProviderRouter 在此基础上构造只读的 `LlmRequest`，Provider 通过请求中的角色化接口消费 Sections，并可使用 `LevelOfDetailSectionExtensions.WithoutLiveScreen` 等扩展按需拆分附加片段。
+- **上下文复用**：`RenderLiveContext()` 优先返回历史条目本身，只在需要选择 `LevelOfDetail` 时包装为 `ModelInputMessage` / `ToolResultsMessage`，避免频繁复制。未来在引入 Token 限额时，可在此层实现统一的裁剪策略而不触碰 Provider。
 - **回写一致性**：模型推理完成后，Orchestrator 必须先聚合全部增量再调用 AgentState 追加条目，禁止 Provider 自行写入 `_history`，以确保每轮推理对应一条 `ModelOutputEntry` 与可选的 `ToolResultsEntry`。
-- **Widget 对齐**：系统指令维持宿主字段，而 Notebook 等运行态数据由 Widget 渲染为 LiveScreen 段落，不直接落盘；当 Widget 需要事件化（例如 Notebook 切换为事件流）时，可新增专门的 `HistoryEntryKind` 而不会影响既有 Provider 协议。
+- **Widget 对齐**：系统指令维持宿主字段，而 Notebook 等运行态数据由 Widget 渲染为 LiveScreen 段落，并在写入阶段注入 `Full` 档 Section；当 Widget 需要事件化（例如 Notebook 切换为事件流）时，可新增专门的 `HistoryEntryKind` 而不会影响既有 Provider 协议。
 - **Widget ↔ 工具执行**：Widget 暴露的 `ITool` 通过 `AgentState.EnumerateWidgetTools()` 汇总，供 Planner 与 ToolExecutor 统一调度；Widget 执行结果仍以 `ToolResultsEntry` 回写，保证历史视图的一致性。
 
 #### LiveScreen 处理约定
-- 渲染阶段仅在最新一次模型输入或工具结果条目上附加 LiveScreen，避免重复展示；若会话暂未生成新的输入，则保留上一次装饰结果。
-- 消费方在检测到 `ILiveScreenCarrier` 时，必须先读取 `InnerMessage` 再执行角色化接口判定，以保证装饰不会干扰 `IModelInputMessage`、`IModelOutputMessage` 等接口的访问；需要展示 LiveScreen 的 Provider 可按自身协议决定呈现方式（Markdown、不可见 token 或多模态 part）。
+- LiveScreen 由 AgentState 在 `AppendModelInput` / `AppendToolResults` 阶段调用 `BuildLiveScreenSnapshot()` 生成，并写入最近条目的 `LevelOfDetailSections.Full` 中，键名固定为 `"[LiveScreen]"`。
+- `RenderLiveContext()` 仅负责选择 `LevelOfDetail`，不会额外装饰消息；消费方若需展示或忽略 LiveScreen，可通过 `WithoutLiveScreen(out liveScreen)` 之类的扩展方法拆分。
+- 更多迁移细节参见《[LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md)》。
 
 ### ContextMessage 层接口设计（✅）
 - **设计目标**：保持 Context 层供应商无关性，避免重复构造历史条目，并让 Provider 通过接口检测快速定位所需字段。
   - 基础接口仅保留角色、时间戳与 Metadata，语义字段交由派生接口承载。
   - 角色化接口覆盖系统指令、模型输入、模型输出与工具结果四种核心消息类型。
-  - 可选能力通过 mix-in 接口表达（LiveScreen、ToolCalls、TokenUsage 等），按需组合而非强制所有条目实现。
+  - 可选能力通过 mix-in 接口表达（ToolCalls、TokenUsage 等），按需组合而非强制所有条目实现；LiveScreen 统一由 `LevelOfDetailSections` 提供。
 
 ```csharp
 interface IContextMessage {
@@ -277,17 +278,13 @@ interface IToolResultsMessage : IContextMessage {
 }
 ```
 
+`ModelInputMessage` 与 `ToolResultsMessage` 在实例化时会从底层 `LevelOfDetailSections` 中挑选目标粒度的 Section；当消费方需要更细粒度控制时，可重新调用 `GetSections(LevelOfDetail)` 或扩展方法在不同档位之间切换。
+
 - **可选能力接口**：
-  - `ILiveScreenCarrier` 暂存 Planner/工具侧的临时屏幕信息，并通过 `InnerMessage` 暴露被装饰的原始消息。
-  - `ITokenUsageCarrier` 用于 Provider 在响应结束后回填 token 统计；当前实现默认返回 `null`。
   - `IToolCallCarrier` 由 `IModelOutputMessage` 实现，统一暴露模型声明的工具调用集合。
+  - `ITokenUsageCarrier` 用于 Provider 在响应结束后回填 token 统计；当前实现默认返回 `null`。
 
 ```csharp
-interface ILiveScreenCarrier {
-  string? LiveScreen { get; }
-  IContextMessage InnerMessage { get; }
-}
-
 interface IToolCallCarrier {
   IReadOnlyList<ToolCallRequest> ToolCalls { get; }
 }
@@ -295,33 +292,40 @@ interface IToolCallCarrier {
 interface ITokenUsageCarrier {
   TokenUsage? Usage { get; }
 }
+
+static class LevelOfDetailSectionExtensions {
+  public static IReadOnlyList<KeyValuePair<string, string>> WithoutLiveScreen(
+    this IReadOnlyList<KeyValuePair<string, string>> sections,
+    out string? liveScreen
+  );
+}
 ```
 
 - **协同约定**：
-  - `RenderLiveContext()` 优先复用历史条目本身，注入 LiveScreen 时才创建装饰对象。
-  - Provider 在消费装饰对象时必须回退至 `ILiveScreenCarrier.InnerMessage` 再执行接口匹配，避免装饰器遮挡角色化接口。
+  - `RenderLiveContext()` 优先复用历史条目本身，通过 `LevelOfDetailSections.GetSections(lod)` 选择粒度，不再创建额外的 LiveScreen 装饰对象。
+  - Provider 读取输入或工具结果时，如需展示 LiveScreen，可调用 `WithoutLiveScreen(out var liveScreen)` 拆分；未拆分也能保持上下文一致性。
   - Metadata 键名采用蛇形命名，体量限制 2 KB，超出部分需转交附件或专用条目。
   - `ToolCallRequest.RawArguments` 永远保留原始参数文本，解析成功后再补写 `Arguments` 字典；失败时将原因写入 `ParseError`。
 - **暂缓设计**：结构化附件、动态工具清单等延后能力在“待定设计”章节有单独说明，本节仅定义占位接口保持兼容。
 
 ### Provider 客户端设计要点（🛠️）
 #### 通用契约（✅）
-- 所有 Provider 实现统一暴露 `IProviderClient.CallModelAsync(IReadOnlyList<IContextMessage>, CancellationToken)`，返回 `ModelOutputDelta` 流。实现层负责解析工具调用、填充 `ToolCallRequest.Arguments`，并在失败时回填 `ParseError`。
-- Provider 必须记录 `ModelInvocationDescriptor`（ProviderId/Specification/Model），并在回写 `ModelOutputEntry` 时附上，便于历史审计与混合模型会话。
+- 所有 Provider 实现统一暴露 `IProviderClient.CallModelAsync(LlmRequest request, CancellationToken)`，返回 `ModelOutputDelta` 流；实现层可在 delta 中解析工具调用并填充 `ToolCallRequest.Arguments`，失败时保留 `RawArguments` 并记录 `ParseError`/`ParseWarning`。
+- ProviderRouter 在构建 `LlmRequest` 时会附带策略、`ModelInvocationDescriptor` 与工具清单；Provider 只能读取 `request.Context`、`request.Tools` 等只读视图，不得修改或绕过 Orchestrator 直接回写历史。
 - 任何流式阶段收集的诊断信息（TokenUsage、原始 SDK 错误等）需要在聚合完成后，通过 `Metadata` 或可选接口返回给 Orchestrator。
 - 为减少重复解析代码，推荐提供共享的 `ToolArgumentParser` 辅助器（例如 `GetRequired(...)`、`ParseList(...)`、`ParseJsonSafely(...)`），供各 Provider 与工具实现重复利用。
-- Provider 层需维护“Specification → 参数解析策略”的静态映射：`ModelOutputEntry.Invocation` 提供规范标识，具体格式解析由各实现内部决定，保持 History 抽象的供应商无关性。
-- Provider 在汇总阶段负责写入 `ToolCallResult.Elapsed`、`ToolResultsEntry.ExecuteError` 等诊断信息，保证上层可追踪工具链路的耗时与失败原因。
+- Provider 层需维护“Specification → 参数解析策略”的静态映射：`ModelOutputEntry.Invocation` 由 ProviderRouter 预先确定，具体的格式解析由各实现内部决定，保持 History 抽象的供应商无关性。
+- 工具执行产生的耗时、失败信息由 Orchestrator 与 ToolExecutor 在回写 `ToolResultsEntry` 时统一填充，Provider 只需确保工具调用声明完整可靠。
 
 #### OpenAI 客户端要点（🛠️）
-- 将 `IContextMessage` 序列翻译为 Chat Completion 所需的消息数组；`ModelInputEntry.ContentSections` 以“标题 + 内容”的 Markdown 组合拼接成单条文本，确保段落语义被保留。
-- OpenAI 在流式阶段可能输出多条工具调用 delta，客户端需将同一轮推理产生的调用合并，并保证顺序与 `ToolResultsEntry.Results` 一一对应。
-- 对工具参数解析成功时写入 `Arguments` 字典，解析失败时记录错误并保留 `RawArguments` 原文本；最终将多个工具调用归并为一条 `ToolResultsEntry`。
+- 将 `LlmRequest` 中的上下文翻译为 Chat Completion 所需的消息数组；`ModelInputEntry.ContentSections` 可按“标题 + 内容”的 Markdown 组合拼接成单条文本，确保段落语义被保留。
+- OpenAI 在流式阶段可能输出多条工具调用 delta，客户端需在返回的 `ModelOutputDelta` 中保留声明顺序，并在 `ToolCallRequest` 上补写解析结果或错误信息。
+- 推理结束后，由 Orchestrator 使用 `ModelOutputAccumulator` 聚合 delta，并在工具执行完成后写入与 `ModelOutputEntry.ToolCalls` 对齐的 `ToolResultsEntry`，保持上下游语义一致。
 
 #### Anthropic 客户端要点（🛠️）
 - Claude 要求 Assistant ↔ Tool 消息严格交替，客户端需要将模型发出的多个工具调用合并为单条工具消息，补齐必要的占位文本，避免奇偶序列破坏。
-- 用与 OpenAI 客户端相同的 `ToolCallRequest`/`ToolCallResult` 协议回写历史，保持跨供应商一致性。
-- 若底层返回的工具消息无法解析，需要在 `ToolCallResult.Status` 上标记失败并将错误原因写入 `ExecuteError`，由上层策略决定是否重试。
+- 返回 `ModelOutputDelta` 流时沿用与 OpenAI 客户端相同的 `ToolCallRequest` 协议，解析失败时在请求上记录 `ParseError` 或发出 `ModelOutputDelta.ExecutionError`，保持跨供应商一致性。
+- 工具调用执行结果由 Orchestrator/ToolExecutor 负责写回历史；若 Provider 侧识别到底层消息无法解析，可在 delta 流中暴露错误信息，供上层策略决定是否重试。
 
 #### 其他供应商（⏳）
 - Azure OpenAI 与 OpenAI v1 客户端共享消息构造逻辑，可通过配置区分终端点与凭据。
@@ -367,15 +371,15 @@ AgentState 内部将写入接口（`AppendModelInput/Output/ToolResults` 等）�
 - 在单元测试中可通过 stub/fixture AgentState 验证写入事件与查询视图的分离效果，为未来的持久化层适配留出余地。
 
 #### Strategy + Adapter（🛠️）
-`IProviderClient` 为 ProviderRouter 提供统一策略入口，不同实现以 Adapter 方式对接 OpenAI、Anthropic、vLLM 等 SDK。每个实现负责翻译 `IContextMessage`、解析增量与工具调用，并回写标准化结构。
+`IProviderClient` 为 ProviderRouter 提供统一策略入口，Router 会把 `RenderLiveContext()` 输出与策略元数据封装为 `LlmRequest` 传入，不同实现以 Adapter 方式对接 OpenAI、Anthropic、vLLM 等 SDK。每个实现按照 `LlmRequest` 契约读取上下文、工具清单与 `ModelInvocationDescriptor`，负责翻译 `IContextMessage`、解析增量与工具调用，并回写标准化结构。
 
 - Strategy 层由 ProviderRouter 承担，根据模型策略（规划/执行/评审）或运行时指标（延迟、成本）挑选不同 Provider，实现“按需换脑”。
 - Adapter 层屏蔽供应商 SDK 差异：每个 `IProviderClient` 实现只处理自身协议细节，例如 OpenAI 的 Function Calling vs Responses API，Anthropic 的 Messages API 等。
 - 组合 Strategy + Adapter 让新供应商的接入流程清晰：先实现一个 Adapter，暴露统一接口，再在 Router 中注册策略即可投入使用。
 - 该设计也便于构建模拟 Provider，用适配器包装测试桩即可复用 Router 逻辑，支撑端到端验证。
 
-#### Decorator（✅）
-`ContextMessageLiveScreenHelper` 使用装饰器包装上下文条目，将 LiveScreen 等临时能力附加其上而不改变原始记录类型。消费方通过 `ILiveScreenCarrier.InnerMessage` 访问原始接口，确保角色判定和复用不受影响。
+#### Decorator（历史回顾）
+早期版本通过 `ContextMessageLiveScreenHelper` 装饰上下文条目动态附加 LiveScreen。自 LOD Sections 上线后，LiveScreen 改为在写入阶段落盘为 `"[LiveScreen]"` Section，装饰器实现已退役，该章节保留作为迁移背景记录。
 
 ### AgentState 与 Widget 职责（🛠️）
 - **状态聚合器**：AgentState 维护 `_history` 并作为 Widget 宿主，统一创建、持有并暴露受控访问器（当前包含 `MemoryNotebookWidget`），确保“唯一事实源”。
@@ -423,7 +427,7 @@ AgentState 内部将写入接口（`AppendModelInput/Output/ToolResults` 等）�
 - `EnumerateWidgetTools()`
   - **行为**：遍历 `_widgets` 聚合所有 `ITool`，供 Planner 或 ToolExecutor 获取 Widget 能力清单。
 - `RenderLiveContext()`
-  - **行为**：反向遍历历史生成上下文列表，并通过 `_widgets` 构建统一的 LiveScreen 片段后附着在最新输入或工具结果上。
+  - **行为**：反向遍历历史生成上下文列表，基于位置选择 `LevelOfDetail` 并返回包装消息；LiveScreen Section 在写入阶段已注入，无需额外附着。
 
 上述方法共用私有 `AppendContextualEntry<T>`，负责统一注入时间戳并写入 Debug 日志；Widget 状态写入统一通过宿主辅助方法完成。
 
@@ -437,14 +441,12 @@ AgentState 内部将写入接口（`AppendModelInput/Output/ToolResults` 等）�
 > 此示例以伪代码形式展示语义化追加接口、统一时间戳注入与上下文渲染的协作方式，具体依赖（`IClock`、`LiveContextProjectionOptions`、`EnsureToolCallAlignment` 等）将在实现阶段落地。
 
 ```csharp
-sealed class AgentState
-{
+sealed class AgentState {
   private readonly List<HistoryEntry> _history = new();
   private readonly Func<DateTimeOffset> _timestampProvider;
   private readonly ImmutableArray<IWidget> _widgets;
 
-  public AgentState(Func<DateTimeOffset> timestampProvider, string systemInstruction)
-  {
+  public AgentState(Func<DateTimeOffset> timestampProvider, string systemInstruction) {
     _timestampProvider = timestampProvider;
     SystemInstruction = systemInstruction;
 
@@ -457,52 +459,58 @@ sealed class AgentState
   public MemoryNotebookWidget MemoryNotebookWidget { get; }
   public IReadOnlyList<HistoryEntry> History => _history;
 
-  public ModelInputEntry AppendModelInput(ModelInputEntry entry)
-  {
-    if (entry.ContentSections is not { Count: > 0 })
-    {
+  public ModelInputEntry AppendModelInput(ModelInputEntry entry) {
+    if (entry.ContentSections.Full is not { Count: > 0 }) {
       throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry));
     }
 
-    return AppendContextualEntry(entry);
+    var enriched = AttachLiveScreen(entry);
+    return AppendContextualEntry(enriched);
   }
 
-  public ModelOutputEntry AppendModelOutput(ModelOutputEntry entry)
-  {
+  public ModelOutputEntry AppendModelOutput(ModelOutputEntry entry) {
     if ((entry.Contents is null || entry.Contents.Count == 0) &&
-        (entry.ToolCalls is null || entry.ToolCalls.Count == 0))
-    {
+        (entry.ToolCalls is null || entry.ToolCalls.Count == 0)) {
       throw new ArgumentException("ModelOutputEntry must include content or tool calls.", nameof(entry));
     }
 
     return AppendContextualEntry(entry);
   }
 
-  public IReadOnlyList<IContextMessage> RenderLiveContext()
-  {
-    var messages = new List<IContextMessage>(_history.Count + 1);
-    var liveScreen = BuildLiveScreenSnapshot();
-    var injected = false;
-
-    for (var index = _history.Count - 1; index >= 0; index--)
-    {
-      if (_history[index] is not ContextualHistoryEntry contextual)
-      {
-        continue;
-      }
-
-      var message = contextual;
-      if (!injected && !string.IsNullOrWhiteSpace(liveScreen) && ShouldDecorateWithLiveScreen(contextual))
-      {
-        message = ContextMessageLiveScreenHelper.AttachLiveScreen(contextual, liveScreen);
-        injected = true;
-      }
-
-      messages.Add(message);
+  public ToolResultsEntry AppendToolResults(ToolResultsEntry entry) {
+    if (entry.Results.Count == 0 && string.IsNullOrWhiteSpace(entry.ExecuteError)) {
+      throw new ArgumentException("ToolResultsEntry requires results or an error.", nameof(entry));
     }
 
-    messages.Add(new SystemInstructionMessage(SystemInstruction)
-    {
+    var enriched = AttachLiveScreen(entry);
+    return AppendContextualEntry(enriched);
+  }
+
+  public IReadOnlyList<IContextMessage> RenderLiveContext() {
+    var messages = new List<IContextMessage>(_history.Count + 1);
+    var detailOrdinal = 0;
+
+    for (var index = _history.Count - 1; index >= 0; index--) {
+      if (_history[index] is not ContextualHistoryEntry contextual) { continue; }
+
+      switch (contextual) {
+        case ModelInputEntry input: {
+          var detail = ResolveDetailLevel(detailOrdinal++);
+          messages.Add(new ModelInputMessage(input, detail));
+          break;
+        }
+        case ToolResultsEntry results: {
+          var detail = ResolveDetailLevel(detailOrdinal++);
+          messages.Add(new ToolResultsMessage(results, detail));
+          break;
+        }
+        default:
+          messages.Add(contextual);
+          break;
+      }
+    }
+
+    messages.Add(new SystemInstructionMessage(SystemInstruction) {
       Timestamp = _timestampProvider()
     });
 
@@ -510,34 +518,65 @@ sealed class AgentState
     return messages;
   }
 
-  private T AppendContextualEntry<T>(T entry) where T : ContextualHistoryEntry
-  {
+  private T AppendContextualEntry<T>(T entry) where T : ContextualHistoryEntry {
     var finalized = entry with { Timestamp = _timestampProvider() };
     _history.Add(finalized);
     DebugUtil.Print("History", $"Appended {finalized.Role} entry (count={_history.Count})");
     return finalized;
   }
 
-  private static bool ShouldDecorateWithLiveScreen(ContextualHistoryEntry entry)
-    => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
+  private static LevelOfDetail ResolveDetailLevel(int ordinal)
+    => ordinal == 0 ? LevelOfDetail.Full : LevelOfDetail.Summary;
 
-  private string? BuildLiveScreenSnapshot()
-  {
-    var context = new WidgetRenderContext(this, ImmutableDictionary<string, object?>.Empty);
-    var fragments = _widgets
-      .Select(widget => widget.RenderLiveScreen(context))
-      .Where(fragment => !string.IsNullOrWhiteSpace(fragment))
-      .ToArray();
+  private ModelInputEntry AttachLiveScreen(ModelInputEntry entry) {
+    var liveScreen = BuildLiveScreenSnapshot();
+    if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
 
-    if (fragments.Length == 0)
-    {
-      return null;
+  var updatedSections = entry.ContentSections.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+    return ReferenceEquals(updatedSections, entry.ContentSections)
+      ? entry
+      : entry with { ContentSections = updatedSections };
+  }
+
+  private ToolResultsEntry AttachLiveScreen(ToolResultsEntry entry) {
+    if (entry.Results.Count == 0) { return entry; }
+
+    var liveScreen = BuildLiveScreenSnapshot();
+    if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+
+    var results = entry.Results.ToArray();
+    var latest = results[^1];
+  var updated = latest.Result.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+    if (ReferenceEquals(updated, latest.Result)) { return entry; }
+
+    results[^1] = latest with { Result = updated };
+    return entry with { Results = results };
+  }
+
+  private string? BuildLiveScreenSnapshot() {
+    var fragments = new List<string>();
+    var renderContext = new WidgetRenderContext(this, ImmutableDictionary<string, object?>.Empty);
+
+    foreach (var widget in _widgets) {
+      var fragment = widget.RenderLiveScreen(renderContext);
+      if (!string.IsNullOrWhiteSpace(fragment)) {
+        fragments.Add(fragment.TrimEnd());
+      }
     }
+
+    if (fragments.Count == 0) { return null; }
 
     var builder = new StringBuilder();
     builder.AppendLine("# [Live Screen]");
     builder.AppendLine();
-    builder.AppendLine(string.Join(Environment.NewLine + Environment.NewLine, fragments));
+
+    for (var i = 0; i < fragments.Count; i++) {
+      builder.AppendLine(fragments[i]);
+      if (i < fragments.Count - 1) {
+        builder.AppendLine();
+      }
+    }
+
     return builder.ToString().TrimEnd();
   }
 
@@ -553,9 +592,9 @@ sealed class AgentState
 | 组件 | 设计结论 | 实施指引 |
 | --- | --- | --- |
 | HistoryEntry 类型族 | 采用 `ContextualHistoryEntry` + `HistoryEntryKind` + `Metadata` 的 record 层级，所有可投影到上下文的事件直接实现 `IContextMessage` | Phase 1 期间维持 `_conversationHistory` 与 `_history` 双写，语义化追加入口负责注入时间戳与 DebugUtil 日志 |
-| ContextMessage 接口束 | 基础接口 + 角色化接口（System/Input/Output/ToolResult）+ mix-in 能力（LiveScreen、ToolCall、TokenUsage），保证供应商无关抽象 | Provider 通过接口检测分支处理，新增能力以 mix-in 扩展保持向后兼容，禁止直接依赖具体记录类型 |
+| ContextMessage 接口束 | 基础接口 + 角色化接口（System/Input/Output/ToolResult）+ mix-in 能力（ToolCall、TokenUsage），保证供应商无关抽象，LiveScreen 由 Sections 持久化 | Provider 通过接口检测分支处理，新增能力以 mix-in 扩展保持向后兼容，禁止直接依赖具体记录类型 |
 | ModelInvocationDescriptor 与 Tool* 结构 | `ModelInvocationDescriptor` 描述 Provider/Specification/Model，`ToolCallRequest` + `ToolCallResult` 统一表达工具调用及执行结果 | Provider 客户端负责填充 Invocation 与参数解析，Orchestrator 在聚合 delta 后一次性落盘，与工具执行结果顺序对齐 |
-| ContextMessageLiveScreenHelper | 通过装饰器附加 LiveScreen 文本，不改变原始条目实例 | RenderLiveContext 仅在需要时调用装饰器；消费方需回退至 `ILiveScreenCarrier.InnerMessage` 再进行角色匹配 |
+| LevelOfDetailSections & 扩展方法 | 提供 `Full/Summary/Gist` 三档 Section，并内置 `"[LiveScreen]"` 片段抽离/替换能力 | 写入阶段统一注入 LiveScreen Section，消费方可使用 `WithoutLiveScreen`/`TryGetSection` 等扩展按需拆分 |
 
 上述组件是当前蓝图已经冻结的设计模块，可直接作为代码实现的基线；待 Phase 1 收尾后，旧的 `_conversationHistory` 将被逐步淘汰。
 
@@ -570,9 +609,9 @@ sealed class AgentState
 #### ContextMessage 与 Provider 消费
 - `IModelOutputMessage.ToolCalls` 与最近的 `IToolResultsMessage.Results` 需要按顺序一一对应，Provider 负责保证配对；若无法解析，必须以失败状态的 `ToolCallResult` 回写。
 - Metadata 键名遵循蛇形命名且单条限制 2 KB，超限信息需转化为附件或独立条目；Provider 在追加诊断信息时同样遵守该约束。
-- LiveScreen 装饰器必须保持 `InnerMessage` 与原条目一致，消费方应先访问 `ILiveScreenCarrier.InnerMessage` 再做角色化接口判定。
+- LiveScreen 以 `LevelOfDetailSections.Full` 中的 `"[LiveScreen]"` Section 持久化，消费方可在渲染前调用扩展方法拆分附加片段，未拆分时也会维持上下文一致。
 - `IContextMessage` 仅暴露角色、时间戳与 Metadata，正文语义由角色化接口提供；Provider 通过 `is` 检查选择处理路径。
-- `ILiveScreenCarrier`、`IToolCallCarrier`、`ITokenUsageCarrier` 等 mix-in 为可选能力，未实现即视为不支持相应特性。
+- `IToolCallCarrier`、`ITokenUsageCarrier` 等 mix-in 为可选能力，未实现即视为不支持相应特性。
 - Provider 必须把 `Timestamp` 视为只读数据源：不得重写、覆盖或重新排序；当底层 SDK 提供更精确的时间数据时，应通过 Metadata 新增字段，而非修改既有时间戳。
 - 任意 Provider 扩展都需验证 `IContextMessage` 列表中的未知角色/能力能被安全忽略，防止未来新增 mix-in 时出现运行时异常。
 
@@ -591,100 +630,103 @@ abstract record ContextualHistoryEntry : HistoryEntry, IContextMessage {
   public abstract ContextMessageRole Role { get; }
 }
 
-record ModelInputEntry(
-  IReadOnlyList<KeyValuePair<string, string>> ContentSections
-) : ContextualHistoryEntry, IModelInputMessage {
-  public override ContextMessageRole Role => ContextMessageRole.ModelInput;
+sealed record ModelInputEntry(
+  LevelOfDetailSections ContentSections
+) : ContextualHistoryEntry {
   public override HistoryEntryKind Kind => HistoryEntryKind.ModelInput;
-  IReadOnlyList<KeyValuePair<string, string>> IModelInputMessage.ContentSections => ContentSections;
+  public override ContextMessageRole Role => ContextMessageRole.ModelInput;
   public IReadOnlyList<IContextAttachment> Attachments { get; init; } = Array.Empty<IContextAttachment>();
 }
 
-record ModelOutputEntry(
-  string? Thinking,
+sealed record ModelOutputEntry(
   IReadOnlyList<string> Contents,
   IReadOnlyList<ToolCallRequest> ToolCalls,
   ModelInvocationDescriptor Invocation
-) : ContextualHistoryEntry, IModelOutputMessage, IToolCallCarrier {
-  public override ContextMessageRole Role => ContextMessageRole.ModelOutput;
+) : ContextualHistoryEntry, IModelOutputMessage {
   public override HistoryEntryKind Kind => HistoryEntryKind.ModelOutput;
+  public override ContextMessageRole Role => ContextMessageRole.ModelOutput;
   IReadOnlyList<string> IModelOutputMessage.Contents => Contents;
   ModelInvocationDescriptor IModelOutputMessage.Invocation => Invocation;
   IReadOnlyList<ToolCallRequest> IToolCallCarrier.ToolCalls => ToolCalls;
 }
 
-record ToolResultsEntry(
-  IReadOnlyList<ToolCallResult> Results,
+sealed record ToolResultsEntry(
+  IReadOnlyList<HistoryToolCallResult> Results,
   string? ExecuteError
-) : ContextualHistoryEntry, IToolResultsMessage {
-  public override ContextMessageRole Role => ContextMessageRole.ToolResult;
+) : ContextualHistoryEntry {
   public override HistoryEntryKind Kind => HistoryEntryKind.ToolResult;
-  string? IToolResultsMessage.ExecuteError => ExecuteError;
+  public override ContextMessageRole Role => ContextMessageRole.ToolResult;
 }
+
+sealed record HistoryToolCallResult(
+  string ToolName,
+  string ToolCallId,
+  ToolExecutionStatus Status,
+  LevelOfDetailSections Result,
+  TimeSpan? Elapsed
+);
 
 record ToolCallRequest(
   string ToolName,
   string ToolCallId,
   string RawArguments,
-  IReadOnlyDictionary<string, string>? Arguments,
-  string? ParseError
+  IReadOnlyDictionary<string, object?>? Arguments,
+  string? ParseError,
+  string? ParseWarning
 );
 
 record ToolCallResult(
   string ToolName,
   string ToolCallId,
   ToolExecutionStatus Status,
-  string Result,
+  IReadOnlyList<KeyValuePair<string, string>> Result,
   TimeSpan? Elapsed
 );
 
-record ModelInvocationDescriptor(
-  string ProviderId,
-  string Specification,
-  string Model
-);
+sealed class LevelOfDetailSections {
+  public LevelOfDetailSections(
+    IReadOnlyList<KeyValuePair<string, string>> full,
+    IReadOnlyList<KeyValuePair<string, string>> summary,
+    IReadOnlyList<KeyValuePair<string, string>> gist
+  ) { /* ... */ }
 
-record SystemInstructionMessage(
-  string Instruction
-) : ISystemMessage {
+  public IReadOnlyList<KeyValuePair<string, string>> Full { get; }
+  public IReadOnlyList<KeyValuePair<string, string>> Summary { get; }
+  public IReadOnlyList<KeyValuePair<string, string>> Gist { get; }
+
+  public IReadOnlyList<KeyValuePair<string, string>> GetSections(LevelOfDetail detail);
+  public LevelOfDetailSections WithFullSection(string key, string value);
+  public static LevelOfDetailSections CreateUniform(IReadOnlyList<KeyValuePair<string, string>> sections);
+}
+
+static class LevelOfDetailSectionNames {
+  public const string LiveScreen = "[LiveScreen]";
+}
+
+static class LevelOfDetailSectionExtensions {
+
+  public static IReadOnlyList<KeyValuePair<string, string>> WithoutLiveScreen(
+    this IReadOnlyList<KeyValuePair<string, string>> sections,
+    out string? liveScreen
+  );
+
+  public static string ToPlainText(IReadOnlyList<KeyValuePair<string, string>> sections);
+}
+
+enum HistoryEntryKind { ModelInput, ModelOutput, ToolResult }
+
+enum ToolExecutionStatus { Success, Failed, Skipped }
+
+record ModelInvocationDescriptor(string ProviderId, string Specification, string Model);
+
+record SystemInstructionMessage(string Instruction) : ISystemMessage {
   public ContextMessageRole Role => ContextMessageRole.System;
   public DateTimeOffset Timestamp { get; init; }
   public ImmutableDictionary<string, object?> Metadata { get; init; }
     = ImmutableDictionary<string, object?>.Empty;
 }
 
-static class ContextMessageLiveScreenHelper {
-  public static IContextMessage AttachLiveScreen(IContextMessage message, string? liveScreen) =>
-    string.IsNullOrEmpty(liveScreen)
-      ? message
-      : new LiveScreenDecoratedMessage(message, liveScreen);
-
-  private sealed record LiveScreenDecoratedMessage(
-    IContextMessage Inner,
-    string? LiveScreen
-  ) : IContextMessage, ILiveScreenCarrier {
-    public ContextMessageRole Role => Inner.Role;
-    public DateTimeOffset Timestamp => Inner.Timestamp;
-    public ImmutableDictionary<string, object?> Metadata => Inner.Metadata;
-    string? ILiveScreenCarrier.LiveScreen => LiveScreen;
-    IContextMessage ILiveScreenCarrier.InnerMessage => Inner;
-  }
-}
-
-enum HistoryEntryKind {
-  ModelInput,
-  ModelOutput,
-  ToolResult
-  // 后续可扩展：LiveContextSnapshot、PlannerDirective 等
-}
-
-enum ToolExecutionStatus { Success, Failed, Skipped }
-
-record TokenUsage(
-  int PromptTokens,
-  int CompletionTokens,
-  int? CachedPromptTokens
-);
+record TokenUsage(int PromptTokens, int CompletionTokens, int? CachedPromptTokens);
 
 interface IContextAttachment { }
 ```
@@ -694,7 +736,7 @@ interface IContextAttachment { }
 ### 设计验收准则
 - **HistoryEntry 分层**：所有可写入条目均需通过 AgentState 的语义化方法生成，单元测试应验证追加后 `Kind`、`Role` 与时间戳被正确注入；若直接向 `_history` 写入视为违背设计。
 - **上下文渲染**：`RenderLiveContext()` 在给定固定输入时必须具备幂等性，同一历史集应生成完全一致的 `IContextMessage` 列表；验收以快照测试或语义比较断言为准。
-- **Provider 契约**：实现 `IProviderClient` 的类需通过统一契约测试，覆盖文本增量、工具调用解析失败、LiveScreen 装饰回退等场景；若任一场景失败则视作未达成设计要求。
+- **Provider 契约**：实现 `IProviderClient` 的类需通过统一契约测试，覆盖文本增量、工具调用解析失败、LiveScreen Section 拆分等场景；若任一场景失败则视作未达成设计要求。
 - **ToolCalls 配对**：`ModelOutputEntry.ToolCalls` 与 `ToolResultsEntry.Results` 必须在回写阶段完成一一对应校验，并在 Metadata 中记录异常；验收测试需模拟对齐与错位两种情况。
 - **Widget 记账**：Widget 引起的状态变更（如 Notebook 更新）必须能在历史中追踪（当前阶段允许人工触发），验收时需检查历史条目能够重建最新 Widget 视图。
 - **调试输出**：关键写入路径需调用 `DebugUtil` 打点，并允许通过 `ATELIA_DEBUG_CATEGORIES=History` 精确开启；若新增路径未打点须补齐。
@@ -705,8 +747,8 @@ interface IContextAttachment { }
 - RenderLiveContext 暂未实现基于 Token 的截断策略，长对话需依赖上层策略控制上下文长度；后续由 Provider 或 Router 根据预算裁剪。
 - 系统指令仍由宿主字段维护，记忆 Notebook 已由 Widget 封装，尚未追加对应的 HistoryEntry；在引入统一 Widget 事件模型前需由调用方保证一致性。
 - HistoryEntry 的序列号、StableId 暂缺省，相关字段需等待持久化设计落定后统一引入。
-- 单元测试在 Phase 1 内应围绕语义化追加接口构造用例（时间戳注入、ToolCall 对齐、LiveScreen 装饰判定），并利用 DebugUtil 日志辅助排查；关于顺序号/回放的断言延后至持久化阶段再补齐。
-- 集成测试需覆盖“规划模型 + 执行模型”混合流程，验证双 Provider 场景下 HistoryEntry 顺序、LiveScreen 装饰及 ToolResult 配对均保持稳定。
+- 单元测试在 Phase 1 内应围绕语义化追加接口构造用例（时间戳注入、ToolCall 对齐、LiveScreen Section 注入判定），并利用 DebugUtil 日志辅助排查；关于顺序号/回放的断言延后至持久化阶段再补齐。
+- 集成测试需覆盖“规划模型 + 执行模型”混合流程，验证双 Provider 场景下 HistoryEntry 顺序、LiveScreen Section 及 ToolResult 配对均保持稳定。
 - 新增 Provider 实现必须通过统一的契约测试套件（Pending），该套件会模拟未知 mix-in、空附件等边界以确保向后兼容。
 
 ## 待定设计（Deferred & TBD）
@@ -755,7 +797,7 @@ interface IContextAttachment { }
 - **AgentState**：管理对话历史与运行时状态的聚合对象，是 Conversation History 的唯一事实来源。
 - **Widget**：封装运行态状态、工具集合与 LiveScreen 呈现的组件，目前包含 `MemoryNotebookWidget`，未来将扩展更多能力。
 - **LiveInfo（Legacy）**：旧版本对运行态快照的称谓，现已由 Widget 体系接手其职责。
-- **LiveScreen**：在上下文中暂时展示的高优先级信息，通过装饰器附加在最近的上下文条目上。
+- **LiveScreen**：在上下文中暂时展示的高优先级信息，由 Widget 渲染为 Markdown 并在写入阶段注入到最近条目的 `"[LiveScreen]"` Section 中。
 - **Provider Router**：根据策略选择底层模型供应商的调度层，标准接口为 `IProviderClient`。
 - **ModelOutputDelta**：供应商返回的流式增量统一表示，最终汇总为 `ModelOutputEntry`。
 - **ModelInvocationDescriptor**：记录 Provider/Specification/Model 三元组，用于回溯模型选择上下文。

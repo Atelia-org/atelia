@@ -27,11 +27,6 @@ internal interface IToolResultsMessage : IContextMessage {
     string? ExecuteError { get; }
 }
 
-internal interface ILiveScreenCarrier {
-    string? LiveScreen { get; }
-    IContextMessage InnerMessage { get; }
-}
-
 internal interface IToolCallCarrier {
     IReadOnlyList<ToolCallRequest> ToolCalls { get; }
 }

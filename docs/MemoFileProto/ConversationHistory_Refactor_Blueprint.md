@@ -1,6 +1,6 @@
 # Memo: Conversation History 抽象重构蓝图
-实施路线图在另外的文档中[Memo: Conversation History 抽象重构实施路线图](docs\MemoFileProto\ConversationHistory_Refactor_Roadmap.md)
-*版本：0.1 · 更新日期：2025-10-10*
+实施路线图在另外的文档中[Memo: Conversation History 抽象重构实施路线图](docs\MemoFileProto\ConversationHistory_Refactor_Roadmap.md)，LiveScreen 装饰器迁移细节可参阅[LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md)
+*版本：0.1.1 · 更新日期：2025-10-16*
 
 ## 背景与目标
 
@@ -66,7 +66,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 这幅图展示了最新的三段式请求流水线：
 
 - **[1] AgentState**：负责维护仅追加的事件日志和运行时快照（System Instruction、Memory Notebook 等），是唯一的真相源。
-- **[2] Context Projection**：由 `RenderLiveContext()` 按当前调用需要生成 `IContextMessage` 只读列表，注入 LiveScreen、内存摘录等易变信息，但不修改历史。
+- **[2] Context Projection**：由 `RenderLiveContext()` 按当前调用需要生成 `IContextMessage` 只读列表，根据条目位置选择合适的 `LevelOfDetail`，LiveScreen 已在写入阶段嵌入 `Full` 档 `"[LiveScreen]"` Section，无需额外装饰器。
 - **[3] Provider Router**：根据调用策略挑选具体的 `IProviderClient`，把 `IContextMessage` 投影重写成供应商协议（OpenAI、Anthropic 等），并将流式增量解析为统一的 `ModelOutputDelta`。
 
 底部的 **Orchestrator feedback** 表示调用协调层在流式推理结束后聚合 `ModelOutputDelta` 与工具结果，再次通过领域方法将新事件追加到 AgentState，从而闭合“读取视图 → 调用模型 → 回写事实”的循环。
@@ -124,15 +124,11 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 `IProviderClient` 接口及其多个实现（OpenAI、Anthropic 等）综合运用了这两种模式：
 
 - **Strategy 模式**：`ProviderRouter`（计划中）可根据模型类型、任务阶段（规划/执行）等条件动态选择 Provider 实现，各策略算法（协议转换逻辑）可独立封装与替换。
-- **Adapter 模式**：每个 `IProviderClient` 实现都是对特定厂商 SDK 的适配器，将异构的底层 API（OpenAI 的 Chat Completion、Anthropic 的 Messages API）统一适配为 `IReadOnlyList<IContextMessage> → IAsyncEnumerable<ModelOutputDelta>` 的标准接口。
+- **Adapter 模式**：每个 `IProviderClient` 实现都是对特定厂商 SDK 的适配器，将异构的底层 API（OpenAI 的 Chat Completion、Anthropic 的 Messages API）统一适配为 `LlmRequest → IAsyncEnumerable<ModelOutputDelta>` 的标准接口（其中 `LlmRequest` 持有只读的 `IContextMessage` 列表）。
 
-### Decorator（装饰器）模式
+### Decorator（历史回顾）
 
-`ContextMessageLiveScreenHelper.AttachLiveScreen()` 是装饰器模式的典型应用：
-
-- **透明扩展**：通过 `LiveScreenDecoratedMessage` 包装原始条目，动态附加 `ILiveScreenCarrier` 能力，而无需修改原始 `HistoryEntry` 定义。
-- **组合优于继承**：避免为"带 LiveScreen 的条目"单独定义子类，保持类型层次的简洁。
-- **按需装饰**：仅在 `RenderLiveContext()` 需要时才创建装饰对象，原始历史条目保持不变。
+早期版本通过 `ContextMessageLiveScreenHelper.AttachLiveScreen()` 装饰上下文条目，在渲染阶段临时附加 LiveScreen。自 [LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md) 发布后，LiveScreen 改为由 `AppendModelInput`/`AppendToolResults` 在写入阶段生成，并落盘为 `LevelOfDetailSections.Full` 中的 `"[LiveScreen]"` Section。装饰器实现已退役，本节保留作为迁移背景记录。
 
 ### 模式协同的价值
 
@@ -153,7 +149,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 - **追加式历史记录**：`_history` 以仅追加方式保存所有 `HistoryEntry`，不提供编辑或删除入口，确保事件轨迹可追溯。
 - **Widget 协同管理**：内部持有实现 `IWidget` 的组件（首版为 `MemoryNotebookWidget`），并维护 `_systemInstruction` 等运行时字段；Widget 负责自身状态与工具暴露，AgentState 负责协调访问与生命周期。
 - **Widget 变更约定**：Widget 在自身状态发生变化时应通过受控入口（例如 `ExecuteTool`）驱动 AgentState 追加描述性 `HistoryEntry`，以保证 `RenderLiveContext()` 能重建历史语义；当前阶段由 `memory_notebook_replace` 覆盖 Notebook 更新。
-- **上下文渲染职责**：沿用 `MemoFileProto.Agent.LlmAgent.BuildLiveContext()` 的思路，在 `RenderLiveContext()` 中把历史条目与各 Widget 的 `RenderLiveScreen()` 输出投影成 `IReadOnlyList<IContextMessage>`；该过程不修改 `_history` 本身。
+- **上下文渲染职责**：沿用 `MemoFileProto.Agent.LlmAgent.BuildLiveContext()` 的思路，在 `RenderLiveContext()` 中把历史条目投影成 `IReadOnlyList<IContextMessage>`，并根据条目位置选择 `LevelOfDetail`；LiveScreen 在写入阶段已落盘为 Section，渲染阶段仅挑选档位而不再额外注入。
 - **单线程约束**：默认挂靠在单线程 Agent 管理循环上，不支持并发写入；如需并发需在调用方自行加锁。本阶段利用该前提直接在 `AgentState` 内部渲染上下文，而不额外生成快照对象。
 - **暂不支持历史回放**：本阶段不提供历史状态重建/时间穿越能力，后续再根据原型需求拆分。
 
@@ -163,7 +159,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 与《LiveContextProto Widget 设计概念草案》保持一致，首版约定如下：
 
-- **渲染职责**：每个 Widget 实现 `RenderLiveScreen(WidgetRenderContext)`，返回 Markdown 或纯文本片段；`AgentState.RenderLiveContext()` 将其作为 LiveScreen 注入，并与历史条目合成 `IReadOnlyList<IContextMessage>`。
+- **渲染职责**：每个 Widget 实现 `RenderLiveScreen(WidgetRenderContext)`，返回 Markdown 或纯文本片段；`AgentState.AppendModelInput/AppendToolResults` 在写入阶段将最新渲染结果嵌入 `LevelOfDetailSections.Full` 的 `"[LiveScreen]"` Section，渲染阶段只需读取现有数据。
 - **状态变更记账**：Widget 通过 `ExecuteTool` 更新内部状态时，应驱动 AgentState 追加对应的 `HistoryEntry`（例如 `MemoryNotebookWidget` 在完成 `memory_notebook_replace` 后记录 Notebook 替换事件），确保历史时间线可还原。
 - **外部交互**：Widget 暴露的 `Tools` 列表供 Planner/LLM 调用；调用方需遵循工具参数约定，避免绕过 Widget 直接修改 AgentState 字段，以免破坏单一事实源。
 - **开放问题**：Widget 之间的顺序协调、事件通知与并发访问策略仍在评估中，后续可能通过统一的 Widget Registry 或事件流补齐。
@@ -190,57 +186,62 @@ abstract record ContextualHistoryEntry : HistoryEntry, IContextMessage {
     public abstract ContextMessageRole Role { get; }
 }
 
-record ModelInputEntry(
-    IReadOnlyList<KeyValuePair<string, string>> ContentSections
-) : ContextualHistoryEntry, IModelInputMessage {
-    public override ContextMessageRole Role => ContextMessageRole.ModelInput;
+sealed record ModelInputEntry(
+    LevelOfDetailSections ContentSections
+) : ContextualHistoryEntry {
     public override HistoryEntryKind Kind => HistoryEntryKind.ModelInput;
-    IReadOnlyList<KeyValuePair<string, string>> IModelInputMessage.ContentSections => ContentSections;
+    public override ContextMessageRole Role => ContextMessageRole.ModelInput;
     public IReadOnlyList<IContextAttachment> Attachments { get; init; } = Array.Empty<IContextAttachment>();
 }
 
-record ModelInvocationDescriptor(
-    string ProviderId,
-    string Specification,  // 例如 "openai-v1"、"openai-responses"、"qwen3"、"qwen3-coder" 等协议规范标识
-    string Model
-);
-
-record ModelOutputEntry(
-    string? Thinking,
+sealed record ModelOutputEntry(
     IReadOnlyList<string> Contents,
     IReadOnlyList<ToolCallRequest> ToolCalls,
     ModelInvocationDescriptor Invocation
-) : ContextualHistoryEntry, IModelOutputMessage, IToolCallCarrier {
-    public override ContextMessageRole Role => ContextMessageRole.ModelOutput;
+) : ContextualHistoryEntry, IModelOutputMessage {
     public override HistoryEntryKind Kind => HistoryEntryKind.ModelOutput;
+    public override ContextMessageRole Role => ContextMessageRole.ModelOutput;
     IReadOnlyList<string> IModelOutputMessage.Contents => Contents;
     ModelInvocationDescriptor IModelOutputMessage.Invocation => Invocation;
-    IReadOnlyList<ToolCallRequest> IToolCallCarrier.ToolCalls => ToolCalls;
 }
 
-record ToolCallResult(
+sealed record ToolResultsEntry(
+    IReadOnlyList<HistoryToolCallResult> Results,
+    string? ExecuteError
+) : ContextualHistoryEntry {
+    public override HistoryEntryKind Kind => HistoryEntryKind.ToolResult;
+    public override ContextMessageRole Role => ContextMessageRole.ToolResult;
+}
+
+sealed record HistoryToolCallResult(
     string ToolName,
     string ToolCallId,
     ToolExecutionStatus Status,
-    string Result, // 未来如果工具调用结果支持多模态就在此处替换string为Parts
+    LevelOfDetailSections Result,
     TimeSpan? Elapsed
 );
-
-record ToolResultsEntry(
-    IReadOnlyList<ToolCallResult> Results,
-    string? ExecuteError // 非null表示遇到错误导致未全部执行
-) : ContextualHistoryEntry, IToolResultsMessage {
-    public override ContextMessageRole Role => ContextMessageRole.ToolResult;
-    public override HistoryEntryKind Kind => HistoryEntryKind.ToolResult;
-    string? IToolResultsMessage.ExecuteError => ExecuteError;
-}
 
 record ToolCallRequest(
     string ToolName,
     string ToolCallId,
     string RawArguments,
-    IReadOnlyDictionary<string, string>? Arguments,  // null = 解析失败
-    string? ParseError  // 非 null 时说明解析出错
+    IReadOnlyDictionary<string, object?>? Arguments,
+    string? ParseError,
+    string? ParseWarning
+);
+
+record ToolCallResult(
+    string ToolName,
+    string ToolCallId,
+    ToolExecutionStatus Status,
+    IReadOnlyList<KeyValuePair<string, string>> Result,
+    TimeSpan? Elapsed
+);
+
+record ModelInvocationDescriptor(
+    string ProviderId,
+    string Specification,
+    string Model
 );
 
 record SystemInstructionMessage(
@@ -252,21 +253,124 @@ record SystemInstructionMessage(
         = ImmutableDictionary<string, object?>.Empty;
 }
 
-static class ContextMessageLiveScreenHelper {
-    public static IContextMessage AttachLiveScreen(IContextMessage message, string? liveScreen) =>
-        string.IsNullOrEmpty(liveScreen)
-            ? message
-            : new LiveScreenDecoratedMessage(message, liveScreen);
+sealed class LevelOfDetailSections {
+    public LevelOfDetailSections(
+        IReadOnlyList<KeyValuePair<string, string>> full,
+        IReadOnlyList<KeyValuePair<string, string>> summary,
+        IReadOnlyList<KeyValuePair<string, string>> gist
+    ) {
+        Full = full ?? throw new ArgumentNullException(nameof(full));
+        Summary = summary ?? throw new ArgumentNullException(nameof(summary));
+        Gist = gist ?? throw new ArgumentNullException(nameof(gist));
+    }
 
-    private sealed record LiveScreenDecoratedMessage(
-        IContextMessage Inner,
-        string? LiveScreen
-    ) : IContextMessage, ILiveScreenCarrier {
-        public ContextMessageRole Role => Inner.Role;
-        public DateTimeOffset Timestamp => Inner.Timestamp;
-        public ImmutableDictionary<string, object?> Metadata => Inner.Metadata;
-        string? ILiveScreenCarrier.LiveScreen => LiveScreen;
-        IContextMessage ILiveScreenCarrier.InnerMessage => Inner;
+    public IReadOnlyList<KeyValuePair<string, string>> Full { get; }
+    public IReadOnlyList<KeyValuePair<string, string>> Summary { get; }
+    public IReadOnlyList<KeyValuePair<string, string>> Gist { get; }
+
+    public IReadOnlyList<KeyValuePair<string, string>> GetSections(LevelOfDetail detail)
+        => detail switch {
+            LevelOfDetail.Full => Full,
+            LevelOfDetail.Summary => Summary,
+            LevelOfDetail.Gist => Gist,
+            _ => Full
+        };
+
+    public LevelOfDetailSections WithFullSection(string key, string value) {
+        var updated = AddOrReplaceSection(Full, key, value);
+        return ReferenceEquals(updated, Full)
+            ? this
+            : new LevelOfDetailSections(updated, Summary, Gist);
+    }
+
+    public static LevelOfDetailSections CreateUniform(IReadOnlyList<KeyValuePair<string, string>> sections)
+        => new(sections, sections, sections);
+
+    private static IReadOnlyList<KeyValuePair<string, string>> AddOrReplaceSection(
+        IReadOnlyList<KeyValuePair<string, string>> sections,
+        string key,
+        string value
+    ) {
+        var builder = new List<KeyValuePair<string, string>>(sections.Count + 1);
+        var replaced = false;
+
+        foreach (var section in sections) {
+            if (!replaced && string.Equals(section.Key, key, StringComparison.Ordinal)) {
+                builder.Add(new KeyValuePair<string, string>(key, value));
+                replaced = true;
+            }
+            else {
+                builder.Add(section);
+            }
+        }
+
+        if (!replaced) {
+            builder.Add(new KeyValuePair<string, string>(key, value));
+        }
+
+        return builder.ToArray();
+    }
+}
+
+static class LevelOfDetailSectionNames {
+    public const string LiveScreen = "[LiveScreen]";
+}
+
+static class LevelOfDetailSectionExtensions {
+    public static IReadOnlyList<KeyValuePair<string, string>> WithoutLiveScreen(
+        this IReadOnlyList<KeyValuePair<string, string>> sections,
+        out string? liveScreen
+    ) => WithoutSection(sections, LevelOfDetailSectionNames.LiveScreen, out liveScreen);
+
+    public static string ToPlainText(IReadOnlyList<KeyValuePair<string, string>> sections) {
+        if (sections.Count == 0) { return string.Empty; }
+        if (sections.Count == 1) { return sections[0].Value ?? string.Empty; }
+
+        var builder = new StringBuilder();
+        for (var index = 0; index < sections.Count; index++) {
+            var section = sections[index];
+            if (!string.IsNullOrEmpty(section.Key)
+                && !string.Equals(section.Key, LevelOfDetailSectionNames.LiveScreen, StringComparison.Ordinal)) {
+                builder.Append('#').Append(' ').AppendLine(section.Key);
+            }
+
+            builder.Append(section.Value ?? string.Empty);
+            if (index < sections.Count - 1) {
+                builder.AppendLine().AppendLine();
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static IReadOnlyList<KeyValuePair<string, string>> WithoutSection(
+        IReadOnlyList<KeyValuePair<string, string>> sections,
+        string key,
+        out string? removed
+    ) {
+        removed = null;
+        List<KeyValuePair<string, string>>? filtered = null;
+
+        for (var i = 0; i < sections.Count; i++) {
+            var section = sections[i];
+            if (string.Equals(section.Key, key, StringComparison.Ordinal)) {
+                removed = section.Value;
+                if (filtered is null) {
+                    filtered = new List<KeyValuePair<string, string>>(sections.Count - 1);
+                    for (var copy = 0; copy < i; copy++) {
+                        filtered.Add(sections[copy]);
+                    }
+                }
+                continue;
+            }
+
+            filtered?.Add(section);
+        }
+
+        if (filtered is null) { return sections; }
+        if (filtered.Count == 0) { return Array.Empty<KeyValuePair<string, string>>(); }
+
+        return filtered.ToArray();
     }
 }
 ```
@@ -279,15 +383,14 @@ static class ContextMessageLiveScreenHelper {
 - **ToolCallRequest.RawArguments** 永远保留模型输出的原始文本；`Arguments` 则由 Provider 成功解析后提供的弱类型键值对（解析失败时为 `null`），工具层只消费该字典。`ParseError` 字段在解析成功时为 `null`，失败时包含错误信息，从而区分"工具不需要参数"与"参数解析失败"两种情况。
 - **ModelOutputEntry.Invocation** 记录触发本次响应时所选用的 Provider / 规范 / 模型三元组，便于在历史层面还原调用上下文，而无需在每个工具调用上重复写入。
 - **ModelInvocationDescriptor** 记录 Provider-Specification-Model 三元组。`Specification` 字段用于区分同一 Provider 的不同协议规范（例如 OpenAI 的 "v1" vs "responses" 端点，Qwen 系列的 "json" vs "xml" 格式），这是快速演进的 AI 行业带来的必要复杂性。注意：`IProviderClient` 的一个实现对应 (Provider, Specification) 组合，如 `OpenAiV1Client` 和 `OpenAiResponsesClient` 是两个独立实现。
-- **ModelInputEntry.ContentSections** 用有序键值对承载提示分段，可用于区分 Planner 指令、环境变量、任务描述等；列表默认为空，Provider 在最终拼装时再决定呈现方式。
-- **ModelOutputEntry** 内部聚合同一轮推理生成的 `ToolCallRequest` 序列，并通过 `Invocation` 字段标记本次模型调用的供应商语义，同时以 `Contents` 保留分段文本，便于 Provider 自行组装提示或多模态片段。
-- **ToolCallResult** 一一对应单个工具调用的执行结果，并记录耗时等诊断信息；`ToolResultsEntry.Results` 代表一次模型响应内的整体结果汇总，按顺序与 `ModelOutputEntry.ToolCalls` 配对，若有任何失败可通过 `ExecuteError` 给出说明。
-- 系统指令则以 `_systemInstruction` 字段维护，并在渲染阶段生成对应的 `SystemInstructionMessage` 注入上下文。
-- **SystemInstructionMessage** 仅在上下文渲染阶段创建，用于向 Provider 暴露当前系统指令；后续若需要分版本或多段系统指令，可再引入稳定标识或扩展结构。
-- **补充说明**：`ToolCallRequest` 仅作为 `ModelOutputEntry.ToolCalls` 的嵌套结构存在，不会追加独立的 `ToolCallRequest` 历史条目。
-- **RenderLiveContext 副本**：如需注入 LiveScreen 内容，`ContextMessageLiveScreenHelper` 会返回实现 `ILiveScreenCarrier` 的包装对象，原始历史条目保持精简且不会被误追加回历史。
-- **显式接口实现留有弹性**：`ModelInputEntry`、`ModelOutputEntry` 等通过显式实现 `IModelInputMessage`、`IModelOutputMessage` 成员，即便当前属性一一对应，也可在未来需要压缩、裁剪或缓存上下文时覆盖接口返回值而无需更改记录类型构造，保持 History 层与 Context 层的解耦空间。
-- `LiveScreenDecoratedMessage` 是一个仅实现 `IContextMessage` 与 `ILiveScreenCarrier` 的轻量包装，可携带 LiveScreen，并通过 `ILiveScreenCarrier.InnerMessage` 引用原始条目，从而既避免被再次追加到 `AgentState.History`，又允许 Provider 继续访问原始条目的角色化接口。
+- **ModelInputEntry.ContentSections** 以 `LevelOfDetailSections` 表达多档位的提示分段，`Full` 档会在写入阶段追加 `"[LiveScreen]"` Section，其余档位保留摘要内容，Provider 可按需取用。
+- **HistoryToolCallResult.Result** 同样以 `LevelOfDetailSections` 保存工具执行结果，便于根据上下文预算在 `Full/Summary/Gist` 之间切换；最新一次工具结果会承载 LiveScreen Section。
+- **ModelOutputEntry** 聚合同一轮推理生成的 `ToolCallRequest` 序列，并通过 `Invocation` 字段标记本次模型调用的供应商语义，同时以 `Contents` 保留分段文本，便于不同 Provider 自行拼装提示或多模态片段。
+- **ToolCallResult** 一一对应单个工具调用的执行结果，并记录耗时等诊断信息；`ToolResultsEntry.Results` 与 `ModelOutputEntry.ToolCalls` 按顺序对齐，若有失败可通过 `ExecuteError` 给出说明。
+- 系统指令仍由 `_systemInstruction` 字段维护，并在渲染阶段生成对应的 `SystemInstructionMessage` 注入上下文；后续若需要多段系统指令，可考虑扩展该结构。
+- **补充说明**：`ToolCallRequest` 仅作为 `ModelOutputEntry.ToolCalls` 的嵌套结构存在，不会追加独立的历史条目。
+- **LevelOfDetailSectionExtensions.WithoutLiveScreen** 可帮助消费方在渲染前拆分 LiveScreen，与 `ToPlainText` 等辅助方法共同构成新的读取约定。
+- **显式接口实现留有弹性**：`ModelInputEntry`、`ModelOutputEntry` 等类型可以继续通过显式接口控制实际暴露的内容，未来若需要按 Provider 做裁剪，可在包装层实现而无需修改记录定义。
 
 ## ContextMessage 层接口深化
 
@@ -357,14 +460,14 @@ interface IToolResultsMessage : IContextMessage {
     string? ExecuteError { get; }
 }
 
-`Instruction` 保持为单字符串，满足当前主要 Provider 的共同约束；未来若需要多段或参数化系统提示，可在此接口基础上扩展。`ContentSections` 采用有序键值对列表，键名可视作分区标题，值目前为纯文本，占位未来的富内容对象。`Contents` 保留模型输出的自然顺序，为多模态输出预留通道。`ExecuteError` 与 `ToolCallResult.Status`/`Elapsed` 搭配使用，可区分局部失败与整体失败的情形。
+`Instruction` 保持为单字符串，满足当前主要 Provider 的共同约束；未来若需要多段或参数化系统提示，可在此接口基础上扩展。`ContentSections` 仍以有序键值对列表呈现，键名可视作分区标题，值目前为纯文本——渲染层会从 `LevelOfDetailSections` 中挑选目标档位后再返回该列表。`Contents` 保留模型输出的自然顺序，为多模态输出预留通道。`ExecuteError` 与 `ToolCallResult.Status`/`Elapsed` 搭配使用，可区分局部失败与整体失败的情形。
 ```
 
 ### 可选能力接口（mix-in）
 
-- `ILiveScreenCarrier`：`string? LiveScreen` 和 `IContextMessage InnerMessage`。LiveScreen 承载 Planner/工具的临时屏幕渲染信息；`InnerMessage` 在存在装饰器时指向被包装的实际消息（否则返回自身），便于 Provider 在需要时继续访问 `IModelInputMessage`、`IModelOutputMessage` 等角色化接口。**设计理由**：不同厂商对 LiveScreen 注入位置和格式要求不同（例如 Gemini 可用 Content/Parts 显式分隔并用不可见 Token 结构化；Anthropic 聚合多个 ToolResult 时 LiveScreen 应注入哪一条尚未确定），因此用独立字段呈现给 `IProviderClient`，由其决定最终拼装策略，而非在 History 层写死到单一文本字段中。不同模型的提示词工程可能也不同。
 - `IToolCallCarrier`：`IReadOnlyList<ToolCallRequest> ToolCalls`，供 Provider 探测输出中是否包含工具调用；由 `IModelOutputMessage` 默认实现。
 - `ITokenUsageCarrier`：`TokenUsage? Usage`，用于 Provider 在响应结束后补写 token 统计。
+- （预留）后续如需表达缓存命中、分布式追踪等诊断信息，可继续通过 mix-in 方式扩展，保持核心接口稳定。
 
 这些 mix-in 接口只在需要的条目上实现，保持基础接口的简洁度，也便于单元测试针对能力组合进行覆盖。
 
@@ -373,11 +476,6 @@ interface IToolResultsMessage : IContextMessage {
 示例定义：
 
 ```csharp
-interface ILiveScreenCarrier {
-    string? LiveScreen { get; }
-    IContextMessage InnerMessage { get; }
-}
-
 interface IToolCallCarrier {
     IReadOnlyList<ToolCallRequest> ToolCalls { get; }
 }
@@ -397,17 +495,18 @@ interface ITokenUsageCarrier {
 
 ### 接口协同要点
 
-- `RenderLiveContext()` 输出的条目应尽量沿用 History 层对象，必要时通过轻量包装类附加 `ILiveScreenCarrier` 等能力。
+- `RenderLiveContext()` 输出的条目应尽量沿用 History 层对象，必要时通过 `LevelOfDetailSections.GetSections(...)` 选择不同粒度，不再引入额外的 LiveScreen 装饰对象。
 - `Metadata` 使用 `ImmutableDictionary<string, object?>` 承载轻量信息，并默认初始化为空字典，禁止写入体量过大的结构（> 2 KB）；较大的数据应改用附件或单独条目。
 - Provider 可通过接口检测来决定拼装逻辑：例如仅对实现了 `IToolCallCarrier` 的条目尝试解析 `ToolCalls`。
-- LiveScreen 处理遵循“LiveScreen 处理约定”小节，保持装饰器与角色接口解耦。
+- LiveScreen 相关约定见“LiveScreen 处理约定”小节，消费方应通过 `WithoutLiveScreen(out liveScreen)` 拆分 Section，避免额外的接口差异。
 - `ModelOutputEntry` 原样实现接口，用于传递模型响应及潜在的工具调用请求。
 - 除模型输入、模型输出及工具结果外的其他历史条目不实现 `IContextMessage`，从编译期阻止它们进入 Provider 管线。
 
 #### LiveScreen 处理约定
 
-- 当上下文条目实现 `ILiveScreenCarrier` 时，消费方必须先读取 `InnerMessage` 再进行角色化接口判定，确保 LiveScreen 装饰不会阻断对 `IModelInputMessage`、`IModelOutputMessage` 等接口的访问。
-- Provider 客户端在处理上下文时同样遵循这一约定，以便在需要时访问原始消息并按需读取 LiveScreen 数据。
+- `AppendModelInput`、`AppendToolResults` 会在写入阶段调用 `BuildLiveScreenSnapshot()`，并将结果追加到最近条目的 `LevelOfDetailSections.Full` 中，键名固定为 `"[LiveScreen]"`。
+- 渲染阶段保持 Section 原样返回，消费方如需展示或忽略 LiveScreen，可通过 `sections.WithoutLiveScreen(out var liveScreen)` 或 `LevelOfDetailSections.ToPlainText(...)` 等扩展方法拆分文本。
+- 若消费方忽略 LiveScreen，Section 数据仍会随历史条目保留，便于后续调试或回放。更多细节见《[LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md)》。
 
 ### 辅助类型
 
@@ -433,9 +532,9 @@ interface IContextAttachment { }
 
 ## History ↔ Context ↔ Provider 协作
 
-- **History → Context**：`AgentState.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口，并叠加各 Widget 通过 `RenderLiveScreen()` 暴露的最新视图；当历史条目本身已实现目标接口时直接复用，无法复用时则通过只读包装补足字段，并在必要时附加 `ILiveScreenCarrier` 等能力。系统指令视为运行时投影，通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
-- **Context → Provider**：Provider 仅消费 `IContextMessage` 层接口，即可完成请求拼装与 delta 解析。它们通过接口检测判定角色（`IModelInputMessage`、`IModelOutputMessage` 等），按需解释 `ContentSections`、`Contents` 等字段，对实现 `IToolCallCarrier` 的条目解析 `ToolCalls`，并在推理结束后根据 `ITokenUsageCarrier` 或 `Metadata` 回写统计信息。
-- **Provider → History**：模型响应结束后，由调用协调层基于 Provider 返回的 delta 聚合出新的 `ModelOutputEntry`、`ToolResultsEntry` 等，并追加到 History。这样可以保证 History 层仅包含最终定稿的条目，而流式阶段的装饰数据只存在于 Context 层。
+- **History → Context**：`AgentState.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口，并根据条目靠近程度选择 `LevelOfDetail`。LiveScreen 已在写入阶段存储为 Section，因此渲染仅需返回适当档位的分段，系统指令通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
+- **Context → Provider**：ProviderRouter 将渲染好的上下文封装进 `LlmRequest`（包含策略标识、`ModelInvocationDescriptor` 以及工具清单），Provider 实现通过请求对象的只读视图读取 `request.Context`、`request.Tools` 等信息，并据此产出 `ModelOutputDelta` 流；如需展示 LiveScreen，可在读取 Sections 后调用扩展方法拆分，实现过程中始终保持对历史的只读。
+- **Provider → History**：模型响应结束后，由调用协调层基于 Provider 返回的 delta 使用 `ModelOutputAccumulator` 聚合出新的 `ModelOutputEntry`，并在工具执行链路完成后生成 `ToolResultsEntry` 等条目追加到 History。这样可以保证 History 层仅包含最终定稿的事实，而流式阶段的临时数据不会污染历史。
 - **附件/富内容**：附件体系说明统一记录在“结构化附属数据（暂缓实现）”小节。
 
 动态工具描述的暂缓策略统一记录在“Tool 描述动态注入（暂缓实现）”一节。
@@ -447,7 +546,7 @@ interface IContextAttachment { }
 ```csharp
 interface IProviderClient {
     IAsyncEnumerable<ModelOutputDelta> CallModelAsync(
-        IReadOnlyList<IContextMessage> context,
+        LlmRequest request,
         CancellationToken cancellationToken
     );
 }
@@ -455,24 +554,25 @@ interface IProviderClient {
 
 - 流式 delta 统一表示为 `ModelOutputDelta`，关于更名与字段约束详见下文“ModelOutputDelta 管线”。
 - Provider 客户端封装底层 SDK 或 HTTP 细节，对外统一为流式 delta；测试场景可通过假实现返回预设 delta 序列。
-- Provider 实现需避免直接引用 `AgentState` ，而是消费预先构建好的 `IContextMessage` 列表；同时负责将 `ToolCallRequest.RawArguments` 解析为 `Arguments` 字典（失败时留空并记录错误），补全 `ModelOutputEntry.Invocation`，并禁止直接修改或回写历史条目。
-- 处理上下文时若遇到实现了 `ILiveScreenCarrier` 的条目，请遵循“LiveScreen 处理约定”中的回退流程，避免装饰器干扰角色判定。
-- 解析失败时的错误处理约定：Provider 需要生成失败状态的 `ToolCallResult`，在结果文本中附上原始参数与错误原因；上层可以据此选择重试、提示 Planner 调整输出或请求人工介入。
+- Orchestrator 会将策略、模型标识、上下文消息与工具清单打包成 `LlmRequest` 传入 Provider；请求体中的 `request.Context`/`request.Tools` 是只读视图，调用方不得修改。
+- Provider 实现需避免直接引用 `AgentState`，而是基于请求对象按需解释 `IModelInputMessage`、`IModelOutputMessage` 等接口；解析模型声明的工具调用时，可在 `ToolCallRequest` 中填充解析成功的 `Arguments` 或记录 `ParseError`，但不得直接回写历史条目。
+- 处理上下文时若需要展示 LiveScreen，可在读取 `request.Context` 中的 `ContentSections` 或工具结果 Sections 后调用 `WithoutLiveScreen(out var liveScreen)` 拆分片段，避免在 Provider 层复制或误用原始 Section。
+- 解析失败时的错误处理约定：Provider 需保留 `ToolCallRequest.RawArguments` 原文，并在 `ParseError`/`ParseWarning` 或 `ModelOutputDelta.ExecutionError` 中记录原因；上层可以据此选择重试、提示 Planner 调整输出或请求人工介入。
 - 为减少重复解析代码，计划提供共享的 `ToolArgumentParser` 辅助器（例如 `GetRequired(...)`、`ParseList(...)`、`ParseJsonSafely(...)` 等），供 Provider 和工具实现重复利用。
-- Provider 层维护"规范 → 参数解析策略"的静态映射：`ModelOutputEntry.Invocation` 提供规范标识，具体的格式解析与工具调用出参推断交由各 Provider 内部实现，使 History 保持供应商无关的抽象。
-- Provider 在汇总阶段负责写入 `ToolCallResult.Elapsed`、`ToolResultsEntry.ExecuteError` 等诊断信息，保证上层可以重建工具链路的耗时与失败原因。
+- Provider 层维护"规范 → 参数解析策略"的静态映射：`ModelOutputEntry.Invocation` 由 ProviderRouter 预先确定，具体的格式解析与工具调用出参推断交由各 Provider 内部实现，使 History 保持供应商无关的抽象。
+- 工具执行的耗时、失败信息由 Orchestrator 与 ToolExecutor 在回写 `ToolResultsEntry` 时统一填充，Provider 只需确保声明的工具调用信息完整可靠。
 
 ### OpenAI 客户端行为
 
-1. 消费传入的 `IReadOnlyList<IContextMessage>`，将其中的系统指令、输入、输出、工具结果等信息映射为 OpenAI 所需的消息数组；当前原型阶段，OpenAI v1 客户端可把 `ContentSections` 以“Heading + Content” 的 Markdown 结构拼接为单条文本供模型消费。
-2. 解析流式返回，将底层 `ChatResponseDelta` 映射为 `ModelOutputDelta`（文本、工具调用等），并驱动上层追加带 `Invocation` 描述、`Contents` 片段聚合的 `ModelOutputEntry`；同时尝试把工具调用的原始参数解析成 `Arguments` 字典，失败时保留 `RawArguments` 并把字典留空、记录错误。
-3. 多个工具调用按 OpenAI 风格作为独立 delta 产出，推理结束时合并为匹配的 `ToolResultsEntry`（其中的 `ToolCallResult` 与 `ModelOutputEntry.ToolCalls` 一一对应）。
+1. 消费传入的 `LlmRequest`，从 `request.Context` 中提取系统指令、输入、输出、工具结果等信息并转换为 OpenAI 所需的消息数组；当前原型阶段，可把 `ContentSections` 以“Heading + Content” 的 Markdown 结构拼接为单条文本供模型消费。
+2. 解析流式返回，将底层 `ChatResponseDelta` 映射为 `ModelOutputDelta`（文本、工具调用等）并逐条返回；同时尝试把工具调用的原始参数解析成 `Arguments` 字典，失败时保留 `RawArguments` 并把字典留空、记录错误。
+3. 推理结束后由 Orchestrator 使用 `ModelOutputAccumulator` 聚合 delta，并在工具执行管线完成后写入与 `ModelOutputEntry.ToolCalls` 对齐的 `ToolResultsEntry`，保持上下游语义一致。
 
 ### Anthropic 客户端行为
 
-1. 同样消费 `IReadOnlyList<IContextMessage>`，在内部将多工具调用聚合成单条工具消息，保证 Claude 的奇偶交错约定。
-2. 输出 `ModelOutputDelta` 序列，在流式阶段完成工具调用解析与信息注入，并使用与 OpenAI 相同的策略填充 `Arguments` 字典（失败时留空并汇报原因），同时写入 Claude 侧的 `Invocation` 描述并聚合文本片段到 `Contents`。
-3. 推理结束后，把聚合后的结果汇总成一条 `ToolResultsEntry`，内部保留逐项 `ToolCallResult`，维持与 OpenAI 的配对精度。
+1. 同样消费 `LlmRequest`，在内部将多工具调用聚合成单条工具消息，保证 Claude 的奇偶交错约定。
+2. 输出 `ModelOutputDelta` 序列，在流式阶段完成工具调用解析与信息注入，并使用与 OpenAI 相同的策略填充 `Arguments` 字典（失败时留空并汇报原因），同时聚合文本片段到 `Content` 增量。
+3. 推理结束后由 Orchestrator 负责将返回的 delta 汇总成 `ModelOutputEntry`，并在工具执行完成后落盘对应的 `ToolResultsEntry`，维持跨 Provider 的配对精度。
 
 ### 其他供应商
 
@@ -499,15 +599,50 @@ internal sealed class AgentState {
         SystemInstruction = systemInstruction;
         _memoryNotebookWidget = new MemoryNotebookWidget();
         _widgets = ImmutableArray.Create<IWidget>(_memoryNotebookWidget);
+
+        DebugUtil.Print("History", $"AgentState initialized with instruction length={systemInstruction.Length}");
     }
 
     public string SystemInstruction { get; private set; }
     public IReadOnlyList<HistoryEntry> History => _history;
-    public MemoryNotebookWidget MemoryNotebookWidget => _memoryNotebookWidget;
     public string MemoryNotebookSnapshot => _memoryNotebookWidget.GetSnapshot();
+    public MemoryNotebookWidget MemoryNotebookWidget => _memoryNotebookWidget;
 
-    public static AgentState CreateDefault(string? systemInstruction = null, Func<DateTimeOffset>? timestampProvider = null)
-        => new AgentState(timestampProvider ?? static () => DateTimeOffset.UtcNow, systemInstruction ?? LlmAgent.DefaultSystemInstruction);
+    public static AgentState CreateDefault(string? systemInstruction = null, Func<DateTimeOffset>? timestampProvider = null) {
+        var instruction = string.IsNullOrWhiteSpace(systemInstruction)
+            ? "You are LiveContextProto, a placeholder agent validating the Conversation History refactor skeleton."
+            : systemInstruction;
+
+        var provider = timestampProvider ?? (() => DateTimeOffset.UtcNow);
+        return new AgentState(provider, instruction);
+    }
+
+    public ModelInputEntry AppendModelInput(ModelInputEntry entry) {
+        if (entry.ContentSections?.Full is not { Count: > 0 }) {
+            throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry));
+        }
+
+        var enriched = AttachLiveScreen(entry);
+        return AppendContextualEntry(enriched);
+    }
+
+    public ModelOutputEntry AppendModelOutput(ModelOutputEntry entry) {
+        if ((entry.Contents is null || entry.Contents.Count == 0)
+            && (entry.ToolCalls is null || entry.ToolCalls.Count == 0)) {
+            throw new ArgumentException("ModelOutputEntry must include content or tool calls.", nameof(entry));
+        }
+
+        return AppendContextualEntry(entry);
+    }
+
+    public ToolResultsEntry AppendToolResults(ToolResultsEntry entry) {
+        if (entry.Results is not { Count: > 0 } && string.IsNullOrWhiteSpace(entry.ExecuteError)) {
+            throw new ArgumentException("ToolResultsEntry must include results or an execution error.", nameof(entry));
+        }
+
+        var enriched = AttachLiveScreen(entry);
+        return AppendContextualEntry(enriched);
+    }
 
     public void SetSystemInstruction(string instruction) {
         SystemInstruction = instruction;
@@ -517,31 +652,89 @@ internal sealed class AgentState {
     public void UpdateMemoryNotebook(string? content)
         => _memoryNotebookWidget.ReplaceNotebookFromHost(content);
 
+    public void Reset() {
+        _history.Clear();
+        _memoryNotebookWidget.Reset();
+        DebugUtil.Print("History", "AgentState history cleared");
+    }
+
     public IReadOnlyList<IContextMessage> RenderLiveContext() {
-        var context = new List<IContextMessage>(_history.Count + 1);
-        var hasDecoratedLiveScreen = false;
+        var messages = new List<IContextMessage>(_history.Count + 1);
+        var detailOrdinal = 0;
 
-        for (var index = _history.Count; --index >= 0;) {
-            if (_history[index] is not ContextualHistoryEntry entry || entry.Role == ContextMessageRole.System) {
-                continue;
+        for (var index = _history.Count - 1; index >= 0; index--) {
+            if (_history[index] is not ContextualHistoryEntry contextual) { continue; }
+
+            switch (contextual) {
+                case ModelInputEntry modelInputEntry:
+                    var inputDetail = ResolveDetailLevel(detailOrdinal++);
+                    messages.Add(new ModelInputMessage(modelInputEntry, inputDetail));
+                    break;
+
+                case ToolResultsEntry toolResultsEntry:
+                    var toolDetail = ResolveDetailLevel(detailOrdinal++);
+                    messages.Add(new ToolResultsMessage(toolResultsEntry, toolDetail));
+                    break;
+
+                default:
+                    messages.Add(contextual);
+                    break;
             }
-
-            if (!hasDecoratedLiveScreen && ShouldDecorate(entry)) {
-                var liveScreen = BuildLiveScreenSnapshot();
-                context.Add(ContextMessageLiveScreenHelper.AttachLiveScreen(entry, liveScreen));
-                hasDecoratedLiveScreen = true;
-                continue;
-            }
-
-            context.Add(entry);
         }
 
-        context.Add(new SystemInstructionMessage(SystemInstruction) {
-            Timestamp = _timestampProvider()
-        });
+        var systemMessage = new SystemInstructionMessage(SystemInstruction) {
+            Timestamp = _timestampProvider(),
+            Metadata = ImmutableDictionary<string, object?>.Empty
+        };
 
-        context.Reverse();
-        return context;
+        messages.Add(systemMessage);
+        messages.Reverse();
+        return messages;
+    }
+
+    private T AppendContextualEntry<T>(T entry) where T : ContextualHistoryEntry {
+        var finalized = entry with {
+            Timestamp = _timestampProvider(),
+            Metadata = entry.Metadata
+        };
+
+        _history.Add(finalized);
+        DebugUtil.Print("History", $"Appended {finalized.Role} entry (count={_history.Count})");
+        return finalized;
+    }
+
+    private static LevelOfDetail ResolveDetailLevel(int ordinal)
+        => ordinal == 0
+            ? LevelOfDetail.Full
+            : LevelOfDetail.Summary;
+
+    private ModelInputEntry AttachLiveScreen(ModelInputEntry entry) {
+        var liveScreen = BuildLiveScreenSnapshot();
+        if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+
+        var sections = entry.ContentSections.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        if (ReferenceEquals(sections, entry.ContentSections)) { return entry; }
+
+        return entry with { ContentSections = sections };
+    }
+
+    private ToolResultsEntry AttachLiveScreen(ToolResultsEntry entry) {
+        if (entry.Results.Count == 0) { return entry; }
+
+        var liveScreen = BuildLiveScreenSnapshot();
+        if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+
+        var results = new HistoryToolCallResult[entry.Results.Count];
+        for (var index = 0; index < entry.Results.Count; index++) {
+            results[index] = entry.Results[index];
+        }
+
+        var latest = results[^1];
+        var updatedSections = latest.Result.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        if (ReferenceEquals(updatedSections, latest.Result)) { return entry; }
+
+        results[^1] = latest with { Result = updatedSections };
+        return entry with { Results = results };
     }
 
     private string? BuildLiveScreenSnapshot() {
@@ -555,22 +748,21 @@ internal sealed class AgentState {
             }
         }
 
-        if (fragments.Count == 0) {
-            return null;
-        }
+        if (fragments.Count == 0) { return null; }
 
-        var builder = new StringBuilder();
-        builder.AppendLine("# [Live Screen]");
-        builder.AppendLine();
+        var liveScreenBuilder = new StringBuilder();
+        liveScreenBuilder.AppendLine("# [Live Screen]");
+        liveScreenBuilder.AppendLine();
 
-        for (var i = 0; i < fragments.Count; i++) {
-            builder.AppendLine(fragments[i]);
-            if (i < fragments.Count - 1) {
-                builder.AppendLine();
+        for (var index = 0; index < fragments.Count; index++) {
+            liveScreenBuilder.AppendLine(fragments[index]);
+
+            if (index < fragments.Count - 1) {
+                liveScreenBuilder.AppendLine();
             }
         }
 
-        return builder.ToString().TrimEnd();
+        return liveScreenBuilder.ToString().TrimEnd();
     }
 
     internal IEnumerable<ITool> EnumerateWidgetTools() {
@@ -580,14 +772,11 @@ internal sealed class AgentState {
             }
         }
     }
-
-    private static bool ShouldDecorate(ContextualHistoryEntry entry)
-        => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
 }
 ```
 
 **设计要点**：
-- **领域方法优于通用 Append**：目标状态会提供 `AppendModelInput()` 等语义化入口以封装 `_history` 追加，避免调用方直接构造条目；当前草稿暂以 `AppendHistory()` 代替，待 Widget 与 Entry 类型稳定后再拆分专用方法。
+- **语义化追加入口**：`AppendModelInput/AppendModelOutput/AppendToolResults` 已封装 `_history` 追加逻辑，并在内部执行 LiveScreen Section 注入与参数校验，防止调用方遗漏关键步骤。
 - **顺序策略复用**：当前示例仅演示时间戳注入，关于顺序号/稳定标识的安排沿用“顺序与稳定标识策略”的统一约定。
 - **History 语义**：`_history` / `History` 明确了"不可变事件日志"的领域语义，与 Event Sourcing 术语一致，强调这是历史条目的原始存储而非展示视图。
 - **状态同步封装**：`SetSystemInstruction` 等方法内部同步更新对应的运行时字段，保持数据一致性。

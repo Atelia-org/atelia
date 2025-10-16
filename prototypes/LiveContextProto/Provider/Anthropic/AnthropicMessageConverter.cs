@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Text.Json;
 using Atelia.Diagnostics;
-using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Provider.Anthropic;
@@ -20,17 +18,13 @@ internal static class AnthropicMessageConverter {
         string? systemInstruction = null;
 
         foreach (var contextMessage in request.Context) {
-            var message = contextMessage is ILiveScreenCarrier carrier
-                ? carrier.InnerMessage
-                : contextMessage;
-
-            switch (message) {
+            switch (contextMessage) {
                 case ISystemMessage system:
                     systemInstruction = system.Instruction;
                     break;
 
                 case IModelInputMessage input:
-                    var userContent = BuildUserContent(input, contextMessage as ILiveScreenCarrier);
+                    var userContent = BuildUserContent(input);
                     messages.Add(
                         new AnthropicMessage {
                             Role = "user",
@@ -50,7 +44,7 @@ internal static class AnthropicMessageConverter {
                     break;
 
                 case IToolResultsMessage toolResults:
-                    var toolResultContent = BuildToolResultContent(toolResults, contextMessage as ILiveScreenCarrier);
+                    var toolResultContent = BuildToolResultContent(toolResults);
                     messages.Add(
                         new AnthropicMessage {
                             Role = "user",
@@ -80,11 +74,13 @@ internal static class AnthropicMessageConverter {
         return apiRequest;
     }
 
-    private static List<AnthropicContentBlock> BuildUserContent(IModelInputMessage input, ILiveScreenCarrier? liveScreenCarrier) {
+    private static List<AnthropicContentBlock> BuildUserContent(IModelInputMessage input) {
         var blocks = new List<AnthropicContentBlock>();
 
+        var sections = input.ContentSections.WithoutLiveScreen(out var liveScreen);
+
         // 处理主要内容分段
-        foreach (var section in input.ContentSections) {
+        foreach (var section in sections) {
             var text = string.IsNullOrEmpty(section.Key)
                 ? section.Value
                 : $"# {section.Key}\n\n{section.Value}";
@@ -95,7 +91,7 @@ internal static class AnthropicMessageConverter {
         }
 
         // 注入 LiveScreen（如果存在）
-        if (liveScreenCarrier?.LiveScreen is { } liveScreen && !string.IsNullOrWhiteSpace(liveScreen)) {
+        if (!string.IsNullOrWhiteSpace(liveScreen)) {
             blocks.Add(new AnthropicTextBlock { Text = liveScreen });
         }
 
@@ -139,16 +135,22 @@ internal static class AnthropicMessageConverter {
         return blocks;
     }
 
-    private static List<AnthropicContentBlock> BuildToolResultContent(IToolResultsMessage toolResults, ILiveScreenCarrier? liveScreenCarrier) {
+    private static List<AnthropicContentBlock> BuildToolResultContent(IToolResultsMessage toolResults) {
         var blocks = new List<AnthropicContentBlock>();
+        string? liveScreen = null;
 
         // Anthropic 要求将多个工具结果聚合到一条 user 消息中
         foreach (var result in toolResults.Results) {
             var isError = result.Status != ToolExecutionStatus.Success;
+            var sections = result.Result.WithoutLiveScreen(out var resultLiveScreen);
+            if (!string.IsNullOrWhiteSpace(resultLiveScreen) && string.IsNullOrWhiteSpace(liveScreen)) {
+                liveScreen = resultLiveScreen;
+            }
+
             blocks.Add(
                 new AnthropicToolResultBlock {
                     ToolUseId = result.ToolCallId,
-                    Content = LevelOfDetailSections.ToPlainText(result.Result),
+                    Content = LevelOfDetailSections.ToPlainText(sections),
                     IsError = isError ? true : null // 仅在出错时写入
                 }
             );
@@ -164,7 +166,7 @@ internal static class AnthropicMessageConverter {
         }
 
         // 注入 LiveScreen（如果存在）
-        if (liveScreenCarrier?.LiveScreen is { } liveScreen && !string.IsNullOrWhiteSpace(liveScreen)) {
+        if (!string.IsNullOrWhiteSpace(liveScreen)) {
             blocks.Add(new AnthropicTextBlock { Text = liveScreen });
         }
 

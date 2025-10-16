@@ -45,7 +45,8 @@ internal sealed class AgentState {
     public ModelInputEntry AppendModelInput(ModelInputEntry entry) {
         if (entry.ContentSections?.Full is not { Count: > 0 }) { throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry)); }
 
-        return AppendContextualEntry(entry);
+        var enriched = AttachLiveScreen(entry);
+        return AppendContextualEntry(enriched);
     }
 
     public ModelOutputEntry AppendModelOutput(ModelOutputEntry entry) {
@@ -57,7 +58,8 @@ internal sealed class AgentState {
     public ToolResultsEntry AppendToolResults(ToolResultsEntry entry) {
         if (entry.Results is not { Count: > 0 } && string.IsNullOrWhiteSpace(entry.ExecuteError)) { throw new ArgumentException("ToolResultsEntry must include results or an execution error.", nameof(entry)); }
 
-        return AppendContextualEntry(entry);
+        var enriched = AttachLiveScreen(entry);
+        return AppendContextualEntry(enriched);
     }
 
     public void SetSystemInstruction(string instruction) {
@@ -76,31 +78,20 @@ internal sealed class AgentState {
 
     public IReadOnlyList<IContextMessage> RenderLiveContext() {
         var messages = new List<IContextMessage>(_history.Count + 1);
-        var liveScreen = BuildLiveScreenSnapshot();
-        var shouldDecorate = !string.IsNullOrWhiteSpace(liveScreen);
-        var liveScreenInjected = false;
         var detailOrdinal = 0;
 
         for (var index = _history.Count - 1; index >= 0; index--) {
             if (_history[index] is not ContextualHistoryEntry contextual) { continue; }
 
-            var liveScreenForEntry = !liveScreenInjected && shouldDecorate && ShouldDecorateWithLiveScreen(contextual)
-                ? liveScreen
-                : null;
-
-            if (liveScreenForEntry is not null) {
-                liveScreenInjected = true;
-            }
-
             switch (contextual) {
                 case ModelInputEntry modelInputEntry:
                     var inputDetail = ResolveDetailLevel(detailOrdinal++);
-                    messages.Add(new ModelInputMessage(modelInputEntry, inputDetail, liveScreenForEntry));
+                    messages.Add(new ModelInputMessage(modelInputEntry, inputDetail));
                     break;
 
                 case ToolResultsEntry toolResultsEntry:
                     var toolDetail = ResolveDetailLevel(detailOrdinal++);
-                    messages.Add(new ToolResultsMessage(toolResultsEntry, toolDetail, liveScreenForEntry));
+                    messages.Add(new ToolResultsMessage(toolResultsEntry, toolDetail));
                     break;
 
                 default:
@@ -130,15 +121,39 @@ internal sealed class AgentState {
         return finalized;
     }
 
-    private static bool ShouldDecorateWithLiveScreen(ContextualHistoryEntry entry)
-        => entry.Role is ContextMessageRole.ModelInput or ContextMessageRole.ToolResult;
-
     private static LevelOfDetail ResolveDetailLevel(int ordinal)
-        => ordinal switch {
-            0 => LevelOfDetail.Full,
-            1 or 2 => LevelOfDetail.Summary,
-            _ => LevelOfDetail.Gist
-        };
+        => ordinal == 0
+            ? LevelOfDetail.Full
+            : LevelOfDetail.Summary;
+
+    private ModelInputEntry AttachLiveScreen(ModelInputEntry entry) {
+        var liveScreen = BuildLiveScreenSnapshot();
+        if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+
+        var sections = entry.ContentSections.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        if (ReferenceEquals(sections, entry.ContentSections)) { return entry; }
+
+        return entry with { ContentSections = sections };
+    }
+
+    private ToolResultsEntry AttachLiveScreen(ToolResultsEntry entry) {
+        if (entry.Results.Count == 0) { return entry; }
+
+        var liveScreen = BuildLiveScreenSnapshot();
+        if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+
+        var results = new HistoryToolCallResult[entry.Results.Count];
+        for (var index = 0; index < entry.Results.Count; index++) {
+            results[index] = entry.Results[index];
+        }
+
+        var latest = results[^1];
+        var updatedSections = latest.Result.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        if (ReferenceEquals(updatedSections, latest.Result)) { return entry; }
+
+        results[^1] = latest with { Result = updatedSections };
+        return entry with { Results = results };
+    }
 
     private string? BuildLiveScreenSnapshot() {
         var fragments = new List<string>();

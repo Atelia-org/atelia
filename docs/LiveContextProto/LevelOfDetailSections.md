@@ -4,7 +4,7 @@
 
 本设计借鉴了 3D 图形领域的 **Level of Detail (LOD)** 概念：在渲染资源有限的情况下优先保留关键轮廓、按需补充细节。同理，LLM 的上下文预算有限，需要在“全貌”“近期细节”“长期摘要”之间动态取舍。后文统一使用 “LevelOfDetail (LOD)” 来指代这些细节档位，便于与 GPU 场景建立类比，同时保持类型命名的语义直接。
 
-- **固定快照**：每个 Widget 在变更发生时，更新自身持有的“最新状态”对象，并将该快照注入到最近一次 `ModelInputEntry` 的扩展字段中。渲染层只在“最后一条待发给模型的用户消息”上，通过 `ModelInputMessage` / `ToolResultsMessage` 这类实现了 `ILiveScreenCarrier` 的包装对象附带 Live Screen，其余历史消息默认隐藏但仍保留数据，便于回放或高保真调试。
+- **固定快照**：每个 Widget 在变更发生时，更新自身持有的“最新状态”对象，并将该快照注入到最近一次 `ModelInputEntry` 的扩展字段中。代理在 Append 阶段将最新的 Live Screen 渲染结果追加为 `Full` 档中的 `"[LiveScreen]"` 段，渲染层不再依赖额外的接口装饰器；Provider 或调试工具可以按需读取该段落，其余历史消息默认隐藏但仍保留数据，便于回放或高保真调试。
 - **分层信息**：Widget 在处理工具调用时，同时生成 `Full / Summary / Gist` 三种粒度的数据：
     - `Full`：与当前快照一致的全量信息（通常作为 Live Screen 片段）。
     - `Summary`：针对近几次操作的精细 diff 或上下文（可含局部文本对比、锚点信息等）。

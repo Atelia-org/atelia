@@ -83,17 +83,10 @@ internal sealed class ConsoleTui {
         _output.WriteLine("[history] 当前上下文消息列表：");
         for (var index = 0; index < context.Count; index++) {
             var message = context[index];
-            var displayMessage = message;
-            string? liveScreen = null;
 
-            if (message is ILiveScreenCarrier carrier) {
-                liveScreen = carrier.LiveScreen;
-                displayMessage = carrier.InnerMessage;
-            }
+            _output.WriteLine($"  [{index}] {message.Timestamp:O} :: {message.Role}");
 
-            _output.WriteLine($"  [{index}] {displayMessage.Timestamp:O} :: {displayMessage.Role}");
-
-            switch (displayMessage) {
+            switch (message) {
                 case ISystemMessage system:
                     _output.WriteLine($"      [system] {system.Instruction}");
                     break;
@@ -108,14 +101,7 @@ internal sealed class ConsoleTui {
                     break;
             }
 
-            if (!string.IsNullOrWhiteSpace(liveScreen)) {
-                _output.WriteLine("      [live-screen]");
-                foreach (var line in liveScreen.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None)) {
-                    _output.WriteLine($"        {line}");
-                }
-            }
-
-            WriteMetadataBlock(displayMessage.Metadata);
+            WriteMetadataBlock(message.Metadata);
         }
     }
 
@@ -133,7 +119,7 @@ internal sealed class ConsoleTui {
         WriteMetadataBlock(result.Output.Metadata);
 
         if (result.ToolResults is not null) {
-            var toolMessage = new ToolResultsMessage(result.ToolResults, LevelOfDetail.Full, liveScreen: null);
+            var toolMessage = new ToolResultsMessage(result.ToolResults, LevelOfDetail.Full);
             WriteToolResults(toolMessage);
             PrintTokenUsage(toolMessage);
             WriteMetadataBlock(toolMessage.Metadata);
@@ -150,8 +136,14 @@ internal sealed class ConsoleTui {
     }
 
     private void WriteInputSections(IReadOnlyList<KeyValuePair<string, string>> sections) {
-        foreach (var (name, content) in sections) {
+        var filtered = sections.WithoutLiveScreen(out var liveScreen);
+
+        foreach (var (name, content) in filtered) {
             _output.WriteLine($"      [input:{name}] {content}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(liveScreen)) {
+            WriteLiveScreenBlock(liveScreen);
         }
     }
 
@@ -175,13 +167,23 @@ internal sealed class ConsoleTui {
         }
 
         _output.WriteLine("      [tool-results]");
+        string? liveScreen = null;
         foreach (var result in tools.Results) {
-            var content = LevelOfDetailSections.ToPlainText(result.Result);
+            var sections = result.Result.WithoutLiveScreen(out var resultLiveScreen);
+            if (!string.IsNullOrWhiteSpace(resultLiveScreen)) {
+                liveScreen ??= resultLiveScreen;
+            }
+
+            var content = LevelOfDetailSections.ToPlainText(sections);
             _output.WriteLine($"        - {result.ToolName} ({result.ToolCallId}) => {result.Status}: {content}");
         }
 
         if (!string.IsNullOrWhiteSpace(tools.ExecuteError)) {
             _output.WriteLine($"      [tool-error] {tools.ExecuteError}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(liveScreen)) {
+            WriteLiveScreenBlock(liveScreen);
         }
     }
 
@@ -241,6 +243,13 @@ internal sealed class ConsoleTui {
         }
 
         _output.WriteLine($"{indent}- {key}: [{string.Join(", ", items)}]");
+    }
+
+    private void WriteLiveScreenBlock(string liveScreen) {
+        _output.WriteLine("      [live-screen]");
+        foreach (var line in liveScreen.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None)) {
+            _output.WriteLine($"        {line}");
+        }
     }
 
     private static string FormatMetadataPrimitive(object? value) {

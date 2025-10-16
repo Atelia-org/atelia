@@ -5,15 +5,13 @@ using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.State.History;
 
-internal sealed class ModelInputMessage : IModelInputMessage, ILiveScreenCarrier {
+internal sealed class ModelInputMessage : IModelInputMessage {
     private readonly ModelInputEntry _entry;
     private readonly LevelOfDetail _detailLevel;
-    private readonly string? _liveScreen;
 
-    public ModelInputMessage(ModelInputEntry entry, LevelOfDetail detailLevel, string? liveScreen) {
+    public ModelInputMessage(ModelInputEntry entry, LevelOfDetail detailLevel) {
         _entry = entry ?? throw new ArgumentNullException(nameof(entry));
         _detailLevel = detailLevel;
-        _liveScreen = liveScreen;
     }
 
     public ContextMessageRole Role => ContextMessageRole.ModelInput;
@@ -27,23 +25,17 @@ internal sealed class ModelInputMessage : IModelInputMessage, ILiveScreenCarrier
 
     public IReadOnlyList<IContextAttachment> Attachments => _entry.Attachments;
 
-    string? ILiveScreenCarrier.LiveScreen => _liveScreen;
-
-    IContextMessage ILiveScreenCarrier.InnerMessage => this;
-
     public LevelOfDetail DetailLevel => _detailLevel;
 }
 
-internal sealed class ToolResultsMessage : IToolResultsMessage, ILiveScreenCarrier {
+internal sealed class ToolResultsMessage : IToolResultsMessage {
     private readonly ToolResultsEntry _entry;
     private readonly LevelOfDetail _detailLevel;
-    private readonly string? _liveScreen;
     private IReadOnlyList<ToolCallResult>? _cachedResults;
 
-    public ToolResultsMessage(ToolResultsEntry entry, LevelOfDetail detailLevel, string? liveScreen) {
+    public ToolResultsMessage(ToolResultsEntry entry, LevelOfDetail detailLevel) {
         _entry = entry ?? throw new ArgumentNullException(nameof(entry));
         _detailLevel = detailLevel;
-        _liveScreen = liveScreen;
     }
 
     public ContextMessageRole Role => ContextMessageRole.ToolResult;
@@ -55,10 +47,6 @@ internal sealed class ToolResultsMessage : IToolResultsMessage, ILiveScreenCarri
     public IReadOnlyList<ToolCallResult> Results => _cachedResults ??= BuildResults();
 
     public string? ExecuteError => _entry.ExecuteError;
-
-    string? ILiveScreenCarrier.LiveScreen => _liveScreen;
-
-    IContextMessage ILiveScreenCarrier.InnerMessage => this;
 
     public LevelOfDetail DetailLevel => _detailLevel;
 
