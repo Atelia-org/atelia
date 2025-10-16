@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
-using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Tools;
 

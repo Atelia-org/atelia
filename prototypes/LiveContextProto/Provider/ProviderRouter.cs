@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Provider;
 
@@ -27,14 +28,14 @@ internal sealed class ProviderRouter {
         DebugUtil.Print("Provider", $"ProviderRouter initialized with routes={_routes.Count}");
     }
 
-    public ProviderInvocationPlan Resolve(ProviderInvocationOptions options) {
+    public LlmInvocationPlan Resolve(LlmInvocationOptions options) {
         if (!_routes.TryGetValue(options.StrategyId, out var definition)) { throw new InvalidOperationException($"Unknown provider strategy '{options.StrategyId}'."); }
 
         var invocation = new ModelInvocationDescriptor(definition.ProviderId, definition.Specification, definition.Model);
 
         DebugUtil.Print("Provider", $"[Router] Strategy={options.StrategyId} resolved to provider={invocation.ProviderId}, spec={invocation.Specification}, model={invocation.Model}");
 
-        return new ProviderInvocationPlan(definition.StrategyId, definition.Client, invocation);
+        return new LlmInvocationPlan(definition.StrategyId, definition.Client, invocation);
     }
 
     public static ProviderRouter CreateAnthropic(IProviderClient anthropicProvider, string model, string providerId = "anthropic")

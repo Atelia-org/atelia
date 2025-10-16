@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Tools;
 using Atelia.LiveContextProto.Widgets;
 

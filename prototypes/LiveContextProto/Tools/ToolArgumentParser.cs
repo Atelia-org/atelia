@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
-using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Tools;
 

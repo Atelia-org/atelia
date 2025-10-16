@@ -7,6 +7,7 @@ using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Tools;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Agent;
 
@@ -45,7 +46,7 @@ internal sealed class LlmAgent {
         return _state.AppendModelInput(new ModelInputEntry(sections));
     }
 
-    public AgentInvocationOutcome InvokeProvider(ProviderInvocationOptions options, CancellationToken cancellationToken = default) {
+    public AgentInvocationOutcome InvokeProvider(LlmInvocationOptions options, CancellationToken cancellationToken = default) {
         if (options is null) { throw new ArgumentNullException(nameof(options)); }
 
         try {

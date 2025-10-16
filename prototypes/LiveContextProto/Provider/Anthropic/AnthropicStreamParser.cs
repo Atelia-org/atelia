@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Diagnostics;
-using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Provider.Anthropic;
 

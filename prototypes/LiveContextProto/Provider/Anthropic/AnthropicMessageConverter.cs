@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Provider.Anthropic;
 
@@ -13,7 +15,7 @@ namespace Atelia.LiveContextProto.Provider.Anthropic;
 internal static class AnthropicMessageConverter {
     private const string DebugCategory = "Provider";
 
-    public static AnthropicApiRequest ConvertToApiRequest(ProviderRequest request) {
+    public static AnthropicApiRequest ConvertToApiRequest(LlmRequest request) {
         var messages = new List<AnthropicMessage>();
         string? systemInstruction = null;
 
@@ -67,10 +69,14 @@ internal static class AnthropicMessageConverter {
             MaxTokens = 4096, // 可配置
             Messages = messages,
             System = systemInstruction,
-            Stream = true
+            Stream = true,
+            Tools = BuildToolDefinitions(request.Tools)
         };
 
-        DebugUtil.Print(DebugCategory, $"[Anthropic] Converted {request.Context.Count} context messages to {messages.Count} API messages");
+        DebugUtil.Print(
+            DebugCategory,
+            $"[Anthropic] Converted {request.Context.Count} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}"
+        );
         return apiRequest;
     }
 
@@ -223,5 +229,23 @@ internal static class AnthropicMessageConverter {
         }
 
         DebugUtil.Print(DebugCategory, $"[Anthropic] Normalized to {messages.Count} messages");
+    }
+
+    private static List<AnthropicTool>? BuildToolDefinitions(ImmutableArray<ToolDefinition> tools) {
+        if (tools.IsDefaultOrEmpty) { return null; }
+
+        var list = new List<AnthropicTool>(tools.Length);
+        foreach (var definition in tools) {
+            var schema = ProviderToolSchemaBuilder.BuildSchema(definition);
+            list.Add(
+                new AnthropicTool {
+                    Name = definition.Name,
+                    Description = definition.Description,
+                    InputSchema = schema
+                }
+            );
+        }
+
+        return list;
     }
 }

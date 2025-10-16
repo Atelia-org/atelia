@@ -10,7 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Diagnostics;
-using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Provider.Anthropic;
 
@@ -42,7 +42,7 @@ internal sealed class AnthropicProviderClient : IProviderClient {
     }
 
     public async IAsyncEnumerable<ModelOutputDelta> CallModelAsync(
-        ProviderRequest request,
+        LlmRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken
     ) {
         DebugUtil.Print(DebugCategory, $"[Anthropic] Starting call model={request.Invocation.Model}");

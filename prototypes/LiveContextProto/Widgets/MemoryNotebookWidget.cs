@@ -4,7 +4,7 @@ using System.Collections.Immutable;
 using System.Text;
 using System.Threading;
 using Atelia.Diagnostics;
-using Atelia.LiveContextProto.State.History;
+using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Tools;
 
 namespace Atelia.LiveContextProto.Widgets;

@@ -7,6 +7,7 @@ using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.Provider.Anthropic;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.Tools;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto;
 
@@ -32,7 +33,7 @@ internal static class Program {
 
         var orchestrator = new AgentOrchestrator(agentState, router, toolExecutor, toolCatalog);
         var agent = new LlmAgent(agentState, orchestrator, toolExecutor, toolCatalog);
-        var defaultInvocation = new ProviderInvocationOptions(ProviderRouter.DefaultAnthropicStrategy);
+        var defaultInvocation = new LlmInvocationOptions(ProviderRouter.DefaultAnthropicStrategy);
         var loop = new ConsoleTui(agent, defaultInvocation);
 
         loop.Run();

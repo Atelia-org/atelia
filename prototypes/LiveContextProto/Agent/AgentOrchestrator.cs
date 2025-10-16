@@ -7,8 +7,7 @@ using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Tools;
-using System.Collections.Generic;
-using System.Linq;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Agent;
 
@@ -33,32 +32,51 @@ internal sealed class AgentOrchestrator {
     }
 
     public async Task<AgentInvocationResult> InvokeAsync(
-        ProviderInvocationOptions options,
+        LlmInvocationOptions options,
         CancellationToken cancellationToken = default
     ) {
-        var context = _state.RenderLiveContext();
-        DebugUtil.Print(DebugCategory, $"[Orchestrator] Rendering context count={context.Count}");
-
         var plan = _router.Resolve(options);
-        var request = new ProviderRequest(plan.StrategyId, plan.Invocation, context);
+        var tools = ToolDefinitionBuilder.FromTools(_toolCatalog.Tools);
+        DebugUtil.Print(DebugCategory, $"[Orchestrator] Tool definitions count={tools.Length}");
 
-        var deltas = plan.Client.CallModelAsync(request, cancellationToken);
-        var aggregate = await ModelOutputAccumulator.AggregateAsync(deltas, plan.Invocation, cancellationToken);
-        var normalizedOutput = NormalizeToolCalls(aggregate.OutputEntry);
+        ModelOutputEntry? lastOutputEntry = null;
+        ToolResultsEntry? lastToolResultsEntry = null;
+        var iteration = 0;
 
-        var outputEntry = _state.AppendModelOutput(normalizedOutput);
-        ToolResultsEntry? toolResultsEntry = null;
+        while (true) {
+            iteration++;
+            cancellationToken.ThrowIfCancellationRequested();
 
-        if (aggregate.ToolResultsEntry is not null) {
-            toolResultsEntry = AppendToolResultsWithSummary(aggregate.ToolResultsEntry);
+            var context = _state.RenderLiveContext();
+            DebugUtil.Print(DebugCategory, $"[Orchestrator] Rendering context iteration={iteration} count={context.Count}");
+
+            var request = new LlmRequest(plan.StrategyId, plan.Invocation, context, tools);
+
+            var deltas = plan.Client.CallModelAsync(request, cancellationToken);
+            var aggregatedOutput = await ModelOutputAccumulator.AggregateAsync(deltas, plan.Invocation, cancellationToken).ConfigureAwait(false);
+            var normalizedOutput = NormalizeToolCalls(aggregatedOutput);
+
+            lastOutputEntry = _state.AppendModelOutput(normalizedOutput);
+            var hasToolCalls = lastOutputEntry.ToolCalls is { Count: > 0 };
+            if (!hasToolCalls) {
+                DebugUtil.Print(DebugCategory, $"[Orchestrator] No tool calls detected (iteration={iteration})");
+                break;
+            }
+
+            var toolResultsEntry = await ExecuteToolsAsync(lastOutputEntry, cancellationToken).ConfigureAwait(false);
+            if (toolResultsEntry is null) {
+                DebugUtil.Print(DebugCategory, $"[Orchestrator] Tool execution returned no results (iteration={iteration})");
+                break;
+            }
+
+            lastToolResultsEntry = toolResultsEntry;
         }
-        else {
-            toolResultsEntry = await ExecuteToolsAsync(outputEntry, cancellationToken).ConfigureAwait(false);
-        }
 
-        DebugUtil.Print(DebugCategory, "[Orchestrator] Invocation completed and appended to state");
+        if (lastOutputEntry is null) { throw new InvalidOperationException("Provider returned no model output."); }
 
-        return new AgentInvocationResult(outputEntry, toolResultsEntry);
+        DebugUtil.Print(DebugCategory, $"[Orchestrator] Invocation completed iterations={iteration} and appended to state");
+
+        return new AgentInvocationResult(lastOutputEntry, lastToolResultsEntry);
     }
 
     private async Task<ToolResultsEntry?> ExecuteToolsAsync(ModelOutputEntry outputEntry, CancellationToken cancellationToken) {

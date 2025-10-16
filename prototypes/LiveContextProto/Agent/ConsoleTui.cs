@@ -6,17 +6,17 @@ using System.Linq;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.State.History;
-using System.IO;
+using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Agent;
 
 internal sealed class ConsoleTui {
     private readonly LlmAgent _agent;
-    private readonly ProviderInvocationOptions _defaultInvocation;
+    private readonly LlmInvocationOptions _defaultInvocation;
     private readonly TextReader _input;
     private readonly TextWriter _output;
 
-    public ConsoleTui(LlmAgent agent, ProviderInvocationOptions defaultInvocation, TextReader? input = null, TextWriter? output = null) {
+    public ConsoleTui(LlmAgent agent, LlmInvocationOptions defaultInvocation, TextReader? input = null, TextWriter? output = null) {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _defaultInvocation = defaultInvocation ?? throw new ArgumentNullException(nameof(defaultInvocation));
         _input = input ?? Console.In;
@@ -285,7 +285,7 @@ internal sealed class ConsoleTui {
         _output.WriteLine($"[notebook] 长度: {snapshot.Length}");
     }
 
-    private void InvokeProviderAndDisplay(ProviderInvocationOptions options) {
+    private void InvokeProviderAndDisplay(LlmInvocationOptions options) {
         var invocation = _agent.InvokeProvider(options);
         if (!invocation.Success) {
             _output.WriteLine($"[error] 模型调用失败：{invocation.Exception?.Message ?? "(unknown)"}");
