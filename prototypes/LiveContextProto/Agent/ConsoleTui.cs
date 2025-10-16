@@ -119,7 +119,7 @@ internal sealed class ConsoleTui {
         WriteMetadataBlock(result.Output.Metadata);
 
         if (result.ToolResults is not null) {
-            var toolMessage = new ToolResultsMessage(result.ToolResults, LevelOfDetail.Full);
+            var toolMessage = new ToolResultsMessage(result.ToolResults, LevelOfDetail.Live);
             WriteToolResults(toolMessage);
             PrintTokenUsage(toolMessage);
             WriteMetadataBlock(toolMessage.Metadata);

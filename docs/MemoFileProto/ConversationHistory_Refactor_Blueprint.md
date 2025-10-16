@@ -15,7 +15,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 1. 引入 **强类型的 HistoryEntry 分层**，让不同事件拥有清晰的数据模型，并以追加式的 AgentState 统一持有。
 2. 将“历史存储”与“供应商调用”解耦，Provider 客户端只感知 AgentState 并负责完成模型调用。
 3. 支撑在单个会话内 **混合多种模型/功能接口**（例如规划走 Claude，执行走 OpenAI Function Calling），同时保持一致的历史视图。
-4. 为后续的 Live Context、工具遥测、记忆系统等能力打好基础，同时保持原型期的实现简洁。
+4. 为后续的 [LiveContext]、工具遥测、记忆系统等能力打好基础，同时保持原型期的实现简洁。
 
 ## 当前痛点梳理
 
@@ -66,7 +66,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 这幅图展示了最新的三段式请求流水线：
 
 - **[1] AgentState**：负责维护仅追加的事件日志和运行时快照（System Instruction、Memory Notebook 等），是唯一的真相源。
-- **[2] Context Projection**：由 `RenderLiveContext()` 按当前调用需要生成 `IContextMessage` 只读列表，根据条目位置选择合适的 `LevelOfDetail`，LiveScreen 已在写入阶段嵌入 `Full` 档 `"[LiveScreen]"` Section，无需额外装饰器。
+- **[2] Context Projection**：由 `RenderLiveContext()` 按当前调用需要生成 `IContextMessage` 只读列表，根据条目位置选择合适的 `LevelOfDetail`，LiveScreen 已在写入阶段嵌入 `Live` 档 `"[LiveScreen]"` Section，无需额外装饰器。
 - **[3] Provider Router**：根据调用策略挑选具体的 `IProviderClient`，把 `IContextMessage` 投影重写成供应商协议（OpenAI、Anthropic 等），并将流式增量解析为统一的 `ModelOutputDelta`。
 
 底部的 **Orchestrator feedback** 表示调用协调层在流式推理结束后聚合 `ModelOutputDelta` 与工具结果，再次通过领域方法将新事件追加到 AgentState，从而闭合“读取视图 → 调用模型 → 回写事实”的循环。
@@ -128,7 +128,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 ### Decorator（历史回顾）
 
-早期版本通过 `ContextMessageLiveScreenHelper.AttachLiveScreen()` 装饰上下文条目，在渲染阶段临时附加 LiveScreen。自 [LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md) 发布后，LiveScreen 改为由 `AppendModelInput`/`AppendToolResults` 在写入阶段生成，并落盘为 `LevelOfDetailSections.Full` 中的 `"[LiveScreen]"` Section。装饰器实现已退役，本节保留作为迁移背景记录。
+早期版本通过 `ContextMessageLiveScreenHelper.AttachLiveScreen()` 装饰上下文条目，在渲染阶段临时附加 LiveScreen。自 [LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md) 发布后，LiveScreen 改为由 `AppendModelInput`/`AppendToolResults` 在写入阶段生成，并落盘为 `LevelOfDetailSections.Live` 中的 `"[LiveScreen]"` Section。装饰器实现已退役，本节保留作为迁移背景记录。
 
 ### 模式协同的价值
 
@@ -159,7 +159,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 与《LiveContextProto Widget 设计概念草案》保持一致，首版约定如下：
 
-- **渲染职责**：每个 Widget 实现 `RenderLiveScreen(WidgetRenderContext)`，返回 Markdown 或纯文本片段；`AgentState.AppendModelInput/AppendToolResults` 在写入阶段将最新渲染结果嵌入 `LevelOfDetailSections.Full` 的 `"[LiveScreen]"` Section，渲染阶段只需读取现有数据。
+- **渲染职责**：每个 Widget 实现 `RenderLiveScreen(WidgetRenderContext)`，返回 Markdown 或纯文本片段；`AgentState.AppendModelInput/AppendToolResults` 在写入阶段将最新渲染结果嵌入 `LevelOfDetailSections.Live` 的 `"[LiveScreen]"` Section，渲染阶段只需读取现有数据。
 - **状态变更记账**：Widget 通过 `ExecuteTool` 更新内部状态时，应驱动 AgentState 追加对应的 `HistoryEntry`（例如 `MemoryNotebookWidget` 在完成 `memory_notebook_replace` 后记录 Notebook 替换事件），确保历史时间线可还原。
 - **外部交互**：Widget 暴露的 `Tools` 列表供 Planner/LLM 调用；调用方需遵循工具参数约定，避免绕过 Widget 直接修改 AgentState 字段，以免破坏单一事实源。
 - **开放问题**：Widget 之间的顺序协调、事件通知与并发访问策略仍在评估中，后续可能通过统一的 Widget Registry 或事件流补齐。
@@ -255,30 +255,30 @@ record SystemInstructionMessage(
 
 sealed class LevelOfDetailSections {
     public LevelOfDetailSections(
-        IReadOnlyList<KeyValuePair<string, string>> full,
+        IReadOnlyList<KeyValuePair<string, string>> live,
         IReadOnlyList<KeyValuePair<string, string>> summary,
         IReadOnlyList<KeyValuePair<string, string>> gist
     ) {
-        Full = full ?? throw new ArgumentNullException(nameof(full));
+        Live = live ?? throw new ArgumentNullException(nameof(live));
         Summary = summary ?? throw new ArgumentNullException(nameof(summary));
         Gist = gist ?? throw new ArgumentNullException(nameof(gist));
     }
 
-    public IReadOnlyList<KeyValuePair<string, string>> Full { get; }
+    public IReadOnlyList<KeyValuePair<string, string>> Live { get; }
     public IReadOnlyList<KeyValuePair<string, string>> Summary { get; }
     public IReadOnlyList<KeyValuePair<string, string>> Gist { get; }
 
     public IReadOnlyList<KeyValuePair<string, string>> GetSections(LevelOfDetail detail)
         => detail switch {
-            LevelOfDetail.Full => Full,
+            LevelOfDetail.Live => Live,
             LevelOfDetail.Summary => Summary,
             LevelOfDetail.Gist => Gist,
-            _ => Full
+            _ => Live
         };
 
-    public LevelOfDetailSections WithFullSection(string key, string value) {
-        var updated = AddOrReplaceSection(Full, key, value);
-        return ReferenceEquals(updated, Full)
+    public LevelOfDetailSections WithLiveSection(string key, string value) {
+        var updated = AddOrReplaceSection(Live, key, value);
+        return ReferenceEquals(updated, Live)
             ? this
             : new LevelOfDetailSections(updated, Summary, Gist);
     }
@@ -383,8 +383,8 @@ static class LevelOfDetailSectionExtensions {
 - **ToolCallRequest.RawArguments** 永远保留模型输出的原始文本；`Arguments` 则由 Provider 成功解析后提供的弱类型键值对（解析失败时为 `null`），工具层只消费该字典。`ParseError` 字段在解析成功时为 `null`，失败时包含错误信息，从而区分"工具不需要参数"与"参数解析失败"两种情况。
 - **ModelOutputEntry.Invocation** 记录触发本次响应时所选用的 Provider / 规范 / 模型三元组，便于在历史层面还原调用上下文，而无需在每个工具调用上重复写入。
 - **ModelInvocationDescriptor** 记录 Provider-Specification-Model 三元组。`Specification` 字段用于区分同一 Provider 的不同协议规范（例如 OpenAI 的 "v1" vs "responses" 端点，Qwen 系列的 "json" vs "xml" 格式），这是快速演进的 AI 行业带来的必要复杂性。注意：`IProviderClient` 的一个实现对应 (Provider, Specification) 组合，如 `OpenAiV1Client` 和 `OpenAiResponsesClient` 是两个独立实现。
-- **ModelInputEntry.ContentSections** 以 `LevelOfDetailSections` 表达多档位的提示分段，`Full` 档会在写入阶段追加 `"[LiveScreen]"` Section，其余档位保留摘要内容，Provider 可按需取用。
-- **HistoryToolCallResult.Result** 同样以 `LevelOfDetailSections` 保存工具执行结果，便于根据上下文预算在 `Full/Summary/Gist` 之间切换；最新一次工具结果会承载 LiveScreen Section。
+- **ModelInputEntry.ContentSections** 以 `LevelOfDetailSections` 表达多档位的提示分段，`Live` 档会在写入阶段追加 `"[LiveScreen]"` Section，其余档位保留摘要内容，Provider 可按需取用。
+- **HistoryToolCallResult.Result** 同样以 `LevelOfDetailSections` 保存工具执行结果，便于根据上下文预算在 `Live/Summary/Gist` 之间切换；最新一次工具结果会承载 LiveScreen Section。
 - **ModelOutputEntry** 聚合同一轮推理生成的 `ToolCallRequest` 序列，并通过 `Invocation` 字段标记本次模型调用的供应商语义，同时以 `Contents` 保留分段文本，便于不同 Provider 自行拼装提示或多模态片段。
 - **ToolCallResult** 一一对应单个工具调用的执行结果，并记录耗时等诊断信息；`ToolResultsEntry.Results` 与 `ModelOutputEntry.ToolCalls` 按顺序对齐，若有失败可通过 `ExecuteError` 给出说明。
 - 系统指令仍由 `_systemInstruction` 字段维护，并在渲染阶段生成对应的 `SystemInstructionMessage` 注入上下文；后续若需要多段系统指令，可考虑扩展该结构。
@@ -504,7 +504,7 @@ interface ITokenUsageCarrier {
 
 #### LiveScreen 处理约定
 
-- `AppendModelInput`、`AppendToolResults` 会在写入阶段调用 `BuildLiveScreenSnapshot()`，并将结果追加到最近条目的 `LevelOfDetailSections.Full` 中，键名固定为 `"[LiveScreen]"`。
+- `AppendModelInput`、`AppendToolResults` 会在写入阶段调用 `BuildLiveScreenSnapshot()`，并将结果追加到最近条目的 `LevelOfDetailSections.Live` 中，键名固定为 `"[LiveScreen]"`。
 - 渲染阶段保持 Section 原样返回，消费方如需展示或忽略 LiveScreen，可通过 `sections.WithoutLiveScreen(out var liveScreen)` 或 `LevelOfDetailSections.ToPlainText(...)` 等扩展方法拆分文本。
 - 若消费方忽略 LiveScreen，Section 数据仍会随历史条目保留，便于后续调试或回放。更多细节见《[LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md)》。
 
@@ -618,7 +618,7 @@ internal sealed class AgentState {
     }
 
     public ModelInputEntry AppendModelInput(ModelInputEntry entry) {
-        if (entry.ContentSections?.Full is not { Count: > 0 }) {
+        if (entry.ContentSections?.Live is not { Count: > 0 }) {
             throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry));
         }
 
@@ -705,14 +705,14 @@ internal sealed class AgentState {
 
     private static LevelOfDetail ResolveDetailLevel(int ordinal)
         => ordinal == 0
-            ? LevelOfDetail.Full
+            ? LevelOfDetail.Live
             : LevelOfDetail.Summary;
 
     private ModelInputEntry AttachLiveScreen(ModelInputEntry entry) {
         var liveScreen = BuildLiveScreenSnapshot();
         if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
 
-        var sections = entry.ContentSections.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        var sections = entry.ContentSections.WithLiveSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
         if (ReferenceEquals(sections, entry.ContentSections)) { return entry; }
 
         return entry with { ContentSections = sections };
@@ -730,7 +730,7 @@ internal sealed class AgentState {
         }
 
         var latest = results[^1];
-        var updatedSections = latest.Result.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        var updatedSections = latest.Result.WithLiveSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
         if (ReferenceEquals(updatedSections, latest.Result)) { return entry; }
 
         results[^1] = latest with { Result = updatedSections };

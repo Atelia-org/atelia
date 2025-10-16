@@ -43,7 +43,7 @@ internal sealed class AgentState {
     }
 
     public ModelInputEntry AppendModelInput(ModelInputEntry entry) {
-        if (entry.ContentSections?.Full is not { Count: > 0 }) { throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry)); }
+        if (entry.ContentSections?.Live is not { Count: > 0 }) { throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry)); }
 
         var enriched = AttachLiveScreen(entry);
         return AppendContextualEntry(enriched);
@@ -123,7 +123,7 @@ internal sealed class AgentState {
 
     private static LevelOfDetail ResolveDetailLevel(int ordinal)
         => ordinal == 0
-            ? LevelOfDetail.Full
+            ? LevelOfDetail.Live
             : LevelOfDetail.Summary;
 
     private ModelInputEntry AttachLiveScreen(ModelInputEntry entry) {

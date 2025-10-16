@@ -93,7 +93,7 @@ internal sealed class AgentOrchestrator {
         var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
-            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Full));
+            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Live));
 
         var entry = new ToolResultsEntry(results, executeError);
         entry = entry with { Metadata = ToolResultMetadataHelper.PopulateSummary(executionRecords, entry.Metadata) };

@@ -5,23 +5,23 @@ using System.Text;
 namespace Atelia.LiveContextProto.Context;
 
 internal enum LevelOfDetail {
-    Full,
+    Live,
     Summary,
     Gist
 }
 
 internal sealed class LevelOfDetailSections {
     public LevelOfDetailSections(
-        IReadOnlyList<KeyValuePair<string, string>> full,
+        IReadOnlyList<KeyValuePair<string, string>> live,
         IReadOnlyList<KeyValuePair<string, string>> summary,
         IReadOnlyList<KeyValuePair<string, string>> gist
     ) {
-        Full = full ?? throw new ArgumentNullException(nameof(full));
+        Live = live ?? throw new ArgumentNullException(nameof(live));
         Summary = summary ?? throw new ArgumentNullException(nameof(summary));
         Gist = gist ?? throw new ArgumentNullException(nameof(gist));
     }
 
-    public IReadOnlyList<KeyValuePair<string, string>> Full { get; }
+    public IReadOnlyList<KeyValuePair<string, string>> Live { get; }
 
     public IReadOnlyList<KeyValuePair<string, string>> Summary { get; }
 
@@ -29,18 +29,18 @@ internal sealed class LevelOfDetailSections {
 
     public IReadOnlyList<KeyValuePair<string, string>> GetSections(LevelOfDetail detail)
         => detail switch {
-            LevelOfDetail.Full => Full,
+            LevelOfDetail.Live => Live,
             LevelOfDetail.Summary => Summary,
             LevelOfDetail.Gist => Gist,
-            _ => Full
+            _ => Live
         };
 
     public LevelOfDetailSections WithFullSection(string key, string value) {
         if (key is null) { throw new ArgumentNullException(nameof(key)); }
         if (value is null) { throw new ArgumentNullException(nameof(value)); }
 
-        var updatedFull = AddOrReplaceSection(Full, key, value);
-        if (ReferenceEquals(updatedFull, Full)) { return this; }
+        var updatedFull = AddOrReplaceSection(Live, key, value);
+        if (ReferenceEquals(updatedFull, Live)) { return this; }
 
         return new LevelOfDetailSections(updatedFull, Summary, Gist);
     }

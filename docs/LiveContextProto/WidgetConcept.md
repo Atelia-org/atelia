@@ -47,6 +47,7 @@ Widget 旨在将某类信息的 **数据模型、操作工具、呈现逻辑** �
 - Widget 之间视为完全独立实体，不共享状态、也不相互调用工具。
 - 遥测保持局部化，不尝试将 Widget Metadata 汇聚到全局遥测体系。
 - Planner 使用场景仅消费 Markdown 文案，不提供结构化提示或 JSON Schema。
+- Widget 工具在返回 `LevelOfDetailSections` 时，`Full` 档需与该 Widget 的 `[LiveScreen]` 输出协同，避免在同一条上下文消息中重复呈现同一份内容；`Summary` / `Gist` 的组织不受此限制。
 
 
 ## 核心接口草案
@@ -108,6 +109,7 @@ internal sealed record WidgetRenderContext(
     - `ExecuteTool` 成功时更新私有字段并调用 `AgentState` 的写入 API，失败时返回 `ToolHandlerResult` 的错误状态。
     - `RenderLiveScreen` 输出固定 Markdown（示例标题：`## Memory Notebook`），内容为空时仍输出占位提示。
     - 通过 `DebugUtil.Print("MemoryNotebookWidget", ...)` 记录工具调用的开始、结束与异常信息。
+    - 在生成 `LevelOfDetailSections` 时，`Full` 档应避免重复 `RenderLiveScreen` 已提供的 Notebook 全文，可选择输出 diff、执行摘要或其他补充说明。
 
 ### 外部依赖最小约定
 
