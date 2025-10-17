@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Atelia.LiveContextProto.Agent;
 using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Provider;
+using Atelia.LiveContextProto.Profile;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Tools;
@@ -59,7 +60,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var provider = new FakeProviderClient(new[] { firstResponse, secondResponse });
         var router = CreateRouter(provider);
-        var options = new LlmInvocationOptions(StrategyId);
+        var options = StrategyId;
         var agent = new LlmAgent(state, router, executor, catalog, options);
 
         agent.EnqueueUserInput("hello world", options);
@@ -150,7 +151,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
 
         var router = CreateRouter(provider);
-        var options = new LlmInvocationOptions(StrategyId);
+        var options = StrategyId;
         var agent = new LlmAgent(state, router, executor, catalog, options);
 
         agent.EnqueueUserInput("trigger failure", options);
@@ -175,8 +176,8 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     private static ProviderRouter CreateRouter(IProviderClient provider) {
-        var route = new ProviderRouteDefinition(StrategyId, ProviderId, Specification, Model, provider);
-        return new ProviderRouter(new[] { route });
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
+        return new ProviderRouter(new[] { profile });
     }
 
     private static ToolCatalog CreateCatalog(AgentState state, params ITool[] extraTools) {
@@ -203,6 +204,9 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     private sealed class FakeProviderClient : IProviderClient {
         private readonly Queue<IAsyncEnumerable<ModelOutputDelta>> _responses;
+
+        public string Name => "test-provider";
+        public string Specification => "test-spec";
 
         public FakeProviderClient(IEnumerable<IAsyncEnumerable<ModelOutputDelta>> responses) {
             _responses = new Queue<IAsyncEnumerable<ModelOutputDelta>>(responses ?? throw new ArgumentNullException(nameof(responses)));

@@ -11,6 +11,7 @@ using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Tools;
 using Atelia.LiveContextProto.Context;
+using Atelia.LiveContextProto.Profile;
 
 namespace Atelia.LiveContextProto.Agent;
 
@@ -27,12 +28,12 @@ internal sealed class LlmAgent {
     private readonly ConcurrentQueue<PendingUserInput> _pendingInputs = new();
     private readonly Dictionary<string, ToolExecutionRecord> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
 
-    private LlmInvocationOptions _defaultInvocationOptions;
-    private LlmInvocationOptions? _activeInvocationOptions;
+    private string _defaultInvocationOptions;
+    private string? _activeInvocationOptions;
     private RunLoopContext? _activeRunLoop;
     private AgentRunState? _lastLoggedState;
 
-    public LlmAgent(AgentState state, ProviderRouter router, ToolExecutor toolExecutor, ToolCatalog toolCatalog, LlmInvocationOptions defaultInvocationOptions) {
+    public LlmAgent(AgentState state, ProviderRouter router, ToolExecutor toolExecutor, ToolCatalog toolCatalog, string defaultInvocationOptions) {
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _router = router ?? throw new ArgumentNullException(nameof(router));
         _toolExecutor = toolExecutor ?? throw new ArgumentNullException(nameof(toolExecutor));
@@ -55,11 +56,11 @@ internal sealed class LlmAgent {
 
     public void UpdateMemoryNotebook(string? content) => _state.UpdateMemoryNotebook(content);
 
-    public void UpdateDefaultInvocationOptions(LlmInvocationOptions options) {
+    public void UpdateDefaultInvocationOptions(string options) {
         _defaultInvocationOptions = options ?? throw new ArgumentNullException(nameof(options));
     }
 
-    public void EnqueueUserInput(string text, LlmInvocationOptions? options = null) {
+    public void EnqueueUserInput(string text, string? options = null) {
         if (string.IsNullOrWhiteSpace(text)) { throw new ArgumentException("Value cannot be null or whitespace.", nameof(text)); }
         var invocation = options ?? _defaultInvocationOptions;
         _pendingInputs.Enqueue(new PendingUserInput(text, invocation));
@@ -82,7 +83,7 @@ internal sealed class LlmAgent {
     }
 
     internal async Task<AgentInvocationResult> InvokePipelineAsync(
-        LlmInvocationOptions options,
+        string options,
         CancellationToken cancellationToken = default
     ) {
         ResetInvocation();
@@ -187,7 +188,7 @@ internal sealed class LlmAgent {
         _activeInvocationOptions = pending.Options;
         _activeRunLoop = null;
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Input dequeued strategy={pending.Options.StrategyId} length={pending.Text.Length}");
+        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Input dequeued strategy={pending.Options} length={pending.Text.Length}");
 
         return StepOutcome.FromInput(entry);
     }
@@ -199,10 +200,11 @@ internal sealed class LlmAgent {
         var liveContext = _state.RenderLiveContext();
         DebugUtil.Print(ProviderDebugCategory, $"[StateMachine] Rendering context step={context.StepCount} count={liveContext.Count}");
 
-        var request = new LlmRequest(context.Plan.StrategyId, context.Plan.Invocation, liveContext, context.Tools);
+        var invocation = new ModelInvocationDescriptor(context.Profile.Client.Name, context.Profile.Client.Specification, context.Profile.ModelId);
+        var request = new LlmRequest(context.Profile.ModelId, liveContext, context.Tools);
 
-        var deltas = context.Plan.Client.CallModelAsync(request, cancellationToken);
-        var aggregatedOutput = await ModelOutputAccumulator.AggregateAsync(deltas, context.Plan.Invocation, cancellationToken).ConfigureAwait(false);
+        var deltas = context.Profile.Client.CallModelAsync(request, cancellationToken);
+        var aggregatedOutput = await ModelOutputAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);
         var normalizedOutput = NormalizeToolCalls(aggregatedOutput);
 
         _pendingToolResults.Clear();
@@ -303,11 +305,11 @@ internal sealed class LlmAgent {
         var options = _activeInvocationOptions ?? _defaultInvocationOptions;
         _activeInvocationOptions ??= options;
 
-        var plan = _router.Resolve(options);
+        var profile = _router.Resolve(options);
         var tools = ToolDefinitionBuilder.FromTools(_toolCatalog.Tools);
         DebugUtil.Print(ProviderDebugCategory, $"[Orchestrator] Tool definitions count={tools.Length}");
 
-        _activeRunLoop = new RunLoopContext(plan, tools);
+        _activeRunLoop = new RunLoopContext(profile, tools);
         return _activeRunLoop;
     }
 
@@ -394,19 +396,19 @@ internal sealed class LlmAgent {
         => new(outcome.ProgressMade, before, after, outcome.Input, outcome.Output, outcome.ToolResults);
 
     private sealed class RunLoopContext {
-        public RunLoopContext(LlmInvocationPlan plan, ImmutableArray<ToolDefinition> tools) {
-            Plan = plan;
+        public RunLoopContext(LlmProfile profile, ImmutableArray<ToolDefinition> tools) {
+            Profile = profile;
             Tools = tools;
         }
 
-        public LlmInvocationPlan Plan { get; }
+        public LlmProfile Profile { get; }
         public ImmutableArray<ToolDefinition> Tools { get; }
         public ModelOutputEntry? LastOutput { get; set; }
         public ToolResultsEntry? LastToolResults { get; set; }
         public int StepCount { get; set; }
     }
 
-    private readonly record struct PendingUserInput(string Text, LlmInvocationOptions Options);
+    private readonly record struct PendingUserInput(string Text, string Options);
 
     private readonly record struct StepOutcome(
         bool ProgressMade,

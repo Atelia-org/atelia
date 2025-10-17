@@ -1,51 +1,38 @@
 using System;
 using System.Collections.Generic;
 using Atelia.Diagnostics;
-using Atelia.LiveContextProto.State.History;
-using Atelia.LiveContextProto.Context;
+using Atelia.LiveContextProto.Profile;
 
 namespace Atelia.LiveContextProto.Provider;
-
-internal sealed record ProviderRouteDefinition(
-    string StrategyId,
-    string ProviderId,
-    string Specification,
-    string Model,
-    IProviderClient Client
-);
 
 internal sealed class ProviderRouter {
     public const string DefaultAnthropicStrategy = "anthropic-v1";
 
-    private readonly Dictionary<string, ProviderRouteDefinition> _routes;
+    private readonly Dictionary<string, LlmProfile> _profiles;
 
-    public ProviderRouter(IEnumerable<ProviderRouteDefinition> routes) {
-        _routes = new(StringComparer.OrdinalIgnoreCase);
-        foreach (var route in routes) {
-            _routes[route.StrategyId] = route;
+    public ProviderRouter(IEnumerable<LlmProfile> profiles) {
+        _profiles = new(StringComparer.OrdinalIgnoreCase);
+        foreach (var profile in profiles) {
+            _profiles[profile.Name] = profile;
         }
 
-        DebugUtil.Print("Provider", $"ProviderRouter initialized with routes={_routes.Count}");
+        DebugUtil.Print("Provider", $"ProviderRouter initialized with profiles={_profiles.Count}");
     }
 
-    public LlmInvocationPlan Resolve(LlmInvocationOptions options) {
-        if (!_routes.TryGetValue(options.StrategyId, out var definition)) { throw new InvalidOperationException($"Unknown provider strategy '{options.StrategyId}'."); }
+    public LlmProfile Resolve(string options) {
+        if (!_profiles.TryGetValue(options, out var profile)) { throw new InvalidOperationException($"Unknown provider strategy '{options}'."); }
 
-        var invocation = new ModelInvocationDescriptor(definition.ProviderId, definition.Specification, definition.Model);
+        DebugUtil.Print("Provider", $"[Router] Strategy={options} resolved to profile={profile.Name}, client={profile.Client.Name}, model={profile.ModelId}");
 
-        DebugUtil.Print("Provider", $"[Router] Strategy={options.StrategyId} resolved to provider={invocation.ProviderId}, spec={invocation.Specification}, model={invocation.Model}");
-
-        return new LlmInvocationPlan(definition.StrategyId, definition.Client, invocation);
+        return profile;
     }
 
-    public static ProviderRouter CreateAnthropic(IProviderClient anthropicProvider, string model, string providerId = "anthropic")
+    public static ProviderRouter CreateAnthropic(IProviderClient anthropicProvider, string model, string strategyName = DefaultAnthropicStrategy)
         => new(new[] {
-            new ProviderRouteDefinition(
-                DefaultAnthropicStrategy,
-                ProviderId: providerId,
-                Specification: "messages-v1",
-                Model: model,
-                Client: anthropicProvider
+            new LlmProfile(
+                Client: anthropicProvider,
+                ModelId: model,
+                Name: strategyName
             )
         });
 }

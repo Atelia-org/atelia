@@ -59,7 +59,7 @@ internal static class AnthropicMessageConverter {
         NormalizeMessageSequence(messages);
 
         var apiRequest = new AnthropicApiRequest {
-            Model = request.Invocation.Model,
+            Model = request.ModelId,
             MaxTokens = 4096, // 可配置
             Messages = messages,
             System = systemInstruction,

@@ -31,6 +31,9 @@ internal sealed class AnthropicProviderClient : IProviderClient {
     private readonly string? _apiKey;
     private readonly string _apiVersion;
 
+    public string Name => _httpClient.BaseAddress?.Host ?? "anthropic";
+    public string Specification => "messages-v1";
+
     public AnthropicProviderClient(string? apiKey, HttpClient? httpClient = null, string? apiVersion = null, Uri? baseAddress = null) {
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient ?? new HttpClient();
@@ -45,7 +48,7 @@ internal sealed class AnthropicProviderClient : IProviderClient {
         LlmRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken
     ) {
-        DebugUtil.Print(DebugCategory, $"[Anthropic] Starting call model={request.Invocation.Model}");
+        DebugUtil.Print(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
         var httpRequest = CreateHttpRequest(apiRequest);

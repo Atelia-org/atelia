@@ -15,7 +15,6 @@ internal static class Program {
     private const string DebugCategory = "History";
     private const string DefaultProxyModel = "vscode-lm-proxy";
     private const string AnthropicProxyUrl = "http://localhost:4000/anthropic/";
-    private const string AnthropicProxyProviderId = "anthropic-proxy";
 
     public static int Main(string[] args) {
         Console.InputEncoding = Encoding.UTF8;
@@ -26,12 +25,12 @@ internal static class Program {
         var agentState = AgentState.CreateDefault();
 
         var anthropicClient = new AnthropicProviderClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
-        var router = ProviderRouter.CreateAnthropic(anthropicClient, DefaultProxyModel, AnthropicProxyProviderId);
+        var router = ProviderRouter.CreateAnthropic(anthropicClient, DefaultProxyModel, ProviderRouter.DefaultAnthropicStrategy);
 
         var toolCatalog = ToolCatalog.Create(agentState.EnumerateWidgetTools());
         var toolExecutor = new ToolExecutor(toolCatalog.CreateHandlers());
 
-        var defaultInvocation = new LlmInvocationOptions(ProviderRouter.DefaultAnthropicStrategy);
+        var defaultInvocation = ProviderRouter.DefaultAnthropicStrategy;
         var agent = new LlmAgent(agentState, router, toolExecutor, toolCatalog, defaultInvocation);
         var loop = new ConsoleTui(agent, defaultInvocation);
 

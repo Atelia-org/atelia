@@ -12,11 +12,11 @@ namespace Atelia.LiveContextProto.Agent;
 
 internal sealed class ConsoleTui {
     private readonly LlmAgent _agent;
-    private readonly LlmInvocationOptions _defaultInvocation;
+    private readonly string _defaultInvocation;
     private readonly TextReader _input;
     private readonly TextWriter _output;
 
-    public ConsoleTui(LlmAgent agent, LlmInvocationOptions defaultInvocation, TextReader? input = null, TextWriter? output = null) {
+    public ConsoleTui(LlmAgent agent, string defaultInvocation, TextReader? input = null, TextWriter? output = null) {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _defaultInvocation = defaultInvocation ?? throw new ArgumentNullException(nameof(defaultInvocation));
         _input = input ?? Console.In;
@@ -309,7 +309,7 @@ internal sealed class ConsoleTui {
             }
             catch (Exception ex) {
                 _output.WriteLine($"[error] 模型调用失败：{ex.Message}");
-                DebugUtil.Print("History", $"[ConsoleTui] DoStep failed strategy={_defaultInvocation.StrategyId} error={ex.Message}");
+                DebugUtil.Print("History", $"[ConsoleTui] DoStep failed strategy={_defaultInvocation} error={ex.Message}");
                 break;
             }
 
