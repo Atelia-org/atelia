@@ -57,7 +57,7 @@ internal sealed class ConsoleTui {
 
             if (string.IsNullOrWhiteSpace(line)) { continue; }
 
-            AppendUserInput(line);
+            ProcessUserInput(line);
         }
     }
 
@@ -105,25 +105,26 @@ internal sealed class ConsoleTui {
         }
     }
 
-    private void AppendUserInput(string text) {
-        _agent.AppendUserInput(text);
+    private void ProcessUserInput(string text) {
+        DebugUtil.Print("History", $"[ConsoleTui] Received user input length={text.Length}");
+        _agent.EnqueueUserInput(text, _defaultInvocation);
         _output.WriteLine($"[state] 已记录用户输入（长度 {text.Length}）。");
 
-        InvokeProviderAndDisplay(_defaultInvocation);
+        DrainAgentUntilIdle();
     }
 
-    private void PrintInvocationResult(AgentInvocationResult result) {
+    private void PrintModelOutput(ModelOutputEntry output) {
         _output.WriteLine("[assistant] 输出如下：");
-        WriteOutputContents(result.Output);
-        PrintTokenUsage(result.Output);
-        WriteMetadataBlock(result.Output.Metadata);
+        WriteOutputContents(output);
+        PrintTokenUsage(output);
+        WriteMetadataBlock(output.Metadata);
+    }
 
-        if (result.ToolResults is not null) {
-            var toolMessage = new ToolResultsMessage(result.ToolResults, LevelOfDetail.Live);
-            WriteToolResults(toolMessage);
-            PrintTokenUsage(toolMessage);
-            WriteMetadataBlock(toolMessage.Metadata);
-        }
+    private void PrintToolResults(ToolResultsEntry entry) {
+        var toolMessage = new ToolResultsMessage(entry, LevelOfDetail.Live);
+        WriteToolResults(toolMessage);
+        PrintTokenUsage(toolMessage);
+        WriteMetadataBlock(toolMessage.Metadata);
     }
 
     private void PrintTokenUsage(IContextMessage message) {
@@ -300,15 +301,34 @@ internal sealed class ConsoleTui {
         _output.WriteLine($"[notebook] 长度: {snapshot.Length}");
     }
 
-    private void InvokeProviderAndDisplay(LlmInvocationOptions options) {
-        var invocation = _agent.InvokeProvider(options);
-        if (!invocation.Success) {
-            _output.WriteLine($"[error] 模型调用失败：{invocation.Exception?.Message ?? "(unknown)"}");
-            return;
-        }
+    private void DrainAgentUntilIdle() {
+        while (true) {
+            AgentStepResult step;
+            try {
+                step = _agent.DoStepAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex) {
+                _output.WriteLine($"[error] 模型调用失败：{ex.Message}");
+                DebugUtil.Print("History", $"[ConsoleTui] DoStep failed strategy={_defaultInvocation.StrategyId} error={ex.Message}");
+                break;
+            }
 
-        if (invocation.Result is not null) {
-            PrintInvocationResult(invocation.Result);
+            if (!step.ProgressMade) {
+                if (step.BlockedOnInput) { break; }
+
+                _output.WriteLine($"[warn] 状态机在 {step.StateAfter} 状态未能继续推进。");
+                break;
+            }
+
+            if (step.Output is not null) {
+                PrintModelOutput(step.Output);
+            }
+
+            if (step.ToolResults is not null) {
+                PrintToolResults(step.ToolResults);
+            }
+
+            if (step.StateAfter == AgentRunState.WaitingInput) { break; }
         }
     }
 }

@@ -31,9 +31,8 @@ internal static class Program {
         var toolCatalog = ToolCatalog.Create(agentState.EnumerateWidgetTools());
         var toolExecutor = new ToolExecutor(toolCatalog.CreateHandlers());
 
-        var orchestrator = new AgentOrchestrator(agentState, router, toolExecutor, toolCatalog);
-        var agent = new LlmAgent(agentState, orchestrator, toolExecutor, toolCatalog);
         var defaultInvocation = new LlmInvocationOptions(ProviderRouter.DefaultAnthropicStrategy);
+        var agent = new LlmAgent(agentState, router, toolExecutor, toolCatalog, defaultInvocation);
         var loop = new ConsoleTui(agent, defaultInvocation);
 
         loop.Run();
