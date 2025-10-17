@@ -8,6 +8,7 @@ using Atelia.LiveContextProto.Provider.Anthropic;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.Tools;
 using Atelia.LiveContextProto.Context;
+using Atelia.LiveContextProto.Profile;
 
 namespace Atelia.LiveContextProto;
 
@@ -15,6 +16,7 @@ internal static class Program {
     private const string DebugCategory = "History";
     private const string DefaultProxyModel = "vscode-lm-proxy";
     private const string AnthropicProxyUrl = "http://localhost:4000/anthropic/";
+    private const string DefaultProfileName = "anthropic-v1";
 
     public static int Main(string[] args) {
         Console.InputEncoding = Encoding.UTF8;
@@ -25,14 +27,13 @@ internal static class Program {
         var agentState = AgentState.CreateDefault();
 
         var anthropicClient = new AnthropicProviderClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
-        var router = ProviderRouter.CreateAnthropic(anthropicClient, DefaultProxyModel, ProviderRouter.DefaultAnthropicStrategy);
+        var defaultProfile = new LlmProfile(anthropicClient, DefaultProxyModel, DefaultProfileName);
 
         var toolCatalog = ToolCatalog.Create(agentState.EnumerateWidgetTools());
         var toolExecutor = new ToolExecutor(toolCatalog.CreateHandlers());
 
-        var defaultInvocation = ProviderRouter.DefaultAnthropicStrategy;
-        var agent = new LlmAgent(agentState, router, toolExecutor, toolCatalog, defaultInvocation);
-        var loop = new ConsoleTui(agent, defaultInvocation);
+        var agent = new LlmAgent(agentState, toolExecutor, toolCatalog);
+        var loop = new ConsoleTui(agent, defaultProfile);
 
         loop.Run();
 

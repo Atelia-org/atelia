@@ -21,24 +21,21 @@ internal sealed class LlmAgent {
     private const int MaxStepsPerInvocation = 64;
 
     private readonly AgentState _state;
-    private readonly ProviderRouter _router;
     private readonly ToolExecutor _toolExecutor;
     private readonly ToolCatalog _toolCatalog;
 
     private readonly ConcurrentQueue<PendingUserInput> _pendingInputs = new();
     private readonly Dictionary<string, ToolExecutionRecord> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
 
-    private string _defaultInvocationOptions;
-    private string? _activeInvocationOptions;
-    private RunLoopContext? _activeRunLoop;
+    private readonly ImmutableArray<ToolDefinition> _toolDefinitions;
     private AgentRunState? _lastLoggedState;
 
-    public LlmAgent(AgentState state, ProviderRouter router, ToolExecutor toolExecutor, ToolCatalog toolCatalog, string defaultInvocationOptions) {
+    public LlmAgent(AgentState state, ToolExecutor toolExecutor, ToolCatalog toolCatalog) {
         _state = state ?? throw new ArgumentNullException(nameof(state));
-        _router = router ?? throw new ArgumentNullException(nameof(router));
         _toolExecutor = toolExecutor ?? throw new ArgumentNullException(nameof(toolExecutor));
         _toolCatalog = toolCatalog ?? throw new ArgumentNullException(nameof(toolCatalog));
-        _defaultInvocationOptions = defaultInvocationOptions ?? throw new ArgumentNullException(nameof(defaultInvocationOptions));
+        _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolCatalog.Tools);
+        DebugUtil.Print(ProviderDebugCategory, $"[Orchestrator] Tool definitions count={_toolDefinitions.Length}");
     }
 
     public string SystemInstruction => _state.SystemInstruction;
@@ -56,21 +53,18 @@ internal sealed class LlmAgent {
 
     public void UpdateMemoryNotebook(string? content) => _state.UpdateMemoryNotebook(content);
 
-    public void UpdateDefaultInvocationOptions(string options) {
-        _defaultInvocationOptions = options ?? throw new ArgumentNullException(nameof(options));
-    }
-
-    public void EnqueueUserInput(string text, string? options = null) {
+    public void EnqueueUserInput(string text) {
         if (string.IsNullOrWhiteSpace(text)) { throw new ArgumentException("Value cannot be null or whitespace.", nameof(text)); }
-        var invocation = options ?? _defaultInvocationOptions;
-        _pendingInputs.Enqueue(new PendingUserInput(text, invocation));
+        _pendingInputs.Enqueue(new PendingUserInput(text));
     }
 
-    public async Task<AgentStepResult> DoStepAsync(CancellationToken cancellationToken = default) {
+    public async Task<AgentStepResult> DoStepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
+        if (profile is null) { throw new ArgumentNullException(nameof(profile)); }
+
         var stateBefore = DetermineState();
         LogStateIfChanged(stateBefore);
 
-        var outcome = await ExecuteStateAsync(stateBefore, cancellationToken).ConfigureAwait(false);
+        var outcome = await ExecuteStateAsync(stateBefore, profile, cancellationToken).ConfigureAwait(false);
 
         var stateAfter = DetermineState();
         LogStateIfChanged(stateAfter);
@@ -80,70 +74,6 @@ internal sealed class LlmAgent {
         }
 
         return CreateStepResult(stateBefore, stateAfter, outcome);
-    }
-
-    internal async Task<AgentInvocationResult> InvokePipelineAsync(
-        string options,
-        CancellationToken cancellationToken = default
-    ) {
-        ResetInvocation();
-        _pendingToolResults.Clear();
-        _activeInvocationOptions = options ?? throw new ArgumentNullException(nameof(options));
-
-        var lastOutput = (ModelOutputEntry?)null;
-        var lastToolResults = (ToolResultsEntry?)null;
-        AgentRunState? previousState = null;
-        var reachedStepLimit = true;
-
-        try {
-            for (var step = 0; step < MaxStepsPerInvocation; step++) {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var state = DetermineState();
-                if (previousState is null || previousState != state) {
-                    DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] state={state} historyCount={_state.History.Count} pendingToolResults={_pendingToolResults.Count}");
-                    previousState = state;
-                }
-
-                if (state == AgentRunState.WaitingInput) {
-                    reachedStepLimit = false;
-                    break;
-                }
-
-                var outcome = await ExecuteStateAsync(state, cancellationToken).ConfigureAwait(false);
-                if (!outcome.ProgressMade) { throw new InvalidOperationException($"State machine stalled in state '{state}'."); }
-
-                if (outcome.Output is not null) {
-                    lastOutput = outcome.Output;
-                }
-
-                if (outcome.ToolResults is not null) {
-                    lastToolResults = outcome.ToolResults;
-                }
-
-                var nextState = DetermineState();
-                if (nextState == AgentRunState.WaitingInput && lastOutput is not null) {
-                    reachedStepLimit = false;
-                    break;
-                }
-            }
-
-            if (lastOutput is null) { throw new InvalidOperationException("Provider returned no model output."); }
-
-            var finalState = DetermineState();
-            var steps = _activeRunLoop?.StepCount ?? 0;
-            if (reachedStepLimit && finalState != AgentRunState.WaitingInput) {
-                DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Step limit reached state={finalState} steps={steps}");
-                throw new InvalidOperationException($"State machine exceeded {MaxStepsPerInvocation} steps without reaching a stable state (last={finalState}).");
-            }
-
-            DebugUtil.Print(ProviderDebugCategory, $"[Orchestrator] Invocation completed steps={steps} state={finalState}");
-
-            return new AgentInvocationResult(lastOutput, lastToolResults);
-        }
-        finally {
-            ResetInvocation();
-        }
     }
 
     private AgentRunState DetermineState() {
@@ -165,13 +95,13 @@ internal sealed class LlmAgent {
             : AgentRunState.WaitingToolResults;
     }
 
-    private async Task<StepOutcome> ExecuteStateAsync(AgentRunState state, CancellationToken cancellationToken) {
+    private async Task<StepOutcome> ExecuteStateAsync(AgentRunState state, LlmProfile profile, CancellationToken cancellationToken) {
         switch (state) {
             case AgentRunState.WaitingInput:
                 return ProcessWaitingInput();
             case AgentRunState.PendingInput:
             case AgentRunState.PendingToolResults:
-                return await ProcessPendingInputAsync(cancellationToken).ConfigureAwait(false);
+                return await ProcessPendingInputAsync(profile, cancellationToken).ConfigureAwait(false);
             case AgentRunState.WaitingToolResults:
                 return await ProcessWaitingToolResultsAsync(cancellationToken).ConfigureAwait(false);
             case AgentRunState.ToolResultsReady:
@@ -185,32 +115,26 @@ internal sealed class LlmAgent {
         if (!_pendingInputs.TryDequeue(out var pending)) { return StepOutcome.NoProgress; }
 
         var entry = AppendModelInput(pending.Text);
-        _activeInvocationOptions = pending.Options;
-        _activeRunLoop = null;
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Input dequeued strategy={pending.Options} length={pending.Text.Length}");
+        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Input dequeued length={pending.Text.Length}");
 
         return StepOutcome.FromInput(entry);
     }
 
-    private async Task<StepOutcome> ProcessPendingInputAsync(CancellationToken cancellationToken) {
-        var context = EnsureRunLoopContext();
-        context.StepCount++;
-
+    private async Task<StepOutcome> ProcessPendingInputAsync(LlmProfile profile, CancellationToken cancellationToken) {
         var liveContext = _state.RenderLiveContext();
-        DebugUtil.Print(ProviderDebugCategory, $"[StateMachine] Rendering context step={context.StepCount} count={liveContext.Count}");
+        DebugUtil.Print(ProviderDebugCategory, $"[StateMachine] Rendering context count={liveContext.Count}");
 
-        var invocation = new ModelInvocationDescriptor(context.Profile.Client.Name, context.Profile.Client.Specification, context.Profile.ModelId);
-        var request = new LlmRequest(context.Profile.ModelId, liveContext, context.Tools);
+        var invocation = new ModelInvocationDescriptor(profile.Client.Name, profile.Client.Specification, profile.ModelId);
+        var request = new LlmRequest(profile.ModelId, liveContext, _toolDefinitions);
 
-        var deltas = context.Profile.Client.CallModelAsync(request, cancellationToken);
+        var deltas = profile.Client.CallModelAsync(request, cancellationToken);
         var aggregatedOutput = await ModelOutputAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);
         var normalizedOutput = NormalizeToolCalls(aggregatedOutput);
 
         _pendingToolResults.Clear();
 
         var appended = _state.AppendModelOutput(normalizedOutput);
-        context.LastOutput = appended;
 
         var toolCallCount = appended.ToolCalls?.Count ?? 0;
         DebugUtil.Print(ProviderDebugCategory, $"[StateMachine] Model output appended segments={appended.Contents.Count} toolCalls={toolCallCount}");
@@ -227,9 +151,6 @@ internal sealed class LlmAgent {
         var nextCall = FindNextPendingToolCall(outputEntry);
         if (nextCall is null) { return StepOutcome.NoProgress; }
 
-        var context = EnsureRunLoopContext();
-        context.StepCount++;
-
         var record = await _toolExecutor.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         _pendingToolResults[nextCall.ToolCallId] = record;
 
@@ -242,8 +163,6 @@ internal sealed class LlmAgent {
         if (_state.History.Count == 0 || _state.History[^1] is not ModelOutputEntry outputEntry) { return StepOutcome.NoProgress; }
 
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return StepOutcome.NoProgress; }
-
-        var context = EnsureRunLoopContext();
 
         var executionRecords = new List<ToolExecutionRecord>(outputEntry.ToolCalls.Count);
         var results = new HistoryToolCallResult[outputEntry.ToolCalls.Count];
@@ -259,8 +178,6 @@ internal sealed class LlmAgent {
             results[index] = CreateHistoryResult(record);
         }
 
-        context.StepCount++;
-
         var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
@@ -270,7 +187,6 @@ internal sealed class LlmAgent {
         entry = entry with { Metadata = ToolResultMetadataHelper.PopulateSummary(executionRecords, entry.Metadata) };
 
         var appended = AppendToolResultsWithSummary(entry);
-        context.LastToolResults = appended;
         _pendingToolResults.Clear();
 
         DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Tool results appended count={results.Length} failure={(failure is null ? "none" : failure.ToolCallId)}");
@@ -297,20 +213,6 @@ internal sealed class LlmAgent {
         }
 
         return true;
-    }
-
-    private RunLoopContext EnsureRunLoopContext() {
-        if (_activeRunLoop is not null) { return _activeRunLoop; }
-
-        var options = _activeInvocationOptions ?? _defaultInvocationOptions;
-        _activeInvocationOptions ??= options;
-
-        var profile = _router.Resolve(options);
-        var tools = ToolDefinitionBuilder.FromTools(_toolCatalog.Tools);
-        DebugUtil.Print(ProviderDebugCategory, $"[Orchestrator] Tool definitions count={tools.Length}");
-
-        _activeRunLoop = new RunLoopContext(profile, tools);
-        return _activeRunLoop;
     }
 
     private ToolResultsEntry AppendToolResultsWithSummary(ToolResultsEntry entry) {
@@ -380,8 +282,6 @@ internal sealed class LlmAgent {
     }
 
     private void ResetInvocation() {
-        _activeRunLoop = null;
-        _activeInvocationOptions = null;
         _lastLoggedState = null;
     }
 
@@ -395,20 +295,7 @@ internal sealed class LlmAgent {
     private static AgentStepResult CreateStepResult(AgentRunState before, AgentRunState after, StepOutcome outcome)
         => new(outcome.ProgressMade, before, after, outcome.Input, outcome.Output, outcome.ToolResults);
 
-    private sealed class RunLoopContext {
-        public RunLoopContext(LlmProfile profile, ImmutableArray<ToolDefinition> tools) {
-            Profile = profile;
-            Tools = tools;
-        }
-
-        public LlmProfile Profile { get; }
-        public ImmutableArray<ToolDefinition> Tools { get; }
-        public ModelOutputEntry? LastOutput { get; set; }
-        public ToolResultsEntry? LastToolResults { get; set; }
-        public int StepCount { get; set; }
-    }
-
-    private readonly record struct PendingUserInput(string Text, string Options);
+    private readonly record struct PendingUserInput(string Text);
 
     private readonly record struct StepOutcome(
         bool ProgressMade,

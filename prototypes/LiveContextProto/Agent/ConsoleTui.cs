@@ -7,18 +7,19 @@ using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Context;
+using Atelia.LiveContextProto.Profile;
 
 namespace Atelia.LiveContextProto.Agent;
 
 internal sealed class ConsoleTui {
     private readonly LlmAgent _agent;
-    private readonly string _defaultInvocation;
+    private readonly LlmProfile _defaultProfile;
     private readonly TextReader _input;
     private readonly TextWriter _output;
 
-    public ConsoleTui(LlmAgent agent, string defaultInvocation, TextReader? input = null, TextWriter? output = null) {
+    public ConsoleTui(LlmAgent agent, LlmProfile defaultProfile, TextReader? input = null, TextWriter? output = null) {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
-        _defaultInvocation = defaultInvocation ?? throw new ArgumentNullException(nameof(defaultInvocation));
+        _defaultProfile = defaultProfile ?? throw new ArgumentNullException(nameof(defaultProfile));
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
     }
@@ -107,7 +108,7 @@ internal sealed class ConsoleTui {
 
     private void ProcessUserInput(string text) {
         DebugUtil.Print("History", $"[ConsoleTui] Received user input length={text.Length}");
-        _agent.EnqueueUserInput(text, _defaultInvocation);
+        _agent.EnqueueUserInput(text);
         _output.WriteLine($"[state] 已记录用户输入（长度 {text.Length}）。");
 
         DrainAgentUntilIdle();
@@ -305,11 +306,11 @@ internal sealed class ConsoleTui {
         while (true) {
             AgentStepResult step;
             try {
-                step = _agent.DoStepAsync().GetAwaiter().GetResult();
+                step = _agent.DoStepAsync(_defaultProfile).GetAwaiter().GetResult();
             }
             catch (Exception ex) {
                 _output.WriteLine($"[error] 模型调用失败：{ex.Message}");
-                DebugUtil.Print("History", $"[ConsoleTui] DoStep failed strategy={_defaultInvocation} error={ex.Message}");
+                DebugUtil.Print("History", $"[ConsoleTui] DoStep failed profile={_defaultProfile.Name} error={ex.Message}");
                 break;
             }
 

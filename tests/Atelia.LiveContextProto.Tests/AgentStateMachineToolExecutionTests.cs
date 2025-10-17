@@ -59,32 +59,31 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
 
         var provider = new FakeProviderClient(new[] { firstResponse, secondResponse });
-        var router = CreateRouter(provider);
-        var options = StrategyId;
-        var agent = new LlmAgent(state, router, executor, catalog, options);
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
+        var agent = new LlmAgent(state, executor, catalog);
 
-        agent.EnqueueUserInput("hello world", options);
+        agent.EnqueueUserInput("hello world");
 
-        var step1 = await agent.DoStepAsync();
+        var step1 = await agent.DoStepAsync(profile);
         Assert.True(step1.ProgressMade);
         Assert.NotNull(step1.Input);
         Assert.Equal(AgentRunState.WaitingInput, step1.StateBefore);
         Assert.Equal(AgentRunState.PendingInput, step1.StateAfter);
 
-        var step2 = await agent.DoStepAsync();
+        var step2 = await agent.DoStepAsync(profile);
         Assert.True(step2.ProgressMade);
         Assert.NotNull(step2.Output);
         Assert.Equal(AgentRunState.PendingInput, step2.StateBefore);
         Assert.Equal(AgentRunState.WaitingToolResults, step2.StateAfter);
         Assert.Single(step2.Output!.ToolCalls);
 
-        var step3 = await agent.DoStepAsync();
+        var step3 = await agent.DoStepAsync(profile);
         Assert.True(step3.ProgressMade);
         Assert.Null(step3.Output);
         Assert.Equal(AgentRunState.WaitingToolResults, step3.StateBefore);
         Assert.Equal(AgentRunState.ToolResultsReady, step3.StateAfter);
 
-        var step4 = await agent.DoStepAsync();
+        var step4 = await agent.DoStepAsync(profile);
         Assert.True(step4.ProgressMade);
         Assert.NotNull(step4.ToolResults);
         Assert.Equal(AgentRunState.ToolResultsReady, step4.StateBefore);
@@ -112,7 +111,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         var perCall = Assert.IsType<ImmutableDictionary<string, object?>>(perCallMetadata);
         Assert.True(perCall.ContainsKey("call-1"));
 
-        var step5 = await agent.DoStepAsync();
+        var step5 = await agent.DoStepAsync(profile);
         Assert.True(step5.ProgressMade);
         Assert.NotNull(step5.Output);
         Assert.Equal(AgentRunState.PendingToolResults, step5.StateBefore);
@@ -150,17 +149,16 @@ public sealed class AgentStateMachineToolExecutionTests {
         }
         );
 
-        var router = CreateRouter(provider);
-        var options = StrategyId;
-        var agent = new LlmAgent(state, router, executor, catalog, options);
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
+        var agent = new LlmAgent(state, executor, catalog);
 
-        agent.EnqueueUserInput("trigger failure", options);
+        agent.EnqueueUserInput("trigger failure");
 
-        await agent.DoStepAsync(); // WaitingInput -> PendingInput
-        await agent.DoStepAsync(); // PendingInput -> WaitingToolResults
-        await agent.DoStepAsync(); // WaitingToolResults -> ToolResultsReady
+        await agent.DoStepAsync(profile); // WaitingInput -> PendingInput
+        await agent.DoStepAsync(profile); // PendingInput -> WaitingToolResults
+        await agent.DoStepAsync(profile); // WaitingToolResults -> ToolResultsReady
 
-        var step4 = await agent.DoStepAsync();
+        var step4 = await agent.DoStepAsync(profile);
         Assert.True(step4.ProgressMade);
         Assert.NotNull(step4.ToolResults);
         Assert.Equal(AgentRunState.ToolResultsReady, step4.StateBefore);
@@ -173,11 +171,6 @@ public sealed class AgentStateMachineToolExecutionTests {
         var metadata = toolResults.Metadata;
         Assert.True(metadata.TryGetValue("tool_failed_count", out var failedCountValue));
         Assert.Equal(1, Assert.IsType<int>(failedCountValue));
-    }
-
-    private static ProviderRouter CreateRouter(IProviderClient provider) {
-        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        return new ProviderRouter(new[] { profile });
     }
 
     private static ToolCatalog CreateCatalog(AgentState state, params ITool[] extraTools) {
