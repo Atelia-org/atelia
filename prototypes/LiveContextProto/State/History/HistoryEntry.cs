@@ -49,12 +49,6 @@ internal sealed record ToolResultsEntry(
     public override ContextMessageRole Role => ContextMessageRole.ToolResult;
 }
 
-internal sealed record SystemInstructionMessage(string Instruction) : ISystemMessage {
-    public ContextMessageRole Role => ContextMessageRole.System;
-    public DateTimeOffset Timestamp { get; init; }
-    public ImmutableDictionary<string, object?> Metadata { get; init; } = ImmutableDictionary<string, object?>.Empty;
-}
-
 internal sealed record HistoryToolCallResult(
     string ToolName,
     string ToolCallId,

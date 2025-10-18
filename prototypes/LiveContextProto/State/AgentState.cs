@@ -100,12 +100,6 @@ internal sealed class AgentState {
             }
         }
 
-        var systemMessage = new SystemInstructionMessage(SystemInstruction) {
-            Timestamp = _timestampProvider(),
-            Metadata = ImmutableDictionary<string, object?>.Empty
-        };
-
-        messages.Add(systemMessage);
         messages.Reverse();
         return messages;
     }

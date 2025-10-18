@@ -75,6 +75,8 @@ internal sealed class ConsoleTui {
     }
 
     private void PrintHistory() {
+        WriteSystemInstructionBlock();
+
         var context = _agent.RenderLiveContext();
         if (context.Count == 0) {
             _output.WriteLine("[history] 暂无上下文消息。");
@@ -88,9 +90,6 @@ internal sealed class ConsoleTui {
             _output.WriteLine($"  [{index}] {message.Timestamp:O} :: {message.Role}");
 
             switch (message) {
-                case ISystemMessage system:
-                    _output.WriteLine($"      [system] {system.Instruction}");
-                    break;
                 case IModelInputMessage input:
                     WriteInputSections(input.ContentSections);
                     break;
@@ -135,6 +134,15 @@ internal sealed class ConsoleTui {
         _output.WriteLine(
             $"      [usage] prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, cached={(usage.CachedPromptTokens?.ToString() ?? "0")}"
         );
+    }
+
+    private void WriteSystemInstructionBlock() {
+        _output.WriteLine("[history] 当前 System Instruction：");
+        var instruction = _agent.SystemInstruction;
+        var lines = instruction.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
+        foreach (var line in lines) {
+            _output.WriteLine($"      {line}");
+        }
     }
 
     private void WriteInputSections(IReadOnlyList<KeyValuePair<string, string>> sections) {

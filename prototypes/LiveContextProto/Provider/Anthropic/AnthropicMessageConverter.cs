@@ -15,14 +15,9 @@ internal static class AnthropicMessageConverter {
 
     public static AnthropicApiRequest ConvertToApiRequest(LlmRequest request) {
         var messages = new List<AnthropicMessage>();
-        string? systemInstruction = null;
 
         foreach (var contextMessage in request.Context) {
             switch (contextMessage) {
-                case ISystemMessage system:
-                    systemInstruction = system.Instruction;
-                    break;
-
                 case IModelInputMessage input:
                     var userContent = BuildUserContent(input);
                     messages.Add(
@@ -62,7 +57,7 @@ internal static class AnthropicMessageConverter {
             Model = request.ModelId,
             MaxTokens = 4096, // 可配置
             Messages = messages,
-            System = systemInstruction,
+            System = string.IsNullOrWhiteSpace(request.SystemInstruction) ? null : request.SystemInstruction,
             Stream = true,
             Tools = BuildToolDefinitions(request.Tools)
         };

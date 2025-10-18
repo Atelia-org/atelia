@@ -20,7 +20,6 @@ namespace Atelia.LiveContextProto.Agent;
 internal sealed class LlmAgent {
     private const string ProviderDebugCategory = "Provider";
     private const string StateMachineDebugCategory = "StateMachine";
-    private const int MaxStepsPerInvocation = 64;
 
     private readonly AgentState _state;
     private readonly ToolExecutor _toolExecutor;
@@ -152,7 +151,7 @@ internal sealed class LlmAgent {
         DebugUtil.Print(ProviderDebugCategory, $"[StateMachine] Rendering context count={liveContext.Count}");
 
         var invocation = new ModelInvocationDescriptor(profile.Client.Name, profile.Client.Specification, profile.ModelId);
-        var request = new LlmRequest(profile.ModelId, liveContext, _toolDefinitions);
+        var request = new LlmRequest(profile.ModelId, SystemInstruction, liveContext, _toolDefinitions);
 
         var deltas = profile.Client.CallModelAsync(request, cancellationToken);
         var aggregatedOutput = await ModelOutputAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);

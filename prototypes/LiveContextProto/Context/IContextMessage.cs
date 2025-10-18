@@ -8,10 +8,6 @@ internal interface IContextMessage {
     ImmutableDictionary<string, object?> Metadata { get; }
 }
 
-internal interface ISystemMessage : IContextMessage {
-    string Instruction { get; }
-}
-
 internal interface IModelInputMessage : IContextMessage {
     IReadOnlyList<KeyValuePair<string, string>> ContentSections { get; }
     IReadOnlyList<IContextAttachment> Attachments { get; }
@@ -39,7 +35,6 @@ internal interface IContextAttachment {
 }
 
 internal enum ContextMessageRole {
-    System,
     ModelInput,
     ModelOutput,
     ToolResult
