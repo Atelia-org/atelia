@@ -2,7 +2,9 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Diagnostics;
@@ -24,6 +26,8 @@ internal sealed class LlmAgent {
     private readonly ToolExecutor _toolExecutor;
     private readonly ToolCatalog _toolCatalog;
 
+    /// 未来扩展到支持多种输入渠道，比如增加即时通讯软件发来的消息。还需要增加发送方身份标识。
+    /// 规划后续把部分信息直送LiveScreen，引入LiveEvent机制，要保证每条Event都能被LLM看到，又能直通LiveScreen来减少延迟(以LlmAgent状态机Step数计量)。
     private readonly ConcurrentQueue<PendingUserInput> _pendingInputs = new();
     private readonly Dictionary<string, ToolExecutionRecord> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
 
@@ -55,7 +59,8 @@ internal sealed class LlmAgent {
 
     public void EnqueueUserInput(string text) {
         if (string.IsNullOrWhiteSpace(text)) { throw new ArgumentException("Value cannot be null or whitespace.", nameof(text)); }
-        _pendingInputs.Enqueue(new PendingUserInput(text));
+        var timestamp = DateTimeOffset.Now;
+        _pendingInputs.Enqueue(new PendingUserInput(text, timestamp));
     }
 
     public async Task<AgentStepResult> DoStepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
@@ -112,11 +117,34 @@ internal sealed class LlmAgent {
     }
 
     private StepOutcome ProcessWaitingInput() {
-        if (!_pendingInputs.TryDequeue(out var pending)) { return StepOutcome.NoProgress; }
+        if (_pendingInputs.IsEmpty) { return StepOutcome.NoProgress; }
 
-        var entry = AppendModelInput(pending.Text);
+        var builder = new StringBuilder();
+        var totalInputLength = 0;
+        var drainedCount = 0;
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Input dequeued length={pending.Text.Length}");
+        while (_pendingInputs.TryDequeue(out var pending)) {
+            if (drainedCount > 0) {
+                builder.AppendLine().AppendLine();
+            }
+
+            var heading = pending.Timestamp.ToString("o");
+
+            builder.Append("### ").AppendLine(heading);
+            builder.AppendLine();
+            builder.AppendLine(pending.Text);
+
+            totalInputLength += pending.Text.Length;
+            drainedCount++;
+        }
+
+        if (drainedCount == 0) { return StepOutcome.NoProgress; }
+
+        var aggregated = builder.ToString().TrimEnd('\r', '\n');
+
+        var entry = AppendModelInput(aggregated);
+
+        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Inputs dequeued count={drainedCount} totalInputLength={totalInputLength} aggregatedLength={aggregated.Length}");
 
         return StepOutcome.FromInput(entry);
     }
@@ -295,7 +323,7 @@ internal sealed class LlmAgent {
     private static AgentStepResult CreateStepResult(AgentRunState before, AgentRunState after, StepOutcome outcome)
         => new(outcome.ProgressMade, before, after, outcome.Input, outcome.Output, outcome.ToolResults);
 
-    private readonly record struct PendingUserInput(string Text);
+    private readonly record struct PendingUserInput(string Text, DateTimeOffset Timestamp);
 
     private readonly record struct StepOutcome(
         bool ProgressMade,
