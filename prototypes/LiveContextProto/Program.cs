@@ -29,10 +29,9 @@ internal static class Program {
         var anthropicClient = new AnthropicProviderClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
         var defaultProfile = new LlmProfile(anthropicClient, DefaultProxyModel, DefaultProfileName);
 
-        var toolCatalog = ToolCatalog.Create(agentState.EnumerateWidgetTools());
-        var toolExecutor = new ToolExecutor(toolCatalog.CreateHandlers());
+        var toolExecutor = new ToolExecutor(agentState.EnumerateWidgetTools());
 
-        var agent = new LlmAgent(agentState, toolExecutor, toolCatalog);
+        var agent = new LlmAgent(agentState, toolExecutor);
         var loop = new ConsoleTui(agent, defaultProfile);
 
         loop.Run();

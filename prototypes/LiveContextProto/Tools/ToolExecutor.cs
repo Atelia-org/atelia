@@ -9,11 +9,6 @@ using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Tools;
 
-internal interface IToolHandler {
-    string ToolName { get; }
-    ValueTask<ToolHandlerResult> ExecuteAsync(ToolCallRequest request, CancellationToken cancellationToken);
-}
-
 internal sealed record ToolHandlerResult(
     ToolExecutionStatus Status,
     LevelOfDetailContent Result,
@@ -44,16 +39,35 @@ internal sealed record ToolExecutionRecord(
 
 internal sealed class ToolExecutor {
     private const string DebugCategory = "Tools";
-    private readonly IReadOnlyDictionary<string, IToolHandler> _handlers;
+    private readonly IReadOnlyDictionary<string, ITool> _tools;
+    private readonly Func<ITool, ImmutableDictionary<string, object?>>? _environmentFactory;
 
-    public ToolExecutor(IEnumerable<IToolHandler> handlers) {
-        var dictionary = new Dictionary<string, IToolHandler>(StringComparer.OrdinalIgnoreCase);
-        foreach (var handler in handlers) {
-            dictionary[handler.ToolName] = handler;
+    public ToolExecutor(IEnumerable<ITool> tools, Func<ITool, ImmutableDictionary<string, object?>>? environmentFactory = null) {
+        if (tools is null) { throw new ArgumentNullException(nameof(tools)); }
+
+        var dictionary = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tool in tools) {
+            if (tool is null) { continue; }
+
+            if (dictionary.ContainsKey(tool.Name)) { throw new InvalidOperationException($"Duplicate tool registration detected for '{tool.Name}'."); }
+
+            dictionary[tool.Name] = tool;
         }
 
-        _handlers = dictionary;
-        DebugUtil.Print(DebugCategory, $"ToolExecutor initialized handlerCount={_handlers.Count}");
+        _tools = dictionary;
+        _environmentFactory = environmentFactory;
+        DebugUtil.Print(DebugCategory, $"ToolExecutor initialized toolCount={_tools.Count}");
+    }
+
+    public IEnumerable<ITool> Tools => _tools.Values;
+
+    public bool TryGetTool(string name, out ITool tool) {
+        if (string.IsNullOrWhiteSpace(name)) {
+            tool = null!;
+            return false;
+        }
+
+        return _tools.TryGetValue(name, out tool!);
     }
 
     public async ValueTask<IReadOnlyList<ToolExecutionRecord>> ExecuteBatchAsync(
@@ -78,26 +92,29 @@ internal sealed class ToolExecutor {
     ) {
         DebugUtil.Print(DebugCategory, $"[Executor] Dispatch toolName={request.ToolName} toolCallId={request.ToolCallId}");
 
-        if (!_handlers.TryGetValue(request.ToolName, out var handler)) {
-            DebugUtil.Print(DebugCategory, $"[Executor] Missing handler toolName={request.ToolName}");
+        if (!_tools.TryGetValue(request.ToolName, out var tool)) {
+            DebugUtil.Print(DebugCategory, $"[Executor] Missing tool toolName={request.ToolName}");
 
             var metadata = ImmutableDictionary<string, object?>.Empty
-                .Add("error", "handler_not_found");
+                .Add("error", "tool_not_found");
 
             return new ToolExecutionRecord(
                 request.ToolName,
                 request.ToolCallId,
                 ToolExecutionStatus.Failed,
-                CreateUniformContent($"未找到工具处理器: {request.ToolName}"),
+                CreateUniformContent($"未找到工具: {request.ToolName}"),
                 null,
                 metadata
             );
         }
 
         var stopwatch = Stopwatch.StartNew();
+        var normalizedRequest = EnsureArguments(tool, request);
+        var environment = _environmentFactory?.Invoke(tool) ?? ImmutableDictionary<string, object?>.Empty;
+        var context = new ToolExecutionContext(normalizedRequest, environment);
 
         try {
-            var handlerResult = await handler.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
+            var handlerResult = await tool.ExecuteAsync(context, cancellationToken).ConfigureAwait(false);
             stopwatch.Stop();
 
             DebugUtil.Print(
@@ -151,6 +168,23 @@ internal sealed class ToolExecutor {
                 metadata
             );
         }
+    }
+
+    private static ToolCallRequest EnsureArguments(ITool tool, ToolCallRequest request) {
+        if (request.Arguments is not null) { return request; }
+
+        var parsed = ToolArgumentParser.ParseArguments(tool, request.RawArguments);
+        return request with {
+            Arguments = parsed.Arguments,
+            ParseError = CombineMessages(request.ParseError, parsed.ParseError),
+            ParseWarning = CombineMessages(request.ParseWarning, parsed.ParseWarning)
+        };
+    }
+
+    private static string? CombineMessages(string? primary, string? secondary) {
+        if (string.IsNullOrWhiteSpace(primary)) { return secondary; }
+        if (string.IsNullOrWhiteSpace(secondary)) { return primary; }
+        return string.Concat(primary, "; ", secondary);
     }
 
     private static LevelOfDetailContent CreateUniformContent(string? content) {

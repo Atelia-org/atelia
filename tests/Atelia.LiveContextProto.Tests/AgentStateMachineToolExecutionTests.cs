@@ -39,8 +39,8 @@ public sealed class AgentStateMachineToolExecutionTests {
             }
         );
 
-        var catalog = CreateCatalog(state, echoTool);
-        var executor = new ToolExecutor(catalog.CreateHandlers());
+        var tools = CreateTools(state, echoTool);
+        var executor = new ToolExecutor(tools);
 
         var firstResponse = CreateDeltaSequence(
             ModelOutputDelta.Content("calling tool", endSegment: true),
@@ -60,7 +60,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var provider = new FakeProviderClient(new[] { firstResponse, secondResponse });
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        var agent = new LlmAgent(state, executor, catalog);
+        var agent = new LlmAgent(state, executor);
 
         agent.EnqueueUserInput("hello world");
 
@@ -137,8 +137,8 @@ public sealed class AgentStateMachineToolExecutionTests {
             )
         );
 
-        var catalog = CreateCatalog(state, failingTool);
-        var executor = new ToolExecutor(catalog.CreateHandlers());
+        var tools = CreateTools(state, failingTool);
+        var executor = new ToolExecutor(tools);
 
         var provider = new FakeProviderClient(
             new[] {
@@ -146,11 +146,11 @@ public sealed class AgentStateMachineToolExecutionTests {
                     ModelOutputDelta.Content("call broken", endSegment: true),
                     ModelOutputDelta.ToolCall(CreateToolCallRequest("broken", "fail-1", "{}"))
                 )
-        }
+            }
         );
 
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        var agent = new LlmAgent(state, executor, catalog);
+        var agent = new LlmAgent(state, executor);
 
         agent.EnqueueUserInput("trigger failure");
 
@@ -173,10 +173,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(1, Assert.IsType<int>(failedCountValue));
     }
 
-    private static ToolCatalog CreateCatalog(AgentState state, params ITool[] extraTools) {
-        var tools = state.EnumerateWidgetTools();
-        return ToolCatalog.Create(tools.Concat(extraTools));
-    }
+    private static IReadOnlyCollection<ITool> CreateTools(AgentState state, params ITool[] extraTools)
+        => state.EnumerateWidgetTools().Concat(extraTools).ToArray();
 
     private static ToolCallRequest CreateToolCallRequest(
         string toolName,

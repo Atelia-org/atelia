@@ -24,7 +24,6 @@ internal sealed class LlmAgent {
 
     private readonly AgentState _state;
     private readonly ToolExecutor _toolExecutor;
-    private readonly ToolCatalog _toolCatalog;
 
     /// 未来扩展到支持多种输入渠道，比如增加即时通讯软件发来的消息。还需要增加发送方身份标识。
     /// 规划后续把部分信息直送LiveScreen，引入LiveEvent机制，要保证每条Event都能被LLM看到，又能直通LiveScreen来减少延迟(以LlmAgent状态机Step数计量)。
@@ -34,11 +33,10 @@ internal sealed class LlmAgent {
     private readonly ImmutableArray<ToolDefinition> _toolDefinitions;
     private AgentRunState? _lastLoggedState;
 
-    public LlmAgent(AgentState state, ToolExecutor toolExecutor, ToolCatalog toolCatalog) {
+    public LlmAgent(AgentState state, ToolExecutor toolExecutor) {
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _toolExecutor = toolExecutor ?? throw new ArgumentNullException(nameof(toolExecutor));
-        _toolCatalog = toolCatalog ?? throw new ArgumentNullException(nameof(toolCatalog));
-        _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolCatalog.Tools);
+        _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolExecutor.Tools);
         DebugUtil.Print(ProviderDebugCategory, $"[Orchestrator] Tool definitions count={_toolDefinitions.Length}");
     }
 
@@ -267,7 +265,7 @@ internal sealed class LlmAgent {
     }
 
     private ToolCallRequest NormalizeToolCall(ToolCallRequest request) {
-        if (!_toolCatalog.TryGet(request.ToolName, out var tool)) {
+        if (!_toolExecutor.TryGetTool(request.ToolName, out var tool)) {
             return request with {
                 ParseWarning = CombineMessages(request.ParseWarning, "tool_definition_missing")
             };

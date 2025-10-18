@@ -147,7 +147,7 @@ internal sealed record WidgetRenderContext(
 - **宿主职责**：`AgentState` 负责创建并持有 `MemoryNotebookWidget`，对外暴露同步访问器（例如 `GetMemoryNotebookWidget()`）。
 - **状态一致性**：Widget 内部维护 Notebook 最新全文；`AgentState` 仍可保留 `_memoryNotebook` 字段以兼容旧逻辑，但写入统一通过 Widget 封装方法完成，确保事实源唯一。
 - **渲染流程**：`AgentState.RenderLiveContext()` 在处理 LiveScreen 注入时直接调用 `MemoryNotebookWidget.RenderLiveScreen(context)`，若返回文本则追加到现有 Markdown。
-- **工具桥接**：为了复用 `ToolExecutor`，可以在 `Program` 或 `AgentState` 内部构造一个 `WidgetToolHandler`（实现 `IToolHandler`），其 `ExecuteAsync` 直接调用 Widget 的同步 `ExecuteTool` 并包装为 `ToolHandlerResult`。
+- **工具桥接**：`ToolExecutor` 已直接消费 Widget 暴露的 `ITool` 接口，Widget 只需在 `Tools` 集合中返回实现即可；若需要额外上下文，可在构造 `ToolExecutor` 时通过环境工厂注入。
 - **未来扩展**：当引入其他 Widget 时，可将 `AgentState` 中的单实例扩展为 `List<IWidget>`，再考虑抽象注册点；当前实现保持“单 Widget + 最小接口”。
 
 ## 历史注入与多层级呈现

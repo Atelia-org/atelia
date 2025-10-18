@@ -13,13 +13,13 @@
 
 - 给出统一的工具抽象 (`ITool`) 与参数描述契约，为 LiveContextProto 及后续实现提供清晰的扩展点。
 - 明确工具声明与 Provider 之间的数据契约，确保模型输出被解析为期望类型的同时保留“宽进严出”策略。
-- 指导将现有 `IToolHandler` 生态迁移至新的 `ITool` 接口，并规划与 `ToolExecutor`、`ToolResultMetadataHelper` 等现有组件的协作方式。
+- 指导将现有工具执行栈迁移至统一的 `ITool` 接口，并规划与 `ToolExecutor`、`ToolResultMetadataHelper` 等现有组件的协作方式。
 
 ## 背景现状
 
 | 现象 | 影响 |
 | --- | --- |
-| `ToolExecutor` 仅依赖 `IToolHandler`（`ToolName + ExecuteAsync`），缺乏统一的工具元数据声明 | Provider 无法在调用前获知参数类型，导致解析策略只能基于 JSON 结构推断，出现布尔字符串被错判等问题。 |
+| （历史问题）`ToolExecutor` 仅依赖 `IToolHandler`（`ToolName + ExecuteAsync`），缺乏统一的工具元数据声明 | Provider 无法在调用前获知参数类型，导致解析策略只能基于 JSON 结构推断，出现布尔字符串被错判等问题；当前版本已经改为直接消费 `ITool`，彻底消除此隐患。 |
 | 工具参数解析策略已在《ToolCallArgumentHandling.md》中定义为“宽进严出”，但缺少与工具声明的联动 | Provider 无法根据各工具需求动态调节解析容错度，扩展成本高。 |
 | 新增工具需要在多个文件中重复编写描述信息（README、脚本、手册） | 易于产生陈旧信息，调试阶段难以诊断参数错配。
 | 未来计划引入动态工具清单与 Planner 协调 | 缺少统一接口将工具清单暴露给 Planner / Provider。
@@ -32,7 +32,7 @@
 2. **类型指引**：参数声明包含强类型枚举指示，Provider 可据此进行容错解析（例如将 `"true"` 转换成布尔 `true`，或在期望字符串时保持原样）。
 3. **兼容现有执行栈**：`ToolExecutor`、`ToolHandlerResult` 等现有类型无需大幅重写，只需接受 `ITool` 适配。
 4. **供应商无关**：参数声明脱离具体 Provider，实现统一解析逻辑（Stub/OpenAI/Anthropic 等）。
-5. **渐进迁移**：允许现有 `IToolHandler` 与新接口短期共存，通过适配器保障无缝过渡。
+5. **渐进迁移**：在早期阶段可通过适配器共存（已完成并淘汰 `IToolHandler`），确保现网行为逐步过渡。
 
 ## 设计原则
 
@@ -175,26 +175,26 @@ Provider 需要在构造 `ToolCallRequest` 时查找工具声明：
 
 ### 执行框架整合
 
-为兼容现有 `ToolExecutor`，引入以下组件：
+为兼容现有执行流水线，引入以下组件：
 
-1. **`ToolCatalog`**（新）：维护 `ITool` 列表，为 Provider、ToolExecutor 提供查询。
-2. **`ToolHandlerAdapter`**（过渡）：将 `ITool` 转换为旧接口 `IToolHandler`，内部调用 `tool.ExecuteAsync(new ToolExecutionContext(...))`。
-3. **`ToolRegistryBuilder`**：在启动时注册工具，生成 `ToolCatalog` 与适配器集合：
+1. **`AgentState.EnumerateWidgetTools()`**：集中收集 Widget 暴露的 `ITool` 实现，形成工具清单。
+2. **`ToolExecutor`**：直接消费 `ITool`，内部维护大小写无关索引，并负责参数兜底解析与环境注入；同时对外暴露 `Tools` 与 `TryGetTool` 供 orchestrator 查询。
+3. **`ToolRegistryBuilder`**（可选）：若后续需要动态注册，可在此处封装工具枚举与初始化流程：
 
 ```csharp
 IEnumerable<ITool> tools = new ITool[] { new MemorySearchTool(), new DiagnosticsTool() };
-var catalog = ToolCatalog.Create(tools);
-var executor = new ToolExecutor(catalog.CreateHandlers());
+var executor = new ToolExecutor(tools);
+var agent = new LlmAgent(agentState, executor);
 ```
 
-- `ToolExecutor` 的构造函数保持不变（接收 `IEnumerable<IToolHandler>`）。
-- Provider 通过 `catalog.Get(name)` 读取声明，用于参数解析。
-- 将来若完全迁移，可让 `ToolExecutor` 直接接受 `ToolCatalog`。
+- `ToolExecutor` 的构造函数现已接受 `IEnumerable<ITool>`，并可选提供环境工厂委托。
+- Orchestrator 与 Provider 通过 `executor.TryGetTool` / `executor.Tools` 读取声明，用于参数解析与提示构建。
+- 若后续需要动态注册，可在 `ToolRegistryBuilder` 中集中处理差异化加载逻辑。
 
 ### 生命周期与数据流
 
 ```
-LLM 输出 tool_call → Provider 查 ToolCatalog → 解析参数（参考 ValueKind）
+LLM 输出 tool_call → Provider/LlmAgent 通过 ToolExecutor.TryGetTool 查找声明 → 解析参数（参考 ValueKind）
     → 构造 ToolCallRequest → ToolExecutor.ExecuteAsync → ITool.ExecuteAsync
     → ToolHandlerResult → ToolResultsEntry 写入历史 → 调试/遥测
 ```
@@ -206,8 +206,8 @@ LLM 输出 tool_call → Provider 查 ToolCatalog → 解析参数（参考 Valu
 
 | 阶段 | 工作项 | 备注 |
 | --- | --- | --- |
-| Phase A（本迭代） | 定义 `ITool`、`ToolParameter` 等类型，编写 `ToolFrameworkDesign`（本文），实现 `ToolCatalog` 与适配器 | 属于设计 + 基础设施建设 |
-| Phase B | 更新 Stub Provider，使其读取 `ToolCatalog` 并按 `ValueKind` 解析参数；补充单元测试覆盖布尔/字符串混淆场景 | 需同步更新《ToolCallArgumentHandling.md》中的流程图 |
+| Phase A（本迭代） | 定义 `ITool`、`ToolParameter` 等类型，编写 `ToolFrameworkDesign`（本文），实现统一的 `ToolExecutor` 与工具索引 | 属于设计 + 基础设施建设 |
+| Phase B | 更新 Stub Provider，使其借助 `ToolExecutor` 提供的声明按 `ValueKind` 解析参数；补充单元测试覆盖布尔/字符串混淆场景 | 需同步更新《ToolCallArgumentHandling.md》中的流程图 |
 | Phase C | 替换示例工具（`SampleMemorySearchToolHandler` 等）为新 `ITool` 实现，观察回归 | `ToolExecutor` 保持兼容 |
 | Phase D | 在 Orchestrator 中暴露工具清单，为 Planner / UI 提供列表（待 LiveInfo 扩展） | 与 Conversation History 蓝图 Phase 4 对齐 |
 
@@ -217,12 +217,12 @@ LLM 输出 tool_call → Provider 查 ToolCatalog → 解析参数（参考 Valu
 - **多 Provider 支持**：同一工具声明应适用于 OpenAI/Anthropic，本方案将解析策略集中在公共层。
 - **错误处理**：当 `ParseError` 存在时，工具可根据 `ToolParameter` 的 `IsRequired` 判定是否拒绝执行；必要时由 `ToolExecutor` 在调用前拦截。
 - **可选参数**：`Cardinality = Optional` 且缺失时，工具无需访问 `Arguments`；若模型填入空字符串，应视为提供了值，需要工具自行判断。
-- **性能影响**：工具枚举数量有限，`ToolCatalog` 使用不可变字典缓存查找结果，避免在 Provider 热路径中重复构造。
+- **性能影响**：工具枚举数量有限，`ToolExecutor` 使用不可变字典缓存查找结果，避免在 Provider 热路径中重复构造。
 
 ## 后续扩展
 
 - **Schema 导出**：可根据 `ToolParameter` 自动生成 JSON Schema 或 Markdown 文档，减少重复维护。
-- **动态注册**：未来 LiveContextProto 支持运行时加载工具时，可扩展 `ToolCatalog.Builder` 动态增删。
+- **动态注册**：未来 LiveContextProto 支持运行时加载工具时，可扩展统一的注册构建器（例如 `ToolRegistryBuilder`）动态增删。
 - **遥测对齐**：在工具执行结果中附加 `ParseWarning` 摘要，便于调试模型输出质量。
 - **UI 集成**：Planner 或 UI 可读取参数枚举，生成表单式工具调用界面。
 
