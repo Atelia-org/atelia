@@ -44,35 +44,6 @@ internal sealed class MemoryNotebookWidget : IWidget {
         return builder.ToString().TrimEnd();
     }
 
-    public ToolHandlerResult ExecuteTool(string toolName, ToolExecutionContext executionContext) {
-        if (executionContext is null) { throw new ArgumentNullException(nameof(executionContext)); }
-
-        DebugUtil.Print(DebugCategory, $"[Execute] tool={toolName} callId={executionContext.Request.ToolCallId}");
-
-        try {
-            if (string.Equals(toolName, ToolNameReplace, StringComparison.OrdinalIgnoreCase)) {
-                var result = ExecuteReplace(executionContext);
-                DebugUtil.Print(DebugCategory, $"[Execute] tool={toolName} status={result.Status}");
-                return result;
-            }
-
-            DebugUtil.Print(DebugCategory, $"[Execute] tool={toolName} not supported");
-            return new ToolHandlerResult(
-                ToolExecutionStatus.Failed,
-                CreateUniformContent($"未注册的工具: {toolName}"),
-                ImmutableDictionary<string, object?>.Empty.SetItem("error", "tool_not_registered")
-            );
-        }
-        catch (Exception ex) {
-            DebugUtil.Print(DebugCategory, $"[Execute] tool={toolName} exception={ex.Message}");
-            return new ToolHandlerResult(
-                ToolExecutionStatus.Failed,
-                CreateUniformContent($"MemoryNotebookWidget 执行异常: {ex.Message}"),
-                ImmutableDictionary<string, object?>.Empty.SetItem("error", ex.GetType().Name)
-            );
-        }
-    }
-
     internal void ReplaceNotebookFromHost(string? content) {
         var normalized = Normalize(content);
         DebugUtil.Print(DebugCategory, $"[HostUpdate] length={(normalized?.Length ?? 0)}");
@@ -282,7 +253,9 @@ internal sealed class MemoryNotebookWidget : IWidget {
 
         public IReadOnlyList<ToolParameter> Parameters => _parameters;
 
-        public ValueTask<ToolHandlerResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken)
-            => new(_owner.ExecuteTool(Name, context));
+        public ValueTask<ToolHandlerResult> ExecuteAsync(ToolExecutionContext executionContext, CancellationToken cancellationToken) {
+            var result = _owner.ExecuteReplace(executionContext);
+            return ValueTask.FromResult(result);
+        }
     }
 }

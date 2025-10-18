@@ -7,11 +7,21 @@ using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Tools;
 
+/// <summary>
+/// 表示可供代理执行的工具定义。
+/// <para>
+/// <see cref="ToolExecutor"/> 会统一捕获并转换执行期间抛出的异常；
+/// 因此实现通常无需在 <see cref="ExecuteAsync"/> 中自行捕获异常，除非需要补充结构化上下文后再抛出。
+/// </para>
+/// </summary>
 internal interface ITool {
     string Name { get; }
     string Description { get; }
     IReadOnlyList<ToolParameter> Parameters { get; }
-    ValueTask<ToolHandlerResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken);
+    /// <summary>
+    /// 执行工具逻辑。实现可以直接抛出异常，由 <see cref="ToolExecutor"/> 统一捕获并转换为失败结果。
+    /// </summary>
+    ValueTask<ToolHandlerResult> ExecuteAsync(ToolExecutionContext executionContext, CancellationToken cancellationToken);
 }
 
 internal sealed record ToolExecutionContext {

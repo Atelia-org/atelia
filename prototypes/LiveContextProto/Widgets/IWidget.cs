@@ -15,5 +15,4 @@ internal interface IWidget {
     string Description { get; }
     IReadOnlyList<ITool> Tools { get; }
     string? RenderLiveScreen(WidgetRenderContext context);
-    ToolHandlerResult ExecuteTool(string toolName, ToolExecutionContext executionContext);
 }
