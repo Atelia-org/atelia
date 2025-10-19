@@ -27,7 +27,7 @@ internal sealed class LlmAgent {
     /// 未来扩展到支持多种输入渠道，比如增加即时通讯软件发来的消息。还需要增加发送方身份标识。
     /// 规划后续把部分信息直送LiveScreen，引入LiveEvent机制，要保证每条Event都能被LLM看到，又能直通LiveScreen来减少延迟(以LlmAgent状态机Step数计量)。
     private readonly ConcurrentQueue<PendingUserInput> _pendingInputs = new();
-    private readonly Dictionary<string, ToolExecutionRecord> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, LodToolCallResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly ImmutableArray<ToolDefinition> _toolDefinitions;
     private AgentRunState? _lastLoggedState;
@@ -176,10 +176,11 @@ internal sealed class LlmAgent {
         var nextCall = FindNextPendingToolCall(outputEntry);
         if (nextCall is null) { return StepOutcome.NoProgress; }
 
-        var record = await _toolExecutor.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
-        _pendingToolResults[nextCall.ToolCallId] = record;
+        var result = await _toolExecutor.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
+        _pendingToolResults[nextCall.ToolCallId] = result;
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Tool executed toolName={record.ToolName} callId={record.ToolCallId} status={record.Status}");
+        var toolName = result.ToolName ?? nextCall.ToolName;
+        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Tool executed toolName={toolName} callId={result.ToolCallId} status={result.Status}");
 
         return StepOutcome.FromToolExecution();
     }
@@ -189,32 +190,31 @@ internal sealed class LlmAgent {
 
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return StepOutcome.NoProgress; }
 
-        var executionRecords = new List<ToolExecutionRecord>(outputEntry.ToolCalls.Count);
-        var results = new HistoryToolCallResult[outputEntry.ToolCalls.Count];
+        var collectedResults = new List<LodToolCallResult>(outputEntry.ToolCalls.Count);
 
         for (var index = 0; index < outputEntry.ToolCalls.Count; index++) {
             var call = outputEntry.ToolCalls[index];
-            if (!_pendingToolResults.TryGetValue(call.ToolCallId, out var record)) {
-                DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Missing tool execution record callId={call.ToolCallId}");
+            if (!_pendingToolResults.TryGetValue(call.ToolCallId, out var result)) {
+                DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Missing tool execution result callId={call.ToolCallId}");
                 return StepOutcome.NoProgress;
             }
 
-            executionRecords.Add(record);
-            results[index] = CreateHistoryResult(record);
+            collectedResults.Add(result);
         }
 
-        var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
+        var failure = collectedResults.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
             : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Basic));
 
+        var results = collectedResults.ToArray();
         var entry = new ToolResultsEntry(results, executeError);
-        entry = entry with { Metadata = ToolResultMetadataHelper.PopulateSummary(executionRecords, entry.Metadata) };
 
         var appended = AppendToolResultsWithSummary(entry);
         _pendingToolResults.Clear();
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Tool results appended count={results.Length} failure={(failure is null ? "none" : failure.ToolCallId)}");
+        var failureCallId = failure?.ToolCallId ?? "none";
+        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Tool results appended count={results.Length} failure={failureCallId}");
 
         return StepOutcome.FromToolResults(appended);
     }
@@ -285,22 +285,16 @@ internal sealed class LlmAgent {
     }
 
     public AgentToolExecutionResult ExecuteTool(ToolCallRequest request, CancellationToken cancellationToken = default) {
-        var executionRecords = _toolExecutor.ExecuteBatchAsync(new[] { request }, cancellationToken).GetAwaiter().GetResult();
-        if (executionRecords.Count == 0) { return AgentToolExecutionResult.NoResults(); }
+        var executionResults = _toolExecutor.ExecuteBatchAsync(new[] { request }, cancellationToken).GetAwaiter().GetResult();
+        if (executionResults.Count == 0) { return AgentToolExecutionResult.NoResults(); }
 
-        var results = executionRecords
-            .Select(static record => CreateHistoryResult(record))
-            .ToArray();
-
-        var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
+        var failure = executionResults.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
         var failureMessage = failure is null
             ? null
             : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Basic));
 
-        var entry = new ToolResultsEntry(results, failureMessage);
-        entry = entry with { Metadata = ToolResultMetadataHelper.PopulateSummary(executionRecords, entry.Metadata) };
-
-        var appended = _state.AppendToolResults(entry);
+        var entry = new ToolResultsEntry(executionResults.ToArray(), failureMessage);
+        var appended = AppendToolResultsWithSummary(entry);
         return failure is null
             ? AgentToolExecutionResult.Success(appended)
             : AgentToolExecutionResult.SuccessWithFailure(appended, failureMessage);
@@ -341,27 +335,6 @@ internal sealed class LlmAgent {
 
         public static StepOutcome FromToolExecution()
             => new(true, null, null, null);
-    }
-
-    private static HistoryToolCallResult CreateHistoryResult(ToolExecutionRecord record) {
-        var basicSection = new[] { new KeyValuePair<string, string>(string.Empty, record.Result.Basic) };
-        IReadOnlyList<KeyValuePair<string, string>> extraSections;
-
-        if (string.IsNullOrEmpty(record.Result.Extra)) {
-            extraSections = Array.Empty<KeyValuePair<string, string>>();
-        }
-        else {
-            extraSections = new[] { new KeyValuePair<string, string>(string.Empty, record.Result.Extra!) };
-        }
-
-        var sections = new LevelOfDetailSections(basicSection, extraSections);
-        return new HistoryToolCallResult(
-            record.ToolName,
-            record.ToolCallId,
-            record.Status,
-            sections,
-            record.Elapsed
-        );
     }
 }
 

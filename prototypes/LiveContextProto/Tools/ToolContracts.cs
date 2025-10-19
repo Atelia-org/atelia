@@ -21,7 +21,7 @@ internal interface ITool {
     /// <summary>
     /// 执行工具逻辑。实现可以直接抛出异常，由 <see cref="ToolExecutor"/> 统一捕获并转换为失败结果。
     /// </summary>
-    ValueTask<ToolHandlerResult> ExecuteAsync(ToolExecutionContext executionContext, CancellationToken cancellationToken);
+    ValueTask<LodToolCallResult> ExecuteAsync(ToolExecutionContext executionContext, CancellationToken cancellationToken);
 }
 
 internal sealed record ToolExecutionContext {

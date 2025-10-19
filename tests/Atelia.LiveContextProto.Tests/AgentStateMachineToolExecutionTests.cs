@@ -31,7 +31,7 @@ public sealed class AgentStateMachineToolExecutionTests {
             context => {
                 toolInvocations.Add(context);
                 var metadata = ImmutableDictionary<string, object?>.Empty.SetItem("source", "delegate");
-                return new ToolHandlerResult(
+                return LodToolCallResult.FromContent(
                     ToolExecutionStatus.Success,
                     UniformContent("tool-output"),
                     metadata
@@ -130,7 +130,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var failingTool = new DelegateTool(
             "broken",
-            _ => new ToolHandlerResult(
+            _ => LodToolCallResult.FromContent(
                 ToolExecutionStatus.Failed,
                 UniformContent("tool failed"),
                 ImmutableDictionary<string, object?>.Empty.SetItem("error", "simulated_failure")
@@ -211,9 +211,9 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     private sealed class DelegateTool : ITool {
-        private readonly Func<ToolExecutionContext, ToolHandlerResult> _execute;
+        private readonly Func<ToolExecutionContext, LodToolCallResult> _execute;
 
-        public DelegateTool(string name, Func<ToolExecutionContext, ToolHandlerResult> execute) {
+        public DelegateTool(string name, Func<ToolExecutionContext, LodToolCallResult> execute) {
             Name = name ?? throw new ArgumentNullException(nameof(name));
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
         }
@@ -224,7 +224,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         public IReadOnlyList<ToolParameter> Parameters { get; } = Array.Empty<ToolParameter>();
 
-        public ValueTask<ToolHandlerResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken)
+        public ValueTask<LodToolCallResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken)
             => new(_execute(context));
     }
 }

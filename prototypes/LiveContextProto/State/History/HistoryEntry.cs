@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using Atelia.LiveContextProto.Context;
+using Atelia.LiveContextProto.Tools;
 
 namespace Atelia.LiveContextProto.State.History;
 
@@ -42,17 +43,9 @@ internal sealed record ModelOutputEntry(
 }
 
 internal sealed record ToolResultsEntry(
-    IReadOnlyList<HistoryToolCallResult> Results,
+    IReadOnlyList<LodToolCallResult> Results,
     string? ExecuteError
 ) : ContextualHistoryEntry {
     public override HistoryEntryKind Kind => HistoryEntryKind.ToolResult;
     public override ContextMessageRole Role => ContextMessageRole.ToolResult;
 }
-
-internal sealed record HistoryToolCallResult(
-    string ToolName,
-    string ToolCallId,
-    ToolExecutionStatus Status,
-    LevelOfDetailSections Result,
-    TimeSpan? Elapsed
-);

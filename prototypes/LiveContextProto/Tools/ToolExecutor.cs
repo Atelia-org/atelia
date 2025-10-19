@@ -9,34 +9,6 @@ using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Tools;
 
-internal sealed record ToolHandlerResult(
-    ToolExecutionStatus Status,
-    LevelOfDetailContent Result,
-    ImmutableDictionary<string, object?> Metadata
-) {
-    public ToolHandlerResult(ToolExecutionStatus status, string result)
-        : this(status, CreateUniformContent(result)) {
-    }
-
-    public ToolHandlerResult(ToolExecutionStatus status, LevelOfDetailContent result)
-        : this(status, result ?? throw new ArgumentNullException(nameof(result)), ImmutableDictionary<string, object?>.Empty) {
-    }
-
-    private static LevelOfDetailContent CreateUniformContent(string result) {
-        var value = result ?? string.Empty;
-        return new LevelOfDetailContent(value);
-    }
-}
-
-internal sealed record ToolExecutionRecord(
-    string ToolName,
-    string ToolCallId,
-    ToolExecutionStatus Status,
-    LevelOfDetailContent Result,
-    TimeSpan? Elapsed,
-    ImmutableDictionary<string, object?> Metadata
-);
-
 internal sealed class ToolExecutor {
     private const string DebugCategory = "Tools";
     private readonly IReadOnlyDictionary<string, ITool> _tools;
@@ -70,13 +42,13 @@ internal sealed class ToolExecutor {
         return _tools.TryGetValue(name, out tool!);
     }
 
-    public async ValueTask<IReadOnlyList<ToolExecutionRecord>> ExecuteBatchAsync(
+    public async ValueTask<IReadOnlyList<LodToolCallResult>> ExecuteBatchAsync(
         IReadOnlyList<ToolCallRequest> requests,
         CancellationToken cancellationToken
     ) {
-        if (requests.Count == 0) { return Array.Empty<ToolExecutionRecord>(); }
+        if (requests.Count == 0) { return Array.Empty<LodToolCallResult>(); }
 
-        var results = new List<ToolExecutionRecord>(requests.Count);
+        var results = new List<LodToolCallResult>(requests.Count);
 
         foreach (var request in requests) {
             var result = await ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
@@ -86,7 +58,7 @@ internal sealed class ToolExecutor {
         return results;
     }
 
-    public async ValueTask<ToolExecutionRecord> ExecuteAsync(
+    public async ValueTask<LodToolCallResult> ExecuteAsync(
         ToolCallRequest request,
         CancellationToken cancellationToken
     ) {
@@ -98,14 +70,12 @@ internal sealed class ToolExecutor {
             var metadata = ImmutableDictionary<string, object?>.Empty
                 .Add("error", "tool_not_found");
 
-            return new ToolExecutionRecord(
-                request.ToolName,
-                request.ToolCallId,
+            return LodToolCallResult.FromContent(
                 ToolExecutionStatus.Failed,
-                CreateUniformContent($"未找到工具: {request.ToolName}"),
-                null,
-                metadata
-            );
+                $"未找到工具: {request.ToolName}",
+                metadata: metadata
+            )
+                .WithContext(request.ToolName, request.ToolCallId);
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -114,27 +84,22 @@ internal sealed class ToolExecutor {
         var context = new ToolExecutionContext(normalizedRequest, environment);
 
         try {
-            var handlerResult = await tool.ExecuteAsync(context, cancellationToken).ConfigureAwait(false);
+            var result = await tool.ExecuteAsync(context, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Tool '{tool.Name}' returned null result.");
             stopwatch.Stop();
 
             DebugUtil.Print(
                 DebugCategory,
-                $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={handlerResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
+                $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={result.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            var metadata = handlerResult.Metadata ?? ImmutableDictionary<string, object?>.Empty;
+            var metadata = result.Metadata;
             if (!metadata.ContainsKey("elapsed_ms")) {
                 metadata = metadata.SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds);
+                result = result with { Metadata = metadata };
             }
 
-            return new ToolExecutionRecord(
-                request.ToolName,
-                request.ToolCallId,
-                handlerResult.Status,
-                handlerResult.Result,
-                stopwatch.Elapsed,
-                metadata
-            );
+            return result.WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
@@ -143,14 +108,12 @@ internal sealed class ToolExecutor {
                 .SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds)
                 .SetItem("error", "cancelled");
 
-            return new ToolExecutionRecord(
-                request.ToolName,
-                request.ToolCallId,
+            return LodToolCallResult.FromContent(
                 ToolExecutionStatus.Skipped,
-                CreateUniformContent("工具执行被取消"),
-                stopwatch.Elapsed,
-                metadata
-            );
+                "工具执行被取消",
+                metadata: metadata
+            )
+                .WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
         }
         catch (Exception ex) {
             stopwatch.Stop();
@@ -159,14 +122,12 @@ internal sealed class ToolExecutor {
                 .SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds)
                 .SetItem("error", ex.GetType().Name);
 
-            return new ToolExecutionRecord(
-                request.ToolName,
-                request.ToolCallId,
+            return LodToolCallResult.FromContent(
                 ToolExecutionStatus.Failed,
-                CreateUniformContent($"工具执行异常: {ex.Message}"),
-                stopwatch.Elapsed,
-                metadata
-            );
+                $"工具执行异常: {ex.Message}",
+                metadata: metadata
+            )
+                .WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
         }
     }
 
@@ -187,8 +148,4 @@ internal sealed class ToolExecutor {
         return string.Concat(primary, "; ", secondary);
     }
 
-    private static LevelOfDetailContent CreateUniformContent(string? content) {
-        var value = content ?? string.Empty;
-        return new LevelOfDetailContent(value);
-    }
 }

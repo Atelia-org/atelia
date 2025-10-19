@@ -137,7 +137,7 @@ internal sealed class AgentState {
         // var liveScreen = BuildLiveScreenSnapshot();
         // if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
 
-        // var results = new HistoryToolCallResult[entry.Results.Count];
+        // var results = new LodToolCallResult[entry.Results.Count];
         // for (var index = 0; index < entry.Results.Count; index++) {
         //     results[index] = entry.Results[index];
         // }

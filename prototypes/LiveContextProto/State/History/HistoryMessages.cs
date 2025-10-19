@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using Atelia.LiveContextProto.Context;
+using Atelia.LiveContextProto.Tools;
 
 namespace Atelia.LiveContextProto.State.History;
 
@@ -58,8 +59,8 @@ internal sealed class ToolResultsMessage : IToolResultsMessage {
             var sections = historyResult.Result.GetSections(_detailLevel);
             builder.Add(
                 new ToolCallResult(
-                    historyResult.ToolName,
-                    historyResult.ToolCallId,
+                    historyResult.ToolName!,
+                    historyResult.ToolCallId!,
                     historyResult.Status,
                     sections,
                     historyResult.Elapsed

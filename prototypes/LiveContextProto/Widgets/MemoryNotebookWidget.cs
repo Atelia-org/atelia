@@ -60,7 +60,7 @@ internal sealed class MemoryNotebookWidget : IWidget {
             ? DefaultSnapshot
             : _notebookContent;
 
-    private ToolHandlerResult ExecuteReplace(ToolExecutionContext executionContext) {
+    private LodToolCallResult ExecuteReplace(ToolExecutionContext executionContext) {
         var arguments = executionContext.Request.Arguments;
         if (arguments is null) { return Failure("工具参数尚未解析。", "arguments_missing"); }
 
@@ -112,7 +112,7 @@ internal sealed class MemoryNotebookWidget : IWidget {
         }
 
         if (ReferenceEquals(updated, current) || string.Equals(updated, current, StringComparison.Ordinal)) {
-            return new ToolHandlerResult(
+            return LodToolCallResult.FromContent(
                 ToolExecutionStatus.Success,
                 CreateUniformContent(appended ? "未追加任何内容：new_text 为空。" : "替换内容未发生变化。"),
                 BuildMetadata(current, updated, appended, searchAfter)
@@ -127,7 +127,7 @@ internal sealed class MemoryNotebookWidget : IWidget {
             ? "已追加新的记忆段落。"
             : "已完成记忆文本替换。";
 
-        return new ToolHandlerResult(
+        return LodToolCallResult.FromContent(
             ToolExecutionStatus.Success,
             CreateOperationContent(basicMessage, appended, current.Length, newContent.Length, searchAfter),
             BuildMetadata(current, newContent, appended, searchAfter)
@@ -210,9 +210,9 @@ internal sealed class MemoryNotebookWidget : IWidget {
         return content.TrimEnd();
     }
 
-    private ToolHandlerResult Failure(string message, string errorCode) {
+    private LodToolCallResult Failure(string message, string errorCode) {
         var metadata = ImmutableDictionary<string, object?>.Empty.SetItem("error", errorCode);
-        return new ToolHandlerResult(ToolExecutionStatus.Failed, CreateUniformContent(message), metadata);
+        return LodToolCallResult.FromContent(ToolExecutionStatus.Failed, CreateUniformContent(message), metadata);
     }
 
     private static LevelOfDetailContent CreateUniformContent(string? text)
@@ -326,7 +326,7 @@ internal sealed class MemoryNotebookWidget : IWidget {
 
         public IReadOnlyList<ToolParameter> Parameters => _parameters;
 
-        public ValueTask<ToolHandlerResult> ExecuteAsync(ToolExecutionContext executionContext, CancellationToken cancellationToken) {
+        public ValueTask<LodToolCallResult> ExecuteAsync(ToolExecutionContext executionContext, CancellationToken cancellationToken) {
             var result = _owner.ExecuteReplace(executionContext);
             return ValueTask.FromResult(result);
         }
