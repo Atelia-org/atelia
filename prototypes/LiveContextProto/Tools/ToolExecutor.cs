@@ -24,7 +24,7 @@ internal sealed record ToolHandlerResult(
 
     private static LevelOfDetailContent CreateUniformContent(string result) {
         var value = result ?? string.Empty;
-        return new LevelOfDetailContent(value, value, value);
+        return new LevelOfDetailContent(value);
     }
 }
 
@@ -189,6 +189,6 @@ internal sealed class ToolExecutor {
 
     private static LevelOfDetailContent CreateUniformContent(string? content) {
         var value = content ?? string.Empty;
-        return new LevelOfDetailContent(value, value, value);
+        return new LevelOfDetailContent(value);
     }
 }

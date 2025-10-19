@@ -15,7 +15,7 @@ public sealed class BaselineSnapshotTests {
         Assert.Equal(1, state.History.Count);
         var last = Assert.IsType<ModelInputEntry>(state.History[0]);
         Assert.Same(entry, last);
-        var liveText = LevelOfDetailSections.ToPlainText(last.ContentSections.Live);
+        var liveText = LevelOfDetailSections.ToPlainText(last.ContentSections.Basic);
         Assert.Contains("hello world", liveText);
     }
 }

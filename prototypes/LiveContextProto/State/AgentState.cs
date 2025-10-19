@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Text;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Context;
@@ -43,7 +42,7 @@ internal sealed class AgentState {
     }
 
     public ModelInputEntry AppendModelInput(ModelInputEntry entry) {
-        if (entry.ContentSections?.Live is not { Count: > 0 }) { throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry)); }
+        if (entry.ContentSections?.Basic is not { Count: > 0 }) { throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry)); }
 
         var enriched = AttachLiveScreen(entry);
         return AppendContextualEntry(enriched);
@@ -117,65 +116,67 @@ internal sealed class AgentState {
 
     private static LevelOfDetail ResolveDetailLevel(int ordinal)
         => ordinal == 0
-            ? LevelOfDetail.Live
-            : LevelOfDetail.Summary;
+            ? LevelOfDetail.BasicAndExtra
+            : LevelOfDetail.Basic;
 
     private ModelInputEntry AttachLiveScreen(ModelInputEntry entry) {
-        var liveScreen = BuildLiveScreenSnapshot();
-        if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+        return entry;
+        // var liveScreen = BuildLiveScreenSnapshot();
+        // if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
 
-        var sections = entry.ContentSections.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
-        if (ReferenceEquals(sections, entry.ContentSections)) { return entry; }
+        // var sections = entry.ContentSections.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        // if (ReferenceEquals(sections, entry.ContentSections)) { return entry; }
 
-        return entry with { ContentSections = sections };
+        // return entry with { ContentSections = sections };
     }
 
     private ToolResultsEntry AttachLiveScreen(ToolResultsEntry entry) {
-        if (entry.Results.Count == 0) { return entry; }
+        return entry;
+        // if (entry.Results.Count == 0) { return entry; }
 
-        var liveScreen = BuildLiveScreenSnapshot();
-        if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+        // var liveScreen = BuildLiveScreenSnapshot();
+        // if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
 
-        var results = new HistoryToolCallResult[entry.Results.Count];
-        for (var index = 0; index < entry.Results.Count; index++) {
-            results[index] = entry.Results[index];
-        }
+        // var results = new HistoryToolCallResult[entry.Results.Count];
+        // for (var index = 0; index < entry.Results.Count; index++) {
+        //     results[index] = entry.Results[index];
+        // }
 
-        var latest = results[^1];
-        var updatedSections = latest.Result.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
-        if (ReferenceEquals(updatedSections, latest.Result)) { return entry; }
+        // var latest = results[^1];
+        // var updatedSections = latest.Result.WithFullSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        // if (ReferenceEquals(updatedSections, latest.Result)) { return entry; }
 
-        results[^1] = latest with { Result = updatedSections };
-        return entry with { Results = results };
+        // results[^1] = latest with { Result = updatedSections };
+        // return entry with { Results = results };
     }
 
-    private string? BuildLiveScreenSnapshot() {
-        var fragments = new List<string>();
-        var renderContext = new WidgetRenderContext(this, ImmutableDictionary<string, object?>.Empty);
+    // private string? BuildLiveScreenSnapshot() {
+    //     var fragments = new List<string>();
+    //     var renderContext = new WidgetRenderContext(this, ImmutableDictionary<string, object?>.Empty);
 
-        foreach (var widget in _widgets) {
-            var fragment = widget.RenderLiveScreen(renderContext);
-            if (!string.IsNullOrWhiteSpace(fragment)) {
-                fragments.Add(fragment.TrimEnd());
-            }
-        }
+    //     foreach (var widget in _widgets) {
+    //         var fragment = widget.RenderLiveScreen(renderContext);
+    //         if (!string.IsNullOrWhiteSpace(fragment)) {
+    //             fragments.Add(fragment.TrimEnd());
+    //         }
+    //     }
 
-        if (fragments.Count == 0) { return null; }
+    //     if (fragments.Count == 0) { return null; }
 
-        var liveScreenBuilder = new StringBuilder();
-        liveScreenBuilder.AppendLine("# [Live Screen]");
-        liveScreenBuilder.AppendLine();
+    //     var liveScreenBuilder = new StringBuilder();
+    //     liveScreenBuilder.AppendLine("# [Live Screen]");
+    //     liveScreenBuilder.AppendLine();
 
-        for (var index = 0; index < fragments.Count; index++) {
-            liveScreenBuilder.AppendLine(fragments[index]);
+    //     for (var index = 0; index < fragments.Count; index++) {
+    //         liveScreenBuilder.AppendLine(fragments[index]);
 
-            if (index < fragments.Count - 1) {
-                liveScreenBuilder.AppendLine();
-            }
-        }
+    //         if (index < fragments.Count - 1) {
+    //             liveScreenBuilder.AppendLine();
+    //         }
+    //     }
 
-        return liveScreenBuilder.ToString().TrimEnd();
-    }
+    //     return liveScreenBuilder.ToString().TrimEnd();
+    // }
 
     internal IEnumerable<ITool> EnumerateWidgetTools() {
         foreach (var widget in _widgets) {

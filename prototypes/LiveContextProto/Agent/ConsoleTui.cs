@@ -121,7 +121,7 @@ internal sealed class ConsoleTui {
     }
 
     private void PrintToolResults(ToolResultsEntry entry) {
-        var toolMessage = new ToolResultsMessage(entry, LevelOfDetail.Live);
+        var toolMessage = new ToolResultsMessage(entry, LevelOfDetail.BasicAndExtra);
         WriteToolResults(toolMessage);
         PrintTokenUsage(toolMessage);
         WriteMetadataBlock(toolMessage.Metadata);

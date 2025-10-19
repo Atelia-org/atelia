@@ -95,7 +95,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var historyResult = toolResults.Results[0];
         Assert.Equal(ToolExecutionStatus.Success, historyResult.Status);
-        var plainText = LevelOfDetailSections.ToPlainText(historyResult.Result.Live);
+        var plainText = LevelOfDetailSections.ToPlainText(historyResult.Result.Basic);
         Assert.Contains("tool-output", plainText, StringComparison.Ordinal);
 
         Assert.Single(toolInvocations);
@@ -191,7 +191,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     private static LevelOfDetailContent UniformContent(string text)
-        => new(text, text, text);
+        => new(text);
 
     private sealed class FakeProviderClient : IProviderClient {
         private readonly Queue<IAsyncEnumerable<ModelOutputDelta>> _responses;

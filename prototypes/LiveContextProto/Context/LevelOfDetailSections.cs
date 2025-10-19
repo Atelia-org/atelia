@@ -5,82 +5,98 @@ using System.Text;
 namespace Atelia.LiveContextProto.Context;
 
 internal enum LevelOfDetail {
-    Live,
-    Summary,
-    Gist
+    Basic,
+    BasicAndExtra
 }
 
 internal sealed class LevelOfDetailContent {
-    public LevelOfDetailContent(
-        string live,
-        string summary,
-        string gist
-    ) {
-        Live = live ?? throw new ArgumentNullException(nameof(live));
-        Summary = summary ?? throw new ArgumentNullException(nameof(summary));
-        Gist = gist ?? throw new ArgumentNullException(nameof(gist));
+    private readonly string _basic;
+    private readonly string? _extra;
+    private string? _cachedBasicAndExtra;
+
+    public LevelOfDetailContent(string basic, string? extra = null) {
+        _basic = basic ?? throw new ArgumentNullException(nameof(basic));
+        _extra = string.IsNullOrEmpty(extra) ? null : extra;
     }
 
-    public string Live { get; }
+    public string Basic => _basic;
 
-    public string Summary { get; }
+    public string? Extra => _extra;
 
-    public string Gist { get; }
+    public string BasicAndExtra => _extra is null
+        ? _basic
+        : _cachedBasicAndExtra ??= Combine(_basic, _extra);
 
     public string GetContent(LevelOfDetail detail)
         => detail switch {
-            LevelOfDetail.Live => Live,
-            LevelOfDetail.Summary => Summary,
-            LevelOfDetail.Gist => Gist,
-            _ => Live
+            LevelOfDetail.Basic => _basic,
+            LevelOfDetail.BasicAndExtra => BasicAndExtra,
+            _ => _basic
         };
+
+    private static string Combine(string basic, string extra)
+        => string.Concat(basic, "\n", extra);
 }
 
 internal sealed class LevelOfDetailSections {
+    private readonly IReadOnlyList<KeyValuePair<string, string>> _basic;
+    private readonly IReadOnlyList<KeyValuePair<string, string>> _extra;
+    private IReadOnlyList<KeyValuePair<string, string>>? _cachedBasicAndExtra;
+
     public LevelOfDetailSections(
-        IReadOnlyList<KeyValuePair<string, string>> live,
-        IReadOnlyList<KeyValuePair<string, string>> summary,
-        IReadOnlyList<KeyValuePair<string, string>> gist
+        IReadOnlyList<KeyValuePair<string, string>> basic,
+        IReadOnlyList<KeyValuePair<string, string>> extra
     ) {
-        Live = live ?? throw new ArgumentNullException(nameof(live));
-        Summary = summary ?? throw new ArgumentNullException(nameof(summary));
-        Gist = gist ?? throw new ArgumentNullException(nameof(gist));
+        _basic = basic ?? throw new ArgumentNullException(nameof(basic));
+        _extra = extra ?? throw new ArgumentNullException(nameof(extra));
     }
 
-    public IReadOnlyList<KeyValuePair<string, string>> Live { get; }
+    public IReadOnlyList<KeyValuePair<string, string>> Basic => _basic;
 
-    public IReadOnlyList<KeyValuePair<string, string>> Summary { get; }
-
-    public IReadOnlyList<KeyValuePair<string, string>> Gist { get; }
+    public IReadOnlyList<KeyValuePair<string, string>> Extra => _extra;
 
     public IReadOnlyList<KeyValuePair<string, string>> GetSections(LevelOfDetail detail)
         => detail switch {
-            LevelOfDetail.Live => Live,
-            LevelOfDetail.Summary => Summary,
-            LevelOfDetail.Gist => Gist,
-            _ => Live
+            LevelOfDetail.Basic => _basic,
+            LevelOfDetail.BasicAndExtra => _extra.Count == 0
+                ? _basic
+                : _cachedBasicAndExtra ??= Combine(_basic, _extra),
+            _ => _basic
         };
 
-    public LevelOfDetailSections WithFullSection(string key, string value) {
+    public LevelOfDetailSections WithBasicSection(string key, string value) {
         if (key is null) { throw new ArgumentNullException(nameof(key)); }
         if (value is null) { throw new ArgumentNullException(nameof(value)); }
 
-        var updatedFull = AddOrReplaceSection(Live, key, value);
-        if (ReferenceEquals(updatedFull, Live)) { return this; }
+        var updatedBasic = AddOrReplaceSection(_basic, key, value);
+        if (ReferenceEquals(updatedBasic, _basic)) { return this; }
 
-        return new LevelOfDetailSections(updatedFull, Summary, Gist);
+        return new LevelOfDetailSections(updatedBasic, _extra);
     }
+
+    public LevelOfDetailSections WithExtraSection(string key, string value) {
+        if (key is null) { throw new ArgumentNullException(nameof(key)); }
+        if (value is null) { throw new ArgumentNullException(nameof(value)); }
+
+        var updatedExtra = AddOrReplaceSection(_extra, key, value);
+        if (ReferenceEquals(updatedExtra, _extra)) { return this; }
+
+        return new LevelOfDetailSections(_basic, updatedExtra);
+    }
+
+    public LevelOfDetailSections WithFullSection(string key, string value)
+        => WithBasicSection(key, value);
 
     public static LevelOfDetailSections CreateUniform(IReadOnlyList<KeyValuePair<string, string>> sections) {
         if (sections is null) { throw new ArgumentNullException(nameof(sections)); }
-        return new LevelOfDetailSections(sections, sections, sections);
+        return new LevelOfDetailSections(sections, Array.Empty<KeyValuePair<string, string>>());
     }
 
     public static LevelOfDetailSections FromSingleSection(string? title, string content) {
         if (content is null) { throw new ArgumentNullException(nameof(content)); }
         var key = title ?? string.Empty;
         var section = new[] { new KeyValuePair<string, string>(key, content) };
-        return CreateUniform(section);
+        return new LevelOfDetailSections(section, Array.Empty<KeyValuePair<string, string>>());
     }
 
     public static string ToPlainText(IReadOnlyList<KeyValuePair<string, string>> sections) {
@@ -106,11 +122,31 @@ internal sealed class LevelOfDetailSections {
         return builder.ToString();
     }
 
+    private static IReadOnlyList<KeyValuePair<string, string>> Combine(
+        IReadOnlyList<KeyValuePair<string, string>> basic,
+        IReadOnlyList<KeyValuePair<string, string>> extra
+    ) {
+        var combined = new KeyValuePair<string, string>[basic.Count + extra.Count];
+
+        var writeIndex = 0;
+        for (var index = 0; index < basic.Count; index++) {
+            combined[writeIndex++] = basic[index];
+        }
+
+        for (var index = 0; index < extra.Count; index++) {
+            combined[writeIndex++] = extra[index];
+        }
+
+        return combined;
+    }
+
     private static IReadOnlyList<KeyValuePair<string, string>> AddOrReplaceSection(
         IReadOnlyList<KeyValuePair<string, string>> sections,
         string key,
         string value
     ) {
+        if (sections.Count == 0) { return new[] { new KeyValuePair<string, string>(key, value) }; }
+
         var replaced = false;
         var builder = new List<KeyValuePair<string, string>>(sections.Count + 1);
 

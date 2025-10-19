@@ -119,16 +119,18 @@ internal sealed class MemoryNotebookWidget : IWidget {
             );
         }
 
-        ApplyNotebookContent(Normalize(updated), "tool_replace");
+        var normalizedUpdated = Normalize(updated);
+        ApplyNotebookContent(normalizedUpdated, "tool_replace");
+
+        var newContent = normalizedUpdated ?? string.Empty;
+        var basicMessage = appended
+            ? "已追加新的记忆段落。"
+            : "已完成记忆文本替换。";
 
         return new ToolHandlerResult(
             ToolExecutionStatus.Success,
-            CreateUniformContent(
-                appended
-                    ? "已追加新的记忆段落。"
-                    : "已完成记忆文本替换。"
-            ),
-            BuildMetadata(current, _notebookContent ?? string.Empty, appended, searchAfter)
+            CreateOperationContent(basicMessage, appended, current.Length, newContent.Length, searchAfter),
+            BuildMetadata(current, newContent, appended, searchAfter)
         );
     }
 
@@ -214,7 +216,78 @@ internal sealed class MemoryNotebookWidget : IWidget {
     }
 
     private static LevelOfDetailContent CreateUniformContent(string? text)
-        => new(text ?? string.Empty, text ?? string.Empty, text ?? string.Empty);
+        => new(text ?? string.Empty);
+
+    private static LevelOfDetailContent CreateOperationContent(
+        string basicMessage,
+        bool appended,
+        int previousLength,
+        int newLength,
+        string? searchAfter
+    ) {
+        var extra = BuildExtraDetails(appended, previousLength, newLength, searchAfter);
+        return new LevelOfDetailContent(basicMessage, extra);
+    }
+
+    private static string BuildExtraDetails(bool appended, int previousLength, int newLength, string? searchAfter) {
+        var delta = newLength - previousLength;
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.Append("- operation: ").Append(appended ? "append" : "replace").AppendLine();
+        builder.Append("- delta: ");
+        if (delta >= 0) { builder.Append('+'); }
+        builder.Append(delta).AppendLine();
+        builder.Append("- new_length: ").Append(newLength);
+
+        var anchorText = FormatAnchor(searchAfter);
+        if (anchorText is not null) {
+            builder.AppendLine();
+            builder.Append("- anchor: ").Append(anchorText);
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string? FormatAnchor(string? searchAfter) {
+        if (string.IsNullOrWhiteSpace(searchAfter)) { return null; }
+
+        var normalized = NormalizeAnchorWhitespace(searchAfter).Trim();
+        if (normalized.Length == 0) { return null; }
+
+        const int MaxLength = 80;
+        const int PrefixLength = 40;
+        const int SuffixLength = 35;
+
+        if (normalized.Length <= MaxLength || normalized.Length <= PrefixLength + SuffixLength) { return normalized; }
+
+        var prefix = normalized.Substring(0, PrefixLength);
+        var suffix = normalized.Substring(normalized.Length - SuffixLength, SuffixLength);
+        return string.Concat(prefix, "…", suffix);
+    }
+
+    private static string NormalizeAnchorWhitespace(string value) {
+        var builder = new StringBuilder(value.Length);
+        var previousWasSpace = false;
+
+        foreach (var ch in value) {
+            var normalizedChar = ch switch {
+                '\r' or '\n' or '\t' => ' ',
+                _ => ch
+            };
+
+            if (char.IsWhiteSpace(normalizedChar)) {
+                if (previousWasSpace) { continue; }
+                builder.Append(' ');
+                previousWasSpace = true;
+            }
+            else {
+                builder.Append(normalizedChar);
+                previousWasSpace = false;
+            }
+        }
+
+        return builder.ToString();
+    }
 
     private sealed class MemoryNotebookReplaceTool : ITool {
         private readonly MemoryNotebookWidget _owner;

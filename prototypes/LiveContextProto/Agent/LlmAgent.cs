@@ -206,7 +206,7 @@ internal sealed class LlmAgent {
         var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
-            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Live));
+            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Basic));
 
         var entry = new ToolResultsEntry(results, executeError);
         entry = entry with { Metadata = ToolResultMetadataHelper.PopulateSummary(executionRecords, entry.Metadata) };
@@ -295,7 +295,7 @@ internal sealed class LlmAgent {
         var failure = results.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
         var failureMessage = failure is null
             ? null
-            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Live));
+            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Basic));
 
         var entry = new ToolResultsEntry(results, failureMessage);
         entry = entry with { Metadata = ToolResultMetadataHelper.PopulateSummary(executionRecords, entry.Metadata) };
@@ -344,9 +344,17 @@ internal sealed class LlmAgent {
     }
 
     private static HistoryToolCallResult CreateHistoryResult(ToolExecutionRecord record) {
-        var sections = LevelOfDetailSections.CreateUniform(
-            new[] { new KeyValuePair<string, string>(string.Empty, record.Result.Live) }
-        );
+        var basicSection = new[] { new KeyValuePair<string, string>(string.Empty, record.Result.Basic) };
+        IReadOnlyList<KeyValuePair<string, string>> extraSections;
+
+        if (string.IsNullOrEmpty(record.Result.Extra)) {
+            extraSections = Array.Empty<KeyValuePair<string, string>>();
+        }
+        else {
+            extraSections = new[] { new KeyValuePair<string, string>(string.Empty, record.Result.Extra!) };
+        }
+
+        var sections = new LevelOfDetailSections(basicSection, extraSections);
         return new HistoryToolCallResult(
             record.ToolName,
             record.ToolCallId,
