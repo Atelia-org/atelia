@@ -13,7 +13,7 @@
    - 转换 `IContextMessage` → Anthropic API 格式
    - 处理 System/User/Assistant/ToolResult 映射
    - 实现消息序列规范化（交错约束）
-   - 支持 LiveScreen 注入
+   - 支持 Window 注入
 
 3. **AnthropicStreamParser.cs** (210 行)
    - 解析 SSE 事件流
@@ -28,7 +28,7 @@
 
 5. **AnthropicIntegrationExample.cs** (210 行)
    - 提供 3 个实战示例
-   - 演示基础对话、工具调用、LiveScreen 注入
+   - 演示基础对话、工具调用、Window 注入
 
 ### ✅ 文档（3 个）
 
@@ -47,7 +47,7 @@
 - ✅ 实现 `IProviderClient` 接口
 - ✅ 消费 `IReadOnlyList<IContextMessage>`
 - ✅ 输出 `ModelOutputDelta` 流
-- ✅ 遵循 LiveScreen 处理约定（`ILiveScreenCarrier`）
+- ✅ 遵循 Window 处理约定（`IWindowCarrier`）
 - ✅ 解析工具参数并填充 `Arguments` 字典
 
 ### 2. Anthropic 协议适配
@@ -76,7 +76,7 @@
 | 消费 `IContextMessage` | ✅ | `AnthropicMessageConverter` |
 | 输出 `ModelOutputDelta` | ✅ | `AnthropicStreamParser` |
 | 工具调用聚合 | ✅ | 多个 `tool_result` 合并到一条消息 |
-| LiveScreen 注入 | ✅ | 检测 `ILiveScreenCarrier` 并追加 |
+| Window 注入 | ✅ | 检测 `IWindowCarrier` 并追加 |
 | 参数解析 | ✅ | `Arguments` 字典 + `ParseError` |
 | Invocation 描述 | ✅ | `ModelInvocationDescriptor` 传递 |
 | Token 统计 | ✅ | 含 `CachedPromptTokens` |
@@ -122,9 +122,9 @@ await foreach (var delta in client.CallModelAsync(request, ct)) {
 }
 ```
 
-### 场景 3：LiveScreen 注入
+### 场景 3：Window 注入
 ```csharp
-var decorated = ContextMessageLiveScreenHelper.AttachLiveScreen(input, liveScreen);
+var decorated = ContextMessageWindowHelper.AttachWindow(input, Window);
 context.Add(decorated);
 ```
 

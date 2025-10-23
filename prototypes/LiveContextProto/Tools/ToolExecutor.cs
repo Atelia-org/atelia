@@ -67,15 +67,13 @@ internal sealed class ToolExecutor {
         if (!_tools.TryGetValue(request.ToolName, out var tool)) {
             DebugUtil.Print(DebugCategory, $"[Executor] Missing tool toolName={request.ToolName}");
 
-            var metadata = ImmutableDictionary<string, object?>.Empty
-                .Add("error", "tool_not_found");
-
-            return LodToolCallResult.FromContent(
-                ToolExecutionStatus.Failed,
-                $"未找到工具: {request.ToolName}",
-                metadata: metadata
-            )
-                .WithContext(request.ToolName, request.ToolCallId);
+            var message = $"未找到工具: {request.ToolName}";
+            return new LodToolCallResult(
+                status: ToolExecutionStatus.Failed,
+                result: new LevelOfDetailContent(message, message),
+                toolName: request.ToolName,
+                toolCallId: request.ToolCallId
+            );
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -93,11 +91,7 @@ internal sealed class ToolExecutor {
                 $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={result.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            var metadata = result.Metadata;
-            if (!metadata.ContainsKey("elapsed_ms")) {
-                metadata = metadata.SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds);
-                result = result with { Metadata = metadata };
-            }
+            var elapsed_ms = stopwatch.Elapsed.TotalMilliseconds;
 
             return result.WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
         }
@@ -108,12 +102,14 @@ internal sealed class ToolExecutor {
                 .SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds)
                 .SetItem("error", "cancelled");
 
-            return LodToolCallResult.FromContent(
-                ToolExecutionStatus.Skipped,
-                "工具执行被取消",
-                metadata: metadata
-            )
-                .WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
+            var message = "工具执行被取消";
+            return new LodToolCallResult(
+                status: ToolExecutionStatus.Skipped,
+                result: new LevelOfDetailContent(message, message),
+                toolName: request.ToolName,
+                toolCallId: request.ToolCallId,
+                elapsed: stopwatch.Elapsed
+            );
         }
         catch (Exception ex) {
             stopwatch.Stop();
@@ -122,12 +118,14 @@ internal sealed class ToolExecutor {
                 .SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds)
                 .SetItem("error", ex.GetType().Name);
 
-            return LodToolCallResult.FromContent(
-                ToolExecutionStatus.Failed,
-                $"工具执行异常: {ex.Message}",
-                metadata: metadata
-            )
-                .WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
+            var message = $"工具执行异常: {ex.Message}";
+            return new LodToolCallResult(
+                status: ToolExecutionStatus.Failed,
+                result: new LevelOfDetailContent(message, message),
+                toolName: request.ToolName,
+                toolCallId: request.ToolCallId,
+                elapsed: stopwatch.Elapsed
+            );
         }
     }
 

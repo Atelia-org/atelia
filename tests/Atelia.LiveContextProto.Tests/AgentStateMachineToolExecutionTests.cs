@@ -23,18 +23,16 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     [Fact]
     public async Task DoStepAsync_CompletesToolCallLifecycle() {
-        var state = AgentState.CreateDefault(timestampProvider: () => DateTimeOffset.UnixEpoch);
+        var state = AgentState.CreateDefault();
 
         var toolInvocations = new List<ToolExecutionContext>();
         var echoTool = new DelegateTool(
             "echo",
             context => {
                 toolInvocations.Add(context);
-                var metadata = ImmutableDictionary<string, object?>.Empty.SetItem("source", "delegate");
                 return LodToolCallResult.FromContent(
                     ToolExecutionStatus.Success,
-                    UniformContent("tool-output"),
-                    metadata
+                    UniformContent("tool-output")
                 );
             }
         );
@@ -62,7 +60,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
         var agent = new LlmAgent(state, executor);
 
-        agent.EnqueueUserInput("hello world");
+        agent.AppendNotification("hello world");
 
         var step1 = await agent.DoStepAsync(profile);
         Assert.True(step1.ProgressMade);
@@ -95,21 +93,12 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var historyResult = toolResults.Results[0];
         Assert.Equal(ToolExecutionStatus.Success, historyResult.Status);
-        var plainText = LevelOfDetailSections.ToPlainText(historyResult.Result.Basic);
+        var plainText = historyResult.Result.Basic;
         Assert.Contains("tool-output", plainText, StringComparison.Ordinal);
 
         Assert.Single(toolInvocations);
         Assert.Equal("call-1", toolInvocations[0].Request.ToolCallId);
         Assert.Equal("echo", toolInvocations[0].Request.ToolName);
-
-        var metadata = toolResults.Metadata;
-        Assert.True(metadata.TryGetValue("tool_call_count", out var callCountValue));
-        Assert.Equal(1, Assert.IsType<int>(callCountValue));
-        Assert.True(metadata.TryGetValue("tool_failed_count", out var failedCountValue));
-        Assert.Equal(0, Assert.IsType<int>(failedCountValue));
-        Assert.True(metadata.TryGetValue("per_call_metadata", out var perCallMetadata));
-        var perCall = Assert.IsType<ImmutableDictionary<string, object?>>(perCallMetadata);
-        Assert.True(perCall.ContainsKey("call-1"));
 
         var step5 = await agent.DoStepAsync(profile);
         Assert.True(step5.ProgressMade);
@@ -126,14 +115,13 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     [Fact]
     public async Task DoStepAsync_ToolFailureProducesExecuteError() {
-        var state = AgentState.CreateDefault(timestampProvider: () => DateTimeOffset.UnixEpoch);
+        var state = AgentState.CreateDefault();
 
         var failingTool = new DelegateTool(
             "broken",
             _ => LodToolCallResult.FromContent(
                 ToolExecutionStatus.Failed,
-                UniformContent("tool failed"),
-                ImmutableDictionary<string, object?>.Empty.SetItem("error", "simulated_failure")
+                UniformContent("tool failed")
             )
         );
 
@@ -152,7 +140,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
         var agent = new LlmAgent(state, executor);
 
-        agent.EnqueueUserInput("trigger failure");
+        agent.AppendNotification("trigger failure");
 
         await agent.DoStepAsync(profile); // WaitingInput -> PendingInput
         await agent.DoStepAsync(profile); // PendingInput -> WaitingToolResults
@@ -167,14 +155,10 @@ public sealed class AgentStateMachineToolExecutionTests {
         var toolResults = step4.ToolResults!;
         Assert.Equal("tool failed", toolResults.ExecuteError);
         Assert.Equal(ToolExecutionStatus.Failed, toolResults.Results.Single().Status);
-
-        var metadata = toolResults.Metadata;
-        Assert.True(metadata.TryGetValue("tool_failed_count", out var failedCountValue));
-        Assert.Equal(1, Assert.IsType<int>(failedCountValue));
     }
 
     private static IReadOnlyCollection<ITool> CreateTools(AgentState state, params ITool[] extraTools)
-        => state.EnumerateWidgetTools().Concat(extraTools).ToArray();
+        => state.EnumerateAppTools().Concat(extraTools).ToArray();
 
     private static ToolCallRequest CreateToolCallRequest(
         string toolName,
@@ -191,7 +175,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     private static LevelOfDetailContent UniformContent(string text)
-        => new(text);
+        => new(text, text);
 
     private sealed class FakeProviderClient : IProviderClient {
         private readonly Queue<IAsyncEnumerable<ModelOutputDelta>> _responses;

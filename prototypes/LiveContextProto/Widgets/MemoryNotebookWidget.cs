@@ -7,28 +7,28 @@ using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Tools;
 
-namespace Atelia.LiveContextProto.Widgets;
+namespace Atelia.LiveContextProto.Apps;
 
-internal sealed class MemoryNotebookWidget : IWidget {
+internal sealed class MemoryNotebookApp : IApp {
     internal const string ToolNameReplace = "memory_notebook_replace";
-    private const string DebugCategory = "MemoryNotebookWidget";
+    private const string DebugCategory = "MemoryNotebookApp";
     internal const string DefaultSnapshot = "（暂无 Memory Notebook 内容）";
 
     private readonly ImmutableArray<ITool> _tools;
 
     private string? _notebookContent;
 
-    public MemoryNotebookWidget() {
+    public MemoryNotebookApp() {
         _tools = ImmutableArray.Create<ITool>(new MemoryNotebookReplaceTool(this));
     }
 
     public string Name => "MemoryNotebook";
 
-    public string Description => "封装管理 Memory Notebook 状态的 Widget，提供工具化替换与 LiveScreen 渲染能力。";
+    public string Description => "封装管理 Memory Notebook 状态的 App，提供工具化替换与 Window 渲染能力。";
 
     public IReadOnlyList<ITool> Tools => _tools;
 
-    public string? RenderLiveScreen(WidgetRenderContext context) {
+    public string? RenderWindow(AppRenderContext context) {
         var builder = new StringBuilder();
         builder.AppendLine("## Memory Notebook");
         builder.AppendLine();
@@ -112,10 +112,10 @@ internal sealed class MemoryNotebookWidget : IWidget {
         }
 
         if (ReferenceEquals(updated, current) || string.Equals(updated, current, StringComparison.Ordinal)) {
+            string message = appended ? "未追加任何内容：new_text 为空。" : "替换内容未发生变化。";
             return LodToolCallResult.FromContent(
                 ToolExecutionStatus.Success,
-                CreateUniformContent(appended ? "未追加任何内容：new_text 为空。" : "替换内容未发生变化。"),
-                BuildMetadata(current, updated, appended, searchAfter)
+                new LevelOfDetailContent(message, message)
             );
         }
 
@@ -129,8 +129,7 @@ internal sealed class MemoryNotebookWidget : IWidget {
 
         return LodToolCallResult.FromContent(
             ToolExecutionStatus.Success,
-            CreateOperationContent(basicMessage, appended, current.Length, newContent.Length, searchAfter),
-            BuildMetadata(current, newContent, appended, searchAfter)
+            CreateOperationContent(basicMessage, appended, current.Length, newContent.Length, searchAfter)
         );
     }
 
@@ -211,12 +210,8 @@ internal sealed class MemoryNotebookWidget : IWidget {
     }
 
     private LodToolCallResult Failure(string message, string errorCode) {
-        var metadata = ImmutableDictionary<string, object?>.Empty.SetItem("error", errorCode);
-        return LodToolCallResult.FromContent(ToolExecutionStatus.Failed, CreateUniformContent(message), metadata);
+        return LodToolCallResult.FromContent(ToolExecutionStatus.Failed, new LevelOfDetailContent(message, message));
     }
-
-    private static LevelOfDetailContent CreateUniformContent(string? text)
-        => new(text ?? string.Empty);
 
     private static LevelOfDetailContent CreateOperationContent(
         string basicMessage,
@@ -290,10 +285,10 @@ internal sealed class MemoryNotebookWidget : IWidget {
     }
 
     private sealed class MemoryNotebookReplaceTool : ITool {
-        private readonly MemoryNotebookWidget _owner;
+        private readonly MemoryNotebookApp _owner;
         private readonly ImmutableArray<ToolParameter> _parameters;
 
-        public MemoryNotebookReplaceTool(MemoryNotebookWidget owner) {
+        public MemoryNotebookReplaceTool(MemoryNotebookApp owner) {
             _owner = owner;
             _parameters = ImmutableArray.Create(
                 new ToolParameter(

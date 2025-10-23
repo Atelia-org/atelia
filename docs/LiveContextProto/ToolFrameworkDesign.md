@@ -177,7 +177,7 @@ Provider 需要在构造 `ToolCallRequest` 时查找工具声明：
 
 为兼容现有执行流水线，引入以下组件：
 
-1. **`AgentState.EnumerateWidgetTools()`**：集中收集 Widget 暴露的 `ITool` 实现，形成工具清单。
+1. **`AgentState.EnumerateAppTools()`**：集中收集 App 暴露的 `ITool` 实现，形成工具清单。
 2. **`ToolExecutor`**：直接消费 `ITool`，内部维护大小写无关索引，并负责参数兜底解析与环境注入；同时对外暴露 `Tools` 与 `TryGetTool` 供 orchestrator 查询。
 3. **`ToolRegistryBuilder`**（可选）：若后续需要动态注册，可在此处封装工具枚举与初始化流程：
 

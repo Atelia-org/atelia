@@ -35,9 +35,9 @@ var client = new AnthropicProviderClient(
 | `IModelOutputMessage` | `assistant` 消息 + text/tool_use blocks | Contents + ToolCalls |
 | `IToolResultsMessage` | `user` 消息 + tool_result blocks | 多个结果聚合到一条消息中 |
 
-**LiveScreen 处理：**
-- 检测 `ILiveScreenCarrier` 接口
-- 将 LiveScreen 内容作为额外的 text block 追加到对应消息末尾
+**Window 处理：**
+- 检测 `IWindowCarrier` 接口
+- 将 Window 内容作为额外的 text block 追加到对应消息末尾
 
 **消息序列规范化：**
 - 连续相同角色的消息会自动合并

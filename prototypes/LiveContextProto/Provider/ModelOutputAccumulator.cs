@@ -62,13 +62,10 @@ internal static class ModelOutputAccumulator {
             contents.Add(string.Empty);
         }
 
-        var outputEntry = new ModelOutputEntry(contents, toolCalls, invocation);
-        if (tokenUsage is not null) {
-            var metadata = outputEntry.Metadata.SetItem("token_usage", tokenUsage);
-            outputEntry = outputEntry with { Metadata = metadata };
-        }
+        var fullContentText = string.Join('\n', contents);
+        var outputEntry = new ModelOutputEntry(fullContentText, toolCalls, invocation);
 
-        DebugUtil.Print(DebugCategory, $"[Aggregate] Produced output segments={contents.Count}, toolCalls={toolCalls.Count}");
+        DebugUtil.Print(DebugCategory, $"[Aggregate] Produced output fullContentText.Length={fullContentText.Length}, toolCalls={toolCalls.Count}");
 
         return outputEntry;
     }

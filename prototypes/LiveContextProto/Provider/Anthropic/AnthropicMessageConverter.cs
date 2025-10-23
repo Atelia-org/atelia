@@ -17,33 +17,27 @@ internal static class AnthropicMessageConverter {
         var messages = new List<AnthropicMessage>();
 
         foreach (var contextMessage in request.Context) {
+            var blocks = new List<AnthropicContentBlock>();
             switch (contextMessage) {
-                case IModelInputMessage input:
-                    var userContent = BuildUserContent(input);
+                case ModelInputMessage input:
+                    if (contextMessage is ToolResultsMessage toolResults) {
+                        BuildToolResultsOwnContent(toolResults, blocks);
+                    }
+                    BuildModelInputOwnContent(input, blocks);
                     messages.Add(
                         new AnthropicMessage {
                             Role = "user",
-                            Content = userContent
+                            Content = blocks
                         }
                     );
                     break;
 
                 case IModelOutputMessage output:
-                    var assistantContent = BuildAssistantContent(output);
+                    BuildAssistantContent(output, blocks);
                     messages.Add(
                         new AnthropicMessage {
                             Role = "assistant",
-                            Content = assistantContent
-                        }
-                    );
-                    break;
-
-                case IToolResultsMessage toolResults:
-                    var toolResultContent = BuildToolResultContent(toolResults);
-                    messages.Add(
-                        new AnthropicMessage {
-                            Role = "user",
-                            Content = toolResultContent
+                            Content = blocks
                         }
                     );
                     break;
@@ -69,43 +63,58 @@ internal static class AnthropicMessageConverter {
         return apiRequest;
     }
 
-    private static List<AnthropicContentBlock> BuildUserContent(IModelInputMessage input) {
-        var blocks = new List<AnthropicContentBlock>();
+    private static void BuildToolResultsOwnContent(ToolResultsMessage toolResults, List<AnthropicContentBlock> blocks) {
+        // Anthropic 要求将多个工具结果聚合到一条 user 消息中
+        foreach (var result in toolResults.Results) {
+            var isError = result.Status != ToolExecutionStatus.Success;
 
-        var sections = input.ContentSections.WithoutLiveScreen(out var liveScreen);
+            blocks.Add(
+                new AnthropicToolResultBlock {
+                    ToolUseId = result.ToolCallId,
+                    Content = result.Result,
+                    IsError = isError ? true : null // 仅在出错时写入
+                }
+            );
+        }
 
-        // 处理主要内容分段
-        foreach (var section in sections) {
-            var text = string.IsNullOrEmpty(section.Key)
-                ? section.Value
-                : $"# {section.Key}\n\n{section.Value}";
+        // 如果整体执行失败，追加错误说明
+        if (!string.IsNullOrEmpty(toolResults.ExecuteError)) {
+            blocks.Add(
+                new AnthropicTextBlock {
+                    Text = $"[Execution Error]: {toolResults.ExecuteError}"
+                }
+            );
+        }
+    }
 
-            if (!string.IsNullOrWhiteSpace(text)) {
-                blocks.Add(new AnthropicTextBlock { Text = text });
+    private static void BuildModelInputOwnContent(ModelInputMessage input, List<AnthropicContentBlock> blocks) {
+        // 处理事件内容分段
+        {
+            var events = input.Notifications;
+            if (!string.IsNullOrWhiteSpace(events)) {
+                blocks.Add(new AnthropicTextBlock { Text = events });
             }
         }
 
-        // 注入 LiveScreen（如果存在）
-        if (!string.IsNullOrWhiteSpace(liveScreen)) {
-            blocks.Add(new AnthropicTextBlock { Text = liveScreen });
+        // 处理状态内容分段
+        {
+            var states = input.Windows;
+            if (!string.IsNullOrWhiteSpace(states)) {
+                blocks.Add(new AnthropicTextBlock { Text = states });
+            }
         }
 
         // 确保至少有一个内容块
         if (blocks.Count == 0) {
             blocks.Add(new AnthropicTextBlock { Text = "(empty input)" });
         }
-
-        return blocks;
     }
 
-    private static List<AnthropicContentBlock> BuildAssistantContent(IModelOutputMessage output) {
-        var blocks = new List<AnthropicContentBlock>();
-
+    private static void BuildAssistantContent(IModelOutputMessage output, List<AnthropicContentBlock> blocks) {
         // 文本内容
-        foreach (var content in output.Contents) {
-            if (!string.IsNullOrWhiteSpace(content)) {
-                blocks.Add(new AnthropicTextBlock { Text = content });
-            }
+        var content = output.Contents;
+        if (!string.IsNullOrWhiteSpace(content)) {
+            blocks.Add(new AnthropicTextBlock { Text = content });
         }
 
         // 工具调用
@@ -126,46 +135,6 @@ internal static class AnthropicMessageConverter {
         if (blocks.Count == 0) {
             blocks.Add(new AnthropicTextBlock { Text = string.Empty });
         }
-
-        return blocks;
-    }
-
-    private static List<AnthropicContentBlock> BuildToolResultContent(IToolResultsMessage toolResults) {
-        var blocks = new List<AnthropicContentBlock>();
-        string? liveScreen = null;
-
-        // Anthropic 要求将多个工具结果聚合到一条 user 消息中
-        foreach (var result in toolResults.Results) {
-            var isError = result.Status != ToolExecutionStatus.Success;
-            var sections = result.Result.WithoutLiveScreen(out var resultLiveScreen);
-            if (!string.IsNullOrWhiteSpace(resultLiveScreen) && string.IsNullOrWhiteSpace(liveScreen)) {
-                liveScreen = resultLiveScreen;
-            }
-
-            blocks.Add(
-                new AnthropicToolResultBlock {
-                    ToolUseId = result.ToolCallId,
-                    Content = LevelOfDetailSections.ToPlainText(sections),
-                    IsError = isError ? true : null // 仅在出错时写入
-                }
-            );
-        }
-
-        // 如果整体执行失败，追加错误说明
-        if (toolResults.ExecuteError is { } error) {
-            blocks.Add(
-                new AnthropicTextBlock {
-                    Text = $"[Execution Error]: {error}"
-                }
-            );
-        }
-
-        // 注入 LiveScreen（如果存在）
-        if (!string.IsNullOrWhiteSpace(liveScreen)) {
-            blocks.Add(new AnthropicTextBlock { Text = liveScreen });
-        }
-
-        return blocks;
     }
 
     private static JsonElement ParseToolInput(string rawArguments) {

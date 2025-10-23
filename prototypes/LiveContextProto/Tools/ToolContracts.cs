@@ -93,32 +93,24 @@ internal enum ToolParameterCardinality {
 }
 
 internal sealed class ToolParameterEnumConstraint {
-    public ToolParameterEnumConstraint(IReadOnlyList<string> allowedValues, bool caseSensitive = false) {
+    public ToolParameterEnumConstraint(IReadOnlySet<string> allowedValues, bool caseSensitive = false) {
         if (allowedValues is null) { throw new ArgumentNullException(nameof(allowedValues)); }
         if (allowedValues.Count == 0) { throw new ArgumentException("At least one allowed value must be provided.", nameof(allowedValues)); }
 
         AllowedValues = allowedValues;
         CaseSensitive = caseSensitive;
+        LoweredAllowedValues = new SortedSet<string>(allowedValues.Select(x => x.ToLower()));
     }
 
-    public IReadOnlyList<string> AllowedValues { get; }
+    public IReadOnlySet<string> AllowedValues { get; }
+    public IReadOnlySet<string> LoweredAllowedValues { get; }
 
     public bool CaseSensitive { get; }
 
     public bool Contains(string value) {
         if (value is null) { return false; }
 
-        if (CaseSensitive) {
-            foreach (var allowed in AllowedValues) {
-                if (string.Equals(allowed, value, StringComparison.Ordinal)) { return true; }
-            }
-            return false;
-        }
-
-        foreach (var allowed in AllowedValues) {
-            if (string.Equals(allowed, value, StringComparison.OrdinalIgnoreCase)) { return true; }
-        }
-
-        return false;
+        if (CaseSensitive) { return AllowedValues.Contains(value); }
+        else { return LoweredAllowedValues.Contains(value.ToLower()); }
     }
 }

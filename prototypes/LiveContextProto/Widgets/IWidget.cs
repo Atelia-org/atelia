@@ -3,16 +3,16 @@ using System.Collections.Immutable;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.Tools;
 
-namespace Atelia.LiveContextProto.Widgets;
+namespace Atelia.LiveContextProto.Apps;
 
-internal sealed record WidgetRenderContext(
+internal sealed record AppRenderContext(
     AgentState AgentState,
     ImmutableDictionary<string, object?> Environment
 );
 
-internal interface IWidget {
+internal interface IApp {
     string Name { get; }
     string Description { get; }
     IReadOnlyList<ITool> Tools { get; }
-    string? RenderLiveScreen(WidgetRenderContext context);
+    string? RenderWindow(AppRenderContext context);
 }

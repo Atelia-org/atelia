@@ -25,8 +25,7 @@ internal sealed class LlmAgent {
     private readonly ToolExecutor _toolExecutor;
 
     /// 未来扩展到支持多种输入渠道，比如增加即时通讯软件发来的消息。还需要增加发送方身份标识。
-    /// 规划后续把部分信息直送LiveScreen，引入LiveEvent机制，要保证每条Event都能被LLM看到，又能直通LiveScreen来减少延迟(以LlmAgent状态机Step数计量)。
-    private readonly ConcurrentQueue<PendingUserInput> _pendingInputs = new();
+
     private readonly Dictionary<string, LodToolCallResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly ImmutableArray<ToolDefinition> _toolDefinitions;
@@ -48,16 +47,21 @@ internal sealed class LlmAgent {
     public void Reset() {
         _state.Reset();
         _pendingToolResults.Clear();
-        _pendingInputs.Clear();
         ResetInvocation();
     }
 
     public void UpdateMemoryNotebook(string? content) => _state.UpdateMemoryNotebook(content);
 
-    public void EnqueueUserInput(string text) {
-        if (string.IsNullOrWhiteSpace(text)) { throw new ArgumentException("Value cannot be null or whitespace.", nameof(text)); }
-        var timestamp = DateTimeOffset.Now;
-        _pendingInputs.Enqueue(new PendingUserInput(text, timestamp));
+    public void AppendNotification(LevelOfDetailContent notificationContent) {
+        if (notificationContent is null) { throw new ArgumentNullException(nameof(notificationContent)); }
+        _state.AppendNotification(notificationContent);
+        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Host notification appended basicLength={notificationContent.Basic.Length}");
+    }
+
+    public void AppendNotification(string basic, string? detail = null) {
+        if (basic is null) { throw new ArgumentNullException(nameof(basic)); }
+        var content = new LevelOfDetailContent(basic, detail ?? basic);
+        AppendNotification(content);
     }
 
     public async Task<AgentStepResult> DoStepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
@@ -83,9 +87,9 @@ internal sealed class LlmAgent {
 
         var last = _state.History[^1];
         return last switch {
+            ToolResultsEntry => AgentRunState.PendingToolResults,
             ModelInputEntry => AgentRunState.PendingInput,
             ModelOutputEntry outputEntry => DetermineOutputState(outputEntry),
-            ToolResultsEntry => AgentRunState.PendingToolResults,
             _ => AgentRunState.WaitingInput
         };
     }
@@ -114,34 +118,10 @@ internal sealed class LlmAgent {
     }
 
     private StepOutcome ProcessWaitingInput() {
-        if (_pendingInputs.IsEmpty) { return StepOutcome.NoProgress; }
+        if (!_state.HasPendingNotification) { return StepOutcome.NoProgress; }
+        var entry = _state.AppendModelInput(new ModelInputEntry());
 
-        var builder = new StringBuilder();
-        var totalInputLength = 0;
-        var drainedCount = 0;
-
-        while (_pendingInputs.TryDequeue(out var pending)) {
-            if (drainedCount > 0) {
-                builder.AppendLine().AppendLine();
-            }
-
-            var heading = pending.Timestamp.ToString("o");
-
-            builder.Append("### ").AppendLine(heading);
-            builder.AppendLine();
-            builder.AppendLine(pending.Text);
-
-            totalInputLength += pending.Text.Length;
-            drainedCount++;
-        }
-
-        if (drainedCount == 0) { return StepOutcome.NoProgress; }
-
-        var aggregated = builder.ToString().TrimEnd('\r', '\n');
-
-        var entry = AppendModelInput(aggregated);
-
-        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Inputs dequeued count={drainedCount} totalInputLength={totalInputLength} aggregatedLength={aggregated.Length}");
+        DebugUtil.Print(StateMachineDebugCategory, $"[StateMachine] Inputs {entry}");
 
         return StepOutcome.FromInput(entry);
     }
@@ -162,7 +142,7 @@ internal sealed class LlmAgent {
         var appended = _state.AppendModelOutput(normalizedOutput);
 
         var toolCallCount = appended.ToolCalls?.Count ?? 0;
-        DebugUtil.Print(ProviderDebugCategory, $"[StateMachine] Model output appended segments={appended.Contents.Count} toolCalls={toolCallCount}");
+        DebugUtil.Print(ProviderDebugCategory, $"[StateMachine] Model output appended Contents.Length={appended.Contents.Length} toolCalls={toolCallCount}");
 
         return StepOutcome.FromOutput(appended);
     }
@@ -205,7 +185,7 @@ internal sealed class LlmAgent {
         var failure = collectedResults.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
-            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Basic));
+            : failure.Result.GetContent(LevelOfDetail.Basic);
 
         var results = collectedResults.ToArray();
         var entry = new ToolResultsEntry(results, executeError);
@@ -241,14 +221,7 @@ internal sealed class LlmAgent {
     }
 
     private ToolResultsEntry AppendToolResultsWithSummary(ToolResultsEntry entry) {
-        var metadata = ToolResultMetadataHelper.PopulateSummary(entry.Results, entry.Metadata);
-        entry = entry with { Metadata = metadata };
         return _state.AppendToolResults(entry);
-    }
-
-    private ModelInputEntry AppendModelInput(string text) {
-        var sections = LevelOfDetailSections.FromSingleSection("default", text);
-        return _state.AppendModelInput(new ModelInputEntry(sections));
     }
 
     private ModelOutputEntry NormalizeToolCalls(ModelOutputEntry entry) {
@@ -282,22 +255,6 @@ internal sealed class LlmAgent {
         if (string.IsNullOrWhiteSpace(first)) { return second; }
         if (string.IsNullOrWhiteSpace(second)) { return first; }
         return string.Concat(first, "; ", second);
-    }
-
-    public AgentToolExecutionResult ExecuteTool(ToolCallRequest request, CancellationToken cancellationToken = default) {
-        var executionResults = _toolExecutor.ExecuteBatchAsync(new[] { request }, cancellationToken).GetAwaiter().GetResult();
-        if (executionResults.Count == 0) { return AgentToolExecutionResult.NoResults(); }
-
-        var failure = executionResults.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
-        var failureMessage = failure is null
-            ? null
-            : LevelOfDetailSections.ToPlainText(failure.Result.GetSections(LevelOfDetail.Basic));
-
-        var entry = new ToolResultsEntry(executionResults.ToArray(), failureMessage);
-        var appended = AppendToolResultsWithSummary(entry);
-        return failure is null
-            ? AgentToolExecutionResult.Success(appended)
-            : AgentToolExecutionResult.SuccessWithFailure(appended, failureMessage);
     }
 
     private void ResetInvocation() {

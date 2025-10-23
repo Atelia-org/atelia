@@ -301,7 +301,7 @@ interface IContentOperations {
 |------------|-----------|
 | 窗口管理器（Window Manager） | Section 层 |
 | 窗口ID、位置、大小、层级 | GUID、路径、深度、父子关系 |
-| 应用窗口内容（Widget/View） | Content 对象 |
+| 应用窗口内容（App/View） | Content 对象 |
 | 不同应用有不同交互方式 | 不同 Content 类型有专属操作 |
 | 用户通过窗口ID操作内容 | LLM 通过 GUID 定位并操作 Content |
 

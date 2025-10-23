@@ -111,11 +111,11 @@ context.Add(new ToolResultsEntry(
 // 继续对话...
 ```
 
-### 4. 注入 LiveScreen
+### 4. 注入 Window
 
 ```csharp
 var input = new ModelInputEntry(...);
-var decorated = ContextMessageLiveScreenHelper.AttachLiveScreen(input, liveScreenText);
+var decorated = ContextMessageWindowHelper.AttachWindow(input, WindowText);
 context.Add(decorated);
 ```
 

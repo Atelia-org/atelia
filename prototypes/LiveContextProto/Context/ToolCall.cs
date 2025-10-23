@@ -19,6 +19,6 @@ internal record ToolCallResult(
     string ToolName,
     string ToolCallId,
     ToolExecutionStatus Status,
-    IReadOnlyList<KeyValuePair<string, string>> Result,
+    string Result,
     TimeSpan? Elapsed
 );

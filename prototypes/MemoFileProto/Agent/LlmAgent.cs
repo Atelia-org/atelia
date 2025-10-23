@@ -50,12 +50,7 @@ public class LlmAgent {
 ## 关于你自己的[Memory Notebook]
 acquired brain injury (ABI)或健忘症患者为战胜记忆方面的困难，会使用Memory Notebook/book这样的External Memory Aid。有限的上下文窗口长度，使你们LLM Agent面临相似的记忆困难，而Agent OS也建立了类似的[Memory Notebook]机制。
 你有一块名叫[Memory Notebook]的持久存储空间，使你可以主动对其进行编辑来记录你想记住的信息。对应的，为防止[Memory Notebook]无限膨胀，你也需要主动对其进行编辑来遗忘过时或次要的信息。
-memory_notebook_replace与memory_notebook_replace_span工具就是为你主动编辑你自己的[Memory Notebook]而设计的。
-[Memory Notebook]中的内容，通过[Live Screen]显示给你。
-
-## [Live Screen]
-[Live Screen]是一种动态上下文注入机制。Agent OS在每次调用LLM来激活你的思维时，都会将[Live Screen]中的实时信息动态且唯一的附加到最新一条user/tool消息中，使你始终能看到其中的最新信息。
-目前[Memory Notebook]常驻在[Live Screen]中始终显示。"
+memory_notebook_replace工具就是为你主动编辑你自己的[Memory Notebook]而设计的。"
     );
 
     public LlmAgent(ILLMClient client) {
@@ -335,7 +330,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (string.IsNullOrEmpty(_memoryNotebookContent)) { return string.Empty; }
 
         var sb = new StringBuilder();
-        sb.Append("# [Live Screen]:");
+        sb.Append("# [Window]:");
         sb.Append("## [Memory Notebook]:");
         sb.Append(BlockSeparator).Append(_memoryNotebookContent);
 

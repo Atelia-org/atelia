@@ -1,5 +1,5 @@
 # Memo: Conversation History 抽象重构蓝图
-实施路线图在另外的文档中[Memo: Conversation History 抽象重构实施路线图](docs\MemoFileProto\ConversationHistory_Refactor_Roadmap.md)，LiveScreen 装饰器迁移细节可参阅[LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md)
+实施路线图在另外的文档中[Memo: Conversation History 抽象重构实施路线图](docs\MemoFileProto\ConversationHistory_Refactor_Roadmap.md)，Window 装饰器迁移细节可参阅[Window 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/Window_LOD_Migration.md)
 *版本：0.1.1 · 更新日期：2025-10-16*
 
 ## 背景与目标
@@ -66,7 +66,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 这幅图展示了最新的三段式请求流水线：
 
 - **[1] AgentState**：负责维护仅追加的事件日志和运行时快照（System Instruction、Memory Notebook 等），是唯一的真相源。
-- **[2] Context Projection**：由 `RenderLiveContext()` 按当前调用需要生成 `IContextMessage` 只读列表，根据条目位置选择合适的 `LevelOfDetail`，LiveScreen 已在写入阶段嵌入 `Live` 档 `"[LiveScreen]"` Section，无需额外装饰器。
+- **[2] Context Projection**：由 `RenderLiveContext()` 按当前调用需要生成 `IContextMessage` 只读列表，根据条目位置选择合适的 `LevelOfDetail`，Window 已在写入阶段嵌入 `Live` 档 `"[Window]"` Section，无需额外装饰器。
 - **[3] Provider Router**：根据调用策略挑选具体的 `IProviderClient`，把 `IContextMessage` 投影重写成供应商协议（OpenAI、Anthropic 等），并将流式增量解析为统一的 `ModelOutputDelta`。
 
 底部的 **Orchestrator feedback** 表示调用协调层在流式推理结束后聚合 `ModelOutputDelta` 与工具结果，再次通过领域方法将新事件追加到 AgentState，从而闭合“读取视图 → 调用模型 → 回写事实”的循环。
@@ -128,7 +128,7 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 ### Decorator（历史回顾）
 
-早期版本通过 `ContextMessageLiveScreenHelper.AttachLiveScreen()` 装饰上下文条目，在渲染阶段临时附加 LiveScreen。自 [LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md) 发布后，LiveScreen 改为由 `AppendModelInput`/`AppendToolResults` 在写入阶段生成，并落盘为 `LevelOfDetailSections.Live` 中的 `"[LiveScreen]"` Section。装饰器实现已退役，本节保留作为迁移背景记录。
+早期版本通过 `ContextMessageWindowHelper.AttachWindow()` 装饰上下文条目，在渲染阶段临时附加 Window。自 [Window 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/Window_LOD_Migration.md) 发布后，Window 改为由 `AppendModelInput`/`AppendToolResults` 在写入阶段生成，并落盘为 `LevelOfDetailSections.Live` 中的 `"[Window]"` Section。装饰器实现已退役，本节保留作为迁移背景记录。
 
 ### 模式协同的价值
 
@@ -145,24 +145,24 @@ MemoFileProto 的早期实现直接把 OpenAI Chat Completion 所需的消息结
 
 ## AgentState 角色划分
 
-- **统一的状态聚合器**：集中封装一次 LLM 调用所需的全部上游信息，包括 Widget 子系统（例如 `MemoryNotebookWidget`）与追加式历史列表，外部通过有限的领域方法与之交互。
+- **统一的状态聚合器**：集中封装一次 LLM 调用所需的全部上游信息，包括 App 子系统（例如 `MemoryNotebookApp`）与追加式历史列表，外部通过有限的领域方法与之交互。
 - **追加式历史记录**：`_history` 以仅追加方式保存所有 `HistoryEntry`，不提供编辑或删除入口，确保事件轨迹可追溯。
-- **Widget 协同管理**：内部持有实现 `IWidget` 的组件（首版为 `MemoryNotebookWidget`），并维护 `_systemInstruction` 等运行时字段；Widget 负责自身状态与工具暴露，AgentState 负责协调访问与生命周期。
-- **Widget 变更约定**：Widget 在自身状态发生变化时应通过受控入口（例如 `ExecuteTool`）驱动 AgentState 追加描述性 `HistoryEntry`，以保证 `RenderLiveContext()` 能重建历史语义；当前阶段由 `memory_notebook_replace` 覆盖 Notebook 更新。
-- **上下文渲染职责**：沿用 `MemoFileProto.Agent.LlmAgent.BuildLiveContext()` 的思路，在 `RenderLiveContext()` 中把历史条目投影成 `IReadOnlyList<IContextMessage>`，并根据条目位置选择 `LevelOfDetail`；LiveScreen 在写入阶段已落盘为 Section，渲染阶段仅挑选档位而不再额外注入。
+- **App 协同管理**：内部持有实现 `IApp` 的组件（首版为 `MemoryNotebookApp`），并维护 `_systemInstruction` 等运行时字段；App 负责自身状态与工具暴露，AgentState 负责协调访问与生命周期。
+- **App 变更约定**：App 在自身状态发生变化时应通过受控入口（例如 `ExecuteTool`）驱动 AgentState 追加描述性 `HistoryEntry`，以保证 `RenderLiveContext()` 能重建历史语义；当前阶段由 `memory_notebook_replace` 覆盖 Notebook 更新。
+- **上下文渲染职责**：沿用 `MemoFileProto.Agent.LlmAgent.BuildLiveContext()` 的思路，在 `RenderLiveContext()` 中把历史条目投影成 `IReadOnlyList<IContextMessage>`，并根据条目位置选择 `LevelOfDetail`；Window 在写入阶段已落盘为 Section，渲染阶段仅挑选档位而不再额外注入。
 - **单线程约束**：默认挂靠在单线程 Agent 管理循环上，不支持并发写入；如需并发需在调用方自行加锁。本阶段利用该前提直接在 `AgentState` 内部渲染上下文，而不额外生成快照对象。
 - **暂不支持历史回放**：本阶段不提供历史状态重建/时间穿越能力，后续再根据原型需求拆分。
 
-> 目前的 `SetSystemInstruction()` 与 `SetMemoryNotebook()` 仍是临时实现，仅更新运行时字段，没有通过 Widget 工具管线自动写入历史；待 `MemoryNotebookWidget` 全量接管后，将改由 `ExecuteTool` 驱动并附带匹配的历史条目。
+> 目前的 `SetSystemInstruction()` 与 `SetMemoryNotebook()` 仍是临时实现，仅更新运行时字段，没有通过 App 工具管线自动写入历史；待 `MemoryNotebookApp` 全量接管后，将改由 `ExecuteTool` 驱动并附带匹配的历史条目。
 
-### Widget 约定
+### App 约定
 
-与《LiveContextProto Widget 设计概念草案》保持一致，首版约定如下：
+与《LiveContextProto App 设计概念草案》保持一致，首版约定如下：
 
-- **渲染职责**：每个 Widget 实现 `RenderLiveScreen(WidgetRenderContext)`，返回 Markdown 或纯文本片段；`AgentState.AppendModelInput/AppendToolResults` 在写入阶段将最新渲染结果嵌入 `LevelOfDetailSections.Live` 的 `"[LiveScreen]"` Section，渲染阶段只需读取现有数据。
-- **状态变更记账**：Widget 通过 `ExecuteTool` 更新内部状态时，应驱动 AgentState 追加对应的 `HistoryEntry`（例如 `MemoryNotebookWidget` 在完成 `memory_notebook_replace` 后记录 Notebook 替换事件），确保历史时间线可还原。
-- **外部交互**：Widget 暴露的 `Tools` 列表供 Planner/LLM 调用；调用方需遵循工具参数约定，避免绕过 Widget 直接修改 AgentState 字段，以免破坏单一事实源。
-- **开放问题**：Widget 之间的顺序协调、事件通知与并发访问策略仍在评估中，后续可能通过统一的 Widget Registry 或事件流补齐。
+- **渲染职责**：每个 App 实现 `RenderWindow(AppRenderContext)`，返回 Markdown 或纯文本片段；`AgentState.AppendModelInput/AppendToolResults` 在写入阶段将最新渲染结果嵌入 `LevelOfDetailSections.Live` 的 `"[Window]"` Section，渲染阶段只需读取现有数据。
+- **状态变更记账**：App 通过 `ExecuteTool` 更新内部状态时，应驱动 AgentState 追加对应的 `HistoryEntry`（例如 `MemoryNotebookApp` 在完成 `memory_notebook_replace` 后记录 Notebook 替换事件），确保历史时间线可还原。
+- **外部交互**：App 暴露的 `Tools` 列表供 Planner/LLM 调用；调用方需遵循工具参数约定，避免绕过 App 直接修改 AgentState 字段，以免破坏单一事实源。
+- **开放问题**：App 之间的顺序协调、事件通知与并发访问策略仍在评估中，后续可能通过统一的 App Registry 或事件流补齐。
 
 ### 顺序与稳定标识策略
 
@@ -313,14 +313,14 @@ sealed class LevelOfDetailSections {
 }
 
 static class LevelOfDetailSectionNames {
-    public const string LiveScreen = "[LiveScreen]";
+    public const string Window = "[Window]";
 }
 
 static class LevelOfDetailSectionExtensions {
-    public static IReadOnlyList<KeyValuePair<string, string>> WithoutLiveScreen(
+    public static IReadOnlyList<KeyValuePair<string, string>> WithoutWindow(
         this IReadOnlyList<KeyValuePair<string, string>> sections,
-        out string? liveScreen
-    ) => WithoutSection(sections, LevelOfDetailSectionNames.LiveScreen, out liveScreen);
+        out string? Window
+    ) => WithoutSection(sections, LevelOfDetailSectionNames.Window, out Window);
 
     public static string ToPlainText(IReadOnlyList<KeyValuePair<string, string>> sections) {
         if (sections.Count == 0) { return string.Empty; }
@@ -330,7 +330,7 @@ static class LevelOfDetailSectionExtensions {
         for (var index = 0; index < sections.Count; index++) {
             var section = sections[index];
             if (!string.IsNullOrEmpty(section.Key)
-                && !string.Equals(section.Key, LevelOfDetailSectionNames.LiveScreen, StringComparison.Ordinal)) {
+                && !string.Equals(section.Key, LevelOfDetailSectionNames.Window, StringComparison.Ordinal)) {
                 builder.Append('#').Append(' ').AppendLine(section.Key);
             }
 
@@ -383,13 +383,13 @@ static class LevelOfDetailSectionExtensions {
 - **ToolCallRequest.RawArguments** 永远保留模型输出的原始文本；`Arguments` 则由 Provider 成功解析后提供的弱类型键值对（解析失败时为 `null`），工具层只消费该字典。`ParseError` 字段在解析成功时为 `null`，失败时包含错误信息，从而区分"工具不需要参数"与"参数解析失败"两种情况。
 - **ModelOutputEntry.Invocation** 记录触发本次响应时所选用的 Provider / 规范 / 模型三元组，便于在历史层面还原调用上下文，而无需在每个工具调用上重复写入。
 - **ModelInvocationDescriptor** 记录 Provider-Specification-Model 三元组。`Specification` 字段用于区分同一 Provider 的不同协议规范（例如 OpenAI 的 "v1" vs "responses" 端点，Qwen 系列的 "json" vs "xml" 格式），这是快速演进的 AI 行业带来的必要复杂性。注意：`IProviderClient` 的一个实现对应 (Provider, Specification) 组合，如 `OpenAiV1Client` 和 `OpenAiResponsesClient` 是两个独立实现。
-- **ModelInputEntry.ContentSections** 以 `LevelOfDetailSections` 表达多档位的提示分段，`Live` 档会在写入阶段追加 `"[LiveScreen]"` Section，其余档位保留摘要内容，Provider 可按需取用。
-- **HistoryToolCallResult.Result** 同样以 `LevelOfDetailSections` 保存工具执行结果，便于根据上下文预算在 `Live/Summary/Gist` 之间切换；最新一次工具结果会承载 LiveScreen Section。
+- **ModelInputEntry.ContentSections** 以 `LevelOfDetailSections` 表达多档位的提示分段，`Live` 档会在写入阶段追加 `"[Window]"` Section，其余档位保留摘要内容，Provider 可按需取用。
+- **HistoryToolCallResult.Result** 同样以 `LevelOfDetailSections` 保存工具执行结果，便于根据上下文预算在 `Live/Summary/Gist` 之间切换；最新一次工具结果会承载 Window Section。
 - **ModelOutputEntry** 聚合同一轮推理生成的 `ToolCallRequest` 序列，并通过 `Invocation` 字段标记本次模型调用的供应商语义，同时以 `Contents` 保留分段文本，便于不同 Provider 自行拼装提示或多模态片段。
 - **ToolCallResult** 一一对应单个工具调用的执行结果，并记录耗时等诊断信息；`ToolResultsEntry.Results` 与 `ModelOutputEntry.ToolCalls` 按顺序对齐，若有失败可通过 `ExecuteError` 给出说明。
 - 系统指令仍由 `_systemInstruction` 字段维护，并在渲染阶段生成对应的 `SystemInstructionMessage` 注入上下文；后续若需要多段系统指令，可考虑扩展该结构。
 - **补充说明**：`ToolCallRequest` 仅作为 `ModelOutputEntry.ToolCalls` 的嵌套结构存在，不会追加独立的历史条目。
-- **LevelOfDetailSectionExtensions.WithoutLiveScreen** 可帮助消费方在渲染前拆分 LiveScreen，与 `ToPlainText` 等辅助方法共同构成新的读取约定。
+- **LevelOfDetailSectionExtensions.WithoutWindow** 可帮助消费方在渲染前拆分 Window，与 `ToPlainText` 等辅助方法共同构成新的读取约定。
 - **显式接口实现留有弹性**：`ModelInputEntry`、`ModelOutputEntry` 等类型可以继续通过显式接口控制实际暴露的内容，未来若需要按 Provider 做裁剪，可在包装层实现而无需修改记录定义。
 
 ## ContextMessage 层接口深化
@@ -495,18 +495,18 @@ interface ITokenUsageCarrier {
 
 ### 接口协同要点
 
-- `RenderLiveContext()` 输出的条目应尽量沿用 History 层对象，必要时通过 `LevelOfDetailSections.GetSections(...)` 选择不同粒度，不再引入额外的 LiveScreen 装饰对象。
+- `RenderLiveContext()` 输出的条目应尽量沿用 History 层对象，必要时通过 `LevelOfDetailSections.GetSections(...)` 选择不同粒度，不再引入额外的 Window 装饰对象。
 - `Metadata` 使用 `ImmutableDictionary<string, object?>` 承载轻量信息，并默认初始化为空字典，禁止写入体量过大的结构（> 2 KB）；较大的数据应改用附件或单独条目。
 - Provider 可通过接口检测来决定拼装逻辑：例如仅对实现了 `IToolCallCarrier` 的条目尝试解析 `ToolCalls`。
-- LiveScreen 相关约定见“LiveScreen 处理约定”小节，消费方应通过 `WithoutLiveScreen(out liveScreen)` 拆分 Section，避免额外的接口差异。
+- Window 相关约定见“Window 处理约定”小节，消费方应通过 `WithoutWindow(out Window)` 拆分 Section，避免额外的接口差异。
 - `ModelOutputEntry` 原样实现接口，用于传递模型响应及潜在的工具调用请求。
 - 除模型输入、模型输出及工具结果外的其他历史条目不实现 `IContextMessage`，从编译期阻止它们进入 Provider 管线。
 
-#### LiveScreen 处理约定
+#### Window 处理约定
 
-- `AppendModelInput`、`AppendToolResults` 会在写入阶段调用 `BuildLiveScreenSnapshot()`，并将结果追加到最近条目的 `LevelOfDetailSections.Live` 中，键名固定为 `"[LiveScreen]"`。
-- 渲染阶段保持 Section 原样返回，消费方如需展示或忽略 LiveScreen，可通过 `sections.WithoutLiveScreen(out var liveScreen)` 或 `LevelOfDetailSections.ToPlainText(...)` 等扩展方法拆分文本。
-- 若消费方忽略 LiveScreen，Section 数据仍会随历史条目保留，便于后续调试或回放。更多细节见《[LiveScreen 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/LiveScreen_LOD_Migration.md)》。
+- `AppendModelInput`、`AppendToolResults` 会在写入阶段调用 `BuildWindowSnapshot()`，并将结果追加到最近条目的 `LevelOfDetailSections.Live` 中，键名固定为 `"[Window]"`。
+- 渲染阶段保持 Section 原样返回，消费方如需展示或忽略 Window，可通过 `sections.WithoutWindow(out var Window)` 或 `LevelOfDetailSections.ToPlainText(...)` 等扩展方法拆分文本。
+- 若消费方忽略 Window，Section 数据仍会随历史条目保留，便于后续调试或回放。更多细节见《[Window 装饰器移除与 LOD Sections 迁移指南](../LiveContextProto/Window_LOD_Migration.md)》。
 
 ### 辅助类型
 
@@ -532,8 +532,8 @@ interface IContextAttachment { }
 
 ## History ↔ Context ↔ Provider 协作
 
-- **History → Context**：`AgentState.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口，并根据条目靠近程度选择 `LevelOfDetail`。LiveScreen 已在写入阶段存储为 Section，因此渲染仅需返回适当档位的分段，系统指令通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
-- **Context → Provider**：ProviderRouter 将渲染好的上下文封装进 `LlmRequest`（包含策略标识、`ModelInvocationDescriptor` 以及工具清单），Provider 实现通过请求对象的只读视图读取 `request.Context`、`request.Tools` 等信息，并据此产出 `ModelOutputDelta` 流；如需展示 LiveScreen，可在读取 Sections 后调用扩展方法拆分，实现过程中始终保持对历史的只读。
+- **History → Context**：`AgentState.RenderLiveContext()` 会把符合条件的 `HistoryEntry` 映射为对应的消息接口，并根据条目靠近程度选择 `LevelOfDetail`。Window 已在写入阶段存储为 Section，因此渲染仅需返回适当档位的分段，系统指令通过单独的 `SystemInstructionMessage` 注入。`Timestamp` 等核心字段直接传递，避免复制。
+- **Context → Provider**：ProviderRouter 将渲染好的上下文封装进 `LlmRequest`（包含策略标识、`ModelInvocationDescriptor` 以及工具清单），Provider 实现通过请求对象的只读视图读取 `request.Context`、`request.Tools` 等信息，并据此产出 `ModelOutputDelta` 流；如需展示 Window，可在读取 Sections 后调用扩展方法拆分，实现过程中始终保持对历史的只读。
 - **Provider → History**：模型响应结束后，由调用协调层基于 Provider 返回的 delta 使用 `ModelOutputAccumulator` 聚合出新的 `ModelOutputEntry`，并在工具执行链路完成后生成 `ToolResultsEntry` 等条目追加到 History。这样可以保证 History 层仅包含最终定稿的事实，而流式阶段的临时数据不会污染历史。
 - **附件/富内容**：附件体系说明统一记录在“结构化附属数据（暂缓实现）”小节。
 
@@ -556,7 +556,7 @@ interface IProviderClient {
 - Provider 客户端封装底层 SDK 或 HTTP 细节，对外统一为流式 delta；测试场景可通过假实现返回预设 delta 序列。
 - Orchestrator 会将策略、模型标识、上下文消息与工具清单打包成 `LlmRequest` 传入 Provider；请求体中的 `request.Context`/`request.Tools` 是只读视图，调用方不得修改。
 - Provider 实现需避免直接引用 `AgentState`，而是基于请求对象按需解释 `IModelInputMessage`、`IModelOutputMessage` 等接口；解析模型声明的工具调用时，可在 `ToolCallRequest` 中填充解析成功的 `Arguments` 或记录 `ParseError`，但不得直接回写历史条目。
-- 处理上下文时若需要展示 LiveScreen，可在读取 `request.Context` 中的 `ContentSections` 或工具结果 Sections 后调用 `WithoutLiveScreen(out var liveScreen)` 拆分片段，避免在 Provider 层复制或误用原始 Section。
+- 处理上下文时若需要展示 Window，可在读取 `request.Context` 中的 `ContentSections` 或工具结果 Sections 后调用 `WithoutWindow(out var Window)` 拆分片段，避免在 Provider 层复制或误用原始 Section。
 - 解析失败时的错误处理约定：Provider 需保留 `ToolCallRequest.RawArguments` 原文，并在 `ParseError`/`ParseWarning` 或 `ModelOutputDelta.ExecutionError` 中记录原因；上层可以据此选择重试、提示 Planner 调整输出或请求人工介入。
 - 为减少重复解析代码，计划提供共享的 `ToolArgumentParser` 辅助器（例如 `GetRequired(...)`、`ParseList(...)`、`ParseJsonSafely(...)` 等），供 Provider 和工具实现重复利用。
 - Provider 层维护"规范 → 参数解析策略"的静态映射：`ModelOutputEntry.Invocation` 由 ProviderRouter 预先确定，具体的格式解析与工具调用出参推断交由各 Provider 内部实现，使 History 保持供应商无关的抽象。
@@ -591,22 +591,22 @@ interface IProviderClient {
 internal sealed class AgentState {
     private readonly List<HistoryEntry> _history = new();
     private readonly Func<DateTimeOffset> _timestampProvider;
-    private readonly MemoryNotebookWidget _memoryNotebookWidget;
-    private readonly ImmutableArray<IWidget> _widgets;
+    private readonly MemoryNotebookApp _memoryNotebookApp;
+    private readonly ImmutableArray<IApp> _apps;
 
     private AgentState(Func<DateTimeOffset> timestampProvider, string systemInstruction) {
         _timestampProvider = timestampProvider;
         SystemInstruction = systemInstruction;
-        _memoryNotebookWidget = new MemoryNotebookWidget();
-        _widgets = ImmutableArray.Create<IWidget>(_memoryNotebookWidget);
+        _memoryNotebookApp = new MemoryNotebookApp();
+        _apps = ImmutableArray.Create<IApp>(_memoryNotebookApp);
 
         DebugUtil.Print("History", $"AgentState initialized with instruction length={systemInstruction.Length}");
     }
 
     public string SystemInstruction { get; private set; }
     public IReadOnlyList<HistoryEntry> History => _history;
-    public string MemoryNotebookSnapshot => _memoryNotebookWidget.GetSnapshot();
-    public MemoryNotebookWidget MemoryNotebookWidget => _memoryNotebookWidget;
+    public string MemoryNotebookSnapshot => _memoryNotebookApp.GetSnapshot();
+    public MemoryNotebookApp MemoryNotebookApp => _memoryNotebookApp;
 
     public static AgentState CreateDefault(string? systemInstruction = null, Func<DateTimeOffset>? timestampProvider = null) {
         var instruction = string.IsNullOrWhiteSpace(systemInstruction)
@@ -622,7 +622,7 @@ internal sealed class AgentState {
             throw new ArgumentException("ContentSections must contain at least one section.", nameof(entry));
         }
 
-        var enriched = AttachLiveScreen(entry);
+        var enriched = AttachWindow(entry);
         return AppendContextualEntry(enriched);
     }
 
@@ -640,7 +640,7 @@ internal sealed class AgentState {
             throw new ArgumentException("ToolResultsEntry must include results or an execution error.", nameof(entry));
         }
 
-        var enriched = AttachLiveScreen(entry);
+        var enriched = AttachWindow(entry);
         return AppendContextualEntry(enriched);
     }
 
@@ -650,11 +650,11 @@ internal sealed class AgentState {
     }
 
     public void UpdateMemoryNotebook(string? content)
-        => _memoryNotebookWidget.ReplaceNotebookFromHost(content);
+        => _memoryNotebookApp.ReplaceNotebookFromHost(content);
 
     public void Reset() {
         _history.Clear();
-        _memoryNotebookWidget.Reset();
+        _memoryNotebookApp.Reset();
         DebugUtil.Print("History", "AgentState history cleared");
     }
 
@@ -708,21 +708,21 @@ internal sealed class AgentState {
             ? LevelOfDetail.Live
             : LevelOfDetail.Summary;
 
-    private ModelInputEntry AttachLiveScreen(ModelInputEntry entry) {
-        var liveScreen = BuildLiveScreenSnapshot();
-        if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+    private ModelInputEntry AttachWindow(ModelInputEntry entry) {
+        var Window = BuildWindowSnapshot();
+        if (string.IsNullOrWhiteSpace(Window)) { return entry; }
 
-        var sections = entry.ContentSections.WithLiveSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        var sections = entry.ContentSections.WithLiveSection(LevelOfDetailSectionNames.Window, Window);
         if (ReferenceEquals(sections, entry.ContentSections)) { return entry; }
 
         return entry with { ContentSections = sections };
     }
 
-    private ToolResultsEntry AttachLiveScreen(ToolResultsEntry entry) {
+    private ToolResultsEntry AttachWindow(ToolResultsEntry entry) {
         if (entry.Results.Count == 0) { return entry; }
 
-        var liveScreen = BuildLiveScreenSnapshot();
-        if (string.IsNullOrWhiteSpace(liveScreen)) { return entry; }
+        var Window = BuildWindowSnapshot();
+        if (string.IsNullOrWhiteSpace(Window)) { return entry; }
 
         var results = new HistoryToolCallResult[entry.Results.Count];
         for (var index = 0; index < entry.Results.Count; index++) {
@@ -730,19 +730,19 @@ internal sealed class AgentState {
         }
 
         var latest = results[^1];
-        var updatedSections = latest.Result.WithLiveSection(LevelOfDetailSectionNames.LiveScreen, liveScreen);
+        var updatedSections = latest.Result.WithLiveSection(LevelOfDetailSectionNames.Window, Window);
         if (ReferenceEquals(updatedSections, latest.Result)) { return entry; }
 
         results[^1] = latest with { Result = updatedSections };
         return entry with { Results = results };
     }
 
-    private string? BuildLiveScreenSnapshot() {
+    private string? BuildWindowSnapshot() {
         var fragments = new List<string>();
-        var renderContext = new WidgetRenderContext(this, ImmutableDictionary<string, object?>.Empty);
+        var renderContext = new AppRenderContext(this, ImmutableDictionary<string, object?>.Empty);
 
-        foreach (var widget in _widgets) {
-            var fragment = widget.RenderLiveScreen(renderContext);
+        foreach (var app in _apps) {
+            var fragment = app.RenderWindow(renderContext);
             if (!string.IsNullOrWhiteSpace(fragment)) {
                 fragments.Add(fragment.TrimEnd());
             }
@@ -750,24 +750,24 @@ internal sealed class AgentState {
 
         if (fragments.Count == 0) { return null; }
 
-        var liveScreenBuilder = new StringBuilder();
-        liveScreenBuilder.AppendLine("# [Live Screen]");
-        liveScreenBuilder.AppendLine();
+        var WindowBuilder = new StringBuilder();
+        WindowBuilder.AppendLine("# [Window]");
+        WindowBuilder.AppendLine();
 
         for (var index = 0; index < fragments.Count; index++) {
-            liveScreenBuilder.AppendLine(fragments[index]);
+            WindowBuilder.AppendLine(fragments[index]);
 
             if (index < fragments.Count - 1) {
-                liveScreenBuilder.AppendLine();
+                WindowBuilder.AppendLine();
             }
         }
 
-        return liveScreenBuilder.ToString().TrimEnd();
+        return WindowBuilder.ToString().TrimEnd();
     }
 
-    internal IEnumerable<ITool> EnumerateWidgetTools() {
-        foreach (var widget in _widgets) {
-            foreach (var tool in widget.Tools) {
+    internal IEnumerable<ITool> EnumerateAppTools() {
+        foreach (var app in _apps) {
+            foreach (var tool in app.Tools) {
                 yield return tool;
             }
         }
@@ -776,7 +776,7 @@ internal sealed class AgentState {
 ```
 
 **设计要点**：
-- **语义化追加入口**：`AppendModelInput/AppendModelOutput/AppendToolResults` 已封装 `_history` 追加逻辑，并在内部执行 LiveScreen Section 注入与参数校验，防止调用方遗漏关键步骤。
+- **语义化追加入口**：`AppendModelInput/AppendModelOutput/AppendToolResults` 已封装 `_history` 追加逻辑，并在内部执行 Window Section 注入与参数校验，防止调用方遗漏关键步骤。
 - **顺序策略复用**：当前示例仅演示时间戳注入，关于顺序号/稳定标识的安排沿用“顺序与稳定标识策略”的统一约定。
 - **History 语义**：`_history` / `History` 明确了"不可变事件日志"的领域语义，与 Event Sourcing 术语一致，强调这是历史条目的原始存储而非展示视图。
 - **状态同步封装**：`SetSystemInstruction` 等方法内部同步更新对应的运行时字段，保持数据一致性。

@@ -69,16 +69,16 @@ public class V2_SymbolTree_BuilderBaseline_Tests {
     public void AliasBuckets_ShouldRemainSortedByNodeId() {
         var builder = SymbolTreeBuilder.CreateEmpty();
 
-        var typeA = TypeEntry("Sample", "Widget", 0, "AsmA");
-        var typeB = TypeEntry("Sample", "Widget", 0, "AsmB");
-        var typeC = TypeEntry("Sample", "Widget", 0, "AsmC");
+        var typeA = TypeEntry("Sample", "App", 0, "AsmA");
+        var typeB = TypeEntry("Sample", "App", 0, "AsmB");
+        var typeC = TypeEntry("Sample", "App", 0, "AsmC");
 
         builder.ApplyDelta(SymbolsDeltaContract.Normalize(new[] { typeA, typeB, typeC }, Array.Empty<TypeKey>()));
         builder.ApplyDelta(SymbolsDeltaContract.Normalize(Array.Empty<SymbolEntry>(), new[] { new TypeKey(typeB.DocCommentId, typeB.Assembly) }));
         builder.ApplyDelta(SymbolsDeltaContract.Normalize(new[] { typeB }, Array.Empty<TypeKey>()));
 
-        Assert.True(builder.ExactAliases.TryGetValue("Widget", out var exactBucket) && !exactBucket.IsDefaultOrEmpty, "Expected exact alias bucket for 'Widget'");
-        Assert.True(builder.NonExactAliases.TryGetValue("widget", out var nonExactBucket) && !nonExactBucket.IsDefaultOrEmpty, "Expected non-exact alias bucket for 'widget'");
+        Assert.True(builder.ExactAliases.TryGetValue("App", out var exactBucket) && !exactBucket.IsDefaultOrEmpty, "Expected exact alias bucket for 'App'");
+        Assert.True(builder.NonExactAliases.TryGetValue("app", out var nonExactBucket) && !nonExactBucket.IsDefaultOrEmpty, "Expected non-exact alias bucket for 'app'");
 
         AssertAliasesSorted(exactBucket);
         AssertAliasesSorted(nonExactBucket);
