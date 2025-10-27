@@ -12,7 +12,6 @@ namespace Atelia.LiveContextProto.Tools;
 internal sealed class ToolExecutor {
     private const string DebugCategory = "Tools";
     private readonly IReadOnlyDictionary<string, ITool> _tools;
-    private readonly Func<ITool, ImmutableDictionary<string, object?>>? _environmentFactory;
 
     public ToolExecutor(IEnumerable<ITool> tools, Func<ITool, ImmutableDictionary<string, object?>>? environmentFactory = null) {
         if (tools is null) { throw new ArgumentNullException(nameof(tools)); }
@@ -27,7 +26,6 @@ internal sealed class ToolExecutor {
         }
 
         _tools = dictionary;
-        _environmentFactory = environmentFactory;
         DebugUtil.Print(DebugCategory, $"ToolExecutor initialized toolCount={_tools.Count}");
     }
 
@@ -78,29 +76,36 @@ internal sealed class ToolExecutor {
 
         var stopwatch = Stopwatch.StartNew();
         var normalizedRequest = EnsureArguments(tool, request);
-        var environment = _environmentFactory?.Invoke(tool) ?? ImmutableDictionary<string, object?>.Empty;
-        var context = new ToolExecutionContext(normalizedRequest, environment);
+
+        if (!string.IsNullOrWhiteSpace(normalizedRequest.ParseError)) {
+            stopwatch.Stop();
+            DebugUtil.Print(
+                DebugCategory,
+                $"[Executor] Argument parse failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={normalizedRequest.ParseError}"
+            );
+
+            return CreateParseFailureResult(normalizedRequest);
+        }
 
         try {
-            var result = await tool.ExecuteAsync(context, cancellationToken).ConfigureAwait(false)
+            var arguments = normalizedRequest.Arguments ?? ImmutableDictionary<string, object?>.Empty;
+            var executeResult = await tool.ExecuteAsync(arguments, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Tool '{tool.Name}' returned null result.");
             stopwatch.Stop();
 
             DebugUtil.Print(
                 DebugCategory,
-                $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={result.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
+                $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            var elapsed_ms = stopwatch.Elapsed.TotalMilliseconds;
+            var callResult = new LodToolCallResult(executeResult.Status, executeResult.Result)
+                .WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
 
-            return result.WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
+            return AttachParseWarning(callResult, normalizedRequest.ParseWarning);
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
             DebugUtil.Print(DebugCategory, $"[Executor] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId}");
-            var metadata = ImmutableDictionary<string, object?>.Empty
-                .SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds)
-                .SetItem("error", "cancelled");
 
             var message = "工具执行被取消";
             return new LodToolCallResult(
@@ -144,6 +149,32 @@ internal sealed class ToolExecutor {
         if (string.IsNullOrWhiteSpace(primary)) { return secondary; }
         if (string.IsNullOrWhiteSpace(secondary)) { return primary; }
         return string.Concat(primary, "; ", secondary);
+    }
+
+    private static LodToolCallResult CreateParseFailureResult(ToolCallRequest request) {
+        var basic = "工具参数解析失败。";
+        var detail = string.IsNullOrWhiteSpace(request.ParseError)
+            ? basic
+            : $"解析错误: {request.ParseError}";
+
+        if (!string.IsNullOrWhiteSpace(request.RawArguments)) {
+            detail = string.Concat(detail, "\nraw_arguments: ", request.RawArguments);
+        }
+
+        return new LodToolCallResult(
+            status: ToolExecutionStatus.Failed,
+            result: new LevelOfDetailContent(basic, detail),
+            toolName: request.ToolName,
+            toolCallId: request.ToolCallId
+        );
+    }
+
+    private static LodToolCallResult AttachParseWarning(LodToolCallResult result, string? parseWarning) {
+        if (string.IsNullOrWhiteSpace(parseWarning)) { return result; }
+
+        var detail = string.Concat(result.Result.Detail, "\n[ParseWarning] ", parseWarning);
+        var enrichedContent = new LevelOfDetailContent(result.Result.Basic, detail);
+        return result with { Result = enrichedContent };
     }
 
 }

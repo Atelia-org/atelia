@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
-using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Tools;
 
@@ -21,17 +19,7 @@ internal interface ITool {
     /// <summary>
     /// 执行工具逻辑。实现可以直接抛出异常，由 <see cref="ToolExecutor"/> 统一捕获并转换为失败结果。
     /// </summary>
-    ValueTask<LodToolCallResult> ExecuteAsync(ToolExecutionContext executionContext, CancellationToken cancellationToken);
-}
-
-internal sealed record ToolExecutionContext {
-    public ToolCallRequest Request { get; }
-    public ImmutableDictionary<string, object?> Environment { get; }
-
-    public ToolExecutionContext(ToolCallRequest request, ImmutableDictionary<string, object?>? environment = null) {
-        Request = request ?? throw new ArgumentNullException(nameof(request));
-        Environment = environment ?? ImmutableDictionary<string, object?>.Empty;
-    }
+    ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken);
 }
 
 internal sealed class ToolParameter {

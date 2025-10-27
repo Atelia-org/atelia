@@ -5,6 +5,27 @@ using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Tools;
 
+internal sealed record LodToolExecuteResult {
+    public LodToolExecuteResult(
+        ToolExecutionStatus status,
+        LevelOfDetailContent result
+    ) {
+        Status = status;
+        Result = result ?? throw new ArgumentNullException(nameof(result));
+    }
+
+    public ToolExecutionStatus Status { get; }
+
+    public LevelOfDetailContent Result { get; }
+
+    public static LodToolExecuteResult FromContent(
+        ToolExecutionStatus status,
+        LevelOfDetailContent content
+    ) {
+        return new LodToolExecuteResult(status, content);
+    }
+}
+
 internal sealed record LodToolCallResult {
     public LodToolCallResult(
         ToolExecutionStatus status,

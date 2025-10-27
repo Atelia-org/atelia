@@ -60,8 +60,7 @@ internal sealed class MemoryNotebookApp : IApp {
             ? DefaultSnapshot
             : _notebookContent;
 
-    private LodToolCallResult ExecuteReplace(ToolExecutionContext executionContext) {
-        var arguments = executionContext.Request.Arguments;
+    private LodToolExecuteResult ExecuteReplace(IReadOnlyDictionary<string, object?>? arguments) {
         if (arguments is null) { return Failure("工具参数尚未解析。", "arguments_missing"); }
 
         if (!TryGetString(arguments, "old_text", required: true, out var oldText, out var oldTextError)) { return Failure(oldTextError ?? "缺少 old_text 参数。", "old_text_invalid"); }
@@ -113,7 +112,7 @@ internal sealed class MemoryNotebookApp : IApp {
 
         if (ReferenceEquals(updated, current) || string.Equals(updated, current, StringComparison.Ordinal)) {
             string message = appended ? "未追加任何内容：new_text 为空。" : "替换内容未发生变化。";
-            return LodToolCallResult.FromContent(
+            return LodToolExecuteResult.FromContent(
                 ToolExecutionStatus.Success,
                 new LevelOfDetailContent(message, message)
             );
@@ -127,7 +126,7 @@ internal sealed class MemoryNotebookApp : IApp {
             ? "已追加新的记忆段落。"
             : "已完成记忆文本替换。";
 
-        return LodToolCallResult.FromContent(
+        return LodToolExecuteResult.FromContent(
             ToolExecutionStatus.Success,
             CreateOperationContent(basicMessage, appended, current.Length, newContent.Length, searchAfter)
         );
@@ -209,8 +208,8 @@ internal sealed class MemoryNotebookApp : IApp {
         return content.TrimEnd();
     }
 
-    private LodToolCallResult Failure(string message, string errorCode) {
-        return LodToolCallResult.FromContent(ToolExecutionStatus.Failed, new LevelOfDetailContent(message, message));
+    private LodToolExecuteResult Failure(string message, string errorCode) {
+        return LodToolExecuteResult.FromContent(ToolExecutionStatus.Failed, new LevelOfDetailContent(message, message));
     }
 
     private static LevelOfDetailContent CreateOperationContent(
@@ -321,8 +320,8 @@ internal sealed class MemoryNotebookApp : IApp {
 
         public IReadOnlyList<ToolParameter> Parameters => _parameters;
 
-        public ValueTask<LodToolCallResult> ExecuteAsync(ToolExecutionContext executionContext, CancellationToken cancellationToken) {
-            var result = _owner.ExecuteReplace(executionContext);
+        public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
+            var result = _owner.ExecuteReplace(arguments);
             return ValueTask.FromResult(result);
         }
     }

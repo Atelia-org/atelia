@@ -25,12 +25,12 @@ public sealed class AgentStateMachineToolExecutionTests {
     public async Task DoStepAsync_CompletesToolCallLifecycle() {
         var state = AgentState.CreateDefault();
 
-        var toolInvocations = new List<ToolExecutionContext>();
+        var toolInvocations = new List<IReadOnlyDictionary<string, object?>?>();
         var echoTool = new DelegateTool(
             "echo",
-            context => {
-                toolInvocations.Add(context);
-                return LodToolCallResult.FromContent(
+            arguments => {
+                toolInvocations.Add(arguments);
+                return LodToolExecuteResult.FromContent(
                     ToolExecutionStatus.Success,
                     UniformContent("tool-output")
                 );
@@ -97,8 +97,12 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Contains("tool-output", plainText, StringComparison.Ordinal);
 
         Assert.Single(toolInvocations);
-        Assert.Equal("call-1", toolInvocations[0].Request.ToolCallId);
-        Assert.Equal("echo", toolInvocations[0].Request.ToolName);
+        var capturedArguments = toolInvocations[0];
+        Assert.NotNull(capturedArguments);
+        Assert.Equal("value", capturedArguments!["payload"]);
+
+        Assert.Equal("call-1", historyResult.ToolCallId);
+        Assert.Equal("echo", historyResult.ToolName);
 
         var step5 = await agent.DoStepAsync(profile);
         Assert.True(step5.ProgressMade);
@@ -119,7 +123,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var failingTool = new DelegateTool(
             "broken",
-            _ => LodToolCallResult.FromContent(
+            _ => LodToolExecuteResult.FromContent(
                 ToolExecutionStatus.Failed,
                 UniformContent("tool failed")
             )
@@ -195,9 +199,9 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     private sealed class DelegateTool : ITool {
-        private readonly Func<ToolExecutionContext, LodToolCallResult> _execute;
+        private readonly Func<IReadOnlyDictionary<string, object?>?, LodToolExecuteResult> _execute;
 
-        public DelegateTool(string name, Func<ToolExecutionContext, LodToolCallResult> execute) {
+        public DelegateTool(string name, Func<IReadOnlyDictionary<string, object?>?, LodToolExecuteResult> execute) {
             Name = name ?? throw new ArgumentNullException(nameof(name));
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
         }
@@ -208,7 +212,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         public IReadOnlyList<ToolParameter> Parameters { get; } = Array.Empty<ToolParameter>();
 
-        public ValueTask<LodToolCallResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken)
-            => new(_execute(context));
+        public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
+            => new(_execute(arguments));
     }
 }
