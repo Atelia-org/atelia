@@ -25,6 +25,15 @@ if (-not $repoRoot) {
 
 Push-Location $repoRoot
 try {
+  $initiallyStaged = @(git diff --cached --name-only --diff-filter=ACMR) | Where-Object { $_ }
+  $initialStagedSet = $null
+  if ($initiallyStaged.Count -gt 0) {
+    $initialStagedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $initiallyStaged) {
+      [void]$initialStagedSet.Add($path)
+    }
+  }
+
   # Run repository formatter on staged .cs files only (fast & minimal)
   if (Test-Path "$repoRoot/format.ps1") {
     Write-Info "Formatting staged C# files via ./format.ps1 -Scope staged"
@@ -36,9 +45,14 @@ try {
 
     # If formatter changed tracked files, restage modifications
     $unstaged = @(git diff --name-only) | Where-Object { $_ }
-    if ($unstaged.Count -gt 0) {
-      Write-Info "Restaging tracked modifications after formatting"
-      git add --update | Out-Null
+    if ($unstaged.Count -gt 0 -and $null -ne $initialStagedSet) {
+      $filesToRestage = $unstaged | Where-Object { $initialStagedSet.Contains($_) }
+      if ($filesToRestage.Count -gt 0) {
+        Write-Info "Restaging $($filesToRestage.Count) file(s) touched by formatter"
+        foreach ($file in ($filesToRestage | Sort-Object -Unique)) {
+          git add -- $file | Out-Null
+        }
+      }
     }
   } else {
     Write-Warn "format.ps1 not found at repo root. Skipping auto-format step."

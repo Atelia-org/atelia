@@ -49,10 +49,18 @@ $shim = @(
   '',
   'exec "$shell" -NoProfile -ExecutionPolicy Bypass -File "$ps1_win"'
 ) -join "`n"
-Set-Content -Path $shimPath -Value $shim -Encoding UTF8
+
+# Write without a UTF-8 BOM so Git for Windows can execute the shim correctly
+[System.IO.File]::WriteAllText(
+  $shimPath,
+  $shim + "`n",
+  [System.Text.UTF8Encoding]::new($false)
+)
 
 # Ensure executable on POSIX; on Windows Git Bash it's not required but harmless
-try { & git update-index --chmod=+x -- ".git/hooks/pre-commit" | Out-Null } catch {}
+try {
+  & git update-index --chmod=+x -- ".git/hooks/pre-commit" 2>$null | Out-Null
+} catch {}
 
 Write-Info "Installed pre-commit hook: $shimPath"
 Write-Info "You can test it by committing any .cs change; it will run ./format.ps1 -Scope staged automatically."
