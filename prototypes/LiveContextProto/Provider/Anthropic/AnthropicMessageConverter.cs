@@ -202,7 +202,7 @@ internal static class AnthropicMessageConverter {
 
         var list = new List<AnthropicTool>(tools.Length);
         foreach (var definition in tools) {
-            var schema = ProviderToolSchemaBuilder.BuildSchema(definition);
+            var schema = JsonToolSchemaBuilder.BuildSchema(definition);
             list.Add(
                 new AnthropicTool {
                     Name = definition.Name,

@@ -8,14 +8,14 @@ namespace Atelia.LiveContextProto.Context;
 internal sealed record ToolDefinition(
     string Name,
     string Description,
-    ImmutableArray<ToolParameter> Parameters
+    ImmutableArray<ToolParamSpec> Parameters
 ) {
     public static ToolDefinition FromTool(ITool tool) {
         if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
 
         var parameters = tool.Parameters is { Count: > 0 }
             ? ImmutableArray.CreateRange(tool.Parameters)
-            : ImmutableArray<ToolParameter>.Empty;
+            : ImmutableArray<ToolParamSpec>.Empty;
 
         return new ToolDefinition(tool.Name, tool.Description, parameters);
     }

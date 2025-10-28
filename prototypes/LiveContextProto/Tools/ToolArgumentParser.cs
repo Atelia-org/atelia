@@ -43,9 +43,9 @@ internal static class ToolArgumentParser {
         }
 
         foreach (var parameter in tool.Parameters) {
-            if (!parameter.IsRequired) { continue; }
-            if (arguments.ContainsKey(parameter.Name)) { continue; }
-            errors.Add($"missing_required:{parameter.Name}");
+            if (parameter.IsRequired && !arguments.ContainsKey(parameter.Name)) {
+                errors.Add($"missing_required:{parameter.Name}");
+            }
         }
 
         var parseError = errors.Count == 0 ? null : string.Join("; ", errors);
@@ -86,8 +86,8 @@ internal static class ToolArgumentParser {
         return builder.ToImmutable();
     }
 
-    private static Dictionary<string, ToolParameter> CreateParameterLookup(IReadOnlyList<ToolParameter> parameters) {
-        var lookup = new Dictionary<string, ToolParameter>(StringComparer.OrdinalIgnoreCase);
+    private static Dictionary<string, ToolParamSpec> CreateParameterLookup(IReadOnlyList<ToolParamSpec> parameters) {
+        var lookup = new Dictionary<string, ToolParamSpec>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameter in parameters) {
             lookup[parameter.Name] = parameter;
         }
@@ -95,75 +95,28 @@ internal static class ToolArgumentParser {
         return lookup;
     }
 
-    private static ParseResult ParseValue(ToolParameter parameter, JsonElement element) {
-        return parameter.Cardinality switch {
-            ToolParameterCardinality.Single => ParseScalar(parameter, element),
-            ToolParameterCardinality.Optional => ParseScalar(parameter, element),
-            ToolParameterCardinality.List => ParseList(parameter, element),
-            ToolParameterCardinality.Map => ParseMap(parameter, element),
-            _ => ParseResult.CreateError("unsupported_cardinality")
-        };
-    }
-
-    private static ParseResult ParseScalar(ToolParameter parameter, JsonElement element) {
+    private static ParseResult ParseValue(ToolParamSpec parameter, JsonElement element) {
         if (element.ValueKind == JsonValueKind.Null) {
-            return parameter.IsRequired
-                ? ParseResult.CreateWarning(null, "null_literal")
-                : ParseResult.CreateSuccess(null);
+            return parameter.IsNullable
+                ? ParseResult.CreateSuccess(null)
+                : ParseResult.CreateError("null_not_allowed");
         }
 
-        return parameter.ValueKind switch {
-            ToolParameterValueKind.String => ParseString(element),
-            ToolParameterValueKind.Boolean => ParseBoolean(element),
-            ToolParameterValueKind.Integer => ParseInteger(element),
-            ToolParameterValueKind.Number => ParseNumber(element),
-            ToolParameterValueKind.JsonObject => ParseJsonObject(element),
-            ToolParameterValueKind.JsonArray => ParseJsonArray(element),
-            ToolParameterValueKind.Timestamp => ParseTimestamp(element),
-            ToolParameterValueKind.Uri => ParseUri(element),
-            ToolParameterValueKind.EnumToken => ParseEnumToken(parameter, element),
-            ToolParameterValueKind.AttachmentReference => ParseString(element),
+        var result = parameter.ValueKind switch {
+            ToolParamValueKind.String => ParseString(element),
+            ToolParamValueKind.Boolean => ParseBoolean(element),
+            ToolParamValueKind.Int32 => ParseInt32(element),
+            ToolParamValueKind.Int64 => ParseInt64(element),
+            ToolParamValueKind.Float32 => ParseFloat32(element),
+            ToolParamValueKind.Float64 => ParseFloat64(element),
+            ToolParamValueKind.Decimal => ParseDecimal(element),
             _ => ParseResult.CreateError("unsupported_value_kind")
         };
-    }
 
-    private static ParseResult ParseList(ToolParameter parameter, JsonElement element) {
-        if (element.ValueKind != JsonValueKind.Array) {
-            var coerced = ParseScalar(parameter, element);
-            if (!coerced.IsSuccess) { return coerced; }
-            return ParseResult.CreateSuccess(ImmutableArray.Create(coerced.Value), CombineWarnings(coerced.Warning, "scalar_coerced_to_list"));
-        }
+        if (!result.IsSuccess) { return result; }
 
-        var builder = ImmutableArray.CreateBuilder<object?>(element.GetArrayLength());
-        string? aggregatedWarning = null;
-
-        foreach (var item in element.EnumerateArray()) {
-            var parsed = ParseScalar(parameter, item);
-            if (!parsed.IsSuccess) { return parsed; }
-            builder.Add(parsed.Value);
-            aggregatedWarning = CombineWarnings(aggregatedWarning, parsed.Warning);
-        }
-
-        return ParseResult.CreateSuccess(builder.ToImmutable(), aggregatedWarning);
-    }
-
-    private static ParseResult ParseMap(ToolParameter parameter, JsonElement element) {
-        if (element.ValueKind == JsonValueKind.Object) { return ParseResult.CreateSuccess(ConvertObject(element)); }
-
-        if (element.ValueKind == JsonValueKind.String) {
-            var text = element.GetString();
-            if (string.IsNullOrWhiteSpace(text)) { return ParseResult.CreateSuccess(ImmutableDictionary<string, object?>.Empty, "empty_map_string"); }
-
-            try {
-                using var document = JsonDocument.Parse(text, DocumentOptions);
-                if (document.RootElement.ValueKind == JsonValueKind.Object) { return ParseResult.CreateSuccess(ConvertObject(document.RootElement), "string_literal_converted_to_object"); }
-            }
-            catch (JsonException ex) {
-                return ParseResult.CreateError($"map_parse_error:{ex.Message}");
-            }
-        }
-
-        return ParseResult.CreateError("map_requires_object");
+        // TODO: 引入统一的参数约束校验流程（枚举、范围等），在此处接入。
+        return result;
     }
 
     private static ParseResult ParseString(JsonElement element) {
@@ -198,111 +151,157 @@ internal static class ToolArgumentParser {
         return ParseResult.CreateSuccess(Math.Abs(value) > double.Epsilon, "number_coerced_to_boolean");
     }
 
-    private static ParseResult ParseInteger(JsonElement element) {
+    private static ParseResult ParseInt32(JsonElement element) {
+        if (element.ValueKind == JsonValueKind.Number) {
+            if (element.TryGetInt32(out var value32)) { return ParseResult.CreateSuccess(value32); }
+
+            if (element.TryGetInt64(out var value64)) {
+                return value64 is >= int.MinValue and <= int.MaxValue
+                    ? ParseResult.CreateSuccess((int)value64, "int64_coerced_to_int32")
+                    : ParseResult.CreateError("int32_out_of_range");
+            }
+
+            if (element.TryGetDouble(out var number)) {
+                if (double.IsNaN(number) || double.IsInfinity(number)) { return ParseResult.CreateError("int32_invalid_number"); }
+
+                var truncated = Math.Truncate(number);
+                if (truncated is < int.MinValue or > int.MaxValue) { return ParseResult.CreateError("int32_out_of_range"); }
+
+                var warning = Math.Abs(number - truncated) > double.Epsilon
+                    ? "fractional_number_truncated_to_int32"
+                    : "float64_coerced_to_int32";
+                return ParseResult.CreateSuccess((int)truncated, warning);
+            }
+
+            return ParseResult.CreateError("int32_invalid_literal");
+        }
+
+        if (element.ValueKind == JsonValueKind.String) {
+            var text = element.GetString();
+            if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)) { return ParseResult.CreateSuccess(value, "string_literal_converted_to_int32"); }
+            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var longValue)) {
+                return longValue is >= int.MinValue and <= int.MaxValue
+                    ? ParseResult.CreateSuccess((int)longValue, "string_literal_converted_to_int32")
+                    : ParseResult.CreateError("int32_out_of_range");
+            }
+
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) {
+                var truncated = Math.Truncate(number);
+                if (truncated is < int.MinValue or > int.MaxValue) { return ParseResult.CreateError("int32_out_of_range"); }
+
+                var warning = Math.Abs(number - truncated) > double.Epsilon
+                    ? "fractional_string_truncated_to_int32"
+                    : "string_literal_converted_to_int32";
+                return ParseResult.CreateSuccess((int)truncated, warning);
+            }
+
+            return ParseResult.CreateError("int32_invalid_string");
+        }
+
+        return ParseResult.CreateError("int32_unsupported_literal");
+    }
+
+    private static ParseResult ParseInt64(JsonElement element) {
         if (element.ValueKind == JsonValueKind.Number) {
             if (element.TryGetInt64(out var integer)) { return ParseResult.CreateSuccess(integer); }
 
             if (element.TryGetDouble(out var number)) {
-                var rounded = Math.Truncate(number);
-                var warning = Math.Abs(number - rounded) > double.Epsilon
-                    ? "fractional_number_truncated_to_integer"
-                    : "number_coerced_to_integer";
-                return ParseResult.CreateSuccess((long)rounded, warning);
+                if (double.IsNaN(number) || double.IsInfinity(number)) { return ParseResult.CreateError("int64_invalid_number"); }
+
+                var truncated = Math.Truncate(number);
+                if (truncated is < long.MinValue or > long.MaxValue) { return ParseResult.CreateError("int64_out_of_range"); }
+
+                var warning = Math.Abs(number - truncated) > double.Epsilon
+                    ? "fractional_number_truncated_to_int64"
+                    : "float64_coerced_to_int64";
+                return ParseResult.CreateSuccess((long)truncated, warning);
             }
 
-            return ParseResult.CreateError("invalid_integer_number");
+            return ParseResult.CreateError("int64_invalid_literal");
         }
 
         if (element.ValueKind == JsonValueKind.String) {
             var text = element.GetString();
-            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer)) { return ParseResult.CreateSuccess(integer, "string_literal_converted_to_integer"); }
+            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer)) { return ParseResult.CreateSuccess(integer, "string_literal_converted_to_int64"); }
 
-            return ParseResult.CreateError("invalid_integer_string");
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) {
+                var truncated = Math.Truncate(number);
+                if (truncated is < long.MinValue or > long.MaxValue) { return ParseResult.CreateError("int64_out_of_range"); }
+
+                var warning = Math.Abs(number - truncated) > double.Epsilon
+                    ? "fractional_string_truncated_to_int64"
+                    : "string_literal_converted_to_int64";
+                return ParseResult.CreateSuccess((long)truncated, warning);
+            }
+
+            return ParseResult.CreateError("int64_invalid_string");
         }
 
-        return ParseResult.CreateError("unsupported_integer_literal");
+        return ParseResult.CreateError("int64_unsupported_literal");
     }
 
-    private static ParseResult ParseNumber(JsonElement element) {
+    private static ParseResult ParseFloat32(JsonElement element) {
+        double number;
+        var sourceKind = element.ValueKind;
+
+        if (sourceKind == JsonValueKind.Number) {
+            if (!element.TryGetDouble(out number)) { return ParseResult.CreateError("float32_invalid_literal"); }
+        }
+        else if (sourceKind == JsonValueKind.String) {
+            var text = element.GetString();
+            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)) { return ParseResult.CreateError("float32_invalid_string"); }
+        }
+        else { return ParseResult.CreateError("float32_unsupported_literal"); }
+
+        if (double.IsNaN(number) || double.IsInfinity(number)) { return ParseResult.CreateError("float32_invalid_literal"); }
+        if (number is < -float.MaxValue or > float.MaxValue) { return ParseResult.CreateError("float32_out_of_range"); }
+
+        var converted = (float)number;
+        var delta = Math.Abs(number - converted);
+
+        string? warning = null;
+        if (sourceKind == JsonValueKind.String) {
+            warning = delta > double.Epsilon ? "string_literal_precision_loss" : "string_literal_converted_to_float32";
+        }
+        else if (delta > double.Epsilon) {
+            warning = "float64_precision_loss";
+        }
+
+        return ParseResult.CreateSuccess(converted, warning);
+    }
+
+    private static ParseResult ParseFloat64(JsonElement element) {
         if (element.ValueKind == JsonValueKind.Number) {
-            return element.TryGetDouble(out var number)
-                ? ParseResult.CreateSuccess(number)
-                : ParseResult.CreateError("invalid_number_literal");
+            return element.TryGetDouble(out var value)
+                ? ParseResult.CreateSuccess(value)
+                : ParseResult.CreateError("float64_invalid_literal");
         }
 
         if (element.ValueKind == JsonValueKind.String) {
             var text = element.GetString();
-            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) { return ParseResult.CreateSuccess(number, "string_literal_converted_to_number"); }
-
-            return ParseResult.CreateError("invalid_number_string");
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+                ? ParseResult.CreateSuccess(value, "string_literal_converted_to_float64")
+                : ParseResult.CreateError("float64_invalid_string");
         }
 
-        return ParseResult.CreateError("unsupported_number_literal");
+        return ParseResult.CreateError("float64_unsupported_literal");
     }
 
-    private static ParseResult ParseJsonObject(JsonElement element) {
-        if (element.ValueKind == JsonValueKind.Object) { return ParseResult.CreateSuccess(ConvertObject(element)); }
+    private static ParseResult ParseDecimal(JsonElement element) {
+        if (element.ValueKind == JsonValueKind.Number) {
+            return element.TryGetDecimal(out var value)
+                ? ParseResult.CreateSuccess(value)
+                : ParseResult.CreateError("decimal_invalid_literal");
+        }
 
         if (element.ValueKind == JsonValueKind.String) {
             var text = element.GetString();
-            if (string.IsNullOrWhiteSpace(text)) { return ParseResult.CreateSuccess(ImmutableDictionary<string, object?>.Empty, "empty_object_string"); }
-
-            try {
-                using var document = JsonDocument.Parse(text, DocumentOptions);
-                if (document.RootElement.ValueKind == JsonValueKind.Object) { return ParseResult.CreateSuccess(ConvertObject(document.RootElement), "string_literal_converted_to_object"); }
-            }
-            catch (JsonException ex) {
-                return ParseResult.CreateError($"object_parse_error:{ex.Message}");
-            }
+            return decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+                ? ParseResult.CreateSuccess(value, "string_literal_converted_to_decimal")
+                : ParseResult.CreateError("decimal_invalid_string");
         }
 
-        return ParseResult.CreateError("object_requires_json_object");
-    }
-
-    private static ParseResult ParseJsonArray(JsonElement element) {
-        if (element.ValueKind == JsonValueKind.Array) { return ParseResult.CreateSuccess(ConvertArray(element)); }
-
-        if (element.ValueKind == JsonValueKind.String) {
-            var text = element.GetString();
-            if (string.IsNullOrWhiteSpace(text)) { return ParseResult.CreateSuccess(ImmutableArray<object?>.Empty, "empty_array_string"); }
-
-            try {
-                using var document = JsonDocument.Parse(text, DocumentOptions);
-                if (document.RootElement.ValueKind == JsonValueKind.Array) { return ParseResult.CreateSuccess(ConvertArray(document.RootElement), "string_literal_converted_to_array"); }
-            }
-            catch (JsonException ex) {
-                return ParseResult.CreateError($"array_parse_error:{ex.Message}");
-            }
-        }
-
-        return ParseResult.CreateError("array_requires_json_array");
-    }
-
-    private static ParseResult ParseTimestamp(JsonElement element) {
-        if (element.ValueKind != JsonValueKind.String) { return ParseResult.CreateError("timestamp_requires_string"); }
-
-        var text = element.GetString();
-        return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var timestamp)
-            ? ParseResult.CreateSuccess(timestamp)
-            : ParseResult.CreateError("invalid_timestamp_format");
-    }
-
-    private static ParseResult ParseUri(JsonElement element) {
-        if (element.ValueKind != JsonValueKind.String) { return ParseResult.CreateError("uri_requires_string"); }
-
-        var text = element.GetString();
-        return Uri.TryCreate(text, UriKind.Absolute, out var uri)
-            ? ParseResult.CreateSuccess(uri)
-            : ParseResult.CreateError("invalid_uri_format");
-    }
-
-    private static ParseResult ParseEnumToken(ToolParameter parameter, JsonElement element) {
-        var scalar = ParseString(element);
-        if (!scalar.IsSuccess) { return scalar; }
-
-        if (scalar.Value is string token && parameter.EnumConstraint is not null && !parameter.EnumConstraint.Contains(token)) { return ParseResult.CreateError($"enum_out_of_range:{token}"); }
-
-        return scalar;
+        return ParseResult.CreateError("decimal_unsupported_literal");
     }
 
     private static ImmutableDictionary<string, object?> ConvertObject(JsonElement element) {

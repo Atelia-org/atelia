@@ -210,7 +210,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         public string Description => "delegate-tool";
 
-        public IReadOnlyList<ToolParameter> Parameters { get; } = Array.Empty<ToolParameter>();
+        public IReadOnlyList<ToolParamSpec> Parameters { get; } = Array.Empty<ToolParamSpec>();
 
         public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
             => new(_execute(arguments));

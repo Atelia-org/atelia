@@ -63,7 +63,7 @@ internal sealed class MemoryNotebookApp : IApp {
     private LodToolExecuteResult ExecuteReplace(IReadOnlyDictionary<string, object?>? arguments) {
         if (arguments is null) { return Failure("工具参数尚未解析。", "arguments_missing"); }
 
-        if (!TryGetString(arguments, "old_text", required: true, out var oldText, out var oldTextError)) { return Failure(oldTextError ?? "缺少 old_text 参数。", "old_text_invalid"); }
+        if (!TryGetString(arguments, "old_text", required: false, out var oldText, out var oldTextError)) { return Failure(oldTextError ?? "缺少 old_text 参数。", "old_text_invalid"); }
 
         if (!TryGetString(arguments, "new_text", required: true, out var newText, out var newTextError)) { return Failure(newTextError ?? "缺少 new_text 参数。", "new_text_invalid"); }
 
@@ -169,9 +169,15 @@ internal sealed class MemoryNotebookApp : IApp {
         }
 
         if (rawValue is null) {
-            value = required ? null : string.Empty;
-            error = required ? $"参数 {key} 不能为空" : null;
-            return !required;
+            if (required) {
+                value = null;
+                error = $"参数 {key} 不能为空";
+                return false;
+            }
+
+            value = null;
+            error = null;
+            return true;
         }
 
         value = rawValue switch {
@@ -285,31 +291,29 @@ internal sealed class MemoryNotebookApp : IApp {
 
     private sealed class MemoryNotebookReplaceTool : ITool {
         private readonly MemoryNotebookApp _owner;
-        private readonly ImmutableArray<ToolParameter> _parameters;
+        private readonly ImmutableArray<ToolParamSpec> _parameters;
 
         public MemoryNotebookReplaceTool(MemoryNotebookApp owner) {
             _owner = owner;
             _parameters = ImmutableArray.Create(
-                new ToolParameter(
+                new ToolParamSpec(
                     name: "old_text",
-                    valueKind: ToolParameterValueKind.String,
-                    cardinality: ToolParameterCardinality.Single,
-                    isRequired: true,
-                    description: "要替换的旧文本；允许为空字符串以表示追加。"
+                    description: "要替换的旧文本；允许为null或空字符串以表示追加。",
+                    valueKind: ToolParamValueKind.String,
+                    isNullable: true,
+                    defaultValue: new ParamDefault(null)
                 ),
-                new ToolParameter(
+                new ToolParamSpec(
                     name: "new_text",
-                    valueKind: ToolParameterValueKind.String,
-                    cardinality: ToolParameterCardinality.Single,
-                    isRequired: true,
-                    description: "替换后的新文本；为空字符串表示删除。"
+                    description: "替换后的新文本；为空字符串表示删除。",
+                    valueKind: ToolParamValueKind.String
                 ),
-                new ToolParameter(
+                new ToolParamSpec(
                     name: "search_after",
-                    valueKind: ToolParameterValueKind.String,
-                    cardinality: ToolParameterCardinality.Optional,
-                    isRequired: false,
-                    description: "可选锚点；缺省时要求 old_text 在文档中唯一出现。"
+                    description: "可选锚点；为null或空字符串时要求 old_text 在文档中唯一出现。",
+                    valueKind: ToolParamValueKind.String,
+                    isNullable: true,
+                    defaultValue: new ParamDefault(null)
                 )
             );
         }
@@ -318,7 +322,7 @@ internal sealed class MemoryNotebookApp : IApp {
 
         public string Description => "在 Memory Notebook 中查找并替换文本，支持锚点定位与末尾追加。";
 
-        public IReadOnlyList<ToolParameter> Parameters => _parameters;
+        public IReadOnlyList<ToolParamSpec> Parameters => _parameters;
 
         public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
             var result = _owner.ExecuteReplace(arguments);

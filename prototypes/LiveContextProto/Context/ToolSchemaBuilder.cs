@@ -6,7 +6,7 @@ using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Provider;
 
-internal static class ProviderToolSchemaBuilder {
+internal static class JsonToolSchemaBuilder {
     public static JsonElement BuildSchema(ToolDefinition definition) {
         if (definition is null) { throw new ArgumentNullException(nameof(definition)); }
 
@@ -38,102 +38,46 @@ internal static class ProviderToolSchemaBuilder {
         return JsonSerializer.SerializeToElement(root);
     }
 
-    private static JsonNode BuildParameterSchema(ToolParameter parameter) {
-        return parameter.Cardinality switch {
-            ToolParameterCardinality.List => BuildListSchema(parameter),
-            ToolParameterCardinality.Map => BuildMapSchema(parameter),
-            _ => BuildScalarSchema(parameter, includeMetadata: true)
-        };
-    }
-
-    private static JsonNode BuildListSchema(ToolParameter parameter) {
-        var schema = new JsonObject {
-            ["type"] = "array"
-        };
-
-        AppendDescription(schema, parameter.Description);
-        AppendExamples(schema, parameter.Example);
-
-        var itemSchema = BuildScalarSchema(parameter, includeMetadata: false);
-        schema["items"] = itemSchema;
-
-        return schema;
-    }
-
-    private static JsonNode BuildMapSchema(ToolParameter parameter) {
-        var schema = new JsonObject {
-            ["type"] = "object"
-        };
-
-        AppendDescription(schema, parameter.Description);
-        AppendExamples(schema, parameter.Example);
-
-        var valueSchema = BuildScalarSchema(parameter, includeMetadata: false);
-        schema["additionalProperties"] = valueSchema;
-
-        return schema;
-    }
-
-    private static JsonNode BuildScalarSchema(ToolParameter parameter, bool includeMetadata) {
+    private static JsonNode BuildParameterSchema(ToolParamSpec parameter) {
         var schema = new JsonObject();
 
         switch (parameter.ValueKind) {
-            case ToolParameterValueKind.String:
-            case ToolParameterValueKind.EnumToken:
-            case ToolParameterValueKind.AttachmentReference:
+            case ToolParamValueKind.String:
                 schema["type"] = "string";
                 break;
-            case ToolParameterValueKind.Boolean:
+            case ToolParamValueKind.Boolean:
                 schema["type"] = "boolean";
                 break;
-            case ToolParameterValueKind.Integer:
+            case ToolParamValueKind.Int32:
                 schema["type"] = "integer";
+                schema["format"] = "int32";
                 break;
-            case ToolParameterValueKind.Number:
+            case ToolParamValueKind.Int64:
+                schema["type"] = "integer";
+                schema["format"] = "int64";
+                break;
+            case ToolParamValueKind.Float32:
                 schema["type"] = "number";
+                schema["format"] = "float32";
                 break;
-            case ToolParameterValueKind.JsonObject:
-                schema["type"] = "object";
+            case ToolParamValueKind.Float64:
+                schema["type"] = "number";
+                schema["format"] = "float64";
                 break;
-            case ToolParameterValueKind.JsonArray:
-                schema["type"] = "array";
-                break;
-            case ToolParameterValueKind.Timestamp:
-                schema["type"] = "string";
-                schema["format"] = "date-time";
-                break;
-            case ToolParameterValueKind.Uri:
-                schema["type"] = "string";
-                schema["format"] = "uri";
+            case ToolParamValueKind.Decimal:
+                schema["type"] = "number";
+                schema["format"] = "decimal";
                 break;
             default:
                 schema["type"] = "string";
                 break;
         }
 
-        if (includeMetadata) {
-            AppendDescription(schema, parameter.Description);
-            AppendExamples(schema, parameter.Example);
-        }
-
-        AppendEnumConstraint(schema, parameter.EnumConstraint);
-        schema["x-ateliatype"] = parameter.ValueKind.ToString();
+        AppendDescription(schema, parameter.Description);
+        AppendExamples(schema, parameter.Example);
+        // TODO: 在引入通用参数约束体系后，将枚举等约束信息映射到 schema。
 
         return schema;
-    }
-
-    private static void AppendEnumConstraint(JsonObject schema, ToolParameterEnumConstraint? constraint) {
-        if (constraint is null) { return; }
-
-        var values = new JsonArray();
-        foreach (var value in constraint.AllowedValues) {
-            values.Add(JsonValue.Create(value));
-        }
-
-        schema["enum"] = values;
-        if (!constraint.CaseSensitive) {
-            schema["x-enum-case-sensitive"] = false;
-        }
     }
 
     private static void AppendDescription(JsonObject schema, string? description) {
