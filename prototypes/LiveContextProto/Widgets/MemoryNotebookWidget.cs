@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Tools;
@@ -10,7 +11,7 @@ using Atelia.LiveContextProto.Tools;
 namespace Atelia.LiveContextProto.Apps;
 
 internal sealed class MemoryNotebookApp : IApp {
-    internal const string ToolNameReplace = "memory_notebook_replace";
+    internal const string ReplaceToolName = "memory_notebook_replace";
     private const string DebugCategory = "MemoryNotebookApp";
     internal const string DefaultSnapshot = "（暂无 Memory Notebook 内容）";
 
@@ -19,7 +20,11 @@ internal sealed class MemoryNotebookApp : IApp {
     private string? _notebookContent;
 
     public MemoryNotebookApp() {
-        _tools = ImmutableArray.Create<ITool>(new MemoryNotebookReplaceTool(this));
+        _tools = ImmutableArray.Create<ITool>(
+            MethodToolWrapper.FromDelegate(
+                (Func<string, string?, string?, CancellationToken, ValueTask<LodToolExecuteResult>>)ReplaceAsync
+            )
+        );
     }
 
     public string Name => "MemoryNotebook";
@@ -44,6 +49,21 @@ internal sealed class MemoryNotebookApp : IApp {
         return builder.ToString().TrimEnd();
     }
 
+    [Tool(ReplaceToolName,
+        "在 Memory Notebook 中查找并替换文本；支持通过锚点限定搜索范围，亦可在末尾追加；执行结果会返回 operation/delta/new_length 等细节。"
+    )]
+    private ValueTask<LodToolExecuteResult> ReplaceAsync(
+        [ToolParam("替换后的新文本；为空字符串表示删除匹配到的 old_text，或在追加场景写入空段落。")] string new_text,
+        [ToolParam("要替换的旧文本；传 null 或空字符串表示改为末尾追加；若提供文本但未找到匹配将返回错误。")] string? old_text = null,
+        [ToolParam("锚点定位文本；如果提供，会从该锚点之后开始搜索 old_text，以区分多次出现的情况。")] string? search_after = null,
+        CancellationToken cancellationToken = default
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var result = ExecuteReplace(old_text, new_text, search_after);
+        return ValueTask.FromResult(result);
+    }
+
     internal void ReplaceNotebookFromHost(string? content) {
         var normalized = Normalize(content);
         DebugUtil.Print(DebugCategory, $"[HostUpdate] length={(normalized?.Length ?? 0)}");
@@ -60,14 +80,8 @@ internal sealed class MemoryNotebookApp : IApp {
             ? DefaultSnapshot
             : _notebookContent;
 
-    private LodToolExecuteResult ExecuteReplace(IReadOnlyDictionary<string, object?>? arguments) {
-        if (arguments is null) { return Failure("工具参数尚未解析。", "arguments_missing"); }
-
-        if (!TryGetString(arguments, "old_text", required: false, out var oldText, out var oldTextError)) { return Failure(oldTextError ?? "缺少 old_text 参数。", "old_text_invalid"); }
-
-        if (!TryGetString(arguments, "new_text", required: true, out var newText, out var newTextError)) { return Failure(newTextError ?? "缺少 new_text 参数。", "new_text_invalid"); }
-
-        TryGetString(arguments, "search_after", required: false, out var searchAfter, out _);
+    private LodToolExecuteResult ExecuteReplace(string? oldText, string? newText, string? searchAfter) {
+        if (newText is null) { return Failure("缺少 new_text 参数。", "new_text_invalid"); }
 
         oldText ??= string.Empty;
         newText ??= string.Empty;
@@ -149,65 +163,6 @@ internal sealed class MemoryNotebookApp : IApp {
         return current + addition;
     }
 
-    private static bool TryGetString(
-        IReadOnlyDictionary<string, object?> arguments,
-        string key,
-        bool required,
-        out string? value,
-        out string? error
-    ) {
-        if (!arguments.TryGetValue(key, out var rawValue)) {
-            if (required) {
-                value = null;
-                error = $"缺少参数 {key}";
-                return false;
-            }
-
-            value = null;
-            error = null;
-            return true;
-        }
-
-        if (rawValue is null) {
-            if (required) {
-                value = null;
-                error = $"参数 {key} 不能为空";
-                return false;
-            }
-
-            value = null;
-            error = null;
-            return true;
-        }
-
-        value = rawValue switch {
-            string s => s,
-            _ => rawValue.ToString() ?? string.Empty
-        };
-
-        error = null;
-        return true;
-    }
-
-    private static ImmutableDictionary<string, object?> BuildMetadata(
-        string previous,
-        string current,
-        bool appended,
-        string? searchAfter
-    ) {
-        var metadata = ImmutableDictionary<string, object?>.Empty
-            .SetItem("previous_length", previous.Length)
-            .SetItem("new_length", current.Length)
-            .SetItem("delta", current.Length - previous.Length)
-            .SetItem("operation", appended ? "append" : "replace");
-
-        if (!string.IsNullOrEmpty(searchAfter)) {
-            metadata = metadata.SetItem("search_after", searchAfter);
-        }
-
-        return metadata;
-    }
-
     private static string? Normalize(string? content) {
         if (string.IsNullOrWhiteSpace(content)) { return null; }
 
@@ -215,7 +170,11 @@ internal sealed class MemoryNotebookApp : IApp {
     }
 
     private LodToolExecuteResult Failure(string message, string errorCode) {
-        return LodToolExecuteResult.FromContent(ToolExecutionStatus.Failed, new LevelOfDetailContent(message, message));
+        var detail = string.Concat(message, Environment.NewLine, "- error_code: ", errorCode);
+        return LodToolExecuteResult.FromContent(
+            ToolExecutionStatus.Failed,
+            new LevelOfDetailContent(message, detail)
+        );
     }
 
     private static LevelOfDetailContent CreateOperationContent(
@@ -289,44 +248,4 @@ internal sealed class MemoryNotebookApp : IApp {
         return builder.ToString();
     }
 
-    private sealed class MemoryNotebookReplaceTool : ITool {
-        private readonly MemoryNotebookApp _owner;
-        private readonly ImmutableArray<ToolParamSpec> _parameters;
-
-        public MemoryNotebookReplaceTool(MemoryNotebookApp owner) {
-            _owner = owner;
-            _parameters = ImmutableArray.Create(
-                new ToolParamSpec(
-                    name: "old_text",
-                    description: "要替换的旧文本；允许为null或空字符串以表示追加。",
-                    valueKind: ToolParamValueKind.String,
-                    isNullable: true,
-                    defaultValue: new ParamDefault(null)
-                ),
-                new ToolParamSpec(
-                    name: "new_text",
-                    description: "替换后的新文本；为空字符串表示删除。",
-                    valueKind: ToolParamValueKind.String
-                ),
-                new ToolParamSpec(
-                    name: "search_after",
-                    description: "可选锚点；为null或空字符串时要求 old_text 在文档中唯一出现。",
-                    valueKind: ToolParamValueKind.String,
-                    isNullable: true,
-                    defaultValue: new ParamDefault(null)
-                )
-            );
-        }
-
-        public string Name => ToolNameReplace;
-
-        public string Description => "在 Memory Notebook 中查找并替换文本，支持锚点定位与末尾追加。";
-
-        public IReadOnlyList<ToolParamSpec> Parameters => _parameters;
-
-        public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
-            var result = _owner.ExecuteReplace(arguments);
-            return ValueTask.FromResult(result);
-        }
-    }
 }
