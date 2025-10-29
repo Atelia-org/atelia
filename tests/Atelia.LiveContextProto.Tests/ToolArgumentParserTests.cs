@@ -1,10 +1,6 @@
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
-using System.Threading;
-using System.Threading.Tasks;
 using Atelia.LiveContextProto.Context;
-using Atelia.LiveContextProto.Tools;
+using Atelia.LiveContextProto.Provider;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -12,13 +8,12 @@ namespace Atelia.LiveContextProto.Tests;
 public sealed class ToolArgumentParserTests {
     [Fact]
     public void ParseArguments_Float32PrecisionLossProducesWarning() {
-        var tool = new FakeTool(
-            "float32-tool",
+        var parameters = new[] {
             new ToolParamSpec(name: "value", description: "float32-value", valueKind: ToolParamValueKind.Float32)
-        );
+        };
 
         var payload = "{\"value\": 123456.7890123}";
-        var result = ToolArgumentParser.ParseArguments(tool, payload);
+        var result = JsonArgumentParser.ParseArguments(parameters, payload);
 
         Assert.Null(result.ParseError);
         Assert.NotNull(result.ParseWarning);
@@ -31,13 +26,12 @@ public sealed class ToolArgumentParserTests {
 
     [Fact]
     public void ParseArguments_DecimalFromStringProducesWarning() {
-        var tool = new FakeTool(
-            "decimal-tool",
+        var parameters = new[] {
             new ToolParamSpec(name: "amount", description: "amount", valueKind: ToolParamValueKind.Decimal)
-        );
+        };
 
         var payload = "{\"amount\": \"42.42\"}";
-        var result = ToolArgumentParser.ParseArguments(tool, payload);
+        var result = JsonArgumentParser.ParseArguments(parameters, payload);
 
         Assert.Null(result.ParseError);
         Assert.NotNull(result.ParseWarning);
@@ -49,13 +43,12 @@ public sealed class ToolArgumentParserTests {
 
     [Fact]
     public void ParseArguments_Int32OutOfRangeReturnsError() {
-        var tool = new FakeTool(
-            "int32-tool",
+        var parameters = new[] {
             new ToolParamSpec(name: "count", description: "count", valueKind: ToolParamValueKind.Int32)
-        );
+        };
 
         var payload = "{\"count\": 5000000000}";
-        var result = ToolArgumentParser.ParseArguments(tool, payload);
+        var result = JsonArgumentParser.ParseArguments(parameters, payload);
 
         Assert.Null(result.ParseWarning);
         Assert.NotNull(result.ParseError);
@@ -64,15 +57,14 @@ public sealed class ToolArgumentParserTests {
 
     [Fact]
     public void ParseArguments_OptionalParameterMissing_NoError() {
-        var tool = new FakeTool(
-            "optional-tool",
+        var parameters = new[] {
             new ToolParamSpec(name: "note", description: "note", valueKind: ToolParamValueKind.String,
                 isNullable: true,
                 defaultValue: new ParamDefault(null)
             )
-        );
+        };
 
-        var result = ToolArgumentParser.ParseArguments(tool, "{}");
+        var result = JsonArgumentParser.ParseArguments(parameters, "{}");
 
         Assert.Null(result.ParseError);
         Assert.Null(result.ParseWarning);
@@ -81,14 +73,13 @@ public sealed class ToolArgumentParserTests {
 
     [Fact]
     public void ParseArguments_RequiredStringIsNullable_SucceedsWithNullValue() {
-        var tool = new FakeTool(
-            "nullable-string-tool",
+        var parameters = new[] {
             new ToolParamSpec(name: "comment", description: "comment", valueKind: ToolParamValueKind.String,
                 isNullable: true
             )
-        );
+        };
 
-        var result = ToolArgumentParser.ParseArguments(tool, "{\"comment\": null}");
+        var result = JsonArgumentParser.ParseArguments(parameters, "{\"comment\": null}");
 
         Assert.Null(result.ParseError);
         Assert.Null(result.ParseWarning);
@@ -99,37 +90,16 @@ public sealed class ToolArgumentParserTests {
 
     [Fact]
     public void ParseArguments_NullForNonNullableOptionalParameter_ProducesError() {
-        var tool = new FakeTool(
-            "optional-int-tool",
+        var parameters = new[] {
             new ToolParamSpec(name: "count", description: "count", valueKind: ToolParamValueKind.Int32,
                 defaultValue: new ParamDefault(0)
             )
-        );
+        };
 
-        var result = ToolArgumentParser.ParseArguments(tool, "{\"count\": null}");
+        var result = JsonArgumentParser.ParseArguments(parameters, "{\"count\": null}");
 
         Assert.Null(result.ParseWarning);
         Assert.NotNull(result.ParseError);
         Assert.Contains("count:null_not_allowed", result.ParseError!, StringComparison.Ordinal);
-    }
-
-    private sealed class FakeTool : ITool {
-        private readonly ImmutableArray<ToolParamSpec> _parameters;
-
-        public FakeTool(string name, params ToolParamSpec[] parameters) {
-            Name = name ?? throw new ArgumentNullException(nameof(name));
-            _parameters = parameters is { Length: > 0 }
-                ? ImmutableArray.Create(parameters)
-                : ImmutableArray<ToolParamSpec>.Empty;
-        }
-
-        public string Name { get; }
-
-        public string Description => "fake-tool";
-
-        public IReadOnlyList<ToolParamSpec> Parameters => _parameters;
-
-        public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
-            => throw new NotSupportedException();
     }
 }

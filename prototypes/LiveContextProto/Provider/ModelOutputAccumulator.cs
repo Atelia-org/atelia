@@ -62,6 +62,12 @@ internal static class ModelOutputAccumulator {
             contents.Add(string.Empty);
         }
 
+        foreach (var call in toolCalls) {
+            if (call.Arguments is null && string.IsNullOrWhiteSpace(call.ParseError)) {
+                DebugUtil.Print(DebugCategory, $"[Aggregate] Tool call missing parsed arguments toolName={call.ToolName} callId={call.ToolCallId}");
+            }
+        }
+
         var fullContentText = string.Join('\n', contents);
         var outputEntry = new ModelOutputEntry(fullContentText, toolCalls, invocation);
 

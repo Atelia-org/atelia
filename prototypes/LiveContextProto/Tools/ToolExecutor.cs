@@ -75,7 +75,13 @@ internal sealed class ToolExecutor {
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var normalizedRequest = EnsureArguments(tool, request);
+        var normalizedRequest = request;
+
+        if (normalizedRequest.Arguments is null && string.IsNullOrWhiteSpace(normalizedRequest.ParseError)) {
+            normalizedRequest = normalizedRequest with {
+                ParseError = "arguments_missing_from_provider"
+            };
+        }
 
         if (!string.IsNullOrWhiteSpace(normalizedRequest.ParseError)) {
             stopwatch.Stop();
@@ -132,23 +138,6 @@ internal sealed class ToolExecutor {
                 elapsed: stopwatch.Elapsed
             );
         }
-    }
-
-    private static ToolCallRequest EnsureArguments(ITool tool, ToolCallRequest request) {
-        if (request.Arguments is not null) { return request; }
-
-        var parsed = ToolArgumentParser.ParseArguments(tool, request.RawArguments);
-        return request with {
-            Arguments = parsed.Arguments,
-            ParseError = CombineMessages(request.ParseError, parsed.ParseError),
-            ParseWarning = CombineMessages(request.ParseWarning, parsed.ParseWarning)
-        };
-    }
-
-    private static string? CombineMessages(string? primary, string? secondary) {
-        if (string.IsNullOrWhiteSpace(primary)) { return secondary; }
-        if (string.IsNullOrWhiteSpace(secondary)) { return primary; }
-        return string.Concat(primary, "; ", secondary);
     }
 
     private static LodToolCallResult CreateParseFailureResult(ToolCallRequest request) {

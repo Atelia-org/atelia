@@ -169,7 +169,10 @@ public sealed class AgentStateMachineToolExecutionTests {
         string callId,
         string rawArguments,
         IReadOnlyDictionary<string, object?>? arguments = null
-    ) => new(toolName, callId, rawArguments, arguments, null, null);
+    ) {
+        var materializedArguments = arguments ?? ImmutableDictionary<string, object?>.Empty;
+        return new(toolName, callId, rawArguments, materializedArguments, null, null);
+    }
 
     private static async IAsyncEnumerable<ModelOutputDelta> CreateDeltaSequence(params ModelOutputDelta[] deltas) {
         foreach (var delta in deltas) {

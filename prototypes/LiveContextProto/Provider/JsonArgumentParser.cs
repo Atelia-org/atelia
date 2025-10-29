@@ -5,24 +5,24 @@ using System.Globalization;
 using System.Text.Json;
 using Atelia.LiveContextProto.Context;
 
-namespace Atelia.LiveContextProto.Tools;
+namespace Atelia.LiveContextProto.Provider;
 
-internal static class ToolArgumentParser {
+internal static class JsonArgumentParser {
     private static readonly JsonDocumentOptions DocumentOptions = new() {
         AllowTrailingCommas = true,
         CommentHandling = JsonCommentHandling.Skip
     };
 
-    public static ToolCallRequest CreateRequest(ITool tool, string toolCallId, string rawArguments) {
-        if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
-        if (toolCallId is null) { throw new ArgumentNullException(nameof(toolCallId)); }
+    // public static ToolCallRequest CreateRequest(ITool tool, string toolCallId, string rawArguments) {
+    //     if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
+    //     if (toolCallId is null) { throw new ArgumentNullException(nameof(toolCallId)); }
 
-        var result = ParseArguments(tool, rawArguments);
-        return new ToolCallRequest(tool.Name, toolCallId, rawArguments ?? string.Empty, result.Arguments, result.ParseError, result.ParseWarning);
-    }
+    //     var result = ParseArguments(tool, rawArguments);
+    //     return new ToolCallRequest(tool.Name, toolCallId, rawArguments ?? string.Empty, result.Arguments, result.ParseError, result.ParseWarning);
+    // }
 
-    public static ToolArgumentParsingResult ParseArguments(ITool tool, string rawArguments) {
-        if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
+    public static ToolArgumentParsingResult ParseArguments(IReadOnlyList<ToolParamSpec> parameters, string rawArguments) {
+        if (parameters is null) { throw new ArgumentNullException(nameof(parameters)); }
 
         var warnings = new List<string>();
         var errors = new List<string>();
@@ -35,14 +35,14 @@ internal static class ToolArgumentParser {
                 errors.Add("arguments_must_be_object");
             }
             else {
-                arguments = ParseObject(tool, document.RootElement, warnings, errors);
+                arguments = ParseObject(parameters, document.RootElement, warnings, errors);
             }
         }
         catch (JsonException ex) {
             errors.Add($"json_parse_error:{ex.Message}");
         }
 
-        foreach (var parameter in tool.Parameters) {
+        foreach (var parameter in parameters) {
             if (parameter.IsRequired && !arguments.ContainsKey(parameter.Name)) {
                 errors.Add($"missing_required:{parameter.Name}");
             }
@@ -55,13 +55,13 @@ internal static class ToolArgumentParser {
     }
 
     private static ImmutableDictionary<string, object?> ParseObject(
-        ITool tool,
+        IReadOnlyList<ToolParamSpec> parameters,
         JsonElement element,
         List<string> warnings,
         List<string> errors
     ) {
         var builder = ImmutableDictionary.CreateBuilder<string, object?>(StringComparer.OrdinalIgnoreCase);
-        var lookup = CreateParameterLookup(tool.Parameters);
+        var lookup = CreateParameterLookup(parameters);
 
         foreach (var property in element.EnumerateObject()) {
             if (!lookup.TryGetValue(property.Name, out var parameter)) {

@@ -59,7 +59,7 @@ internal sealed class AnthropicProviderClient : IProviderClient {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        var parser = new AnthropicStreamParser();
+        var parser = new AnthropicStreamParser(request.Tools);
         string? line;
 
         while ((line = await reader.ReadLineAsync(cancellationToken)) is not null) {

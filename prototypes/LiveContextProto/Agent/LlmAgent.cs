@@ -135,11 +135,10 @@ internal sealed class LlmAgent {
 
         var deltas = profile.Client.CallModelAsync(request, cancellationToken);
         var aggregatedOutput = await ModelOutputAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);
-        var normalizedOutput = NormalizeToolCalls(aggregatedOutput);
 
         _pendingToolResults.Clear();
 
-        var appended = _state.AppendModelOutput(normalizedOutput);
+        var appended = _state.AppendModelOutput(aggregatedOutput);
 
         var toolCallCount = appended.ToolCalls?.Count ?? 0;
         DebugUtil.Print(ProviderDebugCategory, $"[StateMachine] Model output appended Contents.Length={appended.Contents.Length} toolCalls={toolCallCount}");
@@ -222,39 +221,6 @@ internal sealed class LlmAgent {
 
     private ToolResultsEntry AppendToolResultsWithSummary(ToolResultsEntry entry) {
         return _state.AppendToolResults(entry);
-    }
-
-    private ModelOutputEntry NormalizeToolCalls(ModelOutputEntry entry) {
-        if (entry.ToolCalls is not { Count: > 0 }) { return entry; }
-
-        var builder = ImmutableArray.CreateBuilder<ToolCallRequest>(entry.ToolCalls.Count);
-
-        foreach (var request in entry.ToolCalls) {
-            builder.Add(NormalizeToolCall(request));
-        }
-
-        return entry with { ToolCalls = builder.ToImmutable() };
-    }
-
-    private ToolCallRequest NormalizeToolCall(ToolCallRequest request) {
-        if (!_toolExecutor.TryGetTool(request.ToolName, out var tool)) {
-            return request with {
-                ParseWarning = CombineMessages(request.ParseWarning, "tool_definition_missing")
-            };
-        }
-
-        var parsed = ToolArgumentParser.ParseArguments(tool, request.RawArguments);
-        return request with {
-            Arguments = parsed.Arguments,
-            ParseError = CombineMessages(request.ParseError, parsed.ParseError),
-            ParseWarning = CombineMessages(request.ParseWarning, parsed.ParseWarning)
-        };
-    }
-
-    private static string? CombineMessages(string? first, string? second) {
-        if (string.IsNullOrWhiteSpace(first)) { return second; }
-        if (string.IsNullOrWhiteSpace(second)) { return first; }
-        return string.Concat(first, "; ", second);
     }
 
     private void ResetInvocation() {

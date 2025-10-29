@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Context;
+using Atelia.LiveContextProto.Provider;
 
 namespace Atelia.LiveContextProto.Provider.Anthropic;
 
@@ -14,9 +16,29 @@ namespace Atelia.LiveContextProto.Provider.Anthropic;
 internal sealed class AnthropicStreamParser {
     private const string DebugCategory = "Provider";
 
+    private readonly Dictionary<string, ToolDefinition> _toolDefinitions;
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
     private readonly List<ToolCallRequest> _toolCalls = new();
     private TokenUsage? _usage;
+
+    public AnthropicStreamParser()
+        : this(ImmutableArray<ToolDefinition>.Empty) {
+    }
+
+    public AnthropicStreamParser(ImmutableArray<ToolDefinition> toolDefinitions) {
+        _toolDefinitions = new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase);
+
+        if (!toolDefinitions.IsDefaultOrEmpty) {
+            foreach (var definition in toolDefinitions) {
+                if (_toolDefinitions.ContainsKey(definition.Name)) {
+                    DebugUtil.Print(DebugCategory, $"[Anthropic] Duplicate tool definition ignored name={definition.Name}");
+                    continue;
+                }
+
+                _toolDefinitions[definition.Name] = definition;
+            }
+        }
+    }
 
     public IEnumerable<ModelOutputDelta> ParseEvent(string json) {
         JsonNode? node;
@@ -159,10 +181,12 @@ internal sealed class AnthropicStreamParser {
     }
 
     private ToolCallRequest CreateToolCallRequest(ContentBlockState state) {
-        var rawArguments = state.ToolInputJson ?? "{}";
+        var rawArguments = string.IsNullOrWhiteSpace(state.ToolInputJson) ? "{}" : state.ToolInputJson;
         IReadOnlyDictionary<string, object?>? arguments = null;
+        IReadOnlyDictionary<string, object?>? fallbackArguments = null;
         string? parseError = null;
         string? parseWarning = null;
+        string? fallbackWarning = null;
 
         try {
             using var document = JsonDocument.Parse(rawArguments);
@@ -175,17 +199,29 @@ internal sealed class AnthropicStreamParser {
                     dict[property.Name] = ConvertJsonElement(property.Value, childPath, warnings);
                 }
 
-                arguments = dict;
+                fallbackArguments = dict;
                 if (warnings.Count > 0) {
-                    parseWarning = string.Join("; ", warnings);
+                    fallbackWarning = string.Join("; ", warnings);
                 }
             }
             else {
-                parseError = $"Arguments must be a JSON object but was {document.RootElement.ValueKind}.";
+                parseError = CombineMessages(parseError, $"Arguments must be a JSON object but was {document.RootElement.ValueKind}.");
             }
         }
         catch (JsonException ex) {
-            parseError = $"JSON parse failed: {ex.Message}";
+            parseError = CombineMessages(parseError, $"JSON parse failed: {ex.Message}");
+        }
+
+        if (_toolDefinitions.TryGetValue(state.ToolName, out var definition)) {
+            var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, rawArguments);
+            arguments = parsed.Arguments;
+            parseError = CombineMessages(parseError, parsed.ParseError);
+            parseWarning = CombineMessages(parseWarning, parsed.ParseWarning);
+        }
+        else {
+            parseWarning = CombineMessages(parseWarning, "tool_definition_missing");
+            arguments = fallbackArguments;
+            parseWarning = CombineMessages(parseWarning, fallbackWarning);
         }
 
         return new ToolCallRequest(
@@ -196,6 +232,12 @@ internal sealed class AnthropicStreamParser {
             ParseError: parseError,
             ParseWarning: parseWarning
         );
+    }
+
+    private static string? CombineMessages(string? first, string? second) {
+        if (string.IsNullOrWhiteSpace(first)) { return second; }
+        if (string.IsNullOrWhiteSpace(second)) { return first; }
+        return string.Concat(first, "; ", second);
     }
 
     private static object? ConvertJsonElement(JsonElement element, string path, List<string> warnings) {

@@ -119,8 +119,7 @@ internal static class AnthropicMessageConverter {
 
         // 工具调用
         foreach (var toolCall in output.ToolCalls) {
-            // 解析参数为 JSON 对象
-            var inputJson = ParseToolInput(toolCall.RawArguments);
+            var inputJson = BuildToolInput(toolCall);
 
             blocks.Add(
                 new AnthropicToolUseBlock {
@@ -137,16 +136,8 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static JsonElement ParseToolInput(string rawArguments) {
-        if (string.IsNullOrWhiteSpace(rawArguments)) { return JsonSerializer.SerializeToElement(new { }); }
-
-        try {
-            return JsonDocument.Parse(rawArguments).RootElement.Clone();
-        }
-        catch {
-            // 解析失败时返回包装的字符串
-            return JsonSerializer.SerializeToElement(new { raw = rawArguments });
-        }
+    private static JsonElement BuildToolInput(ToolCallRequest toolCall) {
+        return JsonSerializer.SerializeToElement(toolCall.Arguments);
     }
 
     /// <summary>
