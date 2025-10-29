@@ -1,9 +1,5 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
-using System.Threading;
-using System.Threading.Tasks;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Context;
 
@@ -146,8 +142,9 @@ internal sealed class ToolExecutor {
             ? basic
             : $"解析错误: {request.ParseError}";
 
-        if (!string.IsNullOrWhiteSpace(request.RawArguments)) {
-            detail = string.Concat(detail, "\nraw_arguments: ", request.RawArguments);
+        if (request.RawArguments is { Count: > 0 }) {
+            var snapshot = string.Join(", ", request.RawArguments.Select(pair => $"{pair.Key}={pair.Value}"));
+            detail = string.Concat(detail, "\nraw_arguments: ", snapshot);
         }
 
         return new LodToolCallResult(

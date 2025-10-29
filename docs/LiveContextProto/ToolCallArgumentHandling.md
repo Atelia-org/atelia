@@ -17,7 +17,7 @@ LiveContextProto 的工具调用链路包含三个关键参与者：
   - 成功解析 → 将结构化值写入 `Arguments`
   - 轻微偏差（如字符串包裹了布尔值）→ `Arguments` 写入修正后的值，同时将说明写入 `ParseWarning`
   - 解析失败 → 保留原始 JSON 文本，写入 `ParseError`
-- **工具行为**：优先读取 `Arguments` 字典中的结构化值；若发现 `ParseError`/`ParseWarning`，可选择降级到 `RawArguments` 自行解析或向上抛错。
+- **工具行为**：优先读取 `Arguments` 字典中的结构化值；若发现 `ParseError`/`ParseWarning`，可选择降级到 `RawArguments`（保留的原始文本映射）自行解析或向上抛错。
 
 整体目标是在不中断调用的情况下尽量提供类型安全的数据，同时保留原始输入以便调试或容错。
 
@@ -27,19 +27,19 @@ LiveContextProto 的工具调用链路包含三个关键参与者：
 
 ```csharp
 internal record ToolCallRequest(
-    string ToolName,
-    string ToolCallId,
-    string RawArguments,
-    IReadOnlyDictionary<string, object?>? Arguments,
-    string? ParseError,
-    string? ParseWarning
+   string ToolName,
+   string ToolCallId,
+   IReadOnlyDictionary<string, string>? RawArguments,
+   IReadOnlyDictionary<string, object?>? Arguments,
+   string? ParseError,
+   string? ParseWarning
 );
 ```
 
 字段含义：
 
 - **ToolName / ToolCallId**：保持不变
-- **RawArguments**：模型输出的原始 JSON 字符串，永远保留
+- **RawArguments**：按参数名保存的原始文本快照（值为模型输出的字符串表示），用于调试或跨 Provider 还原
 - **Arguments**：解析后的参数字典，值为 `object?`，支持嵌套结构（`Dictionary<string, object?>` / `List<object?>`）
 - **ParseError**：严重错误描述（如 JSON 解析失败/结构非对象）。出现错误时，`Arguments` 可能为 `null` 或部分可用
 - **ParseWarning**：轻量提示，例如从字符串提升为布尔值时的说明，多个警告以 `; ` 分隔
@@ -48,7 +48,7 @@ internal record ToolCallRequest(
 
 ### JSON 解析与结构化构建
 
-1. 解析 `RawArguments` 为 `JsonDocument`
+1. 解析模型输出获取原始 JSON，并将每个参数的原始文本写入 `RawArguments`
 2. 要求根节点必须是对象；否则写入 `ParseError`
 3. 遍历属性时，将 `JsonElement` 转换为 C# 值：
    - `String` → 先尝试类型提升（bool/null 等），否则原样字符串
@@ -58,7 +58,7 @@ internal record ToolCallRequest(
    - `Object` → 递归为 `Dictionary<string, object?>`
    - `Array` → 递归为 `List<object?>`
 4. 发生类型提升时，将提示写入警告集合，最终合并成 `ParseWarning`
-5. 遇到解析异常时写入 `ParseError`，保留原始文本
+5. 遇到解析异常时写入 `ParseError`，同时仍将原始文本放入 `RawArguments`
 
 ### 轻量级类型提升示例
 
@@ -92,7 +92,9 @@ internal record ToolCallRequest(
    ```
 4. **保留 RawArguments：** 需要灵活解析或兼容旧逻辑时可回退到原始字符串：
    ```csharp
-   var fallbackJson = request.RawArguments;
+   if (request.RawArguments is { } raw && raw.TryGetValue("count", out var rawText)) {
+       // rawText 为模型提供的原始文本，可用于提示或再次解析
+   }
    ```
 
 ## 面向未来的扩展
@@ -103,4 +105,4 @@ internal record ToolCallRequest(
 
 ## 总结
 
-“宽进严出”策略在保持 LLM 输出的宽容度的同时，为工具实现提供结构化、可追踪的参数视图。通过 `Arguments + ParseWarning + ParseError + RawArguments` 的组合，工具可以根据自身对类型安全的需求灵活决定使用策略，从而兼顾鲁棒性与开发效率。
+“宽进严出”策略在保持 LLM 输出的宽容度的同时，为工具实现提供结构化、可追踪的参数视图。通过 `Arguments + ParseWarning + ParseError + RawArguments(原始文本映射)` 的组合，工具可以根据自身对类型安全的需求灵活决定使用策略，从而兼顾鲁棒性与开发效率。

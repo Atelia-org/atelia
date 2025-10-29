@@ -1,4 +1,3 @@
-using System;
 using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Provider;
 using Xunit;
@@ -19,6 +18,8 @@ public sealed class ToolArgumentParserTests {
         Assert.NotNull(result.ParseWarning);
         Assert.Contains("float64_precision_loss", result.ParseWarning!, StringComparison.Ordinal);
 
+        Assert.Equal("123456.7890123", result.RawArguments["value"]);
+
         Assert.True(result.Arguments.TryGetValue("value", out var value));
         var floatValue = Assert.IsType<float>(value);
         Assert.Equal((float)123456.7890123, floatValue);
@@ -37,6 +38,8 @@ public sealed class ToolArgumentParserTests {
         Assert.NotNull(result.ParseWarning);
         Assert.Contains("string_literal_converted_to_decimal", result.ParseWarning!, StringComparison.Ordinal);
 
+        Assert.Equal("42.42", result.RawArguments["amount"]);
+
         var decimalValue = Assert.IsType<decimal>(result.Arguments["amount"]);
         Assert.Equal(42.42m, decimalValue);
     }
@@ -53,6 +56,9 @@ public sealed class ToolArgumentParserTests {
         Assert.Null(result.ParseWarning);
         Assert.NotNull(result.ParseError);
         Assert.Contains("int32_out_of_range", result.ParseError!, StringComparison.Ordinal);
+
+        Assert.Equal("5000000000", result.RawArguments["count"]);
+        Assert.False(result.Arguments.ContainsKey("count"));
     }
 
     [Fact]
@@ -69,6 +75,7 @@ public sealed class ToolArgumentParserTests {
         Assert.Null(result.ParseError);
         Assert.Null(result.ParseWarning);
         Assert.Empty(result.Arguments);
+        Assert.Empty(result.RawArguments);
     }
 
     [Fact]
@@ -84,6 +91,7 @@ public sealed class ToolArgumentParserTests {
         Assert.Null(result.ParseError);
         Assert.Null(result.ParseWarning);
 
+        Assert.Equal("null", result.RawArguments["comment"]);
         Assert.True(result.Arguments.TryGetValue("comment", out var value));
         Assert.Null(value);
     }
@@ -101,5 +109,6 @@ public sealed class ToolArgumentParserTests {
         Assert.Null(result.ParseWarning);
         Assert.NotNull(result.ParseError);
         Assert.Contains("count:null_not_allowed", result.ParseError!, StringComparison.Ordinal);
+        Assert.Equal("null", result.RawArguments["count"]);
     }
 }

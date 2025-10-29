@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
@@ -7,6 +5,12 @@ using Atelia.LiveContextProto.Context;
 
 namespace Atelia.LiveContextProto.Provider;
 
+/// <summary>
+/// Provides JSON based argument parsing for providers that receive tool calls as structured payloads.
+/// </summary>
+/// <remarks>
+/// Parsing always attempts to recover original parameter text so that callers can rehydrate failed invocations.
+/// </remarks>
 internal static class JsonArgumentParser {
     private static readonly JsonDocumentOptions DocumentOptions = new() {
         AllowTrailingCommas = true,
@@ -21,21 +25,30 @@ internal static class JsonArgumentParser {
     //     return new ToolCallRequest(tool.Name, toolCallId, rawArguments ?? string.Empty, result.Arguments, result.ParseError, result.ParseWarning);
     // }
 
+    /// <summary>
+    /// Parses raw JSON arguments against the parameter specification.
+    /// </summary>
+    /// <remarks>
+    /// Even when an individual parameter fails to parse, the raw textual representation is preserved in the returned
+    /// <see cref="ToolArgumentParsingResult.RawArguments"/> map.
+    /// </remarks>
     public static ToolArgumentParsingResult ParseArguments(IReadOnlyList<ToolParamSpec> parameters, string rawArguments) {
         if (parameters is null) { throw new ArgumentNullException(nameof(parameters)); }
 
         var warnings = new List<string>();
         var errors = new List<string>();
         var arguments = ImmutableDictionary<string, object?>.Empty;
+        var rawBuilder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.OrdinalIgnoreCase);
         var text = string.IsNullOrWhiteSpace(rawArguments) ? "{}" : rawArguments;
 
         try {
             using var document = JsonDocument.Parse(text, DocumentOptions);
             if (document.RootElement.ValueKind != JsonValueKind.Object) {
                 errors.Add("arguments_must_be_object");
+                rawBuilder.Clear();
             }
             else {
-                arguments = ParseObject(parameters, document.RootElement, warnings, errors);
+                arguments = ParseObject(parameters, document.RootElement, warnings, errors, rawBuilder);
             }
         }
         catch (JsonException ex) {
@@ -51,19 +64,22 @@ internal static class JsonArgumentParser {
         var parseError = errors.Count == 0 ? null : string.Join("; ", errors);
         var parseWarning = warnings.Count == 0 ? null : string.Join("; ", warnings);
 
-        return new ToolArgumentParsingResult(arguments, parseError, parseWarning);
+        return new ToolArgumentParsingResult(arguments, rawBuilder.ToImmutable(), parseError, parseWarning);
     }
 
     private static ImmutableDictionary<string, object?> ParseObject(
         IReadOnlyList<ToolParamSpec> parameters,
         JsonElement element,
         List<string> warnings,
-        List<string> errors
+        List<string> errors,
+        ImmutableDictionary<string, string>.Builder rawBuilder
     ) {
         var builder = ImmutableDictionary.CreateBuilder<string, object?>(StringComparer.OrdinalIgnoreCase);
         var lookup = CreateParameterLookup(parameters);
 
         foreach (var property in element.EnumerateObject()) {
+            rawBuilder[property.Name] = ExtractRawValue(property.Value);
+
             if (!lookup.TryGetValue(property.Name, out var parameter)) {
                 builder[property.Name] = ConvertUntyped(property.Value);
                 warnings.Add($"unknown_parameter:{property.Name}");
@@ -93,6 +109,19 @@ internal static class JsonArgumentParser {
         }
 
         return lookup;
+    }
+
+    private static string ExtractRawValue(JsonElement element) {
+        return element.ValueKind switch {
+            JsonValueKind.String => element.GetString() ?? string.Empty,
+            JsonValueKind.Number => element.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Null => "null",
+            JsonValueKind.Object => element.GetRawText(),
+            JsonValueKind.Array => element.GetRawText(),
+            _ => element.GetRawText()
+        };
     }
 
     private static ParseResult ParseValue(ToolParamSpec parameter, JsonElement element) {
@@ -333,12 +362,6 @@ internal static class JsonArgumentParser {
         };
     }
 
-    private static string? CombineWarnings(string? first, string? second) {
-        if (string.IsNullOrEmpty(first)) { return second; }
-        if (string.IsNullOrEmpty(second)) { return first; }
-        return string.Concat(first, "; ", second);
-    }
-
     private readonly struct ParseResult {
         private ParseResult(bool isSuccess, object? value, string? warning, string? error) {
             IsSuccess = isSuccess;
@@ -362,9 +385,3 @@ internal static class JsonArgumentParser {
             => new(false, null, null, error);
     }
 }
-
-internal sealed record ToolArgumentParsingResult(
-    ImmutableDictionary<string, object?> Arguments,
-    string? ParseError,
-    string? ParseWarning
-);

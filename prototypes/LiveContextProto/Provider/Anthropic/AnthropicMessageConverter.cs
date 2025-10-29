@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Context;
 
@@ -137,7 +138,65 @@ internal static class AnthropicMessageConverter {
     }
 
     private static JsonElement BuildToolInput(ToolCallRequest toolCall) {
-        return JsonSerializer.SerializeToElement(toolCall.Arguments);
+        var hasParseError = !string.IsNullOrWhiteSpace(toolCall.ParseError);
+
+        if (!hasParseError && toolCall.Arguments is { } parsedArguments) { return JsonSerializer.SerializeToElement(parsedArguments); }
+
+        if (toolCall.RawArguments is { Count: > 0 } rawArguments) {
+            if (hasParseError) {
+                DebugUtil.Print(
+                    DebugCategory,
+                    $"[Anthropic] Falling back to raw arguments toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={toolCall.ParseError}"
+                );
+            }
+
+            var fallback = BuildFallbackFromRawArguments(rawArguments);
+            return JsonSerializer.SerializeToElement(fallback);
+        }
+
+        if (toolCall.Arguments is { } fallbackArguments) { return JsonSerializer.SerializeToElement(fallbackArguments); }
+
+        if (hasParseError) {
+            DebugUtil.Print(
+                DebugCategory,
+                $"[Anthropic] Tool call arguments unavailable toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={toolCall.ParseError}"
+            );
+        }
+
+        return JsonSerializer.SerializeToElement(new JsonObject());
+    }
+
+    private static JsonObject BuildFallbackFromRawArguments(IReadOnlyDictionary<string, string> rawArguments) {
+        var node = new JsonObject();
+
+        foreach (var pair in rawArguments) {
+            node[pair.Key] = ConvertRawArgumentValue(pair.Value);
+        }
+
+        return node;
+    }
+
+    private static JsonNode? ConvertRawArgumentValue(string rawValue) {
+        if (rawValue is null) { return null; }
+
+        var trimmed = rawValue.Trim();
+
+        if (trimmed.Length == 0) { return JsonValue.Create(rawValue); }
+
+        if (string.Equals(trimmed, "null", StringComparison.OrdinalIgnoreCase)) { return null; }
+
+        try {
+            var parsed = JsonNode.Parse(trimmed);
+            return parsed;
+        }
+        catch (JsonException) {
+            // fall back to treating the value as a plain string
+        }
+        catch (ArgumentException) {
+            // fall back to treating the value as a plain string
+        }
+
+        return JsonValue.Create(rawValue);
     }
 
     /// <summary>

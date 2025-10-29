@@ -1,13 +1,8 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Atelia.LiveContextProto.Agent;
 using Atelia.LiveContextProto.Context;
-using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.Profile;
+using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.State;
 using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Tools;
@@ -46,7 +41,7 @@ public sealed class AgentStateMachineToolExecutionTests {
                 CreateToolCallRequest(
                     "echo",
                     "call-1",
-                    "{\"payload\":\"value\"}",
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["payload"] = "value" },
                     new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["payload"] = "value" }
                 )
             )
@@ -136,7 +131,7 @@ public sealed class AgentStateMachineToolExecutionTests {
             new[] {
                 CreateDeltaSequence(
                     ModelOutputDelta.Content("call broken", endSegment: true),
-                    ModelOutputDelta.ToolCall(CreateToolCallRequest("broken", "fail-1", "{}"))
+                    ModelOutputDelta.ToolCall(CreateToolCallRequest("broken", "fail-1", ImmutableDictionary<string, string>.Empty))
                 )
             }
         );
@@ -167,7 +162,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     private static ToolCallRequest CreateToolCallRequest(
         string toolName,
         string callId,
-        string rawArguments,
+        IReadOnlyDictionary<string, string>? rawArguments,
         IReadOnlyDictionary<string, object?>? arguments = null
     ) {
         var materializedArguments = arguments ?? ImmutableDictionary<string, object?>.Empty;

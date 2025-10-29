@@ -1,11 +1,8 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Context;
-using Atelia.LiveContextProto.Provider;
 
 namespace Atelia.LiveContextProto.Provider.Anthropic;
 
@@ -180,26 +177,38 @@ internal sealed class AnthropicStreamParser {
         );
     }
 
+    /// <summary>
+    /// Builds a <see cref="ToolCallRequest"/> from a completed Anthropic tool content block.
+    /// </summary>
+    /// <remarks>
+    /// Ensures both parsed arguments and their raw textual counterparts are captured so downstream providers can
+    /// reconstruct the invocation even when type conversion fails.
+    /// </remarks>
     private ToolCallRequest CreateToolCallRequest(ContentBlockState state) {
-        var rawArguments = string.IsNullOrWhiteSpace(state.ToolInputJson) ? "{}" : state.ToolInputJson;
+        var rawArgumentsText = string.IsNullOrWhiteSpace(state.ToolInputJson) ? "{}" : state.ToolInputJson;
         IReadOnlyDictionary<string, object?>? arguments = null;
         IReadOnlyDictionary<string, object?>? fallbackArguments = null;
+        IReadOnlyDictionary<string, string>? rawArguments = null;
+        ImmutableDictionary<string, string>? fallbackRawArguments = null;
         string? parseError = null;
         string? parseWarning = null;
         string? fallbackWarning = null;
 
         try {
-            using var document = JsonDocument.Parse(rawArguments);
+            using var document = JsonDocument.Parse(rawArgumentsText);
             if (document.RootElement.ValueKind == JsonValueKind.Object) {
                 var warnings = new List<string>();
                 var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                var rawBuilder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var property in document.RootElement.EnumerateObject()) {
                     var childPath = property.Name;
+                    rawBuilder[property.Name] = ExtractRawArgument(property.Value);
                     dict[property.Name] = ConvertJsonElement(property.Value, childPath, warnings);
                 }
 
                 fallbackArguments = dict;
+                fallbackRawArguments = rawBuilder.ToImmutable();
                 if (warnings.Count > 0) {
                     fallbackWarning = string.Join("; ", warnings);
                 }
@@ -213,16 +222,20 @@ internal sealed class AnthropicStreamParser {
         }
 
         if (_toolDefinitions.TryGetValue(state.ToolName, out var definition)) {
-            var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, rawArguments);
+            var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, rawArgumentsText);
             arguments = parsed.Arguments;
+            rawArguments = parsed.RawArguments;
             parseError = CombineMessages(parseError, parsed.ParseError);
             parseWarning = CombineMessages(parseWarning, parsed.ParseWarning);
         }
         else {
             parseWarning = CombineMessages(parseWarning, "tool_definition_missing");
             arguments = fallbackArguments;
+            rawArguments = fallbackRawArguments ?? rawArguments;
             parseWarning = CombineMessages(parseWarning, fallbackWarning);
         }
+
+        rawArguments ??= fallbackRawArguments;
 
         return new ToolCallRequest(
             ToolName: state.ToolName,
@@ -232,6 +245,19 @@ internal sealed class AnthropicStreamParser {
             ParseError: parseError,
             ParseWarning: parseWarning
         );
+    }
+
+    private static string ExtractRawArgument(JsonElement element) {
+        return element.ValueKind switch {
+            JsonValueKind.String => element.GetString() ?? string.Empty,
+            JsonValueKind.Number => element.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Null => "null",
+            JsonValueKind.Object => element.GetRawText(),
+            JsonValueKind.Array => element.GetRawText(),
+            _ => element.GetRawText()
+        };
     }
 
     private static string? CombineMessages(string? first, string? second) {
