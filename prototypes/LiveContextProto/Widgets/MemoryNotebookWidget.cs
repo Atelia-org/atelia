@@ -7,22 +7,31 @@ using System.Threading.Tasks;
 using Atelia.Diagnostics;
 using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Tools;
+using Atelia.LiveContextProto.Text;
 
 namespace Atelia.LiveContextProto.Apps;
 
 internal sealed class MemoryNotebookApp : IApp {
     internal const string ReplaceToolName = "memory_notebook_replace";
+    internal const string ReplaceSpanToolName = "memory_notebook_replace_span";
     private const string DebugCategory = "MemoryNotebookApp";
     internal const string DefaultSnapshot = "（暂无 Memory Notebook 内容）";
+    private static readonly string NotebookLabel = "Memory Notebook";
 
     private readonly ImmutableArray<ITool> _tools;
+    private readonly TextReplacementEngine _replacementEngine;
 
+    private string? _pendingEngineSource;
     private string? _notebookContent;
 
     public MemoryNotebookApp() {
+        _replacementEngine = new TextReplacementEngine(GetNotebookForEngine, SetNotebookFromEngine, NotebookLabel);
         _tools = ImmutableArray.Create<ITool>(
             MethodToolWrapper.FromDelegate(
                 (Func<string, string?, string?, CancellationToken, ValueTask<LodToolExecuteResult>>)ReplaceAsync
+            ),
+            MethodToolWrapper.FromDelegate(
+                (Func<string, string, string, string?, CancellationToken, ValueTask<LodToolExecuteResult>>)ReplaceSpanAsync
             )
         );
     }
@@ -64,6 +73,22 @@ internal sealed class MemoryNotebookApp : IApp {
         return ValueTask.FromResult(result);
     }
 
+    [Tool(ReplaceSpanToolName,
+        "通过起止标记精确定位 Memory Notebook 中的区块并替换；适合多段相似内容时依靠首尾锚点锁定唯一目标，可选 search_after 进一步约束搜索范围。"
+    )]
+    private ValueTask<LodToolExecuteResult> ReplaceSpanAsync(
+        [ToolParam("区块起始标记文本，需与 Memory Notebook 内容完全匹配。")] string old_span_start,
+        [ToolParam("区块结束标记文本，需与 Memory Notebook 内容完全匹配。")] string old_span_end,
+        [ToolParam("替换后的新文本，需包含希望保留的首尾标记。")] string new_text,
+        [ToolParam("锚点定位文本；提供后，会从锚点之后搜索 old_span_start，避免多次出现时误替换。")] string? search_after = null,
+        CancellationToken cancellationToken = default
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var result = ExecuteReplaceSpan(old_span_start, old_span_end, new_text, search_after);
+        return ValueTask.FromResult(result);
+    }
+
     internal void ReplaceNotebookFromHost(string? content) {
         var normalized = Normalize(content);
         DebugUtil.Print(DebugCategory, $"[HostUpdate] length={(normalized?.Length ?? 0)}");
@@ -80,70 +105,129 @@ internal sealed class MemoryNotebookApp : IApp {
             ? DefaultSnapshot
             : _notebookContent;
 
-    private LodToolExecuteResult ExecuteReplace(string? oldText, string? newText, string? searchAfter) {
-        if (newText is null) { return Failure("缺少 new_text 参数。", "new_text_invalid"); }
+    private LodToolExecuteResult ExecuteReplace(string? oldText, string newText, string? searchAfter) {
+        var isAppend = string.IsNullOrEmpty(oldText);
+        var normalizedOld = isAppend
+            ? string.Empty
+            : TextToolUtilities.NormalizeLineEndings(oldText!);
 
-        oldText ??= string.Empty;
-        newText ??= string.Empty;
-
-        var current = _notebookContent ?? string.Empty;
-        string updated;
-        bool appended = false;
-
-        if (string.IsNullOrEmpty(oldText)) {
-            updated = AppendContent(current, newText);
-            appended = true;
-        }
-        else {
-            var searchStart = 0;
-
-            if (searchAfter is not null) {
-                if (searchAfter.Length == 0) {
-                    searchStart = 0;
-                }
-                else {
-                    var anchorIndex = current.IndexOf(searchAfter, StringComparison.Ordinal);
-                    if (anchorIndex < 0) { return Failure("未找到指定的 search_after 锚点。", "search_after_not_found"); }
-
-                    searchStart = anchorIndex + searchAfter.Length;
-                }
-            }
-
-            var matchIndex = current.IndexOf(oldText, searchStart, StringComparison.Ordinal);
-            if (matchIndex < 0) { return Failure("未找到匹配的 old_text。", "old_text_not_found"); }
-
-            if (searchAfter is null) {
-                var secondIndex = current.IndexOf(oldText, matchIndex + oldText.Length, StringComparison.Ordinal);
-                if (secondIndex >= 0) { return Failure("old_text 在文档中出现多次，请提供 search_after 以定位。", "old_text_not_unique"); }
-            }
-
-            updated = string.Concat(
-                current.AsSpan(0, matchIndex),
-                newText,
-                current.AsSpan(matchIndex + oldText.Length)
-            );
-        }
-
-        if (ReferenceEquals(updated, current) || string.Equals(updated, current, StringComparison.Ordinal)) {
-            string message = appended ? "未追加任何内容：new_text 为空。" : "替换内容未发生变化。";
-            return LodToolExecuteResult.FromContent(
-                ToolExecutionStatus.Success,
-                new LevelOfDetailContent(message, message)
-            );
-        }
-
-        var normalizedUpdated = Normalize(updated);
-        ApplyNotebookContent(normalizedUpdated, "tool_replace");
-
-        var newContent = normalizedUpdated ?? string.Empty;
-        var basicMessage = appended
-            ? "已追加新的记忆段落。"
-            : "已完成记忆文本替换。";
-
-        return LodToolExecuteResult.FromContent(
-            ToolExecutionStatus.Success,
-            CreateOperationContent(basicMessage, appended, current.Length, newContent.Length, searchAfter)
+        var request = new ReplacementRequest(
+            normalizedOld,
+            newText,
+            searchAfter,
+            isAppend,
+            ReplaceToolName
         );
+
+        var locator = isAppend ? null : new LiteralRegionLocator(normalizedOld);
+
+        return ExecuteReplacement(
+            request,
+            locator,
+            (previous, updated) => {
+                if (string.Equals(previous, updated, StringComparison.Ordinal)) {
+                    var message = isAppend
+                        ? "未追加任何内容：new_text 为空。"
+                        : "替换内容未发生变化。";
+
+                    return LodToolExecuteResult.FromContent(
+                        ToolExecutionStatus.Success,
+                        new LevelOfDetailContent(message, message)
+                    );
+                }
+
+                var basicMessage = isAppend
+                    ? "已追加新的记忆段落。"
+                    : "已完成记忆文本替换。";
+
+                return LodToolExecuteResult.FromContent(
+                    ToolExecutionStatus.Success,
+                    CreateOperationContent(basicMessage, isAppend, previous.Length, updated.Length, searchAfter)
+                );
+            }
+        );
+    }
+
+    private LodToolExecuteResult ExecuteReplaceSpan(string oldSpanStart, string oldSpanEnd, string newText, string? searchAfter) {
+        var normalizedStart = TextToolUtilities.NormalizeLineEndings(oldSpanStart);
+        var normalizedEnd = TextToolUtilities.NormalizeLineEndings(oldSpanEnd);
+
+        var request = new ReplacementRequest(
+            normalizedStart,
+            newText,
+            searchAfter,
+            IsAppend: false,
+            ReplaceSpanToolName
+        );
+
+        var locator = new SpanRegionLocator(normalizedStart, normalizedEnd);
+
+        return ExecuteReplacement(
+            request,
+            locator,
+            (previous, updated) => {
+                if (string.Equals(previous, updated, StringComparison.Ordinal)) {
+                    const string message = "替换内容未发生变化。";
+                    return LodToolExecuteResult.FromContent(
+                        ToolExecutionStatus.Success,
+                        new LevelOfDetailContent(message, message)
+                    );
+                }
+
+                const string basicMessage = "已完成记忆区块替换。";
+                return LodToolExecuteResult.FromContent(
+                    ToolExecutionStatus.Success,
+                    CreateOperationContent(basicMessage, appended: false, previous.Length, updated.Length, searchAfter)
+                );
+            }
+        );
+    }
+
+    private LodToolExecuteResult ExecuteReplacement(
+        ReplacementRequest request,
+        IRegionLocator? locator,
+        Func<string, string, LodToolExecuteResult> onSuccess
+    ) {
+        var previous = GetNotebookNormalized();
+
+        ReplacementOutcome outcome;
+        _pendingEngineSource = string.IsNullOrEmpty(request.OperationName)
+            ? null
+            : request.OperationName;
+        try {
+            outcome = _replacementEngine.Execute(request, locator);
+        }
+        finally {
+            _pendingEngineSource = null;
+        }
+
+        if (!outcome.Success) { return EngineFailure(outcome.Message); }
+
+        var updated = GetNotebookNormalized();
+        return onSuccess(previous, updated);
+    }
+
+    private static LodToolExecuteResult EngineFailure(string message) {
+        return LodToolExecuteResult.FromContent(
+            ToolExecutionStatus.Failed,
+            new LevelOfDetailContent(message, message)
+        );
+    }
+
+    private string GetNotebookForEngine()
+        => _notebookContent ?? string.Empty;
+
+    private string GetNotebookNormalized()
+        => TextToolUtilities.NormalizeLineEndings(GetNotebookForEngine());
+
+    private void SetNotebookFromEngine(string content) {
+        var normalized = content
+            .Replace("\r\n", "\n")
+            .Replace("\r", "\n");
+
+        var withEnvironmentLineEndings = normalized.Replace("\n", Environment.NewLine);
+        var final = Normalize(withEnvironmentLineEndings);
+        ApplyNotebookContent(final, _pendingEngineSource ?? "tool_engine");
     }
 
     private void ApplyNotebookContent(string? content, string source) {
@@ -151,30 +235,10 @@ internal sealed class MemoryNotebookApp : IApp {
         DebugUtil.Print(DebugCategory, $"[State] notebook updated source={source} length={(content?.Length ?? 0)}");
     }
 
-    private static string AppendContent(string current, string addition) {
-        if (string.IsNullOrEmpty(addition)) { return current; }
-
-        if (string.IsNullOrEmpty(current)) { return addition; }
-
-        if (!current.EndsWith(Environment.NewLine, StringComparison.Ordinal) &&
-            !addition.StartsWith(Environment.NewLine, StringComparison.Ordinal) &&
-            !addition.StartsWith("\n", StringComparison.Ordinal)) { return string.Concat(current, Environment.NewLine, addition); }
-
-        return current + addition;
-    }
-
     private static string? Normalize(string? content) {
         if (string.IsNullOrWhiteSpace(content)) { return null; }
 
         return content.TrimEnd();
-    }
-
-    private LodToolExecuteResult Failure(string message, string errorCode) {
-        var detail = string.Concat(message, Environment.NewLine, "- error_code: ", errorCode);
-        return LodToolExecuteResult.FromContent(
-            ToolExecutionStatus.Failed,
-            new LevelOfDetailContent(message, detail)
-        );
     }
 
     private static LevelOfDetailContent CreateOperationContent(
