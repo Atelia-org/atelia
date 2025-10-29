@@ -17,3 +17,8 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 # 工具使用经验
 想要编辑文件时，那个'insert_edit_into_file'工具不好用，经常产生意外的结果，华而不实。建议用'apply_patch'等其他工具替代。
 - VS Code 集成终端偶尔会出现无回显的情况，关闭所有旧终端后新建实例即可恢复，重开后可先跑一条 `Write-Output "hello"` 之类的命令验证。
+
+## LiveContextProto 工具自动化
+- 在 `LiveContextProto` 中可以使用 `prototypes/LiveContextProto/Tools/MethodToolWrapper.cs` 提供的 `MethodToolWrapper` 自动生成可供 Agent 调用的工具。
+- 只需为目标方法添加 `[ToolAttribute("tool.name", "说明文本")]` 并返回 `ValueTask<LodToolExecuteResult>`，同时为业务参数逐个标注 `[ToolParamAttribute("参数说明")]`，末尾保留一个 `CancellationToken` 参数即可。
+- 方法可通过 `MethodToolWrapper.FromMethod(instance, methodInfo)` 或 `MethodToolWrapper.FromDelegate(delegate)` 注册，包装器会自动生成参数描述（含默认值与可空性提示）。
