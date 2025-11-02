@@ -6,7 +6,6 @@ using Atelia.LiveContextProto.Agent;
 using Atelia.LiveContextProto.Provider;
 using Atelia.LiveContextProto.Provider.Anthropic;
 using Atelia.LiveContextProto.State;
-using Atelia.LiveContextProto.Tools;
 using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Profile;
 
@@ -29,9 +28,7 @@ internal static class Program {
         var anthropicClient = new AnthropicProviderClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
         var defaultProfile = new LlmProfile(anthropicClient, DefaultProxyModel, DefaultProfileName);
 
-        var toolExecutor = new ToolExecutor(agentState.EnumerateAppTools());
-
-        var agent = new LlmAgent(agentState, toolExecutor);
+        var agent = new LlmAgent(agentState);
         var loop = new ConsoleTui(agent, defaultProfile);
 
         loop.Run();

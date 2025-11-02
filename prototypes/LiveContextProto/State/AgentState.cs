@@ -12,8 +12,7 @@ namespace Atelia.LiveContextProto.State;
 
 internal sealed class AgentState {
     private readonly List<HistoryEntry> _history = new();
-    private readonly MemoryNotebookApp _memoryNotebookApp;
-    private readonly ImmutableArray<IApp> _apps;
+    private ImmutableArray<IApp> _apps = ImmutableArray<IApp>.Empty;
 
     // 未来考虑增加MessageInstanceId以支持先Peek并构造InputEntry，模型真正完成输出后再Pop，使得在调用模式处理失败后重试时有机会进一步取到新近产生的事件，来提高实时性。
     private readonly ConcurrentQueue<LevelOfDetailContent> _pendingNotifications = new(); // TODO:添加时间戳等元信息，替代LevelOfDetailContent类型。
@@ -34,19 +33,12 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 
     private AgentState(string systemInstruction) {
         SystemInstruction = systemInstruction;
-        _memoryNotebookApp = new MemoryNotebookApp();
-        _apps = ImmutableArray.Create<IApp>(_memoryNotebookApp);
-
         DebugUtil.Print("History", $"AgentState initialized with instruction length={systemInstruction.Length}");
     }
 
     public string SystemInstruction { get; private set; }
 
     public IReadOnlyList<HistoryEntry> History => _history;
-
-    public string MemoryNotebookSnapshot => _memoryNotebookApp.GetSnapshot();
-
-    public MemoryNotebookApp MemoryNotebookApp => _memoryNotebookApp;
 
     public static AgentState CreateDefault(string? systemInstruction = null) {
         var instruction = string.IsNullOrWhiteSpace(systemInstruction)
@@ -83,12 +75,8 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         DebugUtil.Print("History", $"System instruction updated length={instruction.Length}");
     }
 
-    public void UpdateMemoryNotebook(string? content)
-        => _memoryNotebookApp.ReplaceNotebookFromHost(content);
-
     public void Reset() {
         _history.Clear();
-        _memoryNotebookApp.Reset();
         DebugUtil.Print("History", "AgentState history cleared");
     }
 
@@ -193,5 +181,10 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
                 yield return tool;
             }
         }
+    }
+
+    internal void ConfigureApps(IEnumerable<IApp> apps) {
+        if (apps is null) { throw new ArgumentNullException(nameof(apps)); }
+        _apps = ImmutableArray.CreateRange(apps);
     }
 }

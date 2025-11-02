@@ -32,9 +32,6 @@ public sealed class AgentStateMachineToolExecutionTests {
             }
         );
 
-        var tools = CreateTools(state, echoTool);
-        var executor = new ToolExecutor(tools);
-
         var firstResponse = CreateDeltaSequence(
             ModelOutputDelta.Content("calling tool", endSegment: true),
             ModelOutputDelta.ToolCall(
@@ -53,7 +50,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var provider = new FakeProviderClient(new[] { firstResponse, secondResponse });
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        var agent = new LlmAgent(state, executor);
+        var agent = new LlmAgent(state, new[] { echoTool });
 
         agent.AppendNotification("hello world");
 
@@ -124,9 +121,6 @@ public sealed class AgentStateMachineToolExecutionTests {
             )
         );
 
-        var tools = CreateTools(state, failingTool);
-        var executor = new ToolExecutor(tools);
-
         var provider = new FakeProviderClient(
             new[] {
                 CreateDeltaSequence(
@@ -137,7 +131,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
 
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        var agent = new LlmAgent(state, executor);
+        var agent = new LlmAgent(state, new[] { failingTool });
 
         agent.AppendNotification("trigger failure");
 
@@ -155,9 +149,6 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal("tool failed", toolResults.ExecuteError);
         Assert.Equal(ToolExecutionStatus.Failed, toolResults.Results.Single().Status);
     }
-
-    private static IReadOnlyCollection<ITool> CreateTools(AgentState state, params ITool[] extraTools)
-        => state.EnumerateAppTools().Concat(extraTools).ToArray();
 
     private static ToolCallRequest CreateToolCallRequest(
         string toolName,
