@@ -53,7 +53,7 @@ SubAgent。Rolling Summary机制。对Recap文本和其他Agent的MessageHistory
 SubAgent。以其他Agent的MessageHistory作为源操作数进行分析，在必要时介入生成“苏格拉底诘问”式元问题。生成的问题由AgentOS以合适的方式注入目标Agent上下文中。
 
 ## Corpus Generator
-专用Agent。以提示词引导的特定模式，来批量生成SFT语料。用于后续AGLM微调实验。
+专用Agent。以提示词引导的特定模式，来批量生成SFT语料。用于后续AGLM微调实验。实验发现由`Gemini 2.5 Pro`进行整体构思，再由`Claude Sonnet/Opus 4.5`具体编写全文，两位作者协作的效果较好。
 
 ## Teacher
 专用Agent。以提示词引导的方式，让大模型驱动的Teacher对小模型驱动的Student进行提问评估、调查小模型的知识与能力边界、给与讲解和指导。以高效的沿着知识与能力的边界，为小模型生成SFT样本，因材施教。Teacher建模为主导Agent，而Student则建模为一个被Teacher调用的Tool，通过工具调用循环进行。一方面是大模型初始能力强得多，更能完成引导流程的职能。另一方面，微软提供“按请求次数计费”的LLM调用服务，一条User消息一次计费，不限制工具调用循环轮数。这样适当提示词工程和上下文管理后，一次计费就能进行多轮授业问答。
