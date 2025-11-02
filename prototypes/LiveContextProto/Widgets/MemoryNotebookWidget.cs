@@ -95,11 +95,6 @@ internal sealed class MemoryNotebookApp : IApp {
         ApplyNotebookContent(normalized, "host_update");
     }
 
-    internal void Reset() {
-        DebugUtil.Print(DebugCategory, "[Reset] resetting notebook content");
-        ApplyNotebookContent(null, "reset");
-    }
-
     internal string GetSnapshot()
         => string.IsNullOrWhiteSpace(_notebookContent)
             ? DefaultSnapshot

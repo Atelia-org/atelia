@@ -50,12 +50,6 @@ internal sealed class ConsoleTui {
                 continue;
             }
 
-            if (string.Equals(line, "/reset", StringComparison.OrdinalIgnoreCase)) {
-                _agent.Reset();
-                _output.WriteLine("[state] 已清空历史。");
-                continue;
-            }
-
             if (string.IsNullOrWhiteSpace(line)) { continue; }
 
             var notificationText = $"你收到消息:\n``````\n{line}\n``````";
@@ -67,7 +61,7 @@ internal sealed class ConsoleTui {
 
     private void PrintIntro() {
         _output.WriteLine("=== LiveContextProto Anthropic Runner ===");
-        _output.WriteLine("命令：/history 查看上下文，/reset 清空，/notebook view|set，/exit 退出。");
+        _output.WriteLine("命令：/history 查看上下文，/notebook view|set，/exit 退出。");
         _output.WriteLine();
         _output.WriteLine("输入任意文本将调用当前配置的模型，并把输出回写到历史。");
         _output.WriteLine();

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.LiveContextProto.Apps;
@@ -13,39 +12,48 @@ namespace Atelia.LiveContextProto.Agent;
 
 internal sealed class LlmAgent {
     private readonly AgentEngine _engine;
-    private readonly MemoryNotebookApp _memoryNotebookApp;
     private readonly ToolExecutor _toolExecutor;
+    private readonly IAppHost _appHost;
+    private readonly MemoryNotebookApp? _memoryNotebookApp;
 
     public LlmAgent(AgentState state, IEnumerable<ITool>? additionalTools = null) {
         if (state is null) { throw new ArgumentNullException(nameof(state)); }
 
-        _memoryNotebookApp = new MemoryNotebookApp();
-        state.ConfigureApps(new[] { _memoryNotebookApp });
+        _appHost = new DefaultAppHost(state);
 
-        var toolList = state.EnumerateAppTools().ToList();
+        var memoryNotebookApp = new MemoryNotebookApp();
+        _appHost.RegisterApp(memoryNotebookApp);
+        _memoryNotebookApp = memoryNotebookApp;
+
+        var toolList = new List<ITool>(_appHost.Tools);
         if (additionalTools is not null) {
             toolList.AddRange(additionalTools);
         }
 
         _toolExecutor = new ToolExecutor(toolList);
-        _engine = new AgentEngine(state, _toolExecutor, _memoryNotebookApp);
+        _engine = new AgentEngine(state, _toolExecutor, _appHost);
     }
 
     public AgentEngine Engine => _engine;
 
     public ToolExecutor ToolExecutor => _toolExecutor;
 
+    public IAppHost AppHost => _appHost;
+
     public AgentState State => _engine.State;
 
     public string SystemInstruction => _engine.SystemInstruction;
 
-    public string MemoryNotebookSnapshot => _engine.MemoryNotebookSnapshot;
+    public string MemoryNotebookSnapshot
+        => _memoryNotebookApp?.GetSnapshot() ?? MemoryNotebookApp.DefaultSnapshot;
 
     public IReadOnlyList<IContextMessage> RenderLiveContext() => _engine.RenderLiveContext();
 
-    public void Reset() => _engine.Reset();
+    public void UpdateMemoryNotebook(string? content) {
+        if (_memoryNotebookApp is null) { throw new InvalidOperationException("Memory notebook app is not configured for this agent."); }
 
-    public void UpdateMemoryNotebook(string? content) => _engine.UpdateMemoryNotebook(content);
+        _memoryNotebookApp.ReplaceNotebookFromHost(content);
+    }
 
     public void AppendNotification(LevelOfDetailContent notificationContent) => _engine.AppendNotification(notificationContent);
 

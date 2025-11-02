@@ -16,3 +16,14 @@ internal interface IApp {
     IReadOnlyList<ITool> Tools { get; }
     string? RenderWindow(AppRenderContext context);
 }
+
+internal interface IAppHost {
+    AgentState State { get; }
+    ImmutableArray<IApp> Apps { get; }
+    ImmutableArray<ITool> Tools { get; }
+
+    void RegisterApp(IApp app);
+    bool RemoveApp(string name);
+
+    string? RenderWindows();
+}

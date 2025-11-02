@@ -21,16 +21,16 @@ internal class AgentEngine {
 
     private readonly AgentState _state;
     private readonly ToolExecutor _toolExecutor;
-    private readonly MemoryNotebookApp _memoryNotebookApp;
+    private readonly IAppHost _appHost;
     private readonly Dictionary<string, LodToolCallResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
 
     private ImmutableArray<ToolDefinition> _toolDefinitions;
     private AgentRunState? _lastLoggedState;
 
-    public AgentEngine(AgentState state, ToolExecutor toolExecutor, MemoryNotebookApp memoryNotebookApp) {
+    public AgentEngine(AgentState state, ToolExecutor toolExecutor, IAppHost appHost) {
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _toolExecutor = toolExecutor ?? throw new ArgumentNullException(nameof(toolExecutor));
-        _memoryNotebookApp = memoryNotebookApp ?? throw new ArgumentNullException(nameof(memoryNotebookApp));
+        _appHost = appHost ?? throw new ArgumentNullException(nameof(appHost));
         _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolExecutor.Tools);
 
         DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Initialized toolDefinitions={_toolDefinitions.Length}");
@@ -43,19 +43,12 @@ internal class AgentEngine {
 
     public string SystemInstruction => _state.SystemInstruction;
 
-    public string MemoryNotebookSnapshot => _memoryNotebookApp.GetSnapshot();
+    public IAppHost AppHost => _appHost;
 
-    public IReadOnlyList<IContextMessage> RenderLiveContext() => _state.RenderLiveContext();
-
-    public void Reset() {
-        _memoryNotebookApp.Reset();
-        _state.Reset();
-        _pendingToolResults.Clear();
-        ResetInvocation();
+    public IReadOnlyList<IContextMessage> RenderLiveContext() {
+        var windows = _appHost.RenderWindows();
+        return _state.RenderLiveContext(windows);
     }
-
-    public void UpdateMemoryNotebook(string? content)
-        => _memoryNotebookApp.ReplaceNotebookFromHost(content);
 
     public void AppendNotification(LevelOfDetailContent notificationContent) {
         if (notificationContent is null) { throw new ArgumentNullException(nameof(notificationContent)); }
@@ -184,7 +177,7 @@ internal class AgentEngine {
     }
 
     private async Task<StepOutcome> ProcessPendingModelCallAsync(AgentRunState state, LlmProfile profile, CancellationToken cancellationToken) {
-        var liveContext = _state.RenderLiveContext();
+        var liveContext = RenderLiveContext();
         DebugUtil.Print(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
         var args = new BeforeModelCallEventArgs(state, profile, liveContext, _toolDefinitions);

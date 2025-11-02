@@ -1,4 +1,3 @@
-using System.Text;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Collections.Concurrent;
@@ -6,13 +5,11 @@ using Atelia.Diagnostics;
 using Atelia.LiveContextProto.State.History;
 using Atelia.LiveContextProto.Context;
 using Atelia.LiveContextProto.Tools;
-using Atelia.LiveContextProto.Apps;
 
 namespace Atelia.LiveContextProto.State;
 
 internal sealed class AgentState {
     private readonly List<HistoryEntry> _history = new();
-    private ImmutableArray<IApp> _apps = ImmutableArray<IApp>.Empty;
 
     // 未来考虑增加MessageInstanceId以支持先Peek并构造InputEntry，模型真正完成输出后再Pop，使得在调用模式处理失败后重试时有机会进一步取到新近产生的事件，来提高实时性。
     private readonly ConcurrentQueue<LevelOfDetailContent> _pendingNotifications = new(); // TODO:添加时间戳等元信息，替代LevelOfDetailContent类型。
@@ -75,23 +72,18 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         DebugUtil.Print("History", $"System instruction updated length={instruction.Length}");
     }
 
-    public void Reset() {
-        _history.Clear();
-        DebugUtil.Print("History", "AgentState history cleared");
-    }
-
-    public IReadOnlyList<IContextMessage> RenderLiveContext() {
+    public IReadOnlyList<IContextMessage> RenderLiveContext(string? windows = null) {
         var messages = new List<IContextMessage>(_history.Count);
         int detailOrdinal = 0;
-        string? windows = RenderWindows();
+        string? pendingWindows = windows;
 
         for (int index = _history.Count; --index >= 0;) {
             HistoryEntry contextual = _history[index];
             switch (contextual) {
                 case ModelInputEntry modelInputEntry:
                     var inputDetail = ResolveDetailLevel(detailOrdinal++);
-                    messages.Add(modelInputEntry.GetMessage(inputDetail, windows));
-                    windows = null; // 只注入一次
+                    messages.Add(modelInputEntry.GetMessage(inputDetail, pendingWindows));
+                    pendingWindows = null; // 只注入一次
                     break;
                 case ModelOutputEntry modelOutputEntry:
                     messages.Add(modelOutputEntry);
@@ -145,46 +137,5 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 
         if (entry is ToolResultsEntry toolResultsEntry) { return toolResultsEntry with { Notifications = notifications }; }
         return entry with { Notifications = notifications };
-    }
-
-    private string? RenderWindows() {
-        var fragments = new List<string>();
-        var renderContext = new AppRenderContext(this, ImmutableDictionary<string, object?>.Empty);
-
-        foreach (var app in _apps) {
-            var fragment = app.RenderWindow(renderContext);
-            if (!string.IsNullOrWhiteSpace(fragment)) {
-                fragments.Add(fragment.TrimEnd());
-            }
-        }
-
-        if (fragments.Count == 0) { return null; }
-
-        var WindowBuilder = new StringBuilder();
-        WindowBuilder.AppendLine("# [Window]");
-        WindowBuilder.AppendLine();
-
-        for (var index = 0; index < fragments.Count; index++) {
-            WindowBuilder.AppendLine(fragments[index]);
-
-            if (index < fragments.Count - 1) {
-                WindowBuilder.AppendLine();
-            }
-        }
-
-        return WindowBuilder.ToString().TrimEnd();
-    }
-
-    internal IEnumerable<ITool> EnumerateAppTools() {
-        foreach (var app in _apps) {
-            foreach (var tool in app.Tools) {
-                yield return tool;
-            }
-        }
-    }
-
-    internal void ConfigureApps(IEnumerable<IApp> apps) {
-        if (apps is null) { throw new ArgumentNullException(nameof(apps)); }
-        _apps = ImmutableArray.CreateRange(apps);
     }
 }
