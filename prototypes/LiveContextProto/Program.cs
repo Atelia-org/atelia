@@ -2,12 +2,10 @@ using System;
 using System.Net.Http;
 using System.Text;
 using Atelia.Diagnostics;
-using Atelia.LiveContextProto.Agent;
-using Atelia.LiveContextProto.Provider;
-using Atelia.LiveContextProto.Provider.Anthropic;
-using Atelia.LiveContextProto.State;
-using Atelia.LiveContextProto.Context;
-using Atelia.LiveContextProto.Profile;
+using Atelia.Agent;
+using Atelia.Agent.Core;
+using Atelia.LlmProviders.Anthropic;
+using Atelia.Agent.Core.History;
 
 namespace Atelia.LiveContextProto;
 
@@ -28,7 +26,7 @@ internal static class Program {
         var anthropicClient = new AnthropicProviderClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
         var defaultProfile = new LlmProfile(anthropicClient, DefaultProxyModel, DefaultProfileName);
 
-        var agent = new LlmAgent(agentState);
+        var agent = new CharacterAgent(agentState);
         var loop = new ConsoleTui(agent, defaultProfile);
 
         loop.Run();

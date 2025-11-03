@@ -26,3 +26,43 @@ AgentEngine外部:
 - 工具动态添加移除
 - IApp动态添加移除
 - 处理WaitingInput状态的业务逻辑
+
+命名空间分层规划
+
+产品：
+- Atelia.Agent
+  - CharacterAgent
+
+组件库:
+- Atelia.Agent.Apps
+  - MemoryNotebookApp
+  - TextEditor
+- Atelia.Agent.SubAgents
+  - RecapMaintainer
+  - Daemons / Analyzers
+
+引擎外观:
+- Atelia.Agent.Core
+  - AgentEngine
+  - ITool
+  - IApp
+  - ToolAttribute, ToolParamAttribute, MethodToolWrapper
+  - LlmProfile
+
+引擎实现:
+- Atelia.Agent.Core.History
+  - AgentState
+  - HistoryEntry
+- Atelia.Agent.Core.Tool
+  - ToolExecutor
+
+LlmProviders抽象:
+- Atelia.Agent.Core.Context
+  - IContextMessage, LlmRequest
+  - IProviderClient
+
+LlmProviders实现:
+- Atelia.LlmProviders
+  - Anthropic: Messages V1 API
+  - OpenAI: V1 API。不包括Responses API。
+  - Gemini
