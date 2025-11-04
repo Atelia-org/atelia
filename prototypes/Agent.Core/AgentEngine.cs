@@ -16,7 +16,7 @@ namespace Atelia.Agent.Core;
 /// Agent 执行引擎，负责管理 Agent 状态机、工具调度与模型交互的核心协调器。
 /// </summary>
 /// <remarks>
-/// <para>&lt;strong&gt;警告：此类型非线程安全，不支持并发使用。&lt;/strong&gt;</para>
+/// <para><strong>警告：此类型非线程安全，不支持并发使用。</strong></para>
 /// <para>所有公开方法（包括异步方法）都不应从多个线程同时调用。</para>
 /// <para>如需并发执行多个 Agent，请为每个执行上下文创建独立的 <see cref="AgentEngine"/> 实例。</para>
 /// </remarks>

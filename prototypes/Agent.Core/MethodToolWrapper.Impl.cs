@@ -12,11 +12,11 @@ partial class MethodToolWrapper {
     /// </summary>
     /// <remarks>
     /// <para>
-    /// &lt;strong&gt;参数名匹配规则：&lt;/strong&gt;使用原生的 <see cref="IReadOnlyDictionary{TKey, TValue}.TryGetValue"/> 进行查找，
+    /// <strong>参数名匹配规则：</strong>使用原生的 <see cref="IReadOnlyDictionary{TKey, TValue}.TryGetValue"/> 进行查找，
     /// 严格区分大小写。不支持忽略大小写或别名匹配。
     /// </para>
     /// <para>
-    /// &lt;strong&gt;设计原因：&lt;/strong&gt;保持简单、明确的契约，避免引入参数名碰撞检测与优先级决策的复杂性。
+    /// <strong>设计原因：</strong>保持简单、明确的契约，避免引入参数名碰撞检测与优先级决策的复杂性。
     /// 当前团队调用路径可控，大小写一致性由工具定义与调用方共同保证。
     /// </para>
     /// </remarks>

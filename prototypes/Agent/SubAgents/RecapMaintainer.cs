@@ -5,7 +5,7 @@ namespace Atelia.Agent.SubAgents;
 /// Recap 维护者 —— 一个专用 Agent，负责将即将被遗忘的消息历史精炼并融入"前情提要"。
 /// </summary>
 /// <remarks>
-/// <para>&lt;strong&gt;设计意图：&lt;/strong&gt;</para>
+/// <para><strong>设计意图：</strong></para>
 /// <para>
 /// 当上下文窗口有限时，旧的对话轮次终将被遗忘。RecapMaintainer 的使命是在信息被截断之前，
 /// 将其蒸馏提炼，更新到一份持续维护的 Recap 文本中。这个过程类似于剧本中的"前情提要"，
@@ -13,15 +13,15 @@ namespace Atelia.Agent.SubAgents;
 /// 依然能够保持对过去关键事件和上下文的理解。
 /// </para>
 ///
-/// <para>&lt;strong&gt;职能：&lt;/strong&gt;</para>
+/// <para><strong>职能：</strong></para>
 /// <list type="bullet">
-///   <item><description>&lt;strong&gt;摄取 (Ingest)&lt;/strong&gt;: 接收即将被 Dequeue 的消息轮次。</description></item>
-///   <item><description>&lt;strong&gt;精炼 (Refine)&lt;/strong&gt;: 提取消息中的关键信息，摒弃冗余和过时的细节。</description></item>
-///   <item><description>&lt;strong&gt;融合 (Merge)&lt;/strong&gt;: 将精炼后的内容更新到现有的 Recap 文本中，确保连贯性和可读性。</description></item>
-///   <item><description>&lt;strong&gt;修剪 (Prune)&lt;/strong&gt;: 当 Recap 本身过长时，进一步遗忘后效性较低的信息，控制总体长度。</description></item>
+///   <item><description><strong>摄取 (Ingest)</strong>: 接收即将被 Dequeue 的消息轮次。</description></item>
+///   <item><description><strong>精炼 (Refine)</strong>: 提取消息中的关键信息，摒弃冗余和过时的细节。</description></item>
+///   <item><description><strong>融合 (Merge)</strong>: 将精炼后的内容更新到现有的 Recap 文本中，确保连贯性和可读性。</description></item>
+///   <item><description><strong>修剪 (Prune)</strong>: 当 Recap 本身过长时，进一步遗忘后效性较低的信息，控制总体长度。</description></item>
 /// </list>
 ///
-/// <para>&lt;strong&gt;工作方式 (设计初稿):&lt;/strong&gt;</para>
+/// <para><strong>工作方式 (设计初稿):</strong></para>
 /// <para>
 /// RecapMaintainer 本身是一个 LLM-driven Agent。它被赋予两个核心工具：
 /// </para>
@@ -41,7 +41,7 @@ namespace Atelia.Agent.SubAgents;
 /// 最大化历史信息的密度和后效性。
 /// </para>
 ///
-/// <para>&lt;strong&gt;扩展性：&lt;/strong&gt;</para>
+/// <para><strong>扩展性：</strong></para>
 /// <para>
 /// 这是一个被动触发的基础机制（如基于消息队列长度阈值）。未来可以演进为：
 /// </para>
