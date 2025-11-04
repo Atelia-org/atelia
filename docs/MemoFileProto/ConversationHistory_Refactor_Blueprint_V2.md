@@ -229,15 +229,13 @@ Conversation History 的目标架构延续 v1 文档的“三段式流水线”�
 
 ### ContextMessage 层接口设计（✅）
 - **设计目标**：保持 Context 层供应商无关性，避免重复构造历史条目，并让 Provider 通过接口检测快速定位所需字段。
-  - 基础接口仅保留角色、时间戳与 Metadata，语义字段交由派生接口承载。
+  - 基础接口仅保留角色（后续如需扩展可通过 Metadata 等可选机制追加），语义字段交由派生接口承载。
   - 角色化接口覆盖系统指令、模型输入、模型输出与工具结果四种核心消息类型。
   - 可选能力通过 mix-in 接口表达（ToolCalls、TokenUsage 等），按需组合而非强制所有条目实现；Window 统一由 `LevelOfDetailSections` 提供。
 
 ```csharp
 interface IContextMessage {
   ContextMessageRole Role { get; }
-  DateTimeOffset Timestamp { get; }
-  ImmutableDictionary<string, object?> Metadata { get; }
 }
 
 enum ContextMessageRole {
@@ -610,9 +608,9 @@ sealed class AgentState {
 - `IModelOutputMessage.ToolCalls` 与最近的 `IToolResultsMessage.Results` 需要按顺序一一对应，Provider 负责保证配对；若无法解析，必须以失败状态的 `ToolCallResult` 回写。
 - Metadata 键名遵循蛇形命名且单条限制 2 KB，超限信息需转化为附件或独立条目；Provider 在追加诊断信息时同样遵守该约束。
 - Window 以 `LevelOfDetailSections.Live` 中的 `"[Window]"` Section 持久化，消费方可在渲染前调用扩展方法拆分附加片段，未拆分时也会维持上下文一致。
-- `IContextMessage` 仅暴露角色、时间戳与 Metadata，正文语义由角色化接口提供；Provider 通过 `is` 检查选择处理路径。
+- `IContextMessage` 仅暴露角色，正文语义由角色化接口提供；Provider 通过 `is` 检查选择处理路径。
 - `IToolCallCarrier`、`ITokenUsageCarrier` 等 mix-in 为可选能力，未实现即视为不支持相应特性。
-- Provider 必须把 `Timestamp` 视为只读数据源：不得重写、覆盖或重新排序；当底层 SDK 提供更精确的时间数据时，应通过 Metadata 新增字段，而非修改既有时间戳。
+- Provider 必须把来源于 `HistoryEntry` 的 `Timestamp` 视为只读数据源：不得重写、覆盖或重新排序；当底层 SDK 提供更精确的时间数据时，应通过 Metadata 新增字段，而非修改既有时间戳。
 - 任意 Provider 扩展都需验证 `IContextMessage` 列表中的未知角色/能力能被安全忽略，防止未来新增 mix-in 时出现运行时异常。
 
 ### 关键类型定义

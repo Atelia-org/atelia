@@ -402,15 +402,13 @@ static class LevelOfDetailSectionExtensions {
 - 同一条上下文信息在 History 层与 Context 层之间尽可能复用数据，不引入额外复制成本。
 - Provider 通过接口检测（`is IModelOutputMessage` 等）即可获知所需字段，无须了解历史实体类型。
 
-基础接口仅保留角色、时间戳与元数据，具体内容字段完全交由派生接口定义，从而避免对“消息正文”施加过早约束。
+基础接口仅保留角色，具体内容字段完全交由派生接口定义，从而避免对“消息正文”施加过早约束。
 
 ### 基础接口 `IContextMessage`
 
 ```csharp
 interface IContextMessage {
     ContextMessageRole Role { get; }
-    DateTimeOffset Timestamp { get; }
-    ImmutableDictionary<string, object?> Metadata { get; }
 }
 
 enum ContextMessageRole {
@@ -423,8 +421,7 @@ enum ContextMessageRole {
 
 - `Role`：使用供应商无关的枚举值，作为渲染和 Provider 分支判断的第一关键字。
 - （无统一正文字段）基础接口不再提供 `Content`，具体内容由派生接口自行定义，便于适配不同 Provider 的格式要求。
-- `Timestamp`：沿用 History 层的时间戳，便于 Provider/调试器做顺序校验。
-- `Metadata`：附带 token 统计、耗时、实验开关等辅助信息；键名以蛇形命名规范，保持向后兼容。
+- `Metadata`（可选扩展）：附带 token 统计、耗时、实验开关等辅助信息；键名以蛇形命名规范，保持向后兼容。
 
 ### 角色化派生接口
 
