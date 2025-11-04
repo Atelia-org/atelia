@@ -5,12 +5,12 @@ using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core.Tool;
 
-public sealed class ToolExecutor {
+internal sealed class ToolExecutor {
     private const string DebugCategory = "Tools";
     private readonly IReadOnlyDictionary<string, ITool> _tools;
     private readonly ImmutableArray<ToolDefinition> _toolDefinitions;
 
-    public ToolExecutor(IEnumerable<ITool> tools, Func<ITool, ImmutableDictionary<string, object?>>? environmentFactory = null) {
+    public ToolExecutor(IEnumerable<ITool> tools) {
         if (tools is null) { throw new ArgumentNullException(nameof(tools)); }
 
         var dictionary = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
@@ -38,22 +38,6 @@ public sealed class ToolExecutor {
         }
 
         return _tools.TryGetValue(name, out tool!);
-    }
-
-    public async ValueTask<IReadOnlyList<LodToolCallResult>> ExecuteBatchAsync(
-        IReadOnlyList<ParsedToolCall> requests,
-        CancellationToken cancellationToken
-    ) {
-        if (requests.Count == 0) { return Array.Empty<LodToolCallResult>(); }
-
-        var results = new List<LodToolCallResult>(requests.Count);
-
-        foreach (var request in requests) {
-            var result = await ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
-            results.Add(result);
-        }
-
-        return results;
     }
 
     public async ValueTask<LodToolCallResult> ExecuteAsync(
@@ -125,9 +109,6 @@ public sealed class ToolExecutor {
         catch (Exception ex) {
             stopwatch.Stop();
             DebugUtil.Print(DebugCategory, $"[Executor] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={ex.Message}");
-            var metadata = ImmutableDictionary<string, object?>.Empty
-                .SetItem("elapsed_ms", stopwatch.Elapsed.TotalMilliseconds)
-                .SetItem("error", ex.GetType().Name);
 
             var message = $"工具执行异常: {ex.Message}";
             return new LodToolCallResult(

@@ -43,7 +43,7 @@ public sealed class MemoryNotebookApp : IApp {
 
     public IReadOnlyList<ITool> Tools => _tools;
 
-    public string? RenderWindow(AppRenderContext context) {
+    public string? RenderWindow() {
         var builder = new StringBuilder();
         builder.AppendLine("## Memory Notebook");
         builder.AppendLine();

@@ -2,24 +2,17 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Text;
-using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
 
 namespace Atelia.Agent.Core.App;
 
-public sealed class DefaultAppHost : IAppHost {
-    private readonly AgentState _state;
-    private ImmutableDictionary<string, object?> _environment;
+internal sealed class DefaultAppHost : IAppHost {
     private ImmutableArray<IApp> _apps;
     private ImmutableArray<ITool> _tools;
 
     public DefaultAppHost(
-        AgentState state,
-        IEnumerable<IApp>? apps = null,
-        ImmutableDictionary<string, object?>? environment = null
+        IEnumerable<IApp>? apps = null
     ) {
-        _state = state ?? throw new ArgumentNullException(nameof(state));
-        _environment = environment ?? ImmutableDictionary<string, object?>.Empty;
         _apps = ImmutableArray<IApp>.Empty;
         _tools = ImmutableArray<ITool>.Empty;
 
@@ -29,8 +22,6 @@ public sealed class DefaultAppHost : IAppHost {
             }
         }
     }
-
-    public AgentState State => _state;
 
     public ImmutableArray<IApp> Apps => _apps;
 
@@ -69,10 +60,9 @@ public sealed class DefaultAppHost : IAppHost {
         if (_apps.IsDefaultOrEmpty) { return null; }
 
         var fragments = new List<string>();
-        var renderContext = new AppRenderContext(_state, _environment);
 
         foreach (var app in _apps) {
-            var fragment = app.RenderWindow(renderContext);
+            var fragment = app.RenderWindow();
             if (!string.IsNullOrWhiteSpace(fragment)) {
                 fragments.Add(fragment.TrimEnd());
             }
@@ -94,9 +84,6 @@ public sealed class DefaultAppHost : IAppHost {
 
         return builder.ToString().TrimEnd();
     }
-
-    public void UpdateEnvironment(ImmutableDictionary<string, object?> environment)
-        => _environment = environment ?? ImmutableDictionary<string, object?>.Empty;
 
     private int FindAppIndex(string name) {
         if (_apps.IsDefaultOrEmpty) { return -1; }

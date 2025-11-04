@@ -32,7 +32,7 @@ public class AgentEngine {
         IEnumerable<ITool>? initialTools = null
     ) {
         _state = state ?? AgentState.CreateDefault();
-        _appHost = new DefaultAppHost(_state);
+        _appHost = new DefaultAppHost();
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
         _toolsDirty = true;
 

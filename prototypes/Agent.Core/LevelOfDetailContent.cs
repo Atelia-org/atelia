@@ -30,6 +30,7 @@ public sealed class LevelOfDetailContent {
             _ => _basic
         };
 
+    // Note: params IEnumerable<T> is a valid parameter type in C# 12+
     public static LevelOfDetailContent Join(string? separator, params IEnumerable<LevelOfDetailContent> items) {
         string basic = string.Join(separator, items.Select(x => x.Basic));
         string detail = string.Join(separator, items.Select(x => x.Detail));

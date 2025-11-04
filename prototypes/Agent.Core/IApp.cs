@@ -1,24 +1,17 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
 
 namespace Atelia.Agent.Core;
-
-public sealed record AppRenderContext(
-    AgentState AgentState,
-    ImmutableDictionary<string, object?> Environment
-);
 
 public interface IApp {
     string Name { get; }
     string Description { get; }
     IReadOnlyList<ITool> Tools { get; }
-    string? RenderWindow(AppRenderContext context);
+    string? RenderWindow();
 }
 
-public interface IAppHost {
-    AgentState State { get; }
+internal interface IAppHost {
     ImmutableArray<IApp> Apps { get; }
     ImmutableArray<ITool> Tools { get; }
 
