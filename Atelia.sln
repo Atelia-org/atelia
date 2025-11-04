@@ -61,9 +61,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Agent", "prototypes\Agent\A
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Diagnostics", "src\Diagnostics\Diagnostics.csproj", "{C117FE35-0A84-8AD1-E8B1-F8B3DA2086B4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LlmProviders.Abstractions", "prototypes\LlmProviders.Abstractions\LlmProviders.Abstractions.csproj", "{3A10F7AE-734E-4F35-9BA4-5100EF2D3CFE}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Completion.Abstractions", "prototypes\Completion.Abstractions\Completion.Abstractions.csproj", "{3A10F7AE-734E-4F35-9BA4-5100EF2D3CFE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LlmProviders", "prototypes\LlmProviders\LlmProviders.csproj", "{04A410F1-2489-4D9B-BF9E-EF8BE64AD856}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Completion", "prototypes\Completion\Completion.csproj", "{04A410F1-2489-4D9B-BF9E-EF8BE64AD856}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

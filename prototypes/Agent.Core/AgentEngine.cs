@@ -5,8 +5,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Diagnostics;
+using Atelia.Completion.Abstractions;
 using Atelia.Agent.Core.App;
-using Atelia.LlmProviders;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
 
@@ -122,14 +122,14 @@ public class AgentEngine {
 
         var last = _state.History[^1];
         return last switch {
-            ToolResultsEntry => AgentRunState.PendingToolResults,
-            ModelInputEntry => AgentRunState.PendingInput,
-            ModelOutputEntry outputEntry => DetermineOutputState(outputEntry),
+            ToolEntry => AgentRunState.PendingToolResults,
+            PromptEntry => AgentRunState.PendingInput,
+            ModelEntry outputEntry => DetermineOutputState(outputEntry),
             _ => AgentRunState.WaitingInput
         };
     }
 
-    private AgentRunState DetermineOutputState(ModelOutputEntry outputEntry) {
+    private AgentRunState DetermineOutputState(ModelEntry outputEntry) {
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return AgentRunState.WaitingInput; }
         return HasAllToolResults(outputEntry)
             ? AgentRunState.ToolResultsReady
@@ -165,7 +165,7 @@ public class AgentEngine {
             _state.AppendNotification(args.AdditionalNotification);
         }
 
-        var inputEntry = args.InputEntry ?? new ModelInputEntry();
+        var inputEntry = args.InputEntry ?? new PromptEntry();
         var appended = _state.AppendModelInput(inputEntry);
 
         DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
@@ -189,11 +189,11 @@ public class AgentEngine {
             ? _toolDefinitions
             : args.ToolDefinitions;
 
-        var invocation = new ModelInvocationDescriptor(args.Profile.Client.Name, args.Profile.Client.Specification, args.Profile.ModelId);
-        var request = new LlmRequest(args.Profile.ModelId, SystemInstruction, args.LiveContext, effectiveToolDefinitions);
+        var invocation = new ModelInvocationDescriptor(args.Profile.Client.Name, args.Profile.Client.ProtocolVersion, args.Profile.ModelId);
+        var request = new CompletionRequest(args.Profile.ModelId, SystemInstruction, args.LiveContext, effectiveToolDefinitions);
 
-        var deltas = args.Profile.Client.CallModelAsync(request, cancellationToken);
-        var aggregatedOutput = await ModelOutputAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);
+        var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);
+        var aggregatedOutput = await CompletionAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);
 
         _pendingToolResults.Clear();
 
@@ -209,7 +209,7 @@ public class AgentEngine {
     }
 
     private async Task<StepOutcome> ProcessWaitingToolResultsAsync(CancellationToken cancellationToken) {
-        if (_state.History.Count == 0 || _state.History[^1] is not ModelOutputEntry outputEntry) {
+        if (_state.History.Count == 0 || _state.History[^1] is not ModelEntry outputEntry) {
             DebugUtil.Print(StateMachineDebugCategory, "[Engine] WaitingToolResults but no model output available");
             return StepOutcome.NoProgress;
         }
@@ -250,7 +250,7 @@ public class AgentEngine {
     }
 
     private StepOutcome ProcessToolResultsReady() {
-        if (_state.History.Count == 0 || _state.History[^1] is not ModelOutputEntry outputEntry) { return StepOutcome.NoProgress; }
+        if (_state.History.Count == 0 || _state.History[^1] is not ModelEntry outputEntry) { return StepOutcome.NoProgress; }
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return StepOutcome.NoProgress; }
 
         var collectedResults = new List<LodToolCallResult>(outputEntry.ToolCalls.Count);
@@ -271,7 +271,7 @@ public class AgentEngine {
             : failure.Result.GetContent(LevelOfDetail.Basic);
 
         var results = collectedResults.ToArray();
-        var entry = new ToolResultsEntry(results, executeError);
+        var entry = new ToolEntry(results, executeError);
 
         var appended = AppendToolResultsWithSummary(entry);
         _pendingToolResults.Clear();
@@ -282,7 +282,7 @@ public class AgentEngine {
         return StepOutcome.FromToolResults(appended);
     }
 
-    private ToolCallRequest? FindNextPendingToolCall(ModelOutputEntry outputEntry) {
+    private ParsedToolCall? FindNextPendingToolCall(ModelEntry outputEntry) {
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return null; }
 
         foreach (var call in outputEntry.ToolCalls) {
@@ -292,7 +292,7 @@ public class AgentEngine {
         return null;
     }
 
-    private bool HasAllToolResults(ModelOutputEntry outputEntry) {
+    private bool HasAllToolResults(ModelEntry outputEntry) {
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return false; }
         if (_pendingToolResults.Count < outputEntry.ToolCalls.Count) { return false; }
 
@@ -303,7 +303,7 @@ public class AgentEngine {
         return true;
     }
 
-    private ToolResultsEntry AppendToolResultsWithSummary(ToolResultsEntry entry) {
+    private ToolEntry AppendToolResultsWithSummary(ToolEntry entry) {
         return _state.AppendToolResults(entry);
     }
 
@@ -323,19 +323,19 @@ public class AgentEngine {
 
     private readonly record struct StepOutcome(
         bool ProgressMade,
-        ModelInputEntry? Input,
-        ModelOutputEntry? Output,
-        ToolResultsEntry? ToolResults
+        PromptEntry? Input,
+        ModelEntry? Output,
+        ToolEntry? ToolResults
     ) {
         public static StepOutcome NoProgress => default;
 
-        public static StepOutcome FromInput(ModelInputEntry input)
+        public static StepOutcome FromInput(PromptEntry input)
             => new(true, input, null, null);
 
-        public static StepOutcome FromOutput(ModelOutputEntry output)
+        public static StepOutcome FromOutput(ModelEntry output)
             => new(true, null, output, null);
 
-        public static StepOutcome FromToolResults(ToolResultsEntry toolResults)
+        public static StepOutcome FromToolResults(ToolEntry toolResults)
             => new(true, null, null, toolResults);
 
         public static StepOutcome FromToolExecution()
@@ -356,7 +356,7 @@ public sealed class WaitingInputEventArgs : EventArgs {
 
     public bool ShouldContinue { get; set; }
 
-    public ModelInputEntry? InputEntry { get; set; }
+    public PromptEntry? InputEntry { get; set; }
 
     public LevelOfDetailContent? AdditionalNotification { get; set; }
 }
@@ -386,7 +386,7 @@ public sealed class BeforeModelCallEventArgs : EventArgs {
 }
 
 public sealed class AfterModelCallEventArgs : EventArgs {
-    internal AfterModelCallEventArgs(AgentRunState state, LlmProfile profile, ModelOutputEntry output) {
+    internal AfterModelCallEventArgs(AgentRunState state, LlmProfile profile, ModelEntry output) {
         State = state;
         Profile = profile;
         Output = output ?? throw new ArgumentNullException(nameof(output));
@@ -396,15 +396,15 @@ public sealed class AfterModelCallEventArgs : EventArgs {
 
     public LlmProfile Profile { get; }
 
-    public ModelOutputEntry Output { get; }
+    public ModelEntry Output { get; }
 }
 
 public sealed class BeforeToolExecuteEventArgs : EventArgs {
-    internal BeforeToolExecuteEventArgs(ToolCallRequest toolCall) {
+    internal BeforeToolExecuteEventArgs(ParsedToolCall toolCall) {
         ToolCall = toolCall ?? throw new ArgumentNullException(nameof(toolCall));
     }
 
-    public ToolCallRequest ToolCall { get; }
+    public ParsedToolCall ToolCall { get; }
 
     public bool Cancel { get; set; }
 
@@ -412,12 +412,12 @@ public sealed class BeforeToolExecuteEventArgs : EventArgs {
 }
 
 public sealed class AfterToolExecuteEventArgs : EventArgs {
-    internal AfterToolExecuteEventArgs(ToolCallRequest toolCall, LodToolCallResult result) {
+    internal AfterToolExecuteEventArgs(ParsedToolCall toolCall, LodToolCallResult result) {
         ToolCall = toolCall ?? throw new ArgumentNullException(nameof(toolCall));
         Result = result ?? throw new ArgumentNullException(nameof(result));
     }
 
-    public ToolCallRequest ToolCall { get; }
+    public ParsedToolCall ToolCall { get; }
 
     public LodToolCallResult Result { get; set; }
 }

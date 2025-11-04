@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Diagnostics\Diagnostics.csproj" />
     <ProjectReference Include="..\Agent.Core\Agent.Core.csproj" />
+    <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>

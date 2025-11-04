@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Immutable;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core.Tool;
 

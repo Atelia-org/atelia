@@ -10,7 +10,7 @@
     <ProjectReference Include="..\..\src\Diagnostics\Diagnostics.csproj" />
     <ProjectReference Include="..\Agent.Core\Agent.Core.csproj" />
     <ProjectReference Include="..\Agent\Agent.csproj" />
-    <ProjectReference Include="..\LlmProviders\LlmProviders.csproj" />
+    <ProjectReference Include="..\Completion\Completion.csproj" />
   </ItemGroup>
 
   <ItemGroup>

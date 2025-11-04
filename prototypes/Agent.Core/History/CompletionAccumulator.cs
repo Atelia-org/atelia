@@ -4,57 +4,59 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Diagnostics;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core.History;
 
-internal static class ModelOutputAccumulator {
+internal static class CompletionAccumulator {
     private const string DebugCategory = "Provider";
 
-    public static async Task<ModelOutputEntry> AggregateAsync(
-        IAsyncEnumerable<ModelOutputDelta> deltas,
+    public static async Task<ModelEntry> AggregateAsync(
+        IAsyncEnumerable<CompletionChunk> deltas,
         ModelInvocationDescriptor invocation,
         CancellationToken cancellationToken
     ) {
         var contents = new List<string>();
-        var toolCalls = new List<ToolCallRequest>();
+        var toolCalls = new List<ParsedToolCall>();
         var contentBuilder = new StringBuilder();
         TokenUsage? tokenUsage = null;
+
+        void CommitPendingContent() {
+            if (contentBuilder.Length == 0) { return; }
+
+            contents.Add(contentBuilder.ToString());
+            contentBuilder.Clear();
+        }
 
         await foreach (var delta in deltas.WithCancellation(cancellationToken)) {
             DebugUtil.Print(DebugCategory, $"[Aggregate] Received delta kind={delta.Kind}");
 
             switch (delta.Kind) {
-                case ModelOutputDeltaKind.Content:
-                    if (!string.IsNullOrEmpty(delta.ContentFragment)) {
-                        contentBuilder.Append(delta.ContentFragment);
-                    }
-
-                    if (delta.EndSegment) {
-                        if (contentBuilder.Length > 0) {
-                            contents.Add(contentBuilder.ToString());
-                            contentBuilder.Clear();
-                        }
-                        else {
-                            contents.Add(string.Empty);
-                        }
-                    }
-
-                    break;
-                case ModelOutputDeltaKind.ToolCallDeclared:
-                    if (delta.ToolCallRequest is not null) {
-                        toolCalls.Add(delta.ToolCallRequest);
+                case CompletionChunkKind.Content:
+                    if (!string.IsNullOrEmpty(delta.Content)) {
+                        contentBuilder.Append(delta.Content);
                     }
                     break;
-                case ModelOutputDeltaKind.TokenUsage:
+                case CompletionChunkKind.ToolCall:
+                    CommitPendingContent();
+                    if (delta.ToolCall is not null) {
+                        toolCalls.Add(delta.ToolCall);
+                    }
+                    break;
+                case CompletionChunkKind.Error:
+                    CommitPendingContent();
+                    break;
+                case CompletionChunkKind.TokenUsage:
+                    CommitPendingContent();
                     tokenUsage = delta.TokenUsage;
+                    break;
+                default:
+                    CommitPendingContent();
                     break;
             }
         }
 
-        if (contentBuilder.Length > 0) {
-            contents.Add(contentBuilder.ToString());
-        }
+        CommitPendingContent();
 
         if (contents.Count == 0 && toolCalls.Count == 0) {
             // Guarantee at least one content slot for downstream consumers.
@@ -68,7 +70,7 @@ internal static class ModelOutputAccumulator {
         }
 
         var fullContentText = string.Join('\n', contents);
-        var outputEntry = new ModelOutputEntry(fullContentText, toolCalls, invocation);
+        var outputEntry = new ModelEntry(fullContentText, toolCalls, invocation);
 
         DebugUtil.Print(DebugCategory, $"[Aggregate] Produced output fullContentText.Length={fullContentText.Length}, toolCalls={toolCalls.Count}");
 

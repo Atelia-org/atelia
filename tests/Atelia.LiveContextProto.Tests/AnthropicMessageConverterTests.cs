@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
-using Atelia.LiveContextProto.Context;
-using Atelia.LiveContextProto.Provider.Anthropic;
-using Atelia.LiveContextProto.State.History;
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
+using Atelia.Agent.Core.History;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -13,7 +13,7 @@ namespace Atelia.LiveContextProto.Tests;
 public sealed class AnthropicMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ParseErrorFallsBackToRawArguments() {
-        var toolCall = new ToolCallRequest(
+        var toolCall = new ParsedToolCall(
             ToolName: "search",
             ToolCallId: "call-1",
             RawArguments: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
@@ -27,15 +27,15 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ModelOutputEntry(
+        var historyEntry = new ModelEntry(
             Contents: string.Empty,
             ToolCalls: new[] { toolCall },
             Invocation: new ModelInvocationDescriptor("provider", "spec", "model")
         );
 
-        var request = new LlmRequest(
+        var request = new CompletionRequest(
             ModelId: "claude-3",
-            SystemInstruction: string.Empty,
+            SystemPrompt: string.Empty,
             Context: new IContextMessage[] { historyEntry },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
@@ -62,7 +62,7 @@ public sealed class AnthropicMessageConverterTests {
             ["count"] = 7
         };
 
-        var toolCall = new ToolCallRequest(
+        var toolCall = new ParsedToolCall(
             ToolName: "echo",
             ToolCallId: "call-2",
             RawArguments: null,
@@ -71,15 +71,15 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ModelOutputEntry(
+        var historyEntry = new ModelEntry(
             Contents: "call",
             ToolCalls: new[] { toolCall },
             Invocation: new ModelInvocationDescriptor("provider", "spec", "model")
         );
 
-        var request = new LlmRequest(
+        var request = new CompletionRequest(
             ModelId: "claude-3",
-            SystemInstruction: string.Empty,
+            SystemPrompt: string.Empty,
             Context: new IContextMessage[] { historyEntry },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
@@ -98,7 +98,7 @@ public sealed class AnthropicMessageConverterTests {
             ["count"] = 3
         };
 
-        var toolCall = new ToolCallRequest(
+        var toolCall = new ParsedToolCall(
             ToolName: "echo",
             ToolCallId: "call-3",
             RawArguments: null,
@@ -107,15 +107,15 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ModelOutputEntry(
+        var historyEntry = new ModelEntry(
             Contents: "call",
             ToolCalls: new[] { toolCall },
             Invocation: new ModelInvocationDescriptor("provider", "spec", "model")
         );
 
-        var request = new LlmRequest(
+        var request = new CompletionRequest(
             ModelId: "claude-3",
-            SystemInstruction: string.Empty,
+            SystemPrompt: string.Empty,
             Context: new IContextMessage[] { historyEntry },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );

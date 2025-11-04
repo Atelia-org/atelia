@@ -1,4 +1,4 @@
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 namespace Atelia.Agent.Core;
 
 /// <summary>
@@ -7,7 +7,7 @@ namespace Atelia.Agent.Core;
 /// </summary>
 /// <param name="Name">用于在UI中显示，以及区分不同的LlmProfile实例。</param>
 public sealed record LlmProfile(
-    IProviderClient Client,
+    ICompletionClient Client,
     string ModelId,
     string Name
 );

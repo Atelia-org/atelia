@@ -7,7 +7,7 @@ using Atelia.Diagnostics;
 using Atelia.Agent;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.LiveContextProto;
 

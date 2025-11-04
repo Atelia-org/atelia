@@ -3,7 +3,7 @@ using System.Collections.Immutable;
 using System.Collections.Concurrent;
 using Atelia.Diagnostics;
 
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 using Atelia.Agent.Core.Tool;
 using Atelia.Agent.Core.History;
 
@@ -52,19 +52,19 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         _pendingNotifications.Enqueue(item); // TODO: 更具体的消息类型，更多元数据。
     }
 
-    public ModelOutputEntry AppendModelOutput(ModelOutputEntry entry) {
+    public ModelEntry AppendModelOutput(ModelEntry entry) {
         return AppendEntry(entry);
     }
 
-    public ModelInputEntry AppendModelInput(ModelInputEntry entry) {
-        ModelInputEntry enriched = ModelInputAttachNotifications(entry);
+    public PromptEntry AppendModelInput(PromptEntry entry) {
+        PromptEntry enriched = ModelInputAttachNotifications(entry);
         return AppendEntry(enriched);
     }
 
-    public ToolResultsEntry AppendToolResults(ToolResultsEntry entry) {
+    public ToolEntry AppendToolResults(ToolEntry entry) {
         if (entry.Results is not { Count: > 0 } && string.IsNullOrWhiteSpace(entry.ExecuteError)) { throw new ArgumentException("ToolResultsEntry must include results or an execution error.", nameof(entry)); }
 
-        ToolResultsEntry enriched = ToolResultsAttachNotifications(entry);
+        ToolEntry enriched = ToolResultsAttachNotifications(entry);
         return AppendEntry(enriched);
     }
 
@@ -81,12 +81,12 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         for (int index = _history.Count; --index >= 0;) {
             HistoryEntry contextual = _history[index];
             switch (contextual) {
-                case ModelInputEntry modelInputEntry:
+                case PromptEntry modelInputEntry:
                     var inputDetail = ResolveDetailLevel(detailOrdinal++);
                     messages.Add(modelInputEntry.GetMessage(inputDetail, pendingWindows));
                     pendingWindows = null; // 只注入一次
                     break;
-                case ModelOutputEntry modelOutputEntry:
+                case ModelEntry modelOutputEntry:
                     messages.Add(modelOutputEntry);
                     break;
             }
@@ -126,17 +126,17 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
             ? LevelOfDetail.Detail
             : LevelOfDetail.Basic;
 
-    private ToolResultsEntry ToolResultsAttachNotifications(ToolResultsEntry entry) {
+    private ToolEntry ToolResultsAttachNotifications(ToolEntry entry) {
         var notifications = TakeoutPendingNotifications();
         if (notifications == null) { return entry; }
         return entry with { Notifications = notifications };
     }
 
-    private ModelInputEntry ModelInputAttachNotifications(ModelInputEntry entry) {
+    private PromptEntry ModelInputAttachNotifications(PromptEntry entry) {
         var notifications = TakeoutPendingNotifications();
         if (notifications == null) { return entry; }
 
-        if (entry is ToolResultsEntry toolResultsEntry) { return toolResultsEntry with { Notifications = notifications }; }
+        if (entry is ToolEntry toolResultsEntry) { return toolResultsEntry with { Notifications = notifications }; }
         return entry with { Notifications = notifications };
     }
 }

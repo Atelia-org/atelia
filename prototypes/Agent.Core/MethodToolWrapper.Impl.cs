@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 using Atelia.Agent.Core.Tool;
 
 namespace Atelia.Agent.Core;

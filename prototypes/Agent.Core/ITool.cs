@@ -1,5 +1,5 @@
 using Atelia.Agent.Core.Tool;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core;
 

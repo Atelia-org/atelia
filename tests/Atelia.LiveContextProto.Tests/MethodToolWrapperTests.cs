@@ -1,7 +1,8 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Atelia.LiveContextProto.Tool;
+using Atelia.Agent.Core;
+using Atelia.Agent.Core.Tool;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;

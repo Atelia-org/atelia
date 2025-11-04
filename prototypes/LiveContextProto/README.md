@@ -38,7 +38,7 @@ dotnet run --project prototypes/LiveContextProto/LiveContextProto.csproj
 ## 结构
 - `State/`：AgentState 与 HistoryEntry 分层（ModelInput/ModelOutput/ToolResults），`RenderLiveContext()` 负责上下文投影与 Window 装饰。
 - `Provider/`：
-  - `IProviderClient`：统一模型调用接口（返回 `IAsyncEnumerable<ModelOutputDelta>`）。
+  - `IProviderClient`：统一模型调用接口（返回 `IAsyncEnumerable<CompletionChunk>`）。
   - `ProviderRouter`：按策略选择 Provider，并生成 `ModelInvocationDescriptor`。
   - `ModelOutputAccumulator`：聚合 delta → `ModelOutputEntry`/`ToolResultsEntry`，并回填 `TokenUsage` 元数据。
   - `Anthropic/AnthropicProviderClient`：对接 Anthropic Messages API 的流式客户端实现。

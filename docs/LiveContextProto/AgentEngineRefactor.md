@@ -56,13 +56,13 @@ AgentEngine外部:
 - Atelia.Agent.Core.Tool
   - ToolExecutor
 
-LlmProviders抽象:
+Completion抽象:
 - Atelia.Agent.Core.Context
   - IContextMessage, LlmRequest
   - IProviderClient
 
-LlmProviders实现:
-- Atelia.LlmProviders
+Completion实现:
+- Atelia.Completion
   - Anthropic: Messages V1 API
   - OpenAI: V1 API。不包括Responses API。
   - Gemini

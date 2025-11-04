@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
 using Atelia.Diagnostics;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core.Tool;
 
@@ -37,7 +37,7 @@ public sealed class ToolExecutor {
     }
 
     public async ValueTask<IReadOnlyList<LodToolCallResult>> ExecuteBatchAsync(
-        IReadOnlyList<ToolCallRequest> requests,
+        IReadOnlyList<ParsedToolCall> requests,
         CancellationToken cancellationToken
     ) {
         if (requests.Count == 0) { return Array.Empty<LodToolCallResult>(); }
@@ -53,7 +53,7 @@ public sealed class ToolExecutor {
     }
 
     public async ValueTask<LodToolCallResult> ExecuteAsync(
-        ToolCallRequest request,
+        ParsedToolCall request,
         CancellationToken cancellationToken
     ) {
         DebugUtil.Print(DebugCategory, $"[Executor] Dispatch toolName={request.ToolName} toolCallId={request.ToolCallId}");
@@ -136,7 +136,7 @@ public sealed class ToolExecutor {
         }
     }
 
-    private static LodToolCallResult CreateParseFailureResult(ToolCallRequest request) {
+    private static LodToolCallResult CreateParseFailureResult(ParsedToolCall request) {
         var basic = "工具参数解析失败。";
         var detail = string.IsNullOrWhiteSpace(request.ParseError)
             ? basic

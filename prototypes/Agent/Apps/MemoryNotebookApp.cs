@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Diagnostics;
 using Atelia.Agent.Core;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 using Atelia.Agent.Core.Tool;
 using Atelia.Agent.Text;
 

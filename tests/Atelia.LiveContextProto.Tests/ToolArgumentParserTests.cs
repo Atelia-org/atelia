@@ -1,5 +1,5 @@
-using Atelia.LiveContextProto.Context;
-using Atelia.LiveContextProto.Provider;
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.Utils;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;

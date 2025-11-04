@@ -1,11 +1,10 @@
+using Atelia.Agent;
+using Atelia.Agent.Core;
+using Atelia.Agent.Core.History;
+using Atelia.Agent.Core.Tool;
+using Atelia.LiveContextProto;
+using Atelia.Completion.Abstractions;
 using System.Collections.Immutable;
-using Atelia.LiveContextProto.Agent;
-using Atelia.LiveContextProto.Context;
-using Atelia.LiveContextProto.Profile;
-using Atelia.LiveContextProto.Provider;
-using Atelia.LiveContextProto.State;
-using Atelia.LiveContextProto.State.History;
-using Atelia.LiveContextProto.Tool;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -33,8 +32,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
 
         var firstResponse = CreateDeltaSequence(
-            ModelOutputDelta.Content("calling tool", endSegment: true),
-            ModelOutputDelta.ToolCall(
+            CompletionChunk.FromContent("calling tool"),
+            CompletionChunk.FromToolCall(
                 CreateToolCallRequest(
                     "echo",
                     "call-1",
@@ -45,12 +44,12 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
 
         var secondResponse = CreateDeltaSequence(
-            ModelOutputDelta.Content("tool complete", endSegment: true)
+            CompletionChunk.FromContent("tool complete")
         );
 
         var provider = new FakeProviderClient(new[] { firstResponse, secondResponse });
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        var agent = new LlmAgent(state, new[] { echoTool });
+        var agent = new CharacterAgent(state, new[] { echoTool });
 
         agent.AppendNotification("hello world");
 
@@ -103,10 +102,10 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(AgentRunState.WaitingInput, step5.StateAfter);
 
         Assert.Equal(4, state.History.Count);
-        Assert.IsType<ModelInputEntry>(state.History[0]);
-        Assert.IsType<ModelOutputEntry>(state.History[1]);
-        Assert.IsType<ToolResultsEntry>(state.History[2]);
-        Assert.IsType<ModelOutputEntry>(state.History[3]);
+        Assert.IsType<PromptEntry>(state.History[0]);
+        Assert.IsType<ModelEntry>(state.History[1]);
+        Assert.IsType<ToolEntry>(state.History[2]);
+        Assert.IsType<ModelEntry>(state.History[3]);
     }
 
     [Fact]
@@ -124,14 +123,14 @@ public sealed class AgentStateMachineToolExecutionTests {
         var provider = new FakeProviderClient(
             new[] {
                 CreateDeltaSequence(
-                    ModelOutputDelta.Content("call broken", endSegment: true),
-                    ModelOutputDelta.ToolCall(CreateToolCallRequest("broken", "fail-1", ImmutableDictionary<string, string>.Empty))
+                    CompletionChunk.FromContent("call broken"),
+                    CompletionChunk.FromToolCall(CreateToolCallRequest("broken", "fail-1", ImmutableDictionary<string, string>.Empty))
                 )
             }
         );
 
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        var agent = new LlmAgent(state, new[] { failingTool });
+        var agent = new CharacterAgent(state, new[] { failingTool });
 
         agent.AppendNotification("trigger failure");
 
@@ -150,7 +149,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(ToolExecutionStatus.Failed, toolResults.Results.Single().Status);
     }
 
-    private static ToolCallRequest CreateToolCallRequest(
+    private static ParsedToolCall CreateToolCallRequest(
         string toolName,
         string callId,
         IReadOnlyDictionary<string, string>? rawArguments,
@@ -160,7 +159,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         return new(toolName, callId, rawArguments, materializedArguments, null, null);
     }
 
-    private static async IAsyncEnumerable<ModelOutputDelta> CreateDeltaSequence(params ModelOutputDelta[] deltas) {
+    private static async IAsyncEnumerable<CompletionChunk> CreateDeltaSequence(params CompletionChunk[] deltas) {
         foreach (var delta in deltas) {
             yield return delta;
             await Task.Yield();
@@ -170,17 +169,17 @@ public sealed class AgentStateMachineToolExecutionTests {
     private static LevelOfDetailContent UniformContent(string text)
         => new(text, text);
 
-    private sealed class FakeProviderClient : IProviderClient {
-        private readonly Queue<IAsyncEnumerable<ModelOutputDelta>> _responses;
+    private sealed class FakeProviderClient : ICompletionClient {
+        private readonly Queue<IAsyncEnumerable<CompletionChunk>> _responses;
 
         public string Name => "test-provider";
-        public string Specification => "test-spec";
+        public string ProtocolVersion => "test-spec";
 
-        public FakeProviderClient(IEnumerable<IAsyncEnumerable<ModelOutputDelta>> responses) {
-            _responses = new Queue<IAsyncEnumerable<ModelOutputDelta>>(responses ?? throw new ArgumentNullException(nameof(responses)));
+        public FakeProviderClient(IEnumerable<IAsyncEnumerable<CompletionChunk>> responses) {
+            _responses = new Queue<IAsyncEnumerable<CompletionChunk>>(responses ?? throw new ArgumentNullException(nameof(responses)));
         }
 
-        public IAsyncEnumerable<ModelOutputDelta> CallModelAsync(LlmRequest request, CancellationToken cancellationToken) {
+        public IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken) {
             if (_responses.Count == 0) { throw new InvalidOperationException("No provider responses configured."); }
 
             return _responses.Dequeue();

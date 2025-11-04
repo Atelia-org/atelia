@@ -4,7 +4,8 @@ using System.Text;
 using Atelia.Diagnostics;
 using Atelia.Agent;
 using Atelia.Agent.Core;
-using Atelia.LlmProviders.Anthropic;
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
 using Atelia.Agent.Core.History;
 
 namespace Atelia.LiveContextProto;
@@ -23,7 +24,7 @@ internal static class Program {
 
         var agentState = AgentState.CreateDefault();
 
-        var anthropicClient = new AnthropicProviderClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
+        var anthropicClient = new AnthropicClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
         var defaultProfile = new LlmProfile(anthropicClient, DefaultProxyModel, DefaultProfileName);
 
         var agent = new CharacterAgent(agentState);

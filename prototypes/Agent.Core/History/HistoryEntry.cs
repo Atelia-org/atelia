@@ -1,15 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 using Atelia.Agent.Core.Tool;
 
 namespace Atelia.Agent.Core.History;
 
 public enum HistoryEntryKind {
-    ModelInput,
-    ModelOutput,
-    ToolResult
+    Prompt,
+    Model,
+    Tool
 }
 
 public record ModelInvocationDescriptor(
@@ -23,42 +23,42 @@ public abstract record class HistoryEntry {
     public abstract HistoryEntryKind Kind { get; }
 }
 
-public sealed record ModelOutputEntry(
+public sealed record ModelEntry(
     string Contents,
-    IReadOnlyList<ToolCallRequest> ToolCalls,
+    IReadOnlyList<ParsedToolCall> ToolCalls,
     ModelInvocationDescriptor Invocation
-) : HistoryEntry, IModelOutputMessage {
-    public override HistoryEntryKind Kind => HistoryEntryKind.ModelOutput;
-    public ContextMessageRole Role => ContextMessageRole.ModelOutput;
-    string IModelOutputMessage.Contents => Contents;
-    IReadOnlyList<ToolCallRequest> IModelOutputMessage.ToolCalls => ToolCalls;
+) : HistoryEntry, IModelMessage {
+    public override HistoryEntryKind Kind => HistoryEntryKind.Model;
+    public MessageRole Role => MessageRole.Model;
+    string IModelMessage.Contents => Contents;
+    IReadOnlyList<ParsedToolCall> IModelMessage.ToolCalls => ToolCalls;
 }
 
 
-public record class ModelInputEntry(
+public record class PromptEntry(
     LevelOfDetailContent? Notifications = null
 ) : HistoryEntry {
-    public override HistoryEntryKind Kind => HistoryEntryKind.ModelInput;
+    public override HistoryEntryKind Kind => HistoryEntryKind.Prompt;
 
-    public virtual ModelInputMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
-        return new ModelInputMessage(
+    public virtual PromptMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
+        return new PromptMessage(
             Timestamp: Timestamp,
             Notifications: Notifications?.GetContent(detailLevel),
             Windows: windows
         );
     }
 }
-public sealed record ToolResultsEntry(
+public sealed record ToolEntry(
     IReadOnlyList<LodToolCallResult> Results,
     string? ExecuteError,
     LevelOfDetailContent? Notifications = null
-) : ModelInputEntry(Notifications) {
-    public override HistoryEntryKind Kind => HistoryEntryKind.ToolResult;
+) : PromptEntry(Notifications) {
+    public override HistoryEntryKind Kind => HistoryEntryKind.Tool;
 
-    public override ToolResultsMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
-        IReadOnlyList<ToolCallResult> projectedResults = ProjectResults(Results, detailLevel);
+    public override ToolMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
+        IReadOnlyList<ToolResult> projectedResults = ProjectResults(Results, detailLevel);
 
-        return new ToolResultsMessage(
+        return new ToolMessage(
             Timestamp: Timestamp,
             Notifications: Notifications?.GetContent(detailLevel),
             Windows: windows,
@@ -67,19 +67,19 @@ public sealed record ToolResultsEntry(
         );
     }
 
-    private static IReadOnlyList<ToolCallResult> ProjectResults(
+    private static IReadOnlyList<ToolResult> ProjectResults(
         IReadOnlyList<LodToolCallResult> source,
         LevelOfDetail detailLevel
     ) {
-        if (source.Count == 0) { return ImmutableArray<ToolCallResult>.Empty; }
+        if (source.Count == 0) { return ImmutableArray<ToolResult>.Empty; }
 
-        var builder = ImmutableArray.CreateBuilder<ToolCallResult>(source.Count);
+        var builder = ImmutableArray.CreateBuilder<ToolResult>(source.Count);
 
         for (int i = 0; i < source.Count; i++) {
             LodToolCallResult item = source[i];
 
             builder.Add(
-                new ToolCallResult(
+                new ToolResult(
                     item.ToolName ?? string.Empty,
                     item.ToolCallId ?? string.Empty,
                     item.Status,
