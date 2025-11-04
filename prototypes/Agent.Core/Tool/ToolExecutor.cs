@@ -8,6 +8,7 @@ namespace Atelia.Agent.Core.Tool;
 public sealed class ToolExecutor {
     private const string DebugCategory = "Tools";
     private readonly IReadOnlyDictionary<string, ITool> _tools;
+    private readonly ImmutableArray<ToolDefinition> _toolDefinitions;
 
     public ToolExecutor(IEnumerable<ITool> tools, Func<ITool, ImmutableDictionary<string, object?>>? environmentFactory = null) {
         if (tools is null) { throw new ArgumentNullException(nameof(tools)); }
@@ -22,10 +23,13 @@ public sealed class ToolExecutor {
         }
 
         _tools = dictionary;
+        _toolDefinitions = ToolDefinitionBuilder.FromTools(_tools.Values);
         DebugUtil.Print(DebugCategory, $"ToolExecutor initialized toolCount={_tools.Count}");
     }
 
     public IEnumerable<ITool> Tools => _tools.Values;
+
+    public ImmutableArray<ToolDefinition> ToolDefinitions => _toolDefinitions;
 
     public bool TryGetTool(string name, out ITool tool) {
         if (string.IsNullOrWhiteSpace(name)) {

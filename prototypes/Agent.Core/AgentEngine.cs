@@ -19,20 +19,20 @@ public class AgentEngine {
     private readonly AgentState _state;
     private readonly DefaultAppHost _appHost;
     private readonly Dictionary<string, ITool> _standaloneTools;
-    private ToolExecutor _toolExecutor;
     private readonly Dictionary<string, LodToolCallResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
 
-    private ImmutableArray<ToolDefinition> _toolDefinitions;
+    private ToolExecutor? _toolExecutor;
+    private ToolExecutor ToolExecutor => EnsureToolsBuilt();
+    private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
 
     public AgentEngine(AgentState? state = null) {
         _state = state ?? AgentState.CreateDefault();
         _appHost = new DefaultAppHost(_state);
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
-        _toolExecutor = new ToolExecutor(Array.Empty<ITool>());
-        _toolDefinitions = ImmutableArray<ToolDefinition>.Empty;
+        _toolsDirty = true;
 
-        RebuildTools();
+        EnsureToolsBuilt();
     }
 
     public AgentState State => _state;
@@ -44,7 +44,7 @@ public class AgentEngine {
 
         EnsureNoToolConflicts(app.Tools, replacingAppName: app.Name);
         _appHost.RegisterApp(app);
-        RebuildTools();
+        _toolsDirty = true;
     }
 
     public bool RemoveApp(string name) {
@@ -53,7 +53,7 @@ public class AgentEngine {
         var removed = _appHost.RemoveApp(name);
         if (!removed) { return false; }
 
-        RebuildTools();
+        _toolsDirty = true;
         return true;
     }
 
@@ -64,7 +64,7 @@ public class AgentEngine {
 
         EnsureToolNameAvailable(tool.Name);
         _standaloneTools[tool.Name] = tool;
-        RebuildTools();
+        _toolsDirty = true;
     }
 
     public bool RemoveTool(string name) {
@@ -72,8 +72,33 @@ public class AgentEngine {
 
         if (!_standaloneTools.Remove(name)) { return false; }
 
-        RebuildTools();
+        _toolsDirty = true;
         return true;
+    }
+
+    private ToolExecutor EnsureToolsBuilt() {
+        if (!_toolsDirty && _toolExecutor is not null) { return _toolExecutor; }
+
+        var aggregate = new List<ITool>();
+
+        if (!_appHost.Tools.IsDefaultOrEmpty) {
+            foreach (var tool in _appHost.Tools) {
+                if (tool is not null) {
+                    aggregate.Add(tool);
+                }
+            }
+        }
+
+        if (_standaloneTools.Count > 0) {
+            aggregate.AddRange(_standaloneTools.Values);
+        }
+
+        var executor = new ToolExecutor(aggregate);
+        _toolExecutor = executor;
+        _toolsDirty = false;
+
+        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool cache rebuilt count={executor.ToolDefinitions.Length}");
+        return executor;
     }
 
     public IReadOnlyList<IHistoryMessage> RenderLiveContext() {
@@ -91,31 +116,6 @@ public class AgentEngine {
         if (basic is null) { throw new ArgumentNullException(nameof(basic)); }
         var content = new LevelOfDetailContent(basic, detail ?? basic);
         AppendNotification(content);
-    }
-
-    public void RefreshToolDefinitions() {
-        _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolExecutor.Tools);
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool definitions refreshed count={_toolDefinitions.Length}");
-    }
-
-    private void RebuildTools() {
-        var aggregate = new List<ITool>();
-
-        if (!_appHost.Tools.IsDefaultOrEmpty) {
-            foreach (var tool in _appHost.Tools) {
-                if (tool is not null) {
-                    aggregate.Add(tool);
-                }
-            }
-        }
-
-        if (_standaloneTools.Count > 0) {
-            aggregate.AddRange(_standaloneTools.Values);
-        }
-
-        _toolExecutor = new ToolExecutor(aggregate);
-        _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolExecutor.Tools);
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool cache rebuilt count={_toolDefinitions.Length}");
     }
 
     private void EnsureToolNameAvailable(string toolName) {
@@ -295,7 +295,10 @@ public class AgentEngine {
         var liveContext = RenderLiveContext();
         DebugUtil.Print(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
-        var args = new BeforeModelCallEventArgs(state, profile, liveContext, _toolDefinitions);
+        var toolExecutor = ToolExecutor;
+        var toolDefinitions = toolExecutor.ToolDefinitions;
+
+        var args = new BeforeModelCallEventArgs(state, profile, liveContext, toolDefinitions);
         OnBeforeModelCall(args);
 
         if (args.Cancel) { return StepOutcome.NoProgress; }
@@ -303,12 +306,11 @@ public class AgentEngine {
         if (args.Profile is null) { throw new InvalidOperationException("BeforeModelCall handlers must not set Profile to null."); }
         if (args.LiveContext is null) { throw new InvalidOperationException("BeforeModelCall handlers must provide a LiveContext instance."); }
 
-        var effectiveToolDefinitions = args.ToolDefinitions.IsDefault
-            ? _toolDefinitions
-            : args.ToolDefinitions;
+        toolExecutor = ToolExecutor;
+        toolDefinitions = toolExecutor.ToolDefinitions;
 
         var invocation = new CompletionDescriptor(args.Profile.Client.Name, args.Profile.Client.ApiSpecId, args.Profile.ModelId);
-        var request = new CompletionRequest(args.Profile.ModelId, SystemInstruction, args.LiveContext, effectiveToolDefinitions);
+        var request = new CompletionRequest(args.Profile.ModelId, SystemInstruction, args.LiveContext, toolDefinitions);
 
         var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);
         var aggregatedOutput = await CompletionAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);
@@ -350,7 +352,8 @@ public class AgentEngine {
             return StepOutcome.FromToolExecution();
         }
 
-        var result = await _toolExecutor.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
+        var toolExecutor = ToolExecutor;
+        var result = await toolExecutor.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         _pendingToolResults[nextCall.ToolCallId] = result;
 
         var afterArgs = new AfterToolExecuteEventArgs(nextCall, result);
@@ -498,7 +501,7 @@ public sealed class BeforeModelCallEventArgs : EventArgs {
 
     public IReadOnlyList<IHistoryMessage> LiveContext { get; set; }
 
-    public ImmutableArray<ToolDefinition> ToolDefinitions { get; set; }
+    public ImmutableArray<ToolDefinition> ToolDefinitions { get; }
 
     public bool Cancel { get; set; }
 }
