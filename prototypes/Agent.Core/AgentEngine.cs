@@ -26,11 +26,29 @@ public class AgentEngine {
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
 
-    public AgentEngine(AgentState? state = null) {
+    public AgentEngine(
+        AgentState? state = null,
+        IEnumerable<IApp>? initialApps = null,
+        IEnumerable<ITool>? initialTools = null
+    ) {
         _state = state ?? AgentState.CreateDefault();
         _appHost = new DefaultAppHost(_state);
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
         _toolsDirty = true;
+
+        if (initialApps is not null) {
+            foreach (var app in initialApps) {
+                if (app is null) { continue; }
+                RegisterApp(app);
+            }
+        }
+
+        if (initialTools is not null) {
+            foreach (var tool in initialTools) {
+                if (tool is null) { continue; }
+                RegisterTool(tool);
+            }
+        }
 
         EnsureToolsBuilt();
     }

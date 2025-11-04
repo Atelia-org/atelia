@@ -19,17 +19,18 @@ public sealed class CharacterAgent {
         : this(null, additionalTools) { }
 
     public CharacterAgent(AgentState? initialState, IEnumerable<ITool>? additionalTools = null) {
-        _engine = new AgentEngine(initialState);
-
         _memoryNotebookApp = new MemoryNotebookApp();
-        _engine.RegisterApp(_memoryNotebookApp);
 
+        List<ITool>? starterTools = null;
         if (additionalTools is not null) {
+            starterTools = new List<ITool>();
             foreach (var tool in additionalTools) {
                 if (tool is null) { continue; }
-                _engine.RegisterTool(tool);
+                starterTools.Add(tool);
             }
         }
+
+        _engine = new AgentEngine(initialState, new[] { _memoryNotebookApp }, starterTools);
     }
 
     public AgentState State => _engine.State;
