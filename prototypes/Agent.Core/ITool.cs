@@ -17,5 +17,18 @@ public interface ITool {
     /// <summary>
     /// 执行工具逻辑。实现可以直接抛出异常，由 <see cref="ToolExecutor"/> 统一捕获并转换为失败结果。
     /// </summary>
+    /// <param name="arguments">
+    /// 工具参数字典，键为参数名，值为参数值。
+    /// <para>
+    /// &lt;strong&gt;参数名匹配规则：&lt;/strong&gt;字典键必须与 <see cref="ToolParamSpec.Name"/> 完全一致（区分大小写）。
+    /// 不支持忽略大小写或别名匹配，以避免参数名碰撞检测的复杂性，并保持接口契约清晰。
+    /// </para>
+    /// <para>
+    /// &lt;strong&gt;设计原因：&lt;/strong&gt;当前团队内部调用路径可控，调用方拼写准确，强制大小写一致可更早暴露拼写错误；
+    /// 若未来需要兼容外部协议的大小写差异，应在具体工具或适配层处理，而非在核心框架引入通用复杂度。
+    /// </para>
+    /// </param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>工具执行结果。</returns>
     ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken);
 }
