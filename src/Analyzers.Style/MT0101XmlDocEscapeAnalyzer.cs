@@ -51,82 +51,229 @@ namespace Atelia.Analyzers.Style {
             }
         }
 
-        private static readonly HashSet<string> KnownTags = new(StringComparer.OrdinalIgnoreCase) {
-            // Core XML doc tags (keep in sync with MT0101XmlDocEscapeCodeFix)
-            "summary","remarks","para","c","code","see","seealso",
-            // list & structure
-            "list","listheader","item","term","description",
-            // blocks & members
-            "example","exception","include","param","paramref","typeparam","typeparamref","permission","value","returns",
-            // others
-            "inheritdoc","note"
-        };
-
-        // Escape '<' and '>' which are not part of known documentation tags.
+        // Escape '<' and '>' while preserving well-formed XML / HTML-like tags.
         internal static string EscapeAnglesKeepingKnownTags(string s) {
             if (string.IsNullOrEmpty(s)) {
                 return s;
             }
 
-            var sb = new StringBuilder(s.Length + 16);
-            bool inTag = false;
+            var preserved = new List<TagSpan>(capacity: 8);
+            var openTags = new List<OpenTagInfo>(capacity: 4);
+
             int i = 0;
             while (i < s.Length) {
                 char ch = s[i];
-                if (!inTag) {
-                    if (ch == '<') {
-                        // Peek tag name
-                        int j = i + 1;
-                        bool isEnd = (j < s.Length && s[j] == '/');
-                        if (isEnd) {
-                            j++;
+                if (ch != '<') {
+                    i++;
+                    continue;
+                }
+
+                int tagStart = i;
+                int j = i + 1;
+                if (j >= s.Length) {
+                    i++;
+                    continue;
+                }
+
+                // Processing instructions / comments / CDATA – keep verbatim.
+                if (s[j] == '!' || s[j] == '?') {
+                    int specialEnd = s.IndexOf('>', j);
+                    if (specialEnd < 0) {
+                        i = tagStart + 1;
+                        continue;
+                    }
+                    preserved.Add(new TagSpan(tagStart, specialEnd - tagStart + 1));
+                    i = specialEnd + 1;
+                    continue;
+                }
+
+                bool isEnd = false;
+                if (s[j] == '/') {
+                    isEnd = true;
+                    j++;
+                }
+
+                int nameStart = j;
+                while (j < s.Length && IsNameChar(s[j])) {
+                    j++;
+                }
+                int nameLength = j - nameStart;
+                if (nameLength == 0) {
+                    i = tagStart + 1;
+                    continue;
+                }
+
+                // Scan until the terminating '>' while respecting quotes.
+                bool closed = false;
+                bool selfClosing = false;
+                bool invalidClosingTag = false;
+                int scan = j;
+                char quote = '\0';
+                while (scan < s.Length) {
+                    char current = s[scan];
+                    if (quote != '\0') {
+                        if (current == quote) {
+                            quote = '\0';
                         }
-                        // Skip XML declaration/processing/comment/CDATA
-                        if (j < s.Length && (s[j] == '!' || s[j] == '?')) {
-                            // treat as tag-like; copy through until next '>'
-                            int k = s.IndexOf('>', j);
-                            if (k < 0) { sb.Append("&lt;"); i++; continue; }
-                            sb.Append(s, i, k - i + 1);
-                            i = k + 1;
-                            continue;
+                        scan++;
+                        continue;
+                    }
+
+                    if (current == '\"' || current == '\'') {
+                        quote = current;
+                        scan++;
+                        continue;
+                    }
+
+                    if (current == '>') {
+                        closed = true;
+                        int back = scan - 1;
+                        while (back >= tagStart && char.IsWhiteSpace(s[back])) {
+                            back--;
                         }
-                        int nameStart = j;
-                        while (j < s.Length && (char.IsLetterOrDigit(s[j]) || s[j] == ':' || s[j] == '_')) {
-                            j++;
+                        if (!isEnd && back >= tagStart && s[back] == '/') {
+                            selfClosing = true;
                         }
 
-                        var name = s.Substring(nameStart, Math.Max(0, j - nameStart));
-                        if (name.Length > 0 && KnownTags.Contains(name)) {
-                            // keep as real tag
-                            int k = s.IndexOf('>', j);
-                            if (k < 0) { sb.Append("&lt;"); i++; continue; }
-                            sb.Append(s, i, k - i + 1);
-                            i = k + 1;
-                            continue;
+                        if (isEnd) {
+                            for (int t = nameStart + nameLength; t < scan; t++) {
+                                if (!char.IsWhiteSpace(s[t])) {
+                                    invalidClosingTag = true;
+                                    break;
+                                }
+                            }
                         }
-                        // Not a known tag -> escape '<'
-                        sb.Append("&lt;");
-                        i++;
+
+                        scan++;
+                        break;
+                    }
+
+                    scan++;
+                }
+
+                if (!closed || invalidClosingTag) {
+                    i = tagStart + 1;
+                    continue;
+                }
+
+                int tagEnd = scan;
+                int spanLength = tagEnd - tagStart;
+
+                if (isEnd) {
+                    if (openTags.Count == 0) {
+                        i = tagStart + 1;
                         continue;
                     }
-                    else if (ch == '>') {
-                        sb.Append("&gt;");
-                        i++;
+
+                    var open = openTags[openTags.Count - 1];
+                    if (!NamesEqual(s, open.NameStart, open.NameLength, nameStart, nameLength)) {
+                        i = tagStart + 1;
                         continue;
                     }
-                    else {
-                        sb.Append(ch);
-                        i++;
-                        continue;
-                    }
+
+                    openTags.RemoveAt(openTags.Count - 1);
+                    preserved.Add(new TagSpan(open.SpanStart, open.SpanLength));
+                    preserved.Add(new TagSpan(tagStart, spanLength));
+                    i = tagEnd;
+                    continue;
+                }
+
+                if (selfClosing) {
+                    preserved.Add(new TagSpan(tagStart, spanLength));
+                    i = tagEnd;
+                    continue;
+                }
+
+                openTags.Add(new OpenTagInfo(tagStart, spanLength, nameStart, nameLength));
+                i = tagEnd;
+            }
+
+            if (preserved.Count == 0) {
+                return EscapeAnglesNoPreservedSpans(s);
+            }
+
+            preserved.Sort((a, b) => a.Start.CompareTo(b.Start));
+
+            var builder = new StringBuilder(s.Length + 16);
+            int spanIndex = 0;
+            int index = 0;
+            while (index < s.Length) {
+                if (spanIndex < preserved.Count && index == preserved[spanIndex].Start) {
+                    var span = preserved[spanIndex];
+                    builder.Append(s, span.Start, span.Length);
+                    index += span.Length;
+                    spanIndex++;
+                    continue;
+                }
+
+                char current = s[index];
+                if (current == '<') {
+                    builder.Append("&lt;");
+                }
+                else if (current == '>') {
+                    builder.Append("&gt;");
                 }
                 else {
-                    // not used in this simple state machine; kept for clarity
+                    builder.Append(current);
+                }
+
+                index++;
+            }
+
+            return builder.ToString();
+        }
+
+        private static string EscapeAnglesNoPreservedSpans(string s) {
+            var sb = new StringBuilder(s.Length + 16);
+            for (int i = 0; i < s.Length; i++) {
+                char ch = s[i];
+                if (ch == '<') {
+                    sb.Append("&lt;");
+                }
+                else if (ch == '>') {
+                    sb.Append("&gt;");
+                }
+                else {
                     sb.Append(ch);
-                    i++;
                 }
             }
             return sb.ToString();
+        }
+
+        private static bool IsNameChar(char ch) {
+            return char.IsLetterOrDigit(ch) || ch == ':' || ch == '_' || ch == '-';
+        }
+
+        private static bool NamesEqual(string text, int startA, int lengthA, int startB, int lengthB) {
+            if (lengthA != lengthB) {
+                return false;
+            }
+
+            return string.Compare(text, startA, text, startB, lengthA, StringComparison.OrdinalIgnoreCase) == 0;
+        }
+
+        private readonly struct TagSpan {
+            public TagSpan(int start, int length) {
+                Start = start;
+                Length = length;
+            }
+
+            public int Start { get; }
+            public int Length { get; }
+        }
+
+        private readonly struct OpenTagInfo {
+            public OpenTagInfo(int spanStart, int spanLength, int nameStart, int nameLength) {
+                SpanStart = spanStart;
+                SpanLength = spanLength;
+                NameStart = nameStart;
+                NameLength = nameLength;
+            }
+
+            public int SpanStart { get; }
+            public int SpanLength { get; }
+            public int NameStart { get; }
+            public int NameLength { get; }
         }
     }
 }

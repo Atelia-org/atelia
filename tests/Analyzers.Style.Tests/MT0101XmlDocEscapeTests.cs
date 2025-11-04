@@ -49,4 +49,20 @@ class C { }";
         Assert.Contains("</listheader>", fixedText);
     }
 
+    [Fact]
+    public async Task Keeps_WellFormed_Strong_Tag() {
+        var code = @"/// <summary>Use <strong>bold</strong> text.</summary>
+class C { }";
+        var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, AnalyzerType, new Atelia.Analyzers.Style.MT0101XmlDocEscapeCodeFix(), "MT0101");
+        Assert.Contains("<strong>bold</strong>", fixedText);
+    }
+
+    [Fact]
+    public async Task Escapes_Unmatched_Tag() {
+        var code = @"/// <summary>Use <strong>bold text.</summary>
+class C { }";
+        var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, AnalyzerType, new Atelia.Analyzers.Style.MT0101XmlDocEscapeCodeFix(), "MT0101");
+        Assert.Contains("&lt;strong&gt;bold text.", fixedText);
+    }
+
 }
