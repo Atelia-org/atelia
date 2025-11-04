@@ -17,30 +17,64 @@ public class AgentEngine {
     private const string StateMachineDebugCategory = "StateMachine";
 
     private readonly AgentState _state;
-    private readonly ToolExecutor _toolExecutor;
-    private readonly IAppHost _appHost;
+    private readonly DefaultAppHost _appHost;
+    private readonly Dictionary<string, ITool> _standaloneTools;
+    private ToolExecutor _toolExecutor;
     private readonly Dictionary<string, LodToolCallResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
 
     private ImmutableArray<ToolDefinition> _toolDefinitions;
     private AgentRunState? _lastLoggedState;
 
-    public AgentEngine(AgentState state, ToolExecutor toolExecutor, IAppHost appHost) {
-        _state = state ?? throw new ArgumentNullException(nameof(state));
-        _toolExecutor = toolExecutor ?? throw new ArgumentNullException(nameof(toolExecutor));
-        _appHost = appHost ?? throw new ArgumentNullException(nameof(appHost));
-        _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolExecutor.Tools);
+    public AgentEngine(AgentState? state = null) {
+        _state = state ?? AgentState.CreateDefault();
+        _appHost = new DefaultAppHost(_state);
+        _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
+        _toolExecutor = new ToolExecutor(Array.Empty<ITool>());
+        _toolDefinitions = ImmutableArray<ToolDefinition>.Empty;
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Initialized toolDefinitions={_toolDefinitions.Length}");
+        RebuildTools();
     }
 
     public AgentState State => _state;
-    public ToolExecutor ToolExecutor => _toolExecutor;
-
-    public ImmutableArray<ToolDefinition> ToolDefinitions => _toolDefinitions;
 
     public string SystemInstruction => _state.SystemInstruction;
 
-    public IAppHost AppHost => _appHost;
+    public void RegisterApp(IApp app) {
+        if (app is null) { throw new ArgumentNullException(nameof(app)); }
+
+        EnsureNoToolConflicts(app.Tools, replacingAppName: app.Name);
+        _appHost.RegisterApp(app);
+        RebuildTools();
+    }
+
+    public bool RemoveApp(string name) {
+        if (string.IsNullOrWhiteSpace(name)) { return false; }
+
+        var removed = _appHost.RemoveApp(name);
+        if (!removed) { return false; }
+
+        RebuildTools();
+        return true;
+    }
+
+    public void RegisterTool(ITool tool) {
+        if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
+
+        if (_standaloneTools.ContainsKey(tool.Name)) { throw new InvalidOperationException($"Duplicate tool registration detected for '{tool.Name}'."); }
+
+        EnsureToolNameAvailable(tool.Name);
+        _standaloneTools[tool.Name] = tool;
+        RebuildTools();
+    }
+
+    public bool RemoveTool(string name) {
+        if (string.IsNullOrWhiteSpace(name)) { return false; }
+
+        if (!_standaloneTools.Remove(name)) { return false; }
+
+        RebuildTools();
+        return true;
+    }
 
     public IReadOnlyList<IHistoryMessage> RenderLiveContext() {
         var windows = _appHost.RenderWindows();
@@ -62,6 +96,90 @@ public class AgentEngine {
     public void RefreshToolDefinitions() {
         _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolExecutor.Tools);
         DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool definitions refreshed count={_toolDefinitions.Length}");
+    }
+
+    private void RebuildTools() {
+        var aggregate = new List<ITool>();
+
+        if (!_appHost.Tools.IsDefaultOrEmpty) {
+            foreach (var tool in _appHost.Tools) {
+                if (tool is not null) {
+                    aggregate.Add(tool);
+                }
+            }
+        }
+
+        if (_standaloneTools.Count > 0) {
+            aggregate.AddRange(_standaloneTools.Values);
+        }
+
+        _toolExecutor = new ToolExecutor(aggregate);
+        _toolDefinitions = ToolDefinitionBuilder.FromTools(_toolExecutor.Tools);
+        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool cache rebuilt count={_toolDefinitions.Length}");
+    }
+
+    private void EnsureToolNameAvailable(string toolName) {
+        if (string.IsNullOrWhiteSpace(toolName)) { throw new ArgumentException("Tool name must not be null or whitespace.", nameof(toolName)); }
+
+        if (IsToolNameInUse(toolName)) { throw new InvalidOperationException($"Duplicate tool registration detected for '{toolName}'."); }
+    }
+
+    private void EnsureNoToolConflicts(IReadOnlyList<ITool>? tools, string? replacingAppName) {
+        if (tools is null || tools.Count == 0) { return; }
+
+        var existingNames = GatherExistingToolNames(replacingAppName);
+        var newNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tool in tools) {
+            if (tool is null) { continue; }
+
+            if (!newNames.Add(tool.Name)) { throw new InvalidOperationException($"App '{replacingAppName ?? "<unknown>"}' attempted to register duplicate tool name '{tool.Name}'."); }
+
+            if (existingNames.Contains(tool.Name)) { throw new InvalidOperationException($"Tool name conflict detected for '{tool.Name}'."); }
+        }
+    }
+
+    private HashSet<string> GatherExistingToolNames(string? excludingAppName) {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!_appHost.Apps.IsDefaultOrEmpty) {
+            foreach (var app in _appHost.Apps) {
+                if (app is null) { continue; }
+
+                if (!string.IsNullOrWhiteSpace(excludingAppName) && string.Equals(app.Name, excludingAppName, StringComparison.OrdinalIgnoreCase)) { continue; }
+
+                if (app.Tools is { Count: > 0 }) {
+                    foreach (var tool in app.Tools) {
+                        if (tool is not null) {
+                            names.Add(tool.Name);
+                        }
+                    }
+                }
+            }
+        }
+
+        foreach (var tool in _standaloneTools.Values) {
+            names.Add(tool.Name);
+        }
+
+        return names;
+    }
+
+    private bool IsToolNameInUse(string toolName) {
+        if (_standaloneTools.ContainsKey(toolName)) { return true; }
+
+        if (!_appHost.Apps.IsDefaultOrEmpty) {
+            foreach (var app in _appHost.Apps) {
+                if (app?.Tools is not { Count: > 0 }) { continue; }
+
+                foreach (var tool in app.Tools) {
+                    if (tool is null) { continue; }
+                    if (string.Equals(tool.Name, toolName, StringComparison.OrdinalIgnoreCase)) { return true; }
+                }
+            }
+        }
+
+        return false;
     }
 
     public event EventHandler<WaitingInputEventArgs>? WaitingInput;

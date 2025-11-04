@@ -6,7 +6,6 @@ using Atelia.Agent;
 using Atelia.Agent.Core;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
-using Atelia.Agent.Core.History;
 
 namespace Atelia.LiveContextProto;
 
@@ -22,12 +21,10 @@ internal static class Program {
 
         DebugUtil.Print(DebugCategory, "LiveContextProto bootstrap starting");
 
-        var agentState = AgentState.CreateDefault();
-
         var anthropicClient = new AnthropicClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
         var defaultProfile = new LlmProfile(anthropicClient, DefaultProxyModel, DefaultProfileName);
 
-        var agent = new CharacterAgent(agentState);
+        var agent = new CharacterAgent();
         var loop = new ConsoleTui(agent, defaultProfile);
 
         loop.Run();

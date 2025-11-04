@@ -1,4 +1,3 @@
-using Atelia.Agent;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
@@ -17,8 +16,6 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     [Fact]
     public async Task DoStepAsync_CompletesToolCallLifecycle() {
-        var state = AgentState.CreateDefault();
-
         var toolInvocations = new List<IReadOnlyDictionary<string, object?>?>();
         var echoTool = new DelegateTool(
             "echo",
@@ -49,30 +46,31 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var provider = new FakeProviderClient(new[] { firstResponse, secondResponse });
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        var agent = new CharacterAgent(state, new[] { echoTool });
+        var engine = CreateEngine(echoTool);
+        var state = engine.State;
 
-        agent.AppendNotification("hello world");
+        engine.AppendNotification("hello world");
 
-        var step1 = await agent.DoStepAsync(profile);
+        var step1 = await engine.StepAsync(profile);
         Assert.True(step1.ProgressMade);
         Assert.NotNull(step1.Input);
         Assert.Equal(AgentRunState.WaitingInput, step1.StateBefore);
         Assert.Equal(AgentRunState.PendingInput, step1.StateAfter);
 
-        var step2 = await agent.DoStepAsync(profile);
+        var step2 = await engine.StepAsync(profile);
         Assert.True(step2.ProgressMade);
         Assert.NotNull(step2.Output);
         Assert.Equal(AgentRunState.PendingInput, step2.StateBefore);
         Assert.Equal(AgentRunState.WaitingToolResults, step2.StateAfter);
         Assert.Single(step2.Output!.ToolCalls);
 
-        var step3 = await agent.DoStepAsync(profile);
+        var step3 = await engine.StepAsync(profile);
         Assert.True(step3.ProgressMade);
         Assert.Null(step3.Output);
         Assert.Equal(AgentRunState.WaitingToolResults, step3.StateBefore);
         Assert.Equal(AgentRunState.ToolResultsReady, step3.StateAfter);
 
-        var step4 = await agent.DoStepAsync(profile);
+        var step4 = await engine.StepAsync(profile);
         Assert.True(step4.ProgressMade);
         Assert.NotNull(step4.ToolResults);
         Assert.Equal(AgentRunState.ToolResultsReady, step4.StateBefore);
@@ -95,7 +93,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal("call-1", historyResult.ToolCallId);
         Assert.Equal("echo", historyResult.ToolName);
 
-        var step5 = await agent.DoStepAsync(profile);
+        var step5 = await engine.StepAsync(profile);
         Assert.True(step5.ProgressMade);
         Assert.NotNull(step5.Output);
         Assert.Equal(AgentRunState.PendingToolResults, step5.StateBefore);
@@ -110,8 +108,6 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     [Fact]
     public async Task DoStepAsync_ToolFailureProducesExecuteError() {
-        var state = AgentState.CreateDefault();
-
         var failingTool = new DelegateTool(
             "broken",
             _ => LodToolExecuteResult.FromContent(
@@ -130,15 +126,15 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
 
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
-        var agent = new CharacterAgent(state, new[] { failingTool });
+        var engine = CreateEngine(failingTool);
 
-        agent.AppendNotification("trigger failure");
+        engine.AppendNotification("trigger failure");
 
-        await agent.DoStepAsync(profile); // WaitingInput -> PendingInput
-        await agent.DoStepAsync(profile); // PendingInput -> WaitingToolResults
-        await agent.DoStepAsync(profile); // WaitingToolResults -> ToolResultsReady
+        await engine.StepAsync(profile); // WaitingInput -> PendingInput
+        await engine.StepAsync(profile); // PendingInput -> WaitingToolResults
+        await engine.StepAsync(profile); // WaitingToolResults -> ToolResultsReady
 
-        var step4 = await agent.DoStepAsync(profile);
+        var step4 = await engine.StepAsync(profile);
         Assert.True(step4.ProgressMade);
         Assert.NotNull(step4.ToolResults);
         Assert.Equal(AgentRunState.ToolResultsReady, step4.StateBefore);
@@ -147,6 +143,19 @@ public sealed class AgentStateMachineToolExecutionTests {
         var toolResults = step4.ToolResults!;
         Assert.Equal("tool failed", toolResults.ExecuteError);
         Assert.Equal(ToolExecutionStatus.Failed, toolResults.Results.Single().Status);
+    }
+
+    private static AgentEngine CreateEngine(params ITool[] tools) {
+        var engine = new AgentEngine();
+
+        if (tools is { Length: > 0 }) {
+            foreach (var tool in tools) {
+                if (tool is null) { continue; }
+                engine.RegisterTool(tool);
+            }
+        }
+
+        return engine;
     }
 
     private static ParsedToolCall CreateToolCallRequest(
