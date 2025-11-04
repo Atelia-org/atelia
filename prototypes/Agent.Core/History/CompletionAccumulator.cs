@@ -13,7 +13,7 @@ internal static class CompletionAccumulator {
 
     public static async Task<ActionEntry> AggregateAsync(
         IAsyncEnumerable<CompletionChunk> deltas,
-        ModelInvocationDescriptor invocation,
+        CompletionDescriptor invocation,
         CancellationToken cancellationToken
     ) {
         var contents = new List<string>();

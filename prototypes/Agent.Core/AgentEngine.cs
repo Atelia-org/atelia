@@ -189,7 +189,7 @@ public class AgentEngine {
             ? _toolDefinitions
             : args.ToolDefinitions;
 
-        var invocation = new ModelInvocationDescriptor(args.Profile.Client.Name, args.Profile.Client.ApiSpecId, args.Profile.ModelId);
+        var invocation = new CompletionDescriptor(args.Profile.Client.Name, args.Profile.Client.ApiSpecId, args.Profile.ModelId);
         var request = new CompletionRequest(args.Profile.ModelId, SystemInstruction, args.LiveContext, effectiveToolDefinitions);
 
         var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);

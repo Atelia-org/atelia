@@ -32,7 +32,7 @@ public enum HistoryEntryKind {
 /// <param name="ProviderId">服务提供商的内部标识符，例如 "OpenAI" 或 "Anthropic"。</param>
 /// <param name="ApiSpecId">本次调用所遵循的 API 规范，例如 <c>openai-chat-v1</c>。</param>
 /// <param name="Model">所使用的具体模型名称或版本号。</param>
-public record ModelInvocationDescriptor(
+public record CompletionDescriptor(
     string ProviderId,
     string ApiSpecId,
     string Model
@@ -63,7 +63,7 @@ public abstract record class HistoryEntry {
 public sealed record ActionEntry(
     string Contents,
     IReadOnlyList<ParsedToolCall> ToolCalls,
-    ModelInvocationDescriptor Invocation
+    CompletionDescriptor Invocation
 ) : HistoryEntry, IActionMessage {
     /// <inheritdoc />
     public override HistoryEntryKind Kind => HistoryEntryKind.Action;
