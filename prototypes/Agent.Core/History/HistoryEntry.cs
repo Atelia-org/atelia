@@ -90,11 +90,37 @@ public record class ObservationEntry(
     /// <param name="detailLevel">期望输出内容的细节等级。</param>
     /// <param name="windows">由外部渲染好的窗口状态描述。</param>
     public virtual ObservationMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
+        var notificationText = Notifications?.GetContent(detailLevel);
+        var contents = MergeContents(notificationText, windows);
+
         return new ObservationMessage(
             Timestamp: Timestamp,
-            Notifications: Notifications?.GetContent(detailLevel),
-            Windows: windows
+            Contents: contents
         );
+    }
+
+    /// <summary>
+    /// 根据通知文本与窗口内容拼接统一的观测文本。
+    /// </summary>
+    /// <param name="notifications">可选的通知内容。</param>
+    /// <param name="windows">可选的窗口内容。</param>
+    /// <returns>合并后的内容字符串；若两者均为空，则返回其中一个原值（可能为 <c>null</c>）。</returns>
+    protected static string? MergeContents(string? notifications, string? windows) {
+        List<string>? parts = null;
+
+        if (!string.IsNullOrWhiteSpace(notifications)) {
+            parts ??= new List<string>(capacity: 2);
+            parts.Add(notifications);
+        }
+
+        if (!string.IsNullOrWhiteSpace(windows)) {
+            parts ??= new List<string>(capacity: 2);
+            parts.Add(windows);
+        }
+
+        if (parts is null) { return notifications ?? windows; }
+
+        return string.Join("\n", parts);
     }
 }
 
@@ -123,8 +149,7 @@ public sealed record ToolEntry(
 
         return new ToolResultsMessage(
             Timestamp: Timestamp,
-            Notifications: Notifications?.GetContent(detailLevel),
-            Windows: windows,
+            Contents: MergeContents(Notifications?.GetContent(detailLevel), windows),
             Results: projectedResults,
             ExecuteError: ExecuteError
         );
