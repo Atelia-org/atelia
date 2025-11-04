@@ -12,6 +12,14 @@ using Atelia.Agent.Core.Tool;
 
 namespace Atelia.Agent.Core;
 
+/// <summary>
+/// Agent 执行引擎，负责管理 Agent 状态机、工具调度与模型交互的核心协调器。
+/// </summary>
+/// <remarks>
+/// <para>&lt;strong&gt;警告：此类型非线程安全，不支持并发使用。&lt;/strong&gt;</para>
+/// <para>所有公开方法（包括异步方法）都不应从多个线程同时调用。</para>
+/// <para>如需并发执行多个 Agent，请为每个执行上下文创建独立的 <see cref="AgentEngine"/> 实例。</para>
+/// </remarks>
 public class AgentEngine {
     private const string ProviderDebugCategory = "Provider";
     private const string StateMachineDebugCategory = "StateMachine";
@@ -26,6 +34,12 @@ public class AgentEngine {
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
 
+    /// <summary>
+    /// 初始化 <see cref="AgentEngine"/> 的新实例。
+    /// </summary>
+    /// <param name="state">Agent 状态实例，如为 <c>null</c> 则创建默认状态。</param>
+    /// <param name="initialApps">初始注册的应用列表（可选）。</param>
+    /// <param name="initialTools">初始注册的独立工具列表（可选）。</param>
     public AgentEngine(
         AgentState? state = null,
         IEnumerable<IApp>? initialApps = null,
@@ -53,10 +67,23 @@ public class AgentEngine {
         EnsureToolsBuilt();
     }
 
+    /// <summary>
+    /// 获取当前 Agent 状态实例。
+    /// </summary>
     public AgentState State => _state;
 
-    public string SystemInstruction => _state.SystemInstruction;
+    /// <summary>
+    /// 获取当前系统指令。
+    /// </summary>
+    public string SystemPrompt => _state.SystemPrompt;
 
+    /// <summary>
+    /// 注册一个应用（App）及其提供的工具。
+    /// </summary>
+    /// <param name="app">要注册的应用实例。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="app"/> 为 <c>null</c>。</exception>
+    /// <exception cref="InvalidOperationException">应用提供的工具名称与已注册工具冲突。</exception>
+    /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public void RegisterApp(IApp app) {
         if (app is null) { throw new ArgumentNullException(nameof(app)); }
 
@@ -65,6 +92,12 @@ public class AgentEngine {
         _toolsDirty = true;
     }
 
+    /// <summary>
+    /// 移除已注册的应用。
+    /// </summary>
+    /// <param name="name">要移除的应用名称。</param>
+    /// <returns>如成功移除返回 <c>true</c>；否则返回 <c>false</c>。</returns>
+    /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public bool RemoveApp(string name) {
         if (string.IsNullOrWhiteSpace(name)) { return false; }
 
@@ -75,6 +108,13 @@ public class AgentEngine {
         return true;
     }
 
+    /// <summary>
+    /// 注册一个独立工具（不属于任何应用）。
+    /// </summary>
+    /// <param name="tool">要注册的工具实例。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="tool"/> 为 <c>null</c>。</exception>
+    /// <exception cref="InvalidOperationException">工具名称与已注册工具冲突。</exception>
+    /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public void RegisterTool(ITool tool) {
         if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
 
@@ -85,6 +125,12 @@ public class AgentEngine {
         _toolsDirty = true;
     }
 
+    /// <summary>
+    /// 移除已注册的独立工具。
+    /// </summary>
+    /// <param name="name">要移除的工具名称。</param>
+    /// <returns>如成功移除返回 <c>true</c>；否则返回 <c>false</c>。</returns>
+    /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public bool RemoveTool(string name) {
         if (string.IsNullOrWhiteSpace(name)) { return false; }
 
@@ -119,17 +165,35 @@ public class AgentEngine {
         return executor;
     }
 
+    /// <summary>
+    /// 渲染当前实时上下文，包括历史消息与应用窗口内容。
+    /// </summary>
+    /// <returns>渲染后的历史消息列表。</returns>
+    /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
     public IReadOnlyList<IHistoryMessage> RenderLiveContext() {
         var windows = _appHost.RenderWindows();
         return _state.RenderLiveContext(windows);
     }
 
+    /// <summary>
+    /// 向 Agent 追加主机通知（Host Notification）。
+    /// </summary>
+    /// <param name="notificationContent">通知内容（包含基础与详细两级）。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="notificationContent"/> 为 <c>null</c>。</exception>
+    /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
     public void AppendNotification(LevelOfDetailContent notificationContent) {
         if (notificationContent is null) { throw new ArgumentNullException(nameof(notificationContent)); }
         _state.AppendNotification(notificationContent);
         DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Host notification appended basicLength={notificationContent.Basic.Length}");
     }
 
+    /// <summary>
+    /// 向 Agent 追加主机通知（Host Notification）。
+    /// </summary>
+    /// <param name="basic">基础通知文本。</param>
+    /// <param name="detail">详细通知文本（可选，默认同 <paramref name="basic"/>）。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="basic"/> 为 <c>null</c>。</exception>
+    /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
     public void AppendNotification(string basic, string? detail = null) {
         if (basic is null) { throw new ArgumentNullException(nameof(basic)); }
         var content = new LevelOfDetailContent(basic, detail ?? basic);
@@ -200,13 +264,47 @@ public class AgentEngine {
         return false;
     }
 
+    /// <summary>
+    /// 当 Agent 处于等待输入状态时触发。
+    /// </summary>
     public event EventHandler<WaitingInputEventArgs>? WaitingInput;
+
+    /// <summary>
+    /// 在调用模型前触发，允许修改或取消调用。
+    /// </summary>
     public event EventHandler<BeforeModelCallEventArgs>? BeforeModelCall;
+
+    /// <summary>
+    /// 在模型调用完成后触发。
+    /// </summary>
     public event EventHandler<AfterModelCallEventArgs>? AfterModelCall;
+
+    /// <summary>
+    /// 在工具执行前触发，允许取消或覆盖执行结果。
+    /// </summary>
     public event EventHandler<BeforeToolExecuteEventArgs>? BeforeToolExecute;
+
+    /// <summary>
+    /// 在工具执行完成后触发，允许修改执行结果。
+    /// </summary>
     public event EventHandler<AfterToolExecuteEventArgs>? AfterToolExecute;
+
+    /// <summary>
+    /// 当 Agent 状态发生转换时触发。
+    /// </summary>
     public event EventHandler<StateTransitionEventArgs>? StateTransition;
 
+    /// <summary>
+    /// 执行 Agent 状态机的单步推进。
+    /// </summary>
+    /// <param name="profile">LLM 配置文件。</param>
+    /// <param name="cancellationToken">取消令牌（可选）。</param>
+    /// <returns>包含本次步进结果的 <see cref="AgentStepResult"/>。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="profile"/> 为 <c>null</c>。</exception>
+    /// <remarks>
+    /// <para>此方法非线程安全，不应与其他方法并发调用。</para>
+    /// <para>每次调用将根据当前状态执行相应操作（等待输入、调用模型、执行工具等）。</para>
+    /// </remarks>
     public async Task<AgentStepResult> StepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
         if (profile is null) { throw new ArgumentNullException(nameof(profile)); }
 
@@ -328,7 +426,7 @@ public class AgentEngine {
         toolDefinitions = toolExecutor.ToolDefinitions;
 
         var invocation = new CompletionDescriptor(args.Profile.Client.Name, args.Profile.Client.ApiSpecId, args.Profile.ModelId);
-        var request = new CompletionRequest(args.Profile.ModelId, SystemInstruction, args.LiveContext, toolDefinitions);
+        var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
 
         var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);
         var aggregatedOutput = await CompletionAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);
@@ -482,6 +580,9 @@ public class AgentEngine {
     }
 }
 
+/// <summary>
+/// <see cref="AgentEngine.WaitingInput"/> 事件的参数。
+/// </summary>
 public sealed class WaitingInputEventArgs : EventArgs {
     internal WaitingInputEventArgs(bool hasPendingNotification, HistoryEntry? lastEntry) {
         HasPendingNotification = hasPendingNotification;
@@ -489,17 +590,35 @@ public sealed class WaitingInputEventArgs : EventArgs {
         ShouldContinue = hasPendingNotification;
     }
 
+    /// <summary>
+    /// 获取一个值，指示是否有待处理的主机通知。
+    /// </summary>
     public bool HasPendingNotification { get; }
 
+    /// <summary>
+    /// 获取历史中的最后一个条目（可能为 <c>null</c>）。
+    /// </summary>
     public HistoryEntry? LastEntry { get; }
 
+    /// <summary>
+    /// 获取或设置一个值，指示是否应继续执行（默认为 <see cref="HasPendingNotification"/>）。
+    /// </summary>
     public bool ShouldContinue { get; set; }
 
+    /// <summary>
+    /// 获取或设置要追加的用户输入条目（可选）。
+    /// </summary>
     public ObservationEntry? InputEntry { get; set; }
 
+    /// <summary>
+    /// 获取或设置额外的主机通知内容（可选）。
+    /// </summary>
     public LevelOfDetailContent? AdditionalNotification { get; set; }
 }
 
+/// <summary>
+/// <see cref="AgentEngine.BeforeModelCall"/> 事件的参数。
+/// </summary>
 public sealed class BeforeModelCallEventArgs : EventArgs {
     internal BeforeModelCallEventArgs(
         AgentRunState state,
@@ -513,17 +632,35 @@ public sealed class BeforeModelCallEventArgs : EventArgs {
         ToolDefinitions = toolDefinitions;
     }
 
+    /// <summary>
+    /// 获取当前 Agent 运行状态。
+    /// </summary>
     public AgentRunState State { get; }
 
+    /// <summary>
+    /// 获取或设置 LLM 配置文件（可被事件处理器修改）。
+    /// </summary>
     public LlmProfile Profile { get; set; }
 
+    /// <summary>
+    /// 获取或设置实时上下文消息列表（可被事件处理器修改）。
+    /// </summary>
     public IReadOnlyList<IHistoryMessage> LiveContext { get; set; }
 
+    /// <summary>
+    /// 获取当前可用的工具定义列表。
+    /// </summary>
     public ImmutableArray<ToolDefinition> ToolDefinitions { get; }
 
+    /// <summary>
+    /// 获取或设置一个值，指示是否取消本次模型调用。
+    /// </summary>
     public bool Cancel { get; set; }
 }
 
+/// <summary>
+/// <see cref="AgentEngine.AfterModelCall"/> 事件的参数。
+/// </summary>
 public sealed class AfterModelCallEventArgs : EventArgs {
     internal AfterModelCallEventArgs(AgentRunState state, LlmProfile profile, ActionEntry output) {
         State = state;
@@ -531,43 +668,82 @@ public sealed class AfterModelCallEventArgs : EventArgs {
         Output = output ?? throw new ArgumentNullException(nameof(output));
     }
 
+    /// <summary>
+    /// 获取当前 Agent 运行状态。
+    /// </summary>
     public AgentRunState State { get; }
 
+    /// <summary>
+    /// 获取使用的 LLM 配置文件。
+    /// </summary>
     public LlmProfile Profile { get; }
 
+    /// <summary>
+    /// 获取模型输出的动作条目。
+    /// </summary>
     public ActionEntry Output { get; }
 }
 
+/// <summary>
+/// <see cref="AgentEngine.BeforeToolExecute"/> 事件的参数。
+/// </summary>
 public sealed class BeforeToolExecuteEventArgs : EventArgs {
     internal BeforeToolExecuteEventArgs(ParsedToolCall toolCall) {
         ToolCall = toolCall ?? throw new ArgumentNullException(nameof(toolCall));
     }
 
+    /// <summary>
+    /// 获取待执行的工具调用信息。
+    /// </summary>
     public ParsedToolCall ToolCall { get; }
 
+    /// <summary>
+    /// 获取或设置一个值，指示是否取消本次工具执行。
+    /// </summary>
     public bool Cancel { get; set; }
 
+    /// <summary>
+    /// 获取或设置覆盖结果（当 <see cref="Cancel"/> 为 <c>true</c> 时使用）。
+    /// </summary>
     public LodToolCallResult? OverrideResult { get; set; }
 }
 
+/// <summary>
+/// <see cref="AgentEngine.AfterToolExecute"/> 事件的参数。
+/// </summary>
 public sealed class AfterToolExecuteEventArgs : EventArgs {
     internal AfterToolExecuteEventArgs(ParsedToolCall toolCall, LodToolCallResult result) {
         ToolCall = toolCall ?? throw new ArgumentNullException(nameof(toolCall));
         Result = result ?? throw new ArgumentNullException(nameof(result));
     }
 
+    /// <summary>
+    /// 获取已执行的工具调用信息。
+    /// </summary>
     public ParsedToolCall ToolCall { get; }
 
+    /// <summary>
+    /// 获取或设置工具执行结果（可被事件处理器修改）。
+    /// </summary>
     public LodToolCallResult Result { get; set; }
 }
 
+/// <summary>
+/// <see cref="AgentEngine.StateTransition"/> 事件的参数。
+/// </summary>
 public sealed class StateTransitionEventArgs : EventArgs {
     internal StateTransitionEventArgs(AgentRunState fromState, AgentRunState toState) {
         FromState = fromState;
         ToState = toState;
     }
 
+    /// <summary>
+    /// 获取转换前的状态。
+    /// </summary>
     public AgentRunState FromState { get; }
 
+    /// <summary>
+    /// 获取转换后的状态。
+    /// </summary>
     public AgentRunState ToState { get; }
 }

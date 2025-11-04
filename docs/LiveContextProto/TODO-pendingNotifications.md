@@ -1,0 +1,1 @@
+Atelia.Agent.Core.History.AgentState._pendingNotifications改为用字典管理并附加notification id。同时为Atelia.Agent.Core.History.ObservationEntry中记录所携带的notification id集合，这样可以在一条notification确实已被LLM处理后（以完成一条完整ActionMessage输出为准）再将其从_pendingNotifications中移除。也可以支持在模型调用失败后需要重试时刷新最后一条ObservationEntry/ToolResultsEntry，来注入最新的环境信息。

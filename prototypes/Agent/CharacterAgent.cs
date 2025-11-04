@@ -35,7 +35,7 @@ public sealed class CharacterAgent {
 
     public AgentState State => _engine.State;
 
-    public string SystemInstruction => _engine.SystemInstruction;
+    public string SystemPrompt => _engine.SystemPrompt;
 
     public string MemoryNotebookSnapshot => _memoryNotebookApp.GetSnapshot();
 

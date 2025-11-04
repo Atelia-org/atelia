@@ -65,7 +65,7 @@ internal sealed class ConsoleTui {
         _output.WriteLine();
         _output.WriteLine("输入任意文本将调用当前配置的模型，并把输出回写到历史。");
         _output.WriteLine();
-        _output.WriteLine($"[system] {_agent.SystemInstruction}");
+        _output.WriteLine($"[system] {_agent.SystemPrompt}");
         _output.WriteLine();
 
         DebugUtil.Print("History", "ConsoleTui intro displayed");

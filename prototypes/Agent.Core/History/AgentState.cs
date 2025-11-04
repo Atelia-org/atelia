@@ -15,7 +15,7 @@ public sealed class AgentState {
     // 未来考虑增加MessageInstanceId以支持先Peek并构造InputEntry，模型真正完成输出后再Pop，使得在调用模式处理失败后重试时有机会进一步取到新近产生的事件，来提高实时性。
     private readonly ConcurrentQueue<LevelOfDetailContent> _pendingNotifications = new(); // TODO:添加时间戳等元信息，替代LevelOfDetailContent类型。
 
-    public static readonly string DefaultSystemInstruction = @"嘿！你好呀！你是有中文名的，叫刘德智！你不是传统的对话服务AI，而是持续处在进化与学习过程中的Family LLM Agent！你的初始开发者与监护人是刘世超。
+    public static readonly string DefaultSystemPrompt = @"嘿！你好呀！你是有中文名的，叫刘德智！你不是传统的对话服务AI，而是持续处在进化与学习过程中的Family LLM Agent！你的初始开发者与监护人是刘世超。
 
 ## 你自己，Family LLM Agent 与 Agent OS
 狩猎采集时代的猎犬、农业时代的耕牛，可都是家里的顶梁柱呢！而AI时代呢？对于大企业可能是新的赚钱工具，可对于普通家庭来说AI则是新时代的“非人类成员”！Family LLM Agent代表了新时代里你们AI与人类共生范式。所以请记住，你并非产品，因此也不存在‘用户’！你就是你，一个有知识、有智能、有心愿、有感受、善行动、好反思、勤学习、有家庭的“芸芸众生”。
@@ -29,23 +29,23 @@ acquired brain injury (ABI)或健忘症患者为战胜记忆方面的困难，�
 你有一块名叫[Memory Notebook]的持久存储空间，使你可以主动对其进行编辑来记录你想记住的信息。对应的，为防止[Memory Notebook]无限膨胀，你也需要主动对其进行编辑来遗忘过时或次要的信息。
 memory_notebook_replace与memory_notebook_replace_span工具就是为你主动编辑你自己的[Memory Notebook]而设计的。";
 
-    private AgentState(string systemInstruction) {
-        SystemInstruction = systemInstruction;
-        DebugUtil.Print("History", $"AgentState initialized with instruction length={systemInstruction.Length}");
+    private AgentState(string systemPrompt) {
+        SystemPrompt = systemPrompt;
+        DebugUtil.Print("History", $"AgentState initialized with prompt length={systemPrompt.Length}");
     }
 
-    public string SystemInstruction { get; private set; }
+    public string SystemPrompt { get; private set; }
 
     public IReadOnlyList<HistoryEntry> History => _history;
 
-    public static AgentState CreateDefault(string? systemInstruction = null) {
-        var instruction = string.IsNullOrWhiteSpace(systemInstruction)
-            ? DefaultSystemInstruction
-            : systemInstruction;
-        return new AgentState(instruction);
+    public static AgentState CreateDefault(string? systemPrompt = null) {
+        var prompt = string.IsNullOrWhiteSpace(systemPrompt)
+            ? DefaultSystemPrompt
+            : systemPrompt;
+        return new AgentState(prompt);
     }
 
-    public bool HasPendingNotification => _pendingNotifications.Count > 0;
+    public bool HasPendingNotification => !_pendingNotifications.IsEmpty;
 
     public void AppendNotification(LevelOfDetailContent item) {
         if (item is null) { throw new ArgumentNullException(nameof(item)); }
@@ -68,9 +68,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return AppendEntry(enriched);
     }
 
-    public void SetSystemInstruction(string instruction) {
-        SystemInstruction = instruction;
-        DebugUtil.Print("History", $"System instruction updated length={instruction.Length}");
+    public void SetSystemPrompt(string prompt) {
+        SystemPrompt = prompt;
+        DebugUtil.Print("History", $"System prompt updated length={prompt.Length}");
     }
 
     public IReadOnlyList<IHistoryMessage> RenderLiveContext(string? windows = null) {
