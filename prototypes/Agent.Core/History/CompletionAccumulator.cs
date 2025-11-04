@@ -11,7 +11,7 @@ namespace Atelia.Agent.Core.History;
 internal static class CompletionAccumulator {
     private const string DebugCategory = "Provider";
 
-    public static async Task<ModelEntry> AggregateAsync(
+    public static async Task<ActionEntry> AggregateAsync(
         IAsyncEnumerable<CompletionChunk> deltas,
         ModelInvocationDescriptor invocation,
         CancellationToken cancellationToken
@@ -70,7 +70,7 @@ internal static class CompletionAccumulator {
         }
 
         var fullContentText = string.Join('\n', contents);
-        var outputEntry = new ModelEntry(fullContentText, toolCalls, invocation);
+        var outputEntry = new ActionEntry(fullContentText, toolCalls, invocation);
 
         DebugUtil.Print(DebugCategory, $"[Aggregate] Produced output fullContentText.Length={fullContentText.Length}, toolCalls={toolCalls.Count}");
 

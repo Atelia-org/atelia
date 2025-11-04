@@ -148,16 +148,16 @@ partial class MethodToolWrapper {
             .Compile();
     }
 
-    private static ToolParamValueKind ResolveValueKind(Type parameterType) {
+    private static ToolParamType ResolveValueKind(Type parameterType) {
         var underlying = Nullable.GetUnderlyingType(parameterType) ?? parameterType;
 
-        if (underlying == typeof(string)) { return ToolParamValueKind.String; }
-        if (underlying == typeof(bool)) { return ToolParamValueKind.Boolean; }
-        if (underlying == typeof(int)) { return ToolParamValueKind.Int32; }
-        if (underlying == typeof(long)) { return ToolParamValueKind.Int64; }
-        if (underlying == typeof(float)) { return ToolParamValueKind.Float32; }
-        if (underlying == typeof(double)) { return ToolParamValueKind.Float64; }
-        if (underlying == typeof(decimal)) { return ToolParamValueKind.Decimal; }
+        if (underlying == typeof(string)) { return ToolParamType.String; }
+        if (underlying == typeof(bool)) { return ToolParamType.Boolean; }
+        if (underlying == typeof(int)) { return ToolParamType.Int32; }
+        if (underlying == typeof(long)) { return ToolParamType.Int64; }
+        if (underlying == typeof(float)) { return ToolParamType.Float32; }
+        if (underlying == typeof(double)) { return ToolParamType.Float64; }
+        if (underlying == typeof(decimal)) { return ToolParamType.Decimal; }
 
         throw new NotSupportedException($"Unsupported parameter type '{parameterType.FullName}'.");
     }

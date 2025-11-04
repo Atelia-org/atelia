@@ -12,7 +12,7 @@ public sealed class ToolParamSpecTests {
             new ToolParamSpec(
                 name: "id",
                 description: "identifier",
-                valueKind: ToolParamValueKind.String,
+                valueKind: ToolParamType.String,
                 isNullable: false,
                 defaultValue: new ParamDefault(null)
             )
@@ -28,7 +28,7 @@ public sealed class ToolParamSpecTests {
             new ToolParamSpec(
                 name: "count",
                 description: "count",
-                valueKind: ToolParamValueKind.Int32,
+                valueKind: ToolParamType.Int32,
                 defaultValue: new ParamDefault(3.14)
             )
         );

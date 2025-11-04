@@ -27,7 +27,7 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ModelEntry(
+        var historyEntry = new ActionEntry(
             Contents: string.Empty,
             ToolCalls: new[] { toolCall },
             Invocation: new ModelInvocationDescriptor("provider", "spec", "model")
@@ -36,7 +36,7 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IContextMessage[] { historyEntry },
+            Context: new IHistoryMessage[] { historyEntry },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
@@ -71,7 +71,7 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ModelEntry(
+        var historyEntry = new ActionEntry(
             Contents: "call",
             ToolCalls: new[] { toolCall },
             Invocation: new ModelInvocationDescriptor("provider", "spec", "model")
@@ -80,7 +80,7 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IContextMessage[] { historyEntry },
+            Context: new IHistoryMessage[] { historyEntry },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
@@ -107,7 +107,7 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ModelEntry(
+        var historyEntry = new ActionEntry(
             Contents: "call",
             ToolCalls: new[] { toolCall },
             Invocation: new ModelInvocationDescriptor("provider", "spec", "model")
@@ -116,7 +116,7 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IContextMessage[] { historyEntry },
+            Context: new IHistoryMessage[] { historyEntry },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 

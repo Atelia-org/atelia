@@ -14,8 +14,8 @@ public readonly record struct AgentStepResult(
     bool ProgressMade,
     AgentRunState StateBefore,
     AgentRunState StateAfter,
-    PromptEntry? Input,
-    ModelEntry? Output,
+    ObservationEntry? Input,
+    ActionEntry? Output,
     ToolEntry? ToolResults
 ) {
     public bool BlockedOnInput => !ProgressMade && StateAfter == AgentRunState.WaitingInput;

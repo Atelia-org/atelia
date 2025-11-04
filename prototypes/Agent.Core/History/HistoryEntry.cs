@@ -7,9 +7,9 @@ using Atelia.Agent.Core.Tool;
 namespace Atelia.Agent.Core.History;
 
 public enum HistoryEntryKind {
-    Prompt,
-    Model,
-    Tool
+    Observation,
+    Action,
+    ToolResults
 }
 
 public record ModelInvocationDescriptor(
@@ -23,25 +23,25 @@ public abstract record class HistoryEntry {
     public abstract HistoryEntryKind Kind { get; }
 }
 
-public sealed record ModelEntry(
+public sealed record ActionEntry(
     string Contents,
     IReadOnlyList<ParsedToolCall> ToolCalls,
     ModelInvocationDescriptor Invocation
-) : HistoryEntry, IModelMessage {
-    public override HistoryEntryKind Kind => HistoryEntryKind.Model;
-    public MessageRole Role => MessageRole.Model;
-    string IModelMessage.Contents => Contents;
-    IReadOnlyList<ParsedToolCall> IModelMessage.ToolCalls => ToolCalls;
+) : HistoryEntry, IActionMessage {
+    public override HistoryEntryKind Kind => HistoryEntryKind.Action;
+    HistoryMessageKind IHistoryMessage.Kind => HistoryMessageKind.Action;
+    string IActionMessage.Contents => Contents;
+    IReadOnlyList<ParsedToolCall> IActionMessage.ToolCalls => ToolCalls;
 }
 
 
-public record class PromptEntry(
+public record class ObservationEntry(
     LevelOfDetailContent? Notifications = null
 ) : HistoryEntry {
-    public override HistoryEntryKind Kind => HistoryEntryKind.Prompt;
+    public override HistoryEntryKind Kind => HistoryEntryKind.Observation;
 
-    public virtual PromptMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
-        return new PromptMessage(
+    public virtual ObservationMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
+        return new ObservationMessage(
             Timestamp: Timestamp,
             Notifications: Notifications?.GetContent(detailLevel),
             Windows: windows
@@ -52,13 +52,13 @@ public sealed record ToolEntry(
     IReadOnlyList<LodToolCallResult> Results,
     string? ExecuteError,
     LevelOfDetailContent? Notifications = null
-) : PromptEntry(Notifications) {
-    public override HistoryEntryKind Kind => HistoryEntryKind.Tool;
+) : ObservationEntry(Notifications) {
+    public override HistoryEntryKind Kind => HistoryEntryKind.ToolResults;
 
-    public override ToolMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
+    public override ToolResultsMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
         IReadOnlyList<ToolResult> projectedResults = ProjectResults(Results, detailLevel);
 
-        return new ToolMessage(
+        return new ToolResultsMessage(
             Timestamp: Timestamp,
             Notifications: Notifications?.GetContent(detailLevel),
             Windows: windows,

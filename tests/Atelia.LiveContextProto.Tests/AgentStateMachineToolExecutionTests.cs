@@ -102,10 +102,10 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(AgentRunState.WaitingInput, step5.StateAfter);
 
         Assert.Equal(4, state.History.Count);
-        Assert.IsType<PromptEntry>(state.History[0]);
-        Assert.IsType<ModelEntry>(state.History[1]);
+        Assert.IsType<ObservationEntry>(state.History[0]);
+        Assert.IsType<ActionEntry>(state.History[1]);
         Assert.IsType<ToolEntry>(state.History[2]);
-        Assert.IsType<ModelEntry>(state.History[3]);
+        Assert.IsType<ActionEntry>(state.History[3]);
     }
 
     [Fact]
@@ -173,7 +173,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         private readonly Queue<IAsyncEnumerable<CompletionChunk>> _responses;
 
         public string Name => "test-provider";
-        public string ProtocolVersion => "test-spec";
+        public string ApiSpecId => "test-spec";
 
         public FakeProviderClient(IEnumerable<IAsyncEnumerable<CompletionChunk>> responses) {
             _responses = new Queue<IAsyncEnumerable<CompletionChunk>>(responses ?? throw new ArgumentNullException(nameof(responses)));

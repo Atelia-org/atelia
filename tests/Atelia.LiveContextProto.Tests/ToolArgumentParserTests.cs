@@ -8,7 +8,7 @@ public sealed class ToolArgumentParserTests {
     [Fact]
     public void ParseArguments_Float32PrecisionLossProducesWarning() {
         var parameters = new[] {
-            new ToolParamSpec(name: "value", description: "float32-value", valueKind: ToolParamValueKind.Float32)
+            new ToolParamSpec(name: "value", description: "float32-value", valueKind: ToolParamType.Float32)
         };
 
         var payload = "{\"value\": 123456.7890123}";
@@ -28,7 +28,7 @@ public sealed class ToolArgumentParserTests {
     [Fact]
     public void ParseArguments_DecimalFromStringProducesWarning() {
         var parameters = new[] {
-            new ToolParamSpec(name: "amount", description: "amount", valueKind: ToolParamValueKind.Decimal)
+            new ToolParamSpec(name: "amount", description: "amount", valueKind: ToolParamType.Decimal)
         };
 
         var payload = "{\"amount\": \"42.42\"}";
@@ -47,7 +47,7 @@ public sealed class ToolArgumentParserTests {
     [Fact]
     public void ParseArguments_Int32OutOfRangeReturnsError() {
         var parameters = new[] {
-            new ToolParamSpec(name: "count", description: "count", valueKind: ToolParamValueKind.Int32)
+            new ToolParamSpec(name: "count", description: "count", valueKind: ToolParamType.Int32)
         };
 
         var payload = "{\"count\": 5000000000}";
@@ -64,7 +64,7 @@ public sealed class ToolArgumentParserTests {
     [Fact]
     public void ParseArguments_OptionalParameterMissing_NoError() {
         var parameters = new[] {
-            new ToolParamSpec(name: "note", description: "note", valueKind: ToolParamValueKind.String,
+            new ToolParamSpec(name: "note", description: "note", valueKind: ToolParamType.String,
                 isNullable: true,
                 defaultValue: new ParamDefault(null)
             )
@@ -81,7 +81,7 @@ public sealed class ToolArgumentParserTests {
     [Fact]
     public void ParseArguments_RequiredStringIsNullable_SucceedsWithNullValue() {
         var parameters = new[] {
-            new ToolParamSpec(name: "comment", description: "comment", valueKind: ToolParamValueKind.String,
+            new ToolParamSpec(name: "comment", description: "comment", valueKind: ToolParamType.String,
                 isNullable: true
             )
         };
@@ -99,7 +99,7 @@ public sealed class ToolArgumentParserTests {
     [Fact]
     public void ParseArguments_NullForNonNullableOptionalParameter_ProducesError() {
         var parameters = new[] {
-            new ToolParamSpec(name: "count", description: "count", valueKind: ToolParamValueKind.Int32,
+            new ToolParamSpec(name: "count", description: "count", valueKind: ToolParamType.Int32,
                 defaultValue: new ParamDefault(0)
             )
         };

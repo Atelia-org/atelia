@@ -48,7 +48,7 @@ public sealed class CharacterAgent {
     public string MemoryNotebookSnapshot
         => _memoryNotebookApp?.GetSnapshot() ?? MemoryNotebookApp.DefaultSnapshot;
 
-    public IReadOnlyList<IContextMessage> RenderLiveContext() => _engine.RenderLiveContext();
+    public IReadOnlyList<IHistoryMessage> RenderLiveContext() => _engine.RenderLiveContext();
 
     public void UpdateMemoryNotebook(string? content) {
         if (_memoryNotebookApp is null) { throw new InvalidOperationException("Memory notebook app is not configured for this agent."); }

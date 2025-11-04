@@ -52,12 +52,12 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         _pendingNotifications.Enqueue(item); // TODO: 更具体的消息类型，更多元数据。
     }
 
-    public ModelEntry AppendModelOutput(ModelEntry entry) {
+    public ActionEntry AppendModelOutput(ActionEntry entry) {
         return AppendEntry(entry);
     }
 
-    public PromptEntry AppendModelInput(PromptEntry entry) {
-        PromptEntry enriched = ModelInputAttachNotifications(entry);
+    public ObservationEntry AppendModelInput(ObservationEntry entry) {
+        ObservationEntry enriched = ModelInputAttachNotifications(entry);
         return AppendEntry(enriched);
     }
 
@@ -73,20 +73,20 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         DebugUtil.Print("History", $"System instruction updated length={instruction.Length}");
     }
 
-    public IReadOnlyList<IContextMessage> RenderLiveContext(string? windows = null) {
-        var messages = new List<IContextMessage>(_history.Count);
+    public IReadOnlyList<IHistoryMessage> RenderLiveContext(string? windows = null) {
+        var messages = new List<IHistoryMessage>(_history.Count);
         int detailOrdinal = 0;
         string? pendingWindows = windows;
 
         for (int index = _history.Count; --index >= 0;) {
             HistoryEntry contextual = _history[index];
             switch (contextual) {
-                case PromptEntry modelInputEntry:
+                case ObservationEntry modelInputEntry:
                     var inputDetail = ResolveDetailLevel(detailOrdinal++);
                     messages.Add(modelInputEntry.GetMessage(inputDetail, pendingWindows));
                     pendingWindows = null; // 只注入一次
                     break;
-                case ModelEntry modelOutputEntry:
+                case ActionEntry modelOutputEntry:
                     messages.Add(modelOutputEntry);
                     break;
             }
@@ -132,7 +132,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return entry with { Notifications = notifications };
     }
 
-    private PromptEntry ModelInputAttachNotifications(PromptEntry entry) {
+    private ObservationEntry ModelInputAttachNotifications(ObservationEntry entry) {
         var notifications = TakeoutPendingNotifications();
         if (notifications == null) { return entry; }
 

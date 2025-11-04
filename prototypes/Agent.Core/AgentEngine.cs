@@ -42,7 +42,7 @@ public class AgentEngine {
 
     public IAppHost AppHost => _appHost;
 
-    public IReadOnlyList<IContextMessage> RenderLiveContext() {
+    public IReadOnlyList<IHistoryMessage> RenderLiveContext() {
         var windows = _appHost.RenderWindows();
         return _state.RenderLiveContext(windows);
     }
@@ -123,13 +123,13 @@ public class AgentEngine {
         var last = _state.History[^1];
         return last switch {
             ToolEntry => AgentRunState.PendingToolResults,
-            PromptEntry => AgentRunState.PendingInput,
-            ModelEntry outputEntry => DetermineOutputState(outputEntry),
+            ObservationEntry => AgentRunState.PendingInput,
+            ActionEntry outputEntry => DetermineOutputState(outputEntry),
             _ => AgentRunState.WaitingInput
         };
     }
 
-    private AgentRunState DetermineOutputState(ModelEntry outputEntry) {
+    private AgentRunState DetermineOutputState(ActionEntry outputEntry) {
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return AgentRunState.WaitingInput; }
         return HasAllToolResults(outputEntry)
             ? AgentRunState.ToolResultsReady
@@ -165,7 +165,7 @@ public class AgentEngine {
             _state.AppendNotification(args.AdditionalNotification);
         }
 
-        var inputEntry = args.InputEntry ?? new PromptEntry();
+        var inputEntry = args.InputEntry ?? new ObservationEntry();
         var appended = _state.AppendModelInput(inputEntry);
 
         DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
@@ -189,7 +189,7 @@ public class AgentEngine {
             ? _toolDefinitions
             : args.ToolDefinitions;
 
-        var invocation = new ModelInvocationDescriptor(args.Profile.Client.Name, args.Profile.Client.ProtocolVersion, args.Profile.ModelId);
+        var invocation = new ModelInvocationDescriptor(args.Profile.Client.Name, args.Profile.Client.ApiSpecId, args.Profile.ModelId);
         var request = new CompletionRequest(args.Profile.ModelId, SystemInstruction, args.LiveContext, effectiveToolDefinitions);
 
         var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);
@@ -209,7 +209,7 @@ public class AgentEngine {
     }
 
     private async Task<StepOutcome> ProcessWaitingToolResultsAsync(CancellationToken cancellationToken) {
-        if (_state.History.Count == 0 || _state.History[^1] is not ModelEntry outputEntry) {
+        if (_state.History.Count == 0 || _state.History[^1] is not ActionEntry outputEntry) {
             DebugUtil.Print(StateMachineDebugCategory, "[Engine] WaitingToolResults but no model output available");
             return StepOutcome.NoProgress;
         }
@@ -250,7 +250,7 @@ public class AgentEngine {
     }
 
     private StepOutcome ProcessToolResultsReady() {
-        if (_state.History.Count == 0 || _state.History[^1] is not ModelEntry outputEntry) { return StepOutcome.NoProgress; }
+        if (_state.History.Count == 0 || _state.History[^1] is not ActionEntry outputEntry) { return StepOutcome.NoProgress; }
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return StepOutcome.NoProgress; }
 
         var collectedResults = new List<LodToolCallResult>(outputEntry.ToolCalls.Count);
@@ -282,7 +282,7 @@ public class AgentEngine {
         return StepOutcome.FromToolResults(appended);
     }
 
-    private ParsedToolCall? FindNextPendingToolCall(ModelEntry outputEntry) {
+    private ParsedToolCall? FindNextPendingToolCall(ActionEntry outputEntry) {
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return null; }
 
         foreach (var call in outputEntry.ToolCalls) {
@@ -292,7 +292,7 @@ public class AgentEngine {
         return null;
     }
 
-    private bool HasAllToolResults(ModelEntry outputEntry) {
+    private bool HasAllToolResults(ActionEntry outputEntry) {
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return false; }
         if (_pendingToolResults.Count < outputEntry.ToolCalls.Count) { return false; }
 
@@ -323,16 +323,16 @@ public class AgentEngine {
 
     private readonly record struct StepOutcome(
         bool ProgressMade,
-        PromptEntry? Input,
-        ModelEntry? Output,
+        ObservationEntry? Input,
+        ActionEntry? Output,
         ToolEntry? ToolResults
     ) {
         public static StepOutcome NoProgress => default;
 
-        public static StepOutcome FromInput(PromptEntry input)
+        public static StepOutcome FromInput(ObservationEntry input)
             => new(true, input, null, null);
 
-        public static StepOutcome FromOutput(ModelEntry output)
+        public static StepOutcome FromOutput(ActionEntry output)
             => new(true, null, output, null);
 
         public static StepOutcome FromToolResults(ToolEntry toolResults)
@@ -356,7 +356,7 @@ public sealed class WaitingInputEventArgs : EventArgs {
 
     public bool ShouldContinue { get; set; }
 
-    public PromptEntry? InputEntry { get; set; }
+    public ObservationEntry? InputEntry { get; set; }
 
     public LevelOfDetailContent? AdditionalNotification { get; set; }
 }
@@ -365,7 +365,7 @@ public sealed class BeforeModelCallEventArgs : EventArgs {
     internal BeforeModelCallEventArgs(
         AgentRunState state,
         LlmProfile profile,
-        IReadOnlyList<IContextMessage> liveContext,
+        IReadOnlyList<IHistoryMessage> liveContext,
         ImmutableArray<ToolDefinition> toolDefinitions
     ) {
         State = state;
@@ -378,7 +378,7 @@ public sealed class BeforeModelCallEventArgs : EventArgs {
 
     public LlmProfile Profile { get; set; }
 
-    public IReadOnlyList<IContextMessage> LiveContext { get; set; }
+    public IReadOnlyList<IHistoryMessage> LiveContext { get; set; }
 
     public ImmutableArray<ToolDefinition> ToolDefinitions { get; set; }
 
@@ -386,7 +386,7 @@ public sealed class BeforeModelCallEventArgs : EventArgs {
 }
 
 public sealed class AfterModelCallEventArgs : EventArgs {
-    internal AfterModelCallEventArgs(AgentRunState state, LlmProfile profile, ModelEntry output) {
+    internal AfterModelCallEventArgs(AgentRunState state, LlmProfile profile, ActionEntry output) {
         State = state;
         Profile = profile;
         Output = output ?? throw new ArgumentNullException(nameof(output));
@@ -396,7 +396,7 @@ public sealed class AfterModelCallEventArgs : EventArgs {
 
     public LlmProfile Profile { get; }
 
-    public ModelEntry Output { get; }
+    public ActionEntry Output { get; }
 }
 
 public sealed class BeforeToolExecuteEventArgs : EventArgs {
