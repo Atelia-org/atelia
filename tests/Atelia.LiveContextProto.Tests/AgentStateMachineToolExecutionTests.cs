@@ -99,11 +99,11 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(AgentRunState.PendingToolResults, step5.StateBefore);
         Assert.Equal(AgentRunState.WaitingInput, step5.StateAfter);
 
-        Assert.Equal(4, state.History.Count);
-        Assert.IsType<ObservationEntry>(state.History[0]);
-        Assert.IsType<ActionEntry>(state.History[1]);
-        Assert.IsType<ToolEntry>(state.History[2]);
-        Assert.IsType<ActionEntry>(state.History[3]);
+        Assert.Equal(4, state.RecentHistory.Count);
+        Assert.IsType<ObservationEntry>(state.RecentHistory[0]);
+        Assert.IsType<ActionEntry>(state.RecentHistory[1]);
+        Assert.IsType<ToolEntry>(state.RecentHistory[2]);
+        Assert.IsType<ActionEntry>(state.RecentHistory[3]);
     }
 
     [Fact]

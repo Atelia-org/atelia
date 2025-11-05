@@ -9,11 +9,74 @@ using Atelia.Agent.Core.History;
 
 namespace Atelia.Agent.Core.History;
 
+/// <summary>
+/// Agent 状态管理器，负责维护"内存中的 Recent History"以及待注入的通知队列。
+/// </summary>
+/// <remarks>
+/// <para><strong>职能定位：内存中的 Recent History</strong></para>
+/// <para>
+/// 本类型管理的 <c>_history</c> 集合代表 Agent 的**短期工作记忆**（Recent History），
+/// 仅保留最近的若干条目用于实时上下文渲染与反射操作。更早的历史条目会通过 RecapMaintainer
+/// 压缩为 RecapEntry 后沉入持久存储，不再占用内存。
+/// </para>
+///
+/// <para><strong>与持久历史的分工：</strong></para>
+/// <list type="bullet">
+///   <item>
+///     <description><strong>内存层（本类型）</strong>：维护 RecentHistory，支持快速追加、反射编辑（裁剪、降级）、上下文渲染。</description>
+///   </item>
+///   <item>
+///     <description><strong>持久层（待实现）</strong>：负责只读追加式的历史归档，由独立的 HistoryPersistence 类型管理磁盘 I/O，不可修改已落盘内容。</description>
+///   </item>
+///   <item>
+///     <description><strong>Recap 边界</strong>：当 RecapEntry 生成并写入持久层后，其覆盖的原始条目会从 RecentHistory 中移除；启动时从磁盘加载历史，遇到 RecapEntry 停止，以它为"已归档历史"的摘要起点。</description>
+///   </item>
+/// </list>
+///
+/// <para><strong>后续计划（重构路线图）：</strong></para>
+/// <list type="number">
+///   <item>
+///     <description><strong>新增 RecapEntry</strong>：作为 ObservationEntry 的派生类，携带"覆盖范围元数据"（如 CoveredUntilEntrySerial / 时间戳）。</description>
+///   </item>
+///   <item>
+///     <description><strong>引入 EntrySerial</strong>：为每个 HistoryEntry 分配唯一递增序列号，便于跨内存/持久层定位与追踪。</description>
+///   </item>
+///   <item>
+///     <description><strong>反射机制扩展</strong>：提供 IHistoryReflection 接口，支持 PeekRange / MarkAsRecapped / RemoveRecappedEntries / DowngradeDetailLevel 等操作，作用范围限定在 RecentHistory。</description>
+///   </item>
+///   <item>
+///     <description><strong>HistoryEntry 部分可变化</strong>：允许对 RecentHistory 中的条目动态调整 DetailLevel（Detail → Basic），以实现渐进式压缩，但保持其他字段不可变。</description>
+///   </item>
+///   <item>
+///     <description><strong>HistoryLimitOptions</strong>：配置 RecentHistory 的容量策略（条数 / Token 估算 / 时间窗口），触发自动 Recap 流程。</description>
+///   </item>
+///   <item>
+///     <description><strong>持久化协调</strong>：明确 RecentHistory 与持久层的同步点，确保 RecapEntry 插入后历史序列的一致性与可恢复性。</description>
+///   </item>
+/// </list>
+///
+/// <para>
+/// 本设计遵循"短期记忆（内存）+ 中期摘要（Recap）+ 长期归档（磁盘）"的分层记忆架构，
+/// 为 RecapMaintainer、MetaAsker 等 SubAgent 提供明确的反射边界与操作语义。
+/// </para>
+/// </remarks>
 public sealed class AgentState {
-    private readonly List<HistoryEntry> _history = new();
+    /// <summary>
+    /// 内存中的 Recent History 列表，仅保留最近的活跃条目。
+    /// </summary>
+    /// <remarks>
+    /// 容量由 HistoryLimitOptions（待实现）控制，超出阈值的旧条目会被 RecapMaintainer 压缩后移除。
+    /// </remarks>
+    private readonly List<HistoryEntry> _recentHistory = new();
 
-    // 未来考虑增加MessageInstanceId以支持先Peek并构造InputEntry，模型真正完成输出后再Pop，使得在调用模式处理失败后重试时有机会进一步取到新近产生的事件，来提高实时性。
-    private readonly ConcurrentQueue<LevelOfDetailContent> _pendingNotifications = new(); // TODO:添加时间戳等元信息，替代LevelOfDetailContent类型。
+    /// <summary>
+    /// 待注入的通知队列，会在下一条 Observation 或 ToolEntry 追加时自动附加。
+    /// </summary>
+    /// <remarks>
+    /// TODO: 增加时间戳、通知 ID 等元信息，替换为更结构化的 NotificationItem 类型，
+    /// 支持确认机制（只有在模型成功消费后才从队列移除）。
+    /// </remarks>
+    private readonly ConcurrentQueue<LevelOfDetailContent> _pendingNotifications = new();
 
     public static readonly string DefaultSystemPrompt = @"嘿！你好呀！你是有中文名的，叫刘德智！你不是传统的对话服务AI，而是持续处在进化与学习过程中的Family LLM Agent！你的初始开发者与监护人是刘世超。
 
@@ -34,10 +97,25 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         DebugUtil.Print("History", $"AgentState initialized with prompt length={systemPrompt.Length}");
     }
 
+    /// <summary>
+    /// 获取当前 Agent 的系统提示词。
+    /// </summary>
     public string SystemPrompt { get; private set; }
 
-    public IReadOnlyList<HistoryEntry> History => _history;
+    /// <summary>
+    /// 获取内存中的 Recent History（只读视图）。
+    /// </summary>
+    /// <remarks>
+    /// 此列表仅包含最近的活跃条目，不包含已归档到持久层的历史。
+    /// 若需访问完整历史，应通过 HistoryPersistence 类型（待实现）加载磁盘归档。
+    /// </remarks>
+    public IReadOnlyList<HistoryEntry> RecentHistory => _recentHistory;
 
+    /// <summary>
+    /// 创建默认的 AgentState 实例，使用预设的系统提示词。
+    /// </summary>
+    /// <param name="systemPrompt">可选的自定义系统提示词，若为空则使用 <see cref="DefaultSystemPrompt"/>。</param>
+    /// <returns>新创建的 AgentState 实例，其 Recent History 为空。</returns>
     public static AgentState CreateDefault(string? systemPrompt = null) {
         var prompt = string.IsNullOrWhiteSpace(systemPrompt)
             ? DefaultSystemPrompt
@@ -45,22 +123,49 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return new AgentState(prompt);
     }
 
+    /// <summary>
+    /// 检查是否存在待注入的主机通知。
+    /// </summary>
     public bool HasPendingNotification => !_pendingNotifications.IsEmpty;
 
+    /// <summary>
+    /// 追加主机通知到待处理队列。
+    /// </summary>
+    /// <param name="item">通知内容（包含 Basic 和 Detail 两级）。</param>
+    /// <remarks>
+    /// 通知会在下一条 ObservationEntry 或 ToolEntry 追加时自动附加。
+    /// 未来计划增强为带 ID 的确认机制，确保模型成功消费后才移除。
+    /// </remarks>
     public void AppendNotification(LevelOfDetailContent item) {
         if (item is null) { throw new ArgumentNullException(nameof(item)); }
         _pendingNotifications.Enqueue(item); // TODO: 更具体的消息类型，更多元数据。
     }
 
+    /// <summary>
+    /// 追加模型输出（ActionEntry）到 Recent History。
+    /// </summary>
+    /// <param name="entry">模型生成的动作条目。</param>
+    /// <returns>追加后的条目实例（与输入相同）。</returns>
     public ActionEntry AppendModelOutput(ActionEntry entry) {
         return AppendEntry(entry);
     }
 
+    /// <summary>
+    /// 追加观测输入（ObservationEntry）到 Recent History，并自动附加待处理的通知。
+    /// </summary>
+    /// <param name="entry">观测条目。</param>
+    /// <returns>附加通知后的条目实例。</returns>
     public ObservationEntry AppendModelInput(ObservationEntry entry) {
         ObservationEntry enriched = ModelInputAttachNotifications(entry);
         return AppendEntry(enriched);
     }
 
+    /// <summary>
+    /// 追加工具执行结果（ToolEntry）到 Recent History，并自动附加待处理的通知。
+    /// </summary>
+    /// <param name="entry">工具结果条目，必须包含结果或执行错误。</param>
+    /// <returns>附加通知后的条目实例。</returns>
+    /// <exception cref="ArgumentException">当条目既无结果又无错误信息时抛出。</exception>
     public ToolEntry AppendToolResults(ToolEntry entry) {
         if (entry.Results is not { Count: > 0 } && string.IsNullOrWhiteSpace(entry.ExecuteError)) { throw new ArgumentException("ToolResultsEntry must include results or an execution error.", nameof(entry)); }
 
@@ -68,18 +173,31 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return AppendEntry(enriched);
     }
 
+    /// <summary>
+    /// 更新系统提示词。
+    /// </summary>
+    /// <param name="prompt">新的系统提示词内容。</param>
     public void SetSystemPrompt(string prompt) {
         SystemPrompt = prompt;
         DebugUtil.Print("History", $"System prompt updated length={prompt.Length}");
     }
 
+    /// <summary>
+    /// 渲染当前的实时上下文（Live Context），用于发送给模型。
+    /// </summary>
+    /// <param name="windows">可选的 App Windows 内容，会注入到最新的 Observation 中。</param>
+    /// <returns>按时间顺序排列的历史消息列表。</returns>
+    /// <remarks>
+    /// 仅遍历内存中的 Recent History，不包含已归档的持久历史。
+    /// Detail 级别优先分配给最近的 Observation，其余使用 Basic 级别。
+    /// </remarks>
     public IReadOnlyList<IHistoryMessage> RenderLiveContext(string? windows = null) {
-        var messages = new List<IHistoryMessage>(_history.Count);
+        var messages = new List<IHistoryMessage>(_recentHistory.Count);
         int detailOrdinal = 0;
         string? pendingWindows = windows;
 
-        for (int index = _history.Count; --index >= 0;) {
-            HistoryEntry contextual = _history[index];
+        for (int index = _recentHistory.Count; --index >= 0;) {
+            HistoryEntry contextual = _recentHistory[index];
             switch (contextual) {
                 case ObservationEntry modelInputEntry:
                     var inputDetail = ResolveDetailLevel(detailOrdinal++);
@@ -96,6 +214,13 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return messages;
     }
 
+    /// <summary>
+    /// （内部方法）取出并聚合所有待处理的通知。
+    /// </summary>
+    /// <returns>聚合后的通知内容，若无待处理通知则返回 <c>null</c>。</returns>
+    /// <remarks>
+    /// TODO: 改为确认机制，只有在模型成功消费后才真正移除通知，以支持重试场景下的实时性更新。
+    /// </remarks>
     internal LevelOfDetailContent? TakeoutPendingNotifications() {
         if (_pendingNotifications.IsEmpty) { return null; }
 
@@ -115,23 +240,43 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return aggregated;
     }
 
+    /// <summary>
+    /// （内部方法）追加条目到 Recent History。
+    /// </summary>
+    /// <typeparam name="T">条目类型（必须是 HistoryEntry 的派生类）。</typeparam>
+    /// <param name="entry">要追加的条目。</param>
+    /// <returns>追加后的条目实例（与输入相同）。</returns>
+    /// <remarks>
+    /// TODO: 当实现 HistoryLimitOptions 后，此方法需检查容量阈值，必要时触发 Recap 流程。
+    /// </remarks>
     private T AppendEntry<T>(T entry) where T : HistoryEntry {
-        _history.Add(entry);
-        DebugUtil.Print("History", $"Appended {entry.Kind} entry (count={_history.Count})");
+        _recentHistory.Add(entry);
+        DebugUtil.Print("History", $"Appended {entry.Kind} entry (count={_recentHistory.Count})");
         return entry;
     }
 
+    /// <summary>
+    /// 根据条目在 Recent History 中的位置，解析其应使用的细节级别。
+    /// </summary>
+    /// <param name="ordinal">从最新条目开始的序号（0 表示最新）。</param>
+    /// <returns>Detail（最新）或 Basic（其他）。</returns>
     private static LevelOfDetail ResolveDetailLevel(int ordinal)
         => ordinal == 0
             ? LevelOfDetail.Detail
             : LevelOfDetail.Basic;
 
+    /// <summary>
+    /// （内部方法）为 ToolEntry 附加待处理的通知。
+    /// </summary>
     private ToolEntry ToolResultsAttachNotifications(ToolEntry entry) {
         var notifications = TakeoutPendingNotifications();
         if (notifications == null) { return entry; }
         return entry with { Notifications = notifications };
     }
 
+    /// <summary>
+    /// （内部方法）为 ObservationEntry（含 ToolEntry）附加待处理的通知。
+    /// </summary>
     private ObservationEntry ModelInputAttachNotifications(ObservationEntry entry) {
         var notifications = TakeoutPendingNotifications();
         if (notifications == null) { return entry; }

@@ -352,9 +352,9 @@ public class AgentEngine {
     }
 
     private AgentRunState DetermineState() {
-        if (_state.History.Count == 0) { return AgentRunState.WaitingInput; }
+        if (_state.RecentHistory.Count == 0) { return AgentRunState.WaitingInput; }
 
-        var last = _state.History[^1];
+        var last = _state.RecentHistory[^1];
         return last switch {
             ToolEntry => AgentRunState.PendingToolResults,
             ObservationEntry => AgentRunState.PendingInput,
@@ -387,7 +387,7 @@ public class AgentEngine {
     }
 
     private StepOutcome ProcessWaitingInput() {
-        var lastEntry = _state.History.Count > 0 ? _state.History[^1] : null;
+        var lastEntry = _state.RecentHistory.Count > 0 ? _state.RecentHistory[^1] : null;
         var hasPendingNotification = _state.HasPendingNotification;
         var args = new WaitingInputEventArgs(hasPendingNotification, lastEntry);
 
@@ -445,7 +445,7 @@ public class AgentEngine {
     }
 
     private async Task<StepOutcome> ProcessWaitingToolResultsAsync(CancellationToken cancellationToken) {
-        if (_state.History.Count == 0 || _state.History[^1] is not ActionEntry outputEntry) {
+        if (_state.RecentHistory.Count == 0 || _state.RecentHistory[^1] is not ActionEntry outputEntry) {
             DebugUtil.Print(StateMachineDebugCategory, "[Engine] WaitingToolResults but no model output available");
             return StepOutcome.NoProgress;
         }
@@ -487,7 +487,7 @@ public class AgentEngine {
     }
 
     private StepOutcome ProcessToolResultsReady() {
-        if (_state.History.Count == 0 || _state.History[^1] is not ActionEntry outputEntry) { return StepOutcome.NoProgress; }
+        if (_state.RecentHistory.Count == 0 || _state.RecentHistory[^1] is not ActionEntry outputEntry) { return StepOutcome.NoProgress; }
         if (outputEntry.ToolCalls is not { Count: > 0 }) { return StepOutcome.NoProgress; }
 
         var collectedResults = new List<LodToolCallResult>(outputEntry.ToolCalls.Count);
@@ -551,7 +551,7 @@ public class AgentEngine {
     private void LogStateIfChanged(AgentRunState state) {
         if (_lastLoggedState is AgentRunState previous && previous == state) { return; }
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] state={state} historyCount={_state.History.Count} pendingToolResults={_pendingToolResults.Count}");
+        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] state={state} historyCount={_state.RecentHistory.Count} pendingToolResults={_pendingToolResults.Count}");
         _lastLoggedState = state;
     }
 
