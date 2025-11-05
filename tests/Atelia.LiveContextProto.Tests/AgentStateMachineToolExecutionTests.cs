@@ -1,9 +1,8 @@
+using System.Collections.Immutable;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
-using Atelia.LiveContextProto;
 using Atelia.Completion.Abstractions;
-using System.Collections.Immutable;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -102,7 +101,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(4, state.RecentHistory.Count);
         Assert.IsType<ObservationEntry>(state.RecentHistory[0]);
         Assert.IsType<ActionEntry>(state.RecentHistory[1]);
-        Assert.IsType<ToolEntry>(state.RecentHistory[2]);
+        Assert.IsType<ToolResultsEntry>(state.RecentHistory[2]);
         Assert.IsType<ActionEntry>(state.RecentHistory[3]);
     }
 

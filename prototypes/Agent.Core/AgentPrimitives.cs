@@ -16,7 +16,7 @@ public readonly record struct AgentStepResult(
     AgentRunState StateAfter,
     ObservationEntry? Input,
     ActionEntry? Output,
-    ToolEntry? ToolResults
+    ToolResultsEntry? ToolResults
 ) {
     public bool BlockedOnInput => !ProgressMade && StateAfter == AgentRunState.WaitingInput;
 }
@@ -29,7 +29,7 @@ internal enum AgentToolExecutionResultStatus {
 
 internal sealed record AgentToolExecutionResult(
     AgentToolExecutionResultStatus Status,
-    ToolEntry? Entry,
+    ToolResultsEntry? Entry,
     string? FailureMessage,
     string? ToolName
 ) {
@@ -39,9 +39,9 @@ internal sealed record AgentToolExecutionResult(
     public static AgentToolExecutionResult NoResults()
         => new(AgentToolExecutionResultStatus.NoResults, null, null, null);
 
-    public static AgentToolExecutionResult Success(ToolEntry entry)
+    public static AgentToolExecutionResult Success(ToolResultsEntry entry)
         => new(AgentToolExecutionResultStatus.Success, entry, null, null);
 
-    public static AgentToolExecutionResult SuccessWithFailure(ToolEntry entry, string? failureMessage)
+    public static AgentToolExecutionResult SuccessWithFailure(ToolResultsEntry entry, string? failureMessage)
         => new(AgentToolExecutionResultStatus.Success, entry, failureMessage, null);
 }

@@ -1,8 +1,6 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
-using Atelia.Completion.Abstractions;
 using Atelia.Agent.Core.Tool;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core.History;
 
@@ -43,15 +41,38 @@ public record CompletionDescriptor(
 /// 并为派生类定义了时间戳和类型等基本属性。静态历史记录与流式回放均通过此类型与 <see cref="IHistoryMessage"/> 接口进行交互。
 /// </summary>
 public abstract record class HistoryEntry {
+    private ulong _serial;
+
     /// <summary>
     /// 获取或初始化历史事件发生的时间。默认为对象创建时的当前时间，但在历史回放等场景下可以被覆盖。
     /// </summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.Now;
 
     /// <summary>
+    /// 获取当前历史条目的序列号，序列号在追加至 <see cref="AgentState"/> 时赋值。
+    /// </summary>
+    /// <exception cref="InvalidOperationException">在条目尚未被追加时访问。</exception>
+    public ulong Serial => _serial != 0
+        ? _serial
+        : throw new InvalidOperationException("HistoryEntry serial has not been assigned yet. Append the entry to AgentState before reading the serial.");
+
+    /// <summary>
     /// 派生类必须声明其在强化学习（RL）语境下的语义类型，供上层策略和存档系统使用。
     /// </summary>
     public abstract HistoryEntryKind Kind { get; }
+
+    /// <summary>
+    /// （内部方法）为历史条目指定序列号，仅允许赋值一次且必须大于零。
+    /// </summary>
+    /// <param name="serial">由 <see cref="AgentState"/> 管理的递增序列值。</param>
+    /// <exception cref="ArgumentOutOfRangeException">当传入的序列号小于等于零。</exception>
+    /// <exception cref="InvalidOperationException">当尝试重复赋值时。</exception>
+    internal void AssignSerial(ulong serial) {
+        if (serial == 0) { throw new ArgumentOutOfRangeException(nameof(serial), "HistoryEntry serial must be greater than zero."); }
+        if (_serial != 0) { throw new InvalidOperationException($"HistoryEntry serial is already assigned (current={_serial})."); }
+
+        _serial = serial;
+    }
 }
 
 /// <summary>
@@ -76,12 +97,22 @@ public sealed record ActionEntry(
 /// <summary>
 /// 作为观测类历史条目的基类，用于聚合多种形式的观测数据，如系统通知、窗口渲染和工具结果等。
 /// </summary>
-/// <param name="Notifications">可根据细节等级（Level of Detail）进行裁剪的通知内容。</param>
-public record class ObservationEntry(
-    LevelOfDetailContent? Notifications = null
-) : HistoryEntry {
+public record class ObservationEntry : HistoryEntry {
+    private LevelOfDetailContent? _notifications;
+    private bool _notificationsAssigned;
+
+    /// <summary>
+    /// 初始化空的观测条目。
+    /// </summary>
+    public ObservationEntry() { }
+
     /// <inheritdoc />
     public override HistoryEntryKind Kind => HistoryEntryKind.Observation;
+
+    /// <summary>
+    /// 获取当前条目的通知内容。
+    /// </summary>
+    public LevelOfDetailContent? Notifications => _notifications;
 
     /// <summary>
     /// 将内部存储的观测数据转换为 <see cref="ObservationMessage"/>，以供补全（Completion）层或外部策略使用。
@@ -97,6 +128,20 @@ public record class ObservationEntry(
             Timestamp: Timestamp,
             Contents: contents
         );
+    }
+
+    /// <summary>
+    /// （内部方法）将通知内容设置为指定值，标记为最终状态，仅允许调用一次。
+    /// </summary>
+    /// <param name="notifications">新的通知内容。</param>
+    /// <exception cref="ArgumentNullException">当传入的通知内容为 <c>null</c> 时抛出。</exception>
+    /// <exception cref="InvalidOperationException">当通知内容已被设置过。</exception>
+    internal void AssignNotifications(LevelOfDetailContent notifications) {
+        if (notifications is null) { throw new ArgumentNullException(nameof(notifications)); }
+        if (_notificationsAssigned) { throw new InvalidOperationException("ObservationEntry notifications have already been assigned."); }
+
+        _notifications = notifications;
+        _notificationsAssigned = true;
     }
 
     /// <summary>
@@ -128,16 +173,32 @@ public record class ObservationEntry(
 /// 表示一个包含工具执行结果的观测条目。
 /// 此类型既兼容聊天（Chat）范式中的工具输出，又能在强化学习（RL）语境下被统一解释为"环境反馈"。
 /// </summary>
-/// <param name="Results">按不同细节等级存储的工具调用结果列表。</param>
-/// <param name="ExecuteError">工具执行过程中产生的错误信息。</param>
-/// <param name="Notifications">与此次工具执行相关的附带通知信息。</param>
-public sealed record ToolEntry(
-    IReadOnlyList<LodToolCallResult> Results,
-    string? ExecuteError,
-    LevelOfDetailContent? Notifications = null
-) : ObservationEntry(Notifications) {
+public sealed record class ToolResultsEntry : ObservationEntry {
+    /// <summary>
+    /// 初始化工具结果条目。
+    /// </summary>
+    /// <param name="results">按不同细节等级存储的工具调用结果列表。</param>
+    /// <param name="executeError">工具执行过程中产生的错误信息。</param>
+    public ToolResultsEntry(
+        IReadOnlyList<LodToolCallResult> results,
+        string? executeError
+    ) {
+        Results = results ?? throw new ArgumentNullException(nameof(results));
+        ExecuteError = executeError;
+    }
+
     /// <inheritdoc />
     public override HistoryEntryKind Kind => HistoryEntryKind.ToolResults;
+
+    /// <summary>
+    /// 获取工具调用结果列表。
+    /// </summary>
+    public IReadOnlyList<LodToolCallResult> Results { get; init; }
+
+    /// <summary>
+    /// 获取工具执行错误信息。
+    /// </summary>
+    public string? ExecuteError { get; init; }
 
     /// <summary>
     /// 将此条目投影为 <see cref="ToolResultsMessage"/>，并根据指定的细节等级裁剪结果内容。

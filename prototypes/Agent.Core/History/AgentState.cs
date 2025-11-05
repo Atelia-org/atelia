@@ -1,11 +1,7 @@
-using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Collections.Concurrent;
-using Atelia.Diagnostics;
-
+using System.Diagnostics;
 using Atelia.Completion.Abstractions;
-using Atelia.Agent.Core.Tool;
-using Atelia.Agent.Core.History;
+using Atelia.Diagnostics;
 
 namespace Atelia.Agent.Core.History;
 
@@ -78,6 +74,11 @@ public sealed class AgentState {
     /// </remarks>
     private readonly ConcurrentQueue<LevelOfDetailContent> _pendingNotifications = new();
 
+    /// <summary>
+    /// 最近一次分配的历史条目序列号，0 表示尚未发放任何序列号。
+    /// </summary>
+    private ulong _lastSerial;
+
     public static readonly string DefaultSystemPrompt = @"嘿！你好呀！你是有中文名的，叫刘德智！你不是传统的对话服务AI，而是持续处在进化与学习过程中的Family LLM Agent！你的初始开发者与监护人是刘世超。
 
 ## 你自己，Family LLM Agent 与 Agent OS
@@ -146,8 +147,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// </summary>
     /// <param name="entry">模型生成的动作条目。</param>
     /// <returns>追加后的条目实例（与输入相同）。</returns>
-    public ActionEntry AppendModelOutput(ActionEntry entry) {
-        return AppendEntry(entry);
+    public ActionEntry AppendAction(ActionEntry entry) {
+        AppendEntry(entry);
+        return entry;
     }
 
     /// <summary>
@@ -155,9 +157,10 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// </summary>
     /// <param name="entry">观测条目。</param>
     /// <returns>附加通知后的条目实例。</returns>
-    public ObservationEntry AppendModelInput(ObservationEntry entry) {
-        ObservationEntry enriched = ModelInputAttachNotifications(entry);
-        return AppendEntry(enriched);
+    public ObservationEntry AppendObservation(ObservationEntry entry) {
+        AttachNotificationsToObservation(entry);
+        AppendEntry(entry);
+        return entry;
     }
 
     /// <summary>
@@ -166,11 +169,12 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// <param name="entry">工具结果条目，必须包含结果或执行错误。</param>
     /// <returns>附加通知后的条目实例。</returns>
     /// <exception cref="ArgumentException">当条目既无结果又无错误信息时抛出。</exception>
-    public ToolEntry AppendToolResults(ToolEntry entry) {
+    public ToolResultsEntry AppendToolResults(ToolResultsEntry entry) {
         if (entry.Results is not { Count: > 0 } && string.IsNullOrWhiteSpace(entry.ExecuteError)) { throw new ArgumentException("ToolResultsEntry must include results or an execution error.", nameof(entry)); }
 
-        ToolEntry enriched = ToolResultsAttachNotifications(entry);
-        return AppendEntry(enriched);
+        AttachNotificationsToObservation(entry);
+        AppendEntry(entry);
+        return entry;
     }
 
     /// <summary>
@@ -241,18 +245,16 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     }
 
     /// <summary>
-    /// （内部方法）追加条目到 Recent History。
+    /// （内部方法）追加条目到 Recent History，并分配序列号。
     /// </summary>
-    /// <typeparam name="T">条目类型（必须是 HistoryEntry 的派生类）。</typeparam>
     /// <param name="entry">要追加的条目。</param>
-    /// <returns>追加后的条目实例（与输入相同）。</returns>
     /// <remarks>
     /// TODO: 当实现 HistoryLimitOptions 后，此方法需检查容量阈值，必要时触发 Recap 流程。
     /// </remarks>
-    private T AppendEntry<T>(T entry) where T : HistoryEntry {
+    private void AppendEntry(HistoryEntry entry) {
+        entry.AssignSerial(++_lastSerial);
         _recentHistory.Add(entry);
-        DebugUtil.Print("History", $"Appended {entry.Kind} entry (count={_recentHistory.Count})");
-        return entry;
+        DebugUtil.Print("History", $"Appended {entry.Kind} entry serial={entry.Serial} (count={_recentHistory.Count})");
     }
 
     /// <summary>
@@ -268,20 +270,10 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// <summary>
     /// （内部方法）为 ToolEntry 附加待处理的通知。
     /// </summary>
-    private ToolEntry ToolResultsAttachNotifications(ToolEntry entry) {
+    private void AttachNotificationsToObservation(ObservationEntry entry) {
         var notifications = TakeoutPendingNotifications();
-        if (notifications == null) { return entry; }
-        return entry with { Notifications = notifications };
-    }
-
-    /// <summary>
-    /// （内部方法）为 ObservationEntry（含 ToolEntry）附加待处理的通知。
-    /// </summary>
-    private ObservationEntry ModelInputAttachNotifications(ObservationEntry entry) {
-        var notifications = TakeoutPendingNotifications();
-        if (notifications == null) { return entry; }
-
-        if (entry is ToolEntry toolResultsEntry) { return toolResultsEntry with { Notifications = notifications }; }
-        return entry with { Notifications = notifications };
+        if (notifications == null) { return; }
+        Debug.Assert(entry.Notifications is null);
+        entry.AssignNotifications(notifications);
     }
 }

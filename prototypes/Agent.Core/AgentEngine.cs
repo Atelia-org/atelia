@@ -1,14 +1,9 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Atelia.Diagnostics;
-using Atelia.Completion.Abstractions;
 using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
+using Atelia.Completion.Abstractions;
+using Atelia.Diagnostics;
 
 namespace Atelia.Agent.Core;
 
@@ -356,7 +351,7 @@ public class AgentEngine {
 
         var last = _state.RecentHistory[^1];
         return last switch {
-            ToolEntry => AgentRunState.PendingToolResults,
+            ToolResultsEntry => AgentRunState.PendingToolResults,
             ObservationEntry => AgentRunState.PendingInput,
             ActionEntry outputEntry => DetermineOutputState(outputEntry),
             _ => AgentRunState.WaitingInput
@@ -400,7 +395,7 @@ public class AgentEngine {
         }
 
         var inputEntry = args.InputEntry ?? new ObservationEntry();
-        var appended = _state.AppendModelInput(inputEntry);
+        var appended = _state.AppendObservation(inputEntry);
 
         DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
 
@@ -433,7 +428,7 @@ public class AgentEngine {
 
         _pendingToolResults.Clear();
 
-        var appended = _state.AppendModelOutput(aggregatedOutput);
+        var appended = _state.AppendAction(aggregatedOutput);
 
         var afterArgs = new AfterModelCallEventArgs(state, args.Profile, appended);
         OnAfterModelCall(afterArgs);
@@ -508,7 +503,7 @@ public class AgentEngine {
             : failure.Result.GetContent(LevelOfDetail.Basic);
 
         var results = collectedResults.ToArray();
-        var entry = new ToolEntry(results, executeError);
+        var entry = new ToolResultsEntry(results, executeError);
 
         var appended = AppendToolResultsWithSummary(entry);
         _pendingToolResults.Clear();
@@ -540,7 +535,7 @@ public class AgentEngine {
         return true;
     }
 
-    private ToolEntry AppendToolResultsWithSummary(ToolEntry entry) {
+    private ToolResultsEntry AppendToolResultsWithSummary(ToolResultsEntry entry) {
         return _state.AppendToolResults(entry);
     }
 
@@ -562,7 +557,7 @@ public class AgentEngine {
         bool ProgressMade,
         ObservationEntry? Input,
         ActionEntry? Output,
-        ToolEntry? ToolResults
+        ToolResultsEntry? ToolResults
     ) {
         public static StepOutcome NoProgress => default;
 
@@ -572,7 +567,7 @@ public class AgentEngine {
         public static StepOutcome FromOutput(ActionEntry output)
             => new(true, null, output, null);
 
-        public static StepOutcome FromToolResults(ToolEntry toolResults)
+        public static StepOutcome FromToolResults(ToolResultsEntry toolResults)
             => new(true, null, null, toolResults);
 
         public static StepOutcome FromToolExecution()
