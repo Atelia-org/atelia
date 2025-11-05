@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Atelia.Completion.Abstractions;
@@ -148,7 +149,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// <param name="entry">模型生成的动作条目。</param>
     /// <returns>追加后的条目实例（与输入相同）。</returns>
     public ActionEntry AppendAction(ActionEntry entry) {
-        AppendEntry(entry);
+        if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
+        ValidateAppendOrder(entry);
+        AppendEntryCore(entry);
         return entry;
     }
 
@@ -158,8 +161,10 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// <param name="entry">观测条目。</param>
     /// <returns>附加通知后的条目实例。</returns>
     public ObservationEntry AppendObservation(ObservationEntry entry) {
+        if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
+        ValidateAppendOrder(entry);
         AttachNotificationsToObservation(entry);
-        AppendEntry(entry);
+        AppendEntryCore(entry);
         return entry;
     }
 
@@ -170,10 +175,11 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// <returns>附加通知后的条目实例。</returns>
     /// <exception cref="ArgumentException">当条目既无结果又无错误信息时抛出。</exception>
     public ToolResultsEntry AppendToolResults(ToolResultsEntry entry) {
+        if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         if (entry.Results is not { Count: > 0 } && string.IsNullOrWhiteSpace(entry.ExecuteError)) { throw new ArgumentException("ToolResultsEntry must include results or an execution error.", nameof(entry)); }
-
+        ValidateAppendOrder(entry);
         AttachNotificationsToObservation(entry);
-        AppendEntry(entry);
+        AppendEntryCore(entry);
         return entry;
     }
 
@@ -219,6 +225,23 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     }
 
     /// <summary>
+    /// 生成用于编辑 Recap 的快照。
+    /// </summary>
+    internal RecapBuilder GetRecapBuilder() {
+        throw new NotImplementedException("Recap snapshot construction will be implemented alongside RecapMaintainer.");
+    }
+
+    /// <summary>
+    /// 将编辑完成的 RecapBuilder 结果提交回 AgentState。
+    /// </summary>
+    /// <param name="builder">由 <see cref="GetRecapBuilder"/> 生成并已编辑完成的快照。</param>
+    internal RecapCommitResult CommitRecapBuilder(RecapBuilder builder) {
+        if (builder is null) { throw new ArgumentNullException(nameof(builder)); }
+
+        throw new NotImplementedException("Recap commit pipeline is not ready yet.");
+    }
+
+    /// <summary>
     /// （内部方法）取出并聚合所有待处理的通知。
     /// </summary>
     /// <returns>聚合后的通知内容，若无待处理通知则返回 <c>null</c>。</returns>
@@ -251,11 +274,30 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// <remarks>
     /// TODO: 当实现 HistoryLimitOptions 后，此方法需检查容量阈值，必要时触发 Recap 流程。
     /// </remarks>
-    private void AppendEntry(HistoryEntry entry) {
+    private void AppendEntryCore(HistoryEntry entry) {
+        // 所有 HistoryEntry 的序列号都在此处统一递增分配，保持 RecentHistory 中的自然时间顺序。
         entry.AssignSerial(++_lastSerial);
         _recentHistory.Add(entry);
         DebugUtil.Print("History", $"Appended {entry.Kind} entry serial={entry.Serial} (count={_recentHistory.Count})");
     }
+
+    private void ValidateAppendOrder(HistoryEntry entry) {
+        if (_recentHistory.Count == 0) {
+            if (!IsObservationLike(entry)) { throw new InvalidOperationException("The first history entry must be an observation-like entry."); }
+            return;
+        }
+
+        var last = _recentHistory[^1];
+        var lastIsObservation = IsObservationLike(last);
+        var nextIsObservation = IsObservationLike(entry);
+
+        // 这里强制 Observation ↔ Action 的交替顺序，一方面让 AgentEngine 的状态机有稳定前提，
+        // 另一方面也为 RecapBuilder 等只读视图提供“交错配对”的结构保障。
+        if (lastIsObservation == nextIsObservation) { throw new InvalidOperationException($"History entries must alternate between observation-like and action entries. Last={last.Kind}, Next={entry.Kind}"); }
+    }
+
+    private static bool IsObservationLike(HistoryEntry entry)
+        => entry.Kind is HistoryEntryKind.Observation or HistoryEntryKind.ToolResults or HistoryEntryKind.Recap;
 
     /// <summary>
     /// 根据条目在 Recent History 中的位置，解析其应使用的细节级别。
@@ -276,4 +318,14 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         Debug.Assert(entry.Notifications is null);
         entry.AssignNotifications(notifications);
     }
+
+    /// <summary>
+    /// Recap 提交后的占位结果类型。
+    /// </summary>
+    public readonly record struct RecapCommitResult(
+        ulong RecapEntrySerial,
+        int RemovedEntryCount,
+        // 考虑到主要用户时执行Recap任务的LLM，如果有异常就返回报错文本，应该是比抛异常更友好的反馈方式。
+        string? ErrorMessage
+    );
 }

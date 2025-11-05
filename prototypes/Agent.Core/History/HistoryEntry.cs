@@ -20,7 +20,8 @@ public enum HistoryEntryKind {
     /// <summary>
     /// 表示工具执行后的补充观测。
     /// </summary>
-    ToolResults
+    ToolResults,
+    Recap
 }
 
 /// <summary>
@@ -247,4 +248,12 @@ public sealed record class ToolResultsEntry : ObservationEntry {
 
         return builder.MoveToImmutable();
     }
+
+}
+
+public sealed record class RecapEntry(
+    string Contents,
+    ulong InsteadSerial
+) : HistoryEntry {
+    public override HistoryEntryKind Kind => HistoryEntryKind.Recap;
 }
