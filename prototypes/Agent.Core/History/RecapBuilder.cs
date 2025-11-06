@@ -207,7 +207,7 @@ internal sealed class RecapBuilder {
     private static string ExtractRecapText(HistoryEntry firstEntry)
         => firstEntry switch {
             ObservationEntry observation => observation?.Notifications?.Detail ?? EmptyRecap,
-            RecapEntry recapEntry => recapEntry.Contents ?? EmptyRecap,
+            RecapEntry recapEntry => recapEntry.Content ?? EmptyRecap,
             _ => throw new ArgumentException("The first history entry must be an ObservationEntry or RecapEntry to provide recap text.")
         };
 

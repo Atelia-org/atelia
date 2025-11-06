@@ -105,7 +105,7 @@ public sealed class TokenEstimateHelper {
     private uint EstimateAction(ActionEntry action) {
         uint total = 0;
 
-        total += EstimateString(action.Contents);
+        total += EstimateString(action.Content);
         total += EstimateToolCalls(action.ToolCalls);
         // total += EstimateCompletionDescriptor(action.Invocation); action.Invocation是History层元信息，不会序列化到LLM调用上下文中
 
@@ -141,7 +141,7 @@ public sealed class TokenEstimateHelper {
     private uint EstimateRecap(RecapEntry recap) {
         uint total = 0;
 
-        total += EstimateString(recap.Contents);
+        total += EstimateString(recap.Content);
         // total += EstimateUnsigned(recap.InsteadSerial); 元信息，不会序列化到LLM调用上下文中
 
         return total;

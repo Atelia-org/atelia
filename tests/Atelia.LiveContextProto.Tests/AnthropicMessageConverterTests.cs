@@ -28,7 +28,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var historyEntry = new ActionEntry(
-            Contents: string.Empty,
+            Content: string.Empty,
             ToolCalls: new[] { toolCall },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
@@ -72,7 +72,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var historyEntry = new ActionEntry(
-            Contents: "call",
+            Content: "call",
             ToolCalls: new[] { toolCall },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
@@ -108,7 +108,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var historyEntry = new ActionEntry(
-            Contents: "call",
+            Content: "call",
             ToolCalls: new[] { toolCall },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );

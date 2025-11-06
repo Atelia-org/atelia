@@ -16,7 +16,7 @@ internal static class CompletionAccumulator {
         CompletionDescriptor invocation,
         CancellationToken cancellationToken
     ) {
-        var contents = new List<string>();
+        var content = new List<string>();
         var toolCalls = new List<ParsedToolCall>();
         var contentBuilder = new StringBuilder();
         TokenUsage? tokenUsage = null;
@@ -24,7 +24,7 @@ internal static class CompletionAccumulator {
         void CommitPendingContent() {
             if (contentBuilder.Length == 0) { return; }
 
-            contents.Add(contentBuilder.ToString());
+            content.Add(contentBuilder.ToString());
             contentBuilder.Clear();
         }
 
@@ -58,9 +58,9 @@ internal static class CompletionAccumulator {
 
         CommitPendingContent();
 
-        if (contents.Count == 0 && toolCalls.Count == 0) {
+        if (content.Count == 0 && toolCalls.Count == 0) {
             // Guarantee at least one content slot for downstream consumers.
-            contents.Add(string.Empty);
+            content.Add(string.Empty);
         }
 
         foreach (var call in toolCalls) {
@@ -69,7 +69,7 @@ internal static class CompletionAccumulator {
             }
         }
 
-        var fullContentText = string.Join('\n', contents);
+        var fullContentText = string.Join('\n', content);
         var outputEntry = new ActionEntry(fullContentText, toolCalls, invocation);
 
         DebugUtil.Print(DebugCategory, $"[Aggregate] Produced output fullContentText.Length={fullContentText.Length}, toolCalls={toolCalls.Count}");

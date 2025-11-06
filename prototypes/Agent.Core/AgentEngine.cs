@@ -434,7 +434,7 @@ public class AgentEngine {
         OnAfterModelCall(afterArgs);
 
         var toolCallCount = appended.ToolCalls?.Count ?? 0;
-        DebugUtil.Print(ProviderDebugCategory, $"[Engine] Model output appended Contents.Length={appended.Contents.Length} toolCalls={toolCallCount}");
+        DebugUtil.Print(ProviderDebugCategory, $"[Engine] Model output appended Content.Length={appended.Content.Length} toolCalls={toolCallCount}");
 
         return StepOutcome.FromOutput(appended);
     }

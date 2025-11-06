@@ -99,18 +99,18 @@ public abstract record class HistoryEntry : ITokenEstimateSource {
 /// <summary>
 /// 表示 Agent 的一个动作条目，它封装了聊天（Chat）范式中助手的回复，包括文本内容和工具调用。
 /// </summary>
-/// <param name="Contents">模型生成的文本内容，即动作的一部分。</param>
+/// <param name="Content">模型生成的文本内容，即动作的一部分。</param>
 /// <param name="ToolCalls">伴随文本内容产生的工具调用请求列表。</param>
 /// <param name="Invocation">记录生成此次动作所使用的模型来源信息。</param>
 public sealed record ActionEntry(
-    string Contents,
+    string Content,
     IReadOnlyList<ParsedToolCall> ToolCalls,
     CompletionDescriptor Invocation
 ) : HistoryEntry, IActionMessage {
     /// <inheritdoc />
     public override HistoryEntryKind Kind => HistoryEntryKind.Action;
     HistoryMessageKind IHistoryMessage.Kind => HistoryMessageKind.Action;
-    string IActionMessage.Contents => Contents;
+    string IActionMessage.Content => Content;
     IReadOnlyList<ParsedToolCall> IActionMessage.ToolCalls => ToolCalls;
 }
 
@@ -143,11 +143,11 @@ public record class ObservationEntry : HistoryEntry {
     /// <param name="windows">由外部渲染好的窗口状态描述。</param>
     public virtual ObservationMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
         var notificationText = Notifications?.GetContent(detailLevel);
-        var contents = MergeContents(notificationText, windows);
+        var content = MergeContent(notificationText, windows);
 
         return new ObservationMessage(
             Timestamp: Timestamp,
-            Contents: contents
+            Content: content
         );
     }
 
@@ -171,7 +171,7 @@ public record class ObservationEntry : HistoryEntry {
     /// <param name="notifications">可选的通知内容。</param>
     /// <param name="windows">可选的窗口内容。</param>
     /// <returns>合并后的内容字符串；若两者均为空，则返回其中一个原值（可能为 <c>null</c>）。</returns>
-    protected static string? MergeContents(string? notifications, string? windows) {
+    protected static string? MergeContent(string? notifications, string? windows) {
         List<string>? parts = null;
 
         if (!string.IsNullOrWhiteSpace(notifications)) {
@@ -231,7 +231,7 @@ public sealed record class ToolResultsEntry : ObservationEntry {
 
         return new ToolResultsMessage(
             Timestamp: Timestamp,
-            Contents: MergeContents(Notifications?.GetContent(detailLevel), windows),
+            Content: MergeContent(Notifications?.GetContent(detailLevel), windows),
             Results: projectedResults,
             ExecuteError: ExecuteError
         );
@@ -272,7 +272,7 @@ public sealed record class ToolResultsEntry : ObservationEntry {
 }
 
 public sealed record class RecapEntry(
-    string Contents,
+    string Content,
     ulong InsteadSerial
 ) : HistoryEntry {
     public override HistoryEntryKind Kind => HistoryEntryKind.Recap;
