@@ -249,11 +249,13 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (string.IsNullOrEmpty(builder.RecapText)) { return new RecapCommitResult(0, 0, "Recap text should not be null or empty."); }
 
         // 2. 验证PendingPairs区间仍在_recentHistory中。
-        if (!builder.HasPendingPairs) { return new RecapCommitResult(0, 0, "Recap builder must retain at least one pending action/observation pair."); }
+        // 注：由于 RecapBuilder.CreateSnapshot 和 TryDequeueNextPair 已保证至少有一个 pending pair，
+        // 此检查主要作为防御性编程，捕获潜在的并发问题或异常状态。
+        if (!builder.HasPendingPairs) { return new RecapCommitResult(0, 0, "Recap builder must retain at least one pending action/observation pair (this should not happen under normal circumstances)."); }
         if (builder.FirstPendingSerial < _recentHistory[0].Serial) { return new RecapCommitResult(0, 0, "Recap builder out of date; 要保留的首条Entry已不在RecentHistory中。"); }
         if (_recentHistory[^1].Serial < builder.LastPendingSerial) { return new RecapCommitResult(0, 0, "Recap builder out of date; 要保留的最后一条Entry已不在RecentHistory中。"); }
 
-        ulong firstPendingSerial = builder.FirstPendingSerial!.Value;
+        ulong firstPendingSerial = builder.FirstPendingSerial;
 
         // 3. 定位待保留区域的起始位置
         int firstPendingIndex = -1;

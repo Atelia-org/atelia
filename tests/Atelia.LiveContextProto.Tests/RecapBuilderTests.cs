@@ -39,7 +39,6 @@ public class RecapBuilderTests {
         Assert.True(dequeued.HasValue);
         Assert.Equal((uint)30, dequeued.Value.TokenEstimate);
         Assert.Equal(initialTotal - dequeued.Value.TokenEstimate, builder.CurrentTokenEstimate);
-        Assert.NotNull(builder.FirstPendingSerial);
         Assert.Equal(builder.PendingPairs[0].Action.Serial, builder.FirstPendingSerial);
 
         Assert.False(builder.TryDequeueNextPair(out _));
@@ -64,19 +63,33 @@ public class RecapBuilderTests {
     }
 
     [Fact]
-    public void CurrentTokenEstimate_NoPendingPairs_ReturnsRecapTokens() {
-        using var estimatorScope = TokenEstimateHelper.GetDefault().BeginScopedOverride(new PassthroughTokenEstimator());
-
+    public void CreateSnapshot_WithRecapOnlyEntry_ShouldThrow() {
         const string recapText = "ABCD";
+
         var recapEntry = new RecapEntry(recapText, 0);
         recapEntry.AssignSerial(1);
         recapEntry.AssignTokenEstimate((uint)recapText.Length);
 
-        var builder = RecapBuilder.CreateSnapshot(Array.AsReadOnly(new HistoryEntry[] { recapEntry }));
+        var entries = Array.AsReadOnly(new HistoryEntry[] { recapEntry });
 
-        Assert.False(builder.HasPendingPairs);
-        Assert.Equal((uint)recapText.Length, builder.CurrentTokenEstimate);
-        Assert.Equal(builder.RecapTokenEstimate, builder.CurrentTokenEstimate);
+        Assert.Throws<InvalidOperationException>(() => RecapBuilder.CreateSnapshot(entries));
+    }
+
+    [Fact]
+    public void CreateSnapshot_WithRecapAndActionOnly_ShouldThrow() {
+        var descriptor = new CompletionDescriptor("Provider", "Spec", "Model");
+
+        var recapEntry = new RecapEntry("Recap", 0);
+        recapEntry.AssignSerial(1);
+        recapEntry.AssignTokenEstimate(5);
+
+        var actionEntry = new ActionEntry("Action", ImmutableArray<ParsedToolCall>.Empty, descriptor);
+        actionEntry.AssignSerial(2);
+        actionEntry.AssignTokenEstimate(10);
+
+        var entries = Array.AsReadOnly(new HistoryEntry[] { recapEntry, actionEntry });
+
+        Assert.Throws<InvalidOperationException>(() => RecapBuilder.CreateSnapshot(entries));
     }
 
     private static RecapBuilder CreateBuilderWithTwoPairs(string recapText) {

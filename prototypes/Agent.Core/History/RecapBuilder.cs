@@ -42,9 +42,23 @@ internal sealed class RecapBuilder {
     /// 创建 RecapBuilder 快照，通常由 <see cref="AgentState"/> 调用。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 该方法假定 <paramref name="entries"/> 中的每个条目都已调用
     /// <see cref="HistoryEntry.AssignTokenEstimate(uint)"/> 完成 token 估算；
     /// 确保这一前提是调用方的责任。
+    /// </para>
+    /// <para>
+    /// <strong>设计约束：必须至少有一个 Action/Observation 对</strong>
+    /// </para>
+    /// <para>
+    /// RecapMaintainer 不应该将 Agent 的所有工作记忆压缩光，否则会导致：
+    /// <list type="bullet">
+    ///   <item><description>工作记忆完全变成模糊的摘要，丧失具体上下文</description></item>
+    ///   <item><description><see cref="AgentState.RenderLiveContext"/> 无法注入 windows 文本（依赖至少一个 Observation）</description></item>
+    ///   <item><description>违反"短期记忆 + 中期摘要 + 长期归档"的分层架构原则</description></item>
+    /// </list>
+    /// 因此，此方法在快照创建阶段就阻止空 PendingList 的情况（Fail-fast）。
+    /// </para>
     /// </remarks>
     internal static RecapBuilder CreateSnapshot(IReadOnlyList<HistoryEntry> entries) {
         if (entries is null) { throw new ArgumentNullException(nameof(entries)); }
@@ -52,6 +66,15 @@ internal sealed class RecapBuilder {
 
         var recapText = ExtractRecapText(entries[0]);
         var pairs = BuildActionObservationPairs(entries);
+
+        // 强制要求至少有一个 pair，确保 RecapMaintainer 不会压缩光所有工作记忆。
+        // 此检查在创建时即拦截异常情况（Fail-fast），避免后续逻辑复杂化。
+        if (pairs.IsEmpty) {
+            throw new InvalidOperationException(
+                "Cannot create recap builder: history must contain at least one action/observation pair. " +
+                "RecapMaintainer should not digest all working memory into a recap."
+            );
+        }
 
         return new RecapBuilder(recapText, pairs);
     }
@@ -130,8 +153,12 @@ internal sealed class RecapBuilder {
     /// </summary>
     /// <param name="pair">返回被取出的条目；若队列为空则为 <c>null</c>。</param>
     /// <returns>当成功取出条目时返回 <c>true</c>。</returns>
+    /// <remarks>
+    /// 必须至少保留一个 pair，确保 CommitRecapBuilder 时有可用的待保留区域。
+    /// </remarks>
     public bool TryDequeueNextPair(out ActionObservationPair? pair) {
-        if (!HasPendingPairs || (_pairs.Length > 0 && PendingPairCount <= 1)) {
+        // 由于 CreateSnapshot 保证 _pairs.Length >= 1，这里只需检查 PendingPairCount
+        if (PendingPairCount <= 1) {
             pair = null;
             return false;
         }
@@ -148,14 +175,21 @@ internal sealed class RecapBuilder {
     public int PendingPairCount => TotalPairCount - _dequeuedCount;
 
     /// <summary>
-    /// 当前未触碰区域（待保留区间）的起始Entry序列号。序列号由 AgentState.AppendEntryCore 统一递增分配，且 RecapBuilder 快照只读，因此首尾 pair 的 Serial 即可准确反映期望保留的历史范围。
+    /// 当前未触碰区域（待保留区间）的起始 Entry 序列号。
     /// </summary>
-    public ulong? FirstPendingSerial => HasPendingPairs ? _pairs[_dequeuedCount].Action.Serial : null;
+    /// <remarks>
+    /// 由于 <see cref="CreateSnapshot"/> 保证至少有一个 pair，且 <see cref="TryDequeueNextPair"/>
+    /// 阻止消化最后一个 pair，因此此属性始终有效，不需要可空检查。
+    /// </remarks>
+    public ulong FirstPendingSerial => _pairs[_dequeuedCount].Action.Serial;
 
     /// <summary>
-    /// 期望保留区间的末尾Entry序列号。序列号由 AgentState.AppendEntryCore 统一递增分配，且 RecapBuilder 快照只读，因此首尾 pair 的 Serial 即可准确反映期望保留的历史范围。
+    /// 期望保留区间的末尾 Entry 序列号。
     /// </summary>
-    public ulong? LastPendingSerial => HasPendingPairs ? _pairs[^1].Observation.Serial : null;
+    /// <remarks>
+    /// 由于 <see cref="CreateSnapshot"/> 保证至少有一个 pair，因此此属性始终有效。
+    /// </remarks>
+    public ulong LastPendingSerial => _pairs[^1].Observation.Serial;
 
     /// <summary>
     /// 当前快照是否存在任何改动（Recap 文本被修改或条目被消费）。
