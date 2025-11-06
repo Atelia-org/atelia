@@ -275,10 +275,45 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// TODO: 当实现 HistoryLimitOptions 后，此方法需检查容量阈值，必要时触发 Recap 流程。
     /// </remarks>
     private void AppendEntryCore(HistoryEntry entry) {
+        var tokenEstimate = TryEstimateTokens(entry);
+
+        if (tokenEstimate.HasValue) {
+            TryAssignTokenEstimate(entry, tokenEstimate.Value);
+        }
+
         // 所有 HistoryEntry 的序列号都在此处统一递增分配，保持 RecentHistory 中的自然时间顺序。
         entry.AssignSerial(++_lastSerial);
         _recentHistory.Add(entry);
-        DebugUtil.Print("History", $"Appended {entry.Kind} entry serial={entry.Serial} (count={_recentHistory.Count})");
+
+        DebugUtil.Print(
+            "History",
+            $"Appended {entry.Kind} entry serial={entry.Serial} tokens={entry.TokenEstimate} (count={_recentHistory.Count})"
+        );
+    }
+
+    private static uint? TryEstimateTokens(HistoryEntry entry) {
+        try {
+            return TokenEstimateHelper.Estimate(entry);
+        }
+        catch (Exception estimationError) {
+            DebugUtil.Print(
+                "History",
+                $"Token estimation failed for entry kind={entry.Kind}: {estimationError.Message}"
+            );
+            return null;
+        }
+    }
+
+    private static void TryAssignTokenEstimate(HistoryEntry entry, uint tokenEstimate) {
+        try {
+            entry.AssignTokenEstimate(tokenEstimate);
+        }
+        catch (Exception assignError) {
+            DebugUtil.Print(
+                "History",
+                $"AssignTokenEstimate failed for entry kind={entry.Kind}: {assignError.Message}"
+            );
+        }
     }
 
     private void ValidateAppendOrder(HistoryEntry entry) {
