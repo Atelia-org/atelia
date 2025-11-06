@@ -29,21 +29,13 @@ internal sealed class RecapBuilder {
 
     private RecapBuilder(
         string recapText,
-        ImmutableArray<ActionObservationPair> pairs,
-        ulong firstSerial,
-        ulong lastSerial
+        ImmutableArray<ActionObservationPair> pairs
     ) {
         RecapText = recapText ?? string.Empty;
         _originalRecapText = RecapText;
         _pairs = pairs;
-        FirstSerial = firstSerial;
-        LastSerial = lastSerial;
         _pendingPairsView = new PendingPairList(this);
         _recapTokenEstimate = NormalizeEstimate(TokenEstimateHelper.GetDefault().EstimateString(RecapText));
-
-        if (TotalPairCount > 0 && firstSerial == 0) { throw new ArgumentOutOfRangeException(nameof(firstSerial), "First serial must be greater than zero when pairs are present."); }
-
-        if (TotalPairCount > 0 && lastSerial < firstSerial) { throw new ArgumentOutOfRangeException(nameof(lastSerial), "Last serial must be greater than or equal to first serial."); }
     }
 
     /// <summary>
@@ -59,9 +51,9 @@ internal sealed class RecapBuilder {
         if (entries.Count == 0) { throw new ArgumentException("History entry snapshot cannot be empty.", nameof(entries)); }
 
         var recapText = ExtractRecapText(entries[0]);
-        var (pairs, firstSerial, lastSerial) = BuildActionObservationPairs(entries);
+        var pairs = BuildActionObservationPairs(entries);
 
-        return new RecapBuilder(recapText, pairs, firstSerial, lastSerial);
+        return new RecapBuilder(recapText, pairs);
     }
 
     /// <summary>
@@ -70,29 +62,9 @@ internal sealed class RecapBuilder {
     public string RecapText { get; private set; }
 
     /// <summary>
-    /// 快照创建时的原始 Recap 文本。
-    /// </summary>
-    public string OriginalRecapText => _originalRecapText;
-
-    /// <summary>
-    /// 快照覆盖的历史起始序列号。
-    /// </summary>
-    public ulong FirstSerial { get; }
-
-    /// <summary>
-    /// 快照覆盖的历史结束序列号。
-    /// </summary>
-    public ulong LastSerial { get; }
-
-    /// <summary>
     /// 快照中记录的 Action/Observation 对总数。
     /// </summary>
     public int TotalPairCount => _pairs.IsDefault ? 0 : _pairs.Length;
-
-    /// <summary>
-    /// 已经被消费（Dequeued）的 Action/Observation 对数量。
-    /// </summary>
-    public int DequeuedPairCount => _dequeuedCount;
 
     /// <summary>
     /// 是否仍存在待处理的 Action/Observation 对。
@@ -176,14 +148,14 @@ internal sealed class RecapBuilder {
     public int PendingPairCount => TotalPairCount - _dequeuedCount;
 
     /// <summary>
-    /// 当前未触碰区域（待保留区间）的起始动作序列号。
+    /// 当前未触碰区域（待保留区间）的起始Entry序列号。序列号由 AgentState.AppendEntryCore 统一递增分配，且 RecapBuilder 快照只读，因此首尾 pair 的 Serial 即可准确反映期望保留的历史范围。
     /// </summary>
     public ulong? FirstPendingSerial => HasPendingPairs ? _pairs[_dequeuedCount].Action.Serial : null;
 
     /// <summary>
-    /// 当前未触碰区域（待保留区间）的起始 Action/Observation 对。
+    /// 期望保留区间的末尾Entry序列号。序列号由 AgentState.AppendEntryCore 统一递增分配，且 RecapBuilder 快照只读，因此首尾 pair 的 Serial 即可准确反映期望保留的历史范围。
     /// </summary>
-    public ActionObservationPair? FirstPendingPair => HasPendingPairs ? _pairs[_dequeuedCount] : null;
+    public ulong? LastPendingSerial => HasPendingPairs ? _pairs[^1].Observation.Serial : null;
 
     /// <summary>
     /// 当前快照是否存在任何改动（Recap 文本被修改或条目被消费）。
@@ -206,8 +178,8 @@ internal sealed class RecapBuilder {
             _ => throw new ArgumentException("The first history entry must be an ObservationEntry or RecapEntry to provide recap text.")
         };
 
-    private static (ImmutableArray<ActionObservationPair> Pairs, ulong FirstSerial, ulong LastSerial) BuildActionObservationPairs(IReadOnlyList<HistoryEntry> entries) {
-        if (entries.Count <= 1) { return (ImmutableArray<ActionObservationPair>.Empty, 0, 0); }
+    private static ImmutableArray<ActionObservationPair> BuildActionObservationPairs(IReadOnlyList<HistoryEntry> entries) {
+        if (entries.Count <= 1) { return ImmutableArray<ActionObservationPair>.Empty; }
 
         var capacity = Math.Max((entries.Count - 1) / 2, 0);
         var builder = ImmutableArray.CreateBuilder<ActionObservationPair>(capacity);
@@ -232,14 +204,9 @@ internal sealed class RecapBuilder {
             builder.Add(CreatePair(action, observation));
         }
 
-        if (builder.Count == 0) { return (ImmutableArray<ActionObservationPair>.Empty, 0, 0); }
+        if (builder.Count == 0) { return ImmutableArray<ActionObservationPair>.Empty; }
 
-        // 序列号由 AgentState.AppendEntryCore 统一递增分配，且 RecapBuilder 快照只读，
-        // 因此首尾 pair 的 Serial 即可准确反映快照覆盖的历史范围。
-        ulong firstSerial = builder[0].Action.Serial;
-        ulong lastSerial = builder[^1].Observation.Serial;
-
-        return (builder.MoveToImmutable(), firstSerial, lastSerial);
+        return builder.MoveToImmutable();
     }
 
     private static ActionObservationPair CreatePair(ActionEntry action, ObservationEntry observation) {

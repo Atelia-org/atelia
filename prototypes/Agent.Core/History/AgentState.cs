@@ -246,12 +246,12 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 
         // 1. 基本前置检查
         if (_recentHistory.Count == 0) { return new RecapCommitResult(0, 0, "Recent history is empty; cannot commit recap."); }
-        if (string.IsNullOrEmpty(builder.RecapText)) { return new RecapCommitResult(0, 0, "Recap builder should neither null nor empty."); }
+        if (string.IsNullOrEmpty(builder.RecapText)) { return new RecapCommitResult(0, 0, "Recap text should not be null or empty."); }
 
         // 2. 验证PendingPairs区间仍在_recentHistory中。
         if (!builder.HasPendingPairs) { return new RecapCommitResult(0, 0, "Recap builder must retain at least one pending action/observation pair."); }
         if (builder.FirstPendingSerial < _recentHistory[0].Serial) { return new RecapCommitResult(0, 0, "Recap builder out of date; 要保留的首条Entry已不在RecentHistory中。"); }
-        if (_recentHistory[0].Serial < builder.LastSerial) { return new RecapCommitResult(0, 0, "Recap builder out of date; 要保留的最后一条Entry已不在RecentHistory中。"); }
+        if (_recentHistory[^1].Serial < builder.LastPendingSerial) { return new RecapCommitResult(0, 0, "Recap builder out of date; 要保留的最后一条Entry已不在RecentHistory中。"); }
 
         ulong firstPendingSerial = builder.FirstPendingSerial!.Value;
 
@@ -271,15 +271,17 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         ulong replacedSerial = lastRemovedEntry.Serial;
         if (lastRemovedEntry is RecapEntry oldRecap) {
             Debug.Assert(oldRecap.InsteadSerial != 0); // 有本函数稍后创建RecapEntry时填入正确的replacedSerial保证
-            replacedSerial = oldRecap.InsteadSerial != 0 ? oldRecap.InsteadSerial : firstPendingSerial - 1; // 意外情况下回退到要保留的条目的前一个序列号
+            replacedSerial = oldRecap.InsteadSerial != 0 ? oldRecap.InsteadSerial : firstPendingSerial - 1; // 意外情况下回退到要保留的条目的前一个序列号。这里不能用lastRemovedEntry.Serial，因为lastRemovedEntry可能是一个RecapEntry，其Serial是比队尾的序列号还新的。
         }
 
-        // 5. 移除已消化的条目
+        // 5. 移除 [1, firstPendingIndex-1] 区间的条目（保留 [0] 和 [firstPendingIndex...]）
         int removedCount = firstPendingIndex;
-        _recentHistory.RemoveRange(1, firstPendingIndex);
+        if (firstPendingIndex > 1) {
+            _recentHistory.RemoveRange(1, firstPendingIndex - 1);
+        }
 
-        // 6. 创建并插入新的 RecapEntry
-        string recapContent = builder.RecapText!;// 由函数头部的检查保证
+        // 6. 替换第一个条目为新的 RecapEntry
+        string recapContent = builder.RecapText!; // 由函数头部的检查保证
         var newRecap = new RecapEntry(recapContent, replacedSerial);
 
         var tokenHelper = TokenEstimateHelper.GetDefault();
