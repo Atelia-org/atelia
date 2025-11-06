@@ -41,7 +41,7 @@ public record CompletionDescriptor(
 /// Agent 历史条目的抽象基类。它为强化学习（RL）序列中的所有事件提供了统一的元数据，
 /// 并为派生类定义了时间戳和类型等基本属性。静态历史记录与流式回放均通过此类型与 <see cref="IHistoryMessage"/> 接口进行交互。
 /// </summary>
-public abstract record class HistoryEntry {
+public abstract record class HistoryEntry : ITokenEstimateSource {
     /// <summary>
     /// 派生类必须声明其在强化学习（RL）语境下的语义类型，供上层策略和存档系统使用。
     /// </summary>

@@ -3,11 +3,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
-using Atelia.Agent.Core;
-using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core.History;
 
+// TODO: 评估要不要升级为反射API的核心类型，支持更全面的编辑操作。
 /// <summary>
 /// Recent History 的轻量级只读快照，供 RecapMaintainer 等组件在本地编辑 Recap 文本并标记
 /// 已消化的 Action/Observation 对。该类型不直接依赖 <see cref="AgentState"/>，提交逻辑由后者托管。
@@ -24,6 +23,7 @@ internal sealed class RecapBuilder {
     private readonly ImmutableArray<ActionObservationPair> _pairs;
     private readonly PendingPairList _pendingPairsView;
     private readonly string _originalRecapText;
+    private uint _recapTokenEstimate;
 
     private int _dequeuedCount;
 
@@ -39,6 +39,7 @@ internal sealed class RecapBuilder {
         FirstSerial = firstSerial;
         LastSerial = lastSerial;
         _pendingPairsView = new PendingPairList(this);
+        _recapTokenEstimate = NormalizeEstimate(TokenEstimateHelper.GetDefault().EstimateString(RecapText));
 
         if (TotalPairCount > 0 && firstSerial == 0) { throw new ArgumentOutOfRangeException(nameof(firstSerial), "First serial must be greater than zero when pairs are present."); }
 
@@ -48,6 +49,11 @@ internal sealed class RecapBuilder {
     /// <summary>
     /// 创建 RecapBuilder 快照，通常由 <see cref="AgentState"/> 调用。
     /// </summary>
+    /// <remarks>
+    /// 该方法假定 <paramref name="entries"/> 中的每个条目都已调用
+    /// <see cref="HistoryEntry.AssignTokenEstimate(uint)"/> 完成 token 估算；
+    /// 确保这一前提是调用方的责任。
+    /// </remarks>
     internal static RecapBuilder CreateSnapshot(IReadOnlyList<HistoryEntry> entries) {
         if (entries is null) { throw new ArgumentNullException(nameof(entries)); }
         if (entries.Count == 0) { throw new ArgumentException("History entry snapshot cannot be empty.", nameof(entries)); }
@@ -99,32 +105,37 @@ internal sealed class RecapBuilder {
     public IReadOnlyList<ActionObservationPair> PendingPairs => _pendingPairsView;
 
     /// <summary>
-    /// 当前剩余内容的字符数估算（Recap 文本长度 + 未消化条目的长度）。
+    /// 当前 Recap 文本的 token 估算值，最小值为 <c>1</c>。
     /// </summary>
-    public int CurrentCharCount => GetCurrentCharCount();
+    public uint RecapTokenEstimate => _recapTokenEstimate;
 
     /// <summary>
-    /// 当前的 Recap 文本与未消化条目共同占用的字符数。
+    /// 当前剩余内容的 token 估算（Recap 文本 + 未消化条目的估算值）。
     /// </summary>
-    public int GetCurrentCharCount() {
-        // TODO: Replace this heuristic once HistoryEntry exposes precise character metrics.
-        var total = RecapText?.Length ?? 0;
+    public uint CurrentTokenEstimate => GetCurrentTokenEstimate();
+
+    /// <summary>
+    /// 计算当前 Recap 文本与未消化条目的 token 估算总和。
+    /// </summary>
+    public uint GetCurrentTokenEstimate() {
+        var total = _recapTokenEstimate;
 
         if (_pairs.IsDefaultOrEmpty || _dequeuedCount >= _pairs.Length) { return total; }
 
         for (var index = _dequeuedCount; index < _pairs.Length; index++) {
-            total += EstimatePairCharCount(_pairs[index]);
+            total = checked(total + _pairs[index].TokenEstimate);
         }
 
         return total;
     }
 
     /// <summary>
-    /// 更新 Recap 文本。
+    /// 更新 Recap 文本，并重新计算规范化后的 token 估算值（至少为 <c>1</c>）。
     /// </summary>
     /// <param name="recapText">新的 Recap 内容。</param>
     public void UpdateRecap(string recapText) {
         RecapText = recapText ?? string.Empty;
+        _recapTokenEstimate = NormalizeEstimate(TokenEstimateHelper.GetDefault().EstimateString(RecapText));
     }
 
     /// <summary>
@@ -220,6 +231,9 @@ internal sealed class RecapBuilder {
 
             if (action.Serial >= observation.Serial) { throw new InvalidOperationException($"History entry serial order is invalid: action serial {action.Serial} must be less than observation serial {observation.Serial}."); }
 
+            if (action.TokenEstimate == 0) { throw new InvalidOperationException($"ActionEntry serial={action.Serial} does not have a token estimate assigned."); }
+            if (observation.TokenEstimate == 0) { throw new InvalidOperationException($"ObservationEntry serial={observation.Serial} does not have a token estimate assigned."); }
+
             builder.Add(CreatePair(action, observation));
         }
 
@@ -240,68 +254,11 @@ internal sealed class RecapBuilder {
         );
     }
 
-    private static int EstimatePairCharCount(ActionObservationPair pair)
-        => EstimateActionCharCount(pair.Action) + EstimateObservationCharCount(pair.Observation);
-
-    private static int EstimateActionCharCount(ActionEntry action) {
-        var total = action.Contents?.Length ?? 0;
-
-        if (action.ToolCalls is { Count: > 0 }) {
-            foreach (var call in action.ToolCalls) {
-                if (!string.IsNullOrEmpty(call.ToolName)) {
-                    total += call.ToolName.Length;
-                }
-
-                if (!string.IsNullOrEmpty(call.ToolCallId)) {
-                    total += call.ToolCallId.Length;
-                }
-
-                if (call.RawArguments is { Count: > 0 }) {
-                    foreach (var argument in call.RawArguments) {
-                        total += argument.Key.Length;
-                        total += argument.Value?.Length ?? 0;
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(call.ParseError)) {
-                    total += call.ParseError.Length;
-                }
-
-                if (!string.IsNullOrEmpty(call.ParseWarning)) {
-                    total += call.ParseWarning.Length;
-                }
-            }
-        }
-
-        return total;
-    }
-
-    private static int EstimateObservationCharCount(ObservationEntry observation) {
-        var message = observation.GetMessage(LevelOfDetail.Detail, windows: null);
-        var total = message.Contents?.Length ?? 0;
-
-        if (message is ToolResultsMessage toolResults) {
-            if (toolResults.Results is { Count: > 0 }) {
-                foreach (var result in toolResults.Results) {
-                    if (!string.IsNullOrEmpty(result.ToolName)) {
-                        total += result.ToolName.Length;
-                    }
-
-                    if (!string.IsNullOrEmpty(result.ToolCallId)) {
-                        total += result.ToolCallId.Length;
-                    }
-
-                    total += result.Result?.Length ?? 0;
-                }
-            }
-
-            if (!string.IsNullOrEmpty(toolResults.ExecuteError)) {
-                total += toolResults.ExecuteError.Length;
-            }
-        }
-
-        return total;
-    }
+    /// <summary>
+    /// 根据 <see cref="HistoryEntry.TokenEstimate"/> 的约定，将估算值规范化到最小 <c>1</c>。
+    /// </summary>
+    private static uint NormalizeEstimate(uint rawEstimate)
+        => Math.Max(1u, rawEstimate);
 
     private static string DescribeEntry(HistoryEntry? entry) {
         if (entry is null) { return "null"; }
@@ -350,5 +307,7 @@ internal sealed class RecapBuilder {
     public readonly record struct ActionObservationPair(
         ActionEntry Action,
         ObservationEntry Observation
-    );
+    ) : ITokenEstimateSource {
+        public uint TokenEstimate => checked(Action.TokenEstimate + Observation.TokenEstimate);
+    }
 }

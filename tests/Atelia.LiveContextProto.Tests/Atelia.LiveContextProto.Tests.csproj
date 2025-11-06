@@ -16,5 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\prototypes\LiveContextProto\LiveContextProto.csproj" />
+    <ProjectReference Include="..\..\prototypes\Agent.Core\Agent.Core.csproj" />
   </ItemGroup>
 </Project>

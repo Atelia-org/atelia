@@ -9,7 +9,7 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.Agent.Core.History;
 
 /// <summary>
-/// 为 <see cref="HistoryEntry"/> 及其派生类型计算 token 估算值的全局调度器。
+/// 为 <see cref="HistoryEntry"/> 及其派生类型计算 token 估算值的调度器。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,40 +19,49 @@ namespace Atelia.Agent.Core.History;
 /// <para>
 /// 典型用法：
 /// <list type="number">
-///   <item><description>在应用启动阶段调用 <see cref="Configure(ITokenEstimator)"/> 明确注入全局估算器（可选）。</description></item>
+///   <item><description>在应用启动阶段通过 <see cref="GetDefault"/> 获取全局实例，并调用 <see cref="Configure(ITokenEstimator)"/> 注入自定义估算器（可选）。</description></item>
 ///   <item><description>调用 <see cref="Estimate(HistoryEntry)"/> 获取估算值，并由调用者负责写入条目。</description></item>
 /// </list>
 /// </para>
 /// </remarks>
-public static class TokenEstimateHelper {
-    private static readonly object SyncRoot = new();
-    private static ITokenEstimator? _configuredEstimator;
-    private static bool _isExplicitlyConfigured;
+public sealed class TokenEstimateHelper {
+    private static readonly Lazy<TokenEstimateHelper> DefaultInstance = new(() => new TokenEstimateHelper());
+    private static readonly AsyncLocal<TokenEstimateHelper?> OverrideInstance = new();
+
+    /// <summary>
+    /// 获取默认的全局 <see cref="TokenEstimateHelper"/> 实例。
+    /// </summary>
+    public static TokenEstimateHelper GetDefault()
+        => OverrideInstance.Value ?? DefaultInstance.Value;
+
+    private readonly object _syncRoot = new();
+    private ITokenEstimator? _configuredEstimator;
+    private bool _isExplicitlyConfigured;
 
     /// <summary>
     /// 在有限范围内允许测试代码覆盖估算器的临时作用域。
     /// </summary>
-    internal static IDisposable BeginScopedOverride(ITokenEstimator estimator) {
+    internal IDisposable BeginScopedOverride(ITokenEstimator estimator) {
         if (estimator is null) { throw new ArgumentNullException(nameof(estimator)); }
 
-        lock (SyncRoot) {
-            var previous = _configuredEstimator;
-            var previousConfigured = _isExplicitlyConfigured;
-            _configuredEstimator = estimator;
-            _isExplicitlyConfigured = true;
-            return new OverrideScope(previous, previousConfigured);
-        }
+        var overrideHelper = new TokenEstimateHelper();
+        overrideHelper.Configure(estimator);
+
+        var previous = OverrideInstance.Value;
+        OverrideInstance.Value = overrideHelper;
+
+        return new OverrideScope(previous);
     }
 
     /// <summary>
-    /// 配置全局使用的 <see cref="ITokenEstimator"/> 实例。
+    /// 配置当前实例使用的 <see cref="ITokenEstimator"/> 实现。
     /// 仅可设置一次；再次调用时必须传入同一实例。
     /// </summary>
     /// <param name="tokenEstimator">用于估算 token 的实例。</param>
-    public static void Configure(ITokenEstimator tokenEstimator) {
+    public void Configure(ITokenEstimator tokenEstimator) {
         if (tokenEstimator is null) { throw new ArgumentNullException(nameof(tokenEstimator)); }
 
-        lock (SyncRoot) {
+        lock (_syncRoot) {
             if (_isExplicitlyConfigured && !ReferenceEquals(_configuredEstimator, tokenEstimator)) { throw new InvalidOperationException("Token estimator has already been configured."); }
 
             _configuredEstimator = tokenEstimator;
@@ -66,7 +75,7 @@ public static class TokenEstimateHelper {
     /// <param name="entry">需要估算的历史条目。</param>
     /// <returns>估算得到的 token 数量，可为零。</returns>
     /// <exception cref="ArgumentNullException">当 <paramref name="entry"/> 为 <c>null</c>。</exception>
-    public static uint Estimate(HistoryEntry entry) {
+    public uint Estimate(HistoryEntry entry) {
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
 
         return entry switch {
@@ -78,11 +87,11 @@ public static class TokenEstimateHelper {
         };
     }
 
-    private static ITokenEstimator AcquireEstimator() {
+    private ITokenEstimator AcquireEstimator() {
         var estimator = Volatile.Read(ref _configuredEstimator);
         if (estimator is not null) { return estimator; }
 
-        lock (SyncRoot) {
+        lock (_syncRoot) {
             estimator = _configuredEstimator;
             if (estimator is null) {
                 estimator = new NaiveTokenEstimator();
@@ -93,7 +102,7 @@ public static class TokenEstimateHelper {
         }
     }
 
-    private static uint EstimateAction(ActionEntry action) {
+    private uint EstimateAction(ActionEntry action) {
         uint total = 0;
 
         total += EstimateString(action.Contents);
@@ -103,7 +112,7 @@ public static class TokenEstimateHelper {
         return total;
     }
 
-    private static uint EstimateObservation(ObservationEntry observation) {
+    private uint EstimateObservation(ObservationEntry observation) {
         uint total = 0;
 
         total += EstimateContent(observation.Notifications);
@@ -111,7 +120,7 @@ public static class TokenEstimateHelper {
         return total;
     }
 
-    private static uint EstimateToolResults(ToolResultsEntry entry) {
+    private uint EstimateToolResults(ToolResultsEntry entry) {
         uint total = EstimateObservation(entry);
 
         if (entry.Results is { Count: > 0 }) {
@@ -129,7 +138,7 @@ public static class TokenEstimateHelper {
         return total;
     }
 
-    private static uint EstimateRecap(RecapEntry recap) {
+    private uint EstimateRecap(RecapEntry recap) {
         uint total = 0;
 
         total += EstimateString(recap.Contents);
@@ -138,7 +147,7 @@ public static class TokenEstimateHelper {
         return total;
     }
 
-    private static uint EstimateToolCalls(IReadOnlyList<ParsedToolCall> toolCalls) {
+    private uint EstimateToolCalls(IReadOnlyList<ParsedToolCall> toolCalls) {
         if (toolCalls is not { Count: > 0 }) { return 0; }
 
         uint total = 0;
@@ -156,7 +165,7 @@ public static class TokenEstimateHelper {
         return total;
     }
 
-    private static uint EstimateRawArguments(IReadOnlyDictionary<string, string>? rawArguments) {
+    private uint EstimateRawArguments(IReadOnlyDictionary<string, string>? rawArguments) {
         if (rawArguments is null || rawArguments.Count == 0) { return 0; }
 
         uint total = 0;
@@ -169,7 +178,7 @@ public static class TokenEstimateHelper {
         return total;
     }
 
-    private static uint EstimateParsedArguments(IReadOnlyDictionary<string, object?>? parsedArguments) {
+    private uint EstimateParsedArguments(IReadOnlyDictionary<string, object?>? parsedArguments) {
         if (parsedArguments is null || parsedArguments.Count == 0) { return 0; }
 
         uint total = 0;
@@ -182,7 +191,7 @@ public static class TokenEstimateHelper {
         return total;
     }
 
-    private static uint EstimateArgumentValue(object? value) {
+    private uint EstimateArgumentValue(object? value) {
         if (value is null) { return 0; }
 
         if (value is string text) { return EstimateString(text); }
@@ -215,7 +224,7 @@ public static class TokenEstimateHelper {
         return EstimateString(value.ToString());
     }
 
-    private static uint EstimateEnumerable(IEnumerable enumerable) {
+    private uint EstimateEnumerable(IEnumerable enumerable) {
         uint total = 0;
 
         foreach (var item in enumerable) {
@@ -225,7 +234,7 @@ public static class TokenEstimateHelper {
         return total;
     }
 
-    private static uint EstimateContent(LevelOfDetailContent? content) {
+    private uint EstimateContent(LevelOfDetailContent? content) {
         if (content is null) { return 0u; }
 
         var basicEstimate = EstimateString(content.Basic);
@@ -235,29 +244,24 @@ public static class TokenEstimateHelper {
         return estimate;
     }
 
-    private static uint EstimateFallback(HistoryEntry entry)
+    private uint EstimateFallback(HistoryEntry entry)
         => EstimateString(entry.ToString()); // 对未知情况选择高估
 
-    private static uint EstimateString(string? value)
+    internal uint EstimateString(string? value)
         => AcquireEstimator().Estimate(value); // ITokenEstimator.Estimate已约定null返回0
 
     private sealed class OverrideScope : IDisposable {
-        private readonly ITokenEstimator? _previous;
-        private readonly bool _previousConfigured;
+        private readonly TokenEstimateHelper? _previous;
         private bool _disposed;
 
-        public OverrideScope(ITokenEstimator? previous, bool previousConfigured) {
+        public OverrideScope(TokenEstimateHelper? previous) {
             _previous = previous;
-            _previousConfigured = previousConfigured;
         }
 
         public void Dispose() {
             if (_disposed) { return; }
 
-            lock (SyncRoot) {
-                _configuredEstimator = _previous;
-                _isExplicitlyConfigured = _previousConfigured;
-            }
+            OverrideInstance.Value = _previous;
 
             _disposed = true;
         }
