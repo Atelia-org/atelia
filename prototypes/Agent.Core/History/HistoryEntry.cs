@@ -42,13 +42,17 @@ public record CompletionDescriptor(
 /// 并为派生类定义了时间戳和类型等基本属性。静态历史记录与流式回放均通过此类型与 <see cref="IHistoryMessage"/> 接口进行交互。
 /// </summary>
 public abstract record class HistoryEntry {
-    private ulong _serial;
+    /// <summary>
+    /// 派生类必须声明其在强化学习（RL）语境下的语义类型，供上层策略和存档系统使用。
+    /// </summary>
+    public abstract HistoryEntryKind Kind { get; }
 
     /// <summary>
     /// 获取或初始化历史事件发生的时间。默认为对象创建时的当前时间，但在历史回放等场景下可以被覆盖。
     /// </summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.Now;
 
+    private ulong _serial;
     /// <summary>
     /// 获取当前历史条目的序列号，序列号在追加至 <see cref="AgentState"/> 时赋值。
     /// </summary>
@@ -56,11 +60,6 @@ public abstract record class HistoryEntry {
     public ulong Serial => _serial != 0
         ? _serial
         : throw new InvalidOperationException("HistoryEntry serial has not been assigned yet. Append the entry to AgentState before reading the serial.");
-
-    /// <summary>
-    /// 派生类必须声明其在强化学习（RL）语境下的语义类型，供上层策略和存档系统使用。
-    /// </summary>
-    public abstract HistoryEntryKind Kind { get; }
 
     /// <summary>
     /// （内部方法）为历史条目指定序列号，仅允许赋值一次且必须大于零。
@@ -73,6 +72,27 @@ public abstract record class HistoryEntry {
         if (_serial != 0) { throw new InvalidOperationException($"HistoryEntry serial is already assigned (current={_serial})."); }
 
         _serial = serial;
+    }
+
+
+    private uint _tokenEstimate;
+    /// <summary>
+    /// 获取描述当前条目信息量的 token 估计值。
+    /// 当返回值为 0 时表示尚未设定；若原始估计为 <c>0</c>，将返回 <c>1</c> 作为最小有效值。
+    /// </summary>
+    public uint TokenEstimate => _tokenEstimate;
+
+    /// <summary>
+    /// （内部方法）为历史条目指定 token 估计值，仅允许赋值一次。
+    /// 当估计值为 <c>0</c> 时将其规范化为 <c>1</c>，以免与未赋值状态冲突。
+    /// </summary>
+    /// <param name="rawTokenEstimate">由上层评估的原始 token 估计值。</param>
+    /// <exception cref="InvalidOperationException">当尝试重复赋值时。</exception>
+    internal void AssignTokenEstimate(uint rawTokenEstimate) {
+        if (_tokenEstimate != 0) { throw new InvalidOperationException($"HistoryEntry token estimate is already assigned (current={_tokenEstimate})."); }
+
+        // 排除表示未赋值的0值
+        _tokenEstimate = Math.Max(1, rawTokenEstimate);
     }
 }
 
