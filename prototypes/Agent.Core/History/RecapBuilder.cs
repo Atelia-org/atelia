@@ -159,7 +159,7 @@ internal sealed class RecapBuilder {
     /// <param name="pair">返回被取出的条目；若队列为空则为 <c>null</c>。</param>
     /// <returns>当成功取出条目时返回 <c>true</c>。</returns>
     public bool TryDequeueNextPair(out ActionObservationPair? pair) {
-        if (!HasPendingPairs) {
+        if (!HasPendingPairs || (_pairs.Length > 0 && PendingPairCount <= 1)) {
             pair = null;
             return false;
         }
@@ -171,24 +171,19 @@ internal sealed class RecapBuilder {
     }
 
     /// <summary>
-    /// 一次性取出所有剩余条目，常用于强制清空待处理队列。
-    /// </summary>
-    public IReadOnlyList<ActionObservationPair> DequeueAllRemaining() {
-        if (!HasPendingPairs) { return ImmutableArray<ActionObservationPair>.Empty; }
-
-        var builder = ImmutableArray.CreateBuilder<ActionObservationPair>(PendingPairCount);
-
-        while (TryDequeueNextPair(out var pair) && pair.HasValue) {
-            builder.Add(pair.Value);
-        }
-
-        return builder.MoveToImmutable();
-    }
-
-    /// <summary>
     /// 返回尚未消化的条目数量。
     /// </summary>
     public int PendingPairCount => TotalPairCount - _dequeuedCount;
+
+    /// <summary>
+    /// 当前未触碰区域（待保留区间）的起始动作序列号。
+    /// </summary>
+    public ulong? FirstPendingSerial => HasPendingPairs ? _pairs[_dequeuedCount].Action.Serial : null;
+
+    /// <summary>
+    /// 当前未触碰区域（待保留区间）的起始 Action/Observation 对。
+    /// </summary>
+    public ActionObservationPair? FirstPendingPair => HasPendingPairs ? _pairs[_dequeuedCount] : null;
 
     /// <summary>
     /// 当前快照是否存在任何改动（Recap 文本被修改或条目被消费）。

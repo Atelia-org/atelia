@@ -39,14 +39,28 @@ public class RecapBuilderTests {
         Assert.True(dequeued.HasValue);
         Assert.Equal((uint)30, dequeued.Value.TokenEstimate);
         Assert.Equal(initialTotal - dequeued.Value.TokenEstimate, builder.CurrentTokenEstimate);
-
-        Assert.True(builder.TryDequeueNextPair(out var second));
-        Assert.True(second.HasValue);
-        Assert.Equal((uint)20, second.Value.TokenEstimate);
-        Assert.Equal(builder.RecapTokenEstimate, builder.CurrentTokenEstimate);
+        Assert.NotNull(builder.FirstPendingSerial);
+        Assert.Equal(builder.PendingPairs[0].Action.Serial, builder.FirstPendingSerial);
 
         Assert.False(builder.TryDequeueNextPair(out _));
-        Assert.False(builder.HasPendingPairs);
+        Assert.True(builder.HasPendingPairs);
+        Assert.Equal(1, builder.PendingPairCount);
+
+        var remaining = builder.PendingPairs[0];
+        Assert.Equal(builder.RecapTokenEstimate + remaining.TokenEstimate, builder.CurrentTokenEstimate);
+        Assert.Equal(remaining.Action.Serial, builder.FirstPendingSerial);
+    }
+
+    [Fact]
+    public void TryDequeueNextPair_ShouldNotRemoveLastPair() {
+        using var estimatorScope = TokenEstimateHelper.GetDefault().BeginScopedOverride(new PassthroughTokenEstimator());
+
+        var builder = CreateBuilderWithSinglePair("Recap");
+
+        Assert.False(builder.TryDequeueNextPair(out _));
+        Assert.True(builder.HasPendingPairs);
+        Assert.Equal(1, builder.PendingPairCount);
+        Assert.Equal(builder.PendingPairs[0].Action.Serial, builder.FirstPendingSerial);
     }
 
     [Fact]
@@ -96,6 +110,32 @@ public class RecapBuilderTests {
                 action2,
                 observation2
         }
+        );
+
+        return RecapBuilder.CreateSnapshot(entries);
+    }
+
+    private static RecapBuilder CreateBuilderWithSinglePair(string recapText) {
+        var descriptor = new CompletionDescriptor("Provider", "Spec", "Model");
+
+        var recapEntry = new RecapEntry(recapText, 0);
+        recapEntry.AssignSerial(1);
+        recapEntry.AssignTokenEstimate((uint)recapText.Length);
+
+        var action1 = new ActionEntry("Action", ImmutableArray<ParsedToolCall>.Empty, descriptor);
+        action1.AssignSerial(2);
+        action1.AssignTokenEstimate(10);
+
+        var observation1 = new ObservationEntry();
+        observation1.AssignSerial(3);
+        observation1.AssignTokenEstimate(20);
+
+        ReadOnlyCollection<HistoryEntry> entries = Array.AsReadOnly(
+            new HistoryEntry[] {
+                recapEntry,
+                action1,
+                observation1
+            }
         );
 
         return RecapBuilder.CreateSnapshot(entries);

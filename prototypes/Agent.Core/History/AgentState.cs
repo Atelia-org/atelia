@@ -209,6 +209,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         for (int index = _recentHistory.Count; --index >= 0;) {
             HistoryEntry contextual = _recentHistory[index];
             switch (contextual) {
+                case RecapEntry recapEntry:
+                    messages.Add(new ObservationMessage(recapEntry.Timestamp, recapEntry.Content));
+                    break;
                 case ObservationEntry modelInputEntry:
                     var inputDetail = ResolveDetailLevel(detailOrdinal++);
                     messages.Add(modelInputEntry.GetMessage(inputDetail, pendingWindows));
@@ -228,7 +231,10 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// 生成用于编辑 Recap 的快照。
     /// </summary>
     internal RecapBuilder GetRecapBuilder() {
-        throw new NotImplementedException("Recap snapshot construction will be implemented alongside RecapMaintainer.");
+        if (_recentHistory.Count == 0) { throw new InvalidOperationException("Recent history is empty; cannot create a recap snapshot."); }
+        if (!IsObservationLike(_recentHistory[0])) { throw new InvalidOperationException("The first history entry must be observation-like to build a recap snapshot."); }
+
+        return RecapBuilder.CreateSnapshot(_recentHistory);
     }
 
     /// <summary>
@@ -238,7 +244,57 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     internal RecapCommitResult CommitRecapBuilder(RecapBuilder builder) {
         if (builder is null) { throw new ArgumentNullException(nameof(builder)); }
 
-        throw new NotImplementedException("Recap commit pipeline is not ready yet.");
+        // 1. 基本前置检查
+        if (_recentHistory.Count == 0) { return new RecapCommitResult(0, 0, "Recent history is empty; cannot commit recap."); }
+        if (string.IsNullOrEmpty(builder.RecapText)) { return new RecapCommitResult(0, 0, "Recap builder should neither null nor empty."); }
+
+        // 2. 验证PendingPairs区间仍在_recentHistory中。
+        if (!builder.HasPendingPairs) { return new RecapCommitResult(0, 0, "Recap builder must retain at least one pending action/observation pair."); }
+        if (builder.FirstPendingSerial < _recentHistory[0].Serial) { return new RecapCommitResult(0, 0, "Recap builder out of date; 要保留的首条Entry已不在RecentHistory中。"); }
+        if (_recentHistory[0].Serial < builder.LastSerial) { return new RecapCommitResult(0, 0, "Recap builder out of date; 要保留的最后一条Entry已不在RecentHistory中。"); }
+
+        ulong firstPendingSerial = builder.FirstPendingSerial!.Value;
+
+        // 3. 定位待保留区域的起始位置
+        int firstPendingIndex = -1;
+        for (int i = 0; i < _recentHistory.Count; i++) {
+            if (_recentHistory[i].Serial == firstPendingSerial) {
+                firstPendingIndex = i;
+                break;
+            }
+        }
+
+        if (firstPendingIndex < 1) { return new RecapCommitResult(0, 0, "Cannot locate the first pending entry in recent history, or no entries to digest."); }
+
+        // 4. 计算 replacedSerial（新 RecapEntry 替代的最后一个条目）
+        var lastRemovedEntry = _recentHistory[firstPendingIndex - 1];
+        ulong replacedSerial = lastRemovedEntry.Serial;
+        if (lastRemovedEntry is RecapEntry oldRecap) {
+            Debug.Assert(oldRecap.InsteadSerial != 0); // 有本函数稍后创建RecapEntry时填入正确的replacedSerial保证
+            replacedSerial = oldRecap.InsteadSerial != 0 ? oldRecap.InsteadSerial : firstPendingSerial - 1; // 意外情况下回退到要保留的条目的前一个序列号
+        }
+
+        // 5. 移除已消化的条目
+        int removedCount = firstPendingIndex;
+        _recentHistory.RemoveRange(1, firstPendingIndex);
+
+        // 6. 创建并插入新的 RecapEntry
+        string recapContent = builder.RecapText!;// 由函数头部的检查保证
+        var newRecap = new RecapEntry(recapContent, replacedSerial);
+
+        var tokenHelper = TokenEstimateHelper.GetDefault();
+        var newRecapTokenEstimate = tokenHelper.Estimate(newRecap);
+        newRecap.AssignTokenEstimate(newRecapTokenEstimate);
+        newRecap.AssignSerial(++_lastSerial);
+
+        _recentHistory[0] = newRecap;
+
+        DebugUtil.Print(
+            "History",
+            $"Committed recap serial={newRecap.Serial} removed={removedCount} replaced={replacedSerial} firstPending={firstPendingSerial}"
+        );
+
+        return new RecapCommitResult(newRecap.Serial, removedCount, null);
     }
 
     /// <summary>
