@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Reflection;
+using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core;
@@ -42,24 +44,73 @@ public sealed partial class MethodToolWrapper : ITool {
     /// 使用单播委托推断目标方法并创建工具包装器。
     /// </summary>
     /// <param name="methodDelegate">指向目标方法的委托，必须仅包装一个方法。</param>
+    /// <param name="formatArgs">
+    /// 传递给 <see cref="string.Format(string, object?[])"/> 的占位符实参；
+    /// 若目标方法或其参数的注解（见 <see cref="ToolAttribute"/> / <see cref="ToolParamAttribute"/>) 无需格式化，可省略。
+    ///
+    /// <para>
+    /// 例如：
+    /// <code language="csharp">
+    /// [Tool("{0}_replace", "编辑 {1} 文本")]
+    /// ValueTask&lt;LodToolExecuteResult&gt; ReplaceAsync(...)
+    /// </code>
+    /// 调用时可传 <c>MethodToolWrapper.FromDelegate(method, "recap", "Recap")</c>，
+    /// 使 name/description 在注册阶段被格式化。
+    /// </para>
+    /// </param>
     /// <returns>可被代理运行时调用的工具实例。</returns>
     /// <exception cref="ArgumentNullException">当 <paramref name="methodDelegate"/> 为 <c>null</c> 时。</exception>
     /// <exception cref="ArgumentException">当委托绑定多个方法时。</exception>
-    public static MethodToolWrapper FromDelegate(Delegate methodDelegate) {
+    public static MethodToolWrapper FromDelegate(Delegate methodDelegate, params object?[] formatArgs) {
         if (methodDelegate is null) { throw new ArgumentNullException(nameof(methodDelegate)); }
 
         var invocationList = methodDelegate.GetInvocationList();
         if (invocationList.Length != 1) { throw new ArgumentException("Delegate must reference exactly one method.", nameof(methodDelegate)); }
 
         var singleDelegate = invocationList[0];
-        return FromMethod(singleDelegate.Target, singleDelegate.Method);
+        return FromMethod(singleDelegate.Target, singleDelegate.Method, formatArgs);
     }
+
+    public static MethodToolWrapper FromDelegate(
+        Func<CancellationToken, ValueTask<LodToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
+    public static MethodToolWrapper FromDelegate<T1>(
+        Func<T1, CancellationToken, ValueTask<LodToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
+    public static MethodToolWrapper FromDelegate<T1, T2>(
+        Func<T1, T2, CancellationToken, ValueTask<LodToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
+    public static MethodToolWrapper FromDelegate<T1, T2, T3>(
+        Func<T1, T2, T3, CancellationToken, ValueTask<LodToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
+    public static MethodToolWrapper FromDelegate<T1, T2, T3, T4>(
+        Func<T1, T2, T3, T4, CancellationToken, ValueTask<LodToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
+    public static MethodToolWrapper FromDelegate<T1, T2, T3, T4, T5>(
+        Func<T1, T2, T3, T4, T5, CancellationToken, ValueTask<LodToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
 
     /// <summary>
     /// 通过反射信息创建工具包装器。
     /// </summary>
     /// <param name="targetInstance">实例方法的目标对象；调用静态方法时传 <c>null</c>。</param>
     /// <param name="method">带有 <see cref="ToolAttribute"/> 的方法元数据。</param>
+    /// <param name="formatArgs">
+    /// 传递给 <see cref="string.Format(string, object?[])"/> 的占位符实参；
+    /// 当 <see cref="ToolAttribute"/> 或 <see cref="ToolParamAttribute"/> 在 name/description 中使用如 <c>{0}</c> 的格式化占位符时，
+    /// 可通过该参数注入实际值。若无需格式化，可留空。
+    /// </param>
     /// <returns>可供代理执行的工具定义。</returns>
     /// <exception cref="ArgumentNullException">当 <paramref name="method"/> 为 <c>null</c> 时。</exception>
     /// <exception cref="InvalidOperationException">当方法签名或注解不满足工具约束时。</exception>
@@ -100,8 +151,8 @@ public sealed partial class MethodToolWrapper : ITool {
     /// // tool 现在可以交由 ToolExecutor 或代理运行时调用
     /// </code>
     /// </example>
-    public static MethodToolWrapper FromMethod(object? targetInstance, MethodInfo method) {
-        return FromMethodImpl(targetInstance, method);
+    public static MethodToolWrapper FromMethod(object? targetInstance, MethodInfo method, params object?[] formatArgs) {
+        return FromMethodImpl(targetInstance, method, formatArgs ?? Array.Empty<object?>());
     }
 }
 
@@ -110,35 +161,57 @@ public sealed partial class MethodToolWrapper : ITool {
 /// </summary>
 /// <remarks>
 /// 运行时由 <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo)"/> 反射扫描读取此特性，结合方法签名生成工具元数据。
+///
+/// <para>
+/// <strong>格式化占位符：</strong>
+/// <see cref="NameFormat"/> 与 <see cref="DescriptionFormat"/> 支持标准的 <see cref="string.Format(string, object?[])"/> 占位符。
+/// 若调用方在注册时调用 <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo, object?[])"/> 并提供 <c>formatArgs</c>，
+/// 则会在工具实例化过程中将这些占位符替换为实际值；未提供时视为普通常量。
+/// </para>
 /// </remarks>
 /// <see cref="ToolParamAttribute"/>
 /// <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo)"/>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
 public sealed class ToolAttribute : Attribute {
+    private readonly string _nameFormat;
+    private readonly string _descriptionFormat;
+
     /// <summary>
     /// 创建一个工具定义。
     /// </summary>
-    /// <param name="name">工具在调用协议中的唯一名称。</param>
-    /// <param name="description">向 LLM 说明工具用途的描述文本。</param>
+    /// <param name="name">工具名称模板，可包含 <c>{0}</c> 形式的占位符。</param>
+    /// <param name="description">描述文本模板，可包含 <c>{0}</c> 形式的占位符。</param>
     /// <exception cref="ArgumentException">当参数为空或仅包含空白字符时抛出。</exception>
     public ToolAttribute(string name, string description) {
         if (string.IsNullOrWhiteSpace(name)) { throw new ArgumentException("Tool name cannot be null or whitespace.", nameof(name)); }
 
         if (string.IsNullOrWhiteSpace(description)) { throw new ArgumentException("Tool description cannot be null or whitespace.", nameof(description)); }
 
-        Name = name.Trim();
-        Description = description.Trim();
+        _nameFormat = name.Trim();
+        _descriptionFormat = description.Trim();
     }
 
     /// <summary>
-    /// 工具在调用协议中的唯一名称。
+    /// 工具名称模板，可能包含 <see cref="string.Format(string, object?[])"/> 占位符。
     /// </summary>
-    public string Name { get; }
+    public string Name => _nameFormat;
 
     /// <summary>
-    /// 向 LLM 说明工具用途的描述文本。
+    /// 工具用途描述模板，可能包含 <see cref="string.Format(string, object?[])"/> 占位符。
     /// </summary>
-    public string Description { get; }
+    public string Description => _descriptionFormat;
+
+    internal string FormatName(object?[] formatArgs)
+        => FormatWithArgs(_nameFormat, formatArgs);
+
+    internal string FormatDescription(object?[] formatArgs)
+        => FormatWithArgs(_descriptionFormat, formatArgs);
+
+    private static string FormatWithArgs(string format, object?[] formatArgs) {
+        if (formatArgs.Length == 0) { return format; }
+
+        return string.Format(CultureInfo.InvariantCulture, format, formatArgs);
+    }
 }
 
 /// <summary>
@@ -159,24 +232,36 @@ public sealed class ToolAttribute : Attribute {
 /// <description>不支持传入 <c>ref</c>/<c>out</c> 参数，参数类型限定为 <c>string</c> 与基本数值/布尔类型（含各自的可空版本）。</description>
 /// </item>
 /// </list>
+///
+/// <para>
+/// <strong>格式化占位符：</strong><see cref="DescriptionFormat"/> 同样支持 <see cref="string.Format(string, object?[])"/> 占位符，
+/// 由 <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo, object?[])"/> 的 <c>formatArgs</c> 在工具注册时替换。
+/// </para>
 /// </remarks>
 /// <see cref="ToolAttribute"/>
 /// <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo)"/>
 [AttributeUsage(AttributeTargets.Parameter, AllowMultiple = false, Inherited = false)]
 public sealed class ToolParamAttribute : Attribute {
+    private readonly string _descriptionFormat;
+
     /// <summary>
     /// 初始化参数描述定义。
     /// </summary>
-    /// <param name="description">面向 LLM 的参数说明文本。</param>
+    /// <param name="description">参数描述模板，可包含 <c>{0}</c> 形式的占位符。</param>
     /// <exception cref="ArgumentException">当 <paramref name="description"/> 为空或仅包含空白字符时抛出。</exception>
     public ToolParamAttribute(string description) {
         if (string.IsNullOrWhiteSpace(description)) { throw new ArgumentException("Parameter description cannot be null or whitespace.", nameof(description)); }
 
-        Description = description.Trim();
+        _descriptionFormat = description.Trim();
     }
 
     /// <summary>
-    /// 面向 LLM 的参数说明文本。
+    /// 参数描述模板，可能包含 <see cref="string.Format(string, object?[])"/> 占位符。
     /// </summary>
-    public string Description { get; }
+    public string Description => _descriptionFormat;
+
+    internal string FormatDescription(object?[] formatArgs)
+        => formatArgs.Length == 0
+            ? _descriptionFormat
+            : string.Format(CultureInfo.InvariantCulture, _descriptionFormat, formatArgs);
 }

@@ -80,11 +80,15 @@ partial class MethodToolWrapper {
 }
 
 partial class MethodToolWrapper {
-    internal static MethodToolWrapper FromMethodImpl(object? targetInstance, MethodInfo method) {
+    internal static MethodToolWrapper FromMethodImpl(object? targetInstance, MethodInfo method, object?[]? formatArgs) {
         if (method is null) { throw new ArgumentNullException(nameof(method)); }
 
         var toolAttribute = method.GetCustomAttribute<ToolAttribute>()
             ?? throw new InvalidOperationException($"Method '{method.DeclaringType?.FullName}.{method.Name}' is missing ToolAttribute.");
+
+        var formattingArgs = formatArgs is { Length: > 0 }
+            ? formatArgs
+            : Array.Empty<object?>();
 
         if (method.ReturnType != typeof(ValueTask<LodToolExecuteResult>)) { throw new InvalidOperationException($"Method '{method.Name}' must return ValueTask<LodToolExecuteResult>."); }
 
@@ -109,7 +113,8 @@ partial class MethodToolWrapper {
             var valueKind = ResolveValueKind(parameter.ParameterType);
             var allowsNull = ResolveNullability(parameter);
             var defaultInfo = ResolveDefaultValue(parameter, allowsNull);
-            var effectiveDescription = BuildDescription(parameterAttribute.Description, allowsNull, defaultInfo);
+            var formattedDescription = parameterAttribute.FormatDescription(formattingArgs);
+            var effectiveDescription = BuildDescription(formattedDescription, allowsNull, defaultInfo);
 
             toolParameters.Add(
                 new ToolParamSpec(
@@ -123,12 +128,13 @@ partial class MethodToolWrapper {
             argGetters.Add(new ArgGetter(displayName, defaultInfo.DefaultValue));
         }
 
-        var methodDescription = toolAttribute.Description;
+        var methodName = toolAttribute.FormatName(formattingArgs);
+        var methodDescription = toolAttribute.FormatDescription(formattingArgs);
 
         var invoker = CreateInvoker(method, method.IsStatic ? null : targetInstance);
 
         return new MethodToolWrapper(
-            toolAttribute.Name,
+            methodName,
             methodDescription,
             toolParameters.ToArray(),
             argGetters.ToArray(),

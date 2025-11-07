@@ -47,7 +47,7 @@ public sealed class CharacterAgent {
 
     public bool RemoveTool(string name) => _engine.RemoveTool(name);
 
-    public void UpdateMemoryNotebook(string? content)
+    public void UpdateMemoryNotebook(string content)
         => _memoryNotebookApp.ReplaceNotebookFromHost(content);
 
     public void AppendNotification(LevelOfDetailContent notificationContent) => _engine.AppendNotification(notificationContent);

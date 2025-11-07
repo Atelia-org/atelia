@@ -19,7 +19,7 @@ namespace Atelia.Agent.Core.History;
 ///   <item><description>修改完成后将实例提交回 AgentState，由后者完成最终裁剪和持久化。</description></item>
 /// </list>
 /// </remarks>
-internal sealed class RecapBuilder {
+public sealed class RecapBuilder {
     private readonly ImmutableArray<ActionObservationPair> _pairs;
     private readonly PendingPairList _pendingPairsView;
     private readonly string _originalRecapText;

@@ -24,6 +24,14 @@ public sealed class MethodToolWrapperTests {
             => throw new NotImplementedException();
     }
 
+    private sealed class FormattedToolHost {
+        [Tool("{0}_formatted", "内测工具：{2} -> {1}")]
+        public ValueTask<LodToolExecuteResult> FormatAsync(
+            [ToolParam("{2} 输入文本")] string text,
+            CancellationToken cancellationToken = default
+        ) => throw new NotImplementedException();
+    }
+
     [Fact]
     public void FromMethod_PopulatesDefaultMetadataAndDescriptionHints() {
         var host = new SampleToolHost();
@@ -64,5 +72,20 @@ public sealed class MethodToolWrapperTests {
 
         var exception = Assert.Throws<InvalidOperationException>(() => MethodToolWrapper.FromMethod(host, method));
         Assert.Contains("missing ToolParamAttribute", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void FromMethod_AppliesFormatArguments() {
+        var host = new FormattedToolHost();
+        var method = typeof(FormattedToolHost).GetMethod(nameof(FormattedToolHost.FormatAsync))!;
+
+        var wrapper = MethodToolWrapper.FromMethod(host, method, "demo", "目标", "展示");
+
+        Assert.Equal("demo_formatted", wrapper.Name);
+        Assert.Equal("内测工具：展示 -> 目标", wrapper.Description);
+
+        Assert.Single(wrapper.Parameters);
+        var param = wrapper.Parameters[0];
+        Assert.Contains("展示 输入文本", param.Description);
     }
 }
