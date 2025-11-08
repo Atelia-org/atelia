@@ -67,7 +67,7 @@ function Parse-FormatReport {
         if(-not $item){ continue }
         # 优先使用 FileChanges 属性（dotnet format 现有输出）
         if($item.PSObject.Properties.Name -contains 'FileChanges' -and $item.FileChanges){
-            $fc = @($item.FileChanges) | Where-Object { $_ }
+            $fc = @($item.FileChanges | Where-Object { $_ })
             if($fc.Count -gt 0){
                 $changedItems += $item
                 $totalEntryCount += $fc.Count
