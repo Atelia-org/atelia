@@ -22,7 +22,7 @@ namespace Atelia.Agent.Text;
 /// 当前阶段不会主动写回底层存储，也不会自动响应外部变更；后续会在此基础上提供显式刷写、失败提示与差异摘要，让 LLM 自主决策同步策略。
 /// </para>
 /// </remarks>
-public sealed class TextSelectionExperimentWidget {
+public sealed class TextEditor2Widget {
     private const string ReplaceToolFormat = "{0}_replace";
     private const string ReplaceSelectionToolFormat = "{0}_replace_selection";
 
@@ -40,7 +40,7 @@ public sealed class TextSelectionExperimentWidget {
     private SelectionState? _activeSelectionState;
     private bool _isNotifying;
 
-    public TextSelectionExperimentWidget(
+    public TextEditor2Widget(
         string targetTextName,
         string baseToolName,
         string? initialContent = null
