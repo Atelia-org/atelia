@@ -156,7 +156,12 @@ public class AgentEngine {
         _toolExecutor = executor;
         _toolsDirty = false;
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool cache rebuilt count={executor.ToolDefinitions.Length}");
+        // Capture a snapshot for diagnostics so日志能体现当前可见工具数量。
+        var visibleDefinitions = executor.GetVisibleToolDefinitions();
+        DebugUtil.Print(
+            StateMachineDebugCategory,
+            $"[Engine] Tool cache rebuilt all={executor.AllToolDefinitions.Length} visible={visibleDefinitions.Length}"
+        );
         return executor;
     }
 
@@ -407,7 +412,7 @@ public class AgentEngine {
         DebugUtil.Print(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
         var toolExecutor = ToolExecutor;
-        var toolDefinitions = toolExecutor.ToolDefinitions;
+        var toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
 
         var args = new BeforeModelCallEventArgs(state, profile, liveContext, toolDefinitions);
         OnBeforeModelCall(args);
@@ -418,7 +423,7 @@ public class AgentEngine {
         if (args.LiveContext is null) { throw new InvalidOperationException("BeforeModelCall handlers must provide a LiveContext instance."); }
 
         toolExecutor = ToolExecutor;
-        toolDefinitions = toolExecutor.ToolDefinitions;
+        toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
 
         var invocation = new CompletionDescriptor(args.Profile.Client.Name, args.Profile.Client.ApiSpecId, args.Profile.ModelId);
         var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
@@ -643,7 +648,7 @@ public sealed class BeforeModelCallEventArgs : EventArgs {
     public IReadOnlyList<IHistoryMessage> LiveContext { get; set; }
 
     /// <summary>
-    /// 获取当前可用的工具定义列表。
+    /// 获取当前对模型可见的工具定义列表。
     /// </summary>
     public ImmutableArray<ToolDefinition> ToolDefinitions { get; }
 

@@ -58,6 +58,12 @@ partial class MethodToolWrapper {
 
     public IReadOnlyList<ToolParamSpec> Parameters => _parameters;
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// 默认情况下工具对模型可见；调用方可以在运行时修改该值以进行临时隐藏。
+    /// </remarks>
+    public bool Visible { get; set; } = true;
+
     /// <summary>
     /// 执行包装的目标方法。
     /// </summary>

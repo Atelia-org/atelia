@@ -15,6 +15,14 @@ public interface ITool {
     string Description { get; }
     IReadOnlyList<ToolParamSpec> Parameters { get; }
     /// <summary>
+    /// 获取或设置一个值，指示该工具是否在下一次模型调用中对 LLM 可见。
+    /// </summary>
+    /// <remarks>
+    /// 当被标记为 <c>false</c> 时，工具仍然可以被执行（例如已有的待处理调用），
+    /// 但不会出现在新的 <see cref="CompletionRequest"/> 中。
+    /// </remarks>
+    bool Visible { get; set; }
+    /// <summary>
     /// 执行工具逻辑。实现可以直接抛出异常，由 <see cref="ToolExecutor"/> 统一捕获并转换为失败结果。
     /// </summary>
     /// <param name="arguments">

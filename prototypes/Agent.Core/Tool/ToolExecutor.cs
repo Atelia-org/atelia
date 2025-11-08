@@ -1,14 +1,15 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
-using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
+using Atelia.Diagnostics;
 
 namespace Atelia.Agent.Core.Tool;
 
 internal sealed class ToolExecutor {
     private const string DebugCategory = "Tools";
     private readonly IReadOnlyDictionary<string, ITool> _tools;
-    private readonly ImmutableArray<ToolDefinition> _toolDefinitions;
+    private readonly ImmutableArray<ToolDefinition> _allToolDefinitions;
+    private readonly Dictionary<ITool, ToolDefinition> _definitionByInstance;
 
     public ToolExecutor(IEnumerable<ITool> tools) {
         if (tools is null) { throw new ArgumentNullException(nameof(tools)); }
@@ -23,13 +24,54 @@ internal sealed class ToolExecutor {
         }
 
         _tools = dictionary;
-        _toolDefinitions = ToolDefinitionBuilder.FromTools(_tools.Values);
+
+        // 预先缓存每个工具实例对应的 ToolDefinition，以便后续按可见性筛选时避免重复构建。
+        var definitionMap = new Dictionary<ITool, ToolDefinition>(ReferenceEqualityComparer.Instance);
+        var definitionBuilder = ImmutableArray.CreateBuilder<ToolDefinition>(_tools.Count);
+
+        foreach (var tool in _tools.Values) {
+            if (tool is null) { continue; }
+
+            var definition = ToolDefinitionBuilder.FromTool(tool);
+            definitionMap[tool] = definition;
+            definitionBuilder.Add(definition);
+        }
+
+        _definitionByInstance = definitionMap;
+        _allToolDefinitions = definitionBuilder.Count == 0
+            ? ImmutableArray<ToolDefinition>.Empty
+            : definitionBuilder.ToImmutable();
         DebugUtil.Print(DebugCategory, $"ToolExecutor initialized toolCount={_tools.Count}");
     }
 
     public IEnumerable<ITool> Tools => _tools.Values;
 
-    public ImmutableArray<ToolDefinition> ToolDefinitions => _toolDefinitions;
+    /// <summary>
+    /// 获取所有已注册工具的定义（包含当前被隐藏的工具）。
+    /// </summary>
+    public ImmutableArray<ToolDefinition> AllToolDefinitions => _allToolDefinitions;
+
+    /// <summary>
+    /// 获取当前对模型可见的工具定义快照。
+    /// </summary>
+    /// <remarks>
+    /// 每次调用都会根据工具的 <see cref="ITool.Visible"/> 状态重新构建结果，
+    /// 以便调用方可以在运行时动态切换工具可见性。
+    /// </remarks>
+    public ImmutableArray<ToolDefinition> GetVisibleToolDefinitions() {
+        if (_tools.Count == 0) { return ImmutableArray<ToolDefinition>.Empty; }
+
+        var builder = ImmutableArray.CreateBuilder<ToolDefinition>();
+        foreach (var tool in _tools.Values) {
+            if (tool is null || !tool.Visible) { continue; }
+
+            if (_definitionByInstance.TryGetValue(tool, out var definition)) {
+                builder.Add(definition);
+            }
+        }
+
+        return builder.Count == 0 ? ImmutableArray<ToolDefinition>.Empty : builder.ToImmutable();
+    }
 
     public bool TryGetTool(string name, out ITool tool) {
         if (string.IsNullOrWhiteSpace(name)) {

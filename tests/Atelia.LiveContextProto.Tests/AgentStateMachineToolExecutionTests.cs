@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
@@ -144,6 +146,93 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(ToolExecutionStatus.Failed, toolResults.Results.Single().Status);
     }
 
+    [Fact]
+    public async Task StepAsync_HiddenToolsAreExcludedFromCompletionRequest() {
+        var visibleTool = new DelegateTool(
+            "visible",
+            _ => LodToolExecuteResult.FromContent(ToolExecutionStatus.Success, UniformContent("unused"))
+        );
+
+        var hiddenTool = new DelegateTool(
+            "hidden",
+            _ => LodToolExecuteResult.FromContent(ToolExecutionStatus.Success, UniformContent("unused"))
+        ) {
+            Visible = false
+        };
+
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(CompletionChunk.FromContent("no tool call"))
+            }
+        );
+
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
+        var engine = CreateEngine(visibleTool, hiddenTool);
+
+        engine.AppendNotification("trigger model call");
+
+        await engine.StepAsync(profile); // WaitingInput -> PendingInput
+        await engine.StepAsync(profile); // PendingInput -> WaitingInput / ActionEntry
+
+        var capturedRequest = Assert.Single(provider.CapturedRequests);
+        Assert.Single(capturedRequest.Tools);
+        Assert.Equal("visible", capturedRequest.Tools[0].Name);
+        Assert.DoesNotContain(capturedRequest.Tools, definition => definition.Name.Equals("hidden", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task StepAsync_TogglingVisibilityUsesCachedDefinitions() {
+        var toggleTool = new DelegateTool(
+            "toggle",
+            _ => LodToolExecuteResult.FromContent(ToolExecutionStatus.Success, UniformContent("unused"))
+        );
+
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(CompletionChunk.FromContent("cycle-1")),
+                CreateDeltaSequence(CompletionChunk.FromContent("cycle-2")),
+                CreateDeltaSequence(CompletionChunk.FromContent("cycle-3"))
+            }
+        );
+
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId);
+        var engine = CreateEngine(toggleTool);
+
+        static Task AdvanceAsync(AgentEngine engine, LlmProfile profile, string notification)
+            => AdvanceInternalAsync(engine, profile, notification);
+
+        static async Task AdvanceInternalAsync(AgentEngine engine, LlmProfile profile, string notification) {
+            engine.AppendNotification(notification);
+            await engine.StepAsync(profile).ConfigureAwait(false);
+            await engine.StepAsync(profile).ConfigureAwait(false);
+        }
+
+        await AdvanceAsync(engine, profile, "notification-1").ConfigureAwait(false);
+        toggleTool.Visible = false;
+
+        await AdvanceAsync(engine, profile, "notification-2").ConfigureAwait(false);
+        toggleTool.Visible = true;
+
+        await AdvanceAsync(engine, profile, "notification-3").ConfigureAwait(false);
+
+        var captured = provider.CapturedRequests;
+        Assert.Equal(3, captured.Count);
+
+        var first = captured[0].Tools;
+        var second = captured[1].Tools;
+        var third = captured[2].Tools;
+
+        Assert.Single(first);
+        var definition = first[0];
+
+        Assert.Empty(second);
+
+        Assert.Single(third);
+        var thirdDefinition = third[0];
+
+        Assert.Same(definition, thirdDefinition);
+    }
+
     private static AgentEngine CreateEngine(params ITool[] tools) {
         var engine = new AgentEngine();
 
@@ -183,6 +272,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         public string Name => "test-provider";
         public string ApiSpecId => "test-spec";
 
+        public List<CompletionRequest> CapturedRequests { get; } = new();
+
         public FakeProviderClient(IEnumerable<IAsyncEnumerable<CompletionChunk>> responses) {
             _responses = new Queue<IAsyncEnumerable<CompletionChunk>>(responses ?? throw new ArgumentNullException(nameof(responses)));
         }
@@ -190,6 +281,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         public IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken) {
             if (_responses.Count == 0) { throw new InvalidOperationException("No provider responses configured."); }
 
+            CapturedRequests.Add(request);
             return _responses.Dequeue();
         }
     }
@@ -207,6 +299,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         public string Description => "delegate-tool";
 
         public IReadOnlyList<ToolParamSpec> Parameters { get; } = Array.Empty<ToolParamSpec>();
+
+        public bool Visible { get; set; } = true;
 
         public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
             => new(_execute(arguments));
