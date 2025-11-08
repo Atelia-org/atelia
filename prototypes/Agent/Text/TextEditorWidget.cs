@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Immutable;
-using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,9 +36,9 @@ public sealed class TextEditorWidget {
     private readonly Action<string> _writeContent;
     private readonly TextReplacementEngine _replacementEngine;
     private readonly ImmutableArray<ITool> _tools;
-    private readonly string _replaceToolName;
-    private readonly string _replaceSpanToolName;
-    private readonly string _appendToolName;
+    private readonly ITool _replaceTool;
+    private readonly ITool _replaceSpanTool;
+    private readonly ITool _appendTool;
     private bool _isNotifying;
     private string _currentText;
 
@@ -62,9 +61,6 @@ public sealed class TextEditorWidget {
         _baseToolName = baseToolName.Trim();
         _readContent = readContent ?? throw new ArgumentNullException(nameof(readContent));
         _writeContent = writeContent ?? throw new ArgumentNullException(nameof(writeContent));
-        _replaceToolName = string.Format(CultureInfo.InvariantCulture, ReplaceToolFormat, _baseToolName);
-        _replaceSpanToolName = string.Format(CultureInfo.InvariantCulture, ReplaceSpanToolFormat, _baseToolName);
-        _appendToolName = string.Format(CultureInfo.InvariantCulture, AppendToolFormat, _baseToolName);
 
         _currentText = ReadFromSource();
 
@@ -72,9 +68,12 @@ public sealed class TextEditorWidget {
 
         var builder = ImmutableArray.CreateBuilder<ITool>(3);
         var formatArgs = new object?[] { _baseToolName, _targetTextName };
-        builder.Add(MethodToolWrapper.FromDelegate(AppendAsync, formatArgs));
-        builder.Add(MethodToolWrapper.FromDelegate(ReplaceAsync, formatArgs));
-        builder.Add(MethodToolWrapper.FromDelegate(ReplaceSpanAsync, formatArgs));
+        _appendTool = MethodToolWrapper.FromDelegate(AppendAsync, formatArgs);
+        _replaceTool = MethodToolWrapper.FromDelegate(ReplaceAsync, formatArgs);
+        _replaceSpanTool = MethodToolWrapper.FromDelegate(ReplaceSpanAsync, formatArgs);
+        builder.Add(_appendTool);
+        builder.Add(_replaceTool);
+        builder.Add(_replaceSpanTool);
         _tools = builder.ToImmutable();
     }
 
@@ -167,7 +166,7 @@ public sealed class TextEditorWidget {
             NewText: newText,
             SearchAfter: null,
             IsAppend: true,
-            OperationName: _appendToolName
+            OperationName: _appendTool.Name
         );
 
         return ExecuteReplacement(
@@ -185,7 +184,7 @@ public sealed class TextEditorWidget {
                             appended: true,
                             previous.Length,
                             updated.Length,
-                            _appendToolName,
+                            _appendTool.Name,
                             _targetTextName,
                             searchAfter: null
                         )
@@ -202,7 +201,7 @@ public sealed class TextEditorWidget {
                         appended: true,
                         previous.Length,
                         updated.Length,
-                        _appendToolName,
+                        _appendTool.Name,
                         _targetTextName,
                         searchAfter: null
                     )
@@ -215,8 +214,8 @@ public sealed class TextEditorWidget {
         var normalizedSearchAfter = searchAfter is null ? null : NormalizeLineEndings(searchAfter);
         if (string.IsNullOrEmpty(oldText)) {
             return EngineFailure(
-                $"Error: old_text 不能为空；如需追加请改用 {_appendToolName} 工具。",
-                _replaceToolName,
+                $"Error: old_text 不能为空；如需追加请改用 {_appendTool.Name} 工具。",
+                _replaceTool.Name,
                 _targetTextName,
                 normalizedSearchAfter
             );
@@ -229,7 +228,7 @@ public sealed class TextEditorWidget {
             newText,
             normalizedSearchAfter,
             IsAppend: false,
-            _replaceToolName
+            _replaceTool.Name
         );
 
         var locator = new LiteralRegionLocator(normalizedOld);
@@ -249,7 +248,7 @@ public sealed class TextEditorWidget {
                             appended: false,
                             previous.Length,
                             updated.Length,
-                            _replaceToolName,
+                            _replaceTool.Name,
                             _targetTextName,
                             normalizedSearchAfter
                         )
@@ -267,7 +266,7 @@ public sealed class TextEditorWidget {
                         appended: false,
                         previous.Length,
                         updated.Length,
-                        _replaceToolName,
+                        _replaceTool.Name,
                         _targetTextName,
                         normalizedSearchAfter
                     )
@@ -286,7 +285,7 @@ public sealed class TextEditorWidget {
             newText,
             normalizedSearchAfter,
             IsAppend: false,
-            _replaceSpanToolName
+            _replaceSpanTool.Name
         );
 
         var locator = new SpanRegionLocator(normalizedStart, normalizedEnd);
@@ -306,7 +305,7 @@ public sealed class TextEditorWidget {
                             appended: false,
                             previous.Length,
                             updated.Length,
-                            _replaceSpanToolName,
+                            _replaceSpanTool.Name,
                             _targetTextName,
                             normalizedSearchAfter
                         )
@@ -323,7 +322,7 @@ public sealed class TextEditorWidget {
                         appended: false,
                         previous.Length,
                         updated.Length,
-                        _replaceSpanToolName,
+                        _replaceSpanTool.Name,
                         _targetTextName,
                         normalizedSearchAfter
                     )
