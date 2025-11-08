@@ -3,6 +3,8 @@
 > **文档性质**: 本文档是 `TextEditor2Widget` 的中长期演进规划,描绘目标架构与实施路径,部分功能尚未实现。
 > **核心理念**: 以「LLM 独占缓冲区 + 结构化反馈 + 安全持久化」为设计原则,打造新一代文本编辑能力。
 
+> **更新记录 (2025-11-09)**: 完成 Phase 1「响应契约」落地,新增结构化 Markdown 输出、状态/标志类型与核心单元测试。本页已根据最新实现同步调整。
+
 ---
 
 ## 1. 战略定位与背景
@@ -58,28 +60,30 @@
 
 ## 3. 现状与目标对比
 
-### 3.1 当前实现 (v0.1)
-`TextEditor2Widget` 目前已实现以下基础能力:
-- ✅ **双工具支持**: `_replace` 与 `_replace_selection`
-- ✅ **多匹配检测**: 当 `_replace` 命中多处时,生成虚拟选区(最多 5 个)
-- ✅ **选区可视化**: 通过 `[[SEL#X]]` / `[[/SEL#X]]` 标记在快照中高亮候选
-- ✅ **独占缓存**: 所有编辑仅在内存缓冲区生效,不写回底层存储
-- ✅ **基本反馈**: 返回 `summary`、`delta`、`new_length` 等指标
+### 3.1 当前实现 (Phase 1 · 2025-11)
+`TextEditor2Widget` 已完成第一阶段(响应契约)的核心交付,具备以下能力:
+- ✅ **双工具支持**: `_replace` 与 `_replace_selection`,并在多匹配后仅暴露确认工具
+- ✅ **多匹配检测**: `_replace` 命中多处时生成虚拟选区(最多 5 个),附带候选表格
+- ✅ **选区可视化**: 在快照中插入 `[[SEL#X]]` / `[[/SEL#X]]` 标记,配合图例说明
+- ✅ **独占缓存**: 所有编辑仅更新内存缓冲区,不直接写回底层存储
+- ✅ **结构化 Markdown 响应**: 通过 `TextEditResponseFormatter` 输出状态/指标/候选,`LevelOfDetailContent.Basic` 保持精简摘要
+- ✅ **状态与标志基础**: `TextEditWorkflowState`、`TextEditFlag` 支撑 `Idle` ↔ `SelectionPending` 流程,并在冲突场景回退到 `OutOfSync`
+- ✅ **单元测试覆盖**: `TextEditResponseFormatterTests` 与 `TextEditor2WidgetTests` 覆盖多匹配、冲突与标志组合
 
-### 3.2 待实现能力 (v0.2+)
-以下功能属于规划中,尚未开发:
-- ⏳ **状态机管理**: 引入 `WorkflowState` 与 `Flags`,控制工具可见性
-- ⏳ **持久化策略**: 支持 `Immediate` / `Manual` / `Disabled` 三种模式
-- ⏳ **外部冲突检测**: 监听底层文件变更,提示 LLM 执行 `_diff` 或 `_refresh`
-- ⏳ **结构化响应**: 定义 `TextEditResponse` 契约,统一字段名称与类型
-- ⏳ **工具扩展**: 新增 `_commit`、`_discard`、`_diff`、`_refresh`、`_append` 等辅助工具
+### 3.2 待实现能力 (Phase 2+)
+以下工作仍在规划或验证中:
+- ⏳ **状态机进阶**: 引入 `PersistPending`、`Refreshing` 等完整转换矩阵,并集中管理工具可见性
+- ⏳ **持久化策略**: 支持 `Immediate` / `Manual` / `Disabled` 模式,完善 `_commit` / `_discard` 流程
+- ⏳ **外部冲突检测增强**: 集成文件监听,提供 `_diff` / `_refresh` 支持与快照对比
+- ⏳ **结构化响应对象**: 在现有 Markdown 之上,补充 `TextEditResponse` JSON 契约供其他前端/Agent 复用
+- ⏳ **工具扩展**: 新增 `_commit`、`_discard`、`_diff`、`_refresh`、`_append` 等辅助工具,并根据状态自动显隐
 
 ---
 
 ## 4. 核心概念与术语
 
-### 4.1 响应契约 (`TextEditResponse`，待实现)
-未来版本将引入结构化响应类型,包含以下字段:
+### 4.1 响应契约基础（Phase 1 已完成）
+当前版本已在 `prototypes/Agent/Text/TextEditTypes.cs` 中实现核心枚举与数据结构,并由 `TextEditResponseFormatter` 生成统一的 Markdown 输出。字段语义如下:
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -89,10 +93,10 @@
 | `guidance` | `string?` | 下一步操作建议,可为 `null` |
 | `metrics` | `TextEditMetrics` | 包含 `delta`、`new_length`、`selection_count?` |
 | `candidates` | `TextEditCandidate[]?` | 多匹配时的候选列表,单匹配时为 `null` |
-| `flags` | `TextEditFlag` | 由 `workflow_state` 派生的位标志枚举,无标志时为 `TextEditFlag.None` |
+| `flags` | `TextEditFlag` | 由 `workflow_state` 与操作结果派生的位标志枚举,无标志时为 `TextEditFlag.None` |
 
 ```csharp
-// 待实现的类型定义示例
+// 核心类型定义节选 — 文件: prototypes/Agent/Text/TextEditTypes.cs
 public readonly record struct TextEditMetrics(int Delta, int NewLength, int? SelectionCount);
 
 public sealed record TextEditCandidate(
@@ -136,7 +140,11 @@ public enum TextEditFlag {
 }
 ```
 
-### 4.2 状态机定义 (`WorkflowState`，待实现)
+> Formatter 要点: `TextEditResponseFormatter` 固定输出「状态头部 → 概览 → 指标 → 候选」四段 Markdown,并依据 `TextEditStatus` 自动选择 `[OK]` / `[Warning]` / `[Fail]` 视觉标签。`LevelOfDetailContent.Basic` 仅保留 `summary + guidance`, 详细信息位于 `Detail`。
+
+> 后续规划: 计划在 Phase 2 引入 `TextEditResponse` 记录类型,以 JSON 形式补充给其他前端/Agent。现阶段的 Markdown 格式已可作为该结构的序列化参考。
+
+### 4.2 状态机定义（Phase 1 小步落地）
 
 | WorkflowState | 描述 | 典型转入条件 |
 | --- | --- | --- |
@@ -146,7 +154,9 @@ public enum TextEditFlag {
 | `OutOfSync` | 缓存与底层不一致 | 提交失败或外部文件变更 |
 | `Refreshing` | 正在刷新底层快照,临时禁止写入 | 调用 `_refresh` 时 |
 
-### 4.3 标志位映射 (`Flags`，待实现)
+> **当前实现情况**: Phase 1 已在 `TextEditor2Widget` 内部维护 `_workflowState`,并覆盖 `Idle`、`SelectionPending`、`OutOfSync` 三种路径。`PersistPending`、`Refreshing` 将在引入持久化与刷新工具后补全。
+
+### 4.3 标志位映射（Phase 1 小步落地）
 
 | WorkflowState | 必含 Flags | 可选 Flags | Guidance 重点 |
 | --- | --- | --- | --- |
@@ -157,6 +167,8 @@ public enum TextEditFlag {
 | `Refreshing` | `DiagnosticHint` | `SchemaViolation` | 告知刷新中,失败时提示检查日志 |
 
 **注**: 状态切换时需同步更新 Flags,确保 Markdown、JSON、日志三者一致。
+
+> **当前实现情况**: `DeriveFlags` 按工作流状态返回基础标志,`DeriveStatusFlags` 则在 `ExternalConflict`、`PersistFailure`、`Exception` 时附加诊断信息。`SchemaViolation` 仍保留给未来的响应校验场景。
 
 ### 4.4 诊断分类 (`DebugUtil` 类别)
 
@@ -310,6 +322,12 @@ static string FormatFlags(TextEditFlag flags)
 static string FormatDelta(int delta)
     => delta >= 0 ? $"+{delta}" : delta.ToString();
 ```
+
+### 6.4 测试覆盖 (Phase 1)
+
+- `tests/Atelia.LiveContextProto.Tests/TextEditResponseFormatterTests.cs` 覆盖成功、失败、多标志、反引号/管道转义等格式化细节,确保 Markdown 结构稳定。
+- `tests/Atelia.LiveContextProto.Tests/TextEditor2WidgetTests.cs` 通过反射驱动 `_replace` / `_replace_selection`,验证校验失败与外部冲突时的状态/标志输出。
+- 后续在 Phase 2 将补充状态机与持久化相关的端到端测试,扩展现有基线。
 
 ## [Cycle] WorkflowState 定义
 | WorkflowState | 描述 |

@@ -34,11 +34,14 @@ public sealed class TextEditor2Widget {
     private readonly ITool _replaceSelectionTool;
     private readonly ImmutableArray<ITool> _tools;
     // NOTE: 这个实验组件故意独占内部文本状态，不回写底层存储。
-    // 目标是验证“不引入特殊 token 的情况下，通过快照和虚拟选区为 LLM 提供 overlay 交互”的可行性，
+    // 目标是验证"不引入特殊 token 的情况下，通过快照和虚拟选区为 LLM 提供 overlay 交互"的可行性，
     // 因此把其他复杂度全部屏蔽，仅在内存中维护文本。
     private string _currentText;
     private SelectionState? _activeSelectionState;
     private bool _isNotifying;
+
+    // 当前工作流状态，未来会引入完整的状态机管理
+    private TextEditWorkflowState _workflowState = TextEditWorkflowState.Idle;
 
     public TextEditor2Widget(
         string targetTextName,
@@ -105,22 +108,29 @@ public sealed class TextEditor2Widget {
         ClearSelectionState();
 
         if (string.IsNullOrEmpty(old_text)) {
-            var message = "Error: old_text 不能为空。";
-            return ValueTask.FromResult(Failure(message));
+            return ValueTask.FromResult(
+                FormatFailure(TextEditStatus.Exception, "Error: old_text 不能为空。", null)
+            );
         }
 
         var normalizedOld = TextToolUtilities.NormalizeLineEndings(old_text);
         if (normalizedOld.Length == 0) {
-            var message = "Error: old_text 不能为空白字符。";
-            return ValueTask.FromResult(Failure(message));
+            return ValueTask.FromResult(
+                FormatFailure(TextEditStatus.Exception, "Error: old_text 不能为空白字符。", null)
+            );
         }
 
         var normalizedNew = TextToolUtilities.NormalizeLineEndings(new_text ?? string.Empty);
 
         var positions = FindOccurrences(_currentText, normalizedOld);
         if (positions.Count == 0) {
-            var message = "未找到要替换的文本。";
-            return ValueTask.FromResult(Failure(message));
+            return ValueTask.FromResult(
+                FormatFailure(
+                    TextEditStatus.NoMatch,
+                    "未找到要替换的文本。",
+                    "请检查 old_text 是否与目标内容精确匹配（包括空格、换行等）。"
+                )
+            );
         }
 
         if (positions.Count == 1) {
@@ -131,9 +141,15 @@ public sealed class TextEditor2Widget {
             ClearSelectionState();
             ApplyNewContent(updated, raiseEvent: true);
 
-            var summary = $"已在 {_targetTextName} 中完成替换。";
-            var detailText = CreateDeltaDetail(summary, previousLength, newLength);
-            return ValueTask.FromResult(Success(summary, detailText));
+            return ValueTask.FromResult(
+                FormatSuccess(
+                    TextEditStatus.Success,
+                    $"已在 {_targetTextName} 中完成替换。",
+                    null,
+                    previousLength,
+                    newLength
+                )
+            );
         }
         var hasMoreMatches = positions.Count > MaxSelectableMatches;
         var positionsForSelection = hasMoreMatches
@@ -143,34 +159,32 @@ public sealed class TextEditor2Widget {
         var selectionState = BuildSelectionState(normalizedOld, normalizedNew, positionsForSelection);
         _activeSelectionState = selectionState;
         _replaceSelectionTool.Visible = true;
+        _workflowState = TextEditWorkflowState.SelectionPending;
 
-        var overlayDetail = BuildOverlayDetail(selectionState);
+        // 构建候选列表
+        var candidates = BuildCandidates(selectionState);
+
         var summaryMessage = hasMoreMatches
             ? $"检测到 {_targetTextName} 中多处匹配，已展示前 {MaxSelectableMatches} 个选区。"
             : $"检测到 {_targetTextName} 中的多处匹配，已生成选区。";
 
-        var detailBuilder = new StringBuilder();
-        detailBuilder.AppendLine(summaryMessage);
+        var guidanceMessage = $"请调用 {_replaceSelectionTool.Name} 工具并指定 selection_id 完成替换。";
+
         if (hasMoreMatches) {
             var remainingMatches = positions.Count - MaxSelectableMatches;
-            detailBuilder.AppendLine($"提示：共有 {positions.Count} 处匹配，剩余 {remainingMatches} 处未展示，可尝试提供更具体的 old_text 以缩小范围。");
-            detailBuilder.AppendLine();
-        }
-        detailBuilder.AppendLine($"请调用 {_replaceSelectionTool.Name} 工具并指定 selection_id 完成替换。");
-        detailBuilder.AppendLine();
-        detailBuilder.Append(overlayDetail);
-
-        if (hasMoreMatches) {
-            var hiddenPositions = positions.GetRange(MaxSelectableMatches, positions.Count - MaxSelectableMatches);
-            var hiddenPreview = TextToolUtilities.FormatMatchesForError(hiddenPositions, _currentText, normalizedOld.Length);
-            if (!string.IsNullOrEmpty(hiddenPreview)) {
-                detailBuilder.AppendLine();
-                detailBuilder.AppendLine("未展示匹配的上下文：");
-                detailBuilder.AppendLine(hiddenPreview);
-            }
+            guidanceMessage += $" 提示：共有 {positions.Count} 处匹配，剩余 {remainingMatches} 处未展示，可尝试提供更具体的 old_text 以缩小范围。";
         }
 
-        return ValueTask.FromResult(Success(summaryMessage, detailBuilder.ToString()));
+        return ValueTask.FromResult(
+            FormatSuccess(
+                TextEditStatus.MultiMatch,
+                summaryMessage,
+                guidanceMessage,
+                _currentText.Length,
+                _currentText.Length,
+                candidates
+            )
+        );
     }
 
     [Tool(ReplaceSelectionToolFormat, "选定某个虚拟选区并执行替换；仅在存在待确认选区时对模型可见。")]
@@ -183,14 +197,27 @@ public sealed class TextEditor2Widget {
         EnsureWritable();
 
         if (!TryGetActiveSelectionState(out var state)) {
+            // 只要 TryGetActiveSelectionState 返回 false，就有两种情况：要么确实没有挂起选区，要么刚刚检测到底层文本被外部改写。
+            // 当状态被标记为 OutOfSync 时，优先向调用者回传 ExternalConflict，以便 LLM 明确感知冲突并重新拉取选区。
+            if (_workflowState == TextEditWorkflowState.OutOfSync) {
+                var conflictSummary = "选区对应的文本已发生变化，请重新生成选区。";
+                var conflictGuidance = $"请重新调用 {_replaceTool.Name} 工具生成新的选区。";
+                return ValueTask.FromResult(
+                    FormatFailure(TextEditStatus.ExternalConflict, conflictSummary, conflictGuidance)
+                );
+            }
+
             var message = $"当前没有待处理的选区，请先调用 {_replaceTool.Name} 工具生成选区。";
-            _replaceSelectionTool.Visible = false;
-            return ValueTask.FromResult(Failure(message));
+            return ValueTask.FromResult(
+                FormatFailure(TextEditStatus.Exception, message, null)
+            );
         }
 
         if (!TryFindEntry(state, selection_id, out var entry)) {
             var message = $"未找到编号为 #{selection_id} 的选区，或选区已失效。";
-            return ValueTask.FromResult(Failure(message));
+            return ValueTask.FromResult(
+                FormatFailure(TextEditStatus.Exception, message, "请重新调用替换工具生成新的选区。")
+            );
         }
 
         var replacement = new_text is not null
@@ -199,13 +226,17 @@ public sealed class TextEditor2Widget {
 
         if (replacement is null) {
             var message = $"未提供 new_text，且上一轮 {_replaceTool.Name} 未记录默认替换文本。";
-            return ValueTask.FromResult(Failure(message));
+            return ValueTask.FromResult(
+                FormatFailure(TextEditStatus.Exception, message, null)
+            );
         }
 
         if (entry.StartIndex < 0 || entry.StartIndex > _currentText.Length) {
             var message = "选区对应的文本已发生变化，请重新生成选区。";
-            ClearSelectionState();
-            return ValueTask.FromResult(Failure(message));
+            ClearSelectionState(TextEditWorkflowState.OutOfSync);
+            return ValueTask.FromResult(
+                FormatFailure(TextEditStatus.ExternalConflict, message, $"请重新调用 {_replaceTool.Name} 工具。")
+            );
         }
 
         int currentIndex;
@@ -216,14 +247,18 @@ public sealed class TextEditor2Widget {
             currentIndex = FindNthOccurrence(_currentText, state.Needle, entry.OccurrenceNumber);
             if (currentIndex < 0) {
                 var message = "选区对应的文本已发生变化，请重新生成选区。";
-                ClearSelectionState();
-                return ValueTask.FromResult(Failure(message));
+                ClearSelectionState(TextEditWorkflowState.OutOfSync);
+                return ValueTask.FromResult(
+                    FormatFailure(TextEditStatus.ExternalConflict, message, $"请重新调用 {_replaceTool.Name} 工具。")
+                );
             }
 
             if (!SubstringEquals(_currentText, currentIndex, state.Needle)) {
                 var message = "选区对应的文本已发生变化，请重新生成选区。";
-                ClearSelectionState();
-                return ValueTask.FromResult(Failure(message));
+                ClearSelectionState(TextEditWorkflowState.OutOfSync);
+                return ValueTask.FromResult(
+                    FormatFailure(TextEditStatus.ExternalConflict, message, $"请重新调用 {_replaceTool.Name} 工具。")
+                );
             }
         }
 
@@ -235,14 +270,13 @@ public sealed class TextEditor2Widget {
         ApplyNewContent(updated, raiseEvent: true);
 
         var summary = $"已替换选区 #{selection_id}。";
-        var detailBuilder = new StringBuilder(CreateDeltaDetail(summary, previousLength, newLength));
-        if (currentIndex != entry.StartIndex) {
-            detailBuilder.AppendLine();
-            detailBuilder.Append("- selection_offset: ");
-            detailBuilder.Append((currentIndex - entry.StartIndex).ToString(CultureInfo.InvariantCulture));
-        }
+        var guidance = currentIndex != entry.StartIndex
+            ? $"注意：选区位置已自动重定位（偏移 {currentIndex - entry.StartIndex} 字符）。"
+            : null;
 
-        return ValueTask.FromResult(Success(summary, detailBuilder.ToString()));
+        return ValueTask.FromResult(
+            FormatSuccess(TextEditStatus.Success, summary, guidance, previousLength, newLength)
+        );
     }
 
     private void ApplyNewContent(string normalizedContent, bool raiseEvent) {
@@ -277,9 +311,10 @@ public sealed class TextEditor2Widget {
         if (_isNotifying) { throw new InvalidOperationException("Widget is in notification scope; write operations are not allowed."); }
     }
 
-    private void ClearSelectionState() {
+    private void ClearSelectionState(TextEditWorkflowState nextState = TextEditWorkflowState.Idle) {
         _activeSelectionState = null;
         _replaceSelectionTool.Visible = false;
+        _workflowState = nextState;
     }
 
     private bool TryGetActiveSelectionState(out SelectionState state) {
@@ -291,9 +326,10 @@ public sealed class TextEditor2Widget {
         }
 
         if (!string.Equals(current.ContentSnapshot, _currentText, StringComparison.Ordinal)) {
-            _activeSelectionState = null;
+            // 缓存快照与实际文本不一致，说明底层数据已被外部写入；立即清空选区并把工作流状态切换到 OutOfSync。
+            // 这样 ReplaceSelectionAsync 会走 ExternalConflict 路径，同时隐藏 selection 工具，避免 LLM 在陈旧快照上继续操作。
+            ClearSelectionState(TextEditWorkflowState.OutOfSync);
             state = default!;
-            _replaceSelectionTool.Visible = false;
             return false;
         }
 
@@ -323,6 +359,36 @@ public sealed class TextEditor2Widget {
         return new SelectionState(_currentText, needle, defaultReplacement, entriesBuilder.ToImmutable());
     }
 
+    /// <summary>
+    /// 从 SelectionState 构建 TextEditCandidate 列表。
+    /// </summary>
+    private static List<TextEditCandidate> BuildCandidates(SelectionState state) {
+        var candidates = new List<TextEditCandidate>(state.Entries.Length);
+
+        foreach (var entry in state.Entries) {
+            var preview = TextToolUtilities.GetContext(
+                state.ContentSnapshot,
+                entry.StartIndex,
+                entry.Length,
+                contextSize: 40
+            ).Replace("\n", "\\n");
+
+            candidates.Add(
+                new TextEditCandidate(
+                    id: entry.PublicId,
+                    preview: preview,
+                    markerStart: entry.StartMarker,
+                    markerEnd: entry.EndMarker,
+                    occurrence: entry.OccurrenceNumber,
+                    contextStart: entry.StartIndex,
+                    contextEnd: entry.StartIndex + entry.Length
+                )
+            );
+        }
+
+        return candidates;
+    }
+
     private static (string StartMarker, string EndMarker) CreateMarkerPair(string content, int baseId, HashSet<string> usedMarkers) {
         var suffixCounter = 0;
 
@@ -349,20 +415,6 @@ public sealed class TextEditor2Widget {
 
             suffixCounter++;
         }
-    }
-
-    private static string BuildOverlayDetail(SelectionState state) {
-        var legend = BuildLegend(state);
-        var markedContent = InsertMarkers(state.ContentSnapshot, state.Entries);
-
-        var builder = new StringBuilder();
-        if (!string.IsNullOrEmpty(legend)) {
-            builder.AppendLine(legend);
-            builder.AppendLine();
-        }
-
-        builder.Append(RenderAsCodeFence(markedContent));
-        return builder.ToString();
     }
 
     private static string BuildLegend(SelectionState state) {
@@ -505,33 +557,92 @@ public sealed class TextEditor2Widget {
         return longest;
     }
 
-    private static string CreateDeltaDetail(string summary, int previousLength, int newLength) {
+    /// <summary>
+    /// 生成符合规范的格式化响应（成功场景）。
+    /// </summary>
+    private LodToolExecuteResult FormatSuccess(
+        TextEditStatus status,
+        string summary,
+        string? guidance,
+        int previousLength,
+        int newLength,
+        IReadOnlyList<TextEditCandidate>? candidates = null
+    ) {
         var delta = newLength - previousLength;
-        var builder = new StringBuilder();
-        builder.AppendLine(summary);
-        builder.Append("- delta: ");
-        if (delta >= 0) {
-            builder.Append('+');
-        }
-        builder.Append(delta.ToString(CultureInfo.InvariantCulture));
-        builder.AppendLine();
-        builder.Append("- new_length: ");
-        builder.Append(newLength.ToString(CultureInfo.InvariantCulture));
-        return builder.ToString();
-    }
+        var metrics = new TextEditMetrics(delta, newLength, candidates?.Count);
 
-    private static LodToolExecuteResult Success(string summary, string detail) {
+        var flags = DeriveFlags(_workflowState) | DeriveStatusFlags(status);
+        var markdown = TextEditResponseFormatter.FormatResponse(
+            status,
+            _workflowState,
+            flags,
+            summary,
+            guidance,
+            metrics,
+            candidates
+        );
+
+        // Basic 保留简要摘要，Detail 包含完整 Markdown
+        var basicSummary = $"{summary}{(guidance is not null ? $" {guidance}" : string.Empty)}";
         return LodToolExecuteResult.FromContent(
             ToolExecutionStatus.Success,
-            new LevelOfDetailContent(summary, detail)
+            new LevelOfDetailContent(basicSummary, markdown)
         );
     }
 
-    private static LodToolExecuteResult Failure(string message) {
+    /// <summary>
+    /// 生成符合规范的格式化响应（失败场景）。
+    /// </summary>
+    private LodToolExecuteResult FormatFailure(
+        TextEditStatus status,
+        string summary,
+        string? guidance
+    ) {
+        var metrics = new TextEditMetrics(0, _currentText.Length, null);
+        var flags = DeriveFlags(_workflowState) | DeriveStatusFlags(status);
+
+        var markdown = TextEditResponseFormatter.FormatResponse(
+            status,
+            _workflowState,
+            flags,
+            summary,
+            guidance,
+            metrics,
+            null
+        );
+
+        var basicSummary = $"{summary}{(guidance is not null ? $" {guidance}" : string.Empty)}";
         return LodToolExecuteResult.FromContent(
             ToolExecutionStatus.Failed,
-            new LevelOfDetailContent(message, message)
+            new LevelOfDetailContent(basicSummary, markdown)
         );
+    }
+
+    /// <summary>
+    /// 根据工作流状态推断标志位。
+    /// </summary>
+    private static TextEditFlag DeriveFlags(TextEditWorkflowState state) {
+        return state switch {
+            TextEditWorkflowState.Idle => TextEditFlag.None,
+            TextEditWorkflowState.SelectionPending => TextEditFlag.SelectionPending,
+            TextEditWorkflowState.PersistPending => TextEditFlag.PersistPending,
+            TextEditWorkflowState.OutOfSync => TextEditFlag.OutOfSync,
+            // 刷新阶段禁止写入，因此同时暴露 PersistReadOnly 以提示调用方进入只读模式。
+            TextEditWorkflowState.Refreshing => TextEditFlag.PersistReadOnly | TextEditFlag.DiagnosticHint,
+            _ => TextEditFlag.None
+        };
+    }
+
+    /// <summary>
+    /// 根据操作状态补充标志位。
+    /// </summary>
+    private static TextEditFlag DeriveStatusFlags(TextEditStatus status) {
+        return status switch {
+            TextEditStatus.ExternalConflict => TextEditFlag.ExternalConflict | TextEditFlag.DiagnosticHint,
+            TextEditStatus.PersistFailure => TextEditFlag.PersistPending | TextEditFlag.DiagnosticHint,
+            TextEditStatus.Exception => TextEditFlag.DiagnosticHint,
+            _ => TextEditFlag.None
+        };
     }
 
     private sealed class SelectionState {
