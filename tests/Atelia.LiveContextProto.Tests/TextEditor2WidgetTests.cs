@@ -34,8 +34,8 @@ public sealed class TextEditor2WidgetTests {
         var replaceSelectionAsync = GetMethod(nameof(TextEditor2Widget), "ReplaceSelectionAsync");
         var currentTextField = typeof(TextEditor2Widget).GetField("_currentText", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Unable to locate _currentText field.");
-        var workflowStateField = typeof(TextEditor2Widget).GetField("_workflowState", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Unable to locate _workflowState field.");
+        var stateControllerField = typeof(TextEditor2Widget).GetField("_stateController", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Unable to locate _stateController field.");
 
         // Act 1: generate multi-match selections
         var multiMatchResult = InvokeAsync(replaceAsync, widget, "foo", "bar");
@@ -57,8 +57,8 @@ public sealed class TextEditor2WidgetTests {
         Assert.Contains("`DiagnosticHint`", conflictResult.Result.Detail);
         Assert.Contains("请重新调用 myfile_replace 工具生成新的选区。", conflictResult.Result.Detail);
 
-        var workflowState = (TextEditWorkflowState)workflowStateField.GetValue(widget)!;
-        Assert.Equal(TextEditWorkflowState.OutOfSync, workflowState);
+        var stateController = (TextEditStateController)stateControllerField.GetValue(widget)!;
+        Assert.Equal(TextEditWorkflowState.OutOfSync, stateController.CurrentState);
     }
 
     private static MethodInfo GetMethod(string typeName, string methodName) {

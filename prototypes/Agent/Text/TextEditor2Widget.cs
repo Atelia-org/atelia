@@ -33,6 +33,7 @@ public sealed class TextEditor2Widget {
     private readonly ITool _replaceTool;
     private readonly ITool _replaceSelectionTool;
     private readonly ImmutableArray<ITool> _tools;
+    private readonly TextEditStateController _stateController;
     // NOTE: 这个实验组件故意独占内部文本状态，不回写底层存储。
     // 目标是验证"不引入特殊 token 的情况下，通过快照和虚拟选区为 LLM 提供 overlay 交互"的可行性，
     // 因此把其他复杂度全部屏蔽，仅在内存中维护文本。
@@ -40,13 +41,11 @@ public sealed class TextEditor2Widget {
     private SelectionState? _activeSelectionState;
     private bool _isNotifying;
 
-    // 当前工作流状态，未来会引入完整的状态机管理
-    private TextEditWorkflowState _workflowState = TextEditWorkflowState.Idle;
-
     public TextEditor2Widget(
         string targetTextName,
         string baseToolName,
-        string? initialContent = null
+        string? initialContent = null,
+        PersistMode persistMode = PersistMode.Immediate
     ) {
         if (string.IsNullOrWhiteSpace(targetTextName)) { throw new ArgumentException("Target text name cannot be null or whitespace.", nameof(targetTextName)); }
         if (string.IsNullOrWhiteSpace(baseToolName)) { throw new ArgumentException("Base tool name cannot be null or whitespace.", nameof(baseToolName)); }
@@ -60,6 +59,8 @@ public sealed class TextEditor2Widget {
         _replaceSelectionTool = MethodToolWrapper.FromDelegate(ReplaceSelectionAsync, formatArgs);
         _replaceSelectionTool.Visible = false;
         _tools = [_replaceTool, _replaceSelectionTool];
+
+        _stateController = new TextEditStateController(persistMode, _replaceTool, _replaceSelectionTool);
     }
 
     public ImmutableArray<ITool> Tools => _tools;
@@ -140,6 +141,7 @@ public sealed class TextEditor2Widget {
 
             ClearSelectionState();
             ApplyNewContent(updated, raiseEvent: true);
+            _stateController.OnSingleMatchSuccess();
 
             return ValueTask.FromResult(
                 FormatSuccess(
@@ -158,8 +160,7 @@ public sealed class TextEditor2Widget {
 
         var selectionState = BuildSelectionState(normalizedOld, normalizedNew, positionsForSelection);
         _activeSelectionState = selectionState;
-        _replaceSelectionTool.Visible = true;
-        _workflowState = TextEditWorkflowState.SelectionPending;
+        _stateController.OnMultiMatch();
 
         // 构建候选列表
         var candidates = BuildCandidates(selectionState);
@@ -199,7 +200,7 @@ public sealed class TextEditor2Widget {
         if (!TryGetActiveSelectionState(out var state)) {
             // 只要 TryGetActiveSelectionState 返回 false，就有两种情况：要么确实没有挂起选区，要么刚刚检测到底层文本被外部改写。
             // 当状态被标记为 OutOfSync 时，优先向调用者回传 ExternalConflict，以便 LLM 明确感知冲突并重新拉取选区。
-            if (_workflowState == TextEditWorkflowState.OutOfSync) {
+            if (_stateController.CurrentState == TextEditWorkflowState.OutOfSync) {
                 var conflictSummary = "选区对应的文本已发生变化，请重新生成选区。";
                 var conflictGuidance = $"请重新调用 {_replaceTool.Name} 工具生成新的选区。";
                 return ValueTask.FromResult(
@@ -268,6 +269,7 @@ public sealed class TextEditor2Widget {
 
         ClearSelectionState();
         ApplyNewContent(updated, raiseEvent: true);
+        _stateController.OnSelectionConfirmed();
 
         var summary = $"已替换选区 #{selection_id}。";
         var guidance = currentIndex != entry.StartIndex
@@ -313,15 +315,21 @@ public sealed class TextEditor2Widget {
 
     private void ClearSelectionState(TextEditWorkflowState nextState = TextEditWorkflowState.Idle) {
         _activeSelectionState = null;
-        _replaceSelectionTool.Visible = false;
-        _workflowState = nextState;
+
+        // 根据目标状态通知状态控制器
+        if (nextState == TextEditWorkflowState.OutOfSync) {
+            _stateController.OnExternalConflict();
+        }
+        else if (nextState == TextEditWorkflowState.Idle) {
+            _stateController.OnClearSelection();
+        }
+        else { throw new ArgumentException($"Unsupported nextState: {nextState}", nameof(nextState)); }
     }
 
     private bool TryGetActiveSelectionState(out SelectionState state) {
         var current = _activeSelectionState;
         if (current is null) {
             state = default!;
-            _replaceSelectionTool.Visible = false;
             return false;
         }
 
@@ -571,10 +579,11 @@ public sealed class TextEditor2Widget {
         var delta = newLength - previousLength;
         var metrics = new TextEditMetrics(delta, newLength, candidates?.Count);
 
-        var flags = DeriveFlags(_workflowState) | DeriveStatusFlags(status);
+        var currentState = _stateController.CurrentState;
+        var flags = _stateController.DeriveFlags() | TextEditStateController.DeriveStatusFlags(status);
         var markdown = TextEditResponseFormatter.FormatResponse(
             status,
-            _workflowState,
+            currentState,
             flags,
             summary,
             guidance,
@@ -599,11 +608,12 @@ public sealed class TextEditor2Widget {
         string? guidance
     ) {
         var metrics = new TextEditMetrics(0, _currentText.Length, null);
-        var flags = DeriveFlags(_workflowState) | DeriveStatusFlags(status);
+        var currentState = _stateController.CurrentState;
+        var flags = _stateController.DeriveFlags() | TextEditStateController.DeriveStatusFlags(status);
 
         var markdown = TextEditResponseFormatter.FormatResponse(
             status,
-            _workflowState,
+            currentState,
             flags,
             summary,
             guidance,
@@ -616,33 +626,6 @@ public sealed class TextEditor2Widget {
             ToolExecutionStatus.Failed,
             new LevelOfDetailContent(basicSummary, markdown)
         );
-    }
-
-    /// <summary>
-    /// 根据工作流状态推断标志位。
-    /// </summary>
-    private static TextEditFlag DeriveFlags(TextEditWorkflowState state) {
-        return state switch {
-            TextEditWorkflowState.Idle => TextEditFlag.None,
-            TextEditWorkflowState.SelectionPending => TextEditFlag.SelectionPending,
-            TextEditWorkflowState.PersistPending => TextEditFlag.PersistPending,
-            TextEditWorkflowState.OutOfSync => TextEditFlag.OutOfSync,
-            // 刷新阶段禁止写入，因此同时暴露 PersistReadOnly 以提示调用方进入只读模式。
-            TextEditWorkflowState.Refreshing => TextEditFlag.PersistReadOnly | TextEditFlag.DiagnosticHint,
-            _ => TextEditFlag.None
-        };
-    }
-
-    /// <summary>
-    /// 根据操作状态补充标志位。
-    /// </summary>
-    private static TextEditFlag DeriveStatusFlags(TextEditStatus status) {
-        return status switch {
-            TextEditStatus.ExternalConflict => TextEditFlag.ExternalConflict | TextEditFlag.DiagnosticHint,
-            TextEditStatus.PersistFailure => TextEditFlag.PersistPending | TextEditFlag.DiagnosticHint,
-            TextEditStatus.Exception => TextEditFlag.DiagnosticHint,
-            _ => TextEditFlag.None
-        };
     }
 
     private sealed class SelectionState {

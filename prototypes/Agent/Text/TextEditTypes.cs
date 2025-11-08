@@ -77,6 +77,26 @@ public enum TextEditWorkflowState {
 }
 
 /// <summary>
+/// 持久化模式，控制内存缓存与底层存储的同步策略。
+/// </summary>
+public enum PersistMode {
+    /// <summary>
+    /// 每次编辑成功后立即写回底层存储。
+    /// </summary>
+    Immediate,
+
+    /// <summary>
+    /// 编辑成功后进入 PersistPending 状态，需显式调用 commit 或 discard。
+    /// </summary>
+    Manual,
+
+    /// <summary>
+    /// 所有编辑仅更新缓存，不会写回底层存储（只读模式）。
+    /// </summary>
+    Disabled
+}
+
+/// <summary>
 /// 文本编辑操作的附加标志位，从 WorkflowState 派生或由特定条件触发。
 /// </summary>
 [Flags]
