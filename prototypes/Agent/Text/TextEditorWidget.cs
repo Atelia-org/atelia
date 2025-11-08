@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -131,32 +132,30 @@ public sealed class TextEditorWidget {
         return ValueTask.FromResult(result);
     }
 
-    [Tool(ReplaceToolFormat, "在 {1} 中查找并替换文本；支持通过锚点限定搜索范围，执行结果会返回 operation/delta/new_length 等细节。")]
+    [Tool(ReplaceToolFormat, "在 {1} 中查找并替换文本；需提供精确匹配的旧文本，执行结果会返回 operation/delta/new_length 等细节。")]
     private ValueTask<LodToolExecuteResult> ReplaceAsync(
         [ToolParam("要替换的旧文本；需与 {1} 内容精确匹配。")] string old_text,
         [ToolParam("替换后的新文本；为空字符串表示删除匹配到的旧文本。")] string new_text,
-        [ToolParam("锚点定位文本；如果提供，会从该锚点之后开始搜索旧文本，以区分多次出现的情况。")] string? search_after = null,
         CancellationToken cancellationToken = default
     ) {
         cancellationToken.ThrowIfCancellationRequested();
 
         EnsureWritable();
-        var result = ExecuteReplaceInternal(old_text, new_text, search_after);
+        var result = ExecuteReplaceInternal(old_text, new_text);
         return ValueTask.FromResult(result);
     }
 
-    [Tool(ReplaceSpanToolFormat, "通过起止标记精确定位 {1} 中的区块并替换；适合多段相似内容时依靠首尾锚点锁定唯一目标，可选 search_after 进一步约束搜索范围。")]
+    [Tool(ReplaceSpanToolFormat, "通过起止标记精确定位 {1} 中的区块并替换；适合多段相似内容时依靠首尾锚点锁定唯一目标。")]
     private ValueTask<LodToolExecuteResult> ReplaceSpanAsync(
         [ToolParam("区块起始标记文本，需与 {1} 内容完全匹配。")] string old_span_start,
         [ToolParam("区块结束标记文本，需与 {1} 内容完全匹配。")] string old_span_end,
         [ToolParam("替换后的新文本，需包含希望保留的首尾标记。")] string new_text,
-        [ToolParam("锚点定位文本；提供后，会从锚点之后搜索起始标记，避免多次出现时误替换。")] string? search_after = null,
         CancellationToken cancellationToken = default
     ) {
         cancellationToken.ThrowIfCancellationRequested();
 
         EnsureWritable();
-        var result = ExecuteReplaceSpanInternal(old_span_start, old_span_end, new_text, search_after);
+        var result = ExecuteReplaceSpanInternal(old_span_start, old_span_end, new_text);
         return ValueTask.FromResult(result);
     }
 
@@ -164,7 +163,6 @@ public sealed class TextEditorWidget {
         var request = new ReplacementRequest(
             OldText: string.Empty,
             NewText: newText,
-            SearchAfter: null,
             IsAppend: true,
             OperationName: _appendTool.Name
         );
@@ -173,51 +171,45 @@ public sealed class TextEditorWidget {
             request,
             locator: null,
             (previous, updated, engineMessage) => {
+                var extraMessage = string.IsNullOrEmpty(engineMessage) ? null : engineMessage;
+
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
-                    const string summary = "未追加任何内容：new_text 为空。";
-                    var detailMessage = string.IsNullOrEmpty(engineMessage) ? summary : engineMessage;
+                    const string noChangeSummary = "未追加任何内容";
                     return LodToolExecuteResult.FromContent(
                         ToolExecutionStatus.Success,
-                        CreateOperationContent(
-                            summary,
-                            detailMessage,
-                            appended: true,
+                        CreateSuccessContent(
+                            noChangeSummary,
+                            operation: "append",
+                            _targetTextName,
                             previous.Length,
                             updated.Length,
-                            _appendTool.Name,
-                            _targetTextName,
-                            searchAfter: null
+                            extraMessage
                         )
                     );
                 }
 
-                var summaryMessage = $"已追加新的{_targetTextName}段落。";
-                var finalDetail = string.IsNullOrEmpty(engineMessage) ? summaryMessage : engineMessage;
+                var summary = $"✓ 已向{_targetTextName}追加内容";
                 return LodToolExecuteResult.FromContent(
                     ToolExecutionStatus.Success,
-                    CreateOperationContent(
-                        summaryMessage,
-                        finalDetail,
-                        appended: true,
+                    CreateSuccessContent(
+                        summary,
+                        operation: "append",
+                        _targetTextName,
                         previous.Length,
                         updated.Length,
-                        _appendTool.Name,
-                        _targetTextName,
-                        searchAfter: null
+                        extraMessage
                     )
                 );
             }
         );
     }
 
-    private LodToolExecuteResult ExecuteReplaceInternal(string oldText, string newText, string? searchAfter) {
-        var normalizedSearchAfter = searchAfter is null ? null : NormalizeLineEndings(searchAfter);
+    private LodToolExecuteResult ExecuteReplaceInternal(string oldText, string newText) {
         if (string.IsNullOrEmpty(oldText)) {
             return EngineFailure(
-                $"Error: old_text 不能为空；如需追加请改用 {_appendTool.Name} 工具。",
+                $"old_text 不能为空；如需追加请改用 {_appendTool.Name} 工具。",
                 _replaceTool.Name,
-                _targetTextName,
-                normalizedSearchAfter
+                _targetTextName
             );
         }
 
@@ -226,7 +218,6 @@ public sealed class TextEditorWidget {
         var request = new ReplacementRequest(
             normalizedOld,
             newText,
-            normalizedSearchAfter,
             IsAppend: false,
             _replaceTool.Name
         );
@@ -237,53 +228,47 @@ public sealed class TextEditorWidget {
             request,
             locator,
             (previous, updated, engineMessage) => {
+                var extraMessage = string.IsNullOrEmpty(engineMessage) ? null : engineMessage;
+
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
-                    const string summary = "替换内容未发生变化。";
-                    var detailMessage = string.IsNullOrEmpty(engineMessage) ? summary : engineMessage;
+                    const string noChangeSummary = "替换内容未发生变化";
                     return LodToolExecuteResult.FromContent(
                         ToolExecutionStatus.Success,
-                        CreateOperationContent(
-                            summary,
-                            detailMessage,
-                            appended: false,
+                        CreateSuccessContent(
+                            noChangeSummary,
+                            operation: "replace",
+                            _targetTextName,
                             previous.Length,
                             updated.Length,
-                            _replaceTool.Name,
-                            _targetTextName,
-                            normalizedSearchAfter
+                            extraMessage
                         )
                     );
                 }
 
-                var summaryMessage = $"已完成{_targetTextName}文本替换。";
-                var finalDetail = string.IsNullOrEmpty(engineMessage) ? summaryMessage : engineMessage;
+                var summary = $"✓ 已完成{_targetTextName}文本替换";
 
                 return LodToolExecuteResult.FromContent(
                     ToolExecutionStatus.Success,
-                    CreateOperationContent(
-                        summaryMessage,
-                        finalDetail,
-                        appended: false,
+                    CreateSuccessContent(
+                        summary,
+                        operation: "replace",
+                        _targetTextName,
                         previous.Length,
                         updated.Length,
-                        _replaceTool.Name,
-                        _targetTextName,
-                        normalizedSearchAfter
+                        extraMessage
                     )
                 );
             }
         );
     }
 
-    private LodToolExecuteResult ExecuteReplaceSpanInternal(string oldSpanStart, string oldSpanEnd, string newText, string? searchAfter) {
+    private LodToolExecuteResult ExecuteReplaceSpanInternal(string oldSpanStart, string oldSpanEnd, string newText) {
         var normalizedStart = NormalizeLineEndings(oldSpanStart);
         var normalizedEnd = NormalizeLineEndings(oldSpanEnd);
-        var normalizedSearchAfter = searchAfter is null ? null : NormalizeLineEndings(searchAfter);
 
         var request = new ReplacementRequest(
             normalizedStart,
             newText,
-            normalizedSearchAfter,
             IsAppend: false,
             _replaceSpanTool.Name
         );
@@ -294,37 +279,33 @@ public sealed class TextEditorWidget {
             request,
             locator,
             (previous, updated, engineMessage) => {
+                var extraMessage = string.IsNullOrEmpty(engineMessage) ? null : engineMessage;
+
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
-                    const string summary = "替换内容未发生变化。";
-                    var detailMessage = string.IsNullOrEmpty(engineMessage) ? summary : engineMessage;
+                    const string noChangeSummary = "替换内容未发生变化";
                     return LodToolExecuteResult.FromContent(
                         ToolExecutionStatus.Success,
-                        CreateOperationContent(
-                            summary,
-                            detailMessage,
-                            appended: false,
+                        CreateSuccessContent(
+                            noChangeSummary,
+                            operation: "replace_span",
+                            _targetTextName,
                             previous.Length,
                             updated.Length,
-                            _replaceSpanTool.Name,
-                            _targetTextName,
-                            normalizedSearchAfter
+                            extraMessage
                         )
                     );
                 }
 
-                var summaryMessage = $"已完成{_targetTextName}区块替换。";
-                var finalDetail = string.IsNullOrEmpty(engineMessage) ? summaryMessage : engineMessage;
+                var summary = $"✓ 已完成{_targetTextName}区块替换";
                 return LodToolExecuteResult.FromContent(
                     ToolExecutionStatus.Success,
-                    CreateOperationContent(
-                        summaryMessage,
-                        finalDetail,
-                        appended: false,
+                    CreateSuccessContent(
+                        summary,
+                        operation: "replace_span",
+                        _targetTextName,
                         previous.Length,
                         updated.Length,
-                        _replaceSpanTool.Name,
-                        _targetTextName,
-                        normalizedSearchAfter
+                        extraMessage
                     )
                 );
             }
@@ -340,7 +321,7 @@ public sealed class TextEditorWidget {
 
         var outcome = _replacementEngine.Execute(request, locator);
 
-        if (!outcome.Success) { return EngineFailure(outcome.Message, request.OperationName, _targetTextName, request.SearchAfter); }
+        if (!outcome.Success) { return EngineFailure(outcome.Message, request.OperationName, _targetTextName); }
 
         var updated = GetNormalizedContent();
         return onSuccess(previous, updated, outcome.Message);
@@ -434,89 +415,51 @@ public sealed class TextEditorWidget {
         if (_isNotifying) { throw new InvalidOperationException("TextEditorWidget is in read-only notification scope; write operations are not allowed."); }
     }
 
-    private static LodToolExecuteResult EngineFailure(string message, string operationName, string targetName, string? searchAfter) {
-        var detailBuilder = new StringBuilder();
-        detailBuilder.Append(message.TrimEnd());
+    private static LodToolExecuteResult EngineFailure(string message, string operationName, string targetName) {
+        var summary = string.IsNullOrWhiteSpace(message) ? "✗ 操作失败" : $"✗ {message}";
 
-        var context = BuildContextDetails(operationName, targetName, searchAfter);
-        if (!string.IsNullOrEmpty(context)) {
-            detailBuilder.Append('\n').Append(context);
+        var detailBuilder = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(message)) {
+            detailBuilder.Append(message.TrimEnd());
+            detailBuilder.Append('\n');
         }
+
+        detailBuilder.Append("- target: ").Append(targetName).Append('\n');
+        detailBuilder.Append("- tool_operation: ").Append(operationName);
 
         return LodToolExecuteResult.FromContent(
             ToolExecutionStatus.Failed,
-            new LevelOfDetailContent(message, detailBuilder.ToString())
+            new LevelOfDetailContent(summary, detailBuilder.ToString())
         );
     }
 
-    private static LevelOfDetailContent CreateOperationContent(
-        string basicMessage,
-        string? engineMessage,
-        bool appended,
+    private static LevelOfDetailContent CreateSuccessContent(
+        string summary,
+        string operation,
+        string targetName,
         int previousLength,
         int newLength,
-        string operationName,
-        string targetName,
-        string? searchAfter
+        string? extraMessage
     ) {
         var detailBuilder = new StringBuilder();
 
-        if (!string.IsNullOrEmpty(engineMessage)) {
-            detailBuilder.Append(engineMessage.TrimEnd());
+        if (!string.IsNullOrEmpty(extraMessage)) {
+            detailBuilder.Append(extraMessage.TrimEnd());
+            detailBuilder.Append('\n');
         }
 
-        var extra = BuildExtraDetails(appended, previousLength, newLength, searchAfter);
-        if (!string.IsNullOrEmpty(extra)) {
-            if (detailBuilder.Length > 0) {
-                detailBuilder.Append('\n');
-            }
+        detailBuilder.Append("- target: ").Append(targetName).Append('\n');
+        detailBuilder.Append("- operation: ").Append(operation).Append('\n');
+        detailBuilder.Append("- delta: ").Append(FormatDelta(newLength - previousLength)).Append('\n');
+        detailBuilder.Append("- new_length: ").Append(newLength);
 
-            detailBuilder.Append(extra);
-        }
-
-        var context = BuildContextDetails(operationName, targetName, searchAfter);
-        if (!string.IsNullOrEmpty(context)) {
-            if (detailBuilder.Length > 0) {
-                detailBuilder.Append('\n');
-            }
-
-            detailBuilder.Append(context);
-        }
-
-        var detail = detailBuilder.Length == 0 ? basicMessage : detailBuilder.ToString();
-        return new LevelOfDetailContent(basicMessage, detail);
+        return new LevelOfDetailContent(summary, detailBuilder.ToString());
     }
 
-    private static string BuildExtraDetails(bool appended, int previousLength, int newLength, string? searchAfter) {
-        var delta = newLength - previousLength;
-        var builder = new StringBuilder();
-        builder.Append("- operation: ").Append(appended ? "append" : "replace").Append('\n');
-        builder.Append("- delta: ");
-        if (delta >= 0) { builder.Append('+'); }
-        builder.Append(delta).Append('\n');
-        builder.Append("- new_length: ").Append(newLength);
-
-        var anchorText = FormatAnchor(searchAfter);
-        if (anchorText is not null) {
-            builder.Append('\n');
-            builder.Append("- anchor: ").Append(anchorText);
-        }
-
-        return builder.ToString();
-    }
-
-    private static string BuildContextDetails(string operationName, string targetName, string? searchAfter) {
-        var builder = new StringBuilder();
-        builder.Append("- tool_operation: ").Append(operationName);
-        builder.Append('\n');
-        builder.Append("- target: ").Append(targetName);
-        builder.Append('\n');
-        builder.Append("- search_after: ");
-
-        var anchorText = FormatAnchor(searchAfter);
-        builder.Append(anchorText ?? "(none)");
-
-        return builder.ToString();
+    private static string FormatDelta(int delta) {
+        return delta >= 0
+            ? "+" + delta.ToString(CultureInfo.InvariantCulture)
+            : delta.ToString(CultureInfo.InvariantCulture);
     }
 
     private static string RenderAsCodeFence(string content) {
@@ -553,47 +496,6 @@ public sealed class TextEditorWidget {
         }
 
         return longest;
-    }
-
-    private static string? FormatAnchor(string? searchAfter) {
-        if (string.IsNullOrWhiteSpace(searchAfter)) { return null; }
-
-        var normalized = NormalizeAnchorWhitespace(searchAfter).Trim();
-        if (normalized.Length == 0) { return null; }
-
-        const int MaxLength = 80;
-        const int PrefixLength = 40;
-        const int SuffixLength = 35;
-
-        if (normalized.Length <= MaxLength || normalized.Length <= PrefixLength + SuffixLength) { return normalized; }
-
-        var prefix = normalized.Substring(0, PrefixLength);
-        var suffix = normalized.Substring(normalized.Length - SuffixLength, SuffixLength);
-        return string.Concat(prefix, "…", suffix);
-    }
-
-    private static string NormalizeAnchorWhitespace(string value) {
-        var builder = new StringBuilder(value.Length);
-        var previousWasSpace = false;
-
-        foreach (var ch in value) {
-            var normalizedChar = ch switch {
-                '\r' or '\n' or '\t' => ' ',
-                _ => ch
-            };
-
-            if (char.IsWhiteSpace(normalizedChar)) {
-                if (previousWasSpace) { continue; }
-                builder.Append(' ');
-                previousWasSpace = true;
-            }
-            else {
-                builder.Append(normalizedChar);
-                previousWasSpace = false;
-            }
-        }
-
-        return builder.ToString();
     }
 
 }

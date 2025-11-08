@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Atelia.Agent.Text;
 
 /// <summary>
@@ -8,23 +10,29 @@ public static class ToolMessages {
     public const string NoNewContent = "无新内容追加";
 
     // 格式化成功消息
-    public static string FormatUpdate(int startIndex, int replaceLength, int newMemoryLength, string notebookLabel) {
+    public static string FormatReplaceSuccess(int delta, int newMemoryLength, string notebookLabel) {
         var label = FormatNotebookLabel(notebookLabel);
-        return $"{label}已更新: 起始位置 {startIndex}, 替换长度 {replaceLength}, 新{label}长度 {newMemoryLength}";
+        return $"{label}已更新。Δ {FormatDelta(delta)}，新长度 {newMemoryLength}";
     }
 
-    public static string FormatAppendSuccess(int newMemoryLength, string notebookLabel) {
+    public static string FormatAppendSuccess(int delta, int newMemoryLength, string notebookLabel) {
         var label = FormatNotebookLabel(notebookLabel);
-        return $"已追加内容到{label}末尾。当前{label}长度: {newMemoryLength}";
+        return $"{label}已追加内容。Δ {FormatDelta(delta)}，新长度 {newMemoryLength}";
     }
 
     public static string FormatNoContentToAppend(int currentMemoryLength, string notebookLabel) {
         var label = FormatNotebookLabel(notebookLabel);
-        return $"{NoNewContent}。当前{label}长度: {currentMemoryLength}";
+        return $"{label}未追加新内容。当前长度 {currentMemoryLength}";
     }
 
     private static string FormatNotebookLabel(string notebookLabel) {
         var label = notebookLabel.Trim();
         return $"[{label}]";
+    }
+
+    private static string FormatDelta(int delta) {
+        return delta >= 0
+            ? "+" + delta.ToString(CultureInfo.InvariantCulture)
+            : delta.ToString(CultureInfo.InvariantCulture);
     }
 }

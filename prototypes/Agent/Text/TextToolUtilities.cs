@@ -41,26 +41,4 @@ internal static class TextToolUtilities {
         return builder.ToString();
     }
 
-    internal static AnchorResolution ResolveAnchor(string memory, string? searchAfter) {
-        if (searchAfter is null) { return AnchorResolution.NotRequested; }
-
-        if (searchAfter.Length == 0) { return AnchorResolution.FromStart; }
-
-        var index = memory.IndexOf(searchAfter, StringComparison.Ordinal);
-        if (index < 0) { return AnchorResolution.Failed($"Error: 找不到 search_after: '{searchAfter}'"); }
-
-        return AnchorResolution.Resolved(index + searchAfter.Length);
-    }
-}
-
-internal readonly record struct AnchorResolution(
-    bool IsRequested,
-    bool Success,
-    int SearchStart,
-    string? ErrorMessage
-) {
-    public static AnchorResolution NotRequested { get; } = new(false, true, 0, null);
-    public static AnchorResolution FromStart { get; } = new(true, true, 0, null);
-    public static AnchorResolution Resolved(int searchStart) => new(true, true, searchStart, null);
-    public static AnchorResolution Failed(string errorMessage) => new(true, false, -1, errorMessage);
 }

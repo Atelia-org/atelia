@@ -12,11 +12,15 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.Agent.Text;
 
 /// <summary>
-/// 实验性的文本编辑 Widget，提供基于选区的多匹配处理能力，方便 LLM 在没有真实光标的场景中继续交互。
+/// 实验性的文本编辑 Widget，面向 LLM 提供独占的文本缓冲区与基于选区的多匹配处理能力。
 /// </summary>
 /// <remarks>
-/// 本组件的目标仅是验证“在不引入特殊 token 的情况下，为 LLM 提供选区/光标/高亮 overlay UI”的可行性。
-/// 因此它独占维护内部文本缓存，不与外部存储交互，也不会尝试双向同步。
+/// <para>
+/// 该组件以 LLM-first 体验为中心：所有编辑都在内部缓冲区完成，并通过 Summary / Guidance / 选区候选等信息向模型反馈。
+/// </para>
+/// <para>
+/// 当前阶段不会主动写回底层存储，也不会自动响应外部变更；后续会在此基础上提供显式刷写、失败提示与差异摘要，让 LLM 自主决策同步策略。
+/// </para>
 /// </remarks>
 public sealed class TextSelectionExperimentWidget {
     private const string ReplaceToolFormat = "{0}_replace";
@@ -51,6 +55,7 @@ public sealed class TextSelectionExperimentWidget {
         var formatArgs = new object?[] { _baseToolName, _targetTextName };
         _replaceTool = MethodToolWrapper.FromDelegate(ReplaceAsync, formatArgs);
         _replaceSelectionTool = MethodToolWrapper.FromDelegate(ReplaceSelectionAsync, formatArgs);
+        _replaceSelectionTool.Visible = false;
         _tools = [_replaceTool, _replaceSelectionTool];
     }
 
@@ -137,6 +142,7 @@ public sealed class TextSelectionExperimentWidget {
 
         var selectionState = BuildSelectionState(normalizedOld, normalizedNew, positionsForSelection);
         _activeSelectionState = selectionState;
+        _replaceSelectionTool.Visible = true;
 
         var overlayDetail = BuildOverlayDetail(selectionState);
         var summaryMessage = hasMoreMatches
@@ -167,7 +173,7 @@ public sealed class TextSelectionExperimentWidget {
         return ValueTask.FromResult(Success(summaryMessage, detailBuilder.ToString()));
     }
 
-    [Tool(ReplaceSelectionToolFormat, "选定某个虚拟选区并执行替换；new_text 可省略以沿用上一次输入。")]
+    [Tool(ReplaceSelectionToolFormat, "选定某个虚拟选区并执行替换；仅在存在待确认选区时对模型可见。")]
     private ValueTask<LodToolExecuteResult> ReplaceSelectionAsync(
         [ToolParam("要替换的选区编号。")] int selection_id,
         [ToolParam("新的替换文本；省略时沿用上一轮 replace 输入的 new_text。")] string? new_text = null,
@@ -178,6 +184,7 @@ public sealed class TextSelectionExperimentWidget {
 
         if (!TryGetActiveSelectionState(out var state)) {
             var message = $"当前没有待处理的选区，请先调用 {_replaceTool.Name} 工具生成选区。";
+            _replaceSelectionTool.Visible = false;
             return ValueTask.FromResult(Failure(message));
         }
 
@@ -272,18 +279,21 @@ public sealed class TextSelectionExperimentWidget {
 
     private void ClearSelectionState() {
         _activeSelectionState = null;
+        _replaceSelectionTool.Visible = false;
     }
 
     private bool TryGetActiveSelectionState(out SelectionState state) {
         var current = _activeSelectionState;
         if (current is null) {
             state = default!;
+            _replaceSelectionTool.Visible = false;
             return false;
         }
 
         if (!string.Equals(current.ContentSnapshot, _currentText, StringComparison.Ordinal)) {
             _activeSelectionState = null;
             state = default!;
+            _replaceSelectionTool.Visible = false;
             return false;
         }
 

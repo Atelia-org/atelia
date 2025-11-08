@@ -12,40 +12,18 @@ internal sealed class SpanRegionLocator : IRegionLocator {
         _regionEnd = regionEnd;
     }
 
-    public RegionLocateResult Locate(string memory, ReplacementRequest request, AnchorResolution anchor) {
-        if (string.IsNullOrEmpty(_regionStart) || string.IsNullOrEmpty(_regionEnd)) { return RegionLocateResult.Failure("Error: old_span_start 和 old_span_end 不能为空"); }
+    public RegionLocateResult Locate(string memory, ReplacementRequest request) {
+        if (string.IsNullOrEmpty(_regionStart) || string.IsNullOrEmpty(_regionEnd)) { return RegionLocateResult.Failure("old_span_start 和 old_span_end 不能为空"); }
 
-        var searchStart = anchor.SearchStart;
-        var startMatches = FindAllMatchesFrom(memory, _regionStart, searchStart);
+        var startMatches = FindAllMatchesFrom(memory, _regionStart, 0);
 
-        if (startMatches.Count == 0) {
-            var anchorLabel = anchor.IsRequested
-                ? request.SearchAfter is null
-                    ? "search_after"
-                    : request.SearchAfter.Length == 0
-                        ? "search_after=''"
-                        : $"search_after '{request.SearchAfter}'"
-                : null;
+        if (startMatches.Count == 0) { return RegionLocateResult.Failure($"未找到 old_span_start: '{_regionStart}'"); }
 
-            var message = anchorLabel is null
-                ? $"Error: 找不到 old_span_start: '{_regionStart}'"
-                : $"Error: 找不到 old_span_start: '{_regionStart}' (在 {anchorLabel} 之后)";
-            return RegionLocateResult.Failure(message);
-        }
-
-        if (startMatches.Count > 1) {
-            var contextInfo = TextToolUtilities.FormatMatchesForError(startMatches, memory, _regionStart.Length, 80);
-            var message = $"Error: 找到 {startMatches.Count} 个 old_span_start 匹配。\n\n{contextInfo}\n\n请设置 search_after 锚点或提供更精确的标记。";
-            return RegionLocateResult.Failure(message);
-        }
+        if (startMatches.Count > 1) { return RegionLocateResult.Failure($"找到 {startMatches.Count} 处 old_span_start，请提供更精确的标记"); }
 
         var startIndex = startMatches[0];
         var endIndex = memory.IndexOf(_regionEnd, startIndex + _regionStart.Length, StringComparison.Ordinal);
-        if (endIndex < 0) {
-            var context = TextToolUtilities.GetContext(memory, startIndex, _regionStart.Length, 80);
-            var message = $"Error: 找不到 old_span_end: '{_regionEnd}' (在 old_span_start 之后)\n\nold_span_start 位置附近内容：\n{context}";
-            return RegionLocateResult.Failure(message);
-        }
+        if (endIndex < 0) { return RegionLocateResult.Failure($"未找到 old_span_end: '{_regionEnd}'"); }
 
         var length = endIndex + _regionEnd.Length - startIndex;
         return RegionLocateResult.SuccessAt(startIndex, length);
