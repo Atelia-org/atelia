@@ -8,6 +8,8 @@
 > - 完成 Phase 1「响应契约」落地,新增结构化 Markdown 输出、状态/标志类型与核心单元测试
 > - 职责分离:将持久化与同步功能拆分到独立的 DataSourceBindingWidget
 
+> **兼容性说明**: 该组件为全新实现,暂无历史版本或遗留接口,本文描述即为唯一契约。
+
 ---
 
 ## 1. 战略定位与背景
@@ -37,6 +39,7 @@
 | --- | --- | --- |
 | `TextEditor2Widget` | 独占缓存的编辑操作（替换、选区确认、追加） | `_replace`, `_replace_selection`, `_append` |
 | `DataSourceBindingWidget` | 缓存与下层数据源的同步（提交、刷新、冲突处理） | `_flush`, `_refresh`, `_diff`, `_accept_source` |
+| `Buffer ↔ Sync Contract` | 统一版本号、事件、结果与工具矩阵契约 | [文档链接](./Buffer-Sync-Contract.md) |
 
 两者通过 `IExclusiveBuffer` 接口协作,由外部调度者（如 `MemoryNotebookApp`）统一调度双 pass 循环（Update + Render）。
 
@@ -81,29 +84,27 @@
 - ✅ **单元测试覆盖**: `TextEditResponseFormatterTests` 与 `TextEditor2WidgetTests` 覆盖多匹配、选区生命周期与标志组合
 
 ### 3.2 待实现能力 (Phase 2+)
-以下工作仍在规划或验证中:
-- 🔁 **状态机守护**: 持续回归验证 `Idle` / `SelectionPending` 的最小状态集,防止重新引入持久化相关路径,并在代码/文档中标注此约束
-- ⏳ **接口实现**: 实现 `IExclusiveBuffer` 接口,供 DataSourceBindingWidget 订阅变更事件
-- ⏳ **结构化响应对象**: 在现有 Markdown 之上,补充 `TextEditResponse` JSON 契约供其他前端/Agent 复用
-- ⏳ **工具扩展**: 新增 `_append`、`_discard_selection` 等仅作用于独占缓存的辅助工具,并根据状态自动显隐
-- ⏳ **双 Pass 支持**: 补充 `Update()` 与 `Render()` 方法,适配外部调度器
+结合当前化简策略,Phase 2 起的重点工作聚焦在以下方向:
+- **统一响应载体 (`TextEditResponse`)**: 将 Markdown 视为渲染结果,新增结构化 DTO 作为工具与渲染层之间的唯一契约,并在 `LevelOfDetailContent` 中直接复用。
+- 🧭 **工具可见性映射表**: 引入 `TextEditToolMatrix`(命名暂定) 以配置化方式定义 `WorkflowState × Status → 可见工具/默认指引`,替代手写 `switch` 分支,确保新工具只需增量配置。
+- 🧢 **操作结果统一 (`OperationResult`)**: 编辑工具通过统一结果类型返回 `ErrorCode`、`Message` 与 `DiagnosticHint`, 便于与同步组件共享 Guidance 模板。
+- 🔢 **版本号策略**: 用单调递增的 `BufferVersion` 替代哈希指纹,事件负载仅携带版本号与时间戳,简化 Update pass 的脏值检测,并与 Buffer ↔ Sync 契约保持一致。
+- 🧱 **双 Pass 支撑与接口落地**: 在版本号机制下完善 `IExclusiveBuffer` 实现、`Update()` 清理逻辑与 `ContentChanged` 事件,为 DataSourceBindingWidget 对接做好准备。
+- 🧩 **共享 ToolMatrix/Formatter**: 与同步组件共用工具矩阵与响应 Formatter 基础设施,避免重复维护。
 
 ---
 
 ## 4. 核心概念与术语
 
 ### 4.1 响应契约基础（Phase 1 已完成）
-当前版本已在 `prototypes/Agent/Text/TextEditTypes.cs` 中实现核心枚举与数据结构,并由 `TextEditResponseFormatter` 生成统一的 Markdown 输出。为避免与同步组件混淆,我们将当前生效的取值与兼容保留的取值分层说明。
+当前版本已在 `prototypes/Agent/Text/TextEditTypes.cs` 中实现核心枚举与数据结构,并由 `TextEditResponseFormatter` 生成统一的 Markdown 输出。为避免与同步组件混淆,下文先列出当前实际返回的取值,随后给出完整的类型定义,其余成员仅作为后续扩展预留。
 
 #### 4.1.1 当前由 TextEditor2Widget 产出的取值
 - `TextEditStatus`: `Success`、`MultiMatch`、`NoMatch`、`NoOp`
 - `TextEditWorkflowState`: `Idle`、`SelectionPending`
 - `TextEditFlag`: `None`、`SelectionPending`
 
-这些取值完全由编辑 Widget 内部状态机控制,不会因下层数据源状态发生变化,也不与 `DataSourceBindingWidget` 共享存储。
-
-#### 4.1.2 兼容保留的枚举值
-为了便于与同步组件乃至旧版调用方互操作,代码层面仍保留完整的枚举定义。以下片段展示了全部可用取值,其中带有 `Persist*`、`OutOfSync`、`ExternalConflict` 等成员仅供同步域消费,不会由 TextEditor2Widget 主动产出。
+这些取值完全由编辑 Widget 内部状态机控制,不会因下层数据源状态发生变化,也不与 `DataSourceBindingWidget` 共享存储。完整枚举定义如下,其中带有 `Persist*`、`OutOfSync`、`ExternalConflict` 等成员用于后续阶段的扩展,当前实现不会触发这些预留取值。
 
 ```csharp
 // 核心类型定义节选 — 文件: prototypes/Agent/Text/TextEditTypes.cs
@@ -150,11 +151,7 @@ public enum TextEditFlag {
 }
 ```
 
-> **兼容说明**：当绑定组件追加诸如 `PersistFailure` 或 `ExternalConflict` 时,应视为来自同步层的独立信号。编辑 Widget 在 Phase 2 及以后仍仅会返回 4.1.1 中列出的最小取值集合。
-
-> **裁剪指引**：如后续决定移除这些兼容枚举,应同步在公共接口上标注 `[Obsolete]` 或提供迁移指南,确保 `DataSourceBindingWidget` 与历史调用方有足够缓冲期完成替换。
-
-#### 4.1.3 Markdown 字段语义
+#### 4.1.2 Markdown 字段语义
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -169,6 +166,35 @@ public enum TextEditFlag {
 > Formatter 要点: `TextEditResponseFormatter` 固定输出「状态头部 → 概览 → 指标 → 候选」四段 Markdown,并依据 `TextEditStatus` 自动选择 `[OK]` / `[Warning]` / `[Fail]` 视觉标签。`LevelOfDetailContent.Basic` 仅保留 `summary + guidance`, 详细信息位于 `Detail`。
 
 > 后续规划: 计划在 Phase 2 引入 `TextEditResponse` 记录类型,以 JSON 形式补充给其他前端/Agent。现阶段的 Markdown 格式已可作为该结构的序列化参考。
+
+#### 4.1.3 结构化响应载体 (Phase 2 执行项)
+
+Phase 2 将新增 `TextEditResponse` 记录类型,其字段与 4.1.2 所述 Markdown 字段一一对应,并作为以下组件的共同输入/输出:
+
+```csharp
+public sealed record TextEditResponse(
+    TextEditStatus Status,
+    TextEditWorkflowState WorkflowState,
+    TextEditFlag Flags,
+    string Summary,
+    string? Guidance,
+    TextEditMetrics Metrics,
+    IReadOnlyList<TextEditCandidate>? Candidates
+);
+```
+
+- 工具执行完成后返回 `TextEditResponse`,再由统一 Formatter 负责生成 Markdown 与 `LevelOfDetailContent`。
+- `Basic` 视图将直接引用 `Summary`/`Guidance`,避免字符串重新拼装。
+- 与 DataSourceBindingWidget 的响应 DTO 对齐,方便未来在 IApp 中合并展示。
+
+> **落地步骤**: (1) 定义 DTO 与快照测试; (2) 修改工具返回逻辑; (3) 将 Markdown Formatter 改写为 `TextEditResponseFormatter.Render(TextEditResponse response)`。
+
+#### 4.1.4 OperationResult 与 Guidance 模板（Phase 2 执行项）
+
+- `TextEditor2Widget` 所有编辑工具在内部通过 `OperationResult` 汇报成功、错误码与诊断提示,最终映射为 `LodToolExecuteResult`。
+- Guidance 模板按照 `ErrorCode` 进行配置,与 `DataSourceBindingWidget` 共用同一套字典,确保用户提示一致。
+- `OperationResult` 的结构、常见错误码以及诊断字段要求详见 [`Buffer-Sync-Contract`](./Buffer-Sync-Contract.md)。
+- 所有失败路径必须写入 `TextEdit.MatchTrace` 或 `TextEdit.Schema` 日志,并将 `OperationId` 附带给同步组件。
 
 ### 4.2 状态机定义（Phase 1 小步落地,Phase 2 简化）
 
@@ -195,7 +221,7 @@ public enum TextEditFlag {
 
 | 类别 | 用途 |
 | --- | --- |
-| `TextEdit.MatchTrace` | 记录所有匹配位置、选区上下文与快照指纹,用于回放决策 |
+| `TextEdit.MatchTrace` | 记录所有匹配位置、选区上下文与快照版本(或指纹),用于回放决策 |
 | `TextEdit.Schema` | 记录响应结构失效或解析失败时的原始 Markdown/JSON |
 
 环境变量 `ATELIA_DEBUG_CATEGORIES` 控制输出,调试模式下 Guidance 可提示查看对应日志。
@@ -221,10 +247,19 @@ public enum TextEditFlag {
 
 ### 5.3 编辑与同步协作 (由外部调度者统一管理)
 1. LLM 通过 TextEditor2Widget 完成编辑操作(缓存已修改)
-2. DataSourceBindingWidget 在 UpdateAsync() 中检测到缓存指纹变化
+2. DataSourceBindingWidget 在 UpdateAsync() 中检测到缓存版本变化
 3. DataSourceBindingWidget 提示 LLM "缓存有未提交修改,调用 `_flush` 提交"
 4. LLM 调用 DataSourceBindingWidget 的 `_flush` 工具（同步逻辑完全在 DataSourceBindingWidget 内执行）
 5. 同步成功后,DataSourceBindingWidget 状态回到 `Synced`
+
+### 5.4 工具可见性映射 (Phase 2 上线)
+
+- 引入 `TextEditToolMatrix` (命名暂定),以配置化方式维护 `WorkflowState × Status → {Tools, Guidance}` 映射,默认值覆盖 `Idle` 与 `SelectionPending` 两类状态。
+- `_replace` 等基础工具默认始终可见,但在 `SelectionPending` 状态下由映射显式设置为隐藏,避免重复暴露。
+- 对新增工具(例如 `_append`,`_discard_selection`) 仅需新增映射配置,并通过快照测试验证 `VisibleToolsFor(state)` 输出。
+- IApp 读取工具列表时可直接使用映射提供的只读结果,确保 UI 与 Widget 内部逻辑一致。
+
+> **测试策略**: 针对重点状态组合(`Idle+Success`,`SelectionPending+MultiMatch` 等) 生成最小快照,断言可见工具集合与 Guidance 文案,取代多处条件判断测试。
 
 ---
 
@@ -302,27 +337,29 @@ flags: `SelectionPending`
 
 ### 6.3 Formatter 实现建议
 
+从 Phase 2 起,Formatter 将作为公共工具(`WidgetResponseFormatter`)的一部分,面向 `TextEditResponse` 返回 Markdown 与 `LevelOfDetailContent` 双产物:
+
 ```csharp
-var responseMarkdown = $$"""
-status: `{{status}}`
-state: `{{workflowState}}`
-flags: {{FormatFlags(flags)}}
-
-### [{{statusIcon}}] 概览
-- summary: {{summaryLine}}
-- guidance: {{guidanceLine ?? "(留空)"}}
-
-### [Metrics] 指标
-| 指标 | 值 |
-| --- | --- |
-| delta | {{FormatDelta(metrics.Delta)}} |
-| new_length | {{metrics.NewLength}} |
-| selection_count | {{FormatSelectionCount(metrics.SelectionCount)}} |
-{{candidatesBlock ?? string.Empty}}
-""".Trim();
+public static LevelOfDetailContent Render(TextEditResponse response)
+{
+    var markdown = MarkdownTemplates.TextEdit(response);
+    var basic = string.Join('\n', new[]
+    {
+        $"status: `{response.Status}`",
+        $"state: `{response.WorkflowState}`",
+        response.Guidance is { Length: > 0 } guidance
+            ? $"guidance: {guidance}"
+            : "guidance: (留空)"
+    });
+    return new LevelOfDetailContent(basic, markdown);
+}
 ```
 
-> Formatter 仅处理编辑领域指标。涉及同步/差异的 Markdown 和 JSON 由 `DataSourceBindingWidget` 输出。
+- `MarkdownTemplates.TextEdit` 统一拼装状态头部、指标表格与候选表,并复用同一套 CSS-less 样式。
+- 与 DataSourceBindingWidget 共用 Formatter 后,一处修改即可影响双侧输出,降低维护成本。
+- 渲染模板可搭配快照测试与 schema 校验,确保 DTO 字段和 Markdown 结构保持一致。
+
+> Formatter 仅处理编辑领域指标。涉及同步/差异的 Markdown 和 JSON 由 `DataSourceBindingWidget` 的专属模板负责,但仍可共用底层渲染 Helper。
 
 ### 6.4 覆盖要求
 - `TextEditResponseFormatterTests` 需覆盖 Idle、SelectionPending、SchemaViolation 等典型分支。
@@ -337,17 +374,16 @@ flags: {{FormatFlags(flags)}}
 public interface IExclusiveBuffer
 {
     string GetSnapshot();
-    string GetFingerprint();
-    ValueTask<bool> TryUpdateContentAsync(string newContent, CancellationToken ct);
+    string GetVersion();
+    ValueTask<OperationResult<bool>> TryUpdateContentAsync(string newContent, CancellationToken ct);
     event EventHandler<BufferChangedEventArgs> ContentChanged;
 }
 ```
 
-实现要点：
-- `GetFingerprint()` 建议返回稳定且轻量的指纹（版本号或哈希），供同步组件检测脏状态。
-- `TryUpdateContentAsync` 仅在绑定组件执行刷新或接受外部变更时调用；若拒绝更新必须说明原因并保持原状态。
-- 在 `_replace`、`_replace_selection`、`_append` 等操作成功后触发 `ContentChanged`，事件参数携带基础指标（例如 delta、selectionCount）。
-- `ContentChanged` 事件建议携带最新指纹或版本号等轻量标识，让绑定组件在 Update pass 中可以无损校验缓存是否发生变更(字段规范参见 [`DataSourceBindingWidget`](./DataSourceBindingWidget.md) §2.2)。
+- `GetVersion()` 返回单调递增的 `BufferVersion`（字符串化的整数）,配合 `ContentChangedEventArgs.Version` 实现 O(1) 脏值检测。
+- `TryUpdateContentAsync` 仅在绑定组件执行刷新或接受外部变更时调用；返回 `OperationResult<bool>`，失败时必须提供 `ErrorCode`、`Message` 与 `DiagnosticHint` 并保持原状态。
+- 在 `_replace`、`_replace_selection`、`_append` 等操作成功后触发 `ContentChanged`,事件参数携带 `Version`、`Timestamp` 与基础指标(例如 delta、selectionCount)。
+- `ContentChanged` 事件必须携带最新版本号,并遵循 [`Buffer-Sync-Contract`](./Buffer-Sync-Contract.md) 中的字段约定,以便同步组件在 Update pass 中无损判脏。
 
 > **外部写入契约**: 任何来自同步域或其他组件的内容写入都必须通过 `TryUpdateContentAsync` 进入缓存,Widget 保留拒绝权以守住独占语义。禁止直接改写内部缓冲区或绕过事件流。
 
@@ -371,7 +407,7 @@ public class TextEditor2Widget : IExclusiveBuffer
 }
 ```
 
-> Update pass 主要承担内部 housekeeping：清理过期虚拟选区、滚动指纹缓存、回收临时状态等。所有外部同步决策由 `DataSourceBindingWidget` 负责，TextEditor2Widget 不直接访问下层数据源。
+> Update pass 主要承担内部 housekeeping：清理过期虚拟选区、滚动版本计数、回收临时状态等。所有外部同步决策由 `DataSourceBindingWidget` 负责，TextEditor2Widget 不直接访问下层数据源；版本与事件字段需符合 [`Buffer-Sync-Contract`](./Buffer-Sync-Contract.md) 约定。
 
 > **职责提醒**：`UpdateAsync` 与 `Render()` 不应从内部直接调用同步组件或访问底层数据源，以免打破“编辑独占缓存”的契约。任何跨层协作都由外层调度者串联完成。
 
@@ -388,8 +424,8 @@ public class TextEditor2Widget : IExclusiveBuffer
 ## 9. 测试策略
 - **状态机单测**：验证 Idle → SelectionPending → Idle 的核心转换，覆盖多匹配/无匹配/选区失效。
 - **Formatter 快照**：针对 Success、MultiMatch、SchemaViolation 等输出维持快照测试，确保 Markdown 模板稳定。
-- **接口契约测试**：Mock `IExclusiveBuffer` 调用，验证 `ContentChanged` 事件、`TryUpdateContentAsync` 拒绝路径，以及双 pass 对指纹的维护。
-- **协作冒烟**：与 `DataSourceBindingWidget` 的最小集成测试，只关注事件 + 指纹流转是否达成约定。测试场景应通过 `IExclusiveBuffer` 接口模拟外部刷新/更新请求，验证事件通知与拒绝逻辑符合预期。
+- **接口契约测试**：Mock `IExclusiveBuffer` 调用，验证 `ContentChanged` 事件、`TryUpdateContentAsync` 拒绝路径，以及双 pass 对版本号的维护。
+- **协作冒烟**：与 `DataSourceBindingWidget` 的最小集成测试，只关注事件 + 版本号流转是否达成约定。测试场景应通过 `IExclusiveBuffer` 接口模拟外部刷新/更新请求，验证事件通知与拒绝逻辑符合预期。
 
 ## 10. 诊断与日志
 - 使用 `DebugUtil.Print("TextEdit.MatchTrace", ...)` 记录匹配详情、虚拟选区范围和操作耗时。
@@ -399,18 +435,18 @@ public class TextEditor2Widget : IExclusiveBuffer
 ## 11. 风险与缓解
 | 风险 | 说明 | 缓解措施 |
 | --- | --- | --- |
-| 选区漂移 | 替换间隔过长导致上下文变化 | 在 Update pass 中校验指纹，不一致时自动清理并提示重新生成候选 |
+| 选区漂移 | 替换间隔过长导致上下文变化 | 在 Update pass 中校验版本号(或快照指纹),不一致时自动清理并提示重新生成候选 |
 | SchemaViolation | Markdown 模板被意外修改 | 维护快照测试、在 Formatter 中做字段缺失兜底，并输出 `TextEdit.Schema` 日志 |
-| 指纹冲突 | 指纹算法碰撞或未实时更新 | 使用稳定算法（版本号或强哈希），并在单测中覆盖快速连续写入场景 |
+| 版本号不同步 | 内部版本未及时递增或事件负载缺失 | 统一通过 `BufferVersion` 管理,成功写入后立即递增并落盘到事件,配套快照测试 |
 | 接口演进 | `IExclusiveBuffer` 签名变化影响绑定组件 | 建立接口版本说明，修改时同步更新 DataSourceBindingWidget 文档与集成测试 |
 
 ## 12. 实施路线图
 | 阶段 | 目标 | 关键交付 |
 | --- | --- | --- |
 | Phase 1 ✅ | 响应契约 | Formatter、基础状态机、单元测试已落地 |
-| Phase 2 | 状态机简化 | 移除持久化相关状态/标志，保证 Idle/SelectionPending 全覆盖 |
-| Phase 3 | 接口实现 | 完成 `IExclusiveBuffer` 与 `ContentChanged` 事件，对接 DataSourceBindingWidget |
-| Phase 4 | 工具扩展 | 引入 `_append` / `_discard_selection` 等辅助工具，更新可见性矩阵 |
+| Phase 2 | 统一响应 & 可见性矩阵 | 定义 `TextEditResponse` DTO、迁移共享 Formatter、落地 `TextEditToolMatrix`、启用版本号事件 |
+| Phase 3 | 接口与版本号 | 完成 `IExclusiveBuffer`、`ContentChanged` 事件及 `BufferVersion` 递增逻辑,对接 DataSourceBindingWidget |
+| Phase 4 | 工具扩展 | 引入 `_append` / `_discard_selection` 等辅助工具,同时复用映射配置 |
 | Phase 5 | 体验打磨 | 调整 Render 输出样式、补充示例对话与调试脚本 |
 
 ## 13. 附录 A: 术语对照表

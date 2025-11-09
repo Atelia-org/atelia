@@ -2,29 +2,22 @@
 
 > **文档性质**: 本文档描述 `DataSourceBindingWidget` 的架构设计，该组件专注于独占缓存与下层数据源之间的同步/绑定职责。
 > **核心理念**: 通过抽象接口与双 pass 调度模式，实现编辑与同步的完全解耦，类似 IDE 中的 Git Merge 工具体验。
+> **配套契约**：版本号、事件与操作结果等跨组件合同详见 [`Buffer-Sync-Contract`](./Buffer-Sync-Contract.md)。
 
 > **创建日期**: 2025-11-09
 
----
-
-## 1. 战略定位与背景
+> **兼容性说明**: 本组件为全新实现,目前不存在历史版本或遗留接口,本文档即为唯一契约依据。
 
 ### 1.1 设计动因
 在 `TextEditor2Widget` 专注于独占缓存编辑能力的基础上，需要一个独立组件来处理：
+
+    // Event: 下层内容变更通知（文件监听等）
+    event EventHandler<DataSourceChangedEventArgs> ContentChanged;
 - **双向同步**: 在独占缓存与下层数据源（文件、内存、远端）之间建立桥梁
 - **冲突检测**: 识别外部数据源变更与缓存修改的不一致
 - **差异展示**: 为 LLM 提供结构化的差异信息与处理工具
 - **事务管理**: 管理 Flush/Refresh/Merge 等同步操作的生命周期
-
-### 1.2 职责边界
-`DataSourceBindingWidget` **仅负责同步逻辑**，不直接参与文本编辑：
-- ✅ 检测独占缓存与下层数据源的不一致
-- ✅ 提供差异对比、刷新、提交等工具
-- ✅ 管理同步状态机与事务
-- ❌ 不实现任何文本编辑操作（替换、选区等）
-- ❌ 不直接修改独占缓存内容（仅通过接口请求）
-
-### 1.3 与 TextEditor2Widget 的关系
+> **事件负载建议**：推荐在 `BufferChangedEventArgs` 与 `DataSourceChangedEventArgs` 中至少携带最新版本号与时间戳,必要时追加差异摘要,便于绑定组件在 `UpdateAsync` pass 中无需重新计算大文本即可判断状态是否变化。
 - **独立组件**: 两者通过抽象接口协作，互不引用/依赖
 - **职责互补**: TextEditor2Widget 负责"怎么编辑"，DataSourceBindingWidget 负责"怎么同步"
 - **协同调度**: 由外部调度者（如 `MemoryNotebookApp`）统一管理双 pass 循环
@@ -44,11 +37,11 @@ public interface IExclusiveBuffer
     // Getter: 读取当前缓存快照
     string GetSnapshot();
 
-    // Getter: 获取快照指纹（用于变更检测）
-    string GetFingerprint();
+    // Getter: 获取当前版本号（Phase 2 起为主接口）
+    string GetVersion();
 
     // Setter: 请求更新缓存内容（仅在 Refresh 等场景）
-    ValueTask<bool> TryUpdateContentAsync(string newContent, CancellationToken ct);
+    ValueTask<OperationResult<bool>> TryUpdateContentAsync(string newContent, CancellationToken ct);
 
     // Event: 缓存内容变更通知
     event EventHandler<BufferChangedEventArgs> ContentChanged;
@@ -64,20 +57,19 @@ public interface IDataSource
     // Getter: 读取下层当前内容
     ValueTask<string> ReadAsync(CancellationToken ct);
 
-    // Getter: 获取下层内容指纹
-    ValueTask<string> GetFingerprintAsync(CancellationToken ct);
+    // Getter: 获取下层内容版本号（Phase 2 起使用 Version 命名）
+    ValueTask<string> GetVersionAsync(CancellationToken ct);
 
     // Setter: 写入内容到下层
-    ValueTask<DataSourceWriteResult> WriteAsync(string content, CancellationToken ct);
+    ValueTask<OperationResult<WriteReceipt>> WriteAsync(string content, CancellationToken ct);
 
     // Event: 下层内容变更通知（文件监听等）
     event EventHandler<DataSourceChangedEventArgs> ContentChanged;
 }
-
 ```
 
-> **事件负载建议**：推荐在 `BufferChangedEventArgs` 与 `DataSourceChangedEventArgs` 中携带最近一次指纹、版本号或增量摘要，便于绑定组件在 `UpdateAsync` pass 中无需重新计算大文本即可判断状态是否变化。
-```
+> **写入回执说明**：`WriteReceipt` 为示例类型,通常包含写入字节数、耗时、版本号等信息；具体字段由数据源实现定义,但必须通过 `OperationResult` 的 `Payload` 返回。
+> **事件负载建议**：推荐在 `BufferChangedEventArgs` 与 `DataSourceChangedEventArgs` 中至少携带最新版本号与时间戳,必要时追加差异摘要,便于绑定组件在 `UpdateAsync` pass 中无需重新计算大文本即可判断状态是否变化。
 
 ### 2.2 事件负载合同
 
@@ -85,17 +77,17 @@ public interface IDataSource
 
 | 事件 | 必填字段 | 可选字段 | 说明 |
 | --- | --- | --- | --- |
-| `BufferChangedEventArgs` | `Fingerprint`、`Length`、`Timestamp` | `Delta`, `SelectionCount`, `OperationId` | 由 TextEditor2Widget 在缓存成功写入后触发,Fingerprint 应与 `IExclusiveBuffer.GetFingerprint()` 返回值一致 |
-| `DataSourceChangedEventArgs` | `Fingerprint`, `Length`, `Timestamp` | `Source`, `FilePath`, `DeltaSummary` | 由数据源实现触发,用于提示下层内容发生更新或被外部写入 |
+| `BufferChangedEventArgs` | `Version`、`TimestampUtc` | `Delta`, `SelectionCount`, `OperationId` | 由 TextEditor2Widget 在缓存成功写入后触发,`Version` 为单调递增的缓冲区版本号(字符串化整数) |
+| `DataSourceChangedEventArgs` | `Version`, `TimestampUtc` | `Source`, `FilePath`, `DeltaSummary` | 由数据源实现触发,`Version` 对应数据源维护的单调递增版本 |
 
-- **Fingerprint**: 推荐使用稳定字符串(版本号、哈希或自增序列),以便同步 Widget 在单次 Update pass 中通过字符串比较快速判定是否需要进入 `BufferDirty`/`SourceDirty` 状态。
+- **Version**: Phase 2 起统一使用字符串化的数字版本号(如 `"42"`),以便同步 Widget 在单次 Update pass 中通过整数比较快速判定是否需要进入 `BufferDirty`/`SourceDirty` 状态。
 - **Timestamp**: 统一使用 UTC,避免跨时区日志混淆。
 - **Delta/DeltaSummary**: 如能提供简要改动信息,可用于在 `Render()` 输出中生成 “最近一次变更来源” 说明,但不是进入状态机的前置条件。
 - **OperationId**: 来自编辑 Widget 的写入操作标识,有助于在 Debug 日志中关联具体工具调用。
 
-若事件无法即时提供 Fingerprint,数据源/缓存实现必须在同一 Update pass 内补偿一次 `GetFingerprint()` 调用,并在日志中记录原因(推荐写入 `Sync.State` 分类),避免长时间处于“未知脏状态”。
+若事件无法即时提供版本号,数据源/缓存实现必须在同一 Update pass 内补偿一次版本号查询,并在日志中记录原因(推荐写入 `Sync.State` 分类),避免长时间处于“未知脏状态”。
 
-> **性能提示**：如指纹计算成本较高,可在事件触发方缓存最近一次指纹与长度,供下一次 `UpdateAsync` 直接读取,必要时再回退到完整计算,以控制大文本场景的 CPU 开销。
+> **性能提示**：如版本号或差异统计计算成本较高,可在事件触发方缓存最近一次值与长度,供下一次 `UpdateAsync` 直接读取,必要时再回退到完整计算,以控制大文本场景的 CPU 开销。
 
 ### 2.3 同步状态机 (`SyncState`)
 
@@ -132,7 +124,7 @@ public enum SyncFlag
 - Flush/Refresh 等异步操作在启动时应显式追加 `FlushInProgress`/`RefreshInProgress`，由 `UpdateAsync` 在检测到操作完成后统一清除；这样可以避免工具在操作进行时重新曝光。
 - 进入 `Flushing` 或 `Refreshing` 状态时，应立即记录对应的进行中标志，并把标志清除与状态回收逻辑集中在 `UpdateAsyncOperationStatusAsync` 中处理，保证工具可见性只在下一帧恢复。
 
-> **实现提示**：`UpdateAsyncOperationStatusAsync` 负责检测 `_flush`、`_refresh` 等异步操作的完成情况，并在完成后统一更新 `SyncState` 与 `SyncFlag`。这样可以保证 Flush/Refresh 期间工具处于隐藏状态，完成后在下一轮 Update pass 恢复可用。
+> **实现提示**：`UpdateAsyncOperationStatusAsync` 负责检测 `_flush`、`_refresh` 等异步操作的完成情况，并在完成后统一更新 `SyncState` 与 `SyncFlag`。这样可以保证 Flush/Refresh 期间工具处于隐藏状态，完成后在下一轮 Update pass 恢复可用；票据结构与超时策略详见 [`Buffer-Sync-Contract`](./Buffer-Sync-Contract.md#5-异步操作票据operationticket)。
 ## 3. 双 Pass 调度模式
 > **调度建议**：如果 orchestrator 仍使用同步接口，可提供简单的包装方法：
 > ```csharp
@@ -144,27 +136,27 @@ public enum SyncFlag
 ```csharp
 public async ValueTask UpdateAsync(CancellationToken ct = default)
 {
-    // 1. 读取最新指纹（一次调用缓存结果，避免重复 I/O）
-    var sourceFingerprint = await _dataSource.GetFingerprintAsync(ct);
-    var bufferFingerprint = _buffer.GetFingerprint();
+    // 1. 读取最新版本号（一次调用缓存结果，避免重复 I/O）
+    var sourceVersion = await _dataSource.GetVersionAsync(ct); // 返回字符串化版本号
+    var bufferVersion = _buffer.GetVersion();
 
     // 2. 检查下层数据源是否有变更
-    if (!string.Equals(sourceFingerprint, _lastSourceFingerprint, StringComparison.Ordinal))
+    if (!string.Equals(sourceVersion, _lastSourceVersion, StringComparison.Ordinal))
     {
         _syncState = DeriveNewState(SyncEvent.SourceChanged);
         _pendingFlags |= SyncFlag.SourceDirty;
     }
 
     // 3. 检查缓存是否有变更
-    if (!string.Equals(bufferFingerprint, _lastBufferFingerprint, StringComparison.Ordinal))
+    if (!string.Equals(bufferVersion, _lastBufferVersion, StringComparison.Ordinal))
     {
         _syncState = DeriveNewState(SyncEvent.BufferChanged);
         _pendingFlags |= SyncFlag.BufferDirty;
     }
 
-    // 4. 更新内部指纹缓存
-    _lastSourceFingerprint = sourceFingerprint;
-    _lastBufferFingerprint = bufferFingerprint;
+    // 4. 更新内部版本缓存
+    _lastSourceVersion = sourceVersion;
+    _lastBufferVersion = bufferVersion;
 
     // 5. 处理异步操作完成（Flush/Refresh）
     await UpdateAsyncOperationStatusAsync(ct);
@@ -174,6 +166,8 @@ public async ValueTask UpdateAsync(CancellationToken ct = default)
 > **实现提示**：`UpdateAsyncOperationStatusAsync` 负责检测 `_flush`、`_refresh` 等异步操作的完成情况，并在完成后统一更新 `SyncState` 与 `SyncFlag`。这样可以保证 Flush/Refresh 期间工具处于隐藏状态，完成后在下一轮 Update pass 恢复可用。
 
 > **术语说明**：示例中的 `_pendingFlags` 为内部累积寄存器，用于在单次 Update pass 中收集异步结果产生的额外标志，最终通过 `ApplyStatusFlags` 合并到对外可见的 `SyncFlag`。
+
+> **版本号策略**：`_lastSourceVersion` 与 `_lastBufferVersion` 初始值为 `"0"`, 每次成功刷新或写入后即刻更新,并与事件参数中的 `Version` 保持一致,实现 O(1) 级别的脏值检测。
 
 ### 3.2 Render Pass
 在 Update 后，调用 `Render()` 生成面向 LLM 的 TUI 输出：
@@ -231,22 +225,21 @@ public async ValueTask<LodToolExecuteResult> FlushAsync(
     _pendingFlags |= SyncFlag.FlushInProgress;
 
     var content = _buffer.GetSnapshot();
-    var result = await _dataSource.WriteAsync(content, ct);
+    var writeResult = await _dataSource.WriteAsync(content, ct);
 
-    if (result.Success)
+    if (writeResult.Success)
     {
         _syncState = SyncState.Synced;
         return Success($"已成功提交 {content.Length} 字符到下层数据源");
     }
-    else
-    {
-        _syncState = SyncState.Failed;
-        return Failed($"提交失败: {result.ErrorMessage}");
-    }
+
+    _syncState = SyncState.Failed;
+    _pendingFlags |= SyncFlag.DiagnosticHint;
+    return Failed($"提交失败: {writeResult.ErrorCode ?? "Unknown"} {writeResult.Message}");
 }
 ```
 
-> **说明**：写入操作在发起时切换至 `Flushing` 状态并设置 `FlushInProgress`，由后续的 `UpdateAsyncOperationStatusAsync` 统一清除标志、恢复工具可见性。
+> **说明**：写入操作在发起时切换至 `Flushing` 状态并设置 `FlushInProgress`，由后续的 `UpdateAsyncOperationStatusAsync` 统一清除标志、恢复工具可见性。`_dataSource.WriteAsync` 返回 `OperationResult<WriteReceipt>`（命名示例），失败路径需提供 `ErrorCode`/`Message` 供 Formatter 与日志使用。
 
 > **返回助手说明**：示例中的 `Success(...)` / `Failed(...)` 代表封装 `LodToolExecuteResult` 的辅助方法，实际实现可复用公共基类或在当前 Widget 内定义统一的格式化逻辑。
 
@@ -264,22 +257,21 @@ public async ValueTask<LodToolExecuteResult> RefreshAsync(
     _pendingFlags |= SyncFlag.RefreshInProgress;
 
     var sourceContent = await _dataSource.ReadAsync(ct);
-    var updateSuccess = await _buffer.TryUpdateContentAsync(sourceContent, ct);
+    var updateResult = await _buffer.TryUpdateContentAsync(sourceContent, ct);
 
-    if (updateSuccess)
+    if (updateResult.Success)
     {
         _syncState = SyncState.Synced;
         return Success($"已从下层刷新 {sourceContent.Length} 字符");
     }
-    else
-    {
-        _syncState = SyncState.Failed;
-        return Failed("刷新失败，缓存更新被拒绝");
-    }
+
+    _syncState = SyncState.Failed;
+    _pendingFlags |= SyncFlag.DiagnosticHint;
+    return Failed($"刷新失败: {updateResult.ErrorCode ?? "BufferRejected"} {updateResult.Message}");
 }
 ```
 
-> **说明**：刷新同样通过进入 `Refreshing` 状态与设置 `RefreshInProgress` 来阻止工具重复曝光，最终状态由 `UpdateAsync` 统一结算。
+> **说明**：刷新同样通过进入 `Refreshing` 状态与设置 `RefreshInProgress` 来阻止工具重复曝光，最终状态由 `UpdateAsync` 统一结算；`TryUpdateContentAsync` 返回的 `OperationResult<bool>` 需在失败时提供诊断信息（例如 `BufferRejected`）。
 
 #### 4.1.3 `_diff` - 对比缓存与下层差异
 ```csharp
@@ -310,8 +302,8 @@ public async ValueTask<LodToolExecuteResult> AcceptSourceAsync(
 
     if (strategy == "overwrite")
     {
-        var updated = await _buffer.TryUpdateContentAsync(sourceContent, ct);
-        if (updated)
+        var updateResult = await _buffer.TryUpdateContentAsync(sourceContent, ct);
+        if (updateResult.Success)
         {
             _syncState = SyncState.Synced;
             _pendingFlags = SyncFlag.None;
@@ -320,7 +312,7 @@ public async ValueTask<LodToolExecuteResult> AcceptSourceAsync(
 
         _syncState = SyncState.Conflicted;
         _pendingFlags |= SyncFlag.Conflicted;
-        return Failed("缓存拒绝覆盖，下层变更仍待处理");
+        return Failed($"缓存拒绝覆盖，下层变更仍待处理: {updateResult.ErrorCode ?? "BufferRejected"}");
     }
     else if (strategy == "merge_lines")
     {
@@ -345,6 +337,8 @@ public async ValueTask<LodToolExecuteResult> AcceptSourceAsync(
 | `Flushing` | [Block] | [Block] | [Block] | [Block] | 异步写入完成后由 `UpdateAsync` 恢复可见性 |
 | `Refreshing` | [Block] | [Block] | [Block] | [Block] | 缓存刷新成功后恢复到 `Synced`/`SourceDirty` |
 | `Failed` | [Yes] | [Yes] | [Yes] | [Block] | Render 输出诊断提示、建议查看日志 |
+
+> **实现提示**：最终的可见工具集合由 `SyncToolMatrix` 计算，继承 `ToolMatrix<TState, TFlag>` 并返回不可变列表。默认 Guidance 与错误码 → Guidance 映射需要与编辑侧共享配置，具体规范见 [`Buffer-Sync-Contract`](./Buffer-Sync-Contract.md#6-toolmatrix-基础设施)。
 
 ---
 
@@ -386,6 +380,27 @@ sync_flags: `BufferDirty`, `DiagnosticHint`
 ```
 ```
 
+### 5.5 结构化响应载体与 Formatter (Phase 2 执行项)
+
+- 定义 `SyncResponse` 记录类型,字段对齐编辑侧的 `TextEditResponse`,新增同步特有指标字段(如 `BufferVersion`, `SourceVersion`, `LastSyncAt`)。
+
+```csharp
+public sealed record SyncResponse(
+    SyncState State,
+    SyncFlag Flags,
+    string Summary,
+    string? Guidance,
+    SyncMetrics Metrics,
+    IReadOnlyList<SyncDiffEntry>? DiffPreview
+);
+```
+
+- `WidgetResponseFormatter.Render(SyncResponse response)` 负责生成 Markdown 与 `LevelOfDetailContent`,并与编辑侧共享基础模板(状态头部/指标表)。
+- `Basic` 视图由 `Summary` 与 `Guidance` 直接拼装,保持与 `TextEditResponse` 一致,方便 IApp 合并两个 Widget 的窗口。
+- 快照测试覆盖 `Synced`、`BufferDirty`、`SourceDirty`、`Conflicted` 等典型场景,确保 Formatter 结构稳定。
+
+> **一致性目标**: 通过统一 DTO + Formatter,确保编辑/同步两侧的响应都能以同一数据结构传递给 IApp、日志与未来的 UI 渲染。
+
 ---
 
 ## 6. 典型交互流程
@@ -398,7 +413,7 @@ sync_flags: `BufferDirty`, `DiagnosticHint`
 
 ### 6.2 外部文件变更处理
 1. 文件监听器触发 `DataSource.ContentChanged` 事件
-2. UpdateAsync() 检测指纹变化，状态切换到 `SourceDirty`
+2. UpdateAsync() 检测版本号变化，状态切换到 `SourceDirty`
 3. Render() 提示："下层数据源有新变更"
 4. LLM 调用 `_diff` 查看差异
 5. LLM 决定调用 `_accept_source` 或 `_refresh`
@@ -426,6 +441,17 @@ sync_flags: `BufferDirty`, `DiagnosticHint`
 | `_flush` 失败 | `BufferDirty` | `Failed` | 添加 `DiagnosticHint` | 允许重试 |
 | `_refresh` 成功 | 任意 | `Synced` | 清空所有 Flags | 恢复默认 |
 | `_refresh` 失败 | 任意 | `Failed` | 添加 `DiagnosticHint` | 允许重试 |
+
+---
+
+### 4.3 工具可见性配置化落地 (Phase 2 执行项)
+
+- 引入 `SyncToolMatrix` 静态配置,以 `SyncState × CurrentOperation → ToolVisibility` 映射的形式驱动工具显隐与默认 Guidance。`CurrentOperation` 取值 `None | Flushing | Refreshing`。
+- `ToolVisibility` 结构应包含 `VisibleTools`、`DefaultGuidance`、`AdditionalFlags` 等字段,供 Widget 与 IApp 直接消费。
+- Update pass 每次状态迁移时统一从映射刷新 `VisibleTools`,替代手写 `switch`/`if`。
+- 单元测试只需针对有限矩阵断言 `VisibleTools` 集合与 Guidance 文案,快速验证新增工具或状态组合。
+
+> **扩展性**: 当 `_accept_source` 引入行级合并等策略时,只需在矩阵中扩展对应状态与 Guidance,无需改动 Widget 主流程。
 
 ---
 
@@ -466,13 +492,14 @@ public class MockDataSource : IDataSource
 
 | 类别 | 用途 |
 | --- | --- |
-| `Sync.State` | 记录状态机转换、指纹变化、事件触发 |
+| `Sync.State` | 记录状态机转换、版本变化、事件触发 |
 | `Sync.Flush` | 记录提交操作的参数、耗时、结果 |
 | `Sync.Refresh` | 记录刷新操作的数据量、耗时、失败原因 |
 | `Sync.Conflict` | 记录冲突检测详情、差异统计 |
 | `Sync.External` | 记录下层数据源事件、防抖处理 |
 
 > 与旧版 `TextEdit.Persistence` / `TextEdit.External` 日志对应时,可在 `Sync.*` 分类的消息中追加来源标记,方便跨组件排查历史问题。
+> 所有 `OperationResult` 的失败路径需写入对应日志分类,并附带 `OperationId` 与版本号,实现端到端诊断链路。
 
 ---
 
@@ -482,10 +509,11 @@ public class MockDataSource : IDataSource
 | --- | --- | --- |
 | **Phase 0** | 接口定义 | `IExclusiveBuffer`、`IDataSource` 接口与文档 |
 | **Phase 1** | 最小 MVP | 实现 `Synced`/`BufferDirty`/`SourceDirty` 三态 + `_flush`/`_refresh` 工具 |
-| **Phase 2** | 冲突处理 | 引入 `Conflicted` 状态 + `_diff`/`_accept_source` 工具 |
-| **Phase 3** | 文件监听 | 集成 FileSystemWatcher + 防抖逻辑 |
-| **Phase 4** | 高级合并 | 支持行级合并策略、三向合并 |
-| **Phase 5** | 性能优化 | 异步化、增量 diff、大文件支持 |
+| **Phase 2** | 结构化响应与显隐矩阵 | 落地 `SyncResponse` DTO、统一 Formatter、`SyncToolMatrix`、版本号事件负载、`OperationResult` 契约 |
+| **Phase 3** | 异步票据与冲突处理 | 引入 `OperationTicket`、完善超时/诊断机制、增加 `Conflicted` 状态与 `_diff`/`_accept_source` 工具 |
+| **Phase 4** | 文件监听 | 集成 FileSystemWatcher + 防抖逻辑 |
+| **Phase 5** | 高级合并 | 支持行级合并策略、三向合并 |
+| **Phase 6** | 性能优化 | 异步化、增量 diff、大文件支持 |
 
 ---
 
@@ -494,6 +522,7 @@ public class MockDataSource : IDataSource
 ### 11.1 接口契约
 - TextEditor2Widget 实现 `IExclusiveBuffer` 接口
 - DataSourceBindingWidget 通过接口订阅 `ContentChanged` 事件
+- 两侧均遵循 [`Buffer-Sync-Contract`](./Buffer-Sync-Contract.md) 中的版本号、事件与 `OperationResult` 约定
 - 双方不直接引用对方的具体类型
 
 ### 11.2 外部调度者职责
@@ -565,6 +594,8 @@ public class MemoryNotebookApp
 | `Refresh` | 从下层数据源刷新缓存 |
 | `Diff` | 差异对比 |
 | `Conflicted` | 双向冲突状态 |
+| `OperationResult` | 统一的操作返回结构，封装成功状态、错误码与诊断提示 |
+| `OperationTicket` | 跟踪 Flush/Refresh 等异步操作的票据，用于 Update pass 回收 |
 
 ---
 
