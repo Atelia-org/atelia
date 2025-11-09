@@ -1,9 +1,12 @@
 # TextEditor2Widget LLM-first 重构规划(2025 战略版)
 
 > **文档性质**: 本文档是 `TextEditor2Widget` 的中长期演进规划,描绘目标架构与实施路径,部分功能尚未实现。
-> **核心理念**: 以「LLM 独占缓冲区 + 结构化反馈 + 安全持久化」为设计原则,打造新一代文本编辑能力。
+> **核心理念**: 以「LLM 独占缓冲区 + 结构化反馈」为设计原则,专注于纯内存编辑能力。
+> **职责边界**: TextEditor2Widget **仅负责独占缓存的编辑操作**,不处理持久化与同步逻辑。同步职责由 [`DataSourceBindingWidget`](./DataSourceBindingWidget.md) 承担。
 
-> **更新记录 (2025-11-09)**: 完成 Phase 1「响应契约」落地,新增结构化 Markdown 输出、状态/标志类型与核心单元测试。本页已根据最新实现同步调整。
+> **更新记录 (2025-11-09)**:
+> - 完成 Phase 1「响应契约」落地,新增结构化 Markdown 输出、状态/标志类型与核心单元测试
+> - 职责分离:将持久化与同步功能拆分到独立的 DataSourceBindingWidget
 
 ---
 
@@ -12,23 +15,30 @@
 ### 1.1 转向动因
 `TextEditorWidget` 与 `TextReplacementEngine` 的传统架构已难以满足以下需求:
 - **多匹配场景**: 需要向 LLM 展示候选并支持交互式确认
-- **状态可见性**: 需要明确的状态机管理编辑流程(待确认、待提交、冲突等)
-- **持久化策略**: 需要支持 Immediate/Manual/Disabled 等不同写回模式
-- **外部冲突处理**: 需要检测并指引 LLM 处理底层数据变更
+- **状态可见性**: 需要明确的状态机管理编辑流程(待确认、多匹配选择等)
+- **职责分离**: 需要将编辑逻辑与同步/持久化逻辑解耦,降低组合复杂度
 
-因此,`TextEditor2Widget` 作为新一代组件,将承载上述全部差异化能力。
+因此,`TextEditor2Widget` 作为新一代组件,**专注于独占缓存的编辑能力**。持久化、外部冲突等同步职责由 [`DataSourceBindingWidget`](./DataSourceBindingWidget.md) 独立承担。
 
 ### 1.2 迁移策略
 - **旧组件冻结**: `TextEditorWidget` 与 `TextReplacementEngine` 进入维护状态,仅修复高优先级缺陷,不再新增功能
 - **逐步过渡**: 现有调用方通过适配层(shim)转调新组件,待覆盖率达标后规划旧组件下线
-- **能力内聚**: 多匹配、持久化、冲突处理等逻辑全部在 `TextEditor2Widget` 内实现,不回写旧实现
+- **能力内聚**: 多匹配、虚拟选区等编辑逻辑在 `TextEditor2Widget` 内实现;持久化与同步逻辑在 `DataSourceBindingWidget` 内实现
 
 ### 1.3 设计原则
 1. **LLM-first 响应**: 所有工具返回必须包含 `summary`(发生了什么)、`guidance`(下一步做什么)、`candidates`(可选的候选项)
-2. **独占可校验缓存**: Widget 内部缓存是唯一权威数据源,外部写入需经过显式确认
+2. **独占可校验缓存**: Widget 内部缓存是唯一权威数据源,外部只能通过 `IExclusiveBuffer` 接口读取或请求更新
 3. **显式状态机**: 通过 `WorkflowState` 与 `Flags` 控制工具可见性,防止误操作
-4. **安全持久化**: 内置持久化策略、失败回退与只读模式提示
+4. **编辑与同步解耦**: 编辑操作不受外部数据源状态影响,不会被持久化流程阻塞或打断
 5. **分层诊断**: 业务响应保持简洁,调试细节通过 `DebugUtil` 写入分类日志
+
+### 1.4 与 DataSourceBindingWidget 的分工
+| 组件 | 职责 | 核心工具 |
+| --- | --- | --- |
+| `TextEditor2Widget` | 独占缓存的编辑操作（替换、选区确认、追加） | `_replace`, `_replace_selection`, `_append` |
+| `DataSourceBindingWidget` | 缓存与下层数据源的同步（提交、刷新、冲突处理） | `_flush`, `_refresh`, `_diff`, `_accept_source` |
+
+两者通过 `IExclusiveBuffer` 接口协作,由外部调度者（如 `MemoryNotebookApp`）统一调度双 pass 循环（Update + Render）。
 
 ---
 
@@ -67,33 +77,33 @@
 - ✅ **选区可视化**: 在快照中插入 `[[SEL#X]]` / `[[/SEL#X]]` 标记,配合图例说明
 - ✅ **独占缓存**: 所有编辑仅更新内存缓冲区,不直接写回底层存储
 - ✅ **结构化 Markdown 响应**: 通过 `TextEditResponseFormatter` 输出状态/指标/候选,`LevelOfDetailContent.Basic` 保持精简摘要
-- ✅ **状态与标志基础**: `TextEditWorkflowState`、`TextEditFlag` 支撑 `Idle` ↔ `SelectionPending` 流程,并在冲突场景回退到 `OutOfSync`
-- ✅ **单元测试覆盖**: `TextEditResponseFormatterTests` 与 `TextEditor2WidgetTests` 覆盖多匹配、冲突与标志组合
+- ✅ **状态与标志基础**: `TextEditWorkflowState`、`TextEditFlag` 支撑 `Idle` ↔ `SelectionPending` 流程,不再参与持久化与外部冲突判断
+- ✅ **单元测试覆盖**: `TextEditResponseFormatterTests` 与 `TextEditor2WidgetTests` 覆盖多匹配、选区生命周期与标志组合
 
 ### 3.2 待实现能力 (Phase 2+)
 以下工作仍在规划或验证中:
-- ⏳ **状态机进阶**: 引入 `PersistPending`、`Refreshing` 等完整转换矩阵,并集中管理工具可见性
-- ⏳ **持久化策略**: 支持 `Immediate` / `Manual` / `Disabled` 模式,完善 `_commit` / `_discard` 流程
-- ⏳ **外部冲突检测增强**: 集成文件监听,提供 `_diff` / `_refresh` 支持与快照对比
+- 🔁 **状态机守护**: 持续回归验证 `Idle` / `SelectionPending` 的最小状态集,防止重新引入持久化相关路径,并在代码/文档中标注此约束
+- ⏳ **接口实现**: 实现 `IExclusiveBuffer` 接口,供 DataSourceBindingWidget 订阅变更事件
 - ⏳ **结构化响应对象**: 在现有 Markdown 之上,补充 `TextEditResponse` JSON 契约供其他前端/Agent 复用
-- ⏳ **工具扩展**: 新增 `_commit`、`_discard`、`_diff`、`_refresh`、`_append` 等辅助工具,并根据状态自动显隐
+- ⏳ **工具扩展**: 新增 `_append`、`_discard_selection` 等仅作用于独占缓存的辅助工具,并根据状态自动显隐
+- ⏳ **双 Pass 支持**: 补充 `Update()` 与 `Render()` 方法,适配外部调度器
 
 ---
 
 ## 4. 核心概念与术语
 
 ### 4.1 响应契约基础（Phase 1 已完成）
-当前版本已在 `prototypes/Agent/Text/TextEditTypes.cs` 中实现核心枚举与数据结构,并由 `TextEditResponseFormatter` 生成统一的 Markdown 输出。字段语义如下:
+当前版本已在 `prototypes/Agent/Text/TextEditTypes.cs` 中实现核心枚举与数据结构,并由 `TextEditResponseFormatter` 生成统一的 Markdown 输出。为避免与同步组件混淆,我们将当前生效的取值与兼容保留的取值分层说明。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `status` | `TextEditStatus` | 单次操作的即时结果(`Success` / `NoMatch` / `MultiMatch` / `PersistFailure` / `ExternalConflict` / `Exception`) |
-| `workflow_state` | `TextEditWorkflowState` | Widget 的持久状态(`Idle` / `SelectionPending` / `PersistPending` / `OutOfSync` / `Refreshing`) |
-| `summary` | `string` | 单行结论,建议使用 `[OK]` / `[Warning]` / `[Fail]` 等视觉符号 |
-| `guidance` | `string?` | 下一步操作建议,可为 `null` |
-| `metrics` | `TextEditMetrics` | 包含 `delta`、`new_length`、`selection_count?` |
-| `candidates` | `TextEditCandidate[]?` | 多匹配时的候选列表,单匹配时为 `null` |
-| `flags` | `TextEditFlag` | 由 `workflow_state` 与操作结果派生的位标志枚举,无标志时为 `TextEditFlag.None` |
+#### 4.1.1 当前由 TextEditor2Widget 产出的取值
+- `TextEditStatus`: `Success`、`MultiMatch`、`NoMatch`、`NoOp`
+- `TextEditWorkflowState`: `Idle`、`SelectionPending`
+- `TextEditFlag`: `None`、`SelectionPending`
+
+这些取值完全由编辑 Widget 内部状态机控制,不会因下层数据源状态发生变化,也不与 `DataSourceBindingWidget` 共享存储。
+
+#### 4.1.2 兼容保留的枚举值
+为了便于与同步组件乃至旧版调用方互操作,代码层面仍保留完整的枚举定义。以下片段展示了全部可用取值,其中带有 `Persist*`、`OutOfSync`、`ExternalConflict` 等成员仅供同步域消费,不会由 TextEditor2Widget 主动产出。
 
 ```csharp
 // 核心类型定义节选 — 文件: prototypes/Agent/Text/TextEditTypes.cs
@@ -120,11 +130,11 @@ public enum TextEditStatus {
 }
 
 public enum TextEditWorkflowState {
-    Idle,              // 缓存与底层同步,无挂起操作
-    SelectionPending,  // 等待多匹配确认
-    PersistPending,    // 缓存已修改,等待提交
-    OutOfSync,         // 缓存与底层不一致
-    Refreshing         // 正在刷新底层快照
+    Idle,
+    SelectionPending,
+    PersistPending,
+    OutOfSync,
+    Refreshing
 }
 
 [Flags]
@@ -140,46 +150,57 @@ public enum TextEditFlag {
 }
 ```
 
+> **兼容说明**：当绑定组件追加诸如 `PersistFailure` 或 `ExternalConflict` 时,应视为来自同步层的独立信号。编辑 Widget 在 Phase 2 及以后仍仅会返回 4.1.1 中列出的最小取值集合。
+
+> **裁剪指引**：如后续决定移除这些兼容枚举,应同步在公共接口上标注 `[Obsolete]` 或提供迁移指南,确保 `DataSourceBindingWidget` 与历史调用方有足够缓冲期完成替换。
+
+#### 4.1.3 Markdown 字段语义
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `status` | `TextEditStatus` | 单次操作的即时结果,在编辑域仅会落在 4.1.1 所述四种取值 |
+| `workflow_state` | `TextEditWorkflowState` | Widget 的持久状态,当前仅有 `Idle` / `SelectionPending` |
+| `summary` | `string` | 单行结论,建议使用 `[OK]` / `[Warning]` 等视觉符号 |
+| `guidance` | `string?` | 下一步操作建议,可为 `null` |
+| `metrics` | `TextEditMetrics` | 包含 `delta`、`new_length`、`selection_count?` |
+| `candidates` | `TextEditCandidate[]?` | 多匹配时的候选列表,单匹配时为 `null` |
+| `flags` | `TextEditFlag` | 由 `workflow_state` 与操作结果派生的位标志枚举,无标志时为 `TextEditFlag.None` |
+
 > Formatter 要点: `TextEditResponseFormatter` 固定输出「状态头部 → 概览 → 指标 → 候选」四段 Markdown,并依据 `TextEditStatus` 自动选择 `[OK]` / `[Warning]` / `[Fail]` 视觉标签。`LevelOfDetailContent.Basic` 仅保留 `summary + guidance`, 详细信息位于 `Detail`。
 
 > 后续规划: 计划在 Phase 2 引入 `TextEditResponse` 记录类型,以 JSON 形式补充给其他前端/Agent。现阶段的 Markdown 格式已可作为该结构的序列化参考。
 
-### 4.2 状态机定义（Phase 1 小步落地）
+### 4.2 状态机定义（Phase 1 小步落地,Phase 2 简化）
 
 | WorkflowState | 描述 | 典型转入条件 |
 | --- | --- | --- |
-| `Idle` | 缓存与底层同步,无挂起事务 | 单匹配替换成功(Immediate 模式)或提交成功(Manual 模式) |
-| `SelectionPending` | 多匹配待确认,等待 `_replace_selection` 或 `_discard` | `_replace` 检测到多处匹配 |
-| `PersistPending` | 缓存已修改但未提交(仅 Manual 模式) | 替换成功但 `PersistMode=Manual` |
-| `OutOfSync` | 缓存与底层不一致 | 提交失败或外部文件变更 |
-| `Refreshing` | 正在刷新底层快照,临时禁止写入 | 调用 `_refresh` 时 |
+| `Idle` | 缓存空闲,可接受任意编辑操作 | 单匹配替换成功或选区确认完成 |
+| `SelectionPending` | 多匹配待确认,等待 `_replace_selection` | `_replace` 检测到多处匹配 |
 
-> **当前实现情况**: Phase 1 已在 `TextEditor2Widget` 内部维护 `_workflowState`,并覆盖 `Idle`、`SelectionPending`、`OutOfSync` 三种路径。`PersistPending`、`Refreshing` 将在引入持久化与刷新工具后补全。
+> **Phase 2 简化**: 本 Widget 不再负责 `PersistPending`、`OutOfSync`、`Refreshing` 等同步相关状态,这些职责转移到 `DataSourceBindingWidget`。
+> **当前实现情况**: Phase 1 已在 `TextEditor2Widget` 内部维护 `_workflowState`,覆盖 `Idle`、`SelectionPending` 两种路径,与 4.1.1 的取值保持一致。
 
-### 4.3 标志位映射（Phase 1 小步落地）
+### 4.3 标志位映射（Phase 2 简化）
 
 | WorkflowState | 必含 Flags | 可选 Flags | Guidance 重点 |
 | --- | --- | --- | --- |
-| `Idle` | `None` | `PersistReadOnly`、`DiagnosticHint` | 告知当前可执行操作或只读模式提示 |
-| `SelectionPending` | `SelectionPending` | `PersistReadOnly`、`DiagnosticHint` | 引导调用 `_replace_selection` 或 `_discard` |
-| `PersistPending` | `PersistPending` | `PersistReadOnly`、`DiagnosticHint` | 提醒调用 `_commit` 或 `_discard` |
-| `OutOfSync` | `OutOfSync` | `ExternalConflict`、`DiagnosticHint`、`SchemaViolation` | 禁止 `_commit`,建议先 `_diff` 再 `_refresh` |
-| `Refreshing` | `DiagnosticHint` | `SchemaViolation` | 告知刷新中,失败时提示检查日志 |
+| `Idle` | `None` | `DiagnosticHint` | 告知当前可执行操作 |
+| `SelectionPending` | `SelectionPending` | `DiagnosticHint` | 引导调用 `_replace_selection` |
 
 **注**: 状态切换时需同步更新 Flags,确保 Markdown、JSON、日志三者一致。
 
-> **当前实现情况**: `DeriveFlags` 按工作流状态返回基础标志,`DeriveStatusFlags` 则在 `ExternalConflict`、`PersistFailure`、`Exception` 时附加诊断信息。`SchemaViolation` 仍保留给未来的响应校验场景。
+> **Phase 2 简化**: 本 Widget 不再产出 `PersistPending`、`OutOfSync`、`PersistReadOnly`、`ExternalConflict` 等同步相关标志,这些位由 `DataSourceBindingWidget` 决定是否在最终呈现中补充。
 
 ### 4.4 诊断分类 (`DebugUtil` 类别)
 
 | 类别 | 用途 |
 | --- | --- |
 | `TextEdit.MatchTrace` | 记录所有匹配位置、选区上下文与快照指纹,用于回放决策 |
-| `TextEdit.Persistence` | 覆盖 `_commit`、`_persist_as` 等持久化动作,包含参数快照、耗时与异常 |
-| `TextEdit.External` | 捕获文件监听器事件、冲突详情与防抖统计 |
 | `TextEdit.Schema` | 记录响应结构失效或解析失败时的原始 Markdown/JSON |
 
 环境变量 `ATELIA_DEBUG_CATEGORIES` 控制输出,调试模式下 Guidance 可提示查看对应日志。
+
+> **Phase 2 简化**: 移除 `TextEdit.Persistence`、`TextEdit.External` 类别,这些由 `DataSourceBindingWidget` 的 `Sync.*` 类别承担。
 
 ---
 
@@ -188,34 +209,22 @@ public enum TextEditFlag {
 ### 5.1 单匹配替换 (已实现)
 1. LLM 调用 `_replace(old_text="foo", new_text="bar")`
 2. Widget 检测到唯一匹配,直接执行替换
-3. 返回 `status=Success`,`delta=0`,`new_length=1234`
-4. **Immediate 模式**: 保持 `workflow_state=Idle`(待实现)
-5. **Manual 模式**: 切换到 `workflow_state=PersistPending`,提示调用 `_commit`(待实现)
+3. 返回 `status=Success`,`delta=0`,`new_length=1234`,`workflow_state=Idle`
 
 ### 5.2 多匹配确认 (已实现)
 1. LLM 调用 `_replace(old_text="foo", new_text="bar")`
 2. Widget 检测到 3 处匹配,生成虚拟选区(最多 5 个)
-3. 返回 `status=MultiMatch`,`selection_count=3`,附带候选表格
+3. 返回 `status=MultiMatch`,`selection_count=3`,`workflow_state=SelectionPending`,附带候选表格
 4. LLM 查看快照中的 `[[SEL#1]]...[[/SEL#1]]` 标记,选择目标选区
 5. LLM 调用 `_replace_selection(selection_id=2)`
-6. Widget 执行选定替换,返回 `status=Success`
+6. Widget 执行选定替换,返回 `status=Success`,`workflow_state=Idle`
 
-### 5.3 持久化失败 (待实现)
-1. Manual 模式下,LLM 调用 `_commit` 尝试写回
-2. 底层存储返回失败(如文件被锁定)
-3. Widget 返回 `status=PersistFailure`,切换到 `workflow_state=OutOfSync`
-4. Guidance 建议先调用 `_diff` 查看差异,再决定是否重试或 `_refresh`
-
-### 5.4 外部冲突 (待实现)
-1. Widget 缓存有未提交修改,此时文件监听器检测到外部写入
-2. Widget 触发 `status=ExternalConflict`,进入 `workflow_state=OutOfSync`
-3. Guidance 建议调用 `_diff` 对比缓存与底层差异
-4. LLM 评估后选择 `_refresh`(丢弃缓存)或人工介入
-
-### 5.5 只读模式 (待实现)
-1. 配置 `PersistMode=Disabled`
-2. 所有写入操作仅更新缓存,Flags 恒含 `PersistReadOnly`
-3. Guidance 持续提醒"结果仅存于缓存,不会写回底层"
+### 5.3 编辑与同步协作 (由外部调度者统一管理)
+1. LLM 通过 TextEditor2Widget 完成编辑操作(缓存已修改)
+2. DataSourceBindingWidget 在 UpdateAsync() 中检测到缓存指纹变化
+3. DataSourceBindingWidget 提示 LLM "缓存有未提交修改,调用 `_flush` 提交"
+4. LLM 调用 DataSourceBindingWidget 的 `_flush` 工具（同步逻辑完全在 DataSourceBindingWidget 内执行）
+5. 同步成功后,DataSourceBindingWidget 状态回到 `Synced`
 
 ---
 
@@ -225,25 +234,25 @@ public enum TextEditFlag {
 所有返回正文采用半结构化 Markdown,固定包含四个段落(按顺序):
 
 #### 6.1.1 状态头部 (必填)
-三行固定顺序: `status` → `state` → `flags`,字段值置于内联代码。无标志时输出 `flags: -`。
+三行固定顺序: `status` → `state` → `flags`,字段值置于内联代码。无标志时输出 `flags: -` (即 `TextEditFlag.None`)。
 
 ```markdown
 status: `Success`
-state: `PersistPending`
-flags: `PersistPending`, `DiagnosticHint`
+state: `Idle`
+flags: -
 ```
 
 #### 6.1.2 概览 (必填)
-以 `### [OK] 概览` 或 `### [Warning] 概览` 或 `### [Fail] 概览` 开头,列表项键名固定为 `summary`、`guidance`。缺省时写"(留空)"。
+以 `### [OK] 概览`、`### [Warning] 概览`、`### [Fail] 概览` 之一开头,列表项键名固定为 `summary` 与 `guidance`。缺省时写"(留空)"。
 
 ```markdown
 ### [OK] 概览
 - summary: 已完成替换,缓存已更新
-- guidance: 调用 `_commit` 写回,或 `_discard` 放弃修改
+- guidance: (留空)
 ```
 
 #### 6.1.3 指标 (必填)
-以 `### [Metrics] 指标` 开头,表头固定为 `指标` / `值`,缺失值用 `-` 占位。
+以 `### [Metrics] 指标` 开头,表头固定为 `指标` / `值`,缺失值用 `-` 占位。常见指标包括 `delta`、`new_length` 与 `selection_count`。
 
 ```markdown
 ### [Metrics] 指标
@@ -255,7 +264,7 @@ flags: `PersistPending`, `DiagnosticHint`
 ```
 
 #### 6.1.4 候选选区 (可选)
-存在虚拟选区时输出 `### [Target] 候选选区` 表格,列顺序固定:
+存在虚拟选区时输出 `### [Target] 候选选区` 表格,列顺序固定为 `Id`、`MarkerStart`、`MarkerEnd`、`Preview`、`Occurrence`、`ContextStart`、`ContextEnd`。
 
 ```markdown
 ### [Target] 候选选区
@@ -273,8 +282,8 @@ state: `SelectionPending`
 flags: `SelectionPending`
 
 ### [Warning] 概览
-- summary: 在目标文本中检测到 3 处候选
-- guidance: 请选择候选编号后调用 `_replace_selection`,或提供更具体的 `old_text`
+- summary: 检测到 3 处候选
+- guidance: 调用 `_replace_selection` 选择目标编号，或重新发起更精确的 `_replace`
 
 ### [Metrics] 指标
 | 指标 | 值 |
@@ -294,7 +303,6 @@ flags: `SelectionPending`
 ### 6.3 Formatter 实现建议
 
 ```csharp
-// 使用字符串插值与辅助方法保持一致性
 var responseMarkdown = $$"""
 status: `{{status}}`
 state: `{{workflowState}}`
@@ -312,386 +320,116 @@ flags: {{FormatFlags(flags)}}
 | selection_count | {{FormatSelectionCount(metrics.SelectionCount)}} |
 {{candidatesBlock ?? string.Empty}}
 """.Trim();
-
-// 辅助方法
-static string FormatFlags(TextEditFlag flags)
-    => flags == TextEditFlag.None
-        ? "-"
-        : string.Join(", ", EnumerateFlags(flags).Select(f => $"`{f}`"));
-
-static string FormatDelta(int delta)
-    => delta >= 0 ? $"+{delta}" : delta.ToString();
 ```
 
-### 6.4 测试覆盖 (Phase 1)
+> Formatter 仅处理编辑领域指标。涉及同步/差异的 Markdown 和 JSON 由 `DataSourceBindingWidget` 输出。
 
-- `tests/Atelia.LiveContextProto.Tests/TextEditResponseFormatterTests.cs` 覆盖成功、失败、多标志、反引号/管道转义等格式化细节,确保 Markdown 结构稳定。
-- `tests/Atelia.LiveContextProto.Tests/TextEditor2WidgetTests.cs` 通过反射驱动 `_replace` / `_replace_selection`,验证校验失败与外部冲突时的状态/标志输出。
-- 后续在 Phase 2 将补充状态机与持久化相关的端到端测试,扩展现有基线。
+### 6.4 覆盖要求
+- `TextEditResponseFormatterTests` 需覆盖 Idle、SelectionPending、SchemaViolation 等典型分支。
+- `TextEditor2WidgetTests` 在多匹配、候选确认、选区失效等场景下断言 Markdown 快照与 `LevelOfDetailContent.Basic`/`Detail` 保持一致。
 
-## [Cycle] WorkflowState 定义
-| WorkflowState | 描述 |
-| --- | --- |
-| `Idle` | 缓存与底层文本同步，无挂起事务。 |
-| `SelectionPending` | `_replace` 产生多处匹配，等待 `_replace_selection` 或 `_discard`。 |
-| `PersistPending` | 缓存已修改但尚未提交（Manual 模式或延迟提交）。 |
-| `OutOfSync` | 缓存与底层不一致（提交失败或外部写入）。 |
-| `Refreshing` | 正在刷新底层快照，临时禁止写入操作。 |
+## 7. 双 Pass 支持与 IExclusiveBuffer
 
-## [Cycle] WorkflowState -> Flags 映射
-| WorkflowState | 必含 Flags | 可选 Flags | Guidance 重点 |
-| --- | --- | --- | --- |
-| `Idle` | `TextEditFlag.None` | `PersistReadOnly`、`DiagnosticHint` | 告知当前可执行范围或只读提示。 |
-| `SelectionPending` | `SelectionPending` | `PersistReadOnly`、`DiagnosticHint` | 引导 `_replace_selection` 或 `_discard`。 |
-| `PersistPending` | `PersistPending` | `PersistReadOnly`、`DiagnosticHint` | 提醒 `_commit` / `_discard`。 |
-| `OutOfSync` | `OutOfSync` | `ExternalConflict`、`DiagnosticHint`、`SchemaViolation` | 禁止 `_commit`，建议 `_diff` + `_refresh`。 |
-| `Refreshing` | `DiagnosticHint` | `SchemaViolation` | 告知刷新中，失败时提示检查日志。 |
-
-状态切换时需同步更新 Flags，保持 Markdown、JSON、日志一致。
-
----
-
-## 7. 工具可见性矩阵 (待实现)
-
-### 7.1 可见性状态说明
-- **[Yes]**: 工具可见且可调用
-- **[Block]**: 工具隐藏或调用时返回错误
-
-### 7.2 矩阵定义
-
-| WorkflowState | `_replace` | `_replace_selection` | `_append` | `_commit` | `_discard` | `_refresh` | `_diff` | 备注 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `Idle` | [Yes] | [Block] | [Yes] | [Yes]* | [Yes] | [Yes] | [Block] | `PersistMode=Immediate` 时 `_commit` 为 [Block];只读模式可隐藏 `_append` |
-| `SelectionPending` | [Yes] | [Yes] | [Block] | [Block] | [Yes] | [Yes] | [Yes] | 聚焦候选确认,其余写入工具锁定 |
-| `PersistPending` | [Yes] | [Block] | [Yes] | [Yes] | [Yes] | [Yes] | [Yes] | `PersistMode=Disabled` 时隐藏 `_commit` 并输出 `PersistReadOnly` |
-| `OutOfSync` | [Yes] | [Block] | [Block] | [Block] | [Yes] | [Yes] | [Yes] | 禁止 `_commit`,优先比对差异 |
-| `Refreshing` | [Block] | [Block] | [Block] | [Block] | [Block] | [Block] | [Block] | 刷新完成后按新状态恢复可见性 |
-
-### 7.3 实现建议
-- **集中控制**: 实现 `ToolVisibilityMatrix` 类,封装状态→可见工具的映射逻辑
-- **单测覆盖**: 针对每个 `WorkflowState`,断言预期的可见工具集合
-- **动态调整**: `ITool.Visible` 属性可在运行时切换,响应状态机变化
-
----
-
-## 8. Guidance 模板与二次动作 (待实现)
-
-### 8.1 按状态生成 Guidance
-
-| WorkflowState | Guidance 模板 |
-| --- | --- |
-| `SelectionPending` | 调用 `_replace_selection(selection_id=X)` 并传入候选编号,或提供更精确的 `old_text` 重新匹配 |
-| `PersistPending` | 调用 `_commit` 写回底层存储,或使用 `_discard` 放弃修改 |
-| `OutOfSync` | 建议先调用 `_diff` 查看缓存与底层的差异,再考虑 `_refresh` 或人工处理 |
-
-### 8.2 按标志增强 Guidance
-
-| Flag | 附加提示 |
-| --- | --- |
-| `PersistReadOnly` | Summary 或 Guidance 中注明"结果仅存于缓存,不会写回底层" |
-| `ExternalConflict` | 优先使用 `_diff` 评估差异,避免直接 `_commit` |
-| `SchemaViolation` | 输出 `[Fail] 响应格式不符合规范`,并指向 `TextEdit.Schema` 日志 |
-
----
-
-## 9. 虚拟选区与候选编号 (已实现)
-
-### 9.1 设计原理
-- **多匹配缓存**: `_replace` 检测到多处匹配时,生成 `SelectionState` 缓存,包含快照哈希、匹配文本、候选列表
-- **唯一编号**: 每个候选分配递增 ID,从 1 开始,在快照中插入 `[[SEL#X]]` / `[[/SEL#X]]` 标记
-- **重定位依据**: `Occurrence` 字段记录匹配序号,用于校验文本未变化
-
-### 9.2 确认流程
-1. LLM 查看快照中的标记,选择目标候选
-2. 调用 `_replace_selection(selection_id=2, new_text="...")`
-3. Widget 校验:
-   - 快照指纹是否与当前缓存一致
-   - 目标位置文本是否仍匹配 `needle`
-4. 通过校验后执行替换,清除 `SelectionState`,返回 `Success`
-
-### 9.3 失效条件
-- 任意写入操作成功后,旧 `SelectionState` 自动清除
-- Guidance 应提示"选区已作废,需重新生成"
-
----
-
-## 10. 持久化策略 (待实现)
-
-### 10.1 三种模式
-
-| PersistMode | 行为 | 适用场景 |
-| --- | --- | --- |
-| `Immediate` | 写入成功后立即同步到底层,`workflow_state` 保持 `Idle` | 实时保存场景,如配置文件编辑 |
-| `Manual` | 编辑成功后进入 `PersistPending`,需显式调用 `_commit` | 事务性编辑,允许撤销 |
-| `Disabled` | 所有写入仅更新缓存,Flags 恒含 `PersistReadOnly` | 只读预览或临时测试 |
-
-### 10.2 失败处理
-- **Immediate 失败**: 返回 `status=PersistFailure`,进入 `OutOfSync`,Guidance 建议重试或 `_persist_as`
-- **Manual 失败**: 保持 `PersistPending`,提示检查权限或磁盘空间
-
-### 10.3 扩展动作
-- `_commit`: 显式提交缓存到底层(Manual 模式专用)
-- `_discard`: 丢弃缓存修改,刷新为底层内容
-- `_persist_as`: 另存为新路径(扩展功能)
-
----
-
-## 11. 外部变更监测 (待实现)
-
-### 11.1 监听机制
-- 通过文件系统监听器(如 `FileSystemWatcher`)捕获底层文本变动
-- 事件防抖: 200ms 内的连续事件聚合为单次处理,避免状态频繁抖动
-
-### 11.2 冲突处理
-- **缓存无修改**: 静默刷新快照,在 Summary 中提示"内容已更新"
-- **缓存有修改**: 进入 `OutOfSync`,隐藏 `_commit`,显式展示 `_diff` 与 `_refresh`
-
-### 11.3 诊断日志
-记录事件来源、变更指纹、时间戳,便于排查误触发或延迟问题。
-
----
-
-## 12. 状态流转执行合同 (待实现)
-
-| 事件 | 前置 State | PersistMode | 返回 Status | 新 State | Flag 变化 | 工具可见性要点 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `_replace` 单匹配 | `Idle` | Immediate | `Success` | `Idle` | 保持 `None` | `_replace_selection` 隐藏 |
-| `_replace` 单匹配 | `Idle` | Manual | `Success` | `PersistPending` | 添加 `PersistPending` | `_commit` 可见 |
-| `_replace` 多匹配 | 任意 | 任意 | `MultiMatch` | `SelectionPending` | 添加 `SelectionPending` | `_replace_selection` 可见,其余写入锁定 |
-| `_replace_selection` 成功 | `SelectionPending` | Immediate | `Success` | `Idle` | 移除 `SelectionPending` | 恢复默认可见性 |
-| `_replace_selection` 成功 | `SelectionPending` | Manual | `Success` | `PersistPending` | `SelectionPending` → `PersistPending` | `_commit` 可见 |
-| `_commit` 成功 | `PersistPending` | Manual | `Success` | `Idle` | 移除 `PersistPending` | 状态归稳 |
-| `_commit` 失败 | `PersistPending` | Manual | `PersistFailure` | `OutOfSync` | 移除 `PersistPending`,添加 `OutOfSync` | `_commit` 隐藏,引导 `_diff` + `_refresh` |
-| 外部写入检测 | `Idle` / `PersistPending` | 任意 | `ExternalConflict` | `OutOfSync` | 添加 `OutOfSync`、`ExternalConflict` | `_diff` 可见,禁止 `_commit` |
-| `_refresh` 启动 | 任意 | 任意 | `Success` / `NoOp` | `Refreshing` | 附加 `DiagnosticHint` | 刷新期间隐藏全部工具 |
-
-**实现建议**: 封装状态机为 Reducer/Controller,集中管理状态转换与副作用,单测覆盖全部路径。
-
----
-
-## 13. 响应解析与消费 (LLM 工具视角)
-- `workflow_state = SelectionPending`：Guidance 固定提示调用 `_replace_selection` 并传入编号 X，或提供更精确的 `old_text`。
-- `workflow_state = PersistPending`：提供“调用 `_commit` 写回”与“使用 `_discard` 放弃”的二选一建议。
-- `workflow_state = OutOfSync` 或 Flags 含 `ExternalConflict`：提醒先 `_diff` 查看差异，再考虑 `_refresh` 或人工处理。
-- Flags 含 `PersistReadOnly`：在 Summary 中附注“结果仅存于缓存，不会写回”。
-- Flags 含 `SchemaViolation`：输出“[Fail] 响应格式不符合规范”，并指向 `TextEdit.Schema` 日志。
-
-## [Notebook] Markdown 响应规范
-所有返回正文均采用半结构化 Markdown，固定包含四个段落：
-
-1. **状态头部**（必填）：三行顺序固定为 `status` → `state` → `flags`，字段值置于内联代码，无标志时输出 `flags: -`。
-   ```markdown
-   status: `Success`
-   state: `PersistPending`
-   flags: `PersistPending`, `DiagnosticHint`
-   ```
-2. **概览**（必填）：以 `### [OK] 概览` 开头，列表项键名固定为 `summary`、`guidance`；缺省时写“（留空）”。
-3. **指标**（必填）：以 `### [Metrics] 指标` 开头，表头固定 `指标` / `值`，缺失值用 `-` 占位。
-4. **候选选区**（可选）：存在虚拟选区时输出 `### [Target] 候选选区` 表格，列顺序固定为 `Id`、`MarkerStart`、`MarkerEnd`、`Preview`、`Occurrence`、`ContextStart`、`ContextEnd`。
-
-```markdown
-status: `MultiMatch`
-state: `SelectionPending`
-flags: `SelectionPending`
-
-### [OK] 概览
-- summary: [Warning] 在 MemoryNotebook 中检测到 3 处候选。
-- guidance: 请选择候选编号后调用 `_replace_selection`，或提供更具体的 `old_text`。
-
-### [Metrics] 指标
-| 指标 | 值 |
-| --- | --- |
-| delta | 0 |
-| new_length | 1824 |
-| selection_count | 3 |
-
-### [Target] 候选选区
-| Id | MarkerStart | MarkerEnd | Preview | Occurrence | ContextStart | ContextEnd |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | `[[SEL#1]]` | `[[/SEL#1]]` | `...Foo() {` | 0 | 118 | 150 |
-| 2 | `[[SEL#2]]` | `[[/SEL#2]]` | `...Foo() {` | 1 | 312 | 344 |
-| 3 | `[[SEL#3]]` | `[[/SEL#3]]` | `...Foo() {` | 2 | 521 | 553 |
-```
-
-推荐 Formatter 结构：
+### 7.1 IExclusiveBuffer 接口
+`TextEditor2Widget` 对外实现以下接口，供同步组件订阅：
 
 ```csharp
-var responseMarkdown = $$"""
-status: `{{status}}`
-state: `{{workflowState}}`
-flags: {{FormatFlags(flags)}}
-
-### [OK] 概览
-- summary: {{summaryLine}}
-- guidance: {{guidanceLine}}
-
-### [Metrics] 指标
-| 指标 | 值 |
-| --- | --- |
-| delta | {{FormatDelta(metrics.Delta)}} |
-| new_length | {{metrics.NewLength}} |
-| selection_count | {{FormatSelectionCount(metrics.SelectionCount)}} |
-{{candidatesBlock is null ? string.Empty : $"\n{candidatesBlock}"}}
-""".Trim();
+public interface IExclusiveBuffer
+{
+    string GetSnapshot();
+    string GetFingerprint();
+    ValueTask<bool> TryUpdateContentAsync(string newContent, CancellationToken ct);
+    event EventHandler<BufferChangedEventArgs> ContentChanged;
+}
 ```
 
-## [Serializer] 序列化与渲染策略
-- **FormatFlags**：统一使用 `FormatFlags` 将 `TextEditFlag` 枚举渲染为反引号包裹的名称列表；无标志时输出 `-`。
-    ```csharp
-    private static string FormatFlags(TextEditFlag flags)
-            => flags == TextEditFlag.None
-                    ? "-"
-                    : string.Join(", ", Enumerate(flags).Select(flag => $"`{flag}`"));
-    ```
-- **Flags 枚举遍历**：`Enumerate` 仅返回非 `None` 的标志，保持顺序稳定，方便测试快照。
-- **JSON / 持久化**：可选同时输出整数位掩码与字符串数组，示例：
-    ```json
+实现要点：
+- `GetFingerprint()` 建议返回稳定且轻量的指纹（版本号或哈希），供同步组件检测脏状态。
+- `TryUpdateContentAsync` 仅在绑定组件执行刷新或接受外部变更时调用；若拒绝更新必须说明原因并保持原状态。
+- 在 `_replace`、`_replace_selection`、`_append` 等操作成功后触发 `ContentChanged`，事件参数携带基础指标（例如 delta、selectionCount）。
+- `ContentChanged` 事件建议携带最新指纹或版本号等轻量标识，让绑定组件在 Update pass 中可以无损校验缓存是否发生变更(字段规范参见 [`DataSourceBindingWidget`](./DataSourceBindingWidget.md) §2.2)。
+
+> **外部写入契约**: 任何来自同步域或其他组件的内容写入都必须通过 `TryUpdateContentAsync` 进入缓存,Widget 保留拒绝权以守住独占语义。禁止直接改写内部缓冲区或绕过事件流。
+
+### 7.2 Update/Render Pass
+
+```csharp
+public class TextEditor2Widget : IExclusiveBuffer
+{
+    public ValueTask UpdateAsync(CancellationToken ct = default)
     {
-        "flags": {
-            "mask": 6,
-            "names": ["PersistPending", "DiagnosticHint"]
-        }
+        ExpireSelectionsIfSnapshotChanged();
+        return ValueTask.CompletedTask;
     }
-    ```
-- **Debugger 输出**：调试日志与 Markdown 返回使用同一 Formatter，确保状态头部与日志对齐。
 
-## [Fix] 错误处理与调试
-- Markdown 结构缺失、标题不匹配或必填字段为空时，Summary 退化为 `[Fail] 响应格式不符合规范`，`workflow_state` 设为 `OutOfSync`（或保持原值），并在 `flags` 中追加 `SchemaViolation`。
-- 使用 `DebugUtil.Print("TextEdit.Schema", ...)` 记录原始 Markdown，方便回放。
-- 单元测试覆盖结构缺失、表头拼写错误、候选列顺序错误等；建议在 CI 中增加 Markdown AST 校验或 parser 回测。
+    public LevelOfDetailContent Render()
+    {
+        var basic = RenderBasicStatus();
+        var detail = RenderDetailedView();
+        return new LevelOfDetailContent(basic, detail);
+    }
+}
+```
 
-## [Overlay] 虚拟选区与候选编号
-- `_replace` 多匹配时生成 `SelectionState` 缓存，包含 `(snapshot_hash, needle, default_replacement, entries)` 等信息。
-- 每个候选条目提供唯一 `Id`，在快照中插入 `[[SEL#X]]` / `[[/SEL#X]]` 标记，`Occurrence` 记录匹配序号以便重定位。
-- `_replace_selection` 接收 `selection_id` 与可选 `new_text`，执行前需校验快照指纹与当前缓存一致，且目标文本仍匹配 `needle`。
-- 任意写入成功后需清除旧 `SelectionState`，防止复用陈旧选区；Guidance 应提示选区作废需重新生成。
+> Update pass 主要承担内部 housekeeping：清理过期虚拟选区、滚动指纹缓存、回收临时状态等。所有外部同步决策由 `DataSourceBindingWidget` 负责，TextEditor2Widget 不直接访问下层数据源。
 
-## [Persist] 持久化策略与失败处理
-- **Immediate**：写入成功后返回 `workflow_state=Idle`；失败进入 `OutOfSync` 并追加 `OutOfSync` flag，Summary 使用警示语气。
-- **Manual**：编辑成功后进入 `PersistPending`，提示 `_commit` / `_discard`；提交失败时保持 `PersistPending` 并给出重试或 `_persist_as` 建议。
-- **Disabled**：所有写入仅更新缓存，Flags 恒加 `PersistReadOnly`；Guidance 提醒结果不会写回。
-- **扩展动作**：预留 `_persist_as`、`_discard` 等显式调用，状态机需在动作完成后重算 Flags 与工具可见性。
+> **职责提醒**：`UpdateAsync` 与 `Render()` 不应从内部直接调用同步组件或访问底层数据源，以免打破“编辑独占缓存”的契约。任何跨层协作都由外层调度者串联完成。
 
-## [External] 外部变更监测
-- Watcher 捕获底层文本变动时，如缓存无修改则刷新快照并在 Summary 中提示“内容已更新”。
-- 当缓存有修改时进入 `workflow_state=OutOfSync`，隐藏 `_commit` 并显式展示 `_diff`、`_refresh`，Guidance 建议先比对再决定覆盖或刷新。
-- 对文件事件进行去抖（如 200 ms）防止频繁状态抖动；调试日志记录事件来源与变更指纹，便于排查。
+> **统一顺序调度**：外部 orchestrator 应在每轮 LLM 调用前按 `TextEditor2Widget.Update → DataSourceBindingWidget.Update → TextEditor2Widget.Render → DataSourceBindingWidget.Render` 的顺序执行，确保缓存状态与同步状态在同一帧内保持一致，避免互相等待或竞争写入。
 
-## [Loop] 状态流转执行合同
-| 事件 | 前置 WorkflowState | PersistMode | OperationStatus (`status`) | 新 WorkflowState | Flag 变化 | 工具可见性要点 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `_replace` 命中 1 处 | `Idle` / `PersistPending` | Immediate | `Success` | `Idle` | 保持 `TextEditFlag.None` | `_replace_selection` 隐藏；Immediate 模式下 `_commit` 隐藏。 |
-| `_replace` 命中 1 处 | `Idle` / `PersistPending` | Manual | `Success` | `PersistPending` | 添加 `PersistPending`（保留只读标志） | `_commit` 可见，提示提交/放弃。 |
-| `_replace` 多匹配 | 任意 | 任意 | `MultiMatch` | `SelectionPending` | 添加 `SelectionPending` | `_replace_selection` 可见，其余写入工具锁定；`_discard` 可见。 |
-| `_replace_selection` 成功 | `SelectionPending` | Immediate | `Success` | `Idle` | 移除 `SelectionPending` | 写入工具恢复默认。 |
-| `_replace_selection` 成功 | `SelectionPending` | Manual | `Success` | `PersistPending` | `SelectionPending` → 移除，保留/追加 `PersistPending` | `_commit` 保持可见。 |
-| `_commit` 成功 | `PersistPending` | Manual | `Success` | `Idle` | 移除 `PersistPending` | `_commit` 隐藏，状态归稳。 |
-| `_commit` 失败 | `PersistPending` | Manual | `PersistFailure` | `OutOfSync` | 移除 `PersistPending`，追加 `OutOfSync`（必要时 `ExternalConflict`） | `_commit` 隐藏，引导 `_diff` + `_refresh`。 |
-| Watcher 检测外部写入 | `Idle` / `PersistPending` | 任意 | `ExternalConflict` | `OutOfSync` | 添加 `OutOfSync`，可叠加 `ExternalConflict` | `_diff` 可见，禁止 `_commit`。 |
-| `_refresh` 启动 | 任意 | 任意 | `Success` / `NoOp` | `Refreshing`（临时） | 附加 `DiagnosticHint`；失败时叠加 `SchemaViolation` | 刷新期间隐藏全部工具；完成后按新状态重新计算。 |
+## 8. 虚拟选区与候选编号
+- `_replace` 多匹配时缓存 `SelectionState`：`(snapshotHash, needle, defaultReplacement, entries[])`。
+- 每个候选分配递增 `Id` 并在快照中插入 `[[SEL#X]]`/`[[/SEL#X]]` 标记，`Occurrence` 记录匹配顺序，便于后续校验。
+- `_replace_selection` 执行前需校验：
+  1. 当前指纹与 `SelectionState` 的 `snapshotHash` 一致；
+  2. 目标位置仍匹配原始 needle。
+- 任意成功写入或刷新都会清除旧 `SelectionState`，Guidance 应提醒“选区已作废，需要重新匹配”。
 
-> 建议实现 reducer/状态控制器，将事件驱动逻辑集中管理，并在测试中串联断言。
+## 9. 测试策略
+- **状态机单测**：验证 Idle → SelectionPending → Idle 的核心转换，覆盖多匹配/无匹配/选区失效。
+- **Formatter 快照**：针对 Success、MultiMatch、SchemaViolation 等输出维持快照测试，确保 Markdown 模板稳定。
+- **接口契约测试**：Mock `IExclusiveBuffer` 调用，验证 `ContentChanged` 事件、`TryUpdateContentAsync` 拒绝路径，以及双 pass 对指纹的维护。
+- **协作冒烟**：与 `DataSourceBindingWidget` 的最小集成测试，只关注事件 + 指纹流转是否达成约定。测试场景应通过 `IExclusiveBuffer` 接口模拟外部刷新/更新请求，验证事件通知与拒绝逻辑符合预期。
 
-## [Search] 消费方解析指南（LLM 工具视角）
-1. 解析状态头部的 `status`、`state`、`flags`，并校验组合是否满足合同（例如 `state=PersistPending` 必须包含 `PersistPending` flag）。
-2. 将概览段转为键值对，方便多语言呈现与日志记录。
-3. 解析指标表为字典，确保 `delta`、`new_length`、`selection_count`（如适用）存在；缺失时记录 `TextEdit.Schema` 诊断。
-4. 若存在候选表，逐行解析为结构化数组，保留 `Id`、`ContextStart`、`ContextEnd` 等字段以便 `_replace_selection` 与 UI 定位。
-5. 根据 Flags 判断是否需要额外动作（只读、诊断提示等），并与 `workflow_state` 交叉校验。
+## 10. 诊断与日志
+- 使用 `DebugUtil.Print("TextEdit.MatchTrace", ...)` 记录匹配详情、虚拟选区范围和操作耗时。
+- 在检测到响应结构异常时写入 `TextEdit.Schema` 分类，便于与同步组件日志区分。
+- 编辑侧不再输出持久化或外部冲突相关日志；这些信息由 `DataSourceBindingWidget` 的 `Sync.*` 分类承载，可在相应日志中注明来源以便关联历史上的 `TextEdit.Persistence` / `TextEdit.External` 记录。
 
-## [Test] 测试矩阵
-- **状态控制器单测**：覆盖全部 `WorkflowState`，断言 Flags、工具可见性与 Markdown 头部一致。
-- **集成流程测试**：模拟 Immediate / Manual / Disabled 三种 PersistMode，多匹配、提交失败、外部冲突等路径。
-- **Markdown 快照**：维护 Success / MultiMatch / PersistFailure / ExternalConflict / Refreshing 等示例响应，防止模板回退。
-- **Schema 验证**：Formatter 增加反向解析或 AST 检查，一旦输出不合规立即置 `SchemaViolation` 并在测试中失败。
-- **日志断言**：`DebugUtil` 输出至少包含 `operation_id`、`status=`、`state=`、`flags=`、耗时、异常堆栈，确保诊断可用。
-
-## [Diagnostics] Diagnostics 分层
-- **TextEdit.MatchTrace**：记录所有匹配位置、选区上下文与快照指纹，便于回放 `_replace` / `_replace_selection` 的决策。
-- **TextEdit.Persistence**：覆盖 `_commit`、`_persist_as` 等持久化动作，包含参数快照、耗时与异常。
-- **TextEdit.External**：捕获 Watcher 事件、冲突详情与去抖统计。
-- **TextEdit.Schema**：在响应结构失效或解析失败时记录原始 Markdown/JSON。
-- 环境变量 `ATELIA_DEBUG_CATEGORIES` 控制输出类别；调试模式下 Guidance 可提示查看对应日志。
-
-## [Health] Diagnostics 与运维
-- 关键路径统一调用 `DebugUtil.Print`，按类别区分（`TextEdit.MatchTrace`、`TextEdit.Persistence`、`TextEdit.External`、`TextEdit.Schema`）。
-- 日志必须携带 `operation_id`、`status`、`state`、`flags`、耗时与异常信息。
-- 提供脚本 tail `.codecortex/ldebug-logs/TextEdit*.log`，方便 Agent 或人工实时查看。
-- 在 CI 中校验关键路径日志是否存在，防止调试输出被误删。
-
-## [Plan] 实施路线图
-| 阶段 | 目标 | 关键交付 |
-| --- | --- | --- |
-| 0. 现状对齐 | 建立测试基线 | 补齐 `_replace`、`_replace_selection`、快照渲染的 snapshot / 单测，梳理现状文档。 |
-| 1. 响应契约 | 落地 `TextEditResponse` 与 Formatter | 引入枚举/record，适配 `LodToolExecuteResult`，单测断言 Markdown 模板。 |
-| 2. 状态机整理 | 内聚状态与工具可见性 | 实现 WorkflowState 控制器，补齐状态切换测试。 |
-| 3. 候选强化 | Overlay + selection_id 全链路 | 对齐 `SelectionState` 缓存、Marker 生成、确认流程，覆盖多匹配到成功的集成测试。 |
-| 4. 持久化策略 | 支持 `PersistMode` 与 `_commit/_discard` | 封装持久化接口（可先 Stub），模拟失败路径，并在响应中暴露 Flags。 |
-| 5. 外部变更 | Watcher + 冲突工具 | 引入监听器、`_refresh`、`_diff`，测试冲突与恢复流程。 |
-| 6. 数据源接入 | 可插拔数据源 | 文件、内存、远端 provider，覆盖持久化失败与冲突回放。 |
-| 7. 体验打磨 | 文档、提示词、调试工具 | 更新提示词、示例对话，补充 Debug 文档，输出演示脚本。 |
-
-各阶段需保证：编译通过、现有测试全绿、新增测试覆盖关键路径，并同步更新开发笔记。
-
-## [Cleanup] 遗留组件处理策略
-- **功能冻结**：`TextEditorWidget` 标记为已弃用，只做缺陷修复。
-- **薄适配层**：旧调用方通过 shim 转调新组件，不支援新特性时返回 Guidance 提示迁移。
-- **测试守护**：保留旧组件基础回归测试，防止冻结期间回归；新能力不再写入旧测试。
-- **迁移清单**：梳理旧接口调用点，制定迁移计划并跟踪覆盖率。
-- **移除倒计时**：当 shim 覆盖率 < 10% 时，规划下线时间表与迁移 checklist。
-
-## [Warning] 风险与缓解
+## 11. 风险与缓解
 | 风险 | 说明 | 缓解措施 |
 | --- | --- | --- |
-| 状态漂移 | 多线程/多 Agent 导致状态与缓存不一致 | 为 `SelectionState`、`PersistState` 增加指纹校验，测试覆盖空文本、重复 needle、大文档等边界情况。 |
-| Watcher 抖动 | 文件事件抖动频繁切换 `OutOfSync` | 对事件去抖（如 200ms 聚合），并在日志中记录细节。 |
-| 持久化耗时 | 写入耗时长影响体验 | 在 Diagnostics 中记录耗时，必要时提供后台写入或进度提示。 |
-| 提示词错配 | 提示词未同步契约更新 | 每次调整契约后回放多轮对话脚本，验证解析正确性。 |
-| 适配层遗漏 | 旧调用点未迁移导致功能缺失 | 维护迁移清单并在 shim 中输出迁移 Guidance。 |
+| 选区漂移 | 替换间隔过长导致上下文变化 | 在 Update pass 中校验指纹，不一致时自动清理并提示重新生成候选 |
+| SchemaViolation | Markdown 模板被意外修改 | 维护快照测试、在 Formatter 中做字段缺失兜底，并输出 `TextEdit.Schema` 日志 |
+| 指纹冲突 | 指纹算法碰撞或未实时更新 | 使用稳定算法（版本号或强哈希），并在单测中覆盖快速连续写入场景 |
+| 接口演进 | `IExclusiveBuffer` 签名变化影响绑定组件 | 建立接口版本说明，修改时同步更新 DataSourceBindingWidget 文档与集成测试 |
 
-## 18. 后续扩展方向
+## 12. 实施路线图
+| 阶段 | 目标 | 关键交付 |
+| --- | --- | --- |
+| Phase 1 ✅ | 响应契约 | Formatter、基础状态机、单元测试已落地 |
+| Phase 2 | 状态机简化 | 移除持久化相关状态/标志，保证 Idle/SelectionPending 全覆盖 |
+| Phase 3 | 接口实现 | 完成 `IExclusiveBuffer` 与 `ContentChanged` 事件，对接 DataSourceBindingWidget |
+| Phase 4 | 工具扩展 | 引入 `_append` / `_discard_selection` 等辅助工具，更新可见性矩阵 |
+| Phase 5 | 体验打磨 | 调整 Render 输出样式、补充示例对话与调试脚本 |
 
-### 18.1 抽象选区与缓存
-- 扩展到多文件或二进制场景
-- 支持结构化选区(如 AST 节点)
-
-### 18.2 UI 集成
-- 与 LiveContextProto UI overlay 对接
-- 展示实时候选和状态栏
-
-### 18.3 历史与撤销
-- 引入多版本快照
-- 支持撤销/重做与时间线回放
-
-### 18.4 结构化匹配
-- 支持 `match_selector` / AST 匹配
-- 提升大规模重构定位精度
-
-### 18.5 协同编辑
-- 探索多 Agent 协同编辑
-- 共享只读快照 + 互斥写入协议
-
----
-
-## 附录 A: 术语对照表
+## 13. 附录 A: 术语对照表
 
 | 术语 | 说明 |
 | --- | --- |
 | `LodToolExecuteResult` | 工具返回类型,包含 `Status` (ToolExecutionStatus) 和 `Result` (LevelOfDetailContent) |
 | `ToolExecutionStatus` | 工具执行状态枚举: `Success` / `Failed` / `Skipped` |
 | `LevelOfDetailContent` | 双级内容容器,包含 `Basic`(简要)和 `Detail`(详细)两级文本 |
-| `LevelOfDetail` | 细节等级枚举: `Basic` / `Detail`,用于控制上下文渲染 |
-| `MethodToolWrapper` | 通过注解自动生成工具定义的包装器 |
-| `ToolExecutor` | 工具分发与执行的协调器,负责调用、监控、日志 |
-| `AgentState` | Agent 状态管理器,维护 Recent History 与通知队列 |
-| `WorkflowState` | TextEditor2Widget 的状态机枚举(待实现) |
-| `TextEditFlag` | 位标志枚举,由 `WorkflowState` 派生(待实现) |
+| `TextEditWorkflowState` | 编辑侧状态机,现阶段仅 `Idle` 与 `SelectionPending` |
+| `TextEditFlag` | 位标志枚举,当前使用 `None` 与 `SelectionPending` 两值 |
 | `SelectionState` | 多匹配时的虚拟选区缓存 |
-| `PersistMode` | 持久化模式枚举: `Immediate` / `Manual` / `Disabled`(待实现) |
+| `IExclusiveBuffer` | 由 TextEditor2Widget 实现的独占缓存接口 |
+| `DataSourceBindingWidget` | 专注同步职责的配套组件 |
 
 ---
 
-**文档版本**: 2025-战略版-v1.2
+**文档版本**: 2025-战略版-v2.1 (职责分离版)
 **最后更新**: 2025年11月9日
 **维护者**: Atelia 开发团队
-本战略版文档明确了以 `TextEditor2Widget` 为核心的 LLM 文本编辑蓝图，为后续实现、测试与迁移提供统一依据。
+
+本战略版文档明确了 `TextEditor2Widget` 专注于独占缓存编辑能力的设计理念，通过与 [`DataSourceBindingWidget`](./DataSourceBindingWidget.md) 的职责分离，实现编辑与同步的完全解耦，为后续实现、测试与迭代提供清晰的架构指引。
