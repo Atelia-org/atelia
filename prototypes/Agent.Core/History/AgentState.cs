@@ -210,7 +210,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
             HistoryEntry contextual = _recentHistory[index];
             switch (contextual) {
                 case RecapEntry recapEntry:
-                    messages.Add(new ObservationMessage(recapEntry.Timestamp, recapEntry.Content));
+                    messages.Add(new ObservationMessage(recapEntry.Content));
                     break;
                 case ObservationEntry modelInputEntry:
                     var inputDetail = ResolveDetailLevel(detailOrdinal++);

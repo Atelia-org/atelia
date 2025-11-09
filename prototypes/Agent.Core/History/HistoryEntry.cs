@@ -146,7 +146,6 @@ public record class ObservationEntry : HistoryEntry {
         var content = MergeContent(notificationText, windows);
 
         return new ObservationMessage(
-            Timestamp: Timestamp,
             Content: content
         );
     }
@@ -230,7 +229,6 @@ public sealed record class ToolResultsEntry : ObservationEntry {
         IReadOnlyList<ToolResult> projectedResults = ProjectResults(Results, detailLevel);
 
         return new ToolResultsMessage(
-            Timestamp: Timestamp,
             Content: MergeContent(Notifications?.GetContent(detailLevel), windows),
             Results: projectedResults,
             ExecuteError: ExecuteError
@@ -260,8 +258,7 @@ public sealed record class ToolResultsEntry : ObservationEntry {
                     item.ToolName ?? string.Empty,
                     item.ToolCallId ?? string.Empty,
                     item.Status,
-                    item.Result.GetContent(detailLevel),
-                    item.Elapsed
+                    item.Result.GetContent(detailLevel)
                 )
             );
         }
