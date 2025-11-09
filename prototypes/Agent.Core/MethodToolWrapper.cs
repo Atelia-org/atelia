@@ -142,7 +142,7 @@ public sealed partial class MethodToolWrapper : ITool {
     ///     public ValueTask&lt;LodToolExecuteResult&gt; EchoAsync(
     ///         [ToolParamAttribute("要回显的文本")] string text,
     ///         CancellationToken cancellationToken
-    ///     ) =&gt; LodToolExecuteResult.FromContent(text);
+    ///     ) =&gt; new LodToolExecuteResult(text);
     /// }
     ///
     /// var host = new SampleToolHost();

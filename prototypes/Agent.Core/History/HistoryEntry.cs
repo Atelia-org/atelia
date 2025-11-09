@@ -257,8 +257,8 @@ public sealed record class ToolResultsEntry : ObservationEntry {
                 new ToolResult(
                     item.ToolName ?? string.Empty,
                     item.ToolCallId ?? string.Empty,
-                    item.Status,
-                    item.Result.GetContent(detailLevel)
+                    item.ExecuteResult.Status,
+                    item.ExecuteResult.Result.GetContent(detailLevel)
                 )
             );
         }

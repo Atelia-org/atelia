@@ -175,7 +175,7 @@ public sealed class TextEditorWidget {
 
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
                     const string noChangeSummary = "未追加任何内容";
-                    return LodToolExecuteResult.FromContent(
+                    return new LodToolExecuteResult(
                         ToolExecutionStatus.Success,
                         CreateSuccessContent(
                             noChangeSummary,
@@ -189,7 +189,7 @@ public sealed class TextEditorWidget {
                 }
 
                 var summary = $"✓ 已向{_targetTextName}追加内容";
-                return LodToolExecuteResult.FromContent(
+                return new LodToolExecuteResult(
                     ToolExecutionStatus.Success,
                     CreateSuccessContent(
                         summary,
@@ -232,7 +232,7 @@ public sealed class TextEditorWidget {
 
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
                     const string noChangeSummary = "替换内容未发生变化";
-                    return LodToolExecuteResult.FromContent(
+                    return new LodToolExecuteResult(
                         ToolExecutionStatus.Success,
                         CreateSuccessContent(
                             noChangeSummary,
@@ -247,7 +247,7 @@ public sealed class TextEditorWidget {
 
                 var summary = $"✓ 已完成{_targetTextName}文本替换";
 
-                return LodToolExecuteResult.FromContent(
+                return new LodToolExecuteResult(
                     ToolExecutionStatus.Success,
                     CreateSuccessContent(
                         summary,
@@ -283,7 +283,7 @@ public sealed class TextEditorWidget {
 
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
                     const string noChangeSummary = "替换内容未发生变化";
-                    return LodToolExecuteResult.FromContent(
+                    return new LodToolExecuteResult(
                         ToolExecutionStatus.Success,
                         CreateSuccessContent(
                             noChangeSummary,
@@ -297,7 +297,7 @@ public sealed class TextEditorWidget {
                 }
 
                 var summary = $"✓ 已完成{_targetTextName}区块替换";
-                return LodToolExecuteResult.FromContent(
+                return new LodToolExecuteResult(
                     ToolExecutionStatus.Success,
                     CreateSuccessContent(
                         summary,
@@ -427,7 +427,7 @@ public sealed class TextEditorWidget {
         detailBuilder.Append("- target: ").Append(targetName).Append('\n');
         detailBuilder.Append("- tool_operation: ").Append(operationName);
 
-        return LodToolExecuteResult.FromContent(
+        return new LodToolExecuteResult(
             ToolExecutionStatus.Failed,
             new LevelOfDetailContent(summary, detailBuilder.ToString())
         );

@@ -458,8 +458,7 @@ public class AgentEngine {
 
         if (beforeArgs.Cancel) {
             var cancelledResult = beforeArgs.OverrideResult ?? new LodToolCallResult(
-                ToolExecutionStatus.Failed,
-                new LevelOfDetailContent("工具执行被取消", "工具执行在调度前被扩展逻辑取消。"),
+                new LodToolExecuteResult(ToolExecutionStatus.Failed, new LevelOfDetailContent("工具执行被取消", "工具执行在调度前被扩展逻辑取消。")),
                 nextCall.ToolName,
                 nextCall.ToolCallId
             );
@@ -481,7 +480,7 @@ public class AgentEngine {
         }
 
         var toolName = result.ToolName ?? nextCall.ToolName;
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool executed toolName={toolName} callId={result.ToolCallId} status={result.Status}");
+        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool executed toolName={toolName} callId={result.ToolCallId} status={result.ExecuteResult.Status}");
 
         return StepOutcome.FromToolExecution();
     }
@@ -502,10 +501,10 @@ public class AgentEngine {
             collectedResults.Add(result);
         }
 
-        var failure = collectedResults.FirstOrDefault(static result => result.Status == ToolExecutionStatus.Failed);
+        var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
-            : failure.Result.GetContent(LevelOfDetail.Basic);
+            : failure.ExecuteResult.Result.GetContent(LevelOfDetail.Basic);
 
         var results = collectedResults.ToArray();
         var entry = new ToolResultsEntry(results, executeError);

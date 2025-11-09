@@ -125,8 +125,8 @@ public sealed class TokenEstimateHelper {
 
         if (entry.Results is { Count: > 0 }) {
             foreach (var result in entry.Results) {
-                total += EstimateString(result.Status.ToString());
-                total += EstimateContent(result.Result);
+                total += EstimateString(result.ExecuteResult.Status.ToString());
+                total += EstimateContent(result.ExecuteResult.Result);
                 total += EstimateString(result.ToolName);
                 total += EstimateString(result.ToolCallId);
                 // total += EstimateElapsed(result.Elapsed); 元信息，不会单独序列化到LLM调用上下文中，已包含在result.Result.Detail中

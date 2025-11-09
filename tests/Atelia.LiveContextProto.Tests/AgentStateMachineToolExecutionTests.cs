@@ -22,7 +22,7 @@ public sealed class AgentStateMachineToolExecutionTests {
             "echo",
             arguments => {
                 toolInvocations.Add(arguments);
-                return LodToolExecuteResult.FromContent(
+                return new LodToolExecuteResult(
                     ToolExecutionStatus.Success,
                     UniformContent("tool-output")
                 );
@@ -82,8 +82,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Null(toolResults.ExecuteError);
 
         var historyResult = toolResults.Results[0];
-        Assert.Equal(ToolExecutionStatus.Success, historyResult.Status);
-        var plainText = historyResult.Result.Basic;
+        Assert.Equal(ToolExecutionStatus.Success, historyResult.ExecuteResult.Status);
+        var plainText = historyResult.ExecuteResult.Result.Basic;
         Assert.Contains("tool-output", plainText, StringComparison.Ordinal);
 
         Assert.Single(toolInvocations);
@@ -111,7 +111,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     public async Task DoStepAsync_ToolFailureProducesExecuteError() {
         var failingTool = new DelegateTool(
             "broken",
-            _ => LodToolExecuteResult.FromContent(
+            _ => new LodToolExecuteResult(
                 ToolExecutionStatus.Failed,
                 UniformContent("tool failed")
             )
@@ -143,19 +143,19 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var toolResults = step4.ToolResults!;
         Assert.Equal("tool failed", toolResults.ExecuteError);
-        Assert.Equal(ToolExecutionStatus.Failed, toolResults.Results.Single().Status);
+        Assert.Equal(ToolExecutionStatus.Failed, toolResults.Results.Single().ExecuteResult.Status);
     }
 
     [Fact]
     public async Task StepAsync_HiddenToolsAreExcludedFromCompletionRequest() {
         var visibleTool = new DelegateTool(
             "visible",
-            _ => LodToolExecuteResult.FromContent(ToolExecutionStatus.Success, UniformContent("unused"))
+            _ => new LodToolExecuteResult(ToolExecutionStatus.Success, UniformContent("unused"))
         );
 
         var hiddenTool = new DelegateTool(
             "hidden",
-            _ => LodToolExecuteResult.FromContent(ToolExecutionStatus.Success, UniformContent("unused"))
+            _ => new LodToolExecuteResult(ToolExecutionStatus.Success, UniformContent("unused"))
         ) {
             Visible = false
         };
@@ -184,7 +184,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     public async Task StepAsync_TogglingVisibilityUsesCachedDefinitions() {
         var toggleTool = new DelegateTool(
             "toggle",
-            _ => LodToolExecuteResult.FromContent(ToolExecutionStatus.Success, UniformContent("unused"))
+            _ => new LodToolExecuteResult(ToolExecutionStatus.Success, UniformContent("unused"))
         );
 
         var provider = new FakeProviderClient(
@@ -264,7 +264,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     private static LevelOfDetailContent UniformContent(string text)
-        => new(text, text);
+        => new(text);
 
     private sealed class FakeProviderClient : ICompletionClient {
         private readonly Queue<IAsyncEnumerable<CompletionChunk>> _responses;

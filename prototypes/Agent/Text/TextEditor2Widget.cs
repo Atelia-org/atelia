@@ -593,7 +593,7 @@ public sealed class TextEditor2Widget {
 
         // Basic 保留简要摘要，Detail 包含完整 Markdown
         var basicSummary = $"{summary}{(guidance is not null ? $" {guidance}" : string.Empty)}";
-        return LodToolExecuteResult.FromContent(
+        return new LodToolExecuteResult(
             ToolExecutionStatus.Success,
             new LevelOfDetailContent(basicSummary, markdown)
         );
@@ -622,7 +622,7 @@ public sealed class TextEditor2Widget {
         );
 
         var basicSummary = $"{summary}{(guidance is not null ? $" {guidance}" : string.Empty)}";
-        return LodToolExecuteResult.FromContent(
+        return new LodToolExecuteResult(
             ToolExecutionStatus.Failed,
             new LevelOfDetailContent(basicSummary, markdown)
         );

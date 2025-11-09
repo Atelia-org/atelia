@@ -93,10 +93,9 @@ internal sealed class ToolExecutor {
 
             var message = $"未找到工具: {request.ToolName}";
             return new LodToolCallResult(
-                status: ToolExecutionStatus.Failed,
-                result: new LevelOfDetailContent(message, message),
-                toolName: request.ToolName,
-                toolCallId: request.ToolCallId
+                new LodToolExecuteResult(ToolExecutionStatus.Failed, new LevelOfDetailContent(message)),
+                request.ToolName,
+                request.ToolCallId
             );
         }
 
@@ -130,10 +129,9 @@ internal sealed class ToolExecutor {
                 $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            var callResult = new LodToolCallResult(executeResult.Status, executeResult.Result)
-                .WithContext(request.ToolName, request.ToolCallId, stopwatch.Elapsed);
-
-            return AttachParseWarning(callResult, normalizedRequest.ParseWarning);
+            var enrichedContent = AttachParseWarning(executeResult.Result, normalizedRequest.ParseWarning);
+            var callResult = new LodToolCallResult(new LodToolExecuteResult(executeResult.Status, enrichedContent), request.ToolName, request.ToolCallId, stopwatch.Elapsed);
+            return callResult;
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
@@ -141,11 +139,10 @@ internal sealed class ToolExecutor {
 
             var message = "工具执行被取消";
             return new LodToolCallResult(
-                status: ToolExecutionStatus.Skipped,
-                result: new LevelOfDetailContent(message, message),
-                toolName: request.ToolName,
-                toolCallId: request.ToolCallId,
-                elapsed: stopwatch.Elapsed
+                new LodToolExecuteResult(ToolExecutionStatus.Skipped, new LevelOfDetailContent(message)),
+                request.ToolName,
+                request.ToolCallId,
+                stopwatch.Elapsed
             );
         }
         catch (Exception ex) {
@@ -154,11 +151,10 @@ internal sealed class ToolExecutor {
 
             var message = $"工具执行异常: {ex.Message}";
             return new LodToolCallResult(
-                status: ToolExecutionStatus.Failed,
-                result: new LevelOfDetailContent(message, message),
-                toolName: request.ToolName,
-                toolCallId: request.ToolCallId,
-                elapsed: stopwatch.Elapsed
+                new LodToolExecuteResult(ToolExecutionStatus.Failed, new LevelOfDetailContent(message)),
+                request.ToolName,
+                request.ToolCallId,
+                stopwatch.Elapsed
             );
         }
     }
@@ -175,19 +171,17 @@ internal sealed class ToolExecutor {
         }
 
         return new LodToolCallResult(
-            status: ToolExecutionStatus.Failed,
-            result: new LevelOfDetailContent(basic, detail),
-            toolName: request.ToolName,
-            toolCallId: request.ToolCallId
+            new LodToolExecuteResult(ToolExecutionStatus.Failed, new LevelOfDetailContent(basic, detail)),
+            request.ToolName,
+            request.ToolCallId
         );
     }
 
-    private static LodToolCallResult AttachParseWarning(LodToolCallResult result, string? parseWarning) {
-        if (string.IsNullOrWhiteSpace(parseWarning)) { return result; }
+    private static LevelOfDetailContent AttachParseWarning(LevelOfDetailContent content, string? parseWarning) {
+        if (string.IsNullOrWhiteSpace(parseWarning)) { return content; }
 
-        var detail = string.Concat(result.Result.Detail, "\n[ParseWarning] ", parseWarning);
-        var enrichedContent = new LevelOfDetailContent(result.Result.Basic, detail);
-        return result with { Result = enrichedContent };
+        var detail = string.Concat(content.Detail, "\n[ParseWarning] ", parseWarning);
+        return new LevelOfDetailContent(content!.Basic, detail);
     }
 
 }
