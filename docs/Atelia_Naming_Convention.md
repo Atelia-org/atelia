@@ -17,13 +17,19 @@
 **示例：**
 ```
 src/
-  CodeCortex/
-  CodeCortex.DevCli/
-  MemoTree/
-  MemoTree.Contracts/
+  Data/
+  Diagnostics/
+  Analyzers.Style/
+  Analyzers.Style.CodeFixes/
 tests/
-  CodeCortex.Tests/
-  MemoTree.Tests/
+  Data.Tests/
+  Analyzers.Style.Tests/
+prototypes/
+  LiveContextProto/
+  Agent/
+  Agent.Core/
+  Completion/
+  Completion.Abstractions/
 ```
 
 ## 2. 命名空间
@@ -34,10 +40,10 @@ tests/
 
 **示例：**
 ```csharp
-// src/CodeCortex/
-namespace Atelia.CodeCortex;
-// src/CodeCortex.Cli/
-namespace Atelia.CodeCortex.Cli;
+// src/Data/
+namespace Atelia.Data;
+// src/Analyzers.Style/
+namespace Atelia.Analyzers.Style;
 ```
 
 ## 3. 程序集名与包名
@@ -47,20 +53,20 @@ namespace Atelia.CodeCortex.Cli;
   - `<AssemblyName>Atelia.$(MSBuildProjectName)</AssemblyName>`
   - `<RootNamespace>Atelia.$(MSBuildProjectName)</RootNamespace>`
   - `<PackageId>Atelia.$(MSBuildProjectName)</PackageId>`
-- **项目文件名：** 不带 Atelia 前缀，直接用短名（如 `CodeCortex.csproj`）。
+- **项目文件名：** 不带 Atelia 前缀，直接用短名（如 `Data.csproj`、`Analyzers.Style.csproj`）。
 - **CLI/特殊项目例外：** 可在各自 `.csproj` 内覆盖上述属性。
 
-**示例（以 CodeCortex.csproj 为例）：**
+**示例（以 Data.csproj 为例）：**
 ```xml
-<!-- src/CodeCortex/CodeCortex.csproj -->
+<!-- src/Data/Data.csproj -->
 <!-- Directory.Build.props 已统一配置，无需重复写 AssemblyName/RootNamespace -->
 ```
 
 **CLI 例外示例：**
 ```xml
-<!-- src/CodeCortex.DevCli/CodeCortex.DevCli.csproj -->
+<!-- src/SomeDevCli/SomeDevCli.csproj -->
 <PropertyGroup>
-  <AssemblyName>Atelia.CodeCortex.DevCli</AssemblyName>
+  <AssemblyName>Atelia.SomeDevCli</AssemblyName>
   <!-- 如需特殊命名空间可加 RootNamespace -->
 </PropertyGroup>
 ```
@@ -76,12 +82,12 @@ namespace Atelia.CodeCortex.Cli;
 
 ## 总结表
 
-| 工件                | 格式                                 | 示例（CodeCortex.Cli 项目）         |
+| 工件                | 格式                                 | 示例（Analyzers.Style 项目）        |
 |---------------------|--------------------------------------|-------------------------------------|
-| **目录**            | `src/{ProjectName}[.FeatureArea]/`   | `src/CodeCortex.Cli/`               |
-| **命名空间**        | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.CodeCortex.Cli`             |
-| **程序集名**        | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.CodeCortex.Cli`             |
-| **NuGet 包名**      | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.CodeCortex.Cli`             |
+| **目录**            | `src/{ProjectName}[.FeatureArea]/`   | `src/Analyzers.Style/`              |
+| **命名空间**        | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.Analyzers.Style`            |
+| **程序集名**        | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.Analyzers.Style`            |
+| **NuGet 包名**      | `Atelia.{ProjectName}[.FeatureArea]` | `Atelia.Analyzers.Style`            |
 
 ---
 
