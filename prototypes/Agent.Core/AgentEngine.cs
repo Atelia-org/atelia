@@ -170,9 +170,9 @@ public class AgentEngine {
     /// </summary>
     /// <returns>渲染后的历史消息列表。</returns>
     /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
-    public IReadOnlyList<IHistoryMessage> RenderLiveContext() {
+    public IReadOnlyList<IHistoryMessage> ProjectContext() {
         var windows = _appHost.RenderWindows();
-        return _state.RenderLiveContext(windows);
+        return _state.ProjectContext(windows);
     }
 
     /// <summary>
@@ -408,7 +408,7 @@ public class AgentEngine {
     }
 
     private async Task<StepOutcome> ProcessPendingModelCallAsync(AgentRunState state, LlmProfile profile, CancellationToken cancellationToken) {
-        var liveContext = RenderLiveContext();
+        var liveContext = ProjectContext();
         DebugUtil.Print(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
         var toolExecutor = ToolExecutor;

@@ -193,7 +193,8 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     }
 
     /// <summary>
-    /// 渲染当前的实时上下文（Live Context），用于发送给模型。
+    /// 对应Key-Notes中的Context-Projection。
+    /// 投影当前的实时上下文（Live Context），用于发送给模型。
     /// </summary>
     /// <param name="windows">可选的 App Windows 内容，会注入到最新的 Observation 中。</param>
     /// <returns>按时间顺序排列的历史消息列表。</returns>
@@ -201,7 +202,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     /// 仅遍历内存中的 Recent History，不包含已归档的持久历史。
     /// Detail 级别优先分配给最近的 Observation，其余使用 Basic 级别。
     /// </remarks>
-    public IReadOnlyList<IHistoryMessage> RenderLiveContext(string? windows = null) {
+    public IReadOnlyList<IHistoryMessage> ProjectContext(string? windows = null) {
         var messages = new List<IHistoryMessage>(_recentHistory.Count);
         int detailOrdinal = 0;
         string? pendingWindows = windows;

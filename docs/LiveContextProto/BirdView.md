@@ -1,12 +1,12 @@
 ## 架构鸟瞰
 - **AgentEngine（状态机核心）**：围绕 `AgentRunState` 驱动 Sense–Think–Act 循环，按状态分派等待输入、模型调用、工具执行、汇总结果等分支，并通过一组事件（`WaitingInput`/`BeforeModelCall`/`AfterModelCall`/`BeforeToolExecute`/`AfterToolExecute`/`StateTransition`）开放扩展点。
-- **AgentState（历史存储）**：维护 `HistoryEntry` 列表、系统提示词与待注入的通知队列。各条目分为 `ObservationEntry`、`ActionEntry`、`ToolEntry`，都带时间戳和 `LevelOfDetailContent`，可按 Basic/Detail 两档输出。`RenderLiveContext()` 会回溯历史，优先给最近一条 Observation 使用 Detail，其余默认 Basic，并只在最合适的那一条注入由 App 输出的 `[Window]` 片段。
+- **AgentState（历史存储）**：维护 `HistoryEntry` 列表、系统提示词与待注入的通知队列。各条目分为 `ObservationEntry`、`ActionEntry`、`ToolEntry`，都带时间戳和 `LevelOfDetailContent`，可按 Basic/Detail 两档输出。`ProjectContext()` 会回溯历史，优先给最近一条 Observation 使用 Detail，其余默认 Basic，并只在最合适的那一条注入由 App 输出的 `[Window]` 片段。
 - **Tool 与 App 生态**：`MethodToolWrapper` 负责把带 Attribute 的方法自动包装成 `ITool`；`DefaultAppHost` 聚合 App，并把每个 App 渲染的 Window 拼成统一视图。当前默认装配 `MemoryNotebookApp`，提供 `memory_notebook_replace` / `_replace_span` 工具和窗口快照。
 - **通知机制**：主机侧通过 `AppendNotification` 写入待处理通知，下一条 Observation 或 Tool 结果会自动附带，并可在模型失败重试前保留（TODO 文档还计划补强 ID 与确认语义）。
 
 ## 历史管理现状
 - **写入即生成双 LOD**：所有新增条目都要求在写入时就准备好 Basic/Detail，两档内容可通过 `LevelOfDetailContent.Join` 聚合，避免渲染期做昂贵裁剪。
-- **上下文渲染策略**：`AgentEngine.RenderLiveContext()` 先向各 App 拉取 `[Window]`，再委托 `AgentState` 将历史投影成 `IHistoryMessage` 列表。Detail 主要保留最近一条 Observation，其余条目走 Basic，适配不同模型上下文预算。
+- **上下文渲染策略**：`AgentEngine.ProjectContext()` 先向各 App 拉取 `[Window]`，再委托 `AgentState` 将历史投影成 `IHistoryMessage` 列表。Detail 主要保留最近一条 Observation，其余条目走 Basic，适配不同模型上下文预算。
 - **模型调用与工具回填**：`CompletionAccumulator` 聚合流式 delta；工具调用流程会按照模型给出的 `ParsedToolCall` 顺序执行，结果暂存 `_pendingToolResults`，等全部到齐再生成一条 `ToolEntry`。失败会从 Basic 内容中摘取摘要写入 `ExecuteError`。
 
 ## Memory Notebook 与潜在 Recap 接入点
@@ -31,4 +31,4 @@
 - **明确 RecapMaintainer 的触发时机与资源**：可能在 `WaitingInput` 中检测历史长度超阈值，或监听 `AfterModelCall` / `ProcessToolResultsReady` 完成后异步触发。需要评估其使用的模型/工具预算，与 Memory Notebook 协作策略（Recap 是否写入 Notebook 或独立文件）。
 - **完善通知清理逻辑**：TODO 文档建议给 `_pendingNotifications` 加 ID，Recap 在多轮尝试时也要避免重复注入旧通知。
 
-目前没有代码改动，因此尚未触发构建/测试。后续若开始实现裁剪和反射，请同步补上单测（例如针对 `RenderLiveContext` 的 LOD 选择、Recap 摘录流程、裁剪后再渲染的稳定性），以便在进入 RecapMaintainer 正式接入前把地基打牢。
+目前没有代码改动，因此尚未触发构建/测试。后续若开始实现裁剪和反射，请同步补上单测（例如针对 `ProjectContext` 的 LOD 选择、Recap 摘录流程、裁剪后再渲染的稳定性），以便在进入 RecapMaintainer 正式接入前把地基打牢。

@@ -18,7 +18,7 @@ AgentEngine
 - 工具结果缓存
 - 工具调用
 - 工具与APP配置
-- RenderLiveContext
+- ProjectContext
 - ProviderClient调用
 
 AgentEngine外部:

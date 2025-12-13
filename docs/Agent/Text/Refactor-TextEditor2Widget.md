@@ -61,7 +61,7 @@
 
 ### 2.3 上下文渲染 (`AgentState` & `LevelOfDetail`)
 - **历史管理**: `AgentState` 维护 Recent History,按 Observation ↔ Action 交替顺序组织
-- **细节等级**: `RenderLiveContext` 为最新的 Observation 使用 `Detail` 级别,历史条目降为 `Basic`,以控制上下文长度
+- **细节等级**: `ProjectContext` 为最新的 Observation 使用 `Detail` 级别,历史条目降为 `Basic`,以控制上下文长度
 - **响应传递**: 工具返回的 `LodToolExecuteResult` 通过 `ToolResultsEntry` 注入历史,供下一轮模型读取
 
 ### 2.4 对 TextEditor2Widget 的意义

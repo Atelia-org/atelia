@@ -146,7 +146,7 @@ internal sealed record AppRenderContext(
 
 - **宿主职责**：`AgentState` 负责创建并持有 `MemoryNotebookApp`，对外暴露同步访问器（例如 `GetMemoryNotebookApp()`）。
 - **状态一致性**：App 内部维护 Notebook 最新全文；`AgentState` 仍可保留 `_memoryNotebook` 字段以兼容旧逻辑，但写入统一通过 App 封装方法完成，确保事实源唯一。
-- **渲染流程**：`AgentState.RenderLiveContext()` 在处理 Window 注入时直接调用 `MemoryNotebookApp.RenderWindow(context)`，若返回文本则追加到现有 Markdown。
+- **渲染流程**：`AgentState.ProjectContext()` 在处理 Window 注入时直接调用 `MemoryNotebookApp.RenderWindow(context)`，若返回文本则追加到现有 Markdown。
 - **工具桥接**：`ToolExecutor` 已直接消费 App 暴露的 `ITool` 接口，App 只需在 `Tools` 集合中返回实现即可；若需要额外上下文，可在构造 `ToolExecutor` 时通过环境工厂注入。
 - **未来扩展**：当引入其他 App 时，可将 `AgentState` 中的单实例扩展为 `List<IApp>`，再考虑抽象注册点；当前实现保持“单 App + 最小接口”。
 

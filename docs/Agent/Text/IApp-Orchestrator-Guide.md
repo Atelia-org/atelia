@@ -16,7 +16,7 @@
 | `IReadOnlyList<ITool> Tools` | App 暴露的全部工具 | 必须合并编辑与同步工具集（例如 `edit.*` 与 `sync.*`） |
 | `string? RenderWindow()` | 返回面向 LLM 的 TUI | 负责将两个 Widget 渲染结果合并为单个窗口 |
 
-`DefaultAppHost` 会聚合所有 App 的工具与窗口文本，`AgentEngine` 在调用模型前通过 `RenderLiveContext()` 将窗口文本注入上下文。因此，IApp 实现应保证：
+`DefaultAppHost` 会聚合所有 App 的工具与窗口文本，`AgentEngine` 在调用模型前通过 `ProjectContext()` 将窗口文本注入上下文。因此，IApp 实现应保证：
 
 1. 工具列表实时反映两个 Widget 的可见工具；
 2. `RenderWindow()` 输出的 Markdown/TUI 始终与最新状态一致；

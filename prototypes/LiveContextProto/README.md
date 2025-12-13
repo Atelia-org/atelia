@@ -36,7 +36,7 @@ dotnet run --project prototypes/LiveContextProto/LiveContextProto.csproj
 想要继续使用脚本化 stub、示例工具或 `/demo` 命令，请改用伴随项目 `prototypes/LiveContextProto.Demo`。
 
 ## 结构
-- `State/`：AgentState 与 HistoryEntry 分层（ModelInput/ModelOutput/ToolResults），`RenderLiveContext()` 负责上下文投影与 Window 装饰。
+- `State/`：AgentState 与 HistoryEntry 分层（ModelInput/ModelOutput/ToolResults），`ProjectContext()` 负责上下文投影与 Window 装饰。
 - `Provider/`：
   - `IProviderClient`：统一模型调用接口（返回 `IAsyncEnumerable<CompletionChunk>`）。
   - `ProviderRouter`：按策略选择 Provider，并生成 `ModelInvocationDescriptor`。

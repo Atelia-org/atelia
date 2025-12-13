@@ -28,7 +28,7 @@
 - **设计好处**：
   - ✅ RecapEntry 既保留了所有历史序列的连续性，又在类型层面清晰区分出“这是压缩摘要，而非原始消息”。
   - ✅ 可以给 `RecapEntry` 额外元数据（覆盖范围、生成时间、RecapMaintainer ID），便于调试和回放。
-  - ✅ `RenderLiveContext` 能针对 RecapEntry 调整呈现逻辑，比如把 Basic 版当成 timeline 引导语，Detail 版保留更丰富摘要。
+  - ✅ `ProjectContext` 能针对 RecapEntry 调整呈现逻辑，比如把 Basic 版当成 timeline 引导语，Detail 版保留更丰富摘要。
   - ✅ 序列化时自然融入历史文件格式，重启时遍历历史时遇到 `RecapEntry` 就知道“从这里往前的内容已归档可读不可写”。
 - **潜在挑战**：
   - 需要定义 RecapEntry 与其“覆盖的原始条目范围”的映射。这可以通过在 RecapEntry 中记录 `CoveredUntilEntryId` 或时间戳，或者写入一份 meta 文件。

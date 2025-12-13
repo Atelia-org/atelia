@@ -9,7 +9,7 @@
     - `Basic`（对应 `LevelOfDetail.Basic`）：提供紧凑、摘要化的信息，例如“提交成功”“已重命名 3 个文件”等。若 App 已在 `[Window]` 中呈现了同一份内容，应当在 `Basic` 中避免重复，可改为简化说明或指向 diff。
     - `Detail`（对应 `LevelOfDetail.Detail`）：保留完整上下文、详细 diff 以及附加诊断信息。该档位为需要“全量回放”的渲染或调试模式服务。
   这两档数据可以写入关联的 `ToolResultsEntry.Metadata` 或专用的 App 历史条目，作为后续渲染的原料。
-- **渲染时选择细节**：`RenderLiveContext()` 根据 Provider 或调用方传入的参数（例如上下文窗口大小、任务场景），在 `Basic / Detail` 之间按需裁剪：
+- **渲染时选择细节**：`ProjectContext()` 根据 Provider 或调用方传入的参数（例如上下文窗口大小、任务场景），在 `Basic / Detail` 之间按需裁剪：
     - 上下文预算充足 → 直接采用 `Detail`。
     - 预算紧张 → 保留 `Basic`，仅对最新或最关键的条目切换到 `Detail`。
     - 未来可扩展出动态阈值（如“最近 N 条使用 Detail”）。
@@ -27,7 +27,7 @@
 
 ### 渲染策略
 
-`RenderLiveContext()` 在遍历历史条目时，根据目标模型的上下文预算、任务类型等因素决定使用的 `LevelOfDetail`，并将选中的内容暂存于轻量包装对象 (`ModelInputMessage` / `ToolResultsMessage`) 中：
+`ProjectContext()` 在遍历历史条目时，根据目标模型的上下文预算、任务类型等因素决定使用的 `LevelOfDetail`，并将选中的内容暂存于轻量包装对象 (`ModelInputMessage` / `ToolResultsMessage`) 中：
 
 - 最后一条准备发送给模型的用户输入 → 优先 `LevelOfDetail.Detail`，确保模型感知完整上下文。
 - 最近几条输入/工具结果 → 默认 `LevelOfDetail.Basic`，必要时再切换至 `Detail` 补全信息。

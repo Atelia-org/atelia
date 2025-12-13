@@ -47,7 +47,7 @@ public class AgentStateRecapTests {
         Assert.Same(action2, history[1]);
         Assert.Same(observation2, history[2]);
 
-        var context = state.RenderLiveContext();
+        var context = state.ProjectContext();
         var recapMessage = Assert.IsType<ObservationMessage>(context[0]);
         Assert.Equal("Recap Summary", recapMessage.Content);
     }
