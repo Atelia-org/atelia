@@ -1109,31 +1109,35 @@ CommitAll 遵循二阶段提交协议，失败时保证以下语义：
 
 #### 3.4.8 Error Affordance（错误信息规范）
 
-本节定义 StateJournal 异常的结构化要求，便于 LLM Agent 和调用方进行错误诊断与恢复。
+> **规范提升通知**：本节的通用错误处理机制已提升为 Atelia 全项目规范。
+> 请参阅 [AteliaResult 规范](../AteliaResult-Specification.md) 获取完整的类型定义和条款。
+>
+> 本节仅保留 StateJournal 特有的错误码定义。
 
-##### 结构化错误字段
+##### 条款映射
 
-**条款（MUST）**：
-- **[A-ERROR-CODE-MUST]**：所有 StateJournal 公开异常 MUST 包含 `ErrorCode` 属性（字符串，机器可判定）
-- **[A-ERROR-MESSAGE-MUST]**：所有异常 MUST 包含 `Message` 属性（人类可读的错误描述）
-- **[A-ERROR-CODE-REGISTRY]**：ErrorCode 值 MUST 在文档中登记，禁止使用未登记的 ErrorCode
+原 StateJournal 本地条款已提升为 Atelia 全项目条款，映射关系如下：
 
-**条款（SHOULD）**：
-- **[A-ERROR-RECOVERY-HINT-SHOULD]**：异常 SHOULD 包含 `RecoveryHint` 属性（提供下一步行动建议，对 Agent 尤其重要）
-- 涉及特定对象的异常 SHOULD 包含 `ObjectId` 属性
-- 涉及对象状态的异常 SHOULD 包含 `ObjectState` 属性
+| 原条款（已废弃） | 新条款（全项目） | 说明 |
+|-----------------|-----------------|------|
+| [A-ERROR-CODE-MUST] | [ATELIA-ERROR-CODE-MUST] | 所有失败载体 MUST 包含 ErrorCode |
+| [A-ERROR-MESSAGE-MUST] | [ATELIA-ERROR-MESSAGE-MUST] | 所有失败载体 MUST 包含 Message |
+| [A-ERROR-RECOVERY-HINT-SHOULD] | [ATELIA-ERROR-RECOVERY-HINT-SHOULD] | 失败载体 SHOULD 包含 RecoveryHint |
+| [A-ERROR-CODE-REGISTRY] | [ATELIA-ERRORCODE-REGISTRY] | ErrorCode MUST 在组件注册表中登记 |
 
-##### ErrorCode 枚举（MVP 最小集）
+##### StateJournal ErrorCode 注册表（MVP 最小集）
+
+StateJournal 的 ErrorCode 遵循 [ATELIA-ERRORCODE-NAMING] 命名规范，格式为 `StateJournal.{ErrorName}`。
 
 | ErrorCode | 说明 | 触发场景 |
 |-----------|------|----------|
-| `OBJECT_DETACHED` | 对象已分离 | 访问 Detached 对象的任何操作 |
-| `OBJECT_NOT_FOUND` | 对象不存在 | LoadObject 找不到指定 ObjectId |
-| `CORRUPTED_RECORD` | 记录损坏 | CRC 校验失败 |
-| `INVALID_FRAMING` | 帧格式错误 | HeadLen/TailLen 不匹配、Magic 不匹配 |
-| `UNKNOWN_OBJECT_KIND` | 未知对象类型 | ObjectKind 值未知 |
-| `COMMIT_DATA_FSYNC_FAILED` | data file fsync 失败 | Commit 阶段 data 刷盘失败 |
-| `COMMIT_META_FSYNC_FAILED` | meta file fsync 失败 | Commit 阶段 meta 刷盘失败 |
+| `StateJournal.ObjectDetached` | 对象已分离 | 访问 Detached 对象的任何操作 |
+| `StateJournal.ObjectNotFound` | 对象不存在 | LoadObject 找不到指定 ObjectId |
+| `StateJournal.CorruptedRecord` | 记录损坏 | CRC 校验失败 |
+| `StateJournal.InvalidFraming` | 帧格式错误 | HeadLen/TailLen 不匹配、Magic 不匹配 |
+| `StateJournal.UnknownObjectKind` | 未知对象类型 | ObjectKind 值未知 |
+| `StateJournal.CommitDataFsyncFailed` | data file fsync 失败 | Commit 阶段 data 刷盘失败 |
+| `StateJournal.CommitMetaFsyncFailed` | meta file fsync 失败 | Commit 阶段 meta 刷盘失败 |
 
 ##### 异常示例
 
@@ -1145,7 +1149,7 @@ InvalidOperationException: Invalid operation.
 **✅ 好的异常**（Agent 可理解、可恢复）：
 ```
 ObjectDetachedException:
-  ErrorCode: "OBJECT_DETACHED"
+  ErrorCode: "StateJournal.ObjectDetached"
   Message: "Cannot access object 42: it was detached after DiscardChanges on a Transient object."
   ObjectId: 42
   ObjectState: Detached

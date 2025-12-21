@@ -1,6 +1,6 @@
 # StateJournal Backlog
 
-> 最后更新：2025-12-22
+> 最后更新：2025-12-21
 > 维护者：AI Team
 > 
 > **项目位置**：`atelia/docs/StateJournal/`
@@ -9,6 +9,19 @@
 ---
 
 ## ✅ 已完成任务
+
+### 2025-12-21 AteliaResult 规范化
+
+| 任务 | 状态 | 说明 |
+|------|------|------|
+| LoadObject TryLoad 语义讨论 | ✅ | 三轮畅谈会达成共识 |
+| TryLoadObject 设计决策 | ✅ | 改名为 `TryLoadObject`，返回 `AteliaResult<T>` |
+| AteliaResult 机制升级 | ✅ | 升级为 Atelia 全项目基础机制 |
+| Atelia.Primitives 项目创建 | ✅ | `atelia/src/Primitives/`，含测试 |
+| AteliaResult 规范文档 | ✅ | `atelia/docs/AteliaResult-Specification.md` |
+| mvp-design-v2 条款引用更新 | ✅ | §3.4.8 改为引用全项目规范 |
+
+> **相关会议记录**：[2025-12-21 LoadObject 命名畅谈会](../../../agent-team/meeting/StateJournal/2025-12-21-hideout-loadobject-naming.md)
 
 ### 2025-12-22 迁移完成
 
@@ -45,8 +58,9 @@
 
 | # | 任务 | 复杂度 | 说明 |
 |---|------|--------|------|
-| 2 | LoadObject TryLoad 语义标注 | 低 | 明确返回 null 契约 |
-| 3 | TryLoadObject 设计思路 | 中 | 待深入讨论 |
+| ~~2~~ | ~~LoadObject TryLoad 语义标注~~ | ~~低~~ | ✅ 已完成 |
+| ~~3~~ | ~~TryLoadObject 设计思路~~ | ~~中~~ | ✅ 已完成 |
+| 4 | 实现 StateJournal 错误类型派生类 | 低 | 按 ErrorCode 注册表实现 |
 
 ---
 
