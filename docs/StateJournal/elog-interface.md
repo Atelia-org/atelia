@@ -290,14 +290,17 @@ public readonly ref struct ElogFrame
 
 StateJournal 定义以下 FrameTag 值：
 
-| FrameTag | RecordKind | 描述 |
-|----------|------------|------|
-| `0x00` | — | Padding（ELOG 保留，跳过） |
-| `0x01` | `DataRecord.ObjectVersion` | 对象版本数据 |
-| `0x02` | `MetaRecord.Commit` | 提交元数据 |
+| FrameTag | Record 类型 | 描述 |
+|----------|-------------|------|
+| `0x00` | Padding | ELOG 保留，上层 MUST 跳过 |
+| `0x01` | ObjectVersionRecord | 对象版本记录（data payload） |
+| `0x02` | MetaCommitRecord | 提交元数据记录（meta payload） |
 | `0x03`-`0xFF` | — | 未来扩展 |
 
-> 注：具体映射值待与 mvp-design-v2.md 对齐。
+> **FrameTag 是唯一判别器**：
+> - FrameTag 是 ELOG Payload 的第 1 个字节（参见 elog-format.md `[E-FRAMETAG-WIRE-ENCODING]`）
+> - StateJournal 通过 FrameTag 区分 Record 类型，payload 内不再包含额外的类型字节
+> - 此设计与 mvp-design-v2.md §3.2.1/§3.2.2 的定义一致（2025-12-22 对齐）
 
 ### 5.2 使用示例
 

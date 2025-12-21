@@ -1,4 +1,26 @@
-# StateJournal MVP 设计 v2（Working Draft）
+# StateJournal MVP 设计 v3（Working Draft）
+
+> **版本**：v3 (2025-12-22)
+> **状态**：Draft
+
+## 文档层次与依赖
+
+本文档是 StateJournal 的 **Layer 1 设计规范**，专注于：
+- Record 语义（ObjectVersionRecord, MetaCommitRecord）
+- 对象模型（ObjectId, TypeId, Version）
+- Two-phase commit 与恢复语义
+
+**依赖文档**：
+- [elog-interface.md](elog-interface.md) — ELOG 层接口契约（**必读**）
+- [elog-format.md](elog-format.md) — ELOG 二进制格式规范（可选深入）
+
+**不包含**（已提取到 elog-format.md）：
+- Frame 二进制格式（HeadLen/TailLen/Pad/CRC32C/Magic）
+- Genesis Header 结构
+- 逆向扫描算法
+- Resync 机制
+
+---
 
 > 日期：2025-12-18（术语修订：2025-12-19；畅谈会修订：2025-12-20；一致性审阅修订：2025-12-20；最终审阅修订：2025-12-20）
 >
@@ -42,7 +64,7 @@
 | `[R-NAME]` | **Recovery** | 崩溃一致性、resync/scan、损坏判定 |
 
 **命名规则**：
-- 使用 `SCREAMING-KEBAB-CASE` 格式（如 `[F-RECORDKIND-DOMAIN-ISOLATION]`）
+- 使用 `SCREAMING-KEBAB-CASE` 格式（如 `[F-OBJECTKIND-STANDARD-RANGE]`）
 - 锚点名应能概括条款核心语义，作为"内容哈希"
 - 长度控制在 3-5 个词
 - 废弃条款用 `DEPRECATED` 标记，保留原锚点名便于历史追溯
@@ -79,8 +101,7 @@
 | 术语 | 定义 | 别名/弃用 | 实现映射 |
 |------|------|----------|---------|
 | **ObjectId** | 对象的稳定身份。参见 **Well-Known ObjectId** 条目了解保留区规则 | — | `uint64` / `varuint` |
-| **Ptr64** | 64 位文件偏移量的编码形式（`u64 LE`），要求 4B 对齐（低 2 bit 为 0），`0=null`。Ptr64 是通用的 file offset 编码，不限于指向 Record 起点 | — | `ulong`，4B 对齐 |
-| **Address64** | 概念层术语：指向 Record 起始位置的 64-bit 偏移（Ptr64 的语义子类型）。规范条款应使用此术语描述"指向 record 起点的指针"语义 | 编码形式: `Ptr64` | `ulong` |
+| **Ptr64** / **Address64** | 8 字节文件偏移量。详见 [elog-interface.md](elog-interface.md) §2.2 | — | `ulong` |
 | **ObjectVersionPtr** | 指向对象版本记录的 Address64 | — | `Ptr64` 编码值 |
 | **EpochSeq** | Commit 的单调递增序号，用于判定 HEAD 新旧 | — | `varuint` |
 
@@ -107,7 +128,7 @@
 
 | 术语 | 定义 | 别名/弃用 | 实现映射 |
 |------|------|----------|---------|
-| **RecordKind** | Record 的顶层类型标识，决定 payload 解码方式。**[F-RECORDKIND-DOMAIN-ISOLATION]** **域隔离（MUST）**：data file 与 meta file 各有独立的 RecordKind 枚举空间，相同数值在不同文件域表示不同记录类型 | — | `DataRecordKind` / `MetaRecordKind`（`byte` 枚举） |
+| **FrameTag** | ELOG Frame 的顶层类型标识（Payload 的第 1 个字节），是 StateJournal Record 的**唯一判别器**。由 ELOG 层定义并透传。详见 [elog-interface.md](elog-interface.md) `[E-FRAMETAG-DEFINITION]` | Deprecated: RecordKind（旧名称） | `FrameTag`（`byte`）|
 | **ObjectKind** | ObjectVersionRecord 内的对象类型标识，决定 diff 解码器 | — | `byte` 枚举 |
 | **ValueType** | Dict DiffPayload 中的值类型标识 | — | `byte` 低 4 bit |
 
@@ -143,20 +164,21 @@
 1. **概念术语**：统一 Title Case，全文一致
 2. **实现标识符**：仅在 Implementation Mapping 出现，用代码格式
 3. **缩写大写**：`HEAD`、`CRC32C` 全文同形
-4. **编码名 vs 语义名**：`Ptr64` 是通用 file offset 编码；`Address64` 是指向 Record 起点的 Ptr64 子类型
+4. **Ptr64 / Address64**：详见 [elog-interface.md](elog-interface.md) §2.2
 
 ### 枚举值速查表
 
 > 以下枚举值定义集中于此，便于实现者查阅。详细语义参见对应章节。
 
-#### RecordKind（§3.2.1, §3.2.2）
+#### FrameTag（§3.2.1, §3.2.2）
 
-| 文件域 | 值 | 名称 | 说明 |
-|--------|------|------|------|
-| data | `0x01` | ObjectVersionRecord | 对象版本记录 |
-| meta | `0x01` | MetaCommitRecord | 提交元数据记录 |
+| 值 | 名称 | 说明 |
+|------|------|------|
+| `0x00` | Padding | ELOG 保留，可丢弃帧（上层 MUST 跳过）|
+| `0x01` | ObjectVersionRecord | 对象版本记录（data payload）|
+| `0x02` | MetaCommitRecord | 提交元数据记录（meta payload）|
 
-> **[F-RECORDKIND-DOMAIN-ISOLATION]** 域隔离：data file 与 meta file 各有独立的 RecordKind 枚举空间，相同数值在不同文件域表示不同记录类型。
+> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（Payload[0]）区分 Record 类型。详见 [elog-interface.md](elog-interface.md) §5.1 和 [elog-format.md](elog-format.md) `[E-FRAMETAG-WIRE-ENCODING]`。
 
 #### ObjectKind（§3.2.5）
 
@@ -505,11 +527,11 @@ StateJournal **不是通用序列化库**，而是有明确类型边界的持久
 
 #### 3.2.0 变长编码（varint）决策
 
-本 MVP 允许在对象/映射的 payload 层使用 varint（ULEB128 风格或等价编码），主要目的：降低序列化尺寸，且与“对象字段一次性 materialize”模式相匹配。
+本 MVP 允许在对象/映射的 payload 层使用 varint（ULEB128 风格或等价编码），主要目的：降低序列化尺寸，且与"对象字段一次性 materialize"模式相匹配。
 
 MVP 固定（Q15）：
 
-- 除 `Ptr64/Len/CRC32C` 等“硬定长字段”外，其余整数均可采用 varint。
+- 除 `Ptr64/Len/CRC32C` 等"硬定长字段"外，其余整数均可采用 varint。
 - `ObjectId`：varint。
 - `Count/PairCount` 等计数：varint。
 - `DurableDict` 的 key（Q23=A）：`ulong`，采用 `varuint`。
@@ -517,7 +539,7 @@ MVP 固定（Q15）：
 
 #### 3.2.0.1 varint 的精确定义（Q22=A）
 
-为避免实现分歧，本 MVP 固化 varint 语义为“protobuf 风格 base-128 varint”（ULEB128 等价），并要求 **[F-VARINT-CANONICAL-ENCODING]** **canonical 最短编码**：
+为避免实现分歧，本 MVP 固化 varint 语义为"protobuf 风格 base-128 varint"（ULEB128 等价），并要求 **[F-VARINT-CANONICAL-ENCODING]** **canonical 最短编码**：
 
 - `varuint`：无符号 base-128，每个字节低 7 bit 为数据，高 1 bit 为 continuation（1 表示后续还有字节）。`uint64` 最多 10 字节。
 - `varint`：有符号整数采用 ZigZag 映射后按 `varuint` 编码。
@@ -559,81 +581,14 @@ I/O 目标（MVP）：
 - `mmap` 仅作为后续性能优化的备选实现，不进入 MVP 规格与测试基线。
 - MVP 不依赖稀疏文件/预分配（例如 `SetLength` 预扩）；文件“有效末尾”以 meta 的 `DataTail`（逻辑尾部）为准。
 
-##### 分层定义：File Framing vs Record Layout（MVP 固定）
+> **帧格式**：Frame 结构（HeadLen/TailLen/Pad/CRC32C/Magic）、逆向扫描算法、Resync 机制详见 [elog-format.md](elog-format.md)。
 
-```ebnf
-(* File Framing: Magic-separated log *)
-File   := Magic (Record Magic)*
-Magic  := 4 bytes ("DHD3" for data, "DHM3" for meta)
+##### DataRecord 类型判别
 
-(* Record Layout *)
-Record := HeadLen Payload Pad TailLen CRC32C
-HeadLen := u32 LE        (* == TailLen, record total bytes *)
-Payload := N bytes
-Pad     := 0..3 bytes    (* align to 4B *)
-TailLen := u32 LE        (* == HeadLen *)
-CRC32C  := u32 LE        (* covers Payload + Pad + TailLen *)
-```
-
-**[F-MAGIC-IS-FENCE]** **术语约束（MUST）**：Magic 不属于 Record，是 Record 之间的"栅栏"（fencepost）。
-
-**File Framing 规范性条款**（基于上述 EBNF，Q20=A，data/meta 统一）：
-
-**[F-MAGIC-RECORD-SEPARATOR]** **Magic 是 Record Separator**：空文件先写 `Magic`；每写完一条 Record 后追加 `Magic`。
-
-**[F-HEADLEN-TAILLEN-SYMMETRY]** **HeadLen == TailLen**：否则视为损坏。`HeadLen = 4 + PayloadLen + PadLen + 4 + 4`。
-
-**[F-RECORD-4B-ALIGNMENT]** **对齐约束**：`HeadLen % 4 == 0`；Record 起点 4B 对齐。最小 `HeadLen >= 12`（通常 `>= 16`）。
-
-**[F-CRC32C-PAYLOAD-COVERAGE]** **CRC32C 覆盖**：`Payload + Pad + TailLen`（不含 `HeadLen`）。
-
-反向扫尾（reverse scan）所需不变量（MVP 固定）：
-
-- 初始 `MagicPos = FileLength - 4`（尾部分隔符位置）。
-- 定义 `RecordEnd = MagicPos`（当前分隔符 Magic 的起始位置 = 上一条 Record 的末尾）。
-- 若 `RecordEnd == 0`：表示"没有任何 Record"（文件仅 `[Magic]`，此时 `FileLength == 4`，`MagicPos == 0`），扫描结束。
-- 否则：
-	- 从 `RecordEnd` 向前读取 `TailLen`（位于 `RecordEnd-8..RecordEnd-5`）与 `CRC32C`（位于 `RecordEnd-4..RecordEnd-1`）。
-	- 计算 `RecordStart = RecordEnd - TailLen`。
-	- 向前 4 字节定位前一个 `Magic`：`PrevMagicPos = RecordStart - 4`。
-	- 验证：`PrevMagicPos` 处 4 字节等于 `Magic`。
-	- 读取 `HeadLen`（位于 `RecordStart..RecordStart+3`），验证 `HeadLen == TailLen`。
-	- 校验 `CRC32C`（覆盖 `Payload + Pad + TailLen`）。
-	- 通过后，本条 Record 有效；下一轮令 `MagicPos = PrevMagicPos` 继续。
-
-尾部损坏/随机垃圾的 resync 策略（MVP 固定，避免“跳过最后有效记录”）：
-
-- 由于崩溃/撕裂写入/外部追加等原因，文件尾部可能包含随机垃圾或半条记录；此时 `TailLen` 可能是任意值。
-
-- **[R-RESYNC-DISTRUST-TAILLEN]** 因此，当从某个 `MagicPos` 推导出的候选记录未通过校验（包括但不限于：`TailLen` 不合法、`Start` 越界/非 4B 对齐、`Magic` 不匹配、`HeadLen != TailLen`、`CRC32C` 不匹配）时，**reader 不得信任该候选的 `TailLen` 并做跳跃**。
-	- 否则在“误读 TailLen”场景下，会一次性跨过真实的最后有效记录。
-
-- resync 的规范化行为：从尾部开始，按 4B 对齐向前扫描 `Magic`（候选分隔符边界），并对每个命中的 `MagicPos` 执行一次“反向扫尾不变量”的完整验证：
-	- 初始 `MagicPos = FileLength - 4`。
-	- 每次令 `MagicPos = MagicPos - 4`。
-	- 仅当当前位置 4 bytes 等于 `Magic` 时，才进入验证流程（先检查 `HeadLen/TailLen`，再检查 `CRC32C`）。
-	- 找到第一个可通过验证的 `MagicPos` 作为“最后一个有效 record 的尾部边界”，从该位置开始按 fast-path 继续向前枚举。
-
-
-**[F-RECORD-WRITE-SEQUENCE]** 写入顺序（MUST，保证 CRC 覆盖范围与回填一致，并维持"尾部 `Magic` 分隔符"不变量）：
-
-单条 Record 的写入 MUST 按步骤 0-7 顺序执行：
-
-| 步骤 | 操作 |
-|------|------|
-| 0 | 确保文件以 `Magic` 结束（新建空文件时先写入 4 bytes `Magic`） |
-| 1 | 在最后一个 `Magic` 之后开始写入 Record：写入 `HeadLen(u32)` 占位（先写 0） |
-| 2 | 顺序写入 `Payload` |
-| 3 | 写入 `Pad(0..3)`（全 0），使得 Record 结尾满足 4B 对齐 |
-| 4 | 写入 `TailLen(u32)`（此时已知总长度） |
-| 5 | 计算 `CRC32C(Payload + Pad + TailLen)`，写入 `CRC32C(u32)` |
-| 6 | 回填 `HeadLen(u32) = TailLen` |
-| 7 | 追加写入 4 bytes `Magic` 作为新的分隔符 |
-
-
-data payload 的 `RecordKind`（MVP 最小枚举）：`0x01` = `ObjectVersionRecord`
-
-> 约定：`RecordKind` 区分 record 的顶层类型；`ObjectKind` 用于 record 内对象类型并选择 diff 解码器。
+> **FrameTag 是唯一判别器**：ELOG Frame 的 `FrameTag`（Payload[0]）已经区分 Record 类型。
+> StateJournal 读取 Frame 后，根据 `FrameTag` 分流：`0x01` = ObjectVersionRecord。
+> 
+> **与 ObjectKind 的区分**：`FrameTag` 区分 Record 的顶层类型；`ObjectKind` 用于 ObjectVersionRecord 内部区分对象类型并选择 diff 解码器。
 
 Ptr64 与对齐约束（MVP 固定）：
 
@@ -650,11 +605,15 @@ data 文件内的“可被 meta 指向的关键 record”至少包括：
 
 meta file 是 append-only 的 commit log：每次 `Commit(...)` 都追加写入一条 `MetaCommitRecord`。
 
-**Framing**：与 data 相同（§3.2.1 EBNF），Magic = `DHM3`。
+> **帧格式**：Meta 文件与 Data 文件使用相同的 ELOG 帧格式，详见 [elog-format.md](elog-format.md)。
 
-meta payload 最小字段：
+##### MetaCommitRecord Payload
 
-- `RecordKind`：`byte`（Meta file 的 RecordKind；MVP 固定为 `0x01` 表示 `MetaCommitRecord`）
+> **FrameTag = 0x02** 表示 MetaCommitRecord（参见枚举值速查表）。
+> Payload 从业务字段开始，不再包含顶层类型字节。
+
+meta payload 最小字段（**不含 FrameTag，FrameTag 由 ELOG 层管理**）：
+
 - `EpochSeq`（varuint，单调递增）
 - `RootObjectId`（varuint）
 - `VersionIndexPtr`（Ptr64，定长 u64 LE）
@@ -665,10 +624,6 @@ meta payload 最小字段：
 
 - 从 meta 文件尾部回扫，找到最后一个 CRC32C 有效的 `MetaCommitRecord`。
 - **[R-META-AHEAD-BACKTRACK]** 若某条 meta record 校验通过，但其 `DataTail` 大于当前 data 文件长度（byte）/无法解引用其 `VersionIndexPtr`，则视为"meta 领先 data（崩溃撕裂）"，继续回扫上一条。
-
-补充（MVP 固定）：
-
-- **[R-META-RESYNC-SAME-AS-DATA]** meta 文件尾部也可能存在随机垃圾/半条记录；回扫时若遇到 framing 校验失败，MUST 采用与 data 相同的 resync 策略（按 4B 对齐回退继续尝试），MUST NOT 假定 `TailLen` 可信。
 
 
 提交点（commit point）：
@@ -688,8 +643,10 @@ meta payload 最小字段：
 
 MetaCommitRecord 的 payload 解析（MVP 固定）：
 
-- 读取并校验 `RecordKind == 0x01`（Meta file 的 RecordKind）。
+> **前置条件**：ELOG Scanner 已根据 `FrameTag == 0x02` 确定此为 MetaCommitRecord。
+
 - 依次读取 `EpochSeq/RootObjectId/VersionIndexPtr/DataTail/NextObjectId`。
+- 无需再校验 RecordKind（FrameTag 已经是唯一判别器）。
 
 #### 3.2.3 Commit Record（逻辑概念）
 
@@ -746,11 +703,13 @@ MVP 约束与默认策略（第二批决策补充）：
   - **[F-UNKNOWN-OBJECTKIND-REJECT]** 遇到未知 Kind 必须抛出异常（Fail-fast）
 - `DiffPayload`：依对象类型而定（本 MVP 至少要求：`Dict` 与 `VersionIndex` 可工作）
 
-ObjectVersionRecord 的 data payload 建议布局（与 Q20 的“RecordKind 放在 payload”一致）：
+ObjectVersionRecord 的 data payload 布局：
 
-- `RecordKind`：`byte`（固定为 `0x01` 表示 `ObjectVersionRecord`）
+> **FrameTag = 0x01** 表示 ObjectVersionRecord（参见枚举值速查表）。
+> Payload 从业务字段开始，不再包含顶层类型字节。
+
 - `PrevVersionPtr`：`u64 LE`（Ptr64：byte offset；`0=null`，且 4B 对齐）
-- `ObjectKind`：`byte`
+- `ObjectKind`：`byte`（用于选择 diff 解码器，参见 ObjectKind 枚举）
 - `DiffPayload`：bytes
 
 ---
@@ -1260,6 +1219,9 @@ ObjectDetachedException:
 
 ### 3.5 崩溃恢复
 
+> **帧级恢复**：Frame 级别的逆向扫描、CRC 校验、Resync 机制详见 [elog-format.md](elog-format.md)。
+> 本节描述 StateJournal 的 **Record 级恢复语义**。
+
 - 从 meta 文件尾部回扫，选择最后一个有效 `MetaCommitRecord` 作为 HEAD。
 - **[R-DATATAIL-TRUNCATE-GARBAGE]** 以该 record 的 `DataTail` 截断 data 文件尾部垃圾（必要时）。截断后文件仍以 Magic 分隔符结尾。
 - **[R-ALLOCATOR-SEED-FROM-HEAD]** Allocator 初始化 MUST 仅从 HEAD 的 `NextObjectId` 字段获取；MUST NOT 通过扫描 data 文件推断更大 ID。这保证了崩溃恢复的确定性和可测试性。
@@ -1466,4 +1428,13 @@ class DurableDict : IDurableObject {
 > - `_dirtyKeys` 不变式测试
 > - 首次 Commit 语义测试
 > - Value 类型边界测试
+
+---
+
+## 变更日志
+
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v2 | 2025-12-21 | 初始 MVP 设计，P0 问题修复 |
+| v3 | 2025-12-22 | **Layer 分离**：将 ELOG 帧格式提取到 [elog-format.md](elog-format.md)，本文档聚焦 StateJournal 语义层 |
 
