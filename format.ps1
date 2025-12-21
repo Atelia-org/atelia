@@ -110,6 +110,8 @@ if((Test-Path $editorConfig) -and (Test-Path $overrideFile)){
     Write-Info '应用 enforce 覆盖...'
     $baseContent = Get-Content $editorConfig -Raw
     $ovrContent  = Get-Content $overrideFile -Raw
+    # 确保 gitignore 目录存在（WSL2 环境可能没有）
+    if(-not (Test-Path 'gitignore')){ New-Item -ItemType Directory -Path 'gitignore' | Out-Null }
     Copy-Item $editorConfig $backup -Force
     ($baseContent + "`n# ==== ENFORCE OVERRIDES (temp merged) ==== `n" + $ovrContent + "`n") | Set-Content $editorConfig -Encoding UTF8
     $usingEnforce = $true
