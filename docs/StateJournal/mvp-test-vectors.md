@@ -29,42 +29,45 @@
 
 ## 条款编号映射
 
-> 本节映射测试场景到 `mvp-design-v2.md` 中的规范条款编号（`[F/A/S/R-xx]` 格式）。
+> 本节映射测试场景到 `mvp-design-v2.md` 中的规范条款（稳定语义锚点格式）。
 
 | 条款 ID | 规范条款 | 对应测试用例 |
 |---------|----------|--------------|
-| `[F-01]` | RecordKind 域隔离（data/meta 各有独立枚举空间） | — |
-| `[F-02]` | Magic 是 Record Separator | ELOG-EMPTY-001, ELOG-SINGLE-001 |
-| `[F-03]` | HeadLen == TailLen，否则视为损坏 | ELOG-LEN-001, ELOG-BAD-001 |
-| `[F-04]` | HeadLen % 4 == 0 且 Record 起点 4B 对齐 | ELOG-BAD-003 |
-| `[F-05]` | Ptr64 == 0 表示 null；否则 Ptr64 % 4 == 0 | PTR-OK-001, PTR-BAD-001/002 |
-| `[F-06]` | CRC32C 覆盖范围：Payload + Pad + TailLen | ELOG-OK-001, ELOG-BAD-002 |
-| `[F-07]` | VarInt canonical 最短编码 | VARINT-OK-001, VARINT-BAD-001/002/003 |
-| `[F-08]` | VarInt 解码错误策略（EOF/溢出/非 canonical 失败） | VARINT-BAD-001/002/003 |
-| `[F-09]` | ValueType 高 4 bit 必须写 0；reader 见到非 0 视为格式错误 | DICT-BAD-005 |
-| `[S-01]` | Dirty Set MUST 持有对象强引用 | — |
-| `[S-02]` | Identity Map 与 Dirty Set 的 key 必须等于 ObjectId | — |
-| `[S-03]` | Dirty 对象不得被 GC 回收 | — |
-| `[S-04]` | 新建对象 MUST 立即加入 Modified Object Set | FIRST-COMMIT-002/003 |
-| `[S-05]` | 术语约束：File Framing vs Record Layout | — |
-| `[S-06]` | Working State 纯净性（tombstone 不得作为值出现） | DICT-OK-003/004 |
-| `[S-07]` | Delete 一致性（ContainsKey/TryGetValue/Enumerate 一致） | DICT-OK-003 |
-| `[S-08]` | Commit 失败不改内存 | DIRTY-001/002/003 |
-| `[S-09]` | Commit 成功后追平 | COMMIT-ALL-001 |
-| `[S-10]` | 隔离性（Commit 后写入不影响 _committed） | — |
-| `[S-11]` | Key 唯一 + 升序 | DICT-BAD-002/003 |
-| `[S-12]` | Canonical Diff（规范化：不含 net-zero 变更） | DIRTY-001/002/003 |
-| `[S-13]` | 可重放性（Apply(S, D) == CurrentState） | DICT-OK-001/002 |
-| `[S-14]` | _dirtyKeys 精确性 | DIRTY-001/002/003/004/005 |
-| `[S-15]` | CommitAll 失败不改内存 | — |
-| `[S-16]` | CommitAll 可重试 | — |
-| `[A-01]` | DiscardChanges MUST | — |
-| `[A-02]` | CommitAll() 无参重载 MUST | COMMIT-ALL-001 |
-| `[A-03]` | CommitAll(IDurableObject) SHOULD | COMMIT-ALL-002 |
-| `[A-04]` | Dirty Set 可见性 API SHOULD | — |
-| `[R-01]` | Resync 不得信任损坏 TailLen 并做跳跃 | ELOG-TRUNCATE-001/002, ELOG-BAD-003/004 |
-| `[R-02]` | Meta 领先 Data 按撕裂提交处理 | META-RECOVER-002, META-RECOVER-003 |
-| `[R-03]` | 崩溃恢复截断后文件仍以 Magic 分隔符结尾 | — |
+| `[F-RECORDKIND-DOMAIN-ISOLATION]` | RecordKind 域隔离（data/meta 各有独立枚举空间） | — |
+| `[F-MAGIC-RECORD-SEPARATOR]` | Magic 是 Record Separator | ELOG-EMPTY-001, ELOG-SINGLE-001 |
+| `[F-HEADLEN-TAILLEN-SYMMETRY]` | HeadLen == TailLen，否则视为损坏 | ELOG-LEN-001, ELOG-BAD-001 |
+| `[F-RECORD-4B-ALIGNMENT]` | HeadLen % 4 == 0 且 Record 起点 4B 对齐 | ELOG-BAD-003 |
+| `[F-PTR64-NULL-AND-ALIGNMENT]` | Ptr64 == 0 表示 null；否则 Ptr64 % 4 == 0 | PTR-OK-001, PTR-BAD-001/002 |
+| `[F-CRC32C-PAYLOAD-COVERAGE]` | CRC32C 覆盖范围：Payload + Pad + TailLen | ELOG-OK-001, ELOG-BAD-002 |
+| `[F-VARINT-CANONICAL-ENCODING]` | VarInt canonical 最短编码 | VARINT-OK-001, VARINT-BAD-001/002/003 |
+| `[F-DECODE-ERROR-FAILFAST]` | VarInt 解码错误策略（EOF/溢出/非 canonical 失败） | VARINT-BAD-001/002/003 |
+| `[F-KVPAIR-HIGHBITS-RESERVED]` | ValueType 高 4 bit 必须写 0；reader 见到非 0 视为格式错误 | DICT-BAD-005 |
+| `[F-UNKNOWN-VALUETYPE-REJECT]` | 未知 ValueType MUST 视为格式错误 | DICT-BAD-006 |
+| `[S-DIRTYSET-OBJECT-PINNING]` | Dirty Set MUST 持有对象强引用 | — |
+| `[S-IDENTITY-MAP-KEY-COHERENCE]` | Identity Map 与 Dirty Set 的 key 必须等于 ObjectId | — |
+| `[S-DIRTY-OBJECT-GC-PROHIBIT]` | Dirty 对象不得被 GC 回收 | — |
+| `[S-NEW-OBJECT-AUTO-DIRTY]` | 新建对象 MUST 立即加入 Dirty Set | FIRST-COMMIT-002/003 |
+| `[F-MAGIC-IS-FENCE]` | 术语约束：Magic 是栅栏，不属于 Record | — |
+| `[S-WORKING-STATE-TOMBSTONE-FREE]` | Working State 纯净性（tombstone 不得作为值出现） | DICT-OK-003/004 |
+| `[S-DELETE-API-CONSISTENCY]` | Delete 一致性（ContainsKey/TryGetValue/Enumerate 一致） | DICT-OK-003 |
+| `[S-COMMIT-FAIL-MEMORY-INTACT]` | Commit 失败不改内存 | DIRTY-001/002/003 |
+| `[S-COMMIT-SUCCESS-STATE-SYNC]` | Commit 成功后追平 | COMMIT-ALL-001 |
+| `[S-POSTCOMMIT-WRITE-ISOLATION]` | 隔离性（Commit 后写入不影响 _committed） | — |
+| `[S-DIFF-KEY-SORTED-UNIQUE]` | Key 唯一 + 升序 | DICT-BAD-002/003 |
+| `[S-DIFF-CANONICAL-NO-NETZERO]` | Canonical Diff（规范化：不含 net-zero 变更） | DIRTY-001/002/003 |
+| `[S-DIFF-REPLAY-DETERMINISM]` | 可重放性（Apply(S, D) == CurrentState） | DICT-OK-001/002 |
+| `[S-DIRTYKEYS-TRACKING-EXACT]` | _dirtyKeys 精确性 | DIRTY-001/002/003/004/005 |
+| `[S-HEAP-COMMIT-FAIL-INTACT]` | CommitAll 失败不改内存 | — |
+| `[S-COMMIT-FAIL-RETRYABLE]` | CommitAll 可重试 | — |
+| `[S-PAIRCOUNT-ZERO-LEGALITY]` | PairCount=0 仅在 Base Version (PrevVersionPtr=0) 时合法 | DICT-OK-EMPTY-BASE-001, DICT-BAD-001 |
+| `[A-DISCARDCHANGES-REVERT-COMMITTED]` | DiscardChanges MUST | — |
+| `[A-COMMITALL-FLUSH-DIRTYSET]` | CommitAll() 无参重载 MUST | COMMIT-ALL-001 |
+| `[A-COMMITALL-SET-NEWROOT]` | CommitAll(IDurableObject) SHOULD | COMMIT-ALL-002 |
+| `[A-DIRTYSET-OBSERVABILITY]` | Dirty Set 可见性 API SHOULD | — |
+| `[R-RESYNC-DISTRUST-TAILLEN]` | Resync 不得信任损坏 TailLen 并做跳跃 | ELOG-TRUNCATE-001/002, ELOG-BAD-003/004 |
+| `[R-META-AHEAD-BACKTRACK]` | Meta 领先 Data 按撕裂提交处理 | META-RECOVER-002, META-RECOVER-003 |
+| `[R-DATATAIL-TRUNCATE-GARBAGE]` | 崩溃恢复截断后文件仍以 Magic 分隔符结尾 | — |
+| `[R-META-RESYNC-SAME-AS-DATA]` | Meta 文件 resync 策略与 data 相同 | META-RECOVER-001 |
 
 ---
 
@@ -74,7 +77,7 @@
 
 用例 DIRTY-001
 - Given：committed 为空或不含 key=42
-- When：`dict.Set(42, 100); dict.Delete(42);`
+- When：`dict.Set(42, 100); dict.Remove(42);`
 - Then：
   - `dict.HasChanges == false`（`_dirtyKeys.Count == 0`）
   - `dict.ComputeDiff().Count == 0`
@@ -90,7 +93,7 @@
 
 用例 DIRTY-003
 - Given：committed = {42: 100}
-- When：`dict.Delete(42); dict.Set(42, 100);`
+- When：`dict.Remove(42); dict.Set(42, 100);`
 - Then：`dict.HasChanges == false`
 
 ### 1.4 多 key 独立性
@@ -387,9 +390,15 @@ Assert.Equal(newRoot.Id, head.RootObjectId);
 
 ### 5.2 负例（必须拒绝）
 
-用例 DICT-BAD-001（PairCount=0）
-- Given：存在一条 dict diff record，但 `PairCount=0`。
+用例 DICT-BAD-001（Overlay diff 中 PairCount=0）
+- Given：存在一条 dict diff record，`PrevVersionPtr != 0`（Overlay diff），但 `PairCount=0`。
 - Then：reader 必须拒绝（格式错误）。
+- Rationale：Overlay diff 若无变更，writer MUST NOT emit；空 Overlay 违反 `[S-PAIRCOUNT-ZERO-LEGALITY]`。
+
+用例 DICT-OK-EMPTY-BASE-001（Base Version 中 PairCount=0 合法）
+- Given：存在一条 dict diff record，`PrevVersionPtr == 0`（Base Version），`PairCount=0`。
+- Then：reader MUST 接受（表示"空字典的完整 state"）。
+- Rationale：Genesis Base 或 Checkpoint Base 可以表示空字典。
 
 用例 DICT-BAD-002（key 未严格升序 / delta 为 0）
 - Given：`KeyDeltaFromPrev = 0` 或者还原后 `Key[i] <= Key[i-1]`。

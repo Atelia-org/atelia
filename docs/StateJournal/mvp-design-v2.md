@@ -345,14 +345,25 @@ stateDiagram-v2
 
 **DiscardChanges 行为（MVP 固定）**：
 - 对 **Persistent Dirty** 对象：重置为 `_committed` 状态，从 Dirty Set 移除，对象变为 Clean。
-- 对 **Transient Dirty** 对象：**Detach（分离）**。即从 Dirty Set 和 Identity Map 中移除，后续任何访问 MUST 抛出 `ObjectDetachedException`。
+- 对 **Transient Dirty** 对象：**Detach（分离）**。即从 Dirty Set 和 Identity Map 中移除，后续**语义数据访问** MUST 抛出 `ObjectDetachedException`。
 
 > **[S-TRANSIENT-DISCARD-DETACH] Transient Dirty 对象的 DiscardChanges 行为（MUST）**：
 > - 对 Transient Dirty 对象调用 `DiscardChanges()` 后：
 >   - 对象 MUST 从 Dirty Set 移除
 >   - 对象 MUST 从 Identity Map 移除
->   - 后续任何访问（读/写/枚举）MUST 抛出 `ObjectDetachedException`
+>   - 后续**语义数据访问** MUST 抛出 `ObjectDetachedException`
 > - 异常消息 SHOULD 提供恢复指引，例如："Object was never committed. Call CreateObject() to create a new object."
+>
+> **[S-DETACHED-ACCESS-TIERING] Detached 对象的访问分层（MUST）**：
+> 
+> 为避免条款冲突（`State` 属性 MUST NOT throw vs "任何访问 MUST throw"），将访问分为两层：
+> 
+> | 访问类型 | 示例 API | Detached 行为 |
+> |----------|----------|---------------|
+> | **元信息访问** | `State`, `Id`, `ObjectId` | MUST NOT throw（O(1) 复杂度） |
+> | **语义数据访问** | `TryGetValue`, `Set`, `Remove`, `Count`, `Enumerate`, `HasChanges` | MUST throw `ObjectDetachedException` |
+> 
+> **设计理由**：元信息访问用于"先检查再操作"模式（Look-before-you-leap），避免 try-catch 的性能开销和代码污染。
 >
 > **ObjectId 回收语义（MVP 固定）**：
 > - **[S-TRANSIENT-DISCARD-OBJECTID-QUARANTINE]**：Detached 对象的 ObjectId 在同一进程生命周期内 MUST NOT 被重新分配；进程重启后 MAY 重用（因为 Transient 对象从未进入 VersionIndex，其 ObjectId 未被 `NextObjectId` 持久化）
@@ -408,11 +419,47 @@ MVP 限制（保证语义自洽）：
 
 #### 3.1.3 引用与级联 materialize
 
-- 任何对象属性/容器 value 若为“对象引用”，其序列化只写 `ObjectId`。
+- 任何对象属性/容器 value 若为"对象引用"，其序列化只写 `ObjectId`。
 - materialize 一个对象时，不会递归 materialize 其引用对象。
 - **进程内对象实例表示（MVP 固定）**：对 `Val_ObjRef(ObjectId)`，materialize 的 Committed State（`_committed`）中只存 `ObjectId`（而不是 `DurableObject` 实例）。
-- **Lazy 行为（MVP 固定）**：当 API 需要返回被引用对象实例时（例如读取某个字段/某个 dict value 为对象引用），才执行 `LoadObject(ObjectId)` 创建/获取该对象；返回值必须是带 ChangeSet 语义的可变对象视图。
-	- 允许实现一个仅用于性能的缓存（例如在 value wrapper 内缓存已 LoadObject 的实例），但该缓存不属于 Committed State，也不参与序列化。
+
+**Lazy Loading 透明性（MVP 固定）**：
+
+为解决"读写类型不对称"问题（Set 存对象实例，Materialize 恢复 ObjectId），DurableDict 的读取 API MUST 实现透明 Lazy Loading：
+
+- **[A-OBJREF-TRANSPARENT-LAZY-LOAD]**：当 `TryGetValue`/索引器/枚举读取 value 且内部存储为 `ObjectId` 时，MUST 自动调用 `LoadObject(ObjectId)` 并返回 `IDurableObject` 实例。
+- **[A-OBJREF-BACKFILL-CURRENT]**：Lazy Load 成功后，SHOULD 将实例回填到 `_current`（替换 `ObjectId`），避免重复触发 LoadObject。回填不改变 dirty 状态（因为语义值未变）。
+- **Lazy Load 触发 API**：`TryGetValue(key)`, `this[key]`（索引器）, `Enumerate()`——任何返回 value 的读取 API。
+- **返回值类型一致性**：无论对象是刚创建（内存中存 instance）还是从磁盘加载（内存中存 ObjectId），读取 API 返回的都是 `IDurableObject` 实例。
+
+> **设计理由**：保证 API 契约的一致性——用户永远不会看到 `ObjectId` 作为 value（除非显式请求），避免重启前后行为分歧导致的 `InvalidCastException`。
+
+**LazyRef<T> 封装（建议实现）**：
+
+建议实现一个可复用的 `LazyRef<T>` 类型封装 Lazy Load 逻辑，因为 `DurableArray` 等后续容器类型也需要相同机制：
+
+```csharp
+// 示意性伪代码
+internal struct LazyRef<T> where T : IDurableObject
+{
+    private object _storage;  // ObjectId 或 T 实例
+    private readonly IWorkspace _workspace;
+    
+    public T Value => _storage switch
+    {
+        T instance => instance,
+        ObjectId id => LoadAndCache(id),
+        _ => throw new InvalidOperationException()
+    };
+    
+    private T LoadAndCache(ObjectId id)
+    {
+        var obj = _workspace.LoadObject<T>(id);
+        _storage = obj;  // 回填
+        return obj;
+    }
+}
+```
 
 
 #### 3.1.4 类型约束（Type Constraints）
@@ -621,7 +668,7 @@ meta payload 最小字段：
 
 补充（MVP 固定）：
 
-- meta 文件尾部也可能存在随机垃圾/半条记录；回扫时若遇到 framing 校验失败，必须采用与 data 相同的 resync 策略（按 4B 对齐回退继续尝试），不得假定 `TailLen` 可信。
+- **[R-META-RESYNC-SAME-AS-DATA]** meta 文件尾部也可能存在随机垃圾/半条记录；回扫时若遇到 framing 校验失败，MUST 采用与 data 相同的 resync 策略（按 4B 对齐回退继续尝试），MUST NOT 假定 `TailLen` 可信。
 
 
 提交点（commit point）：
@@ -750,10 +797,20 @@ ObjectVersionRecord 的 data payload 建议布局（与 Q20 的“RecordKind 放
 
 若 VersionIndex 中不存在指定 ObjectId 的映射（即该 ObjectId 从未被 Commit），LoadObject 的行为：
 
-| 情况 | 行为（MVP 固定） |
-|------|------------------|
-| ObjectId 在 VersionIndex 中不存在 | 返回 `null`（或等价的 `NotFound` Result） |
-| ObjectId 存在但版本链解析失败 | 抛出 `CorruptedDataException`（或等价异常） |
+**[A-LOADOBJECT-RETURN-RESULT] LoadObject 返回形态（MUST）**：
+
+为保证 API 一致性和 Agent 可诊断性，LoadObject MUST 返回 `AteliaResult<T>` 而非 `null` 或抛异常：
+
+| 情况 | 返回值 | ErrorCode |
+|------|--------|-----------|
+| ObjectId 在 VersionIndex 中不存在 | `AteliaResult<T>.Failure(...)` | `StateJournal.ObjectNotFound` |
+| ObjectId 存在但版本链解析失败 | `AteliaResult<T>.Failure(...)` | `StateJournal.CorruptedRecord` |
+| 加载成功 | `AteliaResult<T>.Success(instance)` | — |
+
+**设计理由**：
+- 统一错误协议：所有可预期失败使用 `AteliaResult`，仅 bug/不变量破坏使用异常
+- Agent 可诊断：ErrorCode 可被自动化测试断言
+- 类型安全：避免 `null` 检查遗漏
 
 
 **新建对象的处理**：
@@ -913,6 +970,15 @@ ValueType（低 4 bit，MVP 固定）：
 - 对于空变更（overlay diff）：writer 不应为“无任何 upsert/delete”的对象写入 `ObjectVersionRecord`（因此 overlay diff 应满足 `PairCount > 0`）。
 - 对于 Checkpoint Base/full-state：允许 `PairCount == 0`，表示"空字典的完整 state"。
 
+**PairCount=0 合法性条款（MUST）**：
+
+- **[S-PAIRCOUNT-ZERO-LEGALITY]**：`PairCount == 0` 仅在 `PrevVersionPtr == 0`（Base Version）时合法，表示"空字典的完整 state"。若 `PrevVersionPtr != 0`（Overlay diff）且 `PairCount == 0`，reader MUST 视为格式错误（ErrorCode: `StateJournal.InvalidFraming`）。
+- **[S-OVERLAY-DIFF-NONEMPTY]**：writer MUST NOT 为"无任何变更"的对象写入 `ObjectVersionRecord`。若对象无变更（`HasChanges == false`），不应生成新版本。
+
+**未知 ValueType 处理条款（MUST）**：
+
+- **[F-UNKNOWN-VALUETYPE-REJECT]**：reader 遇到未知 ValueType（低 4 bit 不在 `{0,1,2,3,4}`）或高 4 bit 非 0，MUST 视为格式错误并失败（ErrorCode: `StateJournal.CorruptedRecord`）。
+
 实现提示：
 
 - writer：写 diff 前先对 ChangeSet keys 排序；写 `FirstKey = keys[0]`；后续写 `KeyDeltaFromPrev = keys[i] - keys[i-1]`。
@@ -975,6 +1041,32 @@ VersionIndex 与 Dict 的关系（落地说明）：
 ##### `DiscardChanges` 支持（MUST）
 
 4. **[A-DISCARDCHANGES-REVERT-COMMITTED]** **DiscardChanges（MUST）**：MVP 必须（MUST）提供 `DiscardChanges()` 方法，将 `_current` 重置为 `_committed` 的副本，并清空 `_dirtyKeys`。这是 Implicit ChangeSet 模式下唯一的撤销/回滚机制，作为用户的安全逃生口。
+
+##### DurableDict API 签名条款（MUST）
+
+为避免 API 形态歧义，本节明确 DurableDict 的对外读写 API 签名：
+
+**[A-DURABLEDICT-API-SIGNATURES]** **DurableDict API 签名（MUST）**：
+
+```csharp
+// 读 API（返回 AteliaResult，统一错误协议）
+AteliaResult<object> TryGetValue(ulong key);  // Success/NotFound/Detached
+bool ContainsKey(ulong key);                   // Detached 时 MUST throw
+int Count { get; }                             // Detached 时 MUST throw
+IEnumerable<KeyValuePair<ulong, object>> Enumerate();  // Detached 时 MUST throw
+
+// 写 API
+void Set(ulong key, object value);             // Detached 时 MUST throw
+bool Remove(ulong key);                        // Detached 时 MUST throw；返回是否存在
+
+// 生命周期 API
+void DiscardChanges();                         // Detached 时 no-op（幂等）
+```
+
+**关键约定**：
+- **TryGetValue 返回 Result**：使用 `AteliaResult<object>` 而非 `bool TryGetValue(out value)`，保证与整体错误协议一致
+- **Remove 而非 Delete**：遵循 C#/.NET 集合命名惯例（`Dictionary<K,V>.Remove`）
+- **Detached 行为**：语义数据访问抛出 `ObjectDetachedException`；元信息访问（`State`, `Id`）不抛异常（参见 [S-DETACHED-ACCESS-TIERING]）
 
 #### 3.4.4 DurableDict 伪代码骨架
 
@@ -1090,6 +1182,13 @@ CommitAll 遵循二阶段提交协议，失败时保证以下语义：
 
 - 首次 `CommitAll(newRootId)` 创建 `EpochSeq = 1` 的 MetaCommitRecord
 - 此时 VersionIndex 写入第一个版本（`PrevVersionPtr = 0`）
+
+**[S-VERSIONINDEX-BOOTSTRAP] VersionIndex 引导扇区初始化（MUST）**：
+
+- 首次 Commit 时，VersionIndex 使用 Well-Known `ObjectId = 0`
+- 写入 `PrevVersionPtr = 0` 的 Genesis Base 版本
+- `MetaCommitRecord.VersionIndexPtr` 指向该版本记录
+- 这是 VersionIndex 的首个版本，其 DiffPayload 包含所有新建对象的 `ObjectId → ObjectVersionPtr` 映射
 
 ##### 新建对象首版本
 
