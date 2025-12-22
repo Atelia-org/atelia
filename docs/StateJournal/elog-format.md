@@ -7,6 +7,8 @@
 
 ---
 
+> 本文档遵循 [Atelia 规范约定](../spec-conventions.md)。
+
 ## 1. 概述
 
 本文档定义 ELOG（Extensible Log Framing）的二进制格式规范。ELOG 是一种 append-only 的日志帧格式，提供：
@@ -48,7 +50,7 @@
 
 ### 2.1 Genesis Header（文件头）
 
-**`[E-GENESIS-HEADER]`**
+**`[F-GENESIS-HEADER]`**
 
 每个 ELOG 文件以 4 字节 Magic 开头作为 Genesis Header（创世头），标识文件类型：
 
@@ -65,13 +67,13 @@
 
 > **命名说明**：`DH` = DurableHeap，`D/M` = Data/Meta，`3` = 版本号。
 
-**`[E-MAGIC-BYTE-SEQUENCE]`** Magic 编码约定：
+**`[F-MAGIC-BYTE-SEQUENCE]`** Magic 编码约定：
 
 - Magic 以 **ASCII 字节序列** 写入（非 u32 端序写入）
 - 即按字符顺序依次写入：`'D'(0x44)`, `'H'(0x48)`, `'D'/'M'(0x44/0x4D)`, `'3'(0x33)`
 - 读取时按字节匹配，不做端序转换
 
-**`[E-GENESIS-EMPTY-FILE]`** 空文件约束：
+**`[F-GENESIS-EMPTY-FILE]`** 空文件约束：
 
 - 新建的 ELOG 文件 MUST 先写入 Genesis Header（4 bytes Magic）
 - 空文件的最小有效长度为 4 字节
@@ -112,7 +114,7 @@ CRC32C  := u32 LE        (* covers Payload + Pad + TailLen *)
 
 ### 3.1 Frame 二进制布局
 
-**`[E-FRAME-LAYOUT]`**
+**`[F-FRAME-LAYOUT]`**
 
 每个 Frame 由以下字段组成：
 
@@ -136,28 +138,28 @@ CRC32C  := u32 LE        (* covers Payload + Pad + TailLen *)
 | CRC32C | u32 LE | 4 | 校验和 |
 | Magic | bytes | 4 | 分隔符（与 Genesis 相同）|
 
-**`[E-FRAMETAG-WIRE-ENCODING]`** FrameTag 编码：
+**`[F-FRAMETAG-WIRE-ENCODING]`** FrameTag 编码：
 
 - **Tag 是 Payload 的第 1 个字节**（偏移 0）
 - ELOG 层负责读写 Tag 字段，但不解释其语义（`0x00` = Padding 除外）
 - Tag 计入 `PayloadLen`（即 `PayloadLen = 1 + PayloadBodyLen`）
-- 关于 FrameTag 的定义和语义，参见 [elog-interface.md](elog-interface.md) 的 `[E-FRAMETAG-DEFINITION]`
+- 关于 FrameTag 的定义和语义，参见 [elog-interface.md](elog-interface.md) 的 `[F-FRAMETAG-DEFINITION]`
 
 ### 3.2 长度字段
 
-**`[E-HEADLEN-TAILLEN-SYMMETRY]`** HeadLen/TailLen 对称性：
+**`[F-HEADLEN-TAILLEN-SYMMETRY]`** HeadLen/TailLen 对称性：
 
 - `HeadLen == TailLen` MUST 成立
 - 若不等，视为帧损坏
 
-**`[E-HEADLEN-FORMULA]`** HeadLen 计算公式：
+**`[F-HEADLEN-FORMULA]`** HeadLen 计算公式：
 
 ```
 HeadLen = 4 (HeadLen) + PayloadLen + PadLen + 4 (TailLen) + 4 (CRC32C)
         = 12 + PayloadLen + PadLen
 ```
 
-**`[E-PADLEN-FORMULA]`** PadLen 计算公式：
+**`[F-PADLEN-FORMULA]`** PadLen 计算公式：
 
 ```
 PadLen = (4 - (PayloadLen % 4)) % 4
@@ -167,7 +169,7 @@ PadLen = (4 - (PayloadLen % 4)) % 4
 > 当 `PayloadLen % 4 == 0` 时，`PadLen = 0`；
 > 当 `PayloadLen % 4 == k (1≤k≤3)` 时，`PadLen = 4 - k`。
 
-**`[E-FRAME-4B-ALIGNMENT]`** 对齐约束：
+**`[F-FRAME-4B-ALIGNMENT]`** 对齐约束：
 
 - `HeadLen % 4 == 0` MUST 成立
 - Frame 起点（HeadLen 字段位置）MUST 4B 对齐
@@ -175,7 +177,7 @@ PadLen = (4 - (PayloadLen % 4)) % 4
 
 ### 3.3 Pad 填充
 
-**`[E-PAD-ZERO-FILL]`**
+**`[F-PAD-ZERO-FILL]`**
 
 - Pad 字节 MUST 全为 0
 - Reader 可忽略 Pad 内容（仅校验长度）
@@ -198,7 +200,7 @@ PadLen = (4 - (PayloadLen % 4)) % 4
 
 ### 4.1 覆盖范围
 
-**`[E-CRC32C-COVERAGE]`** CRC32C 覆盖范围：
+**`[F-CRC32C-COVERAGE]`** CRC32C 覆盖范围：
 
 ```
 CRC32C = crc32c(Payload + Pad + TailLen)
@@ -216,7 +218,7 @@ CRC32C = crc32c(Payload + Pad + TailLen)
 
 ### 4.2 CRC32C 算法
 
-**`[E-CRC32C-ALGORITHM]`**
+**`[F-CRC32C-ALGORITHM]`**
 
 使用 CRC32C（Castagnoli 多项式），与 iSCSI、btrfs、ext4 等标准一致。
 
@@ -239,13 +241,13 @@ CRC32C = crc32c(Payload + Pad + TailLen)
 
 ### 4.3 校验失败处理
 
-**`[E-CRC-FAIL-REJECT]`** CRC 校验失败：
+**`[F-CRC-FAIL-REJECT]`** CRC 校验失败：
 
 - CRC32C 校验不匹配 MUST 视为帧损坏（Frame Corruption）
 - Reader MUST NOT 将损坏帧作为有效数据返回
 - 恢复流程中遇到 CRC 失败 SHOULD 触发 Resync
 
-**`[E-FRAMING-FAIL-REJECT]`** Framing 校验失败：
+**`[F-FRAMING-FAIL-REJECT]`** Framing 校验失败：
 
 以下任一情况 MUST 视为帧损坏：
 - `HeadLen != TailLen`（长度不对称）
@@ -260,7 +262,7 @@ CRC32C = crc32c(Payload + Pad + TailLen)
 
 ### 5.1 Magic 语义
 
-**`[E-MAGIC-IS-FENCE]`** Magic 是 Fence：
+**`[F-MAGIC-IS-FENCE]`** Magic 是 Fence：
 
 - Magic 不属于 Frame，是 Frame 之间的"栅栏"（fencepost）
 - Genesis Header 是第一个 Magic
@@ -275,7 +277,7 @@ File: [Magic][Frame1][Magic][Frame2][Magic]...
                End           End
 ```
 
-**`[E-MAGIC-FRAME-SEPARATOR]`** Magic 是 Frame Separator：
+**`[F-MAGIC-FRAME-SEPARATOR]`** Magic 是 Frame Separator：
 
 - 空文件先写 Genesis Magic
 - 每写完一条 Frame 后追加 Magic 作为分隔符
@@ -284,7 +286,7 @@ File: [Magic][Frame1][Magic][Frame2][Magic]...
 
 ## 6. 写入流程
 
-**`[E-FRAME-WRITE-SEQUENCE]`** Frame 写入步骤（MUST 按顺序执行）：
+**`[F-FRAME-WRITE-SEQUENCE]`** Frame 写入步骤（MUST 按顺序执行）：
 
 | 步骤 | 操作 | 说明 |
 |------|------|------|
@@ -319,7 +321,7 @@ File: [Magic][Frame1][Magic][Frame2][Magic]...
 
 ### 7.2 扫描步骤
 
-**`[E-REVERSE-SCAN-ALGORITHM]`** 逆向扫描算法：
+**`[R-REVERSE-SCAN-ALGORITHM]`** 逆向扫描算法：
 
 ```
 输入: FileLength
@@ -381,13 +383,13 @@ PrevMagicPos = RecordStart - 4
 
 ### 8.2 Resync 策略
 
-**`[E-RESYNC-DISTRUST-TAILLEN]`** 不信任 TailLen：
+**`[R-RESYNC-DISTRUST-TAILLEN]`** 不信任 TailLen：
 
 当从某个 MagicPos 推导的候选 Frame 验证失败时：
 - Reader MUST NOT 信任该候选的 TailLen 并做跳跃
 - MUST 进入 Resync 模式
 
-**`[E-RESYNC-SCAN-MAGIC]`** Resync 扫描规范：
+**`[R-RESYNC-SCAN-MAGIC]`** Resync 扫描规范：
 
 ```
 Resync 模式:
@@ -421,14 +423,14 @@ Resync 过程:
 
 ### 9.1 编码
 
-**`[E-PTR64-ENCODING]`**
+**`[F-PTR64-ENCODING]`**
 
 - Ptr64 为 8 字节 LE 编码的文件偏移量
 - 指向 Frame 的 HeadLen 字段起始位置
 
 ### 9.2 对齐与空值
 
-**`[E-PTR64-NULL-AND-ALIGNMENT]`**
+**`[F-PTR64-NULL-AND-ALIGNMENT]`**
 
 - `Ptr64 == 0` 表示 null（无效指针）
 - 有效 Ptr64 MUST 满足 `Ptr64 % 4 == 0`（4B 对齐）
@@ -446,7 +448,7 @@ Resync 过程:
 
 ### 10.1 DataTail 定义
 
-**`[E-DATATAIL-DEFINITION]`**
+**`[R-DATATAIL-DEFINITION]`**
 
 - `DataTail` 是 Ptr64 值，表示 data 文件的逻辑尾部
 - 存储在 MetaCommitRecord 中
@@ -454,7 +456,7 @@ Resync 过程:
 
 ### 10.2 截断恢复
 
-**`[E-DATATAIL-TRUNCATE]`**
+**`[R-DATATAIL-TRUNCATE]`**
 
 恢复时：
 1. 读取 HEAD 的 `DataTail`
@@ -477,39 +479,39 @@ Resync 过程:
 
 ## 11. 条款索引
 
-### 11.1 格式条款 [E-xxx]
+### 11.1 格式条款 [F-xxx]
 
 | 条款 ID | 名称 | 说明 |
 |---------|------|------|
-| `[E-GENESIS-HEADER]` | 创世头 | 文件以 4B Magic 开头 |
-| `[E-GENESIS-EMPTY-FILE]` | 空文件 | 最小有效长度 4B |
-| `[E-FRAME-LAYOUT]` | 帧布局 | HeadLen + Payload(Tag+Body) + Pad + TailLen + CRC32C + Magic |
-| `[E-FRAMETAG-WIRE-ENCODING]` | FrameTag 编码 | Tag 是 Payload 的第 1 字节 |
-| `[E-HEADLEN-TAILLEN-SYMMETRY]` | 长度对称 | HeadLen == TailLen |
-| `[E-HEADLEN-FORMULA]` | 长度公式 | HeadLen = 12 + PayloadLen + PadLen |
-| `[E-PADLEN-FORMULA]` | Pad 公式 | PadLen = (4 - (PayloadLen % 4)) % 4 |
-| `[E-FRAME-4B-ALIGNMENT]` | 4B 对齐 | HeadLen % 4 == 0，Frame 起点对齐 |
-| `[E-PAD-ZERO-FILL]` | 填充为零 | Pad 字节全为 0 |
-| `[E-CRC32C-COVERAGE]` | CRC 覆盖 | Payload + Pad + TailLen |
-| `[E-CRC32C-ALGORITHM]` | CRC 算法 | CRC32C (Castagnoli)，Reflected I/O 约定 |
-| `[E-CRC-FAIL-REJECT]` | CRC 失败 | CRC 不匹配 MUST 视为帧损坏 |
-| `[E-FRAMING-FAIL-REJECT]` | Framing 失败 | HeadLen!=TailLen / 非对齐 / 越界 / Magic 不匹配 MUST 视为帧损坏 |
-| `[E-MAGIC-BYTE-SEQUENCE]` | Magic 编码 | ASCII 字节序列写入，非 u32 端序 |
-| `[E-MAGIC-IS-FENCE]` | Magic 是栅栏 | Magic 不属于 Frame |
-| `[E-MAGIC-FRAME-SEPARATOR]` | Magic 分隔符 | 每个 Frame 后追加 Magic |
-| `[E-FRAME-WRITE-SEQUENCE]` | 写入顺序 | 8 步写入流程 |
-| `[E-PTR64-ENCODING]` | Ptr64 编码 | 8B LE 文件偏移 |
-| `[E-PTR64-NULL-AND-ALIGNMENT]` | Ptr64 空值与对齐 | 0 = null，4B 对齐 |
-| `[E-DATATAIL-DEFINITION]` | DataTail 定义 | data 文件逻辑尾部 |
-| `[E-DATATAIL-TRUNCATE]` | 截断恢复 | 按 DataTail 截断尾部垃圾 |
+| `[F-GENESIS-HEADER]` | 创世头 | 文件以 4B Magic 开头 |
+| `[F-GENESIS-EMPTY-FILE]` | 空文件 | 最小有效长度 4B |
+| `[F-FRAME-LAYOUT]` | 帧布局 | HeadLen + Payload(Tag+Body) + Pad + TailLen + CRC32C + Magic |
+| `[F-FRAMETAG-WIRE-ENCODING]` | FrameTag 编码 | Tag 是 Payload 的第 1 字节 |
+| `[F-HEADLEN-TAILLEN-SYMMETRY]` | 长度对称 | HeadLen == TailLen |
+| `[F-HEADLEN-FORMULA]` | 长度公式 | HeadLen = 12 + PayloadLen + PadLen |
+| `[F-PADLEN-FORMULA]` | Pad 公式 | PadLen = (4 - (PayloadLen % 4)) % 4 |
+| `[F-FRAME-4B-ALIGNMENT]` | 4B 对齐 | HeadLen % 4 == 0，Frame 起点对齐 |
+| `[F-PAD-ZERO-FILL]` | 填充为零 | Pad 字节全为 0 |
+| `[F-CRC32C-COVERAGE]` | CRC 覆盖 | Payload + Pad + TailLen |
+| `[F-CRC32C-ALGORITHM]` | CRC 算法 | CRC32C (Castagnoli)，Reflected I/O 约定 |
+| `[F-CRC-FAIL-REJECT]` | CRC 失败 | CRC 不匹配 MUST 视为帧损坏 |
+| `[F-FRAMING-FAIL-REJECT]` | Framing 失败 | HeadLen!=TailLen / 非对齐 / 越界 / Magic 不匹配 MUST 视为帧损坏 |
+| `[F-MAGIC-BYTE-SEQUENCE]` | Magic 编码 | ASCII 字节序列写入，非 u32 端序 |
+| `[F-MAGIC-IS-FENCE]` | Magic 是栅栏 | Magic 不属于 Frame |
+| `[F-MAGIC-FRAME-SEPARATOR]` | Magic 分隔符 | 每个 Frame 后追加 Magic |
+| `[F-FRAME-WRITE-SEQUENCE]` | 写入顺序 | 8 步写入流程 |
+| `[F-PTR64-ENCODING]` | Ptr64 编码 | 8B LE 文件偏移 |
+| `[F-PTR64-NULL-AND-ALIGNMENT]` | Ptr64 空值与对齐 | 0 = null，4B 对齐 |
 
-### 11.2 恢复条款 [E-xxx]（Resync）
+### 11.2 恢复条款 [R-xxx]
 
 | 条款 ID | 名称 | 说明 |
 |---------|------|------|
-| `[E-REVERSE-SCAN-ALGORITHM]` | 逆向扫描 | 从尾到头遍历 Frame |
-| `[E-RESYNC-DISTRUST-TAILLEN]` | 不信任 TailLen | 验证失败时不跳跃 |
-| `[E-RESYNC-SCAN-MAGIC]` | Resync 扫描 | 4B 对齐向前找 Magic |
+| `[R-REVERSE-SCAN-ALGORITHM]` | 逆向扫描 | 从尾到头遍历 Frame |
+| `[R-RESYNC-DISTRUST-TAILLEN]` | 不信任 TailLen | 验证失败时不跳跃 |
+| `[R-RESYNC-SCAN-MAGIC]` | Resync 扫描 | 4B 对齐向前找 Magic |
+| `[R-DATATAIL-DEFINITION]` | DataTail 定义 | data 文件逻辑尾部 |
+| `[R-DATATAIL-TRUNCATE]` | 截断恢复 | 按 DataTail 截断尾部垃圾 |
 
 ---
 

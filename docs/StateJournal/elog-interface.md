@@ -8,6 +8,8 @@
 
 ---
 
+> 本文档遵循 [Atelia 规范约定](../spec-conventions.md)。
+
 ## 1. 概述
 
 本文档定义 ELOG（Extensible Log Framing）层与上层（StateJournal）之间的接口契约。
@@ -47,7 +49,7 @@
 
 ### 2.1 FrameTag
 
-**`[E-FRAMETAG-DEFINITION]`**
+**`[F-FRAMETAG-DEFINITION]`**
 
 > **FrameTag** 是 1 字节的帧类型标识符。ELOG 层不解释其语义，仅作为 payload 的 discriminator 透传。
 
@@ -62,7 +64,7 @@ public readonly record struct FrameTag(byte Value);
 | `0x00` | Padding | 可丢弃帧（用于 Auto-Abort 落盘） |
 | `0x01`-`0xFF` | — | 由上层定义 |
 
-**`[E-FRAMETAG-PADDING-VISIBLE]`**：`IElogScanner` MUST 产出所有帧，包括 `FrameTag.Padding`。
+**`[F-FRAMETAG-PADDING-VISIBLE]`**：`IElogScanner` MUST 产出所有帧，包括 `FrameTag.Padding`。
 
 **`[S-STATEJOURNAL-PADDING-SKIP]`**：上层 Record Reader（StateJournal）MUST 忽略 `FrameTag.Padding` 帧，不将其解释为业务记录。
 
@@ -70,7 +72,7 @@ public readonly record struct FrameTag(byte Value);
 
 ### 2.2 Address64
 
-**`[E-ADDRESS64-DEFINITION]`**
+**`[F-ADDRESS64-DEFINITION]`**
 
 > **Address64** 是 8 字节 LE 编码的文件偏移量，指向一个 Frame 的起始位置（HeadLen 字段起点）。
 
@@ -82,8 +84,8 @@ public readonly record struct Address64(ulong Value) {
 ```
 
 **约束**：
-- **`[E-ADDRESS64-ALIGNMENT]`**：有效 Address64 MUST 4 字节对齐（`Value % 4 == 0`）
-- **`[E-ADDRESS64-NULL]`**：`Value == 0` 表示 null（无效地址）
+- **`[F-ADDRESS64-ALIGNMENT]`**：有效 Address64 MUST 4 字节对齐（`Value % 4 == 0`）
+- **`[F-ADDRESS64-NULL]`**：`Value == 0` 表示 null（无效地址）
 
 ### 2.3 Frame
 
@@ -298,7 +300,7 @@ StateJournal 定义以下 FrameTag 值：
 | `0x03`-`0xFF` | — | 未来扩展 |
 
 > **FrameTag 是唯一判别器**：
-> - FrameTag 是 ELOG Payload 的第 1 个字节（参见 elog-format.md `[E-FRAMETAG-WIRE-ENCODING]`）
+> - FrameTag 是 ELOG Payload 的第 1 个字节（参见 elog-format.md `[F-FRAMETAG-WIRE-ENCODING]`）
 > - StateJournal 通过 FrameTag 区分 Record 类型，payload 内不再包含额外的类型字节
 > - 此设计与 mvp-design-v2.md §3.2.1/§3.2.2 的定义一致（2025-12-22 对齐）
 
@@ -349,11 +351,11 @@ public void ProcessFrame(IElogScanner scanner, Address64 addr)
 
 | 条款 ID | 名称 | 类别 |
 |---------|------|------|
-| `[E-FRAMETAG-DEFINITION]` | FrameTag 定义 | 术语 |
-| `[E-FRAMETAG-PADDING-VISIBLE]` | Padding 帧可见 | 语义 |
-| `[E-ADDRESS64-DEFINITION]` | Address64 定义 | 术语 |
-| `[E-ADDRESS64-ALIGNMENT]` | Address64 对齐 | 格式 |
-| `[E-ADDRESS64-NULL]` | Address64 空值 | 格式 |
+| `[F-FRAMETAG-DEFINITION]` | FrameTag 定义 | 术语 |
+| `[F-FRAMETAG-PADDING-VISIBLE]` | Padding 帧可见 | 语义 |
+| `[F-ADDRESS64-DEFINITION]` | Address64 定义 | 术语 |
+| `[F-ADDRESS64-ALIGNMENT]` | Address64 对齐 | 格式 |
+| `[F-ADDRESS64-NULL]` | Address64 空值 | 格式 |
 | `[A-ELOG-FRAMER-INTERFACE]` | IElogFramer 接口 | API |
 | `[A-ELOG-FRAME-BUILDER]` | ElogFrameBuilder 接口 | API |
 | `[A-ELOG-SCANNER-INTERFACE]` | IElogScanner 接口 | API |
