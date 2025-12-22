@@ -1,10 +1,10 @@
-# ELOG Layer Interface Contract
+# RBF Layer Interface Contract
 
 > **状态**：Reviewed（复核通过）
-> **版本**：0.2
+> **版本**：0.3
 > **创建日期**：2025-12-22
-> **设计共识来源**：[agent-team/meeting/2025-12-21-elog-layer-boundary.md](../../../agent-team/meeting/2025-12-21-elog-layer-boundary.md)
-> **复核会议**：[agent-team/meeting/2025-12-22-elog-interface-review.md](../../../agent-team/meeting/2025-12-22-elog-interface-review.md)
+> **设计共识来源**：[agent-team/meeting/2025-12-21-rbf-layer-boundary.md](../../../agent-team/meeting/2025-12-21-rbf-layer-boundary.md)
+> **复核会议**：[agent-team/meeting/2025-12-22-rbf-interface-review.md](../../../agent-team/meeting/2025-12-22-rbf-interface-review.md)
 
 ---
 
@@ -12,11 +12,11 @@
 
 ## 1. 概述
 
-本文档定义 ELOG（Extensible Log Framing）层与上层（StateJournal）之间的接口契约。
+本文档定义 RBF（Reversible Binary Framing）层与上层（StateJournal）之间的接口契约。
 
 **设计原则**：
-- ELOG 是"二进制信封"——只关心如何安全封装 payload，不解释 payload 语义
-- 上层只需依赖本接口文档，无需了解 ELOG 内部实现细节
+- RBF 是"二进制信封"——只关心如何安全封装 payload，不解释 payload 语义
+- 上层只需依赖本接口文档，无需了解 RBF 内部实现细节
 - 接口设计支持 zero-copy 热路径，但不强制
 
 **文档关系**：
@@ -29,14 +29,14 @@
 └─────────────────┬───────────────────┘
                   │ 依赖
 ┌─────────────────▼───────────────────┐
-│  elog-interface.md (本文档)          │
+│  rbf-interface.md (本文档)           │
 │  - Layer 0/1 的对接契约              │
 │  - 定义 FrameTag, Address64 等       │
 └─────────────────┬───────────────────┘
                   │ 待拆分后
 ┌─────────────────▼───────────────────┐
-│  elog-format.md (未来)               │
-│  - ELOG 完整格式规范                 │
+│  rbf-format.md (未来)                │
+│  - RBF 完整格式规范                  │
 │  - 从 mvp-design-v2.md 提取          │
 └─────────────────────────────────────┘
 ```
@@ -45,13 +45,13 @@
 
 ## 2. 术语表（Layer 0）
 
-> 本节定义 ELOG 层的独立术语。上层术语（如 RecordKind）在 mvp-design-v2.md 中定义。
+> 本节定义 RBF 层的独立术语。上层术语（如 RecordKind）在 mvp-design-v2.md 中定义。
 
 ### 2.1 FrameTag
 
 **`[F-FRAMETAG-DEFINITION]`**
 
-> **FrameTag** 是 1 字节的帧类型标识符。ELOG 层不解释其语义，仅作为 payload 的 discriminator 透传。
+> **FrameTag** 是 1 字节的帧类型标识符。RBF 层不解释其语义，仅作为 payload 的 discriminator 透传。
 
 ```csharp
 public readonly record struct FrameTag(byte Value);
@@ -64,7 +64,7 @@ public readonly record struct FrameTag(byte Value);
 | `0x00` | Padding | 可丢弃帧（用于 Auto-Abort 落盘） |
 | `0x01`-`0xFF` | — | 由上层定义 |
 
-**`[F-FRAMETAG-PADDING-VISIBLE]`**：`IElogScanner` MUST 产出所有帧，包括 `FrameTag.Padding`。
+**`[F-FRAMETAG-PADDING-VISIBLE]`**：`IRbfScanner` MUST 产出所有帧，包括 `FrameTag.Padding`。
 
 **`[S-STATEJOURNAL-PADDING-SKIP]`**：上层 Record Reader（StateJournal）MUST 忽略 `FrameTag.Padding` 帧，不将其解释为业务记录。
 
@@ -89,9 +89,9 @@ public readonly record struct Address64(ulong Value) {
 
 ### 2.3 Frame
 
-> **Frame** 是 ELOG 的基本 I/O 单元，由 Header + Payload + Trailer 组成。
+> **Frame** 是 RBF 的基本 I/O 单元，由 Header + Payload + Trailer 组成。
 
-本接口文档不定义 Frame 的内部结构（将在 elog-format.md 中定义）。上层只需知道：
+本接口文档不定义 Frame 的内部结构（将在 rbf-format.md 中定义）。上层只需知道：
 
 - 每个 Frame 有一个 `FrameTag` 和 `Payload`
 - Frame 写入后返回其 `Address64`
@@ -101,19 +101,19 @@ public readonly record struct Address64(ulong Value) {
 
 ## 3. 写入接口
 
-### 3.1 IElogFramer
+### 3.1 IRbfFramer
 
-**`[A-ELOG-FRAMER-INTERFACE]`**
+**`[A-RBF-FRAMER-INTERFACE]`**
 
 ```csharp
 /// <summary>
-/// ELOG 帧写入器。负责将 payload 封装为 Frame 并追加到日志文件。
+/// RBF 帧写入器。负责将 payload 封装为 Frame 并追加到日志文件。
 /// </summary>
 /// <remarks>
 /// <para><b>线程安全</b>：非线程安全，单生产者使用。</para>
-/// <para><b>并发约束</b>：同一时刻最多 1 个 open ElogFrameBuilder。</para>
+/// <para><b>并发约束</b>：同一时刻最多 1 个 open RbfFrameBuilder。</para>
 /// </remarks>
-public interface IElogFramer
+public interface IRbfFramer
 {
     /// <summary>
     /// 追加一个完整的帧（简单场景：payload 已就绪）。
@@ -128,13 +128,13 @@ public interface IElogFramer
     /// </summary>
     /// <param name="tag">帧类型标识符</param>
     /// <returns>帧构建器（必须 Commit 或 Dispose）</returns>
-    ElogFrameBuilder BeginFrame(FrameTag tag);
+    RbfFrameBuilder BeginFrame(FrameTag tag);
     
     /// <summary>
-    /// 将 ELOG 缓冲数据推送到底层 Writer/Stream。
+    /// 将 RBF 缓冲数据推送到底层 Writer/Stream。
     /// </summary>
     /// <remarks>
-    /// <para><b>不承诺 Durability</b>：本方法仅保证 ELOG 层的缓冲被推送到下层，
+    /// <para><b>不承诺 Durability</b>：本方法仅保证 RBF 层的缓冲被推送到下层，
     /// 不保证数据持久化到物理介质。</para>
     /// <para><b>上层责任</b>：如需 durable commit（如 StateJournal 的 data→meta 顺序），
     /// 由上层在其持有的底层句柄上执行 durable flush。</para>
@@ -143,9 +143,9 @@ public interface IElogFramer
 }
 ```
 
-### 3.2 ElogFrameBuilder
+### 3.2 RbfFrameBuilder
 
-**`[A-ELOG-FRAME-BUILDER]`**
+**`[A-RBF-FRAME-BUILDER]`**
 
 ```csharp
 /// <summary>
@@ -157,7 +157,7 @@ public interface IElogFramer
 /// 逻辑上该帧视为不存在。物理实现可能是 Zero I/O（若底层支持 Reservation 回滚）
 /// 或写入 Padding 墓碑帧（否则）。</para>
 /// </remarks>
-public ref struct ElogFrameBuilder
+public ref struct RbfFrameBuilder
 {
     /// <summary>
     /// Payload 写入器（标准接口，满足大多数序列化需求）。
@@ -191,9 +191,9 @@ public ref struct ElogFrameBuilder
 
 **关键语义**：
 
-**`[S-ELOG-BUILDER-AUTO-ABORT]`**（Optimistic Clean Abort）
+**`[S-RBF-BUILDER-AUTO-ABORT]`**（Optimistic Clean Abort）
 
-> 若 `ElogFrameBuilder` 未调用 `Commit()` 就执行 `Dispose()`：
+> 若 `RbfFrameBuilder` 未调用 `Commit()` 就执行 `Dispose()`：
 >
 > **逻辑语义**（对外可观测）：
 > - 该帧视为**不存在**（logical non-existence）
@@ -209,29 +209,29 @@ public ref struct ElogFrameBuilder
 
 此机制防止上层异常导致 Writer 死锁，同时在可能时优化为零 I/O。
 
-**`[S-ELOG-FRAMER-NO-FSYNC]`**
+**`[S-RBF-FRAMER-NO-FSYNC]`**
 
-> `IElogFramer.Flush()` MUST NOT 执行 fsync 操作。
+> `IRbfFramer.Flush()` MUST NOT 执行 fsync 操作。
 > Fsync 策略（如 StateJournal 的 data→meta 顺序）由上层控制。
 
-**`[S-ELOG-BUILDER-SINGLE-OPEN]`**
+**`[S-RBF-BUILDER-SINGLE-OPEN]`**
 
-> 同一 `IElogFramer` 实例同时最多允许 1 个 open `ElogFrameBuilder`。
+> 同一 `IRbfFramer` 实例同时最多允许 1 个 open `RbfFrameBuilder`。
 > 在前一个 Builder 完成（Commit 或 Dispose）前调用 `BeginFrame()` MUST 抛出 `InvalidOperationException`。
 
 ---
 
 ## 4. 读取接口
 
-### 4.1 IElogScanner
+### 4.1 IRbfScanner
 
-**`[A-ELOG-SCANNER-INTERFACE]`**
+**`[A-RBF-SCANNER-INTERFACE]`**
 
 ```csharp
 /// <summary>
-/// ELOG 帧扫描器。支持随机读取和逆向扫描。
+/// RBF 帧扫描器。支持随机读取和逆向扫描。
 /// </summary>
-public interface IElogScanner
+public interface IRbfScanner
 {
     /// <summary>
     /// 读取指定地址的帧。
@@ -239,19 +239,19 @@ public interface IElogScanner
     /// <param name="address">帧起始地址</param>
     /// <param name="frame">输出：帧内容（生命周期受限于底层缓冲区）</param>
     /// <returns>是否成功读取</returns>
-    bool TryReadAt(Address64 address, out ElogFrame frame);
+    bool TryReadAt(Address64 address, out RbfFrame frame);
     
     /// <summary>
     /// 从文件尾部逆向扫描所有帧。
     /// </summary>
     /// <returns>帧枚举器（从尾到头）</returns>
-    ElogReverseEnumerable ScanReverse();
+    RbfReverseEnumerable ScanReverse();
 }
 ```
 
-### 4.2 ElogFrame
+### 4.2 RbfFrame
 
-**`[A-ELOG-FRAME-REF-STRUCT]`**
+**`[A-RBF-FRAME-REF-STRUCT]`**
 
 ```csharp
 /// <summary>
@@ -262,7 +262,7 @@ public interface IElogScanner
 /// 若需持久化，必须显式拷贝。</para>
 /// <para><b>设计理由</b>：ref struct 的限制是"护栏"，防止 use-after-free。</para>
 /// </remarks>
-public readonly ref struct ElogFrame
+public readonly ref struct RbfFrame
 {
     /// <summary>帧类型标识符</summary>
     public FrameTag Tag { get; }
@@ -284,7 +284,7 @@ public readonly ref struct ElogFrame
 
 ## 5. 上层映射（StateJournal）
 
-> 本节描述上层如何使用 ELOG 接口，但不属于 ELOG 层的职责。
+> 本节描述上层如何使用 RBF 接口，但不属于 RBF 层的职责。
 
 ### 5.1 FrameTag ↔ RecordKind 映射
 
@@ -294,13 +294,13 @@ StateJournal 定义以下 FrameTag 值：
 
 | FrameTag | Record 类型 | 描述 |
 |----------|-------------|------|
-| `0x00` | Padding | ELOG 保留，上层 MUST 跳过 |
+| `0x00` | Padding | RBF 保留，上层 MUST 跳过 |
 | `0x01` | ObjectVersionRecord | 对象版本记录（data payload） |
 | `0x02` | MetaCommitRecord | 提交元数据记录（meta payload） |
 | `0x03`-`0xFF` | — | 未来扩展 |
 
 > **FrameTag 是唯一判别器**：
-> - FrameTag 是 ELOG Payload 的第 1 个字节（参见 elog-format.md `[F-FRAMETAG-WIRE-ENCODING]`）
+> - FrameTag 是 RBF Payload 的第 1 个字节（参见 rbf-format.md `[F-FRAMETAG-WIRE-ENCODING]`）
 > - StateJournal 通过 FrameTag 区分 Record 类型，payload 内不再包含额外的类型字节
 > - 此设计与 mvp-design-v2.md §3.2.1/§3.2.2 的定义一致（2025-12-22 对齐）
 
@@ -308,7 +308,7 @@ StateJournal 定义以下 FrameTag 值：
 
 ```csharp
 // 写入 ObjectVersionRecord
-public Address64 WriteObjectVersion(IElogFramer framer, ObjectVersionPayload payload)
+public Address64 WriteObjectVersion(IRbfFramer framer, ObjectVersionPayload payload)
 {
     using var frame = framer.BeginFrame(new FrameTag(0x01));
     
@@ -327,7 +327,7 @@ public Address64 WriteObjectVersion(IElogFramer framer, ObjectVersionPayload pay
 }
 
 // 读取
-public void ProcessFrame(IElogScanner scanner, Address64 addr)
+public void ProcessFrame(IRbfScanner scanner, Address64 addr)
 {
     if (!scanner.TryReadAt(addr, out var frame)) return;
     
@@ -356,13 +356,13 @@ public void ProcessFrame(IElogScanner scanner, Address64 addr)
 | `[F-ADDRESS64-DEFINITION]` | Address64 定义 | 术语 |
 | `[F-ADDRESS64-ALIGNMENT]` | Address64 对齐 | 格式 |
 | `[F-ADDRESS64-NULL]` | Address64 空值 | 格式 |
-| `[A-ELOG-FRAMER-INTERFACE]` | IElogFramer 接口 | API |
-| `[A-ELOG-FRAME-BUILDER]` | ElogFrameBuilder 接口 | API |
-| `[A-ELOG-SCANNER-INTERFACE]` | IElogScanner 接口 | API |
-| `[A-ELOG-FRAME-REF-STRUCT]` | ElogFrame 结构 | API |
-| `[S-ELOG-BUILDER-AUTO-ABORT]` | Builder Auto-Abort (Optimistic Clean Abort) | 语义 |
-| `[S-ELOG-BUILDER-SINGLE-OPEN]` | Builder 单开 | 语义 |
-| `[S-ELOG-FRAMER-NO-FSYNC]` | Flush 不含 Fsync | 语义 |
+| `[A-RBF-FRAMER-INTERFACE]` | IRbfFramer 接口 | API |
+| `[A-RBF-FRAME-BUILDER]` | RbfFrameBuilder 接口 | API |
+| `[A-RBF-SCANNER-INTERFACE]` | IRbfScanner 接口 | API |
+| `[A-RBF-FRAME-REF-STRUCT]` | RbfFrame 结构 | API |
+| `[S-RBF-BUILDER-AUTO-ABORT]` | Builder Auto-Abort (Optimistic Clean Abort) | 语义 |
+| `[S-RBF-BUILDER-SINGLE-OPEN]` | Builder 单开 | 语义 |
+| `[S-RBF-FRAMER-NO-FSYNC]` | Flush 不含 Fsync | 语义 |
 | `[S-STATEJOURNAL-FRAMETAG-MAPPING]` | FrameTag 映射 | 映射 |
 | `[S-STATEJOURNAL-PADDING-SKIP]` | 上层跳过 Padding | 映射 |
 
@@ -374,6 +374,7 @@ public void ProcessFrame(IElogScanner scanner, Address64 addr)
 |------|------|------|
 | 0.1 | 2025-12-22 | 初稿，基于畅谈会共识 |
 | 0.2 | 2025-12-22 | P0/P1 修订：Auto-Abort 改为 Optimistic Clean Abort；Padding 责任边界明确；Flush 不承诺 durability |
+| 0.3 | 2025-12-22 | 命名重构：ELOG → RBF (Reversible Binary Framing) |
 
 ---
 
@@ -390,7 +391,7 @@ public void ProcessFrame(IElogScanner scanner, Address64 addr)
 > 以下问题可在实现阶段确认：
 
 1. **FrameTag 具体值**：与 mvp-design-v2.md 的 RecordKind 如何精确对齐？
-2. **错误处理**：TryReadAt 失败时是否需要 `ElogReadStatus`（P2）
+2. **错误处理**：TryReadAt 失败时是否需要 `RbfReadStatus`（P2）
 3. **ScanReverse 终止条件**：遇到损坏数据时的策略（P2）
 4. **Address64 高位保留**：是否需要预留高 8 位供多文件扩展？
 

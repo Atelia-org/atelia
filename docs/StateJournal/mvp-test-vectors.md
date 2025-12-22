@@ -3,7 +3,7 @@
 > **版本**：v3（2025-12-22 更新，Layer 0 测试向量已提取到独立文档）
 > **配套文档**：
 > - `mvp-design-v2.md` — 设计规范
-> - [elog-test-vectors.md](elog-test-vectors.md) — Layer 0（ELOG）测试向量
+> - [rbf-test-vectors.md](rbf-test-vectors.md) — Layer 0（RBF）测试向量
 >
 > 本文档遵循 [Atelia 规范约定](../spec-conventions.md)。
 
@@ -21,7 +21,7 @@
 ## 条款编号映射
 
 > 本节映射测试场景到 `mvp-design-v2.md` 中的规范条款（稳定语义锚点格式）。
-> Layer 0 条款映射见 [elog-test-vectors.md](elog-test-vectors.md)。
+> Layer 0 条款映射见 [rbf-test-vectors.md](rbf-test-vectors.md)。
 
 | 条款 ID | 规范条款 | 对应测试用例 |
 |---------|----------|--------------|
@@ -270,7 +270,7 @@ Assert.Equal(newRoot.Id, head.RootObjectId);
 
 - `test-data/format/dictdiff/`：若干 dict diff 的二进制 payload，配套 `expected.json` 描述 apply 后的 state
 
-> Layer 0 黄金文件（elog、varint）见 [elog-test-vectors.md](elog-test-vectors.md)。
+> Layer 0 黄金文件（rbf、varint）见 [rbf-test-vectors.md](rbf-test-vectors.md)。
 
 每个黄金文件建议配一个小的 `README.md`，写明：
 - 编码输入（keys/values）
@@ -283,5 +283,5 @@ Assert.Equal(newRoot.Id, head.RootObjectId);
 
 | 日期 | 版本 | 变更 |
 |------|------|------|
-| 2025-12-22 | v3 | Layer 0 测试向量提取到 elog-test-vectors.md |
+| 2025-12-22 | v3 | Layer 0 测试向量提取到 rbf-test-vectors.md |
 | 2025-12-20 | v2 | 根据畅谈会共识修订 |

@@ -11,10 +11,10 @@
 - Two-phase commit 与恢复语义
 
 **依赖文档**：
-- [elog-interface.md](elog-interface.md) — ELOG 层接口契约（**必读**）
-- [elog-format.md](elog-format.md) — ELOG 二进制格式规范（可选深入）
+- [rbf-interface.md](rbf-interface.md) — RBF 层接口契约（**必读**）
+- [rbf-format.md](rbf-format.md) — RBF 二进制格式规范（可选深入）
 
-**不包含**（已提取到 elog-format.md）：
+**不包含**（已提取到 rbf-format.md）：
 - Frame 二进制格式（HeadLen/TailLen/Pad/CRC32C/Magic）
 - Genesis Header 结构
 - 逆向扫描算法
@@ -72,7 +72,7 @@
 | 术语 | 定义 | 别名/弃用 | 实现映射 |
 |------|------|----------|---------|
 | **ObjectId** | 对象的稳定身份。参见 **Well-Known ObjectId** 条目了解保留区规则 | — | `uint64` / `varuint` |
-| **Ptr64** / **Address64** | 8 字节文件偏移量。详见 [elog-interface.md](elog-interface.md) §2.2 | — | `ulong` |
+| **Ptr64** / **Address64** | 8 字节文件偏移量。详见 [rbf-interface.md](rbf-interface.md) §2.2 | — | `ulong` |
 | **ObjectVersionPtr** | 指向对象版本记录的 Address64 | — | `Ptr64` 编码值 |
 | **EpochSeq** | Commit 的单调递增序号，用于判定 HEAD 新旧 | — | `varuint` |
 
@@ -99,7 +99,7 @@
 
 | 术语 | 定义 | 别名/弃用 | 实现映射 |
 |------|------|----------|---------|
-| **FrameTag** | ELOG Frame 的顶层类型标识（Payload 的第 1 个字节），是 StateJournal Record 的**唯一判别器**。由 ELOG 层定义并透传。详见 [elog-interface.md](elog-interface.md) `[E-FRAMETAG-DEFINITION]` | Deprecated: RecordKind（旧名称） | `FrameTag`（`byte`）|
+| **FrameTag** | RBF Frame 的顶层类型标识（Payload 的第 1 个字节），是 StateJournal Record 的**唯一判别器**。由 RBF 层定义并透传。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` | Deprecated: RecordKind（旧名称） | `FrameTag`（`byte`）|
 | **ObjectKind** | ObjectVersionRecord 内的对象类型标识，决定 diff 解码器 | — | `byte` 枚举 |
 | **ValueType** | Dict DiffPayload 中的值类型标识 | — | `byte` 低 4 bit |
 
@@ -135,7 +135,7 @@
 1. **概念术语**：统一 Title Case，全文一致
 2. **实现标识符**：仅在 Implementation Mapping 出现，用代码格式
 3. **缩写大写**：`HEAD`、`CRC32C` 全文同形
-4. **Ptr64 / Address64**：详见 [elog-interface.md](elog-interface.md) §2.2
+4. **Ptr64 / Address64**：详见 [rbf-interface.md](rbf-interface.md) §2.2
 
 ### 枚举值速查表
 
@@ -145,11 +145,11 @@
 
 | 值 | 名称 | 说明 |
 |------|------|------|
-| `0x00` | Padding | ELOG 保留，可丢弃帧（上层 MUST 跳过）|
+| `0x00` | Padding | RBF 保留，可丢弃帧（上层 MUST 跳过）|
 | `0x01` | ObjectVersionRecord | 对象版本记录（data payload）|
 | `0x02` | MetaCommitRecord | 提交元数据记录（meta payload）|
 
-> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（Payload[0]）区分 Record 类型。详见 [elog-interface.md](elog-interface.md) §5.1 和 [elog-format.md](elog-format.md) `[E-FRAMETAG-WIRE-ENCODING]`。
+> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（Payload[0]）区分 Record 类型。详见 [rbf-interface.md](rbf-interface.md) §5.1 和 [rbf-format.md](rbf-format.md) `[E-FRAMETAG-WIRE-ENCODING]`。
 
 #### ObjectKind（§3.2.5）
 
@@ -201,7 +201,7 @@ MVP 非目标（默认不做，后续版本再议）：
 | **引用** | 序列化引用内容 (Q2) | 只存 `ObjectId` |
 | **加载** | LoadObject 语义 (Q3) | workspace + HEAD（Lazy 创建，同 ObjectId 同实例） |
 | **提交** | Commit point (Q16) | `data` + `meta` 两文件；meta commit record 持久化完成 |
-| **格式** | data/meta framing (Q20) | 统一 ELOG framing + Magic separator |
+| **格式** | data/meta framing (Q20) | 统一 RBF framing + Magic separator |
 | **版本链** | VersionIndex 落地 (Q19) | 扩展通用 Dict（`ulong` key + `Ptr64` value） |
 | **编码** | varint 规范 (Q22) | protobuf 风格 base-128，canonical 最短编码 |
 | **Dict** | key 类型 (Q23) | 仅 `ulong` key |
@@ -552,11 +552,11 @@ I/O 目标（MVP）：
 - `mmap` 仅作为后续性能优化的备选实现，不进入 MVP 规格与测试基线。
 - MVP 不依赖稀疏文件/预分配（例如 `SetLength` 预扩）；文件“有效末尾”以 meta 的 `DataTail`（逻辑尾部）为准。
 
-> **帧格式**：Frame 结构（HeadLen/TailLen/Pad/CRC32C/Magic）、逆向扫描算法、Resync 机制详见 [elog-format.md](elog-format.md)。
+> **帧格式**：Frame 结构（HeadLen/TailLen/Pad/CRC32C/Magic）、逆向扫描算法、Resync 机制详见 [rbf-format.md](rbf-format.md)。
 
 ##### DataRecord 类型判别
 
-> **FrameTag 是唯一判别器**：ELOG Frame 的 `FrameTag`（Payload[0]）已经区分 Record 类型。
+> **FrameTag 是唯一判别器**：RBF Frame 的 `FrameTag`（Payload[0]）已经区分 Record 类型。
 > StateJournal 读取 Frame 后，根据 `FrameTag` 分流：`0x01` = ObjectVersionRecord。
 > 
 > **与 ObjectKind 的区分**：`FrameTag` 区分 Record 的顶层类型；`ObjectKind` 用于 ObjectVersionRecord 内部区分对象类型并选择 diff 解码器。
@@ -576,14 +576,14 @@ data 文件内的“可被 meta 指向的关键 record”至少包括：
 
 meta file 是 append-only 的 commit log：每次 `Commit(...)` 都追加写入一条 `MetaCommitRecord`。
 
-> **帧格式**：Meta 文件与 Data 文件使用相同的 ELOG 帧格式，详见 [elog-format.md](elog-format.md)。
+> **帧格式**：Meta 文件与 Data 文件使用相同的 RBF 帧格式，详见 [rbf-format.md](rbf-format.md)。
 
 ##### MetaCommitRecord Payload
 
 > **FrameTag = 0x02** 表示 MetaCommitRecord（参见枚举值速查表）。
 > Payload 从业务字段开始，不再包含顶层类型字节。
 
-meta payload 最小字段（**不含 FrameTag，FrameTag 由 ELOG 层管理**）：
+meta payload 最小字段（**不含 FrameTag，FrameTag 由 RBF 层管理**）：
 
 - `EpochSeq`（varuint，单调递增）
 - `RootObjectId`（varuint）
@@ -614,7 +614,7 @@ meta payload 最小字段（**不含 FrameTag，FrameTag 由 ELOG 层管理**）
 
 MetaCommitRecord 的 payload 解析（MVP 固定）：
 
-> **前置条件**：ELOG Scanner 已根据 `FrameTag == 0x02` 确定此为 MetaCommitRecord。
+> **前置条件**：RBF Scanner 已根据 `FrameTag == 0x02` 确定此为 MetaCommitRecord。
 
 - 依次读取 `EpochSeq/RootObjectId/VersionIndexPtr/DataTail/NextObjectId`。
 - 无需再校验 RecordKind（FrameTag 已经是唯一判别器）。
@@ -629,7 +629,7 @@ Commit Record（逻辑上）至少包含：
 - `RootObjectId`：ObjectId（概念上为 `uint64`；序列化时按 Q15 使用 `varuint`）
 - `VersionIndexPtr`：Ptr64（指向一个"VersionIndex durable object"的版本）
 - `DataTail`：Ptr64
-- `CRC32C`（物理上由 `ELOG` framing 提供，不在 payload 内重复存储）
+- `CRC32C`（物理上由 `RBF` framing 提供，不在 payload 内重复存储）
 
 > 说明：MVP 不提供“按 parent 指针遍历历史”的能力；历史遍历可通过扫描 meta commit log 完成。
 
@@ -1190,7 +1190,7 @@ ObjectDetachedException:
 
 ### 3.5 崩溃恢复
 
-> **帧级恢复**：Frame 级别的逆向扫描、CRC 校验、Resync 机制详见 [elog-format.md](elog-format.md)。
+> **帧级恢复**：Frame 级别的逆向扫描、CRC 校验、Resync 机制详见 [rbf-format.md](rbf-format.md)。
 > 本节描述 StateJournal 的 **Record 级恢复语义**。
 
 - 从 meta 文件尾部回扫，选择最后一个有效 `MetaCommitRecord` 作为 HEAD。
@@ -1392,7 +1392,7 @@ class DurableDict : IDurableObject {
 > 完整测试向量定义参见独立文件：[mvp-test-vectors.md](mvp-test-vectors.md)
 > 
 > 该文件包含：
-> - ELOG framing 测试（正例 + 负例）
+> - RBF framing 测试（正例 + 负例）
 > - VarInt canonical 编码测试
 > - Meta 恢复与撕裂提交测试
 > - DurableDict diff payload 测试
@@ -1407,5 +1407,5 @@ class DurableDict : IDurableObject {
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v2 | 2025-12-21 | 初始 MVP 设计，P0 问题修复 |
-| v3 | 2025-12-22 | **Layer 分离**：将 ELOG 帧格式提取到 [elog-format.md](elog-format.md)，本文档聚焦 StateJournal 语义层 |
+| v3 | 2025-12-22 | **Layer 分离**：将 RBF 帧格式提取到 [rbf-format.md](rbf-format.md)，本文档聚焦 StateJournal 语义层 |
 

@@ -1,9 +1,9 @@
-# ELOG 二进制格式规范
+# RBF 二进制格式规范
 
 > **状态**：Draft
-> **版本**：0.3
+> **版本**：0.4
 > **创建日期**：2025-12-22
-> **接口契约**：[elog-interface.md](elog-interface.md)
+> **接口契约**：[rbf-interface.md](rbf-interface.md)
 
 ---
 
@@ -11,15 +11,15 @@
 
 ## 1. 概述
 
-本文档定义 ELOG（Extensible Log Framing）的二进制格式规范。ELOG 是一种 append-only 的日志帧格式，提供：
+本文档定义 RBF（Reversible Binary Framing）的二进制格式规范。RBF 是一种 append-only 的日志帧格式，提供：
 - CRC32C 完整性校验
 - 4 字节对齐
-- Magic 分隔符支持逆向扫描
+- Magic 分隔符支持逆向扫描（Reversible = backward scan / resync）
 - 崩溃恢复与 Resync 机制
 
-**与 elog-interface.md 的关系**：
-- 本文档（Layer 0）定义 ELOG 的二进制格式细节
-- [elog-interface.md](elog-interface.md) 定义上层（Layer 1）的接口契约
+**与 rbf-interface.md 的关系**：
+- 本文档（Layer 0）定义 RBF 的二进制格式细节
+- [rbf-interface.md](rbf-interface.md) 定义上层（Layer 1）的接口契约
 - 上层无需了解本文档的实现细节，仅需依赖接口文档
 
 **文档层次**：
@@ -27,19 +27,19 @@
 ```
 ┌─────────────────────────────────────┐
 │  mvp-design-v2.md (StateJournal)    │
-│  - 使用 ELOG 接口                    │
+│  - 使用 RBF 接口                     │
 │  - 定义 RecordKind, ObjectKind 等   │
 └─────────────────┬───────────────────┘
                   │ 依赖
 ┌─────────────────▼───────────────────┐
-│  elog-interface.md                   │
+│  rbf-interface.md                    │
 │  - Layer 0/1 的对接契约              │
 │  - 定义 FrameTag, Address64 等       │
 └─────────────────┬───────────────────┘
                   │ 实现
 ┌─────────────────▼───────────────────┐
-│  elog-format.md (本文档)             │
-│  - ELOG 完整二进制格式规范           │
+│  rbf-format.md (本文档)              │
+│  - RBF 完整二进制格式规范            │
 │  - Genesis Header, Frame 结构       │
 └─────────────────────────────────────┘
 ```
@@ -52,38 +52,37 @@
 
 **`[F-GENESIS-HEADER]`**
 
-每个 ELOG 文件以 4 字节 Magic 开头作为 Genesis Header（创世头），标识文件类型：
+每个 RBF 文件以 4 字节 Magic 开头作为 Genesis Header（创世头），标识文件类型：
 
 | 偏移 | 长度 | 字段 | 值 |
 |------|------|------|-----|
-| 0 | 4 | Magic | 文件类型标识 |
+| 0 | 4 | Magic | `RBF1` (`52 42 46 31`) |
 
 **Magic 值定义**：
 
-| Magic (ASCII) | 字节序列 (Hex) | 文件类型 |
-|---------------|----------------|----------|
-| `DHD3` | `44 48 44 33` | Data File（数据文件） |
-| `DHM3` | `44 48 4D 33` | Meta File（元数据文件） |
+| Magic (ASCII) | 字节序列 (Hex) | 说明 |
+|---------------|----------------|------|
+| `RBF1` | `52 42 46 31` | 统一 Magic，不区分文件类型 |
 
-> **命名说明**：`DH` = DurableHeap，`D/M` = Data/Meta，`3` = 版本号。
+> **命名说明**：`RBF` = Reversible Binary Framing，`1` = 版本号。
 
 **`[F-MAGIC-BYTE-SEQUENCE]`** Magic 编码约定：
 
 - Magic 以 **ASCII 字节序列** 写入（非 u32 端序写入）
 - 即按字符顺序依次写入：`'D'(0x44)`, `'H'(0x48)`, `'D'/'M'(0x44/0x4D)`, `'3'(0x33)`
+- 读取时按字节匹配，不做端序R'(0x52)`, `'B'(0x42)`, `'F'(0x46)`, `'1'(0x31)`
 - 读取时按字节匹配，不做端序转换
 
 **`[F-GENESIS-EMPTY-FILE]`** 空文件约束：
 
-- 新建的 ELOG 文件 MUST 先写入 Genesis Header（4 bytes Magic）
-- 空文件的最小有效长度为 4 字节
+- 新建的 RBF长度为 4 字节
 - `FileLength == 4` 表示"无任何 Frame"
 
 ### 2.2 文件整体布局
 
 ```
 ┌────────────────────────────────────────────┐
-│                 ELOG File                   │
+│                 RBF File                    │
 ├──────────┬─────────┬─────────┬─────────────┤
 │ Genesis  │ Frame 1 │ Frame 2 │    ...      │
 │ (Magic)  │         │         │             │
@@ -97,8 +96,7 @@
 (* File Framing: Magic-separated log *)
 File   := Genesis (Frame)*
 Genesis := Magic
-Magic  := 4 bytes ("DHD3" for data, "DHM3" for meta)
-
+Magic  := 4 bytes ("RBF1"
 (* Frame Layout *)
 Frame  := HeadLen Payload Pad TailLen CRC32C Magic
 HeadLen := u32 LE        (* == TailLen, frame total bytes *)
@@ -141,9 +139,9 @@ CRC32C  := u32 LE        (* covers Payload + Pad + TailLen *)
 **`[F-FRAMETAG-WIRE-ENCODING]`** FrameTag 编码：
 
 - **Tag 是 Payload 的第 1 个字节**（偏移 0）
-- ELOG 层负责读写 Tag 字段，但不解释其语义（`0x00` = Padding 除外）
+- RBF 层负责读写 Tag 字段，但不解释其语义（`0x00` = Padding 除外）
 - Tag 计入 `PayloadLen`（即 `PayloadLen = 1 + PayloadBodyLen`）
-- 关于 FrameTag 的定义和语义，参见 [elog-interface.md](elog-interface.md) 的 `[F-FRAMETAG-DEFINITION]`
+- 关于 FrameTag 的定义和语义，参见 [rbf-interface.md](rbf-interface.md) 的 `[F-FRAMETAG-DEFINITION]`
 
 ### 3.2 长度字段
 
@@ -438,7 +436,7 @@ Resync 过程:
 
 ### 9.3 与 Address64 的关系
 
-- `Address64`（在 elog-interface.md 中定义）是 `Ptr64` 的类型化封装
+- `Address64`（在 rbf-interface.md 中定义）是 `Ptr64` 的类型化封装
 - 两者在 wire format 上相同（8 字节 LE）
 - `Address64` 强调"指向 Frame 起点"的语义
 
@@ -528,13 +526,13 @@ Payload: []
 PadLen: 0 (因为 PayloadLen=0 已对齐)
 HeadLen: 4 + 0 + 0 + 4 + 4 = 12
 
-Wire format (假设 Magic = "DHD3" = 0x44484433):
+Wire format (Magic = "RBF1" = 0x52424631):
 [0C 00 00 00]  HeadLen = 12
                (无 Payload)
                (无 Pad)
 [0C 00 00 00]  TailLen = 12
 [XX XX XX XX]  CRC32C
-[44 48 44 33]  Magic "DHD3"
+[52 42 46 31]  Magic "RBF1"
 ```
 
 **带 Payload 的 Frame（5 字节 Payload）**：
@@ -550,8 +548,7 @@ Wire format:
 [00 00 00]     Pad (3 bytes)
 [14 00 00 00]  TailLen = 20
 [XX XX XX XX]  CRC32C
-[44 48 44 33]  Magic "DHD3"
-```
+[52 42 46 31]  Magic "RBF1
 
 ### 12.2 Resync 测试场景
 
@@ -571,4 +568,5 @@ Wire format:
 | 0.1 | 2025-12-22 | 初稿，从 mvp-design-v2.md 提取 |
 | 0.2 | 2025-12-22 | P0 修订：CRC32C 多项式表述（normal vs reflected）；逆向扫描边界条件（>= GenesisLen）；FrameTag wire encoding |
 | 0.3 | 2025-12-22 | P1 修订：Magic 编码约定（字节序列）；PadLen 公式简化；CRC/Framing 失败策略条款 |
+| 0.4 | 2025-12-22 | 命名重构：ELOG → RBF (Reversible Binary Framing)；Magic 统一为 `RBF1`；移除双 Magic 设计 |
 
