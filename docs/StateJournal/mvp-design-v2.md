@@ -99,7 +99,7 @@
 
 | 术语 | 定义 | 别名/弃用 | 实现映射 |
 |------|------|----------|---------|
-| **FrameTag** | RBF Frame 的顶层类型标识（Payload 的第 1 个字节），是 StateJournal Record 的**唯一判别器**。由 RBF 层定义并透传。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` | Deprecated: RecordKind（旧名称） | `FrameTag`（`byte`）|
+| **FrameTag** | RBF Frame 的顶层类型标识（FrameData 的第 1 字节），是 StateJournal Record 的**唯一判别器**。由 RBF 层定义并透传。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` | Deprecated: RecordKind（旧名称） | `FrameTag`（`byte`）|
 | **ObjectKind** | ObjectVersionRecord 内的对象类型标识，决定 diff 解码器 | — | `byte` 枚举 |
 | **ValueType** | Dict DiffPayload 中的值类型标识 | — | `byte` 低 4 bit |
 
@@ -149,7 +149,7 @@
 | `0x01` | ObjectVersionRecord | 对象版本记录（data payload）|
 | `0x02` | MetaCommitRecord | 提交元数据记录（meta payload）|
 
-> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（Payload[0]）区分 Record 类型。详见 [rbf-interface.md](rbf-interface.md) §5.1 和 [rbf-format.md](rbf-format.md) `[E-FRAMETAG-WIRE-ENCODING]`。
+> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（FrameData 的第 1 字节）区分 Record 类型。详见 [rbf-interface.md](rbf-interface.md) §5.1 和 [rbf-format.md](rbf-format.md) `[F-FRAMETAG-WIRE-ENCODING]`。
 
 #### ObjectKind（§3.2.5）
 
@@ -201,7 +201,7 @@ MVP 非目标（默认不做，后续版本再议）：
 | **引用** | 序列化引用内容 (Q2) | 只存 `ObjectId` |
 | **加载** | LoadObject 语义 (Q3) | workspace + HEAD（Lazy 创建，同 ObjectId 同实例） |
 | **提交** | Commit point (Q16) | `data` + `meta` 两文件；meta commit record 持久化完成 |
-| **格式** | data/meta framing (Q20) | 统一 RBF framing + Magic separator |
+| **格式** | data/meta framing (Q20) | 统一 RBF framing + Fence separator |
 | **版本链** | VersionIndex 落地 (Q19) | 扩展通用 Dict（`ulong` key + `Ptr64` value） |
 | **编码** | varint 规范 (Q22) | protobuf 风格 base-128，canonical 最短编码 |
 | **Dict** | key 类型 (Q23) | 仅 `ulong` key |
@@ -556,7 +556,7 @@ I/O 目标（MVP）：
 
 ##### DataRecord 类型判别
 
-> **FrameTag 是唯一判别器**：RBF Frame 的 `FrameTag`（Payload[0]）已经区分 Record 类型。
+> **FrameTag 是唯一判别器**：RBF Frame 的 `FrameTag`（FrameData 的第 1 字节）已经区分 Record 类型。
 > StateJournal 读取 Frame 后，根据 `FrameTag` 分流：`0x01` = ObjectVersionRecord。
 > 
 > **与 ObjectKind 的区分**：`FrameTag` 区分 Record 的顶层类型；`ObjectKind` 用于 ObjectVersionRecord 内部区分对象类型并选择 diff 解码器。
@@ -565,7 +565,7 @@ Ptr64 与对齐约束（MVP 固定）：
 
 - `Ptr64` 为 byte offset（u64 LE）。
 - **[F-PTR64-NULL-AND-ALIGNMENT]** `Ptr64 == 0` 表示 null；否则必须满足 `Ptr64 % 4 == 0`。
-- 所有可被 `Ptr64` 指向的 Record，`Ptr64` 值等于该 Record 的 `HeadLen` 字段起始位置（即紧随分隔符 Magic 之后），且满足 4B 对齐。
+- 所有可被 `Ptr64` 指向的 Record，`Ptr64` 值等于该 Record 的 `HeadLen` 字段起始位置（即紧随分隔符 Fence 之后），且满足 4B 对齐。
 
 data 文件内的“可被 meta 指向的关键 record”至少包括：
 
@@ -708,7 +708,7 @@ ObjectVersionRecord 的 data payload 布局：
 
 **空仓库边界**（MVP 固定）：
 
-- 若 meta 文件为空（仅包含 Magic 分隔符）或不存在有效的 `MetaCommitRecord`：
+- 若 meta 文件为空（仅包含 Fence 分隔符）或不存在有效的 `MetaCommitRecord`：
   - `EpochSeq = 0`（隐式空状态）
   - `NextObjectId = 16`（`ObjectId = 0` 保留给 VersionIndex；`1-15` 保留给未来 well-known 对象）
   - `RootObjectId = null`
@@ -1194,7 +1194,7 @@ ObjectDetachedException:
 > 本节描述 StateJournal 的 **Record 级恢复语义**。
 
 - 从 meta 文件尾部回扫，选择最后一个有效 `MetaCommitRecord` 作为 HEAD。
-- **[R-DATATAIL-TRUNCATE-GARBAGE]** 以该 record 的 `DataTail` 截断 data 文件尾部垃圾（必要时）。截断后文件仍以 Magic 分隔符结尾。
+- **[R-DATATAIL-TRUNCATE-GARBAGE]** 以该 record 的 `DataTail` 截断 data 文件尾部垃圾（必要时）。截断后文件仍以 Fence 分隔符结尾。
 - **[R-ALLOCATOR-SEED-FROM-HEAD]** Allocator 初始化 MUST 仅从 HEAD 的 `NextObjectId` 字段获取；MUST NOT 通过扫描 data 文件推断更大 ID。这保证了崩溃恢复的确定性和可测试性。
 - 若发现“meta 记录有效但指针不可解引用/越界”，按“撕裂提交”处理：继续回扫上一条 meta 记录。
 
@@ -1408,4 +1408,5 @@ class DurableDict : IDurableObject {
 |------|------|------|
 | v2 | 2025-12-21 | 初始 MVP 设计，P0 问题修复 |
 | v3 | 2025-12-22 | **Layer 分离**：将 RBF 帧格式提取到 [rbf-format.md](rbf-format.md)，本文档聚焦 StateJournal 语义层 |
+| v3.1 | 2025-12-23 | **术语对齐**：适配 RBF v0.10+ 变更（Payload -> FrameData, Magic -> Fence） |
 
