@@ -43,72 +43,72 @@
 
 ### 状态与差分
 
-| 术语 | 定义 | 别名/弃用 | 实现映射 |
-|------|------|----------|---------|
-| **Working State** | 当前进程内对外可读、可枚举的对象语义状态 | Alias: Current State（仅口语） | `_current` |
-| **Committed State** | 上次成功 Commit 后的对象语义状态快照 | Deprecated: Baseline（单独使用） | `_committed` |
-| **ChangeSet** | 自上次 Commit 以来的累积变更（逻辑概念，可为隐式） | 机制描述: Write-Tracking | 方案 C: `ComputeDiff()` + `_dirtyKeys` |
-| **DiffPayload** | ChangeSet 的二进制编码形式 | Deprecated: On-Disk Diff, state diff | ObjectVersionRecord 字段 |
+| 术语 | 定义 | 实现映射 |
+|------|------|---------|
+| **Working State** | 当前进程内对外可读、可枚举的对象语义状态 | `_current` |
+| **Committed State** | 上次成功 Commit 后的对象语义状态快照 | `_committed` |
+| **ChangeSet** | 自上次 Commit 以来的累积变更（逻辑概念，可为隐式） | 方案 C: `ComputeDiff()` + `_dirtyKeys` |
+| **DiffPayload** | ChangeSet 的二进制编码形式 | ObjectVersionRecord 字段 |
 
 ### 版本链
 
-| 术语 | 定义 | 别名/弃用 | 实现映射 |
-|------|------|----------|---------|
-| **Version Chain** | 由 PrevVersionPtr 串起的版本记录链 | — | `PrevVersionPtr` 字段 |
-| **Base Version** | `PrevVersionPtr=0` 的版本记录（上位术语），表示版本链起点 | — | `PrevVersionPtr=0` |
-| **Genesis Base** | 新建对象的首个版本（Base Version），表示"从空开始" | — | 首版本 `PrevVersionPtr=0` |
-| **Checkpoint Base** | 为截断回放成本而写入的全量状态版本（Base Version） | Deprecated: snapshot（版本链语境） | 周期性 `PrevVersionPtr=0` |
-| **from-empty diff** | Genesis Base 的 DiffPayload 语义：所有 key-value 都是 Upserts | — | 新建对象首版本的 payload |
-| **VersionIndex** | 每个 Epoch 的 ObjectId → ObjectVersionPtr 映射表。详见 §3.2.4 | Deprecated: EpochMap | `Dictionary<ObjectId, Ptr64>` |
+| 术语 | 定义 | 实现映射 |
+|------|------|---------|
+| **Version Chain** | 由 PrevVersionPtr 串起的版本记录链 | `PrevVersionPtr` 字段 |
+| **Base Version** | `PrevVersionPtr=0` 的版本记录（上位术语），表示版本链起点 | `PrevVersionPtr=0` |
+| **Genesis Base** | 新建对象的首个版本（Base Version），表示"从空开始" | 首版本 `PrevVersionPtr=0` |
+| **Checkpoint Base** | 为截断回放成本而写入的全量状态版本（Base Version） | 周期性 `PrevVersionPtr=0` |
+| **from-empty diff** | Genesis Base 的 DiffPayload 语义：所有 key-value 都是 Upserts | 新建对象首版本的 payload |
+| **VersionIndex** | 每个 Epoch 的 ObjectId → ObjectVersionPtr 映射表。详见 §3.2.4 | `Dictionary<ObjectId, Ptr64>` |
 
 ### 标识与指针
 
-| 术语 | 定义 | 别名/弃用 | 实现映射 |
-|------|------|----------|---------|
-| **ObjectId** | 对象的稳定身份。参见 **Well-Known ObjectId** 条目了解保留区规则 | — | `uint64` / `varuint` |
-| **Ptr64** / **Address64** | 8 字节文件偏移量。详见 [rbf-interface.md](rbf-interface.md) §2.2 | — | `ulong` |
-| **ObjectVersionPtr** | 指向对象版本记录的 Address64 | — | `Ptr64` 编码值 |
-| **EpochSeq** | Commit 的单调递增序号，用于判定 HEAD 新旧 | — | `varuint` |
+| 术语 | 定义 | 实现映射 |
+|------|------|---------|
+| **ObjectId** | 对象的稳定身份。参见 **Well-Known ObjectId** 条目了解保留区规则 | `uint64` / `varuint` |
+| **Ptr64** / **Address64** | 8 字节文件偏移量。详见 [rbf-interface.md](rbf-interface.md) §2.2 | `ulong` |
+| **ObjectVersionPtr** | 指向对象版本记录的 Address64 | `Ptr64` 编码值 |
+| **EpochSeq** | Commit 的单调递增序号，用于判定 HEAD 新旧 | `varuint` |
 
 ### 提交与 HEAD
 
-| 术语 | 定义 | 别名/弃用 | 实现映射 |
-|------|------|----------|---------|
-| **Commit** | Heap 级 API，对外可见的版本点（事务边界） | — | data → meta 刷盘 |
-| **Commit Point** | 对外可见的版本持久化边界；在 meta file 方案中，等于 `MetaCommitRecord` 成功落盘的时刻 | — | meta fsync 完成 |
-| **HEAD** | 最后一条有效 Commit Record | 禁止: head/Head 混用 | `MetaCommitRecord` |
-| **Commit Record** | 物理上承载 Commit 的元数据记录 | Deprecated: EpochRecord（MVP） | `MetaCommitRecord` |
+| 术语 | 定义 | 实现映射 |
+|------|------|---------|
+| **Commit** | Heap 级 API，对外可见的版本点（事务边界） | data → meta 刷盘 |
+| **Commit Point** | 对外可见的版本持久化边界；在 meta file 方案中，等于 `MetaCommitRecord` 成功落盘的时刻 | meta fsync 完成 |
+| **HEAD** | 最后一条有效 Commit Record | `MetaCommitRecord` |
+| **Commit Record** | 物理上承载 Commit 的元数据记录 | `MetaCommitRecord` |
 
 ### 载入与缓存
 
-| 术语 | 定义 | 别名/弃用 | 实现映射 |
-|------|------|----------|---------|
-| **Shallow Materialization** | Materialize 只构建当前对象的 Committed State，不递归加载引用对象。详见 §3.1.0 | — | §3.1.0 阶段定义、§3.1.3 引用与级联 |
-| **Identity Map** | ObjectId → instance 去重缓存，保证同一 ObjectId 在存活期间只对应一个内存对象实例 | Alias: Object Cache | `WeakReference` 映射 |
-| **Dirty Set** | Workspace 级别的 dirty 对象**强引用**集合，持有所有具有未提交修改的对象实例，防止 dirty 对象被 GC 回收导致修改丢失 | — | `Dictionary<ObjectId, IDurableObject>` |
-| **Dirty-Key Set** | 对象内部追踪已变更 key 的集合（用于 DurableDict 等容器对象） | — | `_dirtyKeys: ISet<ulong>` |
-| **LoadObject** | 按 HEAD 取版本指针并 materialize，返回可写对象实例。详见 §3.3.2 | Deprecated: Resolve（外部 API 总称；内部仍可用，标记 Internal Only） | identity map → lookup → materialize |
+| 术语 | 定义 | 实现映射 |
+|------|------|---------|
+| **Shallow Materialization** | Materialize 只构建当前对象的 Committed State，不递归加载引用对象。详见 §3.1.0 | §3.1.0 阶段定义、§3.1.3 引用与级联 |
+| **Identity Map** | ObjectId → instance 去重缓存，保证同一 ObjectId 在存活期间只对应一个内存对象实例 | `WeakReference` 映射 |
+| **Dirty Set** | Workspace 级别的 dirty 对象**强引用**集合，持有所有具有未提交修改的对象实例，防止 dirty 对象被 GC 回收导致修改丢失 | `Dictionary<ObjectId, IDurableObject>` |
+| **Dirty-Key Set** | 对象内部追踪已变更 key 的集合（用于 DurableDict 等容器对象） | `_dirtyKeys: ISet<ulong>` |
+| **LoadObject** | 按 HEAD 取版本指针并 materialize，返回可写对象实例。详见 §3.3.2 | identity map → lookup → materialize |
 
 ### 编码层
 
-| 术语 | 定义 | 别名/弃用 | 实现映射 |
-|------|------|----------|---------|
-| **FrameTag** | RBF Frame 的顶层类型标识（位于 HeadLen 之后），是 StateJournal Record 的**唯一判别器**。由 RBF 层定义并透传。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` | Deprecated: RecordKind（旧名称） | `FrameTag`（`uint`）|
-| **ObjectKind** | ObjectVersionRecord 内的对象类型标识，决定 diff 解码器 | — | `byte` 枚举 |
-| **ValueType** | Dict DiffPayload 中的值类型标识 | — | `byte` 低 4 bit |
+| 术语 | 定义 | 实现映射 |
+|------|------|---------|
+| **FrameTag** | RBF Frame 的顶层类型标识（位于 HeadLen 之后），是 StateJournal Record 的**唯一判别器**。由 RBF 层定义并透传。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` | `FrameTag`（`uint`）|
+| **ObjectKind** | ObjectVersionRecord 内的对象类型标识，决定 diff 解码器 | `byte` 枚举 |
+| **ValueType** | Dict DiffPayload 中的值类型标识 | `byte` 低 4 bit |
 
 ### 对象基类
 
-| 术语 | 定义 | 别名/弃用 | 实现映射 |
-|------|------|----------|----------|
-| **DurableObject** | 可持久化的对象基类/接口，所有可被 StateJournal 管理的对象必须实现 | — | `IDurableObject` 接口 |
+| 术语 | 定义 | 实现映射 |
+|------|------|----------|
+| **DurableObject** | 可持久化的对象基类/接口，所有可被 StateJournal 管理的对象必须实现 | `IDurableObject` 接口 |
 
 ### 对象级 API（二阶段提交）
 
-| 术语 | 定义 | 别名/弃用 | 实现映射 |
-|------|------|----------|----------|
-| **WritePendingDiff** | Prepare 阶段：计算 diff 并序列化到 writer；不更新内存状态 | Deprecated: FlushToWriter（合并版） | `DurableDict.WritePendingDiff(writer)` |
-| **OnCommitSucceeded** | Finalize 阶段：追平内存状态（`_committed = _current`，`_dirtyKeys.Clear()`） | — | `DurableDict.OnCommitSucceeded()` |
+| 术语 | 定义 | 实现映射 |
+|------|------|----------|
+| **WritePendingDiff** | Prepare 阶段：计算 diff 并序列化到 writer；不更新内存状态 | `DurableDict.WritePendingDiff(writer)` |
+| **OnCommitSucceeded** | Finalize 阶段：追平内存状态（`_committed = _current`，`_dirtyKeys.Clear()`） | `DurableDict.OnCommitSucceeded()` |
 
 ### Well-Known ObjectId（保留区）
 
@@ -586,7 +586,7 @@ MetaCommitRecord 的 payload 解析（MVP 固定）：
 > **前置条件**：RBF Scanner 已根据 `FrameTag == 0x00000002` 确定此为 MetaCommitRecord。
 
 - 依次读取 `EpochSeq/RootObjectId/VersionIndexPtr/DataTail/NextObjectId`。
-- 无需再校验 RecordKind（FrameTag 已经是唯一判别器）。
+- 无需额外类型判别（FrameTag 已经是唯一判别器）。
 
 #### 3.2.3 Commit Record（逻辑概念）
 
@@ -1356,4 +1356,5 @@ class DurableDict : IDurableObject {
 | v3 | 2025-12-22 | **Layer 分离**：将 RBF 帧格式提取到 [rbf-format.md](rbf-format.md)，本文档聚焦 StateJournal 语义层 |
 | v3.1 | 2025-12-23 | **术语对齐**：适配 RBF v0.10+ 变更（Payload -> FrameData, Magic -> Fence） |
 | v3.2 | 2025-12-24 | **墓碑机制变更**：适配 RBF v0.12 变更（Pad→FrameStatus；墓碑帧从 FrameTag=0 改为 FrameStatus=0xFF）；移除 FrameTag 保留值 |
+| v3.3 | 2025-12-24 | **术语表精简**：将弃用术语替换为正式术语后移除"别名/弃用"列；统一 RecordKind→FrameTag |
 
