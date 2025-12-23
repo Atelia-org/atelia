@@ -366,7 +366,7 @@ stateDiagram-v2
 #### 3.1.1 三个核心标识
 
 - **ObjectId (`uint64`)**：对象的稳定身份。文件中任何“对象引用”仅存储 `ObjectId`。
-- **ObjectVersionPtr (Address64)**：对象某个版本在文件中的位置指针（指向一条 ObjectVersionRecord）。MVP 中 `Ptr64` 为 **byte offset（u64 LE）**，要求 4B 对齐；`0` 表示 null。
+- **ObjectVersionPtr (Address64)**：对象某个版本在文件中的位置指针（指向一条 ObjectVersionRecord）。定义遵循 [rbf-interface.md](rbf-interface.md) 的 `Address64`。
 - **EpochSeq（`varuint`）**：epoch 的单调递增序号；在 meta file 方案下，它就是 MVP 的 epoch 身份与新旧判定依据。
 
 ObjectId 分配（第二批决策补充）：
@@ -563,9 +563,9 @@ I/O 目标（MVP）：
 
 Ptr64 与对齐约束（MVP 固定）：
 
-- `Ptr64` 为 byte offset（u64 LE）。
-- **[F-PTR64-NULL-AND-ALIGNMENT]** `Ptr64 == 0` 表示 null；否则必须满足 `Ptr64 % 4 == 0`。
-- 所有可被 `Ptr64` 指向的 Record，`Ptr64` 值等于该 Record 的 `HeadLen` 字段起始位置（即紧随分隔符 Fence 之后），且满足 4B 对齐。
+- `Ptr64` 对应 [rbf-interface.md](rbf-interface.md) 中的 `Address64`。
+- 对齐与 Null 定义遵循 `[F-ADDRESS64-ALIGNMENT]` 与 `[F-ADDRESS64-NULL]`。
+- 所有可被 `Ptr64` 指向的 Record，`Ptr64` 值等于该 Record 的 `HeadLen` 字段起始位置（即紧随分隔符 Fence 之后）。
 
 data 文件内的“可被 meta 指向的关键 record”至少包括：
 
@@ -1194,7 +1194,7 @@ ObjectDetachedException:
 > 本节描述 StateJournal 的 **Record 级恢复语义**。
 
 - 从 meta 文件尾部回扫，选择最后一个有效 `MetaCommitRecord` 作为 HEAD。
-- **[R-DATATAIL-TRUNCATE-GARBAGE]** 以该 record 的 `DataTail` 截断 data 文件尾部垃圾（必要时）。截断后文件仍以 Fence 分隔符结尾。
+- **[R-DATATAIL-TRUNCATE-GARBAGE]** 以该 record 的 `DataTail` 截断 data 文件尾部垃圾（必要时）。截断行为遵循 [rbf-format.md](rbf-format.md) 的 `[R-DATATAIL-TRUNCATE]` 条款。
 - **[R-ALLOCATOR-SEED-FROM-HEAD]** Allocator 初始化 MUST 仅从 HEAD 的 `NextObjectId` 字段获取；MUST NOT 通过扫描 data 文件推断更大 ID。这保证了崩溃恢复的确定性和可测试性。
 - 若发现“meta 记录有效但指针不可解引用/越界”，按“撕裂提交”处理：继续回扫上一条 meta 记录。
 
