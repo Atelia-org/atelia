@@ -99,7 +99,7 @@
 
 | 术语 | 定义 | 别名/弃用 | 实现映射 |
 |------|------|----------|---------|
-| **FrameTag** | RBF Frame 的顶层类型标识（FrameData 的第 1 字节），是 StateJournal Record 的**唯一判别器**。由 RBF 层定义并透传。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` | Deprecated: RecordKind（旧名称） | `FrameTag`（`byte`）|
+| **FrameTag** | RBF Frame 的顶层类型标识（位于 HeadLen 之后），是 StateJournal Record 的**唯一判别器**。由 RBF 层定义并透传。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` | Deprecated: RecordKind（旧名称） | `FrameTag`（`uint`）|
 | **ObjectKind** | ObjectVersionRecord 内的对象类型标识，决定 diff 解码器 | — | `byte` 枚举 |
 | **ValueType** | Dict DiffPayload 中的值类型标识 | — | `byte` 低 4 bit |
 
@@ -145,11 +145,11 @@
 
 | 值 | 名称 | 说明 |
 |------|------|------|
-| `0x00` | Padding | RBF 保留，可丢弃帧（上层 MUST 跳过）|
-| `0x01` | ObjectVersionRecord | 对象版本记录（data payload）|
-| `0x02` | MetaCommitRecord | 提交元数据记录（meta payload）|
+| `0x00000000` | Padding | RBF 保留，可丢弃帧（上层 MUST 跳过）|
+| `0x00000001` | ObjectVersionRecord | 对象版本记录（data payload）|
+| `0x00000002` | MetaCommitRecord | 提交元数据记录（meta payload）|
 
-> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（FrameData 的第 1 字节）区分 Record 类型。详见 [rbf-interface.md](rbf-interface.md) §5.1 和 [rbf-format.md](rbf-format.md) `[F-FRAMETAG-WIRE-ENCODING]`。
+> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（独立 4B 字段）区分 Record 类型。详见 [rbf-interface.md](rbf-interface.md) §5.1 和 [rbf-format.md](rbf-format.md) `[F-FRAMETAG-WIRE-ENCODING]`。
 
 #### ObjectKind（§3.2.5）
 
@@ -556,8 +556,8 @@ I/O 目标（MVP）：
 
 ##### DataRecord 类型判别
 
-> **FrameTag 是唯一判别器**：RBF Frame 的 `FrameTag`（FrameData 的第 1 字节）已经区分 Record 类型。
-> StateJournal 读取 Frame 后，根据 `FrameTag` 分流：`0x01` = ObjectVersionRecord。
+> **FrameTag 是唯一判别器**：RBF Frame 的 `FrameTag`（独立 4B 字段）已经区分 Record 类型。
+> StateJournal 读取 Frame 后，根据 `FrameTag` 分流：`0x00000001` = ObjectVersionRecord。
 > 
 > **与 ObjectKind 的区分**：`FrameTag` 区分 Record 的顶层类型；`ObjectKind` 用于 ObjectVersionRecord 内部区分对象类型并选择 diff 解码器。
 
@@ -580,7 +580,7 @@ meta file 是 append-only 的 commit log：每次 `Commit(...)` 都追加写入�
 
 ##### MetaCommitRecord Payload
 
-> **FrameTag = 0x02** 表示 MetaCommitRecord（参见枚举值速查表）。
+> **FrameTag = 0x00000002** 表示 MetaCommitRecord（参见枚举值速查表）。
 > Payload 从业务字段开始，不再包含顶层类型字节。
 
 meta payload 最小字段（**不含 FrameTag，FrameTag 由 RBF 层管理**）：
@@ -614,7 +614,7 @@ meta payload 最小字段（**不含 FrameTag，FrameTag 由 RBF 层管理**）�
 
 MetaCommitRecord 的 payload 解析（MVP 固定）：
 
-> **前置条件**：RBF Scanner 已根据 `FrameTag == 0x02` 确定此为 MetaCommitRecord。
+> **前置条件**：RBF Scanner 已根据 `FrameTag == 0x00000002` 确定此为 MetaCommitRecord。
 
 - 依次读取 `EpochSeq/RootObjectId/VersionIndexPtr/DataTail/NextObjectId`。
 - 无需再校验 RecordKind（FrameTag 已经是唯一判别器）。
@@ -676,7 +676,7 @@ MVP 约束与默认策略（第二批决策补充）：
 
 ObjectVersionRecord 的 data payload 布局：
 
-> **FrameTag = 0x01** 表示 ObjectVersionRecord（参见枚举值速查表）。
+> **FrameTag = 0x00000001** 表示 ObjectVersionRecord（参见枚举值速查表）。
 > Payload 从业务字段开始，不再包含顶层类型字节。
 
 - `PrevVersionPtr`：`u64 LE`（Ptr64：byte offset；`0=null`，且 4B 对齐）
