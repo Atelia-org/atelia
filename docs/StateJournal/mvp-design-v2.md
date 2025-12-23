@@ -26,13 +26,7 @@
 >
 > 目标：围绕"稳定 ObjectId + 变化 ObjectVersion + VersionIndex"的路线，形成可开工的 MVP 规格。
 >
-> 当前已达成共识（来自对话）：
-> - API 风格：in-place 体验（用户写起来像普通可变对象）。
-> - 引用语义：引用指向 **ObjectId**（身份），不直接指向具体 version。
-> - 提交：生成新 epoch；通过 VersionIndex 把"哪些 ObjectId 指向了新版本"记录下来。
-> - 反序列化后的 Committed State：**全量 materialize（但不级联 materialize 引用对象）**。
-> - 写入跟踪：每对象具有 **ChangeSet 语义**（可为隐式 Write-Tracking，用于产生增量写入）。
-> - Dict 增量：Working State（`_current`）与序列化形态都选 **DiffPayload**（为了查询快、实现简单）。
+> 设计要点：In-place API 体验、引用指向 ObjectId（非 version）、Shallow Materialization、ChangeSet 增量跟踪。详见术语表。
 
 ---
 
@@ -65,7 +59,7 @@
 | **Genesis Base** | 新建对象的首个版本（Base Version），表示"从空开始" | — | 首版本 `PrevVersionPtr=0` |
 | **Checkpoint Base** | 为截断回放成本而写入的全量状态版本（Base Version） | Deprecated: snapshot（版本链语境） | 周期性 `PrevVersionPtr=0` |
 | **from-empty diff** | Genesis Base 的 DiffPayload 语义：所有 key-value 都是 Upserts | — | 新建对象首版本的 payload |
-| **VersionIndex** | 每个 Epoch 的 ObjectId → ObjectVersionPtr 映射表 | Deprecated: EpochMap | `Dictionary<ObjectId, Ptr64>` |
+| **VersionIndex** | 每个 Epoch 的 ObjectId → ObjectVersionPtr 映射表。详见 §3.2.4 | Deprecated: EpochMap | `Dictionary<ObjectId, Ptr64>` |
 
 ### 标识与指针
 
@@ -89,11 +83,11 @@
 
 | 术语 | 定义 | 别名/弃用 | 实现映射 |
 |------|------|----------|---------|
-| **Shallow Materialization** | Materialize 只构建"当前对象的 Committed State"，引用只保留 `ObjectId`，不递归创建/加载引用对象。这是 StateJournal 的默认加载语义（MVP 固定），避免隐式 IO | — | 参见 §3.1.0 阶段定义、§3.1.3 引用与级联 |
+| **Shallow Materialization** | Materialize 只构建当前对象的 Committed State，不递归加载引用对象。详见 §3.1.0 | — | §3.1.0 阶段定义、§3.1.3 引用与级联 |
 | **Identity Map** | ObjectId → instance 去重缓存，保证同一 ObjectId 在存活期间只对应一个内存对象实例 | Alias: Object Cache | `WeakReference` 映射 |
 | **Dirty Set** | Workspace 级别的 dirty 对象**强引用**集合，持有所有具有未提交修改的对象实例，防止 dirty 对象被 GC 回收导致修改丢失 | — | `Dictionary<ObjectId, IDurableObject>` |
 | **Dirty-Key Set** | 对象内部追踪已变更 key 的集合（用于 DurableDict 等容器对象） | — | `_dirtyKeys: ISet<ulong>` |
-| **LoadObject** | 按 HEAD 取版本指针并 materialize，返回可写对象实例 | Deprecated: Resolve（作为外部 API 总称；内部仍可用 Resolve 描述"解析版本指针"子步骤，标记为 Internal Only） | identity map → lookup → materialize |
+| **LoadObject** | 按 HEAD 取版本指针并 materialize，返回可写对象实例。详见 §3.3.2 | Deprecated: Resolve（外部 API 总称；内部仍可用，标记 Internal Only） | identity map → lookup → materialize |
 
 ### 编码层
 
@@ -191,22 +185,9 @@ MVP 非目标（默认不做，后续版本再议）：
 
 ---
 
-## 2. 设计决策（Chosen Decisions Index）
+## 2. 设计决策 (Chosen Decisions Index)
 
-> **完整决策记录**：决策选项（单选题）与决策表已移至 [decisions/mvp-v2-decisions.md](decisions/mvp-v2-decisions.md)，以保持规范文档简洁。
-> 
-> 以下为关键决策的摘要索引：
-
-| 分类 | 关键决策 | 选择 |
-|------|----------|------|
-| **标识** | ObjectId 类型 (Q1) | `uint64` |
-| **引用** | 序列化引用内容 (Q2) | 只存 `ObjectId` |
-| **加载** | LoadObject 语义 (Q3) | workspace + HEAD（Lazy 创建，同 ObjectId 同实例） |
-| **提交** | Commit point (Q16) | `data` + `meta` 两文件；meta commit record 持久化完成 |
-| **格式** | data/meta framing (Q20) | 统一 RBF framing + Fence separator |
-| **版本链** | VersionIndex 落地 (Q19) | 扩展通用 Dict（`ulong` key + `Ptr64` value） |
-| **编码** | varint 规范 (Q22) | protobuf 风格 base-128，canonical 最短编码 |
-| **Dict** | key 类型 (Q23) | 仅 `ulong` key |
+> **完整决策记录**：决策选项（单选题）与决策表已移至 [decisions/mvp-v2-decisions.md](decisions/mvp-v2-decisions.md)。本文档落实了其中的所有关键决策。
 
 ---
 
@@ -240,10 +221,6 @@ MVP 非目标（默认不做，后续版本再议）：
 	- MVP 对外只提供带 ChangeSet 的可变对象视图；未来如需只读快照视图，可在不改变磁盘格式的前提下引入无 ChangeSet 的只读对象。
 	- 说明：ChangeSet 可为隐式（如方案 C 的 Write-Tracking 机制），不要求显式的数据结构。
 
-> **Identity Map**：进程内的 `ObjectId → WeakReference<DurableObject>` 映射，用于保证同一 ObjectId 在存活期间只对应一个内存对象实例。
-
-> **Dirty Set**：Workspace 级别的 `Dictionary<ObjectId, IDurableObject>`（**强引用**），持有所有具有未提交修改的对象实例。Commit 时遍历此集合写入新版本。
-
 #### 3.1.0.1 对象状态管理（Object Lifecycle）
 
 为明确 Identity Map 与 Dirty Set 的生命周期，本节定义对象的状态转换规则（MVP 固定）：
@@ -252,18 +229,25 @@ MVP 非目标（默认不做，后续版本再议）：
 - **Clean**：对象已加载，`HasChanges == false`，仅存在于 Identity Map（WeakReference）
 - **Dirty**：对象有未提交修改，`HasChanges == true`，同时存在于 Identity Map 和 Dirty Set
 
-**状态转换规则**：
+**状态转换规则**（完整）：
 
-| 事件 | 转换 | Identity Map | Dirty Set |
-|------|------|--------------|-----------|
-| `LoadObject` 首次加载 | → Clean | 加入（WeakRef） | 不加入 |
-| 首次写入（Set/Remove） | Clean → Dirty | 保持 | 加入（强引用） |
-| `Commit` 成功 | Dirty → Clean | 保持 | 移除 |
-| `DiscardChanges` | Dirty → Clean | 保持 | 移除 |
-| GC 回收（仅 Clean 对象可能） | Clean → 移除 | 自动清理（WeakRef 失效） | N/A |
+| 事件 | 转换 | Identity Map | Dirty Set | 备注 |
+|------|------|--------------|-----------|------|
+| `CreateObject<T>()` 新建 | → TransientDirty | 加入（WeakRef） | 加入（强引用） | 新建对象从未有 Committed 版本 |
+| `LoadObject` 首次加载 | → Clean | 加入（WeakRef） | 不加入 | 从磁盘加载已提交对象 |
+| 首次写入（Set/Remove） | Clean → PersistentDirty | 保持 | 加入（强引用） | 修改已提交对象 |
+| 继续写入 | PersistentDirty → PersistentDirty | 保持 | 保持 | 状态不变 |
+| `Commit` 成功 | *Dirty → Clean | 保持 | 移除 | TransientDirty 或 PersistentDirty 均变为 Clean |
+| `DiscardChanges`（PersistentDirty） | PersistentDirty → Clean | 保持 | 移除 | 重置为 `_committed` 状态 |
+| `DiscardChanges`（TransientDirty） | TransientDirty → Detached | 移除 | 移除 | 参见 [S-TRANSIENT-DISCARD-DETACH] |
+| GC 回收 | Clean → 移除 | 自动清理（WeakRef 失效） | N/A | 仅 Clean 对象可能被 GC |
+| Commit 前 Crash（TransientDirty） | 对象丢失 | N/A | N/A | 符合预期——从未 Commit |
+| Commit 前 Crash（PersistentDirty） | 回滚到 Committed | — | — | 自动恢复到上次提交状态 |
 
-> **脚注**：表中未列出的事件（如 Commit 失败）不引起状态转换——对象保持原状态。
-> Transient Dirty 对象的 DiscardChanges 行为参见 [S-TRANSIENT-DISCARD-DETACH]。
+> **脚注**：
+> - 表中未列出的事件（如 Commit 失败）不引起状态转换——对象保持原状态
+> - `*Dirty` 表示 TransientDirty 或 PersistentDirty
+> - Detached 是终态，后续访问抛 `ObjectDetachedException`
 
 **对象状态枚举（建议 API）**：
 
@@ -273,9 +257,9 @@ MVP 非目标（默认不做，后续版本再议）：
 public enum DurableObjectState
 {
     Clean,            // 已加载，无未提交修改
-    PersistentDirty,  // 有未提交修改，已有 Committed 版本
-    TransientDirty,   // 新建对象，尚未有 Committed 版本
-    Detached          // 已分离（终态）
+    PersistentDirty,  // 有未提交修改，已有 Committed 版本（Crash 后回滚到 Committed）
+    TransientDirty,   // 新建对象，尚未有 Committed 版本（Crash 后对象丢失）
+    Detached          // 已分离（终态，访问抛 ObjectDetachedException）
 }
 
 // IDurableObject 属性
@@ -293,23 +277,7 @@ DurableObjectState State { get; }
 - **[S-DIRTYSET-OBJECT-PINNING]** Dirty Set MUST 持有对象实例的强引用，直到该对象的变更被 Commit Point 确认成功或被显式 `DiscardChanges`
 - **[S-IDENTITY-MAP-KEY-COHERENCE]** Identity Map 与 Dirty Set 的 key 必须等于对象自身 `ObjectId`
 - **[S-DIRTY-OBJECT-GC-PROHIBIT]** Dirty 对象不得被 GC 回收（由 Dirty Set 的强引用保证）
-
-**新建对象的状态转换（MVP 固定）**：
-
-新建对象（尚未 Commit）与从磁盘加载的对象具有不同的初始状态：
-
-| 事件 | 转换 | Identity Map | Dirty Set |
-|------|------|--------------|-----------|
-| `CreateObject<T>()` 新建对象 | → Dirty（Transient） | 加入（WeakRef） | 加入（强引用） |
-| 新建对象首次 Commit 成功 | Transient Dirty → Clean | 保持 | 移除 |
-| 新建对象 Commit 前 Crash | 对象丢失（符合预期） | N/A | N/A |
-
-**Transient Dirty vs Persistent Dirty**：
-
-| 状态 | 定义 | Crash 行为 |
-|------|------|------------|
-| **Transient Dirty** | 新建对象，尚未有任何 Committed 版本 | Crash 后对象丢失（符合预期，因为从未 Commit） |
-| **Persistent Dirty** | 已有 Committed 版本，Working State 有未提交修改 | Crash 后回滚到上次 Committed State |
+- **[S-NEW-OBJECT-AUTO-DIRTY]** 新建对象 MUST 在创建时立即加入 Dirty Set（强引用），以防止在首次 Commit 前被 GC 回收
 
 **状态机可视化**：
 
@@ -558,10 +526,9 @@ I/O 目标（MVP）：
 
 ##### DataRecord 类型判别
 
-> **FrameTag 是唯一判别器**：RBF Frame 的 `FrameTag`（独立 4B 字段）已经区分 Record 类型。
-> StateJournal 读取 Frame 后，根据 `FrameTag` 分流：`0x00000001` = ObjectVersionRecord。
+> FrameTag 与 ObjectKind 的定义及取值详见**枚举值速查表**。
 > 
-> **与 ObjectKind 的区分**：`FrameTag` 区分 Record 的顶层类型；`ObjectKind` 用于 ObjectVersionRecord 内部区分对象类型并选择 diff 解码器。
+> **Data 文件特有说明**：StateJournal 读取 Frame 后，根据 `FrameTag` 分流处理。`FrameTag` 区分 Record 的顶层类型；`ObjectKind` 用于 ObjectVersionRecord 内部选择 diff 解码器。
 
 Ptr64 与对齐约束（MVP 固定）：
 
@@ -670,10 +637,8 @@ MVP 约束与默认策略（第二批决策补充）：
 每个对象的版本以链式版本组织（Q10）：
 
 - `PrevVersionPtr`：Ptr64（该 ObjectId 的上一个版本；若为 0 表示 **Base Version**（Genesis Base 或 Checkpoint Base））
-- `ObjectKind`：`byte`（Q21=A；用于选择 `DiffPayload` 解码器与版本控制）
-  - **[F-OBJECTKIND-STANDARD-RANGE]** `0-127`：标准类型（MVP 仅定义 `Dict=1`）
-  - **[F-OBJECTKIND-VARIANT-RANGE]** `128-255`：保留给未来版本变体（如 `DictV2`）
-  - **[F-UNKNOWN-OBJECTKIND-REJECT]** 遇到未知 Kind 必须抛出异常（Fail-fast）
+- `ObjectKind`：`byte`（Q21=A；用于选择 `DiffPayload` 解码器）。取值与分段规则详见**枚举值速查表**。
+  - **[F-UNKNOWN-OBJECTKIND-REJECT]** 遇到未知 Kind 必须抛出异常（Fail-fast）。
 - `DiffPayload`：依对象类型而定（本 MVP 至少要求：`Dict` 与 `VersionIndex` 可工作）
 
 ObjectVersionRecord 的 data payload 布局：
@@ -712,7 +677,7 @@ ObjectVersionRecord 的 data payload 布局：
 
 - 若 meta 文件为空（仅包含 Fence 分隔符）或不存在有效的 `MetaCommitRecord`：
   - `EpochSeq = 0`（隐式空状态）
-  - `NextObjectId = 16`（`ObjectId = 0` 保留给 VersionIndex；`1-15` 保留给未来 well-known 对象）
+  - `NextObjectId = 16`（参见 **[S-OBJECTID-RESERVED-RANGE]**）
   - `RootObjectId = null`
   - `VersionIndexPtr = null`（无 VersionIndex）
 - 此时 `LoadObject(id)` 对任意 id 都应返回"对象不存在"。
@@ -885,13 +850,7 @@ Key 还原规则（MVP 固定）：
 	- `Key[0] = FirstKey`
 	- `Key[i] = Key[i-1] + KeyDeltaFromPrev(i)`（对 `i >= 1`）
 
-ValueType（低 4 bit，MVP 固定）：
-
-- `Val_Null = 0x0`
-- `Val_Tombstone = 0x1`
-- `Val_ObjRef = 0x2`
-- `Val_VarInt = 0x3`
-- `Val_Ptr64 = 0x4`
+ValueType（低 4 bit，MVP 固定）：取值定义详见**枚举值速查表**。
 
 > **MVP 范围说明**：MVP 仅实现以上 5 种 ValueType。`float`/`double`/`bool` 等类型将在后续版本添加对应的 ValueType 枚举值。
 
@@ -962,9 +921,7 @@ VersionIndex 与 Dict 的关系（落地说明）：
 
 ##### `_dirtyKeys` 不变式（MUST）
 
-9. **[S-DIRTYKEYS-TRACKING-EXACT]** **_dirtyKeys 精确性**：`_dirtyKeys` 必须精确追踪所有与 `_committed` 存在语义差异的 key。
-   - 对任意 key k：`k ∈ _dirtyKeys` ⟺ `CurrentValue(k) ≠ CommittedValue(k)`
-   - 其中 `CurrentValue(k)` 指 `_current.TryGetValue(k)` 的结果（含不存在），`CommittedValue(k)` 同理。
+9. **[S-DIRTYKEYS-TRACKING-EXACT]** **_dirtyKeys 精确性**：`_dirtyKeys` MUST 精确追踪变更。详细维护规则见 **§3.4.2 `_dirtyKeys` 维护规则**。
 
 2. **Clone 策略**：MVP 使用深拷贝实现 `_committed = Clone(_current)`；未来可演进为 Copy-On-Write 或持久化/不可变共享结构。
 
@@ -1000,7 +957,7 @@ void DiscardChanges();                         // Detached 时 no-op（幂等）
 - **Remove 而非 Delete**：遵循 C#/.NET 集合命名惯例（`Dictionary<K,V>.Remove`）
 - **Detached 行为**：语义数据访问抛出 `ObjectDetachedException`；元信息访问（`State`, `Id`）不抛异常（参见 [S-DETACHED-ACCESS-TIERING]）
 
-#### 3.4.4 DurableDict 伪代码骨架
+#### 3.4.4 DurableDict 二阶段提交设计
 
 > 完整伪代码参见 [Appendix A: Reference Implementation Notes](#appendix-a-reference-implementation-notes)。
 > 
@@ -1086,17 +1043,15 @@ CommitAll 遵循二阶段提交协议，失败时保证以下语义：
 | Finalize 阶段（OnCommitSucceeded）| 逐步追平 | 已确立 | N/A（不应失败） |
 
 **关键保证（MUST）**：
-- **[S-HEAP-COMMIT-FAIL-INTACT]** **Commit 失败不改内存**：若 CommitAll 返回失败（或抛出异常），所有对象的 Working State、Committed State、HasChanges 状态 MUST 保持调用前不变。
+- **[S-HEAP-COMMIT-FAIL-INTACT]** **Commit 失败不改内存**：遵循 **[S-COMMIT-FAIL-MEMORY-INTACT]**（§3.4.3），若 CommitAll 返回失败，所有对象的内存状态 MUST 保持调用前不变。
 - **[S-COMMIT-FAIL-RETRYABLE]** **可重试**：调用方可以在失败后再次调用 CommitAll，不需要手动清理状态。
-- **原子性边界**：对外可见的 Commit Point 是 meta commit record 落盘成功的时刻；在此之前的任何崩溃都不会导致"部分提交"。
+- **原子性边界**：遵循 **[R-COMMIT-POINT-META-FSYNC]**。对外可见的 Commit Point 是 meta commit record 落盘成功的时刻。
 
 **规范约束（二阶段 finalize）**：
 
-> **对象级写入不得改变 Committed/Dirty 状态；只有 heap 级 commit 成功才能 finalize。**
-
-- 步骤 2 中对象的 `WritePendingDiff()` 仅写入 `ObjectVersionRecord`，不更新对象的内存状态（`_committed`/`_dirtyKeys`）。
-- 步骤 5 的 finalize（调用对象的 `OnCommitSucceeded()`）**必须在步骤 4 的 meta 落盘成功后**才能执行。
-- 这与 3.4.4 的二阶段设计（`WritePendingDiff` → `OnCommitSucceeded`）语义一致，保证崩溃时不会出现"对象认为已提交但 commit 实际未确立"的状态。
+> 二阶段提交的完整设计（流程图、崩溃安全性保证）详见 **§3.4.4 DurableDict 二阶段提交设计**。
+> 
+> **关键约束**：对象级 `WritePendingDiff()` 不得更新内存状态；`OnCommitSucceeded()` 必须在 meta 落盘成功后才能执行。
 
 
 #### 3.4.6 首次 Commit 与新建对象
@@ -1273,24 +1228,16 @@ class DurableDict : IDurableObject {
         return removed;
     }
     
-    /// <summary>
-    /// 维护 _dirtyKeys：比较 current 与 committed 的值，决定 Add 还是 Remove。
-    /// </summary>
+    /// <summary>维护 _dirtyKeys，规则见 §3.4.2。</summary>
     private void UpdateDirtyKey(ulong key) {
         var hasCurrentValue = _current.TryGetValue(key, out var currentValue);
         var hasCommittedValue = _committed.TryGetValue(key, out var committedValue);
         
-        bool isDifferent;
-        if (hasCurrentValue != hasCommittedValue) {
-            // 一边存在一边不存在 => 不同
-            isDifferent = true;
-        } else if (!hasCurrentValue) {
-            // 两边都不存在 => 相同
-            isDifferent = false;
-        } else {
-            // 两边都存在，比较值
-            isDifferent = !Equals(currentValue, committedValue);
-        }
+        bool isDifferent = (hasCurrentValue, hasCommittedValue) switch {
+            (true, true) => !Equals(currentValue, committedValue),
+            (false, false) => false,
+            _ => true
+        };
         
         if (isDifferent) {
             _dirtyKeys.Add(key);
@@ -1373,10 +1320,7 @@ class DurableDict : IDurableObject {
 
 #### A.1.1 详细实现说明
 
-1. **二阶段分离的崩溃安全性**：
-   - `WritePendingDiff` 只写数据，不更新 `_committed`/`_dirtyKeys`。即使 data file 写入成功，若后续 meta commit 失败/崩溃，对象内存状态仍为 dirty，下次 commit 会重新写入。
-   - `OnCommitSucceeded` 只有在 Heap 确认 meta commit record 落盘后才被调用，保证不会出现"假提交"（数据写了但 commit point 未确立）。
-   - 若 `WritePendingDiff` 抛出异常，内存状态保持不变，允许调用方 retry。
+1. **二阶段分离的崩溃安全性**：遵循 **§3.4.4** 的二阶段提交设计，保证崩溃时不会出现"假提交"。
 
 2. **值相等性判断**：`ComputeDiff` 和 `UpdateDirtyKey` 依赖值的 `Equals` 方法。若 `TValue` 是引用类型且未正确实现 `Equals`，可能产生冗余 Set 记录或 dirty key 判断错误。建议文档要求 `TValue` 实现 `IEquatable<TValue>`，或 MVP 使用 `ReferenceEquals`。
 
