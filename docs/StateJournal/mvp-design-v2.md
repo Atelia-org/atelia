@@ -15,7 +15,7 @@
 - [rbf-format.md](rbf-format.md) — RBF 二进制格式规范（可选深入）
 
 **不包含**（已提取到 rbf-format.md）：
-- Frame 二进制格式（HeadLen/TailLen/Pad/CRC32C/Magic）
+- Frame 二进制格式（HeadLen/TailLen/FrameStatus/CRC32C/Fence）
 - Genesis Header 结构
 - 逆向扫描算法
 - Resync 机制
@@ -145,11 +145,13 @@
 
 | 值 | 名称 | 说明 |
 |------|------|------|
-| `0x00000000` | Padding | RBF 保留，可丢弃帧（上层 MUST 跳过）|
 | `0x00000001` | ObjectVersionRecord | 对象版本记录（data payload）|
 | `0x00000002` | MetaCommitRecord | 提交元数据记录（meta payload）|
+| 其他值 | — | 未来扩展 |
 
 > **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（独立 4B 字段）区分 Record 类型。详见 [rbf-interface.md](rbf-interface.md) §5.1 和 [rbf-format.md](rbf-format.md) `[F-FRAMETAG-WIRE-ENCODING]`。
+> 
+> **注意**：FrameTag 不再有 RBF 保留值。墓碑帧通过 `FrameStatus.Tombstone` 标识，与 FrameTag 无关。StateJournal MUST 先检查 `FrameStatus`，再解释 `FrameTag`（参见 [rbf-interface.md](rbf-interface.md) `[S-STATEJOURNAL-TOMBSTONE-SKIP]`）。
 
 #### ObjectKind（§3.2.5）
 
@@ -1409,4 +1411,5 @@ class DurableDict : IDurableObject {
 | v2 | 2025-12-21 | 初始 MVP 设计，P0 问题修复 |
 | v3 | 2025-12-22 | **Layer 分离**：将 RBF 帧格式提取到 [rbf-format.md](rbf-format.md)，本文档聚焦 StateJournal 语义层 |
 | v3.1 | 2025-12-23 | **术语对齐**：适配 RBF v0.10+ 变更（Payload -> FrameData, Magic -> Fence） |
+| v3.2 | 2025-12-24 | **墓碑机制变更**：适配 RBF v0.12 变更（Pad→FrameStatus；墓碑帧从 FrameTag=0 改为 FrameStatus=0xFF）；移除 FrameTag 保留值 |
 
