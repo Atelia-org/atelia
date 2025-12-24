@@ -47,7 +47,7 @@
 |------|------|---------|
 | **Working State** | 当前进程内对外可读、可枚举的对象语义状态 | `_current` |
 | **Committed State** | 上次成功 Commit 后的对象语义状态快照 | `_committed` |
-| **ChangeSet** | 自上次 Commit 以来的累积变更（逻辑概念，可为隐式） | 方案 C: `ComputeDiff()` + `_dirtyKeys` |
+| **ChangeSet** | 自上次 Commit 以来的累积变更（逻辑概念，可为隐式） | 双字典策略: `ComputeDiff()` + `_dirtyKeys` |
 | **DiffPayload** | ChangeSet 的二进制编码形式 | ObjectVersionRecord 字段 |
 
 ### 版本链
@@ -261,7 +261,7 @@ MVP 非目标（默认不做，后续版本再议）：
 4) **ChangeSet（写入跟踪 / Write-Tracking）**：为 in-place 可写 API 记录未提交的变更。
 	- Committed State（materialize 的结果）作为读取基底；ChangeSet 只记录"自上次 commit 后的修改"。
 	- MVP 对外只提供带 ChangeSet 的可变对象视图；未来如需只读快照视图，可在不改变磁盘格式的前提下引入无 ChangeSet 的只读对象。
-	- 说明：ChangeSet 可为隐式（如方案 C 的 Write-Tracking 机制），不要求显式的数据结构。
+	- 说明：ChangeSet 可为隐式（如双字典策略的 Write-Tracking 机制），不要求显式的数据结构。
 
 #### 3.1.0.1 对象状态管理（Object Lifecycle）
 
@@ -517,10 +517,10 @@ MVP 固定（Q15）：
 - 除 `Ptr64/Len/CRC32C` 等"硬定长字段"外，其余整数均可采用 varint。
 - `ObjectId`：varint。
 - `Count/PairCount` 等计数：varint。
-- `DurableDict` 的 key（Q23=A）：`ulong`，采用 `varuint`。
+- **[S-DURABLEDICT-KEY-ULONG-ONLY]** `DurableDict` 的 key：`ulong`，采用 `varuint`。
 
 
-#### 3.2.0.1 varint 的精确定义（Q22=A）
+#### 3.2.0.1 varint 的精确定义
 
 为避免实现分歧，本 MVP 固化 varint 语义为"protobuf 风格 base-128 varint"（ULEB128 等价），并要求 **[F-VARINT-CANONICAL-ENCODING]** **canonical 最短编码**：
 
@@ -653,7 +653,7 @@ Commit Record（逻辑上）至少包含：
 
 VersionIndex 是一个 durable object（Q7），它自身也以版本链方式存储。
 
-落地选择（Q19=B）：
+**[F-VERSIONINDEX-REUSE-DURABLEDICT]** VersionIndex 落地选择：
 
 - VersionIndex 复用 `DurableDict`（key 为 `ObjectId` as `ulong`，value 使用 `Val_Ptr64` 编码 `ObjectVersionPtr`）。
 - 因此，VersionIndex 的版本记录本质上是 `ObjectVersionRecord(ObjectKind=Dict)`，其 `DiffPayload` 采用 3.4.2 的 dict diff 编码。
@@ -784,15 +784,15 @@ ObjectVersionRecord 的 data payload 布局：
 1. **Working State（工作状态 / Current State）**
    - 定义：对外可读/可枚举的语义状态视图。
    - 约束：tombstone 不得作为值出现；Delete 的语义是"key 不存在"。
-   - 在方案 C（双字典）中，体现为 `_current` 字典的内容。
+   - 在双字典策略中，体现为 `_current` 字典的内容。
 
 2. **Committed State（已提交状态）**
    - 定义：上次 Commit 成功时的状态快照；也是 Materialize（合成状态）的输出。
-   - 在方案 C（双字典）中，体现为 `_committed` 字典的内容。
+   - 在双字典策略中，体现为 `_committed` 字典的内容。
 
 3. **ChangeSet（变更跟踪 / Write-Tracking）**
    - 定义：用于记录"自上次 Commit 以来的变更"的内部结构或算法。
-   - 在方案 C 中，ChangeSet 退化为"由 `_committed` 与 `_current` 两个状态做差得到"的隐式 diff 算法，不需要显式的数据结构。
+   - 在双字典策略中，ChangeSet 退化为"由 `_committed` 与 `_current` 两个状态做差得到"的隐式 diff 算法，不需要显式的数据结构。
    - 其内部可以用任意表示法记录 Delete（例如 tombstone sentinel、Deleted 集合、或 tri-state enum），但这些表示法不得泄漏到 Working State 的可枚举视图。
 
 4. **DiffPayload（序列化差分）**
@@ -805,9 +805,9 @@ ObjectVersionRecord 的 data payload 布局：
 
 本 MVP 采用单表 `Upserts(key -> value)`，删除通过 tombstone value 表达（Q11B）。
 
-##### DurableDict 实现方案：双字典（方案 C）
+##### DurableDict 实现方案：双字典策略
 
-依据畅谈会决策（2025-12-19），MVP 采用 **方案 C（双字典）**：
+依据畅谈会决策（2025-12-19），MVP 采用 **双字典策略**：
 
 - `_committed`：上次 Commit 成功时的状态快照。
 - `_current`：当前的完整工作状态（Working State）。
@@ -1231,7 +1231,7 @@ v2 的 commit 路径大量涉及“先写 payload、后回填长度/CRC32C/指�
 
 ### A.1 DurableDict 伪代码骨架（二阶段提交）
 
-以下伪代码展示方案 C（双字典）的推荐实现结构。
+以下伪代码展示双字典策略的推荐实现结构。
 
 > ⚠️ **注意**：本代码块为**伪代码（PSEUDO-CODE）**，仅用于表达设计意图，不可直接编译。实际实现应参考规范性条款（§3.4.3 不变式）。
 
@@ -1240,7 +1240,7 @@ v2 的 commit 路径大量涉及“先写 payload、后回填长度/CRC32C/指�
 - 它与 Workspace 级别的 **Dirty Set**（持有所有 dirty 对象实例）是不同层级的概念
 - Dirty Set 持有整个对象；`_dirtyKeys` 追踪对象内部的变更 key
 
-**MVP 类型约束**：`DurableDict` 的 key 固定为 `ulong`（与 `ObjectId`、VersionIndex key 类型一致）。这是 MVP 的简化决策（Q23=A）；未来版本可能引入多 key 类型支持。
+**MVP 类型约束**：`DurableDict` 的 key 固定为 `ulong`（与 `ObjectId`、VersionIndex key 类型一致）。这是 MVP 的简化决策（参见 `[S-DURABLEDICT-KEY-ULONG-ONLY]`）；未来版本可能引入多 key 类型支持。
 
 ```csharp
 // ⚠️ PSEUDO-CODE — 仅表达设计意图，不可直接编译
