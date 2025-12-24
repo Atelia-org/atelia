@@ -1,6 +1,6 @@
 # StateJournal MVP 设计 v3（Working Draft）
 
-> **版本**：v3 (2025-12-22)
+> **版本**：v3.1 (2025-12-24)
 > **状态**：Draft
 
 ## 文档层次与依赖
@@ -22,7 +22,7 @@
 
 ---
 
-> 日期：2025-12-18（术语修订：2025-12-19；畅谈会修订：2025-12-20；一致性审阅修订：2025-12-20；最终审阅修订：2025-12-20）
+> 日期：2025-12-18（术语修订：2025-12-19；畅谈会修订：2025-12-20；一致性审阅修订：2025-12-20；最终审阅修订：2025-12-20；**FrameTag 位段编码：2025-12-24**）
 >
 > 目标：围绕"稳定 ObjectId + 变化 ObjectVersion + VersionIndex"的路线，形成可开工的 MVP 规格。
 >
@@ -93,8 +93,9 @@
 
 | 术语 | 定义 | 实现映射 |
 |------|------|---------|
-| **FrameTag** | RBF Frame 的顶层类型标识（位于 HeadLen 之后），是 StateJournal Record 的**唯一判别器**。由 RBF 层定义并透传。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` | `FrameTag`（`uint`）|
-| **ObjectKind** | ObjectVersionRecord 内的对象类型标识，决定 diff 解码器 | `byte` 枚举 |
+| **FrameTag** | RBF Frame 的顶层类型标识（位于 HeadLen 之后），是 StateJournal Record 的**唯一判别器**。采用 16/16 位段编码：低 16 位为 RecordType，高 16 位为 SubType（当 RecordType=ObjectVersion 时解释为 ObjectKind）。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` 和本文档 `[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]` | `FrameTag`（`uint`）|
+| **RecordType** | FrameTag 低 16 位，区分 Record 顶层类型（ObjectVersionRecord / MetaCommitRecord） | `ushort` |
+| **ObjectKind** | 当 RecordType=ObjectVersion 时，FrameTag 高 16 位的语义，决定 diff 解码器 | `ushort` 枚举 |
 | **ValueType** | Dict DiffPayload 中的值类型标识 | `byte` 低 4 bit |
 
 ### 对象基类
@@ -135,26 +136,67 @@
 
 > 以下枚举值定义集中于此，便于实现者查阅。详细语义参见对应章节。
 
-#### FrameTag（§3.2.1, §3.2.2）
+#### FrameTag 位段编码（§3.2.1, §3.2.2, §3.2.5）
+
+**`[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]`** StateJournal MUST 按以下位段解释 `FrameTag.Value`：
+
+```
+FrameTag (u32 LE) 位布局：
+┌─────────────────┬─────────────────┐
+│  位 16-31       │  位 0-15        │
+│  (字节 2-3)     │  (字节 0-1)     │
+├─────────────────┼─────────────────┤
+│  SubType        │  RecordType     │
+│  (ObjectKind)   │  (外层概念)     │
+└─────────────────┴─────────────────┘
+
+计算公式：FrameTag = (SubType << 16) | RecordType
+```
+
+##### RecordType（低 16 位）
 
 | 值 | 名称 | 说明 |
 |------|------|------|
-| `0x00000001` | ObjectVersionRecord | 对象版本记录（data payload）|
-| `0x00000002` | MetaCommitRecord | 提交元数据记录（meta payload）|
-| 其他值 | — | 未来扩展 |
+| `0x0000` | Reserved | 保留，MUST NOT 使用 |
+| `0x0001` | ObjectVersionRecord | 对象版本记录（data payload）|
+| `0x0002` | MetaCommitRecord | 提交元数据记录（meta payload）|
+| `0x0003..0x7FFF` | — | 未来标准扩展 |
+| `0x8000..0xFFFF` | — | 实验/私有扩展 |
 
-> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（独立 4B 字段）区分 Record 类型。详见 [rbf-interface.md](rbf-interface.md) §5.1 和 [rbf-format.md](rbf-format.md) `[F-FRAMETAG-WIRE-ENCODING]`。
+##### SubType（高 16 位）
+
+**`[F-FRAMETAG-SUBTYPE-ZERO-WHEN-NOT-OBJVER]`** 当 `RecordType != ObjectVersionRecord` 时，`SubType` MUST 为 `0x0000`；Reader 遇到非零 SubType MUST 视为格式错误。
+
+**`[F-OBJVER-OBJECTKIND-FROM-TAG]`** 当 `RecordType == ObjectVersionRecord` 时，`SubType` MUST 解释为 `ObjectKind`，Payload 内 MUST NOT 再包含 ObjectKind 字节。
+
+##### FrameTag 完整取值表（MVP）
+
+| FrameTag 值 | RecordType | ObjectKind | 说明 | 字节序列（LE）|
+|-------------|------------|------------|------|---------------|
+| `0x00010001` | ObjectVersion | Dict | DurableDict 版本记录 | `01 00 01 00` |
+| `0x00020001` | ObjectVersion | Array | DurableArray 版本记录（未来）| `01 00 02 00` |
+| `0x00000002` | MetaCommit | — | 提交元数据记录 | `02 00 00 00` |
+
+> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（独立 4B 字段）区分 Record 类型和对象类型。详见 [rbf-format.md](rbf-format.md) `[F-FRAMETAG-WIRE-ENCODING]`。
 > 
-> **注意**：FrameTag 不再有 RBF 保留值。墓碑帧通过 `FrameStatus.Tombstone` 标识，与 FrameTag 无关。StateJournal MUST 先检查 `FrameStatus`，再解释 `FrameTag`（参见 [rbf-interface.md](rbf-interface.md) `[S-STATEJOURNAL-TOMBSTONE-SKIP]`）。
+> **`[S-STATEJOURNAL-TOMBSTONE-SKIP]`** 墓碑帧通过 `FrameStatus.Tombstone` 标识，与 FrameTag 无关。StateJournal Reader MUST 先检查 `FrameStatus`，遇到 `Tombstone` 状态 MUST 跳过该帧，再解释 `FrameTag`。
+>
+> **`[F-UNKNOWN-FRAMETAG-REJECT]`** Reader 遇到未知 RecordType MUST fail-fast（不得静默跳过）。
 
-#### ObjectKind（§3.2.5）
+#### ObjectKind（FrameTag SubType，当 RecordType=ObjectVersion）
+
+> ObjectKind 现在编码在 FrameTag 高 16 位，扩展为 `u16`。
 
 | 值 | 名称 | 说明 |
 |------|------|------|
-| `0x00` | Reserved | 保留 |
-| `0x01` | Dict | DurableDict（MVP 唯一实现） |
-| `0x02-0x7F` | Standard | 标准类型（未来扩展） |
-| `0x80-0xFF` | Variant | 版本变体（如 `DictV2`） |
+| `0x0000` | Reserved | 保留，MUST NOT 使用 |
+| `0x0001` | Dict | DurableDict（MVP 唯一实现） |
+| `0x0002..0x007F` | Standard | 标准类型（未来扩展） |
+| `0x0080..0x00FF` | Variant | 版本变体（如 `DictV2`），兼容原 byte 约定 |
+| `0x0100..0x7FFF` | Extended | 扩展标准类型 |
+| `0x8000..0xFFFF` | Experimental | 实验/私有类型 |
+
+**`[F-UNKNOWN-OBJECTKIND-REJECT]`** 当 `RecordType == ObjectVersionRecord` 时，Reader 遇到未知 `ObjectKind` MUST fail-fast（不得静默跳过）。
 
 #### ValueType（§3.4.2，低 4 bit）
 
@@ -637,18 +679,19 @@ MVP 约束与默认策略（第二批决策补充）：
 每个对象的版本以链式版本组织（Q10）：
 
 - `PrevVersionPtr`：Ptr64（该 ObjectId 的上一个版本；若为 0 表示 **Base Version**（Genesis Base 或 Checkpoint Base））
-- `ObjectKind`：`byte`（Q21=A；用于选择 `DiffPayload` 解码器）。取值与分段规则详见**枚举值速查表**。
+- `ObjectKind`：由 FrameTag 高 16 位提供（参见 `[F-OBJVER-OBJECTKIND-FROM-TAG]`），用于选择 `DiffPayload` 解码器
   - **[F-UNKNOWN-OBJECTKIND-REJECT]** 遇到未知 Kind 必须抛出异常（Fail-fast）。
 - `DiffPayload`：依对象类型而定（本 MVP 至少要求：`Dict` 与 `VersionIndex` 可工作）
 
 ObjectVersionRecord 的 data payload 布局：
 
-> **FrameTag = 0x00000001** 表示 ObjectVersionRecord（参见枚举值速查表）。
-> Payload 从业务字段开始，不再包含顶层类型字节。
+> **FrameTag RecordType = 0x0001** 表示 ObjectVersionRecord；**SubType** 表示 ObjectKind（参见枚举值速查表）。
+> Payload 从业务字段开始，**不再包含 ObjectKind 字节**（已移至 FrameTag）。
 
 - `PrevVersionPtr`：`u64 LE`（Ptr64：byte offset；`0=null`，且 4B 对齐）
-- `ObjectKind`：`byte`（用于选择 diff 解码器，参见 ObjectKind 枚举）
-- `DiffPayload`：bytes
+- `DiffPayload`：bytes（直接从 `payload[8]` 开始）
+
+**`[F-OBJVER-PAYLOAD-MINLEN]`** ObjectVersionRecord payload MUST 至少 8 字节（`PrevVersionPtr`）。若不足，Reader MUST 视为格式错误。
 
 ---
 

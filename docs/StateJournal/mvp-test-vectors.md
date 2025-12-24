@@ -1,6 +1,6 @@
 # StateJournal MVP 测试向量（Layer 1）
 
-> **版本**：v3（2025-12-22 更新，Layer 0 测试向量已提取到独立文档）
+> **版本**：v4（2025-12-24 更新，FrameTag 位段编码）
 > **配套文档**：
 > - `mvp-design-v2.md` — 设计规范
 > - [rbf-test-vectors.md](rbf-test-vectors.md) — Layer 0（RBF）测试向量
@@ -9,6 +9,7 @@
 
 ## 覆盖范围
 
+- **FrameTag 位段编码**（2025-12-24 新增）
 - **`_dirtyKeys` 不变式**（P0-1，监护人建议采纳）
 - **首次 Commit 语义**（P0-7）
 - **Value 类型边界**（P0-4）
@@ -25,6 +26,13 @@
 
 | 条款 ID | 规范条款 | 对应测试用例 |
 |---------|----------|--------------|
+| `[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]` | FrameTag 16/16 位段布局（RecordType/SubType） | FRAMETAG-OK-001/002/003 |
+| `[F-FRAMETAG-SUBTYPE-ZERO-WHEN-NOT-OBJVER]` | 非 ObjectVersion 时 SubType MUST 为 0 | FRAMETAG-BAD-001 |
+| `[F-OBJVER-OBJECTKIND-FROM-TAG]` | ObjectKind 从 FrameTag 高 16 位获取 | FRAMETAG-OK-001 |
+| `[F-OBJVER-PAYLOAD-MINLEN]` | ObjectVersionRecord payload 至少 8 字节 | OBJVER-BAD-001 |
+| `[F-UNKNOWN-FRAMETAG-REJECT]` | 未知 RecordType MUST fail-fast | FRAMETAG-BAD-002 |
+| `[F-UNKNOWN-OBJECTKIND-REJECT]` | 未知 ObjectKind MUST fail-fast | FRAMETAG-BAD-003 |
+| `[S-STATEJOURNAL-TOMBSTONE-SKIP]` | 先检查 FrameStatus，跳过 Tombstone 帧 | TOMBSTONE-SKIP-001 |
 | `[F-KVPAIR-HIGHBITS-RESERVED]` | ValueType 高 4 bit 必须写 0；reader 见到非 0 视为格式错误 | DICT-BAD-005 |
 | `[F-UNKNOWN-VALUETYPE-REJECT]` | 未知 ValueType MUST 视为格式错误 | DICT-BAD-006 |
 | `[S-DIRTYSET-OBJECT-PINNING]` | Dirty Set MUST 持有对象强引用 | — |
@@ -47,6 +55,63 @@
 | `[A-COMMITALL-FLUSH-DIRTYSET]` | CommitAll() 无参重载 MUST | COMMIT-ALL-001 |
 | `[A-COMMITALL-SET-NEWROOT]` | CommitAll(IDurableObject) SHOULD | COMMIT-ALL-002 |
 | `[A-DIRTYSET-OBSERVABILITY]` | Dirty Set 可见性 API SHOULD | — |
+
+---
+
+## 0. FrameTag 位段编码测试（2025-12-24 新增）
+
+> 测试 FrameTag 16/16 位段编码的正确解析。
+
+### 0.1 正例
+
+用例 FRAMETAG-OK-001（ObjectVersionRecord with Dict）
+- Given：FrameTag bytes = `01 00 01 00`（u32 LE = `0x00010001`）
+- When：解析 FrameTag
+- Then：
+  - `RecordType = 0x0001`（ObjectVersionRecord）
+  - `SubType = 0x0001`（Dict）
+  - Payload 不含 ObjectKind 字节
+
+用例 FRAMETAG-OK-002（MetaCommitRecord）
+- Given：FrameTag bytes = `02 00 00 00`（u32 LE = `0x00000002`）
+- When：解析 FrameTag
+- Then：
+  - `RecordType = 0x0002`（MetaCommitRecord）
+  - `SubType = 0x0000`
+
+用例 FRAMETAG-OK-003（ObjectVersionRecord with future Array）
+- Given：FrameTag bytes = `01 00 02 00`（u32 LE = `0x00020001`）
+- When：解析 FrameTag
+- Then：
+  - `RecordType = 0x0001`（ObjectVersionRecord）
+  - `SubType = 0x0002`（Array，若已实现；否则应 reject）
+
+用例 TOMBSTONE-SKIP-001（先检查 FrameStatus）
+- Given：Frame 的 FrameStatus = Tombstone，FrameTag = `0x00010001`
+- When：StateJournal Reader 处理该帧
+- Then：MUST 跳过，不解析 Payload
+
+### 0.2 负例
+
+用例 FRAMETAG-BAD-001（MetaCommitRecord 带非零 SubType）
+- Given：FrameTag bytes = `02 00 01 00`（u32 LE = `0x00010002`）
+- When：解析 FrameTag
+- Then：MUST reject（SubType != 0 for MetaCommitRecord）
+
+用例 FRAMETAG-BAD-002（未知 RecordType）
+- Given：FrameTag bytes = `FF 00 00 00`（u32 LE = `0x000000FF`）
+- When：解析 FrameTag
+- Then：MUST reject（unknown RecordType）
+
+用例 FRAMETAG-BAD-003（未知 ObjectKind）
+- Given：FrameTag bytes = `01 00 FF 00`（u32 LE = `0x00FF0001`）
+- When：解析 FrameTag（ObjectVersionRecord with ObjectKind=0x00FF）
+- Then：MUST reject（unknown ObjectKind）
+
+用例 OBJVER-BAD-001（Payload 不足 8 字节）
+- Given：FrameTag = `0x00010001`（ObjectVersionRecord），Payload 长度 = 4 字节
+- When：解析 ObjectVersionRecord
+- Then：MUST reject（Payload MUST 至少 8 字节 for PrevVersionPtr）
 
 ---
 
@@ -283,5 +348,6 @@ Assert.Equal(newRoot.Id, head.RootObjectId);
 
 | 日期 | 版本 | 变更 |
 |------|------|------|
+| 2025-12-24 | v4 | 新增 §0 FrameTag 位段编码测试；新增条款映射 `[F-FRAMETAG-*]`、`[F-OBJVER-*]`、`[S-STATEJOURNAL-TOMBSTONE-SKIP]` |
 | 2025-12-22 | v3 | Layer 0 测试向量提取到 rbf-test-vectors.md |
 | 2025-12-20 | v2 | 根据畅谈会共识修订 |
