@@ -87,7 +87,7 @@
 | **Identity Map** | ObjectId → instance 去重缓存，保证同一 ObjectId 在存活期间只对应一个内存对象实例 | `WeakReference` 映射 |
 | **Dirty Set** | Workspace 级别的 dirty 对象**强引用**集合，持有所有具有未提交修改的对象实例，防止 dirty 对象被 GC 回收导致修改丢失 | `Dictionary<ObjectId, IDurableObject>` |
 | **Dirty-Key Set** | 对象内部追踪已变更 key 的集合（用于 DurableDict 等容器对象） | `_dirtyKeys: ISet<ulong>` |
-| **LoadObject** | 按 HEAD 取版本指针并 materialize，返回可写对象实例。详见 §3.3.2 | identity map → lookup → materialize |
+| **LoadObject** | 按 HEAD 取版本指针并 materialize，返回 `AteliaResult<IDurableObject>`。详见 §3.3.2 和 `[A-LOADOBJECT-RETURN-RESULT]` | identity map → lookup → materialize |
 
 ### 编码层
 
@@ -380,8 +380,7 @@ stateDiagram-v2
 ObjectId 分配（第二批决策补充）：
 
 - ObjectId 采用**单调递增计数器**分配，避免碰撞处理。
-- 为保证崩溃恢复与跨进程一致性，需要将 `NextObjectId`（下一个可分配 id）持久化。
-  - 依据 Q18：MVP 只把 `NextObjectId` 写在 meta commit record 中。
+- 为保证崩溃恢复与跨进程一致性，`NextObjectId`（下一个可分配 id）在 meta commit record 中持久化。
 
 > **[S-OBJECTID-MONOTONIC-BOUNDARY] ObjectId 单调性边界（MUST）**：
 > - ObjectId 对"已提交对象集合"MUST 单调递增（即：已提交的 ObjectId 不会被重新分配）
@@ -399,19 +398,19 @@ ObjectId 分配（第二批决策补充）：
 
 > 备注：在 meta file 方案下，HEAD 由最后一条 `MetaCommitRecord` 给出；superblock 相关表述仅适用于备选方案。
 
-#### 3.1.2 LoadObject 语义（Q3：workspace + HEAD）的精确定义
+#### 3.1.2 LoadObject 语义的精确定义
 
 MVP 将一次进程内的 `StateJournal` 视为唯一的 **workspace（Git working tree 类比）**：
 
 - **HEAD 的定义**：通过 meta 文件尾部回扫得到最后一条有效 `MetaCommitRecord`；该记录就是 `HEAD`。
-- **第一次 LoadObject 某个 ObjectId**：按 `HEAD` 指定的 `VersionIndexPtr` 解析 `ObjectId -> ObjectVersionPtr`，再对版本链做 Deserialize + Materialize，创建并返回带 ChangeSet 的内存对象。
+- **第一次 LoadObject 某个 ObjectId**：按 `HEAD` 指定的 `VersionIndexPtr` 解析 `ObjectId -> ObjectVersionPtr`，再对版本链做 Deserialize + Materialize，成功则返回 `AteliaResult.Success(带 ChangeSet 的内存对象)`；若对象不存在则返回 `AteliaResult.Failure`。
 - **Identity Map**：用于在对象仍存活期间去重（`ObjectId -> WeakReference<DurableObject>`）。
 - **已 materialize 的对象不会因为 `HEAD` 变化而被自动 refresh/rollback**：它就是 workspace 中那份对象（类似 working tree 上的未提交修改不会被 `HEAD` 自动覆盖）。
 
-因此，Q3B 的可观察效果是：
+其可观察效果是：
 
-- 对尚未 materialize 的对象：LoadObject 总是按当前 `HEAD` 解析并 materialize。
-- 对已 materialize 的对象：LoadObject 固定返回同一个内存实例，不从磁盘覆盖 Working State（`_current`）。
+- 对尚未 materialize 的对象：LoadObject 总是按当前 `HEAD` 解析并 materialize（成功返回 Success，失败返回 Failure）。
+- 对已 materialize 的对象：LoadObject 固定返回 `AteliaResult.Success(同一内存实例)`，不从磁盘覆盖 Working State（`_current`）。
 
 MVP 限制（保证语义自洽）：
 
@@ -455,9 +454,15 @@ internal struct LazyRef<T> where T : IDurableObject
     
     private T LoadAndCache(ObjectId id)
     {
-        var obj = _workspace.LoadObject<T>(id);
-        _storage = obj;  // 回填
-        return obj;
+        var result = _workspace.LoadObject<T>(id);
+        if (result.IsFailure)
+        {
+            // Lazy Load 失败：引用的对象不存在或已损坏
+            throw new InvalidOperationException(
+                $"Failed to load referenced object {id}: {result.Error!.Message}");
+        }
+        _storage = result.Value;  // 回填
+        return result.Value;
     }
 }
 ```
@@ -508,7 +513,7 @@ StateJournal **不是通用序列化库**，而是有明确类型边界的持久
 
 本 MVP 允许在对象/映射的 payload 层使用 varint（ULEB128 风格或等价编码），主要目的：降低序列化尺寸，且与"对象字段一次性 materialize"模式相匹配。
 
-MVP 固定（Q15）：
+MVP 固定：
 
 - 除 `Ptr64/Len/CRC32C` 等"硬定长字段"外，其余整数均可采用 varint。
 - `ObjectId`：varint。
@@ -600,7 +605,7 @@ meta payload 最小字段（**不含 FrameTag，FrameTag 由 RBF 层管理**）�
 - `DataTail`（Ptr64，定长 u64 LE：data 文件逻辑尾部；`DataTail = EOF`，**包含尾部分隔符 Magic**。**注**：此处 Ptr64 表示文件末尾偏移量，不指向 Record 起点）
 - `NextObjectId`（varuint）
 
-打开（Open）策略（Q17）：
+打开（Open）策略：
 
 - 从 meta 文件尾部回扫，找到最后一个 CRC32C 有效的 `MetaCommitRecord`。
 - **[R-META-AHEAD-BACKTRACK]** 若某条 meta record 校验通过，但其 `DataTail` 大于当前 data 文件长度（byte）/无法解引用其 `VersionIndexPtr`，则视为"meta 领先 data（崩溃撕裂）"，继续回扫上一条。
@@ -635,7 +640,7 @@ MetaCommitRecord 的 payload 解析（MVP 固定）：
 Commit Record（逻辑上）至少包含：
 
 - `EpochSeq`：单调递增
-- `RootObjectId`：ObjectId（概念上为 `uint64`；序列化时按 Q15 使用 `varuint`）
+- `RootObjectId`：ObjectId（`varuint` 编码）
 - `VersionIndexPtr`：Ptr64（指向一个"VersionIndex durable object"的版本）
 - `DataTail`：Ptr64
 - `CRC32C`（物理上由 `RBF` framing 提供，不在 payload 内重复存储）
@@ -649,14 +654,14 @@ Commit Record（逻辑上）至少包含：
 > 这打破了"读 VersionIndex 需要先查 VersionIndex"的概念死锁。
 > VersionIndex 使用 Well-Known ObjectId `0`（参见术语表 **Well-Known ObjectId** 条目）。
 
-VersionIndex 是一个 durable object（Q7），它自身也以版本链方式存储。
+VersionIndex 是一个 durable object，它自身也以版本链方式存储。
 
 **[F-VERSIONINDEX-REUSE-DURABLEDICT]** VersionIndex 落地选择：
 
 - VersionIndex 复用 `DurableDict`（key 为 `ObjectId` as `ulong`，value 使用 `Val_Ptr64` 编码 `ObjectVersionPtr`）。
 - 因此，VersionIndex 的版本记录本质上是 `ObjectVersionRecord(ObjectKind=Dict)`，其 `DiffPayload` 采用 3.4.2 的 dict diff 编码。
 
-更新方式（Q8/Q9）：
+更新方式：
 
 - 每个 epoch 写一个"覆盖表"版本：只包含本次 commit 中发生变化的 ObjectId 映射。
 - 查找允许链式回溯：先查 HEAD overlay，miss 再沿 `PrevVersionPtr` 回溯。
@@ -674,7 +679,7 @@ MVP 约束与默认策略（第二批决策补充）：
 
 #### 3.2.5 ObjectVersionRecord（对象版本，增量 DiffPayload）
 
-每个对象的版本以链式版本组织（Q10）：
+每个对象的版本以链式版本组织：
 
 - `PrevVersionPtr`：Ptr64（该 ObjectId 的上一个版本；若为 0 表示 **Base Version**（Genesis Base 或 Checkpoint Base））
 - `ObjectKind`：由 FrameTag 高 16 位提供（参见 `[F-OBJVER-OBJECTKIND-FROM-TAG]`），用于选择 `DiffPayload` 解码器
@@ -695,7 +700,7 @@ ObjectVersionRecord 的 data payload 布局：
 
 #### 3.2.6 备选方案（非 MVP 默认）：单文件双 superblock
 
-单文件 ping-pong superblock 仍是可行备选，但依据 Q16 本文不将其作为 MVP 默认方案。
+单文件 ping-pong superblock 仍是可行备选，但本文不将其作为 MVP 默认方案。
 
 若采用该备选方案，superblock 至少包含：
 
@@ -721,15 +726,15 @@ ObjectVersionRecord 的 data payload 布局：
   - `NextObjectId = 16`（参见 **[S-OBJECTID-RESERVED-RANGE]**）
   - `RootObjectId = null`
   - `VersionIndexPtr = null`（无 VersionIndex）
-- 此时 `LoadObject(id)` 对任意 id 都应返回"对象不存在"。
+- 此时 `LoadObject(id)` 对任意 id 都返回 `AteliaResult.Failure`（ErrorCode: `StateJournal.ObjectNotFound`）。
 
 #### 3.3.2 LoadObject(ObjectId)
 
-1) Identity Map 命中则返回同一内存实例。
+1) Identity Map 命中则返回 `AteliaResult.Success(同一内存实例)`。
 2) 否则：从 HEAD commit 对应的 VersionIndex 解析该 ObjectId 的 `ObjectVersionPtr`。
 3) Deserialize：沿 `PrevVersionPtr` 解码版本链（Checkpoint Base + overlay diffs）。
 4) Materialize：将版本链合成为该对象的 Committed State（其中对象引用仍以 `ObjectId` 形式保存）。
-5) 创建并返回带 ChangeSet 的内存对象实例，并写入 Identity Map。
+5) 创建带 ChangeSet 的内存对象实例，写入 Identity Map，返回 `AteliaResult.Success(instance)`。
 
 **对象不存在的处理（MVP 固定）**：
 
@@ -754,8 +759,8 @@ ObjectVersionRecord 的 data payload 布局：
 **新建对象的处理**：
 
 - 新建对象在首次 Commit 前不存在于 VersionIndex 中
-- 此时 `LoadObject(newObjId)` 返回 `null`
-- 调用方应通过 `heap.CreateObject<T>()` 或等价 API 创建新对象，而非 LoadObject
+- 此时 `LoadObject(newObjId)` 返回 `AteliaResult.Failure`（ErrorCode: `StateJournal.ObjectNotFound`）
+- 调用方应通过 `workspace.CreateObject<T>()` 或等价 API 创建新对象，而非 LoadObject
 
 
 对象生命周期与 WeakReference 约束（写清 MVP 行为，避免丢改动）：
@@ -769,7 +774,7 @@ ObjectVersionRecord 的 data payload 布局：
 
 #### 3.4.1 ChangeSet 语义
 
-- 每个内存对象具有 ChangeSet 语义（可为显式结构或隐式 diff 算法）（Q13/Q14）：
+- 每个内存对象具有 ChangeSet 语义（可为显式结构或隐式 diff 算法）：
 	- commit 成功后清空；失败保留。
 	- MVP 不记录旧值（单 writer）。
 
@@ -799,9 +804,9 @@ ObjectVersionRecord 的 data payload 布局：
 
 > 术语映射：本文档中"Working State"指 `_current`，"Committed State"指 `_committed`（Materialize 的结果）。
 
-#### 3.4.2 Dict 的 DiffPayload（Q11：Upserts + tombstone）
+#### 3.4.2 Dict 的 DiffPayload
 
-本 MVP 采用单表 `Upserts(key -> value)`，删除通过 tombstone value 表达（Q11B）。
+本 MVP 采用单表 `Upserts(key -> value)`，删除通过 tombstone value 表达。
 
 ##### DurableDict 实现方案：双字典策略
 
@@ -1399,6 +1404,8 @@ class DurableDict : IDurableObject {
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v3.7 | 2025-12-25 | **QXX 历史注解清理**：删除正文中 12 处残留的 QXX 决策引用（决策记录已在 [mvp-v2-decisions.md](decisions/mvp-v2-decisions.md) 集中维护）|
+| v3.6 | 2025-12-25 | **LoadObject 返回类型一致性**：修正文档中残留的 `null` 返回值描述，统一为 `AteliaResult<T>`；更新术语表、§3.3.2、LazyRef 伪代码（落实 [A-LOADOBJECT-RETURN-RESULT] 条款）|
 | v3.5 | 2025-12-25 | **位布局表格规范化**：FrameTag 位布局从"视觉表格"改为"行=字段，列=属性"结构（按 spec-conventions.md v0.4） |
 | v3.4 | 2025-12-25 | **ASCII art 规范化**：按 [spec-conventions.md](../spec-conventions.md) v0.3 LLM-Friendly Notation 修订三处 ASCII art——VarInt 图标注为 Informative、Two-Phase Commit Flow 改为 Mermaid sequenceDiagram |
 | v2 | 2025-12-21 | 初始 MVP 设计，P0 问题修复 |
