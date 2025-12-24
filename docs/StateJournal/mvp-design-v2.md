@@ -140,18 +140,14 @@
 
 **`[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]`** StateJournal MUST 按以下位段解释 `FrameTag.Value`：
 
-```
-FrameTag (u32 LE) 位布局：
-┌─────────────────┬─────────────────┐
-│  位 16-31       │  位 0-15        │
-│  (字节 2-3)     │  (字节 0-1)     │
-├─────────────────┼─────────────────┤
-│  SubType        │  RecordType     │
-│  (ObjectKind)   │  (外层概念)     │
-└─────────────────┴─────────────────┘
+| 位范围 | 字段名 | 类型 | 语义 |
+|--------|--------|------|------|
+| 31..16 | SubType | `u16` | 当 RecordType=ObjectVersion 时解释为 ObjectKind |
+| 15..0 | RecordType | `u16` | Record 顶层类型（ObjectVersion / MetaCommit） |
 
-计算公式：FrameTag = (SubType << 16) | RecordType
-```
+> **端序**：Little-Endian (LE)，即低位字节在前（字节 0-1 = RecordType，字节 2-3 = SubType）。
+>
+> **计算公式**：`FrameTag = (SubType << 16) | RecordType`
 
 ##### RecordType（低 16 位）
 
@@ -528,6 +524,8 @@ MVP 固定（Q15）：
 - `varint`：有符号整数采用 ZigZag 映射后按 `varuint` 编码。
 	- ZigZag64：`zz = (n << 1) ^ (n >> 63)`；ZigZag32：`zz = (n << 1) ^ (n >> 31)`。
 - **[F-DECODE-ERROR-FAILFAST]** 解码错误策略（MVP 固定）：遇到 EOF、溢出（超过允许的最大字节数或移位溢出）、或非 canonical（例如存在多余的 0 continuation 字节）一律视为格式错误并失败。
+
+**(Informative / Illustration)** 以下 ASCII 图示仅供教学参考，SSOT 为上述文字描述和公式。
 
 ```text
 VarInt Encoding (Base-128, MSB continuation)
@@ -1010,33 +1008,39 @@ void DiscardChanges();                         // Detached 时 no-op（幂等）
 
 只有当 Heap 级 `CommitAll()` 确认 meta commit record 落盘成功后，才调用各对象的 `OnCommitSucceeded()`。
 
-```text
-Two-Phase Commit Flow
-======================
+```mermaid
+sequenceDiagram
+    participant Heap
+    participant Dict as DurableDict
+    participant Index as VersionIndex
+    participant Data as DataFile
+    participant Meta as MetaFile
 
-Phase 1 (Prepare):
-  ┌─────────────────────┐     ┌─────────────┐
-  │    DurableDict      │────▶│  Data File  │
-  │ WritePendingDiff()  │     │ (dirty data)│
-  └─────────────────────┘     └─────────────┘
-        │
-        ▼ (for each dirty object)
-  ┌─────────────────────┐     ┌─────────────┐
-  │    VersionIndex     │────▶│  Data File  │
-  │ WritePendingDiff()  │     │ (ptr map)   │
-  └─────────────────────┘     └─────────────┘
-        │
-        ▼ fsync data file
+    Note over Heap, Meta: Phase 1: Prepare (Write Pending)
 
-Phase 2 (Finalize):
-  ┌─────────────┐     ┌─────────────┐
-  │    Heap     │────▶│  Meta File  │
-  │ CommitAll() │     │ (commit pt) │
-  └─────────────┘     └─────────────┘
-        │
-        ▼ fsync meta file ← Commit Point!
-        │
-  OnCommitSucceeded() → 内存状态追平
+    Heap->>Dict: WritePendingDiff()
+    Dict->>Data: Append(DirtyData)
+    Note right of Dict: Memory State Unchanged
+
+    loop for each dirty object
+        Heap->>Dict: WritePendingDiff()
+        Dict->>Data: Append(ObjectVersionRecord)
+    end
+
+    Heap->>Index: WritePendingDiff()
+    Index->>Data: Append(VersionIndex PtrMap)
+    
+    Heap->>Data: Fsync()
+
+    Note over Heap, Meta: Phase 2: Finalize (Commit Point)
+
+    Heap->>Meta: Append(MetaCommitRecord)
+    Heap->>Meta: Fsync()
+    Note right of Meta: ← COMMIT POINT
+
+    Heap->>Dict: OnCommitSucceeded()
+    Dict->>Dict: _committed = _current
+    Heap->>Index: OnCommitSucceeded()
 ```
 
 **关键实现要点**：
@@ -1395,6 +1399,8 @@ class DurableDict : IDurableObject {
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v3.5 | 2025-12-25 | **位布局表格规范化**：FrameTag 位布局从"视觉表格"改为"行=字段，列=属性"结构（按 spec-conventions.md v0.4） |
+| v3.4 | 2025-12-25 | **ASCII art 规范化**：按 [spec-conventions.md](../spec-conventions.md) v0.3 LLM-Friendly Notation 修订三处 ASCII art——VarInt 图标注为 Informative、Two-Phase Commit Flow 改为 Mermaid sequenceDiagram |
 | v2 | 2025-12-21 | 初始 MVP 设计，P0 问题修复 |
 | v3 | 2025-12-22 | **Layer 分离**：将 RBF 帧格式提取到 [rbf-format.md](rbf-format.md)，本文档聚焦 StateJournal 语义层 |
 | v3.1 | 2025-12-23 | **术语对齐**：适配 RBF v0.10+ 变更（Payload -> FrameData, Magic -> Fence） |
