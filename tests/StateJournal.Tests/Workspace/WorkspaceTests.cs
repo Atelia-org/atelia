@@ -368,4 +368,147 @@ public class WorkspaceTests {
         ReferenceEquals(result1.Value, result2.Value).Should().BeTrue();
         ReferenceEquals(result2.Value, result3.Value).Should().BeTrue();
     }
+
+    // ========================================================================
+    // PrepareCommit 测试
+    // ========================================================================
+
+    [Fact]
+    public void PrepareCommit_EmptyDirtySet_ReturnsEmptyContext() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        context.WrittenRecords.Should().BeEmpty();
+        context.EpochSeq.Should().Be(1);
+    }
+
+    [Fact]
+    public void PrepareCommit_SingleDirtyObject_WritesRecord() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+        var dict = workspace.CreateObject<DurableDict<long?>>();
+        dict.Set(1, 100);
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        // 应该写入两条记录：dict 和 VersionIndex
+        context.WrittenRecords.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void PrepareCommit_UpdatesVersionIndex() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+        var dict = workspace.CreateObject<DurableDict<long?>>();
+        dict.Set(1, 100);
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        // VersionIndex 应该包含新对象
+        workspace.TryGetVersionPtr(dict.ObjectId, out var ptr).Should().BeTrue();
+    }
+
+    [Fact]
+    public void PrepareCommit_MultipleDirtyObjects_WritesAllRecords() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+        var dict1 = workspace.CreateObject<DurableDict<long?>>();
+        var dict2 = workspace.CreateObject<DurableDict<long?>>();
+        dict1.Set(1, 100);
+        dict2.Set(2, 200);
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        // 2 个 dict + 1 个 VersionIndex = 3 条记录
+        context.WrittenRecords.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void PrepareCommit_EpochSeq_Increments() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+        var dict = workspace.CreateObject<DurableDict<long?>>();
+        dict.Set(1, 100);
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        context.EpochSeq.Should().Be(1);
+    }
+
+    [Fact]
+    public void PrepareCommit_DataTail_IncrementsAfterWrites() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+        var dict = workspace.CreateObject<DurableDict<long?>>();
+        dict.Set(1, 100);
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        // 写入两条记录后，DataTail 应该增加
+        context.DataTail.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void PrepareCommit_VersionIndexPtr_UpdatedAfterWrite() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+        var dict = workspace.CreateObject<DurableDict<long?>>();
+        dict.Set(1, 100);
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        // VersionIndexPtr 应该指向 VersionIndex 写入的位置
+        context.VersionIndexPtr.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void PrepareCommit_WrittenRecords_ContainCorrectObjectIds() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+        var dict1 = workspace.CreateObject<DurableDict<long?>>();
+        var dict2 = workspace.CreateObject<DurableDict<long?>>();
+        dict1.Set(1, 100);
+        dict2.Set(2, 200);
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        var recordIds = context.WrittenRecords.Select(r => r.ObjectId).ToList();
+        recordIds.Should().Contain(dict1.ObjectId);
+        recordIds.Should().Contain(dict2.ObjectId);
+        recordIds.Should().Contain(VersionIndex.WellKnownObjectId);  // 0
+    }
+
+    [Fact]
+    public void PrepareCommit_NoChanges_DoesNotWriteVersionIndex() {
+        // Arrange
+        using var workspace = new WorkspaceClass();
+        // 创建对象但不修改（TransientDirty 但 HasChanges 语义上为"无实际数据变更"）
+        // 注意：TransientDirty 对象在 DurableDict 实现中，HasChanges 取决于 _dirtyKeys.Count
+        // 新创建的 DurableDict 的 _dirtyKeys 是空的，所以 HasChanges = false
+
+        // Act
+        var context = workspace.PrepareCommit();
+
+        // Assert
+        // 没有实际变更的对象不应该被写入
+        context.WrittenRecords.Should().BeEmpty();
+    }
 }

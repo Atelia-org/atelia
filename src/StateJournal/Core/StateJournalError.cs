@@ -273,3 +273,44 @@ public sealed record LazyRefInvalidStorageError(
     "StateJournal.LazyRef.InvalidStorage",
     $"LazyRef contains invalid storage type: {StorageType.Name}.",
     "This is an internal error. Please report it.");
+
+// ============================================================================
+// MetaCommitRecord Errors (元提交记录错误)
+// ============================================================================
+
+/// <summary>
+/// MetaCommitRecord payload 截断错误。
+/// </summary>
+/// <remarks>
+/// 当读取 MetaCommitRecord 时，payload 数据不完整。
+/// </remarks>
+public sealed record MetaCommitRecordTruncatedError : StateJournalError {
+    /// <summary>
+    /// 创建 MetaCommitRecordTruncatedError，指定被截断的字段名。
+    /// </summary>
+    /// <param name="fieldName">被截断的字段名。</param>
+    public MetaCommitRecordTruncatedError(string fieldName)
+        : base(
+            "StateJournal.MetaCommitRecord.Truncated",
+            $"MetaCommitRecord payload truncated while reading {fieldName}.") {
+        FieldName = fieldName;
+    }
+
+    /// <summary>
+    /// 创建 MetaCommitRecordTruncatedError，指定被截断的字段名和底层错误。
+    /// </summary>
+    /// <param name="fieldName">被截断的字段名。</param>
+    /// <param name="cause">导致截断的底层错误。</param>
+    public MetaCommitRecordTruncatedError(string fieldName, AteliaError cause)
+        : base(
+            "StateJournal.MetaCommitRecord.Truncated",
+            $"MetaCommitRecord payload truncated while reading {fieldName}.",
+            Cause: cause) {
+        FieldName = fieldName;
+    }
+
+    /// <summary>
+    /// 被截断的字段名。
+    /// </summary>
+    public string FieldName { get; }
+}

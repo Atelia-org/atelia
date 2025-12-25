@@ -1,6 +1,9 @@
 // Source: Atelia.StateJournal - 工作空间
 // Spec: atelia/docs/StateJournal/mvp-design-v2.md §Workspace
 
+using System.Buffers;
+using System.Buffers.Binary;
+
 namespace Atelia.StateJournal;
 
 /// <summary>
@@ -29,7 +32,11 @@ public class Workspace : IDisposable {
     private readonly IdentityMap _identityMap = new();
     private readonly DirtySet _dirtySet = new();
     private readonly ObjectLoaderDelegate? _objectLoader;
+    private readonly VersionIndex _versionIndex;
     private ulong _nextObjectId;
+    private ulong _versionIndexPtr;  // 当前 VersionIndex 的位置
+    private ulong _epochSeq;         // 当前 epoch 序号
+    private ulong _dataTail;         // data file 当前尾部
 
     // MVP: 简化版，不含存储层
     // Phase 5 会添加 IRbfFramer/IRbfScanner
@@ -61,6 +68,10 @@ public class Workspace : IDisposable {
     public Workspace(ObjectLoaderDelegate? objectLoader) {
         _nextObjectId = 16;  // [S-OBJECTID-RESERVED-RANGE]
         _objectLoader = objectLoader;
+        _versionIndex = new VersionIndex();
+        _versionIndexPtr = 0;
+        _epochSeq = 0;
+        _dataTail = 0;
     }
 
     /// <summary>
@@ -86,6 +97,33 @@ public class Workspace : IDisposable {
         }
         _nextObjectId = nextObjectId;
         _objectLoader = objectLoader;
+        _versionIndex = new VersionIndex();
+        _versionIndexPtr = 0;
+        _epochSeq = 0;
+        _dataTail = 0;
+    }
+
+    /// <summary>
+    /// 从恢复信息创建 Workspace。
+    /// </summary>
+    /// <param name="info">恢复信息，通常由 <see cref="WorkspaceRecovery.Recover"/> 返回。</param>
+    /// <param name="objectLoader">对象加载器委托，用于从存储加载对象。可以为 null。</param>
+    /// <returns>恢复状态后的 Workspace。</returns>
+    /// <remarks>
+    /// <para>
+    /// 对应条款：
+    /// <list type="bullet">
+    ///   <item><c>[R-META-AHEAD-BACKTRACK]</c>: 恢复到最后一个有效的 commit point</item>
+    ///   <item><c>[R-DATATAIL-TRUNCATE-SAFETY]</c>: data file 截断到 DataTail 是安全的</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    public static Workspace Open(RecoveryInfo info, ObjectLoaderDelegate? objectLoader = null) {
+        return new Workspace(info.NextObjectId, objectLoader) {
+            _epochSeq = info.EpochSeq,
+            _dataTail = info.DataTail,
+            _versionIndexPtr = info.VersionIndexPtr,
+        };
     }
 
     /// <summary>
@@ -213,6 +251,186 @@ public class Workspace : IDisposable {
     /// Identity Map 中的对象数量（包括可能已失效的 WeakReference）。
     /// </summary>
     public int CachedCount => _identityMap.Count;
+
+    /// <summary>
+    /// 当前 Epoch 序号。
+    /// </summary>
+    public ulong EpochSeq => _epochSeq;
+
+    /// <summary>
+    /// 当前 Data Tail。
+    /// </summary>
+    public ulong DataTail => _dataTail;
+
+    /// <summary>
+    /// 当前 VersionIndex 指针。
+    /// </summary>
+    public ulong VersionIndexPtr => _versionIndexPtr;
+
+    // ========================================================================
+    // Two-Phase Commit API
+    // ========================================================================
+
+    /// <summary>
+    /// 准备提交所有脏对象（Two-Phase Commit: Phase 1）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Phase 1: 写 Data
+    /// <list type="number">
+    ///   <item>遍历 DirtySet</item>
+    ///   <item>对每个脏对象调用 WritePendingDiff</item>
+    ///   <item>更新 VersionIndex</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// 返回 CommitContext 供 Phase 2 使用（写 Meta）。
+    /// </para>
+    /// <para>
+    /// 对应条款：
+    /// <list type="bullet">
+    ///   <item><c>[A-COMMITALL-DIRTY-ITERATION]</c>: 遍历所有脏对象</item>
+    ///   <item><c>[A-COMMITALL-WRITE-DIFF]</c>: 调用 WritePendingDiff 序列化</item>
+    ///   <item><c>[A-COMMITALL-UPDATE-VERSIONINDEX]</c>: 更新 VersionIndex 映射</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    /// <returns>提交上下文，包含写入的记录和元数据。</returns>
+    public CommitContext PrepareCommit() {
+        var context = new CommitContext {
+            EpochSeq = _epochSeq + 1,
+            DataTail = _dataTail,
+        };
+
+        // 遍历所有脏对象 [A-COMMITALL-DIRTY-ITERATION]
+        foreach (var obj in _dirtySet.GetAll()) {
+            if (!obj.HasChanges) { continue; /* 可能已经被其他操作清理 */ }
+
+            // 序列化 diff [A-COMMITALL-WRITE-DIFF]
+            var buffer = new ArrayBufferWriter<byte>();
+
+            // 写入 PrevVersionPtr（8 bytes LE）
+            var prevPtr = GetPrevVersionPtr(obj.ObjectId);
+            var ptrSpan = buffer.GetSpan(8);
+            BinaryPrimitives.WriteUInt64LittleEndian(ptrSpan, prevPtr);
+            buffer.Advance(8);
+
+            // 写入 DiffPayload
+            obj.WritePendingDiff(buffer);
+
+            // 确定 FrameTag
+            var frameTag = GetFrameTag(obj);
+
+            // 写入记录并获取位置
+            var position = context.WriteObjectVersion(obj.ObjectId, buffer.WrittenSpan, frameTag.Value);
+
+            // 更新 VersionIndex [A-COMMITALL-UPDATE-VERSIONINDEX]
+            _versionIndex.SetObjectVersionPtr(obj.ObjectId, position);
+        }
+
+        // 如果 VersionIndex 有变更，也需要写入
+        if (_versionIndex.HasChanges) {
+            var buffer = new ArrayBufferWriter<byte>();
+
+            // 写入 PrevVersionPtr
+            var prevPtr = _versionIndexPtr;
+            var ptrSpan = buffer.GetSpan(8);
+            BinaryPrimitives.WriteUInt64LittleEndian(ptrSpan, prevPtr);
+            buffer.Advance(8);
+
+            _versionIndex.WritePendingDiff(buffer);
+
+            var frameTag = StateJournalFrameTag.DictVersion;
+            var position = context.WriteObjectVersion(VersionIndex.WellKnownObjectId, buffer.WrittenSpan, frameTag.Value);
+
+            // 记录新的 VersionIndex 位置
+            context.VersionIndexPtr = position;
+        }
+        else {
+            context.VersionIndexPtr = _versionIndexPtr;
+        }
+
+        return context;
+    }
+
+    /// <summary>
+    /// 完成提交：清理内存状态，对象转为 Clean。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 此方法应在 meta file fsync 成功后调用（Two-Phase Commit: Phase 2 完成后）。
+    /// </para>
+    /// <para>
+    /// 对应条款：<c>[R-COMMIT-POINT-META-FSYNC]</c>: Commit Point = Meta fsync 完成时刻
+    /// </para>
+    /// </remarks>
+    /// <param name="context">PrepareCommit 返回的提交上下文。</param>
+    public void FinalizeCommit(CommitContext context) {
+        // 1. 更新内部状态
+        _epochSeq = context.EpochSeq;
+        _dataTail = context.DataTail;
+        _versionIndexPtr = context.VersionIndexPtr;
+
+        // 2. 对所有脏对象调用 OnCommitSucceeded
+        foreach (var obj in _dirtySet.GetAll().ToList()) {  // ToList 避免迭代时修改
+            obj.OnCommitSucceeded();
+        }
+
+        // 3. 对 VersionIndex 调用 OnCommitSucceeded
+        _versionIndex.OnCommitSucceeded();
+
+        // 4. 清空 DirtySet
+        _dirtySet.Clear();
+    }
+
+    /// <summary>
+    /// 执行完整的提交流程（PrepareCommit + FinalizeCommit）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MVP 版本：不含实际 I/O，用于测试验证。
+    /// 生产版本需要在 PrepareCommit 和 FinalizeCommit 之间执行 fsync。
+    /// </para>
+    /// <para>
+    /// 对应条款：<c>[R-COMMIT-FSYNC-ORDER]</c>: 先 fsync data，再 fsync meta
+    /// </para>
+    /// </remarks>
+    /// <returns>提交上下文，包含写入的记录和元数据。</returns>
+    public CommitContext Commit() {
+        var context = PrepareCommit();
+        FinalizeCommit(context);
+        return context;
+    }
+
+    /// <summary>
+    /// 尝试获取对象的版本指针。
+    /// </summary>
+    /// <param name="objectId">对象 ID。</param>
+    /// <param name="versionPtr">输出的版本指针。</param>
+    /// <returns>如果找到则返回 true。</returns>
+    public bool TryGetVersionPtr(ulong objectId, out ulong versionPtr)
+        => _versionIndex.TryGetObjectVersionPtr(objectId, out versionPtr);
+
+    /// <summary>
+    /// 获取对象的前一个版本指针。
+    /// </summary>
+    /// <param name="objectId">对象 ID。</param>
+    /// <returns>前一个版本的位置，如果是基础版本则返回 0。</returns>
+    private ulong GetPrevVersionPtr(ulong objectId) {
+        if (_versionIndex.TryGetObjectVersionPtr(objectId, out var ptr)) { return ptr; }
+        return 0;  // Base version
+    }
+
+    /// <summary>
+    /// 获取对象的 FrameTag。
+    /// </summary>
+    /// <param name="obj">持久化对象。</param>
+    /// <returns>FrameTag。</returns>
+    private static Atelia.Rbf.FrameTag GetFrameTag(IDurableObject obj) {
+        // MVP: 只支持 DurableDict
+        _ = obj;  // Suppress unused parameter warning
+        return StateJournalFrameTag.DictVersion;
+    }
 
     /// <summary>
     /// 释放工作空间资源。

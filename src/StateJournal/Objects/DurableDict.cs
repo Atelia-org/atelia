@@ -437,10 +437,14 @@ public class DurableDict<TValue> : IDurableObject {
             case int intVal:
                 writer.WriteVarInt(key, intVal);
                 break;
+            case ulong ulongVal:
+                // [F-VERSIONINDEX-REUSE-DURABLEDICT]: VersionIndex 使用 Val_Ptr64 编码 ObjectVersionPtr
+                writer.WritePtr64(key, ulongVal);
+                break;
             // MVP 暂不支持其他类型
             default:
                 throw new NotSupportedException(
-                    $"Unsupported value type: {value.GetType()}. MVP only supports null, long, and int."
+                    $"Unsupported value type: {value.GetType()}. MVP only supports null, long, int, and ulong."
                 );
         }
     }
