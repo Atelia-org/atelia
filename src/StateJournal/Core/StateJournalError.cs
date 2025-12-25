@@ -190,3 +190,29 @@ public sealed record DiffKeySortingError(
     "StateJournal.Diff.KeySorting",
     $"DiffPayload keys must be sorted and unique. Found key {CurrentKey} after {PreviousKey}.",
     "This indicates a corrupt or malformed diff payload.");
+
+/// <summary>
+/// DiffPayload 格式错误。
+/// </summary>
+/// <remarks>
+/// 对应条款：<c>[F-KVPAIR-HIGHBITS-RESERVED]</c>、<c>[F-UNKNOWN-VALUETYPE-REJECT]</c>
+/// </remarks>
+public sealed record DiffPayloadFormatError(
+    string Message,
+    string? RecoveryHint = null,
+    IReadOnlyDictionary<string, string>? Details = null
+) : StateJournalError(
+    "StateJournal.DiffPayload.FormatError",
+    Message,
+    RecoveryHint,
+    Details);
+
+/// <summary>
+/// DiffPayload 解码过程中的 EOF 错误。
+/// </summary>
+public sealed record DiffPayloadEofError(
+    string Context
+) : StateJournalError(
+    "StateJournal.DiffPayload.UnexpectedEof",
+    $"Unexpected end of data while reading DiffPayload: {Context}.",
+    "The payload may be truncated or corrupted.");
