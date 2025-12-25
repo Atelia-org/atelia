@@ -1,6 +1,6 @@
 # StateJournal MVP 实施计划
 
-> **版本**: 0.2  
+> **版本**: 0.3  
 > **创建**: 2025-12-25  
 > **状态**: 已审阅  
 > **依据**: [mvp-design-v2.md](mvp-design-v2.md) v3.7 + [T-20251225-01 审计结果](../../agent-team/handoffs/task-result.md)
@@ -40,7 +40,8 @@
 - **目标**：实现 append-only 帧格式的读写能力
 - **预估工时**：8-12h
 - **前置依赖**：无
-- **输出**：`atelia/src/StateJournal/Rbf/`
+- **输出**：`atelia/src/Rbf/`（独立程序集 `Atelia.Rbf`）
+- **测试**：`atelia/tests/Rbf.Tests/`
 
 | 任务 ID | 名称 | 预估 | 条款覆盖 |
 |---------|------|------|----------|
@@ -171,7 +172,7 @@ phase: 1
 name: "RBF Fence 与常量定义"
 
 targetFiles:
-  - "atelia/src/StateJournal/Rbf/RbfConstants.cs"
+  - "atelia/src/Rbf/RbfConstants.cs"
 
 specFiles:
   - "atelia/docs/StateJournal/rbf-format.md#2-fence"
@@ -187,7 +188,7 @@ implementation:
 
 dependencies: []  # 无依赖
 
-testFile: "atelia/tests/StateJournal.Tests/Rbf/RbfConstantsTests.cs"
+testFile: "atelia/tests/Rbf.Tests/RbfConstantsTests.cs"
 
 acceptanceCriteria:
   - "Fence == 0x31464252"
@@ -205,9 +206,9 @@ phase: 1
 name: "RBF Framer 与 Builder 实现"
 
 targetFiles:
-  - "atelia/src/StateJournal/Rbf/IRbfFramer.cs"
-  - "atelia/src/StateJournal/Rbf/RbfFrameBuilder.cs"
-  - "atelia/src/StateJournal/Rbf/RbfFramer.cs"
+  - "atelia/src/Rbf/IRbfFramer.cs"
+  - "atelia/src/Rbf/RbfFrameBuilder.cs"
+  - "atelia/src/Rbf/RbfFramer.cs"
 
 specFiles:
   - "atelia/docs/StateJournal/rbf-interface.md#3-写入端"
@@ -235,7 +236,7 @@ dependencies:
   - "T-P1-02: Frame 布局"
   - "T-P1-03: CRC32C"
 
-testFile: "atelia/tests/StateJournal.Tests/Rbf/RbfFramerTests.cs"
+testFile: "atelia/tests/Rbf.Tests/RbfFramerTests.cs"
 
 acceptanceCriteria:
   - "RBF-SINGLE-001 通过"
@@ -311,9 +312,19 @@ acceptanceCriteria:
 
 ## 6. 项目结构（预期）
 
+### 6.1 程序集依赖图
+
 ```
-atelia/src/StateJournal/
-├── Rbf/                          # Phase 1
+Atelia.Primitives  ←── Atelia.Data  ←── Atelia.Rbf  ←── Atelia.StateJournal
+                                         (Layer 0)       (Layer 1)
+```
+
+### 6.2 目录结构
+
+```
+atelia/src/
+├── Rbf/                              # Atelia.Rbf (独立程序集, Phase 1)
+│   ├── Rbf.csproj
 │   ├── RbfConstants.cs
 │   ├── IRbfFramer.cs
 │   ├── RbfFramer.cs
@@ -321,26 +332,34 @@ atelia/src/StateJournal/
 │   ├── IRbfScanner.cs
 │   ├── RbfScanner.cs
 │   └── RbfFrame.cs
-├── Core/                         # Phase 2
-│   ├── Address64.cs
-│   ├── VarInt.cs
-│   ├── FrameTag.cs
-│   ├── DurableObjectState.cs
-│   └── IDurableObject.cs
-├── Objects/                      # Phase 3
-│   ├── DurableDict.cs
-│   ├── DiffPayload.cs
-│   └── ValueType.cs
-├── Workspace/                    # Phase 4
-│   ├── IdentityMap.cs
-│   ├── DirtySet.cs
-│   ├── StateJournalWorkspace.cs  # CreateObject, LoadObject
-│   └── LazyRef.cs
-└── Commit/                       # Phase 5
-    ├── VersionIndex.cs
-    ├── MetaCommitRecord.cs
-    ├── CommitEngine.cs
-    └── RecoveryEngine.cs
+└── StateJournal/                     # Atelia.StateJournal (Phase 2-5)
+    ├── StateJournal.csproj
+    ├── Core/                         # Phase 2
+    │   ├── Address64.cs
+    │   ├── VarInt.cs
+    │   ├── FrameTag.cs
+    │   ├── DurableObjectState.cs
+    │   └── IDurableObject.cs
+    ├── Objects/                      # Phase 3
+    │   ├── DurableDict.cs
+    │   ├── DiffPayload.cs
+    │   └── ValueType.cs
+    ├── Workspace/                    # Phase 4
+    │   ├── IdentityMap.cs
+    │   ├── DirtySet.cs
+    │   ├── StateJournalWorkspace.cs
+    │   └── LazyRef.cs
+    └── Commit/                       # Phase 5
+        ├── VersionIndex.cs
+        ├── MetaCommitRecord.cs
+        ├── CommitEngine.cs
+        └── RecoveryEngine.cs
+
+atelia/tests/
+├── Rbf.Tests/                        # Atelia.Rbf.Tests
+│   └── Rbf.Tests.csproj
+└── StateJournal.Tests/               # Atelia.StateJournal.Tests
+    └── StateJournal.Tests.csproj
 ```
 
 ---
@@ -396,5 +415,6 @@ atelia/src/StateJournal/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 0.3 | 2025-12-25 | **架构决策**：RBF 独立为 `Atelia.Rbf` 程序集（编译时强制单向依赖）; 更新项目结构和模板路径 |
 | 0.2 | 2025-12-25 | **畅谈会审阅**：新增 T-P2-00（错误类型）; 拆分 T-P3-03→03a/03b, T-P5-03→03a/03b; 补充遗漏条款映射; 具体化验收标准; 标注可并行任务; 总任务数 24→27 |
 | 0.1 | 2025-12-25 | 初始草案，基于 T-20251225-01 审计结果 |
