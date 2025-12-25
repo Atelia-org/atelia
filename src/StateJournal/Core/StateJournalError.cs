@@ -173,6 +173,22 @@ public sealed record ObjectNotFoundError(
     $"Object {ObjectId} not found in the journal.",
     "Verify the ObjectId is correct. It may have been deleted or never created.");
 
+/// <summary>
+/// 对象类型不匹配错误。
+/// </summary>
+/// <remarks>
+/// 当通过 LoadObject&lt;T&gt; 加载对象时，如果对象的实际类型与请求的类型不匹配，
+/// 则返回此错误。
+/// </remarks>
+public sealed record ObjectTypeMismatchError(
+    ulong ObjectId,
+    Type ExpectedType,
+    Type ActualType
+) : StateJournalError(
+    "StateJournal.Object.TypeMismatch",
+    $"Object {ObjectId} is of type {ActualType.Name}, but {ExpectedType.Name} was requested.",
+    "Check the object type or use the correct generic parameter.");
+
 // ============================================================================
 // Diff/Payload Errors (差分/载荷错误)
 // ============================================================================
@@ -216,3 +232,44 @@ public sealed record DiffPayloadEofError(
     "StateJournal.DiffPayload.UnexpectedEof",
     $"Unexpected end of data while reading DiffPayload: {Context}.",
     "The payload may be truncated or corrupted.");
+
+// ============================================================================
+// LazyRef Errors (延迟引用错误)
+// ============================================================================
+
+/// <summary>
+/// LazyRef 未初始化错误。
+/// </summary>
+/// <remarks>
+/// 当访问默认构造的 LazyRef 时返回此错误。
+/// </remarks>
+public sealed record LazyRefNotInitializedError()
+    : StateJournalError(
+        "StateJournal.LazyRef.NotInitialized",
+        "LazyRef has not been initialized.",
+        "Ensure the LazyRef was properly constructed with an objectId and workspace, or with an instance.");
+
+/// <summary>
+/// LazyRef 无工作空间错误。
+/// </summary>
+/// <remarks>
+/// 当尝试从 LazyRef 加载对象但没有关联的 Workspace 时返回此错误。
+/// </remarks>
+public sealed record LazyRefNoWorkspaceError()
+    : StateJournalError(
+        "StateJournal.LazyRef.NoWorkspace",
+        "Cannot load object: LazyRef was not associated with a workspace.",
+        "Construct LazyRef with a valid Workspace instance.");
+
+/// <summary>
+/// LazyRef 内部存储类型异常错误。
+/// </summary>
+/// <remarks>
+/// 当 LazyRef 的内部存储包含非法类型时返回此错误。这通常表示内部状态损坏。
+/// </remarks>
+public sealed record LazyRefInvalidStorageError(
+    Type StorageType
+) : StateJournalError(
+    "StateJournal.LazyRef.InvalidStorage",
+    $"LazyRef contains invalid storage type: {StorageType.Name}.",
+    "This is an internal error. Please report it.");
