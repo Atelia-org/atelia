@@ -7,9 +7,13 @@ using System.Collections.Generic;
 namespace Atelia.StateJournal;
 
 /// <summary>
-/// 持久化字典，支持 ulong 键和泛型值。
+/// 持久化字典，支持 ulong 键和 object? 值。
 /// </summary>
 /// <remarks>
+/// <para>
+/// 非泛型"文档容器"设计：DurableDict 不使用泛型参数，内部存储 object?。
+/// 这符合"持久化容器作为文档"的定位，而非类型化容器。
+/// </para>
 /// <para>
 /// 双字典模型：
 /// <list type="bullet">
@@ -30,11 +34,10 @@ namespace Atelia.StateJournal;
 /// </list>
 /// </para>
 /// </remarks>
-/// <typeparam name="TValue">值类型。</typeparam>
-public class DurableDict<TValue> : IDurableObject {
+public class DurableDict : IDurableObject {
     // === 内部状态 ===
-    private readonly Dictionary<ulong, TValue?> _committed;
-    private readonly Dictionary<ulong, TValue?> _working;
+    private readonly Dictionary<ulong, object?> _committed;
+    private readonly Dictionary<ulong, object?> _working;
     private readonly HashSet<ulong> _removedFromCommitted;  // 跟踪从 _committed 删除的 key
     private readonly HashSet<ulong> _dirtyKeys;
     private DurableObjectState _state;
@@ -65,8 +68,8 @@ public class DurableDict<TValue> : IDurableObject {
     /// </remarks>
     public DurableDict(ulong objectId) {
         ObjectId = objectId;
-        _committed = new Dictionary<ulong, TValue?>();
-        _working = new Dictionary<ulong, TValue?>();
+        _committed = new Dictionary<ulong, object?>();
+        _working = new Dictionary<ulong, object?>();
         _removedFromCommitted = new HashSet<ulong>();
         _dirtyKeys = new HashSet<ulong>();
         _state = DurableObjectState.TransientDirty;
@@ -80,10 +83,10 @@ public class DurableDict<TValue> : IDurableObject {
     /// <remarks>
     /// 此构造函数为 internal，由 Workspace 或加载器使用。
     /// </remarks>
-    internal DurableDict(ulong objectId, Dictionary<ulong, TValue?> committed) {
+    internal DurableDict(ulong objectId, Dictionary<ulong, object?> committed) {
         ObjectId = objectId;
         _committed = committed ?? throw new ArgumentNullException(nameof(committed));
-        _working = new Dictionary<ulong, TValue?>();
+        _working = new Dictionary<ulong, object?>();
         _removedFromCommitted = new HashSet<ulong>();
         _dirtyKeys = new HashSet<ulong>();
         _state = DurableObjectState.Clean;
@@ -101,7 +104,7 @@ public class DurableDict<TValue> : IDurableObject {
     /// 先查 <c>_working</c>，若无则查 <c>_committed</c>。
     /// </remarks>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
-    public bool TryGetValue(ulong key, out TValue? value) {
+    public bool TryGetValue(ulong key, out object? value) {
         ThrowIfDetached();
         // 先检查是否已从 _committed 删除
         if (_removedFromCommitted.Contains(key) && !_working.ContainsKey(key)) {
@@ -135,7 +138,7 @@ public class DurableDict<TValue> : IDurableObject {
     /// <returns>值。</returns>
     /// <exception cref="KeyNotFoundException">获取时键不存在。</exception>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
-    public TValue? this[ulong key] {
+    public object? this[ulong key] {
         get {
             ThrowIfDetached();
             if (_working.TryGetValue(key, out var value)) { return value; }
@@ -202,7 +205,7 @@ public class DurableDict<TValue> : IDurableObject {
     /// 合并 <c>_committed</c> 和 <c>_working</c>，<c>_working</c> 优先。
     /// </remarks>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
-    public IEnumerable<KeyValuePair<ulong, TValue?>> Entries {
+    public IEnumerable<KeyValuePair<ulong, object?>> Entries {
         get {
             ThrowIfDetached();
             // 立即计算以确保 Detached 检查在调用时执行
@@ -210,7 +213,7 @@ public class DurableDict<TValue> : IDurableObject {
         }
     }
 
-    private IEnumerable<KeyValuePair<ulong, TValue?>> GetEntriesCore() {
+    private IEnumerable<KeyValuePair<ulong, object?>> GetEntriesCore() {
         // 合并：_committed 中未删除的 + _working 中所有的
         var allKeys = new HashSet<ulong>();
         foreach (var key in _committed.Keys) {
@@ -222,10 +225,10 @@ public class DurableDict<TValue> : IDurableObject {
 
         foreach (var key in allKeys) {
             if (_working.TryGetValue(key, out var value)) {
-                yield return new KeyValuePair<ulong, TValue?>(key, value);
+                yield return new KeyValuePair<ulong, object?>(key, value);
             }
             else {
-                yield return new KeyValuePair<ulong, TValue?>(key, _committed[key]);
+                yield return new KeyValuePair<ulong, object?>(key, _committed[key]);
             }
         }
     }
@@ -238,7 +241,7 @@ public class DurableDict<TValue> : IDurableObject {
     /// <param name="key">键。</param>
     /// <param name="value">值。</param>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
-    public void Set(ulong key, TValue? value) {
+    public void Set(ulong key, object? value) {
         ThrowIfDetached();
 
         // 写入 working
@@ -382,7 +385,7 @@ public class DurableDict<TValue> : IDurableObject {
     ///   <item>Clean → DiscardChanges() → Clean (no-op)</item>
     ///   <item>PersistentDirty → DiscardChanges() → Clean</item>
     ///   <item>TransientDirty → DiscardChanges() → Detached</item>
-    ///   <item>Detached → DiscardChanges() → throw ObjectDetachedException</item>
+    ///   <item>Detached → DiscardChanges() → Detached (no-op, 幂等)</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -410,7 +413,8 @@ public class DurableDict<TValue> : IDurableObject {
                 return;
 
             case DurableObjectState.Detached:
-                throw new ObjectDetachedException(ObjectId);
+                // No-op: 幂等，符合 [A-DURABLEDICT-API-SIGNATURES] 规范
+                return;
 
             default:
                 throw new InvalidOperationException($"Unknown state: {_state}");
@@ -426,7 +430,7 @@ public class DurableDict<TValue> : IDurableObject {
     /// <param name="key">键。</param>
     /// <param name="value">值。</param>
     /// <exception cref="NotSupportedException">不支持的值类型。</exception>
-    private static void WriteValue(ref DiffPayloadWriter writer, ulong key, TValue? value) {
+    private static void WriteValue(ref DiffPayloadWriter writer, ulong key, object? value) {
         switch (value) {
             case null:
                 writer.WriteNull(key);
@@ -468,13 +472,13 @@ public class DurableDict<TValue> : IDurableObject {
     /// </remarks>
     /// <param name="key">变更的键。</param>
     /// <param name="newValue">新值。</param>
-    private void UpdateDirtyKeyForSet(ulong key, TValue? newValue) {
+    private void UpdateDirtyKeyForSet(ulong key, object? newValue) {
         // 获取 committed 值
         bool hasCommitted = _committed.TryGetValue(key, out var committedValue);
 
         // 比较：新值是否等于已提交值
         bool isEqual = hasCommitted
-            ? EqualityComparer<TValue>.Default.Equals(newValue, committedValue)
+            ? Equals(newValue, committedValue)
             : false;  // 如果 committed 中没有，则不相等
 
         if (isEqual) {

@@ -25,7 +25,7 @@ public class IdentityMapTests {
     public void Add_ThenTryGet_ReturnsObject() {
         // Arrange
         var map = new IdentityMap();
-        var obj = new DurableDict<int>(42);
+        var obj = new DurableDict(42);
 
         // Act
         map.Add(obj);
@@ -78,8 +78,8 @@ public class IdentityMapTests {
     public void Add_DuplicateObjectId_ThrowsInvalidOperationException() {
         // Arrange
         var map = new IdentityMap();
-        var obj1 = new DurableDict<int>(42);
-        var obj2 = new DurableDict<int>(42);
+        var obj1 = new DurableDict(42);
+        var obj2 = new DurableDict(42);
 
         // Act
         map.Add(obj1);
@@ -97,7 +97,7 @@ public class IdentityMapTests {
     public void Add_SameObject_Succeeds() {
         // Arrange
         var map = new IdentityMap();
-        var obj = new DurableDict<int>(42);
+        var obj = new DurableDict(42);
 
         // Act
         map.Add(obj);
@@ -120,12 +120,12 @@ public class IdentityMapTests {
     public void Remove_ThenAdd_Succeeds() {
         // Arrange
         var map = new IdentityMap();
-        var obj1 = new DurableDict<int>(42);
+        var obj1 = new DurableDict(42);
         map.Add(obj1);
 
         // Act
         var removed = map.Remove(42);
-        var obj2 = new DurableDict<int>(42);
+        var obj2 = new DurableDict(42);
         map.Add(obj2);
 
         // Assert
@@ -156,7 +156,7 @@ public class IdentityMapTests {
     public void Remove_ThenTryGet_ReturnsFalse() {
         // Arrange
         var map = new IdentityMap();
-        var obj = new DurableDict<int>(42);
+        var obj = new DurableDict(42);
         map.Add(obj);
 
         // Act
@@ -199,7 +199,7 @@ public class IdentityMapTests {
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void AddObjectAndReleaseReference(IdentityMap map, ulong objectId) {
-        var obj = new DurableDict<int>(objectId);
+        var obj = new DurableDict(objectId);
         map.Add(obj);
         // obj 超出作用域，无强引用
     }
@@ -211,7 +211,7 @@ public class IdentityMapTests {
     public void TryGet_WithStrongReference_AfterGC_ReturnsTrue() {
         // Arrange
         var map = new IdentityMap();
-        var obj = new DurableDict<int>(42);
+        var obj = new DurableDict(42);
         map.Add(obj);
 
         // Act - 强制 GC
@@ -244,7 +244,7 @@ public class IdentityMapTests {
         GC.Collect();
 
         // Act
-        var newObj = new DurableDict<int>(42);
+        var newObj = new DurableDict(42);
         map.Add(newObj);
 
         // Assert
@@ -265,7 +265,7 @@ public class IdentityMapTests {
         var map = new IdentityMap();
         AddObjectAndReleaseReference(map, 1);
         AddObjectAndReleaseReference(map, 2);
-        var liveObj = new DurableDict<int>(3);
+        var liveObj = new DurableDict(3);
         map.Add(liveObj);
 
         map.Count.Should().Be(3);
@@ -310,8 +310,8 @@ public class IdentityMapTests {
     public void Cleanup_AllAlive_ReturnsZero() {
         // Arrange
         var map = new IdentityMap();
-        var obj1 = new DurableDict<int>(1);
-        var obj2 = new DurableDict<int>(2);
+        var obj1 = new DurableDict(1);
+        var obj2 = new DurableDict(2);
         map.Add(obj1);
         map.Add(obj2);
 
@@ -337,8 +337,8 @@ public class IdentityMapTests {
     public void Count_ReflectsEntries() {
         // Arrange
         var map = new IdentityMap();
-        var obj1 = new DurableDict<int>(1);
-        var obj2 = new DurableDict<int>(2);
+        var obj1 = new DurableDict(1);
+        var obj2 = new DurableDict(2);
 
         // Assert
         map.Count.Should().Be(0);
@@ -364,7 +364,7 @@ public class IdentityMapTests {
         // Arrange
         var map = new IdentityMap();
         AddObjectAndReleaseReference(map, 1);
-        var liveObj = new DurableDict<int>(2);
+        var liveObj = new DurableDict(2);
         map.Add(liveObj);
 
         // 强制 GC
@@ -396,7 +396,7 @@ public class IdentityMapTests {
     public void Add_UsesObjectIdAsKey() {
         // Arrange
         var map = new IdentityMap();
-        var obj = new DurableDict<int>(12345);
+        var obj = new DurableDict(12345);
 
         // Act
         map.Add(obj);
@@ -420,9 +420,9 @@ public class IdentityMapTests {
     public void Add_MultipleObjects_AllAccessible() {
         // Arrange
         var map = new IdentityMap();
-        var obj1 = new DurableDict<int>(1);
-        var obj2 = new DurableDict<int>(2);
-        var obj3 = new DurableDict<int>(3);
+        var obj1 = new DurableDict(1);
+        var obj2 = new DurableDict(2);
+        var obj3 = new DurableDict(3);
 
         // Act
         map.Add(obj1);

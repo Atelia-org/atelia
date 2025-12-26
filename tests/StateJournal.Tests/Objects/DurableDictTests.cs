@@ -17,6 +17,13 @@ namespace Atelia.StateJournal.Tests.Objects;
 /// </list>
 /// </remarks>
 public class DurableDictTests {
+
+    /// <summary>
+    /// 辅助方法：将 Dictionary&lt;ulong, T&gt; 转换为 Dictionary&lt;ulong, object?&gt;。
+    /// </summary>
+    private static Dictionary<ulong, object?> ToObjectDict<T>(Dictionary<ulong, T> source)
+        => source.ToDictionary(kv => kv.Key, kv => (object?)kv.Value);
+
     #region 构造函数测试
 
     /// <summary>
@@ -25,7 +32,7 @@ public class DurableDictTests {
     [Fact]
     public void Constructor_New_SetsTransientDirtyState() {
         // Act
-        var dict = new DurableDict<int>(objectId: 42);
+        var dict = new DurableDict(objectId: 42);
 
         // Assert
         dict.ObjectId.Should().Be(42UL);
@@ -48,7 +55,7 @@ public class DurableDictTests {
         };
 
         // Act
-        var dict = new DurableDict<string>(objectId: 100, committed);
+        var dict = new DurableDict(objectId: 100, ToObjectDict(committed));
 
         // Assert
         dict.ObjectId.Should().Be(100UL);
@@ -63,7 +70,7 @@ public class DurableDictTests {
     [Fact]
     public void Constructor_NullCommitted_ThrowsArgumentNullException() {
         // Act
-        Action act = () => new DurableDict<int>(1, null!);
+        Action act = () => new DurableDict(1, null!);
 
         // Assert
         act.Should().Throw<ArgumentNullException>()
@@ -80,7 +87,7 @@ public class DurableDictTests {
     [Fact]
     public void Set_ThenGet_ReturnsSameValue() {
         // Arrange
-        var dict = new DurableDict<string>(1);
+        var dict = new DurableDict(1);
 
         // Act
         dict.Set(10, "hello");
@@ -97,7 +104,7 @@ public class DurableDictTests {
     [Fact]
     public void Set_NullValue_CanBeRetrieved() {
         // Arrange
-        var dict = new DurableDict<string>(1);
+        var dict = new DurableDict(1);
 
         // Act
         dict.Set(10, null);
@@ -114,7 +121,7 @@ public class DurableDictTests {
     [Fact]
     public void Set_MultipleTimes_OverwritesPreviousValue() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
 
         // Act
         dict.Set(10, 100);
@@ -131,7 +138,7 @@ public class DurableDictTests {
     [Fact]
     public void Indexer_Set_WorksLikeSetMethod() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
 
         // Act
         dict[10] = 42;
@@ -147,7 +154,7 @@ public class DurableDictTests {
     [Fact]
     public void Indexer_Get_NonExistentKey_ThrowsKeyNotFoundException() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
 
         // Act
         Action act = () => _ = dict[999];
@@ -162,7 +169,7 @@ public class DurableDictTests {
     [Fact]
     public void TryGetValue_NonExistentKey_ReturnsFalse() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
 
         // Act & Assert
         dict.TryGetValue(999, out var value).Should().BeFalse();
@@ -179,7 +186,7 @@ public class DurableDictTests {
     [Fact]
     public void Remove_ThenContainsKey_ReturnsFalse() {
         // Arrange
-        var dict = new DurableDict<string>(1);
+        var dict = new DurableDict(1);
         dict.Set(10, "hello");
 
         // Act
@@ -197,7 +204,7 @@ public class DurableDictTests {
     [Fact]
     public void Remove_NonExistentKey_ReturnsFalse() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
 
         // Act
         var removed = dict.Remove(999);
@@ -213,7 +220,7 @@ public class DurableDictTests {
     public void Remove_KeyOnlyInCommitted_ReturnsTrue() {
         // Arrange
         var committed = new Dictionary<ulong, int> { { 10, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act
         var removed = dict.Remove(10);
@@ -229,7 +236,7 @@ public class DurableDictTests {
     [Fact]
     public void Remove_KeyNotInEnumeration() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.Set(1, 100);
         dict.Set(2, 200);
         dict.Set(3, 300);
@@ -253,7 +260,7 @@ public class DurableDictTests {
     public void WorkingState_TakesPrecedence_OverCommitted() {
         // Arrange
         var committed = new Dictionary<ulong, int> { { 10, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act
         dict.Set(10, 999);
@@ -273,7 +280,7 @@ public class DurableDictTests {
             { 1, "one" },
             { 2, "two" }
         };
-        var dict = new DurableDict<string>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act - 只修改 key=1
         dict.Set(1, "ONE");
@@ -290,7 +297,7 @@ public class DurableDictTests {
     public void NewKeyInWorking_IncludedInEnumeration() {
         // Arrange
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act
         dict.Set(2, 200);
@@ -312,7 +319,7 @@ public class DurableDictTests {
     public void Clean_AfterSet_BecomesPersistentDirty() {
         // Arrange
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         dict.State.Should().Be(DurableObjectState.Clean);
 
         // Act
@@ -329,7 +336,7 @@ public class DurableDictTests {
     [Fact]
     public void TransientDirty_AfterSet_RemainsTransientDirty() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.State.Should().Be(DurableObjectState.TransientDirty);
 
         // Act
@@ -346,7 +353,7 @@ public class DurableDictTests {
     [Fact]
     public void HasChanges_ReflectsDirtyKeys() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.HasChanges.Should().BeFalse();
 
         // Act & Assert
@@ -364,7 +371,7 @@ public class DurableDictTests {
     public void Clean_AfterRemove_BecomesPersistentDirty() {
         // Arrange
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act
         dict.Remove(1);
@@ -381,10 +388,10 @@ public class DurableDictTests {
     /// <summary>
     /// 创建一个 Detached 状态的 DurableDict（通过反射设置状态）。
     /// </summary>
-    private static DurableDict<TValue?> CreateDetachedDict<TValue>(ulong objectId) {
-        var dict = new DurableDict<TValue?>(objectId);
+    private static DurableDict CreateDetachedDict<TValue>(ulong objectId) {
+        var dict = new DurableDict(objectId);
         // 使用反射设置 _state 为 Detached
-        var stateField = typeof(DurableDict<TValue?>).GetField(
+        var stateField = typeof(DurableDict).GetField(
             "_state",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance
         );
@@ -550,7 +557,7 @@ public class DurableDictTests {
     [Fact]
     public void WritePendingDiff_SingleValue_SerializesCorrectly() {
         // Arrange
-        var dict = new DurableDict<long>(1);
+        var dict = new DurableDict(1);
         dict.Set(42, 100L);
         var buffer = new ArrayBufferWriter<byte>();
 
@@ -579,7 +586,7 @@ public class DurableDictTests {
     [Fact]
     public void WritePendingDiff_MultipleValues_KeysAreSorted() {
         // Arrange
-        var dict = new DurableDict<long>(1);
+        var dict = new DurableDict(1);
         // 以乱序设置值
         dict.Set(100, 1000L);
         dict.Set(10, 100L);
@@ -608,7 +615,7 @@ public class DurableDictTests {
     [Fact]
     public void WritePendingDiff_NullValue_WritesNull() {
         // Arrange
-        var dict = new DurableDict<long?>(1);
+        var dict = new DurableDict(1);
         dict.Set(42, null);
         var buffer = new ArrayBufferWriter<byte>();
 
@@ -632,7 +639,7 @@ public class DurableDictTests {
     public void WritePendingDiff_Remove_WritesTombstone() {
         // Arrange
         var committed = new Dictionary<ulong, long> { { 10, 100L } };
-        var dict = new DurableDict<long>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         dict.Remove(10);
         var buffer = new ArrayBufferWriter<byte>();
 
@@ -655,7 +662,7 @@ public class DurableDictTests {
     [Fact]
     public void WritePendingDiff_DoesNotUpdateState() {
         // Arrange
-        var dict = new DurableDict<long>(1);
+        var dict = new DurableDict(1);
         dict.Set(42, 100L);
         var buffer = new ArrayBufferWriter<byte>();
 
@@ -674,7 +681,7 @@ public class DurableDictTests {
     public void WritePendingDiff_NoChanges_WritesEmptyPayload() {
         // Arrange
         var committed = new Dictionary<ulong, long> { { 10, 100L } };
-        var dict = new DurableDict<long>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         var buffer = new ArrayBufferWriter<byte>();
 
         // Act
@@ -691,7 +698,7 @@ public class DurableDictTests {
     [Fact]
     public void WritePendingDiff_IntValue_SerializesAsVarInt() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.Set(42, 999);
         var buffer = new ArrayBufferWriter<byte>();
 
@@ -723,7 +730,7 @@ public class DurableDictTests {
             { 2, 200L },
             { 3, 300L }
         };
-        var dict = new DurableDict<long>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // 覆盖 key=1, 删除 key=2, 新增 key=4
         dict.Set(1, 999L);
@@ -760,7 +767,7 @@ public class DurableDictTests {
     [Fact]
     public void WritePendingDiff_UnsupportedType_ThrowsNotSupportedException() {
         // Arrange
-        var dict = new DurableDict<string>(1);
+        var dict = new DurableDict(1);
         dict.Set(42, "hello");
         var buffer = new ArrayBufferWriter<byte>();
 
@@ -798,7 +805,7 @@ public class DurableDictTests {
     [Fact]
     public void OnCommitSucceeded_ClearsHasChanges() {
         // Arrange
-        var dict = new DurableDict<long>(1);
+        var dict = new DurableDict(1);
         dict.Set(42, 100L);
         dict.HasChanges.Should().BeTrue();
 
@@ -815,7 +822,7 @@ public class DurableDictTests {
     [Fact]
     public void OnCommitSucceeded_StateBecomesClean() {
         // Arrange
-        var dict = new DurableDict<long>(1);
+        var dict = new DurableDict(1);
         dict.Set(42, 100L);
         dict.State.Should().Be(DurableObjectState.TransientDirty);
 
@@ -832,7 +839,7 @@ public class DurableDictTests {
     [Fact]
     public void OnCommitSucceeded_ValuesStillAccessible() {
         // Arrange
-        var dict = new DurableDict<long>(1);
+        var dict = new DurableDict(1);
         dict.Set(10, 100L);
         dict.Set(20, 200L);
 
@@ -856,7 +863,7 @@ public class DurableDictTests {
             { 1, 100L },
             { 2, 200L }
         };
-        var dict = new DurableDict<long>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // 修改 key=1, 新增 key=3
         dict.Set(1, 999L);
@@ -884,7 +891,7 @@ public class DurableDictTests {
             { 1, 100L },
             { 2, 200L }
         };
-        var dict = new DurableDict<long>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // 删除 key=1
         dict.Remove(1);
@@ -904,7 +911,7 @@ public class DurableDictTests {
     [Fact]
     public void OnCommitSucceeded_ThenModify_BecomesPersistentDirty() {
         // Arrange
-        var dict = new DurableDict<long>(1);
+        var dict = new DurableDict(1);
         dict.Set(42, 100L);
         dict.OnCommitSucceeded();
         dict.State.Should().Be(DurableObjectState.Clean);
@@ -938,7 +945,7 @@ public class DurableDictTests {
     [Fact]
     public void TwoPhaseCommit_RoundTrip() {
         // Arrange
-        var dict = new DurableDict<long>(1);
+        var dict = new DurableDict(1);
         dict.Set(10, 100L);
         dict.Set(20, 200L);
         dict.Set(30, 300L);
@@ -994,7 +1001,7 @@ public class DurableDictTests {
             { 1, 100 },
             { 2, 200 }
         };
-        var dict = new DurableDict<long?>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act: 修改后丢弃
         dict.Set(1, 999);   // 覆盖
@@ -1019,7 +1026,7 @@ public class DurableDictTests {
     [Fact]
     public void DiscardChanges_TransientDirty_BecomesDetached() {
         // Arrange: 新建 dict（TransientDirty）
-        var dict = new DurableDict<long?>(42);
+        var dict = new DurableDict(42);
         dict.Set(1, 100);
         dict.State.Should().Be(DurableObjectState.TransientDirty);
 
@@ -1042,7 +1049,7 @@ public class DurableDictTests {
     public void DiscardChanges_Clean_IsNoop() {
         // Arrange
         var committed = new Dictionary<ulong, long?> { { 1, 100 } };
-        var dict = new DurableDict<long?>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         dict.State.Should().Be(DurableObjectState.Clean);
 
         // Act
@@ -1055,21 +1062,24 @@ public class DurableDictTests {
     }
 
     /// <summary>
-    /// Detached 状态调用 DiscardChanges 抛出 ObjectDetachedException。
+    /// Detached 状态调用 DiscardChanges 是 no-op（幂等）。
     /// </summary>
+    /// <remarks>
+    /// 对应条款：<c>[A-DISCARDCHANGES-REVERT-COMMITTED]</c> — Detached 时为 no-op
+    /// </remarks>
     [Fact]
-    public void DiscardChanges_Detached_ThrowsException() {
+    public void DiscardChanges_Detached_IsNoop() {
         // Arrange: 先 Detach
-        var dict = new DurableDict<long?>(42);
+        var dict = new DurableDict(42);
         dict.DiscardChanges();  // TransientDirty → Detached
         dict.State.Should().Be(DurableObjectState.Detached);
 
-        // Act
+        // Act: 再次调用 DiscardChanges
         Action discard = () => dict.DiscardChanges();
 
-        // Assert
-        discard.Should().Throw<ObjectDetachedException>()
-            .Which.ObjectId.Should().Be(42UL);
+        // Assert: 不抛异常，保持 Detached 状态（幂等）
+        discard.Should().NotThrow();
+        dict.State.Should().Be(DurableObjectState.Detached);
     }
 
     /// <summary>
@@ -1078,7 +1088,7 @@ public class DurableDictTests {
     [Fact]
     public void DiscardChanges_AfterDetach_StateCanBeRead() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.DiscardChanges();
 
         // Act & Assert: State 读取不应抛异常
@@ -1091,7 +1101,7 @@ public class DurableDictTests {
     [Fact]
     public void DiscardChanges_AfterDetach_AllAccessThrows() {
         // Arrange
-        var dict = new DurableDict<int>(42);
+        var dict = new DurableDict(42);
         dict.Set(1, 100);
         dict.DiscardChanges();
 
@@ -1119,7 +1129,7 @@ public class DurableDictTests {
             { 2, "two" },
             { 3, "three" }
         };
-        var dict = new DurableDict<string?>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act: 多种修改
         dict.Set(1, "ONE");       // 覆盖
@@ -1149,7 +1159,7 @@ public class DurableDictTests {
     public void DiscardChanges_ThenModify_BecomesPersistentDirtyAgain() {
         // Arrange
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         dict.Set(1, 999);
         dict.DiscardChanges();
         dict.State.Should().Be(DurableObjectState.Clean);
@@ -1169,7 +1179,7 @@ public class DurableDictTests {
     [Fact]
     public void DiscardChanges_AfterCommit_WorksCorrectly() {
         // Arrange: Commit 后再修改
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.Set(1, 100);
         dict.OnCommitSucceeded();  // 现在 committed[1] = 100
 
@@ -1202,7 +1212,7 @@ public class DurableDictTests {
             { 2, 200 },
             { 3, 300 }
         };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act
         dict.Set(1, 999);      // 覆盖
@@ -1232,7 +1242,7 @@ public class DurableDictTests {
             { 1, "one" },
             { 2, "two" }
         };
-        var dict = new DurableDict<string>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act
         dict.Set(1, "ONE");    // 覆盖
@@ -1252,7 +1262,7 @@ public class DurableDictTests {
     [Fact]
     public void EmptyDict_CountIsZero() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
 
         // Assert
         dict.Count.Should().Be(0);
@@ -1265,7 +1275,7 @@ public class DurableDictTests {
     /// </summary>
     [Fact]
     public void ValueType_Int_Works() {
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.Set(1, 42);
         dict[1].Should().Be(42);
     }
@@ -1275,7 +1285,7 @@ public class DurableDictTests {
     /// </summary>
     [Fact]
     public void ReferenceType_Object_Works() {
-        var dict = new DurableDict<object>(1);
+        var dict = new DurableDict(1);
         var obj = new object();
         dict.Set(1, obj);
         dict[1].Should().BeSameAs(obj);
@@ -1286,7 +1296,7 @@ public class DurableDictTests {
     /// </summary>
     [Fact]
     public void NullableValueType_Works() {
-        var dict = new DurableDict<int?>(1);
+        var dict = new DurableDict(1);
         dict.Set(1, 42);
         dict.Set(2, null);
 
@@ -1329,7 +1339,7 @@ public class DurableDictTests {
     public void DirtyKeys_SetBackToOriginalValue_HasChangesBecomeFalse() {
         // Arrange: committed[1] = 100
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         dict.HasChanges.Should().BeFalse();
 
         // Act: 修改后再恢复
@@ -1352,7 +1362,7 @@ public class DurableDictTests {
     [Fact]
     public void DirtyKeys_RemoveNewKey_HasChangesBecomeFalse() {
         // Arrange: 新建的 dict（无 committed）
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.HasChanges.Should().BeFalse();
 
         // Act
@@ -1375,7 +1385,7 @@ public class DurableDictTests {
     public void DirtyKeys_RemoveCommittedKey_HasChangesIsTrue() {
         // Arrange: committed[1] = 100
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act
         dict.Remove(1);
@@ -1394,7 +1404,7 @@ public class DurableDictTests {
     public void DirtyKeys_RemoveThenSetOriginal_HasChangesBecomeFalse() {
         // Arrange: committed[1] = 100
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act
         dict.Remove(1);
@@ -1413,7 +1423,7 @@ public class DurableDictTests {
     public void DirtyKeys_GetOperations_DoNotPollute() {
         // Arrange: committed[1] = 100
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         dict.HasChanges.Should().BeFalse();
 
         // Act & Assert: 各种读操作都不应改变 HasChanges
@@ -1442,7 +1452,7 @@ public class DurableDictTests {
     [Fact]
     public void DirtyKeys_RoundTrip_SetSameValueAfterCommit_HasChangesIsFalse() {
         // Arrange
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.Set(1, 100);
         dict.OnCommitSucceeded();  // 现在 committed[1] = 100
         dict.HasChanges.Should().BeFalse();
@@ -1465,7 +1475,7 @@ public class DurableDictTests {
             { 1, 100 },
             { 2, 200 }
         };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act & Assert
         // 修改 key=1
@@ -1500,7 +1510,7 @@ public class DurableDictTests {
     public void DirtyKeys_RemoveNonExistent_DoesNotChangeHasChanges() {
         // Arrange
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         dict.HasChanges.Should().BeFalse();
 
         // Act: 删除不存在的 key
@@ -1518,7 +1528,7 @@ public class DurableDictTests {
     public void DirtyKeys_SetNull_TracksCorrectly() {
         // Arrange: committed[1] = null
         var committed = new Dictionary<ulong, string?> { { 1, null } };
-        var dict = new DurableDict<string>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
         dict.HasChanges.Should().BeFalse();
 
         // Act: 修改为非 null
@@ -1536,7 +1546,7 @@ public class DurableDictTests {
     [Fact]
     public void DirtyKeys_TransientDirty_SetAndRemove() {
         // Arrange: 新对象
-        var dict = new DurableDict<int>(1);
+        var dict = new DurableDict(1);
         dict.State.Should().Be(DurableObjectState.TransientDirty);
         dict.HasChanges.Should().BeFalse();
 
@@ -1563,7 +1573,7 @@ public class DurableDictTests {
     public void DirtyKeys_ComplexScenario_SameKeyMultipleOperations() {
         // Arrange: committed[1] = 100
         var committed = new Dictionary<ulong, int> { { 1, 100 } };
-        var dict = new DurableDict<int>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Act & Assert: 一系列操作
         dict.Set(1, 200);  // 脏
@@ -1589,7 +1599,7 @@ public class DurableDictTests {
     public void DirtyKeys_WritePendingDiff_ConsistentWithHasChanges() {
         // Arrange: committed[1] = 100
         var committed = new Dictionary<ulong, long> { { 1, 100L } };
-        var dict = new DurableDict<long>(1, committed);
+        var dict = new DurableDict(1, ToObjectDict(committed));
 
         // Case 1: 无变更 → 空 diff
         var buffer1 = new ArrayBufferWriter<byte>();

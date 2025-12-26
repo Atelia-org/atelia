@@ -38,21 +38,21 @@ public sealed class VersionIndex : IDurableObject {
     /// </remarks>
     private const ulong MinUserObjectId = 16;
 
-    private readonly DurableDict<ulong?> _inner;
+    private readonly DurableDict _inner;
 
     /// <summary>
     /// 创建新的空 VersionIndex。
     /// </summary>
     public VersionIndex() {
-        _inner = new DurableDict<ulong?>(WellKnownObjectId);
+        _inner = new DurableDict(WellKnownObjectId);
     }
 
     /// <summary>
     /// 从 committed 状态恢复 VersionIndex。
     /// </summary>
     /// <param name="committed">已提交的 ObjectId → ObjectVersionPtr 映射。</param>
-    internal VersionIndex(Dictionary<ulong, ulong?> committed) {
-        _inner = new DurableDict<ulong?>(WellKnownObjectId, committed);
+    internal VersionIndex(Dictionary<ulong, object?> committed) {
+        _inner = new DurableDict(WellKnownObjectId, committed);
     }
 
     // === IDurableObject 实现（委托给 _inner）===
@@ -94,8 +94,8 @@ public sealed class VersionIndex : IDurableObject {
     /// </list>
     /// </remarks>
     public bool TryGetObjectVersionPtr(ulong objectId, out ulong versionPtr) {
-        if (_inner.TryGetValue(objectId, out var ptr) && ptr.HasValue) {
-            versionPtr = ptr.Value;
+        if (_inner.TryGetValue(objectId, out var ptr) && ptr is ulong ulongValue) {
+            versionPtr = ulongValue;
             return true;
         }
         versionPtr = 0;

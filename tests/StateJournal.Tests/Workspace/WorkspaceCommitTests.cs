@@ -20,7 +20,7 @@ public class WorkspaceCommitTests {
     public void FinalizeCommit_ClearsDirtySet() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
 
         var context = workspace.PrepareCommit();
@@ -36,7 +36,7 @@ public class WorkspaceCommitTests {
     public void FinalizeCommit_ObjectsBecomeClean() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
 
         var context = workspace.PrepareCommit();
@@ -53,7 +53,7 @@ public class WorkspaceCommitTests {
     public void FinalizeCommit_UpdatesEpochSeq() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
 
         workspace.EpochSeq.Should().Be(0);
@@ -69,7 +69,7 @@ public class WorkspaceCommitTests {
     public void FinalizeCommit_UpdatesDataTail() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
 
         workspace.DataTail.Should().Be(0);
@@ -85,7 +85,7 @@ public class WorkspaceCommitTests {
     public void FinalizeCommit_UpdatesVersionIndexPtr() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
 
         workspace.VersionIndexPtr.Should().Be(0);
@@ -101,9 +101,9 @@ public class WorkspaceCommitTests {
     public void FinalizeCommit_MultipleObjects_AllBecomeClean() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict1 = workspace.CreateObject<DurableDict<long?>>();
-        var dict2 = workspace.CreateObject<DurableDict<long?>>();
-        var dict3 = workspace.CreateObject<DurableDict<long?>>();
+        var dict1 = workspace.CreateObject<DurableDict>();
+        var dict2 = workspace.CreateObject<DurableDict>();
+        var dict3 = workspace.CreateObject<DurableDict>();
         dict1.Set(1, 100);
         dict2.Set(2, 200);
         dict3.Set(3, 300);
@@ -128,7 +128,7 @@ public class WorkspaceCommitTests {
     public void Commit_FullCycle_Success() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
 
         // Act
@@ -144,7 +144,7 @@ public class WorkspaceCommitTests {
     public void Commit_MultipleTimes_EpochIncreases() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
 
         // Act & Assert
         dict.Set(1, 100);
@@ -164,7 +164,7 @@ public class WorkspaceCommitTests {
     public void Commit_ReturnsContextWithCorrectEpochSeq() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
 
         // Act & Assert
         dict.Set(1, 100);
@@ -197,7 +197,7 @@ public class WorkspaceCommitTests {
     public void AfterCommit_DataStillReadable() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
         dict.Set(2, 200);
 
@@ -213,7 +213,7 @@ public class WorkspaceCommitTests {
     public void AfterCommit_CanModifyAndCommitAgain() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
         workspace.Commit();
 
@@ -237,14 +237,14 @@ public class WorkspaceCommitTests {
     public void AfterCommit_ObjectStillInIdentityMap() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         dict.Set(1, 100);
 
         // Act
         workspace.Commit();
 
         // Assert
-        var loadResult = workspace.LoadObject<DurableDict<long?>>(dict.ObjectId);
+        var loadResult = workspace.LoadObject<DurableDict>(dict.ObjectId);
         loadResult.IsSuccess.Should().BeTrue();
         ReferenceEquals(loadResult.Value, dict).Should().BeTrue();
     }
@@ -288,7 +288,7 @@ public class WorkspaceCommitTests {
     public void Commit_ObjectWithNoChanges_NotWritten() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         // 不做任何修改，DirtySet 中有对象但 HasChanges = false
 
         // Act
@@ -302,7 +302,7 @@ public class WorkspaceCommitTests {
     public void Commit_LargeDataSet_HandlesCorrectly() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict<long?>>();
+        var dict = workspace.CreateObject<DurableDict>();
         for (int i = 0; i < 1000; i++) {
             dict.Set((ulong)i, i * 10);
         }

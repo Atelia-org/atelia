@@ -12,6 +12,13 @@ namespace Atelia.StateJournal.Tests.Commit;
 /// 对应条款：<c>[F-VERSIONINDEX-REUSE-DURABLEDICT]</c>
 /// </remarks>
 public class VersionIndexTests {
+
+    /// <summary>
+    /// 辅助方法：将 Dictionary&lt;ulong, ulong?&gt; 转换为 Dictionary&lt;ulong, object?&gt;。
+    /// </summary>
+    private static Dictionary<ulong, object?> ToObjectDict(Dictionary<ulong, ulong?> source)
+        => source.ToDictionary(kv => kv.Key, kv => (object?)kv.Value);
+
     #region Well-Known ObjectId 测试
 
     /// <summary>
@@ -159,7 +166,7 @@ public class VersionIndexTests {
             { 0, 0x100 },   // VersionIndex 自身的指针（特殊情况）
             { 5, 0x200 },   // 另一个保留区 ID
         };
-        var index = new VersionIndex(committed);
+        var index = new VersionIndex(ToObjectDict(committed));
 
         // Act & Assert - 仍然返回 16
         index.ComputeNextObjectId().Should().Be(16);
@@ -203,7 +210,7 @@ public class VersionIndexTests {
         var committed = new Dictionary<ulong, ulong?> { { 16, 0x1000UL } };
 
         // Act
-        var index = new VersionIndex(committed);
+        var index = new VersionIndex(ToObjectDict(committed));
 
         // Assert
         index.State.Should().Be(DurableObjectState.Clean);
@@ -244,7 +251,7 @@ public class VersionIndexTests {
     public void VersionIndex_Clean_AfterSet_BecomesPersistentDirty() {
         // Arrange
         var committed = new Dictionary<ulong, ulong?> { { 16, 0x1000UL } };
-        var index = new VersionIndex(committed);
+        var index = new VersionIndex(ToObjectDict(committed));
         index.State.Should().Be(DurableObjectState.Clean);
 
         // Act
@@ -286,7 +293,7 @@ public class VersionIndexTests {
         }
 
         pairs.Should().HaveCount(2);
-        // 由于 DurableDict<ulong?> 写入的是 VarInt 或 Null
+        // 由于 DurableDict 写入的是 VarInt 或 Null
         // ulong? 被当作 long? 处理（通过 VarInt 编码）
     }
 
@@ -315,7 +322,7 @@ public class VersionIndexTests {
     public void VersionIndex_WritePendingDiff_EmptyChanges() {
         // Arrange
         var committed = new Dictionary<ulong, ulong?> { { 16, 0x1000UL } };
-        var index = new VersionIndex(committed);
+        var index = new VersionIndex(ToObjectDict(committed));
         var buffer = new ArrayBufferWriter<byte>();
 
         // Act
@@ -399,7 +406,7 @@ public class VersionIndexTests {
     public void VersionIndex_DiscardChanges_PersistentDirty_ResetsToClean() {
         // Arrange
         var committed = new Dictionary<ulong, ulong?> { { 16, 0x1000UL } };
-        var index = new VersionIndex(committed);
+        var index = new VersionIndex(ToObjectDict(committed));
         index.SetObjectVersionPtr(16, 0x9999);  // 修改
         index.SetObjectVersionPtr(17, 0x2000);  // 新增
         index.State.Should().Be(DurableObjectState.PersistentDirty);
@@ -426,7 +433,7 @@ public class VersionIndexTests {
     public void VersionIndex_DiscardChanges_Clean_IsNoop() {
         // Arrange
         var committed = new Dictionary<ulong, ulong?> { { 16, 0x1000UL } };
-        var index = new VersionIndex(committed);
+        var index = new VersionIndex(ToObjectDict(committed));
         index.State.Should().Be(DurableObjectState.Clean);
 
         // Act
@@ -456,7 +463,7 @@ public class VersionIndexTests {
         };
 
         // Act
-        var index = new VersionIndex(committed);
+        var index = new VersionIndex(ToObjectDict(committed));
 
         // Assert
         index.TryGetObjectVersionPtr(16, out var ptr1).Should().BeTrue();
@@ -481,7 +488,7 @@ public class VersionIndexTests {
         var committed = new Dictionary<ulong, ulong?> { { 16, 0x1000UL } };
 
         // Act
-        var index = new VersionIndex(committed);
+        var index = new VersionIndex(ToObjectDict(committed));
 
         // Assert
         index.State.Should().Be(DurableObjectState.Clean);

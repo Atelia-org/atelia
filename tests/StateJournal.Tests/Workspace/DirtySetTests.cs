@@ -28,7 +28,7 @@ public class DirtySetTests {
     public void Add_ThenContains_ReturnsTrue() {
         // Arrange
         var set = new DirtySet();
-        var obj = new DurableDict<int>(42);
+        var obj = new DurableDict(42);
 
         // Act
         set.Add(obj);
@@ -56,7 +56,7 @@ public class DirtySetTests {
     public void Remove_ThenContains_ReturnsFalse() {
         // Arrange
         var set = new DirtySet();
-        var obj = new DurableDict<int>(42);
+        var obj = new DurableDict(42);
         set.Add(obj);
 
         // Act
@@ -104,7 +104,7 @@ public class DirtySetTests {
     public void Add_Duplicate_IsIdempotent() {
         // Arrange
         var set = new DirtySet();
-        var obj = new DurableDict<int>(42);
+        var obj = new DurableDict(42);
 
         // Act
         set.Add(obj);
@@ -147,7 +147,7 @@ public class DirtySetTests {
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void AddObjectAndReleaseLocalReference(DirtySet set, ulong objectId) {
-        var obj = new DurableDict<int>(objectId);
+        var obj = new DurableDict(objectId);
         set.Add(obj);
         // obj 局部引用超出作用域，但 DirtySet 仍持有强引用
     }
@@ -177,12 +177,12 @@ public class DirtySetTests {
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static WeakReference<DurableDict<int>> AddObjectAndGetWeakReference(
+    private static WeakReference<DurableDict> AddObjectAndGetWeakReference(
         DirtySet set, ulong objectId
     ) {
-        var obj = new DurableDict<int>(objectId);
+        var obj = new DurableDict(objectId);
         set.Add(obj);
-        return new WeakReference<DurableDict<int>>(obj);
+        return new WeakReference<DurableDict>(obj);
     }
 
     #endregion
@@ -196,9 +196,9 @@ public class DirtySetTests {
     public void GetAll_ReturnsAllObjects() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict<int>(1);
-        var obj2 = new DurableDict<int>(2);
-        var obj3 = new DurableDict<int>(3);
+        var obj1 = new DurableDict(1);
+        var obj2 = new DurableDict(2);
+        var obj3 = new DurableDict(3);
 
         set.Add(obj1);
         set.Add(obj2);
@@ -236,8 +236,8 @@ public class DirtySetTests {
     public void GetAll_ForCommitAll_Scenario() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict<long>(1);
-        var obj2 = new DurableDict<long>(2);
+        var obj1 = new DurableDict(1);
+        var obj2 = new DurableDict(2);
         obj1.Set(100, 1000L);
         obj2.Set(200, 2000L);
 
@@ -264,8 +264,8 @@ public class DirtySetTests {
     public void Clear_EmptiesSet() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict<int>(1);
-        var obj2 = new DurableDict<int>(2);
+        var obj1 = new DurableDict(1);
+        var obj2 = new DurableDict(2);
         set.Add(obj1);
         set.Add(obj2);
         set.Count.Should().Be(2);
@@ -327,8 +327,8 @@ public class DirtySetTests {
     public void Count_ReflectsObjectCount() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict<int>(1);
-        var obj2 = new DurableDict<int>(2);
+        var obj1 = new DurableDict(1);
+        var obj2 = new DurableDict(2);
 
         // Assert
         set.Count.Should().Be(0);
@@ -360,7 +360,7 @@ public class DirtySetTests {
     public void Add_UsesObjectIdAsKey() {
         // Arrange
         var set = new DirtySet();
-        var obj = new DurableDict<int>(12345);
+        var obj = new DurableDict(12345);
 
         // Act
         set.Add(obj);
@@ -381,9 +381,9 @@ public class DirtySetTests {
     public void MultipleAddRemove_Operations() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict<int>(1);
-        var obj2 = new DurableDict<int>(2);
-        var obj3 = new DurableDict<int>(3);
+        var obj1 = new DurableDict(1);
+        var obj2 = new DurableDict(2);
+        var obj3 = new DurableDict(3);
 
         // Act & Assert
         set.Add(obj1);
@@ -413,7 +413,7 @@ public class DirtySetTests {
         // Arrange
         var identityMap = new IdentityMap();
         var dirtySet = new DirtySet();
-        var obj = new DurableDict<int>(42);
+        var obj = new DurableDict(42);
 
         // Act - 模拟创建新对象
         identityMap.Add(obj);

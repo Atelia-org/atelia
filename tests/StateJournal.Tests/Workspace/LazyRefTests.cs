@@ -29,10 +29,10 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_WithInstance_ReturnsImmediately() {
         // Arrange
-        var dict = new DurableDict<long?>(1);
+        var dict = new DurableDict(1);
 
         // Act
-        var lazyRef = new LazyRef<DurableDict<long?>>(dict);
+        var lazyRef = new LazyRef<DurableDict>(dict);
 
         // Assert
         lazyRef.IsLoaded.Should().BeTrue();
@@ -44,8 +44,8 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_WithInstance_TryGetValue_ReturnsSuccess() {
         // Arrange
-        var dict = new DurableDict<long?>(1);
-        var lazyRef = new LazyRef<DurableDict<long?>>(dict);
+        var dict = new DurableDict(1);
+        var lazyRef = new LazyRef<DurableDict>(dict);
 
         // Act
         var result = lazyRef.TryGetValue();
@@ -62,13 +62,13 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_WithObjectId_LoadsOnFirstAccess() {
         // Arrange
-        var storedDict = new DurableDict<long?>(100);
+        var storedDict = new DurableDict(100);
         ObjectLoaderDelegate loader = id => id == 100
             ? AteliaResult<IDurableObject>.Success(storedDict)
             : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(100, workspace);
+        var lazyRef = new LazyRef<DurableDict>(100, workspace);
 
         // Assert - 加载前
         lazyRef.IsLoaded.Should().BeFalse();
@@ -86,13 +86,13 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_WithObjectId_TryGetValue_LoadsOnFirstAccess() {
         // Arrange
-        var storedDict = new DurableDict<long?>(100);
+        var storedDict = new DurableDict(100);
         ObjectLoaderDelegate loader = id => id == 100
             ? AteliaResult<IDurableObject>.Success(storedDict)
             : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(100, workspace);
+        var lazyRef = new LazyRef<DurableDict>(100, workspace);
 
         // Act
         var result = lazyRef.TryGetValue();
@@ -111,7 +111,7 @@ public class LazyRefTests {
     public void LazyRef_AfterLoad_DoesNotReloadOnSubsequentAccess() {
         // Arrange
         int loadCount = 0;
-        var storedDict = new DurableDict<long?>(100);
+        var storedDict = new DurableDict(100);
         ObjectLoaderDelegate loader = id => {
             loadCount++;
             return id == 100
@@ -120,7 +120,7 @@ public class LazyRefTests {
         };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(100, workspace);
+        var lazyRef = new LazyRef<DurableDict>(100, workspace);
 
         // Act
         _ = lazyRef.Value;  // 第一次加载
@@ -136,7 +136,7 @@ public class LazyRefTests {
     public void LazyRef_TryGetValue_AfterLoad_UsesCache() {
         // Arrange
         int loadCount = 0;
-        var storedDict = new DurableDict<long?>(100);
+        var storedDict = new DurableDict(100);
         ObjectLoaderDelegate loader = id => {
             loadCount++;
             return id == 100
@@ -145,7 +145,7 @@ public class LazyRefTests {
         };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(100, workspace);
+        var lazyRef = new LazyRef<DurableDict>(100, workspace);
 
         // Act
         _ = lazyRef.TryGetValue();
@@ -167,7 +167,7 @@ public class LazyRefTests {
             AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(999, workspace);
+        var lazyRef = new LazyRef<DurableDict>(999, workspace);
 
         // Act
         Action act = () => _ = lazyRef.Value;
@@ -184,7 +184,7 @@ public class LazyRefTests {
             AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(999, workspace);
+        var lazyRef = new LazyRef<DurableDict>(999, workspace);
 
         // Act
         var result = lazyRef.TryGetValue();
@@ -201,12 +201,12 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_ObjectId_AvailableBeforeLoad() {
         // Arrange
-        var storedDict = new DurableDict<long?>(42);
+        var storedDict = new DurableDict(42);
         ObjectLoaderDelegate loader = id =>
             AteliaResult<IDurableObject>.Success(storedDict);
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(42, workspace);
+        var lazyRef = new LazyRef<DurableDict>(42, workspace);
 
         // Assert - ObjectId 可用但未加载
         lazyRef.ObjectId.Should().Be(42);
@@ -216,8 +216,8 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_ObjectId_MatchesInstanceId() {
         // Arrange
-        var dict = new DurableDict<long?>(123);
-        var lazyRef = new LazyRef<DurableDict<long?>>(dict);
+        var dict = new DurableDict(123);
+        var lazyRef = new LazyRef<DurableDict>(dict);
 
         // Assert
         lazyRef.ObjectId.Should().Be(123);
@@ -230,7 +230,7 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_Default_IsNotInitialized() {
         // Arrange & Act
-        var lazyRef = default(LazyRef<DurableDict<long?>>);
+        var lazyRef = default(LazyRef<DurableDict>);
 
         // Assert
         lazyRef.IsInitialized.Should().BeFalse();
@@ -240,7 +240,7 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_Default_Value_ThrowsException() {
         // Arrange
-        var lazyRef = default(LazyRef<DurableDict<long?>>);
+        var lazyRef = default(LazyRef<DurableDict>);
 
         // Act
         Action act = () => _ = lazyRef.Value;
@@ -253,7 +253,7 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_Default_ObjectId_ThrowsException() {
         // Arrange
-        var lazyRef = default(LazyRef<DurableDict<long?>>);
+        var lazyRef = default(LazyRef<DurableDict>);
 
         // Act
         Action act = () => _ = lazyRef.ObjectId;
@@ -266,7 +266,7 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_Default_TryGetValue_ReturnsNotInitializedError() {
         // Arrange
-        var lazyRef = default(LazyRef<DurableDict<long?>>);
+        var lazyRef = default(LazyRef<DurableDict>);
 
         // Act
         var result = lazyRef.TryGetValue();
@@ -287,42 +287,49 @@ public class LazyRefTests {
         // 但由于 struct 构造函数不能被绕过，我们测试 TryGetValue 的行为
 
         // Arrange - 创建一个带 objectId 和有效 workspace 的 LazyRef
-        var storedDict = new DurableDict<long?>(100);
+        var storedDict = new DurableDict(100);
         ObjectLoaderDelegate loader = id =>
             AteliaResult<IDurableObject>.Success(storedDict);
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(100, workspace);
+        var lazyRef = new LazyRef<DurableDict>(100, workspace);
 
         // Act & Assert - 正常加载应该成功
         var result = lazyRef.TryGetValue();
         result.IsSuccess.Should().BeTrue();
     }
 
+    /// <summary>
+    /// LazyRef 加载相同类型的对象应该成功。
+    /// </summary>
+    /// <remarks>
+    /// 原测试为 "LazyRef_TypeMismatch_PropagatesError"，但现在 DurableDict 是非泛型的，
+    /// 类型总是匹配，所以测试变为验证 LazyRef 可以成功加载。
+    /// </remarks>
     [Fact]
-    public void LazyRef_TypeMismatch_PropagatesError() {
+    public void LazyRef_SameType_Succeeds() {
         // Arrange
-        var storedDict = new DurableDict<long?>(100);  // 存储的是 DurableDict<long?>
+        var storedDict = new DurableDict(100);  // 存储的是 DurableDict
         ObjectLoaderDelegate loader = id =>
             AteliaResult<IDurableObject>.Success(storedDict);
 
         using var workspace = new WorkspaceClass(loader);
-        // 尝试以 DurableDict<string?> 类型加载
-        var lazyRef = new LazyRef<DurableDict<string?>>(100, workspace);
+        // 以 DurableDict 类型加载
+        var lazyRef = new LazyRef<DurableDict>(100, workspace);
 
         // Act
         var result = lazyRef.TryGetValue();
 
-        // Assert
-        result.IsFailure.Should().BeTrue();
-        result.Error.Should().BeOfType<ObjectTypeMismatchError>();
+        // Assert - 应该成功
+        result.IsSuccess.Should().BeTrue();
+        ReferenceEquals(result.Value, storedDict).Should().BeTrue();
     }
 
     [Fact]
     public void LazyRef_MultipleLazyRefs_SameObject_ShareCache() {
         // Arrange
         int loadCount = 0;
-        var storedDict = new DurableDict<long?>(100);
+        var storedDict = new DurableDict(100);
         ObjectLoaderDelegate loader = id => {
             loadCount++;
             return AteliaResult<IDurableObject>.Success(storedDict);
@@ -331,8 +338,8 @@ public class LazyRefTests {
         using var workspace = new WorkspaceClass(loader);
 
         // Act - 创建两个指向同一 ObjectId 的 LazyRef
-        var lazyRef1 = new LazyRef<DurableDict<long?>>(100, workspace);
-        var lazyRef2 = new LazyRef<DurableDict<long?>>(100, workspace);
+        var lazyRef1 = new LazyRef<DurableDict>(100, workspace);
+        var lazyRef2 = new LazyRef<DurableDict>(100, workspace);
 
         _ = lazyRef1.Value;  // 第一次加载
         _ = lazyRef2.Value;  // 应该命中 Workspace 的 IdentityMap
@@ -344,12 +351,12 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_IsLoaded_BecomesTrue_AfterAccess() {
         // Arrange
-        var storedDict = new DurableDict<long?>(100);
+        var storedDict = new DurableDict(100);
         ObjectLoaderDelegate loader = id =>
             AteliaResult<IDurableObject>.Success(storedDict);
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict<long?>>(100, workspace);
+        var lazyRef = new LazyRef<DurableDict>(100, workspace);
 
         // Assert - 加载前
         lazyRef.IsLoaded.Should().BeFalse();
