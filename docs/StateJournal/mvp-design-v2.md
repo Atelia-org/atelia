@@ -1,6 +1,6 @@
 # StateJournal MVP 设计 v3（Working Draft）
 
-> **版本**：v3.1 (2025-12-24)
+> **版本**：v3.8 (2025-12-27)
 > **状态**：Draft
 
 ## 文档层次与依赖
@@ -416,6 +416,49 @@ MVP 限制（保证语义自洽）：
 
 - **单进程单 writer**（MVP 不考虑外部进程更新文件后本进程自动感知）。
 - MVP 不提供"打开旧 epoch 快照 / checkout 旧 HEAD"的 API；后续版本可引入 readonly session（类似 `git checkout <commit>` 的只读视图）。
+
+#### 3.1.2.1 Workspace 绑定机制（增补）
+
+> **前置文档**：详细设计见 [workspace-binding-spec.md](workspace-binding-spec.md)
+
+**[S-WORKSPACE-OWNING-EXACTLY-ONE]（MUST）**
+
+每个对外可见的 `IDurableObject` 实例 MUST 绑定到且仅绑定到一个 Workspace（*Owning Workspace*）。
+
+**[S-WORKSPACE-OWNING-IMMUTABLE]（MUST）**
+
+Owning Workspace 在对象生命周期内 MUST NOT 改变。
+
+**[S-WORKSPACE-CTOR-REQUIRES-WORKSPACE]（MUST）**
+
+`DurableObjectBase` 的构造函数 MUST 接收 `Workspace` 参数：
+- 参数为 `null` 时 MUST 抛出 `ArgumentNullException`
+- 构造函数 SHOULD 为 `internal` 或 `protected internal`，禁止用户直接调用
+
+**[S-LAZYLOAD-DISPATCH-BY-OWNER]（MUST）**
+
+当触发透明 Lazy Load（`[A-OBJREF-TRANSPARENT-LAZY-LOAD]`）时，MUST 使用对象的 Owning Workspace 调用 `LoadObject`，MUST NOT 使用调用点的 Ambient Workspace。
+
+**[A-WORKSPACE-FACTORY-CREATE]（MUST）**
+
+`Workspace.CreateObject<T>()` MUST：
+1. 分配 ObjectId
+2. 创建对象实例并传入 `this`（Workspace）
+3. 注册到 Identity Map 和 Dirty Set
+4. 返回对象实例
+
+**[A-WORKSPACE-FACTORY-LOAD]（MUST）**
+
+`Workspace.LoadObject<T>(ObjectId)` MUST：
+1. 先查 Identity Map
+2. 未命中则从磁盘 Materialize
+3. 创建对象实例并传入 `this`（Workspace）
+4. 注册到 Identity Map
+5. 返回 `AteliaResult<T>`
+
+**[A-WORKSPACE-AMBIENT-OPTIONAL]（MAY）**
+
+实现 MAY 提供 `StateJournalContext.Current` 和 `WorkspaceScope` 作为便利层，但核心 API MUST NOT 依赖 Ambient Context。
 
 #### 3.1.3 引用与级联 materialize
 
@@ -1258,10 +1301,18 @@ v2 的 commit 路径大量涉及“先写 payload、后回填长度/CRC32C/指�
 // ⚠️ PSEUDO-CODE — 仅表达设计意图，不可直接编译
 // MVP 约束：key 固定为 ulong；Value 仅限 ValueType 枚举支持的类型（null/long/ObjRef/Ptr64）
 // 注：DurableDict 不使用泛型（类似 JObject/BsonDocument），详见 §3.1.5 定位说明
-class DurableDict : IDurableObject {
+//
+// Workspace 绑定（§3.1.2.1）：
+// - 构造函数需要 Workspace 参数（[S-WORKSPACE-CTOR-REQUIRES-WORKSPACE]）
+// - 用户应通过 Workspace.CreateObject<DurableDict>() 创建实例
+// - 构造函数为 internal，禁止直接 new
+class DurableDict : DurableObjectBase {  // 继承自 DurableObjectBase，持有 _owningWorkspace
     private Dictionary<ulong, object> _committed;      // 上次 commit 时的状态
     private Dictionary<ulong, object> _current;        // 当前工作状态
     private HashSet<ulong> _dirtyKeys = new();         // 发生变更的 key 集合（对象内部）
+    
+    // 构造函数（internal，由 Workspace 工厂调用）
+    // internal DurableDict(Workspace workspace, ObjectId objectId) : base(workspace, objectId) { ... }
     
     // ===== 读 API =====
     public object this[ulong key] => _current[key];
@@ -1407,6 +1458,7 @@ class DurableDict : IDurableObject {
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v3.8 | 2025-12-27 | **Workspace 绑定机制增补**：添加 §3.1.2.1 定义对象与 Workspace 的绑定规范（畅谈会 #5 + 监护人决策）；更新 A.1 伪代码注释说明 Workspace 参数需求 |
 | v3.7 | 2025-12-25 | **QXX 历史注解清理**：删除正文中 12 处残留的 QXX 决策引用（决策记录已在 [mvp-v2-decisions.md](decisions/mvp-v2-decisions.md) 集中维护）|
 | v3.6 | 2025-12-25 | **LoadObject 返回类型一致性**：修正文档中残留的 `null` 返回值描述，统一为 `AteliaResult<T>`；更新术语表、§3.3.2、LazyRef 伪代码（落实 [A-LOADOBJECT-RETURN-RESULT] 条款）|
 | v3.5 | 2025-12-25 | **位布局表格规范化**：FrameTag 位布局从"视觉表格"改为"行=字段，列=属性"结构（按 spec-conventions.md v0.4） |
