@@ -66,10 +66,21 @@
 |---|------|--------|------|
 | **B-4** | **DurableDict 与 Workspace 绑定方式** | 高 | 两层架构 vs 直接绑定，跨 Workspace 迁移问题 |
 | **B-5** | **DurableDict API 成员正式命名** | 中 | 先实施基础再定名字 |
-| **B-6** | **Detached 对象成员访问语义** | 中 | 畅谈会 #3 待组织 |
-| 1 | SSOT + 内联摘要模式 | 高 | 需要全文审阅，识别重复定义 |
+| **B-6** | Detached 对象成员访问语义 | ✅ | 畅谈会 #3+#4 已解决 |
 
-### P2 优先级
+### P2 优先级 - 已设计待实施
+
+| # | 任务 | 复杂度 | 说明 |
+|---|------|--------|------|
+| **B-7** | **DiagnosticScope (O6)** | 中 | 诊断作用域，允许读取 Detached 对象最后已知值 |
+
+> **B-7 设计摘要** (畅谈会 #4)：
+> - API: `StateJournal.Diagnostics.AllowStaleReads()`
+> - 实现: `AsyncLocal<int>` + `IDisposable`
+> - 条款草案: [DS-01]~[DS-08]
+> - 详见: [畅谈会记录](../../../agent-team/meeting/StateJournal/2025-12-26-diagnostic-scope.md)
+
+### P3 优先级
 
 | # | 任务 | 复杂度 | 说明 |
 |---|------|--------|------|
