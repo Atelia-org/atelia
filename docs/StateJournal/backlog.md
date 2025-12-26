@@ -1,6 +1,6 @@
 # StateJournal Backlog
 
-> 最后更新：2025-12-21
+> 最后更新：2025-12-26
 > 维护者：AI Team
 > 
 > **项目位置**：`atelia/docs/StateJournal/`
@@ -10,18 +10,22 @@
 
 ## ✅ 已完成任务
 
-### 2025-12-21 AteliaResult 规范化
+### 2025-12-26 L1 审阅与规范修订
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| LoadObject TryLoad 语义讨论 | ✅ | 三轮畅谈会达成共识 |
-| TryLoadObject 设计决策 | ✅ | 改名为 `TryLoadObject`，返回 `AteliaResult<T>` |
-| AteliaResult 机制升级 | ✅ | 升级为 Atelia 全项目基础机制 |
-| Atelia.Primitives 项目创建 | ✅ | `atelia/src/Primitives/`，含测试 |
-| AteliaResult 规范文档 | ✅ | `atelia/docs/AteliaResult-Specification.md` |
-| mvp-design-v2 条款引用更新 | ✅ | §3.4.8 改为引用全项目规范 |
+| L1 全量审阅 | ✅ | 4 模块 60 条款，54C/2V/4U |
+| V-1: DiscardChanges Detached | ✅ | 改为 no-op，测试更新 |
+| V-2: TryGetValue 返回类型 | ✅ | 规范修订为三分类 |
+| AteliaResult v1.1 | ✅ | 新增 `[ATELIA-BOOL-OUT-WHEN]` 等条款 |
+| 畅谈会 #1: AteliaResult 边界 | ✅ | 三位顾问共识 |
+| 畅谈会 #2: DurableDict API | ✅ | 部分批准 |
 
-> **相关会议记录**：[2025-12-21 LoadObject 命名畅谈会](../../../agent-team/meeting/StateJournal/2025-12-21-hideout-loadobject-naming.md)
+> **相关记录**：
+> - [L1 审阅汇总](review/L1-Full-Review-Summary.md)
+> - [MVP 边界划分](mvp-boundary.md)
+> - [畅谈会 #1](../../../agent-team/meeting/StateJournal/2025-12-26-ateliaresult-boundary.md)
+> - [畅谈会 #2](../../../agent-team/meeting/StateJournal/2025-12-26-durabledict-api-design.md)
 
 ### 2025-12-22 迁移完成
 
@@ -48,11 +52,22 @@
 
 ## 📋 待办任务
 
-### P1 优先级
+### P0 优先级 - 已批准已实施 ✅
+
+| # | 任务 | 状态 | 说明 |
+|---|------|------|------|
+| **B-1** | 非泛型 DurableDict 改造 | ✅ | 畅谈会 #2 批准，已实施 |
+| **B-2** | 引入 ObjectId 类型 | ✅ | `Core/ObjectId.cs` |
+| **B-3** | DurableDict 不使用 LazyRef | ✅ | 已确认 |
+
+### P1 优先级 - 开放问题（需后续畅谈会）
 
 | # | 任务 | 复杂度 | 说明 |
 |---|------|--------|------|
-| 1 | **SSOT + 内联摘要模式** | 高 | 需要全文审阅，识别重复定义 |
+| **B-4** | **DurableDict 与 Workspace 绑定方式** | 高 | 两层架构 vs 直接绑定，跨 Workspace 迁移问题 |
+| **B-5** | **DurableDict API 成员正式命名** | 中 | 先实施基础再定名字 |
+| **B-6** | **Detached 对象成员访问语义** | 中 | 畅谈会 #3 待组织 |
+| 1 | SSOT + 内联摘要模式 | 高 | 需要全文审阅，识别重复定义 |
 
 ### P2 优先级
 
