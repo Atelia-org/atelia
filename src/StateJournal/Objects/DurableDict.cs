@@ -54,7 +54,13 @@ public class DurableDict : IDurableObject {
     /// <remarks>
     /// 复杂度 O(1)：直接检查 <c>_dirtyKeys.Count</c>。
     /// </remarks>
-    public bool HasChanges => _dirtyKeys.Count > 0;
+    /// <exception cref="ObjectDetachedException">对象已分离。</exception>
+    public bool HasChanges {
+        get {
+            ThrowIfDetached();
+            return _dirtyKeys.Count > 0;
+        }
+    }
 
     // === 构造函数 ===
 

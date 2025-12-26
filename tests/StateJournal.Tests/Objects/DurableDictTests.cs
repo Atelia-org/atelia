@@ -547,6 +547,25 @@ public class DurableDictTests {
         dict.State.Should().Be(DurableObjectState.Detached);
     }
 
+    /// <summary>
+    /// Detached 状态下 HasChanges 抛 ObjectDetachedException。
+    /// </summary>
+    /// <remarks>
+    /// 对应条款：[S-DETACHED-ACCESS-TIERING] - HasChanges 是语义成员，Detached 时 MUST throw。
+    /// 畅谈会 #3 决议：规则优先级 R2 (Fail-Fast) &gt; R1 (属性惯例)。
+    /// </remarks>
+    [Fact]
+    public void Detached_HasChanges_ThrowsObjectDetachedException() {
+        // Arrange
+        var dict = CreateDetachedDict<int>(42);
+
+        // Act
+        Action act = () => _ = dict.HasChanges;
+
+        // Assert
+        act.Should().Throw<ObjectDetachedException>();
+    }
+
     #endregion
 
     #region WritePendingDiff 测试
