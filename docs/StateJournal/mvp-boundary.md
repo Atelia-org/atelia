@@ -135,7 +135,8 @@
 |:-:|:-----|:---------|:------:|:----:|
 | 1 | AteliaResult 适用边界 | MVP2-1 | P1 | ✅ [已完成](../../../agent-team/meeting/StateJournal/2025-12-26-ateliaresult-boundary.md) |
 | 2 | DurableDict API 外观设计 | MVP2-2, MVP2-3, MVP2-5 | P2 | ✅ [已完成](../../../agent-team/meeting/StateJournal/2025-12-26-durabledict-api-design.md) |
-| 3 | Detached 对象成员访问语义 | MVP2-4 | P2 | ⏳ |
+| 3 | Detached 对象成员访问语义 | MVP2-4 | P2 | ✅ [已完成](../../../agent-team/meeting/StateJournal/2025-12-26-detached-access-semantics.md) |
+| 4 | Detached 诊断作用域 | MVP2-4 延续 | P2 | ✅ [已完成](../../../agent-team/meeting/StateJournal/2025-12-26-diagnostic-scope.md) |
 
 ### 畅谈会 #1 结论
 
@@ -167,6 +168,29 @@
 
 **监护人反馈要点**：
 > 反对现在就确定两层架构设计，因为把 DurableObject 与 Workspace 分离还需要处理跨 Workspace 迁移问题。倾向于不新建 `DurableDictAccessor` 而是直接让 `DurableDict` 与 Workspace 绑定并提供易用性 Accessor。
+
+### 畅谈会 #3 结论
+
+**主题**：Detached 对象成员访问语义
+
+**核心问题**：三条规则的冲突
+- R1 (属性惯例)：属性不应抛异常
+- R2 (Fail-Fast)：Detached 应抛异常
+- R3 (幂等性)：DiscardChanges 应幂等
+
+**共识**：
+- **O2 (监护人直觉版) 不可接受**：延拓值与真值域碰撞导致规范不可判定
+- **O1 作为底层规范**：Meta 成员不抛，Semantic 成员抛 `ObjectDetachedException`
+- **规则优先级**：R2 > R3 > R1
+- **延拓值的合法路径**：改类型 (O3) 或应用层 `SafeXxx()` 扩展 (O5)
+
+**关键洞见——判据 D (Disjointness)**：
+> 调用方仅通过返回值即可判定"这次返回是否来自 Detached 分支"。
+> 如果延拓值与正常值域碰撞，则规范不可判定、测试不可判定。
+
+**待监护人批准后执行**：
+- [ ] 采纳 GPT 的条款草案更新 `[S-DETACHED-ACCESS-TIERING]`
+- [ ] 可选：在应用层提供 `SafeXxx()` 扩展
 
 ---
 
