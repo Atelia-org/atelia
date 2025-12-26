@@ -983,23 +983,26 @@ VersionIndex 与 Dict 的关系（落地说明）：
 
 **[A-DURABLEDICT-API-SIGNATURES]** **DurableDict API 签名（MUST）**：
 
+> **非泛型设计**：DurableDict 是非泛型的"文档容器"，内部存储 `object?`。这符合 StateJournal 的定位——持久化容器而非类型化集合。
+
 ```csharp
-// 读 API（返回 AteliaResult，统一错误协议）
-AteliaResult<object> TryGetValue(ulong key);  // Success/NotFound/Detached
-bool ContainsKey(ulong key);                   // Detached 时 MUST throw
-int Count { get; }                             // Detached 时 MUST throw
-IEnumerable<KeyValuePair<ulong, object>> Enumerate();  // Detached 时 MUST throw
+// 读 API
+bool TryGetValue(ulong key, out object? value);  // Classic Try-pattern [ATELIA-BOOL-OUT-WHEN]
+bool ContainsKey(ulong key);                     // Detached 时 MUST throw
+int Count { get; }                               // Detached 时 MUST throw
+IEnumerable<KeyValuePair<ulong, object?>> Entries { get; }  // Detached 时 MUST throw
 
 // 写 API
-void Set(ulong key, object value);             // Detached 时 MUST throw
-bool Remove(ulong key);                        // Detached 时 MUST throw；返回是否存在
+void Set(ulong key, object? value);              // Detached 时 MUST throw
+bool Remove(ulong key);                          // Detached 时 MUST throw；返回是否存在
 
 // 生命周期 API
-void DiscardChanges();                         // Detached 时 no-op（幂等）
+void DiscardChanges();                           // Detached 时 no-op（幂等）
 ```
 
 **关键约定**：
-- **TryGetValue 返回 Result**：使用 `AteliaResult<object>` 而非 `bool TryGetValue(out value)`，保证与整体错误协议一致
+- **非泛型设计**：DurableDict 不使用泛型参数，值类型统一为 `object?`。序列化时根据运行时类型选择 ValueType 编码
+- **TryGetValue 采用 Classic Try-pattern**：使用 `bool TryGetValue(out object?)` 而非 `AteliaResult<object>`，因为失败原因只有"键不存在"这一种——符合 `[ATELIA-BOOL-OUT-WHEN]` 条款（参见 [AteliaResult 规范](../AteliaResult-Specification.md) §5.1）
 - **Remove 而非 Delete**：遵循 C#/.NET 集合命名惯例（`Dictionary<K,V>.Remove`）
 - **Detached 行为**：语义数据访问抛出 `ObjectDetachedException`；元信息访问（`State`, `Id`）不抛异常（参见 [S-DETACHED-ACCESS-TIERING]）
 
