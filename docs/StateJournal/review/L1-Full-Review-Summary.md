@@ -38,19 +38,22 @@ case DurableObjectState.Detached:
 
 ---
 
-### V-2: [A-DURABLEDICT-API-SIGNATURES] — TryGetValue 返回类型
+### V-2: [A-DURABLEDICT-API-SIGNATURES] — TryGetValue 返回类型 ✅ 已解决
 
 **位置**：[DurableDict.cs#L55-L64](../../../src/StateJournal/Objects/DurableDict.cs#L55-L64)
 
-**规范要求**：`AteliaResult<object> TryGetValue(ulong key);`
+**原规范要求**：`AteliaResult<object> TryGetValue(ulong key);`
 
 **实际行为**：`bool TryGetValue(ulong key, out TValue? value)`
 
-**严重度**：Major
+**解决方式**：**规范修订**（实现正确，规范需要调整）
 
-**修复建议**：
-- **方案 A**：修改实现以符合规范
-- **方案 B**：修订规范允许 C# 惯例签名
+**畅谈会决议**（2025-12-26）：
+- 三位顾问一致同意：`TryGetValue` 的失败原因只有"键不存在"一种，符合 Classic Try-pattern
+- 修订 `AteliaResult-Specification.md` §5.1，新增 `[ATELIA-BOOL-OUT-WHEN]` 条款
+- 修订 `mvp-design-v2.md` `[A-DURABLEDICT-API-SIGNATURES]` 条款
+
+**参考**：[畅谈会记录](../../../../agent-team/meeting/StateJournal/2025-12-26-ateliaresult-boundary.md)
 
 ---
 
@@ -125,12 +128,12 @@ case DurableObjectState.Detached:
 
 ## 📋 后续行动
 
-### P0 - 必须修复 (Violations)
+### P0 - 必须修复 (Violations) — ✅ 已全部解决
 
-| # | 问题 | 负责人 | 状态 |
-|:-:|:-----|:-------|:----:|
-| 1 | DiscardChanges Detached 改为 no-op | Implementer | ⏳ |
-| 2 | TryGetValue 返回类型决策 | Advisor-GPT | ⏳ |
+| # | 问题 | 解决方式 | 状态 |
+|:-:|:-----|:---------|:----:|
+| 1 | DiscardChanges Detached 改为 no-op | 代码修复 | ✅ |
+| 2 | TryGetValue 返回类型 | 规范修订 | ✅ |
 
 ### P1 - 规范澄清 (Underspecified)
 
