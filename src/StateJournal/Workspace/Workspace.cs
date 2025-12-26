@@ -226,12 +226,19 @@ public class Workspace : IDisposable {
     /// <param name="objectId">对象 ID。</param>
     /// <returns>新创建的对象。</returns>
     /// <exception cref="InvalidOperationException">无法创建对象实例。</exception>
-    private static T CreateInstance<T>(ulong objectId) where T : IDurableObject {
-        // 使用 Activator 创建带 objectId 参数的实例
-        var instance = Activator.CreateInstance(typeof(T), objectId);
+    private T CreateInstance<T>(ulong objectId) where T : IDurableObject {
+        // 使用 Activator 创建带 (Workspace, ulong) 参数的实例
+        // 注意：构造函数是 internal，需要指定 NonPublic | Instance 标志
+        var instance = Activator.CreateInstance(
+            typeof(T),
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
+            binder: null,
+            args: [this, objectId],
+            culture: null
+        );
         if (instance is not T obj) {
             throw new InvalidOperationException(
-                $"Failed to create instance of {typeof(T).Name} with objectId {objectId}."
+                $"Failed to create instance of {typeof(T).Name} with (Workspace, objectId)."
             );
         }
         return obj;

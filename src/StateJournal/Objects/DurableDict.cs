@@ -1,5 +1,6 @@
 // Source: Atelia.StateJournal - 持久化字典
-// Spec: atelia/docs/StateJournal/mvp-design-v2.md §3.2
+// Spec: atelia/docs/StateJournal/mvp-design-v2.md §3.4.2, A.1
+// Binding: atelia/docs/StateJournal/workspace-binding-spec.md
 
 using System.Buffers;
 using System.Collections.Generic;
@@ -15,15 +16,16 @@ namespace Atelia.StateJournal;
 /// 这符合"持久化容器作为文档"的定位，而非类型化容器。
 /// </para>
 /// <para>
-/// 双字典模型：
+/// 双字典策略（参见 §3.4.2 和 A.1 伪代码骨架）：
 /// <list type="bullet">
-///   <item><c>_committed</c>：已提交状态（Committed State）</item>
-///   <item><c>_working</c>：工作状态（Working State）</item>
+///   <item><c>_committed</c>：上次 Commit 成功时的状态快照</item>
+///   <item><c>_current</c>：当前的完整工作状态（Working State）</item>
+///   <item><c>_dirtyKeys</c>：记录自上次 Commit 以来发生变更的 key 集合</item>
 /// </list>
 /// </para>
 /// <para>
-/// 读取时先查 <c>_working</c>，若无则查 <c>_committed</c>。
-/// 写入只修改 <c>_working</c>。
+/// 读取只查 <c>_current</c>；写入只修改 <c>_current</c>。
+/// Commit 时通过比较 <c>_committed</c> 与 <c>_current</c> 生成 diff。
 /// </para>
 /// <para>
 /// 对应条款：
@@ -31,31 +33,24 @@ namespace Atelia.StateJournal;
 ///   <item><c>[A-DURABLEDICT-API-SIGNATURES]</c></item>
 ///   <item><c>[S-DURABLEDICT-KEY-ULONG-ONLY]</c></item>
 ///   <item><c>[S-WORKING-STATE-TOMBSTONE-FREE]</c></item>
+///   <item><c>[S-WORKSPACE-OWNING-EXACTLY-ONE]</c></item>
 /// </list>
 /// </para>
 /// </remarks>
-public class DurableDict : IDurableObject {
-    // === 内部状态 ===
-    private readonly Dictionary<ulong, object?> _committed;
-    private readonly Dictionary<ulong, object?> _working;
-    private readonly HashSet<ulong> _removedFromCommitted;  // 跟踪从 _committed 删除的 key
-    private readonly HashSet<ulong> _dirtyKeys;
-    private DurableObjectState _state;
+public class DurableDict : DurableObjectBase {
+    // === 内部状态（双字典策略） ===
+    private Dictionary<ulong, object?> _committed;  // 上次 commit 时的状态
+    private Dictionary<ulong, object?> _current;    // 当前工作状态
+    private readonly HashSet<ulong> _dirtyKeys;     // 发生变更的 key 集合
 
     // === IDurableObject 实现 ===
-
-    /// <inheritdoc/>
-    public ulong ObjectId { get; }
-
-    /// <inheritdoc/>
-    public DurableObjectState State => _state;
 
     /// <inheritdoc/>
     /// <remarks>
     /// 复杂度 O(1)：直接检查 <c>_dirtyKeys.Count</c>。
     /// </remarks>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
-    public bool HasChanges {
+    public override bool HasChanges {
         get {
             ThrowIfDetached();
             return _dirtyKeys.Count > 0;
@@ -67,38 +62,77 @@ public class DurableDict : IDurableObject {
     /// <summary>
     /// 创建新的 DurableDict（TransientDirty 状态）。
     /// </summary>
+    /// <param name="workspace">对象所属的 Workspace。</param>
     /// <param name="objectId">对象 ID。</param>
     /// <remarks>
+    /// <para>
+    /// 此构造函数为 internal，用户应通过 <see cref="Workspace.CreateObject{T}"/> 创建。
+    /// </para>
+    /// <para>
     /// 新创建的对象没有 Committed State，调用 <see cref="IDurableObject.DiscardChanges"/>
     /// 会使对象进入 <see cref="DurableObjectState.Detached"/> 状态。
+    /// </para>
     /// </remarks>
-    public DurableDict(ulong objectId) {
-        ObjectId = objectId;
+    internal DurableDict(Workspace workspace, ulong objectId)
+        : base(workspace, objectId) {
         _committed = new Dictionary<ulong, object?>();
-        _working = new Dictionary<ulong, object?>();
-        _removedFromCommitted = new HashSet<ulong>();
+        _current = new Dictionary<ulong, object?>();
         _dirtyKeys = new HashSet<ulong>();
-        _state = DurableObjectState.TransientDirty;
     }
 
     /// <summary>
     /// 从 Committed State 加载（Clean 状态）。
     /// </summary>
+    /// <param name="workspace">对象所属的 Workspace。</param>
     /// <param name="objectId">对象 ID。</param>
-    /// <param name="committed">已提交的键值对。</param>
+    /// <param name="committed">已提交的键值对（Materialize 的结果）。</param>
     /// <remarks>
-    /// 此构造函数为 internal，由 Workspace 或加载器使用。
+    /// <para>
+    /// 此构造函数为 internal，由 <see cref="Workspace.LoadObject{T}"/> 使用。
+    /// </para>
+    /// <para>
+    /// <c>_current</c> 初始化为 <c>_committed</c> 的深拷贝。
+    /// </para>
     /// </remarks>
-    internal DurableDict(ulong objectId, Dictionary<ulong, object?> committed) {
-        ObjectId = objectId;
+    internal DurableDict(Workspace workspace, ulong objectId, Dictionary<ulong, object?> committed)
+        : base(workspace, objectId, DurableObjectState.Clean) {
         _committed = committed ?? throw new ArgumentNullException(nameof(committed));
-        _working = new Dictionary<ulong, object?>();
-        _removedFromCommitted = new HashSet<ulong>();
+        _current = new Dictionary<ulong, object?>(committed);  // 深拷贝
         _dirtyKeys = new HashSet<ulong>();
-        _state = DurableObjectState.Clean;
     }
 
-    // === 读 API ===
+    // === 内部无绑定构造函数（仅供 VersionIndex 等 Well-Known 对象使用）===
+
+    /// <summary>
+    /// 创建无 Workspace 绑定的 DurableDict（用于 VersionIndex）。
+    /// </summary>
+    /// <param name="objectId">对象 ID。</param>
+    /// <remarks>
+    /// ⚠️ 此构造函数不绑定 Workspace，不支持 Lazy Load。仅供内部使用。
+    /// </remarks>
+    internal DurableDict(ulong objectId)
+        : base(objectId, DurableObjectState.TransientDirty) {
+        _committed = new Dictionary<ulong, object?>();
+        _current = new Dictionary<ulong, object?>();
+        _dirtyKeys = new HashSet<ulong>();
+    }
+
+    /// <summary>
+    /// 从 Committed State 加载无 Workspace 绑定的 DurableDict（用于 VersionIndex）。
+    /// </summary>
+    /// <param name="objectId">对象 ID。</param>
+    /// <param name="committed">已提交的键值对（Materialize 的结果）。</param>
+    /// <remarks>
+    /// ⚠️ 此构造函数不绑定 Workspace，不支持 Lazy Load。仅供内部使用。
+    /// </remarks>
+    internal DurableDict(ulong objectId, Dictionary<ulong, object?> committed)
+        : base(objectId, DurableObjectState.Clean) {
+        _committed = committed ?? throw new ArgumentNullException(nameof(committed));
+        _current = new Dictionary<ulong, object?>(committed);  // 深拷贝
+        _dirtyKeys = new HashSet<ulong>();
+    }
+
+    // === 读 API（只查 _current，支持透明 Lazy Loading） ===
 
     /// <summary>
     /// 尝试获取指定键的值。
@@ -107,18 +141,21 @@ public class DurableDict : IDurableObject {
     /// <param name="value">输出的值（如找到）。</param>
     /// <returns>如果找到键则返回 true。</returns>
     /// <remarks>
-    /// 先查 <c>_working</c>，若无则查 <c>_committed</c>。
+    /// <para>
+    /// 对应条款：<c>[A-OBJREF-TRANSPARENT-LAZY-LOAD]</c>
+    /// </para>
+    /// <para>
+    /// 如果内部存储为 <see cref="ObjectId"/>，会自动调用 <see cref="DurableObjectBase.LoadObject{T}"/>
+    /// 并返回 <see cref="IDurableObject"/> 实例。加载成功后会回填到 <c>_current</c>。
+    /// </para>
     /// </remarks>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
+    /// <exception cref="InvalidOperationException">Lazy Load 失败（引用对象不存在或已损坏）。</exception>
     public bool TryGetValue(ulong key, out object? value) {
         ThrowIfDetached();
-        // 先检查是否已从 _committed 删除
-        if (_removedFromCommitted.Contains(key) && !_working.ContainsKey(key)) {
-            value = default;
-            return false;
-        }
-        if (_working.TryGetValue(key, out value)) { return true; }
-        return _committed.TryGetValue(key, out value);
+        if (!_current.TryGetValue(key, out value)) { return false; }
+        value = ResolveAndBackfill(key, value);
+        return true;
     }
 
     /// <summary>
@@ -129,12 +166,7 @@ public class DurableDict : IDurableObject {
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
     public bool ContainsKey(ulong key) {
         ThrowIfDetached();
-        // _working 中有则存在
-        if (_working.ContainsKey(key)) { return true; }
-        // 已从 _committed 删除则不存在
-        if (_removedFromCommitted.Contains(key)) { return false; }
-        // 否则查 _committed
-        return _committed.ContainsKey(key);
+        return _current.ContainsKey(key);
     }
 
     /// <summary>
@@ -142,15 +174,21 @@ public class DurableDict : IDurableObject {
     /// </summary>
     /// <param name="key">键。</param>
     /// <returns>值。</returns>
+    /// <remarks>
+    /// <para>
+    /// 对应条款：<c>[A-OBJREF-TRANSPARENT-LAZY-LOAD]</c>
+    /// </para>
+    /// <para>
+    /// Getter 如果内部存储为 <see cref="ObjectId"/>，会自动 Lazy Load。
+    /// </para>
+    /// </remarks>
     /// <exception cref="KeyNotFoundException">获取时键不存在。</exception>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
+    /// <exception cref="InvalidOperationException">Lazy Load 失败。</exception>
     public object? this[ulong key] {
         get {
             ThrowIfDetached();
-            if (_working.TryGetValue(key, out var value)) { return value; }
-            // 已从 _committed 删除则不存在
-            if (_removedFromCommitted.Contains(key)) { throw new KeyNotFoundException($"Key {key} not found in DurableDict."); }
-            if (_committed.TryGetValue(key, out value)) { return value; }
+            if (_current.TryGetValue(key, out var value)) { return ResolveAndBackfill(key, value); }
             throw new KeyNotFoundException($"Key {key} not found in DurableDict.");
         }
         set {
@@ -161,46 +199,22 @@ public class DurableDict : IDurableObject {
     /// <summary>
     /// 获取当前条目数量。
     /// </summary>
-    /// <remarks>
-    /// 合并 <c>_committed</c> 和 <c>_working</c> 的 key。
-    /// </remarks>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
     public int Count {
         get {
             ThrowIfDetached();
-            // 计算合并后的唯一 key 数量
-            // _committed 中未被删除的 + _working 中新增的
-            int count = 0;
-            foreach (var key in _committed.Keys) {
-                if (!_removedFromCommitted.Contains(key)) { count++; }
-            }
-            foreach (var key in _working.Keys) {
-                // _working 中存在且不在 _committed 中的是新增的
-                if (!_committed.ContainsKey(key) || _removedFromCommitted.Contains(key)) { count++; }
-            }
-            return count;
+            return _current.Count;
         }
     }
 
     /// <summary>
     /// 获取所有键的枚举。
     /// </summary>
-    /// <remarks>
-    /// 合并 <c>_committed</c> 和 <c>_working</c> 的 key。
-    /// </remarks>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
     public IEnumerable<ulong> Keys {
         get {
             ThrowIfDetached();
-            // 合并：_committed 中未删除的 + _working 中所有的
-            var allKeys = new HashSet<ulong>();
-            foreach (var key in _committed.Keys) {
-                if (!_removedFromCommitted.Contains(key)) {
-                    allKeys.Add(key);
-                }
-            }
-            allKeys.UnionWith(_working.Keys);
-            return allKeys;
+            return _current.Keys;
         }
     }
 
@@ -208,38 +222,65 @@ public class DurableDict : IDurableObject {
     /// 获取所有键值对的枚举。
     /// </summary>
     /// <remarks>
-    /// 合并 <c>_committed</c> 和 <c>_working</c>，<c>_working</c> 优先。
+    /// <para>
+    /// 对应条款：<c>[A-OBJREF-TRANSPARENT-LAZY-LOAD]</c>
+    /// </para>
+    /// <para>
+    /// 枚举时如果 value 为 <see cref="ObjectId"/>，会自动 Lazy Load。
+    /// </para>
     /// </remarks>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
+    /// <exception cref="InvalidOperationException">Lazy Load 失败。</exception>
     public IEnumerable<KeyValuePair<ulong, object?>> Entries {
         get {
             ThrowIfDetached();
-            // 立即计算以确保 Detached 检查在调用时执行
-            return GetEntriesCore();
+            return GetEntriesWithLazyLoad();
         }
     }
 
-    private IEnumerable<KeyValuePair<ulong, object?>> GetEntriesCore() {
-        // 合并：_committed 中未删除的 + _working 中所有的
-        var allKeys = new HashSet<ulong>();
-        foreach (var key in _committed.Keys) {
-            if (!_removedFromCommitted.Contains(key)) {
-                allKeys.Add(key);
-            }
-        }
-        allKeys.UnionWith(_working.Keys);
-
-        foreach (var key in allKeys) {
-            if (_working.TryGetValue(key, out var value)) {
-                yield return new KeyValuePair<ulong, object?>(key, value);
-            }
-            else {
-                yield return new KeyValuePair<ulong, object?>(key, _committed[key]);
-            }
+    /// <summary>
+    /// 枚举时执行 Lazy Load。
+    /// </summary>
+    private IEnumerable<KeyValuePair<ulong, object?>> GetEntriesWithLazyLoad() {
+        foreach (var kvp in _current) {
+            var resolved = ResolveAndBackfill(kvp.Key, kvp.Value);
+            yield return new KeyValuePair<ulong, object?>(kvp.Key, resolved);
         }
     }
 
-    // === 写 API ===
+    // === Lazy Loading 核心方法 ===
+
+    /// <summary>
+    /// 解析 value，如果是 ObjectId 则 Lazy Load 并回填。
+    /// </summary>
+    /// <param name="key">键（用于回填）。</param>
+    /// <param name="value">原始值。</param>
+    /// <returns>解析后的值（如果是 ObjectId 则返回加载的实例）。</returns>
+    /// <remarks>
+    /// <para>
+    /// 对应条款：
+    /// <list type="bullet">
+    ///   <item><c>[A-OBJREF-TRANSPARENT-LAZY-LOAD]</c>: 透明 Lazy Load</item>
+    ///   <item><c>[A-OBJREF-BACKFILL-CURRENT]</c>: 回填到 _current</item>
+    ///   <item><c>[S-LAZYLOAD-DISPATCH-BY-OWNER]</c>: 按 Owning Workspace 分派</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    private object? ResolveAndBackfill(ulong key, object? value) {
+        // 如果不是 ObjectId，直接返回
+        if (value is not ObjectId objectId) { return value; }
+
+        // 透明 Lazy Load：按 Owning Workspace 分派
+        var instance = LoadObject<IDurableObject>(objectId.Value);
+
+        // 回填到 _current（不改变 dirty 状态，因为语义值未变）
+        _current[key] = instance;
+        // 注意：不调用 UpdateDirtyKey，因为 ObjectId 和实例语义等价
+
+        return instance;
+    }
+
+    // === 写 API（只修改 _current，维护 _dirtyKeys） ===
 
     /// <summary>
     /// 设置指定键的值。
@@ -250,16 +291,9 @@ public class DurableDict : IDurableObject {
     public void Set(ulong key, object? value) {
         ThrowIfDetached();
 
-        // 写入 working
-        _working[key] = value;
+        _current[key] = value;
+        UpdateDirtyKey(key);
 
-        // 如果之前标记为删除，现在恢复
-        _removedFromCommitted.Remove(key);
-
-        // 精确追踪 _dirtyKeys
-        UpdateDirtyKeyForSet(key, value);
-
-        // 状态转换（如果有实际变更）
         if (_dirtyKeys.Count > 0) {
             TransitionToDirty();
         }
@@ -269,44 +303,90 @@ public class DurableDict : IDurableObject {
     /// 移除指定键。
     /// </summary>
     /// <param name="key">键。</param>
-    /// <returns>如果键存在（在 _working 或 _committed 中）则返回 true。</returns>
+    /// <returns>如果键存在则返回 true。</returns>
     /// <remarks>
-    /// <para>
     /// 对应条款：<c>[S-WORKING-STATE-TOMBSTONE-FREE]</c>
-    /// </para>
-    /// <para>
-    /// Remove 从 <c>_working</c> 移除条目，不存储 tombstone。
-    /// 如果键只在 <c>_committed</c> 中存在，则在 Diff 生成时需要标记为删除。
-    /// </para>
+    /// Remove 直接从 <c>_current</c> 移除条目，不存储 tombstone。
     /// </remarks>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
     public bool Remove(ulong key) {
         ThrowIfDetached();
 
-        var hadInWorking = _working.Remove(key);
-        var hasInCommitted = _committed.ContainsKey(key);
+        var removed = _current.Remove(key);
+        UpdateDirtyKey(key);
 
-        // 标记 _committed 中的 key 为已删除
-        if (hasInCommitted) {
-            _removedFromCommitted.Add(key);
-        }
-
-        // 精确追踪 _dirtyKeys
-        UpdateDirtyKeyForRemove(key, hadInWorking, hasInCommitted);
-
-        // 只有实际删除了什么才返回 true 并转换状态
-        bool removed = hadInWorking || hasInCommitted;
-        if (removed && _dirtyKeys.Count > 0) {
+        if (_dirtyKeys.Count > 0) {
             TransitionToDirty();
         }
 
         return removed;
     }
 
-    // === IDurableObject 方法 ===
+    /// <summary>
+    /// 维护 _dirtyKeys（参见 §3.4.2 规则）。
+    /// </summary>
+    /// <param name="key">变更的键。</param>
+    /// <remarks>
+    /// <para>
+    /// 使用 <see cref="AreValuesEqual"/> 进行比较，支持 ObjectId 和实例的语义等价判定。
+    /// </para>
+    /// </remarks>
+    private void UpdateDirtyKey(ulong key) {
+        var hasCurrent = _current.TryGetValue(key, out var currentValue);
+        var hasCommitted = _committed.TryGetValue(key, out var committedValue);
+
+        bool isDifferent = (hasCurrent, hasCommitted) switch {
+            (true, true) => !AreValuesEqual(currentValue, committedValue),
+            (false, false) => false,
+            _ => true
+        };
+
+        if (isDifferent) {
+            _dirtyKeys.Add(key);
+        }
+        else {
+            _dirtyKeys.Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// 判断两个值是否语义等价。
+    /// </summary>
+    /// <param name="a">第一个值。</param>
+    /// <param name="b">第二个值。</param>
+    /// <returns>如果语义等价则返回 true。</returns>
+    /// <remarks>
+    /// <para>
+    /// 对应条款：<c>[A-OBJREF-BACKFILL-CURRENT]</c> 的"不改变 dirty 状态"要求。
+    /// </para>
+    /// <para>
+    /// ObjRef 等价判定：<see cref="ObjectId"/> 和对应的 <see cref="IDurableObject"/> 实例是语义等价的。
+    /// 例如：<c>ObjectId(42)</c> 等价于 <c>instance where instance.ObjectId == 42</c>。
+    /// </para>
+    /// </remarks>
+    private static bool AreValuesEqual(object? a, object? b) {
+        // 快速路径：引用相等或都为 null
+        if (ReferenceEquals(a, b)) { return true; }
+        if (a is null || b is null) { return false; }
+
+        // ObjRef 等价判定：ObjectId(x) ≡ instance where instance.ObjectId == x
+        return (a, b) switch {
+            (ObjectId idA, ObjectId idB) => idA.Value == idB.Value,
+            (ObjectId id, IDurableObject obj) => id.Value == obj.ObjectId,
+            (IDurableObject obj, ObjectId id) => obj.ObjectId == id.Value,
+            (IDurableObject objA, IDurableObject objB) => objA.ObjectId == objB.ObjectId,
+            _ => Equals(a, b)
+        };
+    }
+
+    // === IDurableObject 方法（二阶段提交） ===
 
     /// <inheritdoc/>
     /// <remarks>
+    /// <para>
+    /// Prepare 阶段：计算 diff 并写入 writer。
+    /// 不更新 <c>_committed</c>/<c>_dirtyKeys</c>——状态追平由 <see cref="OnCommitSucceeded"/> 负责。
+    /// </para>
     /// <para>
     /// 对应条款：
     /// <list type="bullet">
@@ -315,29 +395,28 @@ public class DurableDict : IDurableObject {
     /// </list>
     /// </para>
     /// </remarks>
-    public void WritePendingDiff(IBufferWriter<byte> writer) {
+    public override void WritePendingDiff(IBufferWriter<byte> writer) {
         ThrowIfDetached();
 
-        // 1. 收集所有变更的 key，按升序排列
+        // Fast path: O(1)
+        if (_dirtyKeys.Count == 0) { return; }
+
+        // 收集所有变更的 key，按升序排列
         var sortedDirtyKeys = _dirtyKeys.OrderBy(k => k).ToList();
 
-        // 2. 使用 DiffPayloadWriter 序列化
+        // 使用 DiffPayloadWriter 序列化
         var payloadWriter = new DiffPayloadWriter(writer);
 
         foreach (var key in sortedDirtyKeys) {
-            // 判断当前状态
-            bool inWorking = _working.TryGetValue(key, out var workingValue);
-            bool isRemoved = _removedFromCommitted.Contains(key);
-
-            if (inWorking) {
-                // Upsert: 写入新值
-                WriteValue(ref payloadWriter, key, workingValue);
+            if (_current.TryGetValue(key, out var value)) {
+                // current 有值 → Set
+                WriteValue(ref payloadWriter, key, value);
             }
-            else if (isRemoved) {
-                // Delete: 写 tombstone
+            else if (_committed.ContainsKey(key)) {
+                // current 无值，committed 有值 → Delete (tombstone)
                 payloadWriter.WriteTombstone(key);
             }
-            // 其他情况不应出现（_dirtyKeys 追踪应正确）
+            // else: 两边都没有 → 不写（理论上不应在 dirtyKeys 中）
         }
 
         payloadWriter.Complete();
@@ -346,34 +425,16 @@ public class DurableDict : IDurableObject {
     /// <inheritdoc/>
     /// <remarks>
     /// Finalize 阶段：追平内存状态。
-    /// <para>
-    /// 1. 合并 _working 到 _committed
-    /// 2. 清空变更追踪
-    /// 3. 状态转为 Clean
-    /// </para>
+    /// <c>_committed = Clone(_current)</c>，清空 <c>_dirtyKeys</c>。
     /// </remarks>
-    public void OnCommitSucceeded() {
+    public override void OnCommitSucceeded() {
         ThrowIfDetached();
 
-        // 1. 合并 _working 到 _committed
-        foreach (var key in _dirtyKeys) {
-            if (_working.TryGetValue(key, out var value)) {
-                _committed[key] = value;
-            }
-            else if (_removedFromCommitted.Contains(key)) {
-                _committed.Remove(key);
-            }
-        }
+        if (_dirtyKeys.Count == 0) { return; }
 
-        // 2. 清空变更追踪
+        _committed = new Dictionary<ulong, object?>(_current);  // 深拷贝
         _dirtyKeys.Clear();
-        _removedFromCommitted.Clear();
-
-        // 3. 清空 _working（因为已合并到 _committed）
-        _working.Clear();
-
-        // 4. 状态转为 Clean
-        _state = DurableObjectState.Clean;
+        SetState(DurableObjectState.Clean);
     }
 
     /// <inheritdoc/>
@@ -395,35 +456,33 @@ public class DurableDict : IDurableObject {
     /// </list>
     /// </para>
     /// </remarks>
-    public void DiscardChanges() {
-        switch (_state) {
+    public override void DiscardChanges() {
+        switch (State) {
             case DurableObjectState.Clean:
                 // No-op: 没有变更可丢弃
                 return;
 
             case DurableObjectState.PersistentDirty:
                 // 重置为 committed 状态
-                _working.Clear();
+                _current = new Dictionary<ulong, object?>(_committed);  // 深拷贝
                 _dirtyKeys.Clear();
-                _removedFromCommitted.Clear();
-                _state = DurableObjectState.Clean;
+                SetState(DurableObjectState.Clean);
                 return;
 
             case DurableObjectState.TransientDirty:
                 // Detach: 标记为已分离，后续访问抛异常
-                _working.Clear();
+                _current.Clear();
                 _committed.Clear();
                 _dirtyKeys.Clear();
-                _removedFromCommitted.Clear();
-                _state = DurableObjectState.Detached;
+                SetState(DurableObjectState.Detached);
                 return;
 
             case DurableObjectState.Detached:
-                // No-op: 幂等，符合 [A-DURABLEDICT-API-SIGNATURES] 规范
+                // No-op: 幂等
                 return;
 
             default:
-                throw new InvalidOperationException($"Unknown state: {_state}");
+                throw new InvalidOperationException($"Unknown state: {State}");
         }
     }
 
@@ -432,10 +491,6 @@ public class DurableDict : IDurableObject {
     /// <summary>
     /// 根据值类型写入到 DiffPayloadWriter。
     /// </summary>
-    /// <param name="writer">Payload 写入器。</param>
-    /// <param name="key">键。</param>
-    /// <param name="value">值。</param>
-    /// <exception cref="NotSupportedException">不支持的值类型。</exception>
     private static void WriteValue(ref DiffPayloadWriter writer, ulong key, object? value) {
         switch (value) {
             case null:
@@ -451,7 +506,6 @@ public class DurableDict : IDurableObject {
                 // [F-VERSIONINDEX-REUSE-DURABLEDICT]: VersionIndex 使用 Val_Ptr64 编码 ObjectVersionPtr
                 writer.WritePtr64(key, ulongVal);
                 break;
-            // MVP 暂不支持其他类型
             default:
                 throw new NotSupportedException(
                     $"Unsupported value type: {value.GetType()}. MVP only supports null, long, int, and ulong."
@@ -462,108 +516,13 @@ public class DurableDict : IDurableObject {
     // === 私有方法 ===
 
     /// <summary>
-    /// 精确追踪 _dirtyKeys（Set 操作）。
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// 对应条款：<c>[S-DIRTYKEYS-TRACKING-EXACT]</c>
-    /// </para>
-    /// <para>
-    /// 规则：比较 newValue 与 _committed[key]：
-    /// <list type="bullet">
-    ///   <item>若相等（含两边都不存在）：移除 dirtyKey</item>
-    ///   <item>若不等：添加 dirtyKey</item>
-    /// </list>
-    /// </para>
-    /// </remarks>
-    /// <param name="key">变更的键。</param>
-    /// <param name="newValue">新值。</param>
-    private void UpdateDirtyKeyForSet(ulong key, object? newValue) {
-        // 获取 committed 值
-        bool hasCommitted = _committed.TryGetValue(key, out var committedValue);
-
-        // 比较：新值是否等于已提交值
-        bool isEqual = hasCommitted
-            ? Equals(newValue, committedValue)
-            : false;  // 如果 committed 中没有，则不相等
-
-        if (isEqual) {
-            _dirtyKeys.Remove(key);
-        }
-        else {
-            _dirtyKeys.Add(key);
-        }
-    }
-
-    /// <summary>
-    /// 精确追踪 _dirtyKeys（Remove 操作）。
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// 对应条款：<c>[S-DIRTYKEYS-TRACKING-EXACT]</c>
-    /// </para>
-    /// <para>
-    /// 规则：
-    /// <list type="bullet">
-    ///   <item>若删除已提交的 key：添加 dirtyKey（删除了已提交的 key）</item>
-    ///   <item>若删除未提交的新 key：移除 dirtyKey（回到原状态）</item>
-    ///   <item>若 key 在两处都不存在：不变</item>
-    /// </list>
-    /// </para>
-    /// </remarks>
-    /// <param name="key">变更的键。</param>
-    /// <param name="hadInWorking">是否在 _working 中存在（已被删除）。</param>
-    /// <param name="hasInCommitted">是否在 _committed 中存在。</param>
-    private void UpdateDirtyKeyForRemove(ulong key, bool hadInWorking, bool hasInCommitted) {
-        if (hasInCommitted) {
-            // 删除了已提交的 key → 记录变更
-            _dirtyKeys.Add(key);
-        }
-        else if (hadInWorking) {
-            // 删除了未提交的新 key → 回到原状态，移除脏标记
-            _dirtyKeys.Remove(key);
-        }
-        // else: key 在两处都不存在，Remove 无效果
-    }
-
-    /// <summary>
     /// 转换到 Dirty 状态。
     /// </summary>
     private void TransitionToDirty() {
-        // Clean → PersistentDirty
-        // TransientDirty 保持不变
-        if (_state == DurableObjectState.Clean) {
-            _state = DurableObjectState.PersistentDirty;
+        if (State == DurableObjectState.Clean) {
+            SetState(DurableObjectState.PersistentDirty);
         }
     }
 
-    /// <summary>
-    /// 如果对象已分离则抛出异常。
-    /// </summary>
-    /// <exception cref="ObjectDetachedException">对象已分离。</exception>
-    private void ThrowIfDetached() {
-        if (_state == DurableObjectState.Detached) { throw new ObjectDetachedException(ObjectId); }
-    }
-}
-
-/// <summary>
-/// 对象已分离异常。
-/// </summary>
-/// <remarks>
-/// 对应条款：<c>[S-TRANSIENT-DISCARD-DETACH]</c>
-/// </remarks>
-public class ObjectDetachedException : InvalidOperationException {
-    /// <summary>
-    /// 已分离对象的 ID。
-    /// </summary>
-    public ulong ObjectId { get; }
-
-    /// <summary>
-    /// 创建新的 ObjectDetachedException。
-    /// </summary>
-    /// <param name="objectId">对象 ID。</param>
-    public ObjectDetachedException(ulong objectId)
-        : base($"Object {objectId} has been detached and cannot be accessed.") {
-        ObjectId = objectId;
-    }
+    // ThrowIfDetached 已由基类提供
 }
