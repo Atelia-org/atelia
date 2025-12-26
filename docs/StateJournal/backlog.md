@@ -1,6 +1,6 @@
 # StateJournal Backlog
 
-> 最后更新：2025-12-26
+> 最后更新：2025-12-27
 > 维护者：AI Team
 > 
 > **项目位置**：`atelia/docs/StateJournal/`
@@ -64,9 +64,15 @@
 
 | # | 任务 | 复杂度 | 说明 |
 |---|------|--------|------|
-| **B-4** | **DurableDict 与 Workspace 绑定方式** | 高 | 两层架构 vs 直接绑定，跨 Workspace 迁移问题 |
+| **B-4** | ~~DurableDict 与 Workspace 绑定方式~~ | ✅ | 畅谈会 #5 已解决，护照模式 |
 | **B-5** | **DurableDict API 成员正式命名** | 中 | 先实施基础再定名字 |
-| **B-6** | Detached 对象成员访问语义 | ✅ | 畅谈会 #3+#4 已解决 |
+| **B-6** | ~~Detached 对象成员访问语义~~ | ✅ | 畅谈会 #3+#4 已解决 |
+| **B-8** | **LoadObject<T> 泛型/非泛型分层** | 低 | 考虑拆分为非泛型底层 + 泛型转换包装 |
+
+> **B-8 设计思路**（监护人 2025-12-27 提出）：
+> - 当前 `DurableObjectBase.LoadObject<T>()` 和 `Workspace.LoadObject<T>()` 都是泛型
+> - 可能应拆分为：非泛型 `LoadObject(ulong id) -> IDurableObject` + 泛型 `LoadObject<T>()` 包装
+> - 理由待讨论：类型转换边界、运行时类型检查位置等
 
 ### P2 优先级 - 已设计待实施
 
