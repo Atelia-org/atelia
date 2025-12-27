@@ -22,8 +22,7 @@ namespace Atelia.StateJournal;
 /// </list>
 /// </para>
 /// </remarks>
-public enum DurableObjectState
-{
+public enum DurableObjectState {
     /// <summary>
     /// 干净状态：对象的 Working State 等于 Committed State。
     /// </summary>

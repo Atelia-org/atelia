@@ -11,8 +11,7 @@ namespace Atelia.StateJournal;
 /// <para><b>varint</b>：有符号整数采用 ZigZag 映射后按 varuint 编码。</para>
 /// <para>对应条款：<c>[F-VARINT-CANONICAL-ENCODING]</c>、<c>[F-DECODE-ERROR-FAILFAST]</c></para>
 /// </remarks>
-public static class VarInt
-{
+public static class VarInt {
     /// <summary>
     /// varuint64 编码的最大字节数（uint64.MaxValue 需要 10 字节）。
     /// </summary>
@@ -27,12 +26,10 @@ public static class VarInt
     /// </summary>
     /// <param name="value">要编码的无符号整数值。</param>
     /// <returns>编码所需的字节数（1-10）。</returns>
-    public static int GetVarUIntLength(ulong value)
-    {
+    public static int GetVarUIntLength(ulong value) {
         // 每 7 bit 需要 1 字节
         int length = 1;
-        while (value >= 0x80)
-        {
+        while (value >= 0x80) {
             value >>= 7;
             length++;
         }
@@ -49,19 +46,17 @@ public static class VarInt
     /// <remarks>
     /// <para><b>[F-VARINT-CANONICAL-ENCODING]</b>：保证产生 canonical 最短编码。</para>
     /// </remarks>
-    public static int WriteVarUInt(Span<byte> destination, ulong value)
-    {
+    public static int WriteVarUInt(Span<byte> destination, ulong value) {
         int length = GetVarUIntLength(value);
-        if (destination.Length < length)
-        {
+        if (destination.Length < length) {
             throw new ArgumentException(
                 $"Destination buffer too small. Need {length} bytes but only {destination.Length} available.",
-                nameof(destination));
+                nameof(destination)
+            );
         }
 
         int offset = 0;
-        while (value >= 0x80)
-        {
+        while (value >= 0x80) {
             // 低 7 bit + continuation flag
             destination[offset++] = (byte)(value | 0x80);
             value >>= 7;
@@ -84,39 +79,39 @@ public static class VarInt
     /// <para><b>[F-DECODE-ERROR-FAILFAST]</b>：遇到 EOF、溢出或非 canonical 一律失败。</para>
     /// <para><b>[F-VARINT-CANONICAL-ENCODING]</b>：拒绝非 canonical 编码（如 0x80 0x00 表示 0）。</para>
     /// </remarks>
-    public static AteliaResult<(ulong Value, int BytesConsumed)> TryReadVarUInt(ReadOnlySpan<byte> source)
-    {
-        if (source.IsEmpty)
-        {
+    public static AteliaResult<(ulong Value, int BytesConsumed)> TryReadVarUInt(ReadOnlySpan<byte> source) {
+        if (source.IsEmpty) {
             return AteliaResult<(ulong, int)>.Failure(
-                new VarIntDecodeError("Unexpected EOF: empty buffer when reading varuint."));
+                new VarIntDecodeError("Unexpected EOF: empty buffer when reading varuint.")
+            );
         }
 
         ulong result = 0;
         int shift = 0;
         int bytesConsumed = 0;
 
-        while (bytesConsumed < source.Length)
-        {
+        while (bytesConsumed < source.Length) {
             byte b = source[bytesConsumed];
             bytesConsumed++;
 
             // 检查溢出：varuint64 最多 10 字节
-            if (bytesConsumed > MaxVarUInt64Bytes)
-            {
+            if (bytesConsumed > MaxVarUInt64Bytes) {
                 return AteliaResult<(ulong, int)>.Failure(
                     new VarIntDecodeError(
                         $"VarUInt overflow: more than {MaxVarUInt64Bytes} bytes.",
-                        "The encoded value exceeds uint64 range."));
+                        "The encoded value exceeds uint64 range."
+                    )
+                );
             }
 
             // 第 10 字节特殊处理：只能有低 1 bit 有效（0x00 或 0x01）
-            if (bytesConsumed == MaxVarUInt64Bytes && b > 0x01)
-            {
+            if (bytesConsumed == MaxVarUInt64Bytes && b > 0x01) {
                 return AteliaResult<(ulong, int)>.Failure(
                     new VarIntDecodeError(
                         $"VarUInt overflow: 10th byte value 0x{b:X2} exceeds allowed range.",
-                        "The encoded value exceeds uint64 range."));
+                        "The encoded value exceeds uint64 range."
+                    )
+                );
             }
 
             // 累加当前字节的 7 bit 数据
@@ -124,14 +119,13 @@ public static class VarInt
             shift += 7;
 
             // 检查 continuation flag
-            if ((b & 0x80) == 0)
-            {
+            if ((b & 0x80) == 0) {
                 // 检查 canonical 编码
                 int expectedLength = GetVarUIntLength(result);
-                if (bytesConsumed != expectedLength)
-                {
+                if (bytesConsumed != expectedLength) {
                     return AteliaResult<(ulong, int)>.Failure(
-                        new VarIntNonCanonicalError(result, bytesConsumed, expectedLength));
+                        new VarIntNonCanonicalError(result, bytesConsumed, expectedLength)
+                    );
                 }
 
                 return AteliaResult<(ulong, int)>.Success((result, bytesConsumed));
@@ -142,7 +136,9 @@ public static class VarInt
         return AteliaResult<(ulong, int)>.Failure(
             new VarIntDecodeError(
                 $"Unexpected EOF: continuation flag set at byte {bytesConsumed} but no more data.",
-                "The varuint encoding is truncated."));
+                "The varuint encoding is truncated."
+            )
+        );
     }
 
     // ==========================================================================
@@ -158,8 +154,7 @@ public static class VarInt
     /// <para>映射规则：<c>zz = (n &lt;&lt; 1) ^ (n &gt;&gt; 63)</c></para>
     /// <para>示例：0→0, -1→1, 1→2, -2→3, ...</para>
     /// </remarks>
-    public static ulong ZigZagEncode(long value)
-    {
+    public static ulong ZigZagEncode(long value) {
         // 算术右移 63 位得到符号扩展：正数→0x0000...，负数→0xFFFF...
         // 然后与左移 1 位的结果异或
         return (ulong)((value << 1) ^ (value >> 63));
@@ -174,8 +169,7 @@ public static class VarInt
     /// <para>映射规则：<c>n = (zz &gt;&gt;&gt; 1) ^ -(zz &amp; 1)</c></para>
     /// <para>示例：0→0, 1→-1, 2→1, 3→-2, ...</para>
     /// </remarks>
-    public static long ZigZagDecode(ulong encoded)
-    {
+    public static long ZigZagDecode(ulong encoded) {
         // 逻辑右移 1 位，然后与符号位扩展异或
         // -(encoded & 1) 等于：偶数→0，奇数→-1（即 0xFFFF...）
         return (long)(encoded >> 1) ^ -((long)(encoded & 1));
@@ -192,8 +186,7 @@ public static class VarInt
     /// <param name="value">要编码的有符号整数值。</param>
     /// <returns>写入的字节数。</returns>
     /// <exception cref="ArgumentException">目标缓冲区太小。</exception>
-    public static int WriteVarInt(Span<byte> destination, long value)
-    {
+    public static int WriteVarInt(Span<byte> destination, long value) {
         ulong zigzag = ZigZagEncode(value);
         return WriteVarUInt(destination, zigzag);
     }
@@ -206,13 +199,9 @@ public static class VarInt
     /// 成功时返回 (Value, BytesConsumed) 元组；
     /// 失败时返回 <see cref="VarIntDecodeError"/> 或 <see cref="VarIntNonCanonicalError"/>。
     /// </returns>
-    public static AteliaResult<(long Value, int BytesConsumed)> TryReadVarInt(ReadOnlySpan<byte> source)
-    {
+    public static AteliaResult<(long Value, int BytesConsumed)> TryReadVarInt(ReadOnlySpan<byte> source) {
         var result = TryReadVarUInt(source);
-        if (result.IsFailure)
-        {
-            return AteliaResult<(long, int)>.Failure(result.Error!);
-        }
+        if (result.IsFailure) { return AteliaResult<(long, int)>.Failure(result.Error!); }
 
         long value = ZigZagDecode(result.Value.Value);
         return AteliaResult<(long, int)>.Success((value, result.Value.BytesConsumed));

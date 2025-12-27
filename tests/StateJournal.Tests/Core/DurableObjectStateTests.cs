@@ -10,16 +10,14 @@ namespace Atelia.StateJournal.Tests.Core;
 /// <remarks>
 /// 对应条款：<c>[A-OBJECT-STATE-CLOSED-SET]</c>
 /// </remarks>
-public class DurableObjectStateTests
-{
+public class DurableObjectStateTests {
     /// <summary>
     /// 测试枚举包含且仅包含 4 个值。
     /// </summary>
     [Fact]
-    public void DurableObjectState_HasExactlyFourValues()
-    {
+    public void DurableObjectState_HasExactlyFourValues() {
         var values = Enum.GetValues<DurableObjectState>();
-        
+
         values.Should().HaveCount(4);
     }
 
@@ -27,8 +25,7 @@ public class DurableObjectStateTests
     /// 测试 Clean 状态存在且值为 0。
     /// </summary>
     [Fact]
-    public void Clean_HasValue0()
-    {
+    public void Clean_HasValue0() {
         ((int)DurableObjectState.Clean).Should().Be(0);
     }
 
@@ -36,8 +33,7 @@ public class DurableObjectStateTests
     /// 测试 PersistentDirty 状态存在且值为 1。
     /// </summary>
     [Fact]
-    public void PersistentDirty_HasValue1()
-    {
+    public void PersistentDirty_HasValue1() {
         ((int)DurableObjectState.PersistentDirty).Should().Be(1);
     }
 
@@ -45,8 +41,7 @@ public class DurableObjectStateTests
     /// 测试 TransientDirty 状态存在且值为 2。
     /// </summary>
     [Fact]
-    public void TransientDirty_HasValue2()
-    {
+    public void TransientDirty_HasValue2() {
         ((int)DurableObjectState.TransientDirty).Should().Be(2);
     }
 
@@ -54,8 +49,7 @@ public class DurableObjectStateTests
     /// 测试 Detached 状态存在且值为 3。
     /// </summary>
     [Fact]
-    public void Detached_HasValue3()
-    {
+    public void Detached_HasValue3() {
         ((int)DurableObjectState.Detached).Should().Be(3);
     }
 
@@ -67,8 +61,7 @@ public class DurableObjectStateTests
     [InlineData(DurableObjectState.PersistentDirty, "PersistentDirty")]
     [InlineData(DurableObjectState.TransientDirty, "TransientDirty")]
     [InlineData(DurableObjectState.Detached, "Detached")]
-    public void AllValues_HaveCorrectNames(DurableObjectState state, string expectedName)
-    {
+    public void AllValues_HaveCorrectNames(DurableObjectState state, string expectedName) {
         state.ToString().Should().Be(expectedName);
     }
 
@@ -80,8 +73,7 @@ public class DurableObjectStateTests
     [InlineData(1, DurableObjectState.PersistentDirty)]
     [InlineData(2, DurableObjectState.TransientDirty)]
     [InlineData(3, DurableObjectState.Detached)]
-    public void IntegerConversion_Works(int value, DurableObjectState expectedState)
-    {
+    public void IntegerConversion_Works(int value, DurableObjectState expectedState) {
         var state = (DurableObjectState)value;
         state.Should().Be(expectedState);
     }

@@ -22,8 +22,7 @@ namespace Atelia.StateJournal;
 /// </list>
 /// </para>
 /// </remarks>
-public interface IDurableObject
-{
+public interface IDurableObject {
     /// <summary>
     /// 对象的唯一标识符。
     /// </summary>

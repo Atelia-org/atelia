@@ -12,8 +12,7 @@ namespace Atelia.StateJournal;
 /// <para>对应条款：<c>[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]</c></para>
 /// <para>计算：<c>RecordType = (ushort)(FrameTag.Value &amp; 0xFFFF)</c></para>
 /// </remarks>
-public enum RecordType : ushort
-{
+public enum RecordType : ushort {
     /// <summary>
     /// 保留值，MUST NOT 使用。
     /// </summary>
@@ -37,8 +36,7 @@ public enum RecordType : ushort
 /// <para>对应条款：<c>[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]</c></para>
 /// <para>计算：<c>ObjectKind = (ushort)(FrameTag.Value &gt;&gt; 16)</c></para>
 /// </remarks>
-public enum ObjectKind : ushort
-{
+public enum ObjectKind : ushort {
     /// <summary>
     /// 保留值，MUST NOT 使用。
     /// </summary>
@@ -68,8 +66,7 @@ public enum ObjectKind : ushort
 /// <para><b>端序</b>: Little-Endian (LE)，即低位字节在前（字节 0-1 = RecordType，字节 2-3 = SubType）。</para>
 /// <para><b>计算公式</b>: <c>FrameTag = (SubType &lt;&lt; 16) | RecordType</c></para>
 /// </remarks>
-public static class StateJournalFrameTag
-{
+public static class StateJournalFrameTag {
     // =========================================================================
     // 预定义常量
     // =========================================================================
@@ -101,8 +98,7 @@ public static class StateJournalFrameTag
     /// </summary>
     /// <param name="tag">FrameTag。</param>
     /// <returns>RecordType 枚举值（可能是未定义的值）。</returns>
-    public static RecordType GetRecordType(this FrameTag tag)
-    {
+    public static RecordType GetRecordType(this FrameTag tag) {
         return (RecordType)(tag.Value & 0xFFFF);
     }
 
@@ -111,8 +107,7 @@ public static class StateJournalFrameTag
     /// </summary>
     /// <param name="tag">FrameTag。</param>
     /// <returns>SubType 的原始值。</returns>
-    public static ushort GetSubType(this FrameTag tag)
-    {
+    public static ushort GetSubType(this FrameTag tag) {
         return (ushort)(tag.Value >> 16);
     }
 
@@ -125,8 +120,7 @@ public static class StateJournalFrameTag
     /// <para>仅当 <c>GetRecordType(tag) == RecordType.ObjectVersion</c> 时才有意义。</para>
     /// <para>其他情况下 SubType 应为 0。</para>
     /// </remarks>
-    public static ObjectKind GetObjectKind(this FrameTag tag)
-    {
+    public static ObjectKind GetObjectKind(this FrameTag tag) {
         return (ObjectKind)(tag.Value >> 16);
     }
 
@@ -143,8 +137,7 @@ public static class StateJournalFrameTag
     /// <remarks>
     /// <para>计算公式：<c>FrameTag = (subType &lt;&lt; 16) | recordType</c></para>
     /// </remarks>
-    public static FrameTag Create(RecordType recordType, ushort subType = 0)
-    {
+    public static FrameTag Create(RecordType recordType, ushort subType = 0) {
         uint value = ((uint)subType << 16) | (ushort)recordType;
         return new FrameTag(value);
     }
@@ -157,8 +150,7 @@ public static class StateJournalFrameTag
     /// <remarks>
     /// <para>等价于 <c>Create(RecordType.ObjectVersion, (ushort)kind)</c></para>
     /// </remarks>
-    public static FrameTag CreateObjectVersion(ObjectKind kind)
-    {
+    public static FrameTag CreateObjectVersion(ObjectKind kind) {
         return Create(RecordType.ObjectVersion, (ushort)kind);
     }
 
@@ -183,43 +175,41 @@ public static class StateJournalFrameTag
     ///   <item>RecordType != ObjectVersion 且 SubType != 0 → <see cref="InvalidSubTypeError"/></item>
     /// </list>
     /// </remarks>
-    public static AteliaResult<(RecordType RecordType, ObjectKind? ObjectKind)> TryParse(FrameTag tag)
-    {
+    public static AteliaResult<(RecordType RecordType, ObjectKind? ObjectKind)> TryParse(FrameTag tag) {
         var recordType = tag.GetRecordType();
         var subType = tag.GetSubType();
 
         // 规则 1: RecordType == Reserved → UnknownRecordTypeError
-        if (recordType == RecordType.Reserved)
-        {
+        if (recordType == RecordType.Reserved) {
             return AteliaResult<(RecordType, ObjectKind?)>.Failure(
-                new UnknownRecordTypeError(tag.Value, (ushort)recordType));
+                new UnknownRecordTypeError(tag.Value, (ushort)recordType)
+            );
         }
 
         // 规则 2: RecordType 未知 → UnknownRecordTypeError
-        if (recordType != RecordType.ObjectVersion && recordType != RecordType.MetaCommit)
-        {
+        if (recordType != RecordType.ObjectVersion && recordType != RecordType.MetaCommit) {
             return AteliaResult<(RecordType, ObjectKind?)>.Failure(
-                new UnknownRecordTypeError(tag.Value, (ushort)recordType));
+                new UnknownRecordTypeError(tag.Value, (ushort)recordType)
+            );
         }
 
         // RecordType == ObjectVersion 时
-        if (recordType == RecordType.ObjectVersion)
-        {
+        if (recordType == RecordType.ObjectVersion) {
             var objectKind = (ObjectKind)subType;
 
             // 规则 3: ObjectKind == Reserved → UnknownObjectKindError
-            if (objectKind == ObjectKind.Reserved)
-            {
+            if (objectKind == ObjectKind.Reserved) {
                 return AteliaResult<(RecordType, ObjectKind?)>.Failure(
-                    new UnknownObjectKindError(tag.Value, subType));
+                    new UnknownObjectKindError(tag.Value, subType)
+                );
             }
 
             // 规则：ObjectKind 未知（非 Dict）→ UnknownObjectKindError
             // MVP 阶段只有 Dict
-            if (objectKind != ObjectKind.Dict)
-            {
+            if (objectKind != ObjectKind.Dict) {
                 return AteliaResult<(RecordType, ObjectKind?)>.Failure(
-                    new UnknownObjectKindError(tag.Value, subType));
+                    new UnknownObjectKindError(tag.Value, subType)
+                );
             }
 
             return AteliaResult<(RecordType, ObjectKind?)>.Success((recordType, objectKind));
@@ -227,10 +217,10 @@ public static class StateJournalFrameTag
 
         // RecordType != ObjectVersion 时（当前只有 MetaCommit）
         // 规则 4: SubType 必须为 0
-        if (subType != 0)
-        {
+        if (subType != 0) {
             return AteliaResult<(RecordType, ObjectKind?)>.Failure(
-                new InvalidSubTypeError(tag.Value, (ushort)recordType, subType));
+                new InvalidSubTypeError(tag.Value, (ushort)recordType, subType)
+            );
         }
 
         return AteliaResult<(RecordType, ObjectKind?)>.Success((recordType, null));
