@@ -1,13 +1,54 @@
 # Workspace 核心 API 非泛型化：施工任务书（可执行清单，交付 Implementer）
 
 日期：2025-12-27
-状态：🟡 待实施
+状态：✅ 已完成
 
-目标：在“保留 IDurableObject 作为协议面”的前提下，将 Workspace 的核心创建/加载/注册 API 收敛为**非泛型**，并将类型化与类型检查上移为便捷层 API。
+目标：在"保留 IDurableObject 作为协议面"的前提下，将 Workspace 的核心创建/加载/注册 API 收敛为**非泛型**，并将类型化与类型检查上移为便捷层 API。
 
 范围：atelia/src/StateJournal（Workspace/IdentityMap/DirtySet/相关错误类型）与对应测试。
 
 不考虑兼容：允许破坏性调整 API/类型/测试。
+
+---
+
+## 实现摘要
+
+**Workspace 核心 API 非泛型化重构完成！**
+
+### 核心代码改动（7 个文件）
+
+| 文件 | 改动 |
+|------|------|
+| Workspace.cs | 新增 `CreateDict()`、`LoadObject(ulong)`、`LoadDict(ulong)`、`LoadAs<T>(ulong)`；旧泛型 API 标记 `[Obsolete]` |
+| IdentityMap.cs | 内部集合从 `IDurableObject` 改为 `DurableObjectBase` |
+| DirtySet.cs | 内部集合从 `IDurableObject` 改为 `DurableObjectBase` |
+| LazyRef.cs | 类型约束改为 `DurableObjectBase`；使用新的 `LoadAs<T>` |
+| DurableObjectBase.cs | `LoadObject<T>` 约束改为 `DurableObjectBase` |
+| DurableDict.cs | Lazy Load 调用改为新 API |
+| ObjectLoaderDelegate | 返回类型改为 `AteliaResult<DurableObjectBase>` |
+
+### 测试改动（~123 处）
+
+| 改动类型 | 数量 |
+|---------|------|
+| `CreateObject<DurableDict>()` → `CreateDict()` | 88 处 |
+| `LoadObject<DurableDict>(id)` → `LoadDict(id)` | 12 处 |
+| `AteliaResult<IDurableObject>` → `AteliaResult<DurableObjectBase>` | 23 处 |
+
+### 测试结果
+```
+Passed! - Failed: 0, Passed: 601, Skipped: 0, Total: 601
+```
+
+### 新 API 概览
+
+**Core API（非泛型）**：
+- `CreateDict()` - 创建 DurableDict
+- `LoadObject(ulong)` - 加载对象，返回 `AteliaResult<DurableObjectBase>`
+
+**Convenience API（类型化）**：
+- `LoadDict(ulong)` - 加载 DurableDict
+- `LoadAs<T>(ulong)` - 泛型加载并类型检查
 
 ---
 
@@ -102,7 +143,7 @@
 
 建议处理方式：
 
-1. 搜索替换：所有 `CreateObject<DurableDict>()` → `CreateDict()`
+1. ✅ 搜索替换：所有 `CreateObject<DurableDict>()` → `CreateDict()` —— **已完成（88 处）**
 2. 搜索替换：所有 `LoadObject<DurableDict>(id)` → `LoadDict(id)`
 3. 若保留 `LoadAs<T>`：可用它替换原 `LoadObject<T>` 的断言式写法
 4. `FakeDurableObject : IDurableObject` 测试若不再进入 Workspace 核心路径，可保留原样；若测试确实需要进入 Workspace，则让 fake 继承 DurableObjectBase（按测试目的选择）

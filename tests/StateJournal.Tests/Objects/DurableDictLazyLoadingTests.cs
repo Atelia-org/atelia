@@ -28,14 +28,14 @@ public class DurableDictLazyLoadingTests {
         // Arrange: 创建被引用对象（在单独的 Workspace 中）
         var targetObjectId = 100UL;
         var refWorkspace = new Ws(targetObjectId, null);  // nextObjectId = 100
-        var referencedDict = refWorkspace.CreateObject<DurableDict>();  // ObjectId = 100
+        var referencedDict = refWorkspace.CreateDict();  // ObjectId = 100
         referencedDict.ObjectId.Should().Be(targetObjectId);
 
         // 设置 ObjectLoader
-        AteliaResult<IDurableObject> loader(ulong id) =>
+        AteliaResult<DurableObjectBase> loader(ulong id) =>
             id == targetObjectId
-                ? AteliaResult<IDurableObject>.Success(referencedDict)
-                : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+                ? AteliaResult<DurableObjectBase>.Success(referencedDict)
+                : AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         var workspace = new Ws(loader);
 
@@ -63,13 +63,13 @@ public class DurableDictLazyLoadingTests {
         // Arrange
         var targetObjectId = 200UL;
         var refWorkspace = new Ws(targetObjectId, null);
-        var referencedDict = refWorkspace.CreateObject<DurableDict>();
+        var referencedDict = refWorkspace.CreateDict();
         referencedDict.ObjectId.Should().Be(targetObjectId);
 
-        AteliaResult<IDurableObject> loader(ulong id) =>
+        AteliaResult<DurableObjectBase> loader(ulong id) =>
             id == targetObjectId
-                ? AteliaResult<IDurableObject>.Success(referencedDict)
-                : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+                ? AteliaResult<DurableObjectBase>.Success(referencedDict)
+                : AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         var workspace = new Ws(loader);
         var committed = new Dictionary<ulong, object?> { { 1, new ObjectId(targetObjectId) } };
@@ -93,13 +93,13 @@ public class DurableDictLazyLoadingTests {
         // Arrange
         var targetObjectId = 300UL;
         var refWorkspace = new Ws(targetObjectId, null);
-        var referencedDict = refWorkspace.CreateObject<DurableDict>();
+        var referencedDict = refWorkspace.CreateDict();
         referencedDict.ObjectId.Should().Be(targetObjectId);
 
-        AteliaResult<IDurableObject> loader(ulong id) =>
+        AteliaResult<DurableObjectBase> loader(ulong id) =>
             id == targetObjectId
-                ? AteliaResult<IDurableObject>.Success(referencedDict)
-                : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+                ? AteliaResult<DurableObjectBase>.Success(referencedDict)
+                : AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         var workspace = new Ws(loader);
         var committed = new Dictionary<ulong, object?> {
@@ -129,14 +129,14 @@ public class DurableDictLazyLoadingTests {
         var targetObjectId = 400UL;
         var loadCount = 0;
         var refWorkspace = new Ws(targetObjectId, null);
-        var referencedDict = refWorkspace.CreateObject<DurableDict>();
+        var referencedDict = refWorkspace.CreateDict();
         referencedDict.ObjectId.Should().Be(targetObjectId);
 
-        AteliaResult<IDurableObject> loader(ulong id) {
+        AteliaResult<DurableObjectBase> loader(ulong id) {
             loadCount++;
             return id == targetObjectId
-                ? AteliaResult<IDurableObject>.Success(referencedDict)
-                : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+                ? AteliaResult<DurableObjectBase>.Success(referencedDict)
+                : AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         }
 
         var workspace = new Ws(loader);
@@ -165,13 +165,13 @@ public class DurableDictLazyLoadingTests {
         // Arrange
         var targetObjectId = 500UL;
         var refWorkspace = new Ws(targetObjectId, null);
-        var referencedDict = refWorkspace.CreateObject<DurableDict>();
+        var referencedDict = refWorkspace.CreateDict();
         referencedDict.ObjectId.Should().Be(targetObjectId);
 
-        AteliaResult<IDurableObject> loader(ulong id) =>
+        AteliaResult<DurableObjectBase> loader(ulong id) =>
             id == targetObjectId
-                ? AteliaResult<IDurableObject>.Success(referencedDict)
-                : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+                ? AteliaResult<DurableObjectBase>.Success(referencedDict)
+                : AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         var workspace = new Ws(loader);
         var committed = new Dictionary<ulong, object?> { { 1, new ObjectId(targetObjectId) } };
@@ -198,8 +198,8 @@ public class DurableDictLazyLoadingTests {
         var targetObjectId = 600UL;
 
         // Loader 总是返回失败
-        AteliaResult<IDurableObject> loader(ulong id) =>
-            AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        AteliaResult<DurableObjectBase> loader(ulong id) =>
+            AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         var workspace = new Ws(loader);
         var committed = new Dictionary<ulong, object?> { { 1, new ObjectId(targetObjectId) } };
@@ -221,9 +221,9 @@ public class DurableDictLazyLoadingTests {
         // Arrange
         var loadCount = 0;
 
-        AteliaResult<IDurableObject> loader(ulong id) {
+        AteliaResult<DurableObjectBase> loader(ulong id) {
             loadCount++;
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         }
 
         var workspace = new Ws(loader);
@@ -258,13 +258,13 @@ public class DurableDictLazyLoadingTests {
         // Arrange
         var targetObjectId = 700UL;
         var refWorkspace = new Ws(targetObjectId, null);
-        var referencedDict = refWorkspace.CreateObject<DurableDict>();
+        var referencedDict = refWorkspace.CreateDict();
         referencedDict.ObjectId.Should().Be(targetObjectId);
 
-        AteliaResult<IDurableObject> loader(ulong id) =>
+        AteliaResult<DurableObjectBase> loader(ulong id) =>
             id == targetObjectId
-                ? AteliaResult<IDurableObject>.Success(referencedDict)
-                : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+                ? AteliaResult<DurableObjectBase>.Success(referencedDict)
+                : AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         var workspace = new Ws(loader);
         var committed = new Dictionary<ulong, object?> { { 1, new ObjectId(targetObjectId) } };

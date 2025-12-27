@@ -290,7 +290,7 @@ public class WorkspaceRecoveryTests {
         using var workspace = WorkspaceClass.Open(info);
 
         // 恢复后可以继续创建对象
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
 
         dict.ObjectId.Should().Be(50);  // 从恢复的 NextObjectId 开始
         workspace.NextObjectId.Should().Be(51);
@@ -308,7 +308,7 @@ public class WorkspaceRecoveryTests {
         using var workspace = WorkspaceClass.Open(info);
 
         // 创建一个对象使其有脏数据
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 42L);
 
         // 提交

@@ -24,7 +24,7 @@ public class WorkspaceTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
 
         // Assert
         dict.ObjectId.Should().Be(16);  // 第一个用户对象
@@ -37,9 +37,9 @@ public class WorkspaceTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        var obj1 = workspace.CreateObject<DurableDict>();
-        var obj2 = workspace.CreateObject<DurableDict>();
-        var obj3 = workspace.CreateObject<DurableDict>();
+        var obj1 = workspace.CreateDict();
+        var obj2 = workspace.CreateDict();
+        var obj3 = workspace.CreateDict();
 
         // Assert
         obj1.ObjectId.Should().Be(16);
@@ -55,10 +55,10 @@ public class WorkspaceTests {
         // Act & Assert
         workspace.NextObjectId.Should().Be(16);
 
-        workspace.CreateObject<DurableDict>();
+        workspace.CreateDict();
         workspace.NextObjectId.Should().Be(17);
 
-        workspace.CreateObject<DurableDict>();
+        workspace.CreateDict();
         workspace.NextObjectId.Should().Be(18);
     }
 
@@ -72,7 +72,7 @@ public class WorkspaceTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
 
         // Assert
         workspace.CachedCount.Should().Be(1);
@@ -84,9 +84,9 @@ public class WorkspaceTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        workspace.CreateObject<DurableDict>();
-        workspace.CreateObject<DurableDict>();
-        workspace.CreateObject<DurableDict>();
+        workspace.CreateDict();
+        workspace.CreateDict();
+        workspace.CreateDict();
 
         // Assert
         workspace.CachedCount.Should().Be(3);
@@ -102,7 +102,7 @@ public class WorkspaceTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
 
         // Assert
         workspace.DirtyCount.Should().Be(1);
@@ -114,9 +114,9 @@ public class WorkspaceTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        workspace.CreateObject<DurableDict>();
-        workspace.CreateObject<DurableDict>();
-        workspace.CreateObject<DurableDict>();
+        workspace.CreateDict();
+        workspace.CreateDict();
+        workspace.CreateDict();
 
         // Assert
         workspace.DirtyCount.Should().Be(3);
@@ -139,7 +139,7 @@ public class WorkspaceTests {
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         static void CreateAndForget(WorkspaceClass ws) {
-            var dict = ws.CreateObject<DurableDict>();
+            var dict = ws.CreateDict();
             // dict 超出作用域，但 DirtySet 持有强引用
         }
     }
@@ -196,8 +196,8 @@ public class WorkspaceTests {
     public void Dispose_ClearsDirtySet() {
         // Arrange
         var workspace = new WorkspaceClass();
-        workspace.CreateObject<DurableDict>();
-        workspace.CreateObject<DurableDict>();
+        workspace.CreateDict();
+        workspace.CreateDict();
 
         // Act
         workspace.Dispose();
@@ -216,8 +216,8 @@ public class WorkspaceTests {
         using var workspace = new WorkspaceClass(1000);
 
         // Act
-        var obj1 = workspace.CreateObject<DurableDict>();
-        var obj2 = workspace.CreateObject<DurableDict>();
+        var obj1 = workspace.CreateDict();
+        var obj2 = workspace.CreateDict();
 
         // Assert
         obj1.ObjectId.Should().Be(1000);
@@ -233,10 +233,10 @@ public class WorkspaceTests {
     public void LoadObject_AfterCreate_ReturnsSameInstance() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var created = workspace.CreateObject<DurableDict>();
+        var created = workspace.CreateDict();
 
         // Act
-        var loadResult = workspace.LoadObject<DurableDict>(created.ObjectId);
+        var loadResult = workspace.LoadDict(created.ObjectId);
 
         // Assert
         loadResult.IsSuccess.Should().BeTrue();
@@ -254,10 +254,10 @@ public class WorkspaceTests {
     public void LoadObject_SameType_Succeeds() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var created = workspace.CreateObject<DurableDict>();
+        var created = workspace.CreateDict();
 
         // Act - 用相同类型加载
-        var loadResult = workspace.LoadObject<DurableDict>(created.ObjectId);
+        var loadResult = workspace.LoadDict(created.ObjectId);
 
         // Assert - 应该成功，返回相同实例
         loadResult.IsSuccess.Should().BeTrue();
@@ -270,7 +270,7 @@ public class WorkspaceTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        var loadResult = workspace.LoadObject<DurableDict>(999);
+        var loadResult = workspace.LoadDict(999);
 
         // Assert
         loadResult.IsFailure.Should().BeTrue();
@@ -284,17 +284,17 @@ public class WorkspaceTests {
         // Arrange - 模拟存储加载
         // 使用临时 Workspace 创建 mock 对象（保持存活防止 GC）
         using var mockWorkspace = new WorkspaceClass(100);
-        var mockObject = mockWorkspace.CreateObject<DurableDict>();
+        var mockObject = mockWorkspace.CreateDict();
 
         ObjectLoaderDelegate loader = id => id == 100
-            ? AteliaResult<IDurableObject>.Success(mockObject)
-            : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            ? AteliaResult<DurableObjectBase>.Success(mockObject)
+            : AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         using var workspace = new WorkspaceClass(loader);
 
         // Act
-        var result1 = workspace.LoadObject<DurableDict>(100);
-        var result2 = workspace.LoadObject<DurableDict>(100);
+        var result1 = workspace.LoadDict(100);
+        var result2 = workspace.LoadDict(100);
 
         // Assert
         result1.IsSuccess.Should().BeTrue();
@@ -308,15 +308,15 @@ public class WorkspaceTests {
         // Arrange
         // 使用临时 Workspace 创建 mock 对象（保持存活防止 GC）
         using var mockWorkspace = new WorkspaceClass(100);
-        var mockObject = mockWorkspace.CreateObject<DurableDict>();
+        var mockObject = mockWorkspace.CreateDict();
 
         ObjectLoaderDelegate loader = id =>
-            AteliaResult<IDurableObject>.Success(mockObject);
+            AteliaResult<DurableObjectBase>.Success(mockObject);
 
         using var workspace = new WorkspaceClass(loader);
 
         // Act
-        workspace.LoadObject<DurableDict>(100);
+        workspace.LoadDict(100);
 
         // Assert - 从存储加载的对象是 Clean 状态，不应加入 DirtySet
         workspace.DirtyCount.Should().Be(0);
@@ -327,12 +327,12 @@ public class WorkspaceTests {
         // Arrange
         var customError = new ObjectNotFoundError(42);
         ObjectLoaderDelegate loader = _ =>
-            AteliaResult<IDurableObject>.Failure(customError);
+            AteliaResult<DurableObjectBase>.Failure(customError);
 
         using var workspace = new WorkspaceClass(loader);
 
         // Act
-        var result = workspace.LoadObject<DurableDict>(42);
+        var result = workspace.LoadDict(42);
 
         // Assert
         result.IsFailure.Should().BeTrue();
@@ -351,15 +351,15 @@ public class WorkspaceTests {
         // Arrange
         // 使用临时 Workspace 创建 mock 对象（保持存活防止 GC）
         using var mockWorkspace = new WorkspaceClass(100);
-        var mockObject = mockWorkspace.CreateObject<DurableDict>();
+        var mockObject = mockWorkspace.CreateDict();
 
         ObjectLoaderDelegate loader = _ =>
-            AteliaResult<IDurableObject>.Success(mockObject);
+            AteliaResult<DurableObjectBase>.Success(mockObject);
 
         using var workspace = new WorkspaceClass(loader);
 
         // Act - 请求同一类型
-        var result = workspace.LoadObject<DurableDict>(100);
+        var result = workspace.LoadDict(100);
 
         // Assert - 应该成功
         result.IsSuccess.Should().BeTrue();
@@ -370,12 +370,12 @@ public class WorkspaceTests {
     public void LoadObject_MultipleLoads_ReturnsSameInstance() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var created = workspace.CreateObject<DurableDict>();
+        var created = workspace.CreateDict();
 
         // Act
-        var result1 = workspace.LoadObject<DurableDict>(created.ObjectId);
-        var result2 = workspace.LoadObject<DurableDict>(created.ObjectId);
-        var result3 = workspace.LoadObject<DurableDict>(created.ObjectId);
+        var result1 = workspace.LoadDict(created.ObjectId);
+        var result2 = workspace.LoadDict(created.ObjectId);
+        var result3 = workspace.LoadDict(created.ObjectId);
 
         // Assert
         result1.IsSuccess.Should().BeTrue();
@@ -406,7 +406,7 @@ public class WorkspaceTests {
     public void PrepareCommit_SingleDirtyObject_WritesRecord() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100);
 
         // Act
@@ -421,7 +421,7 @@ public class WorkspaceTests {
     public void PrepareCommit_UpdatesVersionIndex() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100);
 
         // Act
@@ -436,8 +436,8 @@ public class WorkspaceTests {
     public void PrepareCommit_MultipleDirtyObjects_WritesAllRecords() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict1 = workspace.CreateObject<DurableDict>();
-        var dict2 = workspace.CreateObject<DurableDict>();
+        var dict1 = workspace.CreateDict();
+        var dict2 = workspace.CreateDict();
         dict1.Set(1, 100);
         dict2.Set(2, 200);
 
@@ -453,7 +453,7 @@ public class WorkspaceTests {
     public void PrepareCommit_EpochSeq_Increments() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100);
 
         // Act
@@ -467,7 +467,7 @@ public class WorkspaceTests {
     public void PrepareCommit_DataTail_IncrementsAfterWrites() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100);
 
         // Act
@@ -482,7 +482,7 @@ public class WorkspaceTests {
     public void PrepareCommit_VersionIndexPtr_UpdatedAfterWrite() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100);
 
         // Act
@@ -497,8 +497,8 @@ public class WorkspaceTests {
     public void PrepareCommit_WrittenRecords_ContainCorrectObjectIds() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict1 = workspace.CreateObject<DurableDict>();
-        var dict2 = workspace.CreateObject<DurableDict>();
+        var dict1 = workspace.CreateDict();
+        var dict2 = workspace.CreateDict();
         dict1.Set(1, 100);
         dict2.Set(2, 200);
 

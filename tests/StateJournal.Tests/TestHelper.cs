@@ -27,7 +27,7 @@ internal static class TestHelper {
     /// <returns>DurableDict 实例和其所属的 Workspace。</returns>
     public static (DurableDict Dict, WorkspaceClass Workspace) CreateDurableDict() {
         var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         return (dict, workspace);
     }
 
@@ -38,7 +38,7 @@ internal static class TestHelper {
     public static (DurableDict Dict, WorkspaceClass Workspace) CreateDurableDictWithUniqueId() {
         var nextId = GetNextObjectIdBase();
         var workspace = new WorkspaceClass(nextId);
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         return (dict, workspace);
     }
 
@@ -78,7 +78,7 @@ internal static class TestHelper {
         var workspace = new WorkspaceClass();
         var dicts = new List<DurableDict>();
         for (int i = 0; i < count; i++) {
-            dicts.Add(workspace.CreateObject<DurableDict>());
+            dicts.Add(workspace.CreateDict());
         }
         return (dicts, workspace);
     }
@@ -123,6 +123,6 @@ internal static class TestHelper {
     /// <param name="workspace">对象所属的 Workspace。</param>
     /// <returns>新创建的 DurableDict。</returns>
     public static DurableDict CreateDictInWorkspace(WorkspaceClass workspace) {
-        return workspace.CreateObject<DurableDict>();
+        return workspace.CreateDict();
     }
 }

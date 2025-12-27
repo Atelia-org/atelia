@@ -139,8 +139,8 @@ public abstract class DurableObjectBase : IDurableObject {
     /// 此方法按 Owning Workspace 分派，确保跨 Scope 访问时使用正确的 Workspace。
     /// </para>
     /// </remarks>
-    protected T LoadObject<T>(ulong id) where T : class, IDurableObject {
-        var result = _owningWorkspace.LoadObject<T>(id);
+    protected T LoadObject<T>(ulong id) where T : DurableObjectBase {
+        var result = _owningWorkspace.LoadAs<T>(id);
         if (result.IsFailure) {
             throw new InvalidOperationException(
                 $"Failed to load object {id}: {result.Error?.Message ?? "Unknown error"}"

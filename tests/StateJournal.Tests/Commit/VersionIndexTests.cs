@@ -44,7 +44,7 @@ public class VersionIndexTests {
         using var workspace = new WorkspaceClass();
 
         // Act - 创建对象并提交
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
         workspace.Commit();
 
@@ -63,7 +63,7 @@ public class VersionIndexTests {
     public void Workspace_BeforeCommit_TryGetVersionPtrReturnsFalse() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
 
         // Assert - 未提交时不在 VersionIndex 中
@@ -78,9 +78,9 @@ public class VersionIndexTests {
     public void Workspace_MultipleObjects_AllRecordedInVersionIndex() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict1 = workspace.CreateObject<DurableDict>();
-        var dict2 = workspace.CreateObject<DurableDict>();
-        var dict3 = workspace.CreateObject<DurableDict>();
+        var dict1 = workspace.CreateDict();
+        var dict2 = workspace.CreateDict();
+        var dict3 = workspace.CreateDict();
         dict1.Set(1, 100L);
         dict2.Set(2, 200L);
         dict3.Set(3, 300L);
@@ -129,7 +129,7 @@ public class VersionIndexTests {
     public void Workspace_MultipleCommits_VersionPtrUpdates() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
         workspace.Commit();
 
@@ -151,7 +151,7 @@ public class VersionIndexTests {
     public void Workspace_CleanObject_NotIncludedInCommit() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
         workspace.Commit();
 
@@ -179,7 +179,7 @@ public class VersionIndexTests {
         workspace.VersionIndexPtr.Should().Be(0, "初始 VersionIndexPtr 应为 0");
 
         // Act
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
         workspace.Commit();
 
@@ -194,7 +194,7 @@ public class VersionIndexTests {
     public void Workspace_MultipleCommits_VersionIndexPtrUpdates() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
         workspace.Commit();
 
@@ -216,7 +216,7 @@ public class VersionIndexTests {
     public void Workspace_EmptyCommit_VersionIndexPtrUnchanged() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
         workspace.Commit();
 
@@ -254,9 +254,9 @@ public class VersionIndexTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        var dict1 = workspace.CreateObject<DurableDict>();
-        var dict2 = workspace.CreateObject<DurableDict>();
-        var dict3 = workspace.CreateObject<DurableDict>();
+        var dict1 = workspace.CreateDict();
+        var dict2 = workspace.CreateDict();
+        var dict3 = workspace.CreateDict();
 
         // Assert
         dict1.ObjectId.Should().Be(16);
@@ -274,7 +274,7 @@ public class VersionIndexTests {
         using var workspace = new WorkspaceClass();
 
         // Act
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
 
         // Assert - ObjectId 应该在保留区（0-15）之后
         dict.ObjectId.Should().BeGreaterOrEqualTo(16);
@@ -291,7 +291,7 @@ public class VersionIndexTests {
     public void Workspace_PrepareCommit_ReturnsValidContext() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
 
         // Act
@@ -310,7 +310,7 @@ public class VersionIndexTests {
     public void Workspace_FinalizeCommit_UpdatesState() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100L);
         var context = workspace.PrepareCommit();
 

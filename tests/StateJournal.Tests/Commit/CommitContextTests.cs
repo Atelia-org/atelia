@@ -62,7 +62,7 @@ public class CommitContextTests {
     public void BuildMetaCommitRecord_IntegratedWithWorkspace_ContainsCorrectValues() {
         // Arrange
         using var workspace = new WorkspaceClass();
-        var dict = workspace.CreateObject<DurableDict>();
+        var dict = workspace.CreateDict();
         dict.Set(1, 100);
 
         var context = workspace.PrepareCommit();

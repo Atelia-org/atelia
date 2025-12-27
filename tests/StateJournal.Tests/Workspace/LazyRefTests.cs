@@ -67,13 +67,13 @@ public class LazyRefTests {
         // 创建用于模拟存储的 DurableDict，使用特定 ObjectId
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
-            if (id == 100 && storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (id == 100 && storedDict != null) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
         // 通过 workspace 创建 storedDict（会分配 ObjectId=16）
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
         var objectId = storedDict.ObjectId;
 
         // 使用实际分配的 objectId
@@ -98,12 +98,12 @@ public class LazyRefTests {
         // Arrange
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
-            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
         var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act
@@ -126,12 +126,12 @@ public class LazyRefTests {
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
             loadCount++;
-            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
         var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act
@@ -151,12 +151,12 @@ public class LazyRefTests {
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
             loadCount++;
-            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
         var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act
@@ -176,7 +176,7 @@ public class LazyRefTests {
     public void LazyRef_LoadFailure_ThrowsException() {
         // Arrange
         ObjectLoaderDelegate loader = id =>
-            AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         using var workspace = new WorkspaceClass(loader);
         var lazyRef = new LazyRef<DurableDict>(999, workspace);
@@ -193,7 +193,7 @@ public class LazyRefTests {
     public void LazyRef_TryGetValue_ReturnsFailureOnLoadError() {
         // Arrange
         ObjectLoaderDelegate loader = id =>
-            AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
 
         using var workspace = new WorkspaceClass(loader);
         var lazyRef = new LazyRef<DurableDict>(999, workspace);
@@ -215,12 +215,12 @@ public class LazyRefTests {
         // Arrange
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
-            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
         var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Assert - ObjectId 可用但 LazyRef 内部未标记为已加载
@@ -304,12 +304,12 @@ public class LazyRefTests {
         // Arrange - 创建一个带 objectId 和有效 workspace 的 LazyRef
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
-            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
         var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act & Assert - 正常加载应该成功
@@ -329,12 +329,12 @@ public class LazyRefTests {
         // Arrange
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
-            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
         // 以 DurableDict 类型加载
         var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
@@ -353,12 +353,12 @@ public class LazyRefTests {
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
             loadCount++;
-            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
 
         // Act - 创建两个指向同一 ObjectId 的 LazyRef
         var lazyRef1 = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
@@ -376,12 +376,12 @@ public class LazyRefTests {
         // Arrange
         DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
-            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
-            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null) { return AteliaResult<DurableObjectBase>.Success(storedDict); }
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        storedDict = workspace.CreateObject<DurableDict>();
+        storedDict = workspace.CreateDict();
         var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Assert - 加载前

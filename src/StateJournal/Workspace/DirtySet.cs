@@ -8,6 +8,9 @@ namespace Atelia.StateJournal;
 /// </summary>
 /// <remarks>
 /// <para>
+/// 核心路径只接入 <see cref="DurableObjectBase"/>，确保对象满足 Workspace 绑定约束。
+/// </para>
+/// <para>
 /// 对应条款：
 /// <list type="bullet">
 ///   <item><c>[S-DIRTYSET-OBJECT-PINNING]</c>: Dirty Set MUST 持有对象实例的强引用，
@@ -19,7 +22,7 @@ namespace Atelia.StateJournal;
 /// </para>
 /// </remarks>
 internal class DirtySet {
-    private readonly Dictionary<ulong, IDurableObject> _set = new();
+    private readonly Dictionary<ulong, DurableObjectBase> _set = new();
 
     /// <summary>
     /// 添加脏对象。
@@ -28,14 +31,14 @@ internal class DirtySet {
     /// <remarks>
     /// <para>
     /// 对应条款：<c>[S-IDENTITY-MAP-KEY-COHERENCE]</c>
-    /// — 使用对象的 <see cref="IDurableObject.ObjectId"/> 作为 key。
+    /// — 使用对象的 <see cref="DurableObjectBase.ObjectId"/> 作为 key。
     /// </para>
     /// <para>
     /// 如果对象已存在，此操作为 No-op（幂等）。
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="obj"/> 为 null。</exception>
-    public void Add(IDurableObject obj) {
+    public void Add(DurableObjectBase obj) {
         ArgumentNullException.ThrowIfNull(obj);
         _set[obj.ObjectId] = obj;
     }
@@ -66,7 +69,7 @@ internal class DirtySet {
     /// 返回快照以避免在遍历时修改集合。
     /// PrepareCommit 中可能会触发新对象变脏（如 VersionIndex）。
     /// </remarks>
-    public IReadOnlyList<IDurableObject> GetAll() {
+    public IReadOnlyList<DurableObjectBase> GetAll() {
         return _set.Values.ToList();
     }
 

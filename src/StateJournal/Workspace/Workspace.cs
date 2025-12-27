@@ -11,7 +11,12 @@ namespace Atelia.StateJournal;
 /// </summary>
 /// <param name="objectId">要加载的对象 ID。</param>
 /// <returns>加载结果，成功时包含对象，失败时包含错误。</returns>
-public delegate AteliaResult<IDurableObject> ObjectLoaderDelegate(ulong objectId);
+/// <remarks>
+/// <para>
+/// 核心路径只接入 <see cref="DurableObjectBase"/>，确保对象满足 Workspace 绑定约束。
+/// </para>
+/// </remarks>
+public delegate AteliaResult<DurableObjectBase> ObjectLoaderDelegate(ulong objectId);
 
 /// <summary>
 /// StateJournal 的工作空间，管理对象的创建、加载和提交。
@@ -143,6 +148,9 @@ public class Workspace : IDisposable {
     /// <returns>新创建的对象。</returns>
     /// <remarks>
     /// <para>
+    /// <strong>已弃用</strong>：请使用 <see cref="CreateDict"/> 等具体工厂方法。
+    /// </para>
+    /// <para>
     /// 对应条款：
     /// <list type="bullet">
     ///   <item><c>[S-CREATEOBJECT-IMMEDIATE-ALLOC]</c>: 立即分配 ObjectId</item>
@@ -150,16 +158,9 @@ public class Workspace : IDisposable {
     ///   <item><c>[S-OBJECTID-MONOTONIC-BOUNDARY]</c>: ObjectId 单调递增</item>
     /// </list>
     /// </para>
-    /// <para>
-    /// 流程：
-    /// <list type="number">
-    ///   <item>分配 ObjectId（单调递增）</item>
-    ///   <item>创建对象（TransientDirty 状态）</item>
-    ///   <item>加入 Identity Map（WeakRef）与 Dirty Set（强引用）</item>
-    /// </list>
-    /// </para>
     /// </remarks>
-    public T CreateObject<T>() where T : IDurableObject {
+    [Obsolete("Use CreateDict() instead. This method will be removed in a future version.")]
+    public T CreateObject<T>() where T : DurableObjectBase {
         // 1. 分配 ObjectId [S-OBJECTID-MONOTONIC-BOUNDARY]
         var objectId = _nextObjectId++;
 
@@ -174,12 +175,47 @@ public class Workspace : IDisposable {
     }
 
     /// <summary>
-    /// 加载指定 ObjectId 的对象。
+    /// 创建新的 DurableDict（非泛型工厂方法）。
     /// </summary>
-    /// <typeparam name="T">对象类型，必须实现 <see cref="IDurableObject"/>。</typeparam>
-    /// <param name="objectId">对象 ID。</param>
-    /// <returns>成功返回对象，失败返回错误。</returns>
+    /// <returns>新创建的 DurableDict。</returns>
     /// <remarks>
+    /// <para>
+    /// 这是 Core API 的首选创建入口。
+    /// 目标类型由调用方选择的工厂方法决定，而不是泛型参数。
+    /// </para>
+    /// <para>
+    /// 对应条款：
+    /// <list type="bullet">
+    ///   <item><c>[S-CREATEOBJECT-IMMEDIATE-ALLOC]</c>: 立即分配 ObjectId</item>
+    ///   <item><c>[S-NEW-OBJECT-AUTO-DIRTY]</c>: 自动加入 Dirty Set</item>
+    ///   <item><c>[S-OBJECTID-MONOTONIC-BOUNDARY]</c>: ObjectId 单调递增</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    public DurableDict CreateDict() {
+        // 1. 分配 ObjectId [S-OBJECTID-MONOTONIC-BOUNDARY]
+        var objectId = _nextObjectId++;
+
+        // 2. 创建对象（TransientDirty 状态）—— 直接构造，避免反射
+        var dict = new DurableDict(this, objectId);
+
+        // 3. 加入 Identity Map 和 Dirty Set [S-NEW-OBJECT-AUTO-DIRTY]
+        _identityMap.Add(dict);
+        _dirtySet.Add(dict);
+
+        return dict;
+    }
+
+    /// <summary>
+    /// 加载指定 ObjectId 的对象（Core API，非泛型）。
+    /// </summary>
+    /// <param name="objectId">对象 ID。</param>
+    /// <returns>成功返回对象（由数据决定类型），失败返回错误。</returns>
+    /// <remarks>
+    /// <para>
+    /// 这是 Core Load API：实例类型由底层数据决定，而不是调用方假设。
+    /// 如需类型化访问，请使用 <see cref="LoadDict"/> 或 <see cref="LoadAs{T}"/>。
+    /// </para>
     /// <para>
     /// 对应条款：<c>[A-LOADOBJECT-RETURN-RESULT]</c>
     /// </para>
@@ -192,6 +228,87 @@ public class Workspace : IDisposable {
     /// </list>
     /// </para>
     /// </remarks>
+    public AteliaResult<DurableObjectBase> LoadObject(ulong objectId) {
+        // 1. 查 Identity Map
+        if (_identityMap.TryGet(objectId, out var cached)) { return AteliaResult<DurableObjectBase>.Success(cached); }
+
+        // 2. 尝试从存储加载（MVP: 使用注入的 Loader）
+        var loadResult = _objectLoader?.Invoke(objectId);
+        if (loadResult is null) {
+            // 无 loader 配置（MVP 测试场景）
+            return AteliaResult<DurableObjectBase>.Failure(new ObjectNotFoundError(objectId));
+        }
+
+        if (loadResult.Value.IsFailure) { return AteliaResult<DurableObjectBase>.Failure(loadResult.Value.Error!); }
+
+        var obj = loadResult.Value.Value!;
+
+        // 3. 加入 Identity Map（不加入 DirtySet，因为是 Clean 状态）
+        _identityMap.Add(obj);
+
+        return AteliaResult<DurableObjectBase>.Success(obj);
+    }
+
+    /// <summary>
+    /// 加载指定 ObjectId 的 DurableDict（类型化便捷层）。
+    /// </summary>
+    /// <param name="objectId">对象 ID。</param>
+    /// <returns>成功返回 DurableDict，类型不匹配或未找到则返回错误。</returns>
+    /// <remarks>
+    /// <para>
+    /// 便捷层 API：内部调用 <see cref="LoadObject"/>，然后做类型检查。
+    /// 类型错配错误包含诊断信息（ObjectId + 期望类型 + 实际类型）。
+    /// </para>
+    /// </remarks>
+    public AteliaResult<DurableDict> LoadDict(ulong objectId) {
+        var result = LoadObject(objectId);
+        if (result.IsFailure) { return AteliaResult<DurableDict>.Failure(result.Error!); }
+
+        if (result.Value is DurableDict dict) { return AteliaResult<DurableDict>.Success(dict); }
+
+        return AteliaResult<DurableDict>.Failure(
+            new ObjectTypeMismatchError(objectId, typeof(DurableDict), result.Value!.GetType())
+        );
+    }
+
+    /// <summary>
+    /// 加载指定 ObjectId 的对象并转换为指定类型（泛型便捷层）。
+    /// </summary>
+    /// <typeparam name="T">期望的对象类型。</typeparam>
+    /// <param name="objectId">对象 ID。</param>
+    /// <returns>成功返回类型化对象，类型不匹配或未找到则返回错误。</returns>
+    /// <remarks>
+    /// <para>
+    /// 便捷层 API：内部调用 <see cref="LoadObject"/>，然后做类型检查。
+    /// 类型错配错误包含诊断信息（ObjectId + 期望类型 + 实际类型）。
+    /// </para>
+    /// </remarks>
+    public AteliaResult<T> LoadAs<T>(ulong objectId) where T : DurableObjectBase {
+        var result = LoadObject(objectId);
+        if (result.IsFailure) { return AteliaResult<T>.Failure(result.Error!); }
+
+        if (result.Value is T typed) { return AteliaResult<T>.Success(typed); }
+
+        return AteliaResult<T>.Failure(
+            new ObjectTypeMismatchError(objectId, typeof(T), result.Value!.GetType())
+        );
+    }
+
+    /// <summary>
+    /// 加载指定 ObjectId 的对象。
+    /// </summary>
+    /// <typeparam name="T">对象类型，必须实现 <see cref="IDurableObject"/>。</typeparam>
+    /// <param name="objectId">对象 ID。</param>
+    /// <returns>成功返回对象，失败返回错误。</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>已弃用</strong>：请使用 <see cref="LoadObject"/>（Core API）或 <see cref="LoadDict"/>/<see cref="LoadAs{T}"/>（便捷层）。
+    /// </para>
+    /// <para>
+    /// 对应条款：<c>[A-LOADOBJECT-RETURN-RESULT]</c>
+    /// </para>
+    /// </remarks>
+    [Obsolete("Use LoadObject() or LoadDict()/LoadAs<T>() instead.")]
     public AteliaResult<T> LoadObject<T>(ulong objectId) where T : class, IDurableObject {
         // 1. 查 Identity Map
         if (_identityMap.TryGet(objectId, out var cached)) {
@@ -236,7 +353,7 @@ public class Workspace : IDisposable {
     /// <param name="objectId">对象 ID。</param>
     /// <returns>新创建的对象。</returns>
     /// <exception cref="InvalidOperationException">无法创建对象实例。</exception>
-    private T CreateInstance<T>(ulong objectId) where T : IDurableObject {
+    private T CreateInstance<T>(ulong objectId) where T : DurableObjectBase {
         // 使用 Activator 创建带 (Workspace, ulong) 参数的实例
         // 注意：构造函数是 internal，需要指定 NonPublic | Instance 标志
         var instance = Activator.CreateInstance(
@@ -293,8 +410,11 @@ public class Workspace : IDisposable {
     /// 此方法仅供 DurableObject 在状态转换时调用。
     /// 当对象从 Clean 状态变为 PersistentDirty 时，调用此方法将对象添加到 DirtySet。
     /// </para>
+    /// <para>
+    /// 核心路径只接入 <see cref="DurableObjectBase"/>，确保对象满足 Workspace 绑定约束。
+    /// </para>
     /// </remarks>
-    internal void RegisterDirty(IDurableObject obj) {
+    internal void RegisterDirty(DurableObjectBase obj) {
         _dirtySet.Add(obj);
     }
 

@@ -6,7 +6,7 @@ namespace Atelia.StateJournal;
 /// <summary>
 /// 延迟加载的对象引用，支持透明加载和回填缓存。
 /// </summary>
-/// <typeparam name="T">对象类型，必须是引用类型且实现 <see cref="IDurableObject"/>。</typeparam>
+/// <typeparam name="T">对象类型，必须继承 <see cref="DurableObjectBase"/>。</typeparam>
 /// <remarks>
 /// <para>
 /// 对应条款：
@@ -24,7 +24,7 @@ namespace Atelia.StateJournal;
 /// </list>
 /// </para>
 /// </remarks>
-public struct LazyRef<T> where T : class, IDurableObject {
+public struct LazyRef<T> where T : DurableObjectBase {
     private object? _storage;  // null, ulong (ObjectId), 或 T 实例
     private readonly Workspace? _workspace;
 
@@ -138,7 +138,7 @@ public struct LazyRef<T> where T : class, IDurableObject {
     private T LoadAndCache(ulong objectId) {
         if (_workspace is null) { throw new InvalidOperationException("Cannot load: workspace is null."); }
 
-        var result = _workspace.LoadObject<T>(objectId);
+        var result = _workspace.LoadAs<T>(objectId);
         if (result.IsFailure) {
             throw new InvalidOperationException(
                 $"Failed to load referenced object {objectId}: {result.Error!.Message}"
@@ -157,7 +157,7 @@ public struct LazyRef<T> where T : class, IDurableObject {
     private AteliaResult<T> TryLoadAndCache(ulong objectId) {
         if (_workspace is null) { return AteliaResult<T>.Failure(new LazyRefNoWorkspaceError()); }
 
-        var result = _workspace.LoadObject<T>(objectId);
+        var result = _workspace.LoadAs<T>(objectId);
         if (result.IsSuccess) {
             _storage = result.Value;  // 回填 [A-OBJREF-BACKFILL-CURRENT]
         }

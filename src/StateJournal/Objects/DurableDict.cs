@@ -240,7 +240,7 @@ public class DurableDict : DurableObjectBase {
         if (value is not ObjectId objectId) { return value; }
 
         // 透明 Lazy Load：按 Owning Workspace 分派
-        var instance = LoadObject<IDurableObject>(objectId.Value);
+        var instance = LoadObject<DurableObjectBase>(objectId.Value);
 
         // 回填到 _current（不改变 dirty 状态，因为语义值未变）
         _current[key] = instance;
