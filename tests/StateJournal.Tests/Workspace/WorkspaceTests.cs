@@ -282,7 +282,9 @@ public class WorkspaceTests {
     [Fact]
     public void LoadObject_FromStorage_AddsToIdentityMap() {
         // Arrange - 模拟存储加载
-        var mockObject = new DurableDict(100);
+        // 使用临时 Workspace 创建 mock 对象（保持存活防止 GC）
+        using var mockWorkspace = new WorkspaceClass(100);
+        var mockObject = mockWorkspace.CreateObject<DurableDict>();
 
         ObjectLoaderDelegate loader = id => id == 100
             ? AteliaResult<IDurableObject>.Success(mockObject)
@@ -304,7 +306,9 @@ public class WorkspaceTests {
     [Fact]
     public void LoadObject_FromStorage_DoesNotAddToDirtySet() {
         // Arrange
-        var mockObject = new DurableDict(100);
+        // 使用临时 Workspace 创建 mock 对象（保持存活防止 GC）
+        using var mockWorkspace = new WorkspaceClass(100);
+        var mockObject = mockWorkspace.CreateObject<DurableDict>();
 
         ObjectLoaderDelegate loader = id =>
             AteliaResult<IDurableObject>.Success(mockObject);
@@ -345,7 +349,9 @@ public class WorkspaceTests {
     [Fact]
     public void LoadObject_LoaderReturnsSameType_Succeeds() {
         // Arrange
-        var mockObject = new DurableDict(100);
+        // 使用临时 Workspace 创建 mock 对象（保持存活防止 GC）
+        using var mockWorkspace = new WorkspaceClass(100);
+        var mockObject = mockWorkspace.CreateObject<DurableDict>();
 
         ObjectLoaderDelegate loader = _ =>
             AteliaResult<IDurableObject>.Success(mockObject);

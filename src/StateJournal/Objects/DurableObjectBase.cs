@@ -62,23 +62,6 @@ public abstract class DurableObjectBase : IDurableObject {
         _state = initialState;
     }
 
-    /// <summary>
-    /// 内部无绑定构造函数。仅供 Well-Known 对象（如 VersionIndex）使用。
-    /// </summary>
-    /// <param name="objectId">对象的唯一标识符。</param>
-    /// <param name="initialState">初始状态。</param>
-    /// <remarks>
-    /// <para>
-    /// ⚠️ 警告：此构造函数不绑定 Workspace，调用 <see cref="LoadObject{T}"/> 会失败。
-    /// 仅用于不需要 Lazy Load 能力的内部对象。
-    /// </para>
-    /// </remarks>
-    private protected DurableObjectBase(ulong objectId, DurableObjectState initialState) {
-        _owningWorkspace = null!;  // 危险：不绑定 Workspace
-        ObjectId = objectId;
-        _state = initialState;
-    }
-
     // === IDurableObject 实现 ===
 
     /// <inheritdoc/>
@@ -120,6 +103,18 @@ public abstract class DurableObjectBase : IDurableObject {
     /// </summary>
     /// <param name="state">新状态。</param>
     protected void SetState(DurableObjectState state) => _state = state;
+
+    /// <summary>
+    /// 注册对象为脏状态（Clean → PersistentDirty 转换时调用）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 当对象从 Clean 状态变为 PersistentDirty 时，调用此方法将对象重新添加到 Workspace 的 DirtySet。
+    /// </para>
+    /// </remarks>
+    protected void NotifyDirty() {
+        _owningWorkspace.RegisterDirty(this);
+    }
 
     /// <summary>
     /// 如果对象已分离则抛出异常。

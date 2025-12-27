@@ -61,9 +61,13 @@ internal class DirtySet {
     /// <summary>
     /// 获取所有脏对象（用于 CommitAll）。
     /// </summary>
-    /// <returns>所有脏对象的枚举。</returns>
-    public IEnumerable<IDurableObject> GetAll() {
-        return _set.Values;
+    /// <returns>所有脏对象的快照列表。</returns>
+    /// <remarks>
+    /// 返回快照以避免在遍历时修改集合。
+    /// PrepareCommit 中可能会触发新对象变脏（如 VersionIndex）。
+    /// </remarks>
+    public IReadOnlyList<IDurableObject> GetAll() {
+        return _set.Values.ToList();
     }
 
     /// <summary>

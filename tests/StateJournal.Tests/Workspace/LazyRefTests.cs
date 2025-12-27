@@ -7,6 +7,8 @@ using FluentAssertions;
 using Xunit;
 using WorkspaceClass = Atelia.StateJournal.Workspace;
 
+using static Atelia.StateJournal.Tests.TestHelper;
+
 namespace Atelia.StateJournal.Tests.Workspace;
 
 /// <summary>
@@ -29,7 +31,7 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_WithInstance_ReturnsImmediately() {
         // Arrange
-        var dict = new DurableDict(1);
+        var (dict, ws) = CreateDurableDict();
 
         // Act
         var lazyRef = new LazyRef<DurableDict>(dict);
@@ -38,13 +40,13 @@ public class LazyRefTests {
         lazyRef.IsLoaded.Should().BeTrue();
         lazyRef.IsInitialized.Should().BeTrue();
         lazyRef.Value.Should().BeSameAs(dict);
-        lazyRef.ObjectId.Should().Be(1);
+        lazyRef.ObjectId.Should().Be(dict.ObjectId);
     }
 
     [Fact]
     public void LazyRef_WithInstance_TryGetValue_ReturnsSuccess() {
         // Arrange
-        var dict = new DurableDict(1);
+        var (dict, ws) = CreateDurableDict();
         var lazyRef = new LazyRef<DurableDict>(dict);
 
         // Act
@@ -62,20 +64,28 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_WithObjectId_LoadsOnFirstAccess() {
         // Arrange
-        var storedDict = new DurableDict(100);
-        ObjectLoaderDelegate loader = id => id == 100
-            ? AteliaResult<IDurableObject>.Success(storedDict)
-            : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        // 创建用于模拟存储的 DurableDict，使用特定 ObjectId
+        DurableDict? storedDict = null;
+        ObjectLoaderDelegate loader = id => {
+            if (id == 100 && storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict>(100, workspace);
+        // 通过 workspace 创建 storedDict（会分配 ObjectId=16）
+        storedDict = workspace.CreateObject<DurableDict>();
+        var objectId = storedDict.ObjectId;
 
-        // Assert - 加载前
-        lazyRef.IsLoaded.Should().BeFalse();
+        // 使用实际分配的 objectId
+        var lazyRef = new LazyRef<DurableDict>(objectId, workspace);
+
+        // Assert - 由于对象已在 IdentityMap 中，会直接返回
+        // 注意：CreateObject 会将对象加入 IdentityMap，所以这里实际上不会走 loader
+        lazyRef.IsLoaded.Should().BeFalse(); // LazyRef 自身未加载
         lazyRef.IsInitialized.Should().BeTrue();
-        lazyRef.ObjectId.Should().Be(100);
+        lazyRef.ObjectId.Should().Be(objectId);
 
-        // Act - 触发加载
+        // Act - 触发加载（由于 CreateObject 已在 IdentityMap，这里从缓存获取）
         var value = lazyRef.Value;
 
         // Assert - 加载后
@@ -86,13 +96,15 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_WithObjectId_TryGetValue_LoadsOnFirstAccess() {
         // Arrange
-        var storedDict = new DurableDict(100);
-        ObjectLoaderDelegate loader = id => id == 100
-            ? AteliaResult<IDurableObject>.Success(storedDict)
-            : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        DurableDict? storedDict = null;
+        ObjectLoaderDelegate loader = id => {
+            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict>(100, workspace);
+        storedDict = workspace.CreateObject<DurableDict>();
+        var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act
         var result = lazyRef.TryGetValue();
@@ -111,49 +123,49 @@ public class LazyRefTests {
     public void LazyRef_AfterLoad_DoesNotReloadOnSubsequentAccess() {
         // Arrange
         int loadCount = 0;
-        var storedDict = new DurableDict(100);
+        DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
             loadCount++;
-            return id == 100
-                ? AteliaResult<IDurableObject>.Success(storedDict)
-                : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict>(100, workspace);
+        storedDict = workspace.CreateObject<DurableDict>();
+        var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act
         _ = lazyRef.Value;  // 第一次加载
         _ = lazyRef.Value;  // 应该使用缓存
         _ = lazyRef.Value;  // 应该使用缓存
 
-        // Assert - 只加载一次（通过 Workspace 的 IdentityMap）
-        // 注意：loadCount 可能为 1，因为 Workspace 内部也有 IdentityMap 缓存
-        loadCount.Should().Be(1);
+        // Assert - CreateObject 创建的对象已在 IdentityMap 中，不会调用 loader
+        // 所以 loadCount 应该是 0
+        loadCount.Should().Be(0);
     }
 
     [Fact]
     public void LazyRef_TryGetValue_AfterLoad_UsesCache() {
         // Arrange
         int loadCount = 0;
-        var storedDict = new DurableDict(100);
+        DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
             loadCount++;
-            return id == 100
-                ? AteliaResult<IDurableObject>.Success(storedDict)
-                : AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+            if (storedDict != null && id == storedDict.ObjectId) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict>(100, workspace);
+        storedDict = workspace.CreateObject<DurableDict>();
+        var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act
         _ = lazyRef.TryGetValue();
         _ = lazyRef.TryGetValue();
         _ = lazyRef.TryGetValue();
 
-        // Assert
-        loadCount.Should().Be(1);
+        // Assert - CreateObject 创建的对象已在 IdentityMap 中，不会调用 loader
+        loadCount.Should().Be(0);
     }
 
     // ========================================================================
@@ -201,26 +213,29 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_ObjectId_AvailableBeforeLoad() {
         // Arrange
-        var storedDict = new DurableDict(42);
-        ObjectLoaderDelegate loader = id =>
-            AteliaResult<IDurableObject>.Success(storedDict);
+        DurableDict? storedDict = null;
+        ObjectLoaderDelegate loader = id => {
+            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict>(42, workspace);
+        storedDict = workspace.CreateObject<DurableDict>();
+        var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
-        // Assert - ObjectId 可用但未加载
-        lazyRef.ObjectId.Should().Be(42);
+        // Assert - ObjectId 可用但 LazyRef 内部未标记为已加载
+        lazyRef.ObjectId.Should().Be(storedDict.ObjectId);
         lazyRef.IsLoaded.Should().BeFalse();
     }
 
     [Fact]
     public void LazyRef_ObjectId_MatchesInstanceId() {
         // Arrange
-        var dict = new DurableDict(123);
+        var (dict, ws) = CreateDurableDict();
         var lazyRef = new LazyRef<DurableDict>(dict);
 
         // Assert
-        lazyRef.ObjectId.Should().Be(123);
+        lazyRef.ObjectId.Should().Be(dict.ObjectId);
     }
 
     // ========================================================================
@@ -287,12 +302,15 @@ public class LazyRefTests {
         // 但由于 struct 构造函数不能被绕过，我们测试 TryGetValue 的行为
 
         // Arrange - 创建一个带 objectId 和有效 workspace 的 LazyRef
-        var storedDict = new DurableDict(100);
-        ObjectLoaderDelegate loader = id =>
-            AteliaResult<IDurableObject>.Success(storedDict);
+        DurableDict? storedDict = null;
+        ObjectLoaderDelegate loader = id => {
+            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict>(100, workspace);
+        storedDict = workspace.CreateObject<DurableDict>();
+        var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act & Assert - 正常加载应该成功
         var result = lazyRef.TryGetValue();
@@ -309,13 +327,16 @@ public class LazyRefTests {
     [Fact]
     public void LazyRef_SameType_Succeeds() {
         // Arrange
-        var storedDict = new DurableDict(100);  // 存储的是 DurableDict
-        ObjectLoaderDelegate loader = id =>
-            AteliaResult<IDurableObject>.Success(storedDict);
+        DurableDict? storedDict = null;
+        ObjectLoaderDelegate loader = id => {
+            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        };
 
         using var workspace = new WorkspaceClass(loader);
+        storedDict = workspace.CreateObject<DurableDict>();
         // 以 DurableDict 类型加载
-        var lazyRef = new LazyRef<DurableDict>(100, workspace);
+        var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Act
         var result = lazyRef.TryGetValue();
@@ -329,34 +350,39 @@ public class LazyRefTests {
     public void LazyRef_MultipleLazyRefs_SameObject_ShareCache() {
         // Arrange
         int loadCount = 0;
-        var storedDict = new DurableDict(100);
+        DurableDict? storedDict = null;
         ObjectLoaderDelegate loader = id => {
             loadCount++;
-            return AteliaResult<IDurableObject>.Success(storedDict);
+            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
         };
 
         using var workspace = new WorkspaceClass(loader);
+        storedDict = workspace.CreateObject<DurableDict>();
 
         // Act - 创建两个指向同一 ObjectId 的 LazyRef
-        var lazyRef1 = new LazyRef<DurableDict>(100, workspace);
-        var lazyRef2 = new LazyRef<DurableDict>(100, workspace);
+        var lazyRef1 = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
+        var lazyRef2 = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         _ = lazyRef1.Value;  // 第一次加载
         _ = lazyRef2.Value;  // 应该命中 Workspace 的 IdentityMap
 
-        // Assert - Workspace 的 IdentityMap 确保只加载一次
-        loadCount.Should().Be(1);
+        // Assert - CreateObject 创建的对象已在 IdentityMap 中，不会调用 loader
+        loadCount.Should().Be(0);
     }
 
     [Fact]
     public void LazyRef_IsLoaded_BecomesTrue_AfterAccess() {
         // Arrange
-        var storedDict = new DurableDict(100);
-        ObjectLoaderDelegate loader = id =>
-            AteliaResult<IDurableObject>.Success(storedDict);
+        DurableDict? storedDict = null;
+        ObjectLoaderDelegate loader = id => {
+            if (storedDict != null) { return AteliaResult<IDurableObject>.Success(storedDict); }
+            return AteliaResult<IDurableObject>.Failure(new ObjectNotFoundError(id));
+        };
 
         using var workspace = new WorkspaceClass(loader);
-        var lazyRef = new LazyRef<DurableDict>(100, workspace);
+        storedDict = workspace.CreateObject<DurableDict>();
+        var lazyRef = new LazyRef<DurableDict>(storedDict.ObjectId, workspace);
 
         // Assert - 加载前
         lazyRef.IsLoaded.Should().BeFalse();

@@ -101,37 +101,6 @@ public class DurableDict : DurableObjectBase {
         _dirtyKeys = new HashSet<ulong>();
     }
 
-    // === 内部无绑定构造函数（仅供 VersionIndex 等 Well-Known 对象使用）===
-
-    /// <summary>
-    /// 创建无 Workspace 绑定的 DurableDict（用于 VersionIndex）。
-    /// </summary>
-    /// <param name="objectId">对象 ID。</param>
-    /// <remarks>
-    /// ⚠️ 此构造函数不绑定 Workspace，不支持 Lazy Load。仅供内部使用。
-    /// </remarks>
-    internal DurableDict(ulong objectId)
-        : base(objectId, DurableObjectState.TransientDirty) {
-        _committed = new Dictionary<ulong, object?>();
-        _current = new Dictionary<ulong, object?>();
-        _dirtyKeys = new HashSet<ulong>();
-    }
-
-    /// <summary>
-    /// 从 Committed State 加载无 Workspace 绑定的 DurableDict（用于 VersionIndex）。
-    /// </summary>
-    /// <param name="objectId">对象 ID。</param>
-    /// <param name="committed">已提交的键值对（Materialize 的结果）。</param>
-    /// <remarks>
-    /// ⚠️ 此构造函数不绑定 Workspace，不支持 Lazy Load。仅供内部使用。
-    /// </remarks>
-    internal DurableDict(ulong objectId, Dictionary<ulong, object?> committed)
-        : base(objectId, DurableObjectState.Clean) {
-        _committed = committed ?? throw new ArgumentNullException(nameof(committed));
-        _current = new Dictionary<ulong, object?>(committed);  // 深拷贝
-        _dirtyKeys = new HashSet<ulong>();
-    }
-
     // === 读 API（只查 _current，支持透明 Lazy Loading） ===
 
     /// <summary>
@@ -521,6 +490,7 @@ public class DurableDict : DurableObjectBase {
     private void TransitionToDirty() {
         if (State == DurableObjectState.Clean) {
             SetState(DurableObjectState.PersistentDirty);
+            NotifyDirty();  // 通知 Workspace 重新添加到 DirtySet
         }
     }
 

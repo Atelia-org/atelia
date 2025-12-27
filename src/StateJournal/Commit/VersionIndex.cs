@@ -1,17 +1,23 @@
-// Source: Atelia.StateJournal - 版本索引
+// Source: Atelia.StateJournal - 版本索引视图
 // Spec: atelia/docs/StateJournal/mvp-design-v2.md §F-VERSIONINDEX-REUSE-DURABLEDICT
-
-using System.Buffers;
 
 namespace Atelia.StateJournal;
 
 /// <summary>
-/// 版本索引：ObjectId → ObjectVersionPtr 的映射表。
+/// 版本索引视图：ObjectId → ObjectVersionPtr 的类型化读写接口。
 /// </summary>
 /// <remarks>
 /// <para>
 /// VersionIndex 是 StateJournal 的"引导扇区"，使用 Well-Known ObjectId 0。
-/// 复用 DurableDict 实现，key 为 ObjectId (ulong)，value 为 ObjectVersionPtr (ulong?/Ptr64)。
+/// 它是对 ObjectId=0 的 DurableDict 的"类型化视图"，而不是独立的 durable object。
+/// </para>
+/// <para>
+/// 设计意图：
+/// <list type="bullet">
+///   <item><b>Durable 身份</b>：ObjectId=0 的对象就是 DurableDict。</item>
+///   <item><b>VersionIndex</b>：只作为 view/facade，提供类型化 API。</item>
+///   <item><b>持久化</b>：由 Workspace 提交 DurableDict(ObjectId=0)，而非 VersionIndex 本身。</item>
+/// </list>
 /// </para>
 /// <para>
 /// Bootstrap 入口：VersionIndex 的指针（VersionIndexPtr）直接存储在 MetaCommitRecord 中，
@@ -21,7 +27,7 @@ namespace Atelia.StateJournal;
 /// 对应条款：<c>[F-VERSIONINDEX-REUSE-DURABLEDICT]</c>
 /// </para>
 /// </remarks>
-public sealed class VersionIndex : IDurableObject {
+public sealed class VersionIndex {
     /// <summary>
     /// Well-Known ObjectId for VersionIndex.
     /// </summary>
@@ -41,42 +47,27 @@ public sealed class VersionIndex : IDurableObject {
     private readonly DurableDict _inner;
 
     /// <summary>
-    /// 创建新的空 VersionIndex。
+    /// 创建 VersionIndex 视图（包装指定的 DurableDict）。
     /// </summary>
-    public VersionIndex() {
-        _inner = new DurableDict(WellKnownObjectId);
+    /// <param name="versionIndexDict">ObjectId=0 的 DurableDict。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="versionIndexDict"/> 为 null。</exception>
+    /// <exception cref="ArgumentException"><paramref name="versionIndexDict"/> 的 ObjectId 不是 0。</exception>
+    /// <remarks>
+    /// <para>
+    /// VersionIndex 只是视图，不拥有 DurableDict 的生命周期。
+    /// DurableDict 的创建和提交由 Workspace 负责。
+    /// </para>
+    /// </remarks>
+    internal VersionIndex(DurableDict versionIndexDict) {
+        ArgumentNullException.ThrowIfNull(versionIndexDict);
+        if (versionIndexDict.ObjectId != WellKnownObjectId) {
+            throw new ArgumentException(
+                $"VersionIndex requires ObjectId=0, but got {versionIndexDict.ObjectId}.",
+                nameof(versionIndexDict)
+            );
+        }
+        _inner = versionIndexDict;
     }
-
-    /// <summary>
-    /// 从 committed 状态恢复 VersionIndex。
-    /// </summary>
-    /// <param name="committed">已提交的 ObjectId → ObjectVersionPtr 映射。</param>
-    internal VersionIndex(Dictionary<ulong, object?> committed) {
-        _inner = new DurableDict(WellKnownObjectId, committed);
-    }
-
-    // === IDurableObject 实现（委托给 _inner）===
-
-    /// <inheritdoc/>
-    public ulong ObjectId => WellKnownObjectId;
-
-    /// <inheritdoc/>
-    public DurableObjectState State => _inner.State;
-
-    /// <inheritdoc/>
-    public bool HasChanges => _inner.HasChanges;
-
-    /// <inheritdoc/>
-    public void WritePendingDiff(IBufferWriter<byte> writer)
-        => _inner.WritePendingDiff(writer);
-
-    /// <inheritdoc/>
-    public void OnCommitSucceeded()
-        => _inner.OnCommitSucceeded();
-
-    /// <inheritdoc/>
-    public void DiscardChanges()
-        => _inner.DiscardChanges();
 
     // === VersionIndex 特有 API ===
 

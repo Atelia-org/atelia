@@ -2,6 +2,8 @@ using Atelia.StateJournal;
 using FluentAssertions;
 using Xunit;
 
+using static Atelia.StateJournal.Tests.TestHelper;
+
 namespace Atelia.StateJournal.Tests.Workspace;
 
 /// <summary>
@@ -28,13 +30,13 @@ public class DirtySetTests {
     public void Add_ThenContains_ReturnsTrue() {
         // Arrange
         var set = new DirtySet();
-        var obj = new DurableDict(42);
+        var (obj, _) = CreateDurableDict();
 
         // Act
         set.Add(obj);
 
         // Assert
-        set.Contains(42).Should().BeTrue();
+        set.Contains(obj.ObjectId).Should().BeTrue();
     }
 
     /// <summary>
@@ -56,15 +58,15 @@ public class DirtySetTests {
     public void Remove_ThenContains_ReturnsFalse() {
         // Arrange
         var set = new DirtySet();
-        var obj = new DurableDict(42);
+        var (obj, _) = CreateDurableDict();
         set.Add(obj);
 
         // Act
-        var removed = set.Remove(42);
+        var removed = set.Remove(obj.ObjectId);
 
         // Assert
         removed.Should().BeTrue();
-        set.Contains(42).Should().BeFalse();
+        set.Contains(obj.ObjectId).Should().BeFalse();
     }
 
     /// <summary>
@@ -104,7 +106,7 @@ public class DirtySetTests {
     public void Add_Duplicate_IsIdempotent() {
         // Arrange
         var set = new DirtySet();
-        var obj = new DurableDict(42);
+        var (obj, _) = CreateDurableDict();
 
         // Act
         set.Add(obj);
@@ -112,7 +114,7 @@ public class DirtySetTests {
 
         // Assert
         set.Count.Should().Be(1);
-        set.Contains(42).Should().BeTrue();
+        set.Contains(obj.ObjectId).Should().BeTrue();
     }
 
     #endregion
@@ -129,7 +131,7 @@ public class DirtySetTests {
     public void Add_PreventsGC() {
         // Arrange
         var set = new DirtySet();
-        AddObjectAndReleaseLocalReference(set, 42);
+        var objectId = AddObjectAndReleaseLocalReference(set);
 
         // Act - 强制 GC
         GC.Collect();
@@ -137,19 +139,20 @@ public class DirtySetTests {
         GC.Collect();
 
         // Assert - 对象仍在集合中（因为 DirtySet 持有强引用）
-        set.Contains(42).Should().BeTrue();
+        set.Contains(objectId).Should().BeTrue();
         set.Count.Should().Be(1);
     }
 
     /// <summary>
-    /// 辅助方法：添加对象后释放局部引用。
+    /// 辅助方法：添加对象后释放局部引用，返回 ObjectId。
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static void AddObjectAndReleaseLocalReference(DirtySet set, ulong objectId) {
-        var obj = new DurableDict(objectId);
+    private static ulong AddObjectAndReleaseLocalReference(DirtySet set) {
+        var (obj, _) = CreateDurableDict();
         set.Add(obj);
         // obj 局部引用超出作用域，但 DirtySet 仍持有强引用
+        return obj.ObjectId;
     }
 
     /// <summary>
@@ -159,30 +162,30 @@ public class DirtySetTests {
     public void Remove_AllowsGC() {
         // Arrange
         var set = new DirtySet();
-        var weakRef = AddObjectAndGetWeakReference(set, 42);
+        var (weakRef, objectId) = AddObjectAndGetWeakReference(set);
 
         // Act - Remove 后 GC
-        set.Remove(42);
+        set.Remove(objectId);
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
         // Assert - 对象可被回收
-        set.Contains(42).Should().BeFalse();
+        set.Contains(objectId).Should().BeFalse();
         weakRef.TryGetTarget(out _).Should().BeFalse();
     }
 
     /// <summary>
-    /// 辅助方法：添加对象并返回 WeakReference。
+    /// 辅助方法：添加对象并返回 WeakReference 和 ObjectId。
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static WeakReference<DurableDict> AddObjectAndGetWeakReference(
-        DirtySet set, ulong objectId
+    private static (WeakReference<DurableDict>, ulong) AddObjectAndGetWeakReference(
+        DirtySet set
     ) {
-        var obj = new DurableDict(objectId);
+        var (obj, _) = CreateDurableDict();
         set.Add(obj);
-        return new WeakReference<DurableDict>(obj);
+        return (new WeakReference<DurableDict>(obj), obj.ObjectId);
     }
 
     #endregion
@@ -196,9 +199,10 @@ public class DirtySetTests {
     public void GetAll_ReturnsAllObjects() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict(1);
-        var obj2 = new DurableDict(2);
-        var obj3 = new DurableDict(3);
+        var (dicts, _) = CreateMultipleDurableDict(3);
+        var obj1 = dicts[0];
+        var obj2 = dicts[1];
+        var obj3 = dicts[2];
 
         set.Add(obj1);
         set.Add(obj2);
@@ -236,8 +240,9 @@ public class DirtySetTests {
     public void GetAll_ForCommitAll_Scenario() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict(1);
-        var obj2 = new DurableDict(2);
+        var (dicts, _) = CreateMultipleDurableDict(2);
+        var obj1 = dicts[0];
+        var obj2 = dicts[1];
         obj1.Set(100, 1000L);
         obj2.Set(200, 2000L);
 
@@ -264,8 +269,9 @@ public class DirtySetTests {
     public void Clear_EmptiesSet() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict(1);
-        var obj2 = new DurableDict(2);
+        var (dicts, _) = CreateMultipleDurableDict(2);
+        var obj1 = dicts[0];
+        var obj2 = dicts[1];
         set.Add(obj1);
         set.Add(obj2);
         set.Count.Should().Be(2);
@@ -275,8 +281,8 @@ public class DirtySetTests {
 
         // Assert
         set.Count.Should().Be(0);
-        set.Contains(1).Should().BeFalse();
-        set.Contains(2).Should().BeFalse();
+        set.Contains(obj1.ObjectId).Should().BeFalse();
+        set.Contains(obj2.ObjectId).Should().BeFalse();
         set.GetAll().Should().BeEmpty();
     }
 
@@ -302,8 +308,8 @@ public class DirtySetTests {
     public void Clear_AllowsGC() {
         // Arrange
         var set = new DirtySet();
-        var weakRef = AddObjectAndGetWeakReference(set, 42);
-        set.Contains(42).Should().BeTrue();
+        var (weakRef, objectId) = AddObjectAndGetWeakReference(set);
+        set.Contains(objectId).Should().BeTrue();
 
         // Act
         set.Clear();
@@ -327,8 +333,9 @@ public class DirtySetTests {
     public void Count_ReflectsObjectCount() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict(1);
-        var obj2 = new DurableDict(2);
+        var (dicts, _) = CreateMultipleDurableDict(2);
+        var obj1 = dicts[0];
+        var obj2 = dicts[1];
 
         // Assert
         set.Count.Should().Be(0);
@@ -339,7 +346,7 @@ public class DirtySetTests {
         set.Add(obj2);
         set.Count.Should().Be(2);
 
-        set.Remove(1);
+        set.Remove(obj1.ObjectId);
         set.Count.Should().Be(1);
 
         set.Clear();
@@ -360,13 +367,13 @@ public class DirtySetTests {
     public void Add_UsesObjectIdAsKey() {
         // Arrange
         var set = new DirtySet();
-        var obj = new DurableDict(12345);
+        var (obj, _) = CreateDurableDict();
 
         // Act
         set.Add(obj);
 
         // Assert - 使用对象的 ObjectId 作为 key
-        set.Contains(12345).Should().BeTrue();
+        set.Contains(obj.ObjectId).Should().BeTrue();
         set.Contains(99999).Should().BeFalse();
     }
 
@@ -381,19 +388,20 @@ public class DirtySetTests {
     public void MultipleAddRemove_Operations() {
         // Arrange
         var set = new DirtySet();
-        var obj1 = new DurableDict(1);
-        var obj2 = new DurableDict(2);
-        var obj3 = new DurableDict(3);
+        var (dicts, _) = CreateMultipleDurableDict(3);
+        var obj1 = dicts[0];
+        var obj2 = dicts[1];
+        var obj3 = dicts[2];
 
         // Act & Assert
         set.Add(obj1);
         set.Add(obj2);
         set.Count.Should().Be(2);
 
-        set.Remove(1);
+        set.Remove(obj1.ObjectId);
         set.Count.Should().Be(1);
-        set.Contains(1).Should().BeFalse();
-        set.Contains(2).Should().BeTrue();
+        set.Contains(obj1.ObjectId).Should().BeFalse();
+        set.Contains(obj2.ObjectId).Should().BeTrue();
 
         set.Add(obj3);
         set.Count.Should().Be(2);
@@ -413,23 +421,24 @@ public class DirtySetTests {
         // Arrange
         var identityMap = new IdentityMap();
         var dirtySet = new DirtySet();
-        var obj = new DurableDict(42);
+        var (obj, _) = CreateDurableDict();
+        var objectId = obj.ObjectId;
 
         // Act - 模拟创建新对象
         identityMap.Add(obj);
         dirtySet.Add(obj);  // [S-NEW-OBJECT-AUTO-DIRTY]
 
         // Assert
-        identityMap.TryGet(42, out var fromIdentity).Should().BeTrue();
-        dirtySet.Contains(42).Should().BeTrue();
+        identityMap.TryGet(objectId, out var fromIdentity).Should().BeTrue();
+        dirtySet.Contains(objectId).Should().BeTrue();
         fromIdentity.Should().BeSameAs(obj);
 
         // Act - 模拟 Commit 成功
-        dirtySet.Remove(42);
+        dirtySet.Remove(objectId);
 
         // Assert
-        dirtySet.Contains(42).Should().BeFalse();
-        identityMap.TryGet(42, out _).Should().BeTrue();  // 仍在 IdentityMap
+        dirtySet.Contains(objectId).Should().BeFalse();
+        identityMap.TryGet(objectId, out _).Should().BeTrue();  // 仍在 IdentityMap
     }
 
     #endregion

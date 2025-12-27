@@ -32,7 +32,8 @@ public class Workspace : IDisposable {
     private readonly IdentityMap _identityMap = new();
     private readonly DirtySet _dirtySet = new();
     private readonly ObjectLoaderDelegate? _objectLoader;
-    private readonly VersionIndex _versionIndex;
+    private readonly DurableDict _versionIndexDict;  // ObjectId=0 的 DurableDict
+    private readonly VersionIndex _versionIndex;     // 类型化视图
     private ulong _nextObjectId;
     private ulong _versionIndexPtr;  // 当前 VersionIndex 的位置
     private ulong _epochSeq;         // 当前 epoch 序号
@@ -68,7 +69,12 @@ public class Workspace : IDisposable {
     public Workspace(ObjectLoaderDelegate? objectLoader) {
         _nextObjectId = 16;  // [S-OBJECTID-RESERVED-RANGE]
         _objectLoader = objectLoader;
-        _versionIndex = new VersionIndex();
+
+        // 创建 ObjectId=0 的 DurableDict（绑定到 this Workspace）
+        // 使用 Clean 状态初始化，因为首次 Commit 前它不应被当成"有变更"
+        _versionIndexDict = new DurableDict(this, VersionIndex.WellKnownObjectId, new Dictionary<ulong, object?>());
+        _versionIndex = new VersionIndex(_versionIndexDict);
+
         _versionIndexPtr = 0;
         _epochSeq = 0;
         _dataTail = 0;
@@ -97,7 +103,11 @@ public class Workspace : IDisposable {
         }
         _nextObjectId = nextObjectId;
         _objectLoader = objectLoader;
-        _versionIndex = new VersionIndex();
+
+        // 创建 ObjectId=0 的 DurableDict（绑定到 this Workspace）
+        _versionIndexDict = new DurableDict(this, VersionIndex.WellKnownObjectId, new Dictionary<ulong, object?>());
+        _versionIndex = new VersionIndex(_versionIndexDict);
+
         _versionIndexPtr = 0;
         _epochSeq = 0;
         _dataTail = 0;
@@ -274,6 +284,20 @@ public class Workspace : IDisposable {
     /// </summary>
     public ulong VersionIndexPtr => _versionIndexPtr;
 
+    /// <summary>
+    /// 注册脏对象（Clean → Dirty 转换时调用）。
+    /// </summary>
+    /// <param name="obj">变脏的对象。</param>
+    /// <remarks>
+    /// <para>
+    /// 此方法仅供 DurableObject 在状态转换时调用。
+    /// 当对象从 Clean 状态变为 PersistentDirty 时，调用此方法将对象添加到 DirtySet。
+    /// </para>
+    /// </remarks>
+    internal void RegisterDirty(IDurableObject obj) {
+        _dirtySet.Add(obj);
+    }
+
     // ========================================================================
     // Two-Phase Commit API
     // ========================================================================
@@ -336,7 +360,7 @@ public class Workspace : IDisposable {
         }
 
         // 如果 VersionIndex 有变更，也需要写入
-        if (_versionIndex.HasChanges) {
+        if (_versionIndexDict.HasChanges) {
             var buffer = new ArrayBufferWriter<byte>();
 
             // 写入 PrevVersionPtr
@@ -345,7 +369,7 @@ public class Workspace : IDisposable {
             BinaryPrimitives.WriteUInt64LittleEndian(ptrSpan, prevPtr);
             buffer.Advance(8);
 
-            _versionIndex.WritePendingDiff(buffer);
+            _versionIndexDict.WritePendingDiff(buffer);
 
             var frameTag = StateJournalFrameTag.DictVersion;
             var position = context.WriteObjectVersion(VersionIndex.WellKnownObjectId, buffer.WrittenSpan, frameTag.Value);
@@ -383,8 +407,8 @@ public class Workspace : IDisposable {
             obj.OnCommitSucceeded();
         }
 
-        // 3. 对 VersionIndex 调用 OnCommitSucceeded
-        _versionIndex.OnCommitSucceeded();
+        // 3. 对 VersionIndex（ObjectId=0 的 DurableDict）调用 OnCommitSucceeded
+        _versionIndexDict.OnCommitSucceeded();
 
         // 4. 清空 DirtySet
         _dirtySet.Clear();
