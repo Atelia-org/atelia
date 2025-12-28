@@ -1,6 +1,6 @@
 # StateJournal MVP 设计 v3（Working Draft）
 
-> **版本**：v3.8 (2025-12-27)
+> **版本**：v3.9 (2025-12-28)
 > **状态**：Draft
 
 ## 文档层次与依赖
@@ -93,7 +93,7 @@
 
 | 术语 | 定义 | 实现映射 |
 |------|------|---------|
-| **FrameTag** | RBF Frame 的顶层类型标识（位于 HeadLen 之后），是 StateJournal Record 的**唯一判别器**。采用 16/16 位段编码：低 16 位为 RecordType，高 16 位为 SubType（当 RecordType=ObjectVersion 时解释为 ObjectKind）。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` 和本文档 `[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]` | `FrameTag`（`uint`）|
+| **FrameTag** | RBF Frame 的顶层类型标识（位于 HeadLen 之后），是 StateJournal Record 的**唯一判别器**。采用 4 字节整数，16/16 位段编码：低 16 位为 RecordType，高 16 位为 SubType（当 RecordType=ObjectVersion 时解释为 ObjectKind）。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` 和本文档 `[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]` | `uint`（4 字节）|
 | **RecordType** | FrameTag 低 16 位，区分 Record 顶层类型（ObjectVersionRecord / MetaCommitRecord） | `ushort` |
 | **ObjectKind** | 当 RecordType=ObjectVersion 时，FrameTag 高 16 位的语义，决定 diff 解码器 | `ushort` 枚举 |
 | **ValueType** | Dict DiffPayload 中的值类型标识 | `byte` 低 4 bit |
@@ -138,7 +138,7 @@
 
 #### FrameTag 位段编码（§3.2.1, §3.2.2, §3.2.5）
 
-**`[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]`** StateJournal MUST 按以下位段解释 `FrameTag.Value`：
+**`[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]`** FrameTag 是一个 `uint`（4 字节整数），StateJournal MUST 按以下位段解释：
 
 | 位范围 | 字段名 | 类型 | 语义 |
 |--------|--------|------|------|
@@ -146,8 +146,19 @@
 | 15..0 | RecordType | `u16` | Record 顶层类型（ObjectVersion / MetaCommit） |
 
 > **端序**：Little-Endian (LE)，即低位字节在前（字节 0-1 = RecordType，字节 2-3 = SubType）。
->
-> **计算公式**：`FrameTag = (SubType << 16) | RecordType`
+
+##### Packing/Unpacking 逻辑
+
+应用层将 FrameTag（`uint`）解释为两个独立枚举：
+
+- **Unpacking（解包）**：从 `uint` 提取 `RecordType`（低 16 位）和 `SubType`（高 16 位）
+  - `RecordType = (ushort)(frameTag & 0xFFFF)`
+  - `SubType = (ushort)(frameTag >> 16)`
+- **Interpretation（解释）**：`RecordType` 决定如何解释 `SubType`
+  - 当 `RecordType == ObjectVersion` 时，`SubType` 解释为 `ObjectKind`
+  - 当 `RecordType != ObjectVersion` 时，`SubType` MUST 为 0（参见 `[F-FRAMETAG-SUBTYPE-ZERO-WHEN-NOT-OBJVER]`）
+- **Packing（打包）**：从两个枚举组合回 `uint`
+  - `frameTag = ((uint)subType << 16) | (uint)recordType`
 
 ##### RecordType（低 16 位）
 
@@ -1458,6 +1469,7 @@ class DurableDict : DurableObjectBase {  // 继承自 DurableObjectBase，持有
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v3.9 | 2025-12-28 | **FrameTag 类型简化**：移除 `FrameTag` wrapper 类型，改为直接使用 `uint`；添加 Packing/Unpacking 逻辑说明，明确应用层如何将 `uint` 解释为 `RecordType` + `SubType`（ObjectKind） |
 | v3.8 | 2025-12-27 | **Workspace 绑定机制增补**：添加 §3.1.2.1 定义对象与 Workspace 的绑定规范（畅谈会 #5 + 监护人决策）；更新 A.1 伪代码注释说明 Workspace 参数需求 |
 | v3.7 | 2025-12-25 | **QXX 历史注解清理**：删除正文中 12 处残留的 QXX 决策引用（决策记录已在 [mvp-v2-decisions.md](decisions/mvp-v2-decisions.md) 集中维护）|
 | v3.6 | 2025-12-25 | **LoadObject 返回类型一致性**：修正文档中残留的 `null` 返回值描述，统一为 `AteliaResult<T>`；更新术语表、§3.3.2、LazyRef 伪代码（落实 [A-LOADOBJECT-RETURN-RESULT] 条款）|
