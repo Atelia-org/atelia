@@ -10,6 +10,17 @@
 
 ## ✅ 已完成任务
 
+### 2025-12-27 畅谈会 #6 — Workspace 存储层集成
+
+| 任务 | 状态 | 说明 |
+|------|------|------|
+| 畅谈会 #6 | ✅ | Workspace 存储层集成设计 |
+| 核心架构决策 | ✅ | Workspace 是主动协调器，Materializer 内置 |
+| API 外观设计 | ✅ | B2 方案 + LoadRoot 语法糖 |
+| 条款草案 | ✅ | 5 条 P0 + 3 条 P1 |
+
+> **相关记录**：[畅谈会 #6](../../../agent-team/meeting/2025-12-27-workspace-storage-integration.md)
+
 ### 2025-12-26 L1 审阅与规范修订
 
 | 任务 | 状态 | 说明 |
@@ -79,6 +90,16 @@
 | # | 任务 | 复杂度 | 说明 |
 |---|------|--------|------|
 | **B-7** | **DiagnosticScope (O6)** | 中 | 诊断作用域，允许读取 Detached 对象最后已知值 |
+| **B-9** | **Workspace.Open + ObjectMaterializer** | 高 | 畅谈会 #6 决议，集成 IRbfScanner |
+| **B-10** | **ObjectKindRegistry 实现** | 中 | Kind → Codec/Factory 映射 |
+| **B-11** | **DurableArray 的 DiffCodec** | 中 | 待数组类型设计完成 |
+| **B-12** | **Version Chain 遍历优化** | 低 | 多版本合并性能优化 |
+
+> **B-9 设计摘要** (畅谈会 #6)：
+> - API: `Workspace.Open(path)` / `Workspace.Open(path, options)`
+> - 核心：ObjectMaterializer 内部类 + ObjectKindRegistry 配置入口
+> - 条款：P0 五条 + P1 三条（见畅谈会记录）
+> - 详见: [畅谈会记录](../../../agent-team/meeting/2025-12-27-workspace-storage-integration.md)
 
 > **B-7 设计摘要** (畅谈会 #4)：
 > - API: `StateJournal.Diagnostics.AllowStaleReads()`
