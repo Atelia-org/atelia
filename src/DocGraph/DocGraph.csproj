@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Exe</OutputType>
+    <Description>DocGraph - 文档关系图验证和生成工具，用于验证文档之间的 produce/produce_by 关系。</Description>
+    <!-- 覆盖默认的 Atelia.DocGraph 程序集名，使用 docgraph 作为 CLI 工具名 -->
+    <AssemblyName>docgraph</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.2.1" />
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+  </ItemGroup>
+</Project>
