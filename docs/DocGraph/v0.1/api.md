@@ -164,6 +164,81 @@ public class ValidationIssue {
 }
 
 /// <summary>
+/// 修复选项
+/// </summary>
+public class FixOptions {
+    /// <summary>
+    /// 是否启用修复模式
+    /// </summary>
+    public bool Enabled { get; set; }
+    
+    /// <summary>
+    /// 是否只预览不执行（dry-run）
+    /// </summary>
+    public bool DryRun { get; set; }
+    
+    /// <summary>
+    /// 是否自动确认（跳过用户确认）
+    /// </summary>
+    public bool AutoConfirm { get; set; }
+    
+    /// <summary>
+    /// 修复范围（v0.1仅支持CreateMissing）
+    /// </summary>
+    public FixScope Scope { get; set; } = FixScope.CreateMissing;
+}
+
+/// <summary>
+/// 修复范围
+/// </summary>
+public enum FixScope {
+    /// <summary>
+    /// 创建缺失的文件（v0.1支持）
+    /// </summary>
+    CreateMissing,
+    
+    /// <summary>
+    /// 注入frontmatter到现有文件（v1.0规划）
+    /// </summary>
+    InjectFrontmatter,
+    
+    /// <summary>
+    /// 修复链接关系（v1.0规划）
+    /// </summary>
+    RepairLinks,
+    
+    /// <summary>
+    /// 所有修复类型
+    /// </summary>
+    All
+}
+
+/// <summary>
+/// 修复操作结果
+/// </summary>
+public class FixResult {
+    public bool Success { get; }
+    public string? ErrorMessage { get; }
+    public string? TargetPath { get; }
+    public FixActionType ActionType { get; }
+    
+    public static FixResult Success(string targetPath, FixActionType actionType) 
+        => new FixResult { Success = true, TargetPath = targetPath, ActionType = actionType };
+    
+    public static FixResult Failure(string errorMessage, string? targetPath = null) 
+        => new FixResult { Success = false, ErrorMessage = errorMessage, TargetPath = targetPath };
+}
+
+/// <summary>
+/// 修复操作类型
+/// </summary>
+public enum FixActionType {
+    CreateFile,
+    UpdateFrontmatter,
+    RepairLink
+}
+
+/// <summary>
 /// 问题严重度
 /// </summary>
 public enum IssueSeverity {
@@ -196,8 +271,9 @@ public interface IDocumentGraphBuilder {
     /// 验证文档关系完整性
     /// </summary>
     /// <param name="graph">要验证的文档图</param>
+    /// <param name="fixOptions">修复选项（可选）</param>
     /// <returns>验证结果</returns>
-    ValidationResult Validate(DocumentGraph graph);
+    ValidationResult Validate(DocumentGraph graph, FixOptions? fixOptions = null);
 }
 ```
 
@@ -414,10 +490,17 @@ public class IssueAggregator : IDocumentGraphVisitor {
 | `DOCGRAPH_YAML_ALIAS_DETECTED` | Error | 检测到YAML anchor/alias（禁止） |
 | `DOCGRAPH_IO_DECODE_FAILED` | Error | 文件编码解码失败 |
 | `DOCGRAPH_PATH_OUT_OF_WORKSPACE` | Error | 路径越界（超出workspace范围） |
+| `DOCGRAPH_FIX_CREATE_FAILED` | Error | 文件创建失败 |
+| `DOCGRAPH_FIX_TARGET_EXISTS` | Warning | 目标文件已存在（跳过创建） |
+| `DOCGRAPH_FIX_VALIDATION_BLOCKED` | Error | 验证错误阻止修复执行 |
+| `DOCGRAPH_FIX_USER_CANCELLED` | Info | 用户取消修复操作 |
+| `DOCGRAPH_FIX_DRYRUN_ONLY` | Info | dry-run模式，未实际执行 |
 
 ---
 
 ## 6. 退出码约定
+
+### 6.1 基础退出码
 
 | 退出码 | 含义 | 使用场景 |
 |:-------|:-----|:---------|
@@ -425,6 +508,17 @@ public class IssueAggregator : IDocumentGraphVisitor {
 | 1 | 警告 | 有警告，无错误 |
 | 2 | 错误 | 有验证错误 |
 | 3 | 致命 | 无法执行（配置错误、IO错误） |
+
+### 6.2 修复模式退出码（`--fix` 模式）
+
+| 退出码 | 场景 | 说明 |
+|:-------|:-----|:-----|
+| 0 | 验证通过 + 修复全部成功（或无需修复） | 修复执行成功或无修复需求 |
+| 1 | 验证有警告 + 修复成功 | 警告不影响修复执行 |
+| 2 | 验证有错误，未执行修复 | 错误阻止修复执行 |
+| 3 | 验证 Fatal 或修复执行失败 | Fatal错误或修复执行中失败 |
+
+**注意**：修复模式退出码优先于基础退出码。当指定 `--fix` 时，使用修复模式退出码语义。
 
 ---
 
@@ -455,12 +549,24 @@ public class IssueAggregator : IDocumentGraphVisitor {
 var builder = new DocumentGraphBuilder();
 var graph = builder.Build();
 
-// 验证关系
+// 基础验证
 var validationResult = builder.Validate(graph);
 if (!validationResult.IsValid) {
     // 输出验证报告
     Console.WriteLine(validationResult.ToMarkdown());
 }
+
+// 验证并修复（批量预览模式）
+var fixOptions = new FixOptions { Enabled = true };
+var fixResult = builder.Validate(graph, fixOptions);
+
+// 只预览不执行（dry-run）
+var dryRunOptions = new FixOptions { Enabled = true, DryRun = true };
+var dryRunResult = builder.Validate(graph, dryRunOptions);
+
+// 自动执行（CI/CD场景）
+var autoFixOptions = new FixOptions { Enabled = true, AutoConfirm = true };
+var autoFixResult = builder.Validate(graph, autoFixOptions);
 
 // 生成汇总文档
 var visitors = new List<IDocumentGraphVisitor> {
@@ -482,8 +588,17 @@ foreach (var visitor in visitors) {
 
 ### 8.2 命令行使用
 ```bash
-# 验证文档关系
+# 基础验证
 docgraph validate
+
+# 验证并修复（批量预览模式）
+docgraph validate --fix
+
+# 只预览不执行（dry-run）
+docgraph validate --fix --dry-run
+
+# 自动执行（CI/CD场景）
+docgraph validate --fix --yes
 
 # 生成所有汇总文档
 docgraph generate
@@ -492,8 +607,11 @@ docgraph generate
 docgraph generate glossary
 docgraph generate issues
 
-# 修复可自动修复的问题（如创建缺失的frontmatter）
-docgraph fix --write
+# 详细输出
+docgraph validate --fix --verbose
+
+# 输出JSON格式报告（机器可读）
+docgraph validate --fix --output json
 ```
 
 ---
