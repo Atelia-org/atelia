@@ -120,7 +120,7 @@ public interface ILinkTracker
 
 public record Link(
     string SourcePath,     // 源文档路径
-    string TargetPath,     // 目标文档路径（解析后的绝对路径）
+  string TargetPath,     // 目标文档路径（相对于 Workspace 的规范化路径）
     string RawTarget,      // 原始链接文本
     int LineNumber,        // 链接所在行号
     LinkType Type          // 链接类型

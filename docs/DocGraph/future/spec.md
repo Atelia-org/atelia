@@ -187,6 +187,56 @@ api.md 中的以下术语在本规范中有更窄的解释：
 
 - **[S-DOCGRAPH-EXTRACT-LAYER-PROGRESS]** MUST：解析层级进度表格，提取各层级状态。
 
+#### §3.2.1 链接提取规则
+
+- **[S-DOCGRAPH-LINK-EXTRACT]** MUST：扫描文档正文中的所有 Markdown 链接，按以下规则提取和分类：
+
+  **可遍历边类型（MUST 提取并追踪）**：
+  
+  | 链接模式 | 示例 | 提取行为 |
+  |:---------|:-----|:---------|
+  | 文档链接 | `[text](path.md)` | 提取 `path.md` 作为目标路径 |
+  | 带锚点链接 | `[text](path.md#anchor)` | 分类为 `Anchor`；`TargetPath` 取 `path.md`（去掉 fragment） |
+  | 相对路径链接 | `[text](../sibling/doc.md)` | 提取并规范化路径 |
+
+  **忽略边类型（MUST NOT 追踪）**：
+  
+  | 链接模式 | 示例 | 忽略原因 |
+  |:---------|:-----|:---------|
+  | 外部链接 | `[text](https://example.com)` | 非本地文档 |
+  | 纯锚点链接 | `[text](#section)` | 同文档内链接，无遍历意义 |
+  | 图片链接 | `![alt](image.png)` | 非文档引用 |
+  | 非 `.md` 链接 | `[text](data.json)` | 非 Markdown 文档 |
+
+  **锚点处理策略（可判定规则）**：
+  - 对带锚点链接（形如 `[text](path.md#anchor)`）：
+    - `Type` MUST be `Anchor`
+    - `TargetPath` MUST be `Normalize(path.md)`（去掉 `#anchor` fragment 后再规范化）
+    - `RawTarget` MUST 保留原始包含 `#anchor` 的文本
+  - 对纯锚点链接（形如 `[text](#section)`）：MUST NOT 作为 `Link` 记录输出（即 `ExtractLinks` 不返回该条），且 MUST NOT 参与遍历/存在性验证
+
+- **[S-DOCGRAPH-LINK-PATH-NORMALIZE]** MUST：链接目标路径必须经过规范化处理：
+  - 消解 `.`（当前目录）和 `..`（父目录）
+  - 转换为相对于 Workspace 根目录的规范路径
+  - 使用正斜杠 `/` 作为路径分隔符（跨平台一致性）
+  - 规范化后的路径 MUST 不含 `./` 或 `../` 前缀
+
+- **[S-DOCGRAPH-LINK-BOUNDARY]** MUST：链接目标路径必须在 Workspace 边界内：
+  - 若规范化后的路径指向 Workspace 根目录之外 → `DOCGRAPH_LINK_TARGET_OUTSIDE_WORKSPACE`
+  - Workspace 边界 = 包含 `.git` 目录的仓库根目录（参见 `[S-DOCGRAPH-WORKSPACE-ROOT]`）
+
+- **[S-DOCGRAPH-LINK-VALIDATE]** MUST：对每个提取的链接目标执行存在性检查：
+  - 若目标文件不存在 → `DOCGRAPH_LINK_TARGET_NOT_FOUND`
+  - 检查使用规范化后的路径
+  - 错误报告 MUST 包含：源文件路径、原始链接文本、规范化后路径、行号
+
+- **[S-DOCGRAPH-LINK-OUTPUT]** MUST：链接提取结果必须符合 `ILinkTracker.ExtractLinks` 接口返回的 `Link` 记录结构：
+  - `SourcePath`：源文档相对路径
+  - `TargetPath`：规范化后的目标路径
+  - `RawTarget`：原始链接文本（未经处理）
+  - `LineNumber`：链接所在行号（1-based）
+  - `Type`：链接类型枚举（`LinkType`，取值为 `Document`/`Anchor`/`External`/`Image`）
+
 ### §3.3 输出规则
 
 - **[S-DOCGRAPH-TABLE-FIXED-COLUMNS]** MUST：生成的索引表格固定包含以下 9 列：
@@ -376,11 +426,15 @@ api.md 中的以下术语在本规范中有更窄的解释：
 | | `[S-DOCGRAPH-TRAVERSAL-VISITED]` | 循环检测 |
 | | `[S-DOCGRAPH-EXTRACT-FRONTMATTER]` | frontmatter 提取 |
 | | `[S-DOCGRAPH-EXTRACT-LAYER-PROGRESS]` | 层级进度提取 |
+| | `[S-DOCGRAPH-LINK-EXTRACT]` | 链接提取与分类 |
+| | `[S-DOCGRAPH-LINK-PATH-NORMALIZE]` | 路径规范化 |
+| | `[S-DOCGRAPH-LINK-BOUNDARY]` | Workspace 边界检查 |
+| | `[S-DOCGRAPH-LINK-VALIDATE]` | 链接存在性验证 |
+| | `[S-DOCGRAPH-LINK-OUTPUT]` | 链接输出格式 |
 | | `[S-DOCGRAPH-TABLE-FIXED-COLUMNS]` | 表格列固定 |
 | | `[S-DOCGRAPH-OUTPUT-IDEMPOTENT]` | 输出幂等性 |
 | | `[S-DOCGRAPH-OUTPUT-PATH]` | 输出路径固定 |
 | | `[S-DOCGRAPH-BIDIR-REPORT-ONLY]` | 双向链接仅报告 |
-| | `[S-DOCGRAPH-LINK-EXTRACT]` | 链接提取 |
 | **A** (API) | `[A-DOCGRAPH-ERROR-FAIL-ON-FATAL]` | Fatal 错误失败 |
 | | `[A-DOCGRAPH-ERROR-AGGREGATE-ALL]` | 错误聚合 |
 | | `[A-DOCGRAPH-CLI-EXITCODE-NONZERO]` | 非零退出码 |
@@ -393,9 +447,9 @@ api.md 中的以下术语在本规范中有更窄的解释：
 | 章节 | 条款数量 |
 |:-----|:---------|
 | §2 输入域约束 | 7 |
-| §3 处理与输出规则 | 7 |
+| §3 处理与输出规则 | 12 |
 | §4 错误处理 SSOT | 6 |
-| **总计** | **20** |
+| **总计** | **25** |
 
 ---
 
@@ -404,4 +458,4 @@ api.md 中的以下术语在本规范中有更窄的解释：
 | 版本 | 日期 | 作者 | 变更说明 |
 |:-----|:-----|:-----|:---------|
 | 1.0.0-mvp | 2025-12-31 | Seeker + Craftsman | 初始创建，Phase 0 基础框架 |
-
+| 1.0.1-mvp | 2026-01-01 | Seeker | 补充 `[S-DOCGRAPH-LINK-EXTRACT]` 条款，新增 §3.2.1 链接提取规则 |
