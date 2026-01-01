@@ -4,7 +4,7 @@ title: "DocGraph - Rule-Tier 规范"
 version: 1.0.0-mvp
 status: Normative
 parentWish: "W-0002"
-layer: Rule-Tier
+tier: Rule-Tier
 shapeDependency: "api.md@0.1.0"
 validFrom: 2025-12-31
 supersedes: null
@@ -66,8 +66,8 @@ updated: 2025-12-31
 | `[F-WISH-FRONTMATTER-REQUIRED-FIELDS]` | 校验必填字段存在且可解析 | `DOCGRAPH_WISH_FRONTMATTER_REQUIRED_FIELD_MISSING` |
 | `[F-WISH-FILENAME-ID-MATCH]` | 校验文件名序号与 `wishId` 一致 | `DOCGRAPH_WISH_FILENAME_ID_MISMATCH` |
 | `[S-WISH-STATUS-MATCH-DIR]` | 校验 `status` 与目录一致 | `DOCGRAPH_WISH_STATUS_DIR_MISMATCH` |
-| `[F-WISH-Tier-PROGRESS-TABLE]` | 解析层级进度表格 | `DOCGRAPH_WISH_LAYER_PROGRESS_MISSING` / `DOCGRAPH_WISH_LAYER_PROGRESS_MALFORMED` |
-| `[F-WISH-Tier-PROGRESS-LINKS]` | 校验层级进度表格中的产物链接 | `DOCGRAPH_LINK_TARGET_NOT_FOUND` / `DOCGRAPH_LINK_TARGET_OUTSIDE_WORKSPACE` |
+| `[F-WISH-TIER-PROGRESS-TABLE]` | 解析层级进度表格 | `DOCGRAPH_WISH_LAYER_PROGRESS_MISSING` / `DOCGRAPH_WISH_LAYER_PROGRESS_MALFORMED` |
+| `[F-WISH-TIER-PROGRESS-LINKS]` | 校验层级进度表格中的产物链接 | `DOCGRAPH_LINK_TARGET_NOT_FOUND` / `DOCGRAPH_LINK_TARGET_OUTSIDE_WORKSPACE` |
 
 ### §0.4 术语限定
 
@@ -158,10 +158,10 @@ api.md 中的以下术语在本规范中有更窄的解释：
 - **[S-DOCGRAPH-WISH-STATUS-MATCH-DIR]** MUST：Wish 文档的 `status` 必须与所在目录一致（参见上位规则 `[S-WISH-STATUS-MATCH-DIR]`）。
   - 不一致 → `DOCGRAPH_WISH_STATUS_DIR_MISMATCH`
 
-- **[S-DOCGRAPH-WISH-Tier-PROGRESS]** MUST：Wish 文档必须包含层级进度表格。
-  - 定位规则：包含"层级进度"或"Layer Progress"标题后的首个表格
-  - 缺失 → `DOCGRAPH_WISH_LAYER_PROGRESS_MISSING`
-  - 格式错误 → `DOCGRAPH_WISH_LAYER_PROGRESS_MALFORMED`
+- **[S-DOCGRAPH-WISH-TIER-PROGRESS]** MUST：Wish 文档必须包含层级进度表格。
+  - 定位规则：包含"层级进度"或"TIER Progress"标题后的首个表格
+  - 缺失 → `DOCGRAPH_WISH_TIER_PROGRESS_MISSING`
+  - 格式错误 → `DOCGRAPH_WISH_TIER_PROGRESS_MALFORMED`
 
 ### §2.3 边界条件处理
 
@@ -185,7 +185,7 @@ api.md 中的以下术语在本规范中有更窄的解释：
   - `wishId`, `title`, `status`, `owner`, `created`, `updated`
   - 字段缺失/空值/不可解析时仍可填充空字符串以继续聚合，但 MUST 记录 `DOCGRAPH_WISH_FRONTMATTER_REQUIRED_FIELD_MISSING`（参见 `[S-DOCGRAPH-WISH-FRONTMATTER-REQUIRED-FIELDS]`）
 
-- **[S-DOCGRAPH-EXTRACT-Tier-PROGRESS]** MUST：解析层级进度表格，提取各层级状态。
+- **[S-DOCGRAPH-EXTRACT-TIER-PROGRESS]** MUST：解析层级进度表格，提取各层级状态。
 
 #### §3.2.1 链接提取规则
 
@@ -271,7 +271,7 @@ api.md 中的以下术语在本规范中有更窄的解释：
 | `DOCGRAPH_STRUCTURE_` | 目录/文件结构 | `DOCGRAPH_STRUCTURE_REGISTRY_MISSING` |
 | `DOCGRAPH_PARSE_` | 解析失败 | `DOCGRAPH_PARSE_INVALID_YAML` |
 | `DOCGRAPH_LINK_` | 链接问题 | `DOCGRAPH_LINK_TARGET_NOT_FOUND` |
-| `DOCGRAPH_WISH_` | Wish 专用 | `DOCGRAPH_WISH_LAYER_PROGRESS_MISSING` |
+| `DOCGRAPH_WISH_` | Wish 专用 | `DOCGRAPH_WISH_TIER_PROGRESS_MISSING` |
 
 ### §4.1.1 严重度（Severity）
 
@@ -298,8 +298,8 @@ api.md 中的以下术语在本规范中有更窄的解释：
 | `DOCGRAPH_LINK_TARGET_NOT_FOUND` | Error | 链接目标文件不存在 | Fail |
 | `DOCGRAPH_LINK_TARGET_OUTSIDE_WORKSPACE` | Error | 链接指向仓库外部 | Fail |
 | `DOCGRAPH_LINK_CYCLE_DETECTED` | Warning | 检测到循环引用路径（已安全终止该路径） | Report + Continue |
-| `DOCGRAPH_WISH_LAYER_PROGRESS_MISSING` | Fatal | 缺少层级进度表格 | Fail |
-| `DOCGRAPH_WISH_LAYER_PROGRESS_MALFORMED` | Fatal | 层级进度表格格式错误 | Fail |
+| `DOCGRAPH_WISH_TIER_PROGRESS_MISSING` | Fatal | 缺少层级进度表格 | Fail |
+| `DOCGRAPH_WISH_TIER_PROGRESS_MALFORMED` | Fatal | 层级进度表格格式错误 | Fail |
 
 ### §4.3 错误报告 Schema
 
@@ -367,13 +367,13 @@ api.md 中的以下术语在本规范中有更窄的解释：
 
 ```json
 {
-  "errorCode": "DOCGRAPH_WISH_LAYER_PROGRESS_MISSING",
+  "errorCode": "DOCGRAPH_WISH_TIER_PROGRESS_MISSING",
   "severity": "Fatal",
   "message": "文档缺少层级进度表格",
   "sourcePath": "wishes/active/wish-0002-doc-graph-tool.md",
   "details": {},
   "navigation": {
-    "ruleRef": "[F-WISH-Tier-PROGRESS-TABLE]",
+    "ruleRef": "[F-WISH-TIER-PROGRESS-TABLE]",
     "suggestedFix": "添加包含 '层级进度' 标题的表格，参考模板",
     "relatedDocs": [
       "wishes/specs/wish-system-rules.md"
@@ -419,13 +419,13 @@ api.md 中的以下术语在本规范中有更窄的解释：
 | | `[S-DOCGRAPH-REGISTRY-MISSING-FATAL]` | Registry 缺失处理 |
 | | `[S-DOCGRAPH-WORKSPACE-ROOT]` | Workspace 边界 |
 | | `[S-DOCGRAPH-PARSE-FRONTMATTER]` | frontmatter 必需 |
-| | `[S-DOCGRAPH-WISH-Tier-PROGRESS]` | 层级进度表格必需 |
+| | `[S-DOCGRAPH-WISH-TIER-PROGRESS]` | 层级进度表格必需 |
 | | `[S-DOCGRAPH-EMPTY-REGISTRY]` | 空目录处理 |
 | | `[S-DOCGRAPH-NON-WISH-MD]` | 非 Wish 文件处理 |
 | | `[S-DOCGRAPH-TRAVERSAL-ORDER]` | 遍历排序 |
 | | `[S-DOCGRAPH-TRAVERSAL-VISITED]` | 循环检测 |
 | | `[S-DOCGRAPH-EXTRACT-FRONTMATTER]` | frontmatter 提取 |
-| | `[S-DOCGRAPH-EXTRACT-Tier-PROGRESS]` | 层级进度提取 |
+| | `[S-DOCGRAPH-EXTRACT-TIER-PROGRESS]` | 层级进度提取 |
 | | `[S-DOCGRAPH-LINK-EXTRACT]` | 链接提取与分类 |
 | | `[S-DOCGRAPH-LINK-PATH-NORMALIZE]` | 路径规范化 |
 | | `[S-DOCGRAPH-LINK-BOUNDARY]` | Workspace 边界检查 |

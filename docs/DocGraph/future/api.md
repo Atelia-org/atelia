@@ -4,7 +4,7 @@ title: "DocGraph - API 设计"
 version: 0.1.0
 status: Draft
 parentWish: "W-0002"
-layer: Shape-Tier
+tier: Shape-Tier
 created: 2025-12-30
 updated: 2025-12-30
 ---
