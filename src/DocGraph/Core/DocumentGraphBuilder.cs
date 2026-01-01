@@ -210,8 +210,9 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
             ValidateProducedByDeclarations(node, graph, issues);
         }
 
-        // 4. 检测循环引用 [A-DOCGRAPH-003]
-        DetectCircularReferences(graph, issues);
+        // 注意：不检测循环引用 [设计决策]
+        // 原因：核心目标是"找到每一个与根文档集合关联的文档，收集其中的信息"
+        // 环不影响这个目标，只要每个文档只被 visit 一次即可（类似计算所得税）
 
         stopwatch.Stop();
 
@@ -388,10 +389,11 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
         }
 
         // Wish 文档必须有 produce 关系
+        // [设计决策] 降级为 Warning：单文档字段缺失不应阻断其他文档的收集
         if (node.Type == DocumentType.Wish && node.ProducePaths.Count == 0)
         {
             issues.Add(new ValidationIssue(
-                IssueSeverity.Error,
+                IssueSeverity.Warning,  // 从 Error 降级为 Warning
                 "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING",
                 "Wish 文档必须包含 produce 字段",
                 node.FilePath,
@@ -400,14 +402,14 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
         }
 
         // [P1-2修复] 产物文档核心字段验证
-        // 遵循 [S-FRONTMATTER-006]：必填字段缺失 → Error，类型不匹配 → Error，值无效 → Warning
+        // [设计决策] 降级为 Warning：单文档字段缺失不应阻断其他文档的收集
         if (node.Type == DocumentType.Product && !node.Title.StartsWith("[缺失]"))
         {
             // 检查 docId 字段存在性和类型
             if (!node.Frontmatter.ContainsKey("docId") || node.Frontmatter["docId"] == null)
             {
                 issues.Add(new ValidationIssue(
-                    IssueSeverity.Error,
+                    IssueSeverity.Warning,  // 从 Error 降级为 Warning
                     "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING",
                     "产物文档缺少 docId 字段",
                     node.FilePath,
@@ -418,7 +420,7 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
             {
                 // 空字符串视为字段缺失 [S-FRONTMATTER-006]
                 issues.Add(new ValidationIssue(
-                    IssueSeverity.Error,
+                    IssueSeverity.Warning,  // 从 Error 降级为 Warning
                     "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING",
                     "产物文档 docId 字段为空",
                     node.FilePath,
@@ -430,7 +432,7 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
             if (!node.Frontmatter.ContainsKey("produce_by") || node.Frontmatter["produce_by"] == null)
             {
                 issues.Add(new ValidationIssue(
-                    IssueSeverity.Error,
+                    IssueSeverity.Warning,  // 从 Error 降级为 Warning
                     "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING",
                     "产物文档缺少 produce_by 字段",
                     node.FilePath,
@@ -445,7 +447,7 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
                 {
                     // 单字符串不是有效的数组类型
                     issues.Add(new ValidationIssue(
-                        IssueSeverity.Error,
+                        IssueSeverity.Warning,  // 从 Error 降级为 Warning
                         "DOCGRAPH_FRONTMATTER_FIELD_TYPE_MISMATCH",
                         "produce_by 字段类型不匹配",
                         node.FilePath,
@@ -539,11 +541,12 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
             }
 
             // 检查目标是否有有效的 frontmatter（通过检查是否为占位节点或frontmatter是否为空）
+            // [设计决策] 降级为 Warning：单文档 frontmatter 缺失不应阻断其他文档的收集
             var hasFrontmatter = targetNode.Frontmatter.Count > 0 && !targetNode.Title.StartsWith("[缺失]");
             if (!hasFrontmatter)
             {
                 issues.Add(new ValidationIssue(
-                    IssueSeverity.Error,
+                    IssueSeverity.Warning,  // 从 Error 降级为 Warning
                     "DOCGRAPH_RELATION_DANGLING_LINK",
                     $"目标文件缺少 frontmatter",
                     node.FilePath,
@@ -617,65 +620,6 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
                     targetFilePath: normalizedPath));
             }
         }
-    }
-
-    /// <summary>
-    /// 检测循环引用并记录 Info 级别问题。
-    /// 遵循 [A-DOCGRAPH-003]：检测循环但不禁止，记录信息性警告。
-    /// </summary>
-    private void DetectCircularReferences(DocumentGraph graph, List<ValidationIssue> issues)
-    {
-        var visited = new HashSet<string>(StringComparer.Ordinal);
-        var inStack = new HashSet<string>(StringComparer.Ordinal);
-        var reportedCycles = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var node in graph.AllNodes)
-        {
-            DetectCyclesDfs(node, visited, inStack, reportedCycles, issues);
-        }
-    }
-
-    /// <summary>
-    /// DFS 检测循环引用。
-    /// </summary>
-    private void DetectCyclesDfs(
-        DocumentNode node,
-        HashSet<string> visited,
-        HashSet<string> inStack,
-        HashSet<string> reportedCycles,
-        List<ValidationIssue> issues)
-    {
-        if (inStack.Contains(node.FilePath))
-        {
-            // 发现循环，但只报告一次
-            if (!reportedCycles.Contains(node.FilePath))
-            {
-                reportedCycles.Add(node.FilePath);
-                issues.Add(new ValidationIssue(
-                    IssueSeverity.Info,
-                    "DOCGRAPH_RELATION_CIRCULAR_REFERENCE",
-                    $"检测到循环引用",
-                    node.FilePath,
-                    $"文档 {node.DocId} 参与了循环引用链",
-                    "循环引用不会阻止图构建，但可能表示文档结构设计问题。建议检查 produce 关系是否正确。"));
-            }
-            return;
-        }
-
-        if (visited.Contains(node.FilePath))
-        {
-            return;
-        }
-
-        visited.Add(node.FilePath);
-        inStack.Add(node.FilePath);
-
-        foreach (var target in node.Produces)
-        {
-            DetectCyclesDfs(target, visited, inStack, reportedCycles, issues);
-        }
-
-        inStack.Remove(node.FilePath);
     }
 
     /// <summary>

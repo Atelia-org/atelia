@@ -58,7 +58,9 @@ public class GlossaryVisitor : IDocumentGraphVisitor
         // 按文档路径排序输出
         foreach (var (docPath, terms) in termsByDoc.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
-            builder.AppendLine($"## {Path.GetFileName(docPath)}");
+            // 使用完整 workspace 相对路径（inline code 格式）
+            // [格式约定] 便于阅读者直接定位文档，避免重名问题
+            builder.AppendLine($"## `{docPath}`");
             builder.AppendLine();
 
             foreach (var (term, definition) in terms.OrderBy(t => t.Term, StringComparer.Ordinal))

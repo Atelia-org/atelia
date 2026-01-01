@@ -64,29 +64,29 @@ public class IssueAggregator : IDocumentGraphVisitor
 
         builder.AppendLine();
 
-        // 按状态分组输出
-        var statusOrder = new[] { "open", "in-progress", "resolved", "closed" };
-        var statusGroups = allIssues
-            .GroupBy(i => i.Status)
-            .OrderBy(g => Array.IndexOf(statusOrder, g.Key.ToLowerInvariant()) switch
-            {
-                -1 => 100, // 未知状态排最后
-                var idx => idx
-            });
+        // 按来源文档分组输出（子弹列表格式）
+        // [格式约定] 节约 Token，同一文档多条目不重复路径；属性灵活，额外信息作为子列表
+        var issuesByDoc = allIssues
+            .GroupBy(i => i.SourceDocument)
+            .OrderBy(g => g.Key, StringComparer.Ordinal);
 
-        foreach (var statusGroup in statusGroups)
+        foreach (var docGroup in issuesByDoc)
         {
-            builder.AppendLine($"## {statusGroup.Key} 的问题");
+            // 使用完整 workspace 相对路径（inline code 格式）
+            builder.AppendLine($"## `{docGroup.Key}`");
             builder.AppendLine();
 
-            builder.AppendLine("| 问题描述 | 来源文档 | 负责人 |");
-            builder.AppendLine("|:---------|:---------|:-------|");
-
-            foreach (var issue in statusGroup.OrderBy(i => i.SourceDocument, StringComparer.Ordinal))
+            foreach (var issue in docGroup.OrderBy(i => i.Status, StringComparer.Ordinal))
             {
-                var fileName = Path.GetFileName(issue.SourceDocument);
-                var assignee = issue.Assignee ?? "未分配";
-                builder.AppendLine($"| {EscapeTableCell(issue.Description)} | [{fileName}]({issue.SourceDocument}) | {assignee} |");
+                // 主行：问题描述
+                builder.AppendLine($"- {issue.Description}");
+
+                // 子列表：状态和负责人
+                builder.AppendLine($"  - 状态：{issue.Status}");
+                if (!string.IsNullOrEmpty(issue.Assignee))
+                {
+                    builder.AppendLine($"  - 负责人：{issue.Assignee}");
+                }
             }
 
             builder.AppendLine();
@@ -127,17 +127,6 @@ public class IssueAggregator : IDocumentGraphVisitor
         }
 
         return result;
-    }
-
-    /// <summary>
-    /// 转义表格单元格中的特殊字符。
-    /// </summary>
-    private static string EscapeTableCell(string text)
-    {
-        return text
-            .Replace("|", "\\|")
-            .Replace("\n", " ")
-            .Replace("\r", "");
     }
 
     /// <summary>

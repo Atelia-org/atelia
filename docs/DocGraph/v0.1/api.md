@@ -1,7 +1,23 @@
+---
+docId: "W-0002-api"
+title: "DocGraph v0.1 API 设计文档"
+produce_by:
+  - "wishes/active/wish-0002-doc-graph-tool.md"
+defines:
+  - term: "DocumentNode"
+    definition: "文档图中的节点，表示一个文档"
+  - term: "DocumentGraph"
+    definition: "完整的文档关系图"
+  - term: "ValidationResult"
+    definition: "文档关系验证结果"
+  - term: "IDocumentGraphVisitor"
+    definition: "文档图访问者接口，用于生成汇总文档"
+---
+
 # DocGraph v0.1 - API 设计文档
 
 > **版本**：v0.1.0  
-> **状态**：草案（基于2026-01-01畅谈会共识）  
+> **状态**：已实现  
 > **目的**：定义v0.1简化版MVP的接口和数据模型
 
 ---

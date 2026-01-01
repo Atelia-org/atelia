@@ -1,7 +1,18 @@
+---
+docId: "W-0002-spec"
+title: "DocGraph v0.1 实现规范文档"
+produce_by:
+  - "wishes/active/wish-0002-doc-graph-tool.md"
+issues:
+  - description: "需要添加更多测试用例覆盖边界情况"
+    status: "open"
+    assignee: "QA"
+---
+
 # DocGraph v0.1 - 实现规范文档
 
 > **版本**：v0.1.0  
-> **状态**：草案（基于2026-01-01畅谈会共识）  
+> **状态**：已实现  
 > **目的**：定义v0.1简化版MVP的具体实现约束和验收标准
 
 ---
