@@ -20,7 +20,7 @@ public class GlossaryVisitor : IDocumentGraphVisitor
     public string OutputPath => "docs/glossary.gen.md";
 
     /// <inheritdoc/>
-    public IReadOnlyList<string> RequiredFields => [KnownFrontmatterFields.Defines];
+    public IReadOnlyList<string> RequiredFields => [KnownFrontmatterFields.Glossary];
 
     /// <inheritdoc/>
     public string Generate(DocumentGraph graph)
@@ -38,10 +38,10 @@ public class GlossaryVisitor : IDocumentGraphVisitor
 
         graph.ForEachDocument(node =>
         {
-            if (node.Frontmatter.TryGetValue(KnownFrontmatterFields.Defines, out var definesObj) &&
-                definesObj != null)
+            if (node.Frontmatter.TryGetValue(KnownFrontmatterFields.Glossary, out var glossaryObj) &&
+                glossaryObj != null)
             {
-                var terms = ExtractTerms(definesObj);
+                var terms = ExtractTerms(glossaryObj);
                 if (terms.Count > 0)
                 {
                     termsByDoc[node.FilePath] = terms;
@@ -76,19 +76,21 @@ public class GlossaryVisitor : IDocumentGraphVisitor
 
     /// <summary>
     /// 提取术语定义。
+    /// 格式：单键映射序列 [{term: definition}]
     /// </summary>
-    private static List<(string Term, string Definition)> ExtractTerms(object definesObj)
+    private static List<(string Term, string Definition)> ExtractTerms(object glossaryObj)
     {
         var terms = new List<(string, string)>();
 
-        if (definesObj is IEnumerable<object> definesList)
+        if (glossaryObj is IEnumerable<object> glossaryList)
         {
-            foreach (var item in definesList)
+            foreach (var item in glossaryList)
             {
-                if (item is IDictionary<object, object> dict)
+                if (item is IDictionary<object, object> dict && dict.Count == 1)
                 {
-                    var term = dict.TryGetValue("term", out var t) ? t?.ToString() : null;
-                    var definition = dict.TryGetValue("definition", out var d) ? d?.ToString() : null;
+                    var kvp = dict.First();
+                    var term = kvp.Key?.ToString();
+                    var definition = kvp.Value?.ToString();
 
                     if (!string.IsNullOrWhiteSpace(term) && !string.IsNullOrWhiteSpace(definition))
                     {
@@ -120,9 +122,9 @@ public class GlossaryVisitor : IDocumentGraphVisitor
 public static class KnownFrontmatterFields
 {
     /// <summary>
-    /// 术语定义字段。
+    /// 术语表字段（对应 glossary.gen.md）。
     /// </summary>
-    public const string Defines = "defines";
+    public const string Glossary = "glossary";
 
     /// <summary>
     /// 问题跟踪字段。

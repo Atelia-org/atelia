@@ -3,15 +3,11 @@ docId: "W-0002-scope"
 title: "DocGraph v0.1 功能边界文档"
 produce_by:
   - "wishes/active/wish-0002-doc-graph-tool.md"
-defines:
-  - term: "文档图"
-    definition: "frontmatter 关系构成的有向图，不是文件系统树"
-  - term: "Root Nodes"
-    definition: "Wish 文档，是文档图的入口点"
-  - term: "produce 关系"
-    definition: "Wish 文档到产物文档的单向链接"
-  - term: "produce_by 关系"
-    definition: "产物文档到 Wish 文档的反向链接"
+glossary:
+  - 文档图: "frontmatter 关系构成的有向图，不是文件系统树"
+  - Root-Nodes: "Wish 文档，是文档图的入口点"
+  - produce-关系: "Wish 文档到产物文档的单向链接"
+  - produce_by-关系: "产物文档到 Wish 文档的反向链接"
 ---
 
 # DocGraph v0.1 - 功能边界文档
