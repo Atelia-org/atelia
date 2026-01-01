@@ -9,7 +9,7 @@ updated: 2025-12-30
 
 # DocGraph 设计原矿（ore）
 
-> 本文档是"原矿（ore）"：用于汇总目前已发现但尚未提纯为多层级（Why-Tier/Shape-Tier/Rule-Tier/Plan-Tier/Craft-Tier）设计文档的材料。
+> 本文档是"原矿（ore）"：用于汇总目前已发现但尚未提纯为多层级（Resolve-Tier/Shape-Tier/Rule-Tier/Plan-Tier/Craft-Tier）设计文档的材料。
 >
 > - 目标：把现有会议记录、Wish 文档、L2 API 草案中的信息收敛成一个**一致、自洽**的“素材库”。
 > - 非目标：在本文中做最终决策、或替代规范性条款（normative spec）。
@@ -115,10 +115,10 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 **Wish 专用提取（为 `wishes/index.md` 服务，可硬编码）**：
 
 - Wish 至少提取：`wishId`、`title`、`status`、`owner`、`updated`（来自 frontmatter）。
-- Wish 的 Why-Tier 到 Craft-Tier 状态必须通过解析正文中的"层级进度 (Layer Progress)"表格得到：
+- Wish 的 Resolve-Tier 到 Craft-Tier 状态必须通过解析正文中的"层级进度 (Layer Progress)"表格得到：
   - 定位：找到包含"层级进度"标题后的首个 Markdown 表格。
   - 读取：按 `| 层级 | 状态 | ... |` 的列含义读取。
-  - 映射：层级名 `Why-Tier`/`Shape-Tier`/`Rule-Tier`/`Plan-Tier`/`Craft-Tier` → 状态符号（⚪/🟡/🟢/🔴/➖）。
+  - 映射：层级名 `Resolve-Tier`/`Shape-Tier`/`Rule-Tier`/`Plan-Tier`/`Craft-Tier` → 状态符号（⚪/🟡/🟢/🔴/➖）。
 - 若缺少该表格、或缺少某层级行：必须报告结构错误（因为索引表格不可判定）。
 
 ### 3.5 表格生成（Table Generation）
@@ -130,7 +130,7 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 
 - 文件头必须声明“派生视图 / 可重建”。
 - 至少生成三段：Active / Completed / Abandoned。
-- Active 表格固定列：`WishId`、`标题`、`Owner`、`Why-Tier`、`Shape-Tier`、`Rule-Tier`、`Plan-Tier`、`Craft-Tier`、`更新日期`。
+- Active 表格固定列：`WishId`、`标题`、`Owner`、`Resolve-Tier`、`Shape-Tier`、`Rule-Tier`、`Plan-Tier`、`Craft-Tier`、`更新日期`。
 - `WishId` 单元格生成相对链接，指向对应目录下文件。
 - Quick Nav 可先生成固定空态文本，但不得崩溃。
 
@@ -247,7 +247,7 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 
 ## 8. 后续提纯建议（从 ore → 多层级文档）
 
-- Why-Tier：监护人动机与“认知带宽/上下文精确注入”的问题陈述（已在会议纪要中）。
+- Resolve-Tier：监护人动机与“认知带宽/上下文精确注入”的问题陈述（已在会议纪要中）。
 - L2 What：保留并重命名/对齐“DocGraph”术语，明确 MVP 只覆盖 wishes/index 生成。
 - Rule-Tier：把第 3 节迁移为规范性条款文档（可拆分为 registry/traversal/extraction/table/errors）。
 - L4 How：将第 5、6 节的候选决策收敛成决策记录（Decision Log）。

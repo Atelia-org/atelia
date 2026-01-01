@@ -244,7 +244,7 @@ api.md 中的以下术语在本规范中有更窄的解释：
   2. 标题
   3. 状态
   4. 责任人
-  5. Why-Tier
+  5. Resolve-Tier
   6. Shape-Tier
   7. Rule-Tier
   8. Plan-Tier
