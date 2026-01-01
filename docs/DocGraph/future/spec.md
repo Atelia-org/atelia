@@ -1,10 +1,10 @@
 ---
 documentId: "W-0002-L3"
-title: "DocGraph - Rule-Layer 规范"
+title: "DocGraph - Rule-Tier 规范"
 version: 1.0.0-mvp
 status: Normative
 parentWish: "W-0002"
-layer: Rule-Layer
+layer: Rule-Tier
 shapeDependency: "api.md@0.1.0"
 validFrom: 2025-12-31
 supersedes: null
@@ -12,7 +12,7 @@ created: 2025-12-31
 updated: 2025-12-31
 ---
 
-# DocGraph - Rule-Layer 规范
+# DocGraph - Rule-Tier 规范
 
 > **30秒速读**
 >
@@ -33,16 +33,16 @@ updated: 2025-12-31
 
 ### §0.1 规范定位与适用范围
 
-本文档是 DocGraph 工具的 **Rule-Layer 规范**，定义 **v1.0 MVP** 的确定性行为。
+本文档是 DocGraph 工具的 **Rule-Tier 规范**，定义 **v1.0 MVP** 的确定性行为。
 
-- **阅读前提**：读者应先阅读 [api.md](api.md)（Shape-Layer）了解工具能力外观
+- **阅读前提**：读者应先阅读 [api.md](api.md)（Shape-Tier）了解工具能力外观
 - **规范性等级**：Normative（本文档中的 MUST/SHOULD/MAY 条款具有约束力）
 - **适用版本**：DocGraph v1.0.x
 - **条款语言**：遵循 [spec-conventions.md](../spec-conventions.md) 中定义的规范语言（MUST/SHOULD/MAY）
 
-### §0.2 与 Shape-Layer 的关系声明
+### §0.2 与 Shape-Tier 的关系声明
 
-本文档是 `api.md@0.1.0` 的**时态投影**——Shape-Layer 定义"工具能做什么"（天花板），本规范定义"当前版本做什么"（地板）。
+本文档是 `api.md@0.1.0` 的**时态投影**——Shape-Tier 定义"工具能做什么"（天花板），本规范定义"当前版本做什么"（地板）。
 
 | api.md 定义 | 本文档约束 |
 |:------------|:-----------|
@@ -50,7 +50,7 @@ updated: 2025-12-31
 | `TableConfig` 支持自定义列 | MVP 硬编码 9 列 |
 | `IBidirectionalChecker` 支持修复 | MVP 仅报告，不修复 |
 
-> **约定**：Shape-Layer 中标记 `🚧 MVP: Narrowed` 的能力，在本规范中有对应的限定条款。
+> **约定**：Shape-Tier 中标记 `🚧 MVP: Narrowed` 的能力，在本规范中有对应的限定条款。
 
 ### §0.3 上位规则引用
 
@@ -66,8 +66,8 @@ updated: 2025-12-31
 | `[F-WISH-FRONTMATTER-REQUIRED-FIELDS]` | 校验必填字段存在且可解析 | `DOCGRAPH_WISH_FRONTMATTER_REQUIRED_FIELD_MISSING` |
 | `[F-WISH-FILENAME-ID-MATCH]` | 校验文件名序号与 `wishId` 一致 | `DOCGRAPH_WISH_FILENAME_ID_MISMATCH` |
 | `[S-WISH-STATUS-MATCH-DIR]` | 校验 `status` 与目录一致 | `DOCGRAPH_WISH_STATUS_DIR_MISMATCH` |
-| `[F-WISH-LAYER-PROGRESS-TABLE]` | 解析层级进度表格 | `DOCGRAPH_WISH_LAYER_PROGRESS_MISSING` / `DOCGRAPH_WISH_LAYER_PROGRESS_MALFORMED` |
-| `[F-WISH-LAYER-PROGRESS-LINKS]` | 校验层级进度表格中的产物链接 | `DOCGRAPH_LINK_TARGET_NOT_FOUND` / `DOCGRAPH_LINK_TARGET_OUTSIDE_WORKSPACE` |
+| `[F-WISH-Tier-PROGRESS-TABLE]` | 解析层级进度表格 | `DOCGRAPH_WISH_LAYER_PROGRESS_MISSING` / `DOCGRAPH_WISH_LAYER_PROGRESS_MALFORMED` |
+| `[F-WISH-Tier-PROGRESS-LINKS]` | 校验层级进度表格中的产物链接 | `DOCGRAPH_LINK_TARGET_NOT_FOUND` / `DOCGRAPH_LINK_TARGET_OUTSIDE_WORKSPACE` |
 
 ### §0.4 术语限定
 
@@ -158,7 +158,7 @@ api.md 中的以下术语在本规范中有更窄的解释：
 - **[S-DOCGRAPH-WISH-STATUS-MATCH-DIR]** MUST：Wish 文档的 `status` 必须与所在目录一致（参见上位规则 `[S-WISH-STATUS-MATCH-DIR]`）。
   - 不一致 → `DOCGRAPH_WISH_STATUS_DIR_MISMATCH`
 
-- **[S-DOCGRAPH-WISH-LAYER-PROGRESS]** MUST：Wish 文档必须包含层级进度表格。
+- **[S-DOCGRAPH-WISH-Tier-PROGRESS]** MUST：Wish 文档必须包含层级进度表格。
   - 定位规则：包含"层级进度"或"Layer Progress"标题后的首个表格
   - 缺失 → `DOCGRAPH_WISH_LAYER_PROGRESS_MISSING`
   - 格式错误 → `DOCGRAPH_WISH_LAYER_PROGRESS_MALFORMED`
@@ -185,7 +185,7 @@ api.md 中的以下术语在本规范中有更窄的解释：
   - `wishId`, `title`, `status`, `owner`, `created`, `updated`
   - 字段缺失/空值/不可解析时仍可填充空字符串以继续聚合，但 MUST 记录 `DOCGRAPH_WISH_FRONTMATTER_REQUIRED_FIELD_MISSING`（参见 `[S-DOCGRAPH-WISH-FRONTMATTER-REQUIRED-FIELDS]`）
 
-- **[S-DOCGRAPH-EXTRACT-LAYER-PROGRESS]** MUST：解析层级进度表格，提取各层级状态。
+- **[S-DOCGRAPH-EXTRACT-Tier-PROGRESS]** MUST：解析层级进度表格，提取各层级状态。
 
 #### §3.2.1 链接提取规则
 
@@ -244,11 +244,11 @@ api.md 中的以下术语在本规范中有更窄的解释：
   2. 标题
   3. 状态
   4. 责任人
-  5. Why-Layer
-  6. Shape-Layer
-  7. Rule-Layer
-  8. Plan-Layer
-  9. Craft-Layer
+  5. Why-Tier
+  6. Shape-Tier
+  7. Rule-Tier
+  8. Plan-Tier
+  9. Craft-Tier
 
 - **[S-DOCGRAPH-OUTPUT-IDEMPOTENT]** MUST：相同输入必须产生完全相同的输出（字节级幂等）。
 
@@ -373,7 +373,7 @@ api.md 中的以下术语在本规范中有更窄的解释：
   "sourcePath": "wishes/active/wish-0002-doc-graph-tool.md",
   "details": {},
   "navigation": {
-    "ruleRef": "[F-WISH-LAYER-PROGRESS-TABLE]",
+    "ruleRef": "[F-WISH-Tier-PROGRESS-TABLE]",
     "suggestedFix": "添加包含 '层级进度' 标题的表格，参考模板",
     "relatedDocs": [
       "wishes/specs/wish-system-rules.md"
@@ -419,13 +419,13 @@ api.md 中的以下术语在本规范中有更窄的解释：
 | | `[S-DOCGRAPH-REGISTRY-MISSING-FATAL]` | Registry 缺失处理 |
 | | `[S-DOCGRAPH-WORKSPACE-ROOT]` | Workspace 边界 |
 | | `[S-DOCGRAPH-PARSE-FRONTMATTER]` | frontmatter 必需 |
-| | `[S-DOCGRAPH-WISH-LAYER-PROGRESS]` | 层级进度表格必需 |
+| | `[S-DOCGRAPH-WISH-Tier-PROGRESS]` | 层级进度表格必需 |
 | | `[S-DOCGRAPH-EMPTY-REGISTRY]` | 空目录处理 |
 | | `[S-DOCGRAPH-NON-WISH-MD]` | 非 Wish 文件处理 |
 | | `[S-DOCGRAPH-TRAVERSAL-ORDER]` | 遍历排序 |
 | | `[S-DOCGRAPH-TRAVERSAL-VISITED]` | 循环检测 |
 | | `[S-DOCGRAPH-EXTRACT-FRONTMATTER]` | frontmatter 提取 |
-| | `[S-DOCGRAPH-EXTRACT-LAYER-PROGRESS]` | 层级进度提取 |
+| | `[S-DOCGRAPH-EXTRACT-Tier-PROGRESS]` | 层级进度提取 |
 | | `[S-DOCGRAPH-LINK-EXTRACT]` | 链接提取与分类 |
 | | `[S-DOCGRAPH-LINK-PATH-NORMALIZE]` | 路径规范化 |
 | | `[S-DOCGRAPH-LINK-BOUNDARY]` | Workspace 边界检查 |

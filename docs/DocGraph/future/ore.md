@@ -9,16 +9,16 @@ updated: 2025-12-30
 
 # DocGraph 设计原矿（ore）
 
-> 本文档是"原矿（ore）"：用于汇总目前已发现但尚未提纯为多层级（Why-Layer/Shape-Layer/Rule-Layer/Plan-Layer/Craft-Layer）设计文档的材料。
+> 本文档是"原矿（ore）"：用于汇总目前已发现但尚未提纯为多层级（Why-Tier/Shape-Tier/Rule-Tier/Plan-Tier/Craft-Tier）设计文档的材料。
 >
 > - 目标：把现有会议记录、Wish 文档、L2 API 草案中的信息收敛成一个**一致、自洽**的“素材库”。
 > - 非目标：在本文中做最终决策、或替代规范性条款（normative spec）。
 >
 > 主要信息源：
-> - W-0002 实现畅谈会记录（含 Rule-Layer 条款与 Plan-Layer 建议）：[agent-team/meeting/Meta/2025-12-30-docgraph-implementation.md](../../../agent-team/meeting/Meta/2025-12-30-docgraph-implementation.md)
+> - W-0002 实现畅谈会记录（含 Rule-Tier 条款与 Plan-Tier 建议）：[agent-team/meeting/Meta/2025-12-30-docgraph-implementation.md](../../../agent-team/meeting/Meta/2025-12-30-docgraph-implementation.md)
 > - W-0002 Wish 文档：[wishes/active/wish-0002-doc-graph-tool.md](../../../wishes/active/wish-0002-doc-graph-tool.md)
-> - W-0002 Shape-Layer API 草案：[atelia/docs/DocGraph/api.md](api.md)
-> - Wish 系统 Rule-Layer 规范（用于理解 `wishes/index.md` 的结构约束）：[wishes/specs/wish-system-rules.md](../../../wishes/specs/wish-system-rules.md)
+> - W-0002 Shape-Tier API 草案：[atelia/docs/DocGraph/api.md](api.md)
+> - Wish 系统 Rule-Tier 规范（用于理解 `wishes/index.md` 的结构约束）：[wishes/specs/wish-system-rules.md](../../../wishes/specs/wish-system-rules.md)
 
 ---
 
@@ -115,10 +115,10 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 **Wish 专用提取（为 `wishes/index.md` 服务，可硬编码）**：
 
 - Wish 至少提取：`wishId`、`title`、`status`、`owner`、`updated`（来自 frontmatter）。
-- Wish 的 Why-Layer 到 Craft-Layer 状态必须通过解析正文中的"层级进度 (Layer Progress)"表格得到：
+- Wish 的 Why-Tier 到 Craft-Tier 状态必须通过解析正文中的"层级进度 (Layer Progress)"表格得到：
   - 定位：找到包含"层级进度"标题后的首个 Markdown 表格。
   - 读取：按 `| 层级 | 状态 | ... |` 的列含义读取。
-  - 映射：层级名 `Why-Layer`/`Shape-Layer`/`Rule-Layer`/`Plan-Layer`/`Craft-Layer` → 状态符号（⚪/🟡/🟢/🔴/➖）。
+  - 映射：层级名 `Why-Tier`/`Shape-Tier`/`Rule-Tier`/`Plan-Tier`/`Craft-Tier` → 状态符号（⚪/🟡/🟢/🔴/➖）。
 - 若缺少该表格、或缺少某层级行：必须报告结构错误（因为索引表格不可判定）。
 
 ### 3.5 表格生成（Table Generation）
@@ -130,7 +130,7 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 
 - 文件头必须声明“派生视图 / 可重建”。
 - 至少生成三段：Active / Completed / Abandoned。
-- Active 表格固定列：`WishId`、`标题`、`Owner`、`Why-Layer`、`Shape-Layer`、`Rule-Layer`、`Plan-Layer`、`Craft-Layer`、`更新日期`。
+- Active 表格固定列：`WishId`、`标题`、`Owner`、`Why-Tier`、`Shape-Tier`、`Rule-Tier`、`Plan-Tier`、`Craft-Tier`、`更新日期`。
 - `WishId` 单元格生成相对链接，指向对应目录下文件。
 - Quick Nav 可先生成固定空态文本，但不得崩溃。
 
@@ -159,10 +159,10 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 
 ## 4. L2 API 草案（“愿景外观”，与 MVP 的关系）
 
-> Shape-Layer 文档在 [atelia/docs/DocGraph/api.md](api.md) 中。
+> Shape-Tier 文档在 [atelia/docs/DocGraph/api.md](api.md) 中。
 > 它描述的是更宽的愿景：扫描 workspace、生成表格、双向链接检查/修复、配置化输出等。
 
-### 4.1 Shape-Layer 中的 5 个核心接口（信息源）
+### 4.1 Shape-Tier 中的 5 个核心接口（信息源）
 
 - `IDocumentParser`：frontmatter 解析、字段提取。
 - `ILinkTracker`：提取链接、验证链接目标。
@@ -170,20 +170,20 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 - `IIndexGenerator`：按 `TableConfig` 生成表格。
 - `IWorkspaceScanner`：扫描工作区 Markdown 文件（默认 `**/*.md`）。
 
-### 4.2 与 MVP/Rule-Layer 的张力（需要后续明确）
+### 4.2 与 MVP/Rule-Tier 的张力（需要后续明确）
 
-- **扫描范围**：Shape-Layer 倾向 workspace 扫描；Rule-Layer 强约束为"仅 wishes 三目录 roots + 可选可达扩展"。
-- **双向链接**：Shape-Layer 把"检查并修复双向链接"列为使命之一；Rule-Layer 明确 MVP 不做静默修复，且更偏向"报告/失败"。
-- **配置化**：Shape-Layer 有 `TableConfig`/YAML 配置设想；Rule-Layer MVP 要求硬编码生成 `wishes/index.md`。
+- **扫描范围**：Shape-Tier 倾向 workspace 扫描；Rule-Tier 强约束为"仅 wishes 三目录 roots + 可选可达扩展"。
+- **双向链接**：Shape-Tier 把"检查并修复双向链接"列为使命之一；Rule-Tier 明确 MVP 不做静默修复，且更偏向"报告/失败"。
+- **配置化**：Shape-Tier 有 `TableConfig`/YAML 配置设想；Rule-Tier MVP 要求硬编码生成 `wishes/index.md`。
 
 建议处理方式（素材层面结论）：
 
-- 将 Shape-Layer 视为"未来扩展的外观草案（愿景）"，将 Rule-Layer 视为"MVP 的约束规范"。
-- 代码结构可保留扩展点（例如接口/策略），但默认行为必须满足 Rule-Layer 的确定性与失败策略。
+- 将 Shape-Tier 视为"未来扩展的外观草案（愿景）"，将 Rule-Tier 视为"MVP 的约束规范"。
+- 代码结构可保留扩展点（例如接口/策略），但默认行为必须满足 Rule-Tier 的确定性与失败策略。
 
 ---
 
-## 5. Plan-Layer 实现建议（来自会议记录的候选决策）
+## 5. Plan-Tier 实现建议（来自会议记录的候选决策）
 
 > 这一节是实现层的候选方案集合，不代表最终确定。
 
@@ -214,7 +214,7 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 
 ## 6. 待决事项与风险（用于后续提纯为“决策记录”）
 
-### 6.1 待决事项（来自 Shape-Layer Open Questions + Rule-Layer 扩展点）
+### 6.1 待决事项（来自 Shape-Tier Open Questions + Rule-Tier 扩展点）
 
 - CLI 框架：System.CommandLine vs Spectre.Console（或先无依赖手写参数）。
 - 配置格式：YAML/JSON/TOML（MVP 可先无配置）。
@@ -247,8 +247,8 @@ W-0002（DocGraph 工具）的 MVP 被监护人明确裁剪为：
 
 ## 8. 后续提纯建议（从 ore → 多层级文档）
 
-- L1 Why：监护人动机与“认知带宽/上下文精确注入”的问题陈述（已在会议纪要中）。
+- Why-Tier：监护人动机与“认知带宽/上下文精确注入”的问题陈述（已在会议纪要中）。
 - L2 What：保留并重命名/对齐“DocGraph”术语，明确 MVP 只覆盖 wishes/index 生成。
-- L3 Rules：把第 3 节迁移为规范性条款文档（可拆分为 registry/traversal/extraction/table/errors）。
+- Rule-Tier：把第 3 节迁移为规范性条款文档（可拆分为 registry/traversal/extraction/table/errors）。
 - L4 How：将第 5、6 节的候选决策收敛成决策记录（Decision Log）。
 - L5 Build：落地为 `dotnet` 工具 + xUnit 测试 + 可重复生成的 `wishes/index.md` golden output。

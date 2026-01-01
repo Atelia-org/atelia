@@ -4,15 +4,15 @@ title: "DocGraph - API 设计"
 version: 0.1.0
 status: Draft
 parentWish: "W-0002"
-layer: Shape-Layer
+layer: Shape-Tier
 created: 2025-12-30
 updated: 2025-12-30
 ---
 
-# DocGraph - Shape-Layer API 设计
+# DocGraph - Shape-Tier API 设计
 
 > **ParentWish**: [W-0002](../active/wish-0002-doc-graph-tool.md)
-> **层级**: Shape-Layer（外观与接口设计）
+> **层级**: Shape-Tier（外观与接口设计）
 
 本文档定义 DocGraph 的公共 API 外观，关注**用户看到什么**而非实现细节。
 
@@ -294,7 +294,7 @@ rules:
 
 ### §6.1 SSOT 导航
 
-本节仅提供 Shape-Layer 的概念入口。
+本节仅提供 Shape-Tier 的概念入口。
 
 DocGraph 的 **错误码清单、严重度语义、退出码策略、结构化错误报告 schema** 的唯一权威来源是：
 
@@ -302,7 +302,7 @@ DocGraph 的 **错误码清单、严重度语义、退出码策略、结构化�
 
 ### §6.2 错误报告格式
 
-> 说明：字段命名与细节约束以 Rule-Layer 为准，详见 [spec.md §4.3](spec.md#43-错误报告-schema)。
+> 说明：字段命名与细节约束以 Rule-Tier 为准，详见 [spec.md §4.3](spec.md#43-错误报告-schema)。
 
 ```json
 {
