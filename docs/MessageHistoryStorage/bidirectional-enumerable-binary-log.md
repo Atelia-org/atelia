@@ -626,7 +626,7 @@ public enum MirrorPolicy
 - **镜像比对**：同时扫描两文件的公共前缀边界与各自最后一条完整记录；若分歧，依据策略：
     - PreferLongerValidTail：选取拥有更长有效尾部的副本，复制差异块或将另一侧截断至相同边界；
     - PreferCommonPrefix：将两侧均截断至公共前缀，确保一致性（最保守）。
-- **并发与安全**：修复操作要求独占访问（可选加文件锁）；提供 dryRun 预演计划，便于审计/回滚。
+- **并发与安全**：修复操作要求独占访问（可选加文件锁）；提供 dryRun 预演计划，便于核查/回滚。
 
 ## 位移公式与寻址（明确）
 - 记 `len = EnveLen`，`pad = (4 - (len & 3)) & 3`，等价于 `pad = BinaryLogFormat.PaddingOf4(len)`；`aligned = BinaryLogFormat.AlignedLength4(len) = len + pad`。

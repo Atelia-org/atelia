@@ -222,7 +222,7 @@
 
 ---
 
-## F. 风险提示（审计视角，务必提前条款化）
+## F. 风险提示（核查视角，务必提前条款化）
 
 1. **“对象存在性”与空 diff**：新建对象若无变更可能不生成 ObjectVersionRecord；必须明确 object existence 的最小写出策略（否则恢复后 VersionIndex/Load 语义会漂移）。
 2. **DoD 必须可判定**：每个里程碑都要能写测试或至少能通过 deterministic 的文件扫描验证。

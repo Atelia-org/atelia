@@ -4,7 +4,7 @@
 > **状态**：Approved（已批准）
 > **Owner**：DocOps
 > **批准日期**：2025-12-29
-> **审阅**：Auditor (GPT-5.2) — Approve with conditions → v1.1 已修复
+> **审阅**：Advisor-GPT (GPT-5.2) — Approve with conditions → v1.1 已修复
 > **来源畅谈会**：[2025-12-29-doc-restructuring-methodology.md](../../agent-team/meeting/StateJournal/2025-12-29-doc-restructuring-methodology.md)
 
 ---
@@ -69,7 +69,7 @@ Stub 格式：
 |:-----|:-----|
 | **Advisor-Claude** | 六维度三层架构；"编译单元"模式 |
 | **Advisor-DeepSeek** | "场景卡片 + 文档包"模式；DX 优先 |
-| **Auditor** | 条款注册表；51 条款统计；验收标准 |
+| **Advisor-GPT** | 条款注册表；51 条款统计；验收标准 |
 
 ---
 
@@ -366,7 +366,7 @@ Phase 1 完成后，基于实践经验决定是否继续：
 
 ## 5. 一致性风险检查清单
 
-执行过程中需要持续关注（来自 Auditor 审计）：
+执行过程中需要持续关注（来自 Advisor-GPT 核查）：
 
 | # | 风险 | 缓解措施 |
 |:--|:-----|:---------|
@@ -398,4 +398,4 @@ atelia/docs/StateJournal/
 
 ---
 
-_Last updated: 2025-12-29 (v1.1 — incorporated Auditor review feedback)_
+_Last updated: 2025-12-29 (v1.1 — incorporated Advisor-GPT review feedback)_

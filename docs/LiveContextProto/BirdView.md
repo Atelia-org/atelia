@@ -27,7 +27,7 @@
 - **设计历史反射 API**：
   - 读取：按时间或 Kind 分片获取历史片段，并附带条目的 LOD / Tool metadata。
   - 编辑：支持将旧 Observation 转换成“已收录”标记、从主历史中移除或降级为更紧凑的摘要条目。
-  - 审计：为 Recap 工具链记录操作来源和时间，便于回放。
+  - 可追溯性：为 Recap 工具链记录操作来源和时间，便于回放。
 - **明确 RecapMaintainer 的触发时机与资源**：可能在 `WaitingInput` 中检测历史长度超阈值，或监听 `AfterModelCall` / `ProcessToolResultsReady` 完成后异步触发。需要评估其使用的模型/工具预算，与 Memory Notebook 协作策略（Recap 是否写入 Notebook 或独立文件）。
 - **完善通知清理逻辑**：TODO 文档建议给 `_pendingNotifications` 加 ID，Recap 在多轮尝试时也要避免重复注入旧通知。
 

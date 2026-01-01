@@ -27,7 +27,7 @@ public interface IApplyPatchTool : IAssistantTool<ApplyPatchCommand, ApplyPatchR
 public sealed record ApplyPatchCommand
 (
     string Input,      // 必填：*** Begin Patch / End Patch 包裹的补丁内容
-    string Explanation // 必填：对补丁意图的简短说明，便于审计
+    string Explanation // 必填：对补丁意图的简短说明，便于核查
 );
 
 public sealed record ApplyPatchResult
