@@ -16,7 +16,7 @@ public interface IDocumentGraphBuilder
     /// <summary>
     /// 扫描指定目录，构建文档图。
     /// </summary>
-    /// <param name="wishDirectories">Wish目录列表（默认：["wishes/active", "wishes/completed"]）。</param>
+    /// <param name="wishDirectories">Wish目录列表（默认：["wishes/active", "wishes/biding", "wishes/completed"]）。</param>
     /// <returns>完整的文档关系图。</returns>
     DocumentGraph Build(IEnumerable<string>? wishDirectories = null);
 
@@ -34,7 +34,7 @@ public interface IDocumentGraphBuilder
 /// </summary>
 public partial class DocumentGraphBuilder : IDocumentGraphBuilder
 {
-    private static readonly string[] DefaultWishDirectories = ["wishes/active", "wishes/completed"];
+    private static readonly string[] DefaultWishDirectories = ["wishes/active", "wishes/biding", "wishes/completed"];
 
     // Wish 文件名模式：wish-0001.md → W-0001
     [GeneratedRegex(@"^wish-(\d{4})\.md$", RegexOptions.IgnoreCase)]
@@ -346,13 +346,17 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
 
     /// <summary>
     /// 从文件路径推导状态。
-    /// 遵循 [A-DOCGRAPH-002]：active/ → "active", completed/ → "completed"
+    /// 遵循 [A-DOCGRAPH-002]：active/ → "active", biding/ → "biding", completed/ → "completed"
     /// </summary>
     private static string DeriveStatus(string filePath, string wishDirectory)
     {
         if (wishDirectory.Contains("active", StringComparison.OrdinalIgnoreCase))
         {
             return "active";
+        }
+        if (wishDirectory.Contains("biding", StringComparison.OrdinalIgnoreCase))
+        {
+            return "biding";
         }
         if (wishDirectory.Contains("completed", StringComparison.OrdinalIgnoreCase))
         {

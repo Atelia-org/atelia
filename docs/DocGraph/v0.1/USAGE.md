@@ -178,7 +178,7 @@ wishes/active/wish-0002.md  ──produce──>  atelia/docs/DocGraph/api.md
 
 ### Root Nodes
 
-**Wish 文档**是图的入口点，位于 `wishes/active/` 和 `wishes/completed/` 目录。
+**Wish 文档**是图的入口点，位于 `wishes/active/`、`wishes/biding/` 和 `wishes/completed/` 目录。
 DocGraph 从这些 Root Nodes 开始，沿着 `produce` 关系递归构建完整的文档闭包。
 
 ### 双向验证
@@ -203,7 +203,7 @@ DocGraph 验证这两个方向的声明是否一致。你只需维护 `produce`�
 ### Q: 我的文档没有被扫描到？
 
 检查以下条件：
-1. 文件是否在 `wishes/active/` 或 `wishes/completed/` 目录？
+1. 文件是否在 `wishes/active/`、`wishes/biding/` 或 `wishes/completed/` 目录？
 2. 文件是否有 YAML frontmatter（`---` 开头和结尾）？
 3. 是否被某个 Wish 的 `produce` 字段引用？
 

@@ -30,7 +30,7 @@ public class DocumentNode
 
     /// <summary>
     /// 文档状态。
-    /// - Wish文档：从文件夹推导（active/ → "active", completed/ → "completed"）
+    /// - Wish文档：从文件夹推导（active/ → "active", biding/ → "biding", completed/ → "completed"）
     /// - 产物文档：null（不适用）
     /// </summary>
     public string? Status { get; }

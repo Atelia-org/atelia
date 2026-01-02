@@ -302,9 +302,9 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ExitCode_Error_Is2()
+    public async Task ExitCode_Warning_WithMissingFields_Is1()
     {
-        // Arrange
+        // Arrange - 缺少必填字段现在是 Warning 而非 Error
         SetupWorkspaceWithErrors();
 
         var command = new ValidateCommand();
@@ -314,7 +314,7 @@ public class CommandTests : IDisposable
         var exitCode = await rootCommand.InvokeAsync(new[] { "validate", _testDir });
 
         // Assert
-        exitCode.Should().Be(2, "有错误应返回2");
+        exitCode.Should().Be(1, "有警告应返回1（必填字段缺失已降级为 Warning）");
     }
 
     [Fact]
@@ -448,11 +448,12 @@ public class CommandTests : IDisposable
 
     private void SetupWorkspaceWithErrors()
     {
-        // 创建有错误的工作区（缺少必填字段）
+        // 创建有警告的工作区（缺少必填字段）
+        // 注：必填字段缺失已降级为 Warning
         var activeDir = Path.Combine(_testDir, "wishes", "active");
         Directory.CreateDirectory(activeDir);
 
-        // Wish 文档缺少 produce 字段（Error）
+        // Wish 文档缺少 produce 字段（Warning）
         var wishContent = """
             ---
             title: "测试需求"

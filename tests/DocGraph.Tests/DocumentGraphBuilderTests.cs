@@ -491,9 +491,9 @@ public class DocumentGraphBuilderTests : IDisposable
     }
 
     [Fact]
-    public void Validate_ShouldRequireProduceForWish()
+    public void Validate_ShouldWarnMissingProduceForWish()
     {
-        // Arrange
+        // Arrange - Wish 文档缺少 produce 字段现在是 Warning
         CreateDirectory("wishes/active");
         CreateFile("wishes/active/wish-0001.md", """
             ---
@@ -507,11 +507,11 @@ public class DocumentGraphBuilderTests : IDisposable
         // Act
         var result = builder.Validate(graph);
 
-        // Assert
-        Assert.False(result.IsValid);
+        // Assert - 应该有 Warning 级别的 produce 缺失问题
+        Assert.True(result.IsValid, "Warning 不应导致验证失败");
         Assert.Contains(result.Issues, i =>
             i.ErrorCode == "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING" &&
-            i.Severity == IssueSeverity.Error &&
+            i.Severity == IssueSeverity.Warning &&
             i.Message.Contains("produce"));
     }
 
@@ -936,10 +936,10 @@ public class DocumentGraphBuilderTests : IDisposable
     #region P1-2修复验证测试：产物文档核心字段验证
 
     [Fact]
-    public void Validate_ShouldErrorMissingDocIdInProduct()
+    public void Validate_ShouldWarnMissingDocIdInProduct()
     {
-        // Arrange - P1-2: 产物文档缺少 docId 字段应报Error
-        // 遵循 [S-FRONTMATTER-006]：必填字段缺失 → Error
+        // Arrange - P1-2: 产物文档缺少 docId 字段现在是 Warning
+        // 设计决策：单文档字段缺失不应阻断其他文档的收集
         CreateDirectory("wishes/active");
         CreateFile("wishes/active/wish-0001.md", """
             ---
@@ -962,19 +962,19 @@ public class DocumentGraphBuilderTests : IDisposable
         // Act
         var result = builder.Validate(graph);
 
-        // Assert - 应该有 Error 级别的 docId 缺失问题（不是 Warning）
-        Assert.False(result.IsValid);
+        // Assert - 应该有 Warning 级别的 docId 缺失问题
+        Assert.True(result.IsValid, "Warning 不应导致验证失败");
         Assert.Contains(result.Issues, i =>
             i.ErrorCode == "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING" &&
-            i.Severity == IssueSeverity.Error &&
+            i.Severity == IssueSeverity.Warning &&
             i.Message.Contains("docId"));
     }
 
     [Fact]
-    public void Validate_ShouldErrorMissingProduceByInProduct()
+    public void Validate_ShouldWarnMissingProduceByInProduct()
     {
-        // Arrange - P1-2: 产物文档缺少 produce_by 字段应报Error
-        // 遵循 [S-FRONTMATTER-006]：必填字段缺失 → Error
+        // Arrange - P1-2: 产物文档缺少 produce_by 字段应报 Warning
+        // 设计决策：单文档字段缺失不应阻断其他文档的收集，降级为 Warning
         CreateDirectory("wishes/active");
         CreateFile("wishes/active/wish-0001.md", """
             ---
@@ -996,11 +996,11 @@ public class DocumentGraphBuilderTests : IDisposable
         // Act
         var result = builder.Validate(graph);
 
-        // Assert - 应该有 Error 级别的 produce_by 缺失问题（不是 Warning）
-        Assert.False(result.IsValid);
+        // Assert - 应该有 Warning 级别的 produce_by 缺失问题
+        Assert.True(result.IsValid, "Warning 不应导致验证失败");
         Assert.Contains(result.Issues, i =>
             i.ErrorCode == "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING" &&
-            i.Severity == IssueSeverity.Error &&
+            i.Severity == IssueSeverity.Warning &&
             i.Message.Contains("produce_by"));
     }
 
@@ -1169,10 +1169,10 @@ public class DocumentGraphBuilderTests : IDisposable
     }
 
     [Fact]
-    public void Validate_ProductCoreFieldsMissingShouldBeError()
+    public void Validate_ProductCoreFieldsMissingShouldBeWarning()
     {
-        // Craftsman审计关键测试3：产物核心字段必填为Error
-        // 缺失 docId/title/produce_by 应按 [S-FRONTMATTER-006] 返回 Error
+        // Craftsman审计关键测试3：产物核心字段必填现已降级为 Warning
+        // 设计决策：单文档字段缺失不应阻断其他文档的收集
         CreateDirectory("wishes/active");
         CreateFile("wishes/active/wish-0001.md", """
             ---
@@ -1194,24 +1194,24 @@ public class DocumentGraphBuilderTests : IDisposable
         // Act
         var result = builder.Validate(graph);
 
-        // Assert - docId 和 produce_by 缺失都应该是 Error 级别
-        Assert.False(result.IsValid, "缺少核心字段应导致验证不通过");
+        // Assert - docId 和 produce_by 缺失都应该是 Warning 级别
+        Assert.True(result.IsValid, "Warning 不应导致验证失败");
 
-        // docId 缺失应为 Error
+        // docId 缺失应为 Warning
         var docIdIssue = result.Issues.FirstOrDefault(i =>
             i.ErrorCode == "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING" &&
             i.FilePath == "docs/minimal.md" &&
             i.Message.Contains("docId"));
         Assert.NotNull(docIdIssue);
-        Assert.Equal(IssueSeverity.Error, docIdIssue.Severity);
+        Assert.Equal(IssueSeverity.Warning, docIdIssue.Severity);
 
-        // produce_by 缺失应为 Error
+        // produce_by 缺失应为 Warning
         var produceByIssue = result.Issues.FirstOrDefault(i =>
             i.ErrorCode == "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING" &&
             i.FilePath == "docs/minimal.md" &&
             i.Message.Contains("produce_by"));
         Assert.NotNull(produceByIssue);
-        Assert.Equal(IssueSeverity.Error, produceByIssue.Severity);
+        Assert.Equal(IssueSeverity.Warning, produceByIssue.Severity);
     }
 
     #endregion
@@ -1238,11 +1238,13 @@ public class DocumentGraphBuilderTests : IDisposable
         // Act
         var result = builder.Validate(graph);
 
-        // Assert - 应该报告DANGLING_LINK错误
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Issues, i =>
-            i.ErrorCode == "DOCGRAPH_RELATION_DANGLING_LINK" &&
-            i.Message.Contains("frontmatter"));
+        // Assert - 应该报告 frontmatter 相关的 Warning
+        // 因为文件存在但无 frontmatter，会被视为缺失 docId/title/produce_by
+        Assert.True(result.HasWarnings);
+        var hasRelevantIssue = result.Issues.Any(i =>
+            i.ErrorCode == "DOCGRAPH_FRONTMATTER_REQUIRED_FIELD_MISSING" && 
+            i.FilePath == "docs/no-frontmatter.md");
+        Assert.True(hasRelevantIssue, "应该报告 frontmatter 相关问题");
     }
 
     [Fact]
@@ -1307,49 +1309,9 @@ public class DocumentGraphBuilderTests : IDisposable
             i.ErrorCode == "DOCGRAPH_RELATION_MISSING_BACKLINK");
     }
 
-    [Fact]
-    public void Validate_ShouldDetectCircularReference()
-    {
-        // Arrange - [A-DOCGRAPH-003] 循环引用检测
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
-            ---
-            title: Wish A
-            produce:
-              - docs/docB.md
-            ---
-            """);
-        CreateFile("docs/docB.md", """
-            ---
-            title: Doc B
-            produce_by:
-              - wishes/active/wish-0001.md
-            produce:
-              - docs/docC.md
-            ---
-            """);
-        CreateFile("docs/docC.md", """
-            ---
-            title: Doc C
-            produce_by:
-              - docs/docB.md
-            produce:
-              - wishes/active/wish-0001.md
-            ---
-            """);
-        // 循环：wish-0001 -> docB -> docC -> wish-0001
-
-        var builder = new DocumentGraphBuilder(_tempDir);
-        var graph = builder.Build();
-
-        // Act
-        var result = builder.Validate(graph);
-
-        // Assert - 应该有Info级别的循环引用记录
-        Assert.Contains(result.Issues, i =>
-            i.ErrorCode == "DOCGRAPH_RELATION_CIRCULAR_REFERENCE" &&
-            i.Severity == IssueSeverity.Info);
-    }
+    // [已移除] Validate_ShouldDetectCircularReference
+    // 设计决策：scope.md 明确说明"循环引用不检测不报告"，因为核心目标是"收集信息"，
+    // 环不影响这个目标，只需确保每个文档只被 visit 一次
 
     [Fact]
     public void Build_ShouldHaveDeterministicEdgeOrder()

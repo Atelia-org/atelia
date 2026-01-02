@@ -45,7 +45,7 @@ glossary:
 
 #### 核心功能
 1. **Root Nodes扫描**
-   - 扫描 `wishes/active` 和 `wishes/completed` 目录及子目录的所有 `.md` 文件
+   - 扫描 `wishes/active`、`wishes/biding` 和 `wishes/completed` 目录及子目录的所有 `.md` 文件
    - 忽略无frontmatter的文件
    - 解析frontmatter，构建root nodes集合（wish文档）
 
@@ -162,7 +162,7 @@ glossary:
 
 **推导字段**：
 - `docId`：从文件名推导（`wish-0001.md` → `W-0001`）
-- `status`：从文件夹推导（`active/` → `"active"`, `completed/` → `"completed"`）
+- `status`：从文件夹推导（`active/` → `"active"`, `biding/` → `"biding"`, `completed/` → `"completed"`）
 
 #### 关系字段（v0.1核心功能）
 | 字段名 | 类型 | 说明 | 示例 |
@@ -182,7 +182,7 @@ glossary:
 ### 3.2 输入处理约束
 
 #### Root Nodes扫描
-- **扫描目录**：固定扫描 `wishes/active` 和 `wishes/completed` 两个目录
+- **扫描目录**：固定扫描 `wishes/active`、`wishes/biding` 和 `wishes/completed` 三个目录
 - **文件过滤**：仅`.md`文件，忽略无frontmatter的文件
 - **编码假设**：UTF-8，不支持自动检测
 
@@ -368,7 +368,7 @@ suggestion: "检查YAML语法，确保缩进正确"
 ### 6.1 功能验收标准
 
 #### 第一阶段：文档图构建与验证
-1. ✅ 能扫描 `wishes/active` 和 `wishes/completed` 目录的wish文档
+1. ✅ 能扫描 `wishes/active`、`wishes/biding` 和 `wishes/completed` 目录的wish文档
 2. ✅ 能从文件名推导`docId`，从文件夹推导`status`
 3. ✅ 能正确解析frontmatter中的 `produce` 和 `produce_by` 关系
 4. ✅ 能基于 `produce` 关系构建完整的文档图闭包
