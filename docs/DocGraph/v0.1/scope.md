@@ -2,7 +2,7 @@
 docId: "W-0002-scope"
 title: "DocGraph v0.1 功能边界文档"
 produce_by:
-  - "wishes/active/wish-0002-doc-graph-tool.md"
+  - "wish/W-0002-docgraph/wish.md"
 glossary:
   - 文档图: "frontmatter 关系构成的有向图，不是文件系统树"
   - Root-Nodes: "Wish 文档，是文档图的入口点"
@@ -45,7 +45,7 @@ glossary:
 
 #### 核心功能
 1. **Root Nodes扫描**
-   - 扫描 `wishes/active`、`wishes/biding` 和 `wishes/completed` 目录及子目录的所有 `.md` 文件
+   - 扫描 `wish` 目录下的 `wish.md` 文件（Wish 实例目录布局）
    - 忽略无frontmatter的文件
    - 解析frontmatter，构建root nodes集合（wish文档）
 
@@ -182,7 +182,7 @@ glossary:
 ### 3.2 输入处理约束
 
 #### Root Nodes扫描
-- **扫描目录**：固定扫描 `wishes/active`、`wishes/biding` 和 `wishes/completed` 三个目录
+- **扫描目录**：固定扫描 `wish` 目录（Wish 实例目录布局，仅识别 `wish/**/wish.md`）
 - **文件过滤**：仅`.md`文件，忽略无frontmatter的文件
 - **编码假设**：UTF-8，不支持自动检测
 
@@ -368,8 +368,8 @@ suggestion: "检查YAML语法，确保缩进正确"
 ### 6.1 功能验收标准
 
 #### 第一阶段：文档图构建与验证
-1. ✅ 能扫描 `wishes/active`、`wishes/biding` 和 `wishes/completed` 目录的wish文档
-2. ✅ 能从文件名推导`docId`，从文件夹推导`status`
+1. ✅ 能扫描 `wish` 目录下的 Wish 实例文档（`wish/**/wish.md`）
+2. ✅ 能从 frontmatter 读取 `wishId` 和 `status`（Wish 实例目录布局）
 3. ✅ 能正确解析frontmatter中的 `produce` 和 `produce_by` 关系
 4. ✅ 能基于 `produce` 关系构建完整的文档图闭包
 5. ✅ 能验证双向链接完整性（`produce` ↔ `produce_by`）

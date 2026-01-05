@@ -2,7 +2,7 @@
 docId: "W-0002-api"
 title: "DocGraph v0.1 API 设计文档"
 produce_by:
-  - "wishes/active/wish-0002-doc-graph-tool.md"
+  - "wish/W-0002-docgraph/wish.md"
 glossary:
   - Document-Node: "文档图中的节点，表示一个文档"
   - Document-Graph: "完整的文档关系图"

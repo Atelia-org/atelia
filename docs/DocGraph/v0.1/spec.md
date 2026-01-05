@@ -2,7 +2,7 @@
 docId: "W-0002-spec"
 title: "DocGraph v0.1 实现规范文档"
 produce_by:
-  - "wishes/active/wish-0002-doc-graph-tool.md"
+  - "wish/W-0002-docgraph/wish.md"
 issues:
   - description: "需要添加更多测试用例覆盖边界情况"
     status: "open"
