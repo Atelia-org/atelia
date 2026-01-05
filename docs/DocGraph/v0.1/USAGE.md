@@ -2,7 +2,7 @@
 docId: "W-0002-usage"
 title: "DocGraph v0.1 使用指南"
 produce_by:
-  - "wishes/active/wish-0002-doc-graph-tool.md"
+  - "wish/W-0002-docgraph/wish.md"
 issues:
   - description: "需要更多 Visitor 实现（如依赖图生成器）"
     status: "open"
@@ -198,7 +198,7 @@ DocGraph 验证这两个方向的声明是否一致。你只需维护 `produce`�
 
 当前状态：Visitor 模式架构已就绪（见 `src/DocGraph/Visitors/`），但 CLI 命令未添加。
 
-跟踪进度：[wish-0002-doc-graph-tool.md](../../../../wishes/active/wish-0002-doc-graph-tool.md)
+跟踪进度：[wish/W-0002-docgraph/wish.md](../../../../wish/W-0002-docgraph/wish.md)
 
 ### Q: 我的文档没有被扫描到？
 

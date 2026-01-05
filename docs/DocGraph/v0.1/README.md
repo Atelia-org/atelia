@@ -2,7 +2,7 @@
 docId: "W-0002-readme"
 title: "DocGraph v0.1 README"
 produce_by:
-  - "wishes/active/wish-0002-doc-graph-tool.md"
+  - "wish/W-0002-docgraph/wish.md"
 ---
 
 # DocGraph v0.1 — 文档关系验证工具
@@ -60,4 +60,4 @@ dotnet run -- fix ../../../ --yes
 
 ---
 
-**问题反馈**：[wish-0002-doc-graph-tool.md](../../../../wishes/active/wish-0002-doc-graph-tool.md)
+**问题反馈**：[wish/W-0002-docgraph/wish.md](../../../../wish/W-0002-docgraph/wish.md)

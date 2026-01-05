@@ -16,9 +16,9 @@ updated: 2025-12-30
 >
 > 主要信息源：
 > - W-0002 实现畅谈会记录（含 Rule-Tier 条款与 Plan-Tier 建议）：[agent-team/meeting/Meta/2025-12-30-docgraph-implementation.md](../../../agent-team/meeting/Meta/2025-12-30-docgraph-implementation.md)
-> - W-0002 Wish 文档：[wishes/active/wish-0002-doc-graph-tool.md](../../../wishes/active/wish-0002-doc-graph-tool.md)
+> - W-0002 Wish 文档：[wish/W-0002-docgraph/wish.md](../../../wish/W-0002-docgraph/wish.md)
 > - W-0002 Shape-Tier API 草案：[atelia/docs/DocGraph/api.md](api.md)
-> - Wish 系统 Rule-Tier 规范（用于理解 `wishes/index.md` 的结构约束）：[wishes/specs/wish-system-rules.md](../../../wishes/specs/wish-system-rules.md)
+> - Wish 系统 Rule-Tier 规范：[wish/W-0001-wish-bootstrap/library/specs/wish-system-rules.md](../../../wish/W-0001-wish-bootstrap/library/specs/wish-system-rules.md)
 
 ---
 

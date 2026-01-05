@@ -55,7 +55,7 @@ updated: 2025-12-31
 ### §0.3 上位规则引用
 
 本规范继承以下上位规则：
-- [wish-system-rules.md](../../../wishes/specs/wish-system-rules.md) — Wish 文档格式约束
+- [wish-system-rules.md](../../../wish/W-0001-wish-bootstrap/library/specs/wish-system-rules.md) — Wish 文档格式约束
 - [spec-conventions.md](../spec-conventions.md) — 规范语言约定与条款编号体系
 
 **条款映射表**（本规范依赖的上位条款）：
