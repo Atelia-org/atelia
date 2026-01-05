@@ -4,9 +4,8 @@ title: "DocGraph v0.1 实现规范文档"
 produce_by:
   - "wish/W-0002-docgraph/wish.md"
 issues:
-  - description: "需要添加更多测试用例覆盖边界情况"
-    status: "open"
-    assignee: "QA"
+  - id: "C-MORE-TESTS"
+    description: "需要添加更多测试用例覆盖边界情况"
 ---
 
 # DocGraph v0.1 - 实现规范文档

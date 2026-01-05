@@ -4,8 +4,8 @@ title: "DocGraph v0.1 使用指南"
 produce_by:
   - "wish/W-0002-docgraph/wish.md"
 issues:
-  - description: "需要更多 Visitor 实现（如依赖图生成器）"
-    status: "open"
+  - id: "C-MORE-VISITORS"
+    description: "需要更多 Visitor 实现（如依赖图生成器）"
 ---
 
 # DocGraph v0.1 — 使用指南
