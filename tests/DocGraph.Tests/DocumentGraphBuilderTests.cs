@@ -1,5 +1,6 @@
-// DocGraph v0.1 - DocumentGraphBuilder 集成测试
+// DocGraph v0.2 - DocumentGraphBuilder 集成测试
 // 参考：spec.md §4 文档图构建约束
+// 注意：v0.2 使用 Wish Instance Directory 布局（wish/W-XXXX-slug/wish.md）
 
 using System.IO;
 using Xunit;
@@ -10,6 +11,7 @@ namespace Atelia.DocGraph.Tests;
 /// <summary>
 /// DocumentGraphBuilder 集成测试。
 /// 覆盖 Day 2 任务：目录扫描、关系提取、闭包构建、验证逻辑。
+/// v0.2 更新：使用 Wish Instance Directory 布局。
 /// </summary>
 public class DocumentGraphBuilderTests : IDisposable
 {
@@ -34,19 +36,21 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Build_ShouldScanWishDirectoriesRecursively()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateDirectory("wishes/active/subdir");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish 1
+            status: Active
             produce:
               - docs/api.md
             ---
             """);
-        CreateFile("wishes/active/subdir/wish-0002.md", """
+        CreateFile("wish/W-0002-test/wish.md", """
             ---
+            wishId: "W-0002"
             title: Wish 2
+            status: Active
             produce:
               - docs/spec.md
             ---
@@ -67,7 +71,7 @@ public class DocumentGraphBuilderTests : IDisposable
         // Act
         var graph = builder.Build();
 
-        // Assert - 应该扫描到子目录中的文件
+        // Assert - 应该扫描到 wish 目录中的 wish.md 文件
         Assert.Equal(4, graph.AllNodes.Count);
         Assert.Equal(2, graph.RootNodes.Count);
         Assert.Contains(graph.AllNodes, n => n.DocId == "W-0001");
@@ -75,22 +79,86 @@ public class DocumentGraphBuilderTests : IDisposable
     }
 
     [Fact]
-    public void Build_ShouldIgnoreHiddenFiles()
+    public void Build_ShouldNotTreatNonEntryMarkdownUnderWishAsRoot()
     {
         // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
-            title: Normal Wish
+            wishId: "W-0001"
+            title: Wish 1
+            status: Active
             produce:
               - docs/api.md
             ---
             """);
-        CreateFile("wishes/active/.hidden-wish.md", """
+        CreateFile("wish/W-0001-test/notes.md", """
             ---
-            title: Hidden Wish
+            title: Notes
+            ---
+            """);
+        CreateFile("docs/api.md", """
+            ---
+            title: API Doc
+            ---
+            """);
+
+        var builder = new DocumentGraphBuilder(_tempDir);
+
+        // Act
+        var graph = builder.Build();
+
+        // Assert
+        Assert.Single(graph.RootNodes, n => n.FilePath == "wish/W-0001-test/wish.md");
+        Assert.DoesNotContain(graph.RootNodes, n => n.FilePath == "wish/W-0001-test/notes.md");
+    }
+
+    [Fact]
+    public void Build_ShouldNotTreatNestedWishMdAsRoot()
+    {
+        // Arrange
+        CreateFile("wish/W-0001-test/wish.md", """
+            ---
+            wishId: "W-0001"
+            title: Wish 1
+            status: Active
+            produce: []
+            ---
+            """);
+        CreateFile("wish/W-0001-test/sub/wish.md", """
+            ---
+            wishId: "W-9999"
+            title: Nested Wish
+            status: Active
+            produce: []
+            ---
+            """);
+
+        var builder = new DocumentGraphBuilder(_tempDir);
+
+        // Act
+        var graph = builder.Build();
+
+        // Assert
+        Assert.Single(graph.RootNodes, n => n.FilePath == "wish/W-0001-test/wish.md");
+        Assert.DoesNotContain(graph.RootNodes, n => n.FilePath == "wish/W-0001-test/sub/wish.md");
+    }
+
+    [Fact]
+    public void Build_ShouldIgnoreHiddenFiles()
+    {
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
+            ---
+            wishId: "W-0001"
+            title: Normal Wish
+            status: Active
             produce:
-              - docs/hidden.md
+              - docs/api.md
+            ---
+            """);
+        CreateFile("wish/W-0001-test/.hidden-file.md", """
+            ---
+            title: Hidden File
             ---
             """);
         CreateFile("docs/api.md", """
@@ -107,33 +175,30 @@ public class DocumentGraphBuilderTests : IDisposable
         // Assert - 隐藏文件应该被忽略
         Assert.Equal(2, graph.AllNodes.Count);
         Assert.Single(graph.RootNodes);
-        Assert.DoesNotContain(graph.AllNodes, n => n.Title == "Hidden Wish");
+        Assert.DoesNotContain(graph.AllNodes, n => n.Title == "Hidden File");
     }
 
     [Fact]
     public void Build_ShouldIgnoreTempFiles()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Normal Wish
+            status: Active
             produce:
               - docs/api.md
             ---
             """);
-        CreateFile("wishes/active/wish-0002.md~", """
+        CreateFile("wish/W-0001-test/wish.md~", """
             ---
             title: Temp Wish Backup
-            produce:
-              - docs/temp.md
             ---
             """);
-        CreateFile("wishes/active/#wish-0003.md#", """
+        CreateFile("wish/W-0001-test/#autosave.md#", """
             ---
             title: Emacs Autosave
-            produce:
-              - docs/autosave.md
             ---
             """);
         CreateFile("docs/api.md", """
@@ -155,17 +220,18 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Build_ShouldOnlyProcessMdFiles()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Markdown Wish
+            status: Active
             produce:
               - docs/api.md
             ---
             """);
-        CreateFile("wishes/active/readme.txt", "This is a text file");
-        CreateFile("wishes/active/notes.yaml", "key: value");
+        CreateFile("wish/W-0001-test/readme.txt", "This is a text file");
+        CreateFile("wish/W-0001-test/notes.yaml", "key: value");
         CreateFile("docs/api.md", """
             ---
             title: API Doc
@@ -184,21 +250,23 @@ public class DocumentGraphBuilderTests : IDisposable
     }
 
     [Fact]
-    public void Build_ShouldDeriveStatusFromDirectory()
+    public void Build_ShouldDeriveStatusFromFrontmatter()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateDirectory("wishes/completed");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: 状态从 frontmatter 读取
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Active Wish
+            status: Active
             produce:
               - docs/api.md
             ---
             """);
-        CreateFile("wishes/completed/wish-0002.md", """
+        CreateFile("wish/W-0002-test/wish.md", """
             ---
+            wishId: "W-0002"
             title: Completed Wish
+            status: Completed
             produce:
               - docs/spec.md
             ---
@@ -219,7 +287,7 @@ public class DocumentGraphBuilderTests : IDisposable
         // Act
         var graph = builder.Build();
 
-        // Assert - 状态应该从目录推导
+        // Assert - 状态应该从 frontmatter 读取（小写）
         var activeWish = graph.AllNodes.First(n => n.DocId == "W-0001");
         var completedWish = graph.AllNodes.First(n => n.DocId == "W-0002");
         Assert.Equal("active", activeWish.Status);
@@ -230,8 +298,8 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldHandleEmptyWishDirectory()
     {
         // Arrange
-        CreateDirectory("wishes/active");
-        // 目录存在但没有文件
+        CreateDirectory("wish");
+        // 目录存在但没有 wish.md 文件
 
         var builder = new DocumentGraphBuilder(_tempDir);
 
@@ -260,16 +328,56 @@ public class DocumentGraphBuilderTests : IDisposable
 
     #endregion
 
+        #region v0.2 合同约束：wishId 必填
+
+        [Fact]
+        public void Validate_ShouldErrorWhenWishMissingWishId()
+        {
+                // Arrange - v0.2: wish/**/wish.md 必须提供 wishId
+                CreateFile("wish/W-0001-test/wish.md", """
+                        ---
+                        title: Wish without wishId
+                        status: Active
+                        produce:
+                            - docs/api.md
+                        ---
+                        """);
+                CreateFile("docs/api.md", """
+                        ---
+                        docId: api-doc
+                        title: API Doc
+                        produce_by:
+                            - wish/W-0001-test/wish.md
+                        ---
+                        """);
+
+                var builder = new DocumentGraphBuilder(_tempDir);
+                var graph = builder.Build();
+
+                // Act
+                var result = builder.Validate(graph);
+
+                // Assert
+                Assert.False(result.IsValid);
+                Assert.Contains(result.Issues, i =>
+                        i.ErrorCode == "DOCGRAPH_WISH_ID_MISSING" &&
+                        i.Severity == IssueSeverity.Error &&
+                        i.FilePath == "wish/W-0001-test/wish.md");
+        }
+
+        #endregion
+
     #region 任务 2.3：produce 关系提取和闭包构建
 
     [Fact]
     public void Build_ShouldExtractProduceRelations()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Main Wish
+            status: Active
             produce:
               - docs/api.md
               - docs/spec.md
@@ -301,11 +409,12 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Build_ShouldEstablishBidirectionalRelations()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Main Wish
+            status: Active
             produce:
               - docs/api.md
             ---
@@ -333,10 +442,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldBuildTransitiveClosure()
     {
         // Arrange - 多层 produce 关系：Wish → Doc1 → Doc2 → Doc3
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Root Wish
+            status: Active
             produce:
               - docs/level1.md
             ---
@@ -376,11 +486,12 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Build_ShouldHandleMissingProduceTarget()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with missing target
+            status: Active
             produce:
               - docs/missing.md
             ---
@@ -403,10 +514,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldHandleCircularReference()
     {
         // Arrange - A → B → A 循环引用
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish A
+            status: Active
             produce:
               - docs/docB.md
             ---
@@ -415,7 +527,7 @@ public class DocumentGraphBuilderTests : IDisposable
             ---
             title: Doc B
             produce:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
 
@@ -432,10 +544,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldHandleSingleStringProduce()
     {
         // Arrange - produce 是单个字符串而非数组
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Single Produce Wish
+            status: Active
             produce: docs/api.md
             ---
             """);
@@ -463,10 +576,11 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Validate_ShouldRequireTitleField()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
+            status: Active
             produce:
               - docs/api.md
             ---
@@ -494,10 +608,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldWarnMissingProduceForWish()
     {
         // Arrange - Wish 文档缺少 produce 字段现在是 Warning
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish without produce
+            status: Active
             ---
             """);
 
@@ -518,11 +633,12 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Validate_ShouldDetectDanglingLinks()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with dangling link
+            status: Active
             produce:
               - docs/nonexistent.md
             ---
@@ -544,11 +660,12 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Validate_ShouldDetectInvalidPath()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with invalid path
+            status: Active
             produce:
               - ../../../outside/file.md
             ---
@@ -570,10 +687,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldPassForValidGraph()
     {
         // Arrange - 完整的产物文档必须包含 docId, title, produce_by
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Valid Wish
+            status: Active
             produce:
               - docs/api.md
             ---
@@ -583,7 +701,7 @@ public class DocumentGraphBuilderTests : IDisposable
             docId: api-doc
             title: API Doc
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
 
@@ -605,11 +723,12 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Validate_ShouldIncludeScanStatistics()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish 1
+            status: Active
             produce:
               - docs/api.md
               - docs/spec.md
@@ -643,11 +762,12 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Validate_IssuesShouldHaveThreeTierSuggestions()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with dangling link
+            status: Active
             produce:
               - docs/missing.md
             ---
@@ -671,9 +791,10 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_IssuesShouldBeSortedBySeverity()
     {
         // Arrange - 创建多个不同严重度的问题
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
+            status: Active
             produce:
               - docs/missing.md
             ---
@@ -694,11 +815,12 @@ public class DocumentGraphBuilderTests : IDisposable
     [Fact]
     public void Validate_ShouldIncludeFilePathInIssues()
     {
-        // Arrange
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        // Arrange - v0.2: wish 实例目录布局
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with issue
+            status: Active
             produce:
               - docs/missing.md
             ---
@@ -724,10 +846,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldNotCollapseOutOfWorkspacePath()
     {
         // Arrange - P1-1: 越界路径 ../outside.md 不应被折叠为 outside.md
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with out-of-workspace path
+            status: Active
             produce:
               - ../outside.md
             ---
@@ -746,7 +869,7 @@ public class DocumentGraphBuilderTests : IDisposable
 
         // Assert - 不应该将 ../outside.md 误解为 outside.md
         // 越界路径不应该入队，所以 outside.md 不应该在图中
-        Assert.Equal(1, graph.AllNodes.Count);
+        Assert.Single(graph.AllNodes);
         Assert.DoesNotContain(graph.AllNodes, n => n.FilePath == "outside.md");
     }
 
@@ -754,10 +877,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldNotCollapseDeepOutOfWorkspacePath()
     {
         // Arrange - P1-1: 多层越界路径 ../../../deep/outside.md
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with deep out-of-workspace path
+            status: Active
             produce:
               - ../../../deep/outside.md
             ---
@@ -775,7 +899,7 @@ public class DocumentGraphBuilderTests : IDisposable
         var graph = builder.Build();
 
         // Assert - 越界路径不应该入队
-        Assert.Equal(1, graph.AllNodes.Count);
+        Assert.Single(graph.AllNodes);
         Assert.DoesNotContain(graph.AllNodes, n => n.FilePath == "deep/outside.md");
     }
 
@@ -783,15 +907,17 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldAllowValidParentReference()
     {
         // Arrange - 有效的 .. 引用：subdir/../docs/api.md -> docs/api.md
-        CreateDirectory("wishes/active/subdir");
-        CreateFile("wishes/active/subdir/wish-0001.md", """
+        // 注意：produce 路径是相对于 workspace root 的，不是相对于源文件的
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with valid parent reference
+            status: Active
             produce:
-              - ../docs/api.md
+              - subdir/../docs/api.md
             ---
             """);
-        CreateFile("wishes/active/docs/api.md", """
+        CreateFile("docs/api.md", """
             ---
             title: API Doc
             ---
@@ -810,10 +936,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldReportOutOfWorkspacePathError()
     {
         // Arrange - P1-1: 验证阶段应该报告越界路径错误
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with out-of-workspace path
+            status: Active
             produce:
               - ../outside.md
             ---
@@ -836,10 +963,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ProductDocShouldNotCollapseOutOfWorkspacePath()
     {
         // Arrange - P1-1: 产物文档的 produce 路径也不应越界折叠
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Root Wish
+            status: Active
             produce:
               - docs/level1.md
             ---
@@ -876,10 +1004,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldIncludeTargetFilePathInIssues()
     {
         // Arrange - P2-3: 关系类问题应该包含目标文件路径
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with dangling link
+            status: Active
             produce:
               - docs/missing.md
             ---
@@ -903,10 +1032,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldSortIssuesByTargetFilePath()
     {
         // Arrange - P2-3: 问题应该按源文件路径+目标文件路径排序
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with multiple dangling links
+            status: Active
             produce:
               - docs/z-last.md
               - docs/a-first.md
@@ -940,10 +1070,11 @@ public class DocumentGraphBuilderTests : IDisposable
     {
         // Arrange - P1-2: 产物文档缺少 docId 字段现在是 Warning
         // 设计决策：单文档字段缺失不应阻断其他文档的收集
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Valid Wish
+            status: Active
             produce:
               - docs/missing-docid.md
             ---
@@ -952,7 +1083,7 @@ public class DocumentGraphBuilderTests : IDisposable
             ---
             title: Product without docId
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
 
@@ -975,10 +1106,11 @@ public class DocumentGraphBuilderTests : IDisposable
     {
         // Arrange - P1-2: 产物文档缺少 produce_by 字段应报 Warning
         // 设计决策：单文档字段缺失不应阻断其他文档的收集，降级为 Warning
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Valid Wish
+            status: Active
             produce:
               - docs/missing-produceby.md
             ---
@@ -1008,10 +1140,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldPassWithCompleteProductFrontmatter()
     {
         // Arrange - P1-2: 完整的产物文档 frontmatter
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Valid Wish
+            status: Active
             produce:
               - docs/complete-product.md
             ---
@@ -1021,7 +1154,7 @@ public class DocumentGraphBuilderTests : IDisposable
             docId: complete-product-id
             title: Complete Product
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
 
@@ -1042,10 +1175,11 @@ public class DocumentGraphBuilderTests : IDisposable
     {
         // Arrange - P1-2: 占位节点（文件不存在）不应该验证 docId/produce_by 核心字段
         // 因为占位节点本身就表示"文件不存在"，强制验证核心字段没有意义
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with dangling link
+            status: Active
             produce:
               - docs/nonexistent.md
             ---
@@ -1062,7 +1196,7 @@ public class DocumentGraphBuilderTests : IDisposable
         // 1. 应该有 DANGLING_LINK 错误（在 wish 文档上报告）
         Assert.Contains(result.Issues, i =>
             i.ErrorCode == "DOCGRAPH_RELATION_DANGLING_LINK" &&
-            i.FilePath == "wishes/active/wish-0001.md");
+            i.FilePath == "wish/W-0001-test/wish.md");
 
         // 2. 占位节点的问题只应该是 title 缺失（因为 Title 是 "[缺失] xxx"）
         var placeholderIssues = result.Issues.Where(i => i.FilePath == "docs/nonexistent.md").ToList();
@@ -1082,10 +1216,11 @@ public class DocumentGraphBuilderTests : IDisposable
     {
         // Craftsman审计关键测试1：建边阶段不应误绑定
         // 越界路径（如 ../docs/api.md）在 workspace 内存在同名文件时，Produces 不应建立该边
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with out-of-workspace produce
+            status: Active
             produce:
               - ../docs/api.md
               - docs/valid.md
@@ -1098,7 +1233,7 @@ public class DocumentGraphBuilderTests : IDisposable
             docId: inside-api
             title: Inside API Doc
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
         CreateFile("docs/valid.md", """
@@ -1106,7 +1241,7 @@ public class DocumentGraphBuilderTests : IDisposable
             docId: valid-doc
             title: Valid Doc
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
 
@@ -1132,10 +1267,11 @@ public class DocumentGraphBuilderTests : IDisposable
     {
         // Craftsman审计关键测试2：produce_by越界错误码/严重度
         // `produce_by: ["../outside.md"]` 应触发 `DOCGRAPH_PATH_OUT_OF_WORKSPACE`（而非 DANGLING_BACKLINK）
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Valid Wish
+            status: Active
             produce:
               - docs/product.md
             ---
@@ -1173,10 +1309,11 @@ public class DocumentGraphBuilderTests : IDisposable
     {
         // Craftsman审计关键测试3：产物核心字段必填现已降级为 Warning
         // 设计决策：单文档字段缺失不应阻断其他文档的收集
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Valid Wish
+            status: Active
             produce:
               - docs/minimal.md
             ---
@@ -1222,10 +1359,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldDetectMissingFrontmatter()
     {
         // Arrange - [A-DOCGRAPH-005] produce目标存在但无frontmatter
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Valid Wish
+            status: Active
             produce:
               - docs/no-frontmatter.md
             ---
@@ -1251,10 +1389,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldDetectMissingBacklink()
     {
         // Arrange - [A-DOCGRAPH-005] 目标文档没有produce_by声明源
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Source Wish
+            status: Active
             produce:
               - docs/target.md
             ---
@@ -1282,10 +1421,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Validate_ShouldPassWithCorrectBacklink()
     {
         // Arrange - 正确的双向链接
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Source Wish
+            status: Active
             produce:
               - docs/target.md
             ---
@@ -1294,7 +1434,7 @@ public class DocumentGraphBuilderTests : IDisposable
             ---
             title: Target Doc
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
 
@@ -1317,10 +1457,11 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldHaveDeterministicEdgeOrder()
     {
         // Arrange - [A-DOCGRAPH-004] 边排序确定性
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish with multiple produces
+            status: Active
             produce:
               - docs/z-last.md
               - docs/a-first.md
@@ -1331,21 +1472,21 @@ public class DocumentGraphBuilderTests : IDisposable
             ---
             title: Z Doc
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
         CreateFile("docs/a-first.md", """
             ---
             title: A Doc
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
         CreateFile("docs/m-middle.md", """
             ---
             title: M Doc
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             """);
 
@@ -1366,24 +1507,29 @@ public class DocumentGraphBuilderTests : IDisposable
     public void Build_ShouldHaveDeterministicProducedByOrder()
     {
         // Arrange - [A-DOCGRAPH-004] ProducedBy边排序确定性
-        CreateDirectory("wishes/active");
-        CreateFile("wishes/active/wish-0003.md", """
+        CreateFile("wish/W-0003-test/wish.md", """
             ---
+            wishId: "W-0003"
             title: Wish 3
+            status: Active
             produce:
               - docs/shared.md
             ---
             """);
-        CreateFile("wishes/active/wish-0001.md", """
+        CreateFile("wish/W-0001-test/wish.md", """
             ---
+            wishId: "W-0001"
             title: Wish 1
+            status: Active
             produce:
               - docs/shared.md
             ---
             """);
-        CreateFile("wishes/active/wish-0002.md", """
+        CreateFile("wish/W-0002-test/wish.md", """
             ---
+            wishId: "W-0002"
             title: Wish 2
+            status: Active
             produce:
               - docs/shared.md
             ---
@@ -1392,9 +1538,9 @@ public class DocumentGraphBuilderTests : IDisposable
             ---
             title: Shared Doc
             produce_by:
-              - wishes/active/wish-0003.md
-              - wishes/active/wish-0001.md
-              - wishes/active/wish-0002.md
+              - wish/W-0003-test/wish.md
+              - wish/W-0001-test/wish.md
+              - wish/W-0002-test/wish.md
             ---
             """);
 
@@ -1406,9 +1552,9 @@ public class DocumentGraphBuilderTests : IDisposable
         // Assert - ProducedBy应该按FilePath字典序排序
         var shared = graph.ByPath["docs/shared.md"];
         Assert.Equal(3, shared.ProducedBy.Count);
-        Assert.Equal("wishes/active/wish-0001.md", shared.ProducedBy[0].FilePath);
-        Assert.Equal("wishes/active/wish-0002.md", shared.ProducedBy[1].FilePath);
-        Assert.Equal("wishes/active/wish-0003.md", shared.ProducedBy[2].FilePath);
+        Assert.Equal("wish/W-0001-test/wish.md", shared.ProducedBy[0].FilePath);
+        Assert.Equal("wish/W-0002-test/wish.md", shared.ProducedBy[1].FilePath);
+        Assert.Equal("wish/W-0003-test/wish.md", shared.ProducedBy[2].FilePath);
     }
 
     #endregion

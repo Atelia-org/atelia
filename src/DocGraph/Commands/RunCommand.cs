@@ -201,7 +201,8 @@ public class RunCommand : Command
         return
         [
             new GlossaryVisitor(),
-            new IssueAggregator()
+            new IssueAggregator(),
+            new ReachableDocumentsVisitor()
         ];
     }
 

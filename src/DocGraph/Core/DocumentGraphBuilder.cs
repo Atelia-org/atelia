@@ -16,7 +16,7 @@ public interface IDocumentGraphBuilder
     /// <summary>
     /// 扫描指定目录，构建文档图。
     /// </summary>
-    /// <param name="wishDirectories">Wish目录列表（默认：["wishes/active", "wishes/biding", "wishes/completed"]）。</param>
+    /// <param name="wishDirectories">Wish 目录列表（默认：["wish"]）。</param>
     /// <returns>完整的文档关系图。</returns>
     DocumentGraph Build(IEnumerable<string>? wishDirectories = null);
 
@@ -34,11 +34,18 @@ public interface IDocumentGraphBuilder
 /// </summary>
 public partial class DocumentGraphBuilder : IDocumentGraphBuilder
 {
-    private static readonly string[] DefaultWishDirectories = ["wishes/active", "wishes/biding", "wishes/completed"];
+    // v0.2 (Wish Instance Directory): Root Nodes come only from wish/**/wish.md
+    // Legacy single-file wishes (wishes/{active,biding,completed}/**/*.md) are no longer supported.
+    private static readonly string[] DefaultWishDirectories = ["wish"];
 
     // Wish 文件名模式：wish-0001.md → W-0001
+    // Legacy layout only; v0.2 wish instance layout uses frontmatter.wishId.
     [GeneratedRegex(@"^wish-(\d{4})\.md$", RegexOptions.IgnoreCase)]
     private static partial Regex WishFileNamePattern();
+
+    // v0.2 wish instance directory name: W-0001-slug → W-0001
+    [GeneratedRegex(@"^(W-\d{4})", RegexOptions.IgnoreCase)]
+    private static partial Regex WishInstanceDirectoryPattern();
 
     private readonly string _workspaceRoot;
 
@@ -61,11 +68,21 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
         // 1. 扫描 Wish 目录，收集 Root Nodes
         foreach (var dir in directories)
         {
-            var absoluteDir = Path.Combine(_workspaceRoot, dir);
+            var absoluteDir = Path.GetFullPath(Path.Combine(_workspaceRoot, dir));
             if (!Directory.Exists(absoluteDir))
             {
                 continue;
             }
+
+            // Normalize input directory to workspace-relative path-shape.
+            // This prevents callers from bypassing wish root filtering via "./wish" or "wish/".
+            var workspaceRelativeDir = PathNormalizer.ToWorkspaceRelative(absoluteDir, _workspaceRoot);
+            if (workspaceRelativeDir == null)
+            {
+                // Defensive: never scan directories outside the workspace root.
+                continue;
+            }
+            var isWishRootDirectory = workspaceRelativeDir.Equals("wish", StringComparison.OrdinalIgnoreCase);
 
             var mdFiles = Directory.GetFiles(absoluteDir, "*.md", SearchOption.AllDirectories);
             foreach (var filePath in mdFiles)
@@ -79,6 +96,14 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
 
                 var relativePath = PathNormalizer.ToWorkspaceRelative(filePath, _workspaceRoot);
                 if (relativePath == null)
+                {
+                    continue;
+                }
+
+                // v0.2 wish instance layout: only treat wish/<instanceDir>/wish.md as a Wish root.
+                // Use path-shape (not only file name) to prevent nested wish.md or stray wish.md from being treated as roots.
+                if (isWishRootDirectory
+                    && !IsWishRootPath(relativePath))
                 {
                     continue;
                 }
@@ -273,8 +298,12 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
     private DocumentNode CreateWishNode(string filePath, string wishDirectory, Dictionary<string, object?> frontmatter)
     {
         var fileName = Path.GetFileName(filePath);
-        var docId = DeriveWishDocId(fileName);
-        var status = DeriveStatus(filePath, wishDirectory);
+        // v0.2: wish instances use wish.md as filename; docId must come from frontmatter.wishId
+        var docId = FrontmatterParser.GetString(frontmatter, "wishId")
+            ?? DeriveWishDocIdFromWishInstancePath(filePath)
+            ?? DeriveWishDocId(fileName);
+        // v0.2: wish instances derive status from frontmatter; legacy derives from directory
+        var status = DeriveStatus(filePath, wishDirectory, frontmatter);
         var title = FrontmatterParser.GetString(frontmatter, "title") ?? docId;
         var producePaths = FrontmatterParser.GetStringArray(frontmatter, "produce");
 
@@ -345,11 +374,82 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
     }
 
     /// <summary>
+    /// v0.2: 从 wish 实例路径推导 WishId（仅作为兜底）。
+    /// 规则：wish/W-0001-slug/wish.md → W-0001
+    /// </summary>
+    private static string? DeriveWishDocIdFromWishInstancePath(string filePath)
+    {
+        // filePath is workspace-relative and uses '/' separators.
+        var segments = filePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 3)
+        {
+            return null;
+        }
+
+        if (!segments[0].Equals("wish", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (!segments[^1].Equals("wish.md", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var instanceDirName = segments[^2];
+        var match = WishInstanceDirectoryPattern().Match(instanceDirName);
+        if (match.Success)
+        {
+            return match.Groups[1].Value.ToUpperInvariant();
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// v0.2: 判断一个 workspace-relative 路径是否为 Wish Root：wish/&lt;W-XXXX-...&gt;/wish.md
+    /// </summary>
+    private static bool IsWishRootPath(string workspaceRelativePath)
+    {
+        var segments = workspaceRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length != 3)
+        {
+            return false;
+        }
+
+        if (!segments[0].Equals("wish", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!segments[2].Equals("wish.md", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // Instance directory must start with W-XXXX
+        return WishInstanceDirectoryPattern().IsMatch(segments[1]);
+    }
+
+    /// <summary>
     /// 从文件路径推导状态。
     /// 遵循 [A-DOCGRAPH-002]：active/ → "active", biding/ → "biding", completed/ → "completed"
     /// </summary>
-    private static string DeriveStatus(string filePath, string wishDirectory)
+    private static string DeriveStatus(string filePath, string wishDirectory, IReadOnlyDictionary<string, object?> frontmatter)
     {
+        // New layout: ./wish/**/wish.md
+        if (wishDirectory.Equals("wish", StringComparison.OrdinalIgnoreCase)
+            || wishDirectory.EndsWith("/wish", StringComparison.OrdinalIgnoreCase)
+            || filePath.EndsWith("/wish.md", StringComparison.OrdinalIgnoreCase))
+        {
+            var status = FrontmatterParser.GetString(frontmatter, "status");
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                return status.Trim().ToLowerInvariant();
+            }
+            return "unknown";
+        }
+
         if (wishDirectory.Contains("active", StringComparison.OrdinalIgnoreCase))
         {
             return "active";
@@ -375,6 +475,24 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
     /// </summary>
     private void ValidateRequiredFields(DocumentNode node, List<ValidationIssue> issues)
     {
+        // v0.2: wish/**/wish.md 必须包含 wishId（作为 docId）
+        if (node.Type == DocumentType.Wish
+            && node.FilePath.StartsWith("wish/", StringComparison.OrdinalIgnoreCase)
+            && node.FilePath.EndsWith("/wish.md", StringComparison.OrdinalIgnoreCase))
+        {
+            var wishId = FrontmatterParser.GetString(node.Frontmatter, "wishId");
+            if (string.IsNullOrWhiteSpace(wishId))
+            {
+                issues.Add(new ValidationIssue(
+                    IssueSeverity.Error,
+                    "DOCGRAPH_WISH_ID_MISSING",
+                    "Wish 文档缺少 wishId 字段",
+                    node.FilePath,
+                    $"Wish 文档 {node.FilePath} 缺少 wishId",
+                    "请在 frontmatter 中添加 wishId 字段，如：wishId: \"W-0001\""));
+            }
+        }
+
         // 检查 title 字段
         // 注意：如果 title 与 docId 相同，说明 frontmatter 中没有显式设置 title
         var hasExplicitTitle = node.Frontmatter.ContainsKey("title")
@@ -620,7 +738,7 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder
                     $"produce_by 引用的源文件不在文档图中",
                     node.FilePath,
                     $"produce_by 声明的源文档 {normalizedPath} 不存在或不在扫描范围内",
-                    "请检查 produce_by 路径是否正确，源文件是否在 wishes/ 目录下",
+                    "请检查 produce_by 路径是否正确，源文件是否在 wish/ 目录下",
                     targetFilePath: normalizedPath));
             }
         }

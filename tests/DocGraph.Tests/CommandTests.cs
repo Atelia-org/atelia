@@ -1,5 +1,6 @@
-// DocGraph v0.1 - CLI 命令测试
+// DocGraph v0.2 - CLI 命令测试
 // 参考：spec.md §11 验收标准
+// 注意：v0.2 使用 Wish Instance Directory 布局（wish/W-XXXX-slug/wish.md）
 
 using System.CommandLine;
 using Atelia.DocGraph.Commands;
@@ -35,8 +36,8 @@ public class CommandTests : IDisposable
     [Fact]
     public async Task ValidateCommand_EmptyWorkspace_Returns0()
     {
-        // Arrange
-        var wishDir = Path.Combine(_testDir, "wishes", "active");
+        // Arrange - v0.2: 使用 wish 目录
+        var wishDir = Path.Combine(_testDir, "wish");
         Directory.CreateDirectory(wishDir);
 
         var command = new ValidateCommand();
@@ -117,6 +118,33 @@ public class CommandTests : IDisposable
 
     #endregion
 
+    #region RunCommand Tests
+
+    [Fact]
+    public async Task RunCommand_ValidWorkspace_GeneratesReachableDocumentsPanel()
+    {
+        // Arrange
+        SetupValidWorkspace();
+
+        var command = new RunCommand();
+        var rootCommand = new RootCommand { command };
+
+        // Act
+        var exitCode = await rootCommand.InvokeAsync(new[] { "run", _testDir, "--yes" });
+
+        // Assert
+        exitCode.Should().Be(0, "全流程在有效工作区应成功完成");
+
+        var outputFile = Path.Combine(_testDir, "wish-panels", "reachable-documents.gen.md");
+        File.Exists(outputFile).Should().BeTrue("RunCommand 应生成 reachable-documents 面板");
+
+        var content = File.ReadAllText(outputFile);
+        content.Should().Contain("<!-- 本文档由 DocGraph 工具自动生成", "生成文件必须标记为工具生成");
+        content.Should().Contain("wish/W-0001-test/wish.md", "输出应包含 Wish root 路径");
+    }
+
+    #endregion
+
     #region FixCommand Tests
 
     [Fact]
@@ -177,8 +205,8 @@ public class CommandTests : IDisposable
     [Fact]
     public async Task StatsCommand_EmptyWorkspace_Returns0()
     {
-        // Arrange
-        var wishDir = Path.Combine(_testDir, "wishes", "active");
+        // Arrange - v0.2: 使用 wish 目录
+        var wishDir = Path.Combine(_testDir, "wish");
         Directory.CreateDirectory(wishDir);
 
         var command = new StatsCommand();
@@ -384,22 +412,24 @@ public class CommandTests : IDisposable
 
     private void SetupValidWorkspace()
     {
-        // 创建 wishes 目录结构
-        var activeDir = Path.Combine(_testDir, "wishes", "active");
+        // v0.2: 使用 wish 实例目录布局
+        var wishDir = Path.Combine(_testDir, "wish", "W-0001-test");
         var docsDir = Path.Combine(_testDir, "docs");
-        Directory.CreateDirectory(activeDir);
+        Directory.CreateDirectory(wishDir);
         Directory.CreateDirectory(docsDir);
 
         // 创建 Wish 文档
         var wishContent = """
             ---
+            wishId: "W-0001"
             title: "测试需求"
+            status: Active
             produce:
               - docs/api.md
             ---
             # 测试需求
             """;
-        File.WriteAllText(Path.Combine(activeDir, "wish-0001.md"), wishContent);
+        File.WriteAllText(Path.Combine(wishDir, "wish.md"), wishContent);
 
         // 创建产物文档
         var apiContent = """
@@ -407,7 +437,7 @@ public class CommandTests : IDisposable
             docId: api
             title: "API 文档"
             produce_by:
-              - wishes/active/wish-0001.md
+              - wish/W-0001-test/wish.md
             ---
             # API 文档
             """;
@@ -416,30 +446,33 @@ public class CommandTests : IDisposable
 
     private void SetupWorkspaceWithWarnings()
     {
+        // v0.2: 使用 wish 实例目录布局
         // 创建有警告的工作区（缺少 backlink）
-        var activeDir = Path.Combine(_testDir, "wishes", "active");
+        var wishDir = Path.Combine(_testDir, "wish", "W-0001-test");
         var docsDir = Path.Combine(_testDir, "docs");
-        Directory.CreateDirectory(activeDir);
+        Directory.CreateDirectory(wishDir);
         Directory.CreateDirectory(docsDir);
 
         // Wish 文档引用产物
         var wishContent = """
             ---
+            wishId: "W-0001"
             title: "测试需求"
+            status: Active
             produce:
               - docs/api.md
             ---
             # 测试需求
             """;
-        File.WriteAllText(Path.Combine(activeDir, "wish-0001.md"), wishContent);
+        File.WriteAllText(Path.Combine(wishDir, "wish.md"), wishContent);
 
-        // 产物文档没有 produce_by 指回（Warning）
+        // 产物文档 produce_by 指向错误的文件（Warning - DANGLING_BACKLINK）
         var apiContent = """
             ---
             docId: api
             title: "API 文档"
             produce_by:
-              - wishes/active/other.md
+              - wish/W-0099-other/wish.md
             ---
             # API 文档
             """;
@@ -448,37 +481,43 @@ public class CommandTests : IDisposable
 
     private void SetupWorkspaceWithErrors()
     {
+        // v0.2: 使用 wish 实例目录布局
         // 创建有警告的工作区（缺少必填字段）
         // 注：必填字段缺失已降级为 Warning
-        var activeDir = Path.Combine(_testDir, "wishes", "active");
-        Directory.CreateDirectory(activeDir);
+        var wishDir = Path.Combine(_testDir, "wish", "W-0001-test");
+        Directory.CreateDirectory(wishDir);
 
         // Wish 文档缺少 produce 字段（Warning）
         var wishContent = """
             ---
+            wishId: "W-0001"
             title: "测试需求"
+            status: Active
             ---
             # 测试需求
             """;
-        File.WriteAllText(Path.Combine(activeDir, "wish-0001.md"), wishContent);
+        File.WriteAllText(Path.Combine(wishDir, "wish.md"), wishContent);
     }
 
     private void SetupWorkspaceWithDanglingLink()
     {
+        // v0.2: 使用 wish 实例目录布局
         // 创建有悬空引用的工作区
-        var activeDir = Path.Combine(_testDir, "wishes", "active");
-        Directory.CreateDirectory(activeDir);
+        var wishDir = Path.Combine(_testDir, "wish", "W-0001-test");
+        Directory.CreateDirectory(wishDir);
 
         // Wish 文档引用不存在的文件
         var wishContent = """
             ---
+            wishId: "W-0001"
             title: "测试需求"
+            status: Active
             produce:
               - docs/missing.md
             ---
             # 测试需求
             """;
-        File.WriteAllText(Path.Combine(activeDir, "wish-0001.md"), wishContent);
+        File.WriteAllText(Path.Combine(wishDir, "wish.md"), wishContent);
     }
 
     #endregion
