@@ -10,8 +10,7 @@ namespace Atelia.DocGraph.Visitors;
 /// 可达文档目录生成器：列出 DocumentGraph 中的全部节点（即从 Root Nodes 可达的闭包）。
 /// 输出为 Markdown 列表，按路径字典序排序，便于人工与工具消费。
 /// </summary>
-public sealed class ReachableDocumentsVisitor : IDocumentGraphVisitor
-{
+public sealed class ReachableDocumentsVisitor : IDocumentGraphVisitor {
     public string Name => "reachable-documents";
 
     // 方案 2：面板产物独立目录，不与 wish 实例混放
@@ -19,8 +18,7 @@ public sealed class ReachableDocumentsVisitor : IDocumentGraphVisitor
 
     public IReadOnlyList<string> RequiredFields => [];
 
-    public string Generate(DocumentGraph graph)
-    {
+    public string Generate(DocumentGraph graph) {
         var builder = new StringBuilder();
 
         builder.AppendLine("<!-- 本文档由 DocGraph 工具自动生成，手动编辑无效 -->");
@@ -36,8 +34,7 @@ public sealed class ReachableDocumentsVisitor : IDocumentGraphVisitor
 
         builder.AppendLine("## Wish Roots");
         builder.AppendLine();
-        foreach (var wish in graph.RootNodes.OrderBy(n => n.FilePath, StringComparer.Ordinal))
-        {
+        foreach (var wish in graph.RootNodes.OrderBy(n => n.FilePath, StringComparer.Ordinal)) {
             builder.AppendLine($"- `{wish.FilePath}` ({wish.DocId})");
         }
 
@@ -45,8 +42,7 @@ public sealed class ReachableDocumentsVisitor : IDocumentGraphVisitor
         builder.AppendLine("## All Nodes (Closure)");
         builder.AppendLine();
 
-        foreach (var node in graph.AllNodes.OrderBy(n => n.FilePath, StringComparer.Ordinal))
-        {
+        foreach (var node in graph.AllNodes.OrderBy(n => n.FilePath, StringComparer.Ordinal)) {
             var type = node.Type == DocumentType.Wish ? "Wish" : "Product";
             builder.AppendLine($"- `{node.FilePath}`  ");
             builder.AppendLine($"  - type: {type}");

@@ -6,13 +6,11 @@ using Xunit;
 
 namespace Atelia.DocGraph.Tests;
 
-public class FrontmatterParserTests
-{
+public class FrontmatterParserTests {
     #region Basic Parsing
 
     [Fact]
-    public void TryParse_ShouldParseSimpleFrontmatter()
-    {
+    public void TryParse_ShouldParseSimpleFrontmatter() {
         var content = """
             ---
             title: "测试文档"
@@ -31,8 +29,7 @@ public class FrontmatterParserTests
     }
 
     [Fact]
-    public void TryParse_ShouldParseArrayFields()
-    {
+    public void TryParse_ShouldParseArrayFields() {
         var content = """
             ---
             title: "Wish 文档"
@@ -58,8 +55,7 @@ public class FrontmatterParserTests
     #region Boundary Detection
 
     [Fact]
-    public void TryParse_ShouldReturnFalseForNoFrontmatter()
-    {
+    public void TryParse_ShouldReturnFalseForNoFrontmatter() {
         var content = """
             # 普通 Markdown 文档
 
@@ -74,8 +70,7 @@ public class FrontmatterParserTests
     }
 
     [Fact]
-    public void TryParse_ShouldIgnoreFrontmatterNotAtStart()
-    {
+    public void TryParse_ShouldIgnoreFrontmatterNotAtStart() {
         var content = """
             这是正文
 
@@ -91,8 +86,7 @@ public class FrontmatterParserTests
     }
 
     [Fact]
-    public void TryParse_ShouldAllowLeadingWhitespace()
-    {
+    public void TryParse_ShouldAllowLeadingWhitespace() {
         var content = """
             
             ---
@@ -111,8 +105,7 @@ public class FrontmatterParserTests
     #region Error Handling
 
     [Fact]
-    public void TryParse_ShouldDetectYamlAnchorAlias()
-    {
+    public void TryParse_ShouldDetectYamlAnchorAlias() {
         var content = """
             ---
             base: &base
@@ -130,8 +123,7 @@ public class FrontmatterParserTests
     }
 
     [Fact]
-    public void TryParse_ShouldHandleSyntaxError()
-    {
+    public void TryParse_ShouldHandleSyntaxError() {
         var content = """
             ---
             title: "缺少结束引号
@@ -151,10 +143,8 @@ public class FrontmatterParserTests
     #region Field Extraction Helpers
 
     [Fact]
-    public void GetString_ShouldReturnNullForMissingField()
-    {
-        var frontmatter = new Dictionary<string, object?>
-        {
+    public void GetString_ShouldReturnNullForMissingField() {
+        var frontmatter = new Dictionary<string, object?> {
             ["title"] = "测试"
         };
 
@@ -164,10 +154,8 @@ public class FrontmatterParserTests
     }
 
     [Fact]
-    public void GetStringArray_ShouldReturnEmptyListForMissingField()
-    {
-        var frontmatter = new Dictionary<string, object?>
-        {
+    public void GetStringArray_ShouldReturnEmptyListForMissingField() {
+        var frontmatter = new Dictionary<string, object?> {
             ["title"] = "测试"
         };
 
@@ -177,10 +165,8 @@ public class FrontmatterParserTests
     }
 
     [Fact]
-    public void GetStringArray_ShouldConvertSingleValueToArray()
-    {
-        var frontmatter = new Dictionary<string, object?>
-        {
+    public void GetStringArray_ShouldConvertSingleValueToArray() {
+        var frontmatter = new Dictionary<string, object?> {
             ["produce"] = "single/file.md"
         };
 

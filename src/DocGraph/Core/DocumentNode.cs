@@ -6,8 +6,7 @@ namespace Atelia.DocGraph.Core;
 /// <summary>
 /// 文档图中的节点，表示一个文档。
 /// </summary>
-public class DocumentNode
-{
+public class DocumentNode {
     private readonly List<DocumentNode> _produces = [];
     private readonly List<DocumentNode> _producedBy = [];
 
@@ -79,8 +78,8 @@ public class DocumentNode
         DocumentType type,
         IReadOnlyDictionary<string, object?> frontmatter,
         IReadOnlyList<string> producePaths,
-        IReadOnlyList<string> producedByPaths)
-    {
+        IReadOnlyList<string> producedByPaths
+    ) {
         FilePath = filePath;
         DocId = docId;
         Title = title;
@@ -94,10 +93,8 @@ public class DocumentNode
     /// <summary>
     /// 添加 produce 关系（仅供 DocumentGraphBuilder 内部使用）。
     /// </summary>
-    internal void AddProducesRelation(DocumentNode target)
-    {
-        if (!_produces.Contains(target))
-        {
+    internal void AddProducesRelation(DocumentNode target) {
+        if (!_produces.Contains(target)) {
             _produces.Add(target);
         }
     }
@@ -105,10 +102,8 @@ public class DocumentNode
     /// <summary>
     /// 添加 produced_by 关系（仅供 DocumentGraphBuilder 内部使用）。
     /// </summary>
-    internal void AddProducedByRelation(DocumentNode source)
-    {
-        if (!_producedBy.Contains(source))
-        {
+    internal void AddProducedByRelation(DocumentNode source) {
+        if (!_producedBy.Contains(source)) {
             _producedBy.Add(source);
         }
     }
@@ -118,8 +113,7 @@ public class DocumentNode
     /// 遵循 [A-DOCGRAPH-004]：边按 TargetPath 字典序排序。
     /// 仅供 DocumentGraphBuilder 内部使用。
     /// </summary>
-    internal void SortRelations()
-    {
+    internal void SortRelations() {
         _produces.Sort((a, b) => string.Compare(a.FilePath, b.FilePath, StringComparison.Ordinal));
         _producedBy.Sort((a, b) => string.Compare(a.FilePath, b.FilePath, StringComparison.Ordinal));
     }
@@ -128,8 +122,7 @@ public class DocumentNode
 /// <summary>
 /// 文档类型。
 /// </summary>
-public enum DocumentType
-{
+public enum DocumentType {
     /// <summary>
     /// Wish 文档（需求/愿望文档）。
     /// </summary>

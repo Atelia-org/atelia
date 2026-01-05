@@ -6,8 +6,7 @@ namespace Atelia.DocGraph.Core.Fix;
 /// <summary>
 /// 修复操作结果。
 /// </summary>
-public class FixResult
-{
+public class FixResult {
     /// <summary>
     /// 是否成功。
     /// </summary>
@@ -34,8 +33,7 @@ public class FixResult
     /// 创建成功结果。
     /// </summary>
     public static FixResult CreateSuccess(string targetPath, FixActionType actionType)
-        => new()
-        {
+        => new() {
             Success = true,
             TargetPath = targetPath,
             ActionType = actionType
@@ -45,8 +43,7 @@ public class FixResult
     /// 创建失败结果。
     /// </summary>
     public static FixResult CreateFailure(string errorMessage, string? targetPath = null, FixActionType actionType = FixActionType.CreateFile)
-        => new()
-        {
+        => new() {
             Success = false,
             ErrorMessage = errorMessage,
             TargetPath = targetPath,
@@ -57,8 +54,7 @@ public class FixResult
 /// <summary>
 /// 修复操作类型。
 /// </summary>
-public enum FixActionType
-{
+public enum FixActionType {
     /// <summary>
     /// 创建文件。
     /// </summary>

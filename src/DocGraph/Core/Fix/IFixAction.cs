@@ -6,8 +6,7 @@ namespace Atelia.DocGraph.Core.Fix;
 /// <summary>
 /// 修复动作接口。
 /// </summary>
-public interface IFixAction
-{
+public interface IFixAction {
     /// <summary>
     /// 检查是否可以执行此修复动作。
     /// </summary>
@@ -36,8 +35,7 @@ public interface IFixAction
 /// <summary>
 /// 修复上下文。
 /// </summary>
-public class FixContext
-{
+public class FixContext {
     /// <summary>
     /// 文档图。
     /// </summary>
@@ -56,8 +54,7 @@ public class FixContext
     /// <summary>
     /// 创建修复上下文。
     /// </summary>
-    public FixContext(DocumentGraph graph, FixOptions options, string workspaceRoot)
-    {
+    public FixContext(DocumentGraph graph, FixOptions options, string workspaceRoot) {
         Graph = graph;
         Options = options;
         WorkspaceRoot = workspaceRoot;

@@ -10,10 +10,8 @@ namespace Atelia.DocGraph;
 /// DocGraph CLI 入口点。
 /// 默认行为：无参数时执行全流程（validate + fix + generate）。
 /// </summary>
-public static class Program
-{
-    public static async Task<int> Main(string[] args)
-    {
+public static class Program {
+    public static async Task<int> Main(string[] args) {
         var rootCommand = new RootCommand("DocGraph - 文档关系图验证和生成工具")
         {
             new ValidateCommand(),
@@ -26,23 +24,28 @@ public static class Program
         var pathArgument = new Argument<string>(
             name: "path",
             getDefaultValue: () => ".",
-            description: "工作区目录路径");
+            description: "工作区目录路径"
+        );
 
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
-            description: "只显示会执行的操作，不实际执行");
+            description: "只显示会执行的操作，不实际执行"
+        );
 
         var yesOption = new Option<bool>(
             aliases: ["--yes", "-y"],
-            description: "跳过确认提示，自动执行");
+            description: "跳过确认提示，自动执行"
+        );
 
         var verboseOption = new Option<bool>(
             aliases: ["--verbose", "-v"],
-            description: "显示详细输出");
+            description: "显示详细输出"
+        );
 
         var forceOption = new Option<bool>(
             name: "--force",
-            description: "即使有 Error 级别问题也继续生成（不推荐）");
+            description: "即使有 Error 级别问题也继续生成（不推荐）"
+        );
 
         rootCommand.AddArgument(pathArgument);
         rootCommand.AddOption(dryRunOption);
@@ -53,7 +56,8 @@ public static class Program
         // 默认行为：执行全流程
         rootCommand.SetHandler(
             RunCommand.ExecuteAsync,
-            pathArgument, dryRunOption, yesOption, verboseOption, forceOption);
+            pathArgument, dryRunOption, yesOption, verboseOption, forceOption
+        );
 
         return await rootCommand.InvokeAsync(args);
     }

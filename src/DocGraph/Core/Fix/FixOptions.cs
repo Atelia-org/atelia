@@ -6,8 +6,7 @@ namespace Atelia.DocGraph.Core.Fix;
 /// <summary>
 /// 修复选项。
 /// </summary>
-public class FixOptions
-{
+public class FixOptions {
     /// <summary>
     /// 是否启用修复模式。
     /// </summary>
@@ -37,8 +36,7 @@ public class FixOptions
     /// 创建启用的修复选项。
     /// </summary>
     public static FixOptions Enable(bool dryRun = false, bool autoConfirm = false)
-        => new()
-        {
+        => new() {
             Enabled = true,
             DryRun = dryRun,
             AutoConfirm = autoConfirm
@@ -48,8 +46,7 @@ public class FixOptions
 /// <summary>
 /// 修复范围。
 /// </summary>
-public enum FixScope
-{
+public enum FixScope {
     /// <summary>
     /// 创建缺失的文件（v0.1支持）。
     /// </summary>

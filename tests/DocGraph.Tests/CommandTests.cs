@@ -13,20 +13,16 @@ namespace Atelia.DocGraph.Tests;
 /// <summary>
 /// CLI 命令集成测试。
 /// </summary>
-public class CommandTests : IDisposable
-{
+public class CommandTests : IDisposable {
     private readonly string _testDir;
 
-    public CommandTests()
-    {
+    public CommandTests() {
         _testDir = Path.Combine(Path.GetTempPath(), $"docgraph-cmd-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_testDir);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_testDir))
-        {
+    public void Dispose() {
+        if (Directory.Exists(_testDir)) {
             Directory.Delete(_testDir, recursive: true);
         }
     }
@@ -34,8 +30,7 @@ public class CommandTests : IDisposable
     #region ValidateCommand Tests
 
     [Fact]
-    public async Task ValidateCommand_EmptyWorkspace_Returns0()
-    {
+    public async Task ValidateCommand_EmptyWorkspace_Returns0() {
         // Arrange - v0.2: 使用 wish 目录
         var wishDir = Path.Combine(_testDir, "wish");
         Directory.CreateDirectory(wishDir);
@@ -51,8 +46,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ValidateCommand_NonExistentPath_Returns3()
-    {
+    public async Task ValidateCommand_NonExistentPath_Returns3() {
         // Arrange
         var nonExistent = Path.Combine(_testDir, "nonexistent");
         var command = new ValidateCommand();
@@ -66,8 +60,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ValidateCommand_ValidWorkspace_Returns0()
-    {
+    public async Task ValidateCommand_ValidWorkspace_Returns0() {
         // Arrange
         SetupValidWorkspace();
 
@@ -82,8 +75,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ValidateCommand_WithWarnings_Returns1()
-    {
+    public async Task ValidateCommand_WithWarnings_Returns1() {
         // Arrange
         SetupWorkspaceWithWarnings();
 
@@ -98,8 +90,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ValidateCommand_VerboseOption_ShowsDetails()
-    {
+    public async Task ValidateCommand_VerboseOption_ShowsDetails() {
         // Arrange
         SetupValidWorkspace();
 
@@ -121,8 +112,7 @@ public class CommandTests : IDisposable
     #region RunCommand Tests
 
     [Fact]
-    public async Task RunCommand_ValidWorkspace_GeneratesReachableDocumentsPanel()
-    {
+    public async Task RunCommand_ValidWorkspace_GeneratesReachableDocumentsPanel() {
         // Arrange
         SetupValidWorkspace();
 
@@ -148,8 +138,7 @@ public class CommandTests : IDisposable
     #region FixCommand Tests
 
     [Fact]
-    public async Task FixCommand_DryRun_DoesNotCreateFiles()
-    {
+    public async Task FixCommand_DryRun_DoesNotCreateFiles() {
         // Arrange
         SetupWorkspaceWithDanglingLink();
         var targetFile = Path.Combine(_testDir, "docs", "missing.md");
@@ -166,8 +155,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task FixCommand_WithYes_CreatesFiles()
-    {
+    public async Task FixCommand_WithYes_CreatesFiles() {
         // Arrange
         SetupWorkspaceWithDanglingLink();
         var targetFile = Path.Combine(_testDir, "docs", "missing.md");
@@ -184,8 +172,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task FixCommand_NonExistentPath_Returns3()
-    {
+    public async Task FixCommand_NonExistentPath_Returns3() {
         // Arrange
         var nonExistent = Path.Combine(_testDir, "nonexistent");
         var command = new FixCommand();
@@ -203,8 +190,7 @@ public class CommandTests : IDisposable
     #region StatsCommand Tests
 
     [Fact]
-    public async Task StatsCommand_EmptyWorkspace_Returns0()
-    {
+    public async Task StatsCommand_EmptyWorkspace_Returns0() {
         // Arrange - v0.2: 使用 wish 目录
         var wishDir = Path.Combine(_testDir, "wish");
         Directory.CreateDirectory(wishDir);
@@ -220,8 +206,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task StatsCommand_ValidWorkspace_ShowsStats()
-    {
+    public async Task StatsCommand_ValidWorkspace_ShowsStats() {
         // Arrange
         SetupValidWorkspace();
 
@@ -240,8 +225,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task StatsCommand_VerboseOption_ShowsDetails()
-    {
+    public async Task StatsCommand_VerboseOption_ShowsDetails() {
         // Arrange
         SetupValidWorkspace();
 
@@ -259,8 +243,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task StatsCommand_JsonOption_OutputsJson()
-    {
+    public async Task StatsCommand_JsonOption_OutputsJson() {
         // Arrange
         SetupValidWorkspace();
 
@@ -279,8 +262,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task StatsCommand_NonExistentPath_Returns3()
-    {
+    public async Task StatsCommand_NonExistentPath_Returns3() {
         // Arrange
         var nonExistent = Path.Combine(_testDir, "nonexistent");
         var command = new StatsCommand();
@@ -298,8 +280,7 @@ public class CommandTests : IDisposable
     #region Exit Code Tests
 
     [Fact]
-    public async Task ExitCode_Success_Is0()
-    {
+    public async Task ExitCode_Success_Is0() {
         // Arrange
         SetupValidWorkspace();
 
@@ -314,8 +295,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ExitCode_Warning_Is1()
-    {
+    public async Task ExitCode_Warning_Is1() {
         // Arrange
         SetupWorkspaceWithWarnings();
 
@@ -330,8 +310,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ExitCode_Warning_WithMissingFields_Is1()
-    {
+    public async Task ExitCode_Warning_WithMissingFields_Is1() {
         // Arrange - 缺少必填字段现在是 Warning 而非 Error
         SetupWorkspaceWithErrors();
 
@@ -346,8 +325,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ExitCode_Fatal_Is3()
-    {
+    public async Task ExitCode_Fatal_Is3() {
         // Arrange
         var nonExistent = Path.Combine(_testDir, "nonexistent");
 
@@ -366,8 +344,7 @@ public class CommandTests : IDisposable
     #region JSON Output Tests
 
     [Fact]
-    public async Task ValidateCommand_JsonOutput_ReturnsValidJson()
-    {
+    public async Task ValidateCommand_JsonOutput_ReturnsValidJson() {
         // Arrange
         SetupValidWorkspace();
 
@@ -387,8 +364,7 @@ public class CommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ValidateCommand_JsonOutput_ContainsIssues()
-    {
+    public async Task ValidateCommand_JsonOutput_ContainsIssues() {
         // Arrange
         SetupWorkspaceWithWarnings();
 
@@ -410,8 +386,7 @@ public class CommandTests : IDisposable
 
     #region Helper Methods
 
-    private void SetupValidWorkspace()
-    {
+    private void SetupValidWorkspace() {
         // v0.2: 使用 wish 实例目录布局
         var wishDir = Path.Combine(_testDir, "wish", "W-0001-test");
         var docsDir = Path.Combine(_testDir, "docs");
@@ -444,8 +419,7 @@ public class CommandTests : IDisposable
         File.WriteAllText(Path.Combine(docsDir, "api.md"), apiContent);
     }
 
-    private void SetupWorkspaceWithWarnings()
-    {
+    private void SetupWorkspaceWithWarnings() {
         // v0.2: 使用 wish 实例目录布局
         // 创建有警告的工作区（缺少 backlink）
         var wishDir = Path.Combine(_testDir, "wish", "W-0001-test");
@@ -479,8 +453,7 @@ public class CommandTests : IDisposable
         File.WriteAllText(Path.Combine(docsDir, "api.md"), apiContent);
     }
 
-    private void SetupWorkspaceWithErrors()
-    {
+    private void SetupWorkspaceWithErrors() {
         // v0.2: 使用 wish 实例目录布局
         // 创建有警告的工作区（缺少必填字段）
         // 注：必填字段缺失已降级为 Warning
@@ -499,8 +472,7 @@ public class CommandTests : IDisposable
         File.WriteAllText(Path.Combine(wishDir, "wish.md"), wishContent);
     }
 
-    private void SetupWorkspaceWithDanglingLink()
-    {
+    private void SetupWorkspaceWithDanglingLink() {
         // v0.2: 使用 wish 实例目录布局
         // 创建有悬空引用的工作区
         var wishDir = Path.Combine(_testDir, "wish", "W-0001-test");

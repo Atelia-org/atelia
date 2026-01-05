@@ -6,8 +6,7 @@ namespace Atelia.DocGraph.Core;
 /// <summary>
 /// 文档关系验证结果。
 /// </summary>
-public class ValidationResult
-{
+public class ValidationResult {
     /// <summary>
     /// 扫描统计。
     /// </summary>
@@ -40,8 +39,8 @@ public class ValidationResult
     public ValidationResult(
         ScanStatistics statistics,
         IEnumerable<ValidationIssue> issues,
-        IEnumerable<Fix.FixResult>? fixResults = null)
-    {
+        IEnumerable<Fix.FixResult>? fixResults = null
+    ) {
         Statistics = statistics;
         Issues = issues
             .OrderByDescending(i => i.Severity)
@@ -57,8 +56,7 @@ public class ValidationResult
 /// <summary>
 /// 扫描统计信息。
 /// </summary>
-public class ScanStatistics
-{
+public class ScanStatistics {
     /// <summary>
     /// 扫描的总文件数。
     /// </summary>
@@ -88,8 +86,7 @@ public class ScanStatistics
 /// <summary>
 /// 验证问题。
 /// </summary>
-public class ValidationIssue
-{
+public class ValidationIssue {
     /// <summary>
     /// 问题严重度。
     /// </summary>
@@ -160,8 +157,8 @@ public class ValidationIssue
         int? lineNumber = null,
         int? columnNumber = null,
         string? codeSnippet = null,
-        string? referenceUrl = null)
-    {
+        string? referenceUrl = null
+    ) {
         Severity = severity;
         ErrorCode = errorCode;
         Message = message;
@@ -180,8 +177,7 @@ public class ValidationIssue
 /// 问题严重度。
 /// 参考：spec.md §5.3 错误聚合与退出码
 /// </summary>
-public enum IssueSeverity
-{
+public enum IssueSeverity {
     /// <summary>
     /// 🔵 [FYI] 信息性提示。
     /// </summary>

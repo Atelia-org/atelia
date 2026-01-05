@@ -7,8 +7,7 @@ namespace Atelia.DocGraph.Commands;
 /// 帮助信息工具类。
 /// 提供详细的命令帮助和使用示例。
 /// </summary>
-public static class HelpInfo
-{
+public static class HelpInfo {
     /// <summary>
     /// 版本号。
     /// </summary>
@@ -17,9 +16,9 @@ public static class HelpInfo
     /// <summary>
     /// 打印欢迎信息和快速入门指南。
     /// </summary>
-    public static void PrintWelcome()
-    {
-        Console.WriteLine($"""
+    public static void PrintWelcome() {
+        Console.WriteLine(
+            $"""
             
             ╔═══════════════════════════════════════════════════════════╗
             ║                    DocGraph v{Version}                       ║
@@ -38,15 +37,16 @@ public static class HelpInfo
             更多信息：
               https://github.com/example/docgraph
 
-            """);
+            """
+        );
     }
 
     /// <summary>
     /// 打印退出码说明。
     /// </summary>
-    public static void PrintExitCodes()
-    {
-        Console.WriteLine("""
+    public static void PrintExitCodes() {
+        Console.WriteLine(
+            """
             
             退出码说明：
             ═══════════════════════════════════════════════════════════
@@ -63,15 +63,16 @@ public static class HelpInfo
               2  错误      验证有错误，未执行修复
               3  致命      Fatal错误或修复执行失败
 
-            """);
+            """
+        );
     }
 
     /// <summary>
     /// 打印常见问题和解决方案。
     /// </summary>
-    public static void PrintCommonIssues()
-    {
-        Console.WriteLine("""
+    public static void PrintCommonIssues() {
+        Console.WriteLine(
+            """
             
             常见问题和解决方案：
             ═══════════════════════════════════════════════════════════
@@ -92,15 +93,16 @@ public static class HelpInfo
                问题：frontmatter 的 YAML 语法不正确
                解决：检查 YAML 缩进和格式
 
-            """);
+            """
+        );
     }
 
     /// <summary>
     /// 打印示例工作流。
     /// </summary>
-    public static void PrintWorkflow()
-    {
-        Console.WriteLine("""
+    public static void PrintWorkflow() {
+        Console.WriteLine(
+            """
             
             典型工作流：
             ═══════════════════════════════════════════════════════════
@@ -120,6 +122,7 @@ public static class HelpInfo
             5. CI/CD 自动化（跳过确认）
                $ docgraph validate --fix --yes
 
-            """);
+            """
+        );
     }
 }
