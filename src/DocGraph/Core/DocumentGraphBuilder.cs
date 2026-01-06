@@ -94,6 +94,10 @@ public partial class DocumentGraphBuilder : IDocumentGraphBuilder {
 
                 // 创建 Wish 文档节点
                 var node = CreateWishNode(relativePath, dir, frontmatter);
+
+                // 过滤掉 status 为 "abandoned" 的 Wish 节点
+                if (node.Status?.Equals("abandoned", StringComparison.OrdinalIgnoreCase) == true) { continue; /* 跳过已放弃的 Wish，不加入文档图 */ }
+
                 if (!allNodes.ContainsKey(node.FilePath)) {
                     allNodes[node.FilePath] = node;
 

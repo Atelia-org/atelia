@@ -155,6 +155,83 @@ public class DocumentGraphBuilderTests : IDisposable {
     }
 
     [Fact]
+    public void Build_ShouldFilterOutAbandonedWishes() {
+        // Arrange
+        CreateFile("wish/W-0001-active/wish.md",
+            """
+            ---
+            wishId: "W-0001"
+            title: Active Wish
+            status: Active
+            produce:
+              - docs/api.md
+            ---
+            """
+        );
+        CreateFile("wish/W-0002-abandoned/wish.md",
+            """
+            ---
+            wishId: "W-0002"
+            title: Abandoned Wish
+            status: Abandoned
+            produce:
+              - docs/spec.md
+            ---
+            """
+        );
+        CreateFile("wish/W-0003-completed/wish.md",
+            """
+            ---
+            wishId: "W-0003"
+            title: Completed Wish
+            status: Completed
+            produce:
+              - docs/guide.md
+            ---
+            """
+        );
+        CreateFile("docs/api.md",
+            """
+            ---
+            title: API Doc
+            ---
+            """
+        );
+        CreateFile("docs/spec.md",
+            """
+            ---
+            title: Spec Doc
+            ---
+            """
+        );
+        CreateFile("docs/guide.md",
+            """
+            ---
+            title: Guide Doc
+            ---
+            """
+        );
+
+        var builder = new DocumentGraphBuilder(_tempDir);
+
+        // Act
+        var graph = builder.Build();
+
+        // Assert - Abandoned 状态的 Wish 应该被过滤掉，不出现在 RootNodes 和 AllNodes 中
+        Assert.Equal(2, graph.RootNodes.Count); // 只有 Active 和 Completed
+        Assert.Contains(graph.RootNodes, n => n.DocId == "W-0001" && n.Status == "active");
+        Assert.Contains(graph.RootNodes, n => n.DocId == "W-0003" && n.Status == "completed");
+        Assert.DoesNotContain(graph.RootNodes, n => n.DocId == "W-0002");
+        Assert.DoesNotContain(graph.AllNodes, n => n.DocId == "W-0002");
+
+        // Abandoned Wish 产生的文档也不应该被包含在闭包中
+        Assert.Equal(4, graph.AllNodes.Count); // W-0001, api.md, W-0003, guide.md
+        Assert.Contains(graph.AllNodes, n => n.FilePath == "docs/api.md");
+        Assert.Contains(graph.AllNodes, n => n.FilePath == "docs/guide.md");
+        Assert.DoesNotContain(graph.AllNodes, n => n.FilePath == "docs/spec.md");
+    }
+
+    [Fact]
     public void Build_ShouldIgnoreHiddenFiles() {
         // Arrange - v0.2: wish 实例目录布局
         CreateFile("wish/W-0001-test/wish.md",
