@@ -385,7 +385,7 @@ stateDiagram-v2
 #### 3.1.1 三个核心标识
 
 - **ObjectId (`uint64`)**：对象的稳定身份。文件中任何“对象引用”仅存储 `ObjectId`。
-- **ObjectVersionPtr (<deleted-place-holder>)**：对象某个版本在文件中的位置指针（指向一条 ObjectVersionRecord）。定义遵循 [rbf-interface.md](rbf-interface.md) 的 `<deleted-place-holder>`。
+- **ObjectVersionPtr (<deleted-place-holder>)**：对象某个版本在文件中的位置指针（指向一条 ObjectVersionRecord）。定义遵循 [rbf-interface.md](rbf-interface.md) 的 <deleted-place-holder>。
 - **EpochSeq（`varuint`）**：epoch 的单调递增序号；在 meta file 方案下，它就是 MVP 的 epoch 身份与新旧判定依据。
 
 ObjectId 分配（第二批决策补充）：
@@ -631,7 +631,7 @@ I/O 目标（MVP）：
 
 Ptr64 与对齐约束（MVP 固定）：
 
-- `Ptr64` 对应 [rbf-interface.md](rbf-interface.md) 中的 `<deleted-place-holder>`。
+- `Ptr64` 对应 [rbf-interface.md](rbf-interface.md) 中的 <deleted-place-holder>。
 - 对齐与 Null 定义遵循 `[F-ADDRESS64-ALIGNMENT]` 与 `[F-ADDRESS64-NULL]`。
 - 所有可被 `Ptr64` 指向的 Record，`Ptr64` 值等于该 Record 的 `HeadLen` 字段起始位置（即紧随分隔符 Fence 之后）。
 

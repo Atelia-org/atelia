@@ -398,9 +398,9 @@ Resync 过程:
 
 ### 9.3 与 <deleted-place-holder> 的关系
 
-- `<deleted-place-holder>`（在 rbf-interface.md 中定义）是 `Ptr64` 的类型化封装
+- <deleted-place-holder>（在 rbf-interface.md 中定义）是 `Ptr64` 的类型化封装
 - 两者在 wire format 上相同（8 字节 LE）
-- `<deleted-place-holder>` 强调"指向 Frame 起点"的语义
+- <deleted-place-holder> 强调"指向 Frame 起点"的语义
 
 ---
 

@@ -143,7 +143,7 @@
 1. **概念术语**：统一 Title Case，全文一致
 2. **实现标识符**：仅在 Implementation Mapping 出现，用代码格式
 3. **缩写大写**：`HEAD`、`CRC32C` 全文同形
-4. **编码名 vs 语义名**：`Ptr64` 是通用 file offset 编码；`<deleted-place-holder>` 是指向 Record 起点的 Ptr64 子类型
+4. **编码名 vs 语义名**：`Ptr64` 是通用 file offset 编码；<deleted-place-holder> 是指向 Record 起点的 Ptr64 子类型
 
 ### 枚举值速查表
 
