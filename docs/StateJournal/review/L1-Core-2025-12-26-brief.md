@@ -15,7 +15,7 @@
 - commit: HEAD (main branch)
 - files:
   - `atelia/docs/StateJournal/mvp-design-v2.md` — §3.2.0.1 (VarInt), 术语表 (Ptr64, FrameTag)
-  - `atelia/docs/StateJournal/rbf-interface.md` — §2.3 (Address64)
+  - `atelia/docs/StateJournal/rbf-interface.md` — §2.3 (<deleted-place-holder>)
 
 ---
 
@@ -38,19 +38,19 @@
 > **[F-VARINT-CANONICAL-ENCODING]** canonical 最短编码
 > **[F-DECODE-ERROR-FAILFAST]** 解码错误策略：遇到 EOF、溢出、或非 canonical 一律视为格式错误并失败。
 
-### Group 2: Ptr64 / Address64
+### Group 2: Ptr64 / <deleted-place-holder>
 
 | ID | 标题 | 规范位置 | 要点 |
 |:---|:-----|:---------|:-----|
-| `[F-ADDRESS64-DEFINITION]` | Address64 定义 | rbf-interface.md §2.3 | 8 字节 LE 文件偏移量 |
+| `[F-ADDRESS64-DEFINITION]` | <deleted-place-holder> 定义 | rbf-interface.md §2.3 | 8 字节 LE 文件偏移量 |
 | `[F-ADDRESS64-ALIGNMENT]` | 4 字节对齐 | rbf-interface.md §2.3 | 有效地址 MUST `Value % 4 == 0` |
 | `[F-ADDRESS64-NULL]` | Null 值定义 | rbf-interface.md §2.3 | `Value == 0` 表示 null |
 
 **规范原文摘要**：
 
-> **Address64** 是 8 字节 LE 编码的文件偏移量，指向一个 Frame 的起始位置。
+> **<deleted-place-holder>** 是 8 字节 LE 编码的文件偏移量，指向一个 Frame 的起始位置。
 >
-> - **[F-ADDRESS64-ALIGNMENT]**：有效 Address64 MUST 4 字节对齐（`Value % 4 == 0`）
+> - **[F-ADDRESS64-ALIGNMENT]**：有效 <deleted-place-holder> MUST 4 字节对齐（`Value % 4 == 0`）
 > - **[F-ADDRESS64-NULL]**：`Value == 0` 表示 null（无效地址）
 
 ### Group 3: StateJournalError 类型
@@ -101,7 +101,7 @@
 |:-----|:-----|:---------|
 | `Core/VarInt.cs` | VarInt 编解码 | F-VARINT-*, F-DECODE-ERROR-FAILFAST |
 | `Core/Ptr64.cs` | Ptr64 类型别名 | F-ADDRESS64-* |
-| `Core/Address64Extensions.cs` | Address64 扩展方法 | F-ADDRESS64-ALIGNMENT |
+| `Core/<deleted-place-holder>Extensions.cs` | <deleted-place-holder> 扩展方法 | F-ADDRESS64-ALIGNMENT |
 | `Core/StateJournalError.cs` | 错误类型定义 | F-DECODE-ERROR-FAILFAST, F-UNKNOWN-* |
 | `Core/StateJournalFrameTag.cs` | FrameTag 位段解释 | F-FRAMETAG-* |
 | `Core/IDurableObject.cs` | 持久化对象接口 | A-OBJECT-STATE-*, A-HASCHANGES-* |
@@ -109,7 +109,7 @@
 
 **相关测试**：
 - `Core/VarIntTests.cs`
-- `Core/Address64Tests.cs`
+- `Core/<deleted-place-holder>Tests.cs`
 - `Core/StateJournalErrorTests.cs`
 - `Core/StateJournalFrameTagTests.cs`
 - `Core/IDurableObjectTests.cs`

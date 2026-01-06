@@ -117,11 +117,11 @@ public class DataRecordReaderTests {
         var scanner = new RbfScanner(buffer.WrittenMemory);
         var reader = new DataRecordReader(scanner);
 
-        var chain = new List<(Address64 Addr, byte[] Diff)>();
+        var chain = new List<(<deleted-place-holder> Addr, byte[] Diff)>();
         var currentPtr = addr5.Value;
 
         while (currentPtr != 0) {
-            var result = reader.TryReadAt(Address64.FromOffset((long)currentPtr));
+            var result = reader.TryReadAt(<deleted-place-holder>.FromOffset((long)currentPtr));
             result.IsSuccess.Should().BeTrue($"Should be able to read at 0x{currentPtr:X}");
 
             var parsed = result.Value;
@@ -208,7 +208,7 @@ public class DataRecordReaderTests {
         var reader = new DataRecordReader(scanner);
 
         // 尝试读取一个无效地址
-        var invalidAddr = Address64.FromOffset(0x9999);
+        var invalidAddr = <deleted-place-holder>.FromOffset(0x9999);
         var result = reader.TryReadAt(invalidAddr);
 
         // Assert

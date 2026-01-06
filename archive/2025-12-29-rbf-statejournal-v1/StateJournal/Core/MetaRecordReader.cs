@@ -12,7 +12,7 @@ namespace Atelia.StateJournal;
 /// <param name="Record">解析后的 MetaCommitRecord。</param>
 /// <param name="Status">帧状态（Valid/Tombstone）。</param>
 public readonly record struct ParsedMetaRecord(
-    Address64 Address,
+    <deleted-place-holder> Address,
     MetaCommitRecord Record,
     FrameStatus Status);
 
@@ -68,7 +68,7 @@ public sealed class MetaRecordReader {
 
             // 产出有效记录（包括 Tombstone）
             yield return new ParsedMetaRecord(
-                Address: Address64.FromOffset(frame.FileOffset),
+                Address: <deleted-place-holder>.FromOffset(frame.FileOffset),
                 Record: parseResult.Value,
                 Status: frame.Status
             );
@@ -88,7 +88,7 @@ public sealed class MetaRecordReader {
     ///   <item>Payload 解析失败</item>
     /// </list>
     /// </remarks>
-    public AteliaResult<ParsedMetaRecord> TryReadAt(Address64 address) {
+    public AteliaResult<ParsedMetaRecord> TryReadAt(<deleted-place-holder> address) {
         // 尝试读取帧
         if (!_scanner.TryReadAt(address, out var frame)) {
             return AteliaResult<ParsedMetaRecord>.Failure(
@@ -143,7 +143,7 @@ public abstract record MetaRecordReaderError(
 /// Meta 记录读取失败错误（帧级别）。
 /// </summary>
 public sealed record MetaRecordReadError(
-    Address64 Address,
+    <deleted-place-holder> Address,
     string Reason
 ) : MetaRecordReaderError(
     "StateJournal.MetaRecordReader.ReadFailed",
@@ -157,7 +157,7 @@ public sealed record MetaRecordReadError(
 /// Meta 记录 FrameTag 不匹配错误。
 /// </summary>
 public sealed record MetaRecordFrameTagMismatchError(
-    Address64 Address,
+    <deleted-place-holder> Address,
     uint ActualFrameTag
 ) : MetaRecordReaderError(
     "StateJournal.MetaRecordReader.FrameTagMismatch",
@@ -173,7 +173,7 @@ public sealed record MetaRecordFrameTagMismatchError(
 /// Meta 记录 Payload 解析错误。
 /// </summary>
 public sealed record MetaRecordParseError(
-    Address64 Address,
+    <deleted-place-holder> Address,
     AteliaError Cause
 ) : MetaRecordReaderError(
     "StateJournal.MetaRecordReader.ParseFailed",

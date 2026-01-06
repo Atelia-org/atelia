@@ -65,7 +65,7 @@
 | 任务 ID | 名称 | 预估 | 条款覆盖 | 并行标注 |
 |---------|------|------|----------|----------|
 | T-P2-00 | 错误类型定义 | 0.5h | StateJournal 所有 `*-REJECT`, `*-FAILFAST` 错误码 | ⚡ 可与 P1 并行 |
-| T-P2-01 | Address64/Ptr64 | 1h | `[F-ADDRESS64-*]`, `[F-PTR64-WIRE-FORMAT]` | — |
+| T-P2-01 | <deleted-place-holder>/Ptr64 | 1h | `[F-ADDRESS64-*]`, `[F-PTR64-WIRE-FORMAT]` | — |
 | T-P2-02 | VarInt 编解码 | 2h | `[F-VARINT-CANONICAL-ENCODING]`, `[F-DECODE-ERROR-FAILFAST]` | ⚡ 可与 P1 并行 |
 | T-P2-03 | FrameTag 位段编码 | 2h | `[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]`, `[F-FRAMETAG-SUBTYPE-*]` | — |
 | T-P2-04 | DurableObjectState 枚举 | 1h | `[A-OBJECT-STATE-*]`, `[S-STATE-TRANSITION-MATRIX]` | ⚡ 可与 P1 并行 |
@@ -135,7 +135,7 @@
 | T-P1-04 | 1 | IRbfFramer/Builder | 3h | T-P1-02, T-P1-03 | RBF-SINGLE-001 通过; Auto-abort 测试通过; Single-open 约束测试通过 |
 | T-P1-05 | 1 | IRbfScanner/逆向扫描 | 3h | T-P1-04 | RBF-DOUBLE-001 通过; RESYNC 测试通过; Tombstone 帧可见 |
 | T-P2-00 | 2 | 错误类型定义 | 0.5h | — | `StateJournalError` 继承 `AteliaError`; 所有错误码已定义 |
-| T-P2-01 | 2 | Address64/Ptr64 | 1h | — | 对齐测试：`value % 4 == 0`; 空值测试：`Address64.Null.Value == 0` |
+| T-P2-01 | 2 | <deleted-place-holder>/Ptr64 | 1h | — | 对齐测试：`value % 4 == 0`; 空值测试：`<deleted-place-holder>.Null.Value == 0` |
 | T-P2-02 | 2 | VarInt 编解码 | 2h | — | Canonical 编码测试通过; 非 canonical 输入 reject |
 | T-P2-03 | 2 | FrameTag 位段编码 | 2h | T-P2-01 | FRAMETAG-OK-* 通过 |
 | T-P2-04 | 2 | DurableObjectState 枚举 | 1h | — | 枚举值 4 个：Clean/PersistentDirty/TransientDirty/Detached |
@@ -335,7 +335,7 @@ atelia/src/
 └── StateJournal/                     # Atelia.StateJournal (Phase 2-5)
     ├── StateJournal.csproj
     ├── Core/                         # Phase 2
-    │   ├── Address64.cs
+    │   ├── <deleted-place-holder>.cs
     │   ├── VarInt.cs
     │   ├── FrameTag.cs
     │   ├── DurableObjectState.cs

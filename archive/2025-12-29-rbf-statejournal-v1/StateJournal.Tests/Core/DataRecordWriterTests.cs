@@ -262,7 +262,7 @@ public class DataRecordWriterTests {
 
         var currentPtr = addr5.Value;
         while (currentPtr != 0) {
-            var success = scanner.TryReadAt(Address64.FromOffset((long)currentPtr), out var frame);
+            var success = scanner.TryReadAt(<deleted-place-holder>.FromOffset((long)currentPtr), out var frame);
             success.Should().BeTrue($"Should be able to read at {currentPtr}");
 
             var payload = scanner.ReadPayload(frame);

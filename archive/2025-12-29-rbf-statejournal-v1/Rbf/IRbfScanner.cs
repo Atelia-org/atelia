@@ -21,7 +21,7 @@ public interface IRbfScanner {
     /// <para><b>[F-FRAMING-FAIL-REJECT]</b>: 任一校验不满足时返回 false。</para>
     /// <para><b>[F-CRC-FAIL-REJECT]</b>: CRC 不匹配时返回 false。</para>
     /// </remarks>
-    bool TryReadAt(Address64 address, out RbfFrame frame);
+    bool TryReadAt(<deleted-place-holder> address, out RbfFrame frame);
 
     /// <summary>
     /// 从文件尾部逆向扫描所有帧。

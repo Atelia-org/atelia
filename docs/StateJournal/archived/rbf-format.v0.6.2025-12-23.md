@@ -34,7 +34,7 @@
 ┌─────────────────▼───────────────────┐
 │  rbf-interface.md                    │
 │  - Layer 0/1 的对接契约              │
-│  - 定义 FrameTag, Address64 等       │
+│  - 定义 FrameTag, <deleted-place-holder> 等       │
 └─────────────────┬───────────────────┘
                   │ 实现
 ┌─────────────────▼───────────────────┐
@@ -379,7 +379,7 @@ Resync 过程:
 
 ---
 
-## 9. Ptr64 / Address64
+## 9. Ptr64 / <deleted-place-holder>
 
 ### 9.1 编码
 
@@ -396,11 +396,11 @@ Resync 过程:
 - 有效 Ptr64 MUST 满足 `Ptr64 % 4 == 0`（4B 对齐）
 - Reader 遇到非对齐 Ptr64 MUST 视为格式错误
 
-### 9.3 与 Address64 的关系
+### 9.3 与 <deleted-place-holder> 的关系
 
-- `Address64`（在 rbf-interface.md 中定义）是 `Ptr64` 的类型化封装
+- `<deleted-place-holder>`（在 rbf-interface.md 中定义）是 `Ptr64` 的类型化封装
 - 两者在 wire format 上相同（8 字节 LE）
-- `Address64` 强调"指向 Frame 起点"的语义
+- `<deleted-place-holder>` 强调"指向 Frame 起点"的语义
 
 ---
 

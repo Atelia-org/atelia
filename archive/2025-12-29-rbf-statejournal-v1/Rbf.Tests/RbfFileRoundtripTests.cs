@@ -12,7 +12,7 @@ public class RbfFileRoundtripTests {
         using var temp = new TempFileFixture();
         var path = temp.GetFilePath("roundtrip.rbf");
 
-        var addresses = new List<Address64>();
+        var addresses = new List<<deleted-place-holder>>();
         var payloads = new Dictionary<uint, byte[]>();
 
         using (var framer = new RbfFileFramer(path, RbfFileMode.Create)) {
@@ -72,7 +72,7 @@ public class RbfFileRoundtripTests {
         using var temp = new TempFileFixture();
         var path = temp.GetFilePath("file-backed-read.rbf");
 
-        Address64 savedAddress;
+        <deleted-place-holder> savedAddress;
         byte[] expectedPayload = [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE];
         uint expectedTag = 0x12345678;
 

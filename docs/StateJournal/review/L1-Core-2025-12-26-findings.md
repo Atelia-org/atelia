@@ -10,7 +10,7 @@
 ## 目录
 
 1. [Group 1: VarInt 编解码](#group-1-varint-编解码)
-2. [Group 2: Ptr64 / Address64](#group-2-ptr64--address64)
+2. [Group 2: Ptr64 / <deleted-place-holder>](#group-2-ptr64--address64)
 3. [Group 3: StateJournalError 类型](#group-3-statejournalerror-类型)
 4. [Group 4: FrameTag 位段编码](#group-4-frametag-位段编码)
 5. [Group 5: IDurableObject 接口](#group-5-idurableobject-接口)
@@ -209,7 +209,7 @@ if (bytesConsumed == MaxVarUInt64Bytes && b > 0x01)
 
 ---
 
-## Group 2: Ptr64 / Address64
+## Group 2: Ptr64 / <deleted-place-holder>
 
 ### F-ADDRESS64-DEFINITION-001
 
@@ -220,28 +220,28 @@ clauseId: "[F-ADDRESS64-DEFINITION]"
 dedupeKey: "F-ADDRESS64-DEFINITION|Ptr64.cs|C|type-alias"
 ---
 
-# 🟢 C: [F-ADDRESS64-DEFINITION] Ptr64 是 Address64 的类型别名
+# 🟢 C: [F-ADDRESS64-DEFINITION] Ptr64 是 <deleted-place-holder> 的类型别名
 
 ## 📝 Evidence
 
 **规范**:
-> **Address64** 是 8 字节 LE 编码的文件偏移量，指向一个 Frame 的起始位置。 (rbf-interface.md §2.3)
+> **<deleted-place-holder>** 是 8 字节 LE 编码的文件偏移量，指向一个 Frame 的起始位置。 (rbf-interface.md §2.3)
 >
-> **Ptr64** / **Address64**：8 字节文件偏移量。详见 rbf-interface.md §2.2 (mvp-design-v2.md 术语表)
+> **Ptr64** / **<deleted-place-holder>**：8 字节文件偏移量。详见 rbf-interface.md §2.2 (mvp-design-v2.md 术语表)
 
 **代码**: [Ptr64.cs#L13](../../../src/StateJournal/Core/Ptr64.cs#L13)
 
 ```csharp
-global using Ptr64 = Atelia.Rbf.Address64;
+global using Ptr64 = Atelia.Rbf.<deleted-place-holder>;
 ```
 
 **复现**:
 - 类型: existingTest
-- 参考: `Address64Tests.Ptr64_IsAliasForAddress64`, `Ptr64Null_EqualsAddress64Null`
+- 参考: `<deleted-place-holder>Tests.Ptr64_IsAliasFor<deleted-place-holder>`, `Ptr64Null_Equals<deleted-place-holder>Null`
 
 ## ⚖️ Verdict
 
-**判定**: C — `Ptr64` 正确定义为 `Atelia.Rbf.Address64` 的 global using 别名，与规范要求一致。
+**判定**: C — `Ptr64` 正确定义为 `Atelia.Rbf.<deleted-place-holder>` 的 global using 别名，与规范要求一致。
 
 ---
 
@@ -251,7 +251,7 @@ global using Ptr64 = Atelia.Rbf.Address64;
 id: "F-ADDRESS64-ALIGNMENT-001"
 verdictType: "C"
 clauseId: "[F-ADDRESS64-ALIGNMENT]"
-dedupeKey: "F-ADDRESS64-ALIGNMENT|Address64Extensions.cs|C|validation"
+dedupeKey: "F-ADDRESS64-ALIGNMENT|<deleted-place-holder>Extensions.cs|C|validation"
 ---
 
 # 🟢 C: [F-ADDRESS64-ALIGNMENT] TryFromOffset 验证 4 字节对齐
@@ -259,23 +259,23 @@ dedupeKey: "F-ADDRESS64-ALIGNMENT|Address64Extensions.cs|C|validation"
 ## 📝 Evidence
 
 **规范**:
-> **[F-ADDRESS64-ALIGNMENT]**：有效 Address64 MUST 4 字节对齐（`Value % 4 == 0`） (rbf-interface.md §2.3)
+> **[F-ADDRESS64-ALIGNMENT]**：有效 <deleted-place-holder> MUST 4 字节对齐（`Value % 4 == 0`） (rbf-interface.md §2.3)
 
-**代码**: [Address64Extensions.cs#L29-L35](../../../src/StateJournal/Core/Address64Extensions.cs#L29-L35)
+**代码**: [<deleted-place-holder>Extensions.cs#L29-L35](../../../src/StateJournal/Core/<deleted-place-holder>Extensions.cs#L29-L35)
 
 ```csharp
 // 检查 4 字节对齐
 if (offset % 4 != 0)
 {
-    return AteliaResult<Address64>.Failure(new AddressAlignmentError(offset));
+    return AteliaResult<<deleted-place-holder>>.Failure(new AddressAlignmentError(offset));
 }
 
-return AteliaResult<Address64>.Success(new Address64(offset));
+return AteliaResult<<deleted-place-holder>>.Success(new <deleted-place-holder>(offset));
 ```
 
 **复现**:
 - 类型: existingTest
-- 参考: `Address64Tests.TryFromOffset_AlignedValue_ReturnsSuccess`, `TryFromOffset_UnalignedValue_ReturnsFailure`
+- 参考: `<deleted-place-holder>Tests.TryFromOffset_AlignedValue_ReturnsSuccess`, `TryFromOffset_UnalignedValue_ReturnsFailure`
 - 验证: 4, 8, 1024 对齐值成功；1, 2, 3, 5, 7 非对齐值返回 `AddressAlignmentError`
 
 ## ⚖️ Verdict
@@ -290,33 +290,33 @@ return AteliaResult<Address64>.Success(new Address64(offset));
 id: "F-ADDRESS64-NULL-001"
 verdictType: "C"
 clauseId: "[F-ADDRESS64-NULL]"
-dedupeKey: "F-ADDRESS64-NULL|Address64Extensions.cs|C|null-handling"
+dedupeKey: "F-ADDRESS64-NULL|<deleted-place-holder>Extensions.cs|C|null-handling"
 ---
 
-# 🟢 C: [F-ADDRESS64-NULL] TryFromOffset(0) 返回 Address64.Null
+# 🟢 C: [F-ADDRESS64-NULL] TryFromOffset(0) 返回 <deleted-place-holder>.Null
 
 ## 📝 Evidence
 
 **规范**:
 > **[F-ADDRESS64-NULL]**：`Value == 0` 表示 null（无效地址） (rbf-interface.md §2.3)
 
-**代码**: [Address64Extensions.cs#L22-L26](../../../src/StateJournal/Core/Address64Extensions.cs#L22-L26)
+**代码**: [<deleted-place-holder>Extensions.cs#L22-L26](../../../src/StateJournal/Core/<deleted-place-holder>Extensions.cs#L22-L26)
 
 ```csharp
 // Null 地址（offset=0）是合法值，直接返回
 if (offset == 0)
 {
-    return AteliaResult<Address64>.Success(Address64.Null);
+    return AteliaResult<<deleted-place-holder>>.Success(<deleted-place-holder>.Null);
 }
 ```
 
 **复现**:
 - 类型: existingTest
-- 参考: `Address64Tests.TryFromOffset_Zero_ReturnsNullAddress`, `Null_HasValueZero`, `Null_IsNullReturnsTrue`
+- 参考: `<deleted-place-holder>Tests.TryFromOffset_Zero_ReturnsNullAddress`, `Null_HasValueZero`, `Null_IsNullReturnsTrue`
 
 ## ⚖️ Verdict
 
-**判定**: C — `offset=0` 正确返回 `Address64.Null`（合法值，非错误），符合规范定义的 null 语义。
+**判定**: C — `offset=0` 正确返回 `<deleted-place-holder>.Null`（合法值，非错误），符合规范定义的 null 语义。
 
 ---
 
@@ -942,7 +942,7 @@ public enum DurableObjectState
 | Group | C | V | U | I |
 |-------|---|---|---|---|
 | Group 1: VarInt 编解码 | 4 | 0 | 0 | 0 |
-| Group 2: Ptr64 / Address64 | 3 | 0 | 0 | 0 |
+| Group 2: Ptr64 / <deleted-place-holder> | 3 | 0 | 0 | 0 |
 | Group 3: StateJournalError 类型 | 4 | 0 | 0 | 0 |
 | Group 4: FrameTag 位段编码 | 4 | 0 | 0 | 0 |
 | Group 5: IDurableObject 接口 | 2 | 0 | 0 | 0 |
@@ -955,7 +955,7 @@ public enum DurableObjectState
 所有 17 个审阅条款均判定为 **Conform (C)**。代码实现忠实地遵循了规范要求：
 
 1. **VarInt 编解码**：正确实现 canonical 最短编码和 fail-fast 解码错误处理
-2. **Address64/Ptr64**：正确实现 4 字节对齐验证和 null 语义
+2. **<deleted-place-holder>/Ptr64**：正确实现 4 字节对齐验证和 null 语义
 3. **错误类型**：完整定义了所有规范要求的错误类型，ErrorCode 格式规范
 4. **FrameTag 位段**：位运算正确，TryParse 覆盖所有验证规则
 5. **IDurableObject**：接口定义完整，XML 文档明确了复杂度要求

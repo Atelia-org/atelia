@@ -24,7 +24,7 @@ public sealed class RbfFramer : IRbfFramer {
     /// 创建 RbfFramer。
     /// </summary>
     /// <param name="output">底层缓冲区写入器。</param>
-    /// <param name="startPosition">起始位置（用于计算 Address64）。</param>
+    /// <param name="startPosition">起始位置（用于计算 <deleted-place-holder>）。</param>
     /// <param name="writeGenesis">是否写入 Genesis Fence。</param>
     public RbfFramer(IBufferWriter<byte> output, long startPosition = 0, bool writeGenesis = true) {
         ArgumentNullException.ThrowIfNull(output);
@@ -50,13 +50,13 @@ public sealed class RbfFramer : IRbfFramer {
     internal IBufferWriter<byte> PayloadWriter => throw new InvalidOperationException("Use BeginFrame streaming writer.");
 
     /// <inheritdoc/>
-    public Address64 Append(FrameTag tag, ReadOnlySpan<byte> payload) {
+    public <deleted-place-holder> Append(FrameTag tag, ReadOnlySpan<byte> payload) {
         if (_hasOpenBuilder) { throw new InvalidOperationException("Cannot Append while a RbfFrameBuilder is open."); }
 
         // 写入帧并立即提交
         var frameStart = _position;
         WriteFrameComplete(tag, payload, FrameStatus.CreateValid(1)); // StatusLen will be recalculated
-        return Address64.FromOffset(frameStart);
+        return <deleted-place-holder>.FromOffset(frameStart);
     }
 
     /// <inheritdoc/>
@@ -92,11 +92,11 @@ public sealed class RbfFramer : IRbfFramer {
     /// <summary>
     /// 提交帧（供 RbfFrameBuilder 调用）。
     /// </summary>
-    internal Address64 CommitFrame(long frameStart, FrameTag tag, FrameStatus status) {
+    internal <deleted-place-holder> CommitFrame(long frameStart, FrameTag tag, FrameStatus status) {
         throw new NotSupportedException("Non-streaming frame builder is no longer supported; use BeginFrame streaming writer.");
     }
 
-    internal Address64 CommitFrameStreaming(
+    internal <deleted-place-holder> CommitFrameStreaming(
         long frameStart,
         FrameTag tag,
         ChunkedReservableWriter writer,
@@ -157,7 +157,7 @@ public sealed class RbfFramer : IRbfFramer {
         _activeChunkedWriter = null;
         _activeInnerWriter = null;
 
-        return Address64.FromOffset(frameStart);
+        return <deleted-place-holder>.FromOffset(frameStart);
     }
 
     internal void AbortFrameStreaming(ChunkedReservableWriter writer) {

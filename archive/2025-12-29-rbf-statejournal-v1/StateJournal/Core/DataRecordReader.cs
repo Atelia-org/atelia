@@ -14,7 +14,7 @@ namespace Atelia.StateJournal;
 /// <param name="DiffPayload">Diff 数据（Memory 切片，不复制）。</param>
 /// <param name="Status">帧状态（Valid/Tombstone）。</param>
 public readonly record struct ParsedDataRecord(
-    Address64 Address,
+    <deleted-place-holder> Address,
     ObjectKind Kind,
     ulong PrevVersionPtr,
     ReadOnlyMemory<byte> DiffPayload,
@@ -83,7 +83,7 @@ public sealed class DataRecordReader {
 
             // 产出有效记录（包括 Tombstone）
             yield return new ParsedDataRecord(
-                Address: Address64.FromOffset(frame.FileOffset),
+                Address: <deleted-place-holder>.FromOffset(frame.FileOffset),
                 Kind: kind,
                 PrevVersionPtr: parsed.PrevVersionPtr,
                 DiffPayload: parsed.DiffPayload,
@@ -105,7 +105,7 @@ public sealed class DataRecordReader {
     ///   <item>Payload 解析失败</item>
     /// </list>
     /// </remarks>
-    public AteliaResult<ParsedDataRecord> TryReadAt(Address64 address) {
+    public AteliaResult<ParsedDataRecord> TryReadAt(<deleted-place-holder> address) {
         // 尝试读取帧
         if (!_scanner.TryReadAt(address, out var frame)) {
             return AteliaResult<ParsedDataRecord>.Failure(
@@ -167,7 +167,7 @@ public abstract record DataRecordReaderError(
 /// Data 记录读取失败错误（帧级别）。
 /// </summary>
 public sealed record DataRecordReadError(
-    Address64 Address,
+    <deleted-place-holder> Address,
     string Reason
 ) : DataRecordReaderError(
     "StateJournal.DataRecordReader.ReadFailed",
@@ -181,7 +181,7 @@ public sealed record DataRecordReadError(
 /// Data 记录 FrameTag 不匹配错误。
 /// </summary>
 public sealed record DataRecordFrameTagMismatchError(
-    Address64 Address,
+    <deleted-place-holder> Address,
     uint ActualFrameTag
 ) : DataRecordReaderError(
     "StateJournal.DataRecordReader.FrameTagMismatch",
@@ -196,7 +196,7 @@ public sealed record DataRecordFrameTagMismatchError(
 /// Data 记录 Payload 解析错误。
 /// </summary>
 public sealed record DataRecordParseError(
-    Address64 Address,
+    <deleted-place-holder> Address,
     AteliaError Cause
 ) : DataRecordReaderError(
     "StateJournal.DataRecordReader.ParseFailed",

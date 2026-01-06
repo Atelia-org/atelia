@@ -18,7 +18,7 @@ public interface IRbfFramer {
     /// <param name="tag">帧类型标识符。</param>
     /// <param name="payload">帧负载（可为空）。</param>
     /// <returns>写入的帧起始地址。</returns>
-    Address64 Append(FrameTag tag, ReadOnlySpan<byte> payload);
+    <deleted-place-holder> Append(FrameTag tag, ReadOnlySpan<byte> payload);
 
     /// <summary>
     /// 开始构建一个帧（高级场景：流式写入或需要 payload 内回填）。
@@ -115,7 +115,7 @@ public ref struct RbfFrameBuilder {
     /// <returns>写入的帧起始地址。</returns>
     /// <exception cref="InvalidOperationException">重复调用 Commit。</exception>
     /// <exception cref="ObjectDisposedException">已 Dispose 后调用。</exception>
-    public Address64 Commit() {
+    public <deleted-place-holder> Commit() {
         ObjectDisposedException.ThrowIf(_disposed, nameof(RbfFrameBuilder));
         if (_committed) { throw new InvalidOperationException("Frame has already been committed."); }
 

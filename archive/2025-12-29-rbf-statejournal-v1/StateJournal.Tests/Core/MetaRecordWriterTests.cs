@@ -274,7 +274,7 @@ public class MetaRecordWriterTests {
         var writer = new MetaRecordWriter(framer);
 
         var records = new List<MetaCommitRecord>();
-        var addresses = new List<Address64>();
+        var addresses = new List<<deleted-place-holder>>();
 
         // 写入 5 条 commit 记录，模拟连续提交
         for (ulong i = 1; i <= 5; i++) {

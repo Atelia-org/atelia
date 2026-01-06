@@ -106,7 +106,7 @@ case DurableObjectState.Detached:
 ### Core 模块 (100%)
 
 - VarInt canonical 编码完美实现
-- Address64 4-byte 对齐验证正确
+- <deleted-place-holder> 4-byte 对齐验证正确
 - FrameTag 位布局精确匹配规范
 - 错误类型完整定义
 

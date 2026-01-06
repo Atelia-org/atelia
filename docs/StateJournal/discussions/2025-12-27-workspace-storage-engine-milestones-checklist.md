@@ -65,14 +65,14 @@
 
 **实施要点**：
 - 实现一个可用于 `IBufferWriter<byte>` 的文件追加 writer（或等价抽象），并能提供：
-  - 当前 Position（用于 Address64）
+  - 当前 Position（用于 <deleted-place-holder>）
   - Flush（推送到 OS）
   - Durable flush（对外暴露给上层，满足 data→meta 的持久化顺序）
 - scanner 侧至少满足：TryReadAt + ScanReverse + ReadPayload，并能基于文件内容工作。
 
 **DoD**：
 - 能在磁盘上创建一个 .rbf 文件，Append 若干帧后，ScanReverse 能读回相同数量的 Valid 帧。
-- `TryReadAt(Address64)` 对有效地址可稳定读取并通过 CRC 校验。
+- `TryReadAt(<deleted-place-holder>)` 对有效地址可稳定读取并通过 CRC 校验。
 
 ---
 
@@ -143,7 +143,7 @@
 - `atelia/src/StateJournal/Materialization/DictMaterializer.cs`
 
 **实施要点**：
-- 输入：ObjectVersionPtr（Address64/Ptr64）
+- 输入：ObjectVersionPtr（<deleted-place-holder>/Ptr64）
 - 循环：ReadAt(ptr) → parse ObjectVersionRecord → push(diff) → ptr=PrevVersionPtr，直到 0
 - apply 顺序：base → overlay（逆序应用）
 - tombstone 语义：Remove key（Working State tombstone-free）
@@ -166,7 +166,7 @@
   - [atelia/src/StateJournal/Commit/MetaCommitRecord.cs](../../src/StateJournal/Commit/MetaCommitRecord.cs)
 
 **实施要点**：
-- data：对 dirty objects 写 ObjectVersionRecord（FrameTag=DictVersion），得到 Address64 更新 VersionIndex。
+- data：对 dirty objects 写 ObjectVersionRecord（FrameTag=DictVersion），得到 <deleted-place-holder> 更新 VersionIndex。
 - versionIndex：ObjectId=0 的 DurableDict 如变更也写入 data，并更新 VersionIndexPtr。
 - meta：写 MetaCommitRecord（EpochSeq+RootObjectId+VersionIndexPtr+DataTail+NextObjectId）。
 - durable flush 顺序：data 再 meta。

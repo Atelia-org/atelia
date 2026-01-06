@@ -51,7 +51,7 @@ public sealed class RbfFileScanner : IRbfScanner, IDisposable {
     public long FileLength => _fileLength;
 
     /// <inheritdoc/>
-    public bool TryReadAt(Address64 address, out RbfFrame frame) {
+    public bool TryReadAt(<deleted-place-holder> address, out RbfFrame frame) {
         frame = default;
 
         // 空文件或无效地址

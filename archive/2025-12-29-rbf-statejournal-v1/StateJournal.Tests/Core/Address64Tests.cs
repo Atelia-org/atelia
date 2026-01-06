@@ -4,12 +4,12 @@ using FluentAssertions;
 using Xunit;
 
 // Ptr64 别名：在 StateJournal 项目中通过 global using 定义，测试项目需本地定义
-using Ptr64 = Atelia.Rbf.Address64;
+using Ptr64 = Atelia.Rbf.<deleted-place-holder>;
 
 namespace Atelia.StateJournal.Tests.Core;
 
 /// <summary>
-/// Address64 和 Ptr64 类型测试。
+/// <deleted-place-holder> 和 Ptr64 类型测试。
 /// </summary>
 /// <remarks>
 /// 对应条款：
@@ -19,23 +19,23 @@ namespace Atelia.StateJournal.Tests.Core;
 ///   <item><c>[F-ADDRESS64-NULL]</c></item>
 /// </list>
 /// </remarks>
-public class Address64Tests {
-    #region Address64.Null 测试
+public class <deleted-place-holder>Tests {
+    #region <deleted-place-holder>.Null 测试
 
     /// <summary>
-    /// [F-ADDRESS64-NULL] Address64.Null.Value == 0
+    /// [F-ADDRESS64-NULL] <deleted-place-holder>.Null.Value == 0
     /// </summary>
     [Fact]
     public void Null_HasValueZero() {
-        Address64.Null.Value.Should().Be(0UL);
+        <deleted-place-holder>.Null.Value.Should().Be(0UL);
     }
 
     /// <summary>
-    /// [F-ADDRESS64-NULL] Address64.Null.IsNull == true
+    /// [F-ADDRESS64-NULL] <deleted-place-holder>.Null.IsNull == true
     /// </summary>
     [Fact]
     public void Null_IsNullReturnsTrue() {
-        Address64.Null.IsNull.Should().BeTrue();
+        <deleted-place-holder>.Null.IsNull.Should().BeTrue();
     }
 
     /// <summary>
@@ -46,7 +46,7 @@ public class Address64Tests {
     [InlineData(8UL)]
     [InlineData(1024UL)]
     public void NonZeroAddress_IsNullReturnsFalse(ulong value) {
-        var addr = new Address64(value);
+        var addr = new <deleted-place-holder>(value);
         addr.IsNull.Should().BeFalse();
     }
 
@@ -64,7 +64,7 @@ public class Address64Tests {
     [InlineData(1024UL)]
     [InlineData(4096UL)]
     public void AlignedNonZeroAddress_IsValidReturnsTrue(ulong value) {
-        var addr = new Address64(value);
+        var addr = new <deleted-place-holder>(value);
         addr.IsValid.Should().BeTrue();
     }
 
@@ -79,7 +79,7 @@ public class Address64Tests {
     [InlineData(7UL)]
     [InlineData(1001UL)]
     public void UnalignedAddress_IsValidReturnsFalse(ulong value) {
-        var addr = new Address64(value);
+        var addr = new <deleted-place-holder>(value);
         addr.IsValid.Should().BeFalse();
     }
 
@@ -88,7 +88,7 @@ public class Address64Tests {
     /// </summary>
     [Fact]
     public void NullAddress_IsValidReturnsFalse() {
-        Address64.Null.IsValid.Should().BeFalse();
+        <deleted-place-holder>.Null.IsValid.Should().BeFalse();
     }
 
     #endregion
@@ -103,7 +103,7 @@ public class Address64Tests {
     [InlineData(8UL)]
     [InlineData(1024UL)]
     public void TryFromOffset_AlignedValue_ReturnsSuccess(ulong offset) {
-        var result = Address64Extensions.TryFromOffset(offset);
+        var result = <deleted-place-holder>Extensions.TryFromOffset(offset);
 
         result.IsSuccess.Should().BeTrue();
         result.Value.Value.Should().Be(offset);
@@ -119,7 +119,7 @@ public class Address64Tests {
     [InlineData(5UL)]
     [InlineData(7UL)]
     public void TryFromOffset_UnalignedValue_ReturnsFailure(ulong offset) {
-        var result = Address64Extensions.TryFromOffset(offset);
+        var result = <deleted-place-holder>Extensions.TryFromOffset(offset);
 
         result.IsFailure.Should().BeTrue();
         result.Error.Should().BeOfType<AddressAlignmentError>();
@@ -129,14 +129,14 @@ public class Address64Tests {
     }
 
     /// <summary>
-    /// [F-ADDRESS64-NULL] TryFromOffset(0) 返回 Address64.Null
+    /// [F-ADDRESS64-NULL] TryFromOffset(0) 返回 <deleted-place-holder>.Null
     /// </summary>
     [Fact]
     public void TryFromOffset_Zero_ReturnsNullAddress() {
-        var result = Address64Extensions.TryFromOffset(0UL);
+        var result = <deleted-place-holder>Extensions.TryFromOffset(0UL);
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be(Address64.Null);
+        result.Value.Should().Be(<deleted-place-holder>.Null);
         result.Value.IsNull.Should().BeTrue();
     }
 
@@ -145,7 +145,7 @@ public class Address64Tests {
     /// </summary>
     [Fact]
     public void TryFromOffset_NegativeLong_ThrowsArgumentOutOfRangeException() {
-        var act = () => Address64Extensions.TryFromOffset(-1L);
+        var act = () => <deleted-place-holder>Extensions.TryFromOffset(-1L);
 
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
@@ -158,7 +158,7 @@ public class Address64Tests {
     [InlineData(4L)]
     [InlineData(8L)]
     public void TryFromOffset_PositiveLong_Works(long offset) {
-        var result = Address64Extensions.TryFromOffset(offset);
+        var result = <deleted-place-holder>Extensions.TryFromOffset(offset);
 
         result.IsSuccess.Should().BeTrue();
         result.Value.Value.Should().Be((ulong)offset);
@@ -169,23 +169,23 @@ public class Address64Tests {
     #region 隐式/显式转换测试
 
     /// <summary>
-    /// Address64 可以隐式转换为 ulong
+    /// <deleted-place-holder> 可以隐式转换为 ulong
     /// </summary>
     [Fact]
-    public void Address64_ImplicitConversionToUlong_Works() {
-        var addr = new Address64(1024);
+    public void <deleted-place-holder>_ImplicitConversionToUlong_Works() {
+        var addr = new <deleted-place-holder>(1024);
         ulong value = addr;
 
         value.Should().Be(1024UL);
     }
 
     /// <summary>
-    /// ulong 可以显式转换为 Address64
+    /// ulong 可以显式转换为 <deleted-place-holder>
     /// </summary>
     [Fact]
-    public void Ulong_ExplicitConversionToAddress64_Works() {
+    public void Ulong_ExplicitConversionTo<deleted-place-holder>_Works() {
         ulong value = 2048;
-        var addr = (Address64)value;
+        var addr = (<deleted-place-holder>)value;
 
         addr.Value.Should().Be(2048UL);
     }
@@ -195,12 +195,12 @@ public class Address64Tests {
     #region Ptr64 别名测试
 
     /// <summary>
-    /// Ptr64 是 Address64 的别名
+    /// Ptr64 是 <deleted-place-holder> 的别名
     /// </summary>
     [Fact]
-    public void Ptr64_IsAliasForAddress64() {
+    public void Ptr64_IsAliasFor<deleted-place-holder>() {
         Ptr64 ptr = new(4);
-        Address64 addr = ptr;
+        <deleted-place-holder> addr = ptr;
 
         // 验证它们是同一类型
         addr.Should().Be(ptr);
@@ -209,12 +209,12 @@ public class Address64Tests {
     }
 
     /// <summary>
-    /// Ptr64.Null 与 Address64.Null 相等
+    /// Ptr64.Null 与 <deleted-place-holder>.Null 相等
     /// </summary>
     [Fact]
-    public void Ptr64Null_EqualsAddress64Null() {
+    public void Ptr64Null_Equals<deleted-place-holder>Null() {
         Ptr64 ptrNull = Ptr64.Null;
-        Address64 addrNull = Address64.Null;
+        <deleted-place-holder> addrNull = <deleted-place-holder>.Null;
 
         ptrNull.Should().Be(addrNull);
         ptrNull.IsNull.Should().BeTrue();
@@ -225,24 +225,24 @@ public class Address64Tests {
     #region Record struct 相等性测试
 
     /// <summary>
-    /// 相同 Value 的 Address64 应相等
+    /// 相同 Value 的 <deleted-place-holder> 应相等
     /// </summary>
     [Fact]
     public void SameValue_AreEqual() {
-        var addr1 = new Address64(100);
-        var addr2 = new Address64(100);
+        var addr1 = new <deleted-place-holder>(100);
+        var addr2 = new <deleted-place-holder>(100);
 
         addr1.Should().Be(addr2);
         (addr1 == addr2).Should().BeTrue();
     }
 
     /// <summary>
-    /// 不同 Value 的 Address64 不相等
+    /// 不同 Value 的 <deleted-place-holder> 不相等
     /// </summary>
     [Fact]
     public void DifferentValue_AreNotEqual() {
-        var addr1 = new Address64(100);
-        var addr2 = new Address64(200);
+        var addr1 = new <deleted-place-holder>(100);
+        var addr2 = new <deleted-place-holder>(200);
 
         addr1.Should().NotBe(addr2);
         (addr1 != addr2).Should().BeTrue();

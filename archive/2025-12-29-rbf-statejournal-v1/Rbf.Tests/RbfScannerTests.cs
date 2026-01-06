@@ -193,7 +193,7 @@ public class RbfScannerTests {
         var scanner = new RbfScanner(data);
 
         // Act
-        bool success = scanner.TryReadAt(Address64.FromOffset(4), out var frame);
+        bool success = scanner.TryReadAt(<deleted-place-holder>.FromOffset(4), out var frame);
 
         // Assert
         success.Should().BeTrue();
@@ -430,7 +430,7 @@ public class RbfScannerTests {
         var scanner = new RbfScanner(data);
 
         // Act
-        bool success = scanner.TryReadAt(Address64.FromOffset(4), out var frame);
+        bool success = scanner.TryReadAt(<deleted-place-holder>.FromOffset(4), out var frame);
 
         // Assert
         success.Should().BeFalse();
@@ -454,7 +454,7 @@ public class RbfScannerTests {
         var scanner = new RbfScanner(data);
 
         // Act: 尝试读取非对齐地址
-        bool success = scanner.TryReadAt(Address64.FromOffset(5), out _);
+        bool success = scanner.TryReadAt(<deleted-place-holder>.FromOffset(5), out _);
 
         // Assert
         success.Should().BeFalse();
@@ -474,7 +474,7 @@ public class RbfScannerTests {
         var scanner = new RbfScanner(data);
 
         // Act
-        bool success = scanner.TryReadAt(Address64.Null, out _);
+        bool success = scanner.TryReadAt(<deleted-place-holder>.Null, out _);
 
         // Assert
         success.Should().BeFalse();
@@ -494,7 +494,7 @@ public class RbfScannerTests {
         var scanner = new RbfScanner(data);
 
         // Act
-        bool success = scanner.TryReadAt(Address64.FromOffset(1000), out _);
+        bool success = scanner.TryReadAt(<deleted-place-holder>.FromOffset(1000), out _);
 
         // Assert
         success.Should().BeFalse();
@@ -789,7 +789,7 @@ public class RbfScannerTests {
 
     #endregion
 
-    #region Address64 验证测试
+    #region <deleted-place-holder> 验证测试
 
     /// <summary>
     /// 测试 PTR-OK-001: 有效地址可解析。
@@ -810,7 +810,7 @@ public class RbfScannerTests {
 
         // Act & Assert: 每个帧地址都可解析
         foreach (var frame in frames) {
-            bool success = scanner.TryReadAt(Address64.FromOffset(frame.FileOffset), out var readFrame);
+            bool success = scanner.TryReadAt(<deleted-place-holder>.FromOffset(frame.FileOffset), out var readFrame);
             success.Should().BeTrue();
             readFrame.FrameTag.Should().Be(frame.FrameTag);
             readFrame.PayloadLength.Should().Be(frame.PayloadLength);

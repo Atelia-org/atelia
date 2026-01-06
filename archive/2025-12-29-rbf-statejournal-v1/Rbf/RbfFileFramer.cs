@@ -17,7 +17,7 @@ public sealed class RbfFileFramer : IRbfFramer, IDisposable {
 
     public long Position => _framer.Position;
 
-    public Address64 Append(FrameTag tag, ReadOnlySpan<byte> payload) {
+    public <deleted-place-holder> Append(FrameTag tag, ReadOnlySpan<byte> payload) {
         using var builder = BeginFrame(tag);
         if (!payload.IsEmpty) {
             var span = builder.Payload.GetSpan(payload.Length);

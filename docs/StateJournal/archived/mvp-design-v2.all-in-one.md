@@ -80,8 +80,8 @@
 |------|------|----------|---------|
 | **ObjectId** | 对象的稳定身份。参见 **Well-Known ObjectId** 条目了解保留区规则 | — | `uint64` / `varuint` |
 | **Ptr64** | 64 位文件偏移量的编码形式（`u64 LE`），要求 4B 对齐（低 2 bit 为 0），`0=null`。Ptr64 是通用的 file offset 编码，不限于指向 Record 起点 | — | `ulong`，4B 对齐 |
-| **Address64** | 概念层术语：指向 Record 起始位置的 64-bit 偏移（Ptr64 的语义子类型）。规范条款应使用此术语描述"指向 record 起点的指针"语义 | 编码形式: `Ptr64` | `ulong` |
-| **ObjectVersionPtr** | 指向对象版本记录的 Address64 | — | `Ptr64` 编码值 |
+| **<deleted-place-holder>** | 概念层术语：指向 Record 起始位置的 64-bit 偏移（Ptr64 的语义子类型）。规范条款应使用此术语描述"指向 record 起点的指针"语义 | 编码形式: `Ptr64` | `ulong` |
+| **ObjectVersionPtr** | 指向对象版本记录的 <deleted-place-holder> | — | `Ptr64` 编码值 |
 | **EpochSeq** | Commit 的单调递增序号，用于判定 HEAD 新旧 | — | `varuint` |
 
 ### 提交与 HEAD
@@ -143,7 +143,7 @@
 1. **概念术语**：统一 Title Case，全文一致
 2. **实现标识符**：仅在 Implementation Mapping 出现，用代码格式
 3. **缩写大写**：`HEAD`、`CRC32C` 全文同形
-4. **编码名 vs 语义名**：`Ptr64` 是通用 file offset 编码；`Address64` 是指向 Record 起点的 Ptr64 子类型
+4. **编码名 vs 语义名**：`Ptr64` 是通用 file offset 编码；`<deleted-place-holder>` 是指向 Record 起点的 Ptr64 子类型
 
 ### 枚举值速查表
 
@@ -373,7 +373,7 @@ stateDiagram-v2
 #### 3.1.1 三个核心标识
 
 - **ObjectId (`uint64`)**：对象的稳定身份。文件中任何“对象引用”仅存储 `ObjectId`。
-- **ObjectVersionPtr (Address64)**：对象某个版本在文件中的位置指针（指向一条 ObjectVersionRecord）。MVP 中 `Ptr64` 为 **byte offset（u64 LE）**，要求 4B 对齐；`0` 表示 null。
+- **ObjectVersionPtr (<deleted-place-holder>)**：对象某个版本在文件中的位置指针（指向一条 ObjectVersionRecord）。MVP 中 `Ptr64` 为 **byte offset（u64 LE）**，要求 4B 对齐；`0` 表示 null。
 - **EpochSeq（`varuint`）**：epoch 的单调递增序号；在 meta file 方案下，它就是 MVP 的 epoch 身份与新旧判定依据。
 
 ObjectId 分配（第二批决策补充）：

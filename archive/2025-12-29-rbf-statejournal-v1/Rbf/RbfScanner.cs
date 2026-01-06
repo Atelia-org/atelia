@@ -27,7 +27,7 @@ public sealed class RbfScanner : IRbfScanner {
     public int Length => _data.Length;
 
     /// <inheritdoc/>
-    public bool TryReadAt(Address64 address, out RbfFrame frame) {
+    public bool TryReadAt(<deleted-place-holder> address, out RbfFrame frame) {
         frame = default;
 
         // 验证地址有效性

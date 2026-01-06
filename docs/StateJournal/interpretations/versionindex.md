@@ -57,7 +57,7 @@
 
 ### 3.3 ValueType：VersionIndex 的 value 域必须是 Ptr64
 
-VersionIndex 的 value 在规范里是 `ObjectVersionPtr`（Ptr64 / Address64）。
+VersionIndex 的 value 在规范里是 `ObjectVersionPtr`（Ptr64 / <deleted-place-holder>）。
 
 实现建议（非规范性，但强烈建议）：
 

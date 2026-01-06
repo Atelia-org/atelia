@@ -200,7 +200,7 @@ Stub 格式：
    - 为每个术语建立 Markdown 锚点（如 `### ObjectId {#objectid}`）
    - 核心 10 术语优先处理：
      1. ObjectId
-     2. Ptr64 / Address64
+     2. Ptr64 / <deleted-place-holder>
      3. ObjectVersionPtr
      4. VersionIndex
      5. EpochSeq

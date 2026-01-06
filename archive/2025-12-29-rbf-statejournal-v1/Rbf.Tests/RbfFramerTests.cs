@@ -185,7 +185,7 @@ public class RbfFramerTests {
         var tag = new FrameTag(0x11223344);
 
         // Act
-        Address64 address;
+        <deleted-place-holder> address;
         using (var builder = framer.BeginFrame(tag)) {
             // 写入 payload
             var span = builder.Payload.GetSpan(4);
@@ -329,7 +329,7 @@ public class RbfFramerTests {
     }
 
     /// <summary>
-    /// 测试 Address64 对齐验证。
+    /// 测试 <deleted-place-holder> 对齐验证。
     /// </summary>
     [Fact]
     public void Append_Returns4ByteAlignedAddress() {

@@ -14,7 +14,7 @@ namespace Atelia.StateJournal;
 /// <list type="bullet">
 ///   <item>封装 RBF 层 framing 细节（FrameTag、Frame layout）</item>
 ///   <item>提供语义化 API：AppendCommit 写入提交元数据记录</item>
-///   <item>返回 Address64 作为 commit 记录地址</item>
+///   <item>返回 <deleted-place-holder> 作为 commit 记录地址</item>
 /// </list>
 /// </remarks>
 public sealed class MetaRecordWriter {
@@ -38,7 +38,7 @@ public sealed class MetaRecordWriter {
     /// <para><b>FrameTag</b>: <see cref="FrameTags.MetaCommit"/> (0x00000002)</para>
     /// <para><b>Payload</b>: MetaCommitRecord 序列化数据</para>
     /// </remarks>
-    public Address64 AppendCommit(in MetaCommitRecord record) {
+    public <deleted-place-holder> AppendCommit(in MetaCommitRecord record) {
         // 使用 BeginFrame 流式写入
         using var builder = _framer.BeginFrame(FrameTags.MetaCommit);
 
@@ -58,7 +58,7 @@ public sealed class MetaRecordWriter {
     /// <param name="dataTail">Data file 有效尾部地址。</param>
     /// <param name="nextObjectId">下一个可分配的 ObjectId。</param>
     /// <returns>写入的帧起始地址。</returns>
-    public Address64 AppendCommit(
+    public <deleted-place-holder> AppendCommit(
         ulong epochSeq,
         ulong rootObjectId,
         ulong versionIndexPtr,

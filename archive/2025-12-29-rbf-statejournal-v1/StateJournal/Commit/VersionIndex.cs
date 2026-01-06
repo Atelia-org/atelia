@@ -97,7 +97,7 @@ public sealed class VersionIndex {
     /// 设置对象的最新版本指针。
     /// </summary>
     /// <param name="objectId">对象 ID。</param>
-    /// <param name="versionPtr">版本指针（ObjectVersionRecord 的 Address64）。</param>
+    /// <param name="versionPtr">版本指针（ObjectVersionRecord 的 <deleted-place-holder>）。</param>
     public void SetObjectVersionPtr(ulong objectId, ulong versionPtr) {
         _inner.Set(objectId, versionPtr);
     }
