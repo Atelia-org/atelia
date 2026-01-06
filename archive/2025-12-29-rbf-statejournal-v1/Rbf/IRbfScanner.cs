@@ -17,7 +17,7 @@ public interface IRbfScanner {
     /// <param name="frame">输出：帧元数据。</param>
     /// <returns>是否成功读取（通过 framing/CRC 校验）。</returns>
     /// <remarks>
-    /// <para><b>[F-ADDRESS64-ALIGNMENT]</b>: 地址必须 4 字节对齐。</para>
+    /// <para><b>[F-<deleted-place-holder>-ALIGNMENT]</b>: 地址必须 4 字节对齐。</para>
     /// <para><b>[F-FRAMING-FAIL-REJECT]</b>: 任一校验不满足时返回 false。</para>
     /// <para><b>[F-CRC-FAIL-REJECT]</b>: CRC 不匹配时返回 false。</para>
     /// </remarks>

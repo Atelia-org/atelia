@@ -10,7 +10,7 @@
 ## 目录
 
 1. [Group 1: VarInt 编解码](#group-1-varint-编解码)
-2. [Group 2: Ptr64 / <deleted-place-holder>](#group-2-ptr64--address64)
+2. [Group 2: Ptr64 / <deleted-place-holder>](#group-2-ptr64--<deleted-place-holder>)
 3. [Group 3: StateJournalError 类型](#group-3-statejournalerror-类型)
 4. [Group 4: FrameTag 位段编码](#group-4-frametag-位段编码)
 5. [Group 5: IDurableObject 接口](#group-5-idurableobject-接口)
@@ -211,16 +211,16 @@ if (bytesConsumed == MaxVarUInt64Bytes && b > 0x01)
 
 ## Group 2: Ptr64 / <deleted-place-holder>
 
-### F-ADDRESS64-DEFINITION-001
+### F-<deleted-place-holder>-DEFINITION-001
 
 ---
-id: "F-ADDRESS64-DEFINITION-001"
+id: "F-<deleted-place-holder>-DEFINITION-001"
 verdictType: "C"
-clauseId: "[F-ADDRESS64-DEFINITION]"
-dedupeKey: "F-ADDRESS64-DEFINITION|Ptr64.cs|C|type-alias"
+clauseId: "[F-<deleted-place-holder>-DEFINITION]"
+dedupeKey: "F-<deleted-place-holder>-DEFINITION|Ptr64.cs|C|type-alias"
 ---
 
-# 🟢 C: [F-ADDRESS64-DEFINITION] Ptr64 是 <deleted-place-holder> 的类型别名
+# 🟢 C: [F-<deleted-place-holder>-DEFINITION] Ptr64 是 <deleted-place-holder> 的类型别名
 
 ## 📝 Evidence
 
@@ -245,21 +245,21 @@ global using Ptr64 = Atelia.Rbf.<deleted-place-holder>;
 
 ---
 
-### F-ADDRESS64-ALIGNMENT-001
+### F-<deleted-place-holder>-ALIGNMENT-001
 
 ---
-id: "F-ADDRESS64-ALIGNMENT-001"
+id: "F-<deleted-place-holder>-ALIGNMENT-001"
 verdictType: "C"
-clauseId: "[F-ADDRESS64-ALIGNMENT]"
-dedupeKey: "F-ADDRESS64-ALIGNMENT|<deleted-place-holder>Extensions.cs|C|validation"
+clauseId: "[F-<deleted-place-holder>-ALIGNMENT]"
+dedupeKey: "F-<deleted-place-holder>-ALIGNMENT|<deleted-place-holder>Extensions.cs|C|validation"
 ---
 
-# 🟢 C: [F-ADDRESS64-ALIGNMENT] TryFromOffset 验证 4 字节对齐
+# 🟢 C: [F-<deleted-place-holder>-ALIGNMENT] TryFromOffset 验证 4 字节对齐
 
 ## 📝 Evidence
 
 **规范**:
-> **[F-ADDRESS64-ALIGNMENT]**：有效 <deleted-place-holder> MUST 4 字节对齐（`Value % 4 == 0`） (rbf-interface.md §2.3)
+> **[F-<deleted-place-holder>-ALIGNMENT]**：有效 <deleted-place-holder> MUST 4 字节对齐（`Value % 4 == 0`） (rbf-interface.md §2.3)
 
 **代码**: [<deleted-place-holder>Extensions.cs#L29-L35](../../../src/StateJournal/Core/<deleted-place-holder>Extensions.cs#L29-L35)
 
@@ -284,21 +284,21 @@ return AteliaResult<<deleted-place-holder>>.Success(new <deleted-place-holder>(o
 
 ---
 
-### F-ADDRESS64-NULL-001
+### F-<deleted-place-holder>-NULL-001
 
 ---
-id: "F-ADDRESS64-NULL-001"
+id: "F-<deleted-place-holder>-NULL-001"
 verdictType: "C"
-clauseId: "[F-ADDRESS64-NULL]"
-dedupeKey: "F-ADDRESS64-NULL|<deleted-place-holder>Extensions.cs|C|null-handling"
+clauseId: "[F-<deleted-place-holder>-NULL]"
+dedupeKey: "F-<deleted-place-holder>-NULL|<deleted-place-holder>Extensions.cs|C|null-handling"
 ---
 
-# 🟢 C: [F-ADDRESS64-NULL] TryFromOffset(0) 返回 <deleted-place-holder>.Null
+# 🟢 C: [F-<deleted-place-holder>-NULL] TryFromOffset(0) 返回 <deleted-place-holder>.Null
 
 ## 📝 Evidence
 
 **规范**:
-> **[F-ADDRESS64-NULL]**：`Value == 0` 表示 null（无效地址） (rbf-interface.md §2.3)
+> **[F-<deleted-place-holder>-NULL]**：`Value == 0` 表示 null（无效地址） (rbf-interface.md §2.3)
 
 **代码**: [<deleted-place-holder>Extensions.cs#L22-L26](../../../src/StateJournal/Core/<deleted-place-holder>Extensions.cs#L22-L26)
 

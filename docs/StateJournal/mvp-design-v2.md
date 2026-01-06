@@ -632,7 +632,7 @@ I/O 目标（MVP）：
 Ptr64 与对齐约束（MVP 固定）：
 
 - `Ptr64` 对应 [rbf-interface.md](rbf-interface.md) 中的 <deleted-place-holder>。
-- 对齐与 Null 定义遵循 `[F-ADDRESS64-ALIGNMENT]` 与 `[F-ADDRESS64-NULL]`。
+- 对齐与 Null 定义遵循 `[F-<deleted-place-holder>-ALIGNMENT]` 与 `[F-<deleted-place-holder>-NULL]`。
 - 所有可被 `Ptr64` 指向的 Record，`Ptr64` 值等于该 Record 的 `HeadLen` 字段起始位置（即紧随分隔符 Fence 之后）。
 
 data 文件内的“可被 meta 指向的关键 record”至少包括：

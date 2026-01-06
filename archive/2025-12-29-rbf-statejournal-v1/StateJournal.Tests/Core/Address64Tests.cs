@@ -14,16 +14,16 @@ namespace Atelia.StateJournal.Tests.Core;
 /// <remarks>
 /// 对应条款：
 /// <list type="bullet">
-///   <item><c>[F-ADDRESS64-DEFINITION]</c></item>
-///   <item><c>[F-ADDRESS64-ALIGNMENT]</c></item>
-///   <item><c>[F-ADDRESS64-NULL]</c></item>
+///   <item><c>[F-<deleted-place-holder>-DEFINITION]</c></item>
+///   <item><c>[F-<deleted-place-holder>-ALIGNMENT]</c></item>
+///   <item><c>[F-<deleted-place-holder>-NULL]</c></item>
 /// </list>
 /// </remarks>
 public class <deleted-place-holder>Tests {
     #region <deleted-place-holder>.Null 测试
 
     /// <summary>
-    /// [F-ADDRESS64-NULL] <deleted-place-holder>.Null.Value == 0
+    /// [F-<deleted-place-holder>-NULL] <deleted-place-holder>.Null.Value == 0
     /// </summary>
     [Fact]
     public void Null_HasValueZero() {
@@ -31,7 +31,7 @@ public class <deleted-place-holder>Tests {
     }
 
     /// <summary>
-    /// [F-ADDRESS64-NULL] <deleted-place-holder>.Null.IsNull == true
+    /// [F-<deleted-place-holder>-NULL] <deleted-place-holder>.Null.IsNull == true
     /// </summary>
     [Fact]
     public void Null_IsNullReturnsTrue() {
@@ -55,7 +55,7 @@ public class <deleted-place-holder>Tests {
     #region IsValid 测试 (4 字节对齐)
 
     /// <summary>
-    /// [F-ADDRESS64-ALIGNMENT] 4 字节对齐的非零地址是有效的
+    /// [F-<deleted-place-holder>-ALIGNMENT] 4 字节对齐的非零地址是有效的
     /// </summary>
     [Theory]
     [InlineData(4UL)]
@@ -69,7 +69,7 @@ public class <deleted-place-holder>Tests {
     }
 
     /// <summary>
-    /// [F-ADDRESS64-ALIGNMENT] 非 4 字节对齐的地址是无效的
+    /// [F-<deleted-place-holder>-ALIGNMENT] 非 4 字节对齐的地址是无效的
     /// </summary>
     [Theory]
     [InlineData(1UL)]
@@ -84,7 +84,7 @@ public class <deleted-place-holder>Tests {
     }
 
     /// <summary>
-    /// [F-ADDRESS64-NULL] Null 地址的 IsValid 返回 false
+    /// [F-<deleted-place-holder>-NULL] Null 地址的 IsValid 返回 false
     /// </summary>
     [Fact]
     public void NullAddress_IsValidReturnsFalse() {
@@ -96,7 +96,7 @@ public class <deleted-place-holder>Tests {
     #region TryFromOffset 测试
 
     /// <summary>
-    /// [F-ADDRESS64-ALIGNMENT] TryFromOffset 对齐成功
+    /// [F-<deleted-place-holder>-ALIGNMENT] TryFromOffset 对齐成功
     /// </summary>
     [Theory]
     [InlineData(4UL)]
@@ -110,7 +110,7 @@ public class <deleted-place-holder>Tests {
     }
 
     /// <summary>
-    /// [F-ADDRESS64-ALIGNMENT] TryFromOffset 非对齐返回 AddressAlignmentError
+    /// [F-<deleted-place-holder>-ALIGNMENT] TryFromOffset 非对齐返回 AddressAlignmentError
     /// </summary>
     [Theory]
     [InlineData(1UL)]
@@ -129,7 +129,7 @@ public class <deleted-place-holder>Tests {
     }
 
     /// <summary>
-    /// [F-ADDRESS64-NULL] TryFromOffset(0) 返回 <deleted-place-holder>.Null
+    /// [F-<deleted-place-holder>-NULL] TryFromOffset(0) 返回 <deleted-place-holder>.Null
     /// </summary>
     [Fact]
     public void TryFromOffset_Zero_ReturnsNullAddress() {

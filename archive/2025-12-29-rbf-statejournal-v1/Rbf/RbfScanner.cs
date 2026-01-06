@@ -35,7 +35,7 @@ public sealed class RbfScanner : IRbfScanner {
 
         long frameStart = (long)address.Value;
 
-        // [F-ADDRESS64-ALIGNMENT]: 必须 4B 对齐
+        // [F-<deleted-place-holder>-ALIGNMENT]: 必须 4B 对齐
         if (!RbfLayout.Is4ByteAligned(frameStart)) { return false; }
 
         // 验证边界

@@ -22,8 +22,8 @@ public static class <deleted-place-holder>Extensions {
     /// 若 <paramref name="offset"/> 未 4 字节对齐，返回 <see cref="AddressAlignmentError"/>。
     /// </returns>
     /// <remarks>
-    /// <para><b>[F-ADDRESS64-ALIGNMENT]</b>：有效地址 MUST 4 字节对齐。</para>
-    /// <para><b>[F-ADDRESS64-NULL]</b>：offset=0 返回 <see cref="<deleted-place-holder>.Null"/>（合法值，非错误）。</para>
+    /// <para><b>[F-<deleted-place-holder>-ALIGNMENT]</b>：有效地址 MUST 4 字节对齐。</para>
+    /// <para><b>[F-<deleted-place-holder>-NULL]</b>：offset=0 返回 <see cref="<deleted-place-holder>.Null"/>（合法值，非错误）。</para>
     /// </remarks>
     public static AteliaResult<<deleted-place-holder>> TryFromOffset(ulong offset) {
         // Null 地址（offset=0）是合法值，直接返回

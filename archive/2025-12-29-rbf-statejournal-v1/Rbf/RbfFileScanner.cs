@@ -59,7 +59,7 @@ public sealed class RbfFileScanner : IRbfScanner, IDisposable {
 
         long frameStart = (long)address.Value;
 
-        // [F-ADDRESS64-ALIGNMENT]: 必须 4B 对齐
+        // [F-<deleted-place-holder>-ALIGNMENT]: 必须 4B 对齐
         if (!RbfLayout.Is4ByteAligned(frameStart)) { return false; }
 
         // 验证边界：frameStart 必须在 Genesis Fence 之后

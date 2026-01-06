@@ -4,10 +4,10 @@ namespace Atelia.Rbf;
 /// RBF 帧地址（8 字节文件偏移）。
 /// </summary>
 /// <remarks>
-/// <para><b>[F-ADDRESS64-DEFINITION]</b>: <deleted-place-holder> 是 8 字节 LE 编码的文件偏移量，
+/// <para><b>[F-<deleted-place-holder>-DEFINITION]</b>: <deleted-place-holder> 是 8 字节 LE 编码的文件偏移量，
 /// 指向一个 Frame 的起始位置（HeadLen 字段起点）。</para>
-/// <para><b>[F-ADDRESS64-ALIGNMENT]</b>: 有效 <deleted-place-holder> MUST 4 字节对齐（Value % 4 == 0）。</para>
-/// <para><b>[F-ADDRESS64-NULL]</b>: Value == 0 表示 null（无效地址）。</para>
+/// <para><b>[F-<deleted-place-holder>-ALIGNMENT]</b>: 有效 <deleted-place-holder> MUST 4 字节对齐（Value % 4 == 0）。</para>
+/// <para><b>[F-<deleted-place-holder>-NULL]</b>: Value == 0 表示 null（无效地址）。</para>
 /// </remarks>
 /// <param name="Value">文件偏移量。</param>
 public readonly record struct <deleted-place-holder>(ulong Value) {
@@ -25,7 +25,7 @@ public readonly record struct <deleted-place-holder>(ulong Value) {
     /// 检查地址是否有效（非空且 4 字节对齐）。
     /// </summary>
     /// <remarks>
-    /// <para><b>[F-ADDRESS64-ALIGNMENT]</b>: 有效地址 MUST 4 字节对齐。</para>
+    /// <para><b>[F-<deleted-place-holder>-ALIGNMENT]</b>: 有效地址 MUST 4 字节对齐。</para>
     /// </remarks>
     public bool IsValid => !IsNull && (Value % 4 == 0);
 

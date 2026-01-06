@@ -126,7 +126,7 @@ public sealed record UnknownValueTypeError(
 /// 地址未 4 字节对齐。
 /// </summary>
 /// <remarks>
-/// 对应条款：<c>[F-ADDRESS64-ALIGNMENT]</c>
+/// 对应条款：<c>[F-<deleted-place-holder>-ALIGNMENT]</c>
 /// </remarks>
 public sealed record AddressAlignmentError(
     ulong Address

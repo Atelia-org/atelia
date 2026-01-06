@@ -42,16 +42,16 @@
 
 | ID | 标题 | 规范位置 | 要点 |
 |:---|:-----|:---------|:-----|
-| `[F-ADDRESS64-DEFINITION]` | <deleted-place-holder> 定义 | rbf-interface.md §2.3 | 8 字节 LE 文件偏移量 |
-| `[F-ADDRESS64-ALIGNMENT]` | 4 字节对齐 | rbf-interface.md §2.3 | 有效地址 MUST `Value % 4 == 0` |
-| `[F-ADDRESS64-NULL]` | Null 值定义 | rbf-interface.md §2.3 | `Value == 0` 表示 null |
+| `[F-<deleted-place-holder>-DEFINITION]` | <deleted-place-holder> 定义 | rbf-interface.md §2.3 | 8 字节 LE 文件偏移量 |
+| `[F-<deleted-place-holder>-ALIGNMENT]` | 4 字节对齐 | rbf-interface.md §2.3 | 有效地址 MUST `Value % 4 == 0` |
+| `[F-<deleted-place-holder>-NULL]` | Null 值定义 | rbf-interface.md §2.3 | `Value == 0` 表示 null |
 
 **规范原文摘要**：
 
 > **<deleted-place-holder>** 是 8 字节 LE 编码的文件偏移量，指向一个 Frame 的起始位置。
 >
-> - **[F-ADDRESS64-ALIGNMENT]**：有效 <deleted-place-holder> MUST 4 字节对齐（`Value % 4 == 0`）
-> - **[F-ADDRESS64-NULL]**：`Value == 0` 表示 null（无效地址）
+> - **[F-<deleted-place-holder>-ALIGNMENT]**：有效 <deleted-place-holder> MUST 4 字节对齐（`Value % 4 == 0`）
+> - **[F-<deleted-place-holder>-NULL]**：`Value == 0` 表示 null（无效地址）
 
 ### Group 3: StateJournalError 类型
 
@@ -100,8 +100,8 @@
 | 文件 | 职责 | 条款关联 |
 |:-----|:-----|:---------|
 | `Core/VarInt.cs` | VarInt 编解码 | F-VARINT-*, F-DECODE-ERROR-FAILFAST |
-| `Core/Ptr64.cs` | Ptr64 类型别名 | F-ADDRESS64-* |
-| `Core/<deleted-place-holder>Extensions.cs` | <deleted-place-holder> 扩展方法 | F-ADDRESS64-ALIGNMENT |
+| `Core/Ptr64.cs` | Ptr64 类型别名 | F-<deleted-place-holder>-* |
+| `Core/<deleted-place-holder>Extensions.cs` | <deleted-place-holder> 扩展方法 | F-<deleted-place-holder>-ALIGNMENT |
 | `Core/StateJournalError.cs` | 错误类型定义 | F-DECODE-ERROR-FAILFAST, F-UNKNOWN-* |
 | `Core/StateJournalFrameTag.cs` | FrameTag 位段解释 | F-FRAMETAG-* |
 | `Core/IDurableObject.cs` | 持久化对象接口 | A-OBJECT-STATE-*, A-HASCHANGES-* |

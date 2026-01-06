@@ -65,7 +65,7 @@
 | 任务 ID | 名称 | 预估 | 条款覆盖 | 并行标注 |
 |---------|------|------|----------|----------|
 | T-P2-00 | 错误类型定义 | 0.5h | StateJournal 所有 `*-REJECT`, `*-FAILFAST` 错误码 | ⚡ 可与 P1 并行 |
-| T-P2-01 | <deleted-place-holder>/Ptr64 | 1h | `[F-ADDRESS64-*]`, `[F-PTR64-WIRE-FORMAT]` | — |
+| T-P2-01 | <deleted-place-holder>/Ptr64 | 1h | `[F-<deleted-place-holder>-*]`, `[F-PTR64-WIRE-FORMAT]` | — |
 | T-P2-02 | VarInt 编解码 | 2h | `[F-VARINT-CANONICAL-ENCODING]`, `[F-DECODE-ERROR-FAILFAST]` | ⚡ 可与 P1 并行 |
 | T-P2-03 | FrameTag 位段编码 | 2h | `[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]`, `[F-FRAMETAG-SUBTYPE-*]` | — |
 | T-P2-04 | DurableObjectState 枚举 | 1h | `[A-OBJECT-STATE-*]`, `[S-STATE-TRANSITION-MATRIX]` | ⚡ 可与 P1 并行 |
@@ -382,7 +382,7 @@ atelia/tests/
 | `[R-REVERSE-SCAN-ALGORITHM]` | T-P1-05 |
 | `[S-RBF-TOMBSTONE-VISIBLE]` | T-P1-05 |
 | `*-REJECT`, `*-FAILFAST` 错误码 | T-P2-00 |
-| `[F-ADDRESS64-*]` | T-P2-01 |
+| `[F-<deleted-place-holder>-*]` | T-P2-01 |
 | `[F-VARINT-CANONICAL-ENCODING]` | T-P2-02 |
 | `[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]` | T-P2-03 |
 | `[A-OBJECT-STATE-*]` | T-P2-04 |
