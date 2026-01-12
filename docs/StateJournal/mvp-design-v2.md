@@ -1288,6 +1288,24 @@ v2 的 commit 路径大量涉及“先写 payload、后回填长度/CRC32C/指�
 
 ---
 
+从RBF层挪过来的，暂存
+```markdown
+## 8. DataTail 与截断（恢复语义）
+
+## term `DataTail` 数据尾指针
+`DataTail` 是一个字节偏移量（byte offset），表示 data 文件的逻辑尾部。
+
+### spec [R-DATATAIL-INCLUDES-TRAILING-FENCE] DataTail定义
+@`DataTail` MUST 指向"有效数据末尾"，并包含尾部 Fence（即 `DataTail == 有效 EOF`）。
+
+### spec [R-DATATAIL-TRUNCATE] DataTail截断规则
+恢复时（上层依据其 HEAD/commit record 的语义决定使用哪条 @`DataTail`）：
+1. 若 data 文件实际长度 DataTail：MUST 截断至 DataTail。
+2. 截断后文件 SHOULD 以 Fence 结尾（若 `DataTail` 来自通过校验的 commit record）。
+```
+
+---
+
 ## Appendix A: Reference Implementation Notes
 
 > **⚠️ Informative, not Normative**
