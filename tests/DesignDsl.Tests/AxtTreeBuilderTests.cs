@@ -21,11 +21,11 @@ public class AxtTreeBuilderTests {
         // Arrange
         var markdown = "";
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act - [ ] Build 不抛异常
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // Root 属性验证
@@ -58,11 +58,11 @@ public class AxtTreeBuilderTests {
             - b
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // [ ] Root.Content 等于 Splitter 的 Preface
@@ -94,11 +94,11 @@ public class AxtTreeBuilderTests {
             # B
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // [ ] 同级节点都挂在 Root 下
@@ -148,11 +148,11 @@ public class AxtTreeBuilderTests {
             C-1
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // [ ] 深度递增时形成链式嵌套
@@ -201,11 +201,11 @@ public class AxtTreeBuilderTests {
             ### B
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         var nodeA = tree.Root.Children[0] as AxtNode;
@@ -247,11 +247,11 @@ public class AxtTreeBuilderTests {
             ## D
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         var nodeA = tree.Root.Children[0] as AxtNode;
@@ -306,11 +306,11 @@ public class AxtTreeBuilderTests {
             A-1
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // 前置条件：Splitter 正确处理 YAML
@@ -351,11 +351,11 @@ public class AxtTreeBuilderTests {
             ### E
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // [ ] AllNodes 严格按遇到 heading 的顺序追加
@@ -413,11 +413,11 @@ public class AxtTreeBuilderTests {
             ### D
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // [ ] Root 的 Parent 应为 null
@@ -459,11 +459,11 @@ public class AxtTreeBuilderTests {
             para
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // [ ] Markdig 将 Setext 语法解析为 HeadingBlock
@@ -506,11 +506,11 @@ public class AxtTreeBuilderTests {
             ## E
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         // 结构：Root -> {A, D}
@@ -547,11 +547,11 @@ public class AxtTreeBuilderTests {
             # C
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var sections = AtxSectionSplitter.Split(doc.ToList());
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var tree = AxtTreeBuilder.Build(sections, pipeline, markdown);
+        var tree = AxtTreeBuilder.Build(sections, pipeline);
 
         // Assert
         tree.Root.Children.Should().HaveCount(3);

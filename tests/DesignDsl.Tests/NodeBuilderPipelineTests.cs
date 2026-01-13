@@ -41,13 +41,13 @@ public class NodeBuilderPipelineTests {
             content
             """;
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var heading = (HeadingBlock)doc[0];
-        var content = doc.Skip(1).ToList();
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
+        var section = sections.Sections[0];
 
         var pipeline = new NodeBuilderPipeline();
 
         // Act
-        var node = pipeline.Build(heading, content, markdown);
+        var node = pipeline.Build(section);
 
         // Assert
         // [ ] 返回类型：AxtNode（不为 null）
@@ -58,10 +58,10 @@ public class NodeBuilderPipelineTests {
         node.Depth.Should().Be(1);
 
         // [ ] node.SourceHeadingBlock 引用等于输入 heading
-        node.SourceHeadingBlock.Should().BeSameAs(heading);
+        node.SourceHeadingBlock.Should().BeSameAs(section.Heading);
 
         // [ ] node.Content 引用等于输入 content 列表
-        node.Content.Should().BeEquivalentTo(content);
+        node.Content.Should().BeEquivalentTo(section.Content);
     }
 
     #endregion
@@ -77,10 +77,10 @@ public class NodeBuilderPipelineTests {
         // Arrange
         var markdown = "# A";
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var heading = (HeadingBlock)doc[0];
-        var content = new List<Block>();
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
+        var section = sections.Sections[0];
 
-        var expectedNode = new AxtNode(heading, content);
+        var expectedNode = new AxtNode(section.Heading, section.Content);
 
         // Builder1 返回 null
         var builder1 = new TestNodeBuilder(returnNull: true);
@@ -90,7 +90,7 @@ public class NodeBuilderPipelineTests {
         var pipeline = new NodeBuilderPipeline(new INodeBuilder[] { builder1, builder2 });
 
         // Act
-        var result = pipeline.Build(heading, content, markdown);
+        var result = pipeline.Build(section);
 
         // Assert
         // [ ] 按注册顺序调用 builder
@@ -109,8 +109,8 @@ public class NodeBuilderPipelineTests {
         // Arrange
         var markdown = "# A";
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var heading = (HeadingBlock)doc[0];
-        var content = new List<Block>();
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
+        var section = sections.Sections[0];
 
         // 两个都返回 null 的 Builder
         var builder1 = new TestNodeBuilder(returnNull: true);
@@ -119,7 +119,7 @@ public class NodeBuilderPipelineTests {
         var pipeline = new NodeBuilderPipeline(new INodeBuilder[] { builder1, builder2 });
 
         // Act
-        var result = pipeline.Build(heading, content, markdown);
+        var result = pipeline.Build(section);
 
         // Assert
         // 应该由 DefaultNodeBuilder 兜底返回
@@ -165,15 +165,15 @@ public class NodeBuilderPipelineTests {
         // Arrange
         var markdown = "# A";
         var doc = TestHelpers.ParseMarkdown(markdown);
-        var heading = (HeadingBlock)doc[0];
-        var content = new List<Block>();
+        var sections = AtxSectionSplitter.Split(doc.ToList(), markdown);
+        var section = sections.Sections[0];
 
         var customBuilder = new TestNodeBuilder(returnNull: true);
         var pipeline = new NodeBuilderPipeline();
         pipeline.InsertBefore(customBuilder);
 
         // Act
-        var result = pipeline.Build(heading, content, markdown);
+        var result = pipeline.Build(section);
 
         // Assert
         // [ ] 若 customBuilder 返回 null，则仍应由 DefaultNodeBuilder 兜底返回 AxtNode
@@ -197,9 +197,9 @@ public class NodeBuilderPipelineTests {
             _nodeToReturn = nodeToReturn;
         }
 
-        public AxtNode? TryBuild(HeadingBlock heading, IReadOnlyList<Block> content, string originalMarkdown) {
+        public AxtNode? TryBuild(AtxSection section) {
             WasCalled = true;
-            return _returnNull ? null : (_nodeToReturn ?? new AxtNode(heading, content));
+            return _returnNull ? null : (_nodeToReturn ?? new AxtNode(section.Heading, section.Content));
         }
     }
 }

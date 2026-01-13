@@ -10,7 +10,6 @@ public static class AxtTreeBuilder {
     /// </summary>
     /// <param name="sections">Block 序列分段结果（来自 AtxSectionSplitter）。</param>
     /// <param name="pipeline">节点构建器职责链。</param>
-    /// <param name="originalMarkdown">原始 Markdown 字符串（用于 Span 切片获取原始文本）。</param>
     /// <returns>构建的 ATX 标题树。</returns>
     /// <remarks>
     /// <para>嵌套规则（ATX-Tree）：</para>
@@ -27,7 +26,7 @@ public static class AxtTreeBuilder {
     /// <item>将新节点压栈</item>
     /// </list>
     /// </remarks>
-    public static AxtTree Build(AtxSectionResult sections, NodeBuilderPipeline pipeline, string originalMarkdown) {
+    public static AxtTree Build(AtxSectionResult sections, NodeBuilderPipeline pipeline) {
         // 1. 创建 RootNode，Content = AtxSectionResult.Preface
         var root = new RootNode(sections.Preface);
 
@@ -40,8 +39,8 @@ public static class AxtTreeBuilder {
 
         // 4. 遍历所有 AtxSection，转换为 AxtNode 并建立父子关系
         foreach (var section in sections.Sections) {
-            // 使用 pipeline 构建节点
-            var node = pipeline.Build(section.Heading, section.Content, originalMarkdown);
+            // 使用 pipeline 构建节点（HeadingText 已预存在 section 中）
+            var node = pipeline.Build(section);
 
             // 弹出栈顶所有 Depth >= 当前节点的节点
             // 这样栈顶节点就是首个 Depth 更小的祖先

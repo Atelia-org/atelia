@@ -1,5 +1,3 @@
-using Markdig.Syntax;
-
 namespace Atelia.DesignDsl;
 
 /// <summary>
@@ -47,18 +45,16 @@ public sealed class NodeBuilderPipeline {
     /// <summary>
     /// 构建节点。按顺序调用 Builder，返回首个非 null 结果。
     /// </summary>
-    /// <param name="heading">ATX Heading Block。</param>
-    /// <param name="content">该 Heading 下辖的块级内容。</param>
-    /// <param name="originalMarkdown">原始 Markdown 字符串（用于 Span 切片获取原始文本）。</param>
+    /// <param name="section">ATX Section，包含 Heading、Content 和 HeadingText。</param>
     /// <returns>构建的节点。由于有 DefaultNodeBuilder 兜底，始终返回非 null。</returns>
-    public AxtNode Build(HeadingBlock heading, IReadOnlyList<Block> content, string originalMarkdown) {
+    public AxtNode Build(AtxSection section) {
         foreach (var builder in _builders) {
-            var node = builder.TryBuild(heading, content, originalMarkdown);
+            var node = builder.TryBuild(section);
             if (node is not null) { return node; }
         }
 
         // 不应该到达这里，因为 DefaultNodeBuilder 始终返回非 null
         // 但为了类型安全，这里仍然需要返回
-        return new AxtNode(heading, content);
+        return new AxtNode(section.Heading, section.Content);
     }
 }

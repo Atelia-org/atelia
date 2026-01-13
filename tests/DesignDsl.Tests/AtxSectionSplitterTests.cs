@@ -23,7 +23,7 @@ public class AtxSectionSplitterTests {
         var doc = TestHelpers.ParseMarkdown(markdown);
 
         // Act
-        var result = AtxSectionSplitter.Split(doc.ToList());
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
 
         // Assert
         // [ ] 不抛异常 - 如果执行到这里说明没抛异常
@@ -56,7 +56,7 @@ public class AtxSectionSplitterTests {
         var doc = TestHelpers.ParseMarkdown(markdown);
 
         // Act
-        var result = AtxSectionSplitter.Split(doc.ToList());
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
 
         // Assert
         result.FrontMatter.Should().BeNull();
@@ -95,7 +95,7 @@ public class AtxSectionSplitterTests {
         var doc = TestHelpers.ParseMarkdown(markdown);
 
         // Act
-        var result = AtxSectionSplitter.Split(doc.ToList());
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
 
         // Assert
         // [ ] FrontMatter 单独存储
@@ -134,7 +134,7 @@ public class AtxSectionSplitterTests {
         var doc = TestHelpers.ParseMarkdown(markdown);
 
         // Act
-        var result = AtxSectionSplitter.Split(doc.ToList());
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
 
         // Assert
         result.FrontMatter.Should().BeNull();
@@ -182,7 +182,7 @@ public class AtxSectionSplitterTests {
         var doc = TestHelpers.ParseMarkdown(markdown);
 
         // Act
-        var result = AtxSectionSplitter.Split(doc.ToList());
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
 
         // Assert
         result.FrontMatter.Should().BeNull();
@@ -241,7 +241,7 @@ public class AtxSectionSplitterTests {
         var doc = TestHelpers.ParseMarkdown(markdown);
 
         // Act
-        var result = AtxSectionSplitter.Split(doc.ToList());
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
 
         // Assert
         // [ ] FrontMatter 必须只在"首个 block"时被识别
@@ -289,7 +289,7 @@ public class AtxSectionSplitterTests {
         var doc = TestHelpers.ParseMarkdown(markdown);
 
         // Act
-        var result = AtxSectionSplitter.Split(doc.ToList());
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
 
         // Assert
         // [ ] 仅当 blocks[0] 是 YamlFrontMatterBlock 才设置 FrontMatter
@@ -314,9 +314,8 @@ public class AtxSectionSplitterTests {
     /// 验证 Splitter 只识别文档首块 YAML。
     /// </summary>
     /// <remarks>
-    /// 注意：Markdig 会将 "text\n---" 解析为 Setext Heading（Level=2）。
-    /// 所以 "a: 1\n---" 会被解析为一个 Setext Heading，而不是 YAML FrontMatter。
-    /// 这个测试验证：即使内容看起来像 YAML，但不在文档开头，Splitter 不会将其识别为 FrontMatter。
+    /// 注意：Markdig 会将 "a: 1\n---" 解析为 Setext Heading（Level=2）。
+    /// 现在 Splitter 只按 ATX Heading 分段，Setext Heading 作为普通 Block 处理。
     /// </remarks>
     [Fact]
     public void Split_YamlNotFirst_TreatedAsRegularBlock() {
@@ -333,27 +332,68 @@ public class AtxSectionSplitterTests {
         var doc = TestHelpers.ParseMarkdown(markdown);
 
         // Act
-        var result = AtxSectionSplitter.Split(doc.ToList());
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
 
         // Assert
         // [ ] Splitter 当前实现只识别文档首块 YAML
         result.FrontMatter.Should().BeNull();
 
-        // [ ] Preface 包含 "preface first"
+        // [ ] Preface 包含 "preface first" 和 Setext Heading（作为普通 Block）
         result.Preface.Should().NotBeEmpty();
         result.Preface[0].Should().BeOfType<ParagraphBlock>();
+        // Setext Heading 被当作普通 Block 归入 Preface
+        result.Preface.OfType<HeadingBlock>().Should().Contain(hb => hb.IsSetext);
 
-        // [ ] 由于 Markdig 解析行为，Sections 中可能包含 Setext Heading
-        // Markdig 将 "a: 1\n---" 解析为 Setext Heading (Level=2)
-        result.Sections.Should().HaveCountGreaterOrEqualTo(1);
-
-        // 验证最后一个 Section 是 ATX Heading "# A"
-        var lastSection = result.Sections[^1];
-        lastSection.Heading.Level.Should().Be(1);
-        lastSection.Heading.IsSetext.Should().BeFalse();
+        // [ ] Sections 只包含 ATX Heading "# A"
+        result.Sections.Should().HaveCount(1);
+        var sectionA = result.Sections[0];
+        sectionA.Heading.Level.Should().Be(1);
+        sectionA.Heading.IsSetext.Should().BeFalse();
 
         // [ ] 即使出现类似 YAML 的内容，但不在 blocks[0]，也不会进入 FrontMatter 字段
         // 此验证点已通过 FrontMatter.Should().BeNull() 覆盖
+    }
+
+    #endregion
+
+    #region Case 9: Setext Heading 作为普通 Block 处理
+
+    /// <summary>
+    /// Case 9: Setext Heading 不触发分段。
+    /// 验证只有 ATX Heading 才触发分段，Setext Heading 归入当前 Section 的 Content。
+    /// </summary>
+    [Fact]
+    public void Split_SetextHeading_TreatedAsContent() {
+        // Arrange
+        var markdown = """
+            # ATX Heading
+
+            Setext Title
+            ------------
+
+            paragraph after setext
+            """;
+        var doc = TestHelpers.ParseMarkdown(markdown);
+
+        // Act
+        var result = AtxSectionSplitter.Split(doc.ToList(), markdown);
+
+        // Assert
+        result.FrontMatter.Should().BeNull();
+        result.Preface.Should().BeEmpty();
+
+        // [ ] 只有一个 Section（ATX Heading），Setext Heading 归入 Content
+        result.Sections.Should().HaveCount(1);
+
+        var section = result.Sections[0];
+        section.Heading.Level.Should().Be(1);
+        section.Heading.IsSetext.Should().BeFalse();
+
+        // [ ] Content 包含 Setext Heading 和后续段落
+        section.Content.Should().HaveCount(2);
+        section.Content[0].Should().BeOfType<HeadingBlock>();
+        ((HeadingBlock)section.Content[0]).IsSetext.Should().BeTrue();
+        section.Content[1].Should().BeOfType<ParagraphBlock>();
     }
 
     #endregion
