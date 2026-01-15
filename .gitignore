@@ -49,3 +49,4 @@ src/MemoTree.Services/
 tests/CodeCortex.Tests/
 tests/MemoFileProto.Tests/
 tests/MemoTree.Tests/
+BenchmarkDotNet.Artifacts/
