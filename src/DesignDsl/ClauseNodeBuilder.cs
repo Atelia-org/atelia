@@ -4,7 +4,7 @@ namespace Atelia.DesignDsl;
 
 /// <summary>
 /// Clause 节点构建器。
-/// 识别 `<modifier> [Clause-ID] 可选标题` 模式，返回 <see cref="ClauseNode"/>。
+/// 识别 `&lt;modifier&gt; [Clause-ID] 可选标题` 模式，返回 <see cref="ClauseNode"/>。
 /// </summary>
 public sealed partial class ClauseNodeBuilder : INodeBuilder {
     // Clause 模式：<modifier> [Clause-ID] 可选标题
@@ -29,9 +29,7 @@ public sealed partial class ClauseNodeBuilder : INodeBuilder {
 
         // 解析 Modifier（忽略大小写）
         var modifierStr = match.Groups[1].Value;
-        if (!Enum.TryParse<ClauseModifier>(modifierStr, ignoreCase: true, out var modifier)) {
-            return null;
-        }
+        if (!Enum.TryParse<ClauseModifier>(modifierStr, ignoreCase: true, out var modifier)) { return null; }
 
         var clauseId = match.Groups[2].Value;
 

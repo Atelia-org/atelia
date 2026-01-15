@@ -16,7 +16,8 @@ public sealed class ClauseNode : AxtNode {
     /// <param name="clauseId">Clause 标识符（不含方括号，保留原始大小写）。</param>
     /// <param name="title">可选标题（已 Trim，空字符串转为 null）。</param>
     public ClauseNode(HeadingBlock heading, IReadOnlyList<Block> content,
-                      ClauseModifier modifier, string clauseId, string? title)
+        ClauseModifier modifier, string clauseId, string? title
+    )
         : base(heading, content) {
         Modifier = modifier;
         ClauseId = clauseId;

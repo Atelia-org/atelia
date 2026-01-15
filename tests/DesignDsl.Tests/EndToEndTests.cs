@@ -9,7 +9,8 @@ namespace Atelia.DesignDsl.Tests;
 /// </summary>
 public class EndToEndTests {
     private static readonly string TestDataPath = Path.Combine(
-        AppContext.BaseDirectory, "..", "..", "..", "..", "..", "test-data", "DesignDsl", "dsl-sample.md");
+        AppContext.BaseDirectory, "..", "..", "..", "..", "..", "test-data", "DesignDsl", "dsl-sample.md"
+    );
 
     /// <summary>
     /// 验证测试 fixture 文件存在。
@@ -68,11 +69,14 @@ public class EndToEndTests {
         var clauseNodes = tree.AllNodes.OfType<ClauseNode>().ToList();
 
         clauseNodes.Should().Contain(c => c.Modifier == ClauseModifier.Decision,
-            "应包含至少一个 decision clause");
+            "应包含至少一个 decision clause"
+        );
         clauseNodes.Should().Contain(c => c.Modifier == ClauseModifier.Spec,
-            "应包含至少一个 spec clause");
+            "应包含至少一个 spec clause"
+        );
         clauseNodes.Should().Contain(c => c.Modifier == ClauseModifier.Derived,
-            "应包含至少一个 derived clause");
+            "应包含至少一个 derived clause"
+        );
     }
 
     /// <summary>
