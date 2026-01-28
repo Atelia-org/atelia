@@ -58,6 +58,16 @@ class C { }";
     }
 
     [Fact]
+    public async Task Keeps_Remark_Tag_With_Generic_Text() {
+        var code = @"/// <remark>Use List<int> for items.</remark>
+class C { }";
+        var fixedText = await AnalyzerTestHost.ApplyAllCodeFixesAsync(code, AnalyzerType, new Atelia.Analyzers.Style.MT0101XmlDocEscapeCodeFix(), "MT0101");
+        Assert.Contains("<remark>", fixedText);
+        Assert.Contains("</remark>", fixedText);
+        Assert.Contains("List&lt;int&gt;", fixedText);
+    }
+
+    [Fact]
     public async Task Escapes_Unmatched_Tag() {
         var code = @"/// <summary>Use <strong>bold text.</summary>
 class C { }";
