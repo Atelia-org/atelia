@@ -12,17 +12,11 @@ namespace Atelia.Agent.Core.History;
 /// 为 <see cref="HistoryEntry"/> 及其派生类型计算 token 估算值的调度器。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 该类型通过遍历条目的结构化成员来计算信息量，从而避免额外的字符串拼接开销，
 /// 也便于未来扩展到多模态字段的专用估算逻辑。
-/// </para>
-/// <para>
 /// 典型用法：
-/// <list type="number">
-///   <item><description>在应用启动阶段通过 <see cref="GetDefault"/> 获取全局实例，并调用 <see cref="Configure(ITokenEstimator)"/> 注入自定义估算器（可选）。</description></item>
-///   <item><description>调用 <see cref="Estimate(HistoryEntry)"/> 获取估算值，并由调用者负责写入条目。</description></item>
-/// </list>
-/// </para>
+/// - 在应用启动阶段通过 <see cref="GetDefault"/> 获取全局实例，并调用 <see cref="Configure(ITokenEstimator)"/> 注入自定义估算器（可选）。
+/// - 调用 <see cref="Estimate(HistoryEntry)"/> 获取估算值，并由调用者负责写入条目。
 /// </remarks>
 public sealed class TokenEstimateHelper {
     private static readonly Lazy<TokenEstimateHelper> DefaultInstance = new(() => new TokenEstimateHelper());

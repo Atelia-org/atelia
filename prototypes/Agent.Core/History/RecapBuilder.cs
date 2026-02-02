@@ -13,11 +13,9 @@ namespace Atelia.Agent.Core.History;
 /// </summary>
 /// <remarks>
 /// 典型工作流：
-/// <list type="number">
-///   <item><description>AgentState 提供 <see cref="RecapBuilder"/> 快照。</description></item>
-///   <item><description>上层组件在本地修改 <see cref="RecapText"/>、调用 <see cref="TryDequeueNextPair"/> 消化旧条目。</description></item>
-///   <item><description>修改完成后将实例提交回 AgentState，由后者完成最终裁剪和持久化。</description></item>
-/// </list>
+/// - AgentState 提供 <see cref="RecapBuilder"/> 快照。
+/// - 上层组件在本地修改 <see cref="RecapText"/>、调用 <see cref="TryDequeueNextPair"/> 消化旧条目。
+/// - 修改完成后将实例提交回 AgentState，由后者完成最终裁剪和持久化。
 /// </remarks>
 public sealed class RecapBuilder {
     private readonly ImmutableArray<ActionObservationPair> _pairs;
@@ -42,23 +40,15 @@ public sealed class RecapBuilder {
     /// 创建 RecapBuilder 快照，通常由 <see cref="AgentState"/> 调用。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 该方法假定 <paramref name="entries"/> 中的每个条目都已调用
     /// <see cref="HistoryEntry.AssignTokenEstimate(uint)"/> 完成 token 估算；
     /// 确保这一前提是调用方的责任。
-    /// </para>
-    /// <para>
-    /// <strong>设计约束：必须至少有一个 Action/Observation 对</strong>
-    /// </para>
-    /// <para>
+    /// 设计约束：必须至少有一个 Action/Observation 对
     /// RecapMaintainer 不应该将 Agent 的所有工作记忆压缩光，否则会导致：
-    /// <list type="bullet">
-    ///   <item><description>工作记忆完全变成模糊的摘要，丧失具体上下文</description></item>
-    ///   <item><description><see cref="AgentState.ProjectContext"/> 无法注入 windows 文本（依赖至少一个 Observation）</description></item>
-    ///   <item><description>违反"短期记忆 + 中期摘要 + 长期归档"的分层架构原则</description></item>
-    /// </list>
+    /// - 工作记忆完全变成模糊的摘要，丧失具体上下文
+    /// - <see cref="AgentState.ProjectContext"/> 无法注入 windows 文本（依赖至少一个 Observation）
+    /// - 违反"短期记忆 + 中期摘要 + 长期归档"的分层架构原则
     /// 因此，此方法在快照创建阶段就阻止空 PendingList 的情况（Fail-fast）。
-    /// </para>
     /// </remarks>
     internal static RecapBuilder CreateSnapshot(IReadOnlyList<HistoryEntry> entries) {
         if (entries is null) { throw new ArgumentNullException(nameof(entries)); }

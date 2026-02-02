@@ -11,15 +11,11 @@ partial class MethodToolWrapper {
     /// 从参数字典中按名称提取参数值，若字典中不存在则使用默认值。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <strong>参数名匹配规则：</strong>使用原生的 <see cref="IReadOnlyDictionary{TKey, TValue}.TryGetValue"/> 进行查找，
+        /// 参数名匹配规则：使用原生的 <see cref="IReadOnlyDictionary{TKey, TValue}.TryGetValue"/> 进行查找，
     /// 严格区分大小写。不支持忽略大小写或别名匹配。
-    /// </para>
-    /// <para>
-    /// <strong>设计原因：</strong>保持简单、明确的契约，避免引入参数名碰撞检测与优先级决策的复杂性。
+            /// 设计原因：保持简单、明确的契约，避免引入参数名碰撞检测与优先级决策的复杂性。
     /// 当前团队调用路径可控，大小写一致性由工具定义与调用方共同保证。
-    /// </para>
-    /// </remarks>
+        /// </remarks>
     internal sealed record ArgGetter(string Name, ParamDefault? DefaultValue) {
         public object? GetValue(IReadOnlyDictionary<string, object?>? arguments) {
             if (arguments is not null && arguments.TryGetValue(Name, out var value)) { return value; }
@@ -74,11 +70,9 @@ partial class MethodToolWrapper {
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>工具执行结果。</returns>
     /// <remarks>
-    /// <para>
-    /// 本方法通过 <see cref="ArgGetter"/> 从 <paramref name="arguments"/> 中按原始参数名提取值，
+        /// 本方法通过 <see cref="ArgGetter"/> 从 <paramref name="arguments"/> 中按原始参数名提取值，
     /// 不进行大小写转换或别名匹配。若字典中缺少必填参数，会抛出异常由 <see cref="ToolExecutor"/> 捕获并转换为失败结果。
-    /// </para>
-    /// </remarks>
+        /// </remarks>
     public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
         var args = BuildArgs(_argGetters, arguments);
         return _invoker(args, cancellationToken);

@@ -9,34 +9,16 @@ namespace Atelia.Agent.Core;
 /// 把带有 <see cref="ToolAttribute"/> 与 <see cref="ToolParamAttribute"/> 注解的方法包装为 <see cref="ITool"/> 实例。
 /// </summary>
 /// <remarks>
-/// <para>本文件聚焦于如何构建 <see cref="MethodToolWrapper"/>，包含面向调用方的公开 API 与基础注解。</para>
-/// <para>
+/// 本文件聚焦于如何构建 <see cref="MethodToolWrapper"/>，包含面向调用方的公开 API 与基础注解。
 /// 同目录下的 <c>MethodToolWrapper.Impl.cs</c> 负责参数推断、可空性分析与执行委托的生成，以下规则是针对调用方总结的使用指南，
 /// 便于在不了解内部实现细节的情况下定义新工具：
-/// </para>
-/// <list type="bullet">
-/// <item>
-/// <description>目标方法必须显式标注 <see cref="ToolAttribute"/>，返回类型固定为 <see cref="ValueTask{TResult}"/>，其中 <c>TResult</c> 为 <see cref="LodToolExecuteResult"/>。</description>
-/// </item>
-/// <item>
-/// <description>方法参数列表的最后一个参数必须为 <see cref="CancellationToken"/>，且无需额外标注 Attribute；其它业务参数必须逐个标注 <see cref="ToolParamAttribute"/>。</description>
-/// </item>
-/// <item>
-/// <description>仅支持值类型 <c>bool</c>、<c>int</c>、<c>long</c>、<c>float</c>、<c>double</c>、<c>decimal</c> 以及引用类型 <c>string</c>（含对应的可空版本），且不接受 <c>ref</c>/<c>out</c> 参数。</description>
-/// </item>
-/// <item>
-/// <description>可空性通过 C# 可空注解推断：引用类型需使用如 <c>string?</c> 的注解，值类型需使用 <c>Nullable&lt;T&gt;</c>，否则视为必填。</description>
-/// </item>
-/// <item>
-/// <description>若参数声明了默认值（可选参数），包装器会把它视为“可省略”并生成 <see cref="ParamDefault"/>；默认值为 <c>null</c> 时必须配合可空签名。</description>
-/// </item>
-/// <item>
-/// <description>最终生成的参数描述会在 <see cref="ToolParamAttribute"/> 提供的文本后自动附加「必填/可省略」「默认值」「允许 null」等提示，调用方无需手动维护。</description>
-/// </item>
-/// <item>
-/// <description>实例方法包装时需要传入实际对象；若使用 <see cref="FromDelegate(Delegate)"/>，请确保委托仅绑定单个方法。</description>
-/// </item>
-/// </list>
+/// 目标方法必须显式标注 <see cref="ToolAttribute"/>，返回类型固定为 <see cref="ValueTask{TResult}"/>，其中 <c>TResult</c> 为 <see cref="LodToolExecuteResult"/>。
+/// 方法参数列表的最后一个参数必须为 <see cref="CancellationToken"/>，且无需额外标注 Attribute；其它业务参数必须逐个标注 <see cref="ToolParamAttribute"/>。
+/// 仅支持值类型 <c>bool</c>、<c>int</c>、<c>long</c>、<c>float</c>、<c>double</c>、<c>decimal</c> 以及引用类型 <c>string</c>（含对应的可空版本），且不接受 <c>ref</c>/<c>out</c> 参数。
+/// 可空性通过 C# 可空注解推断：引用类型需使用如 <c>string?</c> 的注解，值类型需使用 <c>Nullable&lt;T&gt;</c>，否则视为必填。
+/// 若参数声明了默认值（可选参数），包装器会把它视为“可省略”并生成 <see cref="ParamDefault"/>；默认值为 <c>null</c> 时必须配合可空签名。
+/// 最终生成的参数描述会在 <see cref="ToolParamAttribute"/> 提供的文本后自动附加「必填/可省略」「默认值」「允许 null」等提示，调用方无需手动维护。
+/// 实例方法包装时需要传入实际对象；若使用 <see cref="FromDelegate(Delegate)"/>，请确保委托仅绑定单个方法。
 /// </remarks>
 public sealed partial class MethodToolWrapper : ITool {
 
@@ -47,17 +29,14 @@ public sealed partial class MethodToolWrapper : ITool {
     /// <param name="formatArgs">
     /// 传递给 <see cref="string.Format(string, object?[])"/> 的占位符实参；
     /// 若目标方法或其参数的注解（见 <see cref="ToolAttribute"/> / <see cref="ToolParamAttribute"/>) 无需格式化，可省略。
-    ///
-    /// <para>
-    /// 例如：
+            /// 例如：
     /// <code language="csharp">
     /// [Tool("{0}_replace", "编辑 {1} 文本")]
     /// ValueTask&lt;LodToolExecuteResult&gt; ReplaceAsync(...)
     /// </code>
     /// 调用时可传 <c>MethodToolWrapper.FromDelegate(method, "recap", "Recap")</c>，
     /// 使 name/description 在注册阶段被格式化。
-    /// </para>
-    /// </param>
+        /// </param>
     /// <returns>可被代理运行时调用的工具实例。</returns>
     /// <exception cref="ArgumentNullException">当 <paramref name="methodDelegate"/> 为 <c>null</c> 时。</exception>
     /// <exception cref="ArgumentException">当委托绑定多个方法时。</exception>
@@ -115,25 +94,13 @@ public sealed partial class MethodToolWrapper : ITool {
     /// <exception cref="ArgumentNullException">当 <paramref name="method"/> 为 <c>null</c> 时。</exception>
     /// <exception cref="InvalidOperationException">当方法签名或注解不满足工具约束时。</exception>
     /// <remarks>
-    /// <para>适用于通过反射注册静态或实例方法，规则如下：</para>
-    /// <list type="bullet">
-    /// <item>
-    /// <description>方法需要标注 <see cref="ToolAttribute"/>，并返回 <see cref="ValueTask{LodToolExecuteResult}"/>。</description>
-    /// </item>
-    /// <item>
-    /// <description>最后一个参数必须是 <see cref="CancellationToken"/>，其余参数必须逐一标注 <see cref="ToolParamAttribute"/>。</description>
-    /// </item>
-    /// <item>
-    /// <description>允许的业务参数类型为 <c>string</c>、<c>bool</c>、<c>int</c>、<c>long</c>、<c>float</c>、<c>double</c>、<c>decimal</c> 及其可空变体，且不支持 <c>ref</c>/<c>out</c>。</description>
-    /// </item>
-    /// <item>
-    /// <description>包装器会根据 C# 可空性注解推断是否允许传入 <c>null</c>；若声明了默认值，则被视作可省略并在元数据中记录默认值文本。</description>
-    /// </item>
-    /// <item>
-    /// <description>对于实例方法，<paramref name="targetInstance"/> 必须是方法声明类型的实例；静态方法则传 <c>null</c>。</description>
-    /// </item>
-    /// </list>
-    /// <para>若违反上述约束（例如缺少 Attribute、类型不受支持、默认值与可空性不匹配等），会抛出 <see cref="InvalidOperationException"/> 或 <see cref="NotSupportedException"/>。</para>
+    /// 适用于通过反射注册静态或实例方法，规则如下：
+            /// 方法需要标注 <see cref="ToolAttribute"/>，并返回 <see cref="ValueTask{LodToolExecuteResult}"/>。
+            /// 最后一个参数必须是 <see cref="CancellationToken"/>，其余参数必须逐一标注 <see cref="ToolParamAttribute"/>。
+            /// 允许的业务参数类型为 <c>string</c>、<c>bool</c>、<c>int</c>、<c>long</c>、<c>float</c>、<c>double</c>、<c>decimal</c> 及其可空变体，且不支持 <c>ref</c>/<c>out</c>。
+            /// 包装器会根据 C# 可空性注解推断是否允许传入 <c>null</c>；若声明了默认值，则被视作可省略并在元数据中记录默认值文本。
+            /// 对于实例方法，<paramref name="targetInstance"/> 必须是方法声明类型的实例；静态方法则传 <c>null</c>。
+            /// 若违反上述约束（例如缺少 Attribute、类型不受支持、默认值与可空性不匹配等），会抛出 <see cref="InvalidOperationException"/> 或 <see cref="NotSupportedException"/>。
     /// </remarks>
     /// <example>
     /// <code language="csharp">
@@ -144,8 +111,7 @@ public sealed partial class MethodToolWrapper : ITool {
     ///         CancellationToken cancellationToken
     ///     ) =&gt; new LodToolExecuteResult(text);
     /// }
-    ///
-    /// var host = new SampleToolHost();
+        /// var host = new SampleToolHost();
     /// var method = typeof(SampleToolHost).GetMethod(nameof(SampleToolHost.EchoAsync))!;
     /// var tool = MethodToolWrapper.FromMethod(host, method);
     /// // tool 现在可以交由 ToolExecutor 或代理运行时调用
@@ -161,13 +127,10 @@ public sealed partial class MethodToolWrapper : ITool {
 /// </summary>
 /// <remarks>
 /// 运行时由 <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo)"/> 反射扫描读取此特性，结合方法签名生成工具元数据。
-///
-/// <para>
-/// <strong>格式化占位符：</strong>
+/// 格式化占位符：
 /// <see cref="NameFormat"/> 与 <see cref="DescriptionFormat"/> 支持标准的 <see cref="string.Format(string, object?[])"/> 占位符。
 /// 若调用方在注册时调用 <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo, object?[])"/> 并提供 <c>formatArgs</c>，
 /// 则会在工具实例化过程中将这些占位符替换为实际值；未提供时视为普通常量。
-/// </para>
 /// </remarks>
 /// <see cref="ToolParamAttribute"/>
 /// <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo)"/>
@@ -218,25 +181,12 @@ public sealed class ToolAttribute : Attribute {
 /// 为工具方法的参数提供元数据补充。
 /// </summary>
 /// <remarks>
-/// <para>
 /// <see cref="ToolParamSpec"/> 会在运行时根据参数的类型、可空注解以及默认值自动推断：
-/// </para>
-/// <list type="bullet">
-/// <item>
-/// <description>可选参数应使用 C# 的默认值语法（例如 <c>string text = ""</c>）；若默认值为 <c>null</c>，需要将参数声明为可空类型。</description>
-/// </item>
-/// <item>
-/// <description>描述文本会自动附加「必填/可省略」「默认值」「允许 null」等提示信息。</description>
-/// </item>
-/// <item>
-/// <description>不支持传入 <c>ref</c>/<c>out</c> 参数，参数类型限定为 <c>string</c> 与基本数值/布尔类型（含各自的可空版本）。</description>
-/// </item>
-/// </list>
-///
-/// <para>
-/// <strong>格式化占位符：</strong><see cref="DescriptionFormat"/> 同样支持 <see cref="string.Format(string, object?[])"/> 占位符，
+/// 可选参数应使用 C# 的默认值语法（例如 <c>string text = ""</c>）；若默认值为 <c>null</c>，需要将参数声明为可空类型。
+/// 描述文本会自动附加「必填/可省略」「默认值」「允许 null」等提示信息。
+/// 不支持传入 <c>ref</c>/<c>out</c> 参数，参数类型限定为 <c>string</c> 与基本数值/布尔类型（含各自的可空版本）。
+/// 格式化占位符：<see cref="DescriptionFormat"/> 同样支持 <see cref="string.Format(string, object?[])"/> 占位符，
 /// 由 <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo, object?[])"/> 的 <c>formatArgs</c> 在工具注册时替换。
-/// </para>
 /// </remarks>
 /// <see cref="ToolAttribute"/>
 /// <see cref="MethodToolWrapper.FromMethod(object?, MethodInfo)"/>

@@ -10,18 +10,12 @@ namespace Atelia.Agent.Text;
 /// 为 TextEditor2Widget 工具生成符合规范的结构化 Markdown 响应。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 响应格式固定包含四个段落（按顺序）：
-/// </para>
-/// <list type="number">
-/// <item><description>状态头部：status → state → flags（三行固定顺序）</description></item>
-/// <item><description>概览：summary 与 guidance（列表项键名固定）</description></item>
-/// <item><description>指标：delta、new_length、selection_count 表格</description></item>
-/// <item><description>候选选区：可选，存在虚拟选区时输出表格</description></item>
-/// </list>
-/// <para>
+/// 状态头部：status → state → flags（三行固定顺序）
+/// 概览：summary 与 guidance（列表项键名固定）
+/// 指标：delta、new_length、selection_count 表格
+/// 候选选区：可选，存在虚拟选区时输出表格
 /// 所有字段值使用内联代码格式，表头和键名固定为中文，以保持与文档规范一致。
-/// </para>
 /// </remarks>
 public static class TextEditResponseFormatter {
 

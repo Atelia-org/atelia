@@ -13,16 +13,12 @@ namespace Atelia.Agent.Text;
 
 /// <summary>
 /// 封装 LLM 面向文本的编辑入口，统一处理缓存与换行符归一化。
-/// <para>
 /// 典型调用流程：构造时从外部读取初始内容 → 对外暴露工具/快照 → 所有编辑操作在内部缓存上生效，
 /// 并按需回写至持久层。这样可以保证 LLM 所见内容与底层真实状态之间始终保持同步。
-/// </para>
 /// </summary>
 /// <remarks>
-/// <para>
-/// <strong>执行约束：</strong>调用方必须保证顺序化访问。本类型不提供内部线程安全；当 <see cref="TextChanged"/> 事件正在广播时，任何写入操作都会抛出
+/// 执行约束：调用方必须保证顺序化访问。本类型不提供内部线程安全；当 <see cref="TextChanged"/> 事件正在广播时，任何写入操作都会抛出
 /// <see cref="InvalidOperationException"/>，以阻止事件处理器执行递归编辑。事件处理器应视内容为只读快照。
-/// </para>
 /// </remarks>
 public sealed class TextEditorWidget {
     private const string ReplaceToolFormat = "{0}_replace";

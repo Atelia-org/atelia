@@ -11,9 +11,9 @@ namespace Atelia.Agent.Core;
 /// Agent 执行引擎，负责管理 Agent 状态机、工具调度与模型交互的核心协调器。
 /// </summary>
 /// <remarks>
-/// <para><strong>警告：此类型非线程安全，不支持并发使用。</strong></para>
-/// <para>所有公开方法（包括异步方法）都不应从多个线程同时调用。</para>
-/// <para>如需并发执行多个 Agent，请为每个执行上下文创建独立的 <see cref="AgentEngine"/> 实例。</para>
+/// 警告：此类型非线程安全，不支持并发使用。
+/// 所有公开方法（包括异步方法）都不应从多个线程同时调用。
+/// 如需并发执行多个 Agent，请为每个执行上下文创建独立的 <see cref="AgentEngine"/> 实例。
 /// </remarks>
 public class AgentEngine {
     private const string ProviderDebugCategory = "Provider";
@@ -302,8 +302,8 @@ public class AgentEngine {
     /// <returns>包含本次步进结果的 <see cref="AgentStepResult"/>。</returns>
     /// <exception cref="ArgumentNullException"><paramref name="profile"/> 为 <c>null</c>。</exception>
     /// <remarks>
-    /// <para>此方法非线程安全，不应与其他方法并发调用。</para>
-    /// <para>每次调用将根据当前状态执行相应操作（等待输入、调用模型、执行工具等）。</para>
+    /// 此方法非线程安全，不应与其他方法并发调用。
+    /// 每次调用将根据当前状态执行相应操作（等待输入、调用模型、执行工具等）。
     /// </remarks>
     public async Task<AgentStepResult> StepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
         if (profile is null) { throw new ArgumentNullException(nameof(profile)); }

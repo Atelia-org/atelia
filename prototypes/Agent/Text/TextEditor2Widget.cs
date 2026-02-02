@@ -15,12 +15,8 @@ namespace Atelia.Agent.Text;
 /// 实验性的文本编辑 Widget，面向 LLM 提供独占的文本缓冲区与基于选区的多匹配处理能力。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 该组件以 LLM-first 体验为中心：所有编辑都在内部缓冲区完成，并通过 Summary / Guidance / 选区候选等信息向模型反馈。
-/// </para>
-/// <para>
 /// 当前阶段不会主动写回底层存储，也不会自动响应外部变更；后续会在此基础上提供显式刷写、失败提示与差异摘要，让 LLM 自主决策同步策略。
-/// </para>
 /// </remarks>
 public sealed class TextEditor2Widget {
     private const string ReplaceToolFormat = "{0}_replace";

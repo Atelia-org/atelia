@@ -10,52 +10,23 @@ namespace Atelia.Agent.Core.History;
 /// Agent 状态管理器，负责维护"内存中的 Recent History"以及待注入的通知队列。
 /// </summary>
 /// <remarks>
-/// <para><strong>职能定位：内存中的 Recent History</strong></para>
-/// <para>
+/// 职能定位：内存中的 Recent History
 /// 本类型管理的 <c>_history</c> 集合代表 Agent 的**短期工作记忆**（Recent History），
 /// 仅保留最近的若干条目用于实时上下文渲染与反射操作。更早的历史条目会通过 RecapMaintainer
 /// 压缩为 RecapEntry 后沉入持久存储，不再占用内存。
-/// </para>
-///
-/// <para><strong>与持久历史的分工：</strong></para>
-/// <list type="bullet">
-///   <item>
-///     <description><strong>内存层（本类型）</strong>：维护 RecentHistory，支持快速追加、反射编辑（裁剪、降级）、上下文渲染。</description>
-///   </item>
-///   <item>
-///     <description><strong>持久层（待实现）</strong>：负责只读追加式的历史归档，由独立的 HistoryPersistence 类型管理磁盘 I/O，不可修改已落盘内容。</description>
-///   </item>
-///   <item>
-///     <description><strong>Recap 边界</strong>：当 RecapEntry 生成并写入持久层后，其覆盖的原始条目会从 RecentHistory 中移除；启动时从磁盘加载历史，遇到 RecapEntry 停止，以它为"已归档历史"的摘要起点。</description>
-///   </item>
-/// </list>
-///
-/// <para><strong>后续计划（重构路线图）：</strong></para>
-/// <list type="number">
-///   <item>
-///     <description><strong>新增 RecapEntry</strong>：作为 ObservationEntry 的派生类，携带"覆盖范围元数据"（如 CoveredUntilEntrySerial / 时间戳）。</description>
-///   </item>
-///   <item>
-///     <description><strong>引入 EntrySerial</strong>：为每个 HistoryEntry 分配唯一递增序列号，便于跨内存/持久层定位与追踪。</description>
-///   </item>
-///   <item>
-///     <description><strong>反射机制扩展</strong>：提供 IHistoryReflection 接口，支持 PeekRange / MarkAsRecapped / RemoveRecappedEntries / DowngradeDetailLevel 等操作，作用范围限定在 RecentHistory。</description>
-///   </item>
-///   <item>
-///     <description><strong>HistoryEntry 部分可变化</strong>：允许对 RecentHistory 中的条目动态调整 DetailLevel（Detail → Basic），以实现渐进式压缩，但保持其他字段不可变。</description>
-///   </item>
-///   <item>
-///     <description><strong>HistoryLimitOptions</strong>：配置 RecentHistory 的容量策略（条数 / Token 估算 / 时间窗口），触发自动 Recap 流程。</description>
-///   </item>
-///   <item>
-///     <description><strong>持久化协调</strong>：明确 RecentHistory 与持久层的同步点，确保 RecapEntry 插入后历史序列的一致性与可恢复性。</description>
-///   </item>
-/// </list>
-///
-/// <para>
+/// 与持久历史的分工：
+/// - 内存层（本类型）：维护 RecentHistory，支持快速追加、反射编辑（裁剪、降级）、上下文渲染。
+/// - 持久层（待实现）：负责只读追加式的历史归档，由独立的 HistoryPersistence 类型管理磁盘 I/O，不可修改已落盘内容。
+/// - Recap 边界：当 RecapEntry 生成并写入持久层后，其覆盖的原始条目会从 RecentHistory 中移除；启动时从磁盘加载历史，遇到 RecapEntry 停止，以它为"已归档历史"的摘要起点。
+/// 后续计划（重构路线图）：
+/// - 新增 RecapEntry：作为 ObservationEntry 的派生类，携带"覆盖范围元数据"（如 CoveredUntilEntrySerial / 时间戳）。
+/// - 引入 EntrySerial：为每个 HistoryEntry 分配唯一递增序列号，便于跨内存/持久层定位与追踪。
+/// - 反射机制扩展：提供 IHistoryReflection 接口，支持 PeekRange / MarkAsRecapped / RemoveRecappedEntries / DowngradeDetailLevel 等操作，作用范围限定在 RecentHistory。
+/// - HistoryEntry 部分可变化：允许对 RecentHistory 中的条目动态调整 DetailLevel（Detail → Basic），以实现渐进式压缩，但保持其他字段不可变。
+/// - HistoryLimitOptions：配置 RecentHistory 的容量策略（条数 / Token 估算 / 时间窗口），触发自动 Recap 流程。
+/// - 持久化协调：明确 RecentHistory 与持久层的同步点，确保 RecapEntry 插入后历史序列的一致性与可恢复性。
 /// 本设计遵循"短期记忆（内存）+ 中期摘要（Recap）+ 长期归档（磁盘）"的分层记忆架构，
 /// 为 RecapMaintainer、MetaAsker 等 SubAgent 提供明确的反射边界与操作语义。
-/// </para>
 /// </remarks>
 public sealed class AgentState {
     /// <summary>

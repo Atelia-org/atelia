@@ -8,15 +8,11 @@ namespace Atelia.Agent.Text;
 /// 封装 TextEditor2Widget 的状态转换逻辑、工具可见性管理与 Flags 推断。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 该控制器作为状态机的核心，负责：
-/// </para>
-/// <list type="number">
-/// <item><description>维护当前 WorkflowState 并根据操作事件执行状态转换</description></item>
-/// <item><description>根据 WorkflowState 和 PersistMode 推断 Flags 组合</description></item>
-/// <item><description>管理工具可见性矩阵，确保 LLM 只看到合法的操作选项</description></item>
-/// <item><description>提供状态查询接口，便于诊断与测试</description></item>
-/// </list>
+/// 维护当前 WorkflowState 并根据操作事件执行状态转换
+/// 根据 WorkflowState 和 PersistMode 推断 Flags 组合
+/// 管理工具可见性矩阵，确保 LLM 只看到合法的操作选项
+/// 提供状态查询接口，便于诊断与测试
 /// </remarks>
 public sealed class TextEditStateController {
     private TextEditWorkflowState _currentState;
