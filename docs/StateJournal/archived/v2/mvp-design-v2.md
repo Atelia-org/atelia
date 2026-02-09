@@ -66,8 +66,8 @@
 | 术语 | 定义 | 实现映射 |
 |------|------|---------|
 | **ObjectId** | 对象的稳定身份。参见 **Well-Known ObjectId** 条目了解保留区规则 | `uint64` / `varuint` |
-| **Ptr64** / **<deleted-place-holder>** | 8 字节文件偏移量。详见 [rbf-interface.md](rbf-interface.md) §2.2 | `ulong` |
-| **ObjectVersionPtr** | 指向对象版本记录的 <deleted-place-holder> | `Ptr64` 编码值 |
+| **Ptr64** / **SizedPtr** | 8 字节文件偏移量。详见 [rbf-interface.md](rbf-interface.md) §2.2。磁盘布局详见 [v0.1/disk-layout.md](v0.1/disk-layout.md#24-ptr64-与对齐约束mvp-固定) | `ulong` |
+| **ObjectVersionPtr** | 指向对象版本记录的 SizedPtr。详见 [v0.1/object-version-chain.md](v0.1/object-version-chain.md) | `Ptr64` 编码值 |
 | **EpochSeq** | Commit 的单调递增序号，用于判定 HEAD 新旧 | `varuint` |
 
 ### 提交与 HEAD
@@ -91,12 +91,7 @@
 
 ### 编码层
 
-| 术语 | 定义 | 实现映射 |
-|------|------|---------|
-| **FrameTag** | RBF Frame 的顶层类型标识（位于 HeadLen 之后），是 StateJournal Record 的**唯一判别器**。采用 4 字节整数，16/16 位段编码：低 16 位为 RecordType，高 16 位为 SubType（当 RecordType=ObjectVersion 时解释为 ObjectKind）。详见 [rbf-interface.md](rbf-interface.md) `[F-FRAMETAG-DEFINITION]` 和本文档 `[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]` | `uint`（4 字节）|
-| **RecordType** | FrameTag 低 16 位，区分 Record 顶层类型（ObjectVersionRecord / MetaCommitRecord） | `ushort` |
-| **ObjectKind** | 当 RecordType=ObjectVersion 时，FrameTag 高 16 位的语义，决定 diff 解码器 | `ushort` 枚举 |
-| **ValueType** | Dict DiffPayload 中的值类型标识 | `byte` 低 4 bit |
+> **已迁移**：FrameTag/RecordType/ObjectKind → [v0.1/disk-layout.md](v0.1/disk-layout.md#2-术语表编码层)；ValueType → [v0.1/primitive-serialization.md](v0.1/primitive-serialization.md)
 
 ### 对象基类
 
@@ -130,90 +125,21 @@
 1. **概念术语**：统一 Title Case，全文一致
 2. **实现标识符**：仅在 Implementation Mapping 出现，用代码格式
 3. **缩写大写**：`HEAD`、`CRC32C` 全文同形
-4. **Ptr64 / <deleted-place-holder>**：详见 [rbf-interface.md](rbf-interface.md) §2.2
+4. **Ptr64 / SizedPtr**：详见 [rbf-interface.md](rbf-interface.md) §2.2
 
 ### 枚举值速查表
 
 > 以下枚举值定义集中于此，便于实现者查阅。详细语义参见对应章节。
 
-#### FrameTag 位段编码（§3.2.1, §3.2.2, §3.2.5）
+#### FrameTag / RecordType / SubType / ObjectKind
 
-**`[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]`** FrameTag 是一个 `uint`（4 字节整数），StateJournal MUST 按以下位段解释：
-
-| 位范围 | 字段名 | 类型 | 语义 |
-|--------|--------|------|------|
-| 31..16 | SubType | `u16` | 当 RecordType=ObjectVersion 时解释为 ObjectKind |
-| 15..0 | RecordType | `u16` | Record 顶层类型（ObjectVersion / MetaCommit） |
-
-> **端序**：Little-Endian (LE)，即低位字节在前（字节 0-1 = RecordType，字节 2-3 = SubType）。
-
-##### Packing/Unpacking 逻辑
-
-应用层将 FrameTag（`uint`）解释为两个独立枚举：
-
-- **Unpacking（解包）**：从 `uint` 提取 `RecordType`（低 16 位）和 `SubType`（高 16 位）
-  - `RecordType = (ushort)(frameTag & 0xFFFF)`
-  - `SubType = (ushort)(frameTag >> 16)`
-- **Interpretation（解释）**：`RecordType` 决定如何解释 `SubType`
-  - 当 `RecordType == ObjectVersion` 时，`SubType` 解释为 `ObjectKind`
-  - 当 `RecordType != ObjectVersion` 时，`SubType` MUST 为 0（参见 `[F-FRAMETAG-SUBTYPE-ZERO-WHEN-NOT-OBJVER]`）
-- **Packing（打包）**：从两个枚举组合回 `uint`
-  - `frameTag = ((uint)subType << 16) | (uint)recordType`
-
-##### RecordType（低 16 位）
-
-| 值 | 名称 | 说明 |
-|------|------|------|
-| `0x0000` | Reserved | 保留，MUST NOT 使用 |
-| `0x0001` | ObjectVersionRecord | 对象版本记录（data payload）|
-| `0x0002` | MetaCommitRecord | 提交元数据记录（meta payload）|
-| `0x0003..0x7FFF` | — | 未来标准扩展 |
-| `0x8000..0xFFFF` | — | 实验/私有扩展 |
-
-##### SubType（高 16 位）
-
-**`[F-FRAMETAG-SUBTYPE-ZERO-WHEN-NOT-OBJVER]`** 当 `RecordType != ObjectVersionRecord` 时，`SubType` MUST 为 `0x0000`；Reader 遇到非零 SubType MUST 视为格式错误。
-
-**`[F-OBJVER-OBJECTKIND-FROM-TAG]`** 当 `RecordType == ObjectVersionRecord` 时，`SubType` MUST 解释为 `ObjectKind`，Payload 内 MUST NOT 再包含 ObjectKind 字节。
-
-##### FrameTag 完整取值表（MVP）
-
-| FrameTag 值 | RecordType | ObjectKind | 说明 | 字节序列（LE）|
-|-------------|------------|------------|------|---------------|
-| `0x00010001` | ObjectVersion | Dict | DurableDict 版本记录 | `01 00 01 00` |
-| `0x00020001` | ObjectVersion | Array | DurableArray 版本记录（未来）| `01 00 02 00` |
-| `0x00000002` | MetaCommit | — | 提交元数据记录 | `02 00 00 00` |
-
-> **FrameTag 是唯一判别器**：StateJournal 通过 `FrameTag`（独立 4B 字段）区分 Record 类型和对象类型。详见 [rbf-format.md](rbf-format.md) `[F-FRAMETAG-WIRE-ENCODING]`。
-> 
-> **`[S-STATEJOURNAL-TOMBSTONE-SKIP]`** 墓碑帧通过 `FrameStatus.Tombstone` 标识，与 FrameTag 无关。StateJournal Reader MUST 先检查 `FrameStatus`，遇到 `Tombstone` 状态 MUST 跳过该帧，再解释 `FrameTag`。
+> **已迁移** → [v0.1/disk-layout.md](v0.1/disk-layout.md#3-frametag-编码)
 >
-> **`[F-UNKNOWN-FRAMETAG-REJECT]`** Reader 遇到未知 RecordType MUST fail-fast（不得静默跳过）。
-
-#### ObjectKind（FrameTag SubType，当 RecordType=ObjectVersion）
-
-> ObjectKind 现在编码在 FrameTag 高 16 位，扩展为 `u16`。
-
-| 值 | 名称 | 说明 |
-|------|------|------|
-| `0x0000` | Reserved | 保留，MUST NOT 使用 |
-| `0x0001` | Dict | DurableDict（MVP 唯一实现） |
-| `0x0002..0x007F` | Standard | 标准类型（未来扩展） |
-| `0x0080..0x00FF` | Variant | 版本变体（如 `DictV2`），兼容原 byte 约定 |
-| `0x0100..0x7FFF` | Extended | 扩展标准类型 |
-| `0x8000..0xFFFF` | Experimental | 实验/私有类型 |
-
-**`[F-UNKNOWN-OBJECTKIND-REJECT]`** 当 `RecordType == ObjectVersionRecord` 时，Reader 遇到未知 `ObjectKind` MUST fail-fast（不得静默跳过）。
+> 包含条款：`[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]`、`[F-FRAMETAG-SUBTYPE-ZERO-WHEN-NOT-OBJVER]`、`[F-OBJVER-OBJECTKIND-FROM-TAG]`、`[S-STATEJOURNAL-TOMBSTONE-SKIP]`、`[F-UNKNOWN-FRAMETAG-REJECT]`、`[F-UNKNOWN-OBJECTKIND-REJECT]`
 
 #### ValueType（§3.4.2，低 4 bit）
 
-| 值 | 名称 | Payload |
-|------|------|---------|
-| `0x0` | Val_Null | 无 |
-| `0x1` | Val_Tombstone | 无（表示删除） |
-| `0x2` | Val_ObjRef | `ObjectId`（varuint） |
-| `0x3` | Val_VarInt | `varint`（ZigZag） |
-| `0x4` | Val_Ptr64 | `u64 LE` |
+> **已迁移**：本节内容已迁移至 [v0.1/primitive-serialization.md](v0.1/primitive-serialization.md)。
 
 ---
 
@@ -336,23 +262,23 @@ stateDiagram-v2
     TransientDirty --> Clean : Commit()
     TransientDirty --> Detached : DiscardChanges()
     Detached --> [*] : (终态，后续访问抛 ObjectDetachedException)
-    
+
     [*] --> Clean : LoadObject()
     Clean --> PersistentDirty : Modify (Set/Remove)
     PersistentDirty --> PersistentDirty : Modify (保持)
     PersistentDirty --> Clean : Commit()
     PersistentDirty --> Clean : DiscardChanges()
-    
+
     Clean --> [*] : GC 回收 (WeakRef 失效)
 ```
 
 > **⚠️ 僵尸对象警告 (Zombie Object Warning)**：
 > 对 Transient Dirty 对象调用 `DiscardChanges()` 后，该对象变为 **Detached** 状态。
 > 此时对象实例仍存在于调用方的变量中，但任何访问都会抛出 `ObjectDetachedException`。
-> 
+>
 > **风险**：Detached 对象的 `ObjectId` 可能在后续 `CreateObject()` 时被重新分配给新对象。
 > 调用方应避免在 Discard 后仍持有对 Transient 对象的引用。
-> 
+>
 > **建议**：使用 `State` 属性（`DurableObjectState` 枚举）判断对象是否可用，而非捕获异常。
 
 **DiscardChanges 行为（MVP 固定）**：
@@ -367,14 +293,14 @@ stateDiagram-v2
 > - 异常消息 SHOULD 提供恢复指引，例如："Object was never committed. Call CreateObject() to create a new object."
 >
 > **[S-DETACHED-ACCESS-TIERING] Detached 对象的访问分层（MUST）**：
-> 
+>
 > 为避免条款冲突（`State` 属性 MUST NOT throw vs "任何访问 MUST throw"），将访问分为两层：
-> 
+>
 > | 访问类型 | 示例 API | Detached 行为 |
 > |----------|----------|---------------|
 > | **元信息访问** | `State`, `Id`, `ObjectId` | MUST NOT throw（O(1) 复杂度） |
 > | **语义数据访问** | `TryGetValue`, `Set`, `Remove`, `Count`, `Enumerate`, `HasChanges` | MUST throw `ObjectDetachedException` |
-> 
+>
 > **设计理由**：元信息访问用于"先检查再操作"模式（Look-before-you-leap），避免 try-catch 的性能开销和代码污染。
 >
 > **ObjectId 回收语义（MVP 固定）**：
@@ -385,7 +311,7 @@ stateDiagram-v2
 #### 3.1.1 三个核心标识
 
 - **ObjectId (`uint64`)**：对象的稳定身份。文件中任何“对象引用”仅存储 `ObjectId`。
-- **ObjectVersionPtr (<deleted-place-holder>)**：对象某个版本在文件中的位置指针（指向一条 ObjectVersionRecord）。定义遵循 [rbf-interface.md](rbf-interface.md) 的 <deleted-place-holder>。
+- **ObjectVersionPtr (SizedPtr)**：对象某个版本在文件中的位置指针（指向一条 ObjectVersionRecord）。定义遵循 [rbf-interface.md](rbf-interface.md) 的 SizedPtr。
 - **EpochSeq（`varuint`）**：epoch 的单调递增序号；在 meta file 方案下，它就是 MVP 的 epoch 身份与新旧判定依据。
 
 ObjectId 分配（第二批决策补充）：
@@ -498,14 +424,14 @@ internal struct LazyRef<T> where T : IDurableObject
 {
     private object _storage;  // ObjectId 或 T 实例
     private readonly IWorkspace _workspace;
-    
+
     public T Value => _storage switch
     {
         T instance => instance,
         ObjectId id => LoadAndCache(id),
         _ => throw new InvalidOperationException()
     };
-    
+
     private T LoadAndCache(ObjectId id)
     {
         var result = _workspace.LoadObject<T>(id);
@@ -561,209 +487,42 @@ StateJournal **不是通用序列化库**，而是有明确类型边界的持久
 
 ### 3.2 磁盘布局（append-only）
 
-本 MVP 采用 append-only 的 record log（长度可跳过 + CRC32C + 4B 对齐）。
+> **总述已迁移** → [v0.1/disk-layout.md](v0.1/disk-layout.md#1-磁盘布局总述)
 
 #### 3.2.0 变长编码（varint）决策
 
-本 MVP 允许在对象/映射的 payload 层使用 varint（ULEB128 风格或等价编码），主要目的：降低序列化尺寸，且与"对象字段一次性 materialize"模式相匹配。
-
-MVP 固定：
-
-- 除 `Ptr64/Len/CRC32C` 等"硬定长字段"外，其余整数均可采用 varint。
-- `ObjectId`：varint。
-- `Count/PairCount` 等计数：varint。
-- **[S-DURABLEDICT-KEY-ULONG-ONLY]** `DurableDict` 的 key：`ulong`，采用 `varuint`。
-
-
-#### 3.2.0.1 varint 的精确定义
-
-为避免实现分歧，本 MVP 固化 varint 语义为"protobuf 风格 base-128 varint"（ULEB128 等价），并要求 **[F-VARINT-CANONICAL-ENCODING]** **canonical 最短编码**：
-
-- `varuint`：无符号 base-128，每个字节低 7 bit 为数据，高 1 bit 为 continuation（1 表示后续还有字节）。`uint64` 最多 10 字节。
-- `varint`：有符号整数采用 ZigZag 映射后按 `varuint` 编码。
-	- ZigZag64：`zz = (n << 1) ^ (n >> 63)`；ZigZag32：`zz = (n << 1) ^ (n >> 31)`。
-- **[F-DECODE-ERROR-FAILFAST]** 解码错误策略（MVP 固定）：遇到 EOF、溢出（超过允许的最大字节数或移位溢出）、或非 canonical（例如存在多余的 0 continuation 字节）一律视为格式错误并失败。
-
-**(Informative / Illustration)** 以下 ASCII 图示仅供教学参考，SSOT 为上述文字描述和公式。
-
-```text
-VarInt Encoding (Base-128, MSB continuation)
-=============================================
-
-值 300 = 0x12C = 0b1_0010_1100
-编码：  [1010_1100] [0000_0010]
-         └─ 0xAC     └─ 0x02
-         (cont=1)    (cont=0, end)
-
-解码：(0x2C) | (0x02 << 7) = 44 + 256 = 300
-
-边界示例：
-  值 127 → [0111_1111]          (1 byte, 最大单字节)
-  值 128 → [1000_0000 0000_0001] (2 bytes)
-  值 0   → [0000_0000]          (1 byte, canonical)
-```
+> **已迁移**：本节内容（含 §3.2.0.1 varint 精确定义）已迁移至 [v0.1/primitive-serialization.md](v0.1/primitive-serialization.md)。
 
 #### 3.2.1 Data 文件（data file）
 
-data 文件只承载对象与映射等 durable records（append-only），不承载 HEAD 指针。
-
-I/O 目标（MVP）：
-
-- **随机读（random read）**：读取某个 Ptr64 指向的 record（用于 LoadObject/version replay）。
-- **追加写（append-only write）**：commit 时追加写入新 records。
-- **可截断（truncate）**：恢复时按 `DataTail` 截断尾部垃圾。
-
-因此：mmap 不是 MVP 依赖；实现上使用 `FileStream` + `ReadAt/WriteAt/Append` 即可。
-
-实现约束（避免实现分叉）：
-
-- MVP 的唯一推荐实现底座是 `FileStream`（或等价的基于 fd 的 `pread/pwrite` 随机读写 + append）。
-- `mmap` 仅作为后续性能优化的备选实现，不进入 MVP 规格与测试基线。
-- MVP 不依赖稀疏文件/预分配（例如 `SetLength` 预扩）；文件“有效末尾”以 meta 的 `DataTail`（逻辑尾部）为准。
-
-> **帧格式**：Frame 结构（HeadLen/TailLen/Pad/CRC32C/Magic）、逆向扫描算法、Resync 机制详见 [rbf-format.md](rbf-format.md)。
-
-##### DataRecord 类型判别
-
-> FrameTag 与 ObjectKind 的定义及取值详见**枚举值速查表**。
-> 
-> **Data 文件特有说明**：StateJournal 读取 Frame 后，根据 `FrameTag` 分流处理。`FrameTag` 区分 Record 的顶层类型；`ObjectKind` 用于 ObjectVersionRecord 内部选择 diff 解码器。
-
-Ptr64 与对齐约束（MVP 固定）：
-
-- `Ptr64` 对应 [rbf-interface.md](rbf-interface.md) 中的 <deleted-place-holder>。
-- 对齐与 Null 定义遵循 `[F-<deleted-place-holder>-ALIGNMENT]` 与 `[F-<deleted-place-holder>-NULL]`。
-- 所有可被 `Ptr64` 指向的 Record，`Ptr64` 值等于该 Record 的 `HeadLen` 字段起始位置（即紧随分隔符 Fence 之后）。
-
-data 文件内的“可被 meta 指向的关键 record”至少包括：
-
-- `ObjectVersionRecord`（包括业务对象版本，以及 VersionIndex 作为 dict 的版本）
-
+> **已迁移** → [v0.1/disk-layout.md](v0.1/disk-layout.md#4-data-文件data-file)
 
 #### 3.2.2 Meta 文件（meta file，commit log，append-only）
 
-meta file 是 append-only 的 commit log：每次 `Commit(...)` 都追加写入一条 `MetaCommitRecord`。
-
-> **帧格式**：Meta 文件与 Data 文件使用相同的 RBF 帧格式，详见 [rbf-format.md](rbf-format.md)。
-
-##### MetaCommitRecord Payload
-
-> **FrameTag = 0x00000002** 表示 MetaCommitRecord（参见枚举值速查表）。
-> Payload 从业务字段开始，不再包含顶层类型字节。
-
-meta payload 最小字段（**不含 FrameTag，FrameTag 由 RBF 层管理**）：
-
-- `EpochSeq`（varuint，单调递增）
-- `RootObjectId`（varuint）
-- `VersionIndexPtr`（Ptr64，定长 u64 LE）
-- `DataTail`（Ptr64，定长 u64 LE：data 文件逻辑尾部；`DataTail = EOF`，**包含尾部分隔符 Magic**。**注**：此处 Ptr64 表示文件末尾偏移量，不指向 Record 起点）
-- `NextObjectId`（varuint）
-
-打开（Open）策略：
-
-- 从 meta 文件尾部回扫，找到最后一个 CRC32C 有效的 `MetaCommitRecord`。
-- **[R-META-AHEAD-BACKTRACK]** 若某条 meta record 校验通过，但其 `DataTail` 大于当前 data 文件长度（byte）/无法解引用其 `VersionIndexPtr`，则视为"meta 领先 data（崩溃撕裂）"，继续回扫上一条。
-
-
-提交点（commit point）：
-
-- 一次 commit 以“meta 追加的 commit record 持久化完成”为对外可见点。
-
-**[R-COMMIT-FSYNC-ORDER]** 刷盘顺序（MUST）：
-
-1) 先将 data 文件本次追加的所有 records 写入并 `fsync`/flush（确保 durable）。
-2) **然后** 将 meta 文件的 commit record 追加写入并 `fsync`/flush。
-
-**[R-COMMIT-POINT-META-FSYNC]** Commit Point 定义（MUST）：
-
-- Commit Point MUST 定义为 MetaCommitRecord fsync 完成时刻。
-- 在此之前的任何崩溃都不会导致“部分提交”。
-
-
-MetaCommitRecord 的 payload 解析（MVP 固定）：
-
-> **前置条件**：RBF Scanner 已根据 `FrameTag == 0x00000002` 确定此为 MetaCommitRecord。
-
-- 依次读取 `EpochSeq/RootObjectId/VersionIndexPtr/DataTail/NextObjectId`。
-- 无需额外类型判别（FrameTag 已经是唯一判别器）。
+> **已迁移** → [v0.1/disk-layout.md](v0.1/disk-layout.md#5-meta-文件与-metacommitrecord)
+>
+> 包含条款：`[R-META-AHEAD-BACKTRACK]`、`[R-COMMIT-FSYNC-ORDER]`、`[R-COMMIT-POINT-META-FSYNC]`
 
 #### 3.2.3 Commit Record（逻辑概念）
 
-在采用 meta file 的方案中，"Commit Record"在物理上等价于 `MetaCommitRecord`（commit log 的一条）。本文仍保留 Commit Record 的逻辑概念，用于描述版本历史。
-
-Commit Record（逻辑上）至少包含：
-
-- `EpochSeq`：单调递增
-- `RootObjectId`：ObjectId（`varuint` 编码）
-- `VersionIndexPtr`：Ptr64（指向一个"VersionIndex durable object"的版本）
-- `DataTail`：Ptr64
-- `CRC32C`（物理上由 `RBF` framing 提供，不在 payload 内重复存储）
-
-> 说明：MVP 不提供“按 parent 指针遍历历史”的能力；历史遍历可通过扫描 meta commit log 完成。
+> **已迁移** → [v0.1/object-version-chain.md](v0.1/object-version-chain.md#commit-record逻辑概念)
 
 #### 3.2.4 VersionIndex（ObjectId -> ObjectVersionPtr 的映射对象）
 
-> **Bootstrap 入口（引导扇区）**：VersionIndex 是整个对象图的**引导扇区（Boot Sector）**。
-> 它的指针（`VersionIndexPtr`）直接存储在 `MetaCommitRecord` 中，无需通过 VersionIndex 自身查询。
-> 这打破了"读 VersionIndex 需要先查 VersionIndex"的概念死锁。
-> VersionIndex 使用 Well-Known ObjectId `0`（参见术语表 **Well-Known ObjectId** 条目）。
-
-VersionIndex 是一个 durable object，它自身也以版本链方式存储。
-
-**[F-VERSIONINDEX-REUSE-DURABLEDICT]** VersionIndex 落地选择：
-
-- VersionIndex 复用 `DurableDict`（key 为 `ObjectId` as `ulong`，value 使用 `Val_Ptr64` 编码 `ObjectVersionPtr`）。
-- 因此，VersionIndex 的版本记录本质上是 `ObjectVersionRecord(ObjectKind=Dict)`，其 `DiffPayload` 采用 3.4.2 的 dict diff 编码。
-
-更新方式：
-
-- 每个 epoch 写一个"覆盖表"版本：只包含本次 commit 中发生变化的 ObjectId 映射。
-- 查找允许链式回溯：先查 HEAD overlay，miss 再沿 `PrevVersionPtr` 回溯。
-
-MVP 约束与默认策略（第二批决策补充）：
-
-- MVP 允许通过 **Checkpoint Base** 作为主要链长控制手段：写入 `PrevVersionPtr=0` 的"全量 state"版本，以封顶 replay 与回溯成本。
-  - **[S-CHECKPOINT-HISTORY-CUTOFF]** Checkpoint Base 标志着版本链的起点，无法回溯到更早历史（断链）。
-  - **[S-MSB-HACK-REJECTED]** MVP 明确否决使用 MSB Hack（如 `PrevVersionPtr` 最高位）来维持历史链；若需完整历史追溯，应由外部归档机制负责。
-- 另外，为避免 **任何 `DurableDict`（包括 VersionIndex）** 的版本链在频繁 commit 下无上限增长，MVP **建议实现一个通用的 Checkpoint Base 触发规则（可关闭）**：
-	- 当某个 dict 对象的版本链长度超过 `DictCheckpointEveryNVersions`（默认建议：`64`）时，下一次写入该对象新版本时写入一个 **Checkpoint Base**：
-		- `PrevVersionPtr = 0`
-		- `DiffPayload` 写入"完整表"（等价于从空 dict apply 后得到当前全量 state）
-	- 若未实现该规则，则链长完全依赖手动/文件级控制。
+> **已迁移** → [v0.1/object-version-chain.md](v0.1/object-version-chain.md#versionindexobjectid--objectversionptr-的映射对象)
+>
+> 包含条款：`[F-VERSIONINDEX-REUSE-DURABLEDICT]`、`[S-CHECKPOINT-HISTORY-CUTOFF]`、`[S-MSB-HACK-REJECTED]`
 
 #### 3.2.5 ObjectVersionRecord（对象版本，增量 DiffPayload）
 
-每个对象的版本以链式版本组织：
+> **已迁移** → [v0.1/object-version-chain.md](v0.1/object-version-chain.md#objectversionrecord对象版本增量-diffpayload)
+>
+> 包含条款：`[F-OBJVER-PAYLOAD-MINLEN]`、`[F-UNKNOWN-OBJECTKIND-REJECT]`
 
-- `PrevVersionPtr`：Ptr64（该 ObjectId 的上一个版本；若为 0 表示 **Base Version**（Genesis Base 或 Checkpoint Base））
-- `ObjectKind`：由 FrameTag 高 16 位提供（参见 `[F-OBJVER-OBJECTKIND-FROM-TAG]`），用于选择 `DiffPayload` 解码器
-  - **[F-UNKNOWN-OBJECTKIND-REJECT]** 遇到未知 Kind 必须抛出异常（Fail-fast）。
-- `DiffPayload`：依对象类型而定（本 MVP 至少要求：`Dict` 与 `VersionIndex` 可工作）
-
-ObjectVersionRecord 的 data payload 布局：
-
-> **FrameTag RecordType = 0x0001** 表示 ObjectVersionRecord；**SubType** 表示 ObjectKind（参见枚举值速查表）。
-> Payload 从业务字段开始，**不再包含 ObjectKind 字节**（已移至 FrameTag）。
-
-- `PrevVersionPtr`：`u64 LE`（Ptr64：byte offset；`0=null`，且 4B 对齐）
-- `DiffPayload`：bytes（直接从 `payload[8]` 开始）
-
-**`[F-OBJVER-PAYLOAD-MINLEN]`** ObjectVersionRecord payload MUST 至少 8 字节（`PrevVersionPtr`）。若不足，Reader MUST 视为格式错误。
-
----
 
 #### 3.2.6 备选方案（非 MVP 默认）：单文件双 superblock
 
-单文件 ping-pong superblock 仍是可行备选，但本文不将其作为 MVP 默认方案。
-
-若采用该备选方案，superblock 至少包含：
-
-- `Seq`：单调递增
-- `EpochSeq`：`uint64 LE`，指示当前 HEAD 的 epoch 序号
-- `RootObjectId`
-- `DataTail`：Ptr64
-- `NextObjectId`
-- `CRC32C`
+> **已迁移** → [v0.1/disk-layout.md](v0.1/disk-layout.md#6-备选方案非-mvp-默认单文件双-superblock)
 
 ### 3.3 读路径
 
@@ -888,99 +647,10 @@ Commit 时通过比较 `_committed` 与 `_current` 生成 diff，而不是维护
 
 > **命名说明**：使用 `Remove` 而非 `Delete`，符合 C#/.NET 集合命名惯例（`Dictionary<K,V>.Remove`）。
 
-##### 三层语义与表示法约束（MVP 固定）
+##### 三层语义与 DiffPayload 二进制布局
 
-- **Working State（`_current`）**：不存储 tombstone。Remove 的效果必须体现为"移除 key"；枚举/ContainsKey 等读 API 只体现"存在/不存在"。
-- **ChangeSet（Commit 时的 diff 算法）**：通过比较 `_committed` 与 `_current` 自动生成，允许识别 Remove 操作（当 key 存在于 `_committed` 但不存在于 `_current` 时）。
-- **DiffPayload（序列化差分）**：用 `Val_Tombstone` 表示 Remove；Apply 时必须转化为"移除 key"。
-
-关键约束（保证语义正确）：
-
-- tombstone 必须是 **与用户可写入的 `null` 不同的值编码**。
-- 因此 value 在逻辑上至少需要三个状态：
-  - `NoChange`：不出现在 diff 里（**通过 diff 中缺失该 key 表达，不在 payload 中编码**）
-  - `Set(value)`：显式设置为某个值（包含用户的 `null`）
-  - `Delete`：tombstone
-
-编码建议：
-
-- **Working State（`_current`/`_committed`）**：使用标准 `Dictionary<K, V>`，Delete 直接移除 key。
-- **DiffPayload**：tombstone 用元数据 tag 表达（`KeyValuePairType.Val_Tombstone`），而不是用"特殊值"。
-
-
-##### DurableDict diff payload（二进制布局，MVP 固定）
-
-本节将 `DurableDict` 的 diff payload 规格化，满足：
-
-- 顺序读即可 apply（不要求 mmap 随机定位）
-- key 采用“有序 pairs + delta-of-prev”压缩：写 `FirstKey`，后续写 `KeyDeltaFromPrev`（key 为 `ulong`；delta 固定为非负）
-- value 通过元数据 tag 区分 `Null / ObjRef(ObjectId) / VarInt / Tombstone / Ptr64`
-
-符号约定：
-
-- `varuint`：无符号 varint
-- `varint`：有符号 varint（ZigZag+varint，仅用于 value，不用于 Dict key）
-
-payload：
-
-- `PairCount`: `varuint`
-	- 语义：本 payload 中包含的 pair 数量。
-	- 允许为 0（用于 Checkpoint Base/full-state 表示"空字典"）。
-- 若 `PairCount == 0`：payload 到此结束。
-- 否则（`PairCount > 0`）：
-	- `FirstKey`: `varuint`
-	- `FirstPair`：
-	- `KeyValuePairType`: `byte`
-		- **[F-KVPAIR-HIGHBITS-RESERVED]** 低 4 bit：`ValueType`（高 4 bit 预留，MVP 必须写 0；reader 见到非 0 视为格式错误）
-	- `Value`：由 `ValueType` 决定
-		- `Val_Null`：无 payload
-		- `Val_Tombstone`：无 payload（表示删除）
-		- `Val_ObjRef`：`ObjectId`（varuint）
-		- `Val_VarInt`：`varint`
-		- `Val_Ptr64`：`u64 LE`（用于 `VersionIndex` 的 `ObjectId -> ObjectVersionPtr`）
-	- `RemainingPairs`：重复 `PairCount-1` 次
-	- `KeyValuePairType`: `byte`（同上，见 [F-KVPAIR-HIGHBITS-RESERVED]）
-	- `KeyDeltaFromPrev`: `varuint`
-	- `Value`：由 `ValueType` 决定（同上）
-
-Key 还原规则（MVP 固定）：
-
-- 若 `PairCount == 0`：无 key。
-- 否则：
-	- `Key[0] = FirstKey`
-	- `Key[i] = Key[i-1] + KeyDeltaFromPrev(i)`（对 `i >= 1`）
-
-ValueType（低 4 bit，MVP 固定）：取值定义详见**枚举值速查表**。
-
-> **MVP 范围说明**：MVP 仅实现以上 5 种 ValueType。`float`/`double`/`bool` 等类型将在后续版本添加对应的 ValueType 枚举值。
-
-约束：
-
-- 同一个 diff 内不允许出现重复 key（MVP 直接视为编码错误）。
-- 为保证 `KeyDeltaFromPrev` 为非负且压缩稳定：MVP writer 必须按 key 严格升序写出 pairs（reader 可顺序 apply；编码约束要求有序）。
-- 对于空变更（overlay diff）：writer 不应为“无任何 upsert/delete”的对象写入 `ObjectVersionRecord`（因此 overlay diff 应满足 `PairCount > 0`）。
-- 对于 Checkpoint Base/full-state：允许 `PairCount == 0`，表示"空字典的完整 state"。
-
-**PairCount=0 合法性条款（MUST）**：
-
-- **[S-PAIRCOUNT-ZERO-LEGALITY]**：`PairCount == 0` 仅在 `PrevVersionPtr == 0`（Base Version）时合法，表示"空字典的完整 state"。若 `PrevVersionPtr != 0`（Overlay diff）且 `PairCount == 0`，reader MUST 视为格式错误（ErrorCode: `StateJournal.InvalidFraming`）。
-- **[S-OVERLAY-DIFF-NONEMPTY]**：writer MUST NOT 为"无任何变更"的对象写入 `ObjectVersionRecord`。若对象无变更（`HasChanges == false`），不应生成新版本。
-
-**未知 ValueType 处理条款（MUST）**：
-
-- **[F-UNKNOWN-VALUETYPE-REJECT]**：reader 遇到未知 ValueType（低 4 bit 不在 `{0,1,2,3,4}`）或高 4 bit 非 0，MUST 视为格式错误并失败（ErrorCode: `StateJournal.CorruptedRecord`）。
-
-实现提示：
-
-- writer：写 diff 前先对 ChangeSet keys 排序；写 `FirstKey = keys[0]`；后续写 `KeyDeltaFromPrev = keys[i] - keys[i-1]`。
-- reader：顺序读取 pairs；对第 1 个 pair 使用 `FirstKey`，对后续 pair 通过累加 `KeyDeltaFromPrev` 还原 key，然后对内存 dict 执行 set/remove。
-
-VersionIndex 与 Dict 的关系（落地说明）：
-
-- MVP 中 `DurableDict` 统一为**无泛型**的底层原语：key 编码固定为 `FirstKey + KeyDeltaFromPrev`（delta-of-prev）。
-- `VersionIndex` 复用 `DurableDict`（key 为 `ObjectId` as `ulong`，value 使用 `Val_Ptr64` 编码 `ObjectVersionPtr`）。
-
-> **命名约定**：正文中禁止使用 `DurableDict<K, V>` 泛型语法；应使用描述性语句说明 key/value 类型。
+> **已迁移**：本节内容已迁移至 [v0.1/dict-delta.md](v0.1/dict-delta.md)。
+> 包含：三层语义与表示法约束、DurableDict diff payload 二进制布局、条款 [F-KVPAIR-HIGHBITS-RESERVED]、[S-PAIRCOUNT-ZERO-LEGALITY]、[S-OVERLAY-DIFF-NONEMPTY]、[F-UNKNOWN-VALUETYPE-REJECT]。
 
 #### 3.4.3 DurableDict 不变式与实现规范
 
@@ -1063,7 +733,7 @@ void DiscardChanges();                           // Detached 时 no-op（幂等�
 #### 3.4.4 DurableDict 二阶段提交设计
 
 > 完整伪代码参见 [Appendix A: Reference Implementation Notes](#appendix-a-reference-implementation-notes)。
-> 
+>
 > 本节仅保留二阶段提交的关键设计要点。
 
 **二阶段提交设计**：
@@ -1091,7 +761,7 @@ sequenceDiagram
 
     Heap->>Index: WritePendingDiff()
     Index->>Data: Append(VersionIndex PtrMap)
-    
+
     Heap->>Data: Fsync()
 
     Note over Heap, Meta: Phase 2: Finalize (Commit Point)
@@ -1159,7 +829,7 @@ CommitAll 遵循二阶段提交协议，失败时保证以下语义：
 **规范约束（二阶段 finalize）**：
 
 > 二阶段提交的完整设计（流程图、崩溃安全性保证）详见 **§3.4.4 DurableDict 二阶段提交设计**。
-> 
+>
 > **关键约束**：对象级 `WritePendingDiff()` 不得更新内存状态；`OnCommitSucceeded()` 必须在 meta 落盘成功后才能执行。
 
 
@@ -1275,41 +945,22 @@ ObjectDetachedException:
 
 ## 5. 实现建议：复用 Atelia 的写入基础设施
 
-v2 的 commit 路径大量涉及“先写 payload、后回填长度/CRC32C/指针”的写法，适合直接复用 [atelia/src/Data/ChunkedReservableWriter.cs](../../atelia/src/Data/ChunkedReservableWriter.cs)：
-
-- 它提供 `ReserveSpan + Commit(token)` 的回填能力，能把“回填 header/尾长/CRC32C”变成顺手的顺序代码。
-- 它的“未 Commit 的 reservation 阻塞 flush”语义，能减少写入半成品被下游持久化的风险（仍需配合 fsync 顺序）。
-
-落地方式（MVP 最小化）：
-
-- data 文件：用一个 append-only writer 负责追加 record bytes。
-- meta 文件：用 reservable writer 写入 `MetaCommitRecord`，在尾部写完后回填头部长度并写 CRC32C。
-- 读取：用随机读（seek + read）实现 `ReadRecord(ptr)`，配合尾部扫尾解析 meta。
+> **已迁移** → [v0.1/disk-layout.md](v0.1/disk-layout.md#8-实现建议复用-atelia-的写入基础设施)
 
 ---
 
-从RBF层挪过来的，暂存
-```markdown
-## 8. DataTail 与截断（恢复语义）
+## 8. DataTail 与截断
 
-## term `DataTail` 数据尾指针
-`DataTail` 是一个字节偏移量（byte offset），表示 data 文件的逻辑尾部。
-
-### spec [R-DATATAIL-INCLUDES-TRAILING-FENCE] DataTail定义
-@`DataTail` MUST 指向"有效数据末尾"，并包含尾部 Fence（即 `DataTail == 有效 EOF`）。
-
-### spec [R-DATATAIL-TRUNCATE] DataTail截断规则
-恢复时（上层依据其 HEAD/commit record 的语义决定使用哪条 @`DataTail`）：
-1. 若 data 文件实际长度 DataTail：MUST 截断至 DataTail。
-2. 截断后文件 SHOULD 以 Fence 结尾（若 `DataTail` 来自通过校验的 commit record）。
-```
+> **已迁移** → [v0.1/disk-layout.md](v0.1/disk-layout.md#7-datatail-与截断恢复语义)
+>
+> 包含条款：`[R-DATATAIL-INCLUDES-TRAILING-FENCE]`、`[R-DATATAIL-TRUNCATE]`
 
 ---
 
 ## Appendix A: Reference Implementation Notes
 
 > **⚠️ Informative, not Normative**
-> 
+>
 > 本附录的伪代码仅为实现参考，不构成规范性要求。
 > 实现者可以采用任何满足规范条款的实现方式。
 
@@ -1339,10 +990,10 @@ class DurableDict : DurableObjectBase {  // 继承自 DurableObjectBase，持有
     private Dictionary<ulong, object> _committed;      // 上次 commit 时的状态
     private Dictionary<ulong, object> _current;        // 当前工作状态
     private HashSet<ulong> _dirtyKeys = new();         // 发生变更的 key 集合（对象内部）
-    
+
     // 构造函数（internal，由 Workspace 工厂调用）
     // internal DurableDict(Workspace workspace, ObjectId objectId) : base(workspace, objectId) { ... }
-    
+
     // ===== 读 API =====
     public object this[ulong key] => _current[key];
     public bool ContainsKey(ulong key) => _current.ContainsKey(key);
@@ -1350,39 +1001,39 @@ class DurableDict : DurableObjectBase {  // 继承自 DurableObjectBase，持有
     public int Count => _current.Count;
     public IEnumerable<KeyValuePair<ulong, object>> Enumerate() => _current;
     public bool HasChanges => _dirtyKeys.Count > 0;
-    
+
     // ===== 写 API =====
     public void Set(ulong key, object value) {
         _current[key] = value;
         UpdateDirtyKey(key);  // 维护 _dirtyKeys
     }
-    
+
     public bool Remove(ulong key) {  // 注：C# 命名惯例使用 Remove 而非 Delete
         var removed = _current.Remove(key);
         UpdateDirtyKey(key);  // 无论是否 remove 成功，都要检查 dirty 状态
         return removed;
     }
-    
+
     /// <summary>维护 _dirtyKeys，规则见 §3.4.2。</summary>
     private void UpdateDirtyKey(ulong key) {
         var hasCurrentValue = _current.TryGetValue(key, out var currentValue);
         var hasCommittedValue = _committed.TryGetValue(key, out var committedValue);
-        
+
         bool isDifferent = (hasCurrentValue, hasCommittedValue) switch {
             (true, true) => !Equals(currentValue, committedValue),
             (false, false) => false,
             _ => true
         };
-        
+
         if (isDifferent) {
             _dirtyKeys.Add(key);
         } else {
             _dirtyKeys.Remove(key);
         }
     }
-    
+
     // ===== 生命周期 API（二阶段提交） =====
-    
+
     /// <summary>
     /// Prepare 阶段：计算 diff 并写入 writer。
     /// 不更新 _committed/_dirtyKeys——状态追平由 OnCommitSucceeded() 负责。
@@ -1390,48 +1041,48 @@ class DurableDict : DurableObjectBase {  // 继承自 DurableObjectBase，持有
     /// <returns>true 如果写入了新版本；false 如果无变更（跳过写入）</returns>
     public bool WritePendingDiff(IRecordWriter writer) {
         if (_dirtyKeys.Count == 0) return false;  // Fast path: O(1)
-        
+
         var diff = ComputeDiff(_committed, _current, _dirtyKeys);
         if (diff.Count == 0) {
             // _dirtyKeys 与实际 diff 不一致（理论上不应发生）
             return false;
         }
-        
+
         WriteDiffTo(writer, diff);  // 可能抛异常；失败时内存状态不变
         return true;
     }
-    
+
     /// <summary>
     /// Finalize 阶段：在 meta commit record 落盘成功后调用。
     /// 追平内存状态，确保 Committed State 与 Working State 一致。
     /// </summary>
     public void OnCommitSucceeded() {
         if (_dirtyKeys.Count == 0) return;  // 与 WritePendingDiff 的 fast path 对称
-        
+
         _committed = Clone(_current);
         _dirtyKeys.Clear();
     }
-    
+
     public void DiscardChanges() {
         _current = Clone(_committed);
         _dirtyKeys.Clear();
     }
-    
+
     // ===== 内部方法 =====
     /// <summary>
     /// 根据 dirtyKeys 计算 diff。只遍历 dirtyKeys 而非全量扫描。
     /// </summary>
     private List<DiffEntry<ulong, object>> ComputeDiff(
-        Dictionary<ulong, object> old, 
+        Dictionary<ulong, object> old,
         Dictionary<ulong, object> @new,
-        HashSet<ulong> dirtyKeys) 
+        HashSet<ulong> dirtyKeys)
     {
         var result = new List<DiffEntry<ulong, object>>();
-        
+
         foreach (var key in dirtyKeys) {
             var hasNew = @new.TryGetValue(key, out var newVal);
             var hasOld = old.TryGetValue(key, out var oldVal);
-            
+
             if (hasNew) {
                 // current 有值 → Set（无论 old 有无）
                 result.Add(DiffEntry<ulong, object>.Set(key, newVal));
@@ -1441,12 +1092,12 @@ class DurableDict : DurableObjectBase {  // 继承自 DurableObjectBase，持有
             }
             // else: 两边都没有 → 不写（理论上不应在 dirtyKeys 中）
         }
-        
+
         // 排序以满足格式不变式（Key 唯一 + 升序）
         result.Sort((a, b) => a.Key.CompareTo(b.Key));
         return result;
     }
-    
+
     private Dictionary<ulong, object> Clone(Dictionary<ulong, object> source) {
         return new Dictionary<ulong, object>(source);
     }
@@ -1471,7 +1122,7 @@ class DurableDict : DurableObjectBase {  // 继承自 DurableObjectBase，持有
 ## Appendix B: Test Vectors
 
 > 完整测试向量定义参见独立文件：[mvp-test-vectors.md](mvp-test-vectors.md)
-> 
+>
 > 该文件包含：
 > - RBF framing 测试（正例 + 负例）
 > - VarInt canonical 编码测试

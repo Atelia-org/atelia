@@ -36,7 +36,7 @@ dedupeKey: "F-VARINT-CANONICAL-ENCODING|VarInt.cs|C|canonical-write"
 
 **规范**:
 > `varuint`：无符号 base-128，每个字节低 7 bit 为数据，高 1 bit 为 continuation（1 表示后续还有字节）。`uint64` 最多 10 字节。
-> 
+>
 > **[F-VARINT-CANONICAL-ENCODING]** canonical 最短编码 (mvp-design-v2.md §3.2.0.1)
 
 **代码**: [VarInt.cs#L44-L64](../../../src/StateJournal/Core/VarInt.cs#L44-L64)
@@ -92,7 +92,7 @@ dedupeKey: "F-VARINT-CANONICAL-ENCODING|VarInt.cs|C|canonical-read-reject"
 
 **规范**:
 > **[F-VARINT-CANONICAL-ENCODING]** canonical 最短编码
-> 
+>
 > **[F-DECODE-ERROR-FAILFAST]** 解码错误策略：遇到 EOF、溢出、或非 canonical 一律视为格式错误并失败。 (mvp-design-v2.md §3.2.0.1)
 
 **代码**: [VarInt.cs#L90-L96](../../../src/StateJournal/Core/VarInt.cs#L90-L96)
@@ -524,7 +524,7 @@ dedupeKey: "F-FRAMETAG-STATEJOURNAL-BITLAYOUT|StateJournalFrameTag.cs|C|bit-extr
 
 **规范**:
 > **[F-FRAMETAG-STATEJOURNAL-BITLAYOUT]** StateJournal MUST 按以下位段解释 `FrameTag.Value`：
-> 
+>
 > | 位范围 | 字段名 | 类型 | 语义 |
 > |--------|--------|------|------|
 > | 31..16 | SubType | `u16` | 当 RecordType=ObjectVersion 时解释为 ObjectKind |
@@ -800,12 +800,12 @@ dedupeKey: "A-OBJECT-STATE-PROPERTY|IDurableObject.cs|C|interface-def"
 /// 对象的生命周期状态。
 /// </summary>
 /// <remarks>
-/// <para>
+///
 /// 对应条款：<c>[A-OBJECT-STATE-PROPERTY]</c>
-/// </para>
-/// <para>
+///
+///
 /// 读取 MUST NOT 抛异常（含 <see cref="DurableObjectState.Detached"/> 状态），复杂度 O(1)。
-/// </para>
+///
 /// </remarks>
 DurableObjectState State { get; }
 ```
@@ -844,16 +844,16 @@ dedupeKey: "A-HASCHANGES-O1-COMPLEXITY|IDurableObject.cs|C|interface-def"
 /// 是否有未提交的变更。
 /// </summary>
 /// <remarks>
-/// <para>
+///
 /// 对应条款：<c>[A-HASCHANGES-O1-COMPLEXITY]</c>
-/// </para>
-/// <para>
+///
+///
 /// 复杂度 MUST 为 O(1)。
-/// </para>
-/// <para>
+///
+///
 /// 语义：<c>HasChanges == true</c> 当且仅当 <see cref="State"/> 为
 /// <see cref="DurableObjectState.PersistentDirty"/> 或 <see cref="DurableObjectState.TransientDirty"/>。
-/// </para>
+///
 /// </remarks>
 bool HasChanges { get; }
 ```
