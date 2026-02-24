@@ -9,7 +9,7 @@ public class GcPoolTests {
     [Fact]
     public void Store_ReturnsHandle_ReadableViaIndexer() {
         var pool = new GcPool<string>();
-        int h = pool.Store("hello");
+        SlotHandle h = pool.Store("hello");
         Assert.Equal("hello", pool[h]);
         Assert.Equal(1, pool.Count);
     }
@@ -17,7 +17,7 @@ public class GcPoolTests {
     [Fact]
     public void TryGetValue_ValidHandle_ReturnsTrue() {
         var pool = new GcPool<int>();
-        int h = pool.Store(42);
+        SlotHandle h = pool.Store(42);
         Assert.True(pool.TryGetValue(h, out int val));
         Assert.Equal(42, val);
     }
@@ -25,22 +25,22 @@ public class GcPoolTests {
     [Fact]
     public void TryGetValue_InvalidHandle_ReturnsFalse() {
         var pool = new GcPool<int>();
-        Assert.False(pool.TryGetValue(0, out _));
-        Assert.False(pool.TryGetValue(-1, out _));
+        // 用一个伪造的 handle 测试
+        Assert.False(pool.TryGetValue(new SlotHandle(0, 0), out _));
     }
 
     [Fact]
     public void Validate_ValidHandle_ReturnsTrue() {
         var pool = new GcPool<int>();
-        int h = pool.Store(99);
+        SlotHandle h = pool.Store(99);
         Assert.True(pool.Validate(h));
     }
 
     [Fact]
     public void Validate_InvalidHandle_ReturnsFalse() {
         var pool = new GcPool<int>();
-        Assert.False(pool.Validate(0));
-        Assert.False(pool.Validate(-1));
+        Assert.False(pool.Validate(new SlotHandle(0, 0)));
+        Assert.False(pool.Validate(new SlotHandle(99, 12345)));
     }
 
     // ───────────────────── Basic GC cycle ─────────────────────
@@ -48,9 +48,9 @@ public class GcPoolTests {
     [Fact]
     public void Sweep_ReclaimsUnreachable() {
         var pool = new GcPool<string>();
-        int a = pool.Store("alive");
-        int b = pool.Store("dead");
-        int c = pool.Store("also-alive");
+        SlotHandle a = pool.Store("alive");
+        SlotHandle b = pool.Store("dead");
+        SlotHandle c = pool.Store("also-alive");
 
         pool.BeginMark();
         pool.MarkReachable(a);
@@ -68,8 +68,8 @@ public class GcPoolTests {
     [Fact]
     public void Sweep_AllReachable_FreesNothing() {
         var pool = new GcPool<int>();
-        int a = pool.Store(1);
-        int b = pool.Store(2);
+        SlotHandle a = pool.Store(1);
+        SlotHandle b = pool.Store(2);
 
         pool.BeginMark();
         pool.MarkReachable(a);
@@ -118,8 +118,8 @@ public class GcPoolTests {
     [Fact]
     public void MultipleCycles_WorkCorrectly() {
         var pool = new GcPool<string>();
-        int a = pool.Store("a");
-        int b = pool.Store("b");
+        SlotHandle a = pool.Store("a");
+        SlotHandle b = pool.Store("b");
 
         // Cycle 1: keep both
         pool.BeginMark();
@@ -135,7 +135,7 @@ public class GcPoolTests {
         Assert.False(pool.Validate(b));
 
         // Allocate new, Cycle 3: drop a, keep c
-        int c = pool.Store("c");
+        SlotHandle c = pool.Store("c");
         pool.BeginMark();
         pool.MarkReachable(c);
         Assert.Equal(1, pool.Sweep());
@@ -152,7 +152,7 @@ public class GcPoolTests {
         var pool = new GcPool<int>(shift);
 
         // Fill 2 slabs
-        var handles = new int[slabSize * 2];
+        var handles = new SlotHandle[slabSize * 2];
         for (int i = 0; i < handles.Length; i++) { handles[i] = pool.Store(i); }
 
         Assert.Equal(slabSize * 2, pool.Count);
@@ -177,9 +177,9 @@ public class GcPoolTests {
     [Fact]
     public void Values_PreservedAcrossGcCycle() {
         var pool = new GcPool<string>();
-        int a = pool.Store("alpha");
-        int b = pool.Store("beta");
-        int c = pool.Store("gamma");
+        SlotHandle a = pool.Store("alpha");
+        SlotHandle b = pool.Store("beta");
+        SlotHandle c = pool.Store("gamma");
 
         pool.BeginMark();
         pool.MarkReachable(a);
@@ -195,8 +195,8 @@ public class GcPoolTests {
     [Fact]
     public void Store_AfterSweep_ReusesFreedSlots() {
         var pool = new GcPool<int>(SlabBitmap.MinSlabShift);
-        int a = pool.Store(100);
-        int b = pool.Store(200);
+        SlotHandle a = pool.Store(100);
+        SlotHandle b = pool.Store(200);
 
         // Sweep b away
         pool.BeginMark();
@@ -204,7 +204,7 @@ public class GcPoolTests {
         pool.Sweep();
 
         // Store new value — should reuse b's slot (lowest free)
-        int c = pool.Store(300);
+        SlotHandle c = pool.Store(300);
         Assert.True(pool.Validate(c));
         Assert.Equal(300, pool[c]);
         Assert.Equal(2, pool.Count);

@@ -9,21 +9,21 @@ namespace Atelia.StateJournal.Pools;
 /// 每个 distinct value 只存储一份，返回 stable slot index 作为 handle。
 /// </summary>
 /// <remarks>
-/// <para>
+///
 ///   核心操作 <see cref="Intern"/> 实现值去重：若池中已存在等价值则返回已有 index，
 ///   否则分配新 slot。值一经 intern 即不可变（集合 mutable，元素 immutable）。
-/// </para>
-/// <para>
+///
+///
 ///   <b>释放策略</b>：不内建引用计数。调用方（如外部可达性探测 / 简易 GC）
 ///   通过 <see cref="Free"/> 显式释放。
 ///   可通过 <see cref="Capacity"/> + <see cref="IsOccupied"/> 遍历所有活跃 slot。
-/// </para>
-/// <para>
+///
+///
 ///   <b>内部结构</b>：<c>SlotPool&lt;Entry&gt;</c> 提供 slab 式 alloc/free/index-access，
 ///   独立的 <c>int[] _buckets</c> + 桶内链表提供 O(1) 均摊的哈希查找。
 ///   本质上是 .NET Dictionary 的 <c>buckets[] + entries[]</c> 结构，
 ///   只是把 <c>entries[]</c> 替换为 SlotPool，获得稳定 index 和尾部自动回收。
-/// </para>
+///
 /// </remarks>
 /// <typeparam name="T">Interned 值类型，必须正确实现 GetHashCode / Equals（或提供 IEqualityComparer）。</typeparam>
 internal sealed class InternPool<T> where T : notnull {
@@ -84,7 +84,7 @@ internal sealed class InternPool<T> where T : notnull {
             HashCode = hashCode,
             Next = _buckets[bucket],
         };
-        int slot = _slots.Alloc(entry);
+        int slot = _slots.Alloc(entry).Index;
         _buckets[bucket] = slot;
 
         // 按需扩容 bucket（load factor ≈ 1.0）

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace Atelia.StateJournal.Pools;
@@ -7,26 +8,20 @@ namespace Atelia.StateJournal.Pools;
 /// 通过 <see cref="SlabBitmap"/> 实现高效的可达性标记与批量回收。
 /// </summary>
 /// <remarks>
-/// <para>
-///   使用方式：
-///   <list type="number">
-///     <item><see cref="Store"/> 存入值，获得 handle。</item>
-///     <item><see cref="BeginMark"/> 开始标记阶段。</item>
-///     <item>对所有可达 handle 调用 <see cref="MarkReachable"/>。</item>
-///     <item><see cref="Sweep"/> 回收所有不可达 handle。</item>
-///   </list>
-/// </para>
-/// <para>
-///   <b>Sweep 优化</b>：Mark 阶段使用 <c>_reachable</c> 位图（初始全 clear），
-///   标记可达时 Set 对应位。Sweep 时先 <c>Or(freeBitmap)</c> 将空闲 slot 标为安全，
-///   再用 <see cref="SlabBitmap.EnumerateZerosReverse"/> 逆序迭代所有 `0`（= 不可达且已占用）的 slot，
-///   避免逐 slot if-check。
-/// </para>
-/// <para>
-///   <b>注意</b>：当前实现假设 Mark-Sweep 是 stop-the-world 的，
-///   即 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间不应调用 <see cref="Store"/>。
-///   如需支持并发分配，需要额外的策略（如 write-barrier）。
-/// </para>
+/// 使用方式：
+/// - <see cref="Store"/> 存入值，获得 handle。
+/// - <see cref="BeginMark"/> 开始标记阶段。
+/// - 对所有可达 handle 调用 <see cref="MarkReachable"/>。
+/// - <see cref="Sweep"/> 回收所有不可达 handle。
+///
+/// <b>Sweep 优化</b>：Mark 阶段使用 <c>_reachable</c> 位图（初始全 clear），
+/// 标记可达时 Set 对应位。Sweep 时先 <c>Or(freeBitmap)</c> 将空闲 slot 标为安全，
+/// 再用 <see cref="SlabBitmap.EnumerateZerosReverse"/> 逆序迭代所有 `0`（= 不可达且已占用）的 slot，
+/// 避免逐 slot if-check。
+///
+/// <b>注意</b>：当前实现假设 Mark-Sweep 是 stop-the-world 的，
+/// 即 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间不应调用 <see cref="Store"/>。
+/// 如需支持并发分配，需要额外的策略（如 write-barrier）。
 /// </remarks>
 /// <typeparam name="T">值类型，必须是 notnull。</typeparam>
 internal sealed class GcPool<T> where T : notnull {
@@ -51,28 +46,27 @@ internal sealed class GcPool<T> where T : notnull {
     // ───────────────────── Store / Read ─────────────────────
 
     /// <summary>存入值，返回 handle。O(1) 均摊。</summary>
-    public int Store(T value) {
-        int handle = _pool.Alloc(value);
+    public SlotHandle Store(T value) {
+        SlotHandle handle = _pool.Alloc(value);
         SyncGrowth();
         return handle;
     }
 
     /// <summary>按 handle 读取值。O(1)。</summary>
     /// <exception cref="ArgumentOutOfRangeException">handle 超出范围。</exception>
-    /// <exception cref="InvalidOperationException">handle 对应 slot 未占用。</exception>
-    public T this[int handle] {
+    /// <exception cref="InvalidOperationException">handle 对应 slot 未占用或 generation 不匹配。</exception>
+    public T this[SlotHandle handle] {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => _pool[handle];
     }
 
     /// <summary>尝试读取 handle 对应的值。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryGetValue(int handle, out T value) => _pool.TryGetValue(handle, out value);
+    public bool TryGetValue(SlotHandle handle, out T value) => _pool.TryGetValue(handle, out value);
 
-    /// <summary>验证 handle 是否有效（在范围内且 slot 已占用）。</summary>
+    /// <summary>验证 handle 是否有效（在范围内、slot 已占用、且 generation 匹配）。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool Validate(int handle) =>
-        (uint)handle < (uint)_pool.Capacity && _pool.IsOccupied(handle);
+    public bool Validate(SlotHandle handle) => _pool.IsOccupied(handle);
 
     // ───────────────────── Mark-Sweep GC ─────────────────────
 
@@ -90,8 +84,9 @@ internal sealed class GcPool<T> where T : notnull {
     /// 标记 handle 为可达。在 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间调用。
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void MarkReachable(int handle) {
-        _reachable.Set(handle);
+    public void MarkReachable(SlotHandle handle) {
+        Debug.Assert(_pool.IsOccupied(handle), "Stale or invalid handle passed to MarkReachable.");
+        _reachable.Set(handle.Index);
     }
 
     /// <summary>
@@ -99,12 +94,9 @@ internal sealed class GcPool<T> where T : notnull {
     /// </summary>
     /// <remarks>
     /// 算法：
-    /// <list type="number">
-    ///   <item><c>_reachable |= freeBitmap</c>：将空闲 slot 标记为安全（1）。</item>
-    ///   <item>用 <see cref="SlabBitmap.EnumerateZerosReverse"/> 逆序迭代结果中的每个 clear bit
-    ///         （= 已占用且不可达），从高 index 向低释放，
-    ///         使尾部 slab 更早触发回收。</item>
-    /// </list>
+    /// - <c>_reachable |= freeBitmap</c>：将空闲 slot 标记为安全（1）。
+    /// - 用 <see cref="SlabBitmap.EnumerateZerosReverse"/> 逆序迭代结果中的每个 clear bit（= 已占用且不可达），从高 index 向低释放，使尾部 slab 更早触发回收。
+    ///
     /// 批量位运算 + tzcnt 迭代的组合使回收速度远优于逐 slot 检查。
     /// </remarks>
     /// <exception cref="InvalidOperationException">未先调用 <see cref="BeginMark"/>。</exception>

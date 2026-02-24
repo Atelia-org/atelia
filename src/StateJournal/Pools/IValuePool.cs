@@ -1,15 +1,15 @@
 namespace Atelia.StateJournal.Pools;
 
 internal interface IValuePool<T> where T : notnull {
-    int Store(T value);
+    SlotHandle Store(T value);
 
-    void Free(int handle);
+    void Free(SlotHandle handle);
 
-    T this[int handle] { get; }
+    T this[SlotHandle handle] { get; }
 
-    bool TryGetValue(int handle, out T value);
+    bool TryGetValue(SlotHandle handle, out T value);
 
-    bool Validate(int handle);
+    bool Validate(SlotHandle handle);
 
     int Count { get; }
 

@@ -36,8 +36,8 @@ public class SlotPoolTests {
         var table = new SlotPool<string>(SlotPool<string>.MinSlabShift); // 64-slot slabs
         var indices = new HashSet<int>();
         for (int i = 0; i < 200; i++) {
-            int idx = table.Alloc($"item-{i}");
-            Assert.True(indices.Add(idx), $"Duplicate index {idx} at iteration {i}");
+            SlotHandle h = table.Alloc($"item-{i}");
+            Assert.True(indices.Add(h.Index), $"Duplicate index {h.Index} at iteration {i}");
         }
         Assert.Equal(200, table.Count);
     }
@@ -45,8 +45,8 @@ public class SlotPoolTests {
     [Fact]
     public void Alloc_StoresValue_ReadableViaIndexer() {
         var table = new SlotPool<int>();
-        int idx = table.Alloc(42);
-        Assert.Equal(42, table[idx]);
+        SlotHandle h = table.Alloc(42);
+        Assert.Equal(42, table[h]);
     }
 
     // ───────────────────── Count / Capacity ─────────────────────
@@ -56,8 +56,8 @@ public class SlotPoolTests {
         var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
         Assert.Equal(0, table.Count);
 
-        int a = table.Alloc(1);
-        int b = table.Alloc(2);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle b = table.Alloc(2);
         Assert.Equal(2, table.Count);
 
         table.Free(a);
@@ -91,10 +91,10 @@ public class SlotPoolTests {
     [Fact]
     public void IsOccupied_ReturnsTrueForAllocated_FalseAfterFree() {
         var table = new SlotPool<string>(SlotPool<string>.MinSlabShift);
-        int idx = table.Alloc("hello");
-        Assert.True(table.IsOccupied(idx));
+        SlotHandle h = table.Alloc("hello");
+        Assert.True(table.IsOccupied(h));
 
-        table.Free(idx);
+        table.Free(h);
         // Free 后的尾部收缩可能使得 index 超出 capacity，此时 IsOccupied 抛 OOR
         // 所以需要保留至少一个更低的 slot 来阻止收缩
     }
@@ -102,12 +102,12 @@ public class SlotPoolTests {
     [Fact]
     public void IsOccupied_AfterFreeWithLowerSlotAlive_ReturnsFalse() {
         var table = new SlotPool<string>(SlotPool<string>.MinSlabShift);
-        int a = table.Alloc("keep");
-        int b = table.Alloc("release");
+        SlotHandle a = table.Alloc("keep");
+        SlotHandle b = table.Alloc("release");
         Assert.True(table.IsOccupied(b));
 
         table.Free(b);
-        Assert.False(table.IsOccupied(b)); // b 仍在 capacity 内（a 阻止了收缩）
+        Assert.False(table.IsOccupied(b)); // b 仍在 capacity 内（a 阻止了收缩）, gen 也不匹配
     }
 
     [Fact]
@@ -125,8 +125,8 @@ public class SlotPoolTests {
     [Fact]
     public void Indexer_FreedSlot_Throws() {
         var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
-        int a = table.Alloc(10);
-        int b = table.Alloc(20);
+        SlotHandle a = table.Alloc(10);
+        SlotHandle b = table.Alloc(20);
         table.Free(b);
 
         Assert.Throws<InvalidOperationException>(() => _ = table[b]);
@@ -143,17 +143,17 @@ public class SlotPoolTests {
     [Fact]
     public void GetValueRef_AllowsMutation() {
         var table = new SlotPool<int>();
-        int idx = table.Alloc(100);
-        ref int val = ref table.GetValueRef(idx);
+        SlotHandle h = table.Alloc(100);
+        ref int val = ref table.GetValueRef(h);
         val = 200;
-        Assert.Equal(200, table[idx]);
+        Assert.Equal(200, table[h]);
     }
 
     [Fact]
     public void GetValueRef_FreedSlot_Throws() {
         var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
-        int a = table.Alloc(1);
-        int b = table.Alloc(2);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle b = table.Alloc(2);
         table.Free(b);
         Assert.Throws<InvalidOperationException>(() => table.GetValueRef(b));
     }
@@ -169,16 +169,16 @@ public class SlotPoolTests {
     [Fact]
     public void IndexerSet_UpdatesValue() {
         var table = new SlotPool<int>();
-        int idx = table.Alloc(100);
-        table[idx] = 200;
-        Assert.Equal(200, table[idx]);
+        SlotHandle h = table.Alloc(100);
+        table[h] = 200;
+        Assert.Equal(200, table[h]);
     }
 
     [Fact]
     public void IndexerSet_FreedSlot_Throws() {
         var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
-        int a = table.Alloc(1);
-        int b = table.Alloc(2);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle b = table.Alloc(2);
         table.Free(b);
         Assert.Throws<InvalidOperationException>(() => table[b] = 99);
     }
@@ -194,16 +194,16 @@ public class SlotPoolTests {
     [Fact]
     public void TryGetValue_OccupiedSlot_ReturnsTrue() {
         var table = new SlotPool<int>();
-        int idx = table.Alloc(42);
-        Assert.True(table.TryGetValue(idx, out int value));
+        SlotHandle h = table.Alloc(42);
+        Assert.True(table.TryGetValue(h, out int value));
         Assert.Equal(42, value);
     }
 
     [Fact]
     public void TryGetValue_FreedSlot_ReturnsFalse() {
         var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
-        int a = table.Alloc(1);
-        int b = table.Alloc(2);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle b = table.Alloc(2);
         table.Free(b);
         Assert.False(table.TryGetValue(b, out _));
     }
@@ -221,8 +221,8 @@ public class SlotPoolTests {
     [Fact]
     public void Free_DoubleFree_Throws() {
         var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
-        int a = table.Alloc(1);
-        int b = table.Alloc(2); // 让 a 所在的 slab 不被收缩
+        SlotHandle a = table.Alloc(1);
+        SlotHandle b = table.Alloc(2); // 让 a 所在的 slab 不被收缩
         table.Free(a);
         Assert.Throws<InvalidOperationException>(() => table.Free(a));
     }
@@ -239,16 +239,17 @@ public class SlotPoolTests {
     [Fact]
     public void Alloc_PrefersLowestFreeIndex() {
         var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
-        int a = table.Alloc(1);
-        int b = table.Alloc(2);
-        int c = table.Alloc(3);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle b = table.Alloc(2);
+        SlotHandle c = table.Alloc(3);
 
         table.Free(a);
         table.Free(c);
 
-        // 再次分配应优先拿到 a（更低的 index）
-        int reused = table.Alloc(99);
-        Assert.Equal(a, reused);
+        // 再次分配应优先拿到 a 的 index（更低的 index），但 generation 已递增
+        SlotHandle reused = table.Alloc(99);
+        Assert.Equal(a.Index, reused.Index);
+        Assert.NotEqual(a, reused); // generation 不同
         Assert.Equal(99, table[reused]);
     }
 
@@ -261,14 +262,14 @@ public class SlotPoolTests {
         var table = new SlotPool<int>(shift);
 
         // 分配两个 slab 的 slot
-        var firstSlabIndices = new int[slabSize];
-        for (int i = 0; i < slabSize; i++) { firstSlabIndices[i] = table.Alloc(i); }
-        var secondSlabIndices = new int[slabSize];
-        for (int i = 0; i < slabSize; i++) { secondSlabIndices[i] = table.Alloc(i + slabSize); }
+        var firstSlabHandles = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { firstSlabHandles[i] = table.Alloc(i); }
+        var secondSlabHandles = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { secondSlabHandles[i] = table.Alloc(i + slabSize); }
         Assert.Equal(slabSize * 2, table.Capacity);
 
         // 释放第二个 slab 的所有 slot → 只有 1 个尾部空 slab，防抖策略保留
-        for (int i = 0; i < slabSize; i++) { table.Free(secondSlabIndices[i]); }
+        for (int i = 0; i < slabSize; i++) { table.Free(secondSlabHandles[i]); }
         Assert.Equal(slabSize * 2, table.Capacity); // 缓冲 slab 保留
         Assert.Equal(slabSize, table.Count);
     }
@@ -279,11 +280,11 @@ public class SlotPoolTests {
         int slabSize = 1 << shift;
         var table = new SlotPool<int>(shift);
 
-        var indices = new int[slabSize];
-        for (int i = 0; i < slabSize; i++) { indices[i] = table.Alloc(i); }
+        var handles = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { handles[i] = table.Alloc(i); }
 
         // 释放所有 slot → 保留 1 个空 slab 作缓冲
-        for (int i = 0; i < slabSize; i++) { table.Free(indices[i]); }
+        for (int i = 0; i < slabSize; i++) { table.Free(handles[i]); }
         Assert.Equal(slabSize, table.Capacity); // 缓冲 slab 保留
         Assert.Equal(0, table.Count);
     }
@@ -295,9 +296,9 @@ public class SlotPoolTests {
         var table = new SlotPool<int>(shift);
 
         // 分配两个 slab
-        var slab0 = new int[slabSize];
+        var slab0 = new SlotHandle[slabSize];
         for (int i = 0; i < slabSize; i++) { slab0[i] = table.Alloc(i); }
-        int slab1Anchor = table.Alloc(999); // 第二个 slab 留一个
+        SlotHandle slab1Anchor = table.Alloc(999); // 第二个 slab 留一个
         Assert.Equal(slabSize * 2, table.Capacity);
 
         // 释放第一个 slab 的全部 → 不是尾部，不收缩
@@ -315,28 +316,28 @@ public class SlotPoolTests {
         int total = slabSize * 3 + 10; // 触发 4 个 slab
         var table = new SlotPool<int>(shift);
 
-        var indices = new int[total];
+        var handles = new SlotHandle[total];
         for (int i = 0; i < total; i++) {
-            indices[i] = table.Alloc(i * 10);
+            handles[i] = table.Alloc(i * 10);
         }
         Assert.Equal(total, table.Count);
 
         // 验证所有值
         for (int i = 0; i < total; i++) {
-            Assert.Equal(i * 10, table[indices[i]]);
+            Assert.Equal(i * 10, table[handles[i]]);
         }
 
         // 释放一半（偶数索引位置的 slot）
         int freed = 0;
         for (int i = 0; i < total; i += 2) {
-            table.Free(indices[i]);
+            table.Free(handles[i]);
             freed++;
         }
         Assert.Equal(total - freed, table.Count);
 
         // 奇数位置的 slot 值仍然完好
         for (int i = 1; i < total; i += 2) {
-            Assert.Equal(i * 10, table[indices[i]]);
+            Assert.Equal(i * 10, table[handles[i]]);
         }
     }
 
@@ -348,13 +349,14 @@ public class SlotPoolTests {
         // 无法直接检测 GC，但可以验证 Free 后 IsOccupied 返回 false，
         // 以及重新分配同一 slot 得到新值。
         var table = new SlotPool<string>(SlotPool<string>.MinSlabShift);
-        int a = table.Alloc("keep-alive");
-        int b = table.Alloc("will-be-freed");
+        SlotHandle a = table.Alloc("keep-alive");
+        SlotHandle b = table.Alloc("will-be-freed");
         table.Free(b);
 
-        // 重新分配应复用 b 的 slot
-        int c = table.Alloc("new-value");
-        Assert.Equal(b, c); // 低 index 优先
+        // 重新分配应复用 b 的 slot index
+        SlotHandle c = table.Alloc("new-value");
+        Assert.Equal(b.Index, c.Index); // 低 index 优先
+        Assert.NotEqual(b, c); // generation 不同
         Assert.Equal("new-value", table[c]);
     }
 
@@ -365,31 +367,31 @@ public class SlotPoolTests {
         int shift = SlotPool<int>.MinSlabShift;
         int slabSize = 1 << shift;
         var table = new SlotPool<int>(shift);
-        int idx = table.Alloc(42);
-        table.Free(idx);
+        SlotHandle h = table.Alloc(42);
+        table.Free(h);
         Assert.Equal(0, table.Count);
         Assert.Equal(slabSize, table.Capacity); // 缓冲 slab 保留
 
         // 重新分配——复用缓冲 slab，不触发 GrowOneSlab
-        int idx2 = table.Alloc(99);
+        SlotHandle h2 = table.Alloc(99);
         Assert.Equal(1, table.Count);
         Assert.Equal(slabSize, table.Capacity); // 容量不变
-        Assert.Equal(99, table[idx2]);
+        Assert.Equal(99, table[h2]);
     }
 
     [Fact]
     public void AllocAfterTrimExcess_WorksCorrectly() {
         var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
-        int idx = table.Alloc(42);
-        table.Free(idx);
+        SlotHandle h = table.Alloc(42);
+        table.Free(h);
         table.TrimExcess();
         Assert.Equal(0, table.Count);
         Assert.Equal(0, table.Capacity);
 
         // 重新分配
-        int idx2 = table.Alloc(99);
+        SlotHandle h2 = table.Alloc(99);
         Assert.Equal(1, table.Count);
-        Assert.Equal(99, table[idx2]);
+        Assert.Equal(99, table[h2]);
     }
 
     // ───────────────────── Hysteresis / anti-thrashing ─────────────────────
@@ -401,13 +403,13 @@ public class SlotPoolTests {
         var table = new SlotPool<int>(shift);
 
         // 填满第一个 slab
-        var indices = new int[slabSize];
-        for (int i = 0; i < slabSize; i++) { indices[i] = table.Alloc(i); }
+        var handles = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { handles[i] = table.Alloc(i); }
         Assert.Equal(slabSize, table.Capacity);
 
         // 反复在边界上 Alloc/Free 100 次，容量应保持稳定
         for (int round = 0; round < 100; round++) {
-            int extra = table.Alloc(9999);
+            SlotHandle extra = table.Alloc(9999);
             Assert.Equal(slabSize * 2, table.Capacity); // 第二个 slab 已分配
             table.Free(extra);
             Assert.Equal(slabSize * 2, table.Capacity); // 缓冲 slab 保留，不收缩
@@ -421,11 +423,11 @@ public class SlotPoolTests {
         var table = new SlotPool<int>(shift);
 
         // 分配 3 个 slab
-        var slab0 = new int[slabSize];
+        var slab0 = new SlotHandle[slabSize];
         for (int i = 0; i < slabSize; i++) { slab0[i] = table.Alloc(i); }
-        var slab1 = new int[slabSize];
+        var slab1 = new SlotHandle[slabSize];
         for (int i = 0; i < slabSize; i++) { slab1[i] = table.Alloc(i); }
-        var slab2 = new int[slabSize];
+        var slab2 = new SlotHandle[slabSize];
         for (int i = 0; i < slabSize; i++) { slab2[i] = table.Alloc(i); }
         Assert.Equal(slabSize * 3, table.Capacity);
 
@@ -447,9 +449,9 @@ public class SlotPoolTests {
         int slabSize = 1 << shift;
         var table = new SlotPool<int>(shift);
 
-        var indices = new int[slabSize];
-        for (int i = 0; i < slabSize; i++) { indices[i] = table.Alloc(i); }
-        for (int i = 0; i < slabSize; i++) { table.Free(indices[i]); }
+        var handles = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { handles[i] = table.Alloc(i); }
+        for (int i = 0; i < slabSize; i++) { table.Free(handles[i]); }
 
         Assert.Equal(slabSize, table.Capacity); // 缓冲 slab 保留
         Assert.Equal(0, table.Count);
@@ -467,7 +469,7 @@ public class SlotPoolTests {
 
         // 分配 2 个 slab，释放 slab 1
         for (int i = 0; i < slabSize; i++) { table.Alloc(i); }
-        var slab1 = new int[slabSize];
+        var slab1 = new SlotHandle[slabSize];
         for (int i = 0; i < slabSize; i++) { slab1[i] = table.Alloc(i); }
         for (int i = 0; i < slabSize; i++) { table.Free(slab1[i]); }
 
@@ -484,5 +486,160 @@ public class SlotPoolTests {
         int cap = table.Capacity;
         table.TrimExcess();
         Assert.Equal(cap, table.Capacity);
+    }
+
+    // ───────────────────── Generation / Stale Handle Detection ─────────────────────
+
+    [Fact]
+    public void Free_IncrementsGeneration_NewAllocGetsDifferentHandle() {
+        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle keep = table.Alloc(2); // 防止收缩
+        byte gen0 = a.Generation;
+
+        table.Free(a);
+        SlotHandle b = table.Alloc(99);
+
+        Assert.Equal(a.Index, b.Index); // 同一 slot 复用
+        Assert.Equal((byte)(gen0 + 1), b.Generation); // generation 递增
+        Assert.NotEqual(a, b); // handle 值不同
+        Assert.Equal(99, table[b]);
+    }
+
+    [Fact]
+    public void StaleHandle_Indexer_Throws() {
+        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle keep = table.Alloc(2);
+
+        table.Free(a);
+        SlotHandle b = table.Alloc(99); // 复用 a 的 slot
+
+        // 用旧的 stale handle 访问 → generation 不匹配 → 抛异常
+        var ex = Assert.Throws<InvalidOperationException>(() => _ = table[a]);
+        Assert.Contains("generation mismatch", ex.Message);
+    }
+
+    [Fact]
+    public void StaleHandle_GetValueRef_Throws() {
+        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle keep = table.Alloc(2);
+
+        table.Free(a);
+        SlotHandle b = table.Alloc(99);
+
+        Assert.Throws<InvalidOperationException>(() => table.GetValueRef(a));
+    }
+
+    [Fact]
+    public void StaleHandle_IndexerSet_Throws() {
+        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle keep = table.Alloc(2);
+
+        table.Free(a);
+        SlotHandle b = table.Alloc(99);
+
+        Assert.Throws<InvalidOperationException>(() => table[a] = 42);
+        Assert.Equal(99, table[b]); // 新值不受影响
+    }
+
+    [Fact]
+    public void StaleHandle_Free_Throws() {
+        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle keep = table.Alloc(2);
+
+        table.Free(a);
+        SlotHandle b = table.Alloc(99);
+
+        // 用旧 handle 尝试 Free → generation 不匹配
+        var ex = Assert.Throws<InvalidOperationException>(() => table.Free(a));
+        Assert.Contains("generation mismatch", ex.Message);
+        Assert.Equal(99, table[b]); // slot 未被释放
+    }
+
+    [Fact]
+    public void StaleHandle_IsOccupied_ReturnsFalse() {
+        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle keep = table.Alloc(2);
+
+        table.Free(a);
+        SlotHandle b = table.Alloc(99);
+
+        Assert.False(table.IsOccupied(a)); // gen 不匹配
+        Assert.True(table.IsOccupied(b));
+    }
+
+    [Fact]
+    public void StaleHandle_TryGetValue_ReturnsFalse() {
+        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        SlotHandle a = table.Alloc(1);
+        SlotHandle keep = table.Alloc(2);
+
+        table.Free(a);
+        SlotHandle b = table.Alloc(99);
+
+        Assert.False(table.TryGetValue(a, out _)); // gen 不匹配
+        Assert.True(table.TryGetValue(b, out int val));
+        Assert.Equal(99, val);
+    }
+
+    [Fact]
+    public void Generation_SurvivesShrinkAndRegrow() {
+        int shift = SlotPool<int>.MinSlabShift;
+        int slabSize = 1 << shift;
+        var table = new SlotPool<int>(shift);
+
+        // 分配 2 个 slab
+        var slab0 = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { slab0[i] = table.Alloc(i); }
+        var slab1 = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { slab1[i] = table.Alloc(i + 1000); }
+
+        // 保存 slab 1 的第一个 handle
+        SlotHandle oldHandle = slab1[0];
+        byte oldGen = oldHandle.Generation;
+
+        // 释放 slab 1 全部
+        for (int i = 0; i < slabSize; i++) { table.Free(slab1[i]); }
+
+        // 释放 slab 0 全部 → 触发 slab 收缩（slab 1 已被收缩掉）
+        for (int i = 0; i < slabSize; i++) { table.Free(slab0[i]); }
+
+        // TrimExcess 强制释放 → capacity = 0，但 generation 数组保留
+        table.TrimExcess();
+        Assert.Equal(0, table.Capacity);
+
+        // 重新增长到覆盖 slab 1
+        var newHandles = new SlotHandle[slabSize + 1];
+        for (int i = 0; i <= slabSize; i++) { newHandles[i] = table.Alloc(i + 2000); }
+
+        // 验证 oldHandle 指向的 slot 被重新分配后，旧 handle 无法使用
+        // oldHandle.Index 在 slab1 范围内，新分配后 generation 已递增
+        if (oldHandle.Index < table.Capacity) {
+            Assert.False(table.IsOccupied(oldHandle)); // gen 不匹配
+        }
+    }
+
+    [Fact]
+    public void Generation_WrapsAround() {
+        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        SlotHandle keep = table.Alloc(0); // 防止收缩
+
+        // 连续 256 次 alloc-free 同一 slot → generation 回绕
+        SlotHandle last = default;
+        for (int round = 0; round < 256; round++) {
+            SlotHandle h = table.Alloc(round + 1);
+            last = h;
+            table.Free(h);
+        }
+
+        // 第 257 次分配：generation 已回绕到 0
+        SlotHandle wrapped = table.Alloc(999);
+        Assert.Equal(0, wrapped.Generation); // 回绕到 0
+        Assert.Equal(999, table[wrapped]);
     }
 }

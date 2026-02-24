@@ -16,6 +16,10 @@ namespace Atelia.StateJournal.Pools;
 /// - Free 后自动检查：若尾部连续 ≥2 个 Slab 全空，则保留 1 个作防抖缓冲、释放其余（双阈值滞回策略）。
 ///   调用 <see cref="TrimExcess"/> 可强制释放所有空余容量（含缓冲 Slab）。
 /// - 空闲状态由独立 bitmap 追踪，不嵌入 slot 内存，T 无尺寸约束。
+/// - 每 slot 独立存储 8-bit generation 计数器（<c>byte[][]</c>），
+///   <see cref="SlotHandle"/> 将 generation + index 打包为 32-bit 胖指针，
+///   Free 时递增 generation 以检测过期访问（Stale Handle Detection）。
+///   generation 数组不随 Slab 收缩而释放，确保跨 shrink/grow 周期的 ABA 防护。
 /// </remarks>
 /// <typeparam name="T">Slot 值类型，必须是 notnull。</typeparam>
 internal sealed class SlotPool<T> where T : notnull {
@@ -28,6 +32,7 @@ internal sealed class SlotPool<T> where T : notnull {
     private readonly int _slabMask;  // slabSize - 1
 
     private T[][] _slabs;          // slot 值
+    private byte[][] _generations; // 每 slot 的 generation 计数器（独立 slab 存储，不随 Slab 收缩而释放）
     internal readonly SlabBitmap _freeBitmap;
     private int _count; // 活跃 slot 数量
 
@@ -53,26 +58,45 @@ internal sealed class SlotPool<T> where T : notnull {
         _slabMask = _slabSize - 1;
 
         _slabs = new T[4][];
+        _generations = new byte[4][];
         _freeBitmap = new SlabBitmap(slabShift);
         _count = 0;
     }
 
-    /// <summary>分配一个 slot 并存入值，返回全局 index。O(1) 均摊。</summary>
-    // [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int Alloc(T value) {
+    /// <summary>分配一个 slot 并存入值，返回包含 generation 的 <see cref="SlotHandle"/>。O(1) 均摊。</summary>
+    /// <exception cref="InvalidOperationException">池容量超出 <see cref="SlotHandle.MaxIndex"/>。</exception>
+    public SlotHandle Alloc(T value) {
         int globalIdx = _freeBitmap.FindFirstOne();
         if (globalIdx < 0) {
+            int nextIndex = _freeBitmap.SlabCount << _slabShift;
+            if (nextIndex > SlotHandle.MaxIndex) {
+                throw new InvalidOperationException(
+                    $"Pool index {nextIndex} exceeds SlotHandle.MaxIndex ({SlotHandle.MaxIndex})."
+                );
+            }
+
             int newSlabIdx = GrowOneSlab();
             globalIdx = newSlabIdx << _slabShift; // 新 slab 全 set，首位确定
         }
 
+        if (globalIdx > SlotHandle.MaxIndex) {
+            throw new InvalidOperationException(
+                $"Pool index {globalIdx} exceeds SlotHandle.MaxIndex ({SlotHandle.MaxIndex})."
+            );
+        }
+
         _freeBitmap.Clear(globalIdx);
-        _slabs[globalIdx >> _slabShift][globalIdx & _slabMask] = value;
+        int slabIdx = globalIdx >> _slabShift;
+        int offset = globalIdx & _slabMask;
+        _slabs[slabIdx][offset] = value;
+        byte gen = _generations[slabIdx][offset];
         _count++;
-        return globalIdx;
+        return new SlotHandle(gen, globalIdx);
     }
 
-    /// <summary>释放一个 slot。O(1)，随后尝试回收尾部空页（保留 1 个空 Slab 作防抖缓冲）。</summary>
+    /// <summary>释放一个 slot（不校验 generation）。O(1)，随后尝试回收尾部空页。</summary>
+    /// <remarks>供内部组件（如 <see cref="GcPool{T}"/> 的 Sweep）使用裸 index 释放。
+    /// 外部调用方应优先使用 <see cref="Free(SlotHandle)"/> 以获得 ABA 保护。</remarks>
     /// <exception cref="ArgumentOutOfRangeException">index 超出当前容量范围。</exception>
     /// <exception cref="InvalidOperationException">对未占用的 slot 进行 Free（double-free）。</exception>
     public void Free(int index) {
@@ -80,11 +104,41 @@ internal sealed class SlotPool<T> where T : notnull {
 
         if (_freeBitmap.Test(index)) { throw new InvalidOperationException($"Double free detected: slot {index} is already free."); }
 
+        FreeCore(index);
+    }
+
+    /// <summary>释放一个 slot（校验 generation）。O(1)，随后尝试回收尾部空页。</summary>
+    /// <exception cref="ArgumentOutOfRangeException">handle 的 index 超出当前容量范围。</exception>
+    /// <exception cref="InvalidOperationException">generation 不匹配（过期 Handle）或 double-free。</exception>
+    public void Free(SlotHandle handle) {
+        int index = handle.Index;
+        if ((uint)index >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(handle), $"Handle index {index} must be in [0, {_freeBitmap.Capacity})."); }
+
+        if (_freeBitmap.Test(index)) { throw new InvalidOperationException($"Double free detected: slot {index} is already free."); }
+
+        byte storedGen = _generations[index >> _slabShift][index & _slabMask];
+        if (storedGen != handle.Generation) {
+            throw new InvalidOperationException(
+                $"Stale handle: generation mismatch at index {index} (handle={handle.Generation}, stored={storedGen})."
+            );
+        }
+
+        FreeCore(index);
+    }
+
+    /// <summary>释放核心逻辑：递增 generation、标记 free、清除引用、计数、尾部回收。</summary>
+    private void FreeCore(int index) {
+        int slabIdx = index >> _slabShift;
+        int offset = index & _slabMask;
+
+        // 递增 generation（8-bit 自然回绕 255→0）
+        _generations[slabIdx][offset]++;
+
         _freeBitmap.Set(index);
 
         // 清除值引用，协助 GC（T 可能是引用类型）
         if (RuntimeHelpers.IsReferenceOrContainsReferences<T>()) {
-            _slabs[index >> _slabShift][index & _slabMask] = default!;
+            _slabs[slabIdx][offset] = default!;
         }
 
         _count--;
@@ -99,6 +153,16 @@ internal sealed class SlotPool<T> where T : notnull {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ref T GetValueRef(int index) {
         ThrowIfNotOccupied(index);
+        return ref _slabs[index >> _slabShift][index & _slabMask];
+    }
+
+    /// <summary>获取 slot 的值的可变引用（校验 generation）。O(1)。</summary>
+    /// <exception cref="ArgumentOutOfRangeException">handle 超出当前容量范围。</exception>
+    /// <exception cref="InvalidOperationException">slot 未占用或 generation 不匹配。</exception>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ref T GetValueRef(SlotHandle handle) {
+        ThrowIfNotOccupiedOrStale(handle);
+        int index = handle.Index;
         return ref _slabs[index >> _slabShift][index & _slabMask];
     }
 
@@ -118,10 +182,42 @@ internal sealed class SlotPool<T> where T : notnull {
         }
     }
 
+    /// <summary>读取或更新已占用 slot 的值（校验 generation）。O(1)。</summary>
+    /// <exception cref="ArgumentOutOfRangeException">handle 超出当前容量范围。</exception>
+    /// <exception cref="InvalidOperationException">slot 未占用或 generation 不匹配。</exception>
+    public T this[SlotHandle handle] {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get {
+            ThrowIfNotOccupiedOrStale(handle);
+            int index = handle.Index;
+            return _slabs[index >> _slabShift][index & _slabMask];
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        set {
+            ThrowIfNotOccupiedOrStale(handle);
+            int index = handle.Index;
+            _slabs[index >> _slabShift][index & _slabMask] = value;
+        }
+    }
+
     /// <summary>尝试读取 slot 的值。若 index 超出范围或 slot 未占用，返回 false。O(1)。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetValue(int index, out T value) {
         if ((uint)index < (uint)_freeBitmap.Capacity && !_freeBitmap.Test(index)) {
+            value = _slabs[index >> _slabShift][index & _slabMask];
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    /// <summary>尝试读取 slot 的值（校验 generation）。若 handle 无效、slot 未占用或 generation 不匹配，返回 false。O(1)。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryGetValue(SlotHandle handle, out T value) {
+        int index = handle.Index;
+        if ((uint)index < (uint)_freeBitmap.Capacity
+            && !_freeBitmap.Test(index)
+            && _generations[index >> _slabShift][index & _slabMask] == handle.Generation) {
             value = _slabs[index >> _slabShift][index & _slabMask];
             return true;
         }
@@ -137,6 +233,18 @@ internal sealed class SlotPool<T> where T : notnull {
         return !_freeBitmap.Test(index);
     }
 
+    /// <summary>
+    /// 检查 Handle 是否仍然有效：index 在范围内、slot 已占用、且 generation 匹配。
+    /// 与 <see cref="IsOccupied(int)"/> 不同，对越界 index 返回 false 而非抛异常。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsOccupied(SlotHandle handle) {
+        int index = handle.Index;
+        return (uint)index < (uint)_freeBitmap.Capacity
+            && !_freeBitmap.Test(index)
+            && _generations[index >> _slabShift][index & _slabMask] == handle.Generation;
+    }
+
     // ───────────────────── Validation ─────────────────────
 
     /// <summary>验证 index 在范围内且对应 slot 已占用，否则抛出异常。</summary>
@@ -144,6 +252,20 @@ internal sealed class SlotPool<T> where T : notnull {
     private void ThrowIfNotOccupied(int index) {
         if ((uint)index >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(index), index, $"Index must be in [0, {_freeBitmap.Capacity})."); }
         if (_freeBitmap.Test(index)) { throw new InvalidOperationException($"Slot {index} is not occupied (already freed or never allocated)."); }
+    }
+
+    /// <summary>验证 handle 对应 slot 已占用且 generation 匹配，否则抛出异常。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ThrowIfNotOccupiedOrStale(SlotHandle handle) {
+        int index = handle.Index;
+        if ((uint)index >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(handle), $"Handle index {index} must be in [0, {_freeBitmap.Capacity})."); }
+        if (_freeBitmap.Test(index)) { throw new InvalidOperationException($"Slot {index} is not occupied (already freed or never allocated)."); }
+        byte storedGen = _generations[index >> _slabShift][index & _slabMask];
+        if (storedGen != handle.Generation) {
+            throw new InvalidOperationException(
+                $"Stale handle: generation mismatch at index {index} (handle={handle.Generation}, stored={storedGen})."
+            );
+        }
     }
 
     // ───────────────────── Capacity management ─────────────────────
@@ -154,9 +276,12 @@ internal sealed class SlotPool<T> where T : notnull {
 
         if (slabIdx >= _slabs.Length) {
             Array.Resize(ref _slabs, _slabs.Length * 2);
+            Array.Resize(ref _generations, _generations.Length * 2);
         }
 
         _slabs[slabIdx] = new T[_slabSize];
+        // 仅首次分配 generation 数组；收缩后重新增长时复用已有数组（保留 generation 历史，防止 ABA）
+        _generations[slabIdx] ??= new byte[_slabSize];
         _freeBitmap.GrowSlabAllOne();
 
         return slabIdx;
