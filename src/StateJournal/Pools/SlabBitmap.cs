@@ -11,15 +11,15 @@ namespace Atelia.StateJournal.Pools;
 /// 支持高效的逐位操作、批量位运算（And / Or / Xor / AndNot / Not）和快速迭代。
 /// </summary>
 /// <remarks>
-///   内部采用二级结构：per-slab <c>ulong[]</c> 存储实际位数据，
-///   per-slab <c>_oneCounts</c> 记录每页 `1` 数量，
-///   汇总 bitmap（_slabHasOne）记录哪些 Slab 含有 `1`（bit=1），
-///   _slabAllOne bitmap 记录哪些 Slab 全满（bit=1），
-///   使 <see cref="FindFirstOne"/> / <see cref="FindLastZero"/> / <see cref="EnumerateZerosReverse"/> 能以 O(slabCount/64) 跳过不相关 Slab。
+/// 内部采用二级结构：per-slab <c>ulong[]</c> 存储实际位数据，
+/// per-slab <c>_oneCounts</c> 记录每页 `1` 数量，
+/// 汇总 bitmap（_slabHasOne）记录哪些 Slab 含有 `1`（bit=1），
+/// _slabAllOne bitmap 记录哪些 Slab 全满（bit=1），
+/// 使 <see cref="FindFirstOne"/> / <see cref="FindLastZero"/> / <see cref="EnumerateZerosReverse"/> 能以 O(slabCount/64) 跳过不相关 Slab。
 ///
-///   通过 <see cref="GrowSlabAllZero"/> / <see cref="GrowSlabAllOne"/> / <see cref="ShrinkLastSlab"/> 动态扩缩，
-///   与 <see cref="SlotPool{T}"/> 的 Slab 生命周期对齐。
-///   批量位运算在主循环中顺带计算 PopCount，零额外开销。
+/// 通过 <see cref="GrowSlabAllZero"/> / <see cref="GrowSlabAllOne"/> / <see cref="ShrinkLastSlab"/> 动态扩缩，
+/// 与 <see cref="SlotPool{T}"/> 的 Slab 生命周期对齐。
+/// 批量位运算在主循环中顺带计算 PopCount，零额外开销。
 /// </remarks>
 internal sealed partial class SlabBitmap {
 

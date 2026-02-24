@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace Atelia.StateJournal.Pools;
 
+// ai:test `tests/StateJournal.Tests/Pools/SlotPoolTests.cs`
 /// <summary>
 /// 基于定长 Slab + 二级 Bitmap 的 Slot 分配器（Slab Allocator 变体）。
 /// 提供 O(1) 的 Alloc / Free / 索引访问，并支持尾部空页自动回收。
@@ -10,19 +12,19 @@ namespace Atelia.StateJournal.Pools;
 /// 设计要点：
 /// - 位图操作委托给 <see cref="SlabBitmap"/>，其中 set bit（1）= free slot。
 /// - 二级 summary bitmap 记录哪些 Slab 有空闲 slot，
-///   Alloc 时通过 <see cref="SlabBitmap.FindFirstOne"/> 定位。
+/// Alloc 时通过 <see cref="SlabBitmap.FindFirstOne"/> 定位。
 /// - Alloc 优先分配低 index 的 slot，自然压实数据向低地址端，
-///   使尾部 Slab 更易变为全空从而可回收。
+/// 使尾部 Slab 更易变为全空从而可回收。
 /// - Free 后自动检查：若尾部连续 ≥2 个 Slab 全空，则保留 1 个作防抖缓冲、释放其余（双阈值滞回策略）。
-///   调用 <see cref="TrimExcess"/> 可强制释放所有空余容量（含缓冲 Slab）。
+/// 调用 <see cref="TrimExcess"/> 可强制释放所有空余容量（含缓冲 Slab）。
 /// - 空闲状态由独立 bitmap 追踪，不嵌入 slot 内存，T 无尺寸约束。
 /// - 每 slot 独立存储 8-bit generation 计数器（<c>byte[][]</c>），
-///   <see cref="SlotHandle"/> 将 generation + index 打包为 32-bit 胖指针，
-///   Free 时递增 generation 以检测过期访问（Stale Handle Detection）。
-///   generation 数组不随 Slab 收缩而释放，确保跨 shrink/grow 周期的 ABA 防护。
+/// <see cref="SlotHandle"/> 将 generation + index 打包为 32-bit 胖指针，
+/// Free 时递增 generation 以检测过期访问（Stale Handle Detection）。
+/// generation 数组不随 Slab 收缩而释放，确保跨 shrink/grow 周期的 ABA 防护。
 /// </remarks>
 /// <typeparam name="T">Slot 值类型，必须是 notnull。</typeparam>
-internal sealed class SlotPool<T> where T : notnull {
+internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     public const int MinSlabShift = SlabBitmap.MinSlabShift;
     public const int MaxSlabShift = SlabBitmap.MaxSlabShift;
     public const int DefaultSlabShift = 10;
@@ -65,7 +67,7 @@ internal sealed class SlotPool<T> where T : notnull {
 
     /// <summary>分配一个 slot 并存入值，返回包含 generation 的 <see cref="SlotHandle"/>。O(1) 均摊。</summary>
     /// <exception cref="InvalidOperationException">池容量超出 <see cref="SlotHandle.MaxIndex"/>。</exception>
-    public SlotHandle Alloc(T value) {
+    public SlotHandle Store(T value) {
         int globalIdx = _freeBitmap.FindFirstOne();
         if (globalIdx < 0) {
             int nextIndex = _freeBitmap.SlabCount << _slabShift;
@@ -99,7 +101,7 @@ internal sealed class SlotPool<T> where T : notnull {
     /// 外部调用方应优先使用 <see cref="Free(SlotHandle)"/> 以获得 ABA 保护。</remarks>
     /// <exception cref="ArgumentOutOfRangeException">index 超出当前容量范围。</exception>
     /// <exception cref="InvalidOperationException">对未占用的 slot 进行 Free（double-free）。</exception>
-    public void Free(int index) {
+    internal void Free(int index) {
         if ((uint)index >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(index), index, $"Index must be in [0, {_freeBitmap.Capacity})."); }
 
         if (_freeBitmap.Test(index)) { throw new InvalidOperationException($"Double free detected: slot {index} is already free."); }
@@ -151,9 +153,17 @@ internal sealed class SlotPool<T> where T : notnull {
     /// <exception cref="ArgumentOutOfRangeException">index 超出当前容量范围。</exception>
     /// <exception cref="InvalidOperationException">访问未占用的 slot。</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ref T GetValueRef(int index) {
+    internal ref T GetValueRef(int index) {
         ThrowIfNotOccupied(index);
         return ref _slabs[index >> _slabShift][index & _slabMask];
+    }
+
+    /// <summary>按 index 创建已占用 slot 的 handle（仅内部使用）。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal SlotHandle GetHandle(int index) {
+        Debug.Assert(IsOccupied(index), "Slot is not occupied.");
+        byte gen = _generations[index >> _slabShift][index & _slabMask];
+        return new SlotHandle(gen, index);
     }
 
     /// <summary>获取 slot 的值的可变引用（校验 generation）。O(1)。</summary>
@@ -169,7 +179,7 @@ internal sealed class SlotPool<T> where T : notnull {
     /// <summary>读取或更新已占用 slot 的值。O(1)。</summary>
     /// <exception cref="ArgumentOutOfRangeException">index 超出当前容量范围。</exception>
     /// <exception cref="InvalidOperationException">访问未占用的 slot。</exception>
-    public T this[int index] {
+    internal T this[int index] {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get {
             ThrowIfNotOccupied(index);
@@ -202,7 +212,7 @@ internal sealed class SlotPool<T> where T : notnull {
 
     /// <summary>尝试读取 slot 的值。若 index 超出范围或 slot 未占用，返回 false。O(1)。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryGetValue(int index, out T value) {
+    internal bool TryGetValue(int index, out T value) {
         if ((uint)index < (uint)_freeBitmap.Capacity && !_freeBitmap.Test(index)) {
             value = _slabs[index >> _slabShift][index & _slabMask];
             return true;
@@ -228,7 +238,7 @@ internal sealed class SlotPool<T> where T : notnull {
     /// <summary>检查指定 index 的 slot 是否已分配（occupied）。</summary>
     /// <exception cref="ArgumentOutOfRangeException">index 超出当前容量范围。</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool IsOccupied(int index) {
+    internal bool IsOccupied(int index) {
         if ((uint)index >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(index), index, $"Index must be in [0, {_freeBitmap.Capacity})."); }
         return !_freeBitmap.Test(index);
     }
@@ -238,7 +248,7 @@ internal sealed class SlotPool<T> where T : notnull {
     /// 与 <see cref="IsOccupied(int)"/> 不同，对越界 index 返回 false 而非抛异常。
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool IsOccupied(SlotHandle handle) {
+    public bool Validate(SlotHandle handle) {
         int index = handle.Index;
         return (uint)index < (uint)_freeBitmap.Capacity
             && !_freeBitmap.Test(index)

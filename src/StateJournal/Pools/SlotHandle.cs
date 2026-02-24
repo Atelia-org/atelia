@@ -9,16 +9,16 @@ namespace Atelia.StateJournal.Pools;
 /// </summary>
 /// <remarks>
 ///
-///   Generation 在 <see cref="SlotPool{T}.Free(SlotHandle)"/> 时递增（8-bit 自然回绕），
-///   用于检测对已释放 slot 的过期访问（Stale Handle Detection）。
+/// Generation 在 <see cref="SlotPool{T}.Free(SlotHandle)"/> 时递增（8-bit 自然回绕），
+/// 用于检测对已释放 slot 的过期访问（Stale Handle Detection）。
 ///
 ///
-///   24-bit Index 支持最多 16,777,216 个 slot（约 16M）。
-///   若需更大地址空间，可后续调整为 7-bit Gen + 25-bit Index。
+/// 24-bit Index 支持最多 16,777,216 个 slot（约 16M）。
+/// 若需更大地址空间，可后续调整为 7-bit Gen + 25-bit Index。
 ///
 ///
-///   <b>相等性</b>：两个 Handle 当且仅当 Generation 与 Index 都相同时才相等。
-///   同一 slot 被释放后重新分配，旧 Handle 与新 Handle 不相等。
+/// <b>相等性</b>：两个 Handle 当且仅当 Generation 与 Index 都相同时才相等。
+/// 同一 slot 被释放后重新分配，旧 Handle 与新 Handle 不相等。
 ///
 /// </remarks>
 public readonly record struct SlotHandle {

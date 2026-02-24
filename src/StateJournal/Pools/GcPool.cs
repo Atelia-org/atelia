@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 
 namespace Atelia.StateJournal.Pools;
 
+// ai:test `tests/StateJournal.Tests/Pools/GcPoolTests.cs`
 /// <summary>
 /// 基于 Mark-Sweep 的 GC 值池。包装 <see cref="SlotPool{T}"/>，
 /// 通过 <see cref="SlabBitmap"/> 实现高效的可达性标记与批量回收。
@@ -14,18 +15,17 @@ namespace Atelia.StateJournal.Pools;
 /// - 对所有可达 handle 调用 <see cref="MarkReachable"/>。
 /// - <see cref="Sweep"/> 回收所有不可达 handle。
 ///
-/// <b>Sweep 优化</b>：Mark 阶段使用 <c>_reachable</c> 位图（初始全 clear），
+/// Sweep 优化：Mark 阶段使用 <c>_reachable</c> 位图（初始全 clear），
 /// 标记可达时 Set 对应位。Sweep 时先 <c>Or(freeBitmap)</c> 将空闲 slot 标为安全，
 /// 再用 <see cref="SlabBitmap.EnumerateZerosReverse"/> 逆序迭代所有 `0`（= 不可达且已占用）的 slot，
 /// 避免逐 slot if-check。
 ///
-/// <b>注意</b>：当前实现假设 Mark-Sweep 是 stop-the-world 的，
+/// 注意：当前实现假设 Mark-Sweep 是 stop-the-world 的，
 /// 即 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间不应调用 <see cref="Store"/>。
 /// 如需支持并发分配，需要额外的策略（如 write-barrier）。
 /// </remarks>
 /// <typeparam name="T">值类型，必须是 notnull。</typeparam>
-internal sealed class GcPool<T> where T : notnull {
-
+internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     private readonly SlotPool<T> _pool;
     private readonly SlabBitmap _reachable;
     private bool _markPhaseActive;
@@ -47,7 +47,7 @@ internal sealed class GcPool<T> where T : notnull {
 
     /// <summary>存入值，返回 handle。O(1) 均摊。</summary>
     public SlotHandle Store(T value) {
-        SlotHandle handle = _pool.Alloc(value);
+        SlotHandle handle = _pool.Store(value);
         SyncGrowth();
         return handle;
     }
@@ -66,7 +66,7 @@ internal sealed class GcPool<T> where T : notnull {
 
     /// <summary>验证 handle 是否有效（在范围内、slot 已占用、且 generation 匹配）。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool Validate(SlotHandle handle) => _pool.IsOccupied(handle);
+    public bool Validate(SlotHandle handle) => _pool.Validate(handle);
 
     // ───────────────────── Mark-Sweep GC ─────────────────────
 
@@ -85,7 +85,7 @@ internal sealed class GcPool<T> where T : notnull {
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MarkReachable(SlotHandle handle) {
-        Debug.Assert(_pool.IsOccupied(handle), "Stale or invalid handle passed to MarkReachable.");
+        Debug.Assert(_pool.Validate(handle), "Stale or invalid handle passed to MarkReachable.");
         _reachable.Set(handle.Index);
     }
 
