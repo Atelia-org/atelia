@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 
 namespace Atelia.StateJournal.Pools;
 
-// ai:test `no unit test yet`
+// ai:test `tests/StateJournal.Tests/Pools/InternPoolTests.cs`
 /// <summary>
 /// 带内建 Mark-Sweep GC 的去重池（Intern Pool）。
 /// 每个 distinct value 只存储一份，返回 stable slot index 作为 handle。
