@@ -6,12 +6,10 @@ namespace Atelia.StateJournal.Pools;
 /// </summary>
 /// <remarks>
 /// 使用方式：
-/// <list type="number">
-///   <item><see cref="IValuePool{T}.Store"/> 存入值，获得 handle。</item>
-///   <item><see cref="BeginMark"/> 开始标记阶段（所有 slot 初始为不可达）。</item>
-///   <item>对每个可达 handle 调用 <see cref="MarkReachable"/>。</item>
-///   <item><see cref="Sweep"/> 回收所有不可达 slot，返回释放数量。</item>
-/// </list>
+/// - <see cref="IValuePool{T}.Store"/> 存入值，获得 handle。
+/// - <see cref="BeginMark"/> 开始标记阶段（所有 slot 初始为不可达）。
+/// - 对每个可达 handle 调用 <see cref="MarkReachable"/>。
+/// - <see cref="Sweep"/> 回收所有不可达 slot，返回释放数量。
 ///
 /// 当前假设 Mark-Sweep 是 stop-the-world 的，
 /// 即 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间不应调用 <see cref="IValuePool{T}.Store"/>。

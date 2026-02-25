@@ -253,9 +253,8 @@ public class InternPoolTests {
 
     [Fact]
     public void Store_CrossSlab_DedupWorksAcrossSlabs() {
-        int shift = SlabBitmap.MinSlabShift; // 64
-        int slabSize = 1 << shift;
-        var pool = new InternPool<int>(slabShift: shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var pool = new InternPool<int>();
 
         // 存满 2 个 slab
         for (int i = 0; i < slabSize * 2; i++) { pool.Store(i); }

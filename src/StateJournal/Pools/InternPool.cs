@@ -58,14 +58,13 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
 
     /// <summary>创建一个空的 <see cref="InternPool{T}"/>。</summary>
     /// <param name="comparer">值相等比较器，null 时使用 <see cref="EqualityComparer{T}.Default"/>。</param>
-    /// <param name="slabShift">底层 SlotPool 的 slabShift，控制每页大小 (2^slabShift)。</param>
-    public InternPool(IEqualityComparer<T>? comparer = null, int slabShift = SlotPool<Entry>.DefaultSlabShift) {
-        _slots = new SlotPool<Entry>(slabShift);
+    public InternPool(IEqualityComparer<T>? comparer = null) {
+        _slots = new SlotPool<Entry>();
         _comparer = comparer ?? EqualityComparer<T>.Default;
         _buckets = new int[InitialBucketCount];
         Array.Fill(_buckets, -1);
         _bucketMask = InitialBucketCount - 1;
-        _reachable = new SlabBitmap(slabShift);
+        _reachable = new SlabBitmap();
     }
 
     // ───────────────────── Core: Intern ─────────────────────

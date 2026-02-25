@@ -37,10 +37,9 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     public int Capacity => _pool.Capacity;
 
     /// <summary>创建一个空的 <see cref="GcPool{T}"/>。</summary>
-    /// <param name="slabShift">底层 <see cref="SlotPool{T}"/> 的 slabShift。</param>
-    public GcPool(int slabShift = SlotPool<T>.DefaultSlabShift) {
-        _pool = new SlotPool<T>(slabShift);
-        _reachable = new SlabBitmap(slabShift);
+    public GcPool() {
+        _pool = new SlotPool<T>();
+        _reachable = new SlabBitmap();
     }
 
     // ───────────────────── Store / Read ─────────────────────

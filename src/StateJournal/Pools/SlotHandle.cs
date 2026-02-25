@@ -17,7 +17,7 @@ namespace Atelia.StateJournal.Pools;
 /// 若需更大地址空间，可后续调整为 7-bit Gen + 25-bit Index。
 ///
 ///
-/// <b>相等性</b>：两个 Handle 当且仅当 Generation 与 Index 都相同时才相等。
+/// 相等性：两个 Handle 当且仅当 Generation 与 Index 都相同时才相等。
 /// 同一 slot 被释放后重新分配，旧 Handle 与新 Handle 不相等。
 ///
 /// </remarks>

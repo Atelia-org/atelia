@@ -9,14 +9,14 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateOnes_Empty_YieldsNothing() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         var list = Collect(bm.EnumerateOnes());
         Assert.Empty(list);
     }
 
     [Fact]
     public void EnumerateOnes_NoBitsSet_YieldsNothing() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();
         var list = Collect(bm.EnumerateOnes());
         Assert.Empty(list);
@@ -24,7 +24,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateOnes_SingleBit() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();
         bm.Set(17);
         Assert.Equal([17], Collect(bm.EnumerateOnes()));
@@ -32,7 +32,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateOnes_MultipleBits_AscendingOrder() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();
         bm.Set(63);
         bm.Set(0);
@@ -42,7 +42,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateOnes_AllBitsSet() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();
         var list = Collect(bm.EnumerateOnes());
         Assert.Equal(SlabSize, list.Count);
@@ -51,7 +51,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateOnes_MultiSlab_SkipsEmptySlab() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();       // slab 0: empty
         bm.GrowSlabAllZero();       // slab 1: empty
         bm.GrowSlabAllZero();       // slab 2: has bits
@@ -62,7 +62,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateOnes_MultiSlab_SparseBits() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();
         bm.GrowSlabAllZero();
         bm.GrowSlabAllZero();
@@ -76,21 +76,21 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateZerosReverse_Empty_YieldsNothing() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         var list = Collect(bm.EnumerateZerosReverse());
         Assert.Empty(list);
     }
 
     [Fact]
     public void EnumerateZerosReverse_AllOnes_YieldsNothing() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();
         Assert.Empty(Collect(bm.EnumerateZerosReverse()));
     }
 
     [Fact]
     public void EnumerateZerosReverse_SingleZero() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();
         bm.Clear(17);
         Assert.Equal([17], Collect(bm.EnumerateZerosReverse()));
@@ -98,7 +98,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateZerosReverse_MultipleZeros_DescendingOrder() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();
         bm.Clear(63);
         bm.Clear(0);
@@ -108,7 +108,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateZerosReverse_AllZeros() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();
         var list = Collect(bm.EnumerateZerosReverse());
         Assert.Equal(SlabSize, list.Count);
@@ -117,7 +117,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateZerosReverse_MultiSlab_SkipsFullSlab() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();       // slab 0: has zeros
         bm.GrowSlabAllOne();       // slab 1: full (skip)
         bm.GrowSlabAllOne();       // slab 2: full (skip)
@@ -128,7 +128,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateZerosReverse_MultiSlab_SparseZeros() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();
         bm.GrowSlabAllOne();
         bm.GrowSlabAllOne();
@@ -142,7 +142,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void EnumerateOnes_And_ZerosReverse_CoverAllIndices() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();
         bm.GrowSlabAllZero();
         bm.GrowSlabAllZero();
@@ -162,45 +162,18 @@ partial class SlabBitmapTests {
         Assert.Equal(SlabSize * 3, all.Count);
     }
 
-    [Theory]
-    [InlineData(7)]   // slabShift = 7 → 128 bits/slab, 2 words/slab
-    [InlineData(8)]   // slabShift = 8 → 256 bits/slab, 4 words/slab
-    public void Enumerate_LargerSlabShift_Works(int shift) {
-        int slabSize = 1 << shift;
-        var bm = new SlabBitmap(shift);
-        bm.GrowSlabAllZero();
-        bm.GrowSlabAllZero();
-        bm.Set(0);
-        bm.Set(slabSize - 1);
-        bm.Set(slabSize + 32);
-
-        var onesForward = Collect(bm.EnumerateOnes());
-        Assert.Equal([0, slabSize - 1, slabSize + 32], onesForward);
-
-        // ZerosReverse: use all-one base with a few clears
-        var bm2 = new SlabBitmap(shift);
-        bm2.GrowSlabAllOne();
-        bm2.GrowSlabAllOne();
-        bm2.Clear(0);
-        bm2.Clear(slabSize - 1);
-        bm2.Clear(slabSize + 32);
-
-        var zerosReverse = Collect(bm2.EnumerateZerosReverse());
-        Assert.Equal([slabSize + 32, slabSize - 1, 0], zerosReverse);
-    }
-
     // ───────────────────── CompactionEnumerator ─────────────────────
 
     [Fact]
     public void CompactionMoves_Empty_YieldsNothing() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         var list = CollectMoves(bm.EnumerateCompactionMoves());
         Assert.Empty(list);
     }
 
     [Fact]
     public void CompactionMoves_AllFree_YieldsNothing() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne(); // all free
         var list = CollectMoves(bm.EnumerateCompactionMoves());
         Assert.Empty(list);
@@ -208,7 +181,7 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void CompactionMoves_AllOccupied_YieldsNothing() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero(); // all occupied
         var list = CollectMoves(bm.EnumerateCompactionMoves());
         Assert.Empty(list);
@@ -217,7 +190,7 @@ partial class SlabBitmapTests {
     [Fact]
     public void CompactionMoves_AlreadyCompact_YieldsNothing() {
         // [0,0,0,1,1,1] — occupied packed at head, free at tail
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();
         for (int i = SlabSize / 2; i < SlabSize; i++) { bm.Set(i); }
         var list = CollectMoves(bm.EnumerateCompactionMoves());
@@ -227,7 +200,7 @@ partial class SlabBitmapTests {
     [Fact]
     public void CompactionMoves_SingleSwap() {
         // bit 0 = free(1), bit 63 = occupied(0), rest = free(1)
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();
         bm.Clear(63); // one occupied at tail
         var list = CollectMoves(bm.EnumerateCompactionMoves());
@@ -238,7 +211,7 @@ partial class SlabBitmapTests {
     [Fact]
     public void CompactionMoves_MultipleSwaps() {
         // free at 0,1,2; occupied at 61,62,63; rest free
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();
         bm.Clear(61);
         bm.Clear(62);
@@ -259,7 +232,7 @@ partial class SlabBitmapTests {
     [Fact]
     public void CompactionMoves_CrossSlab() {
         // slab 0: all occupied (0); slab 1: all free (1) except bit SlabSize+3
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero(); // slab 0: all occupied
         bm.GrowSlabAllOne();  // slab 1: all free
         bm.Clear(SlabSize + 3); // one occupied in slab 1
@@ -273,24 +246,25 @@ partial class SlabBitmapTests {
     [Fact]
     public void CompactionMoves_Stops_When_Cursors_Meet() {
         // Interleaved: even bits = occupied(0), odd bits = free(1)
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllZero();
         for (int i = 1; i < SlabSize; i += 2) { bm.Set(i); } // odd = free
         var list = CollectMoves(bm.EnumerateCompactionMoves());
-        // free slots: 1,3,5,...,63 (32 total)
-        // occupied slots from reverse: 62,60,...,0 (32 total)
+        // free slots: 1,3,5,...,SlabSize-1 (SlabSize/2 total)
+        // occupied slots from reverse: SlabSize-2,SlabSize-4,...,0 (SlabSize/2 total)
         // Moves until free cursor >= occupied cursor
-        // Move k: (2k+1, 62-2k) — stops when 2k+1 >= 62-2k → 4k >= 61 → k >= 16
-        Assert.Equal(16, list.Count);
-        for (int k = 0; k < 16; k++) {
+        // Move k: (2k+1, SlabSize-2-2k) — stops when 2k+1 >= SlabSize-2-2k → 4k >= SlabSize-3 → k >= SlabSize/4
+        int expected = SlabSize / 4;
+        Assert.Equal(expected, list.Count);
+        for (int k = 0; k < expected; k++) {
             Assert.Equal(2 * k + 1, list[k].One);
-            Assert.Equal(62 - 2 * k, list[k].Zero);
+            Assert.Equal(SlabSize - 2 - 2 * k, list[k].Zero);
         }
     }
 
     [Fact]
     public void CompactionMoves_DoesNotModifyBitmap() {
-        var bm = new SlabBitmap(Shift);
+        var bm = new SlabBitmap();
         bm.GrowSlabAllOne();
         bm.Clear(60);
         bm.Clear(61);

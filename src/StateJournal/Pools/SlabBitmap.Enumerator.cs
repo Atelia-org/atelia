@@ -18,7 +18,7 @@ partial class SlabBitmap {
         internal OnesForwardEnumerator(SlabBitmap bmp) {
             _bmp = bmp;
             _slabIdx = -1;
-            _wordIdx = bmp._wordsPerSlab - 1; // 使首次 MoveNext 直接进入 slab 搜索
+            _wordIdx = WordsPerSlab; // sentinel: forces slab advance on first MoveNextSlow
             _remaining = 0;
             _current = -1;
         }
@@ -36,33 +36,36 @@ partial class SlabBitmap {
         private void EmitBit() {
             int bit = BitOperations.TrailingZeroCount(_remaining);
             _remaining ^= 1UL << bit;
-            _current = (_slabIdx << _bmp._slabShift) | (_wordIdx << 6) | bit;
+            _current = (_slabIdx << SlabShift) | (_wordIdx << 6) | bit;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private bool MoveNextSlow() {
             while (true) {
-                // 正序扫描当前 slab 中剩余 words
-                while (_wordIdx < _bmp._wordsPerSlab - 1) {
-                    _wordIdx++;
-                    _remaining = _bmp._data[_slabIdx][_wordIdx];
-                    if (_remaining != 0) {
+                // L1: find next word with ones in current slab
+                if (_slabIdx >= 0 && _wordIdx < WordsPerSlab - 1) {
+                    ulong l1bits = _bmp._l1HasOne[_slabIdx] & (ulong.MaxValue << (_wordIdx + 1));
+                    if (l1bits != 0) {
+                        _wordIdx = BitOperations.TrailingZeroCount(l1bits);
+                        _remaining = _bmp._data[_slabIdx][_wordIdx];
+                        Debug.Assert(_remaining != 0);
                         EmitBit();
                         return true;
                     }
                 }
 
-                // 当前 slab 耗尽，通过 _slabHasOne 正序跳到下一个有 `1` 的 slab
-                int from = _slabIdx >= 0 ? _slabIdx + 1 : 0;
-                int nextSlab = _bmp.FindSlabWithOneForward(from);
+                // L2: find next slab with ones
+                int nextSlab = _bmp.FindSlabWithOneForward(_slabIdx + 1);
                 if (nextSlab < 0) { return false; }
 
-                Debug.Assert(_bmp._oneCounts[nextSlab] > 0,
-                    $"_slabHasOne indicated slab {nextSlab} has ones but _oneCounts is {_bmp._oneCounts[nextSlab]}."
-                );
-
                 _slabIdx = nextSlab;
-                _wordIdx = -1; // 下次 while 步进到 word 0
+                ulong l1 = _bmp._l1HasOne[nextSlab];
+                Debug.Assert(l1 != 0, $"L2 indicated slab {nextSlab} has ones but L1 is zero.");
+                _wordIdx = BitOperations.TrailingZeroCount(l1);
+                _remaining = _bmp._data[nextSlab][_wordIdx];
+                Debug.Assert(_remaining != 0);
+                EmitBit();
+                return true;
             }
         }
     }
@@ -72,13 +75,13 @@ partial class SlabBitmap {
     ref partial struct ZerosReverseEnumerator {
         private readonly SlabBitmap _bmp;
         private int _current, _slabIdx, _wordIdx;
-        private ulong _remaining; // ~word：bit=1 表示原始 word 中对应位为 0
+        private ulong _remaining; // ~word: bit=1 means original bit was 0
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal ZerosReverseEnumerator(SlabBitmap bmp) {
             _bmp = bmp;
-            _slabIdx = bmp._slabCount; // 哨兵：尚未进入任何 slab
-            _wordIdx = 0;              // 使首次 MoveNext 直接进入 slab 搜索
+            _slabIdx = bmp._slabCount; // sentinel: no slab entered yet
+            _wordIdx = -1;              // forces slab advance on first MoveNextSlow
             _remaining = 0;
             _current = -1;
         }
@@ -96,33 +99,37 @@ partial class SlabBitmap {
         private void EmitBit() {
             int bit = 63 - BitOperations.LeadingZeroCount(_remaining);
             _remaining ^= 1UL << bit;
-            _current = (_slabIdx << _bmp._slabShift) | (_wordIdx << 6) | bit;
+            _current = (_slabIdx << SlabShift) | (_wordIdx << 6) | bit;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private bool MoveNextSlow() {
             while (true) {
-                // 逆序扫描当前 slab 中剩余 words
-                while (_wordIdx > 0) {
-                    _wordIdx--;
-                    _remaining = ~_bmp._data[_slabIdx][_wordIdx];
-                    if (_remaining != 0) {
+                // L1: find prev word with zeros in current slab
+                if (_slabIdx < _bmp._slabCount && _wordIdx > 0) {
+                    ulong candidates = _bmp._l1HasZero[_slabIdx] & (ulong.MaxValue >> (64 - _wordIdx));
+                    if (candidates != 0) {
+                        _wordIdx = 63 - BitOperations.LeadingZeroCount(candidates);
+                        _remaining = ~_bmp._data[_slabIdx][_wordIdx];
+                        Debug.Assert(_remaining != 0);
                         EmitBit();
                         return true;
                     }
                 }
 
-                // 当前 slab 耗尽，通过 _slabAllOne 逆序跳到下一个有 `0` 的 slab
+                // L2: find prev slab with zeros
                 int from = _slabIdx < _bmp._slabCount ? _slabIdx - 1 : _bmp._slabCount - 1;
-                int nextSlab = _bmp.FindSlabWithZeroReverse(from);
-                if (nextSlab < 0) { return false; }
+                int prevSlab = _bmp.FindSlabWithZeroReverse(from);
+                if (prevSlab < 0) { return false; }
 
-                Debug.Assert(_bmp._oneCounts[nextSlab] < _bmp._slabSize,
-                    $"_slabAllOne indicated slab {nextSlab} has zeros but _oneCounts is {_bmp._oneCounts[nextSlab]}."
-                );
-
-                _slabIdx = nextSlab;
-                _wordIdx = _bmp._wordsPerSlab; // 下次 while 步进到最后一个 word
+                _slabIdx = prevSlab;
+                ulong l1hz = _bmp._l1HasZero[prevSlab];
+                Debug.Assert(l1hz != 0, $"L2 indicated slab {prevSlab} has zeros but L1 says all-one.");
+                _wordIdx = 63 - BitOperations.LeadingZeroCount(l1hz);
+                _remaining = ~_bmp._data[prevSlab][_wordIdx];
+                Debug.Assert(_remaining != 0);
+                EmitBit();
+                return true;
             }
         }
     }

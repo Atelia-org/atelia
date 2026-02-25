@@ -12,10 +12,10 @@ public abstract class MarkSweepPoolContractTests {
     /// 创建待测池实例。返回 <c>object</c> 以避免 internal 接口出现在 public 方法签名中。
     /// 实现方 MUST 返回 <see cref="IMarkSweepPool{T}"/> 实例。
     /// </summary>
-    protected abstract object CreatePoolBoxed<T>(int slabShift) where T : notnull;
+    protected abstract object CreatePoolBoxed<T>() where T : notnull;
 
-    private IMarkSweepPool<T> CreatePool<T>(int slabShift = 10) where T : notnull
-        => (IMarkSweepPool<T>)CreatePoolBoxed<T>(slabShift);
+    private IMarkSweepPool<T> CreatePool<T>() where T : notnull
+        => (IMarkSweepPool<T>)CreatePoolBoxed<T>();
 
     // ───────────────────── Basic GC cycle ─────────────────────
 
@@ -121,9 +121,8 @@ public abstract class MarkSweepPoolContractTests {
 
     [Fact]
     public void Sweep_CrossSlab_SweepsCorrectly() {
-        int shift = SlabBitmap.MinSlabShift; // 64
-        int slabSize = 1 << shift;
-        var pool = CreatePool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var pool = CreatePool<int>();
 
         // Fill 2 slabs
         var handles = new SlotHandle[slabSize * 2];
@@ -168,7 +167,7 @@ public abstract class MarkSweepPoolContractTests {
 
     [Fact]
     public void Store_AfterSweep_ReusesFreedSlots() {
-        var pool = CreatePool<int>(SlabBitmap.MinSlabShift);
+        var pool = CreatePool<int>();
         SlotHandle a = pool.Store(100);
         SlotHandle b = pool.Store(200);
 
@@ -188,9 +187,9 @@ public abstract class MarkSweepPoolContractTests {
 // ───────────────────── Concrete implementations ─────────────────────
 
 public class GcPool_MarkSweepContractTests : MarkSweepPoolContractTests {
-    protected override object CreatePoolBoxed<T>(int slabShift) => new GcPool<T>(slabShift);
+    protected override object CreatePoolBoxed<T>() => new GcPool<T>();
 }
 
 public class InternPool_MarkSweepContractTests : MarkSweepPoolContractTests {
-    protected override object CreatePoolBoxed<T>(int slabShift) => new InternPool<T>(slabShift: slabShift);
+    protected override object CreatePoolBoxed<T>() => new InternPool<T>();
 }

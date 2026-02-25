@@ -12,28 +12,11 @@ public class SlotPoolTests {
         Assert.Equal(0, table.Capacity);
     }
 
-    [Theory]
-    [InlineData(SlotPool<int>.MinSlabShift)]
-    [InlineData(SlotPool<int>.MaxSlabShift)]
-    [InlineData(8)]
-    public void Ctor_ValidSlabShift_Succeeds(int shift) {
-        var table = new SlotPool<int>(shift);
-        Assert.Equal(1 << shift, table.SlabSize);
-    }
-
-    [Theory]
-    [InlineData(SlotPool<int>.MinSlabShift - 1)]
-    [InlineData(SlotPool<int>.MaxSlabShift + 1)]
-    [InlineData(-1)]
-    public void Ctor_InvalidSlabShift_Throws(int shift) {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new SlotPool<int>(shift));
-    }
-
     // ───────────────────── Alloc ─────────────────────
 
     [Fact]
     public void Alloc_ReturnsUniqueIndices() {
-        var table = new SlotPool<string>(SlotPool<string>.MinSlabShift); // 64-slot slabs
+        var table = new SlotPool<string>();
         var indices = new HashSet<int>();
         for (int i = 0; i < 200; i++) {
             SlotHandle h = table.Store($"item-{i}");
@@ -53,7 +36,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void Count_TracksAllocAndFree() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         Assert.Equal(0, table.Count);
 
         SlotHandle a = table.Store(1);
@@ -69,9 +52,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void Capacity_GrowsInSlabSizeIncrements() {
-        int shift = SlotPool<int>.MinSlabShift; // 64
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         // 分配第一个 slot 触发第一个 slab
         table.Store(1);
@@ -90,7 +72,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void IsOccupied_ReturnsTrueForAllocated_FalseAfterFree() {
-        var table = new SlotPool<string>(SlotPool<string>.MinSlabShift);
+        var table = new SlotPool<string>();
         SlotHandle h = table.Store("hello");
         Assert.True(table.Validate(h));
 
@@ -101,7 +83,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void IsOccupied_AfterFreeWithLowerSlotAlive_ReturnsFalse() {
-        var table = new SlotPool<string>(SlotPool<string>.MinSlabShift);
+        var table = new SlotPool<string>();
         SlotHandle a = table.Store("keep");
         SlotHandle b = table.Store("release");
         Assert.True(table.Validate(b));
@@ -124,7 +106,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void Indexer_FreedSlot_Throws() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(10);
         SlotHandle b = table.Store(20);
         table.Free(b);
@@ -151,7 +133,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void GetValueRef_FreedSlot_Throws() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle b = table.Store(2);
         table.Free(b);
@@ -176,7 +158,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void IndexerSet_FreedSlot_Throws() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle b = table.Store(2);
         table.Free(b);
@@ -201,7 +183,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void TryGetValue_FreedSlot_ReturnsFalse() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle b = table.Store(2);
         table.Free(b);
@@ -220,7 +202,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void Free_DoubleFree_Throws() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle b = table.Store(2); // 让 a 所在的 slab 不被收缩
         table.Free(a);
@@ -238,7 +220,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void Alloc_PrefersLowestFreeIndex() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle b = table.Store(2);
         SlotHandle c = table.Store(3);
@@ -257,9 +239,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void Free_AllSlotsInTrailingSlab_RetainsOneEmptySlabAsBuffer() {
-        int shift = SlotPool<int>.MinSlabShift; // 64
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         // 分配两个 slab 的 slot
         var firstSlabHandles = new SlotHandle[slabSize];
@@ -276,9 +257,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void Free_AllSlots_RetainsOneEmptySlabAsBuffer() {
-        int shift = SlotPool<int>.MinSlabShift;
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         var handles = new SlotHandle[slabSize];
         for (int i = 0; i < slabSize; i++) { handles[i] = table.Store(i); }
@@ -291,9 +271,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void Free_NonTrailingSlab_DoesNotShrink() {
-        int shift = SlotPool<int>.MinSlabShift;
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         // 分配两个 slab
         var slab0 = new SlotHandle[slabSize];
@@ -311,10 +290,9 @@ public class SlotPoolTests {
 
     [Fact]
     public void AllocFree_AcrossMultipleSlabs_Consistent() {
-        int shift = SlotPool<int>.MinSlabShift; // 64
-        int slabSize = 1 << shift;
+        int slabSize = SlabBitmap.SlabSize;
         int total = slabSize * 3 + 10; // 触发 4 个 slab
-        var table = new SlotPool<int>(shift);
+        var table = new SlotPool<int>();
 
         var handles = new SlotHandle[total];
         for (int i = 0; i < total; i++) {
@@ -348,7 +326,7 @@ public class SlotPoolTests {
         // 本测试验证 Free 之后不保留对旧值的强引用。
         // 无法直接检测 GC，但可以验证 Free 后 IsOccupied 返回 false，
         // 以及重新分配同一 slot 得到新值。
-        var table = new SlotPool<string>(SlotPool<string>.MinSlabShift);
+        var table = new SlotPool<string>();
         SlotHandle a = table.Store("keep-alive");
         SlotHandle b = table.Store("will-be-freed");
         table.Free(b);
@@ -364,9 +342,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void AllocAfterFreeAll_ReusesBufferSlab() {
-        int shift = SlotPool<int>.MinSlabShift;
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
         SlotHandle h = table.Store(42);
         table.Free(h);
         Assert.Equal(0, table.Count);
@@ -381,7 +358,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void AllocAfterTrimExcess_WorksCorrectly() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle h = table.Store(42);
         table.Free(h);
         table.TrimExcess();
@@ -398,9 +375,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void AllocFree_AtSlabBoundary_NoThrashing() {
-        int shift = SlotPool<int>.MinSlabShift;
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         // 填满第一个 slab
         var handles = new SlotHandle[slabSize];
@@ -418,9 +394,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void Shrink_WithTwoTrailingEmptySlabs_ShrinkToKeepOne() {
-        int shift = SlotPool<int>.MinSlabShift;
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         // 分配 3 个 slab
         var slab0 = new SlotHandle[slabSize];
@@ -445,9 +420,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void TrimExcess_ReleasesBufferSlab() {
-        int shift = SlotPool<int>.MinSlabShift;
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         var handles = new SlotHandle[slabSize];
         for (int i = 0; i < slabSize; i++) { handles[i] = table.Store(i); }
@@ -463,9 +437,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void TrimExcess_OnNonEmptyPool_OnlyRemovesTrailingEmpty() {
-        int shift = SlotPool<int>.MinSlabShift;
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         // 分配 2 个 slab，释放 slab 1
         for (int i = 0; i < slabSize; i++) { table.Store(i); }
@@ -481,7 +454,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void TrimExcess_OnFullPool_NoChange() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         table.Store(1);
         int cap = table.Capacity;
         table.TrimExcess();
@@ -492,7 +465,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void Free_IncrementsGeneration_NewAllocGetsDifferentHandle() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle keep = table.Store(2); // 防止收缩
         byte gen0 = a.Generation;
@@ -508,7 +481,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void StaleHandle_Indexer_Throws() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle keep = table.Store(2);
 
@@ -522,7 +495,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void StaleHandle_GetValueRef_Throws() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle keep = table.Store(2);
 
@@ -534,7 +507,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void StaleHandle_IndexerSet_Throws() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle keep = table.Store(2);
 
@@ -547,7 +520,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void StaleHandle_Free_Throws() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle keep = table.Store(2);
 
@@ -562,7 +535,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void StaleHandle_IsOccupied_ReturnsFalse() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle keep = table.Store(2);
 
@@ -575,7 +548,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void StaleHandle_TryGetValue_ReturnsFalse() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle a = table.Store(1);
         SlotHandle keep = table.Store(2);
 
@@ -589,9 +562,8 @@ public class SlotPoolTests {
 
     [Fact]
     public void Generation_SurvivesShrinkAndRegrow() {
-        int shift = SlotPool<int>.MinSlabShift;
-        int slabSize = 1 << shift;
-        var table = new SlotPool<int>(shift);
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
 
         // 分配 2 个 slab
         var slab0 = new SlotHandle[slabSize];
@@ -626,7 +598,7 @@ public class SlotPoolTests {
 
     [Fact]
     public void Generation_WrapsAround() {
-        var table = new SlotPool<int>(SlotPool<int>.MinSlabShift);
+        var table = new SlotPool<int>();
         SlotHandle keep = table.Store(0); // 防止收缩
 
         // 连续 256 次 alloc-free 同一 slot → generation 回绕

@@ -25,13 +25,6 @@ namespace Atelia.StateJournal.Pools;
 /// </remarks>
 /// <typeparam name="T">Slot 值类型，必须是 notnull。</typeparam>
 internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
-    public const int MinSlabShift = SlabBitmap.MinSlabShift;
-    public const int MaxSlabShift = SlabBitmap.MaxSlabShift;
-    public const int DefaultSlabShift = 10;
-
-    private readonly int _slabShift; // log2(slabSize)
-    private readonly int _slabSize;
-    private readonly int _slabMask;  // slabSize - 1
 
     private T[][] _slabs;          // slot 值
     private byte[][] _generations; // 每 slot 的 generation 计数器（独立 slab 存储，不随 Slab 收缩而释放）
@@ -45,23 +38,16 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     public int Capacity => _freeBitmap.Capacity;
 
     /// <summary>当前 SlabSize = 2^SlabShift。</summary>
-    public int SlabSize => _slabSize;
+    public int SlabSize => SlabBitmap.SlabSize;
 
     /// <summary>底层空闲位图，供同 assembly 内的组合层（如 GcPool）访问。</summary>
     internal SlabBitmap FreeBitmap => _freeBitmap;
 
     /// <summary>创建一个空的 <see cref="SlotPool{T}"/>。</summary>
-    /// <param name="slabShift">SlabSize = 2^slabShift。</param>
-    public SlotPool(int slabShift = DefaultSlabShift) {
-        if (slabShift < MinSlabShift || slabShift > MaxSlabShift) { throw new ArgumentOutOfRangeException(nameof(slabShift), slabShift, $"slabShift must be in [{MinSlabShift}, {MaxSlabShift}]."); }
-
-        _slabShift = slabShift;
-        _slabSize = 1 << slabShift;
-        _slabMask = _slabSize - 1;
-
+    public SlotPool() {
         _slabs = new T[4][];
         _generations = new byte[4][];
-        _freeBitmap = new SlabBitmap(slabShift);
+        _freeBitmap = new SlabBitmap();
         _count = 0;
     }
 
@@ -70,7 +56,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     public SlotHandle Store(T value) {
         int globalIdx = _freeBitmap.FindFirstOne();
         if (globalIdx < 0) {
-            int nextIndex = _freeBitmap.SlabCount << _slabShift;
+            int nextIndex = _freeBitmap.SlabCount << SlabBitmap.SlabShift;
             if (nextIndex > SlotHandle.MaxIndex) {
                 throw new InvalidOperationException(
                     $"Pool index {nextIndex} exceeds SlotHandle.MaxIndex ({SlotHandle.MaxIndex})."
@@ -78,7 +64,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
             }
 
             int newSlabIdx = GrowOneSlab();
-            globalIdx = newSlabIdx << _slabShift; // 新 slab 全 set，首位确定
+            globalIdx = newSlabIdx << SlabBitmap.SlabShift; // 新 slab 全 set，首位确定
         }
 
         if (globalIdx > SlotHandle.MaxIndex) {
@@ -88,8 +74,8 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         }
 
         _freeBitmap.Clear(globalIdx);
-        int slabIdx = globalIdx >> _slabShift;
-        int offset = globalIdx & _slabMask;
+        int slabIdx = globalIdx >> SlabBitmap.SlabShift;
+        int offset = globalIdx & SlabBitmap.SlabMask;
         _slabs[slabIdx][offset] = value;
         byte gen = _generations[slabIdx][offset];
         _count++;
@@ -118,7 +104,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
 
         if (_freeBitmap.Test(index)) { throw new InvalidOperationException($"Double free detected: slot {index} is already free."); }
 
-        byte storedGen = _generations[index >> _slabShift][index & _slabMask];
+        byte storedGen = _generations[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
         if (storedGen != handle.Generation) {
             throw new InvalidOperationException(
                 $"Stale handle: generation mismatch at index {index} (handle={handle.Generation}, stored={storedGen})."
@@ -130,8 +116,8 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
 
     /// <summary>释放核心逻辑：递增 generation、标记 free、清除引用、计数、尾部回收。</summary>
     private void FreeCore(int index) {
-        int slabIdx = index >> _slabShift;
-        int offset = index & _slabMask;
+        int slabIdx = index >> SlabBitmap.SlabShift;
+        int offset = index & SlabBitmap.SlabMask;
 
         // 递增 generation（8-bit 自然回绕 255→0）
         _generations[slabIdx][offset]++;
@@ -155,14 +141,14 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal ref T GetValueRef(int index) {
         ThrowIfNotOccupied(index);
-        return ref _slabs[index >> _slabShift][index & _slabMask];
+        return ref _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
     }
 
     /// <summary>按 index 创建已占用 slot 的 handle（仅内部使用）。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal SlotHandle GetHandle(int index) {
         Debug.Assert(IsOccupied(index), "Slot is not occupied.");
-        byte gen = _generations[index >> _slabShift][index & _slabMask];
+        byte gen = _generations[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
         return new SlotHandle(gen, index);
     }
 
@@ -173,7 +159,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     public ref T GetValueRef(SlotHandle handle) {
         ThrowIfNotOccupiedOrStale(handle);
         int index = handle.Index;
-        return ref _slabs[index >> _slabShift][index & _slabMask];
+        return ref _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
     }
 
     /// <summary>读取或更新已占用 slot 的值。O(1)。</summary>
@@ -183,12 +169,12 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get {
             ThrowIfNotOccupied(index);
-            return _slabs[index >> _slabShift][index & _slabMask];
+            return _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         set {
             ThrowIfNotOccupied(index);
-            _slabs[index >> _slabShift][index & _slabMask] = value;
+            _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask] = value;
         }
     }
 
@@ -200,13 +186,13 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         get {
             ThrowIfNotOccupiedOrStale(handle);
             int index = handle.Index;
-            return _slabs[index >> _slabShift][index & _slabMask];
+            return _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         set {
             ThrowIfNotOccupiedOrStale(handle);
             int index = handle.Index;
-            _slabs[index >> _slabShift][index & _slabMask] = value;
+            _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask] = value;
         }
     }
 
@@ -214,7 +200,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetValue(int index, out T value) {
         if ((uint)index < (uint)_freeBitmap.Capacity && !_freeBitmap.Test(index)) {
-            value = _slabs[index >> _slabShift][index & _slabMask];
+            value = _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
             return true;
         }
         value = default!;
@@ -227,8 +213,8 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         int index = handle.Index;
         if ((uint)index < (uint)_freeBitmap.Capacity
             && !_freeBitmap.Test(index)
-            && _generations[index >> _slabShift][index & _slabMask] == handle.Generation) {
-            value = _slabs[index >> _slabShift][index & _slabMask];
+            && _generations[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask] == handle.Generation) {
+            value = _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
             return true;
         }
         value = default!;
@@ -252,7 +238,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         int index = handle.Index;
         return (uint)index < (uint)_freeBitmap.Capacity
             && !_freeBitmap.Test(index)
-            && _generations[index >> _slabShift][index & _slabMask] == handle.Generation;
+            && _generations[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask] == handle.Generation;
     }
 
     // ───────────────────── Validation ─────────────────────
@@ -270,7 +256,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         int index = handle.Index;
         if ((uint)index >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(handle), $"Handle index {index} must be in [0, {_freeBitmap.Capacity})."); }
         if (_freeBitmap.Test(index)) { throw new InvalidOperationException($"Slot {index} is not occupied (already freed or never allocated)."); }
-        byte storedGen = _generations[index >> _slabShift][index & _slabMask];
+        byte storedGen = _generations[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
         if (storedGen != handle.Generation) {
             throw new InvalidOperationException(
                 $"Stale handle: generation mismatch at index {index} (handle={handle.Generation}, stored={storedGen})."
@@ -289,9 +275,9 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
             Array.Resize(ref _generations, _generations.Length * 2);
         }
 
-        _slabs[slabIdx] = new T[_slabSize];
+        _slabs[slabIdx] = new T[SlabBitmap.SlabSize];
         // 仅首次分配 generation 数组；收缩后重新增长时复用已有数组（保留 generation 历史，防止 ABA）
-        _generations[slabIdx] ??= new byte[_slabSize];
+        _generations[slabIdx] ??= new byte[SlabBitmap.SlabSize];
         _freeBitmap.GrowSlabAllOne();
 
         return slabIdx;
@@ -303,8 +289,8 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     /// </summary>
     private void TryShrinkTrailingSlabs() {
         while (_freeBitmap.SlabCount >= 2
-               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 1) == _slabSize
-               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 2) == _slabSize) {
+               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 1) == SlabBitmap.SlabSize
+               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 2) == SlabBitmap.SlabSize) {
             int last = _freeBitmap.SlabCount - 1;
             _slabs[last] = null!;
             _freeBitmap.ShrinkLastSlab();
@@ -317,7 +303,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     /// </summary>
     public void TrimExcess() {
         while (_freeBitmap.SlabCount > 0
-               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 1) == _slabSize) {
+               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 1) == SlabBitmap.SlabSize) {
             int last = _freeBitmap.SlabCount - 1;
             _slabs[last] = null!;
             _freeBitmap.ShrinkLastSlab();

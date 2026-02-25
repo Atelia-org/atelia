@@ -9,8 +9,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void And_IntersectsBitmaps() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -32,8 +32,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void And_ExtraSlabs_AreClearedInThis() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllOne();
         a.GrowSlabAllOne(); // extra slab
         b.GrowSlabAllOne();
@@ -48,8 +48,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void Or_UnionsBitmaps() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -71,8 +71,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void Xor_SymmetricDifference() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -93,8 +93,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void AndNot_RemovesBitsFromOther() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllOne();
         b.GrowSlabAllZero();
 
@@ -114,8 +114,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void AndNot_ExtraSlabs_Unchanged() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllOne();
         a.GrowSlabAllOne();
         b.GrowSlabAllZero(); // b 只有 1 slab
@@ -130,8 +130,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void OrNot_SetsUnsetBitsFromOther() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -152,8 +152,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void OrNot_ExtraSlabs_Filled() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         a.GrowSlabAllZero(); // extra slab
         b.GrowSlabAllZero();
@@ -168,8 +168,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void Intersects_ReturnsTrue_WhenOverlap() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -183,8 +183,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void Intersects_ReturnsFalse_WhenDisjoint() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -198,8 +198,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void Intersects_ReturnsFalse_WhenBothEmpty() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -208,8 +208,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void Intersects_DifferentSlabCounts_OnlyCheckCommon() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         a.GrowSlabAllOne(); // extra slab with all 1s
         b.GrowSlabAllZero(); // only 1 slab
@@ -222,8 +222,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void IsSubsetOf_ReturnsTrue_WhenSubset() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -238,8 +238,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void IsSubsetOf_ReturnsFalse_WhenNotSubset() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -252,8 +252,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void IsSubsetOf_ReturnsFalse_WhenExtraSlabHasOnes() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         a.GrowSlabAllZero();
         b.GrowSlabAllOne(); // only 1 slab
@@ -265,8 +265,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void IsSubsetOf_ReturnsTrue_WhenEmpty() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -277,8 +277,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void IsDisjointWith_ReturnsTrue_WhenNoOverlap() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -290,8 +290,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void IsDisjointWith_ReturnsFalse_WhenOverlap() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -305,8 +305,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void CountAnd_ReturnsIntersectionCardinality() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -322,8 +322,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void CountAnd_ReturnsZero_WhenDisjoint() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -337,8 +337,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void CopyFrom_ReplicatesContent() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
@@ -357,8 +357,8 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void CopyFrom_UpdatesSummaryBitmaps() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllOne();
         b.GrowSlabAllZero();
 
@@ -370,12 +370,83 @@ partial class SlabBitmapTests {
 
     [Fact]
     public void CopyFrom_ThrowsOnSlabCountMismatch() {
-        var a = new SlabBitmap(Shift);
-        var b = new SlabBitmap(Shift);
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
         a.GrowSlabAllZero();
         a.GrowSlabAllZero();
         b.GrowSlabAllZero();
 
         Assert.Throws<ArgumentException>(() => a.CopyFrom(b));
+    }
+
+    // ───────────────────── Or: other has more slabs ─────────────────────
+
+    [Fact]
+    public void Or_OtherHasMoreSlabs_ExtraSlabsIgnored() {
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
+        a.GrowSlabAllZero(); // 1 slab
+        b.GrowSlabAllZero();
+        b.GrowSlabAllOne();  // b has 2 slabs, extra slab has all 1s
+
+        b.Set(5); // common slab bit
+        a.Or(b);
+
+        Assert.True(a.Test(5));
+        Assert.Equal(1, a.TotalOneCount());
+        Assert.Equal(1, a.SlabCount); // a not expanded
+    }
+
+    // ───────────────────── Xor: other has more slabs ─────────────────────
+
+    [Fact]
+    public void Xor_OtherHasMoreSlabs_ExtraSlabsIgnored() {
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
+        a.GrowSlabAllZero(); // 1 slab
+        b.GrowSlabAllZero();
+        b.GrowSlabAllOne();  // b has 2 slabs
+
+        a.Set(3);
+        b.Set(3);
+        b.Set(7);
+
+        a.Xor(b);
+
+        Assert.False(a.Test(3)); // both had it → cleared
+        Assert.True(a.Test(7));  // only b had it → set
+        Assert.Equal(1, a.TotalOneCount());
+        Assert.Equal(1, a.SlabCount); // a not expanded
+    }
+
+    // ───────────────────── IsSubsetOf: this has ones, other is empty (0 slabs) ─────────────────────
+
+    [Fact]
+    public void IsSubsetOf_ReturnsFalse_WhenThisHasOnes_OtherHasNoSlabs() {
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
+        a.GrowSlabAllZero();
+        a.Set(0);
+        // b has 0 slabs → common = 0 → a's slab is "extra" with ones
+
+        Assert.False(a.IsSubsetOf(b));
+    }
+
+    [Fact]
+    public void IsSubsetOf_ReturnsTrue_WhenBothHaveNoSlabs() {
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
+
+        Assert.True(a.IsSubsetOf(b)); // ∅ ⊆ ∅
+    }
+
+    [Fact]
+    public void IsSubsetOf_ReturnsTrue_WhenThisAllZero_OtherHasNoSlabs() {
+        var a = new SlabBitmap();
+        var b = new SlabBitmap();
+        a.GrowSlabAllZero(); // 1 slab, all zero
+        // b has 0 slabs → common = 0, a's extra slab has no ones
+
+        Assert.True(a.IsSubsetOf(b)); // {∅} ⊆ ∅ (no set bits)
     }
 }
