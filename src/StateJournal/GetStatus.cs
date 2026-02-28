@@ -4,9 +4,7 @@ public enum GetStatus : byte {
     Success = 0,
     PrecisionLost,
     OverflowedToInfinity,
-    OutOfRange,
-    SignednessChanged,
-    Truncated,
+    Saturated,
     TypeMismatch,
     NotFound,
 }

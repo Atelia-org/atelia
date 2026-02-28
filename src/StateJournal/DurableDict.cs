@@ -38,7 +38,6 @@ public enum UpsertStatus { Inserted, Updated }
 public interface IDict<in TKey, TValue> where TKey : notnull where TValue : notnull {
     UpsertStatus Upsert(TKey key, TValue? value);
     GetStatus Get(TKey key, out TValue? value);
-    GetStatus GetCoerced(TKey key, out TValue? value) => Get(key, out value);
 
     sealed TValue? this[TKey key] {
         set => Upsert(key, value);
@@ -97,22 +96,19 @@ where TKey : notnull {
     public TValue? Get<TValue>(TKey key) where TValue : notnull =>
         GetCore<TValue>(key, out var value) switch {
             GetStatus.Success => value,
-            GetStatus.NotFound => throw new KeyNotFoundException(key?.ToString()),
-            GetStatus.TypeMismatch => throw new InvalidCastException(
-                $"Key '{key}' exists but value is not of type {typeof(TValue).Name}"
-            ),
-            GetStatus.OutOfRange => throw new OverflowException(
-                $"Key '{key}' exists but value is out of range for type {typeof(TValue).Name}"
-            ),
             GetStatus.PrecisionLost => throw new InvalidCastException(
-                $"Key '{key}' exists but value would lose precision when cast to {typeof(TValue).Name}"
+                $"Value for key '{key}' cannot be cast to {typeof(TValue).Name} without losing precision."
             ),
-            GetStatus.Truncated => throw new InvalidCastException(
-                $"Key '{key}' exists but value would be truncated when cast to {typeof(TValue).Name}"
+            GetStatus.OverflowedToInfinity => throw new OverflowException(
+                $"Value for key '{key}' overflows to infinity when cast to {typeof(TValue).Name}."
             ),
-            GetStatus.SignednessChanged => throw new InvalidCastException(
-                $"Key '{key}' exists but value would change sign when cast to {typeof(TValue).Name}"
+            GetStatus.Saturated => throw new OverflowException(
+                $"Value for key '{key}' is out of bounds for {typeof(TValue).Name}."
             ),
+            GetStatus.TypeMismatch => throw new InvalidCastException(
+                $"Value for key '{key}' is not of type {typeof(TValue).Name}."
+            ),
+            GetStatus.NotFound => throw new KeyNotFoundException($"The given key '{key}' was not present in the dictionary."),
             _ => throw new UnreachableException()
         };
 
@@ -200,20 +196,6 @@ where TKey : notnull {
         }
         if (entry.Kind == DurableValueKind.NonnegativeInteger || entry.Kind == DurableValueKind.NegativeInteger) {
             return entry.Box.Get(out value);
-        }
-        value = default;
-        return GetStatus.TypeMismatch;
-    }
-
-    public GetStatus GetCoerced(TKey key, out int value) {
-        if (!_entries.TryGetValue(key, out var entry)) {
-            value = default;
-            return GetStatus.NotFound;
-        }
-        if (entry.Kind == DurableValueKind.NonnegativeInteger
-            || entry.Kind == DurableValueKind.NegativeInteger
-            || entry.Kind == DurableValueKind.FloatingPoint) {
-            return entry.Box.GetCoerced(out value);
         }
         value = default;
         return GetStatus.TypeMismatch;

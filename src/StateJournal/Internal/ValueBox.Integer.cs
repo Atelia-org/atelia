@@ -102,12 +102,12 @@ partial struct ValueBox {
             DurableValueKind kind = GetHeapKind();
             if (kind == DurableValueKind.NonnegativeInteger) {
                 ulong u = DecodeHeapNonnegInt();
-                if (u <= (ulong)long.MaxValue) {
-                    value = (long)u;
-                    return GetStatus.Success;
+                if (u > (ulong)long.MaxValue) {
+                    value = long.MaxValue;
+                    return GetStatus.Saturated;
                 }
-                value = default;
-                return GetStatus.OutOfRange;
+                value = (long)u;
+                return GetStatus.Success;
             }
             if (kind == DurableValueKind.NegativeInteger) {
                 value = DecodeHeapNegInt();
@@ -131,14 +131,14 @@ partial struct ValueBox {
                 return GetStatus.Success;
             }
             if (kind == DurableValueKind.NegativeInteger) {
-                value = default;
-                return GetStatus.OutOfRange;
+                value = ulong.MinValue;
+                return GetStatus.Saturated;
             }
         }
 
         if (lzc == LzcCode.InlineNegInt) {
-            value = default;
-            return GetStatus.OutOfRange;
+            value = ulong.MinValue;
+            return GetStatus.Saturated;
         }
 
         value = default;
@@ -152,8 +152,8 @@ partial struct ValueBox {
             return status;
         }
         if (l < int.MinValue || l > int.MaxValue) {
-            value = default;
-            return GetStatus.OutOfRange;
+            value = l < int.MinValue ? int.MinValue : int.MaxValue;
+            return GetStatus.Saturated;
         }
         value = (int)l;
         return GetStatus.Success;
@@ -166,8 +166,8 @@ partial struct ValueBox {
             return status;
         }
         if (u > uint.MaxValue) {
-            value = default;
-            return GetStatus.OutOfRange;
+            value = uint.MaxValue;
+            return GetStatus.Saturated;
         }
         value = (uint)u;
         return GetStatus.Success;
@@ -180,8 +180,8 @@ partial struct ValueBox {
             return status;
         }
         if (l < short.MinValue || l > short.MaxValue) {
-            value = default;
-            return GetStatus.OutOfRange;
+            value = l < short.MinValue ? short.MinValue : short.MaxValue;
+            return GetStatus.Saturated;
         }
         value = (short)l;
         return GetStatus.Success;
@@ -194,8 +194,8 @@ partial struct ValueBox {
             return status;
         }
         if (u > ushort.MaxValue) {
-            value = default;
-            return GetStatus.OutOfRange;
+            value = ushort.MaxValue;
+            return GetStatus.Saturated;
         }
         value = (ushort)u;
         return GetStatus.Success;
@@ -208,8 +208,8 @@ partial struct ValueBox {
             return status;
         }
         if (l < sbyte.MinValue || l > sbyte.MaxValue) {
-            value = default;
-            return GetStatus.OutOfRange;
+            value = l < sbyte.MinValue ? sbyte.MinValue : sbyte.MaxValue;
+            return GetStatus.Saturated;
         }
         value = (sbyte)l;
         return GetStatus.Success;
@@ -222,8 +222,8 @@ partial struct ValueBox {
             return status;
         }
         if (u > byte.MaxValue) {
-            value = default;
-            return GetStatus.OutOfRange;
+            value = byte.MaxValue;
+            return GetStatus.Saturated;
         }
         value = (byte)u;
         return GetStatus.Success;
