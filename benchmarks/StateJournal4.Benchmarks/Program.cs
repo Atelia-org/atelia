@@ -1,3 +1,3 @@
 using BenchmarkDotNet.Running;
 
-BenchmarkRunner.Run<SJValueLayoutBenchmarks>();
+BenchmarkSwitcher.FromAssembly(typeof(SJValueLayoutBenchmarks).Assembly).Run(args);
