@@ -1,0 +1,68 @@
+namespace Atelia.StateJournal.Internal;
+
+/// <summary>
+/// SJValue 的 LeadingZeroCount 编码。
+/// 值 = BitOperations.LeadingZeroCount(bits)。
+/// </summary>
+/// <remarks>
+/// 值域[0~64]
+/// </remarks>
+internal enum LzcCode : byte {
+    InlineDouble = 0,
+    InlineNonnegInt = 1,
+    InlineNegInt = 2,
+    // 3..23 未分配
+    HeapSlot = 64 - 1 - ValueBox.HeapKindBitCount - ValueBox.HeapHandleBitCount,
+    // 25..61 未分配
+    Boolean = 62,
+    Undefined = 63,
+    Null = 64,
+}
+
+/// <summary>从 <see cref="LzcCode"/> 分配推导出的位掩码常量。消除 ValueBox 编码/解码中的 magic number。
+/// 应避免跨类型依赖，表达式语义清晰。</summary>
+/// <remarks>
+/// 1. **Tag位索引定律**
+///   LZC 意味着从位 63 开始有多少个零。所以紧挨着首个必须为 1 的 Tag 位的序号，天然即是 `63 - LZC`。
+///   `DoubleTag(LZC=0)     = 1UL &lt;&lt; (63 - 0)`
+///   `NonnegIntTag(LZC=1)  = 1UL &lt;&lt; (63 - 1)`
+/// 2. **纯 Payload 位数定律**
+///   对于需要留开 Tag 位的正整数，剩下的有效截断位数必然是 `64 - LZC - 1`。
+/// 3. **负整数巧用补码定律**
+///   对于负整数 (LZC=2)，截取其底层原汁原味的二进制数据宽度是 `64 - LZC` 即 62 位。那为什么它没有显式去定义和 `|` 一个 `NegIntTag` 呢？因为 62 位的负数补码，其最高位（符号位）必然是 1，这个符号位的 1 极其巧妙且完美地兼任了对应的 Tag，使得截断以后 LZC 自然等于 2！不用任何修改！
+///   而这个用 `64 - LZC`（62位）表示的带符号数字，它的下界 `NegIntInlineMin` 自然就是 $-2^{62 - 1}$，因此写成 `-(1L &lt;&lt; (64 - LZC - 1))` 是极其精确的形式推导！
+/// </remarks>
+internal static class LzcConstants {
+    /// <summary>InlineFloatingPoint tag bit (bit63=1 → LZC=0)。</summary>
+    internal const ulong DoubleTag = 1UL << (63 - (int)LzcCode.InlineDouble);
+
+    /// <summary>InlineNonnegativeInteger tag bit (bit62=1 → LZC=1)。</summary>
+    internal const ulong NonnegIntTag = 1UL << (63 - (int)LzcCode.InlineNonnegInt);
+
+    /// <summary>InlineNonnegativeInteger 的 inline 容量上界（不含）：[0, 2^62)。</summary>
+    internal const ulong NonnegIntInlineCap = 1UL << (64 - (int)LzcCode.InlineNonnegInt - 1);
+
+    /// <summary>清除 tag 位，保留 bits[61..0]。用于非负整数 inline 解码。</summary>
+    internal const ulong NonnegIntPayloadMask = NonnegIntInlineCap - 1;
+
+    /// <summary>清除高 <see cref="LzcCode.InlineNegInt"/> 位，保留 bits[61..0]。用于负整数 inline 编码。</summary>
+    internal const ulong NegIntPayloadMask = (1UL << (64 - (int)LzcCode.InlineNegInt)) - 1;
+
+    /// <summary>恢复高 <see cref="LzcCode.InlineNegInt"/> 位（0xC000…）。用于负整数 inline 解码。</summary>
+    internal const ulong NegIntSignRestore = ~NegIntPayloadMask;
+
+    /// <summary>InlineNegativeInteger 的 inline 下界（含）：-2^61。</summary>
+    internal const long NegIntInlineMin = -(1L << (64 - (int)LzcCode.InlineNegInt - 1));
+
+    // ── Half 值域边界 ────────────────────────────────────────
+    // Half.MaxValue = 65504，inline 整数可达 2^62，需要 OutOfRange 守卫。
+    // double/float 的值域远大于 inline 整数域，无需 OutOfRange 检查。
+    //
+    // 精度判定统一使用 LZC+TZC 无分支公式，不再需要每种浮点类型的范围常量。
+    // 参见 ValueBox.IsExactlyRepresentable()。
+
+    /// <summary>Half 值域上界（含）。即 Half.MaxValue = 65504。超出此范围的整数无法用 Half 表示（OutOfRange）。</summary>
+    internal const long FP16MaxValue = 65504; // 有意避免的Half的歧义'类型名 vs 一半'
+    /// <summary>Half 值域下界（含）。即 -65504。</summary>
+    internal const long FP16MinValue = -65504;
+}
