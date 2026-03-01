@@ -57,6 +57,8 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     public T this[SlotHandle handle] {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => _pool[handle];
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        set => _pool[handle] = value;
     }
 
     /// <summary>尝试读取 handle 对应的值。</summary>
@@ -66,6 +68,23 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     /// <summary>验证 handle 是否有效（在范围内、slot 已占用、且 generation 匹配）。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Validate(SlotHandle handle) => _pool.Validate(handle);
+
+    // ───────────────────── Manual Free ─────────────────────
+
+    /// <summary>
+    /// 手动释放一个独占 slot。O(1)，随后可能触发尾部 slab 收缩。
+    /// </summary>
+    /// <remarks>
+    /// 适用于独占所有权场景（如数值 Slot），在值被替换时可立即回收旧 Slot，
+    /// 无需等到下一轮 Mark-Sweep。在 mark 阶段调用也是安全的：
+    /// Sweep 的 <c>Or(freeBitmap)</c> 会将已释放 slot 标为 safe，不会 double-free。
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">handle 超出范围。</exception>
+    /// <exception cref="InvalidOperationException">generation 不匹配（过期 Handle）或 double-free。</exception>
+    public void Free(SlotHandle handle) {
+        _pool.Free(handle);
+        SyncShrink();
+    }
 
     // ───────────────────── Mark-Sweep GC ─────────────────────
 
