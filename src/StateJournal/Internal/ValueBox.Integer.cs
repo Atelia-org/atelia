@@ -5,6 +5,11 @@ using Atelia.StateJournal.Pools;
 
 namespace Atelia.StateJournal;
 
+// ai:test `tests/StateJournal.Tests/Internal/ValueBoxInt64Tests.cs`
+// ai:test `tests/StateJournal.Tests/Internal/ValueBoxUInt64Tests.cs`
+// ai:test `tests/StateJournal.Tests/Internal/ValueBoxInt32Tests.cs`
+// ai:test `tests/StateJournal.Tests/Internal/ValueBoxUnt32Tests.cs`
+// ai:test `tests/StateJournal.Tests/Internal/ValueBoxSmallIntTests.cs`
 partial struct ValueBox {
     #region From integer
 
