@@ -16,6 +16,12 @@ namespace Atelia.StateJournal;
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 internal readonly partial struct ValueBox {
     internal const int HeapKindBitCount = 7, HeapHandleBitCount = 32;
+    internal const uint TagHeapKindFloat = (uint)(LzcConstants.HeapSlotTag >> HeapHandleBitCount) | (uint)DurableValueKind.FloatingPoint;
+    internal const uint TagHeapKindNonnegInt = (uint)(LzcConstants.HeapSlotTag >> HeapHandleBitCount) | (uint)DurableValueKind.NonnegativeInteger;
+    internal const uint TagHeapKindNegInt = (uint)(LzcConstants.HeapSlotTag >> HeapHandleBitCount) | (uint)DurableValueKind.NegativeInteger;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static bool IsNumericTagAndKind(uint tagAndKind) => tagAndKind is TagHeapKindFloat or TagHeapKindNonnegInt or TagHeapKindNegInt;
+
     private readonly ulong _bits;
 
     internal ValueBox(ulong bits) => _bits = bits;
@@ -43,14 +49,18 @@ internal readonly partial struct ValueBox {
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool TryGetBits64Handle(out SlotHandle handle) {
-        if (GetLZC() == LzcCode.HeapSlot) {
-            DurableValueKind kind = GetHeapKind();
-            if (kind is DurableValueKind.NonnegativeInteger
-                     or DurableValueKind.NegativeInteger
-                     or DurableValueKind.FloatingPoint) {
-                handle = GetHeapHandle();
-                return true;
-            }
+        // if (GetLZC() == LzcCode.HeapSlot) {
+        //     DurableValueKind kind = GetHeapKind();
+        //     if (kind is DurableValueKind.NonnegativeInteger
+        //              or DurableValueKind.NegativeInteger
+        //              or DurableValueKind.FloatingPoint) {
+        //         handle = GetHeapHandle();
+        //         return true;
+        //     }
+        // }
+        if (IsNumericTagAndKind((uint)(_bits >> HeapHandleBitCount))) {
+            handle = GetHeapHandle();
+            return true;
         }
         handle = default;
         return false;
