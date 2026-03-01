@@ -39,6 +39,9 @@ internal static class LzcConstants {
     /// <summary>InlineNonnegativeInteger tag bit (bit62=1 → LZC=1)。</summary>
     internal const ulong NonnegIntTag = 1UL << (63 - (int)LzcCode.InlineNonnegInt);
 
+    /// <summary>HeapSlot tag bit (bit39=1 → LZC=24)。编码堆分配软指针时必须置位。</summary>
+    internal const ulong HeapSlotTag = 1UL << (63 - (int)LzcCode.HeapSlot);
+
     /// <summary>InlineNonnegativeInteger 的 inline 容量上界（不含）：[0, 2^62)。</summary>
     internal const ulong NonnegIntInlineCap = 1UL << (64 - (int)LzcCode.InlineNonnegInt - 1);
 

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Atelia.StateJournal.Internal;
+using Atelia.StateJournal.Pools;
 
 namespace Atelia.StateJournal;
 
@@ -24,6 +25,7 @@ partial struct ValueBox {
     }
 
     /// <summary>float/Half → double 拓宽后低位必然有 29/42 个 0，LSB 必然为 0，无需 RTO sticky bit。对 NaN payload 放宽断言以容忍某些平台 (如 Wasm) 的非确定性行为。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ValueBox FromInlineableFloatingPoint(double value) {
         ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
         Debug.Assert(((doubleBits & 1) == 0) || double.IsNaN(value));
@@ -184,5 +186,46 @@ partial struct ValueBox {
         value = default;
         return GetIssue.TypeMismatch;
     }
+    #endregion
+    #region Exclusive set
+    // ai:test `atelia/tests/StateJournal.Tests/Internal/ValueBoxExclusiveSetTests.cs`
+
+    /// <summary>
+    /// 独占更新：将 ValueBox 覆写为指定的 double 值（lossy round-to-odd 编码）。
+    /// <see cref="FromRoundedDouble"/> 始终 inline，因此只需清理旧 slot。
+    /// </summary>
+    internal static void ExclusiveSetRoundedDouble(ref ValueBox box, double value) {
+        FreeOldBits64IfNeeded(box);
+        ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
+        box = new((doubleBits >> 1) | (doubleBits & 1) | LzcConstants.DoubleTag);
+    }
+
+    /// <summary>
+    /// 独占更新：将 ValueBox 覆写为指定的 double 值（无损编码）。
+    /// 当尾数 LSB=1 时需要堆分配，此时尝试 inplace 复用旧 Bits64 Slot。
+    /// </summary>
+    internal static void ExclusiveSetExactDouble(ref ValueBox box, double value) {
+        ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
+        if ((doubleBits & 1) == 0) {
+            FreeOldBits64IfNeeded(box);
+            box = new((doubleBits >> 1) | LzcConstants.DoubleTag);
+        } else {
+            SlotHandle h = StoreOrReuseBits64(box, doubleBits);
+            box = EncodeHeapSlot(DurableValueKind.FloatingPoint, h);
+        }
+    }
+
+    /// <summary>独占更新为 float。始终 inline。</summary>
+    internal static void ExclusiveSetSingle(ref ValueBox box, float value) {
+        FreeOldBits64IfNeeded(box);
+        box = FromInlineableFloatingPoint(value);
+    }
+
+    /// <summary>独占更新为 Half。始终 inline。</summary>
+    internal static void ExclusiveSetHalf(ref ValueBox box, Half value) {
+        FreeOldBits64IfNeeded(box);
+        box = FromInlineableFloatingPoint((double)value);
+    }
+
     #endregion
 }

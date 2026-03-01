@@ -242,4 +242,78 @@ partial struct ValueBox {
     }
 
     #endregion
+    #region Exclusive set
+    // ai:test `atelia/tests/StateJournal.Tests/Internal/ValueBoxExclusiveSetTests.cs`
+
+    /// <summary>
+    /// 独占更新：将 ValueBox 覆写为指定的 long 值。
+    /// 若旧值与新值都使用 <see cref="ValuePools.Bits64"/>，则 inplace 修改 Slot 中的值，
+    /// 避免 Free + Store 的开销。其他情况下清理旧 Slot（如有）并编码新值。
+    /// </summary>
+    internal static void ExclusiveSetInt64(ref ValueBox box, long value) {
+        ulong u = unchecked((ulong)value);
+        if (value >= 0) {
+            if (u < LzcConstants.NonnegIntInlineCap) {
+                FreeOldBits64IfNeeded(box);
+                box = new(u | LzcConstants.NonnegIntTag);
+                return;
+            }
+            SlotHandle h = StoreOrReuseBits64(box, u);
+            box = EncodeHeapSlot(DurableValueKind.NonnegativeInteger, h);
+        } else {
+            if (value >= LzcConstants.NegIntInlineMin) {
+                FreeOldBits64IfNeeded(box);
+                box = new(u & LzcConstants.NegIntPayloadMask);
+                return;
+            }
+            SlotHandle h = StoreOrReuseBits64(box, u);
+            box = EncodeHeapSlot(DurableValueKind.NegativeInteger, h);
+        }
+    }
+
+    /// <summary>
+    /// 独占更新：将 ValueBox 覆写为指定的 ulong 值。
+    /// 逻辑同 <see cref="ExclusiveSetInt64"/>，仅无负数路径。
+    /// </summary>
+    internal static void ExclusiveSetUInt64(ref ValueBox box, ulong value) {
+        if (value < LzcConstants.NonnegIntInlineCap) {
+            FreeOldBits64IfNeeded(box);
+            box = new(value | LzcConstants.NonnegIntTag);
+            return;
+        }
+        SlotHandle h = StoreOrReuseBits64(box, value);
+        box = EncodeHeapSlot(DurableValueKind.NonnegativeInteger, h);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ExclusiveSetInlineSigned(ref ValueBox box, long value) {
+        FreeOldBits64IfNeeded(box);
+        box = FromInlineableSigned(value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ExclusiveSetInlineUnsigned(ref ValueBox box, ulong value) {
+        FreeOldBits64IfNeeded(box);
+        box = FromInlineableUnsigned(value);
+    }
+
+    /// <summary>独占更新为 int。始终 inline。</summary>
+    internal static void ExclusiveSetInt32(ref ValueBox box, int value) => ExclusiveSetInlineSigned(ref box, value);
+
+    /// <summary>独占更新为 uint。始终 inline。</summary>
+    internal static void ExclusiveSetUInt32(ref ValueBox box, uint value) => ExclusiveSetInlineUnsigned(ref box, value);
+
+    /// <summary>独占更新为 short。始终 inline。</summary>
+    internal static void ExclusiveSetInt16(ref ValueBox box, short value) => ExclusiveSetInlineSigned(ref box, value);
+
+    /// <summary>独占更新为 ushort。始终 inline。</summary>
+    internal static void ExclusiveSetUInt16(ref ValueBox box, ushort value) => ExclusiveSetInlineUnsigned(ref box, value);
+
+    /// <summary>独占更新为 sbyte。始终 inline。</summary>
+    internal static void ExclusiveSetSByte(ref ValueBox box, sbyte value) => ExclusiveSetInlineSigned(ref box, value);
+
+    /// <summary>独占更新为 byte。始终 inline。</summary>
+    internal static void ExclusiveSetByte(ref ValueBox box, byte value) => ExclusiveSetInlineUnsigned(ref box, value);
+
+    #endregion
 }
