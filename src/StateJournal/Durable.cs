@@ -4,10 +4,8 @@ namespace Atelia.StateJournal;
 
 /// <summary>
 /// StateJournal 容器的统一工厂门面。
-/// <para>
 /// 所有 SJ 系列容器（<see cref="DurableDict{TKey,TValue}"/>、<see cref="DurableList{T}"/> 等）
 /// 均通过此类创建，工厂方法会在运行时验证泛型参数的合法性。
-/// </para>
 /// </summary>
 /// <example>
 /// <code>

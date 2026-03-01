@@ -56,16 +56,4 @@ internal static class LzcConstants {
 
     /// <summary>InlineNegativeInteger 的 inline 下界（含）：-2^61。</summary>
     internal const long NegIntInlineMin = -(1L << (64 - (int)LzcCode.InlineNegInt - 1));
-
-    // ── Half 值域边界 ────────────────────────────────────────
-    // Half.MaxValue = 65504，inline 整数可达 2^62，需要 OutOfRange 守卫。
-    // double/float 的值域远大于 inline 整数域，无需 OutOfRange 检查。
-    //
-    // 精度判定统一使用 LZC+TZC 无分支公式，不再需要每种浮点类型的范围常量。
-    // 参见 ValueBox.IsExactlyRepresentable()。
-
-    /// <summary>Half 值域上界（含）。即 Half.MaxValue = 65504。超出此范围的整数无法用 Half 表示（OutOfRange）。</summary>
-    internal const long FP16MaxValue = 65504; // 有意避免的Half的歧义'类型名 vs 一半'
-    /// <summary>Half 值域下界（含）。即 -65504。</summary>
-    internal const long FP16MinValue = -65504;
 }

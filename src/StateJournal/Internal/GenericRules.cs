@@ -4,10 +4,8 @@ namespace Atelia.StateJournal.Internal;
 
 /// <summary>
 /// 对 Durable 系列泛型容器的类型参数进行运行时合法性验证。
-/// <para>
 /// C# 泛型约束无法逐一列举受支持的类型，因此由此类在运行时递归检查。
 /// 支持嵌套泛型（如 <c>DurableDict&lt;int, DurableDict&lt;double, int&gt;&gt;</c>）。
-/// </para>
 /// </summary>
 internal static class GenericRules {
 
