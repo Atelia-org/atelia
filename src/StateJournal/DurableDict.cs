@@ -37,26 +37,26 @@ public enum UpsertStatus { Inserted, Updated }
 
 public interface IDict<in TKey, TValue> where TKey : notnull where TValue : notnull {
     UpsertStatus Upsert(TKey key, TValue? value);
-    GetStatus Get(TKey key, out TValue? value);
+    GetIssue Get(TKey key, out TValue? value);
 
     sealed TValue? this[TKey key] {
         set => Upsert(key, value);
-        get => Get(key, out TValue? value) == GetStatus.Success ? value : throw new KeyNotFoundException();
+        get => Get(key, out TValue? value) == GetIssue.None ? value : throw new KeyNotFoundException();
     }
 }
 
 public static class DictExtensions {
     public static bool TryGet<TKey, TValue>(this IDict<TKey, TValue> dict, TKey key, out TValue? value)
         where TKey : notnull where TValue : notnull
-        => dict.Get(key, out value) == GetStatus.Success;
+        => dict.Get(key, out value) == GetIssue.None;
 
     public static TValue? GetOr<TKey, TValue>(this IDict<TKey, TValue> dict, TKey key, TValue? defaultValue)
         where TKey : notnull where TValue : notnull
-        => dict.Get(key, out var value) == GetStatus.Success ? value : defaultValue;
+        => dict.Get(key, out var value) == GetIssue.None ? value : defaultValue;
 
     public static TValue? GetOr<TKey, TValue>(this IDict<TKey, TValue> dict, TKey key, Func<TValue?> factory)
         where TKey : notnull where TValue : notnull
-        => dict.Get(key, out var value) == GetStatus.Success ? value : factory();
+        => dict.Get(key, out var value) == GetIssue.None ? value : factory();
 }
 
 /// <summary>替代<see cref="DurableDict{TKey,DurableValue}"/></summary>
@@ -84,7 +84,7 @@ where TKey : notnull {
         Ref = value,
     };
 
-    // ── Typed Read API ──────────────────────────────────────────
+    // ── Typed Get API ──────────────────────────────────────────
 
     /// <summary>
     /// 获取指定键的值，以请求的类型 <typeparamref name="TValue"/> 返回。
@@ -95,34 +95,34 @@ where TKey : notnull {
     /// <exception cref="NotSupportedException"><typeparamref name="TValue"/> 不是受支持的值类型。</exception>
     public TValue? Get<TValue>(TKey key) where TValue : notnull =>
         GetCore<TValue>(key, out var value) switch {
-            GetStatus.Success => value,
-            GetStatus.PrecisionLost => throw new InvalidCastException(
+            GetIssue.None => value,
+            GetIssue.PrecisionLost => throw new InvalidCastException(
                 $"Value for key '{key}' cannot be cast to {typeof(TValue).Name} without losing precision."
             ),
-            GetStatus.OverflowedToInfinity => throw new OverflowException(
+            GetIssue.OverflowedToInfinity => throw new OverflowException(
                 $"Value for key '{key}' overflows to infinity when cast to {typeof(TValue).Name}."
             ),
-            GetStatus.Saturated => throw new OverflowException(
+            GetIssue.Saturated => throw new OverflowException(
                 $"Value for key '{key}' is out of bounds for {typeof(TValue).Name}."
             ),
-            GetStatus.TypeMismatch => throw new InvalidCastException(
+            GetIssue.TypeMismatch => throw new InvalidCastException(
                 $"Value for key '{key}' is not of type {typeof(TValue).Name}."
             ),
-            GetStatus.NotFound => throw new KeyNotFoundException($"The given key '{key}' was not present in the dictionary."),
+            GetIssue.NotFound => throw new KeyNotFoundException($"The given key '{key}' was not present in the dictionary."),
             _ => throw new UnreachableException()
         };
 
     /// <summary>尝试获取值。支持容器子类型。</summary>
     public bool TryGet<TValue>(TKey key, out TValue? value) where TValue : notnull =>
-        GetCore(key, out value) == GetStatus.Success;
+        GetCore(key, out value) == GetIssue.None;
 
     /// <summary>获取值或返回默认值。支持容器子类型。</summary>
     public TValue? GetOr<TValue>(TKey key, TValue? defaultValue) where TValue : notnull =>
-        GetCore<TValue>(key, out var value) == GetStatus.Success ? value : defaultValue;
+        GetCore<TValue>(key, out var value) == GetIssue.None ? value : defaultValue;
 
     /// <summary>获取值或调用工厂获取默认值。支持容器子类型。</summary>
     public TValue? GetOr<TValue>(TKey key, Func<TValue?> factory) where TValue : notnull =>
-        GetCore<TValue>(key, out var value) == GetStatus.Success ? value : factory();
+        GetCore<TValue>(key, out var value) == GetIssue.None ? value : factory();
 
     // ── Convenience: Nested container read ──────────────────────
 
@@ -141,30 +141,30 @@ where TKey : notnull {
 
     // ── Get routing core ────────────────────────────────────────
 
-    private GetStatus GetCore<TValue>(TKey key, out TValue? value) where TValue : notnull {
+    private GetIssue GetCore<TValue>(TKey key, out TValue? value) where TValue : notnull {
         // Path 1: Direct interface match (int/double/bool/string/DurableDictBase/DurableListBase)
         if (this is IDict<TKey, TValue> typed) { return typed.Get(key, out value); }
 
         // Path 2: Subtypes of DurableDictBase (e.g., DurableDict<string>)
         if (typeof(DurableDictBase).IsAssignableFrom(typeof(TValue))) {
             var status = ((IDict<TKey, DurableDictBase>)this).Get(key, out var baseVal);
-            if (status == GetStatus.Success && baseVal is TValue castVal) {
+            if (status == GetIssue.None && baseVal is TValue castVal) {
                 value = castVal;
-                return GetStatus.Success;
+                return GetIssue.None;
             }
             value = default;
-            return status == GetStatus.Success ? GetStatus.TypeMismatch : status;
+            return status == GetIssue.None ? GetIssue.TypeMismatch : status;
         }
 
         // Path 3: Subtypes of DurableListBase (e.g., DurableList<int>)
         if (typeof(DurableListBase).IsAssignableFrom(typeof(TValue))) {
             var status = ((IDict<TKey, DurableListBase>)this).Get(key, out var baseVal);
-            if (status == GetStatus.Success && baseVal is TValue castVal) {
+            if (status == GetIssue.None && baseVal is TValue castVal) {
                 value = castVal;
-                return GetStatus.Success;
+                return GetIssue.None;
             }
             value = default;
-            return status == GetStatus.Success ? GetStatus.TypeMismatch : status;
+            return status == GetIssue.None ? GetIssue.TypeMismatch : status;
         }
 
         throw new NotSupportedException(
@@ -189,22 +189,22 @@ where TKey : notnull {
 
     // ── IDict<TKey, T> implementations ──────────────────────────
 
-    public GetStatus Get(TKey key, out int value) {
+    public GetIssue Get(TKey key, out int value) {
         if (!_entries.TryGetValue(key, out var entry)) {
             value = default;
-            return GetStatus.NotFound;
+            return GetIssue.NotFound;
         }
         if (entry.Kind == DurableValueKind.NonnegativeInteger || entry.Kind == DurableValueKind.NegativeInteger) {
             return entry.Box.Get(out value);
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
 
-    public GetStatus Get(TKey key, out double value) {
+    public GetIssue Get(TKey key, out double value) {
         if (!_entries.TryGetValue(key, out var entry)) {
             value = default;
-            return GetStatus.NotFound;
+            return GetIssue.NotFound;
         }
         if (entry.Kind == DurableValueKind.FloatingPoint
             || entry.Kind == DurableValueKind.NonnegativeInteger
@@ -212,7 +212,7 @@ where TKey : notnull {
             return entry.Box.Get(out value);
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
 
     public UpsertStatus Upsert(TKey key, int value) {
@@ -234,63 +234,63 @@ where TKey : notnull {
         return UpsertEntry(key, CreateReferenceEntry(DurableValueKind.String, value));
     }
 
-    public GetStatus Get(TKey key, out string? value) {
+    public GetIssue Get(TKey key, out string? value) {
         if (!_entries.TryGetValue(key, out var entry)) {
             value = default;
-            return GetStatus.NotFound;
+            return GetIssue.NotFound;
         }
         if (entry.Kind == DurableValueKind.Null) {
             value = null;
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         if (entry.Kind == DurableValueKind.String && entry.Ref is string s) {
             value = s;
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
 
     public UpsertStatus Upsert(TKey key, DurableDictBase? value) {
         return UpsertEntry(key, CreateReferenceEntry(DurableValueKind.Undefined, value));
     }
 
-    public GetStatus Get(TKey key, out DurableDictBase? value) {
+    public GetIssue Get(TKey key, out DurableDictBase? value) {
         if (!_entries.TryGetValue(key, out var entry)) {
             value = default;
-            return GetStatus.NotFound;
+            return GetIssue.NotFound;
         }
         if (entry.Kind == DurableValueKind.Null) {
             value = null;
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         if (entry.Ref is DurableDictBase dict) {
             value = dict;
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
 
     public UpsertStatus Upsert(TKey key, DurableListBase? value) {
         return UpsertEntry(key, CreateReferenceEntry(DurableValueKind.Undefined, value));
     }
 
-    public GetStatus Get(TKey key, out DurableListBase? value) {
+    public GetIssue Get(TKey key, out DurableListBase? value) {
         if (!_entries.TryGetValue(key, out var entry)) {
             value = default;
-            return GetStatus.NotFound;
+            return GetIssue.NotFound;
         }
         if (entry.Kind == DurableValueKind.Null) {
             value = null;
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         if (entry.Ref is DurableListBase list) {
             value = list;
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
 
     public UpsertStatus Upsert(TKey key, bool value) {
@@ -300,17 +300,17 @@ where TKey : notnull {
         });
     }
 
-    public GetStatus Get(TKey key, out bool value) {
+    public GetIssue Get(TKey key, out bool value) {
         if (!_entries.TryGetValue(key, out var entry)) {
             value = default;
-            return GetStatus.NotFound;
+            return GetIssue.NotFound;
         }
         if (entry.Kind == DurableValueKind.Boolean && entry.Ref is bool b) {
             value = b;
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
 
     #region exact double
@@ -344,13 +344,13 @@ where TKey : notnull where TValue : notnull {
 
     // ── IDict<TKey, TValue> ─────────────────────────────────────
 
-    public GetStatus Get(TKey key, out TValue? value) {
+    public GetIssue Get(TKey key, out TValue? value) {
         if (_entries.TryGetValue(key, out var stored)) {
             value = stored;
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         value = default;
-        return GetStatus.NotFound;
+        return GetIssue.NotFound;
     }
 
     public UpsertStatus Upsert(TKey key, TValue? value) {
@@ -386,7 +386,7 @@ internal class DictDemo {
         model.Upsert("items", Durable.List<int>());
         model.Upsert("metadata", Durable.Dict<string>());
 
-        // ── Read: Get<T> 系列 ───────────────────────────────────
+        // ── Get: Get<T> 系列 ───────────────────────────────────
         string? title = model.Get<string>("title");
         int wc = model.Get<int>("wordCount");
 

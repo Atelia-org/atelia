@@ -7,7 +7,7 @@ using Atelia.StateJournal.Internal;
 namespace Atelia.StateJournal;
 
 partial struct ValueBox {
-    #region Encode Float
+    #region From floating point
     /// <summary>将 double编码为 ValueBox。采用 round-to-odd舍入至 52-bit尾数（±1 ULP）。这是 double的推荐主路径。</summary>
     public static ValueBox FromRoundedDouble(double value) {
         ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
@@ -33,7 +33,7 @@ partial struct ValueBox {
     public static ValueBox FromSingle(float value) => FromInlineableFloatingPoint(value);
     public static ValueBox FromHalf(Half value) => FromInlineableFloatingPoint((double)value);
     #endregion
-    #region Decode Float
+    #region Get as floating point
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private double DecodeInlineDouble() {
         Debug.Assert(GetLZC() == LzcCode.InlineDouble);
@@ -60,61 +60,61 @@ partial struct ValueBox {
     private static bool IsExactAsHalf(ulong magnitude) => BitOperations.LeadingZeroCount(magnitude) + BitOperations.TrailingZeroCount(magnitude) >= 64 - 11;
 
     /// <summary>将 double 窄化为 float。处理溢出（→Infinity）和精度损失。</summary>
-    private static GetStatus NarrowToSingle(double d, out float value) {
+    private static GetIssue NarrowToSingle(double d, out float value) {
         value = (float)d; // 有意在发生溢出和精度损失时依然返回显式类型转换语义下的值
         if (float.IsInfinity(value) && !double.IsInfinity(d)) {
-            return GetStatus.OverflowedToInfinity;
+            return GetIssue.OverflowedToInfinity;
         }
-        return ((double)value == d || double.IsNaN(d)) ? GetStatus.Success : GetStatus.PrecisionLost;
+        return ((double)value == d || double.IsNaN(d)) ? GetIssue.None : GetIssue.PrecisionLost;
     }
 
     /// <summary>将 double 窄化为 Half。处理溢出（→Infinity）和精度损失。</summary>
-    private static GetStatus NarrowToHalf(double d, out Half value) {
+    private static GetIssue NarrowToHalf(double d, out Half value) {
         value = (Half)d; // 有意在发生溢出和精度损失时依然返回显式类型转换语义下的值
         if (Half.IsInfinity(value) && !double.IsInfinity(d)) {
-            return GetStatus.OverflowedToInfinity;
+            return GetIssue.OverflowedToInfinity;
         }
-        return ((double)value == d || double.IsNaN(d)) ? GetStatus.Success : GetStatus.PrecisionLost;
+        return ((double)value == d || double.IsNaN(d)) ? GetIssue.None : GetIssue.PrecisionLost;
     }
 
-    public GetStatus Get(out double value) {
+    public GetIssue Get(out double value) {
         LzcCode lzc = GetLZC();
         if (lzc == LzcCode.InlineDouble) {
             value = DecodeInlineDouble();
-            return GetStatus.Success;
+            return GetIssue.None;
         }
         if (lzc == LzcCode.InlineNonnegInt) {
             ulong u = DecodeInlineNonnegInt();
             value = (double)(long)u; // 因为inline值小于62bit所以可以先转signed再转floating point
-            return IsExactAsDouble(u) ? GetStatus.Success : GetStatus.PrecisionLost;
+            return IsExactAsDouble(u) ? GetIssue.None : GetIssue.PrecisionLost;
         }
         if (lzc == LzcCode.InlineNegInt) {
             long n = DecodeInlineNegInt();
             value = (double)n;
-            return IsExactAsDouble((ulong)-n) ? GetStatus.Success : GetStatus.PrecisionLost;
+            return IsExactAsDouble((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;
         }
         if (lzc == LzcCode.HeapSlot) {
             DurableValueKind kind = GetHeapKind();
             if (kind == DurableValueKind.FloatingPoint) {
                 value = DecodeHeapDouble();
-                return GetStatus.Success;
+                return GetIssue.None;
             }
             if (kind == DurableValueKind.NonnegativeInteger) {
                 ulong u = DecodeHeapNonnegInt();
                 value = (double)u; // 堆中正整数MSB可能为1，不能先转signed
-                return IsExactAsDouble(u) ? GetStatus.Success : GetStatus.PrecisionLost;
+                return IsExactAsDouble(u) ? GetIssue.None : GetIssue.PrecisionLost;
             }
             if (kind == DurableValueKind.NegativeInteger) {
                 long n = DecodeHeapNegInt();
                 value = (double)n;
-                return IsExactAsDouble((ulong)-n) ? GetStatus.Success : GetStatus.PrecisionLost;
+                return IsExactAsDouble((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;
             }
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
 
-    public GetStatus Get(out float value) {
+    public GetIssue Get(out float value) {
         LzcCode lzc = GetLZC();
         if (lzc == LzcCode.InlineDouble) {
             return NarrowToSingle(DecodeInlineDouble(), out value);
@@ -122,12 +122,12 @@ partial struct ValueBox {
         if (lzc == LzcCode.InlineNonnegInt) {
             ulong u = DecodeInlineNonnegInt();
             value = (float)(long)u; // 因为inline值小于62bit所以可以先转signed再转floating point
-            return IsExactAsSingle(u) ? GetStatus.Success : GetStatus.PrecisionLost;
+            return IsExactAsSingle(u) ? GetIssue.None : GetIssue.PrecisionLost;
         }
         if (lzc == LzcCode.InlineNegInt) {
             long n = DecodeInlineNegInt();
             value = (float)n;
-            return IsExactAsSingle((ulong)-n) ? GetStatus.Success : GetStatus.PrecisionLost;
+            return IsExactAsSingle((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;
         }
         if (lzc == LzcCode.HeapSlot) {
             DurableValueKind kind = GetHeapKind();
@@ -137,20 +137,20 @@ partial struct ValueBox {
             if (kind == DurableValueKind.NonnegativeInteger) {
                 ulong u = DecodeHeapNonnegInt();
                 value = (float)u; // 堆中正整数MSB可能为1，不能先转signed
-                return IsExactAsSingle(u) ? GetStatus.Success : GetStatus.PrecisionLost;
+                return IsExactAsSingle(u) ? GetIssue.None : GetIssue.PrecisionLost;
             }
             if (kind == DurableValueKind.NegativeInteger) {
                 long n = DecodeHeapNegInt();
                 value = (float)n;
                 // 当 n = long.MinValue (-2⁶³) 时，-n 在 long 中溢出回到 long.MinValue，但 (ulong)long.MinValue = 2⁶³ 恰好是正确的 magnitude。
-                return IsExactAsSingle((ulong)-n) ? GetStatus.Success : GetStatus.PrecisionLost;
+                return IsExactAsSingle((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;
             }
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
 
-    public GetStatus Get(out Half value) {
+    public GetIssue Get(out Half value) {
         LzcCode lzc = GetLZC();
         if (lzc == LzcCode.InlineDouble) {
             return NarrowToHalf(DecodeInlineDouble(), out value);
@@ -158,14 +158,14 @@ partial struct ValueBox {
         if (lzc == LzcCode.InlineNonnegInt) {
             ulong u = DecodeInlineNonnegInt();
             value = (Half)(long)u; // 因为inline值小于62bit所以可以先转signed再转floating point
-            if (Half.IsInfinity(value)) { return GetStatus.OverflowedToInfinity; }
-            return IsExactAsHalf(u) ? GetStatus.Success : GetStatus.PrecisionLost;
+            if (Half.IsInfinity(value)) { return GetIssue.OverflowedToInfinity; }
+            return IsExactAsHalf(u) ? GetIssue.None : GetIssue.PrecisionLost;
         }
         if (lzc == LzcCode.InlineNegInt) {
             long n = DecodeInlineNegInt();
             value = (Half)n;
-            if (Half.IsInfinity(value)) { return GetStatus.OverflowedToInfinity; }
-            return IsExactAsHalf((ulong)-n) ? GetStatus.Success : GetStatus.PrecisionLost;
+            if (Half.IsInfinity(value)) { return GetIssue.OverflowedToInfinity; }
+            return IsExactAsHalf((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;
         }
         if (lzc == LzcCode.HeapSlot) {
             DurableValueKind kind = GetHeapKind();
@@ -174,15 +174,15 @@ partial struct ValueBox {
             }
             if (kind == DurableValueKind.NonnegativeInteger) {
                 value = Half.PositiveInfinity; // 因为需要放进Heap的整数都超过FP16的表示范围，所以不用真的从堆里把数读出来。
-                return GetStatus.OverflowedToInfinity;
+                return GetIssue.OverflowedToInfinity;
             }
             if (kind == DurableValueKind.NegativeInteger) {
                 value = Half.NegativeInfinity;
-                return GetStatus.OverflowedToInfinity;
+                return GetIssue.OverflowedToInfinity;
             }
         }
         value = default;
-        return GetStatus.TypeMismatch;
+        return GetIssue.TypeMismatch;
     }
     #endregion
 }
