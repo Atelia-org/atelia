@@ -1,15 +1,32 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace Atelia.StateJournal.Internal;
+
+/// <summary>
+/// <see cref="BitDivision{TKey}"/> 的 bitmap 存储单元。
+/// 每个 cell 覆盖 64 个 slot 的占用与子集归属信息。
+/// </summary>
+internal struct BitDivisionCell {
+    /// <summary>slot 是否存活。</summary>
+    public ulong Occupied;
+
+    /// <summary>slot 属于 true 子集（仅在 <see cref="Occupied"/> 对应位为 1 时有意义）。</summary>
+    public ulong Subset;
+
+    /// <summary>
+    /// 计算目标子集中存活 slot 的位掩码。
+    /// <paramref name="mask"/> = 0 → true 子集；<paramref name="mask"/> = <see cref="ulong.MaxValue"/> → false 子集。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly ulong ComputeWord(ulong mask) => Occupied & (Subset ^ mask);
+}
 
 /// <summary>
 /// 将 key 划分为 false 和 true 两个可数可枚举集合。
 /// 使用 bitmap（而非双向链表）追踪子集归属，内存更紧凑、枚举更 cache 友好。
 /// </summary>
 internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnull {
-    [StructLayout(LayoutKind.Auto)]
     private struct Entry {
         public TKey Value;
         public int HashCode;   // lower 31 bits = cached hash
@@ -27,8 +44,7 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
     private int _freeList = -1;
     private int _freeCount;
 
-    private ulong[] _occupied;    // bit set = slot is alive
-    private ulong[] _subset;      // bit set = belongs to true subset (valid only when occupied)
+    private BitDivisionCell[] _cells; // bitmap: occupied + subset per 64-slot word
     private int _falseCount, _trueCount;
 
     public int Capacity => _entries.Length;
@@ -43,8 +59,7 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
         Array.Fill(_buckets, -1);
         _bucketMask = InitialCapacity - 1;
         int words = (InitialCapacity + 63) >> 6;
-        _occupied = new ulong[words];
-        _subset = new ulong[words];
+        _cells = new BitDivisionCell[words];
     }
 
     /// <summary>将 key 放入 false 子集。若 key 不存在则新增；若已在 true 子集则翻转 1 bit 移动。</summary>
@@ -66,7 +81,7 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
                 // 先按 bitmap 判断子集归属，更新计数
                 int word = i >> 6;
                 ulong bit = 1UL << (i & 63);
-                if ((_subset[word] & bit) != 0) { _trueCount--; }
+                if ((_cells[word].Subset & bit) != 0) { _trueCount--; }
                 else { _falseCount--; }
 
                 // 从 bucket chain 中摘除
@@ -86,8 +101,7 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
         if (Count == 0) { return; }
         Array.Clear(_entries, 0, _nextSlot);
         Array.Fill(_buckets, -1);
-        Array.Clear(_occupied);
-        Array.Clear(_subset);
+        Array.Clear(_cells);
         _nextSlot = 0;
         _freeList = -1;
         _freeCount = 0;
@@ -111,11 +125,12 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
             if (e.HashCode == hashCode && _comparer.Equals(e.Value, key)) {
                 int word = i >> 6;
                 ulong bit = 1UL << (i & 63);
-                bool currentlyTrue = (_subset[word] & bit) != 0;
+                ref BitDivisionCell cell = ref _cells[word];
+                bool currentlyTrue = (cell.Subset & bit) != 0;
                 if (currentlyTrue == isTrueSubset) { return; /* 已在目标子集，no-op */ }
 
                 // 翻转 1 bit 完成子集间移动
-                _subset[word] ^= bit;
+                cell.Subset ^= bit;
                 if (isTrueSubset) {
                     _falseCount--;
                     _trueCount++;
@@ -144,15 +159,17 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
 
         // 设置 bitmap
         int w = slot >> 6;
-        ulong b = 1UL << (slot & 63);
-        _occupied[w] |= b;
-        if (isTrueSubset) {
-            _subset[w] |= b;
-            _trueCount++;
-        }
-        else {
-            // _subset bit 已为 0（FreeSlot 清理过 或 从未设置）
-            _falseCount++;
+        ulong b = 1UL << (slot & 63); {
+            ref BitDivisionCell cell = ref _cells[w];
+            cell.Occupied |= b;
+            if (isTrueSubset) {
+                cell.Subset |= b;
+                _trueCount++;
+            }
+            else {
+                // cell.Subset bit 已为 0（FreeSlot 清理过 或 从未设置）
+                _falseCount++;
+            }
         }
     }
 
@@ -179,8 +196,9 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
         // 清理 bitmap bits，确保 slot 复用时无残留
         int word = index >> 6;
         ulong bit = 1UL << (index & 63);
-        _occupied[word] &= ~bit;
-        _subset[word] &= ~bit;
+        ref BitDivisionCell cell = ref _cells[word];
+        cell.Occupied &= ~bit;
+        cell.Subset &= ~bit;
     }
 
     /// <summary>2× 扩容：重建桶链，按需扩展 bitmap 数组。</summary>
@@ -196,7 +214,7 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
         // 利用 occupied bitmap 扫描活跃 slot 重建桶链
         int usedWordCount = (_nextSlot + 63) >> 6;
         for (int w = 0; w < usedWordCount; w++) {
-            ulong bits = _occupied[w];
+            ulong bits = _cells[w].Occupied;
             while (bits != 0) {
                 int bit = BitOperations.TrailingZeroCount(bits);
                 int j = (w << 6) | bit;
@@ -210,8 +228,7 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
 
         // 扩展 bitmap 数组
         int newWordCount = (newSize + 63) >> 6;
-        Array.Resize(ref _occupied, newWordCount);
-        Array.Resize(ref _subset, newWordCount);
+        Array.Resize(ref _cells, newWordCount);
 
         _entries = newEntries;
         _buckets = newBuckets;
@@ -233,13 +250,10 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
             _wordIndex = 0;
             _currentSlot = -1;
             // 预计算第一个 word
-            _currentWord = root._occupied.Length > 0
-                ? ComputeWord(root, mask, 0)
+            _currentWord = root._cells.Length > 0
+                ? root._cells[0].ComputeWord(mask)
                 : 0;
         }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static ulong ComputeWord(BitDivision<TKey> root, ulong mask, int w) => root._occupied[w] & (root._subset[w] ^ mask);
 
         public TKey Current {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -260,8 +274,8 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
         /// <summary>慢路径：前进到下一个非空 word。</summary>
         private bool MoveNextRare() {
             var root = _root;
-            while (++_wordIndex < root._occupied.Length) {
-                _currentWord = ComputeWord(root, _mask, _wordIndex);
+            while (++_wordIndex < root._cells.Length) {
+                _currentWord = root._cells[_wordIndex].ComputeWord(_mask);
                 if (_currentWord != 0) {
                     int bit = BitOperations.TrailingZeroCount(_currentWord);
                     _currentSlot = (_wordIndex << 6) | bit;
