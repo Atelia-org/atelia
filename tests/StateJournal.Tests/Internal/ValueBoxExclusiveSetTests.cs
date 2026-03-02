@@ -1,8 +1,6 @@
-using Atelia.StateJournal.Internal;
-using Atelia.StateJournal.Pools;
 using Xunit;
 
-namespace Atelia.StateJournal.Tests.Internal;
+namespace Atelia.StateJournal.Internal.Tests;
 
 /// <summary>
 /// <see cref="ValueBox.ExclusiveSetInt64"/>, <see cref="ValueBox.ExclusiveSetUInt64"/>,
