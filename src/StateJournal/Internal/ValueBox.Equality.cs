@@ -16,9 +16,9 @@ partial struct ValueBox {
     /// 这覆盖了所有 inline 编码（数值、浮点、bool、null、undefined）
     /// 和所有 InternPool 引用类型（同值同 handle → 同 bits）。
     ///
-    /// 慢路径：仅当双方都是 HeapSlot 且 <see cref="DurableValueKind"/> 相同时才触发。
-    /// 当前仅 <see cref="ValuePools.Bits64"/> 中的数值类型（<see cref="DurableValueKind.NonnegativeInteger"/>、
-    /// <see cref="DurableValueKind.NegativeInteger"/>、<see cref="DurableValueKind.FloatingPoint"/>）
+    /// 慢路径：仅当双方都是 HeapSlot 且 <see cref="ValueKind"/> 相同时才触发。
+    /// 当前仅 <see cref="ValuePools.Bits64"/> 中的数值类型（<see cref="ValueKind.NonnegativeInteger"/>、
+    /// <see cref="ValueKind.NegativeInteger"/>、<see cref="ValueKind.FloatingPoint"/>）
     /// 使用 GcPool（独占 slot），可能出现同值不同 handle 的情况，需要取出堆中 raw bits 比较。
     ///
     /// 设计决策：<c>42.0 != 42</c>（整数与浮点数不互等），
@@ -29,7 +29,7 @@ partial struct ValueBox {
         ulong diffBits;
         uint tagAndKind; // 用于快速判断是否是堆上浮点或整数
         return (diffBits = a._bits ^ b._bits) == 0
-            || ((diffBits & ~ExclusiveBit) == 0 && a.GetLZC() == LzcCode.HeapSlot) // 仅有ExclusiveBit差异的两个HeapSlot
+            || ((diffBits & ~ExclusiveBit) == 0 && a.GetLzc() == BoxLzc.HeapSlot) // 仅有ExclusiveBit差异的两个HeapSlot
             || (IsHeapFloatOrInteger(tagAndKind = a.GetTagAndKind()) // a是`ValuePools.Bits64`值
                 && tagAndKind == b.GetTagAndKind() // b与a类型相同
                 && HeapBits64Equals(a, b)
@@ -59,7 +59,7 @@ partial struct ValueBox {
             // return HashCode.Combine(box.GetHeapKind(), raw); // 似乎杀鸡用牛刀了
             return ((int)box.GetHeapKind() * 16777619) ^ raw.GetHashCode();
         }
-        if (box.GetLZC() == LzcCode.HeapSlot) { return (box._bits & ~ExclusiveBit).GetHashCode(); }
+        if (box.GetLzc() == BoxLzc.HeapSlot) { return (box._bits & ~ExclusiveBit).GetHashCode(); }
         // inline 值 或 InternPool 引用：bits 即值
         return box._bits.GetHashCode();
     }

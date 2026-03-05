@@ -4,7 +4,7 @@ namespace Atelia.StateJournal.Internal;
 internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     where TKey : notnull
     where KHelper : unmanaged, ITypeHelper<TKey> {
-    public override DurableValueKind Kind => DurableValueKind.MixedDict;
+    public override ValueKind Kind => ValueKind.MixedDict;
     internal MixedDictImpl() {
         _core = new();
     }

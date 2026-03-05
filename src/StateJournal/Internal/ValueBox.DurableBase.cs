@@ -5,10 +5,10 @@ namespace Atelia.StateJournal;
 
 partial struct ValueBox {
     internal readonly struct DurableObjectFace : ITypedFace<DurableObject> {
-        internal const uint TagHeapKindMixedDict = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)DurableValueKind.MixedDict;
-        internal const uint TagHeapKindTypedDict = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)DurableValueKind.TypedDict;
-        internal const uint TagHeapKindMixedList = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)DurableValueKind.MixedList;
-        internal const uint TagHeapKindTypedList = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)DurableValueKind.TypedList;
+        internal const uint TagHeapKindMixedDict = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.MixedDict;
+        internal const uint TagHeapKindTypedDict = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.TypedDict;
+        internal const uint TagHeapKindMixedList = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.MixedList;
+        internal const uint TagHeapKindTypedList = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.TypedList;
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static bool IsDurableObject(ValueBox box) => box.GetTagAndKind() is TagHeapKindMixedDict or TagHeapKindTypedDict or TagHeapKindMixedList or TagHeapKindTypedList;
 

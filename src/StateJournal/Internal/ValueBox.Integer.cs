@@ -17,11 +17,11 @@ partial struct ValueBox {
             ulong u = unchecked((ulong)value);
             if (value >= 0) {
                 if (u < LzcConstants.NonnegIntInlineCap) { return new(u | LzcConstants.NonnegIntTag); }
-                return EncodeHeapSlot(DurableValueKind.NonnegativeInteger, ValuePools.Bits64.Store(u));
+                return EncodeHeapSlot(ValueKind.NonnegativeInteger, ValuePools.Bits64.Store(u));
             }
             // value < 0
             if (value >= LzcConstants.NegIntInlineMin) { return new(u & LzcConstants.NegIntPayloadMask); }
-            return EncodeHeapSlot(DurableValueKind.NegativeInteger, ValuePools.Bits64.Store(u));
+            return EncodeHeapSlot(ValueKind.NegativeInteger, ValuePools.Bits64.Store(u));
         }
 
         /// <summary>
@@ -38,7 +38,7 @@ partial struct ValueBox {
                     return true;
                 }
                 SlotHandle h = StoreOrReuseBits64(box, u);
-                box = EncodeHeapSlot(DurableValueKind.NonnegativeInteger, h);
+                box = EncodeHeapSlot(ValueKind.NonnegativeInteger, h);
             }
             else {
                 if (value >= LzcConstants.NegIntInlineMin) {
@@ -47,7 +47,7 @@ partial struct ValueBox {
                     return true;
                 }
                 SlotHandle h = StoreOrReuseBits64(box, u);
-                box = EncodeHeapSlot(DurableValueKind.NegativeInteger, h);
+                box = EncodeHeapSlot(ValueKind.NegativeInteger, h);
             }
             return true;
         }
@@ -59,18 +59,18 @@ partial struct ValueBox {
         /// <see cref="GetIssue.TypeMismatch"/>
         /// </returns>
         public static GetIssue Get(ValueBox box, out long value) {
-            LzcCode lzc = box.GetLZC();
-            if (lzc == LzcCode.InlineNonnegInt) {
+            BoxLzc lzc = box.GetLzc();
+            if (lzc == BoxLzc.InlineNonnegInt) {
                 value = (long)box.DecodeInlineNonnegInt(); // inline范围是62bit所以不会溢出
                 return GetIssue.None;
             }
-            if (lzc == LzcCode.InlineNegInt) {
+            if (lzc == BoxLzc.InlineNegInt) {
                 value = box.DecodeInlineNegInt();
                 return GetIssue.None;
             }
-            if (lzc == LzcCode.HeapSlot) {
-                DurableValueKind kind = box.GetHeapKind();
-                if (kind == DurableValueKind.NonnegativeInteger) {
+            if (lzc == BoxLzc.HeapSlot) {
+                ValueKind kind = box.GetHeapKind();
+                if (kind == ValueKind.NonnegativeInteger) {
                     ulong u = box.DecodeHeapNonnegInt();
                     if (u > (ulong)long.MaxValue) {
                         value = long.MaxValue;
@@ -79,7 +79,7 @@ partial struct ValueBox {
                     value = (long)u;
                     return GetIssue.None;
                 }
-                if (kind == DurableValueKind.NegativeInteger) {
+                if (kind == ValueKind.NegativeInteger) {
                     value = box.DecodeHeapNegInt();
                     return GetIssue.None;
                 }
@@ -93,7 +93,7 @@ partial struct ValueBox {
         /// <summary>将 ulong 编码为 ValueBox。值域 [0, 2^62-1] 内联；超出范围回退到堆分配。</summary>
         public static ValueBox From(ulong value) {
             if (value < LzcConstants.NonnegIntInlineCap) { return new(value | LzcConstants.NonnegIntTag); }
-            return EncodeHeapSlot(DurableValueKind.NonnegativeInteger, ValuePools.Bits64.Store(value));
+            return EncodeHeapSlot(ValueKind.NonnegativeInteger, ValuePools.Bits64.Store(value));
         }
 
         /// <summary>
@@ -107,7 +107,7 @@ partial struct ValueBox {
                 return true;
             }
             SlotHandle h = StoreOrReuseBits64(box, value);
-            box = EncodeHeapSlot(DurableValueKind.NonnegativeInteger, h);
+            box = EncodeHeapSlot(ValueKind.NonnegativeInteger, h);
             return true;
         }
 
@@ -118,24 +118,24 @@ partial struct ValueBox {
         /// <see cref="GetIssue.TypeMismatch"/>
         /// </returns>
         public static GetIssue Get(ValueBox box, out ulong value) {
-            LzcCode lzc = box.GetLZC();
-            if (lzc == LzcCode.InlineNonnegInt) {
+            BoxLzc lzc = box.GetLzc();
+            if (lzc == BoxLzc.InlineNonnegInt) {
                 value = box.DecodeInlineNonnegInt();
                 return GetIssue.None;
             }
-            if (lzc == LzcCode.HeapSlot) {
-                DurableValueKind kind = box.GetHeapKind();
-                if (kind == DurableValueKind.NonnegativeInteger) {
+            if (lzc == BoxLzc.HeapSlot) {
+                ValueKind kind = box.GetHeapKind();
+                if (kind == ValueKind.NonnegativeInteger) {
                     value = box.DecodeHeapNonnegInt();
                     return GetIssue.None;
                 }
-                if (kind == DurableValueKind.NegativeInteger) {
+                if (kind == ValueKind.NegativeInteger) {
                     value = ulong.MinValue;
                     return GetIssue.Saturated;
                 }
             }
 
-            if (lzc == LzcCode.InlineNegInt) {
+            if (lzc == BoxLzc.InlineNegInt) {
                 value = ulong.MinValue;
                 return GetIssue.Saturated;
             }
@@ -311,27 +311,27 @@ partial struct ValueBox {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ulong DecodeInlineNonnegInt() {
-        Debug.Assert(GetLZC() == LzcCode.InlineNonnegInt);
+        Debug.Assert(GetLzc() == BoxLzc.InlineNonnegInt);
         return _bits & LzcConstants.NonnegIntPayloadMask;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long DecodeInlineNegInt() {
-        Debug.Assert(GetLZC() == LzcCode.InlineNegInt);
+        Debug.Assert(GetLzc() == BoxLzc.InlineNegInt);
         return unchecked((long)(_bits | LzcConstants.NegIntSignRestore));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ulong DecodeHeapNonnegInt() {
-        Debug.Assert(GetLZC() == LzcCode.HeapSlot);
-        Debug.Assert(GetHeapKind() == DurableValueKind.NonnegativeInteger);
+        Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
+        Debug.Assert(GetHeapKind() == ValueKind.NonnegativeInteger);
         return ValuePools.Bits64[GetHeapHandle()];
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long DecodeHeapNegInt() {
-        Debug.Assert(GetLZC() == LzcCode.HeapSlot);
-        Debug.Assert(GetHeapKind() == DurableValueKind.NegativeInteger);
+        Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
+        Debug.Assert(GetHeapKind() == ValueKind.NegativeInteger);
         return unchecked((long)ValuePools.Bits64[GetHeapHandle()]);
     }
 

@@ -15,8 +15,8 @@ internal interface ITypeHelper<T> where T : notnull {
 internal readonly struct ByteHelper : ITypeHelper<byte> {
     public static bool Equals(byte a, byte b) => a == b;
 
-    public static void PushKey(IDiffWriter writer, byte v) => writer.PushRawByte(v);
-    public static void PushValue(IDiffWriter writer, byte v) => writer.PushRawByte(v);
+    public static void PushKey(IDiffWriter writer, byte v) => writer.BareByte(v);
+    public static void PushValue(IDiffWriter writer, byte v) => writer.BareByte(v);
 
     public static byte Freeze(byte value) => value;
     public static void ReleaseSlot(byte value) { }
@@ -24,8 +24,8 @@ internal readonly struct ByteHelper : ITypeHelper<byte> {
 
 internal readonly struct Int32Helper : ITypeHelper<int> {
     public static bool Equals(int a, int b) => a == b;
-    public static void PushKey(IDiffWriter writer, int v) => writer.PushRawInt32(v);
-    public static void PushValue(IDiffWriter writer, int v) => writer.PushRawInt32(v);
+    public static void PushKey(IDiffWriter writer, int v) => writer.BareInt32(v);
+    public static void PushValue(IDiffWriter writer, int v) => writer.BareInt32(v);
     public static int Freeze(int value) => value;
     public static void ReleaseSlot(int value) { }
 }
@@ -33,16 +33,16 @@ internal readonly struct Int32Helper : ITypeHelper<int> {
 internal readonly struct DoubleHelper : ITypeHelper<double> {
     public static bool Equals(double a, double b) =>
         BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b);
-    public static void PushKey(IDiffWriter writer, double v) => writer.PushRawDouble(v);
-    public static void PushValue(IDiffWriter writer, double v) => writer.PushRawDouble(v);
+    public static void PushKey(IDiffWriter writer, double v) => writer.BareDouble(v);
+    public static void PushValue(IDiffWriter writer, double v) => writer.BareDouble(v);
     public static double Freeze(double value) => value;
     public static void ReleaseSlot(double value) { }
 }
 
 internal readonly struct StringHelper : ITypeHelper<string> {
     public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
-    public static void PushKey(IDiffWriter writer, string? v) => writer.PushRawString(v);
-    public static void PushValue(IDiffWriter writer, string? v) => writer.PushRawString(v);
+    public static void PushKey(IDiffWriter writer, string? v) => writer.BareString(v);
+    public static void PushValue(IDiffWriter writer, string? v) => writer.BareString(v);
     public static string? Freeze(string? value) => value; // strings are immutable
     public static void ReleaseSlot(string? value) { }
 }

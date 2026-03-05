@@ -29,7 +29,7 @@ where TKey : notnull {
     }
 
     #region DurableObject
-    public override DurableValueKind Kind => DurableValueKind.MixedDict;
+    public override ValueKind Kind => ValueKind.MixedDict;
     public override bool HasChanges => _core.HasChanges;
     #endregion
 
@@ -98,7 +98,7 @@ where TKey : notnull {
         _core.AfterRemove<ValueBoxHelper>(key, removedValue);
         return true;
     }
-    public bool TryGetValueKind(TKey key, out DurableValueKind kind) {
+    public bool TryGetValueKind(TKey key, out ValueKind kind) {
         if (!TryGetValueBox(key, out ValueBox box)) {
             kind = default;
             return false;

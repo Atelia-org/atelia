@@ -3,7 +3,7 @@ using Atelia.StateJournal.Internal;
 namespace Atelia.StateJournal;
 
 public abstract class DurableObject {
-    public abstract DurableValueKind Kind { get; }
+    public abstract ValueKind Kind { get; }
 
     DurableState _state;
 

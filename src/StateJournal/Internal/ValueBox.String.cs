@@ -6,7 +6,7 @@ namespace Atelia.StateJournal;
 partial struct ValueBox {
 
     internal readonly struct StringFace : ITypedFace<string> {
-        internal const uint TagHeapKindString = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)DurableValueKind.String;
+        internal const uint TagHeapKindString = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.String;
 
         /// <summary>
         /// 将字符串编码为 ValueBox。通过 <see cref="ValuePools.Strings"/> InternPool 去重。
@@ -16,7 +16,7 @@ partial struct ValueBox {
         /// 保证 <see cref="ValueEquals"/> 快速路径命中（bits 相等 → 值相等）。
         /// </remarks>
         public static ValueBox From(string? value) => value is not null
-            ? EncodeHeapSlot(DurableValueKind.String, ValuePools.Strings.Store(value))
+            ? EncodeHeapSlot(ValueKind.String, ValuePools.Strings.Store(value))
             : Null;
         /// <summary>
         /// 独占更新：将 ValueBox 覆写为指定的字符串值。

@@ -1,6 +1,6 @@
 namespace Atelia.StateJournal;
 
-public enum DurableValueKind : byte {
+public enum ValueKind : byte {
     Mask = (1 << ValueBox.HeapKindBitCount) - 1,
     Null = 0,
     Undefined,

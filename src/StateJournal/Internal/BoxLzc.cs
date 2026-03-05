@@ -1,13 +1,13 @@
 namespace Atelia.StateJournal.Internal;
 
 /// <summary>
-/// SJValue 的 LeadingZeroCount 编码。
+/// <see cref="ValueBox"/>的 LeadingZeroCount 编码。
 /// 值 = BitOperations.LeadingZeroCount(bits)。
 /// </summary>
 /// <remarks>
 /// 值域[0~64]
 /// </remarks>
-internal enum LzcCode : byte {
+internal enum BoxLzc : byte {
     InlineDouble = 0,
     InlineNonnegInt = 1,
     InlineNegInt = 2,
@@ -19,7 +19,7 @@ internal enum LzcCode : byte {
     Null = 64,
 }
 
-/// <summary>从 <see cref="LzcCode"/> 分配推导出的位掩码常量。消除 ValueBox 编码/解码中的 magic number。
+/// <summary>从 <see cref="BoxLzc"/> 分配推导出的位掩码常量。消除 ValueBox 编码/解码中的 magic number。
 /// 应避免跨类型依赖，表达式语义清晰。</summary>
 /// <remarks>
 /// 1. **Tag位索引定律**
@@ -34,31 +34,31 @@ internal enum LzcCode : byte {
 /// </remarks>
 internal static class LzcConstants {
     /// <summary>InlineFloatingPoint tag bit (bit63=1 → LZC=0)。</summary>
-    internal const ulong DoubleTag = 1UL << (63 - (int)LzcCode.InlineDouble);
+    internal const ulong DoubleTag = 1UL << (63 - (int)BoxLzc.InlineDouble);
 
     /// <summary>InlineNonnegativeInteger tag bit (bit62=1 → LZC=1)。</summary>
-    internal const ulong NonnegIntTag = 1UL << (63 - (int)LzcCode.InlineNonnegInt);
+    internal const ulong NonnegIntTag = 1UL << (63 - (int)BoxLzc.InlineNonnegInt);
 
     /// <summary>HeapSlot tag bit (bit39=1 → LZC=24)。编码堆分配软指针时必须置位。</summary>
-    internal const ulong HeapSlotTag = 1UL << (63 - (int)LzcCode.HeapSlot);
+    internal const ulong HeapSlotTag = 1UL << (63 - (int)BoxLzc.HeapSlot);
 
     /// <summary>InlineNonnegativeInteger 的 inline 容量上界（不含）：[0, 2^62)。</summary>
-    internal const ulong NonnegIntInlineCap = 1UL << (64 - (int)LzcCode.InlineNonnegInt - 1);
+    internal const ulong NonnegIntInlineCap = 1UL << (64 - (int)BoxLzc.InlineNonnegInt - 1);
 
     /// <summary>清除 tag 位，保留 bits[61..0]。用于非负整数 inline 解码。</summary>
     internal const ulong NonnegIntPayloadMask = NonnegIntInlineCap - 1;
 
-    /// <summary>清除高 <see cref="LzcCode.InlineNegInt"/> 位，保留 bits[61..0]。用于负整数 inline 编码。</summary>
-    internal const ulong NegIntPayloadMask = (1UL << (64 - (int)LzcCode.InlineNegInt)) - 1;
+    /// <summary>清除高 <see cref="BoxLzc.InlineNegInt"/> 位，保留 bits[61..0]。用于负整数 inline 编码。</summary>
+    internal const ulong NegIntPayloadMask = (1UL << (64 - (int)BoxLzc.InlineNegInt)) - 1;
 
-    /// <summary>恢复高 <see cref="LzcCode.InlineNegInt"/> 位（0xC000…）。用于负整数 inline 解码。</summary>
+    /// <summary>恢复高 <see cref="BoxLzc.InlineNegInt"/> 位（0xC000…）。用于负整数 inline 解码。</summary>
     internal const ulong NegIntSignRestore = ~NegIntPayloadMask;
 
     /// <summary>InlineNegativeInteger 的 inline 下界（含）：-2^61。</summary>
-    internal const long NegIntInlineMin = -(1L << (64 - (int)LzcCode.InlineNegInt - 1));
+    internal const long NegIntInlineMin = -(1L << (64 - (int)BoxLzc.InlineNegInt - 1));
 
     /// <summary>Boolean false codeword (LZC=62): 0x2.</summary>
-    internal const ulong SimpleFalse = 1UL << (63 - (int)LzcCode.Boolean);
+    internal const ulong SimpleFalse = 1UL << (63 - (int)BoxLzc.Boolean);
 
     /// <summary>Boolean true codeword (LZC=62): 0x3.</summary>
     internal const ulong SimpleTrue = SimpleFalse | 1UL;

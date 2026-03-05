@@ -26,29 +26,29 @@ internal readonly partial struct ValueBox {
     public ulong GetBits() => _bits;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private LzcCode GetLZC() => (LzcCode)BitOperations.LeadingZeroCount(_bits);
+    private BoxLzc GetLzc() => (BoxLzc)BitOperations.LeadingZeroCount(_bits);
 
-    private DurableValueKind GetHeapKind() {
-        Debug.Assert(GetLZC() == LzcCode.HeapSlot);
-        return (DurableValueKind)(_bits >> KindShift) & DurableValueKind.Mask;
+    private ValueKind GetHeapKind() {
+        Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
+        return (ValueKind)(_bits >> KindShift) & ValueKind.Mask;
     }
     private SlotHandle GetHeapHandle() {
-        Debug.Assert(GetLZC() == LzcCode.HeapSlot);
+        Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
         return new SlotHandle((uint)_bits); // 依赖 HeapHandleBitCount == 32
     }
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private uint GetTagAndKind() => (uint)(_bits >> KindShift);
-    private static ValueBox EncodeHeapSlot(DurableValueKind kind, SlotHandle handle) => new(LzcConstants.HeapSlotTag | ((ulong)kind << KindShift) | ExclusiveBit | handle.Packed);
+    private static ValueBox EncodeHeapSlot(ValueKind kind, SlotHandle handle) => new(LzcConstants.HeapSlotTag | ((ulong)kind << KindShift) | ExclusiveBit | handle.Packed);
 
     public static ValueBox Null => default; // 有意为null值选了全0编码，等效于new(LzcConstants.SimpleNull);
     public bool IsNull => _bits == LzcConstants.SimpleNull;
 
-    public DurableValueKind GetValueKind() => throw new NotImplementedException(); // AI TODO
+    public ValueKind GetValueKind() => throw new NotImplementedException(); // AI TODO
 
     #region Bits64 Slot 管理原语（ExclusiveSet 共用）
-    internal const uint TagHeapKindFloat = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)DurableValueKind.FloatingPoint;
-    internal const uint TagHeapKindNonnegInt = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)DurableValueKind.NonnegativeInteger;
-    internal const uint TagHeapKindNegInt = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)DurableValueKind.NegativeInteger;
+    internal const uint TagHeapKindFloat = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.FloatingPoint;
+    internal const uint TagHeapKindNonnegInt = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.NonnegativeInteger;
+    internal const uint TagHeapKindNegInt = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.NegativeInteger;
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static bool IsHeapFloatOrInteger(uint tagAndKind) => tagAndKind is TagHeapKindFloat or TagHeapKindNonnegInt or TagHeapKindNegInt;
     internal bool IsHeapFloatOrInteger() => IsHeapFloatOrInteger(GetTagAndKind());
@@ -94,7 +94,7 @@ internal readonly partial struct ValueBox {
     /// 对堆分配值：清除 Exclusive bit。对 inline 值：直接返回（bit32 是 payload 的一部分，不可修改）。
     /// </summary>
     internal static ValueBox Freeze(ValueBox box) =>
-        box.GetLZC() == LzcCode.HeapSlot ? box.AsFrozen() : box;
+        box.GetLzc() == BoxLzc.HeapSlot ? box.AsFrozen() : box;
 
     /// <summary>
     /// 无条件释放 ValueBox 持有的 Bits64 Slot（如有），不论 exclusive/frozen 状态。
