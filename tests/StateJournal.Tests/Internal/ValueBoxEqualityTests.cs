@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Xunit;
 
 namespace Atelia.StateJournal.Internal.Tests;
@@ -18,12 +19,83 @@ namespace Atelia.StateJournal.Internal.Tests;
 [Collection("ValueBox")]
 public class ValueBoxEqualityTests {
 
+    private sealed class FakeDurable : DurableObject {
+        public override DurableValueKind Kind => DurableValueKind.MixedDict;
+        public override bool HasChanges => false;
+        internal override void WritePendingDiff(IDiffWriter writer) => throw new NotSupportedException();
+        internal override void OnCommitSucceeded() => throw new NotSupportedException();
+        public override void DiscardChanges() { }
+    }
+
     // ═══════════════════════ Helpers ═══════════════════════
 
     private static ValueBox Null => new(0);
     private static ValueBox Undefined => new(1);
     private static ValueBox BoolFalse => new(2);
     private static ValueBox BoolTrue => new(3);
+
+    public static IEnumerable<object[]> EqualsTruePairsForHashContract() {
+        yield return new object[] {
+            "Inline int same bits",
+            ValueBox.Int64Face.From(42),
+            ValueBox.Int32Face.From(42)
+        };
+
+        yield return new object[] {
+            "Inline rounded double same bits",
+            ValueBox.RoundedDoubleFace.From(3.14),
+            ValueBox.RoundedDoubleFace.From(3.14)
+        };
+
+        yield return new object[] {
+            "Heap uint64 same value different handles",
+            ValueBox.UInt64Face.From(ulong.MaxValue),
+            ValueBox.UInt64Face.From(ulong.MaxValue)
+        };
+
+        yield return new object[] {
+            "Heap int64 same value different handles",
+            ValueBox.Int64Face.From(long.MinValue),
+            ValueBox.Int64Face.From(long.MinValue)
+        };
+
+        yield return new object[] {
+            "Heap exact double same value different handles",
+            ValueBox.ExactDoubleFace.From(double.MaxValue),
+            ValueBox.ExactDoubleFace.From(double.MaxValue)
+        };
+
+        {
+            ValueBox exclusive = ValueBox.UInt64Face.From(ulong.MaxValue);
+            ValueBox frozen = ValueBox.Freeze(exclusive);
+            yield return new object[] {
+                "Heap numeric exclusive vs frozen",
+                exclusive,
+                frozen
+            };
+        }
+
+        {
+            ValueBox exclusive = ValueBox.StringFace.From("hash-contract");
+            ValueBox frozen = ValueBox.Freeze(exclusive);
+            yield return new object[] {
+                "Heap string exclusive vs frozen",
+                exclusive,
+                frozen
+            };
+        }
+
+        {
+            var obj = new FakeDurable();
+            ValueBox exclusive = ValueBox.DurableObjectFace.From(obj);
+            ValueBox frozen = ValueBox.Freeze(exclusive);
+            yield return new object[] {
+                "Heap durable exclusive vs frozen",
+                exclusive,
+                frozen
+            };
+        }
+    }
 
     // ═══════════════════════ ValueEquals 快速路径 — bits 相等 → true ═══════════════════════
 
@@ -34,16 +106,16 @@ public class ValueBoxEqualityTests {
     [InlineData(-1L)]
     [InlineData(-42L)]
     public void ValueEquals_SameInlineInt_True(long value) {
-        var a = ValueBox.FromInt64(value);
-        var b = ValueBox.FromInt64(value);
+        var a = ValueBox.Int64Face.From(value);
+        var b = ValueBox.Int64Face.From(value);
         Assert.True(ValueBox.ValueEquals(a, b));
     }
 
     [Fact]
     public void ValueEquals_FromInt64_42_And_FromInt32_42_SameBits_True() {
         // @[SAME-INLINE-SAME-VALUEBOX]: 同值 inline 整数跨类型产生相同 bits
-        var a = ValueBox.FromInt64(42);
-        var b = ValueBox.FromInt32(42);
+        var a = ValueBox.Int64Face.From(42);
+        var b = ValueBox.Int32Face.From(42);
         Assert.Equal(a.GetBits(), b.GetBits()); // 前提：bits 确实相同
         Assert.True(ValueBox.ValueEquals(a, b));
     }
@@ -75,8 +147,8 @@ public class ValueBoxEqualityTests {
     [InlineData(3.14)]
     [InlineData(double.PositiveInfinity)]
     public void ValueEquals_SameRoundedDouble_True(double value) {
-        var a = ValueBox.FromRoundedDouble(value);
-        var b = ValueBox.FromRoundedDouble(value);
+        var a = ValueBox.RoundedDoubleFace.From(value);
+        var b = ValueBox.RoundedDoubleFace.From(value);
         Assert.True(ValueBox.ValueEquals(a, b));
     }
 
@@ -85,8 +157,8 @@ public class ValueBoxEqualityTests {
     [Fact]
     public void ValueEquals_TwoHeapUInt64Max_True() {
         // ulong.MaxValue > 2^62-1 → 走 heap，两次独立分配 → 不同 handle → 慢路径
-        var a = ValueBox.FromUInt64(ulong.MaxValue);
-        var b = ValueBox.FromUInt64(ulong.MaxValue);
+        var a = ValueBox.UInt64Face.From(ulong.MaxValue);
+        var b = ValueBox.UInt64Face.From(ulong.MaxValue);
         Assert.NotEqual(a.GetBits(), b.GetBits()); // 不同 handle → 不同 bits
         Assert.True(ValueBox.ValueEquals(a, b));
     }
@@ -94,8 +166,8 @@ public class ValueBoxEqualityTests {
     [Fact]
     public void ValueEquals_TwoHeapInt64Min_True() {
         // long.MinValue = -2^63，超出 inline 范围 [-2^61, 2^62-1] → 走 heap
-        var a = ValueBox.FromInt64(long.MinValue);
-        var b = ValueBox.FromInt64(long.MinValue);
+        var a = ValueBox.Int64Face.From(long.MinValue);
+        var b = ValueBox.Int64Face.From(long.MinValue);
         Assert.NotEqual(a.GetBits(), b.GetBits()); // 不同 handle
         Assert.True(ValueBox.ValueEquals(a, b));
     }
@@ -103,10 +175,31 @@ public class ValueBoxEqualityTests {
     [Fact]
     public void ValueEquals_TwoHeapExactDoubleMax_True() {
         // double.MaxValue = 0x7FEF_FFFF_FFFF_FFFF，LSB=1 → FromExactDouble 走 heap
-        var a = ValueBox.FromExactDouble(double.MaxValue);
-        var b = ValueBox.FromExactDouble(double.MaxValue);
+        var a = ValueBox.ExactDoubleFace.From(double.MaxValue);
+        var b = ValueBox.ExactDoubleFace.From(double.MaxValue);
         Assert.NotEqual(a.GetBits(), b.GetBits()); // 不同 handle
         Assert.True(ValueBox.ValueEquals(a, b));
+    }
+
+    [Fact]
+    public void ValueEquals_String_FrozenVsExclusive_True() {
+        var exclusive = ValueBox.StringFace.From("hello");
+        var frozen = ValueBox.Freeze(exclusive);
+
+        Assert.NotEqual(exclusive.GetBits(), frozen.GetBits());
+        Assert.True(ValueBox.ValueEquals(exclusive, frozen));
+        Assert.Equal(ValueBox.ValueHashCode(exclusive), ValueBox.ValueHashCode(frozen));
+    }
+
+    [Fact]
+    public void ValueEquals_DurableObject_FrozenVsExclusive_True() {
+        var obj = new FakeDurable();
+        var exclusive = ValueBox.DurableObjectFace.From(obj);
+        var frozen = ValueBox.Freeze(exclusive);
+
+        Assert.NotEqual(exclusive.GetBits(), frozen.GetBits());
+        Assert.True(ValueBox.ValueEquals(exclusive, frozen));
+        Assert.Equal(ValueBox.ValueHashCode(exclusive), ValueBox.ValueHashCode(frozen));
     }
 
     // ═══════════════════════ ValueEquals — heap 数值不同 Kind → false ═══════════════════════
@@ -115,16 +208,16 @@ public class ValueBoxEqualityTests {
     public void ValueEquals_InlineInt42_vs_InlineDouble42_False() {
         // 设计决策：42 != 42.0，整数与浮点不互等
         // 42 → inline int，42.0 → inline double → bits 不同 → 快速路径 false
-        var intBox = ValueBox.FromInt64(42);
-        var dblBox = ValueBox.FromRoundedDouble(42.0);
+        var intBox = ValueBox.Int64Face.From(42);
+        var dblBox = ValueBox.RoundedDoubleFace.From(42.0);
         Assert.False(ValueBox.ValueEquals(intBox, dblBox));
     }
 
     [Fact]
     public void ValueEquals_HeapNonnegInt_vs_HeapFloat_False() {
         // 两个都走 heap Bits64，但 Kind 分别是 NonnegativeInteger 和 FloatingPoint → false
-        var intBox = ValueBox.FromUInt64(ulong.MaxValue); // NonnegativeInteger heap
-        var dblBox = ValueBox.FromExactDouble(double.MaxValue); // FloatingPoint heap (LSB=1)
+        var intBox = ValueBox.UInt64Face.From(ulong.MaxValue); // NonnegativeInteger heap
+        var dblBox = ValueBox.ExactDoubleFace.From(double.MaxValue); // FloatingPoint heap (LSB=1)
         Assert.False(ValueBox.ValueEquals(intBox, dblBox));
     }
 
@@ -132,8 +225,8 @@ public class ValueBoxEqualityTests {
 
     [Fact]
     public void ValueEquals_HeapUInt64Max_vs_HeapUInt64MaxMinus1_False() {
-        var a = ValueBox.FromUInt64(ulong.MaxValue);
-        var b = ValueBox.FromUInt64(ulong.MaxValue - 1);
+        var a = ValueBox.UInt64Face.From(ulong.MaxValue);
+        var b = ValueBox.UInt64Face.From(ulong.MaxValue - 1);
         Assert.False(ValueBox.ValueEquals(a, b));
     }
 
@@ -141,18 +234,33 @@ public class ValueBoxEqualityTests {
 
     [Fact]
     public void ValueEquals_InlineInt1_vs_InlineInt2_False() {
-        Assert.False(ValueBox.ValueEquals(ValueBox.FromInt64(1), ValueBox.FromInt64(2)));
+        Assert.False(ValueBox.ValueEquals(ValueBox.Int64Face.From(1), ValueBox.Int64Face.From(2)));
+    }
+
+    [Fact]
+    public void ValueEquals_InlineNonnegInts_DifferOnlyPayloadBit32_AreNotEqual() {
+        // 回归保护：bit32 是 inline payload 的一部分，不是 ExclusiveBit 语义位。
+        // 1 与 (1 + 2^32) 在 inline nonneg 编码下仅 payload bit32 不同。
+        long x = 1;
+        long y = 1 + (1L << 32);
+
+        var a = ValueBox.Int64Face.From(x);
+        var b = ValueBox.Int64Face.From(y);
+
+        Assert.NotEqual(a.GetBits(), b.GetBits());
+        Assert.False(ValueBox.ValueEquals(a, b));
+        Assert.False(ValueBox.ValueEquals(b, a));
     }
 
     [Fact]
     public void ValueEquals_InlineDouble1_vs_InlineDouble2_False() {
-        Assert.False(ValueBox.ValueEquals(ValueBox.FromRoundedDouble(1.0), ValueBox.FromRoundedDouble(2.0)));
+        Assert.False(ValueBox.ValueEquals(ValueBox.RoundedDoubleFace.From(1.0), ValueBox.RoundedDoubleFace.From(2.0)));
     }
 
     [Fact]
     public void ValueEquals_InlineInt0_vs_Null_False() {
         // FromInt64(0) 编码为 inline 非负整数（LZC=1），new ValueBox(0) 是 Null（LZC=64）
-        var intZero = ValueBox.FromInt64(0);
+        var intZero = ValueBox.Int64Face.From(0);
         Assert.False(ValueBox.ValueEquals(intZero, Null));
     }
 
@@ -160,7 +268,7 @@ public class ValueBoxEqualityTests {
 
     [Fact]
     public void ValueEquals_InlineInt_vs_InlineDouble_False() {
-        Assert.False(ValueBox.ValueEquals(ValueBox.FromInt64(1), ValueBox.FromRoundedDouble(1.0)));
+        Assert.False(ValueBox.ValueEquals(ValueBox.Int64Face.From(1), ValueBox.RoundedDoubleFace.From(1.0)));
     }
 
     [Fact]
@@ -170,8 +278,48 @@ public class ValueBoxEqualityTests {
     }
 
     [Fact]
+    public void ValueEquals_IsSymmetric_ForRepresentativePairs() {
+        var heapU64A = ValueBox.UInt64Face.From(ulong.MaxValue);
+        var heapU64B = ValueBox.UInt64Face.From(ulong.MaxValue);
+        var heapU64Frozen = ValueBox.Freeze(heapU64A);
+
+        var heapStringExclusive = ValueBox.StringFace.From("symmetry");
+        var heapStringFrozen = ValueBox.Freeze(heapStringExclusive);
+
+        var pairs = new (ValueBox A, ValueBox B)[] {
+            (ValueBox.Int64Face.From(42), ValueBox.Int64Face.From(42)),
+            (ValueBox.Int64Face.From(1), ValueBox.Int64Face.From(1 + (1L << 32))),
+            (heapU64A, heapU64B),
+            (heapU64A, heapU64Frozen),
+            (heapStringExclusive, heapStringFrozen),
+            (ValueBox.UInt64Face.From(ulong.MaxValue), ValueBox.ExactDoubleFace.From(double.MaxValue)),
+            (Null, BoolTrue),
+        };
+
+        foreach (var (a, b) in pairs) {
+            Assert.Equal(ValueBox.ValueEquals(a, b), ValueBox.ValueEquals(b, a));
+        }
+    }
+
+    [Fact]
     public void ValueEquals_InlineInt_vs_Undefined_False() {
-        Assert.False(ValueBox.ValueEquals(ValueBox.FromInt64(0), Undefined));
+        Assert.False(ValueBox.ValueEquals(ValueBox.Int64Face.From(0), Undefined));
+    }
+
+    // ═══════════════════════ Equality/Hash 契约：ValueEquals=true ⇒ Hash 相等 ═══════════════════════
+
+    [Theory]
+    [MemberData(nameof(EqualsTruePairsForHashContract))]
+    public void HashContract_WhenValueEqualsTrue_HashCodeMustMatchSymmetrically(string caseName, object leftObj, object rightObj) {
+        ValueBox left = (ValueBox)leftObj;
+        ValueBox right = (ValueBox)rightObj;
+
+        Assert.True(ValueBox.ValueEquals(left, right), caseName);
+        Assert.True(ValueBox.ValueEquals(right, left), caseName);
+
+        int leftHash = ValueBox.ValueHashCode(left);
+        int rightHash = ValueBox.ValueHashCode(right);
+        Assert.Equal(leftHash, rightHash);
     }
 
     // ═══════════════════════ ValueHashCode 一致性 ═══════════════════════
@@ -181,8 +329,8 @@ public class ValueBoxEqualityTests {
     [InlineData(42L)]
     [InlineData(-1L)]
     public void ValueHashCode_SameInlineInt_SameHash(long value) {
-        var a = ValueBox.FromInt64(value);
-        var b = ValueBox.FromInt64(value);
+        var a = ValueBox.Int64Face.From(value);
+        var b = ValueBox.Int64Face.From(value);
         Assert.Equal(ValueBox.ValueHashCode(a), ValueBox.ValueHashCode(b));
     }
 
@@ -190,31 +338,31 @@ public class ValueBoxEqualityTests {
     [InlineData(1.0)]
     [InlineData(3.14)]
     public void ValueHashCode_SameInlineDouble_SameHash(double value) {
-        var a = ValueBox.FromRoundedDouble(value);
-        var b = ValueBox.FromRoundedDouble(value);
+        var a = ValueBox.RoundedDoubleFace.From(value);
+        var b = ValueBox.RoundedDoubleFace.From(value);
         Assert.Equal(ValueBox.ValueHashCode(a), ValueBox.ValueHashCode(b));
     }
 
     [Fact]
     public void ValueHashCode_TwoHeapUInt64Max_SameHash() {
-        var a = ValueBox.FromUInt64(ulong.MaxValue);
-        var b = ValueBox.FromUInt64(ulong.MaxValue);
+        var a = ValueBox.UInt64Face.From(ulong.MaxValue);
+        var b = ValueBox.UInt64Face.From(ulong.MaxValue);
         Assert.True(ValueBox.ValueEquals(a, b)); // 前提：ValueEquals 为 true
         Assert.Equal(ValueBox.ValueHashCode(a), ValueBox.ValueHashCode(b));
     }
 
     [Fact]
     public void ValueHashCode_TwoHeapExactDoubleMax_SameHash() {
-        var a = ValueBox.FromExactDouble(double.MaxValue);
-        var b = ValueBox.FromExactDouble(double.MaxValue);
+        var a = ValueBox.ExactDoubleFace.From(double.MaxValue);
+        var b = ValueBox.ExactDoubleFace.From(double.MaxValue);
         Assert.True(ValueBox.ValueEquals(a, b)); // 前提
         Assert.Equal(ValueBox.ValueHashCode(a), ValueBox.ValueHashCode(b));
     }
 
     [Fact]
     public void ValueHashCode_TwoHeapInt64Min_SameHash() {
-        var a = ValueBox.FromInt64(long.MinValue);
-        var b = ValueBox.FromInt64(long.MinValue);
+        var a = ValueBox.Int64Face.From(long.MinValue);
+        var b = ValueBox.Int64Face.From(long.MinValue);
         Assert.True(ValueBox.ValueEquals(a, b));
         Assert.Equal(ValueBox.ValueHashCode(a), ValueBox.ValueHashCode(b));
     }
@@ -231,9 +379,9 @@ public class ValueBoxEqualityTests {
     [Fact]
     public void EqualityComparer_Equals_DelegatesToValueEquals() {
         var comparer = ValueBox.EqualityComparer.Instance;
-        var x = ValueBox.FromInt64(42);
-        var y = ValueBox.FromInt64(42);
-        var z = ValueBox.FromInt64(99);
+        var x = ValueBox.Int64Face.From(42);
+        var y = ValueBox.Int64Face.From(42);
+        var z = ValueBox.Int64Face.From(99);
         Assert.True(comparer.Equals(x, y));
         Assert.False(comparer.Equals(x, z));
     }
@@ -241,15 +389,15 @@ public class ValueBoxEqualityTests {
     [Fact]
     public void EqualityComparer_GetHashCode_DelegatesToValueHashCode() {
         var comparer = ValueBox.EqualityComparer.Instance;
-        var box = ValueBox.FromInt64(42);
+        var box = ValueBox.Int64Face.From(42);
         Assert.Equal(ValueBox.ValueHashCode(box), comparer.GetHashCode(box));
     }
 
     [Fact]
     public void EqualityComparer_Equals_HeapValues_Works() {
         var comparer = ValueBox.EqualityComparer.Instance;
-        var a = ValueBox.FromUInt64(ulong.MaxValue);
-        var b = ValueBox.FromUInt64(ulong.MaxValue);
+        var a = ValueBox.UInt64Face.From(ulong.MaxValue);
+        var b = ValueBox.UInt64Face.From(ulong.MaxValue);
         Assert.True(comparer.Equals(a, b));
         Assert.Equal(comparer.GetHashCode(a), comparer.GetHashCode(b));
     }

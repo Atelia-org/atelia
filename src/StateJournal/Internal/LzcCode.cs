@@ -12,7 +12,7 @@ internal enum LzcCode : byte {
     InlineNonnegInt = 1,
     InlineNegInt = 2,
     // 3..23 未分配
-    HeapSlot = 64 - 1 - ValueBox.HeapKindBitCount - ValueBox.HeapHandleBitCount,
+    HeapSlot = 64 - 1 - ValueBox.HeapKindBitCount - ValueBox.ExclusiveBitCount - ValueBox.HeapHandleBitCount,
     // 25..61 未分配
     Boolean = 62,
     Undefined = 63,
@@ -56,4 +56,13 @@ internal static class LzcConstants {
 
     /// <summary>InlineNegativeInteger 的 inline 下界（含）：-2^61。</summary>
     internal const long NegIntInlineMin = -(1L << (64 - (int)LzcCode.InlineNegInt - 1));
+
+    /// <summary>Boolean false codeword (LZC=62): 0x2.</summary>
+    internal const ulong SimpleFalse = 1UL << (63 - (int)LzcCode.Boolean);
+
+    /// <summary>Boolean true codeword (LZC=62): 0x3.</summary>
+    internal const ulong SimpleTrue = SimpleFalse | 1UL;
+
+    /// <summary>Null codeword (LZC=64): all bits zero.</summary>
+    internal const ulong SimpleNull = 0UL;
 }

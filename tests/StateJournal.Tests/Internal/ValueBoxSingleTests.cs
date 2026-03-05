@@ -4,7 +4,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 // ai:impl `src/StateJournal/Internal/ValueBox.Float.cs`
 
 /// <summary>
-/// <see cref="ValueBox.FromSingle"/> 和 <see cref="ValueBox.Get(out float)"/> 的单元测试。
+/// <see cref="ValueBox.SingleFace.From"/> 和 <see cref="ValueBox.SingleFace.Get"/> 的单元测试。
 /// </summary>
 /// <remarks>
 /// 测试策略：
@@ -40,16 +40,16 @@ public class ValueBoxSingleTests {
     [InlineData(float.NegativeInfinity)]
     [InlineData(float.Epsilon)]
     public void FromSingle_Roundtrip(float value) {
-        var box = ValueBox.FromSingle(value);
-        GetIssue issue = box.Get(out float actual);
+        var box = ValueBox.SingleFace.From(value);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float actual);
         Assert.Equal(GetIssue.None, issue);
         AssertFloatBitsEqual(value, actual);
     }
 
     [Fact]
     public void FromSingle_NaN_Roundtrip() {
-        var box = ValueBox.FromSingle(float.NaN);
-        GetIssue issue = box.Get(out float actual);
+        var box = ValueBox.SingleFace.From(float.NaN);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.True(float.IsNaN(actual));
     }
@@ -57,8 +57,8 @@ public class ValueBoxSingleTests {
     [Fact]
     public void FromSingle_NegativeZero_PreservesBits() {
         float neg0 = BitConverter.UInt32BitsToSingle(0x8000_0000); // -0.0f
-        var box = ValueBox.FromSingle(neg0);
-        GetIssue issue = box.Get(out float actual);
+        var box = ValueBox.SingleFace.From(neg0);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float actual);
         Assert.Equal(GetIssue.None, issue);
         AssertFloatBitsEqual(neg0, actual);
     }
@@ -68,10 +68,10 @@ public class ValueBoxSingleTests {
     [Fact]
     public void FromSingle_NoPoolAllocation() {
         int before = PoolCount;
-        _ = ValueBox.FromSingle(float.MaxValue);
-        _ = ValueBox.FromSingle(float.MinValue);
-        _ = ValueBox.FromSingle(float.NaN);
-        _ = ValueBox.FromSingle(float.PositiveInfinity);
+        _ = ValueBox.SingleFace.From(float.MaxValue);
+        _ = ValueBox.SingleFace.From(float.MinValue);
+        _ = ValueBox.SingleFace.From(float.NaN);
+        _ = ValueBox.SingleFace.From(float.PositiveInfinity);
         Assert.Equal(before, PoolCount);
     }
 
@@ -79,19 +79,19 @@ public class ValueBoxSingleTests {
 
     [Fact]
     public void SameInlineSameValueBox_Float_EqualsDouble() =>
-        Assert.Equal(ValueBox.FromSingle(0.5f).GetBits(), ValueBox.FromRoundedDouble(0.5).GetBits());
+        Assert.Equal(ValueBox.SingleFace.From(0.5f).GetBits(), ValueBox.RoundedDoubleFace.From(0.5).GetBits());
 
     [Fact]
     public void SameInlineSameValueBox_Float1_EqualsHalf1() =>
-        Assert.Equal(ValueBox.FromSingle(1.0f).GetBits(), ValueBox.FromHalf((Half)1.0).GetBits());
+        Assert.Equal(ValueBox.SingleFace.From(1.0f).GetBits(), ValueBox.HalfFace.From((Half)1.0).GetBits());
 
     // ═══════════════════════ Get(out float) — 从 Half 源（经 inline double 中转）═══════════════════════
 
     [Fact]
     public void GetFloat_FromHalf_ReturnsWidenedFloat() {
         Half h = (Half)2.5;
-        var box = ValueBox.FromHalf(h);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.HalfFace.From(h);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((float)(double)h, value);
     }
@@ -101,8 +101,8 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromDouble_ExactNarrowing() {
         // 1.5 能精确表示为 float
-        var box = ValueBox.FromRoundedDouble(1.5);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.RoundedDoubleFace.From(1.5);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(1.5f, value);
     }
@@ -110,8 +110,8 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromDouble_PrecisionLost() {
         // 0.1 (double) 不能精确表示为 float
-        var box = ValueBox.FromRoundedDouble(0.1);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.RoundedDoubleFace.From(0.1);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((float)0.1, value);
     }
@@ -119,16 +119,16 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromDouble_OverflowedToInfinity() {
         // 1e+300 → (float) → +Infinity
-        var box = ValueBox.FromRoundedDouble(1.0e+300);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.RoundedDoubleFace.From(1.0e+300);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.OverflowedToInfinity, issue);
         Assert.Equal(float.PositiveInfinity, value);
     }
 
     [Fact]
     public void GetFloat_FromNegativeDouble_OverflowedToInfinity() {
-        var box = ValueBox.FromRoundedDouble(-1.0e+300);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.RoundedDoubleFace.From(-1.0e+300);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.OverflowedToInfinity, issue);
         Assert.Equal(float.NegativeInfinity, value);
     }
@@ -136,16 +136,16 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromDoubleInfinity_None_NotOverflow() {
         // double ±Infinity → float ±Infinity 不算"溢出到 Infinity"
-        var box = ValueBox.FromRoundedDouble(double.PositiveInfinity);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.RoundedDoubleFace.From(double.PositiveInfinity);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(float.PositiveInfinity, value);
     }
 
     [Fact]
     public void GetFloat_FromDoubleNaN_None() {
-        var box = ValueBox.FromRoundedDouble(double.NaN);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.RoundedDoubleFace.From(double.NaN);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.None, issue);
         Assert.True(float.IsNaN(value));
     }
@@ -156,8 +156,8 @@ public class ValueBoxSingleTests {
     public void GetFloat_FromExactHeapDouble_PrecisionLost() {
         // 0x3FF0_0000_0000_0001 ≈ 1.0（LSB=1 → heap），窄化到 float 丢失精度
         double d = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
-        var box = ValueBox.FromExactDouble(d);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.ExactDoubleFace.From(d);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal(1.0f, value);
     }
@@ -165,8 +165,8 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromExactHeapDouble_OverflowedToInfinity() {
         // double.MaxValue（LSB=1 → heap），窄化到 float 溢出
-        var box = ValueBox.FromExactDouble(double.MaxValue);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.ExactDoubleFace.From(double.MaxValue);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.OverflowedToInfinity, issue);
         Assert.Equal(float.PositiveInfinity, value);
     }
@@ -179,8 +179,8 @@ public class ValueBoxSingleTests {
     [InlineData(-1L)]
     [InlineData(42L)]
     public void GetFloat_FromSmallInt_Exact(long intValue) {
-        var box = ValueBox.FromInt64(intValue);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.Int64Face.From(intValue);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((float)intValue, value);
     }
@@ -189,8 +189,8 @@ public class ValueBoxSingleTests {
     public void GetFloat_FromInlineInt_24BitBoundary_Exact() {
         // 2^24 − 1 = 16777215：24 个有效位，恰好在 float 精度内
         long v = (1L << 24) - 1;
-        var box = ValueBox.FromInt64(v);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.Int64Face.From(v);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((float)v, value);
     }
@@ -201,8 +201,8 @@ public class ValueBoxSingleTests {
     public void GetFloat_FromInlineInt_25Bit_PrecisionLost() {
         // 2^24 + 1 = 16777217：25 个有效位，超出 float 24-bit significand
         long v = (1L << 24) + 1;
-        var box = ValueBox.FromInt64(v);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.Int64Face.From(v);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((float)v, value);
     }
@@ -210,8 +210,8 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromInlineNegInt_PrecisionLost() {
         long v = -((1L << 24) + 1);
-        var box = ValueBox.FromInt64(v);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.Int64Face.From(v);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((float)v, value);
     }
@@ -221,16 +221,16 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromHeapNonnegInt_PowerOf2_Exact() {
         // 2^62 是 2 的幂 → 精确表示为 float；超出 inline → heap
-        var box = ValueBox.FromInt64((long)LzcConstants.NonnegIntInlineCap);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.Int64Face.From((long)LzcConstants.NonnegIntInlineCap);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((float)(long)LzcConstants.NonnegIntInlineCap, value);
     }
 
     [Fact]
     public void GetFloat_FromHeapUInt64Max_PrecisionLost() {
-        var box = ValueBox.FromUInt64(ulong.MaxValue);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.UInt64Face.From(ulong.MaxValue);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((float)ulong.MaxValue, value);
     }
@@ -239,8 +239,8 @@ public class ValueBoxSingleTests {
     public void GetFloat_FromHeapNegInt_LongMinValue_Exact() {
         // long.MinValue = −2^63：2 的幂 → exact as float
         // 验证 (ulong)(-long.MinValue) 溢出但仍给出正确 magnitude
-        var box = ValueBox.FromInt64(long.MinValue);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.Int64Face.From(long.MinValue);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((float)long.MinValue, value);
     }
@@ -248,8 +248,8 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromHeapNegInt_NotPowerOf2_PrecisionLost() {
         // long.MinValue + 1 = −(2^63 − 1)：63 个有效位 → PrecisionLost
-        var box = ValueBox.FromInt64(long.MinValue + 1);
-        GetIssue issue = box.Get(out float value);
+        var box = ValueBox.Int64Face.From(long.MinValue + 1);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((float)(long.MinValue + 1), value);
     }
@@ -259,7 +259,7 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromNull_TypeMismatch() {
         var box = new ValueBox(0);
-        GetIssue issue = box.Get(out float value);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
@@ -267,7 +267,7 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromBooleanFalse_TypeMismatch() {
         var box = new ValueBox(2);
-        GetIssue issue = box.Get(out float value);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
@@ -275,7 +275,7 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromUndefined_TypeMismatch() {
         var box = new ValueBox(1);
-        GetIssue issue = box.Get(out float value);
+        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }

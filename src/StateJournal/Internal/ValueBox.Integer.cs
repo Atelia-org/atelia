@@ -8,46 +8,288 @@ namespace Atelia.StateJournal;
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxInt64Tests.cs`
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxUInt64Tests.cs`
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxInt32Tests.cs`
-// ai:test `tests/StateJournal.Tests/Internal/ValueBoxUnt32Tests.cs`
+// ai:test `tests/StateJournal.Tests/Internal/ValueBoxUInt32Tests.cs`
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxSmallIntTests.cs`
 partial struct ValueBox {
-    #region From integer
-
-    /// <summary>将 long 编码为 ValueBox。值域 [-2^61, 2^62-1] 内联；超出范围回退到堆分配。</summary>
-    public static ValueBox FromInt64(long value) {
-        ulong u = unchecked((ulong)value);
-        if (value >= 0) {
-            if (u < LzcConstants.NonnegIntInlineCap) { return new(u | LzcConstants.NonnegIntTag); }
-            return EncodeHeapSlot(DurableValueKind.NonnegativeInteger, ValuePools.Bits64.Store(u));
+    internal readonly struct Int64Face : ITypedFace<long> {
+        /// <summary>将 long 编码为 ValueBox。值域 [-2^61, 2^62-1] 内联；超出范围回退到堆分配。</summary>
+        public static ValueBox From(long value) {
+            ulong u = unchecked((ulong)value);
+            if (value >= 0) {
+                if (u < LzcConstants.NonnegIntInlineCap) { return new(u | LzcConstants.NonnegIntTag); }
+                return EncodeHeapSlot(DurableValueKind.NonnegativeInteger, ValuePools.Bits64.Store(u));
+            }
+            // value < 0
+            if (value >= LzcConstants.NegIntInlineMin) { return new(u & LzcConstants.NegIntPayloadMask); }
+            return EncodeHeapSlot(DurableValueKind.NegativeInteger, ValuePools.Bits64.Store(u));
         }
-        // value < 0
-        if (value >= LzcConstants.NegIntInlineMin) { return new(u & LzcConstants.NegIntPayloadMask); }
-        return EncodeHeapSlot(DurableValueKind.NegativeInteger, ValuePools.Bits64.Store(u));
+
+        /// <summary>
+        /// 独占更新：将 ValueBox 覆写为指定的 long 值。
+        /// 若旧值与新值都使用 <see cref="ValuePools.Bits64"/>，则 inplace 修改 Slot 中的值，
+        /// 避免 Free + Store 的开销。其他情况下清理旧 Slot（如有）并编码新值。
+        /// </summary>
+        public static bool Update(ref ValueBox box, long value) {
+            ulong u = unchecked((ulong)value);
+            if (value >= 0) {
+                if (u < LzcConstants.NonnegIntInlineCap) {
+                    FreeOldBits64IfNeeded(box);
+                    box = new(u | LzcConstants.NonnegIntTag);
+                    return true;
+                }
+                SlotHandle h = StoreOrReuseBits64(box, u);
+                box = EncodeHeapSlot(DurableValueKind.NonnegativeInteger, h);
+            }
+            else {
+                if (value >= LzcConstants.NegIntInlineMin) {
+                    FreeOldBits64IfNeeded(box);
+                    box = new(u & LzcConstants.NegIntPayloadMask);
+                    return true;
+                }
+                SlotHandle h = StoreOrReuseBits64(box, u);
+                box = EncodeHeapSlot(DurableValueKind.NegativeInteger, h);
+            }
+            return true;
+        }
+
+        /// <summary>尝试按long类型读出内部保存的值。</summary>
+        /// <returns>
+        /// <see cref="GetIssue.None"/>
+        /// <see cref="GetIssue.Saturated"/>
+        /// <see cref="GetIssue.TypeMismatch"/>
+        /// </returns>
+        public static GetIssue Get(ValueBox box, out long value) {
+            LzcCode lzc = box.GetLZC();
+            if (lzc == LzcCode.InlineNonnegInt) {
+                value = (long)box.DecodeInlineNonnegInt(); // inline范围是62bit所以不会溢出
+                return GetIssue.None;
+            }
+            if (lzc == LzcCode.InlineNegInt) {
+                value = box.DecodeInlineNegInt();
+                return GetIssue.None;
+            }
+            if (lzc == LzcCode.HeapSlot) {
+                DurableValueKind kind = box.GetHeapKind();
+                if (kind == DurableValueKind.NonnegativeInteger) {
+                    ulong u = box.DecodeHeapNonnegInt();
+                    if (u > (ulong)long.MaxValue) {
+                        value = long.MaxValue;
+                        return GetIssue.Saturated;
+                    }
+                    value = (long)u;
+                    return GetIssue.None;
+                }
+                if (kind == DurableValueKind.NegativeInteger) {
+                    value = box.DecodeHeapNegInt();
+                    return GetIssue.None;
+                }
+            }
+            value = default;
+            return GetIssue.TypeMismatch;
+        }
     }
 
-    /// <summary>将 ulong 编码为 ValueBox。值域 [0, 2^62-1] 内联；超出范围回退到堆分配。</summary>
-    public static ValueBox FromUInt64(ulong value) {
-        if (value < LzcConstants.NonnegIntInlineCap) { return new(value | LzcConstants.NonnegIntTag); }
-        return EncodeHeapSlot(DurableValueKind.NonnegativeInteger, ValuePools.Bits64.Store(value));
+    internal readonly struct UInt64Face : ITypedFace<ulong> {
+        /// <summary>将 ulong 编码为 ValueBox。值域 [0, 2^62-1] 内联；超出范围回退到堆分配。</summary>
+        public static ValueBox From(ulong value) {
+            if (value < LzcConstants.NonnegIntInlineCap) { return new(value | LzcConstants.NonnegIntTag); }
+            return EncodeHeapSlot(DurableValueKind.NonnegativeInteger, ValuePools.Bits64.Store(value));
+        }
+
+        /// <summary>
+        /// 独占更新：将 ValueBox 覆写为指定的 ulong 值。
+        /// 逻辑同 <see cref="Int64Face.Update"/>，仅无负数路径。
+        /// </summary>
+        public static bool Update(ref ValueBox box, ulong value) {
+            if (value < LzcConstants.NonnegIntInlineCap) {
+                FreeOldBits64IfNeeded(box);
+                box = new(value | LzcConstants.NonnegIntTag);
+                return true;
+            }
+            SlotHandle h = StoreOrReuseBits64(box, value);
+            box = EncodeHeapSlot(DurableValueKind.NonnegativeInteger, h);
+            return true;
+        }
+
+        /// <summary>尝试按ulong类型读出内部保存的值。</summary>
+        /// <returns>
+        /// <see cref="GetIssue.None"/>
+        /// <see cref="GetIssue.Saturated"/>
+        /// <see cref="GetIssue.TypeMismatch"/>
+        /// </returns>
+        public static GetIssue Get(ValueBox box, out ulong value) {
+            LzcCode lzc = box.GetLZC();
+            if (lzc == LzcCode.InlineNonnegInt) {
+                value = box.DecodeInlineNonnegInt();
+                return GetIssue.None;
+            }
+            if (lzc == LzcCode.HeapSlot) {
+                DurableValueKind kind = box.GetHeapKind();
+                if (kind == DurableValueKind.NonnegativeInteger) {
+                    value = box.DecodeHeapNonnegInt();
+                    return GetIssue.None;
+                }
+                if (kind == DurableValueKind.NegativeInteger) {
+                    value = ulong.MinValue;
+                    return GetIssue.Saturated;
+                }
+            }
+
+            if (lzc == LzcCode.InlineNegInt) {
+                value = ulong.MinValue;
+                return GetIssue.Saturated;
+            }
+
+            value = default;
+            return GetIssue.TypeMismatch;
+        }
     }
 
-    /// <summary>始终 inline。int 值域 [-2^31, 2^31-1] 完全在 inline 容量以内。</summary>
-    public static ValueBox FromInt32(int value) => FromInlineableSigned(value);
+    internal readonly struct Int32Face : ITypedFace<int> {
+        /// <summary>始终 inline。int 值域 [-2^31, 2^31-1] 完全在 inline 容量以内。</summary>
+        public static ValueBox From(int value) => FromInlineableSigned(value);
 
-    /// <summary>始终 inline。uint 值域 [0, 2^32-1] 完全在 inline 容量以内。</summary>
-    public static ValueBox FromUInt32(uint value) => FromInlineableUnsigned(value);
+        /// <summary>独占更新为 int。始终 inline。</summary>
+        public static bool Update(ref ValueBox old, int value) {
+            UpdateByInlineSigned(ref old, value);
+            return true;
+        }
+        public static GetIssue Get(ValueBox box, out int value) {
+            GetIssue status = Int64Face.Get(box, out long l);
+            if (status > GetIssue.Saturated) {
+                value = default;
+                return status;
+            }
+            if (l < int.MinValue || l > int.MaxValue) {
+                value = l < int.MinValue ? int.MinValue : int.MaxValue;
+                return GetIssue.Saturated;
+            }
+            value = (int)l;
+            return status;
+        }
+    }
 
-    /// <summary>始终 inline。</summary>
-    public static ValueBox FromInt16(short value) => FromInlineableSigned(value);
+    internal readonly struct UInt32Face : ITypedFace<uint> {
+        /// <summary>始终 inline。uint 值域 [0, 2^32-1] 完全在 inline 容量以内。</summary>
+        public static ValueBox From(uint value) => FromInlineableUnsigned(value);
 
-    /// <summary>始终 inline。</summary>
-    public static ValueBox FromUInt16(ushort value) => FromInlineableUnsigned(value);
+        /// <summary>独占更新为 uint。始终 inline。</summary>
+        public static bool Update(ref ValueBox old, uint value) {
+            UpdateByInlineUnsigned(ref old, value);
+            return true;
+        }
+        public static GetIssue Get(ValueBox box, out uint value) {
+            GetIssue status = UInt64Face.Get(box, out ulong u);
+            if (status > GetIssue.Saturated) {
+                value = default;
+                return status;
+            }
+            if (u > uint.MaxValue) {
+                value = uint.MaxValue;
+                return GetIssue.Saturated;
+            }
+            value = (uint)u;
+            return status;
+        }
+    }
 
-    /// <summary>始终 inline。</summary>
-    public static ValueBox FromSByte(sbyte value) => FromInlineableSigned(value);
+    internal readonly struct Int16Face : ITypedFace<short> {
+        /// <summary>始终 inline。</summary>
+        public static ValueBox From(short value) => FromInlineableSigned(value);
 
-    /// <summary>始终 inline。</summary>
-    public static ValueBox FromByte(byte value) => FromInlineableUnsigned(value);
+        /// <summary>独占更新为 short。始终 inline。</summary>
+        public static bool Update(ref ValueBox old, short value) {
+            UpdateByInlineSigned(ref old, value);
+            return true;
+        }
+        public static GetIssue Get(ValueBox box, out short value) {
+            GetIssue status = Int64Face.Get(box, out long l);
+            if (status > GetIssue.Saturated) {
+                value = default;
+                return status;
+            }
+            if (l < short.MinValue || l > short.MaxValue) {
+                value = l < short.MinValue ? short.MinValue : short.MaxValue;
+                return GetIssue.Saturated;
+            }
+            value = (short)l;
+            return status;
+        }
+    }
+
+    internal readonly struct UInt16Face : ITypedFace<ushort> {
+        /// <summary>始终 inline。</summary>
+        public static ValueBox From(ushort value) => FromInlineableUnsigned(value);
+
+        /// <summary>独占更新为 ushort。始终 inline。</summary>
+        public static bool Update(ref ValueBox old, ushort value) {
+            UpdateByInlineUnsigned(ref old, value);
+            return true;
+        }
+        public static GetIssue Get(ValueBox box, out ushort value) {
+            GetIssue status = UInt64Face.Get(box, out ulong u);
+            if (status > GetIssue.Saturated) {
+                value = default;
+                return status;
+            }
+            if (u > ushort.MaxValue) {
+                value = ushort.MaxValue;
+                return GetIssue.Saturated;
+            }
+            value = (ushort)u;
+            return status;
+        }
+    }
+
+    internal readonly struct SByteFace : ITypedFace<sbyte> {
+        /// <summary>始终 inline。</summary>
+        public static ValueBox From(sbyte value) => FromInlineableSigned(value);
+
+        /// <summary>独占更新为 sbyte。始终 inline。</summary>
+        public static bool Update(ref ValueBox old, sbyte value) {
+            UpdateByInlineSigned(ref old, value);
+            return true;
+        }
+        public static GetIssue Get(ValueBox box, out sbyte value) {
+            GetIssue status = Int64Face.Get(box, out long l);
+            if (status > GetIssue.Saturated) {
+                value = default;
+                return status;
+            }
+            if (l < sbyte.MinValue || l > sbyte.MaxValue) {
+                value = l < sbyte.MinValue ? sbyte.MinValue : sbyte.MaxValue;
+                return GetIssue.Saturated;
+            }
+            value = (sbyte)l;
+            return status;
+        }
+    }
+
+    internal readonly struct ByteFace : ITypedFace<byte> {
+        /// <summary>始终 inline。</summary>
+        public static ValueBox From(byte value) => FromInlineableUnsigned(value);
+
+        /// <summary>独占更新为 byte。始终 inline。</summary>
+        public static bool Update(ref ValueBox old, byte value) {
+            UpdateByInlineUnsigned(ref old, value);
+            return true;
+        }
+        public static GetIssue Get(ValueBox box, out byte value) {
+            GetIssue status = UInt64Face.Get(box, out ulong u);
+            if (status > GetIssue.Saturated) {
+                value = default;
+                return status;
+            }
+            if (u > byte.MaxValue) {
+                value = byte.MaxValue;
+                return GetIssue.Saturated;
+            }
+            value = (byte)u;
+            return status;
+        }
+    }
+
+    #region Integer encoding helpers
 
     /// <summary>小范围有符号整数的快速内联编码路径。不触发堆分配回退的安全边界为：[-2^61, 2^62-1]。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -65,7 +307,7 @@ partial struct ValueBox {
     }
 
     #endregion
-    #region Get integer 不从浮点值转换
+    #region Integer decoding helpers
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ulong DecodeInlineNonnegInt() {
@@ -93,232 +335,21 @@ partial struct ValueBox {
         return unchecked((long)ValuePools.Bits64[GetHeapHandle()]);
     }
 
-    /// <summary>尝试按long类型读出内部保存的值。</summary>
-    /// <returns>
-    /// <see cref="GetIssue.None"/>
-    /// <see cref="GetIssue.Saturated"/>
-    /// <see cref="GetIssue.TypeMismatch"/>
-    /// </returns>
-    public GetIssue Get(out long value) {
-        LzcCode lzc = GetLZC();
-        if (lzc == LzcCode.InlineNonnegInt) {
-            value = (long)DecodeInlineNonnegInt(); // inline范围是62bit所以不会溢出
-            return GetIssue.None;
-        }
-        if (lzc == LzcCode.InlineNegInt) {
-            value = DecodeInlineNegInt();
-            return GetIssue.None;
-        }
-        if (lzc == LzcCode.HeapSlot) {
-            DurableValueKind kind = GetHeapKind();
-            if (kind == DurableValueKind.NonnegativeInteger) {
-                ulong u = DecodeHeapNonnegInt();
-                if (u > (ulong)long.MaxValue) {
-                    value = long.MaxValue;
-                    return GetIssue.Saturated;
-                }
-                value = (long)u;
-                return GetIssue.None;
-            }
-            if (kind == DurableValueKind.NegativeInteger) {
-                value = DecodeHeapNegInt();
-                return GetIssue.None;
-            }
-        }
-        value = default;
-        return GetIssue.TypeMismatch;
-    }
-
-    /// <summary>尝试按ulong类型读出内部保存的值。</summary>
-    /// <returns>
-    /// <see cref="GetIssue.None"/>
-    /// <see cref="GetIssue.Saturated"/>
-    /// <see cref="GetIssue.TypeMismatch"/>
-    /// </returns>
-    public GetIssue Get(out ulong value) {
-        LzcCode lzc = GetLZC();
-        if (lzc == LzcCode.InlineNonnegInt) {
-            value = DecodeInlineNonnegInt();
-            return GetIssue.None;
-        }
-        if (lzc == LzcCode.HeapSlot) {
-            DurableValueKind kind = GetHeapKind();
-            if (kind == DurableValueKind.NonnegativeInteger) {
-                value = DecodeHeapNonnegInt();
-                return GetIssue.None;
-            }
-            if (kind == DurableValueKind.NegativeInteger) {
-                value = ulong.MinValue;
-                return GetIssue.Saturated;
-            }
-        }
-
-        if (lzc == LzcCode.InlineNegInt) {
-            value = ulong.MinValue;
-            return GetIssue.Saturated;
-        }
-
-        value = default;
-        return GetIssue.TypeMismatch;
-    }
-
-    public GetIssue Get(out int value) {
-        GetIssue status = Get(out long l);
-        if (status > GetIssue.Saturated) {
-            value = default;
-            return status;
-        }
-        if (l < int.MinValue || l > int.MaxValue) {
-            value = l < int.MinValue ? int.MinValue : int.MaxValue;
-            return GetIssue.Saturated;
-        }
-        value = (int)l;
-        return status;
-    }
-
-    public GetIssue Get(out uint value) {
-        GetIssue status = Get(out ulong u);
-        if (status > GetIssue.Saturated) {
-            value = default;
-            return status;
-        }
-        if (u > uint.MaxValue) {
-            value = uint.MaxValue;
-            return GetIssue.Saturated;
-        }
-        value = (uint)u;
-        return status;
-    }
-
-    public GetIssue Get(out short value) {
-        GetIssue status = Get(out long l);
-        if (status > GetIssue.Saturated) {
-            value = default;
-            return status;
-        }
-        if (l < short.MinValue || l > short.MaxValue) {
-            value = l < short.MinValue ? short.MinValue : short.MaxValue;
-            return GetIssue.Saturated;
-        }
-        value = (short)l;
-        return status;
-    }
-
-    public GetIssue Get(out ushort value) {
-        GetIssue status = Get(out ulong u);
-        if (status > GetIssue.Saturated) {
-            value = default;
-            return status;
-        }
-        if (u > ushort.MaxValue) {
-            value = ushort.MaxValue;
-            return GetIssue.Saturated;
-        }
-        value = (ushort)u;
-        return status;
-    }
-
-    public GetIssue Get(out sbyte value) {
-        GetIssue status = Get(out long l);
-        if (status > GetIssue.Saturated) {
-            value = default;
-            return status;
-        }
-        if (l < sbyte.MinValue || l > sbyte.MaxValue) {
-            value = l < sbyte.MinValue ? sbyte.MinValue : sbyte.MaxValue;
-            return GetIssue.Saturated;
-        }
-        value = (sbyte)l;
-        return status;
-    }
-
-    public GetIssue Get(out byte value) {
-        GetIssue status = Get(out ulong u);
-        if (status > GetIssue.Saturated) {
-            value = default;
-            return status;
-        }
-        if (u > byte.MaxValue) {
-            value = byte.MaxValue;
-            return GetIssue.Saturated;
-        }
-        value = (byte)u;
-        return status;
-    }
-
     #endregion
-    #region Exclusive set
+    #region Integer update helpers
     // ai:test `atelia/tests/StateJournal.Tests/Internal/ValueBoxExclusiveSetTests.cs`
 
-    /// <summary>
-    /// 独占更新：将 ValueBox 覆写为指定的 long 值。
-    /// 若旧值与新值都使用 <see cref="ValuePools.Bits64"/>，则 inplace 修改 Slot 中的值，
-    /// 避免 Free + Store 的开销。其他情况下清理旧 Slot（如有）并编码新值。
-    /// </summary>
-    internal static void ExclusiveSetInt64(ref ValueBox box, long value) {
-        ulong u = unchecked((ulong)value);
-        if (value >= 0) {
-            if (u < LzcConstants.NonnegIntInlineCap) {
-                FreeOldBits64IfNeeded(box);
-                box = new(u | LzcConstants.NonnegIntTag);
-                return;
-            }
-            SlotHandle h = StoreOrReuseBits64(box, u);
-            box = EncodeHeapSlot(DurableValueKind.NonnegativeInteger, h);
-        } else {
-            if (value >= LzcConstants.NegIntInlineMin) {
-                FreeOldBits64IfNeeded(box);
-                box = new(u & LzcConstants.NegIntPayloadMask);
-                return;
-            }
-            SlotHandle h = StoreOrReuseBits64(box, u);
-            box = EncodeHeapSlot(DurableValueKind.NegativeInteger, h);
-        }
-    }
-
-    /// <summary>
-    /// 独占更新：将 ValueBox 覆写为指定的 ulong 值。
-    /// 逻辑同 <see cref="ExclusiveSetInt64"/>，仅无负数路径。
-    /// </summary>
-    internal static void ExclusiveSetUInt64(ref ValueBox box, ulong value) {
-        if (value < LzcConstants.NonnegIntInlineCap) {
-            FreeOldBits64IfNeeded(box);
-            box = new(value | LzcConstants.NonnegIntTag);
-            return;
-        }
-        SlotHandle h = StoreOrReuseBits64(box, value);
-        box = EncodeHeapSlot(DurableValueKind.NonnegativeInteger, h);
-    }
-
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void ExclusiveSetInlineSigned(ref ValueBox box, long value) {
+    private static void UpdateByInlineSigned(ref ValueBox box, long value) {
         FreeOldBits64IfNeeded(box);
         box = FromInlineableSigned(value);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void ExclusiveSetInlineUnsigned(ref ValueBox box, ulong value) {
+    private static void UpdateByInlineUnsigned(ref ValueBox box, ulong value) {
         FreeOldBits64IfNeeded(box);
         box = FromInlineableUnsigned(value);
     }
-
-    /// <summary>独占更新为 int。始终 inline。</summary>
-    internal static void ExclusiveSetInt32(ref ValueBox box, int value) => ExclusiveSetInlineSigned(ref box, value);
-
-    /// <summary>独占更新为 uint。始终 inline。</summary>
-    internal static void ExclusiveSetUInt32(ref ValueBox box, uint value) => ExclusiveSetInlineUnsigned(ref box, value);
-
-    /// <summary>独占更新为 short。始终 inline。</summary>
-    internal static void ExclusiveSetInt16(ref ValueBox box, short value) => ExclusiveSetInlineSigned(ref box, value);
-
-    /// <summary>独占更新为 ushort。始终 inline。</summary>
-    internal static void ExclusiveSetUInt16(ref ValueBox box, ushort value) => ExclusiveSetInlineUnsigned(ref box, value);
-
-    /// <summary>独占更新为 sbyte。始终 inline。</summary>
-    internal static void ExclusiveSetSByte(ref ValueBox box, sbyte value) => ExclusiveSetInlineSigned(ref box, value);
-
-    /// <summary>独占更新为 byte。始终 inline。</summary>
-    internal static void ExclusiveSetByte(ref ValueBox box, byte value) => ExclusiveSetInlineUnsigned(ref box, value);
 
     #endregion
 }

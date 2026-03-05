@@ -5,7 +5,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 // ai:impl `src/StateJournal/Internal/ValueBox.String.cs`
 /// <summary>
 /// <see cref="ValueBox.FromString"/>、<see cref="ValueBox.Get(out string)"/>
-/// 和 <see cref="ValueBox.InternSetString"/> 的单元测试。
+/// 和 <see cref="ValueBox.UpdateByString"/> 的单元测试。
 /// </summary>
 /// <remarks>
 /// 测试策略：
@@ -30,15 +30,15 @@ public class ValueBoxStringTests {
     private static ValueBox BoolTrue => new(3);
 
     private static void AssertRoundtrip(string expected) {
-        var box = ValueBox.FromString(expected);
-        GetIssue issue = box.Get(out string actual);
+        var box = ValueBox.StringFace.From(expected);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(expected, actual);
     }
 
     /// <summary>创建一个需要堆分配的正整数 ValueBox（超出 inline 范围）。</summary>
     private static ValueBox HeapNonnegInt() =>
-        ValueBox.FromInt64((long)LzcConstants.NonnegIntInlineCap); // 2^62，刚好溢出 inline
+        ValueBox.Int64Face.From((long)LzcConstants.NonnegIntInlineCap); // 2^62，刚好溢出 inline
 
     // ═══════════════════════ FromString → Get(out string) Roundtrip ═══════════════════════
 
@@ -74,22 +74,22 @@ public class ValueBoxStringTests {
 
     [Fact]
     public void FromString_SameValue_ProducesSameBits() {
-        var a = ValueBox.FromString("hello");
-        var b = ValueBox.FromString("hello");
+        var a = ValueBox.StringFace.From("hello");
+        var b = ValueBox.StringFace.From("hello");
         Assert.Equal(a.GetBits(), b.GetBits());
     }
 
     [Fact]
     public void FromString_DifferentValues_ProduceDifferentBits() {
-        var a = ValueBox.FromString("hello");
-        var b = ValueBox.FromString("world");
+        var a = ValueBox.StringFace.From("hello");
+        var b = ValueBox.StringFace.From("world");
         Assert.NotEqual(a.GetBits(), b.GetBits());
     }
 
     [Fact]
     public void FromString_EmptyAndNonEmpty_DifferentBits() {
-        var a = ValueBox.FromString("");
-        var b = ValueBox.FromString("x");
+        var a = ValueBox.StringFace.From("");
+        var b = ValueBox.StringFace.From("x");
         Assert.NotEqual(a.GetBits(), b.GetBits());
     }
 
@@ -98,7 +98,7 @@ public class ValueBoxStringTests {
     [Fact]
     public void FromString_DoesNotAllocateBits64() {
         int before = Bits64Count;
-        _ = ValueBox.FromString("test_bits64_not_affected");
+        _ = ValueBox.StringFace.From("test_bits64_not_affected");
         Assert.Equal(before, Bits64Count);
     }
 
@@ -107,16 +107,16 @@ public class ValueBoxStringTests {
         // 使用足够独特的字符串，确保之前未被 intern
         string unique = $"unique_string_{Guid.NewGuid()}";
         int before = StringsCount;
-        _ = ValueBox.FromString(unique);
+        _ = ValueBox.StringFace.From(unique);
         Assert.Equal(before + 1, StringsCount);
     }
 
     [Fact]
     public void FromString_SameValue_DoesNotAllocateSecondSlot() {
         string unique = $"dedup_test_{Guid.NewGuid()}";
-        _ = ValueBox.FromString(unique);
+        _ = ValueBox.StringFace.From(unique);
         int after1 = StringsCount;
-        _ = ValueBox.FromString(unique);
+        _ = ValueBox.StringFace.From(unique);
         Assert.Equal(after1, StringsCount); // 去重，不再分配
     }
 
@@ -124,32 +124,32 @@ public class ValueBoxStringTests {
 
     [Fact]
     public void GetString_FromInt64_TypeMismatch() {
-        var box = ValueBox.FromInt64(42);
-        GetIssue issue = box.Get(out string value);
+        var box = ValueBox.Int64Face.From(42);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Null(value);
     }
 
     [Fact]
     public void GetString_FromDouble_TypeMismatch() {
-        var box = ValueBox.FromRoundedDouble(3.14);
-        GetIssue issue = box.Get(out string value);
+        var box = ValueBox.RoundedDoubleFace.From(3.14);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Null(value);
     }
 
     [Fact]
-    public void GetString_FromNull_TypeMismatch() {
+    public void GetString_FromNull_None() {
         var box = Null;
-        GetIssue issue = box.Get(out string value);
-        Assert.Equal(GetIssue.TypeMismatch, issue);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? value);
+        Assert.Equal(GetIssue.None, issue);
         Assert.Null(value);
     }
 
     [Fact]
     public void GetString_FromUndefined_TypeMismatch() {
         var box = Undefined;
-        GetIssue issue = box.Get(out string value);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Null(value);
     }
@@ -157,7 +157,7 @@ public class ValueBoxStringTests {
     [Fact]
     public void GetString_FromBooleanTrue_TypeMismatch() {
         var box = BoolTrue;
-        GetIssue issue = box.Get(out string value);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Null(value);
     }
@@ -165,7 +165,7 @@ public class ValueBoxStringTests {
     [Fact]
     public void GetString_FromBooleanFalse_TypeMismatch() {
         var box = BoolFalse;
-        GetIssue issue = box.Get(out string value);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Null(value);
     }
@@ -174,16 +174,16 @@ public class ValueBoxStringTests {
 
     [Fact]
     public void GetLong_FromString_TypeMismatch() {
-        var box = ValueBox.FromString("42");
-        GetIssue issue = box.Get(out long value);
+        var box = ValueBox.StringFace.From("42");
+        GetIssue issue = ValueBox.Int64Face.Get(box, out long value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
 
     [Fact]
     public void GetDouble_FromString_TypeMismatch() {
-        var box = ValueBox.FromString("3.14");
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.StringFace.From("3.14");
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
@@ -192,34 +192,34 @@ public class ValueBoxStringTests {
 
     [Fact]
     public void ValueEquals_SameString_True() {
-        var a = ValueBox.FromString("hello");
-        var b = ValueBox.FromString("hello");
+        var a = ValueBox.StringFace.From("hello");
+        var b = ValueBox.StringFace.From("hello");
         Assert.True(ValueBox.ValueEquals(a, b));
     }
 
     [Fact]
     public void ValueEquals_DifferentStrings_False() {
-        var a = ValueBox.FromString("hello");
-        var b = ValueBox.FromString("world");
+        var a = ValueBox.StringFace.From("hello");
+        var b = ValueBox.StringFace.From("world");
         Assert.False(ValueBox.ValueEquals(a, b));
     }
 
     [Fact]
     public void ValueEquals_StringVsInt_DifferentType_False() {
-        var str = ValueBox.FromString("42");
-        var num = ValueBox.FromInt64(42);
+        var str = ValueBox.StringFace.From("42");
+        var num = ValueBox.Int64Face.From(42);
         Assert.False(ValueBox.ValueEquals(str, num));
     }
 
     [Fact]
     public void ValueEquals_EmptyStringVsNull_False() {
-        var str = ValueBox.FromString("");
+        var str = ValueBox.StringFace.From("");
         Assert.False(ValueBox.ValueEquals(str, Null));
     }
 
     [Fact]
     public void ValueEquals_String_SelfEquals() {
-        var box = ValueBox.FromString("self");
+        var box = ValueBox.StringFace.From("self");
         Assert.True(ValueBox.ValueEquals(box, box));
     }
 
@@ -227,15 +227,15 @@ public class ValueBoxStringTests {
 
     [Fact]
     public void ValueHashCode_SameString_SameHash() {
-        var a = ValueBox.FromString("hello");
-        var b = ValueBox.FromString("hello");
+        var a = ValueBox.StringFace.From("hello");
+        var b = ValueBox.StringFace.From("hello");
         Assert.Equal(ValueBox.ValueHashCode(a), ValueBox.ValueHashCode(b));
     }
 
     [Fact]
     public void ValueHashCode_SameString_ConsistentWithValueEquals() {
-        var a = ValueBox.FromString("hello");
-        var b = ValueBox.FromString("hello");
+        var a = ValueBox.StringFace.From("hello");
+        var b = ValueBox.StringFace.From("hello");
         Assert.True(ValueBox.ValueEquals(a, b)); // 前提
         Assert.Equal(ValueBox.ValueHashCode(a), ValueBox.ValueHashCode(b));
     }
@@ -245,8 +245,8 @@ public class ValueBoxStringTests {
     [Fact]
     public void InternSetString_FromNull_RoundtripsCorrectly() {
         var box = Null;
-        ValueBox.InternSetString(ref box, "hello");
-        GetIssue issue = box.Get(out string actual);
+        ValueBox.StringFace.Update(ref box, "hello");
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("hello", actual);
     }
@@ -255,9 +255,9 @@ public class ValueBoxStringTests {
 
     [Fact]
     public void InternSetString_FromString_ToAnotherString() {
-        var box = ValueBox.FromString("old");
-        ValueBox.InternSetString(ref box, "new");
-        GetIssue issue = box.Get(out string actual);
+        var box = ValueBox.StringFace.From("old");
+        ValueBox.StringFace.Update(ref box, "new");
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("new", actual);
     }
@@ -266,12 +266,12 @@ public class ValueBoxStringTests {
 
     [Fact]
     public void InternSetString_FromInlineInt_ToStringCorrectly() {
-        var box = ValueBox.FromInt64(42); // inline int
+        var box = ValueBox.Int64Face.From(42); // inline int
         int bits64Before = Bits64Count;
-        ValueBox.InternSetString(ref box, "replaced");
+        ValueBox.StringFace.Update(ref box, "replaced");
         // inline int 没有 Bits64 slot，Bits64.Count 不变
         Assert.Equal(bits64Before, Bits64Count);
-        GetIssue issue = box.Get(out string actual);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("replaced", actual);
     }
@@ -282,21 +282,21 @@ public class ValueBoxStringTests {
     public void InternSetString_FromHeapInt_FreesBits64Slot() {
         var box = HeapNonnegInt(); // 堆上的正整数，持有 Bits64 slot
         int bits64Before = Bits64Count;
-        ValueBox.InternSetString(ref box, "from_heap");
+        ValueBox.StringFace.Update(ref box, "from_heap");
         // 旧的 Bits64 slot 应被释放
         Assert.Equal(bits64Before - 1, Bits64Count);
-        GetIssue issue = box.Get(out string actual);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("from_heap", actual);
     }
 
     [Fact]
     public void InternSetString_FromHeapNegInt_FreesBits64Slot() {
-        var box = ValueBox.FromInt64(LzcConstants.NegIntInlineMin - 1); // 堆上的负整数
+        var box = ValueBox.Int64Face.From(LzcConstants.NegIntInlineMin - 1); // 堆上的负整数
         int bits64Before = Bits64Count;
-        ValueBox.InternSetString(ref box, "from_neg_heap");
+        ValueBox.StringFace.Update(ref box, "from_neg_heap");
         Assert.Equal(bits64Before - 1, Bits64Count);
-        GetIssue issue = box.Get(out string actual);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("from_neg_heap", actual);
     }
@@ -305,11 +305,11 @@ public class ValueBoxStringTests {
     public void InternSetString_FromHeapDouble_FreesBits64Slot() {
         // 0x3FF0_0000_0000_0001 的 LSB=1 → 需要堆分配的 double
         double d = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
-        var box = ValueBox.FromExactDouble(d);
+        var box = ValueBox.ExactDoubleFace.From(d);
         int bits64Before = Bits64Count;
-        ValueBox.InternSetString(ref box, "from_heap_double");
+        ValueBox.StringFace.Update(ref box, "from_heap_double");
         Assert.Equal(bits64Before - 1, Bits64Count);
-        GetIssue issue = box.Get(out string actual);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("from_heap_double", actual);
     }
@@ -321,15 +321,15 @@ public class ValueBoxStringTests {
         // InternPool 不支持手动 Free，旧 string slot 留给 Mark-Sweep GC
         string unique1 = $"intern_old_{Guid.NewGuid()}";
         string unique2 = $"intern_new_{Guid.NewGuid()}";
-        var box = ValueBox.FromString(unique1);
+        var box = ValueBox.StringFace.From(unique1);
         int stringsBefore = StringsCount;
         int bits64Before = Bits64Count;
-        ValueBox.InternSetString(ref box, unique2);
+        ValueBox.StringFace.Update(ref box, unique2);
         // Strings 池增长 1（新字符串），旧字符串 slot 不释放
         Assert.Equal(stringsBefore + 1, StringsCount);
         // Bits64 池不受影响
         Assert.Equal(bits64Before, Bits64Count);
-        GetIssue issue = box.Get(out string actual);
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(unique2, actual);
     }
@@ -339,8 +339,8 @@ public class ValueBoxStringTests {
     [Fact]
     public void InternSetString_FromUndefined_Works() {
         var box = Undefined;
-        ValueBox.InternSetString(ref box, "overwrite_undef");
-        GetIssue issue = box.Get(out string actual);
+        ValueBox.StringFace.Update(ref box, "overwrite_undef");
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("overwrite_undef", actual);
     }
@@ -348,8 +348,8 @@ public class ValueBoxStringTests {
     [Fact]
     public void InternSetString_FromBoolTrue_Works() {
         var box = BoolTrue;
-        ValueBox.InternSetString(ref box, "overwrite_bool");
-        GetIssue issue = box.Get(out string actual);
+        ValueBox.StringFace.Update(ref box, "overwrite_bool");
+        GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("overwrite_bool", actual);
     }

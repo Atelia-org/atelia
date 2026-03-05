@@ -13,5 +13,19 @@ public enum DurableValueKind : byte {
     NegativeInteger,
     #endregion
 
+    #region 注意这3项表示DurableObject的，需保持连续和保序，用于性能优化
+    /// <summary><see cref="DurableDict{TKey}"/> heterogeneous</summary>
+    MixedDict,
+
+    /// <summary><see cref="DurableDict{TKey,TValue}"/>  homogeneous</summary>
+    TypedDict,
+
+    /// <summary><see cref="DurableList"/> heterogeneous</summary>
+    MixedList,
+
+    /// <summary><see cref="DurableList{T}"/> homogeneous</summary>
+    TypedList,
+    #endregion
+
     String,
 }

@@ -1,0 +1,153 @@
+using System.Diagnostics;
+
+namespace Atelia.StateJournal.Internal;
+
+internal readonly struct DictChangeTracker<TKey, TValue>
+where TKey : notnull
+where TValue : notnull {
+
+    // === 内部状态（双字典策略） ===
+    private readonly Dictionary<TKey, TValue?> _committed;  // 上次 commit 时的状态
+    private readonly Dictionary<TKey, TValue?> _current;    // 当前工作状态
+    private readonly BitDivision<TKey> _dirtyKeys; // 发生变更的 key 集合, false = remove; true = upsert
+
+    private void MarkNoChange(TKey key) => _dirtyKeys.Remove(key);
+    private void MarkRemoved(TKey key) => _dirtyKeys.SetFalse(key);
+    private void MarkChanged(TKey key) => _dirtyKeys.SetTrue(key);
+    #region 可用于单元测试
+    public BitDivision<TKey>.Enumerator RemovedKeys => _dirtyKeys.FalseKeys;
+    public BitDivision<TKey>.Enumerator UpsertedKeys => _dirtyKeys.TrueKeys;
+    public int RemovedCount => _dirtyKeys.FalseCount;
+    public int ChangedCount => _dirtyKeys.TrueCount;
+    public bool HasChanges => _dirtyKeys.Count > 0;
+    #endregion
+
+    /// <summary>内部读写接口。当集合变更后需要调用<see cref="AfterUpsert"/>与<see cref="AfterRemove"/>。</summary>
+    internal Dictionary<TKey, TValue?> Current => _current;
+
+    public DictChangeTracker() {
+        _committed = new();
+        _current = new();
+        _dirtyKeys = new();
+    }
+
+    internal void AfterUpsert<VHelper>(TKey key, TValue? value)
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (_committed.TryGetValue(key, out TValue? committedValue) && VHelper.Equals(value, committedValue)) {
+            // 新值语义等于 committed → 释放新值的独占 slot，恢复为 committed 的冻结副本
+            VHelper.ReleaseSlot(value);
+            _current[key] = committedValue;
+            MarkNoChange(key);
+        }
+        else {
+            MarkChanged(key);
+        }
+    }
+
+    public void AfterRemove<VHelper>(TKey key, TValue? removedValue)
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (_dirtyKeys.TryGetSubset(key, out bool wasTrueSubset) && wasTrueSubset) {
+            VHelper.ReleaseSlot(removedValue);
+        }
+
+        if (_committed.ContainsKey(key)) {
+            MarkRemoved(key);
+        }
+        else {
+            MarkNoChange(key);
+        }
+    }
+
+    public void AfterRemove(TKey key) {
+        if (_committed.ContainsKey(key)) {
+            MarkRemoved(key);
+        }
+        else {
+            MarkNoChange(key);
+        }
+    }
+
+    public void Revert<VHelper>()
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (_dirtyKeys.Count == 0) { return; }
+
+        // 根据 dirtyKeys 将 _current 局部还原为 _committed 的状态
+        foreach (var key in RemovedKeys) {
+            // 被移除的：从 _committed 恢复到 _current（共享 frozen 值）
+            _current[key] = _committed[key];
+        }
+
+        foreach (var key in UpsertedKeys) {
+            // 释放 current 的独占 slot（仅对有堆资源的类型有实际效果）
+            VHelper.ReleaseSlot(_current[key]);
+            // 被新增/修改的：如果原本存在则恢复旧值，原本不存在则是纯新增，直接移除
+            if (_committed.TryGetValue(key, out var oldValue)) {
+                _current[key] = oldValue;
+            }
+            else {
+                _current.Remove(key);
+            }
+        }
+
+        _dirtyKeys.Clear();
+    }
+
+    public void Commit<VHelper>()
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (_dirtyKeys.Count == 0) { return; }
+
+        // 根据 dirtyKeys 将变动局部增量应用到 _committed
+        foreach (var key in RemovedKeys) {
+            // 被移除的：释放 committed 的旧 frozen slot，然后从 _committed 中剔除
+            VHelper.ReleaseSlot(_committed[key]);
+            _committed.Remove(key);
+        }
+
+        foreach (var key in UpsertedKeys) {
+            // 释放 committed 中的旧值（如有）
+            if (_committed.TryGetValue(key, out var oldCommitted)) {
+                VHelper.ReleaseSlot(oldCommitted);
+            }
+            // 冻结 current 值并共享给两个字典
+            var frozen = VHelper.Freeze(_current[key]);
+            _committed[key] = frozen;
+            _current[key] = frozen;
+        }
+
+        _dirtyKeys.Clear();
+    }
+
+    public void WritePendingDiff<KHelper, VHelper>(IDiffWriter writer)
+    where KHelper : ITypeHelper<TKey>
+    where VHelper : ITypeHelper<TValue> {
+        if (_dirtyKeys.Count == 0) { return; }
+
+        // 使用 ITypedHelper 和 IDiffWriter 序列化
+        writer.DictBegin();
+        {
+            writer.DictRemoveBegin(RemovedCount);
+            foreach (var key in RemovedKeys) {
+                Debug.Assert(!_current.ContainsKey(key));
+                Debug.Assert(_committed.ContainsKey(key));
+                KHelper.PushKey(writer, key);
+                writer.DictRemove();
+            }
+            writer.DictRemoveEnd();
+
+            writer.DictUpsertBegin(ChangedCount);
+            foreach (var key in UpsertedKeys) {
+                var keyInCurrent = _current.TryGetValue(key, out var value);
+                Debug.Assert(keyInCurrent);
+                Debug.Assert(
+                    !_committed.TryGetValue(key, out var oldValue) // 新 key，合法
+                    || !VHelper.Equals(value, oldValue) // 旧 key，值必须不同
+                );
+                KHelper.PushKey(writer, key);
+                VHelper.PushValue(writer, value);
+                writer.DictUpsert();
+            }
+            writer.DictUpsertEnd();
+        }
+        writer.DictEnd();
+    }
+}

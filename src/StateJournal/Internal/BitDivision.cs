@@ -112,6 +112,24 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
     public Enumerator FalseKeys => new(this, mask: ulong.MaxValue);
     public Enumerator TrueKeys => new(this, mask: 0UL);
 
+    /// <summary>查询 key 是否存在，并返回其所属子集（false/true）。</summary>
+    public bool TryGetSubset(TKey key, out bool isTrueSubset) {
+        int hashCode = _comparer.GetHashCode(key) & HashCodeMask;
+        int i = _buckets[hashCode & _bucketMask];
+        while (i >= 0) {
+            ref Entry e = ref _entries[i];
+            if (e.HashCode == hashCode && _comparer.Equals(e.Value, key)) {
+                int word = i >> 6;
+                ulong bit = 1UL << (i & 63);
+                isTrueSubset = (_cells[word].Subset & bit) != 0;
+                return true;
+            }
+            i = e.BucketNext;
+        }
+        isTrueSubset = default;
+        return false;
+    }
+
     // ────────── 内部实现 ──────────
 
     private void SetSubsetCore(TKey key, bool isTrueSubset) {
@@ -159,7 +177,8 @@ internal sealed class BitDivision<TKey> : IBoolDivision<TKey> where TKey : notnu
 
         // 设置 bitmap
         int w = slot >> 6;
-        ulong b = 1UL << (slot & 63); {
+        ulong b = 1UL << (slot & 63);
+        {
             ref BitDivisionCell cell = ref _cells[w];
             cell.Occupied |= b;
             if (isTrueSubset) {

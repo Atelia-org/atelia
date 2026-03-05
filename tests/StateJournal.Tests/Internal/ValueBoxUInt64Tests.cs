@@ -4,7 +4,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 // ai:impl `src/StateJournal/Internal/ValueBox.Integer.cs`
 
 /// <summary>
-/// <see cref="ValueBox.FromUInt64"/> 和 <see cref="ValueBox.Get(out ulong)"/> 的单元测试。
+/// <see cref="ValueBox.UInt64Face.From"/> 和 <see cref="ValueBox.UInt64Face.Get"/> 的单元测试。
 /// </summary>
 /// <remarks>
 /// 测试策略：
@@ -23,8 +23,8 @@ public class ValueBoxUInt64Tests {
     private static int PoolCount => ValuePools.Bits64.Count;
 
     private static void AssertRoundtrip(ulong expected) {
-        var box = ValueBox.FromUInt64(expected);
-        GetIssue issue = box.Get(out ulong actual);
+        var box = ValueBox.UInt64Face.From(expected);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(expected, actual);
     }
@@ -50,9 +50,9 @@ public class ValueBoxUInt64Tests {
     public void FromUInt64_MaxInline_IsInline() {
         ulong value = LzcConstants.NonnegIntInlineCap - 1; // 2^62 − 1
         int before = PoolCount;
-        var box = ValueBox.FromUInt64(value);
+        var box = ValueBox.UInt64Face.From(value);
         Assert.Equal(before, PoolCount);
-        GetIssue issue = box.Get(out ulong actual);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(value, actual);
     }
@@ -61,9 +61,9 @@ public class ValueBoxUInt64Tests {
     public void FromUInt64_MinHeap_AllocatesPool() {
         ulong value = LzcConstants.NonnegIntInlineCap; // 2^62
         int before = PoolCount;
-        var box = ValueBox.FromUInt64(value);
+        var box = ValueBox.UInt64Face.From(value);
         Assert.Equal(before + 1, PoolCount);
-        GetIssue issue = box.Get(out ulong actual);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(value, actual);
     }
@@ -72,26 +72,26 @@ public class ValueBoxUInt64Tests {
 
     [Fact]
     public void SameInlineSameValueBox_UInt64_EqualsInt64() =>
-        Assert.Equal(ValueBox.FromUInt64(42).GetBits(), ValueBox.FromInt64(42).GetBits());
+        Assert.Equal(ValueBox.UInt64Face.From(42).GetBits(), ValueBox.Int64Face.From(42).GetBits());
 
     [Fact]
     public void SameInlineSameValueBox_UInt64_EqualsUInt32() =>
-        Assert.Equal(ValueBox.FromUInt64(1000).GetBits(), ValueBox.FromUInt32(1000).GetBits());
+        Assert.Equal(ValueBox.UInt64Face.From(1000).GetBits(), ValueBox.UInt32Face.From(1000).GetBits());
 
     [Fact]
     public void SameInlineSameValueBox_UInt64_EqualsUInt16() =>
-        Assert.Equal(ValueBox.FromUInt64(60000).GetBits(), ValueBox.FromUInt16(60000).GetBits());
+        Assert.Equal(ValueBox.UInt64Face.From(60000).GetBits(), ValueBox.UInt16Face.From(60000).GetBits());
 
     [Fact]
     public void SameInlineSameValueBox_UInt64_EqualsByte() =>
-        Assert.Equal(ValueBox.FromUInt64(200).GetBits(), ValueBox.FromByte(200).GetBits());
+        Assert.Equal(ValueBox.UInt64Face.From(200).GetBits(), ValueBox.ByteFace.From(200).GetBits());
 
     // ═══════════════════════ Get(out ulong) — 从正整数长路径 ═══════════════════════
 
     [Fact]
     public void GetULong_FromInt64Positive_None() {
-        var box = ValueBox.FromInt64(42);
-        GetIssue issue = box.Get(out ulong value);
+        var box = ValueBox.Int64Face.From(42);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(42UL, value);
     }
@@ -99,16 +99,16 @@ public class ValueBoxUInt64Tests {
     [Fact]
     public void GetULong_FromInt64MaxInlinePositive_None() {
         long src = (long)LzcConstants.NonnegIntInlineCap - 1;
-        var box = ValueBox.FromInt64(src);
-        GetIssue issue = box.Get(out ulong value);
+        var box = ValueBox.Int64Face.From(src);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((ulong)src, value);
     }
 
     [Fact]
     public void GetULong_FromInt64HeapPositive_None() {
-        var box = ValueBox.FromInt64(long.MaxValue);
-        GetIssue issue = box.Get(out ulong value);
+        var box = ValueBox.Int64Face.From(long.MaxValue);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((ulong)long.MaxValue, value);
     }
@@ -117,24 +117,24 @@ public class ValueBoxUInt64Tests {
 
     [Fact]
     public void GetULong_FromInlineNegInt_Saturated() {
-        var box = ValueBox.FromInt64(-1);
-        GetIssue issue = box.Get(out ulong value);
+        var box = ValueBox.Int64Face.From(-1);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.Saturated, issue);
         Assert.Equal(ulong.MinValue, value);
     }
 
     [Fact]
     public void GetULong_FromInlineMinNeg_Saturated() {
-        var box = ValueBox.FromInt64(LzcConstants.NegIntInlineMin); // −2^61
-        GetIssue issue = box.Get(out ulong value);
+        var box = ValueBox.Int64Face.From(LzcConstants.NegIntInlineMin); // −2^61
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.Saturated, issue);
         Assert.Equal(ulong.MinValue, value);
     }
 
     [Fact]
     public void GetULong_FromHeapNegInt_Saturated() {
-        var box = ValueBox.FromInt64(long.MinValue); // heap negative
-        GetIssue issue = box.Get(out ulong value);
+        var box = ValueBox.Int64Face.From(long.MinValue); // heap negative
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.Saturated, issue);
         Assert.Equal(ulong.MinValue, value);
     }
@@ -143,8 +143,8 @@ public class ValueBoxUInt64Tests {
 
     [Fact]
     public void GetULong_FromDouble_TypeMismatch() {
-        var box = ValueBox.FromRoundedDouble(3.14);
-        GetIssue issue = box.Get(out ulong value);
+        var box = ValueBox.RoundedDoubleFace.From(3.14);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
@@ -152,7 +152,7 @@ public class ValueBoxUInt64Tests {
     [Fact]
     public void GetULong_FromNull_TypeMismatch() {
         var box = new ValueBox(0); // Null
-        GetIssue issue = box.Get(out ulong value);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
@@ -160,7 +160,7 @@ public class ValueBoxUInt64Tests {
     [Fact]
     public void GetULong_FromBooleanFalse_TypeMismatch() {
         var box = new ValueBox(2); // Boolean false
-        GetIssue issue = box.Get(out ulong value);
+        GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }

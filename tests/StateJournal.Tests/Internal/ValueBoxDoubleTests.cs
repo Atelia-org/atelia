@@ -4,8 +4,8 @@ namespace Atelia.StateJournal.Internal.Tests;
 // ai:impl `src/StateJournal/Internal/ValueBox.Float.cs`
 
 /// <summary>
-/// <see cref="ValueBox.FromRoundedDouble"/>、<see cref="ValueBox.FromExactDouble"/>
-/// 和 <see cref="ValueBox.Get(out double)"/> 的单元测试。
+/// <see cref="ValueBox.RoundedDoubleFace.From"/>、<see cref="ValueBox.ExactDoubleFace.From"/>
+/// 和 <see cref="ValueBox.GetDouble(out double)"/> 的单元测试。
 /// </summary>
 /// <remarks>
 /// 测试策略：
@@ -37,8 +37,8 @@ public class ValueBoxDoubleTests {
     [InlineData(double.PositiveInfinity)]
     [InlineData(double.NegativeInfinity)]
     public void FromRoundedDouble_LSB0_ExactRoundtrip(double value) {
-        var box = ValueBox.FromRoundedDouble(value);
-        GetIssue issue = box.Get(out double actual);
+        var box = ValueBox.RoundedDoubleFace.From(value);
+        GetIssue issue = box.GetDouble(out double actual);
         Assert.Equal(GetIssue.None, issue);
         AssertDoubleBitsEqual(value, actual);
     }
@@ -46,8 +46,8 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void FromRoundedDouble_NaN_Roundtrip() {
         // canonical quiet NaN: 0x7FF8_0000_0000_0000，LSB=0
-        var box = ValueBox.FromRoundedDouble(double.NaN);
-        GetIssue issue = box.Get(out double actual);
+        var box = ValueBox.RoundedDoubleFace.From(double.NaN);
+        GetIssue issue = box.GetDouble(out double actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.True(double.IsNaN(actual));
         AssertDoubleBitsEqual(double.NaN, actual);
@@ -56,8 +56,8 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void FromRoundedDouble_NegativeZero_PreservesBits() {
         double neg0 = BitConverter.UInt64BitsToDouble(0x8000_0000_0000_0000);
-        var box = ValueBox.FromRoundedDouble(neg0);
-        GetIssue issue = box.Get(out double actual);
+        var box = ValueBox.RoundedDoubleFace.From(neg0);
+        GetIssue issue = box.GetDouble(out double actual);
         Assert.Equal(GetIssue.None, issue);
         AssertDoubleBitsEqual(neg0, actual);
     }
@@ -68,8 +68,8 @@ public class ValueBoxDoubleTests {
     public void FromRoundedDouble_LSB1_bits01_RoundUp1ULP() {
         // bits[1:0]=01 → sticky=1 → decoded bits[1:0]=10 → error +1 ULP
         double original = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
-        var box = ValueBox.FromRoundedDouble(original);
-        GetIssue issue = box.Get(out double decoded);
+        var box = ValueBox.RoundedDoubleFace.From(original);
+        GetIssue issue = box.GetDouble(out double decoded);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(0x3FF0_0000_0000_0002UL, BitConverter.DoubleToUInt64Bits(decoded));
     }
@@ -78,8 +78,8 @@ public class ValueBoxDoubleTests {
     public void FromRoundedDouble_LSB1_bits11_RoundDown1ULP() {
         // bits[1:0]=11 → sticky already 1 → decoded bits[1:0]=10 → error -1 ULP
         double original = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0003);
-        var box = ValueBox.FromRoundedDouble(original);
-        GetIssue issue = box.Get(out double decoded);
+        var box = ValueBox.RoundedDoubleFace.From(original);
+        GetIssue issue = box.GetDouble(out double decoded);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(0x3FF0_0000_0000_0002UL, BitConverter.DoubleToUInt64Bits(decoded));
     }
@@ -88,8 +88,8 @@ public class ValueBoxDoubleTests {
     public void FromRoundedDouble_LSB0_bits10_Exact() {
         // bits[1:0]=10 → LSB=0 → exact roundtrip
         double original = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0002);
-        var box = ValueBox.FromRoundedDouble(original);
-        GetIssue issue = box.Get(out double decoded);
+        var box = ValueBox.RoundedDoubleFace.From(original);
+        GetIssue issue = box.GetDouble(out double decoded);
         Assert.Equal(GetIssue.None, issue);
         AssertDoubleBitsEqual(original, decoded);
     }
@@ -97,8 +97,8 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void FromRoundedDouble_DoubleMaxValue_LossyButFinite() {
         // double.MaxValue 的 IEEE bits LSB=1，有损编码后仍为有限数
-        var box = ValueBox.FromRoundedDouble(double.MaxValue);
-        GetIssue issue = box.Get(out double decoded);
+        var box = ValueBox.RoundedDoubleFace.From(double.MaxValue);
+        GetIssue issue = box.GetDouble(out double decoded);
         Assert.Equal(GetIssue.None, issue);
         Assert.NotEqual(
             BitConverter.DoubleToUInt64Bits(double.MaxValue),
@@ -110,10 +110,10 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void FromRoundedDouble_AlwaysInline_NoPoolAllocation() {
         int before = PoolCount;
-        _ = ValueBox.FromRoundedDouble(double.MaxValue);
-        _ = ValueBox.FromRoundedDouble(double.MinValue);
-        _ = ValueBox.FromRoundedDouble(double.NaN);
-        _ = ValueBox.FromRoundedDouble(double.PositiveInfinity);
+        _ = ValueBox.RoundedDoubleFace.From(double.MaxValue);
+        _ = ValueBox.RoundedDoubleFace.From(double.MinValue);
+        _ = ValueBox.RoundedDoubleFace.From(double.NaN);
+        _ = ValueBox.RoundedDoubleFace.From(double.PositiveInfinity);
         Assert.Equal(before, PoolCount);
     }
 
@@ -127,8 +127,8 @@ public class ValueBoxDoubleTests {
     [InlineData(double.PositiveInfinity)]
     [InlineData(double.NegativeInfinity)]
     public void FromExactDouble_ExactRoundtrip(double value) {
-        var box = ValueBox.FromExactDouble(value);
-        GetIssue issue = box.Get(out double actual);
+        var box = ValueBox.ExactDoubleFace.From(value);
+        GetIssue issue = box.GetDouble(out double actual);
         Assert.Equal(GetIssue.None, issue);
         AssertDoubleBitsEqual(value, actual);
     }
@@ -136,9 +136,9 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void FromExactDouble_LSB0_Inline_NoPoolAllocation() {
         int before = PoolCount;
-        var box = ValueBox.FromExactDouble(1.0); // LSB=0 → inline
+        var box = ValueBox.ExactDoubleFace.From(1.0); // LSB=0 → inline
         Assert.Equal(before, PoolCount);
-        GetIssue issue = box.Get(out double decoded);
+        GetIssue issue = box.GetDouble(out double decoded);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(1.0, decoded);
     }
@@ -147,9 +147,9 @@ public class ValueBoxDoubleTests {
     public void FromExactDouble_LSB1_HeapAllocation_ExactRoundtrip() {
         double original = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
         int before = PoolCount;
-        var box = ValueBox.FromExactDouble(original);
+        var box = ValueBox.ExactDoubleFace.From(original);
         Assert.Equal(before + 1, PoolCount);
-        GetIssue issue = box.Get(out double decoded);
+        GetIssue issue = box.GetDouble(out double decoded);
         Assert.Equal(GetIssue.None, issue);
         AssertDoubleBitsEqual(original, decoded);
     }
@@ -158,9 +158,9 @@ public class ValueBoxDoubleTests {
     public void FromExactDouble_DoubleMaxValue_HeapAllocation_ExactRoundtrip() {
         // double.MaxValue 的 LSB=1 → heap
         int before = PoolCount;
-        var box = ValueBox.FromExactDouble(double.MaxValue);
+        var box = ValueBox.ExactDoubleFace.From(double.MaxValue);
         Assert.Equal(before + 1, PoolCount);
-        GetIssue issue = box.Get(out double decoded);
+        GetIssue issue = box.GetDouble(out double decoded);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(double.MaxValue, decoded);
     }
@@ -169,24 +169,24 @@ public class ValueBoxDoubleTests {
 
     [Fact]
     public void SameInlineSameValueBox_Float05_EqualsDouble05() =>
-        Assert.Equal(ValueBox.FromSingle(0.5f).GetBits(), ValueBox.FromRoundedDouble(0.5).GetBits());
+        Assert.Equal(ValueBox.SingleFace.From(0.5f).GetBits(), ValueBox.RoundedDoubleFace.From(0.5).GetBits());
 
     [Fact]
     public void SameInlineSameValueBox_Half1_EqualsDouble1() =>
-        Assert.Equal(ValueBox.FromHalf((Half)1.0).GetBits(), ValueBox.FromRoundedDouble(1.0).GetBits());
+        Assert.Equal(ValueBox.HalfFace.From((Half)1.0).GetBits(), ValueBox.RoundedDoubleFace.From(1.0).GetBits());
 
     [Fact]
     public void SameInlineSameValueBox_FloatPosInf_EqualsDoublePosInf() =>
         Assert.Equal(
-            ValueBox.FromSingle(float.PositiveInfinity).GetBits(),
-            ValueBox.FromRoundedDouble(double.PositiveInfinity).GetBits()
+            ValueBox.SingleFace.From(float.PositiveInfinity).GetBits(),
+            ValueBox.RoundedDoubleFace.From(double.PositiveInfinity).GetBits()
         );
 
     [Fact]
     public void SameInlineSameValueBox_HalfNegInf_EqualsDoubleNegInf() =>
         Assert.Equal(
-            ValueBox.FromHalf(Half.NegativeInfinity).GetBits(),
-            ValueBox.FromRoundedDouble(double.NegativeInfinity).GetBits()
+            ValueBox.HalfFace.From(Half.NegativeInfinity).GetBits(),
+            ValueBox.RoundedDoubleFace.From(double.NegativeInfinity).GetBits()
         );
 
     // ═══════════════════════ Get(out double) — 从 float/Half 源（内部均为 inline double）═══════════════════════
@@ -194,8 +194,8 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void GetDouble_FromSingle_ReturnsWidenedDouble() {
         float f = 3.14f;
-        var box = ValueBox.FromSingle(f);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.SingleFace.From(f);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((double)f, value);
     }
@@ -203,8 +203,8 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void GetDouble_FromHalf_ReturnsWidenedDouble() {
         Half h = (Half)2.5;
-        var box = ValueBox.FromHalf(h);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.HalfFace.From(h);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((double)h, value);
     }
@@ -218,8 +218,8 @@ public class ValueBoxDoubleTests {
     [InlineData(42L)]
     [InlineData(-42L)]
     public void GetDouble_FromInlineInt_Exact(long intValue) {
-        var box = ValueBox.FromInt64(intValue);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.Int64Face.From(intValue);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((double)intValue, value);
     }
@@ -228,8 +228,8 @@ public class ValueBoxDoubleTests {
     public void GetDouble_FromInlineNonnegInt_53BitBoundary_Exact() {
         // 2^53 − 1 = 9007199254740991：53 个有效位，恰好精确
         long v = (1L << 53) - 1;
-        var box = ValueBox.FromInt64(v);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.Int64Face.From(v);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((double)v, value);
     }
@@ -240,8 +240,8 @@ public class ValueBoxDoubleTests {
     public void GetDouble_FromInlineNonnegInt_54Bit_PrecisionLost() {
         // 2^53 + 1：54 个有效位，超出 double 53-bit significand
         long v = (1L << 53) + 1;
-        var box = ValueBox.FromInt64(v);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.Int64Face.From(v);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((double)v, value);
     }
@@ -250,8 +250,8 @@ public class ValueBoxDoubleTests {
     public void GetDouble_FromInlineNegInt_PrecisionLost() {
         // −(2^53 + 1)：magnitude 有 54 个有效位
         long v = -((1L << 53) + 1);
-        var box = ValueBox.FromInt64(v);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.Int64Face.From(v);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((double)v, value);
     }
@@ -262,8 +262,8 @@ public class ValueBoxDoubleTests {
     public void GetDouble_FromHeapNonnegInt_PowerOf2_Exact() {
         // 2^62 是 2 的幂 → 精确；但超出 inline 容量 → heap
         long v = (long)LzcConstants.NonnegIntInlineCap;
-        var box = ValueBox.FromInt64(v);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.Int64Face.From(v);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((double)v, value);
     }
@@ -272,8 +272,8 @@ public class ValueBoxDoubleTests {
     public void GetDouble_FromHeapNonnegInt_NotPowerOf2_PrecisionLost() {
         // 2^62 + 1：63 个有效位 → PrecisionLost
         long v = (long)LzcConstants.NonnegIntInlineCap + 1;
-        var box = ValueBox.FromInt64(v);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.Int64Face.From(v);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((double)v, value);
     }
@@ -281,8 +281,8 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void GetDouble_FromHeapNegInt_PowerOf2_Exact() {
         // long.MinValue = −2^63，2 的幂 → exact
-        var box = ValueBox.FromInt64(long.MinValue);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.Int64Face.From(long.MinValue);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal((double)long.MinValue, value);
     }
@@ -290,16 +290,16 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void GetDouble_FromHeapNegInt_NotPowerOf2_PrecisionLost() {
         // long.MinValue + 1 = −(2^63 − 1)：63 个有效位 → PrecisionLost
-        var box = ValueBox.FromInt64(long.MinValue + 1);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.Int64Face.From(long.MinValue + 1);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((double)(long.MinValue + 1), value);
     }
 
     [Fact]
     public void GetDouble_FromHeapUInt64Max_PrecisionLost() {
-        var box = ValueBox.FromUInt64(ulong.MaxValue);
-        GetIssue issue = box.Get(out double value);
+        var box = ValueBox.UInt64Face.From(ulong.MaxValue);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.PrecisionLost, issue);
         Assert.Equal((double)ulong.MaxValue, value);
     }
@@ -309,7 +309,7 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void GetDouble_FromNull_TypeMismatch() {
         var box = new ValueBox(0);
-        GetIssue issue = box.Get(out double value);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
@@ -317,7 +317,7 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void GetDouble_FromBooleanTrue_TypeMismatch() {
         var box = new ValueBox(3);
-        GetIssue issue = box.Get(out double value);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
@@ -325,7 +325,7 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void GetDouble_FromUndefined_TypeMismatch() {
         var box = new ValueBox(1);
-        GetIssue issue = box.Get(out double value);
+        GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }

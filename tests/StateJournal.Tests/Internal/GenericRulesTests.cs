@@ -50,7 +50,7 @@ public class GenericRulesTests {
 
     [Fact]
     public void IsValidValue_NonGenericSJDict_Rejected() =>
-        Assert.False(GenericRules.IsValidValue(typeof(DurableDictBase)));
+        Assert.False(GenericRules.IsValidValue(typeof(DurableObject)));
 
     [Fact]
     public void IsValidValue_NonGenericSJList_Accepted() =>
@@ -88,7 +88,7 @@ public class GenericRulesTests {
     public void SJ_Dict_Valid_ReturnsInstance() {
         var d = Durable.Dict<int, double>();
         Assert.NotNull(d);
-        Assert.IsType<DurableDict<int, double>>(d);
+        Assert.IsAssignableFrom<DurableDict<int, double>>(d);
     }
 
     [Fact]
@@ -101,28 +101,35 @@ public class GenericRulesTests {
     public void SJ_Dict_StringKey_ReturnsInstance() {
         var d = Durable.Dict<string, int>();
         Assert.NotNull(d);
-        Assert.IsType<DurableDict<string, int>>(d);
+        Assert.IsAssignableFrom<DurableDict<string, int>>(d);
     }
 
     [Fact]
     public void SJ_Dict_StringValue_ReturnsInstance() {
         var d = Durable.Dict<int, string>();
         Assert.NotNull(d);
-        Assert.IsType<DurableDict<int, string>>(d);
+        Assert.IsAssignableFrom<DurableDict<int, string>>(d);
     }
 
     [Fact]
     public void SJ_List_Valid_ReturnsInstance() {
         var l = Durable.List<int>();
         Assert.NotNull(l);
-        Assert.IsType<DurableList<int>>(l);
+        Assert.IsAssignableFrom<DurableList<int>>(l);
     }
 
     [Fact]
     public void SJ_List_String_ReturnsInstance() {
         var l = Durable.List<string>();
         Assert.NotNull(l);
-        Assert.IsType<DurableList<string>>(l);
+        Assert.IsAssignableFrom<DurableList<string>>(l);
+    }
+
+    [Fact]
+    public void SJ_List_Mixed_ReturnsInstance() {
+        var l = Durable.List();
+        Assert.NotNull(l);
+        Assert.IsAssignableFrom<DurableList>(l);
     }
 
     [Fact]

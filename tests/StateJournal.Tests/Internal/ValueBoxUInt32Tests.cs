@@ -4,7 +4,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 // ai:impl `src/StateJournal/Internal/ValueBox.Integer.cs`
 
 /// <summary>
-/// <see cref="ValueBox.FromUInt32"/> 和 <see cref="ValueBox.Get(out uint)"/> 的单元测试。
+/// <see cref="ValueBox.UInt32Face.From"/> 和 <see cref="ValueBox.UInt32Face.Get"/> 的单元测试。
 /// </summary>
 /// <remarks>
 /// uint 值域 [0, 2^32−1] 完全在 inline 容量 [0, 2^62−1] 以内，始终 inline，无堆分配。
@@ -18,8 +18,8 @@ public class ValueBoxUInt32Tests {
     private static int PoolCount => ValuePools.Bits64.Count;
 
     private static void AssertRoundtrip(uint expected) {
-        var box = ValueBox.FromUInt32(expected);
-        GetIssue issue = box.Get(out uint actual);
+        var box = ValueBox.UInt32Face.From(expected);
+        GetIssue issue = ValueBox.UInt32Face.Get(box, out uint actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(expected, actual);
     }
@@ -38,7 +38,7 @@ public class ValueBoxUInt32Tests {
     [Fact]
     public void FromUInt32_MaxValue_NoPoolAllocation() {
         int before = PoolCount;
-        _ = ValueBox.FromUInt32(uint.MaxValue);
+        _ = ValueBox.UInt32Face.From(uint.MaxValue);
         Assert.Equal(before, PoolCount);
     }
 
@@ -46,38 +46,38 @@ public class ValueBoxUInt32Tests {
 
     [Fact]
     public void SameInlineSameValueBox_UInt32_EqualsUInt64() =>
-        Assert.Equal(ValueBox.FromUInt32(1000U).GetBits(), ValueBox.FromUInt64(1000UL).GetBits());
+        Assert.Equal(ValueBox.UInt32Face.From(1000U).GetBits(), ValueBox.UInt64Face.From(1000UL).GetBits());
 
     [Fact]
     public void SameInlineSameValueBox_UInt32_EqualsInt64() =>
-        Assert.Equal(ValueBox.FromUInt32(42U).GetBits(), ValueBox.FromInt64(42L).GetBits());
+        Assert.Equal(ValueBox.UInt32Face.From(42U).GetBits(), ValueBox.Int64Face.From(42L).GetBits());
 
     [Fact]
     public void SameInlineSameValueBox_UInt32Max_EqualsUInt64() =>
-        Assert.Equal(ValueBox.FromUInt32(uint.MaxValue).GetBits(), ValueBox.FromUInt64(uint.MaxValue).GetBits());
+        Assert.Equal(ValueBox.UInt32Face.From(uint.MaxValue).GetBits(), ValueBox.UInt64Face.From(uint.MaxValue).GetBits());
 
     // ═══════════════════════ Get(out uint) — Saturated（源值超出 uint 范围）═══════════════════════
 
     [Fact]
     public void GetUInt_FromUInt64Max_Saturated() {
-        var box = ValueBox.FromUInt64(ulong.MaxValue);
-        GetIssue issue = box.Get(out uint value);
+        var box = ValueBox.UInt64Face.From(ulong.MaxValue);
+        GetIssue issue = ValueBox.UInt32Face.Get(box, out uint value);
         Assert.Equal(GetIssue.Saturated, issue);
         Assert.Equal(uint.MaxValue, value);
     }
 
     [Fact]
     public void GetUInt_FromJustAboveUIntMax_Saturated() {
-        var box = ValueBox.FromUInt64((ulong)uint.MaxValue + 1);
-        GetIssue issue = box.Get(out uint value);
+        var box = ValueBox.UInt64Face.From((ulong)uint.MaxValue + 1);
+        GetIssue issue = ValueBox.UInt32Face.Get(box, out uint value);
         Assert.Equal(GetIssue.Saturated, issue);
         Assert.Equal(uint.MaxValue, value);
     }
 
     [Fact]
     public void GetUInt_FromUIntMaxValue_None() {
-        var box = ValueBox.FromUInt64(uint.MaxValue);
-        GetIssue issue = box.Get(out uint value);
+        var box = ValueBox.UInt64Face.From(uint.MaxValue);
+        GetIssue issue = ValueBox.UInt32Face.Get(box, out uint value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(uint.MaxValue, value);
     }
@@ -85,8 +85,8 @@ public class ValueBoxUInt32Tests {
     [Fact]
     public void GetUInt_FromNegativeInt_Saturated() {
         // 负整数 → Get(out ulong) 返回 Saturated/0 → Get(out uint) 返回 Saturated/0
-        var box = ValueBox.FromInt64(-1);
-        GetIssue issue = box.Get(out uint value);
+        var box = ValueBox.Int64Face.From(-1);
+        GetIssue issue = ValueBox.UInt32Face.Get(box, out uint value);
         Assert.Equal(GetIssue.Saturated, issue);
         Assert.Equal(uint.MinValue, value); // 饱和到 0
     }
@@ -95,8 +95,8 @@ public class ValueBoxUInt32Tests {
 
     [Fact]
     public void GetUInt_FromDouble_TypeMismatch() {
-        var box = ValueBox.FromRoundedDouble(3.14);
-        GetIssue issue = box.Get(out uint value);
+        var box = ValueBox.RoundedDoubleFace.From(3.14);
+        GetIssue issue = ValueBox.UInt32Face.Get(box, out uint value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }
@@ -104,7 +104,7 @@ public class ValueBoxUInt32Tests {
     [Fact]
     public void GetUInt_FromNull_TypeMismatch() {
         var box = new ValueBox(0);
-        GetIssue issue = box.Get(out uint value);
+        GetIssue issue = ValueBox.UInt32Face.Get(box, out uint value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
     }

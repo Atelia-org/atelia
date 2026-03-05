@@ -26,20 +26,19 @@ partial struct ValueBox {
     /// </remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static bool ValueEquals(ValueBox a, ValueBox b) {
-        ulong ab = a._bits, bb = b._bits;
-        if (ab == bb) { return true; }
-        // 如果高 32 位不同 → LZC 不同 或 Kind 不同 → 值不等
-        if ((ab >>= HeapHandleBitCount) != (bb >> HeapHandleBitCount)) { return false; }
-        return ValueEqualsSlowPath(a, b, (uint)ab);
-        // return (ab == bb) || (((ab >>= HeapHandleBitCount) == (bb >> HeapHandleBitCount)) && ValueEqualsSlowPath(a, b, (uint)ab));
+        ulong diffBits;
+        uint tagAndKind; // 用于快速判断是否是堆上浮点或整数
+        return (diffBits = a._bits ^ b._bits) == 0
+            || ((diffBits & ~ExclusiveBit) == 0 && a.GetLZC() == LzcCode.HeapSlot) // 仅有ExclusiveBit差异的两个HeapSlot
+            || (IsHeapFloatOrInteger(tagAndKind = a.GetTagAndKind()) // a是`ValuePools.Bits64`值
+                && tagAndKind == b.GetTagAndKind() // b与a类型相同
+                && HeapBits64Equals(a, b)
+            );
     }
 
     /// <summary>检查是否是堆分配的数值且堆中值相等</summary>
-    private static bool ValueEqualsSlowPath(ValueBox a, ValueBox b, uint tagAndKind) {
-        // return (MinNumberTagAndKind <= tagAndKind) & (tagAndKind <= MaxNumberTagAndKind)
-        return IsNumericTagAndKind(tagAndKind)
-            && ValuePools.Bits64[a.GetHeapHandle()] == ValuePools.Bits64[b.GetHeapHandle()];
-        // 非 Bits64 heap 类型（如 String）→ InternPool 保证同值同 handle → bits 不同即值不同
+    private static bool HeapBits64Equals(ValueBox a, ValueBox b) {
+        return ValuePools.Bits64[a.GetHeapHandle()] == ValuePools.Bits64[b.GetHeapHandle()];
     }
 
     /// <summary>
@@ -60,6 +59,7 @@ partial struct ValueBox {
             // return HashCode.Combine(box.GetHeapKind(), raw); // 似乎杀鸡用牛刀了
             return ((int)box.GetHeapKind() * 16777619) ^ raw.GetHashCode();
         }
+        if (box.GetLZC() == LzcCode.HeapSlot) { return (box._bits & ~ExclusiveBit).GetHashCode(); }
         // inline 值 或 InternPool 引用：bits 即值
         return box._bits.GetHashCode();
     }
