@@ -6,7 +6,7 @@ namespace Atelia.StateJournal.Internal;
 /// 调用分派见<see cref="ITypeHelper{T}"/>
 /// </summary>
 internal interface IDiffWriter {
-    #region 操作数入栈 用于异构混杂容器，自描述，先类型再值，类似CBOR。
+    #region 写值，用于异构混杂容器，自描述，先类型再值，类似CBOR。
     void TaggedNull();
     void TaggedBoolean(bool value);
     void TaggedString(string? value);
@@ -17,38 +17,32 @@ internal interface IDiffWriter {
     void TaggedNegativeInteger(long value);
     #endregion
 
-    #region 操作数入栈 用于类型特化容器，无类型信息，直接写值，比如Base128套ZigZag之类的。
-    void BareBoolean(bool value);
-    void BareString(string? value);
-    void BareLocalId(LocalId value);
+    #region 写值，用于类型特化容器，无类型信息，直接写值，比如Base128套ZigZag之类的。
+    void BareBoolean(bool value, bool asKey);
+    void BareString(string? value, bool asKey);
+    void BareLocalId(LocalId? value, bool asKey);
 
-    void BareDouble(double value);
-    void BareSingle(float value);
-    void BareHalf(Half value);
+    void BareDouble(double value, bool asKey);
+    void BareSingle(float value, bool asKey);
+    void BareHalf(Half value, bool asKey);
 
-    void BareUInt64(ulong value);
-    void BareUInt32(uint value);
-    void BareUInt16(ushort value);
-    void BareByte(byte value);
+    void BareUInt64(ulong value, bool asKey);
+    void BareUInt32(uint value, bool asKey);
+    void BareUInt16(ushort value, bool asKey);
+    void BareByte(byte value, bool asKey);
 
-    void BareInt64(long value);
-    void BareInt32(int value);
-    void BareInt16(short value);
-    void BareSByte(sbyte value);
+    void BareInt64(long value, bool asKey);
+    void BareInt32(int value, bool asKey);
+    void BareInt16(short value, bool asKey);
+    void BareSByte(sbyte value, bool asKey);
     #endregion
 
     #region Dict diff payload
-    void DictBegin();
+    void DictBegin(int removeCount, int upsertCount);
 
     void DictRemoveBegin(int count);
-    /// <summary>pop {Key} from stack and write a remove entry</summary>
-    void DictRemove();
-    void DictRemoveEnd();
 
     void DictUpsertBegin(int count);
-    /// <summary>pop {Key,Value} from stack and write a upsert entry</summary>
-    void DictUpsert();
-    void DictUpsertEnd();
 
     void DictEnd();
     #endregion

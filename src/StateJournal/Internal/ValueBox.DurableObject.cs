@@ -1,7 +1,7 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using Atelia.StateJournal.Internal;
 
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 partial struct ValueBox {
     internal readonly struct DurableObjectFace : ITypedFace<DurableObject> {
@@ -13,21 +13,21 @@ partial struct ValueBox {
         internal static bool IsDurableObject(ValueBox box) => box.GetTagAndKind() is TagHeapKindMixedDict or TagHeapKindTypedDict or TagHeapKindMixedList or TagHeapKindTypedList;
 
         /// <summary>
-        /// 将DurableObject编码为 ValueBox。通过 <see cref="ValuePools.DurableObjects"/> InternPool 去重。
+        /// 将DurableObject编码为 ValueBox。通过 <see cref="ValuePools.OfDurableObject"/> InternPool 去重。
         /// </summary>
         /// <remarks>
         /// 同一 DurableObject 实例（引用相等）共享同一 SlotHandle，
         /// 保证 <see cref="ValueEquals"/> 快速路径命中（bits 相等 → 值相等）。
         /// </remarks>
         public static ValueBox From(DurableObject? value) => value is not null
-            ? EncodeHeapSlot(value.Kind, ValuePools.DurableObjects.Store(value))
+            ? EncodeHeapSlot(value.Kind, ValuePools.OfDurableObject.Store(value))
             : Null;
 
         /// <summary>
         /// 独占更新：将 ValueBox 覆写为指定的DurableObject值。
         /// </summary>
         /// <remarks>
-        /// 旧值如果持有 <see cref="ValuePools.Bits64"/> slot（数值类型），会立即释放。
+        /// 旧值如果持有 <see cref="ValuePools.OfBits64"/> slot（数值类型），会立即释放。
         /// 旧值如果持有 InternPool slot（字符串或 DurableObject 类型），
         /// 因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
         /// </remarks>
@@ -51,11 +51,15 @@ partial struct ValueBox {
                 return GetIssue.None;
             }
             if (IsDurableObject(box)) {
-                value = ValuePools.DurableObjects[box.GetHeapHandle()];
+                value = box.DecodeDurableObject();
                 return GetIssue.None;
             }
             value = null;
             return GetIssue.TypeMismatch;
         }
+    }
+    private DurableObject DecodeDurableObject() {
+        Debug.Assert(DurableObjectFace.IsDurableObject(this));
+        return ValuePools.OfDurableObject[GetHeapHandle()];
     }
 }

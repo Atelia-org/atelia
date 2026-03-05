@@ -11,7 +11,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 /// 测试策略：
 /// - 值正确性：通过 <see cref="ValueBox.Int64Face.Get"/> 等 roundtrip 验证。
 /// - inline 编码一致性：对 inline 范围内的值，ExclusiveSet 产生的 bits 应与 From* 一致。
-/// - Pool 行为：通过 <see cref="ValuePools.Bits64"/> 的 Count delta 验证 inplace 复用、Free、及新分配。
+/// - Pool 行为：通过 <see cref="ValuePools.OfBits64"/> 的 Count delta 验证 inplace 复用、Free、及新分配。
 ///
 /// 注意：ValuePools.Bits64 是进程级静态单例，测试间共享状态。
 /// 验证基于 Count delta（操作前后的差值），不依赖绝对值。
@@ -41,7 +41,7 @@ public class ValueBoxExclusiveSetTests {
     }
 
     /// <summary>获取当前 Bits64 池的活跃 slot 数量。</summary>
-    private static int PoolCount => ValuePools.Bits64.Count;
+    private static int PoolCount => ValuePools.OfBits64.Count;
 
     /// <summary>断言 ValueBox 能正确读出 long 值。</summary>
     private static void AssertGetLong(ValueBox box, long expected) {

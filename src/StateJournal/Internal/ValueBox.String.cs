@@ -1,6 +1,6 @@
-using Atelia.StateJournal.Internal;
+using System.Diagnostics;
 
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxStringTests.cs`
 partial struct ValueBox {
@@ -9,21 +9,21 @@ partial struct ValueBox {
         internal const uint TagHeapKindString = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.String;
 
         /// <summary>
-        /// 将字符串编码为 ValueBox。通过 <see cref="ValuePools.Strings"/> InternPool 去重。
+        /// 将字符串编码为 ValueBox。通过 <see cref="ValuePools.OfString"/> InternPool 去重。
         /// </summary>
         /// <remarks>
         /// 同值字符串（Ordinal 相等）共享同一 SlotHandle，
         /// 保证 <see cref="ValueEquals"/> 快速路径命中（bits 相等 → 值相等）。
         /// </remarks>
         public static ValueBox From(string? value) => value is not null
-            ? EncodeHeapSlot(ValueKind.String, ValuePools.Strings.Store(value))
+            ? EncodeHeapSlot(ValueKind.String, ValuePools.OfString.Store(value))
             : Null;
         /// <summary>
         /// 独占更新：将 ValueBox 覆写为指定的字符串值。
         /// </summary>
         /// <remarks>
-        /// 旧值如果持有 <see cref="ValuePools.Bits64"/> slot（数值类型），会立即释放。
-        /// 旧值如果持有 <see cref="ValuePools.Strings"/> slot（字符串类型），
+        /// 旧值如果持有 <see cref="ValuePools.OfBits64"/> slot（数值类型），会立即释放。
+        /// 旧值如果持有 <see cref="ValuePools.OfString"/> slot（字符串类型），
         /// 因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
         /// </remarks>
         public static bool Update(ref ValueBox old, string? value) {
@@ -46,11 +46,18 @@ partial struct ValueBox {
             }
             // if (GetLZC() == LzcCode.HeapSlot && GetHeapKind() == DurableValueKind.String) {
             if ((uint)(box._bits >> KindShift) == TagHeapKindString) {
-                value = ValuePools.Strings[box.GetHeapHandle()];
+                value = ValuePools.OfString[box.GetHeapHandle()];
                 return GetIssue.None;
             }
             value = null;
             return GetIssue.TypeMismatch;
         }
+    }
+
+    /// <summary>解码 HeapSlot 中的字符串值。调用前须确保 LZC == HeapSlot 且 HeapKind == String。</summary>
+    private string DecodeString() {
+        Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
+        Debug.Assert(GetHeapKind() == ValueKind.String);
+        return ValuePools.OfString[GetHeapHandle()];
     }
 }

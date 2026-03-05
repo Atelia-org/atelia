@@ -1,10 +1,9 @@
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using Atelia.StateJournal.Internal;
 using Atelia.StateJournal.Pools;
 
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 partial struct ValueBox {
     internal readonly struct RoundedDoubleFace : ITypedFace<double> {
@@ -34,7 +33,7 @@ partial struct ValueBox {
             ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
             return (doubleBits & 1) == 0
                 ? FromInlineableDoubleBits(doubleBits)
-                : EncodeHeapSlot(ValueKind.FloatingPoint, ValuePools.Bits64.Store(doubleBits));
+                : EncodeHeapSlot(ValueKind.FloatingPoint, ValuePools.OfBits64.Store(doubleBits));
         }
 
         /// <summary>
@@ -167,7 +166,7 @@ partial struct ValueBox {
     private double DecodeHeapDouble() {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
         Debug.Assert(GetHeapKind() == ValueKind.FloatingPoint);
-        return BitConverter.UInt64BitsToDouble(ValuePools.Bits64[GetHeapHandle()]);
+        return BitConverter.UInt64BitsToDouble(ValuePools.OfBits64[GetHeapHandle()]);
     }
 
     /// <summary>

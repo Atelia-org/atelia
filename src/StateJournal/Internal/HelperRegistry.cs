@@ -40,7 +40,7 @@ internal static class HelperRegistry {
         if (h != null) { return h; }
 
         // 非泛型容器: DurableList (MixedList)
-        if (t == typeof(DurableList)) { return typeof(ContainerHelper<DurableList>); }
+        if (t == typeof(DurableList)) { return typeof(DurableObjectHelper<DurableList>); }
 
         // 泛型容器: 递归验证子类型参数
         if (t.IsGenericType) {
@@ -51,19 +51,19 @@ internal static class HelperRegistry {
                 var args = t.GenericTypeArguments;
                 if (ResolveKeyHelper(args[0]) == null) { return null; }
                 if (ResolveValueHelper(args[1]) == null) { return null; }
-                return typeof(ContainerHelper<>).MakeGenericType(t);
+                return typeof(DurableObjectHelper<>).MakeGenericType(t);
             }
 
             // DurableDict<TKey> (MixedDict)
             if (def == typeof(DurableDict<>)) {
                 if (ResolveKeyHelper(t.GenericTypeArguments[0]) == null) { return null; }
-                return typeof(ContainerHelper<>).MakeGenericType(t);
+                return typeof(DurableObjectHelper<>).MakeGenericType(t);
             }
 
             // DurableList<T>
             if (def == typeof(DurableList<>)) {
                 if (ResolveValueHelper(t.GenericTypeArguments[0]) == null) { return null; }
-                return typeof(ContainerHelper<>).MakeGenericType(t);
+                return typeof(DurableObjectHelper<>).MakeGenericType(t);
             }
         }
 

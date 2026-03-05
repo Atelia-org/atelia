@@ -21,7 +21,7 @@ public class ValueBoxSingleTests {
 
     // ═══════════════════════ Helpers ═══════════════════════
 
-    private static int PoolCount => ValuePools.Bits64.Count;
+    private static int PoolCount => ValuePools.OfBits64.Count;
 
     private static void AssertFloatBitsEqual(float expected, float actual) =>
         Assert.Equal(BitConverter.SingleToUInt32Bits(expected), BitConverter.SingleToUInt32Bits(actual));

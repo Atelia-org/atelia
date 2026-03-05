@@ -21,7 +21,7 @@ public class ValueBoxDoubleTests {
 
     // ═══════════════════════ Helpers ═══════════════════════
 
-    private static int PoolCount => ValuePools.Bits64.Count;
+    private static int PoolCount => ValuePools.OfBits64.Count;
 
     /// <summary>断言两个 double 在 IEEE 754 位级别精确相等（区分 -0.0 和 NaN payload）。</summary>
     private static void AssertDoubleBitsEqual(double expected, double actual) =>

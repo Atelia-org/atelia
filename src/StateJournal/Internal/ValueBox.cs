@@ -2,10 +2,9 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using Atelia.StateJournal.Internal;
 using Atelia.StateJournal.Pools;
 
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 /// <summary>
 ///
@@ -68,7 +67,7 @@ internal readonly partial struct ValueBox {
 
     /// <summary>释放旧 ValueBox 持有的独占 Bits64 Slot（如有）。冻结 slot 不释放（属于 committed 共享）。</summary>
     private static void FreeOldBits64IfNeeded(ValueBox old) {
-        if (old.TryGetBits64Handle(out SlotHandle h) && old.IsExclusive) { ValuePools.Bits64.Free(h); }
+        if (old.TryGetBits64Handle(out SlotHandle h) && old.IsExclusive) { ValuePools.OfBits64.Free(h); }
     }
 
     /// <summary>
@@ -77,10 +76,10 @@ internal readonly partial struct ValueBox {
     /// </summary>
     private static SlotHandle StoreOrReuseBits64(ValueBox old, ulong rawBits) {
         if (old.TryGetBits64Handle(out SlotHandle h) && old.IsExclusive) {
-            ValuePools.Bits64[h] = rawBits;
+            ValuePools.OfBits64[h] = rawBits;
             return h;
         }
-        return ValuePools.Bits64.Store(rawBits);
+        return ValuePools.OfBits64.Store(rawBits);
     }
 
     /// <summary>当前 ValueBox 是否持有独占（可变）的堆 Slot。仅对 HeapSlot 编码有意义。</summary>
@@ -102,7 +101,7 @@ internal readonly partial struct ValueBox {
     /// </summary>
     internal static void ReleaseBits64Slot(ValueBox box) {
         if (box.TryGetBits64Handle(out SlotHandle h)) {
-            ValuePools.Bits64.Free(h);
+            ValuePools.OfBits64.Free(h);
         }
     }
 

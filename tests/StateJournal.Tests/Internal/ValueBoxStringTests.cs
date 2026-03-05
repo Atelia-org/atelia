@@ -21,8 +21,8 @@ public class ValueBoxStringTests {
 
     // ═══════════════════════ Helpers ═══════════════════════
 
-    private static int Bits64Count => ValuePools.Bits64.Count;
-    private static int StringsCount => ValuePools.Strings.Count;
+    private static int Bits64Count => ValuePools.OfBits64.Count;
+    private static int StringsCount => ValuePools.OfString.Count;
 
     private static ValueBox Null => new(0);
     private static ValueBox Undefined => new(1);

@@ -15,7 +15,7 @@ public class ValueBoxUInt32Tests {
 
     // ═══════════════════════ Helpers ═══════════════════════
 
-    private static int PoolCount => ValuePools.Bits64.Count;
+    private static int PoolCount => ValuePools.OfBits64.Count;
 
     private static void AssertRoundtrip(uint expected) {
         var box = ValueBox.UInt32Face.From(expected);

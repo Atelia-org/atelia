@@ -11,14 +11,14 @@ where TValue : notnull {
     private readonly Dictionary<TKey, TValue?> _current;    // 当前工作状态
     private readonly BitDivision<TKey> _dirtyKeys; // 发生变更的 key 集合, false = remove; true = upsert
 
-    private void MarkNoChange(TKey key) => _dirtyKeys.Remove(key);
-    private void MarkRemoved(TKey key) => _dirtyKeys.SetFalse(key);
-    private void MarkChanged(TKey key) => _dirtyKeys.SetTrue(key);
+    private void MarkSame(TKey key) => _dirtyKeys.Remove(key);
+    private void MarkRemove(TKey key) => _dirtyKeys.SetFalse(key);
+    private void MarkUpsert(TKey key) => _dirtyKeys.SetTrue(key);
     #region 可用于单元测试
     public BitDivision<TKey>.Enumerator RemovedKeys => _dirtyKeys.FalseKeys;
     public BitDivision<TKey>.Enumerator UpsertedKeys => _dirtyKeys.TrueKeys;
-    public int RemovedCount => _dirtyKeys.FalseCount;
-    public int ChangedCount => _dirtyKeys.TrueCount;
+    public int RemoveCount => _dirtyKeys.FalseCount;
+    public int UpsertCount => _dirtyKeys.TrueCount;
     public bool HasChanges => _dirtyKeys.Count > 0;
     #endregion
 
@@ -37,10 +37,10 @@ where TValue : notnull {
             // 新值语义等于 committed → 释放新值的独占 slot，恢复为 committed 的冻结副本
             VHelper.ReleaseSlot(value);
             _current[key] = committedValue;
-            MarkNoChange(key);
+            MarkSame(key);
         }
         else {
-            MarkChanged(key);
+            MarkUpsert(key);
         }
     }
 
@@ -51,19 +51,19 @@ where TValue : notnull {
         }
 
         if (_committed.ContainsKey(key)) {
-            MarkRemoved(key);
+            MarkRemove(key);
         }
         else {
-            MarkNoChange(key);
+            MarkSame(key);
         }
     }
 
     public void AfterRemove(TKey key) {
         if (_committed.ContainsKey(key)) {
-            MarkRemoved(key);
+            MarkRemove(key);
         }
         else {
-            MarkNoChange(key);
+            MarkSame(key);
         }
     }
 
@@ -123,18 +123,16 @@ where TValue : notnull {
         if (_dirtyKeys.Count == 0) { return; }
 
         // 使用 ITypedHelper 和 IDiffWriter 序列化
-        writer.DictBegin();
+        writer.DictBegin(RemoveCount, UpsertCount);
         {
-            writer.DictRemoveBegin(RemovedCount);
+            writer.DictRemoveBegin(RemoveCount);
             foreach (var key in RemovedKeys) {
                 Debug.Assert(!_current.ContainsKey(key));
                 Debug.Assert(_committed.ContainsKey(key));
-                KHelper.PushKey(writer, key);
-                writer.DictRemove();
+                KHelper.Write(writer, key, true);
             }
-            writer.DictRemoveEnd();
 
-            writer.DictUpsertBegin(ChangedCount);
+            writer.DictUpsertBegin(UpsertCount);
             foreach (var key in UpsertedKeys) {
                 var keyInCurrent = _current.TryGetValue(key, out var value);
                 Debug.Assert(keyInCurrent);
@@ -142,11 +140,9 @@ where TValue : notnull {
                     !_committed.TryGetValue(key, out var oldValue) // 新 key，合法
                     || !VHelper.Equals(value, oldValue) // 旧 key，值必须不同
                 );
-                KHelper.PushKey(writer, key);
-                VHelper.PushValue(writer, value);
-                writer.DictUpsert();
+                KHelper.Write(writer, key, true);
+                VHelper.Write(writer, value, false);
             }
-            writer.DictUpsertEnd();
         }
         writer.DictEnd();
     }

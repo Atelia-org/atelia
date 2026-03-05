@@ -22,7 +22,7 @@ public class ValueBoxHalfTests {
 
     // ═══════════════════════ Helpers ═══════════════════════
 
-    private static int PoolCount => ValuePools.Bits64.Count;
+    private static int PoolCount => ValuePools.OfBits64.Count;
 
     private static void AssertHalfBitsEqual(Half expected, Half actual) =>
         Assert.Equal(BitConverter.HalfToUInt16Bits(expected), BitConverter.HalfToUInt16Bits(actual));

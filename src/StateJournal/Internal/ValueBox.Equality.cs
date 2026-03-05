@@ -1,8 +1,7 @@
 using System.Runtime.CompilerServices;
-using Atelia.StateJournal.Internal;
 using Atelia.StateJournal.Pools;
 
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxEqualityTests.cs`
 // ai:note 没有实现IEquatable<ValueBox>以及没有override int GetHashCode()，是出于方便测试角度出发的，将“指针相等”与“指针的目标的相等”语义保持分离。
@@ -17,7 +16,7 @@ partial struct ValueBox {
     /// 和所有 InternPool 引用类型（同值同 handle → 同 bits）。
     ///
     /// 慢路径：仅当双方都是 HeapSlot 且 <see cref="ValueKind"/> 相同时才触发。
-    /// 当前仅 <see cref="ValuePools.Bits64"/> 中的数值类型（<see cref="ValueKind.NonnegativeInteger"/>、
+    /// 当前仅 <see cref="ValuePools.OfBits64"/> 中的数值类型（<see cref="ValueKind.NonnegativeInteger"/>、
     /// <see cref="ValueKind.NegativeInteger"/>、<see cref="ValueKind.FloatingPoint"/>）
     /// 使用 GcPool（独占 slot），可能出现同值不同 handle 的情况，需要取出堆中 raw bits 比较。
     ///
@@ -38,7 +37,7 @@ partial struct ValueBox {
 
     /// <summary>检查是否是堆分配的数值且堆中值相等</summary>
     private static bool HeapBits64Equals(ValueBox a, ValueBox b) {
-        return ValuePools.Bits64[a.GetHeapHandle()] == ValuePools.Bits64[b.GetHeapHandle()];
+        return ValuePools.OfBits64[a.GetHeapHandle()] == ValuePools.OfBits64[b.GetHeapHandle()];
     }
 
     /// <summary>
@@ -55,7 +54,7 @@ partial struct ValueBox {
     internal static int ValueHashCode(ValueBox box) {
         if (box.TryGetBits64Handle(out SlotHandle handle)) {
             // heap 数值：用实际值 + Kind 做哈希
-            ulong raw = ValuePools.Bits64[handle];
+            ulong raw = ValuePools.OfBits64[handle];
             // return HashCode.Combine(box.GetHeapKind(), raw); // 似乎杀鸡用牛刀了
             return ((int)box.GetHeapKind() * 16777619) ^ raw.GetHashCode();
         }

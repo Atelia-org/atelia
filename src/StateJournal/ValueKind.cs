@@ -1,7 +1,7 @@
 namespace Atelia.StateJournal;
 
 public enum ValueKind : byte {
-    Mask = (1 << ValueBox.HeapKindBitCount) - 1,
+    Mask = (1 << Internal.ValueBox.HeapKindBitCount) - 1,
     Null = 0,
     Undefined,
     Boolean,

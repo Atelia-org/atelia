@@ -1,6 +1,6 @@
-using Atelia.StateJournal.Internal;
+using System.Diagnostics;
 
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 partial struct ValueBox {
     internal readonly struct BooleanFace : ITypedFace<bool> {
@@ -19,5 +19,9 @@ partial struct ValueBox {
             LzcConstants.SimpleTrue => (GetIssue.None, value = true).Item1,
             _ => (GetIssue.TypeMismatch, value = default).Item1,
         };
+    }
+    private bool DecodeBoolean() {
+        Debug.Assert(GetLzc() == BoxLzc.Boolean);
+        return _bits == LzcConstants.SimpleTrue;
     }
 }

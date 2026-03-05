@@ -1,9 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using Atelia.StateJournal.Internal;
 using Atelia.StateJournal.Pools;
 
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxInt64Tests.cs`
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxUInt64Tests.cs`
@@ -17,16 +16,16 @@ partial struct ValueBox {
             ulong u = unchecked((ulong)value);
             if (value >= 0) {
                 if (u < LzcConstants.NonnegIntInlineCap) { return new(u | LzcConstants.NonnegIntTag); }
-                return EncodeHeapSlot(ValueKind.NonnegativeInteger, ValuePools.Bits64.Store(u));
+                return EncodeHeapSlot(ValueKind.NonnegativeInteger, ValuePools.OfBits64.Store(u));
             }
             // value < 0
             if (value >= LzcConstants.NegIntInlineMin) { return new(u & LzcConstants.NegIntPayloadMask); }
-            return EncodeHeapSlot(ValueKind.NegativeInteger, ValuePools.Bits64.Store(u));
+            return EncodeHeapSlot(ValueKind.NegativeInteger, ValuePools.OfBits64.Store(u));
         }
 
         /// <summary>
         /// 独占更新：将 ValueBox 覆写为指定的 long 值。
-        /// 若旧值与新值都使用 <see cref="ValuePools.Bits64"/>，则 inplace 修改 Slot 中的值，
+        /// 若旧值与新值都使用 <see cref="ValuePools.OfBits64"/>，则 inplace 修改 Slot 中的值，
         /// 避免 Free + Store 的开销。其他情况下清理旧 Slot（如有）并编码新值。
         /// </summary>
         public static bool Update(ref ValueBox box, long value) {
@@ -93,7 +92,7 @@ partial struct ValueBox {
         /// <summary>将 ulong 编码为 ValueBox。值域 [0, 2^62-1] 内联；超出范围回退到堆分配。</summary>
         public static ValueBox From(ulong value) {
             if (value < LzcConstants.NonnegIntInlineCap) { return new(value | LzcConstants.NonnegIntTag); }
-            return EncodeHeapSlot(ValueKind.NonnegativeInteger, ValuePools.Bits64.Store(value));
+            return EncodeHeapSlot(ValueKind.NonnegativeInteger, ValuePools.OfBits64.Store(value));
         }
 
         /// <summary>
@@ -325,14 +324,14 @@ partial struct ValueBox {
     private ulong DecodeHeapNonnegInt() {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
         Debug.Assert(GetHeapKind() == ValueKind.NonnegativeInteger);
-        return ValuePools.Bits64[GetHeapHandle()];
+        return ValuePools.OfBits64[GetHeapHandle()];
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long DecodeHeapNegInt() {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
         Debug.Assert(GetHeapKind() == ValueKind.NegativeInteger);
-        return unchecked((long)ValuePools.Bits64[GetHeapHandle()]);
+        return unchecked((long)ValuePools.OfBits64[GetHeapHandle()]);
     }
 
     #endregion

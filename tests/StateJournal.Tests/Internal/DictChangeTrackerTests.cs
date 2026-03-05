@@ -5,7 +5,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 
 [Collection("ValueBox")]
 public class DictChangeTrackerTests {
-    private static int Bits64Count => ValuePools.Bits64.Count;
+    private static int Bits64Count => ValuePools.OfBits64.Count;
 
     [Fact]
     public void AfterUpsert_NoChange_CanonicalizesCurrent_AndReleasesTemporarySlot() {
