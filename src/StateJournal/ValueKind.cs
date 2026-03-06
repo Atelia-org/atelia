@@ -5,6 +5,7 @@ public enum ValueKind : byte {
     Null = 0,
     Undefined,
     Boolean,
+    String,
 
     #region 注意这3项表示数值的，需保持连续和保序，用于性能优化
     FloatingPoint,
@@ -26,6 +27,4 @@ public enum ValueKind : byte {
     /// <summary><see cref="DurableList{T}"/> homogeneous</summary>
     TypedList,
     #endregion
-
-    String,
 }

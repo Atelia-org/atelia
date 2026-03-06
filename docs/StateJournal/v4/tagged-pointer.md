@@ -1,10 +1,10 @@
 
-## Taged-Pointer
+## Tagged-Pointer
 采用类似JS V8引擎（Chrome/Node.js）的Tagged-Pointer方案，将常见值内联存储，边缘情况回退到用软指针查询内部Slot。一个特殊之处在于对double类型的处理，我们为了简单性和速度选择了牺牲精度，采用损失1bit尾数的有损的double存储。
 
 伪代码示意：
 ```csharp
-public readonly record struct SJValue {
+public readonly record struct ValueBox {
     private ulong _bits;
 }
 ```
@@ -14,14 +14,14 @@ public readonly record struct SJValue {
 存储的是值，不含变量类型。以C#语言举例，即输入变量不论是double还是float，都被编码为Lossy-Double类型；输入的int(42)和long(42)，内部都被编码为`0x4000_0000_0000_002A`。
 采用确定性编码，每一个值都有唯一的二进制编码。
 
-## LZC 全景布局
+## BoxLzc 全景布局
 
-> **LZC** = `BitOperations.LeadingZeroCount(UInt64)`。LZC 越小，可用 payload 越大。
+> **BoxLzc** = `BitOperations.LeadingZeroCount(UInt64)`。BoxLzc 越小，可用 payload 越大。
 
 ### 设计原则
 
-- **Inline 和 Slot 天然占据 LZC 光谱两极**：Inline 存值需要大 payload（低 LZC），Slot 存索引只需序号（高 LZC）。
-- **中间地带保留给 inline 演进**：LZC 3-30 是 60-33 bit payload 的黄金储备，不急于占用。
+- **Inline 和 Slot 天然占据 BoxLzc 光谱两极**：Inline 存值需要大 payload（低 BoxLzc），Slot 存索引只需序号（高 BoxLzc）。
+- **中间地带保留给 inline 演进**：BoxLzc 3-30 是 60-33 bit payload 的黄金储备，不急于占用。
 - 以上皆为运行时内部状态的编码方案，进程关闭后可代码更新和重新布局，无需担心兼容性。
 
 ### 分配汇总
@@ -42,23 +42,23 @@ public readonly record struct SJValue {
 
 ### TABLED 技术方案
 
-#### Per-type LZC（当前方案）（TABLED）
-每种内部类型占一个 LZC 码位，dispatch 是零开销的 `switch(lzc)`。
-高频类型（string）分配低 LZC（大容量），低频类型分配高 LZC（小容量），匹配自然分布。
+#### Per-type BoxLzc（当前方案）（TABLED）
+每种内部类型占一个 BoxLzc 码位，dispatch 是零开销的 `switch(BoxLzc)`。
+高频类型（string）分配低 BoxLzc（大容量），低频类型分配高 BoxLzc（小容量），匹配自然分布。
 
-#### UserSlot (LZC 31)（TABLED）
+#### UserSlot (BoxLzc 31)（TABLED）
 16-bit BytesTag 给用户完整的 tag 空间（65536 种自定义类型），16-bit SlotIndex（每种类型 65K 实例）。
 StateJournal 提供 `{tag, bytes}` pair 的读写，**不解释 tag**——用户自行约定语义。
 所有非 .NET 原语的领域类型（SemVer, BCP-47, MIME, 地理坐标, etc.）走此路径。
 
 #### 候选演进方案：16-bit Plane 划分（TABLED）
-> 将 LZC 40-47 区间的琐碎空间统一为 16-bit 粒度的可分配单元（Plane），共 255 个。
-> 每个 Plane 可独立分配给某个类型并拼接 SlotIndex，提供跨 LZC 的容量拼接能力。
-> **搁置理由**：Per-type LZC 的单类型容量（最小 256K）远超当前需求；Plane 引入额外的 dispatch 间接层（查表开销）；从 Per-type LZC 迁移到 Plane 无兼容性代价，可在真实需求出现时无损升级。
+> 将 BoxLzc 40-47 区间的琐碎空间统一为 16-bit 粒度的可分配单元（Plane），共 255 个。
+> 每个 Plane 可独立分配给某个类型并拼接 SlotIndex，提供跨 BoxLzc 的容量拼接能力。
+> **搁置理由**：Per-type BoxLzc 的单类型容量（最小 256K）远超当前需求；Plane 引入额外的 dispatch 间接层（查表开销）；从 Per-type BoxLzc 迁移到 Plane 无兼容性代价，可在真实需求出现时无损升级。
 
 ---
 
-## LZC-Code 详细定义
+## BoxLzc 详细定义
 
 ### `LeadingZeroCount:0` Lossy-Double
 放弃1位尾数（mantissa）精度，换取永远inline。
@@ -107,7 +107,7 @@ StateJournal 不解释 BytesTag，用户自行约定语义。
 
 ---
 
-## 候选的设计素材（未分配 LZC，供未来评估）
+## 候选的设计素材（未分配 BoxLzc，供未来评估）
 
 ### Inline-Char-String
 `ReadOnlySpan<byte>`，短字节串inline存储。

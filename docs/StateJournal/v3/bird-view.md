@@ -19,8 +19,8 @@ DurableBase
     - Signed-Integer: 在unsigned integer bits的基础上叠加ZigZag编码。
     - Boolean:
     - Float-Point:
-    - Taged-Integer: 扩展点，{int Tag,整数}对
-    - Taged-Byte-String: 扩展点，{int Tag,byte[]}对
+    - Tagged-Integer: 扩展点，{int Tag,整数}对
+    - Tagged-Byte-String: 扩展点，{int Tag,byte[]}对
     - Char-String: utf-8, utf-16（为中文+C#环境优化）
     - Decimal:
     - Guid:

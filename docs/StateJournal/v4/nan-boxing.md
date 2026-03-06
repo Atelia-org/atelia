@@ -67,7 +67,7 @@ return mant == 0 || BitOperations.TrailingZeroCount(mant) >= fracBits;
 
 如果你需要，我可以再给一个完全无分支的版本，或者针对你的 Tagged-Pointer 约束做进一步压榨。
 
-User: 我正琢磨要不要引入跨integer - float的确定性唯一编码，统一当做抽象数值。让{int(42),double(42)}都产生相同的Taged-Pointer二进制表示，让52位有效数字以内的整数可以和double共用编码空间。如果采用此设计决策，似乎“NaN Boxing”方案来支持无损inline所有非NaN double，可自由支配的内联bit数只有51bit也不是那么难接受了，有可能也够用。你有哪些想法和思路？
+User: 我正琢磨要不要引入跨integer - float的确定性唯一编码，统一当做抽象数值。让{int(42),double(42)}都产生相同的Tagged-Pointer二进制表示，让52位有效数字以内的整数可以和double共用编码空间。如果采用此设计决策，似乎“NaN Boxing”方案来支持无损inline所有非NaN double，可自由支配的内联bit数只有51bit也不是那么难接受了，有可能也够用。你有哪些想法和思路？
 
 GitHub Copilot: 你这个方向可行，但我会把它当成“语义决策”而不是纯编码技巧：一旦做了跨 int/float 的统一，就等于明确“数值等价”优先于“类型等价”。下面是我会重点权衡的点：
 

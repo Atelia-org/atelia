@@ -16,8 +16,6 @@ public abstract class DurableDict<TKey> : DurableObject, IDict<TKey>
 where TKey : notnull {
     #region Core
     private protected DictChangeTracker<TKey, ValueBox> _core;
-    private bool TryGetValueBox(TKey key, out ValueBox value) => _core.Current.TryGetValue(key, out value);
-    private ref ValueBox GetValueBoxRefOrAddDefault(TKey key, out bool exists) => ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out exists);
     private UpsertStatus FinishUpsert(TKey key, ValueBox value, bool exists) {
         _core.AfterUpsert<ValueBoxHelper>(key, value);
         return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
@@ -99,7 +97,7 @@ where TKey : notnull {
         return true;
     }
     public bool TryGetValueKind(TKey key, out ValueKind kind) {
-        if (!TryGetValueBox(key, out ValueBox box)) {
+        if (!_core.Current.TryGetValue(key, out ValueBox box)) {
             kind = default;
             return false;
         }
@@ -152,7 +150,7 @@ where TKey : notnull {
     private GetIssue GetCore<TValue, VFace>(TKey key, out TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
-        if (!TryGetValueBox(key, out var box)) {
+        if (!_core.Current.TryGetValue(key, out ValueBox box)) {
             value = default;
             return GetIssue.NotFound;
         }
@@ -162,7 +160,7 @@ where TKey : notnull {
     private UpsertStatus UpsertCore<TValue, VFace>(TKey key, TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
-        ref ValueBox slot = ref GetValueBoxRefOrAddDefault(key, out bool exists);
+        ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
         VFace.Update(ref slot, value);
         return FinishUpsert(key, slot, exists);
     }

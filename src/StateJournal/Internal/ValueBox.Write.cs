@@ -32,6 +32,9 @@ partial struct ValueBox {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
         ValueKind valueKind = GetHeapKind();
         switch (valueKind) {
+            case ValueKind.String:
+                writer.TaggedString(DecodeString());
+                break;
             case ValueKind.FloatingPoint:
                 writer.TaggedFloatingPoint(DecodeHeapDouble());
                 break;
@@ -46,9 +49,6 @@ partial struct ValueBox {
             case ValueKind.MixedList:
             case ValueKind.TypedList:
                 writer.TaggedLocalId(DecodeDurableObject().LocalId);
-                break;
-            case ValueKind.String:
-                writer.TaggedString(DecodeString());
                 break;
             default:
                 throw new UnreachableException();
