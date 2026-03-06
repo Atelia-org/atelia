@@ -700,7 +700,7 @@ public class ValueBoxExclusiveSetTests {
     }
 
     private sealed class TestDurableDict : DurableDict<string> {
-        internal override void WritePendingDiff(IDiffWriter writer) { }
+        internal override void WritePendingDiff(IDiffWriter writer, DiffWriteContext context) { }
         internal override void OnCommitSucceeded() { }
         public override void DiscardChanges() { }
     }

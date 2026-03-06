@@ -6,11 +6,14 @@ internal interface ITypeHelper<T> where T : notnull {
     static abstract bool Equals(T? a, T? b);
     static abstract void Write(IDiffWriter writer, T? v, bool asKey);
 
-    /// <summary>冻结一个值用于 Commit 时共享。对于无堆资源的类型直接返回原值。</summary>
-    static abstract T? Freeze(T? value);
+    /// <summary>冻结一个值用于 Commit 时共享。对于无堆资源的类型直接返回原值。
+    /// 目前仅有ValueBox由于堆上值的Share/Exclusive语义需要。</summary>
+    static virtual T? Freeze(T? value) => value;
 
-    /// <summary>释放值持有的堆 Slot。调用者确保是最后持有者。对于无堆资源类型无操作。</summary>
-    static abstract void ReleaseSlot(T? value);
+    /// <summary>释放值持有的堆 Slot。调用者确保是最后持有者。对于无堆资源类型无操作。
+    /// 目前仅有ValueBox由于堆上值的Share/Exclusive语义需要。</summary>
+    static virtual void ReleaseSlot(T? value) { }
+    // static abstract List<T> GetTempList(WriteDiffContext context);
 }
 
 internal readonly struct ByteHelper : ITypeHelper<byte> {
@@ -18,30 +21,26 @@ internal readonly struct ByteHelper : ITypeHelper<byte> {
 
     public static void Write(IDiffWriter writer, byte v, bool asKey) => writer.BareByte(v, asKey);
 
-    public static byte Freeze(byte value) => value;
-    public static void ReleaseSlot(byte value) { }
+    // public static List<byte> GetTempList(WriteDiffContext context) => context.ByteTempList;
 }
 
 internal readonly struct Int32Helper : ITypeHelper<int> {
     public static bool Equals(int a, int b) => a == b;
     public static void Write(IDiffWriter writer, int v, bool asKey) => writer.BareInt32(v, asKey);
-    public static int Freeze(int value) => value;
-    public static void ReleaseSlot(int value) { }
+    // public static List<int> GetTempList(WriteDiffContext context) => context.Int32TempList;
 }
 
 internal readonly struct DoubleHelper : ITypeHelper<double> {
     public static bool Equals(double a, double b) =>
         BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b);
     public static void Write(IDiffWriter writer, double v, bool asKey) => writer.BareDouble(v, asKey);
-    public static double Freeze(double value) => value;
-    public static void ReleaseSlot(double value) { }
+    // public static List<double> GetTempList(WriteDiffContext context) => context.DoubleTempList;
 }
 
 internal readonly struct StringHelper : ITypeHelper<string> {
     public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
     public static void Write(IDiffWriter writer, string? v, bool asKey) => writer.BareString(v, asKey);
-    public static string? Freeze(string? value) => value; // strings are immutable
-    public static void ReleaseSlot(string? value) { }
+    // public static List<string> GetTempList(WriteDiffContext context) => context.StringTempList;
 }
 
 /// <summary>
@@ -55,9 +54,7 @@ internal readonly struct DurableObjectHelper<T> : ITypeHelper<T> where T : Durab
         Debug.Assert(!asKey, "DurableObject不支持作为key使用。");
         writer.BareLocalId(v?.LocalId, asKey);
     }
-
-    public static T? Freeze(T? value) => value; // 容器是共享引用对象，不需要冻结拷贝
-    public static void ReleaseSlot(T? value) { } // 容器生命周期由 Epoch 管理
+    // public static List<T> GetTempList(WriteDiffContext context) => throw new UnreachableException();
 }
 
 internal readonly struct ValueBoxHelper : ITypeHelper<ValueBox> {
@@ -70,4 +67,5 @@ internal readonly struct ValueBoxHelper : ITypeHelper<ValueBox> {
 
     public static ValueBox Freeze(ValueBox value) => ValueBox.Freeze(value);
     public static void ReleaseSlot(ValueBox value) => ValueBox.ReleaseBits64Slot(value);
+    // public static List<ValueBox> GetTempList(WriteDiffContext context) => throw new UnreachableException();
 }

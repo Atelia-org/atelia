@@ -13,6 +13,6 @@ internal class MixedListImpl : DurableList {
     internal override void OnCommitSucceeded() {
     }
 
-    internal override void WritePendingDiff(IDiffWriter writer) {
+    internal override void WritePendingDiff(IDiffWriter writer, DiffWriteContext context) {
     }
 }

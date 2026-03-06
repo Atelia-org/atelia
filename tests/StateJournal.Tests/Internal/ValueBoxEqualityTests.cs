@@ -22,7 +22,7 @@ public class ValueBoxEqualityTests {
     private sealed class FakeDurable : DurableObject {
         public override ValueKind Kind => ValueKind.MixedDict;
         public override bool HasChanges => false;
-        internal override void WritePendingDiff(IDiffWriter writer) => throw new NotSupportedException();
+        internal override void WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
         internal override void OnCommitSucceeded() => throw new NotSupportedException();
         public override void DiscardChanges() { }
     }

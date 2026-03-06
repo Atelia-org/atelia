@@ -33,7 +33,7 @@ public abstract class DurableObject {
     }
 
     /// <inheritdoc/>
-    internal abstract void WritePendingDiff(IDiffWriter writer);
+    internal abstract void WritePendingDiff(IDiffWriter writer, DiffWriteContext context);
 
     /// <inheritdoc/>
     internal abstract void OnCommitSucceeded();

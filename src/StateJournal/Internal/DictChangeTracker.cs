@@ -117,7 +117,7 @@ where TValue : notnull {
         _dirtyKeys.Clear();
     }
 
-    public void WritePendingDiff<KHelper, VHelper>(IDiffWriter writer)
+    public void WritePendingDiff<KHelper, VHelper>(IDiffWriter writer, DiffWriteContext context)
     where KHelper : ITypeHelper<TKey>
     where VHelper : ITypeHelper<TValue> {
         if (_dirtyKeys.Count == 0) { return; }

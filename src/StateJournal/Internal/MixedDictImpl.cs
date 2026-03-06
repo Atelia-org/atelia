@@ -17,5 +17,5 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     }
 
 
-    internal override void WritePendingDiff(IDiffWriter writer) => _core.WritePendingDiff<KHelper, ValueBoxHelper>(writer);
+    internal override void WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => _core.WritePendingDiff<KHelper, ValueBoxHelper>(writer, context);
 }

@@ -31,7 +31,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
         throw new NotImplementedException();
     }
 
-    internal override void WritePendingDiff(IDiffWriter writer) {
-        _core.WritePendingDiff<KHelper, VHelper>(writer);
+    internal override void WritePendingDiff(IDiffWriter writer, DiffWriteContext context) {
+        _core.WritePendingDiff<KHelper, VHelper>(writer, context);
     }
 }
