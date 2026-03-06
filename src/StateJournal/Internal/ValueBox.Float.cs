@@ -17,10 +17,10 @@ partial struct ValueBox {
         // ai:test `atelia/tests/StateJournal.Tests/Internal/ValueBoxExclusiveSetTests.cs`
         /// <summary>
         /// 独占更新：将 ValueBox 覆写为指定的 double 值（lossy round-to-odd 编码）。
-        /// <see cref="FromRoundedDouble"/> 始终 inline，因此只需清理旧 slot。
+        /// 相等性语义：NumericEquiv — <c>-0.0 ≠ +0.0</c>（保符号），所有 NaN 互等。
         /// </summary>
         public static bool Update(ref ValueBox old, double value) {
-            if (old.GetLzc() == BoxLzc.InlineDouble && old.DecodeInlineDouble() == value) { return false; }
+            if (old.NumericEquiv(value)) { return false; }
             FreeOldBits64IfNeeded(old);
             old = From(value);
             return true;
@@ -39,19 +39,17 @@ partial struct ValueBox {
 
         /// <summary>
         /// 独占更新：将 ValueBox 覆写为指定的 double 值（无损编码）。
+        /// 相等性语义：BitExact — IEEE 754 bit 完全一致才视为相等（区分 -0.0/+0.0 及不同 NaN payload）。
         /// 当尾数 LSB=1 时需要堆分配，此时尝试 inplace 复用旧 Bits64 Slot。
         /// </summary>
         public static bool Update(ref ValueBox old, double value) {
             ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
-            BoxLzc lzc = old.GetLzc();
+            if (old.TryDecodeDoubleRawBits(out ulong oldBits) && oldBits == doubleBits) { return false; }
             if ((doubleBits & 1) == 0) {
-                if (lzc == BoxLzc.InlineDouble && old.DecodeInlineDouble() == value) { return false; }
                 FreeOldBits64IfNeeded(old);
                 old = FromInlineableDoubleBits(doubleBits);
             }
             else {
-                if (lzc == BoxLzc.HeapSlot && old.GetHeapKind() == ValueKind.FloatingPoint
-                    && old.DecodeHeapDouble() == value) { return false; }
                 SlotHandle h = StoreOrReuseBits64(old, doubleBits);
                 old = EncodeHeapSlot(ValueKind.FloatingPoint, h);
             }
@@ -64,9 +62,12 @@ partial struct ValueBox {
         /// <summary>将 float 编码为 ValueBox。float→double 拓宽后 LSB 恒为 0，始终 inline。</summary>
         public static ValueBox From(float value) => FromInlineableFloatingPoint(value);
 
-        /// <summary>独占更新为 float。始终 inline。</summary>
+        /// <summary>
+        /// 独占更新为 float。始终 inline。
+        /// 相等性语义：NumericEquiv — <c>-0.0f ≠ +0.0f</c>（保符号），所有 NaN 互等。
+        /// </summary>
         public static bool Update(ref ValueBox old, float value) {
-            if (old.GetLzc() == BoxLzc.InlineDouble && (float)old.DecodeInlineDouble() == value) { return false; }
+            if (old.NumericEquiv(value)) { return false; }
             FreeOldBits64IfNeeded(old);
             old = FromInlineableFloatingPoint(value);
             return true;
@@ -110,9 +111,12 @@ partial struct ValueBox {
         /// <summary>将 Half 编码为 ValueBox。Half→double 拓宽后 LSB 恒为 0，始终 inline。</summary>
         public static ValueBox From(Half value) => FromInlineableFloatingPoint((double)value);
 
-        /// <summary>独占更新为 Half。始终 inline。</summary>
+        /// <summary>
+        /// 独占更新为 Half。始终 inline。
+        /// 相等性语义：NumericEquiv — <c>-0 ≠ +0</c>（保符号），所有 NaN 互等。
+        /// </summary>
         public static bool Update(ref ValueBox old, Half value) {
-            if (old.GetLzc() == BoxLzc.InlineDouble && (Half)old.DecodeInlineDouble() == value) { return false; }
+            if (old.NumericEquiv((double)value)) { return false; }
             FreeOldBits64IfNeeded(old);
             old = FromInlineableFloatingPoint((double)value);
             return true;
@@ -151,6 +155,41 @@ partial struct ValueBox {
         }
     }
 
+    #region Floating-point equality helpers
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool NumericEquiv(double value) {
+        ulong newBits = BitConverter.DoubleToUInt64Bits(value);
+        return TryDecodeDoubleRawBits(out ulong oldBits)
+            && (oldBits == newBits || (IsNaNBits(oldBits) && IsNaNBits(newBits)));
+    }
+
+    /// <summary>
+    /// 尝试从 ValueBox 解码出浮点值的 IEEE 754 原始 bits。
+    /// 仅检查 inline double 和 heap FloatingPoint 两条路径，不尝试整数转换。
+    /// 用于 Update 中的相等性判断。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool TryDecodeDoubleRawBits(out ulong doubleBits) {
+        BoxLzc lzc = GetLzc();
+        if (lzc == BoxLzc.InlineDouble) {
+            doubleBits = _bits << 1;
+            return true;
+        }
+        if (lzc == BoxLzc.HeapSlot && GetHeapKind() == ValueKind.FloatingPoint) {
+            doubleBits = ValuePools.OfBits64[GetHeapHandle()];
+            return true;
+        }
+        doubleBits = default;
+        return false;
+    }
+
+    /// <summary>判断 IEEE 754 double raw bits 是否表示 NaN（exponent 全1 且 mantissa 非0）。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    // private static bool IsNaNBits(ulong doubleBits) => (doubleBits & 0x7FFF_FFFF_FFFF_FFFFUL) > 0x7FF0_0000_0000_0000UL;
+    private static bool IsNaNBits(ulong doubleBits) => (doubleBits << 1) > (0x7FF0_0000_0000_0000UL<<1);
+
+    #endregion
     #region Floating-point encoding helpers
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -120,7 +120,7 @@ public class SJValueLayoutBenchmarks {
             int roll = rng.Next(100);
             if (roll < 50) {
                 // Inline-Nonneg-Integer: 高位 01, 低 62 位是值
-                bits = 0x4000_0000_0000_0000UL | (ulong)rng.Next(0, 10000);
+                bits = 0x4000_0000_0000_0000UL | (ulong)(uint)rng.Next(0, 10000);
             } else if (roll < 80) {
                 // Lossy-Double: 高位 1
                 bits = unchecked((ulong)rng.NextInt64()) | 0x8000_0000_0000_0000UL;

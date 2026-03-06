@@ -592,6 +592,61 @@ public class ValueBoxExclusiveSetTests {
         Assert.True(ValueBox.RoundedDoubleFace.Update(ref box, 2.0));
     }
 
+    // ═══════════ RoundedDouble NumericEquiv: -0.0 ≠ +0.0, all NaN equal ═══════════
+
+    [Fact]
+    public void SetRoundedDouble_NegZeroToPosZero_ReturnsTrue() {
+        var box = ValueBox.RoundedDoubleFace.From(-0.0);
+        Assert.True(ValueBox.RoundedDoubleFace.Update(ref box, +0.0));
+    }
+
+    [Fact]
+    public void SetRoundedDouble_PosZeroToNegZero_ReturnsTrue() {
+        var box = ValueBox.RoundedDoubleFace.From(+0.0);
+        Assert.True(ValueBox.RoundedDoubleFace.Update(ref box, -0.0));
+    }
+
+    [Fact]
+    public void SetRoundedDouble_SameNaN_ReturnsFalse() {
+        var box = ValueBox.RoundedDoubleFace.From(double.NaN);
+        Assert.False(ValueBox.RoundedDoubleFace.Update(ref box, double.NaN));
+    }
+
+    [Fact]
+    public void SetRoundedDouble_DifferentNaNPayload_ReturnsFalse() {
+        // 两个不同 payload 的 NaN，NumericEquiv 下都视为相等
+        double nan1 = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0000); // canonical qNaN
+        double nan2 = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0001); // 不同 payload
+        var box = ValueBox.RoundedDoubleFace.From(nan1);
+        Assert.False(ValueBox.RoundedDoubleFace.Update(ref box, nan2));
+    }
+
+    [Fact]
+    public void SetRoundedDouble_SignalingNaN_EqualsQuietNaN() {
+        double snan = BitConverter.UInt64BitsToDouble(0x7FF0_0000_0000_0001); // sNaN
+        double qnan = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0000); // qNaN
+        var box = ValueBox.RoundedDoubleFace.From(snan);
+        Assert.False(ValueBox.RoundedDoubleFace.Update(ref box, qnan));
+    }
+
+    [Fact]
+    public void SetRoundedDouble_SameValue_FromHeapDouble_ReturnsFalse() {
+        // old 是通过 ExactDouble 存入的 heap double，RoundedDouble Update 应检测到值相同
+        double value = 1.5; // LSB=0, inline
+        var box = ValueBox.ExactDoubleFace.From(value);
+        Assert.False(ValueBox.RoundedDoubleFace.Update(ref box, value));
+    }
+
+    [Fact]
+    public void SetRoundedDouble_NaN_FromHeapDouble_ReturnsFalse() {
+        // old 是通过 ExactDouble 存入的 heap NaN（LSB=1），RoundedDouble Update 应检测到 NaN 互等
+        double heapNaN = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0001); // LSB=1 → heap
+        var box = ValueBox.ExactDoubleFace.From(heapNaN);
+        int poolBefore = PoolCount;
+        Assert.False(ValueBox.RoundedDoubleFace.Update(ref box, double.NaN));
+        Assert.Equal(poolBefore, PoolCount); // heap slot 未被释放也未分配
+    }
+
     // ═══════════ ExactDouble Update 返回值 ═══════════
 
     [Theory]
@@ -619,6 +674,53 @@ public class ValueBoxExclusiveSetTests {
         Assert.True(ValueBox.ExactDoubleFace.Update(ref box, 2.0));
     }
 
+    // ═══════════ ExactDouble BitExact: -0.0 ≠ +0.0, different NaN ≠ ═══════════
+
+    [Fact]
+    public void SetExactDouble_NegZeroToPosZero_ReturnsTrue() {
+        var box = ValueBox.ExactDoubleFace.From(-0.0);
+        Assert.True(ValueBox.ExactDoubleFace.Update(ref box, +0.0));
+    }
+
+    [Fact]
+    public void SetExactDouble_PosZeroToNegZero_ReturnsTrue() {
+        var box = ValueBox.ExactDoubleFace.From(+0.0);
+        Assert.True(ValueBox.ExactDoubleFace.Update(ref box, -0.0));
+    }
+
+    [Fact]
+    public void SetExactDouble_SameNaN_ReturnsFalse() {
+        var box = ValueBox.ExactDoubleFace.From(double.NaN);
+        Assert.False(ValueBox.ExactDoubleFace.Update(ref box, double.NaN));
+    }
+
+    [Fact]
+    public void SetExactDouble_DifferentNaNPayload_ReturnsTrue() {
+        // BitExact: 不同 payload 的 NaN 视为不同
+        double nan1 = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0000);
+        double nan2 = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0002); // LSB=0, inline
+        var box = ValueBox.ExactDoubleFace.From(nan1);
+        Assert.True(ValueBox.ExactDoubleFace.Update(ref box, nan2));
+    }
+
+    [Fact]
+    public void SetExactDouble_SameHeapNaN_ReturnsFalse() {
+        // 同一个 NaN payload (LSB=1 → heap)，BitExact 下应相等
+        double nan = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0001);
+        var box = ValueBox.ExactDoubleFace.From(nan);
+        int poolBefore = PoolCount;
+        Assert.False(ValueBox.ExactDoubleFace.Update(ref box, nan));
+        Assert.Equal(poolBefore, PoolCount);
+    }
+
+    [Fact]
+    public void SetExactDouble_SameValue_FromRoundedInline_ReturnsFalse() {
+        // old 是通过 RoundedDouble 存入的 inline double，ExactDouble Update 应检测到值相同
+        double value = 1.0; // 常规值，RoundedDouble 无损
+        var box = ValueBox.RoundedDoubleFace.From(value);
+        Assert.False(ValueBox.ExactDoubleFace.Update(ref box, value));
+    }
+
     // ═══════════ Single Update 返回值 ═══════════
 
     [Theory]
@@ -637,6 +739,37 @@ public class ValueBoxExclusiveSetTests {
         Assert.True(ValueBox.SingleFace.Update(ref box, 2.0f));
     }
 
+    // ═══════════ Single NumericEquiv: -0.0f ≠ +0.0f, all NaN equal ═══════════
+
+    [Fact]
+    public void SetSingle_NegZeroToPosZero_ReturnsTrue() {
+        float neg0 = BitConverter.Int32BitsToSingle(unchecked((int)0x8000_0000));
+        var box = ValueBox.SingleFace.From(neg0);
+        Assert.True(ValueBox.SingleFace.Update(ref box, +0.0f));
+    }
+
+    [Fact]
+    public void SetSingle_PosZeroToNegZero_ReturnsTrue() {
+        float neg0 = BitConverter.Int32BitsToSingle(unchecked((int)0x8000_0000));
+        var box = ValueBox.SingleFace.From(+0.0f);
+        Assert.True(ValueBox.SingleFace.Update(ref box, neg0));
+    }
+
+    [Fact]
+    public void SetSingle_SameNaN_ReturnsFalse() {
+        var box = ValueBox.SingleFace.From(float.NaN);
+        Assert.False(ValueBox.SingleFace.Update(ref box, float.NaN));
+    }
+
+    [Fact]
+    public void SetSingle_DifferentNaNPayload_ReturnsFalse() {
+        // float 的不同 NaN payload 拓宽为 double 后仍然是不同的 NaN，但 NumericEquiv 下都互等
+        float nan1 = float.NaN;
+        float nan2 = BitConverter.Int32BitsToSingle(0x7FC0_0001); // 不同 payload
+        var box = ValueBox.SingleFace.From(nan1);
+        Assert.False(ValueBox.SingleFace.Update(ref box, nan2));
+    }
+
     // ═══════════ Half Update 返回值 ═══════════
 
     [Fact]
@@ -650,6 +783,28 @@ public class ValueBoxExclusiveSetTests {
     public void SetHalf_DifferentValue_ReturnsTrue() {
         var box = ValueBox.HalfFace.From((Half)1.0);
         Assert.True(ValueBox.HalfFace.Update(ref box, (Half)2.0));
+    }
+
+    // ═══════════ Half NumericEquiv: -0 ≠ +0, all NaN equal ═══════════
+
+    [Fact]
+    public void SetHalf_NegZeroToPosZero_ReturnsTrue() {
+        Half neg0 = BitConverter.UInt16BitsToHalf(0x8000);
+        var box = ValueBox.HalfFace.From(neg0);
+        Assert.True(ValueBox.HalfFace.Update(ref box, (Half)0));
+    }
+
+    [Fact]
+    public void SetHalf_PosZeroToNegZero_ReturnsTrue() {
+        Half neg0 = BitConverter.UInt16BitsToHalf(0x8000);
+        var box = ValueBox.HalfFace.From((Half)0);
+        Assert.True(ValueBox.HalfFace.Update(ref box, neg0));
+    }
+
+    [Fact]
+    public void SetHalf_SameNaN_ReturnsFalse() {
+        var box = ValueBox.HalfFace.From(Half.NaN);
+        Assert.False(ValueBox.HalfFace.Update(ref box, Half.NaN));
     }
 
     // ═══════════ String Update 返回值 ═══════════
