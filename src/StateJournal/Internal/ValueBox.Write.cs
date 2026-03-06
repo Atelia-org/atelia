@@ -48,7 +48,7 @@ partial struct ValueBox {
             case ValueKind.TypedDict:
             case ValueKind.MixedList:
             case ValueKind.TypedList:
-                writer.TaggedLocalId(DecodeDurableObject().LocalId);
+                writer.TaggedDurableObjectRef(DecodeDurableObject().LocalId);
                 break;
             case ValueKind.Uninitialized: // 未初始化的ValueBox不应该参与序列化
             case ValueKind.Null: // `null`值应该永远使用简单值而非堆分配

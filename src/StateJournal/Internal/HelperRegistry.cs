@@ -18,9 +18,23 @@ internal static class HelperRegistry {
     /// 返回 <c>null</c> 表示该类型不是受支持的 Key 类型。
     /// </summary>
     internal static Type? ResolveKeyHelper(Type t) {
-        if (t == typeof(int)) { return typeof(Int32Helper); }
-        if (t == typeof(double)) { return typeof(DoubleHelper); }
+        if (t == typeof(bool)) { return typeof(BooleanHelper); }
         if (t == typeof(string)) { return typeof(StringHelper); }
+        // if (t == typeof(LocalId)) { return typeof(LocalIdHelper); } 暂时不支持，后续如果碰到需求再引入同时支持LocalId和DurableObjectRef两种语义
+
+        if (t == typeof(double)) { return typeof(DoubleHelper); }
+        if (t == typeof(float)) { return typeof(SingleHelper); }
+        if (t == typeof(Half)) { return typeof(HalfHelper); }
+
+        if (t == typeof(ulong)) { return typeof(UInt64Helper); }
+        if (t == typeof(uint)) { return typeof(UInt32Helper); }
+        if (t == typeof(ushort)) { return typeof(UInt16Helper); }
+        if (t == typeof(byte)) { return typeof(ByteHelper); }
+
+        if (t == typeof(long)) { return typeof(Int64Helper); }
+        if (t == typeof(int)) { return typeof(Int32Helper); }
+        if (t == typeof(short)) { return typeof(Int16Helper); }
+        if (t == typeof(sbyte)) { return typeof(SByteHelper); }
         return null;
     }
 

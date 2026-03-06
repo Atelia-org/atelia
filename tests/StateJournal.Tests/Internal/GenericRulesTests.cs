@@ -7,22 +7,43 @@ public class GenericRulesTests {
     // ═══════════════════════ Key 验证 ═══════════════════════
 
     [Theory]
-    [InlineData(typeof(int), true)]
-    [InlineData(typeof(double), true)]
+    [InlineData(typeof(bool), true)]
     [InlineData(typeof(string), true)]
-    [InlineData(typeof(long), false)]
-    [InlineData(typeof(float), false)]
+    // [InlineData(typeof(LocalId), true)]
+    [InlineData(typeof(int), true)]
+    [InlineData(typeof(long), true)]
+    [InlineData(typeof(short), true)]
+    [InlineData(typeof(sbyte), true)]
+    [InlineData(typeof(byte), true)]
+    [InlineData(typeof(uint), true)]
+    [InlineData(typeof(ulong), true)]
+    [InlineData(typeof(ushort), true)]
+    [InlineData(typeof(double), true)]
+    [InlineData(typeof(float), true)]
+    [InlineData(typeof(Half), true)]
+    [InlineData(typeof(decimal), false)]
     public void IsValidKey(Type type, bool expected) =>
         Assert.Equal(expected, GenericRules.IsValidKey(type));
 
     // ═══════════════════════ Value 验证 — 叶子 ═══════════════════════
 
     [Theory]
-    [InlineData(typeof(int), true)]
-    [InlineData(typeof(double), true)]
+    [InlineData(typeof(bool), true)]
     [InlineData(typeof(string), true)]
+    // [InlineData(typeof(LocalId), true)]
+    [InlineData(typeof(int), true)]
+    [InlineData(typeof(long), true)]
+    [InlineData(typeof(short), true)]
+    [InlineData(typeof(sbyte), true)]
+    [InlineData(typeof(byte), true)]
+    [InlineData(typeof(uint), true)]
+    [InlineData(typeof(ulong), true)]
+    [InlineData(typeof(ushort), true)]
+    [InlineData(typeof(double), true)]
+    [InlineData(typeof(float), true)]
+    [InlineData(typeof(Half), true)]
     [InlineData(typeof(ValueBox), false)]
-    [InlineData(typeof(long), false)]
+    [InlineData(typeof(decimal), false)]
     public void IsValidValue_Leaf(Type type, bool expected) =>
         Assert.Equal(expected, GenericRules.IsValidValue(type));
 

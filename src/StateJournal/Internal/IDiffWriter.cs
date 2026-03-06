@@ -10,7 +10,7 @@ internal interface IDiffWriter {
     void TaggedNull();
     void TaggedBoolean(bool value);
     void TaggedString(string? value);
-    void TaggedLocalId(LocalId value);
+    void TaggedDurableObjectRef(LocalId value);
 
     void TaggedFloatingPoint(double value);
     void TaggedNonnegativeInteger(ulong value);
@@ -20,7 +20,7 @@ internal interface IDiffWriter {
     #region 写值，用于类型特化容器，无类型信息，直接写值，比如Base128套ZigZag之类的。
     void BareBoolean(bool value, bool asKey);
     void BareString(string? value, bool asKey);
-    void BareLocalId(LocalId? value, bool asKey);
+    void BareDurableObjectRef(LocalId? value, bool asKey);
 
     void BareDouble(double value, bool asKey);
     void BareSingle(float value, bool asKey);
