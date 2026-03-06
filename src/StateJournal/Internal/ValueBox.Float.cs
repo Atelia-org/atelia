@@ -20,6 +20,7 @@ partial struct ValueBox {
         /// <see cref="FromRoundedDouble"/> 始终 inline，因此只需清理旧 slot。
         /// </summary>
         public static bool Update(ref ValueBox old, double value) {
+            if (old.GetLzc() == BoxLzc.InlineDouble && old.DecodeInlineDouble() == value) { return false; }
             FreeOldBits64IfNeeded(old);
             old = From(value);
             return true;
@@ -42,11 +43,15 @@ partial struct ValueBox {
         /// </summary>
         public static bool Update(ref ValueBox old, double value) {
             ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
+            BoxLzc lzc = old.GetLzc();
             if ((doubleBits & 1) == 0) {
+                if (lzc == BoxLzc.InlineDouble && old.DecodeInlineDouble() == value) { return false; }
                 FreeOldBits64IfNeeded(old);
                 old = FromInlineableDoubleBits(doubleBits);
             }
             else {
+                if (lzc == BoxLzc.HeapSlot && old.GetHeapKind() == ValueKind.FloatingPoint
+                    && old.DecodeHeapDouble() == value) { return false; }
                 SlotHandle h = StoreOrReuseBits64(old, doubleBits);
                 old = EncodeHeapSlot(ValueKind.FloatingPoint, h);
             }
@@ -61,6 +66,7 @@ partial struct ValueBox {
 
         /// <summary>独占更新为 float。始终 inline。</summary>
         public static bool Update(ref ValueBox old, float value) {
+            if (old.GetLzc() == BoxLzc.InlineDouble && (float)old.DecodeInlineDouble() == value) { return false; }
             FreeOldBits64IfNeeded(old);
             old = FromInlineableFloatingPoint(value);
             return true;
@@ -106,6 +112,7 @@ partial struct ValueBox {
 
         /// <summary>独占更新为 Half。始终 inline。</summary>
         public static bool Update(ref ValueBox old, Half value) {
+            if (old.GetLzc() == BoxLzc.InlineDouble && (Half)old.DecodeInlineDouble() == value) { return false; }
             FreeOldBits64IfNeeded(old);
             old = FromInlineableFloatingPoint((double)value);
             return true;

@@ -32,6 +32,10 @@ partial struct ValueBox {
         /// 因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
         /// </remarks>
         public static bool Update(ref ValueBox old, DurableObject? value) {
+            if (value is null) {
+                if (old.IsNull) { return false; }
+            }
+            else if (IsDurableObject(old) && old.DecodeDurableObject() == value) { return false; }
             FreeOldBits64IfNeeded(old);
             old = From(value);
             return true;

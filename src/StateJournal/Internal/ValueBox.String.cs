@@ -27,6 +27,11 @@ partial struct ValueBox {
         /// 因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
         /// </remarks>
         public static bool Update(ref ValueBox old, string? value) {
+            if (value is null) {
+                if (old.IsNull) { return false; }
+            }
+            else if (old.GetTagAndKind() == TagHeapKindString
+                && string.Equals(old.DecodeString(), value, StringComparison.Ordinal)) { return false; }
             FreeOldBits64IfNeeded(old);
             old = From(value);
             return true;

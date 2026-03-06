@@ -1,3 +1,4 @@
+using Atelia.StateJournal;
 using Xunit;
 
 namespace Atelia.StateJournal.Internal.Tests;
@@ -552,5 +553,155 @@ public class ValueBoxExclusiveSetTests {
         Assert.False(ValueBox.UInt64Face.Update(ref box, value));
         Assert.Equal(bitsBefore, box.GetBits());
         Assert.Equal(poolBefore, PoolCount);
+    }
+
+    // ═══════════ Boolean Update 返回值 ═══════════
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SetBool_SameValue_ReturnsFalse(bool value) {
+        var box = ValueBox.BooleanFace.From(value);
+        Assert.False(ValueBox.BooleanFace.Update(ref box, value));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void SetBool_DifferentValue_ReturnsTrue(bool first, bool second) {
+        var box = ValueBox.BooleanFace.From(first);
+        Assert.True(ValueBox.BooleanFace.Update(ref box, second));
+    }
+
+    // ═══════════ RoundedDouble Update 返回值 ═══════════
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(1.5)]
+    [InlineData(-1.5)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void SetRoundedDouble_SameValue_ReturnsFalse(double value) {
+        var box = ValueBox.RoundedDoubleFace.From(value);
+        Assert.False(ValueBox.RoundedDoubleFace.Update(ref box, value));
+    }
+
+    [Fact]
+    public void SetRoundedDouble_DifferentValue_ReturnsTrue() {
+        var box = ValueBox.RoundedDoubleFace.From(1.0);
+        Assert.True(ValueBox.RoundedDoubleFace.Update(ref box, 2.0));
+    }
+
+    // ═══════════ ExactDouble Update 返回值 ═══════════
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(1.0)]   // LSB=0 → inline
+    [InlineData(-1.0)]
+    public void SetExactDouble_SameInlineValue_ReturnsFalse(double value) {
+        var box = ValueBox.ExactDoubleFace.From(value);
+        Assert.False(ValueBox.ExactDoubleFace.Update(ref box, value));
+    }
+
+    [Fact]
+    public void SetExactDouble_SameHeapValue_ReturnsFalse() {
+        // 0x3FF0_0000_0000_0001 → LSB=1 → heap
+        double value = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
+        var box = ValueBox.ExactDoubleFace.From(value);
+        int poolBefore = PoolCount;
+        Assert.False(ValueBox.ExactDoubleFace.Update(ref box, value));
+        Assert.Equal(poolBefore, PoolCount);
+    }
+
+    [Fact]
+    public void SetExactDouble_DifferentValue_ReturnsTrue() {
+        var box = ValueBox.ExactDoubleFace.From(1.0);
+        Assert.True(ValueBox.ExactDoubleFace.Update(ref box, 2.0));
+    }
+
+    // ═══════════ Single Update 返回值 ═══════════
+
+    [Theory]
+    [InlineData(0.0f)]
+    [InlineData(1.5f)]
+    [InlineData(-1.5f)]
+    [InlineData(float.PositiveInfinity)]
+    public void SetSingle_SameValue_ReturnsFalse(float value) {
+        var box = ValueBox.SingleFace.From(value);
+        Assert.False(ValueBox.SingleFace.Update(ref box, value));
+    }
+
+    [Fact]
+    public void SetSingle_DifferentValue_ReturnsTrue() {
+        var box = ValueBox.SingleFace.From(1.0f);
+        Assert.True(ValueBox.SingleFace.Update(ref box, 2.0f));
+    }
+
+    // ═══════════ Half Update 返回值 ═══════════
+
+    [Fact]
+    public void SetHalf_SameValue_ReturnsFalse() {
+        Half value = (Half)1.5;
+        var box = ValueBox.HalfFace.From(value);
+        Assert.False(ValueBox.HalfFace.Update(ref box, value));
+    }
+
+    [Fact]
+    public void SetHalf_DifferentValue_ReturnsTrue() {
+        var box = ValueBox.HalfFace.From((Half)1.0);
+        Assert.True(ValueBox.HalfFace.Update(ref box, (Half)2.0));
+    }
+
+    // ═══════════ String Update 返回值 ═══════════
+
+    [Fact]
+    public void SetString_SameValue_ReturnsFalse() {
+        var box = ValueBox.StringFace.From("hello");
+        Assert.False(ValueBox.StringFace.Update(ref box, "hello"));
+    }
+
+    [Fact]
+    public void SetString_SameNull_ReturnsFalse() {
+        var box = ValueBox.StringFace.From((string?)null);
+        Assert.False(ValueBox.StringFace.Update(ref box, null));
+    }
+
+    [Fact]
+    public void SetString_DifferentValue_ReturnsTrue() {
+        var box = ValueBox.StringFace.From("hello");
+        Assert.True(ValueBox.StringFace.Update(ref box, "world"));
+    }
+
+    [Fact]
+    public void SetString_NullToNonNull_ReturnsTrue() {
+        var box = ValueBox.StringFace.From((string?)null);
+        Assert.True(ValueBox.StringFace.Update(ref box, "hello"));
+    }
+
+    [Fact]
+    public void SetString_NonNullToNull_ReturnsTrue() {
+        var box = ValueBox.StringFace.From("hello");
+        Assert.True(ValueBox.StringFace.Update(ref box, null));
+    }
+
+    // ═══════════ DurableObject Update 返回值 ═══════════
+
+    [Fact]
+    public void SetDurableObject_SameNull_ReturnsFalse() {
+        var box = ValueBox.DurableObjectFace.From((DurableObject?)null);
+        Assert.False(ValueBox.DurableObjectFace.Update(ref box, null));
+    }
+
+    [Fact]
+    public void SetDurableObject_NullToNonNull_ReturnsTrue() {
+        var box = ValueBox.DurableObjectFace.From((DurableObject?)null);
+        var obj = new TestDurableDict();
+        Assert.True(ValueBox.DurableObjectFace.Update(ref box, obj));
+    }
+
+    private sealed class TestDurableDict : DurableDict<string> {
+        internal override void WritePendingDiff(IDiffWriter writer) { }
+        internal override void OnCommitSucceeded() { }
+        public override void DiscardChanges() { }
     }
 }
