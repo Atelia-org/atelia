@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Atelia.StateJournal.Pools;
 
@@ -12,7 +13,7 @@ partial struct ValueBox {
     /// </summary>
     /// <remarks>
     /// 快速路径：<c>GetBits()</c> 相等即值相等。
-    /// 这覆盖了所有 inline 编码（数值、浮点、bool、null、undefined）
+    /// 这覆盖了所有 inline 编码（数值、浮点、bool、null、uninitialized）
     /// 和所有 InternPool 引用类型（同值同 handle → 同 bits）。
     ///
     /// 慢路径：仅当双方都是 HeapSlot 且 <see cref="ValueKind"/> 相同时才触发。
@@ -25,6 +26,8 @@ partial struct ValueBox {
     /// </remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static bool ValueEquals(ValueBox a, ValueBox b) {
+        Debug.Assert(!a.IsUninitialized);
+        Debug.Assert(!b.IsUninitialized);
         ulong diffBits;
         uint tagAndKind; // 用于快速判断是否是堆上浮点或整数
         return (diffBits = a._bits ^ b._bits) == 0
@@ -52,6 +55,7 @@ partial struct ValueBox {
     ///
     /// </remarks>
     internal static int ValueHashCode(ValueBox box) {
+        Debug.Assert(!box.IsUninitialized);
         if (box.TryGetBits64Handle(out SlotHandle handle)) {
             // heap 数值：用实际值 + Kind 做哈希
             ulong raw = ValuePools.OfBits64[handle];

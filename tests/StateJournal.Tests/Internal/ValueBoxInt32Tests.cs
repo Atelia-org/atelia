@@ -143,7 +143,7 @@ public class ValueBoxInt32Tests {
 
     [Fact]
     public void GetInt_FromNull_TypeMismatch() {
-        var box = new ValueBox(0);
+        var box = ValueBox.Null;
         GetIssue issue = ValueBox.Int32Face.Get(box, out int value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);

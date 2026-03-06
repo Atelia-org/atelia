@@ -40,6 +40,7 @@ partial struct ValueBox {
         /// <see cref="GetIssue.TypeMismatch"/> 当 ValueBox 不是字符串类型。
         /// </returns>
         public static GetIssue Get(ValueBox box, out string? value) {
+            Debug.Assert(!box.IsUninitialized);
             if (box.IsNull) {
                 value = null;
                 return GetIssue.None;

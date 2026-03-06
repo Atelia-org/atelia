@@ -10,7 +10,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 /// </summary>
 /// <remarks>
 /// 测试策略：
-/// - 快速路径：bits 相同 → true（inline 值、布尔、null、undefined）。
+/// - 快速路径：bits 相同 → true（inline 值、布尔、null、uninitialized）。
 /// - 慢路径：heap 数值同值同 Kind → true（GcPool 独占 slot，同值不同 handle）。
 /// - 跨 Kind 不等：整数 ≠ 浮点（42 ≠ 42.0 的语义决策）。
 /// - HashCode 一致性：ValueEquals 为 true → 同 HashCode。
@@ -29,10 +29,10 @@ public class ValueBoxEqualityTests {
 
     // ═══════════════════════ Helpers ═══════════════════════
 
-    private static ValueBox Null => new(0);
-    private static ValueBox Undefined => new(1);
-    private static ValueBox BoolFalse => new(2);
-    private static ValueBox BoolTrue => new(3);
+    private static ValueBox Null => ValueBox.Null;
+    private static ValueBox Uninitialized => default;
+    private static ValueBox BoolFalse => new(LzcConstants.BoxFalse);
+    private static ValueBox BoolTrue => new(LzcConstants.BoxTrue);
 
     public static IEnumerable<object[]> EqualsTruePairsForHashContract() {
         yield return new object[] {
@@ -123,11 +123,6 @@ public class ValueBoxEqualityTests {
     [Fact]
     public void ValueEquals_Null_SelfEquals() {
         Assert.True(ValueBox.ValueEquals(Null, Null));
-    }
-
-    [Fact]
-    public void ValueEquals_Undefined_SelfEquals() {
-        Assert.True(ValueBox.ValueEquals(Undefined, Undefined));
     }
 
     [Fact]
@@ -259,7 +254,7 @@ public class ValueBoxEqualityTests {
 
     [Fact]
     public void ValueEquals_InlineInt0_vs_Null_False() {
-        // FromInt64(0) 编码为 inline 非负整数（LZC=1），new ValueBox(0) 是 Null（LZC=64）
+        // FromInt64(0) 编码为 inline 非负整数（LZC=1），ValueBox.Null 是 Null（LZC=63）
         var intZero = ValueBox.Int64Face.From(0);
         Assert.False(ValueBox.ValueEquals(intZero, Null));
     }
@@ -299,11 +294,6 @@ public class ValueBoxEqualityTests {
         foreach (var (a, b) in pairs) {
             Assert.Equal(ValueBox.ValueEquals(a, b), ValueBox.ValueEquals(b, a));
         }
-    }
-
-    [Fact]
-    public void ValueEquals_InlineInt_vs_Undefined_False() {
-        Assert.False(ValueBox.ValueEquals(ValueBox.Int64Face.From(0), Undefined));
     }
 
     // ═══════════════════════ Equality/Hash 契约：ValueEquals=true ⇒ Hash 相等 ═══════════════════════

@@ -67,6 +67,7 @@ partial struct ValueBox {
         }
 
         public static GetIssue Get(ValueBox box, out float value) {
+            Debug.Assert(!box.IsUninitialized);
             BoxLzc lzc = box.GetLzc();
             if (lzc == BoxLzc.InlineDouble) { return NarrowToSingle(box.DecodeInlineDouble(), out value); }
             if (lzc == BoxLzc.InlineNonnegInt) {
@@ -111,6 +112,7 @@ partial struct ValueBox {
         }
 
         public static GetIssue Get(ValueBox box, out Half value) {
+            Debug.Assert(!box.IsUninitialized);
             BoxLzc lzc = box.GetLzc();
             if (lzc == BoxLzc.InlineDouble) { return NarrowToHalf(box.DecodeInlineDouble(), out value); }
             if (lzc == BoxLzc.InlineNonnegInt) {
@@ -197,6 +199,7 @@ partial struct ValueBox {
 
     /// <summary>共享的 GetDouble 实现，供 RoundedDoubleFace 和 ExactDoubleFace 共用。</summary>
     internal GetIssue GetDouble(out double value) {
+        Debug.Assert(!IsUninitialized);
         BoxLzc lzc = GetLzc();
         if (lzc == BoxLzc.InlineDouble) {
             value = DecodeInlineDouble();

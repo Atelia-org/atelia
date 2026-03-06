@@ -39,8 +39,9 @@ internal readonly partial struct ValueBox {
     private uint GetTagAndKind() => (uint)(_bits >> KindShift);
     private static ValueBox EncodeHeapSlot(ValueKind kind, SlotHandle handle) => new(LzcConstants.HeapSlotTag | ((ulong)kind << KindShift) | ExclusiveBit | handle.Packed);
 
-    public static ValueBox Null => default; // 有意为null值选了全0编码，等效于new(LzcConstants.SimpleNull);
-    public bool IsNull => _bits == LzcConstants.SimpleNull;
+    public static ValueBox Null => new(LzcConstants.BoxNull); // 有意避开了0值，default，以实现内部的明确赋值检查。
+    public bool IsNull => _bits == LzcConstants.BoxNull;
+    internal bool IsUninitialized => _bits == LzcConstants.BoxUninitialized;
 
     public ValueKind GetValueKind() => throw new NotImplementedException(); // AI TODO
 

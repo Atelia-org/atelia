@@ -58,6 +58,7 @@ partial struct ValueBox {
         /// <see cref="GetIssue.TypeMismatch"/>
         /// </returns>
         public static GetIssue Get(ValueBox box, out long value) {
+            Debug.Assert(!box.IsUninitialized);
             BoxLzc lzc = box.GetLzc();
             if (lzc == BoxLzc.InlineNonnegInt) {
                 value = (long)box.DecodeInlineNonnegInt(); // inline范围是62bit所以不会溢出
@@ -117,6 +118,7 @@ partial struct ValueBox {
         /// <see cref="GetIssue.TypeMismatch"/>
         /// </returns>
         public static GetIssue Get(ValueBox box, out ulong value) {
+            Debug.Assert(!box.IsUninitialized);
             BoxLzc lzc = box.GetLzc();
             if (lzc == BoxLzc.InlineNonnegInt) {
                 value = box.DecodeInlineNonnegInt();

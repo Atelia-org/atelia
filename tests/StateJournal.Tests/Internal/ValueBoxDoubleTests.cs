@@ -14,7 +14,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 /// - 同值同码 @[SAME-INLINE-SAME-VALUEBOX]：float/Half 拓宽为 double 后应与对应 double 产生相同 bits。
 /// - Get(out double) 从整数源隐式转换：精确转换（≤53-bit significand）或 PrecisionLost。
 /// - 特殊值：NaN, ±Infinity, -0.0。
-/// - TypeMismatch：来自 Null/Boolean/Undefined 的 ValueBox。
+/// - TypeMismatch：来自 Null/Boolean/Uninitialized 的 ValueBox。
 /// </remarks>
 [Collection("ValueBox")]
 public class ValueBoxDoubleTests {
@@ -308,7 +308,7 @@ public class ValueBoxDoubleTests {
 
     [Fact]
     public void GetDouble_FromNull_TypeMismatch() {
-        var box = new ValueBox(0);
+        var box = ValueBox.Null;
         GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
@@ -317,14 +317,6 @@ public class ValueBoxDoubleTests {
     [Fact]
     public void GetDouble_FromBooleanTrue_TypeMismatch() {
         var box = new ValueBox(3);
-        GetIssue issue = box.GetDouble(out double value);
-        Assert.Equal(GetIssue.TypeMismatch, issue);
-        Assert.Equal(default, value);
-    }
-
-    [Fact]
-    public void GetDouble_FromUndefined_TypeMismatch() {
-        var box = new ValueBox(1);
         GetIssue issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);

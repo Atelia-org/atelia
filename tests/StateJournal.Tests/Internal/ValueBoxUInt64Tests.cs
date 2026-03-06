@@ -151,7 +151,7 @@ public class ValueBoxUInt64Tests {
 
     [Fact]
     public void GetULong_FromNull_TypeMismatch() {
-        var box = new ValueBox(0); // Null
+        var box = ValueBox.Null;
         GetIssue issue = ValueBox.UInt64Face.Get(box, out ulong value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);

@@ -46,6 +46,7 @@ partial struct ValueBox {
         /// <see cref="GetIssue.TypeMismatch"/> 当 ValueBox 不是DurableObject类型。
         /// </returns>
         public static GetIssue Get(ValueBox box, out DurableObject? value) {
+            Debug.Assert(!box.IsUninitialized);
             if (box.IsNull) {
                 value = null;
                 return GetIssue.None;

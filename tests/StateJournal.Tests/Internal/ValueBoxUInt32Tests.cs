@@ -103,7 +103,7 @@ public class ValueBoxUInt32Tests {
 
     [Fact]
     public void GetUInt_FromNull_TypeMismatch() {
-        var box = new ValueBox(0);
+        var box = ValueBox.Null;
         GetIssue issue = ValueBox.UInt32Face.Get(box, out uint value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);

@@ -241,7 +241,7 @@ public class ValueBoxHalfTests {
 
     [Fact]
     public void GetHalf_FromNull_TypeMismatch() {
-        var box = new ValueBox(0);
+        var box = ValueBox.Null;
         GetIssue issue = ValueBox.HalfFace.Get(box, out Half value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
@@ -250,14 +250,6 @@ public class ValueBoxHalfTests {
     [Fact]
     public void GetHalf_FromBooleanTrue_TypeMismatch() {
         var box = new ValueBox(3);
-        GetIssue issue = ValueBox.HalfFace.Get(box, out Half value);
-        Assert.Equal(GetIssue.TypeMismatch, issue);
-        Assert.Equal(default, value);
-    }
-
-    [Fact]
-    public void GetHalf_FromUndefined_TypeMismatch() {
-        var box = new ValueBox(1);
         GetIssue issue = ValueBox.HalfFace.Get(box, out Half value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);

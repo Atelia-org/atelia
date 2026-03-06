@@ -154,15 +154,7 @@ public class ValueBoxInt64Tests {
 
     [Fact]
     public void GetLong_FromNull_TypeMismatch() {
-        var box = new ValueBox(0); // Null
-        GetIssue issue = ValueBox.Int64Face.Get(box, out long value);
-        Assert.Equal(GetIssue.TypeMismatch, issue);
-        Assert.Equal(default, value);
-    }
-
-    [Fact]
-    public void GetLong_FromUndefined_TypeMismatch() {
-        var box = new ValueBox(1); // Undefined
+        var box = ValueBox.Null;
         GetIssue issue = ValueBox.Int64Face.Get(box, out long value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);

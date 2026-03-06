@@ -24,10 +24,10 @@ public class ValueBoxStringTests {
     private static int Bits64Count => ValuePools.OfBits64.Count;
     private static int StringsCount => ValuePools.OfString.Count;
 
-    private static ValueBox Null => new(0);
-    private static ValueBox Undefined => new(1);
-    private static ValueBox BoolFalse => new(2);
-    private static ValueBox BoolTrue => new(3);
+    private static ValueBox Null => new(LzcConstants.BoxNull);
+    private static ValueBox Uninitialized => new(LzcConstants.BoxUninitialized);
+    private static ValueBox BoolFalse => new(LzcConstants.BoxFalse);
+    private static ValueBox BoolTrue => new(LzcConstants.BoxTrue);
 
     private static void AssertRoundtrip(string expected) {
         var box = ValueBox.StringFace.From(expected);
@@ -143,14 +143,6 @@ public class ValueBoxStringTests {
         var box = Null;
         GetIssue issue = ValueBox.StringFace.Get(box, out string? value);
         Assert.Equal(GetIssue.None, issue);
-        Assert.Null(value);
-    }
-
-    [Fact]
-    public void GetString_FromUndefined_TypeMismatch() {
-        var box = Undefined;
-        GetIssue issue = ValueBox.StringFace.Get(box, out string? value);
-        Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Null(value);
     }
 
@@ -334,11 +326,11 @@ public class ValueBoxStringTests {
         Assert.Equal(unique2, actual);
     }
 
-    // ═══════════════════════ InternSetString — Undefined/Boolean → String ═══════════════════════
+    // ═══════════════════════ InternSetString — Uninitialized/Boolean → String ═══════════════════════
 
     [Fact]
-    public void InternSetString_FromUndefined_Works() {
-        var box = Undefined;
+    public void InternSetString_FromUninitialized_Works() {
+        var box = Uninitialized;
         ValueBox.StringFace.Update(ref box, "overwrite_undef");
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);

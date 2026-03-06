@@ -17,6 +17,7 @@ where TKey : notnull {
     #region Core
     private protected DictChangeTracker<TKey, ValueBox> _core;
     private UpsertStatus FinishUpsert(TKey key, ValueBox value, bool exists) {
+        Debug.Assert(!value.IsUninitialized); // 未初始化的ValueBox不应被存入容器
         _core.AfterUpsert<ValueBoxHelper>(key, value);
         return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }

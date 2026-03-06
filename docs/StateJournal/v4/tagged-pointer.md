@@ -36,9 +36,9 @@ public readonly record struct ValueBox {
 |25~30|38~33|未分配|未分配| |
 |31|32|未分配|未分配| |
 |32~61|31~2|未分配|未分配| |
-|62|1|确定|Simple-Boolean|`bits & 1 != 0`|
-|63|0|确定|Simple-Undefined| |
-|64|0|确定|Simple-Null| |
+|62|1|确定|Boolean|`bits & 1 != 0`|
+|63|0|确定|Null| |
+|64|0|确定|Uninitialized| |
 
 ### TABLED 技术方案
 
@@ -98,12 +98,17 @@ StateJournal 不解释 BytesTag，用户自行约定语义。
 `0x2`: False
 `0x3`: True
 
-### `LeadingZeroCount:63` Inline-Undefined
+### `LeadingZeroCount:63` Null
 `0x1`，仅最低位为1。
-用于集合中的删除操作，delete / tombstone 语义。
+等价于C#中的`null`语义，表示空引用。
+MUST 读取时与 EVERY 引用类型相容。
+MUST NOT 与 ANY 值类型相容。
 
-### `LeadingZeroCount:64` Ref-Null
-`0x0`。64个bit全0。
+### `LeadingZeroCount:64` Uninitialized
+`0x0`。64个bit全0。未初始化哨兵，用于内部的遗漏初始化检测，这不是一个对外可见的合法值。
+设计目标是仅内部可见此状态，用于批量划分槽位，对外部永远都是明确赋值的。
+目前在Upsert实现中，用到了`CollectionsMarshal.GetValueRefOrAddDefault`，会短暂出现此状态。
+未来实现Mixed DurableList时，如果批量划分槽位也应显式初始化为合法值，用性能开销换取健壮性。
 
 ---
 

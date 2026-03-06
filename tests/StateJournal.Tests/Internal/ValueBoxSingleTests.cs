@@ -258,7 +258,7 @@ public class ValueBoxSingleTests {
 
     [Fact]
     public void GetFloat_FromNull_TypeMismatch() {
-        var box = new ValueBox(0);
+        var box = ValueBox.Null;
         GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
@@ -267,14 +267,6 @@ public class ValueBoxSingleTests {
     [Fact]
     public void GetFloat_FromBooleanFalse_TypeMismatch() {
         var box = new ValueBox(2);
-        GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
-        Assert.Equal(GetIssue.TypeMismatch, issue);
-        Assert.Equal(default, value);
-    }
-
-    [Fact]
-    public void GetFloat_FromUndefined_TypeMismatch() {
-        var box = new ValueBox(1);
         GetIssue issue = ValueBox.SingleFace.Get(box, out float value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);

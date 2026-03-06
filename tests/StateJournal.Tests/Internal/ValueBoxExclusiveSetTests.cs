@@ -74,8 +74,8 @@ public class ValueBoxExclusiveSetTests {
     [InlineData(-42L)]
     [InlineData(long.MaxValue)]
     [InlineData(long.MinValue)]
-    public void SetInt64_FromNull_RoundtripsCorrectly(long value) {
-        var box = new ValueBox(0); // Null
+    public void SetInt64_FromUninitialized_RoundtripsCorrectly(long value) {
+        var box = default(ValueBox); // Uninitialized
         ValueBox.Int64Face.Update(ref box, value);
         AssertGetLong(box, value);
     }
@@ -83,7 +83,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void SetInt64_MaxInlinePositive() {
         long value = (long)LzcConstants.NonnegIntInlineCap - 1; // 2^62 - 1，最大 inline 正整数
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.Int64Face.Update(ref box, value);
         AssertGetLong(box, value);
         // 应与 FromInt64 产生相同 bits（inline）
@@ -93,7 +93,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void SetInt64_MinHeapPositive() {
         long value = (long)LzcConstants.NonnegIntInlineCap; // 2^62，刚好需要堆
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.Int64Face.Update(ref box, value);
         AssertGetLong(box, value);
     }
@@ -101,7 +101,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void SetInt64_MinInlineNegative() {
         long value = LzcConstants.NegIntInlineMin; // -2^61，最小 inline 负整数
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.Int64Face.Update(ref box, value);
         AssertGetLong(box, value);
         Assert.Equal(ValueBox.Int64Face.From(value).GetBits(), box.GetBits());
@@ -110,7 +110,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void SetInt64_MaxHeapNegative() {
         long value = LzcConstants.NegIntInlineMin - 1; // -2^61 - 1，刚好需要堆
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.Int64Face.Update(ref box, value);
         AssertGetLong(box, value);
     }
@@ -212,7 +212,7 @@ public class ValueBoxExclusiveSetTests {
 
     [Fact]
     public void SetInt64_MultipleUpdates_HeapToHeapToInline() {
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         // null → heap
         int c0 = PoolCount;
         ValueBox.Int64Face.Update(ref box, long.MaxValue);
@@ -245,8 +245,8 @@ public class ValueBoxExclusiveSetTests {
     [InlineData(1UL)]
     [InlineData(42UL)]
     [InlineData(ulong.MaxValue)]
-    public void SetUInt64_FromNull_RoundtripsCorrectly(ulong value) {
-        var box = new ValueBox(0);
+    public void SetUInt64_FromUninitialized_RoundtripsCorrectly(ulong value) {
+        var box = default(ValueBox);
         ValueBox.UInt64Face.Update(ref box, value);
         AssertGetULong(box, value);
     }
@@ -254,7 +254,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void SetUInt64_MaxInline() {
         ulong value = LzcConstants.NonnegIntInlineCap - 1;
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.UInt64Face.Update(ref box, value);
         AssertGetULong(box, value);
         Assert.Equal(ValueBox.UInt64Face.From(value).GetBits(), box.GetBits());
@@ -263,7 +263,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void SetUInt64_MinHeap() {
         ulong value = LzcConstants.NonnegIntInlineCap;
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.UInt64Face.Update(ref box, value);
         AssertGetULong(box, value);
     }
@@ -315,8 +315,8 @@ public class ValueBoxExclusiveSetTests {
     [InlineData(3.14)]
     [InlineData(double.PositiveInfinity)]
     [InlineData(double.NegativeInfinity)]
-    public void SetRoundedDouble_FromNull_MatchesFromRoundedDouble(double value) {
-        var box = new ValueBox(0);
+    public void SetRoundedDouble_FromUninitialized_MatchesFromRoundedDouble(double value) {
+        var box = default(ValueBox);
         ValueBox.RoundedDoubleFace.Update(ref box, value);
         // ExclusiveSetRoundedDouble 始终 inline，bits 应与 FromRoundedDouble 一致
         Assert.Equal(ValueBox.RoundedDoubleFace.From(value).GetBits(), box.GetBits());
@@ -324,7 +324,7 @@ public class ValueBoxExclusiveSetTests {
 
     [Fact]
     public void SetRoundedDouble_NaN_MatchesFromRoundedDouble() {
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.RoundedDoubleFace.Update(ref box, double.NaN);
         Assert.Equal(ValueBox.RoundedDoubleFace.From(double.NaN).GetBits(), box.GetBits());
     }
@@ -364,7 +364,7 @@ public class ValueBoxExclusiveSetTests {
     [InlineData(-1.0)]   // LSB=0, inline
     [InlineData(0.5)]    // LSB=0, inline
     public void SetExactDouble_InlineValues_MatchesFromExactDouble(double value) {
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.ExactDoubleFace.Update(ref box, value);
         Assert.Equal(ValueBox.ExactDoubleFace.From(value).GetBits(), box.GetBits());
         AssertGetDoubleBits(box, value);
@@ -374,7 +374,7 @@ public class ValueBoxExclusiveSetTests {
     public void SetExactDouble_HeapValue_RoundtripsCorrectly() {
         // 0x3FF0_0000_0000_0001 的 LSB=1 → 需要堆分配
         double value = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.ExactDoubleFace.Update(ref box, value);
         AssertGetDoubleBits(box, value);
     }
@@ -403,7 +403,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void SetExactDouble_HeapFromNull_IncreasesPoolCount() {
         double value = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         int before = PoolCount;
         ValueBox.ExactDoubleFace.Update(ref box, value);
         Assert.Equal(before + 1, PoolCount);
@@ -425,7 +425,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void CrossMethod_Int64ThenDouble_SlotReuse() {
         // int(heap) → double(heap)：跨方法复用同一 Bits64 slot
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.Int64Face.Update(ref box, long.MaxValue); // heap int
         int c1 = PoolCount;
 
@@ -439,7 +439,7 @@ public class ValueBoxExclusiveSetTests {
     public void CrossMethod_DoubleThenInt64_SlotReuse() {
         // double(heap) → int(heap)
         double d = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.ExactDoubleFace.Update(ref box, d);
         int c1 = PoolCount;
 
@@ -451,7 +451,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void CrossMethod_RoundedDoubleThenUInt64_HeapAlloc() {
         // rounded double (inline) → uint64 (heap)
-        var box = new ValueBox(0);
+        var box = default(ValueBox);
         ValueBox.RoundedDoubleFace.Update(ref box, 1.23);
         int c1 = PoolCount;
 

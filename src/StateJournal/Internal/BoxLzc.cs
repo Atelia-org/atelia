@@ -15,8 +15,8 @@ internal enum BoxLzc : byte {
     HeapSlot = 64 - 1 - ValueBox.HeapKindBitCount - ValueBox.ExclusiveBitCount - ValueBox.HeapHandleBitCount,
     // 25..61 未分配
     Boolean = 62,
-    Undefined = 63,
-    Null = 64,
+    Null = 63,
+    Uninitialized = 64,
 }
 
 /// <summary>从 <see cref="BoxLzc"/> 分配推导出的位掩码常量。消除 ValueBox 编码/解码中的 magic number。
@@ -58,11 +58,14 @@ internal static class LzcConstants {
     internal const long NegIntInlineMin = -(1L << (64 - (int)BoxLzc.InlineNegInt - 1));
 
     /// <summary>Boolean false codeword (LZC=62): 0x2.</summary>
-    internal const ulong SimpleFalse = 1UL << (63 - (int)BoxLzc.Boolean);
+    internal const ulong BoxFalse = 1UL << (63 - (int)BoxLzc.Boolean);
 
     /// <summary>Boolean true codeword (LZC=62): 0x3.</summary>
-    internal const ulong SimpleTrue = SimpleFalse | 1UL;
+    internal const ulong BoxTrue = BoxFalse | 1UL;
 
-    /// <summary>Null codeword (LZC=64): all bits zero.</summary>
-    internal const ulong SimpleNull = 0UL;
+    /// <summary>Null codeword (LZC=63): 0x1.</summary>
+    internal const ulong BoxNull = 1UL << (63 - (int)BoxLzc.Null);
+
+    /// <summary>Uninitialized codeword (LZC=64): all bits zero.</summary>
+    internal const ulong BoxUninitialized = default;
 }
