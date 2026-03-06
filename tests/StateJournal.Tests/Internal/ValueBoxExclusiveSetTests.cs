@@ -459,4 +459,98 @@ public class ValueBoxExclusiveSetTests {
         Assert.Equal(c1 + 1, PoolCount);
         AssertGetULong(box, ulong.MaxValue);
     }
+
+    // ═══════════════════════ Update 返回值：值相等时返回 false ═══════════════════════
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(42L)]
+    [InlineData(-1L)]
+    [InlineData(-42L)]
+    public void SetInt64_SameInlineValue_ReturnsFalse(long value) {
+        var box = ValueBox.Int64Face.From(value);
+        ulong bitsBefore = box.GetBits();
+        Assert.False(ValueBox.Int64Face.Update(ref box, value));
+        Assert.Equal(bitsBefore, box.GetBits()); // bits 未变
+    }
+
+    [Fact]
+    public void SetInt64_SameHeapNonneg_ReturnsFalse() {
+        long value = (long)LzcConstants.NonnegIntInlineCap; // 堆分配正整数
+        var box = ValueBox.Int64Face.From(value);
+        ulong bitsBefore = box.GetBits();
+        int poolBefore = PoolCount;
+        Assert.False(ValueBox.Int64Face.Update(ref box, value));
+        Assert.Equal(bitsBefore, box.GetBits());
+        Assert.Equal(poolBefore, PoolCount); // 未分配新 slot
+    }
+
+    [Fact]
+    public void SetInt64_SameHeapNeg_ReturnsFalse() {
+        long value = LzcConstants.NegIntInlineMin - 1; // 堆分配负整数
+        var box = ValueBox.Int64Face.From(value);
+        ulong bitsBefore = box.GetBits();
+        int poolBefore = PoolCount;
+        Assert.False(ValueBox.Int64Face.Update(ref box, value));
+        Assert.Equal(bitsBefore, box.GetBits());
+        Assert.Equal(poolBefore, PoolCount);
+    }
+
+    [Theory]
+    [InlineData(0L, 1L)]
+    [InlineData(42L, -42L)]
+    [InlineData(0L, -1L)]
+    public void SetInt64_DifferentInlineValue_ReturnsTrue(long first, long second) {
+        var box = ValueBox.Int64Face.From(first);
+        Assert.True(ValueBox.Int64Face.Update(ref box, second));
+        AssertGetLong(box, second);
+    }
+
+    [Fact]
+    public void SetInt64_FromUninitialized_ReturnsTrue() {
+        var box = default(ValueBox);
+        Assert.True(ValueBox.Int64Face.Update(ref box, 42));
+        AssertGetLong(box, 42);
+    }
+
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(42u)]
+    [InlineData(uint.MaxValue)]
+    public void SetUInt32_SameValue_ReturnsFalse(uint value) {
+        var box = ValueBox.UInt32Face.From(value);
+        ulong bitsBefore = box.GetBits();
+        Assert.False(ValueBox.UInt32Face.Update(ref box, value));
+        Assert.Equal(bitsBefore, box.GetBits());
+    }
+
+    [Theory]
+    [InlineData(0, 0)]        // int 0 == uint 0 → 同编码
+    [InlineData(42, 42)]
+    public void SetInt32_SameValueAsUInt32_ReturnsFalse(int intVal, uint uintVal) {
+        // 验证跨 Face 写入同值也能检测
+        var box = ValueBox.UInt32Face.From(uintVal);
+        Assert.False(ValueBox.Int32Face.Update(ref box, intVal));
+    }
+
+    [Theory]
+    [InlineData((ulong)0)]
+    [InlineData((ulong)42)]
+    public void SetUInt64_SameInlineValue_ReturnsFalse(ulong value) {
+        var box = ValueBox.UInt64Face.From(value);
+        ulong bitsBefore = box.GetBits();
+        Assert.False(ValueBox.UInt64Face.Update(ref box, value));
+        Assert.Equal(bitsBefore, box.GetBits());
+    }
+
+    [Fact]
+    public void SetUInt64_SameHeapValue_ReturnsFalse() {
+        ulong value = ulong.MaxValue;
+        var box = ValueBox.UInt64Face.From(value);
+        ulong bitsBefore = box.GetBits();
+        int poolBefore = PoolCount;
+        Assert.False(ValueBox.UInt64Face.Update(ref box, value));
+        Assert.Equal(bitsBefore, box.GetBits());
+        Assert.Equal(poolBefore, PoolCount);
+    }
 }

@@ -29,22 +29,29 @@ partial struct ValueBox {
         /// 避免 Free + Store 的开销。其他情况下清理旧 Slot（如有）并编码新值。
         /// </summary>
         public static bool Update(ref ValueBox box, long value) {
+            BoxLzc lzc = box.GetLzc();
             ulong u = unchecked((ulong)value);
             if (value >= 0) {
+                if (lzc == BoxLzc.InlineNonnegInt && (long)box.DecodeInlineNonnegInt() == value) { return false; }
                 if (u < LzcConstants.NonnegIntInlineCap) {
                     FreeOldBits64IfNeeded(box);
                     box = new(u | LzcConstants.NonnegIntTag);
                     return true;
                 }
+                if (lzc == BoxLzc.HeapSlot && box.GetHeapKind() == ValueKind.NonnegativeInteger
+                    && box.DecodeHeapNonnegInt() == u) { return false; }
                 SlotHandle h = StoreOrReuseBits64(box, u);
                 box = EncodeHeapSlot(ValueKind.NonnegativeInteger, h);
             }
             else {
+                if (lzc == BoxLzc.InlineNegInt && box.DecodeInlineNegInt() == value) { return false; }
                 if (value >= LzcConstants.NegIntInlineMin) {
                     FreeOldBits64IfNeeded(box);
                     box = new(u & LzcConstants.NegIntPayloadMask);
                     return true;
                 }
+                if (lzc == BoxLzc.HeapSlot && box.GetHeapKind() == ValueKind.NegativeInteger
+                    && box.DecodeHeapNegInt() == value) { return false; }
                 SlotHandle h = StoreOrReuseBits64(box, u);
                 box = EncodeHeapSlot(ValueKind.NegativeInteger, h);
             }
@@ -101,11 +108,15 @@ partial struct ValueBox {
         /// 逻辑同 <see cref="Int64Face.Update"/>，仅无负数路径。
         /// </summary>
         public static bool Update(ref ValueBox box, ulong value) {
+            BoxLzc lzc = box.GetLzc();
+            if (lzc == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegInt() == value) { return false; }
             if (value < LzcConstants.NonnegIntInlineCap) {
                 FreeOldBits64IfNeeded(box);
                 box = new(value | LzcConstants.NonnegIntTag);
                 return true;
             }
+            if (lzc == BoxLzc.HeapSlot && box.GetHeapKind() == ValueKind.NonnegativeInteger
+                && box.DecodeHeapNonnegInt() == value) { return false; }
             SlotHandle h = StoreOrReuseBits64(box, value);
             box = EncodeHeapSlot(ValueKind.NonnegativeInteger, h);
             return true;
@@ -151,10 +162,7 @@ partial struct ValueBox {
         public static ValueBox From(int value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 int。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, int value) {
-            UpdateByInlineSigned(ref old, value);
-            return true;
-        }
+        public static bool Update(ref ValueBox old, int value) => UpdateByInlineSigned(ref old, value);
         public static GetIssue Get(ValueBox box, out int value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -175,10 +183,7 @@ partial struct ValueBox {
         public static ValueBox From(uint value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 uint。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, uint value) {
-            UpdateByInlineUnsigned(ref old, value);
-            return true;
-        }
+        public static bool Update(ref ValueBox old, uint value) => UpdateByInlineUnsigned(ref old, value);
         public static GetIssue Get(ValueBox box, out uint value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -199,10 +204,7 @@ partial struct ValueBox {
         public static ValueBox From(short value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 short。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, short value) {
-            UpdateByInlineSigned(ref old, value);
-            return true;
-        }
+        public static bool Update(ref ValueBox old, short value) => UpdateByInlineSigned(ref old, value);
         public static GetIssue Get(ValueBox box, out short value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -223,10 +225,7 @@ partial struct ValueBox {
         public static ValueBox From(ushort value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 ushort。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, ushort value) {
-            UpdateByInlineUnsigned(ref old, value);
-            return true;
-        }
+        public static bool Update(ref ValueBox old, ushort value) => UpdateByInlineUnsigned(ref old, value);
         public static GetIssue Get(ValueBox box, out ushort value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -247,10 +246,7 @@ partial struct ValueBox {
         public static ValueBox From(sbyte value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 sbyte。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, sbyte value) {
-            UpdateByInlineSigned(ref old, value);
-            return true;
-        }
+        public static bool Update(ref ValueBox old, sbyte value) => UpdateByInlineSigned(ref old, value);
         public static GetIssue Get(ValueBox box, out sbyte value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -271,10 +267,7 @@ partial struct ValueBox {
         public static ValueBox From(byte value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 byte。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, byte value) {
-            UpdateByInlineUnsigned(ref old, value);
-            return true;
-        }
+        public static bool Update(ref ValueBox old, byte value) => UpdateByInlineUnsigned(ref old, value);
         public static GetIssue Get(ValueBox box, out byte value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -340,16 +333,28 @@ partial struct ValueBox {
     #region Integer update helpers
     // ai:test `atelia/tests/StateJournal.Tests/Internal/ValueBoxExclusiveSetTests.cs`
 
+    /// <summary>类型匹配且值相等时返回 false（无需后续处理）；否则编码新值并返回 true。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void UpdateByInlineSigned(ref ValueBox box, long value) {
+    private static bool UpdateByInlineSigned(ref ValueBox box, long value) {
+        BoxLzc lzc = box.GetLzc();
+        if (value >= 0) {
+            if (lzc == BoxLzc.InlineNonnegInt && (long)box.DecodeInlineNonnegInt() == value) { return false; }
+        }
+        else {
+            if (lzc == BoxLzc.InlineNegInt && box.DecodeInlineNegInt() == value) { return false; }
+        }
         FreeOldBits64IfNeeded(box);
         box = FromInlineableSigned(value);
+        return true;
     }
 
+    /// <summary>类型匹配且值相等时返回 false（无需后续处理）；否则编码新值并返回 true。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void UpdateByInlineUnsigned(ref ValueBox box, ulong value) {
+    private static bool UpdateByInlineUnsigned(ref ValueBox box, ulong value) {
+        if (box.GetLzc() == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegInt() == value) { return false; }
         FreeOldBits64IfNeeded(box);
         box = FromInlineableUnsigned(value);
+        return true;
     }
 
     #endregion

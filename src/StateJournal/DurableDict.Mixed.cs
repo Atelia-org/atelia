@@ -162,7 +162,7 @@ where TKey : notnull {
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
-        VFace.Update(ref slot, value);
+        if (!VFace.Update(ref slot, value)) { return UpsertStatus.Updated; /* 值未变，跳过 AfterUpsert */ }
         return FinishUpsert(key, slot, exists);
     }
 
