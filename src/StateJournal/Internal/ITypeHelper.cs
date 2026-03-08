@@ -50,7 +50,7 @@ internal readonly struct DurableObjectHelper<T> : ITypeHelper<T> where T : Durab
 
     public static void Write(IDiffWriter writer, T? v, bool asKey) {
         Debug.Assert(!asKey, "DurableObject不支持作为key使用。");
-        writer.BareDurableObjectRef(v?.LocalId, asKey);
+        writer.BareDurableObjectRef(v?.LocalId ?? LocalId.Null, asKey);
     }
     // public static List<T> GetTempList(DiffWriteContext context) => throw new UnreachableException();
 }
