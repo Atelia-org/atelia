@@ -187,7 +187,7 @@ partial struct ValueBox {
     /// <summary>判断 IEEE 754 double raw bits 是否表示 NaN（exponent 全1 且 mantissa 非0）。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     // private static bool IsNaNBits(ulong doubleBits) => (doubleBits & 0x7FFF_FFFF_FFFF_FFFFUL) > 0x7FF0_0000_0000_0000UL;
-    private static bool IsNaNBits(ulong doubleBits) => (doubleBits << 1) > (0x7FF0_0000_0000_0000UL<<1);
+    internal static bool IsNaNBits(ulong doubleBits) => (doubleBits << 1) > (0x7FF0_0000_0000_0000UL << 1);
 
     #endregion
     #region Floating-point encoding helpers
