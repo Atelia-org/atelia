@@ -9,7 +9,7 @@ partial struct ValueBox {
         public static ValueBox From(bool value) => value ? True : False;
         /// <summary>将 ValueBox 覆写为指定的 bool 值。
         /// Boolean 始终 inline 编码，因此只需清理旧 Bits64 slot（如有）。</summary>
-        public static bool Update(ref ValueBox old, bool value) {
+        public static bool UpdateOrInit(ref ValueBox old, bool value) {
             // if (old.GetLzc() == BoxLzc.Boolean && old.DecodeBoolean() == value) { return false; }
             if (old._bits == (value ? LzcConstants.BoxTrue : LzcConstants.BoxFalse)) { return false; }
             FreeOldBits64IfNeeded(old);

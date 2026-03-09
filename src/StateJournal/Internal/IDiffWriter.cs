@@ -6,6 +6,8 @@ namespace Atelia.StateJournal.Internal;
 /// 调用分派见<see cref="ITypeHelper{T}"/>
 /// </summary>
 internal interface IDiffWriter {
+    void WriteCount(int count);
+
     #region 写值，用于异构混杂容器，自描述，先类型再值，类似CBOR。
     void TaggedNull();
     void TaggedBoolean(bool value);
@@ -38,12 +40,7 @@ internal interface IDiffWriter {
     #endregion
 
     #region Dict diff payload
-    void DictBegin(int removeCount, int upsertCount);
-
-    void DictRemoveBegin(int count);
-
-    void DictUpsertBegin(int count);
-
+    void DictBegin();
     void DictEnd();
     #endregion
 

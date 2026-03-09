@@ -237,7 +237,7 @@ public class ValueBoxStringTests {
     [Fact]
     public void InternSetString_FromNull_RoundtripsCorrectly() {
         var box = Null;
-        ValueBox.StringFace.Update(ref box, "hello");
+        ValueBox.StringFace.UpdateOrInit(ref box, "hello");
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("hello", actual);
@@ -248,7 +248,7 @@ public class ValueBoxStringTests {
     [Fact]
     public void InternSetString_FromString_ToAnotherString() {
         var box = ValueBox.StringFace.From("old");
-        ValueBox.StringFace.Update(ref box, "new");
+        ValueBox.StringFace.UpdateOrInit(ref box, "new");
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("new", actual);
@@ -260,7 +260,7 @@ public class ValueBoxStringTests {
     public void InternSetString_FromInlineInt_ToStringCorrectly() {
         var box = ValueBox.Int64Face.From(42); // inline int
         int bits64Before = Bits64Count;
-        ValueBox.StringFace.Update(ref box, "replaced");
+        ValueBox.StringFace.UpdateOrInit(ref box, "replaced");
         // inline int 没有 Bits64 slot，Bits64.Count 不变
         Assert.Equal(bits64Before, Bits64Count);
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
@@ -274,7 +274,7 @@ public class ValueBoxStringTests {
     public void InternSetString_FromHeapInt_FreesBits64Slot() {
         var box = HeapNonnegInt(); // 堆上的正整数，持有 Bits64 slot
         int bits64Before = Bits64Count;
-        ValueBox.StringFace.Update(ref box, "from_heap");
+        ValueBox.StringFace.UpdateOrInit(ref box, "from_heap");
         // 旧的 Bits64 slot 应被释放
         Assert.Equal(bits64Before - 1, Bits64Count);
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
@@ -286,7 +286,7 @@ public class ValueBoxStringTests {
     public void InternSetString_FromHeapNegInt_FreesBits64Slot() {
         var box = ValueBox.Int64Face.From(LzcConstants.NegIntInlineMin - 1); // 堆上的负整数
         int bits64Before = Bits64Count;
-        ValueBox.StringFace.Update(ref box, "from_neg_heap");
+        ValueBox.StringFace.UpdateOrInit(ref box, "from_neg_heap");
         Assert.Equal(bits64Before - 1, Bits64Count);
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
@@ -299,7 +299,7 @@ public class ValueBoxStringTests {
         double d = BitConverter.UInt64BitsToDouble(0x3FF0_0000_0000_0001);
         var box = ValueBox.ExactDoubleFace.From(d);
         int bits64Before = Bits64Count;
-        ValueBox.StringFace.Update(ref box, "from_heap_double");
+        ValueBox.StringFace.UpdateOrInit(ref box, "from_heap_double");
         Assert.Equal(bits64Before - 1, Bits64Count);
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
@@ -316,7 +316,7 @@ public class ValueBoxStringTests {
         var box = ValueBox.StringFace.From(unique1);
         int stringsBefore = StringsCount;
         int bits64Before = Bits64Count;
-        ValueBox.StringFace.Update(ref box, unique2);
+        ValueBox.StringFace.UpdateOrInit(ref box, unique2);
         // Strings 池增长 1（新字符串），旧字符串 slot 不释放
         Assert.Equal(stringsBefore + 1, StringsCount);
         // Bits64 池不受影响
@@ -331,7 +331,7 @@ public class ValueBoxStringTests {
     [Fact]
     public void InternSetString_FromUninitialized_Works() {
         var box = Uninitialized;
-        ValueBox.StringFace.Update(ref box, "overwrite_undef");
+        ValueBox.StringFace.UpdateOrInit(ref box, "overwrite_undef");
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("overwrite_undef", actual);
@@ -340,7 +340,7 @@ public class ValueBoxStringTests {
     [Fact]
     public void InternSetString_FromBoolTrue_Works() {
         var box = BoolTrue;
-        ValueBox.StringFace.Update(ref box, "overwrite_bool");
+        ValueBox.StringFace.UpdateOrInit(ref box, "overwrite_bool");
         GetIssue issue = ValueBox.StringFace.Get(box, out string? actual);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal("overwrite_bool", actual);

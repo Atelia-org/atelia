@@ -57,6 +57,26 @@ public class TaggedFloatTests {
         AssertEncoding(value, 9, ExpectedDouble(0xC8, bits));
     }
 
+    [Fact]
+    public void Write_ScalarRules_HalfValue_UsesCborMajorSevenTag() {
+        var writer = new ArrayBufferWriter<byte>(3);
+
+        TaggedFloat<ScalarRules.FloatingPoint>.Write(writer, 1.5);
+
+        Assert.Equal([0xF9, 0x00, 0x3E], writer.WrittenSpan.ToArray());
+    }
+
+    [Fact]
+    public void Write_ScalarRules_NaN_PreservesDoublePayload() {
+        ulong bits = 0x7FF8_0000_0000_0001;
+        double value = BitConverter.UInt64BitsToDouble(bits);
+        var writer = new ArrayBufferWriter<byte>(9);
+
+        TaggedFloat<ScalarRules.FloatingPoint>.Write(writer, value);
+
+        Assert.Equal([0xFB, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x7F], writer.WrittenSpan.ToArray());
+    }
+
     private static void AssertEncoding(double value, int expectedLength, byte[] expectedBytes) {
         var writer = new ArrayBufferWriter<byte>(expectedLength);
 

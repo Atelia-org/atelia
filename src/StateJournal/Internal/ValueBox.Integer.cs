@@ -28,11 +28,11 @@ partial struct ValueBox {
         /// 若旧值与新值都使用 <see cref="ValuePools.OfBits64"/>，则 inplace 修改 Slot 中的值，
         /// 避免 Free + Store 的开销。其他情况下清理旧 Slot（如有）并编码新值。
         /// </summary>
-        public static bool Update(ref ValueBox box, long value) {
+        public static bool UpdateOrInit(ref ValueBox box, long value) {
             BoxLzc lzc = box.GetLzc();
             ulong u = unchecked((ulong)value);
             if (value >= 0) {
-                if (lzc == BoxLzc.InlineNonnegInt && (long)box.DecodeInlineNonnegInt() == value) { return false; }
+                if (lzc == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegIntAsSigned() == value) { return false; }
                 if (u < LzcConstants.NonnegIntInlineCap) {
                     FreeOldBits64IfNeeded(box);
                     box = new(u | LzcConstants.NonnegIntTag);
@@ -68,7 +68,7 @@ partial struct ValueBox {
             Debug.Assert(!box.IsUninitialized);
             BoxLzc lzc = box.GetLzc();
             if (lzc == BoxLzc.InlineNonnegInt) {
-                value = (long)box.DecodeInlineNonnegInt(); // inline范围是62bit所以不会溢出
+                value = box.DecodeInlineNonnegIntAsSigned();
                 return GetIssue.None;
             }
             if (lzc == BoxLzc.InlineNegInt) {
@@ -105,9 +105,9 @@ partial struct ValueBox {
 
         /// <summary>
         /// 独占更新：将 ValueBox 覆写为指定的 ulong 值。
-        /// 逻辑同 <see cref="Int64Face.Update"/>，仅无负数路径。
+        /// 逻辑同 <see cref="Int64Face.UpdateOrInit"/>，仅无负数路径。
         /// </summary>
-        public static bool Update(ref ValueBox box, ulong value) {
+        public static bool UpdateOrInit(ref ValueBox box, ulong value) {
             BoxLzc lzc = box.GetLzc();
             if (lzc == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegInt() == value) { return false; }
             if (value < LzcConstants.NonnegIntInlineCap) {
@@ -162,7 +162,7 @@ partial struct ValueBox {
         public static ValueBox From(int value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 int。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, int value) => UpdateByInlineSigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, int value) => UpdateByInlineSigned(ref old, value);
         public static GetIssue Get(ValueBox box, out int value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -183,7 +183,7 @@ partial struct ValueBox {
         public static ValueBox From(uint value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 uint。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, uint value) => UpdateByInlineUnsigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, uint value) => UpdateByInlineUnsigned(ref old, value);
         public static GetIssue Get(ValueBox box, out uint value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -204,7 +204,7 @@ partial struct ValueBox {
         public static ValueBox From(short value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 short。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, short value) => UpdateByInlineSigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, short value) => UpdateByInlineSigned(ref old, value);
         public static GetIssue Get(ValueBox box, out short value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -225,7 +225,7 @@ partial struct ValueBox {
         public static ValueBox From(ushort value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 ushort。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, ushort value) => UpdateByInlineUnsigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, ushort value) => UpdateByInlineUnsigned(ref old, value);
         public static GetIssue Get(ValueBox box, out ushort value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -246,7 +246,7 @@ partial struct ValueBox {
         public static ValueBox From(sbyte value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 sbyte。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, sbyte value) => UpdateByInlineSigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, sbyte value) => UpdateByInlineSigned(ref old, value);
         public static GetIssue Get(ValueBox box, out sbyte value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -267,7 +267,7 @@ partial struct ValueBox {
         public static ValueBox From(byte value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 byte。始终 inline。</summary>
-        public static bool Update(ref ValueBox old, byte value) => UpdateByInlineUnsigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, byte value) => UpdateByInlineUnsigned(ref old, value);
         public static GetIssue Get(ValueBox box, out byte value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -308,6 +308,7 @@ partial struct ValueBox {
         Debug.Assert(GetLzc() == BoxLzc.InlineNonnegInt);
         return _bits & LzcConstants.NonnegIntPayloadMask;
     }
+    private long DecodeInlineNonnegIntAsSigned() => unchecked((long)DecodeInlineNonnegInt()); // inline范围是62bit所以不会溢出
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long DecodeInlineNegInt() {
@@ -338,7 +339,7 @@ partial struct ValueBox {
     private static bool UpdateByInlineSigned(ref ValueBox box, long value) {
         BoxLzc lzc = box.GetLzc();
         if (value >= 0) {
-            if (lzc == BoxLzc.InlineNonnegInt && (long)box.DecodeInlineNonnegInt() == value) { return false; }
+            if (lzc == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegIntAsSigned() == value) { return false; }
         }
         else {
             if (lzc == BoxLzc.InlineNegInt && box.DecodeInlineNegInt() == value) { return false; }

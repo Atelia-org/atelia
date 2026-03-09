@@ -53,7 +53,7 @@ internal class BinaryDiffWriter : IDiffWriter {
         _downstream.Advance(1);
     }
 
-    public void DictBegin(int removeCount, int upsertCount) {
+    public void DictBegin() {
         throw new NotImplementedException();
     }
 
@@ -61,14 +61,9 @@ internal class BinaryDiffWriter : IDiffWriter {
         throw new NotImplementedException();
     }
 
-    public void DictRemoveBegin(int count) {
-        Debug.Assert(count >= 0);
-        BareUInt32((uint)count, false);
-    }
-
-    public void DictUpsertBegin(int count) {
-        Debug.Assert(count >= 0);
-        BareUInt32((uint)count, false);
+    public void WriteCount(int count) {
+        Debug.Assert(count >= 0); // 内部类型，避免层层重复检查。
+        VarInt.WriteUInt32(_downstream, (uint)count);
     }
 
     public void TaggedBoolean(bool value) {

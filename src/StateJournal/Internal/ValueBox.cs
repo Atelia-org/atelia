@@ -37,6 +37,7 @@ internal readonly partial struct ValueBox {
     }
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private uint GetTagAndKind() => (uint)(_bits >> KindShift);
+    /// <summary>默认设置ExclusiveBit。目前仅对Heap Float/Integer有效。</summary>
     private static ValueBox EncodeHeapSlot(ValueKind kind, SlotHandle handle) => new(LzcConstants.HeapSlotTag | ((ulong)kind << KindShift) | ExclusiveBit | handle.Packed);
 
     public static ValueBox Null => new(LzcConstants.BoxNull); // 有意避开了0值，default，以实现内部的明确赋值检查。
@@ -106,11 +107,21 @@ internal readonly partial struct ValueBox {
         }
     }
 
+    internal static bool UpdateToNull(ref ValueBox old) {
+        if (old.IsNull) { return false; }
+        FreeOldBits64IfNeeded(old);
+        old = Null;
+        return true;
+    }
+
     #endregion
 
     internal interface ITypedFace<T> where T : notnull {
         static abstract ValueBox From(T? value);
-        static abstract bool Update(ref ValueBox old, T? value);
+        /// <summary>Update if <paramref name="old"/> is not Uninitialized.
+        /// Init if <paramref name="old"/> is Uninitialized.</summary>
+        /// <returns>is <paramref name="old"/> changed.</returns>
+        static abstract bool UpdateOrInit(ref ValueBox old, T? value);
         static abstract GetIssue Get(ValueBox box, out T? value);
     }
 }

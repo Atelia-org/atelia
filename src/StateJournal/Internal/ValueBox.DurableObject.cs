@@ -31,7 +31,7 @@ partial struct ValueBox {
         /// 旧值如果持有 InternPool slot（字符串或 DurableObject 类型），
         /// 因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
         /// </remarks>
-        public static bool Update(ref ValueBox old, DurableObject? value) {
+        public static bool UpdateOrInit(ref ValueBox old, DurableObject? value) {
             if (value is null) {
                 if (old.IsNull) { return false; }
             }

@@ -52,6 +52,42 @@ public class TaggedIntTests {
         Assert.Equal(expectedBytes, writer.WrittenSpan.ToArray());
     }
 
+    public static TheoryData<ulong, byte[]> CborNonnegativeCases => new() {
+        { 0, [0x00] },
+        { 23, [0x17] },
+        { 24, [0x18, 0x18] },
+        { 255, [0x18, 0xFF] },
+        { 256, [0x19, 0x00, 0x01] },
+    };
+
+    public static TheoryData<long, byte[]> CborNegativeCases => new() {
+        { -1, [0x20] },
+        { -24, [0x37] },
+        { -25, [0x38, 0x18] },
+        { -256, [0x38, 0xFF] },
+        { -257, [0x39, 0x00, 0x01] },
+    };
+
+    [Theory]
+    [MemberData(nameof(CborNonnegativeCases))]
+    public void WriteNonnegative_ScalarRules_ProducesCborStandardEncoding(ulong value, byte[] expectedBytes) {
+        var writer = new ArrayBufferWriter<byte>(expectedBytes.Length);
+
+        TaggedInt.WriteNonnegative<ScalarRules.NonnegativeInteger>(writer, value);
+
+        Assert.Equal(expectedBytes, writer.WrittenSpan.ToArray());
+    }
+
+    [Theory]
+    [MemberData(nameof(CborNegativeCases))]
+    public void WriteNegative_ScalarRules_ProducesCborStandardEncoding(long value, byte[] expectedBytes) {
+        var writer = new ArrayBufferWriter<byte>(expectedBytes.Length);
+
+        TaggedInt.WriteNegative<ScalarRules.NegativeInteger>(writer, value);
+
+        Assert.Equal(expectedBytes, writer.WrittenSpan.ToArray());
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

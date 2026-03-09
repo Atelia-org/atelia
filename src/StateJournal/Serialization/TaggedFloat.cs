@@ -10,6 +10,7 @@ internal interface ITaggedFloatRule {
     static abstract byte Tag8 { get; }
 }
 
+// ai:test `tests/StateJournal.Tests/Serialization/TaggedFloatTests.cs`
 internal static class TaggedFloat<Tags> where Tags : ITaggedFloatRule {
     internal const int TagLen = 1;
     internal static int Write(IBufferWriter<byte> writer, double value) {

@@ -26,7 +26,7 @@ partial struct ValueBox {
         /// 旧值如果持有 <see cref="ValuePools.OfString"/> slot（字符串类型），
         /// 因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
         /// </remarks>
-        public static bool Update(ref ValueBox old, string? value) {
+        public static bool UpdateOrInit(ref ValueBox old, string? value) {
             if (value is null) {
                 if (old.IsNull) { return false; }
             }

@@ -123,16 +123,16 @@ where TValue : notnull {
         if (_dirtyKeys.Count == 0) { return; }
 
         // 使用 ITypedHelper 和 IDiffWriter 序列化
-        writer.DictBegin(RemoveCount, UpsertCount);
+        writer.DictBegin();
         {
-            writer.DictRemoveBegin(RemoveCount);
+            writer.WriteCount(RemoveCount);
             foreach (var key in RemovedKeys) {
                 Debug.Assert(!_current.ContainsKey(key));
                 Debug.Assert(_committed.ContainsKey(key));
                 KHelper.Write(writer, key, true);
             }
 
-            writer.DictUpsertBegin(UpsertCount);
+            writer.WriteCount(UpsertCount);
             foreach (var key in UpsertedKeys) {
                 var keyInCurrent = _current.TryGetValue(key, out var value);
                 Debug.Assert(keyInCurrent);

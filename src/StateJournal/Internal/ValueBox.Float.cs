@@ -19,7 +19,7 @@ partial struct ValueBox {
         /// 独占更新：将 ValueBox 覆写为指定的 double 值（lossy round-to-odd 编码）。
         /// 相等性语义：NumericEquiv — <c>-0.0 ≠ +0.0</c>（保符号），所有 NaN 互等。
         /// </summary>
-        public static bool Update(ref ValueBox old, double value) {
+        public static bool UpdateOrInit(ref ValueBox old, double value) {
             if (old.NumericEquiv(value)) { return false; }
             FreeOldBits64IfNeeded(old);
             old = From(value);
@@ -42,7 +42,7 @@ partial struct ValueBox {
         /// 相等性语义：BitExact — IEEE 754 bit 完全一致才视为相等（区分 -0.0/+0.0 及不同 NaN payload）。
         /// 当尾数 LSB=1 时需要堆分配，此时尝试 inplace 复用旧 Bits64 Slot。
         /// </summary>
-        public static bool Update(ref ValueBox old, double value) {
+        public static bool UpdateOrInit(ref ValueBox old, double value) {
             ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
             if (old.TryDecodeDoubleRawBits(out ulong oldBits) && oldBits == doubleBits) { return false; }
             if ((doubleBits & 1) == 0) {
@@ -66,7 +66,7 @@ partial struct ValueBox {
         /// 独占更新为 float。始终 inline。
         /// 相等性语义：NumericEquiv — <c>-0.0f ≠ +0.0f</c>（保符号），所有 NaN 互等。
         /// </summary>
-        public static bool Update(ref ValueBox old, float value) {
+        public static bool UpdateOrInit(ref ValueBox old, float value) {
             if (old.NumericEquiv(value)) { return false; }
             FreeOldBits64IfNeeded(old);
             old = FromInlineableFloatingPoint(value);
@@ -115,7 +115,7 @@ partial struct ValueBox {
         /// 独占更新为 Half。始终 inline。
         /// 相等性语义：NumericEquiv — <c>-0 ≠ +0</c>（保符号），所有 NaN 互等。
         /// </summary>
-        public static bool Update(ref ValueBox old, Half value) {
+        public static bool UpdateOrInit(ref ValueBox old, Half value) {
             if (old.NumericEquiv((double)value)) { return false; }
             FreeOldBits64IfNeeded(old);
             old = FromInlineableFloatingPoint((double)value);

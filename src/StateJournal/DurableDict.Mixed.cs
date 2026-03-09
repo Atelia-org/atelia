@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Atelia.StateJournal.Internal;
 
@@ -162,7 +161,7 @@ where TKey : notnull {
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
-        if (!VFace.Update(ref slot, value)) { return UpsertStatus.Updated; /* 值未变，跳过 AfterUpsert */ }
+        if (!VFace.UpdateOrInit(ref slot, value)) { return UpsertStatus.Updated; /* 值未变，跳过 AfterUpsert */ }
         return FinishUpsert(key, slot, exists);
     }
 

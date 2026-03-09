@@ -13,6 +13,7 @@ internal interface ITaggedIntRule {
     static abstract byte Tag8 { get; }
 }
 
+// ai:test `tests/StateJournal.Tests/Serialization/TaggedIntTests.cs`
 internal static class TaggedInt {
     internal const int TagLen = 1;
 
@@ -65,4 +66,10 @@ internal static class TaggedInt {
         Debug.Assert(negValue < 0);
         return WriteNonnegative<NegRule>(writer, unchecked((ulong)(-1 - negValue)));
     }
+
+    internal static int DecodeNegativeTagOnly(byte data) => -1 - data;
+    internal static int DecodeNegative1(byte data) => -1 - data;
+    internal static int DecodeNegative2(ushort data) => -1 - data;
+    internal static long DecodeNegative4(uint data) => -1L - data;
+    internal static long DecodeNegative8(ulong data) => -1L - checked((long)data); // TODO: 看看有没有比checked更优雅的方案。
 }

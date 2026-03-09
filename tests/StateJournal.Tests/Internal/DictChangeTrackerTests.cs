@@ -21,7 +21,7 @@ public class DictChangeTrackerTests {
 
         // 模拟真实 Upsert 流程：通过 ref 获取 slot，用 Update 尝试更新
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(tracker.Current, key, out _);
-        bool changed = ValueBox.Int64Face.Update(ref slot, long.MaxValue);
+        bool changed = ValueBox.Int64Face.UpdateOrInit(ref slot, long.MaxValue);
         Assert.False(changed); // 值未变，Update 返回 false
 
         // Update 返回 false 时跳过 AfterUpsert，slot 保持 frozen 不变
@@ -67,7 +67,7 @@ public class DictChangeTrackerTests {
 
         // 模拟真实 Upsert 流程：Update 检测值相同 → 返回 false → 跳过 AfterUpsert
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(tracker.Current, key, out _);
-        bool changed = ValueBox.Int64Face.Update(ref slot, long.MaxValue);
+        bool changed = ValueBox.Int64Face.UpdateOrInit(ref slot, long.MaxValue);
         Assert.False(changed);
         // AfterUpsert 未被调用，状态不变
         Assert.False(tracker.HasChanges);

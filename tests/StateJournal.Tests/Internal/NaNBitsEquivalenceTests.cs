@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Atelia.StateJournal.Tests.Internal;
+namespace Atelia.StateJournal.Internal.Tests;
 
 public class NaNBitsEquivalenceTests {
     private const ulong ExponentMask = 0x7FF0_0000_0000_0000UL;
@@ -23,7 +23,6 @@ public class NaNBitsEquivalenceTests {
     [InlineData(0x7FFF_FFFF_FFFF_FFFFUL, true)]
     [InlineData(0xFFFF_FFFF_FFFF_FFFFUL, true)]
     public void RepresentativePatterns_Agree(ulong bits, bool expected) {
-        Assert.Equal(expected, IsNaNBits_Original(bits));
         Assert.Equal(expected, IsNaNBits_User(bits));
         Assert.Equal(expected, IsNaNBits_Classic(bits));
     }
@@ -37,9 +36,8 @@ public class NaNBitsEquivalenceTests {
                 ulong exponentBits = exponent << 52;
                 foreach (ulong mantissa in mantissas) {
                     ulong bits = sign | exponentBits | mantissa;
-                    bool expected = IsNaNBits_Original(bits);
+                    bool expected = IsNaNBits_Classic(bits);
                     Assert.Equal(expected, IsNaNBits_User(bits));
-                    Assert.Equal(expected, IsNaNBits_Classic(bits));
                 }
             }
         }
@@ -51,21 +49,13 @@ public class NaNBitsEquivalenceTests {
 
         for (int i = 0; i < 1_000_000; i++) {
             ulong bits = NextUInt64(ref state);
-            bool expected = IsNaNBits_Original(bits);
+            bool expected = IsNaNBits_Classic(bits);
             Assert.Equal(expected, IsNaNBits_User(bits));
-            Assert.Equal(expected, IsNaNBits_Classic(bits));
         }
     }
 
-    private static bool IsNaNBits_Original(ulong doubleBits) =>
-        (doubleBits & ExponentMask) == ExponentMask
-        && (doubleBits & MantissaMask) != 0;
-
     private static bool IsNaNBits_User(ulong doubleBits) {
-        doubleBits ^= ExponentMask;
-        doubleBits <<= 1;
-        doubleBits -= 2UL;
-        return doubleBits < (MantissaMask << 1);
+        return ValueBox.IsNaNBits(doubleBits);
     }
 
     private static bool IsNaNBits_Classic(ulong doubleBits) =>
