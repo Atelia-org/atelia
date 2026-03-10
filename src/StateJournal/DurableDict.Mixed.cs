@@ -13,6 +13,10 @@ public abstract class DurableDict<TKey> : DurableObject, IDict<TKey>
 , IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>
 
 where TKey : notnull {
+    /// <summary>由<see cref="MixedDictFactory{TKey}"/>初始化。</summary>
+    internal static byte[]? s_typeCode;
+    private protected override ReadOnlySpan<byte> TypeCode => s_typeCode;
+
     #region Core
     private protected DictChangeTracker<TKey, ValueBox> _core;
     private UpsertStatus FinishUpsert(TKey key, ValueBox value, bool exists) {

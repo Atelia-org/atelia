@@ -32,13 +32,12 @@ public abstract class DurableObject {
         }
     }
 
-    /// <inheritdoc/>
     internal abstract void WritePendingDiff(IDiffWriter writer, DiffWriteContext context);
 
-    /// <inheritdoc/>
+    private protected abstract ReadOnlySpan<byte> TypeCode { get; }
+
     internal abstract void OnCommitSucceeded();
 
-    /// <inheritdoc/>
     public abstract void DiscardChanges();
 
     /// <summary>设置对象状态。</summary>

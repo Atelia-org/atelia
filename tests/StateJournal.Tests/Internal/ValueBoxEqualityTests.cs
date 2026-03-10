@@ -24,6 +24,7 @@ public class ValueBoxEqualityTests {
         internal override void WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
         internal override void OnCommitSucceeded() => throw new NotSupportedException();
         public override void DiscardChanges() { }
+        private protected override ReadOnlySpan<byte> TypeCode => null;
     }
 
     // ═══════════════════════ Helpers ═══════════════════════

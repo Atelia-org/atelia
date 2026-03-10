@@ -4,6 +4,10 @@ namespace Atelia.StateJournal;
 
 public abstract class DurableDict<TKey, TValue> : DurableObject, IDict<TKey>, IDict<TKey, TValue>
 where TKey : notnull where TValue : notnull {
+    /// <summary>由<see cref="TypedDictFactory{TKey, TValue}"/>初始化。</summary>
+    internal static byte[]? s_typeCode;
+    private protected override ReadOnlySpan<byte> TypeCode => s_typeCode;
+
     #region Core
     private protected DictChangeTracker<TKey, TValue> _core;
     #endregion

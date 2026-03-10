@@ -47,6 +47,7 @@ internal static class TypedDictFactory<TKey, TValue>
         kEntry.TypeCode.CopyTo(tc, vEntry.TypeCode.Length);
         tc[^1] = (byte)TypeOpCode.MakeTypedDict;
         TypeCode = tc;
+        DurableDict<TKey, TValue>.s_typeCode = tc;
     }
 }
 
@@ -85,6 +86,7 @@ internal static class MixedDictFactory<TKey>
         kEntry.TypeCode.CopyTo(tc, 0);
         tc[^1] = (byte)TypeOpCode.MakeMixedDict;
         TypeCode = tc;
+        DurableDict<TKey>.s_typeCode = tc;
     }
 }
 
@@ -123,5 +125,6 @@ internal static class TypedListFactory<T>
         vEntry.TypeCode.CopyTo(tc, 0);
         tc[^1] = (byte)TypeOpCode.MakeTypedList;
         TypeCode = tc;
+        DurableDict<T>.s_typeCode = tc;
     }
 }

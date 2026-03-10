@@ -25,10 +25,6 @@ internal readonly struct TypeEntry {
 /// </summary>
 internal static class HelperRegistry {
 
-    private static readonly ConcurrentDictionary<Type, TypeEntry> _valueHelperCache = new() {
-        [typeof(DurableList)] = new(typeof(DurableObjectHelper<DurableList>), [(byte)TypeOpCode.PushMixedList])
-    };
-
     #region Key Helper 单例
 
     private static readonly TypeEntry _bool = new(typeof(BooleanHelper), [(byte)TypeOpCode.PushBoolean]);
@@ -46,6 +42,17 @@ internal static class HelperRegistry {
     private static readonly TypeEntry _sbyte = new(typeof(SByteHelper), [(byte)TypeOpCode.PushSByte]);
 
     #endregion
+    #region 不可为Key的非泛型单例
+
+    private static readonly TypeEntry _mixedList = new(typeof(DurableObjectHelper<DurableList>), [(byte)TypeOpCode.PushMixedList]);
+    internal static TypeEntry MixedList => _mixedList;
+
+    #endregion
+
+    private static readonly ConcurrentDictionary<Type, TypeEntry> _valueHelperCache = new() {
+        [typeof(DurableList)] = _mixedList
+    };
+
     #region Key Helper 解析
 
     /// <summary>
