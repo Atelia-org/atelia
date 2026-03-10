@@ -61,5 +61,5 @@ public static class Durable {
     /// 创建 <see cref="DurableList"/> (MixedList)。
     /// </summary>
     /// <returns>空的 <see cref="DurableList"/> 实例。</returns>
-    public static DurableList List() => MixedListFactory.Create();
+    public static DurableList List() => new MixedListImpl();
 }

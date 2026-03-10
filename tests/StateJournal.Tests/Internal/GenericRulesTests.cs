@@ -23,7 +23,7 @@ public class GenericRulesTests {
     [InlineData(typeof(Half), true)]
     [InlineData(typeof(decimal), false)]
     public void IsValidKey(Type type, bool expected) =>
-        Assert.Equal(expected, GenericRules.IsValidKey(type));
+        Assert.Equal(expected, HelperRegistry.IsValidKey(type));
 
     // ═══════════════════════ Value 验证 — 叶子 ═══════════════════════
 
@@ -45,63 +45,63 @@ public class GenericRulesTests {
     [InlineData(typeof(ValueBox), false)]
     [InlineData(typeof(decimal), false)]
     public void IsValidValue_Leaf(Type type, bool expected) =>
-        Assert.Equal(expected, GenericRules.IsValidValue(type));
+        Assert.Equal(expected, HelperRegistry.IsValidValue(type));
 
     // ═══════════════════════ Value 验证 — 嵌套容器 ═══════════════════════
 
     [Fact]
     public void IsValidValue_SJDict_ValidKeyValue() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableDict<int, double>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, double>)));
 
     [Fact]
     public void IsValidValue_SJDict_StringKey_Valid() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableDict<string, double>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<string, double>)));
 
     [Fact]
     public void IsValidValue_SJDict_StringValue_Valid() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableDict<int, string>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, string>)));
 
     [Fact]
     public void IsValidValue_SJList_ValidElement() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableList<int>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableList<int>)));
 
     [Fact]
     public void IsValidValue_SJList_StringElement_Valid() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableList<string>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableList<string>)));
 
     [Fact]
     public void IsValidValue_NonGenericSJDict_Rejected() =>
-        Assert.False(GenericRules.IsValidValue(typeof(DurableObject)));
+        Assert.False(HelperRegistry.IsValidValue(typeof(DurableObject)));
 
     [Fact]
     public void IsValidValue_NonGenericSJList_Accepted() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableList)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableList)));
 
     // ═══════════════════════ 多层嵌套 ═══════════════════════
 
     [Fact]
     public void IsValidValue_NestedSJDict() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableDict<int, DurableDict<double, int>>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, DurableDict<double, int>>)));
 
     [Fact]
     public void IsValidValue_DeeplyNestedSJDict_WithValueBox_Rejected() =>
-        Assert.False(GenericRules.IsValidValue(typeof(DurableDict<int, DurableDict<double, DurableDict<int, ValueBox>>>)));
+        Assert.False(HelperRegistry.IsValidValue(typeof(DurableDict<int, DurableDict<double, DurableDict<int, ValueBox>>>)));
 
     [Fact]
     public void IsValidValue_SJList_OfSJDict() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableList<DurableDict<int, double>>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableList<DurableDict<int, double>>)));
 
     [Fact]
     public void IsValidValue_SJDict_OfSJList() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableDict<int, DurableList<double>>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, DurableList<double>>)));
 
     [Fact]
     public void IsValidValue_Nested_StringKey_Valid() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableDict<int, DurableDict<string, int>>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, DurableDict<string, int>>)));
 
     [Fact]
     public void IsValidValue_Nested_StringValue_Valid() =>
-        Assert.True(GenericRules.IsValidValue(typeof(DurableDict<int, DurableDict<int, string>>)));
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, DurableDict<int, string>>)));
 
     // ═══════════════════════ SJ 门面集成 ═══════════════════════
 

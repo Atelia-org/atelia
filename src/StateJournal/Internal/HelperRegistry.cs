@@ -146,4 +146,11 @@ internal static class HelperRegistry {
     }
 
     #endregion
+    #region 适配历史单元测试
+    // Key 验证
+    internal static bool IsValidKey(Type t) => ResolveKeyHelper(t).IsValid;
+
+    // Value 验证（递归，缓存由 HelperRegistry 管理）
+    internal static bool IsValidValue(Type t) => ResolveValueHelper(t).IsValid;
+    #endregion
 }

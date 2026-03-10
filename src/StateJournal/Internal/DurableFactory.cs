@@ -125,22 +125,3 @@ internal static class TypedListFactory<T>
         TypeCode = tc;
     }
 }
-
-/// <summary>
-/// <see cref="DurableList"/> (MixedList) 的工厂缓存。
-/// </summary>
-internal static class MixedListFactory {
-    private static readonly Func<DurableList> _create = BuildCreate();
-
-    internal static DurableList Create() => _create();
-
-    private static Func<DurableList> BuildCreate() {
-        var ctor = typeof(MixedListImpl).GetConstructor(
-            BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes
-        )!;
-
-        return Expression.Lambda<Func<DurableList>>(
-            Expression.New(ctor)
-        ).Compile();
-    }
-}
