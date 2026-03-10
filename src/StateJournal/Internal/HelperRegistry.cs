@@ -3,88 +3,139 @@ using System.Collections.Concurrent;
 namespace Atelia.StateJournal.Internal;
 
 /// <summary>
+/// HelperType + TypeCode 的复合解析结果。
+/// <see cref="IsValid"/> 为 <c>false</c> 时表示该类型不被支持。
+/// </summary>
+internal readonly struct TypeEntry {
+    internal readonly Type? HelperType;
+    internal readonly byte[]? TypeCode;
+
+    internal TypeEntry(Type helperType, byte[] typeCode) {
+        HelperType = helperType;
+        TypeCode = typeCode;
+    }
+
+    internal bool IsValid => HelperType != null;
+}
+
+/// <summary>
 /// 泛型实参到 <see cref="ITypeHelper{T}"/> 实现类型的映射注册表。
-/// 查找成功即验证通过，返回 <c>null</c> 即表示该类型不被支持。
+/// 查找成功即验证通过，返回 <c>default</c> 即表示该类型不被支持。
 /// 合并了类型验证与 Helper 解析，避免先验证再查找的双重遍历。
 /// </summary>
 internal static class HelperRegistry {
 
-    private static readonly ConcurrentDictionary<Type, Type?> _valueHelperCache = new();
+    private static readonly ConcurrentDictionary<Type, TypeEntry> _valueHelperCache = new() {
+        [typeof(DurableList)] = new(typeof(DurableObjectHelper<DurableList>), [(byte)TypeOpCode.PushMixedList])
+    };
 
-    // ── Key Helper 解析 ─────────────────────────────────────────
+    #region Key Helper 单例
+
+    private static readonly TypeEntry _bool = new(typeof(BooleanHelper), [(byte)TypeOpCode.PushBoolean]);
+    private static readonly TypeEntry _string = new(typeof(StringHelper), [(byte)TypeOpCode.PushString]);
+    private static readonly TypeEntry _double = new(typeof(DoubleHelper), [(byte)TypeOpCode.PushDouble]);
+    private static readonly TypeEntry _single = new(typeof(SingleHelper), [(byte)TypeOpCode.PushSingle]);
+    private static readonly TypeEntry _half = new(typeof(HalfHelper), [(byte)TypeOpCode.PushHalf]);
+    private static readonly TypeEntry _uint64 = new(typeof(UInt64Helper), [(byte)TypeOpCode.PushUInt64]);
+    private static readonly TypeEntry _uint32 = new(typeof(UInt32Helper), [(byte)TypeOpCode.PushUInt32]);
+    private static readonly TypeEntry _uint16 = new(typeof(UInt16Helper), [(byte)TypeOpCode.PushUInt16]);
+    private static readonly TypeEntry _byte = new(typeof(ByteHelper), [(byte)TypeOpCode.PushByte]);
+    private static readonly TypeEntry _int64 = new(typeof(Int64Helper), [(byte)TypeOpCode.PushInt64]);
+    private static readonly TypeEntry _int32 = new(typeof(Int32Helper), [(byte)TypeOpCode.PushInt32]);
+    private static readonly TypeEntry _int16 = new(typeof(Int16Helper), [(byte)TypeOpCode.PushInt16]);
+    private static readonly TypeEntry _sbyte = new(typeof(SByteHelper), [(byte)TypeOpCode.PushSByte]);
+
+    #endregion
+    #region Key Helper 解析
 
     /// <summary>
-    /// 解析 Key 类型对应的 <see cref="ITypeHelper{T}"/> 实现类型。
-    /// 返回 <c>null</c> 表示该类型不是受支持的 Key 类型。
+    /// 解析 Key 类型对应的 <see cref="ITypeHelper{T}"/> 实现类型与 TypeCode。
+    /// 返回 <c>default</c> 表示该类型不是受支持的 Key 类型。
     /// </summary>
-    internal static Type? ResolveKeyHelper(Type t) {
-        if (t == typeof(bool)) { return typeof(BooleanHelper); }
-        if (t == typeof(string)) { return typeof(StringHelper); }
-        // if (t == typeof(LocalId)) { return typeof(LocalIdHelper); } 暂时不支持，后续如果碰到需求再引入同时支持LocalId和DurableObjectRef两种语义
+    internal static TypeEntry ResolveKeyHelper(Type t) {
+        if (t == typeof(bool)) { return _bool; }
+        if (t == typeof(string)) { return _string; }
+        // if (t == typeof(LocalId)) { ... } 暂时不支持，后续如果碰到需求再引入同时支持LocalId和DurableObjectRef两种语义
 
-        if (t == typeof(double)) { return typeof(DoubleHelper); }
-        if (t == typeof(float)) { return typeof(SingleHelper); }
-        if (t == typeof(Half)) { return typeof(HalfHelper); }
+        if (t == typeof(double)) { return _double; }
+        if (t == typeof(float)) { return _single; }
+        if (t == typeof(Half)) { return _half; }
 
-        if (t == typeof(ulong)) { return typeof(UInt64Helper); }
-        if (t == typeof(uint)) { return typeof(UInt32Helper); }
-        if (t == typeof(ushort)) { return typeof(UInt16Helper); }
-        if (t == typeof(byte)) { return typeof(ByteHelper); }
+        if (t == typeof(ulong)) { return _uint64; }
+        if (t == typeof(uint)) { return _uint32; }
+        if (t == typeof(ushort)) { return _uint16; }
+        if (t == typeof(byte)) { return _byte; }
 
-        if (t == typeof(long)) { return typeof(Int64Helper); }
-        if (t == typeof(int)) { return typeof(Int32Helper); }
-        if (t == typeof(short)) { return typeof(Int16Helper); }
-        if (t == typeof(sbyte)) { return typeof(SByteHelper); }
-        return null;
+        if (t == typeof(long)) { return _int64; }
+        if (t == typeof(int)) { return _int32; }
+        if (t == typeof(short)) { return _int16; }
+        if (t == typeof(sbyte)) { return _sbyte; }
+        return default;
     }
 
-    // ── Value Helper 解析（带缓存） ────────────────────────────
+    #endregion
+    #region Value Helper 解析（带缓存）
 
     /// <summary>
-    /// 解析 Value 类型对应的 <see cref="ITypeHelper{T}"/> 实现类型。
-    /// 返回 <c>null</c> 表示该类型不是受支持的 Value 类型。
+    /// 解析 Value 类型对应的 <see cref="ITypeHelper{T}"/> 实现类型与 TypeCode。
+    /// 返回 <c>default</c> 表示该类型不是受支持的 Value 类型。
     /// 对嵌套容器类型递归验证其子类型参数。
     /// </summary>
-    internal static Type? ResolveValueHelper(Type t) =>
+    internal static TypeEntry ResolveValueHelper(Type t) =>
         _valueHelperCache.GetOrAdd(t, ResolveValueHelperCore);
 
-    private static Type? ResolveValueHelperCore(Type t) {
+    private static TypeEntry ResolveValueHelperCore(Type t) {
         // 基元类型（同时也可作为 Key 使用的类型）
         var h = ResolveKeyHelper(t);
-        if (h != null) { return h; }
+        if (h.IsValid) { return h; }
 
-        // 非泛型容器: DurableList (MixedList)
-        if (t == typeof(DurableList)) { return typeof(DurableObjectHelper<DurableList>); }
+        // DurableList (MixedList) 已作为 _valueHelperCache 初值处理
 
-        // 泛型容器: 递归验证子类型参数
+        // 泛型容器: 递归验证子类型参数并拼接 TypeCode
         if (t.IsGenericType) {
             var def = t.GetGenericTypeDefinition();
 
-            // DurableDict<TKey, TValue>
+            // DurableDict<TKey, TValue> (TypedDict)
             if (def == typeof(DurableDict<,>)) {
                 var args = t.GenericTypeArguments;
-                if (ResolveKeyHelper(args[0]) == null) { return null; }
-                if (ResolveValueHelper(args[1]) == null) { return null; }
-                return typeof(DurableObjectHelper<>).MakeGenericType(t);
+                var kEntry = ResolveKeyHelper(args[0]);
+                if (!kEntry.IsValid) { return default; }
+                var vEntry = ResolveValueHelper(args[1]);
+                if (!vEntry.IsValid) { return default; }
+                // 编码顺序: TValue, TKey, MakeTypedDict（与栈式解码器匹配）
+                var typeCode = new byte[vEntry.TypeCode!.Length + kEntry.TypeCode!.Length + 1];
+                vEntry.TypeCode.CopyTo(typeCode, 0);
+                kEntry.TypeCode.CopyTo(typeCode, vEntry.TypeCode.Length);
+                typeCode[^1] = (byte)TypeOpCode.MakeTypedDict;
+                return new(typeof(DurableObjectHelper<>).MakeGenericType(t), typeCode);
             }
 
             // DurableDict<TKey> (MixedDict)
             if (def == typeof(DurableDict<>)) {
-                if (ResolveKeyHelper(t.GenericTypeArguments[0]) == null) { return null; }
-                return typeof(DurableObjectHelper<>).MakeGenericType(t);
+                var kEntry = ResolveKeyHelper(t.GenericTypeArguments[0]);
+                if (!kEntry.IsValid) { return default; }
+                var typeCode = new byte[kEntry.TypeCode!.Length + 1];
+                kEntry.TypeCode.CopyTo(typeCode, 0);
+                typeCode[^1] = (byte)TypeOpCode.MakeMixedDict;
+                return new(typeof(DurableObjectHelper<>).MakeGenericType(t), typeCode);
             }
 
-            // DurableList<T>
+            // DurableList<T> (TypedList)
             if (def == typeof(DurableList<>)) {
-                if (ResolveValueHelper(t.GenericTypeArguments[0]) == null) { return null; }
-                return typeof(DurableObjectHelper<>).MakeGenericType(t);
+                var vEntry = ResolveValueHelper(t.GenericTypeArguments[0]);
+                if (!vEntry.IsValid) { return default; }
+                var typeCode = new byte[vEntry.TypeCode!.Length + 1];
+                vEntry.TypeCode.CopyTo(typeCode, 0);
+                typeCode[^1] = (byte)TypeOpCode.MakeTypedList;
+                return new(typeof(DurableObjectHelper<>).MakeGenericType(t), typeCode);
             }
         }
 
-        return null;
+        return default;
     }
 
-    // ── 友好类型名 ──────────────────────────────────────────────
+    #endregion
+    #region 友好类型名
 
     /// <summary>格式化类型名称以用于错误消息。处理泛型嵌套。</summary>
     internal static string FormatTypeName(Type t) {
@@ -93,4 +144,6 @@ internal static class HelperRegistry {
         var args = string.Join(", ", t.GenericTypeArguments.Select(FormatTypeName));
         return $"{baseName}<{args}>";
     }
+
+    #endregion
 }

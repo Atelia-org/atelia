@@ -14,23 +14,24 @@ internal static class TypedDictFactory<TKey, TValue>
     where TValue : notnull {
 
     internal static readonly Func<DurableDict<TKey, TValue>>? Create;
+    internal static readonly byte[]? TypeCode;
     internal static readonly string? ErrorReason;
 
     static TypedDictFactory() {
-        var kHelper = HelperRegistry.ResolveKeyHelper(typeof(TKey));
-        if (kHelper == null) {
+        var kEntry = HelperRegistry.ResolveKeyHelper(typeof(TKey));
+        if (!kEntry.IsValid) {
             ErrorReason = $"Unsupported key type: {typeof(TKey)}.";
             return;
         }
 
-        var vHelper = HelperRegistry.ResolveValueHelper(typeof(TValue));
-        if (vHelper == null) {
+        var vEntry = HelperRegistry.ResolveValueHelper(typeof(TValue));
+        if (!vEntry.IsValid) {
             ErrorReason = $"Unsupported value type: {HelperRegistry.FormatTypeName(typeof(TValue))}.";
             return;
         }
 
         var implType = typeof(TypedDictImpl<,,,>)
-            .MakeGenericType(typeof(TKey), typeof(TValue), kHelper, vHelper);
+            .MakeGenericType(typeof(TKey), typeof(TValue), kEntry.HelperType!, vEntry.HelperType!);
 
         var ctor = implType.GetConstructor(
             BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes
@@ -39,6 +40,13 @@ internal static class TypedDictFactory<TKey, TValue>
         Create = Expression.Lambda<Func<DurableDict<TKey, TValue>>>(
             Expression.New(ctor)
         ).Compile();
+
+        // TypeCode: TValue, TKey, MakeTypedDict
+        var tc = new byte[vEntry.TypeCode!.Length + kEntry.TypeCode!.Length + 1];
+        vEntry.TypeCode.CopyTo(tc, 0);
+        kEntry.TypeCode.CopyTo(tc, vEntry.TypeCode.Length);
+        tc[^1] = (byte)TypeOpCode.MakeTypedDict;
+        TypeCode = tc;
     }
 }
 
@@ -51,17 +59,18 @@ internal static class MixedDictFactory<TKey>
     where TKey : notnull {
 
     internal static readonly Func<DurableDict<TKey>>? Create;
+    internal static readonly byte[]? TypeCode;
     internal static readonly string? ErrorReason;
 
     static MixedDictFactory() {
-        var kHelper = HelperRegistry.ResolveKeyHelper(typeof(TKey));
-        if (kHelper == null) {
+        var kEntry = HelperRegistry.ResolveKeyHelper(typeof(TKey));
+        if (!kEntry.IsValid) {
             ErrorReason = $"Unsupported key type: {typeof(TKey)}.";
             return;
         }
 
         var implType = typeof(MixedDictImpl<,>)
-            .MakeGenericType(typeof(TKey), kHelper);
+            .MakeGenericType(typeof(TKey), kEntry.HelperType!);
 
         var ctor = implType.GetConstructor(
             BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes
@@ -70,6 +79,12 @@ internal static class MixedDictFactory<TKey>
         Create = Expression.Lambda<Func<DurableDict<TKey>>>(
             Expression.New(ctor)
         ).Compile();
+
+        // TypeCode: TKey, MakeMixedDict
+        var tc = new byte[kEntry.TypeCode!.Length + 1];
+        kEntry.TypeCode.CopyTo(tc, 0);
+        tc[^1] = (byte)TypeOpCode.MakeMixedDict;
+        TypeCode = tc;
     }
 }
 
@@ -82,17 +97,18 @@ internal static class TypedListFactory<T>
     where T : notnull {
 
     internal static readonly Func<DurableList<T>>? Create;
+    internal static readonly byte[]? TypeCode;
     internal static readonly string? ErrorReason;
 
     static TypedListFactory() {
-        var vHelper = HelperRegistry.ResolveValueHelper(typeof(T));
-        if (vHelper == null) {
+        var vEntry = HelperRegistry.ResolveValueHelper(typeof(T));
+        if (!vEntry.IsValid) {
             ErrorReason = $"Unsupported value type: {HelperRegistry.FormatTypeName(typeof(T))}.";
             return;
         }
 
         var implType = typeof(TypedListImpl<,>)
-            .MakeGenericType(typeof(T), vHelper);
+            .MakeGenericType(typeof(T), vEntry.HelperType!);
 
         var ctor = implType.GetConstructor(
             BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes
@@ -101,6 +117,12 @@ internal static class TypedListFactory<T>
         Create = Expression.Lambda<Func<DurableList<T>>>(
             Expression.New(ctor)
         ).Compile();
+
+        // TypeCode: T, MakeTypedList
+        var tc = new byte[vEntry.TypeCode!.Length + 1];
+        vEntry.TypeCode.CopyTo(tc, 0);
+        tc[^1] = (byte)TypeOpCode.MakeTypedList;
+        TypeCode = tc;
     }
 }
 

@@ -7,7 +7,7 @@ namespace Atelia.StateJournal.Internal;
 /// </summary>
 internal static class GenericRules {
 
-    // ── 公开入口 ────────────────────────────────────────────────────
+    #region 公开入口
 
     /// <summary>验证 <c>DurableDict&lt;TKey, TValue&gt;</c> 的类型参数组合是否合法。</summary>
     public static void ValidateDict(Type typeofKey, Type typeofValue) {
@@ -31,11 +31,11 @@ internal static class GenericRules {
         }
     }
 
-    // ── Key 验证 ────────────────────────────────────────────────────
+    #endregion
 
-    internal static bool IsValidKey(Type t) => HelperRegistry.ResolveKeyHelper(t) != null;
+    // Key 验证
+    internal static bool IsValidKey(Type t) => HelperRegistry.ResolveKeyHelper(t).IsValid;
 
-    // ── Value 验证（递归，缓存由 HelperRegistry 管理） ──────────────
-
-    internal static bool IsValidValue(Type t) => HelperRegistry.ResolveValueHelper(t) != null;
+    // Value 验证（递归，缓存由 HelperRegistry 管理）
+    internal static bool IsValidValue(Type t) => HelperRegistry.ResolveValueHelper(t).IsValid;
 }
