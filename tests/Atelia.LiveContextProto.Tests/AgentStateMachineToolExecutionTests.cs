@@ -203,17 +203,17 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         static async Task AdvanceInternalAsync(AgentEngine engine, LlmProfile profile, string notification) {
             engine.AppendNotification(notification);
-            await engine.StepAsync(profile).ConfigureAwait(false);
-            await engine.StepAsync(profile).ConfigureAwait(false);
+            await engine.StepAsync(profile);
+            await engine.StepAsync(profile);
         }
 
-        await AdvanceAsync(engine, profile, "notification-1").ConfigureAwait(false);
+        await AdvanceAsync(engine, profile, "notification-1");
         toggleTool.Visible = false;
 
-        await AdvanceAsync(engine, profile, "notification-2").ConfigureAwait(false);
+        await AdvanceAsync(engine, profile, "notification-2");
         toggleTool.Visible = true;
 
-        await AdvanceAsync(engine, profile, "notification-3").ConfigureAwait(false);
+        await AdvanceAsync(engine, profile, "notification-3");
 
         var captured = provider.CapturedRequests;
         Assert.Equal(3, captured.Count);
