@@ -91,16 +91,16 @@ internal static class VarInt {
         ulong result = data & 0x7Fu;
         if ((data & 0x80) == 0) { return Finish(out value, result, 1); }
 
-        for (int i = 1; i < MaxLength64-1; ++i) {
+        for (int i = 1; i < MaxLength64 - 1; ++i) {
             if (source.Length <= i) { return Err(ErrorCode.UnexpectedEof); }
             data = source[i];
             result |= (ulong)(data & 0x7F) << (7 * i);
             if (data <= 127) { return (data == 0) ? Err(ErrorCode.NonCanonicalEncoding) : Finish(out value, result, 1 + i); }
         }
 
-        if (source.Length <= MaxLength64-1) { return Err(ErrorCode.UnexpectedEof); }
-        data = source[MaxLength64-1];
-        result |= (ulong)data << 7*(MaxLength64-1);
+        if (source.Length <= MaxLength64 - 1) { return Err(ErrorCode.UnexpectedEof); }
+        data = source[MaxLength64 - 1];
+        result |= (ulong)data << 7 * (MaxLength64 - 1);
         return (data > 0x01) ? Err(ErrorCode.Overflow) : Finish(out value, result, MaxLength64);
     }
 
@@ -117,16 +117,16 @@ internal static class VarInt {
         uint result = data & 0x7Fu;
         if ((data & 0x80) == 0) { return Finish(out value, result, 1); }
 
-        for (int i = 1; i < MaxLength32-1; ++i) {
+        for (int i = 1; i < MaxLength32 - 1; ++i) {
             if (source.Length <= i) { return Err(ErrorCode.UnexpectedEof); }
             data = source[i];
             result |= (uint)(data & 0x7F) << (7 * i);
             if (data <= 127) { return (data == 0) ? Err(ErrorCode.NonCanonicalEncoding) : Finish(out value, result, 1 + i); }
         }
 
-        if (source.Length <= MaxLength32-1) { return Err(ErrorCode.UnexpectedEof); }
-        data = source[MaxLength32-1];
-        result |= (uint)data << 7*(MaxLength32-1);
+        if (source.Length <= MaxLength32 - 1) { return Err(ErrorCode.UnexpectedEof); }
+        data = source[MaxLength32 - 1];
+        result |= (uint)data << 7 * (MaxLength32 - 1);
         return (data > 0x0F) ? Err(ErrorCode.Overflow) : Finish(out value, result, MaxLength32);
     }
 
@@ -143,16 +143,16 @@ internal static class VarInt {
         ushort result = (ushort)(data & 0x7Fu);
         if ((data & 0x80) == 0) { return Finish(out value, result, 1); }
 
-        for (int i = 1; i < MaxLength16-1; ++i) {
+        for (int i = 1; i < MaxLength16 - 1; ++i) {
             if (source.Length <= i) { return Err(ErrorCode.UnexpectedEof); }
             data = source[i];
             result |= (ushort)((data & 0x7F) << (7 * i));
             if (data <= 127) { return (data == 0) ? Err(ErrorCode.NonCanonicalEncoding) : Finish(out value, result, 1 + i); }
         }
 
-        if (source.Length <= MaxLength16-1) { return Err(ErrorCode.UnexpectedEof); }
-        data = source[MaxLength16-1];
-        result |= (ushort)(data << 7*(MaxLength16-1));
+        if (source.Length <= MaxLength16 - 1) { return Err(ErrorCode.UnexpectedEof); }
+        data = source[MaxLength16 - 1];
+        result |= (ushort)(data << 7 * (MaxLength16 - 1));
         return (data > 0x03) ? Err(ErrorCode.Overflow) : Finish(out value, result, MaxLength16);
     }
 

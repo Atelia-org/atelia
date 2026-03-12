@@ -43,9 +43,7 @@ internal static class VersionChain {
     /// </remarks>
     internal static AteliaResult<SizedPtr> Save(DurableObject obj, IRbfFile file, bool forceRebase = false) {
         DiffWriteContext context = new() { ForceRebase = forceRebase };
-        if (!obj.HasChanges && !forceRebase && obj.HasBeenSaved) {
-            return obj.LatestVersionTicket;
-        }
+        if (!obj.HasChanges && !forceRebase && obj.HasBeenSaved) { return obj.LatestVersionTicket; }
         using RbfFrameBuilder builder = file.BeginAppend();
         RbfPayloadWriter rbfWriter = builder.PayloadAndMeta;
         BinaryDiffWriter diffWriter = new(rbfWriter);
@@ -98,9 +96,7 @@ internal static class VersionChain {
                 }
                 RbfPooledFrame frame = frameResult.Value!;
                 FrameTag frameTag = new(frame.Tag);
-                if (frameTag.Validate(readTarget.Offset, expectUsage, expectObject) is { } tagError) {
-                    return tagError;
-                }
+                if (frameTag.Validate(readTarget.Offset, expectUsage, expectObject) is { } tagError) { return tagError; }
                 if (chainObjectKind.HasValue && chainObjectKind.Value != frameTag.ObjectKind) {
                     return new SjCorruptionError(
                         $"ObjectKind mismatch in version chain at offset {readTarget.Offset}: expected {chainObjectKind.Value}, actual {frameTag.ObjectKind}.",

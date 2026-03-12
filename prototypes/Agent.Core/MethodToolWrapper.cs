@@ -29,14 +29,14 @@ public sealed partial class MethodToolWrapper : ITool {
     /// <param name="formatArgs">
     /// 传递给 <see cref="string.Format(string, object?[])"/> 的占位符实参；
     /// 若目标方法或其参数的注解（见 <see cref="ToolAttribute"/> / <see cref="ToolParamAttribute"/>) 无需格式化，可省略。
-            /// 例如：
+    /// 例如：
     /// <code language="csharp">
     /// [Tool("{0}_replace", "编辑 {1} 文本")]
     /// ValueTask&lt;LodToolExecuteResult&gt; ReplaceAsync(...)
     /// </code>
     /// 调用时可传 <c>MethodToolWrapper.FromDelegate(method, "recap", "Recap")</c>，
     /// 使 name/description 在注册阶段被格式化。
-        /// </param>
+    /// </param>
     /// <returns>可被代理运行时调用的工具实例。</returns>
     /// <exception cref="ArgumentNullException">当 <paramref name="methodDelegate"/> 为 <c>null</c> 时。</exception>
     /// <exception cref="ArgumentException">当委托绑定多个方法时。</exception>
@@ -95,12 +95,12 @@ public sealed partial class MethodToolWrapper : ITool {
     /// <exception cref="InvalidOperationException">当方法签名或注解不满足工具约束时。</exception>
     /// <remarks>
     /// 适用于通过反射注册静态或实例方法，规则如下：
-            /// 方法需要标注 <see cref="ToolAttribute"/>，并返回 <see cref="ValueTask{LodToolExecuteResult}"/>。
-            /// 最后一个参数必须是 <see cref="CancellationToken"/>，其余参数必须逐一标注 <see cref="ToolParamAttribute"/>。
-            /// 允许的业务参数类型为 <c>string</c>、<c>bool</c>、<c>int</c>、<c>long</c>、<c>float</c>、<c>double</c>、<c>decimal</c> 及其可空变体，且不支持 <c>ref</c>/<c>out</c>。
-            /// 包装器会根据 C# 可空性注解推断是否允许传入 <c>null</c>；若声明了默认值，则被视作可省略并在元数据中记录默认值文本。
-            /// 对于实例方法，<paramref name="targetInstance"/> 必须是方法声明类型的实例；静态方法则传 <c>null</c>。
-            /// 若违反上述约束（例如缺少 Attribute、类型不受支持、默认值与可空性不匹配等），会抛出 <see cref="InvalidOperationException"/> 或 <see cref="NotSupportedException"/>。
+    /// 方法需要标注 <see cref="ToolAttribute"/>，并返回 <see cref="ValueTask{LodToolExecuteResult}"/>。
+    /// 最后一个参数必须是 <see cref="CancellationToken"/>，其余参数必须逐一标注 <see cref="ToolParamAttribute"/>。
+    /// 允许的业务参数类型为 <c>string</c>、<c>bool</c>、<c>int</c>、<c>long</c>、<c>float</c>、<c>double</c>、<c>decimal</c> 及其可空变体，且不支持 <c>ref</c>/<c>out</c>。
+    /// 包装器会根据 C# 可空性注解推断是否允许传入 <c>null</c>；若声明了默认值，则被视作可省略并在元数据中记录默认值文本。
+    /// 对于实例方法，<paramref name="targetInstance"/> 必须是方法声明类型的实例；静态方法则传 <c>null</c>。
+    /// 若违反上述约束（例如缺少 Attribute、类型不受支持、默认值与可空性不匹配等），会抛出 <see cref="InvalidOperationException"/> 或 <see cref="NotSupportedException"/>。
     /// </remarks>
     /// <example>
     /// <code language="csharp">
@@ -111,7 +111,7 @@ public sealed partial class MethodToolWrapper : ITool {
     ///         CancellationToken cancellationToken
     ///     ) =&gt; new LodToolExecuteResult(text);
     /// }
-        /// var host = new SampleToolHost();
+    /// var host = new SampleToolHost();
     /// var method = typeof(SampleToolHost).GetMethod(nameof(SampleToolHost.EchoAsync))!;
     /// var tool = MethodToolWrapper.FromMethod(host, method);
     /// // tool 现在可以交由 ToolExecutor 或代理运行时调用

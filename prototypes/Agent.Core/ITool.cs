@@ -25,11 +25,11 @@ public interface ITool {
     /// </summary>
     /// <param name="arguments">
     /// 工具参数字典，键为参数名，值为参数值。
-        /// 参数名匹配规则：字典键必须与 <see cref="ToolParamSpec.Name"/> 完全一致（区分大小写）。
+    /// 参数名匹配规则：字典键必须与 <see cref="ToolParamSpec.Name"/> 完全一致（区分大小写）。
     /// 不支持忽略大小写或别名匹配，以避免参数名碰撞检测的复杂性，并保持接口契约清晰。
-            /// 设计原因：当前团队内部调用路径可控，调用方拼写准确，强制大小写一致可更早暴露拼写错误；
+    /// 设计原因：当前团队内部调用路径可控，调用方拼写准确，强制大小写一致可更早暴露拼写错误；
     /// 若未来需要兼容外部协议的大小写差异，应在具体工具或适配层处理，而非在核心框架引入通用复杂度。
-        /// </param>
+    /// </param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>工具执行结果。</returns>
     ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken);

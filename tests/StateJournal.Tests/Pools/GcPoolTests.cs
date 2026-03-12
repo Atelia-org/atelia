@@ -119,7 +119,7 @@ public class GcPoolTests {
     public void Free_MultipleThenSweep_ConsistentCount() {
         var pool = new GcPool<int>();
         var handles = new SlotHandle[5];
-        for (int i = 0; i < 5; i++) handles[i] = pool.Store(i * 10);
+        for (int i = 0; i < 5; i++) { handles[i] = pool.Store(i * 10); }
 
         // 手动 Free h0 和 h1
         pool.Free(handles[0]);

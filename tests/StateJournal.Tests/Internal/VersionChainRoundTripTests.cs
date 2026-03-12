@@ -371,14 +371,16 @@ public class VersionChainRoundTripTests : IDisposable {
         using var file = RbfFile.CreateNew(path);
 
         byte[] typeCode = TypedDictFactory<int, int>.TypeCode!.ToArray();
-        byte[] payload = BuildPayload(writer => {
-            writer.WriteBytes(typeCode); // rebase frame
-            writer.BareUInt64(0, false); // previousVersion
-            writer.BareUInt32(1, false); // cumulativeCost
-            writer.WriteCount(0); // remove count
-            writer.WriteCount(0); // upsert count
-            writer.BareByte(0x7F, false); // trailing garbage
-        });
+        byte[] payload = BuildPayload(
+            writer => {
+                writer.WriteBytes(typeCode); // rebase frame
+                writer.BareUInt64(0, false); // previousVersion
+                writer.BareUInt32(1, false); // cumulativeCost
+                writer.WriteCount(0); // remove count
+                writer.WriteCount(0); // upsert count
+                writer.BareByte(0x7F, false); // trailing garbage
+            }
+        );
 
         uint tag = new FrameTag(UsageKind.Blank, ObjectKind.TypedDict, VersionKind.Rebase).Bits;
         var append = file.Append(tag, payload);
@@ -395,19 +397,25 @@ public class VersionChainRoundTripTests : IDisposable {
         var ticketB = SizedPtr.Create(8, 4);
         uint deltaTag = new FrameTag(UsageKind.Blank, ObjectKind.TypedDict, VersionKind.Delta).Bits;
 
-        byte[] payloadA = BuildPayload(writer => {
-            writer.WriteBytes(default); // delta frame: empty typeCode
-            writer.BareUInt64(ticketB.Serialize(), false);
-        });
-        byte[] payloadB = BuildPayload(writer => {
-            writer.WriteBytes(default); // delta frame: empty typeCode
-            writer.BareUInt64(ticketA.Serialize(), false);
-        });
+        byte[] payloadA = BuildPayload(
+            writer => {
+                writer.WriteBytes(default); // delta frame: empty typeCode
+                writer.BareUInt64(ticketB.Serialize(), false);
+            }
+        );
+        byte[] payloadB = BuildPayload(
+            writer => {
+                writer.WriteBytes(default); // delta frame: empty typeCode
+                writer.BareUInt64(ticketA.Serialize(), false);
+            }
+        );
 
-        using var file = new StubRbfFile(new Dictionary<SizedPtr, byte[]> {
-            [ticketA] = payloadA,
-            [ticketB] = payloadB,
-        }, deltaTag);
+        using var file = new StubRbfFile(
+            new Dictionary<SizedPtr, byte[]> {
+                [ticketA] = payloadA,
+                [ticketB] = payloadB,
+            }, deltaTag
+        );
 
         var load = VersionChain.Load(file, ticketA);
         Assert.True(load.IsFailure);
@@ -453,13 +461,15 @@ public class VersionChainRoundTripTests : IDisposable {
         using var file = RbfFile.CreateNew(path);
 
         byte[] typeCode = TypedDictFactory<int, int>.TypeCode!.ToArray();
-        byte[] payload = BuildPayload(writer => {
-            writer.WriteBytes(typeCode); // non-empty typeCode
-            writer.BareUInt64(0, false);
-            writer.BareUInt32(1, false);
-            writer.WriteCount(0);
-            writer.WriteCount(0);
-        });
+        byte[] payload = BuildPayload(
+            writer => {
+                writer.WriteBytes(typeCode); // non-empty typeCode
+                writer.BareUInt64(0, false);
+                writer.BareUInt32(1, false);
+                writer.WriteCount(0);
+                writer.WriteCount(0);
+            }
+        );
         uint tag = new FrameTag(UsageKind.Blank, ObjectKind.TypedDict, VersionKind.Delta).Bits;
         var append = file.Append(tag, payload);
         Assert.True(append.IsSuccess);
@@ -494,9 +504,7 @@ public class VersionChainRoundTripTests : IDisposable {
         public void SetupReadLog(string? logPath) => throw new NotSupportedException();
 
         public AteliaResult<RbfPooledFrame> ReadPooledFrame(SizedPtr ptr) {
-            if (!payloadByTicket.TryGetValue(ptr, out byte[]? payload)) {
-                return new StubError("STUB.NotFound", $"No frame mapped for ticket {ptr}.");
-            }
+            if (!payloadByTicket.TryGetValue(ptr, out byte[]? payload)) { return new StubError("STUB.NotFound", $"No frame mapped for ticket {ptr}."); }
             return CreatePooledFrame(ptr, payload, tag);
         }
 
@@ -516,9 +524,11 @@ public class VersionChainRoundTripTests : IDisposable {
                 null
             ) ?? throw new InvalidOperationException("RbfPooledFrame internal ctor not found.");
 
-            return (RbfPooledFrame)ctor.Invoke(new object[] {
-                buffer, ticket, tag, 0, payload.Length, 0, false,
-            });
+            return (RbfPooledFrame)ctor.Invoke(
+                new object[] {
+                    buffer,                     ticket,                     tag,                     0,                     payload.Length,                     0,                     false,
+            }
+            );
         }
     }
 
