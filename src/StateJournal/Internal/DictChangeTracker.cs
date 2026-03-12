@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
 
@@ -19,6 +20,8 @@ where TValue : notnull {
     public BitDivision<TKey>.Enumerator UpsertedKeys => _dirtyKeys.TrueKeys;
     public int RemoveCount => _dirtyKeys.FalseCount;
     public int UpsertCount => _dirtyKeys.TrueCount;
+    public int DeltifyCount => _dirtyKeys.Count;
+    public int RebaseCount => _current.Count;
     public bool HasChanges => _dirtyKeys.Count > 0;
     #endregion
 
@@ -108,11 +111,9 @@ where TValue : notnull {
         _dirtyKeys.Clear();
     }
 
-    public void WritePendingDiff<KHelper, VHelper>(IDiffWriter writer, DiffWriteContext context)
+    public void WriteDeltify<KHelper, VHelper>(IDiffWriter writer, DiffWriteContext context)
     where KHelper : ITypeHelper<TKey>
     where VHelper : ITypeHelper<TValue> {
-        if (_dirtyKeys.Count == 0) { return; }
-
         // 使用 ITypedHelper 和 IDiffWriter 序列化
         writer.WriteCount(RemoveCount);
         foreach (var key in RemovedKeys) {
@@ -131,6 +132,36 @@ where TValue : notnull {
             );
             KHelper.Write(writer, key, true);
             VHelper.Write(writer, value, false);
+        }
+    }
+
+    public void WriteRebase<KHelper, VHelper>(IDiffWriter writer, DiffWriteContext context)
+    where KHelper : ITypeHelper<TKey>
+    where VHelper : ITypeHelper<TValue> {
+        // 使用 ITypedHelper 和 IDiffWriter 序列化
+        writer.WriteCount(0);
+        writer.WriteCount(_current.Count);
+        foreach (var (key, value) in _current) {
+            KHelper.Write(writer, key, true);
+            VHelper.Write(writer, value, false);
+        }
+    }
+
+    public void ApplyDelta<KHelper, VHelper>(ref BinaryDiffReader reader)
+    where KHelper : ITypeHelper<TKey>
+    where VHelper : ITypeHelper<TValue> {
+        DictDiffApplier.Apply<TKey, TValue, KHelper, VHelper>(ref reader, _committed);
+    }
+
+    /// <summary>
+    /// Load 完成后将 _committed 同步到 _current，使公共 API 可访问已加载的数据。
+    /// 对需要 copy-on-write 语义的类型（如 ValueBox），使用 Freeze 生成共享副本。
+    /// </summary>
+    public void SyncCurrentFromCommitted<VHelper>()
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        Debug.Assert(_current.Count == 0, "SyncCurrentFromCommitted 应在空 _current 上调用。");
+        foreach (var (key, value) in _committed) {
+            _current[key] = VHelper.Freeze(value);
         }
     }
 }

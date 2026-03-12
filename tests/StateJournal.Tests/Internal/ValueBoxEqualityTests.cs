@@ -1,3 +1,5 @@
+using Atelia.Data;
+using Atelia.StateJournal.Serialization;
 using Xunit;
 
 namespace Atelia.StateJournal.Internal.Tests;
@@ -21,9 +23,15 @@ public class ValueBoxEqualityTests {
     private sealed class FakeDurable : DurableObject {
         public override ValueKind Kind => ValueKind.MixedDict;
         public override bool HasChanges => false;
-        internal override void WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
-        internal override void OnCommitSucceeded() => throw new NotSupportedException();
-        public override void DiscardChanges() { }
+        internal override SizedPtr LatestVersionTicket => default;
+        internal override bool HasBeenSaved => false;
+        internal override FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
+        internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) => throw new NotSupportedException();
+        public override void DiscardChanges() => throw new NotSupportedException();
+
+        internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion) => throw new NotSupportedException();
+        internal override void OnLoadCompleted(SizedPtr versionTicket) => throw new NotSupportedException();
+
         private protected override ReadOnlySpan<byte> TypeCode => null;
     }
 

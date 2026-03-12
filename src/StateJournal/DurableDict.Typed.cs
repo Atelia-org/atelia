@@ -1,3 +1,4 @@
+using Atelia.Data;
 using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
@@ -37,4 +38,12 @@ where TKey : notnull where TValue : notnull {
     }
 
     public abstract UpsertStatus Upsert(TKey key, TValue? value);
+
+    #region Version Chain
+
+    private protected VersionChainStatus _versionStatus; // TODO: 如果确定了所有DurableObject都采用delta chain模型，则上移到DurableObject中；如果某些类型使用共享成员，则保持，不过由于RBF已被设计为粗粒度读写，估计难以支持共享成员（比如红黑树）那种琐碎的节点读写。
+    internal override SizedPtr LatestVersionTicket => _versionStatus.CommittedVersion;
+    internal override bool HasBeenSaved => _versionStatus.HasCommittedVersion;
+
+    #endregion
 }

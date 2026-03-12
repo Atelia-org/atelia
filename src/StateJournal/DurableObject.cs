@@ -1,4 +1,6 @@
+using Atelia.Data;
 using Atelia.StateJournal.Internal;
+using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal;
 
@@ -32,11 +34,20 @@ public abstract class DurableObject {
         }
     }
 
-    internal abstract void WritePendingDiff(IDiffWriter writer, DiffWriteContext context);
+    /// <returns>RBF frame tag</returns>
+    internal abstract FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context);
 
     private protected abstract ReadOnlySpan<byte> TypeCode { get; }
 
-    internal abstract void OnCommitSucceeded();
+    internal abstract SizedPtr LatestVersionTicket { get; }
+    internal abstract bool HasBeenSaved { get; }
+
+    internal abstract void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context);
+
+    internal abstract void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion);
+
+    /// <summary>Load 完成后调用，修正 _previousVersion 并将 _committed 数据同步到 _current。</summary>
+    internal abstract void OnLoadCompleted(SizedPtr versionTicket);
 
     public abstract void DiscardChanges();
 

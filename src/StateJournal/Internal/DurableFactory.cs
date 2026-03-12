@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -125,6 +127,55 @@ internal static class TypedListFactory<T>
         vEntry.TypeCode.CopyTo(tc, 0);
         tc[^1] = (byte)TypeOpCode.MakeTypedList;
         TypeCode = tc;
-        DurableDict<T>.s_typeCode = tc;
+        DurableList<T>.s_typeCode = tc;
+    }
+}
+
+/// <summary>
+/// 非泛型工厂：从运行时 <see cref="Type"/> 实例构建 <see cref="DurableObject"/>。
+/// 通过反射访问泛型 Factory 的 <c>Create</c> 委托并用 Expression 包装为
+/// <c>Func&lt;DurableObject&gt;</c>，结果缓存于 <see cref="ConcurrentDictionary{TKey,TValue}"/>。
+/// </summary>
+internal static class DurableFactory {
+    private static readonly ConcurrentDictionary<Type, Func<DurableObject>?> _cache = new();
+
+    internal static bool TryCreate(Type type, [NotNullWhen(true)] out DurableObject? result) {
+        var factory = _cache.GetOrAdd(type, BuildFactory);
+        if (factory == null) {
+            result = null;
+            return false;
+        }
+        result = factory();
+        return true;
+    }
+
+    private static Func<DurableObject>? BuildFactory(Type type) {
+        if (type == typeof(DurableList)) { return static () => new MixedListImpl(); }
+        if (!type.IsGenericType) { return null; }
+
+        var def = type.GetGenericTypeDefinition();
+        var args = type.GenericTypeArguments;
+
+        Type? factoryType =
+            def == typeof(DurableDict<,>) ? typeof(TypedDictFactory<,>).MakeGenericType(args) :
+            def == typeof(DurableDict<>) ? typeof(MixedDictFactory<>).MakeGenericType(args) :
+            def == typeof(DurableList<>) ? typeof(TypedListFactory<>).MakeGenericType(args) :
+            null;
+
+        if (factoryType == null) { return null; }
+
+        // 读取 Factory 的 Create 字段（触发其静态构造函数，完成 s_typeCode 初始化等副作用）
+        var createDelegate = (Delegate?)factoryType
+            .GetField("Create", BindingFlags.Static | BindingFlags.NonPublic)?
+            .GetValue(null);
+        if (createDelegate == null) { return null; }
+
+        // Expression.Invoke 避免 DynamicInvoke 的反射开销
+        return Expression.Lambda<Func<DurableObject>>(
+            Expression.Convert(
+                Expression.Invoke(Expression.Constant(createDelegate)),
+                typeof(DurableObject)
+            )
+        ).Compile();
     }
 }

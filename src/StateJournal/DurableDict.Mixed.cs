@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Atelia.Data;
 using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
@@ -13,10 +14,13 @@ public abstract class DurableDict<TKey> : DurableObject, IDict<TKey>
 , IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>
 
 where TKey : notnull {
+    #region TypeCode
+
     /// <summary>由<see cref="MixedDictFactory{TKey}"/>初始化。</summary>
     internal static byte[]? s_typeCode;
     private protected override ReadOnlySpan<byte> TypeCode => s_typeCode;
 
+    #endregion
     #region Core
     private protected DictChangeTracker<TKey, ValueBox> _core;
     private UpsertStatus FinishUpsert(TKey key, ValueBox value, bool exists) {
@@ -233,6 +237,13 @@ where TKey : notnull {
     public IDict<TKey, sbyte> OfSByte => this;
     public GetIssue Get(TKey key, out sbyte value) => GetCore<sbyte, ValueBox.SByteFace>(key, out value);
     public UpsertStatus Upsert(TKey key, sbyte value) => UpsertCore<sbyte, ValueBox.SByteFace>(key, value);
+
+    #endregion
+    #region Version Chain
+
+    private protected VersionChainStatus _versionStatus;
+    internal override SizedPtr LatestVersionTicket => _versionStatus.CommittedVersion;
+    internal override bool HasBeenSaved => _versionStatus.HasCommittedVersion;
 
     #endregion
 }

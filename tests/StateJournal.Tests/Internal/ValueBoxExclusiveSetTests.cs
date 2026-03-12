@@ -1,3 +1,5 @@
+using Atelia.Data;
+using Atelia.StateJournal.Serialization;
 using Xunit;
 
 namespace Atelia.StateJournal.Internal.Tests;
@@ -854,8 +856,11 @@ public class ValueBoxExclusiveSetTests {
     }
 
     private sealed class TestDurableDict : DurableDict<string> {
-        internal override void WritePendingDiff(IDiffWriter writer, DiffWriteContext context) { }
-        internal override void OnCommitSucceeded() { }
+        internal override FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
+        internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) { }
         public override void DiscardChanges() { }
+
+        internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion) { }
+        internal override void OnLoadCompleted(SizedPtr versionTicket) { }
     }
 }

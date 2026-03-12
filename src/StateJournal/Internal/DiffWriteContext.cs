@@ -1,6 +1,20 @@
 namespace Atelia.StateJournal.Internal;
 
 internal class DiffWriteContext {
+    /// <summary>调用方可设为 true 以强制写出 rebase 帧（compact / 另存为新文件场景）。</summary>
+    internal bool ForceRebase { get; init; }
+
+    // WritePendingDiff 写入、OnCommitSucceeded 读取的决策结果。
+    internal bool WasRebase { get; private set; }
+    internal uint EffectiveRebaseSize { get; private set; }
+    internal uint EffectiveDeltifySize { get; private set; }
+
+    internal void SetOutcome(bool wasRebase, uint rebaseSize, uint deltifySize) {
+        WasRebase = wasRebase;
+        EffectiveRebaseSize = rebaseSize;
+        EffectiveDeltifySize = deltifySize;
+    }
+
     #region 暂时用不到，留给扩展点
     // // public List<ValueBox> ValueBoxTempList => field ??= new List<ValueBox>(); 目前的唯一的用户MixdDict不会用到
     // // public List<LocalId> LocalIdTempList => field ??= new List<LocalId>();
