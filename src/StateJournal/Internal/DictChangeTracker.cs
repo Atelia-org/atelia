@@ -46,19 +46,10 @@ where TValue : notnull {
 
     public void AfterRemove<VHelper>(TKey key, TValue? removedValue)
     where VHelper : unmanaged, ITypeHelper<TValue> {
-        if (_dirtyKeys.TryGetSubset(key, out bool wasTrueSubset) && wasTrueSubset) {
+        if (VHelper.NeedRelease && _dirtyKeys.TryGetSubset(key, out bool wasTrueSubset) && wasTrueSubset) {
             VHelper.ReleaseSlot(removedValue);
         }
 
-        if (_committed.ContainsKey(key)) {
-            MarkRemove(key);
-        }
-        else {
-            MarkSame(key);
-        }
-    }
-
-    public void AfterRemove(TKey key) {
         if (_committed.ContainsKey(key)) {
             MarkRemove(key);
         }
@@ -123,27 +114,23 @@ where TValue : notnull {
         if (_dirtyKeys.Count == 0) { return; }
 
         // 使用 ITypedHelper 和 IDiffWriter 序列化
-        writer.DictBegin();
-        {
-            writer.WriteCount(RemoveCount);
-            foreach (var key in RemovedKeys) {
-                Debug.Assert(!_current.ContainsKey(key));
-                Debug.Assert(_committed.ContainsKey(key));
-                KHelper.Write(writer, key, true);
-            }
-
-            writer.WriteCount(UpsertCount);
-            foreach (var key in UpsertedKeys) {
-                var keyInCurrent = _current.TryGetValue(key, out var value);
-                Debug.Assert(keyInCurrent);
-                Debug.Assert(
-                    !_committed.TryGetValue(key, out var oldValue) // 新 key，合法
-                    || !VHelper.Equals(value, oldValue) // 旧 key，值必须不同
-                );
-                KHelper.Write(writer, key, true);
-                VHelper.Write(writer, value, false);
-            }
+        writer.WriteCount(RemoveCount);
+        foreach (var key in RemovedKeys) {
+            Debug.Assert(!_current.ContainsKey(key));
+            Debug.Assert(_committed.ContainsKey(key));
+            KHelper.Write(writer, key, true);
         }
-        writer.DictEnd();
+
+        writer.WriteCount(UpsertCount);
+        foreach (var key in UpsertedKeys) {
+            var keyInCurrent = _current.TryGetValue(key, out var value);
+            Debug.Assert(keyInCurrent);
+            Debug.Assert(
+                !_committed.TryGetValue(key, out var oldValue) // 新 key，合法
+                || !VHelper.Equals(value, oldValue) // 旧 key，值必须不同
+            );
+            KHelper.Write(writer, key, true);
+            VHelper.Write(writer, value, false);
+        }
     }
 }

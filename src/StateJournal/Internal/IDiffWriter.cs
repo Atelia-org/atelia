@@ -38,12 +38,4 @@ internal interface IDiffWriter {
     void BareInt16(short value, bool asKey);
     void BareSByte(sbyte value, bool asKey);
     #endregion
-
-    #region Dict diff payload
-    void DictBegin();
-    void DictEnd();
-    #endregion
-
-    #region List diff payload
-    #endregion
 }

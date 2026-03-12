@@ -19,8 +19,10 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
         return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }
 
-    protected override void OnRemoved(TKey key, TValue? removedValue) {
+    public override bool Remove(TKey key) {
+        if (!_core.Current.Remove(key, out TValue? removedValue)) { return false; }
         _core.AfterRemove<VHelper>(key, removedValue);
+        return true;
     }
 
     public override void DiscardChanges() {

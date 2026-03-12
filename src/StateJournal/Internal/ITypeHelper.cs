@@ -10,6 +10,7 @@ internal interface ITypeHelper<T> where T : notnull {
     /// 目前仅有ValueBox由于堆上值的Share/Exclusive语义需要。</summary>
     static virtual T? Freeze(T? value) => value;
 
+    static virtual bool NeedRelease => false;
     /// <summary>释放值持有的堆 Slot。调用者确保是最后持有者。对于无堆资源类型无操作。
     /// 目前仅有ValueBox由于堆上值的Share/Exclusive语义需要。</summary>
     static virtual void ReleaseSlot(T? value) { }
@@ -27,6 +28,7 @@ internal interface ITypeHelper<T> where T : notnull {
 internal readonly struct ValueBoxHelper : ITypeHelper<ValueBox> {
     public static bool Equals(ValueBox a, ValueBox b) => ValueBox.ValueEquals(a, b);
     public static ValueBox Freeze(ValueBox value) => ValueBox.Freeze(value);
+    public static bool NeedRelease => true;
     public static void ReleaseSlot(ValueBox value) => ValueBox.ReleaseBits64Slot(value);
 
     public static void Write(IDiffWriter writer, ValueBox v, bool asKey) {

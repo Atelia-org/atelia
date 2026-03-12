@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Atelia.StateJournal.Internal;
 
 /// <summary>
@@ -33,7 +35,7 @@ internal enum TypeOpCode : byte {
 internal static class TypeCodec {
     /// <summary>从已确定长度的完整TypeOpCode序列解码出所表示的Durable类型。</summary>
     /// <param name="bytes">不含头部长度，不含尾部无关字节。</param>
-    internal static bool TryDecode(ReadOnlySpan<byte> bytes, out Type? result) {
+    internal static bool TryDecode(ReadOnlySpan<byte> bytes, [NotNullWhen(true)] out Type? result) {
         result = null;
         if (bytes.IsEmpty) { return false; }
         Stack<Type> operands = new(8);

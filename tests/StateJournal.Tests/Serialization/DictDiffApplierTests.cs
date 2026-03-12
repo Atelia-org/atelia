@@ -24,7 +24,7 @@ public class DictDiffApplierTests {
         };
 
         var reader = new BinaryDiffReader(bodyWriter.WrittenSpan);
-        new DictDiffApplier().Apply<int, long, Int32Helper, Int64Helper>(ref reader, target);
+        DictDiffApplier.Apply<int, long, Int32Helper, Int64Helper>(ref reader, target);
 
         Assert.False(target.ContainsKey(1));
         Assert.Equal(20L, target[2]);
@@ -51,7 +51,7 @@ public class DictDiffApplierTests {
             [3] = ValueBox.Int64Face.From(0),
         };
         var reader = new BinaryDiffReader(bodyWriter.WrittenSpan);
-        new DictDiffApplier().Apply<int, ValueBox, Int32Helper, ValueBoxHelper>(ref reader, target);
+        DictDiffApplier.Apply<int, ValueBox, Int32Helper, ValueBoxHelper>(ref reader, target);
 
         Assert.False(target.ContainsKey(1));
         Assert.Equal(GetIssue.None, ValueBox.BooleanFace.Get(target[2], out bool boolValue));
