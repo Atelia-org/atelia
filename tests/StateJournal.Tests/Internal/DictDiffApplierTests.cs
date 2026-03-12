@@ -1,8 +1,8 @@
 using System.Buffers;
-using Atelia.StateJournal.Internal;
+using Atelia.StateJournal.Serialization;
 using Xunit;
 
-namespace Atelia.StateJournal.Serialization.Tests;
+namespace Atelia.StateJournal.Internal.Tests;
 
 public class DictDiffApplierTests {
     [Fact]

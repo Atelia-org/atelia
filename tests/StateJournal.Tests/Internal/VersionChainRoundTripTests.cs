@@ -3,10 +3,9 @@ using System.Reflection;
 using Xunit;
 using Atelia.Data;
 using Atelia.Rbf;
-using Atelia.StateJournal.Internal;
 using Atelia.StateJournal.Serialization;
 
-namespace Atelia.StateJournal.Tests.Internal;
+namespace Atelia.StateJournal.Internal.Tests;
 
 public class VersionChainRoundTripTests : IDisposable {
     private readonly List<string> _tempFiles = new();

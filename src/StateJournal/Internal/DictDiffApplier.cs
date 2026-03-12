@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
-using Atelia.StateJournal.Internal;
+using Atelia.StateJournal.Serialization;
 
-namespace Atelia.StateJournal.Serialization;
+namespace Atelia.StateJournal.Internal;
 
 // ai:test `tests/StateJournal.Tests/Serialization/DictDiffApplierTests.cs`
 internal static class DictDiffApplier {
