@@ -7,6 +7,7 @@ namespace Atelia.StateJournal.Internal;
 /// </summary>
 internal interface IDiffWriter {
     void WriteCount(int count);
+    void WriteBytes(ReadOnlySpan<byte> array);
 
     #region 写值，用于异构混杂容器，自描述，先类型再值，类似CBOR。
     void TaggedNull();

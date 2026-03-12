@@ -57,6 +57,11 @@ internal class BinaryDiffWriter : IDiffWriter {
         Debug.Assert(count >= 0); // 内部类型，避免层层重复检查。
         VarInt.WriteUInt32(_downstream, (uint)count);
     }
+    public void WriteBytes(ReadOnlySpan<byte> array) {
+        VarInt.WriteUInt32(_downstream, (uint)array.Length);
+        array.CopyTo(_downstream.GetSpan(array.Length));
+        _downstream.Advance(array.Length);
+    }
 
     public void TaggedBoolean(bool value) {
         _downstream.GetSpan(1)[0] = value ? ScalarRules.True : ScalarRules.False;

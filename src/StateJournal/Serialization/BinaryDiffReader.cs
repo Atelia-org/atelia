@@ -64,6 +64,10 @@ internal ref struct BinaryDiffReader {
         if (count > (uint)int.MaxValue) { throw new InvalidDataException($"count {count} exceeds Int32.MaxValue."); }
         return unchecked((int)count); // 前面抛异常已经检查过了。
     }
+    internal ReadOnlySpan<byte> ReadBytes() {
+        int length = ReadCount();
+        return ReadSpan(length);
+    }
 
     internal ushort BareUInt16(bool asKey) {
         int consumed = VarInt.ReadUInt16(_remaining, out ushort value);
