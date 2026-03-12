@@ -851,16 +851,7 @@ public class ValueBoxExclusiveSetTests {
     [Fact]
     public void SetDurableObject_NullToNonNull_ReturnsTrue() {
         var box = ValueBox.DurableObjectFace.From((DurableObject?)null);
-        var obj = new TestDurableDict();
+        var obj = Durable.Dict<string>();
         Assert.True(ValueBox.DurableObjectFace.UpdateOrInit(ref box, obj));
-    }
-
-    private sealed class TestDurableDict : DurableDict<string> {
-        internal override FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
-        internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) { }
-        public override void DiscardChanges() { }
-
-        internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion) { }
-        internal override void OnLoadCompleted(SizedPtr versionTicket) { }
     }
 }

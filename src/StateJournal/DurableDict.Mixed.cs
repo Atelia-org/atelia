@@ -7,7 +7,7 @@ namespace Atelia.StateJournal;
 
 /// <summary>替代<see cref="DurableDict{TKey,ValueBox}"/></summary>
 /// <typeparam name="TKey"></typeparam>
-public abstract class DurableDict<TKey> : DurableObject, IDict<TKey>
+public abstract class DurableDict<TKey> : DurableDictBase<TKey, ValueBox>, IDict<TKey>
 , IDict<TKey, bool>, IDict<TKey, string>, IDict<TKey, DurableObject>
 , IDict<TKey, double>, IDict<TKey, float>, IDict<TKey, Half>
 , IDict<TKey, ulong>, IDict<TKey, uint>, IDict<TKey, ushort>, IDict<TKey, byte>
@@ -22,7 +22,6 @@ where TKey : notnull {
 
     #endregion
     #region Core
-    private protected DictChangeTracker<TKey, ValueBox> _core;
     private UpsertStatus FinishUpsert(TKey key, ValueBox value, bool exists) {
         Debug.Assert(!value.IsUninitialized); // 未初始化的ValueBox不应被存入容器
         _core.AfterUpsert<ValueBoxHelper>(key, value);
@@ -36,7 +35,6 @@ where TKey : notnull {
 
     #region DurableObject
     public override ValueKind Kind => ValueKind.MixedDict;
-    public override bool HasChanges => _core.HasChanges;
     #endregion
 
     #region Generic Accessor
@@ -237,13 +235,6 @@ where TKey : notnull {
     public IDict<TKey, sbyte> OfSByte => this;
     public GetIssue Get(TKey key, out sbyte value) => GetCore<sbyte, ValueBox.SByteFace>(key, out value);
     public UpsertStatus Upsert(TKey key, sbyte value) => UpsertCore<sbyte, ValueBox.SByteFace>(key, value);
-
-    #endregion
-    #region Version Chain
-
-    private protected VersionChainStatus _versionStatus;
-    internal override SizedPtr LatestVersionTicket => _versionStatus.CommittedVersion;
-    internal override bool HasBeenSaved => _versionStatus.HasCommittedVersion;
 
     #endregion
 }

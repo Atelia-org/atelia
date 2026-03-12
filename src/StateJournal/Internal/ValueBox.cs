@@ -12,8 +12,12 @@ namespace Atelia.StateJournal.Internal;
 /// <remarks>
 /// 作为Dictionary的TValue时，如果TKey是4字节值，`StructLayout(Pack = 4)`能避免Padding以节约4字节内存。
 /// </remarks>
+/// <summary>
+/// 内部值存储的不透明载体。此类型本身为 public 以便用作泛型类型参数，
+/// 但所有成员均为 internal，外部代码不应直接操作。
+/// </summary>
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
-internal readonly partial struct ValueBox {
+public readonly partial struct ValueBox {
     internal const int HeapKindBitCount = 6, ExclusiveBitCount = 1, HeapHandleBitCount = 32;
     private const int KindShift = ExclusiveBitCount + HeapHandleBitCount; // 33
     private const ulong ExclusiveBit = 1UL << HeapHandleBitCount; // bit32
