@@ -94,11 +94,10 @@ public class ValueBoxEqualityTests {
         }
 
         {
-            var obj = new FakeDurable();
-            ValueBox exclusive = ValueBox.DurableObjectFace.From(obj);
+            ValueBox exclusive = ValueBox.DurableRefFace.From(new DurableRef(DurableObjectKind.MixedDict, new LocalId(0x1234)));
             ValueBox frozen = ValueBox.Freeze(exclusive);
             yield return new object[] {
-                "Heap durable exclusive vs frozen",
+                "Inline-DurableRef exclusive vs frozen",
                 exclusive,
                 frozen
             };
@@ -187,17 +186,6 @@ public class ValueBoxEqualityTests {
     [Fact]
     public void ValueEquals_String_FrozenVsExclusive_True() {
         var exclusive = ValueBox.StringFace.From("hello");
-        var frozen = ValueBox.Freeze(exclusive);
-
-        Assert.NotEqual(exclusive.GetBits(), frozen.GetBits());
-        Assert.True(ValueBox.ValueEquals(exclusive, frozen));
-        Assert.Equal(ValueBox.ValueHashCode(exclusive), ValueBox.ValueHashCode(frozen));
-    }
-
-    [Fact]
-    public void ValueEquals_DurableObject_FrozenVsExclusive_True() {
-        var obj = new FakeDurable();
-        var exclusive = ValueBox.DurableObjectFace.From(obj);
         var frozen = ValueBox.Freeze(exclusive);
 
         Assert.NotEqual(exclusive.GetBits(), frozen.GetBits());

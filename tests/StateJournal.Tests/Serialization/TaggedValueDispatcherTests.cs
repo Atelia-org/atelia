@@ -85,4 +85,111 @@ public class TaggedValueDispatcherTests {
         Assert.True(changed);
         Assert.True(box.IsNull);
     }
+
+    #region DurableRef round-trip
+
+    private static byte[] WriteDurableRef(DurableObjectKind kind, LocalId id) {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var writer = new BinaryDiffWriter(buffer);
+        writer.TaggedDurableRef(new DurableRef(kind, id));
+        return buffer.WrittenSpan.ToArray();
+    }
+
+    [Fact]
+    public void DurableRef_NarrowId_RoundTrips() {
+        byte[] data = WriteDurableRef(DurableObjectKind.MixedDict, new LocalId(42));
+        Assert.Equal(3, data.Length); // 1 tag + 2 payload
+
+        ValueBox box = Init(data);
+        Assert.Equal(GetIssue.None, ValueBox.DurableRefFace.Get(box, out var value));
+        Assert.Equal(DurableObjectKind.MixedDict, value.Kind);
+        Assert.Equal(42u, value.Id.Value);
+    }
+
+    [Fact]
+    public void DurableRef_WideId_RoundTrips() {
+        uint wideId = (uint)ushort.MaxValue + 100;
+        byte[] data = WriteDurableRef(DurableObjectKind.TypedList, new LocalId(wideId));
+        Assert.Equal(5, data.Length); // 1 tag + 4 payload
+
+        ValueBox box = Init(data);
+        Assert.Equal(GetIssue.None, ValueBox.DurableRefFace.Get(box, out var value));
+        Assert.Equal(DurableObjectKind.TypedList, value.Kind);
+        Assert.Equal(wideId, value.Id.Value);
+    }
+
+    [Theory]
+    [InlineData(DurableObjectKind.MixedDict)]
+    [InlineData(DurableObjectKind.TypedDict)]
+    [InlineData(DurableObjectKind.MixedList)]
+    [InlineData(DurableObjectKind.TypedList)]
+    public void DurableRef_AllKinds_RoundTrip(DurableObjectKind kind) {
+        byte[] data = WriteDurableRef(kind, new LocalId(1));
+        ValueBox box = Init(data);
+        Assert.Equal(GetIssue.None, ValueBox.DurableRefFace.Get(box, out var value));
+        Assert.Equal(kind, value.Kind);
+        Assert.Equal(1u, value.Id.Value);
+    }
+
+    [Fact]
+    public void DurableRef_BoundaryId_UInt16Max_UsesNarrow() {
+        byte[] data = WriteDurableRef(DurableObjectKind.MixedList, new LocalId(ushort.MaxValue));
+        Assert.Equal(3, data.Length); // still narrow
+
+        ValueBox box = Init(data);
+        Assert.Equal(GetIssue.None, ValueBox.DurableRefFace.Get(box, out var value));
+        Assert.Equal(ushort.MaxValue, (ushort)value.Id.Value);
+    }
+
+    [Fact]
+    public void DurableRef_BoundaryId_UInt16MaxPlus1_UsesWide() {
+        uint id = (uint)ushort.MaxValue + 1;
+        byte[] data = WriteDurableRef(DurableObjectKind.TypedDict, new LocalId(id));
+        Assert.Equal(5, data.Length); // wide
+
+        ValueBox box = Init(data);
+        Assert.Equal(GetIssue.None, ValueBox.DurableRefFace.Get(box, out var value));
+        Assert.Equal(id, value.Id.Value);
+    }
+
+    [Fact]
+    public void DurableRef_Update_SameValue_ReturnsFalse() {
+        byte[] data = WriteDurableRef(DurableObjectKind.MixedDict, new LocalId(7));
+        ValueBox box = Init(data);
+
+        var reader2 = new BinaryDiffReader(data);
+        bool changed = TaggedValueDispatcher.UpdateOrInit(ref reader2, ref box);
+        Assert.False(changed);
+    }
+
+    [Fact]
+    public void DurableRef_InvalidKind_ThrowsInvalidDataException() {
+        Assert.Throws<System.IO.InvalidDataException>(() => Init([0xBE, 0x01, 0x00]));
+    }
+
+    [Fact]
+    public void DurableRef_NullId_ThrowsInvalidDataException() {
+        Assert.Throws<System.IO.InvalidDataException>(() => Init([0xA2, 0x00, 0x00]));
+    }
+
+    [Fact]
+    public void WriteDurableRef_BlankKind_ThrowsInvalidDataException() {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var writer = new BinaryDiffWriter(buffer);
+        Assert.Throws<System.IO.InvalidDataException>(
+            () => writer.TaggedDurableRef(new DurableRef(DurableObjectKind.Blank, new LocalId(1)))
+        );
+    }
+
+    [Fact]
+    public void WriteDurableRef_NullId_ThrowsInvalidDataException() {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var writer = new BinaryDiffWriter(buffer);
+        Assert.Throws<System.IO.InvalidDataException>(
+            () =>
+            writer.TaggedDurableRef(new DurableRef(DurableObjectKind.MixedDict, LocalId.Null))
+        );
+    }
+
+    #endregion
 }

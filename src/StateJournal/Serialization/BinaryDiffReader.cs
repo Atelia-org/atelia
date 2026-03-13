@@ -121,5 +121,7 @@ internal ref struct BinaryDiffReader {
     internal Half TaggedHalf() => BareHalf(false);
     internal float TaggedSingle() => BareSingle(false);
     internal double TaggedDouble() => BareDouble(false);
+    internal ushort FixedUInt16() => RawUInt16();
+    internal uint FixedUInt32() => RawUInt32();
     #endregion
 }

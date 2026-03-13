@@ -68,7 +68,7 @@ internal readonly struct DurableObjectHelper<T> : ITypeHelper<T> where T : Durab
 
     public static void Write(IDiffWriter writer, T? v, bool asKey) {
         Debug.Assert(!asKey, "DurableObject不支持作为key使用。");
-        writer.BareDurableObjectRef(v?.LocalId ?? LocalId.Null, asKey);
+        writer.BareDurableRef(v?.LocalId ?? LocalId.Null, asKey);
     }
     public static T? Read(ref BinaryDiffReader reader, bool asKey) => throw new NotImplementedException();
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref T? old) => old = Read(ref reader, asKey: false);

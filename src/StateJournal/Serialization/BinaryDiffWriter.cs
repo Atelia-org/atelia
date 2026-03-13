@@ -22,7 +22,10 @@ internal class BinaryDiffWriter : IDiffWriter {
         throw new NotImplementedException();
     }
 
-    public void BareDurableObjectRef(LocalId value, bool asKey) => BareUInt32(value.Value, asKey);
+    /// <summary>依赖于<see cref="DurableObjectKind"/>基于byte。</summary>
+    public void BareDurableRef(LocalId value, bool asKey) {
+        BareUInt32(value.Value, asKey);
+    }
 
     public void BareDouble(double value, bool asKey) {
         BinaryPrimitives.WriteDoubleLittleEndian(_downstream.GetSpan(8), value);
@@ -68,8 +71,24 @@ internal class BinaryDiffWriter : IDiffWriter {
         _downstream.Advance(1);
     }
 
-    public void TaggedDurableObjectRef(LocalId value) {
-        throw new NotImplementedException();
+    public void TaggedDurableRef(DurableRef value) {
+        if (!DurableRef.IsValidKind(value.Kind)) { throw new InvalidDataException($"Invalid DurableRef kind '{value.Kind}'."); }
+        if (value.IsNull) { throw new InvalidDataException("DurableRef LocalId cannot be null. Use TaggedNull for null references."); }
+
+        bool wide = value.Id.Value > ushort.MaxValue;
+        byte tag = ScalarRules.DurableRefEncoding.EncodeTag(value.Kind, wide);
+        if (wide) {
+            var span = _downstream.GetSpan(1 + 4);
+            span[0] = tag;
+            BinaryPrimitives.WriteUInt32LittleEndian(span[1..], value.Id.Value);
+            _downstream.Advance(1 + 4);
+        }
+        else {
+            var span = _downstream.GetSpan(1 + 2);
+            span[0] = tag;
+            BinaryPrimitives.WriteUInt16LittleEndian(span[1..], (ushort)value.Id.Value);
+            _downstream.Advance(1 + 2);
+        }
     }
 
     public void TaggedFloatingPoint(double value) {

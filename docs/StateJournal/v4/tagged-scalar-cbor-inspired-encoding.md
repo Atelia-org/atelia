@@ -59,22 +59,22 @@
 1. CBOR 在 major type 0 / 1 / 7 上与 `StateJournal` 的“自描述标量”模型天然接近。
 2. 负整数采用 `-1 - value` 后，`0..23` 与 `-1..-24` 形成漂亮对称，且 `long.MinValue` 的处理更自然。
 3. 仓库其余二进制编码普遍采用 little-endian，延续这一点能减少局部特殊规则。
-4. 当前阶段并不打算让 `StateJournal` 直接映射 CBOR 的 text/array/map 语义，因此没有必要追求完整 CBOR 对齐。
+4. Major type 5 (map, `0xA0..0xBF`) 与 StateJournal 的设计相性最远，因此被重写为 DurableObject 引用编码。
 
 ## 明确不做的事
 
 当前设计明确没有承诺以下事项：
 
 1. 不承诺与 RFC 8949 的 wire format 兼容。
-2. 不承诺复用 CBOR major type 3 / 4 / 5 作为 `StateJournal` 的 string / array / map 编码方案。
+2. 不承诺复用 CBOR major type 3 / 4 作为 `StateJournal` 的 string / array 编码方案。Major type 5 已被重写为 DurableRef 编码。
 3. 不承诺可被通用 CBOR 解码器直接解析。
-4. 不承诺未来的 `TaggedString`、容器 diff 格式、`DurableObjectRef` 会沿用 CBOR 结构。
+4. 不承诺未来的 `TaggedString`、容器 diff 格式会沿用 CBOR 结构。
 
 ## 实施提醒
 
 后续文档和代码中，应该将这套编码描述为：
 
-- “CBOR-inspired scalar encoding”
-- 或 “little-endian variant of CBOR major type 0/1/7 for StateJournal tagged scalars”
+- "CBOR-inspired tagged encoding"
+- 或 "little-endian variant of CBOR major type 0/1/7 + rewritten major type 5 for StateJournal"
 
 避免把它表述成“CBOR baseline”或“兼容 CBOR”，以免后续 agent 或人工维护者误判协议边界。

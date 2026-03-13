@@ -58,6 +58,9 @@ where TKey : notnull {
             GetIssue.Saturated => throw new OverflowException(
                 $"Value for key '{key}' is out of bounds for {typeof(TValue).Name}."
             ),
+            GetIssue.LoadFailed => throw new InvalidDataException(
+                $"Value for key '{key}' references a DurableObject that cannot be loaded."
+            ),
             GetIssue.UnsupportedType => throw new NotSupportedException(
                 $"Type {typeof(TValue)} is not a supported value type for DurableDict"
             ),
@@ -184,8 +187,34 @@ where TKey : notnull {
     public UpsertStatus Upsert(TKey key, string? value) => UpsertCore<string, ValueBox.StringFace>(key, value);
 
     public IDict<TKey, DurableObject> OfDurableObject => this;
-    public GetIssue Get(TKey key, out DurableObject? value) => GetCore<DurableObject, ValueBox.DurableObjectFace>(key, out value);
-    public UpsertStatus Upsert(TKey key, DurableObject? value) => UpsertCore<DurableObject, ValueBox.DurableObjectFace>(key, value);
+    public GetIssue Get(TKey key, out DurableObject? value) {
+        value = null;
+
+        var issue = GetCore<DurableRef, ValueBox.DurableRefFace>(key, out var durRef);
+        if (issue != GetIssue.None) { return issue; }
+
+        if (durRef.IsNull) { return GetIssue.None; }
+
+        AteliaResult<DurableObject> loadResult = Epoch.Load(durRef.Id);
+        if (loadResult.IsFailure) { return GetIssue.LoadFailed; }
+        DurableObject? loaded = loadResult.Value;
+        if (loaded is null || loaded.Kind != durRef.Kind) { return GetIssue.LoadFailed; }
+
+        value = loaded;
+        return GetIssue.None;
+    }
+    public UpsertStatus Upsert(TKey key, DurableObject? value) {
+        DurableRef durableRef;
+        if (value is not null) {
+            durableRef = new DurableRef(value.Kind, value.LocalId);
+            Debug.Assert(!durableRef.IsNull);
+            Debug.Assert(DurableRef.IsValidKind(durableRef.Kind));
+        }
+        else {
+            durableRef = default;
+        }
+        return UpsertCore<DurableRef, ValueBox.DurableRefFace>(key, durableRef);
+    }
 
     public IDict<TKey, double> OfDouble => this;
     public GetIssue Get(TKey key, out double value) => GetCore<double, ValueBox.RoundedDoubleFace>(key, out value);

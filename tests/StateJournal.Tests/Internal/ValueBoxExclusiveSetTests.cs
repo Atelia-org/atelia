@@ -844,14 +844,14 @@ public class ValueBoxExclusiveSetTests {
 
     [Fact]
     public void SetDurableObject_SameNull_ReturnsFalse() {
-        var box = ValueBox.DurableObjectFace.From((DurableObject?)null);
-        Assert.False(ValueBox.DurableObjectFace.UpdateOrInit(ref box, null));
+        var box = ValueBox.DurableRefFace.From(DurableRef.Null);
+        Assert.False(ValueBox.DurableRefFace.UpdateOrInit(ref box, DurableRef.Null));
     }
 
     [Fact]
     public void SetDurableObject_NullToNonNull_ReturnsTrue() {
-        var box = ValueBox.DurableObjectFace.From((DurableObject?)null);
-        var obj = Durable.Dict<string>();
-        Assert.True(ValueBox.DurableObjectFace.UpdateOrInit(ref box, obj));
+        var box = ValueBox.DurableRefFace.From(DurableRef.Null);
+        var obj = new DurableRef(DurableObjectKind.MixedDict, new LocalId(0x1234));
+        Assert.True(ValueBox.DurableRefFace.UpdateOrInit(ref box, obj));
     }
 }

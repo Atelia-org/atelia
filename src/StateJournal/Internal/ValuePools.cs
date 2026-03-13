@@ -13,6 +13,4 @@ internal static class ValuePools {
 
     /// <summary>字符串去重池。同值字符串共享同一 SlotHandle，保证 <see cref="ValueBox.ValueEquals"/> 快速路径命中。</summary>
     public static InternPool<string> OfString { get; } = new InternPool<string>(StringComparer.Ordinal);
-
-    public static InternPool<DurableObject> OfDurableObject { get; } = new InternPool<DurableObject>(ReferenceEqualityComparer.Instance);
 }

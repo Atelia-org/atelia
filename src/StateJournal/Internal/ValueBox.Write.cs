@@ -17,6 +17,9 @@ partial struct ValueBox {
             case BoxLzc.HeapSlot:
                 WriteHeapValue(writer);
                 break;
+            case BoxLzc.DurableRef:
+                writer.TaggedDurableRef(DecodeDurableRef());
+                break;
             case BoxLzc.Boolean:
                 writer.TaggedBoolean(DecodeBoolean());
                 break;

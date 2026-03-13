@@ -8,6 +8,8 @@ public enum GetIssue : byte {
     Saturated,
     OverflowedToInfinity,
 
+    LoadFailed,
+
     TypeMismatch = byte.MaxValue - 2,
     NotFound = byte.MaxValue - 1,
     UnsupportedType = byte.MaxValue,

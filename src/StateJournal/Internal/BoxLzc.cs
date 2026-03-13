@@ -12,8 +12,10 @@ internal enum BoxLzc : byte {
     InlineNonnegInt = 1,
     InlineNegInt = 2,
     // 3..23 未分配
-    HeapSlot = 64 - 1 - ValueBox.HeapKindBitCount - ValueBox.ExclusiveBitCount - ValueBox.HeapHandleBitCount,
-    // 25..61 未分配
+    HeapSlot = 64 - 1 - ValueBox.HeapKindBitCount - ValueBox.ExclusiveBitCount - ValueBox.HeapHandleBitCount, // 24
+    // 25..26 未分配
+    DurableRef = 64 - 1 - ValueBox.DurRefKindBitCount - ValueBox.DurRefIdBitCount, // 27
+    // 28..61 未分配
     Boolean = 62,
     Null = 63,
     Uninitialized = 64,
@@ -41,6 +43,9 @@ internal static class LzcConstants {
 
     /// <summary>HeapSlot tag bit (bit39=1 → LZC=24)。编码堆分配软指针时必须置位。</summary>
     internal const ulong HeapSlotTag = 1UL << (63 - (int)BoxLzc.HeapSlot);
+
+    /// <summary>指向DurableObject的LocalId。</summary>
+    internal const ulong DurableRefTag = 1UL << (63 - (int)BoxLzc.DurableRef);
 
     /// <summary>InlineNonnegativeInteger 的 inline 容量上界（不含）：[0, 2^62)。</summary>
     internal const ulong NonnegIntInlineCap = 1UL << (64 - (int)BoxLzc.InlineNonnegInt - 1);

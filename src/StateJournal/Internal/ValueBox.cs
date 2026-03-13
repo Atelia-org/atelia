@@ -31,7 +31,28 @@ public readonly partial struct ValueBox {
     public readonly bool IsNull => GetBits() == LzcConstants.BoxNull;
     internal readonly bool IsUninitialized => GetBits() == LzcConstants.BoxUninitialized;
 
-    public readonly ValueKind GetValueKind() => throw new NotImplementedException(); // AI TODO
+    public readonly ValueKind GetValueKind() => GetLzc() switch {
+        BoxLzc.InlineDouble => ValueKind.FloatingPoint,
+        BoxLzc.InlineNonnegInt => ValueKind.NonnegativeInteger,
+        BoxLzc.InlineNegInt => ValueKind.NegativeInteger,
+        BoxLzc.HeapSlot => GetHeapKind() switch {
+            HeapValueKind.FloatingPoint => ValueKind.FloatingPoint,
+            HeapValueKind.NonnegativeInteger => ValueKind.NonnegativeInteger,
+            HeapValueKind.NegativeInteger => ValueKind.NegativeInteger,
+            HeapValueKind.String => ValueKind.String,
+            _ => throw new UnreachableException()
+        },
+        BoxLzc.DurableRef => GetDurRefKind() switch {
+            DurableObjectKind.MixedDict => ValueKind.MixedDict,
+            DurableObjectKind.TypedDict => ValueKind.TypedDict,
+            DurableObjectKind.MixedList => ValueKind.MixedList,
+            DurableObjectKind.TypedList => ValueKind.TypedList,
+            _ => throw new UnreachableException()
+        },
+        BoxLzc.Boolean => ValueKind.Boolean,
+        BoxLzc.Null => ValueKind.Null,
+        _ => throw new UnreachableException()
+    };
 
     #region HeapSlot
     internal const int HeapKindBitCount = 6, ExclusiveBitCount = 1, HeapHandleBitCount = 32;
