@@ -25,7 +25,6 @@ public abstract class DurableDictBase<TKey, TValue> : DurableObject
 
     #region Abstract Hooks
 
-    private protected abstract ObjectKind DictObjectKind { get; }
     private protected abstract void CommitCore();
     private protected abstract void SyncCurrentFromCommittedCore();
     private protected abstract void WriteRebaseCore(IDiffWriter writer, DiffWriteContext context);
@@ -62,14 +61,14 @@ public abstract class DurableDictBase<TKey, TValue> : DurableObject
             writer.WriteBytes(TypeCode); // 非空TypeCode表示rebase frame
             _versionStatus.WriteRebase(writer, rebaseSize);
             WriteRebaseCore(writer, context);
-            return new(UsageKind.Blank, DictObjectKind, VersionKind.Rebase);
+            return new(UsageKind.Blank, Kind, VersionKind.Rebase);
         }
         else {
             context.SetOutcome(wasRebase: false, rebaseSize, deltifySize);
             writer.WriteBytes(null); // 空TypeCode表示deltify frame
             _versionStatus.WriteDeltify(writer, deltifySize);
             WriteDeltifyCore(writer, context);
-            return new(UsageKind.Blank, DictObjectKind, VersionKind.Delta);
+            return new(UsageKind.Blank, Kind, VersionKind.Delta);
         }
     }
 

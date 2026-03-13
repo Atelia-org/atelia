@@ -6,9 +6,9 @@ using Atelia.StateJournal.Serialization;
 namespace Atelia.StateJournal.Internal;
 
 internal static class VersionChain {
-    private static bool TryInferObjectKind(Type type, out ObjectKind kind) {
+    private static bool TryInferObjectKind(Type type, out DurableObjectKind kind) {
         if (type == typeof(DurableList)) {
-            kind = ObjectKind.MixedList;
+            kind = DurableObjectKind.MixedList;
             return true;
         }
 
@@ -19,15 +19,15 @@ internal static class VersionChain {
 
         var def = type.GetGenericTypeDefinition();
         if (def == typeof(DurableDict<,>)) {
-            kind = ObjectKind.TypedDict;
+            kind = DurableObjectKind.TypedDict;
             return true;
         }
         if (def == typeof(DurableDict<>)) {
-            kind = ObjectKind.MixedDict;
+            kind = DurableObjectKind.MixedDict;
             return true;
         }
         if (def == typeof(DurableList<>)) {
-            kind = ObjectKind.TypedList;
+            kind = DurableObjectKind.TypedList;
             return true;
         }
 
@@ -71,14 +71,14 @@ internal static class VersionChain {
         IRbfFile file,
         SizedPtr versionTicket,
         UsageKind? expectUsage = null,
-        ObjectKind? expectObject = null
+        DurableObjectKind? expectObject = null
     ) {
         Stack<(RbfPooledFrame Frame, int ConsumedCount, SizedPtr PreviousVersion)> deltaChain = new(256);
         HashSet<SizedPtr> visitedTickets = new();
         try {
             ReadOnlySpan<byte> typeCode;
             SizedPtr readTarget = versionTicket;
-            ObjectKind? chainObjectKind = null;
+            DurableObjectKind? chainObjectKind = null;
             do {
                 if (!visitedTickets.Add(readTarget)) {
                     return new SjCorruptionError(
@@ -142,7 +142,7 @@ internal static class VersionChain {
             }
             Debug.Assert(
                 !chainObjectKind.HasValue
-                || !TryInferObjectKind(targetType, out ObjectKind decodedObjectKind)
+                || !TryInferObjectKind(targetType, out DurableObjectKind decodedObjectKind)
                 || chainObjectKind.Value == decodedObjectKind,
                 $"ObjectKind mismatch between frame tag and decoded type: tag={chainObjectKind}, type={targetType}."
             );

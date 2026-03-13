@@ -6,7 +6,7 @@ namespace Atelia.StateJournal.Internal;
 partial struct ValueBox {
 
     internal readonly struct StringFace : ITypedFace<string> {
-        internal const uint TagHeapKindString = (uint)(LzcConstants.HeapSlotTag >> KindShift) | (uint)ValueKind.String;
+        internal const uint TagHeapKindString = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)ValueKind.String;
 
         /// <summary>
         /// 将字符串编码为 ValueBox。通过 <see cref="ValuePools.OfString"/> InternPool 去重。
@@ -16,7 +16,7 @@ partial struct ValueBox {
         /// 保证 <see cref="ValueEquals"/> 快速路径命中（bits 相等 → 值相等）。
         /// </remarks>
         public static ValueBox From(string? value) => value is not null
-            ? EncodeHeapSlot(ValueKind.String, ValuePools.OfString.Store(value))
+            ? EncodeHeapSlot(HeapValueKind.String, ValuePools.OfString.Store(value))
             : Null;
         /// <summary>
         /// 独占更新：将 ValueBox 覆写为指定的字符串值。
@@ -51,7 +51,7 @@ partial struct ValueBox {
                 return GetIssue.None;
             }
             // if (GetLZC() == LzcCode.HeapSlot && GetHeapKind() == DurableValueKind.String) {
-            if ((uint)(box._bits >> KindShift) == TagHeapKindString) {
+            if ((uint)(box.GetBits() >> HeapKindShift) == TagHeapKindString) {
                 value = ValuePools.OfString[box.GetHeapHandle()];
                 return GetIssue.None;
             }
@@ -63,7 +63,7 @@ partial struct ValueBox {
     /// <summary>解码 HeapSlot 中的字符串值。调用前须确保 LZC == HeapSlot 且 HeapKind == String。</summary>
     private string DecodeString() {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
-        Debug.Assert(GetHeapKind() == ValueKind.String);
+        Debug.Assert(GetHeapKind() == HeapValueKind.String);
         return ValuePools.OfString[GetHeapHandle()];
     }
 }

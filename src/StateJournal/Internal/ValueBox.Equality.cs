@@ -30,7 +30,7 @@ partial struct ValueBox {
         Debug.Assert(!b.IsUninitialized);
         ulong diffBits;
         uint tagAndKind; // 用于快速判断是否是堆上浮点或整数
-        return (diffBits = a._bits ^ b._bits) == 0
+        return (diffBits = a.GetBits() ^ b.GetBits()) == 0
             || ((diffBits & ~ExclusiveBit) == 0 && a.GetLzc() == BoxLzc.HeapSlot) // 仅有ExclusiveBit差异的两个HeapSlot
             || (IsHeapFloatOrInteger(tagAndKind = a.GetTagAndKind()) // a是`ValuePools.Bits64`值
                 && tagAndKind == b.GetTagAndKind() // b与a类型相同
@@ -62,9 +62,9 @@ partial struct ValueBox {
             // return HashCode.Combine(box.GetHeapKind(), raw); // 似乎杀鸡用牛刀了
             return ((int)box.GetHeapKind() * 16777619) ^ raw.GetHashCode();
         }
-        if (box.GetLzc() == BoxLzc.HeapSlot) { return (box._bits & ~ExclusiveBit).GetHashCode(); }
+        if (box.GetLzc() == BoxLzc.HeapSlot) { return (box.GetBits() & ~ExclusiveBit).GetHashCode(); }
         // inline 值 或 InternPool 引用：bits 即值
-        return box._bits.GetHashCode();
+        return box.GetBits().GetHashCode();
     }
 
     /// <summary>

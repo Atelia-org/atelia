@@ -13,7 +13,6 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         _core.Revert<ValueBoxHelper>();
     }
 
-    private protected override ObjectKind DictObjectKind => ObjectKind.MixedDict;
     private protected override void CommitCore() => _core.Commit<ValueBoxHelper>();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<ValueBoxHelper>();
     private protected override void WriteRebaseCore(IDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<KHelper, ValueBoxHelper>(writer, context);

@@ -30,29 +30,21 @@ partial struct ValueBox {
 
     private void WriteHeapValue(IDiffWriter writer) {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
-        ValueKind valueKind = GetHeapKind();
+        HeapValueKind valueKind = GetHeapKind();
         switch (valueKind) {
-            case ValueKind.String:
-                writer.TaggedString(DecodeString());
-                break;
-            case ValueKind.FloatingPoint:
+            case HeapValueKind.FloatingPoint:
                 writer.TaggedFloatingPoint(DecodeHeapDouble());
                 break;
-            case ValueKind.NonnegativeInteger:
+            case HeapValueKind.NonnegativeInteger:
                 writer.TaggedNonnegativeInteger(DecodeHeapNonnegInt());
                 break;
-            case ValueKind.NegativeInteger:
+            case HeapValueKind.NegativeInteger:
                 writer.TaggedNegativeInteger(DecodeHeapNegInt());
                 break;
-            case ValueKind.MixedDict:
-            case ValueKind.TypedDict:
-            case ValueKind.MixedList:
-            case ValueKind.TypedList:
-                writer.TaggedDurableObjectRef(DecodeDurableObject().LocalId);
+            case HeapValueKind.String:
+                writer.TaggedString(DecodeString());
                 break;
-            case ValueKind.Uninitialized: // 未初始化的ValueBox不应该参与序列化
-            case ValueKind.Null: // `null`值应该永远使用简单值而非堆分配
-            case ValueKind.Boolean: // Boolean应该永远内联
+            case HeapValueKind.Blank: // 未初始化的ValueBox不应该参与序列化
             default:
                 throw new UnreachableException();
         }

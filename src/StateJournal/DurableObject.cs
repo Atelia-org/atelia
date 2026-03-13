@@ -5,7 +5,7 @@ using Atelia.StateJournal.Serialization;
 namespace Atelia.StateJournal;
 
 public abstract class DurableObject {
-    public abstract ValueKind Kind { get; }
+    public abstract DurableObjectKind Kind { get; }
 
     DurableState _state;
 

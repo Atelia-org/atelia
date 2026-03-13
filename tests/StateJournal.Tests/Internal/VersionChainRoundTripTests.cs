@@ -381,7 +381,7 @@ public class VersionChainRoundTripTests : IDisposable {
             }
         );
 
-        uint tag = new FrameTag(UsageKind.Blank, ObjectKind.TypedDict, VersionKind.Rebase).Bits;
+        uint tag = new FrameTag(UsageKind.Blank, DurableObjectKind.TypedDict, VersionKind.Rebase).Bits;
         var append = file.Append(tag, payload);
         Assert.True(append.IsSuccess);
 
@@ -394,7 +394,7 @@ public class VersionChainRoundTripTests : IDisposable {
     public void Load_CyclicVersionChain_ReturnsCorruptionError() {
         var ticketA = SizedPtr.Create(4, 4);
         var ticketB = SizedPtr.Create(8, 4);
-        uint deltaTag = new FrameTag(UsageKind.Blank, ObjectKind.TypedDict, VersionKind.Delta).Bits;
+        uint deltaTag = new FrameTag(UsageKind.Blank, DurableObjectKind.TypedDict, VersionKind.Delta).Bits;
 
         byte[] payloadA = BuildPayload(
             writer => {
@@ -432,7 +432,7 @@ public class VersionChainRoundTripTests : IDisposable {
         var save = VersionChain.Save(dict, file);
         Assert.True(save.IsSuccess);
 
-        var load = VersionChain.Load(file, save.Value, expectObject: ObjectKind.MixedDict);
+        var load = VersionChain.Load(file, save.Value, expectObject: DurableObjectKind.MixedDict);
         Assert.True(load.IsFailure);
         var err = Assert.IsType<SjCorruptionError>(load.Error);
         Assert.Contains("Unexpected ObjectKind", err.Message, StringComparison.OrdinalIgnoreCase);
@@ -469,7 +469,7 @@ public class VersionChainRoundTripTests : IDisposable {
                 writer.WriteCount(0);
             }
         );
-        uint tag = new FrameTag(UsageKind.Blank, ObjectKind.TypedDict, VersionKind.Delta).Bits;
+        uint tag = new FrameTag(UsageKind.Blank, DurableObjectKind.TypedDict, VersionKind.Delta).Bits;
         var append = file.Append(tag, payload);
         Assert.True(append.IsSuccess);
 

@@ -21,7 +21,7 @@ namespace Atelia.StateJournal.Internal.Tests;
 public class ValueBoxEqualityTests {
 
     private sealed class FakeDurable : DurableObject {
-        public override ValueKind Kind => ValueKind.MixedDict;
+        public override DurableObjectKind Kind => DurableObjectKind.MixedDict;
         public override bool HasChanges => false;
         internal override SizedPtr LatestVersionTicket => default;
         internal override bool HasBeenSaved => false;

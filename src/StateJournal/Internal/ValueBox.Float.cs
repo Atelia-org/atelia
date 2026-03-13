@@ -34,7 +34,7 @@ partial struct ValueBox {
             ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
             return (doubleBits & 1) == 0
                 ? FromInlineableDoubleBits(doubleBits)
-                : EncodeHeapSlot(ValueKind.FloatingPoint, ValuePools.OfBits64.Store(doubleBits));
+                : EncodeHeapSlot(HeapValueKind.FloatingPoint, ValuePools.OfBits64.Store(doubleBits));
         }
 
         /// <summary>
@@ -51,7 +51,7 @@ partial struct ValueBox {
             }
             else {
                 SlotHandle h = StoreOrReuseBits64(old, doubleBits);
-                old = EncodeHeapSlot(ValueKind.FloatingPoint, h);
+                old = EncodeHeapSlot(HeapValueKind.FloatingPoint, h);
             }
             return true;
         }
@@ -88,14 +88,14 @@ partial struct ValueBox {
                 return IsExactAsSingle((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;
             }
             if (lzc == BoxLzc.HeapSlot) {
-                ValueKind kind = box.GetHeapKind();
-                if (kind == ValueKind.FloatingPoint) { return NarrowToSingle(box.DecodeHeapDouble(), out value); }
-                if (kind == ValueKind.NonnegativeInteger) {
+                HeapValueKind kind = box.GetHeapKind();
+                if (kind == HeapValueKind.FloatingPoint) { return NarrowToSingle(box.DecodeHeapDouble(), out value); }
+                if (kind == HeapValueKind.NonnegativeInteger) {
                     ulong u = box.DecodeHeapNonnegInt();
                     value = (float)u; // 堆中正整数MSB可能为1，不能先转signed
                     return IsExactAsSingle(u) ? GetIssue.None : GetIssue.PrecisionLost;
                 }
-                if (kind == ValueKind.NegativeInteger) {
+                if (kind == HeapValueKind.NegativeInteger) {
                     long n = box.DecodeHeapNegInt();
                     value = (float)n;
                     // 当 n = long.MinValue (-2⁶³) 时，-n 在 long 中溢出回到 long.MinValue，但 (ulong)long.MinValue = 2⁶³ 恰好是正确的 magnitude。
@@ -139,13 +139,13 @@ partial struct ValueBox {
                 return IsExactAsHalf((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;
             }
             if (lzc == BoxLzc.HeapSlot) {
-                ValueKind kind = box.GetHeapKind();
-                if (kind == ValueKind.FloatingPoint) { return NarrowToHalf(box.DecodeHeapDouble(), out value); }
-                if (kind == ValueKind.NonnegativeInteger) {
+                HeapValueKind kind = box.GetHeapKind();
+                if (kind == HeapValueKind.FloatingPoint) { return NarrowToHalf(box.DecodeHeapDouble(), out value); }
+                if (kind == HeapValueKind.NonnegativeInteger) {
                     value = Half.PositiveInfinity; // 因为需要放进Heap的整数都超过FP16的表示范围，所以不用真的从堆里把数读出来。
                     return GetIssue.OverflowedToInfinity;
                 }
-                if (kind == ValueKind.NegativeInteger) {
+                if (kind == HeapValueKind.NegativeInteger) {
                     value = Half.NegativeInfinity;
                     return GetIssue.OverflowedToInfinity;
                 }
@@ -173,10 +173,10 @@ partial struct ValueBox {
     private bool TryDecodeDoubleRawBits(out ulong doubleBits) {
         BoxLzc lzc = GetLzc();
         if (lzc == BoxLzc.InlineDouble) {
-            doubleBits = _bits << 1;
+            doubleBits = GetBits() << 1;
             return true;
         }
-        if (lzc == BoxLzc.HeapSlot && GetHeapKind() == ValueKind.FloatingPoint) {
+        if (lzc == BoxLzc.HeapSlot && GetHeapKind() == HeapValueKind.FloatingPoint) {
             doubleBits = ValuePools.OfBits64[GetHeapHandle()];
             return true;
         }
@@ -207,13 +207,13 @@ partial struct ValueBox {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private double DecodeInlineDouble() {
         Debug.Assert(GetLzc() == BoxLzc.InlineDouble);
-        return BitConverter.UInt64BitsToDouble(_bits << 1);
+        return BitConverter.UInt64BitsToDouble(GetBits() << 1);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private double DecodeHeapDouble() {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
-        Debug.Assert(GetHeapKind() == ValueKind.FloatingPoint);
+        Debug.Assert(GetHeapKind() == HeapValueKind.FloatingPoint);
         return BitConverter.UInt64BitsToDouble(ValuePools.OfBits64[GetHeapHandle()]);
     }
 
@@ -262,17 +262,17 @@ partial struct ValueBox {
             return IsExactAsDouble((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;
         }
         if (lzc == BoxLzc.HeapSlot) {
-            ValueKind kind = GetHeapKind();
-            if (kind == ValueKind.FloatingPoint) {
+            HeapValueKind kind = GetHeapKind();
+            if (kind == HeapValueKind.FloatingPoint) {
                 value = DecodeHeapDouble();
                 return GetIssue.None;
             }
-            if (kind == ValueKind.NonnegativeInteger) {
+            if (kind == HeapValueKind.NonnegativeInteger) {
                 ulong u = DecodeHeapNonnegInt();
                 value = (double)u; // 堆中正整数MSB可能为1，不能先转signed
                 return IsExactAsDouble(u) ? GetIssue.None : GetIssue.PrecisionLost;
             }
-            if (kind == ValueKind.NegativeInteger) {
+            if (kind == HeapValueKind.NegativeInteger) {
                 long n = DecodeHeapNegInt();
                 value = (double)n;
                 return IsExactAsDouble((ulong)-n) ? GetIssue.None : GetIssue.PrecisionLost;

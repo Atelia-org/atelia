@@ -5,7 +5,7 @@ namespace Atelia.StateJournal.Internal;
 
 // 仅占位，尚未实现
 internal class MixedListImpl : DurableList {
-    public override ValueKind Kind => ValueKind.MixedList;
+    public override DurableObjectKind Kind => DurableObjectKind.MixedList;
     public override bool HasChanges => false;
 
     internal MixedListImpl() {

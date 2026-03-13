@@ -5,7 +5,7 @@ public class DurableEpoch {
     public EpochId ParentId { get; }
     public EpochId Id { get; }
     public DurableRepo Repo { get; }
-    public AteliaResult<T> LoadAs<T>(LocalId id) where T : DurableObject {
+    public AteliaResult<DurableObject> Load(LocalId id) {
         throw new NotImplementedException();
     }
 

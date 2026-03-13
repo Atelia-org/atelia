@@ -34,7 +34,7 @@ where TKey : notnull {
     }
 
     #region DurableObject
-    public override ValueKind Kind => ValueKind.MixedDict;
+    public override DurableObjectKind Kind => DurableObjectKind.MixedDict;
     #endregion
 
     #region Generic Accessor

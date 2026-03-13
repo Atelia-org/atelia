@@ -13,7 +13,7 @@ where TKey : notnull where TValue : notnull {
     }
 
     #region DurableObject
-    public override ValueKind Kind => ValueKind.TypedDict;
+    public override DurableObjectKind Kind => DurableObjectKind.TypedDict;
     #endregion
 
     // ── IDict<TKey> ─────────────────────────────────────────────

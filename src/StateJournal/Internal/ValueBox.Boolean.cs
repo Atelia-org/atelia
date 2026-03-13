@@ -11,14 +11,14 @@ partial struct ValueBox {
         /// Boolean 始终 inline 编码，因此只需清理旧 Bits64 slot（如有）。</summary>
         public static bool UpdateOrInit(ref ValueBox old, bool value) {
             // if (old.GetLzc() == BoxLzc.Boolean && old.DecodeBoolean() == value) { return false; }
-            if (old._bits == (value ? LzcConstants.BoxTrue : LzcConstants.BoxFalse)) { return false; }
+            if (old.GetBits() == (value ? LzcConstants.BoxTrue : LzcConstants.BoxFalse)) { return false; }
             FreeOldBits64IfNeeded(old);
             old = From(value);
             return true;
         }
         public static GetIssue Get(ValueBox box, out bool value) {
             Debug.Assert(!box.IsUninitialized);
-            return box._bits switch {
+            return box.GetBits() switch {
                 LzcConstants.BoxFalse => (GetIssue.None, value = false).Item1,
                 LzcConstants.BoxTrue => (GetIssue.None, value = true).Item1,
                 _ => (GetIssue.TypeMismatch, value = default).Item1,
@@ -27,6 +27,6 @@ partial struct ValueBox {
     }
     private bool DecodeBoolean() {
         Debug.Assert(GetLzc() == BoxLzc.Boolean);
-        return _bits == LzcConstants.BoxTrue;
+        return GetBits() == LzcConstants.BoxTrue;
     }
 }
