@@ -23,8 +23,8 @@ public class ValueBoxEqualityTests {
     private sealed class FakeDurable : DurableObject {
         public override DurableObjectKind Kind => DurableObjectKind.MixedDict;
         public override bool HasChanges => false;
-        internal override SizedPtr LatestVersionTicket => default;
-        internal override bool HasBeenSaved => false;
+        internal override SizedPtr HeadTicket => default;
+        internal override bool IsTracked => false;
         internal override FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
         internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) => throw new NotSupportedException();
         public override void DiscardChanges() => throw new NotSupportedException();

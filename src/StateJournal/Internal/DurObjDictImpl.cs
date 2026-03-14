@@ -7,7 +7,7 @@ namespace Atelia.StateJournal.Internal;
 /// <see cref="DurableDict{TKey, TValue}"/> 的 DurableObject 值类型专用实现。
 /// 内部以 <see cref="LocalId"/> 存储引用，对外通过 <see cref="DurableDict{TKey, TValue}"/>
 /// 提供 <typeparamref name="TDurObj"/> 的读写接口。
-/// Get 时委托 <see cref="DurableObject.Epoch"/> 按需加载实例。
+/// Get 时委托 <see cref="DurableObject.Revision"/> 按需加载实例。
 /// </summary>
 internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurObj>
     where TKey : notnull
@@ -57,7 +57,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
         if (!_core.Current.TryGetValue(key, out var localId)) { return GetIssue.NotFound; }
         if (localId.IsNull) { return GetIssue.None; }
 
-        var loadResult = Epoch.Load(localId);
+        var loadResult = Revision.Load(localId);
         if (loadResult.IsFailure) { return GetIssue.LoadFailed; }
         if (loadResult.Value is not TDurObj typed) { return GetIssue.LoadFailed; }
 

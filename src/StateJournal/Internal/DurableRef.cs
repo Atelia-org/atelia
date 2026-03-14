@@ -1,4 +1,4 @@
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 /// <summary>
 /// 指向 <see cref="DurableObject"/> 的轻量引用，由 (<see cref="Kind"/>, <see cref="Id"/>) 构成。

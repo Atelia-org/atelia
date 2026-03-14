@@ -207,7 +207,7 @@ where TKey : notnull {
 
         if (durRef.IsNull) { return GetIssue.None; }
 
-        AteliaResult<DurableObject> loadResult = Epoch.Load(durRef.Id);
+        AteliaResult<DurableObject> loadResult = Revision.Load(durRef.Id);
         if (loadResult.IsFailure) { return GetIssue.LoadFailed; }
         DurableObject? loaded = loadResult.Value;
         if (loaded is null || loaded.Kind != durRef.Kind) { return GetIssue.LoadFailed; }

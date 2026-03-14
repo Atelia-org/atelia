@@ -352,8 +352,8 @@ public class VersionChainRoundTripTests : IDisposable {
         var loaded = loadResult.Value!;
 
         // 修复前 LatestVersionTicket 会是 default(SizedPtr)
-        Assert.Equal(ticket, loaded.LatestVersionTicket);
-        Assert.True(loaded.HasBeenSaved);
+        Assert.Equal(ticket, loaded.HeadTicket);
+        Assert.True(loaded.IsTracked);
 
         // 无变更 Save 幂等返回同一 ticket
         var resave = VersionChain.Save(loaded, file);

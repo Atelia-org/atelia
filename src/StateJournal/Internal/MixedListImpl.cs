@@ -12,10 +12,10 @@ internal class MixedListImpl : DurableList {
     }
 
     public override void DiscardChanges() => throw new NotImplementedException();
-    internal override SizedPtr LatestVersionTicket => throw new NotImplementedException();
-    internal override bool HasBeenSaved => throw new NotImplementedException();
+    internal override SizedPtr HeadTicket => throw new NotImplementedException();
+    internal override bool IsTracked => throw new NotImplementedException();
     internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) => throw new NotImplementedException();
     internal override FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotImplementedException();
-    internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion) => throw new NotImplementedException();
+    internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr parentTicket) => throw new NotImplementedException();
     internal override void OnLoadCompleted(SizedPtr versionTicket) => throw new NotImplementedException();
 }

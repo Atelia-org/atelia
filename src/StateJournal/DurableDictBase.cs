@@ -31,8 +31,8 @@ public abstract class DurableDictBase<TKey> : DurableObject
 
     #region Version Chain
 
-    internal sealed override SizedPtr LatestVersionTicket => _versionStatus.CommittedVersion;
-    internal sealed override bool HasBeenSaved => _versionStatus.HasCommittedVersion;
+    internal sealed override SizedPtr HeadTicket => _versionStatus.Head;
+    internal sealed override bool IsTracked => _versionStatus.IsTracked;
 
     #endregion
 
@@ -68,15 +68,15 @@ public abstract class DurableDictBase<TKey> : DurableObject
         }
     }
 
-    internal sealed override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion) {
+    internal sealed override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr parentTicket) {
         Debug.Assert(RebaseCount == 0);
         Debug.Assert(DeltifyCount == 0);
-        _versionStatus.ApplyDelta(ref reader, previousVersion);
+        _versionStatus.ApplyDelta(ref reader, parentTicket);
         ApplyDeltaCore(ref reader);
     }
 
     internal sealed override void OnLoadCompleted(SizedPtr versionTicket) {
-        _versionStatus.SetLoadedVersionTicket(versionTicket);
+        _versionStatus.SetHead(versionTicket);
         SyncCurrentFromCommittedCore();
     }
 

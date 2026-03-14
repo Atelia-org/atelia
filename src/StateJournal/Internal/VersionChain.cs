@@ -43,7 +43,7 @@ internal static class VersionChain {
     /// </remarks>
     internal static AteliaResult<SizedPtr> Save(DurableObject obj, IRbfFile file, bool forceRebase = false) {
         DiffWriteContext context = new() { ForceRebase = forceRebase };
-        if (!obj.HasChanges && !forceRebase && obj.HasBeenSaved) { return obj.LatestVersionTicket; }
+        if (!obj.HasChanges && !forceRebase && obj.IsTracked) { return obj.HeadTicket; }
         using RbfFrameBuilder builder = file.BeginAppend();
         RbfPayloadWriter rbfWriter = builder.PayloadAndMeta;
         BinaryDiffWriter diffWriter = new(rbfWriter);
@@ -73,7 +73,7 @@ internal static class VersionChain {
         UsageKind? expectUsage = null,
         DurableObjectKind? expectObject = null
     ) {
-        Stack<(RbfPooledFrame Frame, int ConsumedCount, SizedPtr PreviousVersion)> deltaChain = new(256);
+        Stack<(RbfPooledFrame Frame, int ConsumedCount, SizedPtr ParentTicket)> deltaChain = new(256);
         HashSet<SizedPtr> visitedTickets = new();
         try {
             ReadOnlySpan<byte> typeCode;
@@ -120,9 +120,9 @@ internal static class VersionChain {
                         RecoveryHint: "The frame metadata and payload are inconsistent."
                     );
                 }
-                SizedPtr previousVersion = SizedPtr.Deserialize(reader.BareUInt64(false));
-                deltaChain.Push((frame, reader.ConsumedCount, previousVersion));
-                readTarget = previousVersion;
+                SizedPtr parentTicket = SizedPtr.Deserialize(reader.BareUInt64(false));
+                deltaChain.Push((frame, reader.ConsumedCount, parentTicket));
+                readTarget = parentTicket;
             } while (typeCode.IsEmpty);
             Debug.Assert(!typeCode.IsEmpty);
             Debug.Assert(deltaChain.Count > 0);
@@ -153,7 +153,7 @@ internal static class VersionChain {
             while (deltaChain.Count > 0) {
                 var version = deltaChain.Peek();
                 BinaryDiffReader reader = new(version.Frame.PayloadAndMeta[version.ConsumedCount..]);
-                result.ApplyDelta(ref reader, version.PreviousVersion);
+                result.ApplyDelta(ref reader, version.ParentTicket);
                 reader.EnsureFullyConsumed();
                 version.Frame.Dispose();
                 deltaChain.Pop();

@@ -10,9 +10,9 @@ internal enum UsageKind : uint {
     Blank = 0,
     UserPayload = 1 << FrameTag.UsageKindShift,
 
-    /// <summary>LocalId -&gt; SizedPtr, DurableDict&lt;uint, ulong&gt;。
-    /// 是一个Epoch最重要的内容之一。</summary>
-    VersionTable = 2 << FrameTag.UsageKindShift,
+    /// <summary><see cref="LocalId"/> → <see cref="SizedPtr"/>, <see cref="DurableDict{uint, ulong}"/>。
+    /// 是一个<see cref="Revision"/>最重要的内容之一。</summary>
+    ObjectMap = 2 << FrameTag.UsageKindShift,
 }
 
 internal readonly struct FrameTag(uint bits) {
@@ -48,7 +48,7 @@ internal readonly struct FrameTag(uint bits) {
                 RecoveryHint: "The frame metadata is malformed."
             );
         }
-        if (UsageKind is not UsageKind.Blank and not UsageKind.UserPayload and not UsageKind.VersionTable) {
+        if (UsageKind is not UsageKind.Blank and not UsageKind.UserPayload and not UsageKind.ObjectMap) {
             return new SjCorruptionError(
                 $"Invalid UsageKind in frame tag at offset {offset}: {UsageKind}.",
                 RecoveryHint: "The frame metadata is malformed."

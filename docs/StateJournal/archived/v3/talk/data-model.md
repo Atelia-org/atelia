@@ -30,7 +30,7 @@ Read [](file:///repos/focus/atelia/src/StateJournal/DurableList.cs)
 
 Read [](file:///repos/focus/atelia/src/StateJournal/DurableEpoch.cs)
 
-Read [](file:///repos/focus/atelia/src/StateJournal/DurableRepo.cs)
+Read [](file:///repos/focus/atelia/src/StateJournal/Repository.cs)
 
 Read [](file:///repos/focus/agent-team/wiki/StateJournal/jam-brief-1.md)
 
