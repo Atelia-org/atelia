@@ -19,21 +19,6 @@ public abstract class DurableObject {
     /// <inheritdoc/>
     public abstract bool HasChanges { get; }
 
-    public bool IsLoaded {
-        get {
-            ThrowIfDetached();
-            return _state != DurableState.Unloaded;
-        }
-    }
-
-    /// <summary>确保内容已加载，未加载则触发回放</summary>
-    protected void EnsureLoaded() {
-        if (!IsLoaded) {
-            Revision.Materialize(this); // 回放版本链，填充 _committed/_current
-            _state = DurableState.Clean;
-        }
-    }
-
     /// <returns>RBF frame tag</returns>
     internal abstract FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context);
 
@@ -67,10 +52,5 @@ public abstract class DurableObject {
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
     protected void ThrowIfDetached() {
         if (_state == DurableState.Detached) { throw new ObjectDetachedException(LocalId); }
-    }
-
-    protected void EnsureReady() {
-        ThrowIfDetached();
-        EnsureLoaded();
     }
 }

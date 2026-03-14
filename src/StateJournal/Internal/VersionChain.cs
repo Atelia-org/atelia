@@ -5,6 +5,22 @@ using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
 
+/// <summary>VersionChain.Load 的返回结果。</summary>
+internal readonly struct VersionChainLoadResult {
+    internal readonly DurableObject Object;
+    /// <summary>头帧（versionTicket 所指帧）内储存的 parentTicket 字段。
+    /// 对于 ObjectMap frame chain，此值即为父 commit 的 ticket（= 父 CommitId）。</summary>
+    internal readonly SizedPtr HeadParentTicket;
+    /// <summary>最新帧（version chain 头帧）的 tailMeta 数据。无 tailMeta 时为空数组。</summary>
+    internal readonly byte[] HeadTailMeta;
+
+    internal VersionChainLoadResult(DurableObject obj, SizedPtr headPreviousVersion, byte[] headTailMeta) {
+        Object = obj;
+        HeadParentTicket = headPreviousVersion;
+        HeadTailMeta = headTailMeta;
+    }
+}
+
 internal static class VersionChain {
     private static bool TryInferObjectKind(Type type, out DurableObjectKind kind) {
         if (type == typeof(DurableList)) {
@@ -42,13 +58,31 @@ internal static class VersionChain {
     /// - WritePendingDiff 抛异常 → 编程错误，不捕获，直接传播。
     /// </remarks>
     internal static AteliaResult<SizedPtr> Save(DurableObject obj, IRbfFile file, bool forceRebase = false) {
-        DiffWriteContext context = new() { ForceRebase = forceRebase };
-        if (!obj.HasChanges && !forceRebase && obj.IsTracked) { return obj.HeadTicket; }
+        return Save(obj, file, new DiffWriteContext { ForceRebase = forceRebase });
+    }
+
+    /// <summary>将 DurableObject 的待写入 diff 序列化并追加到 RBF 文件中。</summary>
+    /// <param name="obj">目标对象。</param>
+    /// <param name="file">RBF 文件。</param>
+    /// <param name="context">写入上下文，可指定 ForceRebase、UsageKindOverride。</param>
+    /// <param name="tailMeta">可选的 tailMeta 数据，附加到帧末尾。</param>
+    internal static AteliaResult<SizedPtr> Save(
+        DurableObject obj,
+        IRbfFile file,
+        DiffWriteContext context,
+        ReadOnlySpan<byte> tailMeta = default
+    ) {
+        if (!obj.HasChanges && !context.ForceRebase && !context.ForceSave && obj.IsTracked) { return obj.HeadTicket; }
         using RbfFrameBuilder builder = file.BeginAppend();
         RbfPayloadWriter rbfWriter = builder.PayloadAndMeta;
         BinaryDiffWriter diffWriter = new(rbfWriter);
         FrameTag frameTag = obj.WritePendingDiff(diffWriter, context);
-        AteliaResult<SizedPtr> appendResult = builder.EndAppend(tag: frameTag.Bits);
+        int tailMetaLength = tailMeta.Length;
+        if (tailMetaLength > 0) {
+            tailMeta.CopyTo(rbfWriter.GetSpan(tailMetaLength));
+            rbfWriter.Advance(tailMetaLength);
+        }
+        AteliaResult<SizedPtr> appendResult = builder.EndAppend(tag: frameTag.Bits, tailMetaLength: tailMetaLength);
         if (appendResult.IsFailure) {
             return new SjCorruptionError(
                 $"Failed to append version frame: {appendResult.Error!.Message}",
@@ -61,19 +95,31 @@ internal static class VersionChain {
     }
 
     /// <summary>从 RBF 文件加载版本链，重建 DurableObject。</summary>
-    /// <remarks>
-    /// 读取路径的失败来源：
-    /// - ReadPooledFrame 返回 AteliaResult 失败 → 包装为 SjCorruptionError 透传。
-    /// - BinaryDiffReader / ApplyDelta 抛 InvalidDataException → 由边界 catch 转换为 SjCorruptionError。
-    /// - TypeCodec.TryDecode / DurableFactory.TryCreate 返回 false → SjTypeResolutionError。
-    /// </remarks>
     internal static AteliaResult<DurableObject> Load(
         IRbfFile file,
         SizedPtr versionTicket,
         UsageKind? expectUsage = null,
         DurableObjectKind? expectObject = null
     ) {
-        Stack<(RbfPooledFrame Frame, int ConsumedCount, SizedPtr ParentTicket)> deltaChain = new(256);
+        var result = LoadFull(file, versionTicket, expectUsage, expectObject);
+        if (result.IsFailure) { return result.Error!; }
+        return result.Value.Object;
+    }
+
+    /// <summary>从 RBF 文件加载版本链，重建 DurableObject，同时返回头帧的 tailMeta。</summary>
+    /// <remarks>
+    /// 读取路径的失败来源：
+    /// - ReadPooledFrame 返回 AteliaResult 失败 → 包装为 SjCorruptionError 透传。
+    /// - BinaryDiffReader / ApplyDelta 抛 InvalidDataException → 由边界 catch 转换为 SjCorruptionError。
+    /// - TypeCodec.TryDecode / DurableFactory.TryCreate 返回 false → SjTypeResolutionError。
+    /// </remarks>
+    internal static AteliaResult<VersionChainLoadResult> LoadFull(
+        IRbfFile file,
+        SizedPtr versionTicket,
+        UsageKind? expectUsage = null,
+        DurableObjectKind? expectObject = null
+    ) {
+        Stack<(RbfPooledFrame Frame, int ConsumedCount, int TailMetaLength, SizedPtr ParentTicket)> deltaChain = new(256);
         HashSet<SizedPtr> visitedTickets = new();
         try {
             ReadOnlySpan<byte> typeCode;
@@ -105,7 +151,10 @@ internal static class VersionChain {
                 }
                 chainObjectKind ??= frameTag.ObjectKind;
 
-                ReadOnlySpan<byte> payload = frame.PayloadAndMeta;
+                // 切分 payload 和 tailMeta：PayloadAndMeta 的末尾 TailMetaLength 字节是 tailMeta
+                ReadOnlySpan<byte> payloadAndMeta = frame.PayloadAndMeta;
+                int tailMetaLen = frame.TailMetaLength;
+                ReadOnlySpan<byte> payload = tailMetaLen > 0 ? payloadAndMeta[..^tailMetaLen] : payloadAndMeta;
                 BinaryDiffReader reader = new(payload);
                 typeCode = reader.ReadBytes();
                 if (frameTag.VersionKind == VersionKind.Rebase && typeCode.IsEmpty) {
@@ -121,7 +170,7 @@ internal static class VersionChain {
                     );
                 }
                 SizedPtr parentTicket = SizedPtr.Deserialize(reader.BareUInt64(false));
-                deltaChain.Push((frame, reader.ConsumedCount, parentTicket));
+                deltaChain.Push((frame, reader.ConsumedCount, tailMetaLen, parentTicket));
                 readTarget = parentTicket;
             } while (typeCode.IsEmpty);
             Debug.Assert(!typeCode.IsEmpty);
@@ -147,19 +196,32 @@ internal static class VersionChain {
                 $"ObjectKind mismatch between frame tag and decoded type: tag={chainObjectKind}, type={targetType}."
             );
 
+            // deltaChain 是 Stack，底部是第一个被 Push 的（即 versionTicket 指向的头帧）。
+            // 头帧的 ParentTicket 即为版本链的前驱 ticket（ObjectMap 场景下 = 父 CommitId）。
+            byte[] headTailMeta = Array.Empty<byte>();
+            SizedPtr headParentTicket = default;
+
             // 从栈顶（rebase 帧）开始，依次向更新的 delta 帧应用变更。
             // 使用 Peek+Pop 而非 TryPop：若 ApplyDelta 抛异常，
             // 当前帧仍在栈中，finally 会负责释放。
             while (deltaChain.Count > 0) {
                 var version = deltaChain.Peek();
-                BinaryDiffReader reader = new(version.Frame.PayloadAndMeta[version.ConsumedCount..]);
+                ReadOnlySpan<byte> payloadAndMeta = version.Frame.PayloadAndMeta;
+                int tmLen = version.TailMetaLength;
+                ReadOnlySpan<byte> diffPayload = tmLen > 0 ? payloadAndMeta[version.ConsumedCount..^tmLen] : payloadAndMeta[version.ConsumedCount..];
+                BinaryDiffReader reader = new(diffPayload);
                 result.ApplyDelta(ref reader, version.ParentTicket);
                 reader.EnsureFullyConsumed();
+                // 最后弹出的帧是头帧（deltaChain 中最先 Push 的）：提取其 parentTicket 和 tailMeta
+                if (deltaChain.Count == 1) {
+                    headParentTicket = version.ParentTicket;
+                    if (tmLen > 0) { headTailMeta = payloadAndMeta[^tmLen..].ToArray(); }
+                }
                 version.Frame.Dispose();
                 deltaChain.Pop();
             }
             result.OnLoadCompleted(versionTicket);
-            return result;
+            return new VersionChainLoadResult(result, headParentTicket, headTailMeta);
         }
         catch (InvalidDataException ex) {
             return new SjCorruptionError(

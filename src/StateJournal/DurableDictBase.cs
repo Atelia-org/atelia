@@ -57,14 +57,14 @@ public abstract class DurableDictBase<TKey> : DurableObject
             writer.WriteBytes(TypeCode); // 非空TypeCode表示rebase frame
             _versionStatus.WriteRebase(writer, rebaseSize);
             WriteRebaseCore(writer, context);
-            return new(UsageKind.Blank, Kind, VersionKind.Rebase);
+            return new(context.UsageKindOverride, Kind, VersionKind.Rebase);
         }
         else {
             context.SetOutcome(wasRebase: false, rebaseSize, deltifySize);
             writer.WriteBytes(null); // 空TypeCode表示deltify frame
             _versionStatus.WriteDeltify(writer, deltifySize);
             WriteDeltifyCore(writer, context);
-            return new(UsageKind.Blank, Kind, VersionKind.Delta);
+            return new(context.UsageKindOverride, Kind, VersionKind.Delta);
         }
     }
 

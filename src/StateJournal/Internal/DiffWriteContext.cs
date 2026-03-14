@@ -4,6 +4,14 @@ internal class DiffWriteContext {
     /// <summary>调用方可设为 true 以强制写出 rebase 帧（compact / 另存为新文件场景）。</summary>
     internal bool ForceRebase { get; init; }
 
+    /// <summary>强制写入帧，即使对象本身无变更。
+    /// 用于 ObjectMap 等场景：对象自身无变化但其层级上下文要求产生新帧。
+    /// 与 ForceRebase 独立：rebase/delta 决策仍由 ShouldRebase 判定。</summary>
+    internal bool ForceSave { get; init; }
+
+    /// <summary>覆盖帧的 UsageKind（默认 Blank，由 WritePendingDiff 使用）。</summary>
+    internal UsageKind UsageKindOverride { get; init; }
+
     // WritePendingDiff 写入、OnCommitSucceeded 读取的决策结果。
     internal bool WasRebase { get; private set; }
     internal uint EffectiveRebaseSize { get; private set; }
