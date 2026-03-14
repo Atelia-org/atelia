@@ -1,3 +1,5 @@
+using Atelia.StateJournal.Internal;
+
 namespace Atelia.StateJournal;
 
 public enum DurableObjectKind : byte {
@@ -6,5 +8,5 @@ public enum DurableObjectKind : byte {
     TypedDict,
     MixedList,
     TypedList,
-    Mask = (1 << 4) - 1
+    Mask = (1 << ValueBox.DurRefKindBitCount) - 1
 }

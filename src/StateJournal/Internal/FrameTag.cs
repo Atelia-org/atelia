@@ -20,7 +20,7 @@ internal readonly struct FrameTag(uint bits) {
     public const int VersionKindShift = 0, VersionKindBits = 2;
     internal const uint VersionKindMask = ((1U << VersionKindBits) - 1) << VersionKindShift;
 
-    public const int ObjectKindShift = VersionKindShift + VersionKindBits, ObjectKindBits = ValueBox.HeapKindBitCount;
+    public const int ObjectKindShift = VersionKindShift + VersionKindBits, ObjectKindBits = ValueBox.DurRefKindBitCount;
 
     public const int UsageKindShift = ObjectKindShift + ObjectKindBits, UsageKindBits = 4;
     internal const uint UsageKindMask = ((1U << UsageKindBits) - 1) << UsageKindShift;

@@ -15,6 +15,7 @@ where TValue : notnull {
     private void MarkSame(TKey key) => _dirtyKeys.Remove(key);
     private void MarkRemove(TKey key) => _dirtyKeys.SetFalse(key);
     private void MarkUpsert(TKey key) => _dirtyKeys.SetTrue(key);
+    private bool HasUpsert(TKey key) => _dirtyKeys.TryGetSubset(key, out bool isUpsert) && isUpsert;
     #region 可用于单元测试
     public BitDivision<TKey>.Enumerator RemovedKeys => _dirtyKeys.FalseKeys;
     public BitDivision<TKey>.Enumerator UpsertedKeys => _dirtyKeys.TrueKeys;
@@ -49,7 +50,7 @@ where TValue : notnull {
 
     public void AfterRemove<VHelper>(TKey key, TValue? removedValue)
     where VHelper : unmanaged, ITypeHelper<TValue> {
-        if (VHelper.NeedRelease && _dirtyKeys.TryGetSubset(key, out bool wasTrueSubset) && wasTrueSubset) {
+        if (VHelper.NeedRelease && HasUpsert(key)) {
             VHelper.ReleaseSlot(removedValue);
         }
 
