@@ -34,7 +34,7 @@ internal struct VersionChainStatus {
 
     private readonly uint GetDeltifiedCumulativeCost(uint deltifySize) => checked(_cumulativeCost + deltifySize + PerFrameOverhead);
     /// <summary>二阶段提交的前一阶段</summary>
-    internal readonly void WriteDeltify(IDiffWriter writer, uint deltifySize) {
+    internal readonly void WriteDeltify(BinaryDiffWriter writer, uint deltifySize) {
         uint newCumulativeCost = GetDeltifiedCumulativeCost(deltifySize);
         writer.BareUInt64(_head.Serialize(), false);
         writer.BareUInt32(newCumulativeCost, false);
@@ -49,7 +49,7 @@ internal struct VersionChainStatus {
 
     private readonly uint GetRebasedCumulativeCost(uint rebaseSize) => checked(rebaseSize + PerFrameOverhead);
     /// <summary>二阶段提交的前一阶段</summary>
-    internal readonly void WriteRebase(IDiffWriter writer, uint rebaseSize) {
+    internal readonly void WriteRebase(BinaryDiffWriter writer, uint rebaseSize) {
         uint newCumulativeCost = GetRebasedCumulativeCost(rebaseSize);
         writer.BareUInt64(_head.Serialize(), false);
         writer.BareUInt32(newCumulativeCost, false);

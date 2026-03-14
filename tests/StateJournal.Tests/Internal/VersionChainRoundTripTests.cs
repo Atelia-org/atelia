@@ -481,7 +481,8 @@ public class VersionChainRoundTripTests : IDisposable {
 
     #endregion
 
-    private static byte[] BuildPayload(Action<BinaryDiffWriter> writeAction) {
+    private delegate void WriteDiffAction(BinaryDiffWriter writer);
+    private static byte[] BuildPayload(WriteDiffAction writeAction) {
         var buffer = new ArrayBufferWriter<byte>();
         var writer = new BinaryDiffWriter(buffer);
         writeAction(writer);

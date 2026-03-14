@@ -23,8 +23,8 @@ public abstract class DurableDictBase<TKey> : DurableObject
 
     private protected abstract void CommitCore();
     private protected abstract void SyncCurrentFromCommittedCore();
-    private protected abstract void WriteRebaseCore(IDiffWriter writer, DiffWriteContext context);
-    private protected abstract void WriteDeltifyCore(IDiffWriter writer, DiffWriteContext context);
+    private protected abstract void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context);
+    private protected abstract void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context);
     private protected abstract void ApplyDeltaCore(ref BinaryDiffReader reader);
 
     #endregion
@@ -48,7 +48,7 @@ public abstract class DurableDictBase<TKey> : DurableObject
         CommitCore();
     }
 
-    internal sealed override FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context) {
+    internal sealed override FrameTag WritePendingDiff(BinaryDiffWriter writer, DiffWriteContext context) {
         uint rebaseSize = (uint)RebaseCount + (uint)TypeCode.Length;
         uint deltifySize = (uint)DeltifyCount;
         bool doRebase = context.ForceRebase || _versionStatus.ShouldRebase(rebaseSize, deltifySize);

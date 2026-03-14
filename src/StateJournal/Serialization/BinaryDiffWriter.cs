@@ -5,7 +5,7 @@ using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal.Serialization;
 
-internal class BinaryDiffWriter : IDiffWriter {
+internal ref struct BinaryDiffWriter {
     internal const byte BareFalse = 0, BareTrue = 1;
     private IBufferWriter<byte> _downstream = null!;
 

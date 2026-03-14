@@ -20,7 +20,7 @@ public abstract class DurableObject {
     public abstract bool HasChanges { get; }
 
     /// <returns>RBF frame tag</returns>
-    internal abstract FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context);
+    internal abstract FrameTag WritePendingDiff(BinaryDiffWriter writer, DiffWriteContext context);
 
     private protected abstract ReadOnlySpan<byte> TypeCode { get; }
 

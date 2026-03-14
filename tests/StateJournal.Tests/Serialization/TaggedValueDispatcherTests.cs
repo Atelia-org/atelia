@@ -174,20 +174,23 @@ public class TaggedValueDispatcherTests {
 
     [Fact]
     public void WriteDurableRef_BlankKind_ThrowsInvalidDataException() {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        var writer = new BinaryDiffWriter(buffer);
         Assert.Throws<System.IO.InvalidDataException>(
-            () => writer.TaggedDurableRef(new DurableRef(DurableObjectKind.Blank, new LocalId(1)))
+            () => {
+                var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+                var writer = new BinaryDiffWriter(buffer);
+                writer.TaggedDurableRef(new DurableRef(DurableObjectKind.Blank, new LocalId(1)));
+            }
         );
     }
 
     [Fact]
     public void WriteDurableRef_NullId_ThrowsInvalidDataException() {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        var writer = new BinaryDiffWriter(buffer);
         Assert.Throws<System.IO.InvalidDataException>(
-            () =>
-            writer.TaggedDurableRef(new DurableRef(DurableObjectKind.MixedDict, LocalId.Null))
+            () => {
+                var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+                var writer = new BinaryDiffWriter(buffer);
+                writer.TaggedDurableRef(new DurableRef(DurableObjectKind.MixedDict, LocalId.Null));
+            }
         );
     }
 

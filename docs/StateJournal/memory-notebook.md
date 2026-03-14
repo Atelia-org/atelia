@@ -170,8 +170,7 @@ DictChangeTracker 当前使用 `BitDivision`。
 
 ### 二进制 Diff 读写
 
-- `IDiffWriter`（`Internal/IDiffWriter.cs`）：统一写入接口，提供 Tagged（自描述）和 Bare（无类型头）两类方法
-- `BinaryDiffWriter`（`Serialization/BinaryDiffWriter.cs`）：实现 IDiffWriter，包装 `IBufferWriter<byte>`
+- `BinaryDiffWriter`（`Serialization/BinaryDiffWriter.cs`）：`ref struct`，包装 `IBufferWriter<byte>`，提供 Tagged（自描述）和 Bare（无类型头）两类写入方法
 - `BinaryDiffReader`（`Serialization/BinaryDiffReader.cs`）：`ref struct`，基于 `ReadOnlySpan<byte>` 零分配读取
 
 ### Tagged 编码（CBOR-inspired）
@@ -355,7 +354,6 @@ src/StateJournal/
 │   ├── DurableFactory.cs              # 泛型工厂缓存
 │   ├── HelperRegistry.cs              # 类型→Helper 映射
 │   ├── ITypeHelper.cs                 # 静态抽象 Helper 接口
-│   ├── IDiffWriter.cs                 # Diff 写入接口
 │   ├── DiffWriteContext.cs            # 写入上下文
 │   ├── DictDiffApplier.cs             # Load 时的增量应用
 │   ├── DurableRef.cs                 # (ObjectKind, LocalId) 轻量引用

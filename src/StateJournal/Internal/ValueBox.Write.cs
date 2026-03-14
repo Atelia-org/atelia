@@ -1,9 +1,10 @@
 using System.Diagnostics;
+using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
 
 partial struct ValueBox {
-    internal void Write(IDiffWriter writer) {
+    internal void Write(BinaryDiffWriter writer) {
         switch (GetLzc()) {
             case BoxLzc.InlineDouble:
                 writer.TaggedFloatingPoint(DecodeInlineDouble());
@@ -31,7 +32,7 @@ partial struct ValueBox {
         }
     }
 
-    private void WriteHeapValue(IDiffWriter writer) {
+    private void WriteHeapValue(BinaryDiffWriter writer) {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
         HeapValueKind valueKind = GetHeapKind();
         switch (valueKind) {

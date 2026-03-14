@@ -25,7 +25,7 @@ public class ValueBoxEqualityTests {
         public override bool HasChanges => false;
         internal override SizedPtr HeadTicket => default;
         internal override bool IsTracked => false;
-        internal override FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
+        internal override FrameTag WritePendingDiff(BinaryDiffWriter writer, DiffWriteContext context) => throw new NotSupportedException();
         internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) => throw new NotSupportedException();
         public override void DiscardChanges() => throw new NotSupportedException();
 

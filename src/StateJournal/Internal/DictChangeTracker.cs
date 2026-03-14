@@ -112,7 +112,7 @@ where TValue : notnull {
         _dirtyKeys.Clear();
     }
 
-    public void WriteDeltify<KHelper, VHelper>(IDiffWriter writer, DiffWriteContext context)
+    public void WriteDeltify<KHelper, VHelper>(BinaryDiffWriter writer, DiffWriteContext context)
     where KHelper : ITypeHelper<TKey>
     where VHelper : ITypeHelper<TValue> {
         // 使用 ITypedHelper 和 IDiffWriter 序列化
@@ -136,7 +136,7 @@ where TValue : notnull {
         }
     }
 
-    public void WriteRebase<KHelper, VHelper>(IDiffWriter writer, DiffWriteContext context)
+    public void WriteRebase<KHelper, VHelper>(BinaryDiffWriter writer, DiffWriteContext context)
     where KHelper : ITypeHelper<TKey>
     where VHelper : ITypeHelper<TValue> {
         // 使用 ITypedHelper 和 IDiffWriter 序列化

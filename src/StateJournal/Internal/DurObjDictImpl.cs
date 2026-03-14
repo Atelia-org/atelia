@@ -79,8 +79,8 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
 
     private protected override void CommitCore() => _core.Commit<LocalIdAsRefHelper>();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<LocalIdAsRefHelper>();
-    private protected override void WriteRebaseCore(IDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<KHelper, LocalIdAsRefHelper>(writer, context);
-    private protected override void WriteDeltifyCore(IDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<KHelper, LocalIdAsRefHelper>(writer, context);
+    private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<KHelper, LocalIdAsRefHelper>(writer, context);
+    private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<KHelper, LocalIdAsRefHelper>(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, LocalIdAsRefHelper>(ref reader);
 
     #endregion
