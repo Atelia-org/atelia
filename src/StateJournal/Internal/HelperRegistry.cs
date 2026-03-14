@@ -15,7 +15,14 @@ internal readonly struct TypeEntry {
         TypeCode = typeCode;
     }
 
-    internal bool IsValid => HelperType != null;
+    /// <summary>仅提供 TypeCode、不提供 HelperType 的条目。
+    /// 用于 DurableObject 容器值类型（由各工厂的 DurableObject 分支独立处理，不需要通用 VHelper）。</summary>
+    internal TypeEntry(byte[] typeCode) {
+        HelperType = null;
+        TypeCode = typeCode;
+    }
+
+    internal bool IsValid => TypeCode != null;
 }
 
 /// <summary>
@@ -44,7 +51,7 @@ internal static class HelperRegistry {
     #endregion
     #region 不可为Key的非泛型单例
 
-    private static readonly TypeEntry _mixedList = new(typeof(DurableObjectHelper<DurableList>), [(byte)TypeOpCode.PushMixedList]);
+    private static readonly TypeEntry _mixedList = new([(byte)TypeOpCode.PushMixedList]);
     internal static TypeEntry MixedList => _mixedList;
 
     #endregion
@@ -114,7 +121,7 @@ internal static class HelperRegistry {
                 vEntry.TypeCode.CopyTo(typeCode, 0);
                 kEntry.TypeCode.CopyTo(typeCode, vEntry.TypeCode.Length);
                 typeCode[^1] = (byte)TypeOpCode.MakeTypedDict;
-                return new(typeof(DurableObjectHelper<>).MakeGenericType(t), typeCode);
+                return new(typeCode);
             }
 
             // DurableDict<TKey> (MixedDict)
@@ -124,7 +131,7 @@ internal static class HelperRegistry {
                 var typeCode = new byte[kEntry.TypeCode!.Length + 1];
                 kEntry.TypeCode.CopyTo(typeCode, 0);
                 typeCode[^1] = (byte)TypeOpCode.MakeMixedDict;
-                return new(typeof(DurableObjectHelper<>).MakeGenericType(t), typeCode);
+                return new(typeCode);
             }
 
             // DurableList<T> (TypedList)
@@ -134,7 +141,7 @@ internal static class HelperRegistry {
                 var typeCode = new byte[vEntry.TypeCode!.Length + 1];
                 vEntry.TypeCode.CopyTo(typeCode, 0);
                 typeCode[^1] = (byte)TypeOpCode.MakeTypedList;
-                return new(typeof(DurableObjectHelper<>).MakeGenericType(t), typeCode);
+                return new(typeCode);
             }
         }
 

@@ -60,19 +60,14 @@ internal readonly struct StringHelper : ITypeHelper<string> {
 }
 
 /// <summary>
-/// 用于将 <see cref="DurableObject"/> 子类型（嵌套容器）作为 Dict 值类型时的 Helper。
-/// 容器使用引用相等性语义（同一对象 = 相等），生命周期由 Epoch 管理。
+/// <see cref="LocalId"/> 的序列化 Helper。
+/// 用于 <see cref="DurObjDictImpl{TKey, TDurObj, KHelper}"/> 内部以 LocalId 存储 DurableObject 引用。
 /// </summary>
-internal readonly struct DurableObjectHelper<T> : ITypeHelper<T> where T : DurableObject {
-    public static bool Equals(T? a, T? b) => ReferenceEquals(a, b);
-
-    public static void Write(IDiffWriter writer, T? v, bool asKey) {
-        Debug.Assert(!asKey, "DurableObject不支持作为key使用。");
-        writer.BareDurableRef(v?.LocalId ?? LocalId.Null, asKey);
-    }
-    public static T? Read(ref BinaryDiffReader reader, bool asKey) => throw new NotImplementedException();
-    public static void UpdateOrInit(ref BinaryDiffReader reader, ref T? old) => old = Read(ref reader, asKey: false);
-    // public static List<T> GetTempList(DiffWriteContext context) => throw new UnreachableException();
+internal readonly struct LocalIdAsRefHelper : ITypeHelper<LocalId> {
+    public static bool Equals(LocalId a, LocalId b) => a == b;
+    public static void Write(IDiffWriter writer, LocalId v, bool asKey) => writer.BareDurableRef(v, asKey);
+    public static LocalId Read(ref BinaryDiffReader reader, bool asKey) => new(reader.BareUInt32(asKey));
+    public static void UpdateOrInit(ref BinaryDiffReader reader, ref LocalId old) => old = Read(ref reader, asKey: false);
 }
 
 internal readonly struct DoubleHelper : ITypeHelper<double> {

@@ -7,23 +7,19 @@ namespace Atelia.StateJournal;
 
 /// <summary>
 /// <see cref="DurableDict{TKey, TValue}"/>和<see cref="DurableDict{TKey}"/>的共享基类，
-/// 持有<see cref="DictChangeTracker{TKey, TValue}"/>和<see cref="VersionChainStatus"/>，
+/// 持有<see cref="VersionChainStatus"/>，
 /// 实现统一的持久化生命周期方法（OnCommitSucceeded、WritePendingDiff、ApplyDelta、OnLoadCompleted）。
 /// 类型相关的操作通过 abstract hook 委托给具体子类。
+/// <see cref="DictChangeTracker{TKey, TValue}"/> 由各实现类自持，本类通过 abstract 属性访问计数。
 /// </summary>
-public abstract class DurableDictBase<TKey, TValue> : DurableObject
-    where TKey : notnull
-    where TValue : notnull {
-    private protected DictChangeTracker<TKey, TValue> _core;
+public abstract class DurableDictBase<TKey> : DurableObject
+    where TKey : notnull {
     private protected VersionChainStatus _versionStatus;
 
-    #region DurableObject
-
-    public override bool HasChanges => _core.HasChanges;
-
-    #endregion
-
     #region Abstract Hooks
+
+    private protected abstract int RebaseCount { get; }
+    private protected abstract int DeltifyCount { get; }
 
     private protected abstract void CommitCore();
     private protected abstract void SyncCurrentFromCommittedCore();
@@ -53,8 +49,8 @@ public abstract class DurableDictBase<TKey, TValue> : DurableObject
     }
 
     internal sealed override FrameTag WritePendingDiff(IDiffWriter writer, DiffWriteContext context) {
-        uint rebaseSize = (uint)_core.RebaseCount + (uint)TypeCode.Length;
-        uint deltifySize = (uint)_core.DeltifyCount;
+        uint rebaseSize = (uint)RebaseCount + (uint)TypeCode.Length;
+        uint deltifySize = (uint)DeltifyCount;
         bool doRebase = context.ForceRebase || _versionStatus.ShouldRebase(rebaseSize, deltifySize);
         if (doRebase) {
             context.SetOutcome(wasRebase: true, rebaseSize, deltifySize);
@@ -73,8 +69,8 @@ public abstract class DurableDictBase<TKey, TValue> : DurableObject
     }
 
     internal sealed override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion) {
-        Debug.Assert(_core.RebaseCount == 0);
-        Debug.Assert(_core.DeltifyCount == 0);
+        Debug.Assert(RebaseCount == 0);
+        Debug.Assert(DeltifyCount == 0);
         _versionStatus.ApplyDelta(ref reader, previousVersion);
         ApplyDeltaCore(ref reader);
     }

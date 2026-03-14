@@ -1,0 +1,87 @@
+using System.Runtime.InteropServices;
+using Atelia.StateJournal.Serialization;
+
+namespace Atelia.StateJournal.Internal;
+
+/// <summary>
+/// <see cref="DurableDict{TKey, TValue}"/> 的 DurableObject 值类型专用实现。
+/// 内部以 <see cref="LocalId"/> 存储引用，对外通过 <see cref="DurableDict{TKey, TValue}"/>
+/// 提供 <typeparamref name="TDurObj"/> 的读写接口。
+/// Get 时委托 <see cref="DurableObject.Epoch"/> 按需加载实例。
+/// </summary>
+internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurObj>
+    where TKey : notnull
+    where TDurObj : DurableObject
+    where KHelper : unmanaged, ITypeHelper<TKey> {
+
+    private DictChangeTracker<TKey, LocalId> _core;
+
+    internal DurObjDictImpl() {
+        _core = new();
+    }
+
+    #region DurableDictBase abstract properties
+
+    public override bool HasChanges => _core.HasChanges;
+    private protected override int RebaseCount => _core.RebaseCount;
+    private protected override int DeltifyCount => _core.DeltifyCount;
+
+    #endregion
+
+    #region DurableObject
+
+    public override void DiscardChanges() => _core.Revert<LocalIdAsRefHelper>();
+
+    #endregion
+
+    #region IDict<TKey>
+
+    public override bool ContainsKey(TKey key) => _core.Current.ContainsKey(key);
+
+    public override int Count => _core.Current.Count;
+
+    public override IEnumerable<TKey> Keys => _core.Current.Keys;
+
+    public override bool Remove(TKey key) {
+        if (!_core.Current.Remove(key, out var removedId)) { return false; }
+        _core.AfterRemove<LocalIdAsRefHelper>(key, removedId);
+        return true;
+    }
+
+    #endregion
+
+    #region IDict<TKey, TDurObj>
+
+    public override GetIssue Get(TKey key, out TDurObj? value) {
+        value = null;
+        if (!_core.Current.TryGetValue(key, out var localId)) { return GetIssue.NotFound; }
+        if (localId.IsNull) { return GetIssue.None; }
+
+        var loadResult = Epoch.Load(localId);
+        if (loadResult.IsFailure) { return GetIssue.LoadFailed; }
+        if (loadResult.Value is not TDurObj typed) { return GetIssue.LoadFailed; }
+
+        value = typed;
+        return GetIssue.None;
+    }
+
+    public override UpsertStatus Upsert(TKey key, TDurObj? value) {
+        var localId = value?.LocalId ?? LocalId.Null;
+        ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
+        slot = localId;
+        _core.AfterUpsert<LocalIdAsRefHelper>(key, localId);
+        return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
+    }
+
+    #endregion
+
+    #region Persistence Hooks
+
+    private protected override void CommitCore() => _core.Commit<LocalIdAsRefHelper>();
+    private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<LocalIdAsRefHelper>();
+    private protected override void WriteRebaseCore(IDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<KHelper, LocalIdAsRefHelper>(writer, context);
+    private protected override void WriteDeltifyCore(IDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<KHelper, LocalIdAsRefHelper>(writer, context);
+    private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, LocalIdAsRefHelper>(ref reader);
+
+    #endregion
+}

@@ -5,15 +5,18 @@ using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
 
-/// <summary>替代<see cref="DurableDict{TKey,ValueBox}"/></summary>
+/// <summary>MixedDict — 异构值字典，内部使用 <see cref="ValueBox"/> 存储。</summary>
 /// <typeparam name="TKey"></typeparam>
-public abstract class DurableDict<TKey> : DurableDictBase<TKey, ValueBox>, IDict<TKey>
+public abstract class DurableDict<TKey> : DurableDictBase<TKey>, IDict<TKey>
 , IDict<TKey, bool>, IDict<TKey, string>, IDict<TKey, DurableObject>
 , IDict<TKey, double>, IDict<TKey, float>, IDict<TKey, Half>
 , IDict<TKey, ulong>, IDict<TKey, uint>, IDict<TKey, ushort>, IDict<TKey, byte>
 , IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>
 
 where TKey : notnull {
+
+    private protected DictChangeTracker<TKey, ValueBox> _core;
+
     #region TypeCode
 
     /// <summary>由<see cref="MixedDictFactory{TKey}"/>初始化。</summary>
@@ -21,6 +24,15 @@ where TKey : notnull {
     private protected override ReadOnlySpan<byte> TypeCode => s_typeCode;
 
     #endregion
+
+    #region DurableDictBase abstract properties
+
+    public override bool HasChanges => _core.HasChanges;
+    private protected override int RebaseCount => _core.RebaseCount;
+    private protected override int DeltifyCount => _core.DeltifyCount;
+
+    #endregion
+
     #region Core
     private UpsertStatus FinishUpsert(TKey key, ValueBox value, bool exists) {
         Debug.Assert(!value.IsUninitialized); // 未初始化的ValueBox不应被存入容器

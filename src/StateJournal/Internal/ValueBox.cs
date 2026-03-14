@@ -17,7 +17,7 @@ namespace Atelia.StateJournal.Internal;
 /// 但所有成员均为 internal，外部代码不应直接操作。
 /// </summary>
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
-public readonly partial struct ValueBox {
+internal readonly partial struct ValueBox {
     private readonly ulong _bits;
     internal ValueBox(ulong bits) => _bits = bits;
 

@@ -8,8 +8,8 @@ namespace Atelia.StateJournal.Internal;
 /// <summary>
 /// <see cref="DurableDict{TKey, TValue}"/> (TypedDict) 的工厂缓存。
 /// CLR 对每组 &lt;TKey, TValue&gt; 仅初始化一次静态泛型类，天然线程安全且零锁。
-/// 首次访问时通过反射构建 <see cref="TypedDictImpl{TKey,TValue,KHelper,VHelper}"/>
-/// 的编译委托，后续调用近乎 native 开销。
+/// 首次访问时通过反射构建 <see cref="TypedDictImpl{TKey,TValue,KHelper,VHelper}"/> 或
+/// <see cref="DurObjDictImpl{TKey,TDurObj,KHelper}"/> 的编译委托，后续调用近乎 native 开销。
 /// </summary>
 internal static class TypedDictFactory<TKey, TValue>
     where TKey : notnull
@@ -32,8 +32,17 @@ internal static class TypedDictFactory<TKey, TValue>
             return;
         }
 
-        var implType = typeof(TypedDictImpl<,,,>)
-            .MakeGenericType(typeof(TKey), typeof(TValue), kEntry.HelperType!, vEntry.HelperType!);
+        Type implType;
+        if (typeof(DurableObject).IsAssignableFrom(typeof(TValue))) {
+            // DurableObject 值 → DurableObjectDictImpl（内部存 LocalId，Get 时懒加载）
+            implType = typeof(DurObjDictImpl<,,>)
+                .MakeGenericType(typeof(TKey), typeof(TValue), kEntry.HelperType!);
+        }
+        else {
+            // 基元/值类型 → TypedDictImpl
+            implType = typeof(TypedDictImpl<,,,>)
+                .MakeGenericType(typeof(TKey), typeof(TValue), kEntry.HelperType!, vEntry.HelperType!);
+        }
 
         var ctor = implType.GetConstructor(
             BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes
@@ -111,8 +120,15 @@ internal static class TypedListFactory<T>
             return;
         }
 
-        var implType = typeof(TypedListImpl<,>)
-            .MakeGenericType(typeof(T), vEntry.HelperType!);
+        Type implType;
+        if (typeof(DurableObject).IsAssignableFrom(typeof(T))) {
+            // DurableObject 值 → DurableObjectListImpl（占位，未来实现 LocalId 存储）
+            implType = typeof(DurObjListImpl<>).MakeGenericType(typeof(T));
+        }
+        else {
+            // 基元/值类型 → TypedListImpl
+            implType = typeof(TypedListImpl<,>).MakeGenericType(typeof(T), vEntry.HelperType!);
+        }
 
         var ctor = implType.GetConstructor(
             BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes
