@@ -51,6 +51,42 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         _count = 0;
     }
 
+    /// <summary>
+    /// 从已有的 (SlotHandle, T) 映射批量重建 SlotPool。
+    /// 每个 handle 对应的 slot 被标记为 occupied 并写入值和 generation，
+    /// 其余 slot 保持 free 状态。
+    /// </summary>
+    /// <param name="entries">
+    /// 要恢复的 (handle, value) 集合。允许 index=0。
+    /// 调用方必须保证每个 handle.Index 唯一（当前实现不做去重校验）。
+    /// </param>
+    internal static SlotPool<T> Rebuild(ReadOnlySpan<(SlotHandle Handle, T Value)> entries) {
+        if (entries.IsEmpty) { return new SlotPool<T>(); }
+
+        int maxIndex = 0;
+        foreach (var (handle, _) in entries) {
+            if (handle.Index > maxIndex) { maxIndex = handle.Index; }
+        }
+
+        var pool = new SlotPool<T>();
+        int requiredSlabs = (maxIndex >> SlabBitmap.SlabShift) + 1;
+        for (int i = 0; i < requiredSlabs; i++) { pool.GrowOneSlab(); }
+
+        foreach (var (handle, value) in entries) {
+            int index = handle.Index;
+            int slabIdx = index >> SlabBitmap.SlabShift;
+            int offset = index & SlabBitmap.SlabMask;
+
+            pool._slabs[slabIdx][offset] = value;
+            pool._generations[slabIdx][offset] = handle.Generation;
+            pool._freeBitmap.Clear(index);
+        }
+
+        pool._count = entries.Length;
+        pool.TryShrinkTrailingSlabs();
+        return pool;
+    }
+
     /// <summary>分配一个 slot 并存入值，返回包含 generation 的 <see cref="SlotHandle"/>。O(1) 均摊。</summary>
     /// <exception cref="InvalidOperationException">池容量超出 <see cref="SlotHandle.MaxIndex"/>。</exception>
     public SlotHandle Store(T value) {

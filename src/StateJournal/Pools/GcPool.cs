@@ -42,6 +42,27 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
         _reachable = new SlabBitmap();
     }
 
+    /// <summary>从已有 SlotPool 构造（供 Rebuild 使用）。</summary>
+    private GcPool(SlotPool<T> pool) {
+        _pool = pool;
+        _reachable = new SlabBitmap();
+        SyncGrowth();
+    }
+
+    /// <summary>
+    /// 从已有的 (SlotHandle, T) 映射批量重建 GcPool。
+    /// 每个 handle 对应的 slot 被标记为 occupied 并写入值和 generation，
+    /// 其余 slot 保持 free 状态，后续 <see cref="Store"/> 从最低空闲 index 分配。
+    /// </summary>
+    /// <param name="entries">
+    /// 要恢复的 (handle, value) 集合。允许 index=0。
+    /// 调用方必须保证每个 handle.Index 唯一（当前实现不做去重校验）。
+    /// </param>
+    public static GcPool<T> Rebuild(ReadOnlySpan<(SlotHandle Handle, T Value)> entries) {
+        var pool = SlotPool<T>.Rebuild(entries);
+        return new GcPool<T>(pool);
+    }
+
     // ───────────────────── Store / Read ─────────────────────
 
     /// <summary>存入值，返回 handle。O(1) 均摊。</summary>

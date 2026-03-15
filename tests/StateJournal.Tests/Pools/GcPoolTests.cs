@@ -134,4 +134,74 @@ public class GcPoolTests {
         Assert.Equal(2, swept); // h3, h4 被 sweep
         Assert.Equal(1, pool.Count); // 只剩 h2
     }
+
+    // ───────────────────── Rebuild ─────────────────────
+
+    [Fact]
+    public void Rebuild_EmptySpan_ReturnsEmptyPool() {
+        var pool = GcPool<string>.Rebuild(ReadOnlySpan<(SlotHandle, string)>.Empty);
+        Assert.Equal(0, pool.Count);
+    }
+
+    [Fact]
+    public void Rebuild_WithEntries_ThenMarkSweep_CollectsUnmarked() {
+        var hA = new SlotHandle(1, 1);
+        var hB = new SlotHandle(2, 2);
+        var hC = new SlotHandle(3, 3);
+
+        var pool = GcPool<string>.Rebuild([(hA, "A"), (hB, "B"), (hC, "C")]);
+        Assert.Equal(3, pool.Count);
+
+        pool.BeginMark();
+        pool.MarkReachable(hA);
+        pool.MarkReachable(hC);
+        int swept = pool.Sweep();
+
+        Assert.Equal(1, swept);
+        Assert.Equal(2, pool.Count);
+        Assert.True(pool.Validate(hA));
+        Assert.False(pool.Validate(hB));
+        Assert.True(pool.Validate(hC));
+    }
+
+    [Fact]
+    public void Rebuild_ThenStore_AllocatesFromLowestFreeIndex() {
+        var h3 = new SlotHandle(4, 3);
+        var pool = GcPool<string>.Rebuild([(h3, "existing")]);
+
+        // Index 0 is the lowest free after Rebuild
+        SlotHandle fill0 = pool.Store("fill0");
+        Assert.Equal(0, fill0.Index);
+
+        // Next lowest free is index 1
+        SlotHandle newH = pool.Store("new");
+        Assert.Equal(1, newH.Index);
+        Assert.Equal("new", pool[newH]);
+    }
+
+    [Fact]
+    public void Rebuild_PreservesGeneration_ValidateReturnsTrue() {
+        var h1 = new SlotHandle(7, 5);
+        var h2 = new SlotHandle(200, 10);
+
+        var pool = GcPool<string>.Rebuild([(h1, "x"), (h2, "y")]);
+
+        Assert.True(pool.Validate(h1));
+        Assert.True(pool.Validate(h2));
+        Assert.Equal("x", pool[h1]);
+        Assert.Equal("y", pool[h2]);
+    }
+
+    [Fact]
+    public void Rebuild_IndexZero_IsAllowed() {
+        var h0 = new SlotHandle(0, 0);
+        var h2 = new SlotHandle(9, 2);
+        var pool = GcPool<string>.Rebuild([(h0, "zero"), (h2, "two")]);
+
+        Assert.Equal(2, pool.Count);
+        Assert.True(pool.Validate(h0));
+        Assert.True(pool.Validate(h2));
+        Assert.Equal("zero", pool[h0]);
+        Assert.Equal("two", pool[h2]);
+    }
 }

@@ -614,4 +614,110 @@ public class SlotPoolTests {
         Assert.Equal(0, wrapped.Generation); // 回绕到 0
         Assert.Equal(999, table[wrapped]);
     }
+
+    // ───────────────────── Rebuild ─────────────────────
+
+    [Fact]
+    public void Rebuild_EmptySpan_ReturnsEmptyPool() {
+        var pool = SlotPool<string>.Rebuild(ReadOnlySpan<(SlotHandle, string)>.Empty);
+        Assert.Equal(0, pool.Count);
+        Assert.Equal(0, pool.Capacity);
+    }
+
+    [Fact]
+    public void Rebuild_SingleEntry_StoresValueAndGeneration() {
+        var handle = new SlotHandle(3, 42);
+        var pool = SlotPool<string>.Rebuild([(handle, "hello")]);
+
+        Assert.Equal(1, pool.Count);
+        Assert.Equal("hello", pool[handle]);
+        Assert.True(pool.Validate(handle));
+    }
+
+    [Fact]
+    public void Rebuild_MultipleEntries_AllAccessible() {
+        var h1 = new SlotHandle(1, 1);
+        var h2 = new SlotHandle(5, 10);
+        var h3 = new SlotHandle(255, 100);
+
+        var pool = SlotPool<string>.Rebuild([(h1, "a"), (h2, "b"), (h3, "c")]);
+
+        Assert.Equal(3, pool.Count);
+        Assert.Equal("a", pool[h1]);
+        Assert.Equal("b", pool[h2]);
+        Assert.Equal("c", pool[h3]);
+        Assert.True(pool.Validate(h1));
+        Assert.True(pool.Validate(h2));
+        Assert.True(pool.Validate(h3));
+    }
+
+    [Fact]
+    public void Rebuild_PreservesGeneration_FutureStorePrefersLowestFreeIndex() {
+        var h2 = new SlotHandle(7, 2);
+        var h5 = new SlotHandle(3, 5);
+
+        var pool = SlotPool<string>.Rebuild([(h2, "x"), (h5, "y")]);
+
+        // Index 0 is the lowest free index after Rebuild
+        SlotHandle first = pool.Store("fill0");
+        Assert.Equal(0, first.Index);
+
+        // Next lowest free is index 1
+        SlotHandle second = pool.Store("new");
+        Assert.Equal(1, second.Index);
+        Assert.Equal("new", pool[second]);
+    }
+
+    [Fact]
+    public void Rebuild_IndexZero_IsAllowed() {
+        var h0 = new SlotHandle(0, 0);
+        var h3 = new SlotHandle(2, 3);
+        var pool = SlotPool<string>.Rebuild([(h0, "zero"), (h3, "three")]);
+
+        Assert.Equal(2, pool.Count);
+        Assert.True(pool.Validate(h0));
+        Assert.True(pool.Validate(h3));
+        Assert.Equal("zero", pool[h0]);
+        Assert.Equal("three", pool[h3]);
+    }
+
+    [Fact]
+    public void Rebuild_NonContiguousIndices_GapsAreFree() {
+        var h1 = new SlotHandle(1, 1);
+        var h4096 = new SlotHandle(2, 4096);
+
+        var pool = SlotPool<string>.Rebuild([(h1, "first"), (h4096, "far")]);
+
+        Assert.Equal(2, pool.Count);
+        Assert.Equal("first", pool[h1]);
+        Assert.Equal("far", pool[h4096]);
+
+        // Index 0 is the lowest free, then index 2 (since 1 is occupied)
+        SlotHandle fill0 = pool.Store("idx0");
+        Assert.Equal(0, fill0.Index);
+        SlotHandle gap = pool.Store("gap");
+        Assert.Equal(2, gap.Index);
+    }
+
+    [Fact]
+    public void Rebuild_ThenFree_IncrementsGeneration() {
+        var h = new SlotHandle(5, 1);
+        // Need a second entry at a higher index to prevent tail shrink
+        var anchor = new SlotHandle(1, 10);
+
+        var pool = SlotPool<string>.Rebuild([(h, "val"), (anchor, "anchor")]);
+        Assert.True(pool.Validate(h));
+
+        // Fill index 0 first so that freeing h makes index 1 the lowest free
+        SlotHandle fill0 = pool.Store("fill0");
+        Assert.Equal(0, fill0.Index);
+
+        pool.Free(h);
+        Assert.False(pool.Validate(h));
+
+        // Re-allocate the same index — generation should have incremented
+        SlotHandle reused = pool.Store("reused");
+        Assert.Equal(h.Index, reused.Index);
+        Assert.Equal((byte)(h.Generation + 1), reused.Generation);
+    }
 }
