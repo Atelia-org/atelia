@@ -152,6 +152,15 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     }
 
     /// <summary>
+    /// 查询 handle 在当前 Mark 阶段是否已被标记为可达。
+    /// 仅在 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间有意义。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsMarkedReachable(SlotHandle handle) {
+        return _reachable.Test(handle.Index);
+    }
+
+    /// <summary>
     /// 回收所有不可达且已占用的 slot。返回实际释放的 slot 数量。
     /// </summary>
     /// <remarks>

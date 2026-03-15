@@ -214,26 +214,26 @@ public class Revision {
     /// <returns>新 commit 的 <see cref="CommitId"/>（即 ObjectMap 帧的 ticket）。</returns>
     /// <remarks>
     /// 提交流程分为三阶段：
-    /// 1) Preflight（纯读校验）；
-    /// 2) Persist（仅追加写）；
-    /// 3) Finalize（持久化成功后再执行 GC/状态更新）。
+    /// 1) WalkAndMark — 从 graphRoot DFS 遍历对象图，同时执行 GcPool Mark（用 TryMarkReachable 替代 HashSet 去重）；
+    /// 2) Persist — 仅追加写盘，不改对象内存状态；
+    /// 3) Finalize — 持久化成功后执行 Sweep GC 和状态更新。
     /// 预期的运行时/IO 异常会在持久化成功前转换为失败结果返回；
-    /// 若持久化成功后 Finalize 抛异常，则直接向上抛出（避免“已落盘却返回失败”的语义不一致）。
+    /// 若持久化成功后 Finalize 抛异常，则直接向上抛出（避免"已落盘却返回失败"的语义不一致）。
     /// </remarks>
     internal AteliaResult<CommitId> Commit(DurableObject graphRoot) {
-        CommitPreflight preflight;
+        List<DurableObject> liveObjects;
         List<PendingSave> pendingSaves;
         CommitId newCommitId;
         try {
             EnsureCanReference(graphRoot);
 
-            // Phase 1: Preflight（纯读，不执行破坏性修改）
-            var preflightResult = BuildCommitPreflight(graphRoot);
-            if (preflightResult.IsFailure) { return preflightResult.Error!; }
-            preflight = preflightResult.Value!;
+            // Phase 1: WalkAndMark（DFS 遍历 + GcPool Mark，合并去重与标记为单次遍历）
+            var walkResult = WalkAndMark(graphRoot);
+            if (walkResult.IsFailure) { return walkResult.Error!; }
+            liveObjects = walkResult.Value!;
 
             // Phase 2: Persist（写盘但不改对象内存，失败时通过 DiscardChanges 回滚 _objectMap）
-            var persistResult = PersistCommit(preflight);
+            var persistResult = PersistCommit(graphRoot, liveObjects);
             if (persistResult.IsFailure) {
                 _objectMap.DiscardChanges();
                 return persistResult.Error!;
@@ -257,38 +257,41 @@ public class Revision {
         }
 
         // Phase 3: Finalize（全部落盘成功，统一应用内存状态变更）
-        FinalizeCommit(preflight, pendingSaves, newCommitId);
+        FinalizeCommit(graphRoot, pendingSaves, newCommitId);
         return newCommitId;
     }
 
-    private void SweepUnreachable(List<DurableObject> liveObjects) {
+    /// <summary>
+    /// 从 GraphRoot 开始 DFS 遍历，同时执行 GcPool 的 BeginMark + TryMarkReachable。
+    /// 遍历结束后 mark bitmap 即为最终可达集，后续 Sweep 无需再标记。
+    /// 若发现悬空引用则返回失败（mark bitmap 留脏，下次 Commit 的 BeginMark 会清零，无副作用）。
+    /// </summary>
+    private AteliaResult<List<DurableObject>> WalkAndMark(DurableObject graphRoot) {
         _pool.BeginMark();
-        _pool.MarkReachable(new SlotHandle(0, 0)); // ObjectMap 始终可达（slot 0）
-        foreach (var obj in liveObjects) {
-            _pool.MarkReachable(obj.LocalId.ToSlotHandle());
+        _pool.MarkReachable(new SlotHandle(0, 0)); // slot 0 = ObjectMap，始终可达
+
+        var liveObjects = new List<DurableObject>();
+        var dfsStack = new Stack<DurableObject>();
+
+        // 标记并入队根节点
+        _pool.TryMarkReachable(graphRoot.LocalId.ToSlotHandle());
+        liveObjects.Add(graphRoot);
+        dfsStack.Push(graphRoot);
+
+        while (dfsStack.Count > 0) {
+            var current = dfsStack.Pop();
+            var visitor = new WalkMarkVisitor(_pool, liveObjects, dfsStack);
+            current.AcceptChildRefVisitor(ref visitor);
+            if (visitor.Error is not null) { return visitor.Error; }
         }
-        _pool.Sweep<DetachOnSweepCollectHandler>();
+
+        return liveObjects;
     }
 
-    private AteliaResult<CommitPreflight> BuildCommitPreflight(DurableObject graphRoot) {
-        var collectResult = CollectReachableOrFail(graphRoot);
-        if (collectResult.IsFailure) { return collectResult.Error!; }
-        var liveObjects = collectResult.Value!;
-
-        var liveKeys = new HashSet<uint>(liveObjects.Count);
-        foreach (var obj in liveObjects) { liveKeys.Add(obj.LocalId.Value); }
-
-        return new CommitPreflight(
-            graphRoot,
-            liveObjects,
-            liveKeys
-        );
-    }
-
-    private AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> PersistCommit(CommitPreflight preflight) {
-        // 二阶段 Phase A：写盘但不修改对象内存状态。失败时由调用方 DiscardChanges() 回滚 _objectMap。
+    private AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> PersistCommit(
+            DurableObject graphRoot, List<DurableObject> liveObjects) {
         var pendingSaves = new List<PendingSave>();
-        foreach (var obj in preflight.LiveObjects) {
+        foreach (var obj in liveObjects) {
             if (obj.IsTracked && !obj.HasChanges) { continue; }
             var writeResult = VersionChain.Write(obj, _file);
             if (writeResult.IsFailure) { return writeResult.Error!; }
@@ -296,14 +299,15 @@ public class Revision {
             _objectMap.Upsert(obj.LocalId.Value, writeResult.Value.Ticket.Serialize());
         }
 
+        // 从 ObjectMap 中移除不可达对象的 key（利用 Phase 1 的 mark bitmap 判定）
         var staleKeys = new List<uint>();
         foreach (uint key in _objectMap.Keys) {
-            if (!preflight.LiveKeys.Contains(key)) { staleKeys.Add(key); }
+            if (!_pool.IsMarkedReachable(new SlotHandle(key))) { staleKeys.Add(key); }
         }
         foreach (uint key in staleKeys) { _objectMap.Remove(key); }
 
         Span<byte> rootMeta = stackalloc byte[4];
-        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, preflight.GraphRoot.LocalId.Value);
+        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, graphRoot.LocalId.Value);
         DiffWriteContext mapContext = new() {
             UsageKindOverride = UsageKind.ObjectMap,
             ForceSave = true,
@@ -315,51 +319,18 @@ public class Revision {
         return (pendingSaves, new CommitId(mapWriteResult.Value.Ticket));
     }
 
-    private void FinalizeCommit(CommitPreflight preflight, List<PendingSave> pendingSaves, CommitId newCommitId) {
-        // 二阶段 Phase B：全部落盘成功，统一将写盘结果应用到对象内存状态。
+    private void FinalizeCommit(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitId newCommitId) {
         foreach (var pending in pendingSaves) { pending.Complete(); }
 
-        SweepUnreachable(preflight.LiveObjects);
+        // Mark bitmap 已在 Phase 1 (WalkAndMark) 中完成，直接 Sweep
+        _pool.Sweep<DetachOnSweepCollectHandler>();
 
         _head = new CommitSnapshot(
             newCommitId,
             _head?.Id ?? default,
             _objectMap,
-            preflight.GraphRoot
+            graphRoot
         );
-    }
-
-    /// <summary>从 GraphRoot 遍历收集可达对象。若发现悬空引用则返回失败。</summary>
-    private AteliaResult<List<DurableObject>> CollectReachableOrFail(DurableObject graphRoot) {
-        var reachableObjects = new List<DurableObject>();
-        var visited = new HashSet<uint>();
-        var stack = new Stack<DurableObject>();
-        var childBuffer = new List<LocalId>();
-
-        visited.Add(graphRoot.LocalId.Value);
-        reachableObjects.Add(graphRoot);
-        stack.Push(graphRoot);
-
-        while (stack.Count > 0) {
-            var current = stack.Pop();
-            childBuffer.Clear();
-            var collector = new ChildCollectVisitor(childBuffer);
-            current.AcceptChildRefVisitor(ref collector);
-            foreach (var childId in childBuffer) {
-                SlotHandle handle = childId.ToSlotHandle();
-                if (!_pool.TryGetValue(handle, out var child)) {
-                    return new SjCorruptionError(
-                        $"Dangling reference detected during commit: Graph contains missing LocalId {childId.Value}.",
-                        RecoveryHint: "Fix object graph references before commit."
-                    );
-                }
-                if (!visited.Add(childId.Value)) { continue; }
-                reachableObjects.Add(child);
-                stack.Push(child);
-            }
-        }
-
-        return reachableObjects;
     }
 
     /// <summary>全量校验 pool 中所有用户对象的引用完整性。发现悬空引用则失败。</summary>
@@ -385,9 +356,26 @@ public class Revision {
         public static void OnCollect(DurableObject value) => value.DetachByGc();
     }
 
-    private ref struct ChildCollectVisitor(List<LocalId> childRefs) : IChildRefVisitor {
+    /// <summary>DFS 遍历中的 visitor：验证引用有效性 + TryMarkReachable 去重 + 收集存活对象 + 压入 DFS 栈。</summary>
+    private ref struct WalkMarkVisitor(
+            GcPool<DurableObject> pool,
+            List<DurableObject> liveObjects,
+            Stack<DurableObject> dfsStack) : IChildRefVisitor {
+        public AteliaError? Error { get; private set; }
+
         public void Visit(LocalId childId) {
-            if (!childId.IsNull) { childRefs.Add(childId); }
+            if (Error is not null || childId.IsNull) { return; }
+            SlotHandle handle = childId.ToSlotHandle();
+            if (!pool.TryGetValue(handle, out var child)) {
+                Error = new SjCorruptionError(
+                    $"Dangling reference detected during commit: Graph contains missing LocalId {childId.Value}.",
+                    RecoveryHint: "Fix object graph references before commit."
+                );
+                return;
+            }
+            if (!pool.TryMarkReachable(handle)) { return; } // 已访问
+            liveObjects.Add(child);
+            dfsStack.Push(child);
         }
     }
 
@@ -411,12 +399,6 @@ public class Revision {
         CommitId ParentId,
         DurableDict<uint, ulong> ObjectMap,
         DurableObject? GraphRoot
-    );
-
-    private readonly record struct CommitPreflight(
-        DurableObject GraphRoot,
-        List<DurableObject> LiveObjects,
-        HashSet<uint> LiveKeys
     );
 
     private static bool IsExpectedCommitException(Exception ex) {
