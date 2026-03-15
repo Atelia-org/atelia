@@ -50,6 +50,8 @@ public abstract class DurableObject {
 
     public abstract void DiscardChanges();
 
+    internal abstract void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) where TVisitor : IChildRefVisitor, allows ref struct;
+
     /// <summary>设置对象状态。</summary>
     /// <param name="state">新状态。</param>
     protected void SetState(DurableState state) => _state = state;

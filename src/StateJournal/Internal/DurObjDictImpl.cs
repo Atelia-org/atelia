@@ -90,4 +90,10 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, LocalIdAsRefHelper>(ref reader);
 
     #endregion
+
+    internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
+        foreach (var localId in _core.Current.Values) {
+            if (!localId.IsNull) { visitor.Visit(localId); }
+        }
+    }
 }

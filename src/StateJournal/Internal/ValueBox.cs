@@ -25,7 +25,7 @@ internal readonly partial struct ValueBox {
     public readonly ulong GetBits() => _bits;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private readonly BoxLzc GetLzc() => (BoxLzc)BitOperations.LeadingZeroCount(GetBits());
+    internal readonly BoxLzc GetLzc() => (BoxLzc)BitOperations.LeadingZeroCount(GetBits());
 
     public static ValueBox Null => new(LzcConstants.BoxNull); // 有意避开了0值，default，以实现内部的明确赋值检查。
     public readonly bool IsNull => GetBits() == LzcConstants.BoxNull;
