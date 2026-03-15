@@ -214,7 +214,7 @@ public class Revision {
     /// <returns>新 commit 的 <see cref="CommitId"/>（即 ObjectMap 帧的 ticket）。</returns>
     /// <remarks>
     /// 提交流程分为三阶段：
-    /// 1) WalkAndMark — 从 graphRoot DFS 遍历对象图，同时执行 GcPool Mark（用 TryMarkReachable 替代 HashSet 去重）；
+    /// 1) WalkAndMark — 从 graphRoot DFS 遍历对象图，同时执行 GcPool Mark（用 mark bitmap 替代 HashSet 去重）；
     /// 2) Persist — 仅追加写盘，不改对象内存状态；
     /// 3) Finalize — 持久化成功后执行 Sweep GC 和状态更新。
     /// 预期的运行时/IO 异常会在持久化成功前转换为失败结果返回；
@@ -356,7 +356,7 @@ public class Revision {
         public static void OnCollect(DurableObject value) => value.DetachByGc();
     }
 
-    /// <summary>DFS 遍历中的 visitor：验证引用有效性 + TryMarkReachable 去重 + 收集存活对象 + 压入 DFS 栈。</summary>
+    /// <summary>DFS 遍历中的 visitor：验证引用有效性 + 首访标记去重 + 收集存活 handle + 压入 DFS 栈。</summary>
     private ref struct WalkMarkVisitor(
             GcPool<DurableObject> pool,
             List<DurableObject> liveObjects,
@@ -366,15 +366,15 @@ public class Revision {
         public void Visit(LocalId childId) {
             if (Error is not null || childId.IsNull) { return; }
             SlotHandle handle = childId.ToSlotHandle();
-            if (!pool.TryGetValue(handle, out var child)) {
+            if (!pool.TryGetValueAndMarkFirstReachable(handle, out var child, out bool firstVisit)) {
                 Error = new SjCorruptionError(
                     $"Dangling reference detected during commit: Graph contains missing LocalId {childId.Value}.",
                     RecoveryHint: "Fix object graph references before commit."
                 );
                 return;
             }
-            if (!pool.TryMarkReachable(handle)) { return; } // 已访问
-            liveObjects.Add(child);
+            if (!firstVisit) { return; } // 已访问
+            liveObjects.Add(child);;
             dfsStack.Push(child);
         }
     }

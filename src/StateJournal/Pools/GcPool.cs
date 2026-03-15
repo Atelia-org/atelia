@@ -152,6 +152,28 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     }
 
     /// <summary>
+    /// 尝试读取 handle 对应值，并在未标记时标记为可达。
+    /// 返回值表示 handle 是否存在；<paramref name="firstVisit"/> 表示是否是首次标记。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryGetValueAndMarkFirstReachable(SlotHandle handle, out T value, out bool firstVisit) {
+        if (!_pool.TryGetValue(handle, out value)) {
+            firstVisit = false;
+            return false;
+        }
+
+        int index = handle.Index;
+        if (_reachable.Test(index)) {
+            firstVisit = false;
+            return true;
+        }
+
+        _reachable.Set(index);
+        firstVisit = true;
+        return true;
+    }
+
+    /// <summary>
     /// 查询 handle 在当前 Mark 阶段是否已被标记为可达。
     /// 仅在 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间有意义。
     /// </summary>
