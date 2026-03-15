@@ -8,10 +8,24 @@ public abstract class DurableObject {
     public abstract DurableObjectKind Kind { get; }
 
     DurableState _state;
+    Revision? _revision;
 
-    public LocalId LocalId { get; }
-    public Revision Revision { get; }
-    public GlobalId GlobalId { get; }
+    public LocalId LocalId { get; private set; }
+
+    /// <summary>所属 Revision。对象一经绑定即不可更改。</summary>
+    /// <exception cref="InvalidOperationException">对象尚未绑定到 Revision。</exception>
+    public Revision Revision => _revision ?? throw new InvalidOperationException("DurableObject not bound to a Revision.");
+
+    /// <summary>由 Revision 调用，将对象与 Revision 绑定并分配 LocalId。一经绑定不可更改。</summary>
+    /// <param name="revision">所属 Revision。</param>
+    /// <param name="localId">分配的 LocalId。</param>
+    /// <param name="initialState">绑定时设置的初始状态（新建对象为 TransientDirty，加载对象为 Clean）。</param>
+    internal void Bind(Revision revision, LocalId localId, DurableState initialState = DurableState.Clean) {
+        if (_revision is not null) { throw new InvalidOperationException($"DurableObject already bound to a Revision (LocalId={LocalId})."); }
+        _revision = revision;
+        LocalId = localId;
+        _state = initialState;
+    }
 
     /// <inheritdoc/>
     public DurableState State => _state;
@@ -39,14 +53,6 @@ public abstract class DurableObject {
     /// <summary>设置对象状态。</summary>
     /// <param name="state">新状态。</param>
     protected void SetState(DurableState state) => _state = state;
-
-    /// <summary>注册对象为脏状态（Clean → PersistentDirty 转换时调用）。</summary>
-    /// <remarks>
-    /// 当对象从 Clean 状态变为 PersistentDirty 时，调用此方法将对象重新添加到 Workspace 的 DirtySet。
-    /// </remarks>
-    protected void NotifyDirty() {
-        Revision.RegisterDirty(this);
-    }
 
     /// <summary>如果对象已分离则抛出异常。</summary>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>

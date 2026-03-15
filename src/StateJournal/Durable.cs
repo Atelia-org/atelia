@@ -16,7 +16,7 @@ namespace Atelia.StateJournal;
 /// var mixed  = Durable.Dict&lt;string&gt;();
 /// </code>
 /// </example>
-public static class Durable {
+internal static class Durable {
 
     /// <summary>
     /// 创建 <see cref="DurableDict{TKey, TValue}"/> (TypedDict)。

@@ -312,12 +312,55 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 | TypeCodec / HelperRegistry / DurableFactory | ✅ 已完成 | 泛型类型 → 工厂 |
 | VersionChain（Save/Load） | ✅ 已完成 | RBF 集成 |
 | DurableList（Typed/Mixed） | ⬜ 占位 | 所有方法 throw；Diff 方案待定（候选：最短编辑距离 / 操作记录合并 / BTree） |
-| Revision | 🔧 进行中 | ObjectMap + Commit/Open/Load 已实现；Materialize 待补 |
-| Revision.ObjectMap | 🔧 进行中 | `DurableDict<uint, ulong>`，LocalId → SizedPtr 映射，Save/Load 已通过测试 |
-| Revision.LocalId 管理 | 🔧 进行中 | `LocalIdAllocator`：空洞回收 + 高水位分配，O(1) Allocate |
+| Revision | 🔧 进行中 | ObjectMap + Commit/Open/Load + CreateDict/CreateList 工厂 + Identity Map 已实现 |
+| Revision.ObjectMap | ✅ 已完成 | `DurableDict<uint, ulong>`，LocalId → SizedPtr 映射，Save/Load 已通过测试 |
+| Revision.LocalId 管理 | 🔧 进行中 | `LocalIdAllocator`：空洞回收 + 高水位分配。后续计划用 `GcPool<DurableObject>` 替代 |
+| DurableObject 生存期绑定 | 🔧 进行中 | Bind(Revision, LocalId) 只读绑定 + 跨 Revision 引用拦截 |
 | Repository | ⬜ 骨架 | 仅有 DirectoryPath 属性 |
 
-**下一步重点**：实现 ObjectMap，使 Revision 能通过 LocalId 定位对象版本。
+---
+
+## 对象生存期管理演进路线（2026-03-15 规划）
+
+### 阶段一（已实施）：Revision-Owned Factory + Identity Map
+
+**核心变更**：`Durable` 静态工厂降为 `internal`，公开创建入口移至 `Revision` 实例方法。
+
+- `DurableObject.Bind(revision, localId)`：internal 一次性绑定，对象终生属于一个 Revision。
+- `Revision.CreateDict<K,V>()` / `CreateDict<K>()` / `CreateList<T>()` / `CreateList()`：分配 LocalId、绑定、标记 TransientDirty、放入 Identity Map。
+- **Identity Map**（`Dictionary<LocalId, DurableObject>`）：Load 命中缓存直接返回，保证实例唯一。采用 Strong Reference（dirty 安全 + 实例唯一保证）。
+- **跨 Revision 引用拦截**：`DurObjDictImpl.Upsert` 和 `DurableDict<TKey>.Upsert(DurableObject?)` 检查 `value.Revision == this.Revision`。
+- `GlobalId` 属性已删除（语义陷阱：返回的是 HEAD 版本上的 GlobalId，易误以为是 commit 后的）。
+
+**设计约束**：
+- 对象一经 Bind 不可更改 Revision 或 LocalId。
+- VersionChain.Load 内部仍使用 `Durable`（now internal）工厂 + `DurableFactory.TryCreate` 创建空壳，Revision.Load 在外层 Bind。
+- ObjectMap（`DurableDict<uint, ulong>`）本身不走 Bind 流程（它是 Revision 的内部基础设施）。
+
+### 阶段二（即将实施）：GcPool\<DurableObject\> 统一管理
+
+**目标**：用一个 `GcPool<DurableObject>` 同时替代 `LocalIdAllocator` + `Dictionary<LocalId, DurableObject>` Identity Map。
+
+| 现状 | 目标 |
+|:-----|:-----|
+| `LocalId` 内含裸 `uint` | `LocalId` 内含 `SlotHandle`（带 generation 防 ABA） |
+| 分配 ID = `LocalIdAllocator.Allocate()` | 分配 ID = `GcPool.Alloc(obj)` 返回 SlotHandle |
+| 查对象 = `_identityMap[localId]` (哈希查找) | 查对象 = `GcPool[slotHandle]` (O(1) 数组索引) |
+| 空洞追踪 = HoleSpan + Queue | 空洞管理 = SlotPool 内建 bitmap free-list |
+| GC = 无 | GC = Mark-Sweep：Commit 时从 GraphRoot 遍历标记可达对象 |
+
+**Mark-Sweep GC 设计思路**：
+
+1. **Commit 时触发**：在 `Revision.Commit()` 保存脏对象之前，先从 `GraphRoot` 开始 DFS/BFS 遍历对象图。
+2. **Mark 阶段**：递归标记所有从 GraphRoot 可达的 DurableObject。DurObjDict/MixedDict 中的 DurableRef 是遍历边。
+3. **Sweep 阶段**：未标记的对象从 GcPool 释放、从 ObjectMap 中移除。
+4. **落盘保证**：Sweep 后 ObjectMap 只含可达对象 → 持久化状态始终健康。
+
+**Lazy-Load 兼容（性能优化，可延后）**：
+
+- **MVP 简单实现**：Open Revision 时直接加载整个对象图到内存。内存集中，运行时简单。
+- **优化实现**：保持 Lazy-Load，Commit GC 时对未加载对象临时 Load 以遍历其 DurableRef 成员，遍历完即释放。
+- **优化辅助**：序列化时给对象帧加标记"是否含有对其他 DurableObject 的引用"（`HasDurableRefs` flag in FrameTag），GC 遍历时跳过不含引用的叶对象，避免不必要的临时 Load。
 
 ---
 
@@ -325,7 +368,7 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 
 ```
 src/StateJournal/
-├── Durable.cs                    # 工厂门面
+├── Durable.cs                    # internal 工厂基础设施（VersionChain.Load 使用）
 ├── DurableObject.cs              # 抽象基类
 ├── DurableState.cs               # 生命周期枚举
 ├── DurableDictBase.cs            # Dict 共享版本链逻辑
@@ -339,6 +382,7 @@ src/StateJournal/
 ├── ValueKind.cs                  # 值类型枚举
 ├── DurableObjectKind.cs          # 对象种类枚举
 ├── LocalId.cs / CommitId.cs / GlobalId.cs
+├── LocalIdExhaustedException.cs
 ├── GetIssue.cs                   # Get 操作的结果枚举
 ├── ObjectDetachedException.cs
 ├── Internal/

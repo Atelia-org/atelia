@@ -55,32 +55,122 @@ public class RevisionTests : IDisposable {
     }
 
     [Fact]
-    public void Commit_WithAllocatedId_ThenOpen_RoundTrips() {
-        // TODO: 完善为端到端测试——当前仅验证 AllocateId + Commit + Open 的 round-trip，
-        //       未将对象注册到 ObjectMap，因此 Open 后的 ObjectMap 实际为空。
-        //       需要实现 Register 工作流后补充 ObjectMap 内容验证。
+    public void Commit_WithCreatedObject_ThenOpen_RoundTrips() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var commit = new Revision(file);
+        var rev = new Revision(file);
 
-        // 手动向 ObjectMap 写入模拟数据
-        var dict = Durable.Dict<int, double>();
+        // 通过 Revision 工厂创建对象（自动绑定 Revision + 分配 LocalId）
+        var dict = rev.CreateDict<int, double>();
+        Assert.Equal(rev, dict.Revision);
+        Assert.False(dict.LocalId.IsNull);
+        Assert.Equal(1u, dict.LocalId.Value);
+        Assert.Equal(DurableState.TransientDirty, dict.State);
+
         dict.Upsert(10, 3.14);
         dict.Upsert(20, 2.718);
-        var saveResult = VersionChain.Save(dict, file);
-        Assert.True(saveResult.IsSuccess);
 
-        // 在 object map 中手动注册
-        var localId = commit.AllocateId();
-        Assert.Equal(1u, localId.Value);
-
-        var commitResult = commit.Commit();
+        var commitResult = rev.Commit();
         Assert.True(commitResult.IsSuccess, $"Commit failed: {commitResult.Error}");
 
         // Open via CommitId and verify
         var openResult = Revision.Open(commitResult.Value, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        // Load the object back and verify contents
+        var loaded = openResult.Value!;
+        var loadResult = loaded.Load(dict.LocalId);
+        Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
+        var loadedDict = Assert.IsAssignableFrom<DurableDict<int, double>>(loadResult.Value);
+        Assert.Equal(2, loadedDict.Count);
+        Assert.Equal(GetIssue.None, loadedDict.Get(10, out double v1));
+        Assert.Equal(3.14, v1);
+        Assert.Equal(GetIssue.None, loadedDict.Get(20, out double v2));
+        Assert.Equal(2.718, v2);
+    }
+
+    [Fact]
+    public void Commit_ModifyAfterFirstCommit_ThenSecondCommit_PersistsLatestValue() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var dict = rev.CreateDict<int, double>();
+        dict.Upsert(1, 1.0);
+
+        var c1 = rev.Commit();
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+
+        dict.Upsert(1, 2.0);
+        var c2 = rev.Commit();
+        Assert.True(c2.IsSuccess, $"Commit2 failed: {c2.Error}");
+
+        var open = Revision.Open(c2.Value, file);
+        Assert.True(open.IsSuccess, $"Open failed: {open.Error}");
+
+        var loaded = open.Value!;
+        var load = loaded.Load(dict.LocalId);
+        Assert.True(load.IsSuccess, $"Load failed: {load.Error}");
+
+        var loadedDict = Assert.IsAssignableFrom<DurableDict<int, double>>(load.Value);
+        Assert.Equal(GetIssue.None, loadedDict.Get(1, out double latest));
+        Assert.Equal(2.0, latest);
+    }
+
+    [Fact]
+    public void Load_SameLocalIdTwice_ReturnsSameInstance_FromIdentityMap() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var dict = rev.CreateDict<int, double>();
+        dict.Upsert(7, 7.7);
+        var commit = rev.Commit();
+        Assert.True(commit.IsSuccess, $"Commit failed: {commit.Error}");
+
+        var opened = Revision.Open(commit.Value, file);
+        Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
+        var loadedRev = opened.Value!;
+
+        var first = loadedRev.Load(dict.LocalId);
+        var second = loadedRev.Load(dict.LocalId);
+        Assert.True(first.IsSuccess, $"First load failed: {first.Error}");
+        Assert.True(second.IsSuccess, $"Second load failed: {second.Error}");
+
+        Assert.Same(first.Value, second.Value);
+    }
+
+    [Fact]
+    public void Upsert_DurableObjectFromDifferentRevision_InTypedDurObjDict_Throws() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev1 = new Revision(file);
+        var ownerDict = rev1.CreateDict<int, DurableDict<int, double>>();
+        var childSameRevision = rev1.CreateDict<int, double>();
+        ownerDict.Upsert(1, childSameRevision); // same revision should pass
+
+        var rev2 = new Revision(file);
+        var childForeignRevision = rev2.CreateDict<int, double>();
+
+        Assert.Throws<InvalidOperationException>(() => ownerDict.Upsert(2, childForeignRevision));
+    }
+
+    [Fact]
+    public void Upsert_DurableObjectFromDifferentRevision_InMixedDict_Throws() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev1 = new Revision(file);
+        var mixed = rev1.CreateDict<string>();
+        var childSameRevision = rev1.CreateDict<int, double>();
+        mixed.Upsert("ok", childSameRevision); // same revision should pass
+
+        var rev2 = new Revision(file);
+        var childForeignRevision = rev2.CreateDict<int, double>();
+
+        Assert.Throws<InvalidOperationException>(() => mixed.Upsert("bad", childForeignRevision));
     }
 
     [Fact]
