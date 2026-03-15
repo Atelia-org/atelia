@@ -66,12 +66,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     }
 
     public override UpsertStatus Upsert(TKey key, TDurObj? value) {
-        if (value is not null && value.Revision != this.Revision) {
-            throw new InvalidOperationException(
-                $"Cannot store a DurableObject from a different Revision. " +
-                $"Object LocalId={value.LocalId}, object Revision={value.Revision.Head}, this Revision={Revision.Head}."
-            );
-        }
+        if (value is not null) { Revision.EnsureCanReference(value); }
         var localId = value?.LocalId ?? LocalId.Null;
         ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
         slot = localId;

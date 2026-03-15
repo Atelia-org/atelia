@@ -56,6 +56,15 @@ public abstract class DurableObject {
     /// <param name="state">新状态。</param>
     protected void SetState(DurableState state) => _state = state;
 
+    /// <summary>是否已绑定到指定 Revision（不会抛异常）。</summary>
+    internal bool IsBoundTo(Revision revision) => ReferenceEquals(_revision, revision);
+
+    /// <summary>是否处于 Detached 状态。</summary>
+    internal bool IsDetached => _state == DurableState.Detached;
+
+    /// <summary>供 Revision 在 GC Sweep 回收对象时标记 Detached。</summary>
+    internal void DetachByGc() => _state = DurableState.Detached;
+
     /// <summary>如果对象已分离则抛出异常。</summary>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
     protected void ThrowIfDetached() {

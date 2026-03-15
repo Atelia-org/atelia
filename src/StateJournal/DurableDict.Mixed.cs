@@ -216,12 +216,7 @@ where TKey : notnull {
         return GetIssue.None;
     }
     public UpsertStatus Upsert(TKey key, DurableObject? value) {
-        if (value is not null && value.Revision != this.Revision) {
-            throw new InvalidOperationException(
-                $"Cannot store a DurableObject from a different Revision. " +
-                $"Object LocalId={value.LocalId}, object Revision={value.Revision.Head}, this Revision={Revision.Head}."
-            );
-        }
+        if (value is not null) { Revision.EnsureCanReference(value); }
         DurableRef durableRef;
         if (value is not null) {
             durableRef = new DurableRef(value.Kind, value.LocalId);

@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.Reflection;
 using Xunit;
 using Atelia.Data;
 using Atelia.Rbf;
@@ -36,9 +38,10 @@ public class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        // Create and commit empty
+        // Create and commit with a minimal root
         var commit = new Revision(file);
-        var commitResult = commit.Commit();
+        var root = commit.CreateDict<int, int>();
+        var commitResult = commit.Commit(root);
         Assert.True(commitResult.IsSuccess, $"Commit failed: {commitResult.Error}");
 
         CommitId commitId = commitResult.Value;
@@ -71,7 +74,7 @@ public class RevisionTests : IDisposable {
         dict.Upsert(10, 3.14);
         dict.Upsert(20, 2.718);
 
-        var commitResult = rev.Commit();
+        var commitResult = rev.Commit(dict);
         Assert.True(commitResult.IsSuccess, $"Commit failed: {commitResult.Error}");
 
         // Open via CommitId and verify
@@ -80,6 +83,8 @@ public class RevisionTests : IDisposable {
 
         // Load the object back and verify contents
         var loaded = openResult.Value!;
+        Assert.NotNull(loaded.GraphRoot); // GraphRoot 自动从 TailMeta 恢复
+        Assert.Equal(dict.LocalId, loaded.GraphRoot!.LocalId); // 应指向同一 LocalId
         var loadResult = loaded.Load(dict.LocalId);
         Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
         var loadedDict = Assert.IsAssignableFrom<DurableDict<int, double>>(loadResult.Value);
@@ -99,11 +104,11 @@ public class RevisionTests : IDisposable {
         var dict = rev.CreateDict<int, double>();
         dict.Upsert(1, 1.0);
 
-        var c1 = rev.Commit();
+        var c1 = rev.Commit(dict);
         Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
 
         dict.Upsert(1, 2.0);
-        var c2 = rev.Commit();
+        var c2 = rev.Commit(dict);
         Assert.True(c2.IsSuccess, $"Commit2 failed: {c2.Error}");
 
         var open = Revision.Open(c2.Value, file);
@@ -126,7 +131,7 @@ public class RevisionTests : IDisposable {
         var rev = new Revision(file);
         var dict = rev.CreateDict<int, double>();
         dict.Upsert(7, 7.7);
-        var commit = rev.Commit();
+        var commit = rev.Commit(dict);
         Assert.True(commit.IsSuccess, $"Commit failed: {commit.Error}");
 
         var opened = Revision.Open(commit.Value, file);
@@ -174,13 +179,138 @@ public class RevisionTests : IDisposable {
     }
 
     [Fact]
+    public void GcCollectedObject_BecomesDetached_AndCannotBeReReferenced() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, double>>();
+        var child = rev.CreateDict<int, double>();
+        child.Upsert(7, 7.7);
+        root.Upsert(1, child);
+
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+        Assert.NotEqual(DurableState.Detached, child.State);
+
+        root.Remove(1);
+        var c2 = rev.Commit(root);
+        Assert.True(c2.IsSuccess, $"Commit2 failed: {c2.Error}");
+
+        Assert.Equal(DurableState.Detached, child.State);
+        Assert.Throws<InvalidOperationException>(() => root.Upsert(2, child));
+        Assert.Throws<InvalidOperationException>(() => rev.Commit(child));
+
+        var reopened = Revision.Open(c2.Value, file);
+        Assert.True(reopened.IsSuccess, $"Open failed: {reopened.Error}");
+        var reopenedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, double>>>(reopened.Value!.GraphRoot);
+        Assert.False(reopenedRoot.ContainsKey(1));
+    }
+
+    [Fact]
+    public void Commit_WithDanglingReference_FailsFast() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, double>>();
+        var child = rev.CreateDict<int, double>();
+        root.Upsert(1, child);
+
+        // 人工破坏：直接从 Revision 的 pool 中释放 child，使 root 内引用悬空。
+        var poolField = typeof(Revision).GetField("_pool", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        object poolObj = poolField.GetValue(rev)!;
+        var toHandle = typeof(LocalId).GetMethod("ToSlotHandle", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        object childHandle = toHandle.Invoke(child.LocalId, null)!;
+        poolObj.GetType().GetMethod("Free", BindingFlags.Public | BindingFlags.Instance)!.Invoke(poolObj, [childHandle]);
+
+        var result = rev.Commit(root);
+        Assert.True(result.IsFailure);
+        Assert.IsType<SjCorruptionError>(result.Error);
+    }
+
+    [Fact]
+    public void Open_WithDanglingReferenceInPersistedData_FailsFast() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, double>>();
+        var child = rev.CreateDict<int, double>();
+        child.Upsert(7, 7.7);
+        root.Upsert(1, child);
+
+        // 手工写入一个损坏快照：
+        // 仅把 root 放入 ObjectMap，故 root->child 引用会在 Open 时成为悬空。
+        var rootSave = VersionChain.Save(root, file);
+        Assert.True(rootSave.IsSuccess, $"Save root failed: {rootSave.Error}");
+
+        var mapField = typeof(Revision).GetField("_objectMap", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var objectMap = Assert.IsAssignableFrom<DurableDict<uint, ulong>>(mapField.GetValue(rev));
+        objectMap.Upsert(root.LocalId.Value, rootSave.Value.Serialize()); // 故意不写 child ticket
+
+        Span<byte> rootMeta = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, root.LocalId.Value);
+        DiffWriteContext context = new() { UsageKindOverride = UsageKind.ObjectMap, ForceSave = true };
+        var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: rootMeta);
+        Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
+
+        var open = Revision.Open(new CommitId(mapSave.Value), file);
+        Assert.True(open.IsFailure);
+        Assert.IsType<SjCorruptionError>(open.Error);
+    }
+
+    [Fact]
+    public void Open_WithGraphRootLocalIdZeroInTailMeta_FailsFast() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, int>();
+        root.Upsert(1, 42);
+
+        var rootSave = VersionChain.Save(root, file);
+        Assert.True(rootSave.IsSuccess, $"Save root failed: {rootSave.Error}");
+
+        var mapField = typeof(Revision).GetField("_objectMap", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var objectMap = Assert.IsAssignableFrom<DurableDict<uint, ulong>>(mapField.GetValue(rev));
+        objectMap.Upsert(root.LocalId.Value, rootSave.Value.Serialize());
+
+        Span<byte> badMeta = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(badMeta, 0u); // 非法 GraphRoot LocalId
+        DiffWriteContext context = new() { UsageKindOverride = UsageKind.ObjectMap, ForceSave = true };
+        var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: badMeta);
+        Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
+
+        var open = Revision.Open(new CommitId(mapSave.Value), file);
+        Assert.True(open.IsFailure);
+        Assert.IsType<SjCorruptionError>(open.Error);
+    }
+
+    [Fact]
+    public void Commit_SetsTransientObjectStateToClean() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, int>();
+        root.Upsert(1, 1);
+        Assert.Equal(DurableState.TransientDirty, root.State);
+
+        var commit = rev.Commit(root);
+        Assert.True(commit.IsSuccess, $"Commit failed: {commit.Error}");
+        Assert.Equal(DurableState.Clean, root.State);
+    }
+
+    [Fact]
     public void ParentId_DerivedFromFrameParentTicket() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
         // Commit 1 (root)
         var c1 = new Revision(file);
-        var commit1 = c1.Commit();
+        var root1 = c1.CreateDict<int, int>();
+        var commit1 = c1.Commit(root1);
         Assert.True(commit1.IsSuccess, $"Commit1 failed: {commit1.Error}");
         CommitId id1 = commit1.Value;
 
@@ -191,7 +321,8 @@ public class RevisionTests : IDisposable {
 
         // Commit 2
         var c2 = new Revision(file);
-        var commit2 = c2.Commit();
+        var root2 = c2.CreateDict<int, int>();
+        var commit2 = c2.Commit(root2);
         Assert.True(commit2.IsSuccess, $"Commit2 failed: {commit2.Error}");
         CommitId id2 = commit2.Value;
 
@@ -240,11 +371,12 @@ public class RevisionTests : IDisposable {
         using var file = RbfFile.CreateNew(path);
 
         var rev = new Revision(file);
+        var root = rev.CreateDict<int, int>();
         Assert.True(rev.Head.IsNull);
         Assert.True(rev.HeadParent.IsNull);
 
         // Commit 1 (root)
-        var r1 = rev.Commit();
+        var r1 = rev.Commit(root);
         Assert.True(r1.IsSuccess, $"Commit1 failed: {r1.Error}");
         CommitId id1 = r1.Value;
         Assert.False(id1.IsNull);
@@ -252,7 +384,7 @@ public class RevisionTests : IDisposable {
         Assert.True(rev.HeadParent.IsNull, "root commit's parent should be null");
 
         // Commit 2 on the same Revision instance
-        var r2 = rev.Commit();
+        var r2 = rev.Commit(root);
         Assert.True(r2.IsSuccess, $"Commit2 failed: {r2.Error}");
         CommitId id2 = r2.Value;
         Assert.NotEqual(id1, id2);
@@ -260,7 +392,7 @@ public class RevisionTests : IDisposable {
         Assert.Equal(id1, rev.HeadParent); // HeadParent should now point to previous Head
 
         // Commit 3
-        var r3 = rev.Commit();
+        var r3 = rev.Commit(root);
         Assert.True(r3.IsSuccess, $"Commit3 failed: {r3.Error}");
         CommitId id3 = r3.Value;
         Assert.Equal(id3, rev.Head);

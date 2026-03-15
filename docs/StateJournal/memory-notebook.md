@@ -337,7 +337,7 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 - VersionChain.Load 内部仍使用 `Durable`（now internal）工厂 + `DurableFactory.TryCreate` 创建空壳，Revision.Load 在外层 Bind。
 - ObjectMap（`DurableDict<uint, ulong>`）本身不走 Bind 流程（它是 Revision 的内部基础设施）。
 
-### 阶段二（即将实施）：GcPool\<DurableObject\> 统一管理
+### 阶段二（已实施）：GcPool\<DurableObject\> 统一管理
 
 **目标**：用一个 `GcPool<DurableObject>` 同时替代 `LocalIdAllocator` + `Dictionary<LocalId, DurableObject>` Identity Map。
 

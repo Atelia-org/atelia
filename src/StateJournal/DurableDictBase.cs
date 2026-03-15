@@ -46,6 +46,7 @@ public abstract class DurableDictBase<TKey> : DurableObject
             _versionStatus.UpdateDeltified(versionTicket, context.EffectiveDeltifySize);
         }
         CommitCore();
+        SetState(DurableState.Clean);
     }
 
     internal sealed override FrameTag WritePendingDiff(BinaryDiffWriter writer, DiffWriteContext context) {
@@ -78,6 +79,7 @@ public abstract class DurableDictBase<TKey> : DurableObject
     internal sealed override void OnLoadCompleted(SizedPtr versionTicket) {
         _versionStatus.SetHead(versionTicket);
         SyncCurrentFromCommittedCore();
+        SetState(DurableState.Clean);
     }
 
     #endregion

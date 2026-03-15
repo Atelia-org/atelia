@@ -3,6 +3,13 @@ using System.Runtime.CompilerServices;
 
 namespace Atelia.StateJournal.Pools;
 
+/// <summary>
+/// Sweep 回调的静态策略接口：用于在回收 slot 前对值执行零捕获处理。
+/// </summary>
+internal interface ISweepCollectHandler<T> where T : notnull {
+    static abstract void OnCollect(T value);
+}
+
 // ai:test `tests/StateJournal.Tests/Pools/GcPoolTests.cs`
 /// <summary>
 /// 基于 Mark-Sweep 的 GC 值池。包装 <see cref="SlotPool{T}"/>，
@@ -26,6 +33,10 @@ namespace Atelia.StateJournal.Pools;
 /// </remarks>
 /// <typeparam name="T">值类型，必须是 notnull。</typeparam>
 internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
+    private readonly struct NoOpSweepCollectHandler : ISweepCollectHandler<T> {
+        public static void OnCollect(T value) { }
+    }
+
     private readonly SlotPool<T> _pool;
     private readonly SlabBitmap _reachable;
     private bool _markPhaseActive;
@@ -129,6 +140,18 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     }
 
     /// <summary>
+    /// 尝试标记 handle 为可达。若已标记过则返回 false（用于 GC 图遍历的环检测）。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryMarkReachable(SlotHandle handle) {
+        Debug.Assert(_pool.Validate(handle), "Stale or invalid handle passed to TryMarkReachable.");
+        int index = handle.Index;
+        if (_reachable.Test(index)) { return false; } // 已标记
+        _reachable.Set(index);
+        return true;
+    }
+
+    /// <summary>
     /// 回收所有不可达且已占用的 slot。返回实际释放的 slot 数量。
     /// </summary>
     /// <remarks>
@@ -139,7 +162,15 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     /// 批量位运算 + tzcnt 迭代的组合使回收速度远优于逐 slot 检查。
     /// </remarks>
     /// <exception cref="InvalidOperationException">未先调用 <see cref="BeginMark"/>。</exception>
-    public int Sweep() {
+    public int Sweep() => Sweep<NoOpSweepCollectHandler>();
+
+    /// <summary>
+    /// 回收所有不可达且已占用的 slot。返回实际释放的 slot 数量。
+    /// 每个将被回收的值会在释放前调用一次 <typeparamref name="THandler"/>。
+    /// </summary>
+    /// <typeparam name="THandler">静态回调策略类型。</typeparam>
+    /// <exception cref="InvalidOperationException">未先调用 <see cref="BeginMark"/>。</exception>
+    public int Sweep<THandler>() where THandler : struct, ISweepCollectHandler<T> {
         if (!_markPhaseActive) { throw new InvalidOperationException("Sweep must be called after BeginMark."); }
         _markPhaseActive = false;
 
@@ -148,6 +179,7 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
 
         int freed = 0;
         foreach (int index in _reachable.EnumerateZerosReverse()) {
+            THandler.OnCollect(_pool[index]);
             _pool.Free(index);
             freed++;
         }
