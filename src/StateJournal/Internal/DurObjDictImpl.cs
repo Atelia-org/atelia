@@ -42,6 +42,8 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
 
     public override IEnumerable<TKey> Keys => _core.Current.Keys;
 
+    internal override IReadOnlyCollection<TKey> CommittedKeys => _core.CommittedKeys;
+
     public override bool Remove(TKey key) {
         if (!_core.Current.Remove(key, out var removedId)) { return false; }
         _core.AfterRemove<LocalIdAsRefHelper>(key, removedId);

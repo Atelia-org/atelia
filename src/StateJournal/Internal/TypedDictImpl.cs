@@ -28,6 +28,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     public override bool ContainsKey(TKey key) => _core.Current.ContainsKey(key);
     public override int Count => _core.Current.Count;
     public override IEnumerable<TKey> Keys => _core.Current.Keys;
+    internal override IReadOnlyCollection<TKey> CommittedKeys => _core.CommittedKeys;
 
     public override bool Remove(TKey key) {
         if (!_core.Current.Remove(key, out TValue? removedValue)) { return false; }

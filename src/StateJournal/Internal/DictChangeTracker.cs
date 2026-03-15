@@ -29,6 +29,9 @@ where TValue : notnull {
     /// <summary>内部读写接口。当集合变更后需要调用<see cref="AfterUpsert"/>与<see cref="AfterRemove"/>。</summary>
     internal Dictionary<TKey, TValue?> Current => _current;
 
+    /// <summary>上次 commit 时的 key 集合（只读视图）。在 <see cref="Commit{VHelper}"/> 前保持不变。</summary>
+    internal Dictionary<TKey, TValue?>.KeyCollection CommittedKeys => _committed.Keys;
+
     public DictChangeTracker() {
         _committed = new();
         _current = new();

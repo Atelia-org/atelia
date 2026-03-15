@@ -289,7 +289,8 @@ public class Revision {
     }
 
     private AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> PersistCommit(
-            DurableObject graphRoot, List<DurableObject> liveObjects) {
+        DurableObject graphRoot, List<DurableObject> liveObjects
+    ) {
         var pendingSaves = new List<PendingSave>();
         foreach (var obj in liveObjects) {
             if (obj.IsTracked && !obj.HasChanges) { continue; }
@@ -300,11 +301,10 @@ public class Revision {
         }
 
         // 从 ObjectMap 中移除不可达对象的 key（利用 Phase 1 的 mark bitmap 判定）
-        var staleKeys = new List<uint>();
-        foreach (uint key in _objectMap.Keys) {
-            if (!_pool.IsMarkedReachable(new SlotHandle(key))) { staleKeys.Add(key); }
+        // 迭代 CommittedKeys（上次 commit 的快照，本轮 Upsert/Remove 不影响）以避免临时集合分配
+        foreach (uint key in _objectMap.CommittedKeys) {
+            if (!_pool.IsMarkedReachable(new SlotHandle(key))) { _objectMap.Remove(key); }
         }
-        foreach (uint key in staleKeys) { _objectMap.Remove(key); }
 
         Span<byte> rootMeta = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, graphRoot.LocalId.Value);
@@ -374,7 +374,8 @@ public class Revision {
                 return;
             }
             if (!firstVisit) { return; } // 已访问
-            liveObjects.Add(child);;
+            liveObjects.Add(child);
+            ;
             dfsStack.Push(child);
         }
     }

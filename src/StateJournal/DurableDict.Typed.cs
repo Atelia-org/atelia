@@ -23,6 +23,9 @@ where TKey : notnull where TValue : notnull {
     public abstract bool Remove(TKey key);
     public abstract IEnumerable<TKey> Keys { get; }
 
+    /// <summary>上次 commit 时的 key 集合。在当前 Commit 周期内保持不变，可安全迭代。</summary>
+    internal abstract IReadOnlyCollection<TKey> CommittedKeys { get; }
+
     // ── IDict<TKey, TValue> ─────────────────────────────────────
 
     public abstract GetIssue Get(TKey key, out TValue? value);
