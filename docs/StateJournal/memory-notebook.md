@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记脉络与决策，不复述代码细节；有疑问时指向源文件路径。
-> **最后更新**：2026-03-14
+> **最后更新**：2026-03-15
 
 ---
 
@@ -29,7 +29,7 @@ StateJournal 本身 **不依赖** 网络、文件系统 API 或第三方库。RB
 ### 继承体系
 
 ```
-DurableObject                           // 抽象基类：LocalId, GlobalId, DurableState, 生命周期钩子
+DurableObject                           // 抽象基类：LocalId, DurableState, 生命周期钩子
   ├─ DurableDictBase<TKey>              // 抽象：版本链读写逻辑(WritePendingDiff/ApplyDelta/OnCommitSucceeded)
   │    ├─ DurableDict<TKey, TValue>     // TypedDict 外观（值类型同构）
   │    │    ├─ TypedDictImpl<…>         // Internal：自持 DictChangeTracker<TKey, TValue>
@@ -52,23 +52,26 @@ Modify(Clean)  → PersistentDirty
 Commit(Dirty)  → Clean
 Discard(PersistentDirty) → Clean（回退到 committed 快照）
 Discard(TransientDirty)  → Detached（终态，不可恢复）
+GC Sweep(不可达) → Detached（由 DetachByGc() 设置，终态）
 ```
 
 关键文件：`DurableState.cs`, `DurableObject.cs`
 
 ### 工厂入口
 
-`Durable` 静态类（`Durable.cs`）是唯一的创建入口：
+公开创建入口为 `Revision` 实例方法（`Durable` 静态类已降为 `internal`）：
 
 ```csharp
-Durable.Dict<string, int>()    // TypedDict
-Durable.Dict<string>()          // MixedDict（异构值）
-Durable.List<int>()             // TypedList（占位）
-Durable.List()                  // MixedList（占位）
+var rev = new Revision(rbfFile);
+rev.CreateDict<string, int>()   // TypedDict
+rev.CreateDict<string>()         // MixedDict（异构值）
+rev.CreateList<int>()            // TypedList（占位）
+rev.CreateList()                 // MixedList（占位）
 ```
 
-背后通过 Static Generic Class Cache 编译工厂委托，首次访问后接近零开销。
-详见 `Internal/DurableFactory.cs`。
+创建时自动分配 `LocalId`、绑定到 `Revision`、标记 `TransientDirty`。
+底层仍通过 Static Generic Class Cache 编译工厂委托，首次访问后接近零开销。
+详见 `Internal/DurableFactory.cs`, `Revision.cs`。
 
 ### 接口与访问模式
 
@@ -203,7 +206,7 @@ MixedDict 反序列化的入口。读取 tag byte → 按 CBOR-inspired 规则 d
 
 ### 核心流程
 
-**Save**（`VersionChain.Save`）：
+**Write**（`VersionChain.Write`）—— 二阶段写入，返回 `PendingSave`：
 
 ```
 对象有变更？
@@ -213,8 +216,12 @@ MixedDict 反序列化的入口。读取 tag byte → 按 CBOR-inspired 规则 d
     → rebase: 写入 TypeCode + 全量数据
     → deltify: 写入空 TypeCode + 增量数据
   → EndAppend(tag) 得到 SizedPtr
-  → OnCommitSucceeded() 更新内部状态
+  → 返回 PendingSave（持有 obj + ticket + context，尚未更新内存状态）
 ```
+
+**PendingSave.Complete()**：调用 `OnCommitSucceeded()` 将写盘结果应用到对象内存状态。
+
+**Save**（`VersionChain.Save`）：一步到位的便捷方法，等价于 `Write()` + `Complete()`。
 
 **Load**（`VersionChain.Load`）：
 
@@ -305,62 +312,109 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 | 模块 | 状态 | 备注 |
 |:-----|:-----|:-----|
 | ValueBox（Tagged-Pointer + 所有 Face） | ✅ 已完成 | 含 Inline/Heap 编解码、Equality、Write |
-| Pools（SlotPool / GcPool / InternPool / SlabBitmap） | ✅ 已完成 | 含 Mark-Sweep GC |
+| Pools（SlotPool / GcPool / InternPool / SlabBitmap） | ✅ 已完成 | 含 Mark-Sweep GC、`ISweepCollectHandler` 回调 |
 | DictChangeTracker + BitDivision | ✅ 已完成 | 双字典 + 脏标记 |
 | DurableDict（Typed / Mixed / DurObj） | ✅ 已完成 | 含 Rebase/Deltify |
 | BinaryDiffWriter / Reader | ✅ 已完成 | 含 Tagged + Bare 编码 |
 | TypeCodec / HelperRegistry / DurableFactory | ✅ 已完成 | 泛型类型 → 工厂 |
-| VersionChain（Save/Load） | ✅ 已完成 | RBF 集成 |
-| DurableList（Typed/Mixed） | ⬜ 占位 | 所有方法 throw；Diff 方案待定（候选：最短编辑距离 / 操作记录合并 / BTree） |
-| Revision | 🔧 进行中 | ObjectMap + Commit/Open/Load + CreateDict/CreateList 工厂 + Identity Map 已实现 |
-| Revision.ObjectMap | ✅ 已完成 | `DurableDict<uint, ulong>`，LocalId → SizedPtr 映射，Save/Load 已通过测试 |
-| Revision.LocalId 管理 | 🔧 进行中 | `LocalIdAllocator`：空洞回收 + 高水位分配。后续计划用 `GcPool<DurableObject>` 替代 |
-| DurableObject 生存期绑定 | 🔧 进行中 | Bind(Revision, LocalId) 只读绑定 + 跨 Revision 引用拦截 |
+| VersionChain（Write/Save/Load） | ✅ 已完成 | 含二阶段 Write + PendingSave |
+| DurableList（Typed/Mixed） | ⬜ 占位 | 所有方法 throw；Diff 方案待定 |
+| Revision | ✅ 已完成 | GcPool 对象管理 + 三阶段 Commit + GC + GraphRoot 持久化 |
 | Repository | ⬜ 骨架 | 仅有 DirectoryPath 属性 |
 
 ---
 
-## 对象生存期管理演进路线（2026-03-15 规划）
+## Revision 层
 
-### 阶段一（已实施）：Revision-Owned Factory + Identity Map
+Revision 是**对象图的事务快照管理器**，类似 git commit。每次 `Commit(graphRoot)` 产生一个新的落盘快照。
 
-**核心变更**：`Durable` 静态工厂降为 `internal`，公开创建入口移至 `Revision` 实例方法。
+### 对象管理：GcPool\<DurableObject\>
 
-- `DurableObject.Bind(revision, localId)`：internal 一次性绑定，对象终生属于一个 Revision。
-- `Revision.CreateDict<K,V>()` / `CreateDict<K>()` / `CreateList<T>()` / `CreateList()`：分配 LocalId、绑定、标记 TransientDirty、放入 Identity Map。
-- **Identity Map**（`Dictionary<LocalId, DurableObject>`）：Load 命中缓存直接返回，保证实例唯一。采用 Strong Reference（dirty 安全 + 实例唯一保证）。
-- **跨 Revision 引用拦截**：`DurObjDictImpl.Upsert` 和 `DurableDict<TKey>.Upsert(DurableObject?)` 检查 `value.Revision == this.Revision`。
-- `GlobalId` 属性已删除（语义陷阱：返回的是 HEAD 版本上的 GlobalId，易误以为是 commit 后的）。
+`GcPool<DurableObject>` 同时承担三个职责：
 
-**设计约束**：
-- 对象一经 Bind 不可更改 Revision 或 LocalId。
-- VersionChain.Load 内部仍使用 `Durable`（now internal）工厂 + `DurableFactory.TryCreate` 创建空壳，Revision.Load 在外层 Bind。
-- ObjectMap（`DurableDict<uint, ulong>`）本身不走 Bind 流程（它是 Revision 的内部基础设施）。
-
-### 阶段二（已实施）：GcPool\<DurableObject\> 统一管理
-
-**目标**：用一个 `GcPool<DurableObject>` 同时替代 `LocalIdAllocator` + `Dictionary<LocalId, DurableObject>` Identity Map。
-
-| 现状 | 目标 |
+| 职责 | 机制 |
 |:-----|:-----|
-| `LocalId` 内含裸 `uint` | `LocalId` 内含 `SlotHandle`（带 generation 防 ABA） |
-| 分配 ID = `LocalIdAllocator.Allocate()` | 分配 ID = `GcPool.Alloc(obj)` 返回 SlotHandle |
-| 查对象 = `_identityMap[localId]` (哈希查找) | 查对象 = `GcPool[slotHandle]` (O(1) 数组索引) |
-| 空洞追踪 = HoleSpan + Queue | 空洞管理 = SlotPool 内建 bitmap free-list |
-| GC = 无 | GC = Mark-Sweep：Commit 时从 GraphRoot 遍历标记可达对象 |
+| **分配 LocalId** | `_pool.Store(obj)` 返回 `SlotHandle`，`LocalId.FromSlotHandle` 转换 |
+| **Identity Map** | `_pool[handle]` / `_pool.TryGetValue` O(1) 数组索引查找 |
+| **GC 回收** | BeginMark → MarkReachable → Sweep 三步 Mark-Sweep |
 
-**Mark-Sweep GC 设计思路**：
+- **slot 0** 始终由 ObjectMap 占据（对应 `LocalId.Null`），不分配给用户对象。
+- `LocalId.Value == SlotHandle.Packed`：二者一一对应，通过 `FromSlotHandle` / `ToSlotHandle` 互转。
+- 对象一经 `Bind(revision, localId)` 终生属于该 Revision，不可改绑。
 
-1. **Commit 时触发**：在 `Revision.Commit()` 保存脏对象之前，先从 `GraphRoot` 开始 DFS/BFS 遍历对象图。
-2. **Mark 阶段**：递归标记所有从 GraphRoot 可达的 DurableObject。DurObjDict/MixedDict 中的 DurableRef 是遍历边。
-3. **Sweep 阶段**：未标记的对象从 GcPool 释放、从 ObjectMap 中移除。
-4. **落盘保证**：Sweep 后 ObjectMap 只含可达对象 → 持久化状态始终健康。
+### 引用安全
 
-**Lazy-Load 兼容（性能优化，可延后）**：
+`Revision.EnsureCanReference(obj)` 统一校验：
+- 对象已绑定到当前 Revision（`IsBoundTo`）
+- 对象未被 Detach（`!IsDetached`）
+- 对象仍在 pool 中（`_pool.Validate(handle)`，防止使用已被 GC 回收的对象）
 
-- **MVP 简单实现**：Open Revision 时直接加载整个对象图到内存。内存集中，运行时简单。
-- **优化实现**：保持 Lazy-Load，Commit GC 时对未加载对象临时 Load 以遍历其 DurableRef 成员，遍历完即释放。
-- **优化辅助**：序列化时给对象帧加标记"是否含有对其他 DurableObject 的引用"（`HasDurableRefs` flag in FrameTag），GC 遍历时跳过不含引用的叶对象，避免不必要的临时 Load。
+`DurObjDictImpl.Upsert` 和 MixedDict 的 `Upsert(DurableObject?)` 通过此方法拦截跨 Revision / 已回收的引用。
+
+Open 时还执行 `ValidateAllReferences()`：遍历所有对象的子引用，检测悬空引用。
+
+### Commit 三阶段协议
+
+```
+Commit(graphRoot)
+  ├─ Phase 1: Preflight（纯读校验）
+  │    ├─ EnsureCanReference(graphRoot)
+  │    ├─ CollectReachableOrFail：从 graphRoot DFS 收集可达对象
+  │    │    └─ 遇到悬空引用 → 返回失败
+  │    └─ 构建 CommitPreflight（liveObjects, liveKeys）
+  ├─ Phase 2: Persist（仅追加写盘，不改对象内存）
+  │    ├─ 对每个脏对象 → VersionChain.Write → 得到 PendingSave
+  │    ├─ 更新 ObjectMap（upsert 新 ticket，remove stale keys）
+  │    ├─ 写 ObjectMap 帧（TailMeta = GraphRoot 的 LocalId.Value）
+  │    └─ 失败时 _objectMap.DiscardChanges() 回滚
+  └─ Phase 3: Finalize（全部落盘成功后）
+       ├─ 逐个 PendingSave.Complete()（更新对象版本链状态）
+       ├─ SweepUnreachable → 不可达对象 DetachByGc → pool.Sweep
+       └─ 更新 _head = CommitSnapshot(newId, ...)
+```
+
+**异常分类**：Phase 1/2 中的运行时 / IO 异常通过 `IsExpectedCommitException` 捕获，转为 `SjStateError` 返回（安全回滚）。Phase 3 中的异常直接上抛（数据已落盘，不能假装失败）。
+
+**关键不变量**：Sweep 在 Persist 之后执行，确保"先写盘再回收"——不会出现对象被 GC 但数据未保存的情况。
+
+### GraphRoot 持久化
+
+GraphRoot 的 `LocalId.Value`（4 字节 LE）写入 ObjectMap 帧的 TailMeta。Open 时从 TailMeta 恢复。
+
+### Open 全量加载
+
+```
+Open(commitId, rbfFile)
+  → LoadFull(objectMap 帧) → 获取 ObjectMap + TailMeta
+  → 遍历 ObjectMap entries → VersionChain.Load 每个对象
+  → GcPool.Rebuild(entries) 批量重建 pool
+  → Bind 所有用户对象
+  → 从 TailMeta 恢复 GraphRoot
+  → ValidateAllReferences() 校验引用完整性
+```
+
+当前采用 MVP 全量加载策略：Open 时一次性加载整个对象图到内存。
+
+### CommitSnapshot
+
+`_head: CommitSnapshot?` 记录最近一次成功 Commit 的不可变快照（Id / ParentId / ObjectMap / GraphRoot）。首次 Commit 前为 null。`Head` / `HeadParent` / `GraphRoot` 属性均从 `_head` 派生。
+
+### IChildRefVisitor 与图遍历
+
+`IChildRefVisitor` 是 GC / 校验用的子引用访问器接口：
+
+```csharp
+internal interface IChildRefVisitor {
+    void Visit(LocalId childId);
+}
+```
+
+`DurableObject.AcceptChildRefVisitor<TVisitor>(ref TVisitor)` 是抽象方法，各实现类按需遍历子引用：
+- `DurObjDictImpl`：遍历所有值中的非空 LocalId
+- `MixedDictImpl`：遍历 ValueBox 值中的 DurableRef
+- `TypedDictImpl` / List 占位实现：空实现（不含子引用）
+
+关键文件：`Revision.cs`, `Internal/IChildRefVisitor.cs`, `DurableObject.cs`
 
 ---
 
@@ -369,29 +423,28 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 ```
 src/StateJournal/
 ├── Durable.cs                    # internal 工厂基础设施（VersionChain.Load 使用）
-├── DurableObject.cs              # 抽象基类
-├── DurableState.cs               # 生命周期枚举
+├── DurableObject.cs              # 抽象基类（Bind, DetachByGc, IsBoundTo, AcceptChildRefVisitor）
+├── DurableState.cs               # 生命周期枚举（Clean/PersistentDirty/TransientDirty/Detached）
 ├── DurableDictBase.cs            # Dict 共享版本链逻辑
 ├── DurableDict.Typed.cs          # TypedDict 外观
 ├── DurableDict.Mixed.cs          # MixedDict 外观（含 generic accessor）
 ├── DurableList.Typed.cs          # TypedList 外观（占位）
 ├── DurableList.Mixed.cs          # MixedList 外观（占位）
-├── Revision.cs                   # Revision 骨架
+├── Revision.cs                   # 对象图事务快照管理器（GcPool + 三阶段 Commit + GC）
 ├── Repository.cs                 # Repo 骨架
 ├── IDict.cs                      # Dict 接口 + 扩展方法
 ├── ValueKind.cs                  # 值类型枚举
 ├── DurableObjectKind.cs          # 对象种类枚举
-├── LocalId.cs / CommitId.cs / GlobalId.cs
-├── LocalIdExhaustedException.cs
+├── LocalId.cs / CommitId.cs      # 标识类型（LocalId ↔ SlotHandle 互转）
 ├── GetIssue.cs                   # Get 操作的结果枚举
-├── ObjectDetachedException.cs
+├── ObjectDetachedException.cs    # Detached 对象操作异常
 ├── Internal/
 │   ├── ValueBox.cs + ValueBox.*.cs    # Tagged-Pointer 值载体
 │   ├── BoxLzc.cs                      # LZC 编码常量
 │   ├── ValuePools.cs                  # 静态池单例
 │   ├── DictChangeTracker.cs           # 双字典变更追踪
 │   ├── BitDivision.cs / BoolDivision.cs
-│   ├── VersionChain.cs                # Save/Load 核心流程
+│   ├── VersionChain.cs                # Write/Save/Load 核心流程 + PendingSave
 │   ├── VersionChainStatus.cs          # Rebase/Deltify 成本决策
 │   ├── FrameTag.cs                    # RBF 帧元数据结构
 │   ├── TypeCodec.cs                   # 栈式类型编码
@@ -400,9 +453,10 @@ src/StateJournal/
 │   ├── ITypeHelper.cs                 # 静态抽象 Helper 接口
 │   ├── DiffWriteContext.cs            # 写入上下文
 │   ├── DictDiffApplier.cs             # Load 时的增量应用
-│   ├── DurableRef.cs                 # (ObjectKind, LocalId) 轻量引用
+│   ├── DurableRef.cs                  # (ObjectKind, LocalId) 轻量引用
+│   ├── IChildRefVisitor.cs            # GC/校验用子引用访问器接口
 │   ├── HeapValueKind.cs
-│   ├── StateJournalErrors.cs          # SjCorruptionError 等
+│   ├── StateJournalErrors.cs          # SjCorruptionError / SjStateError 等
 │   ├── TypedDictImpl.cs / MixedDictImpl.cs / DurObjDictImpl.cs
 │   ├── TypedListImpl.cs / MixedListImpl.cs
 │   └── ...
@@ -414,11 +468,11 @@ src/StateJournal/
 │   └── VarInt.cs
 └── Pools/
     ├── SlotPool.cs       # Slab + Bitmap 基础分配器
-    ├── GcPool.cs         # Mark-Sweep GC 池
+    ├── GcPool.cs         # Mark-Sweep GC 池（含 Sweep<THandler> 泛型回调）
     ├── InternPool.cs     # 去重 + Mark-Sweep 池
     ├── SlabBitmap.cs     # Bitmap 基础设施
     ├── SlotHandle.cs     # 32bit 胖指针（generation + index）
-    └── IMarkSweepPool.cs / IValuePool.cs
+    └── IMarkSweepPool.cs / IValuePool.cs / ISweepCollectHandler.cs
 ```
 
 ---
