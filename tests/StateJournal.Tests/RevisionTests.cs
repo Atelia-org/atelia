@@ -199,7 +199,9 @@ public class RevisionTests : IDisposable {
 
         Assert.Equal(DurableState.Detached, child.State);
         Assert.Throws<InvalidOperationException>(() => root.Upsert(2, child));
-        Assert.Throws<InvalidOperationException>(() => rev.Commit(child));
+        var detachedCommit = rev.Commit(child);
+        Assert.True(detachedCommit.IsFailure);
+        Assert.IsType<SjStateError>(detachedCommit.Error);
 
         var reopened = Revision.Open(c2.Value, file);
         Assert.True(reopened.IsSuccess, $"Open failed: {reopened.Error}");
@@ -227,6 +229,61 @@ public class RevisionTests : IDisposable {
         var result = rev.Commit(root);
         Assert.True(result.IsFailure);
         Assert.IsType<SjCorruptionError>(result.Error);
+    }
+
+    [Fact]
+    public void Commit_WithNullGraphRoot_ReturnsSjStateError() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+        var rev = new Revision(file);
+
+        var result = rev.Commit(null!);
+        Assert.True(result.IsFailure);
+        Assert.IsType<SjStateError>(result.Error);
+    }
+
+    [Fact]
+    public void Commit_WhenPersistFails_DoesNotDetachUnreachableObjectsEarly() {
+        var path = GetTempFilePath();
+        var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, double>>();
+        var child = rev.CreateDict<int, double>();
+        root.Upsert(1, child);
+
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+        Assert.Equal(DurableState.Clean, child.State);
+
+        // child 变为不可达；若 Commit 失败前提前 Sweep，会被错误标记 Detached。
+        root.Remove(1);
+        file.Dispose(); // 人工制造持久化失败
+
+        var failed = rev.Commit(root);
+        Assert.True(failed.IsFailure);
+        Assert.Equal(DurableState.Clean, child.State);
+    }
+
+    [Fact]
+    public void Commit_WhenPersistFails_DoesNotUpdateGraphRoot() {
+        var path = GetTempFilePath();
+        var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root1 = rev.CreateDict<int, int>();
+        root1.Upsert(1, 1);
+        var c1 = rev.Commit(root1);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+        Assert.Equal(root1.LocalId, rev.GraphRoot!.LocalId);
+
+        var root2 = rev.CreateDict<int, int>();
+        root2.Upsert(2, 2);
+        file.Dispose(); // 人工制造持久化失败
+
+        var failed = rev.Commit(root2);
+        Assert.True(failed.IsFailure);
+        Assert.Equal(root1.LocalId, rev.GraphRoot!.LocalId);
     }
 
     [Fact]

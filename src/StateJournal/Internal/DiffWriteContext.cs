@@ -1,6 +1,6 @@
 namespace Atelia.StateJournal.Internal;
 
-internal class DiffWriteContext {
+internal struct DiffWriteContext {
     /// <summary>调用方可设为 true 以强制写出 rebase 帧（compact / 另存为新文件场景）。</summary>
     internal bool ForceRebase { get; init; }
 

@@ -21,6 +21,26 @@ internal readonly struct VersionChainLoadResult {
     }
 }
 
+/// <summary>
+/// <see cref="VersionChain.Write"/> 的返回结果，持有已落盘但尚未应用到内存的写入结果。
+/// 调用 <see cref="Complete"/> 将落盘结果应用到对象内存状态。
+/// </summary>
+internal readonly struct PendingSave {
+    private readonly DurableObject _obj;
+    private readonly DiffWriteContext _context;
+
+    public SizedPtr Ticket { get; }
+
+    internal PendingSave(DurableObject obj, SizedPtr ticket, DiffWriteContext context) {
+        _obj = obj;
+        Ticket = ticket;
+        _context = context;
+    }
+
+    /// <summary>将落盘结果应用到对象内存状态（更新版本链、提交 DictChangeTracker、设置 Clean）。</summary>
+    public void Complete() => _obj.OnCommitSucceeded(Ticket, _context);
+}
+
 internal static class VersionChain {
     private static bool TryInferObjectKind(Type type, out DurableObjectKind kind) {
         if (type == typeof(DurableList)) {
@@ -61,22 +81,36 @@ internal static class VersionChain {
         return Save(obj, file, new DiffWriteContext { ForceRebase = forceRebase });
     }
 
-    /// <summary>将 DurableObject 的待写入 diff 序列化并追加到 RBF 文件中。</summary>
-    /// <param name="obj">目标对象。</param>
-    /// <param name="file">RBF 文件。</param>
-    /// <param name="context">写入上下文，可指定 ForceRebase、UsageKindOverride。</param>
-    /// <param name="tailMeta">可选的 tailMeta 数据，附加到帧末尾。</param>
+    /// <summary>将 DurableObject 的待写入 diff 序列化并追加到 RBF 文件中，同时立即应用内存状态变更。</summary>
     internal static AteliaResult<SizedPtr> Save(
         DurableObject obj,
         IRbfFile file,
         DiffWriteContext context,
         ReadOnlySpan<byte> tailMeta = default
     ) {
-        if (!obj.HasChanges && !context.ForceRebase && !context.ForceSave && obj.IsTracked) { return obj.HeadTicket; }
+        var writeResult = Write(obj, file, context, tailMeta);
+        if (writeResult.IsFailure) { return writeResult.Error!; }
+        writeResult.Value.Complete();
+        return writeResult.Value.Ticket;
+    }
+
+    /// <summary>
+    /// 二阶段提交 Phase A：将 DurableObject 的待写入 diff 序列化并追加到 RBF 文件中，
+    /// 但不修改对象内存状态。调用方需在所有写入成功后调用 <see cref="PendingSave.Finalize"/> 完成 Phase B。
+    /// </summary>
+    internal static AteliaResult<PendingSave> Write(
+        DurableObject obj,
+        IRbfFile file,
+        DiffWriteContext context = default,
+        ReadOnlySpan<byte> tailMeta = default
+    ) {
+        if (!obj.HasChanges && !context.ForceRebase && !context.ForceSave && obj.IsTracked) {
+            return new PendingSave(obj, obj.HeadTicket, context);
+        }
         using RbfFrameBuilder builder = file.BeginAppend();
         RbfPayloadWriter rbfWriter = builder.PayloadAndMeta;
         BinaryDiffWriter diffWriter = new(rbfWriter);
-        FrameTag frameTag = obj.WritePendingDiff(diffWriter, context);
+        FrameTag frameTag = obj.WritePendingDiff(diffWriter, ref context);
         int tailMetaLength = tailMeta.Length;
         if (tailMetaLength > 0) {
             tailMeta.CopyTo(rbfWriter.GetSpan(tailMetaLength));
@@ -89,9 +123,7 @@ internal static class VersionChain {
                 Cause: appendResult.Error
             );
         }
-        SizedPtr versionTicket = appendResult.Value;
-        obj.OnCommitSucceeded(versionTicket, context);
-        return versionTicket;
+        return new PendingSave(obj, appendResult.Value, context);
     }
 
     /// <summary>从 RBF 文件加载版本链，重建 DurableObject。</summary>

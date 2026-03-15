@@ -49,7 +49,7 @@ public abstract class DurableDictBase<TKey> : DurableObject
         SetState(DurableState.Clean);
     }
 
-    internal sealed override FrameTag WritePendingDiff(BinaryDiffWriter writer, DiffWriteContext context) {
+    internal sealed override FrameTag WritePendingDiff(BinaryDiffWriter writer, ref DiffWriteContext context) {
         uint rebaseSize = (uint)RebaseCount + (uint)TypeCode.Length;
         uint deltifySize = (uint)DeltifyCount;
         bool doRebase = context.ForceRebase || _versionStatus.ShouldRebase(rebaseSize, deltifySize);

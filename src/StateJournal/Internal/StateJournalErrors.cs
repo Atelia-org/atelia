@@ -19,3 +19,13 @@ internal sealed record SjTypeResolutionError(
     IReadOnlyDictionary<string, string>? Details = null,
     AteliaError? Cause = null
 ) : AteliaError("SJ.TypeResolution", Message, RecoveryHint, Details, Cause);
+
+/// <summary>
+/// 运行时状态或 I/O 异常导致提交流程中断。
+/// </summary>
+internal sealed record SjStateError(
+    string Message,
+    string? RecoveryHint = null,
+    IReadOnlyDictionary<string, string>? Details = null,
+    AteliaError? Cause = null
+) : AteliaError("SJ.State", Message, RecoveryHint, Details, Cause);

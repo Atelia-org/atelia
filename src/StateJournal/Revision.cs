@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.IO;
 using Atelia.Data;
 using Atelia.Rbf;
 using Atelia.StateJournal.Internal;
@@ -8,37 +9,35 @@ namespace Atelia.StateJournal;
 
 /// <summary>
 /// 一个内存对象图状态快照，类似 git commit。
-/// 每次 Commit 产生一个新的落盘快照，由CommitId标识。Head标识当前Revision所基于的CommitId，HeadParent 指向Head的前一个 commit。
-/// 核心数据：ObjectMap（<see cref="DurableDict{uint, ulong}"/>），记录 LocalId → SizedPtr 映射。
+/// 每次 Commit 产生一个新的落盘快照，由 <see cref="CommitId"/> 标识。
+/// <see cref="_head"/> 持有当前已提交的快照状态（Id / ParentId / ObjectMap / GraphRoot），首次 Commit 前为 null。
 /// </summary>
 public class Revision {
     private readonly IRbfFile _file;
+    /// <summary>
+    /// 当前活跃的 ObjectMap，始终占据 pool slot 0。
+    /// 首次 Commit 前为空 dict；Commit 后与 <see cref="CommitSnapshot.ObjectMap"/> 是同一实例。
+    /// </summary>
     private DurableDict<uint, ulong> _objectMap;
     private GcPool<DurableObject> _pool;
+    /// <summary>最近一次成功 Commit 的快照。首次 Commit 前为 null。</summary>
+    private CommitSnapshot? _head;
 
-    public CommitId HeadParent { get; private set; }
-    public CommitId Head { get; private set; }
+    public CommitId Head => _head?.Id ?? default;
+    public CommitId HeadParent => _head?.ParentId ?? default;
     /// <summary>最近一次 Commit 时使用的 GraphRoot。首次 Commit 前为 null。Open 后自动从 TailMeta 恢复。</summary>
-    public DurableObject? GraphRoot { get; private set; }
+    public DurableObject? GraphRoot => _head?.GraphRoot;
 
-    /// <summary>从头创建一个新的 root commit（未 Commit 前 Id 为 default）。</summary>
+    /// <summary>从头创建一个新的 root commit（未 Commit 前 _head 为 null）。</summary>
     internal Revision(IRbfFile file) {
-        Head = default; // Commit 后才有有效 Id
-        HeadParent = default; // root commit has no parent
         _file = file;
-        // ObjectMap 是 Revision 内部基础设施，不参与用户对象生命周期系统（Bind/GraphRoot）。
         _objectMap = Durable.Dict<uint, ulong>();
-        // 创建空 pool，用 ObjectMap 占据 0 号槽位（对应 LocalId.Null，不分配给用户对象）。
         _pool = new GcPool<DurableObject>();
         _pool.Store(_objectMap); // slot 0 = ObjectMap
     }
 
-    /// <summary>从持久化数据全量加载 commit（内部构造函数）。</summary>
-    private Revision(CommitId id, CommitId parentId, IRbfFile file,
-        DurableDict<uint, ulong> objectMap, GcPool<DurableObject> pool
-    ) {
-        Head = id;
-        HeadParent = parentId;
+    /// <summary>从持久化数据全量加载 commit（内部构造函数，_head 由 Open 设置）。</summary>
+    private Revision(IRbfFile file, DurableDict<uint, ulong> objectMap, GcPool<DurableObject> pool) {
         _file = file;
         _objectMap = objectMap;
         _pool = pool;
@@ -88,7 +87,7 @@ public class Revision {
 
         var pool = GcPool<DurableObject>.Rebuild(entries);
 
-        var revision = new Revision(id, parentId, file, objectMap, pool);
+        var revision = new Revision(file, objectMap, pool);
 
         // 绑定所有用户对象到 Revision（ObjectMap 在 slot 0，不 Bind）
         foreach (uint key in objectMap.Keys) {
@@ -99,6 +98,7 @@ public class Revision {
         }
 
         // 从 TailMeta 恢复 GraphRoot（4 字节 = GraphRoot 的 LocalId.Value）
+        DurableObject? graphRoot = null;
         if (tailMeta.Length >= 4) {
             uint rootIdValue = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta);
             if (rootIdValue == 0) {
@@ -114,8 +114,10 @@ public class Revision {
                     RecoveryHint: "Data corruption in TailMeta."
                 );
             }
-            revision.GraphRoot = rootObj;
+            graphRoot = rootObj;
         }
+
+        revision._head = new CommitSnapshot(id, parentId, objectMap, graphRoot);
 
         var validateResult = revision.ValidateAllReferences();
         if (validateResult.IsFailure) { return validateResult.Error!; }
@@ -210,52 +212,53 @@ public class Revision {
     /// </summary>
     /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
     /// <returns>新 commit 的 <see cref="CommitId"/>（即 ObjectMap 帧的 ticket）。</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="graphRoot"/> 为 null。</exception>
-    /// <exception cref="InvalidOperationException"><paramref name="graphRoot"/> 不属于当前 Revision。</exception>
+    /// <remarks>
+    /// 提交流程分为三阶段：
+    /// 1) Preflight（纯读校验）；
+    /// 2) Persist（仅追加写）；
+    /// 3) Finalize（持久化成功后再执行 GC/状态更新）。
+    /// 预期的运行时/IO 异常会在持久化成功前转换为失败结果返回；
+    /// 若持久化成功后 Finalize 抛异常，则直接向上抛出（避免“已落盘却返回失败”的语义不一致）。
+    /// </remarks>
     internal AteliaResult<CommitId> Commit(DurableObject graphRoot) {
-        EnsureCanReference(graphRoot);
-        GraphRoot = graphRoot;
+        CommitPreflight preflight;
+        List<PendingSave> pendingSaves;
+        CommitId newCommitId;
+        try {
+            EnsureCanReference(graphRoot);
 
-        // 0. 从 GraphRoot 收集可达对象；若出现悬空引用则 fail-fast
-        var collectResult = CollectReachableOrFail();
-        if (collectResult.IsFailure) { return collectResult.Error!; }
-        var liveObjects = collectResult.Value!;
+            // Phase 1: Preflight（纯读，不执行破坏性修改）
+            var preflightResult = BuildCommitPreflight(graphRoot);
+            if (preflightResult.IsFailure) { return preflightResult.Error!; }
+            preflight = preflightResult.Value!;
 
-        // 1. Mark-Sweep GC（仅在图一致时执行）
-        SweepUnreachable(liveObjects);
+            // Phase 2: Persist（写盘但不改对象内存，失败时通过 DiscardChanges 回滚 _objectMap）
+            var persistResult = PersistCommit(preflight);
+            if (persistResult.IsFailure) {
+                _objectMap.DiscardChanges();
+                return persistResult.Error!;
+            }
+            (pendingSaves, newCommitId) = persistResult.Value;
+        }
+        catch (Exception ex) when (IsExpectedCommitException(ex)) {
+            _objectMap.DiscardChanges();
+            var details = new Dictionary<string, string> {
+                ["ExceptionType"] = ex.GetType().FullName ?? ex.GetType().Name,
+            };
+            if (graphRoot is not null) {
+                details["GraphRootLocalId"] = graphRoot.LocalId.Value.ToString();
+            }
 
-        // 2. 保存所有待保存的存活对象，更新 ObjectMap
-        foreach (var obj in liveObjects) {
-            if (obj.IsTracked && !obj.HasChanges) { continue; }
-            var saveResult = VersionChain.Save(obj, _file);
-            if (saveResult.IsFailure) { return saveResult.Error!; }
-            _objectMap.Upsert(obj.LocalId.Value, saveResult.Value.Serialize());
+            return new SjStateError(
+                $"Commit failed due to runtime state or I/O exception: {ex.GetType().Name}: {ex.Message}",
+                RecoveryHint: "Fix the runtime/file state and retry commit. No GC detachment has been applied before ObjectMap persistence succeeds.",
+                Details: details
+            );
         }
 
-        // 3. 从 ObjectMap 中移除被 GC 回收的对象（它们的 key 还残留在 ObjectMap 中）
-        // GC 后 liveObjects 是完整的存活集合，ObjectMap 中多出来的 key 需要清理
-        var liveKeys = new HashSet<uint>(liveObjects.Count);
-        foreach (var obj in liveObjects) { liveKeys.Add(obj.LocalId.Value); }
-        var staleKeys = new List<uint>();
-        foreach (uint key in _objectMap.Keys) {
-            if (!liveKeys.Contains(key)) { staleKeys.Add(key); }
-        }
-        foreach (uint key in staleKeys) { _objectMap.Remove(key); }
-
-        // 4. 保存 ObjectMap 帧（TailMeta = GraphRoot 的 LocalId.Value）
-        Span<byte> rootMeta = stackalloc byte[4];
-        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, GraphRoot!.LocalId.Value);
-        DiffWriteContext context = new() {
-            UsageKindOverride = UsageKind.ObjectMap,
-            ForceSave = true,
-        };
-        var result = VersionChain.Save(_objectMap, _file, context, tailMeta: rootMeta);
-        if (result.IsFailure) { return result.Error!; }
-
-        var newId = new CommitId(result.Value);
-        HeadParent = Head;
-        Head = newId;
-        return newId;
+        // Phase 3: Finalize（全部落盘成功，统一应用内存状态变更）
+        FinalizeCommit(preflight, pendingSaves, newCommitId);
+        return newCommitId;
     }
 
     private void SweepUnreachable(List<DurableObject> liveObjects) {
@@ -267,15 +270,94 @@ public class Revision {
         _pool.Sweep<DetachOnSweepCollectHandler>();
     }
 
+    private AteliaResult<CommitPreflight> BuildCommitPreflight(DurableObject graphRoot) {
+        var collectResult = CollectReachableOrFail(graphRoot);
+        if (collectResult.IsFailure) { return collectResult.Error!; }
+        var liveObjects = collectResult.Value!;
+
+        var liveKeys = new HashSet<uint>(liveObjects.Count);
+        foreach (var obj in liveObjects) { liveKeys.Add(obj.LocalId.Value); }
+
+        return new CommitPreflight(
+            graphRoot,
+            liveObjects,
+            liveKeys
+        );
+    }
+
+    private AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> PersistCommit(CommitPreflight preflight) {
+        // 二阶段 Phase A：写盘但不修改对象内存状态。失败时由调用方 DiscardChanges() 回滚 _objectMap。
+        var pendingSaves = new List<PendingSave>();
+        foreach (var obj in preflight.LiveObjects) {
+            if (obj.IsTracked && !obj.HasChanges) { continue; }
+            var writeResult = VersionChain.Write(obj, _file);
+            if (writeResult.IsFailure) { return writeResult.Error!; }
+            pendingSaves.Add(writeResult.Value);
+            _objectMap.Upsert(obj.LocalId.Value, writeResult.Value.Ticket.Serialize());
+        }
+
+        var staleKeys = new List<uint>();
+        foreach (uint key in _objectMap.Keys) {
+            if (!preflight.LiveKeys.Contains(key)) { staleKeys.Add(key); }
+        }
+        foreach (uint key in staleKeys) { _objectMap.Remove(key); }
+
+        Span<byte> rootMeta = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, preflight.GraphRoot.LocalId.Value);
+        DiffWriteContext mapContext = new() {
+            UsageKindOverride = UsageKind.ObjectMap,
+            ForceSave = true,
+        };
+        var mapWriteResult = VersionChain.Write(_objectMap, _file, mapContext, tailMeta: rootMeta);
+        if (mapWriteResult.IsFailure) { return mapWriteResult.Error!; }
+        pendingSaves.Add(mapWriteResult.Value);
+
+        return (pendingSaves, new CommitId(mapWriteResult.Value.Ticket));
+    }
+
+    private void FinalizeCommit(CommitPreflight preflight, List<PendingSave> pendingSaves, CommitId newCommitId) {
+        // 二阶段 Phase B：全部落盘成功，统一将写盘结果应用到对象内存状态。
+        foreach (var pending in pendingSaves) { pending.Complete(); }
+
+        SweepUnreachable(preflight.LiveObjects);
+
+        _head = new CommitSnapshot(
+            newCommitId,
+            _head?.Id ?? default,
+            _objectMap,
+            preflight.GraphRoot
+        );
+    }
+
     /// <summary>从 GraphRoot 遍历收集可达对象。若发现悬空引用则返回失败。</summary>
-    private AteliaResult<List<DurableObject>> CollectReachableOrFail() {
+    private AteliaResult<List<DurableObject>> CollectReachableOrFail(DurableObject graphRoot) {
         var reachableObjects = new List<DurableObject>();
         var visited = new HashSet<uint>();
+        var stack = new Stack<DurableObject>();
+        var childBuffer = new List<LocalId>();
 
-        // 从 GraphRoot 开始 DFS 遍历
-        var markVisitor = new MarkVisitor(_pool, reachableObjects, visited);
-        markVisitor.MarkRoot(GraphRoot!);
-        if (markVisitor.Error is not null) { return markVisitor.Error!; }
+        visited.Add(graphRoot.LocalId.Value);
+        reachableObjects.Add(graphRoot);
+        stack.Push(graphRoot);
+
+        while (stack.Count > 0) {
+            var current = stack.Pop();
+            childBuffer.Clear();
+            var collector = new ChildCollectVisitor(childBuffer);
+            current.AcceptChildRefVisitor(ref collector);
+            foreach (var childId in childBuffer) {
+                SlotHandle handle = childId.ToSlotHandle();
+                if (!_pool.TryGetValue(handle, out var child)) {
+                    return new SjCorruptionError(
+                        $"Dangling reference detected during commit: Graph contains missing LocalId {childId.Value}.",
+                        RecoveryHint: "Fix object graph references before commit."
+                    );
+                }
+                if (!visited.Add(childId.Value)) { continue; }
+                reachableObjects.Add(child);
+                stack.Push(child);
+            }
+        }
 
         return reachableObjects;
     }
@@ -303,35 +385,9 @@ public class Revision {
         public static void OnCollect(DurableObject value) => value.DetachByGc();
     }
 
-    /// <summary>Mark 阶段的 Visitor：标记可达 + 收集存活对象 + 递归遍历子引用。</summary>
-    private ref struct MarkVisitor(
-        GcPool<DurableObject> pool,
-        List<DurableObject> reachableObjects,
-        HashSet<uint> visited
-    ) : IChildRefVisitor {
-        public AteliaError? Error { get; private set; }
-
-        /// <summary>标记根对象并递归遍历其子引用。</summary>
-        public void MarkRoot(DurableObject root) {
-            if (!visited.Add(root.LocalId.Value)) { return; }
-            reachableObjects.Add(root);
-            root.AcceptChildRefVisitor(ref this);
-        }
-
+    private ref struct ChildCollectVisitor(List<LocalId> childRefs) : IChildRefVisitor {
         public void Visit(LocalId childId) {
-            if (Error is not null) { return; }
-            if (childId.IsNull) { return; }
-            SlotHandle handle = childId.ToSlotHandle();
-            if (!pool.TryGetValue(handle, out var child)) {
-                Error = new SjCorruptionError(
-                    $"Dangling reference detected during commit: Graph contains missing LocalId {childId.Value}.",
-                    RecoveryHint: "Fix object graph references before commit."
-                );
-                return;
-            }
-            if (!visited.Add(childId.Value)) { return; }
-            reachableObjects.Add(child);
-            child.AcceptChildRefVisitor(ref this);
+            if (!childId.IsNull) { childRefs.Add(childId); }
         }
     }
 
@@ -348,5 +404,29 @@ public class Revision {
                 );
             }
         }
+    }
+
+    private readonly record struct CommitSnapshot(
+        CommitId Id,
+        CommitId ParentId,
+        DurableDict<uint, ulong> ObjectMap,
+        DurableObject? GraphRoot
+    );
+
+    private readonly record struct CommitPreflight(
+        DurableObject GraphRoot,
+        List<DurableObject> LiveObjects,
+        HashSet<uint> LiveKeys
+    );
+
+    private static bool IsExpectedCommitException(Exception ex) {
+        return ex is InvalidOperationException
+            or ArgumentException
+            or InvalidDataException
+            or NotSupportedException
+            or ObjectDetachedException
+            or IOException
+            or UnauthorizedAccessException
+            or ObjectDisposedException;
     }
 }
