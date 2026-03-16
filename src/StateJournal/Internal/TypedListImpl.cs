@@ -22,4 +22,6 @@ internal class TypedListImpl<T, VHelper> : DurableList<T>
     internal override void OnLoadCompleted(SizedPtr versionTicket) => throw new NotImplementedException();
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
+
+    internal override void AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) { }
 }

@@ -171,6 +171,47 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         TryShrinkTrailingSlabs();
     }
 
+    /// <summary>
+    /// 将 fromIndex 的值移动到 toIndex。
+    /// toIndex 必须是 free slot；fromIndex 在移动后变为 free。
+    /// 目标位置 generation 自增 1（语义等价于"释放旧占用者 + 重新分配"），使指向旧占用者的 stale handle 失效。
+    /// 源位置 generation 也自增（标准 Free 行为）。
+    /// </summary>
+    /// <param name="fromIndex">要移动的源 slot index（必须 occupied）。</param>
+    /// <param name="toIndex">目标 slot index（必须 free）。</param>
+    /// <returns>目标位置的新 <see cref="SlotHandle"/>（携带自增后的 generation）。</returns>
+    internal SlotHandle MoveSlot(int fromIndex, int toIndex) {
+        if ((uint)fromIndex >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(fromIndex), fromIndex, $"Index must be in [0, {_freeBitmap.Capacity})."); }
+        if ((uint)toIndex >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(toIndex), toIndex, $"Index must be in [0, {_freeBitmap.Capacity})."); }
+        if (_freeBitmap.Test(fromIndex)) { throw new InvalidOperationException($"Source slot {fromIndex} is not occupied."); }
+        if (!_freeBitmap.Test(toIndex)) { throw new InvalidOperationException($"Target slot {toIndex} is not free."); }
+
+        int fromSlab = fromIndex >> SlabBitmap.SlabShift;
+        int fromOff = fromIndex & SlabBitmap.SlabMask;
+        int toSlab = toIndex >> SlabBitmap.SlabShift;
+        int toOff = toIndex & SlabBitmap.SlabMask;
+
+        // 复制值到目标位置
+        _slabs[toSlab][toOff] = _slabs[fromSlab][fromOff];
+
+        // 目标位置 generation++（使指向该位置旧占用者的 handle 失效）
+        byte newGen = ++_generations[toSlab][toOff];
+
+        // 标记目标位置为 occupied
+        _freeBitmap.Clear(toIndex);
+
+        // 释放源位置（generation++、标记 free、清除引用）—— 但不触发 TryShrinkTrailingSlabs，也不减 _count（总活跃数不变）
+        _generations[fromSlab][fromOff]++;
+        _freeBitmap.Set(fromIndex);
+        if (RuntimeHelpers.IsReferenceOrContainsReferences<T>()) {
+            _slabs[fromSlab][fromOff] = default!;
+        }
+
+        // _count 不变（一进一出）
+
+        return new SlotHandle(newGen, toIndex);
+    }
+
     /// <summary>获取 slot 的值的可变引用。O(1)。</summary>
     /// <exception cref="ArgumentOutOfRangeException">index 超出当前容量范围。</exception>
     /// <exception cref="InvalidOperationException">访问未占用的 slot。</exception>

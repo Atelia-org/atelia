@@ -34,6 +34,8 @@ public class ValueBoxEqualityTests {
 
         internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
 
+        internal override void AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) { }
+
         private protected override ReadOnlySpan<byte> TypeCode => null;
     }
 

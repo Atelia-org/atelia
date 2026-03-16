@@ -375,7 +375,6 @@ public class Revision {
             }
             if (!firstVisit) { return; } // 已访问
             liveObjects.Add(child);
-            ;
             dfsStack.Push(child);
         }
     }

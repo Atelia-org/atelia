@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Atelia.Data;
 using Atelia.StateJournal.Internal;
 using Atelia.StateJournal.Serialization;
@@ -52,6 +53,9 @@ public abstract class DurableObject {
 
     internal abstract void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) where TVisitor : IChildRefVisitor, allows ref struct;
 
+    /// <summary>Compaction 时重写子引用中的 LocalId。无子引用的类型提供空实现。</summary>
+    internal abstract void AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) where TRewriter : IChildRefRewriter, allows ref struct;
+
     /// <summary>设置对象状态。</summary>
     /// <param name="state">新状态。</param>
     protected void SetState(DurableState state) => _state = state;
@@ -64,6 +68,12 @@ public abstract class DurableObject {
 
     /// <summary>供 Revision 在 GC Sweep 回收对象时标记 Detached。</summary>
     internal void DetachByGc() => _state = DurableState.Detached;
+
+    /// <summary>Compaction 时重新绑定 LocalId（不更改 Revision 所属关系）。</summary>
+    internal void Rebind(LocalId newId) {
+        Debug.Assert(!IsDetached, "Cannot rebind a detached object.");
+        LocalId = newId;
+    }
 
     /// <summary>如果对象已分离则抛出异常。</summary>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
