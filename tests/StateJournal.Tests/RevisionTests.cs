@@ -8,7 +8,7 @@ using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal.Tests;
 
-public class RevisionTests : IDisposable {
+public partial class RevisionTests : IDisposable {
     private readonly List<string> _tempFiles = new();
 
     private string GetTempFilePath() {

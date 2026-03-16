@@ -67,5 +67,5 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
 
-    internal override void AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) { }
+    internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) => false;
 }

@@ -2,7 +2,7 @@ using Xunit;
 
 namespace Atelia.StateJournal.Pools.Tests;
 
-public class SlotPoolTests {
+public partial class SlotPoolTests {
     // ───────────────────── Construction ─────────────────────
 
     [Fact]

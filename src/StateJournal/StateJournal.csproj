@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Rbf\Rbf.csproj" />
     <ProjectReference Include="..\Primitives\Primitives.csproj" />
+    <ProjectReference Include="..\Diagnostics\Diagnostics.csproj" />
   </ItemGroup>
 
 </Project>

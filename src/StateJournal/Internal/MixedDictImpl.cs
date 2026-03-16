@@ -27,7 +27,8 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         }
     }
 
-    internal override void AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) {
+    internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) {
+        bool changed = false;
         var keys = new List<TKey>(_core.Current.Count);
         foreach (var kvp in _core.Current) {
             if (!kvp.Value.IsNull && kvp.Value.GetLzc() == BoxLzc.DurableRef) {
@@ -43,7 +44,9 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
                 var newBox = ValueBox.DurableRefFace.From(newRef);
                 _core.Current[key] = newBox;
                 _core.AfterUpsert<ValueBoxHelper>(key, newBox);
+                changed = true;
             }
         }
+        return changed;
     }
 }

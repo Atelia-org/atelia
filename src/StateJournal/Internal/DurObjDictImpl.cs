@@ -94,7 +94,8 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
         }
     }
 
-    internal override void AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) {
+    internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) {
+        bool changed = false;
         var keys = new List<TKey>(_core.Current.Count);
         foreach (var kvp in _core.Current) {
             if (!kvp.Value.IsNull) { keys.Add(kvp.Key); }
@@ -105,7 +106,9 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
             if (newId != oldId) {
                 _core.Current[key] = newId;
                 _core.AfterUpsert<LocalIdAsRefHelper>(key, newId);
+                changed = true;
             }
         }
+        return changed;
     }
 }

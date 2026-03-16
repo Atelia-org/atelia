@@ -1,5 +1,3 @@
-using Atelia.Data;
-using Atelia.StateJournal.Serialization;
 using Xunit;
 
 namespace Atelia.StateJournal.Internal.Tests;

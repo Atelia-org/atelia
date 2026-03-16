@@ -53,8 +53,11 @@ public abstract class DurableObject {
 
     internal abstract void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) where TVisitor : IChildRefVisitor, allows ref struct;
 
-    /// <summary>Compaction 时重写子引用中的 LocalId。无子引用的类型提供空实现。</summary>
-    internal abstract void AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) where TRewriter : IChildRefRewriter, allows ref struct;
+    /// <summary>
+    /// Compaction 时重写子引用中的 LocalId。
+    /// 返回值表示对象当前工作态是否因此发生了修改。
+    /// </summary>
+    internal abstract bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) where TRewriter : IChildRefRewriter, allows ref struct;
 
     /// <summary>设置对象状态。</summary>
     /// <param name="state">新状态。</param>
