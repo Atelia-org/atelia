@@ -17,6 +17,14 @@ public class RevisionTests : IDisposable {
         return path;
     }
 
+    private static int CountObjectMapFrames(IRbfFile file) {
+        int count = 0;
+        foreach (var info in file.ScanReverse()) {
+            if (new FrameTag(info.Tag).UsageKind == UsageKind.ObjectMap) { count++; }
+        }
+        return count;
+    }
+
     public void Dispose() {
         foreach (var path in _tempFiles) {
             try { if (File.Exists(path)) { File.Delete(path); } } catch { }
@@ -647,5 +655,144 @@ public class RevisionTests : IDisposable {
         for (int i = 20; i < 30; i++) {
             Assert.True(root.ContainsKey(i));
         }
+    }
+
+    [Fact]
+    public void Commit_WhenCompactionTriggered_AppendsTwoObjectMapFrames() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, int>>();
+
+        const int totalChildren = 140;
+        for (int i = 0; i < totalChildren; i++) {
+            var child = rev.CreateDict<int, int>();
+            child.Upsert(i, i);
+            root.Upsert(i, child);
+        }
+
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+
+        for (int i = 0; i < 70; i++) {
+            root.Remove(i);
+        }
+
+        int before = CountObjectMapFrames(file);
+        var c2 = rev.Commit(root);
+        Assert.True(c2.IsSuccess, $"Commit2 failed: {c2.Error}");
+        int after = CountObjectMapFrames(file);
+
+        Assert.Equal(before + 2, after);
+    }
+
+    [Fact]
+    public void Commit_WhenCompactionTriggered_HeadParentPointsToIntermediateCommit() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, int>>();
+        const int totalChildren = 140;
+        for (int i = 0; i < totalChildren; i++) {
+            var child = rev.CreateDict<int, int>();
+            child.Upsert(i, i);
+            root.Upsert(i, child);
+        }
+
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+
+        for (int i = 0; i < 70; i++) {
+            root.Remove(i);
+        }
+
+        var c2 = rev.Commit(root);
+        Assert.True(c2.IsSuccess, $"Commit2 failed: {c2.Error}");
+
+        Assert.Equal(c2.Value, rev.Head);
+        Assert.NotEqual(c1.Value, rev.HeadParent); // HeadParent 应指向内部中间 commit
+
+        var opened = Revision.Open(c2.Value, file);
+        Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
+        Assert.Equal(rev.HeadParent, opened.Value!.HeadParent);
+        Assert.NotEqual(c1.Value, opened.Value!.HeadParent);
+    }
+
+    [Fact]
+    public void Commit_WhenCompactionFollowupPersistFails_ReturnsFailureWithPrimaryCommitDurable() {
+        var path = GetTempFilePath();
+        var inner = RbfFile.CreateNew(path);
+        using var file = new FailOnNthBeginAppendFile(inner);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, int>>();
+        const int totalChildren = 140;
+        for (int i = 0; i < totalChildren; i++) {
+            var child = rev.CreateDict<int, int>();
+            child.Upsert(i, i);
+            root.Upsert(i, child);
+        }
+
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+
+        for (int i = 0; i < 70; i++) {
+            root.Remove(i);
+        }
+
+        int before = CountObjectMapFrames(file);
+        file.Arm(failOnBeginAppendIndex: 4);
+        var c2 = rev.Commit(root);
+        Assert.True(c2.IsFailure);
+        var err = Assert.IsType<SjCompactionFollowupPersistError>(c2.Error);
+        Assert.Equal("SJ.Compaction.FollowupPersistFailed", err.ErrorCode);
+        Assert.True(err.Details?.ContainsKey("PrimaryCommitTicket"));
+        Assert.Equal("FollowupPersist", err.Details!["CompactionStage"]);
+        Assert.True(err.Details.ContainsKey("FollowupErrorCode"));
+        int after = CountObjectMapFrames(file);
+        Assert.Equal(before + 1, after); // 仅 primary commit 的 ObjectMap 已写入
+
+        Assert.Equal(rev.Head, rev.GraphRoot!.Revision.Head);
+        var opened = Revision.Open(rev.Head, file);
+        Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, int>>>(opened.Value!.GraphRoot);
+        Assert.Equal(70, loadedRoot.Count);
+    }
+
+    private sealed class FailOnNthBeginAppendFile(IRbfFile inner) : IRbfFile {
+        private bool _armed;
+        private int _beginAppendCount;
+        private int _failOnBeginAppendIndex;
+
+        public void Arm(int failOnBeginAppendIndex) {
+            if (failOnBeginAppendIndex <= 0) { throw new ArgumentOutOfRangeException(nameof(failOnBeginAppendIndex)); }
+            _armed = true;
+            _beginAppendCount = 0;
+            _failOnBeginAppendIndex = failOnBeginAppendIndex;
+        }
+
+        public long TailOffset => inner.TailOffset;
+
+        public AteliaResult<SizedPtr> Append(uint tag, ReadOnlySpan<byte> payload, ReadOnlySpan<byte> tailMeta = default) => inner.Append(tag, payload, tailMeta);
+
+        public RbfFrameBuilder BeginAppend() {
+            if (_armed && ++_beginAppendCount == _failOnBeginAppendIndex) {
+                _armed = false;
+                throw new IOException("Injected failure on compaction follow-up BeginAppend.");
+            }
+            return inner.BeginAppend();
+        }
+        public AteliaResult<RbfPooledFrame> ReadPooledFrame(SizedPtr ptr) => inner.ReadPooledFrame(ptr);
+        public AteliaResult<RbfFrame> ReadFrame(SizedPtr ptr, Span<byte> buffer) => inner.ReadFrame(ptr, buffer);
+        public RbfReverseSequence ScanReverse(bool showTombstone = false) => inner.ScanReverse(showTombstone);
+        public AteliaResult<RbfFrameInfo> ReadFrameInfo(SizedPtr ticket) => inner.ReadFrameInfo(ticket);
+        public AteliaResult<RbfTailMeta> ReadTailMeta(SizedPtr ticket, Span<byte> buffer) => inner.ReadTailMeta(ticket, buffer);
+        public AteliaResult<RbfPooledTailMeta> ReadPooledTailMeta(SizedPtr ticket) => inner.ReadPooledTailMeta(ticket);
+        public void DurableFlush() => inner.DurableFlush();
+        public void Truncate(long newLengthBytes) => inner.Truncate(newLengthBytes);
+        public void SetupReadLog(string? logPath) => inner.SetupReadLog(logPath);
+        public void Dispose() => inner.Dispose();
     }
 }

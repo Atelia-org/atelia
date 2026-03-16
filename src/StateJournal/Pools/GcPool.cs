@@ -33,6 +33,15 @@ internal interface ISweepCollectHandler<T> where T : notnull {
 /// </remarks>
 /// <typeparam name="T">值类型，必须是 notnull。</typeparam>
 internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
+    internal readonly record struct CompactionUndoToken(
+        IReadOnlyList<(SlotHandle Old, SlotHandle New)> AppliedMoves
+    );
+
+    internal readonly record struct CompactionApplyResult(
+        List<(SlotHandle Old, SlotHandle New)> Moves,
+        CompactionUndoToken UndoToken
+    );
+
     private readonly struct NoOpSweepCollectHandler : ISweepCollectHandler<T> {
         public static void OnCollect(T value) { }
     }
@@ -258,5 +267,29 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
         SyncShrink();
 
         return moves;
+    }
+
+    /// <summary>
+    /// 执行 compaction 并返回用于回滚的 undo token。
+    /// 当前 undo token 仅承载已执行移动信息；完整回滚能力待后续实现。
+    /// </summary>
+    internal CompactionApplyResult CompactWithUndo(int maxMoves) {
+        var moves = Compact(maxMoves);
+        var undoToken = new CompactionUndoToken(moves);
+        return new CompactionApplyResult(moves, undoToken);
+    }
+
+    /// <summary>
+    /// 回滚一次已应用的 compaction。
+    /// </summary>
+    internal void RollbackCompaction(CompactionUndoToken undoToken) {
+        // TODO(StateJournal/Compaction-Rollback):
+        // 需要在 SlotPool/GcPool 层提供可逆 MoveSlot，恢复：
+        // 1) 物理槽位布局；
+        // 2) generation 语义（避免 ABA 破坏）；
+        // 3) bitmap 与 capacity/shrink 状态一致性。
+        // 当前仅搭好事务框架，后续专项实现该能力。
+        _ = undoToken;
+        throw new NotImplementedException("GcPool compaction rollback is not implemented yet.");
     }
 }

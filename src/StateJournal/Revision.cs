@@ -210,16 +210,39 @@ public class Revision {
     /// GraphRoot 的 LocalId 会序列化到 ObjectMap 帧的 TailMeta 中，Open 时自动恢复。
     /// </summary>
     /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
-    /// <returns>新 commit 的 <see cref="CommitId"/>（即 ObjectMap 帧的 ticket）。</returns>
+    /// <returns>
+    /// 若无 compaction 或 compaction 后续持久化成功，返回最新 commit 的 <see cref="CommitId"/>（ObjectMap 帧 ticket）。
+    /// 若 primary commit 已成功但 compaction 阶段失败，则返回失败；此时 <see cref="Head"/> 可能已经前进（部分成功可见）。
+    /// </returns>
     /// <remarks>
-    /// 提交流程分为三阶段：
+    /// 提交流程分为两段：
+    /// A) Primary Commit（三阶段）：
     /// 1) WalkAndMark — 从 graphRoot DFS 遍历对象图，同时执行 GcPool Mark（用 mark bitmap 替代 HashSet 去重）；
     /// 2) Persist — 仅追加写盘，不改对象内存状态；
     /// 3) Finalize — 持久化成功后执行 Sweep GC 和状态更新。
-    /// 预期的运行时/IO 异常会在持久化成功前转换为失败结果返回；
-    /// 若持久化成功后 Finalize 抛异常，则直接向上抛出（避免"已落盘却返回失败"的语义不一致）。
+    /// B) Compaction Follow-up（可选）：
+    /// - 若触发 compaction，先在内存执行 MoveSlot/Rebind/引用重写；
+    /// - 然后执行一次内部 CommitCore 持久化 compaction 造成的脏变更。
+    /// 因此 Commit 具备“部分成功可见”语义：primary commit 成功后，即使后续 compaction 失败，Head 也可能已更新到 primary commit。
     /// </remarks>
     internal AteliaResult<CommitId> Commit(DurableObject graphRoot) {
+        var userCommit = CommitCore(graphRoot, rollbackObjectMapOnFailure: true);
+        if (userCommit.IsFailure) { return userCommit.Error!; }
+
+        CommitId firstCommitId = userCommit.Value;
+        var compactionApply = ApplyCompactionIfNeeded(firstCommitId);
+        if (compactionApply.IsFailure) { return compactionApply.Error!; }
+        if (!compactionApply.Value.Compacted) { return firstCommitId; }
+
+        var compactionCommit = CommitCore(graphRoot, rollbackObjectMapOnFailure: false);
+        if (compactionCommit.IsFailure) {
+            return BuildCompactionFollowupPersistFailureError(firstCommitId, compactionCommit.Error!);
+        }
+
+        return compactionCommit.Value;
+    }
+
+    private AteliaResult<CommitId> CommitCore(DurableObject graphRoot, bool rollbackObjectMapOnFailure) {
         List<DurableObject> liveObjects;
         List<PendingSave> pendingSaves;
         CommitId newCommitId;
@@ -231,16 +254,16 @@ public class Revision {
             if (walkResult.IsFailure) { return walkResult.Error!; }
             liveObjects = walkResult.Value!;
 
-            // Phase 2: Persist（写盘但不改对象内存，失败时通过 DiscardChanges 回滚 _objectMap）
+            // Phase 2: Persist（写盘但不改对象内存，失败时按策略决定是否回滚 _objectMap）
             var persistResult = PersistCommit(graphRoot, liveObjects);
             if (persistResult.IsFailure) {
-                _objectMap.DiscardChanges();
+                if (rollbackObjectMapOnFailure) { _objectMap.DiscardChanges(); }
                 return persistResult.Error!;
             }
             (pendingSaves, newCommitId) = persistResult.Value;
         }
         catch (Exception ex) when (IsExpectedCommitException(ex)) {
-            _objectMap.DiscardChanges();
+            if (rollbackObjectMapOnFailure) { _objectMap.DiscardChanges(); }
             var details = new Dictionary<string, string> {
                 ["ExceptionType"] = ex.GetType().FullName ?? ex.GetType().Name,
             };
@@ -324,9 +347,6 @@ public class Revision {
         // Mark bitmap 已在 Phase 1 (WalkAndMark) 中完成，直接 Sweep
         _pool.Sweep<DetachOnSweepCollectHandler>();
 
-        // 渐进压缩：碎片率超阈值时移动有限比例的 slot
-        CompactIfNeeded(pendingSaves);
-
         _head = new CommitSnapshot(
             newCommitId,
             _head?.Id ?? default,
@@ -338,50 +358,190 @@ public class Revision {
     /// <summary>
     /// 碎片率超阈值时触发渐进压缩。
     /// 在 Sweep 之后调用，利用 FreeBitmap 的空洞分布执行有限次数的 MoveSlot，
-    /// 然后遍历 liveObjects 重写所有受影响的子引用。
-    /// 被改动的对象自然变脏，下一次 Commit 的 Persist 阶段写盘。
+    /// 然后遍历 ObjectMap 覆盖的存活对象重写所有受影响的子引用。
+    /// 被改动的对象会变脏，并在同一次外层 Commit 的 follow-up CommitCore 中持久化。
+    /// 若 apply 失败则尝试回滚（当前 _pool 回滚实现仍是占位）。
     /// </summary>
-    private void CompactIfNeeded(List<PendingSave> pendingSaves) {
+    private AteliaResult<CompactionApplyContext> ApplyCompactionIfNeeded(CommitId primaryCommitId) {
         int liveCount = _pool.Count;
         int capacity = _pool.Capacity;
-        if (liveCount < CompactionMinThreshold || capacity == 0) { return; }
+        if (liveCount < CompactionMinThreshold || capacity == 0) { return CompactionApplyContext.NotCompacted; }
 
         // fragmentationRatio = (capacity - liveCount) / capacity
         // 等价于 (capacity - liveCount) * 100 > capacity * triggerPercent 避免浮点
         int holeCount = capacity - liveCount;
-        if (holeCount * 100 <= capacity * CompactionTriggerPercent) { return; }
+        if (holeCount * 100 <= capacity * CompactionTriggerPercent) { return CompactionApplyContext.NotCompacted; }
 
         int maxMoves = Math.Max(1, (int)((long)liveCount * CompactionMovePercent / 100));
-        var moves = _pool.Compact(maxMoves);
-        if (moves.Count == 0) { return; }
+        GcPool<DurableObject>.CompactionApplyResult applyResult = _pool.CompactWithUndo(maxMoves);
+        if (applyResult.Moves.Count == 0) { return CompactionApplyContext.NotCompacted; }
+        try {
+            // 构建翻译表
+            var translationTable = new Dictionary<uint, LocalId>(applyResult.Moves.Count);
+            foreach (var (oldHandle, newHandle) in applyResult.Moves) {
+                var oldId = LocalId.FromSlotHandle(oldHandle);
+                var newId = LocalId.FromSlotHandle(newHandle);
 
-        // 构建翻译表
-        var translationTable = new Dictionary<uint, LocalId>(moves.Count);
-        foreach (var (oldHandle, newHandle) in moves) {
-            var oldId = LocalId.FromSlotHandle(oldHandle);
-            var newId = LocalId.FromSlotHandle(newHandle);
+                // Rebind 被移动对象自身的 LocalId
+                var obj = _pool[newHandle]; // 值已在物理上移动到新位置
+                obj.Rebind(newId);
 
-            // Rebind 被移动对象自身的 LocalId
-            var obj = _pool[newHandle]; // 值已在物理上移动到新位置
-            obj.Rebind(newId);
+                // 更新 ObjectMap 的 key：Remove(oldKey) + Upsert(newKey, sameTicket)
+                if (_objectMap.Get(oldId.Value, out ulong ticket) == GetIssue.None) {
+                    _objectMap.Remove(oldId.Value);
+                    _objectMap.Upsert(newId.Value, ticket);
+                }
 
-            // 更新 ObjectMap 的 key：Remove(oldKey) + Upsert(newKey, sameTicket)
-            if (_objectMap.Get(oldId.Value, out ulong ticket) == GetIssue.None) {
-                _objectMap.Remove(oldId.Value);
-                _objectMap.Upsert(newId.Value, ticket);
+                translationTable.Add(oldId.Value, newId);
             }
 
-            translationTable.Add(oldId.Value, newId);
+            // 遍历 pool 中所有存活的用户对象，重写子引用
+            // ObjectMap 保存了所有用户对象的 key
+            var rewriter = new CompactRewriter(translationTable);
+            foreach (uint key in _objectMap.Keys) {
+                var handle = new SlotHandle(key);
+                if (!_pool.TryGetValue(handle, out var obj)) { continue; }
+                obj.AcceptChildRefRewrite(ref rewriter);
+            }
+
+            var validateResult = ValidateAllReferences();
+            if (validateResult.IsFailure) {
+                var rollbackResult = TryRollbackCompaction(primaryCommitId, applyResult, validateResult.Error!);
+                if (rollbackResult.IsFailure) { return rollbackResult.Error!; }
+                return BuildCompactionApplyFailureError(
+                    primaryCommitId,
+                    new InvalidDataException($"Compaction produced invalid references: {validateResult.Error!.Message}")
+                );
+            }
+        }
+        catch (Exception ex) when (IsExpectedCommitException(ex)) {
+            var rollbackResult = TryRollbackCompaction(primaryCommitId, applyResult, ex);
+            if (rollbackResult.IsFailure) { return rollbackResult.Error!; }
+            return BuildCompactionApplyFailureError(primaryCommitId, ex);
         }
 
-        // 遍历 pool 中所有存活的用户对象，重写子引用
-        // ObjectMap 保存了所有用户对象的 key
-        var rewriter = new CompactRewriter(translationTable);
+        return new CompactionApplyContext(true, applyResult.UndoToken, applyResult.Moves);
+    }
+
+    private AteliaResult<bool> TryRollbackCompaction(
+        CommitId primaryCommitId,
+        GcPool<DurableObject>.CompactionApplyResult applyResult,
+        AteliaError applyCause
+    ) {
+        try {
+            _pool.RollbackCompaction(applyResult.UndoToken);
+            _objectMap.DiscardChanges();
+            foreach (var obj in EnumerateRollbackCandidates(applyResult.Moves)) {
+                obj.DiscardChanges();
+            }
+            return true;
+        }
+        catch (Exception ex) when (IsExpectedCommitException(ex) || ex is NotImplementedException) {
+            return BuildCompactionRollbackFailureError(primaryCommitId, ex, applyCause);
+        }
+    }
+
+    private AteliaResult<bool> TryRollbackCompaction(
+        CommitId primaryCommitId,
+        GcPool<DurableObject>.CompactionApplyResult applyResult,
+        Exception applyException
+    ) {
+        try {
+            _pool.RollbackCompaction(applyResult.UndoToken);
+            _objectMap.DiscardChanges();
+            foreach (var obj in EnumerateRollbackCandidates(applyResult.Moves)) {
+                obj.DiscardChanges();
+            }
+            return true;
+        }
+        catch (Exception ex) when (IsExpectedCommitException(ex) || ex is NotImplementedException) {
+            return BuildCompactionRollbackFailureError(primaryCommitId, ex, applyException);
+        }
+    }
+
+    private IEnumerable<DurableObject> EnumerateRollbackCandidates(IReadOnlyList<(SlotHandle Old, SlotHandle New)> moves) {
+        var visited = new HashSet<uint>();
         foreach (uint key in _objectMap.Keys) {
             var handle = new SlotHandle(key);
-            if (!_pool.TryGetValue(handle, out var obj)) { continue; }
-            obj.AcceptChildRefRewrite(ref rewriter);
+            if (_pool.TryGetValue(handle, out var obj) && visited.Add(obj.LocalId.Value)) {
+                yield return obj;
+            }
         }
+
+        foreach (var (oldHandle, newHandle) in moves) {
+            if (_pool.TryGetValue(oldHandle, out var oldObj) && visited.Add(oldObj.LocalId.Value)) {
+                yield return oldObj;
+            }
+            if (_pool.TryGetValue(newHandle, out var newObj) && visited.Add(newObj.LocalId.Value)) {
+                yield return newObj;
+            }
+        }
+    }
+
+    private static SjCompactionApplyError BuildCompactionApplyFailureError(CommitId primaryCommitId, Exception ex) {
+        var details = new Dictionary<string, string> {
+            ["PrimaryCommitTicket"] = primaryCommitId.Ticket.Serialize().ToString(),
+            ["CompactionStage"] = "Apply",
+            ["ExceptionType"] = ex.GetType().FullName ?? ex.GetType().Name,
+        };
+
+        return new SjCompactionApplyError(
+            $"Commit primary snapshot succeeded, but compaction apply failed: {ex.GetType().Name}: {ex.Message}",
+            RecoveryHint: "Primary snapshot has been persisted and set as current Head. Fix runtime issue and retry Commit to persist compaction changes.",
+            Details: details,
+            Cause: null
+        );
+    }
+
+    private static SjCompactionFollowupPersistError BuildCompactionFollowupPersistFailureError(CommitId primaryCommitId, AteliaError cause) {
+        var details = new Dictionary<string, string> {
+            ["PrimaryCommitTicket"] = primaryCommitId.Ticket.Serialize().ToString(),
+            ["CompactionStage"] = "FollowupPersist",
+            ["FollowupErrorCode"] = cause.ErrorCode,
+        };
+
+        return new SjCompactionFollowupPersistError(
+            "Commit primary snapshot succeeded, but compaction follow-up persistence failed.",
+            RecoveryHint: "Primary snapshot has been persisted and set as current Head. Fix runtime/I/O issue and retry Commit to persist compaction changes.",
+            Details: details,
+            Cause: cause
+        );
+    }
+
+    private static SjCompactionRollbackError BuildCompactionRollbackFailureError(
+        CommitId primaryCommitId, Exception rollbackException, AteliaError applyCause
+    ) {
+        var details = new Dictionary<string, string> {
+            ["PrimaryCommitTicket"] = primaryCommitId.Ticket.Serialize().ToString(),
+            ["CompactionStage"] = "Rollback",
+            ["RollbackExceptionType"] = rollbackException.GetType().FullName ?? rollbackException.GetType().Name,
+            ["ApplyErrorCode"] = applyCause.ErrorCode,
+        };
+
+        return new SjCompactionRollbackError(
+            $"Compaction apply failed and rollback also failed: {rollbackException.GetType().Name}: {rollbackException.Message}",
+            RecoveryHint: "Primary snapshot is durable. Restart revision state from persisted Head before retrying commit.",
+            Details: details,
+            Cause: applyCause
+        );
+    }
+
+    private static SjCompactionRollbackError BuildCompactionRollbackFailureError(
+        CommitId primaryCommitId, Exception rollbackException, Exception applyException
+    ) {
+        var details = new Dictionary<string, string> {
+            ["PrimaryCommitTicket"] = primaryCommitId.Ticket.Serialize().ToString(),
+            ["CompactionStage"] = "Rollback",
+            ["ApplyExceptionType"] = applyException.GetType().FullName ?? applyException.GetType().Name,
+            ["RollbackExceptionType"] = rollbackException.GetType().FullName ?? rollbackException.GetType().Name,
+        };
+
+        return new SjCompactionRollbackError(
+            $"Compaction apply failed and rollback also failed: {rollbackException.GetType().Name}: {rollbackException.Message}",
+            RecoveryHint: "Primary snapshot is durable. Restart revision state from persisted Head before retrying commit.",
+            Details: details,
+            Cause: null
+        );
     }
 
     // ───── Compaction 参数（internal 以允许测试覆盖策略验证） ─────
@@ -400,6 +560,18 @@ public class Revision {
         public LocalId Rewrite(LocalId oldId) {
             return table.TryGetValue(oldId.Value, out var newId) ? newId : oldId;
         }
+    }
+
+    private readonly record struct CompactionApplyContext(
+        bool Compacted,
+        GcPool<DurableObject>.CompactionUndoToken UndoToken,
+        IReadOnlyList<(SlotHandle Old, SlotHandle New)> Moves
+    ) {
+        public static readonly CompactionApplyContext NotCompacted = new(
+            Compacted: false,
+            UndoToken: default,
+            Moves: Array.Empty<(SlotHandle Old, SlotHandle New)>()
+        );
     }
 
     /// <summary>全量校验 pool 中所有用户对象的引用完整性。发现悬空引用则失败。</summary>
