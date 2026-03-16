@@ -230,4 +230,33 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     private void SyncShrink() {
         while (_reachable.SlabCount > _pool.FreeBitmap.SlabCount) { _reachable.ShrinkLastSlab(); }
     }
+
+    // ───────────────────── Compaction ─────────────────────
+
+    /// <summary>
+    /// 渐进压缩：将高位 occupied slot 移到低位 free hole，最多移动 <paramref name="maxMoves"/> 个。
+    /// 必须在 <see cref="Sweep"/> 之后调用（mark phase 已关闭、FreeBitmap 已反映 Sweep 后的空洞分布）。
+    /// </summary>
+    /// <returns>实际移动的 (oldHandle → newHandle) 映射，供调用者重写引用。为空表示无需压缩。</returns>
+    internal List<(SlotHandle Old, SlotHandle New)> Compact(int maxMoves) {
+        Debug.Assert(!_markPhaseActive, "Compact must be called after Sweep (mark phase must be inactive).");
+        Debug.Assert(maxMoves >= 0);
+
+        var moves = new List<(SlotHandle Old, SlotHandle New)>();
+        if (maxMoves == 0 || _pool.Count == 0) { return moves; }
+
+        int moved = 0;
+        foreach (var (holeIndex, dataIndex) in _pool.FreeBitmap.EnumerateCompactionMoves()) {
+            SlotHandle oldHandle = _pool.GetHandle(dataIndex);
+            SlotHandle newHandle = _pool.MoveSlot(dataIndex, holeIndex);
+            moves.Add((oldHandle, newHandle));
+            if (++moved >= maxMoves) { break; }
+        }
+
+        // MoveSlot 可能使尾部 slab 变空，触发收缩
+        _pool.TrimExcess();
+        SyncShrink();
+
+        return moves;
+    }
 }

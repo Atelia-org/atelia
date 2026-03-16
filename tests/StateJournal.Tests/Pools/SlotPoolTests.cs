@@ -720,4 +720,109 @@ public class SlotPoolTests {
         Assert.Equal(h.Index, reused.Index);
         Assert.Equal((byte)(h.Generation + 1), reused.Generation);
     }
+
+    // ───────────────────── MoveSlot ─────────────────────
+
+    [Fact]
+    public void MoveSlot_MovesValueToTarget() {
+        var pool = new SlotPool<string>();
+        var h0 = pool.Store("A");
+        var h1 = pool.Store("B");
+        var h2 = pool.Store("C");
+
+        // Free h0 to create a hole at index 0
+        pool.Free(h0);
+
+        // Move h2 (index 2) → hole (index 0)
+        var newHandle = pool.MoveSlot(h2.Index, h0.Index);
+
+        Assert.Equal(0, newHandle.Index);
+        Assert.Equal("C", pool[newHandle]);
+        Assert.Equal(2, pool.Count); // h1 + moved
+    }
+
+    [Fact]
+    public void MoveSlot_IncrementsGenerationAtTarget() {
+        var pool = new SlotPool<string>();
+        var h0 = pool.Store("A");
+        var h1 = pool.Store("B");
+
+        pool.Free(h0); // index 0 is now free, generation was incremented by Free
+
+        var newHandle = pool.MoveSlot(h1.Index, h0.Index);
+
+        // Target generation should be h0's original gen + 1 (from Free) + 1 (from MoveSlot)
+        Assert.Equal((byte)(h0.Generation + 2), newHandle.Generation);
+    }
+
+    [Fact]
+    public void MoveSlot_InvalidatesOldHandle() {
+        var pool = new SlotPool<string>();
+        var h0 = pool.Store("A");
+        var h1 = pool.Store("B");
+        // keep an anchor so tail slab doesn't shrink
+        pool.Store("anchor");
+
+        pool.Free(h0);
+
+        var newHandle = pool.MoveSlot(h1.Index, h0.Index);
+
+        Assert.False(pool.Validate(h1), "Old handle should be invalidated after MoveSlot");
+        Assert.True(pool.Validate(newHandle), "New handle should be valid");
+    }
+
+    [Fact]
+    public void MoveSlot_CountUnchanged() {
+        var pool = new SlotPool<string>();
+        pool.Store("A");
+        var h1 = pool.Store("B");
+        pool.Store("C");
+
+        pool.Free(pool.Store("D")); // free something to not leave index 0 as hole
+        // Actually let's make it simpler:
+        var p = new SlotPool<string>();
+        var a = p.Store("A");
+        var b = p.Store("B");
+        p.Free(a);
+
+        int countBefore = p.Count;
+        p.MoveSlot(b.Index, a.Index);
+        Assert.Equal(countBefore, p.Count);
+    }
+
+    [Fact]
+    public void MoveSlot_SourceNotOccupied_Throws() {
+        var pool = new SlotPool<string>();
+        var h0 = pool.Store("A");
+        pool.Store("B"); // index 1 occupied
+
+        pool.Free(h0);
+        // Now index 0 is free. Try to move from index 0 (free) to index 1 — both occupied/free mismatch
+        Assert.Throws<InvalidOperationException>(() => pool.MoveSlot(h0.Index, 1));
+    }
+
+    [Fact]
+    public void MoveSlot_TargetNotFree_Throws() {
+        var pool = new SlotPool<string>();
+        pool.Store("A"); // index 0 occupied
+        pool.Store("B"); // index 1 occupied
+
+        Assert.Throws<InvalidOperationException>(() => pool.MoveSlot(1, 0));
+    }
+
+    [Fact]
+    public void MoveSlot_SourceOutOfRange_Throws() {
+        var pool = new SlotPool<string>();
+        pool.Store("A");
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => pool.MoveSlot(9999, 0));
+    }
+
+    [Fact]
+    public void MoveSlot_TargetOutOfRange_Throws() {
+        var pool = new SlotPool<string>();
+        var h = pool.Store("A");
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => pool.MoveSlot(h.Index, 9999));
+    }
 }

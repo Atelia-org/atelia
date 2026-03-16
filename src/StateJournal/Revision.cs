@@ -325,12 +325,82 @@ public class Revision {
         // Mark bitmap 已在 Phase 1 (WalkAndMark) 中完成，直接 Sweep
         _pool.Sweep<DetachOnSweepCollectHandler>();
 
+        // 渐进压缩：碎片率超阈值时移动有限比例的 slot
+        CompactIfNeeded(pendingSaves);
+
         _head = new CommitSnapshot(
             newCommitId,
             _head?.Id ?? default,
             _objectMap,
             graphRoot
         );
+    }
+
+    /// <summary>
+    /// 碎片率超阈值时触发渐进压缩。
+    /// 在 Sweep 之后调用，利用 FreeBitmap 的空洞分布执行有限次数的 MoveSlot，
+    /// 然后遍历 liveObjects 重写所有受影响的子引用。
+    /// 被改动的对象自然变脏，下一次 Commit 的 Persist 阶段写盘。
+    /// </summary>
+    private void CompactIfNeeded(List<PendingSave> pendingSaves) {
+        int liveCount = _pool.Count;
+        int capacity = _pool.Capacity;
+        if (liveCount < CompactionMinThreshold || capacity == 0) { return; }
+
+        // fragmentationRatio = (capacity - liveCount) / capacity
+        // 等价于 (capacity - liveCount) * 100 > capacity * triggerPercent 避免浮点
+        int holeCount = capacity - liveCount;
+        if (holeCount * 100 <= capacity * CompactionTriggerPercent) { return; }
+
+        int maxMoves = Math.Max(1, (int)((long)liveCount * CompactionMovePercent / 100));
+        var moves = _pool.Compact(maxMoves);
+        if (moves.Count == 0) { return; }
+
+        // 构建翻译表
+        var translationTable = new Dictionary<uint, LocalId>(moves.Count);
+        foreach (var (oldHandle, newHandle) in moves) {
+            var oldId = LocalId.FromSlotHandle(oldHandle);
+            var newId = LocalId.FromSlotHandle(newHandle);
+
+            // Rebind 被移动对象自身的 LocalId
+            var obj = _pool[newHandle]; // 值已在物理上移动到新位置
+            obj.Rebind(newId);
+
+            // 更新 ObjectMap 的 key：Remove(oldKey) + Upsert(newKey, sameTicket)
+            if (_objectMap.Get(oldId.Value, out ulong ticket) == GetIssue.None) {
+                _objectMap.Remove(oldId.Value);
+                _objectMap.Upsert(newId.Value, ticket);
+            }
+
+            translationTable.Add(oldId.Value, newId);
+        }
+
+        // 遍历 pool 中所有存活的用户对象，重写子引用
+        // ObjectMap 保存了所有用户对象的 key
+        var rewriter = new CompactRewriter(translationTable);
+        foreach (uint key in _objectMap.Keys) {
+            var handle = new SlotHandle(key);
+            if (!_pool.TryGetValue(handle, out var obj)) { continue; }
+            obj.AcceptChildRefRewrite(ref rewriter);
+        }
+    }
+
+    // ───── Compaction 参数（internal 以允许测试覆盖策略验证） ─────
+
+    /// <summary>存活对象数低于此值时不触发压缩。</summary>
+    internal const int CompactionMinThreshold = 64;
+
+    /// <summary>碎片率（%）超过此值才触发压缩。</summary>
+    internal const int CompactionTriggerPercent = 25;
+
+    /// <summary>每次压缩最多移动的存活对象比例（%）。</summary>
+    internal const int CompactionMovePercent = 5;
+
+    /// <summary>Compaction 用的引用重写器：查翻译表，命中则返回新 LocalId，否则原样返回。</summary>
+    private ref struct CompactRewriter(Dictionary<uint, LocalId> table) : IChildRefRewriter {
+        public LocalId Rewrite(LocalId oldId) {
+            return table.TryGetValue(oldId.Value, out var newId) ? newId : oldId;
+        }
     }
 
     /// <summary>全量校验 pool 中所有用户对象的引用完整性。发现悬空引用则失败。</summary>

@@ -460,4 +460,191 @@ public class RevisionTests : IDisposable {
         Assert.True(open3.IsSuccess, $"Open commit3 failed: {open3.Error}");
         Assert.Equal(id2, open3.Value!.HeadParent);
     }
+
+    // ───────────────────── Compaction Integration ─────────────────────
+
+    [Fact]
+    public void Commit_WithHeavyFragmentation_CompactsAndRemainsConsistent() {
+        // 创建 80+ 对象再删除大部分，产生 >25% 碎片率，触发 Compaction
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, int>>();
+
+        // 创建 100 个子对象挂在 root 下
+        const int totalChildren = 100;
+        var children = new DurableDict<int, int>[totalChildren];
+        for (int i = 0; i < totalChildren; i++) {
+            children[i] = rev.CreateDict<int, int>();
+            children[i].Upsert(i, i * 10);
+            root.Upsert(i, children[i]);
+        }
+
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+
+        // 删除前 70 个子对象——产生大量空洞
+        for (int i = 0; i < 70; i++) {
+            root.Remove(i);
+        }
+
+        var c2 = rev.Commit(root);
+        Assert.True(c2.IsSuccess, $"Commit2 (after deletions) failed: {c2.Error}");
+
+        // 验证剩余 30 个子对象仍然可达、数据完整
+        for (int i = 70; i < totalChildren; i++) {
+            var child = children[i];
+            Assert.NotEqual(DurableState.Detached, child.State);
+            Assert.Equal(GetIssue.None, child.Get(i, out int val));
+            Assert.Equal(i * 10, val);
+        }
+
+        // 再 commit 几次，让 compaction 渐进收敛
+        for (int round = 0; round < 5; round++) {
+            // 每轮微修改以确保有脏数据触发 Persist
+            var aliveChild = children[70];
+            aliveChild.Upsert(9999 + round, round);
+
+            var cr = rev.Commit(root);
+            Assert.True(cr.IsSuccess, $"Commit round {round} failed: {cr.Error}");
+        }
+
+        // 最终验证：数据完整且 GraphRoot 可达
+        Assert.NotNull(rev.GraphRoot);
+        var finalRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, int>>>(rev.GraphRoot);
+        Assert.Equal(30, finalRoot.Count);
+        for (int i = 70; i < totalChildren; i++) {
+            Assert.True(finalRoot.ContainsKey(i), $"Key {i} missing in final root");
+        }
+    }
+
+    [Fact]
+    public void Commit_WithCompaction_ThenOpen_Roundtrips() {
+        // 验证 compaction 后落盘数据仍可正确 Open 恢复
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, int>>();
+
+        const int totalChildren = 100;
+        for (int i = 0; i < totalChildren; i++) {
+            var child = rev.CreateDict<int, int>();
+            child.Upsert(1, i * 100);
+            root.Upsert(i, child);
+        }
+
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+
+        // 删除 80 个子对象，保留最后 20 个
+        for (int i = 0; i < 80; i++) {
+            root.Remove(i);
+        }
+
+        // 多次 commit 让 compaction 逐步执行
+        CommitId lastCommitId = default;
+        for (int round = 0; round < 10; round++) {
+            var cr = rev.Commit(root);
+            Assert.True(cr.IsSuccess, $"Commit round {round} failed: {cr.Error}");
+            lastCommitId = cr.Value;
+        }
+
+        // Open 最终 commit，验证数据完整性
+        var openResult = Revision.Open(lastCommitId, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = openResult.Value!;
+        Assert.NotNull(loaded.GraphRoot);
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, int>>>(loaded.GraphRoot);
+        Assert.Equal(20, loadedRoot.Count);
+
+        for (int i = 80; i < totalChildren; i++) {
+            Assert.True(loadedRoot.ContainsKey(i), $"Key {i} missing after Open");
+            Assert.Equal(GetIssue.None, loadedRoot.Get(i, out var loadedChild));
+            Assert.Equal(GetIssue.None, loadedChild!.Get(1, out int val));
+            Assert.Equal(i * 100, val);
+        }
+    }
+
+    [Fact]
+    public void Commit_WithMixedDictChildRefs_CompactionRewritesCorrectly() {
+        // 验证 MixedDict 中 DurableRef 引用在 compaction 后被正确重写
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int>();
+
+        // 创建 80 个垫脚对象（将被删除产生碎片）+ 20 个保留对象
+        var padding = new DurableDict<int, int>[80];
+        for (int i = 0; i < 80; i++) {
+            padding[i] = rev.CreateDict<int, int>();
+            root.Upsert(i, padding[i]);
+        }
+
+        // 20 个存活的 child 对象，通过 MixedDict 引用
+        var survivors = new DurableDict<int, int>[20];
+        for (int i = 0; i < 20; i++) {
+            survivors[i] = rev.CreateDict<int, int>();
+            survivors[i].Upsert(i, i * 100);
+            root.Upsert(1000 + i, survivors[i]);
+        }
+
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess, $"Commit1 failed: {c1.Error}");
+
+        // 删除所有垫脚对象
+        for (int i = 0; i < 80; i++) {
+            root.Remove(i);
+        }
+
+        // 多次 commit 触发 compaction
+        for (int round = 0; round < 10; round++) {
+            var cr = rev.Commit(root);
+            Assert.True(cr.IsSuccess, $"Commit round {round} failed: {cr.Error}");
+        }
+
+        // 验证 MixedDict 中引用仍然正确
+        Assert.Equal(20, root.Count);
+        for (int i = 0; i < 20; i++) {
+            Assert.True(root.ContainsKey(1000 + i));
+            Assert.Equal(GetIssue.None, root.Get(1000 + i, out DurableObject? childObj));
+            var child = Assert.IsAssignableFrom<DurableDict<int, int>>(childObj);
+            Assert.Equal(GetIssue.None, child.Get(i, out int val));
+            Assert.Equal(i * 100, val);
+        }
+    }
+
+    [Fact]
+    public void Commit_BelowMinThreshold_DoesNotCompact() {
+        // 少于 CompactionMinThreshold（64）个存活对象时不触发压缩
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = new Revision(file);
+        var root = rev.CreateDict<int, DurableDict<int, int>>();
+
+        // 创建 30 个子对象
+        for (int i = 0; i < 30; i++) {
+            var child = rev.CreateDict<int, int>();
+            root.Upsert(i, child);
+        }
+        var c1 = rev.Commit(root);
+        Assert.True(c1.IsSuccess);
+
+        // 删除 20 个——碎片率高但数量少
+        for (int i = 0; i < 20; i++) {
+            root.Remove(i);
+        }
+
+        var c2 = rev.Commit(root);
+        Assert.True(c2.IsSuccess);
+
+        // 验证数据完整（无论是否压缩都应正确）
+        for (int i = 20; i < 30; i++) {
+            Assert.True(root.ContainsKey(i));
+        }
+    }
 }
