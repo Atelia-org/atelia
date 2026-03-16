@@ -21,7 +21,8 @@ internal sealed record SjTypeResolutionError(
 ) : AteliaError("SJ.TypeResolution", Message, RecoveryHint, Details, Cause);
 
 /// <summary>
-/// 运行时状态或 I/O 异常导致提交流程中断。
+/// 由对象图状态、宿主环境或 I/O 等外部不可控因素导致的提交流程失败。
+/// 纯实现 bug / 内部不变量破坏不应使用此错误建模。
 /// </summary>
 internal sealed record SjStateError(
     string Message,
@@ -31,31 +32,12 @@ internal sealed record SjStateError(
 ) : AteliaError("SJ.State", Message, RecoveryHint, Details, Cause);
 
 /// <summary>
-/// primary commit 已成功后，Compaction 应用阶段（MoveSlot/Rebind/引用重写）失败。
-/// </summary>
-internal sealed record SjCompactionApplyError(
-    string Message,
-    string? RecoveryHint = null,
-    IReadOnlyDictionary<string, string>? Details = null,
-    AteliaError? Cause = null
-) : AteliaError("SJ.Compaction.ApplyFailed", Message, RecoveryHint, Details, Cause);
-
-/// <summary>
 /// primary commit 已成功后，Compaction 触发的后续持久化提交失败。
+/// 该错误对应外部不可控因素（如 I/O / 文件状态），会回到 <see cref="CommitOutcome"/> 作为可诊断结果。
 /// </summary>
-internal sealed record SjCompactionFollowupPersistError(
+internal sealed record SjCompactionPersistError(
     string Message,
     string? RecoveryHint = null,
     IReadOnlyDictionary<string, string>? Details = null,
     AteliaError? Cause = null
 ) : AteliaError("SJ.Compaction.FollowupPersistFailed", Message, RecoveryHint, Details, Cause);
-
-/// <summary>
-/// Compaction 应用失败后，回滚阶段失败（或回滚能力尚未实现）。
-/// </summary>
-internal sealed record SjCompactionRollbackError(
-    string Message,
-    string? RecoveryHint = null,
-    IReadOnlyDictionary<string, string>? Details = null,
-    AteliaError? Cause = null
-) : AteliaError("SJ.Compaction.RollbackFailed", Message, RecoveryHint, Details, Cause);

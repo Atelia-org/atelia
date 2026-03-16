@@ -5,21 +5,37 @@ namespace Atelia.StateJournal.Internal;
 internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     where TKey : notnull
     where KHelper : unmanaged, ITypeHelper<TKey> {
+    private int _durableRefCount;
+
     internal MixedDictImpl() {
         _core = new();
     }
 
     internal override void DiscardChanges() {
         _core.Revert<ValueBoxHelper>();
+        RecountDurableRefs();
     }
 
     private protected override void CommitCore() => _core.Commit<ValueBoxHelper>();
-    private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<ValueBoxHelper>();
+    private protected override void SyncCurrentFromCommittedCore() {
+        _core.SyncCurrentFromCommitted<ValueBoxHelper>();
+        RecountDurableRefs();
+    }
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<KHelper, ValueBoxHelper>(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<KHelper, ValueBoxHelper>(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, ValueBoxHelper>(ref reader);
 
+    private protected override void OnCurrentValueRemoved(ValueBox removedValue) {
+        if (IsDurableRef(removedValue)) { _durableRefCount--; }
+    }
+
+    private protected override void OnCurrentValueUpserted(ValueBox oldValue, ValueBox newValue, bool existed) {
+        if (existed && IsDurableRef(oldValue)) { _durableRefCount--; }
+        if (IsDurableRef(newValue)) { _durableRefCount++; }
+    }
+
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
+        if (_durableRefCount == 0) { return; }
         foreach (var box in _core.Current.Values) {
             if (!box.IsNull && box.GetLzc() == BoxLzc.DurableRef) {
                 visitor.Visit(box.GetDurRefId());
@@ -28,6 +44,7 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     }
 
     internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) {
+        if (_durableRefCount == 0) { return false; }
         bool changed = false;
         var keys = new List<TKey>(_core.Current.Count);
         foreach (var kvp in _core.Current) {
@@ -48,5 +65,15 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
             }
         }
         return changed;
+    }
+
+    private static bool IsDurableRef(ValueBox box) => !box.IsNull && box.GetLzc() == BoxLzc.DurableRef;
+
+    private void RecountDurableRefs() {
+        int count = 0;
+        foreach (var box in _core.Current.Values) {
+            if (IsDurableRef(box)) { count++; }
+        }
+        _durableRefCount = count;
     }
 }

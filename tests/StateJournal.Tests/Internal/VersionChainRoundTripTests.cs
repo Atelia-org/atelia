@@ -1,9 +1,9 @@
 using System.Buffers;
 using System.Reflection;
-using Xunit;
 using Atelia.Data;
 using Atelia.Rbf;
 using Atelia.StateJournal.Serialization;
+using Xunit;
 
 namespace Atelia.StateJournal.Internal.Tests;
 
@@ -381,7 +381,7 @@ public class VersionChainRoundTripTests : IDisposable {
             }
         );
 
-        uint tag = new FrameTag(UsageKind.Blank, DurableObjectKind.TypedDict, VersionKind.Rebase).Bits;
+        uint tag = new FrameTag(UsageKind.UserPayload, DurableObjectKind.TypedDict, VersionKind.Rebase, FrameSource.PrimaryCommit).Bits;
         var append = file.Append(tag, payload);
         Assert.True(append.IsSuccess);
 
@@ -394,7 +394,7 @@ public class VersionChainRoundTripTests : IDisposable {
     public void Load_CyclicVersionChain_ReturnsCorruptionError() {
         var ticketA = SizedPtr.Create(4, 4);
         var ticketB = SizedPtr.Create(8, 4);
-        uint deltaTag = new FrameTag(UsageKind.Blank, DurableObjectKind.TypedDict, VersionKind.Delta).Bits;
+        uint deltaTag = new FrameTag(UsageKind.UserPayload, DurableObjectKind.TypedDict, VersionKind.Delta, FrameSource.PrimaryCommit).Bits;
 
         byte[] payloadA = BuildPayload(
             writer => {
@@ -448,7 +448,7 @@ public class VersionChainRoundTripTests : IDisposable {
         var save = VersionChain.Save(dict, file);
         Assert.True(save.IsSuccess);
 
-        var load = VersionChain.Load(file, save.Value, expectUsage: UsageKind.UserPayload);
+        var load = VersionChain.Load(file, save.Value, expectUsage: UsageKind.ObjectMap);
         Assert.True(load.IsFailure);
         var err = Assert.IsType<SjCorruptionError>(load.Error);
         Assert.Contains("Unexpected UsageKind", err.Message, StringComparison.OrdinalIgnoreCase);
@@ -469,7 +469,7 @@ public class VersionChainRoundTripTests : IDisposable {
                 writer.WriteCount(0);
             }
         );
-        uint tag = new FrameTag(UsageKind.Blank, DurableObjectKind.TypedDict, VersionKind.Delta).Bits;
+        uint tag = new FrameTag(UsageKind.UserPayload, DurableObjectKind.TypedDict, VersionKind.Delta, FrameSource.PrimaryCommit).Bits;
         var append = file.Append(tag, payload);
         Assert.True(append.IsSuccess);
 

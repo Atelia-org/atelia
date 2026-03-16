@@ -15,6 +15,12 @@ internal enum UsageKind : uint {
     ObjectMap = 2 << FrameTag.UsageKindShift,
 }
 
+internal enum FrameSource : uint {
+    Blank = 0,
+    PrimaryCommit = 1 << FrameTag.FrameSourceShift,
+    Compaction = 2 << FrameTag.FrameSourceShift,
+}
+
 internal readonly struct FrameTag(uint bits) {
     #region Constant
     public const int VersionKindShift = 0, VersionKindBits = 2;
@@ -24,6 +30,9 @@ internal readonly struct FrameTag(uint bits) {
 
     public const int UsageKindShift = ObjectKindShift + ObjectKindBits, UsageKindBits = 4;
     internal const uint UsageKindMask = ((1U << UsageKindBits) - 1) << UsageKindShift;
+
+    public const int FrameSourceShift = UsageKindShift + UsageKindBits, FrameSourceBits = 2;
+    internal const uint FrameSourceMask = ((1U << FrameSourceBits) - 1) << FrameSourceShift;
     #endregion
 
     internal uint Bits => bits;
@@ -31,9 +40,10 @@ internal readonly struct FrameTag(uint bits) {
     internal VersionKind VersionKind => (VersionKind)(bits & VersionKindMask);
     internal DurableObjectKind ObjectKind => (DurableObjectKind)(bits >> ObjectKindShift) & DurableObjectKind.Mask;
     internal UsageKind UsageKind => (UsageKind)(bits & UsageKindMask);
+    internal FrameSource FrameSource => (FrameSource)(bits & FrameSourceMask);
 
-    internal FrameTag(UsageKind usageKind, DurableObjectKind objectKind, VersionKind versionKind)
-        : this((uint)usageKind | ((uint)objectKind << ObjectKindShift) | (uint)versionKind) { }
+    internal FrameTag(UsageKind usageKind, DurableObjectKind objectKind, VersionKind versionKind, FrameSource frameSource)
+        : this((uint)usageKind | ((uint)objectKind << ObjectKindShift) | (uint)versionKind | (uint)frameSource) { }
 
     internal SjCorruptionError? Validate(long offset, UsageKind? expectUsage = null, DurableObjectKind? expectObject = null) {
         if (VersionKind is not VersionKind.Rebase and not VersionKind.Delta) {
@@ -48,9 +58,15 @@ internal readonly struct FrameTag(uint bits) {
                 RecoveryHint: "The frame metadata is malformed."
             );
         }
-        if (UsageKind is not UsageKind.Blank and not UsageKind.UserPayload and not UsageKind.ObjectMap) {
+        if (UsageKind is not UsageKind.UserPayload and not UsageKind.ObjectMap) {
             return new SjCorruptionError(
                 $"Invalid UsageKind in frame tag at offset {offset}: {UsageKind}.",
+                RecoveryHint: "The frame metadata is malformed."
+            );
+        }
+        if (FrameSource is not FrameSource.PrimaryCommit and not FrameSource.Compaction) {
+            return new SjCorruptionError(
+                $"Invalid FrameSource in frame tag at offset {offset}: {FrameSource}.",
                 RecoveryHint: "The frame metadata is malformed."
             );
         }

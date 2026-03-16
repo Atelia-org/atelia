@@ -9,8 +9,11 @@ internal struct DiffWriteContext {
     /// 与 ForceRebase 独立：rebase/delta 决策仍由 ShouldRebase 判定。</summary>
     internal bool ForceSave { get; init; }
 
-    /// <summary>覆盖帧的 UsageKind（默认 Blank，由 WritePendingDiff 使用）。</summary>
-    internal UsageKind UsageKindOverride { get; init; }
+    /// <summary>覆盖帧的 UsageKind（默认 Blank 哨兵值，写入时解析为 UserPayload）。</summary>
+    internal UsageKind UsageKind { get; init; }
+
+    /// <summary>帧的来源（PrimaryCommit / Compaction）。Blank = 哨兵值，必须显式设置。</summary>
+    internal FrameSource FrameSource { get; init; }
 
     // WritePendingDiff 写入、OnCommitSucceeded 读取的决策结果。
     internal bool WasRebase { get; private set; }

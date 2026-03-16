@@ -38,6 +38,9 @@ where TKey : notnull {
         _core.AfterUpsert<ValueBoxHelper>(key, value);
         return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }
+
+    private protected virtual void OnCurrentValueRemoved(ValueBox removedValue) { }
+    private protected virtual void OnCurrentValueUpserted(ValueBox oldValue, ValueBox newValue, bool existed) { }
     #endregion
 
     internal DurableDict() {
@@ -113,6 +116,7 @@ where TKey : notnull {
     public int Count => _core.Current.Count;
     public bool Remove(TKey key) {
         if (!_core.Current.Remove(key, out var removedValue)) { return false; }
+        OnCurrentValueRemoved(removedValue);
         _core.AfterRemove<ValueBoxHelper>(key, removedValue);
         return true;
     }
@@ -181,7 +185,9 @@ where TKey : notnull {
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
+        ValueBox oldValue = exists ? slot : default;
         if (!VFace.UpdateOrInit(ref slot, value)) { return UpsertStatus.Updated; /* 值未变，跳过 AfterUpsert */ }
+        OnCurrentValueUpserted(oldValue, slot, exists);
         return FinishUpsert(key, slot, exists);
     }
 

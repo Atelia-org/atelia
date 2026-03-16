@@ -78,7 +78,11 @@ internal static class VersionChain {
     /// - WritePendingDiff 抛异常 → 编程错误，不捕获，直接传播。
     /// </remarks>
     internal static AteliaResult<SizedPtr> Save(DurableObject obj, IRbfFile file, bool forceRebase = false) {
-        return Save(obj, file, new DiffWriteContext { ForceRebase = forceRebase });
+        return Save(obj, file, new DiffWriteContext {
+            ForceRebase = forceRebase,
+            UsageKind = UsageKind.UserPayload,
+            FrameSource = FrameSource.PrimaryCommit,
+        });
     }
 
     /// <summary>将 DurableObject 的待写入 diff 序列化并追加到 RBF 文件中，同时立即应用内存状态变更。</summary>
