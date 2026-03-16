@@ -49,7 +49,7 @@ public abstract class DurableObject {
     /// <summary>Load 完成后调用，修正 _previousVersion 并将 _committed 数据同步到 _current。</summary>
     internal abstract void OnLoadCompleted(SizedPtr versionTicket);
 
-    public abstract void DiscardChanges();
+    internal abstract void DiscardChanges();
 
     internal abstract void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) where TVisitor : IChildRefVisitor, allows ref struct;
 

@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.IO;
 using Atelia.Data;
 using Atelia.Rbf;
 using Atelia.StateJournal.Internal;

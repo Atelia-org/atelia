@@ -55,7 +55,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
 
     #endregion
 
-    public override void DiscardChanges() {
+    internal override void DiscardChanges() {
         _core.Revert<VHelper>();
     }
 

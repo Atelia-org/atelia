@@ -13,7 +13,7 @@ internal class TypedListImpl<T, VHelper> : DurableList<T>
     internal TypedListImpl() {
     }
 
-    public override void DiscardChanges() => throw new NotImplementedException();
+    internal override void DiscardChanges() => throw new NotImplementedException();
     internal override SizedPtr HeadTicket => throw new NotImplementedException();
     internal override bool IsTracked => throw new NotImplementedException();
     internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) => throw new NotImplementedException();

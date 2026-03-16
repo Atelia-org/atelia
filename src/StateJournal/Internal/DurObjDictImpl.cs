@@ -30,7 +30,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
 
     #region DurableObject
 
-    public override void DiscardChanges() => _core.Revert<LocalIdAsRefHelper>();
+    internal override void DiscardChanges() => _core.Revert<LocalIdAsRefHelper>();
 
     #endregion
 

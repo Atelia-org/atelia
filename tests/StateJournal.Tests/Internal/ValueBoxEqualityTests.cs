@@ -27,7 +27,7 @@ public class ValueBoxEqualityTests {
         internal override bool IsTracked => false;
         internal override FrameTag WritePendingDiff(BinaryDiffWriter writer, ref DiffWriteContext context) => throw new NotSupportedException();
         internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) => throw new NotSupportedException();
-        public override void DiscardChanges() => throw new NotSupportedException();
+        internal override void DiscardChanges() => throw new NotSupportedException();
 
         internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion) => throw new NotSupportedException();
         internal override void OnLoadCompleted(SizedPtr versionTicket) => throw new NotSupportedException();

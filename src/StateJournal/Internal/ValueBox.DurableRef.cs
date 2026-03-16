@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 namespace Atelia.StateJournal.Internal;
 
 partial struct ValueBox {

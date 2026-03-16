@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.IO;
 using System.Reflection;
 using Xunit;
 using Atelia.Data;

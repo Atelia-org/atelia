@@ -9,7 +9,7 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         _core = new();
     }
 
-    public override void DiscardChanges() {
+    internal override void DiscardChanges() {
         _core.Revert<ValueBoxHelper>();
     }
 

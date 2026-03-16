@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using Atelia.Data;
 using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
