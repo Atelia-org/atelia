@@ -171,6 +171,27 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         TryShrinkTrailingSlabs();
     }
 
+    /// <summary>记录一次 MoveSlot 的完整信息，用于精确回滚。</summary>
+    internal readonly struct MoveRecord {
+        public MoveRecord(int fromIndex, int toIndex, byte fromGenBefore, byte toGenBefore) {
+            FromIndex = fromIndex;
+            ToIndex = toIndex;
+            FromGenBefore = fromGenBefore;
+            ToGenBefore = toGenBefore;
+        }
+
+        public int FromIndex { get; }
+        public int ToIndex { get; }
+        public byte FromGenBefore { get; }
+        public byte ToGenBefore { get; }
+
+        /// <summary>移动后目标位置的 <see cref="SlotHandle"/>。</summary>
+        public SlotHandle NewHandle => new(unchecked((byte)(ToGenBefore + 1)), ToIndex);
+
+        /// <summary>移动前源位置的 <see cref="SlotHandle"/>。</summary>
+        public SlotHandle OldHandle => new(FromGenBefore, FromIndex);
+    }
+
     /// <summary>
     /// 将 fromIndex 的值移动到 toIndex。
     /// toIndex 必须是 free slot；fromIndex 在移动后变为 free。
@@ -181,6 +202,19 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     /// <param name="toIndex">目标 slot index（必须 free）。</param>
     /// <returns>目标位置的新 <see cref="SlotHandle"/>（携带自增后的 generation）。</returns>
     internal SlotHandle MoveSlot(int fromIndex, int toIndex) {
+        MoveSlotCore(fromIndex, toIndex, out _);
+        return new SlotHandle(_generations[toIndex >> SlabBitmap.SlabShift][toIndex & SlabBitmap.SlabMask], toIndex);
+    }
+
+    /// <summary>
+    /// 将 fromIndex 的值移动到 toIndex，并返回可用于精确回滚的 <see cref="MoveRecord"/>。
+    /// </summary>
+    internal MoveRecord MoveSlotRecorded(int fromIndex, int toIndex) {
+        MoveSlotCore(fromIndex, toIndex, out var record);
+        return record;
+    }
+
+    private void MoveSlotCore(int fromIndex, int toIndex, out MoveRecord record) {
         if ((uint)fromIndex >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(fromIndex), fromIndex, $"Index must be in [0, {_freeBitmap.Capacity})."); }
         if ((uint)toIndex >= (uint)_freeBitmap.Capacity) { throw new ArgumentOutOfRangeException(nameof(toIndex), toIndex, $"Index must be in [0, {_freeBitmap.Capacity})."); }
         if (_freeBitmap.Test(fromIndex)) { throw new InvalidOperationException($"Source slot {fromIndex} is not occupied."); }
@@ -191,11 +225,16 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         int toSlab = toIndex >> SlabBitmap.SlabShift;
         int toOff = toIndex & SlabBitmap.SlabMask;
 
+        // 记录移动前的 generation（用于精确回滚）
+        byte fromGenBefore = _generations[fromSlab][fromOff];
+        byte toGenBefore = _generations[toSlab][toOff];
+        record = new MoveRecord(fromIndex, toIndex, fromGenBefore, toGenBefore);
+
         // 复制值到目标位置
         _slabs[toSlab][toOff] = _slabs[fromSlab][fromOff];
 
         // 目标位置 generation++（使指向该位置旧占用者的 handle 失效）
-        byte newGen = ++_generations[toSlab][toOff];
+        unchecked { _generations[toSlab][toOff]++; }
 
         // 标记目标位置为 occupied
         _freeBitmap.Clear(toIndex);
@@ -208,8 +247,54 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         }
 
         // _count 不变（一进一出）
+    }
 
-        return new SlotHandle(newGen, toIndex);
+    /// <summary>
+    /// 精确回滚一次 <see cref="MoveSlotRecorded"/> 操作：
+    /// 将值从 toIndex 移回 fromIndex，并恢复双端 generation 到移动前的值。
+    /// 调用方需保证在回滚前已通过 <see cref="EnsureCapacity"/> 恢复了足够的 slab 容量。
+    /// </summary>
+    internal void UndoMoveSlot(MoveRecord record) {
+        int fromIndex = record.FromIndex;
+        int toIndex = record.ToIndex;
+
+        Debug.Assert((uint)toIndex < (uint)_freeBitmap.Capacity, $"Target index {toIndex} out of capacity {_freeBitmap.Capacity} during undo.");
+        Debug.Assert((uint)fromIndex < (uint)_freeBitmap.Capacity, $"Source index {fromIndex} out of capacity {_freeBitmap.Capacity} during undo.");
+        Debug.Assert(!_freeBitmap.Test(toIndex), $"Target slot {toIndex} should be occupied during undo.");
+        Debug.Assert(_freeBitmap.Test(fromIndex), $"Source slot {fromIndex} should be free during undo.");
+
+        int fromSlab = fromIndex >> SlabBitmap.SlabShift;
+        int fromOff = fromIndex & SlabBitmap.SlabMask;
+        int toSlab = toIndex >> SlabBitmap.SlabShift;
+        int toOff = toIndex & SlabBitmap.SlabMask;
+
+        // 将值从目标位移回源位
+        _slabs[fromSlab][fromOff] = _slabs[toSlab][toOff];
+
+        // 精确恢复双端 generation
+        _generations[fromSlab][fromOff] = record.FromGenBefore;
+        _generations[toSlab][toOff] = record.ToGenBefore;
+
+        // 翻转 bitmap：源位恢复为 occupied，目标位恢复为 free
+        _freeBitmap.Clear(fromIndex);
+        _freeBitmap.Set(toIndex);
+
+        // 清除目标位的值引用
+        if (RuntimeHelpers.IsReferenceOrContainsReferences<T>()) {
+            _slabs[toSlab][toOff] = default!;
+        }
+
+        // _count 不变（一进一出）
+    }
+
+    /// <summary>
+    /// 确保 pool 容量至少为 <paramref name="minCapacity"/>（按 SlabSize 对齐增长）。
+    /// 用于 compaction 回滚前恢复被 <see cref="TrimExcess"/> 收缩的 slab。
+    /// </summary>
+    internal void EnsureCapacity(int minCapacity) {
+        while (_freeBitmap.Capacity < minCapacity) {
+            GrowOneSlab();
+        }
     }
 
     /// <summary>获取 slot 的值的可变引用。O(1)。</summary>

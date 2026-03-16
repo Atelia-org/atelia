@@ -33,14 +33,17 @@ internal interface ISweepCollectHandler<T> where T : notnull {
 /// </remarks>
 /// <typeparam name="T">值类型，必须是 notnull。</typeparam>
 internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
-    internal readonly record struct CompactionUndoToken(
-        IReadOnlyList<(SlotHandle Old, SlotHandle New)> AppliedMoves
-    );
+    /// <summary>
+    /// Compaction 回滚令牌：保存每次 MoveSlot 的 <see cref="SlotPool{T}.MoveRecord"/>，
+    /// 用于 <see cref="RollbackCompaction"/> 在 shrink 最终提交前精确恢复 pool 状态。
+    /// </summary>
+    internal readonly struct CompactionJournal {
+        public CompactionJournal(List<SlotPool<T>.MoveRecord> records) {
+            Records = records;
+        }
 
-    internal readonly record struct CompactionApplyResult(
-        List<(SlotHandle Old, SlotHandle New)> Moves,
-        CompactionUndoToken UndoToken
-    );
+        public List<SlotPool<T>.MoveRecord> Records { get; }
+    }
 
     private readonly struct NoOpSweepCollectHandler : ISweepCollectHandler<T> {
         public static void OnCollect(T value) { }
@@ -49,6 +52,7 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     private readonly SlotPool<T> _pool;
     private readonly SlabBitmap _reachable;
     private bool _markPhaseActive;
+    private static readonly AsyncLocal<CompactionFaultInjection?> s_compactionFaultInjection = new();
 
     /// <summary>活跃 slot 数量。</summary>
     public int Count => _pool.Count;
@@ -243,53 +247,114 @@ internal sealed class GcPool<T> : IMarkSweepPool<T> where T : notnull {
     // ───────────────────── Compaction ─────────────────────
 
     /// <summary>
-    /// 渐进压缩：将高位 occupied slot 移到低位 free hole，最多移动 <paramref name="maxMoves"/> 个。
-    /// 必须在 <see cref="Sweep"/> 之后调用（mark phase 已关闭、FreeBitmap 已反映 Sweep 后的空洞分布）。
+    /// 执行 compaction 并返回用于回滚的 undo token。
+    /// Token 中保存每个 move 的原始 generation，支持在 shrink 最终提交前精确恢复。
     /// </summary>
-    /// <returns>实际移动的 (oldHandle → newHandle) 映射，供调用者重写引用。为空表示无需压缩。</returns>
-    internal List<(SlotHandle Old, SlotHandle New)> Compact(int maxMoves) {
-        Debug.Assert(!_markPhaseActive, "Compact must be called after Sweep (mark phase must be inactive).");
+    /// <remarks>
+    /// 目标语义下，此方法属于纯内存内部算法：
+    /// 在参数合法且 pool 预先满足自身不变量时，应做到“除灾难性运行时异常外不抛异常”；
+    /// 若抛出普通异常，优先视为实现 bug / 状态破坏并 fail-fast。
+    /// </remarks>
+    internal CompactionJournal CompactWithUndo(int maxMoves) {
+        Debug.Assert(!_markPhaseActive, "CompactWithUndo must be called after Sweep (mark phase must be inactive).");
         Debug.Assert(maxMoves >= 0);
 
-        var moves = new List<(SlotHandle Old, SlotHandle New)>();
-        if (maxMoves == 0 || _pool.Count == 0) { return moves; }
+        if (maxMoves == 0 || _pool.Count == 0) { return new CompactionJournal([]); }
 
-        int moved = 0;
-        foreach (var (holeIndex, dataIndex) in _pool.FreeBitmap.EnumerateCompactionMoves()) {
-            SlotHandle oldHandle = _pool.GetHandle(dataIndex);
-            SlotHandle newHandle = _pool.MoveSlot(dataIndex, holeIndex);
-            moves.Add((oldHandle, newHandle));
-            if (++moved >= maxMoves) { break; }
+        var records = new List<SlotPool<T>.MoveRecord>(maxMoves);
+        try {
+            int moved = 0;
+            foreach (var (holeIndex, dataIndex) in _pool.FreeBitmap.EnumerateCompactionMoves()) {
+                var record = _pool.MoveSlotRecorded(dataIndex, holeIndex);
+                records.Add(record);
+                if (records.Count == 1) { ThrowIfCompactionFaultInjected(); }
+                if (++moved >= maxMoves) { break; }
+            }
+        }
+        catch {
+            RollbackCompaction(new CompactionJournal(records));
+            throw;
         }
 
-        // MoveSlot 可能使尾部 slab 变空，触发收缩
+        return new CompactionJournal(records);
+    }
+
+    /// <summary>
+    /// 精确回滚一次已应用的 compaction：反向逐条恢复 slot 布局和 generation。
+    /// 回滚后所有移动前的 <see cref="SlotHandle"/> 重新可用。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="CompactWithUndo"/> 相同，目标是“在 undo token 自洽时 no-throw except bug”。
+    /// 此方法与 <see cref="TrimExcessCapacity"/> 存在时序争用：
+    /// 一旦同一批 compaction 的尾部空 slab 已被 <see cref="TrimExcessCapacity"/> 收缩，
+    /// 高位 <c>toIndex</c> 可能已不再可寻址，rollback 能力随之失效。
+    /// 内部协作约定是：调用方必须在确认“不再需要对此批 compaction 执行 rollback”之后，
+    /// 才能调用 <see cref="TrimExcessCapacity"/>。
+    /// </remarks>
+    internal void RollbackCompaction(CompactionJournal undoToken) {
+        var records = undoToken.Records;
+        if (records.Count > 0) {
+            int maxToIndex = records[0].ToIndex;
+            for (int i = 1; i < records.Count; i++) {
+                if (records[i].ToIndex > maxToIndex) { maxToIndex = records[i].ToIndex; }
+            }
+            Debug.Assert(
+                maxToIndex < _pool.Capacity,
+                "RollbackCompaction must run before TrimExcessCapacity for the same compaction batch."
+            );
+        }
+
+        // 逆序回滚每个 move（LIFO 顺序确保中间状态一致）
+        for (int i = records.Count - 1; i >= 0; i--) {
+            _pool.UndoMoveSlot(records[i]);
+        }
+    }
+
+    /// <summary>
+    /// 主动裁剪尾部空 slab，释放当前 pool 的多余容量。
+    /// </summary>
+    /// <remarks>
+    /// 该操作与 compaction 本身并不强绑定；即使未发生新的 compaction，也可以单独调用以回收容量。
+    ///
+    /// 但它与 <see cref="RollbackCompaction"/> 存在时序争用：
+    /// 若某批 compaction 的 rollback 窗口尚未关闭，调用此方法可能收缩掉 rollback 仍需访问的高位 slab，
+    /// 从而破坏该批 compaction 的 rollback 能力。
+    ///
+    /// 内部协作约定是：只有在调用方已确认“不再需要针对当前 compaction batch 执行 rollback”之后，
+    /// 才调用此方法。这里不做运行时异常检查，仅保留调试期契约说明。
+    /// </remarks>
+    internal void TrimExcessCapacity() {
         _pool.TrimExcess();
         SyncShrink();
-
-        return moves;
     }
 
-    /// <summary>
-    /// 执行 compaction 并返回用于回滚的 undo token。
-    /// 当前 undo token 仅承载已执行移动信息；完整回滚能力待后续实现。
-    /// </summary>
-    internal CompactionApplyResult CompactWithUndo(int maxMoves) {
-        var moves = Compact(maxMoves);
-        var undoToken = new CompactionUndoToken(moves);
-        return new CompactionApplyResult(moves, undoToken);
+    internal static IDisposable InjectCompactionFaultScope(Func<Exception> exceptionFactory) {
+        ArgumentNullException.ThrowIfNull(exceptionFactory);
+
+        var previous = s_compactionFaultInjection.Value;
+        s_compactionFaultInjection.Value = new CompactionFaultInjection(exceptionFactory);
+        return new CompactionFaultScope(previous);
     }
 
-    /// <summary>
-    /// 回滚一次已应用的 compaction。
-    /// </summary>
-    internal void RollbackCompaction(CompactionUndoToken undoToken) {
-        // TODO(StateJournal/Compaction-Rollback):
-        // 需要在 SlotPool/GcPool 层提供可逆 MoveSlot，恢复：
-        // 1) 物理槽位布局；
-        // 2) generation 语义（避免 ABA 破坏）；
-        // 3) bitmap 与 capacity/shrink 状态一致性。
-        // 当前仅搭好事务框架，后续专项实现该能力。
-        _ = undoToken;
-        throw new NotImplementedException("GcPool compaction rollback is not implemented yet.");
+    private static void ThrowIfCompactionFaultInjected() {
+        var injection = s_compactionFaultInjection.Value;
+        if (injection is null || !injection.Armed) { return; }
+        injection.Armed = false;
+        throw injection.ExceptionFactory();
+    }
+
+    private sealed class CompactionFaultInjection(Func<Exception> exceptionFactory) {
+        public Func<Exception> ExceptionFactory { get; } = exceptionFactory;
+        public bool Armed { get; set; } = true;
+    }
+
+    private sealed class CompactionFaultScope(CompactionFaultInjection? previous) : IDisposable {
+        private bool _disposed;
+
+        public void Dispose() {
+            if (_disposed) { return; }
+            s_compactionFaultInjection.Value = previous;
+            _disposed = true;
+        }
     }
 }

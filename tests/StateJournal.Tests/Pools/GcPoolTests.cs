@@ -205,10 +205,10 @@ public class GcPoolTests {
         Assert.Equal("two", pool[h2]);
     }
 
-    // ───────────────────── Compact ─────────────────────
+    // ───────────────────── CompactWithUndo + RollbackCompaction ─────────────────────
 
     [Fact]
-    public void Compact_MovesHighSlotToLowHole() {
+    public void CompactWithUndo_MovesHighSlotToLowHole() {
         var pool = new GcPool<string>();
         var h0 = pool.Store("A"); // index 0
         var h1 = pool.Store("B"); // index 1
@@ -220,18 +220,17 @@ public class GcPoolTests {
         pool.MarkReachable(h2);
         pool.Sweep();
 
-        // Compact — should move h2 (highest) to index 0 (hole)
-        var moves = pool.Compact(10);
+        var result = pool.CompactWithUndo(10);
 
-        Assert.Single(moves);
-        Assert.Equal(h2.Index, moves[0].Old.Index);
-        Assert.Equal(0, moves[0].New.Index);
-        Assert.Equal("C", pool[moves[0].New]);
+        Assert.Single(result.Records);
+        Assert.Equal(h2.Index, result.Records[0].OldHandle.Index);
+        Assert.Equal(0, result.Records[0].NewHandle.Index);
+        Assert.Equal("C", pool[result.Records[0].NewHandle]);
         Assert.Equal(2, pool.Count);
     }
 
     [Fact]
-    public void Compact_RespectsMaxMoves() {
+    public void CompactWithUndo_RespectsMaxMoves() {
         var pool = new GcPool<string>();
         var handles = new SlotHandle[6];
         for (int i = 0; i < 6; i++) { handles[i] = pool.Store($"v{i}"); }
@@ -243,47 +242,27 @@ public class GcPoolTests {
         pool.MarkReachable(handles[5]);
         pool.Sweep();
 
-        // Compact with maxMoves=1: only one move
-        var moves = pool.Compact(1);
+        var result = pool.CompactWithUndo(1);
 
-        Assert.Single(moves);
+        Assert.Single(result.Records);
     }
 
     [Fact]
-    public void Compact_NoHoles_NoMoves() {
+    public void CompactWithUndo_MaxMovesZero_NoMoves() {
         var pool = new GcPool<string>();
         pool.Store("A");
         pool.Store("B");
-        pool.Store("C");
-
-        // Mark all reachable — no sweeps
-        pool.BeginMark();
-        foreach (var _ in new[] { 0, 1, 2 }) { } // dummy
-        pool.MarkReachable(new SlotHandle(0, 0));
-        pool.MarkReachable(new SlotHandle(0, 1));
-        pool.MarkReachable(new SlotHandle(0, 2));
-        pool.Sweep();
-
-        var moves = pool.Compact(10);
-        Assert.Empty(moves);
-    }
-
-    [Fact]
-    public void Compact_MaxMovesZero_NoMoves() {
-        var pool = new GcPool<string>();
-        var h0 = pool.Store("A");
-        pool.Store("B");
 
         pool.BeginMark();
         pool.MarkReachable(new SlotHandle(0, 1));
         pool.Sweep();
 
-        var moves = pool.Compact(0);
-        Assert.Empty(moves);
+        var result = pool.CompactWithUndo(0);
+        Assert.Empty(result.Records);
     }
 
     [Fact]
-    public void Compact_HandlesMultipleMoves() {
+    public void CompactWithUndo_HandlesMultipleMoves() {
         var pool = new GcPool<string>();
         var handles = new SlotHandle[6];
         for (int i = 0; i < 6; i++) { handles[i] = pool.Store($"v{i}"); }
@@ -295,16 +274,178 @@ public class GcPoolTests {
         pool.MarkReachable(handles[5]);
         pool.Sweep();
 
-        var moves = pool.Compact(10);
+        var result = pool.CompactWithUndo(10);
 
         // Two-Finger: hole=0→data=5, hole=2→data=3. index 1 stays.
-        // The exact pairs depend on CompactionEnumerator, but moves should be ≤ 2
-        Assert.True(moves.Count <= 2);
+        Assert.True(result.Records.Count <= 2);
         Assert.Equal(3, pool.Count);
 
-        // All values should be readable
-        foreach (var (_, newH) in moves) {
-            Assert.True(pool.Validate(newH));
+        foreach (var record in result.Records) {
+            Assert.True(pool.Validate(record.NewHandle));
         }
+    }
+
+    [Fact]
+    public void CompactWithUndo_WhenInternalFailureOccurs_RestoresOriginalStateBeforeRethrow() {
+        var pool = new GcPool<string>();
+        var h0 = pool.Store("A");
+        var h1 = pool.Store("B");
+        var h2 = pool.Store("C");
+
+        pool.BeginMark();
+        pool.MarkReachable(h1);
+        pool.MarkReachable(h2);
+        pool.Sweep();
+
+        using var _ = GcPool<string>.InjectCompactionFaultScope(
+            static () => new InvalidOperationException("Injected failure inside CompactWithUndo.")
+        );
+
+        var ex = Assert.Throws<InvalidOperationException>(() => pool.CompactWithUndo(10));
+        Assert.Contains("Injected failure inside CompactWithUndo", ex.Message);
+
+        Assert.True(pool.Validate(h1));
+        Assert.True(pool.Validate(h2));
+        Assert.Equal("B", pool[h1]);
+        Assert.Equal("C", pool[h2]);
+        Assert.Equal(2, pool.Count);
+    }
+
+    [Fact]
+    public void RollbackCompaction_RestoresOriginalHandles() {
+        var pool = new GcPool<string>();
+        var h0 = pool.Store("A");
+        var h1 = pool.Store("B");
+        var h2 = pool.Store("C");
+
+        pool.BeginMark();
+        pool.MarkReachable(h1);
+        pool.MarkReachable(h2);
+        pool.Sweep();
+
+        var result = pool.CompactWithUndo(10);
+        Assert.True(result.Records.Count > 0);
+
+        pool.RollbackCompaction(result);
+
+        // After rollback, original handles h1 and h2 should be valid at their original positions
+        Assert.True(pool.Validate(h1), "h1 should be valid after rollback");
+        Assert.True(pool.Validate(h2), "h2 should be valid after rollback");
+        Assert.Equal("B", pool[h1]);
+        Assert.Equal("C", pool[h2]);
+        Assert.Equal(2, pool.Count);
+    }
+
+    [Fact]
+    public void CompactWithUndo_DoesNotTrimExcessBeforeTrimExcessCapacity() {
+        var pool = new GcPool<string>();
+        int slabSize = SlabBitmap.SlabSize;
+        var handles = new SlotHandle[slabSize + 8];
+        for (int i = 0; i < handles.Length; i++) { handles[i] = pool.Store($"v{i}"); }
+
+        // Keep only the last few objects in slab 1 so compaction can move them into slab 0,
+        // but capacity should remain unchanged until TrimExcessCapacity is explicitly called.
+        pool.BeginMark();
+        for (int i = slabSize; i < handles.Length; i++) {
+            pool.MarkReachable(handles[i]);
+        }
+        pool.Sweep();
+
+        int capacityBeforeCompaction = pool.Capacity;
+
+        var result = pool.CompactWithUndo(10);
+        Assert.Equal(8, result.Records.Count);
+        Assert.Equal(capacityBeforeCompaction, pool.Capacity);
+    }
+
+    [Fact]
+    public void TrimExcessCapacity_TrimsExcessAfterSuccessfulCompaction() {
+        var pool = new GcPool<string>();
+        int slabSize = SlabBitmap.SlabSize;
+        var handles = new SlotHandle[slabSize + 8];
+        for (int i = 0; i < handles.Length; i++) { handles[i] = pool.Store($"v{i}"); }
+
+        pool.BeginMark();
+        for (int i = slabSize; i < handles.Length; i++) {
+            pool.MarkReachable(handles[i]);
+        }
+        pool.Sweep();
+
+        int capacityBeforeFinalize = pool.Capacity;
+
+        var result = pool.CompactWithUndo(10);
+        Assert.Equal(8, result.Records.Count);
+
+        pool.TrimExcessCapacity();
+
+        Assert.True(pool.Capacity < capacityBeforeFinalize,
+            $"Capacity after finalize ({pool.Capacity}) should be < before finalize ({capacityBeforeFinalize})"
+        );
+    }
+
+    [Fact]
+    public void RollbackCompaction_NoMoves_IsNoOp() {
+        var pool = new GcPool<string>();
+        pool.Store("A");
+        pool.Store("B");
+
+        pool.BeginMark();
+        pool.MarkReachable(new SlotHandle(0, 0));
+        pool.MarkReachable(new SlotHandle(0, 1));
+        pool.Sweep();
+
+        var result = pool.CompactWithUndo(10);
+        Assert.Empty(result.Records);
+
+        // Rollback of empty moves should not throw
+        pool.RollbackCompaction(result);
+        Assert.Equal(2, pool.Count);
+    }
+
+    [Fact]
+    public void CompactWithUndo_UndoToken_ContainsMoveRecords() {
+        var pool = new GcPool<string>();
+        var handles = new SlotHandle[4];
+        for (int i = 0; i < 4; i++) { handles[i] = pool.Store($"v{i}"); }
+
+        pool.BeginMark();
+        pool.MarkReachable(handles[1]);
+        pool.MarkReachable(handles[3]);
+        pool.Sweep();
+
+        var result = pool.CompactWithUndo(10);
+
+        foreach (var record in result.Records) {
+            Assert.True(record.FromIndex > record.ToIndex, "Compaction should move from high to low");
+        }
+    }
+
+    [Fact]
+    public void RollbackCompaction_RestoresHandleGenerationAcrossByteWrap() {
+        var pool = new GcPool<string>();
+        var h0 = pool.Store("A");
+        var h1 = pool.Store("B");
+        var h2 = pool.Store("C");
+
+        // Reuse index 2 repeatedly so the live handle generation reaches 255.
+        for (int i = 0; i < 255; i++) {
+            pool.Free(h2);
+            h2 = pool.Store("C");
+        }
+        Assert.Equal(255, h2.Generation);
+
+        pool.BeginMark();
+        pool.MarkReachable(h1);
+        pool.MarkReachable(h2);
+        pool.Sweep(); // h0 becomes hole at low index
+
+        var result = pool.CompactWithUndo(10);
+        Assert.NotEmpty(result.Records);
+
+        pool.RollbackCompaction(result);
+
+        // Original high-generation handle should be restored and readable.
+        Assert.True(pool.Validate(h2));
+        Assert.Equal("C", pool[h2]);
     }
 }
