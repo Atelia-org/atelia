@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记脉络与决策，不复述代码细节；有疑问时指向源文件路径。
-> **最后更新**：2026-03-15
+> **最后更新**：2026-03-16
 
 ---
 
@@ -312,14 +312,14 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 | 模块 | 状态 | 备注 |
 |:-----|:-----|:-----|
 | ValueBox（Tagged-Pointer + 所有 Face） | ✅ 已完成 | 含 Inline/Heap 编解码、Equality、Write |
-| Pools（SlotPool / GcPool / InternPool / SlabBitmap） | ✅ 已完成 | 含 Mark-Sweep GC、`ISweepCollectHandler` 回调 |
+| Pools（SlotPool / GcPool / InternPool / SlabBitmap） | ✅ 已完成 | 含 Mark-Sweep GC、Compaction、`MoveSlotRecorded`/`UndoMoveSlot` 精确回滚 |
 | DictChangeTracker + BitDivision | ✅ 已完成 | 双字典 + 脏标记 |
 | DurableDict（Typed / Mixed / DurObj） | ✅ 已完成 | 含 Rebase/Deltify |
 | BinaryDiffWriter / Reader | ✅ 已完成 | 含 Tagged + Bare 编码 |
 | TypeCodec / HelperRegistry / DurableFactory | ✅ 已完成 | 泛型类型 → 工厂 |
 | VersionChain（Write/Save/Load） | ✅ 已完成 | 含二阶段 Write + PendingSave |
 | DurableList（Typed/Mixed） | ⬜ 占位 | 所有方法 throw；Diff 方案待定 |
-| Revision | ✅ 已完成 | GcPool 对象管理 + 三阶段 Commit + GC + GraphRoot 持久化 |
+| Revision | ✅ 已完成 | Primary Commit（三阶段）+ Compaction Apply/Rollback + Follow-up Persist |
 | Repository | ⬜ 骨架 | 仅有 DirectoryPath 属性 |
 
 ---
@@ -353,27 +353,57 @@ Revision 是**对象图的事务快照管理器**，类似 git commit。每次 `
 
 Open 时还执行 `ValidateAllReferences()`：遍历所有对象的子引用，检测悬空引用。
 
-### Commit 三阶段协议
+### Commit 两段协议（显式结果）
 
 ```
 Commit(graphRoot)
-  ├─ Phase 1: Preflight（纯读校验）
-  │    ├─ EnsureCanReference(graphRoot)
-  │    ├─ CollectReachableOrFail：从 graphRoot DFS 收集可达对象
-  │    │    └─ 遇到悬空引用 → 返回失败
-  │    └─ 构建 CommitPreflight（liveObjects, liveKeys）
-  ├─ Phase 2: Persist（仅追加写盘，不改对象内存）
-  │    ├─ 对每个脏对象 → VersionChain.Write → 得到 PendingSave
-  │    ├─ 更新 ObjectMap（upsert 新 ticket，remove stale keys）
-  │    ├─ 写 ObjectMap 帧（TailMeta = GraphRoot 的 LocalId.Value）
-  │    └─ 失败时 _objectMap.DiscardChanges() 回滚
-  └─ Phase 3: Finalize（全部落盘成功后）
-       ├─ 逐个 PendingSave.Complete()（更新对象版本链状态）
-       ├─ SweepUnreachable → 不可达对象 DetachByGc → pool.Sweep
-       └─ 更新 _head = CommitSnapshot(newId, ...)
+  ├─ A) Primary Commit（三阶段）
+  │    ├─ Phase 1: WalkAndMark（DFS + Mark）
+  │    ├─ Phase 2: Persist（写盘，不改对象内存；失败回滚 _objectMap）
+  │    └─ Phase 3: Finalize（Complete + Sweep + 更新 _head）
+  ├─ B) Compaction Apply（条件触发）
+  │    ├─ RevisionCompactionSession.TryApply（ShouldCompact + CompactWithUndo + Rebind/引用重写）
+  │    ├─ 校验模式分层：
+  │    │    - Strict：全量校验 liveObjects 引用一致性
+  │    │    - HotPath：只校验 touched objects + moved keys + ObjectMap/pool 对齐
+  │    └─ 目标语义：apply / rollback 的内部 bug 直接 fail-fast，不建模为普通结果
+  └─ C) Follow-up Persist（仅在确实 compact 后）
+       └─ 复用 primary 的 liveObjects 持久化 compaction 造成的脏变更；若 follow-up persist 因外部因素失败，则回滚 compaction，并返回 rolled-back outcome
 ```
 
-**异常分类**：Phase 1/2 中的运行时 / IO 异常通过 `IsExpectedCommitException` 捕获，转为 `SjStateError` 返回（安全回滚）。Phase 3 中的异常直接上抛（数据已落盘，不能假装失败）。
+`Commit(graphRoot)` 现在返回 `CommitOutcome`，显式区分：
+- `PrimaryOnly`
+- `PrimaryPlusCompaction`
+- `PrimaryCommittedCompactionRolledBack`
+
+**错误语义目标**：
+- 可归因于对象图状态、文件句柄、RBF I/O、宿主环境等外部不可控因素的失败，返回 `AteliaError`。
+- 纯内存 compaction / rollback 中的内部不变量破坏，视为实现 bug，直接 fail-fast。
+- `CommitOutcome.CompactionIssue` 只承载“primary 已 durable，但 follow-up persist 因外部因素未完成”的诊断信息。
+- rollback 成功后，`Head` 与当前内存图会重新对齐到 primary commit。
+
+当前实现注意：
+
+- `GcPool.RollbackCompaction` 已实现：在 shrink 最终提交前通过 move records 精确恢复 slot 布局与 generation。
+- `GcPool.TrimExcessCapacity` 已实现：可独立回收尾部空容量；当前只在 follow-up persist 成功后调用。
+- `GcPool.CompactWithUndo` 现在以强异常安全为目标：若在返回 undo token 前内部出错，会先恢复 pool 状态，再重新抛出异常。
+- 引用重写现在返回“是否真的改动”，Rollback 只对 moved objects + 实际被重写的对象做 `DiscardChanges()`，不再粗暴扫描全体对象。
+- Compaction 流程已收拢为独立的 `RevisionCompactionSession`，`Revision.Commit` 主要保留协议调度职责。
+- `RevisionCompactionSession.TryApply(...)` 已把“ShouldCompact”与“是否真的发生移动”合并为单次判定，消除了 `TryCreate + Apply(NotCompacted)` 的双重 no-op 路径。
+- compaction 校验现已支持 `Strict` / `HotPath` 两种模式：
+  - `DEBUG` 默认 `Strict`
+  - 发布默认 `HotPath`
+  - 可用环境变量 `ATELIA_SJ_COMPACTION_VALIDATE=STRICT|HOT|HOTPATH` 覆盖
+- 已接入轻量调试日志类别：`StateJournal.Commit` / `StateJournal.Compaction`。
+
+当前观测入口：
+
+- compaction 的设计取舍、benchmark 运行建议与首轮观测重点，集中记录在 `docs/StateJournal/compaction-note.md`
+- 已落地的结构化收敛包括：
+  - primary `liveObjects` 复用到 compaction apply 与 follow-up persist
+  - `MixedDictImpl._durableRefCount` 快路径
+  - 两层 benchmark：整次 commit 与分阶段 benchmark
+- 更复杂的后续方案（如更激进的局部校验、反向引用索引、Epoch 重映射）应等待 benchmark 数据再决定
 
 **关键不变量**：Sweep 在 Persist 之后执行，确保"先写盘再回收"——不会出现对象被 GC 但数据未保存的情况。
 
@@ -399,7 +429,7 @@ Open(commitId, rbfFile)
 
 `_head: CommitSnapshot?` 记录最近一次成功 Commit 的不可变快照（Id / ParentId / ObjectMap / GraphRoot）。首次 Commit 前为 null。`Head` / `HeadParent` / `GraphRoot` 属性均从 `_head` 派生。
 
-### IChildRefVisitor 与图遍历
+### IChildRefVisitor / IChildRefRewriter 与图遍历
 
 `IChildRefVisitor` 是 GC / 校验用的子引用访问器接口：
 
@@ -409,12 +439,22 @@ internal interface IChildRefVisitor {
 }
 ```
 
+`IChildRefRewriter` 是 compaction 用的子引用重写接口：
+
+```csharp
+internal interface IChildRefRewriter {
+    LocalId Rewrite(LocalId oldId);
+}
+```
+
 `DurableObject.AcceptChildRefVisitor<TVisitor>(ref TVisitor)` 是抽象方法，各实现类按需遍历子引用：
 - `DurObjDictImpl`：遍历所有值中的非空 LocalId
 - `MixedDictImpl`：遍历 ValueBox 值中的 DurableRef
 - `TypedDictImpl` / List 占位实现：空实现（不含子引用）
 
-关键文件：`Revision.cs`, `Internal/IChildRefVisitor.cs`, `DurableObject.cs`
+`DurableObject.AcceptChildRefRewrite<TRewriter>(ref TRewriter)` 用于 compaction apply 阶段重写子引用。
+
+关键文件：`Revision.cs`, `Internal/IChildRefVisitor.cs`, `Internal/IChildRefRewriter.cs`, `DurableObject.cs`
 
 ---
 
@@ -430,7 +470,7 @@ src/StateJournal/
 ├── DurableDict.Mixed.cs          # MixedDict 外观（含 generic accessor）
 ├── DurableList.Typed.cs          # TypedList 外观（占位）
 ├── DurableList.Mixed.cs          # MixedList 外观（占位）
-├── Revision.cs                   # 对象图事务快照管理器（GcPool + 三阶段 Commit + GC）
+├── Revision.cs                   # 对象图事务快照管理器（Primary Commit + Compaction Follow-up）
 ├── Repository.cs                 # Repo 骨架
 ├── IDict.cs                      # Dict 接口 + 扩展方法
 ├── ValueKind.cs                  # 值类型枚举
@@ -455,8 +495,9 @@ src/StateJournal/
 │   ├── DictDiffApplier.cs             # Load 时的增量应用
 │   ├── DurableRef.cs                  # (ObjectKind, LocalId) 轻量引用
 │   ├── IChildRefVisitor.cs            # GC/校验用子引用访问器接口
+│   ├── IChildRefRewriter.cs           # Compaction 子引用重写接口
 │   ├── HeapValueKind.cs
-│   ├── StateJournalErrors.cs          # SjCorruptionError / SjStateError 等
+│   ├── StateJournalErrors.cs          # SjCorruptionError / SjStateError / SjCompaction*Error
 │   ├── TypedDictImpl.cs / MixedDictImpl.cs / DurObjDictImpl.cs
 │   ├── TypedListImpl.cs / MixedListImpl.cs
 │   └── ...
@@ -468,7 +509,7 @@ src/StateJournal/
 │   └── VarInt.cs
 └── Pools/
     ├── SlotPool.cs       # Slab + Bitmap 基础分配器
-    ├── GcPool.cs         # Mark-Sweep GC 池（含 Sweep<THandler> 泛型回调）
+    ├── GcPool.cs         # Mark-Sweep GC 池（含 CompactWithUndo + RollbackCompaction）
     ├── InternPool.cs     # 去重 + Mark-Sweep 池
     ├── SlabBitmap.cs     # Bitmap 基础设施
     ├── SlotHandle.cs     # 32bit 胖指针（generation + index）
