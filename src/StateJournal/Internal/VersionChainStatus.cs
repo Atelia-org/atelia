@@ -10,7 +10,10 @@ internal struct VersionChainStatus {
     // 固定额外开销相当于多少条变更（remove or upsert）。每条变更估算约VarInt(8B+8B)≈8B
     const uint PerFrameOverhead = 6; // 涉及多个变长字段，还挺不好估算的，约34B。RbfFrame=24B, ParentTicket+CumulativeCost=VarInt(8B+4B), RemoveCount+UpsertCount=VarInt(4B+4B)。
 
-    // 前一个version的RBF Frame Ticket。_head不用于标记是否为rebase version, 对于 rebase version 依然可能尽可能保持不断版本历史，
+    // 前一个 version 的 RBF Frame Ticket。
+    // 注意：这里记录的是“逻辑前驱”，不要求一定与当前写入目标文件同源。
+    // ExportTo/SaveAs 做 full rebase 到新文件时，会刻意保留旧 _head 作为跨文件祖先元数据。
+    // 读取 rebase 头帧时，Load 会在看到非空 typeCode 后停止回溯，因此这个 parent 可以只是逻辑信息。
     SizedPtr _head;
 
     // 从头帧的 parentTicket 指向的基帧（含）到当前 _head（含）总共的开销。用于评估是否值得以deltify方式保存而非rebase。
@@ -48,7 +51,11 @@ internal struct VersionChainStatus {
     }
 
     private readonly uint GetRebasedCumulativeCost(uint rebaseSize) => checked(rebaseSize + PerFrameOverhead);
-    /// <summary>二阶段提交的前一阶段</summary>
+    /// <summary>
+    /// 二阶段提交的前一阶段。
+    /// 即使本次输出的是 rebase 帧，也会把当前 <see cref="_head"/> 写入 parentTicket，
+    /// 以保留逻辑祖先链；这在 ExportTo/SaveAs 的跨文件 full snapshot 场景下是有意设计。
+    /// </summary>
     internal readonly void WriteRebase(BinaryDiffWriter writer, uint rebaseSize) {
         uint newCumulativeCost = GetRebasedCumulativeCost(rebaseSize);
         writer.BareUInt64(_head.Serialize(), false);

@@ -3,6 +3,10 @@
 > 日期：2026-03-16
 > 状态：已落地当前方案（Primary Commit + Compaction Follow-up）
 
+> 2026-03-18 补记：`ExportTo` / `SaveAs` 已落地为跨文件完整快照路径。
+> 这两条路径写出的帧统一标记为 `FrameSource.CrossFileSnapshot`，用于和常规 `PrimaryCommit` / `Compaction` 区分；
+> 同时保留逻辑祖先 `parentTicket` 作为跨文件组织信息。该语义不影响当前读取，因为头帧本身是 rebase。
+
 ## 0. 当前进展（2026-03-16）
 
 已落地：
@@ -237,6 +241,13 @@ Compaction 改变了 key（LocalId.Value）。对每个移动的 (oldKey → new
 ## 6. 执行时机与流程草案
 
 采用**渐进压缩**：Primary Commit 成功并更新 `_head` 之后，条件触发一次内存 compaction，再追加一次 follow-up 持久化提交；若 follow-up persist 因外部因素失败，则回滚到 primary commit 对应的内存态。若 compaction apply / rollback 自身出错，则按 bug 直接 fail-fast。
+
+### 6.0 与跨文件快照的边界
+
+- `ExportTo` / `SaveAs` 不走 compaction follow-up 协议，它们复用的是 primary persist 骨架 + full rebase 写入
+- 这两条路径写出的帧统一使用 `FrameSource.CrossFileSnapshot`
+- `SaveAs` 成功后当前 `Revision` 会切换到新文件；后续普通 `Commit` 重新写回 `FrameSource.PrimaryCommit`
+- `CrossFileSnapshot` 的目的不是改变读取协议，而是把“这是一次跨文件完整快照”明确写进帧元数据，供未来更高层的文件组织/管理逻辑使用
 
 ### 6.1 已落地流程：Primary Commit + Compaction Follow-up
 

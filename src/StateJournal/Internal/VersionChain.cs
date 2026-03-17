@@ -9,7 +9,9 @@ namespace Atelia.StateJournal.Internal;
 internal readonly struct VersionChainLoadResult {
     internal readonly DurableObject Object;
     /// <summary>头帧（versionTicket 所指帧）内储存的 parentTicket 字段。
-    /// 对于 ObjectMap frame chain，此值即为父 commit 的 ticket（= 父 CommitId）。</summary>
+    /// 对于 ObjectMap frame chain，此值通常即为父 commit 的 ticket（= 父 CommitId）。
+    /// 在 ExportTo/SaveAs 的跨文件 full rebase 场景下，它也可能只是“逻辑祖先”元数据，
+    /// 指向另一个文件中的 commit。</summary>
     internal readonly SizedPtr HeadParentTicket;
     /// <summary>最新帧（version chain 头帧）的 tailMeta 数据。无 tailMeta 时为空数组。</summary>
     internal readonly byte[] HeadTailMeta;
@@ -201,6 +203,10 @@ internal static class VersionChain {
                 SizedPtr parentTicket = SizedPtr.Deserialize(reader.BareUInt64(false));
                 deltaChain.Push((frame, reader.ConsumedCount, tailMetaLen, parentTicket));
                 readTarget = parentTicket;
+                // 只有当前帧是 delta（typeCode 为空）时，才会在下一轮继续追 parentTicket。
+                // 若头帧本身已是 rebase，则循环在本轮结束后停止；
+                // 因此 rebase 头帧中记录的 parentTicket 可以安全地仅作为逻辑祖先信息存在，
+                // 不要求当前 file 内一定存在对应的物理前驱帧。
             } while (typeCode.IsEmpty);
             Debug.Assert(!typeCode.IsEmpty);
             Debug.Assert(deltaChain.Count > 0);

@@ -48,6 +48,65 @@ partial class Revision {
         return LogAndReturnOutcome(CommitOutcome.Compacted(primaryCommitId, compactionCommit.Value));
     }
 
+    internal partial AteliaResult<CommitId> ExportTo(DurableObject graphRoot, IRbfFile targetFile) {
+        ArgumentNullException.ThrowIfNull(graphRoot);
+        ArgumentNullException.ThrowIfNull(targetFile);
+
+        var liveObjectsResult = PrepareLiveObjects(graphRoot);
+        if (liveObjectsResult.IsFailure) { return liveObjectsResult.Error!; }
+
+        try {
+            var persistResult = PersistCurrentSnapshot(
+                graphRoot, liveObjectsResult.Value!,
+                removeUnreachableObjectMapKeys: true, FrameSource.CrossFileSnapshot,
+                targetFile, forceAll: true
+            );
+            // ExportTo 不改变当前 Revision 状态，无论成败都回滚 _objectMap 的未提交变更
+            _objectMap.DiscardChanges();
+            if (persistResult.IsFailure) { return persistResult.Error!; }
+            // 不调用 FinalizePrimaryCommit：不 Complete PendingSave、不 Sweep、不更新 _head
+            return persistResult.Value.Id;
+        }
+        catch (Exception ex) when (IsExternalCommitException(ex)) {
+            _objectMap.DiscardChanges();
+            return BuildStateError("ExportTo persistence failed", ex);
+        }
+    }
+
+    internal partial AteliaResult<CommitOutcome> SaveAs(DurableObject graphRoot, IRbfFile targetFile) {
+        ArgumentNullException.ThrowIfNull(graphRoot);
+        ArgumentNullException.ThrowIfNull(targetFile);
+
+        var liveObjectsResult = PrepareLiveObjects(graphRoot);
+        if (liveObjectsResult.IsFailure) { return liveObjectsResult.Error!; }
+
+        AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> persistResult;
+        try {
+            persistResult = PersistCurrentSnapshot(
+                graphRoot, liveObjectsResult.Value!,
+                removeUnreachableObjectMapKeys: true, FrameSource.CrossFileSnapshot,
+                targetFile, forceAll: true
+            );
+        }
+        catch (Exception ex) when (IsExternalCommitException(ex)) {
+            _objectMap.DiscardChanges();
+            return BuildStateError("SaveAs persistence failed", ex);
+        }
+        if (persistResult.IsFailure) {
+            _objectMap.DiscardChanges();
+            return persistResult.Error!;
+        }
+
+        var (pendingSaves, newCommitId) = persistResult.Value;
+
+        // Finalize: Complete all PendingSave (HeadTicket 指向新文件), Sweep GC, 更新 _head
+        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitId);
+        // 切换到新文件
+        _file = targetFile;
+        // 跳过 Compaction（刚全量 rebase，无 delta 碎片）
+        return CommitOutcome.PrimaryOnly(newCommitId);
+    }
+
     private static AteliaResult<CommitOutcome> LogAndReturnOutcome(CommitOutcome outcome) {
         var msg = $"Completed: head={outcome.HeadCommitId.Ticket.Serialize()}, kind={outcome.Completion}";
         if (outcome.CompactionIssue is not null) { msg += $", issue={outcome.CompactionIssue.ErrorCode}"; }
@@ -69,59 +128,30 @@ partial class Revision {
     /// 若内部持久化协议本身违反不变量，应让异常直接传播，以便 fail-fast 暴露实现 bug。
     /// </remarks>
     private AteliaResult<PrimaryCommitArtifacts> RunPrimaryCommit(DurableObject graphRoot) {
-        List<DurableObject> liveObjects;
-        List<PendingSave> pendingSaves;
-        CommitId newCommitId;
-        try {
-            EnsureCanReference(graphRoot);
-        }
-        catch (InvalidOperationException ex) {
-            _objectMap.DiscardChanges();
-            var details = new Dictionary<string, string> {
-                ["ExceptionType"] = ex.GetType().FullName ?? ex.GetType().Name,
-                ["FailureStage"] = "Preflight",
-                ["GraphRootLocalId"] = graphRoot.LocalId.Value.ToString(),
-            };
+        var liveObjectsResult = PrepareLiveObjects(graphRoot);
+        if (liveObjectsResult.IsFailure) { return liveObjectsResult.Error!; }
 
-            return new SjStateError(
-                $"Commit preflight failed due to invalid runtime state: {ex.GetType().Name}: {ex.Message}",
-                RecoveryHint: "Fix the runtime/file state and retry commit. No GC detachment has been applied before ObjectMap persistence succeeds.",
-                Details: details
+        AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> persistResult;
+        try {
+            persistResult = PersistCurrentSnapshot(
+                graphRoot, liveObjectsResult.Value!,
+                removeUnreachableObjectMapKeys: true, FrameSource.PrimaryCommit
             );
-        }
-
-        // Phase 1: WalkAndMark（DFS 遍历 + GcPool Mark，合并去重与标记为单次遍历）
-        var walkResult = WalkAndMark(graphRoot);
-        if (walkResult.IsFailure) { return walkResult.Error!; }
-        liveObjects = walkResult.Value!;
-
-        try {
-            // Phase 2: Persist（写盘但不改对象内存，失败时按策略决定是否回滚 _objectMap）
-            var persistResult = PersistCurrentSnapshot(graphRoot, liveObjects, removeUnreachableObjectMapKeys: true, FrameSource.PrimaryCommit);
-            if (persistResult.IsFailure) {
-                _objectMap.DiscardChanges();
-                return persistResult.Error!;
-            }
-            (pendingSaves, newCommitId) = persistResult.Value;
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
-            _objectMap.DiscardChanges(); // 预期此时_objectMap尚未被修改，此处是防御性回滚。
-            var details = new Dictionary<string, string> {
-                ["ExceptionType"] = ex.GetType().FullName ?? ex.GetType().Name,
-                ["FailureStage"] = "Persist",
-                ["GraphRootLocalId"] = graphRoot.LocalId.Value.ToString(),
-            };
-
-            return new SjStateError(
-                $"Commit persistence failed due to host environment or I/O exception: {ex.GetType().Name}: {ex.Message}",
-                RecoveryHint: "Fix the runtime/file state and retry commit. No GC detachment has been applied before ObjectMap persistence succeeds.",
-                Details: details
-            );
+            _objectMap.DiscardChanges();
+            return BuildStateError("Persistence failed", ex);
         }
+        if (persistResult.IsFailure) {
+            _objectMap.DiscardChanges();
+            return persistResult.Error!;
+        }
+
+        var (pendingSaves, newCommitId) = persistResult.Value;
 
         // Phase 3: Finalize（全部落盘成功，统一应用内存状态变更）
         FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitId);
-        return new PrimaryCommitArtifacts(newCommitId, liveObjects);
+        return new PrimaryCommitArtifacts(newCommitId, liveObjectsResult.Value!);
     }
 
     /// <summary>
@@ -132,27 +162,21 @@ partial class Revision {
     /// 因为 compaction 只重排 slot / LocalId / 子引用与 ObjectMap key，不改变对象可达性。
     /// </remarks>
     private AteliaResult<CommitId> PersistCompactionFollowup(DurableObject graphRoot, IReadOnlyList<DurableObject> liveObjects) {
+        AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> persistResult;
         try {
-            var persistResult = PersistCurrentSnapshot(graphRoot, liveObjects, removeUnreachableObjectMapKeys: false, FrameSource.Compaction);
-            if (persistResult.IsFailure) { return persistResult.Error!; }
-
-            var (pendingSaves, newCommitId) = persistResult.Value;
-            FinalizeFollowupPersist(graphRoot, pendingSaves, newCommitId);
-            return newCommitId;
-        }
-        catch (Exception ex) when (IsExternalCommitException(ex)) {
-            var details = new Dictionary<string, string> {
-                ["ExceptionType"] = ex.GetType().FullName ?? ex.GetType().Name,
-                ["FailureStage"] = "FollowupPersist",
-                ["GraphRootLocalId"] = graphRoot.LocalId.Value.ToString(),
-            };
-
-            return new SjStateError(
-                $"Commit follow-up persistence failed due to host environment or I/O exception: {ex.GetType().Name}: {ex.Message}",
-                RecoveryHint: "Primary snapshot remains durable. Fix the runtime/file state and retry Commit if you still want to persist compaction changes.",
-                Details: details
+            persistResult = PersistCurrentSnapshot(
+                graphRoot, liveObjects,
+                removeUnreachableObjectMapKeys: false, FrameSource.Compaction
             );
         }
+        catch (Exception ex) when (IsExternalCommitException(ex)) {
+            return BuildStateError("Compaction follow-up persistence failed", ex);
+        }
+        if (persistResult.IsFailure) { return persistResult.Error!; }
+
+        var (pendingSaves, newCommitId) = persistResult.Value;
+        FinalizeFollowupPersist(graphRoot, pendingSaves, newCommitId);
+        return newCommitId;
     }
 
     /// <summary>
@@ -182,17 +206,45 @@ partial class Revision {
         return liveObjects;
     }
 
+    private AteliaResult<List<DurableObject>> PrepareLiveObjects(DurableObject graphRoot) {
+        try {
+            EnsureCanReference(graphRoot);
+        }
+        catch (InvalidOperationException ex) {
+            return BuildStateError("EnsureCanReference failed", ex);
+        }
+
+        return WalkAndMark(graphRoot);
+    }
+
+    private static SjStateError BuildStateError(string messagePrefix, Exception ex) {
+        return new SjStateError(
+            $"{messagePrefix}: {ex.GetType().Name}: {ex.Message}",
+            RecoveryHint: "Revision state was not modified. Fix the issue and retry."
+        );
+    }
+
     private AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> PersistCurrentSnapshot(
         DurableObject graphRoot,
         IReadOnlyList<DurableObject> liveObjects,
         bool removeUnreachableObjectMapKeys,
-        FrameSource frameSource
+        FrameSource frameSource,
+        IRbfFile? targetFile = null,
+        bool forceAll = false
     ) {
+        var file = targetFile ?? _file;
         var pendingSaves = new List<PendingSave>();
-        var userContext = new DiffWriteContext(FrameUsage.UserPayload, frameSource);
+        var userContext = new DiffWriteContext(FrameUsage.UserPayload, frameSource) {
+            // forceAll + targetFile 用于 ExportTo/SaveAs 的 full snapshot：
+            // 我们强制当前可达对象全部写成 rebase 帧，但不抹掉对象现有的 HeadTicket。
+            // 这样目标文件里的头帧会保留“逻辑祖先”信息；读取时因为头帧本身是 rebase，
+            // Load 不会继续跟进这个 parent 去目标文件中追帧。
+            ForceRebase = forceAll,
+            ForceSave = forceAll,
+        };
         foreach (var obj in liveObjects) {
-            if (obj.IsTracked && !obj.HasChanges) { continue; }
-            var writeResult = VersionChain.Write(obj, _file, userContext);
+            if (!forceAll && obj.IsTracked && !obj.HasChanges) { continue; }
+            var writeResult = VersionChain.Write(obj, file, userContext);
             if (writeResult.IsFailure) { return writeResult.Error!; }
             pendingSaves.Add(writeResult.Value);
             _objectMap.Upsert(obj.LocalId.Value, writeResult.Value.Ticket.Serialize());
@@ -209,9 +261,12 @@ partial class Revision {
         Span<byte> rootMeta = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, graphRoot.LocalId.Value);
         DiffWriteContext mapContext = new(FrameUsage.ObjectMap, frameSource) {
+            // ObjectMap 也保留逻辑祖先 commit 的 ticket。
+            // 因此 Open(targetCommit, targetFile) 能读取当前快照，同时 HeadParentId 继续暴露这条跨文件祖先信息。
+            ForceRebase = forceAll,
             ForceSave = true,
         };
-        var mapWriteResult = VersionChain.Write(_objectMap, _file, mapContext, tailMeta: rootMeta);
+        var mapWriteResult = VersionChain.Write(_objectMap, file, mapContext, tailMeta: rootMeta);
         if (mapWriteResult.IsFailure) { return mapWriteResult.Error!; }
         pendingSaves.Add(mapWriteResult.Value);
 

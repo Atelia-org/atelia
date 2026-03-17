@@ -35,7 +35,7 @@ internal struct DiffWriteContext {
     /// <summary>帧的用途（UserPayload / ObjectMap）。构造时必须显式指定，不可为 Blank。</summary>
     internal FrameUsage FrameUsage { get; init; }
 
-    /// <summary>帧的来源（PrimaryCommit / Compaction）。构造时必须显式指定，不可为 Blank。</summary>
+    /// <summary>帧的来源（PrimaryCommit / Compaction / CrossFileSnapshot）。构造时必须显式指定，不可为 Blank。</summary>
     internal FrameSource FrameSource { get; init; }
 
     // WritePendingDiff 写入、OnCommitSucceeded 读取的决策结果。

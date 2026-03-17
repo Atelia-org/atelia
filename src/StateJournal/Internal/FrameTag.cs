@@ -23,25 +23,30 @@ internal enum FrameSource : byte {
     Blank = 0,
     PrimaryCommit = 1,
     Compaction = 2,
+    /// <summary>
+    /// 写入到其他文件的完整快照（如 ExportTo / SaveAs）。
+    /// 允许保留跨文件的逻辑祖先信息。
+    /// </summary>
+    CrossFileSnapshot = 3,
     Mask = (1 << FrameTag.FrameSourceBits) - 1,
 }
 
 internal readonly struct FrameTag(uint bits) {
     #region Constant
-    public const int VersionKindShift = 0, VersionKindBits = 2;
+    public const int VersionKindShift = 0, VersionKindBits = 4;
 
     public const int ObjectKindShift = VersionKindShift + VersionKindBits, ObjectKindBits = ValueBox.DurRefKindBitCount;
 
     public const int UsageKindShift = ObjectKindShift + ObjectKindBits, UsageKindBits = 4;
 
-    public const int FrameSourceShift = UsageKindShift + UsageKindBits, FrameSourceBits = 2;
+    public const int FrameSourceShift = UsageKindShift + UsageKindBits, FrameSourceBits = 4;
     #endregion
 
     #region Static Helper
     internal static bool IsValidVersionKind(VersionKind value) => value is VersionKind.Rebase or VersionKind.Delta;
     internal static bool IsValidObjectKind(DurableObjectKind value) => value is not DurableObjectKind.Blank and not DurableObjectKind.Mask;
     internal static bool IsValidUsage(FrameUsage value) => value is FrameUsage.UserPayload or FrameUsage.ObjectMap;
-    internal static bool IsValidSource(FrameSource value) => value is FrameSource.PrimaryCommit or FrameSource.Compaction;
+    internal static bool IsValidSource(FrameSource value) => value is FrameSource.PrimaryCommit or FrameSource.Compaction or FrameSource.CrossFileSnapshot;
     #endregion
 
     internal uint Bits => bits;
@@ -82,7 +87,7 @@ internal readonly struct FrameTag(uint bits) {
         if (!IsValidSource(Source)) {
             return new SjCorruptionError(
                 $"FrameTag has invalid Source before write: {Source}.",
-                RecoveryHint: "DiffWriteContext.FrameSource must be PrimaryCommit or Compaction."
+                RecoveryHint: "DiffWriteContext.FrameSource must be PrimaryCommit, Compaction, or CrossFileSnapshot."
             );
         }
         return null;

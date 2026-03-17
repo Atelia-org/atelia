@@ -12,7 +12,7 @@ namespace Atelia.StateJournal;
 /// <see cref="_head"/> 持有当前已提交的快照状态（Id / ParentId / ObjectMap / GraphRoot），首次 Commit 前为 null。
 /// </summary>
 public partial class Revision {
-    private readonly IRbfFile _file;
+    private IRbfFile _file;
     /// <summary>
     /// 当前活跃的 ObjectMap，始终占据 pool slot 0。
     /// 首次 Commit 前为空 dict；Commit 后与 <see cref="CommitSnapshot.ObjectMap"/> 是同一实例。
@@ -242,6 +242,36 @@ public partial class Revision {
     /// <see cref="CommitCompletion.CompactionRolledBack"/>。
     /// </remarks>
     internal partial AteliaResult<CommitOutcome> Commit(DurableObject graphRoot);
+
+    /// <summary>
+    /// 将当前对象图的完整快照（全量 rebase）导出到 <paramref name="targetFile"/>，
+    /// 不修改当前 Revision 的任何内部状态（_file / _objectMap / _head / 对象 HeadTicket 均不变）。
+    /// </summary>
+    /// <remarks>
+    /// 导出到新文件时，会保留当前快照的“逻辑祖先”信息：
+    /// 新写出的 rebase/ObjectMap 头帧仍会记录源 Revision 当时看到的 parent ticket。
+    /// 该 ticket 可属于其他文件；它作为元数据保留给未来的跨文件组织/管理能力使用，
+    /// 而不是要求目标文件在本地继续沿该 ticket 追溯读取。
+    /// </remarks>
+    /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
+    /// <param name="targetFile">导出目标 RBF 文件。</param>
+    /// <returns>新文件中的 CommitId，可用于 <see cref="Open"/> 独立打开。</returns>
+    internal partial AteliaResult<CommitId> ExportTo(DurableObject graphRoot, IRbfFile targetFile);
+
+    /// <summary>
+    /// 将当前对象图的完整快照（全量 rebase）保存到 <paramref name="targetFile"/>，
+    /// 并将当前 Revision 切换到新文件继续工作。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ExportTo"/> 一样，SaveAs 到新文件时会保留当前快照的逻辑祖先信息，
+    /// 即新文件中的 rebase/ObjectMap 头帧仍记录源 Revision 视角下的 parent ticket。
+    /// 这允许未来在文件之间建立更高层的 commit 组织关系；当前读取路径只依赖 rebase 头帧自身，
+    /// 不要求目标文件内存在该 parent ticket 对应的物理帧。
+    /// </remarks>
+    /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
+    /// <param name="targetFile">另存为目标 RBF 文件。SaveAs 成功后当前 Revision 将绑定到此文件。</param>
+    /// <returns>与 <see cref="Commit"/> 相同的 <see cref="CommitOutcome"/>，但不触发 Compaction。</returns>
+    internal partial AteliaResult<CommitOutcome> SaveAs(DurableObject graphRoot, IRbfFile targetFile);
 
     private readonly record struct CommitSnapshot(
         CommitId Id,

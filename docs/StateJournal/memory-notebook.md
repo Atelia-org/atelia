@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记脉络与决策，不复述代码细节；有疑问时指向源文件路径。
-> **最后更新**：2026-03-16
+> **最后更新**：2026-03-18
 
 ---
 
@@ -250,10 +250,11 @@ MixedDict 反序列化的入口。读取 tag byte → 按 CBOR-inspired 规则 d
 
 ### FrameTag
 
-RBF 帧的 `uint tag` 字段被 StateJournal 结构化为三部分：
-- VersionKind（2bit）：Rebase / Delta
+RBF 帧的 `uint tag` 字段被 StateJournal 结构化为四部分：
+- VersionKind（4bit）：Rebase / Delta
 - ObjectKind（4bit）：MixedDict / TypedDict / MixedList / TypedList
 - UsageKind（4bit）：Blank / UserPayload / ObjectMap
+- FrameSource（4bit）：PrimaryCommit / Compaction / CrossFileSnapshot
 
 关键文件：`Internal/FrameTag.cs`
 
@@ -319,7 +320,7 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 | TypeCodec / HelperRegistry / DurableFactory | ✅ 已完成 | 泛型类型 → 工厂 |
 | VersionChain（Write/Save/Load） | ✅ 已完成 | 含二阶段 Write + PendingSave |
 | DurableList（Typed/Mixed） | ⬜ 占位 | 所有方法 throw；Diff 方案待定 |
-| Revision | ✅ 已完成 | Primary Commit（三阶段）+ Compaction Apply/Rollback + Follow-up Persist |
+| Revision | ✅ 已完成 | Primary Commit（三阶段）+ Compaction Apply/Rollback + Follow-up Persist + CrossFileSnapshot(`ExportTo`/`SaveAs`) |
 | Repository | ⬜ 骨架 | 仅有 DirectoryPath 属性 |
 
 ---
@@ -375,6 +376,14 @@ Commit(graphRoot)
 - `PrimaryOnly`
 - `PrimaryPlusCompaction`
 - `PrimaryCommittedCompactionRolledBack`
+
+### ExportTo / SaveAs（跨文件完整快照）
+
+- `ExportTo(graphRoot, targetFile)`：把当前可达对象图完整写到 `targetFile`，但不修改当前 `Revision` 的 `_file / _head / 对象 HeadTicket`
+- `SaveAs(graphRoot, targetFile)`：同样做完整快照写入，但成功后会 `FinalizePrimaryCommit` 并把当前 `Revision` 切换到 `targetFile`
+- 两者都会把写出的帧标记为 `FrameSource.CrossFileSnapshot`
+- 这类 full rebase 帧允许保留当前对象/commit 的逻辑祖先 `parentTicket`，即使该祖先位于其他文件
+- 读取时不需要在目标文件继续追这条 parent 链：因为头帧自身是 rebase，`VersionChain.Load` 在读到非空 TypeCode 后就会停止回溯
 
 **错误语义目标**：
 - 可归因于对象图状态、文件句柄、RBF I/O、宿主环境等外部不可控因素的失败，返回 `AteliaError`。

@@ -23,6 +23,14 @@ public partial class RevisionTests : IDisposable {
         return count;
     }
 
+    private static FrameSource GetLatestObjectMapFrameSource(IRbfFile file) {
+        foreach (var info in file.ScanReverse()) {
+            var tag = new FrameTag(info.Tag);
+            if (tag.Usage == FrameUsage.ObjectMap) { return tag.Source; }
+        }
+        throw new Xunit.Sdk.XunitException("No ObjectMap frame found.");
+    }
+
     private static int GetMixedDictDurableRefCount<TKey>(DurableDict<TKey> dict) where TKey : notnull {
         var field = dict.GetType().GetField("_durableRefCount", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(field);
