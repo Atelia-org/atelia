@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using Atelia.Data;
-using Atelia.Diagnostics;
 using Atelia.Rbf;
 using Atelia.StateJournal.Internal;
 using Atelia.StateJournal.Pools;
