@@ -5,12 +5,16 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>$(MSBuildProjectName)</AssemblyName>
+    <AssemblyName>RevisionCommit.Bench</AssemblyName>
+    <RootNamespace>Atelia.RevisionCommit.Bench</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\StateJournal\StateJournal.csproj" />
   </ItemGroup>
 
 </Project>
