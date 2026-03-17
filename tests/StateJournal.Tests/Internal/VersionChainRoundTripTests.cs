@@ -37,7 +37,7 @@ public class VersionChainRoundTripTests : IDisposable {
         dict.Upsert(100, double.MaxValue);
 
         // Act: Save → Load
-        var saveResult = VersionChain.Save(dict, file);
+        var saveResult = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(saveResult.IsSuccess, $"Save failed: {saveResult.Error}");
         SizedPtr ticket = saveResult.Value;
 
@@ -72,7 +72,7 @@ public class VersionChainRoundTripTests : IDisposable {
         dict.Upsert(20, 200);
         dict.Upsert(30, -300);
 
-        var saveResult = VersionChain.Save(dict, file);
+        var saveResult = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(saveResult.IsSuccess);
         SizedPtr ticket = saveResult.Value;
 
@@ -102,7 +102,7 @@ public class VersionChainRoundTripTests : IDisposable {
         dict.Upsert(0L, 0.0f);
         dict.Upsert(long.MaxValue, float.PositiveInfinity);
 
-        var saveResult = VersionChain.Save(dict, file);
+        var saveResult = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(saveResult.IsSuccess);
 
         var loadResult = VersionChain.Load(file, saveResult.Value);
@@ -135,7 +135,7 @@ public class VersionChainRoundTripTests : IDisposable {
         dict.Upsert(3, true);
         dict.UpsertExactDouble(4, 3.14);
 
-        var saveResult = VersionChain.Save(dict, file);
+        var saveResult = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(saveResult.IsSuccess, $"Save failed: {saveResult.Error}");
 
         var loadResult = VersionChain.Load(file, saveResult.Value);
@@ -170,14 +170,14 @@ public class VersionChainRoundTripTests : IDisposable {
         dict.Upsert(1, 1.0);
         dict.Upsert(2, 2.0);
 
-        var save1 = VersionChain.Save(dict, file);
+        var save1 = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save1.IsSuccess);
 
         // 修改并第二次 Save (可能是 deltify)
         dict.Upsert(3, 3.0);
         dict.Remove(1);
 
-        var save2 = VersionChain.Save(dict, file);
+        var save2 = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save2.IsSuccess);
 
         // Load 最新版本
@@ -205,7 +205,7 @@ public class VersionChainRoundTripTests : IDisposable {
         var dict = Durable.Dict<int, int>();
         // 不插入任何数据
 
-        var saveResult = VersionChain.Save(dict, file);
+        var saveResult = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(saveResult.IsSuccess);
 
         var loadResult = VersionChain.Load(file, saveResult.Value);
@@ -224,14 +224,14 @@ public class VersionChainRoundTripTests : IDisposable {
         dict.Upsert(1, 100);
         dict.Upsert(2, 2.5);
 
-        var save1 = VersionChain.Save(dict, file);
+        var save1 = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save1.IsSuccess);
 
         // 修改
         dict.Upsert(3, false);
         dict.Remove(1);
 
-        var save2 = VersionChain.Save(dict, file);
+        var save2 = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save2.IsSuccess);
 
         var loadResult = VersionChain.Load(file, save2.Value);
@@ -261,12 +261,12 @@ public class VersionChainRoundTripTests : IDisposable {
         dict.Upsert(1, 10);
         dict.Upsert(2, 20);
 
-        var save1 = VersionChain.Save(dict, file);
+        var save1 = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save1.IsSuccess);
         SizedPtr ticket1 = save1.Value;
 
         // 无变更再次 Save — 幂等返回同一票据，不写新帧
-        var save2 = VersionChain.Save(dict, file);
+        var save2 = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save2.IsSuccess);
         Assert.Equal(ticket1, save2.Value);
 
@@ -287,11 +287,11 @@ public class VersionChainRoundTripTests : IDisposable {
 
         var dict = Durable.Dict<int, int>();
         dict.Upsert(1, 10);
-        var save1 = VersionChain.Save(dict, file);
+        var save1 = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save1.IsSuccess);
 
         dict.Upsert(2, 20);
-        var save2 = VersionChain.Save(dict, file, forceRebase: true);
+        var save2 = VersionChain.Save(dict, file, new DiffWriteContext(FrameUsage.UserPayload, FrameSource.PrimaryCommit) { ForceRebase = true });
         Assert.True(save2.IsSuccess);
         Assert.NotEqual(save1.Value, save2.Value);
 
@@ -313,15 +313,15 @@ public class VersionChainRoundTripTests : IDisposable {
         var dict = Durable.Dict<int, double>();
         dict.Upsert(10, 1.0);
         dict.Upsert(20, 2.0);
-        VersionChain.Save(dict, originalFile);
+        VersionChain.Save(dict, originalFile, DiffWriteContext.UserPrimary);
         dict.Upsert(30, 3.0);
         dict.Remove(10);
-        VersionChain.Save(dict, originalFile);
+        VersionChain.Save(dict, originalFile, DiffWriteContext.UserPrimary);
 
         // 无待写变更 + forceRebase + 新文件 = compact
         var compactPath = GetTempFilePath();
         using var compactFile = RbfFile.CreateNew(compactPath);
-        var saveCompact = VersionChain.Save(dict, compactFile, forceRebase: true);
+        var saveCompact = VersionChain.Save(dict, compactFile, new DiffWriteContext(FrameUsage.UserPayload, FrameSource.PrimaryCommit) { ForceRebase = true });
         Assert.True(saveCompact.IsSuccess);
 
         var loadResult = VersionChain.Load(compactFile, saveCompact.Value);
@@ -345,7 +345,7 @@ public class VersionChainRoundTripTests : IDisposable {
 
         var dict = Durable.Dict<int, int>();
         dict.Upsert(1, 100);
-        var ticket = VersionChain.Save(dict, file).Value;
+        var ticket = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary).Value;
 
         var loadResult = VersionChain.Load(file, ticket);
         Assert.True(loadResult.IsSuccess);
@@ -356,7 +356,7 @@ public class VersionChainRoundTripTests : IDisposable {
         Assert.True(loaded.IsTracked);
 
         // 无变更 Save 幂等返回同一 ticket
-        var resave = VersionChain.Save(loaded, file);
+        var resave = VersionChain.Save(loaded, file, DiffWriteContext.UserPrimary);
         Assert.True(resave.IsSuccess);
         Assert.Equal(ticket, resave.Value);
     }
@@ -381,7 +381,7 @@ public class VersionChainRoundTripTests : IDisposable {
             }
         );
 
-        uint tag = new FrameTag(UsageKind.UserPayload, DurableObjectKind.TypedDict, VersionKind.Rebase, FrameSource.PrimaryCommit).Bits;
+        uint tag = new FrameTag(VersionKind.Rebase, DurableObjectKind.TypedDict, FrameUsage.UserPayload, FrameSource.PrimaryCommit).Bits;
         var append = file.Append(tag, payload);
         Assert.True(append.IsSuccess);
 
@@ -394,7 +394,7 @@ public class VersionChainRoundTripTests : IDisposable {
     public void Load_CyclicVersionChain_ReturnsCorruptionError() {
         var ticketA = SizedPtr.Create(4, 4);
         var ticketB = SizedPtr.Create(8, 4);
-        uint deltaTag = new FrameTag(UsageKind.UserPayload, DurableObjectKind.TypedDict, VersionKind.Delta, FrameSource.PrimaryCommit).Bits;
+        uint deltaTag = new FrameTag(VersionKind.Delta, DurableObjectKind.TypedDict, FrameUsage.UserPayload, FrameSource.PrimaryCommit).Bits;
 
         byte[] payloadA = BuildPayload(
             writer => {
@@ -429,7 +429,7 @@ public class VersionChainRoundTripTests : IDisposable {
 
         var dict = Durable.Dict<int, int>();
         dict.Upsert(1, 10);
-        var save = VersionChain.Save(dict, file);
+        var save = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save.IsSuccess);
 
         var load = VersionChain.Load(file, save.Value, expectObject: DurableObjectKind.MixedDict);
@@ -445,10 +445,10 @@ public class VersionChainRoundTripTests : IDisposable {
 
         var dict = Durable.Dict<int, int>();
         dict.Upsert(1, 10);
-        var save = VersionChain.Save(dict, file);
+        var save = VersionChain.Save(dict, file, DiffWriteContext.UserPrimary);
         Assert.True(save.IsSuccess);
 
-        var load = VersionChain.Load(file, save.Value, expectUsage: UsageKind.ObjectMap);
+        var load = VersionChain.Load(file, save.Value, expectUsage: FrameUsage.ObjectMap);
         Assert.True(load.IsFailure);
         var err = Assert.IsType<SjCorruptionError>(load.Error);
         Assert.Contains("Unexpected UsageKind", err.Message, StringComparison.OrdinalIgnoreCase);
@@ -469,7 +469,7 @@ public class VersionChainRoundTripTests : IDisposable {
                 writer.WriteCount(0);
             }
         );
-        uint tag = new FrameTag(UsageKind.UserPayload, DurableObjectKind.TypedDict, VersionKind.Delta, FrameSource.PrimaryCommit).Bits;
+        uint tag = new FrameTag(VersionKind.Delta, DurableObjectKind.TypedDict, FrameUsage.UserPayload, FrameSource.PrimaryCommit).Bits;
         var append = file.Append(tag, payload);
         Assert.True(append.IsSuccess);
 

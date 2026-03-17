@@ -190,10 +190,7 @@ partial class Revision {
         FrameSource frameSource
     ) {
         var pendingSaves = new List<PendingSave>();
-        var userContext = new DiffWriteContext {
-            UsageKind = UsageKind.UserPayload,
-            FrameSource = frameSource,
-        };
+        var userContext = new DiffWriteContext(FrameUsage.UserPayload, frameSource);
         foreach (var obj in liveObjects) {
             if (obj.IsTracked && !obj.HasChanges) { continue; }
             var writeResult = VersionChain.Write(obj, _file, userContext);
@@ -212,9 +209,7 @@ partial class Revision {
 
         Span<byte> rootMeta = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, graphRoot.LocalId.Value);
-        DiffWriteContext mapContext = new() {
-            UsageKind = UsageKind.ObjectMap,
-            FrameSource = frameSource,
+        DiffWriteContext mapContext = new(FrameUsage.ObjectMap, frameSource) {
             ForceSave = true,
         };
         var mapWriteResult = VersionChain.Write(_objectMap, _file, mapContext, tailMeta: rootMeta);

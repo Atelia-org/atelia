@@ -50,7 +50,6 @@ public abstract class DurableDictBase<TKey> : DurableObject
     }
 
     internal sealed override FrameTag WritePendingDiff(BinaryDiffWriter writer, ref DiffWriteContext context) {
-        var usageKind = context.UsageKind is UsageKind.Blank ? UsageKind.UserPayload : context.UsageKind;
         Debug.Assert(context.FrameSource != FrameSource.Blank, "FrameSource must be explicitly set");
 
         uint rebaseSize = (uint)RebaseCount + (uint)TypeCode.Length;
@@ -61,14 +60,14 @@ public abstract class DurableDictBase<TKey> : DurableObject
             writer.WriteBytes(TypeCode); // 非空TypeCode表示rebase frame
             _versionStatus.WriteRebase(writer, rebaseSize);
             WriteRebaseCore(writer, context);
-            return new(usageKind, Kind, VersionKind.Rebase, context.FrameSource);
+            return new(VersionKind.Rebase, Kind, context.FrameUsage, context.FrameSource);
         }
         else {
             context.SetOutcome(wasRebase: false, rebaseSize, deltifySize);
             writer.WriteBytes(null); // 空TypeCode表示deltify frame
             _versionStatus.WriteDeltify(writer, deltifySize);
             WriteDeltifyCore(writer, context);
-            return new(usageKind, Kind, VersionKind.Delta, context.FrameSource);
+            return new(VersionKind.Delta, Kind, context.FrameUsage, context.FrameSource);
         }
     }
 

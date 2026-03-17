@@ -51,7 +51,7 @@ public partial class Revision {
     internal static AteliaResult<Revision> Open(CommitId id, IRbfFile file) {
         var loadResult = VersionChain.LoadFull(
             file, id.Ticket,
-            expectUsage: UsageKind.ObjectMap,
+            expectUsage: FrameUsage.ObjectMap,
             expectObject: DurableObjectKind.TypedDict
         );
         if (loadResult.IsFailure) { return loadResult.Error!; }
@@ -131,7 +131,7 @@ public partial class Revision {
     internal static AteliaResult<CommitId> FindLatestCommitId(IRbfFile file) {
         foreach (var info in file.ScanReverse()) {
             FrameTag tag = new(info.Tag);
-            if (tag.UsageKind == UsageKind.ObjectMap) { return new CommitId(info.Ticket); }
+            if (tag.Usage == FrameUsage.ObjectMap) { return new CommitId(info.Ticket); }
         }
         return new SjCorruptionError(
             "No ObjectMap frame found in RBF file.",

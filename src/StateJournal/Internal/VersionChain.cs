@@ -71,21 +71,12 @@ internal static class VersionChain {
         return false;
     }
 
-    /// <summary>将 DurableObject 的待写入 diff 序列化并追加到 RBF 文件中。</summary>
+    /// <summary>将 DurableObject 的待写入 diff 序列化并追加到 RBF 文件中，同时立即应用内存状态变更。</summary>
     /// <remarks>
     /// 写入路径的失败来源：
     /// - EndAppend 返回 AteliaResult 失败（RBF 层验证/容量问题）→ 包装为 SjCorruptionError 透传。
     /// - WritePendingDiff 抛异常 → 编程错误，不捕获，直接传播。
     /// </remarks>
-    internal static AteliaResult<SizedPtr> Save(DurableObject obj, IRbfFile file, bool forceRebase = false) {
-        return Save(obj, file, new DiffWriteContext {
-            ForceRebase = forceRebase,
-            UsageKind = UsageKind.UserPayload,
-            FrameSource = FrameSource.PrimaryCommit,
-        });
-    }
-
-    /// <summary>将 DurableObject 的待写入 diff 序列化并追加到 RBF 文件中，同时立即应用内存状态变更。</summary>
     internal static AteliaResult<SizedPtr> Save(
         DurableObject obj,
         IRbfFile file,
@@ -105,16 +96,18 @@ internal static class VersionChain {
     internal static AteliaResult<PendingSave> Write(
         DurableObject obj,
         IRbfFile file,
-        DiffWriteContext context = default,
+        DiffWriteContext context,
         ReadOnlySpan<byte> tailMeta = default
     ) {
-        if (!obj.HasChanges && !context.ForceRebase && !context.ForceSave && obj.IsTracked) {
-            return new PendingSave(obj, obj.HeadTicket, context);
-        }
+        context.AssertValid();
+        if (!obj.HasChanges && !context.ForceRebase
+            && !context.ForceSave && obj.IsTracked
+        ) { return new PendingSave(obj, obj.HeadTicket, context); }
         using RbfFrameBuilder builder = file.BeginAppend();
         RbfPayloadWriter rbfWriter = builder.PayloadAndMeta;
         BinaryDiffWriter diffWriter = new(rbfWriter);
         FrameTag frameTag = obj.WritePendingDiff(diffWriter, ref context);
+        if (frameTag.ValidateComplete() is { } tagError) { return tagError; }
         int tailMetaLength = tailMeta.Length;
         if (tailMetaLength > 0) {
             tailMeta.CopyTo(rbfWriter.GetSpan(tailMetaLength));
@@ -134,7 +127,7 @@ internal static class VersionChain {
     internal static AteliaResult<DurableObject> Load(
         IRbfFile file,
         SizedPtr versionTicket,
-        UsageKind? expectUsage = null,
+        FrameUsage? expectUsage = null,
         DurableObjectKind? expectObject = null
     ) {
         var result = LoadFull(file, versionTicket, expectUsage, expectObject);
@@ -152,7 +145,7 @@ internal static class VersionChain {
     internal static AteliaResult<VersionChainLoadResult> LoadFull(
         IRbfFile file,
         SizedPtr versionTicket,
-        UsageKind? expectUsage = null,
+        FrameUsage? expectUsage = null,
         DurableObjectKind? expectObject = null
     ) {
         Stack<(RbfPooledFrame Frame, int ConsumedCount, int TailMetaLength, SizedPtr ParentTicket)> deltaChain = new(256);

@@ -1,6 +1,29 @@
+using System.Diagnostics;
+
 namespace Atelia.StateJournal.Internal;
 
 internal struct DiffWriteContext {
+    /// <summary>最常见的写入上下文：用户负载 + 主提交。</summary>
+    internal static readonly DiffWriteContext UserPrimary = new(FrameUsage.UserPayload, FrameSource.PrimaryCommit);
+
+    internal DiffWriteContext(FrameUsage usage, FrameSource source) {
+        FrameUsage = usage;
+        FrameSource = source;
+        AssertValid();
+    }
+
+    [Conditional("DEBUG")]
+    internal void AssertValid() {
+        Debug.Assert(
+            FrameTag.IsValidUsage(FrameUsage),
+            $"DiffWriteContext: FrameUsage 不合法，实际值为 {FrameUsage}，期望非 Blank。"
+        );
+        Debug.Assert(
+            FrameTag.IsValidSource(FrameSource),
+            $"DiffWriteContext: FrameSource 不合法，实际值为 {FrameSource}，期望非 Blank。"
+        );
+    }
+
     /// <summary>调用方可设为 true 以强制写出 rebase 帧（compact / 另存为新文件场景）。</summary>
     internal bool ForceRebase { get; init; }
 
@@ -9,10 +32,10 @@ internal struct DiffWriteContext {
     /// 与 ForceRebase 独立：rebase/delta 决策仍由 ShouldRebase 判定。</summary>
     internal bool ForceSave { get; init; }
 
-    /// <summary>覆盖帧的 UsageKind（默认 Blank 哨兵值，写入时解析为 UserPayload）。</summary>
-    internal UsageKind UsageKind { get; init; }
+    /// <summary>帧的用途（UserPayload / ObjectMap）。构造时必须显式指定，不可为 Blank。</summary>
+    internal FrameUsage FrameUsage { get; init; }
 
-    /// <summary>帧的来源（PrimaryCommit / Compaction）。Blank = 哨兵值，必须显式设置。</summary>
+    /// <summary>帧的来源（PrimaryCommit / Compaction）。构造时必须显式指定，不可为 Blank。</summary>
     internal FrameSource FrameSource { get; init; }
 
     // WritePendingDiff 写入、OnCommitSucceeded 读取的决策结果。

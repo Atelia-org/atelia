@@ -18,7 +18,7 @@ public partial class RevisionTests : IDisposable {
     private static int CountObjectMapFrames(IRbfFile file) {
         int count = 0;
         foreach (var info in file.ScanReverse()) {
-            if (new FrameTag(info.Tag).UsageKind == UsageKind.ObjectMap) { count++; }
+            if (new FrameTag(info.Tag).Usage == FrameUsage.ObjectMap) { count++; }
         }
         return count;
     }
@@ -151,7 +151,7 @@ public partial class RevisionTests : IDisposable {
 
         // 手工写入一个损坏快照：
         // 仅把 root 放入 ObjectMap，故 root->child 引用会在 Open 时成为悬空。
-        var rootSave = VersionChain.Save(root, file);
+        var rootSave = VersionChain.Save(root, file, DiffWriteContext.UserPrimary);
         Assert.True(rootSave.IsSuccess, $"Save root failed: {rootSave.Error}");
 
         var mapField = typeof(Revision).GetField("_objectMap", BindingFlags.NonPublic | BindingFlags.Instance)!;
@@ -160,7 +160,7 @@ public partial class RevisionTests : IDisposable {
 
         Span<byte> rootMeta = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, root.LocalId.Value);
-        DiffWriteContext context = new() { UsageKind = UsageKind.ObjectMap, FrameSource = FrameSource.PrimaryCommit, ForceSave = true };
+        DiffWriteContext context = new(FrameUsage.ObjectMap, FrameSource.PrimaryCommit) { ForceSave = true };
         var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: rootMeta);
         Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
 
@@ -178,7 +178,7 @@ public partial class RevisionTests : IDisposable {
         var root = rev.CreateDict<int, int>();
         root.Upsert(1, 42);
 
-        var rootSave = VersionChain.Save(root, file);
+        var rootSave = VersionChain.Save(root, file, DiffWriteContext.UserPrimary);
         Assert.True(rootSave.IsSuccess, $"Save root failed: {rootSave.Error}");
 
         var mapField = typeof(Revision).GetField("_objectMap", BindingFlags.NonPublic | BindingFlags.Instance)!;
@@ -187,7 +187,7 @@ public partial class RevisionTests : IDisposable {
 
         Span<byte> badMeta = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(badMeta, 0u); // 非法 GraphRoot LocalId
-        DiffWriteContext context = new() { UsageKind = UsageKind.ObjectMap, FrameSource = FrameSource.PrimaryCommit, ForceSave = true };
+        DiffWriteContext context = new(FrameUsage.ObjectMap, FrameSource.PrimaryCommit) { ForceSave = true };
         var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: badMeta);
         Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
 
