@@ -21,7 +21,7 @@
 > 详见 `docs/StateJournal/eliminate-commit-sequence.md`
 
 之前的设计中存在全局递增 `CommitSequence` 作为 commit 的 surrogate key，并需要 `sequence.json` 持久化、三路崩溃恢复等机制。
-现在这一切已被消除。每个 commit 的天然地址是独立的 `CommitAddress(uint SegmentNumber, CommitId)`——就像 `{楼号, 房间号}` 天然唯一。
+现在这一切已被消除。每个 commit 的天然地址是独立的 `CommitAddress(uint SegmentNumber, CommitTicket)`——就像 `{楼号, 房间号}` 天然唯一。
 
 消除后的收益：
 - `sequence.json` 文件不再存在
@@ -239,9 +239,9 @@ Commit 热路径上不做 segment 扫描，也不做归档维护。
 [0..3]   GraphRoot.LocalId.Value (uint LE)
 ```
 
-commit 身份完全由 `CommitAddress(uint SegmentNumber, CommitId)` 确定：
+commit 身份完全由 `CommitAddress(uint SegmentNumber, CommitTicket)` 确定：
 - `SegmentNumber` 由 branch JSON 记录
-- `CommitId` 即 ObjectMap 帧的 `SizedPtr` ticket
+- `CommitTicket` 即 ObjectMap 帧的 `SizedPtr` ticket
 
 ---
 
@@ -334,7 +334,7 @@ CheckoutBranch(branchName):
   2. 根据 segmentNumber O(1) 找 segment 文件
   3. 若目标是 active segment：复用 active file
   4. 若目标是历史 segment：临时只读打开该 segment
-  5. Revision.Open(commitId, segmentFile, segmentNumber) 打开工作会话
+  5. Revision.Open(commitTicket, segmentFile, segmentNumber) 打开工作会话
   6. 历史 segment 的临时句柄在 Open 完成后立即释放
 ```
 
@@ -372,7 +372,7 @@ CheckoutBranch(branchName):
 
 为了降低复杂性，当前阶段明确不做：
 
-- 全局 `CommitId → Segment` 索引
+- 全局 `CommitTicket → Segment` 索引
 - 多进程并发写
 - 分布式或内容哈希身份
 - 类 Git 的 branch/worktree 限制语义

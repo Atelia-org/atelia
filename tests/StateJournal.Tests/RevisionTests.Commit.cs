@@ -16,19 +16,19 @@ partial class RevisionTests {
         var root = rev.CreateDict<int, int>();
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
-        CommitId commitId = outcome.HeadCommitId;
-        Assert.False(commitId.IsNull); // Commit 后 Id 不为 null
-        Assert.Equal(commitId, rev.HeadId); // Id 已更新
+        CommitTicket commitTicket = outcome.HeadCommitTicket;
+        Assert.False(commitTicket.IsNull); // Commit 后 Id 不为 null
+        Assert.Equal(commitTicket, rev.HeadId); // Id 已更新
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome.Completion);
         Assert.True(outcome.IsPrimaryOnly);
         Assert.False(outcome.IsCompacted);
 
-        // Open from CommitId
-        var openResult = OpenRevision(commitId, file);
+        // Open from CommitTicket
+        var openResult = OpenRevision(commitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
         var loaded = openResult.Value!;
-        Assert.Equal(commitId, loaded.HeadId);
+        Assert.Equal(commitTicket, loaded.HeadId);
         Assert.True(loaded.HeadParentId.IsNull); // root commit
     }
 
@@ -52,8 +52,8 @@ partial class RevisionTests {
         var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome.Completion);
 
-        // Open via CommitId and verify
-        var openResult = OpenRevision(outcome.HeadCommitId, file);
+        // Open via CommitTicket and verify
+        var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
         // Load the object back and verify contents
@@ -84,7 +84,7 @@ partial class RevisionTests {
         dict.Upsert(1, 2.0);
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, dict, file), "Commit2");
 
-        var open = OpenRevision(outcome2.HeadCommitId, file);
+        var open = OpenRevision(outcome2.HeadCommitTicket, file);
         Assert.True(open.IsSuccess, $"Open failed: {open.Error}");
 
         var loaded = open.Value!;
@@ -263,13 +263,13 @@ partial class RevisionTests {
         }
 
         // 多次 commit 让 compaction 逐步执行
-        CommitId lastCommitId = default;
+        CommitTicket lastCommitTicket = default;
         for (int round = 0; round < 10; round++) {
-            lastCommitId = AssertHeadCommitId(CommitToFile(rev, root, file), $"Commit round {round}");
+            lastCommitTicket = AssertHeadCommitTicket(CommitToFile(rev, root, file), $"Commit round {round}");
         }
 
         // Open 最终 commit，验证数据完整性
-        var openResult = OpenRevision(lastCommitId, file);
+        var openResult = OpenRevision(lastCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
         var loaded = openResult.Value!;
@@ -366,7 +366,7 @@ partial class RevisionTests {
 
         Assert.True(outcome.IsCompacted || outcome.IsPrimaryOnly);
 
-        var open = OpenRevision(outcome.HeadCommitId, file);
+        var open = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(open.IsSuccess, $"Open failed: {open.Error}");
 
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<int>>(open.Value!.GraphRoot);

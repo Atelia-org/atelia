@@ -22,12 +22,12 @@ partial class RevisionTests {
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome.Completion);
 
         // HeadId 已更新
-        Assert.Equal(outcome.HeadCommitId, rev.HeadId);
+        Assert.Equal(outcome.HeadCommitTicket, rev.HeadId);
 
         // 新文件可独立打开
-        var opened = OpenRevision(outcome.HeadCommitId, dstFile, segmentNumber: 2);
+        var opened = OpenRevision(outcome.HeadCommitTicket, dstFile, segmentNumber: 2);
         Assert.True(opened.IsSuccess, $"Open from new file failed: {opened.Error}");
-        Assert.Equal(outcome.HeadCommitId, opened.Value!.HeadId);
+        Assert.Equal(outcome.HeadCommitTicket, opened.Value!.HeadId);
         Assert.Equal(FrameSource.CrossFileSnapshot, GetLatestObjectMapFrameSource(dstFile));
     }
 
@@ -48,7 +48,7 @@ partial class RevisionTests {
         var outcome = AssertCommitSucceeded(saveAsResult, "SaveAs");
 
         // 从新文件打开并验证数据
-        var opened = OpenRevision(outcome.HeadCommitId, dstFile, segmentNumber: 2);
+        var opened = OpenRevision(outcome.HeadCommitTicket, dstFile, segmentNumber: 2);
         Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
         var loaded = Assert.IsAssignableFrom<DurableDict<int, double>>(opened.Value!.Load(root.LocalId).Value);
         Assert.Equal(2, loaded.Count);
@@ -60,10 +60,10 @@ partial class RevisionTests {
         // SaveAs 后可以继续在新文件上 Commit
         root.Upsert(3, 1.414);
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, dstFile, segmentNumber: 2), "CommitAfterSaveAs");
-        Assert.NotEqual(outcome.HeadCommitId, outcome2.HeadCommitId);
+        Assert.NotEqual(outcome.HeadCommitTicket, outcome2.HeadCommitTicket);
         Assert.Equal(FrameSource.PrimaryCommit, GetLatestObjectMapFrameSource(dstFile));
 
-        var opened2 = OpenRevision(outcome2.HeadCommitId, dstFile, segmentNumber: 2);
+        var opened2 = OpenRevision(outcome2.HeadCommitTicket, dstFile, segmentNumber: 2);
         Assert.True(opened2.IsSuccess, $"Open after second commit failed: {opened2.Error}");
         var loaded2 = Assert.IsAssignableFrom<DurableDict<int, double>>(opened2.Value!.Load(root.LocalId).Value);
         Assert.Equal(3, loaded2.Count);
@@ -86,7 +86,7 @@ partial class RevisionTests {
         var outcome = AssertCommitSucceeded(SaveAsToFile(rev, root, dstFile, segmentNumber: 2), "SaveAs");
 
         // 子对象从新文件可读
-        var opened = OpenRevision(outcome.HeadCommitId, dstFile, segmentNumber: 2);
+        var opened = OpenRevision(outcome.HeadCommitTicket, dstFile, segmentNumber: 2);
         Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
         var loadChild = opened.Value!.Load(child.LocalId);
         Assert.True(loadChild.IsSuccess, $"Load child failed: {loadChild.Error}");
@@ -98,7 +98,7 @@ partial class RevisionTests {
         child.Upsert(2, 20);
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, dstFile, segmentNumber: 2), "CommitAfterSaveAs");
 
-        var opened2 = OpenRevision(outcome2.HeadCommitId, dstFile, segmentNumber: 2);
+        var opened2 = OpenRevision(outcome2.HeadCommitTicket, dstFile, segmentNumber: 2);
         Assert.True(opened2.IsSuccess, $"Open after commit failed: {opened2.Error}");
         var lc2 = Assert.IsAssignableFrom<DurableDict<int, int>>(opened2.Value!.Load(child.LocalId).Value);
         Assert.Equal(2, lc2.Count);

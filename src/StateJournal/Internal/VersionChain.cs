@@ -9,7 +9,7 @@ namespace Atelia.StateJournal.Internal;
 internal readonly struct VersionChainLoadResult {
     internal readonly DurableObject Object;
     /// <summary>头帧（versionTicket 所指帧）内储存的 parentTicket 字段。
-    /// 对于 ObjectMap frame chain，此值通常即为父 commit 的 ticket（= 父 CommitId）。
+    /// 对于 ObjectMap frame chain，此值通常即为父 commit 的 ticket（= 父 CommitTicket）。
     /// 在 ExportTo/SaveAs 的跨文件 full rebase 场景下，它也可能只是“逻辑祖先”元数据，
     /// 指向另一个文件中的 commit。</summary>
     internal readonly SizedPtr HeadParentTicket;
@@ -232,7 +232,7 @@ internal static class VersionChain {
             );
 
             // deltaChain 是 Stack，底部是第一个被 Push 的（即 versionTicket 指向的头帧）。
-            // 头帧的 ParentTicket 即为版本链的前驱 ticket（ObjectMap 场景下 = 父 CommitId）。
+            // 头帧的 ParentTicket 即为版本链的前驱 ticket（ObjectMap 场景下 = 父 CommitTicket）。
             byte[] headTailMeta = Array.Empty<byte>();
             SizedPtr headParentTicket = default;
 

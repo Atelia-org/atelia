@@ -15,7 +15,7 @@ partial class Revision {
     /// </remarks>
     internal sealed partial class RevisionCompactionSession {
         private readonly Revision _revision;
-        private readonly CommitId _primaryCommitId;
+        private readonly CommitTicket _primaryCommitTicket;
         private readonly HashSet<DurableObject> _touchedObjects = new();
         /// <summary>
         /// Apply() 入口处即赋值（即使 records 为空也会赋值）。
@@ -23,19 +23,19 @@ partial class Revision {
         /// </summary>
         private GcPool<DurableObject>.CompactionJournal _undoToken;
 
-        private RevisionCompactionSession(Revision revision, CommitId primaryCommitId) {
+        private RevisionCompactionSession(Revision revision, CommitTicket primaryCommitTicket) {
             _revision = revision;
-            _primaryCommitId = primaryCommitId;
+            _primaryCommitTicket = primaryCommitTicket;
         }
 
         public static RevisionCompactionSession? TryApply(
             Revision revision,
-            CommitId primaryCommitId,
+            CommitTicket primaryCommitTicket,
             IReadOnlyList<DurableObject> liveObjects
         ) {
             if (!revision.ShouldCompact()) { return null; }
 
-            var session = new RevisionCompactionSession(revision, primaryCommitId);
+            var session = new RevisionCompactionSession(revision, primaryCommitTicket);
             return session.ApplyCore(liveObjects) ? session : null;
         }
 
@@ -55,7 +55,7 @@ partial class Revision {
 
             DebugUtil.Info(
                 "StateJournal.Compaction",
-                $"Apply succeeded: primary={_primaryCommitId.Ticket.Serialize()}, moves={_undoToken.Records.Count}, touched={_touchedObjects.Count}",
+                $"Apply succeeded: primary={_primaryCommitTicket.Ticket.Serialize()}, moves={_undoToken.Records.Count}, touched={_touchedObjects.Count}",
                 eventKind: DebugEventKind.Success
             );
             return true;
@@ -67,7 +67,7 @@ partial class Revision {
             if (records.Count == 0) {
                 DebugUtil.Trace(
                     "StateJournal.Compaction",
-                    $"Skipped after planning: no movable records. primary={_primaryCommitId.Ticket.Serialize()}",
+                    $"Skipped after planning: no movable records. primary={_primaryCommitTicket.Ticket.Serialize()}",
                     eventKind: DebugEventKind.Skip
                 );
                 return false;
@@ -75,7 +75,7 @@ partial class Revision {
 
             DebugUtil.Trace(
                 "StateJournal.Compaction",
-                $"Apply start: primary={_primaryCommitId.Ticket.Serialize()}, moves={records.Count}",
+                $"Apply start: primary={_primaryCommitTicket.Ticket.Serialize()}, moves={records.Count}",
                 eventKind: DebugEventKind.Start
             );
             return true;
@@ -139,14 +139,14 @@ partial class Revision {
         public CommitOutcome RollbackAfterFollowupPersistFailure(AteliaError cause) {
             Debug.Assert(_undoToken.Records is not null, "RollbackAfterFollowupPersistFailure called before _undoToken was initialized by Apply().");
 
-            var issue = BuildCompactionFollowupPersistFailureError(_primaryCommitId, cause);
+            var issue = BuildCompactionFollowupPersistFailureError(_primaryCommitTicket, cause);
             _revision.RollbackCompactionChanges(_undoToken, _touchedObjects);
             DebugUtil.Warning(
                 "StateJournal.Compaction",
-                $"Rollback succeeded: primary={_primaryCommitId.Ticket.Serialize()}, stage=FollowupPersist, issue={issue.ErrorCode}, touched={_touchedObjects.Count}",
+                $"Rollback succeeded: primary={_primaryCommitTicket.Ticket.Serialize()}, stage=FollowupPersist, issue={issue.ErrorCode}, touched={_touchedObjects.Count}",
                 eventKind: DebugEventKind.Failure
             );
-            return CommitOutcome.CompactionRolledBack(_primaryCommitId, issue);
+            return CommitOutcome.CompactionRolledBack(_primaryCommitTicket, issue);
         }
     }
 }

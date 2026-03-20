@@ -8,7 +8,7 @@ namespace Atelia.StateJournal;
 
 partial class Revision {
     internal readonly record struct PrimaryCommitArtifacts(
-        CommitId CommitId,
+        CommitTicket CommitTicket,
         List<DurableObject> LiveObjects
     );
 
@@ -34,22 +34,22 @@ partial class Revision {
         }
 
         var primaryArtifacts = primaryCommit.Value;
-        CommitId primaryCommitId = primaryArtifacts.CommitId;
+        CommitTicket primaryCommitTicket = primaryArtifacts.CommitTicket;
         DebugUtil.Info(
             "StateJournal.Commit",
-            $"Primary succeeded: primary={primaryCommitId.Ticket.Serialize()}",
+            $"Primary succeeded: primary={primaryCommitTicket.Ticket.Serialize()}",
             eventKind: DebugEventKind.Success
         );
-        var compactionSession = RevisionCompactionSession.TryApply(this, primaryCommitId, primaryArtifacts.LiveObjects);
-        if (compactionSession is null) { return LogAndReturnOutcome(CommitOutcome.PrimaryOnly(primaryCommitId)); }
+        var compactionSession = RevisionCompactionSession.TryApply(this, primaryCommitTicket, primaryArtifacts.LiveObjects);
+        if (compactionSession is null) { return LogAndReturnOutcome(CommitOutcome.PrimaryOnly(primaryCommitTicket)); }
 
         var compactionCommit = PersistCompactionFollowup(graphRoot, primaryArtifacts.LiveObjects, targetFile);
         if (compactionCommit.IsFailure) { return LogAndReturnOutcome(compactionSession.RollbackAfterFollowupPersistFailure(compactionCommit.Error!)); }
 
-        return LogAndReturnOutcome(CommitOutcome.Compacted(primaryCommitId, compactionCommit.Value));
+        return LogAndReturnOutcome(CommitOutcome.Compacted(primaryCommitTicket, compactionCommit.Value));
     }
 
-    internal partial AteliaResult<CommitId> ExportTo(DurableObject graphRoot, IRbfFile targetFile) {
+    internal partial AteliaResult<CommitTicket> ExportTo(DurableObject graphRoot, IRbfFile targetFile) {
         ArgumentNullException.ThrowIfNull(graphRoot);
         ArgumentNullException.ThrowIfNull(targetFile);
 
@@ -81,7 +81,7 @@ partial class Revision {
         var liveObjectsResult = PrepareLiveObjects(graphRoot);
         if (liveObjectsResult.IsFailure) { return liveObjectsResult.Error!; }
 
-        AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> persistResult;
+        AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> persistResult;
         try {
             persistResult = PersistCurrentSnapshot(
                 graphRoot, liveObjectsResult.Value!,
@@ -98,18 +98,18 @@ partial class Revision {
             return persistResult.Error!;
         }
 
-        var (pendingSaves, newCommitId) = persistResult.Value;
+        var (pendingSaves, newCommitTicket) = persistResult.Value;
 
         // Finalize: Complete all PendingSave (HeadTicket 指向新文件), Sweep GC, 更新 _head
-        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitId);
+        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitTicket);
         // 跳过 Compaction（刚全量 rebase，无 delta 碎片）
-        return CommitOutcome.PrimaryOnly(newCommitId);
+        return CommitOutcome.PrimaryOnly(newCommitTicket);
     }
 
     private static AteliaResult<CommitOutcome> LogAndReturnOutcome(CommitOutcome outcome) {
-        var msg = $"Completed: head={outcome.HeadCommitId.Ticket.Serialize()}, kind={outcome.Completion}";
+        var msg = $"Completed: head={outcome.HeadCommitTicket.Ticket.Serialize()}, kind={outcome.Completion}";
         if (outcome.CompactionIssue is not null) { msg += $", issue={outcome.CompactionIssue.ErrorCode}"; }
-        if (outcome.IsCompacted) { msg += $", primary={outcome.PrimaryCommitId.Ticket.Serialize()}"; }
+        if (outcome.IsCompacted) { msg += $", primary={outcome.PrimaryCommitTicket.Ticket.Serialize()}"; }
         if (outcome.CompactionIssue is not null) {
             DebugUtil.Warning("StateJournal.Commit", msg, eventKind: DebugEventKind.Failure);
         }
@@ -130,7 +130,7 @@ partial class Revision {
         var liveObjectsResult = PrepareLiveObjects(graphRoot);
         if (liveObjectsResult.IsFailure) { return liveObjectsResult.Error!; }
 
-        AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> persistResult;
+        AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> persistResult;
         try {
             persistResult = PersistCurrentSnapshot(
                 graphRoot, liveObjectsResult.Value!,
@@ -147,11 +147,11 @@ partial class Revision {
             return persistResult.Error!;
         }
 
-        var (pendingSaves, newCommitId) = persistResult.Value;
+        var (pendingSaves, newCommitTicket) = persistResult.Value;
 
         // Phase 3: Finalize（全部落盘成功，统一应用内存状态变更）
-        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitId);
-        return new PrimaryCommitArtifacts(newCommitId, liveObjectsResult.Value!);
+        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitTicket);
+        return new PrimaryCommitArtifacts(newCommitTicket, liveObjectsResult.Value!);
     }
 
     /// <summary>
@@ -161,12 +161,12 @@ partial class Revision {
     /// 这里复用 primary commit 产出的 live objects，不再重新 WalkAndMark/Sweep。
     /// 因为 compaction 只重排 slot / LocalId / 子引用与 ObjectMap key，不改变对象可达性。
     /// </remarks>
-    private AteliaResult<CommitId> PersistCompactionFollowup(
+    private AteliaResult<CommitTicket> PersistCompactionFollowup(
         DurableObject graphRoot,
         IReadOnlyList<DurableObject> liveObjects,
         IRbfFile targetFile
     ) {
-        AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> persistResult;
+        AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> persistResult;
         try {
             persistResult = PersistCurrentSnapshot(
                 graphRoot, liveObjects,
@@ -179,9 +179,9 @@ partial class Revision {
         }
         if (persistResult.IsFailure) { return persistResult.Error!; }
 
-        var (pendingSaves, newCommitId) = persistResult.Value;
-        FinalizeFollowupPersist(graphRoot, pendingSaves, newCommitId);
-        return newCommitId;
+        var (pendingSaves, newCommitTicket) = persistResult.Value;
+        FinalizeFollowupPersist(graphRoot, pendingSaves, newCommitTicket);
+        return newCommitTicket;
     }
 
     /// <summary>
@@ -229,7 +229,7 @@ partial class Revision {
         );
     }
 
-    private AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> PersistCurrentSnapshot(
+    private AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> PersistCurrentSnapshot(
         DurableObject graphRoot,
         IReadOnlyList<DurableObject> liveObjects,
         bool removeUnreachableObjectMapKeys,
@@ -274,29 +274,29 @@ partial class Revision {
         if (mapWriteResult.IsFailure) { return mapWriteResult.Error!; }
         pendingSaves.Add(mapWriteResult.Value);
 
-        return (pendingSaves, new CommitId(mapWriteResult.Value.Ticket));
+        return (pendingSaves, new CommitTicket(mapWriteResult.Value.Ticket));
     }
 
-    private void FinalizePrimaryCommit(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitId newCommitId) {
+    private void FinalizePrimaryCommit(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitTicket newCommitTicket) {
         foreach (var pending in pendingSaves) { pending.Complete(); }
 
         // Mark bitmap 已在 Phase 1 (WalkAndMark) 中完成，直接 Sweep
         _pool.Sweep<DetachOnSweepCollectHandler>();
 
         _head = new CommitSnapshot(
-            newCommitId,
+            newCommitTicket,
             _head?.Id ?? default,
             _objectMap,
             graphRoot
         );
     }
 
-    private void FinalizeFollowupPersist(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitId newCommitId) {
+    private void FinalizeFollowupPersist(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitTicket newCommitTicket) {
         foreach (var pending in pendingSaves) { pending.Complete(); }
         _pool.TrimExcessCapacity();
 
         _head = new CommitSnapshot(
-            newCommitId,
+            newCommitTicket,
             _head?.Id ?? default,
             _objectMap,
             graphRoot
@@ -355,9 +355,9 @@ partial class Revision {
         }
     }
 
-    private static SjCompactionPersistError BuildCompactionFollowupPersistFailureError(CommitId primaryCommitId, AteliaError cause) {
+    private static SjCompactionPersistError BuildCompactionFollowupPersistFailureError(CommitTicket primaryCommitTicket, AteliaError cause) {
         var details = new Dictionary<string, string> {
-            ["PrimaryCommitTicket"] = primaryCommitId.Ticket.Serialize().ToString(),
+            ["PrimaryCommitTicket"] = primaryCommitTicket.Ticket.Serialize().ToString(),
             ["CompactionStage"] = "FollowupPersist",
             ["FollowupErrorCode"] = cause.ErrorCode,
         };

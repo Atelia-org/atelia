@@ -8,7 +8,7 @@ namespace Atelia.StateJournal;
 
 /// <summary>
 /// 一个已打开的对象图工作会话。
-/// 每次 Commit 会把当前工作态 durable 化为一个新的落盘快照，由 <see cref="CommitId"/> 标识。
+/// 每次 Commit 会把当前工作态 durable 化为一个新的落盘快照，由 <see cref="CommitTicket"/> 标识。
 /// <see cref="_head"/> 持有当前已提交的快照状态（Id / ParentId / ObjectMap / GraphRoot），首次 Commit 前为 null。
 /// </summary>
 public partial class Revision {
@@ -23,8 +23,8 @@ public partial class Revision {
     /// <summary>最近一次成功 Commit 的快照。首次 Commit 前为 null。</summary>
     private CommitSnapshot? _head;
 
-    public CommitId HeadId => _head?.Id ?? default;
-    public CommitId HeadParentId => _head?.ParentId ?? default;
+    public CommitTicket HeadId => _head?.Id ?? default;
+    public CommitTicket HeadParentId => _head?.ParentId ?? default;
     /// <summary>最近一次 Commit 时使用的 GraphRoot。首次 Commit 前为 null。Open 后自动从 TailMeta 恢复。</summary>
     public DurableObject? GraphRoot => _head?.GraphRoot;
     internal uint HeadSegmentNumber => _headSegmentNumber;
@@ -58,11 +58,11 @@ public partial class Revision {
         _pool = pool;
     }
 
-    /// <summary>从 RBF 文件打开指定 CommitId 对应的 commit，全量加载所有对象到 GcPool。</summary>
+    /// <summary>从 RBF 文件打开指定 CommitTicket 对应的 commit，全量加载所有对象到 GcPool。</summary>
     /// <param name="id">commit 的标识（内含 ObjectMap 帧的 SizedPtr）。</param>
     /// <param name="file">RBF 文件。</param>
     /// <param name="segmentNumber">此 commit 所在的 segment number。</param>
-    internal static AteliaResult<Revision> Open(CommitId id, IRbfFile file, uint segmentNumber) {
+    internal static AteliaResult<Revision> Open(CommitTicket id, IRbfFile file, uint segmentNumber) {
         var loadResult = VersionChain.LoadFull(
             file, id.Ticket,
             expectUsage: FrameUsage.ObjectMap,
@@ -78,7 +78,7 @@ public partial class Revision {
             );
         }
 
-        CommitId parentId = new CommitId(result.HeadParentTicket);
+        CommitTicket parentId = new CommitTicket(result.HeadParentTicket);
         byte[] tailMeta = result.HeadTailMeta;
 
         // 全量加载：遍历 ObjectMap 所有 entries，从 RBF 加载对象，
@@ -145,11 +145,11 @@ public partial class Revision {
         return revision;
     }
 
-    /// <summary>查找 RBF 文件中最新的 CommitId（逆向扫描最新的 ObjectMap 帧）。</summary>
-    internal static AteliaResult<CommitId> FindLatestCommitId(IRbfFile file) {
+    /// <summary>查找 RBF 文件中最新的 CommitTicket（逆向扫描最新的 ObjectMap 帧）。</summary>
+    internal static AteliaResult<CommitTicket> FindLatestCommitTicket(IRbfFile file) {
         foreach (var info in file.ScanReverse()) {
             FrameTag tag = new(info.Tag);
-            if (tag.Usage == FrameUsage.ObjectMap) { return new CommitId(info.Ticket); }
+            if (tag.Usage == FrameUsage.ObjectMap) { return new CommitTicket(info.Ticket); }
         }
         return new SjCorruptionError(
             "No ObjectMap frame found in RBF file.",
@@ -274,8 +274,8 @@ public partial class Revision {
     /// </remarks>
     /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
     /// <param name="targetFile">导出目标 RBF 文件。</param>
-    /// <returns>新文件中的 CommitId，可用于 <see cref="Open"/> 独立打开。</returns>
-    internal partial AteliaResult<CommitId> ExportTo(DurableObject graphRoot, IRbfFile targetFile);
+    /// <returns>新文件中的 CommitTicket，可用于 <see cref="Open"/> 独立打开。</returns>
+    internal partial AteliaResult<CommitTicket> ExportTo(DurableObject graphRoot, IRbfFile targetFile);
 
     /// <summary>
     /// 将当前对象图的完整快照（全量 rebase）保存到 <paramref name="targetFile"/>，
@@ -301,8 +301,8 @@ public partial class Revision {
     }
 
     private readonly record struct CommitSnapshot(
-        CommitId Id,
-        CommitId ParentId,
+        CommitTicket Id,
+        CommitTicket ParentId,
         DurableDict<uint, ulong> ObjectMap,
         DurableObject? GraphRoot
     );

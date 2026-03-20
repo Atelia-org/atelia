@@ -11,16 +11,16 @@ public class CompactionCommitBenchmarks : CompactionBenchmarkBase {
     private IDisposable? _validationScope;
 
     [Benchmark(Baseline = true)]
-    public CommitId TypedLeafObjects_NoChildRefs() => RunEndToEndBenchmark(CompactionScenarioKind.TypedLeafObjectsNoChildRefs);
+    public CommitTicket TypedLeafObjects_NoChildRefs() => RunEndToEndBenchmark(CompactionScenarioKind.TypedLeafObjectsNoChildRefs);
 
     [Benchmark]
-    public CommitId DurObjDict_SparseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.DurObjDictSparseRefs);
+    public CommitTicket DurObjDict_SparseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.DurObjDictSparseRefs);
 
     [Benchmark]
-    public CommitId MixedDict_SparseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.MixedDictSparseRefs);
+    public CommitTicket MixedDict_SparseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.MixedDictSparseRefs);
 
     [Benchmark]
-    public CommitId MixedDict_DenseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.MixedDictDenseRefs);
+    public CommitTicket MixedDict_DenseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.MixedDictDenseRefs);
 
     [IterationSetup(Target = nameof(TypedLeafObjects_NoChildRefs))]
     public void SetupTypedLeafObjects() {
@@ -50,7 +50,7 @@ public class CompactionCommitBenchmarks : CompactionBenchmarkBase {
         _scenario = null;
     }
 
-    private CommitId RunEndToEndBenchmark(CompactionScenarioKind scenarioKind) {
+    private CommitTicket RunEndToEndBenchmark(CompactionScenarioKind scenarioKind) {
         var scenario = RequireScenario(scenarioKind);
         return CompactionBenchmarkUtil.RequireCompactionResult(
             scenario.Revision.Commit(scenario.Root, scenario.File),
@@ -101,7 +101,7 @@ public class CompactionStageBenchmarks : CompactionBenchmarkBase {
     }
 
     [Benchmark]
-    public CommitId FollowupPersist_Only() {
+    public CommitTicket FollowupPersist_Only() {
         var scenario = RequireScenario();
         return scenario.Revision.PersistCompactionFollowupForBenchmark(
             scenario.Root,
@@ -188,11 +188,11 @@ public class PrimaryCommitStageBenchmarks : CompactionBenchmarkBase {
     private CompactionBenchmarkScenario? _scenario;
     private List<DurableObject>? _liveObjects;
     private List<PendingSave>? _pendingSaves;
-    private CommitId _primaryCommitId;
+    private CommitTicket _primaryCommitId;
     private IDisposable? _validationScope;
 
     [Benchmark(Baseline = true)]
-    public CommitId PrimaryCommit_Only() {
+    public CommitTicket PrimaryCommit_Only() {
         var scenario = RequireScenario();
         return scenario.Revision.RunPrimaryCommitForBenchmark(scenario.Root, scenario.File).CommitId;
     }
@@ -203,14 +203,14 @@ public class PrimaryCommitStageBenchmarks : CompactionBenchmarkBase {
     }
 
     [Benchmark]
-    public CommitId Persist_Only() {
+    public CommitTicket Persist_Only() {
         var scenario = RequireScenario();
         var liveObjects = RequireLiveObjects();
         return scenario.Revision.PersistPrimaryCommitForBenchmark(scenario.Root, liveObjects, scenario.File).CommitId;
     }
 
     [Benchmark]
-    public CommitId Finalize_Only() {
+    public CommitTicket Finalize_Only() {
         var scenario = RequireScenario();
         var pendingSaves = RequirePendingSaves();
         scenario.Revision.FinalizePrimaryCommitForBenchmark(scenario.Root, pendingSaves, _primaryCommitId);
@@ -304,7 +304,7 @@ internal static class CompactionBenchmarkUtil {
         };
     }
 
-    public static CommitId RequireCompactionResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
+    public static CommitTicket RequireCompactionResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
         if (result.IsFailure) { throw new InvalidOperationException($"{benchmarkName} failed: {result.Error}"); }
         if (!result.Value.IsCompacted) { throw new InvalidOperationException($"{benchmarkName} did not trigger compaction."); }
         return result.Value.HeadCommitId;
@@ -437,7 +437,7 @@ internal static class CompactionScenarioFactory {
         }
     }
 
-    private static CommitId RequireCompactionResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
+    private static CommitTicket RequireCompactionResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
         if (result.IsFailure) { throw new InvalidOperationException($"{benchmarkName} failed during scenario setup: {result.Error}"); }
         return result.Value.HeadCommitId;
     }

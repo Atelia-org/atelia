@@ -42,8 +42,8 @@ public partial class RevisionTests : IDisposable {
         return result.Value;
     }
 
-    private static CommitId AssertHeadCommitId(AteliaResult<CommitOutcome> result, string label = "Commit") {
-        return AssertCommitSucceeded(result, label).HeadCommitId;
+    private static CommitTicket AssertHeadCommitTicket(AteliaResult<CommitOutcome> result, string label = "Commit") {
+        return AssertCommitSucceeded(result, label).HeadCommitTicket;
     }
 
     private static Revision CreateRevision(uint segmentNumber = 1) {
@@ -73,11 +73,11 @@ public partial class RevisionTests : IDisposable {
     }
 
     private static AteliaResult<Revision> OpenRevision(
-        CommitId commitId,
+        CommitTicket commitTicket,
         IRbfFile file,
         uint segmentNumber = 1
     ) {
-        return Revision.Open(commitId, file, segmentNumber);
+        return Revision.Open(commitTicket, file, segmentNumber);
     }
 
     public void Dispose() {
@@ -107,7 +107,7 @@ public partial class RevisionTests : IDisposable {
         dict.Upsert(7, 7.7);
         var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
 
-        var opened = OpenRevision(outcome.HeadCommitId, file);
+        var opened = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
         var loadedRev = opened.Value!;
 
@@ -174,7 +174,7 @@ public partial class RevisionTests : IDisposable {
         Assert.True(detachedCommit.IsFailure);
         Assert.IsType<SjStateError>(detachedCommit.Error);
 
-        var reopened = OpenRevision(outcome2.HeadCommitId, file);
+        var reopened = OpenRevision(outcome2.HeadCommitTicket, file);
         Assert.True(reopened.IsSuccess, $"Open failed: {reopened.Error}");
         var reopenedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, double>>>(reopened.Value!.GraphRoot);
         Assert.False(reopenedRoot.ContainsKey(1));
@@ -206,7 +206,7 @@ public partial class RevisionTests : IDisposable {
         var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: rootMeta);
         Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
 
-        var open = OpenRevision(new CommitId(mapSave.Value), file);
+        var open = OpenRevision(new CommitTicket(mapSave.Value), file);
         Assert.True(open.IsFailure);
         Assert.IsType<SjCorruptionError>(open.Error);
     }
@@ -233,7 +233,7 @@ public partial class RevisionTests : IDisposable {
         var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: badMeta);
         Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
 
-        var open = OpenRevision(new CommitId(mapSave.Value), file);
+        var open = OpenRevision(new CommitTicket(mapSave.Value), file);
         Assert.True(open.IsFailure);
         Assert.IsType<SjCorruptionError>(open.Error);
     }
@@ -247,7 +247,7 @@ public partial class RevisionTests : IDisposable {
         var rev1 = CreateRevision();
         var root1 = rev1.CreateDict<int, int>();
         var outcome1 = AssertCommitSucceeded(CommitToFile(rev1, root1, file), "Commit1");
-        CommitId id1 = outcome1.HeadCommitId;
+        CommitTicket id1 = outcome1.HeadCommitTicket;
 
         // Open commit 1 → ParentId should be null (root)
         var open1 = OpenRevision(id1, file);
@@ -258,7 +258,7 @@ public partial class RevisionTests : IDisposable {
         var rev2 = CreateRevision();
         var root2 = rev2.CreateDict<int, int>();
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev2, root2, file), "Commit2");
-        CommitId id2 = outcome2.HeadCommitId;
+        CommitTicket id2 = outcome2.HeadCommitTicket;
 
         // id1 and id2 are distinct, non-null
         Assert.False(id1.IsNull);
@@ -271,11 +271,11 @@ public partial class RevisionTests : IDisposable {
     }
 
     [Fact]
-    public void FindLatestCommitId_EmptyFile_ReturnsError() {
+    public void FindLatestCommitTicket_EmptyFile_ReturnsError() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var result = Revision.FindLatestCommitId(file);
+        var result = Revision.FindLatestCommitTicket(file);
         Assert.True(result.IsFailure);
     }
 
@@ -311,21 +311,21 @@ public partial class RevisionTests : IDisposable {
 
         // Commit 1 (root)
         var outcome1 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
-        CommitId id1 = outcome1.HeadCommitId;
+        CommitTicket id1 = outcome1.HeadCommitTicket;
         Assert.False(id1.IsNull);
         Assert.Equal(id1, rev.HeadId);
         Assert.True(rev.HeadParentId.IsNull, "root commit's parent should be null");
 
         // Commit 2 on the same Revision instance
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
-        CommitId id2 = outcome2.HeadCommitId;
+        CommitTicket id2 = outcome2.HeadCommitTicket;
         Assert.NotEqual(id1, id2);
         Assert.Equal(id2, rev.HeadId);
         Assert.Equal(id1, rev.HeadParentId); // HeadParent should now point to previous Head
 
         // Commit 3
         var outcome3 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit3");
-        CommitId id3 = outcome3.HeadCommitId;
+        CommitTicket id3 = outcome3.HeadCommitTicket;
         Assert.Equal(id3, rev.HeadId);
         Assert.Equal(id2, rev.HeadParentId); // HeadParent tracks the chain
 
@@ -395,7 +395,7 @@ public partial class RevisionTests : IDisposable {
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.Equal(2, GetMixedDictDurableRefCount(root));
 
-        var open = OpenRevision(outcome.HeadCommitId, file);
+        var open = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(open.IsSuccess, $"Open failed: {open.Error}");
 
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<int>>(open.Value!.GraphRoot);

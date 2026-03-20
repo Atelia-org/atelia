@@ -68,14 +68,14 @@ partial class RevisionTests {
         Assert.True(c2.IsCompacted);
         Assert.False(c2.IsCompactionRolledBack);
 
-        Assert.Equal(c2.HeadCommitId, rev.HeadId);
-        Assert.NotEqual(c1.HeadCommitId, rev.HeadParentId); // HeadParent 应指向内部中间 commit
-        Assert.NotEqual(c2.PrimaryCommitId, c2.HeadCommitId);
+        Assert.Equal(c2.HeadCommitTicket, rev.HeadId);
+        Assert.NotEqual(c1.HeadCommitTicket, rev.HeadParentId); // HeadParent 应指向内部中间 commit
+        Assert.NotEqual(c2.PrimaryCommitTicket, c2.HeadCommitTicket);
 
-        var opened = OpenRevision(c2.HeadCommitId, file);
+        var opened = OpenRevision(c2.HeadCommitTicket, file);
         Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
         Assert.Equal(rev.HeadParentId, opened.Value!.HeadParentId);
-        Assert.NotEqual(c1.HeadCommitId, opened.Value!.HeadParentId);
+        Assert.NotEqual(c1.HeadCommitTicket, opened.Value!.HeadParentId);
     }
 
     [Fact]
@@ -103,7 +103,7 @@ partial class RevisionTests {
         var target = Assert.IsAssignableFrom<DurableDict<int, int>>(targetObj);
         LocalId targetIdBefore = target.LocalId;
 
-        CommitId headBefore = rev.HeadId;
+        CommitTicket headBefore = rev.HeadId;
 
         int before = CountObjectMapFrames(file);
         file.Arm(failOnBeginAppendIndex: 4);
@@ -119,8 +119,8 @@ partial class RevisionTests {
         int after = CountObjectMapFrames(file);
         Assert.Equal(before + 1, after); // 仅 primary commit 的 ObjectMap 已写入
         Assert.NotEqual(headBefore, rev.HeadId); // primary commit 已成功，Head 前进到中间提交
-        Assert.Equal(c2.HeadCommitId, rev.HeadId);
-        Assert.Equal(c2.PrimaryCommitId, c2.HeadCommitId);
+        Assert.Equal(c2.HeadCommitTicket, rev.HeadId);
+        Assert.Equal(c2.PrimaryCommitTicket, c2.HeadCommitTicket);
 
         // follow-up persist 失败后应自动回滚 compaction，使内存状态重新对齐到 primary commit
         Assert.Equal(targetIdBefore, target.LocalId);
@@ -160,7 +160,7 @@ partial class RevisionTests {
         }
 
         int framesBefore = CountObjectMapFrames(file);
-        CommitId headBefore = rev.HeadId;
+        CommitTicket headBefore = rev.HeadId;
 
         using var faultScope = Revision.InjectCompactionFaultScope(
             Revision.CompactionFaultPoint.AfterFirstMoveApplied,

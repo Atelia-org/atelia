@@ -368,7 +368,7 @@ public sealed partial class Repository : IDisposable {
         if (commitResult.IsFailure) { return commitResult.Error!; }
 
         var expectedHead = branchState.Head;
-        var newHead = CommitAddress.Create(writePlan.TargetSegmentNumber, commitResult.Value.HeadCommitId);
+        var newHead = CommitAddress.Create(writePlan.TargetSegmentNumber, commitResult.Value.HeadCommitTicket);
 
         try {
             CompareAndSwapBranchAtomically(DirectoryPath, branchName, expectedHead, newHead);
@@ -537,11 +537,11 @@ public sealed partial class Repository : IDisposable {
             if (branchState.Head is not { } head) { return new Revision(_segments.ActiveSegmentNumber); }
 
             if (head.SegmentNumber == _segments.ActiveSegmentNumber) {
-                return Revision.Open(head.CommitId, _segments.ActiveFile, head.SegmentNumber);
+                return Revision.Open(head.CommitTicket, _segments.ActiveFile, head.SegmentNumber);
             }
 
             using var file = _segments.OpenHistoricalFile(head.SegmentNumber);
-            return Revision.Open(head.CommitId, file, head.SegmentNumber);
+            return Revision.Open(head.CommitTicket, file, head.SegmentNumber);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException) {
             return new SjRepositoryError(

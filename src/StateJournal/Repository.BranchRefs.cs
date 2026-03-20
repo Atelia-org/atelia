@@ -22,9 +22,9 @@ public sealed partial class Repository {
 
         if (currentHead != expectedHead) {
             var expectedSeg = expectedHead?.SegmentNumber ?? 0;
-            var expectedTicket = expectedHead?.CommitId.Ticket.Serialize() ?? 0;
+            var expectedTicket = expectedHead?.CommitTicket.Ticket.Serialize() ?? 0;
             var actualSeg = currentHead?.SegmentNumber ?? 0;
-            var actualTicket = currentHead?.CommitId.Ticket.Serialize() ?? 0;
+            var actualTicket = currentHead?.CommitTicket.Ticket.Serialize() ?? 0;
             throw new InvalidOperationException(
                 $"branch CAS mismatch: expected seg={expectedSeg}, ticket={expectedTicket}, actual seg={actualSeg}, ticket={actualTicket}."
             );
@@ -43,7 +43,7 @@ public sealed partial class Repository {
         var data = new BranchData {
             Version = 1,
             SegmentNumber = head?.SegmentNumber ?? 0,
-            Ticket = head?.CommitId.Ticket.Serialize() ?? 0,
+            Ticket = head?.CommitTicket.Ticket.Serialize() ?? 0,
         };
 
         Directory.CreateDirectory(Path.GetDirectoryName(branchPath)!);

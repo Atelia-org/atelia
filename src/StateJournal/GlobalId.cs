@@ -1,3 +1,3 @@
 namespace Atelia.StateJournal;
 
-public record struct GlobalId(CommitId CommitId, LocalId LocalId);
+public record struct GlobalId(CommitTicket CommitTicket, LocalId LocalId);

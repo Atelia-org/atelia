@@ -8,9 +8,9 @@ partial class Revision {
         /// <summary>
         /// benchmark/诊断专用：只完成“应该开始 compaction 吗”的入口判定，不执行 apply。
         /// </summary>
-        internal static RevisionCompactionSession? TryStartForBenchmark(Revision revision, CommitId primaryCommitId) {
+        internal static RevisionCompactionSession? TryStartForBenchmark(Revision revision, CommitTicket primaryCommitTicket) {
             return revision.ShouldCompact()
-                ? new RevisionCompactionSession(revision, primaryCommitId)
+                ? new RevisionCompactionSession(revision, primaryCommitTicket)
                 : null;
         }
 
@@ -42,7 +42,7 @@ partial class Revision {
         return result.Value!;
     }
 
-    internal CommitId PersistCompactionFollowupForBenchmark(
+    internal CommitTicket PersistCompactionFollowupForBenchmark(
         DurableObject graphRoot,
         IReadOnlyList<DurableObject> liveObjects,
         IRbfFile targetFile
@@ -52,7 +52,7 @@ partial class Revision {
         return result.Value;
     }
 
-    internal (List<PendingSave> PendingSaves, CommitId CommitId) PersistPrimaryCommitForBenchmark(
+    internal (List<PendingSave> PendingSaves, CommitTicket CommitTicket) PersistPrimaryCommitForBenchmark(
         DurableObject graphRoot,
         IReadOnlyList<DurableObject> liveObjects,
         IRbfFile targetFile
@@ -65,11 +65,11 @@ partial class Revision {
             targetFile
         );
         if (result.IsFailure) { throw new InvalidOperationException($"Primary persist benchmark failed: {result.Error}"); }
-        var (pendingSaves, commitId) = result.Value;
-        return (pendingSaves, commitId);
+        var (pendingSaves, commitTicket) = result.Value;
+        return (pendingSaves, commitTicket);
     }
 
-    internal void FinalizePrimaryCommitForBenchmark(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitId newCommitId) {
-        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitId);
+    internal void FinalizePrimaryCommitForBenchmark(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitTicket newCommitTicket) {
+        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitTicket);
     }
 }

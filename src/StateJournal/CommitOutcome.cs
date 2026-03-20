@@ -25,8 +25,8 @@ public enum CommitCompletion {
 /// 因此 <see cref="CompactionIssue"/> 仅用于承载“primary 已 durable，但 compaction 后续因非 bug 外因未完成”的诊断信息。
 /// </remarks>
 public readonly record struct CommitOutcome(
-    CommitId HeadCommitId,
-    CommitId PrimaryCommitId,
+    CommitTicket HeadCommitTicket,
+    CommitTicket PrimaryCommitTicket,
     CommitCompletion Completion,
     AteliaError? CompactionIssue = null
 ) {
@@ -34,21 +34,21 @@ public readonly record struct CommitOutcome(
     public bool IsCompactionRolledBack => Completion == CommitCompletion.CompactionRolledBack;
     public bool IsPrimaryOnly => Completion == CommitCompletion.PrimaryOnly;
 
-    public static CommitOutcome PrimaryOnly(CommitId commitId) => new(
-        HeadCommitId: commitId,
-        PrimaryCommitId: commitId,
+    public static CommitOutcome PrimaryOnly(CommitTicket commitTicket) => new(
+        HeadCommitTicket: commitTicket,
+        PrimaryCommitTicket: commitTicket,
         Completion: CommitCompletion.PrimaryOnly
     );
 
-    public static CommitOutcome Compacted(CommitId primaryCommitId, CommitId headCommitId) => new(
-        HeadCommitId: headCommitId,
-        PrimaryCommitId: primaryCommitId,
+    public static CommitOutcome Compacted(CommitTicket primaryCommitTicket, CommitTicket headCommitTicket) => new(
+        HeadCommitTicket: headCommitTicket,
+        PrimaryCommitTicket: primaryCommitTicket,
         Completion: CommitCompletion.Compacted
     );
 
-    public static CommitOutcome CompactionRolledBack(CommitId primaryCommitId, AteliaError issue) => new(
-        HeadCommitId: primaryCommitId,
-        PrimaryCommitId: primaryCommitId,
+    public static CommitOutcome CompactionRolledBack(CommitTicket primaryCommitTicket, AteliaError issue) => new(
+        HeadCommitTicket: primaryCommitTicket,
+        PrimaryCommitTicket: primaryCommitTicket,
         Completion: CommitCompletion.CompactionRolledBack,
         CompactionIssue: issue
     );

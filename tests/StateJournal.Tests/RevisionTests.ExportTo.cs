@@ -65,7 +65,7 @@ partial class RevisionTests {
         var root = rev.CreateDict<int, int>();
         root.Upsert(42, 100);
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, srcFile));
-        CommitId headBefore = rev.HeadId;
+        CommitTicket headBefore = rev.HeadId;
 
         var exportResult = rev.ExportTo(root, dstFile);
         Assert.True(exportResult.IsSuccess, $"ExportTo failed: {exportResult.Error}");
