@@ -12,7 +12,7 @@ namespace Atelia.StateJournal;
 /// <see cref="_head"/> 持有当前已提交的快照状态（Id / ParentId / ObjectMap / GraphRoot），首次 Commit 前为 null。
 /// </summary>
 public partial class Revision {
-    private IRbfFile _file;
+    private uint _headSegmentNumber;
 
     /// <summary>
     /// 当前活跃的 ObjectMap，始终占据 pool slot 0。
@@ -27,7 +27,7 @@ public partial class Revision {
     public CommitId HeadParentId => _head?.ParentId ?? default;
     /// <summary>最近一次 Commit 时使用的 GraphRoot。首次 Commit 前为 null。Open 后自动从 TailMeta 恢复。</summary>
     public DurableObject? GraphRoot => _head?.GraphRoot;
-    internal IRbfFile BoundFile => _file;
+    internal uint HeadSegmentNumber => _headSegmentNumber;
 
     /// <summary>此 Revision 所属的 branch 名称。由 Repository 在绑定时设置一次，之后不可更改。</summary>
     internal string? BranchName {
@@ -42,16 +42,18 @@ public partial class Revision {
 
 
     /// <summary>从头创建一个新的 root commit（未 Commit 前 _head 为 null）。</summary>
-    internal Revision(IRbfFile file) {
-        _file = file;
+    internal Revision(uint boundSegmentNumber) {
+        ArgumentOutOfRangeException.ThrowIfZero(boundSegmentNumber);
+        _headSegmentNumber = boundSegmentNumber;
         _objectMap = Durable.Dict<uint, ulong>();
         _pool = new GcPool<DurableObject>();
         _pool.Store(_objectMap); // slot 0 = ObjectMap
     }
 
     /// <summary>从持久化数据全量加载 commit（内部构造函数，_head 由 Open 设置）。</summary>
-    private Revision(IRbfFile file, DurableDict<uint, ulong> objectMap, GcPool<DurableObject> pool) {
-        _file = file;
+    private Revision(uint boundSegmentNumber, DurableDict<uint, ulong> objectMap, GcPool<DurableObject> pool) {
+        ArgumentOutOfRangeException.ThrowIfZero(boundSegmentNumber);
+        _headSegmentNumber = boundSegmentNumber;
         _objectMap = objectMap;
         _pool = pool;
     }
@@ -59,7 +61,8 @@ public partial class Revision {
     /// <summary>从 RBF 文件打开指定 CommitId 对应的 commit，全量加载所有对象到 GcPool。</summary>
     /// <param name="id">commit 的标识（内含 ObjectMap 帧的 SizedPtr）。</param>
     /// <param name="file">RBF 文件。</param>
-    internal static AteliaResult<Revision> Open(CommitId id, IRbfFile file) {
+    /// <param name="segmentNumber">此 commit 所在的 segment number。</param>
+    internal static AteliaResult<Revision> Open(CommitId id, IRbfFile file, uint segmentNumber) {
         var loadResult = VersionChain.LoadFull(
             file, id.Ticket,
             expectUsage: FrameUsage.ObjectMap,
@@ -100,7 +103,7 @@ public partial class Revision {
 
         var pool = GcPool<DurableObject>.Rebuild(entries);
 
-        var revision = new Revision(file, objectMap, pool);
+        var revision = new Revision(segmentNumber, objectMap, pool);
 
         // 绑定所有用户对象到 Revision（ObjectMap 在 slot 0，不 Bind）
         foreach (uint key in objectMap.Keys) {
@@ -257,11 +260,11 @@ public partial class Revision {
     /// 因此 Commit 具备“primary 先提交，再尝试 compaction”的语义；若 follow-up persist 失败但回滚成功，则返回成功结果，并显式标记为
     /// <see cref="CommitCompletion.CompactionRolledBack"/>。
     /// </remarks>
-    internal partial AteliaResult<CommitOutcome> Commit(DurableObject graphRoot);
+    internal partial AteliaResult<CommitOutcome> Commit(DurableObject graphRoot, IRbfFile targetFile);
 
     /// <summary>
     /// 将当前对象图的完整快照（全量 rebase）导出到 <paramref name="targetFile"/>，
-    /// 不修改当前 Revision 的任何内部状态（_file / _objectMap / _head / 对象 HeadTicket 均不变）。
+    /// 不修改当前 Revision 的任何内部状态（_boundSegmentNumber / _objectMap / _head / 对象 HeadTicket 均不变）。
     /// </summary>
     /// <remarks>
     /// 导出到新文件时，会保留当前快照的“逻辑祖先”信息：
@@ -285,9 +288,17 @@ public partial class Revision {
     /// 不要求目标文件内存在该 parent ticket 对应的物理帧。
     /// </remarks>
     /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
-    /// <param name="targetFile">另存为目标 RBF 文件。SaveAs 成功后当前 Revision 将绑定到此文件。</param>
+    /// <param name="targetFile">另存为目标 RBF 文件。</param>
     /// <returns>与 <see cref="Commit"/> 相同的 <see cref="CommitOutcome"/>，但不触发 Compaction。</returns>
     internal partial AteliaResult<CommitOutcome> SaveAs(DurableObject graphRoot, IRbfFile targetFile);
+
+    /// <summary>
+    /// 由 Repository 在 branch CAS 成功后确认当前 Revision 已切换到新的 segment。
+    /// </summary>
+    internal void AcceptPersistedSegment(uint segmentNumber) {
+        ArgumentOutOfRangeException.ThrowIfZero(segmentNumber);
+        _headSegmentNumber = segmentNumber;
+    }
 
     private readonly record struct CommitSnapshot(
         CommitId Id,

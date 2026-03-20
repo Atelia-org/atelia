@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
+using Atelia.Diagnostics;
 using Atelia.Data;
+using Atelia.Rbf;
 using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
@@ -14,14 +16,32 @@ namespace Atelia.StateJournal;
 ///   refs/
 ///     branches/
 ///   recent/
-///     {segNumHex8}.sj.rbf         - 文件名 = segment number（1-based, hex8）
+///     {segNumHex8}.sj.rbf         - 最近窗口中的 segment 文件（连续、无空洞）
+///   archive/
+///     {bucketStartHex8}-{bucketEndHex8}/
+///       {segNumHex8}.sj.rbf       - 已归档的旧 segment 文件（按固定 bucket 分组）
 /// </code>
 /// </remarks>
 public sealed partial class Repository : IDisposable {
+    private enum RevisionWriteKind {
+        AppendToActive,
+        SaveAs,
+    }
+
+    private readonly record struct RevisionWritePlan(
+        RevisionWriteKind Kind,
+        uint TargetSegmentNumber,
+        IRbfFile TargetFile,
+        SegmentCatalog.PendingRotation? PendingRotation = null
+    );
+
     private const string LockFileName = "state-journal.lock";
     private const string RefsDirName = "refs";
     private const string BranchesDirName = "branches";
     private const string RecentDirName = "recent";
+    private const string ArchiveDirName = "archive";
+    internal const int RecentSegmentWindowTargetCount = 512;
+    internal const int ArchivedSegmentBucketSize = 512;
     private const long DefaultRotationThreshold = 2L * 1024 * 1024 * 1024; // 2 GB
 
     public string DirectoryPath { get; }
@@ -91,6 +111,17 @@ public sealed partial class Repository : IDisposable {
         _rotationThreshold = value;
     }
 
+    /// <summary>
+    /// best-effort 地将过旧 segment 从 <c>recent/</c> 迁移到 <c>archive/</c>，
+    /// 以收敛 recent 窗口的目录规模。
+    /// 这不是 Commit 的事务性一部分；失败时抛出异常，由调用方决定是否重试。
+    /// </summary>
+    public void MaintainSegmentLayout() {
+        using var scope = _gate.EnterScope();
+        if (!EnsureUsable(out var err)) { throw new InvalidOperationException(err.Message); }
+        _segments.ArchiveExcessRecentSegments();
+    }
+
     private Repository(
         string directoryPath,
         FileStream lockStream,
@@ -155,8 +186,10 @@ public sealed partial class Repository : IDisposable {
 
             var branchesDir = GetBranchesDirectoryPath(fullPath);
             var recentDir = Path.Combine(fullPath, RecentDirName);
+            var archiveDir = Path.Combine(fullPath, ArchiveDirName);
             Directory.CreateDirectory(branchesDir);
             Directory.CreateDirectory(recentDir);
+            Directory.CreateDirectory(archiveDir);
 
             var segments = SegmentCatalog.CreateNew(fullPath);
 
@@ -223,7 +256,8 @@ public sealed partial class Repository : IDisposable {
             var openLayout = RepositoryOpenValidator.Validate(fullPath);
             var branches = BuildBranchStates(openLayout.Branches);
 
-            segments = SegmentCatalog.OpenFromScan(fullPath, openLayout.Segments);
+            segments = SegmentCatalog.OpenFromScan(fullPath, openLayout.RecentSegments);
+            TryMaintainSegmentLayout(segments, "open");
 
             return new Repository(
                 fullPath,
@@ -326,14 +360,47 @@ public sealed partial class Repository : IDisposable {
         }
 
         var shouldRotate = HasCommittedBranchPointingIntoActiveSegment() && _segments.ShouldRotate(_rotationThreshold);
+        var writePlanResult = CreateWritePlan(revision, shouldRotate);
+        if (writePlanResult.IsFailure) { return writePlanResult.Error!; }
 
-        AteliaResult<CommitOutcome> commitResult;
-        uint targetSegmentNumber;
+        var writePlan = writePlanResult.Value;
+        var commitResult = ExecuteWritePlan(revision, graphRoot, writePlan);
+        if (commitResult.IsFailure) { return commitResult.Error!; }
 
+        var expectedHead = branchState.Head;
+        var newHead = CommitAddress.Create(writePlan.TargetSegmentNumber, commitResult.Value.HeadCommitId);
+
+        try {
+            CompareAndSwapBranchAtomically(DirectoryPath, branchName, expectedHead, newHead);
+        }
+        catch (Exception ex) {
+            _isPoisoned = true;
+            if (writePlan.PendingRotation is { } abandonedRotation) {
+                _segments.RollbackRotation(abandonedRotation);
+            }
+            return new SjRepositoryError(
+                $"Commit data was written, but advancing branch '{branchName}' failed: {ex.Message}",
+                RecoveryHint: "Dispose this Repository instance and reopen it before continuing."
+            );
+        }
+
+        CompleteWritePlanAfterCasSuccess(revision, writePlan);
+        branchState.Head = newHead;
+        if (newHead.SegmentNumber > _maxCommittedSegmentNumber) { _maxCommittedSegmentNumber = newHead.SegmentNumber; }
+
+        return commitResult;
+    }
+
+    private AteliaResult<RevisionWritePlan> CreateWritePlan(Revision revision, bool shouldRotate) {
         if (shouldRotate) {
-            SegmentCatalog.PendingRotation pendingRotation;
             try {
-                pendingRotation = _segments.OpenPendingRotation();
+                var pendingRotation = _segments.OpenPendingRotation();
+                return new RevisionWritePlan(
+                    RevisionWriteKind.SaveAs,
+                    pendingRotation.SegmentNumber,
+                    pendingRotation.File,
+                    pendingRotation
+                );
             }
             catch (Exception ex) {
                 return new SjRepositoryError(
@@ -341,42 +408,56 @@ public sealed partial class Repository : IDisposable {
                     RecoveryHint: "Check disk space and permissions."
                 );
             }
-
-            commitResult = revision.SaveAs(graphRoot, pendingRotation.File);
-            if (commitResult.IsSuccess) {
-                _segments.CommitRotation(pendingRotation);
-                targetSegmentNumber = pendingRotation.SegmentNumber;
-            }
-            else {
-                _segments.RollbackRotation(pendingRotation);
-                return commitResult;
-            }
-        }
-        else {
-            commitResult = ReferenceEquals(revision.BoundFile, _segments.ActiveFile)
-                ? revision.Commit(graphRoot)
-                : revision.SaveAs(graphRoot, _segments.ActiveFile);
-            if (commitResult.IsFailure) { return commitResult; }
-            targetSegmentNumber = _segments.ActiveSegmentNumber;
         }
 
-        var expectedHead = branchState.Head;
-        var newHead = CommitAddress.Create(targetSegmentNumber, commitResult.Value.HeadCommitId);
-
-        try {
-            CompareAndSwapBranchAtomically(DirectoryPath, branchName, expectedHead, newHead);
-        }
-        catch (Exception ex) {
-            _isPoisoned = true;
-            return new SjRepositoryError(
-                $"Commit data was written, but advancing branch '{branchName}' failed: {ex.Message}",
-                RecoveryHint: "Dispose this Repository instance and reopen it before continuing."
+        if (revision.HeadSegmentNumber == _segments.ActiveSegmentNumber) {
+            return new RevisionWritePlan(
+                RevisionWriteKind.AppendToActive,
+                _segments.ActiveSegmentNumber,
+                _segments.ActiveFile
             );
         }
 
-        branchState.Head = newHead;
-        if (newHead.SegmentNumber > _maxCommittedSegmentNumber) { _maxCommittedSegmentNumber = newHead.SegmentNumber; }
-        return commitResult;
+        return new RevisionWritePlan(
+            RevisionWriteKind.SaveAs,
+            _segments.ActiveSegmentNumber,
+            _segments.ActiveFile
+        );
+    }
+
+    private AteliaResult<CommitOutcome> ExecuteWritePlan(
+        Revision revision,
+        DurableObject graphRoot,
+        RevisionWritePlan writePlan
+    ) {
+        var result = writePlan.Kind == RevisionWriteKind.AppendToActive
+            ? revision.Commit(graphRoot, writePlan.TargetFile)
+            : revision.SaveAs(graphRoot, writePlan.TargetFile);
+
+        if (result.IsFailure && writePlan.PendingRotation is { } rotation) {
+            _segments.RollbackRotation(rotation);
+        }
+        return result;
+    }
+
+    private void CompleteWritePlanAfterCasSuccess(Revision revision, RevisionWritePlan writePlan) {
+        if (writePlan.PendingRotation is { } rotation) {
+            _segments.CommitRotation(rotation);
+        }
+
+        revision.AcceptPersistedSegment(writePlan.TargetSegmentNumber);
+    }
+
+    private static void TryMaintainSegmentLayout(SegmentCatalog segments, string reason) {
+        try {
+            segments.ArchiveExcessRecentSegments();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
+            DebugUtil.Warning(
+                "StateJournal.Repository",
+                $"Failed to archive excess recent segments during {reason}: {ex.Message}"
+            );
+        }
     }
 
     private AteliaResult<Revision> CreateBranchCore(string branchName, string? sourceBranchName) {
@@ -453,10 +534,14 @@ public sealed partial class Repository : IDisposable {
 
     private AteliaResult<Revision> CreateDetachedRevisionForBranch(BranchState branchState) {
         try {
-            if (branchState.Head is not { } head) { return new Revision(_segments.ActiveFile); }
+            if (branchState.Head is not { } head) { return new Revision(_segments.ActiveSegmentNumber); }
 
-            var file = _segments.GetFileForSegment(head.SegmentNumber);
-            return Revision.Open(head.CommitId, file);
+            if (head.SegmentNumber == _segments.ActiveSegmentNumber) {
+                return Revision.Open(head.CommitId, _segments.ActiveFile, head.SegmentNumber);
+            }
+
+            using var file = _segments.OpenHistoricalFile(head.SegmentNumber);
+            return Revision.Open(head.CommitId, file, head.SegmentNumber);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException) {
             return new SjRepositoryError(

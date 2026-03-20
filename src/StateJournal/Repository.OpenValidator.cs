@@ -14,14 +14,14 @@ public sealed partial class Repository {
 
     private sealed record OpenLayout(
         List<LoadedBranch> Branches,
-        List<ExistingSegment> Segments
+        List<ExistingSegment> RecentSegments
     );
 
     private static class RepositoryOpenValidator {
         public static OpenLayout Validate(string repoFullPath) {
-            var branchesDir = GetBranchesDirectoryPath(repoFullPath);
-            if (!Directory.Exists(branchesDir)) {
-                throw new InvalidDataException($"Repository '{repoFullPath}' is missing required branches directory '{branchesDir}'.");
+            var branchesFullDir = GetBranchesDirectoryPath(repoFullPath);
+            if (!Directory.Exists(branchesFullDir)) {
+                throw new InvalidDataException($"Repository '{repoFullPath}' is missing required branches directory '{branchesFullDir}'.");
             }
 
             var recentDir = Path.Combine(repoFullPath, RecentDirName);
@@ -29,21 +29,27 @@ public sealed partial class Repository {
                 throw new InvalidDataException($"Repository '{repoFullPath}' is missing required segment directory '{recentDir}'.");
             }
 
-            var segments = ScanExistingSegments(repoFullPath, recentDir);
-            var knownSegmentNumbers = segments.Select(x => x.SegmentNumber).ToHashSet();
-            var branches = LoadBranches(repoFullPath, branchesDir, knownSegmentNumbers);
-            return new OpenLayout(branches, segments);
+            var recentSegments = ScanRecentSegments(recentDir);
+            if (recentSegments.Count == 0) {
+                throw new InvalidDataException($"Repository '{repoFullPath}' does not contain any segment files under '{recentDir}'.");
+            }
+
+            var archiveDir = Path.Combine(repoFullPath, ArchiveDirName);
+            var archivedSegments = ScanArchivedSegments(repoFullPath, archiveDir);
+            var maxSegmentNumber = ValidateSegmentLayout(repoFullPath, recentSegments, archivedSegments);
+            var branches = LoadBranches(repoFullPath, branchesFullDir, maxSegmentNumber);
+            return new OpenLayout(branches, recentSegments);
         }
 
         private static List<LoadedBranch> LoadBranches(
             string repoFullPath,
-            string branchesDir,
-            IReadOnlySet<uint> knownSegmentNumbers
+            string branchesFullDir,
+            uint maxSegmentNumber
         ) {
             var branches = new List<LoadedBranch>();
 
-            foreach (var filePath in Directory.GetFiles(branchesDir, "*.json", SearchOption.AllDirectories)) {
-                var relPath = Path.GetRelativePath(branchesDir, filePath);
+            foreach (var filePath in Directory.GetFiles(branchesFullDir, "*.json", SearchOption.AllDirectories)) {
+                var relPath = Path.GetRelativePath(branchesFullDir, filePath);
                 var branchName = Path.ChangeExtension(relPath, null)!
                     .Replace(Path.DirectorySeparatorChar, '/')
                     .Replace(Path.AltDirectorySeparatorChar, '/');
@@ -55,7 +61,7 @@ public sealed partial class Repository {
                 }
 
                 var head = ReadBranchAddress(filePath);
-                if (head is { } address && !knownSegmentNumbers.Contains(address.SegmentNumber)) {
+                if (head is { } address && (address.SegmentNumber == 0 || address.SegmentNumber > maxSegmentNumber)) {
                     throw new InvalidDataException(
                         $"Branch '{branchName}' points to missing segment {address.SegmentNumber} (from '{filePath}')."
                     );
@@ -67,39 +73,84 @@ public sealed partial class Repository {
             return branches;
         }
 
-        private static List<ExistingSegment> ScanExistingSegments(string repoFullPath, string recentDir) {
+        private static List<ExistingSegment> ScanRecentSegments(string recentDir) {
             var segments = new List<ExistingSegment>();
 
             foreach (var file in Directory.GetFiles(recentDir, "*.sj.rbf")) {
                 var fileName = Path.GetFileName(file);
-                const string suffix = ".sj.rbf";
-                var name = fileName[..^suffix.Length];
-                if (!uint.TryParse(name, System.Globalization.NumberStyles.HexNumber, null, out var segmentNumber)) {
-                    throw new InvalidDataException($"Segment file '{fileName}' does not use the expected hex segment number format.");
-                }
-
                 segments.Add(new ExistingSegment(
-                    SegmentNumber: segmentNumber,
+                    SegmentNumber: ParseSegmentNumber(fileName),
                     AbsolutePath: file,
                     RelativePath: Path.Combine(RecentDirName, fileName)
                 ));
             }
 
             segments.Sort((a, b) => a.SegmentNumber.CompareTo(b.SegmentNumber));
-            if (segments.Count == 0) {
-                throw new InvalidDataException($"Repository '{repoFullPath}' does not contain any segment files under '{recentDir}'.");
+            return segments;
+        }
+
+        private static List<ExistingSegment> ScanArchivedSegments(string repoFullPath, string archiveDir) {
+            var segments = new List<ExistingSegment>();
+            if (!Directory.Exists(archiveDir)) { return segments; }
+
+            foreach (var file in Directory.GetFiles(archiveDir, "*.sj.rbf", SearchOption.AllDirectories)) {
+                var fileName = Path.GetFileName(file);
+                var segmentNumber = ParseSegmentNumber(fileName);
+                var relativePath = Path.GetRelativePath(repoFullPath, file);
+                var expectedRelativePath = MakeArchiveRelativeSegmentPath(segmentNumber);
+                if (!string.Equals(relativePath, expectedRelativePath, StringComparison.Ordinal)) {
+                    throw new InvalidDataException(
+                        $"Archived segment {segmentNumber} is stored at '{relativePath}', expected '{expectedRelativePath}'."
+                    );
+                }
+
+                segments.Add(new ExistingSegment(
+                    SegmentNumber: segmentNumber,
+                    AbsolutePath: file,
+                    RelativePath: relativePath
+                ));
             }
 
-            for (int i = 0; i < segments.Count; i++) {
+            segments.Sort((a, b) => a.SegmentNumber.CompareTo(b.SegmentNumber));
+            return segments;
+        }
+
+        private static uint ValidateSegmentLayout(
+            string repoFullPath,
+            List<ExistingSegment> recentSegments,
+            List<ExistingSegment> archivedSegments
+        ) {
+            // 验证 archive 部分内部连续性: 1, 2, ..., archivedSegments.Count
+            for (int i = 0; i < archivedSegments.Count; i++) {
                 uint expectedSegmentNumber = (uint)(i + 1);
-                if (segments[i].SegmentNumber != expectedSegmentNumber) {
+                if (archivedSegments[i].SegmentNumber != expectedSegmentNumber) {
                     throw new InvalidDataException(
-                        $"Segment numbering is not contiguous in '{recentDir}': expected segment {expectedSegmentNumber} but found {segments[i].SegmentNumber}."
+                        $"Segment numbering is not contiguous in repository '{repoFullPath}': expected segment {expectedSegmentNumber} but found {archivedSegments[i].SegmentNumber}."
                     );
                 }
             }
 
-            return segments;
+            // 验证 recent 部分衔接 archive 并内部连续，天然保证 recent 是最新连续后缀
+            for (int i = 0; i < recentSegments.Count; i++) {
+                uint expectedSegmentNumber = (uint)(archivedSegments.Count + i + 1);
+                if (recentSegments[i].SegmentNumber != expectedSegmentNumber) {
+                    throw new InvalidDataException(
+                        $"Segment numbering is not contiguous in repository '{repoFullPath}': expected segment {expectedSegmentNumber} but found {recentSegments[i].SegmentNumber}."
+                    );
+                }
+            }
+
+            return (uint)(archivedSegments.Count + recentSegments.Count);
+        }
+
+        private static uint ParseSegmentNumber(string fileName) {
+            const string suffix = ".sj.rbf";
+            var name = fileName[..^suffix.Length];
+            if (!uint.TryParse(name, System.Globalization.NumberStyles.HexNumber, null, out var segmentNumber)) {
+                throw new InvalidDataException($"Segment file '{fileName}' does not use the expected hex segment number format.");
+            }
+
+            return segmentNumber;
         }
     }
 }

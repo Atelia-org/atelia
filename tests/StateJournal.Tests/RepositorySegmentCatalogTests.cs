@@ -97,6 +97,37 @@ public class RepositorySegmentCatalogTests : IDisposable {
         Assert.Contains("Failed to materialize Revision", result.Error!.Message);
     }
 
+    [Fact]
+    public void ArchivedOlderSegmentBranchRemainsReadableAfterReopen() {
+        var dir = GetTempDir();
+        using (var repo = CreateRepositoryWithBranch(dir, "main", out var main)) {
+            repo.SetRotationThreshold(1);
+
+            var root = main.CreateDict<int, int>();
+            root.Upsert(1, 1);
+            AssertSuccess(repo.Commit(root));
+
+            _ = AssertSuccess(repo.CreateBranch("feature", "main"));
+
+            root.Upsert(2, 2);
+            AssertSuccess(repo.Commit(root));
+        }
+
+        var archivedPath = SegmentPathTestHelper.ArchiveSegmentPath(dir, 1);
+        Directory.CreateDirectory(Path.GetDirectoryName(archivedPath)!);
+        File.Move(
+            SegmentPathTestHelper.RecentSegmentPath(dir, 1),
+            archivedPath
+        );
+
+        using var reopened = AssertSuccess(Repository.Open(dir));
+        var reopenedFeature = AssertSuccess(reopened.CheckoutBranch("feature"));
+        var reopenedRoot = Assert.IsAssignableFrom<DurableDict<int, int>>(reopenedFeature.GraphRoot);
+        Assert.Equal(1, reopenedRoot.Count);
+        Assert.Equal(GetIssue.None, reopenedRoot.Get(1, out int v));
+        Assert.Equal(1, v);
+    }
+
     public void Dispose() {
         foreach (var dir in _tempDirs) {
             try { if (Directory.Exists(dir)) { Directory.Delete(dir, recursive: true); } } catch { }

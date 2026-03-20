@@ -28,6 +28,7 @@ public class RepositoryTests : IDisposable {
         Assert.True(Directory.Exists(Path.Combine(dir, "refs")));
         Assert.True(Directory.Exists(Path.Combine(dir, "refs", "branches")));
         Assert.True(Directory.Exists(Path.Combine(dir, "recent")));
+        Assert.True(Directory.Exists(Path.Combine(dir, "archive")));
         Assert.True(File.Exists(Path.Combine(dir, "state-journal.lock")));
         // 初始 active segment 已创建
         var segFiles = Directory.GetFiles(Path.Combine(dir, "recent"), "*.sj.rbf");
@@ -279,6 +280,55 @@ public class RepositoryTests : IDisposable {
     }
 
     [Fact]
+    public void MaintainSegmentLayout_ArchivesExcessRecentSegmentsIntoBuckets() {
+        const int OverCreate = 4;
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+        repo.SetRotationThreshold(1);
+
+        var root = main.CreateDict<int, int>();
+        for (int i = 1; i <= Repository.RecentSegmentWindowTargetCount + OverCreate; i++) {
+            root.Upsert(i, i);
+            AssertSuccess(repo.Commit(root));
+        }
+
+        repo.MaintainSegmentLayout();
+
+        var recentDir = Path.Combine(dir, "recent");
+        var recentFiles = Directory.GetFiles(recentDir, "*.sj.rbf");
+        Assert.Equal(Repository.RecentSegmentWindowTargetCount, recentFiles.Length);
+        Assert.DoesNotContain(SegmentPathTestHelper.RecentSegmentPath(dir, 1), recentFiles);
+
+        var archiveFile = SegmentPathTestHelper.ArchiveSegmentPath(dir, 1);
+        Assert.True(File.Exists(archiveFile));
+        Assert.Equal(OverCreate, Directory.GetFiles(Path.Combine(dir, "archive"), "*.sj.rbf", SearchOption.AllDirectories).Length);
+    }
+
+    [Fact]
+    public void Open_BestEffortMaintenance_ArchivesExcessRecentSegments() {
+        const int OverCreate = 4;
+        var dir = GetTempDir();
+        using (var repo = CreateRepositoryWithBranch(dir, "main", out var main)) {
+            repo.SetRotationThreshold(1);
+
+            var root = main.CreateDict<int, int>();
+            for (int i = 1; i <= Repository.RecentSegmentWindowTargetCount + OverCreate; i++) {
+                root.Upsert(i, i);
+                AssertSuccess(repo.Commit(root));
+            }
+        }
+
+        var recentDirBefore = Path.Combine(dir, "recent");
+        Assert.Equal(Repository.RecentSegmentWindowTargetCount + OverCreate, Directory.GetFiles(recentDirBefore, "*.sj.rbf").Length);
+
+        using var reopened = AssertSuccess(Repository.Open(dir));
+
+        var recentDirAfter = Path.Combine(dir, "recent");
+        Assert.Equal(Repository.RecentSegmentWindowTargetCount, Directory.GetFiles(recentDirAfter, "*.sj.rbf").Length);
+        Assert.True(File.Exists(SegmentPathTestHelper.ArchiveSegmentPath(dir, 1)));
+    }
+
+    [Fact]
     public void SetRotationThreshold_NegativeValue_Throws() {
         var dir = GetTempDir();
         using var repo = CreateRepositoryWithBranch(dir, "main", out _);
@@ -336,6 +386,33 @@ public class RepositoryTests : IDisposable {
         var openFailed = repo.CheckoutBranch("main");
         Assert.True(openFailed.IsFailure);
         Assert.Contains("poisoned state", openFailed.Error!.Message);
+    }
+
+    [Fact]
+    public void Commit_WhenRotatedCommitCasFails_DoesNotAdvanceRevisionBoundSegment() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+        repo.SetRotationThreshold(1);
+
+        var root = main.CreateDict<int, int>();
+        root.Upsert(1, 10);
+        AssertSuccess(repo.Commit(root));
+        Assert.Equal(1u, main.HeadSegmentNumber);
+
+        var mainBranchPath = Path.Combine(dir, "refs", "branches", "main.json");
+        var branchAfterCommit1 = File.ReadAllText(mainBranchPath);
+
+        root.Upsert(2, 20);
+        AssertSuccess(repo.Commit(root));
+        Assert.Equal(2u, main.HeadSegmentNumber);
+
+        File.WriteAllText(mainBranchPath, branchAfterCommit1);
+
+        root.Upsert(3, 30);
+        var failed = repo.Commit(root);
+        Assert.True(failed.IsFailure);
+        Assert.Contains("CAS mismatch", failed.Error!.Message);
+        Assert.Equal(2u, main.HeadSegmentNumber);
     }
 
 

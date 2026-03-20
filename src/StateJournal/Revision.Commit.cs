@@ -12,8 +12,9 @@ partial class Revision {
         List<DurableObject> LiveObjects
     );
 
-    internal partial AteliaResult<CommitOutcome> Commit(DurableObject graphRoot) {
+    internal partial AteliaResult<CommitOutcome> Commit(DurableObject graphRoot, IRbfFile targetFile) {
         ArgumentNullException.ThrowIfNull(graphRoot);
+        ArgumentNullException.ThrowIfNull(targetFile);
 
         string graphRootLabel = graphRoot.LocalId.Value.ToString();
         DebugUtil.Trace(
@@ -22,7 +23,7 @@ partial class Revision {
             eventKind: DebugEventKind.Start
         );
 
-        var primaryCommit = RunPrimaryCommit(graphRoot);
+        var primaryCommit = RunPrimaryCommit(graphRoot, targetFile);
         if (primaryCommit.IsFailure) {
             DebugUtil.Warning(
                 "StateJournal.Commit",
@@ -42,7 +43,7 @@ partial class Revision {
         var compactionSession = RevisionCompactionSession.TryApply(this, primaryCommitId, primaryArtifacts.LiveObjects);
         if (compactionSession is null) { return LogAndReturnOutcome(CommitOutcome.PrimaryOnly(primaryCommitId)); }
 
-        var compactionCommit = PersistCompactionFollowup(graphRoot, primaryArtifacts.LiveObjects);
+        var compactionCommit = PersistCompactionFollowup(graphRoot, primaryArtifacts.LiveObjects, targetFile);
         if (compactionCommit.IsFailure) { return LogAndReturnOutcome(compactionSession.RollbackAfterFollowupPersistFailure(compactionCommit.Error!)); }
 
         return LogAndReturnOutcome(CommitOutcome.Compacted(primaryCommitId, compactionCommit.Value));
@@ -101,8 +102,6 @@ partial class Revision {
 
         // Finalize: Complete all PendingSave (HeadTicket 指向新文件), Sweep GC, 更新 _head
         FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitId);
-        // 切换到新文件
-        _file = targetFile;
         // 跳过 Compaction（刚全量 rebase，无 delta 碎片）
         return CommitOutcome.PrimaryOnly(newCommitId);
     }
@@ -127,7 +126,7 @@ partial class Revision {
     /// 此方法只应把“可归因于图状态 / 宿主环境 / I/O”的失败折叠为 <see cref="AteliaError"/>。
     /// 若内部持久化协议本身违反不变量，应让异常直接传播，以便 fail-fast 暴露实现 bug。
     /// </remarks>
-    private AteliaResult<PrimaryCommitArtifacts> RunPrimaryCommit(DurableObject graphRoot) {
+    private AteliaResult<PrimaryCommitArtifacts> RunPrimaryCommit(DurableObject graphRoot, IRbfFile targetFile) {
         var liveObjectsResult = PrepareLiveObjects(graphRoot);
         if (liveObjectsResult.IsFailure) { return liveObjectsResult.Error!; }
 
@@ -135,7 +134,8 @@ partial class Revision {
         try {
             persistResult = PersistCurrentSnapshot(
                 graphRoot, liveObjectsResult.Value!,
-                removeUnreachableObjectMapKeys: true, FrameSource.PrimaryCommit
+                removeUnreachableObjectMapKeys: true, FrameSource.PrimaryCommit,
+                targetFile
             );
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
@@ -161,12 +161,17 @@ partial class Revision {
     /// 这里复用 primary commit 产出的 live objects，不再重新 WalkAndMark/Sweep。
     /// 因为 compaction 只重排 slot / LocalId / 子引用与 ObjectMap key，不改变对象可达性。
     /// </remarks>
-    private AteliaResult<CommitId> PersistCompactionFollowup(DurableObject graphRoot, IReadOnlyList<DurableObject> liveObjects) {
+    private AteliaResult<CommitId> PersistCompactionFollowup(
+        DurableObject graphRoot,
+        IReadOnlyList<DurableObject> liveObjects,
+        IRbfFile targetFile
+    ) {
         AteliaResult<(List<PendingSave> PendingSaves, CommitId Id)> persistResult;
         try {
             persistResult = PersistCurrentSnapshot(
                 graphRoot, liveObjects,
-                removeUnreachableObjectMapKeys: false, FrameSource.Compaction
+                removeUnreachableObjectMapKeys: false, FrameSource.Compaction,
+                targetFile
             );
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
@@ -229,10 +234,9 @@ partial class Revision {
         IReadOnlyList<DurableObject> liveObjects,
         bool removeUnreachableObjectMapKeys,
         FrameSource frameSource,
-        IRbfFile? targetFile = null,
+        IRbfFile targetFile,
         bool forceAll = false
     ) {
-        var file = targetFile ?? _file;
         var pendingSaves = new List<PendingSave>();
         var userContext = new DiffWriteContext(FrameUsage.UserPayload, frameSource) {
             // forceAll + targetFile 用于 ExportTo/SaveAs 的 full snapshot：
@@ -244,7 +248,7 @@ partial class Revision {
         };
         foreach (var obj in liveObjects) {
             if (!forceAll && obj.IsTracked && !obj.HasChanges) { continue; }
-            var writeResult = VersionChain.Write(obj, file, userContext);
+            var writeResult = VersionChain.Write(obj, targetFile, userContext);
             if (writeResult.IsFailure) { return writeResult.Error!; }
             pendingSaves.Add(writeResult.Value);
             _objectMap.Upsert(obj.LocalId.Value, writeResult.Value.Ticket.Serialize());
@@ -266,7 +270,7 @@ partial class Revision {
             ForceRebase = forceAll,
             ForceSave = true,
         };
-        var mapWriteResult = VersionChain.Write(_objectMap, file, mapContext, tailMeta: rootMeta);
+        var mapWriteResult = VersionChain.Write(_objectMap, targetFile, mapContext, tailMeta: rootMeta);
         if (mapWriteResult.IsFailure) { return mapWriteResult.Error!; }
         pendingSaves.Add(mapWriteResult.Value);
 

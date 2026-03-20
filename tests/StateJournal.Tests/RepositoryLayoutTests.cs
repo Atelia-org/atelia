@@ -151,6 +151,35 @@ public class RepositoryLayoutTests : IDisposable {
         Assert.True(reopened.IsFailure);
     }
 
+    [Fact]
+    public void Open_RecentWindowCanStartAfterOne_WhenOlderSegmentsAreArchived() {
+        var dir = GetTempDir();
+        using (var repo = AssertSuccess(Repository.Create(dir))) {
+            var mainResult = repo.CreateBranch("main");
+            Assert.True(mainResult.IsSuccess, $"Expected Revision success but got error: {mainResult.Error}");
+            var main = mainResult.Value!;
+            repo.SetRotationThreshold(1);
+
+            var root = main.CreateDict<int, int>();
+            root.Upsert(1, 10);
+            var commit1 = repo.Commit(root);
+            Assert.True(commit1.IsSuccess, $"Expected CommitOutcome success but got error: {commit1.Error}");
+            root.Upsert(2, 20);
+            var commit2 = repo.Commit(root);
+            Assert.True(commit2.IsSuccess, $"Expected CommitOutcome success but got error: {commit2.Error}");
+        }
+
+        var archivedPath = SegmentPathTestHelper.ArchiveSegmentPath(dir, 1);
+        Directory.CreateDirectory(Path.GetDirectoryName(archivedPath)!);
+        File.Move(
+            SegmentPathTestHelper.RecentSegmentPath(dir, 1),
+            archivedPath
+        );
+
+        var reopened = AssertSuccess(Repository.Open(dir));
+        reopened.Dispose();
+    }
+
     private static Repository AssertSuccess(AteliaResult<Repository> result) {
         Assert.True(result.IsSuccess, $"Expected Repository success but got error: {result.Error}");
         return result.Value!;

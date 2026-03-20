@@ -48,7 +48,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
         const int totalChildren = 140;
         for (int i = 0; i < totalChildren; i++) {
@@ -57,13 +57,13 @@ partial class RevisionTests {
             root.Upsert(i, child);
         }
 
-        var c1 = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        var c1 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         for (int i = 0; i < 70; i++) {
             root.Remove(i);
         }
 
-        var c2 = AssertCommitSucceeded(rev.Commit(root), "Commit2");
+        var c2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
         Assert.Equal(CommitCompletion.Compacted, c2.Completion);
         Assert.True(c2.IsCompacted);
         Assert.False(c2.IsCompactionRolledBack);
@@ -72,7 +72,7 @@ partial class RevisionTests {
         Assert.NotEqual(c1.HeadCommitId, rev.HeadParentId); // HeadParent 应指向内部中间 commit
         Assert.NotEqual(c2.PrimaryCommitId, c2.HeadCommitId);
 
-        var opened = Revision.Open(c2.HeadCommitId, file);
+        var opened = OpenRevision(c2.HeadCommitId, file);
         Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
         Assert.Equal(rev.HeadParentId, opened.Value!.HeadParentId);
         Assert.NotEqual(c1.HeadCommitId, opened.Value!.HeadParentId);
@@ -84,7 +84,7 @@ partial class RevisionTests {
         var inner = RbfFile.CreateNew(path);
         using var file = new FailOnNthBeginAppendFile(inner);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
         const int totalChildren = 140;
         for (int i = 0; i < totalChildren; i++) {
@@ -93,7 +93,7 @@ partial class RevisionTests {
             root.Upsert(i, child);
         }
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         for (int i = 0; i < 70; i++) {
             root.Remove(i);
@@ -107,7 +107,7 @@ partial class RevisionTests {
 
         int before = CountObjectMapFrames(file);
         file.Arm(failOnBeginAppendIndex: 4);
-        var c2 = AssertCommitSucceeded(rev.Commit(root), "Commit2");
+        var c2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
         Assert.Equal(CommitCompletion.CompactionRolledBack, c2.Completion);
         Assert.True(c2.IsCompactionRolledBack);
         Assert.False(c2.IsCompacted);
@@ -129,7 +129,7 @@ partial class RevisionTests {
         Assert.Equal(targetIdBefore, targetAfter!.LocalId);
 
         Assert.Equal(rev.HeadId, rev.GraphRoot!.Revision.HeadId);
-        var opened = Revision.Open(rev.HeadId, file);
+        var opened = OpenRevision(rev.HeadId, file);
         Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, int>>>(opened.Value!.GraphRoot);
         Assert.Equal(70, loadedRoot.Count);
@@ -144,7 +144,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
         const int totalChildren = 140;
         for (int i = 0; i < totalChildren; i++) {
@@ -153,7 +153,7 @@ partial class RevisionTests {
             root.Upsert(i, child);
         }
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         for (int i = 0; i < 70; i++) {
             root.Remove(i);
@@ -166,7 +166,7 @@ partial class RevisionTests {
             Revision.CompactionFaultPoint.AfterFirstMoveApplied,
             static () => new InvalidOperationException("Injected failure during compaction apply.")
         );
-        var ex = Assert.Throws<InvalidOperationException>(() => rev.Commit(root));
+        var ex = Assert.Throws<InvalidOperationException>(() => CommitToFile(rev, root, file));
         Assert.Contains("Injected failure during compaction apply", ex.Message);
 
         int framesAfter = CountObjectMapFrames(file);
@@ -174,7 +174,7 @@ partial class RevisionTests {
         Assert.NotEqual(headBefore, rev.HeadId); // 部分成功可见：Head 已推进到 primary commit
 
         // fail-fast 不承诺内存工作态仍可继续使用，但 primary commit 必须已经 durable。
-        var opened = Revision.Open(rev.HeadId, file);
+        var opened = OpenRevision(rev.HeadId, file);
         Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, int>>>(opened.Value!.GraphRoot);
         Assert.Equal(70, loadedRoot.Count);
@@ -185,14 +185,14 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         _ = rev.CreateDict<int, int>(); // pad object: first commit 后会被 Sweep 掉，留下低位 hole
         var root = rev.CreateDict<int, DurableDict<int, int>>();
         var child = rev.CreateDict<int, int>();
         child.Upsert(7, 70);
         root.Upsert(1, child);
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         var poolField = typeof(Revision).GetField("_pool", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var pool = Assert.IsAssignableFrom<GcPool<DurableObject>>(poolField.GetValue(rev));

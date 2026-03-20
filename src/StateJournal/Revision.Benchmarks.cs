@@ -1,4 +1,5 @@
 using Atelia.StateJournal.Internal;
+using Atelia.Rbf;
 
 namespace Atelia.StateJournal;
 
@@ -29,8 +30,8 @@ partial class Revision {
         }
     }
 
-    internal PrimaryCommitArtifacts RunPrimaryCommitForBenchmark(DurableObject graphRoot) {
-        var result = RunPrimaryCommit(graphRoot);
+    internal PrimaryCommitArtifacts RunPrimaryCommitForBenchmark(DurableObject graphRoot, IRbfFile targetFile) {
+        var result = RunPrimaryCommit(graphRoot, targetFile);
         if (result.IsFailure) { throw new InvalidOperationException($"Primary benchmark setup failed: {result.Error}"); }
         return result.Value;
     }
@@ -41,17 +42,28 @@ partial class Revision {
         return result.Value!;
     }
 
-    internal CommitId PersistCompactionFollowupForBenchmark(DurableObject graphRoot, IReadOnlyList<DurableObject> liveObjects) {
-        var result = PersistCompactionFollowup(graphRoot, liveObjects);
+    internal CommitId PersistCompactionFollowupForBenchmark(
+        DurableObject graphRoot,
+        IReadOnlyList<DurableObject> liveObjects,
+        IRbfFile targetFile
+    ) {
+        var result = PersistCompactionFollowup(graphRoot, liveObjects, targetFile);
         if (result.IsFailure) { throw new InvalidOperationException($"Follow-up persist benchmark failed: {result.Error}"); }
         return result.Value;
     }
 
     internal (List<PendingSave> PendingSaves, CommitId CommitId) PersistPrimaryCommitForBenchmark(
         DurableObject graphRoot,
-        IReadOnlyList<DurableObject> liveObjects
+        IReadOnlyList<DurableObject> liveObjects,
+        IRbfFile targetFile
     ) {
-        var result = PersistCurrentSnapshot(graphRoot, liveObjects, removeUnreachableObjectMapKeys: true, FrameSource.PrimaryCommit);
+        var result = PersistCurrentSnapshot(
+            graphRoot,
+            liveObjects,
+            removeUnreachableObjectMapKeys: true,
+            FrameSource.PrimaryCommit,
+            targetFile
+        );
         if (result.IsFailure) { throw new InvalidOperationException($"Primary persist benchmark failed: {result.Error}"); }
         var (pendingSaves, commitId) = result.Value;
         return (pendingSaves, commitId);

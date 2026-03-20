@@ -8,6 +8,23 @@ public sealed partial class Repository {
         return new FileStream(lockPath, mode, FileAccess.ReadWrite, FileShare.None);
     }
 
+    private static string MakeRecentRelativeSegmentPath(uint segmentNumber) {
+        return Path.Combine(RecentDirName, MakeSegmentFileName(segmentNumber));
+    }
+
+    private static string MakeArchiveRelativeSegmentPath(uint segmentNumber) {
+        ArgumentOutOfRangeException.ThrowIfZero(segmentNumber);
+
+        var bucketStart = ((segmentNumber - 1) / ArchivedSegmentBucketSize) * (uint)ArchivedSegmentBucketSize + 1;
+        var bucketEnd = bucketStart + (uint)ArchivedSegmentBucketSize - 1;
+        var bucketDir = $"{bucketStart:X8}-{bucketEnd:X8}";
+        return Path.Combine(ArchiveDirName, bucketDir, MakeSegmentFileName(segmentNumber));
+    }
+
+    private static string MakeSegmentFileName(uint segmentNumber) {
+        return $"{segmentNumber:X8}.sj.rbf";
+    }
+
     private bool HasCommittedBranchPointingIntoActiveSegment() {
         return _maxCommittedSegmentNumber >= _segments.ActiveSegmentNumber;
     }
@@ -16,71 +33,73 @@ public sealed partial class Repository {
         internal readonly record struct PendingRotation(uint SegmentNumber, string RelativePath, IRbfFile File);
 
         private readonly string _repoDir;
-        private readonly Dictionary<string, IRbfFile> _openFiles;
-        private readonly List<(uint SegmentNumber, string RelativePath)> _index;
-        private string _activeRelativePath;
+        private uint _recentBaseSegmentNumber;
+        private int _recentCount;
+        private IRbfFile _activeFile;
 
         private SegmentCatalog(
             string repoDir,
-            Dictionary<string, IRbfFile> openFiles,
-            List<(uint SegmentNumber, string RelativePath)> index,
-            string activeRelativePath
+            uint recentBaseSegmentNumber,
+            int recentCount,
+            IRbfFile activeFile
         ) {
             _repoDir = repoDir;
-            _openFiles = openFiles;
-            _index = index;
-            _activeRelativePath = activeRelativePath;
+            _recentBaseSegmentNumber = recentBaseSegmentNumber;
+            _recentCount = recentCount;
+            _activeFile = activeFile;
         }
 
-        public IRbfFile ActiveFile => _openFiles[_activeRelativePath];
+        public IRbfFile ActiveFile => _activeFile;
 
-        public uint ActiveSegmentNumber => _index[^1].SegmentNumber;
+        public uint ActiveSegmentNumber => _recentBaseSegmentNumber + (uint)_recentCount - 1;
 
         public static SegmentCatalog CreateNew(string repoDir) {
             var recentDir = Path.Combine(repoDir, RecentDirName);
             Directory.CreateDirectory(recentDir);
 
             const uint firstSegment = 1;
-            var relPath = MakeRelativeSegmentPath(firstSegment);
+            var relPath = MakeRecentRelativeSegmentPath(firstSegment);
             var fullPath = Path.Combine(repoDir, relPath);
             var activeFile = RbfFile.CreateNew(fullPath);
-            var openFiles = new Dictionary<string, IRbfFile>(StringComparer.Ordinal) {
-                [relPath] = activeFile,
-            };
-            var index = new List<(uint, string)> { (firstSegment, relPath) };
-            return new SegmentCatalog(repoDir, openFiles, index, relPath);
+            return new SegmentCatalog(repoDir, firstSegment, 1, activeFile);
         }
 
         public static SegmentCatalog OpenFromScan(
             string repoDir,
-            IReadOnlyList<ExistingSegment> scannedSegments
+            IReadOnlyList<ExistingSegment> recentSegments
         ) {
-            var openFiles = new Dictionary<string, IRbfFile>(StringComparer.Ordinal);
-            var index = new List<(uint, string)>(scannedSegments.Count);
-            foreach (var segment in scannedSegments) {
-                index.Add((segment.SegmentNumber, segment.RelativePath));
-            }
-
-            var activeRelPath = index[^1].Item2;
-            openFiles[activeRelPath] = RbfFile.OpenExisting(scannedSegments[^1].AbsolutePath);
-            return new SegmentCatalog(repoDir, openFiles, index, activeRelPath);
+            var activeFile = RbfFile.OpenExisting(recentSegments[^1].AbsolutePath);
+            return new SegmentCatalog(
+                repoDir,
+                recentSegments[0].SegmentNumber,
+                recentSegments.Count,
+                activeFile
+            );
         }
 
-        public IRbfFile GetFileForSegment(uint segmentNumber) {
-            var idx = (int)(segmentNumber - 1); // 1-based → 0-based
-            if (idx < 0 || idx >= _index.Count) {
+        public IRbfFile OpenHistoricalFile(uint segmentNumber) {
+            if (segmentNumber == 0 || segmentNumber > ActiveSegmentNumber) {
                 throw new InvalidOperationException(
-                    $"No segment found for segment number {segmentNumber}. Known segments: 1–{_index.Count}."
+                    $"No segment found for segment number {segmentNumber}. Known segments: 1–{ActiveSegmentNumber}."
                 );
             }
 
-            var relativePath = _index[idx].RelativePath;
-            if (_openFiles.TryGetValue(relativePath, out var existing)) { return existing; }
+            if (segmentNumber == ActiveSegmentNumber) {
+                throw new InvalidOperationException(
+                    $"Segment {segmentNumber} is the active segment and should use the active file instance."
+                );
+            }
+
+            string relativePath;
+            if (segmentNumber < _recentBaseSegmentNumber) {
+                relativePath = MakeArchiveRelativeSegmentPath(segmentNumber);
+            }
+            else {
+                relativePath = MakeRecentRelativeSegmentPath(segmentNumber);
+            }
 
             var fullPath = Path.Combine(_repoDir, relativePath);
-            var file = RbfFile.OpenExisting(fullPath);
-            _openFiles[relativePath] = file;
-            return file;
+            return RbfFile.OpenReadOnlyExisting(fullPath);
         }
 
         public bool ShouldRotate(long threshold) {
@@ -88,33 +107,41 @@ public sealed partial class Repository {
         }
 
         public PendingRotation OpenPendingRotation() {
-            var nextSegNum = (uint)(_index.Count + 1);
-            var relativePath = MakeRelativeSegmentPath(nextSegNum);
+            var nextSegNum = ActiveSegmentNumber + 1;
+            var relativePath = MakeRecentRelativeSegmentPath(nextSegNum);
             var fullPath = Path.Combine(_repoDir, relativePath);
             var file = RbfFile.CreateNew(fullPath);
-            _openFiles[relativePath] = file;
             return new PendingRotation(nextSegNum, relativePath, file);
         }
 
         public void CommitRotation(PendingRotation rotation) {
-            _activeRelativePath = rotation.RelativePath;
-            _index.Add((rotation.SegmentNumber, rotation.RelativePath));
+            _activeFile.Dispose();
+            _activeFile = rotation.File;
+            _recentCount++;
+        }
+
+        public void ArchiveExcessRecentSegments() {
+            while (_recentCount > RecentSegmentWindowTargetCount) {
+                var segmentNumber = _recentBaseSegmentNumber;
+                var sourceRelativePath = MakeRecentRelativeSegmentPath(segmentNumber);
+                var targetRelativePath = MakeArchiveRelativeSegmentPath(segmentNumber);
+                var sourceFullPath = Path.Combine(_repoDir, sourceRelativePath);
+                var targetFullPath = Path.Combine(_repoDir, targetRelativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(targetFullPath)!);
+                File.Move(sourceFullPath, targetFullPath);
+
+                _recentCount--;
+                _recentBaseSegmentNumber++;
+            }
         }
 
         public void RollbackRotation(PendingRotation rotation) {
-            _openFiles.Remove(rotation.RelativePath);
             rotation.File.Dispose();
             TryDeleteSegmentFile(_repoDir, rotation.RelativePath);
         }
 
         public void Dispose() {
-            foreach (var file in _openFiles.Values) {
-                file.Dispose();
-            }
-        }
-
-        private static string MakeRelativeSegmentPath(uint segmentNumber) {
-            return Path.Combine(RecentDirName, $"{segmentNumber:X8}.sj.rbf");
+            _activeFile.Dispose();
         }
 
         private static void TryDeleteSegmentFile(string repoDir, string relativePath) {

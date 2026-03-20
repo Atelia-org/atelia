@@ -46,6 +46,40 @@ public partial class RevisionTests : IDisposable {
         return AssertCommitSucceeded(result, label).HeadCommitId;
     }
 
+    private static Revision CreateRevision(uint segmentNumber = 1) {
+        return new Revision(segmentNumber);
+    }
+
+    private static AteliaResult<CommitOutcome> CommitToFile(
+        Revision revision,
+        DurableObject graphRoot,
+        IRbfFile file,
+        uint segmentNumber = 1
+    ) {
+        var result = revision.Commit(graphRoot, file);
+        if (result.IsSuccess) { revision.AcceptPersistedSegment(segmentNumber); }
+        return result;
+    }
+
+    private static AteliaResult<CommitOutcome> SaveAsToFile(
+        Revision revision,
+        DurableObject graphRoot,
+        IRbfFile file,
+        uint segmentNumber = 1
+    ) {
+        var result = revision.SaveAs(graphRoot, file);
+        if (result.IsSuccess) { revision.AcceptPersistedSegment(segmentNumber); }
+        return result;
+    }
+
+    private static AteliaResult<Revision> OpenRevision(
+        CommitId commitId,
+        IRbfFile file,
+        uint segmentNumber = 1
+    ) {
+        return Revision.Open(commitId, file, segmentNumber);
+    }
+
     public void Dispose() {
         foreach (var path in _tempFiles) {
             try { if (File.Exists(path)) { File.Delete(path); } } catch { }
@@ -57,7 +91,7 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
 
         Assert.True(rev.HeadId.IsNull); // 未 Commit 前 Id 为 null
         Assert.True(rev.HeadParentId.IsNull);
@@ -68,12 +102,12 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var dict = rev.CreateDict<int, double>();
         dict.Upsert(7, 7.7);
-        var outcome = AssertCommitSucceeded(rev.Commit(dict));
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
 
-        var opened = Revision.Open(outcome.HeadCommitId, file);
+        var opened = OpenRevision(outcome.HeadCommitId, file);
         Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
         var loadedRev = opened.Value!;
 
@@ -90,12 +124,12 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev1 = new Revision(file);
+        var rev1 = CreateRevision();
         var ownerDict = rev1.CreateDict<int, DurableDict<int, double>>();
         var childSameRevision = rev1.CreateDict<int, double>();
         ownerDict.Upsert(1, childSameRevision); // same revision should pass
 
-        var rev2 = new Revision(file);
+        var rev2 = CreateRevision();
         var childForeignRevision = rev2.CreateDict<int, double>();
 
         Assert.Throws<InvalidOperationException>(() => ownerDict.Upsert(2, childForeignRevision));
@@ -106,12 +140,12 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev1 = new Revision(file);
+        var rev1 = CreateRevision();
         var mixed = rev1.CreateDict<string>();
         var childSameRevision = rev1.CreateDict<int, double>();
         mixed.Upsert("ok", childSameRevision); // same revision should pass
 
-        var rev2 = new Revision(file);
+        var rev2 = CreateRevision();
         var childForeignRevision = rev2.CreateDict<int, double>();
 
         Assert.Throws<InvalidOperationException>(() => mixed.Upsert("bad", childForeignRevision));
@@ -122,25 +156,25 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, double>>();
         var child = rev.CreateDict<int, double>();
         child.Upsert(7, 7.7);
         root.Upsert(1, child);
 
-        var outcome1 = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        var outcome1 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.NotEqual(DurableState.Detached, child.State);
 
         root.Remove(1);
-        var outcome2 = AssertCommitSucceeded(rev.Commit(root), "Commit2");
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
 
         Assert.Equal(DurableState.Detached, child.State);
         Assert.Throws<InvalidOperationException>(() => root.Upsert(2, child));
-        var detachedCommit = rev.Commit(child);
+        var detachedCommit = CommitToFile(rev, child, file);
         Assert.True(detachedCommit.IsFailure);
         Assert.IsType<SjStateError>(detachedCommit.Error);
 
-        var reopened = Revision.Open(outcome2.HeadCommitId, file);
+        var reopened = OpenRevision(outcome2.HeadCommitId, file);
         Assert.True(reopened.IsSuccess, $"Open failed: {reopened.Error}");
         var reopenedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, double>>>(reopened.Value!.GraphRoot);
         Assert.False(reopenedRoot.ContainsKey(1));
@@ -151,7 +185,7 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, double>>();
         var child = rev.CreateDict<int, double>();
         child.Upsert(7, 7.7);
@@ -172,7 +206,7 @@ public partial class RevisionTests : IDisposable {
         var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: rootMeta);
         Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
 
-        var open = Revision.Open(new CommitId(mapSave.Value), file);
+        var open = OpenRevision(new CommitId(mapSave.Value), file);
         Assert.True(open.IsFailure);
         Assert.IsType<SjCorruptionError>(open.Error);
     }
@@ -182,7 +216,7 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, int>();
         root.Upsert(1, 42);
 
@@ -199,7 +233,7 @@ public partial class RevisionTests : IDisposable {
         var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: badMeta);
         Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
 
-        var open = Revision.Open(new CommitId(mapSave.Value), file);
+        var open = OpenRevision(new CommitId(mapSave.Value), file);
         Assert.True(open.IsFailure);
         Assert.IsType<SjCorruptionError>(open.Error);
     }
@@ -210,20 +244,20 @@ public partial class RevisionTests : IDisposable {
         using var file = RbfFile.CreateNew(path);
 
         // Commit 1 (root)
-        var rev1 = new Revision(file);
+        var rev1 = CreateRevision();
         var root1 = rev1.CreateDict<int, int>();
-        var outcome1 = AssertCommitSucceeded(rev1.Commit(root1), "Commit1");
+        var outcome1 = AssertCommitSucceeded(CommitToFile(rev1, root1, file), "Commit1");
         CommitId id1 = outcome1.HeadCommitId;
 
         // Open commit 1 → ParentId should be null (root)
-        var open1 = Revision.Open(id1, file);
+        var open1 = OpenRevision(id1, file);
         Assert.True(open1.IsSuccess);
         Assert.True(open1.Value!.HeadParentId.IsNull, "root commit should have null parent");
 
         // Commit 2
-        var rev2 = new Revision(file);
+        var rev2 = CreateRevision();
         var root2 = rev2.CreateDict<int, int>();
-        var outcome2 = AssertCommitSucceeded(rev2.Commit(root2), "Commit2");
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev2, root2, file), "Commit2");
         CommitId id2 = outcome2.HeadCommitId;
 
         // id1 and id2 are distinct, non-null
@@ -232,7 +266,7 @@ public partial class RevisionTests : IDisposable {
         Assert.NotEqual(id1, id2);
 
         // Open commit 2 and verify it loads successfully
-        var open2 = Revision.Open(id2, file);
+        var open2 = OpenRevision(id2, file);
         Assert.True(open2.IsSuccess, $"Open commit2 failed: {open2.Error}");
     }
 
@@ -249,7 +283,7 @@ public partial class RevisionTests : IDisposable {
     public void Load_NullLocalId_ReturnsError() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
-        var rev = new Revision(file);
+        var rev = CreateRevision();
 
         var result = rev.Load(LocalId.Null);
         Assert.True(result.IsFailure);
@@ -259,7 +293,7 @@ public partial class RevisionTests : IDisposable {
     public void Load_NonexistentLocalId_ReturnsError() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
-        var rev = new Revision(file);
+        var rev = CreateRevision();
 
         var result = rev.Load(new LocalId(999));
         Assert.True(result.IsFailure);
@@ -270,33 +304,33 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, int>();
         Assert.True(rev.HeadId.IsNull);
         Assert.True(rev.HeadParentId.IsNull);
 
         // Commit 1 (root)
-        var outcome1 = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        var outcome1 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         CommitId id1 = outcome1.HeadCommitId;
         Assert.False(id1.IsNull);
         Assert.Equal(id1, rev.HeadId);
         Assert.True(rev.HeadParentId.IsNull, "root commit's parent should be null");
 
         // Commit 2 on the same Revision instance
-        var outcome2 = AssertCommitSucceeded(rev.Commit(root), "Commit2");
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
         CommitId id2 = outcome2.HeadCommitId;
         Assert.NotEqual(id1, id2);
         Assert.Equal(id2, rev.HeadId);
         Assert.Equal(id1, rev.HeadParentId); // HeadParent should now point to previous Head
 
         // Commit 3
-        var outcome3 = AssertCommitSucceeded(rev.Commit(root), "Commit3");
+        var outcome3 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit3");
         CommitId id3 = outcome3.HeadCommitId;
         Assert.Equal(id3, rev.HeadId);
         Assert.Equal(id2, rev.HeadParentId); // HeadParent tracks the chain
 
         // Verify persistence: Open commit 3, its parent should be id2
-        var open3 = Revision.Open(id3, file);
+        var open3 = OpenRevision(id3, file);
         Assert.True(open3.IsSuccess, $"Open commit3 failed: {open3.Error}");
         Assert.Equal(id2, open3.Value!.HeadParentId);
     }
@@ -306,7 +340,7 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int>();
         var child1 = rev.CreateDict<int, int>();
         var child2 = rev.CreateDict<int, int>();
@@ -325,7 +359,7 @@ public partial class RevisionTests : IDisposable {
         root.Upsert(2, child1);
         Assert.Equal(2, GetMixedDictDurableRefCount(root));
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.Equal(2, GetMixedDictDurableRefCount(root));
 
         root.Remove(1);
@@ -350,7 +384,7 @@ public partial class RevisionTests : IDisposable {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int>();
         var child1 = rev.CreateDict<int, int>();
         var child2 = rev.CreateDict<int, int>();
@@ -358,10 +392,10 @@ public partial class RevisionTests : IDisposable {
         root.Upsert(2, 42);
         root.Upsert(3, child2);
 
-        var outcome = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.Equal(2, GetMixedDictDurableRefCount(root));
 
-        var open = Revision.Open(outcome.HeadCommitId, file);
+        var open = OpenRevision(outcome.HeadCommitId, file);
         Assert.True(open.IsSuccess, $"Open failed: {open.Error}");
 
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<int>>(open.Value!.GraphRoot);

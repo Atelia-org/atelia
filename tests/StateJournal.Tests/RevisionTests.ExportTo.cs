@@ -13,14 +13,14 @@ partial class RevisionTests {
         using var srcFile = RbfFile.CreateNew(srcPath);
         using var dstFile = RbfFile.CreateNew(dstPath);
 
-        var rev = new Revision(srcFile);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, int>();
-        _ = AssertCommitSucceeded(rev.Commit(root));
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, srcFile));
 
         var exportResult = rev.ExportTo(root, dstFile);
         Assert.True(exportResult.IsSuccess, $"ExportTo failed: {exportResult.Error}");
 
-        var opened = Revision.Open(exportResult.Value, dstFile);
+        var opened = OpenRevision(exportResult.Value, dstFile);
         Assert.True(opened.IsSuccess, $"Open exported failed: {opened.Error}");
         Assert.Equal(exportResult.Value, opened.Value!.HeadId);
         Assert.Equal(FrameSource.CrossFileSnapshot, GetLatestObjectMapFrameSource(dstFile));
@@ -33,16 +33,16 @@ partial class RevisionTests {
         using var srcFile = RbfFile.CreateNew(srcPath);
         using var dstFile = RbfFile.CreateNew(dstPath);
 
-        var rev = new Revision(srcFile);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, double>();
         root.Upsert(1, 3.14);
         root.Upsert(2, 2.718);
-        _ = AssertCommitSucceeded(rev.Commit(root));
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, srcFile));
 
         var exportResult = rev.ExportTo(root, dstFile);
         Assert.True(exportResult.IsSuccess, $"ExportTo failed: {exportResult.Error}");
 
-        var opened = Revision.Open(exportResult.Value, dstFile);
+        var opened = OpenRevision(exportResult.Value, dstFile);
         Assert.True(opened.IsSuccess, $"Open exported failed: {opened.Error}");
         var loadResult = opened.Value!.Load(root.LocalId);
         Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
@@ -61,10 +61,10 @@ partial class RevisionTests {
         using var srcFile = RbfFile.CreateNew(srcPath);
         using var dstFile = RbfFile.CreateNew(dstPath);
 
-        var rev = new Revision(srcFile);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, int>();
         root.Upsert(42, 100);
-        var outcome = AssertCommitSucceeded(rev.Commit(root));
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, srcFile));
         CommitId headBefore = rev.HeadId;
 
         var exportResult = rev.ExportTo(root, dstFile);
@@ -76,7 +76,7 @@ partial class RevisionTests {
         Assert.Equal(root.LocalId, rev.GraphRoot!.LocalId);
         // 原文件仍可正常 Commit
         root.Upsert(43, 200);
-        var outcome2 = AssertCommitSucceeded(rev.Commit(root), "CommitAfterExport");
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, srcFile), "CommitAfterExport");
         Assert.NotEqual(headBefore, rev.HeadId);
     }
 
@@ -87,7 +87,7 @@ partial class RevisionTests {
         using var srcFile = RbfFile.CreateNew(srcPath);
         using var dstFile = RbfFile.CreateNew(dstPath);
 
-        var rev = new Revision(srcFile);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
         var child1 = rev.CreateDict<int, int>();
         var child2 = rev.CreateDict<int, int>();
@@ -95,12 +95,12 @@ partial class RevisionTests {
         child2.Upsert(2, 20);
         root.Upsert(1, child1);
         root.Upsert(2, child2);
-        _ = AssertCommitSucceeded(rev.Commit(root));
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, srcFile));
 
         var exportResult = rev.ExportTo(root, dstFile);
         Assert.True(exportResult.IsSuccess, $"ExportTo failed: {exportResult.Error}");
 
-        var opened = Revision.Open(exportResult.Value, dstFile);
+        var opened = OpenRevision(exportResult.Value, dstFile);
         Assert.True(opened.IsSuccess, $"Open exported failed: {opened.Error}");
         var loadedRev = opened.Value!;
 
@@ -124,10 +124,10 @@ partial class RevisionTests {
         using var srcFile = RbfFile.CreateNew(srcPath);
         using var dstFile = RbfFile.CreateNew(dstPath);
 
-        var rev = new Revision(srcFile);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, int>();
         root.Upsert(1, 100);
-        _ = AssertCommitSucceeded(rev.Commit(root));
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, srcFile));
 
         // 修改但不 Commit
         root.Upsert(1, 999);
@@ -136,7 +136,7 @@ partial class RevisionTests {
         var exportResult = rev.ExportTo(root, dstFile);
         Assert.True(exportResult.IsSuccess, $"ExportTo failed: {exportResult.Error}");
 
-        var opened = Revision.Open(exportResult.Value, dstFile);
+        var opened = OpenRevision(exportResult.Value, dstFile);
         Assert.True(opened.IsSuccess, $"Open exported failed: {opened.Error}");
         var loaded = Assert.IsAssignableFrom<DurableDict<int, int>>(opened.Value!.Load(root.LocalId).Value);
         Assert.Equal(2, loaded.Count);

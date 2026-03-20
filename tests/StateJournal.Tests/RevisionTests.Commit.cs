@@ -12,9 +12,9 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         // Create and commit with a minimal root
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, int>();
-        var outcome = AssertCommitSucceeded(rev.Commit(root));
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
         CommitId commitId = outcome.HeadCommitId;
         Assert.False(commitId.IsNull); // Commit 后 Id 不为 null
@@ -24,7 +24,7 @@ partial class RevisionTests {
         Assert.False(outcome.IsCompacted);
 
         // Open from CommitId
-        var openResult = Revision.Open(commitId, file);
+        var openResult = OpenRevision(commitId, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
         var loaded = openResult.Value!;
@@ -37,7 +37,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
 
         // 通过 Revision 工厂创建对象（自动绑定 Revision + 分配 LocalId）
         var dict = rev.CreateDict<int, double>();
@@ -49,11 +49,11 @@ partial class RevisionTests {
         dict.Upsert(10, 3.14);
         dict.Upsert(20, 2.718);
 
-        var outcome = AssertCommitSucceeded(rev.Commit(dict));
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome.Completion);
 
         // Open via CommitId and verify
-        var openResult = Revision.Open(outcome.HeadCommitId, file);
+        var openResult = OpenRevision(outcome.HeadCommitId, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
         // Load the object back and verify contents
@@ -75,16 +75,16 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var dict = rev.CreateDict<int, double>();
         dict.Upsert(1, 1.0);
 
-        var outcome1 = AssertCommitSucceeded(rev.Commit(dict), "Commit1");
+        var outcome1 = AssertCommitSucceeded(CommitToFile(rev, dict, file), "Commit1");
 
         dict.Upsert(1, 2.0);
-        var outcome2 = AssertCommitSucceeded(rev.Commit(dict), "Commit2");
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, dict, file), "Commit2");
 
-        var open = Revision.Open(outcome2.HeadCommitId, file);
+        var open = OpenRevision(outcome2.HeadCommitId, file);
         Assert.True(open.IsSuccess, $"Open failed: {open.Error}");
 
         var loaded = open.Value!;
@@ -101,7 +101,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, double>>();
         var child = rev.CreateDict<int, double>();
         root.Upsert(1, child);
@@ -113,7 +113,7 @@ partial class RevisionTests {
         object childHandle = toHandle.Invoke(child.LocalId, null)!;
         poolObj.GetType().GetMethod("Free", BindingFlags.Public | BindingFlags.Instance)!.Invoke(poolObj, [childHandle]);
 
-        var result = rev.Commit(root);
+        var result = CommitToFile(rev, root, file);
         Assert.True(result.IsFailure);
         Assert.IsType<SjCorruptionError>(result.Error);
     }
@@ -122,9 +122,9 @@ partial class RevisionTests {
     public void Commit_WithNullGraphRoot_ThrowsArgumentNullException() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
-        var rev = new Revision(file);
+        var rev = CreateRevision();
 
-        Assert.Throws<ArgumentNullException>("graphRoot", () => rev.Commit(null!));
+        Assert.Throws<ArgumentNullException>("graphRoot", () => CommitToFile(rev, null!, file));
     }
 
     [Fact]
@@ -132,19 +132,19 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, double>>();
         var child = rev.CreateDict<int, double>();
         root.Upsert(1, child);
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.Equal(DurableState.Clean, child.State);
 
         // child 变为不可达；若 Commit 失败前提前 Sweep，会被错误标记 Detached。
         root.Remove(1);
         file.Dispose(); // 人工制造持久化失败
 
-        var failed = rev.Commit(root);
+        var failed = CommitToFile(rev, root, file);
         Assert.True(failed.IsFailure);
         Assert.Equal(DurableState.Clean, child.State);
     }
@@ -154,17 +154,17 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root1 = rev.CreateDict<int, int>();
         root1.Upsert(1, 1);
-        _ = AssertCommitSucceeded(rev.Commit(root1), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root1, file), "Commit1");
         Assert.Equal(root1.LocalId, rev.GraphRoot!.LocalId);
 
         var root2 = rev.CreateDict<int, int>();
         root2.Upsert(2, 2);
         file.Dispose(); // 人工制造持久化失败
 
-        var failed = rev.Commit(root2);
+        var failed = CommitToFile(rev, root2, file);
         Assert.True(failed.IsFailure);
         Assert.Equal(root1.LocalId, rev.GraphRoot!.LocalId);
     }
@@ -174,12 +174,12 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, int>();
         root.Upsert(1, 1);
         Assert.Equal(DurableState.TransientDirty, root.State);
 
-        var outcome = AssertCommitSucceeded(rev.Commit(root));
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
         Assert.Equal(DurableState.Clean, root.State);
     }
 
@@ -191,7 +191,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
 
         // 创建 100 个子对象挂在 root 下
@@ -203,7 +203,7 @@ partial class RevisionTests {
             root.Upsert(i, children[i]);
         }
 
-        var outcome1 = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        var outcome1 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome1.Completion);
 
         // 删除前 70 个子对象——产生大量空洞
@@ -211,7 +211,7 @@ partial class RevisionTests {
             root.Remove(i);
         }
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit2");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
 
         // 验证剩余 30 个子对象仍然可达、数据完整
         for (int i = 70; i < totalChildren; i++) {
@@ -227,7 +227,7 @@ partial class RevisionTests {
             var aliveChild = children[70];
             aliveChild.Upsert(9999 + round, round);
 
-            _ = AssertCommitSucceeded(rev.Commit(root), $"Commit round {round}");
+            _ = AssertCommitSucceeded(CommitToFile(rev, root, file), $"Commit round {round}");
         }
 
         // 最终验证：数据完整且 GraphRoot 可达
@@ -245,7 +245,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
 
         const int totalChildren = 100;
@@ -255,7 +255,7 @@ partial class RevisionTests {
             root.Upsert(i, child);
         }
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         // 删除 80 个子对象，保留最后 20 个
         for (int i = 0; i < 80; i++) {
@@ -265,11 +265,11 @@ partial class RevisionTests {
         // 多次 commit 让 compaction 逐步执行
         CommitId lastCommitId = default;
         for (int round = 0; round < 10; round++) {
-            lastCommitId = AssertHeadCommitId(rev.Commit(root), $"Commit round {round}");
+            lastCommitId = AssertHeadCommitId(CommitToFile(rev, root, file), $"Commit round {round}");
         }
 
         // Open 最终 commit，验证数据完整性
-        var openResult = Revision.Open(lastCommitId, file);
+        var openResult = OpenRevision(lastCommitId, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
         var loaded = openResult.Value!;
@@ -291,7 +291,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int>();
 
         // 创建 80 个垫脚对象（将被删除产生碎片）+ 20 个保留对象
@@ -309,7 +309,7 @@ partial class RevisionTests {
             root.Upsert(1000 + i, survivors[i]);
         }
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         // 删除所有垫脚对象
         for (int i = 0; i < 80; i++) {
@@ -318,7 +318,7 @@ partial class RevisionTests {
 
         // 多次 commit 触发 compaction
         for (int round = 0; round < 10; round++) {
-            _ = AssertCommitSucceeded(rev.Commit(root), $"Commit round {round}");
+            _ = AssertCommitSucceeded(CommitToFile(rev, root, file), $"Commit round {round}");
         }
 
         // 验证 MixedDict 中引用仍然正确
@@ -338,7 +338,7 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
         using var validationScope = Revision.OverrideCompactionValidationModeScope(Revision.CompactionValidationMode.HotPath);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int>();
 
         for (int i = 0; i < 80; i++) {
@@ -353,7 +353,7 @@ partial class RevisionTests {
             root.Upsert(10_000 + i, child);
         }
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         for (int i = 0; i < 80; i++) {
             root.Remove(i);
@@ -361,12 +361,12 @@ partial class RevisionTests {
 
         CommitOutcome outcome = default;
         for (int round = 0; round < 10; round++) {
-            outcome = AssertCommitSucceeded(rev.Commit(root), $"Commit round {round}");
+            outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), $"Commit round {round}");
         }
 
         Assert.True(outcome.IsCompacted || outcome.IsPrimaryOnly);
 
-        var open = Revision.Open(outcome.HeadCommitId, file);
+        var open = OpenRevision(outcome.HeadCommitId, file);
         Assert.True(open.IsSuccess, $"Open failed: {open.Error}");
 
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<int>>(open.Value!.GraphRoot);
@@ -385,7 +385,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
 
         // 创建 30 个子对象
@@ -393,7 +393,7 @@ partial class RevisionTests {
             var child = rev.CreateDict<int, int>();
             root.Upsert(i, child);
         }
-        var outcome1 = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        var outcome1 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome1.Completion);
 
         // 删除 20 个——碎片率高但数量少
@@ -401,7 +401,7 @@ partial class RevisionTests {
             root.Remove(i);
         }
 
-        var outcome2 = AssertCommitSucceeded(rev.Commit(root), "Commit2");
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome2.Completion);
 
         // 验证数据完整（无论是否压缩都应正确）
@@ -415,7 +415,7 @@ partial class RevisionTests {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
-        var rev = new Revision(file);
+        var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
 
         const int totalChildren = 140;
@@ -425,14 +425,14 @@ partial class RevisionTests {
             root.Upsert(i, child);
         }
 
-        _ = AssertCommitSucceeded(rev.Commit(root), "Commit1");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         for (int i = 0; i < 70; i++) {
             root.Remove(i);
         }
 
         int before = CountObjectMapFrames(file);
-        var outcome2 = AssertCommitSucceeded(rev.Commit(root), "Commit2");
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
         Assert.Equal(CommitCompletion.Compacted, outcome2.Completion);
         int after = CountObjectMapFrames(file);
 
