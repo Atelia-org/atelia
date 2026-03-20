@@ -4,11 +4,13 @@ using Atelia.StateJournal.Serialization;
 namespace Atelia.StateJournal.Internal;
 
 // 仅占位，尚未实现
-internal class MixedListImpl : DurableList {
-    public override DurableObjectKind Kind => DurableObjectKind.MixedList;
+internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
+    where T : notnull
+    where VHelper : unmanaged, ITypeHelper<T> {
+    public override DurableObjectKind Kind => DurableObjectKind.TypedDeque;
     public override bool HasChanges => false;
 
-    internal MixedListImpl() {
+    internal TypedDequeImpl() {
     }
 
     internal override void DiscardChanges() => throw new NotImplementedException();

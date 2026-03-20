@@ -102,18 +102,18 @@ internal static class MixedDictFactory<TKey>
 }
 
 /// <summary>
-/// <see cref="DurableList{T}"/> (TypedList) 的工厂缓存。
+/// <see cref="DurableDeque{T}"/> (TypedDeque) 的工厂缓存。
 /// 通过 <see cref="HelperRegistry"/> 将元素类型映射到 <see cref="ITypeHelper{T}"/>
-/// 并构建 <see cref="TypedListImpl{T, VHelper}"/> 的编译委托。
+/// 并构建 <see cref="TypedDequeImpl{T, VHelper}"/> 的编译委托。
 /// </summary>
-internal static class TypedListFactory<T>
+internal static class TypedDequeFactory<T>
     where T : notnull {
 
-    internal static readonly Func<DurableList<T>>? Create;
+    internal static readonly Func<DurableDeque<T>>? Create;
     internal static readonly byte[]? TypeCode;
     internal static readonly string? ErrorReason;
 
-    static TypedListFactory() {
+    static TypedDequeFactory() {
         var vEntry = HelperRegistry.ResolveValueHelper(typeof(T));
         if (!vEntry.IsValid) {
             ErrorReason = $"Unsupported value type: {HelperRegistry.FormatTypeName(typeof(T))}.";
@@ -122,28 +122,28 @@ internal static class TypedListFactory<T>
 
         Type implType;
         if (typeof(DurableObject).IsAssignableFrom(typeof(T))) {
-            // DurableObject 值 → DurableObjectListImpl（占位，未来实现 LocalId 存储）
-            implType = typeof(DurObjListImpl<>).MakeGenericType(typeof(T));
+            // DurableObject 值 → DurableObjectDequeImpl（占位，未来实现 LocalId 存储）
+            implType = typeof(DurObjDequeImpl<>).MakeGenericType(typeof(T));
         }
         else {
-            // 基元/值类型 → TypedListImpl
-            implType = typeof(TypedListImpl<,>).MakeGenericType(typeof(T), vEntry.HelperType!);
+            // 基元/值类型 → TypedDequeImpl
+            implType = typeof(TypedDequeImpl<,>).MakeGenericType(typeof(T), vEntry.HelperType!);
         }
 
         var ctor = implType.GetConstructor(
             BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes
         )!;
 
-        Create = Expression.Lambda<Func<DurableList<T>>>(
+        Create = Expression.Lambda<Func<DurableDeque<T>>>(
             Expression.New(ctor)
         ).Compile();
 
-        // TypeCode: T, MakeTypedList
+        // TypeCode: T, MakeTypedDeque
         var tc = new byte[vEntry.TypeCode!.Length + 1];
         vEntry.TypeCode.CopyTo(tc, 0);
-        tc[^1] = (byte)TypeOpCode.MakeTypedList;
+        tc[^1] = (byte)TypeOpCode.MakeTypedDeque;
         TypeCode = tc;
-        DurableList<T>.s_typeCode = tc;
+        DurableDeque<T>.s_typeCode = tc;
     }
 }
 
@@ -166,7 +166,7 @@ internal static class DurableFactory {
     }
 
     private static Func<DurableObject>? BuildFactory(Type type) {
-        if (type == typeof(DurableList)) { return static () => new MixedListImpl(); }
+        if (type == typeof(DurableDeque)) { return static () => new MixedDequeImpl(); }
         if (!type.IsGenericType) { return null; }
 
         var def = type.GetGenericTypeDefinition();
@@ -175,7 +175,7 @@ internal static class DurableFactory {
         Type? factoryType =
             def == typeof(DurableDict<,>) ? typeof(TypedDictFactory<,>).MakeGenericType(args) :
             def == typeof(DurableDict<>) ? typeof(MixedDictFactory<>).MakeGenericType(args) :
-            def == typeof(DurableList<>) ? typeof(TypedListFactory<>).MakeGenericType(args) :
+            def == typeof(DurableDeque<>) ? typeof(TypedDequeFactory<>).MakeGenericType(args) :
             null;
 
         if (factoryType == null) { return null; }

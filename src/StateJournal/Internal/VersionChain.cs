@@ -45,8 +45,8 @@ internal readonly struct PendingSave {
 
 internal static class VersionChain {
     private static bool TryInferObjectKind(Type type, out DurableObjectKind kind) {
-        if (type == typeof(DurableList)) {
-            kind = DurableObjectKind.MixedList;
+        if (type == typeof(DurableDeque)) {
+            kind = DurableObjectKind.MixedDeque;
             return true;
         }
 
@@ -64,8 +64,8 @@ internal static class VersionChain {
             kind = DurableObjectKind.MixedDict;
             return true;
         }
-        if (def == typeof(DurableList<>)) {
-            kind = DurableObjectKind.TypedList;
+        if (def == typeof(DurableDeque<>)) {
+            kind = DurableObjectKind.TypedDeque;
             return true;
         }
 

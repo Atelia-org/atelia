@@ -70,7 +70,7 @@ Compaction 的本质是**移动 slot**——把高位占用的 slot 值移到低
 | `ObjectMap` | `Dictionary<uint, ulong>` key | 清空重建，或逐条 Remove+Reinsert |
 | `DurObjDictImpl._core.Current` | `Dictionary<TKey, LocalId>` value | 遍历 + 更新 LocalId |
 | `MixedDictImpl._core.Current` | `Dictionary<TKey, ValueBox>` value | 遍历 + 识别 DurableRef + 更新 ValueBox |
-| `TypedDictImpl` / List 占位实现 | 无子引用 | 无需更新 |
+| `TypedDictImpl` / Deque 占位实现 | 无子引用 | 无需更新 |
 
 ### 2.1 引用重写的代价
 
@@ -176,12 +176,12 @@ internal abstract void AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter)
     where TRewriter : IChildRefRewriter;
 ```
 
-状态：已实现。  
+状态：已实现。
 实现概况：
 
 - `DurObjDictImpl`：遍历 `_core.Current` dictionary values，对每个非空 LocalId 调 `Rewrite`
 - `MixedDictImpl`：遍历 `_core.Current` dictionary values，识别 `BoxLzc.DurableRef` 的 ValueBox，提取 LocalId → Rewrite → 构建新 ValueBox 写回
-- `TypedDictImpl` / List 占位：空实现
+- `TypedDictImpl` / Deque 占位：空实现
 
 ### 4.2.1 MixedDictImpl 的 DurableRef 计数优化
 
@@ -312,7 +312,7 @@ Compact 在 Sweep 之后执行的好处：
 
 3. **与未来 Lazy Loading 的交互**：当前 MVP 全量加载整个对象图。如果未来引入 lazy loading，Compact 的引用重写需要触发 lazy load——是否能接受？
 
-4. **回滚覆盖面继续扩展**：当前 dict 体系路径已有充分测试覆盖；若后续补上 `DurableList` 持久化/变更追踪，需要同步验证 compaction 回滚与 `DiscardChanges()` 语义。
+4. **回滚覆盖面继续扩展**：当前 dict 体系路径已有充分测试覆盖；若后续补上 `DurableDeque` 持久化/变更追踪，需要同步验证 compaction 回滚与 `DiscardChanges()` 语义。
 
 5. **方案 D（Epoch 重映射表）的长期价值**：如果未来对象规模大到全图扫描不可接受，可能需要方案 D。但那是遥远的未来问题。
 

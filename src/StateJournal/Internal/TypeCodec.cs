@@ -25,11 +25,11 @@ internal enum TypeOpCode : byte {
     PushDouble,
 
     PushString,
-    PushMixedList,
+    PushMixedDeque,
 
     MakeMixedDict = 128,
     MakeTypedDict,
-    MakeTypedList,
+    MakeTypedDeque,
 }
 
 internal static class TypeCodec {
@@ -81,8 +81,8 @@ internal static class TypeCodec {
                 case TypeOpCode.PushString:
                     operands.Push(typeof(string));
                     break;
-                case TypeOpCode.PushMixedList:
-                    operands.Push(typeof(DurableList));
+                case TypeOpCode.PushMixedDeque:
+                    operands.Push(typeof(DurableDeque));
                     break;
                 case TypeOpCode.MakeMixedDict:
                     if (operands.Count < 1) { return false; }
@@ -92,9 +92,9 @@ internal static class TypeCodec {
                     if (operands.Count < 2) { return false; }
                     operands.Push(typeof(DurableDict<,>).MakeGenericType(operands.Pop(), operands.Pop())); // 编码时需按泛型参数列表从右向左编码。
                     break;
-                case TypeOpCode.MakeTypedList:
+                case TypeOpCode.MakeTypedDeque:
                     if (operands.Count < 1) { return false; }
-                    operands.Push(typeof(DurableList<>).MakeGenericType(operands.Pop()));
+                    operands.Push(typeof(DurableDeque<>).MakeGenericType(operands.Pop()));
                     break;
                 case TypeOpCode.Invalid:
                 default:

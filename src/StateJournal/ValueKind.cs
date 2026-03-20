@@ -13,10 +13,10 @@ public enum ValueKind : byte {
     MixedDict,
     /// <summary><see cref="DurableDict{TKey,TValue}"/>  homogeneous</summary>
     TypedDict,
-    /// <summary><see cref="DurableList"/> heterogeneous</summary>
-    MixedList,
-    /// <summary><see cref="DurableList{T}"/> homogeneous</summary>
-    TypedList,
+    /// <summary><see cref="DurableDeque"/> heterogeneous</summary>
+    MixedDeque,
+    /// <summary><see cref="DurableDeque{T}"/> homogeneous</summary>
+    TypedDeque,
 
     Boolean,
     Null,

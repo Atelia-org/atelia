@@ -45,8 +45,8 @@ internal readonly partial struct ValueBox {
         BoxLzc.DurableRef => GetDurRefKind() switch {
             DurableObjectKind.MixedDict => ValueKind.MixedDict,
             DurableObjectKind.TypedDict => ValueKind.TypedDict,
-            DurableObjectKind.MixedList => ValueKind.MixedList,
-            DurableObjectKind.TypedList => ValueKind.TypedList,
+            DurableObjectKind.MixedDeque => ValueKind.MixedDeque,
+            DurableObjectKind.TypedDeque => ValueKind.TypedDeque,
             _ => throw new UnreachableException()
         },
         BoxLzc.Boolean => ValueKind.Boolean,

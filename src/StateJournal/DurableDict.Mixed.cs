@@ -55,7 +55,7 @@ where TKey : notnull {
 
     /// <summary>
     /// 获取指定键的值，以请求的类型 <typeparamref name="TValue"/> 返回。
-    /// 支持直接类型（int/double/bool/string）和容器子类型（如 DurableDict&lt;string&gt;、DurableList&lt;int&gt;）。
+    /// 支持直接类型（int/double/bool/string）和容器子类型（如 <see cref="DurableDict{string}"/>、<see cref="DurableDeque{int}"/>）。
     /// </summary>
     /// <exception cref="KeyNotFoundException">Key 不存在。</exception>
     /// <exception cref="InvalidCastException">Key 存在但值类型不匹配。</exception>

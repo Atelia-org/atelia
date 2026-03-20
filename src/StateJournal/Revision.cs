@@ -186,16 +186,16 @@ public partial class Revision {
         return obj;
     }
 
-    /// <summary>创建 TypedList 并绑定到当前 Revision。</summary>
-    public DurableList<T> CreateList<T>() where T : notnull {
-        var obj = Durable.List<T>();
+    /// <summary>创建 TypedDeque 并绑定到当前 Revision。</summary>
+    public DurableDeque<T> CreateDeque<T>() where T : notnull {
+        var obj = Durable.Deque<T>();
         BindNewObject(obj);
         return obj;
     }
 
-    /// <summary>创建 MixedList 并绑定到当前 Revision。</summary>
-    public DurableList CreateList() {
-        var obj = Durable.List();
+    /// <summary>创建 MixedDeque 并绑定到当前 Revision。</summary>
+    public DurableDeque CreateDeque() {
+        var obj = Durable.Deque();
         BindNewObject(obj);
         return obj;
     }

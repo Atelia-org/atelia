@@ -6,7 +6,7 @@ public enum DurableObjectKind : byte {
     Blank = 0,
     MixedDict,
     TypedDict,
-    MixedList,
-    TypedList,
+    MixedDeque,
+    TypedDeque,
     Mask = (1 << ValueBox.DurRefKindBitCount) - 1
 }

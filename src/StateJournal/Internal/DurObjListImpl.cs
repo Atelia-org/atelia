@@ -3,14 +3,14 @@ using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
 
-// 仅占位，尚未实现。对应 DurableObjectDictImpl 的 List 版本，
+// 仅占位，尚未实现。对应 DurableObjectDictImpl 的 Deque 版本，
 // 未来将内部以 LocalId 存储 DurableObject 引用，Get 时通过 Commit.Load 懒加载。
-internal class DurObjListImpl<T> : DurableList<T>
+internal class DurObjDequeImpl<T> : DurableDeque<T>
     where T : DurableObject {
-    public override DurableObjectKind Kind => DurableObjectKind.TypedList;
+    public override DurableObjectKind Kind => DurableObjectKind.TypedDeque;
     public override bool HasChanges => false;
 
-    internal DurObjListImpl() {
+    internal DurObjDequeImpl() {
     }
 
     internal override void DiscardChanges() => throw new NotImplementedException();

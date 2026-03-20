@@ -8,7 +8,7 @@
 
 ## 一句话定位
 
-StateJournal 是一个**可持久化增量序列化对象图引擎**——在内存中维护类型化/异构容器（Dict/List），通过 delta/rebase 版本链将变更持久化到 RBF 文件，支持按版本回放重建任意时刻的对象状态。
+StateJournal 是一个**可持久化增量序列化对象图引擎**——在内存中维护类型化/异构容器（Dict/Deque），通过 delta/rebase 版本链将变更持久化到 RBF 文件，支持按版本回放重建任意时刻的对象状态。
 
 ---
 
@@ -37,11 +37,11 @@ DurableObject                           // 抽象基类：LocalId, DurableState,
   │    │    └─ DurObjDictImpl<…>        // Internal：值为 DurableObject 子类，内部存 LocalId
   │    └─ DurableDict<TKey>             // MixedDict 外观（值异构，内部 ValueBox）
   │         └─ MixedDictImpl<…>         // Internal：自持 DictChangeTracker<TKey, ValueBox>
-  ├─ DurableList<T>                     // TypedList 外观 ← ⚠️ 占位，尚未实现
-  │    ├─ TypedListImpl<…>              // Internal 占位。基元类型同构值。
-  │    └─ DurObjListImpl<…>             // Internal 占位。值为 DurableObject 子类，内部存 LocalId
-  └─ DurableList                        // MixedList 外观 ← ⚠️ 占位，尚未实现
-       └─ MixedListImpl                 // Internal 占位。值异构，内部 ValueBox
+  ├─ DurableDeque<T>                     // TypedDeque 外观 ← ⚠️ 占位，尚未实现
+  │    ├─ TypedDequeImpl<…>              // Internal 占位。基元类型同构值。
+  │    └─ DurObjDequeImpl<…>             // Internal 占位。值为 DurableObject 子类，内部存 LocalId
+  └─ DurableDeque                        // MixedDeque 外观 ← ⚠️ 占位，尚未实现
+       └─ MixedDequeImpl                 // Internal 占位。值异构，内部 ValueBox
 ```
 
 ### DurableState 生命周期
@@ -66,8 +66,8 @@ GC Sweep(不可达) → Detached（由 DetachByGc() 设置，终态）
 var rev = new Revision(boundSegmentNumber: 1);
 rev.CreateDict<string, int>()   // TypedDict
 rev.CreateDict<string>()         // MixedDict（异构值）
-rev.CreateList<int>()            // TypedList（占位）
-rev.CreateList()                 // MixedList（占位）
+rev.CreateDeque<int>()            // TypedDeque（占位）
+rev.CreateDeque()                 // MixedDeque（占位）
 ```
 
 创建时自动分配 `LocalId`、绑定到 `Revision`、标记 `TransientDirty`。
@@ -254,7 +254,7 @@ MixedDict 反序列化的入口。读取 tag byte → 按 CBOR-inspired 规则 d
 
 RBF 帧的 `uint tag` 字段被 StateJournal 结构化为四部分：
 - VersionKind（4bit）：Rebase / Delta
-- ObjectKind（4bit）：MixedDict / TypedDict / MixedList / TypedList
+- ObjectKind（4bit）：MixedDict / TypedDict / MixedDeque / TypedDeque
 - UsageKind（4bit）：Blank / UserPayload / ObjectMap
 - FrameSource（4bit）：PrimaryCommit / Compaction / CrossFileSnapshot
 
@@ -271,7 +271,7 @@ RBF 帧的 `uint tag` 字段被 StateJournal 结构化为四部分：
 ```
 PushInt32, PushString → MakeTypedDict  //= DurableDict<string, int>
 PushString → MakeMixedDict              //= DurableDict<string>
-PushInt32 → MakeTypedList               //= DurableList<int>
+PushInt32 → MakeTypedDeque               //= DurableDeque<int>
 ```
 
 一经持久化不可变更。
@@ -321,7 +321,7 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 | BinaryDiffWriter / Reader | ✅ 已完成 | 含 Tagged + Bare 编码 |
 | TypeCodec / HelperRegistry / DurableFactory | ✅ 已完成 | 泛型类型 → 工厂 |
 | VersionChain（Write/Save/Load） | ✅ 已完成 | 含二阶段 Write + PendingSave |
-| DurableList（Typed/Mixed） | ⬜ 占位 | 所有方法 throw；Diff 方案待定 |
+| DurableDeque（Typed/Mixed） | ⬜ 占位 | 所有方法 throw；Diff 方案待定 |
 | Revision | ✅ 已完成 | Primary Commit（三阶段）+ Compaction Apply/Rollback + Follow-up Persist + CrossFileSnapshot(`ExportTo`/`SaveAs`) |
 | Repository | ✅ 已完成首版 | 单写者 repo + `refs/branches` + `CreateBranch` / `CheckoutBranch` + segment 轮换 + O(1) `CommitAddress(uint, CommitTicket)` 直接索引 |
 
@@ -649,7 +649,7 @@ internal interface IChildRefRewriter {
 `DurableObject.AcceptChildRefVisitor<TVisitor>(ref TVisitor)` 是抽象方法，各实现类按需遍历子引用：
 - `DurObjDictImpl`：遍历所有值中的非空 LocalId
 - `MixedDictImpl`：遍历 ValueBox 值中的 DurableRef
-- `TypedDictImpl` / List 占位实现：空实现（不含子引用）
+- `TypedDictImpl` / Deque 占位实现：空实现（不含子引用）
 
 `DurableObject.AcceptChildRefRewrite<TRewriter>(ref TRewriter)` 用于 compaction apply 阶段重写子引用。
 
@@ -684,8 +684,8 @@ src/StateJournal/
 ├── DurableDictBase.cs            # Dict 共享版本链逻辑
 ├── DurableDict.Typed.cs          # TypedDict 外观
 ├── DurableDict.Mixed.cs          # MixedDict 外观（含 generic accessor）
-├── DurableList.Typed.cs          # TypedList 外观（占位）
-├── DurableList.Mixed.cs          # MixedList 外观（占位）
+├── DurableDeque.Typed.cs          # TypedDeque 外观（占位）
+├── DurableDeque.Mixed.cs          # MixedDeque 外观（占位）
 ├── Revision.cs                   # 对象图工作会话（Primary Commit + Compaction Follow-up）
 ├── Repository.cs                 # Repo 骨架
 ├── IDict.cs                      # Dict 接口 + 扩展方法
@@ -715,7 +715,7 @@ src/StateJournal/
 │   ├── HeapValueKind.cs
 │   ├── StateJournalErrors.cs          # SjCorruptionError / SjStateError / SjCompaction*Error
 │   ├── TypedDictImpl.cs / MixedDictImpl.cs / DurObjDictImpl.cs
-│   ├── TypedListImpl.cs / MixedListImpl.cs
+│   ├── TypedDequeImpl.cs / MixedDequeImpl.cs
 │   └── ...
 ├── Serialization/
 │   ├── BinaryDiffWriter.cs / BinaryDiffReader.cs

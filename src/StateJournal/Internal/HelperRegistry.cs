@@ -51,13 +51,13 @@ internal static class HelperRegistry {
     #endregion
     #region 不可为Key的非泛型单例
 
-    private static readonly TypeEntry _mixedList = new([(byte)TypeOpCode.PushMixedList]);
-    internal static TypeEntry MixedList => _mixedList;
+    private static readonly TypeEntry _mixedDeque = new([(byte)TypeOpCode.PushMixedDeque]);
+    internal static TypeEntry MixedDeque => _mixedDeque;
 
     #endregion
 
     private static readonly ConcurrentDictionary<Type, TypeEntry> _valueHelperCache = new() {
-        [typeof(DurableList)] = _mixedList
+        [typeof(DurableDeque)] = _mixedDeque
     };
 
     #region Key Helper 解析
@@ -103,7 +103,7 @@ internal static class HelperRegistry {
         var h = ResolveKeyHelper(t);
         if (h.IsValid) { return h; }
 
-        // DurableList (MixedList) 已作为 _valueHelperCache 初值处理
+        // DurableDeque (MixedDeque) 已作为 _valueHelperCache 初值处理
 
         // 泛型容器: 递归验证子类型参数并拼接 TypeCode
         if (t.IsGenericType) {
@@ -134,13 +134,13 @@ internal static class HelperRegistry {
                 return new(typeCode);
             }
 
-            // DurableList<T> (TypedList)
-            if (def == typeof(DurableList<>)) {
+            // DurableDeque<T> (TypedDeque)
+            if (def == typeof(DurableDeque<>)) {
                 var vEntry = ResolveValueHelper(t.GenericTypeArguments[0]);
                 if (!vEntry.IsValid) { return default; }
                 var typeCode = new byte[vEntry.TypeCode!.Length + 1];
                 vEntry.TypeCode.CopyTo(typeCode, 0);
-                typeCode[^1] = (byte)TypeOpCode.MakeTypedList;
+                typeCode[^1] = (byte)TypeOpCode.MakeTypedDeque;
                 return new(typeCode);
             }
         }

@@ -109,20 +109,20 @@ public class TaggedValueDispatcherTests {
     [Fact]
     public void DurableRef_WideId_RoundTrips() {
         uint wideId = (uint)ushort.MaxValue + 100;
-        byte[] data = WriteDurableRef(DurableObjectKind.TypedList, new LocalId(wideId));
+        byte[] data = WriteDurableRef(DurableObjectKind.TypedDeque, new LocalId(wideId));
         Assert.Equal(5, data.Length); // 1 tag + 4 payload
 
         ValueBox box = Init(data);
         Assert.Equal(GetIssue.None, ValueBox.DurableRefFace.Get(box, out var value));
-        Assert.Equal(DurableObjectKind.TypedList, value.Kind);
+        Assert.Equal(DurableObjectKind.TypedDeque, value.Kind);
         Assert.Equal(wideId, value.Id.Value);
     }
 
     [Theory]
     [InlineData(DurableObjectKind.MixedDict)]
     [InlineData(DurableObjectKind.TypedDict)]
-    [InlineData(DurableObjectKind.MixedList)]
-    [InlineData(DurableObjectKind.TypedList)]
+    [InlineData(DurableObjectKind.MixedDeque)]
+    [InlineData(DurableObjectKind.TypedDeque)]
     public void DurableRef_AllKinds_RoundTrip(DurableObjectKind kind) {
         byte[] data = WriteDurableRef(kind, new LocalId(1));
         ValueBox box = Init(data);
@@ -133,7 +133,7 @@ public class TaggedValueDispatcherTests {
 
     [Fact]
     public void DurableRef_BoundaryId_UInt16Max_UsesNarrow() {
-        byte[] data = WriteDurableRef(DurableObjectKind.MixedList, new LocalId(ushort.MaxValue));
+        byte[] data = WriteDurableRef(DurableObjectKind.MixedDeque, new LocalId(ushort.MaxValue));
         Assert.Equal(3, data.Length); // still narrow
 
         ValueBox box = Init(data);

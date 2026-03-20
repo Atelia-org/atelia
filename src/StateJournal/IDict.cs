@@ -63,7 +63,7 @@ internal class DictDemo {
         model.Upsert("wordCount", 1234);
         model.Upsert("zoom", 1.5);
         model.Upsert("darkMode", true);
-        model.Upsert("items", Durable.List<int>());
+        model.Upsert("items", Durable.Deque<int>());
         model.Upsert("metadata", Durable.Dict<string>());
 
         // 类型化视图（主要用于索引器）：As<T>() 与 As* 属性
@@ -100,7 +100,7 @@ internal class DictDemo {
         // ── ✅ Wish 4: 嵌套容器泛型取回 ─────────────────────────
         // 便捷方法：直接拿到具体泛型类型，无需手动 cast
         DurableDict<string>? meta = model.Get<DurableDict<string>>("metadata");
-        DurableList<int>? items = model.Get<DurableList<int>>("items");
+        DurableDeque<int>? items = model.Get<DurableDeque<int>>("items");
         // 也可用 Get<T> 直接指定子类型（GetCore 自动中转基类再 cast）：
         DurableDict<string>? meta2 = model.Get<DurableDict<string>>("metadata");
         // TryGet 同样支持子类型：

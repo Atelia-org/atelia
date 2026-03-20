@@ -4,7 +4,7 @@ namespace Atelia.StateJournal;
 
 /// <summary>
 /// StateJournal 容器的统一工厂门面。
-/// 所有 SJ 系列容器（<see cref="DurableDict{TKey,TValue}"/>、<see cref="DurableList{T}"/> 等）
+/// 所有 SJ 系列容器（<see cref="DurableDict{TKey,TValue}"/>、<see cref="DurableDeque{T}"/> 等）
 /// 均通过此类创建。工厂方法通过 <see cref="HelperRegistry"/> 完成泛型实参的
 /// 验证与 <see cref="ITypeHelper{T}"/> 映射（合二为一），
 /// 并通过 Static Generic Class Cache 将构造委托编译缓存，后续调用近乎 native 开销。
@@ -25,7 +25,7 @@ internal static class Durable {
     /// <typeparam name="TValue">
     /// 值类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、
     /// <see cref="DurableDict{TKey,TValue}"/>（嵌套）、<see cref="DurableDict{TKey}"/>（嵌套）、
-    /// <see cref="DurableList{T}"/>（嵌套）、<see cref="DurableList"/>（嵌套）。
+    /// <see cref="DurableDeque{T}"/>（嵌套）、<see cref="DurableDeque"/>（嵌套）。
     /// </typeparam>
     /// <returns>空的 <see cref="DurableDict{TKey, TValue}"/> 实例。</returns>
     /// <exception cref="ArgumentException">泛型参数不在受支持的类型范围内。</exception>
@@ -45,21 +45,21 @@ internal static class Durable {
         ?? throw new ArgumentException(MixedDictFactory<TKey>.ErrorReason);
 
     /// <summary>
-    /// 创建 <see cref="DurableList{T}"/> (TypedList)。
+    /// 创建 <see cref="DurableDeque{T}"/> (TypedDeque)。
     /// </summary>
     /// <typeparam name="T">
     /// 元素类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、
-    /// <see cref="DurableDict{TKey,TValue}"/>（嵌套）、<see cref="DurableList{T}"/>（嵌套）。
+    /// <see cref="DurableDict{TKey,TValue}"/>（嵌套）、<see cref="DurableDeque{T}"/>（嵌套）。
     /// </typeparam>
-    /// <returns>空的 <see cref="DurableList{T}"/> 实例。</returns>
+    /// <returns>空的 <see cref="DurableDeque{T}"/> 实例。</returns>
     /// <exception cref="ArgumentException">泛型参数不在受支持的类型范围内。</exception>
-    public static DurableList<T> List<T>() where T : notnull =>
-        TypedListFactory<T>.Create?.Invoke()
-        ?? throw new ArgumentException(TypedListFactory<T>.ErrorReason);
+    public static DurableDeque<T> Deque<T>() where T : notnull =>
+        TypedDequeFactory<T>.Create?.Invoke()
+        ?? throw new ArgumentException(TypedDequeFactory<T>.ErrorReason);
 
     /// <summary>
-    /// 创建 <see cref="DurableList"/> (MixedList)。
+    /// 创建 <see cref="DurableDeque"/> (MixedDeque)。
     /// </summary>
-    /// <returns>空的 <see cref="DurableList"/> 实例。</returns>
-    public static DurableList List() => new MixedListImpl();
+    /// <returns>空的 <see cref="DurableDeque"/> 实例。</returns>
+    public static DurableDeque Deque() => new MixedDequeImpl();
 }

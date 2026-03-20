@@ -49,30 +49,30 @@ public class TypeCodecTests {
     }
 
     [Fact]
-    public void PushMixedList_DecodesDurableList() {
-        Assert.True(Decode([(byte)TypeOpCode.PushMixedList], out var result));
-        Assert.Equal(typeof(DurableList), result);
+    public void PushMixedDeque_DecodesDurableDeque() {
+        Assert.True(Decode([(byte)TypeOpCode.PushMixedDeque], out var result));
+        Assert.Equal(typeof(DurableDeque), result);
     }
 
-    // ═══════════════════════ MakeTypedList ═══════════════════════
+    // ═══════════════════════ MakeTypedDeque ═══════════════════════
 
     [Fact]
-    public void MakeTypedList_Int32() {
-        byte[] bytes = [(byte)TypeOpCode.PushInt32, (byte)TypeOpCode.MakeTypedList];
+    public void MakeTypedDeque_Int32() {
+        byte[] bytes = [(byte)TypeOpCode.PushInt32, (byte)TypeOpCode.MakeTypedDeque];
         Assert.True(Decode(bytes, out var result));
-        Assert.Equal(typeof(DurableList<int>), result);
+        Assert.Equal(typeof(DurableDeque<int>), result);
     }
 
     [Fact]
-    public void MakeTypedList_String() {
-        byte[] bytes = [(byte)TypeOpCode.PushString, (byte)TypeOpCode.MakeTypedList];
+    public void MakeTypedDeque_String() {
+        byte[] bytes = [(byte)TypeOpCode.PushString, (byte)TypeOpCode.MakeTypedDeque];
         Assert.True(Decode(bytes, out var result));
-        Assert.Equal(typeof(DurableList<string>), result);
+        Assert.Equal(typeof(DurableDeque<string>), result);
     }
 
     [Fact]
-    public void MakeTypedList_InsufficientOperands_ReturnsFalse() {
-        byte[] bytes = [(byte)TypeOpCode.MakeTypedList];
+    public void MakeTypedDeque_InsufficientOperands_ReturnsFalse() {
+        byte[] bytes = [(byte)TypeOpCode.MakeTypedDeque];
         Assert.False(Decode(bytes, out _));
     }
 
@@ -120,28 +120,28 @@ public class TypeCodecTests {
     // ═══════════════════════ 嵌套复合类型 ═══════════════════════
 
     [Fact]
-    public void NestedTypedList_ListOfListOfInt() {
-        // DurableList<DurableList<int>>
+    public void NestedTypedDeque_DequeOfDequeOfInt() {
+        // DurableDeque<DurableDeque<int>>
         byte[] bytes = [
             (byte)TypeOpCode.PushInt32,
-            (byte)TypeOpCode.MakeTypedList,   // DurableList<int>
-            (byte)TypeOpCode.MakeTypedList    // DurableList<DurableList<int>>
+            (byte)TypeOpCode.MakeTypedDeque,   // DurableDeque<int>
+            (byte)TypeOpCode.MakeTypedDeque    // DurableDeque<DurableDeque<int>>
         ];
         Assert.True(Decode(bytes, out var result));
-        Assert.Equal(typeof(DurableList<DurableList<int>>), result);
+        Assert.Equal(typeof(DurableDeque<DurableDeque<int>>), result);
     }
 
     [Fact]
-    public void NestedDict_DictOfStringToTypedList() {
-        // DurableDict<string, DurableList<double>>
+    public void NestedDict_DictOfStringToTypedDeque() {
+        // DurableDict<string, DurableDeque<double>>
         byte[] bytes = [
             (byte)TypeOpCode.PushDouble,
-            (byte)TypeOpCode.MakeTypedList,    // DurableList<double> → TValue
+            (byte)TypeOpCode.MakeTypedDeque,    // DurableDeque<double> → TValue
             (byte)TypeOpCode.PushString,       // TKey
             (byte)TypeOpCode.MakeTypedDict
         ];
         Assert.True(Decode(bytes, out var result));
-        Assert.Equal(typeof(DurableDict<string, DurableList<double>>), result);
+        Assert.Equal(typeof(DurableDict<string, DurableDeque<double>>), result);
     }
 
     // ═══════════════════════ 栈残余检查 ═══════════════════════

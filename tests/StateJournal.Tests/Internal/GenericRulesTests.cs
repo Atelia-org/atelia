@@ -62,20 +62,20 @@ public class GenericRulesTests {
         Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, string>)));
 
     [Fact]
-    public void IsValidValue_SJList_ValidElement() =>
-        Assert.True(HelperRegistry.IsValidValue(typeof(DurableList<int>)));
+    public void IsValidValue_SJDeque_ValidElement() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDeque<int>)));
 
     [Fact]
-    public void IsValidValue_SJList_StringElement_Valid() =>
-        Assert.True(HelperRegistry.IsValidValue(typeof(DurableList<string>)));
+    public void IsValidValue_SJDeque_StringElement_Valid() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDeque<string>)));
 
     [Fact]
     public void IsValidValue_NonGenericSJDict_Rejected() =>
         Assert.False(HelperRegistry.IsValidValue(typeof(DurableObject)));
 
     [Fact]
-    public void IsValidValue_NonGenericSJList_Accepted() =>
-        Assert.True(HelperRegistry.IsValidValue(typeof(DurableList)));
+    public void IsValidValue_NonGenericSJDeque_Accepted() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDeque)));
 
     // ═══════════════════════ 多层嵌套 ═══════════════════════
 
@@ -88,12 +88,12 @@ public class GenericRulesTests {
         Assert.False(HelperRegistry.IsValidValue(typeof(DurableDict<int, DurableDict<double, DurableDict<int, ValueBox>>>)));
 
     [Fact]
-    public void IsValidValue_SJList_OfSJDict() =>
-        Assert.True(HelperRegistry.IsValidValue(typeof(DurableList<DurableDict<int, double>>)));
+    public void IsValidValue_SJDeque_OfSJDict() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDeque<DurableDict<int, double>>)));
 
     [Fact]
-    public void IsValidValue_SJDict_OfSJList() =>
-        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, DurableList<double>>)));
+    public void IsValidValue_SJDict_OfSJDeque() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(DurableDict<int, DurableDeque<double>>)));
 
     [Fact]
     public void IsValidValue_Nested_StringKey_Valid() =>
@@ -133,27 +133,27 @@ public class GenericRulesTests {
     }
 
     [Fact]
-    public void SJ_List_Valid_ReturnsInstance() {
-        var l = Durable.List<int>();
+    public void SJ_Deque_Valid_ReturnsInstance() {
+        var l = Durable.Deque<int>();
         Assert.NotNull(l);
-        Assert.IsAssignableFrom<DurableList<int>>(l);
+        Assert.IsAssignableFrom<DurableDeque<int>>(l);
     }
 
     [Fact]
-    public void SJ_List_String_ReturnsInstance() {
-        var l = Durable.List<string>();
+    public void SJ_Deque_String_ReturnsInstance() {
+        var l = Durable.Deque<string>();
         Assert.NotNull(l);
-        Assert.IsAssignableFrom<DurableList<string>>(l);
+        Assert.IsAssignableFrom<DurableDeque<string>>(l);
     }
 
     [Fact]
-    public void SJ_List_Mixed_ReturnsInstance() {
-        var l = Durable.List();
+    public void SJ_Deque_Mixed_ReturnsInstance() {
+        var l = Durable.Deque();
         Assert.NotNull(l);
-        Assert.IsAssignableFrom<DurableList>(l);
+        Assert.IsAssignableFrom<DurableDeque>(l);
     }
 
     [Fact]
-    public void SJ_List_ValueBox_Throws() =>
-        Assert.Throws<ArgumentException>(() => Durable.List<ValueBox>());
+    public void SJ_Deque_ValueBox_Throws() =>
+        Assert.Throws<ArgumentException>(() => Durable.Deque<ValueBox>());
 }

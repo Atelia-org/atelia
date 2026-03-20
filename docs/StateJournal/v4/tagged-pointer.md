@@ -131,7 +131,7 @@ MUST NOT 与 ANY 值类型相容。
 `0x0`。64个bit全0。未初始化哨兵，用于内部的遗漏初始化检测，这不是一个对外可见的合法值。
 设计目标是仅内部可见此状态，用于批量划分槽位，对外部永远都是明确赋值的。
 目前在Upsert实现中，用到了`CollectionsMarshal.GetValueRefOrAddDefault`，会短暂出现此状态。
-未来实现Mixed DurableList时，如果批量划分槽位也应显式初始化为合法值，用性能开销换取健壮性。
+未来实现Mixed DurableDeque时，如果批量划分槽位也应显式初始化为合法值，用性能开销换取健壮性。
 
 ---
 

@@ -41,10 +41,10 @@ public class TypeCodePrecomputeTests {
     // ═══════════════════════ Value 叶子类型（通过缓存） ═══════════════════════
 
     [Fact]
-    public void ResolveValueHelper_DurableList_TypeCode_RoundTrips() {
-        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableList));
+    public void ResolveValueHelper_DurableDeque_TypeCode_RoundTrips() {
+        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableDeque));
         Assert.True(entry.IsValid);
-        AssertRoundTrip(entry.TypeCode, typeof(DurableList));
+        AssertRoundTrip(entry.TypeCode, typeof(DurableDeque));
     }
 
     // ═══════════════════════ 泛型容器 — HelperRegistry ═══════════════════════
@@ -64,10 +64,10 @@ public class TypeCodePrecomputeTests {
     }
 
     [Fact]
-    public void ResolveValueHelper_TypedList_TypeCode_RoundTrips() {
-        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableList<int>));
+    public void ResolveValueHelper_TypedDeque_TypeCode_RoundTrips() {
+        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableDeque<int>));
         Assert.True(entry.IsValid);
-        AssertRoundTrip(entry.TypeCode, typeof(DurableList<int>));
+        AssertRoundTrip(entry.TypeCode, typeof(DurableDeque<int>));
     }
 
     [Fact]
@@ -80,18 +80,18 @@ public class TypeCodePrecomputeTests {
     }
 
     [Fact]
-    public void ResolveValueHelper_ListOfDict_TypeCode_RoundTrips() {
-        // DurableList<DurableDict<int, string>>
-        var type = typeof(DurableList<DurableDict<int, string>>);
+    public void ResolveValueHelper_DequeOfDict_TypeCode_RoundTrips() {
+        // DurableDeque<DurableDict<int, string>>
+        var type = typeof(DurableDeque<DurableDict<int, string>>);
         var entry = HelperRegistry.ResolveValueHelper(type);
         Assert.True(entry.IsValid);
         AssertRoundTrip(entry.TypeCode, type);
     }
 
     [Fact]
-    public void ResolveValueHelper_DictOfList_TypeCode_RoundTrips() {
-        // DurableDict<int, DurableList<double>>
-        var type = typeof(DurableDict<int, DurableList<double>>);
+    public void ResolveValueHelper_DictOfDeque_TypeCode_RoundTrips() {
+        // DurableDict<int, DurableDeque<double>>
+        var type = typeof(DurableDict<int, DurableDeque<double>>);
         var entry = HelperRegistry.ResolveValueHelper(type);
         Assert.True(entry.IsValid);
         AssertRoundTrip(entry.TypeCode, type);
@@ -124,14 +124,14 @@ public class TypeCodePrecomputeTests {
     }
 
     [Fact]
-    public void TypedListFactory_TypeCode_RoundTrips() {
-        AssertRoundTrip(TypedListFactory<double>.TypeCode, typeof(DurableList<double>));
+    public void TypedDequeFactory_TypeCode_RoundTrips() {
+        AssertRoundTrip(TypedDequeFactory<double>.TypeCode, typeof(DurableDeque<double>));
     }
 
     [Fact]
-    public void TypedListFactory_TypeCode_MatchesHelperRegistry() {
-        var factoryCode = TypedListFactory<double>.TypeCode;
-        var registryCode = HelperRegistry.ResolveValueHelper(typeof(DurableList<double>)).TypeCode;
+    public void TypedDequeFactory_TypeCode_MatchesHelperRegistry() {
+        var factoryCode = TypedDequeFactory<double>.TypeCode;
+        var registryCode = HelperRegistry.ResolveValueHelper(typeof(DurableDeque<double>)).TypeCode;
         Assert.Equal(registryCode, factoryCode);
     }
 
