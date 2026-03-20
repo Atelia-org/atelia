@@ -7,12 +7,13 @@ using Atelia.StateJournal.Pools;
 namespace Atelia.StateJournal;
 
 /// <summary>
-/// 一个内存对象图状态快照，类似 git commit。
-/// 每次 Commit 产生一个新的落盘快照，由 <see cref="CommitId"/> 标识。
+/// 一个已打开的对象图工作会话。
+/// 每次 Commit 会把当前工作态 durable 化为一个新的落盘快照，由 <see cref="CommitId"/> 标识。
 /// <see cref="_head"/> 持有当前已提交的快照状态（Id / ParentId / ObjectMap / GraphRoot），首次 Commit 前为 null。
 /// </summary>
 public partial class Revision {
     private IRbfFile _file;
+
     /// <summary>
     /// 当前活跃的 ObjectMap，始终占据 pool slot 0。
     /// 首次 Commit 前为空 dict；Commit 后与 <see cref="CommitSnapshot.ObjectMap"/> 是同一实例。
@@ -26,6 +27,17 @@ public partial class Revision {
     public CommitId HeadParentId => _head?.ParentId ?? default;
     /// <summary>最近一次 Commit 时使用的 GraphRoot。首次 Commit 前为 null。Open 后自动从 TailMeta 恢复。</summary>
     public DurableObject? GraphRoot => _head?.GraphRoot;
+    internal IRbfFile BoundFile => _file;
+
+    /// <summary>此 Revision 所属的 branch 名称。由 Repository 在绑定时设置一次，之后不可更改。</summary>
+    internal string? BranchName {
+        get => field;
+        set {
+            if (field is not null) { throw new InvalidOperationException($"BranchName is already set to '{field}' and cannot be changed."); }
+            ArgumentNullException.ThrowIfNull(value);
+            field = value;
+        }
+    }
 
 
 
@@ -98,25 +110,29 @@ public partial class Revision {
             obj.Bind(revision, localId);
         }
 
-        // 从 TailMeta 恢复 GraphRoot（4 字节 = GraphRoot 的 LocalId.Value）
-        DurableObject? graphRoot = null;
-        if (tailMeta.Length >= 4) {
-            uint rootIdValue = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta);
-            if (rootIdValue == 0) {
-                return new SjCorruptionError(
-                    "Invalid GraphRoot LocalId 0 in TailMeta.",
-                    RecoveryHint: "Data corruption in TailMeta."
-                );
-            }
-            var rootHandle = new SlotHandle(rootIdValue);
-            if (!pool.TryGetValue(rootHandle, out var rootObj)) {
-                return new SjCorruptionError(
-                    $"Unknown GraphRoot LocalId {rootIdValue}.",
-                    RecoveryHint: "Data corruption in TailMeta."
-                );
-            }
-            graphRoot = rootObj;
+        // 从 TailMeta 恢复 GraphRoot
+        // 布局：[0..3] GraphRoot.LocalId.Value (uint LE)
+        if (tailMeta.Length < 4) {
+            return new SjCorruptionError(
+                $"TailMeta length {tailMeta.Length} < 4.",
+                RecoveryHint: "Data corruption or unsupported format in TailMeta."
+            );
         }
+        uint rootIdValue = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta);
+        if (rootIdValue == 0) {
+            return new SjCorruptionError(
+                "Invalid GraphRoot LocalId 0 in TailMeta.",
+                RecoveryHint: "Data corruption in TailMeta."
+            );
+        }
+        var rootHandle = new SlotHandle(rootIdValue);
+        if (!pool.TryGetValue(rootHandle, out var rootObj)) {
+            return new SjCorruptionError(
+                $"Unknown GraphRoot LocalId {rootIdValue}.",
+                RecoveryHint: "Data corruption in TailMeta."
+            );
+        }
+        DurableObject? graphRoot = rootObj;
 
         revision._head = new CommitSnapshot(id, parentId, objectMap, graphRoot);
 

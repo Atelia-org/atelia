@@ -3,7 +3,7 @@ namespace Atelia.StateJournal;
 /// <summary>
 /// 一次 <see cref="Revision.Commit"/> 的完成状态。
 /// </summary>
-internal enum CommitCompletion {
+public enum CommitCompletion {
     /// <summary>仅完成 primary commit；未触发 compaction，或 compaction 无实际移动。</summary>
     PrimaryOnly = 0,
 
@@ -24,7 +24,7 @@ internal enum CommitCompletion {
 ///
 /// 因此 <see cref="CompactionIssue"/> 仅用于承载“primary 已 durable，但 compaction 后续因非 bug 外因未完成”的诊断信息。
 /// </remarks>
-internal readonly record struct CommitOutcome(
+public readonly record struct CommitOutcome(
     CommitId HeadCommitId,
     CommitId PrimaryCommitId,
     CommitCompletion Completion,

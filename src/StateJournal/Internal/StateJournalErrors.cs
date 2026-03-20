@@ -41,3 +41,13 @@ internal sealed record SjCompactionPersistError(
     IReadOnlyDictionary<string, string>? Details = null,
     AteliaError? Cause = null
 ) : AteliaError("SJ.Compaction.FollowupPersistFailed", Message, RecoveryHint, Details, Cause);
+
+/// <summary>
+/// Repository 层面的操作失败：文件发现、锁获取、head.json 读写等。
+/// </summary>
+internal sealed record SjRepositoryError(
+    string Message,
+    string? RecoveryHint = null,
+    IReadOnlyDictionary<string, string>? Details = null,
+    AteliaError? Cause = null
+) : AteliaError("SJ.Repository", Message, RecoveryHint, Details, Cause);
