@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记脉络与决策，不复述代码细节；有疑问时指向源文件路径。
-> **最后更新**：2026-03-18
+> **最后更新**：2026-03-20
 
 ---
 
@@ -321,13 +321,184 @@ StateJournal 将 RBF 视为一个 **append-only 分帧二进制文件**。交互
 | VersionChain（Write/Save/Load） | ✅ 已完成 | 含二阶段 Write + PendingSave |
 | DurableList（Typed/Mixed） | ⬜ 占位 | 所有方法 throw；Diff 方案待定 |
 | Revision | ✅ 已完成 | Primary Commit（三阶段）+ Compaction Apply/Rollback + Follow-up Persist + CrossFileSnapshot(`ExportTo`/`SaveAs`) |
-| Repository | ⬜ 骨架 | 仅有 DirectoryPath 属性 |
+| Repository | ✅ 已完成首版 | 单写者 repo + `refs/branches` + `CreateBranch` / `CheckoutBranch` + segment 轮换 + O(1) `CommitAddress(uint, CommitId)` 直接索引 |
+
+---
+
+## 未来方向思考笔记（2026-03-18 会话）
+
+> 以下由 Claude Opus 4.6 会话留给后续 Agent 的思考笔记。背景：本会话完成了 ExportTo/SaveAs 的代码审阅和 commit 层的重构，在 Revision.Commit.cs 消除了 TryPersistSnapshot（10 参数→删除）、PrepareLiveObjects（5 参数→1 参数）、BuildStateError（4 参数→2 参数）。
+
+### 方向 1：Repository — 从单文件到文件集
+
+**现状更新（2026-03-20）**：`Repository.cs` 已从空壳演进为完整实现：管理 `refs/branches/*.json`、`recent/*.sj.rbf`、repo 锁、按需 `CheckoutBranch()`、以及 branch 级 commit 推进。`CommitSequence` 已彻底消除——每个 commit 由 `{SegmentNumber, CommitId}` 天然寻址，segment 路由 O(1)，`sequence.json` 不再存在，恢复流程大幅简化。
+
+**核心命题**：Repository 管理一组 RBF 文件，构成逻辑上的"仓库"。
+
+#### 我认为 Repository 需要解决的问题
+
+1. **文件发现与目录结构**：启动时扫描目录，识别哪些 `.rbf` 文件属于此仓库、哪些 branch 当前可写。当前方案是 `refs/branches/*.json` + `recent/*.sj.rbf`；当前 `Open()` 已会从 segments 恢复 durable sequence 下界，而不只看 branch。
+2. **文件生命周期**：何时创建新文件？可能的触发条件：
+   - 文件尺寸超阈值（类似 git packfile 的理念）
+   - 显式 SaveAs
+   - compaction 产生新世代
+3. **文件级 GC**：当某个 RBF 文件中所有帧都不再被任何可达 commit 引用时，可安全删除。需要某种引用计数或扫描机制。
+3. **单写者锁**：Repository 描述自己是"进程独占"的。文件锁（`state-journal.lock`）。
+4. **Open 时不需要 recovery**：当前 `Open()` 只做 `扫描 segments + 加载 branches`。segment 文件和 branch 文件就是全部真相，不需要 repair 逻辑。
+
+#### 设计建议
+
+- **先把 branch 语义站稳**：公开 API 统一用 `CreateBranch` / `CheckoutBranch`，磁盘目录统一用 `refs/branches`，把 `HEAD` 留给 `Revision` 工作会话语义。
+- **manifest 继续推迟**：当前 `branches + sequence + recent segments` 已足够支撑单写 repo；等真的需要跨层索引时再引入 manifest。
+- **`ExportTo` 是 Repository 的天然子操作**：未来可以是 `repo.CreateSnapshot()` 或类似 API，内部调 `Revision.ExportTo` 到仓库管理的新文件。
+
+**当前记忆点（供后续 Agent 快速接手）**：
+
+- `CommitSequence` 已彻底消除。commit 地址 = `CommitAddress(uint SegmentNumber, CommitId)`。
+- `BranchHead` 类型已重命名为 `CommitAddress`，`Unborn` 语义移至调用侧（`CommitAddress?` = null）。
+- `sequence.json` 不再存在。`Open()` 只做 `扫描 segments + 加载 branches`，没有 recovery/repair 逻辑。
+- Segment 路由 O(1) 直接索引。文件名 `{segmentNumber:X8}.sj.rbf`（uint hex8）。
+- TailMeta 已从 12 字节缩减为 4 字节（仅 GraphRoot LocalId）。
+- Branch JSON 字段由 `commitSequence` → `segmentNumber`（`uint`）更名。
+- poisoned commit 后 reopen 的 correctness 无需特殊 recovery——branch 和 segment 文件本身就是全部真相。
+
+### 方向 2：新的 DurableObject 类型
+
+#### DurableList — Diff vs Op-Record
+
+**Diff 路线**（类似 Dict 的做法）：
+- 优点：与 Dict 复用大量基础设施（DictChangeTracker 的双快照 + 脏标记模式）
+- 缺点：List 的 insert/remove 会导致后续元素全部"脏"（index shift），diff 退化为全量重写
+- 适用场景：短列表、主要做 append/replace、很少做中间插入
+
+**Op-Record 路线**：
+- 记录操作序列：`Insert(index, value)`, `Remove(index)`, `Append(value)`, `Clear()`
+- rebase 帧写全量，delta 帧写操作日志
+- 优点：精确描述变更意图，对 insert-heavy 场景友好
+- 缺点：回放开销随 delta 链长度线性增长；合并/冲突解决复杂
+- 适用场景：消息历史、事件日志等 append-mostly 序列
+
+**我的倾向**：先走 Diff 路线做一个能用的版本。理由：
+1. Agent 的 List 使用模式大概率是 append-mostly（对话历史、步骤记录），中间插入少
+2. Diff 路线能直接复用 VersionChainStatus 的 rebase/deltify 成本模型
+3. Op-Record 的"操作合并"问题（连续 Insert 后 Remove 的归约）是一个独立的设计黑洞，不值得现在踩
+4. 如果未来 profiling 发现 List diff 效率有问题，可以后续引入 op-record 作为优化——反正 rebase 帧格式不变，只影响 delta 帧
+
+#### DurableText — Rope vs PieceTable
+
+**Rope**：
+- 经典的平衡二叉绳结构，O(log n) insert/delete
+- delta 表达：记录 splice 操作 `(offset, deleteCount, insertText)`
+- 优点：随机位置编辑高效；天然支持大文本
+- 缺点：实现复杂；小文本（<4KB）不如 flat string
+
+**PieceTable**：
+- 两个缓冲区（original + additions）+ 一组 pieces 描述当前文本的拼接
+- delta 表达：新的 piece 就是 delta
+- 优点：实现相对简单；append-only additions 缓冲区天然适配 RBF 的追加模型
+- 缺点：读取需要跳跃多个 piece；频繁编辑后 pieces 会碎片化
+- 缺点：序列化兼容未来的局部加载特性
+
+**我的倾向**：如果文本主要服务于 Agent 的笔记/记忆场景，大多数编辑是 append 或 replace 整段。PieceTable 的简单性更有吸引力。但如果要支持精细的协作编辑（Agent 和用户共同编辑同一文档），Rope 更合适。
+
+**务实建议**：先不做。Agent 的文本需求短期内可以用 `DurableDict<string, string>` 模拟（key=段落ID，value=文本内容）。等 Agent 真的跑起来并且产生了"我需要高效编辑一段长文本"的需求时再做。
+
+#### NodeSet — 共享结构聚合帧
+
+这个思路很有意思。如果我理解正确：
+
+- 一个 NodeSet 是一组轻量 Node（每个 Node 本质是 K-V 映射）
+- 整组 Node 打包在一帧里（而不是每个 Node 一帧）
+- 读取时合并近期到 rebase 的若干帧，重建 BTree 等共享结构
+
+**关键洞察**：当前每个 DurableObject 独立占一帧，帧间通过 LocalId 互引。这对"一棵 BTree 有 1000 个节点"的场景会产生 1000 个帧和 1000 条 ObjectMap 条目——开销过大。NodeSet 把粒度从"每节点一帧"提升到"每结构一帧"。
+
+**我关心的设计问题**：
+1. **Node 的 identity**：如果 Node 不是 DurableObject（没有 LocalId），怎么在 delta 帧里引用"哪个 Node 被修改了"？需要某种帧内 ID（可能就是 BTree 节点地址 / 页号）。
+2. **部分重建**：如果 NodeSet 帧很大（一棵 BTree 的全部节点），delta 合并的成本可能高。需要某种分段/分页机制？
+3. **GC**：NodeSet 内的 Node 引用外部 DurableObject 时（比如 BTree 叶子节点存 LocalId），GC walk 需要穿透 NodeSet 边界。`AcceptChildRefVisitor` 需要能遍历 NodeSet 内所有外部引用。
+
+**总结**：NodeSet 是往"容器即模型"方向迈的关键一步——Dict 是 flat K-V，NodeSet + BTree 是 ordered K-V with range query。Dict 能满足 80% 场景，BTree 处理剩下的 20%（排序、范围查询、前缀匹配）。如果思路清晰就先做这个也合理。
+
+### 方向 3：时空回溯 — CommitId 信标
+
+**场景还原**：Agent 在 step 5 发现走错了，想回到 step 2 的状态，但带上"这条路不行"的结论。
+
+**当前能力**：`Revision.Open(commitId, file)` 可以回到任意已 commit 的快照。但这是"开一个新的 Revision 实例"，不是在当前 Revision 上回退。
+
+**需要的新能力**：
+
+1. **Revert to commit**：将当前 Revision 的内存对象图回退到指定 CommitId 的状态。类似 `git reset --hard <commit>`。
+   - 实现思路：`Open(targetCommitId, _file)` 加载目标快照到新 pool，然后替换当前 Revision 的 `_pool / _objectMap / _head`。
+   - 难点：当前 Revision 的对象引用（用户持有的 `DurableObject` 变量）全部失效。需要某种"引用重绑定"机制，或者接受"revert 后旧引用全部 Detached"。
+
+2. **携带非持久信息穿越**：用户想带着 "这条路不行" 的结论回去。这不是 StateJournal 的持久状态，而是某种 **annotations / side-channel**。
+   - 方案 A：在 commit 之前把结论写进持久状态（比如一个 `DurableDict<string, string>("_agent_notes")`），然后 revert 时指定"保留某些 key 的当前值"——这就变成了 selective revert / cherry-pick。
+   - 方案 B：annotations 完全不走 StateJournal。回退后用户自己把结论塞进新状态。这更简单，但需要应用层自己管理 side-channel。
+   - 方案 C：提供一种"穿越信封" API —— `revert(targetCommitId, envelope: object)` 返回时同时返回信封内容。信封不落盘、不参与 diff，纯内存传递。
+
+3. **分支/Fork**：从某个历史 CommitId 创建一个新的 Revision 分支，两个分支独立演化。
+   - 这比 revert 简单——就是 `var branch = Revision.Open(someOldCommitId, file)` + 让它写到不同的 RBF 文件（或同一文件的不同 commit chain）。
+   - `ExportTo` 已经做了大部分工作：从当前状态完整快照到新文件。Fork = Open(旧 commit) + ExportTo(新文件)。
+
+4. **轨迹本身作为可分析对象（"反射 API"）**：
+   - 最简形式：`CommitId[] ListCommits()` + `CommitSnapshot Inspect(CommitId)` —— 列出所有 commit，读取任意一个的 ObjectMap 和 GraphRoot。
+   - 进阶：diff 两个 commit 的状态（哪些 key 变了、哪些对象新增/删除）。这需要两次 Open + 比较 ObjectMap 的 key-set 差异，不需要新基础设施。
+   - 更进阶：commit graph 持久化（当前 `CommitSnapshot.ParentId` 只记录了线性 parent，fork 后需要 DAG）。
+
+**务实优先级建议**：
+1. 先做 `Revision.ListCommits(file)` —— 从最新 commit 沿 parent 链回溯，收集所有 CommitId。这是其他所有功能的基础。
+2. 再做 Fork（`Open` 旧 commit + `ExportTo` 新文件），利用已有能力组合。
+3. Revert 和 selective-carry-forward 最复杂，放最后。
+
+### 给后续 Agent 的优先级建议
+
+如果要排一个"接下来做什么"的序，我会建议：
+
+1. **Repository MVP**（最小骨架：single-file + lock + Open/Create）—— 打通完整链路
+2. **让一个真实 Agent 原型跑在 StateJournal 上** —— 验证 API 人体工学
+3. **NodeSet**（思路清晰，组合价值高）
+4. **DurableList**（Diff 路线，快速出活）
+5. **时空回溯基础设施**（ListCommits + Fork）
+6. **DurableText**（需求不紧急，先用 Dict 模拟）
+
+理由：2 的优先级应该非常高。在没有真实 Agent 使用反馈之前，所有基础设施设计都只是猜测。一旦有了真实使用者，才能知道 Dict/List/Text/NodeSet 的优先级到底是什么、API 哪里别扭、性能瓶颈在哪。
+
+### 补充：DurableDeque 灵感（来自 Agent.Core/History 分析）
+
+在分析了 `prototypes/Agent.Core/History/AgentState.cs` 的实际数据模式后，发现 Agent History 的操作模式是纯 Deque：后端 push + 前端 trim，无中间 insert/remove。这意味着在做通用 DurableList 之前，应该先做一个 **DurableDeque**：
+
+**操作集**：`PushBack` / `PopFront` / `PushFront`（可选） / `PopBack`（可选） / 索引读取 / 枚举
+
+**Delta 编码**（极其简单）：
+```
+[VarInt: trimFrontCount] [VarInt: trimBackCount]
+[VarInt: pushFrontCount] [pushFrontCount 个元素...]
+[VarInt: pushBackCount]  [pushBackCount 个元素...]
+```
+
+**为什么优先于 DurableList**：
+- 不需要处理 index shift（insert/remove 导致后续元素全部脏）
+- delta 帧天然紧凑：append-mostly 场景下只写新元素
+- 完全复用 VersionChainStatus 的 rebase/deltify 成本模型
+- 覆盖 Agent 最核心的数据结构：对话历史、步骤记录、事件日志
+
+**值类型策略**：先做基元版本（`DurableDeque<T>` where T 是 int/string/double 等已支持类型），满足"存一列 string"的场景。异构多态元素（如 HistoryEntry 体系）等后续 NodeSet 或自定义序列化支持后再做。
+
+**优先级修订**：
+1. Repository MVP
+2. **DurableDeque**（新增，插入到 NodeSet 之前）
+3. Agent prototype 跑在 StateJournal 上（用 DurableDict + DurableDeque 建模 AgentState）
+4. NodeSet
+5. DurableList（通用版，含 insert/remove）
+6. 时空回溯
 
 ---
 
 ## Revision 层
 
-Revision 是**对象图的事务快照管理器**，类似 git commit。每次 `Commit(graphRoot)` 产生一个新的落盘快照。
+Revision 是**已打开的对象图工作会话**：它持有一个可编辑的内存对象图、最近一次已提交快照的视角，以及把当前工作态 durable 化为新快照的能力。
+每次 `Commit(graphRoot)` 都会产生一个新的落盘快照；但 `Revision` 本身不是那个快照对象，更接近 checkout / workspace / session，而不是 git commit。
 
 ### 对象管理：GcPool\<DurableObject\>
 
@@ -372,7 +543,7 @@ Commit(graphRoot)
        └─ 复用 primary 的 liveObjects 持久化 compaction 造成的脏变更；若 follow-up persist 因外部因素失败，则回滚 compaction，并返回 rolled-back outcome
 ```
 
-`Commit(graphRoot)` 现在返回 `CommitOutcome`，显式区分：
+`Commit(graphRoot)` 返回 `CommitOutcome`，显式区分：
 - `PrimaryOnly`
 - `PrimaryPlusCompaction`
 - `PrimaryCommittedCompactionRolledBack`
@@ -418,7 +589,9 @@ Commit(graphRoot)
 
 ### GraphRoot 持久化
 
-GraphRoot 的 `LocalId.Value`（4 字节 LE）写入 ObjectMap 帧的 TailMeta。Open 时从 TailMeta 恢复。
+GraphRoot 的 `LocalId.Value`（4 字节 LE）写入 ObjectMap 帧的 TailMeta（总共 4 字节）。Open 时从 TailMeta 恢复。
+
+> **历史变更**（2026-03-20）：TailMeta 从 12 字节 `[rootLocalId:4B][commitSequence:8B]` 缩减为 4 字节 `[rootLocalId:4B]`。CommitSequence 已彻底消除。
 
 ### Open 全量加载
 
@@ -437,6 +610,8 @@ Open(commitId, rbfFile)
 ### CommitSnapshot
 
 `_head: CommitSnapshot?` 记录最近一次成功 Commit 的不可变快照（Id / ParentId / ObjectMap / GraphRoot）。首次 Commit 前为 null。`Head` / `HeadParent` / `GraphRoot` 属性均从 `_head` 派生。
+
+> **历史变更**（2026-03-20）：`CommitSnapshot.CommitSequence` 字段和 `Revision.CommitSequence` 属性已删除。
 
 ### IChildRefVisitor / IChildRefRewriter 与图遍历
 
@@ -479,7 +654,7 @@ src/StateJournal/
 ├── DurableDict.Mixed.cs          # MixedDict 外观（含 generic accessor）
 ├── DurableList.Typed.cs          # TypedList 外观（占位）
 ├── DurableList.Mixed.cs          # MixedList 外观（占位）
-├── Revision.cs                   # 对象图事务快照管理器（Primary Commit + Compaction Follow-up）
+├── Revision.cs                   # 对象图工作会话（Primary Commit + Compaction Follow-up）
 ├── Repository.cs                 # Repo 骨架
 ├── IDict.cs                      # Dict 接口 + 扩展方法
 ├── ValueKind.cs                  # 值类型枚举
