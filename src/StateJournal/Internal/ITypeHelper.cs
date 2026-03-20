@@ -3,16 +3,39 @@ using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
 
+/// <remarks>
+/// <para><b>COW 生命周期契约</b>（仅对 <see cref="NeedRelease"/> == true 的类型有意义）：</para>
+/// <list type="number">
+///   <item>新值以 <b>Exclusive</b>（独占/可变）状态进入 <c>_current</c>。</item>
+///   <item><see cref="Freeze"/> 将值转为 <b>Frozen</b>（共享/不可变），使 committed 与 current 可安全引用同一份值。</item>
+///   <item>当某个 frozen 值不再被任何方引用时，最后持有者调用 <see cref="ReleaseSlot"/> 归还堆资源。</item>
+/// </list>
+/// <para>对无堆资源的值类型（<see cref="NeedRelease"/> == false），上述三步均退化为 no-op / identity。</para>
+/// </remarks>
 internal interface ITypeHelper<T> where T : notnull {
     static abstract bool Equals(T? a, T? b);
 
-    /// <summary>冻结一个值用于 Commit 时共享。对于无堆资源的类型直接返回原值。
-    /// 目前仅有ValueBox由于堆上值的Share/Exclusive语义需要。</summary>
+    /// <summary>
+    /// 将值从 Exclusive 状态转为 Frozen 状态，用于 Commit 时让 committed 与 current 共享同一份值。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>幂等性契约</b>：对已 Frozen 的值，必须返回同一实例（<c>Freeze(Freeze(x)) ≡ Freeze(x)</c>）。
+    /// ChangeTracker 的 Commit 路径依赖此性质——keep 窗口中的值已经是 frozen 的，再次 Freeze 不得产生新引用。</para>
+    /// <para>对无堆资源的类型直接返回原值。目前仅 <see cref="ValueBoxHelper"/> (ValueBox) 会清除 ExclusiveBit。</para>
+    /// </remarks>
     static virtual T? Freeze(T? value) => value;
 
+    /// <summary>是否持有需要手动管理的堆资源。为 true 时，调用方需遵守 Freeze/ReleaseSlot 的生命周期契约。</summary>
     static virtual bool NeedRelease => false;
-    /// <summary>释放值持有的堆 Slot。调用者确保是最后持有者。对于无堆资源类型无操作。
-    /// 目前仅有ValueBox由于堆上值的Share/Exclusive语义需要。</summary>
+
+    /// <summary>
+    /// 无条件释放值持有的堆资源，不论 Exclusive/Frozen 状态。
+    /// </summary>
+    /// <remarks>
+    /// <para>调用者必须确保自己是该值的最后持有者（即 committed 与 current 均不再引用此值）。</para>
+    /// <para>典型调用时机：Commit 时释放已被 trim/remove 的旧 committed 值；Revert 时释放 current 中的新增值。</para>
+    /// <para>对无堆资源的类型为空操作。目前仅 <see cref="ValueBoxHelper"/> (ValueBox) 会归还池化 Slot。</para>
+    /// </remarks>
     static virtual void ReleaseSlot(T? value) { }
     // static abstract List<T> GetTempList(DiffWriteContext context);
 
