@@ -152,7 +152,7 @@ public class CompactionStageBenchmarks : CompactionBenchmarkBase {
         );
         _scenario = CompactionScenarioFactory.CreatePendingCompactionScenario(ScenarioKind, TotalChildren, RemovedChildren);
         _primaryArtifacts = _scenario.Revision.RunPrimaryCommitForBenchmark(_scenario.Root, _scenario.File);
-        _session = Revision.RevisionCompactionSession.TryStartForBenchmark(_scenario.Revision, _primaryArtifacts.CommitId)
+        _session = Revision.RevisionCompactionSession.TryStartForBenchmark(_scenario.Revision, _primaryArtifacts.CommitTicket)
             ?? throw new InvalidOperationException($"Scenario {ScenarioKind} did not reach compaction start.");
     }
 
@@ -188,13 +188,13 @@ public class PrimaryCommitStageBenchmarks : CompactionBenchmarkBase {
     private CompactionBenchmarkScenario? _scenario;
     private List<DurableObject>? _liveObjects;
     private List<PendingSave>? _pendingSaves;
-    private CommitTicket _primaryCommitId;
+    private CommitTicket _primaryCommitTicket;
     private IDisposable? _validationScope;
 
     [Benchmark(Baseline = true)]
     public CommitTicket PrimaryCommit_Only() {
         var scenario = RequireScenario();
-        return scenario.Revision.RunPrimaryCommitForBenchmark(scenario.Root, scenario.File).CommitId;
+        return scenario.Revision.RunPrimaryCommitForBenchmark(scenario.Root, scenario.File).CommitTicket;
     }
 
     [Benchmark]
@@ -206,15 +206,15 @@ public class PrimaryCommitStageBenchmarks : CompactionBenchmarkBase {
     public CommitTicket Persist_Only() {
         var scenario = RequireScenario();
         var liveObjects = RequireLiveObjects();
-        return scenario.Revision.PersistPrimaryCommitForBenchmark(scenario.Root, liveObjects, scenario.File).CommitId;
+        return scenario.Revision.PersistPrimaryCommitForBenchmark(scenario.Root, liveObjects, scenario.File).CommitTicket;
     }
 
     [Benchmark]
     public CommitTicket Finalize_Only() {
         var scenario = RequireScenario();
         var pendingSaves = RequirePendingSaves();
-        scenario.Revision.FinalizePrimaryCommitForBenchmark(scenario.Root, pendingSaves, _primaryCommitId);
-        return _primaryCommitId;
+        scenario.Revision.FinalizePrimaryCommitForBenchmark(scenario.Root, pendingSaves, _primaryCommitTicket);
+        return _primaryCommitTicket;
     }
 
     [IterationSetup(Target = nameof(PrimaryCommit_Only))]
@@ -238,7 +238,7 @@ public class PrimaryCommitStageBenchmarks : CompactionBenchmarkBase {
         PrepareScenario();
         var scenario = RequireScenario();
         _liveObjects = scenario.Revision.WalkAndMarkForBenchmark(scenario.Root);
-        (_pendingSaves, _primaryCommitId) = scenario.Revision.PersistPrimaryCommitForBenchmark(
+        (_pendingSaves, _primaryCommitTicket) = scenario.Revision.PersistPrimaryCommitForBenchmark(
             scenario.Root,
             _liveObjects,
             scenario.File
@@ -249,7 +249,7 @@ public class PrimaryCommitStageBenchmarks : CompactionBenchmarkBase {
     public void CleanupIteration() {
         _pendingSaves = null;
         _liveObjects = null;
-        _primaryCommitId = default;
+        _primaryCommitTicket = default;
         _validationScope?.Dispose();
         _validationScope = null;
         _scenario?.Dispose();
@@ -307,7 +307,7 @@ internal static class CompactionBenchmarkUtil {
     public static CommitTicket RequireCompactionResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
         if (result.IsFailure) { throw new InvalidOperationException($"{benchmarkName} failed: {result.Error}"); }
         if (!result.Value.IsCompacted) { throw new InvalidOperationException($"{benchmarkName} did not trigger compaction."); }
-        return result.Value.HeadCommitId;
+        return result.Value.HeadCommitTicket;
     }
 }
 
@@ -439,6 +439,6 @@ internal static class CompactionScenarioFactory {
 
     private static CommitTicket RequireCompactionResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
         if (result.IsFailure) { throw new InvalidOperationException($"{benchmarkName} failed during scenario setup: {result.Error}"); }
-        return result.Value.HeadCommitId;
+        return result.Value.HeadCommitTicket;
     }
 }
