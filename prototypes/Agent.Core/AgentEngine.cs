@@ -158,7 +158,7 @@ public class AgentEngine {
 
         // Capture a snapshot for diagnostics so日志能体现当前可见工具数量。
         var visibleDefinitions = executor.GetVisibleToolDefinitions();
-        DebugUtil.Print(
+        DebugUtil.Info(
             StateMachineDebugCategory,
             $"[Engine] Tool cache rebuilt all={executor.AllToolDefinitions.Length} visible={visibleDefinitions.Length}"
         );
@@ -184,7 +184,7 @@ public class AgentEngine {
     public void AppendNotification(LevelOfDetailContent notificationContent) {
         if (notificationContent is null) { throw new ArgumentNullException(nameof(notificationContent)); }
         _state.AppendNotification(notificationContent);
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Host notification appended basicLength={notificationContent.Basic.Length}");
+        DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Host notification appended basicLength={notificationContent.Basic.Length}");
     }
 
     /// <summary>
@@ -402,14 +402,14 @@ public class AgentEngine {
         var inputEntry = args.InputEntry ?? new ObservationEntry();
         var appended = _state.AppendObservation(inputEntry);
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
+        DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
 
         return StepOutcome.FromInput(appended);
     }
 
     private async Task<StepOutcome> ProcessPendingModelCallAsync(AgentRunState state, LlmProfile profile, CancellationToken cancellationToken) {
         var liveContext = ProjectContext();
-        DebugUtil.Print(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
+        DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
         var toolExecutor = ToolExecutor;
         var toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
@@ -439,14 +439,14 @@ public class AgentEngine {
         OnAfterModelCall(afterArgs);
 
         var toolCallCount = appended.ToolCalls?.Count ?? 0;
-        DebugUtil.Print(ProviderDebugCategory, $"[Engine] Model output appended Content.Length={appended.Content.Length} toolCalls={toolCallCount}");
+        DebugUtil.Info(ProviderDebugCategory, $"[Engine] Model output appended Content.Length={appended.Content.Length} toolCalls={toolCallCount}");
 
         return StepOutcome.FromOutput(appended);
     }
 
     private async Task<StepOutcome> ProcessWaitingToolResultsAsync(CancellationToken cancellationToken) {
         if (_state.RecentHistory.Count == 0 || _state.RecentHistory[^1] is not ActionEntry outputEntry) {
-            DebugUtil.Print(StateMachineDebugCategory, "[Engine] WaitingToolResults but no model output available");
+            DebugUtil.Warning(StateMachineDebugCategory, "[Engine] WaitingToolResults but no model output available");
             return StepOutcome.NoProgress;
         }
 
@@ -480,7 +480,7 @@ public class AgentEngine {
         }
 
         var toolName = result.ToolName ?? nextCall.ToolName;
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool executed toolName={toolName} callId={result.ToolCallId} status={result.ExecuteResult.Status}");
+        DebugUtil.Info(StateMachineDebugCategory, $"[Engine] Tool executed toolName={toolName} callId={result.ToolCallId} status={result.ExecuteResult.Status}");
 
         return StepOutcome.FromToolExecution();
     }
@@ -494,7 +494,7 @@ public class AgentEngine {
         for (var index = 0; index < outputEntry.ToolCalls.Count; index++) {
             var call = outputEntry.ToolCalls[index];
             if (!_pendingToolResults.TryGetValue(call.ToolCallId, out var result)) {
-                DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Missing tool execution result callId={call.ToolCallId}");
+                DebugUtil.Warning(StateMachineDebugCategory, $"[Engine] Missing tool execution result callId={call.ToolCallId}");
                 return StepOutcome.NoProgress;
             }
 
@@ -513,7 +513,7 @@ public class AgentEngine {
         _pendingToolResults.Clear();
 
         var failureCallId = failure?.ToolCallId ?? "none";
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] Tool results appended count={results.Length} failure={failureCallId}");
+        DebugUtil.Info(StateMachineDebugCategory, $"[Engine] Tool results appended count={results.Length} failure={failureCallId}");
 
         return StepOutcome.FromToolResults(appended);
     }
@@ -550,7 +550,7 @@ public class AgentEngine {
     private void LogStateIfChanged(AgentRunState state) {
         if (_lastLoggedState is AgentRunState previous && previous == state) { return; }
 
-        DebugUtil.Print(StateMachineDebugCategory, $"[Engine] state={state} historyCount={_state.RecentHistory.Count} pendingToolResults={_pendingToolResults.Count}");
+        DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] state={state} historyCount={_state.RecentHistory.Count} pendingToolResults={_pendingToolResults.Count}");
         _lastLoggedState = state;
     }
 

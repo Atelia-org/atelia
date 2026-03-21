@@ -31,7 +31,7 @@ internal sealed class ConsoleTui {
             _output.Write("user> ");
             var line = _input.ReadLine();
             if (line is null) {
-                DebugUtil.Print("History", "Input stream ended");
+                DebugUtil.Info("History", "Input stream ended");
                 break;
             }
 
@@ -68,7 +68,7 @@ internal sealed class ConsoleTui {
         _output.WriteLine($"[system] {_agent.SystemPrompt}");
         _output.WriteLine();
 
-        DebugUtil.Print("History", "ConsoleTui intro displayed");
+        DebugUtil.Info("History", "ConsoleTui intro displayed");
     }
 
     private void PrintHistory() {
@@ -114,7 +114,7 @@ internal sealed class ConsoleTui {
             }
             catch (Exception ex) {
                 _output.WriteLine($"[error] 模型调用失败：{ex.Message}");
-                DebugUtil.Print("History", $"[ConsoleTui] DoStep failed profile={_defaultProfile.Name} error={ex.Message}");
+                DebugUtil.Error("History", $"[ConsoleTui] DoStep failed profile={_defaultProfile.Name} error={ex.Message}", ex);
                 break;
             }
 

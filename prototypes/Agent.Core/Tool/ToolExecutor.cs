@@ -41,7 +41,7 @@ internal sealed class ToolExecutor {
         _allToolDefinitions = definitionBuilder.Count == 0
             ? ImmutableArray<ToolDefinition>.Empty
             : definitionBuilder.ToImmutable();
-        DebugUtil.Print(DebugCategory, $"ToolExecutor initialized toolCount={_tools.Count}");
+        DebugUtil.Info(DebugCategory, $"ToolExecutor initialized toolCount={_tools.Count}");
     }
 
     public IEnumerable<ITool> Tools => _tools.Values;
@@ -86,10 +86,10 @@ internal sealed class ToolExecutor {
         ParsedToolCall request,
         CancellationToken cancellationToken
     ) {
-        DebugUtil.Print(DebugCategory, $"[Executor] Dispatch toolName={request.ToolName} toolCallId={request.ToolCallId}");
+        DebugUtil.Info(DebugCategory, $"[Executor] Dispatch toolName={request.ToolName} toolCallId={request.ToolCallId}");
 
         if (!_tools.TryGetValue(request.ToolName, out var tool)) {
-            DebugUtil.Print(DebugCategory, $"[Executor] Missing tool toolName={request.ToolName}");
+            DebugUtil.Warning(DebugCategory, $"[Executor] Missing tool toolName={request.ToolName}");
 
             var message = $"未找到工具: {request.ToolName}";
             return new LodToolCallResult(
@@ -110,7 +110,7 @@ internal sealed class ToolExecutor {
 
         if (!string.IsNullOrWhiteSpace(normalizedRequest.ParseError)) {
             stopwatch.Stop();
-            DebugUtil.Print(
+            DebugUtil.Warning(
                 DebugCategory,
                 $"[Executor] Argument parse failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={normalizedRequest.ParseError}"
             );
@@ -124,7 +124,7 @@ internal sealed class ToolExecutor {
                 ?? throw new InvalidOperationException($"Tool '{tool.Name}' returned null result.");
             stopwatch.Stop();
 
-            DebugUtil.Print(
+            DebugUtil.Info(
                 DebugCategory,
                 $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
@@ -135,7 +135,7 @@ internal sealed class ToolExecutor {
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
-            DebugUtil.Print(DebugCategory, $"[Executor] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId}");
+            DebugUtil.Warning(DebugCategory, $"[Executor] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId}");
 
             var message = "工具执行被取消";
             return new LodToolCallResult(
@@ -147,7 +147,7 @@ internal sealed class ToolExecutor {
         }
         catch (Exception ex) {
             stopwatch.Stop();
-            DebugUtil.Print(DebugCategory, $"[Executor] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={ex.Message}");
+            DebugUtil.Error(DebugCategory, $"[Executor] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={ex.Message}", ex);
 
             var message = $"工具执行异常: {ex.Message}";
             return new LodToolCallResult(

@@ -41,14 +41,14 @@ public sealed class MemoryNotebookApp : IApp {
 
     public void ReplaceNotebookFromHost(string content) {
         _editor.UpdateFromHost(content);
-        DebugUtil.Print(DebugCategory, $"[HostUpdate] length={_editor.GetRawSnapshot().Length}");
+        DebugUtil.Trace(DebugCategory, $"[HostUpdate] length={_editor.GetRawSnapshot().Length}");
     }
 
     public string GetSnapshot() => _editor.GetRawSnapshot();
 
     private void ApplyNotebookContent(string content) {
         _notebookContent = content;
-        DebugUtil.Print(DebugCategory, $"[State] notebook updated length={content.Length}");
+        DebugUtil.Trace(DebugCategory, $"[State] notebook updated length={content.Length}");
     }
 
     internal const string TargetTextName = "MemoryNotebook";

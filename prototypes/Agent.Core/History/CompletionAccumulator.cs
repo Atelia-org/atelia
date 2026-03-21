@@ -29,7 +29,7 @@ internal static class CompletionAccumulator {
         }
 
         await foreach (var delta in deltas.WithCancellation(cancellationToken)) {
-            DebugUtil.Print(DebugCategory, $"[Aggregate] Received delta kind={delta.Kind}");
+            DebugUtil.Trace(DebugCategory, $"[Aggregate] Received delta kind={delta.Kind}");
 
             switch (delta.Kind) {
                 case CompletionChunkKind.Content:
@@ -65,14 +65,14 @@ internal static class CompletionAccumulator {
 
         foreach (var call in toolCalls) {
             if (call.Arguments is null && string.IsNullOrWhiteSpace(call.ParseError)) {
-                DebugUtil.Print(DebugCategory, $"[Aggregate] Tool call missing parsed arguments toolName={call.ToolName} callId={call.ToolCallId}");
+                DebugUtil.Warning(DebugCategory, $"[Aggregate] Tool call missing parsed arguments toolName={call.ToolName} callId={call.ToolCallId}");
             }
         }
 
         var fullContentText = string.Join('\n', content);
         var outputEntry = new ActionEntry(fullContentText, toolCalls, invocation);
 
-        DebugUtil.Print(DebugCategory, $"[Aggregate] Produced output fullContentText.Length={fullContentText.Length}, toolCalls={toolCalls.Count}");
+        DebugUtil.Info(DebugCategory, $"[Aggregate] Produced output fullContentText.Length={fullContentText.Length}, toolCalls={toolCalls.Count}");
 
         return outputEntry;
     }

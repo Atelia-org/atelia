@@ -19,7 +19,7 @@ internal static class Program {
         Console.InputEncoding = Encoding.UTF8;
         Console.OutputEncoding = Encoding.UTF8;
 
-        DebugUtil.Print(DebugCategory, "LiveContextProto bootstrap starting");
+        DebugUtil.Info(DebugCategory, "LiveContextProto bootstrap starting");
 
         var anthropicClient = new AnthropicClient(apiKey: null, baseAddress: new Uri(AnthropicProxyUrl));
         var defaultProfile = new LlmProfile(anthropicClient, DefaultProxyModel, DefaultProfileName);
@@ -29,7 +29,7 @@ internal static class Program {
 
         loop.Run();
 
-        DebugUtil.Print(DebugCategory, "LiveContextProto shutdown");
+        DebugUtil.Info(DebugCategory, "LiveContextProto shutdown");
         return 0;
     }
 

@@ -373,7 +373,7 @@ public sealed class TextEditorWidget {
                 _writeContent(normalizedContent);
             }
             catch (Exception ex) {
-                DebugUtil.Print(DebugCategory, $"[PersistFailed] target={_targetTextName} length={normalizedContent.Length} exception={ex.GetType().Name} message={ex.Message}");
+                DebugUtil.Error(DebugCategory, $"[PersistFailed] target={_targetTextName} length={normalizedContent.Length} exception={ex.GetType().Name} message={ex.Message}", ex);
                 throw;
             }
         }
@@ -398,7 +398,7 @@ public sealed class TextEditorWidget {
                     ((Action<string>)handler).Invoke(content);
                 }
                 catch (Exception ex) {
-                    DebugUtil.Print(DebugCategory, $"[EventError] target={_targetTextName} length={content.Length} exception={ex.GetType().Name} message={ex.Message}");
+                    DebugUtil.Error(DebugCategory, $"[EventError] target={_targetTextName} length={content.Length} exception={ex.GetType().Name} message={ex.Message}", ex);
                 }
             }
         }
