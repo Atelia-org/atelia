@@ -31,6 +31,11 @@ internal sealed class IndexedDeque<T> {
         }
     }
 
+    public ref T GetRef(int index) {
+        ValidateIndex(index);
+        return ref _buffer[ToBufferIndex(index)];
+    }
+
     public void PushFront(T value) {
         EnsureCapacityForOneMore();
         _head = (_head - 1) & BufferMask;
