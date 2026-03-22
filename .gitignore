@@ -50,3 +50,4 @@ tests/CodeCortex.Tests/
 tests/MemoFileProto.Tests/
 tests/MemoTree.Tests/
 BenchmarkDotNet.Artifacts/
+.atelia/

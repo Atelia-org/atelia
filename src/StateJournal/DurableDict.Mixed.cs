@@ -163,6 +163,10 @@ where TKey : notnull {
             value = default;
             return status;
         }
+        if (baseVal is null) {
+            value = default;
+            return GetIssue.None;
+        }
         if (baseVal is not TValue castVal) {
             value = default;
             return GetIssue.TypeMismatch;
