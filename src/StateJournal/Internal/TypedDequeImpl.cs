@@ -3,23 +3,107 @@ using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
 
-// 仅占位，尚未实现
 internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
     where T : notnull
     where VHelper : unmanaged, ITypeHelper<T> {
-    public override DurableObjectKind Kind => DurableObjectKind.TypedDeque;
-    public override bool HasChanges => false;
+    private DequeChangeTracker<T> _core;
 
     internal TypedDequeImpl() {
+        _core = new();
     }
 
-    internal override void DiscardChanges() => throw new NotImplementedException();
-    internal override SizedPtr HeadTicket => throw new NotImplementedException();
-    internal override bool IsTracked => throw new NotImplementedException();
-    internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) => throw new NotImplementedException();
-    internal override FrameTag WritePendingDiff(BinaryDiffWriter writer, ref DiffWriteContext context) => throw new NotImplementedException();
-    internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr parentTicket) => throw new NotImplementedException();
-    internal override void OnLoadCompleted(SizedPtr versionTicket) => throw new NotImplementedException();
+    #region DurableObject
+
+    public override bool HasChanges => _core.HasChanges;
+
+    #endregion
+
+    #region DurableDeque<T>
+
+    public override int Count => _core.Current.Count;
+    public override void PushFront(T? value) => _core.PushFront<VHelper>(value);
+    public override void PushBack(T? value) => _core.PushBack<VHelper>(value);
+    public override GetIssue GetAt(int index, out T? value) {
+        if (!_core.TryGetAt(index, out value)) {
+            value = default;
+            return GetIssue.OutOfRange;
+        }
+        return GetIssue.None;
+    }
+    public override GetIssue PeekFront(out T? value) {
+        if (!_core.TryPeekFront(out value)) {
+            value = default;
+            return GetIssue.NotFound;
+        }
+        return GetIssue.None;
+    }
+    public override GetIssue PeekBack(out T? value) {
+        if (!_core.TryPeekBack(out value)) {
+            value = default;
+            return GetIssue.NotFound;
+        }
+        return GetIssue.None;
+    }
+    public override bool TrySetAt(int index, T? value) {
+        if ((uint)index >= (uint)_core.Current.Count) { return false; }
+        SetCore(index, value);
+        return true;
+    }
+    public override bool TrySetFront(T? value) {
+        if (_core.Current.Count == 0) { return false; }
+        SetCore(0, value);
+        return true;
+    }
+    public override bool TrySetBack(T? value) {
+        if (_core.Current.Count == 0) { return false; }
+        SetCore(_core.Current.Count - 1, value);
+        return true;
+    }
+    public override GetIssue PopFront(out T? value) {
+        if (!_core.TryPopFront<VHelper>(out value, out bool callerOwned)) {
+            value = default;
+            return GetIssue.NotFound;
+        }
+        if (VHelper.NeedRelease && callerOwned) {
+            VHelper.ReleaseSlot(value);
+        }
+        return GetIssue.None;
+    }
+    public override GetIssue PopBack(out T? value) {
+        if (!_core.TryPopBack<VHelper>(out value, out bool callerOwned)) {
+            value = default;
+            return GetIssue.NotFound;
+        }
+        if (VHelper.NeedRelease && callerOwned) {
+            VHelper.ReleaseSlot(value);
+        }
+        return GetIssue.None;
+    }
+
+    #endregion
+
+    #region DurableDequeBase
+
+    private protected override int RebaseCount => _core.RebaseCount;
+    private protected override int DeltifyCount => _core.DeltifyCount;
+
+    internal override void DiscardChanges() => _core.Revert<VHelper>();
+
+    private protected override void CommitCore() => _core.Commit<VHelper>();
+    private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<VHelper>();
+    private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<VHelper>(writer, context);
+    private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<VHelper>(writer, context);
+    private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<VHelper>(ref reader);
+
+    #endregion
+
+    private void SetCore(int index, T? value) {
+        ref T? slot = ref _core.GetRef(index);
+        if (VHelper.Equals(slot, value)) { return; }
+
+        slot = value;
+        _core.AfterSet<VHelper>(index, ref slot);
+    }
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
 

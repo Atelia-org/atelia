@@ -5,13 +5,15 @@ partial struct ValueBox {
     #region DurableRef
     internal const int DurRefKindBitCount = 4, DurRefIdBitCount = 32;
     internal const int DurRefKindShift = DurRefIdBitCount;
+
+    internal bool IsDurableRef => GetLzc() == BoxLzc.DurableRef;
     internal readonly DurableObjectKind GetDurRefKind() {
-        Debug.Assert(GetLzc() == BoxLzc.DurableRef);
+        Debug.Assert(IsDurableRef);
         return (DurableObjectKind)(GetBits() >> DurRefKindShift) & DurableObjectKind.Mask;
     }
     /// <summary>依赖<see cref="DurRefIdBitCount"/> == 32</summary>
     internal readonly LocalId GetDurRefId() {
-        Debug.Assert(GetLzc() == BoxLzc.DurableRef);
+        Debug.Assert(IsDurableRef);
         return new((uint)GetBits());
     }
     private readonly DurableRef DecodeDurableRef() {
@@ -55,7 +57,7 @@ partial struct ValueBox {
                 value = default;
                 return GetIssue.None;
             }
-            if (box.GetLzc() == BoxLzc.DurableRef) {
+            if (box.IsDurableRef) {
                 value = box.DecodeDurableRef();
                 return GetIssue.None;
             }

@@ -19,6 +19,6 @@ public class DurableDictTypedGetTests {
         var model = Durable.Dict<string>();
         model.Upsert("zoom", 1.5);
 
-        Assert.Throws<NotSupportedException>(() => model.Get<DateTime>("zoom"));
+        Assert.Throws<NotSupportedException>(() => model.GetOrThrow<DateTime>("zoom"));
     }
 }

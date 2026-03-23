@@ -203,4 +203,153 @@ public class IndexedDequeTests {
 
         Assert.Throws<ArgumentOutOfRangeException>(() => deque.TrimFront(3));
     }
+
+    [Fact]
+    public void GetSegments_OnContiguousDeque_ReturnsSingleSegment() {
+        var deque = new IndexedDeque<int>(capacity: 4);
+        deque.PushBack(1);
+        deque.PushBack(2);
+        deque.PushBack(3);
+
+        deque.GetSegments(out int firstStartIndex, out var first, out int secondStartIndex, out var second);
+
+        Assert.Equal(0, firstStartIndex);
+        Assert.Equal([1, 2, 3], first.ToArray());
+        Assert.Equal(3, secondStartIndex);
+        Assert.Empty(second.ToArray());
+    }
+
+    [Fact]
+    public void GetSegments_OnWrappedDeque_ReturnsTwoSegmentsInLogicalOrder() {
+        var deque = new IndexedDeque<int>(capacity: 4);
+        deque.PushBack(1);
+        deque.PushBack(2);
+        deque.PushBack(3);
+        deque.PushBack(4);
+        Assert.Equal(1, deque.PopFront());
+        Assert.Equal(2, deque.PopFront());
+        deque.PushBack(5);
+        deque.PushBack(6); // logical [3,4,5,6], wrapped in backing buffer
+
+        deque.GetSegments(out int firstStartIndex, out var first, out int secondStartIndex, out var second);
+
+        Assert.Equal(0, firstStartIndex);
+        Assert.Equal([3, 4], first.ToArray());
+        Assert.Equal(2, secondStartIndex);
+        Assert.Equal([5, 6], second.ToArray());
+    }
+
+    [Fact]
+    public void GetSegments_ForWrappedSubRange_SplitsAtBufferBoundary() {
+        var deque = new IndexedDeque<int>(capacity: 4);
+        deque.PushBack(1);
+        deque.PushBack(2);
+        deque.PushBack(3);
+        deque.PushBack(4);
+        Assert.Equal(1, deque.PopFront());
+        Assert.Equal(2, deque.PopFront());
+        deque.PushBack(5);
+        deque.PushBack(6); // logical [3,4,5,6]
+
+        deque.GetSegments(index: 1, count: 3, out int firstStartIndex, out var first, out int secondStartIndex, out var second);
+
+        Assert.Equal(1, firstStartIndex);
+        Assert.Equal([4], first.ToArray());
+        Assert.Equal(2, secondStartIndex);
+        Assert.Equal([5, 6], second.ToArray());
+    }
+
+    [Fact]
+    public void GetSegments_WithEmptyRange_ReturnsEmptySegments() {
+        var deque = new IndexedDeque<int>();
+        deque.PushBack(1);
+        deque.PushBack(2);
+
+        deque.GetSegments(index: 1, count: 0, out int firstStartIndex, out var first, out int secondStartIndex, out var second);
+
+        Assert.Equal(1, firstStartIndex);
+        Assert.Empty(first.ToArray());
+        Assert.Equal(1, secondStartIndex);
+        Assert.Empty(second.ToArray());
+    }
+
+    [Fact]
+    public void GetSegments_WithInvalidRange_Throws() {
+        var deque = new IndexedDeque<int>();
+        deque.PushBack(1);
+        deque.PushBack(2);
+
+        Assert.Throws<ArgumentOutOfRangeException>(Act);
+        return;
+
+        void Act() => deque.GetSegments(index: 1, count: 2, out _, out _, out _, out _);
+    }
+
+    [Fact]
+    public void ReserveBack_OnWrappedDeque_AppendsInLogicalOrder() {
+        var deque = new IndexedDeque<int>(capacity: 4);
+        deque.PushBack(1);
+        deque.PushBack(2);
+        deque.PushBack(3);
+        deque.PushBack(4);
+        Assert.Equal(1, deque.PopFront());
+        Assert.Equal(2, deque.PopFront());
+
+        deque.ReserveBack(3, out var first, out var second);
+        FillSequential(first, second, [5, 6, 7]);
+
+        Assert.Equal([3, 4, 5, 6, 7], Collect(deque));
+    }
+
+    [Fact]
+    public void ReserveFront_OnWrappedDeque_PrependsInLogicalOrder() {
+        var deque = new IndexedDeque<int>(capacity: 4);
+        deque.PushBack(3);
+        deque.PushBack(4);
+        deque.PushBack(5);
+        deque.PushBack(6);
+        Assert.Equal(6, deque.PopBack());
+        Assert.Equal(5, deque.PopBack());
+        deque.PushFront(2);
+
+        deque.ReserveFront(2, out var first, out var second);
+        FillSequential(first, second, [0, 1]);
+
+        Assert.Equal([0, 1, 2, 3, 4], Collect(deque));
+    }
+
+    [Fact]
+    public void ReserveFrontAndBack_Zero_DoNotChangeDeque() {
+        var deque = new IndexedDeque<int>();
+        deque.PushBack(1);
+        deque.PushBack(2);
+
+        deque.ReserveFront(0, out var frontFirst, out var frontSecond);
+        deque.ReserveBack(0, out var backFirst, out var backSecond);
+
+        Assert.Empty(frontFirst.ToArray());
+        Assert.Empty(frontSecond.ToArray());
+        Assert.Empty(backFirst.ToArray());
+        Assert.Empty(backSecond.ToArray());
+        Assert.Equal([1, 2], Collect(deque));
+    }
+
+    private static void FillSequential(Span<int> first, Span<int> second, int[] values) {
+        int index = 0;
+        foreach (ref var slot in first) {
+            slot = values[index++];
+        }
+        foreach (ref var slot in second) {
+            slot = values[index++];
+        }
+        Assert.Equal(values.Length, index);
+    }
+
+    private static int[] Collect(IndexedDeque<int> deque) {
+        var result = new int[deque.Count];
+        for (int i = 0; i < deque.Count; ++i) {
+            result[i] = deque[i];
+        }
+        return result;
+    }
 }

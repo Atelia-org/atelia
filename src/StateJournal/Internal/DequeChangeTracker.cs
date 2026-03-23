@@ -101,15 +101,11 @@ internal struct DequeChangeTracker<TValue>
         AssertTrackedInvariant<VHelper>();
     }
 
-    public TValue? PeekFront() {
-        if (_current.Count == 0) { throw new InvalidOperationException("Deque is empty."); }
-        return _current[0];
-    }
+    public bool TryGetAt(int index, out TValue? value) => _current.TryGetAt(index, out value);
 
-    public TValue? PeekBack() {
-        if (_current.Count == 0) { throw new InvalidOperationException("Deque is empty."); }
-        return _current[_current.Count - 1];
-    }
+    public bool TryPeekFront(out TValue? value) => _current.TryPeekFront(out value);
+
+    public bool TryPeekBack(out TValue? value) => _current.TryPeekBack(out value);
 
     /// <summary>
     /// 返回 current 槽位的可写引用。调用方可直接对槽位做原地更新。
@@ -156,60 +152,64 @@ internal struct DequeChangeTracker<TValue>
         AssertTrackedInvariant<VHelper>();
     }
 
-    public TValue? PopFront<VHelper>(out bool callerOwned)
+    public bool TryPopFront<VHelper>(out TValue? value, out bool callerOwned)
         where VHelper : unmanaged, ITypeHelper<TValue> {
-        if (_current.Count == 0) { throw new InvalidOperationException("Deque is empty."); }
+        bool popDirtyPrefix = _newKeepLo > 0;
+        bool popKeep = !popDirtyPrefix && _keepCount > 0;
+        if (!_current.TryPopFront(out value)) {
+            callerOwned = false;
+            return false;
+        }
 
-        if (_newKeepLo > 0) {
-            TValue? removed = _current.PopFront();
+        if (popDirtyPrefix) {
             --_newKeepLo;
             callerOwned = VHelper.NeedRelease;
             AssertTrackedInvariant<VHelper>();
-            return removed;
+            return true;
         }
 
-        if (_keepCount > 0) {
-            TValue? removed = _current.PopFront();
+        if (popKeep) {
             bool frontWasDirty = _committedDirtyMap.ClearBit(_oldKeepLo);
             ++_oldKeepLo;
             --_keepCount;
             callerOwned = VHelper.NeedRelease && frontWasDirty;
             AssertTrackedInvariant<VHelper>();
-            return removed;
+            return true;
         }
 
-        TValue? suffixRemoved = _current.PopFront();
         callerOwned = VHelper.NeedRelease;
         AssertTrackedInvariant<VHelper>();
-        return suffixRemoved;
+        return true;
     }
 
-    public TValue? PopBack<VHelper>(out bool callerOwned)
+    public bool TryPopBack<VHelper>(out TValue? value, out bool callerOwned)
         where VHelper : unmanaged, ITypeHelper<TValue> {
-        if (_current.Count == 0) { throw new InvalidOperationException("Deque is empty."); }
-
-        if (DirtySuffixCount > 0) {
-            TValue? removed = _current.PopBack();
-            callerOwned = VHelper.NeedRelease;
-            AssertTrackedInvariant<VHelper>();
-            return removed;
+        bool popDirtySuffix = DirtySuffixCount > 0;
+        bool popKeep = !popDirtySuffix && _keepCount > 0;
+        if (!_current.TryPopBack(out value)) {
+            callerOwned = false;
+            return false;
         }
 
-        if (_keepCount > 0) {
-            TValue? removed = _current.PopBack();
+        if (popDirtySuffix) {
+            callerOwned = VHelper.NeedRelease;
+            AssertTrackedInvariant<VHelper>();
+            return true;
+        }
+
+        if (popKeep) {
             int backCommittedIndex = OldKeepHi - 1;
             bool backWasDirty = _committedDirtyMap.ClearBit(backCommittedIndex);
             --_keepCount;
             callerOwned = VHelper.NeedRelease && backWasDirty;
             AssertTrackedInvariant<VHelper>();
-            return removed;
+            return true;
         }
 
-        TValue? prefixRemoved = _current.PopBack();
         --_newKeepLo;
         callerOwned = VHelper.NeedRelease;
         AssertTrackedInvariant<VHelper>();
-        return prefixRemoved;
+        return true;
     }
 
     public void Revert<VHelper>()
@@ -228,12 +228,8 @@ internal struct DequeChangeTracker<TValue>
         RestoreCurrentKeepFromCommitted<VHelper>();
 
         // 从 committed 恢复被 trim 的前后部分
-        for (int i = _oldKeepLo; --i >= 0;) {
-            _current.PushFront(VHelper.Freeze(_committed[i]));
-        }
-        for (int i = OldKeepHi; i < _committed.Count; ++i) {
-            _current.PushBack(VHelper.Freeze(_committed[i]));
-        }
+        CopyCommittedRangeToCurrent<VHelper>(0, _oldKeepLo, toFront: true);
+        CopyCommittedRangeToCurrent<VHelper>(OldKeepHi, _committed.Count - OldKeepHi, toFront: false);
 
         ResetTrackedWindow<VHelper>();
     }
@@ -243,22 +239,14 @@ internal struct DequeChangeTracker<TValue>
         if (!HasChanges) { return; }
 
         // O(delta): 只冻结 prefix 和 suffix（keep 窗口已是 frozen 共享引用）
-        for (int i = 0; i < _newKeepLo; ++i) {
-            _current[i] = VHelper.Freeze(_current[i]);
-        }
-        for (int i = NewKeepHi; i < _current.Count; ++i) {
-            _current[i] = VHelper.Freeze(_current[i]);
-        }
+        FreezeCurrentRange<VHelper>(0, _newKeepLo);
+        FreezeCurrentRange<VHelper>(NewKeepHi, _current.Count - NewKeepHi);
         CommitSparseKeepChanges<VHelper>();
 
         // 释放 committed 中被 trim 的元素
         if (VHelper.NeedRelease) {
-            for (int i = 0; i < _oldKeepLo; ++i) {
-                VHelper.ReleaseSlot(_committed[i]);
-            }
-            for (int i = OldKeepHi; i < _committed.Count; ++i) {
-                VHelper.ReleaseSlot(_committed[i]);
-            }
+            ReleaseRange<VHelper>(_committed, 0, _oldKeepLo);
+            ReleaseRange<VHelper>(_committed, OldKeepHi, _committed.Count - OldKeepHi);
         }
 
         // 裁掉 committed 的 trim 部分，只留 keep 窗口
@@ -266,12 +254,8 @@ internal struct DequeChangeTracker<TValue>
         _committed.TrimFront(_oldKeepLo);
 
         // 将 current 的 prefix/suffix 同步到 committed
-        for (int i = _newKeepLo; --i >= 0;) {
-            _committed.PushFront(_current[i]);
-        }
-        for (int i = NewKeepHi; i < _current.Count; ++i) {
-            _committed.PushBack(_current[i]);
-        }
+        CopyCurrentRangeToCommitted(0, _newKeepLo, toFront: true);
+        CopyCurrentRangeToCommitted(NewKeepHi, _current.Count - NewKeepHi, toFront: false);
 
         ResetTrackedWindow<VHelper>();
     }
@@ -290,14 +274,10 @@ internal struct DequeChangeTracker<TValue>
 
         writer.WriteCount(PushFrontCount);
         // 逆序写 prefix，使 ApplyDelta 可边读边 PushFront，无需临时缓存。
-        for (int i = _newKeepLo; --i >= 0;) {
-            VHelper.Write(writer, _current[i], false);
-        }
+        WriteCurrentRange<VHelper>(writer, 0, _newKeepLo, reverse: true);
 
         writer.WriteCount(PushBackCount);
-        for (int i = NewKeepHi; i < _current.Count; ++i) {
-            VHelper.Write(writer, _current[i], false);
-        }
+        WriteCurrentRange<VHelper>(writer, NewKeepHi, _current.Count - NewKeepHi, reverse: false);
     }
 
     public void WriteRebase<VHelper>(BinaryDiffWriter writer, DiffWriteContext context)
@@ -309,9 +289,7 @@ internal struct DequeChangeTracker<TValue>
         writer.WriteCount(0);
         writer.WriteCount(0);
         writer.WriteCount(_current.Count);
-        for (int i = 0; i < _current.Count; ++i) {
-            VHelper.Write(writer, _current[i], false);
-        }
+        WriteCurrentRange<VHelper>(writer, 0, _current.Count, reverse: false);
     }
 
     public void ApplyDelta<VHelper>(ref BinaryDiffReader reader)
@@ -326,12 +304,8 @@ internal struct DequeChangeTracker<TValue>
         if (trimFrontCount + trimBackCount > _committed.Count) { throw new InvalidDataException("Deque delta trims more elements than committed contains."); }
 
         if (VHelper.NeedRelease) {
-            for (int i = 0; i < trimFrontCount; ++i) {
-                VHelper.ReleaseSlot(_committed[i]);
-            }
-            for (int i = _committed.Count - trimBackCount; i < _committed.Count; ++i) {
-                VHelper.ReleaseSlot(_committed[i]);
-            }
+            ReleaseRange<VHelper>(_committed, 0, trimFrontCount);
+            ReleaseRange<VHelper>(_committed, _committed.Count - trimBackCount, trimBackCount);
         }
 
         _committed.TrimBack(trimBackCount);
@@ -372,9 +346,7 @@ internal struct DequeChangeTracker<TValue>
     public void SyncCurrentFromCommitted<VHelper>()
         where VHelper : unmanaged, ITypeHelper<TValue> {
         Debug.Assert(_current.Count == 0, "SyncCurrentFromCommitted 应在空 _current 上调用。");
-        for (int i = 0; i < _committed.Count; ++i) {
-            _current.PushBack(VHelper.Freeze(_committed[i]));
-        }
+        CopyCommittedRangeToCurrent<VHelper>(0, _committed.Count, toFront: false);
 
         ResetTrackedWindow<VHelper>();
     }
@@ -469,11 +441,169 @@ internal struct DequeChangeTracker<TValue>
 
     private void ReleaseCurrentPrefixAndSuffix<VHelper>()
         where VHelper : unmanaged, ITypeHelper<TValue> {
-        for (int i = 0; i < DirtyPrefixCount; ++i) {
-            VHelper.ReleaseSlot(_current[i]);
+        ReleaseRange<VHelper>(_current, 0, DirtyPrefixCount);
+        ReleaseRange<VHelper>(_current, NewKeepHi, _current.Count - NewKeepHi);
+    }
+
+    private void FreezeCurrentRange<VHelper>(int index, int count)
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (count == 0) { return; }
+
+        _current.GetSegments(index, count, out Span<TValue?> first, out Span<TValue?> second);
+        FreezeSegment<VHelper>(first);
+        FreezeSegment<VHelper>(second);
+    }
+
+    private static void ReleaseRange<VHelper>(IndexedDeque<TValue?> deque, int index, int count)
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (count == 0) { return; }
+
+        deque.GetSegments(index, count, out Span<TValue?> first, out Span<TValue?> second);
+        ReleaseSegments<VHelper>(first, second);
+    }
+
+    private void CopyCommittedRangeToCurrent<VHelper>(int index, int count, bool toFront)
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (count == 0) { return; }
+
+        _committed.GetSegments(index, count, out Span<TValue?> sourceFirst, out Span<TValue?> sourceSecond);
+        if (toFront) {
+            _current.ReserveFront(count, out Span<TValue?> destFirst, out Span<TValue?> destSecond);
+            CopySegments<VHelper>(sourceFirst, sourceSecond, destFirst, destSecond, freeze: true);
+            return;
         }
-        for (int i = NewKeepHi; i < _current.Count; ++i) {
-            VHelper.ReleaseSlot(_current[i]);
+
+        _current.ReserveBack(count, out Span<TValue?> backDestFirst, out Span<TValue?> backDestSecond);
+        CopySegments<VHelper>(sourceFirst, sourceSecond, backDestFirst, backDestSecond, freeze: true);
+    }
+
+    private void CopyCurrentRangeToCommitted(int index, int count, bool toFront) {
+        if (count == 0) { return; }
+
+        _current.GetSegments(index, count, out Span<TValue?> sourceFirst, out Span<TValue?> sourceSecond);
+        if (toFront) {
+            _committed.ReserveFront(count, out Span<TValue?> destFirst, out Span<TValue?> destSecond);
+            CopySegments(sourceFirst, sourceSecond, destFirst, destSecond);
+            return;
+        }
+
+        _committed.ReserveBack(count, out Span<TValue?> backDestFirst, out Span<TValue?> backDestSecond);
+        CopySegments(sourceFirst, sourceSecond, backDestFirst, backDestSecond);
+    }
+
+    private void WriteCurrentRange<VHelper>(BinaryDiffWriter writer, int index, int count, bool reverse)
+        where VHelper : ITypeHelper<TValue> {
+        if (count == 0) { return; }
+
+        _current.GetSegments(index, count, out Span<TValue?> first, out Span<TValue?> second);
+        if (reverse) {
+            WriteSegmentReverse<VHelper>(writer, second);
+            WriteSegmentReverse<VHelper>(writer, first);
+            return;
+        }
+
+        WriteSegmentForward<VHelper>(writer, first);
+        WriteSegmentForward<VHelper>(writer, second);
+    }
+
+    private static void FreezeSegment<VHelper>(Span<TValue?> segment)
+        where VHelper : ITypeHelper<TValue> {
+        for (int i = 0; i < segment.Length; ++i) {
+            segment[i] = VHelper.Freeze(segment[i]);
+        }
+    }
+
+    private static void ReleaseSegments<VHelper>(Span<TValue?> first, Span<TValue?> second)
+        where VHelper : ITypeHelper<TValue> {
+        ReleaseSegment<VHelper>(first);
+        ReleaseSegment<VHelper>(second);
+    }
+
+    private static void WriteSegmentForward<VHelper>(BinaryDiffWriter writer, Span<TValue?> segment)
+        where VHelper : ITypeHelper<TValue> {
+        foreach (var value in segment) {
+            VHelper.Write(writer, value, false);
+        }
+    }
+
+    private static void WriteSegmentReverse<VHelper>(BinaryDiffWriter writer, Span<TValue?> segment)
+        where VHelper : ITypeHelper<TValue> {
+        for (int i = segment.Length; --i >= 0;) {
+            VHelper.Write(writer, segment[i], false);
+        }
+    }
+
+    private static void ReleaseSegment<VHelper>(Span<TValue?> segment)
+        where VHelper : ITypeHelper<TValue> {
+        foreach (var value in segment) {
+            VHelper.ReleaseSlot(value);
+        }
+    }
+
+    private static void CopySegments(
+        Span<TValue?> sourceFirst,
+        Span<TValue?> sourceSecond,
+        Span<TValue?> destFirst,
+        Span<TValue?> destSecond
+    ) {
+        CopyInto(ref sourceFirst, ref sourceSecond, destFirst);
+        CopyInto(ref sourceFirst, ref sourceSecond, destSecond);
+        Debug.Assert(sourceFirst.IsEmpty && sourceSecond.IsEmpty, "all source items should have been copied.");
+    }
+
+    private static void CopySegments<VHelper>(
+        Span<TValue?> sourceFirst,
+        Span<TValue?> sourceSecond,
+        Span<TValue?> destFirst,
+        Span<TValue?> destSecond,
+        bool freeze
+    )
+        where VHelper : ITypeHelper<TValue> {
+        CopyInto<VHelper>(ref sourceFirst, ref sourceSecond, destFirst, freeze);
+        CopyInto<VHelper>(ref sourceFirst, ref sourceSecond, destSecond, freeze);
+        Debug.Assert(sourceFirst.IsEmpty && sourceSecond.IsEmpty, "all source items should have been copied.");
+    }
+
+    private static void CopyInto(ref Span<TValue?> currentSource, ref Span<TValue?> nextSource, Span<TValue?> destination) {
+        int written = 0;
+        while (written < destination.Length) {
+            if (currentSource.IsEmpty) {
+                currentSource = nextSource;
+                nextSource = [];
+                continue;
+            }
+
+            int take = Math.Min(currentSource.Length, destination.Length - written);
+            currentSource[..take].CopyTo(destination.Slice(written, take));
+            currentSource = currentSource[take..];
+            written += take;
+        }
+    }
+
+    private static void CopyInto<VHelper>(ref Span<TValue?> currentSource, ref Span<TValue?> nextSource, Span<TValue?> destination, bool freeze)
+        where VHelper : ITypeHelper<TValue> {
+        int written = 0;
+        while (written < destination.Length) {
+            if (currentSource.IsEmpty) {
+                currentSource = nextSource;
+                nextSource = [];
+                continue;
+            }
+
+            int take = Math.Min(currentSource.Length, destination.Length - written);
+            var sourceSlice = currentSource[..take];
+            var destSlice = destination.Slice(written, take);
+            if (freeze) {
+                for (int i = 0; i < take; ++i) {
+                    destSlice[i] = VHelper.Freeze(sourceSlice[i]);
+                }
+            }
+            else {
+                sourceSlice.CopyTo(destSlice);
+            }
+
+            currentSource = currentSource[take..];
+            written += take;
         }
     }
 

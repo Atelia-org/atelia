@@ -158,6 +158,66 @@ public class VersionChainRoundTripTests : IDisposable {
     }
 
     #endregion
+    #region TypedDeque round-trip
+
+    [Fact]
+    public void TypedDeque_Int_SaveLoad_RoundTrip() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var deque = Durable.Deque<int>();
+        deque.PushBack(10);
+        deque.PushFront(5);
+        deque.PushBack(20);
+
+        var saveResult = VersionChain.Save(deque, file, DiffWriteContext.UserPrimary);
+        Assert.True(saveResult.IsSuccess, $"Save failed: {saveResult.Error}");
+
+        var loadResult = VersionChain.Load(file, saveResult.Value);
+        Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
+
+        var loaded = Assert.IsAssignableFrom<DurableDeque<int>>(loadResult.Value);
+        Assert.Equal(3, loaded.Count);
+        Assert.Equal(5, loaded.GetFrontOrThrow());
+        Assert.Equal(20, loaded.GetBackOrThrow());
+
+        Assert.True(loaded.TryPopFront(out int front));
+        Assert.True(loaded.TryPopBack(out int back));
+        Assert.Equal(5, front);
+        Assert.Equal(20, back);
+        Assert.Equal(10, loaded.GetFrontOrThrow());
+    }
+
+    #endregion
+    #region MixedDeque round-trip
+
+    [Fact]
+    public void MixedDeque_SaveLoad_RoundTrip() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var deque = Durable.Deque();
+        deque.PushFront(42);
+        deque.PushBack(true);
+        deque.PushBack(1.5);
+
+        var saveResult = VersionChain.Save(deque, file, DiffWriteContext.UserPrimary);
+        Assert.True(saveResult.IsSuccess, $"Save failed: {saveResult.Error}");
+
+        var loadResult = VersionChain.Load(file, saveResult.Value);
+        Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
+
+        var loaded = Assert.IsAssignableFrom<DurableDeque>(loadResult.Value);
+        Assert.Equal(3, loaded.Count);
+
+        Assert.True(loaded.TryPeekFront(out int front));
+        Assert.Equal(42, front);
+
+        Assert.True(loaded.TryPeekBack(out double back));
+        Assert.Equal(1.5, back);
+    }
+
+    #endregion
     #region Deltify round-trip (Save twice, Load latest)
 
     [Fact]

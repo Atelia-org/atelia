@@ -41,7 +41,7 @@ public class DequeChangeTrackerValueBoxTests {
             SeedCommitted(ref tracker, Heap(11), Heap(22), Heap(33));
             int countAfterCommit = Bits64Count;
 
-            ValueBox removed = tracker.PopFront<ValueBoxHelper>(out _);
+            ValueBox removed = PopFront(ref tracker, out _);
             AssertBoxEquals(removed, HeapValue(11));
             Assert.Equal(countAfterCommit, Bits64Count);
 
@@ -77,7 +77,7 @@ public class DequeChangeTrackerValueBoxTests {
             tracker.PushFront<ValueBoxHelper>(ValueBox.UInt64Face.From(ulong.MaxValue));
             Assert.Equal(countAfterCommit + 1, Bits64Count);
 
-            removed = tracker.PopFront<ValueBoxHelper>(out bool callerOwned);
+            removed = PopFront(ref tracker, out bool callerOwned);
 
             Assert.True(callerOwned);
             Assert.Equal(countAfterCommit + 1, Bits64Count);
@@ -104,7 +104,7 @@ public class DequeChangeTrackerValueBoxTests {
             SeedCommitted(ref tracker, Heap(11), Heap(22));
             int countAfterCommit = Bits64Count;
 
-            ValueBox removed = tracker.PopFront<ValueBoxHelper>(out bool callerOwned);
+            ValueBox removed = PopFront(ref tracker, out bool callerOwned);
 
             Assert.False(callerOwned);
             Assert.Equal(countAfterCommit, Bits64Count);
@@ -195,7 +195,7 @@ public class DequeChangeTrackerValueBoxTests {
             SeedCommitted(ref tracker, Heap(11), Heap(22));
             int countAfterCommit = Bits64Count;
 
-            tracker.PopFront<ValueBoxHelper>(out _);
+            PopFront(ref tracker, out _);
             tracker.PushFront<ValueBoxHelper>(Heap(33));
             Assert.Equal(countAfterCommit + 1, Bits64Count);
 
@@ -218,7 +218,7 @@ public class DequeChangeTrackerValueBoxTests {
             SeedCommitted(ref tracker, Heap(11));
             int countAfterCommit = Bits64Count;
 
-            tracker.PopFront<ValueBoxHelper>(out _);
+            PopFront(ref tracker, out _);
             tracker.PushBack<ValueBoxHelper>(Heap(33));
             Assert.Equal(countAfterCommit + 1, Bits64Count);
 
@@ -241,7 +241,7 @@ public class DequeChangeTrackerValueBoxTests {
             SeedCommitted(ref tracker, Heap(11));
             int countAfterCommit = Bits64Count;
 
-            tracker.PopBack<ValueBoxHelper>(out _);
+            PopBack(ref tracker, out _);
             tracker.PushFront<ValueBoxHelper>(Heap(33));
             Assert.Equal(countAfterCommit + 1, Bits64Count);
 
@@ -264,10 +264,10 @@ public class DequeChangeTrackerValueBoxTests {
             SeedCommitted(ref tracker, Heap(11), Heap(22));
             int countAfterCommit = Bits64Count;
 
-            ValueBox removedFront = tracker.PopFront<ValueBoxHelper>(out bool frontCallerOwned);
+            ValueBox removedFront = PopFront(ref tracker, out bool frontCallerOwned);
             if (frontCallerOwned) { ValueBox.ReleaseBits64Slot(removedFront); }
 
-            ValueBox removedBack = tracker.PopBack<ValueBoxHelper>(out bool backCallerOwned);
+            ValueBox removedBack = PopBack(ref tracker, out bool backCallerOwned);
             if (backCallerOwned) { ValueBox.ReleaseBits64Slot(removedBack); }
 
             tracker.PushFront<ValueBoxHelper>(Heap(33));
@@ -302,10 +302,10 @@ public class DequeChangeTrackerValueBoxTests {
             SeedCommitted(ref tracker, Heap(11), Heap(22));
             int countAfterCommit = Bits64Count;
 
-            ValueBox removedFront = tracker.PopFront<ValueBoxHelper>(out bool frontCallerOwned);
+            ValueBox removedFront = PopFront(ref tracker, out bool frontCallerOwned);
             if (frontCallerOwned) { ValueBox.ReleaseBits64Slot(removedFront); }
 
-            ValueBox removedBack = tracker.PopBack<ValueBoxHelper>(out bool backCallerOwned);
+            ValueBox removedBack = PopBack(ref tracker, out bool backCallerOwned);
             if (backCallerOwned) { ValueBox.ReleaseBits64Slot(removedBack); }
 
             tracker.PushFront<ValueBoxHelper>(Heap(33));
@@ -391,7 +391,7 @@ public class DequeChangeTrackerValueBoxTests {
             Assert.True(UpdateAtInt64(ref tracker, 2, HeapValue(333)));
             Assert.Equal(countAfterCommit + 2, Bits64Count);
 
-            ValueBox removedDirtyKeep = tracker.PopFront<ValueBoxHelper>(out bool removedCallerOwned);
+            ValueBox removedDirtyKeep = PopFront(ref tracker, out bool removedCallerOwned);
             if (removedCallerOwned) {
                 ValueBox.ReleaseBits64Slot(removedDirtyKeep);
             }
@@ -440,7 +440,7 @@ public class DequeChangeTrackerValueBoxTests {
 
     private static void Cleanup(ref DequeChangeTracker<ValueBox> tracker) {
         while (tracker.Current.Count > 0) {
-            ValueBox removed = tracker.PopFront<ValueBoxHelper>(out bool callerOwned);
+            ValueBox removed = PopFront(ref tracker, out bool callerOwned);
             if (callerOwned) {
                 ValueBox.ReleaseBits64Slot(removed);
             }
@@ -459,6 +459,16 @@ public class DequeChangeTrackerValueBoxTests {
         GetIssue issue = ValueBox.Int64Face.Get(actual, out long value);
         Assert.Equal(GetIssue.None, issue);
         Assert.Equal(expected, value);
+    }
+
+    private static ValueBox PopFront(ref DequeChangeTracker<ValueBox> tracker, out bool callerOwned) {
+        Assert.True(tracker.TryPopFront<ValueBoxHelper>(out ValueBox value, out callerOwned));
+        return value;
+    }
+
+    private static ValueBox PopBack(ref DequeChangeTracker<ValueBox> tracker, out bool callerOwned) {
+        Assert.True(tracker.TryPopBack<ValueBoxHelper>(out ValueBox value, out callerOwned));
+        return value;
     }
 
     private static bool UpdateFrontInt64(ref DequeChangeTracker<ValueBox> tracker, long value) => UpdateAtInt64(ref tracker, 0, value);

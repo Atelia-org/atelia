@@ -6,6 +6,19 @@ namespace Atelia.StateJournal.Internal.Tests;
 
 public class DequeChangeTrackerTests {
     [Fact]
+    public void TryApis_OnEmptyTracker_ReturnFalse() {
+        var tracker = new DequeChangeTracker<int>();
+
+        Assert.False(tracker.TryGetAt(0, out int _));
+        Assert.False(tracker.TryPeekFront(out int _));
+        Assert.False(tracker.TryPeekBack(out int _));
+        Assert.False(tracker.TryPopFront<Int32Helper>(out int _, out bool frontCallerOwned));
+        Assert.False(frontCallerOwned);
+        Assert.False(tracker.TryPopBack<Int32Helper>(out int _, out bool backCallerOwned));
+        Assert.False(backCallerOwned);
+    }
+
+    [Fact]
     public void PushAndPop_AtBothEnds_TracksPrefixSuffixAndKeepWindow() {
         var tracker = new DequeChangeTracker<int>();
 
@@ -24,12 +37,12 @@ public class DequeChangeTrackerTests {
         Assert.Equal(2, tracker.KeepCount);
         Assert.Equal([0, 1, 2, 3], Collect(tracker.Current));
 
-        Assert.Equal(0, tracker.PopFront<Int32Helper>(out _));
+        Assert.Equal(0, PopFront(ref tracker));
         Assert.Equal(0, tracker.PushFrontCount);
         Assert.Equal(1, tracker.PushBackCount);
         Assert.Equal([1, 2, 3], Collect(tracker.Current));
 
-        Assert.Equal(3, tracker.PopBack<Int32Helper>(out _));
+        Assert.Equal(3, PopBack(ref tracker));
         Assert.False(tracker.HasChanges);
         Assert.Equal(2, tracker.KeepCount);
         Assert.Equal([1, 2], Collect(tracker.Current));
@@ -45,8 +58,8 @@ public class DequeChangeTrackerTests {
         tracker.PushBack<Int32Helper>(4);
         tracker.Commit<Int32Helper>();
 
-        Assert.Equal(1, tracker.PopFront<Int32Helper>(out _));
-        Assert.Equal(4, tracker.PopBack<Int32Helper>(out _));
+        Assert.Equal(1, PopFront(ref tracker));
+        Assert.Equal(4, PopBack(ref tracker));
 
         Assert.True(tracker.HasChanges);
         Assert.Equal(1, tracker.TrimFrontCount);
@@ -68,7 +81,7 @@ public class DequeChangeTrackerTests {
 
         tracker.PushFront<Int32Helper>(0);
         tracker.PushBack<Int32Helper>(4);
-        tracker.PopFront<Int32Helper>(out _);
+        PopFront(ref tracker);
 
         Assert.True(tracker.HasChanges);
         Assert.Equal([1, 2, 3, 4], Collect(tracker.Current));
@@ -83,6 +96,24 @@ public class DequeChangeTrackerTests {
     }
 
     [Fact]
+    public void Revert_WithWrappedDirtyPrefix_RestoresCommittedSequence() {
+        var tracker = new DequeChangeTracker<int>();
+        SeedCommitted(ref tracker, [3, 4]);
+
+        tracker.PushFront<Int32Helper>(2);
+        tracker.PushFront<Int32Helper>(1); // current logical [1,2,3,4], backing buffer wrapped
+
+        Assert.True(tracker.HasChanges);
+        Assert.Equal([1, 2, 3, 4], Collect(tracker.Current));
+
+        tracker.Revert<Int32Helper>();
+
+        Assert.False(tracker.HasChanges);
+        Assert.Equal([3, 4], Collect(tracker.Current));
+        Assert.Equal([3, 4], Collect(tracker.Committed));
+    }
+
+    [Fact]
     public void Commit_RebuildsCommittedSnapshot_AndResetsWindow() {
         var tracker = new DequeChangeTracker<int>();
 
@@ -91,7 +122,7 @@ public class DequeChangeTrackerTests {
         tracker.PushBack<Int32Helper>(3);
         tracker.Commit<Int32Helper>();
 
-        tracker.PopFront<Int32Helper>(out _);
+        PopFront(ref tracker);
         tracker.PushBack<Int32Helper>(4);
         tracker.Commit<Int32Helper>();
 
@@ -102,13 +133,30 @@ public class DequeChangeTrackerTests {
     }
 
     [Fact]
+    public void Commit_WithWrappedDirtySuffix_PreservesLogicalOrder() {
+        var tracker = new DequeChangeTracker<int>();
+        SeedCommitted(ref tracker, [1, 2, 3, 4]);
+
+        Assert.Equal(1, PopFront(ref tracker));
+        Assert.Equal(2, PopFront(ref tracker));
+        tracker.PushBack<Int32Helper>(5);
+        tracker.PushBack<Int32Helper>(6); // current logical [3,4,5,6], backing buffer wrapped
+
+        tracker.Commit<Int32Helper>();
+
+        Assert.False(tracker.HasChanges);
+        Assert.Equal([3, 4, 5, 6], Collect(tracker.Current));
+        Assert.Equal([3, 4, 5, 6], Collect(tracker.Committed));
+    }
+
+    [Fact]
     public void WriteDeltify_AndApplyDelta_RoundTripsTrackedSequence() {
         var source = new DequeChangeTracker<int>();
         SeedCommitted(ref source, [1, 2, 3, 4]);
 
         source.PushBack<Int32Helper>(5);
         source.PushBack<Int32Helper>(6);
-        source.PopFront<Int32Helper>(out _);
+        PopFront(ref source);
         source.PushFront<Int32Helper>(0);
 
         var buffer = new ArrayBufferWriter<byte>();
@@ -215,7 +263,7 @@ public class DequeChangeTrackerTests {
         SeedCommitted(ref source, [1, 2, 3, 4, 5]);
 
         Assert.True(AssignAt(ref source, 3, 40));
-        source.PopFront<Int32Helper>(out _);
+        PopFront(ref source);
         source.PushFront<Int32Helper>(0);
 
         var buffer = new ArrayBufferWriter<byte>();
@@ -244,7 +292,7 @@ public class DequeChangeTrackerTests {
         Assert.True(AssignAt(ref tracker, 2, 30));
         Assert.Equal(2, tracker.KeepDirtyCount);
 
-        Assert.Equal(10, tracker.PopFront<Int32Helper>(out _));
+        Assert.Equal(10, PopFront(ref tracker));
 
         Assert.True(tracker.HasChanges);
         Assert.Equal(1, tracker.KeepDirtyCount);
@@ -290,9 +338,9 @@ public class DequeChangeTrackerTests {
         Assert.True(AssignAt(ref source, 1, 20));
         Assert.True(AssignAt(ref source, 4, 50));
 
-        source.PopFront<Int32Helper>(out _);
+        PopFront(ref source);
         source.PushFront<Int32Helper>(0);
-        source.PopBack<Int32Helper>(out _);
+        PopBack(ref source);
         source.PushBack<Int32Helper>(7);
 
         var buffer = new ArrayBufferWriter<byte>();
@@ -317,7 +365,7 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1, 2, 3]);
 
-        Assert.Equal(1, tracker.PopFront<Int32Helper>(out _));
+        Assert.Equal(1, PopFront(ref tracker));
         Assert.True(tracker.HasChanges);
         Assert.Equal(1, tracker.TrimFrontCount);
         Assert.Equal([2, 3], Collect(tracker.Current));
@@ -334,7 +382,7 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<double>();
         SeedCommitted(ref tracker, [-0.0, 1.0]);
 
-        Assert.Equal(BitConverter.DoubleToInt64Bits(-0.0), BitConverter.DoubleToInt64Bits(tracker.PopFront<DoubleHelper>(out _)));
+        Assert.Equal(BitConverter.DoubleToInt64Bits(-0.0), BitConverter.DoubleToInt64Bits(PopFrontDouble(ref tracker)));
         Assert.Equal(1, tracker.TrimFrontCount);
         Assert.Equal([1.0], Collect(tracker.Current));
 
@@ -353,7 +401,7 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1, 2, 3]);
 
-        Assert.Equal(3, tracker.PopBack<Int32Helper>(out _));
+        Assert.Equal(3, PopBack(ref tracker));
         Assert.True(tracker.HasChanges);
         Assert.Equal(1, tracker.TrimBackCount);
         Assert.Equal([1, 2], Collect(tracker.Current));
@@ -373,8 +421,8 @@ public class DequeChangeTrackerTests {
         tracker.PushFront<Int32Helper>(0);
         tracker.PushBack<Int32Helper>(4);
 
-        Assert.Equal(0, tracker.PeekFront());
-        Assert.Equal(4, tracker.PeekBack());
+        Assert.Equal(0, PeekFront(ref tracker));
+        Assert.Equal(4, PeekBack(ref tracker));
     }
 
     [Fact]
@@ -400,7 +448,7 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1, 2, 3]);
 
-        tracker.PopFront<Int32Helper>(out _);
+        PopFront(ref tracker);
         tracker.PushFront<Int32Helper>(9);
         Assert.True(tracker.HasChanges);
 
@@ -416,7 +464,7 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1]);
 
-        tracker.PopFront<Int32Helper>(out _);
+        PopFront(ref tracker);
         tracker.PushBack<Int32Helper>(9);
         Assert.True(tracker.HasChanges);
 
@@ -432,8 +480,8 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1, 2]);
 
-        Assert.Equal(1, tracker.PopFront<Int32Helper>(out _));
-        Assert.Equal(2, tracker.PopBack<Int32Helper>(out _));
+        Assert.Equal(1, PopFront(ref tracker));
+        Assert.Equal(2, PopBack(ref tracker));
         tracker.PushFront<Int32Helper>(0);
         tracker.PushBack<Int32Helper>(3);
 
@@ -485,7 +533,7 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1, 2, 3]);
 
-        tracker.PopBack<Int32Helper>(out _);
+        PopBack(ref tracker);
         tracker.PushBack<Int32Helper>(9);
         Assert.True(tracker.HasChanges);
 
@@ -501,7 +549,7 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1]);
 
-        tracker.PopBack<Int32Helper>(out _);
+        PopBack(ref tracker);
         tracker.PushFront<Int32Helper>(9);
         Assert.True(tracker.HasChanges);
 
@@ -517,8 +565,8 @@ public class DequeChangeTrackerTests {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1, 2]);
 
-        Assert.Equal(1, tracker.PopFront<Int32Helper>(out _));
-        Assert.Equal(2, tracker.PopBack<Int32Helper>(out _));
+        Assert.Equal(1, PopFront(ref tracker));
+        Assert.Equal(2, PopBack(ref tracker));
         tracker.PushFront<Int32Helper>(0);
         tracker.PushBack<Int32Helper>(3);
 
@@ -616,6 +664,31 @@ public class DequeChangeTrackerTests {
             result[i] = deque[i];
         }
         return result;
+    }
+
+    private static int PopFront(ref DequeChangeTracker<int> tracker) {
+        Assert.True(tracker.TryPopFront<Int32Helper>(out int value, out _));
+        return value;
+    }
+
+    private static int PopBack(ref DequeChangeTracker<int> tracker) {
+        Assert.True(tracker.TryPopBack<Int32Helper>(out int value, out _));
+        return value;
+    }
+
+    private static double PopFrontDouble(ref DequeChangeTracker<double> tracker) {
+        Assert.True(tracker.TryPopFront<DoubleHelper>(out double value, out _));
+        return value;
+    }
+
+    private static int PeekFront(ref DequeChangeTracker<int> tracker) {
+        Assert.True(tracker.TryPeekFront(out int value));
+        return value;
+    }
+
+    private static int PeekBack(ref DequeChangeTracker<int> tracker) {
+        Assert.True(tracker.TryPeekBack(out int value));
+        return value;
     }
 
     private static bool AssignFront(ref DequeChangeTracker<int> tracker, int value) => AssignAt(ref tracker, 0, value);

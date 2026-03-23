@@ -26,18 +26,18 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, ValueBoxHelper>(ref reader);
 
     private protected override void OnCurrentValueRemoved(ValueBox removedValue) {
-        if (IsDurableRef(removedValue)) { _durableRefCount--; }
+        if (removedValue.IsDurableRef) { _durableRefCount--; }
     }
 
     private protected override void OnCurrentValueUpserted(ValueBox oldValue, ValueBox newValue, bool existed) {
-        if (existed && IsDurableRef(oldValue)) { _durableRefCount--; }
-        if (IsDurableRef(newValue)) { _durableRefCount++; }
+        if (existed && oldValue.IsDurableRef) { _durableRefCount--; }
+        if (newValue.IsDurableRef) { _durableRefCount++; }
     }
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
         if (_durableRefCount == 0) { return; }
         foreach (var box in _core.Current.Values) {
-            if (!box.IsNull && box.GetLzc() == BoxLzc.DurableRef) {
+            if (box.IsDurableRef) {
                 visitor.Visit(box.GetDurRefId());
             }
         }
@@ -48,7 +48,7 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         bool changed = false;
         var keys = new List<TKey>(_core.Current.Count);
         foreach (var kvp in _core.Current) {
-            if (!kvp.Value.IsNull && kvp.Value.GetLzc() == BoxLzc.DurableRef) {
+            if (kvp.Value.IsDurableRef) {
                 keys.Add(kvp.Key);
             }
         }
@@ -67,12 +67,10 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         return changed;
     }
 
-    private static bool IsDurableRef(ValueBox box) => !box.IsNull && box.GetLzc() == BoxLzc.DurableRef;
-
     private void RecountDurableRefs() {
         int count = 0;
         foreach (var box in _core.Current.Values) {
-            if (IsDurableRef(box)) { count++; }
+            if (box.IsDurableRef) { ++count; }
         }
         _durableRefCount = count;
     }

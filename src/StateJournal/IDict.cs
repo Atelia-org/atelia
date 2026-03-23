@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 
 namespace Atelia.StateJournal;
 
@@ -33,17 +34,20 @@ public enum UpsertStatus { Inserted, Updated }
 public interface IDict<in TKey, TValue> where TKey : notnull where TValue : notnull {
     UpsertStatus Upsert(TKey key, TValue? value);
     GetIssue Get(TKey key, out TValue? value);
-
-    sealed TValue? this[TKey key] {
-        set => Upsert(key, value);
-        get => Get(key, out TValue? value) == GetIssue.None ? value : throw new KeyNotFoundException();
-    }
 }
 
 public static class DictExtensions {
+    public static TValue? Get<TKey, TValue>(this IDict<TKey, TValue> dict, TKey key)
+        where TKey : notnull where TValue : notnull
+        => dict.GetOrThrow(key);
+
     public static bool TryGet<TKey, TValue>(this IDict<TKey, TValue> dict, TKey key, out TValue? value)
         where TKey : notnull where TValue : notnull
         => dict.Get(key, out value) == GetIssue.None;
+
+    public static TValue? GetOrThrow<TKey, TValue>(this IDict<TKey, TValue> dict, TKey key)
+        where TKey : notnull where TValue : notnull
+        => DictThrowHelpers.GetOrThrow(key, dict.Get(key, out TValue? value), value);
 
     public static TValue? GetOr<TKey, TValue>(this IDict<TKey, TValue> dict, TKey key, TValue? defaultValue)
         where TKey : notnull where TValue : notnull
@@ -52,6 +56,44 @@ public static class DictExtensions {
     public static TValue? GetOr<TKey, TValue>(this IDict<TKey, TValue> dict, TKey key, Func<TValue?> factory)
         where TKey : notnull where TValue : notnull
         => dict.Get(key, out var value) == GetIssue.None ? value : factory();
+
+    public static TValue? GetOr<TValue, TKey>(this DurableDict<TKey> dict, TKey key, TValue? defaultValue)
+        where TValue : notnull where TKey : notnull
+        => dict.Get<TValue>(key, out var value) == GetIssue.None ? value : defaultValue;
+
+    public static TValue? GetOr<TValue, TKey>(this DurableDict<TKey> dict, TKey key, Func<TValue?> factory)
+        where TValue : notnull where TKey : notnull
+        => dict.Get<TValue>(key, out var value) == GetIssue.None ? value : factory();
+}
+
+internal static class DictThrowHelpers {
+    public static TValue? GetOrThrow<TKey, TValue>(TKey key, GetIssue issue, TValue? value)
+        where TKey : notnull where TValue : notnull =>
+        issue switch {
+            GetIssue.None => value,
+            GetIssue.PrecisionLost => throw new InvalidCastException(
+                $"Value for key '{key}' cannot be cast to {typeof(TValue).Name} without losing precision."
+            ),
+            GetIssue.OverflowedToInfinity => throw new OverflowException(
+                $"Value for key '{key}' overflows to infinity when cast to {typeof(TValue).Name}."
+            ),
+            GetIssue.Saturated => throw new OverflowException(
+                $"Value for key '{key}' is out of bounds for {typeof(TValue).Name}."
+            ),
+            GetIssue.LoadFailed => throw new InvalidDataException(
+                $"Value for key '{key}' references a DurableObject that cannot be loaded."
+            ),
+            GetIssue.UnsupportedType => throw new NotSupportedException(
+                $"Type {typeof(TValue)} is not a supported value type for DurableDict"
+            ),
+            GetIssue.TypeMismatch => throw new InvalidCastException(
+                $"Value for key '{key}' is not of type {typeof(TValue).Name}."
+            ),
+            GetIssue.NotFound => throw new KeyNotFoundException(
+                $"The given key '{key}' was not present in the dictionary."
+            ),
+            _ => throw new UnreachableException()
+        };
 }
 
 internal class DictDemo {
@@ -66,14 +108,14 @@ internal class DictDemo {
         model.Upsert("items", Durable.Deque<int>());
         model.Upsert("metadata", Durable.Dict<string>());
 
-        // 类型化视图（主要用于索引器）：As<T>() 与 As* 属性
-        model.OfString["title"] = "新文档标题";
-        model.OfInt32["wordCount"] = 2048;
-        model.Of<double>()["zoom"] = 1.25;
+        // 类型化视图（exact typed capability）：Of<T>() 与 Of* 属性
+        model.OfString.Upsert("title", "新文档标题");
+        model.OfInt32.Upsert("wordCount", 2048);
+        model.Of<double>().Upsert("zoom", 1.25);
 
-        // ── Get: Get<T> 系列 ───────────────────────────────────
-        string? title = model.Get<string>("title");
-        int wc = model.Get<int>("wordCount");
+        // ── Get: Get<T> / TryGet / GetOr 系列 ──────────────────
+        string? title = model.GetOrThrow<string>("title");
+        int wc = model.GetOrThrow<int>("wordCount");
 
         // TryGet: out 参数推断类型
         if (model.TryGet("zoom", out double y)) {
@@ -99,10 +141,10 @@ internal class DictDemo {
 
         // ── ✅ Wish 4: 嵌套容器泛型取回 ─────────────────────────
         // 便捷方法：直接拿到具体泛型类型，无需手动 cast
-        DurableDict<string>? meta = model.Get<DurableDict<string>>("metadata");
-        DurableDeque<int>? items = model.Get<DurableDeque<int>>("items");
-        // 也可用 Get<T> 直接指定子类型（GetCore 自动中转基类再 cast）：
-        DurableDict<string>? meta2 = model.Get<DurableDict<string>>("metadata");
+        DurableDict<string>? meta = model.GetOrThrow<DurableDict<string>>("metadata");
+        DurableDeque<int>? items = model.GetOrThrow<DurableDeque<int>>("items");
+        // 也可用 GetOrThrow<T> 直接指定子类型（GetCore 自动中转基类再 cast）：
+        DurableDict<string>? meta2 = model.GetOrThrow<DurableDict<string>>("metadata");
         // TryGet 同样支持子类型：
         if (model.TryGet("metadata", out DurableDict<string>? meta3)) {
             Console.WriteLine(meta3);
@@ -113,7 +155,7 @@ internal class DictDemo {
     static void TeaUpdate(DurableDict<string> model, string msg) {
         switch (msg) {
             case "increment":
-                model.Upsert("wordCount", model.Get<int>("wordCount") + 1);
+                model.Upsert("wordCount", model.GetOrThrow<int>("wordCount") + 1);
                 break;
             case "setTitle":
                 model.Upsert("title", "新标题");
@@ -125,18 +167,17 @@ internal class DictDemo {
                 model.Remove("tempFlag");
                 break;
             case "toggleDark":
-                model.Upsert("darkMode", !model.Get<bool>("darkMode"));
+                model.Upsert("darkMode", !model.GetOrThrow<bool>("darkMode"));
                 break;
         }
     }
 
     // ── ✅ Wish 6: Get<T> TypeMismatch 已区分 ───────────────────
     // model.Upsert("zoom", 1.5);
-    // model.Get<int>("zoom");         → InvalidCastException: "Key 'zoom' exists but value is not of type Int32"
-    // model.Get<int>("nonexistent");  → KeyNotFoundException
-    // model.Get<DateTime>("zoom");    → NotSupportedException: "Type DateTime is not a supported value type"
+    // model.GetOrThrow<int>("zoom");         → InvalidCastException: "Key 'zoom' exists but value is not of type Int32"
+    // model.GetOrThrow<int>("nonexistent");  → KeyNotFoundException
+    // model.GetOrThrow<DateTime>("zoom");    → NotSupportedException: "Type DateTime is not a supported value type"
 
     // ── Wish 7: 批量 Upsert ─────────────────────────────────────
     // 结论：连续 Upsert 就是最务实的，TEA update 本来就是命令式。
 }
-
