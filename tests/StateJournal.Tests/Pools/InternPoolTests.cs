@@ -3,12 +3,16 @@ using Xunit;
 namespace Atelia.StateJournal.Pools.Tests;
 
 public class InternPoolTests {
+    readonly struct Int32StaticEqualityComparer : IStaticEqualityComparer<int> {
+        public static bool Equals(int a, int b) => a == b;
+        public static int GetHashCode(int obj) => obj;
+    }
 
     // ───────────────────── Store / Dedup ─────────────────────
 
     [Fact]
     public void Store_SameValue_ReturnsSameHandle() {
-        var pool = new InternPool<string>();
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
         SlotHandle h1 = pool.Store("hello");
         SlotHandle h2 = pool.Store("hello");
         Assert.Equal(h1, h2);
@@ -17,7 +21,7 @@ public class InternPoolTests {
 
     [Fact]
     public void Store_DifferentValues_ReturnsDifferentHandles() {
-        var pool = new InternPool<string>();
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
         SlotHandle h1 = pool.Store("alpha");
         SlotHandle h2 = pool.Store("beta");
         Assert.NotEqual(h1, h2);
@@ -26,7 +30,7 @@ public class InternPoolTests {
 
     [Fact]
     public void Store_IntValues_Deduplicates() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         SlotHandle a = pool.Store(42);
         SlotHandle b = pool.Store(99);
         SlotHandle c = pool.Store(42);
@@ -37,7 +41,7 @@ public class InternPoolTests {
 
     [Fact]
     public void Store_ManyDuplicates_CountReflectsDistinct() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         for (int i = 0; i < 100; i++) { pool.Store(i % 10); }
         Assert.Equal(10, pool.Count);
     }
@@ -46,14 +50,14 @@ public class InternPoolTests {
 
     [Fact]
     public void Indexer_ReturnsStoredValue() {
-        var pool = new InternPool<string>();
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
         SlotHandle h = pool.Store("world");
         Assert.Equal("world", pool[h]);
     }
 
     [Fact]
     public void TryGetValue_ValidHandle_ReturnsTrue() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         SlotHandle h = pool.Store(7);
         Assert.True(pool.TryGetValue(h, out int val));
         Assert.Equal(7, val);
@@ -61,7 +65,7 @@ public class InternPoolTests {
 
     [Fact]
     public void TryGetValue_InvalidHandle_ReturnsFalse() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         Assert.False(pool.TryGetValue(new SlotHandle(0, 0), out _));
     }
 
@@ -69,14 +73,14 @@ public class InternPoolTests {
 
     [Fact]
     public void Validate_ValidHandle_ReturnsTrue() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         SlotHandle h = pool.Store(1);
         Assert.True(pool.Validate(h));
     }
 
     [Fact]
     public void Validate_InvalidHandle_ReturnsFalse() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         Assert.False(pool.Validate(new SlotHandle(0, 0)));
         Assert.False(pool.Validate(new SlotHandle(99, 12345)));
     }
@@ -85,7 +89,7 @@ public class InternPoolTests {
 
     [Fact]
     public void TryGetIndex_ExistingValue_ReturnsTrueAndCorrectHandle() {
-        var pool = new InternPool<string>();
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
         SlotHandle stored = pool.Store("findme");
         Assert.True(pool.TryGetIndex("findme", out SlotHandle found));
         Assert.Equal(stored, found);
@@ -93,28 +97,28 @@ public class InternPoolTests {
 
     [Fact]
     public void TryGetIndex_NonExistingValue_ReturnsFalse() {
-        var pool = new InternPool<string>();
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
         pool.Store("present");
         Assert.False(pool.TryGetIndex("absent", out _));
     }
 
     [Fact]
     public void Contains_ExistingValue_ReturnsTrue() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         pool.Store(42);
         Assert.True(pool.Contains(42));
     }
 
     [Fact]
     public void Contains_NonExistingValue_ReturnsFalse() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         pool.Store(42);
         Assert.False(pool.Contains(99));
     }
 
     [Fact]
     public void Contains_EmptyPool_ReturnsFalse() {
-        var pool = new InternPool<string>();
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
         Assert.False(pool.Contains("anything"));
     }
 
@@ -122,7 +126,7 @@ public class InternPoolTests {
 
     [Fact]
     public void Store_WithCaseInsensitiveComparer_DeduplicatesByCase() {
-        var pool = new InternPool<string>(StringComparer.OrdinalIgnoreCase);
+        var pool = new InternPool<string, IgnoreCaseStaticEqualityComparer>();
         SlotHandle h1 = pool.Store("Hello");
         SlotHandle h2 = pool.Store("HELLO");
         SlotHandle h3 = pool.Store("hello");
@@ -135,7 +139,7 @@ public class InternPoolTests {
 
     [Fact]
     public void TryGetIndex_WithCaseInsensitiveComparer_FindsByCase() {
-        var pool = new InternPool<string>(StringComparer.OrdinalIgnoreCase);
+        var pool = new InternPool<string, IgnoreCaseStaticEqualityComparer>();
         SlotHandle stored = pool.Store("Key");
         Assert.True(pool.TryGetIndex("KEY", out SlotHandle found));
         Assert.Equal(stored, found);
@@ -143,7 +147,7 @@ public class InternPoolTests {
 
     [Fact]
     public void Contains_WithCaseInsensitiveComparer_MatchesByCase() {
-        var pool = new InternPool<string>(StringComparer.OrdinalIgnoreCase);
+        var pool = new InternPool<string, IgnoreCaseStaticEqualityComparer>();
         pool.Store("Test");
         Assert.True(pool.Contains("test"));
         Assert.True(pool.Contains("TEST"));
@@ -153,7 +157,7 @@ public class InternPoolTests {
 
     [Fact]
     public void Store_ManyDistinctValues_TriggersRehashAndRemainsCorrect() {
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         const int n = 200; // 远超 InitialBucketCount=4，触发多次 rehash
 
         var handles = new SlotHandle[n];
@@ -179,7 +183,7 @@ public class InternPoolTests {
 
     [Fact]
     public void Sweep_RemovesUnreachable_ThenReStoreGetsNewHandle() {
-        var pool = new InternPool<string>();
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
         SlotHandle h1 = pool.Store("ephemeral");
         pool.Store("keeper");
 
@@ -203,7 +207,7 @@ public class InternPoolTests {
     [Fact]
     public void Sweep_HashChainIntegrity_AfterPartialSweep() {
         // 构造多个哈希冲突的 entry 然后部分 sweep，验证链表完整性
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
         const int n = 20;
         var handles = new SlotHandle[n];
         for (int i = 0; i < n; i++) { handles[i] = pool.Store(i); }
@@ -231,7 +235,7 @@ public class InternPoolTests {
 
     [Fact]
     public void Sweep_ThenStore_DedupStillWorks() {
-        var pool = new InternPool<string>();
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
         pool.Store("a");
         pool.Store("b");
         pool.Store("c");
@@ -254,7 +258,7 @@ public class InternPoolTests {
     [Fact]
     public void Store_CrossSlab_DedupWorksAcrossSlabs() {
         int slabSize = SlabBitmap.SlabSize;
-        var pool = new InternPool<int>();
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
 
         // 存满 2 个 slab
         for (int i = 0; i < slabSize * 2; i++) { pool.Store(i); }

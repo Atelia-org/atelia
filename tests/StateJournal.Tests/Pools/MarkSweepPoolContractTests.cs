@@ -189,7 +189,3 @@ public abstract class MarkSweepPoolContractTests {
 public class GcPool_MarkSweepContractTests : MarkSweepPoolContractTests {
     protected override object CreatePoolBoxed<T>() => new GcPool<T>();
 }
-
-public class InternPool_MarkSweepContractTests : MarkSweepPoolContractTests {
-    protected override object CreatePoolBoxed<T>() => new InternPool<T>();
-}

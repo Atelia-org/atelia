@@ -28,7 +28,7 @@ namespace Atelia.StateJournal.Pools;
 /// 即 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间不应调用 <see cref="Store"/>。
 /// </remarks>
 /// <typeparam name="T">Interned 值类型，必须正确实现 GetHashCode / Equals（或提供 IEqualityComparer）。</typeparam>
-internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
+internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : notnull where TComparer : unmanaged, IStaticEqualityComparer<T> {
 
     private struct Entry {
         public T Value;
@@ -39,7 +39,6 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
     private const int InitialBucketCount = 4;
 
     private readonly SlotPool<Entry> _slots;
-    private readonly IEqualityComparer<T> _comparer;
     private int[] _buckets;    // _buckets[hash & mask] → chain head slot index, -1 = 空桶
     private int _bucketMask;   // buckets.Length - 1（2^n sizing，用 & 代替 %）
 
@@ -57,10 +56,8 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
     public int Capacity => _slots.Capacity;
 
     /// <summary>创建一个空的 <see cref="InternPool{T}"/>。</summary>
-    /// <param name="comparer">值相等比较器，null 时使用 <see cref="EqualityComparer{T}.Default"/>。</param>
-    public InternPool(IEqualityComparer<T>? comparer = null) {
+    public InternPool() {
         _slots = new SlotPool<Entry>();
-        _comparer = comparer ?? EqualityComparer<T>.Default;
         _buckets = new int[InitialBucketCount];
         Array.Fill(_buckets, -1);
         _bucketMask = InitialBucketCount - 1;
@@ -74,13 +71,13 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
     /// 若池中已存在等价值，返回已有 index；否则分配新 slot 并存入。O(1) 均摊。
     /// </summary>
     public SlotHandle Store(T value) {
-        int hashCode = _comparer.GetHashCode(value) & 0x7FFFFFFF;
+        int hashCode = TComparer.GetHashCode(value) & 0x7FFFFFFF;
         int bucket = hashCode & _bucketMask;
 
         // 在链表中查找已有
         for (int i = _buckets[bucket]; i >= 0;) {
-            ref Entry e = ref _slots.GetValueRef(i);
-            if (e.HashCode == hashCode && _comparer.Equals(e.Value, value)) { return _slots.GetHandle(i); /* 去重命中 */ }
+            ref Entry e = ref _slots.GetValueRefUnchecked(i);
+            if (e.HashCode == hashCode && TComparer.Equals(e.Value, value)) { return _slots.GetHandle(i); /* 去重命中 */ }
             i = e.Next;
         }
 
@@ -96,8 +93,8 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
         // SlotPool 可能扩容了新 slab，同步 _reachable 位图
         SyncGrowth();
 
-        // 按需扩容 bucket（load factor ≈ 1.0）
-        if (_slots.Count > _buckets.Length) {
+        // 按需扩容 bucket（load factor ≈ 0.75）
+        if (_slots.Count * 4 > _buckets.Length * 3) {
             Rehash(_buckets.Length * 2);
         }
 
@@ -108,12 +105,12 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
 
     /// <summary>查找池中是否存在等价值。若存在，通过 <paramref name="index"/> 返回其 slot index。</summary>
     public bool TryGetIndex(T value, out SlotHandle index) {
-        int hashCode = _comparer.GetHashCode(value) & 0x7FFFFFFF;
+        int hashCode = TComparer.GetHashCode(value) & 0x7FFFFFFF;
         int bucket = hashCode & _bucketMask;
 
         for (int i = _buckets[bucket]; i >= 0;) {
-            ref Entry e = ref _slots.GetValueRef(i);
-            if (e.HashCode == hashCode && _comparer.Equals(e.Value, value)) {
+            ref Entry e = ref _slots.GetValueRefUnchecked(i);
+            if (e.HashCode == hashCode && TComparer.Equals(e.Value, value)) {
                 index = _slots.GetHandle(i);
                 return true;
             }
@@ -219,7 +216,7 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
     /// </summary>
     private void Free(int index) {
         // 读取 entry 信息（必须在 _slots.Free 之前）
-        ref Entry entry = ref _slots.GetValueRef(index); // 同时验证 occupied
+        ref Entry entry = ref _slots.GetValueRefUnchecked(index); // 同时验证 occupied
         int hashCode = entry.HashCode;
         int next = entry.Next;
         int bucket = hashCode & _bucketMask;
@@ -230,14 +227,14 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
         while (current != index) {
             Debug.Assert(current >= 0, "Entry not found in bucket chain — internal state corrupted.");
             prev = current;
-            current = _slots.GetValueRef(current).Next;
+            current = _slots.GetValueRefUnchecked(current).Next;
         }
 
         if (prev < 0) {
             _buckets[bucket] = next;
         }
         else {
-            _slots.GetValueRef(prev).Next = next;
+            _slots.GetValueRefUnchecked(prev).Next = next;
         }
 
         // 释放 slot（SlotPool 会自动回收尾部空页）
@@ -268,7 +265,7 @@ internal sealed class InternPool<T> : IMarkSweepPool<T> where T : notnull {
         for (int i = 0; i < cap; i++) {
             if (!_slots.IsOccupied(i)) { continue; }
 
-            ref Entry e = ref _slots.GetValueRef(i);
+            ref Entry e = ref _slots.GetValueRefUnchecked(i);
             int b = e.HashCode & newMask;
             e.Next = newBuckets[b];
             newBuckets[b] = i;

@@ -306,6 +306,14 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         return ref _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal ref T GetValueRefUnchecked(int index) {
+#if DEBUG
+        ThrowIfNotOccupied(index);
+#endif
+        return ref _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
+    }
+
     /// <summary>按 index 创建已占用 slot 的 handle（仅内部使用）。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal SlotHandle GetHandle(int index) {
