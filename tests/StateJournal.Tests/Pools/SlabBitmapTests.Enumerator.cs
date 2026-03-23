@@ -72,6 +72,50 @@ partial class SlabBitmapTests {
         Assert.Equal([0, SlabSize * 2 - 1, SlabSize * 2 + 32], Collect(bm.EnumerateOnes()));
     }
 
+    // ───────────────────── EnumerateZeros (Forward) ─────────────────────
+
+    [Fact]
+    public void EnumerateZeros_Empty_YieldsNothing() {
+        var bm = new SlabBitmap();
+        Assert.Empty(Collect(bm.EnumerateZeros()));
+    }
+
+    [Fact]
+    public void EnumerateZeros_AllOnes_YieldsNothing() {
+        var bm = new SlabBitmap();
+        bm.GrowSlabAllOne();
+        Assert.Empty(Collect(bm.EnumerateZeros()));
+    }
+
+    [Fact]
+    public void EnumerateZeros_SingleZero() {
+        var bm = new SlabBitmap();
+        bm.GrowSlabAllOne();
+        bm.Clear(17);
+        Assert.Equal([17], Collect(bm.EnumerateZeros()));
+    }
+
+    [Fact]
+    public void EnumerateZeros_MultipleZeros_AscendingOrder() {
+        var bm = new SlabBitmap();
+        bm.GrowSlabAllOne();
+        bm.Clear(63);
+        bm.Clear(0);
+        bm.Clear(31);
+        Assert.Equal([0, 31, 63], Collect(bm.EnumerateZeros()));
+    }
+
+    [Fact]
+    public void EnumerateZeros_MultiSlab_SkipsFullSlab() {
+        var bm = new SlabBitmap();
+        bm.GrowSlabAllOne();
+        bm.GrowSlabAllOne();
+        bm.GrowSlabAllOne();
+        bm.Clear(SlabSize + 5);
+        bm.Clear(SlabSize * 2 + 60);
+        Assert.Equal([SlabSize + 5, SlabSize * 2 + 60], Collect(bm.EnumerateZeros()));
+    }
+
     // ───────────────────── EnumerateZerosReverse ─────────────────────
 
     [Fact]
@@ -291,6 +335,12 @@ partial class SlabBitmapTests {
     // ───────────────────── Helpers ─────────────────────
 
     private static List<int> Collect(SlabBitmap.OnesForwardEnumerator e) {
+        var list = new List<int>();
+        foreach (int i in e) { list.Add(i); }
+        return list;
+    }
+
+    private static List<int> Collect(SlabBitmap.ZerosForwardEnumerator e) {
         var list = new List<int>();
         foreach (int i in e) { list.Add(i); }
         return list;

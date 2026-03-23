@@ -70,6 +70,69 @@ partial class SlabBitmap {
         }
     }
 
+    // ───────────────────── ZerosForwardEnumerator ─────────────────────
+
+    ref partial struct ZerosForwardEnumerator {
+        private readonly SlabBitmap _bmp;
+        private int _current, _slabIdx, _wordIdx;
+        private ulong _remaining; // ~word: bit=1 means original bit was 0
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal ZerosForwardEnumerator(SlabBitmap bmp) {
+            _bmp = bmp;
+            _slabIdx = -1;
+            _wordIdx = WordsPerSlab; // sentinel: forces slab advance on first MoveNextSlow
+            _remaining = 0;
+            _current = -1;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public partial bool MoveNext() {
+            if (_remaining != 0) {
+                EmitBit();
+                return true;
+            }
+            return MoveNextSlow();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void EmitBit() {
+            int bit = BitOperations.TrailingZeroCount(_remaining);
+            _remaining ^= 1UL << bit;
+            _current = (_slabIdx << SlabShift) | (_wordIdx << 6) | bit;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool MoveNextSlow() {
+            while (true) {
+                // L1: find next word with zeros in current slab
+                if (_slabIdx >= 0 && _wordIdx < WordsPerSlab - 1) {
+                    ulong candidates = _bmp._l1HasZero[_slabIdx] & (ulong.MaxValue << (_wordIdx + 1));
+                    if (candidates != 0) {
+                        _wordIdx = BitOperations.TrailingZeroCount(candidates);
+                        _remaining = ~_bmp._data[_slabIdx][_wordIdx];
+                        Debug.Assert(_remaining != 0);
+                        EmitBit();
+                        return true;
+                    }
+                }
+
+                // L2: find next slab with zeros
+                int nextSlab = _bmp.FindSlabWithZeroForward(_slabIdx + 1);
+                if (nextSlab < 0) { return false; }
+
+                _slabIdx = nextSlab;
+                ulong l1 = _bmp._l1HasZero[nextSlab];
+                Debug.Assert(l1 != 0, $"L2 indicated slab {nextSlab} has zeros but L1 says all-one.");
+                _wordIdx = BitOperations.TrailingZeroCount(l1);
+                _remaining = ~_bmp._data[nextSlab][_wordIdx];
+                Debug.Assert(_remaining != 0);
+                EmitBit();
+                return true;
+            }
+        }
+    }
+
     // ───────────────────── ZerosReverseEnumerator ─────────────────────
 
     ref partial struct ZerosReverseEnumerator {

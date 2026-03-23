@@ -280,6 +280,31 @@ partial class SlabBitmap {
         return -1;
     }
 
+    /// <summary>在 L2 中正序查找从 <paramref name="fromSlab"/>（含）开始第一个非全满 slab。找不到返回 -1。</summary>
+    internal int FindSlabWithZeroForward(int fromSlab) {
+        if (fromSlab >= _slabCount) { return -1; }
+
+        int summaryLen = (_slabCount + 63) >> 6;
+        int si = fromSlab >> 6;
+        int sb = fromSlab & 63;
+
+        ulong w = _l2HasZero[si] & (ulong.MaxValue << sb);
+        if (w != 0) {
+            int slab = (si << 6) | BitOperations.TrailingZeroCount(w);
+            return slab < _slabCount ? slab : -1;
+        }
+
+        for (int i = si + 1; i < summaryLen; i++) {
+            w = _l2HasZero[i];
+            if (w != 0) {
+                int slab = (i << 6) | BitOperations.TrailingZeroCount(w);
+                return slab < _slabCount ? slab : -1;
+            }
+        }
+
+        return -1;
+    }
+
     /// <summary>在 L2 中逆序查找从 <paramref name="fromSlab"/>（含）开始第一个非全满 slab。找不到返回 -1。</summary>
     internal int FindSlabWithZeroReverse(int fromSlab) {
         if (fromSlab < 0) { return -1; }

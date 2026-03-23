@@ -400,6 +400,13 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     }
 
     /// <summary>
+    /// 正序枚举所有已占用 slot 的 index。
+    /// 基于 free-bitmap 的零位枚举，能跳过整段空闲区域，避免按容量全扫。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal OccupiedIndexEnumerator EnumerateOccupiedIndices() => new(_freeBitmap);
+
+    /// <summary>
     /// 检查 Handle 是否仍然有效：index 在范围内、slot 已占用、且 generation 匹配。
     /// 与 <see cref="IsOccupied(int)"/> 不同，对越界 index 返回 false 而非抛异常。
     /// </summary>
@@ -409,6 +416,25 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         return (uint)index < (uint)_freeBitmap.Capacity
             && !_freeBitmap.Test(index)
             && _generations[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask] == handle.Generation;
+    }
+
+    /// <summary>
+    /// 正序枚举 <see cref="SlotPool{T}"/> 中所有已占用 slot index 的零分配枚举器。
+    /// </summary>
+    internal ref struct OccupiedIndexEnumerator {
+        private SlabBitmap.ZerosForwardEnumerator _zeros;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal OccupiedIndexEnumerator(SlabBitmap freeBitmap) {
+            _zeros = freeBitmap.EnumerateZeros();
+        }
+
+        public int Current => _zeros.Current;
+
+        public OccupiedIndexEnumerator GetEnumerator() => this;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool MoveNext() => _zeros.MoveNext();
     }
 
     // ───────────────────── Validation ─────────────────────

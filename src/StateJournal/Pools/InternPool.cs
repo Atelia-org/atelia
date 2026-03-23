@@ -261,10 +261,7 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
         Array.Fill(newBuckets, -1);
         int newMask = newSize - 1;
 
-        int cap = _slots.Capacity;
-        for (int i = 0; i < cap; i++) {
-            if (!_slots.IsOccupied(i)) { continue; }
-
+        foreach (int i in _slots.EnumerateOccupiedIndices()) {
             ref Entry e = ref _slots.GetValueRefUnchecked(i);
             int b = e.HashCode & newMask;
             e.Next = newBuckets[b];

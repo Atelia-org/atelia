@@ -148,6 +148,12 @@ internal sealed partial class SlabBitmap {
     public OnesForwardEnumerator EnumerateOnes() => new(this);
 
     /// <summary>
+    /// 返回一个正序（从低 index 到高 index）遍历所有 `0` 的枚举器。
+    /// 零分配（ref struct），可直接 foreach。利用 L2 跳过全满 slab，L1 跳过全满 word。
+    /// </summary>
+    public ZerosForwardEnumerator EnumerateZeros() => new(this);
+
+    /// <summary>
     /// 返回一个逆序（从高 index 到低 index）遍历所有 `0` 的枚举器。
     /// 零分配（ref struct），可直接 foreach。利用 L2 跳过全满 slab，L1 跳过全满 word。
     /// </summary>
@@ -216,6 +222,23 @@ internal sealed partial class SlabBitmap {
         public OnesForwardEnumerator GetEnumerator() => this;
 
         /// <summary>推进到下一个 `1`。</summary>
+        public partial bool MoveNext();
+    }
+
+    // ───────────────────── ZerosForwardEnumerator ─────────────────────
+
+    /// <summary>
+    /// 正序枚举 <see cref="SlabBitmap"/> 中所有 `0` 的 ref struct 枚举器。
+    /// 内部通过 L2 跳过全满 slab，L1 跳过全满 word，零分配，可直接 foreach。
+    /// </summary>
+    public ref partial struct ZerosForwardEnumerator {
+        /// <summary>当前 `0` 的全局 index。</summary>
+        public int Current => _current;
+
+        /// <summary>支持 foreach。</summary>
+        public ZerosForwardEnumerator GetEnumerator() => this;
+
+        /// <summary>推进到下一个 `0`。</summary>
         public partial bool MoveNext();
     }
 

@@ -198,6 +198,50 @@ public partial class SlotPoolTests {
         Assert.False(table.TryGetValue(int.MaxValue, out _));
     }
 
+    // ───────────────────── EnumerateOccupiedIndices ─────────────────────
+
+    [Fact]
+    public void EnumerateOccupiedIndices_Empty_YieldsNothing() {
+        var table = new SlotPool<int>();
+        Assert.Empty(Collect(table.EnumerateOccupiedIndices()));
+    }
+
+    [Fact]
+    public void EnumerateOccupiedIndices_SkipsFreedSlots_AndPreservesAscendingOrder() {
+        var table = new SlotPool<int>();
+        var h0 = table.Store(10);
+        var h1 = table.Store(20);
+        var h2 = table.Store(30);
+        var h3 = table.Store(40);
+
+        table.Free(h1);
+        table.Free(h3);
+
+        Assert.Equal([h0.Index, h2.Index], Collect(table.EnumerateOccupiedIndices()));
+    }
+
+    [Fact]
+    public void EnumerateOccupiedIndices_CrossSlab_YieldsOnlyOccupiedIndices() {
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
+        var handles = new List<SlotHandle>(slabSize + 4);
+        for (int i = 0; i < slabSize + 4; i++) {
+            handles.Add(table.Store(i));
+        }
+
+        table.Free(handles[1]);
+        table.Free(handles[slabSize]);
+        table.Free(handles[slabSize + 2]);
+
+        var expected = new List<int>(handles.Count - 3);
+        for (int i = 0; i < handles.Count; i++) {
+            if (i == 1 || i == slabSize || i == slabSize + 2) { continue; }
+            expected.Add(handles[i].Index);
+        }
+
+        Assert.Equal(expected, Collect(table.EnumerateOccupiedIndices()));
+    }
+
     // ───────────────────── Free validation ─────────────────────
 
     [Fact]
@@ -824,5 +868,11 @@ public partial class SlotPoolTests {
         var h = pool.Store("A");
 
         Assert.Throws<ArgumentOutOfRangeException>(() => pool.MoveSlot(h.Index, 9999));
+    }
+
+    private static List<int> Collect(SlotPool<int>.OccupiedIndexEnumerator e) {
+        var list = new List<int>();
+        foreach (int index in e) { list.Add(index); }
+        return list;
     }
 }
