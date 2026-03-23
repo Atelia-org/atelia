@@ -7,7 +7,11 @@ namespace Atelia.StateJournal;
 /// <summary>MixedDict — 异构值字典，内部使用 <see cref="ValueBox"/> 存储。</summary>
 /// <typeparam name="TKey"></typeparam>
 [UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.Dict)]
-public abstract partial class DurableDict<TKey> : DurableDictBase<TKey>, IDict<TKey>
+public abstract partial class DurableDict<TKey> : DurableDictBase<TKey>, IDict<TKey>,
+    IDict<TKey, bool>, IDict<TKey, string>, IDict<TKey, DurableObject>,
+    IDict<TKey, double>, IDict<TKey, float>, IDict<TKey, Half>,
+    IDict<TKey, ulong>, IDict<TKey, uint>, IDict<TKey, ushort>, IDict<TKey, byte>,
+    IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>
 where TKey : notnull {
 
     private protected DictChangeTracker<TKey, ValueBox> _core;
@@ -45,6 +49,14 @@ where TKey : notnull {
 
     #region DurableObject
     public override DurableObjectKind Kind => DurableObjectKind.MixedDict;
+    #endregion
+
+    #region Generated Dispatch (partial — bodies in .g.cs)
+
+    public partial UpsertStatus Upsert<TValue>(TKey key, TValue? value) where TValue : notnull;
+    public partial GetIssue Get<TValue>(TKey key, out TValue? value) where TValue : notnull;
+    public partial IDict<TKey, TValue> Of<TValue>() where TValue : notnull;
+
     #endregion
 
     #region Generic Accessor

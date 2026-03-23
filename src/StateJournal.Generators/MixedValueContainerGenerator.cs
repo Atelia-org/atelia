@@ -38,24 +38,16 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         MixedTypeGenerationCommon.AppendNamespace(builder, target.Namespace);
 
         if (target.ContainerKind == MixedTypeGenerationCommon.MixedContainerKind.Deque) {
-            MixedTypeGenerationCommon.AppendClassHeader(
-                builder,
-                target,
-                $"global::Atelia.StateJournal.IDeque<{target.Types[0].ValueType}>",
-                target.Types.Skip(1).Select(type => $"global::Atelia.StateJournal.IDeque<{type.ValueType}>")
-            );
+            MixedTypeGenerationCommon.AppendPartialClassHeader(builder, target);
+            builder.AppendLine("    // Partial implementations \u2014 interface list & declaring declarations are in the hand-written source.");
             builder.AppendLine();
             EmitDequeGenericDispatch(builder, target.Types);
             EmitDequeTypedViews(builder, target.Types);
         }
         else {
             string keyType = target.JoinedTypeParameterNames;
-            MixedTypeGenerationCommon.AppendClassHeader(
-                builder,
-                target,
-                $"global::Atelia.StateJournal.IDict<{keyType}, {target.Types[0].ValueType}>",
-                target.Types.Skip(1).Select(type => $"global::Atelia.StateJournal.IDict<{keyType}, {type.ValueType}>")
-            );
+            MixedTypeGenerationCommon.AppendPartialClassHeader(builder, target);
+            builder.AppendLine("    // Partial implementations \u2014 interface list & declaring declarations are in the hand-written source.");
             builder.AppendLine();
             EmitDictGenericDispatch(builder, target.Types, keyType);
             EmitDictTypedViews(builder, target.Types, keyType);
@@ -73,7 +65,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         EmitDequeTryWriteDispatchMethod(builder, "TrySetBack", "TrySetCore", "front: false", types);
 
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
-        builder.AppendLine("    public global::Atelia.StateJournal.IDeque<TValue> Of<TValue>() where TValue : notnull {");
+        builder.AppendLine("    public partial global::Atelia.StateJournal.IDeque<TValue> Of<TValue>() where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             builder.Append("            return (global::Atelia.StateJournal.IDeque<TValue>)(object)(global::Atelia.StateJournal.IDeque<")
@@ -91,7 +83,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
     private static void EmitDequeWriteDispatchMethod(StringBuilder builder, string methodName, string coreMethodName, string coreArgumentPrefix, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
-        builder.Append("    public void ").Append(methodName).AppendLine("<TValue>(TValue? value) where TValue : notnull {");
+        builder.Append("    public partial void ").Append(methodName).AppendLine("<TValue>(TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             if (type.UseDurableObjectHelpers) {
@@ -123,7 +115,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
     private static void EmitDequeTryWriteDispatchMethod(StringBuilder builder, string methodName, string coreMethodName, string coreArgumentPrefix, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
-        builder.Append("    public bool ").Append(methodName).AppendLine("<TValue>(TValue? value) where TValue : notnull {");
+        builder.Append("    public partial bool ").Append(methodName).AppendLine("<TValue>(TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             if (type.UseDurableObjectHelpers) {
@@ -153,7 +145,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
     private static void EmitDequeTrySetAtDispatchMethod(StringBuilder builder, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
-        builder.AppendLine("    public bool TrySetAt<TValue>(int index, TValue? value) where TValue : notnull {");
+        builder.AppendLine("    public partial bool TrySetAt<TValue>(int index, TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             EmitDequeTrySetAtDispatchBranch(builder, type);
         }
@@ -185,7 +177,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
     private static void EmitDequeReadDispatchMethod(StringBuilder builder, string methodName, string methodParameter, string coreArgument, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
-        builder.Append("    private global::Atelia.StateJournal.GetIssue ").Append(methodName).Append("<TValue>(").Append(methodParameter).Append(", out TValue? value) where TValue : notnull {").AppendLine();
+        builder.Append("    private partial global::Atelia.StateJournal.GetIssue ").Append(methodName).Append("<TValue>(").Append(methodParameter).Append(", out TValue? value) where TValue : notnull {").AppendLine();
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             if (type.UseDurableObjectHelpers) {
@@ -279,7 +271,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
     private static void EmitDictGenericDispatch(StringBuilder builder, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types, string keyType) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
-        builder.Append("    public global::Atelia.StateJournal.UpsertStatus Upsert<TValue>(").Append(keyType).AppendLine(" key, TValue? value) where TValue : notnull {");
+        builder.Append("    public partial global::Atelia.StateJournal.UpsertStatus Upsert<TValue>(").Append(keyType).AppendLine(" key, TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             if (type.UseDurableObjectHelpers) {
@@ -301,7 +293,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.AppendLine();
 
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
-        builder.Append("    public global::Atelia.StateJournal.IDict<").Append(keyType).Append(", TValue> Of<TValue>() where TValue : notnull {").AppendLine();
+        builder.Append("    public partial global::Atelia.StateJournal.IDict<").Append(keyType).Append(", TValue> Of<TValue>() where TValue : notnull {").AppendLine();
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             builder.Append("            return (global::Atelia.StateJournal.IDict<").Append(keyType).Append(", TValue>)(object)(global::Atelia.StateJournal.IDict<").Append(keyType).Append(", ").Append(type.ValueType).AppendLine(">)this;");
@@ -312,7 +304,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.AppendLine();
 
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
-        builder.Append("    public global::Atelia.StateJournal.GetIssue Get<TValue>(").Append(keyType).AppendLine(" key, out TValue? value) where TValue : notnull {");
+        builder.Append("    public partial global::Atelia.StateJournal.GetIssue Get<TValue>(").Append(keyType).AppendLine(" key, out TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             if (type.UseDurableObjectHelpers) {

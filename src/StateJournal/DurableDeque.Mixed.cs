@@ -6,7 +6,11 @@ namespace Atelia.StateJournal;
 
 /// <summary>替代 <see cref="DurableDeque{ValueBox}"/> 的异构双端队列。</summary>
 [UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.Deque)]
-public abstract partial class DurableDeque : DurableDequeBase, IDeque {
+public abstract partial class DurableDeque : DurableDequeBase, IDeque,
+    IDeque<bool>, IDeque<string>, IDeque<DurableObject>,
+    IDeque<double>, IDeque<float>, IDeque<Half>,
+    IDeque<ulong>, IDeque<uint>, IDeque<ushort>, IDeque<byte>,
+    IDeque<long>, IDeque<int>, IDeque<short>, IDeque<sbyte> {
 
     private protected DequeChangeTracker<ValueBox> _core;
 
@@ -37,6 +41,19 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque {
     #endregion
 
     public int Count => _core.Current.Count;
+
+    #region Generated Dispatch (partial — bodies in .g.cs)
+
+    public partial void PushFront<TValue>(TValue? value) where TValue : notnull;
+    public partial void PushBack<TValue>(TValue? value) where TValue : notnull;
+    public partial bool TrySetAt<TValue>(int index, TValue? value) where TValue : notnull;
+    public partial bool TrySetFront<TValue>(TValue? value) where TValue : notnull;
+    public partial bool TrySetBack<TValue>(TValue? value) where TValue : notnull;
+    public partial IDeque<TValue> Of<TValue>() where TValue : notnull;
+    private partial GetIssue PeekCore<TValue>(bool front, out TValue? value) where TValue : notnull;
+    private partial GetIssue GetCore<TValue>(int index, out TValue? value) where TValue : notnull;
+
+    #endregion
 
     #region Generic Accessor
 

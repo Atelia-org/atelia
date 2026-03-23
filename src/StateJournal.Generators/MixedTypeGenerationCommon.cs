@@ -182,6 +182,16 @@ internal static class MixedTypeGenerationCommon {
         builder.AppendLine(" {");
     }
 
+    /// <summary>Partial class header without interface list (interfaces declared in hand-written source).</summary>
+    public static void AppendPartialClassHeader(StringBuilder builder, TargetSpec target) {
+        builder.Append("public abstract partial class ").Append(target.TypeName).Append(target.TypeParameterListText);
+        foreach (var constraintClause in target.ConstraintClauses) {
+            builder.AppendLine();
+            builder.Append("    ").Append(constraintClause);
+        }
+        builder.AppendLine(" {");
+    }
+
     internal sealed class TargetSpec {
         public TargetSpec(
             string? @namespace,
