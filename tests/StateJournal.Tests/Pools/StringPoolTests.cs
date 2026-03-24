@@ -1,5 +1,5 @@
 using Xunit;
-using StringPool = Atelia.StateJournal.Pools.StringPoolDirect64x4;
+
 namespace Atelia.StateJournal.Pools.Tests;
 
 public class StringPoolTests {

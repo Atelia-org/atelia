@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 
 namespace Atelia.StateJournal.Pools;
 
-internal sealed class StringPoolDirect64x4 : IMarkSweepPool<string> {
+internal sealed class StringPool : IMarkSweepPool<string> {
     private const int MaxPassthroughLength = 40;
     private const int IdentityCacheWays = 4;
     private const int IdentityCacheSetCount = 64;
