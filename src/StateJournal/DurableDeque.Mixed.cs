@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Atelia.Data;
 using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;

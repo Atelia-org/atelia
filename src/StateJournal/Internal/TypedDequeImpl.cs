@@ -1,4 +1,3 @@
-using Atelia.Data;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
