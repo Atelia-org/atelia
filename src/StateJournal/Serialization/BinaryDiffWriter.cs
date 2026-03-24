@@ -18,8 +18,18 @@ internal ref struct BinaryDiffWriter {
         _downstream.Advance(1);
     }
 
-    public void BareString(string? value, bool asKey) {
+    /// <summary>Symbol id（引用语义字符串）的裸写入。当前为 stub，后续 Phase 4 实现。</summary>
+    public void BareSymbolId(string? value, bool asKey) {
         throw new NotImplementedException();
+    }
+
+    /// <summary>
+    /// InlineString 的裸写入。格式：VarUInt header，后跟 payload。
+    /// header LSB=0 → UTF-16LE，header 本身就是 payloadByteCount。
+    /// header LSB=1 → UTF-8，payloadByteCount = header &gt;&gt; 1。
+    /// </summary>
+    public void BareInlineString(string? value, bool asKey) {
+        InlineString.WriteTo(_downstream, value ?? string.Empty);
     }
 
     /// <summary>依赖于<see cref="DurableObjectKind"/>基于byte。</summary>

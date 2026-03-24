@@ -47,6 +47,13 @@ public class TypeCodePrecomputeTests {
         AssertRoundTrip(entry.TypeCode, typeof(DurableDeque));
     }
 
+    [Fact]
+    public void ResolveValueHelper_InlineString_TypeCode_RoundTrips() {
+        var entry = HelperRegistry.ResolveValueHelper(typeof(InlineString));
+        Assert.True(entry.IsValid);
+        AssertRoundTrip(entry.TypeCode, typeof(InlineString));
+    }
+
     // ═══════════════════════ 泛型容器 — HelperRegistry ═══════════════════════
 
     [Fact]

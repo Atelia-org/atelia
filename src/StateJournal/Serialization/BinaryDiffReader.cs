@@ -108,6 +108,16 @@ internal ref struct BinaryDiffReader {
     internal Half BareHalf(bool asKey) => BinaryPrimitives.ReadHalfLittleEndian(ReadSpan(2));
     internal float BareSingle(bool asKey) => BinaryPrimitives.ReadSingleLittleEndian(ReadSpan(sizeof(float)));
     internal double BareDouble(bool asKey) => BinaryPrimitives.ReadDoubleLittleEndian(ReadSpan(sizeof(double)));
+
+    /// <summary>Symbol id（引用语义字符串）的裸读取。当前为 stub，后续 Phase 4 实现。</summary>
+    internal string? BareSymbolId(bool asKey) => throw new NotImplementedException();
+
+    /// <summary>
+    /// InlineString 的裸读取。格式：VarUInt header，后跟 payload。
+    /// header LSB=0 → UTF-16LE，header 本身就是 payloadByteCount。
+    /// header LSB=1 → UTF-8，payloadByteCount = header &gt;&gt; 1。
+    /// </summary>
+    internal string BareInlineString(bool asKey) => Internal.InlineString.ReadFrom(ref this);
     #endregion
     #region Read Taged
     internal byte TaggedNonnegative1() => RawByte();

@@ -74,12 +74,26 @@ internal readonly struct BooleanHelper : ITypeHelper<bool> {
     // public static List<bool> GetTempList(DiffWriteContext context) => context.BooleanTempList;
 }
 
-internal readonly struct StringHelper : ITypeHelper<string> {
+/// <summary>
+/// Symbol（引用语义字符串）的序列化 Helper。
+/// 当前为 stub，后续 Phase 4 接入 per-Revision String Pool 时实现。
+/// </summary>
+internal readonly struct SymbolIdHelper : ITypeHelper<string> {
     public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
-    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareString(v, asKey);
-    public static string? Read(ref BinaryDiffReader reader, bool asKey) => throw new NotImplementedException();
+    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareSymbolId(v, asKey);
+    public static string? Read(ref BinaryDiffReader reader, bool asKey) => reader.BareSymbolId(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) => old = Read(ref reader, asKey: false);
-    // public static List<string> GetTempList(DiffWriteContext context) => context.StringTempList;
+}
+
+/// <summary>
+/// 值语义字符串（<see cref="InlineString"/>）的序列化 Helper。
+/// 用于 Per-Revision String Pool（<c>DurableDict&lt;uint, InlineString&gt;</c>）的 value 侧。
+/// </summary>
+internal readonly struct InlineStringHelper : ITypeHelper<InlineString> {
+    public static bool Equals(InlineString a, InlineString b) => a == b;
+    public static void Write(BinaryDiffWriter writer, InlineString v, bool asKey) => writer.BareInlineString(v.Value, asKey);
+    public static InlineString Read(ref BinaryDiffReader reader, bool asKey) => new(reader.BareInlineString(asKey));
+    public static void UpdateOrInit(ref BinaryDiffReader reader, ref InlineString old) => old = Read(ref reader, asKey: false);
 }
 
 /// <summary>
