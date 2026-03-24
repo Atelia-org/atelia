@@ -71,41 +71,28 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
     /// 若池中已存在等价值，返回已有 index；否则分配新 slot 并存入。O(1) 均摊。
     /// </summary>
     public SlotHandle Store(T value) {
-        int hashCode = TComparer.GetHashCode(value) & 0x7FFFFFFF;
-        int bucket = hashCode & _bucketMask;
-
-        // 在链表中查找已有
-        for (int i = _buckets[bucket]; i >= 0;) {
-            ref Entry e = ref _slots.GetValueRefUnchecked(i);
-            if (e.HashCode == hashCode && TComparer.Equals(e.Value, value)) { return _slots.GetHandle(i); /* 去重命中 */ }
-            i = e.Next;
-        }
-
-        // 未命中 → 分配新 slot
-        var entry = new Entry {
-            Value = value,
-            HashCode = hashCode,
-            Next = _buckets[bucket],
-        };
-        SlotHandle slot = _slots.Store(entry);
-        _buckets[bucket] = slot.Index;
-
-        // SlotPool 可能扩容了新 slab，同步 _reachable 位图
-        SyncGrowth();
-
-        // 按需扩容 bucket（load factor ≈ 0.75）
-        if (_slots.Count * 4 > _buckets.Length * 3) {
-            Rehash(_buckets.Length * 2);
-        }
-
-        return slot;
+        return StorePrehashed(value, TComparer.GetHashCode(value));
     }
+
+    /// <summary>
+    /// 使用调用方已计算好的哈希值执行去重存储，避免重复计算 hash。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal SlotHandle StorePrehashed(T value, int hashCode) => StoreCore(value, hashCode & 0x7FFFFFFF);
 
     // ───────────────────── Lookup ─────────────────────
 
     /// <summary>查找池中是否存在等价值。若存在，通过 <paramref name="index"/> 返回其 slot index。</summary>
     public bool TryGetIndex(T value, out SlotHandle index) {
-        int hashCode = TComparer.GetHashCode(value) & 0x7FFFFFFF;
+        return TryGetIndexPrehashed(value, TComparer.GetHashCode(value), out index);
+    }
+
+    /// <summary>
+    /// 使用调用方已计算好的哈希值执行查找，避免重复计算 hash。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryGetIndexPrehashed(T value, int hashCode, out SlotHandle index) {
+        hashCode &= 0x7FFFFFFF;
         int bucket = hashCode & _bucketMask;
 
         for (int i = _buckets[bucket]; i >= 0;) {
@@ -124,6 +111,33 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
     /// <summary>检查池中是否存在等价值。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Contains(T value) => TryGetIndex(value, out _);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private SlotHandle StoreCore(T value, int hashCode) {
+        int bucket = hashCode & _bucketMask;
+
+        for (int i = _buckets[bucket]; i >= 0;) {
+            ref Entry e = ref _slots.GetValueRefUnchecked(i);
+            if (e.HashCode == hashCode && TComparer.Equals(e.Value, value)) { return _slots.GetHandle(i); }
+            i = e.Next;
+        }
+
+        var entry = new Entry {
+            Value = value,
+            HashCode = hashCode,
+            Next = _buckets[bucket],
+        };
+        SlotHandle slot = _slots.Store(entry);
+        _buckets[bucket] = slot.Index;
+
+        SyncGrowth();
+
+        if (_slots.Count * 4 > _buckets.Length * 3) {
+            Rehash(_buckets.Length * 2);
+        }
+
+        return slot;
+    }
 
     // ───────────────────── Access by index ─────────────────────
 
