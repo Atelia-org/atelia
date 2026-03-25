@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Reflection;
 using Atelia.Rbf;
 using Atelia.StateJournal.Internal;
+using Atelia.StateJournal.Pools;
 using Xunit;
 
 namespace Atelia.StateJournal.Tests;
@@ -200,8 +201,15 @@ public partial class RevisionTests : IDisposable {
         var objectMap = Assert.IsAssignableFrom<DurableDict<uint, ulong>>(mapField.GetValue(rev));
         objectMap.Upsert(root.LocalId.Value, rootSave.Value.Serialize()); // 故意不写 child ticket
 
-        Span<byte> rootMeta = stackalloc byte[4];
+        var symbolTableField = typeof(Revision).GetField("_symbolTable", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var symbolTable = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(symbolTableField.GetValue(rev));
+        var symbolTableSave = VersionChain.Save(symbolTable, file, DiffWriteContext.UserPrimary);
+        Assert.True(symbolTableSave.IsSuccess, $"Save symbolTable failed: {symbolTableSave.Error}");
+        objectMap.Upsert(new SlotHandle(0, 1).Packed, symbolTableSave.Value.Serialize());
+
+        Span<byte> rootMeta = stackalloc byte[8];
         BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, root.LocalId.Value);
+        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta[4..], new SlotHandle(0, 1).Packed);
         DiffWriteContext context = new(FrameUsage.ObjectMap, FrameSource.PrimaryCommit) { ForceSave = true };
         var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: rootMeta);
         Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");
@@ -227,8 +235,15 @@ public partial class RevisionTests : IDisposable {
         var objectMap = Assert.IsAssignableFrom<DurableDict<uint, ulong>>(mapField.GetValue(rev));
         objectMap.Upsert(root.LocalId.Value, rootSave.Value.Serialize());
 
-        Span<byte> badMeta = stackalloc byte[4];
+        var symbolTableField = typeof(Revision).GetField("_symbolTable", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var symbolTable = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(symbolTableField.GetValue(rev));
+        var symbolTableSave = VersionChain.Save(symbolTable, file, DiffWriteContext.UserPrimary);
+        Assert.True(symbolTableSave.IsSuccess, $"Save symbolTable failed: {symbolTableSave.Error}");
+        objectMap.Upsert(new SlotHandle(0, 1).Packed, symbolTableSave.Value.Serialize());
+
+        Span<byte> badMeta = stackalloc byte[8];
         BinaryPrimitives.WriteUInt32LittleEndian(badMeta, 0u); // 非法 GraphRoot LocalId
+        BinaryPrimitives.WriteUInt32LittleEndian(badMeta[4..], new SlotHandle(0, 1).Packed);
         DiffWriteContext context = new(FrameUsage.ObjectMap, FrameSource.PrimaryCommit) { ForceSave = true };
         var mapSave = VersionChain.Save(objectMap, file, context, tailMeta: badMeta);
         Assert.True(mapSave.IsSuccess, $"Save objectMap failed: {mapSave.Error}");

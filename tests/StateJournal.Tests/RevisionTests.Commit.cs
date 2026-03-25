@@ -43,7 +43,7 @@ partial class RevisionTests {
         var dict = rev.CreateDict<int, double>();
         Assert.Equal(rev, dict.Revision);
         Assert.False(dict.LocalId.IsNull);
-        Assert.Equal(1u, dict.LocalId.Value);
+        Assert.Equal(2u, dict.LocalId.Value); // slot 0=ObjectMap, slot 1=SymbolTable, slot 2=first user object
         Assert.Equal(DurableState.TransientDirty, dict.State);
 
         dict.Upsert(10, 3.14);

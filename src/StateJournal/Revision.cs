@@ -20,6 +20,18 @@ public partial class Revision {
     /// </summary>
     private DurableDict<uint, ulong> _objectMap;
     private GcPool<DurableObject> _pool;
+
+    /// <summary>
+    /// Per-Revision Symbol Table：持久化层，占据 pool slot 1。
+    /// 存储 symbol slot index → InlineString 映射，用于增量序列化。
+    /// </summary>
+    private DurableDict<uint, InlineString> _symbolTable;
+    /// <summary>
+    /// 运行时 intern 引擎 + Mark-Sweep-Compact GC 池。
+    /// 对外通过 <see cref="InternSymbol"/> / <see cref="GetSymbol"/> 提供 string ↔ SymbolId 转换。
+    /// </summary>
+    private StringPool _symbolPool;
+
     /// <summary>最近一次成功 Commit 的快照。首次 Commit 前为 null。</summary>
     private CommitSnapshot? _head;
 
@@ -48,14 +60,26 @@ public partial class Revision {
         _objectMap = Durable.Dict<uint, ulong>();
         _pool = new GcPool<DurableObject>();
         _pool.Store(_objectMap); // slot 0 = ObjectMap
+
+        _symbolTable = Durable.Dict<uint, InlineString>();
+        _pool.Store(_symbolTable); // slot 1 = SymbolTable
+        _symbolPool = new StringPool();
     }
 
     /// <summary>从持久化数据全量加载 commit（内部构造函数，_head 由 Open 设置）。</summary>
-    private Revision(uint boundSegmentNumber, DurableDict<uint, ulong> objectMap, GcPool<DurableObject> pool) {
+    private Revision(
+        uint boundSegmentNumber,
+        DurableDict<uint, ulong> objectMap,
+        GcPool<DurableObject> pool,
+        DurableDict<uint, InlineString> symbolTable,
+        StringPool symbolPool
+    ) {
         ArgumentOutOfRangeException.ThrowIfZero(boundSegmentNumber);
         _headSegmentNumber = boundSegmentNumber;
         _objectMap = objectMap;
         _pool = pool;
+        _symbolTable = symbolTable;
+        _symbolPool = symbolPool;
     }
 
     /// <summary>从 RBF 文件打开指定 CommitTicket 对应的 commit，全量加载所有对象到 GcPool。</summary>
@@ -81,12 +105,40 @@ public partial class Revision {
         CommitTicket parentId = new CommitTicket(result.HeadParentTicket);
         byte[] tailMeta = result.HeadTailMeta;
 
-        // 全量加载：遍历 ObjectMap 所有 entries，从 RBF 加载对象，
-        // 连同 ObjectMap 自身（slot 0）一起 Rebuild 进 GcPool。
-        var entries = new (SlotHandle, DurableObject)[objectMap.Count + 1];
-        entries[0] = (new SlotHandle(0, 0), objectMap); // slot 0 = ObjectMap
+        // 从 TailMeta 读取 GraphRoot + SymbolTable 信息
+        // 布局：[0..3] GraphRoot.LocalId.Value (uint LE)
+        //        [4..7] SymbolTable slot packed (uint LE)
+        if (tailMeta.Length < 8) {
+            return new SjCorruptionError(
+                $"TailMeta length {tailMeta.Length} < 8.",
+                RecoveryHint: "This commit uses an unsupported or corrupted TailMeta format."
+            );
+        }
+        uint rootIdValue = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta);
+        if (rootIdValue == 0) {
+            return new SjCorruptionError(
+                "Invalid GraphRoot LocalId 0 in TailMeta.",
+                RecoveryHint: "Data corruption in TailMeta."
+            );
+        }
 
-        int i = 1;
+        uint symbolTablePacked = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta.AsSpan(4));
+        uint expectedSymbolTablePacked = new SlotHandle(0, 1).Packed;
+        if (symbolTablePacked != expectedSymbolTablePacked) {
+            return new SjCorruptionError(
+                $"Unexpected SymbolTable LocalId {symbolTablePacked}; expected fixed slot {expectedSymbolTablePacked}.",
+                RecoveryHint: "This commit uses an unsupported or corrupted SymbolTable layout."
+            );
+        }
+
+        // 全量加载：遍历 ObjectMap 所有 entries，从 RBF 加载对象。
+        // 为 ObjectMap（slot 0）和 SymbolTable（slot 1）预留位置。
+        const int reservedSlots = 2;
+        var entries = new (SlotHandle, DurableObject)[objectMap.Count + reservedSlots];
+        entries[0] = (new SlotHandle(1, 0), objectMap); // slot 0 = ObjectMap
+
+        DurableDict<uint, InlineString>? symbolTable = null;
+        int i = reservedSlots; // user objects start after reserved slots
         foreach (uint key in objectMap.Keys) {
             var handle = new SlotHandle(key); // LocalId.Value == SlotHandle.Packed
             if (objectMap.Get(key, out ulong serializedPtr) != GetIssue.None) {
@@ -98,15 +150,51 @@ public partial class Revision {
             SizedPtr ticket = SizedPtr.Deserialize(serializedPtr);
             var objLoad = VersionChain.Load(file, ticket);
             if (objLoad.IsFailure) { return objLoad.Error!; }
-            entries[i++] = (handle, objLoad.Value!);
+
+            if (key == symbolTablePacked) {
+                // SymbolTable 放到 reserved slot 1
+                if (objLoad.Value is not DurableDict<uint, InlineString> st) {
+                    return new SjCorruptionError(
+                        $"SymbolTable frame at key {key} resolved to unexpected type: {objLoad.Value!.GetType()}.",
+                        RecoveryHint: "Expected DurableDict<uint, InlineString>."
+                    );
+                }
+                symbolTable = st;
+                entries[1] = (handle, st);
+            }
+            else {
+                entries[i++] = (handle, objLoad.Value!);
+            }
         }
 
-        var pool = GcPool<DurableObject>.Rebuild(entries);
+        if (symbolTable is null) {
+            return new SjCorruptionError(
+                $"SymbolTable key {symbolTablePacked} referenced in TailMeta but not found in ObjectMap.",
+                RecoveryHint: "Data corruption in TailMeta or ObjectMap."
+            );
+        }
 
-        var revision = new Revision(segmentNumber, objectMap, pool);
+        var pool = GcPool<DurableObject>.Rebuild(entries.AsSpan(0, i));
 
-        // 绑定所有用户对象到 Revision（ObjectMap 在 slot 0，不 Bind）
+        // 从 SymbolTable 重建 StringPool
+        var symbolEntries = new (SlotHandle, string)[symbolTable.Count];
+        int si = 0;
+        foreach (uint key in symbolTable.Keys) {
+            if (symbolTable.Get(key, out InlineString inlineStr) != GetIssue.None) {
+                return new SjCorruptionError(
+                    $"SymbolTable key {key} could not be read.",
+                    RecoveryHint: "Data corruption in SymbolTable."
+                );
+            }
+            symbolEntries[si++] = (new SlotHandle(key), inlineStr.ToString());
+        }
+        StringPool symbolPool = StringPool.Rebuild(symbolEntries);
+
+        var revision = new Revision(segmentNumber, objectMap, pool, symbolTable, symbolPool);
+
+        // 绑定所有用户对象到 Revision（skip ObjectMap slot 0 和 SymbolTable）
         foreach (uint key in objectMap.Keys) {
+            if (key == symbolTablePacked) { continue; } // skip SymbolTable
             var handle = new SlotHandle(key);
             var localId = LocalId.FromSlotHandle(handle);
             var obj = pool[handle];
@@ -114,20 +202,6 @@ public partial class Revision {
         }
 
         // 从 TailMeta 恢复 GraphRoot
-        // 布局：[0..3] GraphRoot.LocalId.Value (uint LE)
-        if (tailMeta.Length < 4) {
-            return new SjCorruptionError(
-                $"TailMeta length {tailMeta.Length} < 4.",
-                RecoveryHint: "Data corruption or unsupported format in TailMeta."
-            );
-        }
-        uint rootIdValue = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta);
-        if (rootIdValue == 0) {
-            return new SjCorruptionError(
-                "Invalid GraphRoot LocalId 0 in TailMeta.",
-                RecoveryHint: "Data corruption in TailMeta."
-            );
-        }
         var rootHandle = new SlotHandle(rootIdValue);
         if (!pool.TryGetValue(rootHandle, out var rootObj)) {
             return new SjCorruptionError(
@@ -169,6 +243,26 @@ public partial class Revision {
         }
         return obj;
     }
+
+    #region Symbol API
+
+    /// <summary>
+    /// 将字符串 intern 到当前 Revision 的 Symbol Pool，返回 SymbolId。
+    /// <c>null</c> 映射为 <see cref="SymbolId.Null"/>；非空字符串若已存在则去重返回已有 id。
+    /// 同时同步更新 _symbolTable 以保持持久化层一致。
+    /// </summary>
+    internal SymbolId InternSymbol(string? value) {
+        if (value is null) { return SymbolId.Null; }
+
+        var handle = _symbolPool.Store(value);
+        _symbolTable.Upsert(handle.Packed, new InlineString(value));
+        return SymbolId.FromSlotHandle(handle);
+    }
+
+    /// <summary>按 SymbolId 读取 intern 字符串；<see cref="SymbolId.Null"/> 返回 <c>null</c>。</summary>
+    internal string? GetSymbol(SymbolId id) => id.IsNull ? null : _symbolPool[id.ToSlotHandle()];
+
+    #endregion
 
     #region Object Factory
 

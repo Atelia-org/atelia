@@ -192,6 +192,7 @@ partial class Revision {
     private AteliaResult<List<DurableObject>> WalkAndMark(DurableObject graphRoot) {
         _pool.BeginMark();
         _pool.MarkReachable(new SlotHandle(1, 0)); // slot 0 = ObjectMap，始终可达
+        _pool.MarkReachable(new SlotHandle(0, 1)); // slot 1 = SymbolTable，始终可达
 
         var liveObjects = new List<DurableObject>();
         var dfsStack = new Stack<DurableObject>();
@@ -262,8 +263,24 @@ partial class Revision {
             }
         }
 
-        Span<byte> rootMeta = stackalloc byte[4];
+        // ── SymbolTable 持久化 ──
+        // 写入 SymbolTable（它的 VersionChain 自动处理增量 diff）
+        var stContext = new DiffWriteContext(FrameUsage.UserPayload, frameSource) {
+            ForceRebase = forceAll,
+            ForceSave = forceAll,
+        };
+        var stWriteResult = VersionChain.Write(_symbolTable, targetFile, stContext);
+        if (stWriteResult.IsFailure) { return stWriteResult.Error!; }
+        var stPendingSave = stWriteResult.Value;
+        pendingSaves.Add(stPendingSave);
+        // SymbolTable 的 ticket 存入 ObjectMap，key = packed slot handle（slot 1）
+        _objectMap.Upsert(new SlotHandle(0, 1).Packed, stPendingSave.Ticket.Serialize());
+
+        // ── TailMeta: [0..3] GraphRoot LocalId, [4..7] SymbolTable LocalId ──
+        Span<byte> rootMeta = stackalloc byte[8];
         BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, graphRoot.LocalId.Value);
+        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta[4..], new SlotHandle(0, 1).Packed);
+
         DiffWriteContext mapContext = new(FrameUsage.ObjectMap, frameSource) {
             // ObjectMap 也保留逻辑祖先 commit 的 ticket。
             // 因此 Open(targetCommit, targetFile) 能读取当前快照，同时 HeadParentId 继续暴露这条跨文件祖先信息。
@@ -334,6 +351,7 @@ partial class Revision {
         _pool.RollbackCompaction(undoToken);
         RestoreMovedObjectLocalIds(undoToken.Records);
         _objectMap.DiscardChanges();
+        _symbolTable.DiscardChanges();
         foreach (var obj in touchedObjects) {
             obj.DiscardChanges();
         }
@@ -422,9 +440,11 @@ partial class Revision {
     /// 主要用于 compaction apply 后的工作集级验证，避免再次从 ObjectMap 反查对象。
     /// </summary>
     private AteliaResult<bool> ValidateAllReferences(IReadOnlyList<DurableObject> liveObjects) {
-        if (_objectMap.Count != liveObjects.Count) {
+        // ObjectMap.Count = liveObjects.Count + 1 (SymbolTable at key=1)
+        int expectedObjectMapCount = liveObjects.Count + 1;
+        if (_objectMap.Count != expectedObjectMapCount) {
             return new SjCorruptionError(
-                $"ObjectMap count {_objectMap.Count} does not match live object count {liveObjects.Count}.",
+                $"ObjectMap count {_objectMap.Count} does not match expected count {expectedObjectMapCount} (live={liveObjects.Count} + 1 SymbolTable).",
                 RecoveryHint: "Compaction produced inconsistent ObjectMap/live-object state."
             );
         }
@@ -448,9 +468,11 @@ partial class Revision {
         IReadOnlyDictionary<uint, LocalId> translationTable,
         int expectedLiveObjectCount
     ) {
-        if (_objectMap.Count != expectedLiveObjectCount) {
+        // ObjectMap.Count = expectedLiveObjectCount + 1 (SymbolTable at key=1)
+        int expectedObjectMapCount = expectedLiveObjectCount + 1;
+        if (_objectMap.Count != expectedObjectMapCount) {
             return new SjCorruptionError(
-                $"ObjectMap count {_objectMap.Count} does not match live object count {expectedLiveObjectCount}.",
+                $"ObjectMap count {_objectMap.Count} does not match expected count {expectedObjectMapCount} (live={expectedLiveObjectCount} + 1 SymbolTable).",
                 RecoveryHint: "Compaction produced inconsistent ObjectMap/live-object state."
             );
         }
