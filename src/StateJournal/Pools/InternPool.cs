@@ -30,7 +30,23 @@ namespace Atelia.StateJournal.Pools;
 /// <typeparam name="T">Interned 值类型，必须正确实现 GetHashCode / Equals（或提供 IEqualityComparer）。</typeparam>
 internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : notnull where TComparer : unmanaged, IStaticEqualityComparer<T> {
 
-    private struct Entry {
+    /// <summary>
+    /// Compaction 回滚令牌：保存每次 MoveSlot 的 <see cref="SlotPool{T}.MoveRecord"/>，
+    /// 用于 <see cref="RollbackCompaction"/> 在 shrink 最终提交前精确恢复 pool 状态。
+    /// </summary>
+    internal readonly struct CompactionJournal {
+        public CompactionJournal(List<SlotPool<Entry>.MoveRecord> records) {
+            Records = records;
+        }
+
+        public List<SlotPool<Entry>.MoveRecord> Records { get; }
+    }
+
+    private readonly struct NoOpSweepCollectHandler : ISweepCollectHandler<T> {
+        public static void OnCollect(T value) { }
+    }
+
+    internal struct Entry {
         public T Value;
         public int Next;      // 同桶内下一个 entry 的 slot index，-1 = 链尾
         public int HashCode;  // 缓存（非负，已 & 0x7FFFFFFF）
@@ -63,7 +79,53 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
         _bucketMask = InitialBucketCount - 1;
         _reachable = new SlabBitmap();
     }
+    /// <summary>从已重建的 SlotPool 构造（供 <see cref="Rebuild"/> 使用）。</summary>
+    private InternPool(SlotPool<Entry> slots) {
+        _slots = slots;
+        _reachable = new SlabBitmap();
 
+        // 根据 count 选择合适的 bucket size
+        int bucketCount = InitialBucketCount;
+        while (slots.Count * 4 > bucketCount * 3) { bucketCount *= 2; }
+        _buckets = new int[bucketCount];
+        Array.Fill(_buckets, -1);
+        _bucketMask = bucketCount - 1;
+
+        // 从 slot 数据重建 bucket chains
+        foreach (int i in _slots.EnumerateOccupiedIndices()) {
+            ref Entry e = ref _slots.GetValueRefUnchecked(i);
+            int b = e.HashCode & _bucketMask;
+            e.Next = _buckets[b];
+            _buckets[b] = i;
+        }
+
+        SyncGrowth();
+    }
+
+    /// <summary>
+    /// 从已有的 (SlotHandle, T) 映射批量重建 InternPool。
+    /// 每个 handle 对应的 slot 被恢复并重建 bucket chain。
+    /// </summary>
+    /// <param name="entries">
+    /// 要恢复的 (handle, value) 集合。调用方必须保证每个 handle.Index 唯一且值已去重。
+    /// </param>
+    public static InternPool<T, TComparer> Rebuild(ReadOnlySpan<(SlotHandle Handle, T Value)> entries) {
+        if (entries.IsEmpty) { return new InternPool<T, TComparer>(); }
+
+        // 构建 Entry 数组以包含 HashCode
+        var entrySpan = new (SlotHandle Handle, Entry Value)[entries.Length];
+        for (int i = 0; i < entries.Length; i++) {
+            int hashCode = TComparer.GetHashCode(entries[i].Value) & 0x7FFFFFFF;
+            entrySpan[i] = (entries[i].Handle, new Entry {
+                Value = entries[i].Value,
+                HashCode = hashCode,
+                Next = -1, // 由构造函数中的 Rehash 重建
+            });
+        }
+
+        var slotPool = SlotPool<Entry>.Rebuild(entrySpan);
+        return new InternPool<T, TComparer>(slotPool);
+    }
     // ───────────────────── Core: Intern ─────────────────────
 
     /// <summary>
@@ -192,18 +254,27 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
     }
 
     /// <summary>
+    /// 查询 handle 在当前 Mark 阶段是否已被标记为可达。
+    /// 仅在 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间有意义。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsMarkedReachable(SlotHandle handle) {
+        return _reachable.Test(handle.Index);
+    }
+
+    /// <summary>
     /// 回收所有不可达且已占用的 slot。返回实际释放的 slot 数量。
     /// </summary>
-    /// <remarks>
-    /// 算法：
-    /// - <c>_reachable |= freeBitmap</c>：将空闲 slot 标记为安全（1）。
-    /// - 用 <see cref="SlabBitmap.EnumerateZerosReverse"/> 逆序迭代结果中的每个 clear bit
-    ///   （= 已占用且不可达），从高 index 向低释放，使尾部 slab 更早触发回收。
-    /// - 每个被 sweep 的 slot 会先从哈希桶链中摘除，再释放底层 slot，
-    ///   确保去重索引与存储的一致性。
-    /// </remarks>
     /// <exception cref="InvalidOperationException">未先调用 <see cref="BeginMark"/>。</exception>
-    public int Sweep() {
+    public int Sweep() => Sweep<NoOpSweepCollectHandler>();
+
+    /// <summary>
+    /// 回收所有不可达且已占用的 slot。返回实际释放的 slot 数量。
+    /// 每个将被回收的值会在释放前调用一次 <typeparamref name="THandler"/>。
+    /// </summary>
+    /// <typeparam name="THandler">静态回调策略类型。</typeparam>
+    /// <exception cref="InvalidOperationException">未先调用 <see cref="BeginMark"/>。</exception>
+    public int Sweep<THandler>() where THandler : struct, ISweepCollectHandler<T> {
         if (!_markPhaseActive) { throw new InvalidOperationException("Sweep must be called after BeginMark."); }
         _markPhaseActive = false;
 
@@ -212,6 +283,7 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
 
         int freed = 0;
         foreach (int index in _reachable.EnumerateZerosReverse()) {
+            THandler.OnCollect(_slots.GetValueRefUnchecked(index).Value);
             Free(index);
             freed++;
         }
@@ -284,5 +356,96 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
 
         _buckets = newBuckets;
         _bucketMask = newMask;
+    }
+
+    // ───────────────────── Compaction ─────────────────────
+
+    /// <summary>
+    /// 执行 compaction 并返回用于回滚的 undo token。
+    /// 每次 move 后在 bucket chain 中做 index rewrite（不做全量 rehash）。
+    /// </summary>
+    internal CompactionJournal CompactWithUndo(int maxMoves) {
+        Debug.Assert(!_markPhaseActive, "CompactWithUndo must be called after Sweep (mark phase must be inactive).");
+        Debug.Assert(maxMoves >= 0);
+
+        if (maxMoves == 0 || _slots.Count == 0) { return new CompactionJournal([]); }
+
+        var records = new List<SlotPool<Entry>.MoveRecord>(Math.Min(maxMoves, _slots.Count));
+        try {
+            int moved = 0;
+            foreach (var (holeIndex, dataIndex) in _slots.FreeBitmap.EnumerateCompactionMoves()) {
+                var record = _slots.MoveSlotRecorded(dataIndex, holeIndex);
+                records.Add(record);
+                RewriteChainRef(dataIndex, holeIndex);
+                if (++moved >= maxMoves) { break; }
+            }
+        }
+        catch {
+            RollbackCompaction(new CompactionJournal(records));
+            throw;
+        }
+
+        return new CompactionJournal(records);
+    }
+
+    /// <summary>
+    /// 精确回滚一次已应用的 compaction：反向逐条恢复 slot 布局、generation 和 bucket chain。
+    /// </summary>
+    internal void RollbackCompaction(CompactionJournal undoToken) {
+        var records = undoToken.Records;
+        if (records.Count > 0) {
+            int maxToIndex = records[0].ToIndex;
+            for (int i = 1; i < records.Count; i++) {
+                if (records[i].ToIndex > maxToIndex) { maxToIndex = records[i].ToIndex; }
+            }
+            Debug.Assert(
+                maxToIndex < _slots.Capacity,
+                "RollbackCompaction must run before TrimExcessCapacity for the same compaction batch."
+            );
+        }
+
+        // 逆序回滚每个 move（LIFO 顺序确保中间状态一致）
+        for (int i = records.Count - 1; i >= 0; i--) {
+            var record = records[i];
+            // Undo slot move: entry 从 toIndex (hole) 回到 fromIndex (data)
+            _slots.UndoMoveSlot(record);
+            // Rewrite chain ref: toIndex → fromIndex (entry 已回到 fromIndex)
+            RewriteChainRef(record.ToIndex, record.FromIndex);
+        }
+    }
+
+    /// <summary>
+    /// 主动裁剪尾部空 slab，释放当前 pool 的多余容量。
+    /// </summary>
+    internal void TrimExcessCapacity() {
+        _slots.TrimExcess();
+        SyncShrink();
+    }
+
+    /// <summary>
+    /// MoveSlot(from→to) 后，在 bucket chain 中将指向 <paramref name="oldIndex"/> 的引用改写为 <paramref name="newIndex"/>。
+    /// Entry 已在 newIndex 位置。O(chain_length)，均摊 O(1)。
+    /// </summary>
+    private void RewriteChainRef(int oldIndex, int newIndex) {
+        ref Entry e = ref _slots.GetValueRefUnchecked(newIndex);
+        int bucket = e.HashCode & _bucketMask;
+
+        if (_buckets[bucket] == oldIndex) {
+            _buckets[bucket] = newIndex;
+            return;
+        }
+
+        // 沿链搜索前驱
+        int current = _buckets[bucket];
+        while (current >= 0) {
+            ref Entry ce = ref _slots.GetValueRefUnchecked(current);
+            if (ce.Next == oldIndex) {
+                ce.Next = newIndex;
+                return;
+            }
+            current = ce.Next;
+        }
+
+        Debug.Fail($"oldIndex {oldIndex} not found in bucket chain for bucket {bucket} — internal state corrupted.");
     }
 }

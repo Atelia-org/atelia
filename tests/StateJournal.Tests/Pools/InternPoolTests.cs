@@ -268,4 +268,292 @@ public class InternPoolTests {
         for (int i = 0; i < slabSize * 2; i++) { pool.Store(i); }
         Assert.Equal(slabSize * 2, pool.Count);
     }
+
+    // ───────────────────── Rebuild ─────────────────────
+
+    [Fact]
+    public void Rebuild_Empty_ReturnsEmptyPool() {
+        var pool = InternPool<int, Int32StaticEqualityComparer>.Rebuild([]);
+        Assert.Equal(0, pool.Count);
+    }
+
+    [Fact]
+    public void Rebuild_SingleEntry_RoundTrips() {
+        var original = new InternPool<string, OrdinalStaticEqualityComparer>();
+        SlotHandle h = original.Store("hello");
+
+        var rebuilt = InternPool<string, OrdinalStaticEqualityComparer>.Rebuild([(h, "hello")]);
+        Assert.Equal(1, rebuilt.Count);
+        Assert.Equal("hello", rebuilt[h]);
+        Assert.True(rebuilt.Contains("hello"));
+        Assert.True(rebuilt.Validate(h));
+    }
+
+    [Fact]
+    public void Rebuild_ManyEntries_AllAccessible() {
+        var original = new InternPool<int, Int32StaticEqualityComparer>();
+        var handles = new SlotHandle[50];
+        for (int i = 0; i < 50; i++) { handles[i] = original.Store(i * 7); }
+
+        var entries = new (SlotHandle, int)[50];
+        for (int i = 0; i < 50; i++) { entries[i] = (handles[i], i * 7); }
+
+        var rebuilt = InternPool<int, Int32StaticEqualityComparer>.Rebuild(entries);
+        Assert.Equal(50, rebuilt.Count);
+
+        for (int i = 0; i < 50; i++) {
+            Assert.Equal(i * 7, rebuilt[handles[i]]);
+            Assert.True(rebuilt.Contains(i * 7));
+            Assert.True(rebuilt.TryGetIndex(i * 7, out SlotHandle found));
+            Assert.Equal(handles[i], found);
+        }
+    }
+
+    [Fact]
+    public void Rebuild_ThenStore_DedupWorks() {
+        var original = new InternPool<string, OrdinalStaticEqualityComparer>();
+        SlotHandle h1 = original.Store("existing");
+
+        var rebuilt = InternPool<string, OrdinalStaticEqualityComparer>.Rebuild([(h1, "existing")]);
+        SlotHandle h2 = rebuilt.Store("existing");
+        Assert.Equal(h1, h2);
+        Assert.Equal(1, rebuilt.Count);
+
+        // New value gets new handle
+        SlotHandle h3 = rebuilt.Store("brand_new");
+        Assert.NotEqual(h1, h3);
+        Assert.Equal(2, rebuilt.Count);
+    }
+
+    [Fact]
+    public void Rebuild_AfterSweepCausesGap_HandlesPreserved() {
+        var original = new InternPool<int, Int32StaticEqualityComparer>();
+        var h0 = original.Store(0);
+        var h1 = original.Store(1);
+        var h2 = original.Store(2);
+
+        // Sweep away h1 → creates gap
+        original.BeginMark();
+        original.MarkReachable(h0);
+        original.MarkReachable(h2);
+        original.Sweep();
+
+        // Rebuild with remaining entries (gap at h1's index)
+        var rebuilt = InternPool<int, Int32StaticEqualityComparer>.Rebuild([(h0, 0), (h2, 2)]);
+        Assert.Equal(2, rebuilt.Count);
+        Assert.Equal(0, rebuilt[h0]);
+        Assert.Equal(2, rebuilt[h2]);
+        Assert.True(rebuilt.Contains(0));
+        Assert.True(rebuilt.Contains(2));
+        Assert.False(rebuilt.Contains(1));
+    }
+
+    // ───────────────────── Sweep<THandler> ─────────────────────
+
+    readonly struct CountingSweepHandler : ISweepCollectHandler<int> {
+        internal static int Collected;
+        public static void OnCollect(int value) => Collected++;
+    }
+
+    [Fact]
+    public void SweepWithHandler_CallsOnCollectForEachSwept() {
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
+        for (int i = 0; i < 5; i++) { pool.Store(i); }
+
+        pool.BeginMark();
+        pool.MarkReachable(pool.Store(0));
+        pool.MarkReachable(pool.Store(2));
+
+        CountingSweepHandler.Collected = 0;
+        int freed = pool.Sweep<CountingSweepHandler>();
+
+        Assert.Equal(3, freed);
+        Assert.Equal(3, CountingSweepHandler.Collected);
+        Assert.Equal(2, pool.Count);
+    }
+
+    // ───────────────────── IsMarkedReachable ─────────────────────
+
+    [Fact]
+    public void IsMarkedReachable_ReflectsMarkState() {
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
+        SlotHandle h1 = pool.Store("a");
+        SlotHandle h2 = pool.Store("b");
+
+        pool.BeginMark();
+        Assert.False(pool.IsMarkedReachable(h1));
+        Assert.False(pool.IsMarkedReachable(h2));
+
+        pool.MarkReachable(h1);
+        Assert.True(pool.IsMarkedReachable(h1));
+        Assert.False(pool.IsMarkedReachable(h2));
+
+        pool.Sweep();
+    }
+
+    // ───────────────────── CompactWithUndo ─────────────────────
+
+    /// <summary>让所有 int 碰撞到同一 bucket 的 comparer，用于验证 chain rewrite 正确性。</summary>
+    readonly struct CollisionInt32Comparer : IStaticEqualityComparer<int> {
+        public static bool Equals(int a, int b) => a == b;
+        public static int GetHashCode(int obj) => 42; // 全部碰撞
+    }
+
+    [Fact]
+    public void CompactWithUndo_NoGap_NoMoves() {
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
+        pool.Store(1);
+        pool.Store(2);
+        pool.Store(3);
+
+        // No sweep → no gaps → compact should produce 0 moves
+        pool.BeginMark();
+        pool.MarkReachable(pool.Store(1));
+        pool.MarkReachable(pool.Store(2));
+        pool.MarkReachable(pool.Store(3));
+        pool.Sweep();
+
+        var journal = pool.CompactWithUndo(10);
+        Assert.Empty(journal.Records);
+    }
+
+    [Fact]
+    public void CompactWithUndo_WithGap_MovesData() {
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
+        var h0 = pool.Store(100);
+        var h1 = pool.Store(200);
+        var h2 = pool.Store(300);
+
+        // Sweep h1 → creates gap at index 1
+        pool.BeginMark();
+        pool.MarkReachable(h0);
+        pool.MarkReachable(h2);
+        pool.Sweep();
+
+        Assert.Equal(2, pool.Count);
+
+        var journal = pool.CompactWithUndo(10);
+        Assert.True(journal.Records.Count > 0);
+
+        // After compact, all remaining values accessible and dedup works
+        Assert.True(pool.Contains(100));
+        Assert.True(pool.Contains(300));
+        Assert.False(pool.Contains(200));
+        Assert.Equal(2, pool.Count);
+
+        // Store dedup still works
+        var check100 = pool.Store(100);
+        Assert.Equal(100, pool[check100]);
+    }
+
+    [Fact]
+    public void CompactWithUndo_HashCollision_ChainRewriteCorrect() {
+        // All values share bucket → long chain → verify chain rewrite
+        var pool = new InternPool<int, CollisionInt32Comparer>();
+        var handles = new SlotHandle[6];
+        for (int i = 0; i < 6; i++) { handles[i] = pool.Store(i); }
+
+        // Sweep even indices → interleaved gaps
+        pool.BeginMark();
+        for (int i = 1; i < 6; i += 2) { pool.MarkReachable(handles[i]); }
+        pool.Sweep();
+
+        Assert.Equal(3, pool.Count);
+
+        var journal = pool.CompactWithUndo(10);
+
+        // Remaining values still found through hash chain
+        for (int i = 1; i < 6; i += 2) {
+            Assert.True(pool.Contains(i), $"Value {i} not found after compact");
+            Assert.True(pool.TryGetIndex(i, out SlotHandle found));
+            Assert.Equal(i, pool[found]);
+        }
+        Assert.Equal(3, pool.Count);
+    }
+
+    [Fact]
+    public void CompactWithUndo_MaxMovesLimitsWork() {
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
+        for (int i = 0; i < 10; i++) { pool.Store(i); }
+
+        // Sweep every other → 5 gaps
+        pool.BeginMark();
+        for (int i = 0; i < 10; i += 2) { pool.MarkReachable(pool.Store(i)); }
+        pool.Sweep();
+
+        // Compact with limit
+        var journal = pool.CompactWithUndo(2);
+        Assert.True(journal.Records.Count <= 2);
+
+        // All surviving values still accessible
+        for (int i = 0; i < 10; i += 2) {
+            Assert.True(pool.Contains(i), $"Value {i} not found");
+        }
+    }
+
+    // ───────────────────── RollbackCompaction ─────────────────────
+
+    [Fact]
+    public void RollbackCompaction_RestoresOriginalState() {
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
+        var handles = new SlotHandle[6];
+        for (int i = 0; i < 6; i++) { handles[i] = pool.Store(i * 10); }
+
+        // Sweep odd indices
+        pool.BeginMark();
+        for (int i = 0; i < 6; i += 2) { pool.MarkReachable(handles[i]); }
+        pool.Sweep();
+
+        // Snapshot pre-compact state
+        var preCompactHandles = new SlotHandle[3];
+        for (int j = 0, i = 0; i < 6; i += 2, j++) {
+            Assert.True(pool.TryGetIndex(i * 10, out preCompactHandles[j]));
+        }
+
+        var journal = pool.CompactWithUndo(10);
+        Assert.True(journal.Records.Count > 0);
+
+        // Rollback
+        pool.RollbackCompaction(journal);
+
+        // Original handles should work again
+        for (int j = 0, i = 0; i < 6; i += 2, j++) {
+            Assert.True(pool.Validate(preCompactHandles[j]), $"Handle for {i * 10} invalid after rollback");
+            Assert.Equal(i * 10, pool[preCompactHandles[j]]);
+        }
+
+        // Hash lookup still correct
+        for (int i = 0; i < 6; i += 2) {
+            Assert.True(pool.Contains(i * 10));
+        }
+    }
+
+    [Fact]
+    public void RollbackCompaction_EmptyJournal_IsNoOp() {
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
+        pool.Store(1);
+        pool.RollbackCompaction(new InternPool<int, Int32StaticEqualityComparer>.CompactionJournal([]));
+        Assert.Equal(1, pool[pool.Store(1)]);
+    }
+
+    // ───────────────────── TrimExcessCapacity ─────────────────────
+
+    [Fact]
+    public void TrimExcessCapacity_ReducesCapacity() {
+        var pool = new InternPool<int, Int32StaticEqualityComparer>();
+        int slabSize = SlabBitmap.SlabSize;
+        // Fill 2 slabs
+        for (int i = 0; i < slabSize * 2; i++) { pool.Store(i); }
+        int capBefore = pool.Capacity;
+
+        // Sweep all in second slab → free entire trailing slab
+        pool.BeginMark();
+        for (int i = 0; i < slabSize; i++) { pool.MarkReachable(pool.Store(i)); }
+        pool.Sweep();
+
+        pool.CompactWithUndo(slabSize);
+        pool.TrimExcessCapacity();
+
+        Assert.True(pool.Capacity < capBefore, $"Capacity should shrink from {capBefore} but got {pool.Capacity}");
+    }
 }

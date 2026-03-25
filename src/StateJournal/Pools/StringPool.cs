@@ -11,9 +11,9 @@ internal sealed class StringPool : IMarkSweepPool<string> {
     private const uint RefBitMask = 0x8000_0000u;
     private const uint EpochMask = ~RefBitMask;
 
-    private readonly InternPool<string, OrdinalStaticEqualityComparer> _innerPool = new();
-    private readonly Entry[] _identityEntries = new Entry[IdentityCacheSetCount * IdentityCacheWays];
-    private readonly byte[] _setHands = new byte[IdentityCacheSetCount];
+    private readonly InternPool<string, OrdinalStaticEqualityComparer> _innerPool;
+    private readonly Entry[] _identityEntries;
+    private readonly byte[] _setHands;
     private uint _sweepEpoch;
 
     private struct Entry {
@@ -21,6 +21,28 @@ internal sealed class StringPool : IMarkSweepPool<string> {
         public int ContentHash;
         public SlotHandle Handle;
         public uint EpochAndRefBit;
+    }
+
+    public StringPool() {
+        _innerPool = new();
+        _identityEntries = new Entry[IdentityCacheSetCount * IdentityCacheWays];
+        _setHands = new byte[IdentityCacheSetCount];
+    }
+
+    /// <summary>从已重建的 InternPool 构造（供 <see cref="Rebuild"/> 使用）。</summary>
+    private StringPool(InternPool<string, OrdinalStaticEqualityComparer> pool) {
+        _innerPool = pool;
+        _identityEntries = new Entry[IdentityCacheSetCount * IdentityCacheWays];
+        _setHands = new byte[IdentityCacheSetCount];
+    }
+
+    /// <summary>
+    /// 从已有的 (SlotHandle, string) 映射批量重建 StringPoolDirect64x4。
+    /// Identity cache 从空开始，后续 Store 调用会逐步填充。
+    /// </summary>
+    public static StringPool Rebuild(ReadOnlySpan<(SlotHandle Handle, string Value)> entries) {
+        var innerPool = InternPool<string, OrdinalStaticEqualityComparer>.Rebuild(entries);
+        return new StringPool(innerPool);
     }
 
     public int Count => _innerPool.Count;
@@ -40,9 +62,22 @@ internal sealed class StringPool : IMarkSweepPool<string> {
 
     public int Sweep() {
         int freed = _innerPool.Sweep();
-        unchecked { _sweepEpoch++; }
+        if (freed > 0) {
+            InvalidateIdentityCache();
+        }
         return freed;
     }
+
+    public int Sweep<THandler>() where THandler : struct, ISweepCollectHandler<string> {
+        int freed = _innerPool.Sweep<THandler>();
+        if (freed > 0) {
+            InvalidateIdentityCache();
+        }
+        return freed;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsMarkedReachable(SlotHandle handle) => _innerPool.IsMarkedReachable(handle);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetValue(SlotHandle handle, out string value) => _innerPool.TryGetValue(handle, out value);
@@ -187,4 +222,32 @@ internal sealed class StringPool : IMarkSweepPool<string> {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void SetEpoch(ref Entry entry, uint epoch) => entry.EpochAndRefBit = epoch | (entry.EpochAndRefBit & RefBitMask);
+
+    // ───────────────────── Identity Cache Invalidation ─────────────────────
+
+    private void InvalidateIdentityCache() {
+        // epoch bump 使所有 cache entry 在下次访问时 miss，触发 RefreshHandle
+        unchecked { _sweepEpoch++; }
+    }
+
+    // ───────────────────── Compaction ─────────────────────
+
+    internal InternPool<string, OrdinalStaticEqualityComparer>.CompactionJournal CompactWithUndo(int maxMoves) {
+        var journal = _innerPool.CompactWithUndo(maxMoves);
+        if (journal.Records.Count > 0) {
+            InvalidateIdentityCache();
+        }
+        return journal;
+    }
+
+    internal void RollbackCompaction(InternPool<string, OrdinalStaticEqualityComparer>.CompactionJournal undoToken) {
+        _innerPool.RollbackCompaction(undoToken);
+        if (undoToken.Records.Count > 0) {
+            InvalidateIdentityCache();
+        }
+    }
+
+    internal void TrimExcessCapacity() {
+        _innerPool.TrimExcessCapacity();
+    }
 }
