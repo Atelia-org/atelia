@@ -115,6 +115,9 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         _slabs[slabIdx][offset] = value;
         byte gen = _generations[slabIdx][offset];
         _count++;
+        if (globalIdx ==0 && gen == 0) {
+            _generations[slabIdx][offset] = ++gen;
+        }
         return new SlotHandle(gen, globalIdx);
     }
 

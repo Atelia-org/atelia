@@ -29,6 +29,15 @@ public class InternPoolTests {
     }
 
     [Fact]
+    public void Store_FirstHandle_IsNeverZeroPacked() {
+        var pool = new InternPool<string, OrdinalStaticEqualityComparer>();
+        SlotHandle h = pool.Store("alpha");
+        Assert.NotEqual(0u, h.Packed);
+        Assert.Equal(0, h.Index);
+        Assert.Equal(1, h.Generation);
+    }
+
+    [Fact]
     public void Store_IntValues_Deduplicates() {
         var pool = new InternPool<int, Int32StaticEqualityComparer>();
         SlotHandle a = pool.Store(42);
@@ -66,7 +75,7 @@ public class InternPoolTests {
     [Fact]
     public void TryGetValue_InvalidHandle_ReturnsFalse() {
         var pool = new InternPool<int, Int32StaticEqualityComparer>();
-        Assert.False(pool.TryGetValue(new SlotHandle(0, 0), out _));
+        Assert.False(pool.TryGetValue(new SlotHandle(1, 0), out _));
     }
 
     // ───────────────────── Validate ─────────────────────
@@ -81,7 +90,7 @@ public class InternPoolTests {
     [Fact]
     public void Validate_InvalidHandle_ReturnsFalse() {
         var pool = new InternPool<int, Int32StaticEqualityComparer>();
-        Assert.False(pool.Validate(new SlotHandle(0, 0)));
+        Assert.False(pool.Validate(new SlotHandle(1, 0)));
         Assert.False(pool.Validate(new SlotHandle(99, 12345)));
     }
 

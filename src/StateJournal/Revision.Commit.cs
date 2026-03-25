@@ -191,7 +191,7 @@ partial class Revision {
     /// </summary>
     private AteliaResult<List<DurableObject>> WalkAndMark(DurableObject graphRoot) {
         _pool.BeginMark();
-        _pool.MarkReachable(new SlotHandle(0, 0)); // slot 0 = ObjectMap，始终可达
+        _pool.MarkReachable(new SlotHandle(1, 0)); // slot 0 = ObjectMap，始终可达
 
         var liveObjects = new List<DurableObject>();
         var dfsStack = new Stack<DurableObject>();

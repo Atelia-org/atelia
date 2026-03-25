@@ -714,7 +714,7 @@ public partial class SlotPoolTests {
 
     [Fact]
     public void Rebuild_IndexZero_IsAllowed() {
-        var h0 = new SlotHandle(0, 0);
+        var h0 = new SlotHandle(1, 0);
         var h3 = new SlotHandle(2, 3);
         var pool = SlotPool<string>.Rebuild([(h0, "zero"), (h3, "three")]);
 

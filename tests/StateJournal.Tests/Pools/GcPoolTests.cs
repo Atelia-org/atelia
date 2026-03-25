@@ -26,7 +26,7 @@ public class GcPoolTests {
     public void TryGetValue_InvalidHandle_ReturnsFalse() {
         var pool = new GcPool<int>();
         // 用一个伪造的 handle 测试
-        Assert.False(pool.TryGetValue(new SlotHandle(0, 0), out _));
+        Assert.False(pool.TryGetValue(new SlotHandle(1, 0), out _));
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public class GcPoolTests {
     [Fact]
     public void Validate_InvalidHandle_ReturnsFalse() {
         var pool = new GcPool<int>();
-        Assert.False(pool.Validate(new SlotHandle(0, 0)));
+        Assert.False(pool.Validate(new SlotHandle(1, 0)));
         Assert.False(pool.Validate(new SlotHandle(99, 12345)));
     }
 
@@ -194,7 +194,7 @@ public class GcPoolTests {
 
     [Fact]
     public void Rebuild_IndexZero_IsAllowed() {
-        var h0 = new SlotHandle(0, 0);
+        var h0 = new SlotHandle(1, 0);
         var h2 = new SlotHandle(9, 2);
         var pool = GcPool<string>.Rebuild([(h0, "zero"), (h2, "two")]);
 
@@ -390,7 +390,7 @@ public class GcPoolTests {
         pool.Store("B");
 
         pool.BeginMark();
-        pool.MarkReachable(new SlotHandle(0, 0));
+        pool.MarkReachable(new SlotHandle(1, 0));
         pool.MarkReachable(new SlotHandle(0, 1));
         pool.Sweep();
 

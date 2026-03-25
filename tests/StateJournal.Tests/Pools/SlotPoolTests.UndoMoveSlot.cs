@@ -99,7 +99,7 @@ partial class SlotPoolTests {
     }
 
     [Fact]
-    public void UndoMoveSlot_RestoresGenerationsAcrossByteWrap() {
+    public void UndoMoveSlot_RestoresGenerationsAcrossByteWrap_ForReservedSlotZero() {
         var pool = new SlotPool<string>();
         var h0 = pool.Store("target");
         var h1 = pool.Store("source");
@@ -112,17 +112,17 @@ partial class SlotPoolTests {
         }
         Assert.Equal(255, h1.Generation);
 
-        // Bump target generation to 255, then free once more so target becomes free with wrapped generation 0.
+        // Slot 0 是特例：每次重新分配时都会跳过 generation 0，因此占用态 handle 始终从 1 起步。
         for (int i = 0; i < 255; i++) {
             pool.Free(h0);
             h0 = pool.Store("target");
         }
-        Assert.Equal(255, h0.Generation);
-        pool.Free(h0); // generation wraps: 255 -> 0
+        Assert.Equal(1, h0.Generation);
+        pool.Free(h0); // free 后 generation 从 1 递增到 2
 
         var record = pool.MoveSlotRecorded(h1.Index, h0.Index);
         Assert.Equal((byte)255, record.FromGenBefore);
-        Assert.Equal((byte)0, record.ToGenBefore);
+        Assert.Equal((byte)2, record.ToGenBefore);
 
         pool.UndoMoveSlot(record);
 
@@ -130,8 +130,42 @@ partial class SlotPoolTests {
         Assert.True(pool.Validate(h1));
         Assert.Equal("source", pool[h1]);
 
-        // Target slot remains free at wrapped generation 0, so old handle (gen 255) stays invalid.
+        // Target slot 仍保持 free，旧 handle 继续失效。
         Assert.False(pool.Validate(h0));
+    }
+
+    [Fact]
+    public void UndoMoveSlot_RestoresGenerationsAcrossByteWrap_ForOrdinarySlot() {
+        var pool = new SlotPool<string>();
+        pool.Store("reserved-slot-zero");
+        var h1 = pool.Store("target");
+        var h2 = pool.Store("source");
+        pool.Store("anchor");
+
+        // Bump source handle generation to 255 while keeping it occupied at index 2.
+        for (int i = 0; i < 255; i++) {
+            pool.Free(h2);
+            h2 = pool.Store("source");
+        }
+        Assert.Equal(255, h2.Generation);
+
+        // 普通 slot 不跳过 generation 0：255 再 free 一次后回绕到 0。
+        for (int i = 0; i < 255; i++) {
+            pool.Free(h1);
+            h1 = pool.Store("target");
+        }
+        Assert.Equal(255, h1.Generation);
+        pool.Free(h1); // generation wraps: 255 -> 0
+
+        var record = pool.MoveSlotRecorded(h2.Index, h1.Index);
+        Assert.Equal((byte)255, record.FromGenBefore);
+        Assert.Equal((byte)0, record.ToGenBefore);
+
+        pool.UndoMoveSlot(record);
+
+        Assert.True(pool.Validate(h2));
+        Assert.Equal("source", pool[h2]);
+        Assert.False(pool.Validate(h1));
     }
 
     // ───────────────────── EnsureCapacity ─────────────────────
