@@ -6,7 +6,7 @@ namespace Atelia.StateJournal.Pools;
 // ai:test `tests/StateJournal.Tests/Pools/SlotPoolTests.cs`
 /// <summary>
 /// 基于定长 Slab + 二级 Bitmap 的 Slot 分配器（Slab Allocator 变体）。
-/// 提供 O(1) 的 Alloc / Free / 索引访问，并支持尾部空页自动回收。
+/// 提供 O(1) 的 Alloc / Free / 索引访问，并支持空 slab 的 value 稀疏释放与尾部 metadata 自动回收。
 /// </summary>
 /// <remarks>
 /// 设计要点：
@@ -15,8 +15,8 @@ namespace Atelia.StateJournal.Pools;
 /// Alloc 时通过 <see cref="SlabBitmap.FindFirstOne"/> 定位。
 /// - Alloc 优先分配低 index 的 slot，自然压实数据向低地址端，
 /// 使尾部 Slab 更易变为全空从而可回收。
-/// - Free 后自动检查：若尾部连续 ≥2 个 Slab 全空，则保留 1 个作防抖缓冲、释放其余（双阈值滞回策略）。
-/// 调用 <see cref="TrimExcess"/> 可强制释放所有空余容量（含缓冲 Slab）。
+/// - 任意 slab 全空后都会释放其 value slab；对尾部 metadata 则采用保留 1 个空 slab 的防抖缓冲策略。
+/// 调用 <see cref="TrimExcess"/> 可强制释放所有尾部空 metadata 容量（含缓冲 Slab）。
 /// - 空闲状态由独立 bitmap 追踪，不嵌入 slot 内存，T 无尺寸约束。
 /// - 每 slot 独立存储 8-bit generation 计数器（<c>byte[][]</c>），
 /// <see cref="SlotHandle"/> 将 generation + index 打包为 32-bit 胖指针，
@@ -26,7 +26,7 @@ namespace Atelia.StateJournal.Pools;
 /// <typeparam name="T">Slot 值类型，必须是 notnull。</typeparam>
 internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
 
-    private T[][] _slabs;          // slot 值
+    private T[]?[] _slabs;         // slot 值；允许按 slab 稀疏分配，null 表示该 slab 当前逻辑上全空
     private byte[][] _generations; // 每 slot 的 generation 计数器（独立 slab 存储，不随 Slab 收缩而释放）
     internal readonly SlabBitmap _freeBitmap;
     private int _count; // 活跃 slot 数量
@@ -45,7 +45,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
 
     /// <summary>创建一个空的 <see cref="SlotPool{T}"/>。</summary>
     public SlotPool() {
-        _slabs = new T[4][];
+        _slabs = new T[]?[4];
         _generations = new byte[4][];
         _freeBitmap = new SlabBitmap();
         _count = 0;
@@ -77,13 +77,13 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
             int slabIdx = index >> SlabBitmap.SlabShift;
             int offset = index & SlabBitmap.SlabMask;
 
-            pool._slabs[slabIdx][offset] = value;
+            pool.EnsureValueSlabAllocated(slabIdx)[offset] = value;
             pool._generations[slabIdx][offset] = handle.Generation;
             pool._freeBitmap.Clear(index);
         }
 
         pool._count = entries.Length;
-        pool.TryShrinkTrailingSlabs();
+        pool.ShrinkTrailingEmptyMetadataSlabs(keepTrailingEmptySlabs: 1);
         return pool;
     }
 
@@ -112,7 +112,8 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         _freeBitmap.Clear(globalIdx);
         int slabIdx = globalIdx >> SlabBitmap.SlabShift;
         int offset = globalIdx & SlabBitmap.SlabMask;
-        _slabs[slabIdx][offset] = value;
+        var slab = EnsureValueSlabAllocated(slabIdx);
+        slab[offset] = value;
         byte gen = _generations[slabIdx][offset];
         _count++;
         if (globalIdx ==0 && gen == 0) {
@@ -121,7 +122,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         return new SlotHandle(gen, globalIdx);
     }
 
-    /// <summary>释放一个 slot（不校验 generation）。O(1)，随后尝试回收尾部空页。</summary>
+    /// <summary>释放一个 slot（不校验 generation）。O(1)，随后尝试规范化空 slab。</summary>
     /// <remarks>供内部组件（如 <see cref="GcPool{T}"/> 的 Sweep）使用裸 index 释放。
     /// 外部调用方应优先使用 <see cref="Free(SlotHandle)"/> 以获得 ABA 保护。</remarks>
     /// <exception cref="ArgumentOutOfRangeException">index 超出当前容量范围。</exception>
@@ -134,7 +135,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         FreeCore(index);
     }
 
-    /// <summary>释放一个 slot（校验 generation）。O(1)，随后尝试回收尾部空页。</summary>
+    /// <summary>释放一个 slot（校验 generation）。O(1)，随后尝试规范化空 slab。</summary>
     /// <exception cref="ArgumentOutOfRangeException">handle 的 index 超出当前容量范围。</exception>
     /// <exception cref="InvalidOperationException">generation 不匹配（过期 Handle）或 double-free。</exception>
     public void Free(SlotHandle handle) {
@@ -153,10 +154,11 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         FreeCore(index);
     }
 
-    /// <summary>释放核心逻辑：递增 generation、标记 free、清除引用、计数、尾部回收。</summary>
+    /// <summary>释放核心逻辑：递增 generation、标记 free、清除引用、计数，并规范化空 slab。</summary>
     private void FreeCore(int index) {
         int slabIdx = index >> SlabBitmap.SlabShift;
         int offset = index & SlabBitmap.SlabMask;
+        T[] slab = GetAllocatedValueSlab(slabIdx);
 
         // 递增 generation（8-bit 自然回绕 255→0）
         _generations[slabIdx][offset]++;
@@ -165,13 +167,12 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
 
         // 清除值引用，协助 GC（T 可能是引用类型）
         if (RuntimeHelpers.IsReferenceOrContainsReferences<T>()) {
-            _slabs[slabIdx][offset] = default!;
+            slab[offset] = default!;
         }
 
         _count--;
 
-        // 尾部连续空页回收
-        TryShrinkTrailingSlabs();
+        NormalizeFreeSlabAfterMutation(slabIdx, allowCapacityShrink: true);
     }
 
     /// <summary>记录一次 MoveSlot 的完整信息，用于精确回滚。</summary>
@@ -234,7 +235,9 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         record = new MoveRecord(fromIndex, toIndex, fromGenBefore, toGenBefore);
 
         // 复制值到目标位置
-        _slabs[toSlab][toOff] = _slabs[fromSlab][fromOff];
+        var fromValueSlab = GetAllocatedValueSlab(fromSlab);
+        var toValueSlab = EnsureValueSlabAllocated(toSlab);
+        toValueSlab[toOff] = fromValueSlab[fromOff];
 
         // 目标位置 generation++（使指向该位置旧占用者的 handle 失效）
         unchecked { _generations[toSlab][toOff]++; }
@@ -242,12 +245,15 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         // 标记目标位置为 occupied
         _freeBitmap.Clear(toIndex);
 
-        // 释放源位置（generation++、标记 free、清除引用）—— 但不触发 TryShrinkTrailingSlabs，也不减 _count（总活跃数不变）
+        // 释放源位置（generation++、标记 free、清除引用）—— 允许释放空 slab 的 value，
+        // 但不在 move 期间收缩 metadata 容量，避免影响 rollback 窗口。
         _generations[fromSlab][fromOff]++;
         _freeBitmap.Set(fromIndex);
         if (RuntimeHelpers.IsReferenceOrContainsReferences<T>()) {
-            _slabs[fromSlab][fromOff] = default!;
+            fromValueSlab[fromOff] = default!;
         }
+
+        NormalizeFreeSlabAfterMutation(fromSlab, allowCapacityShrink: false);
 
         // _count 不变（一进一出）
     }
@@ -272,7 +278,9 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         int toOff = toIndex & SlabBitmap.SlabMask;
 
         // 将值从目标位移回源位
-        _slabs[fromSlab][fromOff] = _slabs[toSlab][toOff];
+        var toValueSlab = GetAllocatedValueSlab(toSlab);
+        var fromValueSlab = EnsureValueSlabAllocated(fromSlab);
+        fromValueSlab[fromOff] = toValueSlab[toOff];
 
         // 精确恢复双端 generation
         _generations[fromSlab][fromOff] = record.FromGenBefore;
@@ -284,8 +292,10 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
 
         // 清除目标位的值引用
         if (RuntimeHelpers.IsReferenceOrContainsReferences<T>()) {
-            _slabs[toSlab][toOff] = default!;
+            toValueSlab[toOff] = default!;
         }
+
+        NormalizeFreeSlabAfterMutation(toSlab, allowCapacityShrink: false);
 
         // _count 不变（一进一出）
     }
@@ -306,7 +316,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal ref T GetValueRef(int index) {
         ThrowIfNotOccupied(index);
-        return ref _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
+        return ref GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask];
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -314,7 +324,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
 #if DEBUG
         ThrowIfNotOccupied(index);
 #endif
-        return ref _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
+        return ref GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask];
     }
 
     /// <summary>按 index 创建已占用 slot 的 handle（仅内部使用）。</summary>
@@ -332,7 +342,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     public ref T GetValueRef(SlotHandle handle) {
         ThrowIfNotOccupiedOrStale(handle);
         int index = handle.Index;
-        return ref _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
+        return ref GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask];
     }
 
     /// <summary>读取或更新已占用 slot 的值。O(1)。</summary>
@@ -342,12 +352,12 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get {
             ThrowIfNotOccupied(index);
-            return _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
+            return GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask];
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         set {
             ThrowIfNotOccupied(index);
-            _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask] = value;
+            GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask] = value;
         }
     }
 
@@ -359,13 +369,13 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         get {
             ThrowIfNotOccupiedOrStale(handle);
             int index = handle.Index;
-            return _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
+            return GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask];
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         set {
             ThrowIfNotOccupiedOrStale(handle);
             int index = handle.Index;
-            _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask] = value;
+            GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask] = value;
         }
     }
 
@@ -373,7 +383,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetValue(int index, out T value) {
         if ((uint)index < (uint)_freeBitmap.Capacity && !_freeBitmap.Test(index)) {
-            value = _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
+            value = GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask];
             return true;
         }
         value = default!;
@@ -387,7 +397,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
         if ((uint)index < (uint)_freeBitmap.Capacity
             && !_freeBitmap.Test(index)
             && _generations[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask] == handle.Generation) {
-            value = _slabs[index >> SlabBitmap.SlabShift][index & SlabBitmap.SlabMask];
+            value = GetAllocatedValueSlab(index >> SlabBitmap.SlabShift)[index & SlabBitmap.SlabMask];
             return true;
         }
         value = default!;
@@ -465,7 +475,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
 
     // ───────────────────── Capacity management ─────────────────────
 
-    /// <summary>增长一个新页，所有 slot 标记为 free，返回新页的 slab index。</summary>
+    /// <summary>增长一个新页的元数据，所有 slot 标记为 free，返回新页的 slab index。</summary>
     private int GrowOneSlab() {
         int slabIdx = _freeBitmap.SlabCount;
 
@@ -474,7 +484,7 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
             Array.Resize(ref _generations, _generations.Length * 2);
         }
 
-        _slabs[slabIdx] = new T[SlabBitmap.SlabSize];
+        _slabs[slabIdx] = null;
         // 仅首次分配 generation 数组；收缩后重新增长时复用已有数组（保留 generation 历史，防止 ABA）
         _generations[slabIdx] ??= new byte[SlabBitmap.SlabSize];
         _freeBitmap.GrowSlabAllOne();
@@ -483,29 +493,67 @@ internal sealed class SlotPool<T> : IValuePool<T> where T : notnull {
     }
 
     /// <summary>
-    /// 回收尾部连续的全空 Slab，但保留 1 个全空 Slab 作为防抖缓冲。
-    /// 双阈值滞回策略：只有尾部 ≥2 个连续全空 Slab 才开始收缩，收缩后至少保留 1 个空 Slab。
-    /// </summary>
-    private void TryShrinkTrailingSlabs() {
-        while (_freeBitmap.SlabCount >= 2
-               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 1) == SlabBitmap.SlabSize
-               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 2) == SlabBitmap.SlabSize) {
-            int last = _freeBitmap.SlabCount - 1;
-            _slabs[last] = null!;
-            _freeBitmap.ShrinkLastSlab();
-        }
-    }
-
-    /// <summary>
     /// 强制释放所有空余容量，包括防抖缓冲的空 Slab。
     /// 调用后 Capacity 收缩到恰好容纳所有已占用 slot 的最小 Slab 数量。
     /// </summary>
     public void TrimExcess() {
-        while (_freeBitmap.SlabCount > 0
-               && _freeBitmap.GetOneCount(_freeBitmap.SlabCount - 1) == SlabBitmap.SlabSize) {
+        ShrinkTrailingEmptyMetadataSlabs(keepTrailingEmptySlabs: 0);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private T[] EnsureValueSlabAllocated(int slabIdx) {
+        return _slabs[slabIdx] ??= new T[SlabBitmap.SlabSize];
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private T[] GetAllocatedValueSlab(int slabIdx) {
+        return _slabs[slabIdx] ?? throw new InvalidOperationException(
+            $"Invariant violation: slab {slabIdx} has occupied slots but its value slab is not allocated."
+        );
+    }
+
+    /// <summary>
+    /// 对已完全 free 的 slab，释放其 value 数组，保留 generation 与 bitmap 元数据。
+    /// 这样容量与 handle 语义保持不变，但值存储可以稀疏化。
+    /// </summary>
+    private void TryDetachValueSlabIfAllFree(int slabIdx) {
+        if ((uint)slabIdx >= (uint)_freeBitmap.SlabCount) { return; }
+        if (_slabs[slabIdx] is null) { return; }
+        if (_freeBitmap.GetOneCount(slabIdx) != SlabBitmap.SlabSize) { return; }
+
+        _slabs[slabIdx] = null;
+    }
+
+    /// <summary>
+    /// slab 变为 free 后的统一规范化入口：
+    /// 总是先尝试释放 value slab；随后按策略决定是否收缩尾部 metadata 容量。
+    /// </summary>
+    private void NormalizeFreeSlabAfterMutation(int slabIdx, bool allowCapacityShrink) {
+        TryDetachValueSlabIfAllFree(slabIdx);
+        if (allowCapacityShrink) {
+            ShrinkTrailingEmptyMetadataSlabs(keepTrailingEmptySlabs: 1);
+        }
+    }
+
+    /// <summary>
+    /// 回收尾部连续的全空 metadata slab，但保留指定数量的空 slab 作为缓冲。
+    /// 仅收缩可寻址容量；value slab 的释放由 <see cref="TryDetachValueSlabIfAllFree"/> 负责。
+    /// </summary>
+    private void ShrinkTrailingEmptyMetadataSlabs(int keepTrailingEmptySlabs) {
+        Debug.Assert(keepTrailingEmptySlabs >= 0, "keepTrailingEmptySlabs must be non-negative.");
+
+        int trailingEmptySlabCount = 0;
+        for (int slabIdx = _freeBitmap.SlabCount - 1;
+             slabIdx >= 0 && _freeBitmap.GetOneCount(slabIdx) == SlabBitmap.SlabSize;
+             slabIdx--) {
+            trailingEmptySlabCount++;
+        }
+
+        while (trailingEmptySlabCount > keepTrailingEmptySlabs) {
             int last = _freeBitmap.SlabCount - 1;
-            _slabs[last] = null!;
+            _slabs[last] = null;
             _freeBitmap.ShrinkLastSlab();
+            trailingEmptySlabCount--;
         }
     }
 }

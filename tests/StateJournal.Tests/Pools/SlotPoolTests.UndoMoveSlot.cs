@@ -168,6 +168,48 @@ partial class SlotPoolTests {
         Assert.False(pool.Validate(h1));
     }
 
+    [Fact]
+    public void MoveSlotRecorded_CanMoveIntoInteriorAllFreeSlab_AfterValueSlabWasReleased() {
+        int slabSize = SlabBitmap.SlabSize;
+        var pool = new SlotPool<string>();
+
+        for (int i = 0; i < slabSize; i++) { pool.Store($"slab0-{i}"); }
+        var slab1 = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { slab1[i] = pool.Store($"slab1-{i}"); }
+        SlotHandle source = pool.Store("source"); // slab 2
+
+        for (int i = 0; i < slabSize; i++) { pool.Free(slab1[i]); }
+
+        var record = pool.MoveSlotRecorded(source.Index, slab1[0].Index);
+
+        Assert.Equal(slab1[0].Index, record.ToIndex);
+        Assert.Equal("source", pool[record.NewHandle]);
+        Assert.False(pool.Validate(source));
+    }
+
+    [Fact]
+    public void UndoMoveSlot_CanRestoreIntoTailSlab_AfterMoveDetachedItsValueSlab() {
+        int slabSize = SlabBitmap.SlabSize;
+        var pool = new SlotPool<string>();
+
+        var slab0 = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { slab0[i] = pool.Store($"slab0-{i}"); }
+        SlotHandle source = pool.Store("source"); // slab 1，仅此一个占用
+
+        pool.Free(slab0[0]); // 在 slab 0 制造一个 hole
+        var record = pool.MoveSlotRecorded(source.Index, slab0[0].Index);
+
+        Assert.False(pool.Validate(source));
+        Assert.Equal("source", pool[record.NewHandle]);
+
+        pool.UndoMoveSlot(record);
+
+        Assert.True(pool.Validate(source));
+        Assert.Equal("source", pool[source]);
+        Assert.False(pool.Validate(record.NewHandle));
+        Assert.Equal(slabSize, pool.Count);
+    }
+
     // ───────────────────── EnsureCapacity ─────────────────────
 
     [Fact]

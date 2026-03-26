@@ -300,6 +300,24 @@ public partial class SlotPoolTests {
     }
 
     [Fact]
+    public void Store_CanReuseTrailingEmptyBufferSlab_AfterValueSlabWasDetached() {
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
+
+        for (int i = 0; i < slabSize; i++) { table.Store(i); } // slab 0
+        var slab1 = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { slab1[i] = table.Store(10_000 + i); } // slab 1
+
+        for (int i = 0; i < slabSize; i++) { table.Free(slab1[i]); }
+
+        SlotHandle reused = table.Store(123456);
+        Assert.Equal(slab1[0].Index, reused.Index);
+        Assert.Equal(123456, table[reused]);
+        Assert.Equal(slabSize * 2, table.Capacity); // 仅保留 metadata 缓冲
+        Assert.Equal(slabSize + 1, table.Count);
+    }
+
+    [Fact]
     public void Free_AllSlots_RetainsOneEmptySlabAsBuffer() {
         int slabSize = SlabBitmap.SlabSize;
         var table = new SlotPool<int>();
@@ -458,6 +476,24 @@ public partial class SlotPoolTests {
         for (int i = 0; i < slabSize; i++) { table.Free(slab1[i]); }
         Assert.Equal(slabSize * 2, table.Capacity); // 保留 slab 0 (满) + slab 1 (空缓冲)
         Assert.Equal(slabSize, table.Count);
+    }
+
+    [Fact]
+    public void Store_CanReuseInteriorAllFreeSlab_AfterValueSlabWasReleased() {
+        int slabSize = SlabBitmap.SlabSize;
+        var table = new SlotPool<int>();
+
+        for (int i = 0; i < slabSize; i++) { table.Store(i); } // slab 0
+        var slab1 = new SlotHandle[slabSize];
+        for (int i = 0; i < slabSize; i++) { slab1[i] = table.Store(10_000 + i); } // slab 1
+        SlotHandle slab2Anchor = table.Store(99_999); // slab 2，阻止 slab 1 变成尾部
+
+        for (int i = 0; i < slabSize; i++) { table.Free(slab1[i]); }
+
+        SlotHandle reused = table.Store(123456);
+        Assert.Equal(slab1[0].Index, reused.Index);
+        Assert.Equal(123456, table[reused]);
+        Assert.Equal(slabSize + 2, table.Count); // slab0 + anchor + reused
     }
 
     // ───────────────────── TrimExcess ─────────────────────
