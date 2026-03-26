@@ -21,7 +21,6 @@ partial class RevisionTests {
         Assert.Equal(commitTicket, rev.HeadId); // Id 已更新
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome.Completion);
         Assert.True(outcome.IsPrimaryOnly);
-        Assert.False(outcome.IsCompacted);
 
         // Open from CommitTicket
         var openResult = OpenRevision(commitTicket, file);
@@ -183,11 +182,10 @@ partial class RevisionTests {
         Assert.Equal(DurableState.Clean, root.State);
     }
 
-    #region Compaction Integration
+    #region Fragmentation Stability
 
     [Fact]
-    public void Commit_WithHeavyFragmentation_CompactsAndRemainsConsistent() {
-        // 创建 80+ 对象再删除大部分，产生 >25% 碎片率，触发 Compaction
+    public void Commit_WithHeavyFragmentation_RemainsConsistent() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
@@ -206,14 +204,12 @@ partial class RevisionTests {
         var outcome1 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome1.Completion);
 
-        // 删除前 70 个子对象——产生大量空洞
         for (int i = 0; i < 70; i++) {
             root.Remove(i);
         }
 
         _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
 
-        // 验证剩余 30 个子对象仍然可达、数据完整
         for (int i = 70; i < totalChildren; i++) {
             var child = children[i];
             Assert.NotEqual(DurableState.Detached, child.State);
@@ -221,16 +217,13 @@ partial class RevisionTests {
             Assert.Equal(i * 10, val);
         }
 
-        // 再 commit 几次，让 compaction 渐进收敛
         for (int round = 0; round < 5; round++) {
-            // 每轮微修改以确保有脏数据触发 Persist
             var aliveChild = children[70];
             aliveChild.Upsert(9999 + round, round);
 
             _ = AssertCommitSucceeded(CommitToFile(rev, root, file), $"Commit round {round}");
         }
 
-        // 最终验证：数据完整且 GraphRoot 可达
         Assert.NotNull(rev.GraphRoot);
         var finalRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, int>>>(rev.GraphRoot);
         Assert.Equal(30, finalRoot.Count);
@@ -240,8 +233,7 @@ partial class RevisionTests {
     }
 
     [Fact]
-    public void Commit_WithCompaction_ThenOpen_Roundtrips() {
-        // 验证 compaction 后落盘数据仍可正确 Open 恢复
+    public void Commit_WithHeavyFragmentation_ThenOpen_RoundTrips() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
@@ -257,18 +249,15 @@ partial class RevisionTests {
 
         _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
-        // 删除 80 个子对象，保留最后 20 个
         for (int i = 0; i < 80; i++) {
             root.Remove(i);
         }
 
-        // 多次 commit 让 compaction 逐步执行
         CommitTicket lastCommitTicket = default;
         for (int round = 0; round < 10; round++) {
             lastCommitTicket = AssertHeadCommitTicket(CommitToFile(rev, root, file), $"Commit round {round}");
         }
 
-        // Open 最终 commit，验证数据完整性
         var openResult = OpenRevision(lastCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
@@ -286,22 +275,19 @@ partial class RevisionTests {
     }
 
     [Fact]
-    public void Commit_WithMixedDictChildRefs_CompactionRewritesCorrectly() {
-        // 验证 MixedDict 中 DurableRef 引用在 compaction 后被正确重写
+    public void Commit_WithMixedDictChildRefs_RemainsCorrectUnderFragmentation() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
 
-        // 创建 80 个垫脚对象（将被删除产生碎片）+ 20 个保留对象
         var padding = new DurableDict<int, int>[80];
         for (int i = 0; i < 80; i++) {
             padding[i] = rev.CreateDict<int, int>();
             root.Upsert(i, padding[i]);
         }
 
-        // 20 个存活的 child 对象，通过 MixedDict 引用
         var survivors = new DurableDict<int, int>[20];
         for (int i = 0; i < 20; i++) {
             survivors[i] = rev.CreateDict<int, int>();
@@ -311,17 +297,14 @@ partial class RevisionTests {
 
         _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
-        // 删除所有垫脚对象
         for (int i = 0; i < 80; i++) {
             root.Remove(i);
         }
 
-        // 多次 commit 触发 compaction
         for (int round = 0; round < 10; round++) {
             _ = AssertCommitSucceeded(CommitToFile(rev, root, file), $"Commit round {round}");
         }
 
-        // 验证 MixedDict 中引用仍然正确
         Assert.Equal(20, root.Count);
         for (int i = 0; i < 20; i++) {
             Assert.True(root.ContainsKey(1000 + i));
@@ -333,62 +316,13 @@ partial class RevisionTests {
     }
 
     [Fact]
-    public void Commit_WithHotPathCompactionValidation_StillRoundTripsCorrectly() {
-        var path = GetTempFilePath();
-        using var file = RbfFile.CreateNew(path);
-        using var validationScope = Revision.OverrideCompactionValidationModeScope(Revision.CompactionValidationMode.HotPath);
-
-        var rev = CreateRevision();
-        var root = rev.CreateDict<int>();
-
-        for (int i = 0; i < 80; i++) {
-            var padding = rev.CreateDict<int, int>();
-            padding.Upsert(i, i);
-            root.Upsert(i, padding);
-        }
-
-        for (int i = 0; i < 20; i++) {
-            var child = rev.CreateDict<int, int>();
-            child.Upsert(i, i * 10);
-            root.Upsert(10_000 + i, child);
-        }
-
-        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
-
-        for (int i = 0; i < 80; i++) {
-            root.Remove(i);
-        }
-
-        CommitOutcome outcome = default;
-        for (int round = 0; round < 10; round++) {
-            outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), $"Commit round {round}");
-        }
-
-        Assert.True(outcome.IsCompacted || outcome.IsPrimaryOnly);
-
-        var open = OpenRevision(outcome.HeadCommitTicket, file);
-        Assert.True(open.IsSuccess, $"Open failed: {open.Error}");
-
-        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int>>(open.Value!.GraphRoot);
-        Assert.Equal(20, loadedRoot.Count);
-        for (int i = 0; i < 20; i++) {
-            Assert.Equal(GetIssue.None, loadedRoot.Get(10_000 + i, out DurableObject? childObj));
-            var child = Assert.IsAssignableFrom<DurableDict<int, int>>(childObj);
-            Assert.Equal(GetIssue.None, child.Get(i, out int value));
-            Assert.Equal(i * 10, value);
-        }
-    }
-
-    [Fact]
-    public void Commit_BelowMinThreshold_DoesNotCompact() {
-        // 少于 CompactionMinThreshold（64）个存活对象时不触发压缩
+    public void Commit_WithSmallerGraph_StillPersistsCorrectly() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int, DurableDict<int, int>>();
 
-        // 创建 30 个子对象
         for (int i = 0; i < 30; i++) {
             var child = rev.CreateDict<int, int>();
             root.Upsert(i, child);
@@ -396,7 +330,6 @@ partial class RevisionTests {
         var outcome1 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome1.Completion);
 
-        // 删除 20 个——碎片率高但数量少
         for (int i = 0; i < 20; i++) {
             root.Remove(i);
         }
@@ -404,14 +337,13 @@ partial class RevisionTests {
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
         Assert.Equal(CommitCompletion.PrimaryOnly, outcome2.Completion);
 
-        // 验证数据完整（无论是否压缩都应正确）
         for (int i = 20; i < 30; i++) {
             Assert.True(root.ContainsKey(i));
         }
     }
 
     [Fact]
-    public void Commit_WhenCompactionTriggered_AppendsTwoObjectMapFrames() {
+    public void Commit_AppendsSingleObjectMapFramePerCommit() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
@@ -433,10 +365,10 @@ partial class RevisionTests {
 
         int before = CountObjectMapFrames(file);
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
-        Assert.Equal(CommitCompletion.Compacted, outcome2.Completion);
+        Assert.Equal(CommitCompletion.PrimaryOnly, outcome2.Completion);
         int after = CountObjectMapFrames(file);
 
-        Assert.Equal(before + 2, after);
+        Assert.Equal(before + 1, after);
     }
     #endregion
 }

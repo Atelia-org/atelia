@@ -664,12 +664,10 @@ partial class RevisionTests {
         Assert.Equal("second", front);
     }
 
-    // ═══════════════════════ Phase 5: Symbol Compaction ═══════════════════════
+    // ═══════════════════════ Phase 5: Fragmented Symbol Pool ═══════════════════════
 
     [Fact]
-    public void Commit_WhenSymbolPoolFragmented_TriggersCompaction() {
-        // 创建 200 个字符串 symbol → commit → 移除 100 个 → commit
-        // 第二次 commit 的 sweep 回收 100 个 symbol，碎片率 ≈ 50%，触发 symbol compaction
+    public void Commit_WhenSymbolPoolFragmented_RemainsCorrect() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
@@ -690,18 +688,13 @@ partial class RevisionTests {
         }
 
         var c2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2-AfterRemoval");
-        // Object pool 只有 1 个对象（root），不会触发 object compaction
-        // 但 symbol pool 碎片率约 50%，应触发 symbol compaction
-        Assert.Equal(CommitCompletion.Compacted, c2.Completion);
-        Assert.True(c2.IsCompacted);
+        Assert.Equal(CommitCompletion.PrimaryOnly, c2.Completion);
 
-        // 内存中剩余 symbol 仍正确可读
         for (int i = toRemove; i < total; i++) {
             Assert.Equal(GetIssue.None, root.Get(i, out string? val));
             Assert.Equal($"symbol_{i}", val);
         }
 
-        // 持久化后重新加载也正确
         var openResult = OpenRevision(c2.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
         var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
@@ -713,8 +706,7 @@ partial class RevisionTests {
     }
 
     [Fact]
-    public void Commit_SymbolCompaction_RewritesSymbolIdsInContainers() {
-        // 验证 compaction 后容器内的 SymbolId 引用被正确重写
+    public void Commit_WithFragmentedSymbolPool_ThenFurtherWrites_StillRoundTrips() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
@@ -733,9 +725,8 @@ partial class RevisionTests {
         }
 
         var c2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
-        Assert.True(c2.IsCompacted);
+        Assert.Equal(CommitCompletion.PrimaryOnly, c2.Completion);
 
-        // 第三次 commit（compaction 后再 commit）验证 symbol 引用仍然一致
         root.Upsert(999, "after_compaction");
         var c3 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit3");
 
@@ -744,20 +735,17 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
         Assert.Equal(total - toRemove + 1, loaded.Count);
         Assert.Equal(GetIssue.None, loaded.Get(999, out string? v)); Assert.Equal("after_compaction", v);
-        // 老的存活 symbol 也仍然正确
         Assert.Equal(GetIssue.None, loaded.Get(toRemove, out string? first_alive));
         Assert.Equal($"value_{toRemove}", first_alive);
     }
 
     [Fact]
-    public void Commit_SymbolCompaction_MixedDict_StringAndNonStringValues() {
-        // MixedDict 中混合 string 与非 string value 在 symbol compaction 后都正确
+    public void Commit_WithFragmentedSymbolPool_MixedDictValuesRemainCorrect() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        // 300 entries: 150 strings (even) + 150 ints (odd)
         const int total = 300;
         const int toRemove = 100;
 
@@ -770,14 +758,12 @@ partial class RevisionTests {
         }
         AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
-        // Remove first 100 entries: 50 strings (even) + 50 ints (odd)
-        // Remaining: 100 strings alive → ≥ 64 threshold, holes/capacity ≈ 33% > 25%
         for (int i = 0; i < toRemove; i++) {
             root.Remove(i);
         }
 
         var c2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
-        Assert.True(c2.IsCompacted);
+        Assert.Equal(CommitCompletion.PrimaryOnly, c2.Completion);
 
         var openResult = OpenRevision(c2.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");

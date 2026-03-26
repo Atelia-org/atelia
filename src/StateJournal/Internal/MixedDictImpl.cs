@@ -48,42 +48,6 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         }
     }
 
-    internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) {
-        if (_durableRefCount == 0 && _symbolRefCount == 0) { return false; }
-        bool changed = false;
-        var keys = new List<TKey>(_core.Current.Count);
-        foreach (var kvp in _core.Current) {
-            if (kvp.Value.IsDurableRef || kvp.Value.IsSymbolRef) {
-                keys.Add(kvp.Key);
-            }
-        }
-        foreach (var key in keys) {
-            var box = _core.Current[key];
-            if (box.IsDurableRef) {
-                var oldId = box.GetDurRefId();
-                var newId = rewriter.Rewrite(oldId);
-                if (newId != oldId) {
-                    var newRef = new DurableRef(box.GetDurRefKind(), newId);
-                    var newBox = ValueBox.DurableRefFace.From(newRef);
-                    _core.Current[key] = newBox;
-                    _core.AfterUpsert<ValueBoxHelper>(key, newBox);
-                    changed = true;
-                }
-            }
-            else if (box.IsSymbolRef) {
-                var oldId = box.DecodeSymbolId();
-                var newId = rewriter.Rewrite(oldId);
-                if (newId != oldId) {
-                    var newBox = ValueBox.FromSymbolId(newId);
-                    _core.Current[key] = newBox;
-                    _core.AfterUpsert<ValueBoxHelper>(key, newBox);
-                    changed = true;
-                }
-            }
-        }
-        return changed;
-    }
-
     private void RecountRefs() {
         int durCount = 0, symCount = 0;
         foreach (var box in _core.Current.Values) {

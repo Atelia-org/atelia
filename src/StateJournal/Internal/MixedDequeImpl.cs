@@ -38,16 +38,6 @@ internal class MixedDequeImpl : DurableDeque {
         else if (newValue.IsSymbolRef) { _symbolRefCount++; }
     }
 
-    internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) {
-        if (_durableRefCount == 0 && _symbolRefCount == 0) { return false; }
-
-        bool changed = false;
-        _core.Current.GetSegments(out int firstStartIndex, out Span<ValueBox> first, out int secondStartIndex, out Span<ValueBox> second);
-        changed |= RewriteSegment(ref rewriter, firstStartIndex, first);
-        changed |= RewriteSegment(ref rewriter, secondStartIndex, second);
-        return changed;
-    }
-
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
         if (_durableRefCount == 0 && _symbolRefCount == 0) { return; }
 
@@ -63,41 +53,6 @@ internal class MixedDequeImpl : DurableDeque {
         CountRefs(second, ref durCount, ref symCount);
         _durableRefCount = durCount;
         _symbolRefCount = symCount;
-    }
-
-    private bool RewriteSegment<TRewriter>(ref TRewriter rewriter, int startIndex, Span<ValueBox> segment)
-        where TRewriter : IChildRefRewriter, allows ref struct {
-        bool changed = false;
-        for (int i = 0; i < segment.Length; i++) {
-            ref ValueBox slot = ref segment[i];
-            var box = slot;
-            if (box.IsDurableRef) {
-                var oldId = box.GetDurRefId();
-                var newId = rewriter.Rewrite(oldId);
-                if (newId == oldId) { continue; }
-
-                var newRef = new DurableRef(box.GetDurRefKind(), newId);
-                ValueBox oldValue = slot;
-                if (!ValueBox.DurableRefFace.UpdateOrInit(ref slot, newRef)) { continue; }
-
-                OnCurrentValueUpserted(oldValue, slot, existed: true);
-                _core.AfterSet<ValueBoxHelper>(startIndex + i, ref slot);
-                changed = true;
-            }
-            else if (box.IsSymbolRef) {
-                var oldId = box.DecodeSymbolId();
-                var newId = rewriter.Rewrite(oldId);
-                if (newId == oldId) { continue; }
-
-                ValueBox oldValue = slot;
-                slot = ValueBox.FromSymbolId(newId);
-                OnCurrentValueUpserted(oldValue, slot, existed: true);
-                _core.AfterSet<ValueBoxHelper>(startIndex + i, ref slot);
-                changed = true;
-            }
-        }
-
-        return changed;
     }
 
     private static void VisitSegment<TVisitor>(ref TVisitor visitor, Span<ValueBox> segment)

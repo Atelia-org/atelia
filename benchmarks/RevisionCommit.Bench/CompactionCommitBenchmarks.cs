@@ -6,312 +6,230 @@ using Atelia.StateJournal.Internal;
 namespace Atelia.RevisionCommit.Bench;
 
 [MemoryDiagnoser]
-public class CompactionCommitBenchmarks : CompactionBenchmarkBase {
-    private CompactionBenchmarkScenario? _scenario;
-    private IDisposable? _validationScope;
+public class CommitBenchmarks : CommitBenchmarkBase {
+    private BenchmarkScenario? _scenario;
 
     [Benchmark(Baseline = true)]
-    public CommitTicket TypedLeafObjects_NoChildRefs() => RunEndToEndBenchmark(CompactionScenarioKind.TypedLeafObjectsNoChildRefs);
+    public CommitTicket TypedLeafObjects_NoChildRefs() => RunEndToEndBenchmark(ScenarioKind.TypedLeafObjectsNoChildRefs);
 
     [Benchmark]
-    public CommitTicket DurObjDict_SparseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.DurObjDictSparseRefs);
+    public CommitTicket DurObjDict_SparseRefs() => RunEndToEndBenchmark(ScenarioKind.DurObjDictSparseRefs);
 
     [Benchmark]
-    public CommitTicket MixedDict_SparseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.MixedDictSparseRefs);
+    public CommitTicket MixedDict_SparseRefs() => RunEndToEndBenchmark(ScenarioKind.MixedDictSparseRefs);
 
     [Benchmark]
-    public CommitTicket MixedDict_DenseRefs() => RunEndToEndBenchmark(CompactionScenarioKind.MixedDictDenseRefs);
+    public CommitTicket MixedDict_DenseRefs() => RunEndToEndBenchmark(ScenarioKind.MixedDictDenseRefs);
 
     [IterationSetup(Target = nameof(TypedLeafObjects_NoChildRefs))]
     public void SetupTypedLeafObjects() {
-        PrepareScenario(CompactionScenarioKind.TypedLeafObjectsNoChildRefs);
+        PrepareScenario(ScenarioKind.TypedLeafObjectsNoChildRefs);
     }
 
     [IterationSetup(Target = nameof(DurObjDict_SparseRefs))]
     public void SetupDurObjDictSparseRefs() {
-        PrepareScenario(CompactionScenarioKind.DurObjDictSparseRefs);
+        PrepareScenario(ScenarioKind.DurObjDictSparseRefs);
     }
 
     [IterationSetup(Target = nameof(MixedDict_SparseRefs))]
     public void SetupMixedDictSparseRefs() {
-        PrepareScenario(CompactionScenarioKind.MixedDictSparseRefs);
+        PrepareScenario(ScenarioKind.MixedDictSparseRefs);
     }
 
     [IterationSetup(Target = nameof(MixedDict_DenseRefs))]
     public void SetupMixedDictDenseRefs() {
-        PrepareScenario(CompactionScenarioKind.MixedDictDenseRefs);
+        PrepareScenario(ScenarioKind.MixedDictDenseRefs);
     }
 
     [IterationCleanup]
     public void CleanupIteration() {
-        _validationScope?.Dispose();
-        _validationScope = null;
         _scenario?.Dispose();
         _scenario = null;
     }
 
-    private CommitTicket RunEndToEndBenchmark(CompactionScenarioKind scenarioKind) {
+    private CommitTicket RunEndToEndBenchmark(ScenarioKind scenarioKind) {
         var scenario = RequireScenario(scenarioKind);
-        return CompactionBenchmarkUtil.RequireCompactionResult(
+        return BenchmarkUtil.RequireCommitResult(
             scenario.Revision.Commit(scenario.Root, scenario.File),
-            $"{nameof(CompactionCommitBenchmarks)}.{scenarioKind}"
+            $"{nameof(CommitBenchmarks)}.{scenarioKind}"
         );
     }
 
-    private void PrepareScenario(CompactionScenarioKind scenarioKind) {
+    private void PrepareScenario(ScenarioKind scenarioKind) {
         CleanupIteration();
-        _validationScope = Revision.OverrideCompactionValidationModeScope(
-            CompactionBenchmarkUtil.ParseValidationMode(ValidationModeName)
-        );
-        _scenario = CompactionScenarioFactory.CreatePendingCompactionScenario(scenarioKind, TotalChildren, RemovedChildren);
+        _scenario = ScenarioFactory.CreatePendingScenario(scenarioKind, TotalChildren, RemovedChildren, AddedChildren);
     }
 
-    private CompactionBenchmarkScenario RequireScenario(CompactionScenarioKind expectedScenarioKind) {
+    private BenchmarkScenario RequireScenario(ScenarioKind expectedScenarioKind) {
         return _scenario ?? throw new InvalidOperationException($"Scenario {expectedScenarioKind} has not been prepared.");
     }
 }
 
 [MemoryDiagnoser]
-public class CompactionStageBenchmarks : CompactionBenchmarkBase {
+public class PrimaryCommitStageBenchmarks : CommitBenchmarkBase {
+    private const int DefaultStageOperationCount = 256;
+    private const int FinalizeStageOperationCount = 1024;
+
     [ParamsAllValues]
-    public CompactionScenarioKind ScenarioKind { get; set; }
+    public ScenarioKind ScenarioKind { get; set; }
 
-    private CompactionBenchmarkScenario? _scenario;
-    private Revision.PrimaryCommitArtifacts _primaryArtifacts;
-    private Revision.RevisionCompactionSession? _session;
-    private Dictionary<uint, LocalId>? _translationTable;
-    private IDisposable? _validationScope;
+    private ScenarioBatch? _scenarioBatch;
+    private List<DurableObject>[]? _liveObjectsBatch;
+    private List<PendingSave>[]? _pendingSavesBatch;
+    private CommitTicket[]? _primaryCommitTickets;
 
-    [Benchmark(Baseline = true)]
-    public int CompactWithUndo_Only() {
-        return RequireSession().CompactPoolForBenchmark();
+    [Benchmark(Baseline = true, OperationsPerInvoke = DefaultStageOperationCount)]
+    public ulong PrimaryCommit_Only() {
+        var batch = RequireScenarioBatch();
+        ulong checksum = 0;
+        for (int i = 0; i < batch.Count; i++) {
+            checksum += batch.Revisions[i].RunPrimaryCommitForBenchmark(batch.Roots[i], batch.File).CommitTicket.Ticket.Packed;
+        }
+        return checksum;
     }
 
-    [Benchmark]
-    public int ReferenceRewrite_Only() {
-        return RequireTranslationTable().Count;
-    }
-
-    [Benchmark]
-    public int Validate_Only() {
-        var session = RequireSession();
-        var translationTable = RequireTranslationTable();
-        session.ValidateAppliedCompactionForBenchmark(_primaryArtifacts.LiveObjects, translationTable);
-        return translationTable.Count;
-    }
-
-    [Benchmark]
-    public CommitTicket FollowupPersist_Only() {
-        var scenario = RequireScenario();
-        return scenario.Revision.PersistCompactionFollowupForBenchmark(
-            scenario.Root,
-            _primaryArtifacts.LiveObjects,
-            scenario.File
-        );
-    }
-
-    [IterationSetup(Target = nameof(CompactWithUndo_Only))]
-    public void SetupCompactWithUndo() {
-        PrepareScenario();
-    }
-
-    [IterationSetup(Target = nameof(ReferenceRewrite_Only))]
-    public void SetupReferenceRewrite() {
-        PrepareScenario();
-        EnsureCompactionStarted();
-    }
-
-    [IterationSetup(Target = nameof(Validate_Only))]
-    public void SetupValidate() {
-        PrepareScenario();
-        EnsureRewriteApplied();
-    }
-
-    [IterationSetup(Target = nameof(FollowupPersist_Only))]
-    public void SetupFollowupPersist() {
-        PrepareScenario();
-        EnsureRewriteApplied();
-        RequireSession().ValidateAppliedCompactionForBenchmark(_primaryArtifacts.LiveObjects, RequireTranslationTable());
-    }
-
-    [IterationCleanup]
-    public void CleanupIteration() {
-        _translationTable = null;
-        _session = null;
-        _primaryArtifacts = default;
-        _validationScope?.Dispose();
-        _validationScope = null;
-        _scenario?.Dispose();
-        _scenario = null;
-    }
-
-    private void PrepareScenario() {
-        CleanupIteration();
-        _validationScope = Revision.OverrideCompactionValidationModeScope(
-            CompactionBenchmarkUtil.ParseValidationMode(ValidationModeName)
-        );
-        _scenario = CompactionScenarioFactory.CreatePendingCompactionScenario(ScenarioKind, TotalChildren, RemovedChildren);
-        _primaryArtifacts = _scenario.Revision.RunPrimaryCommitForBenchmark(_scenario.Root, _scenario.File);
-        _session = Revision.RevisionCompactionSession.TryStartForBenchmark(_scenario.Revision, _primaryArtifacts.CommitTicket)
-            ?? throw new InvalidOperationException($"Scenario {ScenarioKind} did not reach compaction start.");
-    }
-
-    private void EnsureCompactionStarted() {
-        if (RequireSession().CompactPoolForBenchmark() == 0) { throw new InvalidOperationException($"Scenario {ScenarioKind} did not produce compaction moves."); }
-    }
-
-    private void EnsureRewriteApplied() {
-        if (_translationTable is not null) { return; }
-        EnsureCompactionStarted();
-        _translationTable = RequireSession().ApplyMovedObjectsAndRewriteForBenchmark(_primaryArtifacts.LiveObjects);
-    }
-
-    private Dictionary<uint, LocalId> RequireTranslationTable() {
-        EnsureRewriteApplied();
-        return _translationTable!;
-    }
-
-    private CompactionBenchmarkScenario RequireScenario() {
-        return _scenario ?? throw new InvalidOperationException("Scenario has not been prepared.");
-    }
-
-    private Revision.RevisionCompactionSession RequireSession() {
-        return _session ?? throw new InvalidOperationException("Compaction session has not been prepared.");
-    }
-}
-
-[MemoryDiagnoser]
-public class PrimaryCommitStageBenchmarks : CompactionBenchmarkBase {
-    [ParamsAllValues]
-    public CompactionScenarioKind ScenarioKind { get; set; }
-
-    private CompactionBenchmarkScenario? _scenario;
-    private List<DurableObject>? _liveObjects;
-    private List<PendingSave>? _pendingSaves;
-    private CommitTicket _primaryCommitTicket;
-    private IDisposable? _validationScope;
-
-    [Benchmark(Baseline = true)]
-    public CommitTicket PrimaryCommit_Only() {
-        var scenario = RequireScenario();
-        return scenario.Revision.RunPrimaryCommitForBenchmark(scenario.Root, scenario.File).CommitTicket;
-    }
-
-    [Benchmark]
+    [Benchmark(OperationsPerInvoke = DefaultStageOperationCount)]
     public int WalkAndMark_Only() {
-        return RequireScenario().Revision.WalkAndMarkForBenchmark(RequireScenario().Root).Count;
+        var batch = RequireScenarioBatch();
+        int totalCount = 0;
+        for (int i = 0; i < batch.Count; i++) {
+            totalCount += batch.Revisions[i].WalkAndMarkForBenchmark(batch.Roots[i]).Count;
+        }
+        return totalCount;
     }
 
-    [Benchmark]
-    public CommitTicket Persist_Only() {
-        var scenario = RequireScenario();
-        var liveObjects = RequireLiveObjects();
-        return scenario.Revision.PersistPrimaryCommitForBenchmark(scenario.Root, liveObjects, scenario.File).CommitTicket;
+    [Benchmark(OperationsPerInvoke = DefaultStageOperationCount)]
+    public ulong Persist_Only() {
+        var batch = RequireScenarioBatch();
+        var liveObjectsBatch = RequireLiveObjectsBatch();
+        ulong checksum = 0;
+        for (int i = 0; i < batch.Count; i++) {
+            checksum += batch.Revisions[i]
+                .PersistPrimaryCommitForBenchmark(batch.Roots[i], liveObjectsBatch[i], batch.File)
+                .CommitTicket
+                .Ticket
+                .Packed;
+        }
+        return checksum;
     }
 
-    [Benchmark]
-    public CommitTicket Finalize_Only() {
-        var scenario = RequireScenario();
-        var pendingSaves = RequirePendingSaves();
-        scenario.Revision.FinalizePrimaryCommitForBenchmark(scenario.Root, pendingSaves, _primaryCommitTicket);
-        return _primaryCommitTicket;
+    [Benchmark(OperationsPerInvoke = FinalizeStageOperationCount)]
+    public ulong Finalize_Only() {
+        var batch = RequireScenarioBatch();
+        var pendingSavesBatch = RequirePendingSavesBatch();
+        var primaryCommitTickets = RequirePrimaryCommitTickets();
+        ulong checksum = 0;
+        for (int i = 0; i < batch.Count; i++) {
+            batch.Revisions[i].FinalizePrimaryCommitForBenchmark(batch.Roots[i], pendingSavesBatch[i], primaryCommitTickets[i]);
+            checksum += primaryCommitTickets[i].Ticket.Packed;
+        }
+        return checksum;
     }
 
     [IterationSetup(Target = nameof(PrimaryCommit_Only))]
     public void SetupPrimaryCommit() {
-        PrepareScenario();
+        PrepareScenario(DefaultStageOperationCount);
     }
 
     [IterationSetup(Target = nameof(WalkAndMark_Only))]
     public void SetupWalkAndMark() {
-        PrepareScenario();
+        PrepareScenario(DefaultStageOperationCount);
     }
 
     [IterationSetup(Target = nameof(Persist_Only))]
     public void SetupPersist() {
-        PrepareScenario();
-        _liveObjects = RequireScenario().Revision.WalkAndMarkForBenchmark(RequireScenario().Root);
+        PrepareScenario(DefaultStageOperationCount);
+        var batch = RequireScenarioBatch();
+        _liveObjectsBatch = new List<DurableObject>[batch.Count];
+        for (int i = 0; i < batch.Count; i++) {
+            _liveObjectsBatch[i] = batch.Revisions[i].WalkAndMarkForBenchmark(batch.Roots[i]);
+        }
     }
 
     [IterationSetup(Target = nameof(Finalize_Only))]
     public void SetupFinalize() {
-        PrepareScenario();
-        var scenario = RequireScenario();
-        _liveObjects = scenario.Revision.WalkAndMarkForBenchmark(scenario.Root);
-        (_pendingSaves, _primaryCommitTicket) = scenario.Revision.PersistPrimaryCommitForBenchmark(
-            scenario.Root,
-            _liveObjects,
-            scenario.File
-        );
+        PrepareScenario(FinalizeStageOperationCount);
+        var batch = RequireScenarioBatch();
+        _liveObjectsBatch = new List<DurableObject>[batch.Count];
+        _pendingSavesBatch = new List<PendingSave>[batch.Count];
+        _primaryCommitTickets = new CommitTicket[batch.Count];
+        for (int i = 0; i < batch.Count; i++) {
+            var liveObjects = batch.Revisions[i].WalkAndMarkForBenchmark(batch.Roots[i]);
+            _liveObjectsBatch[i] = liveObjects;
+            var (pendingSaves, commitTicket) = batch.Revisions[i].PersistPrimaryCommitForBenchmark(
+                batch.Roots[i],
+                liveObjects,
+                batch.File
+            );
+            _pendingSavesBatch[i] = pendingSaves;
+            _primaryCommitTickets[i] = commitTicket;
+        }
     }
 
     [IterationCleanup]
     public void CleanupIteration() {
-        _pendingSaves = null;
-        _liveObjects = null;
-        _primaryCommitTicket = default;
-        _validationScope?.Dispose();
-        _validationScope = null;
-        _scenario?.Dispose();
-        _scenario = null;
+        _primaryCommitTickets = null;
+        _pendingSavesBatch = null;
+        _liveObjectsBatch = null;
+        _scenarioBatch?.Dispose();
+        _scenarioBatch = null;
     }
 
-    private void PrepareScenario() {
+    private void PrepareScenario(int scenarioCount) {
         CleanupIteration();
-        _validationScope = Revision.OverrideCompactionValidationModeScope(
-            CompactionBenchmarkUtil.ParseValidationMode(ValidationModeName)
+        _scenarioBatch = ScenarioFactory.CreatePendingScenarioBatch(
+            ScenarioKind,
+            TotalChildren,
+            RemovedChildren,
+            AddedChildren,
+            scenarioCount
         );
-        _scenario = CompactionScenarioFactory.CreatePendingCompactionScenario(ScenarioKind, TotalChildren, RemovedChildren);
     }
 
-    private CompactionBenchmarkScenario RequireScenario() {
-        return _scenario ?? throw new InvalidOperationException("Primary benchmark scenario has not been prepared.");
+    private ScenarioBatch RequireScenarioBatch() {
+        return _scenarioBatch ?? throw new InvalidOperationException("Primary benchmark scenario batch has not been prepared.");
     }
 
-    private List<DurableObject> RequireLiveObjects() {
-        return _liveObjects ?? throw new InvalidOperationException("Primary benchmark live objects are not prepared.");
+    private List<DurableObject>[] RequireLiveObjectsBatch() {
+        return _liveObjectsBatch ?? throw new InvalidOperationException("Primary benchmark live objects are not prepared.");
     }
 
-    private List<PendingSave> RequirePendingSaves() {
-        return _pendingSaves ?? throw new InvalidOperationException("Primary benchmark pending saves are not prepared.");
+    private List<PendingSave>[] RequirePendingSavesBatch() {
+        return _pendingSavesBatch ?? throw new InvalidOperationException("Primary benchmark pending saves are not prepared.");
+    }
+
+    private CommitTicket[] RequirePrimaryCommitTickets() {
+        return _primaryCommitTickets ?? throw new InvalidOperationException("Primary benchmark commit tickets are not prepared.");
     }
 }
 
-public abstract class CompactionBenchmarkBase {
-    [Params(140)]
+public abstract class CommitBenchmarkBase {
+    [Params(384)]
     public int TotalChildren { get; set; }
 
-    [Params(40, 70)]
+    [Params(0, 8)]
     public int RemovedChildren { get; set; }
 
-    [Params("HotPath", "Strict")]
-    public string ValidationModeName { get; set; } = "HotPath";
+    [Params(8)]
+    public int AddedChildren { get; set; }
 }
 
-public enum CompactionScenarioKind {
+public enum ScenarioKind {
     TypedLeafObjectsNoChildRefs = 0,
     DurObjDictSparseRefs = 1,
     MixedDictSparseRefs = 2,
     MixedDictDenseRefs = 3,
 }
 
-internal static class CompactionBenchmarkUtil {
-    public static Revision.CompactionValidationMode ParseValidationMode(string validationModeName) {
-        return validationModeName switch {
-            "HotPath" => Revision.CompactionValidationMode.HotPath,
-            "Strict" => Revision.CompactionValidationMode.Strict,
-            _ => throw new InvalidOperationException($"Unknown validation mode '{validationModeName}'.")
-        };
-    }
+internal static class BenchmarkUtil {
 
-    public static CommitTicket RequireCompactionResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
+    public static CommitTicket RequireCommitResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
         if (result.IsFailure) { throw new InvalidOperationException($"{benchmarkName} failed: {result.Error}"); }
-        if (!result.Value.IsCompacted) { throw new InvalidOperationException($"{benchmarkName} did not trigger compaction."); }
         return result.Value.HeadCommitTicket;
     }
 }
 
-internal sealed class CompactionBenchmarkScenario : IDisposable {
+internal sealed class BenchmarkScenario : IDisposable {
     public required string Path { get; init; }
     public required IRbfFile File { get; init; }
     public required Revision Revision { get; init; }
@@ -327,11 +245,30 @@ internal sealed class CompactionBenchmarkScenario : IDisposable {
     }
 }
 
-internal static class CompactionScenarioFactory {
-    public static CompactionBenchmarkScenario CreatePendingCompactionScenario(
-        CompactionScenarioKind scenarioKind,
+internal sealed class ScenarioBatch : IDisposable {
+    public required string Path { get; init; }
+    public required IRbfFile File { get; init; }
+    public required Revision[] Revisions { get; init; }
+    public required DurableObject[] Roots { get; init; }
+
+    public int Count => Revisions.Length;
+
+    public void Dispose() {
+        File.Dispose();
+        try {
+            if (System.IO.File.Exists(Path)) { System.IO.File.Delete(Path); }
+        }
+        catch {
+        }
+    }
+}
+
+internal static class ScenarioFactory {
+    public static BenchmarkScenario CreatePendingScenario(
+        ScenarioKind scenarioKind,
         int totalChildren,
-        int removedChildren
+        int removedChildren,
+        int addedChildren
     ) {
         const uint segmentNumber = 1;
         string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"sj-bench-{Guid.NewGuid():N}.rbf");
@@ -339,14 +276,14 @@ internal static class CompactionScenarioFactory {
         var revision = new Revision(segmentNumber);
 
         DurableObject root = scenarioKind switch {
-            CompactionScenarioKind.TypedLeafObjectsNoChildRefs => CreateTypedLeafScenario(revision, file, totalChildren, removedChildren),
-            CompactionScenarioKind.DurObjDictSparseRefs => CreateDurObjDictSparseScenario(revision, file, totalChildren, removedChildren),
-            CompactionScenarioKind.MixedDictSparseRefs => CreateMixedSparseScenario(revision, file, totalChildren, removedChildren),
-            CompactionScenarioKind.MixedDictDenseRefs => CreateMixedDenseScenario(revision, file, totalChildren, removedChildren),
+            ScenarioKind.TypedLeafObjectsNoChildRefs => CreateTypedLeafScenario(revision, file, totalChildren, removedChildren, addedChildren),
+            ScenarioKind.DurObjDictSparseRefs => CreateDurObjDictSparseScenario(revision, file, totalChildren, removedChildren, addedChildren),
+            ScenarioKind.MixedDictSparseRefs => CreateMixedSparseScenario(revision, file, totalChildren, removedChildren, addedChildren),
+            ScenarioKind.MixedDictDenseRefs => CreateMixedDenseScenario(revision, file, totalChildren, removedChildren, addedChildren),
             _ => throw new InvalidOperationException($"Unknown scenario kind {scenarioKind}.")
         };
 
-        return new CompactionBenchmarkScenario {
+        return new BenchmarkScenario {
             Path = path,
             File = file,
             Revision = revision,
@@ -354,7 +291,62 @@ internal static class CompactionScenarioFactory {
         };
     }
 
-    private static DurableObject CreateTypedLeafScenario(Revision revision, IRbfFile file, int totalChildren, int removedChildren) {
+    public static ScenarioBatch CreatePendingScenarioBatch(
+        ScenarioKind scenarioKind,
+        int totalChildren,
+        int removedChildren,
+        int addedChildren,
+        int scenarioCount
+    ) {
+        const uint segmentNumber = 1;
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"sj-bench-{Guid.NewGuid():N}.rbf");
+        var file = RbfFile.CreateNew(path);
+        var revisions = new Revision[scenarioCount];
+        var roots = new DurableObject[scenarioCount];
+
+        try {
+            for (int i = 0; i < scenarioCount; i++) {
+                var revision = new Revision(segmentNumber);
+                revisions[i] = revision;
+                roots[i] = CreatePendingRoot(scenarioKind, revision, file, totalChildren, removedChildren, addedChildren);
+            }
+
+            return new ScenarioBatch {
+                Path = path,
+                File = file,
+                Revisions = revisions,
+                Roots = roots,
+            };
+        }
+        catch {
+            file.Dispose();
+            try {
+                if (System.IO.File.Exists(path)) { System.IO.File.Delete(path); }
+            }
+            catch {
+            }
+            throw;
+        }
+    }
+
+    private static DurableObject CreatePendingRoot(
+        ScenarioKind scenarioKind,
+        Revision revision,
+        IRbfFile file,
+        int totalChildren,
+        int removedChildren,
+        int addedChildren
+    ) {
+        return scenarioKind switch {
+            ScenarioKind.TypedLeafObjectsNoChildRefs => CreateTypedLeafScenario(revision, file, totalChildren, removedChildren, addedChildren),
+            ScenarioKind.DurObjDictSparseRefs => CreateDurObjDictSparseScenario(revision, file, totalChildren, removedChildren, addedChildren),
+            ScenarioKind.MixedDictSparseRefs => CreateMixedSparseScenario(revision, file, totalChildren, removedChildren, addedChildren),
+            ScenarioKind.MixedDictDenseRefs => CreateMixedDenseScenario(revision, file, totalChildren, removedChildren, addedChildren),
+            _ => throw new InvalidOperationException($"Unknown scenario kind {scenarioKind}.")
+        };
+    }
+
+    private static DurableObject CreateTypedLeafScenario(Revision revision, IRbfFile file, int totalChildren, int removedChildren, int addedChildren) {
         var root = revision.CreateDict<int, DurableDict<int, int>>();
         for (int i = 0; i < totalChildren; i++) {
             var child = revision.CreateDict<int, int>();
@@ -362,12 +354,13 @@ internal static class CompactionScenarioFactory {
             root.Upsert(i, child);
         }
 
-        _ = RequireCompactionResult(revision.Commit(root, file), nameof(CreateTypedLeafScenario));
+        _ = RequireResult(revision.Commit(root, file), nameof(CreateTypedLeafScenario));
         RemoveFirstEntries(root, removedChildren, key => key);
+        AddTypedLeafEntries(root, revision, totalChildren, addedChildren);
         return root;
     }
 
-    private static DurableObject CreateDurObjDictSparseScenario(Revision revision, IRbfFile file, int totalChildren, int removedChildren) {
+    private static DurableObject CreateDurObjDictSparseScenario(Revision revision, IRbfFile file, int totalChildren, int removedChildren, int addedChildren) {
         var root = revision.CreateDict<int, DurableDict<int, DurableDict<int, int>>>();
         for (int i = 0; i < totalChildren; i++) {
             var container = revision.CreateDict<int, DurableDict<int, int>>();
@@ -377,12 +370,13 @@ internal static class CompactionScenarioFactory {
             root.Upsert(i, container);
         }
 
-        _ = RequireCompactionResult(revision.Commit(root, file), nameof(CreateDurObjDictSparseScenario));
+        _ = RequireResult(revision.Commit(root, file), nameof(CreateDurObjDictSparseScenario));
         RemoveFirstEntries(root, removedChildren, key => key);
+        AddDurObjDictSparseEntries(root, revision, totalChildren, addedChildren);
         return root;
     }
 
-    private static DurableObject CreateMixedSparseScenario(Revision revision, IRbfFile file, int totalChildren, int removedChildren) {
+    private static DurableObject CreateMixedSparseScenario(Revision revision, IRbfFile file, int totalChildren, int removedChildren, int addedChildren) {
         var root = revision.CreateDict<int>();
         for (int i = 0; i < totalChildren; i++) {
             var child = revision.CreateDict<int>();
@@ -395,12 +389,13 @@ internal static class CompactionScenarioFactory {
             root.Upsert(i, child);
         }
 
-        _ = RequireCompactionResult(revision.Commit(root, file), nameof(CreateMixedSparseScenario));
+        _ = RequireResult(revision.Commit(root, file), nameof(CreateMixedSparseScenario));
         RemoveFirstEntries(root, removedChildren, key => key);
+        AddMixedSparseEntries(root, revision, totalChildren, addedChildren);
         return root;
     }
 
-    private static DurableObject CreateMixedDenseScenario(Revision revision, IRbfFile file, int totalChildren, int removedChildren) {
+    private static DurableObject CreateMixedDenseScenario(Revision revision, IRbfFile file, int totalChildren, int removedChildren, int addedChildren) {
         var root = revision.CreateDict<int>();
         for (int i = 0; i < totalChildren; i++) {
             var child = revision.CreateDict<int>();
@@ -413,9 +408,63 @@ internal static class CompactionScenarioFactory {
             root.Upsert(i, child);
         }
 
-        _ = RequireCompactionResult(revision.Commit(root, file), nameof(CreateMixedDenseScenario));
+        _ = RequireResult(revision.Commit(root, file), nameof(CreateMixedDenseScenario));
         RemoveFirstEntries(root, removedChildren, key => key);
+        AddMixedDenseEntries(root, revision, totalChildren, addedChildren);
         return root;
+    }
+
+    private static void AddTypedLeafEntries(DurableDict<int, DurableDict<int, int>> root, Revision revision, int startKey, int count) {
+        for (int i = 0; i < count; i++) {
+            int key = startKey + i;
+            var child = revision.CreateDict<int, int>();
+            child.Upsert(key, key);
+            root.Upsert(key, child);
+        }
+    }
+
+    private static void AddDurObjDictSparseEntries(
+        DurableDict<int, DurableDict<int, DurableDict<int, int>>> root,
+        Revision revision,
+        int startKey,
+        int count
+    ) {
+        for (int i = 0; i < count; i++) {
+            int key = startKey + i;
+            var container = revision.CreateDict<int, DurableDict<int, int>>();
+            var leaf = revision.CreateDict<int, int>();
+            leaf.Upsert(1, key);
+            container.Upsert(1, leaf);
+            root.Upsert(key, container);
+        }
+    }
+
+    private static void AddMixedSparseEntries(DurableDict<int> root, Revision revision, int startKey, int count) {
+        for (int i = 0; i < count; i++) {
+            int key = startKey + i;
+            var child = revision.CreateDict<int>();
+            PopulateMixedScalars(child, key);
+            if ((key & 3) == 0) {
+                var leaf = revision.CreateDict<int, int>();
+                leaf.Upsert(1, key);
+                child.Upsert(10_000, leaf);
+            }
+            root.Upsert(key, child);
+        }
+    }
+
+    private static void AddMixedDenseEntries(DurableDict<int> root, Revision revision, int startKey, int count) {
+        for (int i = 0; i < count; i++) {
+            int key = startKey + i;
+            var child = revision.CreateDict<int>();
+            PopulateMixedScalars(child, key);
+            for (int refIndex = 0; refIndex < 4; refIndex++) {
+                var leaf = revision.CreateDict<int, int>();
+                leaf.Upsert(refIndex, key + refIndex);
+                child.Upsert(20_000 + refIndex, leaf);
+            }
+            root.Upsert(key, child);
+        }
     }
 
     private static void PopulateMixedScalars(DurableDict<int> child, int seed) {
@@ -437,7 +486,7 @@ internal static class CompactionScenarioFactory {
         }
     }
 
-    private static CommitTicket RequireCompactionResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
+    private static CommitTicket RequireResult(AteliaResult<CommitOutcome> result, string benchmarkName) {
         if (result.IsFailure) { throw new InvalidOperationException($"{benchmarkName} failed during scenario setup: {result.Error}"); }
         return result.Value.HeadCommitTicket;
     }

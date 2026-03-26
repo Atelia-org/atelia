@@ -40,18 +40,7 @@ partial class Revision {
             $"Primary succeeded: primary={primaryCommitTicket.Ticket.Serialize()}",
             eventKind: DebugEventKind.Success
         );
-        var compactionSession = RevisionCompactionSession.TryApply(this, primaryCommitTicket, primaryArtifacts.LiveObjects);
-        if (compactionSession is null) { return LogAndReturnOutcome(CommitOutcome.PrimaryOnly(primaryCommitTicket)); }
-
-        var compactionCommit = PersistCompactionFollowup(
-            graphRoot,
-            primaryArtifacts.LiveObjects,
-            compactionSession.SymbolMirrorUpdatePlan,
-            targetFile
-        );
-        if (compactionCommit.IsFailure) { return LogAndReturnOutcome(compactionSession.RollbackAfterFollowupPersistFailure(compactionCommit.Error!)); }
-
-        return LogAndReturnOutcome(CommitOutcome.Compacted(primaryCommitTicket, compactionCommit.Value));
+        return LogAndReturnOutcome(CommitOutcome.PrimaryOnly(primaryCommitTicket));
     }
 
     internal partial AteliaResult<CommitTicket> ExportTo(DurableObject graphRoot, IRbfFile targetFile) {
@@ -103,20 +92,13 @@ partial class Revision {
 
         // Finalize: Complete all PendingSave (HeadTicket 指向新文件), Sweep GC, 更新 _head
         FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitTicket);
-        // 跳过 Compaction（刚全量 rebase，无 delta 碎片）
+        // SaveAs 直接以全量快照作为新的 head，不再存在额外的后续整理阶段。
         return CommitOutcome.PrimaryOnly(newCommitTicket);
     }
 
     private static AteliaResult<CommitOutcome> LogAndReturnOutcome(CommitOutcome outcome) {
         var msg = $"Completed: head={outcome.HeadCommitTicket.Ticket.Serialize()}, kind={outcome.Completion}";
-        if (outcome.CompactionIssue is not null) { msg += $", issue={outcome.CompactionIssue.ErrorCode}"; }
-        if (outcome.IsCompacted) { msg += $", primary={outcome.PrimaryCommitTicket.Ticket.Serialize()}"; }
-        if (outcome.CompactionIssue is not null) {
-            DebugUtil.Warning("StateJournal.Commit", msg, eventKind: DebugEventKind.Failure);
-        }
-        else {
-            DebugUtil.Info("StateJournal.Commit", msg, eventKind: DebugEventKind.Success);
-        }
+        DebugUtil.Info("StateJournal.Commit", msg, eventKind: DebugEventKind.Success);
         return outcome;
     }
 
@@ -153,33 +135,6 @@ partial class Revision {
         return new PrimaryCommitArtifacts(newCommitTicket, liveObjectsResult.Value!);
     }
 
-    /// <summary>
-    /// durable 化 compaction apply 引入的脏变更。
-    /// </summary>
-    /// <remarks>
-    /// 这里复用 primary commit 产出的 live objects，不再重新 WalkAndMark/Sweep。
-    /// 因为 compaction 只重排 slot / LocalId / 子引用与 ObjectMap key，不改变对象可达性。
-    /// </remarks>
-    private AteliaResult<CommitTicket> PersistCompactionFollowup(
-        DurableObject graphRoot,
-        IReadOnlyList<DurableObject> liveObjects,
-        SymbolMirrorUpdatePlan symbolMirrorUpdatePlan,
-        IRbfFile targetFile
-    ) {
-        AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> persistResult;
-        try {
-            persistResult = PersistCompactionFollowupSnapshot(graphRoot, liveObjects, symbolMirrorUpdatePlan, targetFile);
-        }
-        catch (Exception ex) when (IsExternalCommitException(ex)) {
-            return BuildStateError("Compaction follow-up persistence failed", ex);
-        }
-        if (persistResult.IsFailure) { return persistResult.Error!; }
-
-        var (pendingSaves, newCommitTicket) = persistResult.Value;
-        FinalizeFollowupPersist(graphRoot, pendingSaves, newCommitTicket);
-        return newCommitTicket;
-    }
-
     private static SjStateError BuildStateError(string messagePrefix, Exception ex) {
         return new SjStateError(
             $"{messagePrefix}: {ex.GetType().Name}: {ex.Message}",
@@ -197,7 +152,7 @@ partial class Revision {
             liveObjects,
             frameSource: FrameSource.PrimaryCommit,
             targetFile,
-            symbolMirrorUpdatePlan: SymbolMirrorUpdatePlan.ReachableScan(),
+            symbolMirrorUpdatePlan: SymbolMirrorUpdatePlan.ReachableScan(validateFullScan: true),
             removeUnreachableObjectMapKeys: true,
             forceAll: false
         );
@@ -213,26 +168,9 @@ partial class Revision {
             liveObjects,
             frameSource: FrameSource.CrossFileSnapshot,
             targetFile,
-            symbolMirrorUpdatePlan: SymbolMirrorUpdatePlan.ReachableScan(),
+            symbolMirrorUpdatePlan: SymbolMirrorUpdatePlan.ReachableScan(validateFullScan: true),
             removeUnreachableObjectMapKeys: true,
             forceAll: true
-        );
-    }
-
-    private AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> PersistCompactionFollowupSnapshot(
-        DurableObject graphRoot,
-        IReadOnlyList<DurableObject> liveObjects,
-        SymbolMirrorUpdatePlan symbolMirrorUpdatePlan,
-        IRbfFile targetFile
-    ) {
-        return PersistSnapshotCore(
-            graphRoot,
-            liveObjects,
-            frameSource: FrameSource.Compaction,
-            targetFile,
-            symbolMirrorUpdatePlan: symbolMirrorUpdatePlan,
-            removeUnreachableObjectMapKeys: false,
-            forceAll: false
         );
     }
 
@@ -318,39 +256,6 @@ partial class Revision {
         );
     }
 
-    private void FinalizeFollowupPersist(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitTicket newCommitTicket) {
-        foreach (var pending in pendingSaves) { pending.Complete(); }
-        _pool.TrimExcessCapacity();
-
-        _head = new CommitSnapshot(
-            newCommitTicket,
-            _head?.Id ?? default,
-            _objectMap,
-            graphRoot
-        );
-    }
-
-    private static SjCompactionPersistError BuildCompactionFollowupPersistFailureError(CommitTicket primaryCommitTicket, AteliaError cause) {
-        var details = new Dictionary<string, string> {
-            ["PrimaryCommitTicket"] = primaryCommitTicket.Ticket.Serialize().ToString(),
-            ["CompactionStage"] = "FollowupPersist",
-            ["FollowupErrorCode"] = cause.ErrorCode,
-        };
-
-        return new SjCompactionPersistError(
-            "Commit primary snapshot succeeded, but compaction follow-up persistence failed.",
-            RecoveryHint: "Primary snapshot remains current Head. In-memory compaction changes were rolled back. Fix runtime/I/O issue and retry Commit to persist compaction changes.",
-            Details: details,
-            Cause: cause
-        );
-    }
-
-    /// <summary>Compaction 用的引用重写器：查翻译表，命中则返回新 id，否则原样返回。同时覆盖 Object (LocalId) 和 Symbol (SymbolId)。</summary>
-    private ref partial struct CompactRewriter(
-            Dictionary<uint, LocalId> objectTable,
-            Dictionary<uint, SymbolId>? symbolTable) : IChildRefRewriter {
-    }
-
     /// <summary>DFS 遍历中的 visitor：验证引用有效性 + 首访标记去重 + 收集存活 handle + 压入 DFS 栈。
     /// 同时标记 symbol pool 中的可达 SymbolId，一趟 DFS 完成两种 pool 的 mark。</summary>
     private ref partial struct WalkMarkVisitor(
@@ -365,115 +270,9 @@ partial class Revision {
         public AteliaError? Error { get; private set; }
     }
 
-    #region Test Helper
-    internal enum CompactionFaultPoint {
-        None = 0,
-        AfterFirstMoveApplied = 1,
-    }
-
-    /// <summary>
-    /// compaction apply 结束后的引用一致性校验模式。
-    /// </summary>
-    internal enum CompactionValidationMode {
-        /// <summary>
-        /// 热路径模式：只校验 touched objects、moved keys 与必要的 ObjectMap/pool 对齐。
-        /// 成本更低，但自检覆盖面小于全量校验。
-        /// </summary>
-        HotPath = 0,
-
-        /// <summary>
-        /// 严格模式：对整个 live object 工作集做全量引用完整性校验。
-        /// 成本更高，但最利于 fail-fast 暴露遗漏重写一类内部 bug。
-        /// </summary>
-        Strict = 1,
-    }
-    private static readonly AsyncLocal<CompactionFaultInjection?> s_compactionFaultInjection = new();
-    private static readonly AsyncLocal<CompactionValidationMode?> s_compactionValidationModeOverride = new();
-    private static readonly CompactionValidationMode s_defaultCompactionValidationMode = GetDefaultCompactionValidationMode();
-
-    private static CompactionValidationMode GetCompactionValidationMode() {
-        return s_compactionValidationModeOverride.Value ?? s_defaultCompactionValidationMode;
-    }
-
-    private static CompactionValidationMode GetDefaultCompactionValidationMode() {
-        string? raw = Environment.GetEnvironmentVariable("ATELIA_SJ_COMPACTION_VALIDATE");
-        if (!string.IsNullOrWhiteSpace(raw)) {
-            if (string.Equals(raw, "STRICT", StringComparison.OrdinalIgnoreCase)) { return CompactionValidationMode.Strict; }
-            if (string.Equals(raw, "HOT", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(raw, "HOTPATH", StringComparison.OrdinalIgnoreCase)) { return CompactionValidationMode.HotPath; }
-        }
-#if DEBUG
-        // Debug / test 默认更偏向 fail-fast 暴露内部遗漏重写 bug。
-        return CompactionValidationMode.Strict;
-#else
-        // 发布默认优先热路径成本；需要更强自检时可显式切到 STRICT。
-        return CompactionValidationMode.HotPath;
-#endif
-    }
-
-    private static void ThrowIfCompactionFaultInjected(CompactionFaultPoint point) {
-        var injection = s_compactionFaultInjection.Value;
-        if (injection is null || !injection.Armed || injection.Point != point) { return; }
-        injection.Armed = false;
-        throw injection.ExceptionFactory();
-    }
-
-    private sealed class CompactionFaultInjection(
-        CompactionFaultPoint point,
-        Func<Exception> exceptionFactory
-    ) {
-        public CompactionFaultPoint Point { get; } = point;
-        public Func<Exception> ExceptionFactory { get; } = exceptionFactory;
-        public bool Armed { get; set; } = true;
-    }
-
-    private sealed class CompactionFaultScope(CompactionFaultInjection? previous) : IDisposable {
-        private bool _disposed;
-
-        public void Dispose() {
-            if (_disposed) { return; }
-            s_compactionFaultInjection.Value = previous;
-            _disposed = true;
-        }
-    }
-
-    private sealed class CompactionValidationModeScope(CompactionValidationMode? previous) : IDisposable {
-        private bool _disposed;
-
-        public void Dispose() {
-            if (_disposed) { return; }
-            s_compactionValidationModeOverride.Value = previous;
-            _disposed = true;
-        }
-    }
-
     private static bool IsExternalCommitException(Exception ex) {
         return ex is IOException
             or UnauthorizedAccessException
             or ObjectDisposedException;
     }
-
-    internal static IDisposable InjectCompactionFaultScope(
-        CompactionFaultPoint point,
-        Func<Exception> exceptionFactory
-    ) {
-        ArgumentNullException.ThrowIfNull(exceptionFactory);
-        if (point == CompactionFaultPoint.None) { throw new ArgumentOutOfRangeException(nameof(point)); }
-
-        var previous = s_compactionFaultInjection.Value;
-        s_compactionFaultInjection.Value = new CompactionFaultInjection(point, exceptionFactory);
-        return new CompactionFaultScope(previous);
-    }
-
-    /// <summary>
-    /// 临时覆盖当前 async flow 下的 compaction 校验模式。
-    /// 主要供测试、benchmark 与显式诊断场景使用。
-    /// </summary>
-    internal static IDisposable OverrideCompactionValidationModeScope(CompactionValidationMode mode) {
-        var previous = s_compactionValidationModeOverride.Value;
-        s_compactionValidationModeOverride.Value = mode;
-        return new CompactionValidationModeScope(previous);
-    }
-
-    #endregion
 }

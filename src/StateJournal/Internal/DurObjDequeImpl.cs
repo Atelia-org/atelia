@@ -81,14 +81,6 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
         VisitSegment(ref visitor, second);
     }
 
-    internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) {
-        bool changed = false;
-        _core.Current.GetSegments(out int firstStartIndex, out Span<LocalId> first, out int secondStartIndex, out Span<LocalId> second);
-        changed |= RewriteSegment(ref rewriter, firstStartIndex, first);
-        changed |= RewriteSegment(ref rewriter, secondStartIndex, second);
-        return changed;
-    }
-
     private bool SetCore(int index, LocalId value) {
         ref LocalId slot = ref _core.GetRef(index);
         if (slot == value) { return false; }
@@ -120,24 +112,5 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
         foreach (var localId in segment) {
             if (!localId.IsNull) { visitor.Visit(localId); }
         }
-    }
-
-    private bool RewriteSegment<TRewriter>(ref TRewriter rewriter, int startIndex, Span<LocalId> segment)
-        where TRewriter : IChildRefRewriter, allows ref struct {
-        bool changed = false;
-        for (int i = 0; i < segment.Length; i++) {
-            var oldId = segment[i];
-            if (oldId.IsNull) { continue; }
-
-            var newId = rewriter.Rewrite(oldId);
-            if (newId == oldId) { continue; }
-
-            ref LocalId slot = ref segment[i];
-            slot = newId;
-            _core.AfterSet<LocalIdAsRefHelper>(startIndex + i, ref slot);
-            changed = true;
-        }
-
-        return changed;
     }
 }

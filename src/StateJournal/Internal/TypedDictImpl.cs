@@ -66,6 +66,4 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, VHelper>(ref reader);
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
-
-    internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) => false;
 }

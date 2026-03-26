@@ -32,17 +32,6 @@ internal sealed record SjStateError(
 ) : AteliaError("SJ.State", Message, RecoveryHint, Details, Cause);
 
 /// <summary>
-/// primary commit 已成功后，Compaction 触发的后续持久化提交失败。
-/// 该错误对应外部不可控因素（如 I/O / 文件状态），会回到 <see cref="CommitOutcome"/> 作为可诊断结果。
-/// </summary>
-internal sealed record SjCompactionPersistError(
-    string Message,
-    string? RecoveryHint = null,
-    IReadOnlyDictionary<string, string>? Details = null,
-    AteliaError? Cause = null
-) : AteliaError("SJ.Compaction.FollowupPersistFailed", Message, RecoveryHint, Details, Cause);
-
-/// <summary>
 /// Repository 层面的操作失败：文件发现、锁获取、head.json 读写等。
 /// </summary>
 internal sealed record SjRepositoryError(

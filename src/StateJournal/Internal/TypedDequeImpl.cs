@@ -105,6 +105,4 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
     }
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
-
-    internal override bool AcceptChildRefRewrite<TRewriter>(ref TRewriter rewriter) => false;
 }

@@ -28,7 +28,7 @@ public partial class Revision {
     /// </summary>
     private DurableDict<uint, InlineString> _symbolTable;
     /// <summary>
-    /// 运行时 intern 引擎 + Mark-Sweep-Compact GC 池。
+    /// 运行时 intern 引擎 + Mark-Sweep GC 池。
     /// 对外通过 <see cref="InternSymbol"/> / <see cref="GetSymbol"/> 提供 string ↔ SymbolId 转换。
     /// </summary>
     private StringPool _symbolPool;
@@ -410,34 +410,12 @@ public partial class Revision {
     /// GraphRoot 的 LocalId 会序列化到 ObjectMap 帧的 TailMeta 中，Open 时自动恢复。
     /// </summary>
     /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
-    /// <returns>
-    /// 返回显式的 <see cref="CommitOutcome"/>，区分：
-    /// - 仅完成 primary commit；
-    /// - primary commit + compaction follow-up 全部成功；
-    /// - primary commit 成功，但 compaction 的后续持久化受外部不可控因素影响而失败，且内存 compaction 已回滚到 primary commit 对齐状态。
-    ///
-    /// 目标语义下，failure 表示“可诊断但非 bug”的失败；
-    /// compaction 的纯内存 apply / rollback 若违反内部不变量，应直接抛异常 fail-fast，而不折叠为 <see cref="AteliaError"/>。
-    /// </returns>
+    /// <returns>返回显式的 <see cref="CommitOutcome"/>；failure 表示“可诊断但非 bug”的失败。</returns>
     /// <remarks>
     /// 提交流程分为三段：
-    /// A) Primary Commit（三阶段）：
     /// 1) WalkAndMark — 从 graphRoot DFS 遍历对象图，同时执行 GcPool Mark（用 mark bitmap 替代 HashSet 去重）；
     /// 2) Persist — 仅追加写盘，不改对象内存状态；
     /// 3) Finalize — 持久化成功后执行 Sweep GC 和状态更新。
-    /// B) Compaction Apply（可选）：
-    /// - 若触发 compaction，在 primary commit 产出的同一批 live objects 上执行 MoveSlot/Rebind/引用重写。
-    /// C) Follow-up Persist（可选）：
-    /// - durable 化 compaction 造成的脏变更；
-    /// - 复用 primary commit 产出的 live objects，不再重新 WalkAndMark/Sweep。
-    ///
-    /// 错误分类目标：
-    /// - primary commit 中来自对象图状态校验、RBF I/O、文件句柄状态等“外部/宿主环境”问题，返回 <see cref="AteliaError"/>；
-    /// - compaction follow-up persist 的外部失败，在 primary 已 durable 的前提下返回带 issue 的结果；
-    /// - compaction apply / rollback 的内部不变量破坏属于 bug，应 fail-fast。
-    ///
-    /// 因此 Commit 具备“primary 先提交，再尝试 compaction”的语义；若 follow-up persist 失败但回滚成功，则返回成功结果，并显式标记为
-    /// <see cref="CommitCompletion.CompactionRolledBack"/>。
     /// </remarks>
     internal partial AteliaResult<CommitOutcome> Commit(DurableObject graphRoot, IRbfFile targetFile);
 
@@ -468,7 +446,7 @@ public partial class Revision {
     /// </remarks>
     /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
     /// <param name="targetFile">另存为目标 RBF 文件。</param>
-    /// <returns>与 <see cref="Commit"/> 相同的 <see cref="CommitOutcome"/>，但不触发 Compaction。</returns>
+    /// <returns>与 <see cref="Commit"/> 相同的 <see cref="CommitOutcome"/>。</returns>
     internal partial AteliaResult<CommitOutcome> SaveAs(DurableObject graphRoot, IRbfFile targetFile);
 
     /// <summary>
