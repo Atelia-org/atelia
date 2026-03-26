@@ -29,6 +29,9 @@ namespace Atelia.StateJournal.Pools;
 /// </remarks>
 /// <typeparam name="T">Interned 值类型，必须正确实现 GetHashCode / Equals（或提供 IEqualityComparer）。</typeparam>
 internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : notnull where TComparer : unmanaged, IStaticEqualityComparer<T> {
+    internal interface IEntryVisitor {
+        void Visit(SlotHandle handle, T value);
+    }
 
     /// <summary>
     /// Compaction 回滚令牌：保存每次 MoveSlot 的 <see cref="SlotPool{T}.MoveRecord"/>，
@@ -254,6 +257,16 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
     }
 
     /// <summary>
+    /// 尝试标记 handle 为可达。若 handle 无效或 slot 未占用，返回 false。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryMarkReachable(SlotHandle handle) {
+        if (!_slots.Validate(handle)) { return false; }
+        _reachable.Set(handle.Index);
+        return true;
+    }
+
+    /// <summary>
     /// 查询 handle 在当前 Mark 阶段是否已被标记为可达。
     /// 仅在 <see cref="BeginMark"/> 和 <see cref="Sweep"/> 之间有意义。
     /// </summary>
@@ -335,6 +348,14 @@ internal sealed class InternPool<T, TComparer> : IMarkSweepPool<T> where T : not
 
     private void SyncShrink() {
         while (_reachable.SlabCount > _slots.FreeBitmap.SlabCount) { _reachable.ShrinkLastSlab(); }
+    }
+
+    internal void VisitEntries<TVisitor>(ref TVisitor visitor)
+        where TVisitor : IEntryVisitor, allows ref struct {
+        foreach (int i in _slots.EnumerateOccupiedIndices()) {
+            ref Entry entry = ref _slots.GetValueRefUnchecked(i);
+            visitor.Visit(_slots.GetHandle(i), entry.Value);
+        }
     }
 
     // ───────────────────── Rehash ─────────────────────

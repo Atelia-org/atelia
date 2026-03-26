@@ -1,4 +1,5 @@
 using Xunit;
+using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal.Tests;
 
@@ -42,7 +43,8 @@ public class DurableDequeApiTests {
 
     [Fact]
     public void MixedDeque_SupportsGenericAndTypedViews() {
-        var deque = Durable.Deque();
+        var rev = new Revision(1);
+        var deque = rev.CreateDeque();
 
         deque.PushBack("tail");
         deque.PushFront(42);
@@ -155,7 +157,8 @@ public class DurableDequeApiTests {
 
     [Fact]
     public void MixedDeque_TypedFront_TypeMismatch_DoesNotPretendDequeIsEmpty() {
-        var deque = Durable.Deque();
+        var rev = new Revision(1);
+        var deque = rev.CreateDeque();
         deque.PushFront("title");
 
         Assert.Equal(GetIssue.TypeMismatch, deque.OfInt32.PeekFront(out int _));
@@ -164,7 +167,8 @@ public class DurableDequeApiTests {
 
     [Fact]
     public void MixedDeque_TypedBack_TypeMismatch_DoesNotPretendDequeIsEmpty() {
-        var deque = Durable.Deque();
+        var rev = new Revision(1);
+        var deque = rev.CreateDeque();
         deque.PushBack("tail");
 
         Assert.Equal(GetIssue.TypeMismatch, deque.OfInt32.PeekBack(out int _));

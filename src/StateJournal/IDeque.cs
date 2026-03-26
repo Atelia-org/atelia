@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
 
@@ -192,7 +193,9 @@ internal class DequeDemo {
         Debug.Assert(typed.TryPopFront(out int poppedFront) && poppedFront == 10);
         Debug.Assert(typed.TryPopBack(out int poppedBack) && poppedBack == 30);
 
-        var mixed = Durable.Deque();
+        // MixedDeque 中的 string 操作需要绑定 Revision（string 通过 per-Revision Symbol Pool intern）。
+        var rev = new Revision(1);
+        var mixed = rev.CreateDeque();
         mixed.PushBack("title");
         mixed.PushBack(42);
         mixed.PushFront(true);
@@ -205,10 +208,9 @@ internal class DequeDemo {
 
         // 对于 MixedDeque 中的 DurableObject 子类型，不提供 Of<Subtype>() 视图，
         // 而是通过 generic 方法族访问，避免隐藏分配的 subtype wrapper。
-        var owner = new Revision(1);
-        var child = owner.CreateDict<int, int>();
+        var child = rev.CreateDict<int, int>();
         child.Upsert(7, 70);
-        var mixedWithChild = owner.CreateDeque();
+        var mixedWithChild = rev.CreateDeque();
         mixedWithChild.PushBack(child);
         Debug.Assert(mixedWithChild.TryPeekFront<DurableDict<int, int>>(out var frontChild) && ReferenceEquals(frontChild, child));
         Debug.Assert(ReferenceEquals(mixedWithChild.GetBack<DurableDict<int, int>>(), child));

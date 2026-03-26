@@ -25,7 +25,7 @@ partial struct ValueBox {
         /// <summary>将 DurableRef 编码为 ValueBox。</summary>
         public static ValueBox From(DurableRef value) {
             if (value.IsNull) { return Null; }
-            Debug.Assert(DurableRef.IsValidKind(value.Kind), $"Invalid DurableRef kind: {value.Kind}");
+            Debug.Assert(DurableRef.IsValidObjectKind(value.Kind), $"Invalid DurableRef kind: {value.Kind}");
             return new(LzcConstants.DurableRefTag | ((ulong)value.Kind << DurRefKindShift) | value.Id.Value);
         }
 

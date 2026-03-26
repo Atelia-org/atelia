@@ -1,11 +1,13 @@
 using Xunit;
+using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal.Tests;
 
 public class DurableDictApiTests {
     [Fact]
     public void MixedDict_SupportsGenericAndTypedViews() {
-        var dict = Durable.Dict<string>();
+        var rev = new Revision(1);
+        var dict = rev.CreateDict<string>();
 
         dict.Upsert("count", 42);
         dict.Upsert("title", "draft");
@@ -26,7 +28,8 @@ public class DurableDictApiTests {
 
     [Fact]
     public void MixedDict_TypedView_TypeMismatch_ReturnsIssue() {
-        var dict = Durable.Dict<string>();
+        var rev = new Revision(1);
+        var dict = rev.CreateDict<string>();
         dict.Upsert("title", "memo");
 
         Assert.Equal(GetIssue.TypeMismatch, dict.OfInt32.Get("title", out int _));

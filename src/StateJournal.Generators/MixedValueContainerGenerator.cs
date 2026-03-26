@@ -86,20 +86,25 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.Append("    public partial void ").Append(methodName).AppendLine("<TValue>(TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
-            if (type.UseDurableObjectHelpers) {
-                builder.Append("            ").Append(methodName).Append("(")
-                    .Append("(").Append(type.RenderNullableValueType()).Append(")(object?)value")
-                    .AppendLine(");");
-            }
-            else if (type.IsValueType) {
-                builder.Append("            ").Append(coreMethodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
-                    .Append(coreArgumentPrefix).Append(", Unsafe.As<TValue, ").Append(type.ValueType).Append(">(ref value));")
-                    .AppendLine();
-            }
-            else {
-                builder.Append("            ").Append(coreMethodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
-                    .Append(coreArgumentPrefix).Append(", (").Append(type.RenderNullableValueType()).Append(")(object?)value);")
-                    .AppendLine();
+            switch (type.SpecialHandling) {
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.SymbolString:
+                    builder.Append("            ").Append(methodName).Append("(")
+                        .Append("(").Append(type.RenderNullableValueType()).Append(")(object?)value")
+                        .AppendLine(");");
+                    break;
+                default:
+                    if (type.IsValueType) {
+                        builder.Append("            ").Append(coreMethodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
+                            .Append(coreArgumentPrefix).Append(", Unsafe.As<TValue, ").Append(type.ValueType).Append(">(ref value));")
+                            .AppendLine();
+                    }
+                    else {
+                        builder.Append("            ").Append(coreMethodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
+                            .Append(coreArgumentPrefix).Append(", (").Append(type.RenderNullableValueType()).Append(")(object?)value);")
+                            .AppendLine();
+                    }
+                    break;
             }
             builder.AppendLine("            return;");
             builder.AppendLine("        }");
@@ -118,20 +123,25 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.Append("    public partial bool ").Append(methodName).AppendLine("<TValue>(TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
-            if (type.UseDurableObjectHelpers) {
-                builder.Append("            return ").Append(methodName).Append("(")
-                    .Append("(").Append(type.RenderNullableValueType()).Append(")(object?)value")
-                    .AppendLine(");");
-            }
-            else if (type.IsValueType) {
-                builder.Append("            return ").Append(coreMethodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
-                    .Append(coreArgumentPrefix).Append(", Unsafe.As<TValue, ").Append(type.ValueType).Append(">(ref value));")
-                    .AppendLine();
-            }
-            else {
-                builder.Append("            return ").Append(coreMethodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
-                    .Append(coreArgumentPrefix).Append(", (").Append(type.RenderNullableValueType()).Append(")(object?)value);")
-                    .AppendLine();
+            switch (type.SpecialHandling) {
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.SymbolString:
+                    builder.Append("            return ").Append(methodName).Append("(")
+                        .Append("(").Append(type.RenderNullableValueType()).Append(")(object?)value")
+                        .AppendLine(");");
+                    break;
+                default:
+                    if (type.IsValueType) {
+                        builder.Append("            return ").Append(coreMethodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
+                            .Append(coreArgumentPrefix).Append(", Unsafe.As<TValue, ").Append(type.ValueType).Append(">(ref value));")
+                            .AppendLine();
+                    }
+                    else {
+                        builder.Append("            return ").Append(coreMethodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
+                            .Append(coreArgumentPrefix).Append(", (").Append(type.RenderNullableValueType()).Append(")(object?)value);")
+                            .AppendLine();
+                    }
+                    break;
             }
             builder.AppendLine("        }");
         }
@@ -159,18 +169,23 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
     private static void EmitDequeTrySetAtDispatchBranch(StringBuilder builder, MixedTypeGenerationCommon.TypeSpec type) {
         builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
-        if (type.UseDurableObjectHelpers) {
-            builder.Append("            return ((global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">)this).TrySetAt(index, (")
-                .Append(type.RenderNullableValueType()).Append(")(object?)value);")
-                .AppendLine();
-        }
-        else if (type.IsValueType) {
-            builder.Append("            return TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(index, Unsafe.As<TValue, ").Append(type.ValueType).Append(">(ref value));")
-                .AppendLine();
-        }
-        else {
-            builder.Append("            return TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(index, (").Append(type.RenderNullableValueType()).Append(")(object?)value);")
-                .AppendLine();
+        switch (type.SpecialHandling) {
+            case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
+            case MixedTypeGenerationCommon.MixedValueSpecialHandling.SymbolString:
+                builder.Append("            return ((global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">)this).TrySetAt(index, (")
+                    .Append(type.RenderNullableValueType()).Append(")(object?)value);")
+                    .AppendLine();
+                break;
+            default:
+                if (type.IsValueType) {
+                    builder.Append("            return TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(index, Unsafe.As<TValue, ").Append(type.ValueType).Append(">(ref value));")
+                        .AppendLine();
+                }
+                else {
+                    builder.Append("            return TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(index, (").Append(type.RenderNullableValueType()).Append(")(object?)value);")
+                        .AppendLine();
+                }
+                break;
         }
         builder.AppendLine("        }");
     }
@@ -180,21 +195,29 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.Append("    private partial global::Atelia.StateJournal.GetIssue ").Append(methodName).Append("<TValue>(").Append(methodParameter).Append(", out TValue? value) where TValue : notnull {").AppendLine();
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
-            if (type.UseDurableObjectHelpers) {
-                builder.Append("            var exactIssue = ")
-                    .Append(methodName == "PeekCore" ? "PeekDurableObject" : "GetDurableObjectAt")
-                    .Append("(").Append(coreArgument).Append(", out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
-                builder.AppendLine("            value = (TValue?)(object?)typedValue;");
-            }
-            else {
-                builder.Append("            var exactIssue = ").Append(methodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
-                    .Append(coreArgument).Append(", out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
-                if (type.IsValueType) {
-                    builder.Append("            value = Unsafe.As<").Append(type.ValueType).Append(", TValue>(ref typedValue);").AppendLine();
-                }
-                else {
+            switch (type.SpecialHandling) {
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
+                    builder.Append("            var exactIssue = ")
+                        .Append(methodName == "PeekCore" ? "PeekDurableObject" : "GetDurableObjectAt")
+                        .Append("(").Append(coreArgument).Append(", out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
                     builder.AppendLine("            value = (TValue?)(object?)typedValue;");
-                }
+                    break;
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.SymbolString:
+                    builder.Append("            var exactIssue = ")
+                        .Append(methodName == "PeekCore" ? "PeekSymbol" : "GetSymbolAt")
+                        .Append("(").Append(coreArgument).Append(", out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
+                    builder.AppendLine("            value = (TValue?)(object?)typedValue;");
+                    break;
+                default:
+                    builder.Append("            var exactIssue = ").Append(methodName).Append("<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(")
+                        .Append(coreArgument).Append(", out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
+                    if (type.IsValueType) {
+                        builder.Append("            value = Unsafe.As<").Append(type.ValueType).Append(", TValue>(ref typedValue);").AppendLine();
+                    }
+                    else {
+                        builder.AppendLine("            value = (TValue?)(object?)typedValue;");
+                    }
+                    break;
             }
             builder.AppendLine("            return exactIssue;");
             builder.AppendLine("        }");
@@ -239,29 +262,43 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
             var nullableValueType = type.RenderNullableValueType();
             builder.Append("    public global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append("> Of").Append(type.PropertySuffix).AppendLine(" => this;");
 
-            if (type.UseDurableObjectHelpers) {
-                builder.Append("    global::Atelia.StateJournal.GetIssue global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.GetAt(int index, out ").Append(nullableValueType).AppendLine(" value) => GetDurableObjectAt(index, out value);");
-                builder.Append("    public void PushFront(").Append(nullableValueType).AppendLine(" value) => PushCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(front: true, ToDurableRef(value));");
-                builder.Append("    public void PushBack(").Append(nullableValueType).AppendLine(" value) => PushCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(front: false, ToDurableRef(value));");
-                builder.Append("    public global::Atelia.StateJournal.GetIssue PeekFront(out ").Append(nullableValueType).AppendLine(" value) => PeekDurableObject(front: true, out value);");
-                builder.Append("    public global::Atelia.StateJournal.GetIssue PeekBack(out ").Append(nullableValueType).AppendLine(" value) => PeekDurableObject(front: false, out value);");
-                builder.Append("    bool global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.TrySetAt(int index, ").Append(nullableValueType).AppendLine(" value) => TrySetCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(index, ToDurableRef(value));");
-                builder.Append("    public bool TrySetFront(").Append(nullableValueType).AppendLine(" value) => TrySetCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(front: true, ToDurableRef(value));");
-                builder.Append("    public bool TrySetBack(").Append(nullableValueType).AppendLine(" value) => TrySetCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(front: false, ToDurableRef(value));");
-                builder.Append("    public global::Atelia.StateJournal.GetIssue PopFront(out ").Append(nullableValueType).AppendLine(" value) => PopCore<global::Atelia.StateJournal.DurableObject>(front: true, out value);");
-                builder.Append("    public global::Atelia.StateJournal.GetIssue PopBack(out ").Append(nullableValueType).AppendLine(" value) => PopCore<global::Atelia.StateJournal.DurableObject>(front: false, out value);");
-            }
-            else {
-                builder.Append("    global::Atelia.StateJournal.GetIssue global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.GetAt(int index, out ").Append(nullableValueType).Append(" value) => GetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(index, out value);");
-                builder.Append("    public void PushFront(").Append(nullableValueType).Append(" value) => PushCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: true, value);");
-                builder.Append("    public void PushBack(").Append(nullableValueType).Append(" value) => PushCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: false, value);");
-                builder.Append("    public global::Atelia.StateJournal.GetIssue PeekFront(out ").Append(nullableValueType).Append(" value) => PeekCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: true, out value);");
-                builder.Append("    public global::Atelia.StateJournal.GetIssue PeekBack(out ").Append(nullableValueType).Append(" value) => PeekCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: false, out value);");
-                builder.Append("    bool global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.TrySetAt(int index, ").Append(nullableValueType).Append(" value) => TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(index, value);");
-                builder.Append("    public bool TrySetFront(").Append(nullableValueType).Append(" value) => TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: true, value);");
-                builder.Append("    public bool TrySetBack(").Append(nullableValueType).Append(" value) => TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: false, value);");
-                builder.Append("    public global::Atelia.StateJournal.GetIssue PopFront(out ").Append(nullableValueType).Append(" value) => PopCore<").Append(type.ValueType).AppendLine(">(front: true, out value);");
-                builder.Append("    public global::Atelia.StateJournal.GetIssue PopBack(out ").Append(nullableValueType).Append(" value) => PopCore<").Append(type.ValueType).AppendLine(">(front: false, out value);");
+            switch (type.SpecialHandling) {
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
+                    builder.Append("    global::Atelia.StateJournal.GetIssue global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.GetAt(int index, out ").Append(nullableValueType).AppendLine(" value) => GetDurableObjectAt(index, out value);");
+                    builder.Append("    public void PushFront(").Append(nullableValueType).AppendLine(" value) => PushCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(front: true, ToDurableRef(value));");
+                    builder.Append("    public void PushBack(").Append(nullableValueType).AppendLine(" value) => PushCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(front: false, ToDurableRef(value));");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PeekFront(out ").Append(nullableValueType).AppendLine(" value) => PeekDurableObject(front: true, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PeekBack(out ").Append(nullableValueType).AppendLine(" value) => PeekDurableObject(front: false, out value);");
+                    builder.Append("    bool global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.TrySetAt(int index, ").Append(nullableValueType).AppendLine(" value) => TrySetCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(index, ToDurableRef(value));");
+                    builder.Append("    public bool TrySetFront(").Append(nullableValueType).AppendLine(" value) => TrySetCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(front: true, ToDurableRef(value));");
+                    builder.Append("    public bool TrySetBack(").Append(nullableValueType).AppendLine(" value) => TrySetCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(front: false, ToDurableRef(value));");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PopFront(out ").Append(nullableValueType).AppendLine(" value) => PopCore<global::Atelia.StateJournal.DurableObject>(front: true, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PopBack(out ").Append(nullableValueType).AppendLine(" value) => PopCore<global::Atelia.StateJournal.DurableObject>(front: false, out value);");
+                    break;
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.SymbolString:
+                    builder.Append("    global::Atelia.StateJournal.GetIssue global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.GetAt(int index, out ").Append(nullableValueType).AppendLine(" value) => GetSymbolAt(index, out value);");
+                    builder.Append("    public void PushFront(").Append(nullableValueType).AppendLine(" value) => PushSymbol(front: true, value);");
+                    builder.Append("    public void PushBack(").Append(nullableValueType).AppendLine(" value) => PushSymbol(front: false, value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PeekFront(out ").Append(nullableValueType).AppendLine(" value) => PeekSymbol(front: true, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PeekBack(out ").Append(nullableValueType).AppendLine(" value) => PeekSymbol(front: false, out value);");
+                    builder.Append("    bool global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.TrySetAt(int index, ").Append(nullableValueType).AppendLine(" value) => TrySetSymbol(index, value);");
+                    builder.Append("    public bool TrySetFront(").Append(nullableValueType).AppendLine(" value) => TrySetSymbol(front: true, value);");
+                    builder.Append("    public bool TrySetBack(").Append(nullableValueType).AppendLine(" value) => TrySetSymbol(front: false, value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PopFront(out ").Append(nullableValueType).AppendLine(" value) => PopCore<string>(front: true, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PopBack(out ").Append(nullableValueType).AppendLine(" value) => PopCore<string>(front: false, out value);");
+                    break;
+                default:
+                    builder.Append("    global::Atelia.StateJournal.GetIssue global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.GetAt(int index, out ").Append(nullableValueType).Append(" value) => GetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(index, out value);");
+                    builder.Append("    public void PushFront(").Append(nullableValueType).Append(" value) => PushCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: true, value);");
+                    builder.Append("    public void PushBack(").Append(nullableValueType).Append(" value) => PushCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: false, value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PeekFront(out ").Append(nullableValueType).Append(" value) => PeekCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: true, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PeekBack(out ").Append(nullableValueType).Append(" value) => PeekCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: false, out value);");
+                    builder.Append("    bool global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append(">.TrySetAt(int index, ").Append(nullableValueType).Append(" value) => TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(index, value);");
+                    builder.Append("    public bool TrySetFront(").Append(nullableValueType).Append(" value) => TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: true, value);");
+                    builder.Append("    public bool TrySetBack(").Append(nullableValueType).Append(" value) => TrySetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(front: false, value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PopFront(out ").Append(nullableValueType).Append(" value) => PopCore<").Append(type.ValueType).AppendLine(">(front: true, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue PopBack(out ").Append(nullableValueType).Append(" value) => PopCore<").Append(type.ValueType).AppendLine(">(front: false, out value);");
+                    break;
             }
             builder.AppendLine();
         }
@@ -274,14 +311,21 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.Append("    public partial global::Atelia.StateJournal.UpsertStatus Upsert<TValue>(").Append(keyType).AppendLine(" key, TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
-            if (type.UseDurableObjectHelpers) {
-                builder.Append("            return Upsert(key, (").Append(type.RenderNullableValueType()).Append(")(object?)value);").AppendLine();
-            }
-            else if (type.IsValueType) {
-                builder.Append("            return UpsertCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(key, Unsafe.As<TValue, ").Append(type.ValueType).Append(">(ref value));").AppendLine();
-            }
-            else {
-                builder.Append("            return UpsertCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(key, (").Append(type.RenderNullableValueType()).Append(")(object?)value);").AppendLine();
+            switch (type.SpecialHandling) {
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
+                    builder.Append("            return Upsert(key, (").Append(type.RenderNullableValueType()).Append(")(object?)value);").AppendLine();
+                    break;
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.SymbolString:
+                    builder.Append("            return UpsertSymbol(key, (").Append(type.RenderNullableValueType()).Append(")(object?)value);").AppendLine();
+                    break;
+                default:
+                    if (type.IsValueType) {
+                        builder.Append("            return UpsertCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(key, Unsafe.As<TValue, ").Append(type.ValueType).Append(">(ref value));").AppendLine();
+                    }
+                    else {
+                        builder.Append("            return UpsertCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(key, (").Append(type.RenderNullableValueType()).Append(")(object?)value);").AppendLine();
+                    }
+                    break;
             }
             builder.AppendLine("        }");
         }
@@ -307,18 +351,24 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.Append("    public partial global::Atelia.StateJournal.GetIssue Get<TValue>(").Append(keyType).AppendLine(" key, out TValue? value) where TValue : notnull {");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
-            if (type.UseDurableObjectHelpers) {
-                builder.Append("            var exactIssue = GetDurableObject(key, out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
-                builder.AppendLine("            value = (TValue?)(object?)typedValue;");
-            }
-            else {
-                builder.Append("            var exactIssue = GetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(key, out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
-                if (type.IsValueType) {
-                    builder.Append("            value = Unsafe.As<").Append(type.ValueType).Append(", TValue>(ref typedValue);").AppendLine();
-                }
-                else {
+            switch (type.SpecialHandling) {
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
+                    builder.Append("            var exactIssue = GetDurableObject(key, out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
                     builder.AppendLine("            value = (TValue?)(object?)typedValue;");
-                }
+                    break;
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.SymbolString:
+                    builder.Append("            var exactIssue = GetSymbol(key, out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
+                    builder.AppendLine("            value = (TValue?)(object?)typedValue;");
+                    break;
+                default:
+                    builder.Append("            var exactIssue = GetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).Append(">(key, out ").Append(type.RenderNullableValueType()).AppendLine(" typedValue);");
+                    if (type.IsValueType) {
+                        builder.Append("            value = Unsafe.As<").Append(type.ValueType).Append(", TValue>(ref typedValue);").AppendLine();
+                    }
+                    else {
+                        builder.AppendLine("            value = (TValue?)(object?)typedValue;");
+                    }
+                    break;
             }
             builder.AppendLine("            return exactIssue;");
             builder.AppendLine("        }");
@@ -354,13 +404,19 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
             var nullableValueType = type.RenderNullableValueType();
             builder.Append("    public global::Atelia.StateJournal.IDict<").Append(keyType).Append(", ").Append(type.ValueType).Append("> Of").Append(type.PropertySuffix).AppendLine(" => this;");
 
-            if (type.UseDurableObjectHelpers) {
-                builder.Append("    public global::Atelia.StateJournal.GetIssue Get(").Append(keyType).Append(" key, out ").Append(nullableValueType).AppendLine(" value) => GetDurableObject(key, out value);");
-                builder.Append("    public global::Atelia.StateJournal.UpsertStatus Upsert(").Append(keyType).Append(" key, ").Append(nullableValueType).AppendLine(" value) => UpsertCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(key, ToDurableRef(value));");
-            }
-            else {
-                builder.Append("    public global::Atelia.StateJournal.GetIssue Get(").Append(keyType).Append(" key, out ").Append(nullableValueType).Append(" value) => GetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(key, out value);");
-                builder.Append("    public global::Atelia.StateJournal.UpsertStatus Upsert(").Append(keyType).Append(" key, ").Append(nullableValueType).Append(" value) => UpsertCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(key, value);");
+            switch (type.SpecialHandling) {
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue Get(").Append(keyType).Append(" key, out ").Append(nullableValueType).AppendLine(" value) => GetDurableObject(key, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.UpsertStatus Upsert(").Append(keyType).Append(" key, ").Append(nullableValueType).AppendLine(" value) => UpsertCore<global::Atelia.StateJournal.Internal.DurableRef, global::Atelia.StateJournal.Internal.ValueBox.DurableRefFace>(key, ToDurableRef(value));");
+                    break;
+                case MixedTypeGenerationCommon.MixedValueSpecialHandling.SymbolString:
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue Get(").Append(keyType).Append(" key, out ").Append(nullableValueType).AppendLine(" value) => GetSymbol(key, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.UpsertStatus Upsert(").Append(keyType).Append(" key, ").Append(nullableValueType).AppendLine(" value) => UpsertSymbol(key, value);");
+                    break;
+                default:
+                    builder.Append("    public global::Atelia.StateJournal.GetIssue Get(").Append(keyType).Append(" key, out ").Append(nullableValueType).Append(" value) => GetCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(key, out value);");
+                    builder.Append("    public global::Atelia.StateJournal.UpsertStatus Upsert(").Append(keyType).Append(" key, ").Append(nullableValueType).Append(" value) => UpsertCore<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(key, value);");
+                    break;
             }
             builder.AppendLine();
         }

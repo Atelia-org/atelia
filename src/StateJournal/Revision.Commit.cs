@@ -43,7 +43,12 @@ partial class Revision {
         var compactionSession = RevisionCompactionSession.TryApply(this, primaryCommitTicket, primaryArtifacts.LiveObjects);
         if (compactionSession is null) { return LogAndReturnOutcome(CommitOutcome.PrimaryOnly(primaryCommitTicket)); }
 
-        var compactionCommit = PersistCompactionFollowup(graphRoot, primaryArtifacts.LiveObjects, targetFile);
+        var compactionCommit = PersistCompactionFollowup(
+            graphRoot,
+            primaryArtifacts.LiveObjects,
+            compactionSession.SymbolMirrorUpdatePlan,
+            targetFile
+        );
         if (compactionCommit.IsFailure) { return LogAndReturnOutcome(compactionSession.RollbackAfterFollowupPersistFailure(compactionCommit.Error!)); }
 
         return LogAndReturnOutcome(CommitOutcome.Compacted(primaryCommitTicket, compactionCommit.Value));
@@ -57,19 +62,17 @@ partial class Revision {
         if (liveObjectsResult.IsFailure) { return liveObjectsResult.Error!; }
 
         try {
-            var persistResult = PersistCurrentSnapshot(
-                graphRoot, liveObjectsResult.Value!,
-                removeUnreachableObjectMapKeys: true, FrameSource.CrossFileSnapshot,
-                targetFile, forceAll: true
-            );
-            // ExportTo 不改变当前 Revision 状态，无论成败都回滚 _objectMap 的未提交变更
+            var persistResult = PersistCrossFileSnapshot(graphRoot, liveObjectsResult.Value!, targetFile);
+            // ExportTo 不改变当前 Revision 状态，无论成败都回滚镜像层的未提交变更
             _objectMap.DiscardChanges();
+            _symbolTable.DiscardChanges();
             if (persistResult.IsFailure) { return persistResult.Error!; }
             // 不调用 FinalizePrimaryCommit：不 Complete PendingSave、不 Sweep、不更新 _head
             return persistResult.Value.Id;
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
             _objectMap.DiscardChanges();
+            _symbolTable.DiscardChanges();
             return BuildStateError("ExportTo persistence failed", ex);
         }
     }
@@ -83,18 +86,16 @@ partial class Revision {
 
         AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> persistResult;
         try {
-            persistResult = PersistCurrentSnapshot(
-                graphRoot, liveObjectsResult.Value!,
-                removeUnreachableObjectMapKeys: true, FrameSource.CrossFileSnapshot,
-                targetFile, forceAll: true
-            );
+            persistResult = PersistCrossFileSnapshot(graphRoot, liveObjectsResult.Value!, targetFile);
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
             _objectMap.DiscardChanges();
+            _symbolTable.DiscardChanges();
             return BuildStateError("SaveAs persistence failed", ex);
         }
         if (persistResult.IsFailure) {
             _objectMap.DiscardChanges();
+            _symbolTable.DiscardChanges();
             return persistResult.Error!;
         }
 
@@ -132,18 +133,16 @@ partial class Revision {
 
         AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> persistResult;
         try {
-            persistResult = PersistCurrentSnapshot(
-                graphRoot, liveObjectsResult.Value!,
-                removeUnreachableObjectMapKeys: true, FrameSource.PrimaryCommit,
-                targetFile
-            );
+            persistResult = PersistPrimarySnapshot(graphRoot, liveObjectsResult.Value!, targetFile);
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
             _objectMap.DiscardChanges();
+            _symbolTable.DiscardChanges();
             return BuildStateError("Persistence failed", ex);
         }
         if (persistResult.IsFailure) {
             _objectMap.DiscardChanges();
+            _symbolTable.DiscardChanges();
             return persistResult.Error!;
         }
 
@@ -164,15 +163,12 @@ partial class Revision {
     private AteliaResult<CommitTicket> PersistCompactionFollowup(
         DurableObject graphRoot,
         IReadOnlyList<DurableObject> liveObjects,
+        SymbolMirrorUpdatePlan symbolMirrorUpdatePlan,
         IRbfFile targetFile
     ) {
         AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> persistResult;
         try {
-            persistResult = PersistCurrentSnapshot(
-                graphRoot, liveObjects,
-                removeUnreachableObjectMapKeys: false, FrameSource.Compaction,
-                targetFile
-            );
+            persistResult = PersistCompactionFollowupSnapshot(graphRoot, liveObjects, symbolMirrorUpdatePlan, targetFile);
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
             return BuildStateError("Compaction follow-up persistence failed", ex);
@@ -184,45 +180,6 @@ partial class Revision {
         return newCommitTicket;
     }
 
-    /// <summary>
-    /// 从 GraphRoot 开始 DFS 遍历，同时执行 GcPool 的 BeginMark + TryMarkReachable。
-    /// 遍历结束后 mark bitmap 即为最终可达集，后续 Sweep 无需再标记。
-    /// 若发现悬空引用则返回失败（mark bitmap 留脏，下次 Commit 的 BeginMark 会清零，无副作用）。
-    /// </summary>
-    private AteliaResult<List<DurableObject>> WalkAndMark(DurableObject graphRoot) {
-        _pool.BeginMark();
-        _pool.MarkReachable(new SlotHandle(1, 0)); // slot 0 = ObjectMap，始终可达
-        _pool.MarkReachable(new SlotHandle(0, 1)); // slot 1 = SymbolTable，始终可达
-
-        var liveObjects = new List<DurableObject>();
-        var dfsStack = new Stack<DurableObject>();
-
-        // 标记并入队根节点
-        _pool.TryMarkReachable(graphRoot.LocalId.ToSlotHandle());
-        liveObjects.Add(graphRoot);
-        dfsStack.Push(graphRoot);
-
-        while (dfsStack.Count > 0) {
-            var current = dfsStack.Pop();
-            var visitor = new WalkMarkVisitor(_pool, liveObjects, dfsStack);
-            current.AcceptChildRefVisitor(ref visitor);
-            if (visitor.Error is not null) { return visitor.Error; }
-        }
-
-        return liveObjects;
-    }
-
-    private AteliaResult<List<DurableObject>> PrepareLiveObjects(DurableObject graphRoot) {
-        try {
-            EnsureCanReference(graphRoot);
-        }
-        catch (InvalidOperationException ex) {
-            return BuildStateError("EnsureCanReference failed", ex);
-        }
-
-        return WalkAndMark(graphRoot);
-    }
-
     private static SjStateError BuildStateError(string messagePrefix, Exception ex) {
         return new SjStateError(
             $"{messagePrefix}: {ex.GetType().Name}: {ex.Message}",
@@ -230,12 +187,62 @@ partial class Revision {
         );
     }
 
-    private AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> PersistCurrentSnapshot(
+    private AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> PersistPrimarySnapshot(
         DurableObject graphRoot,
         IReadOnlyList<DurableObject> liveObjects,
-        bool removeUnreachableObjectMapKeys,
+        IRbfFile targetFile
+    ) {
+        return PersistSnapshotCore(
+            graphRoot,
+            liveObjects,
+            frameSource: FrameSource.PrimaryCommit,
+            targetFile,
+            symbolMirrorUpdatePlan: SymbolMirrorUpdatePlan.ReachableScan(),
+            removeUnreachableObjectMapKeys: true,
+            forceAll: false
+        );
+    }
+
+    private AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> PersistCrossFileSnapshot(
+        DurableObject graphRoot,
+        IReadOnlyList<DurableObject> liveObjects,
+        IRbfFile targetFile
+    ) {
+        return PersistSnapshotCore(
+            graphRoot,
+            liveObjects,
+            frameSource: FrameSource.CrossFileSnapshot,
+            targetFile,
+            symbolMirrorUpdatePlan: SymbolMirrorUpdatePlan.ReachableScan(),
+            removeUnreachableObjectMapKeys: true,
+            forceAll: true
+        );
+    }
+
+    private AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> PersistCompactionFollowupSnapshot(
+        DurableObject graphRoot,
+        IReadOnlyList<DurableObject> liveObjects,
+        SymbolMirrorUpdatePlan symbolMirrorUpdatePlan,
+        IRbfFile targetFile
+    ) {
+        return PersistSnapshotCore(
+            graphRoot,
+            liveObjects,
+            frameSource: FrameSource.Compaction,
+            targetFile,
+            symbolMirrorUpdatePlan: symbolMirrorUpdatePlan,
+            removeUnreachableObjectMapKeys: false,
+            forceAll: false
+        );
+    }
+
+    private AteliaResult<(List<PendingSave> PendingSaves, CommitTicket Id)> PersistSnapshotCore(
+        DurableObject graphRoot,
+        IReadOnlyList<DurableObject> liveObjects,
         FrameSource frameSource,
         IRbfFile targetFile,
+        SymbolMirrorUpdatePlan symbolMirrorUpdatePlan,
+        bool removeUnreachableObjectMapKeys,
         bool forceAll = false
     ) {
         var pendingSaves = new List<PendingSave>();
@@ -263,7 +270,9 @@ partial class Revision {
             }
         }
 
-        // ── SymbolTable 持久化 ──
+        var symbolMirrorResult = UpdateSymbolMirror(symbolMirrorUpdatePlan);
+        if (symbolMirrorResult.IsFailure) { return symbolMirrorResult.Error!; }
+
         // 写入 SymbolTable（它的 VersionChain 自动处理增量 diff）
         var stContext = new DiffWriteContext(FrameUsage.UserPayload, frameSource) {
             ForceRebase = forceAll,
@@ -299,6 +308,7 @@ partial class Revision {
 
         // Mark bitmap 已在 Phase 1 (WalkAndMark) 中完成，直接 Sweep
         _pool.Sweep<DetachOnSweepCollectHandler>();
+        _symbolPool.Sweep();
 
         _head = new CommitSnapshot(
             newCommitTicket,
@@ -320,59 +330,6 @@ partial class Revision {
         );
     }
 
-    /// <summary>
-    /// 测试专用入口：从 move records 推断 touched objects 后调用核心回滚。
-    /// </summary>
-    internal void RollbackCompactionChanges(GcPool<DurableObject>.CompactionJournal undoToken) {
-        var touchedObjects = new HashSet<DurableObject>();
-        foreach (var record in undoToken.Records) {
-            if (_pool.TryGetValue(record.NewHandle, out var movedObj)) {
-                touchedObjects.Add(movedObj);
-            }
-            else if (_pool.TryGetValue(record.OldHandle, out var originalObj)) {
-                touchedObjects.Add(originalObj);
-            }
-        }
-        RollbackCompactionChanges(undoToken, touchedObjects);
-    }
-
-    /// <summary>
-    /// 核心回滚逻辑：恢复 pool slot 布局 → 恢复被移动对象的 LocalId → 丢弃 ObjectMap 与 touched 对象的工作态变更。
-    /// </summary>
-    /// <remarks>
-    /// 目标语义下，这里不负责“吞掉”内部不变量破坏。
-    /// 若 pool 恢复后的对象布局与 move records 不一致，应直接抛异常 fail-fast。
-    /// </remarks>
-    private void RollbackCompactionChanges(
-        GcPool<DurableObject>.CompactionJournal undoToken,
-        HashSet<DurableObject> touchedObjects
-    ) {
-        // 顺序关键：先恢复 pool slot 布局，再恢复 LocalId，最后丢弃工作态变更
-        _pool.RollbackCompaction(undoToken);
-        RestoreMovedObjectLocalIds(undoToken.Records);
-        _objectMap.DiscardChanges();
-        _symbolTable.DiscardChanges();
-        foreach (var obj in touchedObjects) {
-            obj.DiscardChanges();
-        }
-    }
-
-    /// <summary>
-    /// pool 恢复后，对象已回到原始 slot，但其 LocalId 仍指向 compaction 后的新位置。
-    /// 此方法将每个被移动对象的 LocalId Rebind 回 compaction 前的原始 handle。
-    /// </summary>
-    private void RestoreMovedObjectLocalIds(IReadOnlyList<SlotPool<DurableObject>.MoveRecord> records) {
-        foreach (var record in records) {
-            var oldHandle = record.OldHandle;
-            if (!_pool.TryGetValue(oldHandle, out var obj)) {
-                throw new InvalidOperationException(
-                    $"Compaction rollback restored slot {oldHandle}, but the moved object is missing at its original handle."
-                );
-            }
-            obj.Rebind(LocalId.FromSlotHandle(oldHandle));
-        }
-    }
-
     private static SjCompactionPersistError BuildCompactionFollowupPersistFailureError(CommitTicket primaryCommitTicket, AteliaError cause) {
         var details = new Dictionary<string, string> {
             ["PrimaryCommitTicket"] = primaryCommitTicket.Ticket.Serialize().ToString(),
@@ -388,182 +345,24 @@ partial class Revision {
         );
     }
 
-    private bool ShouldCompact() {
-        int liveCount = _pool.Count;
-        int capacity = _pool.Capacity;
-        if (liveCount < CompactionMinThreshold || capacity == 0) { return false; }
-
-        int holeCount = capacity - liveCount;
-        return holeCount * 100 > capacity * CompactionTriggerPercent;
+    /// <summary>Compaction 用的引用重写器：查翻译表，命中则返回新 id，否则原样返回。同时覆盖 Object (LocalId) 和 Symbol (SymbolId)。</summary>
+    private ref partial struct CompactRewriter(
+            Dictionary<uint, LocalId> objectTable,
+            Dictionary<uint, SymbolId>? symbolTable) : IChildRefRewriter {
     }
 
-    private int GetCompactionMaxMoves() {
-        int liveCount = _pool.Count;
-        return Math.Max(1, (int)((long)liveCount * CompactionMovePercent / 100));
-    }
-
-    // ───── Compaction 参数 ─────
-
-    /// <summary>存活对象数低于此值时不触发压缩。</summary>
-    private const int CompactionMinThreshold = 64;
-
-    /// <summary>碎片率（%）超过此值才触发压缩。</summary>
-    private const int CompactionTriggerPercent = 25;
-
-    /// <summary>每次压缩最多移动的存活对象比例（%）。</summary>
-    private const int CompactionMovePercent = 5;
-
-    /// <summary>Compaction 用的引用重写器：查翻译表，命中则返回新 LocalId，否则原样返回。</summary>
-    private ref struct CompactRewriter(Dictionary<uint, LocalId> table) : IChildRefRewriter {
-        public LocalId Rewrite(LocalId oldId) {
-            return table.TryGetValue(oldId.Value, out var newId) ? newId : oldId;
-        }
-    }
-
-    /// <summary>
-    /// 根据当前 compaction 校验模式，在 apply 完成后做一致性校验。
-    /// </summary>
-    private AteliaResult<bool> ValidateCompactionApply(
-        IReadOnlyList<DurableObject> liveObjects,
-        IReadOnlyCollection<DurableObject> touchedObjects,
-        IReadOnlyDictionary<uint, LocalId> translationTable
-    ) {
-        return GetCompactionValidationMode() switch {
-            CompactionValidationMode.Strict => ValidateAllReferences(liveObjects),
-            CompactionValidationMode.HotPath => ValidateCompactionHotPath(touchedObjects, translationTable, liveObjects.Count),
-            _ => throw new InvalidOperationException("Unknown compaction validation mode.")
-        };
-    }
-
-    /// <summary>
-    /// 校验给定 live objects 与当前 ObjectMap / pool / 子引用的一致性。
-    /// 主要用于 compaction apply 后的工作集级验证，避免再次从 ObjectMap 反查对象。
-    /// </summary>
-    private AteliaResult<bool> ValidateAllReferences(IReadOnlyList<DurableObject> liveObjects) {
-        // ObjectMap.Count = liveObjects.Count + 1 (SymbolTable at key=1)
-        int expectedObjectMapCount = liveObjects.Count + 1;
-        if (_objectMap.Count != expectedObjectMapCount) {
-            return new SjCorruptionError(
-                $"ObjectMap count {_objectMap.Count} does not match expected count {expectedObjectMapCount} (live={liveObjects.Count} + 1 SymbolTable).",
-                RecoveryHint: "Compaction produced inconsistent ObjectMap/live-object state."
-            );
-        }
-
-        foreach (var parentObj in liveObjects) {
-            var identityResult = ValidateLiveObjectIdentity(parentObj);
-            if (identityResult.IsFailure) { return identityResult.Error!; }
-
-            var validator = new ReferenceValidationVisitor(_pool, parentObj.LocalId);
-            parentObj.AcceptChildRefVisitor(ref validator);
-            if (validator.Error is not null) { return validator.Error!; }
-        }
-        return true;
-    }
-
-    /// <summary>
-    /// 热路径模式：不再扫描整个 live object 图，而是只校验本次 compaction 明确触达的对象和键空间重映射。
-    /// </summary>
-    private AteliaResult<bool> ValidateCompactionHotPath(
-        IReadOnlyCollection<DurableObject> touchedObjects,
-        IReadOnlyDictionary<uint, LocalId> translationTable,
-        int expectedLiveObjectCount
-    ) {
-        // ObjectMap.Count = expectedLiveObjectCount + 1 (SymbolTable at key=1)
-        int expectedObjectMapCount = expectedLiveObjectCount + 1;
-        if (_objectMap.Count != expectedObjectMapCount) {
-            return new SjCorruptionError(
-                $"ObjectMap count {_objectMap.Count} does not match expected count {expectedObjectMapCount} (live={expectedLiveObjectCount} + 1 SymbolTable).",
-                RecoveryHint: "Compaction produced inconsistent ObjectMap/live-object state."
-            );
-        }
-
-        foreach (var touchedObj in touchedObjects) {
-            var identityResult = ValidateLiveObjectIdentity(touchedObj);
-            if (identityResult.IsFailure) { return identityResult.Error!; }
-
-            var validator = new ReferenceValidationVisitor(_pool, touchedObj.LocalId);
-            touchedObj.AcceptChildRefVisitor(ref validator);
-            if (validator.Error is not null) { return validator.Error!; }
-        }
-
-        foreach (uint oldIdValue in translationTable.Keys) {
-            if (_objectMap.Get(oldIdValue, out _) == GetIssue.None) {
-                return new SjCorruptionError(
-                    $"Moved object old LocalId {oldIdValue} still exists in ObjectMap after compaction.",
-                    RecoveryHint: "Compaction produced inconsistent ObjectMap key remapping."
-                );
-            }
-        }
-
-        return true;
-    }
-
-    private AteliaResult<bool> ValidateLiveObjectIdentity(DurableObject parentObj) {
-        if (parentObj.IsDetached) {
-            return new SjCorruptionError(
-                $"Live object LocalId {parentObj.LocalId.Value} is unexpectedly detached.",
-                RecoveryHint: "Compaction produced inconsistent object state."
-            );
-        }
-
-        var parentHandle = parentObj.LocalId.ToSlotHandle();
-        if (!_pool.TryGetValue(parentHandle, out var pooledParent) || !ReferenceEquals(parentObj, pooledParent)) {
-            return new SjCorruptionError(
-                $"Live object LocalId {parentObj.LocalId.Value} is missing or mismatched in pool.",
-                RecoveryHint: "Compaction produced inconsistent pool/object identity state."
-            );
-        }
-
-        if (_objectMap.Get(parentObj.LocalId.Value, out _) != GetIssue.None) {
-            return new SjCorruptionError(
-                $"Live object LocalId {parentObj.LocalId.Value} is missing from ObjectMap.",
-                RecoveryHint: "Compaction produced inconsistent ObjectMap state."
-            );
-        }
-
-        return true;
-    }
-
-    private readonly struct DetachOnSweepCollectHandler : ISweepCollectHandler<DurableObject> {
-        public static void OnCollect(DurableObject value) => value.DetachByGc();
-    }
-
-    /// <summary>DFS 遍历中的 visitor：验证引用有效性 + 首访标记去重 + 收集存活 handle + 压入 DFS 栈。</summary>
-    private ref struct WalkMarkVisitor(
+    /// <summary>DFS 遍历中的 visitor：验证引用有效性 + 首访标记去重 + 收集存活 handle + 压入 DFS 栈。
+    /// 同时标记 symbol pool 中的可达 SymbolId，一趟 DFS 完成两种 pool 的 mark。</summary>
+    private ref partial struct WalkMarkVisitor(
             GcPool<DurableObject> pool,
+            StringPool symbolPool,
             List<DurableObject> liveObjects,
             Stack<DurableObject> dfsStack) : IChildRefVisitor {
         public AteliaError? Error { get; private set; }
-
-        public void Visit(LocalId childId) {
-            if (Error is not null || childId.IsNull) { return; }
-            SlotHandle handle = childId.ToSlotHandle();
-            if (!pool.TryGetValueAndMarkFirstReachable(handle, out var child, out bool firstVisit)) {
-                Error = new SjCorruptionError(
-                    $"Dangling reference detected during commit: Graph contains missing LocalId {childId.Value}.",
-                    RecoveryHint: "Fix object graph references before commit."
-                );
-                return;
-            }
-            if (!firstVisit) { return; } // 已访问
-            liveObjects.Add(child);
-            dfsStack.Push(child);
-        }
     }
 
-    private ref struct ReferenceValidationVisitor(GcPool<DurableObject> pool, LocalId parentId) : IChildRefVisitor {
+    private ref partial struct ReferenceValidationVisitor(GcPool<DurableObject> pool, StringPool symbolPool, LocalId parentId) : IChildRefVisitor {
         public AteliaError? Error { get; private set; }
-
-        public void Visit(LocalId childId) {
-            if (Error is not null || childId.IsNull) { return; }
-            SlotHandle handle = childId.ToSlotHandle();
-            if (!pool.TryGetValue(handle, out _)) {
-                Error = new SjCorruptionError(
-                    $"Dangling reference detected: parent LocalId {parentId.Value} points to missing LocalId {childId.Value}.",
-                    RecoveryHint: "Data corruption detected in persisted object references."
-                );
-            }
-        }
     }
 
     #region Test Helper

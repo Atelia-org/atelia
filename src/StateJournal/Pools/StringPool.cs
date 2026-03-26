@@ -4,6 +4,8 @@ using System.Runtime.CompilerServices;
 namespace Atelia.StateJournal.Pools;
 
 internal sealed class StringPool : IMarkSweepPool<string> {
+    internal interface IEntryVisitor : InternPool<string, OrdinalStaticEqualityComparer>.IEntryVisitor;
+
     private const int MaxPassthroughLength = 40;
     private const int IdentityCacheWays = 4;
     private const int IdentityCacheSetCount = 64;
@@ -60,6 +62,9 @@ internal sealed class StringPool : IMarkSweepPool<string> {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MarkReachable(SlotHandle handle) => _innerPool.MarkReachable(handle);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryMarkReachable(SlotHandle handle) => _innerPool.TryMarkReachable(handle);
+
     public int Sweep() {
         int freed = _innerPool.Sweep();
         if (freed > 0) {
@@ -84,6 +89,11 @@ internal sealed class StringPool : IMarkSweepPool<string> {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Validate(SlotHandle handle) => _innerPool.Validate(handle);
+
+    internal void VisitEntries<TVisitor>(ref TVisitor visitor)
+        where TVisitor : IEntryVisitor, allows ref struct {
+        _innerPool.VisitEntries(ref visitor);
+    }
 
     public SlotHandle Store(string value) {
         if (value.Length <= MaxPassthroughLength) {

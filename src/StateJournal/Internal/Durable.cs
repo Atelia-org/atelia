@@ -1,6 +1,4 @@
-using Atelia.StateJournal.Internal;
-
-namespace Atelia.StateJournal;
+namespace Atelia.StateJournal.Internal;
 
 /// <summary>
 /// StateJournal 容器的统一工厂门面。

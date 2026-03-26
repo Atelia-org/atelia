@@ -31,6 +31,12 @@ internal static class MixedTypeGenerationCommon {
                     All = Deque | Dict
                 }
 
+                internal enum MixedValueSpecialHandling {
+                    None = 0,
+                    DurableObject,
+                    SymbolString
+                }
+
                 [global::System.AttributeUsage(global::System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
                 internal sealed class MixedValueTypeAttribute : global::System.Attribute {
                     public MixedValueTypeAttribute(global::System.Type valueType, global::System.Type faceType, string propertySuffix) {
@@ -43,7 +49,7 @@ internal static class MixedTypeGenerationCommon {
                     public global::System.Type FaceType { get; }
                     public string PropertySuffix { get; }
                     public MixedContainers Containers { get; set; } = MixedContainers.All;
-                    public bool UseDurableObjectHelpers { get; set; }
+                    public MixedValueSpecialHandling SpecialHandling { get; set; } = MixedValueSpecialHandling.None;
                 }
 
                 [global::System.AttributeUsage(global::System.AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
@@ -125,15 +131,17 @@ internal static class MixedTypeGenerationCommon {
             if (attribute.ConstructorArguments[2].Value is not string propertySuffix) { continue; }
 
             int declaredContainers = 3;
-            bool useDurableObjectHelpers = false;
+            int specialHandling = 0;
             foreach (var namedArg in attribute.NamedArguments) {
                 if (namedArg.Key == "Containers") {
                     declaredContainers = namedArg.Value.Value is int flagsAsInt
                         ? flagsAsInt
                         : (int)namedArg.Value.Value!;
                 }
-                else if (namedArg.Key == "UseDurableObjectHelpers" && namedArg.Value.Value is bool namedUseDurableObjectHelpers) {
-                    useDurableObjectHelpers = namedUseDurableObjectHelpers;
+                else if (namedArg.Key == "SpecialHandling") {
+                    specialHandling = namedArg.Value.Value is int specialHandlingAsInt
+                        ? specialHandlingAsInt
+                        : (int)namedArg.Value.Value!;
                 }
             }
 
@@ -145,7 +153,7 @@ internal static class MixedTypeGenerationCommon {
                     faceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                     propertySuffix,
                     valueType.IsValueType,
-                    useDurableObjectHelpers
+                    (MixedValueSpecialHandling)specialHandling
                 )
             );
         }
@@ -224,20 +232,26 @@ internal static class MixedTypeGenerationCommon {
         Dict = 2,
     }
 
+    internal enum MixedValueSpecialHandling {
+        None = 0,
+        DurableObject,
+        SymbolString,
+    }
+
     internal readonly struct TypeSpec {
-        public TypeSpec(string valueType, string faceType, string propertySuffix, bool isValueType, bool useDurableObjectHelpers) {
+        public TypeSpec(string valueType, string faceType, string propertySuffix, bool isValueType, MixedValueSpecialHandling specialHandling) {
             ValueType = valueType;
             FaceType = faceType;
             PropertySuffix = propertySuffix;
             IsValueType = isValueType;
-            UseDurableObjectHelpers = useDurableObjectHelpers;
+            SpecialHandling = specialHandling;
         }
 
         public string ValueType { get; }
         public string FaceType { get; }
         public string PropertySuffix { get; }
         public bool IsValueType { get; }
-        public bool UseDurableObjectHelpers { get; }
+        public MixedValueSpecialHandling SpecialHandling { get; }
 
         public string RenderNullableValueType() => IsValueType ? ValueType : $"{ValueType}?";
     }

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal.Serialization;
 
@@ -109,8 +110,11 @@ internal ref struct BinaryDiffReader {
     internal float BareSingle(bool asKey) => BinaryPrimitives.ReadSingleLittleEndian(ReadSpan(sizeof(float)));
     internal double BareDouble(bool asKey) => BinaryPrimitives.ReadDoubleLittleEndian(ReadSpan(sizeof(double)));
 
-    /// <summary>Symbol id（引用语义字符串）的裸读取。当前为 stub，后续 Phase 4 实现。</summary>
+    /// <summary>string key 的 symbol-backed 裸读取。当前仍为 stub，后续 key 专用实现接入。</summary>
     internal string? BareSymbolId(bool asKey) => throw new NotImplementedException();
+
+    /// <summary>已编码 <see cref="SymbolId"/> 的裸读取，不做任何 <see cref="Revision"/> 级转换。</summary>
+    internal SymbolId BareStoredSymbolId(bool asKey) => new(BareUInt32(asKey));
 
     /// <summary>
     /// InlineString 的裸读取。格式：VarUInt header，后跟 payload。

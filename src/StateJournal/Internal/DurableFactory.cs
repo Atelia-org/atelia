@@ -33,7 +33,12 @@ internal static class TypedDictFactory<TKey, TValue>
         }
 
         Type implType;
-        if (typeof(DurableObject).IsAssignableFrom(typeof(TValue))) {
+        if (typeof(TValue) == typeof(string)) {
+            // string value → SymbolValDictImpl（内部存 SymbolId，Get 时从 Revision symbol table 解码）
+            implType = typeof(SymbolValDictImpl<,>)
+                .MakeGenericType(typeof(TKey), kEntry.HelperType!);
+        }
+        else if (typeof(DurableObject).IsAssignableFrom(typeof(TValue))) {
             // DurableObject 值 → DurableObjectDictImpl（内部存 LocalId，Get 时懒加载）
             implType = typeof(DurObjDictImpl<,,>)
                 .MakeGenericType(typeof(TKey), typeof(TValue), kEntry.HelperType!);
@@ -117,6 +122,18 @@ internal static class TypedDequeFactory<T>
         var vEntry = HelperRegistry.ResolveValueHelper(typeof(T));
         if (!vEntry.IsValid) {
             ErrorReason = $"Unsupported value type: {HelperRegistry.FormatTypeName(typeof(T))}.";
+            return;
+        }
+
+        // string element 将使用 symbol-backed 专用实现，而不是通用 ITypeHelper<string> 路径。
+        // 这里先保留 TypeCode 预计算，但延后到专用 impl 接入后再开放工厂。
+        if (typeof(T) == typeof(string)) {
+            var stringTypeCode = new byte[vEntry.TypeCode!.Length + 1];
+            vEntry.TypeCode.CopyTo(stringTypeCode, 0);
+            stringTypeCode[^1] = (byte)TypeOpCode.MakeTypedDeque;
+            TypeCode = stringTypeCode;
+            DurableDeque<T>.s_typeCode = stringTypeCode;
+            ErrorReason = "TypedDeque<string> is reserved for a symbol-backed specialized implementation and is not wired yet.";
             return;
         }
 

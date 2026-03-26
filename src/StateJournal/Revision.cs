@@ -22,8 +22,9 @@ public partial class Revision {
     private GcPool<DurableObject> _pool;
 
     /// <summary>
-    /// Per-Revision Symbol Table：持久化层，占据 pool slot 1。
-    /// 存储 symbol slot index → InlineString 映射，用于增量序列化。
+    /// Per-Revision Symbol Table：durable mirror，占据 pool slot 1。
+    /// 平时保留最近一次已 durable 化的镜像，用于后续 diff/rebase 复用；
+    /// 仅在需要持久化前，才从 <see cref="_symbolPool"/> 统一 reconcile。
     /// </summary>
     private DurableDict<uint, InlineString> _symbolTable;
     /// <summary>
@@ -249,20 +250,104 @@ public partial class Revision {
     /// <summary>
     /// 将字符串 intern 到当前 Revision 的 Symbol Pool，返回 SymbolId。
     /// <c>null</c> 映射为 <see cref="SymbolId.Null"/>；非空字符串若已存在则去重返回已有 id。
-    /// 同时同步更新 _symbolTable 以保持持久化层一致。
+    /// 运行时真源始终是 <see cref="_symbolPool"/>；<see cref="_symbolTable"/> 只在持久化前统一收敛。
     /// </summary>
     internal SymbolId InternSymbol(string? value) {
         if (value is null) { return SymbolId.Null; }
 
         var handle = _symbolPool.Store(value);
-        _symbolTable.Upsert(handle.Packed, new InlineString(value));
         return SymbolId.FromSlotHandle(handle);
     }
 
     /// <summary>按 SymbolId 读取 intern 字符串；<see cref="SymbolId.Null"/> 返回 <c>null</c>。</summary>
     internal string? GetSymbol(SymbolId id) => id.IsNull ? null : _symbolPool[id.ToSlotHandle()];
 
+    /// <summary>
+    /// 防御性读取：尝试按 SymbolId 读取 intern 字符串。
+    /// handle 无效或 slot 未占用时返回 false，不抛异常。
+    /// </summary>
+    internal bool TryGetSymbol(SymbolId id, out string? value) {
+        if (id.IsNull) { value = null; return true; }
+        return _symbolPool.TryGetValue(id.ToSlotHandle(), out value!);
+    }
+
+    private void ReconcileSymbolTableFromPool(bool reachableOnly) {
+        var liveSymbols = new Dictionary<uint, string>(_symbolPool.Count);
+        var collector = new SymbolMirrorCollector(_symbolPool, liveSymbols, reachableOnly);
+        _symbolPool.VisitEntries(ref collector);
+
+        foreach (var (packed, value) in liveSymbols) {
+            if (_symbolTable.Get(packed, out InlineString existing) == GetIssue.None && existing.Value == value) {
+                continue;
+            }
+            _symbolTable.Upsert(packed, new InlineString(value));
+        }
+
+        List<uint> keysToRemove = [];
+        foreach (uint key in _symbolTable.Keys) {
+            if (!liveSymbols.ContainsKey(key)) { keysToRemove.Add(key); }
+        }
+        foreach (uint key in keysToRemove) {
+            _symbolTable.Remove(key);
+        }
+    }
+
+    private AteliaResult<bool> ValidateSymbolMirrorConsistency(bool reachableOnly) {
+        var checker = new SymbolMirrorValidator(_symbolTable, _symbolPool, reachableOnly);
+        _symbolPool.VisitEntries(ref checker);
+        if (checker.Error is not null) { return checker.Error; }
+
+        if (checker.ObservedCount != _symbolTable.Count) {
+            return new SjCorruptionError(
+                $"SymbolTable count {_symbolTable.Count} does not match symbol pool live count {checker.ObservedCount}.",
+                RecoveryHint: "Symbol mirror is inconsistent with the runtime symbol pool."
+            );
+        }
+
+        return true;
+    }
+
     #endregion
+
+    private readonly struct SymbolMirrorCollector(
+        StringPool symbolPool,
+        Dictionary<uint, string> liveSymbols,
+        bool reachableOnly) : StringPool.IEntryVisitor {
+        public void Visit(SlotHandle handle, string value) {
+            if (reachableOnly && !symbolPool.IsMarkedReachable(handle)) { return; }
+            liveSymbols[handle.Packed] = value;
+        }
+    }
+
+    private ref struct SymbolMirrorValidator(
+        DurableDict<uint, InlineString> symbolTable,
+        StringPool symbolPool,
+        bool reachableOnly) : StringPool.IEntryVisitor {
+        public AteliaError? Error { get; private set; }
+        public int ObservedCount { get; private set; }
+
+        public void Visit(SlotHandle handle, string value) {
+            if (Error is not null) { return; }
+            if (reachableOnly && !symbolPool.IsMarkedReachable(handle)) { return; }
+
+            ObservedCount++;
+            uint packed = handle.Packed;
+            if (symbolTable.Get(packed, out InlineString inline) != GetIssue.None) {
+                Error = new SjCorruptionError(
+                    $"SymbolTable is missing runtime symbol entry {packed}.",
+                    RecoveryHint: "Symbol mirror is inconsistent with the runtime symbol pool."
+                );
+                return;
+            }
+
+            if (inline.Value != value) {
+                Error = new SjCorruptionError(
+                    $"SymbolTable value mismatch for symbol {packed}.",
+                    RecoveryHint: "Symbol mirror is inconsistent with the runtime symbol pool."
+                );
+            }
+        }
+    }
 
     #region Object Factory
 
@@ -413,7 +498,7 @@ public partial class Revision {
             }
 
             var parentId = LocalId.FromSlotHandle(parentHandle);
-            var validator = new ReferenceValidationVisitor(_pool, parentId);
+            var validator = new ReferenceValidationVisitor(_pool, _symbolPool, parentId);
             parentObj.AcceptChildRefVisitor(ref validator);
             if (validator.Error is not null) { return validator.Error; }
         }

@@ -15,11 +15,12 @@ partial class Revision {
         }
 
         internal int CompactPoolForBenchmark() {
-            return TryCompactPool() ? _undoToken.Records.Count : 0;
+            return TryCompactPool() ? _objectUndoToken?.Records.Count ?? 0 : 0;
         }
 
         internal Dictionary<uint, LocalId> ApplyMovedObjectsAndRewriteForBenchmark(IReadOnlyList<DurableObject> liveObjects) {
-            return ApplyMovedObjectsAndRewrite(liveObjects);
+            var (objectTable, _) = ApplyMovedObjectsAndRewrite(liveObjects, objectMoved: true, symbolMoved: false);
+            return objectTable!;
         }
 
         internal void ValidateAppliedCompactionForBenchmark(
@@ -47,7 +48,12 @@ partial class Revision {
         IReadOnlyList<DurableObject> liveObjects,
         IRbfFile targetFile
     ) {
-        var result = PersistCompactionFollowup(graphRoot, liveObjects, targetFile);
+        var result = PersistCompactionFollowup(
+            graphRoot,
+            liveObjects,
+            SymbolMirrorUpdatePlan.Unchanged(),
+            targetFile
+        );
         if (result.IsFailure) { throw new InvalidOperationException($"Follow-up persist benchmark failed: {result.Error}"); }
         return result.Value;
     }
@@ -57,13 +63,7 @@ partial class Revision {
         IReadOnlyList<DurableObject> liveObjects,
         IRbfFile targetFile
     ) {
-        var result = PersistCurrentSnapshot(
-            graphRoot,
-            liveObjects,
-            removeUnreachableObjectMapKeys: true,
-            FrameSource.PrimaryCommit,
-            targetFile
-        );
+        var result = PersistPrimarySnapshot(graphRoot, liveObjects, targetFile);
         if (result.IsFailure) { throw new InvalidOperationException($"Primary persist benchmark failed: {result.Error}"); }
         var (pendingSaves, commitTicket) = result.Value;
         return (pendingSaves, commitTicket);

@@ -1,5 +1,6 @@
 using Atelia.Rbf;
 using Xunit;
+using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal.Tests;
 
@@ -64,16 +65,12 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var dict = rev.CreateDict<int, double>();
-        dict.Upsert(1, 1.0);
+        // 使用 TypedDict<int, string> 使 symbol 在 DFS 中可达
+        var dict = rev.CreateDict<int, string>();
 
-        // Intern 几个 symbol
-        var sym1 = rev.InternSymbol("alpha");
-        var sym2 = rev.InternSymbol("beta");
-        var sym3 = rev.InternSymbol("alpha"); // dedup
-
-        Assert.Equal(sym1, sym3);
-        Assert.NotEqual(sym1, sym2);
+        dict.Upsert(1, "alpha");
+        dict.Upsert(2, "beta");
+        dict.Upsert(3, "alpha"); // 与 key 1 dedup
 
         // Commit
         var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
@@ -82,13 +79,10 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = openResult.Value!;
-
-        // Verify round-tripped symbols
-        var loadedSym1 = loaded.GetSymbol(sym1);
-        var loadedSym2 = loaded.GetSymbol(sym2);
-        Assert.Equal("alpha", loadedSym1);
-        Assert.Equal("beta", loadedSym2);
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
+        Assert.Equal(GetIssue.None, loaded.Get(1, out var v1)); Assert.Equal("alpha", v1);
+        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2)); Assert.Equal("beta", v2);
+        Assert.Equal(GetIssue.None, loaded.Get(3, out var v3)); Assert.Equal("alpha", v3);
     }
 
     [Fact]
@@ -97,25 +91,42 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var dict = rev.CreateDict<int, double>();
-        dict.Upsert(1, 1.0);
+        var dict = rev.CreateDict<int, string>();
 
         // First commit with one symbol
-        var sym1 = rev.InternSymbol("first");
+        dict.Upsert(1, "first");
         var outcome1 = AssertCommitSucceeded(CommitToFile(rev, dict, file));
 
         // Second commit with another symbol
-        var sym2 = rev.InternSymbol("second");
-        dict.Upsert(2, 2.0);
+        dict.Upsert(2, "second");
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, dict, file));
 
         // Open latest commit
         var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = openResult.Value!;
-        Assert.Equal("first", loaded.GetSymbol(sym1));
-        Assert.Equal("second", loaded.GetSymbol(sym2));
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
+        Assert.Equal(GetIssue.None, loaded.Get(1, out var v1)); Assert.Equal("first", v1);
+        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2)); Assert.Equal("second", v2);
+    }
+
+    [Fact]
+    public void SymbolTable_TracksCommittedMirror_NotRuntimeWorkingSet() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var dict = rev.CreateDict<int, string>();
+        dict.Upsert(1, "first");
+
+        _ = AssertCommitSucceeded(CommitToFile(rev, dict, file));
+        Assert.Equal(1, GetSymbolTableCount(rev));
+
+        dict.Upsert(2, "second");
+        Assert.Equal(1, GetSymbolTableCount(rev));
+
+        _ = AssertCommitSucceeded(CommitToFile(rev, dict, file));
+        Assert.Equal(2, GetSymbolTableCount(rev));
     }
 
     [Fact]
@@ -124,19 +135,18 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var dict = rev.CreateDict<int, double>();
-        dict.Upsert(1, 1.0);
-
-        var emptyId = rev.InternSymbol("");
-        Assert.False(emptyId.IsNull);
+        // 使用 TypedDict<int, string> 使 empty string symbol 可达
+        var dict = rev.CreateDict<int, string>();
+        dict.Upsert(1, "");
+        dict.Upsert(2, "non-empty");
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = openResult.Value!;
-        Assert.Equal("", loaded.GetSymbol(emptyId));
-        Assert.Null(loaded.GetSymbol(SymbolId.Null));
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
+        Assert.Equal(GetIssue.None, loaded.Get(1, out var v1)); Assert.Equal("", v1);
+        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2)); Assert.Equal("non-empty", v2);
     }
 
     [Fact]
@@ -157,22 +167,22 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var dict = rev.CreateDict<int, double>();
-        dict.Upsert(0, 0.0);
+        // 使用 TypedDict<int, string> 使 symbol 可达
+        var dict = rev.CreateDict<int, string>();
 
         const int symbolCount = 50;
-        var ids = new SymbolId[symbolCount];
         for (int i = 0; i < symbolCount; i++) {
-            ids[i] = rev.InternSymbol($"symbol_{i}");
+            dict.Upsert(i, $"symbol_{i}");
         }
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = openResult.Value!;
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
         for (int i = 0; i < symbolCount; i++) {
-            Assert.Equal($"symbol_{i}", loaded.GetSymbol(ids[i]));
+            Assert.Equal(GetIssue.None, loaded.Get(i, out var v));
+            Assert.Equal($"symbol_{i}", v);
         }
     }
 }

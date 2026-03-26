@@ -5,63 +5,58 @@ namespace Atelia.StateJournal.Internal;
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxStringTests.cs`
 partial struct ValueBox {
 
-    internal readonly struct StringFace : ITypedFace<string> {
-        internal const uint TagHeapKindString = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)ValueKind.String;
+    /// <summary>HeapSlot + String kind 的组合 tag，用于快速类型判断。</summary>
+    internal const uint TagHeapKindString = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)ValueKind.String;
 
-        /// <summary>
-        /// 将字符串编码为 ValueBox。通过 <see cref="ValuePools.OfString"/> InternPool 去重。
-        /// </summary>
-        /// <remarks>
-        /// 同值字符串（Ordinal 相等）共享同一 SlotHandle，
-        /// 保证 <see cref="ValueEquals"/> 快速路径命中（bits 相等 → 值相等）。
-        /// </remarks>
-        public static ValueBox From(string? value) => value is not null
-            ? EncodeHeapSlot(HeapValueKind.String, ValuePools.OfString.Store(value))
-            : Null;
-        /// <summary>
-        /// 独占更新：将 ValueBox 覆写为指定的字符串值。
-        /// </summary>
-        /// <remarks>
-        /// 旧值如果持有 <see cref="ValuePools.OfBits64"/> slot（数值类型），会立即释放。
-        /// 旧值如果持有 <see cref="ValuePools.OfString"/> slot（字符串类型），
-        /// 因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
-        /// </remarks>
-        public static bool UpdateOrInit(ref ValueBox old, string? value) {
-            if (value is null && old.IsNull) { return false; }
-            else if (old.GetTagAndKind() == TagHeapKindString
-                && string.Equals(old.DecodeString(), value, StringComparison.Ordinal)) { return false; }
-            FreeOldBits64IfNeeded(old);
-            old = From(value);
-            return true;
+    /// <summary>判断 ValueBox 是否为 SymbolId 引用（HeapSlot + HeapValueKind.String）。O(1) 位操作。</summary>
+    internal readonly bool IsSymbolRef => (uint)(GetBits() >> HeapKindShift) == TagHeapKindString;
+
+    /// <summary>将 SymbolId 编码为 HeapSlot ValueBox。纯位操作，不访问任何池。</summary>
+    internal static ValueBox FromSymbolId(SymbolId id) => id.IsNull
+        ? Null
+        : EncodeHeapSlot(HeapValueKind.String, id.ToSlotHandle());
+
+    /// <summary>从 HeapSlot ValueBox 解码出 SymbolId。纯位操作，不访问任何池。</summary>
+    internal static GetIssue GetSymbolId(ValueBox box, out SymbolId id) {
+        Debug.Assert(!box.IsUninitialized);
+        if (box.IsNull) {
+            id = SymbolId.Null;
+            return GetIssue.None;
         }
-        /// <summary>
-        /// 尝试将 ValueBox 读取为字符串。
-        /// </summary>
-        /// <param name="value">读取到的字符串。仅当返回 <see cref="GetIssue.None"/> 时有效。</param>
-        /// <returns>
-        /// <see cref="GetIssue.None"/> 成功；
-        /// <see cref="GetIssue.TypeMismatch"/> 当 ValueBox 不是字符串类型。
-        /// </returns>
-        public static GetIssue Get(ValueBox box, out string? value) {
-            Debug.Assert(!box.IsUninitialized);
-            if (box.IsNull) {
-                value = null;
-                return GetIssue.None;
-            }
-            // if (GetLZC() == LzcCode.HeapSlot && GetHeapKind() == DurableValueKind.String) {
-            if ((uint)(box.GetBits() >> HeapKindShift) == TagHeapKindString) {
-                value = ValuePools.OfString[box.GetHeapHandle()];
-                return GetIssue.None;
-            }
-            value = null;
-            return GetIssue.TypeMismatch;
+        if ((uint)(box.GetBits() >> HeapKindShift) == TagHeapKindString) {
+            id = new SymbolId(box.GetHeapHandle().Packed);
+            return GetIssue.None;
         }
+        id = default;
+        return GetIssue.TypeMismatch;
     }
 
-    /// <summary>解码 HeapSlot 中的字符串值。调用前须确保 LZC == HeapSlot 且 HeapKind == String。</summary>
-    private string DecodeString() {
+    /// <summary>解码 HeapSlot 中的 SymbolId。调用前须确保 LZC == HeapSlot 且 HeapKind == String。</summary>
+    internal SymbolId DecodeSymbolId() {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
         Debug.Assert(GetHeapKind() == HeapValueKind.String);
-        return ValuePools.OfString[GetHeapHandle()];
+        return new SymbolId(GetHeapHandle().Packed);
+    }
+
+    /// <summary>
+    /// SymbolId 的 ITypedFace 实现。纯位操作，不访问任何池。
+    /// 容器层负责 SymbolId ↔ string 的转换（通过 Revision.InternSymbol/GetSymbol）。
+    /// </summary>
+    internal readonly struct SymbolIdFace : ITypedFace<SymbolId> {
+        public static ValueBox From(SymbolId value) => value.IsNull
+            ? Null
+            : FromSymbolId(value);
+
+        public static bool UpdateOrInit(ref ValueBox old, SymbolId value) {
+            var newBox = value.IsNull ? Null : FromSymbolId(value);
+            if (old.GetBits() == newBox.GetBits()) { return false; }
+            FreeOldBits64IfNeeded(old);
+            old = newBox;
+            return true;
+        }
+
+        public static GetIssue Get(ValueBox box, out SymbolId value) {
+            return GetSymbolId(box, out value);
+        }
     }
 }

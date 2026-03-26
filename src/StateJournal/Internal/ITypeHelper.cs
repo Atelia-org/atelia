@@ -75,14 +75,25 @@ internal readonly struct BooleanHelper : ITypeHelper<bool> {
 }
 
 /// <summary>
-/// Symbol（引用语义字符串）的序列化 Helper。
-/// 当前为 stub，后续 Phase 4 接入 per-Revision String Pool 时实现。
+/// string key 的临时序列化 Helper。
+/// 其真正的 symbol-backed key 存储仍待后续专用实现接入。
 /// </summary>
-internal readonly struct SymbolIdHelper : ITypeHelper<string> {
+internal readonly struct StringKeyHelper : ITypeHelper<string> {
     public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
     public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareSymbolId(v, asKey);
     public static string? Read(ref BinaryDiffReader reader, bool asKey) => reader.BareSymbolId(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) => old = Read(ref reader, asKey: false);
+}
+
+/// <summary>
+/// <see cref="SymbolId"/> 的低层存储 Helper。
+/// 仅负责读写裸的 symbol id，不承接任何 <see cref="Revision"/> 语义。
+/// </summary>
+internal readonly struct SymbolIdHelper : ITypeHelper<SymbolId> {
+    public static bool Equals(SymbolId a, SymbolId b) => a == b;
+    public static void Write(BinaryDiffWriter writer, SymbolId v, bool asKey) => writer.BareStoredSymbolId(v, asKey);
+    public static SymbolId Read(ref BinaryDiffReader reader, bool asKey) => reader.BareStoredSymbolId(asKey);
+    public static void UpdateOrInit(ref BinaryDiffReader reader, ref SymbolId old) => old = Read(ref reader, asKey: false);
 }
 
 /// <summary>

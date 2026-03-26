@@ -155,4 +155,20 @@ where TKey : notnull {
     }
 
     #endregion
+
+    #region Symbol Helpers
+
+    private GetIssue GetSymbol(TKey key, out string? value) {
+        value = null;
+        var issue = GetCore<SymbolId, ValueBox.SymbolIdFace>(key, out var symbolId);
+        if (issue != GetIssue.None) { return issue; }
+        return RevisionStringCodec.Decode(Revision, symbolId, out value);
+    }
+
+    private UpsertStatus UpsertSymbol(TKey key, string? value) {
+        SymbolId id = RevisionStringCodec.Encode(Revision, value);
+        return UpsertCore<SymbolId, ValueBox.SymbolIdFace>(key, id);
+    }
+
+    #endregion
 }

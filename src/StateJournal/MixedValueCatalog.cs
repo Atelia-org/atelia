@@ -3,8 +3,8 @@ using Atelia.StateJournal.Internal;
 namespace Atelia.StateJournal;
 
 [MixedValueType(typeof(bool), typeof(ValueBox.BooleanFace), "Bool")]
-[MixedValueType(typeof(string), typeof(ValueBox.StringFace), "String")]
-[MixedValueType(typeof(DurableObject), typeof(ValueBox.DurableRefFace), "DurableObject", UseDurableObjectHelpers = true)]
+[MixedValueType(typeof(string), typeof(ValueBox.SymbolIdFace), "String", SpecialHandling = MixedValueSpecialHandling.SymbolString)]
+[MixedValueType(typeof(DurableObject), typeof(ValueBox.DurableRefFace), "DurableObject", SpecialHandling = MixedValueSpecialHandling.DurableObject)]
 [MixedValueType(typeof(double), typeof(ValueBox.RoundedDoubleFace), "Double")]
 [MixedValueType(typeof(float), typeof(ValueBox.SingleFace), "Single")]
 [MixedValueType(typeof(Half), typeof(ValueBox.HalfFace), "Half")]

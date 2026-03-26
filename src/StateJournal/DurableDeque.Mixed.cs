@@ -242,4 +242,37 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     }
 
     #endregion
+
+    #region Symbol Helpers
+
+    private GetIssue GetSymbolAt(int index, out string? value) {
+        value = null;
+        var issue = GetCore<SymbolId, ValueBox.SymbolIdFace>(index, out var symbolId);
+        if (issue != GetIssue.None) { return issue; }
+        return RevisionStringCodec.Decode(Revision, symbolId, out value);
+    }
+
+    private GetIssue PeekSymbol(bool front, out string? value) {
+        value = null;
+        var issue = PeekCore<SymbolId, ValueBox.SymbolIdFace>(front, out var symbolId);
+        if (issue != GetIssue.None) { return issue; }
+        return RevisionStringCodec.Decode(Revision, symbolId, out value);
+    }
+
+    private void PushSymbol(bool front, string? value) {
+        SymbolId id = RevisionStringCodec.Encode(Revision, value);
+        PushCore<SymbolId, ValueBox.SymbolIdFace>(front, id);
+    }
+
+    private bool TrySetSymbol(int index, string? value) {
+        SymbolId id = RevisionStringCodec.Encode(Revision, value);
+        return TrySetCore<SymbolId, ValueBox.SymbolIdFace>(index, id);
+    }
+
+    private bool TrySetSymbol(bool front, string? value) {
+        SymbolId id = RevisionStringCodec.Encode(Revision, value);
+        return TrySetCore<SymbolId, ValueBox.SymbolIdFace>(front, id);
+    }
+
+    #endregion
 }

@@ -97,15 +97,17 @@ internal static class DictThrowHelpers {
 
 internal class DictDemo {
     public static void Run() {
-        var model = Durable.Dict<string>();
+        // MixedDict 中的 string 操作需要绑定 Revision（string 通过 per-Revision Symbol Pool intern）。
+        var rev = new Revision(1);
+        var model = rev.CreateDict<string>();
 
         // ── Write: Upsert 重载自动推断类型 ──────────────────────
         model.Upsert("title", "文档标题");
         model.Upsert("wordCount", 1234);
         model.Upsert("zoom", 1.5);
         model.Upsert("darkMode", true);
-        model.Upsert("items", Durable.Deque<int>());
-        model.Upsert("metadata", Durable.Dict<string>());
+        model.Upsert("items", rev.CreateDeque<int>());
+        model.Upsert("metadata", rev.CreateDict<string>());
 
         // 类型化视图（exact typed capability）：Of<T>() 与 Of* 属性
         model.OfString.Upsert("title", "新文档标题");

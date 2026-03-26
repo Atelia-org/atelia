@@ -88,7 +88,7 @@ public class ValueBoxEqualityTests {
         }
 
         {
-            ValueBox exclusive = ValueBox.StringFace.From("hash-contract");
+            ValueBox exclusive = ValueBox.FromSymbolId(new SymbolId(42));
             ValueBox frozen = ValueBox.Freeze(exclusive);
             yield return new object[] {
                 "Heap string exclusive vs frozen",
@@ -189,7 +189,7 @@ public class ValueBoxEqualityTests {
 
     [Fact]
     public void ValueEquals_String_FrozenVsExclusive_True() {
-        var exclusive = ValueBox.StringFace.From("hello");
+        var exclusive = ValueBox.FromSymbolId(new SymbolId(100));
         var frozen = ValueBox.Freeze(exclusive);
 
         Assert.NotEqual(exclusive.GetBits(), frozen.GetBits());
@@ -278,7 +278,7 @@ public class ValueBoxEqualityTests {
         var heapU64B = ValueBox.UInt64Face.From(ulong.MaxValue);
         var heapU64Frozen = ValueBox.Freeze(heapU64A);
 
-        var heapStringExclusive = ValueBox.StringFace.From("symmetry");
+        var heapStringExclusive = ValueBox.FromSymbolId(new SymbolId(200));
         var heapStringFrozen = ValueBox.Freeze(heapStringExclusive);
 
         var pairs = new (ValueBox A, ValueBox B)[] {

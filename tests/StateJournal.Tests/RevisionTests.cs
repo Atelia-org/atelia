@@ -38,6 +38,13 @@ public partial class RevisionTests : IDisposable {
         return Assert.IsType<int>(field!.GetValue(dict));
     }
 
+    private static int GetSymbolTableCount(Revision revision) {
+        var field = typeof(Revision).GetField("_symbolTable", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(field);
+        var table = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(field!.GetValue(revision));
+        return table.Count;
+    }
+
     private static CommitOutcome AssertCommitSucceeded(AteliaResult<CommitOutcome> result, string label = "Commit") {
         Assert.True(result.IsSuccess, $"{label} failed: {result.Error}");
         return result.Value;

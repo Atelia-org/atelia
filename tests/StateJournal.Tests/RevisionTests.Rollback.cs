@@ -140,6 +140,50 @@ partial class RevisionTests {
     }
 
     [Fact]
+    public void Commit_WhenSymbolOnlyCompactionFollowupPersistFails_RollsBackCleanly() {
+        var path = GetTempFilePath();
+        var inner = RbfFile.CreateNew(path);
+        using var file = new FailOnNthBeginAppendFile(inner);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, string>();
+        const int total = 200;
+        const int toRemove = 100;
+
+        for (int i = 0; i < total; i++) {
+            root.Upsert(i, $"symbol_{i}");
+        }
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        for (int i = 0; i < toRemove; i++) {
+            root.Remove(i);
+        }
+
+        int before = CountObjectMapFrames(file);
+        file.Arm(failOnBeginAppendIndex: 4);
+        var c2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        Assert.Equal(CommitCompletion.CompactionRolledBack, c2.Completion);
+        Assert.True(c2.IsCompactionRolledBack);
+        Assert.False(c2.IsCompacted);
+        Assert.Equal(c2.PrimaryCommitTicket, c2.HeadCommitTicket);
+        Assert.Equal(before + 1, CountObjectMapFrames(file));
+
+        for (int i = toRemove; i < total; i++) {
+            Assert.Equal(GetIssue.None, root.Get(i, out string? value));
+            Assert.Equal($"symbol_{i}", value);
+        }
+
+        var opened = OpenRevision(rev.HeadId, file);
+        Assert.True(opened.IsSuccess, $"Open failed: {opened.Error}");
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(opened.Value!.GraphRoot);
+        Assert.Equal(total - toRemove, loaded.Count);
+        for (int i = toRemove; i < total; i++) {
+            Assert.Equal(GetIssue.None, loaded.Get(i, out string? value));
+            Assert.Equal($"symbol_{i}", value);
+        }
+    }
+
+    [Fact]
     public void Commit_WhenCompactionApplyFails_FailsFastAndLeavesPrimaryCommitDurable() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);

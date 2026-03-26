@@ -69,20 +69,20 @@ internal static class ScalarRules {
     }
 
     /// <summary>
-    /// 重写 CBOR Major Type 5 (map, 0xA0..0xBF) 语义，用于 DurableObject 引用。
+    /// 重写 CBOR Major Type 5 (map, 0xA0..0xBF) 语义，用于 tagged reference（DurableRef / SymbolId）。
     /// 布局: 0xA0 | (4bit Kind &lt;&lt; 1) | (1bit PayloadLen)。
     /// PayloadLen=0 → 后续 2 字节 (uint16 LE)；PayloadLen=1 → 后续 4 字节 (uint32 LE)。
     /// </summary>
-    internal readonly struct DurableRefEncoding {
+    internal readonly struct TaggedRefEncoding {
         internal const byte MajorType5Base = 0xA0;
         internal const byte MinTag = 0xA0;
         internal const byte MaxTag = 0xBF;
 
-        internal static byte EncodeTag(DurableObjectKind kind, bool widePayload) =>
+        internal static byte EncodeTag(TaggedRefKind kind, bool widePayload) =>
             (byte)(MajorType5Base | ((byte)kind << 1) | (widePayload ? 1 : 0));
 
-        internal static DurableObjectKind DecodeKind(byte tag) =>
-            (DurableObjectKind)((tag >> 1) & 0xF);
+        internal static TaggedRefKind DecodeKind(byte tag) =>
+            (TaggedRefKind)((tag >> 1) & 0xF);
 
         internal static bool IsWidePayload(byte tag) => (tag & 1) != 0;
     }

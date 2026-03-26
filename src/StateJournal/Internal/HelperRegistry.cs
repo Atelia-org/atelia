@@ -35,7 +35,8 @@ internal static class HelperRegistry {
     #region Key Helper 单例
 
     private static readonly TypeEntry _bool = new(typeof(BooleanHelper), [(byte)TypeOpCode.PushBoolean]);
-    private static readonly TypeEntry _string = new(typeof(SymbolIdHelper), [(byte)TypeOpCode.PushString]);
+    private static readonly TypeEntry _stringKey = new(typeof(StringKeyHelper), [(byte)TypeOpCode.PushString]);
+    private static readonly TypeEntry _stringValue = new([(byte)TypeOpCode.PushString]);
     private static readonly TypeEntry _inlineString = new(typeof(InlineStringHelper), [(byte)TypeOpCode.PushInlineString]);
     private static readonly TypeEntry _double = new(typeof(DoubleHelper), [(byte)TypeOpCode.PushDouble]);
     private static readonly TypeEntry _single = new(typeof(SingleHelper), [(byte)TypeOpCode.PushSingle]);
@@ -69,7 +70,7 @@ internal static class HelperRegistry {
     /// </summary>
     internal static TypeEntry ResolveKeyHelper(Type t) {
         if (t == typeof(bool)) { return _bool; }
-        if (t == typeof(string)) { return _string; }
+        if (t == typeof(string)) { return _stringKey; }
         if (t == typeof(InlineString)) { return _inlineString; }
         // if (t == typeof(LocalId)) { ... } 暂时不支持，后续如果碰到需求再引入同时支持LocalId和DurableObjectRef两种语义
 
@@ -101,6 +102,8 @@ internal static class HelperRegistry {
         _valueHelperCache.GetOrAdd(t, ResolveValueHelperCore);
 
     private static TypeEntry ResolveValueHelperCore(Type t) {
+        if (t == typeof(string)) { return _stringValue; }
+
         // 基元类型（同时也可作为 Key 使用的类型）
         var h = ResolveKeyHelper(t);
         if (h.IsValid) { return h; }

@@ -18,9 +18,14 @@ internal ref struct BinaryDiffWriter {
         _downstream.Advance(1);
     }
 
-    /// <summary>Symbol id（引用语义字符串）的裸写入。当前为 stub，后续 Phase 4 实现。</summary>
+    /// <summary>string key 的 symbol-backed 裸写入。当前仍为 stub，后续 key 专用实现接入。</summary>
     public void BareSymbolId(string? value, bool asKey) {
         throw new NotImplementedException();
+    }
+
+    /// <summary>已编码 <see cref="SymbolId"/> 的裸写入，不做任何 <see cref="Revision"/> 级转换。</summary>
+    public void BareStoredSymbolId(SymbolId value, bool asKey) {
+        BareUInt32(value.Value, asKey);
     }
 
     /// <summary>
@@ -82,11 +87,11 @@ internal ref struct BinaryDiffWriter {
     }
 
     public void TaggedDurableRef(DurableRef value) {
-        if (!DurableRef.IsValidKind(value.Kind)) { throw new InvalidDataException($"Invalid DurableRef kind '{value.Kind}'."); }
+        if (!DurableRef.IsValidObjectKind(value.Kind)) { throw new InvalidDataException($"Invalid DurableRef kind '{value.Kind}'."); }
         if (value.IsNull) { throw new InvalidDataException("DurableRef LocalId cannot be null. Use TaggedNull for null references."); }
 
         bool wide = value.Id.Value > ushort.MaxValue;
-        byte tag = ScalarRules.DurableRefEncoding.EncodeTag(value.Kind, wide);
+        byte tag = ScalarRules.TaggedRefEncoding.EncodeTag(TaggedRefKindHelper.FromDurableObjectKind(value.Kind), wide);
         if (wide) {
             var span = _downstream.GetSpan(1 + 4);
             span[0] = tag;
@@ -120,5 +125,28 @@ internal ref struct BinaryDiffWriter {
 
     public void TaggedString(string? value) {
         throw new NotImplementedException();
+    }
+
+    /// <summary>
+    /// 将 SymbolId 写为 tagged value，借用 TaggedRefEncoding 编码空间 + <see cref="TaggedRefKind.Symbol"/>。
+    /// 布局：1-byte tag (0xA0 | Kind.Symbol&lt;&lt;1 | WideFlag)，后跟 2 或 4 字节 SymbolId.Value (LE)。
+    /// </summary>
+    public void TaggedSymbolId(SymbolId id) {
+        if (id.IsNull) { throw new InvalidDataException("SymbolId cannot be null. Use TaggedNull for null references."); }
+
+        bool wide = id.Value > ushort.MaxValue;
+        byte tag = ScalarRules.TaggedRefEncoding.EncodeTag(TaggedRefKind.Symbol, wide);
+        if (wide) {
+            var span = _downstream.GetSpan(1 + 4);
+            span[0] = tag;
+            BinaryPrimitives.WriteUInt32LittleEndian(span[1..], id.Value);
+            _downstream.Advance(1 + 4);
+        }
+        else {
+            var span = _downstream.GetSpan(1 + 2);
+            span[0] = tag;
+            BinaryPrimitives.WriteUInt16LittleEndian(span[1..], (ushort)id.Value);
+            _downstream.Advance(1 + 2);
+        }
     }
 }

@@ -806,36 +806,36 @@ public class ValueBoxExclusiveSetTests {
         Assert.False(ValueBox.HalfFace.UpdateOrInit(ref box, Half.NaN));
     }
 
-    // ═══════════ String Update 返回值 ═══════════
+    // ═══════════ SymbolId Update 返回值 ═══════════
 
     [Fact]
-    public void SetString_SameValue_ReturnsFalse() {
-        var box = ValueBox.StringFace.From("hello");
-        Assert.False(ValueBox.StringFace.UpdateOrInit(ref box, "hello"));
+    public void SetSymbolId_SameValue_ReturnsFalse() {
+        var box = ValueBox.SymbolIdFace.From(new SymbolId(10));
+        Assert.False(ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(10)));
     }
 
     [Fact]
-    public void SetString_SameNull_ReturnsFalse() {
-        var box = ValueBox.StringFace.From((string?)null);
-        Assert.False(ValueBox.StringFace.UpdateOrInit(ref box, null));
+    public void SetSymbolId_SameNull_ReturnsFalse() {
+        var box = ValueBox.SymbolIdFace.From(SymbolId.Null);
+        Assert.False(ValueBox.SymbolIdFace.UpdateOrInit(ref box, SymbolId.Null));
     }
 
     [Fact]
-    public void SetString_DifferentValue_ReturnsTrue() {
-        var box = ValueBox.StringFace.From("hello");
-        Assert.True(ValueBox.StringFace.UpdateOrInit(ref box, "world"));
+    public void SetSymbolId_DifferentValue_ReturnsTrue() {
+        var box = ValueBox.SymbolIdFace.From(new SymbolId(10));
+        Assert.True(ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(20)));
     }
 
     [Fact]
-    public void SetString_NullToNonNull_ReturnsTrue() {
-        var box = ValueBox.StringFace.From((string?)null);
-        Assert.True(ValueBox.StringFace.UpdateOrInit(ref box, "hello"));
+    public void SetSymbolId_NullToNonNull_ReturnsTrue() {
+        var box = ValueBox.SymbolIdFace.From(SymbolId.Null);
+        Assert.True(ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(10)));
     }
 
     [Fact]
-    public void SetString_NonNullToNull_ReturnsTrue() {
-        var box = ValueBox.StringFace.From("hello");
-        Assert.True(ValueBox.StringFace.UpdateOrInit(ref box, null));
+    public void SetSymbolId_NonNullToNull_ReturnsTrue() {
+        var box = ValueBox.SymbolIdFace.From(new SymbolId(10));
+        Assert.True(ValueBox.SymbolIdFace.UpdateOrInit(ref box, SymbolId.Null));
     }
 
     // ═══════════ DurableObject Update 返回值 ═══════════
