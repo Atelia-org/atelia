@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
@@ -38,7 +39,26 @@ where TValue : notnull {
         _dirtyKeys = new();
     }
 
-    internal void AfterUpsert<VHelper>(TKey key, TValue? value)
+    /// <summary>
+    /// typed / durable-ref 路径的一步写入入口：
+    /// 在 tracker 内部完成 get-ref、current no-op 短路，以及 dirty/canonicalize 维护。
+    /// </summary>
+    public UpsertStatus Upsert<VHelper>(TKey key, TValue? value)
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        Debug.Assert(
+            !VHelper.NeedRelease,
+            "一体化 Upsert 仅适用于无额外所有权释放语义的 typed/durable-ref 路径；mixed/ValueBox 仍应走二阶段 Update + AfterUpsert。"
+        );
+
+        ref TValue? slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_current, key, out bool exists);
+        if (exists && VHelper.Equals(slot, value)) { return UpsertStatus.Updated; }
+
+        slot = value;
+        AfterUpsert<VHelper>(key, value);
+        return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
+    }
+
+    public void AfterUpsert<VHelper>(TKey key, TValue? value)
     where VHelper : unmanaged, ITypeHelper<TValue> {
         if (_committed.TryGetValue(key, out TValue? committedValue) && VHelper.Equals(value, committedValue)) {
             // 新值语义等于 committed → 释放新值的独占 slot，恢复为 committed 的冻结副本

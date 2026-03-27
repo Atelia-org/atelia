@@ -54,14 +54,14 @@ partial class Revision {
             var persistResult = PersistCrossFileSnapshot(graphRoot, liveObjectsResult.Value!, targetFile);
             // ExportTo 不改变当前 Revision 状态，无论成败都回滚镜像层的未提交变更
             _objectMap.DiscardChanges();
-            _symbolTable.DiscardChanges();
+            _symbolMirror.DiscardChanges();
             if (persistResult.IsFailure) { return persistResult.Error!; }
             // 不调用 FinalizePrimaryCommit：不 Complete PendingSave、不 Sweep、不更新 _head
             return persistResult.Value.Id;
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
             _objectMap.DiscardChanges();
-            _symbolTable.DiscardChanges();
+            _symbolMirror.DiscardChanges();
             return BuildStateError("ExportTo persistence failed", ex);
         }
     }
@@ -79,12 +79,12 @@ partial class Revision {
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
             _objectMap.DiscardChanges();
-            _symbolTable.DiscardChanges();
+            _symbolMirror.DiscardChanges();
             return BuildStateError("SaveAs persistence failed", ex);
         }
         if (persistResult.IsFailure) {
             _objectMap.DiscardChanges();
-            _symbolTable.DiscardChanges();
+            _symbolMirror.DiscardChanges();
             return persistResult.Error!;
         }
 
@@ -119,12 +119,12 @@ partial class Revision {
         }
         catch (Exception ex) when (IsExternalCommitException(ex)) {
             _objectMap.DiscardChanges();
-            _symbolTable.DiscardChanges();
+            _symbolMirror.DiscardChanges();
             return BuildStateError("Persistence failed", ex);
         }
         if (persistResult.IsFailure) {
             _objectMap.DiscardChanges();
-            _symbolTable.DiscardChanges();
+            _symbolMirror.DiscardChanges();
             return persistResult.Error!;
         }
 
@@ -216,7 +216,7 @@ partial class Revision {
             ForceRebase = forceAll,
             ForceSave = forceAll,
         };
-        var stWriteResult = VersionChain.Write(_symbolTable, targetFile, stContext);
+        var stWriteResult = VersionChain.Write(_symbolMirror, targetFile, stContext);
         if (stWriteResult.IsFailure) { return stWriteResult.Error!; }
         var stPendingSave = stWriteResult.Value;
         pendingSaves.Add(stPendingSave);
@@ -266,7 +266,7 @@ partial class Revision {
         public AteliaError? Error { get; private set; }
     }
 
-    private ref partial struct ReferenceValidationVisitor(GcPool<DurableObject> pool, StringPool symbolPool, LocalId parentId) : IChildRefVisitor {
+    private ref partial struct ReferenceValidationVisitor(GcPool<DurableObject> pool, LocalId parentId) : IChildRefVisitor {
         public AteliaError? Error { get; private set; }
     }
 

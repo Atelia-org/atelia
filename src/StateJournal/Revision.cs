@@ -22,11 +22,11 @@ public partial class Revision {
     private GcPool<DurableObject> _pool;
 
     /// <summary>
-    /// Per-Revision Symbol Table：durable mirror，占据 pool slot 1。
-    /// 平时保留最近一次已 durable 化的镜像，用于后续 diff/rebase 复用；
-    /// 仅在需要持久化前，才从 <see cref="_symbolPool"/> 统一 reconcile。
+    /// Per-Revision symbol durable mirror，占据 pool slot 1。
+    /// 运行时真源是 <see cref="_symbolPool"/>；
+    /// 本镜像负责承接增量落盘与后续 diff/rebase 复用。
     /// </summary>
-    private DurableDict<uint, InlineString> _symbolTable;
+    private DurableDict<uint, InlineString> _symbolMirror;
     /// <summary>
     /// 运行时 intern 引擎 + Mark-Sweep GC 池。
     /// 对外通过 <see cref="InternSymbol"/> / <see cref="GetSymbol"/> 提供 string ↔ SymbolId 转换。
@@ -62,8 +62,8 @@ public partial class Revision {
         _pool = new GcPool<DurableObject>();
         _pool.Store(_objectMap); // slot 0 = ObjectMap
 
-        _symbolTable = Durable.Dict<uint, InlineString>();
-        _pool.Store(_symbolTable); // slot 1 = SymbolTable
+        _symbolMirror = Durable.Dict<uint, InlineString>();
+        _pool.Store(_symbolMirror); // slot 1 = SymbolTable
         _symbolPool = new StringPool();
     }
 
@@ -72,14 +72,14 @@ public partial class Revision {
         uint boundSegmentNumber,
         DurableDict<uint, ulong> objectMap,
         GcPool<DurableObject> pool,
-        DurableDict<uint, InlineString> symbolTable,
+        DurableDict<uint, InlineString> symbolMirror,
         StringPool symbolPool
     ) {
         ArgumentOutOfRangeException.ThrowIfZero(boundSegmentNumber);
         _headSegmentNumber = boundSegmentNumber;
         _objectMap = objectMap;
         _pool = pool;
-        _symbolTable = symbolTable;
+        _symbolMirror = symbolMirror;
         _symbolPool = symbolPool;
     }
 
@@ -132,52 +132,23 @@ public partial class Revision {
             );
         }
 
-        // 全量加载：遍历 ObjectMap 所有 entries，从 RBF 加载对象。
-        // 为 ObjectMap（slot 0）和 SymbolTable（slot 1）预留位置。
-        const int reservedSlots = 2;
-        var entries = new (SlotHandle, DurableObject)[objectMap.Count + reservedSlots];
-        entries[0] = (new SlotHandle(1, 0), objectMap); // slot 0 = ObjectMap
-
-        DurableDict<uint, InlineString>? symbolTable = null;
-        int i = reservedSlots; // user objects start after reserved slots
-        foreach (uint key in objectMap.Keys) {
-            var handle = new SlotHandle(key); // LocalId.Value == SlotHandle.Packed
-            if (objectMap.Get(key, out ulong serializedPtr) != GetIssue.None) {
-                return new SjCorruptionError(
-                    $"ObjectMap key {key} could not be read.",
-                    RecoveryHint: "Data corruption in ObjectMap."
-                );
-            }
-            SizedPtr ticket = SizedPtr.Deserialize(serializedPtr);
-            var objLoad = VersionChain.Load(file, ticket);
-            if (objLoad.IsFailure) { return objLoad.Error!; }
-
-            if (key == symbolTablePacked) {
-                // SymbolTable 放到 reserved slot 1
-                if (objLoad.Value is not DurableDict<uint, InlineString> st) {
-                    return new SjCorruptionError(
-                        $"SymbolTable frame at key {key} resolved to unexpected type: {objLoad.Value!.GetType()}.",
-                        RecoveryHint: "Expected DurableDict<uint, InlineString>."
-                    );
-                }
-                symbolTable = st;
-                entries[1] = (handle, st);
-            }
-            else {
-                entries[i++] = (handle, objLoad.Value!);
-            }
-        }
-
-        if (symbolTable is null) {
+        // 先加载 SymbolTable，重建 string decode 上下文，再加载用户对象。
+        if (objectMap.Get(symbolTablePacked, out ulong serializedSymbolPtr) != GetIssue.None) {
             return new SjCorruptionError(
-                $"SymbolTable key {symbolTablePacked} referenced in TailMeta but not found in ObjectMap.",
-                RecoveryHint: "Data corruption in TailMeta or ObjectMap."
+                $"SymbolTable key {symbolTablePacked} could not be read from ObjectMap.",
+                RecoveryHint: "Data corruption in ObjectMap."
+            );
+        }
+        SizedPtr symbolTableTicket = SizedPtr.Deserialize(serializedSymbolPtr);
+        var symbolTableLoad = VersionChain.Load(file, symbolTableTicket);
+        if (symbolTableLoad.IsFailure) { return symbolTableLoad.Error!; }
+        if (symbolTableLoad.Value is not DurableDict<uint, InlineString> symbolTable) {
+            return new SjCorruptionError(
+                $"SymbolTable frame at key {symbolTablePacked} resolved to unexpected type: {symbolTableLoad.Value!.GetType()}.",
+                RecoveryHint: "Expected DurableDict<uint, InlineString>."
             );
         }
 
-        var pool = GcPool<DurableObject>.Rebuild(entries.AsSpan(0, i));
-
-        // 从 SymbolTable 重建 StringPool
         var symbolEntries = new (SlotHandle, string)[symbolTable.Count];
         int si = 0;
         foreach (uint key in symbolTable.Keys) {
@@ -190,6 +161,31 @@ public partial class Revision {
             symbolEntries[si++] = (new SlotHandle(key), inlineStr.ToString());
         }
         StringPool symbolPool = StringPool.Rebuild(symbolEntries);
+
+        // 全量加载：遍历 ObjectMap 所有 entries，从 RBF 加载对象。
+        // 为 ObjectMap（slot 0）和 SymbolTable（slot 1）预留位置。
+        const int reservedSlots = 2;
+        var entries = new (SlotHandle, DurableObject)[objectMap.Count + reservedSlots];
+        entries[0] = (new SlotHandle(1, 0), objectMap); // slot 0 = ObjectMap
+        entries[1] = (new SlotHandle(symbolTablePacked), symbolTable);
+
+        int i = reservedSlots; // user objects start after reserved slots
+        foreach (uint key in objectMap.Keys) {
+            var handle = new SlotHandle(key); // LocalId.Value == SlotHandle.Packed
+            if (key == symbolTablePacked) { continue; }
+            if (objectMap.Get(key, out ulong serializedPtr) != GetIssue.None) {
+                return new SjCorruptionError(
+                    $"ObjectMap key {key} could not be read.",
+                    RecoveryHint: "Data corruption in ObjectMap."
+                );
+            }
+            SizedPtr ticket = SizedPtr.Deserialize(serializedPtr);
+            var objLoad = VersionChain.Load(file, ticket, symbolPool: symbolPool);
+            if (objLoad.IsFailure) { return objLoad.Error!; }
+            entries[i++] = (handle, objLoad.Value!);
+        }
+
+        var pool = GcPool<DurableObject>.Rebuild(entries.AsSpan(0, i));
 
         var revision = new Revision(segmentNumber, objectMap, pool, symbolTable, symbolPool);
 
@@ -250,12 +246,23 @@ public partial class Revision {
     /// <summary>
     /// 将字符串 intern 到当前 Revision 的 Symbol Pool，返回 SymbolId。
     /// <c>null</c> 映射为 <see cref="SymbolId.Null"/>；非空字符串若已存在则去重返回已有 id。
-    /// 运行时真源始终是 <see cref="_symbolPool"/>；<see cref="_symbolTable"/> 只在持久化前统一收敛。
+    /// 运行时真源始终是 <see cref="_symbolPool"/>；durable mirror 保存在 <see cref="_symbolMirror"/>。
     /// </summary>
     internal SymbolId InternSymbol(string? value) {
         if (value is null) { return SymbolId.Null; }
 
         var handle = _symbolPool.Store(value);
+        return SymbolId.FromSlotHandle(handle);
+    }
+
+    /// <summary>
+    /// 在 commit / serialization 阶段将 string 编码为当前 Revision 的 SymbolId，并立即标记为可达。
+    /// </summary>
+    internal SymbolId InternReachableSymbol(string? value) {
+        if (value is null) { return SymbolId.Null; }
+
+        var handle = _symbolPool.Store(value);
+        _symbolPool.TryMarkReachable(handle);
         return SymbolId.FromSlotHandle(handle);
     }
 
@@ -267,87 +274,14 @@ public partial class Revision {
     /// handle 无效或 slot 未占用时返回 false，不抛异常。
     /// </summary>
     internal bool TryGetSymbol(SymbolId id, out string? value) {
-        if (id.IsNull) { value = null; return true; }
+        if (id.IsNull) {
+            value = null;
+            return true;
+        }
         return _symbolPool.TryGetValue(id.ToSlotHandle(), out value!);
     }
 
-    private void ReconcileSymbolTableFromPool(bool reachableOnly) {
-        var liveSymbols = new Dictionary<uint, string>(_symbolPool.Count);
-        var collector = new SymbolMirrorCollector(_symbolPool, liveSymbols, reachableOnly);
-        _symbolPool.VisitEntries(ref collector);
-
-        foreach (var (packed, value) in liveSymbols) {
-            if (_symbolTable.Get(packed, out InlineString existing) == GetIssue.None && existing.Value == value) {
-                continue;
-            }
-            _symbolTable.Upsert(packed, new InlineString(value));
-        }
-
-        List<uint> keysToRemove = [];
-        foreach (uint key in _symbolTable.Keys) {
-            if (!liveSymbols.ContainsKey(key)) { keysToRemove.Add(key); }
-        }
-        foreach (uint key in keysToRemove) {
-            _symbolTable.Remove(key);
-        }
-    }
-
-    private AteliaResult<bool> ValidateSymbolMirrorConsistency(bool reachableOnly) {
-        var checker = new SymbolMirrorValidator(_symbolTable, _symbolPool, reachableOnly);
-        _symbolPool.VisitEntries(ref checker);
-        if (checker.Error is not null) { return checker.Error; }
-
-        if (checker.ObservedCount != _symbolTable.Count) {
-            return new SjCorruptionError(
-                $"SymbolTable count {_symbolTable.Count} does not match symbol pool live count {checker.ObservedCount}.",
-                RecoveryHint: "Symbol mirror is inconsistent with the runtime symbol pool."
-            );
-        }
-
-        return true;
-    }
-
     #endregion
-
-    private readonly struct SymbolMirrorCollector(
-        StringPool symbolPool,
-        Dictionary<uint, string> liveSymbols,
-        bool reachableOnly) : StringPool.IEntryVisitor {
-        public void Visit(SlotHandle handle, string value) {
-            if (reachableOnly && !symbolPool.IsMarkedReachable(handle)) { return; }
-            liveSymbols[handle.Packed] = value;
-        }
-    }
-
-    private ref struct SymbolMirrorValidator(
-        DurableDict<uint, InlineString> symbolTable,
-        StringPool symbolPool,
-        bool reachableOnly) : StringPool.IEntryVisitor {
-        public AteliaError? Error { get; private set; }
-        public int ObservedCount { get; private set; }
-
-        public void Visit(SlotHandle handle, string value) {
-            if (Error is not null) { return; }
-            if (reachableOnly && !symbolPool.IsMarkedReachable(handle)) { return; }
-
-            ObservedCount++;
-            uint packed = handle.Packed;
-            if (symbolTable.Get(packed, out InlineString inline) != GetIssue.None) {
-                Error = new SjCorruptionError(
-                    $"SymbolTable is missing runtime symbol entry {packed}.",
-                    RecoveryHint: "Symbol mirror is inconsistent with the runtime symbol pool."
-                );
-                return;
-            }
-
-            if (inline.Value != value) {
-                Error = new SjCorruptionError(
-                    $"SymbolTable value mismatch for symbol {packed}.",
-                    RecoveryHint: "Symbol mirror is inconsistent with the runtime symbol pool."
-                );
-            }
-        }
-    }
 
     #region Object Factory
 
@@ -464,7 +398,7 @@ public partial class Revision {
         DurableObject? GraphRoot
     );
 
-    /// <summary>全量校验 ObjectMap / pool / 用户对象引用完整性。发现悬空引用则失败。</summary>
+    /// <summary>全量校验 ObjectMap / pool / 用户对象之间的 DurableObject 引用完整性。发现悬空引用则失败。</summary>
     private AteliaResult<bool> ValidateAllReferences() {
         foreach (uint key in _objectMap.Keys) {
             var parentHandle = new SlotHandle(key);
@@ -476,7 +410,7 @@ public partial class Revision {
             }
 
             var parentId = LocalId.FromSlotHandle(parentHandle);
-            var validator = new ReferenceValidationVisitor(_pool, _symbolPool, parentId);
+            var validator = new ReferenceValidationVisitor(_pool, parentId);
             parentObj.AcceptChildRefVisitor(ref validator);
             if (validator.Error is not null) { return validator.Error; }
         }

@@ -8,6 +8,36 @@ public class DictChangeTrackerTests {
     private static int Bits64Count => ValuePools.OfBits64.Count;
 
     [Fact]
+    public void Upsert_SameAsCurrent_IsNoOp() {
+        var tracker = new DictChangeTracker<int, int>();
+
+        Assert.Equal(UpsertStatus.Inserted, tracker.Upsert<Int32Helper>(1, 7));
+        Assert.True(tracker.HasChanges);
+
+        tracker.Commit<Int32Helper>();
+        Assert.False(tracker.HasChanges);
+
+        Assert.Equal(UpsertStatus.Updated, tracker.Upsert<Int32Helper>(1, 7));
+        Assert.False(tracker.HasChanges);
+        Assert.Equal(7, tracker.Current[1]);
+    }
+
+    [Fact]
+    public void Upsert_BackToCommitted_ClearsDirty() {
+        var tracker = new DictChangeTracker<int, int>();
+
+        Assert.Equal(UpsertStatus.Inserted, tracker.Upsert<Int32Helper>(1, 7));
+        tracker.Commit<Int32Helper>();
+
+        Assert.Equal(UpsertStatus.Updated, tracker.Upsert<Int32Helper>(1, 9));
+        Assert.True(tracker.HasChanges);
+
+        Assert.Equal(UpsertStatus.Updated, tracker.Upsert<Int32Helper>(1, 7));
+        Assert.False(tracker.HasChanges);
+        Assert.Equal(7, tracker.Current[1]);
+    }
+
+    [Fact]
     public void AfterUpsert_NoChange_CanonicalizesCurrent_AndReleasesTemporarySlot() {
         var tracker = new DictChangeTracker<byte, ValueBox>();
         const byte key = 1;

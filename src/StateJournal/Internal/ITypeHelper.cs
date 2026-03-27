@@ -42,6 +42,22 @@ internal interface ITypeHelper<T> where T : notnull {
     static abstract void Write(BinaryDiffWriter writer, T? v, bool asKey);
     static abstract T? Read(ref BinaryDiffReader reader, bool asKey);
 
+    /// <summary>当前 facade 类型是否需要在提交期参与 child-ref walk（例如 typed string facade）。</summary>
+    static virtual bool NeedVisitChildRefs => false;
+
+    /// <summary>将单个 facade 值暴露给 child-ref visitor。默认 no-op。</summary>
+    static virtual void VisitChildRefs<TVisitor>(T? value, Revision revision, ref TVisitor visitor)
+        where TVisitor : IChildRefVisitor, allows ref struct { }
+
+    /// <summary>
+    /// 加载历史版本链后，是否需要对最终 surviving 的 facade 值做 placeholder 残留校验。
+    /// 目前主要用于 typed string 在 load 阶段的缺失 SymbolId 占位方案。
+    /// </summary>
+    static virtual bool NeedValidateReconstructed => false;
+
+    /// <summary>校验单个 facade 值是否残留非法的 load placeholder。</summary>
+    static virtual AteliaError? ValidateReconstructed(T? value, LoadPlaceholderTracker tracker, string ownerName) => null;
+
     /// <summary>未来如果需要获知是否改变了old（update or init），可以将返回值改为bool并添加`bool exists参数`，参考实现：
     /// `if (exists && Equals(old, readedNewValue)) { return false; }`</summary>
     static abstract void UpdateOrInit(ref BinaryDiffReader reader, ref T? old);
@@ -75,25 +91,29 @@ internal readonly struct BooleanHelper : ITypeHelper<bool> {
 }
 
 /// <summary>
-/// string key 的临时序列化 Helper。
-/// 其真正的 symbol-backed key 存储仍待后续专用实现接入。
+/// string 的 symbol-backed 序列化 Helper。
+/// 运行时 facade/store 都是普通 string；写入/读取时通过 writer/reader 上下文桥接 SymbolId。
 /// </summary>
-internal readonly struct StringKeyHelper : ITypeHelper<string> {
+internal readonly struct StringHelper : ITypeHelper<string> {
     public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
-    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareSymbolId(v, asKey);
+    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareSymbol(v, asKey);
     public static string? Read(ref BinaryDiffReader reader, bool asKey) => reader.BareSymbolId(asKey);
+    public static bool NeedVisitChildRefs => true;
+    public static bool NeedValidateReconstructed => true;
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) => old = Read(ref reader, asKey: false);
-}
 
-/// <summary>
-/// <see cref="SymbolId"/> 的低层存储 Helper。
-/// 仅负责读写裸的 symbol id，不承接任何 <see cref="Revision"/> 语义。
-/// </summary>
-internal readonly struct SymbolIdHelper : ITypeHelper<SymbolId> {
-    public static bool Equals(SymbolId a, SymbolId b) => a == b;
-    public static void Write(BinaryDiffWriter writer, SymbolId v, bool asKey) => writer.BareStoredSymbolId(v, asKey);
-    public static SymbolId Read(ref BinaryDiffReader reader, bool asKey) => reader.BareStoredSymbolId(asKey);
-    public static void UpdateOrInit(ref BinaryDiffReader reader, ref SymbolId old) => old = Read(ref reader, asKey: false);
+    public static void VisitChildRefs<TVisitor>(string? value, Revision revision, ref TVisitor visitor)
+        where TVisitor : IChildRefVisitor, allows ref struct {
+        visitor.Visit(value);
+    }
+
+    public static AteliaError? ValidateReconstructed(string? value, LoadPlaceholderTracker tracker, string ownerName) {
+        if (!tracker.IsPlaceholder(value)) { return null; }
+        return new SjCorruptionError(
+            $"{ownerName} load completed with an unresolved historical string placeholder: '{value}'.",
+            RecoveryHint: "The final SymbolTable is missing a string still referenced by the reconstructed object state."
+        );
+    }
 }
 
 /// <summary>

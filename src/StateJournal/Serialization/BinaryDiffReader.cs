@@ -1,15 +1,20 @@
 using System.Buffers.Binary;
 using Atelia.StateJournal.Internal;
+using Atelia.StateJournal.Pools;
 
 namespace Atelia.StateJournal.Serialization;
 
 internal ref struct BinaryDiffReader {
     private ReadOnlySpan<byte> _remaining;
     private readonly int _initialLength;
+    private readonly StringPool? _symbolPool;
+    private readonly LoadPlaceholderTracker? _placeholderTracker;
 
-    internal BinaryDiffReader(ReadOnlySpan<byte> source) {
+    internal BinaryDiffReader(ReadOnlySpan<byte> source, StringPool? symbolPool = null, LoadPlaceholderTracker? placeholderTracker = null) {
         _remaining = source;
         _initialLength = source.Length;
+        _symbolPool = symbolPool;
+        _placeholderTracker = placeholderTracker;
     }
 
     internal int ConsumedCount => _initialLength - _remaining.Length;
@@ -110,8 +115,17 @@ internal ref struct BinaryDiffReader {
     internal float BareSingle(bool asKey) => BinaryPrimitives.ReadSingleLittleEndian(ReadSpan(sizeof(float)));
     internal double BareDouble(bool asKey) => BinaryPrimitives.ReadDoubleLittleEndian(ReadSpan(sizeof(double)));
 
-    /// <summary>string key 的 symbol-backed 裸读取。当前仍为 stub，后续 key 专用实现接入。</summary>
-    internal string? BareSymbolId(bool asKey) => throw new NotImplementedException();
+    /// <summary>symbol-backed string 的裸读取。需要调用方提供 symbol 解码上下文。</summary>
+    internal string? BareSymbolId(bool asKey) {
+        SymbolId id = BareStoredSymbolId(asKey);
+        if (id.IsNull) { return null; }
+        if (_symbolPool is null) { throw new InvalidDataException("Symbol-backed string deserialization requires a symbol pool context."); }
+        if (_symbolPool.TryGetValue(id.ToSlotHandle(), out string value)) { return value; }
+        if (_placeholderTracker is not null) { return _placeholderTracker.Create(id); }
+
+        if (!_symbolPool.TryGetValue(id.ToSlotHandle(), out _)) { throw new InvalidDataException($"Missing symbol entry for SymbolId {id.Value} during string deserialization."); }
+        throw new InvalidDataException($"Missing symbol entry for SymbolId {id.Value} during string deserialization.");
+    }
 
     /// <summary>已编码 <see cref="SymbolId"/> 的裸读取，不做任何 <see cref="Revision"/> 级转换。</summary>
     internal SymbolId BareStoredSymbolId(bool asKey) => new(BareUInt32(asKey));

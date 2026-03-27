@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
@@ -70,10 +69,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     public override UpsertStatus Upsert(TKey key, TDurObj? value) {
         if (value is not null) { Revision.EnsureCanReference(value); }
         var localId = value?.LocalId ?? LocalId.Null;
-        ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
-        slot = localId;
-        _core.AfterUpsert<LocalIdAsRefHelper>(key, localId);
-        return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
+        return _core.Upsert<LocalIdAsRefHelper>(key, localId);
     }
 
     #endregion
@@ -89,8 +85,22 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     #endregion
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
+        if (KHelper.NeedVisitChildRefs) {
+            foreach (var key in _core.Current.Keys) {
+                KHelper.VisitChildRefs(key, Revision, ref visitor);
+            }
+        }
+
         foreach (var localId in _core.Current.Values) {
             if (!localId.IsNull) { visitor.Visit(localId); }
         }
+    }
+
+    internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
+        if (tracker is null || !KHelper.NeedValidateReconstructed) { return null; }
+        foreach (var key in _core.Current.Keys) {
+            if (KHelper.ValidateReconstructed(key, tracker, "DurObjDict") is { } error) { return error; }
+        }
+        return null;
     }
 }

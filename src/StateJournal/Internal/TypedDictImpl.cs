@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
@@ -46,12 +45,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
             : GetIssue.NotFound;
     }
 
-    public override UpsertStatus Upsert(TKey key, TValue? value) {
-        ref TValue? slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
-        slot = value;
-        _core.AfterUpsert<VHelper>(key, value);
-        return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
-    }
+    public override UpsertStatus Upsert(TKey key, TValue? value) => _core.Upsert<VHelper>(key, value);
 
     #endregion
 
@@ -65,5 +59,35 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<KHelper, VHelper>(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, VHelper>(ref reader);
 
-    internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
+    internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
+        if (KHelper.NeedVisitChildRefs) {
+            foreach (var key in _core.Current.Keys) {
+                KHelper.VisitChildRefs(key, Revision, ref visitor);
+            }
+        }
+
+        if (VHelper.NeedVisitChildRefs) {
+            foreach (var value in _core.Current.Values) {
+                VHelper.VisitChildRefs(value, Revision, ref visitor);
+            }
+        }
+    }
+
+    internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
+        if (tracker is null) { return null; }
+
+        if (KHelper.NeedValidateReconstructed) {
+            foreach (var key in _core.Current.Keys) {
+                if (KHelper.ValidateReconstructed(key, tracker, "TypedDict") is { } keyError) { return keyError; }
+            }
+        }
+
+        if (VHelper.NeedValidateReconstructed) {
+            foreach (var value in _core.Current.Values) {
+                if (VHelper.ValidateReconstructed(value, tracker, "TypedDict") is { } valueError) { return valueError; }
+            }
+        }
+
+        return null;
+    }
 }

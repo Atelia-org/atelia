@@ -140,8 +140,11 @@ public class GenericRulesTests {
     }
 
     [Fact]
-    public void SJ_Deque_String_ThrowsUntilSymbolBackedImplIsWired() =>
-        Assert.Throws<ArgumentException>(() => Durable.Deque<string>());
+    public void SJ_Deque_String_ReturnsInstance() {
+        var l = Durable.Deque<string>();
+        Assert.NotNull(l);
+        Assert.IsAssignableFrom<DurableDeque<string>>(l);
+    }
 
     [Fact]
     public void SJ_Deque_Mixed_ReturnsInstance() {

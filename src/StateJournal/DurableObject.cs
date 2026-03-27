@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using Atelia.Data;
 using Atelia.StateJournal.Internal;
+using Atelia.StateJournal.Pools;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal;
@@ -52,6 +52,9 @@ public abstract class DurableObject {
     internal abstract void DiscardChanges();
 
     internal abstract void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) where TVisitor : IChildRefVisitor, allows ref struct;
+    // load 历史回放完成后的局部收尾校验入口。
+    // 目前既承接 typed string placeholder 残留校验，也承接 mixed 容器里的 SymbolId 完整性校验。
+    internal virtual AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, StringPool? symbolPool) => null;
 
     /// <summary>设置对象状态。</summary>
     /// <param name="state">新状态。</param>
@@ -59,6 +62,7 @@ public abstract class DurableObject {
 
     /// <summary>是否已绑定到指定 Revision（不会抛异常）。</summary>
     internal bool IsBoundTo(Revision revision) => ReferenceEquals(_revision, revision);
+    internal Revision? BoundRevision => _revision;
 
     /// <summary>是否处于 Detached 状态。</summary>
     internal bool IsDetached => _state == DurableState.Detached;

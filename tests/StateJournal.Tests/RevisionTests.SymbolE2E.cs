@@ -4,9 +4,7 @@ using Xunit;
 namespace Atelia.StateJournal.Tests;
 
 // Phase 3d: 端到端测试
-// MixedDict/MixedDeque + string value → InternSymbol → Commit → Open → GetSymbol round-trip
-// 注意：DurableDict<string>（string 作为 key）仍走临时 key helper，属后续 string-key 专用实现范畴（BareSymbolId 尚未实现）。
-// 因此此处使用 DurableDict<int>（int 作为 key）测试 string 作为 value 的端到端路径。
+// Mixed / Typed 容器中的 string 最终都经由 symbol table 落盘并在 Open 时还原。
 partial class RevisionTests {
 
     // ═══════════════════════ MixedDict + string value round-trip ═══════════════════════
@@ -397,7 +395,7 @@ partial class RevisionTests {
         Assert.Equal("2026-03-25", loadedMeta.OfString.Get(2));
     }
 
-    // ═══════════════════════ TypedDict<int, string> (SymbolValDictImpl) ═══════════════════════
+    // ═══════════════════════ TypedDict<int, string> ═══════════════════════
 
     [Fact]
     public void TypedDict_StringValue_Commit_Open_RoundTrips() {
@@ -416,9 +414,12 @@ partial class RevisionTests {
 
         var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
         Assert.Equal(3, loaded.Count);
-        Assert.Equal(GetIssue.None, loaded.Get(1, out var v1)); Assert.Equal("hello", v1);
-        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2)); Assert.Equal("世界", v2);
-        Assert.Equal(GetIssue.None, loaded.Get(3, out var v3)); Assert.Null(v3);
+        Assert.Equal(GetIssue.None, loaded.Get(1, out var v1));
+        Assert.Equal("hello", v1);
+        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2));
+        Assert.Equal("世界", v2);
+        Assert.Equal(GetIssue.None, loaded.Get(3, out var v3));
+        Assert.Null(v3);
         Assert.Equal(GetIssue.NotFound, loaded.Get(99, out _));
     }
 
@@ -474,8 +475,10 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
         Assert.Equal(2, loaded.Count);
         Assert.Equal(GetIssue.NotFound, loaded.Get(1, out _));
-        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2)); Assert.Equal("beta", v2);
-        Assert.Equal(GetIssue.None, loaded.Get(3, out var v3)); Assert.Equal("gamma", v3);
+        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2));
+        Assert.Equal("beta", v2);
+        Assert.Equal(GetIssue.None, loaded.Get(3, out var v3));
+        Assert.Equal("gamma", v3);
     }
 
     [Fact]
@@ -497,9 +500,12 @@ partial class RevisionTests {
         Assert.True(openResult.IsSuccess);
 
         var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
-        Assert.Equal(GetIssue.None, loaded.Get(1, out var v1)); Assert.Equal(longAscii, v1);
-        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2)); Assert.Equal(longUnicode, v2);
-        Assert.Equal(GetIssue.None, loaded.Get(3, out var v3)); Assert.Equal("", v3);
+        Assert.Equal(GetIssue.None, loaded.Get(1, out var v1));
+        Assert.Equal(longAscii, v1);
+        Assert.Equal(GetIssue.None, loaded.Get(2, out var v2));
+        Assert.Equal(longUnicode, v2);
+        Assert.Equal(GetIssue.None, loaded.Get(3, out var v3));
+        Assert.Equal("", v3);
     }
 
     [Fact]
@@ -523,8 +529,10 @@ partial class RevisionTests {
         Assert.Equal(GetIssue.None, loaded.Get(1, out DurableObject? obj));
         var loadedChild = Assert.IsAssignableFrom<DurableDict<int, string>>(obj);
         Assert.Equal(2, loadedChild.Count);
-        Assert.Equal(GetIssue.None, loadedChild.Get(10, out var v1)); Assert.Equal("nested-hello", v1);
-        Assert.Equal(GetIssue.None, loadedChild.Get(20, out var v2)); Assert.Equal("nested-world", v2);
+        Assert.Equal(GetIssue.None, loadedChild.Get(10, out var v1));
+        Assert.Equal("nested-hello", v1);
+        Assert.Equal(GetIssue.None, loadedChild.Get(20, out var v2));
+        Assert.Equal("nested-world", v2);
     }
 
     [Fact]
@@ -581,7 +589,8 @@ partial class RevisionTests {
         Assert.True(openResult.IsSuccess);
         var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
         Assert.Equal(1, loaded.Count);
-        Assert.Equal(GetIssue.None, loaded.Get(1, out var v)); Assert.Equal("keep-me", v);
+        Assert.Equal(GetIssue.None, loaded.Get(1, out var v));
+        Assert.Equal("keep-me", v);
         Assert.Equal(GetIssue.NotFound, loaded.Get(2, out _));
     }
 
@@ -607,8 +616,10 @@ partial class RevisionTests {
         Assert.True(openResult.IsSuccess);
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(2, loaded.Count);
-        Assert.True(loaded.TryGet(1, out string? s)); Assert.Equal("alive", s);
-        Assert.True(loaded.TryGet(3, out int n)); Assert.Equal(42, n);
+        Assert.True(loaded.TryGet(1, out string? s));
+        Assert.Equal("alive", s);
+        Assert.True(loaded.TryGet(3, out int n));
+        Assert.Equal(42, n);
     }
 
     [Fact]
@@ -631,7 +642,8 @@ partial class RevisionTests {
         Assert.True(openResult.IsSuccess);
         var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
         Assert.Equal(1, loaded.Count);
-        Assert.Equal(GetIssue.None, loaded.Get(1, out var v)); Assert.Equal("replaced", v);
+        Assert.Equal(GetIssue.None, loaded.Get(1, out var v));
+        Assert.Equal("replaced", v);
     }
 
     [Fact]
@@ -734,7 +746,8 @@ partial class RevisionTests {
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
         var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
         Assert.Equal(total - toRemove + 1, loaded.Count);
-        Assert.Equal(GetIssue.None, loaded.Get(999, out string? v)); Assert.Equal("after_compaction", v);
+        Assert.Equal(GetIssue.None, loaded.Get(999, out string? v));
+        Assert.Equal("after_compaction", v);
         Assert.Equal(GetIssue.None, loaded.Get(toRemove, out string? first_alive));
         Assert.Equal($"value_{toRemove}", first_alive);
     }
@@ -752,7 +765,8 @@ partial class RevisionTests {
         for (int i = 0; i < total; i++) {
             if (i % 2 == 0) {
                 root.Upsert(i, $"str_{i}");
-            } else {
+            }
+            else {
                 root.Upsert(i, i * 10);
             }
         }
@@ -774,7 +788,8 @@ partial class RevisionTests {
             if (i % 2 == 0) {
                 Assert.True(loaded.TryGet(i, out string? s));
                 Assert.Equal($"str_{i}", s);
-            } else {
+            }
+            else {
                 Assert.True(loaded.TryGet(i, out int n));
                 Assert.Equal(i * 10, n);
             }

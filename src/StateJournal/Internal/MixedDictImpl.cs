@@ -41,11 +41,39 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     }
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
+        if (KHelper.NeedVisitChildRefs) {
+            foreach (var key in _core.Current.Keys) {
+                KHelper.VisitChildRefs(key, Revision, ref visitor);
+            }
+        }
         if (_durableRefCount == 0 && _symbolRefCount == 0) { return; }
         foreach (var box in _core.Current.Values) {
             if (box.IsDurableRef) { visitor.Visit(box.GetDurRefId()); }
             else if (box.IsSymbolRef) { visitor.Visit(box.DecodeSymbolId()); }
         }
+    }
+
+    internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
+        if (tracker is not null && KHelper.NeedValidateReconstructed) {
+            foreach (var key in _core.Current.Keys) {
+                if (KHelper.ValidateReconstructed(key, tracker, "MixedDict") is { } keyError) { return keyError; }
+            }
+        }
+
+        if (symbolPool is not null && _symbolRefCount != 0) {
+            foreach (var box in _core.Current.Values) {
+                if (!box.IsSymbolRef) { continue; }
+                SymbolId symbolId = box.DecodeSymbolId();
+                if (!symbolPool.Validate(symbolId.ToSlotHandle())) {
+                    return new SjCorruptionError(
+                        $"MixedDict load completed with a dangling SymbolId {symbolId.Value}.",
+                        RecoveryHint: "The final SymbolTable is missing a string still referenced by the reconstructed object state."
+                    );
+                }
+            }
+        }
+
+        return null;
     }
 
     private void RecountRefs() {

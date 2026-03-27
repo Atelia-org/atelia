@@ -108,6 +108,25 @@ internal struct DequeChangeTracker<TValue>
     public bool TryPeekBack(out TValue? value) => _current.TryPeekBack(out value);
 
     /// <summary>
+    /// typed / durable-ref 路径的一步写入入口：
+    /// 在 tracker 内部完成 current no-op 短路，以及 keep window / dirty map 维护。
+    /// </summary>
+    public bool SetAt<VHelper>(int index, TValue? value)
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        Debug.Assert(
+            !VHelper.NeedRelease,
+            "一体化 SetAt 仅适用于无额外所有权释放语义的 typed/durable-ref 路径；mixed/ValueBox 仍应走二阶段 Update + AfterSet。"
+        );
+
+        ref TValue? slot = ref _current.GetRef(index);
+        if (VHelper.Equals(slot, value)) { return false; }
+
+        slot = value;
+        AfterSet<VHelper>(index, ref slot);
+        return true;
+    }
+
+    /// <summary>
     /// 返回 current 槽位的可写引用。调用方可直接对槽位做原地更新。
     /// 若更新后语义发生变化，必须再调用 <see cref="AfterSet{VHelper}"/> 维护 tracker 状态。
     /// </summary>

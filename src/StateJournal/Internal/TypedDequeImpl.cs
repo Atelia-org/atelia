@@ -96,13 +96,33 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
 
     #endregion
 
-    private void SetCore(int index, T? value) {
-        ref T? slot = ref _core.GetRef(index);
-        if (VHelper.Equals(slot, value)) { return; }
+    private void SetCore(int index, T? value) => _core.SetAt<VHelper>(index, value);
 
-        slot = value;
-        _core.AfterSet<VHelper>(index, ref slot);
+    internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
+        if (!VHelper.NeedVisitChildRefs) { return; }
+
+        _core.Current.GetSegments(out Span<T?> first, out Span<T?> second);
+        VisitSegment(ref visitor, first);
+        VisitSegment(ref visitor, second);
     }
 
-    internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
+    private void VisitSegment<TVisitor>(ref TVisitor visitor, Span<T?> segment)
+        where TVisitor : IChildRefVisitor, allows ref struct {
+        foreach (var value in segment) {
+            VHelper.VisitChildRefs(value, Revision, ref visitor);
+        }
+    }
+
+    internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
+        if (tracker is null || !VHelper.NeedValidateReconstructed) { return null; }
+        _core.Current.GetSegments(out Span<T?> first, out Span<T?> second);
+        return ValidateSegment(first, tracker) ?? ValidateSegment(second, tracker);
+    }
+
+    private static AteliaError? ValidateSegment(Span<T?> segment, LoadPlaceholderTracker tracker) {
+        foreach (T? value in segment) {
+            if (VHelper.ValidateReconstructed(value, tracker, "TypedDeque") is { } error) { return error; }
+        }
+        return null;
+    }
 }

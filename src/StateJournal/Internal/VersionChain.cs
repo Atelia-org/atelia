@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Atelia.Data;
 using Atelia.Rbf;
 using Atelia.StateJournal.Serialization;
+using Atelia.StateJournal.Pools;
 
 namespace Atelia.StateJournal.Internal;
 
@@ -83,9 +84,10 @@ internal static class VersionChain {
         DurableObject obj,
         IRbfFile file,
         DiffWriteContext context,
-        ReadOnlySpan<byte> tailMeta = default
+        ReadOnlySpan<byte> tailMeta = default,
+        Revision? stringRevision = null
     ) {
-        var writeResult = Write(obj, file, context, tailMeta);
+        var writeResult = Write(obj, file, context, tailMeta, stringRevision);
         if (writeResult.IsFailure) { return writeResult.Error!; }
         writeResult.Value.Complete();
         return writeResult.Value.Ticket;
@@ -99,7 +101,8 @@ internal static class VersionChain {
         DurableObject obj,
         IRbfFile file,
         DiffWriteContext context,
-        ReadOnlySpan<byte> tailMeta = default
+        ReadOnlySpan<byte> tailMeta = default,
+        Revision? stringRevision = null
     ) {
         context.AssertValid();
         if (!obj.HasChanges && !context.ForceRebase
@@ -107,7 +110,7 @@ internal static class VersionChain {
         ) { return new PendingSave(obj, obj.HeadTicket, context); }
         using RbfFrameBuilder builder = file.BeginAppend();
         RbfPayloadWriter rbfWriter = builder.PayloadAndMeta;
-        BinaryDiffWriter diffWriter = new(rbfWriter);
+        BinaryDiffWriter diffWriter = new(rbfWriter, stringRevision ?? obj.BoundRevision);
         FrameTag frameTag = obj.WritePendingDiff(diffWriter, ref context);
         if (frameTag.ValidateComplete() is { } tagError) { return tagError; }
         int tailMetaLength = tailMeta.Length;
@@ -130,9 +133,10 @@ internal static class VersionChain {
         IRbfFile file,
         SizedPtr versionTicket,
         FrameUsage? expectUsage = null,
-        DurableObjectKind? expectObject = null
+        DurableObjectKind? expectObject = null,
+        StringPool? symbolPool = null
     ) {
-        var result = LoadFull(file, versionTicket, expectUsage, expectObject);
+        var result = LoadFull(file, versionTicket, expectUsage, expectObject, symbolPool);
         if (result.IsFailure) { return result.Error!; }
         return result.Value.Object;
     }
@@ -148,10 +152,12 @@ internal static class VersionChain {
         IRbfFile file,
         SizedPtr versionTicket,
         FrameUsage? expectUsage = null,
-        DurableObjectKind? expectObject = null
+        DurableObjectKind? expectObject = null,
+        StringPool? symbolPool = null
     ) {
         Stack<(RbfPooledFrame Frame, int ConsumedCount, int TailMetaLength, SizedPtr ParentTicket)> deltaChain = new(256);
         HashSet<SizedPtr> visitedTickets = new();
+        LoadPlaceholderTracker? placeholderTracker = symbolPool is null ? null : new();
         try {
             ReadOnlySpan<byte> typeCode;
             SizedPtr readTarget = versionTicket;
@@ -186,7 +192,7 @@ internal static class VersionChain {
                 ReadOnlySpan<byte> payloadAndMeta = frame.PayloadAndMeta;
                 int tailMetaLen = frame.TailMetaLength;
                 ReadOnlySpan<byte> payload = tailMetaLen > 0 ? payloadAndMeta[..^tailMetaLen] : payloadAndMeta;
-                BinaryDiffReader reader = new(payload);
+                BinaryDiffReader reader = new(payload, symbolPool, placeholderTracker);
                 typeCode = reader.ReadBytes();
                 if (frameTag.VersionKind == VersionKind.Rebase && typeCode.IsEmpty) {
                     return new SjCorruptionError(
@@ -244,7 +250,7 @@ internal static class VersionChain {
                 ReadOnlySpan<byte> payloadAndMeta = version.Frame.PayloadAndMeta;
                 int tmLen = version.TailMetaLength;
                 ReadOnlySpan<byte> diffPayload = tmLen > 0 ? payloadAndMeta[version.ConsumedCount..^tmLen] : payloadAndMeta[version.ConsumedCount..];
-                BinaryDiffReader reader = new(diffPayload);
+                BinaryDiffReader reader = new(diffPayload, symbolPool, placeholderTracker);
                 result.ApplyDelta(ref reader, version.ParentTicket);
                 reader.EnsureFullyConsumed();
                 // 最后弹出的帧是头帧（deltaChain 中最先 Push 的）：提取其 parentTicket 和 tailMeta
@@ -255,6 +261,9 @@ internal static class VersionChain {
                 version.Frame.Dispose();
                 deltaChain.Pop();
             }
+            if ((placeholderTracker is not null || symbolPool is not null) &&
+                result.ValidateReconstructed(placeholderTracker, symbolPool) is { } placeholderError) { return placeholderError; }
+
             result.OnLoadCompleted(versionTicket);
             return new VersionChainLoadResult(result, headParentTicket, headTailMeta);
         }

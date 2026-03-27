@@ -39,7 +39,7 @@ public partial class RevisionTests : IDisposable {
     }
 
     private static int GetSymbolTableCount(Revision revision) {
-        var field = typeof(Revision).GetField("_symbolTable", BindingFlags.NonPublic | BindingFlags.Instance);
+        var field = typeof(Revision).GetField("_symbolMirror", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(field);
         var table = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(field!.GetValue(revision));
         return table.Count;
@@ -208,7 +208,7 @@ public partial class RevisionTests : IDisposable {
         var objectMap = Assert.IsAssignableFrom<DurableDict<uint, ulong>>(mapField.GetValue(rev));
         objectMap.Upsert(root.LocalId.Value, rootSave.Value.Serialize()); // 故意不写 child ticket
 
-        var symbolTableField = typeof(Revision).GetField("_symbolTable", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var symbolTableField = typeof(Revision).GetField("_symbolMirror", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var symbolTable = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(symbolTableField.GetValue(rev));
         var symbolTableSave = VersionChain.Save(symbolTable, file, DiffWriteContext.UserPrimary);
         Assert.True(symbolTableSave.IsSuccess, $"Save symbolTable failed: {symbolTableSave.Error}");
@@ -242,7 +242,7 @@ public partial class RevisionTests : IDisposable {
         var objectMap = Assert.IsAssignableFrom<DurableDict<uint, ulong>>(mapField.GetValue(rev));
         objectMap.Upsert(root.LocalId.Value, rootSave.Value.Serialize());
 
-        var symbolTableField = typeof(Revision).GetField("_symbolTable", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var symbolTableField = typeof(Revision).GetField("_symbolMirror", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var symbolTable = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(symbolTableField.GetValue(rev));
         var symbolTableSave = VersionChain.Save(symbolTable, file, DiffWriteContext.UserPrimary);
         Assert.True(symbolTableSave.IsSuccess, $"Save symbolTable failed: {symbolTableSave.Error}");

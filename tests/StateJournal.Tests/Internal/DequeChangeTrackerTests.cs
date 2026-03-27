@@ -695,12 +695,6 @@ public class DequeChangeTrackerTests {
 
     private static bool AssignBack(ref DequeChangeTracker<int> tracker, int value) => AssignAt(ref tracker, tracker.Current.Count - 1, value);
 
-    private static bool AssignAt(ref DequeChangeTracker<int> tracker, int index, int value) {
-        ref int slot = ref tracker.GetRef(index);
-        if (slot == value) { return false; }
-
-        slot = value;
-        tracker.AfterSet<Int32Helper>(index, ref slot);
-        return true;
-    }
+    private static bool AssignAt(ref DequeChangeTracker<int> tracker, int index, int value) =>
+        tracker.SetAt<Int32Helper>(index, value);
 }

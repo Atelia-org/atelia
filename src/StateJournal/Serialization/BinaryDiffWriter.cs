@@ -8,9 +8,11 @@ namespace Atelia.StateJournal.Serialization;
 internal ref struct BinaryDiffWriter {
     internal const byte BareFalse = 0, BareTrue = 1;
     private IBufferWriter<byte> _downstream = null!;
+    private readonly Revision? _stringRevision;
 
-    internal BinaryDiffWriter(IBufferWriter<byte> downstream) {
+    internal BinaryDiffWriter(IBufferWriter<byte> downstream, Revision? stringRevision = null) {
         _downstream = downstream;
+        _stringRevision = stringRevision;
     }
 
     public void BareBoolean(bool value, bool asKey) {
@@ -18,13 +20,21 @@ internal ref struct BinaryDiffWriter {
         _downstream.Advance(1);
     }
 
-    /// <summary>string key 的 symbol-backed 裸写入。当前仍为 stub，后续 key 专用实现接入。</summary>
-    public void BareSymbolId(string? value, bool asKey) {
-        throw new NotImplementedException();
+    /// <summary>string 的 symbol-backed 裸写入。需要调用方提供 <see cref="Revision"/> 级编码上下文。</summary>
+    public void BareSymbol(string? value, bool asKey) {
+        if (value is null) {
+            BareSymbolId(SymbolId.Null, asKey);
+            return;
+        }
+        if (_stringRevision is null) { throw new InvalidOperationException("Symbol-backed string serialization requires a bound Revision context."); }
+
+        SymbolId id = _stringRevision.InternReachableSymbol(value);
+        _stringRevision.EnsureSymbolMirrored(value, id);
+        BareSymbolId(id, asKey);
     }
 
     /// <summary>已编码 <see cref="SymbolId"/> 的裸写入，不做任何 <see cref="Revision"/> 级转换。</summary>
-    public void BareStoredSymbolId(SymbolId value, bool asKey) {
+    public void BareSymbolId(SymbolId value, bool asKey) {
         BareUInt32(value.Value, asKey);
     }
 
@@ -87,8 +97,13 @@ internal ref struct BinaryDiffWriter {
     }
 
     public void TaggedDurableRef(DurableRef value) {
-        if (!DurableRef.IsValidObjectKind(value.Kind)) { throw new InvalidDataException($"Invalid DurableRef kind '{value.Kind}'."); }
-        if (value.IsNull) { throw new InvalidDataException("DurableRef LocalId cannot be null. Use TaggedNull for null references."); }
+        // 内部方法，填入正确参数是调用方的责任。
+        Debug.Assert(DurableRef.IsValidObjectKind(value.Kind), $"Invalid DurableRef kind '{value.Kind}'.");
+        Debug.Assert(!value.IsNull, "DurableRef LocalId cannot be null. Use TaggedNull for null references.");
+        if (value.IsNull) {
+            TaggedNull(); // Release 尽量弥补。
+            return;
+        }
 
         bool wide = value.Id.Value > ushort.MaxValue;
         byte tag = ScalarRules.TaggedRefEncoding.EncodeTag(TaggedRefKindHelper.FromDurableObjectKind(value.Kind), wide);
@@ -132,7 +147,13 @@ internal ref struct BinaryDiffWriter {
     /// 布局：1-byte tag (0xA0 | Kind.Symbol&lt;&lt;1 | WideFlag)，后跟 2 或 4 字节 SymbolId.Value (LE)。
     /// </summary>
     public void TaggedSymbolId(SymbolId id) {
-        if (id.IsNull) { throw new InvalidDataException("SymbolId cannot be null. Use TaggedNull for null references."); }
+        // 内部方法，填入正确参数是调用方的责任。
+        Debug.Assert(!id.IsNull, "SymbolId cannot be null. Use TaggedNull for null references.");
+        if (id.IsNull) {
+            TaggedNull(); // Release 尽量弥补。
+            return;
+        }
+        _stringRevision?.EnsureSymbolIdMirrored(id);
 
         bool wide = id.Value > ushort.MaxValue;
         byte tag = ScalarRules.TaggedRefEncoding.EncodeTag(TaggedRefKind.Symbol, wide);

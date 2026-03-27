@@ -81,14 +81,7 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
         VisitSegment(ref visitor, second);
     }
 
-    private bool SetCore(int index, LocalId value) {
-        ref LocalId slot = ref _core.GetRef(index);
-        if (slot == value) { return false; }
-
-        slot = value;
-        _core.AfterSet<LocalIdAsRefHelper>(index, ref slot);
-        return true;
-    }
+    private bool SetCore(int index, LocalId value) => _core.SetAt<LocalIdAsRefHelper>(index, value);
 
     private LocalId ToLocalId(T? value) {
         if (value is not null) { Revision.EnsureCanReference(value); }

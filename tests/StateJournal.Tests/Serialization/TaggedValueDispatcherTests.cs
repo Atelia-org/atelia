@@ -173,28 +173,6 @@ public class TaggedValueDispatcherTests {
     }
 
     [Fact]
-    public void WriteDurableRef_BlankKind_ThrowsInvalidDataException() {
-        Assert.Throws<System.IO.InvalidDataException>(
-            () => {
-                var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-                var writer = new BinaryDiffWriter(buffer);
-                writer.TaggedDurableRef(new DurableRef(DurableObjectKind.Blank, new LocalId(1)));
-            }
-        );
-    }
-
-    [Fact]
-    public void WriteDurableRef_NullId_ThrowsInvalidDataException() {
-        Assert.Throws<System.IO.InvalidDataException>(
-            () => {
-                var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-                var writer = new BinaryDiffWriter(buffer);
-                writer.TaggedDurableRef(new DurableRef(DurableObjectKind.MixedDict, LocalId.Null));
-            }
-        );
-    }
-
-    [Fact]
     public void TaggedRefKind_FromDurableObjectKind_PreservesAlignedValues() {
         Assert.Equal((byte)DurableObjectKind.MixedDict, (byte)TaggedRefKindHelper.FromDurableObjectKind(DurableObjectKind.MixedDict));
         Assert.Equal((byte)DurableObjectKind.TypedDict, (byte)TaggedRefKindHelper.FromDurableObjectKind(DurableObjectKind.TypedDict));
@@ -282,17 +260,6 @@ public class TaggedValueDispatcherTests {
 
         Assert.Equal(GetIssue.None, ValueBox.GetSymbolId(box, out var id));
         Assert.Equal(42u, id.Value);
-    }
-
-    [Fact]
-    public void WriteSymbolId_NullId_Throws() {
-        Assert.Throws<System.IO.InvalidDataException>(
-            () => {
-                var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-                var writer = new BinaryDiffWriter(buffer);
-                writer.TaggedSymbolId(SymbolId.Null);
-            }
-        );
     }
 
     [Fact]

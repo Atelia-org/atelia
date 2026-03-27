@@ -46,6 +46,13 @@ internal class MixedDequeImpl : DurableDeque {
         VisitSegment(ref visitor, second);
     }
 
+    internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
+        if (symbolPool is null || _symbolRefCount == 0) { return null; }
+
+        _core.Current.GetSegments(out Span<ValueBox> first, out Span<ValueBox> second);
+        return ValidateSymbolSegment(first, symbolPool) ?? ValidateSymbolSegment(second, symbolPool);
+    }
+
     private void RecountRefs() {
         int durCount = 0, symCount = 0;
         _core.Current.GetSegments(out Span<ValueBox> first, out Span<ValueBox> second);
@@ -61,6 +68,20 @@ internal class MixedDequeImpl : DurableDeque {
             if (box.IsDurableRef) { visitor.Visit(box.GetDurRefId()); }
             else if (box.IsSymbolRef) { visitor.Visit(box.DecodeSymbolId()); }
         }
+    }
+
+    private static AteliaError? ValidateSymbolSegment(Span<ValueBox> segment, Pools.StringPool symbolPool) {
+        foreach (var box in segment) {
+            if (!box.IsSymbolRef) { continue; }
+            SymbolId symbolId = box.DecodeSymbolId();
+            if (!symbolPool.Validate(symbolId.ToSlotHandle())) {
+                return new SjCorruptionError(
+                    $"MixedDeque load completed with a dangling SymbolId {symbolId.Value}.",
+                    RecoveryHint: "The final SymbolTable is missing a string still referenced by the reconstructed object state."
+                );
+            }
+        }
+        return null;
     }
 
     private static void CountRefs(Span<ValueBox> segment, ref int durCount, ref int symCount) {
