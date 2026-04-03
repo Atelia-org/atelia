@@ -31,6 +31,18 @@ internal readonly struct TypeEntry {
 /// 合并了类型验证与 Helper 解析，避免先验证再查找的双重遍历。
 /// </summary>
 internal static class HelperRegistry {
+    private static readonly Type ValueTuple2Definition = typeof(ValueTuple<,>);
+    private static readonly Type ValueTuple3Definition = typeof(ValueTuple<,,>);
+    private static readonly Type ValueTuple4Definition = typeof(ValueTuple<,,,>);
+    private static readonly Type ValueTuple5Definition = typeof(ValueTuple<,,,,>);
+    private static readonly Type ValueTuple6Definition = typeof(ValueTuple<,,,,,>);
+    private static readonly Type ValueTuple7Definition = typeof(ValueTuple<,,,,,,>);
+    private static readonly Type ValueTuple2HelperDefinition = typeof(ValueTuple2Helper<,,,>);
+    private static readonly Type ValueTuple3HelperDefinition = typeof(ValueTuple3Helper<,,,,,>);
+    private static readonly Type ValueTuple4HelperDefinition = typeof(ValueTuple4Helper<,,,,,,,>);
+    private static readonly Type ValueTuple5HelperDefinition = typeof(ValueTuple5Helper<,,,,,,,,,>);
+    private static readonly Type ValueTuple6HelperDefinition = typeof(ValueTuple6Helper<,,,,,,,,,,,>);
+    private static readonly Type ValueTuple7HelperDefinition = typeof(ValueTuple7Helper<,,,,,,,,,,,,,>);
 
     #region Key Helper 单例
 
@@ -105,6 +117,8 @@ internal static class HelperRegistry {
         var h = ResolveKeyHelper(t);
         if (h.IsValid) { return h; }
 
+        if (TryResolveTupleHelper(t, out TypeEntry tupleEntry)) { return tupleEntry; }
+
         // DurableDeque (MixedDeque) 已作为 _valueHelperCache 初值处理
 
         // 泛型容器: 递归验证子类型参数并拼接 TypeCode
@@ -148,6 +162,140 @@ internal static class HelperRegistry {
         }
 
         return default;
+    }
+
+    private static bool TryResolveTupleHelper(Type t, out TypeEntry entry) {
+        entry = default;
+        if (!t.IsGenericType) { return false; }
+
+        var def = t.GetGenericTypeDefinition();
+        var args = t.GenericTypeArguments;
+
+        if (def == ValueTuple2Definition) {
+            var first = ResolveTupleElementHelper(args[0]);
+            if (!first.IsValid) { return false; }
+            var second = ResolveTupleElementHelper(args[1]);
+            if (!second.IsValid) { return false; }
+
+            byte[] typeCode = BuildCompositeTypeCode(TypeOpCode.MakeValueTuple2, second.TypeCode!, first.TypeCode!);
+            Type helperType = ValueTuple2HelperDefinition.MakeGenericType(args[0], args[1], first.HelperType!, second.HelperType!);
+            entry = new(helperType, typeCode);
+            return true;
+        }
+
+        if (def == ValueTuple3Definition) {
+            var first = ResolveTupleElementHelper(args[0]);
+            if (!first.IsValid) { return false; }
+            var second = ResolveTupleElementHelper(args[1]);
+            if (!second.IsValid) { return false; }
+            var third = ResolveTupleElementHelper(args[2]);
+            if (!third.IsValid) { return false; }
+
+            byte[] typeCode = BuildCompositeTypeCode(TypeOpCode.MakeValueTuple3, third.TypeCode!, second.TypeCode!, first.TypeCode!);
+            Type helperType = ValueTuple3HelperDefinition.MakeGenericType(args[0], args[1], args[2], first.HelperType!, second.HelperType!, third.HelperType!);
+            entry = new(helperType, typeCode);
+            return true;
+        }
+
+        if (def == ValueTuple4Definition) {
+            var first = ResolveTupleElementHelper(args[0]);
+            if (!first.IsValid) { return false; }
+            var second = ResolveTupleElementHelper(args[1]);
+            if (!second.IsValid) { return false; }
+            var third = ResolveTupleElementHelper(args[2]);
+            if (!third.IsValid) { return false; }
+            var fourth = ResolveTupleElementHelper(args[3]);
+            if (!fourth.IsValid) { return false; }
+
+            byte[] typeCode = BuildCompositeTypeCode(TypeOpCode.MakeValueTuple4, fourth.TypeCode!, third.TypeCode!, second.TypeCode!, first.TypeCode!);
+            Type helperType = ValueTuple4HelperDefinition.MakeGenericType(args[0], args[1], args[2], args[3], first.HelperType!, second.HelperType!, third.HelperType!, fourth.HelperType!);
+            entry = new(helperType, typeCode);
+            return true;
+        }
+
+        if (def == ValueTuple5Definition) {
+            var first = ResolveTupleElementHelper(args[0]);
+            if (!first.IsValid) { return false; }
+            var second = ResolveTupleElementHelper(args[1]);
+            if (!second.IsValid) { return false; }
+            var third = ResolveTupleElementHelper(args[2]);
+            if (!third.IsValid) { return false; }
+            var fourth = ResolveTupleElementHelper(args[3]);
+            if (!fourth.IsValid) { return false; }
+            var fifth = ResolveTupleElementHelper(args[4]);
+            if (!fifth.IsValid) { return false; }
+
+            byte[] typeCode = BuildCompositeTypeCode(TypeOpCode.MakeValueTuple5, fifth.TypeCode!, fourth.TypeCode!, third.TypeCode!, second.TypeCode!, first.TypeCode!);
+            Type helperType = ValueTuple5HelperDefinition.MakeGenericType(args[0], args[1], args[2], args[3], args[4], first.HelperType!, second.HelperType!, third.HelperType!, fourth.HelperType!, fifth.HelperType!);
+            entry = new(helperType, typeCode);
+            return true;
+        }
+
+        if (def == ValueTuple6Definition) {
+            var first = ResolveTupleElementHelper(args[0]);
+            if (!first.IsValid) { return false; }
+            var second = ResolveTupleElementHelper(args[1]);
+            if (!second.IsValid) { return false; }
+            var third = ResolveTupleElementHelper(args[2]);
+            if (!third.IsValid) { return false; }
+            var fourth = ResolveTupleElementHelper(args[3]);
+            if (!fourth.IsValid) { return false; }
+            var fifth = ResolveTupleElementHelper(args[4]);
+            if (!fifth.IsValid) { return false; }
+            var sixth = ResolveTupleElementHelper(args[5]);
+            if (!sixth.IsValid) { return false; }
+
+            byte[] typeCode = BuildCompositeTypeCode(TypeOpCode.MakeValueTuple6, sixth.TypeCode!, fifth.TypeCode!, fourth.TypeCode!, third.TypeCode!, second.TypeCode!, first.TypeCode!);
+            Type helperType = ValueTuple6HelperDefinition.MakeGenericType(args[0], args[1], args[2], args[3], args[4], args[5], first.HelperType!, second.HelperType!, third.HelperType!, fourth.HelperType!, fifth.HelperType!, sixth.HelperType!);
+            entry = new(helperType, typeCode);
+            return true;
+        }
+
+        if (def == ValueTuple7Definition) {
+            var first = ResolveTupleElementHelper(args[0]);
+            if (!first.IsValid) { return false; }
+            var second = ResolveTupleElementHelper(args[1]);
+            if (!second.IsValid) { return false; }
+            var third = ResolveTupleElementHelper(args[2]);
+            if (!third.IsValid) { return false; }
+            var fourth = ResolveTupleElementHelper(args[3]);
+            if (!fourth.IsValid) { return false; }
+            var fifth = ResolveTupleElementHelper(args[4]);
+            if (!fifth.IsValid) { return false; }
+            var sixth = ResolveTupleElementHelper(args[5]);
+            if (!sixth.IsValid) { return false; }
+            var seventh = ResolveTupleElementHelper(args[6]);
+            if (!seventh.IsValid) { return false; }
+
+            byte[] typeCode = BuildCompositeTypeCode(TypeOpCode.MakeValueTuple7, seventh.TypeCode!, sixth.TypeCode!, fifth.TypeCode!, fourth.TypeCode!, third.TypeCode!, second.TypeCode!, first.TypeCode!);
+            Type helperType = ValueTuple7HelperDefinition.MakeGenericType(args[0], args[1], args[2], args[3], args[4], args[5], args[6], first.HelperType!, second.HelperType!, third.HelperType!, fourth.HelperType!, fifth.HelperType!, sixth.HelperType!, seventh.HelperType!);
+            entry = new(helperType, typeCode);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static TypeEntry ResolveTupleElementHelper(Type t) {
+        TypeEntry entry = ResolveValueHelper(t);
+        return entry.HelperType is null ? default : entry;
+    }
+
+    private static byte[] BuildCompositeTypeCode(TypeOpCode opCode, params byte[][] operandTypeCodes) {
+        int totalLength = 1;
+        foreach (byte[] code in operandTypeCodes) {
+            totalLength += code.Length;
+        }
+
+        byte[] result = new byte[totalLength];
+        int offset = 0;
+        foreach (byte[] code in operandTypeCodes) {
+            code.CopyTo(result, offset);
+            offset += code.Length;
+        }
+
+        result[^1] = (byte)opCode;
+        return result;
     }
 
     #endregion

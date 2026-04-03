@@ -54,6 +54,70 @@ public class TypeCodecTests {
         Assert.Equal(typeof(DurableDeque), result);
     }
 
+    [Fact]
+    public void MakeValueTuple2_Int32String() {
+        byte[] bytes = [
+            (byte)TypeOpCode.PushString,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.MakeValueTuple2
+        ];
+        Assert.True(Decode(bytes, out var result));
+        Assert.Equal(typeof(ValueTuple<int, string>), result);
+    }
+
+    [Fact]
+    public void MakeValueTuple3_Int32UInt32Boolean() {
+        byte[] bytes = [
+            (byte)TypeOpCode.PushBoolean,
+            (byte)TypeOpCode.PushUInt32,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.MakeValueTuple3
+        ];
+        Assert.True(Decode(bytes, out var result));
+        Assert.Equal(typeof(ValueTuple<int, uint, bool>), result);
+    }
+
+    [Fact]
+    public void MakeNestedValueTuple2_DecodesCorrectly() {
+        byte[] bytes = [
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.MakeValueTuple2,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.MakeValueTuple2
+        ];
+        Assert.True(Decode(bytes, out var result));
+        Assert.Equal(typeof(ValueTuple<int, ValueTuple<int, int>>), result);
+    }
+
+    [Fact]
+    public void MakeValueTuple2_InsufficientOperands_ReturnsFalse() {
+        byte[] bytes = [(byte)TypeOpCode.PushInt32, (byte)TypeOpCode.MakeValueTuple2];
+        Assert.False(Decode(bytes, out _));
+    }
+
+    [Fact]
+    public void MakeValueTuple3_InsufficientOperands_ReturnsFalse() {
+        byte[] bytes = [(byte)TypeOpCode.PushInt32, (byte)TypeOpCode.PushInt32, (byte)TypeOpCode.MakeValueTuple3];
+        Assert.False(Decode(bytes, out _));
+    }
+
+    [Fact]
+    public void MakeValueTuple7_AllInt32_DecodesCorrectly() {
+        byte[] bytes = [
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.PushInt32,
+            (byte)TypeOpCode.MakeValueTuple7
+        ];
+        Assert.True(Decode(bytes, out var result));
+        Assert.Equal(typeof(ValueTuple<int, int, int, int, int, int, int>), result);
+    }
+
     // ═══════════════════════ MakeTypedDeque ═══════════════════════
 
     [Fact]

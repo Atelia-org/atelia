@@ -70,6 +70,30 @@ public class GenericRulesTests {
         Assert.True(HelperRegistry.IsValidValue(typeof(DurableDeque<string>)));
 
     [Fact]
+    public void IsValidValue_ValueTuple2_Valid() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(ValueTuple<int, int>)));
+
+    [Fact]
+    public void IsValidValue_ValueTuple3_Valid() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(ValueTuple<int, int, int>)));
+
+    [Fact]
+    public void IsValidValue_ValueTuple7_Valid() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(ValueTuple<int, int, int, int, int, int, int>)));
+
+    [Fact]
+    public void IsValidValue_NestedValueTuple_Valid() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(ValueTuple<int, ValueTuple<int, int>>)));
+
+    [Fact]
+    public void IsValidValue_ValueTupleWithString_Valid() =>
+        Assert.True(HelperRegistry.IsValidValue(typeof(ValueTuple<int, string>)));
+
+    [Fact]
+    public void IsValidValue_ValueTupleWithNestedContainer_Rejected() =>
+        Assert.False(HelperRegistry.IsValidValue(typeof(ValueTuple<int, DurableDict<int, int>>)));
+
+    [Fact]
     public void IsValidValue_NonGenericSJDict_Rejected() =>
         Assert.False(HelperRegistry.IsValidValue(typeof(DurableObject)));
 
@@ -130,6 +154,27 @@ public class GenericRulesTests {
         var d = Durable.Dict<int, string>();
         Assert.NotNull(d);
         Assert.IsAssignableFrom<DurableDict<int, string>>(d);
+    }
+
+    [Fact]
+    public void SJ_Dict_ValueTuple2_ReturnsInstance() {
+        var d = Durable.Dict<int, ValueTuple<int, int>>();
+        Assert.NotNull(d);
+        Assert.IsAssignableFrom<DurableDict<int, ValueTuple<int, int>>>(d);
+    }
+
+    [Fact]
+    public void SJ_Deque_ValueTuple3_ReturnsInstance() {
+        var l = Durable.Deque<ValueTuple<int, int, int>>();
+        Assert.NotNull(l);
+        Assert.IsAssignableFrom<DurableDeque<ValueTuple<int, int, int>>>(l);
+    }
+
+    [Fact]
+    public void SJ_Dict_ValueTuple7_ReturnsInstance() {
+        var d = Durable.Dict<int, ValueTuple<int, int, int, int, int, int, int>>();
+        Assert.NotNull(d);
+        Assert.IsAssignableFrom<DurableDict<int, ValueTuple<int, int, int, int, int, int, int>>>(d);
     }
 
     [Fact]

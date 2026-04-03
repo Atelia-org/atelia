@@ -27,6 +27,12 @@ internal enum TypeOpCode : byte {
     PushString,
     PushInlineString,
     PushMixedDeque,
+    MakeValueTuple2,
+    MakeValueTuple3,
+    MakeValueTuple4,
+    MakeValueTuple5,
+    MakeValueTuple6,
+    MakeValueTuple7,
 
     MakeMixedDict = 128,
     MakeTypedDict,
@@ -87,6 +93,30 @@ internal static class TypeCodec {
                     break;
                 case TypeOpCode.PushMixedDeque:
                     operands.Push(typeof(DurableDeque));
+                    break;
+                case TypeOpCode.MakeValueTuple2:
+                    if (operands.Count < 2) { return false; }
+                    operands.Push(typeof(ValueTuple<,>).MakeGenericType(operands.Pop(), operands.Pop()));
+                    break;
+                case TypeOpCode.MakeValueTuple3:
+                    if (operands.Count < 3) { return false; }
+                    operands.Push(typeof(ValueTuple<,,>).MakeGenericType(operands.Pop(), operands.Pop(), operands.Pop()));
+                    break;
+                case TypeOpCode.MakeValueTuple4:
+                    if (operands.Count < 4) { return false; }
+                    operands.Push(typeof(ValueTuple<,,,>).MakeGenericType(operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop()));
+                    break;
+                case TypeOpCode.MakeValueTuple5:
+                    if (operands.Count < 5) { return false; }
+                    operands.Push(typeof(ValueTuple<,,,,>).MakeGenericType(operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop()));
+                    break;
+                case TypeOpCode.MakeValueTuple6:
+                    if (operands.Count < 6) { return false; }
+                    operands.Push(typeof(ValueTuple<,,,,,>).MakeGenericType(operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop()));
+                    break;
+                case TypeOpCode.MakeValueTuple7:
+                    if (operands.Count < 7) { return false; }
+                    operands.Push(typeof(ValueTuple<,,,,,,>).MakeGenericType(operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop()));
                     break;
                 case TypeOpCode.MakeMixedDict:
                     if (operands.Count < 1) { return false; }
