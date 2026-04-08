@@ -1,7 +1,3 @@
-using System.Collections.Generic;
-using System.IO;
-using Atelia;
-using Atelia.StateJournal;
 using Xunit;
 
 namespace Atelia.StateJournal.Tests;

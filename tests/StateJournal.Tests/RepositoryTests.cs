@@ -1,5 +1,3 @@
-using System.Text.Json;
-using Atelia.Rbf;
 using Xunit;
 
 namespace Atelia.StateJournal.Tests;

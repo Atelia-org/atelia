@@ -1,6 +1,3 @@
-using System.IO;
-using Atelia.StateJournal;
-
 namespace Atelia.StateJournal.Tests;
 
 internal static class SegmentPathTestHelper {
