@@ -405,4 +405,208 @@ public class DurableOrderedDictTests : IDisposable {
         Assert.True(loadedOrdered.TryGet("beta", out var vb), "Key 'beta' should exist after reload");
         Assert.Equal("B", vb);
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // DurableObject value tests
+    // ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Factory_DurObj_CreatesInstance_WithCorrectKind() {
+        var rev = CreateRevision();
+        var dict = rev.CreateOrderedDict<int, DurableDict<string, int>>();
+        Assert.Equal(DurableObjectKind.TypedOrderedDict, dict.Kind);
+    }
+
+    [Fact]
+    public void DurObj_Upsert_Get_BasicFlow() {
+        var rev = CreateRevision();
+        var dict = rev.CreateOrderedDict<int, DurableDict<string, int>>();
+
+        var child1 = rev.CreateDict<string, int>();
+        child1.Upsert("a", 1);
+        var child2 = rev.CreateDict<string, int>();
+        child2.Upsert("b", 2);
+
+        dict.Upsert(10, child1);
+        dict.Upsert(20, child2);
+        Assert.Equal(2, dict.Count);
+
+        var issue = dict.Get(10, out var loaded);
+        Assert.Equal(GetIssue.None, issue);
+        Assert.NotNull(loaded);
+        Assert.Equal(child1.LocalId, loaded!.LocalId);
+
+        Assert.Equal(GetIssue.NotFound, dict.Get(99, out _));
+
+        Assert.True(dict.Remove(10));
+        Assert.Equal(1, dict.Count);
+        Assert.Equal(GetIssue.NotFound, dict.Get(10, out _));
+    }
+
+    [Fact]
+    public void DurObj_Upsert_NullValue() {
+        var rev = CreateRevision();
+        var dict = rev.CreateOrderedDict<int, DurableDict<string, int>>();
+
+        dict.Upsert(1, null);
+        Assert.Equal(1, dict.Count);
+        Assert.True(dict.ContainsKey(1));
+
+        var issue = dict.Get(1, out var v);
+        Assert.Equal(GetIssue.None, issue);
+        Assert.Null(v);
+    }
+
+    [Fact]
+    public void DurObj_Commit_ThenOpen_RoundTrips() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+        var rev = CreateRevision();
+
+        var root = rev.CreateDict<string>();
+        var dict = rev.CreateOrderedDict<int, DurableDict<string, int>>();
+
+        var child1 = rev.CreateDict<string, int>();
+        child1.Upsert("x", 10);
+        var child2 = rev.CreateDict<string, int>();
+        child2.Upsert("y", 20);
+
+        dict.Upsert(1, child1);
+        dict.Upsert(2, child2);
+        root.Upsert("ordered", dict);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
+
+        var openResult = OpenRevision(outcome.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = openResult.Value!;
+        var loadResult = loaded.Load(dict.LocalId);
+        Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
+        var loadedDict = Assert.IsAssignableFrom<DurableOrderedDict<int, DurableDict<string, int>>>(loadResult.Value);
+
+        Assert.Equal(2, loadedDict.Count);
+
+        var issue1 = loadedDict.Get(1, out var loadedChild1);
+        Assert.Equal(GetIssue.None, issue1);
+        Assert.NotNull(loadedChild1);
+        Assert.Equal(DurableObjectKind.TypedDict, loadedChild1!.Kind);
+        Assert.True(loadedChild1.TryGet("x", out var vx));
+        Assert.Equal(10, vx);
+
+        var issue2 = loadedDict.Get(2, out var loadedChild2);
+        Assert.Equal(GetIssue.None, issue2);
+        Assert.NotNull(loadedChild2);
+        Assert.True(loadedChild2!.TryGet("y", out var vy));
+        Assert.Equal(20, vy);
+    }
+
+    [Fact]
+    public void DurObj_MultipleCommits_DeltaChain_RoundTrips() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+        var rev = CreateRevision();
+
+        var root = rev.CreateDict<string>();
+        var dict = rev.CreateOrderedDict<int, DurableDict<string, int>>();
+
+        var child1 = rev.CreateDict<string, int>();
+        child1.Upsert("a", 1);
+        dict.Upsert(1, child1);
+        root.Upsert("ordered", dict);
+
+        AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        // 第二次提交：替换 key=1 的值为新 child
+        var child1New = rev.CreateDict<string, int>();
+        child1New.Upsert("a", 100);
+        dict.Upsert(1, child1New);
+
+        var child2 = rev.CreateDict<string, int>();
+        child2.Upsert("b", 2);
+        dict.Upsert(2, child2);
+
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+
+        var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = openResult.Value!;
+        var loadResult = loaded.Load(dict.LocalId);
+        Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
+        var loadedDict = Assert.IsAssignableFrom<DurableOrderedDict<int, DurableDict<string, int>>>(loadResult.Value);
+
+        Assert.Equal(2, loadedDict.Count);
+
+        var issue1 = loadedDict.Get(1, out var lc1);
+        Assert.Equal(GetIssue.None, issue1);
+        Assert.NotNull(lc1);
+        Assert.True(lc1!.TryGet("a", out var va));
+        Assert.Equal(100, va); // 更新后的值
+
+        var issue2 = loadedDict.Get(2, out var lc2);
+        Assert.Equal(GetIssue.None, issue2);
+        Assert.NotNull(lc2);
+        Assert.True(lc2!.TryGet("b", out var vb));
+        Assert.Equal(2, vb);
+    }
+
+    [Fact]
+    public void DurObj_ReadAscendingFrom_Works() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+        var rev = CreateRevision();
+
+        var root = rev.CreateDict<string>();
+        var dict = rev.CreateOrderedDict<int, DurableDict<string, int>>();
+
+        for (int i = 1; i <= 5; i++) {
+            var child = rev.CreateDict<string, int>();
+            child.Upsert("v", i * 10);
+            dict.Upsert(i * 10, child);
+        }
+        root.Upsert("ordered", dict);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
+
+        var openResult = OpenRevision(outcome.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = openResult.Value!;
+        var loadResult = loaded.Load(dict.LocalId);
+        Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
+        var loadedDict = Assert.IsAssignableFrom<DurableOrderedDict<int, DurableDict<string, int>>>(loadResult.Value);
+
+        var range = loadedDict.ReadAscendingFrom(25, 3);
+        Assert.Equal(3, range.Count);
+        Assert.Equal(30, range[0].Key);
+        Assert.Equal(40, range[1].Key);
+        Assert.Equal(50, range[2].Key);
+
+        // 验证返回的对象内容正确
+        Assert.True(range[0].Value!.TryGet("v", out var v30));
+        Assert.Equal(30, v30);
+        Assert.True(range[1].Value!.TryGet("v", out var v40));
+        Assert.Equal(40, v40);
+    }
+
+    [Fact]
+    public void DurObj_GetKeys_Ordered() {
+        var rev = CreateRevision();
+        var dict = rev.CreateOrderedDict<int, DurableDict<string, int>>();
+
+        var child1 = rev.CreateDict<string, int>();
+        var child2 = rev.CreateDict<string, int>();
+        var child3 = rev.CreateDict<string, int>();
+
+        dict.Upsert(30, child1);
+        dict.Upsert(10, child2);
+        dict.Upsert(20, child3);
+
+        var keys = dict.GetKeys();
+        Assert.Equal(3, keys.Count);
+        Assert.Equal(10, keys[0]);
+        Assert.Equal(20, keys[1]);
+        Assert.Equal(30, keys[2]);
+    }
 }

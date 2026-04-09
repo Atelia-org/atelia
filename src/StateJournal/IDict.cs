@@ -31,7 +31,9 @@ public interface IDict<TKey> where TKey : notnull {
 public enum UpsertStatus { Inserted, Updated }
 
 public interface IDict<in TKey, TValue> where TKey : notnull where TValue : notnull {
+    /// <summary>插入或更新。对引用类型，<paramref name="value"/> 允许 <c>null</c>。</summary>
     UpsertStatus Upsert(TKey key, TValue? value);
+    /// <summary>查询指定 key 的值。对引用类型，<paramref name="value"/> 可能为 <c>null</c>（表示存储的值本身就是 null）。</summary>
     GetIssue Get(TKey key, out TValue? value);
 }
 

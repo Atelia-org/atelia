@@ -28,13 +28,16 @@ internal static class TypedOrderedDictFactory<TKey, TValue>
             return;
         }
 
+        Type implType;
         if (typeof(DurableObject).IsAssignableFrom(typeof(TValue))) {
-            ErrorReason = $"DurableOrderedDict does not support DurableObject values. Use DurableDict for object-valued dictionaries.";
-            return;
+            // DurableObject 值 → DurObjOrderedDictImpl（内部存 LocalId，Get 时懒加载）
+            implType = typeof(DurObjOrderedDictImpl<,,>)
+                .MakeGenericType(typeof(TKey), typeof(TValue), kEntry.HelperType!);
         }
-
-        var implType = typeof(TypedOrderedDictImpl<,,,>)
-            .MakeGenericType(typeof(TKey), typeof(TValue), kEntry.HelperType!, vEntry.HelperType!);
+        else {
+            implType = typeof(TypedOrderedDictImpl<,,,>)
+                .MakeGenericType(typeof(TKey), typeof(TValue), kEntry.HelperType!, vEntry.HelperType!);
+        }
 
         var ctor = implType.GetConstructor(
             BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes

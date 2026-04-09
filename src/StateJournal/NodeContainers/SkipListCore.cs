@@ -99,7 +99,8 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
         return false;
     }
 
-    public void Upsert(TKey key, TValue value) {
+    /// <summary>插入或更新。返回 true 表示新插入，false 表示更新已有 key。</summary>
+    public bool Upsert(TKey key, TValue value) {
         if (_head.IsNull) {
             // 首次插入
             _head = _arena.AllocNode(key, value);
@@ -107,7 +108,7 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
             Span<int> emptyUpdate = stackalloc int[MaxTowerHeight];
             emptyUpdate.Fill(-1);
             InsertIntoTower(key, _arena.CurrentNodeCount - 1, emptyUpdate);
-            return;
+            return true;
         }
 
         // 检查 head 是否就是目标 key (或 key < head → 插入到链头前)
@@ -116,7 +117,7 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
         if (headCmp == 0) {
             // head 就是目标 → 更新
             _arena.SetValue(ref _head, value);
-            return;
+            return false;
         }
         if (headCmp > 0) {
             // key < head → 插入到链头前（所有塔层前驱均为 -1）
@@ -126,7 +127,7 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
             Span<int> emptyUpdate = stackalloc int[MaxTowerHeight];
             emptyUpdate.Fill(-1);
             InsertIntoTower(key, _arena.CurrentNodeCount - 1, emptyUpdate);
-            return;
+            return true;
         }
 
         // head < key。查找 pred + 塔层前驱
@@ -142,7 +143,7 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
             if (KHelper.Compare(succKey, key) == 0) {
                 // 后继就是目标 → 更新
                 _arena.SetValue(ref successor, value);
-                return;
+                return false;
             }
         }
 
@@ -152,6 +153,7 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
         _arena.SetNext(ref pred, insertedHandle);
         _count++;
         InsertIntoTower(key, _arena.CurrentNodeCount - 1, towerUpdate);
+        return true;
     }
 
     public bool Remove(TKey key) {

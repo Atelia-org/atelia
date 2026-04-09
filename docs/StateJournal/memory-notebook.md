@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-04-09
+> **最后更新**：2026-04-10
 
 ---
 
@@ -179,7 +179,8 @@ DurableObject
   │    ├─ DurableDict<TKey>             // MixedDict facade
   │    │    └─ MixedDictImpl<...>       // 内部值为 ValueBox
   │    └─ DurableOrderedDict<TKey, TValue>  // TypedOrderedDict facade
-  │         └─ TypedOrderedDictImpl<...>    // 内部基于 SkipListCore
+  │         ├─ TypedOrderedDictImpl<...>    // 一般 typed value，内部基于 SkipListCore
+  │         └─ DurObjOrderedDictImpl<...>   // TValue : DurableObject，内部存 LocalId
   ├─ DurableDeque<T>                    // TypedDeque facade
   │    ├─ TypedDequeImpl<...>           // 一般 typed value
   │    └─ DurObjDequeImpl<...>          // TValue : DurableObject，内部存 LocalId
@@ -189,7 +190,7 @@ DurableObject
 
 注意：
 
-- `DurableOrderedDict` 继承自 `DurableDictBase<TKey>`，仅支持 Typed，不支持 Mixed 也不支持 DurableObject value
+- `DurableOrderedDict` 继承自 `DurableDictBase<TKey>`，支持 Typed 和 DurableObject value（不支持 Mixed）
 - `DurableDeque` 现在已实现，不再是“占位”
 - typed / mixed 两条 deque 路线都已经打通
 

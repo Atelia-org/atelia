@@ -147,6 +147,12 @@ internal readonly struct LocalIdAsRefHelper : ITypeHelper<LocalId> {
     public static void Write(BinaryDiffWriter writer, LocalId v, bool asKey) => writer.BareDurableRef(v, asKey);
     public static LocalId Read(ref BinaryDiffReader reader, bool asKey) => new(reader.BareUInt32(asKey));
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref LocalId old) => old = Read(ref reader, asKey: false);
+
+    public static bool NeedVisitChildRefs => true;
+    public static void VisitChildRefs<TVisitor>(LocalId value, Revision revision, ref TVisitor visitor)
+        where TVisitor : IChildRefVisitor, allows ref struct {
+        if (!value.IsNull) { visitor.Visit(value); }
+    }
 }
 
 internal readonly struct DoubleHelper : ITypeHelper<double> {

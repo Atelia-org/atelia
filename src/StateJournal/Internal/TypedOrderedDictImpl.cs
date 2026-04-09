@@ -32,14 +32,17 @@ internal sealed class TypedOrderedDictImpl<TKey, TValue, KHelper, VHelper> : Dur
     public override bool ContainsKey(TKey key) => _core.ContainsKey(key);
     public override int Count => _core.Count;
 
-    public override bool TryGet(TKey key, out TValue? value) => _core.TryGet(key, out value);
-    public override void Upsert(TKey key, TValue value) => _core.Upsert(key, value);
+    public override GetIssue Get(TKey key, out TValue? value) =>
+        _core.TryGet(key, out value) ? GetIssue.None : GetIssue.NotFound;
+    // value! : notnull 约束下 TValue? 仅是 NRT 注解；引用类型的 null 值在运行时被正确传递和存储。
+    public override UpsertStatus Upsert(TKey key, TValue? value) =>
+        _core.Upsert(key, value!) ? UpsertStatus.Inserted : UpsertStatus.Updated;
 
     public override bool Remove(TKey key) => _core.Remove(key);
 
     public override IReadOnlyList<TKey> GetKeys() => _core.GetAllKeys();
-    public override List<KeyValuePair<TKey, TValue>> ReadAscendingFrom(TKey minInclusive, int maxCount) =>
-        _core.ReadAscendingFrom(minInclusive, maxCount);
+    public override List<KeyValuePair<TKey, TValue?>> ReadAscendingFrom(TKey minInclusive, int maxCount) =>
+        _core.ReadAscendingFrom(minInclusive, maxCount)!;
 
     #endregion
 
