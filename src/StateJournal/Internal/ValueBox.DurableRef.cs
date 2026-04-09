@@ -9,7 +9,7 @@ partial struct ValueBox {
     internal bool IsDurableRef => GetLzc() == BoxLzc.DurableRef;
     internal readonly DurableObjectKind GetDurRefKind() {
         Debug.Assert(IsDurableRef);
-        return (DurableObjectKind)(GetBits() >> DurRefKindShift) & DurableObjectKind.Mask;
+        return (DurableObjectKind)((GetBits() >> DurRefKindShift) & DurableObjectKindHelper.BitMask);
     }
     /// <summary>依赖<see cref="DurRefIdBitCount"/> == 32</summary>
     internal readonly LocalId GetDurRefId() {

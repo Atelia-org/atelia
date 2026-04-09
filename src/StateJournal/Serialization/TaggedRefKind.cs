@@ -12,29 +12,34 @@ internal enum TaggedRefKind : byte {
     TypedDict = (byte)DurableObjectKind.TypedDict,
     MixedDeque = (byte)DurableObjectKind.MixedDeque,
     TypedDeque = (byte)DurableObjectKind.TypedDeque,
-    Symbol,
-    Mask = (1 << ValueBox.DurRefKindBitCount) - 1
+    TypedOrderedDict = (byte)DurableObjectKind.TypedOrderedDict,
+    Symbol = DurableObjectKindHelper.BitMask
 }
 
 internal static class TaggedRefKindHelper {
+    internal const byte BitMask = DurableObjectKindHelper.BitMask;
+
     internal static bool IsValidKind(TaggedRefKind kind) => kind is
         TaggedRefKind.MixedDict
         or TaggedRefKind.TypedDict
         or TaggedRefKind.MixedDeque
         or TaggedRefKind.TypedDeque
+        or TaggedRefKind.TypedOrderedDict
         or TaggedRefKind.Symbol;
 
     internal static bool IsDurableObjectKind(TaggedRefKind kind) => kind is
         TaggedRefKind.MixedDict
         or TaggedRefKind.TypedDict
         or TaggedRefKind.MixedDeque
-        or TaggedRefKind.TypedDeque;
+        or TaggedRefKind.TypedDeque
+        or TaggedRefKind.TypedOrderedDict;
 
     internal static TaggedRefKind FromDurableObjectKind(DurableObjectKind kind) => kind switch {
         DurableObjectKind.MixedDict => TaggedRefKind.MixedDict,
         DurableObjectKind.TypedDict => TaggedRefKind.TypedDict,
         DurableObjectKind.MixedDeque => TaggedRefKind.MixedDeque,
         DurableObjectKind.TypedDeque => TaggedRefKind.TypedDeque,
+        DurableObjectKind.TypedOrderedDict => TaggedRefKind.TypedOrderedDict,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Only real DurableObject kinds can be converted to TaggedRefKind."),
     };
 
@@ -51,6 +56,9 @@ internal static class TaggedRefKindHelper {
                 return true;
             case TaggedRefKind.TypedDeque:
                 objectKind = DurableObjectKind.TypedDeque;
+                return true;
+            case TaggedRefKind.TypedOrderedDict:
+                objectKind = DurableObjectKind.TypedOrderedDict;
                 return true;
             default:
                 objectKind = default;

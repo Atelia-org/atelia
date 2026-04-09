@@ -8,5 +8,9 @@ public enum DurableObjectKind : byte {
     TypedDict,
     MixedDeque,
     TypedDeque,
-    Mask = (1 << ValueBox.DurRefKindBitCount) - 1
+    TypedOrderedDict
+}
+
+internal static class DurableObjectKindHelper {
+    internal const byte BitMask = (1 << ValueBox.DurRefKindBitCount) - 1;
 }

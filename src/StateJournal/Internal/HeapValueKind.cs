@@ -10,7 +10,9 @@ internal enum HeapValueKind : byte {
     NegativeInteger,
     #endregion
 
-    String,
+    String
+}
 
-    Mask = (1 << Internal.ValueBox.HeapKindBitCount) - 1
+internal static class HeapValueKindHelper {
+    internal const byte BitMask = (1 << Internal.ValueBox.HeapKindBitCount) - 1;
 }

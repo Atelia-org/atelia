@@ -163,11 +163,6 @@ public class TaggedValueDispatcherTests {
     }
 
     [Fact]
-    public void DurableRef_InvalidKind_ThrowsInvalidDataException() {
-        Assert.Throws<System.IO.InvalidDataException>(() => Init([0xBE, 0x01, 0x00]));
-    }
-
-    [Fact]
     public void DurableRef_NullId_ThrowsInvalidDataException() {
         Assert.Throws<System.IO.InvalidDataException>(() => Init([0xA2, 0x00, 0x00]));
     }

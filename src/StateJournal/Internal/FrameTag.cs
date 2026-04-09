@@ -6,7 +6,6 @@ internal enum VersionKind : byte {
     Blank = 0,
     Rebase = 1,
     Delta = 2,
-    Mask = (1 << FrameTag.VersionKindBits) - 1,
 }
 
 internal enum FrameUsage : byte {
@@ -16,7 +15,6 @@ internal enum FrameUsage : byte {
     /// <summary><see cref="LocalId"/> → <see cref="SizedPtr"/>, <see cref="DurableDict{uint, ulong}"/>。
     /// 是一个<see cref="Revision"/>最重要的内容之一。</summary>
     ObjectMap = 2,
-    Mask = (1 << FrameTag.UsageKindBits) - 1,
 }
 
 internal enum FrameSource : byte {
@@ -28,7 +26,6 @@ internal enum FrameSource : byte {
     /// 允许保留跨文件的逻辑祖先信息。
     /// </summary>
     CrossFileSnapshot = 3,
-    Mask = (1 << FrameTag.FrameSourceBits) - 1,
 }
 
 internal readonly struct FrameTag(uint bits) {
@@ -40,28 +37,32 @@ internal readonly struct FrameTag(uint bits) {
     public const int UsageKindShift = ObjectKindShift + ObjectKindBits, UsageKindBits = 4;
 
     public const int FrameSourceShift = UsageKindShift + UsageKindBits, FrameSourceBits = 4;
+
+    private const byte VersionKindMask = (1 << VersionKindBits) - 1;
+    private const byte UsageKindMask = (1 << UsageKindBits) - 1;
+    private const byte FrameSourceMask = (1 << FrameSourceBits) - 1;
     #endregion
 
     #region Static Helper
     internal static bool IsValidVersionKind(VersionKind value) => value is VersionKind.Rebase or VersionKind.Delta;
-    internal static bool IsValidObjectKind(DurableObjectKind value) => value is not DurableObjectKind.Blank and not DurableObjectKind.Mask;
+    internal static bool IsValidObjectKind(DurableObjectKind value) => DurableRef.IsValidObjectKind(value);
     internal static bool IsValidUsage(FrameUsage value) => value is FrameUsage.UserPayload or FrameUsage.ObjectMap;
     internal static bool IsValidSource(FrameSource value) => value is FrameSource.PrimaryCommit or FrameSource.Compaction or FrameSource.CrossFileSnapshot;
     #endregion
 
     internal uint Bits => bits;
 
-    internal VersionKind VersionKind => (VersionKind)(bits >> VersionKindShift) & VersionKind.Mask;
-    internal DurableObjectKind ObjectKind => (DurableObjectKind)(bits >> ObjectKindShift) & DurableObjectKind.Mask;
-    internal FrameUsage Usage => (FrameUsage)(bits >> UsageKindShift) & FrameUsage.Mask;
-    internal FrameSource Source => (FrameSource)(bits >> FrameSourceShift) & FrameSource.Mask;
+    internal VersionKind VersionKind => (VersionKind)((bits >> VersionKindShift) & VersionKindMask);
+    internal DurableObjectKind ObjectKind => (DurableObjectKind)((bits >> ObjectKindShift) & DurableObjectKindHelper.BitMask);
+    internal FrameUsage Usage => (FrameUsage)((bits >> UsageKindShift) & UsageKindMask);
+    internal FrameSource Source => (FrameSource)((bits >> FrameSourceShift) & FrameSourceMask);
 
     internal FrameTag(VersionKind versionKind, DurableObjectKind objectKind, FrameUsage usageKind, FrameSource frameSource)
         : this(((uint)versionKind << VersionKindShift) | ((uint)objectKind << ObjectKindShift) | ((uint)usageKind << UsageKindShift) | ((uint)frameSource << FrameSourceShift)) {
-        Debug.Assert((byte)versionKind <= (byte)VersionKind.Mask, $"VersionKind {versionKind} exceeds {VersionKindBits}-bit field");
-        Debug.Assert((byte)objectKind <= (byte)DurableObjectKind.Mask, $"ObjectKind {objectKind} exceeds {ObjectKindBits}-bit field");
-        Debug.Assert((byte)usageKind <= (byte)FrameUsage.Mask, $"FrameUsage {usageKind} exceeds {UsageKindBits}-bit field");
-        Debug.Assert((byte)frameSource <= (byte)FrameSource.Mask, $"FrameSource {frameSource} exceeds {FrameSourceBits}-bit field");
+        Debug.Assert((byte)versionKind <= VersionKindMask, $"VersionKind {versionKind} exceeds {VersionKindBits}-bit field");
+        Debug.Assert((byte)objectKind <= DurableObjectKindHelper.BitMask, $"ObjectKind {objectKind} exceeds {ObjectKindBits}-bit field");
+        Debug.Assert((byte)usageKind <= UsageKindMask, $"FrameUsage {usageKind} exceeds {UsageKindBits}-bit field");
+        Debug.Assert((byte)frameSource <= FrameSourceMask, $"FrameSource {frameSource} exceeds {FrameSourceBits}-bit field");
     }
 
     /// <summary>写入路径守门：确认所有字段均为已知的非 Blank 值。</summary>

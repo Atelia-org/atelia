@@ -60,7 +60,7 @@ internal readonly partial struct ValueBox {
     private const ulong ExclusiveBit = 1UL << HeapHandleBitCount; // bit32
     private readonly HeapValueKind GetHeapKind() {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
-        return (HeapValueKind)(GetBits() >> HeapKindShift) & HeapValueKind.Mask;
+        return (HeapValueKind)((GetBits() >> HeapKindShift) & HeapValueKindHelper.BitMask);
     }
     /// <summary>依赖<see cref="HeapHandleBitCount"/> == 32</summary>
     private readonly SlotHandle GetHeapHandle() {

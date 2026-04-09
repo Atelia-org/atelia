@@ -60,4 +60,11 @@ internal static class Durable {
     /// </summary>
     /// <returns>空的 <see cref="DurableDeque"/> 实例。</returns>
     public static DurableDeque Deque() => new MixedDequeImpl();
+
+    /// <summary>
+    /// 创建 <see cref="DurableOrderedDict{TKey, TValue}"/> (TypedOrderedDict)。
+    /// </summary>
+    public static DurableOrderedDict<TKey, TValue> OrderedDict<TKey, TValue>() where TKey : notnull where TValue : notnull =>
+        TypedOrderedDictFactory<TKey, TValue>.Create?.Invoke()
+        ?? throw new ArgumentException(TypedOrderedDictFactory<TKey, TValue>.ErrorReason);
 }

@@ -176,6 +176,7 @@ internal static class DurableFactory {
             def == typeof(DurableDict<,>) ? typeof(TypedDictFactory<,>).MakeGenericType(args) :
             def == typeof(DurableDict<>) ? typeof(MixedDictFactory<>).MakeGenericType(args) :
             def == typeof(DurableDeque<>) ? typeof(TypedDequeFactory<>).MakeGenericType(args) :
+            def == typeof(DurableOrderedDict<,>) ? typeof(TypedOrderedDictFactory<,>).MakeGenericType(args) :
             null;
 
         if (factoryType == null) { return null; }

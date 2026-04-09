@@ -113,8 +113,7 @@ internal static class HelperRegistry {
         _valueHelperCache.GetOrAdd(t, ResolveValueHelperCore);
 
     private static TypeEntry ResolveValueHelperCore(Type t) {
-        // 基元类型（同时也可作为 Key 使用的类型）
-        var h = ResolveKeyHelper(t);
+        TypeEntry h = ResolveScalarValueLeafHelper(t);
         if (h.IsValid) { return h; }
 
         if (TryResolveTupleHelper(t, out TypeEntry tupleEntry)) { return tupleEntry; }
@@ -159,10 +158,26 @@ internal static class HelperRegistry {
                 typeCode[^1] = (byte)TypeOpCode.MakeTypedDeque;
                 return new(typeCode);
             }
+
+            // DurableOrderedDict<TKey, TValue> (TypedOrderedDict)
+            if (def == typeof(DurableOrderedDict<,>)) {
+                var args = t.GenericTypeArguments;
+                var kEntry = ResolveKeyHelper(args[0]);
+                if (!kEntry.IsValid) { return default; }
+                var vEntry = ResolveValueHelper(args[1]);
+                if (!vEntry.IsValid) { return default; }
+                var typeCode = new byte[vEntry.TypeCode!.Length + kEntry.TypeCode!.Length + 1];
+                vEntry.TypeCode.CopyTo(typeCode, 0);
+                kEntry.TypeCode.CopyTo(typeCode, vEntry.TypeCode.Length);
+                typeCode[^1] = (byte)TypeOpCode.MakeTypedOrderedDict;
+                return new(typeCode);
+            }
         }
 
         return default;
     }
+
+    private static TypeEntry ResolveScalarValueLeafHelper(Type t) => ResolveKeyHelper(t);
 
     private static bool TryResolveTupleHelper(Type t, out TypeEntry entry) {
         entry = default;
@@ -277,8 +292,19 @@ internal static class HelperRegistry {
     }
 
     private static TypeEntry ResolveTupleElementHelper(Type t) {
-        TypeEntry entry = ResolveValueHelper(t);
-        return entry.HelperType is null ? default : entry;
+        TypeEntry entry = ResolveTupleElementLeafHelper(t);
+        if (entry.IsValid) { return entry; }
+
+        if (TryResolveTupleHelper(t, out entry)) { return entry; }
+
+        return default;
+    }
+
+    private static TypeEntry ResolveTupleElementLeafHelper(Type t) {
+        TypeEntry entry = ResolveScalarValueLeafHelper(t);
+        if (entry.IsValid) { return entry; }
+
+        return default;
     }
 
     private static byte[] BuildCompositeTypeCode(TypeOpCode opCode, params byte[][] operandTypeCodes) {

@@ -313,6 +313,13 @@ public partial class Revision {
         return obj;
     }
 
+    /// <summary>创建 TypedOrderedDict 并绑定到当前 Revision。</summary>
+    public DurableOrderedDict<TKey, TValue> CreateOrderedDict<TKey, TValue>() where TKey : notnull where TValue : notnull {
+        var obj = Durable.OrderedDict<TKey, TValue>();
+        BindNewObject(obj);
+        return obj;
+    }
+
     private void BindNewObject(DurableObject obj) {
         var handle = _pool.Store(obj);
         var id = LocalId.FromSlotHandle(handle);

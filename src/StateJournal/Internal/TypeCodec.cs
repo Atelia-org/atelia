@@ -27,16 +27,17 @@ internal enum TypeOpCode : byte {
     PushString,
     PushInlineString,
     PushMixedDeque,
+
+    MakeMixedDict = 128,
+    MakeTypedDict,
+    MakeTypedDeque,
     MakeValueTuple2,
     MakeValueTuple3,
     MakeValueTuple4,
     MakeValueTuple5,
     MakeValueTuple6,
     MakeValueTuple7,
-
-    MakeMixedDict = 128,
-    MakeTypedDict,
-    MakeTypedDeque,
+    MakeTypedOrderedDict,
 }
 
 internal static class TypeCodec {
@@ -94,6 +95,19 @@ internal static class TypeCodec {
                 case TypeOpCode.PushMixedDeque:
                     operands.Push(typeof(DurableDeque));
                     break;
+
+                case TypeOpCode.MakeMixedDict:
+                    if (operands.Count < 1) { return false; }
+                    operands.Push(typeof(DurableDict<>).MakeGenericType(operands.Pop()));
+                    break;
+                case TypeOpCode.MakeTypedDict:
+                    if (operands.Count < 2) { return false; }
+                    operands.Push(typeof(DurableDict<,>).MakeGenericType(operands.Pop(), operands.Pop())); // 编码时需按泛型参数列表从右向左编码。
+                    break;
+                case TypeOpCode.MakeTypedDeque:
+                    if (operands.Count < 1) { return false; }
+                    operands.Push(typeof(DurableDeque<>).MakeGenericType(operands.Pop()));
+                    break;
                 case TypeOpCode.MakeValueTuple2:
                     if (operands.Count < 2) { return false; }
                     operands.Push(typeof(ValueTuple<,>).MakeGenericType(operands.Pop(), operands.Pop()));
@@ -118,17 +132,9 @@ internal static class TypeCodec {
                     if (operands.Count < 7) { return false; }
                     operands.Push(typeof(ValueTuple<,,,,,,>).MakeGenericType(operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop()));
                     break;
-                case TypeOpCode.MakeMixedDict:
-                    if (operands.Count < 1) { return false; }
-                    operands.Push(typeof(DurableDict<>).MakeGenericType(operands.Pop()));
-                    break;
-                case TypeOpCode.MakeTypedDict:
+                case TypeOpCode.MakeTypedOrderedDict:
                     if (operands.Count < 2) { return false; }
-                    operands.Push(typeof(DurableDict<,>).MakeGenericType(operands.Pop(), operands.Pop())); // 编码时需按泛型参数列表从右向左编码。
-                    break;
-                case TypeOpCode.MakeTypedDeque:
-                    if (operands.Count < 1) { return false; }
-                    operands.Push(typeof(DurableDeque<>).MakeGenericType(operands.Pop()));
+                    operands.Push(typeof(DurableOrderedDict<,>).MakeGenericType(operands.Pop(), operands.Pop()));
                     break;
                 case TypeOpCode.Invalid:
                 default:

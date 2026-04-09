@@ -1,8 +1,6 @@
 using Atelia.StateJournal.NodeContainers;
 using Xunit;
 
-using NodeHandleTupleSampleNode = System.ValueTuple<uint,string>;
-
 namespace Atelia.StateJournal.Internal.Tests;
 
 public class GenericRulesTests {
@@ -98,7 +96,7 @@ public class GenericRulesTests {
 
     [Fact]
     public void IsValidValue_NodeHandleTopLevel_Rejected() =>
-        Assert.False(HelperRegistry.IsValidValue(typeof(NodeHandle<NodeHandleTupleSampleNode>)));
+        Assert.False(HelperRegistry.IsValidValue(typeof(LeafHandle)));
 
     [Fact]
     public void IsValidValue_NonGenericSJDict_Rejected() =>

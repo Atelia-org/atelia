@@ -10,6 +10,11 @@ internal readonly struct ValueTuple2Helper<T1, T2, H1, H2> : ITypeHelper<ValueTu
     public static bool Equals(ValueTuple<T1, T2> a, ValueTuple<T1, T2> b) =>
         H1.Equals(a.Item1, b.Item1) && H2.Equals(a.Item2, b.Item2);
 
+    public static int Compare(ValueTuple<T1, T2> a, ValueTuple<T1, T2> b) {
+        int c = H1.Compare(a.Item1, b.Item1);
+        return c != 0 ? c : H2.Compare(a.Item2, b.Item2);
+    }
+
     public static ValueTuple<T1, T2> Freeze(ValueTuple<T1, T2> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!);
 
@@ -39,13 +44,9 @@ internal readonly struct ValueTuple2Helper<T1, T2, H1, H2> : ITypeHelper<ValueTu
     public static bool NeedValidateReconstructed => H1.NeedValidateReconstructed || H2.NeedValidateReconstructed;
 
     public static AteliaError? ValidateReconstructed(ValueTuple<T1, T2> value, LoadPlaceholderTracker tracker, string ownerName) {
-        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) {
-            return firstError;
-        }
+        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) { return firstError; }
 
-        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) {
-            return secondError;
-        }
+        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) { return secondError; }
 
         return null;
     }
@@ -68,6 +69,13 @@ internal readonly struct ValueTuple3Helper<T1, T2, T3, H1, H2, H3> : ITypeHelper
     where H3 : unmanaged, ITypeHelper<T3> {
     public static bool Equals(ValueTuple<T1, T2, T3> a, ValueTuple<T1, T2, T3> b) =>
         H1.Equals(a.Item1, b.Item1) && H2.Equals(a.Item2, b.Item2) && H3.Equals(a.Item3, b.Item3);
+
+    public static int Compare(ValueTuple<T1, T2, T3> a, ValueTuple<T1, T2, T3> b) {
+        int c = H1.Compare(a.Item1, b.Item1);
+        if (c != 0) { return c; }
+        c = H2.Compare(a.Item2, b.Item2);
+        return c != 0 ? c : H3.Compare(a.Item3, b.Item3);
+    }
 
     public static ValueTuple<T1, T2, T3> Freeze(ValueTuple<T1, T2, T3> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!);
@@ -102,17 +110,11 @@ internal readonly struct ValueTuple3Helper<T1, T2, T3, H1, H2, H3> : ITypeHelper
         H1.NeedValidateReconstructed || H2.NeedValidateReconstructed || H3.NeedValidateReconstructed;
 
     public static AteliaError? ValidateReconstructed(ValueTuple<T1, T2, T3> value, LoadPlaceholderTracker tracker, string ownerName) {
-        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) {
-            return firstError;
-        }
+        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) { return firstError; }
 
-        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) {
-            return secondError;
-        }
+        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) { return secondError; }
 
-        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) {
-            return thirdError;
-        }
+        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) { return thirdError; }
 
         return null;
     }
@@ -142,6 +144,15 @@ internal readonly struct ValueTuple4Helper<T1, T2, T3, T4, H1, H2, H3, H4> : ITy
         && H2.Equals(a.Item2, b.Item2)
         && H3.Equals(a.Item3, b.Item3)
         && H4.Equals(a.Item4, b.Item4);
+
+    public static int Compare(ValueTuple<T1, T2, T3, T4> a, ValueTuple<T1, T2, T3, T4> b) {
+        int c = H1.Compare(a.Item1, b.Item1);
+        if (c != 0) { return c; }
+        c = H2.Compare(a.Item2, b.Item2);
+        if (c != 0) { return c; }
+        c = H3.Compare(a.Item3, b.Item3);
+        return c != 0 ? c : H4.Compare(a.Item4, b.Item4);
+    }
 
     public static ValueTuple<T1, T2, T3, T4> Freeze(ValueTuple<T1, T2, T3, T4> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!, H4.Freeze(value.Item4)!);
@@ -180,21 +191,13 @@ internal readonly struct ValueTuple4Helper<T1, T2, T3, T4, H1, H2, H3, H4> : ITy
         H1.NeedValidateReconstructed || H2.NeedValidateReconstructed || H3.NeedValidateReconstructed || H4.NeedValidateReconstructed;
 
     public static AteliaError? ValidateReconstructed(ValueTuple<T1, T2, T3, T4> value, LoadPlaceholderTracker tracker, string ownerName) {
-        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) {
-            return firstError;
-        }
+        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) { return firstError; }
 
-        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) {
-            return secondError;
-        }
+        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) { return secondError; }
 
-        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) {
-            return thirdError;
-        }
+        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) { return thirdError; }
 
-        if (H4.NeedValidateReconstructed && H4.ValidateReconstructed(value.Item4, tracker, ownerName) is { } fourthError) {
-            return fourthError;
-        }
+        if (H4.NeedValidateReconstructed && H4.ValidateReconstructed(value.Item4, tracker, ownerName) is { } fourthError) { return fourthError; }
 
         return null;
     }
@@ -229,6 +232,17 @@ internal readonly struct ValueTuple5Helper<T1, T2, T3, T4, T5, H1, H2, H3, H4, H
         && H3.Equals(a.Item3, b.Item3)
         && H4.Equals(a.Item4, b.Item4)
         && H5.Equals(a.Item5, b.Item5);
+
+    public static int Compare(ValueTuple<T1, T2, T3, T4, T5> a, ValueTuple<T1, T2, T3, T4, T5> b) {
+        int c = H1.Compare(a.Item1, b.Item1);
+        if (c != 0) { return c; }
+        c = H2.Compare(a.Item2, b.Item2);
+        if (c != 0) { return c; }
+        c = H3.Compare(a.Item3, b.Item3);
+        if (c != 0) { return c; }
+        c = H4.Compare(a.Item4, b.Item4);
+        return c != 0 ? c : H5.Compare(a.Item5, b.Item5);
+    }
 
     public static ValueTuple<T1, T2, T3, T4, T5> Freeze(ValueTuple<T1, T2, T3, T4, T5> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!, H4.Freeze(value.Item4)!, H5.Freeze(value.Item5)!);
@@ -270,25 +284,15 @@ internal readonly struct ValueTuple5Helper<T1, T2, T3, T4, T5, H1, H2, H3, H4, H
         H1.NeedValidateReconstructed || H2.NeedValidateReconstructed || H3.NeedValidateReconstructed || H4.NeedValidateReconstructed || H5.NeedValidateReconstructed;
 
     public static AteliaError? ValidateReconstructed(ValueTuple<T1, T2, T3, T4, T5> value, LoadPlaceholderTracker tracker, string ownerName) {
-        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) {
-            return firstError;
-        }
+        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) { return firstError; }
 
-        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) {
-            return secondError;
-        }
+        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) { return secondError; }
 
-        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) {
-            return thirdError;
-        }
+        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) { return thirdError; }
 
-        if (H4.NeedValidateReconstructed && H4.ValidateReconstructed(value.Item4, tracker, ownerName) is { } fourthError) {
-            return fourthError;
-        }
+        if (H4.NeedValidateReconstructed && H4.ValidateReconstructed(value.Item4, tracker, ownerName) is { } fourthError) { return fourthError; }
 
-        if (H5.NeedValidateReconstructed && H5.ValidateReconstructed(value.Item5, tracker, ownerName) is { } fifthError) {
-            return fifthError;
-        }
+        if (H5.NeedValidateReconstructed && H5.ValidateReconstructed(value.Item5, tracker, ownerName) is { } fifthError) { return fifthError; }
 
         return null;
     }
@@ -328,6 +332,19 @@ internal readonly struct ValueTuple6Helper<T1, T2, T3, T4, T5, T6, H1, H2, H3, H
         && H4.Equals(a.Item4, b.Item4)
         && H5.Equals(a.Item5, b.Item5)
         && H6.Equals(a.Item6, b.Item6);
+
+    public static int Compare(ValueTuple<T1, T2, T3, T4, T5, T6> a, ValueTuple<T1, T2, T3, T4, T5, T6> b) {
+        int c = H1.Compare(a.Item1, b.Item1);
+        if (c != 0) { return c; }
+        c = H2.Compare(a.Item2, b.Item2);
+        if (c != 0) { return c; }
+        c = H3.Compare(a.Item3, b.Item3);
+        if (c != 0) { return c; }
+        c = H4.Compare(a.Item4, b.Item4);
+        if (c != 0) { return c; }
+        c = H5.Compare(a.Item5, b.Item5);
+        return c != 0 ? c : H6.Compare(a.Item6, b.Item6);
+    }
 
     public static ValueTuple<T1, T2, T3, T4, T5, T6> Freeze(ValueTuple<T1, T2, T3, T4, T5, T6> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!, H4.Freeze(value.Item4)!, H5.Freeze(value.Item5)!, H6.Freeze(value.Item6)!);
@@ -372,29 +389,17 @@ internal readonly struct ValueTuple6Helper<T1, T2, T3, T4, T5, T6, H1, H2, H3, H
         H1.NeedValidateReconstructed || H2.NeedValidateReconstructed || H3.NeedValidateReconstructed || H4.NeedValidateReconstructed || H5.NeedValidateReconstructed || H6.NeedValidateReconstructed;
 
     public static AteliaError? ValidateReconstructed(ValueTuple<T1, T2, T3, T4, T5, T6> value, LoadPlaceholderTracker tracker, string ownerName) {
-        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) {
-            return firstError;
-        }
+        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) { return firstError; }
 
-        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) {
-            return secondError;
-        }
+        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) { return secondError; }
 
-        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) {
-            return thirdError;
-        }
+        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) { return thirdError; }
 
-        if (H4.NeedValidateReconstructed && H4.ValidateReconstructed(value.Item4, tracker, ownerName) is { } fourthError) {
-            return fourthError;
-        }
+        if (H4.NeedValidateReconstructed && H4.ValidateReconstructed(value.Item4, tracker, ownerName) is { } fourthError) { return fourthError; }
 
-        if (H5.NeedValidateReconstructed && H5.ValidateReconstructed(value.Item5, tracker, ownerName) is { } fifthError) {
-            return fifthError;
-        }
+        if (H5.NeedValidateReconstructed && H5.ValidateReconstructed(value.Item5, tracker, ownerName) is { } fifthError) { return fifthError; }
 
-        if (H6.NeedValidateReconstructed && H6.ValidateReconstructed(value.Item6, tracker, ownerName) is { } sixthError) {
-            return sixthError;
-        }
+        if (H6.NeedValidateReconstructed && H6.ValidateReconstructed(value.Item6, tracker, ownerName) is { } sixthError) { return sixthError; }
 
         return null;
     }
@@ -439,6 +444,21 @@ internal readonly struct ValueTuple7Helper<T1, T2, T3, T4, T5, T6, T7, H1, H2, H
         && H5.Equals(a.Item5, b.Item5)
         && H6.Equals(a.Item6, b.Item6)
         && H7.Equals(a.Item7, b.Item7);
+
+    public static int Compare(ValueTuple<T1, T2, T3, T4, T5, T6, T7> a, ValueTuple<T1, T2, T3, T4, T5, T6, T7> b) {
+        int c = H1.Compare(a.Item1, b.Item1);
+        if (c != 0) { return c; }
+        c = H2.Compare(a.Item2, b.Item2);
+        if (c != 0) { return c; }
+        c = H3.Compare(a.Item3, b.Item3);
+        if (c != 0) { return c; }
+        c = H4.Compare(a.Item4, b.Item4);
+        if (c != 0) { return c; }
+        c = H5.Compare(a.Item5, b.Item5);
+        if (c != 0) { return c; }
+        c = H6.Compare(a.Item6, b.Item6);
+        return c != 0 ? c : H7.Compare(a.Item7, b.Item7);
+    }
 
     public static ValueTuple<T1, T2, T3, T4, T5, T6, T7> Freeze(ValueTuple<T1, T2, T3, T4, T5, T6, T7> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!, H4.Freeze(value.Item4)!, H5.Freeze(value.Item5)!, H6.Freeze(value.Item6)!, H7.Freeze(value.Item7)!);
@@ -487,33 +507,19 @@ internal readonly struct ValueTuple7Helper<T1, T2, T3, T4, T5, T6, T7, H1, H2, H
         H1.NeedValidateReconstructed || H2.NeedValidateReconstructed || H3.NeedValidateReconstructed || H4.NeedValidateReconstructed || H5.NeedValidateReconstructed || H6.NeedValidateReconstructed || H7.NeedValidateReconstructed;
 
     public static AteliaError? ValidateReconstructed(ValueTuple<T1, T2, T3, T4, T5, T6, T7> value, LoadPlaceholderTracker tracker, string ownerName) {
-        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) {
-            return firstError;
-        }
+        if (H1.NeedValidateReconstructed && H1.ValidateReconstructed(value.Item1, tracker, ownerName) is { } firstError) { return firstError; }
 
-        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) {
-            return secondError;
-        }
+        if (H2.NeedValidateReconstructed && H2.ValidateReconstructed(value.Item2, tracker, ownerName) is { } secondError) { return secondError; }
 
-        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) {
-            return thirdError;
-        }
+        if (H3.NeedValidateReconstructed && H3.ValidateReconstructed(value.Item3, tracker, ownerName) is { } thirdError) { return thirdError; }
 
-        if (H4.NeedValidateReconstructed && H4.ValidateReconstructed(value.Item4, tracker, ownerName) is { } fourthError) {
-            return fourthError;
-        }
+        if (H4.NeedValidateReconstructed && H4.ValidateReconstructed(value.Item4, tracker, ownerName) is { } fourthError) { return fourthError; }
 
-        if (H5.NeedValidateReconstructed && H5.ValidateReconstructed(value.Item5, tracker, ownerName) is { } fifthError) {
-            return fifthError;
-        }
+        if (H5.NeedValidateReconstructed && H5.ValidateReconstructed(value.Item5, tracker, ownerName) is { } fifthError) { return fifthError; }
 
-        if (H6.NeedValidateReconstructed && H6.ValidateReconstructed(value.Item6, tracker, ownerName) is { } sixthError) {
-            return sixthError;
-        }
+        if (H6.NeedValidateReconstructed && H6.ValidateReconstructed(value.Item6, tracker, ownerName) is { } sixthError) { return sixthError; }
 
-        if (H7.NeedValidateReconstructed && H7.ValidateReconstructed(value.Item7, tracker, ownerName) is { } seventhError) {
-            return seventhError;
-        }
+        if (H7.NeedValidateReconstructed && H7.ValidateReconstructed(value.Item7, tracker, ownerName) is { } seventhError) { return seventhError; }
 
         return null;
     }

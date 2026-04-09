@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-03-27
+> **最后更新**：2026-04-09
 
 ---
 
@@ -127,6 +127,43 @@ load / 历史回放完成后：
 - 重建后校验：typed placeholder 残留 + mixed surviving `SymbolId`
 - Open 后全图引用校验：只校验 DurableObject 引用
 
+### 6. ordered skip-list load 的 committed canonicalization 属于 `ApplyDelta`
+
+这是 `TypedOrderedDict` / `SkipListCore` 当前的一条明确边界：
+
+- `ApplyDelta` 负责先重建 committed 叶链，再按新的 `committedHead` 清理 committed 窗口里不可达的死节点
+- `SyncCurrentFromCommitted` 只负责把 committed 暴露为 current，并重建纯内存塔索引
+- 不应再把“load 后 dead committed node 的 GC”理解为 `SyncCurrentFromCommitted` 的副作用
+
+这样做的原因是：
+
+- dead-node 清理本质上属于 committed 状态收敛，而不是 current 视图建立
+- 塔索引依赖压缩后的物理 index，因此 committed canonicalization 必须发生在 `RebuildIndex` 之前
+- 这也让 `SyncCurrentFromCommitted` 与其他 typed/mixed 容器保持更一致的职责边界
+
+### 7. `LeafChainStore` 里移动 committed 槽位的 GC 不能与活跃 dirty tracking 共存
+
+`LeafChainStore` 当前有一条必须牢记的不变量：
+
+- `CollectCommitted` / `CollectAll` 这类会移动 committed 槽位的压缩操作，不能在活跃 dirty tracking 存在时执行
+- 原因是 `CapturedOriginal.Index` 与 dirty bit 都绑定物理槽位；一旦 committed 槽位被压缩，索引就会失效
+- `CollectDraft` 只移动 draft 窗口，不会破坏 committed dirty tracking，因此不受这条约束
+
+当前 `SkipListCore.Commit` 的时序已经按这条不变量调整为：
+
+- 先 `arena.Commit()` 结束 dirty tracking
+- 再 `CollectCommitted(head)` 做 committed canonicalization
+- 最后 `SyncCurrentFromCommitted()` 与 `RebuildIndex()`
+
+### 8. enum Mask 成员已提取为 helper class 常量
+
+`DurableObjectKind.Mask`、`HeapValueKind.Mask`、`VersionKind.Mask`、`FrameUsage.Mask`、`FrameSource.Mask` 已全部从 enum 中移除，改为对应 helper 静态类中的 `const byte BitMask`（或 `FrameTag` 内部的私有 `const`）。
+
+原因：
+
+- 新增 `TypedOrderedDict` 后，`Mask` 不再是有意义的枚举成员
+- 保留在 enum 中会干扰 exhaustive switch/pattern matching
+
 ---
 
 ## 对象模型层（Public API）
@@ -139,8 +176,10 @@ DurableObject
   │    ├─ DurableDict<TKey, TValue>     // TypedDict facade
   │    │    ├─ TypedDictImpl<...>       // 一般 typed value
   │    │    └─ DurObjDictImpl<...>      // TValue : DurableObject，内部存 LocalId
-  │    └─ DurableDict<TKey>             // MixedDict facade
-  │         └─ MixedDictImpl<...>       // 内部值为 ValueBox
+  │    ├─ DurableDict<TKey>             // MixedDict facade
+  │    │    └─ MixedDictImpl<...>       // 内部值为 ValueBox
+  │    └─ DurableOrderedDict<TKey, TValue>  // TypedOrderedDict facade
+  │         └─ TypedOrderedDictImpl<...>    // 内部基于 SkipListCore
   ├─ DurableDeque<T>                    // TypedDeque facade
   │    ├─ TypedDequeImpl<...>           // 一般 typed value
   │    └─ DurObjDequeImpl<...>          // TValue : DurableObject，内部存 LocalId
@@ -150,6 +189,7 @@ DurableObject
 
 注意：
 
+- `DurableOrderedDict` 继承自 `DurableDictBase<TKey>`，仅支持 Typed，不支持 Mixed 也不支持 DurableObject value
 - `DurableDeque` 现在已实现，不再是“占位”
 - typed / mixed 两条 deque 路线都已经打通
 
@@ -177,10 +217,11 @@ GC Sweep(不可达) -> Detached
 ```csharp
 var rev = new Revision(boundSegmentNumber: 1);
 
-rev.CreateDict<string, int>(); // TypedDict
-rev.CreateDict<string>();      // MixedDict
-rev.CreateDeque<int>();        // TypedDeque
-rev.CreateDeque();             // MixedDeque
+rev.CreateDict<string, int>();        // TypedDict
+rev.CreateDict<string>();             // MixedDict
+rev.CreateOrderedDict<string, int>(); // TypedOrderedDict
+rev.CreateDeque<int>();               // TypedDeque
+rev.CreateDeque();                    // MixedDeque
 ```
 
 创建时自动：
@@ -286,6 +327,42 @@ deque 路线已正式落地，承担：
 - deque 已经不是设计草案
 - API / diff / round-trip / durable child ref 都已有测试覆盖
 
+### `DurableOrderedDict` 的 Change Tracking
+
+`DurableOrderedDict` **不使用** `DictChangeTracker`。它的 commit / revert / delta 由 `SkipListCore` + `LeafChainStore` 内部管理——叶链自身维护 dirty tracking（dirty value bits + dirty link bits + captured originals），整体架构与基于 `Dictionary<TKey, TValue>` 快照的 `DictChangeTracker` 完全不同。
+
+---
+
+## NodeContainers 层
+
+`src/StateJournal/NodeContainers/` 是本次新增的基于共享节点的有序数据结构子系统。
+
+### 核心组件
+
+| 类型 | 职责 |
+|:-----|:-----|
+| `LeafChainStore<TKey, TValue, KHelper, VHelper>` | 叶链 KV 仓库：连续数组存储 + Next 指针链 + 独立 dirty tracking（value bit / link bit / captured originals）+ mark-sweep GC |
+| `LeafHandle` | 节点句柄：`uint Sequence`（持久身份）+ 缓存的物理 index |
+| `ListCore<T>` | 内部动态数组，用于 `CapturedOriginal` 列表等 |
+| `SkipListCore<TKey, TValue, KHelper, VHelper>` | 跳表有序字典核心：叶链参与序列化，索引塔纯内存态从叶链确定性重建 |
+
+### 关键设计决策
+
+- **叶链分离**：Key/Value 与 Next 指针分离存储，分别追踪脏状态；序列化时可独立表达"仅链接变更"与"仅 value 变更"
+- **Key 不可变契约**：Key 仅在 `AllocNode` 和 `ApplyDelta`（新增段）时设定，后续只允许改 Value 和 Next
+- **索引塔纯内存态**：`SkipListCore` 的塔索引不参与序列化，从叶链确定性重建（基于 key hash 确定塔高度）
+- **sequence 单调递增、不复用**：`LeafChainStore` 的 `_nextAllocSequence` 只增不减，GC 后回收的 sequence 不会被新节点占用
+- **增量帧三段式**：link mutations → value mutations → appended nodes（详见 `LeafChainStore` 注释）
+
+### `SkipListCore` 的 commit 时序
+
+```text
+1. arena.Commit()              → 结束 dirty tracking
+2. CollectAll(head)            → 全量 GC，移除不可达死节点
+3. _committedHead = _head      → 记录 committed 起点
+4. SyncCurrentFromCommitted()  → current = committed + RebuildIndex
+```
+
 ---
 
 ## 类型系统层
@@ -298,6 +375,7 @@ deque 路线已正式落地，承担：
 PushInt32, PushString -> MakeTypedDict
 PushString            -> MakeMixedDict
 PushInt32             -> MakeTypedDeque
+PushInt32, PushString -> MakeTypedOrderedDict
 ```
 
 关键文件：
@@ -312,7 +390,7 @@ PushInt32             -> MakeTypedDeque
 - 解析对应 helper 类型
 - 生成持久化 `TypeCode`
 
-`ITypeHelper<T>` 现在除 `Equals/Write/Read/UpdateOrInit/Freeze/ReleaseSlot` 外，
+`ITypeHelper<T>` 现在除 `Equals/Compare/Write/Read/UpdateOrInit/Freeze/ReleaseSlot` 外，
 还新增了一组提交期/加载期静态钩子：
 
 - `NeedVisitChildRefs`
@@ -330,6 +408,19 @@ PushInt32             -> MakeTypedDeque
 
 - typed string 的序列化桥接
 - typed string 的重建后 placeholder 残留检查
+
+`HelperRegistry` 内部已做拆分重构：
+
+- 基元标量类型的解析提取为 `ResolveScalarValueLeafHelper`（与 `ResolveKeyHelper` 共享逻辑）
+- Tuple 元素解析 `ResolveTupleElementHelper` 不再递归调用完整的 `ResolveValueHelper`，而是先尝试 scalar leaf，再尝试嵌套 tuple
+- 这使得 tuple 内部不会意外匹配到 `DurableDict`/`DurableDeque`/`DurableOrderedDict` 等容器类型作为 tuple 元素
+
+`Compare` 方法：
+
+- 用于 `SkipListCore` 等有序容器的键比较
+- 默认委托 `Comparer<T>.Default`（对数值类型已跨平台稳定）
+- 对 `string` / `InlineString` 覆盖为 `StringComparison.Ordinal` 语义
+- 所有 `ValueTupleHelper` 也实现了字典序 `Compare`
 
 关键文件：
 
@@ -531,6 +622,8 @@ Load ObjectMap frame chain
 | VersionChain（Write / Save / Load） | ✅ 已完成 | reconstruction 校验钩子已接入 |
 | Revision Commit 主协议 | ✅ 已完成 | 已去除 compaction 主线 |
 | Repository | ✅ 已完成首版 | branch / segment / CAS / SaveAs 路由 |
+| NodeContainers（LeafChainStore / SkipListCore） | ✅ 已完成 | 叶链共享节点仓库 + 跳表核心 |
+| DurableOrderedDict（TypedOrderedDict） | ✅ 已完成 | 基于 SkipListCore，typed only |
 | typed string staging-in-ChangeTracker | 🟡 储备方案 | 尚未落地，见专项文档 |
 
 ---
@@ -589,6 +682,7 @@ src/StateJournal/
 ├── DurableDict.Mixed.cs
 ├── DurableDeque.Typed.cs
 ├── DurableDeque.Mixed.cs
+├── DurableOrderedDict.cs
 ├── Revision.cs
 ├── Revision.Commit.cs
 ├── Revision.Symbol.cs
@@ -605,12 +699,19 @@ src/StateJournal/
 │   ├── LoadPlaceholderTracker.cs
 │   ├── TypedDictImpl.cs / MixedDictImpl.cs / DurObjDictImpl.cs
 │   ├── TypedDequeImpl.cs / MixedDequeImpl.cs / DurObjDequeImpl.cs
+│   ├── TypedOrderedDictImpl.cs
+│   ├── TypedOrderedDictFactory.cs
 │   └── ...
 ├── Serialization/
 │   ├── BinaryDiffWriter.cs
 │   ├── BinaryDiffReader.cs
 │   ├── TaggedValueDispatcher.cs
 │   └── VarInt.cs
+├── NodeContainers/
+│   ├── LeafChainStore.cs
+│   ├── LeafHandle.cs
+│   ├── ListCore.cs
+│   └── SkipListCore.cs
 └── Pools/
     ├── SlotPool.cs
     ├── GcPool.cs
