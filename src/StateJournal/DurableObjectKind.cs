@@ -8,7 +8,8 @@ public enum DurableObjectKind : byte {
     TypedDict,
     MixedDeque,
     TypedDeque,
-    TypedOrderedDict
+    MixedOrderedDict,
+    TypedOrderedDict,
 }
 
 internal static class DurableObjectKindHelper {

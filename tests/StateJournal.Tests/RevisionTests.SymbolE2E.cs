@@ -795,4 +795,69 @@ partial class RevisionTests {
             }
         }
     }
+
+    // ═══════════════════════ Symbol sweep safety ═══════════════════════
+    //
+    // 以下测试覆盖"commit → 移除部分 string → 再次 commit → open"流程，
+    // 验证 WalkAndMark 中 AcceptChildRefVisitor 正确标记了 surviving symbol，
+    // sweep 不会误删仍然被引用的 SymbolId。
+    //
+    // 此场景的关键前置条件是 _symbolRefCount 在 commit 时必须准确：
+    //   若 refcount 为 0 而容器实际持有 symbol，AcceptChildRefVisitor 会短路跳过，
+    //   导致 symbol 未被标记为可达，sweep 后 symbol 丢失。
+
+    [Fact]
+    public void MixedDict_RemoveString_ThenCommit_SurvivingSymbolsPreserved() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int>();
+        root.Upsert(1, "alpha");
+        root.Upsert(2, "beta");
+        root.Upsert(3, "gamma");
+        root.Upsert(4, 42);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        // 移除一个 string，保留另外两个
+        root.Remove(2);
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+
+        var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
+        Assert.Equal(3, loaded.Count);
+        Assert.Equal("alpha", loaded.OfString.Get(1));
+        Assert.Equal("gamma", loaded.OfString.Get(3));
+        Assert.True(loaded.TryGet(4, out int intVal));
+        Assert.Equal(42, intVal);
+    }
+
+    [Fact]
+    public void MixedDeque_PopString_ThenCommit_SurvivingSymbolsPreserved() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDeque();
+        root.PushBack("first");
+        root.PushBack("second");
+        root.PushBack("third");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        // Pop 掉 front，保留 "second" 和 "third"
+        root.TryPopFront<string>(out _);
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+
+        var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = Assert.IsAssignableFrom<DurableDeque>(openResult.Value!.GraphRoot);
+        Assert.Equal(2, loaded.Count);
+        Assert.Equal(GetIssue.None, loaded.OfString.GetAt(0, out string? v0));
+        Assert.Equal("second", v0);
+        Assert.Equal(GetIssue.None, loaded.OfString.GetAt(1, out string? v1));
+        Assert.Equal("third", v1);
+    }
 }

@@ -172,6 +172,16 @@ internal static class HelperRegistry {
                 typeCode[^1] = (byte)TypeOpCode.MakeTypedOrderedDict;
                 return new(typeCode);
             }
+
+            // DurableOrderedDict<TKey> (MixedOrderedDict)
+            if (def == typeof(DurableOrderedDict<>)) {
+                var kEntry = ResolveKeyHelper(t.GenericTypeArguments[0]);
+                if (!kEntry.IsValid) { return default; }
+                var typeCode = new byte[kEntry.TypeCode!.Length + 1];
+                kEntry.TypeCode.CopyTo(typeCode, 0);
+                typeCode[^1] = (byte)TypeOpCode.MakeMixedOrderedDict;
+                return new(typeCode);
+            }
         }
 
         return default;

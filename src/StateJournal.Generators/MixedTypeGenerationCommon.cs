@@ -28,7 +28,8 @@ internal static class MixedTypeGenerationCommon {
                     None = 0,
                     Deque = 1,
                     Dict = 2,
-                    All = Deque | Dict
+                    OrderedDict = 4,
+                    All = Deque | Dict | OrderedDict
                 }
 
                 internal enum MixedValueSpecialHandling {
@@ -113,6 +114,9 @@ internal static class MixedTypeGenerationCommon {
             case (int)MixedContainerKind.Dict:
                 containerKind = MixedContainerKind.Dict;
                 return true;
+            case (int)MixedContainerKind.OrderedDict:
+                containerKind = MixedContainerKind.OrderedDict;
+                return true;
             default:
                 containerKind = default;
                 return false;
@@ -130,7 +134,7 @@ internal static class MixedTypeGenerationCommon {
             if (attribute.ConstructorArguments[1].Value is not ITypeSymbol faceType) { continue; }
             if (attribute.ConstructorArguments[2].Value is not string propertySuffix) { continue; }
 
-            int declaredContainers = 3;
+            int declaredContainers = (int)MixedContainerKind.All;
             int specialHandling = 0;
             foreach (var namedArg in attribute.NamedArguments) {
                 if (namedArg.Key == "Containers") {
@@ -230,6 +234,8 @@ internal static class MixedTypeGenerationCommon {
     internal enum MixedContainerKind {
         Deque = 1,
         Dict = 2,
+        OrderedDict = 4,
+        All = Deque | Dict | OrderedDict,
     }
 
     internal enum MixedValueSpecialHandling {

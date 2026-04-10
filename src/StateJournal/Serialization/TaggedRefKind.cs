@@ -1,5 +1,3 @@
-using Atelia.StateJournal.Internal;
-
 namespace Atelia.StateJournal.Serialization;
 
 /// <summary>
@@ -12,6 +10,7 @@ internal enum TaggedRefKind : byte {
     TypedDict = (byte)DurableObjectKind.TypedDict,
     MixedDeque = (byte)DurableObjectKind.MixedDeque,
     TypedDeque = (byte)DurableObjectKind.TypedDeque,
+    MixedOrderedDict = (byte)DurableObjectKind.MixedOrderedDict,
     TypedOrderedDict = (byte)DurableObjectKind.TypedOrderedDict,
     Symbol = DurableObjectKindHelper.BitMask
 }
@@ -24,6 +23,7 @@ internal static class TaggedRefKindHelper {
         or TaggedRefKind.TypedDict
         or TaggedRefKind.MixedDeque
         or TaggedRefKind.TypedDeque
+        or TaggedRefKind.MixedOrderedDict
         or TaggedRefKind.TypedOrderedDict
         or TaggedRefKind.Symbol;
 
@@ -32,6 +32,7 @@ internal static class TaggedRefKindHelper {
         or TaggedRefKind.TypedDict
         or TaggedRefKind.MixedDeque
         or TaggedRefKind.TypedDeque
+        or TaggedRefKind.MixedOrderedDict
         or TaggedRefKind.TypedOrderedDict;
 
     internal static TaggedRefKind FromDurableObjectKind(DurableObjectKind kind) => kind switch {
@@ -39,6 +40,7 @@ internal static class TaggedRefKindHelper {
         DurableObjectKind.TypedDict => TaggedRefKind.TypedDict,
         DurableObjectKind.MixedDeque => TaggedRefKind.MixedDeque,
         DurableObjectKind.TypedDeque => TaggedRefKind.TypedDeque,
+        DurableObjectKind.MixedOrderedDict => TaggedRefKind.MixedOrderedDict,
         DurableObjectKind.TypedOrderedDict => TaggedRefKind.TypedOrderedDict,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Only real DurableObject kinds can be converted to TaggedRefKind."),
     };
@@ -56,6 +58,9 @@ internal static class TaggedRefKindHelper {
                 return true;
             case TaggedRefKind.TypedDeque:
                 objectKind = DurableObjectKind.TypedDeque;
+                return true;
+            case TaggedRefKind.MixedOrderedDict:
+                objectKind = DurableObjectKind.MixedOrderedDict;
                 return true;
             case TaggedRefKind.TypedOrderedDict:
                 objectKind = DurableObjectKind.TypedOrderedDict;

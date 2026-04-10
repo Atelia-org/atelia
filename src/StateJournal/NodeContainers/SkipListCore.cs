@@ -43,6 +43,15 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
         public int Down;
     }
 
+    /// <summary>
+    /// Upsert 定位结果：要么命中现有节点，要么已完成新节点插入。
+    /// value 更新语义由调用方按物理槽位决定（SetValueByIndex 或 PrepareValueSlotForUpdate）。
+    /// </summary>
+    private struct UpsertLocateResult {
+        public bool Existed;
+        public int PhysicalIndex;
+    }
+
     public int Count => _count;
     internal int LeafNodeCount => _arena.CurrentNodeCount;
     internal int CommittedLeafNodeCount => _arena.CommittedNodeCount;
@@ -101,67 +110,48 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
 
     /// <summary>插入或更新。返回 true 表示新插入，false 表示更新已有 key。</summary>
     public bool Upsert(TKey key, TValue value) {
-        if (_head.IsNull) {
-            // 首次插入
-            _head = _arena.AllocNode(key, value);
-            _count = 1;
-            Span<int> emptyUpdate = stackalloc int[MaxTowerHeight];
-            emptyUpdate.Fill(-1);
-            InsertIntoTower(key, _arena.CurrentNodeCount - 1, emptyUpdate);
-            return true;
-        }
+        UpsertLocateResult located = LocateOrInsertNode(key, value);
+        if (!located.Existed) { return true; }
 
-        // 检查 head 是否就是目标 key (或 key < head → 插入到链头前)
-        TKey headKey = _arena.GetKey(ref _head);
-        int headCmp = KHelper.Compare(headKey, key);
-        if (headCmp == 0) {
-            // head 就是目标 → 更新
-            _arena.SetValue(ref _head, value);
-            return false;
-        }
-        if (headCmp > 0) {
-            // key < head → 插入到链头前（所有塔层前驱均为 -1）
-            LeafHandle oldHead = _head;
-            _head = _arena.AllocNode(key, value, oldHead.Sequence);
-            _count++;
-            Span<int> emptyUpdate = stackalloc int[MaxTowerHeight];
-            emptyUpdate.Fill(-1);
-            InsertIntoTower(key, _arena.CurrentNodeCount - 1, emptyUpdate);
-            return true;
-        }
-
-        // head < key。查找 pred + 塔层前驱
-        Span<int> towerUpdate = stackalloc int[MaxTowerHeight];
-        towerUpdate.Fill(-1);
-        LeafHandle pred = FindLeafPredecessorAndTowerUpdate(key, towerUpdate);
-        Debug.Assert(pred.IsNotNull); // head < key → 至少 head 是 pred
-
-        // 检查 pred 的后继是否就是目标
-        LeafHandle successor = _arena.GetNext(ref pred);
-        if (successor.IsNotNull) {
-            TKey succKey = _arena.GetKey(ref successor);
-            if (KHelper.Compare(succKey, key) == 0) {
-                // 后继就是目标 → 更新
-                _arena.SetValue(ref successor, value);
-                return false;
-            }
-        }
-
-        // 在 pred 之后插入
-        uint predNextSeq = _arena.GetNextSequence(ref pred);
-        LeafHandle insertedHandle = _arena.AllocNode(key, value, predNextSeq);
-        _arena.SetNext(ref pred, insertedHandle);
-        _count++;
-        InsertIntoTower(key, _arena.CurrentNodeCount - 1, towerUpdate);
-        return true;
+        _arena.SetValueByIndex(located.PhysicalIndex, value);
+        return false;
     }
 
-    public bool Remove(TKey key) {
-        if (_head.IsNull) { return false; }
+    /// <summary>
+    /// Upsert 变体：返回值槽的引用，供调用方通过 <c>UpdateOrInit</c> 原位更新。
+    /// <list type="bullet">
+    ///   <item>已存在的 key → committed 原值已保存（provisional capture）但未标记 dirty，<paramref name="existed"/> = true</item>
+    ///   <item>新 key → 已分配节点（值为 <c>default</c>），<paramref name="existed"/> = false</item>
+    /// </list>
+    /// 调用方在确认值确实改变后，须调用 <see cref="ConfirmValueDirty"/> 标记 dirty。
+    /// 若值未变且 <paramref name="capturedNow"/> 为 true，应调用 <see cref="CancelPreparedValueUpdate"/> 回滚。
+    /// 调用方在返回的 ref 上完成赋值前不得再调用本结构的任何变更方法。
+    /// </summary>
+    public ref TValue UpsertGetValueRef(TKey key, out bool existed, out int physicalIndex, out bool capturedNow) {
+        UpsertLocateResult located = LocateOrInsertNode(key, default!);
+        existed = located.Existed;
+        physicalIndex = located.PhysicalIndex;
+        return ref _arena.PrepareValueSlotForUpdate(physicalIndex, out capturedNow);
+    }
 
-        int headCmp = KHelper.Compare(_arena.GetKey(ref _head), key);
+    /// <summary>配合 <see cref="UpsertGetValueRef"/> 使用：确认值已改变，标记物理槽位 dirty。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ConfirmValueDirty(int physicalIndex) => _arena.ConfirmValueDirty(physicalIndex);
+
+    /// <summary>配合 <see cref="UpsertGetValueRef"/> 使用：回滚刚创建的 provisional capture（值未变时）。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void CancelPreparedValueUpdate(int physicalIndex) => _arena.CancelPreparedValueUpdate(physicalIndex);
+
+    public bool Remove(TKey key) => TryRemove(key, out _);
+
+    public bool TryRemove(TKey key, out TValue? value) {
+        if (_head.IsNull) { value = default; return false; }
+
+        var (headKey, headValue) = _arena.GetEntry(ref _head);
+        int headCmp = KHelper.Compare(headKey, key);
         if (headCmp == 0) {
             // 删除头节点（towerUpdate 全 -1 = 所有层前驱即 _levelHeads）
+            value = headValue;
             _head = _arena.GetNext(ref _head);
             _count--;
             Span<int> headUpdate = stackalloc int[MaxTowerHeight];
@@ -169,19 +159,21 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
             RemoveFromTower(key, headUpdate);
             return true;
         }
-        if (headCmp > 0) { return false; /* key 小于最小元素 */ }
+        if (headCmp > 0) { value = default; return false; }
 
         Span<int> towerUpdate = stackalloc int[MaxTowerHeight];
         towerUpdate.Fill(-1);
         LeafHandle pred = FindLeafPredecessorAndTowerUpdate(key, towerUpdate);
-        if (pred.IsNull) { return false; }
+        if (pred.IsNull) { value = default; return false; }
 
         LeafHandle candidate = _arena.GetNext(ref pred);
-        if (candidate.IsNull) { return false; }
+        if (candidate.IsNull) { value = default; return false; }
 
-        if (KHelper.Compare(_arena.GetKey(ref candidate), key) != 0) { return false; }
+        var (candKey, candValue) = _arena.GetEntry(ref candidate);
+        if (KHelper.Compare(candKey, key) != 0) { value = default; return false; }
 
         // 重链接：pred → candidate.next
+        value = candValue;
         uint candidateNextSeq = _arena.GetNextSequence(ref candidate);
         _arena.SetNextSequence(ref pred, candidateNextSeq);
         _count--;
@@ -204,6 +196,20 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
         return result;
     }
 
+    /// <summary>从 <paramref name="minInclusive"/> 开始按升序读取最多 <paramref name="maxCount"/> 个 key。</summary>
+    public List<TKey> ReadKeysAscendingFrom(TKey minInclusive, int maxCount) {
+        ArgumentOutOfRangeException.ThrowIfNegative(maxCount);
+        var result = new List<TKey>(Math.Min(maxCount, _count));
+        if (maxCount <= 0 || _head.IsNull) { return result; }
+
+        LeafHandle leaf = FindLowerBoundLeaf(minInclusive);
+        while (leaf.IsNotNull && result.Count < maxCount) {
+            result.Add(_arena.GetKey(ref leaf));
+            leaf = _arena.GetNext(ref leaf);
+        }
+        return result;
+    }
+
     /// <summary>按升序返回所有 key。</summary>
     public List<TKey> GetAllKeys() {
         var keys = new List<TKey>(_count);
@@ -214,6 +220,12 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
         }
         return keys;
     }
+
+    /// <summary>按叶链顺序读取当前游标处的 KV 对。</summary>
+    internal (TKey Key, TValue Value) GetEntry(ref LeafHandle handle) => _arena.GetEntry(ref handle);
+
+    /// <summary>按叶链顺序前进到下一个节点。</summary>
+    internal LeafHandle GetNext(ref LeafHandle handle) => _arena.GetNext(ref handle);
 
     /// <summary>遍历叶链中每个节点的 key 和 value，分别调用对应的 VisitChildRefs。</summary>
     internal void AcceptChildRefVisitor<TVisitor>(Revision revision, ref TVisitor visitor)
@@ -229,16 +241,20 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
     }
 
     /// <summary>遍历叶链中每个节点，校验加载后的 placeholder 是否已全部解析。</summary>
-    internal AteliaError? ValidateReconstructed(LoadPlaceholderTracker tracker) {
-        if (!KHelper.NeedValidateReconstructed && !VHelper.NeedValidateReconstructed) { return null; }
+    internal AteliaError? ValidateReconstructed(
+        LoadPlaceholderTracker tracker, string ownerName, bool validateValues = true
+    ) {
+        bool needKeys = KHelper.NeedValidateReconstructed;
+        bool needValues = validateValues && VHelper.NeedValidateReconstructed;
+        if (!needKeys && !needValues) { return null; }
         LeafHandle cursor = _head;
         while (cursor.IsNotNull) {
             var (k, v) = _arena.GetEntry(ref cursor);
-            if (KHelper.NeedValidateReconstructed) {
-                if (KHelper.ValidateReconstructed(k, tracker, "TypedOrderedDict") is { } e) { return e; }
+            if (needKeys) {
+                if (KHelper.ValidateReconstructed(k, tracker, ownerName) is { } e) { return e; }
             }
-            if (VHelper.NeedValidateReconstructed) {
-                if (VHelper.ValidateReconstructed(v, tracker, "TypedOrderedDict") is { } e) { return e; }
+            if (needValues) {
+                if (VHelper.ValidateReconstructed(v, tracker, ownerName) is { } e) { return e; }
             }
             cursor = _arena.GetNext(ref cursor);
         }
@@ -484,6 +500,64 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
     #endregion
 
     #region Internal Search
+
+    /// <summary>
+    /// 定位 key 对应节点；若不存在则完成叶链与塔索引插入。
+    /// 不处理 value 更新生命周期，供 Upsert / UpsertGetValueRef 复用。
+    /// </summary>
+    private UpsertLocateResult LocateOrInsertNode(TKey key, TValue insertedValue) {
+        if (_head.IsNull) {
+            _head = _arena.AllocNode(key, insertedValue);
+            int newIndex = _arena.CurrentNodeCount - 1;
+            _count = 1;
+            Span<int> emptyUpdate = stackalloc int[MaxTowerHeight];
+            emptyUpdate.Fill(-1);
+            InsertIntoTower(key, newIndex, emptyUpdate);
+            _head.CachedIndex = newIndex;
+            return new UpsertLocateResult { Existed = false, PhysicalIndex = newIndex };
+        }
+
+        TKey headKey = _arena.GetKey(ref _head);
+        int headCmp = KHelper.Compare(headKey, key);
+        if (headCmp == 0) {
+            int headIndex = _arena.ResolveIndex(ref _head);
+            return new UpsertLocateResult { Existed = true, PhysicalIndex = headIndex };
+        }
+        if (headCmp > 0) {
+            LeafHandle oldHead = _head;
+            _head = _arena.AllocNode(key, insertedValue, oldHead.Sequence);
+            int newIndex = _arena.CurrentNodeCount - 1;
+            _count++;
+            Span<int> emptyUpdate = stackalloc int[MaxTowerHeight];
+            emptyUpdate.Fill(-1);
+            InsertIntoTower(key, newIndex, emptyUpdate);
+            _head.CachedIndex = newIndex;
+            return new UpsertLocateResult { Existed = false, PhysicalIndex = newIndex };
+        }
+
+        Span<int> towerUpdate = stackalloc int[MaxTowerHeight];
+        towerUpdate.Fill(-1);
+        LeafHandle pred = FindLeafPredecessorAndTowerUpdate(key, towerUpdate);
+        Debug.Assert(pred.IsNotNull);
+
+        LeafHandle successor = _arena.GetNext(ref pred);
+        if (successor.IsNotNull) {
+            TKey succKey = _arena.GetKey(ref successor);
+            if (KHelper.Compare(succKey, key) == 0) {
+                int succIndex = _arena.ResolveIndex(ref successor);
+                return new UpsertLocateResult { Existed = true, PhysicalIndex = succIndex };
+            }
+        }
+
+        uint predNextSeq = _arena.GetNextSequence(ref pred);
+        LeafHandle insertedHandle = _arena.AllocNode(key, insertedValue, predNextSeq);
+        int insertedIndex = _arena.CurrentNodeCount - 1;
+        insertedHandle.CachedIndex = insertedIndex;
+        _arena.SetNext(ref pred, insertedHandle);
+        _count++;
+        InsertIntoTower(key, insertedIndex, towerUpdate);
+        return new UpsertLocateResult { Existed = false, PhysicalIndex = insertedIndex };
+    }
 
     /// <summary>只读前驱查找。用于 TryGet、FindLowerBoundLeaf 等不修改塔的路径。</summary>
     private LeafHandle FindLeafPredecessor(TKey key)

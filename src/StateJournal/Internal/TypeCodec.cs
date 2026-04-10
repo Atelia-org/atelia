@@ -31,13 +31,15 @@ internal enum TypeOpCode : byte {
     MakeMixedDict = 128,
     MakeTypedDict,
     MakeTypedDeque,
-    MakeValueTuple2,
+    MakeMixedOrderedDict,
+    MakeTypedOrderedDict,
+
+    MakeValueTuple2 = 192,
     MakeValueTuple3,
     MakeValueTuple4,
     MakeValueTuple5,
     MakeValueTuple6,
     MakeValueTuple7,
-    MakeTypedOrderedDict,
 }
 
 internal static class TypeCodec {
@@ -108,6 +110,15 @@ internal static class TypeCodec {
                     if (operands.Count < 1) { return false; }
                     operands.Push(typeof(DurableDeque<>).MakeGenericType(operands.Pop()));
                     break;
+                case TypeOpCode.MakeMixedOrderedDict:
+                    if (operands.Count < 1) { return false; }
+                    operands.Push(typeof(DurableOrderedDict<>).MakeGenericType(operands.Pop()));
+                    break;
+                case TypeOpCode.MakeTypedOrderedDict:
+                    if (operands.Count < 2) { return false; }
+                    operands.Push(typeof(DurableOrderedDict<,>).MakeGenericType(operands.Pop(), operands.Pop()));
+                    break;
+
                 case TypeOpCode.MakeValueTuple2:
                     if (operands.Count < 2) { return false; }
                     operands.Push(typeof(ValueTuple<,>).MakeGenericType(operands.Pop(), operands.Pop()));
@@ -132,10 +143,7 @@ internal static class TypeCodec {
                     if (operands.Count < 7) { return false; }
                     operands.Push(typeof(ValueTuple<,,,,,,>).MakeGenericType(operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop(), operands.Pop()));
                     break;
-                case TypeOpCode.MakeTypedOrderedDict:
-                    if (operands.Count < 2) { return false; }
-                    operands.Push(typeof(DurableOrderedDict<,>).MakeGenericType(operands.Pop(), operands.Pop()));
-                    break;
+
                 case TypeOpCode.Invalid:
                 default:
                     return false;

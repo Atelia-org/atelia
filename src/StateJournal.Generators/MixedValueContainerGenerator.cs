@@ -21,9 +21,11 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
         context.RegisterSourceOutput(targets,
             static (ctx, target) => {
-                string suffix = target!.ContainerKind == MixedTypeGenerationCommon.MixedContainerKind.Deque
-                    ? "MixedDeque"
-                    : "MixedDict";
+                string suffix = target!.ContainerKind switch {
+                    MixedTypeGenerationCommon.MixedContainerKind.Deque => "MixedDeque",
+                    MixedTypeGenerationCommon.MixedContainerKind.OrderedDict => "MixedOrderedDict",
+                    _ => "MixedDict",
+                };
                 ctx.AddSource(
                     $"{target.TypeName}.{suffix}.g.cs",
                     SourceText.From(RenderTarget(target), Encoding.UTF8)
@@ -45,11 +47,15 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
             EmitDequeTypedViews(builder, target.Types);
         }
         else {
+            // Dict and OrderedDict share identical dispatch logic (Upsert/Get/Of + typed views)
             string keyType = target.JoinedTypeParameterNames;
+            string containerDisplayName = target.ContainerKind == MixedTypeGenerationCommon.MixedContainerKind.OrderedDict
+                ? "DurableOrderedDict"
+                : "DurableDict";
             MixedTypeGenerationCommon.AppendPartialClassHeader(builder, target);
             builder.AppendLine("    // Partial implementations \u2014 interface list & declaring declarations are in the hand-written source.");
             builder.AppendLine();
-            EmitDictGenericDispatch(builder, target.Types, keyType);
+            EmitDictGenericDispatch(builder, target.Types, keyType, containerDisplayName);
             EmitDictTypedViews(builder, target.Types, keyType);
         }
 
@@ -306,7 +312,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.AppendLine();
     }
 
-    private static void EmitDictGenericDispatch(StringBuilder builder, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types, string keyType) {
+    private static void EmitDictGenericDispatch(StringBuilder builder, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types, string keyType, string containerDisplayName = "DurableDict") {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.Append("    public partial global::Atelia.StateJournal.UpsertStatus Upsert<TValue>(").Append(keyType).AppendLine(" key, TValue? value) where TValue : notnull {");
         foreach (var type in types) {
@@ -332,7 +338,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.AppendLine("        if (typeof(global::Atelia.StateJournal.DurableObject).IsAssignableFrom(typeof(TValue))) {");
         builder.AppendLine("            return Upsert(key, (global::Atelia.StateJournal.DurableObject?)(object?)value);");
         builder.AppendLine("        }");
-        builder.AppendLine("        throw new NotSupportedException($\"Type {typeof(TValue)} is not a supported value type for DurableDict\");");
+        builder.Append("        throw new NotSupportedException($\"Type {typeof(TValue)} is not a supported value type for ").Append(containerDisplayName).AppendLine("\");");
         builder.AppendLine("    }");
         builder.AppendLine();
 
@@ -343,7 +349,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
             builder.Append("            return (global::Atelia.StateJournal.IDict<").Append(keyType).Append(", TValue>)(object)(global::Atelia.StateJournal.IDict<").Append(keyType).Append(", ").Append(type.ValueType).AppendLine(">)this;");
             builder.AppendLine("        }");
         }
-        builder.AppendLine("        throw new NotSupportedException($\"Type {typeof(TValue)} is not a supported value type for DurableDict\");");
+        builder.Append("        throw new NotSupportedException($\"Type {typeof(TValue)} is not a supported value type for ").Append(containerDisplayName).AppendLine("\");");
         builder.AppendLine("    }");
         builder.AppendLine();
 

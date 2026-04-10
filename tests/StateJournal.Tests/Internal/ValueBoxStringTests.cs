@@ -1,4 +1,5 @@
 using Xunit;
+using Atelia.StateJournal.Pools;
 
 namespace Atelia.StateJournal.Internal.Tests;
 
@@ -194,6 +195,39 @@ public class ValueBoxStringTests {
         var issue = box.GetDouble(out double value);
         Assert.Equal(GetIssue.TypeMismatch, issue);
         Assert.Equal(default, value);
+    }
+
+    [Fact]
+    public void ValidateReconstructedMixedSymbol_WhenSymbolExists_ReturnsNull() {
+        var pool = StringPool.Rebuild([(new SlotHandle(7), "alpha")]);
+        var box = ValueBox.FromSymbolId(new SymbolId(7));
+
+        var error = ValueBox.ValidateReconstructedMixedSymbol(box, pool, "MixedDict");
+
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public void ValidateReconstructedMixedSymbol_WhenSymbolMissing_ReturnsCorruption() {
+        var box = ValueBox.FromSymbolId(new SymbolId(7));
+
+        var error = ValueBox.ValidateReconstructedMixedSymbol(box, StringPool.Rebuild([]), "MixedDict");
+
+        var corruption = Assert.IsType<SjCorruptionError>(error);
+        Assert.Contains("MixedDict", corruption.Message);
+        Assert.Contains("dangling SymbolId 7", corruption.Message);
+    }
+
+    [Theory]
+    [InlineData(42)]
+    [InlineData(0)]
+    public void ValidateReconstructedMixedSymbol_NonSymbolBox_ReturnsNull(int intValue) {
+        var pool = StringPool.Rebuild([]);
+        var box = ValueBox.Int32Face.From(intValue);
+
+        var error = ValueBox.ValidateReconstructedMixedSymbol(box, pool, "MixedDeque");
+
+        Assert.Null(error);
     }
 
     // ═══════════════════════ ValueEquals 与 SymbolId ═══════════════════════

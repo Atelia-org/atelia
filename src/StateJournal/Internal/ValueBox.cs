@@ -47,6 +47,8 @@ internal readonly partial struct ValueBox {
             DurableObjectKind.TypedDict => ValueKind.TypedDict,
             DurableObjectKind.MixedDeque => ValueKind.MixedDeque,
             DurableObjectKind.TypedDeque => ValueKind.TypedDeque,
+            DurableObjectKind.MixedOrderedDict => ValueKind.MixedOrderedDict,
+            DurableObjectKind.TypedOrderedDict => ValueKind.TypedOrderedDict,
             _ => throw new UnreachableException()
         },
         BoxLzc.Boolean => ValueKind.Boolean,

@@ -67,4 +67,15 @@ internal static class Durable {
     public static DurableOrderedDict<TKey, TValue> OrderedDict<TKey, TValue>() where TKey : notnull where TValue : notnull =>
         TypedOrderedDictFactory<TKey, TValue>.Create?.Invoke()
         ?? throw new ArgumentException(TypedOrderedDictFactory<TKey, TValue>.ErrorReason);
+
+    /// <summary>
+    /// 创建 <see cref="DurableOrderedDict{TKey}"/> (MixedOrderedDict)。
+    /// 值类型为异构混合，支持 int/double/bool/string/<see cref="DurableObject"/> 等多种类型。
+    /// </summary>
+    /// <typeparam name="TKey">键类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>。</typeparam>
+    /// <returns>空的 <see cref="DurableOrderedDict{TKey}"/> 实例。</returns>
+    /// <exception cref="ArgumentException">泛型参数不在受支持的类型范围内。</exception>
+    public static DurableOrderedDict<TKey> OrderedDict<TKey>() where TKey : notnull =>
+        MixedOrderedDictFactory<TKey>.Create?.Invoke()
+        ?? throw new ArgumentException(MixedOrderedDictFactory<TKey>.ErrorReason);
 }

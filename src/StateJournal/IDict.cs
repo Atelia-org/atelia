@@ -68,7 +68,7 @@ public static class DictExtensions {
 }
 
 internal static class DictThrowHelpers {
-    public static TValue? GetOrThrow<TKey, TValue>(TKey key, GetIssue issue, TValue? value)
+    public static TValue? GetOrThrow<TKey, TValue>(TKey key, GetIssue issue, TValue? value, string containerDisplayName = "DurableDict")
         where TKey : notnull where TValue : notnull =>
         issue switch {
             GetIssue.None => value,
@@ -85,7 +85,7 @@ internal static class DictThrowHelpers {
                 $"Value for key '{key}' references a DurableObject that cannot be loaded."
             ),
             GetIssue.UnsupportedType => throw new NotSupportedException(
-                $"Type {typeof(TValue)} is not a supported value type for DurableDict"
+                $"Type {typeof(TValue)} is not a supported value type for {containerDisplayName}"
             ),
             GetIssue.TypeMismatch => throw new InvalidCastException(
                 $"Value for key '{key}' is not of type {typeof(TValue).Name}."

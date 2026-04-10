@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
@@ -40,7 +41,11 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         else if (newValue.IsSymbolRef) { _symbolRefCount++; }
     }
 
+    /// <remarks>
+    /// refcount 短路的时序安全性——同 MixedDequeImpl.AcceptChildRefVisitor 注释。
+    /// </remarks>
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
+        AssertRefCountConsistency();
         if (KHelper.NeedVisitChildRefs) {
             foreach (var key in _core.Current.Keys) {
                 KHelper.VisitChildRefs(key, Revision, ref visitor);
@@ -60,15 +65,10 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
             }
         }
 
-        if (symbolPool is not null && _symbolRefCount != 0) {
+        if (symbolPool is not null) {
             foreach (var box in _core.Current.Values) {
-                if (!box.IsSymbolRef) { continue; }
-                SymbolId symbolId = box.DecodeSymbolId();
-                if (!symbolPool.Validate(symbolId.ToSlotHandle())) {
-                    return new SjCorruptionError(
-                        $"MixedDict load completed with a dangling SymbolId {symbolId.Value}.",
-                        RecoveryHint: "The final SymbolTable is missing a string still referenced by the reconstructed object state."
-                    );
+                if (ValueBox.ValidateReconstructedMixedSymbol(box, symbolPool, "MixedDict") is { } symbolError) {
+                    return symbolError;
                 }
             }
         }
@@ -76,13 +76,21 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         return null;
     }
 
-    private void RecountRefs() {
+    private void RecountRefs() => (_durableRefCount, _symbolRefCount) = ComputeRefCounts();
+
+    private (int dur, int sym) ComputeRefCounts() {
         int durCount = 0, symCount = 0;
         foreach (var box in _core.Current.Values) {
             if (box.IsDurableRef) { ++durCount; }
             else if (box.IsSymbolRef) { ++symCount; }
         }
-        _durableRefCount = durCount;
-        _symbolRefCount = symCount;
+        return (durCount, symCount);
+    }
+
+    [Conditional("DEBUG")]
+    private void AssertRefCountConsistency() {
+        var (durCount, symCount) = ComputeRefCounts();
+        Debug.Assert(_durableRefCount == durCount && _symbolRefCount == symCount,
+            $"MixedDict refcount drift: durable={_durableRefCount}(expect {durCount}), symbol={_symbolRefCount}(expect {symCount})");
     }
 }

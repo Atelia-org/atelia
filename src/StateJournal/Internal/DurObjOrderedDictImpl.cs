@@ -95,9 +95,6 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
 
     internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? _) {
         if (tracker is null || !KHelper.NeedValidateReconstructed) { return null; }
-        foreach (var key in _core.GetAllKeys()) {
-            if (KHelper.ValidateReconstructed(key, tracker, "DurObjOrderedDict") is { } error) { return error; }
-        }
-        return null;
+        return _core.ValidateReconstructed(tracker, "DurObjOrderedDict", validateValues: false);
     }
 }

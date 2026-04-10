@@ -45,6 +45,9 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     #region Dirty Tracking
     private BitVector _dirtyValues;
     private BitVector _dirtyLinks;
+    /// <summary>标记哪些 committed 节点的原值已被保存到 <see cref="_capturedOriginals"/>。
+    /// 独立于 dirty 状态——节点可以"已 capture 但未 dirty"（prepare 后值未变时的中间态）。</summary>
+    private BitVector _capturedNodes;
     private ListCore<CapturedOriginal> _capturedOriginals;
 
     private struct CapturedOriginal {
@@ -53,12 +56,12 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
         public TValue Value;
     }
 
-    private bool IsCaptured(int index) =>
-        _dirtyValues.TestBit(index) || _dirtyLinks.TestBit(index);
+    private bool IsCaptured(int index) => _capturedNodes.TestBit(index);
 
     private void CaptureIfNeeded(int index) {
         Debug.Assert(index >= 0 && index < _committedCount);
         if (!IsCaptured(index)) {
+            _capturedNodes.SetBit(index);
             _capturedOriginals.Add(
                 new CapturedOriginal {
                     Index = index,
@@ -79,6 +82,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
         }
         _dirtyValues.Clear();
         _dirtyLinks.Clear();
+        _capturedNodes.Clear();
     }
 
     private void CommitDirty() {
@@ -94,10 +98,11 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
         }
         _dirtyValues.Clear();
         _dirtyLinks.Clear();
+        _capturedNodes.Clear();
     }
 
     private bool HasActiveDirtyTracking =>
-        _dirtyValues.PopCount != 0 || _dirtyLinks.PopCount != 0 || _capturedOriginals.Count != 0;
+        _dirtyValues.PopCount != 0 || _dirtyLinks.PopCount != 0 || _capturedNodes.PopCount != 0;
 
     private void ThrowIfActiveDirtyTracking(string operation) {
         if (!HasActiveDirtyTracking) { return; }
@@ -123,6 +128,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
         _committedCount = 0;
         _dirtyValues = new();
         _dirtyLinks = new();
+        _capturedNodes = new();
         _capturedOriginals = new();
         ResetDirtyTracking();
     }
@@ -139,7 +145,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     }
 
     /// <summary>由 sequence 解析物理 index，同时维护 LeafHandle 的缓存。</summary>
-    private int ResolveIndex(ref LeafHandle handle) {
+    internal int ResolveIndex(ref LeafHandle handle) {
         if (handle.MissingCachedIndex) {
             int index = FindIndex(handle.Sequence);
             if (index < 0) { throw new KeyNotFoundException(); }
@@ -246,7 +252,11 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     /// </remarks>
     public void SetValue(ref LeafHandle handle, TValue newValue) {
         int index = ResolveIndex(ref handle);
+        SetValueByIndex(index, newValue);
+    }
 
+    /// <summary>按物理 index 更新节点的 value。语义同 <see cref="SetValue(ref LeafHandle, TValue)"/>。</summary>
+    internal void SetValueByIndex(int index, TValue newValue) {
         if (IsCommittedIndex(index)) {
             bool isRepeatMutation = _dirtyValues.TestBit(index);
             CaptureIfNeeded(index);
@@ -259,6 +269,40 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
             VHelper.ReleaseSlot(_values[index]);
         }
         _values[index] = newValue;
+    }
+
+    /// <summary>
+    /// 为原位更新准备值槽：仅保存 committed 原值（如尚未保存），但不标记 dirty。
+    /// 调用方在确认值确实改变后，须调用 <see cref="ConfirmValueDirty"/> 标记 dirty。
+    /// 若调用方发现值未变（如 UpdateOrInit 返回 false）且 <paramref name="capturedNow"/> 为 true，
+    /// 应调用 <see cref="CancelPreparedValueUpdate"/> 撤销本次 provisional capture，实现零副作用。
+    /// </summary>
+    internal ref TValue PrepareValueSlotForUpdate(int index, out bool capturedNow) {
+        capturedNow = false;
+        if (IsCommittedIndex(index) && !IsCaptured(index)) {
+            CaptureIfNeeded(index);
+            capturedNow = true;
+        }
+        return ref _values[index];
+    }
+
+    /// <summary>配合 <see cref="PrepareValueSlotForUpdate"/> 使用：确认值已改变，标记 dirty。对 draft 节点无操作。</summary>
+    internal void ConfirmValueDirty(int index) {
+        if (IsCommittedIndex(index)) {
+            _dirtyValues.SetBit(index);
+        }
+    }
+
+    /// <summary>
+    /// 撤销 <see cref="PrepareValueSlotForUpdate"/> 刚创建的 provisional capture。
+    /// 仅在 <c>capturedNow == true</c> 且值未实际改变时调用。
+    /// </summary>
+    internal void CancelPreparedValueUpdate(int index) {
+        Debug.Assert(IsCaptured(index), "CancelPreparedValueUpdate called on un-captured index.");
+        Debug.Assert(!_dirtyValues.TestBit(index), "CancelPreparedValueUpdate called on already-dirty index.");
+        _capturedNodes.ClearBit(index);
+        bool popped = _capturedOriginals.TryPop(out var orig);
+        Debug.Assert(popped && orig.Index == index, "CancelPreparedValueUpdate: stack top mismatch.");
     }
 
     public void SetNext(ref LeafHandle handle, LeafHandle newNext) {
@@ -379,7 +423,9 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
 
     private void ReadKv(ref BinaryDiffReader reader, int index) {
         _keys[index] = KHelper.Read(ref reader, asKey: true)!;
-        _values[index] = VHelper.Read(ref reader, asKey: false)!;
+        // 使用 UpdateOrInit 而非 Read：对 ValueBoxHelper 这是唯一合法路径
+        // （支持 OfBits64 Slot 原位复用）；对 typed helper 行为等价于 old = Read(...)。
+        VHelper.UpdateOrInit(ref reader, ref _values[index]!);
     }
 
     public void ApplyDelta(ref BinaryDiffReader reader) {
@@ -409,10 +455,12 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
                     $"Leaf chain delta references unknown committed node sequence {sequence}."
                 );
             }
-            if (VHelper.NeedRelease) {
-                VHelper.ReleaseSlot(_values[index]);
-            }
-            _values[index] = VHelper.Read(ref reader, asKey: false)!;
+            // UpdateOrInit 内部负责释放旧值的堆资源（对 ValueBoxHelper 为
+            // FreeOldBits64IfNeeded / StoreOrReuseBits64）。ApplyDelta 只在 load 路径调用，
+            // 此时旧值为 exclusive 状态，UpdateOrInit 可以正确释放或原位复用。
+            // 对 NeedRelease 且 UpdateOrInit 不自行管理旧值的 helper（测试用），
+            // 须在 UpdateOrInit 实现中自行释放（这是 ITypeHelper 契约的一部分）。
+            VHelper.UpdateOrInit(ref reader, ref _values[index]!);
         }
 
         // Section 3: appended nodes
@@ -537,6 +585,8 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
         _dirtyValues.SetLength(_committedCount);
         _dirtyLinks.Clear();
         _dirtyLinks.SetLength(_committedCount);
+        _capturedNodes.Clear();
+        _capturedNodes.SetLength(_committedCount);
         _capturedOriginals.Clear();
     }
 

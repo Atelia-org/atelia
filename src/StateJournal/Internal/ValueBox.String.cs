@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Atelia.StateJournal.Pools;
 
 namespace Atelia.StateJournal.Internal;
 
@@ -36,6 +37,22 @@ partial struct ValueBox {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
         Debug.Assert(GetHeapKind() == HeapValueKind.String);
         return new SymbolId(GetHeapHandle().Packed);
+    }
+
+    /// <summary>
+    /// load 后校验 mixed 容器中 surviving 的 SymbolId 是否仍能在最终 <see cref="StringPool"/> 中解析。
+    /// 注意：此校验发生在容器的 runtime ref-count cache 重建前，因此不能依赖 <c>_symbolRefCount</c> 一类派生缓存。
+    /// </summary>
+    internal static AteliaError? ValidateReconstructedMixedSymbol(ValueBox box, StringPool symbolPool, string ownerName) {
+        if (!box.IsSymbolRef) { return null; }
+
+        SymbolId symbolId = box.DecodeSymbolId();
+        if (symbolPool.Validate(symbolId.ToSlotHandle())) { return null; }
+
+        return new SjCorruptionError(
+            $"{ownerName} load completed with a dangling SymbolId {symbolId.Value}.",
+            RecoveryHint: "The final SymbolTable is missing a string still referenced by the reconstructed object state."
+        );
     }
 
     /// <summary>

@@ -78,6 +78,20 @@ public class TypeCodePrecomputeTests {
     }
 
     [Fact]
+    public void ResolveValueHelper_MixedOrderedDict_TypeCode_RoundTrips() {
+        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableOrderedDict<int>));
+        Assert.True(entry.IsValid);
+        AssertRoundTrip(entry.TypeCode, typeof(DurableOrderedDict<int>));
+    }
+
+    [Fact]
+    public void ResolveValueHelper_TypedOrderedDict_TypeCode_RoundTrips() {
+        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableOrderedDict<string, int>));
+        Assert.True(entry.IsValid);
+        AssertRoundTrip(entry.TypeCode, typeof(DurableOrderedDict<string, int>));
+    }
+
+    [Fact]
     public void ResolveValueHelper_NestedDict_TypeCode_RoundTrips() {
         // DurableDict<int, DurableDict<string, double>>
         var type = typeof(DurableDict<int, DurableDict<string, double>>);
@@ -139,6 +153,30 @@ public class TypeCodePrecomputeTests {
     public void TypedDequeFactory_TypeCode_MatchesHelperRegistry() {
         var factoryCode = TypedDequeFactory<double>.TypeCode;
         var registryCode = HelperRegistry.ResolveValueHelper(typeof(DurableDeque<double>)).TypeCode;
+        Assert.Equal(registryCode, factoryCode);
+    }
+
+    [Fact]
+    public void TypedOrderedDictFactory_TypeCode_RoundTrips() {
+        AssertRoundTrip(TypedOrderedDictFactory<string, int>.TypeCode, typeof(DurableOrderedDict<string, int>));
+    }
+
+    [Fact]
+    public void TypedOrderedDictFactory_TypeCode_MatchesHelperRegistry() {
+        var factoryCode = TypedOrderedDictFactory<string, int>.TypeCode;
+        var registryCode = HelperRegistry.ResolveValueHelper(typeof(DurableOrderedDict<string, int>)).TypeCode;
+        Assert.Equal(registryCode, factoryCode);
+    }
+
+    [Fact]
+    public void MixedOrderedDictFactory_TypeCode_RoundTrips() {
+        AssertRoundTrip(MixedOrderedDictFactory<string>.TypeCode, typeof(DurableOrderedDict<string>));
+    }
+
+    [Fact]
+    public void MixedOrderedDictFactory_TypeCode_MatchesHelperRegistry() {
+        var factoryCode = MixedOrderedDictFactory<string>.TypeCode;
+        var registryCode = HelperRegistry.ResolveValueHelper(typeof(DurableOrderedDict<string>)).TypeCode;
         Assert.Equal(registryCode, factoryCode);
     }
 

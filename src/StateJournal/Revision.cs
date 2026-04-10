@@ -320,6 +320,13 @@ public partial class Revision {
         return obj;
     }
 
+    /// <summary>创建 MixedOrderedDict 并绑定到当前 Revision。</summary>
+    public DurableOrderedDict<TKey> CreateOrderedDict<TKey>() where TKey : notnull {
+        var obj = Durable.OrderedDict<TKey>();
+        BindNewObject(obj);
+        return obj;
+    }
+
     private void BindNewObject(DurableObject obj) {
         var handle = _pool.Store(obj);
         var id = LocalId.FromSlotHandle(handle);

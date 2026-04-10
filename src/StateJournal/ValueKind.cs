@@ -17,6 +17,10 @@ public enum ValueKind : byte {
     MixedDeque,
     /// <summary><see cref="DurableDeque{T}"/> homogeneous</summary>
     TypedDeque,
+    /// <summary><see cref="DurableOrderedDict{TKey}"/> heterogeneous</summary>
+    MixedOrderedDict,
+    /// <summary><see cref="DurableOrderedDict{TKey, TValue}"/> homogeneous</summary>
+    TypedOrderedDict,
 
     Boolean,
     Null,

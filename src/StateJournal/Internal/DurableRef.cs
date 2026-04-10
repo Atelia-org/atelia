@@ -15,5 +15,6 @@ internal readonly record struct DurableRef(DurableObjectKind Kind, LocalId Id) {
         or DurableObjectKind.TypedDict
         or DurableObjectKind.MixedDeque
         or DurableObjectKind.TypedDeque
+        or DurableObjectKind.MixedOrderedDict
         or DurableObjectKind.TypedOrderedDict;
 }

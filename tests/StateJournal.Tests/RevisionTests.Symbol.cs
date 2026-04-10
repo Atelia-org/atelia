@@ -377,6 +377,42 @@ partial class RevisionTests {
     }
 
     [Fact]
+    public void Commit_DurObjOrderedDictStringKeyDeltaReplay_CanLoadAfterRemovedHistoricalKeyFallsOutOfHeadSymbolTable() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateOrderedDict<string, DurableDict<string, int>>();
+        for (int i = 0; i < 6; i++) {
+            var child = rev.CreateDict<string, int>();
+            child.Upsert("value", i);
+            root.Upsert($"key_{i}", child);
+        }
+
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        root.Remove("key_0");
+        var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+
+        var frameInfo = file.ReadFrameInfo(root.HeadTicket);
+        Assert.True(frameInfo.IsSuccess, $"ReadFrameInfo failed: {frameInfo.Error}");
+        Assert.Equal(VersionKind.Delta, new FrameTag(frameInfo.Value.Tag).VersionKind);
+
+        var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = Assert.IsAssignableFrom<DurableOrderedDict<string, DurableDict<string, int>>>(openResult.Value!.GraphRoot);
+        Assert.Equal(5, loaded.Count);
+        Assert.Equal(GetIssue.NotFound, loaded.Get("key_0", out _));
+        for (int i = 1; i < 6; i++) {
+            Assert.Equal(GetIssue.None, loaded.Get($"key_{i}", out var child));
+            Assert.NotNull(child);
+            Assert.Equal(GetIssue.None, child!.Get("value", out int value));
+            Assert.Equal(i, value);
+        }
+    }
+
+    [Fact]
     public void Commit_MixedStringValueDeltaReplay_CanLoadAfterRemovedHistoricalStringFallsOutOfHeadSymbolTable() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);

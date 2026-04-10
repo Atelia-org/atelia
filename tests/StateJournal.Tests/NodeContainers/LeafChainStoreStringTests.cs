@@ -23,7 +23,10 @@ internal readonly struct TrackingStringHelper : ITypeHelper<string> {
     public static string? Read(ref BinaryDiffReader reader, bool asKey) => reader.BareInlineString(asKey);
     public static bool NeedRelease => true;
     public static void ReleaseSlot(string? value) => LeafChainStoreStringTests.ReleasedValues.Add(value);
-    public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) => old = Read(ref reader, asKey: false);
+    public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) {
+        if (old is not null) { ReleaseSlot(old); }
+        old = Read(ref reader, asKey: false);
+    }
 }
 
 /// <summary>

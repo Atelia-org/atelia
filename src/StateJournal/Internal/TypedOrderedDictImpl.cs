@@ -58,6 +58,6 @@ internal sealed class TypedOrderedDictImpl<TKey, TValue, KHelper, VHelper> : Dur
         // 因此这里不需要像 mixed 容器那样再验证 surviving SymbolId 是否仍在 symbolPool 中；
         // load 后校验职责仅剩 placeholder 残留检查。
         if (tracker is null) { return null; }
-        return _core.ValidateReconstructed(tracker);
+        return _core.ValidateReconstructed(tracker, "TypedOrderedDict");
     }
 }

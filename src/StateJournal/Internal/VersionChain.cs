@@ -57,16 +57,24 @@ internal static class VersionChain {
         }
 
         var def = type.GetGenericTypeDefinition();
-        if (def == typeof(DurableDict<,>)) {
-            kind = DurableObjectKind.TypedDict;
-            return true;
-        }
         if (def == typeof(DurableDict<>)) {
             kind = DurableObjectKind.MixedDict;
             return true;
         }
+        if (def == typeof(DurableDict<,>)) {
+            kind = DurableObjectKind.TypedDict;
+            return true;
+        }
         if (def == typeof(DurableDeque<>)) {
             kind = DurableObjectKind.TypedDeque;
+            return true;
+        }
+        if (def == typeof(DurableOrderedDict<>)) {
+            kind = DurableObjectKind.MixedOrderedDict;
+            return true;
+        }
+        if (def == typeof(DurableOrderedDict<,>)) {
+            kind = DurableObjectKind.TypedOrderedDict;
             return true;
         }
 
@@ -261,6 +269,11 @@ internal static class VersionChain {
                 version.Frame.Dispose();
                 deltaChain.Pop();
             }
+            // ⚠️ 时序关键：ValidateReconstructed 必须在 OnLoadCompleted 之前调用。
+            // 此时 mixed 容器的 _symbolRefCount 尚未重建（ApplyDelta 不经过 refcount 回调），
+            // 因此 ValidateReconstructed 不能依赖 refcount 短路，而是直接遍历所有值做校验。
+            // OnLoadCompleted 调用 SyncCurrentFromCommittedCore → RecountRefs，重建完成后
+            // AcceptChildRefVisitor 的 refcount 短路才安全可用。
             if ((placeholderTracker is not null || symbolPool is not null) &&
                 result.ValidateReconstructed(placeholderTracker, symbolPool) is { } placeholderError) { return placeholderError; }
 
