@@ -1,7 +1,7 @@
 # Mixed Value Generator 备忘
 
-> 日期：2026-03-23
-> 状态：已与当前代码对齐（共享 catalog + 单一 generator）
+> 日期：2026-04-11
+> 状态：已与当前代码对齐（共享 catalog + 单一 generator，支持 Deque / Dict / OrderedDict）
 
 ---
 
@@ -9,7 +9,7 @@
 
 这份笔记是给后续 AI 会话和未来自己看的快速入口，目标是用最短路径回答下面几件事：
 
-- Mixed Deque / Mixed Dict 现在的泛型分发是怎么做的？
+- Mixed Deque / Mixed Dict / Mixed OrderedDict 现在的泛型分发是怎么做的？
 - Source Generator 的元数据入口在哪，生成器主逻辑在哪？
 - 哪些代码已经交给生成器，哪些仍然是手写保留区？
 - 如果要新增 `Int128`、`Guid` 一类底层支持，应该改哪里？
@@ -31,7 +31,7 @@ Mixed 容器原本有两类明显痛点：
 
 结果是：
 
-- Mixed Deque 和 Mixed Dict 现在共用一套类型目录。
+- Mixed Deque 和 Mixed Dict 和 Mixed OrderedDict 现在共用一套类型目录。
 - 原先两个容器各自的 generator 已合并成一个 `MixedValueContainerGenerator`。
 - 后续新增类型时，原则上优先只改 catalog，而不是再手写几十行接口实现。
 
@@ -44,7 +44,7 @@ Mixed 容器原本有两类明显痛点：
 现在的结构是：
 
 `MixedValueCatalog` 声明支持类型
-→ `DurableDeque` / `DurableDict<TKey>` 通过 `[UseMixedValueCatalog(...)]` 挂接
+→ `DurableDeque` / `DurableDict<TKey>` / `DurableOrderedDict<TKey>` 通过 `[UseMixedValueCatalog(...)]` 挂接
 → `MixedValueContainerGenerator` 读取 catalog 元数据
 → 为不同容器生成泛型分发和 `IDeque<T>` / `IDict<TKey, TValue>` 实现。
 
@@ -67,10 +67,13 @@ Mixed 容器原本有两类明显痛点：
 
 `src/StateJournal/DurableDict.Mixed.cs`
 
-- 这两个文件现在都只是“手写骨架 + attribute 挂接 + 少量特殊逻辑”。
+`src/StateJournal/DurableOrderedDict.Mixed.cs`
+
+- 这三个文件现在都只是"手写骨架 + attribute 挂接 + 少量特殊逻辑"。
 - 核心入口分别是：
   - `[UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.Deque)]`
   - `[UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.Dict)]`
+  - `[UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.OrderedDict)]`
 - 生成器据此判断“要给哪个容器生成哪一套代码”。
 
 #### C. 生成器入口
@@ -78,10 +81,11 @@ Mixed 容器原本有两类明显痛点：
 `src/StateJournal.Generators/MixedValueContainerGenerator.cs`
 
 - 当前唯一的 mixed 容器生成器。
-- 同时负责 deque 和 dict，两者只是在模板分支上不同。
+- 同时负责 deque、dict 和 ordered dict，三者只是在模板分支上不同。
 - 主要生成两大块内容：
   - 泛型分发入口，如 `PushFront<TValue>`、`GetCore<TValue>`、`Upsert<TValue>`
   - typed view / 接口实现，如 `OfInt32`、`IDeque<int>`、`IDict<TKey, int>`
+- Dict 和 OrderedDict 共享相同的分发模板（`Upsert/Get/Of`），仅通过 `containerDisplayName` 区分错误信息
 
 #### D. 生成器公共层
 
@@ -101,7 +105,7 @@ Mixed 容器原本有两类明显痛点：
 
 ## 3. 泛型分发现在是怎么工作的
 
-### 3.1 Deque / Dict 的共同思路
+### 3.1 Deque / Dict / OrderedDict 的共同思路
 
 生成后的对外泛型入口不再优先走：
 
@@ -152,13 +156,15 @@ if (typeof(TValue) == typeof(string)) { ... }
 - `DurableDeque` 的泛型写入/读取分发
 - `DurableDict<TKey>` 的 `IDict<TKey, TValue>` typed view 实现
 - `DurableDict<TKey>` 的泛型 `Upsert<TValue>` / `GetCore<TValue>` 分发
+- `DurableOrderedDict<TKey>` 的 `IDict<TKey, TValue>` typed view 实现（与 Dict 共享模板）
+- `DurableOrderedDict<TKey>` 的泛型 `Upsert<TValue>` / `Get<TValue>` / `Of<TValue>` 分发
 - `OfInt32`、`OfString`、`OfDurableObject` 这类重复属性
 
 ### 4.2 仍然手写保留的部分
 
 - `ExactDouble` 专用 API
   - deque: `PushFrontExactDouble` / `PushBackExactDouble` / `SetFrontExactDouble` / `SetBackExactDouble`
-  - dict: `UpsertExactDouble`
+  - dict / ordered dict: `UpsertExactDouble`
 - `DurableObject` 的引用检查、`DurableRef` 转换、对象装载 helper
 - 容器自身与 change tracker 相关的核心行为
   - `PushCore`
@@ -185,10 +191,12 @@ if (typeof(TValue) == typeof(string)) { ... }
   - deque 的手写骨架与特殊 helper
 - `src/StateJournal/DurableDict.Mixed.cs`
   - dict 的手写骨架与特殊 helper
+- `src/StateJournal/DurableOrderedDict.Mixed.cs`
+  - ordered dict 的手写骨架与特殊 helper（结构与 dict 平行）
 - `src/StateJournal.Generators/MixedValueContainerGenerator.cs`
   - 生成器主模板
 - `src/StateJournal.Generators/MixedTypeGenerationCommon.cs`
-  - generator 公共元数据层
+  - generator 公共元数据层（含 `MixedContainers` enum: `Deque | Dict | OrderedDict`）
 
 行为回归优先看测试：
 
@@ -230,12 +238,12 @@ if (typeof(TValue) == typeof(string)) { ... }
 
 至少补两类测试：
 
-- API 行为测试：mixed deque / dict 是否能正确写入、读取、typed view 访问
+- API 行为测试：mixed deque / dict / ordered dict 是否能正确写入、读取、typed view 访问
 - 语义测试：底层 `ValueBox` face 的 roundtrip / equality / diff 行为是否符合预期
 
 一个重要经验是：
 
-- 如果只是“新增普通标量类型”，理想状态下不应该再手改 `DurableDeque.Mixed.cs` 或 `DurableDict.Mixed.cs` 里的 typed view 样板。
+- 如果只是"新增普通标量类型"，理想状态下不应该再手改 `DurableDeque.Mixed.cs`、`DurableDict.Mixed.cs` 或 `DurableOrderedDict.Mixed.cs` 里的 typed view 样板。
 - 一旦你发现自己在复制 `OfXxx`、`PushXxx`、`IDict<TKey, Xxx>` 这类代码，多半说明没有走对这套生成器路径。
 
 ---
@@ -247,7 +255,7 @@ if (typeof(TValue) == typeof(string)) { ... }
 第一优先级检查：
 
 - `MixedValueCatalog` 上的 attribute 是否写对
-- `DurableDeque` / `DurableDict<TKey>` 上的 `[UseMixedValueCatalog(...)]` 是否写对
+- `DurableDeque` / `DurableDict<TKey>` / `DurableOrderedDict<TKey>` 上的 `[UseMixedValueCatalog(...)]` 是否写对
 - `MixedTypeGenerationCommon.CreateTarget(...)` 是否成功解析出 `TargetSpec`
 - `MixedTypeGenerationCommon.ParseCatalogTypes(...)` 是否正确过滤出目标类型
 
@@ -258,7 +266,7 @@ if (typeof(TValue) == typeof(string)) { ... }
 `MixedValueContainerGenerator.RenderTarget(...)` 是主入口：
 
 - `Deque` 走 `EmitDequeGenericDispatch(...)` 与 `EmitDequeTypedViews(...)`
-- `Dict` 走 `EmitDictGenericDispatch(...)` 与 `EmitDictTypedViews(...)`
+- `Dict` / `OrderedDict` 走 `EmitDictGenericDispatch(...)` 与 `EmitDictTypedViews(...)`（共享模板）
 
 如果出现“deque 代码长得像 dict”或“某一侧少生成一段方法”，这里是首查点。
 
@@ -267,7 +275,7 @@ if (typeof(TValue) == typeof(string)) { ... }
 先不要怀疑 catalog，优先看手写 helper：
 
 - deque: `ToDurableRef`、`GetDurableObjectAt`、`PeekDurableObject`
-- dict: `ToDurableRef`、`GetDurableObject`
+- dict / ordered dict: `ToDurableRef`、`GetDurableObject`
 
 因为 `DurableObject` 不是单纯模板展开问题。
 

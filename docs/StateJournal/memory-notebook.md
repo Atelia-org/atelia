@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-04-10
+> **最后更新**：2026-04-11
 
 ---
 
@@ -178,9 +178,11 @@ DurableObject
   │    │    └─ DurObjDictImpl<...>      // TValue : DurableObject，内部存 LocalId
   │    ├─ DurableDict<TKey>             // MixedDict facade
   │    │    └─ MixedDictImpl<...>       // 内部值为 ValueBox
-  │    └─ DurableOrderedDict<TKey, TValue>  // TypedOrderedDict facade
-  │         ├─ TypedOrderedDictImpl<...>    // 一般 typed value，内部基于 SkipListCore
-  │         └─ DurObjOrderedDictImpl<...>   // TValue : DurableObject，内部存 LocalId
+  │    ├─ DurableOrderedDict<TKey, TValue>  // TypedOrderedDict facade
+  │    │    ├─ TypedOrderedDictImpl<...>    // 一般 typed value，内部基于 SkipListCore
+  │    │    └─ DurObjOrderedDictImpl<...>   // TValue : DurableObject，内部存 LocalId
+  │    └─ DurableOrderedDict<TKey>         // MixedOrderedDict facade
+  │         └─ MixedOrderedDictImpl<...>   // 内部值为 ValueBox，基于 SkipListCore
   ├─ DurableDeque<T>                    // TypedDeque facade
   │    ├─ TypedDequeImpl<...>           // 一般 typed value
   │    └─ DurObjDequeImpl<...>          // TValue : DurableObject，内部存 LocalId
@@ -190,7 +192,8 @@ DurableObject
 
 注意：
 
-- `DurableOrderedDict` 继承自 `DurableDictBase<TKey>`，支持 Typed 和 DurableObject value（不支持 Mixed）
+- `DurableOrderedDict<TKey, TValue>` 继承自 `DurableDictBase<TKey>`，支持 Typed 和 DurableObject value
+- `DurableOrderedDict<TKey>` 继承自 `DurableDictBase<TKey>`，支持 Mixed value（ValueBox），与 `DurableDict<TKey>` 平行
 - `DurableDeque` 现在已实现，不再是“占位”
 - typed / mixed 两条 deque 路线都已经打通
 
@@ -221,6 +224,7 @@ var rev = new Revision(boundSegmentNumber: 1);
 rev.CreateDict<string, int>();        // TypedDict
 rev.CreateDict<string>();             // MixedDict
 rev.CreateOrderedDict<string, int>(); // TypedOrderedDict
+rev.CreateOrderedDict<string>();      // MixedOrderedDict
 rev.CreateDeque<int>();               // TypedDeque
 rev.CreateDeque();                    // MixedDeque
 ```
@@ -330,7 +334,7 @@ deque 路线已正式落地，承担：
 
 ### `DurableOrderedDict` 的 Change Tracking
 
-`DurableOrderedDict` **不使用** `DictChangeTracker`。它的 commit / revert / delta 由 `SkipListCore` + `LeafChainStore` 内部管理——叶链自身维护 dirty tracking（dirty value bits + dirty link bits + captured originals），整体架构与基于 `Dictionary<TKey, TValue>` 快照的 `DictChangeTracker` 完全不同。
+`DurableOrderedDict`（Typed 和 Mixed）**不使用** `DictChangeTracker`。它的 commit / revert / delta 由 `SkipListCore` + `LeafChainStore` 内部管理——叶链自身维护 dirty tracking（dirty value bits + dirty link bits + captured nodes + captured originals），整体架构与基于 `Dictionary<TKey, TValue>` 快照的 `DictChangeTracker` 完全不同。
 
 ---
 
@@ -354,14 +358,17 @@ deque 路线已正式落地，承担：
 - **索引塔纯内存态**：`SkipListCore` 的塔索引不参与序列化，从叶链确定性重建（基于 key hash 确定塔高度）
 - **sequence 单调递增、不复用**：`LeafChainStore` 的 `_nextAllocSequence` 只增不减，GC 后回收的 sequence 不会被新节点占用
 - **增量帧三段式**：link mutations → value mutations → appended nodes（详见 `LeafChainStore` 注释）
+- **`LocateOrInsertNode` 共享定位逻辑**：`SkipListCore` 的 `Upsert` 与 `UpsertGetValueRef` 通过私有 `LocateOrInsertNode` 共享"查找定位 + 必要时插入节点"逻辑，value 更新语义由各自调用方处理（`SetValue` vs `PrepareValueSlotForUpdate`）
+- **三阶段值更新协议**：`LeafChainStore` 提供 `PrepareValueSlotForUpdate` → `ConfirmValueDirty` / `CancelPreparedValueUpdate` 三阶段协议，支持 ValueBox 等 `NeedRelease` 类型的原位更新。`_capturedNodes` BitVector 独立于 dirty 状态追踪 capture 中间态
 
 ### `SkipListCore` 的 commit 时序
 
 ```text
-1. arena.Commit()              → 结束 dirty tracking
-2. CollectAll(head)            → 全量 GC，移除不可达死节点
-3. _committedHead = _head      → 记录 committed 起点
-4. SyncCurrentFromCommitted()  → current = committed + RebuildIndex
+1. arena.Commit()                  → 结束 dirty tracking
+2. CollectCommitted(head)          → committed 窗口 GC，移除不可达死节点
+3. SyncCurrentFromCommitted()      → current = committed
+4. _committedHead = _head          → 记录 committed 起点
+5. RebuildIndex()                  → 重建纯内存塔索引
 ```
 
 ---
@@ -484,7 +491,8 @@ PushInt32, PushString -> MakeTypedOrderedDict
 
 - typed string key/value/element：检查 placeholder 是否残留
 - mixed string key：如经过 typed helper 路径，也检查 placeholder
-- mixed value / mixed deque element 中的 `ValueBox(SymbolId)`：在这里直接验证 surviving `SymbolId` 是否仍在 `symbolPool` 中有效
+- mixed value / mixed deque element / mixed ordered dict element 中的 `ValueBox(SymbolId)`：通过共享的 `ValueBox.ValidateReconstructedMixedSymbol(...)` 验证 surviving `SymbolId` 是否仍在 `symbolPool` 中有效
+- 此校验在 `OnLoadCompleted`（`RecountRefs`）**之前**执行，因此不能依赖 `_symbolRefCount` 短路，必须直接遍历所有值
 - 这一步是“对象局部的 reconstruction 收尾校验”，不是全图对象引用校验
 
 关键文件：
@@ -624,7 +632,7 @@ Load ObjectMap frame chain
 | Revision Commit 主协议 | ✅ 已完成 | 已去除 compaction 主线 |
 | Repository | ✅ 已完成首版 | branch / segment / CAS / SaveAs 路由 |
 | NodeContainers（LeafChainStore / SkipListCore） | ✅ 已完成 | 叶链共享节点仓库 + 跳表核心 |
-| DurableOrderedDict（TypedOrderedDict） | ✅ 已完成 | 基于 SkipListCore，typed only |
+| DurableOrderedDict（Typed / Mixed / DurObj） | ✅ 已完成 | 基于 SkipListCore，typed + mixed + DurObj |
 | typed string staging-in-ChangeTracker | 🟡 储备方案 | 尚未落地，见专项文档 |
 
 ---
@@ -700,8 +708,8 @@ src/StateJournal/
 │   ├── LoadPlaceholderTracker.cs
 │   ├── TypedDictImpl.cs / MixedDictImpl.cs / DurObjDictImpl.cs
 │   ├── TypedDequeImpl.cs / MixedDequeImpl.cs / DurObjDequeImpl.cs
-│   ├── TypedOrderedDictImpl.cs
-│   ├── TypedOrderedDictFactory.cs
+│   ├── TypedOrderedDictImpl.cs / MixedOrderedDictImpl.cs / DurObjOrderedDictImpl.cs
+│   ├── TypedOrderedDictFactory.cs / MixedOrderedDictFactory.cs
 │   └── ...
 ├── Serialization/
 │   ├── BinaryDiffWriter.cs
