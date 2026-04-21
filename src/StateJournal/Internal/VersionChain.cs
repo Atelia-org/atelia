@@ -50,6 +50,10 @@ internal static class VersionChain {
             kind = DurableObjectKind.MixedDeque;
             return true;
         }
+        if (type == typeof(DurableText)) {
+            kind = DurableObjectKind.Text;
+            return true;
+        }
 
         if (!type.IsGenericType) {
             kind = default;

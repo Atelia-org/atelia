@@ -67,10 +67,14 @@ internal static class HelperRegistry {
     private static readonly TypeEntry _mixedDeque = new([(byte)TypeOpCode.PushMixedDeque]);
     internal static TypeEntry MixedDeque => _mixedDeque;
 
+    private static readonly TypeEntry _text = new([(byte)TypeOpCode.PushText]);
+    internal static TypeEntry Text => _text;
+
     #endregion
 
     private static readonly ConcurrentDictionary<Type, TypeEntry> _valueHelperCache = new() {
-        [typeof(DurableDeque)] = _mixedDeque
+        [typeof(DurableDeque)] = _mixedDeque,
+        [typeof(DurableText)] = _text
     };
 
     #region Key Helper 解析

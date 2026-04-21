@@ -167,6 +167,7 @@ internal static class DurableFactory {
 
     private static Func<DurableObject>? BuildFactory(Type type) {
         if (type == typeof(DurableDeque)) { return static () => new MixedDequeImpl(); }
+        if (type == typeof(DurableText)) { return static () => new DurableText(); }
         if (!type.IsGenericType) { return null; }
 
         var def = type.GetGenericTypeDefinition();

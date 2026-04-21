@@ -12,6 +12,7 @@ internal enum TaggedRefKind : byte {
     TypedDeque = (byte)DurableObjectKind.TypedDeque,
     MixedOrderedDict = (byte)DurableObjectKind.MixedOrderedDict,
     TypedOrderedDict = (byte)DurableObjectKind.TypedOrderedDict,
+    Text = (byte)DurableObjectKind.Text,
     Symbol = DurableObjectKindHelper.BitMask
 }
 
@@ -25,6 +26,7 @@ internal static class TaggedRefKindHelper {
         or TaggedRefKind.TypedDeque
         or TaggedRefKind.MixedOrderedDict
         or TaggedRefKind.TypedOrderedDict
+        or TaggedRefKind.Text
         or TaggedRefKind.Symbol;
 
     internal static bool IsDurableObjectKind(TaggedRefKind kind) => kind is
@@ -33,7 +35,8 @@ internal static class TaggedRefKindHelper {
         or TaggedRefKind.MixedDeque
         or TaggedRefKind.TypedDeque
         or TaggedRefKind.MixedOrderedDict
-        or TaggedRefKind.TypedOrderedDict;
+        or TaggedRefKind.TypedOrderedDict
+        or TaggedRefKind.Text;
 
     internal static TaggedRefKind FromDurableObjectKind(DurableObjectKind kind) => kind switch {
         DurableObjectKind.MixedDict => TaggedRefKind.MixedDict,
@@ -42,6 +45,7 @@ internal static class TaggedRefKindHelper {
         DurableObjectKind.TypedDeque => TaggedRefKind.TypedDeque,
         DurableObjectKind.MixedOrderedDict => TaggedRefKind.MixedOrderedDict,
         DurableObjectKind.TypedOrderedDict => TaggedRefKind.TypedOrderedDict,
+        DurableObjectKind.Text => TaggedRefKind.Text,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Only real DurableObject kinds can be converted to TaggedRefKind."),
     };
 
@@ -64,6 +68,9 @@ internal static class TaggedRefKindHelper {
                 return true;
             case TaggedRefKind.TypedOrderedDict:
                 objectKind = DurableObjectKind.TypedOrderedDict;
+                return true;
+            case TaggedRefKind.Text:
+                objectKind = DurableObjectKind.Text;
                 return true;
             default:
                 objectKind = default;

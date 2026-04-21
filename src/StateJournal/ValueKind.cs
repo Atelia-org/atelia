@@ -21,6 +21,8 @@ public enum ValueKind : byte {
     MixedOrderedDict,
     /// <summary><see cref="DurableOrderedDict{TKey, TValue}"/> homogeneous</summary>
     TypedOrderedDict,
+    /// <summary><see cref="DurableText"/></summary>
+    Text,
 
     Boolean,
     Null,

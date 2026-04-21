@@ -27,6 +27,7 @@ internal enum TypeOpCode : byte {
     PushString,
     PushInlineString,
     PushMixedDeque,
+    PushText,
 
     MakeMixedDict = 128,
     MakeTypedDict,
@@ -96,6 +97,9 @@ internal static class TypeCodec {
                     break;
                 case TypeOpCode.PushMixedDeque:
                     operands.Push(typeof(DurableDeque));
+                    break;
+                case TypeOpCode.PushText:
+                    operands.Push(typeof(DurableText));
                     break;
 
                 case TypeOpCode.MakeMixedDict:

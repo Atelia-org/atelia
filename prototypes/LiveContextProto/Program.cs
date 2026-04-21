@@ -11,8 +11,10 @@ namespace Atelia.LiveContextProto;
 
 internal static class Program {
     private const string DebugCategory = "History";
-    private const string DefaultProxyModel = "vscode-lm-proxy";
-    private const string AnthropicProxyUrl = "http://localhost:4000/anthropic/";
+    // private const string DefaultProxyModel = "vscode-lm-proxy";
+    // private const string AnthropicProxyUrl = "http://localhost:4000/anthropic/";
+    private const string DefaultProxyModel = "Qwen3.5-27b-GPTQ-Int4";
+    private const string AnthropicProxyUrl = "http://localhost:8000/";
     private const string DefaultProfileName = "anthropic-v1";
 
     public static int Main(string[] args) {

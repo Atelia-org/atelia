@@ -327,6 +327,13 @@ public partial class Revision {
         return obj;
     }
 
+    /// <summary>创建 DurableText 并绑定到当前 Revision。</summary>
+    public DurableText CreateText() {
+        var obj = Durable.Text();
+        BindNewObject(obj);
+        return obj;
+    }
+
     private void BindNewObject(DurableObject obj) {
         var handle = _pool.Store(obj);
         var id = LocalId.FromSlotHandle(handle);

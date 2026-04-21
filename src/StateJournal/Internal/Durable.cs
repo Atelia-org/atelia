@@ -78,4 +78,10 @@ internal static class Durable {
     public static DurableOrderedDict<TKey> OrderedDict<TKey>() where TKey : notnull =>
         MixedOrderedDictFactory<TKey>.Create?.Invoke()
         ?? throw new ArgumentException(MixedOrderedDictFactory<TKey>.ErrorReason);
+
+    /// <summary>
+    /// 创建 <see cref="DurableText"/>。
+    /// </summary>
+    /// <returns>空的 <see cref="DurableText"/> 实例。</returns>
+    public static DurableText Text() => new();
 }

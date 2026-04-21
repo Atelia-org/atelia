@@ -10,6 +10,7 @@ public enum DurableObjectKind : byte {
     TypedDeque,
     MixedOrderedDict,
     TypedOrderedDict,
+    Text,
 }
 
 internal static class DurableObjectKindHelper {
