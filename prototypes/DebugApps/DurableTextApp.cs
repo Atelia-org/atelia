@@ -1,6 +1,7 @@
 using System.Text;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.App;
+using Atelia.Agent.Core.Text;
 using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
 using Atelia.StateJournal;
@@ -37,6 +38,7 @@ public sealed class DurableTextApp : IApp {
             MethodToolWrapper.FromDelegate<long>(DeleteAsync),
             MethodToolWrapper.FromDelegate(ClearAsync),
             MethodToolWrapper.FromDelegate<string>(LoadAsync),
+            MethodToolWrapper.FromDelegate<string>(LoadMarkdownAsync),
         };
     }
 
@@ -61,25 +63,6 @@ public sealed class DurableTextApp : IApp {
             sb.Append("> 显示格式: `<blockId> │ <content>`. ` │ ` 左侧是元数据列（不属于正文），\n");
             sb.Append("> 调用 dt_* 工具时 content 参数只填正文部分，**不要**包含 blockId 或 ` │ `。\n\n");
 
-            // 计算 blockId 列宽以右对齐
-            var idWidth = 1;
-            foreach (var b in blocks) {
-                var w = b.Id.ToString().Length;
-                if (w > idWidth) { idWidth = w; }
-            }
-
-            sb.Append("```\n");
-            foreach (var b in blocks) {
-                var idStr = b.Id.ToString().PadLeft(idWidth);
-                // 多行内容：第一行带 blockId 列，后续行用空白占位（与 bat 行为一致）
-                var contentLines = b.Content.Split('\n');
-                sb.Append(idStr).Append(" │ ").Append(contentLines[0]).Append('\n');
-                for (int i = 1; i < contentLines.Length; i++) {
-                    sb.Append(new string(' ', idWidth)).Append(" │ ").Append(contentLines[i]).Append('\n');
-                }
-            }
-            sb.Append("```\n");
-            sb.Append('\n').Append(blocks.Count).Append(" blocks total.
             // 计算 blockId 列宽以右对齐
             var idWidth = 1;
             foreach (var b in blocks) {
@@ -213,6 +196,22 @@ public sealed class DurableTextApp : IApp {
         }
         catch (Exception ex) {
             return Fail($"Failed to load: {ex.Message}");
+        }
+    }
+
+    [Tool("dt_load_markdown", "把 Markdown 文档加载为多个 block，每个顶层 BlockElement (标题/段落/列表/代码块/引用 等) 是一个独立的 block。仅当文档为空时可用。")]
+    private ValueTask<LodToolExecuteResult> LoadMarkdownAsync(
+        [ToolParam("要加载的 Markdown 文本")] string markdown,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        try {
+            var blocks = MarkdownBlockizer.Instance.Blockize(markdown);
+            _text.LoadBlocks(blocks.AsSpan());
+            return Ok($"Loaded {_text.BlockCount} blocks via Markdown blockizer.");
+        }
+        catch (Exception ex) {
+            return Fail($"Failed to load markdown: {ex.Message}");
         }
     }
 

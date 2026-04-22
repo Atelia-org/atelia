@@ -11,4 +11,8 @@
     <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Markdig" Version="0.38.0" />
+  </ItemGroup>
+
 </Project>
