@@ -36,7 +36,17 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { historyEntry },
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("hi"),
+                historyEntry,
+                new ToolResultsMessage(
+                    Content: null,
+                    Results: new[] {
+                        new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                    },
+                    ExecuteError: null
+                )
+            },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
@@ -80,7 +90,17 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { historyEntry },
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("hi"),
+                historyEntry,
+                new ToolResultsMessage(
+                    Content: null,
+                    Results: new[] {
+                        new ToolResult("echo", "call-2", ToolExecutionStatus.Success, "ok")
+                    },
+                    ExecuteError: null
+                )
+            },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
@@ -116,7 +136,17 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { historyEntry },
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("hi"),
+                historyEntry,
+                new ToolResultsMessage(
+                    Content: null,
+                    Results: new[] {
+                        new ToolResult("echo", "call-3", ToolExecutionStatus.Success, "ok")
+                    },
+                    ExecuteError: null
+                )
+            },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
@@ -126,5 +156,182 @@ public sealed class AnthropicMessageConverterTests {
         var toolUseBlock = Assert.IsType<AnthropicToolUseBlock>(assistantMessage.Content.Single(block => block is AnthropicToolUseBlock));
 
         Assert.Equal(3, toolUseBlock.Input.GetProperty("count").GetInt32());
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ToolResultsFollowPendingAssistantToolCallOrder() {
+        var actionEntry = new ActionEntry(
+            Content: string.Empty,
+            ToolCalls: new[] {
+                new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null),
+                new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)
+            },
+            Invocation: new CompletionDescriptor("provider", "spec", "model")
+        );
+
+        var toolResults = new ToolResultsMessage(
+            Content: "Observed external state.",
+            Results: new[] {
+                new ToolResult("lookup", "call-2", ToolExecutionStatus.Failed, "bad"),
+                new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+            },
+            ExecuteError: "runner_failed"
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionEntry, toolResults },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        Assert.Collection(
+            apiRequest.Messages,
+            message => {
+                Assert.Equal("user", message.Role);
+                Assert.Equal("hi", Assert.IsType<AnthropicTextBlock>(Assert.Single(message.Content)).Text);
+            },
+            message => {
+                Assert.Equal("assistant", message.Role);
+                Assert.Equal(2, message.Content.Count(block => block is AnthropicToolUseBlock));
+            },
+            message => {
+                Assert.Equal("user", message.Role);
+                Assert.Collection(
+                    message.Content,
+                    block => {
+                        var toolResult = Assert.IsType<AnthropicToolResultBlock>(block);
+                        Assert.Equal("call-1", toolResult.ToolUseId);
+                        Assert.Equal("ok", toolResult.Content);
+                        Assert.Null(toolResult.IsError);
+                    },
+                    block => {
+                        var toolResult = Assert.IsType<AnthropicToolResultBlock>(block);
+                        Assert.Equal("call-2", toolResult.ToolUseId);
+                        Assert.Equal("bad", toolResult.Content);
+                        Assert.True(toolResult.IsError);
+                    },
+                    block => Assert.Equal("Observed external state.", Assert.IsType<AnthropicTextBlock>(block).Text),
+                    block => Assert.Equal("[Execution Error]: runner_failed", Assert.IsType<AnthropicTextBlock>(block).Text)
+                );
+            }
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
+        var actionEntry = new ActionEntry(
+            Content: string.Empty,
+            ToolCalls: new[] {
+                new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null),
+                new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)
+            },
+            Invocation: new CompletionDescriptor("provider", "spec", "model")
+        );
+
+        var toolResults = new ToolResultsMessage(
+            Content: "Observed external state.",
+            Results: Array.Empty<ToolResult>(),
+            ExecuteError: "runner_failed"
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionEntry, toolResults },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        var toolResultMessage = apiRequest.Messages.Last();
+        Assert.Collection(
+            toolResultMessage.Content,
+            block => {
+                var toolResult = Assert.IsType<AnthropicToolResultBlock>(block);
+                Assert.Equal("call-1", toolResult.ToolUseId);
+                Assert.Equal("runner_failed", toolResult.Content);
+                Assert.True(toolResult.IsError);
+            },
+            block => {
+                var toolResult = Assert.IsType<AnthropicToolResultBlock>(block);
+                Assert.Equal("call-2", toolResult.ToolUseId);
+                Assert.Equal("runner_failed", toolResult.Content);
+                Assert.True(toolResult.IsError);
+            },
+            block => Assert.Equal("Observed external state.", Assert.IsType<AnthropicTextBlock>(block).Text)
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_OrphanToolResultsThrow() {
+        var toolResults = new ToolResultsMessage(
+            Content: null,
+            Results: new[] {
+                new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+            },
+            ExecuteError: null
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { toolResults },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+        );
+
+        Assert.Contains("without a preceding assistant tool_use", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_EmptyObservationIsSkipped() {
+        // 纯空观测不携带信息，跳过可避免向 Anthropic 发送空 text block
+        // (`messages: text content blocks must contain non-whitespace text`)。
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("hi"),
+                new ObservationMessage(null),
+                new ObservationMessage("   ")
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        var only = Assert.Single(apiRequest.Messages);
+        Assert.Equal("user", only.Role);
+        Assert.Equal("hi", Assert.IsType<AnthropicTextBlock>(Assert.Single(only.Content)).Text);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_LeadingAssistantThrows() {
+        // Anthropic 要求第一条消息必须是 user；上游提供了以 Action 开头的历史应被早期拒绝，
+        // 而不是静默垫一个会被 API 拒绝的空文本块。
+        var actionEntry = new ActionEntry(
+            Content: "hello",
+            ToolCalls: Array.Empty<ParsedToolCall>(),
+            Invocation: new CompletionDescriptor("provider", "spec", "model")
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { actionEntry },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+        );
+
+        Assert.Contains("must start with a user message", exception.Message, StringComparison.Ordinal);
     }
 }
