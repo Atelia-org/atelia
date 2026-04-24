@@ -211,8 +211,36 @@ Completion + Completion.Abstractions
 
 > 以下几项在调研过程中发现**代码中已经落地**，列在此处供后续读者快速校准：
 >
-> - **多 LLM 切换策略**：`StepAsync(profile)` 入参允许每步切换 `LlmProfile`
+> - **多 LLM 切换策略**：`StepAsync(profile)` 入参允许每步传入 `LlmProfile`，但**仅允许在 Turn 起点切换**（见下节）
 > - **App 生命周期**：`RemoveApp()` 已存在；移除后新发起的工具调用会被拒为 `ToolNotRegistered`，进行中的不受影响
+
+---
+
+## Turn 与 LlmProfile 锁定（硬约束）
+
+**不变量**：`AgentState.RecentHistory` 中从最近一条 `ObservationEntry`（含）起到末尾的连续段构成一个 **Turn**。同一个 Turn 内的所有模型调用必须使用同一个 `LlmProfile`，按 `CompletionDescriptor` 三元组（`ProviderId` / `ApiSpecId` / `Model`）严格比对。
+
+**判定**：
+- **Turn 起点**：精确匹配 `HistoryEntryKind.Observation` 的条目。
+  - 注意 `ToolResultsEntry` 虽继承自 `ObservationEntry`，但 `Kind == ToolResults`，**不**视为 Turn 起点（它是 Turn 中段的环境反馈）。
+- **是否锁定**：从末尾向起点反扫，若沿途出现至少一条 `ActionEntry`，则该 Turn 已锁定到该 `ActionEntry.Invocation`。
+- **校验时机**：在 `ProcessPendingModelCallAsync` 入口（事件触发**之前**）执行一次；在 `OnBeforeModelCall` 事件**之后**复查一次（防止 handler 通过 `args.Profile = ...` 绕过）。
+- **违反后果**：抛 `InvalidOperationException`，错误消息包含锁定信息与传入信息，便于排查。
+
+**为何如此设计**：
+- 主流闭源模型（GPT-5、Gemini 2.5/3.0）的 thinking/reasoning 内容是**加密**的，跨模型不可解码。Turn 锁定保证后续在 Turn 范围内注入加密 thinking 时，下一次调用仍在同一 model，可以原样回灌。
+- 切 profile 的语义被收敛到"开新 Turn"——也就是必须先有新的 `ObservationEntry`（用户输入或工具结果之外的环境观测）。
+- **不**提供 escape hatch：远程故障时宁可让调用方显式开新 Turn 重启，也不引入"尽力而为解码 + 模型兼容性矩阵"的隐式复杂性（详见 `gitignore/` 或后续 PR 讨论）。
+
+**接口形态保留**：`StepAsync(profile, ct)` 签名不变；profile 仍按每步传入。仅在违反不变量时报错——这样最小化改动现有调用点。
+
+**实现位置**：`prototypes/Agent.Core/History/TurnAnalyzer.cs` 负责纯函数式 Turn 分析；`prototypes/Agent.Core/AgentEngine.cs` 中 `EnsureProfileMatchesCurrentTurnLock(profile)` 负责执行业务约束。
+
+**测试**：`tests/Atelia.LiveContextProto.Tests/AgentEngineTurnLockTests.cs` 覆盖 6 个场景：首次调用、同 turn 工具往返同 profile、同 turn 切 ModelId、同 turn 切 ProviderId、跨 turn 切换、`BeforeModelCall` handler 篡改 profile。
+
+**后续依赖此约束的 PR**：
+- `ThinkingBlock` 端到端落地（Anthropic extended thinking / OpenAI reasoning_content）
+- MessageConverter 投影时按 turn 边界裁剪 thinking blocks（仅当前 Turn 注入，旧 Turn 仅作历史真相记录）
 
 ---
 

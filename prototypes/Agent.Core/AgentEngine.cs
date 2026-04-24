@@ -310,9 +310,18 @@ public class AgentEngine {
     /// <param name="cancellationToken">取消令牌（可选）。</param>
     /// <returns>包含本次步进结果的 <see cref="AgentStepResult"/>。</returns>
     /// <exception cref="ArgumentNullException"><paramref name="profile"/> 为 <c>null</c>。</exception>
+    /// <exception cref="InvalidOperationException">
+    /// 当 <paramref name="profile"/> 与当前 Turn 已锁定的模型（由首次模型调用确立）不一致时抛出。
+    /// </exception>
     /// <remarks>
     /// 此方法非线程安全，不应与其他方法并发调用。
     /// 每次调用将根据当前状态执行相应操作（等待输入、调用模型、执行工具等）。
+    /// <para>
+    /// <b>Turn 锁定约束</b>：一个 Turn 由最近一条 <see cref="History.ObservationEntry"/> 起至历史末尾的连续段构成。
+    /// 在 Turn 内的所有模型调用必须使用同一 <see cref="LlmProfile"/>（按 Provider/ApiSpec/Model 三元组比对）。
+    /// 切换 profile 仅允许在 Turn 起点（即没有未完结的工具往返时）进行。
+    /// 该约束为后续 thinking/reasoning 内容的窗口化注入提供前提保证。
+    /// </para>
     /// </remarks>
     public async Task<AgentStepResult> StepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
         if (profile is null) { throw new ArgumentNullException(nameof(profile)); }
@@ -330,7 +339,7 @@ public class AgentEngine {
         }
 
         if (stateAfter == AgentRunState.WaitingInput) {
-            ResetInvocation();
+            ResetStateLogging();
         }
 
         return CreateStepResult(stateBefore, stateAfter, outcome);
@@ -439,6 +448,9 @@ public class AgentEngine {
     }
 
     private async Task<StepOutcome> ProcessPendingModelCallAsync(AgentRunState state, LlmProfile profile, CancellationToken cancellationToken) {
+        // Turn 锁定校验：在事件触发前拦截，防止宿主侧绕过约束。
+        EnsureProfileMatchesCurrentTurnLock(profile);
+
         var liveContext = ProjectContext();
         DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
@@ -453,10 +465,13 @@ public class AgentEngine {
         if (args.Profile is null) { throw new InvalidOperationException("BeforeModelCall handlers must not set Profile to null."); }
         if (args.LiveContext is null) { throw new InvalidOperationException("BeforeModelCall handlers must provide a LiveContext instance."); }
 
+        // 二次校验：BeforeModelCall handler 可能替换了 Profile，需再次确认仍在 turn 锁定范围内。
+        EnsureProfileMatchesCurrentTurnLock(args.Profile);
+
         toolExecutor = ToolExecutor;
         toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
 
-        var invocation = new CompletionDescriptor(args.Profile.Client.Name, args.Profile.Client.ApiSpecId, args.Profile.ModelId);
+        var invocation = args.Profile.ToCompletionDescriptor();
         var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
 
         var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);
@@ -574,8 +589,49 @@ public class AgentEngine {
         return _state.AppendToolResults(entry);
     }
 
-    private void ResetInvocation() {
+    private void ResetStateLogging() {
         _lastLoggedState = null;
+    }
+
+    /// <summary>
+    /// 分析当前 Turn，并返回其显式边界与已锁定的模型身份。
+    /// </summary>
+    /// <remarks>
+    /// Turn 起点判定：精确匹配 <see cref="HistoryEntryKind.Observation"/>。
+    /// 注意 <see cref="ToolResultsEntry"/> 虽然继承自 <see cref="ObservationEntry"/>，但其 Kind 为 <see cref="HistoryEntryKind.ToolResults"/>，
+    /// 不视为 Turn 起点（工具结果是 Turn 中段的环境反馈）。
+    /// 若显式起点已被 Recap 裁剪，返回结果的 <c>StartIndex</c> 为 -1，但仍会保留可从残留片段推断出的锁定信息。
+    /// </remarks>
+    private CurrentTurnInfo AnalyzeCurrentTurn()
+        => TurnAnalyzer.Analyze(_state.RecentHistory);
+
+    private static string DescribeDescriptor(CompletionDescriptor descriptor)
+        => $"{{Provider={descriptor.ProviderId}, ApiSpec={descriptor.ApiSpecId}, Model={descriptor.Model}}}";
+
+    private static string DescribeCurrentTurn(CurrentTurnInfo turn)
+        => turn.HasExplicitStartBoundary
+            ? $"CurrentTurn.StartIndex={turn.StartIndex}, EndIndex={turn.EndIndex}"
+            : $"CurrentTurn.StartIndex=<recapped>, EndIndex={turn.EndIndex}";
+
+    /// <summary>
+    /// 校验给定 profile 是否与当前 Turn 已锁定的模型一致。Turn 起点（无锁定）时无条件通过。
+    /// </summary>
+    /// <exception cref="InvalidOperationException">profile 与当前 Turn 锁定的模型不一致时抛出。</exception>
+    private void EnsureProfileMatchesCurrentTurnLock(LlmProfile profile) {
+        var turn = AnalyzeCurrentTurn();
+        var locked = turn.LockedInvocation;
+        if (locked is null) { return; }
+
+        var requested = profile.ToCompletionDescriptor();
+        if (Equals(locked, requested)) { return; }
+
+        throw new InvalidOperationException(
+            $"LlmProfile switch is not allowed within an active Turn. " +
+            $"Turn is locked to {DescribeDescriptor(locked)}, but received {DescribeDescriptor(requested)}. " +
+            $"{DescribeCurrentTurn(turn)}. " +
+            $"A Turn spans from the most recent ObservationEntry to the end of history; " +
+            $"to switch profile, complete the current Turn (return to WaitingInput) and start a new ObservationEntry."
+        );
     }
 
     private void LogStateIfChanged(AgentRunState state) {
