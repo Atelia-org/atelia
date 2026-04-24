@@ -68,7 +68,7 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 
 - 不是 diff/增量，而是两份**完全独立**的渲染版本
 - 用于通知、工具结果、窗口等场景的"详略可切换"
-- `ProjectContext()` 时按当前策略选 Basic 或 Detail
+- `ProjectInvocationContext()` 时按当前策略选 Basic 或 Detail
 
 ### 7. 事件系统允许宿主在关键节点插桩
 
@@ -91,7 +91,11 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
    └─ 宿主提供 ObservationEntry（含用户消息 + pending notifications）
 
 2. 状态 = PendingInput → 准备 LLM 调用
-   ├─ ProjectContext() 把 RecentHistory 投影成 IHistoryMessage 序列
+   ├─ ProjectInvocationContext(options) 把 RecentHistory 投影成 IHistoryMessage 序列
+   │    · 拆分为 StablePrefix + ActiveTurnTail（以最近一条 Observation 为分界）
+   │    · ActionEntry 的有序内容以 `Blocks: IReadOnlyList<ActionBlock>` 为唯一真相
+   │    · `ActionBlock.Thinking` 仅在 ActiveTurnTail 内、`Origin == TargetInvocation`、
+   │      且存在显式 Turn 起点与 `ThinkingMode == CurrentTurnOnly` 同时成立时保留
    ├─ 拼上 DefaultAppHost.RenderWindows() 生成的窗口块
    ├─ ToolExecutor.GetVisibleToolDefinitions() 收集可见工具
    └─ 触发 BeforeModelCall（宿主可改 request）
@@ -239,8 +243,11 @@ Completion + Completion.Abstractions
 **测试**：`tests/Atelia.LiveContextProto.Tests/AgentEngineTurnLockTests.cs` 覆盖 6 个场景：首次调用、同 turn 工具往返同 profile、同 turn 切 ModelId、同 turn 切 ProviderId、跨 turn 切换、`BeforeModelCall` handler 篡改 profile。
 
 **后续依赖此约束的 PR**：
-- `ThinkingBlock` 端到端落地（Anthropic extended thinking / OpenAI reasoning_content）
-- MessageConverter 投影时按 turn 边界裁剪 thinking blocks（仅当前 Turn 注入，旧 Turn 仅作历史真相记录）
+- ✅ `ActionBlock.Thinking` 端到端落地（Anthropic extended thinking）——`ActionBlock` 已上提到 `Completion.Abstractions`，`ActionEntry.Blocks` 为唯一真相，`Content`/`ToolCalls` 退为 lossy compatibility view。
+- ✅ MessageConverter 投影时按 turn 边界裁剪 thinking blocks：`AgentState.ProjectInvocationContext` 只在 ActiveTurnTail 中按 4 个条件（`isInActiveTurn` / `TargetInvocation != null` / `HasExplicitStartBoundary` / `ThinkingMode == CurrentTurnOnly`）且 `Origin == TargetInvocation` 保留，Stable Prefix 始终剩离。
+- ✅ OpenAI reasoning_content 双轨并行：本轮仅实现 Anthropic；OpenAI Chat Completions 仍丢弃 reasoning，留待后续多-provider 阶段。
+
+实现与设计详见 [docs/Agent/Thinking-Replay-Design.md](Thinking-Replay-Design.md) 与 [docs/Agent/Thinking-Replay-Implementation-Plan.md](Thinking-Replay-Implementation-Plan.md)。
 
 ---
 

@@ -164,39 +164,51 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     }
 
     /// <summary>
-    /// 对应Key-Notes中的Context-Projection。
-    /// 投影当前的实时上下文（Live Context），用于发送给模型。
+    /// 对应 Key-Notes 中的 Context Projection。
+    /// 按当前 invocation 语义把 RecentHistory 投影为 StablePrefix + ActiveTurnTail 两段上下文。
     /// </summary>
-    /// <param name="windows">可选的 App Windows 内容，会注入到最新的 Observation 中。</param>
-    /// <returns>按时间顺序排列的历史消息列表。</returns>
+    /// <param name="options">
+    /// 投影选项。<see cref="ContextProjectionOptions.TargetInvocation"/> 为 <c>null</c>
+    /// 表示非真实调用场景（如 Recap / UI / debug / 测试）；这是投影的一等公民语义，而非兼容层。
+    /// </param>
+    /// <returns>按时间顺序排列的两段上下文视图。</returns>
     /// <remarks>
     /// 仅遍历内存中的 Recent History，不包含已归档的持久历史。
-    /// Detail 级别优先分配给最近的 Observation，其余使用 Basic 级别。
+    /// StablePrefix / ActiveTurnTail 的切分点严格由 <see cref="TurnAnalyzer"/> 的 Turn 边界语义决定。
+    /// Detail 级别仍优先分配给最近的 <see cref="ObservationEntry"/>，App Windows 也只注入一次。
     /// </remarks>
-    public IReadOnlyList<IHistoryMessage> ProjectContext(string? windows = null) {
-        var messages = new List<IHistoryMessage>(_recentHistory.Count);
-        int detailOrdinal = 0;
-        string? pendingWindows = windows;
+    public ProjectedInvocationContext ProjectInvocationContext(ContextProjectionOptions options) {
+        if (options is null) { throw new ArgumentNullException(nameof(options)); }
 
-        for (int index = _recentHistory.Count; --index >= 0;) {
-            HistoryEntry contextual = _recentHistory[index];
-            switch (contextual) {
-                case RecapEntry recapEntry:
-                    messages.Add(new ObservationMessage(recapEntry.Content));
-                    break;
-                case ObservationEntry modelInputEntry:
-                    var inputDetail = ResolveDetailLevel(detailOrdinal++);
-                    messages.Add(modelInputEntry.GetMessage(inputDetail, pendingWindows));
-                    pendingWindows = null; // 只注入一次
-                    break;
-                case ActionEntry modelOutputEntry:
-                    messages.Add(modelOutputEntry);
-                    break;
+        if (_recentHistory.Count == 0) {
+            return new ProjectedInvocationContext(
+                StablePrefix: Array.Empty<IHistoryMessage>(),
+                ActiveTurnTail: Array.Empty<IHistoryMessage>()
+            );
+        }
+
+        var currentTurn = TurnAnalyzer.Analyze(_recentHistory);
+        var activeTurnStartIndex = DetermineActiveTurnStartIndex(currentTurn);
+        var stablePrefix = new List<IHistoryMessage>(_recentHistory.Count);
+        var activeTurnTail = new List<IHistoryMessage>(_recentHistory.Count);
+        var detailOrdinal = 0;
+        string? pendingWindows = options.Windows;
+
+        for (var index = _recentHistory.Count; --index >= 0;) {
+            var isInActiveTurn = index >= activeTurnStartIndex;
+            var projected = ProjectHistoryEntry(_recentHistory[index], options, currentTurn, isInActiveTurn, ref detailOrdinal, ref pendingWindows);
+            if (isInActiveTurn) {
+                activeTurnTail.Add(projected);
+            }
+            else {
+                stablePrefix.Add(projected);
             }
         }
 
-        messages.Reverse();
-        return messages;
+        stablePrefix.Reverse();
+        activeTurnTail.Reverse();
+
+        return new ProjectedInvocationContext(stablePrefix, activeTurnTail);
     }
 
     /// <summary>
@@ -348,6 +360,89 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         => ordinal == 0
             ? LevelOfDetail.Detail
             : LevelOfDetail.Basic;
+
+    private int DetermineActiveTurnStartIndex(CurrentTurnInfo currentTurn) {
+        if (_recentHistory.Count == 0) { return 0; }
+        if (currentTurn.StartIndex >= 0) { return currentTurn.StartIndex; }
+
+        for (var index = 0; index < _recentHistory.Count; index++) {
+            if (_recentHistory[index] is ActionEntry) {
+                return index;
+            }
+        }
+
+        return _recentHistory.Count;
+    }
+
+    private static IHistoryMessage ProjectHistoryEntry(
+        HistoryEntry entry,
+        ContextProjectionOptions options,
+        CurrentTurnInfo currentTurn,
+        bool isInActiveTurn,
+        ref int detailOrdinal,
+        ref string? pendingWindows
+    ) {
+        return entry switch {
+            RecapEntry recapEntry => new ObservationMessage(recapEntry.Content),
+            ObservationEntry observationEntry => ProjectObservationEntry(observationEntry, ref detailOrdinal, ref pendingWindows),
+            ActionEntry actionEntry => ProjectActionEntry(actionEntry, options, currentTurn, isInActiveTurn),
+            _ => throw new ArgumentOutOfRangeException(nameof(entry), entry.Kind, "Unsupported history entry kind.")
+        };
+    }
+
+    private static ObservationMessage ProjectObservationEntry(
+        ObservationEntry observationEntry,
+        ref int detailOrdinal,
+        ref string? pendingWindows
+    ) {
+        var detailLevel = ResolveDetailLevel(detailOrdinal++);
+        var projected = observationEntry.GetMessage(detailLevel, pendingWindows);
+        pendingWindows = null;
+        return projected;
+    }
+
+    private static ProjectedActionMessage ProjectActionEntry(
+        ActionEntry actionEntry,
+        ContextProjectionOptions options,
+        CurrentTurnInfo currentTurn,
+        bool isInActiveTurn
+    ) {
+        var projectedBlocks = ProjectActionBlocks(actionEntry, options, currentTurn, isInActiveTurn);
+        return new ProjectedActionMessage(projectedBlocks);
+    }
+
+    private static IReadOnlyList<ActionBlock> ProjectActionBlocks(
+        ActionEntry actionEntry,
+        ContextProjectionOptions options,
+        CurrentTurnInfo currentTurn,
+        bool isInActiveTurn
+    ) {
+        var retainThinkingInActiveTurn = isInActiveTurn && ShouldRetainThinkingInActiveTurn(options, currentTurn);
+        var projectedBlocks = new List<ActionBlock>(actionEntry.Blocks.Count);
+
+        foreach (var block in actionEntry.Blocks) {
+            if (block is not ActionBlock.Thinking thinkingBlock) {
+                projectedBlocks.Add(block);
+                continue;
+            }
+
+            if (!retainThinkingInActiveTurn) { continue; }
+            if (thinkingBlock.Origin != options.TargetInvocation) { continue; }
+
+            projectedBlocks.Add(thinkingBlock);
+        }
+
+        return projectedBlocks;
+    }
+
+    private static bool ShouldRetainThinkingInActiveTurn(
+        ContextProjectionOptions options,
+        CurrentTurnInfo currentTurn
+    ) {
+        if (options.TargetInvocation is null) { return false; }
+        if (!currentTurn.HasExplicitStartBoundary) { return false; }
+        return options.ThinkingMode == ThinkingProjectionMode.CurrentTurnOnly;
+    }
 
     /// <summary>
     /// （内部方法）为 ToolEntry 附加待处理的通知。

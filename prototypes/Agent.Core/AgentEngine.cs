@@ -175,16 +175,6 @@ public class AgentEngine {
     }
 
     /// <summary>
-    /// 渲染当前实时上下文，包括历史消息与应用窗口内容。
-    /// </summary>
-    /// <returns>渲染后的历史消息列表。</returns>
-    /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
-    public IReadOnlyList<IHistoryMessage> ProjectContext() {
-        var windows = _appHost.RenderWindows();
-        return _state.ProjectContext(windows);
-    }
-
-    /// <summary>
     /// 向 Agent 追加主机通知（Host Notification）。
     /// </summary>
     /// <param name="notificationContent">通知内容（包含基础与详细两级）。</param>
@@ -451,7 +441,14 @@ public class AgentEngine {
         // Turn 锁定校验：在事件触发前拦截，防止宿主侧绕过约束。
         EnsureProfileMatchesCurrentTurnLock(profile);
 
-        var liveContext = ProjectContext();
+        var invocation = profile.ToCompletionDescriptor();
+        var projection = _state.ProjectInvocationContext(
+            new ContextProjectionOptions(
+                TargetInvocation: invocation,
+                Windows: _appHost.RenderWindows()
+            )
+        );
+        var liveContext = projection.ToFlat();
         DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
         var toolExecutor = ToolExecutor;
@@ -471,7 +468,7 @@ public class AgentEngine {
         toolExecutor = ToolExecutor;
         toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
 
-        var invocation = args.Profile.ToCompletionDescriptor();
+        invocation = args.Profile.ToCompletionDescriptor();
         var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
 
         var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);

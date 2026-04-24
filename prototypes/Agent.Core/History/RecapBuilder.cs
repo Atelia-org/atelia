@@ -46,7 +46,7 @@ public sealed class RecapBuilder {
     /// 设计约束：必须至少有一个 Action/Observation 对
     /// RecapMaintainer 不应该将 Agent 的所有工作记忆压缩光，否则会导致：
     /// - 工作记忆完全变成模糊的摘要，丧失具体上下文
-    /// - <see cref="AgentState.ProjectContext"/> 无法注入 windows 文本（依赖至少一个 Observation）
+    /// - <see cref="AgentState.ProjectInvocationContext"/> 无法注入 windows 文本（依赖至少一个 Observation）
     /// - 违反"短期记忆 + 中期摘要 + 长期归档"的分层架构原则
     /// 因此，此方法在快照创建阶段就阻止空 PendingList 的情况（Fail-fast）。
     /// </remarks>

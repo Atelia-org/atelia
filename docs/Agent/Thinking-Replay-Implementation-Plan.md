@@ -1,7 +1,7 @@
 # Thinking Replay 实施计划稿
 
-**状态**：Draft v0.1  
-**前置设计**：[Thinking-Replay-Design.md](./Thinking-Replay-Design.md)  
+**状态**：Draft v0.1
+**前置设计**：[Thinking-Replay-Design.md](./Thinking-Replay-Design.md)
 **实施原则**：
 
 - 小 PR、强验收、可回滚
@@ -162,7 +162,7 @@ dotnet build Atelia.sln
 
 ### 2.4 具体任务
 
-1. 新增 `IRichActionMessage`，放在 `Agent.Core.History`
+1. 新增 `IRichActionMessage`，放在 `Completion.Abstractions`
 2. 新增 `ProjectedActionMessage`
 3. 新增：
    - `ContextProjectionOptions`
@@ -394,6 +394,16 @@ dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cs
 dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.csproj
 ```
 
+### 5.6 落地结果（PR 5 完成）
+
+- ✅ `docs/Agent/memory-notebook.md`：核心数据流改写为 `ProjectInvocationContext`，新增 ActionEntry.Blocks 源 + Thinking 投影 4 条件描述；Turn 锁定小节"后续依赖此约束的 PR"标记为已落地（Anthropic 端到端、ProjectInvocationContext 过滤），并指明 OpenAI reasoning_content 仍未实现。
+- ✅ `docs/Completion/memory-notebook.md`：第 1/2/7 节扩展（IRichActionMessage/ActionBlock sum type、CompletionChunkKind.Thinking、Anthropic SSE 表新增 thinking/signature 处理），最后边界小节明确 `ActionBlock.Thinking.Origin` 与 Turn lock 同构 + ProjectInvocationContext 过滤策略。
+- ✅ `docs/Agent/Thinking-Replay-Design.md`：D9 已在 PR 2.5 修订；本 PR 不需进一步改动。
+- ✅ `prototypes/Agent.Core/History/RecapBuilder.cs:49`：cref 由 `AgentState.ProjectContext` 修正为 `AgentState.ProjectInvocationContext`。
+- ✅ Recap 路径兼容性已确认：`RecapBuilder.ExtractRecapText` 只读 `RecapEntry.Content` / `ObservationEntry.Notifications.Detail`，不触碰 `ActionEntry` 内容；`BuildActionObservationPairs` 仅按交替顺序成对消费 entry 引用，对内部 Blocks 透明。**结论：Recap 无需新增兼容代码或测试。**
+- ⚠️ **已知 v1 边界（暂不修，记录在此）**：`TokenEstimateHelper.EstimateAction` 使用 lossy compat view `action.Content`，**不计入 Thinking blocks 的 token 成本**。对当前 turn 注入 thinking 时实际 prompt 体积会显著高于估算。后续校准 token 估算时需同步增加 `Blocks` 中 `Thinking.PlainTextForDebug` 长度（或更精确的 OpaquePayload 体积估算）。
+
+
 ---
 
 ## 6. 统一协作规则
@@ -424,10 +434,10 @@ dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cs
 
 建议转发给 Claude 的简版消息如下：
 
-> 设计已收束，准备按实施计划推进。  
-> 先从 PR 1 开始：`ActionEntry.Blocks` 存储重构，不含 Thinking。  
-> 你主刀，我这边由 GPT-5 做专职审阅。  
-> 请严格控制边界：只做 `ActionBlock(Text/ToolCall)`、`ActionEntry` 主构造切换、旧构造重载保留、`Content/ToolCalls` 派生视图、`CompletionAccumulator` 内部迁移，以及必要测试迁移；不要提前引入 Thinking / projection / rich message。  
+> 设计已收束，准备按实施计划推进。
+> 先从 PR 1 开始：`ActionEntry.Blocks` 存储重构，不含 Thinking。
+> 你主刀，我这边由 GPT-5 做专职审阅。
+> 请严格控制边界：只做 `ActionBlock(Text/ToolCall)`、`ActionEntry` 主构造切换、旧构造重载保留、`Content/ToolCalls` 派生视图、`CompletionAccumulator` 内部迁移，以及必要测试迁移；不要提前引入 Thinking / projection / rich message。
 > 交付标准是全量测试零回归。
 
 ---

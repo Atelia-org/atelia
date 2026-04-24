@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Xunit;
@@ -111,5 +113,83 @@ public sealed class AnthropicStreamParserTests {
         Assert.Equal("true", toolCall.RawArguments!["flag"]);
         Assert.Equal("42", toolCall.RawArguments!["count"]);
         Assert.Equal("null", toolCall.RawArguments!["maybe"]);
+    }
+
+    [Fact]
+    public void ParseEvent_AggregatesThinkingDeltasIntoOpaquePayload() {
+        var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+
+        var events = new[] {
+            """
+            {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+            """,
+            """
+            {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me consider "}}
+            """,
+            """
+            {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"this carefully."}}
+            """,
+            """
+            {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-abc"}}
+            """,
+            """
+            {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"-xyz"}}
+            """,
+            """
+            {"type":"content_block_stop","index":0}
+            """
+        };
+
+        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+
+        var thinkingChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.Thinking).Thinking!;
+
+        Assert.Equal("Let me consider this carefully.", thinkingChunk.PlainTextForDebug);
+
+        // OpaquePayload 应当是完整的 Anthropic-native thinking content block JSON 字节
+        using var doc = JsonDocument.Parse(thinkingChunk.OpaquePayload);
+        Assert.Equal("thinking", doc.RootElement.GetProperty("type").GetString());
+        Assert.Equal("Let me consider this carefully.", doc.RootElement.GetProperty("thinking").GetString());
+        Assert.Equal("sig-abc-xyz", doc.RootElement.GetProperty("signature").GetString());
+    }
+
+    [Fact]
+    public void ParseEvent_PreservesThinkingThenTextOrdering() {
+        var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+
+        var events = new[] {
+            """
+            {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+            """,
+            """
+            {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reasoning"}}
+            """,
+            """
+            {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}
+            """,
+            """
+            {"type":"content_block_stop","index":0}
+            """,
+            """
+            {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+            """,
+            """
+            {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}
+            """,
+            """
+            {"type":"content_block_stop","index":1}
+            """
+        };
+
+        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+
+        Assert.Collection(
+            chunks,
+            chunk => Assert.Equal(CompletionChunkKind.Thinking, chunk.Kind),
+            chunk => {
+                Assert.Equal(CompletionChunkKind.Content, chunk.Kind);
+                Assert.Equal("answer", chunk.Content);
+            }
+        );
     }
 }

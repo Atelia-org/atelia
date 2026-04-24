@@ -25,19 +25,6 @@ public enum HistoryEntryKind {
 }
 
 /// <summary>
-/// 描述一次模型调用的来源信息，包括供应商、API 规范和具体的模型标识。
-/// 这些信息有助于在历史回放时，将强化学习（RL）视角的序列重新映射为特定聊天（Chat）范式所需的上下文。
-/// </summary>
-/// <param name="ProviderId">服务提供商的内部标识符，例如 "OpenAI" 或 "Anthropic"。</param>
-/// <param name="ApiSpecId">本次调用所遵循的 API 规范，例如 <c>openai-chat-v1</c>。</param>
-/// <param name="Model">所使用的具体模型名称或版本号。</param>
-public record CompletionDescriptor(
-    string ProviderId,
-    string ApiSpecId,
-    string Model
-);
-
-/// <summary>
 /// Agent 历史条目的抽象基类。它为强化学习（RL）序列中的所有事件提供了统一的元数据，
 /// 并为派生类定义了时间戳和类型等基本属性。静态历史记录与流式回放均通过此类型与 <see cref="IHistoryMessage"/> 接口进行交互。
 /// </summary>
@@ -97,18 +84,71 @@ public abstract record class HistoryEntry : ITokenEstimateSource {
 }
 
 /// <summary>
-/// 表示 Agent 的一个动作条目，它封装了聊天（Chat）范式中助手的回复，包括文本内容和工具调用。
+/// 表示 Agent 的一个动作条目，封装了聊天（Chat）范式中助手的有序内容块序列。
+/// 真相层（source of truth）是 <see cref="Blocks"/>；<see cref="Content"/> 与 <see cref="ToolCalls"/>
+/// 仅作为兼容旧消费者的 lossy 派生视图。新代码应优先读取 <see cref="Blocks"/>。
+/// 完整设计见 <c>docs/Agent/Thinking-Replay-Design.md</c>。
 /// </summary>
-/// <param name="Content">模型生成的文本内容，即动作的一部分。</param>
-/// <param name="ToolCalls">伴随文本内容产生的工具调用请求列表。</param>
+/// <param name="Blocks">有序的内容块序列，反映 provider 流式协议输出的真实顺序。</param>
 /// <param name="Invocation">记录生成此次动作所使用的模型来源信息。</param>
 public sealed record ActionEntry(
-    string Content,
-    IReadOnlyList<ParsedToolCall> ToolCalls,
+    IReadOnlyList<ActionBlock> Blocks,
     CompletionDescriptor Invocation
-) : HistoryEntry, IActionMessage {
+) : HistoryEntry, IRichActionMessage {
+    /// <summary>
+    /// 兼容性便捷构造：从扁平的 <paramref name="Content"/> 与 <paramref name="ToolCalls"/> 构造
+    /// <see cref="ActionEntry"/>。生成的 <see cref="Blocks"/> 形态为
+    /// <c>[Text(Content)?, ToolCall(c1), ToolCall(c2), ...]</c>——content 在前（若非空），
+    /// 随后是各个 tool call。仅作为 convenience，不引入第二真相源。
+    /// 参数沿用 PascalCase 以保持与既有命名参数调用的源码兼容。
+    /// </summary>
+    public ActionEntry(string Content, IReadOnlyList<ParsedToolCall> ToolCalls, CompletionDescriptor Invocation)
+        : this(BuildBlocks(Content, ToolCalls), Invocation) { }
+
+    private static IReadOnlyList<ActionBlock> BuildBlocks(string content, IReadOnlyList<ParsedToolCall> toolCalls) {
+        var list = new List<ActionBlock>(capacity: (string.IsNullOrEmpty(content) ? 0 : 1) + toolCalls.Count);
+        if (!string.IsNullOrEmpty(content)) {
+            list.Add(new ActionBlock.Text(content));
+        }
+        foreach (var call in toolCalls) {
+            list.Add(new ActionBlock.ToolCall(call));
+        }
+        return list;
+    }
+
     /// <inheritdoc />
     public override HistoryEntryKind Kind => HistoryEntryKind.Action;
+
+    // ===== Compatibility views（lossy by design）=====
+    //
+    // 这些视图仅为兼容现有消费者保留，存在以下不保证：
+    // (1) 不保留 Blocks 之间的 ordering——例如 [Text(a), ToolCall, Text(b)]
+    //     在 Content 中变为 "ab"，丢失文本被工具调用打断的边界信息
+    // (2) 不暴露未来的 Thinking / Citation 等富 block 类型
+    // (3) 任何依赖结构边界的下游应直接读取 Blocks，不要走这两个视图
+    //
+    // 选择 string.Concat 而非 string.Join('\n', ...) 的理由：
+    // Anthropic / OpenAI / Gemini 的流式协议本身不保证 text block 之间有换行；
+    // 在 compat view 强加 '\n' 反而会注入虚假信息。换行语义应由具体 provider
+    // converter 在编码时按需添加，而非 compat view 越权决定。
+
+    /// <summary>
+    /// Lossy compatibility view：将 <see cref="Blocks"/> 中所有 <see cref="ActionBlock.Text"/>
+    /// 块的内容按顺序串接（无分隔符）。新代码应直接读取 <see cref="Blocks"/>。
+    /// </summary>
+    public string Content => string.Concat(
+        Blocks.OfType<ActionBlock.Text>().Select(b => b.Content)
+    );
+
+    /// <summary>
+    /// Lossy compatibility view：从 <see cref="Blocks"/> 中按顺序提取所有
+    /// <see cref="ActionBlock.ToolCall"/> 块的工具调用信息。
+    /// </summary>
+    public IReadOnlyList<ParsedToolCall> ToolCalls => Blocks
+        .OfType<ActionBlock.ToolCall>()
+        .Select(b => b.Call)
+        .ToArray();
+
     HistoryMessageKind IHistoryMessage.Kind => HistoryMessageKind.Action;
     string IActionMessage.Content => Content;
     IReadOnlyList<ParsedToolCall> IActionMessage.ToolCalls => ToolCalls;

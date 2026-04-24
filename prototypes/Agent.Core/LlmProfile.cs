@@ -7,7 +7,7 @@ namespace Atelia.Agent.Core;
 /// </summary>
 /// <param name="Client">完成（completion）协议客户端，决定 Provider 与 ApiSpec 归属。</param>
 /// <param name="ModelId">具体模型标识，会与 <see cref="ICompletionClient.Name"/>、<see cref="ICompletionClient.ApiSpecId"/>
-/// 一同写入 <see cref="Atelia.Agent.Core.History.CompletionDescriptor"/>。</param>
+/// 一同写入 <see cref="CompletionDescriptor"/>。</param>
 /// <param name="Name">用于在UI中显示，以及区分不同的LlmProfile实例。</param>
 /// <remarks>
 /// <b>切换时机约束</b>：profile 切换仅允许在 Turn 起点发生，即历史末尾不存在 <see cref="Atelia.Agent.Core.History.ActionEntry"/>

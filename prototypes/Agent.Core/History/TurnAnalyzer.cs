@@ -1,3 +1,5 @@
+using Atelia.Completion.Abstractions;
+
 namespace Atelia.Agent.Core.History;
 
 /// <summary>

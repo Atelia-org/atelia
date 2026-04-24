@@ -334,4 +334,115 @@ public sealed class AnthropicMessageConverterTests {
 
         Assert.Contains("must start with a user message", exception.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ConvertToApiRequest_RichActionMessagePreservesBlockOrdering() {
+        var toolCall = new ParsedToolCall(
+            ToolName: "search",
+            ToolCallId: "call-1",
+            RawArguments: new Dictionary<string, string>(),
+            Arguments: new Dictionary<string, object?>(),
+            ParseError: null,
+            ParseWarning: null
+        );
+
+        var action = new ProjectedActionMessage(
+            Blocks: new ActionBlock[] {
+                new ActionBlock.Text("alpha"),
+                new ActionBlock.ToolCall(toolCall),
+                new ActionBlock.Text("omega")
+            }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("hi"),
+                action,
+                new ToolResultsMessage(
+                    Content: "done",
+                    Results: new[] {
+                        new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                    },
+                    ExecuteError: null
+                )
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var assistant = apiRequest.Messages.Single(message => message.Role == "assistant");
+
+        Assert.Collection(
+            assistant.Content,
+            block => Assert.Equal("alpha", Assert.IsType<AnthropicTextBlock>(block).Text),
+            block => Assert.Equal("call-1", Assert.IsType<AnthropicToolUseBlock>(block).Id),
+            block => Assert.Equal("omega", Assert.IsType<AnthropicTextBlock>(block).Text)
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_RichActionMessageRoundTripsThinkingPayload() {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new {
+            type = "thinking",
+            thinking = "Let me reason about the tool result.",
+            signature = "sig-123"
+        });
+
+        var action = new ProjectedActionMessage(
+            Blocks: new ActionBlock[] {
+                new ActionBlock.Text("alpha"),
+                new ActionBlock.Thinking(new CompletionDescriptor("provider", "spec", "model"), payload, "debug"),
+                new ActionBlock.Text("omega")
+            }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), action },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var assistant = apiRequest.Messages.Single(message => message.Role == "assistant");
+
+        Assert.Collection(
+            assistant.Content,
+            block => Assert.Equal("alpha", Assert.IsType<AnthropicTextBlock>(block).Text),
+            block => {
+                var thinking = Assert.IsType<AnthropicThinkingBlock>(block);
+                Assert.Equal("Let me reason about the tool result.", thinking.Thinking);
+                Assert.Equal("sig-123", thinking.Signature);
+            },
+            block => Assert.Equal("omega", Assert.IsType<AnthropicTextBlock>(block).Text)
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_InvalidThinkingPayloadFailsFast() {
+        var action = new ProjectedActionMessage(
+            Blocks: new ActionBlock[] {
+                new ActionBlock.Thinking(
+                    new CompletionDescriptor("provider", "spec", "model"),
+                    System.Text.Encoding.UTF8.GetBytes("""{"type":"not-thinking","foo":1}"""),
+                    null
+                )
+            }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), action },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+        );
+
+        Assert.Contains("Failed to deserialize Anthropic thinking block payload", exception.Message, StringComparison.Ordinal);
+    }
 }

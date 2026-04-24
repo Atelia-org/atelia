@@ -1,4 +1,4 @@
-using Atelia.Agent.Core.History;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core;
 

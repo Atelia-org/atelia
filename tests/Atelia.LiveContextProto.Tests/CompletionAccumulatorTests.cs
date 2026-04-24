@@ -1,0 +1,72 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Atelia.Agent.Core.History;
+using Atelia.Completion.Abstractions;
+using Xunit;
+
+namespace Atelia.LiveContextProto.Tests;
+
+public sealed class CompletionAccumulatorTests {
+    private static readonly CompletionDescriptor Descriptor = new("anthropic", "anthropic-messages-v1", "claude-3");
+
+    private static async IAsyncEnumerable<CompletionChunk> ToAsync(IEnumerable<CompletionChunk> chunks) {
+        foreach (var chunk in chunks) {
+            yield return chunk;
+            await Task.Yield();
+        }
+    }
+
+    [Fact]
+    public async Task AggregateAsync_PreservesTextThinkingTextOrdering() {
+        var thinkingPayload = JsonSerializer.SerializeToUtf8Bytes(new {
+            type = "thinking",
+            thinking = "deliberation",
+            signature = "sig"
+        });
+
+        var chunks = new[] {
+            CompletionChunk.FromContent("alpha"),
+            CompletionChunk.FromThinking(new ThinkingChunk(thinkingPayload, "deliberation")),
+            CompletionChunk.FromContent("omega")
+        };
+
+        var entry = await CompletionAccumulator.AggregateAsync(ToAsync(chunks), Descriptor, CancellationToken.None);
+
+        Assert.Collection(
+            entry.Blocks,
+            block => Assert.Equal("alpha", Assert.IsType<ActionBlock.Text>(block).Content),
+            block => {
+                var thinking = Assert.IsType<ActionBlock.Thinking>(block);
+                Assert.Same(Descriptor, thinking.Origin);
+                Assert.Equal("deliberation", thinking.PlainTextForDebug);
+                using var doc = JsonDocument.Parse(thinking.OpaquePayload);
+                Assert.Equal("thinking", doc.RootElement.GetProperty("type").GetString());
+            },
+            block => Assert.Equal("omega", Assert.IsType<ActionBlock.Text>(block).Content)
+        );
+
+        // Compatibility view: Content concatenates only Text blocks, Thinking is excluded
+        Assert.Equal("alphaomega", entry.Content);
+    }
+
+    [Fact]
+    public async Task AggregateAsync_InjectsCurrentInvocationAsThinkingOrigin() {
+        var payload = Encoding.UTF8.GetBytes("""{"type":"thinking","thinking":"x","signature":"s"}""");
+        var customDescriptor = new CompletionDescriptor("anthropic", "anthropic-messages-v1", "claude-opus-4");
+
+        var entry = await CompletionAccumulator.AggregateAsync(
+            ToAsync(new[] {
+                CompletionChunk.FromThinking(new ThinkingChunk(payload, null))
+            }),
+            customDescriptor,
+            CancellationToken.None
+        );
+
+        var thinking = Assert.IsType<ActionBlock.Thinking>(entry.Blocks.Single());
+        Assert.Same(customDescriptor, thinking.Origin);
+    }
+}
