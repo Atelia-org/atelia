@@ -23,6 +23,8 @@ public class AgentEngine {
     private readonly DefaultAppHost _appHost;
     private readonly Dictionary<string, ITool> _standaloneTools;
     private readonly Dictionary<string, LodToolCallResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IIdleObservationProvider _idleProvider;
+    private readonly Func<DateTimeOffset> _utcNowProvider;
 
     private ToolExecutor? _toolExecutor;
     private ToolExecutor ToolExecutor => EnsureToolsBuilt();
@@ -35,15 +37,22 @@ public class AgentEngine {
     /// <param name="state">Agent 状态实例，如为 <c>null</c> 则创建默认状态。</param>
     /// <param name="initialApps">初始注册的应用列表（可选）。</param>
     /// <param name="initialTools">初始注册的独立工具列表（可选）。</param>
+    /// <param name="idleProvider">在无外部输入且无待处理通知时产生"心跳观测"的提供器；
+    /// 传 <c>null</c> 使用默认的 <see cref="TimestampHeartbeatObservationProvider"/>。</param>
+    /// <param name="utcNowProvider">UTC 时间源（可选，主要供测试注入）。</param>
     public AgentEngine(
         AgentState? state = null,
         IEnumerable<IApp>? initialApps = null,
-        IEnumerable<ITool>? initialTools = null
+        IEnumerable<ITool>? initialTools = null,
+        IIdleObservationProvider? idleProvider = null,
+        Func<DateTimeOffset>? utcNowProvider = null
     ) {
         _state = state ?? AgentState.CreateDefault();
         _appHost = new DefaultAppHost();
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
         _toolsDirty = true;
+        _idleProvider = idleProvider ?? new TimestampHeartbeatObservationProvider();
+        _utcNowProvider = utcNowProvider ?? (() => DateTimeOffset.UtcNow);
 
         if (initialApps is not null) {
             foreach (var app in initialApps) {
@@ -399,7 +408,29 @@ public class AgentEngine {
             _state.AppendNotification(args.AdditionalNotification);
         }
 
-        var inputEntry = args.InputEntry ?? new ObservationEntry();
+        var inputEntry = args.InputEntry;
+        if (inputEntry is null) {
+            // 上游决定推进但未提供任何输入：若此时连 pending notification 也没有，调用 idle provider 填充
+            // 一条内源性"心跳"通知。这避免向下游 provider 提交"完全空"的 user 消息（会被 Anthropic 等拒绝），
+            // 同时使"空推进"这个语义变成可配置的宛转点而不是 provider 层隐式兼容。
+            if (!_state.HasPendingNotification) {
+                var idleContext = new IdleObservationContext {
+                    UtcNow = _utcNowProvider(),
+                    RecentHistory = _state.RecentHistory
+                };
+
+                var heartbeat = _idleProvider.CreateIdleNotification(idleContext);
+                if (heartbeat is null) {
+                    DebugUtil.Trace(StateMachineDebugCategory, "[Engine] Idle provider declined to produce a heartbeat; staying NoProgress.");
+                    return StepOutcome.NoProgress;
+                }
+
+                _state.AppendNotification(heartbeat);
+            }
+
+            inputEntry = new ObservationEntry();
+        }
+
         var appended = _state.AppendObservation(inputEntry);
 
         DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
