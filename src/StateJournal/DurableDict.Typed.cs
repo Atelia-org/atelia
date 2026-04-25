@@ -30,4 +30,10 @@ where TKey : notnull where TValue : notnull {
     public abstract GetIssue Get(TKey key, out TValue? value);
     public abstract UpsertStatus Upsert(TKey key, TValue? value);
 
+    /// <summary>
+    /// Fork this object's committed state into a new mutable object with a fresh LocalId.
+    /// Pending working changes on the source are ignored. DurableObject references inside values are shallow-copied.
+    /// </summary>
+    public DurableDict<TKey, TValue> ForkCommittedAsMutable() =>
+        Revision.ForkCommittedAsMutable(this);
 }

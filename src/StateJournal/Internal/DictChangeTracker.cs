@@ -39,6 +39,19 @@ where TValue : notnull {
         _dirtyKeys = new();
     }
 
+    public DictChangeTracker<TKey, TValue> ForkMutableFromCommitted<KHelper, VHelper>()
+    where KHelper : unmanaged, ITypeHelper<TKey>
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        var fork = new DictChangeTracker<TKey, TValue>();
+        foreach (var (key, value) in _committed) {
+            TKey forkKey = KHelper.ForkFrozenForNewOwner(key)!;
+            TValue? forkValue = value is null ? default : VHelper.ForkFrozenForNewOwner(value);
+            fork._committed.Add(forkKey, forkValue);
+            fork._current.Add(forkKey, forkValue);
+        }
+        return fork;
+    }
+
     /// <summary>
     /// typed / durable-ref 路径的一步写入入口：
     /// 在 tracker 内部完成 get-ref、current no-op 短路，以及 dirty/canonicalize 维护。

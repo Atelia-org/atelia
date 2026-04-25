@@ -91,7 +91,7 @@ partial class Revision {
         var (pendingSaves, newCommitTicket) = persistResult.Value;
 
         // Finalize: Complete all PendingSave (HeadTicket 指向新文件), Sweep GC, 更新 _head
-        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitTicket);
+        FinalizePrimaryCommit(graphRoot, liveObjectsResult.Value!, pendingSaves, newCommitTicket);
         // SaveAs 直接以全量快照作为新的 head，不再存在额外的后续整理阶段。
         return CommitOutcome.PrimaryOnly(newCommitTicket);
     }
@@ -131,7 +131,7 @@ partial class Revision {
         var (pendingSaves, newCommitTicket) = persistResult.Value;
 
         // Phase 3: Finalize（全部落盘成功，统一应用内存状态变更）
-        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitTicket);
+        FinalizePrimaryCommit(graphRoot, liveObjectsResult.Value!, pendingSaves, newCommitTicket);
         return new PrimaryCommitArtifacts(newCommitTicket, liveObjectsResult.Value!);
     }
 
@@ -193,7 +193,12 @@ partial class Revision {
             ForceSave = forceAll,
         };
         foreach (var obj in liveObjects) {
-            if (!forceAll && obj.IsTracked && !obj.HasChanges) { continue; }
+            if (!forceAll && obj.IsTracked && !obj.HasChanges) {
+                if (obj.HasPendingObjectMapRegistration) {
+                    _objectMap.Upsert(obj.LocalId.Value, obj.HeadTicket.Serialize());
+                }
+                continue;
+            }
             var writeResult = VersionChain.Write(obj, targetFile, userContext);
             if (writeResult.IsFailure) { return writeResult.Error!; }
             pendingSaves.Add(writeResult.Value);
@@ -241,8 +246,14 @@ partial class Revision {
         return (pendingSaves, new CommitTicket(mapWriteResult.Value.Ticket));
     }
 
-    private void FinalizePrimaryCommit(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitTicket newCommitTicket) {
+    private void FinalizePrimaryCommit(
+        DurableObject graphRoot,
+        IReadOnlyList<DurableObject> liveObjects,
+        List<PendingSave> pendingSaves,
+        CommitTicket newCommitTicket
+    ) {
         foreach (var pending in pendingSaves) { pending.Complete(); }
+        foreach (var obj in liveObjects) { obj.ClearPendingObjectMapRegistration(); }
 
         // Mark bitmap 已在 Phase 1 (WalkAndMark) 中完成，直接 Sweep
         _pool.Sweep<DetachOnSweepCollectHandler>();

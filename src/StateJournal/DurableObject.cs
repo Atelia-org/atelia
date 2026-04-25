@@ -10,6 +10,7 @@ public abstract class DurableObject {
 
     DurableState _state;
     Revision? _revision;
+    bool _pendingObjectMapRegistration;
 
     public LocalId LocalId { get; private set; }
 
@@ -42,6 +43,12 @@ public abstract class DurableObject {
     internal abstract SizedPtr HeadTicket { get; }
     internal abstract bool IsTracked { get; }
 
+    internal bool HasPendingObjectMapRegistration => _pendingObjectMapRegistration;
+
+    internal void MarkPendingObjectMapRegistration() => _pendingObjectMapRegistration = true;
+
+    internal void ClearPendingObjectMapRegistration() => _pendingObjectMapRegistration = false;
+
     internal abstract void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context);
 
     internal abstract void ApplyDelta(ref BinaryDiffReader reader, SizedPtr parentTicket);
@@ -50,6 +57,17 @@ public abstract class DurableObject {
     internal abstract void OnLoadCompleted(SizedPtr versionTicket);
 
     internal abstract void DiscardChanges();
+
+    internal virtual DurableObject ForkAsMutableCore() =>
+        throw new NotSupportedException($"{GetType().Name} does not support ForkCommittedAsMutable.");
+
+    protected void ThrowIfPendingObjectMapRegistration() {
+        if (_pendingObjectMapRegistration) {
+            throw new InvalidOperationException(
+                "Cannot discard changes on a forked durable object before its ObjectMap registration has been committed."
+            );
+        }
+    }
 
     internal abstract void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) where TVisitor : IChildRefVisitor, allows ref struct;
     // load 历史回放完成后的局部收尾校验入口。

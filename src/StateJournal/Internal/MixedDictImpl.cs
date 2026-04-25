@@ -14,8 +14,17 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     }
 
     internal override void DiscardChanges() {
+        ThrowIfPendingObjectMapRegistration();
         _core.Revert<ValueBoxHelper>();
         RecountRefs();
+    }
+
+    internal override DurableObject ForkAsMutableCore() {
+        var fork = new MixedDictImpl<TKey, KHelper>();
+        fork._core = _core.ForkMutableFromCommitted<KHelper, ValueBoxHelper>();
+        fork._versionStatus = _versionStatus.ForkForNewObject();
+        fork.RecountRefs();
+        return fork;
     }
 
     private protected override void CommitCore() => _core.Commit<ValueBoxHelper>();

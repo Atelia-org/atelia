@@ -130,6 +130,13 @@ where TKey : notnull {
 
     #endregion
 
+    /// <summary>
+    /// Fork this object's committed state into a new mutable object with a fresh LocalId.
+    /// Pending working changes on the source are ignored. DurableObject values are shallow-copied.
+    /// </summary>
+    public DurableDict<TKey> ForkCommittedAsMutable() =>
+        Revision.ForkCommittedAsMutable(this);
+
     #region DurableObject Helpers
 
     private DurableRef ToDurableRef(DurableObject? value) {

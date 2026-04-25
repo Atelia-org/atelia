@@ -340,6 +340,34 @@ public partial class Revision {
         obj.Bind(this, id, DurableState.TransientDirty);
     }
 
+    private void BindForkedObject(DurableObject obj) {
+        var handle = _pool.Store(obj);
+        var id = LocalId.FromSlotHandle(handle);
+        obj.Bind(this, id, DurableState.Clean);
+        obj.MarkPendingObjectMapRegistration();
+    }
+
+    internal TFork ForkCommittedAsMutable<TFork>(TFork source)
+        where TFork : DurableObject {
+        ArgumentNullException.ThrowIfNull(source);
+        EnsureCanReference(source);
+        if (!source.IsTracked) {
+            throw new InvalidOperationException(
+                $"Cannot fork LocalId={source.LocalId.Value}: source has no committed version chain yet."
+            );
+        }
+
+        var fork = source.ForkAsMutableCore();
+        if (fork is not TFork typedFork) {
+            throw new InvalidOperationException(
+                $"Fork implementation returned {fork.GetType().Name}, expected {typeof(TFork).Name}."
+            );
+        }
+
+        BindForkedObject(typedFork);
+        return typedFork;
+    }
+
     /// <summary>校验 DurableObject 可作为当前 Revision 的图引用被持有/写入。</summary>
     internal void EnsureCanReference(DurableObject obj) {
         ArgumentNullException.ThrowIfNull(obj);

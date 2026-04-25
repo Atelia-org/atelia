@@ -116,11 +116,17 @@ public class PrimaryCommitStageBenchmarks : CommitBenchmarkBase {
     [Benchmark(OperationsPerInvoke = FinalizeStageOperationCount)]
     public ulong Finalize_Only() {
         var batch = RequireScenarioBatch();
+        var liveObjectsBatch = RequireLiveObjectsBatch();
         var pendingSavesBatch = RequirePendingSavesBatch();
         var primaryCommitTickets = RequirePrimaryCommitTickets();
         ulong checksum = 0;
         for (int i = 0; i < batch.Count; i++) {
-            batch.Revisions[i].FinalizePrimaryCommitForBenchmark(batch.Roots[i], pendingSavesBatch[i], primaryCommitTickets[i]);
+            batch.Revisions[i].FinalizePrimaryCommitForBenchmark(
+                batch.Roots[i],
+                liveObjectsBatch[i],
+                pendingSavesBatch[i],
+                primaryCommitTickets[i]
+            );
             checksum += primaryCommitTickets[i].Ticket.Packed;
         }
         return checksum;

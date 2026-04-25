@@ -29,7 +29,17 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
 
     #region DurableObject
 
-    internal override void DiscardChanges() => _core.Revert<LocalIdAsRefHelper>();
+    internal override void DiscardChanges() {
+        ThrowIfPendingObjectMapRegistration();
+        _core.Revert<LocalIdAsRefHelper>();
+    }
+
+    internal override DurableObject ForkAsMutableCore() {
+        var fork = new DurObjDictImpl<TKey, TDurObj, KHelper>();
+        fork._core = _core.ForkMutableFromCommitted<KHelper, LocalIdAsRefHelper>();
+        fork._versionStatus = _versionStatus.ForkForNewObject();
+        return fork;
+    }
 
     #endregion
 

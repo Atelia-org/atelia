@@ -27,7 +27,12 @@ partial class Revision {
         return (pendingSaves, commitTicket);
     }
 
-    internal void FinalizePrimaryCommitForBenchmark(DurableObject graphRoot, List<PendingSave> pendingSaves, CommitTicket newCommitTicket) {
-        FinalizePrimaryCommit(graphRoot, pendingSaves, newCommitTicket);
+    internal void FinalizePrimaryCommitForBenchmark(
+        DurableObject graphRoot,
+        IReadOnlyList<DurableObject> liveObjects,
+        List<PendingSave> pendingSaves,
+        CommitTicket newCommitTicket
+    ) {
+        FinalizePrimaryCommit(graphRoot, liveObjects, pendingSaves, newCommitTicket);
     }
 }

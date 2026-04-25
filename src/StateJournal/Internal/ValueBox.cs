@@ -127,6 +127,14 @@ internal readonly partial struct ValueBox {
     internal static ValueBox Freeze(ValueBox box) =>
         box.GetLzc() == BoxLzc.HeapSlot ? box.AsFrozen() : box;
 
+    internal static ValueBox CloneFrozenForNewOwner(ValueBox box) {
+        if (!box.TryGetBits64Handle(out SlotHandle h)) { return box; }
+
+        ulong rawBits = ValuePools.OfBits64[h];
+        SlotHandle newHandle = ValuePools.OfBits64.Store(rawBits);
+        return EncodeHeapSlot(box.GetHeapKind(), newHandle).AsFrozen();
+    }
+
     /// <summary>
     /// 无条件释放 ValueBox 持有的 Bits64 Slot（如有），不论 exclusive/frozen 状态。
     /// 调用者必须确保自己是该 Slot 的最后持有者。对 inline 值和 InternPool 类型无操作。

@@ -50,7 +50,15 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     #endregion
 
     internal override void DiscardChanges() {
+        ThrowIfPendingObjectMapRegistration();
         _core.Revert<VHelper>();
+    }
+
+    internal override DurableObject ForkAsMutableCore() {
+        var fork = new TypedDictImpl<TKey, TValue, KHelper, VHelper>();
+        fork._core = _core.ForkMutableFromCommitted<KHelper, VHelper>();
+        fork._versionStatus = _versionStatus.ForkForNewObject();
+        return fork;
     }
 
     private protected override void CommitCore() => _core.Commit<VHelper>();

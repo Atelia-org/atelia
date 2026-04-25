@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Atelia.Data;
 using Atelia.StateJournal.Serialization;
 
@@ -21,6 +22,12 @@ internal struct VersionChainStatus {
 
     internal readonly SizedPtr Head => _head;
     internal readonly bool IsTracked => _cumulativeCost != 0;
+
+    internal readonly VersionChainStatus ForkForNewObject() {
+        Debug.Assert(IsTracked, "Only committed/tracked objects can be forked.");
+        return this;
+    }
+
     /// <summary>Load 完成后修正 _previousVersion，使其指向已加载版本本身而非其前驱帧。</summary>
     internal void SetHead(SizedPtr ticket) => _head = ticket;
 

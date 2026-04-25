@@ -18,6 +18,9 @@ internal readonly struct ValueTuple2Helper<T1, T2, H1, H2> : ITypeHelper<ValueTu
     public static ValueTuple<T1, T2> Freeze(ValueTuple<T1, T2> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!);
 
+    public static ValueTuple<T1, T2> ForkFrozenForNewOwner(ValueTuple<T1, T2> value) =>
+        new(H1.ForkFrozenForNewOwner(value.Item1)!, H2.ForkFrozenForNewOwner(value.Item2)!);
+
     public static bool NeedRelease => H1.NeedRelease || H2.NeedRelease;
 
     public static void ReleaseSlot(ValueTuple<T1, T2> value) {
@@ -79,6 +82,9 @@ internal readonly struct ValueTuple3Helper<T1, T2, T3, H1, H2, H3> : ITypeHelper
 
     public static ValueTuple<T1, T2, T3> Freeze(ValueTuple<T1, T2, T3> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!);
+
+    public static ValueTuple<T1, T2, T3> ForkFrozenForNewOwner(ValueTuple<T1, T2, T3> value) =>
+        new(H1.ForkFrozenForNewOwner(value.Item1)!, H2.ForkFrozenForNewOwner(value.Item2)!, H3.ForkFrozenForNewOwner(value.Item3)!);
 
     public static bool NeedRelease => H1.NeedRelease || H2.NeedRelease || H3.NeedRelease;
 
@@ -156,6 +162,14 @@ internal readonly struct ValueTuple4Helper<T1, T2, T3, T4, H1, H2, H3, H4> : ITy
 
     public static ValueTuple<T1, T2, T3, T4> Freeze(ValueTuple<T1, T2, T3, T4> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!, H4.Freeze(value.Item4)!);
+
+    public static ValueTuple<T1, T2, T3, T4> ForkFrozenForNewOwner(ValueTuple<T1, T2, T3, T4> value) =>
+        new(
+            H1.ForkFrozenForNewOwner(value.Item1)!,
+            H2.ForkFrozenForNewOwner(value.Item2)!,
+            H3.ForkFrozenForNewOwner(value.Item3)!,
+            H4.ForkFrozenForNewOwner(value.Item4)!
+        );
 
     public static bool NeedRelease => H1.NeedRelease || H2.NeedRelease || H3.NeedRelease || H4.NeedRelease;
 
@@ -246,6 +260,15 @@ internal readonly struct ValueTuple5Helper<T1, T2, T3, T4, T5, H1, H2, H3, H4, H
 
     public static ValueTuple<T1, T2, T3, T4, T5> Freeze(ValueTuple<T1, T2, T3, T4, T5> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!, H4.Freeze(value.Item4)!, H5.Freeze(value.Item5)!);
+
+    public static ValueTuple<T1, T2, T3, T4, T5> ForkFrozenForNewOwner(ValueTuple<T1, T2, T3, T4, T5> value) =>
+        new(
+            H1.ForkFrozenForNewOwner(value.Item1)!,
+            H2.ForkFrozenForNewOwner(value.Item2)!,
+            H3.ForkFrozenForNewOwner(value.Item3)!,
+            H4.ForkFrozenForNewOwner(value.Item4)!,
+            H5.ForkFrozenForNewOwner(value.Item5)!
+        );
 
     public static bool NeedRelease => H1.NeedRelease || H2.NeedRelease || H3.NeedRelease || H4.NeedRelease || H5.NeedRelease;
 
@@ -348,6 +371,16 @@ internal readonly struct ValueTuple6Helper<T1, T2, T3, T4, T5, T6, H1, H2, H3, H
 
     public static ValueTuple<T1, T2, T3, T4, T5, T6> Freeze(ValueTuple<T1, T2, T3, T4, T5, T6> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!, H4.Freeze(value.Item4)!, H5.Freeze(value.Item5)!, H6.Freeze(value.Item6)!);
+
+    public static ValueTuple<T1, T2, T3, T4, T5, T6> ForkFrozenForNewOwner(ValueTuple<T1, T2, T3, T4, T5, T6> value) =>
+        new(
+            H1.ForkFrozenForNewOwner(value.Item1)!,
+            H2.ForkFrozenForNewOwner(value.Item2)!,
+            H3.ForkFrozenForNewOwner(value.Item3)!,
+            H4.ForkFrozenForNewOwner(value.Item4)!,
+            H5.ForkFrozenForNewOwner(value.Item5)!,
+            H6.ForkFrozenForNewOwner(value.Item6)!
+        );
 
     public static bool NeedRelease => H1.NeedRelease || H2.NeedRelease || H3.NeedRelease || H4.NeedRelease || H5.NeedRelease || H6.NeedRelease;
 
@@ -462,6 +495,17 @@ internal readonly struct ValueTuple7Helper<T1, T2, T3, T4, T5, T6, T7, H1, H2, H
 
     public static ValueTuple<T1, T2, T3, T4, T5, T6, T7> Freeze(ValueTuple<T1, T2, T3, T4, T5, T6, T7> value) =>
         new(H1.Freeze(value.Item1)!, H2.Freeze(value.Item2)!, H3.Freeze(value.Item3)!, H4.Freeze(value.Item4)!, H5.Freeze(value.Item5)!, H6.Freeze(value.Item6)!, H7.Freeze(value.Item7)!);
+
+    public static ValueTuple<T1, T2, T3, T4, T5, T6, T7> ForkFrozenForNewOwner(ValueTuple<T1, T2, T3, T4, T5, T6, T7> value) =>
+        new(
+            H1.ForkFrozenForNewOwner(value.Item1)!,
+            H2.ForkFrozenForNewOwner(value.Item2)!,
+            H3.ForkFrozenForNewOwner(value.Item3)!,
+            H4.ForkFrozenForNewOwner(value.Item4)!,
+            H5.ForkFrozenForNewOwner(value.Item5)!,
+            H6.ForkFrozenForNewOwner(value.Item6)!,
+            H7.ForkFrozenForNewOwner(value.Item7)!
+        );
 
     public static bool NeedRelease =>
         H1.NeedRelease || H2.NeedRelease || H3.NeedRelease || H4.NeedRelease || H5.NeedRelease || H6.NeedRelease || H7.NeedRelease;

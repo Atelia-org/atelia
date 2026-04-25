@@ -32,6 +32,12 @@ internal interface ITypeHelper<T> where T : notnull {
     /// </remarks>
     static virtual T? Freeze(T? value) => value;
 
+    /// <summary>
+    /// 为对象级 fork 复制 committed/frozen 值到新的 owner。
+    /// 对无独占堆资源的类型是 identity；持有手动生命周期资源的 helper 必须返回独立所有权。
+    /// </summary>
+    static virtual T? ForkFrozenForNewOwner(T? value) => value;
+
     /// <summary>是否持有需要手动管理的堆资源。为 true 时，调用方需遵守 Freeze/ReleaseSlot 的生命周期契约。</summary>
     static virtual bool NeedRelease => false;
 
@@ -74,6 +80,7 @@ internal interface ITypeHelper<T> where T : notnull {
 internal readonly struct ValueBoxHelper : ITypeHelper<ValueBox> {
     public static bool Equals(ValueBox a, ValueBox b) => ValueBox.ValueEquals(a, b);
     public static ValueBox Freeze(ValueBox value) => ValueBox.Freeze(value);
+    public static ValueBox ForkFrozenForNewOwner(ValueBox value) => ValueBox.CloneFrozenForNewOwner(value);
     public static bool NeedRelease => true;
     public static void ReleaseSlot(ValueBox value) => ValueBox.ReleaseBits64Slot(value);
 
