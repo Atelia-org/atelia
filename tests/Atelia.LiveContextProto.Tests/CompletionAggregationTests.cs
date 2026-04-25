@@ -4,13 +4,12 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
 
-public sealed class CompletionAccumulatorTests {
+public sealed class CompletionChunkAggregationTests {
     private static readonly CompletionDescriptor Descriptor = new("anthropic", "anthropic-messages-v1", "claude-3");
 
     private static async IAsyncEnumerable<CompletionChunk> ToAsync(IEnumerable<CompletionChunk> chunks) {
@@ -34,7 +33,7 @@ public sealed class CompletionAccumulatorTests {
             CompletionChunk.FromContent("omega")
         };
 
-        var entry = await CompletionAccumulator.AggregateAsync(ToAsync(chunks), Descriptor, CancellationToken.None);
+        var entry = await ToAsync(chunks).AggregateAsync(Descriptor, CancellationToken.None);
 
         Assert.Collection(
             entry.Blocks,
@@ -58,15 +57,70 @@ public sealed class CompletionAccumulatorTests {
         var payload = Encoding.UTF8.GetBytes("""{"type":"thinking","thinking":"x","signature":"s"}""");
         var customDescriptor = new CompletionDescriptor("anthropic", "anthropic-messages-v1", "claude-opus-4");
 
-        var entry = await CompletionAccumulator.AggregateAsync(
-            ToAsync(new[] {
+        var entry = await ToAsync(new[] {
                 CompletionChunk.FromThinking(new ThinkingChunk(payload, null))
-            }),
-            customDescriptor,
-            CancellationToken.None
-        );
+            }).AggregateAsync(
+                customDescriptor,
+                CancellationToken.None
+            );
 
         var thinking = Assert.IsType<ActionBlock.Thinking>(entry.Blocks.Single());
         Assert.Same(customDescriptor, thinking.Origin);
+    }
+
+    [Fact]
+    public async Task AggregateAsync_CollectsErrorsAndUsageWithoutTurningThemIntoBlocks() {
+        var usage = new TokenUsage(11, 7, 3);
+        var entry = await ToAsync(new[] {
+                CompletionChunk.FromContent("alpha"),
+                CompletionChunk.FromError("boom-1"),
+                CompletionChunk.FromError("boom-2"),
+                CompletionChunk.FromTokenUsage(usage),
+            }).AggregateAsync(
+                Descriptor,
+                CancellationToken.None
+            );
+
+        Assert.Collection(
+            entry.Blocks,
+            block => Assert.Equal("alpha", Assert.IsType<ActionBlock.Text>(block).Content)
+        );
+        Assert.Equal("alpha", entry.Content);
+        Assert.Equal(usage, entry.Usage);
+        Assert.Equal(new[] { "boom-1", "boom-2" }, entry.Errors);
+    }
+
+    [Fact]
+    public async Task AggregateAsync_ReturnsSingleEmptyTextBlock_ForEmptyStream() {
+        var entry = await ToAsync(Array.Empty<CompletionChunk>()).AggregateAsync(Descriptor, CancellationToken.None);
+
+        Assert.Collection(
+            entry.Blocks,
+            block => Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(block).Content)
+        );
+        Assert.Equal(string.Empty, entry.Content);
+        Assert.Empty(entry.ToolCalls);
+        Assert.Null(entry.Errors);
+        Assert.Null(entry.Usage);
+    }
+
+    [Fact]
+    public async Task AggregateAsync_ReturnsSingleEmptyTextBlock_ForMetaOnlyStream() {
+        var usage = new TokenUsage(5, 2);
+        var entry = await ToAsync(new[] {
+                CompletionChunk.FromError("recoverable"),
+                CompletionChunk.FromTokenUsage(usage),
+            }).AggregateAsync(
+                Descriptor,
+                CancellationToken.None
+            );
+
+        Assert.Collection(
+            entry.Blocks,
+            block => Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(block).Content)
+        );
+        Assert.Equal(string.Empty, entry.Content);
+        Assert.Equal(new[] { "recoverable" }, entry.Errors);
+        Assert.Equal(usage, entry.Usage);
     }
 }

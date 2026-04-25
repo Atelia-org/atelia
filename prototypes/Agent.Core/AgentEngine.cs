@@ -472,7 +472,13 @@ public class AgentEngine {
         var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
 
         var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);
-        var aggregatedOutput = await CompletionAccumulator.AggregateAsync(deltas, invocation, cancellationToken).ConfigureAwait(false);
+        var aggregated = await deltas.AggregateAsync(invocation, cancellationToken).ConfigureAwait(false);
+        var aggregatedOutput = new ActionEntry(aggregated.Blocks, aggregated.Invocation);
+
+        DebugUtil.Info(
+            ProviderDebugCategory,
+            $"[Engine] Aggregated completion blocks={aggregated.Blocks.Count} toolCalls={aggregatedOutput.ToolCalls.Count} errors={aggregated.Errors?.Count ?? 0} usage={(aggregated.Usage is null ? "<none>" : $"prompt={aggregated.Usage.PromptTokens},completion={aggregated.Usage.CompletionTokens}")}"
+        );
 
         _pendingToolResults.Clear();
 
