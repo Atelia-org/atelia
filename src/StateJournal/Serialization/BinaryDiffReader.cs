@@ -135,7 +135,7 @@ internal ref struct BinaryDiffReader {
     /// header LSB=0 → UTF-16LE，header 本身就是 payloadByteCount。
     /// header LSB=1 → UTF-8，payloadByteCount = header &gt;&gt; 1。
     /// </summary>
-    internal string BareInlineString(bool asKey) => Internal.InlineString.ReadFrom(ref this);
+    internal string BareInlineString(bool asKey) => InlineString.ReadFrom(ref this);
     #endregion
     #region Read Taged
     internal byte TaggedNonnegative1() => RawByte();

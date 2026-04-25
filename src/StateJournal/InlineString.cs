@@ -3,16 +3,17 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace Atelia.StateJournal.Internal;
+namespace Atelia.StateJournal;
 
 /// <summary>
-/// 值语义的字符串包装，用于 Per-Revision String Pool（<c>DurableDict&lt;uint, InlineString&gt;</c>）的 value 侧。
+/// 值语义的字符串包装，可作为 typed durable 容器的 key 或 value。
 /// 序列化时直接写入字符串内容（UTF-8 或 UTF-16LE，由 LSB encoding flag 自动选择最短表示）。
 /// </summary>
 /// <remarks>
-/// 与引用语义的 Symbol（对外暴露为 <see cref="string"/>，通过 symbol id 间接引用）相对应。
+/// 与 symbol-backed 的 <see cref="string"/> 相对应。
+/// <see cref="InlineString"/> 总是直接内联持久化 payload，不经过 per-revision symbol table。
 /// </remarks>
-internal readonly struct InlineString(string value) : IEquatable<InlineString> {
+public readonly struct InlineString : IEquatable<InlineString> {
     /// <summary>纯粹为了提高可测试性才抽象出来的。</summary>
     internal interface IFastPathStrategy {
         static abstract bool IsFastPath { get; }
@@ -23,18 +24,24 @@ internal readonly struct InlineString(string value) : IEquatable<InlineString> {
     }
 
     private const uint Utf8FlagMask = 1;
-    internal readonly string Value = value ?? string.Empty;
+    private readonly string _value;
 
-    public bool Equals(InlineString other) => string.Equals(Value, other.Value, StringComparison.Ordinal);
+    public InlineString(string? value) {
+        _value = value ?? string.Empty;
+    }
+
+    public string Value => _value;
+
+    public bool Equals(InlineString other) => string.Equals(_value, other._value, StringComparison.Ordinal);
     public override bool Equals(object? obj) => obj is InlineString other && Equals(other);
-    public override int GetHashCode() => string.GetHashCode(Value, StringComparison.Ordinal);
-    public override string ToString() => Value;
+    public override int GetHashCode() => string.GetHashCode(_value, StringComparison.Ordinal);
+    public override string ToString() => _value;
 
     public static bool operator ==(InlineString left, InlineString right) => left.Equals(right);
     public static bool operator !=(InlineString left, InlineString right) => !left.Equals(right);
 
-    public static implicit operator InlineString(string value) => new(value);
-    public static implicit operator string(InlineString s) => s.Value;
+    public static implicit operator InlineString(string? value) => new(value);
+    public static implicit operator string(InlineString s) => s._value;
 
     #region Serialization
 

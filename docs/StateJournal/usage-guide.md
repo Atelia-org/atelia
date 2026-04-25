@@ -267,6 +267,18 @@ Typed 容器的优点：
 - API 更直接。
 - 更适合作为长期 schema。
 
+typed 容器里的字符串类型选择：
+
+- `string` 是 symbol-backed：更适合短字符串、重复率高的字段值、枚举感较强的文本。
+- `InlineString` 是 payload-backed：更适合不想进入 per-revision symbol table 的字符串，也可以直接作为 typed key/value。
+
+例如：
+
+```csharp
+var dict = rev.CreateDict<InlineString, InlineString>();
+dict.Upsert("prompt", "a long one-off message");
+```
+
 Mixed 容器的优点：
 
 - 适合 LLM Agent 原型期的“对象属性袋”。
