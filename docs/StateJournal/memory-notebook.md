@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-04-11
+> **最后更新**：2026-04-26
 
 > **使用者入口**：面向实际接入与 API 调用的高密度手册见 [`usage-guide.md`](usage-guide.md)。
 
@@ -87,7 +87,29 @@ private T[]?[] _slabs;
 - `MixedDict` / `MixedDeque` 的 string 仍以 `ValueBox(SymbolId)` 存储
 - 因为这是 `ValueBox` tagged-pointer 异构模型本身的一部分
 
-### 4. typed string load 采用 placeholder 过渡方案
+### 4. DurableObject 已引入 fork / frozen 对象级语义
+
+当前主线里，`DurableObject` 基类已引入两组对象级能力：
+
+- `Freeze()` / `IsFrozen`
+- object-level `ForkCommittedAsMutable()`
+
+但当前落地范围是**有选择的**：
+
+- `DurableDict<TKey, TValue>` / `DurableDict<TKey>`：已完整支持 fork + freeze
+- `DurableDeque<T>` / `DurableDeque` / `DurableOrderedDict<...>` / `DurableText`：
+  - 当前不支持 public fork
+  - `Freeze()` 默认抛 `NotSupportedException`
+  - load 路径若遇到 frozen flag 会 fail-fast，避免“被加载成 frozen 但仍可变”
+
+dict 路线需要牢记的当前语义：
+
+- fork 复制的是 **committed state**，不是 source 的 working state
+- source 有普通未提交修改时，fork 仍取上次 committed 内容
+- source 若处于 dirty frozen 且该 frozen snapshot 尚未提交，则 fork 会被拒绝
+- frozen source fork 出来的新对象默认是 mutable；若其当前 flags 与继承的 committed flags 不同，首次 commit 需要写 frame 同步 object flags
+
+### 5. typed string load 采用 placeholder 过渡方案
 
 引入延迟 intern 后，版本链历史回放会遇到一个真实问题：
 
@@ -107,7 +129,7 @@ private T[]?[] _slabs;
 - `staging in ChangeTracker`
 - 文档见 `docs/StateJournal/typed-string-load-staging-reserve.md`
 
-### 5. typed / mixed 的字符串标记与重建后校验职责已分离
+### 6. typed / mixed 的字符串标记与重建后校验职责已分离
 
 这是当前实现里很重要的一条边界。
 
@@ -129,7 +151,7 @@ load / 历史回放完成后：
 - 重建后校验：typed placeholder 残留 + mixed surviving `SymbolId`
 - Open 后全图引用校验：只校验 DurableObject 引用
 
-### 6. ordered skip-list load 的 committed canonicalization 属于 `ApplyDelta`
+### 7. ordered skip-list load 的 committed canonicalization 属于 `ApplyDelta`
 
 这是 `TypedOrderedDict` / `SkipListCore` 当前的一条明确边界：
 
@@ -143,7 +165,7 @@ load / 历史回放完成后：
 - 塔索引依赖压缩后的物理 index，因此 committed canonicalization 必须发生在 `RebuildIndex` 之前
 - 这也让 `SyncCurrentFromCommitted` 与其他 typed/mixed 容器保持更一致的职责边界
 
-### 7. `LeafChainStore` 里移动 committed 槽位的 GC 不能与活跃 dirty tracking 共存
+### 8. `LeafChainStore` 里移动 committed 槽位的 GC 不能与活跃 dirty tracking 共存
 
 `LeafChainStore` 当前有一条必须牢记的不变量：
 
@@ -157,7 +179,28 @@ load / 历史回放完成后：
 - 再 `CollectCommitted(head)` 做 committed canonicalization
 - 最后 `SyncCurrentFromCommitted()` 与 `RebuildIndex()`
 
-### 8. enum Mask 成员已提取为 helper class 常量
+### 9. frozen 状态通过 VersionChain object flags 持久化
+
+freeze PR 之后，`VersionChainStatus` 的 metadata 里新增了 resultant object flags：
+
+```text
+parentTicket
+cumulativeCost
+objectFlags
+```
+
+当前 object flags 只有：
+
+- `Frozen`
+
+需要牢记的边界：
+
+- `VersionChainStatus` 是 committed object flags 的真源
+- `DurableObject` 基类持有 working flags（例如未提交的 `Freeze()`）
+- `_mutabilityDirty` 表示 working flags 是否不同于 committed flags
+- 因此 clean/tracked 对象只做 `Freeze()` 也必须写一帧；否则 reopen 会丢失 readonly 语义
+
+### 10. enum Mask 成员已提取为 helper class 常量
 
 `DurableObjectKind.Mask`、`HeapValueKind.Mask`、`VersionKind.Mask`、`FrameUsage.Mask`、`FrameSource.Mask` 已全部从 enum 中移除，改为对应 helper 静态类中的 `const byte BitMask`（或 `FrameTag` 内部的私有 `const`）。
 
@@ -215,6 +258,14 @@ GC Sweep(不可达) -> Detached
 
 - `src/StateJournal/DurableObject.cs`
 - `src/StateJournal/DurableState.cs`
+
+补充理解：
+
+- `State` 仍只表达 dirty / clean / detached 生命周期
+- `IsFrozen` 是与 `DurableState` 正交的对象级 mutability 语义，不单独占一个 `DurableState`
+- 当前合法组合里，最需要记忆的是：
+  - `Clean + IsFrozen = true`：已提交 readonly 对象
+  - `PersistentDirty + IsFrozen = true`：dirty freeze 后等待以 rebase 落盘的 frozen working state
 
 ### 工厂入口
 
@@ -635,6 +686,8 @@ Load ObjectMap frame chain
 | Repository | ✅ 已完成首版 | branch / segment / CAS / SaveAs 路由 |
 | NodeContainers（LeafChainStore / SkipListCore） | ✅ 已完成 | 叶链共享节点仓库 + 跳表核心 |
 | DurableOrderedDict（Typed / Mixed / DurObj） | ✅ 已完成 | 基于 SkipListCore，typed + mixed + DurObj |
+| DurableDict fork / freeze | ✅ 已完成 | typed + mixed 都已支持；flags 持久化已打通 |
+| 其他容器的 freeze / fork | 🟡 预留中 | 当前以 `NotSupportedException` / fail-fast 为主 |
 | typed string staging-in-ChangeTracker | 🟡 储备方案 | 尚未落地，见专项文档 |
 
 ---
@@ -680,6 +733,16 @@ mixed：
 - 未来候选演进路径
 
 不应覆盖本文件作为“当前主线事实地图”的角色。
+
+### 5. 当前只有 DurableDict 正式支持 fork / freeze
+
+不要把“基类已有 `Freeze()` / `IsFrozen` / object flags”误读成“所有容器都已支持 readonly / mutable fork”。
+
+当前事实是：
+
+- dict：正式支持，并已有 roundtrip / retry / fork matrix 测试
+- deque / ordered dict / text：仍待后续 PR 推进
+- 设计推进应以 `frozen-durable-object-design.md` 为基线，而不是从基类表面 API 反推“应该已经可用”
 
 ---
 
@@ -739,6 +802,8 @@ src/StateJournal/
 | 文档 | 路径 | 说明 |
 |:-----|:-----|:-----|
 | 去 compaction 化与 typed string 延迟 intern | `docs/StateJournal/remove-compaction-and-late-typed-string-intern.md` | 本轮主线设计背景 |
+| DurableDict fork 设计 | `docs/StateJournal/fork-as-mutable-design.md` | committed-state mutable fork 的设计背景 |
+| DurableDict frozen 设计 | `docs/StateJournal/frozen-durable-object-design.md` | object flags + dict freeze 的设计与后续推进 |
 | typed string load staging 预备方案 | `docs/StateJournal/typed-string-load-staging-reserve.md` | placeholder 方案的后续正统演进 |
 | 异构存储设计决策 | `docs/StateJournal/v4/异构存储设计决策.md` | ValueBox 核心决策 |
 | Tagged-Pointer 布局 | `docs/StateJournal/v4/tagged-pointer.md` | `ValueBox` 编码表 |

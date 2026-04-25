@@ -176,6 +176,7 @@ var text = rev.CreateText();                       // DurableText
 
 - 新建对象会自动绑定到当前 `Revision`，分配 `LocalId`，状态为 `TransientDirty`。
 - 从磁盘打开的对象状态为 `Clean`。
+- `DurableState` 只表达 dirty / clean / detached 生命周期；`IsFrozen` 是与之正交的只读语义。
 - 业务代码应从 `Revision.Create*` 创建对象；`Durable.*` 工厂多用于内部和测试，直接创建的对象可能未绑定 `Revision`。
 - 对象一经绑定，不可转移到其他 `Revision`。
 - 不能把其他 `Revision` 的 `DurableObject` 存入当前对象图。
@@ -193,6 +194,56 @@ var foreign = rev2.CreateDict<string, int>();
 
 root.Upsert("bad", foreign); // InvalidOperationException
 ```
+
+### 3.1 Fork committed state
+
+当前只有 `DurableDict` 路线公开支持 fork：
+
+```csharp
+var template = rev.CreateDict<string, int>();
+template.Upsert("a", 1);
+repo.Commit(template).Value;
+
+var draft = template.ForkCommittedAsMutable();
+draft.Upsert("b", 2);
+```
+
+语义要点：
+
+- fork 会创建同一 `Revision` 内的**新对象**和**新 `LocalId`**。
+- fork 复制的是 source 的 **committed state**，不是 working state。
+- source 上未提交的普通修改会被忽略；fork 看到的是上次 commit 的内容。
+- `DurableObject` 子引用是浅拷贝；fork parent 不会深拷贝整棵子图。
+- fork 后如果对象还没挂到 root，可在后续 commit 中被 sweep 掉。
+
+当前不支持：
+
+- `DurableDeque` / `DurableOrderedDict` / `DurableText` 没有 public `ForkCommittedAsMutable()`。
+
+### 3.2 Freeze / frozen
+
+`Freeze()` 是 `DurableObject` 基类上的对象级能力，但当前只有 `DurableDict` 路线正式支持：
+
+```csharp
+var dict = rev.CreateDict<string, int>();
+dict.Upsert("a", 1);
+
+dict.Freeze();
+bool frozen = dict.IsFrozen; // true
+
+dict.Upsert("b", 2); // ObjectFrozenException
+```
+
+语义要点：
+
+- frozen 对象可读，不可修改。
+- clean/tracked 对象执行 `Freeze()` 后，即使内容没变，下一次 commit 也会写入 object flags，保证 reopen 后仍是 frozen。
+- dirty 对象执行 `Freeze()` 会把当前 working state 固化为 frozen snapshot，并要求下一次保存走 rebase。
+- dirty frozen 且尚未提交的 source 不能再 `ForkCommittedAsMutable()`；先 commit，再 fork。
+
+当前不支持：
+
+- `DurableDeque<T>` / `DurableDeque` / `DurableOrderedDict<...>` / `DurableText` 上调用 `Freeze()` 会抛 `NotSupportedException`。
 
 ---
 
@@ -289,6 +340,7 @@ foreach (var key in users.Keys) {
 - `Remove(key)`
 - `Count`
 - `Keys`
+- `ForkCommittedAsMutable()`
 
 也可用 extension：
 
@@ -315,6 +367,13 @@ model.OfInt32.Upsert("wordCount", 2048);
 if (model.TryGetValueKind("title", out var kind)) {
     // kind == ValueKind.String
 }
+```
+
+也可 fork：
+
+```csharp
+var snapshot = model.ForkCommittedAsMutable();
+snapshot.Upsert("title", "Draft");
 ```
 
 `GetIssue` 的常见值：
@@ -629,6 +688,11 @@ repo.Commit(root).Value;
 - 不要跨 `Revision` 存 DurableObject。
 - 不要继续使用被 GC sweep 后的 detached 对象。
 - `Commit(root)` 的 root 决定可达性；没挂在 root 下的对象不会保留。
+- 当前只有 `DurableDict` 正式支持 `ForkCommittedAsMutable()`。
+- 当前只有 `DurableDict` 正式支持 `Freeze()` / `IsFrozen`；其他容器会 `NotSupportedException` 或尚未暴露 public fork。
+- `ForkCommittedAsMutable()` 复制 committed state，不复制 source 的未提交 working state。
+- `Freeze()` 后的修改会抛 `ObjectFrozenException`。
+- dirty frozen source 不能直接 fork；先 commit 让 frozen snapshot 落盘。
 - mixed 容器里的 `double` 默认可能采用紧凑编码；需要精确保存所有 double bit 时使用 `UpsertExactDouble` 或 exact double helpers。
 - typed string 运行时保存普通 `string`，mixed string 运行时走 `ValueBox(SymbolId)`；使用者通常无感，但调试内部结构时不要混淆。
 - `SymbolTable` 是持久化 mirror，不是业务可见数据表。
@@ -666,5 +730,7 @@ repo.Commit(root).Value;
 - [`docs/StateJournal/memory-notebook.md`](memory-notebook.md)
 - [`docs/StateJournal/repository-note.md`](repository-note.md)
 - [`docs/StateJournal/container-api-design-note.md`](container-api-design-note.md)
+- [`docs/StateJournal/fork-as-mutable-design.md`](fork-as-mutable-design.md)
+- [`docs/StateJournal/frozen-durable-object-design.md`](frozen-durable-object-design.md)
 - [`docs/Rbf/rbf-interface.md`](../Rbf/rbf-interface.md)
 - [`docs/Data/Draft/SizedPtr.md`](../Data/Draft/SizedPtr.md)
