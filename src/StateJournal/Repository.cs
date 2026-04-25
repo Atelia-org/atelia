@@ -277,6 +277,41 @@ public sealed partial class Repository : IDisposable {
     }
 
     /// <summary>
+    /// 在指定目录打开或创建 Repository：
+    /// <list type="bullet">
+    /// <item>目录不存在或为空 → 等价于 <see cref="Create(string)"/>。</item>
+    /// <item>目录是有效 Repository（含 <c>state-journal.lock</c>） → 等价于 <see cref="Open(string)"/>。</item>
+    /// <item>目录存在但非有效 Repository → 返回失败，避免误覆盖。</item>
+    /// </list>
+    /// </summary>
+    public static AteliaResult<Repository> OpenOrCreate(string directoryPath) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
+        var fullPath = Path.GetFullPath(directoryPath);
+
+        if (File.Exists(fullPath)) {
+            return new SjRepositoryError(
+                $"Repository path '{fullPath}' is a file, not a directory.",
+                RecoveryHint: "Choose a directory path instead."
+            );
+        }
+
+        if (!Directory.Exists(fullPath) || DirectoryIsEmpty(fullPath)) {
+            return Create(fullPath);
+        }
+
+        // 已有内容：必须看起来像一个 repo 才走 Open，否则明确失败，避免误覆盖。
+        var lockPath = Path.Combine(fullPath, LockFileName);
+        if (File.Exists(lockPath)) {
+            return Open(fullPath);
+        }
+
+        return new SjRepositoryError(
+            $"Directory '{fullPath}' is not empty and not a StateJournal repository.",
+            RecoveryHint: "Choose an empty or non-existent directory, or point to an existing repository."
+        );
+    }
+
+    /// <summary>
     /// 对外的简洁提交入口。从 <paramref name="graphRoot"/> 反查所属 Revision，再映射到对应 branch。
     /// </summary>
     public AteliaResult<CommitOutcome> Commit(DurableObject graphRoot) {
@@ -314,6 +349,32 @@ public sealed partial class Repository : IDisposable {
         ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
 
         return GetOrCheckoutBranchCore(branchName);
+    }
+
+    /// <summary>
+    /// 探测指定名称的 branch 是否已存在于此 Repository。仅查内存元数据，不做 IO。
+    /// 名称非法时返回 <c>false</c>（不抛异常），方便"探测后决定"风格。
+    /// </summary>
+    public bool HasBranch(string branchName) {
+        if (ValidateBranchName(branchName) is not null) { return false; }
+        using var scope = _gate.EnterScope();
+        if (_disposed || _isPoisoned) { return false; }
+        return _branches.ContainsKey(branchName);
+    }
+
+    /// <summary>
+    /// 若指定 branch 存在则等价于 <see cref="CheckoutBranch(string)"/>；否则等价于 <see cref="CreateBranch(string)"/>（unborn 起点）。
+    /// 不提供带 <c>fromBranch</c> 的重载，以避免"已有 vs 派生"语义模糊。
+    /// </summary>
+    public AteliaResult<Revision> GetOrCreateBranch(string branchName) {
+        using var scope = _gate.EnterScope();
+        if (!EnsureUsable(out var err)) { return err; }
+        ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
+
+        if (_branches.ContainsKey(branchName)) {
+            return GetOrCheckoutBranchCore(branchName);
+        }
+        return CreateBranchCore(branchName, sourceBranchName: null);
     }
 
     /// <summary>

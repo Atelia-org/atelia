@@ -415,7 +415,105 @@ public class RepositoryTests : IDisposable {
 
 
 
-    private static T AssertSuccess<T>(AteliaResult<T> result) {
+    #region OpenOrCreate / HasBranch / GetOrCreateBranch
+
+    [Fact]
+    public void OpenOrCreate_NonExistentDirectory_CreatesNewRepository() {
+        var dir = GetTempDir();
+        Assert.False(Directory.Exists(dir));
+
+        using var repo = AssertSuccess(Repository.OpenOrCreate(dir));
+
+        Assert.True(File.Exists(Path.Combine(dir, "state-journal.lock")));
+        Assert.True(Directory.Exists(Path.Combine(dir, "refs", "branches")));
+    }
+
+    [Fact]
+    public void OpenOrCreate_EmptyDirectory_CreatesNewRepository() {
+        var dir = GetTempDir();
+        Directory.CreateDirectory(dir);
+
+        using var repo = AssertSuccess(Repository.OpenOrCreate(dir));
+        Assert.True(File.Exists(Path.Combine(dir, "state-journal.lock")));
+    }
+
+    [Fact]
+    public void OpenOrCreate_ExistingValidRepository_OpensIt() {
+        var dir = GetTempDir();
+
+        // Build a repo with a committed branch.
+        {
+            using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+            var root = main.CreateDict<int, int>();
+            root.Upsert(1, 10);
+            AssertSuccess(repo.Commit(root));
+        }
+
+        using var reopened = AssertSuccess(Repository.OpenOrCreate(dir));
+        Assert.True(reopened.HasBranch("main"));
+        var rev = AssertSuccess(reopened.CheckoutBranch("main"));
+        var root2 = Assert.IsAssignableFrom<DurableDict<int, int>>(rev.GraphRoot);
+        Assert.Equal(1, root2.Count);
+    }
+
+    [Fact]
+    public void OpenOrCreate_NonEmptyNonRepoDirectory_Fails() {
+        var dir = GetTempDir();
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "stranger.txt"), "hello");
+
+        var result = Repository.OpenOrCreate(dir);
+        Assert.True(result.IsFailure);
+        Assert.Contains("not a StateJournal repository", result.Error!.Message);
+        // 没被破坏：文件还在。
+        Assert.True(File.Exists(Path.Combine(dir, "stranger.txt")));
+        Assert.False(File.Exists(Path.Combine(dir, "state-journal.lock")));
+    }
+
+    [Fact]
+    public void HasBranch_HitMissAndInvalidName() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out _);
+
+        Assert.True(repo.HasBranch("main"));
+        Assert.False(repo.HasBranch("does-not-exist"));
+        // 非法名称返回 false，而非抛异常。
+        Assert.False(repo.HasBranch(""));
+        Assert.False(repo.HasBranch("/leading-slash"));
+        Assert.False(repo.HasBranch("trailing-slash/"));
+        Assert.False(repo.HasBranch(".."));
+    }
+
+    [Fact]
+    public void GetOrCreateBranch_Existing_ReturnsSameRevision() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+
+        var again = AssertSuccess(repo.GetOrCreateBranch("main"));
+        Assert.Same(main, again);
+    }
+
+    [Fact]
+    public void GetOrCreateBranch_Missing_CreatesAndCanCommit() {
+        var dir = GetTempDir();
+        using var repo = AssertSuccess(Repository.Create(dir));
+
+        Assert.False(repo.HasBranch("feature"));
+        var feature = AssertSuccess(repo.GetOrCreateBranch("feature"));
+        Assert.True(repo.HasBranch("feature"));
+
+        var root = feature.CreateDict<int, int>();
+        root.Upsert(42, 420);
+        AssertSuccess(repo.Commit(root));
+
+        // 再次调用应返回同一会话。
+        var again = AssertSuccess(repo.GetOrCreateBranch("feature"));
+        Assert.Same(feature, again);
+    }
+
+    #endregion
+
+    private static T AssertSuccess<T>(AteliaResult<T> result) where T : notnull {
         Assert.True(result.IsSuccess, $"Expected success but got error: {result.Error}");
         return result.Value!;
     }
@@ -424,6 +522,45 @@ public class RepositoryTests : IDisposable {
         var repo = AssertSuccess(Repository.Create(dir));
         revision = AssertSuccess(repo.CreateBranch(branchName));
         return repo;
+    }
+
+    [Fact]
+    public void GetGraphRoot_UnbornBranch_Fails() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+
+        var result = main.GetGraphRoot<DurableDict<string>>();
+        Assert.True(result.IsFailure);
+        Assert.NotNull(result.Error);
+        Assert.Contains("unborn", result.Error!.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GetGraphRoot_TypeMatches_Succeeds() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+        var root = main.CreateDict<string>();
+        root.Upsert("k", "v");
+        AssertSuccess(repo.Commit(root));
+
+        var result = main.GetGraphRoot<DurableDict<string>>();
+        Assert.True(result.IsSuccess);
+        Assert.Same(root, result.Value);
+    }
+
+    [Fact]
+    public void GetGraphRoot_TypeMismatch_Fails() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+        var root = main.CreateDict<string>();
+        root.Upsert("k", "v");
+        AssertSuccess(repo.Commit(root));
+
+        var result = main.GetGraphRoot<DurableDeque<string>>();
+        Assert.True(result.IsFailure);
+        Assert.NotNull(result.Error);
+        Assert.Contains("Kind=MixedDict", result.Error!.Message);
+        Assert.Contains("DurableDeque", result.Error!.Message);
     }
 
     #region ValidateBranchName

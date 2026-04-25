@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Atelia.PersistentAgentProto</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Diagnostics\Diagnostics.csproj" />
+    <ProjectReference Include="..\..\src\StateJournal\StateJournal.csproj" />
+    <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" />
+    <ProjectReference Include="..\Completion\Completion.csproj" />
+  </ItemGroup>
+
+</Project>

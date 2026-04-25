@@ -42,6 +42,33 @@ public partial class Revision {
     public DurableObject? GraphRoot => _head?.GraphRoot;
     internal uint HeadSegmentNumber => _headSegmentNumber;
 
+    /// <summary>
+    /// 把 <see cref="GraphRoot"/> 取为指定的 <typeparamref name="T"/>。
+    /// </summary>
+    /// <remarks>
+    /// 失败语义：
+    /// <list type="bullet">
+    ///   <item>unborn branch（<c>GraphRoot is null</c>）→ <see cref="SjStateError"/>。</item>
+    ///   <item><c>GraphRoot</c> 实际类型不可赋值给 <typeparamref name="T"/> → <see cref="SjStateError"/>。</item>
+    /// </list>
+    /// </remarks>
+    public AteliaResult<T> GetGraphRoot<T>() where T : DurableObject {
+        var root = _head?.GraphRoot;
+        if (root is null) {
+            return new SjStateError(
+                "Branch is unborn — no graph root committed yet.",
+                RecoveryHint: "Commit a root object first or check GraphRoot is null before calling."
+            );
+        }
+        if (root is not T typed) {
+            return new SjStateError(
+                $"GraphRoot is of type {root.GetType()} (Kind={root.Kind}), requested as {typeof(T)}.",
+                RecoveryHint: "Use the type that was committed as the graph root."
+            );
+        }
+        return typed;
+    }
+
     /// <summary>此 Revision 所属的 branch 名称。由 Repository 在绑定时设置一次，之后不可更改。</summary>
     internal string? BranchName {
         get => field;
