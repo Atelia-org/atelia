@@ -2,7 +2,7 @@
 
 > 目标 PR：为 DurableObject 增加持久化 readonly/frozen 语义，并释放可变 tracking 资源。
 > 依赖建议：先完成 [`fork-as-mutable-design.md`](fork-as-mutable-design.md) 中的 `ForkCommittedAsMutable`，使 frozen 对象的可变派生有明确路径。
-> 状态：设计草案，用于后续打磨和实施。
+> 状态：设计草案。当前建议先收敛为“VersionChain object flags + DurableDict full support”的第一阶段实施文档。
 
 ---
 
@@ -56,6 +56,29 @@ repo.Commit(root).Value;
 - 不把 frozen 对象自动压缩成 JSON/blob。
 - 不在第一版中支持 dirty working state fork；这由 Fork PR 后续扩展决定。
 
+### 2.3 推荐实施切片
+
+为了尽快把设计落到代码，同时避免被 deque / ordered dict / text 的内部结构牵着走，建议明确切成两个阶段：
+
+#### PR1：只把 DurableDict 做完整
+
+- 为 VersionChain metadata 引入 resultant object flags。
+- 为 `DurableObject` 增加 `IsFrozen` / `Freeze()` / mutability dirty / `HasPersistenceChanges`。
+- 为 `DurableDict<TKey, TValue>` / `DurableDict<TKey>` 打通 freeze 的完整链路：
+  - mutating API 防护
+  - 持久化 roundtrip
+  - `DictChangeTracker` frozen shape
+  - frozen source 的 `ForkCommittedAsMutable()`
+- `MixedDictImpl` 保持 child-ref / symbol-ref walk 正确，必要时在 freeze/load/fork 后 `RecountRefs()`。
+
+#### PR2：推广到其他容器
+
+- `DurableDeque<T>` / `DurableDeque`
+- `DurableOrderedDict<TKey, TValue>` / `DurableOrderedDict<TKey>`
+- `DurableText`
+
+第一阶段不要一边推进 frozen，一边同时追求所有容器覆盖。对当前需求而言，`DurableDict` 才是核心受益者。
+
 ---
 
 ## 3. 命名
@@ -78,7 +101,7 @@ Freeze()
 
 ```csharp
 public abstract class DurableObject {
-    public abstract bool IsFrozen { get; }
+    public bool IsFrozen { get; }
 
     public void Freeze();
 
@@ -93,7 +116,37 @@ public abstract class DurableObject {
 public abstract void Freeze();
 ```
 
-具体取舍取决于 frozen state 是否统一放在 `DurableObject` 基类。
+**推荐取舍**：`IsFrozen` 统一放在 `DurableObject` 基类，`Freeze()` 采用 base template method，
+再委托给具体类型的 internal hook。示意：
+
+```csharp
+public abstract class DurableObject {
+    public bool IsFrozen { get; }
+
+    public void Freeze();
+
+    internal virtual void FreezeCore() =>
+        throw new NotSupportedException($"{GetType().Name} does not support Freeze() yet.");
+}
+```
+
+理由：
+
+- `IsFrozen` / mutability dirty / `HasPersistenceChanges` 是对象级持久化语义，不该散落到各容器重复维护。
+- 第一阶段只做 `DurableDict` 时，其他类型可由 `FreezeCore()` 显式抛 `NotSupportedException`，避免出现“flags 已持久化，但 mutating API 还没全部防住”的半完成状态。
+- 未来推广到 deque / ordered dict / text 时，不需要再改 public API。
+
+### 4.1.1 第一阶段的支持矩阵
+
+PR1 建议采用下面的行为：
+
+| 类型 | `Freeze()` | 资源释放 | 备注 |
+|---|---|---:|---|
+| `DurableDict<TKey, TValue>` | 支持 | 是 | 第一阶段完整实现 |
+| `DurableDict<TKey>` | 支持 | 是 | 第一阶段完整实现 |
+| `DurableDeque*` | `NotSupportedException` | 否 | 第二阶段 |
+| `DurableOrderedDict*` | `NotSupportedException` | 否 | 第二阶段 |
+| `DurableText` | `NotSupportedException` | 否 | 后续 |
 
 ### 4.2 异常
 
@@ -242,6 +295,24 @@ dirty freeze 的事务边界：
 - 如果某个后续对象写入、ObjectMap 写入或 branch CAS 失败，标记不得清除，下一次 commit 应可重试 rebase。
 - `DiscardChanges()` 对已经 frozen 且释放 diff metadata 的 dirty snapshot 第一版建议直接抛 `InvalidOperationException`，不要尝试恢复旧 mutable tracker。
 
+建议把 `DiscardChanges()` 的规则说得更明确：
+
+```text
+clean tracked object:
+  Freeze() 后若尚未 commit，可允许 DiscardChanges() 撤销这次 freeze
+  （清掉 IsFrozen / mutabilityDirty，并恢复 mutable clean tracker）
+
+dirty tracked object:
+  Freeze() 后第一版不支持 DiscardChanges()
+  （因为已经把当前内容固化为 frozen current，并可能释放旧 diff/tracker 元数据）
+
+transient object:
+  Freeze() 后若未 commit，第一版同样不支持 DiscardChanges()
+  （理由同上：没有已提交快照可回退）
+```
+
+也就是说，`Freeze()` 不是“永远不可撤销”，但只有 **clean + tracked** 这一条路径值得为 UX 保留撤销能力。
+
 ### 6.3 VersionChain.Write 跳过条件
 
 现有跳过逻辑：
@@ -269,6 +340,32 @@ internal bool HasPersistenceChanges { get; }
 - `DiscardChanges()` 语义更清楚。
 
 `VersionChain.Write` 与 `PersistSnapshotCore` 的 clean skip 都应检查 `HasPersistenceChanges`，而不是只看 `HasChanges`。
+
+### 6.4 对象级真源与推荐字段
+
+第一阶段建议把“内容 dirty”和“持久化 dirty”明确拆开：
+
+```csharp
+public abstract class DurableObject {
+    private bool _isFrozen;
+    private bool _mutabilityDirty;
+    private bool _forceRebaseForFrozenSnapshot;
+
+    public bool IsFrozen => _isFrozen;
+    public abstract bool HasChanges { get; } // 仅内容 working state
+
+    internal bool HasPersistenceChanges =>
+        HasChanges || _mutabilityDirty || HasPendingObjectMapRegistration;
+}
+```
+
+规则：
+
+- `HasChanges` 继续由 tracker 表达“内容 working state 是否不同”。
+- `IsFrozen` 和 `_mutabilityDirty` 的唯一真源在 `DurableObject` 基类。
+- tracker 不自行维护 `IsFrozen` 的持久化 dirty；它只负责 frozen 形态下的内容存储。
+
+这样 `ForkCommittedAsMutable()`、commit skip、UI/诊断、以及 `DiscardChanges()` 的语义边界都会更清楚。
 
 ---
 
@@ -319,6 +416,40 @@ FrozenDictState {
 
 第一版建议采用 nullable fields，改动面较小。
 
+为支持第一阶段 `DurableDict`，建议把需要的 API 也一并固定下来：
+
+```csharp
+internal struct DictChangeTracker<TKey, TValue> {
+    public bool IsFrozen { get; }
+
+    public void FreezeFromClean<VHelper>();
+    public void FreezeFromCurrent<VHelper>();
+    public void UnfreezeToMutableClean<VHelper>();
+    public void MaterializeFrozenFromReconstructedCommitted<VHelper>();
+
+    public DictChangeTracker<TKey, TValue> ForkMutableForNewOwner<KHelper, VHelper>();
+}
+```
+
+语义建议：
+
+- `FreezeFromClean<VHelper>()`
+  - 前置条件：当前内容 clean。
+  - 目标：保留 frozen `Current`，释放 `Committed` / `DirtyKeys`。
+- `FreezeFromCurrent<VHelper>()`
+  - 前置条件：允许 dirty / transient。
+  - 目标：把当前内容整体 freeze 成新的 readonly current；之后不再保留“可增量回退”的 mutable tracker 状态。
+- `UnfreezeToMutableClean<VHelper>()`
+  - 仅供 `clean + tracked + freeze-but-not-committed-yet` 的 `DiscardChanges()` 使用。
+  - 用 current 重建 committed，并清空 dirtyKeys。
+- `MaterializeFrozenFromReconstructedCommitted<VHelper>()`
+  - 仅供 load 路径使用。
+  - 从 replay 后的 committed reconstructed state 直接收口成 frozen current，避免瞬时双份内存。
+- `ForkMutableForNewOwner<KHelper, VHelper>()`
+  - 若 tracker 仍是 mutable 形态，从 committed 拷贝。
+  - 若 tracker 已是 frozen 形态，从 current 拷贝。
+  - 对 `NeedRelease == true` 的值继续通过 `ForkFrozenForNewOwner` 复制所有权。
+
 Frozen tracker 行为：
 
 - `Current` 仍可供读取和 child-ref walk。
@@ -329,6 +460,30 @@ Frozen tracker 行为：
 - `WriteDeltify` 在 frozen dirty 状态下不应被调用；应强制 rebase。
 - `Commit` 对 frozen tracker 是 no-op 或只清理 object-level dirty bit。
 - ValidateReconstructed 需要能遍历 replayed committed state；不能在 freeze 后释放 committed 再校验。
+
+第一阶段建议让 `Commit` 在 frozen tracker 上成为真正的 no-op；对象级状态清理由 `DurableObject.OnCommitSucceeded` 负责。这样 tracker 的职责会更纯粹。
+
+### 7.1.1 Load 到 frozen dict 时避免瞬时双份内存
+
+当前加载路径是：
+
+```text
+ApplyDelta -> committed reconstructed
+OnLoadCompleted -> SyncCurrentFromCommitted()
+```
+
+如果 final flags 表示 frozen，第一阶段建议不要走“先复制出 mutable current，再立刻释放 committed”的路径，
+否则会出现一次无意义的双份内存峰值。更好的做法是：
+
+```text
+ApplyDelta -> committed reconstructed
+OnLoadCompleted detects IsFrozen
+  -> 直接把 reconstructed committed 物化为 frozen current
+  -> 不再保留 committed / dirtyKeys
+```
+
+也就是说，`DictChangeTracker` 需要提供一个“从 reconstructed committed 直接收口成 frozen current”的入口，
+而不是只能先 `SyncCurrentFromCommitted()` 再 `FreezeFromClean()`。
 
 ### 7.2 DequeChangeTracker
 
@@ -404,6 +559,8 @@ Dict：
 - `Remove`
 - mixed typed view 的 `Upsert`
 
+第一阶段只要求把 dict 系列的所有 public mutating API 防护完整补齐；其他类型因为 `Freeze()` 尚未开放，不作为 PR1 阻塞项。
+
 Deque：
 
 - `PushFront`
@@ -452,6 +609,29 @@ mutable.Upsert("field", "new value");
 - forked mutable 第一次内容修改 commit 写自己的 delta/rebase，flags 为 mutable。
 
 如果 source 是 frozen transient/untracked，则第一版可拒绝 fork，要求先 commit。
+
+### 9.1 Frozen DurableDict 的 fork 实现建议
+
+这部分对 PR1 很关键，建议文档里显式钉住：
+
+`ForkCommittedAsMutable()` 的 public 语义仍然叫“committed fork”，但对 frozen dict 而言，
+其 frozen `Current` 就是“当前对象的持久化视图”。因此第一阶段可采用下列实现：
+
+```text
+source mutable tracker:
+  从 committed 复制到新 mutable tracker
+
+source frozen tracker:
+  从 frozen current 复制到新 mutable tracker
+```
+
+这样做的理由：
+
+- frozen dict 已经不再保留 mutable committed/current 双态；
+- 其 current 本身就是上次持久化后希望 reopen 看到的内容；
+- fork 的目标是得到一个新的 mutable owner，而不是恢复 source 的 mutable tracker。
+
+因此，第一阶段不要把 frozen dict 的 fork 仍硬绑在“必须存在 committed 字典”这个前提上。
 
 ---
 
@@ -508,14 +688,21 @@ VersionChain.Load
   - ValidateReconstructed scans reconstructed committed state
   - OnLoadCompleted
   - if final flags IsFrozen:
-      tracker.SyncCurrentFromCommitted()
-      tracker.FreezeFromClean()
+      tracker.MaterializeFrozenFromReconstructedCommitted()
       object.IsFrozen = true
     else:
       normal mutable SyncCurrentFromCommitted()
 ```
 
 注意：`ValidateReconstructed` 仍需在 `OnLoadCompleted` 前执行；frozen 不应破坏 typed string placeholder 和 mixed symbol 校验。当前若某些实现遍历 `_core.Current`，需要改成遍历 replayed committed state 或 tracker 暴露的 reconstructed view，否则 `_current` 为空时会漏校验。
+
+### 10.5 SaveAs / ExportTo 对 frozen 的要求
+
+第一阶段建议把 cross-file 语义也提前讲清楚：
+
+- `SaveAs` 写出的 full snapshot 必须保留 `IsFrozen` flags。
+- `ExportTo` 不应修改 source revision 中对象的 `_mutabilityDirty` / `_forceRebaseForFrozenSnapshot` / pending registration 状态。
+- 对 frozen dict 而言，cross-file snapshot 仍应写成 rebase frame，但 flags 必须来自对象当前 `IsFrozen`，不能只继承旧 head。
 
 ---
 
@@ -543,6 +730,13 @@ VersionChain.Load
 - reopen 后 `IsFrozen == true`。
 
 这是防止“freeze 语义没有写盘”的关键测试。
+
+补一个撤销测试：
+
+- create/commit mutable object。
+- `Freeze()` 后但尚未 commit，调用 `DiscardChanges()`。
+- 对象恢复 mutable clean。
+- commit/reopen 后 `IsFrozen == false`。
 
 ### 11.4 Dirty object freeze 强制 rebase
 
@@ -611,11 +805,30 @@ VersionChain.Load
 3. 在 `DurableObject` 增加 `IsFrozen`、mutability dirty、`HasPersistenceChanges`、异常 helper。
 4. 修改 commit skip 逻辑，使用 `HasPersistenceChanges`。
 5. 修改 dict mutating API，添加 frozen 防护。
-6. 重构 `DictChangeTracker` 支持 frozen shape 和 reconstructed-state validation。
-7. 实现 typed dict frozen 全链路测试。
-8. 推广到 mixed dict，并处理 refcount。
-9. 推广到 deque。
-10. ordered dict / `DurableText` 先做防误用，资源释放另行设计。
+6. 重构 `DictChangeTracker` 支持 frozen shape、direct-load-to-frozen、以及 frozen-source fork。
+7. 先实现 typed dict frozen 全链路测试。
+8. 再推广到 mixed dict，并处理 refcount 与 mixed symbol walk。
+9. deque / ordered dict / `DurableText` 暂不实现 `Freeze()`，保持显式 `NotSupportedException`。
+10. 第二阶段再推广到 deque；ordered dict / `DurableText` 继续单独设计。
+
+### 12.1 PR1 预计修改点
+
+为方便后续直接开工，第一阶段大致会落到这些文件：
+
+- `src/StateJournal/DurableObject.cs`
+- `src/StateJournal/Internal/VersionChainStatus.cs`
+- `src/StateJournal/Internal/VersionChain.cs`
+- `src/StateJournal/Revision.Commit.cs`
+- `src/StateJournal/DurableDict.Typed.cs`
+- `src/StateJournal/DurableDict.Mixed.cs`
+- `src/StateJournal/DurableDictBase.cs`
+- `src/StateJournal/Internal/TypedDictImpl.cs`
+- `src/StateJournal/Internal/MixedDictImpl.cs`
+- `src/StateJournal/Internal/DurObjDictImpl.cs`
+- `src/StateJournal/Internal/DictChangeTracker.cs`
+- 以及相应测试文件
+
+如果 PR1 期间发现必须修改 deque / ordered dict 的公共 facade，只应限于“显式拒绝 Freeze()”，不要把完整实现偷偷扩进去。
 
 ---
 
@@ -627,6 +840,7 @@ VersionChain.Load
 - frozen tracker 是否要保留 committed payload 以便未来 debug/diff；第一版建议释放。
 - `Freeze()` 是否允许在 object 未挂到 root 时调用；建议允许，commit 可达性仍由 root 决定。
 - `DurableText` 是否在首版只做防写，不做资源释放。
+- clean tracked object 在 freeze-but-not-yet-committed 状态下，`DiscardChanges()` 是否允许撤销 freeze；本文建议允许。
 
 ---
 
