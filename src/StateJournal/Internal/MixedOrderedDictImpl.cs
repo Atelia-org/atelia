@@ -24,6 +24,7 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
         _core.SyncCurrentFromCommitted();
         RecountRefs();
     }
+    private protected override void SyncFrozenCurrentFromCommittedCore() => throw new InvalidDataException("Frozen OrderedDict is not supported by this implementation.");
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) =>
         _core.WriteRebase(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) =>

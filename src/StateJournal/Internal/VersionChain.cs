@@ -117,7 +117,7 @@ internal static class VersionChain {
         Revision? stringRevision = null
     ) {
         context.AssertValid();
-        if (!obj.HasChanges && !context.ForceRebase
+        if (!obj.HasPersistenceChanges && !context.ForceRebase
             && !context.ForceSave && obj.IsTracked
         ) { return new PendingSave(obj, obj.HeadTicket, context); }
         using RbfFrameBuilder builder = file.BeginAppend();

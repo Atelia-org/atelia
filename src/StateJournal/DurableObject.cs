@@ -11,6 +11,9 @@ public abstract class DurableObject {
     DurableState _state;
     Revision? _revision;
     bool _pendingObjectMapRegistration;
+    bool _isFrozen;
+    bool _mutabilityDirty;
+    bool _forceRebaseForFrozenSnapshot;
 
     public LocalId LocalId { get; private set; }
 
@@ -32,8 +35,16 @@ public abstract class DurableObject {
     /// <inheritdoc/>
     public DurableState State => _state;
 
+    public bool IsFrozen => _isFrozen;
+
     /// <inheritdoc/>
     public abstract bool HasChanges { get; }
+
+    internal bool HasPersistenceChanges => HasChanges || _mutabilityDirty || _pendingObjectMapRegistration;
+
+    internal bool HasMutabilityChanges => _mutabilityDirty;
+
+    internal bool ForceRebaseForFrozenSnapshot => _forceRebaseForFrozenSnapshot;
 
     /// <returns>RBF frame tag</returns>
     internal abstract FrameTag WritePendingDiff(BinaryDiffWriter writer, ref DiffWriteContext context);
@@ -61,12 +72,71 @@ public abstract class DurableObject {
     internal virtual DurableObject ForkAsMutableCore() =>
         throw new NotSupportedException($"{GetType().Name} does not support ForkCommittedAsMutable.");
 
+    public void Freeze() {
+        ThrowIfDetached();
+        if (_isFrozen) { return; }
+
+        bool forceRebase = HasChanges || !IsTracked;
+        FreezeCore(forceRebase);
+        _isFrozen = true;
+        _mutabilityDirty = CurrentObjectFlags != VersionObjectFlags;
+        if (forceRebase) { _forceRebaseForFrozenSnapshot = true; }
+    }
+
+    internal virtual void FreezeCore(bool forceRebase) =>
+        throw new NotSupportedException($"{GetType().Name} does not support Freeze.");
+
     protected void ThrowIfPendingObjectMapRegistration() {
         if (_pendingObjectMapRegistration) {
             throw new InvalidOperationException(
                 "Cannot discard changes on a forked durable object before its ObjectMap registration has been committed."
             );
         }
+    }
+
+    protected void ThrowIfFrozen() {
+        if (_isFrozen) { throw new ObjectFrozenException(LocalId); }
+    }
+
+    protected void ThrowIfDetachedOrFrozen() {
+        ThrowIfDetached();
+        ThrowIfFrozen();
+    }
+
+    protected bool CanDiscardCleanFreeze => _isFrozen && _mutabilityDirty && !_forceRebaseForFrozenSnapshot && IsTracked && !HasChanges;
+
+    protected void ThrowIfCannotDiscardFrozenChanges() {
+        if (!_isFrozen) { return; }
+        if (CanDiscardCleanFreeze) { return; }
+
+        throw new InvalidOperationException(
+            "Cannot discard changes on a frozen durable object unless it is a clean tracked object whose uncommitted Freeze() can be reverted."
+        );
+    }
+
+    protected void ClearDiscardedFreeze() {
+        if (!CanDiscardCleanFreeze) { throw new InvalidOperationException("Current freeze state cannot be discarded."); }
+        _isFrozen = false;
+        _mutabilityDirty = false;
+        _forceRebaseForFrozenSnapshot = false;
+    }
+
+    internal ObjectVersionFlags CurrentObjectFlags =>
+        _isFrozen ? ObjectVersionFlags.Frozen : ObjectVersionFlags.None;
+
+    internal virtual ObjectVersionFlags VersionObjectFlags => ObjectVersionFlags.None;
+
+    internal void MarkMutabilityDirty() => _mutabilityDirty = true;
+
+    internal void ApplyLoadedObjectFlags(ObjectVersionFlags objectFlags) {
+        _isFrozen = (objectFlags & ObjectVersionFlags.Frozen) != 0;
+        _mutabilityDirty = false;
+        _forceRebaseForFrozenSnapshot = false;
+    }
+
+    internal void ClearCommittedPersistenceFlags() {
+        _mutabilityDirty = false;
+        _forceRebaseForFrozenSnapshot = false;
     }
 
     internal abstract void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) where TVisitor : IChildRefVisitor, allows ref struct;

@@ -4,12 +4,19 @@ using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
 
+[Flags]
+internal enum ObjectVersionFlags : uint {
+    None = 0,
+    Frozen = 1,
+}
+
 internal struct VersionChainStatus {
     // const uint ReadWeight = 1, WriteWeight = 1, StorageWeight = 1;
     const uint MaxReadAmplificationRatio = 3; // 来自于权重分配方案`Write:Read:Storage = 1:1:1`
 
     // 固定额外开销相当于多少条变更（remove or upsert）。每条变更估算约VarInt(8B+8B)≈8B
-    const uint PerFrameOverhead = 6; // 涉及多个变长字段，还挺不好估算的，约34B。RbfFrame=24B, ParentTicket+CumulativeCost=VarInt(8B+4B), RemoveCount+UpsertCount=VarInt(4B+4B)。
+    const uint PerFrameOverhead = 7; // 涉及多个变长字段，还挺不好估算的，约34B。RbfFrame=24B, ParentTicket+CumulativeCost+ObjectFlags=VarInt(8B+4B+4B), RemoveCount+UpsertCount=VarInt(4B+4B)。
+    const ObjectVersionFlags KnownFlags = ObjectVersionFlags.Frozen;
 
     // 前一个 version 的 RBF Frame Ticket。
     // 注意：这里记录的是“逻辑前驱”，不要求一定与当前写入目标文件同源。
@@ -19,9 +26,12 @@ internal struct VersionChainStatus {
 
     // 从头帧的 parentTicket 指向的基帧（含）到当前 _head（含）总共的开销。用于评估是否值得以deltify方式保存而非rebase。
     uint _cumulativeCost; // 由于PerFrameOverhead的存在，在初始化后_cumulativeCost不可能为0，可用于初始化检测。
+    ObjectVersionFlags _objectFlags;
 
     internal readonly SizedPtr Head => _head;
     internal readonly bool IsTracked => _cumulativeCost != 0;
+    internal readonly ObjectVersionFlags ObjectFlags => _objectFlags;
+    internal readonly bool IsFrozen => (_objectFlags & ObjectVersionFlags.Frozen) != 0;
 
     internal readonly VersionChainStatus ForkForNewObject() {
         Debug.Assert(IsTracked, "Only committed/tracked objects can be forked.");
@@ -44,17 +54,19 @@ internal struct VersionChainStatus {
 
     private readonly uint GetDeltifiedCumulativeCost(uint deltifySize) => checked(_cumulativeCost + deltifySize + PerFrameOverhead);
     /// <summary>二阶段提交的前一阶段</summary>
-    internal readonly void WriteDeltify(BinaryDiffWriter writer, uint deltifySize) {
+    internal readonly void WriteDeltify(BinaryDiffWriter writer, uint deltifySize, ObjectVersionFlags objectFlags) {
         uint newCumulativeCost = GetDeltifiedCumulativeCost(deltifySize);
         writer.BareUInt64(_head.Serialize(), false);
         writer.BareUInt32(newCumulativeCost, false);
+        writer.BareUInt32((uint)objectFlags, false);
     }
 
     /// <summary>二阶段提交的后一阶段</summary>
-    internal void UpdateDeltified(SizedPtr versionTicket, uint deltifySize) {
+    internal void UpdateDeltified(SizedPtr versionTicket, uint deltifySize, ObjectVersionFlags objectFlags) {
         uint newCumulativeCost = GetDeltifiedCumulativeCost(deltifySize);
         _head = versionTicket;
         _cumulativeCost = newCumulativeCost;
+        _objectFlags = objectFlags;
     }
 
     private readonly uint GetRebasedCumulativeCost(uint rebaseSize) => checked(rebaseSize + PerFrameOverhead);
@@ -63,17 +75,19 @@ internal struct VersionChainStatus {
     /// 即使本次输出的是 rebase 帧，也会把当前 <see cref="_head"/> 写入 parentTicket，
     /// 以保留逻辑祖先链；这在 ExportTo/SaveAs 的跨文件 full snapshot 场景下是有意设计。
     /// </summary>
-    internal readonly void WriteRebase(BinaryDiffWriter writer, uint rebaseSize) {
+    internal readonly void WriteRebase(BinaryDiffWriter writer, uint rebaseSize, ObjectVersionFlags objectFlags) {
         uint newCumulativeCost = GetRebasedCumulativeCost(rebaseSize);
         writer.BareUInt64(_head.Serialize(), false);
         writer.BareUInt32(newCumulativeCost, false);
+        writer.BareUInt32((uint)objectFlags, false);
     }
 
     /// <summary>二阶段提交的后一阶段</summary>
-    internal void UpdateRebased(SizedPtr versionTicket, uint rebaseSize) {
+    internal void UpdateRebased(SizedPtr versionTicket, uint rebaseSize, ObjectVersionFlags objectFlags) {
         uint newCumulativeCost = GetRebasedCumulativeCost(rebaseSize);
         _head = versionTicket;
         _cumulativeCost = newCumulativeCost;
+        _objectFlags = objectFlags;
     }
 
     /// <summary>通用于 rebase frame 和 deltify frame 。</summary>
@@ -82,7 +96,18 @@ internal struct VersionChainStatus {
     /// <exception cref="Exception"></exception>
     internal void ApplyDelta(ref BinaryDiffReader reader, SizedPtr parentTicket) {
         uint newCumulativeCost = reader.BareUInt32(false);
+        ObjectVersionFlags objectFlags = ReadObjectFlags(ref reader);
         _head = parentTicket;
         _cumulativeCost = newCumulativeCost;
+        _objectFlags = objectFlags;
+    }
+
+    private static ObjectVersionFlags ReadObjectFlags(ref BinaryDiffReader reader) {
+        ObjectVersionFlags flags = (ObjectVersionFlags)reader.BareUInt32(false);
+        ObjectVersionFlags unknown = flags & ~KnownFlags;
+        if (unknown != 0) {
+            throw new InvalidDataException($"Unsupported object flags 0x{(uint)unknown:X8}.");
+        }
+        return flags;
     }
 }

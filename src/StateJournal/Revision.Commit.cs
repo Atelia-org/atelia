@@ -193,7 +193,7 @@ partial class Revision {
             ForceSave = forceAll,
         };
         foreach (var obj in liveObjects) {
-            if (!forceAll && obj.IsTracked && !obj.HasChanges) {
+            if (!forceAll && obj.IsTracked && !obj.HasChanges && !obj.HasMutabilityChanges) {
                 if (obj.HasPendingObjectMapRegistration) {
                     _objectMap.Upsert(obj.LocalId.Value, obj.HeadTicket.Serialize());
                 }

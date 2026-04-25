@@ -31,6 +31,12 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
 
     internal override void DiscardChanges() {
         ThrowIfPendingObjectMapRegistration();
+        if (IsFrozen) {
+            ThrowIfCannotDiscardFrozenChanges();
+            _core.UnfreezeToMutableClean<LocalIdAsRefHelper>();
+            ClearDiscardedFreeze();
+            return;
+        }
         _core.Revert<LocalIdAsRefHelper>();
     }
 
@@ -39,6 +45,15 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
         fork._core = _core.ForkMutableFromCommitted<KHelper, LocalIdAsRefHelper>();
         fork._versionStatus = _versionStatus.ForkForNewObject();
         return fork;
+    }
+
+    internal override void FreezeCore(bool forceRebase) {
+        if (forceRebase) {
+            _core.FreezeFromCurrent<LocalIdAsRefHelper>();
+        }
+        else {
+            _core.FreezeFromClean<LocalIdAsRefHelper>();
+        }
     }
 
     #endregion
@@ -54,6 +69,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     internal override IReadOnlyCollection<TKey> CommittedKeys => _core.CommittedKeys;
 
     public override bool Remove(TKey key) {
+        ThrowIfDetachedOrFrozen();
         if (!_core.Current.Remove(key, out var removedId)) { return false; }
         _core.AfterRemove<LocalIdAsRefHelper>(key, removedId);
         return true;
@@ -77,6 +93,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     }
 
     public override UpsertStatus Upsert(TKey key, TDurObj? value) {
+        ThrowIfDetachedOrFrozen();
         if (value is not null) { Revision.EnsureCanReference(value); }
         var localId = value?.LocalId ?? LocalId.Null;
         return _core.Upsert<LocalIdAsRefHelper>(key, localId);
@@ -88,6 +105,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
 
     private protected override void CommitCore() => _core.Commit<LocalIdAsRefHelper>();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<LocalIdAsRefHelper>();
+    private protected override void SyncFrozenCurrentFromCommittedCore() => _core.MaterializeFrozenFromReconstructedCommitted<LocalIdAsRefHelper>();
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<KHelper, LocalIdAsRefHelper>(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<KHelper, LocalIdAsRefHelper>(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, LocalIdAsRefHelper>(ref reader);
@@ -108,8 +126,8 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
 
     internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
         if (tracker is null || !KHelper.NeedValidateReconstructed) { return null; }
-        foreach (var key in _core.Current.Keys) {
-            if (KHelper.ValidateReconstructed(key, tracker, "DurObjDict") is { } error) { return error; }
+        foreach (var pair in _core.ReconstructedOrCurrent) {
+            if (KHelper.ValidateReconstructed(pair.Key, tracker, "DurObjDict") is { } error) { return error; }
         }
         return null;
     }

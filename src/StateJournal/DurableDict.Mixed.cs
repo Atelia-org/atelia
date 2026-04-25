@@ -79,6 +79,7 @@ where TKey : notnull {
     public bool ContainsKey(TKey key) => _core.Current.ContainsKey(key);
     public int Count => _core.Current.Count;
     public bool Remove(TKey key) {
+        ThrowIfDetachedOrFrozen();
         if (!_core.Current.Remove(key, out var removedValue)) { return false; }
         OnCurrentValueRemoved(removedValue);
         _core.AfterRemove<ValueBoxHelper>(key, removedValue);
@@ -113,6 +114,7 @@ where TKey : notnull {
     private UpsertStatus UpsertCore<TValue, VFace>(TKey key, TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
+        ThrowIfDetachedOrFrozen();
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
         ValueBox oldValue = exists ? slot : default;
         if (!VFace.UpdateOrInit(ref slot, value)) { return UpsertStatus.Updated; /* 值未变，跳过 AfterUpsert */ }

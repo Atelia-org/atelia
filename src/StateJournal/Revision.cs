@@ -356,6 +356,11 @@ public partial class Revision {
                 $"Cannot fork LocalId={source.LocalId.Value}: source has no committed version chain yet."
             );
         }
+        if (source.IsFrozen && source.ForceRebaseForFrozenSnapshot) {
+            throw new InvalidOperationException(
+                $"Cannot fork LocalId={source.LocalId.Value}: dirty frozen state has not been committed yet."
+            );
+        }
 
         var fork = source.ForkAsMutableCore();
         if (fork is not TFork typedFork) {
@@ -365,6 +370,9 @@ public partial class Revision {
         }
 
         BindForkedObject(typedFork);
+        if (typedFork.VersionObjectFlags != typedFork.CurrentObjectFlags) {
+            typedFork.MarkMutabilityDirty();
+        }
         return typedFork;
     }
 

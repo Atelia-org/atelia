@@ -15,6 +15,13 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
 
     internal override void DiscardChanges() {
         ThrowIfPendingObjectMapRegistration();
+        if (IsFrozen) {
+            ThrowIfCannotDiscardFrozenChanges();
+            _core.UnfreezeToMutableClean<ValueBoxHelper>();
+            ClearDiscardedFreeze();
+            RecountRefs();
+            return;
+        }
         _core.Revert<ValueBoxHelper>();
         RecountRefs();
     }
@@ -27,9 +34,23 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         return fork;
     }
 
+    internal override void FreezeCore(bool forceRebase) {
+        if (forceRebase) {
+            _core.FreezeFromCurrent<ValueBoxHelper>();
+        }
+        else {
+            _core.FreezeFromClean<ValueBoxHelper>();
+        }
+        RecountRefs();
+    }
+
     private protected override void CommitCore() => _core.Commit<ValueBoxHelper>();
     private protected override void SyncCurrentFromCommittedCore() {
         _core.SyncCurrentFromCommitted<ValueBoxHelper>();
+        RecountRefs();
+    }
+    private protected override void SyncFrozenCurrentFromCommittedCore() {
+        _core.MaterializeFrozenFromReconstructedCommitted<ValueBoxHelper>();
         RecountRefs();
     }
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<KHelper, ValueBoxHelper>(writer, context);
@@ -69,14 +90,14 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
 
     internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
         if (tracker is not null && KHelper.NeedValidateReconstructed) {
-            foreach (var key in _core.Current.Keys) {
-                if (KHelper.ValidateReconstructed(key, tracker, "MixedDict") is { } keyError) { return keyError; }
+            foreach (var pair in _core.ReconstructedOrCurrent) {
+                if (KHelper.ValidateReconstructed(pair.Key, tracker, "MixedDict") is { } keyError) { return keyError; }
             }
         }
 
         if (symbolPool is not null) {
-            foreach (var box in _core.Current.Values) {
-                if (ValueBox.ValidateReconstructedMixedSymbol(box, symbolPool, "MixedDict") is { } symbolError) {
+            foreach (var pair in _core.ReconstructedOrCurrent) {
+                if (ValueBox.ValidateReconstructedMixedSymbol(pair.Value, symbolPool, "MixedDict") is { } symbolError) {
                     return symbolError;
                 }
             }

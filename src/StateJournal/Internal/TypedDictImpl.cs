@@ -30,6 +30,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     internal override IReadOnlyCollection<TKey> CommittedKeys => _core.CommittedKeys;
 
     public override bool Remove(TKey key) {
+        ThrowIfDetachedOrFrozen();
         if (!_core.Current.Remove(key, out TValue? removedValue)) { return false; }
         _core.AfterRemove<VHelper>(key, removedValue);
         return true;
@@ -45,12 +46,21 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
             : GetIssue.NotFound;
     }
 
-    public override UpsertStatus Upsert(TKey key, TValue? value) => _core.Upsert<VHelper>(key, value);
+    public override UpsertStatus Upsert(TKey key, TValue? value) {
+        ThrowIfDetachedOrFrozen();
+        return _core.Upsert<VHelper>(key, value);
+    }
 
     #endregion
 
     internal override void DiscardChanges() {
         ThrowIfPendingObjectMapRegistration();
+        if (IsFrozen) {
+            ThrowIfCannotDiscardFrozenChanges();
+            _core.UnfreezeToMutableClean<VHelper>();
+            ClearDiscardedFreeze();
+            return;
+        }
         _core.Revert<VHelper>();
     }
 
@@ -61,8 +71,18 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
         return fork;
     }
 
+    internal override void FreezeCore(bool forceRebase) {
+        if (forceRebase) {
+            _core.FreezeFromCurrent<VHelper>();
+        }
+        else {
+            _core.FreezeFromClean<VHelper>();
+        }
+    }
+
     private protected override void CommitCore() => _core.Commit<VHelper>();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<VHelper>();
+    private protected override void SyncFrozenCurrentFromCommittedCore() => _core.MaterializeFrozenFromReconstructedCommitted<VHelper>();
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<KHelper, VHelper>(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<KHelper, VHelper>(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<KHelper, VHelper>(ref reader);
@@ -85,14 +105,14 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
         if (tracker is null) { return null; }
 
         if (KHelper.NeedValidateReconstructed) {
-            foreach (var key in _core.Current.Keys) {
-                if (KHelper.ValidateReconstructed(key, tracker, "TypedDict") is { } keyError) { return keyError; }
+            foreach (var pair in _core.ReconstructedOrCurrent) {
+                if (KHelper.ValidateReconstructed(pair.Key, tracker, "TypedDict") is { } keyError) { return keyError; }
             }
         }
 
         if (VHelper.NeedValidateReconstructed) {
-            foreach (var value in _core.Current.Values) {
-                if (VHelper.ValidateReconstructed(value, tracker, "TypedDict") is { } valueError) { return valueError; }
+            foreach (var pair in _core.ReconstructedOrCurrent) {
+                if (VHelper.ValidateReconstructed(pair.Value, tracker, "TypedDict") is { } valueError) { return valueError; }
             }
         }
 

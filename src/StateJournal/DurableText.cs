@@ -94,15 +94,18 @@ public sealed class DurableText : DurableObject {
 
     internal override SizedPtr HeadTicket => _versionStatus.Head;
     internal override bool IsTracked => _versionStatus.IsTracked;
+    internal override ObjectVersionFlags VersionObjectFlags => _versionStatus.ObjectFlags;
 
     internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) {
+        ObjectVersionFlags objectFlags = CurrentObjectFlags;
         if (context.WasRebase) {
-            _versionStatus.UpdateRebased(versionTicket, context.EffectiveRebaseSize);
+            _versionStatus.UpdateRebased(versionTicket, context.EffectiveRebaseSize, objectFlags);
         }
         else {
-            _versionStatus.UpdateDeltified(versionTicket, context.EffectiveDeltifySize);
+            _versionStatus.UpdateDeltified(versionTicket, context.EffectiveDeltifySize, objectFlags);
         }
         _core.Commit();
+        ClearCommittedPersistenceFlags();
         SetState(DurableState.Clean);
     }
 
@@ -115,14 +118,14 @@ public sealed class DurableText : DurableObject {
         if (doRebase) {
             context.SetOutcome(wasRebase: true, rebaseSize, deltifySize);
             writer.WriteBytes(TypeCode);
-            _versionStatus.WriteRebase(writer, rebaseSize);
+            _versionStatus.WriteRebase(writer, rebaseSize, CurrentObjectFlags);
             _core.WriteRebase(writer, context);
             return new(VersionKind.Rebase, Kind, context.FrameUsage, context.FrameSource);
         }
 
         context.SetOutcome(wasRebase: false, rebaseSize, deltifySize);
         writer.WriteBytes(null);
-        _versionStatus.WriteDeltify(writer, deltifySize);
+        _versionStatus.WriteDeltify(writer, deltifySize, CurrentObjectFlags);
         _core.WriteDeltify(writer, context);
         return new(VersionKind.Delta, Kind, context.FrameUsage, context.FrameSource);
     }
@@ -135,6 +138,8 @@ public sealed class DurableText : DurableObject {
 
     internal override void OnLoadCompleted(SizedPtr versionTicket) {
         _versionStatus.SetHead(versionTicket);
+        ApplyLoadedObjectFlags(_versionStatus.ObjectFlags);
+        if (IsFrozen) { throw new InvalidDataException("Frozen DurableText is not supported by this implementation."); }
         _core.SyncCurrentFromCommitted();
         SetState(DurableState.Clean);
     }

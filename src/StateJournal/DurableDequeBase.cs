@@ -31,19 +31,22 @@ public abstract class DurableDequeBase : DurableObject {
 
     internal sealed override SizedPtr HeadTicket => _versionStatus.Head;
     internal sealed override bool IsTracked => _versionStatus.IsTracked;
+    internal sealed override ObjectVersionFlags VersionObjectFlags => _versionStatus.ObjectFlags;
 
     #endregion
 
     #region Persistence Lifecycle
 
     internal sealed override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) {
+        ObjectVersionFlags objectFlags = CurrentObjectFlags;
         if (context.WasRebase) {
-            _versionStatus.UpdateRebased(versionTicket, context.EffectiveRebaseSize);
+            _versionStatus.UpdateRebased(versionTicket, context.EffectiveRebaseSize, objectFlags);
         }
         else {
-            _versionStatus.UpdateDeltified(versionTicket, context.EffectiveDeltifySize);
+            _versionStatus.UpdateDeltified(versionTicket, context.EffectiveDeltifySize, objectFlags);
         }
         CommitCore();
+        ClearCommittedPersistenceFlags();
         SetState(DurableState.Clean);
     }
 
@@ -56,14 +59,14 @@ public abstract class DurableDequeBase : DurableObject {
         if (doRebase) {
             context.SetOutcome(wasRebase: true, rebaseSize, deltifySize);
             writer.WriteBytes(TypeCode); // 非空 TypeCode 表示 rebase frame
-            _versionStatus.WriteRebase(writer, rebaseSize);
+            _versionStatus.WriteRebase(writer, rebaseSize, CurrentObjectFlags);
             WriteRebaseCore(writer, context);
             return new(VersionKind.Rebase, Kind, context.FrameUsage, context.FrameSource);
         }
 
         context.SetOutcome(wasRebase: false, rebaseSize, deltifySize);
         writer.WriteBytes(null); // 空 TypeCode 表示 deltify frame
-        _versionStatus.WriteDeltify(writer, deltifySize);
+        _versionStatus.WriteDeltify(writer, deltifySize, CurrentObjectFlags);
         WriteDeltifyCore(writer, context);
         return new(VersionKind.Delta, Kind, context.FrameUsage, context.FrameSource);
     }
@@ -77,6 +80,8 @@ public abstract class DurableDequeBase : DurableObject {
 
     internal sealed override void OnLoadCompleted(SizedPtr versionTicket) {
         _versionStatus.SetHead(versionTicket);
+        ApplyLoadedObjectFlags(_versionStatus.ObjectFlags);
+        if (IsFrozen) { throw new InvalidDataException("Frozen DurableDeque is not supported by this implementation."); }
         SyncCurrentFromCommittedCore();
         SetState(DurableState.Clean);
     }

@@ -235,7 +235,7 @@ objectFlags
 
 unknown bits 第一版必须 fail-fast 为 corruption/unsupported format，不默默忽略。这样后续新增 flags 时不会让旧代码误读对象语义。
 
-Load 时 `VersionChainStatus.ApplyDelta` 读出 flags，并更新 status 内的当前 flags。`VersionChainStatus` 应成为 object flags 的唯一真源；容器类型不各自解析 flags。
+Load 时 `VersionChainStatus.ApplyDelta` 读出 flags，并更新 status 内的 committed/current-version flags。`VersionChainStatus` 是“已提交版本 flags”的真源；`DurableObject` 基类持有 working flags（例如未提交的 `Freeze()`），并用 `_mutabilityDirty` 表达 working flags 是否不同于已提交 flags。容器类型不各自解析 flags。
 
 优点：
 
@@ -646,7 +646,7 @@ Freeze()
   - if HasChanges or !IsTracked: tracker.FreezeFromCurrent()
   - else tracker.FreezeFromClean()
   - IsFrozen = true
-  - mark mutability dirty
+  - mark mutability dirty if working flags differ from committed flags
   - if content was dirty: force next save as rebase
 ```
 

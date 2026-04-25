@@ -21,6 +21,7 @@ internal sealed class TypedOrderedDictImpl<TKey, TValue, KHelper, VHelper> : Dur
 
     private protected override void CommitCore() => _core.Commit();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted();
+    private protected override void SyncFrozenCurrentFromCommittedCore() => throw new InvalidDataException("Frozen OrderedDict is not supported by this implementation.");
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta(ref reader);
