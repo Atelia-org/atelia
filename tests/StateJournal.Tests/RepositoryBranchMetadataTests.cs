@@ -132,7 +132,7 @@ public class RepositoryBranchMetadataTests : IDisposable {
         return path;
     }
 
-    private static T AssertSuccess<T>(AteliaResult<T> result) {
+    private static T AssertSuccess<T>(AteliaResult<T> result) where T : notnull {
         Assert.True(result.IsSuccess, $"Expected success but got error: {result.Error}");
         return result.Value!;
     }

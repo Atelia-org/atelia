@@ -21,7 +21,7 @@ partial class Revision {
     private AteliaResult<bool> UpdateSymbolMirror(SymbolMirrorUpdatePlan plan) {
         PruneUnreachableSymbolsFromMirror(reachableOnly: true);
 
-        Debug.Assert(ValidateSymbolMirrorConsistency(reachableOnly: true).GetValueOrThrow() == true);
+        Debug.Assert(ValidateSymbolMirrorConsistency(reachableOnly: true).Unwrap() == true);
 
         return true;
     }

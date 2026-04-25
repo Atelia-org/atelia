@@ -325,7 +325,7 @@ partial class RevisionTests {
         return count;
     }
 
-    private static T AssertSuccess<T>(AteliaResult<T> result) {
+    private static T AssertSuccess<T>(AteliaResult<T> result) where T : notnull {
         Assert.True(result.IsSuccess, $"Expected success, got: {result.Error}");
         return result.Value!;
     }
