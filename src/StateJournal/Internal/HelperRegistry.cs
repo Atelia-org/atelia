@@ -48,7 +48,7 @@ internal static class HelperRegistry {
 
     private static readonly TypeEntry _bool = new(typeof(BooleanHelper), [(byte)TypeOpCode.PushBoolean]);
     private static readonly TypeEntry _string = new(typeof(StringHelper), [(byte)TypeOpCode.PushString]);
-    private static readonly TypeEntry _inlineString = new(typeof(InlineStringHelper), [(byte)TypeOpCode.PushInlineString]);
+    private static readonly TypeEntry _symbol = new(typeof(SymbolHelper), [(byte)TypeOpCode.PushSymbol]);
     private static readonly TypeEntry _double = new(typeof(DoubleHelper), [(byte)TypeOpCode.PushDouble]);
     private static readonly TypeEntry _single = new(typeof(SingleHelper), [(byte)TypeOpCode.PushSingle]);
     private static readonly TypeEntry _half = new(typeof(HalfHelper), [(byte)TypeOpCode.PushHalf]);
@@ -86,7 +86,7 @@ internal static class HelperRegistry {
     internal static TypeEntry ResolveKeyHelper(Type t) {
         if (t == typeof(bool)) { return _bool; }
         if (t == typeof(string)) { return _string; }
-        if (t == typeof(InlineString)) { return _inlineString; }
+        if (t == typeof(Symbol)) { return _symbol; }
         // if (t == typeof(LocalId)) { ... } 暂时不支持，后续如果碰到需求再引入同时支持LocalId和DurableObjectRef两种语义
 
         if (t == typeof(double)) { return _double; }

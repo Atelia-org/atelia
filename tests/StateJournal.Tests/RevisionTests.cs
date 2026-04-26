@@ -41,7 +41,7 @@ public partial class RevisionTests : IDisposable {
     private static int GetSymbolTableCount(Revision revision) {
         var field = typeof(Revision).GetField("_symbolMirror", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(field);
-        var table = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(field!.GetValue(revision));
+        var table = Assert.IsAssignableFrom<DurableDict<uint, string>>(field!.GetValue(revision));
         return table.Count;
     }
 
@@ -209,7 +209,7 @@ public partial class RevisionTests : IDisposable {
         objectMap.Upsert(root.LocalId.Value, rootSave.Value.Serialize()); // 故意不写 child ticket
 
         var symbolTableField = typeof(Revision).GetField("_symbolMirror", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var symbolTable = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(symbolTableField.GetValue(rev));
+        var symbolTable = Assert.IsAssignableFrom<DurableDict<uint, string>>(symbolTableField.GetValue(rev));
         var symbolTableSave = VersionChain.Save(symbolTable, file, DiffWriteContext.UserPrimary);
         Assert.True(symbolTableSave.IsSuccess, $"Save symbolTable failed: {symbolTableSave.Error}");
         objectMap.Upsert(new SlotHandle(0, 1).Packed, symbolTableSave.Value.Serialize());
@@ -243,7 +243,7 @@ public partial class RevisionTests : IDisposable {
         objectMap.Upsert(root.LocalId.Value, rootSave.Value.Serialize());
 
         var symbolTableField = typeof(Revision).GetField("_symbolMirror", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var symbolTable = Assert.IsAssignableFrom<DurableDict<uint, InlineString>>(symbolTableField.GetValue(rev));
+        var symbolTable = Assert.IsAssignableFrom<DurableDict<uint, string>>(symbolTableField.GetValue(rev));
         var symbolTableSave = VersionChain.Save(symbolTable, file, DiffWriteContext.UserPrimary);
         Assert.True(symbolTableSave.IsSuccess, $"Save symbolTable failed: {symbolTableSave.Error}");
         objectMap.Upsert(new SlotHandle(0, 1).Packed, symbolTableSave.Value.Serialize());

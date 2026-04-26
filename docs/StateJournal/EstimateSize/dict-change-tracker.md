@@ -125,7 +125,7 @@ VarIntSize(removeCount)
 
 dict body 自己的协议骨架已经字节级建模，剩余误差主要来自下层：
 
-- `KHelper.EstimateBareSize(...)` / `VHelper.EstimateBareSize(...)`：例如 `StringHelper` 仍可能是保守近似，见 `src/StateJournal/Internal/ITypeHelper.cs:166`
+- `KHelper.EstimateBareSize(...)` / `VHelper.EstimateBareSize(...)`：不同 helper 的精度不同；例如 `StringHelper` 已按 `BareStringPayload` 真实长度估算，而 `ValueBox` 仍可能使用上界
 - `ValueBox.EstimateBareSize(...)` 对部分堆态值走上界，见 `src/StateJournal/Internal/ValueBox.cs:34-46`
 - `VersionChainStatus.PerFrameOverhead` 仍然是共享层的粗略 frame envelope 近似，见 `src/StateJournal/Internal/VersionChainStatus.cs:17-18`
 

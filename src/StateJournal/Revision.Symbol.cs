@@ -28,11 +28,11 @@ partial class Revision {
 
     /// <summary>
     /// 写时把 symbol durable mirror 补齐到至少包含本次实际落盘用到的 symbol。
-    /// 这是一个 write-through 侧效应：typed string / mixed string 在写出时都会触达此入口。
+    /// 这是一个 write-through 侧效应：typed Symbol / mixed string 在写出时都会触达此入口。
     /// </summary>
     internal void EnsureSymbolMirrored(string value, SymbolId id) {
         Debug.Assert(_symbolPool.TryGetValue(id.ToSlotHandle(), out string? existed) && string.Equals(existed, value, StringComparison.Ordinal));
-        _symbolMirror.Upsert(id.Value, new InlineString(value));
+        _symbolMirror.Upsert(id.Value, value);
     }
 
     /// <summary>
@@ -40,6 +40,7 @@ partial class Revision {
     /// 再将 durable mirror 补齐。
     /// </summary>
     internal void EnsureSymbolIdMirrored(SymbolId id) {
+        if (id.IsNull) { return; }
         if (!_symbolPool.TryGetValue(id.ToSlotHandle(), out string value)) { throw new InvalidDataException(); }
         EnsureSymbolMirrored(value, id);
     }
@@ -69,7 +70,7 @@ partial class Revision {
     }
 
     private ref struct SymbolMirrorValidator(
-        DurableDict<uint, InlineString> symbolTable,
+        DurableDict<uint, string> symbolTable,
         StringPool symbolPool,
         bool reachableOnly) : StringPool.IEntryVisitor {
         public AteliaError? Error { get; private set; }
@@ -81,7 +82,7 @@ partial class Revision {
 
             ObservedCount++;
             uint packed = handle.Packed;
-            if (symbolTable.Get(packed, out InlineString inline) != GetIssue.None) {
+            if (symbolTable.Get(packed, out string? inline) != GetIssue.None) {
                 Error = new SjCorruptionError(
                     $"SymbolTable is missing runtime symbol entry {packed}.",
                     RecoveryHint: "Symbol mirror is inconsistent with the runtime symbol pool."
@@ -89,7 +90,7 @@ partial class Revision {
                 return;
             }
 
-            if (inline.Value != value) {
+            if ((inline ?? string.Empty) != value) {
                 Error = new SjCorruptionError(
                     $"SymbolTable value mismatch for symbol {packed}.",
                     RecoveryHint: "Symbol mirror is inconsistent with the runtime symbol pool."
@@ -100,9 +101,9 @@ partial class Revision {
 
     #region Visitors
     partial struct WalkMarkVisitor {
-        public void Visit(string? value) {
-            if (value is null) { return; }
-            symbolPool.MarkReachable(symbolPool.Store(value));
+        public void Visit(Symbol value) {
+            // Symbol 契约保证 Value 非 null；empty symbol 也会被 intern 为非零 SymbolId。
+            symbolPool.MarkReachable(symbolPool.Store(value.Value));
         }
 
         public void Visit(SymbolId symbolId) {
@@ -117,9 +118,9 @@ partial class Revision {
     }
 
     partial struct ReferenceValidationVisitor {
-        /// typed string facade 在 load 完成后由 ValidateReconstructed 统一校验；
+        /// typed symbol facade 在 load 完成后由 ValidateReconstructed 统一校验；
         /// 这里不做 symbol 级验证，避免把“校验”与“补齐/解析”职责重新耦合。
-        public void Visit(string? value) { }
+        public void Visit(Symbol value) { }
 
         // mixed 容器里的直接 SymbolId 同样交由各自的 ValidateReconstructed 负责。
         public void Visit(SymbolId symbolId) { }

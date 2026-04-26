@@ -8,7 +8,7 @@ namespace Atelia.StateJournal;
 /// </summary>
 /// <remarks>
 /// <para><b>关于 <c>notnull</c> 约束与 <c>TValue?</c></b>：
-/// <c>where TValue : notnull</c> 的作用是阻止泛型实参传入自带可空注解的类型（如 <c>string?</c>、<c>DurableDict?</c>），
+/// <c>where TValue : notnull</c> 的作用是阻止泛型实参传入自带可空注解的类型（如 <c>string?</c>、<c>Symbol?</c>、<c>DurableDict?</c>），
 /// 但容器内部对于引用类型始终支持 <c>null</c> 值的传入和存储。
 /// 这与 <see cref="DurableDict{TKey, TValue}"/> 的约定一致。</para>
 /// <para>对值类型（如 <c>int</c>、<c>double</c>），<c>TValue?</c> 在 NRT 下只是注解，运行时类型仍为 <c>TValue</c> 本身。</para>
@@ -39,8 +39,9 @@ public abstract class DurableOrderedDict<TKey, TValue> : DurableDictBase<TKey>
 
     /// <summary>插入或更新。</summary>
     /// <remarks>
-    /// 对引用类型（含 <see cref="DurableObject"/> 和 <c>string</c>），<paramref name="value"/> 允许 <c>null</c>。
-    /// <c>null</c> 会被正确持久化（DurableObject → <see cref="LocalId.Null"/>，string → <see cref="SymbolId.Null"/>）并在 <see cref="Get"/> 时原样返回。
+    /// 对 <see cref="DurableObject"/> 和 <see cref="Symbol"/> 这类可表达空值的 facade，空值会被正确持久化
+    /// （DurableObject → <see cref="LocalId.Null"/>，Symbol → <see cref="SymbolId.Null"/>）并在 <see cref="Get"/> 时原样返回。
+    /// 裸 <c>string</c> 走值语义 payload 路线；<c>null</c> 会按空字符串写出。
     /// </remarks>
     public abstract UpsertStatus Upsert(TKey key, TValue? value);
 

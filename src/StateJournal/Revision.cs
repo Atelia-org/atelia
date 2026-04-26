@@ -26,7 +26,7 @@ public partial class Revision {
     /// 运行时真源是 <see cref="_symbolPool"/>；
     /// 本镜像负责承接增量落盘与后续 diff/rebase 复用。
     /// </summary>
-    private DurableDict<uint, InlineString> _symbolMirror;
+    private DurableDict<uint, string> _symbolMirror;
     /// <summary>
     /// 运行时 intern 引擎 + Mark-Sweep GC 池。
     /// 对外通过 <see cref="InternSymbol"/> / <see cref="GetSymbol"/> 提供 string ↔ SymbolId 转换。
@@ -89,7 +89,7 @@ public partial class Revision {
         _pool = new GcPool<DurableObject>();
         _pool.Store(_objectMap); // slot 0 = ObjectMap
 
-        _symbolMirror = Durable.Dict<uint, InlineString>();
+        _symbolMirror = Durable.Dict<uint, string>();
         _pool.Store(_symbolMirror); // slot 1 = SymbolTable
         _symbolPool = new StringPool();
     }
@@ -99,7 +99,7 @@ public partial class Revision {
         uint boundSegmentNumber,
         DurableDict<uint, ulong> objectMap,
         GcPool<DurableObject> pool,
-        DurableDict<uint, InlineString> symbolMirror,
+        DurableDict<uint, string> symbolMirror,
         StringPool symbolPool
     ) {
         ArgumentOutOfRangeException.ThrowIfZero(boundSegmentNumber);
@@ -169,23 +169,23 @@ public partial class Revision {
         SizedPtr symbolTableTicket = SizedPtr.Deserialize(serializedSymbolPtr);
         var symbolTableLoad = VersionChain.Load(file, symbolTableTicket);
         if (symbolTableLoad.IsFailure) { return symbolTableLoad.Error!; }
-        if (symbolTableLoad.Value is not DurableDict<uint, InlineString> symbolTable) {
+        if (symbolTableLoad.Value is not DurableDict<uint, string> symbolTable) {
             return new SjCorruptionError(
                 $"SymbolTable frame at key {symbolTablePacked} resolved to unexpected type: {symbolTableLoad.Value!.GetType()}.",
-                RecoveryHint: "Expected DurableDict<uint, InlineString>."
+                RecoveryHint: "Expected DurableDict<uint, string>."
             );
         }
 
         var symbolEntries = new (SlotHandle, string)[symbolTable.Count];
         int si = 0;
         foreach (uint key in symbolTable.Keys) {
-            if (symbolTable.Get(key, out InlineString inlineStr) != GetIssue.None) {
+            if (symbolTable.Get(key, out string? inlineStr) != GetIssue.None) {
                 return new SjCorruptionError(
                     $"SymbolTable key {key} could not be read.",
                     RecoveryHint: "Data corruption in SymbolTable."
                 );
             }
-            symbolEntries[si++] = (new SlotHandle(key), inlineStr.ToString());
+            symbolEntries[si++] = (new SlotHandle(key), inlineStr ?? string.Empty);
         }
         StringPool symbolPool = StringPool.Rebuild(symbolEntries);
 
@@ -271,23 +271,21 @@ public partial class Revision {
     #region Symbol API
 
     /// <summary>
-    /// 将字符串 intern 到当前 Revision 的 Symbol Pool，返回 SymbolId。
-    /// <c>null</c> 映射为 <see cref="SymbolId.Null"/>；非空字符串若已存在则去重返回已有 id。
+    /// 将非空字符串 intern 到当前 Revision 的 Symbol Pool，返回非零 SymbolId。
     /// 运行时真源始终是 <see cref="_symbolPool"/>；durable mirror 保存在 <see cref="_symbolMirror"/>。
+    /// mixed string 路径如需表达 <c>null</c>，请由 <see cref="Internal.RevisionStringCodec"/> 映射为 <see cref="SymbolId.Null"/>。
     /// </summary>
-    internal SymbolId InternSymbol(string? value) {
-        if (value is null) { return SymbolId.Null; }
-
+    internal SymbolId InternSymbol(string value) {
+        ArgumentNullException.ThrowIfNull(value);
         var handle = _symbolPool.Store(value);
         return SymbolId.FromSlotHandle(handle);
     }
 
     /// <summary>
-    /// 在 commit / serialization 阶段将 string 编码为当前 Revision 的 SymbolId，并立即标记为可达。
+    /// 在 commit / serialization 阶段将非空 string 编码为当前 Revision 的 SymbolId，并立即标记为可达。
     /// </summary>
-    internal SymbolId InternReachableSymbol(string? value) {
-        if (value is null) { return SymbolId.Null; }
-
+    internal SymbolId InternReachableSymbol(string value) {
+        ArgumentNullException.ThrowIfNull(value);
         var handle = _symbolPool.Store(value);
         _symbolPool.TryMarkReachable(handle);
         return SymbolId.FromSlotHandle(handle);

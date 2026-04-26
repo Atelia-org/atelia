@@ -52,11 +52,9 @@ partial class RevisionTests {
     }
 
     [Fact]
-    public void InternSymbol_Null_ReturnsNullId() {
+    public void InternSymbol_Null_Throws() {
         var rev = CreateRevision();
-        var id = rev.InternSymbol(null);
-        Assert.Equal(SymbolId.Null, id);
-        Assert.Null(rev.GetSymbol(id));
+        Assert.Throws<ArgumentNullException>(() => rev.InternSymbol(null!));
     }
 
     [Fact]
@@ -65,8 +63,8 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        // 使用 TypedDict<int, string> 使 symbol 在 DFS 中可达
-        var dict = rev.CreateDict<int, string>();
+        // 使用 TypedDict<int, Symbol> 使 symbol 在 DFS 中可达
+        var dict = rev.CreateDict<int, Symbol>();
 
         dict.Upsert(1, "alpha");
         dict.Upsert(2, "beta");
@@ -79,7 +77,7 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, Symbol>>(openResult.Value!.GraphRoot);
         Assert.Equal(GetIssue.None, loaded.Get(1, out var v1));
         Assert.Equal("alpha", v1);
         Assert.Equal(GetIssue.None, loaded.Get(2, out var v2));
@@ -94,7 +92,7 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var dict = rev.CreateDict<int, string>();
+        var dict = rev.CreateDict<int, Symbol>();
 
         // First commit with one symbol
         dict.Upsert(1, "first");
@@ -108,7 +106,7 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, Symbol>>(openResult.Value!.GraphRoot);
         Assert.Equal(GetIssue.None, loaded.Get(1, out var v1));
         Assert.Equal("first", v1);
         Assert.Equal(GetIssue.None, loaded.Get(2, out var v2));
@@ -121,7 +119,7 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var dict = rev.CreateDict<int, string>();
+        var dict = rev.CreateDict<int, Symbol>();
         dict.Upsert(1, "first");
 
         _ = AssertCommitSucceeded(CommitToFile(rev, dict, file));
@@ -140,8 +138,8 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        // 使用 TypedDict<int, string> 使 empty string symbol 可达
-        var dict = rev.CreateDict<int, string>();
+        // 使用 TypedDict<int, Symbol> 使 empty string symbol 可达
+        var dict = rev.CreateDict<int, Symbol>();
         dict.Upsert(1, "");
         dict.Upsert(2, "non-empty");
 
@@ -149,7 +147,7 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, Symbol>>(openResult.Value!.GraphRoot);
         Assert.Equal(GetIssue.None, loaded.Get(1, out var v1));
         Assert.Equal("", v1);
         Assert.Equal(GetIssue.None, loaded.Get(2, out var v2));
@@ -174,8 +172,8 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        // 使用 TypedDict<int, string> 使 symbol 可达
-        var dict = rev.CreateDict<int, string>();
+        // 使用 TypedDict<int, Symbol> 使 symbol 可达
+        var dict = rev.CreateDict<int, Symbol>();
 
         const int symbolCount = 50;
         for (int i = 0; i < symbolCount; i++) {
@@ -186,7 +184,7 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, Symbol>>(openResult.Value!.GraphRoot);
         for (int i = 0; i < symbolCount; i++) {
             Assert.Equal(GetIssue.None, loaded.Get(i, out var v));
             Assert.Equal($"symbol_{i}", v);
@@ -199,26 +197,34 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var deque = rev.CreateDeque<string>();
+        var deque = rev.CreateDeque<Symbol>();
         deque.PushBack("alpha");
         deque.PushBack("beta");
         deque.PushFront("zero");
-        deque.PushBack(null);
+        deque.PushBack(Symbol.Empty);
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, deque, file));
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDeque<string>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableDeque<Symbol>>(openResult.Value!.GraphRoot);
         Assert.Equal(4, loaded.Count);
-        Assert.Equal(GetIssue.None, loaded.GetAt(0, out string? v0));
-        Assert.Equal("zero", v0);
-        Assert.Equal(GetIssue.None, loaded.GetAt(1, out string? v1));
-        Assert.Equal("alpha", v1);
-        Assert.Equal(GetIssue.None, loaded.GetAt(2, out string? v2));
-        Assert.Equal("beta", v2);
-        Assert.Equal(GetIssue.None, loaded.GetAt(3, out string? v3));
-        Assert.Null(v3);
+        Assert.Equal(GetIssue.None, loaded.GetAt(0, out Symbol v0));
+        Assert.Equal("zero", v0.Value);
+        Assert.Equal(GetIssue.None, loaded.GetAt(1, out Symbol v1));
+        Assert.Equal("alpha", v1.Value);
+        Assert.Equal(GetIssue.None, loaded.GetAt(2, out Symbol v2));
+        Assert.Equal("beta", v2.Value);
+        Assert.Equal(GetIssue.None, loaded.GetAt(3, out Symbol v3));
+        Assert.Equal(Symbol.Empty, v3);
+        Assert.Equal(string.Empty, v3.Value);
+    }
+
+    [Fact]
+    public void TypedDequeOfSymbol_PushBackNull_Throws() {
+        var rev = CreateRevision();
+        var deque = rev.CreateDeque<Symbol>();
+        Assert.Throws<ArgumentNullException>(() => deque.PushBack(null!));
     }
 
     [Fact]
@@ -227,7 +233,7 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var dict = rev.CreateDict<string, int>();
+        var dict = rev.CreateDict<Symbol, int>();
         dict.Upsert("alpha", 1);
         dict.Upsert("beta", 2);
         dict.Upsert("你好", 3);
@@ -236,7 +242,7 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDict<string, int>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableDict<Symbol, int>>(openResult.Value!.GraphRoot);
         Assert.Equal(3, loaded.Count);
         Assert.Equal(GetIssue.None, loaded.Get("alpha", out int a));
         Assert.Equal(1, a);
@@ -253,7 +259,7 @@ partial class RevisionTests {
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        var stringChild = rev.CreateDict<int, string>();
+        var stringChild = rev.CreateDict<int, Symbol>();
         stringChild.Upsert(1, "alpha");
         stringChild.Upsert(2, "beta");
         var intChild = rev.CreateDict<int, int>();
@@ -272,11 +278,11 @@ partial class RevisionTests {
 
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableObject? stringChildObj));
-        var loadedStringChild = Assert.IsAssignableFrom<DurableDict<int, string>>(stringChildObj);
-        Assert.Equal(GetIssue.None, loadedStringChild.Get(1, out string? v1));
-        Assert.Equal("alpha", v1);
-        Assert.Equal(GetIssue.None, loadedStringChild.Get(2, out string? v2));
-        Assert.Equal("beta", v2);
+        var loadedStringChild = Assert.IsAssignableFrom<DurableDict<int, Symbol>>(stringChildObj);
+        Assert.Equal(GetIssue.None, loadedStringChild.Get(1, out Symbol v1));
+        Assert.Equal("alpha", v1.Value);
+        Assert.Equal(GetIssue.None, loadedStringChild.Get(2, out Symbol v2));
+        Assert.Equal("beta", v2.Value);
     }
 
     [Fact]
@@ -286,7 +292,7 @@ partial class RevisionTests {
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        var keyedChild = rev.CreateDict<string, int>();
+        var keyedChild = rev.CreateDict<Symbol, int>();
         keyedChild.Upsert("alpha", 1);
         keyedChild.Upsert("beta", 2);
         var intChild = rev.CreateDict<int, int>();
@@ -305,7 +311,7 @@ partial class RevisionTests {
 
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableObject? keyedChildObj));
-        var loadedKeyedChild = Assert.IsAssignableFrom<DurableDict<string, int>>(keyedChildObj);
+        var loadedKeyedChild = Assert.IsAssignableFrom<DurableDict<Symbol, int>>(keyedChildObj);
         Assert.Equal(GetIssue.None, loadedKeyedChild.Get("alpha", out int a));
         Assert.Equal(1, a);
         Assert.Equal(GetIssue.None, loadedKeyedChild.Get("beta", out int b));
@@ -318,7 +324,7 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var root = rev.CreateDict<int, string>();
+        var root = rev.CreateDict<int, Symbol>();
         for (int i = 0; i < 6; i++) {
             root.Upsert(i, $"value_{i}");
         }
@@ -335,12 +341,12 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDict<int, string>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, Symbol>>(openResult.Value!.GraphRoot);
         Assert.Equal(5, loaded.Count);
         Assert.Equal(GetIssue.NotFound, loaded.Get(0, out _));
         for (int i = 1; i < 6; i++) {
-            Assert.Equal(GetIssue.None, loaded.Get(i, out string? value));
-            Assert.Equal($"value_{i}", value);
+            Assert.Equal(GetIssue.None, loaded.Get(i, out Symbol value));
+            Assert.Equal($"value_{i}", value.Value);
         }
     }
 
@@ -350,7 +356,7 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var root = rev.CreateDict<string, int>();
+        var root = rev.CreateDict<Symbol, int>();
         for (int i = 0; i < 6; i++) {
             root.Upsert($"key_{i}", i);
         }
@@ -367,7 +373,7 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDict<string, int>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableDict<Symbol, int>>(openResult.Value!.GraphRoot);
         Assert.Equal(5, loaded.Count);
         Assert.Equal(GetIssue.NotFound, loaded.Get("key_0", out _));
         for (int i = 1; i < 6; i++) {
@@ -382,9 +388,9 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var root = rev.CreateOrderedDict<string, DurableDict<string, int>>();
+        var root = rev.CreateOrderedDict<Symbol, DurableDict<Symbol, int>>();
         for (int i = 0; i < 6; i++) {
-            var child = rev.CreateDict<string, int>();
+            var child = rev.CreateDict<Symbol, int>();
             child.Upsert("value", i);
             root.Upsert($"key_{i}", child);
         }
@@ -401,7 +407,7 @@ partial class RevisionTests {
         var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableOrderedDict<string, DurableDict<string, int>>>(openResult.Value!.GraphRoot);
+        var loaded = Assert.IsAssignableFrom<DurableOrderedDict<Symbol, DurableDict<Symbol, int>>>(openResult.Value!.GraphRoot);
         Assert.Equal(5, loaded.Count);
         Assert.Equal(GetIssue.NotFound, loaded.Get("key_0", out _));
         for (int i = 1; i < 6; i++) {

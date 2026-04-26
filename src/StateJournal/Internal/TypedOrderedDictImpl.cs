@@ -54,8 +54,8 @@ internal sealed class TypedOrderedDictImpl<TKey, TValue, KHelper, VHelper> : Dur
     }
 
     internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? _) {
-        // 对 typed ordered dict，typed string key/value 在 ApplyDelta 期间已通过
-        // BinaryDiffReader.BareSymbolId(...) 物化为 string facade。
+        // 对 typed ordered dict，typed Symbol key/value 在 ApplyDelta 期间已通过
+        // BinaryDiffReader.BareSymbol(...) 物化为 Symbol facade。
         // 因此这里不需要像 mixed 容器那样再验证 surviving SymbolId 是否仍在 symbolPool 中；
         // load 后校验职责仅剩 placeholder 残留检查。
         if (tracker is null) { return null; }

@@ -17,5 +17,5 @@ internal sealed class LoadPlaceholderTracker {
         return placeholder;
     }
 
-    internal bool IsPlaceholder(string? value) => value is not null && _placeholders.Contains(value);
+    internal bool IsPlaceholder(string value) => _placeholders.Contains(value);
 }

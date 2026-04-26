@@ -1,5 +1,4 @@
 using Atelia.Rbf;
-using Atelia.StateJournal.Internal;
 using Xunit;
 
 namespace Atelia.StateJournal.Tests;

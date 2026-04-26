@@ -6,28 +6,38 @@ namespace Atelia.StateJournal.Internal;
 /// 由于其涉及持久化数据，所以一经投入使用就不可再变更，届时将internal可见性改为public进行标记。
 /// 在序列化时使用前导长度而非`return`操作码。
 /// </summary>
+/// <remarks>
+/// **TODO（持久化数据正式落地前）**：当真正开始记录长期 segment 时，需要系统性整理本枚举
+/// 与其它涉及 wire format 的不可变枚举（<see cref="DurableObjectKind"/>、<see cref="VersionKind"/>、
+/// <see cref="FrameUsage"/>、<see cref="FrameSource"/>、<see cref="HeapValueKind"/> 等），
+/// 把所有成员都改为显式数值字面量并冻结分配，避免日后插入/重命名导致 numeric 漂移。
+/// 当前阶段（个人自用 / 无下游用户 / 无历史数据）允许 numeric remap，参见本文件 13/14 注释。
+/// </remarks>
 internal enum TypeOpCode : byte {
     Invalid = 0,
 
-    PushByte,
-    PushUInt16,
-    PushUInt32,
-    PushUInt64,
+    PushByte = 1,
+    PushUInt16 = 2,
+    PushUInt32 = 3,
+    PushUInt64 = 4,
 
-    PushSByte,
-    PushInt16,
-    PushInt32,
-    PushInt64,
+    PushSByte = 5,
+    PushInt16 = 6,
+    PushInt32 = 7,
+    PushInt64 = 8,
 
-    PushBoolean,
-    PushHalf,
-    PushSingle,
-    PushDouble,
+    PushBoolean = 9,
+    PushHalf = 10,
+    PushSingle = 11,
+    PushDouble = 12,
 
-    PushString,
-    PushInlineString,
-    PushMixedDeque,
-    PushText,
+    // Legacy wire mapping:
+    // 13 used to be PushString (symbol-backed string); it now decodes as explicit Symbol.
+    // 14 used to be PushInlineString; it now decodes as value-payload string.
+    PushSymbol = 13,
+    PushString = 14,
+    PushMixedDeque = 15,
+    PushText = 16,
 
     MakeMixedDict = 128,
     MakeTypedDict,
@@ -89,11 +99,11 @@ internal static class TypeCodec {
                 case TypeOpCode.PushDouble:
                     operands.Push(typeof(double));
                     break;
+                case TypeOpCode.PushSymbol:
+                    operands.Push(typeof(Symbol));
+                    break;
                 case TypeOpCode.PushString:
                     operands.Push(typeof(string));
-                    break;
-                case TypeOpCode.PushInlineString:
-                    operands.Push(typeof(InlineString));
                     break;
                 case TypeOpCode.PushMixedDeque:
                     operands.Push(typeof(DurableDeque));

@@ -19,8 +19,8 @@ public class TextSequenceCoreTests {
         core.Delete(deletedId);
 
         // head + count + {0,0,liveCount} = 5
-        // live nodes: seq + nextSeq + dummy key + BareSymbol ~= 1 + 1 + 1 + 5 = 8 each
-        Assert.Equal(21u, core.EstimatedRebaseBytes());
+        // live nodes: seq + nextSeq + dummy key + inline string = 1 + 1 + 1 + 6 = 9 each
+        Assert.Equal(23u, core.EstimatedRebaseBytes());
     }
 
     [Fact]
@@ -36,9 +36,9 @@ public class TextSequenceCoreTests {
 
         // header = head + count + dirtyLinkCount + dirtyValueCount + appendedCount = 5
         // dirty link entry = seq + nextSeq = 2
-        // dirty value entry = seq + value = 1 + 5 = 6
-        // appended entry = seq + nextSeq + dummy key + value = 1 + 1 + 1 + 5 = 8
-        Assert.Equal(21u, core.EstimatedDeltifyBytes());
+        // dirty value entry = seq + inline string("B") = 1 + 2 = 3
+        // appended entry = seq + nextSeq + dummy key + inline string("x") = 1 + 1 + 1 + 2 = 5
+        Assert.Equal(15u, core.EstimatedDeltifyBytes());
     }
 
     [Fact]
@@ -51,8 +51,8 @@ public class TextSequenceCoreTests {
         core.Delete(appendedId);
 
         // 当前文本只剩 1 个 live block，但 delta appended section 仍写物理 appended window 中的 draft node。
-        // header = 5, dirty link entry = 2, appended entry = 8
-        Assert.Equal(15u, core.EstimatedDeltifyBytes());
+        // header = 5, dirty link entry = 2, appended entry = 9
+        Assert.Equal(16u, core.EstimatedDeltifyBytes());
     }
 
     [Fact]

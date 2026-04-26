@@ -66,21 +66,23 @@ private T[]?[] _slabs;
 - 接受一定程度的稀疏性
 - 避免为“地址压紧”付出全图 rewrite 的系统复杂度
 
-### 3. typed 容器的 string 已改为延迟 intern
+### 3. typed 容器的 Symbol 已改为显式 symbol facade
 
 当前 typed 路线的运行时模型已经改变：
 
-- `TypedDict<TKey, string>` / `TypedDeque<string>` / `string key`
-- 运行时直接保存普通 `string`
-- commit / 序列化时才 intern 为 `SymbolId`
-- load / 反序列化时再解回 `string`
+- `TypedDict<TKey, Symbol>` / `TypedDeque<Symbol>` / `Symbol key`
+- 运行时 facade 是 `Symbol`
+- `Symbol.Value` 承载实际字符串内容（**契约非 null**；`default(Symbol)` 等价于 `Symbol.Empty`，对应空字符串 symbol）
+- 不存在 "null symbol" 这一态：构造器 / 隐式转换遇到 null 会抛 `ArgumentNullException`；wire 上禁止 typed `Symbol` 出现 `SymbolId.Null`，遇到则抛 `InvalidDataException`
+- commit / 序列化时才 intern 为 `SymbolId`（empty symbol 也会 intern 为非零 id）
+- load / 反序列化时再解回 `Symbol`
 
 这意味着：
 
-- typed string 的运行时真源不再是 `SymbolId`
+- typed `Symbol` 的运行时真源不再是 `SymbolId`
 - `SymbolTable` 更像持久化编码层的一部分
-- `TypedDeque<string>` 已正式开放
-- `TypedDict<TKey, string>` 不再需要专用 `SymbolValDictImpl`
+- `TypedDeque<Symbol>` 已正式开放
+- `TypedDict<TKey, Symbol>` 不再需要专用 `SymbolValDictImpl`
 
 但 mixed 路线不变：
 
@@ -110,17 +112,17 @@ dict 路线需要牢记的当前语义：
 - source 若处于 dirty frozen 且该 frozen snapshot 尚未提交，则 fork 会被拒绝
 - frozen source fork 出来的新对象默认是 mutable；若其当前 flags 与继承的 committed flags 不同，首次 commit 需要写 frame 同步 object flags
 
-### 5. typed string load 采用 placeholder 过渡方案
+### 5. typed Symbol load 采用 placeholder 过渡方案
 
 引入延迟 intern 后，版本链历史回放会遇到一个真实问题：
 
 - 历史 delta 中可能出现旧的 `SymbolId`
 - 这些字符串在目标 head commit 的 `SymbolTable` 中可能已不存在
-- 如果 `ApplyDelta` 期间立即强制 `SymbolId -> string`，则历史回放会失败
+- 如果 `ApplyDelta` 期间立即强制 `SymbolId -> Symbol`，则历史回放会失败
 
 当前正式过渡方案是：
 
-- `BinaryDiffReader.BareSymbolId(...)` 在 load 时优先查 head `StringPool`
+- `BinaryDiffReader.BareSymbol(...)` 在 load 时优先查 head `StringPool`
 - 若缺失，则通过 `LoadPlaceholderTracker` 生成“每个缺失 `SymbolId` 对应唯一 placeholder string”
 - 历史回放完成后，再对 typed 容器做 placeholder 残留检查
 - 若最终 surviving 数据里仍残留 placeholder，则判定为数据损坏或内部 bug
@@ -128,7 +130,7 @@ dict 路线需要牢记的当前语义：
 长期更正统的储备方案仍是：
 
 - `staging in ChangeTracker`
-- 文档见 `docs/StateJournal/typed-string-load-staging-reserve.md`
+- 正式设计文档待补；转正前需要把旧 typed string 草稿统一同步为 typed Symbol 术语。
 
 ### 6. typed / mixed 的字符串标记与重建后校验职责已分离
 
@@ -136,19 +138,19 @@ dict 路线需要牢记的当前语义：
 
 提交期 `WalkAndMark`：
 
-- typed string / string key 通过 `ITypeHelper<T>.VisitChildRefs(...)` 暴露 `string` facade
-- `WalkMarkVisitor.Visit(string?)` 负责 `StringPool.Store(...)` + `MarkReachable`
+- typed Symbol / Symbol key 通过 `ITypeHelper<T>.VisitChildRefs(...)` 暴露 `Symbol` facade
+- `WalkMarkVisitor.Visit(Symbol)` 负责 `StringPool.Store(...)` + `MarkReachable`
 - mixed 容器里直接存储的 `ValueBox(SymbolId)` 仍走 `Visit(SymbolId)` 直达标记
 
 load / 历史回放完成后：
 
-- typed 容器的 string facade 通过 `ValidateReconstructed(...)` 检查 placeholder 是否残留
+- typed 容器的 Symbol facade 通过 `ValidateReconstructed(...)` 检查 placeholder 是否残留
 - mixed 容器里 surviving 的 `ValueBox(SymbolId)` 也在 `ValidateReconstructed(...)` 里直接做 `symbolPool.Validate(...)`
 - `Revision.ValidateAllReferences()` 现在只负责 DurableObject 引用完整性，不再承担 symbol 校验
 
 当前分工应牢记：
 
-- 提交期标记：`LocalId`、typed `string facade`、mixed `SymbolId`
+- 提交期标记：`LocalId`、typed `Symbol facade`、mixed `SymbolId`
 - 重建后校验：typed placeholder 残留 + mixed surviving `SymbolId`
 - Open 后全图引用校验：只校验 DurableObject 引用
 
@@ -320,7 +322,7 @@ rev.CreateDeque();                    // MixedDeque
 当前关键边界：
 
 - mixed string 继续保存 `SymbolId`
-- typed string 不再保存 `SymbolId`
+- typed Symbol 不再保存 `SymbolId`
 
 这两条路线不能混淆。
 
@@ -343,20 +345,21 @@ StringPool      // InternPool<string> + identity cache
 - `SlotPool<T>` 已支持 `null slab`
 - generation 元数据不随 value slab 释放
 - `StringPool` 是 `Revision` 运行时 symbol 真源
-- `SymbolTable` 是 durable mirror，不是 typed string 的运行时真源
+- `SymbolTable` 是 durable mirror，不是 typed Symbol 的运行时真源
 
 ### `SymbolTable` / `StringPool` 的角色分工
 
 `Revision` 同时持有：
 
-- `_symbolMirror : DurableDict<uint, InlineString>`
+- `_symbolMirror : DurableDict<uint, string>`
 - `_symbolPool : StringPool`
 
 当前语义：
 
 - `_symbolPool` 是运行时 symbol 真源
 - `_symbolMirror` 是 durable mirror，不是运行时真源
-- 用户对象写出时，typed / mixed string 会通过 writer 的 write-through 路径把 mirror 补齐
+- 用户对象写出时，typed `Symbol` / mixed string 会通过 writer 的 write-through 路径把 mirror 补齐
+- typed `string` 走 inline payload 路线，不触达 symbol mirror
 - 提交期随后只需 prune 不可达旧 symbol，并可选做 full validation
 
 相关 API：
@@ -492,14 +495,14 @@ PushInt32, PushString -> MakeTypedOrderedDict
 
 当前这组钩子的主要用途是：
 
-- 把 typed string 的 child-ref visit 与重建后校验下沉到 helper 多态
-- 避免容器实现里继续散落 `typeof(T) == typeof(string)` 分支
+- 把 typed `Symbol` 的 child-ref visit 与重建后校验下沉到 helper 多态
+- 避免容器实现里继续散落 `typeof(T) == typeof(Symbol)` 分支
 - 让容器保留对自身枚举结构的掌控，不需要为了 helper 形状物化临时集合
 
-`StringHelper` 当前同时承担：
+`SymbolHelper` 当前同时承担：
 
-- typed string 的序列化桥接
-- typed string 的重建后 placeholder 残留检查
+- typed `Symbol` 的序列化桥接
+- typed `Symbol` 的重建后 placeholder 残留检查
 
 `HelperRegistry` 内部已做拆分重构：
 
@@ -511,7 +514,7 @@ PushInt32, PushString -> MakeTypedOrderedDict
 
 - 用于 `SkipListCore` 等有序容器的键比较
 - 默认委托 `Comparer<T>.Default`（对数值类型已跨平台稳定）
-- 对 `string` / `InlineString` 覆盖为 `StringComparison.Ordinal` 语义
+- 对 `Symbol` / `string` 覆盖为 `StringComparison.Ordinal` 语义
 - 所有 `ValueTupleHelper` 也实现了字典序 `Compare`
 
 关键文件：
@@ -525,12 +528,12 @@ PushInt32, PushString -> MakeTypedOrderedDict
 
 ### `BinaryDiffWriter`
 
-`BinaryDiffWriter` 现在对 typed string 的关键语义是：
+`BinaryDiffWriter` 现在对 typed `Symbol` 的关键语义是：
 
-- `BareSymbolId(string?)`
-- 通过 `_stringRevision.InternReachableSymbol(value)` 把 facade `string` 编码成 `SymbolId`
+- `BareSymbol(Symbol)`
+- 通过 `_symbolRevision.InternReachableSymbol(value.Value)` 把 facade `Symbol` 编码成 `SymbolId`
 - 同时标记该 symbol 为本轮 commit 可达
-- 并通过 `Revision.ObservePersistedSymbol(...)` 把 durable mirror 补齐
+- 并通过 `Revision.EnsureSymbolMirrored(...)` 把 durable mirror 补齐
 
 注意：
 
@@ -539,11 +542,11 @@ PushInt32, PushString -> MakeTypedOrderedDict
 
 ### `BinaryDiffReader`
 
-`BinaryDiffReader.BareSymbolId(...)` 现在有三段行为：
+`BinaryDiffReader.BareSymbol(...)` 现在有三段行为：
 
 1. 读出裸 `SymbolId`
-2. 优先从当前 head `StringPool` 解码
-3. 若缺失且提供了 `LoadPlaceholderTracker`，则返回本次 load 私有 placeholder string
+2. 优先从当前 head `StringPool` 解码并物化为 `Symbol`
+3. 若缺失且提供了 `LoadPlaceholderTracker`，则返回本次 load 私有 placeholder 对应的 `Symbol`
 
 关键文件：
 
@@ -578,8 +581,8 @@ PushInt32, PushString -> MakeTypedOrderedDict
 
 当前 `ValidateReconstructed(...)` 的职责边界：
 
-- typed string key/value/element：检查 placeholder 是否残留
-- mixed string key：如经过 typed helper 路径，也检查 placeholder
+- typed `Symbol` key/value/element：检查 placeholder 是否残留
+- mixed `Symbol` key：如经过 typed helper 路径，也检查 placeholder
 - mixed value / mixed deque element / mixed ordered dict element 中的 `ValueBox(SymbolId)`：通过共享的 `ValueBox.ValidateReconstructedMixedSymbol(...)` 验证 surviving `SymbolId` 是否仍在 `symbolPool` 中有效
 - 此校验在 `OnLoadCompleted`（`RecountRefs`）**之前**执行，因此不能依赖 `_symbolRefCount` 短路，必须直接遍历所有值
 - 这一步是“对象局部的 reconstruction 收尾校验”，不是全图对象引用校验
@@ -713,9 +716,9 @@ Load ObjectMap frame chain
 | ValueBox（Tagged-Pointer + Faces） | ✅ 已完成 | mixed string 继续 symbol-backed |
 | SlotPool / GcPool / InternPool / StringPool | ✅ 已完成 | `SlotPool` 已支持 sparse value slab |
 | DictChangeTracker / DequeChangeTracker | ✅ 已完成 | dict + deque 两条都已工作 |
-| DurableDict（Typed / Mixed / DurObj） | ✅ 已完成 | typed string 延迟 intern 已打通 |
+| DurableDict（Typed / Mixed / DurObj） | ✅ 已完成 | typed Symbol 延迟 intern 已打通 |
 | DurableDeque（Typed / Mixed / DurObj） | ✅ 已完成 | 不再是占位 |
-| BinaryDiffWriter / Reader | ✅ 已完成 | typed string late intern + placeholder load |
+| BinaryDiffWriter / Reader | ✅ 已完成 | typed Symbol late intern + placeholder load |
 | TypeCodec / HelperRegistry / DurableFactory | ✅ 已完成 | helper 多态已扩展到 reconstruction 校验 |
 | VersionChain（Write / Save / Load） | ✅ 已完成 | reconstruction 校验钩子已接入 |
 | Revision Commit 主协议 | ✅ 已完成 | 已去除 compaction 主线 |
@@ -725,13 +728,13 @@ Load ObjectMap frame chain
 | DurableDict fork / freeze | ✅ 已完成 | typed + mixed 都已支持；flags 持久化已打通 |
 | DurableDeque freeze | ✅ 已完成 | typed + mixed 都已支持；当前仍不支持 public fork |
 | OrderedDict / Text freeze 与其他 fork | 🟡 预留中 | 当前以 `NotSupportedException` / fail-fast 为主 |
-| typed string staging-in-ChangeTracker | 🟡 储备方案 | 尚未落地，见专项文档 |
+| typed Symbol staging-in-ChangeTracker | 🟡 储备方案 | 尚未落地，见专项文档 |
 
 ---
 
 ## 仍需牢记的高风险边界
 
-### 1. typed string placeholder 方案是“正式过渡层”，不是最终形态
+### 1. typed Symbol placeholder 方案是“正式过渡层”，不是最终形态
 
 它已经正确、可测试、可工作，但不是最终最干净的建模。
 
@@ -839,10 +842,10 @@ src/StateJournal/
 
 | 文档 | 路径 | 说明 |
 |:-----|:-----|:-----|
-| 去 compaction 化与 typed string 延迟 intern | `docs/StateJournal/remove-compaction-and-late-typed-string-intern.md` | 本轮主线设计背景 |
+| 去 compaction 化与 typed Symbol 延迟 intern | 待补正式文档 | 本轮主线设计背景 |
 | DurableDict fork 设计 | `docs/StateJournal/fork-as-mutable-design.md` | committed-state mutable fork 的设计背景 |
 | DurableDict frozen 设计 | `docs/StateJournal/frozen-durable-object-design.md` | object flags + dict freeze 的设计与后续推进 |
-| typed string load staging 预备方案 | `docs/StateJournal/typed-string-load-staging-reserve.md` | placeholder 方案的后续正统演进 |
+| typed Symbol load staging 预备方案 | 待补正式文档 | placeholder 方案的后续正统演进 |
 | 异构存储设计决策 | `docs/StateJournal/v4/异构存储设计决策.md` | ValueBox 核心决策 |
 | Tagged-Pointer 布局 | `docs/StateJournal/v4/tagged-pointer.md` | `ValueBox` 编码表 |
 | 浮点相等语义 | `docs/StateJournal/v4/floating-point-equality-semantics.md` | BitExact vs NumericEquiv |

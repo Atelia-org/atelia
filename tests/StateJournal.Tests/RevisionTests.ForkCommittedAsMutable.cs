@@ -274,8 +274,8 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var root = rev.CreateDict<int, DurableDict<int, (ulong, string)>>();
-        var source = rev.CreateDict<int, (ulong, string)>();
+        var root = rev.CreateDict<int, DurableDict<int, (ulong, Symbol)>>();
+        var source = rev.CreateDict<int, (ulong, Symbol)>();
         source.Upsert(1, (ulong.MaxValue, "source"));
         root.Upsert(1, source);
         _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
@@ -286,13 +286,15 @@ partial class RevisionTests {
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
         var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
-        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, (ulong, string)>>>(opened.GraphRoot);
-        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDict<int, (ulong, string)>? loadedSource));
-        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDict<int, (ulong, string)>? loadedFork));
-        Assert.Equal(GetIssue.None, loadedSource!.Get(1, out (ulong, string) sourceValue));
-        Assert.Equal(GetIssue.None, loadedFork!.Get(1, out (ulong, string) forkValue));
-        Assert.Equal((ulong.MaxValue, "source"), sourceValue);
-        Assert.Equal((42UL, "fork"), forkValue);
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int, (ulong, Symbol)>>>(opened.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDict<int, (ulong, Symbol)>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDict<int, (ulong, Symbol)>? loadedFork));
+        Assert.Equal(GetIssue.None, loadedSource!.Get(1, out (ulong, Symbol) sourceValue));
+        Assert.Equal(GetIssue.None, loadedFork!.Get(1, out (ulong, Symbol) forkValue));
+        Assert.Equal(ulong.MaxValue, sourceValue.Item1);
+        Assert.Equal("source", sourceValue.Item2.Value);
+        Assert.Equal(42UL, forkValue.Item1);
+        Assert.Equal("fork", forkValue.Item2.Value);
     }
 
     [Fact]

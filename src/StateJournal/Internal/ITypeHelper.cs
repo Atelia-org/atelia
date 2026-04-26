@@ -53,7 +53,7 @@ internal interface ITypeHelper<T> where T : notnull {
     /// <summary>
     /// 持久化稳定的比较。用于 <see cref="SkipListCore{TKey,TValue,KHelper,VHelper}"/> 等有序容器。
     /// 默认委托 <see cref="Comparer{T}.Default"/>（对数值类型已经跨平台稳定）。
-    /// 对 string 等 culture-sensitive 类型，Helper 必须覆盖为 Ordinal 语义。
+    /// 对 string / Symbol 等 culture-sensitive 类型，Helper 必须覆盖为 Ordinal 语义。
     /// </summary>
     static virtual int Compare(T? a, T? b) => Comparer<T>.Default.Compare(a!, b!);
 
@@ -90,7 +90,7 @@ internal interface ITypeHelper<T> where T : notnull {
     static abstract void Write(BinaryDiffWriter writer, T? v, bool asKey);
     static abstract T? Read(ref BinaryDiffReader reader, bool asKey);
 
-    /// <summary>当前 facade 类型是否需要在提交期参与 child-ref walk（例如 typed string facade）。</summary>
+    /// <summary>当前 facade 类型是否需要在提交期参与 child-ref walk（例如 typed symbol facade）。</summary>
     static virtual bool NeedVisitChildRefs => false;
 
     /// <summary>将单个 facade 值暴露给 child-ref visitor。默认 no-op。</summary>
@@ -99,7 +99,7 @@ internal interface ITypeHelper<T> where T : notnull {
 
     /// <summary>
     /// 加载历史版本链后，是否需要对最终 surviving 的 facade 值做 placeholder 残留校验。
-    /// 目前主要用于 typed string 在 load 阶段的缺失 SymbolId 占位方案。
+    /// 目前主要用于 typed Symbol 在 load 阶段的缺失 SymbolId 占位方案。
     /// </summary>
     static virtual bool NeedValidateReconstructed => false;
 
@@ -151,54 +151,62 @@ internal readonly struct BooleanHelper : ITypeHelper<bool> {
 }
 
 /// <summary>
-/// string 的 symbol-backed 序列化 Helper。
-/// 运行时 facade/store 都是普通 string；写入/读取时通过 writer/reader 上下文桥接 SymbolId。
+/// 显式 Symbol facade 的序列化 Helper。
+/// 运行时 facade 是 <see cref="Symbol"/>；写入/读取时通过 writer/reader 上下文桥接 SymbolId。
 /// </summary>
-internal readonly struct StringHelper : ITypeHelper<string> {
-    public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
-    public static int Compare(string? a, string? b) => string.Compare(a, b, StringComparison.Ordinal);
-    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareSymbol(v, asKey);
-    public static string? Read(ref BinaryDiffReader reader, bool asKey) => reader.BareSymbolId(asKey);
+internal readonly struct SymbolHelper : ITypeHelper<Symbol> {
+    public static bool Equals(Symbol a, Symbol b) => a == b;
+    public static int Compare(Symbol a, Symbol b) => a.CompareTo(b);
+    public static void Write(BinaryDiffWriter writer, Symbol v, bool asKey) => writer.BareSymbol(v, asKey);
+    public static Symbol Read(ref BinaryDiffReader reader, bool asKey) => reader.BareSymbol(asKey);
     public static bool NeedVisitChildRefs => true;
     public static bool NeedValidateReconstructed => true;
-    public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) => old = Read(ref reader, asKey: false);
-    /// <summary>BareSymbol 写出 VarUInt(SymbolId)。这里拿不到实际 SymbolId，先保守取 5 作为上界。</summary>
-    public static uint EstimateBareSize(string? value, bool asKey) => 5;
+    public static void UpdateOrInit(ref BinaryDiffReader reader, ref Symbol old) => old = Read(ref reader, asKey: false);
 
-    public static void VisitChildRefs<TVisitor>(string? value, Revision revision, ref TVisitor visitor)
+    public static void VisitChildRefs<TVisitor>(Symbol value, Revision revision, ref TVisitor visitor)
         where TVisitor : IChildRefVisitor, allows ref struct {
         visitor.Visit(value);
     }
 
-    public static AteliaError? ValidateReconstructed(string? value, LoadPlaceholderTracker tracker, string ownerName) {
-        if (!tracker.IsPlaceholder(value)) { return null; }
+    public static AteliaError? ValidateReconstructed(Symbol value, LoadPlaceholderTracker tracker, string ownerName) {
+        if (!tracker.IsPlaceholder(value.Value)) { return null; }
         return new SjCorruptionError(
-            $"{ownerName} load completed with an unresolved historical string placeholder: '{value}'.",
+            $"{ownerName} load completed with an unresolved historical symbol placeholder: '{value}'.",
             RecoveryHint: "The final SymbolTable is missing a string still referenced by the reconstructed object state."
         );
     }
+
+    /// <summary>BareSymbol 写出 VarUInt(SymbolId)。这里拿不到实际 SymbolId，先保守取 5 作为上界。</summary>
+    public static uint EstimateBareSize(Symbol value, bool asKey) => 5;
 }
 
 /// <summary>
-/// 值语义字符串（<see cref="InlineString"/>）的序列化 Helper。
-/// 用于 Per-Revision String Pool（<c>DurableDict&lt;uint, InlineString&gt;</c>）的 value 侧。
+/// 值语义 string 的序列化 Helper。
+/// 直接把字符串 payload 写入帧体，不经过 per-Revision symbol table。
 /// </summary>
-internal readonly struct InlineStringHelper : ITypeHelper<InlineString> {
-    public static bool Equals(InlineString a, InlineString b) => a == b;
-    public static int Compare(InlineString a, InlineString b) => string.Compare(a.Value, b.Value, StringComparison.Ordinal);
-    public static void Write(BinaryDiffWriter writer, InlineString v, bool asKey) => writer.BareInlineString(v.Value, asKey);
-    public static InlineString Read(ref BinaryDiffReader reader, bool asKey) => new(reader.BareInlineString(asKey));
-    public static void UpdateOrInit(ref BinaryDiffReader reader, ref InlineString old) => old = Read(ref reader, asKey: false);
-    public static uint EstimateBareSize(InlineString value, bool asKey) {
-        string? s = value.Value;
-        if (string.IsNullOrEmpty(s)) { return 1; }
-        int utf8Bytes = Encoding.UTF8.GetByteCount(s);
-        int utf16Bytes = s.Length * 2;
+internal readonly struct StringHelper : ITypeHelper<string> {
+    public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
+    public static int Compare(string? a, string? b) => string.Compare(a, b, StringComparison.Ordinal);
+    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareStringPayload(v, asKey);
+    public static string Read(ref BinaryDiffReader reader, bool asKey) => reader.BareStringPayload(asKey);
+    public static bool NeedVisitChildRefs => false;
+    public static bool NeedValidateReconstructed => false;
+    public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(string? value, bool asKey) {
+        if (string.IsNullOrEmpty(value)) { return 1; }
+        int utf8Bytes = Encoding.UTF8.GetByteCount(value);
+        int utf16Bytes = value.Length * 2;
         bool useUtf8 = utf8Bytes < utf16Bytes;
         int payloadBytes = useUtf8 ? utf8Bytes : utf16Bytes;
         uint header = useUtf8 ? ((uint)utf8Bytes << 1) | 1u : (uint)utf16Bytes;
         return CostEstimateUtil.VarIntSize(header) + (uint)payloadBytes;
     }
+
+    public static void VisitChildRefs<TVisitor>(string? value, Revision revision, ref TVisitor visitor)
+        where TVisitor : IChildRefVisitor, allows ref struct {
+    }
+
+    public static AteliaError? ValidateReconstructed(string? value, LoadPlaceholderTracker tracker, string ownerName) => null;
 }
 
 /// <summary>

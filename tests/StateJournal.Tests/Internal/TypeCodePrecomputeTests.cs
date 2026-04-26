@@ -21,6 +21,7 @@ public class TypeCodePrecomputeTests {
     [Theory]
     [InlineData(typeof(bool))]
     [InlineData(typeof(string))]
+    [InlineData(typeof(Symbol))]
     [InlineData(typeof(double))]
     [InlineData(typeof(float))]
     [InlineData(typeof(Half))]
@@ -45,13 +46,6 @@ public class TypeCodePrecomputeTests {
         var entry = HelperRegistry.ResolveValueHelper(typeof(DurableDeque));
         Assert.True(entry.IsValid);
         AssertRoundTrip(entry.TypeCode, typeof(DurableDeque));
-    }
-
-    [Fact]
-    public void ResolveValueHelper_InlineString_TypeCode_RoundTrips() {
-        var entry = HelperRegistry.ResolveValueHelper(typeof(InlineString));
-        Assert.True(entry.IsValid);
-        AssertRoundTrip(entry.TypeCode, typeof(InlineString));
     }
 
     // ═══════════════════════ 泛型容器 — HelperRegistry ═══════════════════════

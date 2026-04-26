@@ -159,13 +159,12 @@ deltifyBytes =
 
 最典型的是 `string`：
 
-- `TextSequenceCore` 的 value 最终走 symbol-backed 路径写盘
-- `StringHelper.EstimateBareSize(...)` 仍然给出保守近似，而不是精确 `SymbolId` 长度
-- 对应位置：`src/StateJournal/Internal/ITypeHelper.cs:166`
+- `TextSequenceCore` 的 value 现在走 inline payload 路径写盘
+- `StringHelper.EstimateBareSize(...)` 已按 `BareStringPayload` 的真实 header + payload 长度估算
+- 对应位置：`src/StateJournal/Internal/ITypeHelper.cs` 中的 `StringHelper.EstimateBareSize(...)`
 
-这类误差仍然存在，但它的性质已经变了：
+因此，对 `TextSequenceCore` 来说，`string` helper 本身不再是主要误差来源；剩余误差如果存在，更多来自共享层 envelope 估算，而不是字符串值大小本身。
 
-- 现在主要是“值大小近似”
 - 不再是“协议字段漏算”
 
 ## 7. live 视角与 appended 物理窗口视角

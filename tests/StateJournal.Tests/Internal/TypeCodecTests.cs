@@ -42,6 +42,7 @@ public class TypeCodecTests {
     [InlineData((byte)TypeOpCode.PushHalf, typeof(Half))]
     [InlineData((byte)TypeOpCode.PushSingle, typeof(float))]
     [InlineData((byte)TypeOpCode.PushDouble, typeof(double))]
+    [InlineData((byte)TypeOpCode.PushSymbol, typeof(Symbol))]
     [InlineData((byte)TypeOpCode.PushString, typeof(string))]
     public void PushLeaf_DecodesCorrectType(byte op, Type expected) {
         Assert.True(Decode([op], out var result));

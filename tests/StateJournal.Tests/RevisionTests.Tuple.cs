@@ -49,15 +49,15 @@ partial class RevisionTests {
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
-        var root = rev.CreateDict<int, ValueTuple<int, string>>();
-        root.Upsert(5, new ValueTuple<int, string>(9, "tuple-symbol"));
+        var root = rev.CreateDict<int, ValueTuple<int, Symbol>>();
+        root.Upsert(5, new ValueTuple<int, Symbol>(9, "tuple-symbol"));
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
         var openResult = OpenRevision(outcome.HeadCommitTicket, file);
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
-        var loaded = Assert.IsAssignableFrom<DurableDict<int, ValueTuple<int, string>>>(openResult.Value!.GraphRoot);
-        Assert.Equal(GetIssue.None, loaded.Get(5, out ValueTuple<int, string> value));
+        var loaded = Assert.IsAssignableFrom<DurableDict<int, ValueTuple<int, Symbol>>>(openResult.Value!.GraphRoot);
+        Assert.Equal(GetIssue.None, loaded.Get(5, out ValueTuple<int, Symbol> value));
         Assert.Equal(9, value.Item1);
         Assert.Equal("tuple-symbol", value.Item2);
     }

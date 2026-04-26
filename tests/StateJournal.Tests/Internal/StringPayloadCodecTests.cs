@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Atelia.StateJournal.Internal.Tests;
 
-public class InlineStringTests {
+public class StringPayloadCodecTests {
     [Fact]
     public void WriteTo_Ascii_PrefersUtf8() {
         byte[] data = WriteFastPath("hello");
@@ -55,38 +55,38 @@ public class InlineStringTests {
         Assert.Throws<InvalidDataException>(ReadTruncatedUtf16LePayloadOnCompatibilityPath);
     }
 
-    private readonly struct FixFastPath : InlineString.IFastPathStrategy {
+    private readonly struct FixFastPath : StringPayloadCodec.IFastPathStrategy {
         public static bool IsFastPath => true;
     }
 
-    private readonly struct FixCompatibilityPath : InlineString.IFastPathStrategy {
+    private readonly struct FixCompatibilityPath : StringPayloadCodec.IFastPathStrategy {
         public static bool IsFastPath => false;
     }
 
     private static byte[] WriteFastPath(string value) {
         var buffer = new ArrayBufferWriter<byte>();
-        InlineString.WriteTo<FixFastPath>(buffer, value);
+        StringPayloadCodec.WriteTo<FixFastPath>(buffer, value);
         return buffer.WrittenSpan.ToArray();
     }
 
     private static byte[] WriteCompatibilityPath(string value) {
         var buffer = new ArrayBufferWriter<byte>();
-        InlineString.WriteTo<FixCompatibilityPath>(buffer, value);
+        StringPayloadCodec.WriteTo<FixCompatibilityPath>(buffer, value);
         return buffer.WrittenSpan.ToArray();
     }
 
     private static string ReadFastPath(byte[] data) {
         var reader = new BinaryDiffReader(data);
-        return InlineString.ReadFrom<FixFastPath>(ref reader);
+        return StringPayloadCodec.ReadFrom<FixFastPath>(ref reader);
     }
 
     private static string ReadCompatibilityPath(byte[] data) {
         var reader = new BinaryDiffReader(data);
-        return InlineString.ReadFrom<FixCompatibilityPath>(ref reader);
+        return StringPayloadCodec.ReadFrom<FixCompatibilityPath>(ref reader);
     }
 
     private static void ReadTruncatedUtf16LePayloadOnCompatibilityPath() {
         var reader = new BinaryDiffReader([0x04, 0x60, 0x4F, 0x7D]);
-        InlineString.ReadFrom<FixCompatibilityPath>(ref reader);
+        StringPayloadCodec.ReadFrom<FixCompatibilityPath>(ref reader);
     }
 }

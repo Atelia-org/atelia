@@ -142,7 +142,7 @@ public abstract class DurableObject {
 
     internal abstract void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) where TVisitor : IChildRefVisitor, allows ref struct;
     // load 历史回放完成后的局部收尾校验入口。
-    // 目前既承接 typed string placeholder 残留校验，也承接 mixed 容器里的 SymbolId 完整性校验。
+    // 目前既承接 typed Symbol placeholder 残留校验，也承接 mixed 容器里的 SymbolId 完整性校验。
     internal virtual AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, StringPool? symbolPool) => null;
 
     /// <summary>设置对象状态。</summary>

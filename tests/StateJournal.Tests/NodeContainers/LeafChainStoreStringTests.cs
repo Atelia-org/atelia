@@ -13,14 +13,14 @@ namespace Atelia.StateJournal.Tests.NodeContainers;
 
 /// <summary>
 /// Test-only <see cref="ITypeHelper{T}"/> for <see cref="string"/> with <c>NeedRelease = true</c>.
-/// Uses <c>BareInlineString</c> for serialization (no Revision context needed).
+/// Uses <c>BareStringPayload</c> for serialization (no Revision context needed).
 /// All <see cref="ReleaseSlot"/> calls are recorded in <see cref="LeafChainStoreStringTests.ReleasedValues"/>.
 /// </summary>
 internal readonly struct TrackingStringHelper : ITypeHelper<string> {
     public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
     public static int Compare(string? a, string? b) => string.Compare(a, b, StringComparison.Ordinal);
-    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareInlineString(v, asKey);
-    public static string? Read(ref BinaryDiffReader reader, bool asKey) => reader.BareInlineString(asKey);
+    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareStringPayload(v, asKey);
+    public static string? Read(ref BinaryDiffReader reader, bool asKey) => reader.BareStringPayload(asKey);
     public static bool NeedRelease => true;
     public static void ReleaseSlot(string? value) => LeafChainStoreStringTests.ReleasedValues.Add(value);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) {
@@ -288,7 +288,7 @@ public class LeafChainStoreStringTests : IDisposable {
         Assert.Equal(1, reader.ReadCount());
         uint seq = reader.BareUInt32(asKey: true);
         Assert.Equal(head.Sequence, seq);
-        string value = reader.BareInlineString(asKey: false);
+        string value = reader.BareStringPayload(asKey: false);
         Assert.Equal("updated", value);
 
         // Section 3: no appends

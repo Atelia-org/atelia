@@ -270,13 +270,14 @@ Typed 容器的优点：
 
 typed 容器里的字符串类型选择：
 
-- `string` 是 symbol-backed：更适合短字符串、重复率高的字段值、枚举感较强的文本。
-- `InlineString` 是 payload-backed：更适合不想进入 per-revision symbol table 的字符串，也可以直接作为 typed key/value。
+- `string` 是值语义 payload-backed 字符串，适合作为普通 typed key/value。
+- `Symbol` 是显式 symbol-backed facade，适合需要表达“身份/驻留字符串”语义的字段。
+- mixed 容器里的 `string` 目前仍走 `ValueBox(SymbolId)` 路线，这和 typed `string` 不是同一套语义。
 
 例如：
 
 ```csharp
-var dict = rev.CreateDict<InlineString, InlineString>();
+var dict = rev.CreateDict<string, string>();
 dict.Upsert("prompt", "a long one-off message");
 ```
 
@@ -311,14 +312,20 @@ null
 所有容器类型参数都有 `where T : notnull`，但这不表示引用类型值不能存 `null`。
 
 ```csharp
-var dict = rev.CreateDict<string, string>();
-dict.Upsert("nickname", null);
-dict.Get("nickname", out string? value); // value == null, issue == None
+var typedString = rev.CreateDict<string, string>();
+typedString.Upsert("nickname", null);
+typedString.Get("nickname", out string? nickname); // nickname == "", issue == None
+
+var typedSymbol = rev.CreateDict<string, Symbol>();
+typedSymbol.Upsert("owner", null);
+typedSymbol.Get("owner", out Symbol owner); // owner.IsNull
 
 var mixed = rev.CreateDict<string>();
 mixed.Upsert("child", (DurableObject?)null);
 mixed.TryGet("child", out DurableDict<string, int>? child); // child == null
 ```
+
+也就是说：typed `string` 会把 `null` 规范化为空字符串；typed `Symbol` 和 mixed `DurableObject` 则保留显式 null facade。
 
 对值类型，如 `int`，`TValue?` 在 `where TValue : notnull` 下只是 nullable annotation，不是 `Nullable<T>` 包装。
 
@@ -707,7 +714,7 @@ repo.Commit(root).Value;
 - `Freeze()` 后的修改会抛 `ObjectFrozenException`。
 - dirty frozen source 不能直接 fork；先 commit 让 frozen snapshot 落盘。
 - mixed 容器里的 `double` 默认可能采用紧凑编码；需要精确保存所有 double bit 时使用 `UpsertExactDouble` 或 exact double helpers。
-- typed string 运行时保存普通 `string`，mixed string 运行时走 `ValueBox(SymbolId)`；使用者通常无感，但调试内部结构时不要混淆。
+- typed `string` 走值语义 payload 路线；typed `Symbol` 的公开运行时 facade 是 `Symbol`；mixed string 运行时走 `ValueBox(SymbolId)`。调试内部结构时不要混淆这三条路线。
 - `SymbolTable` 是持久化 mirror，不是业务可见数据表。
 - `Repository` 目录文件不要手工改；branch refs 是 CAS 保护的元数据。
 - 业务对象创建优先用 `Revision.Create*`，不要直接用 `Durable.*` 工厂绕过绑定。

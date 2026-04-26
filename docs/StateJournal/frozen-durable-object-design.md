@@ -699,7 +699,7 @@ VersionChain.Load
       normal mutable SyncCurrentFromCommitted()
 ```
 
-注意：`ValidateReconstructed` 仍需在 `OnLoadCompleted` 前执行；frozen 不应破坏 typed string placeholder 和 mixed symbol 校验。当前若某些实现遍历 `_core.Current`，需要改成遍历 replayed committed state 或 tracker 暴露的 reconstructed view，否则 `_current` 为空时会漏校验。
+注意：`ValidateReconstructed` 仍需在 `OnLoadCompleted` 前执行；frozen 不应破坏 typed `Symbol` placeholder 和 mixed symbol 校验。当前若某些实现遍历 `_core.Current`，需要改成遍历 replayed committed state 或 tracker 暴露的 reconstructed view，否则 `_current` 为空时会漏校验。
 
 ### 10.5 SaveAs / ExportTo 对 frozen 的要求
 
@@ -792,7 +792,7 @@ VersionChain.Load
 
 ### 11.9 Load validation
 
-- 构造 mixed symbol corruption / typed string placeholder 残留。
+- 构造 mixed symbol corruption / typed `Symbol` placeholder 残留。
 - 确认 `ValidateReconstructed` 在 sync/freeze 前能扫到 replayed committed state。
 
 ### 11.10 SaveAs / ExportTo

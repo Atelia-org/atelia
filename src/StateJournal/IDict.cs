@@ -99,7 +99,7 @@ internal static class DictThrowHelpers {
 
 internal class DictDemo {
     public static void Run() {
-        // MixedDict 中的 string 操作需要绑定 Revision（string 通过 per-Revision Symbol Pool intern）。
+        // MixedDict 的 string value 路线仍需要绑定 Revision（mixed string 通过 per-Revision Symbol Pool intern）。
         var rev = new Revision(1);
         var model = rev.CreateDict<string>();
 

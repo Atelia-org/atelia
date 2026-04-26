@@ -1,5 +1,4 @@
 using Atelia.Rbf;
-using Atelia.StateJournal.Internal;
 using Xunit;
 
 namespace Atelia.StateJournal.Tests;
@@ -95,7 +94,7 @@ public class MixedOrderedDictTests : IDisposable {
     public void Upsert_DurableObject_RoundTrips() {
         var rev = CreateRevision();
         var dict = rev.CreateOrderedDict<int>();
-        var child = rev.CreateDict<string, int>();
+        var child = rev.CreateDict<Symbol, int>();
         child.Upsert("x", 10);
 
         dict.Upsert<DurableObject>(1, child);
@@ -215,7 +214,7 @@ public class MixedOrderedDictTests : IDisposable {
         var dict = rev.CreateOrderedDict<int>();
 
         // TypedDict as value
-        var typedDict = rev.CreateDict<string, int>();
+        var typedDict = rev.CreateDict<Symbol, int>();
         dict.Upsert<DurableObject>(1, typedDict);
         Assert.True(dict.TryGetValueKind(1, out var k1));
         Assert.Equal(ValueKind.TypedDict, k1);

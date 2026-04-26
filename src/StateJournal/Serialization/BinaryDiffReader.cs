@@ -115,27 +115,28 @@ internal ref struct BinaryDiffReader {
     internal float BareSingle(bool asKey) => BinaryPrimitives.ReadSingleLittleEndian(ReadSpan(sizeof(float)));
     internal double BareDouble(bool asKey) => BinaryPrimitives.ReadDoubleLittleEndian(ReadSpan(sizeof(double)));
 
-    /// <summary>symbol-backed string 的裸读取。需要调用方提供 symbol 解码上下文。</summary>
-    internal string? BareSymbolId(bool asKey) {
-        SymbolId id = BareStoredSymbolId(asKey);
-        if (id.IsNull) { return null; }
-        if (_symbolPool is null) { throw new InvalidDataException("Symbol-backed string deserialization requires a symbol pool context."); }
-        if (_symbolPool.TryGetValue(id.ToSlotHandle(), out string value)) { return value; }
-        if (_placeholderTracker is not null) { return _placeholderTracker.Create(id); }
-
-        if (!_symbolPool.TryGetValue(id.ToSlotHandle(), out _)) { throw new InvalidDataException($"Missing symbol entry for SymbolId {id.Value} during string deserialization."); }
-        throw new InvalidDataException($"Missing symbol entry for SymbolId {id.Value} during string deserialization.");
+    /// <summary>
+    /// <see cref="Symbol"/> 的裸读取。需要调用方提供 symbol 解码上下文。
+    /// typed <see cref="Symbol"/> wire 的 health 契约要求 id 非零；读到 <see cref="SymbolId.Null"/> 会抛 <see cref="InvalidDataException"/>。
+    /// </summary>
+    internal Symbol BareSymbol(bool asKey) {
+        SymbolId id = BareSymbolId(asKey);
+        if (id.IsNull) { throw new InvalidDataException("Typed Symbol payload must not contain the no-symbol sentinel (SymbolId.Null). The wire data is corrupted or produced by a legacy writer."); }
+        if (_symbolPool is null) { throw new InvalidDataException("Symbol deserialization requires a symbol pool context."); }
+        if (_symbolPool.TryGetValue(id.ToSlotHandle(), out string value)) { return new Symbol(value); }
+        if (_placeholderTracker is not null) { return new Symbol(_placeholderTracker.Create(id)); }
+        throw new InvalidDataException($"Missing symbol entry for SymbolId {id.Value} during Symbol deserialization.");
     }
 
     /// <summary>已编码 <see cref="SymbolId"/> 的裸读取，不做任何 <see cref="Revision"/> 级转换。</summary>
-    internal SymbolId BareStoredSymbolId(bool asKey) => new(BareUInt32(asKey));
+    internal SymbolId BareSymbolId(bool asKey) => new(BareUInt32(asKey));
 
     /// <summary>
-    /// InlineString 的裸读取。格式：VarUInt header，后跟 payload。
+    /// 值语义 string 的裸读取。格式：VarUInt header，后跟 payload。
     /// header LSB=0 → UTF-16LE，header 本身就是 payloadByteCount。
     /// header LSB=1 → UTF-8，payloadByteCount = header &gt;&gt; 1。
     /// </summary>
-    internal string BareInlineString(bool asKey) => InlineString.ReadFrom(ref this);
+    internal string BareStringPayload(bool asKey) => StringPayloadCodec.ReadFrom(ref this);
     #endregion
     #region Read Taged
     internal byte TaggedNonnegative1() => RawByte();

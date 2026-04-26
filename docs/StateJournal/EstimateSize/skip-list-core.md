@@ -143,7 +143,7 @@ deltifyBytes =
 
 例如：
 
-- `StringHelper.EstimateBareSize(...)` 仍可能是保守近似，见 `src/StateJournal/Internal/ITypeHelper.cs:166`
+- `StringHelper.EstimateBareSize(...)` 现在已按 `BareStringPayload` 的真实长度估算；仍可能近似的是 `ValueBox` 等会走上界的 helper
 
 这类误差是可接受的，因为它们属于“值本身大小的近似”，而不再是“容器协议骨架漏算”。
 

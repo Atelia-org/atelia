@@ -8,11 +8,11 @@ namespace Atelia.StateJournal.Serialization;
 internal ref struct BinaryDiffWriter {
     internal const byte BareFalse = 0, BareTrue = 1;
     private IBufferWriter<byte> _downstream = null!;
-    private readonly Revision? _stringRevision;
+    private readonly Revision? _symbolRevision;
 
-    internal BinaryDiffWriter(IBufferWriter<byte> downstream, Revision? stringRevision = null) {
+    internal BinaryDiffWriter(IBufferWriter<byte> downstream, Revision? symbolRevision = null) {
         _downstream = downstream;
-        _stringRevision = stringRevision;
+        _symbolRevision = symbolRevision;
     }
 
     public void BareBoolean(bool value, bool asKey) {
@@ -20,16 +20,14 @@ internal ref struct BinaryDiffWriter {
         _downstream.Advance(1);
     }
 
-    /// <summary>string 的 symbol-backed 裸写入。需要调用方提供 <see cref="Revision"/> 级编码上下文。</summary>
-    public void BareSymbol(string? value, bool asKey) {
-        if (value is null) {
-            BareSymbolId(SymbolId.Null, asKey);
-            return;
-        }
-        if (_stringRevision is null) { throw new InvalidOperationException("Symbol-backed string serialization requires a bound Revision context."); }
-
-        SymbolId id = _stringRevision.InternReachableSymbol(value);
-        _stringRevision.EnsureSymbolMirrored(value, id);
+    /// <summary>
+    /// <see cref="Symbol"/> 的裸写入。需要调用方提供 <see cref="Revision"/> 级编码上下文。
+    /// typed <see cref="Symbol"/> wire 不会产生 <see cref="SymbolId.Null"/>；empty symbol 会被 intern 为非零 id。
+    /// </summary>
+    public void BareSymbol(Symbol value, bool asKey) {
+        if (_symbolRevision is null) { throw new InvalidOperationException("Symbol-backed string serialization requires a bound Revision context."); }
+        SymbolId id = _symbolRevision.InternReachableSymbol(value.Value);
+        _symbolRevision.EnsureSymbolMirrored(value.Value, id);
         BareSymbolId(id, asKey);
     }
 
@@ -39,12 +37,12 @@ internal ref struct BinaryDiffWriter {
     }
 
     /// <summary>
-    /// InlineString 的裸写入。格式：VarUInt header，后跟 payload。
+    /// 值语义 string 的裸写入。格式：VarUInt header，后跟 payload。
     /// header LSB=0 → UTF-16LE，header 本身就是 payloadByteCount。
     /// header LSB=1 → UTF-8，payloadByteCount = header &gt;&gt; 1。
     /// </summary>
-    public void BareInlineString(string? value, bool asKey) {
-        InlineString.WriteTo(_downstream, value ?? string.Empty);
+    public void BareStringPayload(string? value, bool asKey) {
+        StringPayloadCodec.WriteTo(_downstream, value ?? string.Empty);
     }
 
     /// <summary>依赖于<see cref="DurableObjectKind"/>基于byte。</summary>
@@ -99,7 +97,7 @@ internal ref struct BinaryDiffWriter {
     public void TaggedDurableRef(DurableRef value) {
         // 内部方法，填入正确参数是调用方的责任。
         Debug.Assert(DurableRef.IsValidObjectKind(value.Kind), $"Invalid DurableRef kind '{value.Kind}'.");
-        Debug.Assert(!value.IsNull, "DurableRef LocalId cannot be null. Use TaggedNull for null references.");
+        Debug.Assert(!value.IsNull, "TaggedDurableRef requires a resolved DurableRef; use TaggedNull for the no-object sentinel.");
         if (value.IsNull) {
             TaggedNull(); // Release 尽量弥补。
             return;
@@ -148,12 +146,12 @@ internal ref struct BinaryDiffWriter {
     /// </summary>
     public void TaggedSymbolId(SymbolId id) {
         // 内部方法，填入正确参数是调用方的责任。
-        Debug.Assert(!id.IsNull, "SymbolId cannot be null. Use TaggedNull for null references.");
+        Debug.Assert(!id.IsNull, "TaggedSymbolId requires a resolved SymbolId; use TaggedNull for the no-symbol sentinel.");
         if (id.IsNull) {
             TaggedNull(); // Release 尽量弥补。
             return;
         }
-        _stringRevision?.EnsureSymbolIdMirrored(id);
+        _symbolRevision?.EnsureSymbolIdMirrored(id);
 
         bool wide = id.Value > ushort.MaxValue;
         byte tag = ScalarRules.TaggedRefEncoding.EncodeTag(TaggedRefKind.Symbol, wide);

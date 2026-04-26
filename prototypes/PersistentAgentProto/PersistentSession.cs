@@ -10,8 +10,8 @@ namespace Atelia.PersistentAgentProto;
 /// <list type="bullet">
 ///   <item>外层 message 走 <c>DurableDict&lt;string&gt;</c> mixed schema，便于未来零破坏地加 typed 元数据
 ///         （cost / tokenUsage / toolCallId / latency 等）。</item>
-///   <item>高熵文本字段集中在 <c>text: DurableDict&lt;string, InlineString&gt;</c> 子字典，
-///         明确"这是不可复用、长 payload"的语义；同时绕过 SymbolTable intern。</item>
+///   <item>高熵文本字段集中在 <c>text: DurableDict&lt;string, string&gt;</c> 子字典，
+///         typed string 当前就是 inline/non-intern 路线，可显式表达"这是不可复用、长 payload"的语义。</item>
 ///   <item>每条 message 写入后立即 <c>Freeze()</c>，把"消息一旦写入即不可变"的承诺写进对象状态。</item>
 /// </list>
 ///
@@ -23,9 +23,9 @@ namespace Atelia.PersistentAgentProto;
 ///   "createdAt": long (unix ms)
 ///   "messages": DurableDeque&lt;DurableDict&lt;string&gt;&gt;
 ///     (each, frozen after append)
-///       "text": DurableDict&lt;string, InlineString&gt;     (frozen)
-///         "role": InlineString ("user" | "assistant")
-///         "content": InlineString
+///       "text": DurableDict&lt;string, string&gt;     (frozen)
+///         "role": string ("user" | "assistant")
+///         "content": string
 ///       "ts": long (unix ms)
 /// </code>
 /// </summary>
@@ -88,7 +88,7 @@ public sealed class PersistentSession : IDisposable {
 
     private void Append(string role, string content) {
         var msg = _rev.CreateDict<string>();
-        var text = _rev.CreateDict<string, InlineString>();
+        var text = _rev.CreateDict<string, string>();
         text.Upsert("role", role);
         text.Upsert("content", content);
         text.Freeze();
@@ -120,11 +120,11 @@ public sealed class PersistentSession : IDisposable {
     public IEnumerable<(string Role, string Content, long TimestampMs)> EnumerateMessages() {
         for (int i = 0; i < _messages.Count; i++) {
             if (_messages.GetAt(i, out var msg) != GetIssue.None || msg is null) { continue; }
-            if (msg.Get("text", out DurableDict<string, InlineString>? text) != GetIssue.None || text is null) { continue; }
-            if (text.Get("role", out InlineString roleInline) != GetIssue.None) { continue; }
-            if (text.Get("content", out InlineString contentInline) != GetIssue.None) { continue; }
+            if (msg.Get("text", out DurableDict<string, string>? text) != GetIssue.None || text is null) { continue; }
+            if (text.Get("role", out string? role) != GetIssue.None) { continue; }
+            if (text.Get("content", out string? content) != GetIssue.None) { continue; }
             var ts = msg.GetOrThrow<long>("ts");
-            yield return (roleInline.Value, contentInline.Value, ts);
+            yield return (role ?? string.Empty, content ?? string.Empty, ts);
         }
     }
 

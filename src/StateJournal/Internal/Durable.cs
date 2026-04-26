@@ -19,9 +19,9 @@ internal static class Durable {
     /// <summary>
     /// 创建 <see cref="DurableDict{TKey, TValue}"/> (TypedDict)。
     /// </summary>
-    /// <typeparam name="TKey">键类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>。</typeparam>
+    /// <typeparam name="TKey">键类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、<see cref="Symbol"/> 等 HelperRegistry 支持的叶子类型。</typeparam>
     /// <typeparam name="TValue">
-    /// 值类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、
+    /// 值类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、<see cref="Symbol"/>、
     /// <see cref="DurableDict{TKey,TValue}"/>（嵌套）、<see cref="DurableDict{TKey}"/>（嵌套）、
     /// <see cref="DurableDeque{T}"/>（嵌套）、<see cref="DurableDeque"/>（嵌套）。
     /// </typeparam>
@@ -35,7 +35,7 @@ internal static class Durable {
     /// 创建 <see cref="DurableDict{TKey}"/> (MixedDict)。
     /// 值类型为异构混合，支持 int/double/bool/string/<see cref="DurableObject"/> 等多种类型。
     /// </summary>
-    /// <typeparam name="TKey">键类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>。</typeparam>
+    /// <typeparam name="TKey">键类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、<see cref="Symbol"/> 等 HelperRegistry 支持的叶子类型。</typeparam>
     /// <returns>空的 <see cref="DurableDict{TKey}"/> 实例。</returns>
     /// <exception cref="ArgumentException">泛型参数不在受支持的类型范围内。</exception>
     public static DurableDict<TKey> Dict<TKey>() where TKey : notnull =>
@@ -46,7 +46,7 @@ internal static class Durable {
     /// 创建 <see cref="DurableDeque{T}"/> (TypedDeque)。
     /// </summary>
     /// <typeparam name="T">
-    /// 元素类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、
+    /// 元素类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、<see cref="Symbol"/>、
     /// <see cref="DurableDict{TKey,TValue}"/>（嵌套）、<see cref="DurableDeque{T}"/>（嵌套）。
     /// </typeparam>
     /// <returns>空的 <see cref="DurableDeque{T}"/> 实例。</returns>
@@ -72,7 +72,7 @@ internal static class Durable {
     /// 创建 <see cref="DurableOrderedDict{TKey}"/> (MixedOrderedDict)。
     /// 值类型为异构混合，支持 int/double/bool/string/<see cref="DurableObject"/> 等多种类型。
     /// </summary>
-    /// <typeparam name="TKey">键类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>。</typeparam>
+    /// <typeparam name="TKey">键类型。当前支持：<c>int</c>、<c>double</c>、<c>string</c>、<see cref="Symbol"/> 等 HelperRegistry 支持的叶子类型。</typeparam>
     /// <returns>空的 <see cref="DurableOrderedDict{TKey}"/> 实例。</returns>
     /// <exception cref="ArgumentException">泛型参数不在受支持的类型范围内。</exception>
     public static DurableOrderedDict<TKey> OrderedDict<TKey>() where TKey : notnull =>

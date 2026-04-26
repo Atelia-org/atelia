@@ -25,9 +25,9 @@ root: DurableDict<string>
   ├─ createdAt: long (unix ms)
   └─ messages: DurableDeque<DurableDict<string>>            ← 仍然 mutable（继续 PushBack）
        (each msg, frozen after append)
-         ├─ text: DurableDict<string, InlineString>          ← frozen
-         │    ├─ role: InlineString ("user" | "assistant")
-         │    └─ content: InlineString
+         ├─ text: DurableDict<string, string>                ← frozen
+         │    ├─ role: string (typed value string)
+         │    └─ content: string
          └─ ts: long (unix ms)
 ```
 
@@ -48,10 +48,10 @@ root: DurableDict<string>
 |---|---:|---|
 | **当前主线**（freeze + cost-model fix） | **~907** | content 高熵随机；含每条消息 freeze 的 force-rebase 开销 |
 | 同 schema 但不 freeze | ~831 | 历史对照：去掉 freeze 后基线 |
-| SymbolTable happy path（content 100% 复用） | ~320 | content 不变 → SymbolTable 不增长，理论下限附近 |
+| 历史 SymbolTable happy path（content 100% 复用） | ~320 | 仅适用于旧 symbol-backed / mixed string 对照；当前 typed `string` schema 不会因 content 复用自动进入 SymbolTable |
 | **历史 buggy 基线**（cost-model fix 之前的同 schema） | ~869 | 当时是体积赢家是因为 mixed dict 受 bug 影响膨胀 5.6× |
 
-百万轮估算：~907 MB / ~320 MB（取决于内容是否高熵）。
+百万轮估算：当前 typed `string` schema 约 ~907 MB；~320 MB 只适用于显式选择 symbol-backed 且内容高度复用的模型。
 
 cost-model fix 经过：参见 `gitignore/persistent-proto/{claude,gpt5}-sendbox/` 中的 Claude × GPT5 联合定位 + 修复 `ITypeHelper<T>.EstimateBareSize` / `VersionChainStatus` 字节单位错配的 3 轮通信记录。
 
@@ -61,15 +61,15 @@ cost-model fix 经过：参见 `gitignore/persistent-proto/{claude,gpt5}-sendbox
 
 ```text
 toolCalls: DurableDeque<DurableDict<string>>?
-   each: { id: InlineString, name: string, args: InlineString }
+   each: { id: string, name: string, args: string }
 blocks: DurableDeque<DurableDict<string>>?
-   each: { kind: string, payload: InlineString | bytes? }
+   each: { kind: string, payload: string | bytes? }
    kind ∈ { "text", "thinking-redacted", "thinking-summary", … }
 opaqueThinking: bytes?                ← Anthropic redacted thinking 原文
 ```
 
 **待决策**：
-- `ActionBlock.Thinking.OpaquePayload` 是 `byte[]` —— 直接进 mixed value box（如果支持 byte[]）？还是包成 base64 InlineString？前者结构更准；后者付 ~33% base64 膨胀。
+- `ActionBlock.Thinking.OpaquePayload` 是 `byte[]` —— 直接进 mixed value box（如果支持 byte[]）？还是包成 base64 string？前者结构更准；后者付 ~33% base64 膨胀。
 - `Blocks` 顺序：deque 自然保序；`IRichActionMessage.Blocks` 本来就是 `IReadOnlyList<ActionBlock>`，deque 是自然映射。
 - `ToolCalls` 是不是直接复用同一个 ordered structure？可以，但 tool_call_id 是稳定 join key，建议独立 deque + per-id 索引。
 
