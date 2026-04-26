@@ -455,8 +455,8 @@ Frozen tracker 行为：
 - `Current` 仍可供读取和 child-ref walk。
 - `HasChanges` 仍只表示内容 dirty；frozen tracker 通常为 false。
 - `HasPersistenceChanges` 来自 object-level mutability dirty / registration pending / content dirty。
-- `RebaseCount` 仍等于 current count。
-- `DeltifyCount` 为 0。
+- 当前主线的 `rebase vs deltify` 决策已由 `EstimatedRebaseBytes` / `EstimatedDeltifyBytes` 驱动；旧的聚合 `RebaseCount` / `DeltifyCount` 已从所有 tracker 删除。后续如有诊断需求需要重新加回，应明确标记为诊断视图，不进入 `WritePendingDiff` 决策路径。
+- frozen tracker 在持久化层面的关键要求是：冻结快照应走 rebase。
 - `WriteDeltify` 在 frozen dirty 状态下不应被调用；应强制 rebase。
 - `Commit` 对 frozen tracker 是 no-op 或只清理 object-level dirty bit。
 - ValidateReconstructed 需要能遍历 replayed committed state；不能在 freeze 后释放 committed 再校验。
@@ -501,7 +501,7 @@ Frozen 后只保留 current sequence。
 需要重构点：
 
 - `_committed` 目前 readonly，不可释放。
-- `HasChanges` / `RebaseCount` / `DeltifyCount` 需识别 frozen 状态。
+- `HasChanges` 必须识别 frozen 状态；旧的聚合 `RebaseCount` / `DeltifyCount` 已删除，无需再为 frozen 状态特殊处理。
 - `WriteRebase` 可直接写 current。
 - mutating API 入口先由容器 facade 拦截 frozen，tracker 也可 debug assert。
 - ValidateReconstructed 同样需要 committed/current-agnostic reconstructed view。
@@ -665,6 +665,11 @@ else:
 
 VersionChainStatus.Write*(..., objectFlags: IsFrozen)
 ```
+
+这里应明确区分两层语义：
+
+- 当前主线里，`normal ShouldRebase` 的输入是字节估算，而不是 `RebaseCount` / `DeltifyCount`
+- object flags 带来的额外成本属于版本层共享开销，应体现在 `VersionChainStatus` 的 shared overhead 或 `deltifySize` 近似中，而不是退回到 count-based 启发式
 
 flags-only delta 的成本不能按 0 处理。`objectFlags` 应纳入 per-frame overhead 或 deltifySize 估算，避免 rebase 策略失真。
 

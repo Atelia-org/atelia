@@ -17,8 +17,8 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     #region DurableDictBase abstract properties
 
     public override bool HasChanges => _core.HasChanges;
-    private protected override int RebaseCount => _core.RebaseCount;
-    private protected override int DeltifyCount => _core.DeltifyCount;
+    private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<KHelper, VHelper>();
+    private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<KHelper, VHelper>();
 
     #endregion
 
@@ -32,7 +32,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     public override bool Remove(TKey key) {
         ThrowIfDetachedOrFrozen();
         if (!_core.Current.Remove(key, out TValue? removedValue)) { return false; }
-        _core.AfterRemove<VHelper>(key, removedValue);
+        _core.AfterRemove<VHelper>(key, removedValue, KHelper.EstimateBareSize(key, asKey: true));
         return true;
     }
 
@@ -48,7 +48,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
 
     public override UpsertStatus Upsert(TKey key, TValue? value) {
         ThrowIfDetachedOrFrozen();
-        return _core.Upsert<VHelper>(key, value);
+        return _core.Upsert<KHelper, VHelper>(key, value);
     }
 
     #endregion

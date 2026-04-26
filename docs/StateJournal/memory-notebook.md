@@ -200,7 +200,22 @@ objectFlags
 - `_mutabilityDirty` 表示 working flags 是否不同于 committed flags
 - 因此 clean/tracked 对象只做 `Freeze()` 也必须写一帧；否则 reopen 会丢失 readonly 语义
 
-### 10. enum Mask 成员已提取为 helper class 常量
+### 10. `rebase vs deltify` 已从 count-based 切到基于序列化字节的估算
+
+当前主线里，是否写 rebase frame 不再由聚合 `count` 启发式决定，而是统一走：
+
+- 容器/核心结构提供 `EstimatedRebaseBytes` / `EstimatedDeltifyBytes`
+- `DurableDictBase` / `DurableDequeBase` / `DurableText` 再补上 `WriteBytes(TypeCode)` 或 `WriteBytes(null)` 的真实长度前缀成本
+- `VersionChainStatus.ShouldRebase(rebaseSize, deltifySize)` 直接比较这两个序列化字节估算
+
+需要牢记的边界：
+
+- `PerFrameOverhead` 现在只表示 frame 头与版本链元数据的共享近似值
+- 容器 body 自身的 protocol header 与 payload 估算，应由各自的 `Estimated*Bytes()` 建模
+- `RemoveCount` / `UpsertCount` / `KeepDirtyCount` / `dirtyLinkCount` / `dirtyValueCount` / `appendedCount` 这类 count 仍然保留，因为它们描述的是当前 wire shape
+- 旧的聚合 `RebaseCount` / `DeltifyCount` 残留语义已经不再是主线合同，也不应再作为设计心智模型
+
+### 11. enum Mask 成员已提取为 helper class 常量
 
 `DurableObjectKind.Mask`、`HeapValueKind.Mask`、`VersionKind.Mask`、`FrameUsage.Mask`、`FrameSource.Mask` 已全部从 enum 中移除，改为对应 helper 静态类中的 `const byte BitMask`（或 `FrameTag` 内部的私有 `const`）。
 
@@ -371,6 +386,10 @@ _dirtyKeys : BitDivision<TKey>
 - dirty 集跟踪 upsert / remove
 - `Commit()` 把 dirty 收敛进 `_committed`
 - `Revert()` 把 `_current` 恢复到 `_committed`
+- rebase / deltify 估算已改为面向真实 dict wire shape 的字节估算：
+  - rebase = count header + 全量当前 payload bare bytes
+  - deltify = remove count + removed key bytes + upsert count + upsert payload bytes
+- `RemoveCount` / `UpsertCount` 现在属于协议 section count，不应误解成旧的 count-based 开销启发式
 
 ### `DequeChangeTracker<T>`
 
@@ -384,10 +403,20 @@ deque 路线已正式落地，承担：
 
 - deque 已经不是设计草案
 - API / diff / round-trip / durable child ref 都已有测试覆盖
+- `EstimatedRebaseBytes` / `EstimatedDeltifyBytes` 已按真实 deque 协议估算：
+  - rebase 路径显式计入 5 个 count header + 当前 value bytes
+  - deltify 路径显式计入 `Trim/KeepDirty/Push` 各 section count、dirty value bytes 与 keep patch index bytes
+- `TrimFrontCount` / `TrimBackCount` / `PushFrontCount` / `PushBackCount` / `KeepDirtyCount` 是协议结构，不是旧的聚合成本模型
 
 ### `DurableOrderedDict` 的 Change Tracking
 
 `DurableOrderedDict`（Typed 和 Mixed）**不使用** `DictChangeTracker`。它的 commit / revert / delta 由 `SkipListCore` + `LeafChainStore` 内部管理——叶链自身维护 dirty tracking（dirty value bits + dirty link bits + captured nodes + captured originals），整体架构与基于 `Dictionary<TKey, TValue>` 快照的 `DictChangeTracker` 完全不同。
+
+当前 `SkipListCore` 的估算语义也应按“协议感知的字节估算”理解：
+
+- rebase 按 live 链逐项估算 `seq / nextSeq / key / value`
+- deltify 按 `dirty links / dirty values / appended nodes` 三段协议分别估算
+- 不再使用“平均 entry bytes × 聚合 dirty count”这一类旧启发式
 
 ---
 
@@ -411,6 +440,7 @@ deque 路线已正式落地，承担：
 - **索引塔纯内存态**：`SkipListCore` 的塔索引不参与序列化，从叶链确定性重建（基于 key hash 确定塔高度）
 - **sequence 单调递增、不复用**：`LeafChainStore` 的 `_nextAllocSequence` 只增不减，GC 后回收的 sequence 不会被新节点占用
 - **增量帧三段式**：link mutations → value mutations → appended nodes（详见 `LeafChainStore` 注释）
+- **估算与 wire shape 对齐**：`SkipListCore` / `TextSequenceCore` 的 `Estimated*Bytes()` 已按这三段协议和真实 header 逐项建模，而不是按聚合 count 粗估
 - **`LocateOrInsertNode` 共享定位逻辑**：`SkipListCore` 的 `Upsert` 与 `UpsertGetValueRef` 通过私有 `LocateOrInsertNode` 共享"查找定位 + 必要时插入节点"逻辑，value 更新语义由各自调用方处理（`SetValue` vs `PrepareValueSlotForUpdate`）
 - **三阶段值更新协议**：`LeafChainStore` 提供 `PrepareValueSlotForUpdate` → `ConfirmValueDirty` / `CancelPreparedValueUpdate` 三阶段协议，支持 ValueBox 等 `NeedRelease` 类型的原位更新。`_capturedNodes` BitVector 独立于 dirty 状态追踪 capture 中间态
 
@@ -531,6 +561,11 @@ PushInt32, PushString -> MakeTypedOrderedDict
 - `Write(...)` 写帧但不改对象内存态，返回 `PendingSave`
 - `PendingSave.Complete()` 应用内存态变更
 - `Save(...)` = `Write(...) + Complete()`
+
+当前关于 `Write(...)` 最需要记住的新点是：
+
+- `rebase vs deltify` 的选择输入已经是序列化字节估算，而不是 payload 个数或聚合 dirty count
+- 容器层负责估算 body + section header；`VersionChainStatus` 只再叠加共享 frame overhead 与历史累计成本
 
 ### `VersionChain.Load`
 

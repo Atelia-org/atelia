@@ -17,6 +17,12 @@ internal struct DequeChangeTracker<TValue>
     /// 由后续 <c>SyncCurrentFromCommitted</c> 完成容量校准。
     /// </summary>
     private BitVector _committedDirtyMap;
+    private uint _currentValueBytes;
+    private uint _dirtyPrefixValueBytes;
+    private uint _dirtySuffixValueBytes;
+    private uint _dirtyKeepValueBytes;
+    private uint _dirtyKeepIndexBytesCache;
+    private bool _dirtyKeepIndexBytesCacheValid;
 
     // committed 中仍然幸存的连续窗口: [_oldKeepLo, OldKeepHi)
     private int _oldKeepLo;
@@ -37,9 +43,6 @@ internal struct DequeChangeTracker<TValue>
     public int PushBackCount => _current.Count - NewKeepHi;
     public int KeepCount => _keepCount;
     public int KeepDirtyCount => _committedDirtyMap.PopCount;
-    // 用于估算落盘大小
-    public int DeltifyCount => PushFrontCount + PushBackCount + KeepDirtyCount;
-    public int RebaseCount => _current.Count;
     public bool HasChanges =>
         _committed.Count != _keepCount // TrimFrontCount + TrimBackCount
         || _committedDirtyMap.PopCount != 0
@@ -48,6 +51,46 @@ internal struct DequeChangeTracker<TValue>
     internal IndexedDeque<TValue?> Committed => _committed;
     #endregion
 
+    /// <summary>估算 rebase 帧所需的 bare 字节数（仅 payload，不含 frame overhead 与 typeCode）。</summary>
+    public uint EstimatedRebaseBytes<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        AssertEstimateSummaryConsistent<VHelper>();
+        return CountHeaderBytes(0)
+            + CountHeaderBytes(0)
+            + CountHeaderBytes(0)
+            + CountHeaderBytes(0)
+            + CountHeaderBytes(_current.Count)
+            + _currentValueBytes;
+    }
+
+    /// <summary>估算 deltify 帧所需的 bare 字节数（仅 payload，不含 frame overhead）。</summary>
+    public uint EstimatedDeltifyBytes<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        AssertEstimateSummaryConsistent<VHelper>();
+        // 5 个序列化 count header + dirty value bytes（prefix/suffix/keep）+ keep patch index header。
+        // 三个 value bytes 字段均在 mutation 热路径上增量维护；keep patch index header 走 lazy cache。
+        return CountHeaderBytes(TrimFrontCount)
+            + CountHeaderBytes(TrimBackCount)
+            + CountHeaderBytes(KeepDirtyCount)
+            + CountHeaderBytes(PushFrontCount)
+            + CountHeaderBytes(PushBackCount)
+            + _dirtyPrefixValueBytes
+            + _dirtySuffixValueBytes
+            + _dirtyKeepValueBytes
+            + GetDirtyKeepIndexBytes();
+    }
+
+    private static uint CountHeaderBytes(int count) => CostEstimateUtil.VarIntSize((uint)count);
+
+    private static uint SumSegment<VHelper>(Span<TValue?> segment)
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        uint s = 0;
+        foreach (var v in segment) {
+            s += VHelper.EstimateBareSize(v, asKey: false);
+        }
+        return s;
+    }
+
     public DequeChangeTracker() {
         _committed = new();
         _current = new();
@@ -55,6 +98,12 @@ internal struct DequeChangeTracker<TValue>
         _oldKeepLo = 0;
         _newKeepLo = 0;
         _keepCount = 0;
+        _currentValueBytes = 0;
+        _dirtyPrefixValueBytes = 0;
+        _dirtySuffixValueBytes = 0;
+        _dirtyKeepValueBytes = 0;
+        _dirtyKeepIndexBytesCache = 0;
+        _dirtyKeepIndexBytesCacheValid = true;
     }
 
     public void PushFront<VHelper>(TValue? value)
@@ -68,14 +117,19 @@ internal struct DequeChangeTracker<TValue>
                 }
 
                 _current.PushFront(committedValue);
+                _currentValueBytes += EstimateValueBytes<VHelper>(committedValue);
                 --_oldKeepLo;
                 ++_keepCount;
+                InvalidateDirtyKeepIndexBytes();
                 AssertTrackedInvariant<VHelper>();
                 return;
             }
         }
 
         _current.PushFront(value);
+        uint valueBytes = EstimateValueBytes<VHelper>(value);
+        _currentValueBytes += valueBytes;
+        _dirtyPrefixValueBytes += valueBytes;
         ++_newKeepLo;
         AssertTrackedInvariant<VHelper>();
     }
@@ -91,6 +145,7 @@ internal struct DequeChangeTracker<TValue>
                 }
 
                 _current.PushBack(committedValue);
+                _currentValueBytes += EstimateValueBytes<VHelper>(committedValue);
                 ++_keepCount;
                 AssertTrackedInvariant<VHelper>();
                 return;
@@ -98,6 +153,9 @@ internal struct DequeChangeTracker<TValue>
         }
 
         _current.PushBack(value);
+        uint pushBackBytes = EstimateValueBytes<VHelper>(value);
+        _currentValueBytes += pushBackBytes;
+        _dirtySuffixValueBytes += pushBackBytes;
         AssertTrackedInvariant<VHelper>();
     }
 
@@ -119,10 +177,11 @@ internal struct DequeChangeTracker<TValue>
         );
 
         ref TValue? slot = ref _current.GetRef(index);
+        TValue? oldValue = slot;
         if (VHelper.Equals(slot, value)) { return false; }
 
         slot = value;
-        AfterSet<VHelper>(index, ref slot);
+        AfterSet<VHelper>(index, ref slot, oldValue);
         return true;
     }
 
@@ -136,14 +195,36 @@ internal struct DequeChangeTracker<TValue>
     /// 配合 <see cref="GetRef"/> 使用：调用方先原地更新 current 槽位，确认语义发生变化后，
     /// 再调用本方法维护 keep window / dirty map。
     /// </summary>
-    public void AfterSet<VHelper>(int currentIndex, ref TValue? value)
+    public void AfterSet<VHelper>(int currentIndex, ref TValue? value, TValue? oldValue)
         where VHelper : unmanaged, ITypeHelper<TValue> {
         // 显式要求传入与 GetRef 配对得到的 ref，可在 DEBUG 下校验“就是这个槽位”，
         // 比仅比较值语义更能防止调用方误把别处的临时值传进来。
         Debug.Assert(Unsafe.AreSame(ref value, ref _current.GetRef(currentIndex)));
+        uint oldValueBytes = EstimateValueBytes<VHelper>(oldValue);
 
         if ((uint)(currentIndex - _newKeepLo) >= (uint)_keepCount) {
-            TryAbsorbDirtyEdgeIntoKeep<VHelper>(currentIndex, value);
+            // index 在 dirty prefix / dirty suffix 区域。
+            bool isPrefix = currentIndex < _newKeepLo;
+            if (TryAbsorbDirtyEdgeIntoKeep<VHelper>(currentIndex, value, out uint absorbedBytes)) {
+                // absorb 成功：原 dirty edge 槽位进入 keep（keep 仍 clean，因 _committedDirtyMap 未设位）。
+                if (isPrefix) {
+                    _dirtyPrefixValueBytes -= oldValueBytes;
+                }
+                else {
+                    _dirtySuffixValueBytes -= oldValueBytes;
+                }
+                ApplyValueBytesDelta(ref _currentValueBytes, oldValueBytes, absorbedBytes);
+            }
+            else {
+                uint finalBytes = EstimateValueBytes<VHelper>(value);
+                if (isPrefix) {
+                    ApplyValueBytesDelta(ref _dirtyPrefixValueBytes, oldValueBytes, finalBytes);
+                }
+                else {
+                    ApplyValueBytesDelta(ref _dirtySuffixValueBytes, oldValueBytes, finalBytes);
+                }
+                ApplyValueBytesDelta(ref _currentValueBytes, oldValueBytes, finalBytes);
+            }
             AssertTrackedInvariant<VHelper>();
             return;
         }
@@ -152,6 +233,7 @@ internal struct DequeChangeTracker<TValue>
         int committedIndex = _oldKeepLo + keepRelativeIndex;
         TValue? committedValue = _committed[committedIndex];
         bool wasDirty = _committedDirtyMap.TestBit(committedIndex);
+        uint finalKeepBytes;
 
         if (VHelper.Equals(value, committedValue)) {
             if (VHelper.NeedRelease) {
@@ -161,13 +243,26 @@ internal struct DequeChangeTracker<TValue>
             _current[currentIndex] = committedValue;
             if (wasDirty) {
                 _committedDirtyMap.ClearBit(committedIndex);
+                InvalidateDirtyKeepIndexBytes();
+                _dirtyKeepValueBytes -= oldValueBytes;
             }
+            finalKeepBytes = EstimateValueBytes<VHelper>(committedValue);
 
+            ApplyValueBytesDelta(ref _currentValueBytes, oldValueBytes, finalKeepBytes);
             AssertTrackedInvariant<VHelper>();
             return;
         }
 
+        finalKeepBytes = EstimateValueBytes<VHelper>(value);
+        if (!wasDirty) {
+            InvalidateDirtyKeepIndexBytes();
+            _dirtyKeepValueBytes += finalKeepBytes;
+        }
+        else {
+            ApplyValueBytesDelta(ref _dirtyKeepValueBytes, oldValueBytes, finalKeepBytes);
+        }
         _committedDirtyMap.SetBit(committedIndex);
+        ApplyValueBytesDelta(ref _currentValueBytes, oldValueBytes, finalKeepBytes);
         AssertTrackedInvariant<VHelper>();
     }
 
@@ -179,8 +274,11 @@ internal struct DequeChangeTracker<TValue>
             callerOwned = false;
             return false;
         }
+        uint poppedBytes = EstimateValueBytes<VHelper>(value);
+        _currentValueBytes -= poppedBytes;
 
         if (popDirtyPrefix) {
+            _dirtyPrefixValueBytes -= poppedBytes;
             --_newKeepLo;
             callerOwned = VHelper.NeedRelease;
             AssertTrackedInvariant<VHelper>();
@@ -189,13 +287,19 @@ internal struct DequeChangeTracker<TValue>
 
         if (popKeep) {
             bool frontWasDirty = _committedDirtyMap.ClearBit(_oldKeepLo);
+            if (frontWasDirty) {
+                _dirtyKeepValueBytes -= poppedBytes;
+            }
             ++_oldKeepLo;
             --_keepCount;
+            InvalidateDirtyKeepIndexBytes();
             callerOwned = VHelper.NeedRelease && frontWasDirty;
             AssertTrackedInvariant<VHelper>();
             return true;
         }
 
+        // 仅剩 dirty suffix（_keepCount==0 且 _newKeepLo==0）时，pop 的是 suffix 首元。
+        _dirtySuffixValueBytes -= poppedBytes;
         callerOwned = VHelper.NeedRelease;
         AssertTrackedInvariant<VHelper>();
         return true;
@@ -209,8 +313,11 @@ internal struct DequeChangeTracker<TValue>
             callerOwned = false;
             return false;
         }
+        uint poppedBytes = EstimateValueBytes<VHelper>(value);
+        _currentValueBytes -= poppedBytes;
 
         if (popDirtySuffix) {
+            _dirtySuffixValueBytes -= poppedBytes;
             callerOwned = VHelper.NeedRelease;
             AssertTrackedInvariant<VHelper>();
             return true;
@@ -219,12 +326,20 @@ internal struct DequeChangeTracker<TValue>
         if (popKeep) {
             int backCommittedIndex = OldKeepHi - 1;
             bool backWasDirty = _committedDirtyMap.ClearBit(backCommittedIndex);
+            if (backWasDirty) {
+                _dirtyKeepValueBytes -= poppedBytes;
+            }
             --_keepCount;
+            if (backWasDirty) {
+                InvalidateDirtyKeepIndexBytes();
+            }
             callerOwned = VHelper.NeedRelease && backWasDirty;
             AssertTrackedInvariant<VHelper>();
             return true;
         }
 
+        // 仅剩 dirty prefix（_keepCount==0 且 DirtySuffixCount==0）时，pop 的是 prefix 末元。
+        _dirtyPrefixValueBytes -= poppedBytes;
         --_newKeepLo;
         callerOwned = VHelper.NeedRelease;
         AssertTrackedInvariant<VHelper>();
@@ -250,6 +365,7 @@ internal struct DequeChangeTracker<TValue>
         CopyCommittedRangeToCurrent<VHelper>(0, _oldKeepLo, toFront: true);
         CopyCommittedRangeToCurrent<VHelper>(OldKeepHi, _committed.Count - OldKeepHi, toFront: false);
 
+        RebuildCurrentValueBytesFromCurrent<VHelper>();
         ResetTrackedWindow<VHelper>();
     }
 
@@ -360,6 +476,12 @@ internal struct DequeChangeTracker<TValue>
         _newKeepLo = 0;
         _keepCount = 0;
         _committedDirtyMap.Clear();
+        _currentValueBytes = 0;
+        _dirtyPrefixValueBytes = 0;
+        _dirtySuffixValueBytes = 0;
+        _dirtyKeepValueBytes = 0;
+        _dirtyKeepIndexBytesCache = 0;
+        _dirtyKeepIndexBytesCacheValid = true;
     }
 
     public void SyncCurrentFromCommitted<VHelper>()
@@ -367,6 +489,7 @@ internal struct DequeChangeTracker<TValue>
         Debug.Assert(_current.Count == 0, "SyncCurrentFromCommitted 应在空 _current 上调用。");
         CopyCommittedRangeToCurrent<VHelper>(0, _committed.Count, toFront: false);
 
+        RebuildCurrentValueBytesFromCurrent<VHelper>();
         ResetTrackedWindow<VHelper>();
     }
 
@@ -404,44 +527,65 @@ internal struct DequeChangeTracker<TValue>
 
     private int CurrentIndexFromCommittedIndex(int committedIndex) => _newKeepLo + KeepRelativeIndexFromCommittedIndex(committedIndex);
 
-    private bool TryAbsorbDirtyEdgeIntoKeep<VHelper>(int currentIndex, TValue? value)
+    private bool TryAbsorbDirtyEdgeIntoKeep<VHelper>(int currentIndex, TValue? value, out uint finalBytes)
         where VHelper : unmanaged, ITypeHelper<TValue> =>
-        TryAbsorbDirtyFrontIntoKeep<VHelper>(currentIndex, value)
-        || TryAbsorbDirtyBackIntoKeep<VHelper>(currentIndex, value);
+        TryAbsorbDirtyFrontIntoKeep<VHelper>(currentIndex, value, out finalBytes)
+        || TryAbsorbDirtyBackIntoKeep<VHelper>(currentIndex, value, out finalBytes);
 
-    private bool TryAbsorbDirtyFrontIntoKeep<VHelper>(int currentIndex, TValue? value)
+    private bool TryAbsorbDirtyFrontIntoKeep<VHelper>(int currentIndex, TValue? value, out uint finalBytes)
         where VHelper : unmanaged, ITypeHelper<TValue> {
-        if (_oldKeepLo == 0) { return false; }
+        if (_oldKeepLo == 0) {
+            finalBytes = 0;
+            return false;
+        }
 
         bool isStandardFront = currentIndex == _newKeepLo - 1;
         bool isEmptySuffixMatch = _keepCount == 0 && currentIndex == _newKeepLo;
-        if (!isStandardFront && !isEmptySuffixMatch) { return false; }
+        if (!isStandardFront && !isEmptySuffixMatch) {
+            finalBytes = 0;
+            return false;
+        }
 
         TValue? committedValue = _committed[_oldKeepLo - 1];
-        if (!VHelper.Equals(value, committedValue)) { return false; }
+        if (!VHelper.Equals(value, committedValue)) {
+            finalBytes = 0;
+            return false;
+        }
 
         if (VHelper.NeedRelease) { VHelper.ReleaseSlot(value); }
         _current[currentIndex] = committedValue; // ReplaceDirtyEdgeWithCommitted
+        finalBytes = EstimateValueBytes<VHelper>(committedValue);
 
         --_oldKeepLo;
         if (isStandardFront) { --_newKeepLo; }
         ++_keepCount;
+        InvalidateDirtyKeepIndexBytes();
         return true;
     }
 
-    private bool TryAbsorbDirtyBackIntoKeep<VHelper>(int currentIndex, TValue? value)
+    private bool TryAbsorbDirtyBackIntoKeep<VHelper>(int currentIndex, TValue? value, out uint finalBytes)
         where VHelper : unmanaged, ITypeHelper<TValue> {
-        if (OldKeepHi >= _committed.Count) { return false; }
+        if (OldKeepHi >= _committed.Count) {
+            finalBytes = 0;
+            return false;
+        }
 
         bool isStandardBack = currentIndex == NewKeepHi;
         bool isEmptyPrefixMatch = _keepCount == 0 && currentIndex == NewKeepHi - 1;
-        if (!isStandardBack && !isEmptyPrefixMatch) { return false; }
+        if (!isStandardBack && !isEmptyPrefixMatch) {
+            finalBytes = 0;
+            return false;
+        }
 
         TValue? committedValue = _committed[OldKeepHi];
-        if (!VHelper.Equals(value, committedValue)) { return false; }
+        if (!VHelper.Equals(value, committedValue)) {
+            finalBytes = 0;
+            return false;
+        }
 
         if (VHelper.NeedRelease) { VHelper.ReleaseSlot(value); }
         _current[currentIndex] = committedValue; // ReplaceDirtyEdgeWithCommitted
+        finalBytes = EstimateValueBytes<VHelper>(committedValue);
 
         if (isEmptyPrefixMatch) { --_newKeepLo; }
         ++_keepCount;
@@ -455,7 +599,97 @@ internal struct DequeChangeTracker<TValue>
         _keepCount = _committed.Count;
         _committedDirtyMap.Clear();
         _committedDirtyMap.SetLength(_committed.Count);
+        _dirtyPrefixValueBytes = 0;
+        _dirtySuffixValueBytes = 0;
+        _dirtyKeepValueBytes = 0;
+        _dirtyKeepIndexBytesCache = 0;
+        _dirtyKeepIndexBytesCacheValid = true;
         AssertTrackedInvariant<VHelper>();
+    }
+
+    private static uint EstimateValueBytes<VHelper>(TValue? value)
+        where VHelper : ITypeHelper<TValue> => VHelper.EstimateBareSize(value, asKey: false);
+
+    private uint GetDirtyKeepIndexBytes() {
+        if (_dirtyKeepIndexBytesCacheValid) { return _dirtyKeepIndexBytesCache; }
+
+        uint sum = 0;
+        foreach (int committedIndex in _committedDirtyMap.Ones()) {
+            sum += CountHeaderBytes(KeepRelativeIndexFromCommittedIndex(committedIndex));
+        }
+
+        _dirtyKeepIndexBytesCache = sum;
+        _dirtyKeepIndexBytesCacheValid = true;
+        return sum;
+    }
+
+    private void InvalidateDirtyKeepIndexBytes() => _dirtyKeepIndexBytesCacheValid = false;
+
+    private static void ApplyValueBytesDelta(ref uint field, uint oldBytes, uint newBytes) {
+        if (newBytes >= oldBytes) {
+            field += newBytes - oldBytes;
+        }
+        else {
+            field -= oldBytes - newBytes;
+        }
+    }
+
+    private void RebuildCurrentValueBytesFromCurrent<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        _current.GetSegments(out Span<TValue?> first, out Span<TValue?> second);
+        _currentValueBytes = SumSegment<VHelper>(first) + SumSegment<VHelper>(second);
+    }
+
+    /// <summary>
+    /// DEBUG-only：从 _current / _committedDirtyMap 全量重算 estimate summary 字段，
+    /// 与增量维护的状态比对，用于尽早发现 summary drift（参考设计 7.1 节）。
+    /// </summary>
+    [Conditional("DEBUG")]
+    private void AssertEstimateSummaryConsistent<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        _current.GetSegments(out Span<TValue?> first, out Span<TValue?> second);
+        uint expectedCurrentValueBytes = SumSegment<VHelper>(first) + SumSegment<VHelper>(second);
+        Debug.Assert(
+            expectedCurrentValueBytes == _currentValueBytes,
+            $"DequeChangeTracker _currentValueBytes drift: tracked={_currentValueBytes}, expected={expectedCurrentValueBytes}."
+        );
+
+        // dirty prefix / suffix 是 current 中 keep 窗口之外的全部元素。
+        _current.GetSegments(0, _newKeepLo, out Span<TValue?> pfFirst, out Span<TValue?> pfSecond);
+        uint expectedDirtyPrefix = SumSegment<VHelper>(pfFirst) + SumSegment<VHelper>(pfSecond);
+        Debug.Assert(
+            expectedDirtyPrefix == _dirtyPrefixValueBytes,
+            $"DequeChangeTracker _dirtyPrefixValueBytes drift: tracked={_dirtyPrefixValueBytes}, expected={expectedDirtyPrefix}."
+        );
+
+        int suffixCount = _current.Count - NewKeepHi;
+        _current.GetSegments(NewKeepHi, suffixCount, out Span<TValue?> sfFirst, out Span<TValue?> sfSecond);
+        uint expectedDirtySuffix = SumSegment<VHelper>(sfFirst) + SumSegment<VHelper>(sfSecond);
+        Debug.Assert(
+            expectedDirtySuffix == _dirtySuffixValueBytes,
+            $"DequeChangeTracker _dirtySuffixValueBytes drift: tracked={_dirtySuffixValueBytes}, expected={expectedDirtySuffix}."
+        );
+
+        uint expectedDirtyKeep = 0;
+        foreach (int committedIndex in _committedDirtyMap.Ones()) {
+            int currentIndex = CurrentIndexFromCommittedIndex(committedIndex);
+            expectedDirtyKeep += EstimateValueBytes<VHelper>(_current[currentIndex]);
+        }
+        Debug.Assert(
+            expectedDirtyKeep == _dirtyKeepValueBytes,
+            $"DequeChangeTracker _dirtyKeepValueBytes drift: tracked={_dirtyKeepValueBytes}, expected={expectedDirtyKeep}."
+        );
+
+        if (_dirtyKeepIndexBytesCacheValid) {
+            uint expectedDirtyKeepIndexBytes = 0;
+            foreach (int committedIndex in _committedDirtyMap.Ones()) {
+                expectedDirtyKeepIndexBytes += CountHeaderBytes(KeepRelativeIndexFromCommittedIndex(committedIndex));
+            }
+            Debug.Assert(
+                expectedDirtyKeepIndexBytes == _dirtyKeepIndexBytesCache,
+                $"DequeChangeTracker _dirtyKeepIndexBytesCache drift: tracked={_dirtyKeepIndexBytesCache}, expected={expectedDirtyKeepIndexBytes}."
+            );
+        }
     }
 
     private void ReleaseCurrentPrefixAndSuffix<VHelper>()

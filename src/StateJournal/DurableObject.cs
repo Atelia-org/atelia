@@ -2,6 +2,7 @@ using Atelia.Data;
 using Atelia.StateJournal.Internal;
 using Atelia.StateJournal.Pools;
 using Atelia.StateJournal.Serialization;
+using System.Diagnostics;
 
 namespace Atelia.StateJournal;
 
@@ -162,5 +163,20 @@ public abstract class DurableObject {
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
     protected void ThrowIfDetached() {
         if (_state == DurableState.Detached) { throw new ObjectDetachedException(LocalId); }
+    }
+
+    /// <summary>
+    /// DEBUG-only：校验对象正处于版本链重建阶段允许的“reconstruction-only”状态。
+    /// 允许此前帧已写入 reconstructed committed 数据，但不允许混入 working changes。
+    /// </summary>
+    [Conditional("DEBUG")]
+    internal void AssertReconstructionOnlyState(bool requireCleanState = true) {
+        Debug.Assert(
+            (!requireCleanState || State == DurableState.Clean)
+            && !HasMutabilityChanges
+            && !HasPendingObjectMapRegistration,
+            "ApplyDelta requires reconstruction-only state before OnLoadCompleted; " +
+            "reconstructed committed data from earlier frames is allowed, but pending working changes are not."
+        );
     }
 }

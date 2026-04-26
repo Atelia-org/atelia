@@ -27,8 +27,8 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     #region DurableDequeBase abstract properties
 
     public override bool HasChanges => _core.HasChanges;
-    private protected override int RebaseCount => _core.RebaseCount;
-    private protected override int DeltifyCount => _core.DeltifyCount;
+    private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<ValueBoxHelper>();
+    private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<ValueBoxHelper>();
 
     #endregion
 
@@ -189,7 +189,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
         if (!VFace.UpdateOrInit(ref slot, value)) { return; }
 
         OnCurrentValueUpserted(oldValue, slot, existed: true);
-        _core.AfterSet<ValueBoxHelper>(index, ref slot);
+        _core.AfterSet<ValueBoxHelper>(index, ref slot, oldValue);
     }
 
     #endregion

@@ -13,6 +13,10 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
         _core = new();
     }
 
+    private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<KHelper, ValueBoxHelper>();
+    private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<KHelper, ValueBoxHelper>();
+    private protected override uint EstimateKeyBareBytes(TKey key) => KHelper.EstimateBareSize(key, asKey: true);
+
     internal override void DiscardChanges() {
         ThrowIfPendingObjectMapRegistration();
         if (IsFrozen) {

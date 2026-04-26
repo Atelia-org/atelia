@@ -16,8 +16,8 @@ public abstract class DurableDequeBase : DurableObject {
 
     #region Abstract Hooks
 
-    private protected abstract int RebaseCount { get; }
-    private protected abstract int DeltifyCount { get; }
+    private protected abstract uint EstimatedRebaseBytes { get; }
+    private protected abstract uint EstimatedDeltifyBytes { get; }
 
     private protected abstract void CommitCore();
     private protected abstract void SyncCurrentFromCommittedCore();
@@ -53,8 +53,9 @@ public abstract class DurableDequeBase : DurableObject {
     internal sealed override FrameTag WritePendingDiff(BinaryDiffWriter writer, ref DiffWriteContext context) {
         Debug.Assert(context.FrameSource != FrameSource.Blank, "FrameSource must be explicitly set");
 
-        uint rebaseSize = (uint)RebaseCount + (uint)TypeCode.Length;
-        uint deltifySize = (uint)DeltifyCount;
+        // rebase frame 写 WriteBytes(TypeCode)，deltify frame 写 WriteBytes(null)；二者实际写出的字节都包含 VarUInt 长度前缀。
+        uint rebaseSize = checked(EstimatedRebaseBytes + CostEstimateUtil.WriteBytesSize(TypeCode));
+        uint deltifySize = checked(EstimatedDeltifyBytes + CostEstimateUtil.WriteBytesSize(default));
         bool doRebase = context.ForceRebase || _versionStatus.ShouldRebase(rebaseSize, deltifySize);
         if (doRebase) {
             context.SetOutcome(wasRebase: true, rebaseSize, deltifySize);
@@ -72,8 +73,7 @@ public abstract class DurableDequeBase : DurableObject {
     }
 
     internal sealed override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr parentTicket) {
-        Debug.Assert(RebaseCount == 0);
-        Debug.Assert(DeltifyCount == 0);
+        AssertReconstructionOnlyState();
         _versionStatus.ApplyDelta(ref reader, parentTicket);
         ApplyDeltaCore(ref reader);
     }

@@ -334,6 +334,77 @@ public class SkipListCoreTests {
 
     #endregion
 
+    #region Estimate
+
+    [Fact]
+    public void EstimatedRebaseBytes_MatchesPayloadLength_AfterDeleteExcludesDeadNodes() {
+        SkipListCore<int, int, Int32Helper, Int32Helper> source = new();
+        source.Upsert(1, 10);
+        source.Upsert(2, 20);
+        source.Upsert(3, 30);
+        source.Commit();
+
+        source.Remove(3);
+
+        byte[] payload = WriteRebase(ref source);
+
+        Assert.Equal(payload.Length, (int)source.EstimatedRebaseBytes());
+    }
+
+    [Fact]
+    public void EstimatedDeltifyBytes_MatchesPayloadLength_ForLinkOnlyDelete() {
+        SkipListCore<int, int, Int32Helper, Int32Helper> source = new();
+        for (int i = 1; i <= 10; i++) {
+            source.Upsert(i, i * 10);
+        }
+        source.Commit();
+
+        source.Remove(5);
+
+        byte[] payload = WriteDelta(ref source);
+
+        Assert.Equal(payload.Length, (int)source.EstimatedDeltifyBytes());
+    }
+
+    [Fact]
+    public void EstimatedDeltifyBytes_MatchesPayloadLength_ForMixedSections() {
+        SkipListCore<int, int, Int32Helper, Int32Helper> source = new();
+        source.Upsert(1, 10);
+        source.Upsert(3, 30);
+        source.Commit();
+
+        source.Upsert(2, 20);
+        source.Upsert(3, 99);
+
+        byte[] payload = WriteDelta(ref source);
+
+        Assert.Equal(payload.Length, (int)source.EstimatedDeltifyBytes());
+    }
+
+    [Fact]
+    public void EstimatedBytes_MatchesPayloadLength_AcrossVarIntBoundaries() {
+        // 跨 sequence 的 1-byte/2-byte VarInt 边界（128）以及多次 commit 推高 _nextAllocSequence。
+        SkipListCore<int, int, Int32Helper, Int32Helper> source = new();
+        for (int i = 0; i < 200; i++) {
+            source.Upsert(i, i);
+        }
+        source.Commit();
+
+        // Rebase 估算：序列号、key、value、count 都跨过 128 边界。
+        byte[] rebasePayload = WriteRebase(ref source);
+        Assert.Equal(rebasePayload.Length, (int)source.EstimatedRebaseBytes());
+
+        // Deltify 估算：混合 link-only delete、value mutation、appended（新增 seq 均为 2 字节 VarInt）。
+        source.Remove(50);            // 1 个 dirty link
+        source.Upsert(100, 100_000);  // 1 个 dirty value (value 跨 1-byte zigzag 边界)
+        source.Upsert(300, 300);      // 1 个 appended
+
+        byte[] deltaPayload = WriteDelta(ref source);
+        Assert.Equal(deltaPayload.Length, (int)source.EstimatedDeltifyBytes());
+    }
+
+    #endregion
+
     #region Scale & Stress
 
     [Fact]

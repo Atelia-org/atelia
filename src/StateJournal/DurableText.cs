@@ -112,8 +112,9 @@ public sealed class DurableText : DurableObject {
     internal override FrameTag WritePendingDiff(BinaryDiffWriter writer, ref DiffWriteContext context) {
         Debug.Assert(context.FrameSource != FrameSource.Blank, "FrameSource must be explicitly set");
 
-        uint rebaseSize = (uint)_core.RebaseCount + (uint)TypeCode.Length;
-        uint deltifySize = (uint)_core.DeltifyCount;
+        // rebase frame 写 WriteBytes(TypeCode)，deltify frame 写 WriteBytes(null)；二者实际写出的字节都包含 VarUInt 长度前缀。
+        uint rebaseSize = checked(_core.EstimatedRebaseBytes() + CostEstimateUtil.WriteBytesSize(TypeCode));
+        uint deltifySize = checked(_core.EstimatedDeltifyBytes() + CostEstimateUtil.WriteBytesSize(default));
         bool doRebase = context.ForceRebase || _versionStatus.ShouldRebase(rebaseSize, deltifySize);
         if (doRebase) {
             context.SetOutcome(wasRebase: true, rebaseSize, deltifySize);
@@ -131,7 +132,7 @@ public sealed class DurableText : DurableObject {
     }
 
     internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr parentTicket) {
-        Debug.Assert(!_core.HasChanges);
+        AssertReconstructionOnlyState();
         _versionStatus.ApplyDelta(ref reader, parentTicket);
         _core.ApplyDelta(ref reader);
     }

@@ -33,18 +33,15 @@ internal static class Program {
             int contentLen = args.Length > 2 ? int.Parse(args[2]) : 200;
             return RunStressJson(n, contentLen);
         }
+        if (args.Length > 0 && args[0] == "stress-dup") {
+            int n = args.Length > 1 ? int.Parse(args[1]) : 100;
+            int contentLen = args.Length > 2 ? int.Parse(args[2]) : 200;
+            return RunStressDuplicate(n, contentLen);
+        }
         if (args.Length > 0 && args[0] == "stress-inline") {
             int n = args.Length > 1 ? int.Parse(args[1]) : 100;
             int contentLen = args.Length > 2 ? int.Parse(args[2]) : 200;
             return RunStressInline(n, contentLen);
-        }
-        if (args.Length > 0 && args[0] == "stress-dup") {
-            // 决定性实验：所有消息 content 都用同一个字符串。
-            // SymbolTable intern hit=100%，几乎不增长。
-            // 若 5.6× 放大主犯是 "SymbolTable 频繁 rebase"，则该路线应趋近 InlineSession。
-            int n = args.Length > 1 ? int.Parse(args[1]) : 1000;
-            int contentLen = args.Length > 2 ? int.Parse(args[2]) : 200;
-            return RunStressDup(n, contentLen);
         }
         if (args.Length > 0 && args[0] == "smoke-v2") {
             return RunSmokeV2();
@@ -282,33 +279,6 @@ internal static class Program {
         return sb.ToString();
     }
 
-    private static int RunStressDup(int n, int contentLen) {
-        var dir = Path.Combine(Path.GetTempPath(), "persistent-agent-stress-dup-" + Guid.NewGuid().ToString("N")[..8]);
-        Console.WriteLine($"stress-dup dir = {dir} n={n} contentLen={contentLen}");
-        // 单一 string，每轮全部复用
-        var u = new string('U', contentLen);
-        var a = new string('A', contentLen);
-        var checkpoints = new[] { 1, 10, 50, 100, 200, 500, 1000 };
-        long lastSize = 0;
-        using (var s = PersistentSession.OpenOrCreate(dir, "stress-system")) {
-            for (int i = 1; i <= n; i++) {
-                s.AppendUser(u);
-                s.AppendAssistant(a);
-                if (Array.IndexOf(checkpoints, i) >= 0 || i == n) {
-                    long total = 0;
-                    foreach (var f in Directory.EnumerateFiles(dir, "*.sj.rbf", SearchOption.AllDirectories)) {
-                        total += new FileInfo(f).Length;
-                    }
-                    var perTurn = (total - lastSize) / (double)(i - checkpoints.Where(c => c < i).DefaultIfEmpty(0).Max());
-                    Console.WriteLine($"  after {i,4} turns: total={total,8} bytes  bytes/turn-since-last≈{perTurn,7:F1}");
-                    lastSize = total;
-                }
-            }
-        }
-        Console.WriteLine("stress-dup ok");
-        return 0;
-    }
-
     /// <summary>对照实验：每条消息整体序列化为 JSON 字符串，存到 DurableDeque&lt;string&gt;。</summary>
     private static int RunStressJson(int n, int contentLen) {
         var dir = Path.Combine(Path.GetTempPath(), "persistent-agent-stress-json-" + Guid.NewGuid().ToString("N")[..8]);
@@ -332,6 +302,41 @@ internal static class Program {
             }
         }
         Console.WriteLine("stress-json ok");
+        return 0;
+    }
+
+    /// <summary>
+    /// 对照实验：所有 turn 反复写入完全相同的 user/assistant 内容。
+    /// 用于观测 SymbolTable intern 命中后的“理想路径”体积。
+    /// </summary>
+    private static int RunStressDuplicate(int n, int contentLen) {
+        var dir = Path.Combine(Path.GetTempPath(), "persistent-agent-stress-dup-" + Guid.NewGuid().ToString("N")[..8]);
+        Console.WriteLine($"stress-dup dir = {dir} n={n} contentLen={contentLen}");
+        var checkpoints = new[] { 1, 10, 50, 100, 200, 500, 1000 };
+        long lastSize = 0;
+        string userText = new('u', contentLen);
+        string assistantText = new('a', contentLen);
+
+        using (var s = PersistentSession.OpenOrCreate(dir, "stress-system")) {
+            for (int i = 1; i <= n; i++) {
+                s.AppendUser(userText);
+                s.AppendAssistant(assistantText);
+                if (Array.IndexOf(checkpoints, i) >= 0 || i == n) {
+                    long total = 0;
+                    foreach (var f in Directory.EnumerateFiles(dir, "*.sj.rbf", SearchOption.AllDirectories)) {
+                        total += new FileInfo(f).Length;
+                    }
+                    var perTurn = (total - lastSize) / (double)(i - checkpoints.Where(c => c < i).DefaultIfEmpty(0).Max());
+                    Console.WriteLine($"  after {i,4} turns: total={total,8} bytes  bytes/turn-since-last≈{perTurn,7:F1}");
+                    lastSize = total;
+                }
+            }
+        }
+
+        using (var s = PersistentSession.OpenOrCreate(dir, "ignored")) {
+            Console.WriteLine($"reopen: count={s.MessageCount}");
+        }
+        Console.WriteLine("stress-dup ok");
         return 0;
     }
 

@@ -341,10 +341,59 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
         RebuildIndex();
     }
 
-    /// <summary>估算开销输入：live 条目数（逻辑 key 计数）。与 DeltifyCount 单位不严格对齐，ShouldRebase 的启发式已容忍此差异。</summary>
-    public int RebaseCount => _count;
-    /// <summary>估算开销输入：物理变更数（dirty links + dirty values + new nodes）。</summary>
-    public int DeltifyCount => _arena.DirtyLinkCount + _arena.DirtyValueCount + (_arena.CurrentNodeCount - _arena.CommittedNodeCount);
+    private static uint CountSize(int count) => CostEstimateUtil.VarIntSize((uint)count);
+    private static uint SequenceSize(uint sequence) => CostEstimateUtil.VarIntSize(sequence);
+
+    /// <summary>估算 rebase 帧所需的 bare 字节数，对齐真实 rebase wire shape。</summary>
+    public uint EstimatedRebaseBytes() {
+        uint sum = SequenceSize(_head.Sequence)
+            + CountSize(_count)
+            + CountSize(0)
+            + CountSize(0)
+            + CountSize(_count);
+        var cursor = _head;
+        while (cursor.IsNotNull) {
+            var (key, value) = _arena.GetEntry(ref cursor);
+            sum += SequenceSize(cursor.Sequence);
+            sum += SequenceSize(_arena.GetNextSequence(ref cursor));
+            sum += KHelper.EstimateBareSize(key, asKey: true);
+            sum += VHelper.EstimateBareSize(value, asKey: false);
+            cursor = _arena.GetNext(ref cursor);
+        }
+        return sum;
+    }
+
+    /// <summary>估算 deltify 帧所需的 bare 字节数，对齐真实 delta wire shape。</summary>
+    public uint EstimatedDeltifyBytes() {
+        int dirtyLinkCount = _arena.DirtyLinkCount;
+        int dirtyValueCount = _arena.DirtyValueCount;
+        int appendedCount = _arena.CurrentNodeCount - _arena.CommittedNodeCount;
+
+        uint sum = SequenceSize(_head.Sequence)
+            + CountSize(_count)
+            + CountSize(dirtyLinkCount)
+            + CountSize(dirtyValueCount)
+            + CountSize(appendedCount);
+
+        foreach (int dirtyIndex in _arena.EnumerateDirtyLinkIndices()) {
+            sum += SequenceSize(_arena.GetSequenceByIndex(dirtyIndex));
+            sum += SequenceSize(_arena.GetNextSequenceByIndex(dirtyIndex));
+        }
+
+        foreach (int dirtyIndex in _arena.EnumerateDirtyValueIndices()) {
+            sum += SequenceSize(_arena.GetSequenceByIndex(dirtyIndex));
+            sum += VHelper.EstimateBareSize(_arena.GetValueByIndex(dirtyIndex), asKey: false);
+        }
+
+        for (int i = _arena.CommittedNodeCount; i < _arena.CurrentNodeCount; i++) {
+            sum += SequenceSize(_arena.GetSequenceByIndex(i));
+            sum += SequenceSize(_arena.GetNextSequenceByIndex(i));
+            sum += KHelper.EstimateBareSize(_arena.GetKeyByIndex(i), asKey: true);
+            sum += VHelper.EstimateBareSize(_arena.GetValueByIndex(i), asKey: false);
+        }
+
+        return sum;
+    }
 
     #endregion
 

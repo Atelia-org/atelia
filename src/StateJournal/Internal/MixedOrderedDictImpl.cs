@@ -16,8 +16,8 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
 
     // ── DurableDictBase abstract hooks ──
     public override bool HasChanges => _core.HasChanges;
-    private protected override int RebaseCount => _core.RebaseCount;
-    private protected override int DeltifyCount => _core.DeltifyCount;
+    private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes();
+    private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes();
 
     private protected override void CommitCore() => _core.Commit();
     private protected override void SyncCurrentFromCommittedCore() {

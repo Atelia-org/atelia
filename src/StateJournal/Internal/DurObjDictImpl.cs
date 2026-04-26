@@ -22,8 +22,8 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     #region DurableDictBase abstract properties
 
     public override bool HasChanges => _core.HasChanges;
-    private protected override int RebaseCount => _core.RebaseCount;
-    private protected override int DeltifyCount => _core.DeltifyCount;
+    private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<KHelper, LocalIdAsRefHelper>();
+    private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<KHelper, LocalIdAsRefHelper>();
 
     #endregion
 
@@ -71,7 +71,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     public override bool Remove(TKey key) {
         ThrowIfDetachedOrFrozen();
         if (!_core.Current.Remove(key, out var removedId)) { return false; }
-        _core.AfterRemove<LocalIdAsRefHelper>(key, removedId);
+        _core.AfterRemove<LocalIdAsRefHelper>(key, removedId, KHelper.EstimateBareSize(key, asKey: true));
         return true;
     }
 
@@ -96,7 +96,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
         ThrowIfDetachedOrFrozen();
         if (value is not null) { Revision.EnsureCanReference(value); }
         var localId = value?.LocalId ?? LocalId.Null;
-        return _core.Upsert<LocalIdAsRefHelper>(key, localId);
+        return _core.Upsert<KHelper, LocalIdAsRefHelper>(key, localId);
     }
 
     #endregion

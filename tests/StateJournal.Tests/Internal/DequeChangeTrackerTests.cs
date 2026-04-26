@@ -1,10 +1,27 @@
 using System.Buffers;
 using Atelia.StateJournal.Serialization;
 using Xunit;
+using Atelia.StateJournal.Tests;
 
 namespace Atelia.StateJournal.Internal.Tests;
 
 public class DequeChangeTrackerTests {
+    private static void AssertEstimateMatchesSerializedBody<TValue, VHelper>(in DequeChangeTracker<TValue> tracker)
+        where TValue : notnull
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        var rebaseTracker = tracker;
+        EstimateAssert.EqualSerializedBodySize(
+            rebaseTracker.EstimatedRebaseBytes<VHelper>(),
+            writer => rebaseTracker.WriteRebase<VHelper>(writer, DiffWriteContext.UserPrimary)
+        );
+
+        var deltaTracker = tracker;
+        EstimateAssert.EqualSerializedBodySize(
+            deltaTracker.EstimatedDeltifyBytes<VHelper>(),
+            writer => deltaTracker.WriteDeltify<VHelper>(writer, DiffWriteContext.UserPrimary)
+        );
+    }
+
     [Fact]
     public void TryApis_OnEmptyTracker_ReturnFalse() {
         var tracker = new DequeChangeTracker<int>();
@@ -89,7 +106,7 @@ public class DequeChangeTrackerTests {
         tracker.Revert<Int32Helper>();
 
         Assert.False(tracker.HasChanges);
-        Assert.Equal(3, tracker.RebaseCount);
+        Assert.Equal(3, tracker.Current.Count);
         Assert.Equal(3, tracker.KeepCount);
         Assert.Equal([1, 2, 3], Collect(tracker.Current));
         Assert.Equal([1, 2, 3], Collect(tracker.Committed));
@@ -284,6 +301,18 @@ public class DequeChangeTrackerTests {
     }
 
     [Fact]
+    public void EstimatedBytes_WithSparseKeepPatchAndFrontBias_MatchSerializedBody() {
+        var tracker = new DequeChangeTracker<int>();
+        SeedCommitted(ref tracker, [1, 2, 3, 4, 5]);
+
+        Assert.True(AssignAt(ref tracker, 3, 40));
+        PopFront(ref tracker);
+        tracker.PushFront<Int32Helper>(0);
+
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+    }
+
+    [Fact]
     public void PopFront_RemovingDirtyKeepElement_ShiftsRemainingSparsePatches() {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1, 2, 3, 4]);
@@ -411,6 +440,38 @@ public class DequeChangeTrackerTests {
         Assert.False(tracker.HasChanges);
         Assert.Equal(3, tracker.KeepCount);
         Assert.Equal([1, 2, 3], Collect(tracker.Current));
+    }
+
+    [Fact]
+    public void EstimatedBytes_RemainInSync_AcrossAbsorbRevertAndLoadSync() {
+        var tracker = new DequeChangeTracker<int>();
+        SeedCommitted(ref tracker, [1, 2, 3]);
+
+        PopFront(ref tracker);
+        tracker.PushFront<Int32Helper>(1); // absorb trimmed committed front
+        PopBack(ref tracker);
+        tracker.PushBack<Int32Helper>(3); // absorb trimmed committed back
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+
+        tracker.PushFront<Int32Helper>(0);
+        Assert.True(AssignAt(ref tracker, 1, 20));
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+
+        tracker.Revert<Int32Helper>();
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+
+        var source = tracker;
+        var target = new DequeChangeTracker<int>();
+        var buffer = new ArrayBufferWriter<byte>();
+        var writer = new BinaryDiffWriter(buffer);
+        source.WriteRebase<Int32Helper>(writer, DiffWriteContext.UserPrimary);
+
+        var reader = new BinaryDiffReader(buffer.WrittenSpan);
+        target.ApplyDelta<Int32Helper>(ref reader);
+        reader.EnsureFullyConsumed();
+        target.SyncCurrentFromCommitted<Int32Helper>();
+
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(target);
     }
 
     [Fact]
@@ -641,6 +702,37 @@ public class DequeChangeTrackerTests {
         reader.EnsureFullyConsumed();
         Assert.Equal(0, tracker.Current.Count);
         Assert.Equal(values, Collect(tracker.Committed));
+    }
+
+    [Fact]
+    public void EstimatedBytes_AcrossVarintCountBoundary_MatchSerializedBody() {
+        // 跨 VarUInt 单字节边界 127 -> 128：count header 从 1B 变成 2B，
+        // 验证 estimate 在该处仍精确等于真实序列化字节数。
+        var tracker = new DequeChangeTracker<int>();
+        for (int i = 0; i < 127; i++) {
+            tracker.PushBack<Int32Helper>(i);
+        }
+        tracker.Commit<Int32Helper>();
+
+        // PushBack 第 128 个，使 pushBackCount 从 0 -> 1 还不会触发；
+        // 这里更关键的是 _current.Count 从 127 -> 128（影响 rebase 的 count header）。
+        tracker.PushBack<Int32Helper>(127);
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+
+        tracker.Commit<Int32Helper>();
+
+        // 现在让 pushBackCount 跨过 128：再 push 128 个，使 pushBackCount = 128。
+        for (int i = 0; i < 128; i++) {
+            tracker.PushBack<Int32Helper>(128 + i);
+        }
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+
+        // keep-patch 索引跨边界：在 keep window 中较远位置打一个 patch，
+        // 让 keepRelativeIndex 从 < 128 走到 >= 128（取决于 commit 后 keep 的大小）。
+        tracker.Commit<Int32Helper>();
+        Assert.True(AssignAt(ref tracker, 127, -1)); // keepRelativeIndex = 127
+        Assert.True(AssignAt(ref tracker, 128, -2)); // keepRelativeIndex = 128
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
     }
 
     private static void SeedCommitted(ref DequeChangeTracker<double> tracker, double[] values) {

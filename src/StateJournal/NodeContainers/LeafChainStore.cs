@@ -176,8 +176,20 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     /// <summary>按物理 index 直接访问 key，无 sequence 查找开销。仅用于塔索引等已知 index 稳定的场景。</summary>
     internal TKey GetKeyByIndex(int index) => _keys[index];
 
+    /// <summary>按物理 index 直接访问 value。仅用于估算等只读路径。</summary>
+    internal TValue GetValueByIndex(int index) => _values[index];
+
     /// <summary>按物理 index 直接获取 sequence。</summary>
     internal uint GetSequenceByIndex(int index) => _sequences[index];
+
+    /// <summary>按物理 index 直接获取 next sequence。仅用于估算等只读路径。</summary>
+    internal uint GetNextSequenceByIndex(int index) => _nextSequences[index];
+
+    /// <summary>按升序枚举 dirty link 的 committed 物理 index。</summary>
+    internal BitVector.OnesEnumerator EnumerateDirtyLinkIndices() => _dirtyLinks.Ones();
+
+    /// <summary>按升序枚举 dirty value 的 committed 物理 index。</summary>
+    internal BitVector.OnesEnumerator EnumerateDirtyValueIndices() => _dirtyValues.Ones();
 
     public LeafHandle GetNext(ref LeafHandle handle) {
         int index = ResolveIndex(ref handle);

@@ -7,11 +7,18 @@ namespace Atelia.StateJournal.Internal;
 internal struct DictChangeTracker<TKey, TValue>
 where TKey : notnull
 where TValue : notnull {
+    private struct EstimateSummary {
+        public uint CommittedPayloadBareBytes;
+        public uint CurrentPayloadBareBytes;
+        public uint DirtyRemovedKeyBareBytes;
+        public uint DirtyUpsertPayloadBareBytes;
+    }
 
     // === 内部状态（双字典策略） ===
     private Dictionary<TKey, TValue?>? _committed;  // 上次 commit 时的状态
     private Dictionary<TKey, TValue?> _current;    // 当前工作状态 / frozen 只读视图
     private BitDivision<TKey>? _dirtyKeys; // 发生变更的 key 集合, false = remove; true = upsert
+    private EstimateSummary _estimate;
     private bool _isFrozen;
 
     private readonly Dictionary<TKey, TValue?> Committed => _committed ?? throw new InvalidOperationException("Frozen DictChangeTracker has no mutable committed dictionary.");
@@ -29,11 +36,79 @@ where TValue : notnull {
     public BitDivision<TKey>.Enumerator UpsertedKeys => DirtyKeys.TrueKeys;
     public int RemoveCount => _isFrozen ? 0 : DirtyKeys.FalseCount;
     public int UpsertCount => _isFrozen ? 0 : DirtyKeys.TrueCount;
-    public int DeltifyCount => _isFrozen ? 0 : DirtyKeys.Count;
-    public int RebaseCount => _current.Count;
     public bool HasChanges => !_isFrozen && DirtyKeys.Count > 0;
     public bool IsFrozen => _isFrozen;
     #endregion
+
+    /// <summary>估算 rebase 帧所需的 bare 字节数（不含 frame overhead 与 typeCode）。</summary>
+    public uint EstimatedRebaseBytes<KHelper, VHelper>()
+    where KHelper : unmanaged, ITypeHelper<TKey>
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        AssertEstimateSummaryConsistent<KHelper, VHelper>();
+        return checked(
+            CostEstimateUtil.VarIntSize(0u)
+            + CostEstimateUtil.VarIntSize((uint)_current.Count)
+            + _estimate.CurrentPayloadBareBytes
+        );
+    }
+
+    /// <summary>估算 deltify 帧所需的 bare 字节数（不含 frame overhead）。</summary>
+    public uint EstimatedDeltifyBytes<KHelper, VHelper>()
+    where KHelper : unmanaged, ITypeHelper<TKey>
+    where VHelper : unmanaged, ITypeHelper<TValue> {
+        AssertEstimateSummaryConsistent<KHelper, VHelper>();
+        return checked(
+            CostEstimateUtil.VarIntSize((uint)RemoveCount)
+            + _estimate.DirtyRemovedKeyBareBytes
+            + CostEstimateUtil.VarIntSize((uint)UpsertCount)
+            + _estimate.DirtyUpsertPayloadBareBytes
+        );
+    }
+
+    /// <summary>
+    /// DEBUG-only：从 _committed/_current/_dirtyKeys 全量重算 EstimateSummary，
+    /// 与增量维护的 _estimate 比对，用于尽早发现 summary drift（参考设计 7.1 节）。
+    /// </summary>
+    [Conditional("DEBUG")]
+    private readonly void AssertEstimateSummaryConsistent<KHelper, VHelper>()
+    where KHelper : ITypeHelper<TKey>
+    where VHelper : ITypeHelper<TValue> {
+        var expected = RecomputeEstimateSummarySlow<KHelper, VHelper>();
+        Debug.Assert(
+            expected.CommittedPayloadBareBytes == _estimate.CommittedPayloadBareBytes
+            && expected.CurrentPayloadBareBytes == _estimate.CurrentPayloadBareBytes
+            && expected.DirtyRemovedKeyBareBytes == _estimate.DirtyRemovedKeyBareBytes
+            && expected.DirtyUpsertPayloadBareBytes == _estimate.DirtyUpsertPayloadBareBytes,
+            $"DictChangeTracker EstimateSummary drift: "
+                + $"committed {_estimate.CommittedPayloadBareBytes} vs {expected.CommittedPayloadBareBytes}, "
+                + $"current {_estimate.CurrentPayloadBareBytes} vs {expected.CurrentPayloadBareBytes}, "
+                + $"dirtyRemoved {_estimate.DirtyRemovedKeyBareBytes} vs {expected.DirtyRemovedKeyBareBytes}, "
+                + $"dirtyUpsert {_estimate.DirtyUpsertPayloadBareBytes} vs {expected.DirtyUpsertPayloadBareBytes}."
+        );
+    }
+
+    private readonly EstimateSummary RecomputeEstimateSummarySlow<KHelper, VHelper>()
+    where KHelper : ITypeHelper<TKey>
+    where VHelper : ITypeHelper<TValue> {
+        var summary = new EstimateSummary {
+            CurrentPayloadBareBytes = SumDictionaryPayloadBareBytes<KHelper, VHelper>(_current),
+        };
+        if (_isFrozen) {
+            // frozen 视图：committed 等于 current；dirty 项必须为零。
+            summary.CommittedPayloadBareBytes = summary.CurrentPayloadBareBytes;
+            return summary;
+        }
+        summary.CommittedPayloadBareBytes = SumDictionaryPayloadBareBytes<KHelper, VHelper>(Committed);
+        foreach (var key in DirtyKeys.FalseKeys) {
+            summary.DirtyRemovedKeyBareBytes = checked(summary.DirtyRemovedKeyBareBytes + KHelper.EstimateBareSize(key, asKey: true));
+        }
+        foreach (var key in DirtyKeys.TrueKeys) {
+            // dirty upsert 应当出现在 _current 中。
+            TValue? value = _current[key];
+            summary.DirtyUpsertPayloadBareBytes = checked(summary.DirtyUpsertPayloadBareBytes + EstimateEntryBareBytes<KHelper, VHelper>(key, value));
+        }
+        return summary;
+    }
 
     /// <summary>内部读写接口。当集合变更后需要调用<see cref="AfterUpsert"/>与<see cref="AfterRemove"/>。</summary>
     internal Dictionary<TKey, TValue?> Current => _current;
@@ -57,6 +132,9 @@ where TValue : notnull {
             TValue? forkValue = value is null ? default : VHelper.ForkFrozenForNewOwner(value);
             fork.Committed.Add(forkKey, forkValue);
             fork._current.Add(forkKey, forkValue);
+            uint entryBareBytes = EstimateEntryBareBytes<KHelper, VHelper>(forkKey, forkValue);
+            fork._estimate.CommittedPayloadBareBytes = checked(fork._estimate.CommittedPayloadBareBytes + entryBareBytes);
+            fork._estimate.CurrentPayloadBareBytes = checked(fork._estimate.CurrentPayloadBareBytes + entryBareBytes);
         }
         return fork;
     }
@@ -65,7 +143,8 @@ where TValue : notnull {
     /// typed / durable-ref 路径的一步写入入口：
     /// 在 tracker 内部完成 get-ref、current no-op 短路，以及 dirty/canonicalize 维护。
     /// </summary>
-    public UpsertStatus Upsert<VHelper>(TKey key, TValue? value)
+    public UpsertStatus Upsert<KHelper, VHelper>(TKey key, TValue? value)
+    where KHelper : unmanaged, ITypeHelper<TKey>
     where VHelper : unmanaged, ITypeHelper<TValue> {
         ThrowIfFrozen();
         Debug.Assert(
@@ -76,33 +155,49 @@ where TValue : notnull {
         ref TValue? slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_current, key, out bool exists);
         if (exists && VHelper.Equals(slot, value)) { return UpsertStatus.Updated; }
 
+        uint keyBareBytes = EstimateKeyBareBytes<KHelper>(key);
+        TValue? oldCurrentValue = slot;
         slot = value;
-        AfterUpsert<VHelper>(key, value);
+        AfterUpsert<VHelper>(key, oldCurrentValue, exists, value, keyBareBytes);
         return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }
 
-    public void AfterUpsert<VHelper>(TKey key, TValue? value)
+    public void AfterUpsert<VHelper>(TKey key, TValue? oldCurrentValue, bool existed, TValue? value, uint keyBareBytes)
     where VHelper : unmanaged, ITypeHelper<TValue> {
         ThrowIfFrozen();
+        uint oldEntryBareBytes = existed ? EstimateEntryBareBytes<VHelper>(keyBareBytes, oldCurrentValue) : 0u;
+        RemoveDirtyContribution(key, oldEntryBareBytes, keyBareBytes);
+
         if (Committed.TryGetValue(key, out TValue? committedValue) && VHelper.Equals(value, committedValue)) {
             // 新值语义等于 committed → 释放新值的独占 slot，恢复为 committed 的冻结副本
             VHelper.ReleaseSlot(value);
             _current[key] = committedValue;
+            uint committedEntryBareBytes = EstimateEntryBareBytes<VHelper>(keyBareBytes, committedValue);
+            _estimate.CurrentPayloadBareBytes = checked(_estimate.CurrentPayloadBareBytes - oldEntryBareBytes + committedEntryBareBytes);
             MarkSame(key);
         }
         else {
+            uint newEntryBareBytes = EstimateEntryBareBytes<VHelper>(keyBareBytes, value);
+            _estimate.CurrentPayloadBareBytes = checked(_estimate.CurrentPayloadBareBytes - oldEntryBareBytes + newEntryBareBytes);
+            _estimate.DirtyUpsertPayloadBareBytes = checked(_estimate.DirtyUpsertPayloadBareBytes + newEntryBareBytes);
             MarkUpsert(key);
         }
     }
 
-    public void AfterRemove<VHelper>(TKey key, TValue? removedValue)
+    public void AfterRemove<VHelper>(TKey key, TValue? removedValue, uint keyBareBytes)
     where VHelper : unmanaged, ITypeHelper<TValue> {
         ThrowIfFrozen();
-        if (VHelper.NeedRelease && HasUpsert(key)) {
+        uint removedEntryBareBytes = EstimateEntryBareBytes<VHelper>(keyBareBytes, removedValue);
+        bool hadDirtySubset = DirtyKeys.TryGetSubset(key, out bool wasUpsert);
+        if (VHelper.NeedRelease && hadDirtySubset && wasUpsert) {
             VHelper.ReleaseSlot(removedValue);
         }
 
+        _estimate.CurrentPayloadBareBytes = checked(_estimate.CurrentPayloadBareBytes - removedEntryBareBytes);
+        RemoveDirtyContribution(key, removedEntryBareBytes, keyBareBytes);
+
         if (Committed.ContainsKey(key)) {
+            _estimate.DirtyRemovedKeyBareBytes = checked(_estimate.DirtyRemovedKeyBareBytes + keyBareBytes);
             MarkRemove(key);
         }
         else {
@@ -134,6 +229,9 @@ where TValue : notnull {
         }
 
         DirtyKeys.Clear();
+        _estimate.CurrentPayloadBareBytes = _estimate.CommittedPayloadBareBytes;
+        _estimate.DirtyRemovedKeyBareBytes = 0;
+        _estimate.DirtyUpsertPayloadBareBytes = 0;
     }
 
     public void Commit<VHelper>()
@@ -160,6 +258,9 @@ where TValue : notnull {
         }
 
         DirtyKeys.Clear();
+        _estimate.CommittedPayloadBareBytes = _estimate.CurrentPayloadBareBytes;
+        _estimate.DirtyRemovedKeyBareBytes = 0;
+        _estimate.DirtyUpsertPayloadBareBytes = 0;
     }
 
     public void FreezeFromClean<VHelper>()
@@ -183,6 +284,9 @@ where TValue : notnull {
         if (!_isFrozen) { throw new InvalidOperationException("DictChangeTracker is not frozen."); }
         _committed = new(_current);
         _dirtyKeys = new();
+        _estimate.CommittedPayloadBareBytes = _estimate.CurrentPayloadBareBytes;
+        _estimate.DirtyRemovedKeyBareBytes = 0;
+        _estimate.DirtyUpsertPayloadBareBytes = 0;
         _isFrozen = false;
     }
 
@@ -194,6 +298,9 @@ where TValue : notnull {
         foreach (var key in _current.Keys.ToArray()) {
             _current[key] = VHelper.Freeze(_current[key]);
         }
+        _estimate.CurrentPayloadBareBytes = _estimate.CommittedPayloadBareBytes;
+        _estimate.DirtyRemovedKeyBareBytes = 0;
+        _estimate.DirtyUpsertPayloadBareBytes = 0;
         _committed = null;
         _dirtyKeys = null;
         _isFrozen = true;
@@ -244,6 +351,10 @@ where TValue : notnull {
     where KHelper : ITypeHelper<TKey>
     where VHelper : ITypeHelper<TValue> {
         DictDiffApplier.Apply<TKey, TValue, KHelper, VHelper>(ref reader, Committed);
+        _estimate.CommittedPayloadBareBytes = SumDictionaryPayloadBareBytes<KHelper, VHelper>(Committed);
+        _estimate.CurrentPayloadBareBytes = 0;
+        _estimate.DirtyRemovedKeyBareBytes = 0;
+        _estimate.DirtyUpsertPayloadBareBytes = 0;
     }
 
     /// <summary>
@@ -256,8 +367,44 @@ where TValue : notnull {
         foreach (var (key, value) in Committed) {
             _current[key] = VHelper.Freeze(value);
         }
+        _estimate.CurrentPayloadBareBytes = _estimate.CommittedPayloadBareBytes;
+        _estimate.DirtyRemovedKeyBareBytes = 0;
+        _estimate.DirtyUpsertPayloadBareBytes = 0;
     }
 
     internal IEnumerable<KeyValuePair<TKey, TValue?>> ReconstructedOrCurrent =>
         _current.Count != 0 || (_dirtyKeys?.Count ?? 0) != 0 ? _current : _committed ?? _current;
+
+    private static uint EstimateKeyBareBytes<KHelper>(TKey key)
+    where KHelper : ITypeHelper<TKey> =>
+        KHelper.EstimateBareSize(key, asKey: true);
+
+    private static uint EstimateEntryBareBytes<KHelper, VHelper>(TKey key, TValue? value)
+    where KHelper : ITypeHelper<TKey>
+    where VHelper : ITypeHelper<TValue> =>
+        checked(EstimateKeyBareBytes<KHelper>(key) + VHelper.EstimateBareSize(value, asKey: false));
+
+    private static uint EstimateEntryBareBytes<VHelper>(uint keyBareBytes, TValue? value)
+    where VHelper : ITypeHelper<TValue> =>
+        checked(keyBareBytes + VHelper.EstimateBareSize(value, asKey: false));
+
+    private static uint SumDictionaryPayloadBareBytes<KHelper, VHelper>(Dictionary<TKey, TValue?> dict)
+    where KHelper : ITypeHelper<TKey>
+    where VHelper : ITypeHelper<TValue> {
+        uint sum = 0;
+        foreach (var (key, value) in dict) {
+            sum = checked(sum + EstimateEntryBareBytes<KHelper, VHelper>(key, value));
+        }
+        return sum;
+    }
+
+    private void RemoveDirtyContribution(TKey key, uint oldEntryBareBytes, uint keyBareBytes) {
+        if (!DirtyKeys.TryGetSubset(key, out bool wasUpsert)) { return; }
+        if (wasUpsert) {
+            _estimate.DirtyUpsertPayloadBareBytes = checked(_estimate.DirtyUpsertPayloadBareBytes - oldEntryBareBytes);
+        }
+        else {
+            _estimate.DirtyRemovedKeyBareBytes = checked(_estimate.DirtyRemovedKeyBareBytes - keyBareBytes);
+        }
+    }
 }

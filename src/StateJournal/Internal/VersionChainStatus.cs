@@ -14,8 +14,33 @@ internal struct VersionChainStatus {
     // const uint ReadWeight = 1, WriteWeight = 1, StorageWeight = 1;
     const uint MaxReadAmplificationRatio = 3; // 来自于权重分配方案`Write:Read:Storage = 1:1:1`
 
-    // 固定额外开销相当于多少条变更（remove or upsert）。每条变更估算约VarInt(8B+8B)≈8B
-    const uint PerFrameOverhead = 7; // 涉及多个变长字段，还挺不好估算的，约34B。RbfFrame=24B, ParentTicket+CumulativeCost+ObjectFlags=VarInt(8B+4B+4B), RemoveCount+UpsertCount=VarInt(4B+4B)。
+    // PerFrameOverhead 拆解为各个独立可审阅的叶常量之和：
+    //   - RBF 协议层：每帧固定开销 + 帧后 fence + 对齐 padding 的平均估算
+    //   - VersionChain metadata 层：parentTicket / cumulativeCost / objectFlags 三个 BareUInt 字段的平均 VarInt 字节
+    // 合计值是叶常量求和的副产品。修改协议（增删 metadata 字段、调整对齐策略等）时，
+    // 应当只动对应叶常量，避免再次出现脱离协议事实的整数魔数。
+
+    // RBF 帧固定开销：HeadLen(4) + PayloadCrc(4) + TrailerCodeword(16)。来自 RbfLayout.FixedOverhead。
+    const uint RbfFrameFixedBytes = 24;
+    // 写入路径在每帧 payload 之后追加的 fence。RbfLayout.FenceSize。
+    const uint RbfFenceBytes = 4;
+    // 帧对齐 padding 的平均估算（实际 0~3B，对齐分布近似均匀）。
+    const uint AvgFramePaddingBytes = 2;
+    // VersionChain metadata: parentTicket 的 BareUInt64（VarUInt）平均字节数。SizedPtr 紧凑交错编码后，常见 3~5B。
+    const uint AvgParentTicketBytes = 4;
+    // VersionChain metadata: cumulativeCost 的 BareUInt32（VarUInt）平均字节数。中小链上常见 2~3B。
+    const uint AvgCumulativeCostBytes = 3;
+    // VersionChain metadata: objectFlags 的 BareUInt32（VarUInt）平均字节数。当前仅用 Frozen=1 一位，恒为 1B。
+    const uint AvgObjectFlagsBytes = 1;
+
+    /// <summary>
+    /// 单帧固定共享开销近似值，用于在 _cumulativeCost 中显式吸收 RBF 协议层与 VersionChain metadata 层的成本。
+    /// 容器自身 payload 与 section count header 由各 EstimatedDeltifyBytes 精确建模，不在此处重复。
+    /// </summary>
+    const uint PerFrameOverhead =
+        RbfFrameFixedBytes + RbfFenceBytes + AvgFramePaddingBytes
+        + AvgParentTicketBytes + AvgCumulativeCostBytes + AvgObjectFlagsBytes;
+
     const ObjectVersionFlags KnownFlags = ObjectVersionFlags.Frozen;
 
     // 前一个 version 的 RBF Frame Ticket。

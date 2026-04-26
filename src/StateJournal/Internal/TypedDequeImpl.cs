@@ -83,8 +83,8 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
 
     #region DurableDequeBase
 
-    private protected override int RebaseCount => _core.RebaseCount;
-    private protected override int DeltifyCount => _core.DeltifyCount;
+    private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<VHelper>();
+    private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<VHelper>();
 
     internal override void DiscardChanges() => _core.Revert<VHelper>();
 

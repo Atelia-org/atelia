@@ -15,6 +15,9 @@ for mode in stress stress-json stress-inline stress-v2; do
   dotnet run --project prototypes/PersistentAgentProto -c Release -- $mode 1000 200
 done
 
+# SymbolTable happy-path：所有 turn 反复写入相同内容
+dotnet run --project prototypes/PersistentAgentProto -c Release -- stress-dup 1000 200
+
 # 真实交互（需要本地 LLM endpoint，默认 http://localhost:8000/）
 dotnet run --project prototypes/PersistentAgentProto -- ./.atelia-state
 dotnet run --project prototypes/PersistentAgentProto -- v2 ./.atelia-state-v2
@@ -37,6 +40,12 @@ root: DurableDict<string>
 
 ## 3. 实测体积（1000 轮，每轮 1 user + 1 assistant，每条 200B 随机字符）
 
+> 说明：本节现分为 **fix 前** 与 **fix 后** 两组数据。
+> 2026-04-26 起，`StateJournal` 已开始修复 `SymbolTable` rebase/deltify cost 估算把“条目数”误当“字节成本”的问题。
+> 因此旧数据仍有历史价值，但不再代表当前主线行为。
+
+### 3.1 fix 前（历史基线）
+
 | 路线 | 总 RBF 字节 | bytes/turn | 放大率 (vs raw 400B/turn) |
 |---|---:|---:|---:|
 | mixed `DurableDict<string>` per message | 2,262,600 | ~2263 | **5.66×** |
@@ -44,18 +53,33 @@ root: DurableDict<string>
 | **typed `DurableDict<string, InlineString>` per message** | **782,512** | **~782** | **1.96×** |
 | **`PersistentSessionV2`：structured message + nested InlineString text** | **868,920** | **~869** | **2.17×** |
 
-**前两者几乎等价**——只要走 `string` 字段，无论 typed 还是 mixed 都会被 `SymbolTable` intern。
+### 3.2 fix 后（A' cost model 修复后）
 
-**InlineString 路线体积减半以上**（1000 轮 2.3 MB → 0.78 MB，节省 65%）。原因是 content/role/ts 全走 InlineString，**完全绕过了 SymbolTable**——文件里只剩下“裸 UTF-8/UTF-16 payload + dict frame increment”。
+| 路线 | 总 RBF 字节 | bytes/turn | 放大率 (vs raw 400B/turn) |
+|---|---:|---:|---:|
+| mixed `DurableDict<string>` per message | **826,408** | **~826** | **2.07×** |
+| typed `DurableDeque<string>` + JSON 整体 | **806,100** | **~806** | **2.02×** |
+| **typed `DurableDict<string, InlineString>` per message** | **744,400** | **~744** | **1.86×** |
+| **`PersistentSessionV2`：structured message + nested InlineString text** | **825,380** | **~825** | **2.06×** |
 
-`PersistentSessionV2` 的目标则是验证另一件事：**不放弃结构化 message schema，也能把最贵的高熵文本迁出 SymbolTable**。实测它只比极限压缩取向的 `InlineSession` 多出约 11% 体积，但比原始 `PersistentSession` 小了约 62%，这个折中已经很接近正式方案候选。
+fix 后可以看到，**随机高熵文本走 SymbolTable 的异常膨胀已经基本消失**：`stress` / `stress-json` / `stress-v2` 都回到了 `~0.8 MB` 区间。说明之前 `2.2 MB` 级别的主要来源，确实不是“intern 天生就比 InlineString 臃肿”，而是 `SymbolTable` 路径的 rebase cost heuristic 存在系统性低估。
+
+额外旁证：`stress-dup 1000 200`（所有 turn 重复写入相同内容）在 fix 后约为 **319,892 bytes / ~320 bytes-per-turn**。这说明当 SymbolTable 命中复用路径时，symbol-backed `string` 仍然非常有竞争力。
+
+这也改变了原来的结论力度：`InlineString` 仍然有价值，但它不再是“救火式体积优化”的唯一来源。更准确的定位是：
+
+- `InlineString`：适合表达**长、高熵、低复用** payload
+- `string` / SymbolTable：在 cost model 正常时，对有复用机会的文本并不天然吃亏
+
+`PersistentSessionV2` 的意义也随之变化：它仍然是一个很强的正式方案候选，但优势更多来自 **schema 清晰度与演进性**，而不只是“避开 SymbolTable”。
 
 估计 100k 轮场景：
 
-- mixed dict: ~226 MB
-- InlineString: ~78 MB
+- mixed dict（fix 前历史基线）: ~226 MB
+- mixed dict（fix 后当前主线）: ~83 MB
+- InlineString（fix 后当前主线）: ~74 MB
 
-100k 轮是 long-running Agent 的现实量级（一天上千次交互 × 几个月），InlineString 的差距足以决定是否需要重同。
+100k 轮仍然是 long-running Agent 的现实量级；但在 fix 后，方案选择的关键已经从“谁能避开异常膨胀”转向“谁的 schema 更适合长期演进”。
 
 ## 4. 实操中遇到的 API 痛点（已落地 / 待办）
 

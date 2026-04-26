@@ -66,8 +66,8 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
 
     internal override void DiscardChanges() => _core.Revert<LocalIdAsRefHelper>();
 
-    private protected override int RebaseCount => _core.RebaseCount;
-    private protected override int DeltifyCount => _core.DeltifyCount;
+    private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<LocalIdAsRefHelper>();
+    private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<LocalIdAsRefHelper>();
 
     private protected override void CommitCore() => _core.Commit<LocalIdAsRefHelper>();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<LocalIdAsRefHelper>();

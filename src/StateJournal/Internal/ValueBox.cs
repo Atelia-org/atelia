@@ -31,6 +31,20 @@ internal readonly partial struct ValueBox {
     public readonly bool IsNull => GetBits() == LzcConstants.BoxNull;
     internal readonly bool IsUninitialized => GetBits() == LzcConstants.BoxUninitialized;
 
+    /// <summary>
+    /// 估算 <see cref="ValueBox.Write"/> 写入的 bare 字节数（含 1B tag）。
+    /// 用于 cost-model 决策；不要求精确，仅与真实值同数量级。
+    /// </summary>
+    internal readonly uint EstimateBareSize() => GetLzc() switch {
+        BoxLzc.Boolean => 2, // tag + 1B
+        BoxLzc.Null => 1,
+        BoxLzc.InlineDouble => 9, // tag + 8B
+        BoxLzc.InlineNonnegInt or BoxLzc.InlineNegInt => 9, // tag + VarUInt(<=8)
+        BoxLzc.HeapSlot => 9, // float/integer 走 VarUInt；string 走 SymbolId VarUInt（更短，9 是上界）
+        BoxLzc.DurableRef => 7, // tag + kind + LocalId VarUInt(<=5)
+        _ => 8,
+    };
+
     public readonly ValueKind GetValueKind() => GetLzc() switch {
         BoxLzc.InlineDouble => ValueKind.FloatingPoint,
         BoxLzc.InlineNonnegInt => ValueKind.NonnegativeInteger,

@@ -27,15 +27,16 @@ where TKey : notnull {
     #region DurableDictBase abstract properties
 
     public override bool HasChanges => _core.HasChanges;
-    private protected override int RebaseCount => _core.RebaseCount;
-    private protected override int DeltifyCount => _core.DeltifyCount;
+    // EstimatedRebaseBytes/EstimatedDeltifyBytes 由 MixedDictImpl<TKey, KHelper> 提供（需要 KHelper）。
 
     #endregion
 
     #region Core
-    private UpsertStatus FinishUpsert(TKey key, ValueBox value, bool exists) {
+    private protected abstract uint EstimateKeyBareBytes(TKey key);
+
+    private UpsertStatus FinishUpsert(TKey key, ValueBox oldValue, ValueBox value, bool exists) {
         Debug.Assert(!value.IsUninitialized); // 未初始化的ValueBox不应被存入容器
-        _core.AfterUpsert<ValueBoxHelper>(key, value);
+        _core.AfterUpsert<ValueBoxHelper>(key, oldValue, exists, value, EstimateKeyBareBytes(key));
         return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }
 
@@ -82,7 +83,7 @@ where TKey : notnull {
         ThrowIfDetachedOrFrozen();
         if (!_core.Current.Remove(key, out var removedValue)) { return false; }
         OnCurrentValueRemoved(removedValue);
-        _core.AfterRemove<ValueBoxHelper>(key, removedValue);
+        _core.AfterRemove<ValueBoxHelper>(key, removedValue, EstimateKeyBareBytes(key));
         return true;
     }
     public bool TryGetValueKind(TKey key, out ValueKind kind) {
@@ -119,7 +120,7 @@ where TKey : notnull {
         ValueBox oldValue = exists ? slot : default;
         if (!VFace.UpdateOrInit(ref slot, value)) { return UpsertStatus.Updated; /* 值未变，跳过 AfterUpsert */ }
         OnCurrentValueUpserted(oldValue, slot, exists);
-        return FinishUpsert(key, slot, exists);
+        return FinishUpsert(key, oldValue, slot, exists);
     }
 
     #endregion

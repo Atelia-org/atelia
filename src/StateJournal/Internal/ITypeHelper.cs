@@ -1,7 +1,42 @@
 using System.Diagnostics;
+using System.Text;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
+
+/// <summary>cost-model 估算共享的小工具：手算 VarUInt 编码长度，避免在 hot path 上调用更重的辅助方法。</summary>
+internal static class CostEstimateUtil {
+    public static uint VarIntSize(uint v) =>
+        v < 128u ? 1u :
+        v < 16384u ? 2u :
+        v < 2097152u ? 3u :
+        v < 268435456u ? 4u : 5u;
+
+    public static uint VarIntSize(ulong v) =>
+        v < 128ul ? 1u :
+        v < 16384ul ? 2u :
+        v < 2097152ul ? 3u :
+        v < 268435456ul ? 4u :
+        v < 34359738368ul ? 5u :
+        v < 4398046511104ul ? 6u :
+        v < 562949953421312ul ? 7u :
+        v < 72057594037927936ul ? 8u :
+        v < 9223372036854775808ul ? 9u : 10u;
+
+    public static uint ZigZagInt32Size(int v) => VarIntSize(VarInt.ZigZagEncode32(v));
+    public static uint ZigZagInt64Size(long v) => VarIntSize(VarInt.ZigZagEncode64(v));
+    public static uint ZigZagInt16Size(short v) => VarIntSize(VarInt.ZigZagEncode16(v));
+
+    /// <summary>
+    /// 估算 <see cref="BinaryDiffWriter.WriteBytes(System.ReadOnlySpan{byte})"/> 的真实写出字节数：
+    /// VarUInt 长度前缀 + payload 内容。空 span（包括 deltify frame 写出的空 TypeCode）按零长度处理，
+    /// 即 <c>VarUInt(0) = 1B</c>。
+    /// </summary>
+    public static uint WriteBytesSize(System.ReadOnlySpan<byte> bytes) {
+        uint length = (uint)bytes.Length;
+        return VarIntSize(length) + length;
+    }
+}
 
 /// <remarks>
 /// <para><b>COW 生命周期契约</b>（仅对 <see cref="NeedRelease"/> == true 的类型有意义）：</para>
@@ -74,6 +109,13 @@ internal interface ITypeHelper<T> where T : notnull {
     /// <summary>未来如果需要获知是否改变了old（update or init），可以将返回值改为bool并添加`bool exists参数`，参考实现：
     /// `if (exists && Equals(old, readedNewValue)) { return false; }`</summary>
     static abstract void UpdateOrInit(ref BinaryDiffReader reader, ref T? old);
+
+    /// <summary>
+    /// 估算 <see cref="Write"/>(value, asKey) 写入的 bare 字节数，用于 cost-model 决策（rebase vs deltify）。
+    /// 不要求精确，只要求与真实值同数量级；偏低会让 rebase 太频繁，偏高会让 deltify 链过长。
+    /// 默认 8 字节为保守 fallback。
+    /// </summary>
+    static virtual uint EstimateBareSize(T? value, bool asKey) => 8;
 }
 
 #region for MixedDict value
@@ -92,6 +134,8 @@ internal readonly struct ValueBoxHelper : ITypeHelper<ValueBox> {
 
     /// <summary>为简化兄弟类型实现，未返回bool。</summary>
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref ValueBox old) => TaggedValueDispatcher.UpdateOrInit(ref reader, ref old);
+
+    public static uint EstimateBareSize(ValueBox value, bool asKey) => value.EstimateBareSize();
     // public static List<ValueBox> GetTempList(DiffWriteContext context) => throw new UnreachableException();
 }
 #endregion
@@ -102,6 +146,7 @@ internal readonly struct BooleanHelper : ITypeHelper<bool> {
     public static void Write(BinaryDiffWriter writer, bool v, bool asKey) => writer.BareBoolean(v, asKey);
     public static bool Read(ref BinaryDiffReader reader, bool asKey) => reader.BareBoolean(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref bool old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(bool value, bool asKey) => 1;
     // public static List<bool> GetTempList(DiffWriteContext context) => context.BooleanTempList;
 }
 
@@ -117,6 +162,8 @@ internal readonly struct StringHelper : ITypeHelper<string> {
     public static bool NeedVisitChildRefs => true;
     public static bool NeedValidateReconstructed => true;
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) => old = Read(ref reader, asKey: false);
+    /// <summary>BareSymbol 写出 VarUInt(SymbolId)。这里拿不到实际 SymbolId，先保守取 5 作为上界。</summary>
+    public static uint EstimateBareSize(string? value, bool asKey) => 5;
 
     public static void VisitChildRefs<TVisitor>(string? value, Revision revision, ref TVisitor visitor)
         where TVisitor : IChildRefVisitor, allows ref struct {
@@ -142,6 +189,16 @@ internal readonly struct InlineStringHelper : ITypeHelper<InlineString> {
     public static void Write(BinaryDiffWriter writer, InlineString v, bool asKey) => writer.BareInlineString(v.Value, asKey);
     public static InlineString Read(ref BinaryDiffReader reader, bool asKey) => new(reader.BareInlineString(asKey));
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref InlineString old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(InlineString value, bool asKey) {
+        string? s = value.Value;
+        if (string.IsNullOrEmpty(s)) { return 1; }
+        int utf8Bytes = Encoding.UTF8.GetByteCount(s);
+        int utf16Bytes = s.Length * 2;
+        bool useUtf8 = utf8Bytes < utf16Bytes;
+        int payloadBytes = useUtf8 ? utf8Bytes : utf16Bytes;
+        uint header = useUtf8 ? ((uint)utf8Bytes << 1) | 1u : (uint)utf16Bytes;
+        return CostEstimateUtil.VarIntSize(header) + (uint)payloadBytes;
+    }
 }
 
 /// <summary>
@@ -154,6 +211,7 @@ internal readonly struct LocalIdAsRefHelper : ITypeHelper<LocalId> {
     public static void Write(BinaryDiffWriter writer, LocalId v, bool asKey) => writer.BareDurableRef(v, asKey);
     public static LocalId Read(ref BinaryDiffReader reader, bool asKey) => new(reader.BareUInt32(asKey));
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref LocalId old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(LocalId value, bool asKey) => CostEstimateUtil.VarIntSize(value.Value);
 
     public static bool NeedVisitChildRefs => true;
     public static void VisitChildRefs<TVisitor>(LocalId value, Revision revision, ref TVisitor visitor)
@@ -169,6 +227,7 @@ internal readonly struct DoubleHelper : ITypeHelper<double> {
     public static void Write(BinaryDiffWriter writer, double v, bool asKey) => writer.BareDouble(v, asKey);
     public static double Read(ref BinaryDiffReader reader, bool asKey) => reader.BareDouble(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref double old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(double value, bool asKey) => 8;
 }
 
 internal readonly struct SingleHelper : ITypeHelper<float> {
@@ -178,6 +237,7 @@ internal readonly struct SingleHelper : ITypeHelper<float> {
     public static void Write(BinaryDiffWriter writer, float v, bool asKey) => writer.BareSingle(v, asKey);
     public static float Read(ref BinaryDiffReader reader, bool asKey) => reader.BareSingle(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref float old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(float value, bool asKey) => 4;
 }
 
 internal readonly struct HalfHelper : ITypeHelper<Half> {
@@ -187,6 +247,7 @@ internal readonly struct HalfHelper : ITypeHelper<Half> {
     public static void Write(BinaryDiffWriter writer, Half v, bool asKey) => writer.BareHalf(v, asKey);
     public static Half Read(ref BinaryDiffReader reader, bool asKey) => reader.BareHalf(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref Half old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(Half value, bool asKey) => 2;
 }
 
 internal readonly struct UInt64Helper : ITypeHelper<ulong> {
@@ -195,6 +256,7 @@ internal readonly struct UInt64Helper : ITypeHelper<ulong> {
     public static void Write(BinaryDiffWriter writer, ulong v, bool asKey) => writer.BareUInt64(v, asKey);
     public static ulong Read(ref BinaryDiffReader reader, bool asKey) => reader.BareUInt64(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref ulong old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(ulong value, bool asKey) => CostEstimateUtil.VarIntSize(value);
 }
 
 internal readonly struct UInt32Helper : ITypeHelper<uint> {
@@ -203,6 +265,7 @@ internal readonly struct UInt32Helper : ITypeHelper<uint> {
     public static void Write(BinaryDiffWriter writer, uint v, bool asKey) => writer.BareUInt32(v, asKey);
     public static uint Read(ref BinaryDiffReader reader, bool asKey) => reader.BareUInt32(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref uint old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(uint value, bool asKey) => CostEstimateUtil.VarIntSize(value);
 }
 
 internal readonly struct UInt16Helper : ITypeHelper<ushort> {
@@ -211,6 +274,7 @@ internal readonly struct UInt16Helper : ITypeHelper<ushort> {
     public static void Write(BinaryDiffWriter writer, ushort v, bool asKey) => writer.BareUInt16(v, asKey);
     public static ushort Read(ref BinaryDiffReader reader, bool asKey) => reader.BareUInt16(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref ushort old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(ushort value, bool asKey) => CostEstimateUtil.VarIntSize((uint)value);
 }
 
 internal readonly struct Int64Helper : ITypeHelper<long> {
@@ -219,6 +283,7 @@ internal readonly struct Int64Helper : ITypeHelper<long> {
     public static void Write(BinaryDiffWriter writer, long v, bool asKey) => writer.BareInt64(v, asKey);
     public static long Read(ref BinaryDiffReader reader, bool asKey) => reader.BareInt64(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref long old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(long value, bool asKey) => CostEstimateUtil.ZigZagInt64Size(value);
 }
 
 internal readonly struct Int32Helper : ITypeHelper<int> {
@@ -227,6 +292,7 @@ internal readonly struct Int32Helper : ITypeHelper<int> {
     public static void Write(BinaryDiffWriter writer, int v, bool asKey) => writer.BareInt32(v, asKey);
     public static int Read(ref BinaryDiffReader reader, bool asKey) => reader.BareInt32(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref int old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(int value, bool asKey) => CostEstimateUtil.ZigZagInt32Size(value);
 }
 
 internal readonly struct Int16Helper : ITypeHelper<short> {
@@ -235,6 +301,7 @@ internal readonly struct Int16Helper : ITypeHelper<short> {
     public static void Write(BinaryDiffWriter writer, short v, bool asKey) => writer.BareInt16(v, asKey);
     public static short Read(ref BinaryDiffReader reader, bool asKey) => reader.BareInt16(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref short old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(short value, bool asKey) => CostEstimateUtil.ZigZagInt16Size(value);
 }
 
 internal readonly struct SByteHelper : ITypeHelper<sbyte> {
@@ -243,6 +310,7 @@ internal readonly struct SByteHelper : ITypeHelper<sbyte> {
     public static void Write(BinaryDiffWriter writer, sbyte v, bool asKey) => writer.BareSByte(v, asKey);
     public static sbyte Read(ref BinaryDiffReader reader, bool asKey) => reader.BareSByte(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref sbyte old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(sbyte value, bool asKey) => 1;
 }
 
 internal readonly struct ByteHelper : ITypeHelper<byte> {
@@ -251,6 +319,7 @@ internal readonly struct ByteHelper : ITypeHelper<byte> {
     public static void Write(BinaryDiffWriter writer, byte v, bool asKey) => writer.BareByte(v, asKey);
     public static byte Read(ref BinaryDiffReader reader, bool asKey) => reader.BareByte(asKey);
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref byte old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(byte value, bool asKey) => 1;
 }
 
 // internal readonly struct LocalIdHelper : ITypeHelper<LocalId> {

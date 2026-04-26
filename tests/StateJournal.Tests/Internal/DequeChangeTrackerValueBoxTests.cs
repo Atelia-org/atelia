@@ -1,12 +1,27 @@
 using System.Buffers;
 using Atelia.StateJournal.Serialization;
 using Xunit;
+using Atelia.StateJournal.Tests;
 
 namespace Atelia.StateJournal.Internal.Tests;
 
 [Collection("ValueBox")]
 public class DequeChangeTrackerValueBoxTests {
     private static int Bits64Count => ValuePools.OfBits64.Count;
+
+    private static void AssertEstimateMatchesSerializedBody(in DequeChangeTracker<ValueBox> tracker) {
+        var rebaseTracker = tracker;
+        EstimateAssert.EqualSerializedBodySize(
+            rebaseTracker.EstimatedRebaseBytes<ValueBoxHelper>(),
+            writer => rebaseTracker.WriteRebase<ValueBoxHelper>(writer, DiffWriteContext.UserPrimary)
+        );
+
+        var deltaTracker = tracker;
+        EstimateAssert.EqualSerializedBodySize(
+            deltaTracker.EstimatedDeltifyBytes<ValueBoxHelper>(),
+            writer => deltaTracker.WriteDeltify<ValueBoxHelper>(writer, DiffWriteContext.UserPrimary)
+        );
+    }
 
     [Fact]
     public void Revert_ReleasesDirtyPrefixAndSuffixSlots_Symmetrically() {
@@ -295,6 +310,43 @@ public class DequeChangeTrackerValueBoxTests {
     }
 
     [Fact]
+    public void EstimatedBytes_ValueBoxRemainInSync_AfterMutationAndLoad() {
+        var tracker = new DequeChangeTracker<ValueBox>();
+
+        try {
+            SeedCommitted(ref tracker, Heap(11), Heap(22), Heap(33));
+
+            tracker.PushFront<ValueBoxHelper>(Heap(7));
+            Assert.True(UpdateAtInt64(ref tracker, 2, HeapValue(44)));
+            AssertEstimateMatchesSerializedBody(tracker);
+
+            tracker.Revert<ValueBoxHelper>();
+            AssertEstimateMatchesSerializedBody(tracker);
+
+            var source = tracker;
+            var target = new DequeChangeTracker<ValueBox>();
+            try {
+                var buffer = new ArrayBufferWriter<byte>();
+                var writer = new BinaryDiffWriter(buffer);
+                source.WriteRebase<ValueBoxHelper>(writer, DiffWriteContext.UserPrimary);
+
+                var reader = new BinaryDiffReader(buffer.WrittenSpan);
+                target.ApplyDelta<ValueBoxHelper>(ref reader);
+                reader.EnsureFullyConsumed();
+                target.SyncCurrentFromCommitted<ValueBoxHelper>();
+
+                AssertEstimateMatchesSerializedBody(target);
+            }
+            finally {
+                Cleanup(ref target);
+            }
+        }
+        finally {
+            Cleanup(ref tracker);
+        }
+    }
+
+    [Fact]
     public void SetBack_ThenSetFront_WithEmptyKeepAndBothDirtySides_ReleasesBothExclusiveSlots() {
         var tracker = new DequeChangeTracker<ValueBox>();
 
@@ -482,9 +534,10 @@ public class DequeChangeTrackerValueBoxTests {
         where TValue : notnull
         where TFace : ValueBox.ITypedFace<TValue> {
         ref ValueBox slot = ref tracker.GetRef(index);
+        ValueBox oldValue = slot;
         if (!TFace.UpdateOrInit(ref slot, value)) { return false; }
 
-        tracker.AfterSet<ValueBoxHelper>(index, ref slot);
+        tracker.AfterSet<ValueBoxHelper>(index, ref slot, oldValue);
         return true;
     }
 
