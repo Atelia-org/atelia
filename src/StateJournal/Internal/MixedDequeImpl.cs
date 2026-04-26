@@ -11,8 +11,17 @@ internal class MixedDequeImpl : DurableDeque {
         _core = new();
     }
 
-    internal override void DiscardChanges() {
+    private protected override void DiscardChangesCore() {
         _core.Revert<ValueBoxHelper>();
+        RecountRefs();
+    }
+
+    internal override void FreezeCore(bool forceRebase) {
+        if (!forceRebase) { return; }
+
+        _core.Current.GetSegments(out Span<ValueBox> first, out Span<ValueBox> second);
+        FreezeSegment(first);
+        FreezeSegment(second);
         RecountRefs();
     }
 
@@ -61,7 +70,7 @@ internal class MixedDequeImpl : DurableDeque {
     internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
         if (symbolPool is null) { return null; }
 
-        _core.Current.GetSegments(out Span<ValueBox> first, out Span<ValueBox> second);
+        _core.ReconstructedOrCurrent.GetSegments(out Span<ValueBox> first, out Span<ValueBox> second);
         return ValidateSymbolSegment(first, symbolPool) ?? ValidateSymbolSegment(second, symbolPool);
     }
 
@@ -101,6 +110,12 @@ internal class MixedDequeImpl : DurableDeque {
         foreach (var box in segment) {
             if (box.IsDurableRef) { durCount++; }
             else if (box.IsSymbolRef) { symCount++; }
+        }
+    }
+
+    private static void FreezeSegment(Span<ValueBox> segment) {
+        for (int i = 0; i < segment.Length; ++i) {
+            segment[i] = ValueBox.Freeze(segment[i]);
         }
     }
 }

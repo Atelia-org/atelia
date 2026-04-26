@@ -21,11 +21,23 @@ public abstract class DurableDequeBase : DurableObject {
 
     private protected abstract void CommitCore();
     private protected abstract void SyncCurrentFromCommittedCore();
+    // frozen load 路径默认与 non-frozen 相同；子类若需区分（如 tracker-level 内存释放）可 override。
+    private protected virtual void SyncFrozenCurrentFromCommittedCore() => SyncCurrentFromCommittedCore();
     private protected abstract void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context);
     private protected abstract void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context);
     private protected abstract void ApplyDeltaCore(ref BinaryDiffReader reader);
+    private protected abstract void DiscardChangesCore();
 
     #endregion
+
+    internal sealed override void DiscardChanges() {
+        if (IsFrozen) {
+            ThrowIfCannotDiscardFrozenChanges();
+            ClearDiscardedFreeze();
+            return;
+        }
+        DiscardChangesCore();
+    }
 
     #region Version Chain
 
@@ -56,18 +68,19 @@ public abstract class DurableDequeBase : DurableObject {
         // rebase frame 写 WriteBytes(TypeCode)，deltify frame 写 WriteBytes(null)；二者实际写出的字节都包含 VarUInt 长度前缀。
         uint rebaseSize = checked(EstimatedRebaseBytes + CostEstimateUtil.WriteBytesSize(TypeCode));
         uint deltifySize = checked(EstimatedDeltifyBytes + CostEstimateUtil.WriteBytesSize(default));
-        bool doRebase = context.ForceRebase || _versionStatus.ShouldRebase(rebaseSize, deltifySize);
+        bool doRebase = context.ForceRebase || ForceRebaseForFrozenSnapshot || _versionStatus.ShouldRebase(rebaseSize, deltifySize);
+        ObjectVersionFlags objectFlags = CurrentObjectFlags;
         if (doRebase) {
             context.SetOutcome(wasRebase: true, rebaseSize, deltifySize);
             writer.WriteBytes(TypeCode); // 非空 TypeCode 表示 rebase frame
-            _versionStatus.WriteRebase(writer, rebaseSize, CurrentObjectFlags);
+            _versionStatus.WriteRebase(writer, rebaseSize, objectFlags);
             WriteRebaseCore(writer, context);
             return new(VersionKind.Rebase, Kind, context.FrameUsage, context.FrameSource);
         }
 
         context.SetOutcome(wasRebase: false, rebaseSize, deltifySize);
         writer.WriteBytes(null); // 空 TypeCode 表示 deltify frame
-        _versionStatus.WriteDeltify(writer, deltifySize, CurrentObjectFlags);
+        _versionStatus.WriteDeltify(writer, deltifySize, objectFlags);
         WriteDeltifyCore(writer, context);
         return new(VersionKind.Delta, Kind, context.FrameUsage, context.FrameSource);
     }
@@ -81,8 +94,12 @@ public abstract class DurableDequeBase : DurableObject {
     internal sealed override void OnLoadCompleted(SizedPtr versionTicket) {
         _versionStatus.SetHead(versionTicket);
         ApplyLoadedObjectFlags(_versionStatus.ObjectFlags);
-        if (IsFrozen) { throw new InvalidDataException("Frozen DurableDeque is not supported by this implementation."); }
-        SyncCurrentFromCommittedCore();
+        if (IsFrozen) {
+            SyncFrozenCurrentFromCommittedCore();
+        }
+        else {
+            SyncCurrentFromCommittedCore();
+        }
         SetState(DurableState.Clean);
     }
 

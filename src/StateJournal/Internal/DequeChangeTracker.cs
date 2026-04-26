@@ -49,6 +49,7 @@ internal struct DequeChangeTracker<TValue>
         || _current.Count != _keepCount; // PushFrontCount + PushBackCount
     internal IndexedDeque<TValue?> Current => _current;
     internal IndexedDeque<TValue?> Committed => _committed;
+    internal IndexedDeque<TValue?> ReconstructedOrCurrent => _current.Count != 0 ? _current : _committed;
     #endregion
 
     /// <summary>估算 rebase 帧所需的 bare 字节数（仅 payload，不含 frame overhead 与 typeCode）。</summary>

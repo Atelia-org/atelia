@@ -20,8 +20,14 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
     #region DurableDeque<T>
 
     public override int Count => _core.Current.Count;
-    public override void PushFront(T? value) => _core.PushFront<VHelper>(value);
-    public override void PushBack(T? value) => _core.PushBack<VHelper>(value);
+    public override void PushFront(T? value) {
+        ThrowIfDetachedOrFrozen();
+        _core.PushFront<VHelper>(value);
+    }
+    public override void PushBack(T? value) {
+        ThrowIfDetachedOrFrozen();
+        _core.PushBack<VHelper>(value);
+    }
     public override GetIssue GetAt(int index, out T? value) {
         if (!_core.TryGetAt(index, out value)) {
             value = default;
@@ -44,21 +50,25 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
         return GetIssue.None;
     }
     public override bool TrySetAt(int index, T? value) {
+        ThrowIfDetachedOrFrozen();
         if ((uint)index >= (uint)_core.Current.Count) { return false; }
         SetCore(index, value);
         return true;
     }
     public override bool TrySetFront(T? value) {
+        ThrowIfDetachedOrFrozen();
         if (_core.Current.Count == 0) { return false; }
         SetCore(0, value);
         return true;
     }
     public override bool TrySetBack(T? value) {
+        ThrowIfDetachedOrFrozen();
         if (_core.Current.Count == 0) { return false; }
         SetCore(_core.Current.Count - 1, value);
         return true;
     }
     public override GetIssue PopFront(out T? value) {
+        ThrowIfDetachedOrFrozen();
         if (!_core.TryPopFront<VHelper>(out value, out bool callerOwned)) {
             value = default;
             return GetIssue.NotFound;
@@ -69,6 +79,7 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
         return GetIssue.None;
     }
     public override GetIssue PopBack(out T? value) {
+        ThrowIfDetachedOrFrozen();
         if (!_core.TryPopBack<VHelper>(out value, out bool callerOwned)) {
             value = default;
             return GetIssue.NotFound;
@@ -86,7 +97,15 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<VHelper>();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<VHelper>();
 
-    internal override void DiscardChanges() => _core.Revert<VHelper>();
+    private protected override void DiscardChangesCore() => _core.Revert<VHelper>();
+
+    internal override void FreezeCore(bool forceRebase) {
+        if (!forceRebase) { return; }
+
+        _core.Current.GetSegments(out Span<T?> first, out Span<T?> second);
+        FreezeSegment(first);
+        FreezeSegment(second);
+    }
 
     private protected override void CommitCore() => _core.Commit<VHelper>();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<VHelper>();
@@ -115,8 +134,14 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
 
     internal override AteliaError? ValidateReconstructed(LoadPlaceholderTracker? tracker, Pools.StringPool? symbolPool) {
         if (tracker is null || !VHelper.NeedValidateReconstructed) { return null; }
-        _core.Current.GetSegments(out Span<T?> first, out Span<T?> second);
+        _core.ReconstructedOrCurrent.GetSegments(out Span<T?> first, out Span<T?> second);
         return ValidateSegment(first, tracker) ?? ValidateSegment(second, tracker);
+    }
+
+    private static void FreezeSegment(Span<T?> segment) {
+        for (int i = 0; i < segment.Length; ++i) {
+            segment[i] = VHelper.Freeze(segment[i]);
+        }
     }
 
     private static AteliaError? ValidateSegment(Span<T?> segment, LoadPlaceholderTracker tracker) {

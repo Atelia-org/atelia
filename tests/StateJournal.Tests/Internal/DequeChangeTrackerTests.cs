@@ -194,6 +194,15 @@ public class DequeChangeTrackerTests {
     }
 
     [Fact]
+    public void ReconstructedOrCurrent_BeforeSync_UsesCommittedSequence() {
+        var tracker = new DequeChangeTracker<int>();
+        SeedCommittedOnly(ref tracker, [1, 2, 3]);
+
+        Assert.Equal(0, tracker.Current.Count);
+        Assert.Equal([1, 2, 3], Collect(tracker.ReconstructedOrCurrent));
+    }
+
+    [Fact]
     public void WriteDeltify_WithMultipleFrontItems_RoundTripsInLogicalOrder() {
         var source = new DequeChangeTracker<int>();
         SeedCommitted(ref source, [3, 4]);

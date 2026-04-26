@@ -13,8 +13,14 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
 
     public override bool HasChanges => _core.HasChanges;
     public override int Count => _core.Current.Count;
-    public override void PushFront(T? value) => _core.PushFront<LocalIdAsRefHelper>(ToLocalId(value));
-    public override void PushBack(T? value) => _core.PushBack<LocalIdAsRefHelper>(ToLocalId(value));
+    public override void PushFront(T? value) {
+        ThrowIfDetachedOrFrozen();
+        _core.PushFront<LocalIdAsRefHelper>(ToLocalId(value));
+    }
+    public override void PushBack(T? value) {
+        ThrowIfDetachedOrFrozen();
+        _core.PushBack<LocalIdAsRefHelper>(ToLocalId(value));
+    }
     public override GetIssue GetAt(int index, out T? value) {
         if (!_core.TryGetAt(index, out var localId)) {
             value = null;
@@ -37,34 +43,45 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
         return Load(localId, out value);
     }
     public override bool TrySetAt(int index, T? value) {
+        ThrowIfDetachedOrFrozen();
         if ((uint)index >= (uint)_core.Current.Count) { return false; }
         SetCore(index, ToLocalId(value));
         return true;
     }
     public override bool TrySetFront(T? value) {
+        ThrowIfDetachedOrFrozen();
         if (_core.Current.Count == 0) { return false; }
         SetCore(0, ToLocalId(value));
         return true;
     }
     public override bool TrySetBack(T? value) {
+        ThrowIfDetachedOrFrozen();
         if (_core.Current.Count == 0) { return false; }
         SetCore(_core.Current.Count - 1, ToLocalId(value));
         return true;
     }
     public override GetIssue PopFront(out T? value) {
+        ThrowIfDetachedOrFrozen();
         var issue = PeekFront(out value);
         if (issue != GetIssue.None) { return issue; }
         if (!_core.TryPopFront<LocalIdAsRefHelper>(out _, out _)) { throw new InvalidOperationException("Deque state changed unexpectedly between peek and pop."); }
         return GetIssue.None;
     }
     public override GetIssue PopBack(out T? value) {
+        ThrowIfDetachedOrFrozen();
         var issue = PeekBack(out value);
         if (issue != GetIssue.None) { return issue; }
         if (!_core.TryPopBack<LocalIdAsRefHelper>(out _, out _)) { throw new InvalidOperationException("Deque state changed unexpectedly between peek and pop."); }
         return GetIssue.None;
     }
 
-    internal override void DiscardChanges() => _core.Revert<LocalIdAsRefHelper>();
+    private protected override void DiscardChangesCore() => _core.Revert<LocalIdAsRefHelper>();
+
+    internal override void FreezeCore(bool forceRebase) {
+        // LocalId 是纯值 ID，逐槽 freeze 无意义；
+        // DequeChangeTracker 目前也没有 FreezeFromCurrent/FreezeFromClean，
+        // 因此不做 tracker 级 freeze（已知内存优化缺口，与 TypedDeque/MixedDeque 相同）。
+    }
 
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<LocalIdAsRefHelper>();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<LocalIdAsRefHelper>();

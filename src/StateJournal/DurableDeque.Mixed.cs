@@ -140,6 +140,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     }
 
     private GetIssue PopCore<TValue>(bool front, out TValue? value) where TValue : notnull {
+        ThrowIfDetachedOrFrozen();
         var issue = PeekCore<TValue>(front, out value);
         if (issue != GetIssue.None) { return issue; }
 
@@ -161,6 +162,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     private void PushCore<TValue, VFace>(bool front, TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
+        ThrowIfDetachedOrFrozen();
         ValueBox newValue = VFace.From(value);
         Debug.Assert(!newValue.IsUninitialized);
         OnCurrentValueUpserted(default, newValue, existed: false);
@@ -175,6 +177,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     private bool TrySetCore<TValue, VFace>(bool front, TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
+        ThrowIfDetachedOrFrozen();
         if (_core.Current.Count == 0) { return false; }
 
         int index = front ? 0 : _core.Current.Count - 1;
@@ -184,6 +187,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     private void SetCore<TValue, VFace>(int index, TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
+        ThrowIfDetachedOrFrozen();
         ref ValueBox slot = ref _core.GetRef(index);
         ValueBox oldValue = slot;
         if (!VFace.UpdateOrInit(ref slot, value)) { return; }
@@ -205,6 +209,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     #region DurableObject Helpers
 
     private DurableRef ToDurableRef(DurableObject? value) {
+        ThrowIfDetachedOrFrozen();
         if (value is not null) { Revision.EnsureCanReference(value); }
         return value is not null ? new DurableRef(value.Kind, value.LocalId) : default;
     }
@@ -260,16 +265,19 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     }
 
     private void PushSymbol(bool front, string? value) {
+        ThrowIfDetachedOrFrozen();
         SymbolId id = RevisionStringCodec.Encode(Revision, value);
         PushCore<SymbolId, ValueBox.SymbolIdFace>(front, id);
     }
 
     private bool TrySetSymbol(int index, string? value) {
+        ThrowIfDetachedOrFrozen();
         SymbolId id = RevisionStringCodec.Encode(Revision, value);
         return TrySetCore<SymbolId, ValueBox.SymbolIdFace>(index, id);
     }
 
     private bool TrySetSymbol(bool front, string? value) {
+        ThrowIfDetachedOrFrozen();
         SymbolId id = RevisionStringCodec.Encode(Revision, value);
         return TrySetCore<SymbolId, ValueBox.SymbolIdFace>(front, id);
     }

@@ -319,10 +319,12 @@ partial class RevisionTests {
     }
 
     [Fact]
-    public void Freeze_OnUnsupportedDurableContainer_ThrowsNotSupported() {
+    public void Freeze_OnStillUnsupportedDurableContainer_ThrowsNotSupported() {
         var rev = CreateRevision();
-        var deque = rev.CreateDeque<int>();
+        var ordered = rev.CreateOrderedDict<int, int>();
+        var text = rev.CreateText();
 
-        Assert.Throws<NotSupportedException>(() => deque.Freeze());
+        Assert.Throws<NotSupportedException>(() => ordered.Freeze());
+        Assert.Throws<NotSupportedException>(() => text.Freeze());
     }
 }
