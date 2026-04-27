@@ -67,13 +67,62 @@ partial struct ValueBox {
         public static bool UpdateOrInit(ref ValueBox old, SymbolId value) {
             var newBox = value.IsNull ? Null : FromSymbolId(value);
             if (old.GetBits() == newBox.GetBits()) { return false; }
-            FreeOldBits64IfNeeded(old);
+            FreeOldOwnedHeapIfNeeded(old);
             old = newBox;
             return true;
         }
 
         public static GetIssue Get(ValueBox box, out SymbolId value) {
             return GetSymbolId(box, out value);
+        }
+    }
+
+    /// <summary>判断 ValueBox 是否为独立 owned payload string（HeapSlot + HeapValueKind.StringPayload）。</summary>
+    internal readonly bool IsStringPayloadRef => (uint)(GetBits() >> HeapKindShift) == TagHeapKindStringPayload;
+
+    /// <summary>
+    /// payload string 的 ITypedFace 实现。每次 <see cref="From"/> 在 <see cref="ValuePools.OfOwnedString"/>
+    /// 分配新 slot（不去重），<see cref="UpdateOrInit"/> 在内容相同时直接复用旧 slot 避免抖动。
+    /// </summary>
+    internal readonly struct StringPayloadFace : ITypedFace<string> {
+        public static ValueBox From(string? value) {
+            if (value is null) { return Null; }
+            SlotHandle handle = ValuePools.OfOwnedString.Store(value);
+            return EncodeHeapSlot(HeapValueKind.StringPayload, handle);
+        }
+
+        public static bool UpdateOrInit(ref ValueBox old, string? value) {
+            if (value is null) { return UpdateToNull(ref old); }
+            // inplace 更新：旧 box 是 exclusive StringPayload → 比较内容；同则 no-op，否则覆写 slot 内容。
+            if (old.GetLzc() == BoxLzc.HeapSlot
+                && old.GetTagAndKind() == TagHeapKindStringPayload
+                && old.IsExclusive) {
+                SlotHandle h = old.GetHeapHandle();
+                string current = ValuePools.OfOwnedString[h];
+                if (string.Equals(current, value, StringComparison.Ordinal)) { return false; }
+                ValuePools.OfOwnedString[h] = value;
+                // bits 不变（同 handle、kind、exclusive bit 都不变）；返回 true 表示内容变化。
+                return true;
+            }
+            // 其他情况：释放旧 owned heap slot（如有），分配新 StringPayload slot。
+            FreeOldOwnedHeapIfNeeded(old);
+            SlotHandle newHandle = ValuePools.OfOwnedString.Store(value);
+            old = EncodeHeapSlot(HeapValueKind.StringPayload, newHandle);
+            return true;
+        }
+
+        public static GetIssue Get(ValueBox box, out string? value) {
+            Debug.Assert(!box.IsUninitialized);
+            if (box.IsNull) {
+                value = null;
+                return GetIssue.None;
+            }
+            if ((uint)(box.GetBits() >> HeapKindShift) == TagHeapKindStringPayload) {
+                value = ValuePools.OfOwnedString[box.GetHeapHandle()];
+                return GetIssue.None;
+            }
+            value = null;
+            return GetIssue.TypeMismatch;
         }
     }
 }

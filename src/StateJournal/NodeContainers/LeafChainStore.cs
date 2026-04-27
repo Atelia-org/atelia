@@ -468,7 +468,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
                 );
             }
             // UpdateOrInit 内部负责释放旧值的堆资源（对 ValueBoxHelper 为
-            // FreeOldBits64IfNeeded / StoreOrReuseBits64）。ApplyDelta 只在 load 路径调用，
+            // FreeOldOwnedHeapIfNeeded / StoreOrReuseBits64）。ApplyDelta 只在 load 路径调用，
             // 此时旧值为 exclusive 状态，UpdateOrInit 可以正确释放或原位复用。
             // 对 NeedRelease 且 UpdateOrInit 不自行管理旧值的 helper（测试用），
             // 须在 UpdateOrInit 实现中自行释放（这是 ITypeHelper 契约的一部分）。

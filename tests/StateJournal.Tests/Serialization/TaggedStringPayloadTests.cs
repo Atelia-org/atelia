@@ -72,13 +72,16 @@ public class TaggedStringPayloadTests {
     }
 
     [Fact]
-    public void Dispatcher_StringPayloadTag_ThrowsNotImplementedExceptionStub() {
-        // B1 阶段 dispatcher 对 0xC0 暂时抛 NotImplementedException，标记 B2 边界。
+    public void Dispatcher_StringPayloadTag_RoundTripsViaStringPayloadFace() {
+        // B2: dispatcher 把 0xC0 路由到 ValueBox.StringPayloadFace；ValueBox 应携带等价 payload。
         byte[] data = WriteTaggedString("hello");
-        Assert.Throws<System.NotImplementedException>(() => {
-            var reader = new BinaryDiffReader(data);
-            Internal.ValueBox box = default;
-            TaggedValueDispatcher.UpdateOrInit(ref reader, ref box);
-        });
+        var reader = new BinaryDiffReader(data);
+        Internal.ValueBox box = Internal.ValueBox.Null;
+        bool changed = TaggedValueDispatcher.UpdateOrInit(ref reader, ref box);
+        Assert.True(changed);
+        Assert.Equal(ValueKind.String, box.GetValueKind());
+        Assert.Equal(GetIssue.None, Internal.ValueBox.StringPayloadFace.Get(box, out string? value));
+        Assert.Equal("hello", value);
+        Internal.ValueBox.ReleaseOwnedHeapSlot(box);
     }
 }

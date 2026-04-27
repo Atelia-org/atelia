@@ -40,10 +40,20 @@ internal readonly partial struct ValueBox {
         BoxLzc.Null => 1,
         BoxLzc.InlineDouble => 9, // tag + 8B
         BoxLzc.InlineNonnegInt or BoxLzc.InlineNegInt => 9, // tag + VarUInt(<=8)
-        BoxLzc.HeapSlot => 9, // float/integer 走 VarUInt；string 走 SymbolId VarUInt（更短，9 是上界）
+        BoxLzc.HeapSlot => GetHeapKind() switch {
+            HeapValueKind.StringPayload => EstimateStringPayloadBareSize(),
+            _ => 9, // float/integer 走 VarUInt；Symbol 走 SymbolId VarUInt（更短，9 是上界）
+        },
         BoxLzc.DurableRef => 7, // tag + kind + LocalId VarUInt(<=5)
         _ => 8,
     };
+
+    private uint EstimateStringPayloadBareSize() {
+        // 1B tag (0xC0) + VarUInt header(<=5) + UTF-8 最坏情况每字符 4B。
+        // 成本模型不要求精确，同量级即可。
+        string s = ValuePools.OfOwnedString[GetHeapHandle()];
+        return 6u + (uint)s.Length * 4u;
+    }
 
     public readonly ValueKind GetValueKind() => GetLzc() switch {
         BoxLzc.InlineDouble => ValueKind.FloatingPoint,
@@ -54,6 +64,7 @@ internal readonly partial struct ValueBox {
             HeapValueKind.NonnegativeInteger => ValueKind.NonnegativeInteger,
             HeapValueKind.NegativeInteger => ValueKind.NegativeInteger,
             HeapValueKind.Symbol => ValueKind.Symbol,
+            HeapValueKind.StringPayload => ValueKind.String,
             _ => throw new UnreachableException()
         },
         BoxLzc.DurableRef => GetDurRefKind() switch {
@@ -94,6 +105,7 @@ internal readonly partial struct ValueBox {
     internal const uint TagHeapKindFloat = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)HeapValueKind.FloatingPoint;
     internal const uint TagHeapKindNonnegInt = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)HeapValueKind.NonnegativeInteger;
     internal const uint TagHeapKindNegInt = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)HeapValueKind.NegativeInteger;
+    internal const uint TagHeapKindStringPayload = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)HeapValueKind.StringPayload;
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static bool IsHeapFloatOrInteger(uint tagAndKind) => tagAndKind is TagHeapKindFloat or TagHeapKindNonnegInt or TagHeapKindNegInt;
     internal readonly bool IsHeapFloatOrInteger() => IsHeapFloatOrInteger(GetTagAndKind());
@@ -111,9 +123,14 @@ internal readonly partial struct ValueBox {
         return false;
     }
 
-    /// <summary>释放旧 ValueBox 持有的独占 Bits64 Slot（如有）。冻结 slot 不释放（属于 committed 共享）。</summary>
-    private static void FreeOldBits64IfNeeded(ValueBox old) {
-        if (old.TryGetBits64Handle(out SlotHandle h) && old.IsExclusive) { ValuePools.OfBits64.Free(h); }
+    /// <summary>释放旧 ValueBox 持有的独占 owned 堆 slot（Bits64 数值或 StringPayload）。冻结 slot 不释放（属于 committed 共享）。</summary>
+    private static void FreeOldOwnedHeapIfNeeded(ValueBox old) {
+        if (!old.IsExclusive) { return; }
+        if (old.TryGetBits64Handle(out SlotHandle h)) {
+            ValuePools.OfBits64.Free(h);
+            return;
+        }
+        if (old.GetTagAndKind() == TagHeapKindStringPayload) { ValuePools.OfOwnedString.Free(old.GetHeapHandle()); }
     }
 
     /// <summary>
@@ -125,6 +142,7 @@ internal readonly partial struct ValueBox {
             ValuePools.OfBits64[h] = rawBits;
             return h;
         }
+        FreeOldOwnedHeapIfNeeded(old);
         return ValuePools.OfBits64.Store(rawBits);
     }
 
@@ -142,26 +160,38 @@ internal readonly partial struct ValueBox {
         box.GetLzc() == BoxLzc.HeapSlot ? box.AsFrozen() : box;
 
     internal static ValueBox CloneFrozenForNewOwner(ValueBox box) {
-        if (!box.TryGetBits64Handle(out SlotHandle h)) { return box; }
-
-        ulong rawBits = ValuePools.OfBits64[h];
-        SlotHandle newHandle = ValuePools.OfBits64.Store(rawBits);
-        return EncodeHeapSlot(box.GetHeapKind(), newHandle).AsFrozen();
+        if (box.TryGetBits64Handle(out SlotHandle h)) {
+            ulong rawBits = ValuePools.OfBits64[h];
+            SlotHandle newHandle = ValuePools.OfBits64.Store(rawBits);
+            return EncodeHeapSlot(box.GetHeapKind(), newHandle).AsFrozen();
+        }
+        if (box.GetLzc() == BoxLzc.HeapSlot && box.GetTagAndKind() == TagHeapKindStringPayload) {
+            // 第一版：frozen StringPayload fork → 深 clone。简单且正确，避免共享 slot 的双 free 风险；
+            // 后续若引入引用计数可优化为共享。
+            string value = ValuePools.OfOwnedString[box.GetHeapHandle()];
+            SlotHandle newHandle = ValuePools.OfOwnedString.Store(value);
+            return EncodeHeapSlot(HeapValueKind.StringPayload, newHandle).AsFrozen();
+        }
+        return box;
     }
 
     /// <summary>
-    /// 无条件释放 ValueBox 持有的 Bits64 Slot（如有），不论 exclusive/frozen 状态。
-    /// 调用者必须确保自己是该 Slot 的最后持有者。对 inline 值和 InternPool 类型无操作。
+    /// 无条件释放 ValueBox 持有的 owned 堆 Slot（Bits64 数值或 StringPayload），不论 exclusive/frozen 状态。
+    /// 调用者必须确保自己是该 Slot 的最后持有者。对 inline 值和 InternPool 类型（Symbol）无操作。
     /// </summary>
-    internal static void ReleaseBits64Slot(ValueBox box) {
+    internal static void ReleaseOwnedHeapSlot(ValueBox box) {
         if (box.TryGetBits64Handle(out SlotHandle h)) {
             ValuePools.OfBits64.Free(h);
+            return;
+        }
+        if (box.GetLzc() == BoxLzc.HeapSlot && box.GetTagAndKind() == TagHeapKindStringPayload) {
+            ValuePools.OfOwnedString.Free(box.GetHeapHandle());
         }
     }
 
     internal static bool UpdateToNull(ref ValueBox old) {
         if (old.IsNull) { return false; }
-        FreeOldBits64IfNeeded(old);
+        FreeOldOwnedHeapIfNeeded(old);
         old = Null;
         return true;
     }

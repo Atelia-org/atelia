@@ -10,7 +10,10 @@ internal enum HeapValueKind : byte {
     NegativeInteger,
     #endregion
 
-    Symbol
+    Symbol,
+
+    /// <summary>Payload string — 非 intern，独立 owned 堆 slot（每次 Store 分配新 slot，不去重）。</summary>
+    StringPayload,
 }
 
 internal static class HeapValueKindHelper {

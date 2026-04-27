@@ -34,7 +34,7 @@ partial struct ValueBox {
             if (value >= 0) {
                 if (lzc == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegIntAsSigned() == value) { return false; }
                 if (u < LzcConstants.NonnegIntInlineCap) {
-                    FreeOldBits64IfNeeded(box);
+                    FreeOldOwnedHeapIfNeeded(box);
                     box = new(u | LzcConstants.NonnegIntTag);
                     return true;
                 }
@@ -46,7 +46,7 @@ partial struct ValueBox {
             else {
                 if (lzc == BoxLzc.InlineNegInt && box.DecodeInlineNegInt() == value) { return false; }
                 if (value >= LzcConstants.NegIntInlineMin) {
-                    FreeOldBits64IfNeeded(box);
+                    FreeOldOwnedHeapIfNeeded(box);
                     box = new(u & LzcConstants.NegIntPayloadMask);
                     return true;
                 }
@@ -111,7 +111,7 @@ partial struct ValueBox {
             BoxLzc lzc = box.GetLzc();
             if (lzc == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegInt() == value) { return false; }
             if (value < LzcConstants.NonnegIntInlineCap) {
-                FreeOldBits64IfNeeded(box);
+                FreeOldOwnedHeapIfNeeded(box);
                 box = new(value | LzcConstants.NonnegIntTag);
                 return true;
             }
@@ -344,7 +344,7 @@ partial struct ValueBox {
         else {
             if (lzc == BoxLzc.InlineNegInt && box.DecodeInlineNegInt() == value) { return false; }
         }
-        FreeOldBits64IfNeeded(box);
+        FreeOldOwnedHeapIfNeeded(box);
         box = FromInlineableSigned(value);
         return true;
     }
@@ -353,7 +353,7 @@ partial struct ValueBox {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool UpdateByInlineUnsigned(ref ValueBox box, ulong value) {
         if (box.GetLzc() == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegInt() == value) { return false; }
-        FreeOldBits64IfNeeded(box);
+        FreeOldOwnedHeapIfNeeded(box);
         box = FromInlineableUnsigned(value);
         return true;
     }

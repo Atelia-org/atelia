@@ -21,7 +21,7 @@ partial struct ValueBox {
         /// </summary>
         public static bool UpdateOrInit(ref ValueBox old, double value) {
             if (old.NumericEquiv(value)) { return false; }
-            FreeOldBits64IfNeeded(old);
+            FreeOldOwnedHeapIfNeeded(old);
             old = From(value);
             return true;
         }
@@ -46,7 +46,7 @@ partial struct ValueBox {
             ulong doubleBits = BitConverter.DoubleToUInt64Bits(value);
             if (old.TryDecodeDoubleRawBits(out ulong oldBits) && oldBits == doubleBits) { return false; }
             if ((doubleBits & 1) == 0) {
-                FreeOldBits64IfNeeded(old);
+                FreeOldOwnedHeapIfNeeded(old);
                 old = FromInlineableDoubleBits(doubleBits);
             }
             else {
@@ -68,7 +68,7 @@ partial struct ValueBox {
         /// </summary>
         public static bool UpdateOrInit(ref ValueBox old, float value) {
             if (old.NumericEquiv(value)) { return false; }
-            FreeOldBits64IfNeeded(old);
+            FreeOldOwnedHeapIfNeeded(old);
             old = FromInlineableFloatingPoint(value);
             return true;
         }
@@ -117,7 +117,7 @@ partial struct ValueBox {
         /// </summary>
         public static bool UpdateOrInit(ref ValueBox old, Half value) {
             if (old.NumericEquiv((double)value)) { return false; }
-            FreeOldBits64IfNeeded(old);
+            FreeOldOwnedHeapIfNeeded(old);
             old = FromInlineableFloatingPoint((double)value);
             return true;
         }

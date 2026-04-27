@@ -31,13 +31,13 @@ partial struct ValueBox {
 
         /// <summary>将 ValueBox 覆写为指定的 DurableRef 值。</summary>
         /// <remarks>
-        /// 旧值如果持有 <see cref="ValuePools.OfBits64"/> slot（数值类型），会立即释放。
-        /// 旧值如果持有 InternPool slot（例如字符串等），因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
+        /// 旧值如果持有 owned heap slot（Bits64 数值或 StringPayload），会立即释放。
+        /// 旧值如果持有 InternPool slot（Symbol），因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
         /// </remarks>
         public static bool UpdateOrInit(ref ValueBox old, DurableRef value) {
             var newBox = From(value);
             if (old.GetBits() == newBox.GetBits()) { return false; }
-            FreeOldBits64IfNeeded(old);
+            FreeOldOwnedHeapIfNeeded(old);
             old = newBox;
             return true;
         }

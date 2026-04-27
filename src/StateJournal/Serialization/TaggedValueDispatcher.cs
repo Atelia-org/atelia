@@ -28,7 +28,7 @@ internal static class TaggedValueDispatcher {
             Fp.Follow4 => ValueBox.SingleFace.UpdateOrInit(ref old, reader.TaggedSingle()),
             Fp.Follow8 => ValueBox.ExactDoubleFace.UpdateOrInit(ref old, reader.TaggedDouble()), // 内部存储一律走精确语义，RoundedDouble只是外部写入路径之一。
             >= TaggedRefEnc.MinTag and <= TaggedRefEnc.MaxTag => ReadDurableRefOrSymbol(head, ref reader, ref old),
-            ScalarRules.StringPayload.Tag => throw new NotImplementedException("TaggedString payload routing into ValueBox.StringPayloadFace is pending Step B2."),
+            ScalarRules.StringPayload.Tag => ValueBox.StringPayloadFace.UpdateOrInit(ref old, reader.TaggedStringPayload()),
             _ => throw new InvalidDataException($"Unsupported tagged value head 0x{head:X2}. The current reader supports the CBOR-inspired scalar subset (major type 0/1/5/7) plus the tagged-ref (0xA0..0xBF) and string-payload (0xC0) extensions."),
         };
     }
@@ -38,17 +38,9 @@ internal static class TaggedValueDispatcher {
         uint id = TaggedRefEnc.IsWidePayload(head) ? reader.FixedUInt32() : reader.FixedUInt16();
         if (id == 0) { throw new InvalidDataException($"Invalid id=0 in TaggedRefEncoding (kind={kind}). Use tagged null for null references."); }
 
-        if (kind == TaggedRefKind.Symbol) {
-            var symbolId = new SymbolId(id);
-            var newBox = ValueBox.FromSymbolId(symbolId);
-            if (old.GetBits() == newBox.GetBits()) { return false; }
-            old = newBox;
-            return true;
-        }
+        if (kind == TaggedRefKind.Symbol) { return ValueBox.SymbolIdFace.UpdateOrInit(ref old, new SymbolId(id)); }
 
-        if (!TaggedRefKindHelper.TryToDurableObjectKind(kind, out DurableObjectKind objectKind)) {
-            throw new InvalidDataException($"Invalid tagged ref kind '{kind}' from head 0x{head:X2}.");
-        }
+        if (!TaggedRefKindHelper.TryToDurableObjectKind(kind, out DurableObjectKind objectKind)) { throw new InvalidDataException($"Invalid tagged ref kind '{kind}' from head 0x{head:X2}."); }
         return ValueBox.DurableRefFace.UpdateOrInit(ref old, new DurableRef(objectKind, new LocalId(id)));
     }
 }

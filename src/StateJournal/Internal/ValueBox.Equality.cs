@@ -17,9 +17,10 @@ partial struct ValueBox {
     /// 和所有 InternPool 引用类型（同值同 handle → 同 bits）。
     ///
     /// 慢路径：仅当双方都是 HeapSlot 且 <see cref="ValueKind"/> 相同时才触发。
-    /// 当前仅 <see cref="ValuePools.OfBits64"/> 中的数值类型（<see cref="ValueKind.NonnegativeInteger"/>、
-    /// <see cref="ValueKind.NegativeInteger"/>、<see cref="ValueKind.FloatingPoint"/>）
-    /// 使用 GcPool（独占 slot），可能出现同值不同 handle 的情况，需要取出堆中 raw bits 比较。
+    /// <see cref="ValuePools.OfBits64"/> 中的数值类型（<see cref="ValueKind.NonnegativeInteger"/>、
+    /// <see cref="ValueKind.NegativeInteger"/>、<see cref="ValueKind.FloatingPoint"/>）以及
+    /// <see cref="HeapValueKind.StringPayload"/> 都使用 owned pool（独占 slot），可能出现同值不同 handle 的情况，
+    /// 需要取出堆中 payload 做内容比较。
     ///
     /// 设计决策：<c>42.0 != 42</c>（整数与浮点数不互等），
     /// 因此只有 Kind 相同才可能相等。非负整数与负整数之间也不可能数学值相等。
@@ -30,12 +31,20 @@ partial struct ValueBox {
         Debug.Assert(!b.IsUninitialized);
         ulong diffBits;
         uint tagAndKind; // 用于快速判断是否是堆上浮点或整数
-        return (diffBits = a.GetBits() ^ b.GetBits()) == 0
-            || ((diffBits & ~ExclusiveBit) == 0 && a.GetLzc() == BoxLzc.HeapSlot) // 仅有ExclusiveBit差异的两个HeapSlot
-            || (IsHeapFloatOrInteger(tagAndKind = a.GetTagAndKind()) // a是`ValuePools.Bits64`值
-                && tagAndKind == b.GetTagAndKind() // b与a类型相同
-                && HeapBits64Equals(a, b)
+        if ((diffBits = a.GetBits() ^ b.GetBits()) == 0) { return true; }
+        if ((diffBits & ~ExclusiveBit) == 0 && a.GetLzc() == BoxLzc.HeapSlot) { return true; }
+        if (IsHeapFloatOrInteger(tagAndKind = a.GetTagAndKind())
+            && tagAndKind == b.GetTagAndKind()
+            && HeapBits64Equals(a, b)) { return true; }
+        // payload string 不去重：同值不同 slot 需走内容比较慢路。
+        if (tagAndKind == TagHeapKindStringPayload && b.GetTagAndKind() == TagHeapKindStringPayload) {
+            return string.Equals(
+                ValuePools.OfOwnedString[a.GetHeapHandle()],
+                ValuePools.OfOwnedString[b.GetHeapHandle()],
+                StringComparison.Ordinal
             );
+        }
+        return false;
     }
 
     /// <summary>检查是否是堆分配的数值且堆中值相等</summary>
@@ -62,7 +71,14 @@ partial struct ValueBox {
             // return HashCode.Combine(box.GetHeapKind(), raw); // 似乎杀鸡用牛刀了
             return ((int)box.GetHeapKind() * 16777619) ^ raw.GetHashCode();
         }
-        if (box.GetLzc() == BoxLzc.HeapSlot) { return (box.GetBits() & ~ExclusiveBit).GetHashCode(); }
+        if (box.GetLzc() == BoxLzc.HeapSlot) {
+            // payload string：同值不同 slot 必须 hash 相等，走内容 hash。
+            if (box.GetTagAndKind() == TagHeapKindStringPayload) {
+                string s = ValuePools.OfOwnedString[box.GetHeapHandle()];
+                return ((int)HeapValueKind.StringPayload * 16777619) ^ string.GetHashCode(s, StringComparison.Ordinal);
+            }
+            return (box.GetBits() & ~ExclusiveBit).GetHashCode();
+        }
         // inline 值 或 InternPool 引用：bits 即值
         return box.GetBits().GetHashCode();
     }

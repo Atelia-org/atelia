@@ -124,7 +124,7 @@ internal readonly struct ValueBoxHelper : ITypeHelper<ValueBox> {
     public static ValueBox Freeze(ValueBox value) => ValueBox.Freeze(value);
     public static ValueBox ForkFrozenForNewOwner(ValueBox value) => ValueBox.CloneFrozenForNewOwner(value);
     public static bool NeedRelease => true;
-    public static void ReleaseSlot(ValueBox value) => ValueBox.ReleaseBits64Slot(value);
+    public static void ReleaseSlot(ValueBox value) => ValueBox.ReleaseOwnedHeapSlot(value);
 
     public static void Write(BinaryDiffWriter writer, ValueBox v, bool asKey) {
         Debug.Assert(!asKey, "ValueBox不支持作为key使用。");
