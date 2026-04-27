@@ -41,7 +41,7 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
     public override bool ContainsKey(TKey key) => _core.ContainsKey(key);
     public override int Count => _core.Count;
     public override bool Remove(TKey key) {
-        if (!_core.TryRemove(key, out var oldBox)) return false;
+        if (!_core.TryRemove(key, out var oldBox)) { return false; }
         OnCurrentValueRemoved(oldBox);
         return true;
     }
@@ -55,7 +55,7 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
     // ── Core Impl ──
     private protected override GetIssue GetCore<TValue, VFace>(TKey key, out TValue value) {
         value = default!;
-        if (!_core.TryGet(key, out var box)) return GetIssue.NotFound;
+        if (!_core.TryGet(key, out var box)) { return GetIssue.NotFound; }
         return VFace.Get(box, out value!);
     }
 
@@ -64,7 +64,9 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
 #pragma warning restore CS8765
         ref ValueBox slot = ref _core.UpsertGetValueRef(key, out bool existed, out int slotIndex, out bool capturedNow);
         ValueBox oldValue = existed ? slot : default;
-        if (!VFace.UpdateOrInit(ref slot, value)) {
+        // SkipListCore 自行维护 estimate (遍历 dirty index 当场重算)，不需要 oldBareBytes；
+        // 仅为满足 face 接口接以 out _ 丢弃。
+        if (!VFace.UpdateOrInit(ref slot, value, out _)) {
             if (capturedNow) { _core.CancelPreparedValueUpdate(slotIndex); }
             return UpsertStatus.Updated;
         }
@@ -125,14 +127,10 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
         while (cursor.IsNotNull) {
             var (key, box) = _core.GetEntry(ref cursor);
             if (needValidateKeys) {
-                if (KHelper.ValidateReconstructed(key, tracker!, "MixedOrderedDict") is { } keyError) {
-                    return keyError;
-                }
+                if (KHelper.ValidateReconstructed(key, tracker!, "MixedOrderedDict") is { } keyError) { return keyError; }
             }
             if (needValidateSymbols &&
-                ValueBox.ValidateReconstructedMixedSymbol(box, symbolPool!, "MixedOrderedDict") is { } symbolError) {
-                return symbolError;
-            }
+                ValueBox.ValidateReconstructedMixedSymbol(box, symbolPool!, "MixedOrderedDict") is { } symbolError) { return symbolError; }
             cursor = _core.GetNext(ref cursor);
         }
         return null;
@@ -156,6 +154,7 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
     private void AssertRefCountConsistency() {
         var (durCount, symCount) = ComputeRefCounts();
         Debug.Assert(_durableRefCount == durCount && _symbolRefCount == symCount,
-            $"MixedOrderedDict refcount drift: durable={_durableRefCount}(expect {durCount}), symbol={_symbolRefCount}(expect {symCount})");
+            $"MixedOrderedDict refcount drift: durable={_durableRefCount}(expect {durCount}), symbol={_symbolRefCount}(expect {symCount})"
+        );
     }
 }

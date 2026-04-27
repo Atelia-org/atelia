@@ -70,8 +70,12 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
 
     public override bool Remove(TKey key) {
         ThrowIfDetachedOrFrozen();
-        if (!_core.Current.Remove(key, out var removedId)) { return false; }
-        _core.AfterRemove<LocalIdAsRefHelper>(key, removedId, KHelper.EstimateBareSize(key, asKey: true));
+        if (!_core.Current.TryGetValue(key, out var removedId)) { return false; }
+        uint keyBareBytes = KHelper.EstimateBareSize(key, asKey: true);
+        uint removedEntryBytes = checked(keyBareBytes + LocalIdAsRefHelper.EstimateBareSize(removedId, asKey: false));
+        bool removed = _core.Current.Remove(key);
+        System.Diagnostics.Debug.Assert(removed);
+        _core.AfterRemove<LocalIdAsRefHelper>(key, removedId, removedEntryBytes, keyBareBytes);
         return true;
     }
 

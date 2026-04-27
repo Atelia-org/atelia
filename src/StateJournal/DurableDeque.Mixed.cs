@@ -190,10 +190,10 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
         ThrowIfDetachedOrFrozen();
         ref ValueBox slot = ref _core.GetRef(index);
         ValueBox oldValue = slot;
-        if (!VFace.UpdateOrInit(ref slot, value)) { return; }
+        if (!VFace.UpdateOrInit(ref slot, value, out uint oldBareBytes)) { return; }
 
         OnCurrentValueUpserted(oldValue, slot, existed: true);
-        _core.AfterSet<ValueBoxHelper>(index, ref slot, oldValue);
+        _core.AfterSet<ValueBoxHelper>(index, ref slot, oldBareBytes);
     }
 
     #endregion

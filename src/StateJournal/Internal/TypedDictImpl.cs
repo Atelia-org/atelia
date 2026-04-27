@@ -31,8 +31,12 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
 
     public override bool Remove(TKey key) {
         ThrowIfDetachedOrFrozen();
-        if (!_core.Current.Remove(key, out TValue? removedValue)) { return false; }
-        _core.AfterRemove<VHelper>(key, removedValue, KHelper.EstimateBareSize(key, asKey: true));
+        if (!_core.Current.TryGetValue(key, out TValue? removedValue)) { return false; }
+        uint keyBareBytes = KHelper.EstimateBareSize(key, asKey: true);
+        uint removedEntryBytes = checked(keyBareBytes + VHelper.EstimateBareSize(removedValue, asKey: false));
+        bool removed = _core.Current.Remove(key);
+        System.Diagnostics.Debug.Assert(removed);
+        _core.AfterRemove<VHelper>(key, removedValue, removedEntryBytes, keyBareBytes);
         return true;
     }
 

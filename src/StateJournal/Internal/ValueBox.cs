@@ -197,10 +197,20 @@ internal readonly partial struct ValueBox {
 
     internal interface ITypedFace<T> where T : notnull {
         static abstract ValueBox From(T? value);
-        /// <summary>Update if <paramref name="old"/> is not Uninitialized.
-        /// Init if <paramref name="old"/> is Uninitialized.</summary>
+        /// <summary>
+        /// Update if <paramref name="old"/> is not Uninitialized.
+        /// Init if <paramref name="old"/> is Uninitialized.
+        /// </summary>
+        /// <param name="old">要突变的 slot。</param>
+        /// <param name="value">新值。</param>
+        /// <param name="oldBareBytesBeforeMutation">
+        /// 在 slot 被任何修改之前，旧 ValueBox 的 <see cref="EstimateBareSize"/> 值（不含 key bytes）。
+        /// 即使返回 false (no-op) 也设为有效值（与新 box 的 estimate 相同）。
+        /// 调用方将此值传给 tracker 的 AfterUpsert / AfterSet 用于 dirty 增量减算，
+        /// 避免在 inplace 覆写后对旧 slot 重新解码。
+        /// </param>
         /// <returns>is <paramref name="old"/> changed.</returns>
-        static abstract bool UpdateOrInit(ref ValueBox old, T? value);
+        static abstract bool UpdateOrInit(ref ValueBox old, T? value, out uint oldBareBytesBeforeMutation);
         static abstract GetIssue Get(ValueBox box, out T? value);
     }
 }

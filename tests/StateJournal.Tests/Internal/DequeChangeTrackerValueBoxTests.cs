@@ -145,7 +145,7 @@ public class DequeChangeTrackerValueBoxTests {
             int countAfterCommit = Bits64Count;
 
             ref ValueBox slot = ref tracker.GetRef(0);
-            bool changed = ValueBox.Int64Face.UpdateOrInit(ref slot, HeapValue(11));
+            bool changed = ValueBox.Int64Face.UpdateOrInit(ref slot, HeapValue(11), out _);
 
             Assert.False(changed);
             Assert.False(tracker.HasChanges);
@@ -534,10 +534,9 @@ public class DequeChangeTrackerValueBoxTests {
         where TValue : notnull
         where TFace : ValueBox.ITypedFace<TValue> {
         ref ValueBox slot = ref tracker.GetRef(index);
-        ValueBox oldValue = slot;
-        if (!TFace.UpdateOrInit(ref slot, value)) { return false; }
+        if (!TFace.UpdateOrInit(ref slot, value, out uint oldBareBytes)) { return false; }
 
-        tracker.AfterSet<ValueBoxHelper>(index, ref slot, oldValue);
+        tracker.AfterSet<ValueBoxHelper>(index, ref slot, oldBareBytes);
         return true;
     }
 

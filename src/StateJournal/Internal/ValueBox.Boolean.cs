@@ -9,7 +9,10 @@ partial struct ValueBox {
         public static ValueBox From(bool value) => value ? True : False;
         /// <summary>将 ValueBox 覆写为指定的 bool 值。
         /// Boolean 始终 inline 编码，因此只需清理旧 owned heap slot（如有）。</summary>
-        public static bool UpdateOrInit(ref ValueBox old, bool value) {
+        public static bool UpdateOrInit(ref ValueBox old, bool value, out uint oldBareBytesBeforeMutation) {
+            // Boolean 与 oldValue 无关的常量 estimate 路径无需特别捕获顺序，
+            // 但接口契约要求在任何 mutation 之前确定 oldBareBytes。
+            oldBareBytesBeforeMutation = old.IsUninitialized ? 0u : old.EstimateBareSize();
             // if (old.GetLzc() == BoxLzc.Boolean && old.DecodeBoolean() == value) { return false; }
             if (old.GetBits() == (value ? LzcConstants.BoxTrue : LzcConstants.BoxFalse)) { return false; }
             FreeOldOwnedHeapIfNeeded(old);

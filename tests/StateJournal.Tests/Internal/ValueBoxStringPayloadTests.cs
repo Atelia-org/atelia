@@ -106,14 +106,14 @@ public class ValueBoxStringPayloadTests {
         Assert.Equal(before + 1, OwnedStringCount);
 
         // 同 exclusive slot 内容覆写：count 不变（in-place）
-        bool changed = ValueBox.StringPayloadFace.UpdateOrInit(ref box, "second");
+        bool changed = ValueBox.StringPayloadFace.UpdateOrInit(ref box, "second", out _);
         Assert.True(changed);
         Assert.Equal(before + 1, OwnedStringCount);
         Assert.Equal(GetIssue.None, ValueBox.StringPayloadFace.Get(box, out string? v));
         Assert.Equal("second", v);
 
         // 同内容：no-op，count 不变
-        bool changed2 = ValueBox.StringPayloadFace.UpdateOrInit(ref box, "second");
+        bool changed2 = ValueBox.StringPayloadFace.UpdateOrInit(ref box, "second", out _);
         Assert.False(changed2);
         Assert.Equal(before + 1, OwnedStringCount);
 
@@ -129,7 +129,7 @@ public class ValueBoxStringPayloadTests {
         var box = ValueBox.Int64Face.From((long)LzcConstants.NonnegIntInlineCap); // 溢出 inline，进堆
         Assert.Equal(beforeBits64 + 1, Bits64Count);
 
-        bool changed = ValueBox.StringPayloadFace.UpdateOrInit(ref box, "switched");
+        bool changed = ValueBox.StringPayloadFace.UpdateOrInit(ref box, "switched", out _);
         Assert.True(changed);
         Assert.Equal(beforeBits64, Bits64Count); // bits64 slot 被释放
         Assert.Equal(beforeOwned + 1, OwnedStringCount); // 新 owned string slot
@@ -145,7 +145,7 @@ public class ValueBoxStringPayloadTests {
         var box = ValueBox.StringPayloadFace.From("old string");
         Assert.Equal(beforeOwned + 1, OwnedStringCount);
 
-        bool changed = ValueBox.UInt64Face.UpdateOrInit(ref box, LzcConstants.NonnegIntInlineCap);
+        bool changed = ValueBox.UInt64Face.UpdateOrInit(ref box, LzcConstants.NonnegIntInlineCap, out _);
         Assert.True(changed);
         Assert.Equal(beforeOwned, OwnedStringCount);
         Assert.Equal(beforeBits64 + 1, Bits64Count);
@@ -158,13 +158,13 @@ public class ValueBoxStringPayloadTests {
     public void StringPayload_Update_FromNull_AllocatesNew() {
         int before = OwnedStringCount;
         var box = ValueBox.Null;
-        bool changed = ValueBox.StringPayloadFace.UpdateOrInit(ref box, "seed");
+        bool changed = ValueBox.StringPayloadFace.UpdateOrInit(ref box, "seed", out _);
         Assert.True(changed);
         Assert.Equal(before + 1, OwnedStringCount);
         Assert.Equal(ValueKind.String, box.GetValueKind());
 
         // Update 到 null：释放 slot，box → Null
-        bool changed2 = ValueBox.StringPayloadFace.UpdateOrInit(ref box, null);
+        bool changed2 = ValueBox.StringPayloadFace.UpdateOrInit(ref box, null, out _);
         Assert.True(changed2);
         Assert.True(box.IsNull);
         Assert.Equal(before, OwnedStringCount);

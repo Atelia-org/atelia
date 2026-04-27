@@ -181,8 +181,11 @@ internal struct DequeChangeTracker<TValue>
         TValue? oldValue = slot;
         if (VHelper.Equals(slot, value)) { return false; }
 
+        // 在 typed 路径上 oldValue 是 reference/value 拷贝，不存在 stale 风险，
+        // 但仍按照统一契约：在 mutate 之前快照 oldValueBytes 给 AfterSet。
+        uint oldValueBareBytes = EstimateValueBytes<VHelper>(oldValue);
         slot = value;
-        AfterSet<VHelper>(index, ref slot, oldValue);
+        AfterSet<VHelper>(index, ref slot, oldValueBareBytes);
         return true;
     }
 
@@ -196,12 +199,16 @@ internal struct DequeChangeTracker<TValue>
     /// 配合 <see cref="GetRef"/> 使用：调用方先原地更新 current 槽位，确认语义发生变化后，
     /// 再调用本方法维护 keep window / dirty map。
     /// </summary>
-    public void AfterSet<VHelper>(int currentIndex, ref TValue? value, TValue? oldValue)
+    /// <param name="oldValueBareBytesBeforeMutation">
+    /// 在 slot 被任何修改之前对旧值 <see cref="EstimateValueBytes{VHelper}"/> 的快照。
+    /// 由调用方负责 (mixed 路径下通常由 <c>ITypedFace.UpdateOrInit</c> 自报)。
+    /// </param>
+    public void AfterSet<VHelper>(int currentIndex, ref TValue? value, uint oldValueBareBytesBeforeMutation)
         where VHelper : unmanaged, ITypeHelper<TValue> {
         // 显式要求传入与 GetRef 配对得到的 ref，可在 DEBUG 下校验“就是这个槽位”，
         // 比仅比较值语义更能防止调用方误把别处的临时值传进来。
         Debug.Assert(Unsafe.AreSame(ref value, ref _current.GetRef(currentIndex)));
-        uint oldValueBytes = EstimateValueBytes<VHelper>(oldValue);
+        uint oldValueBytes = oldValueBareBytesBeforeMutation;
 
         if ((uint)(currentIndex - _newKeepLo) >= (uint)_keepCount) {
             // index 在 dirty prefix / dirty suffix 区域。

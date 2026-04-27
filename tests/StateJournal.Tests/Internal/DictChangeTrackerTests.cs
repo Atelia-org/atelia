@@ -65,14 +65,14 @@ public class DictChangeTrackerTests {
 
         var committed = ValueBox.Int64Face.From(long.MaxValue);
         tracker.Current[key] = committed;
-        tracker.AfterUpsert<ValueBoxHelper>(key, default, existed: false, committed, ByteHelper.EstimateBareSize(key, asKey: true));
+        tracker.AfterUpsert<ValueBoxHelper>(key, 0u, existed: false, committed, ByteHelper.EstimateBareSize(key, asKey: true));
         tracker.Commit<ValueBoxHelper>();
 
         int countAfterCommit = Bits64Count;
 
         // 模拟真实 Upsert 流程：通过 ref 获取 slot，用 Update 尝试更新
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(tracker.Current, key, out _);
-        bool changed = ValueBox.Int64Face.UpdateOrInit(ref slot, long.MaxValue);
+        bool changed = ValueBox.Int64Face.UpdateOrInit(ref slot, long.MaxValue, out _);
         Assert.False(changed); // 值未变，Update 返回 false
 
         // Update 返回 false 时跳过 AfterUpsert，slot 保持 frozen 不变
@@ -92,14 +92,17 @@ public class DictChangeTrackerTests {
 
         var inserted = ValueBox.Int64Face.From(long.MaxValue);
         tracker.Current[key] = inserted;
-        tracker.AfterUpsert<ValueBoxHelper>(key, default, existed: false, inserted, ByteHelper.EstimateBareSize(key, asKey: true));
+        tracker.AfterUpsert<ValueBoxHelper>(key, 0u, existed: false, inserted, ByteHelper.EstimateBareSize(key, asKey: true));
 
         Assert.True(tracker.HasChanges);
         Assert.Equal(before + 1, Bits64Count);
 
+        uint keyBytes = ByteHelper.EstimateBareSize(key, asKey: true);
+        ValueBox toRemove = tracker.Current[key];
+        uint removedBytes = checked(keyBytes + ValueBoxHelper.EstimateBareSize(toRemove, asKey: false));
         bool removed = tracker.Current.Remove(key, out var removedValue);
         Assert.True(removed);
-        tracker.AfterRemove<ValueBoxHelper>(key, removedValue, ByteHelper.EstimateBareSize(key, asKey: true));
+        tracker.AfterRemove<ValueBoxHelper>(key, removedValue, removedBytes, keyBytes);
 
         Assert.False(tracker.HasChanges);
         Assert.Equal(before, Bits64Count);
@@ -112,20 +115,23 @@ public class DictChangeTrackerTests {
 
         var committed = ValueBox.Int64Face.From(long.MaxValue);
         tracker.Current[key] = committed;
-        tracker.AfterUpsert<ValueBoxHelper>(key, default, existed: false, committed, ByteHelper.EstimateBareSize(key, asKey: true));
+        tracker.AfterUpsert<ValueBoxHelper>(key, 0u, existed: false, committed, ByteHelper.EstimateBareSize(key, asKey: true));
         tracker.Commit<ValueBoxHelper>();
         int countAfterCommit = Bits64Count;
 
         // 模拟真实 Upsert 流程：Update 检测值相同 → 返回 false → 跳过 AfterUpsert
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(tracker.Current, key, out _);
-        bool changed = ValueBox.Int64Face.UpdateOrInit(ref slot, long.MaxValue);
+        bool changed = ValueBox.Int64Face.UpdateOrInit(ref slot, long.MaxValue, out _);
         Assert.False(changed);
         // AfterUpsert 未被调用，状态不变
         Assert.False(tracker.HasChanges);
 
+        uint keyBytes = ByteHelper.EstimateBareSize(key, asKey: true);
+        ValueBox toRemove = tracker.Current[key];
+        uint removedBytes = checked(keyBytes + ValueBoxHelper.EstimateBareSize(toRemove, asKey: false));
         bool removed = tracker.Current.Remove(key, out var removedValue);
         Assert.True(removed);
-        tracker.AfterRemove<ValueBoxHelper>(key, removedValue, ByteHelper.EstimateBareSize(key, asKey: true));
+        tracker.AfterRemove<ValueBoxHelper>(key, removedValue, removedBytes, keyBytes);
 
         Assert.True(tracker.HasChanges);
         Assert.Equal(countAfterCommit, Bits64Count);
@@ -150,7 +156,9 @@ public class DictChangeTrackerTests {
         AssertEstimateMatchesSerializedBody<int, int, Int32Helper, Int32Helper>(tracker);
 
         Assert.True(tracker.Current.Remove(1, out int removedValue));
-        tracker.AfterRemove<Int32Helper>(1, removedValue, Int32Helper.EstimateBareSize(1, asKey: true));
+        uint keyBytes1 = Int32Helper.EstimateBareSize(1, asKey: true);
+        uint removedBytes1 = checked(keyBytes1 + Int32Helper.EstimateBareSize(removedValue, asKey: false));
+        tracker.AfterRemove<Int32Helper>(1, removedValue, removedBytes1, keyBytes1);
         AssertEstimateMatchesSerializedBody<int, int, Int32Helper, Int32Helper>(tracker);
 
         tracker.Commit<Int32Helper>();

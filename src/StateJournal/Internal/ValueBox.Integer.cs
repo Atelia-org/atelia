@@ -28,7 +28,8 @@ partial struct ValueBox {
         /// 若旧值与新值都使用 <see cref="ValuePools.OfBits64"/>，则 inplace 修改 Slot 中的值，
         /// 避免 Free + Store 的开销。其他情况下清理旧 Slot（如有）并编码新值。
         /// </summary>
-        public static bool UpdateOrInit(ref ValueBox box, long value) {
+        public static bool UpdateOrInit(ref ValueBox box, long value, out uint oldBareBytesBeforeMutation) {
+            oldBareBytesBeforeMutation = box.IsUninitialized ? 0u : box.EstimateBareSize();
             BoxLzc lzc = box.GetLzc();
             ulong u = unchecked((ulong)value);
             if (value >= 0) {
@@ -107,7 +108,8 @@ partial struct ValueBox {
         /// 独占更新：将 ValueBox 覆写为指定的 ulong 值。
         /// 逻辑同 <see cref="Int64Face.UpdateOrInit"/>，仅无负数路径。
         /// </summary>
-        public static bool UpdateOrInit(ref ValueBox box, ulong value) {
+        public static bool UpdateOrInit(ref ValueBox box, ulong value, out uint oldBareBytesBeforeMutation) {
+            oldBareBytesBeforeMutation = box.IsUninitialized ? 0u : box.EstimateBareSize();
             BoxLzc lzc = box.GetLzc();
             if (lzc == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegInt() == value) { return false; }
             if (value < LzcConstants.NonnegIntInlineCap) {
@@ -162,7 +164,7 @@ partial struct ValueBox {
         public static ValueBox From(int value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 int。始终 inline。</summary>
-        public static bool UpdateOrInit(ref ValueBox old, int value) => UpdateByInlineSigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, int value, out uint oldBareBytesBeforeMutation) => UpdateByInlineSigned(ref old, value, out oldBareBytesBeforeMutation);
         public static GetIssue Get(ValueBox box, out int value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -183,7 +185,7 @@ partial struct ValueBox {
         public static ValueBox From(uint value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 uint。始终 inline。</summary>
-        public static bool UpdateOrInit(ref ValueBox old, uint value) => UpdateByInlineUnsigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, uint value, out uint oldBareBytesBeforeMutation) => UpdateByInlineUnsigned(ref old, value, out oldBareBytesBeforeMutation);
         public static GetIssue Get(ValueBox box, out uint value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -204,7 +206,7 @@ partial struct ValueBox {
         public static ValueBox From(short value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 short。始终 inline。</summary>
-        public static bool UpdateOrInit(ref ValueBox old, short value) => UpdateByInlineSigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, short value, out uint oldBareBytesBeforeMutation) => UpdateByInlineSigned(ref old, value, out oldBareBytesBeforeMutation);
         public static GetIssue Get(ValueBox box, out short value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -225,7 +227,7 @@ partial struct ValueBox {
         public static ValueBox From(ushort value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 ushort。始终 inline。</summary>
-        public static bool UpdateOrInit(ref ValueBox old, ushort value) => UpdateByInlineUnsigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, ushort value, out uint oldBareBytesBeforeMutation) => UpdateByInlineUnsigned(ref old, value, out oldBareBytesBeforeMutation);
         public static GetIssue Get(ValueBox box, out ushort value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -246,7 +248,7 @@ partial struct ValueBox {
         public static ValueBox From(sbyte value) => FromInlineableSigned(value);
 
         /// <summary>独占更新为 sbyte。始终 inline。</summary>
-        public static bool UpdateOrInit(ref ValueBox old, sbyte value) => UpdateByInlineSigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, sbyte value, out uint oldBareBytesBeforeMutation) => UpdateByInlineSigned(ref old, value, out oldBareBytesBeforeMutation);
         public static GetIssue Get(ValueBox box, out sbyte value) {
             GetIssue status = Int64Face.Get(box, out long l);
             if (status > GetIssue.Saturated) {
@@ -267,7 +269,7 @@ partial struct ValueBox {
         public static ValueBox From(byte value) => FromInlineableUnsigned(value);
 
         /// <summary>独占更新为 byte。始终 inline。</summary>
-        public static bool UpdateOrInit(ref ValueBox old, byte value) => UpdateByInlineUnsigned(ref old, value);
+        public static bool UpdateOrInit(ref ValueBox old, byte value, out uint oldBareBytesBeforeMutation) => UpdateByInlineUnsigned(ref old, value, out oldBareBytesBeforeMutation);
         public static GetIssue Get(ValueBox box, out byte value) {
             GetIssue status = UInt64Face.Get(box, out ulong u);
             if (status > GetIssue.Saturated) {
@@ -336,7 +338,8 @@ partial struct ValueBox {
 
     /// <summary>类型匹配且值相等时返回 false（无需后续处理）；否则编码新值并返回 true。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool UpdateByInlineSigned(ref ValueBox box, long value) {
+    private static bool UpdateByInlineSigned(ref ValueBox box, long value, out uint oldBareBytesBeforeMutation) {
+        oldBareBytesBeforeMutation = box.IsUninitialized ? 0u : box.EstimateBareSize();
         BoxLzc lzc = box.GetLzc();
         if (value >= 0) {
             if (lzc == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegIntAsSigned() == value) { return false; }
@@ -351,7 +354,8 @@ partial struct ValueBox {
 
     /// <summary>类型匹配且值相等时返回 false（无需后续处理）；否则编码新值并返回 true。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool UpdateByInlineUnsigned(ref ValueBox box, ulong value) {
+    private static bool UpdateByInlineUnsigned(ref ValueBox box, ulong value, out uint oldBareBytesBeforeMutation) {
+        oldBareBytesBeforeMutation = box.IsUninitialized ? 0u : box.EstimateBareSize();
         if (box.GetLzc() == BoxLzc.InlineNonnegInt && box.DecodeInlineNonnegInt() == value) { return false; }
         FreeOldOwnedHeapIfNeeded(box);
         box = FromInlineableUnsigned(value);

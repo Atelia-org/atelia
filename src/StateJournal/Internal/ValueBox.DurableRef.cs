@@ -34,7 +34,10 @@ partial struct ValueBox {
         /// 旧值如果持有 owned heap slot（Bits64 数值或 StringPayload），会立即释放。
         /// 旧值如果持有 InternPool slot（Symbol），因 InternPool 共享语义不支持手动 Free，旧 slot 由 Mark-Sweep GC 回收。
         /// </remarks>
-        public static bool UpdateOrInit(ref ValueBox old, DurableRef value) {
+        public static bool UpdateOrInit(ref ValueBox old, DurableRef value, out uint oldBareBytesBeforeMutation) {
+            // DurableRef 的 estimate 仅取决于 bits 编码（无 inplace 池写），但接口契约要求
+            // 在任何 mutation 之前捕获 oldBareBytes，保持调用顺序统一。
+            oldBareBytesBeforeMutation = old.IsUninitialized ? 0u : old.EstimateBareSize();
             var newBox = From(value);
             if (old.GetBits() == newBox.GetBits()) { return false; }
             FreeOldOwnedHeapIfNeeded(old);

@@ -34,12 +34,6 @@ where TKey : notnull {
     #region Core
     private protected abstract uint EstimateKeyBareBytes(TKey key);
 
-    private UpsertStatus FinishUpsert(TKey key, ValueBox oldValue, ValueBox value, bool exists) {
-        Debug.Assert(!value.IsUninitialized); // 未初始化的ValueBox不应被存入容器
-        _core.AfterUpsert<ValueBoxHelper>(key, oldValue, exists, value, EstimateKeyBareBytes(key));
-        return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
-    }
-
     private protected virtual void OnCurrentValueRemoved(ValueBox removedValue) { }
     private protected virtual void OnCurrentValueUpserted(ValueBox oldValue, ValueBox newValue, bool existed) { }
     #endregion
@@ -81,9 +75,14 @@ where TKey : notnull {
     public int Count => _core.Current.Count;
     public bool Remove(TKey key) {
         ThrowIfDetachedOrFrozen();
-        if (!_core.Current.Remove(key, out var removedValue)) { return false; }
+        if (!_core.Current.TryGetValue(key, out ValueBox removedValue)) { return false; }
+        // 在从 dict 中移除之前先快照 oldEntryBytes（快照依赖 slot 仍活）。
+        uint keyBareBytes = EstimateKeyBareBytes(key);
+        uint removedEntryBytes = checked(keyBareBytes + removedValue.EstimateBareSize());
+        bool removed = _core.Current.Remove(key);
+        Debug.Assert(removed);
         OnCurrentValueRemoved(removedValue);
-        _core.AfterRemove<ValueBoxHelper>(key, removedValue, EstimateKeyBareBytes(key));
+        _core.AfterRemove<ValueBoxHelper>(key, removedValue, removedEntryBytes, keyBareBytes);
         return true;
     }
     public bool TryGetValueKind(TKey key, out ValueKind kind) {
@@ -118,9 +117,13 @@ where TKey : notnull {
         ThrowIfDetachedOrFrozen();
         ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
         ValueBox oldValue = exists ? slot : default;
-        if (!VFace.UpdateOrInit(ref slot, value)) { return UpsertStatus.Updated; /* 值未变，跳过 AfterUpsert */ }
+        if (!VFace.UpdateOrInit(ref slot, value, out uint oldBareBytes)) { return UpsertStatus.Updated; /* 值未变，跳过 AfterUpsert */ }
         OnCurrentValueUpserted(oldValue, slot, exists);
-        return FinishUpsert(key, oldValue, slot, exists);
+        Debug.Assert(!slot.IsUninitialized); // 未初始化的 ValueBox 不应被存入容器
+        uint keyBareBytes = EstimateKeyBareBytes(key);
+        uint oldEntryBytes = exists ? checked(keyBareBytes + oldBareBytes) : 0u;
+        _core.AfterUpsert<ValueBoxHelper>(key, oldEntryBytes, exists, slot, keyBareBytes);
+        return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }
 
     #endregion

@@ -64,7 +64,10 @@ partial struct ValueBox {
             ? Null
             : FromSymbolId(value);
 
-        public static bool UpdateOrInit(ref ValueBox old, SymbolId value) {
+        public static bool UpdateOrInit(ref ValueBox old, SymbolId value, out uint oldBareBytesBeforeMutation) {
+            // Symbol 路径下 estimate 与 slot 内容无关（HeapSlot+Symbol kind 走常量），
+            // 但接口契约要求在任何 mutation 之前捕获 oldBareBytes。
+            oldBareBytesBeforeMutation = old.IsUninitialized ? 0u : old.EstimateBareSize();
             var newBox = value.IsNull ? Null : FromSymbolId(value);
             if (old.GetBits() == newBox.GetBits()) { return false; }
             FreeOldOwnedHeapIfNeeded(old);
@@ -91,7 +94,11 @@ partial struct ValueBox {
             return EncodeHeapSlot(HeapValueKind.StringPayload, handle);
         }
 
-        public static bool UpdateOrInit(ref ValueBox old, string? value) {
+        public static bool UpdateOrInit(ref ValueBox old, string? value, out uint oldBareBytesBeforeMutation) {
+            // 关键：必须在任何对 slot / 后备 OwnedStringPool 的修改之前捕获 oldBareBytes。
+            // 当前 EstimateBareSize 对 StringPayload 走 16u 常量（不依赖 slot 内容），但仍按 face
+            // 接口约定保留正确顺序，使得 Step 2 切到 Length×2 实现后无需再调整调用方。
+            oldBareBytesBeforeMutation = old.IsUninitialized ? 0u : old.EstimateBareSize();
             if (value is null) { return UpdateToNull(ref old); }
             // inplace 更新：旧 box 是 exclusive StringPayload → 比较内容；同则 no-op，否则覆写 slot 内容。
             if (old.GetLzc() == BoxLzc.HeapSlot

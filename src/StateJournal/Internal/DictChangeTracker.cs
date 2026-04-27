@@ -156,16 +156,21 @@ where TValue : notnull {
         if (exists && VHelper.Equals(slot, value)) { return UpsertStatus.Updated; }
 
         uint keyBareBytes = EstimateKeyBareBytes<KHelper>(key);
-        TValue? oldCurrentValue = slot;
+        // 在覆写 slot 之前先计 oldEntryBytes；typed 路径下 TValue? 是 reference/value 拷贝，
+        // 不存在 stale 问题，但仍保持“调用方负责捕获”的统一契约。
+        uint oldEntryBareBytes = exists
+            ? checked(keyBareBytes + VHelper.EstimateBareSize(slot, asKey: false))
+            : 0u;
         slot = value;
-        AfterUpsert<VHelper>(key, oldCurrentValue, exists, value, keyBareBytes);
+        AfterUpsert<VHelper>(key, oldEntryBareBytes, exists, value, keyBareBytes);
         return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }
 
-    public void AfterUpsert<VHelper>(TKey key, TValue? oldCurrentValue, bool existed, TValue? value, uint keyBareBytes)
+    public void AfterUpsert<VHelper>(TKey key, uint oldEntryBareBytesBeforeMutation, bool existed, TValue? value, uint keyBareBytes)
     where VHelper : unmanaged, ITypeHelper<TValue> {
         ThrowIfFrozen();
-        uint oldEntryBareBytes = existed ? EstimateEntryBareBytes<VHelper>(keyBareBytes, oldCurrentValue) : 0u;
+        Debug.Assert(existed || oldEntryBareBytesBeforeMutation == 0u, "新建路径下 oldEntryBareBytesBeforeMutation 必须为 0。");
+        uint oldEntryBareBytes = oldEntryBareBytesBeforeMutation;
         RemoveDirtyContribution(key, oldEntryBareBytes, keyBareBytes);
 
         if (Committed.TryGetValue(key, out TValue? committedValue) && VHelper.Equals(value, committedValue)) {
@@ -184,10 +189,20 @@ where TValue : notnull {
         }
     }
 
-    public void AfterRemove<VHelper>(TKey key, TValue? removedValue, uint keyBareBytes)
+    /// <summary>
+    /// 通知 tracker 一个键已从 _current 中移除，更新增量 estimate 与 dirty 状态。
+    /// </summary>
+    /// <param name="removedValue">
+    /// 被移除的值，仅用于在 wasUpsert 路径下释放调用方此前 dirty-upsert 时分配的独占 slot。
+    /// 大小核算不再读它（避免 inplace 覆写后的 stale read），改由 <paramref name="removedEntryBareBytesBeforeMutation"/> 显式传递。
+    /// </param>
+    /// <param name="removedEntryBareBytesBeforeMutation">
+    /// 在 _current.Remove 之前 (slot 还活的时刻) 对 <c>keyBareBytes + EstimateBareSize(removedValue)</c> 的快照。
+    /// </param>
+    public void AfterRemove<VHelper>(TKey key, TValue? removedValue, uint removedEntryBareBytesBeforeMutation, uint keyBareBytes)
     where VHelper : unmanaged, ITypeHelper<TValue> {
         ThrowIfFrozen();
-        uint removedEntryBareBytes = EstimateEntryBareBytes<VHelper>(keyBareBytes, removedValue);
+        uint removedEntryBareBytes = removedEntryBareBytesBeforeMutation;
         bool hadDirtySubset = DirtyKeys.TryGetSubset(key, out bool wasUpsert);
         if (VHelper.NeedRelease && hadDirtySubset && wasUpsert) {
             VHelper.ReleaseSlot(removedValue);

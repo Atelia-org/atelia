@@ -114,7 +114,7 @@ public class ValueBoxStringTests {
     [Fact]
     public void SymbolIdFace_UpdateOrInit_FromNull_SetsValue() {
         var box = Null;
-        bool changed = ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(10));
+        bool changed = ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(10), out _);
         Assert.True(changed);
         var issue = ValueBox.SymbolIdFace.Get(box, out var id);
         Assert.Equal(GetIssue.None, issue);
@@ -125,14 +125,14 @@ public class ValueBoxStringTests {
     public void SymbolIdFace_UpdateOrInit_SameValue_ReturnsFalse() {
         var id = new SymbolId(77);
         var box = ValueBox.SymbolIdFace.From(id);
-        bool changed = ValueBox.SymbolIdFace.UpdateOrInit(ref box, id);
+        bool changed = ValueBox.SymbolIdFace.UpdateOrInit(ref box, id, out _);
         Assert.False(changed);
     }
 
     [Fact]
     public void SymbolIdFace_UpdateOrInit_DifferentValue_ReturnsTrue() {
         var box = ValueBox.SymbolIdFace.From(new SymbolId(1));
-        bool changed = ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(2));
+        bool changed = ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(2), out _);
         Assert.True(changed);
         ValueBox.SymbolIdFace.Get(box, out var id);
         Assert.Equal(2u, id.Value);
@@ -142,7 +142,7 @@ public class ValueBoxStringTests {
     public void SymbolIdFace_UpdateOrInit_FromHeapInt_FreesBits64Slot() {
         var box = HeapNonnegInt();
         int bits64Before = Bits64Count;
-        ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(99));
+        ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(99), out _);
         Assert.Equal(bits64Before - 1, Bits64Count);
         ValueBox.SymbolIdFace.Get(box, out var id);
         Assert.Equal(99u, id.Value);
@@ -152,7 +152,7 @@ public class ValueBoxStringTests {
     public void SymbolIdFace_UpdateOrInit_FromInlineInt_DoesNotFreeBits64() {
         var box = ValueBox.Int64Face.From(42);
         int bits64Before = Bits64Count;
-        ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(88));
+        ValueBox.SymbolIdFace.UpdateOrInit(ref box, new SymbolId(88), out _);
         Assert.Equal(bits64Before, Bits64Count);
         ValueBox.SymbolIdFace.Get(box, out var id);
         Assert.Equal(88u, id.Value);
