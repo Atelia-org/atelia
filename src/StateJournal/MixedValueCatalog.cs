@@ -5,6 +5,7 @@ namespace Atelia.StateJournal;
 [MixedValueType(typeof(bool), typeof(ValueBox.BooleanFace), "Bool")]
 [MixedValueType(typeof(Symbol), typeof(ValueBox.SymbolIdFace), "Symbol", SpecialHandling = MixedValueSpecialHandling.Symbol)]
 [MixedValueType(typeof(string), typeof(ValueBox.StringPayloadFace), "String")]
+[MixedValueType(typeof(ByteString), typeof(ValueBox.BlobPayloadFace), "Blob")]
 [MixedValueType(typeof(DurableObject), typeof(ValueBox.DurableRefFace), "DurableObject", SpecialHandling = MixedValueSpecialHandling.DurableObject)]
 [MixedValueType(typeof(double), typeof(ValueBox.RoundedDoubleFace), "Double")]
 [MixedValueType(typeof(float), typeof(ValueBox.SingleFace), "Single")]

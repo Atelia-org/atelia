@@ -5,7 +5,7 @@ namespace Atelia.StateJournal;
 /// <summary>异构值有序字典。内部以 <see cref="ValueBox"/> 存储值，按 Key 自然序排列。</summary>
 [UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.OrderedDict)]
 public abstract partial class DurableOrderedDict<TKey> : DurableDictBase<TKey>, IDict<TKey>,
-    IDict<TKey, bool>, IDict<TKey, Symbol>, IDict<TKey, string>, IDict<TKey, DurableObject>,
+    IDict<TKey, bool>, IDict<TKey, Symbol>, IDict<TKey, string>, IDict<TKey, ByteString>, IDict<TKey, DurableObject>,
     IDict<TKey, double>, IDict<TKey, float>, IDict<TKey, Half>,
     IDict<TKey, ulong>, IDict<TKey, uint>, IDict<TKey, ushort>, IDict<TKey, byte>,
     IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>
