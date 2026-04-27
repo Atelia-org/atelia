@@ -15,6 +15,8 @@ partial struct ValueBox {
     /// 避免抖动。完全镜像 <see cref="StringPayloadFace"/> 的形态。
     /// </summary>
     /// <remarks>
+    /// <para>命名说明：业务 API 是 <see cref="ByteString"/>；内部链路（本 face / pool / wire / view）统称 "Blob"。
+    /// 详见 <c>MixedValueCatalog.cs</c> 顶部的术语对照表。</para>
     /// <para><see cref="ByteString"/> 是值类型且 <c>default</c> 等价 <see cref="ByteString.Empty"/>，没有 null 概念，
     /// 因此不存在 "From(null) → ValueBox.Null" 路径。空 blob 同样在 pool 中分配 slot（与 <see cref="StringPayloadFace"/>
     /// 处理空 string 一致）。Wire 上的"无值"由独立的 <see cref="Serialization.ScalarRules.Null"/> tag 表达。</para>

@@ -2,6 +2,27 @@ using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 术语对照表（CMS 项目设计决议；见 ByteString.cs XML doc / docs/StateJournal/usage-guide.md）：
+//
+//   层级               String 链路              Blob 链路
+//   ─────────────────  ──────────────────────  ──────────────────────
+//   业务 API           string (BCL)            ByteString
+//   内部前缀           StringPayload           Blob (= BlobPayload 简称)
+//   HeapValueKind      StringPayload           BlobPayload
+//   ValueKind          String                  Blob
+//   Pool               OfOwnedString           OfOwnedBlob
+//   Face               StringPayloadFace       BlobPayloadFace
+//   Wire codec         BareStringPayload       BareBlobPayload
+//   Wire tag           0xC0                    0xC1
+//   View property      OfString                OfBlob
+//   displayName        "String"                "Blob"
+//
+// 设计哲学：业务 API 暴露用户友好的简短名 (BCL string / 自家 ByteString)；
+// 内部所有 payload 通路统一用 payload 概念专有术语 (StringPayload / Blob)。
+// 两条链路命名分工完全对称——这是设计特性，不是疏忽。
+// ─────────────────────────────────────────────────────────────────────────────
+
 [MixedValueType(typeof(bool), typeof(ValueBox.BooleanFace), "Bool")]
 [MixedValueType(typeof(Symbol), typeof(ValueBox.SymbolIdFace), "Symbol", SpecialHandling = MixedValueSpecialHandling.Symbol)]
 [MixedValueType(typeof(string), typeof(ValueBox.StringPayloadFace), "String")]

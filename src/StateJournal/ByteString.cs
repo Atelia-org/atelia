@@ -8,6 +8,13 @@ namespace Atelia.StateJournal;
 /// </summary>
 /// <remarks>
 /// <para>
+/// <strong>术语对照</strong>：本类在用户侧称为 <c>ByteString</c>；在框架内部 / wire / pool / face 实现中统称为
+/// "Blob"（如 <c>HeapValueKind.BlobPayload</c> / <c>ValueKind.Blob</c> / <c>OfOwnedBlob</c> / <c>BlobPayloadFace</c> /
+/// <c>OfBlob</c> view / wire tag <c>0xC1</c>）。两个名字指代同一概念：immutable byte sequence with payload semantics。
+/// 这与 <see cref="string"/>（业务 API）↔ <c>StringPayload</c>（内部前缀）的分工完全对称——业务侧用 BCL/简短名，
+/// 实现侧用 payload 概念专有术语。详见 <c>MixedValueCatalog.cs</c> 的术语表。
+/// </para>
+/// <para>
 /// <see cref="ByteString(byte[])"/> 不做防御性 clone：调用方必须保证传入的 <see cref="byte"/>[] 在 <see cref="ByteString"/>
 /// 的整个生命周期内不被外部代码 mutate（与 <see cref="string"/> 的 immutable 约定对齐）。需要安全副本时请使用
 /// <see cref="ByteString(ReadOnlySpan{byte})"/>，它会无条件复制一份。
