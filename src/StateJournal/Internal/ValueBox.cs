@@ -35,22 +35,40 @@ internal readonly partial struct ValueBox {
     /// 估算 <see cref="ValueBox.Write"/> 写入的 bare 字节数（含 1B tag）。
     /// 用于 cost-model 决策；不要求精确，仅与真实值同数量级。
     /// </summary>
+    /// <remarks>
+    /// <para>调用方契约：必须保证 box 处于"活"状态（slot/pool entry 未被释放，且非
+    /// <see cref="IsUninitialized"/>）。CMS Step 1 已让所有 mutation 路径在 mutate 前
+    /// snapshot 此值，所以 StringPayload 分支可以安全解引用 <see cref="ValuePools.OfOwnedString"/>。</para>
+    /// <para>StringPayload 采用 <c>1B tag + VarUInt(L*2) + L*2</c> 的 O(1) 上界算法
+    /// （UTF-16 字节数；UTF-8 写出时按较小者，但 estimate 不必复刻）。全 ASCII 时
+    /// 偏大 ~2×，cost-model 容忍。空 string 走 <c>1B tag + 1B header(=VarUInt(0))</c> = 2u。</para>
+    /// </remarks>
     internal readonly uint EstimateBareSize() => GetLzc() switch {
         BoxLzc.Boolean => 2, // tag + 1B
         BoxLzc.Null => 1,
         BoxLzc.InlineDouble => 9, // tag + 8B
         BoxLzc.InlineNonnegInt or BoxLzc.InlineNegInt => 9, // tag + VarUInt(<=8)
         BoxLzc.HeapSlot => GetHeapKind() switch {
-            // StringPayload 走常量估算（不解引用 OwnedStringPool）：
-            // 1) cost-model 不要求精确，同量级即可；
-            // 2) 关键不变量：oldValue.EstimateBareSize() 必须不依赖 slot 当前内容/活性
-            //    — 否则 inplace 覆写或 free-then-realloc 之后 dirty 字节统计会失衡（曾经 underflow）。
-            HeapValueKind.StringPayload => 16u,
+            HeapValueKind.StringPayload => EstimateStringPayloadBareSize(),
             _ => 9, // float/integer 走 VarUInt；Symbol 走 SymbolId VarUInt（更短，9 是上界）
         },
         BoxLzc.DurableRef => 7, // tag + kind + LocalId VarUInt(<=5)
-        _ => 8,
+        _ => throw new UnreachableException($"EstimateBareSize on invalid LZC={(int)GetLzc()} (Uninitialized 或未分配槽位)。调用方必须先排除 IsUninitialized。"),
     };
+
+    /// <summary>
+    /// StringPayload 上界算法：<c>1B tag + VarUInt(utf16Bytes) + utf16Bytes</c>，其中 <c>utf16Bytes = s.Length * 2</c>。
+    /// 不做 UTF-8 dry-run（<see cref="string.Length"/> 是 O(1) 字段读取，hot mutation path 友好）。
+    /// </summary>
+    private readonly uint EstimateStringPayloadBareSize() {
+        Debug.Assert(GetLzc() == BoxLzc.HeapSlot && GetHeapKind() == HeapValueKind.StringPayload);
+        // pool 内 string 永不为 null（StringPayloadFace.From 已分流 null 到 ValueBox.Null），
+        // 但空 string ("") 是合法值，header = VarUInt(0) = 1B → 总 size = 2u。
+        string s = ValuePools.OfOwnedString[GetHeapHandle()];
+        if (s.Length == 0) { return 2u; }
+        uint utf16Bytes = checked((uint)s.Length * 2u);
+        return checked(1u + CostEstimateUtil.VarIntSize(utf16Bytes) + utf16Bytes);
+    }
 
     public readonly ValueKind GetValueKind() => GetLzc() switch {
         BoxLzc.InlineDouble => ValueKind.FloatingPoint,
