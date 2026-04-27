@@ -47,7 +47,9 @@ public readonly struct ByteString : IEquatable<ByteString> {
 
     /// <summary>
     /// 内部使用：取出底层 <see cref="byte"/>[] 引用（<c>default</c> 情况下返回 <see cref="Array.Empty{T}"/>）。
-    /// 仅供 StateJournal 内部把 ByteString 直接交给 owned blob pool 存放，避免重复分配；外部代码不得依赖。
+    /// 当前 <see cref="Internal.ValueBox.BlobPayloadFace"/> 入池路径走 defensive clone（CMS Step 3b 决策 B），
+    /// 暂无活跃调用方；保留作为 future <c>ByteString.FromTrustedOwned(byte[])</c> 高级 API 的零拷贝种子，
+    /// 届时配合 face 的 <c>FromTrusted</c> 路径直接复用底层数组。
     /// </summary>
     internal byte[] DangerousGetUnderlyingArray() => _data ?? Array.Empty<byte>();
 

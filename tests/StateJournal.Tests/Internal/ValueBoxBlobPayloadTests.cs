@@ -159,6 +159,41 @@ public class ValueBoxBlobPayloadTests {
         Assert.True(v.IsEmpty);
     }
 
+    [Fact]
+    public void BlobPayload_From_DefensiveClone_ExternalMutationDoesNotAffectPool() {
+        // CMS Step 3b 决策 B（GPT5 review）：BlobPayloadFace.From 入池时 defensive clone byte[]，
+        // 即便 ByteString(byte[]) ctor 不 clone（trusts immutable convention），
+        // pool 内 byte[] 仍是 face 独占副本，外部 mutate 源数组不应污染 dict / wire。
+        // 本测试锁定该契约，防 future 误改回零拷贝。
+        byte[] external = [1, 2, 3, 4];
+        ByteString src = new(external);
+        ValueBox box = ValueBox.BlobPayloadFace.From(src);
+        try {
+            external[1] = 0xFF; // 外部 mutation
+            ValueBox.BlobPayloadFace.Get(box, out ByteString got);
+            Assert.Equal(new byte[] { 1, 2, 3, 4 }, got.AsSpan().ToArray());
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+        }
+    }
+
+    [Fact]
+    public void BlobPayload_UpdateOrInit_DefensiveClone_ExternalMutationDoesNotAffectPool() {
+        // 同上，但走 UpdateOrInit 路径（含 inplace 优化与 cross-kind/new-slot 分支共用的 CloneForPool）。
+        byte[] external = [10, 20, 30];
+        ValueBox box = ValueBox.BlobPayloadFace.From(Bs(1)); // 先建一个 exclusive blob 占 slot
+        try {
+            ValueBox.BlobPayloadFace.UpdateOrInit(ref box, new ByteString(external), out _);
+            external[0] = 0xFF;
+            ValueBox.BlobPayloadFace.Get(box, out ByteString got);
+            Assert.Equal(new byte[] { 10, 20, 30 }, got.AsSpan().ToArray());
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+        }
+    }
+
     // ─────────────────── UpdateOrInit 五条路径 ───────────────────
 
     [Fact]
