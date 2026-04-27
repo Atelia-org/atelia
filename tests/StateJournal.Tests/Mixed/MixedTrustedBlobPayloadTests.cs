@@ -1,8 +1,5 @@
-using System.Linq;
-using System.Runtime.CompilerServices;
 using Atelia.Rbf;
 using Atelia.StateJournal.Internal;
-using Atelia.StateJournal.Pools;
 using Xunit;
 
 namespace Atelia.StateJournal.Tests;

@@ -1,7 +1,4 @@
-using System.Buffers;
 using System.Runtime.InteropServices;
-using Atelia.StateJournal.Pools;
-using Atelia.StateJournal.Serialization;
 using Atelia.StateJournal.Tests;
 using Xunit;
 

@@ -1,6 +1,5 @@
 using System.Buffers;
 using Xunit;
-using Atelia.StateJournal.Pools;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal.Tests;
