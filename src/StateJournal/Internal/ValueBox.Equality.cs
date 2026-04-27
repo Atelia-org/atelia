@@ -44,6 +44,12 @@ partial struct ValueBox {
                 StringComparison.Ordinal
             );
         }
+        // payload blob 不去重：同值不同 slot 需走 SequenceEqual 慢路。
+        if (tagAndKind == TagHeapKindBlobPayload && b.GetTagAndKind() == TagHeapKindBlobPayload) {
+            byte[] aBytes = ValuePools.OfOwnedBlob[a.GetHeapHandle()];
+            byte[] bBytes = ValuePools.OfOwnedBlob[b.GetHeapHandle()];
+            return aBytes.AsSpan().SequenceEqual(bBytes);
+        }
         return false;
     }
 
@@ -76,6 +82,16 @@ partial struct ValueBox {
             if (box.GetTagAndKind() == TagHeapKindStringPayload) {
                 string s = ValuePools.OfOwnedString[box.GetHeapHandle()];
                 return ((int)HeapValueKind.StringPayload * 16777619) ^ string.GetHashCode(s, StringComparison.Ordinal);
+            }
+            // payload blob：同样走内容 FNV-1a hash。
+            if (box.GetTagAndKind() == TagHeapKindBlobPayload) {
+                byte[] bytes = ValuePools.OfOwnedBlob[box.GetHeapHandle()];
+                uint hash = 2166136261u;
+                for (int i = 0; i < bytes.Length; i++) {
+                    hash ^= bytes[i];
+                    hash *= 16777619u;
+                }
+                return ((int)HeapValueKind.BlobPayload * 16777619) ^ unchecked((int)hash);
             }
             return (box.GetBits() & ~ExclusiveBit).GetHashCode();
         }

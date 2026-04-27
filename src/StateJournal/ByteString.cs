@@ -45,6 +45,12 @@ public readonly struct ByteString : IEquatable<ByteString> {
 
     public ReadOnlySpan<byte> AsSpan() => _data;
 
+    /// <summary>
+    /// 内部使用：取出底层 <see cref="byte"/>[] 引用（<c>default</c> 情况下返回 <see cref="Array.Empty{T}"/>）。
+    /// 仅供 StateJournal 内部把 ByteString 直接交给 owned blob pool 存放，避免重复分配；外部代码不得依赖。
+    /// </summary>
+    internal byte[] DangerousGetUnderlyingArray() => _data ?? Array.Empty<byte>();
+
     public bool Equals(ByteString other) => AsSpan().SequenceEqual(other.AsSpan());
 
     public override bool Equals(object? obj) => obj is ByteString other && Equals(other);

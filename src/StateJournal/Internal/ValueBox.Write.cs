@@ -51,6 +51,9 @@ partial struct ValueBox {
             case HeapValueKind.StringPayload:
                 writer.TaggedString(ValuePools.OfOwnedString[GetHeapHandle()]);
                 break;
+            case HeapValueKind.BlobPayload:
+                writer.TaggedBlob(new ByteString(ValuePools.OfOwnedBlob[GetHeapHandle()]));
+                break;
             case HeapValueKind.Blank: // 未初始化的ValueBox不应该参与序列化
             default:
                 throw new UnreachableException();

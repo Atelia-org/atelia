@@ -14,6 +14,9 @@ internal enum HeapValueKind : byte {
 
     /// <summary>Payload string — 非 intern，独立 owned 堆 slot（每次 Store 分配新 slot，不去重）。</summary>
     StringPayload,
+
+    /// <summary>Payload blob — 非去重，独立 owned 堆 slot（byte[]，每次 Store 分配新 slot）。</summary>
+    BlobPayload,
 }
 
 internal static class HeapValueKindHelper {

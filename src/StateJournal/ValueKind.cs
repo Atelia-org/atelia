@@ -30,4 +30,7 @@ public enum ValueKind : byte {
 
     /// <summary>Payload string — 非 intern，独立 owned 字节序列。A1 阶段暂未挂任何 <c>ValueBox</c>，预留给 B2/C 启用。</summary>
     String,
+
+    /// <summary>Payload blob — <see cref="ByteString"/>，独立 owned 字节序列；CMS Step 3b 启用。</summary>
+    Blob,
 }

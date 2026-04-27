@@ -29,8 +29,8 @@ internal static class TaggedValueDispatcher {
             Fp.Follow8 => ValueBox.ExactDoubleFace.UpdateOrInit(ref old, reader.TaggedDouble(), out _), // 内部存储一律走精确语义，RoundedDouble只是外部写入路径之一。
             >= TaggedRefEnc.MinTag and <= TaggedRefEnc.MaxTag => ReadDurableRefOrSymbol(head, ref reader, ref old),
             ScalarRules.StringPayload.Tag => ValueBox.StringPayloadFace.UpdateOrInit(ref old, reader.TaggedStringPayload(), out _),
-            ScalarRules.BlobPayload.Tag => throw new NotImplementedException("ValueBox.BlobPayloadFace pending CMS Step 3b ValueBox BlobPayload integration."),
-            _ => throw new InvalidDataException($"Unsupported tagged value head 0x{head:X2}. The current reader supports the CBOR-inspired scalar subset (major type 0/1/5/7) plus the tagged-ref (0xA0..0xBF), string-payload (0xC0) and blob-payload (0xC1, pending Step 3b) extensions."),
+            ScalarRules.BlobPayload.Tag => ValueBox.BlobPayloadFace.UpdateOrInit(ref old, reader.TaggedBlobPayload(), out _),
+            _ => throw new InvalidDataException($"Unsupported tagged value head 0x{head:X2}. The current reader supports the CBOR-inspired scalar subset (major type 0/1/5/7) plus the tagged-ref (0xA0..0xBF), string-payload (0xC0) and blob-payload (0xC1) extensions."),
         };
     }
 

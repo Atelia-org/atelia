@@ -96,20 +96,20 @@ public class TaggedBlobPayloadTests {
     }
 
     [Fact]
-    public void Dispatcher_BlobPayloadTag_Throws_PendingStep3b() {
-        // Step 3a stub 契约：dispatcher 路由 0xC1 时抛 NotImplementedException，
-        // 等 Step 3b 接入 ValueBox.BlobPayloadFace 后改为真实实现。
-        // BinaryDiffReader 是 ref struct，不能被 lambda 捕获，所以用 try/catch 显式断言。
-        byte[] data = WriteTaggedBlob(new ByteString(new byte[] { 1, 2, 3 }));
+    public void Dispatcher_BlobPayloadTag_RoutesToBlobPayloadFace() {
+        // CMS Step 3b 起 dispatcher 0xC1 真正路由到 ValueBox.BlobPayloadFace。
+        // BinaryDiffReader 是 ref struct，不能被 lambda 捕获，所以直接顺序调用。
+        var input = new ByteString(new byte[] { 1, 2, 3 });
+        byte[] data = WriteTaggedBlob(input);
         var reader = new BinaryDiffReader(data);
         Internal.ValueBox box = Internal.ValueBox.Null;
-        bool threwExpected = false;
+        bool changed = TaggedValueDispatcher.UpdateOrInit(ref reader, ref box);
         try {
-            TaggedValueDispatcher.UpdateOrInit(ref reader, ref box);
+            Assert.True(changed);
+            Assert.Equal(ValueKind.Blob, box.GetValueKind());
+            Assert.Equal(GetIssue.None, Internal.ValueBox.BlobPayloadFace.Get(box, out ByteString decoded));
+            Assert.Equal(input, decoded);
         }
-        catch (NotImplementedException) {
-            threwExpected = true;
-        }
-        Assert.True(threwExpected, "expected NotImplementedException for 0xC1 stub (CMS Step 3a)");
+        finally { Internal.ValueBox.ReleaseOwnedHeapSlot(box); }
     }
 }

@@ -96,8 +96,7 @@ partial struct ValueBox {
 
         public static bool UpdateOrInit(ref ValueBox old, string? value, out uint oldBareBytesBeforeMutation) {
             // 关键：必须在任何对 slot / 后备 OwnedStringPool 的修改之前捕获 oldBareBytes。
-            // 当前 EstimateBareSize 对 StringPayload 走 16u 常量（不依赖 slot 内容），但仍按 face
-            // 接口约定保留正确顺序，使得 Step 2 切到 Length×2 实现后无需再调整调用方。
+            // StringPayload estimate 会读取当前 slot 内容，因此必须严格先 snapshot、后 inplace 覆写 / 释放。
             oldBareBytesBeforeMutation = old.IsUninitialized ? 0u : old.EstimateBareSize();
             if (value is null) { return UpdateToNull(ref old); }
             // inplace 更新：旧 box 是 exclusive StringPayload → 比较内容；同则 no-op，否则覆写 slot 内容。

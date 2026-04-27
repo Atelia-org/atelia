@@ -17,4 +17,11 @@ internal static class ValuePools {
     /// 与 intern 用途的 <see cref="StringPool"/> 完全分离，互不干涉。
     /// </summary>
     public static GcPool<string> OfOwnedString { get; } = new();
+
+    /// <summary>
+    /// Payload blob (<see cref="ByteString"/> / <c>byte[]</c>) 的独占 owned 堆 slot 池：每次 <see cref="GcPool{T}.Store"/>
+    /// 分配新 slot，不去重；slot 由持有者 (ValueBox 通过 ExclusiveBit) 显式 <see cref="GcPool{T}.Free"/>。
+    /// 与 <see cref="OfOwnedString"/> 对称，专门承载 mixed payload 的不可变字节串。
+    /// </summary>
+    public static GcPool<byte[]> OfOwnedBlob { get; } = new();
 }
