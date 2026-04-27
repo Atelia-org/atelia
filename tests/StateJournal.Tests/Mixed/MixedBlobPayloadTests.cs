@@ -219,6 +219,136 @@ partial class RevisionTests {
         Assert.Equal(Bs(1, 2, 3), value);
     }
 
+    // ─── ForkCommittedAsMutable: blob 端到端 fork 隔离 (CMS Step C) ───
+    // 镜像 MixedDict_String_ForkCommittedAsMutable_RoundTripsIndependentStrings；锁定:
+    //   - frozen BlobPayload fork 时按 owner 分配独立 pool slot (+1 OfOwnedBlob)；
+    //   - fork 中 mutate blob 不影响 source 的 committed view (frozen 路径走 new slot)；
+    //   - commit + reopen 后双方各自保留独立 blob 内容。
+
+    [Fact]
+    public void MixedDict_Blob_ForkCommittedAsMutable_RoundTripsIndependentBlobs() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDict<int>>();
+        var source = rev.CreateDict<int>();
+        source.Upsert(1, Bs(0x11, 0x22, 0x33));
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        int ownedBeforeFork = ValuePools.OfOwnedBlob.Count;
+        var fork = source.ForkCommittedAsMutable();
+        Assert.Equal(ownedBeforeFork + 1, ValuePools.OfOwnedBlob.Count); // frozen BlobPayload fork → 新 pool slot
+
+        fork.Upsert(1, Bs(0xAA, 0xBB, 0xCC, 0xDD));
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int>>>(opened.GraphRoot);
+
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDict<int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDict<int>? loadedFork));
+        Assert.Equal(GetIssue.None, loadedSource!.OfBlob.Get(1, out ByteString sourceValue));
+        Assert.Equal(GetIssue.None, loadedFork!.OfBlob.Get(1, out ByteString forkValue));
+        Assert.Equal(Bs(0x11, 0x22, 0x33), sourceValue);
+        Assert.Equal(Bs(0xAA, 0xBB, 0xCC, 0xDD), forkValue);
+    }
+
+    [Fact]
+    public void MixedDict_Blob_ForkCommittedAsMutable_LargeBlob_RoundTripsIndependently() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        // 1MB blob: 验证大体量 frozen → fork 路径仍然语义正确 (内容独立、reopen 后双方完整保留)。
+        // 注意: 当前实现 frozen BlobPayload fork 是浅 clone (shared byte[] + 独立 pool slot, 见
+        // ValueBox.CloneFrozenForNewOwner BlobPayload 分支)，contract 是不可变约定下的引用复用；
+        // 本测试只锁定可观察契约 (内容独立)，不绑定底层 byte[] 是否共享，避免与未来 ref-count 优化耦合。
+        const int Size = 1 * 1024 * 1024;
+        byte[] sourceBytes = new byte[Size];
+        for (int i = 0; i < Size; i++) { sourceBytes[i] = (byte)(i & 0xFF); }
+        byte[] forkBytes = new byte[Size];
+        for (int i = 0; i < Size; i++) { forkBytes[i] = (byte)((i * 7 + 3) & 0xFF); }
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDict<int>>();
+        var source = rev.CreateDict<int>();
+        source.Upsert(1, new ByteString(sourceBytes));
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        int ownedBeforeFork = ValuePools.OfOwnedBlob.Count;
+        var fork = source.ForkCommittedAsMutable();
+        Assert.Equal(ownedBeforeFork + 1, ValuePools.OfOwnedBlob.Count);
+
+        fork.Upsert(1, new ByteString(forkBytes));
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int>>>(opened.GraphRoot);
+
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDict<int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDict<int>? loadedFork));
+        Assert.Equal(GetIssue.None, loadedSource!.OfBlob.Get(1, out ByteString sourceValue));
+        Assert.Equal(GetIssue.None, loadedFork!.OfBlob.Get(1, out ByteString forkValue));
+        Assert.Equal(Size, sourceValue.Length);
+        Assert.Equal(Size, forkValue.Length);
+        Assert.True(sourceBytes.AsSpan().SequenceEqual(sourceValue.AsSpan()));
+        Assert.True(forkBytes.AsSpan().SequenceEqual(forkValue.AsSpan()));
+    }
+
+    [Fact]
+    public void MixedDict_Blob_ForkCommittedAsMutable_MixedTypes_BlobsIndependentOthersIntact() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        // source 含 blob + string + heap-int + symbol，fork 后只 mutate blob，
+        // 验证: blob 被独立 fork; 其他 kind 在 source/fork 各自 reopen 后保持原值 (frozen → fork 通用路径正确)。
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDict<int>>();
+        var source = rev.CreateDict<int>();
+        source.Upsert(1, Bs(0x01, 0x02, 0x03));
+        source.OfString.Upsert(2, "hello");
+        source.Upsert(3, ulong.MaxValue);
+        source.OfSymbol.Upsert(4, "tag");
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        var fork = source.ForkCommittedAsMutable();
+        // 只改 blob slot；其他 kind 保持 frozen mirror。
+        fork.Upsert(1, Bs(0xFF, 0xEE, 0xDD, 0xCC, 0xBB));
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDict<int>>>(opened.GraphRoot);
+
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDict<int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDict<int>? loadedFork));
+
+        // source: 完全保持 commit1 的所有 kind
+        Assert.Equal(GetIssue.None, loadedSource!.OfBlob.Get(1, out ByteString sb));
+        Assert.Equal(Bs(0x01, 0x02, 0x03), sb);
+        Assert.Equal(GetIssue.None, loadedSource.OfString.Get(2, out string? ss));
+        Assert.Equal("hello", ss);
+        Assert.Equal(GetIssue.None, loadedSource.Get<ulong>(3, out ulong si));
+        Assert.Equal(ulong.MaxValue, si);
+        Assert.Equal(GetIssue.None, loadedSource.OfSymbol.Get(4, out Symbol ssym));
+        Assert.Equal("tag", ssym.Value);
+
+        // fork: blob 被覆盖为新值，其他 kind 与 source 一致 (frozen mirror)
+        Assert.Equal(GetIssue.None, loadedFork!.OfBlob.Get(1, out ByteString fb));
+        Assert.Equal(Bs(0xFF, 0xEE, 0xDD, 0xCC, 0xBB), fb);
+        Assert.Equal(GetIssue.None, loadedFork.OfString.Get(2, out string? fs));
+        Assert.Equal("hello", fs);
+        Assert.Equal(GetIssue.None, loadedFork.Get<ulong>(3, out ulong fi));
+        Assert.Equal(ulong.MaxValue, fi);
+        Assert.Equal(GetIssue.None, loadedFork.OfSymbol.Get(4, out Symbol fsym));
+        Assert.Equal("tag", fsym.Value);
+    }
+
     [Fact]
     public void MixedDict_Blob_Commit_Open_RoundTrip() {
         var path = GetTempFilePath();
