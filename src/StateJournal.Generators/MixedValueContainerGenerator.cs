@@ -45,6 +45,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
             builder.AppendLine();
             EmitDequeGenericDispatch(builder, target.Types);
             EmitDequeTypedViews(builder, target.Types);
+            EmitDequeTrustedOverloads(builder, target.Types);
         }
         else {
             // Dict and OrderedDict share identical dispatch logic (Upsert/Get/Of + typed views)
@@ -57,6 +58,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
             builder.AppendLine();
             EmitDictGenericDispatch(builder, target.Types, keyType, containerDisplayName);
             EmitDictTypedViews(builder, target.Types, keyType);
+            EmitDictTrustedOverloads(builder, target.Types, keyType);
         }
 
         builder.AppendLine("}");
@@ -428,5 +430,95 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         }
         builder.AppendLine("    #endregion");
         builder.AppendLine();
+    }
+
+    /// <summary>
+    /// CMS Step E：为标注 <c>SupportsTrustedFromCallerOwnedBuffer = true</c> 的 type 生成
+    /// <c>UpsertTrusted{PropertySuffix}</c> opt-in overload，dispatch 到手写
+    /// <c>UpsertCoreTrusted&lt;TValue, VFace&gt;</c>。
+    /// </summary>
+    private static void EmitDictTrustedOverloads(StringBuilder builder, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types, string keyType) {
+        bool any = false;
+        foreach (var type in types) {
+            if (!type.SupportsTrustedFromCallerOwnedBuffer) { continue; }
+            if (!any) {
+                builder.AppendLine("    #region Trusted (caller-owned buffer) zero-copy overloads");
+                builder.AppendLine();
+                any = true;
+            }
+            string nullableValueType = type.RenderNullableValueType();
+            string docTypeName = RenderDocTypeName(type.ValueType);
+            AppendTrustedOverloadDoc(
+                builder,
+                $"Trusted zero-copy variant of <c>Upsert(key, {docTypeName})</c>.",
+                docTypeName
+            );
+            builder.Append("    public global::Atelia.StateJournal.UpsertStatus UpsertTrusted").Append(type.PropertySuffix).Append("(").Append(keyType).Append(" key, ").Append(nullableValueType).Append(" value)").AppendLine();
+            builder.Append("        => UpsertCoreTrusted<").Append(type.ValueType).Append(", ").Append(type.FaceType).AppendLine(">(key, value);");
+            builder.AppendLine();
+        }
+        if (any) {
+            builder.AppendLine("    #endregion");
+            builder.AppendLine();
+        }
+    }
+
+    /// <summary>
+    /// CMS Step E：为标注 <c>SupportsTrustedFromCallerOwnedBuffer = true</c> 的 type 生成
+    /// <c>PushFrontTrusted{PropertySuffix}</c> / <c>PushBackTrusted{PropertySuffix}</c> /
+    /// <c>TrySetFrontTrusted{PropertySuffix}</c> / <c>TrySetBackTrusted{PropertySuffix}</c> /
+    /// <c>TrySetAtTrusted{PropertySuffix}</c> opt-in overload。
+    /// </summary>
+    private static void EmitDequeTrustedOverloads(StringBuilder builder, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
+        bool any = false;
+        foreach (var type in types) {
+            if (!type.SupportsTrustedFromCallerOwnedBuffer) { continue; }
+            if (!any) {
+                builder.AppendLine("    #region Trusted (caller-owned buffer) zero-copy overloads");
+                builder.AppendLine();
+                any = true;
+            }
+            string nullableValueType = type.RenderNullableValueType();
+            string suffix = type.PropertySuffix;
+            string vt = type.ValueType;
+            string face = type.FaceType;
+            string docTypeName = RenderDocTypeName(type.ValueType);
+            AppendTrustedOverloadDoc(builder, $"Trusted zero-copy variant of <c>PushFront({docTypeName})</c>.", docTypeName);
+            builder.Append("    public void PushFrontTrusted").Append(suffix).Append("(").Append(nullableValueType).Append(" value) => PushCoreTrusted<").Append(vt).Append(", ").Append(face).AppendLine(">(front: true, value);");
+            AppendTrustedOverloadDoc(builder, $"Trusted zero-copy variant of <c>PushBack({docTypeName})</c>.", docTypeName);
+            builder.Append("    public void PushBackTrusted").Append(suffix).Append("(").Append(nullableValueType).Append(" value) => PushCoreTrusted<").Append(vt).Append(", ").Append(face).AppendLine(">(front: false, value);");
+            AppendTrustedOverloadDoc(builder, $"Trusted zero-copy variant of <c>TrySetFront({docTypeName})</c>.", docTypeName);
+            builder.Append("    public bool TrySetFrontTrusted").Append(suffix).Append("(").Append(nullableValueType).Append(" value) => TrySetCoreTrusted<").Append(vt).Append(", ").Append(face).AppendLine(">(front: true, value);");
+            AppendTrustedOverloadDoc(builder, $"Trusted zero-copy variant of <c>TrySetBack({docTypeName})</c>.", docTypeName);
+            builder.Append("    public bool TrySetBackTrusted").Append(suffix).Append("(").Append(nullableValueType).Append(" value) => TrySetCoreTrusted<").Append(vt).Append(", ").Append(face).AppendLine(">(front: false, value);");
+            AppendTrustedOverloadDoc(builder, $"Trusted zero-copy variant of <c>TrySetAt(index, {docTypeName})</c>.", docTypeName);
+            builder.Append("    public bool TrySetAtTrusted").Append(suffix).Append("(int index, ").Append(nullableValueType).Append(" value) => TrySetAtCoreTrusted<").Append(vt).Append(", ").Append(face).AppendLine(">(index, value);");
+            builder.AppendLine();
+        }
+        if (any) {
+            builder.AppendLine("    #endregion");
+            builder.AppendLine();
+        }
+    }
+
+    private static string RenderDocTypeName(string valueType) {
+        const string globalPrefix = "global::";
+        if (valueType.StartsWith(globalPrefix, System.StringComparison.Ordinal)) {
+            valueType = valueType.Substring(globalPrefix.Length);
+        }
+
+        const string stateJournalPrefix = "Atelia.StateJournal.";
+        if (valueType.StartsWith(stateJournalPrefix, System.StringComparison.Ordinal)) {
+            valueType = valueType.Substring(stateJournalPrefix.Length);
+        }
+
+        return valueType;
+    }
+
+    private static void AppendTrustedOverloadDoc(StringBuilder builder, string summary, string docTypeName) {
+        builder.Append("    /// <summary>").Append(summary).AppendLine("</summary>");
+        builder.Append("    /// <remarks>Caller must pass a ").Append(docTypeName).AppendLine(" constructed via <c>ByteString.FromTrustedOwned(byte[])</c>");
+        builder.AppendLine("    /// (or an equivalent caller-owned immutable-buffer contract). This overload skips the face-layer defensive clone;");
+        builder.AppendLine("    /// mutating the transferred buffer afterwards violates the StateJournal immutability contract.</remarks>");
     }
 }

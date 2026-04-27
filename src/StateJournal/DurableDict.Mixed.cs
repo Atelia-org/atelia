@@ -126,6 +126,27 @@ where TKey : notnull {
         return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }
 
+    /// <summary>
+    /// CMS Step E：trusted 零拷贝 upsert。与 <see cref="UpsertCore{TValue, VFace}"/> 完全镜像，
+    /// 唯一区别是 face 走 <see cref="ValueBox.ITrustedTypedFace{T}.UpdateOrInitTrusted"/>，
+    /// 由 caller 明示移交底层 buffer 所有权（contract: 见 face doc）。Generator 仅对
+    /// catalog 中标注 <c>SupportsTrustedFromCallerOwnedBuffer = true</c> 的类型 dispatch 到本方法。
+    /// </summary>
+    private UpsertStatus UpsertCoreTrusted<TValue, VFace>(TKey key, TValue value)
+        where TValue : notnull
+        where VFace : ValueBox.ITrustedTypedFace<TValue> {
+        ThrowIfDetachedOrFrozen();
+        ref ValueBox slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_core.Current, key, out bool exists);
+        ValueBox oldValue = exists ? slot : default;
+        if (!VFace.UpdateOrInitTrusted(ref slot, value, out uint oldBareBytes)) { return UpsertStatus.Updated; }
+        OnCurrentValueUpserted(oldValue, slot, exists);
+        Debug.Assert(!slot.IsUninitialized);
+        uint keyBareBytes = EstimateKeyBareBytes(key);
+        uint oldEntryBytes = exists ? checked(keyBareBytes + oldBareBytes) : 0u;
+        _core.AfterUpsert<ValueBoxHelper>(key, oldEntryBytes, exists, slot, keyBareBytes);
+        return exists ? UpsertStatus.Updated : UpsertStatus.Inserted;
+    }
+
     #endregion
 
     #region Double Helpers

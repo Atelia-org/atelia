@@ -196,6 +196,48 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
         _core.AfterSet<ValueBoxHelper>(index, ref slot, oldBareBytes);
     }
 
+    // ── CMS Step E：trusted 零拷贝 push / set 路径（与上方常规版本镜像，仅 face 走 trusted overload） ──
+
+    private void PushCoreTrusted<TValue, VFace>(bool front, TValue value)
+        where TValue : notnull
+        where VFace : ValueBox.ITrustedTypedFace<TValue> {
+        ThrowIfDetachedOrFrozen();
+        ValueBox newValue = VFace.FromTrusted(value);
+        Debug.Assert(!newValue.IsUninitialized);
+        OnCurrentValueUpserted(default, newValue, existed: false);
+        if (front) {
+            _core.PushFront<ValueBoxHelper>(newValue);
+        }
+        else {
+            _core.PushBack<ValueBoxHelper>(newValue);
+        }
+    }
+
+    private bool TrySetCoreTrusted<TValue, VFace>(bool front, TValue value)
+        where TValue : notnull
+        where VFace : ValueBox.ITrustedTypedFace<TValue> {
+        ThrowIfDetachedOrFrozen();
+        if (_core.Current.Count == 0) { return false; }
+
+        int index = front ? 0 : _core.Current.Count - 1;
+        return TrySetAtCoreTrusted<TValue, VFace>(index, value);
+    }
+
+    private bool TrySetAtCoreTrusted<TValue, VFace>(int index, TValue value)
+        where TValue : notnull
+        where VFace : ValueBox.ITrustedTypedFace<TValue> {
+        if ((uint)index >= (uint)_core.Current.Count) { return false; }
+
+        ThrowIfDetachedOrFrozen();
+        ref ValueBox slot = ref _core.GetRef(index);
+        ValueBox oldValue = slot;
+        if (!VFace.UpdateOrInitTrusted(ref slot, value, out uint oldBareBytes)) { return true; }
+
+        OnCurrentValueUpserted(oldValue, slot, existed: true);
+        _core.AfterSet<ValueBoxHelper>(index, ref slot, oldBareBytes);
+        return true;
+    }
+
     #endregion
 
     #region Double Helpers

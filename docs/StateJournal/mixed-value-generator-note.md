@@ -60,6 +60,7 @@ Mixed 容器原本有两类明显痛点：
 - `FaceType` 指内部 `ValueBox` 的 typed face。
 - `PropertySuffix` 决定生成出来的 `OfInt32`、`OfString` 这类属性名后缀。
 - `UseDurableObjectHelpers = true` 表示该类型不能直接套普通 `ValueBox.ITypedFace<T>` 路径，而要走手写的 `DurableObject` 装载/引用辅助逻辑。
+- `SupportsTrustedFromCallerOwnedBuffer = true` 表示该类型有“caller 移交底层 buffer 所有权”的高级零拷贝写入路径；generator 会额外生成 `UpsertTrusted{Suffix}` / `PushFrontTrusted{Suffix}` 等 opt-in overload，并要求对应 face 实现 `ValueBox.ITrustedTypedFace<T>`。
 
 #### B. 容器侧挂接点
 
@@ -100,6 +101,18 @@ Mixed 容器原本有两类明显痛点：
   - 把 catalog attribute 解析成 `TypeSpec`
   - 把容器类解析成 `TargetSpec`
   - 提供生成代码时复用的文件头、namespace、class header 拼接逻辑
+
+#### E. Trusted caller-owned buffer opt-in
+
+CMS Step E 起，`ByteString` / `BlobPayloadFace` 接通 mixed 容器的端到端零拷贝写入：
+
+- catalog 中只有 `ByteString` 这一项标注 `SupportsTrustedFromCallerOwnedBuffer = true`。
+- `ValueBox.BlobPayloadFace` 实现 `ValueBox.ITrustedTypedFace<ByteString>`，在 `FromTrusted` / `UpdateOrInitTrusted` 中直接复用 `ByteString.FromTrustedOwned(byte[])` 携带的底层 `byte[]`。
+- generator 只为 opt-in 类型生成 trusted overload：
+  - dict / ordered dict: `UpsertTrustedBlob(key, value)`
+  - deque: `PushFrontTrustedBlob(value)`、`PushBackTrustedBlob(value)`、`TrySetFrontTrustedBlob(value)`、`TrySetBackTrustedBlob(value)`、`TrySetAtTrustedBlob(index, value)`
+- 如果 catalog 误标某类型支持 trusted，但该类型的 face 没有实现 `ITrustedTypedFace<T>`，生成代码会因为 `UpsertCoreTrusted<TValue, VFace>` / `PushCoreTrusted<TValue, VFace>` 的泛型约束而编译失败；这是预期的 fail-fast。
+- 普通 `Upsert` / `PushBack` 等默认 API 仍保持 defensive clone 语义；端到端零拷贝必须同时使用 `ByteString.FromTrustedOwned(byte[])` 和上述 trusted overload。
 
 ---
 

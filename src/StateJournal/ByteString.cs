@@ -82,10 +82,11 @@ public readonly struct ByteString : IEquatable<ByteString> {
     /// <see cref="ByteString(ReadOnlySpan{byte})"/>（无条件复制）。
     /// </para>
     /// <para>
-    /// 端到端零拷贝需要 <c>ByteString.FromTrustedOwned(largeBytes)</c> + 显式 trusted 入池路径（当前实现层为
-    /// <c>BlobPayloadFace.FromTrusted</c> / <c>UpdateOrInitTrusted</c>；公开 mixed 容器 trusted API 留待后续接通）。
-    /// 仅创建 <c>ByteString</c> 但走默认 mixed <c>Upsert</c> 路径仍会触发 face 层 defensive clone（CMS Step 3b 决策 B），
-    /// 此时 <see cref="FromTrustedOwned"/> 节省的只有 ctor 一次 clone。
+    /// 端到端零拷贝需要 <c>ByteString.FromTrustedOwned(largeBytes)</c> + 显式 trusted 入池路径
+    /// （如 mixed dict/ordered dict 的 <c>UpsertTrustedBlob</c>，或 mixed deque 的
+    /// <c>PushFrontTrustedBlob</c> / <c>PushBackTrustedBlob</c> / <c>TrySetAtTrustedBlob</c>）。
+    /// 仅创建 <c>ByteString</c> 但走默认 mixed <c>Upsert</c> / <c>PushBack</c> 路径仍会触发 face 层
+    /// defensive clone（CMS Step 3b 决策 B），此时 <see cref="FromTrustedOwned"/> 节省的只有 ctor 一次 clone。
     /// </para>
     /// </remarks>
     public static ByteString FromTrustedOwned(byte[] data) {

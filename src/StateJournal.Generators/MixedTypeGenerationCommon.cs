@@ -51,6 +51,13 @@ internal static class MixedTypeGenerationCommon {
                     public string PropertySuffix { get; }
                     public MixedContainers Containers { get; set; } = MixedContainers.All;
                     public MixedValueSpecialHandling SpecialHandling { get; set; } = MixedValueSpecialHandling.None;
+                    /// <summary>
+                    /// 当 value 类型支持 "caller 移交 buffer 所有权" 的零拷贝入池路径（如 <c>ByteString</c>
+                    /// 通过 <c>ByteString.FromTrustedOwned(byte[])</c>），并且 face 类型实现
+                    /// <c>ITrustedTypedFace&lt;T&gt;</c> 时设为 true，generator 会额外生成
+                    /// <c>UpsertTrusted{PropertySuffix}</c> / <c>PushFrontTrusted{PropertySuffix}</c> 等 opt-in overload。
+                    /// </summary>
+                    public bool SupportsTrustedFromCallerOwnedBuffer { get; set; }
                 }
 
                 [global::System.AttributeUsage(global::System.AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
@@ -136,6 +143,7 @@ internal static class MixedTypeGenerationCommon {
 
             int declaredContainers = (int)MixedContainerKind.All;
             int specialHandling = 0;
+            bool supportsTrusted = false;
             foreach (var namedArg in attribute.NamedArguments) {
                 if (namedArg.Key == "Containers") {
                     declaredContainers = namedArg.Value.Value is int flagsAsInt
@@ -147,6 +155,9 @@ internal static class MixedTypeGenerationCommon {
                         ? specialHandlingAsInt
                         : (int)namedArg.Value.Value!;
                 }
+                else if (namedArg.Key == "SupportsTrustedFromCallerOwnedBuffer") {
+                    supportsTrusted = namedArg.Value.Value is bool b && b;
+                }
             }
 
             if ((declaredContainers & containerMask) == 0) { continue; }
@@ -157,7 +168,8 @@ internal static class MixedTypeGenerationCommon {
                     faceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                     propertySuffix,
                     valueType.IsValueType,
-                    (MixedValueSpecialHandling)specialHandling
+                    (MixedValueSpecialHandling)specialHandling,
+                    supportsTrusted
                 )
             );
         }
@@ -246,12 +258,13 @@ internal static class MixedTypeGenerationCommon {
     }
 
     internal readonly struct TypeSpec {
-        public TypeSpec(string valueType, string faceType, string propertySuffix, bool isValueType, MixedValueSpecialHandling specialHandling) {
+        public TypeSpec(string valueType, string faceType, string propertySuffix, bool isValueType, MixedValueSpecialHandling specialHandling, bool supportsTrustedFromCallerOwnedBuffer) {
             ValueType = valueType;
             FaceType = faceType;
             PropertySuffix = propertySuffix;
             IsValueType = isValueType;
             SpecialHandling = specialHandling;
+            SupportsTrustedFromCallerOwnedBuffer = supportsTrustedFromCallerOwnedBuffer;
         }
 
         public string ValueType { get; }
@@ -259,6 +272,7 @@ internal static class MixedTypeGenerationCommon {
         public string PropertySuffix { get; }
         public bool IsValueType { get; }
         public MixedValueSpecialHandling SpecialHandling { get; }
+        public bool SupportsTrustedFromCallerOwnedBuffer { get; }
 
         public string RenderNullableValueType() => IsValueType ? ValueType : $"{ValueType}?";
     }

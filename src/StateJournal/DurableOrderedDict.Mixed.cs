@@ -90,6 +90,14 @@ where TKey : notnull {
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue>;
 
+    /// <summary>
+    /// CMS Step E：trusted 零拷贝 upsert（与 <see cref="UpsertCore{TValue, VFace}"/> 镜像，
+    /// 仅 face 走 <see cref="ValueBox.ITrustedTypedFace{T}.UpdateOrInitTrusted"/>）。
+    /// </summary>
+    private protected abstract UpsertStatus UpsertCoreTrusted<TValue, VFace>(TKey key, TValue value)
+        where TValue : notnull
+        where VFace : ValueBox.ITrustedTypedFace<TValue>;
+
     private protected abstract bool TryGetValueBox(TKey key, out ValueBox box);
 
     #endregion

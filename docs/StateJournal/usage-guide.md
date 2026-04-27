@@ -311,7 +311,10 @@ null
 - `Of<DurableDict<string>>()` 这种 DurableObject 子类型 view 不支持；用泛型 `Get/TryGet/GetOrThrow`。
 - `ByteString.Empty` 表示一个具体的空字节串（`ValueKind.Blob`），不等价于 mixed `null`。
 - `new ByteString(byte[])` 会 defensive clone 外部可变数组；高级零拷贝入口是 `ByteString.FromTrustedOwned(byte[])`。
-    但默认 mixed `Upsert` / deque 写入仍会在 face 入池时再次 clone，端到端零拷贝需显式 trusted 入池路径。
+- 但默认 mixed `Upsert` / deque 写入仍会在 face 入池时再次 clone，端到端零拷贝需显式 trusted 入池路径：
+    - `DurableDict<TKey>` / `DurableOrderedDict<TKey>`：`UpsertTrustedBlob(key, value)`。
+    - `DurableDeque`：`PushFrontTrustedBlob(value)`、`PushBackTrustedBlob(value)`、`TrySetFrontTrustedBlob(value)`、`TrySetBackTrustedBlob(value)`、`TrySetAtTrustedBlob(index, value)`。
+    - 这些 trusted API 要求传入由 `ByteString.FromTrustedOwned(byte[])` 构造的值，或具备等价的“caller 独占 + 后续不可变”契约；转交后继续 mutate 原数组会静默破坏 StateJournal 内部状态。
 
 ### 4.3 null 语义
 

@@ -62,11 +62,25 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
 #pragma warning disable CS8765 // notnull 约束下 override 不能写 TValue?，这是 C# 泛型 override 的已知限制。
     private protected override UpsertStatus UpsertCore<TValue, VFace>(TKey key, TValue value) {
 #pragma warning restore CS8765
+        ThrowIfDetachedOrFrozen();
         ref ValueBox slot = ref _core.UpsertGetValueRef(key, out bool existed, out int slotIndex, out bool capturedNow);
         ValueBox oldValue = existed ? slot : default;
         // SkipListCore 自行维护 estimate (遍历 dirty index 当场重算)，不需要 oldBareBytes；
         // 仅为满足 face 接口接以 out _ 丢弃。
         if (!VFace.UpdateOrInit(ref slot, value, out _)) {
+            if (capturedNow) { _core.CancelPreparedValueUpdate(slotIndex); }
+            return UpsertStatus.Updated;
+        }
+        _core.ConfirmValueDirty(slotIndex);
+        OnCurrentValueUpserted(oldValue, slot, existed);
+        return existed ? UpsertStatus.Updated : UpsertStatus.Inserted;
+    }
+
+    private protected override UpsertStatus UpsertCoreTrusted<TValue, VFace>(TKey key, TValue value) {
+        ThrowIfDetachedOrFrozen();
+        ref ValueBox slot = ref _core.UpsertGetValueRef(key, out bool existed, out int slotIndex, out bool capturedNow);
+        ValueBox oldValue = existed ? slot : default;
+        if (!VFace.UpdateOrInitTrusted(ref slot, value, out _)) {
             if (capturedNow) { _core.CancelPreparedValueUpdate(slotIndex); }
             return UpsertStatus.Updated;
         }

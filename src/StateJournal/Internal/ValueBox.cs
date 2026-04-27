@@ -267,4 +267,19 @@ internal readonly partial struct ValueBox {
         static abstract bool UpdateOrInit(ref ValueBox old, T? value, out uint oldBareBytesBeforeMutation);
         static abstract GetIssue Get(ValueBox box, out T? value);
     }
+
+    /// <summary>
+    /// 在 <see cref="ITypedFace{T}"/> 之上额外暴露 "trusted (caller-owned)" 零拷贝入池路径。
+    /// 仅当业务 value 类型对底层 buffer 有可移交所有权语义（如 <see cref="ByteString"/> 通过
+    /// <see cref="ByteString.FromTrustedOwned(byte[])"/>）时才实现本接口；ITypedFace 的常规
+    /// <c>From</c> / <c>UpdateOrInit</c> 始终保留 defensive clone 语义。
+    /// </summary>
+    /// <remarks>CMS Step E：generator 仅对 catalog 中标注 <c>SupportsTrustedFromCallerOwnedBuffer = true</c>
+    /// 的类型生成 <c>UpsertTrustedXxx</c>/<c>PushFrontTrustedXxx</c> 等公开 overload，并通过本接口约束分发。</remarks>
+    internal interface ITrustedTypedFace<T> : ITypedFace<T> where T : notnull {
+        /// <summary>零拷贝入池：caller 明示移交底层 buffer 所有权。契约违反会让 pool 内字节被外部静默篡改。</summary>
+        static abstract ValueBox FromTrusted(T value);
+        /// <summary>零拷贝 in-place 入池：契约同 <see cref="FromTrusted"/>；CMS Step 1 snapshot 契约保留。</summary>
+        static abstract bool UpdateOrInitTrusted(ref ValueBox old, T value, out uint oldBareBytesBeforeMutation);
+    }
 }

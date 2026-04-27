@@ -27,7 +27,7 @@ partial struct ValueBox {
     /// <see cref="Get"/> 返回的 <see cref="ByteString"/> 包装 pool 内副本，
     /// 但因 <see cref="ByteString"/> 公开 API 仅暴露 <see cref="ReadOnlySpan{T}"/>，外部无法 mutate。</para>
     /// </remarks>
-    internal readonly struct BlobPayloadFace : ITypedFace<ByteString> {
+    internal readonly struct BlobPayloadFace : ITrustedTypedFace<ByteString> {
         public static ValueBox From(ByteString value) => StoreNewSlot(CloneForPool(value));
 
         /// <summary>
