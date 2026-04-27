@@ -6,16 +6,16 @@ namespace Atelia.StateJournal.Internal;
 // ai:test `tests/StateJournal.Tests/Internal/ValueBoxStringTests.cs`
 partial struct ValueBox {
 
-    /// <summary>HeapSlot + String kind 的组合 tag，用于快速类型判断。</summary>
-    internal const uint TagHeapKindString = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)ValueKind.String;
+    /// <summary>HeapSlot + Symbol kind 的组合 tag，用于快速类型判断。</summary>
+    internal const uint TagHeapKindSymbol = (uint)(LzcConstants.HeapSlotTag >> HeapKindShift) | (uint)HeapValueKind.Symbol;
 
-    /// <summary>判断 ValueBox 是否为 SymbolId 引用（HeapSlot + HeapValueKind.String）。O(1) 位操作。</summary>
-    internal readonly bool IsSymbolRef => (uint)(GetBits() >> HeapKindShift) == TagHeapKindString;
+    /// <summary>判断 ValueBox 是否为 SymbolId 引用（HeapSlot + HeapValueKind.Symbol）。O(1) 位操作。</summary>
+    internal readonly bool IsSymbolRef => (uint)(GetBits() >> HeapKindShift) == TagHeapKindSymbol;
 
     /// <summary>将 SymbolId 编码为 HeapSlot ValueBox。纯位操作，不访问任何池。</summary>
     internal static ValueBox FromSymbolId(SymbolId id) => id.IsNull
         ? Null
-        : EncodeHeapSlot(HeapValueKind.String, id.ToSlotHandle());
+        : EncodeHeapSlot(HeapValueKind.Symbol, id.ToSlotHandle());
 
     /// <summary>从 HeapSlot ValueBox 解码出 SymbolId。纯位操作，不访问任何池。</summary>
     internal static GetIssue GetSymbolId(ValueBox box, out SymbolId id) {
@@ -24,7 +24,7 @@ partial struct ValueBox {
             id = SymbolId.Null;
             return GetIssue.None;
         }
-        if ((uint)(box.GetBits() >> HeapKindShift) == TagHeapKindString) {
+        if ((uint)(box.GetBits() >> HeapKindShift) == TagHeapKindSymbol) {
             id = new SymbolId(box.GetHeapHandle().Packed);
             return GetIssue.None;
         }
@@ -32,10 +32,10 @@ partial struct ValueBox {
         return GetIssue.TypeMismatch;
     }
 
-    /// <summary>解码 HeapSlot 中的 SymbolId。调用前须确保 LZC == HeapSlot 且 HeapKind == String。</summary>
+    /// <summary>解码 HeapSlot 中的 SymbolId。调用前须确保 LZC == HeapSlot 且 HeapKind == Symbol。</summary>
     internal SymbolId DecodeSymbolId() {
         Debug.Assert(GetLzc() == BoxLzc.HeapSlot);
-        Debug.Assert(GetHeapKind() == HeapValueKind.String);
+        Debug.Assert(GetHeapKind() == HeapValueKind.Symbol);
         return new SymbolId(GetHeapHandle().Packed);
     }
 
@@ -57,7 +57,7 @@ partial struct ValueBox {
 
     /// <summary>
     /// SymbolId 的 ITypedFace 实现。纯位操作，不访问任何池。
-    /// 容器层负责 SymbolId ↔ string 的转换（通过 Revision.InternSymbol/GetSymbol）。
+    /// 容器层负责 SymbolId ↔ Symbol 的转换（通过 Revision.InternSymbol/TryGetSymbol）。
     /// </summary>
     internal readonly struct SymbolIdFace : ITypedFace<SymbolId> {
         public static ValueBox From(SymbolId value) => value.IsNull

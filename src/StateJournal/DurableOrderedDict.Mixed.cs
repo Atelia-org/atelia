@@ -5,7 +5,7 @@ namespace Atelia.StateJournal;
 /// <summary>异构值有序字典。内部以 <see cref="ValueBox"/> 存储值，按 Key 自然序排列。</summary>
 [UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.OrderedDict)]
 public abstract partial class DurableOrderedDict<TKey> : DurableDictBase<TKey>, IDict<TKey>,
-    IDict<TKey, bool>, IDict<TKey, string>, IDict<TKey, DurableObject>,
+    IDict<TKey, bool>, IDict<TKey, Symbol>, IDict<TKey, DurableObject>,
     IDict<TKey, double>, IDict<TKey, float>, IDict<TKey, Half>,
     IDict<TKey, ulong>, IDict<TKey, uint>, IDict<TKey, ushort>, IDict<TKey, byte>,
     IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>
@@ -122,15 +122,27 @@ where TKey : notnull {
 
     #region Symbol Helpers
 
-    private protected GetIssue GetSymbol(TKey key, out string? value) {
-        value = null;
+    private protected GetIssue GetSymbol(TKey key, out Symbol value) {
         var issue = GetCore<SymbolId, ValueBox.SymbolIdFace>(key, out var symbolId);
-        if (issue != GetIssue.None) { return issue; }
-        return RevisionStringCodec.Decode(Revision, symbolId, out value);
+        if (issue != GetIssue.None) {
+            value = default;
+            return issue;
+        }
+        if (symbolId.IsNull) {
+            // slot 存的是 ValueBox.Null 或非 Symbol 类型；Symbol 本身契约非 null，不应被误读为 Symbol.Empty。
+            value = default;
+            return GetIssue.TypeMismatch;
+        }
+        if (!Revision.TryGetSymbol(symbolId, out string? str)) {
+            value = default;
+            return GetIssue.LoadFailed;
+        }
+        value = new Symbol(str!);
+        return GetIssue.None;
     }
 
-    private protected UpsertStatus UpsertSymbol(TKey key, string? value) {
-        SymbolId id = RevisionStringCodec.Encode(Revision, value);
+    private protected UpsertStatus UpsertSymbol(TKey key, Symbol value) {
+        SymbolId id = Revision.InternSymbol(value.Value);
         return UpsertCore<SymbolId, ValueBox.SymbolIdFace>(key, id);
     }
 

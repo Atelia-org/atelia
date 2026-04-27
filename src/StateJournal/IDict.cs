@@ -99,12 +99,12 @@ internal static class DictThrowHelpers {
 
 internal class DictDemo {
     public static void Run() {
-        // MixedDict 的 string value 路线仍需要绑定 Revision（mixed string 通过 per-Revision Symbol Pool intern）。
+        // MixedDict 的 Symbol 路线需要绑定 Revision（Symbol 通过 per-Revision Symbol Pool intern）。
         var rev = new Revision(1);
         var model = rev.CreateDict<string>();
 
-        // ── Write: Upsert 重载自动推断类型 ──────────────────────
-        model.Upsert("title", "文档标题");
+        // ── Write: Symbol 需显式走 OfSymbol / Upsert<Symbol>；数值等可由 Upsert 推断类型 ─────
+        model.OfSymbol.Upsert("title", "文档标题");
         model.Upsert("wordCount", 1234);
         model.Upsert("zoom", 1.5);
         model.Upsert("darkMode", true);
@@ -112,12 +112,12 @@ internal class DictDemo {
         model.Upsert("metadata", rev.CreateDict<string>());
 
         // 类型化视图（exact typed capability）：Of<T>() 与 Of* 属性
-        model.OfString.Upsert("title", "新文档标题");
+        model.OfSymbol.Upsert("title", "新文档标题");
         model.OfInt32.Upsert("wordCount", 2048);
         model.Of<double>().Upsert("zoom", 1.25);
 
         // ── Get: Get<T> / TryGet / GetOr 系列 ──────────────────
-        string? title = model.GetOrThrow<string>("title");
+        Symbol title = model.GetOrThrow<Symbol>("title");
         int wc = model.GetOrThrow<int>("wordCount");
 
         // TryGet: out 参数推断类型

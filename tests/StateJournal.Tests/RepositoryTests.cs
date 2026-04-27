@@ -540,7 +540,7 @@ public class RepositoryTests : IDisposable {
         var dir = GetTempDir();
         using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
         var root = main.CreateDict<string>();
-        root.Upsert("k", "v");
+        root.OfSymbol.Upsert("k", "v");
         AssertSuccess(repo.Commit(root));
 
         var result = main.GetGraphRoot<DurableDict<string>>();
@@ -553,7 +553,7 @@ public class RepositoryTests : IDisposable {
         var dir = GetTempDir();
         using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
         var root = main.CreateDict<string>();
-        root.Upsert("k", "v");
+        root.OfSymbol.Upsert("k", "v");
         AssertSuccess(repo.Commit(root));
 
         var result = main.GetGraphRoot<DurableDeque<string>>();

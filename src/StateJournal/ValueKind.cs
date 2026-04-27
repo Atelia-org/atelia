@@ -7,7 +7,8 @@ public enum ValueKind : byte {
     NonnegativeInteger,
     NegativeInteger,
 
-    String,
+    /// <summary>Symbol facade — intern 池中的字符串身份。占用了原 <c>String</c> 的槽位。</summary>
+    Symbol,
 
     /// <summary><see cref="DurableDict{TKey}"/> heterogeneous</summary>
     MixedDict,
@@ -26,4 +27,7 @@ public enum ValueKind : byte {
 
     Boolean,
     Null,
+
+    /// <summary>Payload string — 非 intern，独立 owned 字节序列。A1 阶段暂未挂任何 <c>ValueBox</c>，预留给 B2/C 启用。</summary>
+    String,
 }

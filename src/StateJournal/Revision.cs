@@ -273,7 +273,7 @@ public partial class Revision {
     /// <summary>
     /// 将非空字符串 intern 到当前 Revision 的 Symbol Pool，返回非零 SymbolId。
     /// 运行时真源始终是 <see cref="_symbolPool"/>；durable mirror 保存在 <see cref="_symbolMirror"/>。
-    /// mixed string 路径如需表达 <c>null</c>，请由 <see cref="Internal.RevisionStringCodec"/> 映射为 <see cref="SymbolId.Null"/>。
+    /// <see cref="SymbolId.Null"/> 是 handle sentinel；<see cref="Symbol"/> facade 不用它表达 null。
     /// </summary>
     internal SymbolId InternSymbol(string value) {
         ArgumentNullException.ThrowIfNull(value);

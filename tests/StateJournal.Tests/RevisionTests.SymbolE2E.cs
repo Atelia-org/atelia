@@ -16,8 +16,8 @@ partial class RevisionTests {
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        root.Upsert(1, "文档标题");
-        root.Upsert(2, "Alice");
+        root.OfSymbol.Upsert(1, "文档标题");
+        root.OfSymbol.Upsert(2, "Alice");
         root.Upsert(3, 42);
         root.Upsert(4, 100L);
 
@@ -29,11 +29,11 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(4, loaded.Count);
 
-        Assert.True(loaded.TryGet(1, out string? title));
-        Assert.Equal("文档标题", title);
+        Assert.True(loaded.TryGet(1, out Symbol title));
+        Assert.Equal("文档标题", title.Value);
 
-        Assert.True(loaded.TryGet(2, out string? author));
-        Assert.Equal("Alice", author);
+        Assert.True(loaded.TryGet(2, out Symbol author));
+        Assert.Equal("Alice", author.Value);
 
         Assert.True(loaded.TryGet(3, out int count));
         Assert.Equal(42, count);
@@ -43,15 +43,15 @@ partial class RevisionTests {
     }
 
     [Fact]
-    public void MixedDict_OfStringView_Commit_Open_RoundTrips() {
+    public void MixedDict_OfSymbolView_Commit_Open_RoundTrips() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        root.OfString.Upsert(1, "value1");
-        root.OfString.Upsert(2, "value2");
-        root.OfString.Upsert(3, "value3");
+        root.OfSymbol.Upsert(1, "value1");
+        root.OfSymbol.Upsert(2, "value2");
+        root.OfSymbol.Upsert(3, "value3");
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
@@ -59,9 +59,9 @@ partial class RevisionTests {
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
-        Assert.Equal("value1", loaded.OfString.Get(1));
-        Assert.Equal("value2", loaded.OfString.Get(2));
-        Assert.Equal("value3", loaded.OfString.Get(3));
+        Assert.Equal("value1", loaded.OfSymbol.Get(1));
+        Assert.Equal("value2", loaded.OfSymbol.Get(2));
+        Assert.Equal("value3", loaded.OfSymbol.Get(3));
     }
 
     // ═══════════════════════ MixedDeque + string round-trip ═══════════════════════
@@ -73,11 +73,11 @@ partial class RevisionTests {
 
         var rev = CreateRevision();
         var root = rev.CreateDeque();
-        root.PushBack("first");
+        root.OfSymbol.PushBack("first");
         root.PushBack(42);
-        root.PushBack("second");
+        root.OfSymbol.PushBack("second");
         root.PushBack(99);
-        root.PushFront("zeroth");
+        root.OfSymbol.PushFront("zeroth");
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
@@ -87,34 +87,34 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDeque>(openResult.Value!.GraphRoot);
         Assert.Equal(5, loaded.Count);
 
-        Assert.True(loaded.TryPeekFront(out string? front));
-        Assert.Equal("zeroth", front);
+        Assert.True(loaded.TryPeekFront(out Symbol front));
+        Assert.Equal("zeroth", front.Value);
 
-        Assert.Equal(GetIssue.None, loaded.OfString.GetAt(0, out string? at0));
-        Assert.Equal("zeroth", at0);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(0, out Symbol at0));
+        Assert.Equal("zeroth", at0.Value);
 
-        Assert.Equal(GetIssue.None, loaded.OfString.GetAt(1, out string? at1));
-        Assert.Equal("first", at1);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(1, out Symbol at1));
+        Assert.Equal("first", at1.Value);
 
         Assert.Equal(GetIssue.None, loaded.OfInt32.GetAt(2, out int intVal));
         Assert.Equal(42, intVal);
 
-        Assert.Equal(GetIssue.None, loaded.OfString.GetAt(3, out string? at3));
-        Assert.Equal("second", at3);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(3, out Symbol at3));
+        Assert.Equal("second", at3.Value);
 
         Assert.Equal(GetIssue.None, loaded.OfInt32.GetAt(4, out int intVal2));
         Assert.Equal(99, intVal2);
     }
 
     [Fact]
-    public void MixedDeque_OfStringView_PushAndPeek_Commit_Open_RoundTrips() {
+    public void MixedDeque_OfSymbolView_PushAndPeek_Commit_Open_RoundTrips() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
         var root = rev.CreateDeque();
-        root.OfString.PushBack("back");
-        root.OfString.PushFront("front");
+        root.OfSymbol.PushBack("back");
+        root.OfSymbol.PushFront("front");
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
@@ -124,24 +124,28 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDeque>(openResult.Value!.GraphRoot);
         Assert.Equal(2, loaded.Count);
 
-        Assert.Equal(GetIssue.None, loaded.OfString.PeekFront(out string? pf));
-        Assert.Equal("front", pf);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.PeekFront(out Symbol pf));
+        Assert.Equal("front", pf.Value);
 
-        Assert.Equal(GetIssue.None, loaded.OfString.PeekBack(out string? pb));
-        Assert.Equal("back", pb);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.PeekBack(out Symbol pb));
+        Assert.Equal("back", pb.Value);
     }
 
-    // ═══════════════════════ null string round-trip ═══════════════════════
+    // ═══════════════════════ mixed null value round-trip ═══════════════════════
+    // A1 阶段 mixed 容器没有 string 入口（无论 silent intern 或 payload）；
+    // Symbol 不表达 null（default(Symbol) == Symbol.Empty）。这里保留 ValueBox.Null 的 round-trip 覆盖，
+    // null payload string 的 round-trip 测试将随 B2/C 的 payload 通路重新加入。
 
     [Fact]
-    public void MixedDict_NullString_Commit_Open_RoundTrips() {
+    public void MixedDict_NullDurableObject_Commit_Open_RoundTripsAsValueBoxNull() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        root.Upsert(1, "hello");
-        root.Upsert(2, (string?)null);
+        root.OfSymbol.Upsert(1, "hello");
+        root.Upsert<DurableObject>(2, null);
+        root.Upsert(3, 42);
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
@@ -149,24 +153,30 @@ partial class RevisionTests {
         Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
 
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
+        Assert.Equal(3, loaded.Count);
 
-        Assert.True(loaded.TryGet(1, out string? present));
-        Assert.Equal("hello", present);
+        Assert.True(loaded.TryGet(1, out Symbol present));
+        Assert.Equal("hello", present.Value);
 
-        Assert.True(loaded.TryGet(2, out string? absent));
+        Assert.True(loaded.TryGetValueKind(2, out var nullKind));
+        Assert.Equal(ValueKind.Null, nullKind);
+        Assert.Equal(GetIssue.None, loaded.Get<DurableObject>(2, out var absent));
         Assert.Null(absent);
+
+        Assert.True(loaded.TryGet(3, out int number));
+        Assert.Equal(42, number);
     }
 
     [Fact]
-    public void MixedDeque_NullString_Commit_Open_RoundTrips() {
+    public void MixedDeque_NullDurableObject_Commit_Open_RoundTripsAsValueBoxNull() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
         var rev = CreateRevision();
         var root = rev.CreateDeque();
-        root.PushBack("hello");
-        root.PushBack((string?)null);
-        root.PushBack("world");
+        root.OfSymbol.PushBack("hello");
+        root.PushBack((DurableObject?)null);
+        root.OfSymbol.PushBack("world");
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
@@ -176,16 +186,14 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDeque>(openResult.Value!.GraphRoot);
         Assert.Equal(3, loaded.Count);
 
-        Assert.True(loaded.TryPeekFront(out string? s0));
-        Assert.Equal("hello", s0);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(0, out Symbol first));
+        Assert.Equal("hello", first.Value);
 
-        Assert.True(loaded.TryPopFront(out string? _)); // pop "hello"
-        Assert.True(loaded.TryPeekFront(out string? s1));
-        Assert.Null(s1);
+        Assert.Equal(GetIssue.None, loaded.GetAt<DurableObject>(1, out var absent));
+        Assert.Null(absent);
 
-        Assert.True(loaded.TryPopFront(out string? _2)); // pop null
-        Assert.True(loaded.TryPeekFront(out string? s2));
-        Assert.Equal("world", s2);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(2, out Symbol last));
+        Assert.Equal("world", last.Value);
     }
 
     // ═══════════════════════ Empty string round-trip ═══════════════════════
@@ -197,8 +205,8 @@ partial class RevisionTests {
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        root.Upsert(1, "");
-        root.Upsert(2, "text");
+        root.OfSymbol.Upsert(1, "");
+        root.OfSymbol.Upsert(2, "text");
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
@@ -207,11 +215,11 @@ partial class RevisionTests {
 
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
 
-        Assert.True(loaded.TryGet(1, out string? empty));
-        Assert.Equal("", empty);
+        Assert.True(loaded.TryGet(1, out Symbol empty));
+        Assert.Equal("", empty.Value);
 
-        Assert.True(loaded.TryGet(2, out string? nonempty));
-        Assert.Equal("text", nonempty);
+        Assert.True(loaded.TryGet(2, out Symbol nonempty));
+        Assert.Equal("text", nonempty.Value);
     }
 
     // ═══════════════════════ Long string round-trip ═══════════════════════
@@ -227,8 +235,8 @@ partial class RevisionTests {
         string longStr = new('x', 10_000);
         string unicodeLong = string.Concat(Enumerable.Repeat("你好🎉", 2_000));
 
-        root.Upsert(1, longStr);
-        root.Upsert(2, unicodeLong);
+        root.OfSymbol.Upsert(1, longStr);
+        root.OfSymbol.Upsert(2, unicodeLong);
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
@@ -237,11 +245,11 @@ partial class RevisionTests {
 
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
 
-        Assert.True(loaded.TryGet(1, out string? la));
-        Assert.Equal(longStr, la);
+        Assert.True(loaded.TryGet(1, out Symbol la));
+        Assert.Equal(longStr, la.Value);
 
-        Assert.True(loaded.TryGet(2, out string? lu));
-        Assert.Equal(unicodeLong, lu);
+        Assert.True(loaded.TryGet(2, out Symbol lu));
+        Assert.Equal(unicodeLong, lu.Value);
     }
 
     // ═══════════════════════ 大量 symbol 去重 ═══════════════════════
@@ -256,7 +264,7 @@ partial class RevisionTests {
 
         // 100 个 key 使用 50 个不同的 string value（每个 value 重复 2 次）
         for (int i = 0; i < 100; i++) {
-            root.Upsert(i, $"value_{i % 50}");
+            root.OfSymbol.Upsert(i, $"value_{i % 50}");
         }
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
@@ -268,8 +276,8 @@ partial class RevisionTests {
         Assert.Equal(100, loaded.Count);
 
         for (int i = 0; i < 100; i++) {
-            Assert.True(loaded.TryGet(i, out string? val));
-            Assert.Equal($"value_{i % 50}", val);
+            Assert.True(loaded.TryGet(i, out Symbol val));
+            Assert.Equal($"value_{i % 50}", val.Value);
         }
     }
 
@@ -282,7 +290,7 @@ partial class RevisionTests {
         var root = rev.CreateDeque();
 
         for (int i = 0; i < 200; i++) {
-            root.PushBack($"item_{i}");
+            root.OfSymbol.PushBack($"item_{i}");
         }
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
@@ -294,8 +302,8 @@ partial class RevisionTests {
         Assert.Equal(200, loaded.Count);
 
         for (int i = 0; i < 200; i++) {
-            Assert.Equal(GetIssue.None, loaded.OfString.GetAt(i, out string? val));
-            Assert.Equal($"item_{i}", val);
+            Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(i, out Symbol val));
+            Assert.Equal($"item_{i}", val.Value);
         }
     }
 
@@ -310,19 +318,19 @@ partial class RevisionTests {
         var root = rev.CreateDict<int>();
 
         // Commit 1: 初始数据
-        root.Upsert(1, "draft");
+        root.OfSymbol.Upsert(1, "draft");
         root.Upsert(2, 1);
         var outcome1 = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
         // Commit 2: 新增与更新字符串
-        root.Upsert(1, "final");     // 更新已有 string
-        root.Upsert(3, "Bob");       // 新增 string
+        root.OfSymbol.Upsert(1, "final");     // 更新已有 string
+        root.OfSymbol.Upsert(3, "Bob");       // 新增 string
         root.Upsert(2, 2);           // 更新 int
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
         // Commit 3: 再次更新
-        root.OfString.Upsert(1, "published");
-        root.Upsert(4, "science");
+        root.OfSymbol.Upsert(1, "published");
+        root.OfSymbol.Upsert(4, "science");
         var outcome3 = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
         // Open 最新 commit
@@ -332,9 +340,9 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(4, loaded.Count);
 
-        Assert.Equal("published", loaded.OfString.Get(1));
-        Assert.Equal("Bob", loaded.OfString.Get(3));
-        Assert.Equal("science", loaded.OfString.Get(4));
+        Assert.Equal("published", loaded.OfSymbol.Get(1));
+        Assert.Equal("Bob", loaded.OfSymbol.Get(3));
+        Assert.Equal("science", loaded.OfSymbol.Get(4));
 
         Assert.True(loaded.TryGet(2, out int intCount));
         Assert.Equal(2, intCount);
@@ -350,18 +358,18 @@ partial class RevisionTests {
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
 
-        root.Upsert(1, "Project A");
+        root.OfSymbol.Upsert(1, "Project A");
         root.Upsert(2, 3);
 
         var tags = rev.CreateDeque();
-        tags.PushBack("alpha");
-        tags.PushBack("beta");
-        tags.PushBack("release");
+        tags.OfSymbol.PushBack("alpha");
+        tags.OfSymbol.PushBack("beta");
+        tags.OfSymbol.PushBack("release");
         root.Upsert(10, tags);
 
         var meta = rev.CreateDict<int>();
-        meta.Upsert(1, "2026-01-01");
-        meta.Upsert(2, "2026-03-25");
+        meta.OfSymbol.Upsert(1, "2026-01-01");
+        meta.OfSymbol.Upsert(2, "2026-03-25");
         root.Upsert(20, meta);
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
@@ -372,7 +380,7 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(4, loaded.Count);
 
-        Assert.Equal("Project A", loaded.OfString.Get(1));
+        Assert.Equal("Project A", loaded.OfSymbol.Get(1));
         Assert.True(loaded.TryGet(2, out int version));
         Assert.Equal(3, version);
 
@@ -380,19 +388,19 @@ partial class RevisionTests {
         var loadedTags = loaded.GetOrThrow<DurableDeque>(10);
         Assert.NotNull(loadedTags);
         Assert.Equal(3, loadedTags.Count);
-        Assert.Equal(GetIssue.None, loadedTags.OfString.GetAt(0, out string? tag0));
-        Assert.Equal("alpha", tag0);
-        Assert.Equal(GetIssue.None, loadedTags.OfString.GetAt(1, out string? tag1));
-        Assert.Equal("beta", tag1);
-        Assert.Equal(GetIssue.None, loadedTags.OfString.GetAt(2, out string? tag2));
-        Assert.Equal("release", tag2);
+        Assert.Equal(GetIssue.None, loadedTags.OfSymbol.GetAt(0, out Symbol tag0));
+        Assert.Equal("alpha", tag0.Value);
+        Assert.Equal(GetIssue.None, loadedTags.OfSymbol.GetAt(1, out Symbol tag1));
+        Assert.Equal("beta", tag1.Value);
+        Assert.Equal(GetIssue.None, loadedTags.OfSymbol.GetAt(2, out Symbol tag2));
+        Assert.Equal("release", tag2.Value);
 
         // 嵌套 Dict 中的 string
         var loadedMeta = loaded.GetOrThrow<DurableDict<int>>(20);
         Assert.NotNull(loadedMeta);
         Assert.Equal(2, loadedMeta.Count);
-        Assert.Equal("2026-01-01", loadedMeta.OfString.Get(1));
-        Assert.Equal("2026-03-25", loadedMeta.OfString.Get(2));
+        Assert.Equal("2026-01-01", loadedMeta.OfSymbol.Get(1));
+        Assert.Equal("2026-03-25", loadedMeta.OfSymbol.Get(2));
     }
 
     // ═══════════════════════ TypedDict<int, string> ═══════════════════════
@@ -609,8 +617,8 @@ partial class RevisionTests {
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        root.Upsert(1, "alive");
-        root.Upsert(2, "doomed");
+        root.OfSymbol.Upsert(1, "alive");
+        root.OfSymbol.Upsert(2, "doomed");
         root.Upsert(3, 42); // 非 string
 
         var out1 = AssertCommitSucceeded(CommitToFile(rev, root, file));
@@ -624,8 +632,8 @@ partial class RevisionTests {
         Assert.True(openResult.IsSuccess);
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(2, loaded.Count);
-        Assert.True(loaded.TryGet(1, out string? s));
-        Assert.Equal("alive", s);
+        Assert.True(loaded.TryGet(1, out Symbol s));
+        Assert.Equal("alive", s.Value);
         Assert.True(loaded.TryGet(3, out int n));
         Assert.Equal(42, n);
     }
@@ -662,15 +670,15 @@ partial class RevisionTests {
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
         var deque = rev.CreateDeque();
-        deque.PushBack("first");
-        deque.PushBack("second");
-        deque.PushBack("third");
+        deque.OfSymbol.PushBack("first");
+        deque.OfSymbol.PushBack("second");
+        deque.OfSymbol.PushBack("third");
         root.Upsert(1, deque);
 
         AssertCommitSucceeded(CommitToFile(rev, root, file));
 
         // Pop 掉 front，"first" 不再可达
-        deque.OfString.PopFront(out _);
+        deque.OfSymbol.PopFront(out _);
 
         var out2 = AssertCommitSucceeded(CommitToFile(rev, root, file));
 
@@ -680,8 +688,8 @@ partial class RevisionTests {
         Assert.Equal(GetIssue.None, loaded.Get(1, out DurableObject? obj));
         var loadedDeque = Assert.IsAssignableFrom<DurableDeque>(obj);
         Assert.Equal(2, loadedDeque.Count);
-        Assert.Equal(GetIssue.None, loadedDeque.OfString.PeekFront(out string? front));
-        Assert.Equal("second", front);
+        Assert.Equal(GetIssue.None, loadedDeque.OfSymbol.PeekFront(out Symbol front));
+        Assert.Equal("second", front.Value);
     }
 
     // ═══════════════════════ Phase 5: Fragmented Symbol Pool ═══════════════════════
@@ -772,7 +780,7 @@ partial class RevisionTests {
 
         for (int i = 0; i < total; i++) {
             if (i % 2 == 0) {
-                root.Upsert(i, $"str_{i}");
+                root.OfSymbol.Upsert(i, $"str_{i}");
             }
             else {
                 root.Upsert(i, i * 10);
@@ -794,8 +802,8 @@ partial class RevisionTests {
 
         for (int i = toRemove; i < total; i++) {
             if (i % 2 == 0) {
-                Assert.True(loaded.TryGet(i, out string? s));
-                Assert.Equal($"str_{i}", s);
+                Assert.True(loaded.TryGet(i, out Symbol s));
+                Assert.Equal($"str_{i}", s.Value);
             }
             else {
                 Assert.True(loaded.TryGet(i, out int n));
@@ -821,9 +829,9 @@ partial class RevisionTests {
 
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
-        root.Upsert(1, "alpha");
-        root.Upsert(2, "beta");
-        root.Upsert(3, "gamma");
+        root.OfSymbol.Upsert(1, "alpha");
+        root.OfSymbol.Upsert(2, "beta");
+        root.OfSymbol.Upsert(3, "gamma");
         root.Upsert(4, 42);
         _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
@@ -836,8 +844,8 @@ partial class RevisionTests {
 
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(3, loaded.Count);
-        Assert.Equal("alpha", loaded.OfString.Get(1));
-        Assert.Equal("gamma", loaded.OfString.Get(3));
+        Assert.Equal("alpha", loaded.OfSymbol.Get(1));
+        Assert.Equal("gamma", loaded.OfSymbol.Get(3));
         Assert.True(loaded.TryGet(4, out int intVal));
         Assert.Equal(42, intVal);
     }
@@ -849,13 +857,13 @@ partial class RevisionTests {
 
         var rev = CreateRevision();
         var root = rev.CreateDeque();
-        root.PushBack("first");
-        root.PushBack("second");
-        root.PushBack("third");
+        root.OfSymbol.PushBack("first");
+        root.OfSymbol.PushBack("second");
+        root.OfSymbol.PushBack("third");
         _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
         // Pop 掉 front，保留 "second" 和 "third"
-        root.TryPopFront<string>(out _);
+        root.TryPopFront<Symbol>(out _);
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
 
         var openResult = OpenRevision(outcome2.HeadCommitTicket, file);
@@ -863,9 +871,9 @@ partial class RevisionTests {
 
         var loaded = Assert.IsAssignableFrom<DurableDeque>(openResult.Value!.GraphRoot);
         Assert.Equal(2, loaded.Count);
-        Assert.Equal(GetIssue.None, loaded.OfString.GetAt(0, out string? v0));
-        Assert.Equal("second", v0);
-        Assert.Equal(GetIssue.None, loaded.OfString.GetAt(1, out string? v1));
-        Assert.Equal("third", v1);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(0, out Symbol v0));
+        Assert.Equal("second", v0.Value);
+        Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(1, out Symbol v1));
+        Assert.Equal("third", v1.Value);
     }
 }

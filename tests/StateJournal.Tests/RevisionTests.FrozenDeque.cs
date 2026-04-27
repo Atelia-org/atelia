@@ -27,7 +27,7 @@ partial class RevisionTests {
     public void FrozenMixedDeque_RejectsAllMutationEntrypoints_AndAllowsReads() {
         var rev = CreateRevision();
         var deque = rev.CreateDeque();
-        deque.PushBack("tail");
+        deque.OfSymbol.PushBack("tail");
         deque.PushFront(1);
 
         deque.Freeze();
@@ -35,10 +35,10 @@ partial class RevisionTests {
         Assert.True(deque.IsFrozen);
         Assert.Equal(GetIssue.None, deque.PeekFront(out int front));
         Assert.Equal(1, front);
-        Assert.Equal(GetIssue.None, deque.PeekBack(out string? back));
-        Assert.Equal("tail", back);
+        Assert.Equal(GetIssue.None, deque.PeekBack(out Symbol back));
+        Assert.Equal("tail", back.Value);
         Assert.Throws<ObjectFrozenException>(() => deque.PushBack(2));
-        Assert.Throws<ObjectFrozenException>(() => deque.OfString.TrySetBack("next"));
+        Assert.Throws<ObjectFrozenException>(() => deque.OfSymbol.TrySetBack("next"));
         Assert.Throws<ObjectFrozenException>(() => deque.TrySetAt<int>(0, 3));
         Assert.Throws<ObjectFrozenException>(() => deque.PopFront<int>(out _));
     }
@@ -181,7 +181,7 @@ partial class RevisionTests {
         var child = rev.CreateDict<int, int>();
         child.Upsert(1, 10);
         root.PushBack(child);
-        root.PushBack("kept");
+        root.OfSymbol.PushBack("kept");
         root.Freeze();
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit");
@@ -191,8 +191,8 @@ partial class RevisionTests {
         var loadedRoot = Assert.IsAssignableFrom<DurableDeque>(opened.GraphRoot);
         Assert.True(loadedRoot.IsFrozen);
         Assert.Equal(GetIssue.None, loadedRoot.GetAt<DurableDict<int, int>>(0, out var loadedChild));
-        Assert.Equal(GetIssue.None, loadedRoot.GetAt<string>(1, out var label));
-        Assert.Equal("kept", label);
+        Assert.Equal(GetIssue.None, loadedRoot.GetAt<Symbol>(1, out var label));
+        Assert.Equal("kept", label.Value);
         Assert.NotNull(loadedChild);
         Assert.Equal(GetIssue.None, loadedChild!.Get(1, out int value));
         Assert.Equal(10, value);

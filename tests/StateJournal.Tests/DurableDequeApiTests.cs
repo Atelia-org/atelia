@@ -46,36 +46,36 @@ public class DurableDequeApiTests {
         var rev = new Revision(1);
         var deque = rev.CreateDeque();
 
-        deque.PushBack("tail");
+        deque.OfSymbol.PushBack("tail");
         deque.PushFront(42);
 
         Assert.Equal(2, deque.Count);
         Assert.True(deque.TryPeekFront(out int front));
         Assert.Equal(42, front);
-        Assert.True(deque.TryPeekBack(out string? back));
-        Assert.Equal("tail", back);
+        Assert.True(deque.TryPeekBack(out Symbol back));
+        Assert.Equal("tail", back.Value);
 
         Assert.True(deque.OfInt32.TrySetFront(7));
-        Assert.True(deque.OfString.TrySetBack("new-tail"));
+        Assert.True(deque.OfSymbol.TrySetBack("new-tail"));
         Assert.True(deque.TrySetAt<int>(0, 9));
-        Assert.True(deque.OfString.TrySetAt(1, "tail-2"));
+        Assert.True(deque.OfSymbol.TrySetAt(1, "tail-2"));
 
         Assert.Equal(GetIssue.None, deque.GetAt<int>(0, out int typedFront));
         Assert.Equal(9, typedFront);
-        Assert.Equal(GetIssue.None, deque.OfString.GetAt(1, out string? typedBack));
-        Assert.Equal("tail-2", typedBack);
+        Assert.Equal(GetIssue.None, deque.OfSymbol.GetAt(1, out Symbol typedBack));
+        Assert.Equal("tail-2", typedBack.Value);
         Assert.Equal(9, deque.GetAt<int>(0));
-        Assert.Equal("tail-2", deque.OfString.GetAt(1));
+        Assert.Equal("tail-2", deque.OfSymbol.GetAt(1));
 
         Assert.True(deque.TryPeekFrontValueKind(out var frontKind));
         Assert.True(deque.TryPeekBackValueKind(out var backKind));
         Assert.Equal(ValueKind.NonnegativeInteger, frontKind);
-        Assert.Equal(ValueKind.String, backKind);
+        Assert.Equal(ValueKind.Symbol, backKind);
 
         Assert.True(deque.TryPopFront(out int poppedFront));
-        Assert.True(deque.TryPopBack(out string? poppedBack));
+        Assert.True(deque.TryPopBack(out Symbol poppedBack));
         Assert.Equal(9, poppedFront);
-        Assert.Equal("tail-2", poppedBack);
+        Assert.Equal("tail-2", poppedBack.Value);
     }
 
     [Fact]
@@ -159,7 +159,7 @@ public class DurableDequeApiTests {
     public void MixedDeque_TypedFront_TypeMismatch_DoesNotPretendDequeIsEmpty() {
         var rev = new Revision(1);
         var deque = rev.CreateDeque();
-        deque.PushFront("title");
+        deque.OfSymbol.PushFront("title");
 
         Assert.Equal(GetIssue.TypeMismatch, deque.OfInt32.PeekFront(out int _));
         Assert.Throws<InvalidCastException>(() => _ = deque.OfInt32.GetFrontOrThrow());
@@ -169,10 +169,20 @@ public class DurableDequeApiTests {
     public void MixedDeque_TypedBack_TypeMismatch_DoesNotPretendDequeIsEmpty() {
         var rev = new Revision(1);
         var deque = rev.CreateDeque();
-        deque.PushBack("tail");
+        deque.OfSymbol.PushBack("tail");
 
         Assert.Equal(GetIssue.TypeMismatch, deque.OfInt32.PeekBack(out int _));
         Assert.Throws<InvalidCastException>(() => _ = deque.OfInt32.GetBackOrThrow());
+    }
+
+    [Fact]
+    public void MixedDeque_StringLiteral_InfersStringAndRemainsUnsupported() {
+        var rev = new Revision(1);
+        var deque = rev.CreateDeque();
+
+        var ex = Assert.Throws<NotSupportedException>(() => deque.PushBack("tail"));
+        Assert.Contains("System.String", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, deque.Count);
     }
 
     [Fact]

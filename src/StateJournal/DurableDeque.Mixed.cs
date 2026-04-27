@@ -6,7 +6,7 @@ namespace Atelia.StateJournal;
 /// <summary>替代 <see cref="DurableDeque{ValueBox}"/> 的异构双端队列。</summary>
 [UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.Deque)]
 public abstract partial class DurableDeque : DurableDequeBase, IDeque,
-    IDeque<bool>, IDeque<string>, IDeque<DurableObject>,
+    IDeque<bool>, IDeque<Symbol>, IDeque<DurableObject>,
     IDeque<double>, IDeque<float>, IDeque<Half>,
     IDeque<ulong>, IDeque<uint>, IDeque<ushort>, IDeque<byte>,
     IDeque<long>, IDeque<int>, IDeque<short>, IDeque<sbyte> {
@@ -250,35 +250,59 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
 
     #region Symbol Helpers
 
-    private GetIssue GetSymbolAt(int index, out string? value) {
-        value = null;
+    private GetIssue GetSymbolAt(int index, out Symbol value) {
         var issue = GetCore<SymbolId, ValueBox.SymbolIdFace>(index, out var symbolId);
-        if (issue != GetIssue.None) { return issue; }
-        return RevisionStringCodec.Decode(Revision, symbolId, out value);
+        if (issue != GetIssue.None) {
+            value = default;
+            return issue;
+        }
+        if (symbolId.IsNull) {
+            // slot 存的是 ValueBox.Null 或非 Symbol 类型；Symbol 本身契约非 null，不应被误读为 Symbol.Empty。
+            value = default;
+            return GetIssue.TypeMismatch;
+        }
+        if (!Revision.TryGetSymbol(symbolId, out string? str)) {
+            value = default;
+            return GetIssue.LoadFailed;
+        }
+        value = new Symbol(str!);
+        return GetIssue.None;
     }
 
-    private GetIssue PeekSymbol(bool front, out string? value) {
-        value = null;
+    private GetIssue PeekSymbol(bool front, out Symbol value) {
         var issue = PeekCore<SymbolId, ValueBox.SymbolIdFace>(front, out var symbolId);
-        if (issue != GetIssue.None) { return issue; }
-        return RevisionStringCodec.Decode(Revision, symbolId, out value);
+        if (issue != GetIssue.None) {
+            value = default;
+            return issue;
+        }
+        if (symbolId.IsNull) {
+            // slot 存的是 ValueBox.Null 或非 Symbol 类型；Symbol 本身契约非 null，不应被误读为 Symbol.Empty。
+            value = default;
+            return GetIssue.TypeMismatch;
+        }
+        if (!Revision.TryGetSymbol(symbolId, out string? str)) {
+            value = default;
+            return GetIssue.LoadFailed;
+        }
+        value = new Symbol(str!);
+        return GetIssue.None;
     }
 
-    private void PushSymbol(bool front, string? value) {
+    private void PushSymbol(bool front, Symbol value) {
         ThrowIfDetachedOrFrozen();
-        SymbolId id = RevisionStringCodec.Encode(Revision, value);
+        SymbolId id = Revision.InternSymbol(value.Value);
         PushCore<SymbolId, ValueBox.SymbolIdFace>(front, id);
     }
 
-    private bool TrySetSymbol(int index, string? value) {
+    private bool TrySetSymbol(int index, Symbol value) {
         ThrowIfDetachedOrFrozen();
-        SymbolId id = RevisionStringCodec.Encode(Revision, value);
+        SymbolId id = Revision.InternSymbol(value.Value);
         return TrySetCore<SymbolId, ValueBox.SymbolIdFace>(index, id);
     }
 
-    private bool TrySetSymbol(bool front, string? value) {
+    private bool TrySetSymbol(bool front, Symbol value) {
         ThrowIfDetachedOrFrozen();
-        SymbolId id = RevisionStringCodec.Encode(Revision, value);
+        SymbolId id = Revision.InternSymbol(value.Value);
         return TrySetCore<SymbolId, ValueBox.SymbolIdFace>(front, id);
     }
 

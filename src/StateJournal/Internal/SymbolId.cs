@@ -11,8 +11,8 @@ namespace Atelia.StateJournal.Internal;
 /// 与 <see cref="LocalId.Null"/> / <see cref="NodeContainers.LeafHandle"/> / <see cref="DurableRef"/> 等 nullable handle 同构。</para>
 /// <para><b>不要</b>把它误读为“user-facing <see cref="Symbol"/> 处于 null 态”——按新契约 <c>Symbol.Value</c> 永非 null，
 /// typed <see cref="Symbol"/> 容器 / wire 上也不允许出现 <see cref="Null"/>。</para>
-/// <para><b>唯一合法出现位置</b>：mixed 容器路径中作为 <see cref="ValueBox"/>.<c>Null</c>
-/// 与 <c>null string</c> 之间的 wire-级桥接 sentinel，详见 <see cref="RevisionStringCodec"/>。</para>
+/// <para><b>合法出现位置</b>：内部 handle / <see cref="ValueBox"/> 层可用它表示“没有 symbol slot”；
+/// user-facing <see cref="Symbol"/> 层不暴露 null symbol。</para>
 /// </remarks>
 internal readonly record struct SymbolId(uint Value) {
     /// <summary>handle 家族 sentinel：未指向任何 interned symbol。与 <c>Symbol.Value is null</c> 无关。</summary>

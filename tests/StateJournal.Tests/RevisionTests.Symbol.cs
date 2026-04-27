@@ -192,7 +192,7 @@ partial class RevisionTests {
     }
 
     [Fact]
-    public void Commit_WithTypedDequeOfString_ThenOpen_RoundTrips() {
+    public void Commit_WithTypedDequeOfSymbol_ThenOpen_RoundTrips() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
 
@@ -426,7 +426,7 @@ partial class RevisionTests {
         var rev = CreateRevision();
         var root = rev.CreateDict<int>();
         for (int i = 0; i < 6; i++) {
-            root.OfString.Upsert(i, $"value_{i}");
+            root.OfSymbol.Upsert(i, $"value_{i}");
         }
 
         _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
@@ -443,10 +443,10 @@ partial class RevisionTests {
 
         var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
         Assert.Equal(5, loaded.Count);
-        Assert.Equal(GetIssue.NotFound, loaded.OfString.Get(0, out _));
+        Assert.Equal(GetIssue.NotFound, loaded.OfSymbol.Get(0, out _));
         for (int i = 1; i < 6; i++) {
-            Assert.Equal(GetIssue.None, loaded.OfString.Get(i, out string? value));
-            Assert.Equal($"value_{i}", value);
+            Assert.Equal(GetIssue.None, loaded.OfSymbol.Get(i, out Symbol value));
+            Assert.Equal($"value_{i}", value.Value);
         }
     }
 
@@ -458,13 +458,13 @@ partial class RevisionTests {
         var rev = CreateRevision();
         var root = rev.CreateDeque();
         for (int i = 0; i < 6; i++) {
-            root.OfString.PushBack($"value_{i}");
+            root.OfSymbol.PushBack($"value_{i}");
         }
 
         _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
 
-        Assert.Equal(GetIssue.None, root.OfString.PopFront(out string? removed));
-        Assert.Equal("value_0", removed);
+        Assert.Equal(GetIssue.None, root.OfSymbol.PopFront(out Symbol removed));
+        Assert.Equal("value_0", removed.Value);
         var outcome2 = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
 
         var frameInfo = file.ReadFrameInfo(root.HeadTicket);
@@ -477,8 +477,8 @@ partial class RevisionTests {
         var loaded = Assert.IsAssignableFrom<DurableDeque>(openResult.Value!.GraphRoot);
         Assert.Equal(5, loaded.Count);
         for (int i = 0; i < 5; i++) {
-            Assert.Equal(GetIssue.None, loaded.OfString.GetAt(i, out string? value));
-            Assert.Equal($"value_{i + 1}", value);
+            Assert.Equal(GetIssue.None, loaded.OfSymbol.GetAt(i, out Symbol value));
+            Assert.Equal($"value_{i + 1}", value.Value);
         }
     }
 }

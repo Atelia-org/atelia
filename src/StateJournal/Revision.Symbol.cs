@@ -28,7 +28,7 @@ partial class Revision {
 
     /// <summary>
     /// 写时把 symbol durable mirror 补齐到至少包含本次实际落盘用到的 symbol。
-    /// 这是一个 write-through 侧效应：typed Symbol / mixed string 在写出时都会触达此入口。
+    /// 这是一个 write-through 侧效应：typed Symbol / mixed Symbol 在写出时都会触达此入口。
     /// </summary>
     internal void EnsureSymbolMirrored(string value, SymbolId id) {
         Debug.Assert(_symbolPool.TryGetValue(id.ToSlotHandle(), out string? existed) && string.Equals(existed, value, StringComparison.Ordinal));
@@ -36,7 +36,7 @@ partial class Revision {
     }
 
     /// <summary>
-    /// mixed string 路径在写出时只有 SymbolId；此处从当前 runtime symbol pool 反查 string，
+    /// mixed Symbol 路径在写出时只有 SymbolId；此处从当前 runtime symbol pool 反查 string，
     /// 再将 durable mirror 补齐。
     /// </summary>
     internal void EnsureSymbolIdMirrored(SymbolId id) {

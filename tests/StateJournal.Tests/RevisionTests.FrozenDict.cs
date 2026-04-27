@@ -168,7 +168,7 @@ partial class RevisionTests {
         var child = rev.CreateDict<int, int>();
         child.Upsert(1, 10);
         root.Upsert("child", child);
-        root.Upsert("label", "kept");
+        root.OfSymbol.Upsert("label", "kept");
         root.Freeze();
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit");
@@ -177,8 +177,8 @@ partial class RevisionTests {
         var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
         var loadedRoot = Assert.IsAssignableFrom<DurableDict<string>>(opened.GraphRoot);
         Assert.True(loadedRoot.IsFrozen);
-        Assert.Equal(GetIssue.None, loadedRoot.Get("label", out string? label));
-        Assert.Equal("kept", label);
+        Assert.Equal(GetIssue.None, loadedRoot.Get("label", out Symbol label));
+        Assert.Equal("kept", label.Value);
         Assert.Equal(GetIssue.None, loadedRoot.Get("child", out DurableObject? loadedChild));
         var loadedChildDict = Assert.IsAssignableFrom<DurableDict<int, int>>(loadedChild);
         Assert.Equal(GetIssue.None, loadedChildDict.Get(1, out int value));

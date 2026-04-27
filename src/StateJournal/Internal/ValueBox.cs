@@ -53,7 +53,7 @@ internal readonly partial struct ValueBox {
             HeapValueKind.FloatingPoint => ValueKind.FloatingPoint,
             HeapValueKind.NonnegativeInteger => ValueKind.NonnegativeInteger,
             HeapValueKind.NegativeInteger => ValueKind.NegativeInteger,
-            HeapValueKind.String => ValueKind.String,
+            HeapValueKind.Symbol => ValueKind.Symbol,
             _ => throw new UnreachableException()
         },
         BoxLzc.DurableRef => GetDurRefKind() switch {

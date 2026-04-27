@@ -45,7 +45,7 @@ partial struct ValueBox {
             case HeapValueKind.NegativeInteger:
                 writer.TaggedNegativeInteger(DecodeHeapNegInt());
                 break;
-            case HeapValueKind.String:
+            case HeapValueKind.Symbol:
                 writer.TaggedSymbolId(DecodeSymbolId());
                 break;
             case HeapValueKind.Blank: // 未初始化的ValueBox不应该参与序列化

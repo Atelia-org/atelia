@@ -193,18 +193,18 @@ internal class DequeDemo {
         Debug.Assert(typed.TryPopFront(out int poppedFront) && poppedFront == 10);
         Debug.Assert(typed.TryPopBack(out int poppedBack) && poppedBack == 30);
 
-        // MixedDeque 中的 string 操作需要绑定 Revision（string 通过 per-Revision Symbol Pool intern）。
+        // MixedDeque 中的 Symbol 操作需要绑定 Revision（Symbol 通过 per-Revision Symbol Pool intern）。
         var rev = new Revision(1);
         var mixed = rev.CreateDeque();
-        mixed.PushBack("title");
+        mixed.OfSymbol.PushBack("title");
         mixed.PushBack(42);
         mixed.PushFront(true);
         Debug.Assert(mixed.OfInt32.TrySetAt(2, 99));
         Debug.Assert(mixed.TryPeekFront(out bool enabled) && enabled);
         Debug.Assert(mixed.OfInt32.GetAtOrThrow(2) == 99);
 
-        mixed.OfString.PushFront("new-title");
-        Debug.Assert(mixed.TryPopFront(out string? s) && s == "new-title");
+        mixed.OfSymbol.PushFront("new-title");
+        Debug.Assert(mixed.TryPopFront(out Symbol s) && s.Value == "new-title");
 
         // 对于 MixedDeque 中的 DurableObject 子类型，不提供 Of<Subtype>() 视图，
         // 而是通过 generic 方法族访问，避免隐藏分配的 subtype wrapper。

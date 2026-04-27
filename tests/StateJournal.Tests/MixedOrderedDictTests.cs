@@ -81,13 +81,23 @@ public class MixedOrderedDictTests : IDisposable {
         var rev = CreateRevision();
         var dict = rev.CreateOrderedDict<int>();
 
-        dict.Upsert<string>(1, "hello");
-        dict.Upsert<string>(2, "world");
+        dict.Upsert<Symbol>(1, "hello");
+        dict.Upsert<Symbol>(2, "world");
 
-        Assert.True(dict.TryGet<string>(1, out var v1));
+        Assert.True(dict.TryGet<Symbol>(1, out var v1));
         Assert.Equal("hello", v1);
-        Assert.True(dict.TryGet<string>(2, out var v2));
+        Assert.True(dict.TryGet<Symbol>(2, out var v2));
         Assert.Equal("world", v2);
+    }
+
+    [Fact]
+    public void Upsert_StringLiteral_InfersStringAndRemainsUnsupported() {
+        var rev = CreateRevision();
+        var dict = rev.CreateOrderedDict<int>();
+
+        var ex = Assert.Throws<NotSupportedException>(() => dict.Upsert(1, "hello"));
+        Assert.Contains("System.String", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, dict.Count);
     }
 
     [Fact]
@@ -195,7 +205,7 @@ public class MixedOrderedDictTests : IDisposable {
         dict.Upsert(1, 42);
         dict.Upsert(2, 100.0);
         dict.Upsert(3, true);
-        dict.Upsert<string>(4, "hello");
+        dict.Upsert<Symbol>(4, "hello");
 
         Assert.True(dict.TryGetValueKind(1, out var k1));
         Assert.Equal(ValueKind.NonnegativeInteger, k1);
@@ -204,7 +214,7 @@ public class MixedOrderedDictTests : IDisposable {
         Assert.True(dict.TryGetValueKind(3, out var k3));
         Assert.Equal(ValueKind.Boolean, k3);
         Assert.True(dict.TryGetValueKind(4, out var k4));
-        Assert.Equal(ValueKind.String, k4);
+        Assert.Equal(ValueKind.Symbol, k4);
         Assert.False(dict.TryGetValueKind(99, out _));
     }
 
@@ -287,8 +297,8 @@ public class MixedOrderedDictTests : IDisposable {
         var rev = CreateRevision();
 
         var dict = rev.CreateOrderedDict<int>();
-        dict.Upsert<string>(1, "alpha");
-        dict.Upsert<string>(2, "beta");
+        dict.Upsert<Symbol>(1, "alpha");
+        dict.Upsert<Symbol>(2, "beta");
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
 
@@ -301,9 +311,9 @@ public class MixedOrderedDictTests : IDisposable {
         var loadedDict = Assert.IsAssignableFrom<DurableOrderedDict<int>>(loadResult.Value);
 
         Assert.Equal(2, loadedDict.Count);
-        Assert.True(loadedDict.TryGet<string>(1, out var v1));
+        Assert.True(loadedDict.TryGet<Symbol>(1, out var v1));
         Assert.Equal("alpha", v1);
-        Assert.True(loadedDict.TryGet<string>(2, out var v2));
+        Assert.True(loadedDict.TryGet<Symbol>(2, out var v2));
         Assert.Equal("beta", v2);
     }
 
@@ -412,7 +422,7 @@ public class MixedOrderedDictTests : IDisposable {
         var root = rev.CreateDict<string, DurableOrderedDict<int>>();
         var child = rev.CreateOrderedDict<int>();
         child.Upsert(10, 42);
-        child.Upsert<string>(20, "alpha");
+        child.Upsert<Symbol>(20, "alpha");
         root.Upsert("ordered", child);
 
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
@@ -430,7 +440,7 @@ public class MixedOrderedDictTests : IDisposable {
         Assert.Equal(DurableObjectKind.MixedOrderedDict, loadedChild!.Kind);
         Assert.True(loadedChild.TryGet<int>(10, out var vi));
         Assert.Equal(42, vi);
-        Assert.True(loadedChild.TryGet<string>(20, out var vs));
+        Assert.True(loadedChild.TryGet<Symbol>(20, out var vs));
         Assert.Equal("alpha", vs);
     }
 
@@ -466,13 +476,13 @@ public class MixedOrderedDictTests : IDisposable {
         var dict = rev.CreateOrderedDict<string>();
 
         dict.Upsert("age", 30);
-        dict.Upsert("name", "Alice");
+        dict.OfSymbol.Upsert("name", "Alice");
         dict.Upsert("active", true);
 
         Assert.Equal(3, dict.Count);
         Assert.True(dict.TryGet<int>("age", out var age));
         Assert.Equal(30, age);
-        Assert.True(dict.TryGet<string>("name", out var name));
+        Assert.True(dict.TryGet<Symbol>("name", out var name));
         Assert.Equal("Alice", name);
         Assert.True(dict.TryGet<bool>("active", out var active));
         Assert.True(active);
@@ -491,14 +501,14 @@ public class MixedOrderedDictTests : IDisposable {
         var dict = rev.CreateOrderedDict<int>();
         dict.Upsert(1, 42);
         dict.Upsert(2, true);
-        dict.Upsert<string>(3, "hello");
+        dict.Upsert<Symbol>(3, "hello");
 
         AssertCommitSucceeded(CommitToFile(rev, dict, file), "Commit1");
 
         // Re-upsert the exact same values
         dict.Upsert(1, 42);
         dict.Upsert(2, true);
-        dict.Upsert<string>(3, "hello");
+        dict.Upsert<Symbol>(3, "hello");
 
         // HasChanges should remain false — UpdateOrInit short-circuits on equal values
         Assert.False(dict.HasChanges, "Same-value re-Upsert should not produce dirty state");

@@ -10,18 +10,18 @@ public class DurableDictApiTests {
         var dict = rev.CreateDict<string>();
 
         dict.Upsert("count", 42);
-        dict.Upsert("title", "draft");
+        dict.OfSymbol.Upsert("title", "draft");
 
         Assert.True(dict.TryGet("count", out int count));
         Assert.Equal(42, count);
-        Assert.True(dict.TryGet("title", out string? title));
-        Assert.Equal("draft", title);
+        Assert.True(dict.TryGet("title", out Symbol title));
+        Assert.Equal("draft", title.Value);
 
         dict.OfInt32.Upsert("count", 99);
-        dict.OfString.Upsert("title", "v2");
+        dict.OfSymbol.Upsert("title", "v2");
 
         Assert.Equal(99, dict.GetOrThrow<int>("count"));
-        Assert.Equal("v2", dict.OfString.Get("title"));
+        Assert.Equal("v2", dict.OfSymbol.Get("title"));
         Assert.Equal(GetIssue.None, dict.OfInt32.Get("count", out int exactCount));
         Assert.Equal(99, exactCount);
     }
@@ -30,10 +30,20 @@ public class DurableDictApiTests {
     public void MixedDict_TypedView_TypeMismatch_ReturnsIssue() {
         var rev = new Revision(1);
         var dict = rev.CreateDict<string>();
-        dict.Upsert("title", "memo");
+        dict.OfSymbol.Upsert("title", "memo");
 
         Assert.Equal(GetIssue.TypeMismatch, dict.OfInt32.Get("title", out int _));
         Assert.Throws<InvalidCastException>(() => dict.OfInt32.Get("title"));
+    }
+
+    [Fact]
+    public void MixedDict_StringLiteral_InfersStringAndRemainsUnsupported() {
+        var rev = new Revision(1);
+        var dict = rev.CreateDict<string>();
+
+        var ex = Assert.Throws<NotSupportedException>(() => dict.Upsert("title", "draft"));
+        Assert.Contains("System.String", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, dict.Count);
     }
 
     [Fact]

@@ -10,7 +10,7 @@ internal enum HeapValueKind : byte {
     NegativeInteger,
     #endregion
 
-    String
+    Symbol
 }
 
 internal static class HeapValueKindHelper {
