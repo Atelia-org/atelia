@@ -45,6 +45,18 @@ internal ref struct BinaryDiffWriter {
         StringPayloadCodec.WriteTo(_downstream, value ?? string.Empty);
     }
 
+    /// <summary>
+    /// 值语义 <see cref="ByteString"/> (BlobPayload) 的裸写入。格式：<c>VarUInt(byteLength)</c> 后跟原始字节。
+    /// 与 <see cref="BareStringPayload"/> 不同，blob 没有 UTF-8/UTF-16 自适应：长度即字节数，payload 一字不动。
+    /// </summary>
+    public void BareBlobPayload(ReadOnlySpan<byte> value, bool asKey) {
+        VarInt.WriteUInt32(_downstream, (uint)value.Length);
+        if (value.Length > 0) {
+            value.CopyTo(_downstream.GetSpan(value.Length));
+            _downstream.Advance(value.Length);
+        }
+    }
+
     /// <summary>依赖于<see cref="DurableObjectKind"/>基于byte。</summary>
     public void BareDurableRef(LocalId value, bool asKey) {
         BareUInt32(value.Value, asKey);
@@ -149,6 +161,17 @@ internal ref struct BinaryDiffWriter {
         _downstream.GetSpan(1)[0] = ScalarRules.StringPayload.Tag;
         _downstream.Advance(1);
         BareStringPayload(value, asKey: false);
+    }
+
+    /// <summary>
+    /// Mixed payload <see cref="ByteString"/> 的 tagged 写入。
+    /// 写 <see cref="ScalarRules.BlobPayload.Tag"/> (0xC1) 后跟 <see cref="BareBlobPayload"/> 完整 payload。
+    /// 空 blob 编码为 <c>0xC1 0x00</c>；上层用 <see cref="TaggedNull"/> 表达 null。
+    /// </summary>
+    public void TaggedBlob(ByteString value) {
+        _downstream.GetSpan(1)[0] = ScalarRules.BlobPayload.Tag;
+        _downstream.Advance(1);
+        BareBlobPayload(value.AsSpan(), asKey: false);
     }
 
     /// <summary>

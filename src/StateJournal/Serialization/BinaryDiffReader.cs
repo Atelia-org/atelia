@@ -137,6 +137,17 @@ internal ref struct BinaryDiffReader {
     /// header LSB=1 → UTF-8，payloadByteCount = header &gt;&gt; 1。
     /// </summary>
     internal string BareStringPayload(bool asKey) => StringPayloadCodec.ReadFrom(ref this);
+
+    /// <summary>
+    /// 值语义 <see cref="ByteString"/> (BlobPayload) 的裸读取。格式：<c>VarUInt(byteLength)</c> 后跟原始字节。
+    /// 长度为 0 时返回 <see cref="ByteString.Empty"/>，不做额外分配。
+    /// </summary>
+    internal ByteString BareBlobPayload(bool asKey) {
+        int length = ReadCount();
+        if (length == 0) { return ByteString.Empty; }
+        ReadOnlySpan<byte> bytes = ReadSpan(length);
+        return new ByteString(bytes);
+    }
     #endregion
     #region Read Taged
     internal byte TaggedNonnegative1() => RawByte();
@@ -158,5 +169,11 @@ internal ref struct BinaryDiffReader {
     /// null 走 <see cref="ScalarRules.Null"/> 路径，本方法只处理非 null payload，永远返回非 null（空字符串编码为长度 0 的 UTF-16LE）。
     /// </summary>
     internal string TaggedStringPayload() => BareStringPayload(asKey: false);
+
+    /// <summary>
+    /// 读取一个 tagged blob payload（调用方已消耗 <see cref="ScalarRules.BlobPayload.Tag"/> (0xC1) 标签字节）。
+    /// null 走 <see cref="ScalarRules.Null"/> 路径，本方法只处理非 null payload；空 blob 返回 <see cref="ByteString.Empty"/>。
+    /// </summary>
+    internal ByteString TaggedBlobPayload() => BareBlobPayload(asKey: false);
     #endregion
 }
