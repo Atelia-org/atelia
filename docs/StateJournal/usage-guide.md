@@ -259,7 +259,7 @@ deque.PushBack(2); // ObjectFrozenException
 | key/value schema 明确 | `DurableDict<TKey, TValue>` |
 | 队列元素类型明确 | `DurableDeque<T>` |
 | 需要按 key 有序遍历 / range query | `DurableOrderedDict<TKey, TValue>` |
-| 同一容器里要混放 int/string/bool/DurableObject | `DurableDict<TKey>` / `DurableDeque` / `DurableOrderedDict<TKey>` |
+| 同一容器里要混放 int/string/ByteString/bool/DurableObject | `DurableDict<TKey>` / `DurableDeque` / `DurableOrderedDict<TKey>` |
 | 需要稳定 block ID 的文本编辑 | `DurableText` |
 
 Typed 容器的优点：
@@ -271,8 +271,9 @@ Typed 容器的优点：
 typed 容器里的字符串类型选择：
 
 - `string` 是值语义 payload-backed 字符串，适合作为普通 typed key/value。
+- `ByteString` 是值语义 payload-backed 字节串，适合 mixed 容器里的 blob/opaque bytes 值。
 - `Symbol` 是显式 symbol-backed facade，适合需要表达“身份/驻留字符串”语义的字段。
-- mixed 容器里的 `Symbol` 走 intern 池；mixed 容器里的 `string` 走独立 payload，不再 silent intern。
+- mixed 容器里的 `Symbol` 走 intern 池；mixed 容器里的 `string` / `ByteString` 走独立 owned payload，不再 silent intern。
 
 例如：
 
@@ -295,6 +296,7 @@ Mixed 容器主要支持：
 bool
 Symbol
 string
+ByteString
 DurableObject
 double / float / Half
 ulong / uint / ushort / byte
@@ -307,6 +309,7 @@ null
 - `DateTime`、任意 POCO、任意 enum 当前不是 mixed value 直接支持类型。
 - DurableObject 子类型可以通过泛型便捷 API 读取，如 `GetOrThrow<DurableDict<string>>()`。
 - `Of<DurableDict<string>>()` 这种 DurableObject 子类型 view 不支持；用泛型 `Get/TryGet/GetOrThrow`。
+- `ByteString.Empty` 表示一个具体的空字节串（`ValueKind.Blob`），不等价于 mixed `null`。
 
 ### 4.3 null 语义
 
@@ -328,7 +331,7 @@ mixed.Upsert("child", (DurableObject?)null);
 mixed.TryGet("child", out DurableDict<string, int>? child); // child == null
 ```
 
-也就是说：typed `string` 会把 `null` 规范化为空字符串；mixed `string`、typed `Symbol` 和 mixed `DurableObject` 则保留显式 null facade。
+也就是说：typed `string` 会把 `null` 规范化为空字符串；mixed `string`、typed `Symbol` 和 mixed `DurableObject` 则保留显式 null facade；`ByteString` 是值类型，没有 `null` 概念，`default(ByteString)` 等价于 `ByteString.Empty`。
 
 对值类型，如 `int`，`TValue?` 在 `where TValue : notnull` 下只是 nullable annotation，不是 `Nullable<T>` 包装。
 

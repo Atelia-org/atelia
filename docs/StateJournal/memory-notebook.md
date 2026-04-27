@@ -84,7 +84,7 @@ private T[]?[] _slabs;
 - `TypedDeque<Symbol>` 已正式开放
 - `TypedDict<TKey, Symbol>` 不再需要专用 `SymbolValDictImpl`
 
-但 mixed 路线现在已**对称分流**为两条独立通路：
+但 mixed 路线现在已**对称分流**为三条独立通路：
 
 - `MixedDict<TKey, Symbol>` / `MixedDeque<Symbol>`（视图：`OfSymbol`）：
   - `Upsert<Symbol>(...)` 走 intern 通路 → `Revision._symbolPool` → 同内容去重；
@@ -98,8 +98,14 @@ private T[]?[] _slabs;
   - `ValueKind.String`；
   - 写 `null` → `ValueBox.Null`（不抛 ANE）；
   - empty `""` 不进 intern 池。
-- 两条通路互**不互通**：同一 key 先 `Upsert<Symbol>` 再 `OfString.Get` 返回 `GetIssue.TypeMismatch`，反之亦然；ValueKind 严格区分。
-- payload 通路是 owned 资源：dirty 修改 inplace 复用 slot；commit/discard/fork 时由五件套（`UpdateOrInit`/`Freeze`/`CloneFrozenForNewOwner`/`ReleaseSlot`/equality）维护生命周期。
+- `MixedDict<TKey, ByteString>` / `MixedDeque<ByteString>`（视图：`OfBlob`）：
+  - `Upsert(key, new ByteString(bytes))` 走 blob payload 通路 → `ValuePools.OfOwnedBlob` → **不去重**，每次独立 slot；
+  - 容器中存 `ValueBox(HeapValueKind.BlobPayload, OwnedSlotHandle)`；
+  - wire 上落 `0xC1` tag + `VarUInt(byteLength)` + raw bytes；
+  - `ValueKind.Blob`；
+  - `ByteString` 是值类型，没有 `null` 概念；`default(ByteString)` / `ByteString.Empty` 表示具体空 blob，不等价于 `ValueBox.Null`。
+- 三条通路互**不互通**：同一 key 先 `Upsert<Symbol>` 再 `OfString.Get` / `OfBlob.Get` 返回 `GetIssue.TypeMismatch`，其他跨 kind 组合同理；ValueKind 严格区分。
+- string/blob payload 通路是 owned 资源：dirty 修改 inplace 复用 slot；commit/discard/fork 时由五件套（`UpdateOrInit`/`Freeze`/`CloneFrozenForNewOwner`/`ReleaseSlot`/equality）维护生命周期。
 
 ### 4. DurableObject 已引入 fork / frozen 对象级语义
 
