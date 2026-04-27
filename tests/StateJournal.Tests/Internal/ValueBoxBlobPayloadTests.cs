@@ -625,4 +625,200 @@ public class ValueBoxBlobPayloadTests {
             ValueBox.ReleaseOwnedHeapSlot(b);
         }
     }
+
+    // ─────────────────── FromTrusted 零拷贝路径 ───────────────────
+
+    [Fact]
+    public void BlobPayload_FromTrusted_NoClone_SharesByteArrayReference() {
+        // CMS Step B：FromTrusted 应直接复用 ByteString 底层 byte[] 引用，而非 defensive clone。
+        // 通过对照 From 路径（不同引用）+ FromTrusted 路径（同引用）锁定契约，防 future 误改回 clone。
+        // 注：BlobPayloadFace.Get 返回的 ByteString 直接包装 pool 内 byte[]（CMS Step 3b 设计），
+        // 因此 DangerousGetUnderlyingArray() 即 pool 内 byte[] 引用。
+        byte[] external = [9, 8, 7, 6, 5];
+        ByteString src = ByteString.FromTrustedOwned(external);
+
+        ValueBox boxClone = ValueBox.BlobPayloadFace.From(src);
+        ValueBox boxTrusted = ValueBox.BlobPayloadFace.FromTrusted(src);
+        try {
+            ValueBox.BlobPayloadFace.Get(boxClone, out ByteString gotClone);
+            ValueBox.BlobPayloadFace.Get(boxTrusted, out ByteString gotTrusted);
+            Assert.NotSame(external, gotClone.DangerousGetUnderlyingArray());     // 默认路径必 clone
+            Assert.Same(external, gotTrusted.DangerousGetUnderlyingArray());      // trusted 路径必零拷贝
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(boxClone);
+            ValueBox.ReleaseOwnedHeapSlot(boxTrusted);
+        }
+    }
+
+    [Fact]
+    public void BlobPayload_FromTrusted_ExternalMutation_PropagatesToPool() {
+        // FromTrusted 的契约成本：调用方违反"独占 + immutable"承诺时，pool 会跟着被篡改。
+        // 这是反向证明零拷贝的契约锁定测试（同时提醒 future 维护者：违约后果是静默篡改）。
+        byte[] external = [1, 2, 3];
+        ValueBox box = ValueBox.BlobPayloadFace.FromTrusted(ByteString.FromTrustedOwned(external));
+        try {
+            external[1] = 0xFF; // 故意违约 mutate
+            ValueBox.BlobPayloadFace.Get(box, out ByteString got);
+            Assert.Equal(new byte[] { 1, 0xFF, 3 }, got.AsSpan().ToArray());
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+        }
+    }
+
+    [Fact]
+    public void BlobPayload_UpdateOrInitTrusted_NoClone_SharesByteArrayReference() {
+        // UpdateOrInitTrusted 在新 slot 与 inplace overwrite 两条路径上都应零拷贝。
+        // 路径 1：new from uninit
+        byte[] ext1 = [11, 22, 33];
+        ValueBox box = default;
+        ValueBox.BlobPayloadFace.UpdateOrInitTrusted(ref box, ByteString.FromTrustedOwned(ext1), out _);
+        try {
+            int beforePoolCount = OwnedBlobCount;
+            ulong bitsBeforeOverwrite;
+            ValueBox.BlobPayloadFace.Get(box, out ByteString got1);
+            Assert.Same(ext1, got1.DangerousGetUnderlyingArray());
+            bitsBeforeOverwrite = box.GetBits();
+
+            // 路径 2：inplace overwrite（exclusive blob slot + 不同内容）
+            byte[] ext2 = [44, 55, 66, 77];
+            ValueBox.BlobPayloadFace.UpdateOrInitTrusted(ref box, ByteString.FromTrustedOwned(ext2), out _);
+            Assert.Equal(bitsBeforeOverwrite, box.GetBits()); // inplace：bits（含 handle）不变
+            Assert.Equal(beforePoolCount, OwnedBlobCount);    // 不增加 pool 槽位
+            ValueBox.BlobPayloadFace.Get(box, out ByteString got2);
+            Assert.Same(ext2, got2.DangerousGetUnderlyingArray());
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+        }
+    }
+
+    [Fact]
+    public void BlobPayload_UpdateOrInitTrusted_ReportsOldBareBytesBeforeMutation() {
+        // CMS Step 1 snapshot 契约：oldBareBytesBeforeMutation 必须在任何 mutation 前 capture，
+        // trusted 路径同样不能破坏该契约（与默认路径走同一 UpdateOrInitCore 入口验证）。
+        // 路径覆盖：uninit / no-op / inplace / cross-kind。
+        ValueBox box = default;
+
+        // 1) uninit → 0
+        bool changed = ValueBox.BlobPayloadFace.UpdateOrInitTrusted(ref box, ByteString.FromTrustedOwned([1, 2, 3]), out uint old1);
+        Assert.True(changed);
+        Assert.Equal(0u, old1);
+        try {
+            uint sizeOf3 = BlobTaggedSize(3);
+
+            // 2) no-op（同内容；注意 trusted 路径要求 ByteString 是同样独占语义，但 SequenceEqual 比较即可）
+            changed = ValueBox.BlobPayloadFace.UpdateOrInitTrusted(ref box, ByteString.FromTrustedOwned([1, 2, 3]), out uint old2);
+            Assert.False(changed);
+            Assert.Equal(sizeOf3, old2);
+
+            // 3) inplace（不同内容、同 kind、exclusive）
+            changed = ValueBox.BlobPayloadFace.UpdateOrInitTrusted(ref box, ByteString.FromTrustedOwned([9, 9, 9, 9, 9]), out uint old3);
+            Assert.True(changed);
+            Assert.Equal(sizeOf3, old3); // mutation 前的状态：长度 3
+
+            // 4) cross-kind：先释放当前 trusted blob 后，从 string slot 切回 blob
+            ValueBox.ReleaseOwnedHeapSlot(box);
+            box = ValueBox.StringPayloadFace.From("hello");
+            uint stringBareBefore = box.EstimateBareSize();
+            changed = ValueBox.BlobPayloadFace.UpdateOrInitTrusted(ref box, ByteString.FromTrustedOwned([0xAB, 0xCD]), out uint old4);
+            Assert.True(changed);
+            Assert.Equal(stringBareBefore, old4); // mutation 前是 string，size 由 string 给出
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+        }
+    }
+
+    [Fact]
+    public void BlobPayload_UpdateOrInitTrusted_CrossKind_SharesByteArrayReference() {
+        // cross-kind 分支应先释放旧 owned slot，再把 trusted byte[] 作为新 blob slot 直接入池。
+        int beforeStr = OwnedStringCount;
+        int beforeBlob = OwnedBlobCount;
+        ValueBox box = ValueBox.StringPayloadFace.From("old string");
+        Assert.Equal(beforeStr + 1, OwnedStringCount);
+
+        byte[] external = [0xCA, 0xFE, 0xBA, 0xBE];
+        bool changed = ValueBox.BlobPayloadFace.UpdateOrInitTrusted(ref box, ByteString.FromTrustedOwned(external), out uint oldBytes);
+        try {
+            Assert.True(changed);
+            Assert.Equal(1u + CostEstimateUtil.VarIntSize(20u) + 20u, oldBytes); // "old string" length=10 UTF-16 upper-bound
+            Assert.Equal(beforeStr, OwnedStringCount);
+            Assert.Equal(beforeBlob + 1, OwnedBlobCount);
+            Assert.Equal(GetIssue.None, ValueBox.BlobPayloadFace.Get(box, out ByteString got));
+            Assert.Same(external, got.DangerousGetUnderlyingArray());
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+        }
+    }
+
+    [Fact]
+    public void BlobPayload_FromTrusted_InteropWith_From_DefaultClonePathStillIsolates() {
+        // FromTrusted 入池后，再用默认 UpdateOrInit（clone 路径）覆写：
+        // 期望 inplace overwrite 后 pool 内是默认 clone 出的新数组（与外部数组解耦），
+        // 这样 trusted slot 的"违约成本"不会蔓延到后续默认调用方。
+        byte[] trustedExt = [1, 2, 3];
+        ValueBox box = ValueBox.BlobPayloadFace.FromTrusted(ByteString.FromTrustedOwned(trustedExt));
+        try {
+            ValueBox.BlobPayloadFace.Get(box, out ByteString gotTrusted);
+            Assert.Same(trustedExt, gotTrusted.DangerousGetUnderlyingArray());
+
+            byte[] cloneExt = [10, 20, 30, 40];
+            ValueBox.BlobPayloadFace.UpdateOrInit(ref box, new ByteString(cloneExt), out _);
+            ValueBox.BlobPayloadFace.Get(box, out ByteString gotNow);
+            byte[] poolNow = gotNow.DangerousGetUnderlyingArray();
+            Assert.NotSame(cloneExt, poolNow);     // 默认路径 clone
+            Assert.NotSame(trustedExt, poolNow);   // 与之前的 trusted 数组也无关
+            Assert.Equal(new byte[] { 10, 20, 30, 40 }, poolNow);
+
+            cloneExt[0] = 0xFF; // 默认路径下外部 mutate 不影响 pool
+            ValueBox.BlobPayloadFace.Get(box, out ByteString got);
+            Assert.Equal(new byte[] { 10, 20, 30, 40 }, got.AsSpan().ToArray());
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+        }
+    }
+
+    [Fact]
+    public void BlobPayload_FromTrusted_LargeBlob_RoundTrip() {
+        // 大 blob（1MB）走 FromTrusted 不应触发 OOM / clone，pool 内 byte[] 与外部同 ref，round-trip 内容一致。
+        byte[] big = new byte[1024 * 1024];
+        for (int i = 0; i < big.Length; i++) { big[i] = (byte)(i & 0xFF); }
+        ValueBox box = ValueBox.BlobPayloadFace.FromTrusted(ByteString.FromTrustedOwned(big));
+        try {
+            ValueBox.BlobPayloadFace.Get(box, out ByteString got);
+            Assert.Same(big, got.DangerousGetUnderlyingArray());
+            Assert.Equal(big.Length, got.Length);
+            Assert.True(got.AsSpan().SequenceEqual(big));
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+        }
+    }
+
+    [Fact]
+    public void BlobPayload_FromTrusted_EmptyBlob_UsesArrayEmptySingleton() {
+        // FromTrustedOwned(default)/Empty 形态：DangerousGetUnderlyingArray 对 default ByteString 返回 Array.Empty<byte>()，
+        // 与默认 CloneForPool 空 blob 语义一致；pool 内仍持有 singleton。多个 slot 共享空数组不会跨 slot 污染，
+        // 因为空数组没有可 mutate 的元素。
+        ValueBox box = ValueBox.BlobPayloadFace.FromTrusted(ByteString.Empty);
+        ValueBox defaultBox = ValueBox.BlobPayloadFace.From(ByteString.Empty);
+        try {
+            ValueBox.BlobPayloadFace.Get(box, out ByteString got);
+            Assert.Same(Array.Empty<byte>(), got.DangerousGetUnderlyingArray());
+            Assert.True(got.IsEmpty);
+
+            ValueBox.BlobPayloadFace.Get(defaultBox, out ByteString defaultGot);
+            Assert.Same(Array.Empty<byte>(), defaultGot.DangerousGetUnderlyingArray());
+            Assert.True(ValueBox.ValueEquals(box, defaultBox));
+            Assert.NotEqual(box.GetBits(), defaultBox.GetBits()); // 内容数组可共享，pool slot 仍相互独立。
+        }
+        finally {
+            ValueBox.ReleaseOwnedHeapSlot(box);
+            ValueBox.ReleaseOwnedHeapSlot(defaultBox);
+        }
+    }
 }

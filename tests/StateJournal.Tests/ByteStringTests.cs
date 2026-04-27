@@ -46,6 +46,31 @@ public class ByteStringTests {
     }
 
     [Fact]
+    public void FromTrustedOwned_DoesNotClone_BehavesLikeCtor() {
+        // CMS Step B：FromTrustedOwned 是 ctor 的语义化别名（明示"独占 + immutable"承诺），
+        // 与 ctor 行为完全一致——不做 defensive clone。本测试与 Ctor_ByteArray_DoesNotClone 对照锁定该等价契约。
+        byte[] arr = [7, 8, 9];
+        var bs = ByteString.FromTrustedOwned(arr);
+        int hash1 = bs.GetHashCode();
+        arr[0] = 0xFE;
+        int hash2 = bs.GetHashCode();
+        Assert.NotEqual(hash1, hash2);
+    }
+
+    [Fact]
+    public void FromTrustedOwned_NullThrows() {
+        Assert.Throws<ArgumentNullException>(() => ByteString.FromTrustedOwned(null!));
+    }
+
+    [Fact]
+    public void FromTrustedOwned_EmptyArray_BehavesLikeEmpty() {
+        var bs = ByteString.FromTrustedOwned(Array.Empty<byte>());
+        Assert.True(bs.IsEmpty);
+        Assert.Equal(0, bs.Length);
+        Assert.Equal(ByteString.Empty, bs);
+    }
+
+    [Fact]
     public void Ctor_EmptySpan_BehavesLikeEmpty() {
         var bs = new ByteString(ReadOnlySpan<byte>.Empty);
         Assert.True(bs.IsEmpty);

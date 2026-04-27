@@ -46,6 +46,36 @@ public readonly struct ByteString : IEquatable<ByteString> {
     /// <summary>空字节串。等价于 <c>default(ByteString)</c>。</summary>
     public static ByteString Empty => default;
 
+    /// <summary>
+    /// 高级 API：直接持有调用方提供的 <paramref name="data"/> 引用并明示"独占所有权"语义。
+    /// 当内部调用链显式选择 <c>BlobPayloadFace.FromTrusted</c> / <c>UpdateOrInitTrusted</c> 入池路径时，
+    /// 该语义可用于跳过默认 defensive clone，达成大 blob 零拷贝。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>调用方必须保证</strong>：(a) 除本次转交给 <see cref="ByteString"/> 的引用外，<paramref name="data"/>
+    /// 没有任何会被继续使用的活跃可变引用；(b) <paramref name="data"/> 后续永不被任何代码 mutate（哪怕调用方自己也不行）。违反契约会导致 StateJournal
+    /// 内部 dict / wire 状态被静默篡改，类型系统无法防御。
+    /// </para>
+    /// <para>
+    /// 用途：从 IO buffer / <see cref="System.Buffers.ArrayPool{T}"/> rent / 文件读取等场景拿到的大 byte[]，
+    /// 已知数组生命周期、且只会传递给 StateJournal 一次的高级用户。普通用户应继续使用
+    /// <see cref="ByteString(byte[])"/>（语义同等但命名不强调 "trusted"）或更安全的
+    /// <see cref="ByteString(ReadOnlySpan{byte})"/>（无条件复制）。
+    /// </para>
+    /// <para>
+    /// 实现层面：当前 <see cref="ByteString(byte[])"/> ctor 也不 clone（trusts immutable convention），所以
+    /// <c>FromTrustedOwned</c> 与 ctor 在 <see cref="ByteString"/> 自身行为完全一致。区别在于<strong>语义命名</strong>：
+    /// <c>FromTrustedOwned</c> 显式承诺"独占 + immutable"，是与 face <c>FromTrusted</c> 路径联通的契约入口。
+    /// 但当前 public mixed 容器 API 仍调用默认 <c>From</c> / <c>UpdateOrInit</c> clone 路径；仅创建
+    /// <c>ByteString</c> 不会让 mixed <c>Upsert</c> / deque set 端到端零拷贝。mixed/generator 接通 trusted 路径留待后续工作。
+    /// </para>
+    /// </remarks>
+    public static ByteString FromTrustedOwned(byte[] data) {
+        ArgumentNullException.ThrowIfNull(data);
+        return new ByteString(data);
+    }
+
     public int Length => _data?.Length ?? 0;
 
     public bool IsEmpty => _data is null || _data.Length == 0;
@@ -54,9 +84,9 @@ public readonly struct ByteString : IEquatable<ByteString> {
 
     /// <summary>
     /// 内部使用：取出底层 <see cref="byte"/>[] 引用（<c>default</c> 情况下返回 <see cref="Array.Empty{T}"/>）。
-    /// 当前 <see cref="Internal.ValueBox.BlobPayloadFace"/> 入池路径走 defensive clone（CMS Step 3b 决策 B），
-    /// 暂无活跃调用方；保留作为 future <c>ByteString.FromTrustedOwned(byte[])</c> 高级 API 的零拷贝种子，
-    /// 届时配合 face 的 <c>FromTrusted</c> 路径直接复用底层数组。
+    /// 默认 <see cref="Internal.ValueBox.BlobPayloadFace"/> 入池路径走 defensive clone（CMS Step 3b 决策 B）；
+    /// 高级零拷贝路径 <c>BlobPayloadFace.FromTrusted</c> / <c>UpdateOrInitTrusted</c> 通过本方法直接复用底层数组，
+    /// 配合 <see cref="FromTrustedOwned(byte[])"/> 形成 "独占 + immutable" 契约入口。
     /// </summary>
     internal byte[] DangerousGetUnderlyingArray() => _data ?? Array.Empty<byte>();
 
