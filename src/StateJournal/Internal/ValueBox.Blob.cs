@@ -98,7 +98,10 @@ partial struct ValueBox {
             // box 为 Null 时返回 TypeMismatch；上层若需要 "null → Empty" 映射，应在调用层做。
             if ((uint)(box.GetBits() >> HeapKindShift) == TagHeapKindBlobPayload) {
                 byte[] bytes = ValuePools.OfOwnedBlob[box.GetHeapHandle()];
-                value = new ByteString(bytes);
+                // CMS Step D: 走 FromTrustedOwned 跳过 ctor 的 defensive clone。Get 返回的 ByteString 包装的是 pool 内
+                // byte[]，public ByteString API 仅暴露 ReadOnlySpan / IsEmpty / Length / Equals，外部用户无法 mutate
+                // 底层数组（DangerousGetUnderlyingArray 是 internal），因此零拷贝安全。
+                value = ByteString.FromTrustedOwned(bytes);
                 return GetIssue.None;
             }
             value = default;

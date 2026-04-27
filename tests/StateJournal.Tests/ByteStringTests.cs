@@ -17,15 +17,16 @@ public class ByteStringTests {
     }
 
     [Fact]
-    public void Ctor_ByteArray_DoesNotClone_TrustsImmutableConvention() {
-        // 文档明确：byte[] ctor 不防御性 clone，调用方负责保证不被 mutate。
-        // 这里通过 mutate 后 hash 变化来证明实现确实复用了引用（防止 future 误改成 clone 后契约偏离）。
+    public void Ctor_ByteArray_ClonesData_IsolatedFromSource() {
+        // CMS Step D: byte[] ctor 默认 defensive clone（与 ReadOnlySpan ctor 行为对齐）。
+        // 调用方对原数组的后续 mutation 不会泄漏到本 ByteString。性能敏感场景请用 FromTrustedOwned 跳过 clone。
         byte[] arr = [1, 2, 3];
         var bs = new ByteString(arr);
         int hash1 = bs.GetHashCode();
         arr[1] = 0xFF;
         int hash2 = bs.GetHashCode();
-        Assert.NotEqual(hash1, hash2);
+        Assert.Equal(hash1, hash2);
+        Assert.Equal(new byte[] { 1, 2, 3 }, bs.AsSpan().ToArray());
     }
 
     [Fact]
@@ -46,15 +47,16 @@ public class ByteStringTests {
     }
 
     [Fact]
-    public void FromTrustedOwned_DoesNotClone_BehavesLikeCtor() {
-        // CMS Step B：FromTrustedOwned 是 ctor 的语义化别名（明示"独占 + immutable"承诺），
-        // 与 ctor 行为完全一致——不做 defensive clone。本测试与 Ctor_ByteArray_DoesNotClone 对照锁定该等价契约。
+    public void FromTrustedOwned_DoesNotClone_SharesArrayReference() {
+        // CMS Step D: FromTrustedOwned 是唯一跳过 defensive clone 的零拷贝入口（ctor 已收紧为强制 clone）。
+        // 通过 mutate 后 hash 变化证明引用复用——本测试与 Ctor_ByteArray_ClonesData 形成对照, 锁定 trusted vs 默认两条路径的差异。
         byte[] arr = [7, 8, 9];
         var bs = ByteString.FromTrustedOwned(arr);
         int hash1 = bs.GetHashCode();
         arr[0] = 0xFE;
         int hash2 = bs.GetHashCode();
         Assert.NotEqual(hash1, hash2);
+        Assert.Equal(new byte[] { 0xFE, 8, 9 }, bs.AsSpan().ToArray());
     }
 
     [Fact]
@@ -73,6 +75,15 @@ public class ByteStringTests {
     [Fact]
     public void Ctor_EmptySpan_BehavesLikeEmpty() {
         var bs = new ByteString(ReadOnlySpan<byte>.Empty);
+        Assert.True(bs.IsEmpty);
+        Assert.Equal(0, bs.Length);
+        Assert.Equal(ByteString.Empty, bs);
+    }
+
+    [Fact]
+    public void Ctor_ByteArray_EmptyArray_BehavesLikeEmpty() {
+        // CMS Step D: ctor clone 路径上空数组特殊形态——应得到 IsEmpty == true（_data == null），与 ReadOnlySpan ctor 对齐。
+        var bs = new ByteString(Array.Empty<byte>());
         Assert.True(bs.IsEmpty);
         Assert.Equal(0, bs.Length);
         Assert.Equal(ByteString.Empty, bs);

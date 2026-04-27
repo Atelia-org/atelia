@@ -15,9 +15,10 @@ namespace Atelia.StateJournal;
 /// 实现侧用 payload 概念专有术语。详见 <c>MixedValueCatalog.cs</c> 的术语表。
 /// </para>
 /// <para>
-/// <see cref="ByteString(byte[])"/> 不做防御性 clone：调用方必须保证传入的 <see cref="byte"/>[] 在 <see cref="ByteString"/>
-/// 的整个生命周期内不被外部代码 mutate（与 <see cref="string"/> 的 immutable 约定对齐）。需要安全副本时请使用
-/// <see cref="ByteString(ReadOnlySpan{byte})"/>，它会无条件复制一份。
+/// <see cref="ByteString(byte[])"/> 默认走 defensive clone（与 <see cref="ByteString(ReadOnlySpan{byte})"/> 对齐），
+/// 调用方对原数组的后续 mutation 不会泄漏到本 <see cref="ByteString"/>。性能敏感场景（大 blob + 已知调用方独占所有权）
+/// 可用 <see cref="FromTrustedOwned(byte[])"/> 跳过 <see cref="ByteString"/> 自身的 clone；若还要跳过 mixed
+/// face 入池 clone，必须显式选择 trusted 入池路径。
 /// </para>
 /// <para><see cref="Equals(ByteString)"/> 走字节序列等值；<see cref="GetHashCode"/> 走 FNV-1a 32-bit。</para>
 /// <para>
@@ -29,12 +30,15 @@ public readonly struct ByteString : IEquatable<ByteString> {
     private readonly byte[]? _data;
 
     /// <summary>
-    /// 直接持有传入数组的引用，不做防御性 clone。调用方必须保证 <paramref name="data"/> 不被外部 mutate。
+    /// 防御性复制 <paramref name="data"/>，将外部可变数组隔离为 <see cref="ByteString"/> 独占的内部副本。
+    /// 调用方后续对 <paramref name="data"/> 的 mutation 不会影响本 <see cref="ByteString"/>。与
+    /// <see cref="ByteString(ReadOnlySpan{byte})"/> 行为对齐。
     /// </summary>
-    public ByteString(byte[] data) {
-        ArgumentNullException.ThrowIfNull(data);
-        _data = data;
-    }
+    /// <remarks>
+    /// 性能敏感场景（大 blob + 已知调用方独占所有权）请改用 <see cref="FromTrustedOwned(byte[])"/> 跳过本次 clone；
+    /// 若还要跳过 mixed face 入池 clone，必须显式选择 trusted 入池路径。
+    /// </remarks>
+    public ByteString(byte[] data) : this(data, clone: true) { }
 
     /// <summary>
     /// 复制 <paramref name="data"/> 到内部数组。<see cref="ReadOnlySpan{T}"/> 的生命周期不安全，必须复制。
@@ -43,13 +47,27 @@ public readonly struct ByteString : IEquatable<ByteString> {
         _data = data.IsEmpty ? null : data.ToArray();
     }
 
+    /// <summary>
+    /// 内部共享构造路径：根据 <paramref name="clone"/> 决定是否 defensive clone。
+    /// <c>clone=true</c> 服务 <see cref="ByteString(byte[])"/> public ctor；<c>clone=false</c> 服务
+    /// <see cref="FromTrustedOwned(byte[])"/>。
+    /// </summary>
+    private ByteString(byte[] data, bool clone) {
+        ArgumentNullException.ThrowIfNull(data);
+        if (clone) {
+            _data = data.Length == 0 ? null : (byte[])data.Clone();
+        }
+        else {
+            _data = data;
+        }
+    }
+
     /// <summary>空字节串。等价于 <c>default(ByteString)</c>。</summary>
     public static ByteString Empty => default;
 
     /// <summary>
-    /// 高级 API：直接持有调用方提供的 <paramref name="data"/> 引用并明示"独占所有权"语义。
-    /// 当内部调用链显式选择 <c>BlobPayloadFace.FromTrusted</c> / <c>UpdateOrInitTrusted</c> 入池路径时，
-    /// 该语义可用于跳过默认 defensive clone，达成大 blob 零拷贝。
+    /// 高级 API：直接持有调用方提供的 <paramref name="data"/> 引用，<strong>跳过</strong>默认 <see cref="ByteString(byte[])"/>
+    /// ctor 的 defensive clone，明示"独占所有权"语义。配合显式 trusted 入池路径可达成大 blob 端到端零拷贝。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -60,20 +78,18 @@ public readonly struct ByteString : IEquatable<ByteString> {
     /// <para>
     /// 用途：从 IO buffer / <see cref="System.Buffers.ArrayPool{T}"/> rent / 文件读取等场景拿到的大 byte[]，
     /// 已知数组生命周期、且只会传递给 StateJournal 一次的高级用户。普通用户应继续使用
-    /// <see cref="ByteString(byte[])"/>（语义同等但命名不强调 "trusted"）或更安全的
+    /// <see cref="ByteString(byte[])"/>（自带 defensive clone）或更安全的
     /// <see cref="ByteString(ReadOnlySpan{byte})"/>（无条件复制）。
     /// </para>
     /// <para>
-    /// 实现层面：当前 <see cref="ByteString(byte[])"/> ctor 也不 clone（trusts immutable convention），所以
-    /// <c>FromTrustedOwned</c> 与 ctor 在 <see cref="ByteString"/> 自身行为完全一致。区别在于<strong>语义命名</strong>：
-    /// <c>FromTrustedOwned</c> 显式承诺"独占 + immutable"，是与 face <c>FromTrusted</c> 路径联通的契约入口。
-    /// 但当前 public mixed 容器 API 仍调用默认 <c>From</c> / <c>UpdateOrInit</c> clone 路径；仅创建
-    /// <c>ByteString</c> 不会让 mixed <c>Upsert</c> / deque set 端到端零拷贝。mixed/generator 接通 trusted 路径留待后续工作。
+    /// 端到端零拷贝需要 <c>ByteString.FromTrustedOwned(largeBytes)</c> + 显式 trusted 入池路径（当前实现层为
+    /// <c>BlobPayloadFace.FromTrusted</c> / <c>UpdateOrInitTrusted</c>；公开 mixed 容器 trusted API 留待后续接通）。
+    /// 仅创建 <c>ByteString</c> 但走默认 mixed <c>Upsert</c> 路径仍会触发 face 层 defensive clone（CMS Step 3b 决策 B），
+    /// 此时 <see cref="FromTrustedOwned"/> 节省的只有 ctor 一次 clone。
     /// </para>
     /// </remarks>
     public static ByteString FromTrustedOwned(byte[] data) {
-        ArgumentNullException.ThrowIfNull(data);
-        return new ByteString(data);
+        return new ByteString(data, clone: false);
     }
 
     public int Length => _data?.Length ?? 0;

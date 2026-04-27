@@ -52,7 +52,8 @@ partial struct ValueBox {
                 writer.TaggedString(ValuePools.OfOwnedString[GetHeapHandle()]);
                 break;
             case HeapValueKind.BlobPayload:
-                writer.TaggedBlob(new ByteString(ValuePools.OfOwnedBlob[GetHeapHandle()]));
+                // CMS Step D: writer 仅读取 ByteString 字节流且 pool byte[] 由 face 独占，无 mutation 风险，走 FromTrustedOwned 跳过 ctor clone。
+                writer.TaggedBlob(ByteString.FromTrustedOwned(ValuePools.OfOwnedBlob[GetHeapHandle()]));
                 break;
             case HeapValueKind.Blank: // 未初始化的ValueBox不应该参与序列化
             default:

@@ -310,6 +310,8 @@ null
 - DurableObject 子类型可以通过泛型便捷 API 读取，如 `GetOrThrow<DurableDict<string>>()`。
 - `Of<DurableDict<string>>()` 这种 DurableObject 子类型 view 不支持；用泛型 `Get/TryGet/GetOrThrow`。
 - `ByteString.Empty` 表示一个具体的空字节串（`ValueKind.Blob`），不等价于 mixed `null`。
+- `new ByteString(byte[])` 会 defensive clone 外部可变数组；高级零拷贝入口是 `ByteString.FromTrustedOwned(byte[])`。
+    但默认 mixed `Upsert` / deque 写入仍会在 face 入池时再次 clone，端到端零拷贝需显式 trusted 入池路径。
 
 ### 4.3 null 语义
 
