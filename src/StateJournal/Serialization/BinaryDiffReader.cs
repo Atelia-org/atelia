@@ -152,5 +152,11 @@ internal ref struct BinaryDiffReader {
     internal double TaggedDouble() => BareDouble(false);
     internal ushort FixedUInt16() => RawUInt16();
     internal uint FixedUInt32() => RawUInt32();
+
+    /// <summary>
+    /// 读取一个 tagged string payload（调用方已消耗 <see cref="ScalarRules.StringPayload.Tag"/> (0xC0) 标签字节）。
+    /// null 走 <see cref="ScalarRules.Null"/> 路径，本方法只处理非 null payload，永远返回非 null（空字符串编码为长度 0 的 UTF-16LE）。
+    /// </summary>
+    internal string TaggedStringPayload() => BareStringPayload(asKey: false);
     #endregion
 }

@@ -28,7 +28,8 @@ internal static class TaggedValueDispatcher {
             Fp.Follow4 => ValueBox.SingleFace.UpdateOrInit(ref old, reader.TaggedSingle()),
             Fp.Follow8 => ValueBox.ExactDoubleFace.UpdateOrInit(ref old, reader.TaggedDouble()), // 内部存储一律走精确语义，RoundedDouble只是外部写入路径之一。
             >= TaggedRefEnc.MinTag and <= TaggedRefEnc.MaxTag => ReadDurableRefOrSymbol(head, ref reader, ref old),
-            _ => throw new InvalidDataException($"Unsupported tagged value head 0x{head:X2}. The current reader only supports the CBOR-inspired scalar subset (major type 0/1/5/7)."),
+            ScalarRules.StringPayload.Tag => throw new NotImplementedException("TaggedString payload routing into ValueBox.StringPayloadFace is pending Step B2."),
+            _ => throw new InvalidDataException($"Unsupported tagged value head 0x{head:X2}. The current reader supports the CBOR-inspired scalar subset (major type 0/1/5/7) plus the tagged-ref (0xA0..0xBF) and string-payload (0xC0) extensions."),
         };
     }
 

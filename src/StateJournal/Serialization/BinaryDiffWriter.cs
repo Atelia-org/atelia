@@ -136,8 +136,19 @@ internal ref struct BinaryDiffWriter {
         _downstream.Advance(1);
     }
 
+    /// <summary>
+    /// Mixed payload string 的 tagged 写入。
+    /// <paramref name="value"/> 为 <c>null</c> 时写 <see cref="ScalarRules.Null"/> (0xF6)；
+    /// 否则写 <see cref="ScalarRules.StringPayload.Tag"/> (0xC0) 后跟 <see cref="BareStringPayload"/> 完整 payload。
+    /// </summary>
     public void TaggedString(string? value) {
-        throw new NotImplementedException();
+        if (value is null) {
+            TaggedNull();
+            return;
+        }
+        _downstream.GetSpan(1)[0] = ScalarRules.StringPayload.Tag;
+        _downstream.Advance(1);
+        BareStringPayload(value, asKey: false);
     }
 
     /// <summary>

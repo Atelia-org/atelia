@@ -69,6 +69,15 @@ internal static class ScalarRules {
     }
 
     /// <summary>
+    /// Mixed payload string 的 tagged 编码。布局：1B tag (0xC0) + <see cref="StringPayloadCodec"/> 完整 payload
+    /// （VarUInt header + UTF-8/UTF-16LE 字节）。null 走 <see cref="Null"/> (0xF6)，不进入此分支；
+    /// 空字符串编码为 <c>0xC0 0x00</c>。
+    /// </summary>
+    internal readonly struct StringPayload {
+        internal const byte Tag = 0xC0;
+    }
+
+    /// <summary>
     /// 重写 CBOR Major Type 5 (map, 0xA0..0xBF) 语义，用于 tagged reference（DurableRef / SymbolId）。
     /// 布局: 0xA0 | (4bit Kind &lt;&lt; 1) | (1bit PayloadLen)。
     /// PayloadLen=0 → 后续 2 字节 (uint16 LE)；PayloadLen=1 → 后续 4 字节 (uint32 LE)。
