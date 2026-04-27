@@ -272,7 +272,7 @@ typed 容器里的字符串类型选择：
 
 - `string` 是值语义 payload-backed 字符串，适合作为普通 typed key/value。
 - `Symbol` 是显式 symbol-backed facade，适合需要表达“身份/驻留字符串”语义的字段。
-- mixed 容器里的 `string` 目前仍走 `ValueBox(SymbolId)` 路线，这和 typed `string` 不是同一套语义。
+- mixed 容器里的 `Symbol` 走 intern 池；mixed 容器里的 `string` 走独立 payload，不再 silent intern。
 
 例如：
 
@@ -293,6 +293,7 @@ Mixed 容器主要支持：
 
 ```text
 bool
+Symbol
 string
 DurableObject
 double / float / Half
@@ -321,11 +322,13 @@ typedSymbol.Upsert("owner", null);
 typedSymbol.Get("owner", out Symbol owner); // owner.IsNull
 
 var mixed = rev.CreateDict<string>();
+mixed.Upsert<string>("nickname", null);
+mixed.TryGet("nickname", out string? mixedNickname); // mixedNickname == null
 mixed.Upsert("child", (DurableObject?)null);
 mixed.TryGet("child", out DurableDict<string, int>? child); // child == null
 ```
 
-也就是说：typed `string` 会把 `null` 规范化为空字符串；typed `Symbol` 和 mixed `DurableObject` 则保留显式 null facade。
+也就是说：typed `string` 会把 `null` 规范化为空字符串；mixed `string`、typed `Symbol` 和 mixed `DurableObject` 则保留显式 null facade。
 
 对值类型，如 `int`，`TValue?` 在 `where TValue : notnull` 下只是 nullable annotation，不是 `Nullable<T>` 包装。
 
@@ -714,7 +717,7 @@ repo.Commit(root).Value;
 - `Freeze()` 后的修改会抛 `ObjectFrozenException`。
 - dirty frozen source 不能直接 fork；先 commit 让 frozen snapshot 落盘。
 - mixed 容器里的 `double` 默认可能采用紧凑编码；需要精确保存所有 double bit 时使用 `UpsertExactDouble` 或 exact double helpers。
-- typed `string` 走值语义 payload 路线；typed `Symbol` 的公开运行时 facade 是 `Symbol`；mixed string 运行时走 `ValueBox(SymbolId)`。调试内部结构时不要混淆这三条路线。
+- typed `string` 和 mixed `string` 都走值语义 payload 路线；typed/mixed `Symbol` 才走 intern 池。注意 typed `string` 的 `null` 规范化为空字符串，而 mixed `string` 的 `null` 存为 `ValueBox.Null`。
 - `SymbolTable` 是持久化 mirror，不是业务可见数据表。
 - `Repository` 目录文件不要手工改；branch refs 是 CAS 保护的元数据。
 - 业务对象创建优先用 `Revision.Create*`，不要直接用 `Durable.*` 工厂绕过绑定。

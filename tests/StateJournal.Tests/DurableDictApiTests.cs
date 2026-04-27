@@ -37,13 +37,21 @@ public class DurableDictApiTests {
     }
 
     [Fact]
-    public void MixedDict_StringLiteral_InfersStringAndRemainsUnsupported() {
+    public void MixedDict_StringLiteral_GoesToPayload_NotSymbolIntern() {
         var rev = new Revision(1);
         var dict = rev.CreateDict<string>();
 
-        var ex = Assert.Throws<NotSupportedException>(() => dict.Upsert("title", "draft"));
-        Assert.Contains("System.String", ex.Message, StringComparison.Ordinal);
-        Assert.Equal(0, dict.Count);
+        int symbolBefore = rev.SymbolPoolCount;
+        dict.Upsert("title", "draft");
+
+        // string 字面量推断为 TValue=string，走 payload 路径，不进 intern 池。
+        Assert.Equal(symbolBefore, rev.SymbolPoolCount);
+        Assert.True(dict.TryGetValueKind("title", out var kind));
+        Assert.Equal(ValueKind.String, kind);
+        Assert.Equal(GetIssue.None, dict.OfString.Get("title", out string? value));
+        Assert.Equal("draft", value);
+        // Symbol 视图读取不到（两者不互通）。
+        Assert.Equal(GetIssue.TypeMismatch, dict.OfSymbol.Get("title", out Symbol _));
     }
 
     [Fact]

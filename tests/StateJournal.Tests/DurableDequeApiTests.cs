@@ -176,13 +176,19 @@ public class DurableDequeApiTests {
     }
 
     [Fact]
-    public void MixedDeque_StringLiteral_InfersStringAndRemainsUnsupported() {
+    public void MixedDeque_StringLiteral_GoesToPayload_NotSymbolIntern() {
         var rev = new Revision(1);
         var deque = rev.CreateDeque();
 
-        var ex = Assert.Throws<NotSupportedException>(() => deque.PushBack("tail"));
-        Assert.Contains("System.String", ex.Message, StringComparison.Ordinal);
-        Assert.Equal(0, deque.Count);
+        int symbolBefore = rev.SymbolPoolCount;
+        deque.PushBack("tail");
+
+        Assert.Equal(symbolBefore, rev.SymbolPoolCount);
+        Assert.Equal(1, deque.Count);
+        Assert.True(deque.TryPeekBackValueKind(out var kind));
+        Assert.Equal(ValueKind.String, kind);
+        Assert.Equal(GetIssue.None, deque.OfString.PeekBack(out string? value));
+        Assert.Equal("tail", value);
     }
 
     [Fact]

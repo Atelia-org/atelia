@@ -84,10 +84,22 @@ private T[]?[] _slabs;
 - `TypedDeque<Symbol>` 已正式开放
 - `TypedDict<TKey, Symbol>` 不再需要专用 `SymbolValDictImpl`
 
-但 mixed 路线不变：
+但 mixed 路线现在已**对称分流**为两条独立通路：
 
-- `MixedDict` / `MixedDeque` 的 string 仍以 `ValueBox(SymbolId)` 存储
-- 因为这是 `ValueBox` tagged-pointer 异构模型本身的一部分
+- `MixedDict<TKey, Symbol>` / `MixedDeque<Symbol>`（视图：`OfSymbol`）：
+  - `Upsert<Symbol>(...)` 走 intern 通路 → `Revision._symbolPool` → 同内容去重；
+  - 容器中存 `ValueBox(HeapValueKind.Symbol, SymbolId)`；
+  - wire 上落 SymbolId VarUInt（同 typed Symbol）；
+  - `ValueKind.Symbol`。
+- `MixedDict<TKey, string>` / `MixedDeque<string>`（视图：`OfString`）：
+  - `Upsert(key, "literal")` 经类型推断走 string payload 通路 → `ValuePools.OfOwnedString` → **不去重**，每次独立 slot；
+  - 容器中存 `ValueBox(HeapValueKind.StringPayload, OwnedSlotHandle)`；
+  - wire 上落 `0xC0` tag + UTF-8/UTF-16LE 自适应 payload；
+  - `ValueKind.String`；
+  - 写 `null` → `ValueBox.Null`（不抛 ANE）；
+  - empty `""` 不进 intern 池。
+- 两条通路互**不互通**：同一 key 先 `Upsert<Symbol>` 再 `OfString.Get` 返回 `GetIssue.TypeMismatch`，反之亦然；ValueKind 严格区分。
+- payload 通路是 owned 资源：dirty 修改 inplace 复用 slot；commit/discard/fork 时由五件套（`UpdateOrInit`/`Freeze`/`CloneFrozenForNewOwner`/`ReleaseSlot`/equality）维护生命周期。
 
 ### 4. DurableObject 已引入 fork / frozen 对象级语义
 
@@ -317,14 +329,16 @@ rev.CreateDeque();                    // MixedDeque
 - inline double / integer / bool / null
 - heap slot
 - durable ref
-- symbol-backed string
+- symbol-backed `Symbol`
+- payload-backed `string`
 
 当前关键边界：
 
-- mixed string 继续保存 `SymbolId`
-- typed Symbol 不再保存 `SymbolId`
+- mixed `Symbol` 保存 `SymbolId`，走 `Revision._symbolPool` intern。
+- mixed `string` 保存 `HeapValueKind.StringPayload` + `ValuePools.OfOwnedString` owned slot，不去重、不进 intern 池。
+- typed `Symbol` 的公开 facade 不再裸露 `SymbolId`。
 
-这两条路线不能混淆。
+这几条路线不能混淆。
 
 关键文件：
 

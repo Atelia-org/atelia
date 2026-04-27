@@ -91,13 +91,19 @@ public class MixedOrderedDictTests : IDisposable {
     }
 
     [Fact]
-    public void Upsert_StringLiteral_InfersStringAndRemainsUnsupported() {
+    public void Upsert_StringLiteral_GoesToPayload_NotSymbolIntern() {
         var rev = CreateRevision();
         var dict = rev.CreateOrderedDict<int>();
 
-        var ex = Assert.Throws<NotSupportedException>(() => dict.Upsert(1, "hello"));
-        Assert.Contains("System.String", ex.Message, StringComparison.Ordinal);
-        Assert.Equal(0, dict.Count);
+        int symbolBefore = rev.SymbolPoolCount;
+        dict.Upsert(1, "hello");
+
+        Assert.Equal(symbolBefore, rev.SymbolPoolCount);
+        Assert.Equal(1, dict.Count);
+        Assert.True(dict.TryGetValueKind(1, out var kind));
+        Assert.Equal(ValueKind.String, kind);
+        Assert.Equal(GetIssue.None, dict.OfString.Get(1, out string? value));
+        Assert.Equal("hello", value);
     }
 
     [Fact]

@@ -42,6 +42,9 @@ public partial class Revision {
     public DurableObject? GraphRoot => _head?.GraphRoot;
     internal uint HeadSegmentNumber => _headSegmentNumber;
 
+    /// <summary>测试用：当前 intern 池中 symbol slot 数量（已分配未释放）。</summary>
+    internal int SymbolPoolCount => _symbolPool.Count;
+
     /// <summary>
     /// 把 <see cref="GraphRoot"/> 取为指定的 <typeparamref name="T"/>。
     /// </summary>

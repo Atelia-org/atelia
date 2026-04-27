@@ -6,7 +6,7 @@ namespace Atelia.StateJournal;
 /// <summary>替代 <see cref="DurableDeque{ValueBox}"/> 的异构双端队列。</summary>
 [UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.Deque)]
 public abstract partial class DurableDeque : DurableDequeBase, IDeque,
-    IDeque<bool>, IDeque<Symbol>, IDeque<DurableObject>,
+    IDeque<bool>, IDeque<Symbol>, IDeque<string>, IDeque<DurableObject>,
     IDeque<double>, IDeque<float>, IDeque<Half>,
     IDeque<ulong>, IDeque<uint>, IDeque<ushort>, IDeque<byte>,
     IDeque<long>, IDeque<int>, IDeque<short>, IDeque<sbyte> {

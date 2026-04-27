@@ -132,9 +132,9 @@ partial class RevisionTests {
     }
 
     // ═══════════════════════ mixed null value round-trip ═══════════════════════
-    // A1 阶段 mixed 容器没有 string 入口（无论 silent intern 或 payload）；
+    // A1 阶段 mixed 容器没有 string 入口；C 阶段 mixed string 已重新接入 payload 通路。
     // Symbol 不表达 null（default(Symbol) == Symbol.Empty）。这里保留 ValueBox.Null 的 round-trip 覆盖，
-    // null payload string 的 round-trip 测试将随 B2/C 的 payload 通路重新加入。
+    // null payload string 的 round-trip 覆盖见 MixedStringPayloadTests。
 
     [Fact]
     public void MixedDict_NullDurableObject_Commit_Open_RoundTripsAsValueBoxNull() {

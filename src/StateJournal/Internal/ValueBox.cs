@@ -41,19 +41,16 @@ internal readonly partial struct ValueBox {
         BoxLzc.InlineDouble => 9, // tag + 8B
         BoxLzc.InlineNonnegInt or BoxLzc.InlineNegInt => 9, // tag + VarUInt(<=8)
         BoxLzc.HeapSlot => GetHeapKind() switch {
-            HeapValueKind.StringPayload => EstimateStringPayloadBareSize(),
+            // StringPayload 走常量估算（不解引用 OwnedStringPool）：
+            // 1) cost-model 不要求精确，同量级即可；
+            // 2) 关键不变量：oldValue.EstimateBareSize() 必须不依赖 slot 当前内容/活性
+            //    — 否则 inplace 覆写或 free-then-realloc 之后 dirty 字节统计会失衡（曾经 underflow）。
+            HeapValueKind.StringPayload => 16u,
             _ => 9, // float/integer 走 VarUInt；Symbol 走 SymbolId VarUInt（更短，9 是上界）
         },
         BoxLzc.DurableRef => 7, // tag + kind + LocalId VarUInt(<=5)
         _ => 8,
     };
-
-    private uint EstimateStringPayloadBareSize() {
-        // 1B tag (0xC0) + VarUInt header(<=5) + UTF-8 最坏情况每字符 4B。
-        // 成本模型不要求精确，同量级即可。
-        string s = ValuePools.OfOwnedString[GetHeapHandle()];
-        return 6u + (uint)s.Length * 4u;
-    }
 
     public readonly ValueKind GetValueKind() => GetLzc() switch {
         BoxLzc.InlineDouble => ValueKind.FloatingPoint,

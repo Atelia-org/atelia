@@ -8,7 +8,7 @@ namespace Atelia.StateJournal;
 /// <typeparam name="TKey"></typeparam>
 [UseMixedValueCatalog(typeof(MixedValueCatalog), MixedContainers.Dict)]
 public abstract partial class DurableDict<TKey> : DurableDictBase<TKey>, IDict<TKey>,
-    IDict<TKey, bool>, IDict<TKey, Symbol>, IDict<TKey, DurableObject>,
+    IDict<TKey, bool>, IDict<TKey, Symbol>, IDict<TKey, string>, IDict<TKey, DurableObject>,
     IDict<TKey, double>, IDict<TKey, float>, IDict<TKey, Half>,
     IDict<TKey, ulong>, IDict<TKey, uint>, IDict<TKey, ushort>, IDict<TKey, byte>,
     IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>
