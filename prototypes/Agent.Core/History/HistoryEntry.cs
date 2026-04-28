@@ -81,6 +81,12 @@ public abstract record class HistoryEntry : ITokenEstimateSource {
         // 排除表示未赋值的0值
         _tokenEstimate = Math.Max(1, rawTokenEstimate);
     }
+
+    /// <summary>
+    /// 判断当前条目是否为 observation-like（Observation / ToolResults / Recap）。
+    /// 用于检查历史交替不变量与上下文切分的合法性。
+    /// </summary>
+    public bool IsObservationLike => Kind is HistoryEntryKind.Observation or HistoryEntryKind.ToolResults or HistoryEntryKind.Recap;
 }
 
 /// <summary>
