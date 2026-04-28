@@ -282,6 +282,11 @@ where TValue : notnull {
     where VHelper : unmanaged, ITypeHelper<TValue> {
         ThrowIfFrozen();
         if (DirtyKeys.Count != 0) { throw new InvalidOperationException("Cannot FreezeFromClean while dict has changes."); }
+        // 防御性冻结 _current 中的所有值，确保 frozen tracker 不会持有 unfrozen/Exclusive slot。
+        // 对已冻结的值 Freeze() 幂等；对 ValueBox 等有所有权语义的类型必不可少。
+        foreach (var key in _current.Keys) {
+            _current[key] = VHelper.Freeze(_current[key]);
+        }
         _committed = null;
         _dirtyKeys = null;
         _isFrozen = true;
@@ -310,7 +315,7 @@ where TValue : notnull {
         ThrowIfFrozen();
         Debug.Assert(_current.Count == 0, "MaterializeFrozenFromReconstructedCommitted 应在空 _current 上调用。");
         _current = Committed;
-        foreach (var key in _current.Keys.ToArray()) {
+        foreach (var key in _current.Keys) {
             _current[key] = VHelper.Freeze(_current[key]);
         }
         _estimate.CurrentPayloadBareBytes = _estimate.CommittedPayloadBareBytes;

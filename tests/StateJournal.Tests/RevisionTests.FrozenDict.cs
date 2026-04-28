@@ -317,6 +317,49 @@ partial class RevisionTests {
         Assert.Equal(42UL, forkValue);
     }
 
+    /// <summary>
+    /// 验证 pending fork（尚未经 ObjectMap registration 提交）上调用 Freeze 后，
+    /// DiscardChanges 的优先级：pending registration guard 优先于 frozen discard 逻辑。
+    /// 这是 fork 设计文档明确规定的第一版策略。
+    /// </summary>
+    [Fact]
+    public void PendingFork_FreezeThenDiscardChanges_ThrowsWithRegistrationMessage() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+        var rev = CreateRevision();
+
+        // 先 commit source，使其有 version chain 可供 fork
+        var source = rev.CreateDict<int, int>();
+        source.Upsert(1, 10);
+        _ = AssertCommitSucceeded(CommitToFile(rev, source, file), "Commit1");
+
+        var fork = source.ForkCommittedAsMutable();
+        fork.Freeze();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => fork.DiscardChanges());
+        Assert.Contains("ObjectMap registration", ex.Message);
+        Assert.True(fork.IsFrozen);
+    }
+
+    [Fact]
+    public void PendingFork_MixedDict_FreezeThenDiscardChanges_ThrowsWithRegistrationMessage() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+        var rev = CreateRevision();
+
+        // 先 commit source，使其有 version chain 可供 fork
+        var source = rev.CreateDict<int>();
+        source.Upsert(1, ulong.MaxValue);
+        _ = AssertCommitSucceeded(CommitToFile(rev, source, file), "Commit1");
+
+        var fork = source.ForkCommittedAsMutable();
+        fork.Freeze();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => fork.DiscardChanges());
+        Assert.Contains("ObjectMap registration", ex.Message);
+        Assert.True(fork.IsFrozen);
+    }
+
     [Fact]
     public void Freeze_OnStillUnsupportedDurableContainer_ThrowsNotSupported() {
         var rev = CreateRevision();
