@@ -340,13 +340,11 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var action = new ActionMessage(
-            Blocks: new ActionBlock[] {
-                new ActionBlock.Text("alpha"),
-                new ActionBlock.ToolCall(toolCall),
-                new ActionBlock.Text("omega")
-            }
-        );
+        var action = new ActionMessage(new ActionBlock[] {
+            new ActionBlock.Text("alpha"),
+            new ActionBlock.ToolCall(toolCall),
+            new ActionBlock.Text("omega")
+        });
 
         var request = new CompletionRequest(
             ModelId: "claude-3",
@@ -384,13 +382,11 @@ public sealed class AnthropicMessageConverterTests {
             signature = "sig-123"
         });
 
-        var action = new ActionMessage(
-            Blocks: new ActionBlock[] {
-                new ActionBlock.Text("alpha"),
-                new ActionBlock.Thinking(new CompletionDescriptor("provider", "spec", "model"), payload, "debug"),
-                new ActionBlock.Text("omega")
-            }
-        );
+        var action = new ActionMessage(new ActionBlock[] {
+            new ActionBlock.Text("alpha"),
+            new ActionBlock.Thinking(new CompletionDescriptor("provider", "spec", "model"), payload, "debug"),
+            new ActionBlock.Text("omega")
+        });
 
         var request = new CompletionRequest(
             ModelId: "claude-3",
@@ -416,15 +412,13 @@ public sealed class AnthropicMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_InvalidThinkingPayloadFailsFast() {
-        var action = new ActionMessage(
-            Blocks: new ActionBlock[] {
-                new ActionBlock.Thinking(
-                    new CompletionDescriptor("provider", "spec", "model"),
-                    System.Text.Encoding.UTF8.GetBytes("""{"type":"not-thinking","foo":1}"""),
-                    null
-                )
-            }
-        );
+        var action = new ActionMessage(new ActionBlock[] {
+            new ActionBlock.Thinking(
+                new CompletionDescriptor("provider", "spec", "model"),
+                System.Text.Encoding.UTF8.GetBytes("""{"type":"not-thinking","foo":1}"""),
+                null
+            )
+        });
 
         var request = new CompletionRequest(
             ModelId: "claude-3",

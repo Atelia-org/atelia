@@ -16,7 +16,8 @@ public sealed class AggregatedActionTests {
         };
         var sourceErrors = new List<string> { "boom-1" };
 
-        var action = new AggregatedAction(sourceBlocks, Descriptor, new TokenUsage(3, 2), sourceErrors);
+        var message = new ActionMessage(sourceBlocks);
+        var action = new AggregatedAction(message, Descriptor, new TokenUsage(3, 2), sourceErrors);
 
         sourceBlocks.Add(new ActionBlock.Text("omega"));
         sourceErrors.Add("boom-2");
@@ -34,14 +35,14 @@ public sealed class AggregatedActionTests {
     [Fact]
     public void WithExpression_AlsoFreezesAssignedLists() {
         var baseAction = new AggregatedAction(
-            blocks: new[] { new ActionBlock.Text("seed") },
+            message: new ActionMessage(new[] { new ActionBlock.Text("seed") }),
             invocation: Descriptor
         );
         var replacementBlocks = new List<ActionBlock> { new ActionBlock.Text("beta") };
         var replacementErrors = new List<string> { "warn-1" };
 
         var cloned = baseAction with {
-            Blocks = replacementBlocks,
+            Message = new ActionMessage(replacementBlocks),
             Errors = replacementErrors,
         };
 

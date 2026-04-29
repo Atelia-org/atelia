@@ -110,7 +110,7 @@ public sealed class PersistentSession : IDisposable {
                     list.Add(new ObservationMessage(content));
                     break;
                 case "assistant":
-                    list.Add(new TextOnlyAction(content));
+                    list.Add(new ActionMessage(new ActionBlock[] { new ActionBlock.Text(content) }));
                     break;
             }
         }
@@ -131,12 +131,4 @@ public sealed class PersistentSession : IDisposable {
     public void Dispose() => _repo.Dispose();
 }
 
-/// <summary>
-/// 把一段纯文本包装成 IActionMessage，用于回灌到 OpenAI/Anthropic converter。
-/// 等到我们要持久化 ToolCalls/Thinking blocks 时，这里会扩充为完整的 AggregatedAction-like record。
-/// </summary>
-internal sealed record TextOnlyAction(string Text) : IActionMessage {
-    public HistoryMessageKind Kind => HistoryMessageKind.Action;
-    public IReadOnlyList<ParsedToolCall> ToolCalls => Array.Empty<ParsedToolCall>();
-    public IReadOnlyList<ActionBlock> Blocks { get; } = new ActionBlock[] { new ActionBlock.Text(Text) };
-}
+
