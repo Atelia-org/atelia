@@ -32,6 +32,35 @@ public class AgentEngine {
     private AgentRunState? _lastLoggedState;
 
     /// <summary>
+    /// 捆绑一次上下文压缩请求所需的全部参数：切分点与 LLM 调用所需的两个 prompt。
+    /// </summary>
+    /// <remarks>
+    /// prompt 文本不由引擎内置，而是由 <see cref="RequestCompaction"/> 的调用者注入，
+    /// 便于在不同实验台项目中进行提示词工程。
+    /// </remarks>
+    /// <param name="SplitIndex">suffix 起始索引（由 <see cref="ContextSplitter.FindHalfContextSplitPoint"/> 返回）。</param>
+    /// <param name="SystemPrompt">摘要 LLM 的系统提示词。</param>
+    /// <param name="SummarizePrompt">追加在待摘要历史末尾的请求消息。</param>
+    private readonly record struct CompactionRequest(int SplitIndex, string SystemPrompt, string SummarizePrompt);
+
+    /// <summary>
+    /// 待执行的上下文压缩请求。
+    /// <c>null</c> 表示无待处理的压缩请求；非 <c>null</c> 时，<see cref="DetermineState"/> 返回 <see cref="AgentRunState.Compacting"/>。
+    /// </summary>
+    /// <remarks>
+    /// 在 <see cref="RequestCompaction"/> 中计算并写入。
+    /// 清除时机：
+    /// <list type="bullet">
+    /// <item><see cref="ProcessCompactingAsync"/> 成功调用 <see cref="AgentState.ReplacePrefixWithRecap"/> 后清除（正常完成）；</item>
+    /// <item>stale 校验失败（splitIndex 越界或不再满足 Observation→Action 边界不变式）时清除；</item>
+    /// <item>LLM 摘要返回空字符串时清除。</item>
+    /// </list>
+    /// LLM 调用抛出异常或 cancellation 时<em>不</em>清除，允许下一次 <see cref="StepAsync"/> 自动重试。
+    /// 这替代了原先的 <c>bool _compactionPending</c>，使得状态标志同时携带切分点与 prompt 信息，避免 flag 与各参数分离导致的一致性问题。
+    /// </remarks>
+    private CompactionRequest? _compactionRequest;
+
+    /// <summary>
     /// 初始化 <see cref="AgentEngine"/> 的新实例。
     /// </summary>
     /// <param name="state">Agent 状态实例，如为 <c>null</c> 则创建默认状态。</param>
@@ -360,6 +389,7 @@ public class AgentEngine {
     }
 
     private AgentRunState DetermineState() {
+        if (_compactionRequest.HasValue) { return AgentRunState.Compacting; }
         if (_state.RecentHistory.Count == 0) { return AgentRunState.WaitingInput; }
 
         var last = _state.RecentHistory[^1];
@@ -389,9 +419,130 @@ public class AgentEngine {
                 return await ProcessWaitingToolResultsAsync(cancellationToken).ConfigureAwait(false);
             case AgentRunState.ToolResultsReady:
                 return ProcessToolResultsReady();
+            case AgentRunState.Compacting:
+                return await ProcessCompactingAsync(profile, cancellationToken).ConfigureAwait(false);
             default:
                 return StepOutcome.NoProgress;
         }
+    }
+
+    /// <summary>
+    /// 请求下一次 <see cref="StepAsync"/> 调用时执行上下文压缩。
+    /// 主要用于测试目的；自动触发策略留待后续设计。
+    /// </summary>
+    /// <param name="systemPrompt">摘要 LLM 的系统提示词（由调用方注入，便于提示词工程）。</param>
+    /// <param name="summarizePrompt">追加在待摘要历史末尾的摘要请求消息（由调用方注入）。</param>
+    /// <returns>
+    /// <c>true</c> 表示找到合法切分点并已记录到 <see cref="_compactionRequest"/>；
+    /// <c>false</c> 表示当前历史没有可用的切分点（如条目数不足 2），不会进入 <see cref="AgentRunState.Compacting"/> 状态。
+    /// </returns>
+    /// <remarks>
+    /// 若已有待处理的压缩请求（<see cref="_compactionRequest"/> 非 <c>null</c>），
+    /// 本次调用会刷新切分点与 prompt（重新采样当前历史快照）。重复调用是幂等的：只要历史量足够，
+    /// 始终返回 <c>true</c>。
+    /// <para>
+    /// Compaction 是一个高优先级内部状态：一旦 <see cref="_compactionRequest"/> 被设置，
+    /// <see cref="DetermineState"/> 会优先返回 <see cref="AgentRunState.Compacting"/>，
+    /// 插队到 <c>PendingInput</c> / <c>PendingToolResults</c> 等状态之前。
+    /// 由于 suffix 部分原样保留，此插队不会破坏 <see cref="_pendingToolResults"/> 与末尾 <see cref="ActionEntry"/> 的对应关系。
+    /// </para>
+    /// </remarks>
+    public bool RequestCompaction(string systemPrompt, string summarizePrompt) {
+        if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
+        if (summarizePrompt is null) { throw new ArgumentNullException(nameof(summarizePrompt)); }
+
+        var snapshot = _state.RecentHistory;
+        int splitIndex = ContextSplitter.FindHalfContextSplitPoint(snapshot);
+        if (splitIndex < 0) {
+            DebugUtil.Trace(StateMachineDebugCategory, "[Compacting] RequestCompaction: no valid split point; skipping.");
+            return false;
+        }
+        _compactionRequest = new CompactionRequest(splitIndex, systemPrompt, summarizePrompt);
+        DebugUtil.Trace(StateMachineDebugCategory, $"[Compacting] RequestCompaction: splitIndex={splitIndex} historyCount={snapshot.Count}");
+        return true;
+    }
+
+    /// <summary>
+    /// 将历史条目投影为 <see cref="IHistoryMessage"/> 列表，末尾追加摘要请求消息。
+    /// </summary>
+    /// <remarks>
+    /// 这是原 <c>ContextSummarizer.ProjectToMessages</c> 的迁移版本。
+    /// 使用 Detail 级别、不注入 windows、不处理 Turn 切分——
+    /// 摘要场景下 LLM 只需看到内容文本，无需完整投影管线。
+    /// </remarks>
+    private static List<IHistoryMessage> ProjectForSummarization(
+        IReadOnlyList<HistoryEntry> entries,
+        string summarizePrompt
+    ) {
+        var messages = new List<IHistoryMessage>(entries.Count + 1);
+
+        foreach (var entry in entries) {
+            switch (entry) {
+                case ActionEntry action:
+                    messages.Add(action);
+                    break;
+
+                case ObservationEntry observation:
+                    messages.Add(observation.GetMessage(LevelOfDetail.Detail, windows: null));
+                    break;
+
+                case RecapEntry recap:
+                    messages.Add(new ObservationMessage(recap.Content));
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported HistoryEntry type: {entry.GetType().Name} (Kind={entry.Kind})"
+                    );
+            }
+        }
+
+        messages.Add(new ObservationMessage(summarizePrompt));
+        return messages;
+    }
+
+    private async Task<StepOutcome> ProcessCompactingAsync(LlmProfile profile, CancellationToken cancellationToken) {
+        if (!_compactionRequest.HasValue) {
+            // 防御性：状态机不应走到这里，但保留安全处理。
+            DebugUtil.Warning(StateMachineDebugCategory, "[Compacting] Entered without valid compaction request; aborting.");
+            return StepOutcome.NoProgress;
+        }
+
+        var request = _compactionRequest.Value;
+        int splitIndex = request.SplitIndex;
+        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Starting half-context compaction. splitIndex={splitIndex}");
+
+        // 校验 splitIndex 对当前历史仍然合法（RequestCompaction 与执行之间历史可能变化）
+        // 需要同时验证索引边界和 Observation→Action 结构不变式，因为 ReplacePrefixWithRecap
+        // 仅在 DEBUG 下对这些前置条件做 Assert，Release 下不会阻止。
+        var snapshot = _state.RecentHistory;
+        if (splitIndex < 1 || splitIndex >= snapshot.Count
+            || !snapshot[splitIndex - 1].IsObservationLike
+            || snapshot[splitIndex] is not ActionEntry) {
+            DebugUtil.Warning(StateMachineDebugCategory, $"[Compacting] splitIndex={splitIndex} no longer valid for current history (count={snapshot.Count}); aborting.");
+            _compactionRequest = null;
+            return StepOutcome.NoProgress;
+        }
+
+        var prefix = new List<HistoryEntry>(splitIndex);
+        for (int i = 0; i < splitIndex; i++) {
+            prefix.Add(snapshot[i]);
+        }
+        var messages = ProjectForSummarization(prefix, request.SummarizePrompt);
+        var (summary, usage) = await ContextSummarizer.SummarizeAsync(
+            profile, messages, request.SystemPrompt, cancellationToken
+        ).ConfigureAwait(false);
+
+        if (string.IsNullOrEmpty(summary)) {
+            DebugUtil.Warning(StateMachineDebugCategory, "[Compacting] Summarization returned empty; skipping replacement.");
+            _compactionRequest = null;
+            return StepOutcome.NoProgress;
+        }
+
+        _state.ReplacePrefixWithRecap(splitIndex, summary);
+        _compactionRequest = null;
+        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Done. splitIndex={splitIndex} summaryLen={summary.Length} usage={(usage is null ? "N/A" : $"prompt={usage.PromptTokens} completion={usage.CompletionTokens}")} remaining={_state.RecentHistory.Count}");
+        return StepOutcome.FromStateMutation();
     }
 
     private StepOutcome ProcessWaitingInput() {
@@ -666,6 +817,13 @@ public class AgentEngine {
 
         public static StepOutcome FromToolExecution()
             => new(true, null, null, null);
+
+        /// <summary>
+        /// 表示状态机发生了内部状态变更（如上下文压缩），但未产生新的 I/O 条目。
+        /// 返回 <c>ProgressMade == true</c>，确保外层驱动循环不会误判为阻塞。
+        /// </summary>
+        public static StepOutcome FromStateMutation()
+            => FromToolExecution();
     }
 }
 

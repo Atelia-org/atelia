@@ -7,7 +7,11 @@ public enum AgentRunState {
     PendingInput,
     WaitingToolResults,
     ToolResultsReady,
-    PendingToolResults
+    PendingToolResults,
+    /// <summary>
+    /// 内部状态：即将执行上下文压缩（LLM 一次性摘要）。
+    /// </summary>
+    Compacting,
 }
 
 public readonly record struct AgentStepResult(
