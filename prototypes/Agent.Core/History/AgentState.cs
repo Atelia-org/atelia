@@ -363,14 +363,14 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return projected;
     }
 
-    private static ProjectedActionMessage ProjectActionEntry(
+    private static ActionMessage ProjectActionEntry(
         ActionEntry actionEntry,
         ContextProjectionOptions options,
         CurrentTurnInfo currentTurn,
         bool isInActiveTurn
     ) {
         var projectedBlocks = ProjectActionBlocks(actionEntry, options, currentTurn, isInActiveTurn);
-        return new ProjectedActionMessage(projectedBlocks);
+        return new ActionMessage(projectedBlocks);
     }
 
     private static IReadOnlyList<ActionBlock> ProjectActionBlocks(

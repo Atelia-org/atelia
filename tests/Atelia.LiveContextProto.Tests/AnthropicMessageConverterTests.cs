@@ -340,7 +340,7 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var action = new ProjectedActionMessage(
+        var action = new ActionMessage(
             Blocks: new ActionBlock[] {
                 new ActionBlock.Text("alpha"),
                 new ActionBlock.ToolCall(toolCall),
@@ -384,7 +384,7 @@ public sealed class AnthropicMessageConverterTests {
             signature = "sig-123"
         });
 
-        var action = new ProjectedActionMessage(
+        var action = new ActionMessage(
             Blocks: new ActionBlock[] {
                 new ActionBlock.Text("alpha"),
                 new ActionBlock.Thinking(new CompletionDescriptor("provider", "spec", "model"), payload, "debug"),
@@ -416,7 +416,7 @@ public sealed class AnthropicMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_InvalidThinkingPayloadFailsFast() {
-        var action = new ProjectedActionMessage(
+        var action = new ActionMessage(
             Blocks: new ActionBlock[] {
                 new ActionBlock.Thinking(
                     new CompletionDescriptor("provider", "spec", "model"),
