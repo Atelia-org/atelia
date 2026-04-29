@@ -100,28 +100,7 @@ public abstract record class HistoryEntry : ITokenEstimateSource {
 public sealed record ActionEntry(
     IReadOnlyList<ActionBlock> Blocks,
     CompletionDescriptor Invocation
-) : HistoryEntry, IRichActionMessage {
-    /// <summary>
-    /// 兼容性便捷构造：从扁平的 <paramref name="Content"/> 与 <paramref name="ToolCalls"/> 构造
-    /// <see cref="ActionEntry"/>。生成的 <see cref="Blocks"/> 形态为
-    /// <c>[Text(Content)?, ToolCall(c1), ToolCall(c2), ...]</c>——content 在前（若非空），
-    /// 随后是各个 tool call。仅作为 convenience，不引入第二真相源。
-    /// 参数沿用 PascalCase 以保持与既有命名参数调用的源码兼容。
-    /// </summary>
-    public ActionEntry(string Content, IReadOnlyList<ParsedToolCall> ToolCalls, CompletionDescriptor Invocation)
-        : this(BuildBlocks(Content, ToolCalls), Invocation) { }
-
-    private static IReadOnlyList<ActionBlock> BuildBlocks(string content, IReadOnlyList<ParsedToolCall> toolCalls) {
-        var list = new List<ActionBlock>(capacity: (string.IsNullOrEmpty(content) ? 0 : 1) + toolCalls.Count);
-        if (!string.IsNullOrEmpty(content)) {
-            list.Add(new ActionBlock.Text(content));
-        }
-        foreach (var call in toolCalls) {
-            list.Add(new ActionBlock.ToolCall(call));
-        }
-        return list;
-    }
-
+) : HistoryEntry, IActionMessage {
     /// <inheritdoc />
     public override HistoryEntryKind Kind => HistoryEntryKind.Action;
 
@@ -139,10 +118,10 @@ public sealed record ActionEntry(
     // converter 在编码时按需添加，而非 compat view 越权决定。
 
     /// <summary>
-    /// Lossy compatibility view：将 <see cref="Blocks"/> 中所有 <see cref="ActionBlock.Text"/>
-    /// 块的内容按顺序串接（无分隔符）。新代码应直接读取 <see cref="Blocks"/>。
+    /// Lossy derived view：将 <see cref="Blocks"/> 中所有 <see cref="ActionBlock.Text"/>
+    /// 块的内容按顺序串接（无分隔符）。非真相源——优先使用 <see cref="Blocks"/>。
     /// </summary>
-    public string Content => string.Concat(
+    public string GetFlattenedText() => string.Concat(
         Blocks.OfType<ActionBlock.Text>().Select(b => b.Content)
     );
 
@@ -156,8 +135,6 @@ public sealed record ActionEntry(
         .ToArray();
 
     HistoryMessageKind IHistoryMessage.Kind => HistoryMessageKind.Action;
-    string IActionMessage.Content => Content;
-    IReadOnlyList<ParsedToolCall> IActionMessage.ToolCalls => ToolCalls;
 }
 
 

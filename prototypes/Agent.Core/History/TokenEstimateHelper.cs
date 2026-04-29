@@ -99,7 +99,9 @@ public sealed class TokenEstimateHelper {
     private uint EstimateAction(ActionEntry action) {
         uint total = 0;
 
-        total += EstimateString(action.Content);
+        foreach (var textBlock in action.Blocks.OfType<ActionBlock.Text>()) {
+            total += EstimateString(textBlock.Content);
+        }
         total += EstimateToolCalls(action.ToolCalls);
         // total += EstimateCompletionDescriptor(action.Invocation); action.Invocation是History层元信息，不会序列化到LLM调用上下文中
 

@@ -258,9 +258,9 @@ public sealed class AgentEngineTurnLockTests {
         var newDescriptor = new CompletionDescriptor("provider-new", "spec-new", "model-new");
         var history = new HistoryEntry[] {
             new ObservationEntry(),
-            new ActionEntry("first", Array.Empty<ParsedToolCall>(), oldDescriptor),
+            new ActionEntry(Blocks: new ActionBlock[] { new ActionBlock.Text("first") }, Invocation: oldDescriptor),
             new ToolResultsEntry(Array.Empty<LodToolCallResult>(), "runner_failed"),
-            new ActionEntry("second", Array.Empty<ParsedToolCall>(), newDescriptor)
+            new ActionEntry(Blocks: new ActionBlock[] { new ActionBlock.Text("second") }, Invocation: newDescriptor)
         };
 
         var turn = TurnAnalyzer.Analyze(history);
@@ -277,7 +277,7 @@ public sealed class AgentEngineTurnLockTests {
         var descriptor = new CompletionDescriptor("provider", "spec", "model");
         var history = new HistoryEntry[] {
             new RecapEntry("recap", 42),
-            new ActionEntry("tool call", Array.Empty<ParsedToolCall>(), descriptor),
+            new ActionEntry(Blocks: new ActionBlock[] { new ActionBlock.Text("tool call") }, Invocation: descriptor),
             new ToolResultsEntry(Array.Empty<LodToolCallResult>(), "runner_failed")
         };
 

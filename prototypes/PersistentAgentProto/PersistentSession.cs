@@ -132,12 +132,11 @@ public sealed class PersistentSession : IDisposable {
 }
 
 /// <summary>
-/// 把一段纯文本包装成 IRichActionMessage，用于回灌到 OpenAI/Anthropic converter。
+/// 把一段纯文本包装成 IActionMessage，用于回灌到 OpenAI/Anthropic converter。
 /// 等到我们要持久化 ToolCalls/Thinking blocks 时，这里会扩充为完整的 AggregatedAction-like record。
 /// </summary>
-internal sealed record TextOnlyAction(string Text) : IRichActionMessage {
+internal sealed record TextOnlyAction(string Text) : IActionMessage {
     public HistoryMessageKind Kind => HistoryMessageKind.Action;
-    public string Content => Text;
     public IReadOnlyList<ParsedToolCall> ToolCalls => Array.Empty<ParsedToolCall>();
     public IReadOnlyList<ActionBlock> Blocks { get; } = new ActionBlock[] { new ActionBlock.Text(Text) };
 }

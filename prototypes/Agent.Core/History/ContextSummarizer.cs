@@ -58,6 +58,6 @@ public static class ContextSummarizer {
         var chunks = profile.Client.StreamCompletionAsync(request, cancellationToken);
         var aggregated = await chunks.AggregateAsync(invocation, cancellationToken).ConfigureAwait(false);
 
-        return (aggregated.Content ?? string.Empty, aggregated.Usage);
+        return (aggregated.GetFlattenedText() ?? string.Empty, aggregated.Usage);
     }
 }

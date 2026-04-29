@@ -639,7 +639,8 @@ public class AgentEngine {
         OnAfterModelCall(afterArgs);
 
         var toolCallCount = appended.ToolCalls?.Count ?? 0;
-        DebugUtil.Info(ProviderDebugCategory, $"[Engine] Model output appended Content.Length={appended.Content.Length} toolCalls={toolCallCount}");
+        var textLen = appended.Blocks.OfType<ActionBlock.Text>().Sum(b => b.Content.Length);
+        DebugUtil.Info(ProviderDebugCategory, $"[Engine] Model output appended textLen={textLen} toolCalls={toolCallCount}");
 
         return StepOutcome.FromOutput(appended);
     }

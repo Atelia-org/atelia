@@ -28,8 +28,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var historyEntry = new ActionEntry(
-            Content: string.Empty,
-            ToolCalls: new[] { toolCall },
+            Blocks: new ActionBlock[] { new ActionBlock.ToolCall(toolCall) },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
 
@@ -82,8 +81,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var historyEntry = new ActionEntry(
-            Content: "call",
-            ToolCalls: new[] { toolCall },
+            Blocks: new ActionBlock[] { new ActionBlock.Text("call"), new ActionBlock.ToolCall(toolCall) },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
 
@@ -128,8 +126,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var historyEntry = new ActionEntry(
-            Content: "call",
-            ToolCalls: new[] { toolCall },
+            Blocks: new ActionBlock[] { new ActionBlock.Text("call"), new ActionBlock.ToolCall(toolCall) },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
 
@@ -161,10 +158,9 @@ public sealed class AnthropicMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ToolResultsFollowPendingAssistantToolCallOrder() {
         var actionEntry = new ActionEntry(
-            Content: string.Empty,
-            ToolCalls: new[] {
-                new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null),
-                new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)
+            Blocks: new ActionBlock[] {
+                new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
+                new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
             },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
@@ -223,10 +219,9 @@ public sealed class AnthropicMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
         var actionEntry = new ActionEntry(
-            Content: string.Empty,
-            ToolCalls: new[] {
-                new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null),
-                new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)
+            Blocks: new ActionBlock[] {
+                new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
+                new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
             },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
@@ -316,8 +311,7 @@ public sealed class AnthropicMessageConverterTests {
         // Anthropic 要求第一条消息必须是 user；上游提供了以 Action 开头的历史应被早期拒绝，
         // 而不是静默垫一个会被 API 拒绝的空文本块。
         var actionEntry = new ActionEntry(
-            Content: "hello",
-            ToolCalls: Array.Empty<ParsedToolCall>(),
+            Blocks: new ActionBlock[] { new ActionBlock.Text("hello") },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
 

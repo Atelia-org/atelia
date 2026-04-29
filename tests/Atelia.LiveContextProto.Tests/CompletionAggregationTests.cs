@@ -48,8 +48,8 @@ public sealed class CompletionChunkAggregationTests {
             block => Assert.Equal("omega", Assert.IsType<ActionBlock.Text>(block).Content)
         );
 
-        // Compatibility view: Content concatenates only Text blocks, Thinking is excluded
-        Assert.Equal("alphaomega", entry.Content);
+        // Compatibility view: GetFlattenedText() concatenates only Text blocks, Thinking is excluded
+        Assert.Equal("alphaomega", entry.GetFlattenedText());
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class CompletionChunkAggregationTests {
             entry.Blocks,
             block => Assert.Equal("alpha", Assert.IsType<ActionBlock.Text>(block).Content)
         );
-        Assert.Equal("alpha", entry.Content);
+        Assert.Equal("alpha", entry.GetFlattenedText());
         Assert.Equal(usage, entry.Usage);
         Assert.Equal(new[] { "boom-1", "boom-2" }, entry.Errors);
     }
@@ -98,8 +98,8 @@ public sealed class CompletionChunkAggregationTests {
             entry.Blocks,
             block => Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(block).Content)
         );
-        Assert.Equal(string.Empty, entry.Content);
-        Assert.Empty(entry.ToolCalls);
+        Assert.Equal(string.Empty, entry.GetFlattenedText());
+        Assert.Empty(((IActionMessage)entry).ToolCalls);
         Assert.Null(entry.Errors);
         Assert.Null(entry.Usage);
     }
@@ -119,7 +119,7 @@ public sealed class CompletionChunkAggregationTests {
             entry.Blocks,
             block => Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(block).Content)
         );
-        Assert.Equal(string.Empty, entry.Content);
+        Assert.Equal(string.Empty, entry.GetFlattenedText());
         Assert.Equal(new[] { "recoverable" }, entry.Errors);
         Assert.Equal(usage, entry.Usage);
     }

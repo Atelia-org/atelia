@@ -91,8 +91,9 @@ public static class PeerEntry {
             }
 
             if (step.Output is { } actionEntry) {
-                if (!string.IsNullOrEmpty(actionEntry.Content)) {
-                    output.WriteLine(actionEntry.Content);
+                var actionText = actionEntry.GetFlattenedText();
+                if (!string.IsNullOrEmpty(actionText)) {
+                    output.WriteLine(actionText);
                 }
                 if (!quiet) {
                     foreach (var call in actionEntry.ToolCalls) {

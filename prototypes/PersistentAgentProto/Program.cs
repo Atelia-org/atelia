@@ -76,7 +76,7 @@ internal static class Program {
                     .StreamCompletionAsync(request, cts.Token)
                     .AggregateAsync(invocation, cts.Token);
 
-                Console.WriteLine(aggregated.Content);
+                Console.WriteLine(aggregated.GetFlattenedText());
                 if (aggregated.Errors is { Count: > 0 } errs) {
                     foreach (var e in errs) { Console.WriteLine($"[error] {e}"); }
                 }
@@ -84,7 +84,7 @@ internal static class Program {
                     DebugUtil.Info("Boot", $"usage prompt={u.PromptTokens} completion={u.CompletionTokens}");
                 }
 
-                session.AppendAssistant(aggregated.Content);
+                session.AppendAssistant(aggregated.GetFlattenedText());
             }
             catch (OperationCanceledException) {
                 Console.WriteLine("[cancelled]");

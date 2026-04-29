@@ -26,8 +26,8 @@ public sealed class AggregatedActionTests {
             block => Assert.Equal("alpha", Assert.IsType<ActionBlock.Text>(block).Content),
             block => Assert.Equal("call-1", Assert.IsType<ActionBlock.ToolCall>(block).Call.ToolCallId)
         );
-        Assert.Equal("alpha", action.Content);
-        Assert.Collection(action.ToolCalls, call => Assert.Equal("call-1", call.ToolCallId));
+        Assert.Equal("alpha", action.GetFlattenedText());
+        Assert.Collection(((IActionMessage)action).ToolCalls, call => Assert.Equal("call-1", call.ToolCallId));
         Assert.Equal(new[] { "boom-1" }, action.Errors);
     }
 
@@ -52,7 +52,7 @@ public sealed class AggregatedActionTests {
             cloned.Blocks,
             block => Assert.Equal("beta", Assert.IsType<ActionBlock.Text>(block).Content)
         );
-        Assert.Equal("beta", cloned.Content);
+        Assert.Equal("beta", cloned.GetFlattenedText());
         Assert.Equal(new[] { "warn-1" }, cloned.Errors);
     }
 }

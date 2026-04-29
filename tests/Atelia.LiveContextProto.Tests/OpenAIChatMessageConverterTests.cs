@@ -28,8 +28,7 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var historyEntry = new ActionEntry(
-            Content: string.Empty,
-            ToolCalls: new[] { toolCall },
+            Blocks: new ActionBlock[] { new ActionBlock.ToolCall(toolCall) },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
 
@@ -69,10 +68,9 @@ public sealed class OpenAIChatMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ToolResultsFollowPendingAssistantToolCallOrder() {
         var actionEntry = new ActionEntry(
-            Content: string.Empty,
-            ToolCalls: new[] {
-                new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null),
-                new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)
+            Blocks: new ActionBlock[] {
+                new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
+                new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
             },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );
@@ -126,10 +124,9 @@ public sealed class OpenAIChatMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
         var actionEntry = new ActionEntry(
-            Content: string.Empty,
-            ToolCalls: new[] {
-                new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null),
-                new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)
+            Blocks: new ActionBlock[] {
+                new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
+                new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
             },
             Invocation: new CompletionDescriptor("provider", "spec", "model")
         );

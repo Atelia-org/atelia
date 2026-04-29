@@ -8,8 +8,12 @@ namespace Atelia.Agent.Core.History;
 /// </summary>
 public sealed record ProjectedActionMessage(
     IReadOnlyList<ActionBlock> Blocks
-) : IRichActionMessage {
-    public string Content => string.Concat(
+) : IActionMessage {
+    /// <summary>
+    /// Lossy derived view：将 <see cref="Blocks"/> 中所有 <see cref="ActionBlock.Text"/>
+    /// 块的内容按顺序串接（无分隔符）。非真相源——优先使用 <see cref="Blocks"/>。
+    /// </summary>
+    public string GetFlattenedText() => string.Concat(
         Blocks.OfType<ActionBlock.Text>().Select(static block => block.Content)
     );
 
