@@ -92,8 +92,8 @@ public sealed class AnthropicClientTests {
         Assert.Equal(1, thinkingBeginCount);
         Assert.Equal(1, thinkingEndCount);
         Assert.Equal(1, reasoningDeltaCount);
-        Assert.DoesNotContain(aggregated.Blocks, block => block.Kind == ActionBlockKind.Thinking);
-        var text = Assert.Single(aggregated.Blocks);
+        Assert.DoesNotContain(aggregated.Message.Blocks, block => block.Kind == ActionBlockKind.Thinking);
+        var text = Assert.Single(aggregated.Message.Blocks);
         Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(text).Content);
     }
 

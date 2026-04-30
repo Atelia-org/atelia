@@ -358,7 +358,7 @@ public sealed class AgentEngineTurnLockTests {
             _responses = new Queue<Action<CompletionAggregator>[]>(responses);
         }
 
-        public Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default) {
+        public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default) {
             if (_responses.Count == 0) { throw new InvalidOperationException("No provider responses configured."); }
 
             var feeds = _responses.Dequeue();

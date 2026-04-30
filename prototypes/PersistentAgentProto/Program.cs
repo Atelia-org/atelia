@@ -46,7 +46,10 @@ internal static class Program {
         );
 
         var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        Console.CancelKeyPress += (_, e) => {
+            e.Cancel = true;
+            cts.Cancel();
+        };
 
         while (true) {
             Console.Write("user> ");
@@ -74,12 +77,12 @@ internal static class Program {
                 var aggregated = await client
                     .StreamCompletionAsync(request, null, cts.Token);
 
-                Console.WriteLine(aggregated.GetFlattenedText());
+                Console.WriteLine(aggregated.Message.GetFlattenedText());
                 if (aggregated.Errors is { Count: > 0 } errs) {
                     foreach (var e in errs) { Console.WriteLine($"[error] {e}"); }
                 }
 
-                session.AppendAssistant(aggregated.GetFlattenedText());
+                session.AppendAssistant(aggregated.Message.GetFlattenedText());
             }
             catch (OperationCanceledException) {
                 Console.WriteLine("[cancelled]");

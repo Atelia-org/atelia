@@ -43,7 +43,7 @@ public sealed class CompletionDescriptorTests {
         public string Name { get; }
         public string ApiSpecId { get; }
 
-        public Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default)
+        public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
     }
 }

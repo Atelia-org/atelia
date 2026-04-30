@@ -44,7 +44,7 @@ public sealed class OpenAIChatClientTests {
 
         var requestBody = Assert.Single(handler.RequestBodies);
         Assert.DoesNotContain("\"stream_options\"", requestBody, StringComparison.Ordinal);
-        Assert.Equal("hello", aggregated.GetFlattenedText());
+        Assert.Equal("hello", aggregated.Message.GetFlattenedText());
     }
 
     [Fact]
@@ -103,8 +103,8 @@ public sealed class OpenAIChatClientTests {
 
         var aggregated = await client.StreamCompletionAsync(CreateRequest(), observer, CancellationToken.None);
 
-        Assert.DoesNotContain(aggregated.Blocks, block => block.Kind == ActionBlockKind.ToolCall);
-        var text = Assert.Single(aggregated.Blocks);
+        Assert.DoesNotContain(aggregated.Message.Blocks, block => block.Kind == ActionBlockKind.ToolCall);
+        var text = Assert.Single(aggregated.Message.Blocks);
         Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(text).Content);
     }
 

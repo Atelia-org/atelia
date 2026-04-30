@@ -699,13 +699,13 @@ public class AgentEngine {
         invocation = args.Profile.ToCompletionDescriptor();
         var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
 
-        var aggregated = await args.Profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
-        EnsureAggregatedInvocationMatchesExpected(invocation, aggregated.Invocation);
-        var aggregatedOutput = new ActionEntry(aggregated.Blocks, invocation);
+        var result = await args.Profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
+        EnsureCompletionInvocationMatchesExpected(invocation, result.Invocation);
+        var aggregatedOutput = new ActionEntry(result.Message.Blocks, invocation);
 
         DebugUtil.Info(
             ProviderDebugCategory,
-            $"[Engine] Aggregated completion blocks={aggregated.Blocks.Count} toolCalls={aggregatedOutput.ToolCalls.Count} errors={aggregated.Errors?.Count ?? 0}"
+            $"[Engine] Completion result blocks={result.Message.Blocks.Count} toolCalls={aggregatedOutput.ToolCalls.Count} errors={result.Errors?.Count ?? 0}"
         );
 
         _pendingToolResults.Clear();
@@ -840,13 +840,13 @@ public class AgentEngine {
     private static string DescribeDescriptor(CompletionDescriptor descriptor)
         => $"{{Provider={descriptor.ProviderId}, ApiSpec={descriptor.ApiSpecId}, Model={descriptor.Model}}}";
 
-    private static void EnsureAggregatedInvocationMatchesExpected(CompletionDescriptor expected, CompletionDescriptor actual) {
+    private static void EnsureCompletionInvocationMatchesExpected(CompletionDescriptor expected, CompletionDescriptor actual) {
         if (expected is null) { throw new ArgumentNullException(nameof(expected)); }
         if (actual is null) { throw new ArgumentNullException(nameof(actual)); }
         if (Equals(expected, actual)) { return; }
 
         throw new InvalidOperationException(
-            "Completion client returned an AggregatedAction.Invocation that does not match the requested profile. " +
+            "Completion client returned a CompletionResult.Invocation that does not match the requested profile. " +
             $"Expected {DescribeDescriptor(expected)}, but received {DescribeDescriptor(actual)}."
         );
     }

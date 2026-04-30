@@ -118,7 +118,7 @@ public sealed class AgentEngineIdleObservationTests {
         public string Name => "throwing";
         public string ApiSpecId => "throwing";
 
-        public System.Threading.Tasks.Task<Atelia.Completion.Abstractions.AggregatedAction> StreamCompletionAsync(
+        public System.Threading.Tasks.Task<Atelia.Completion.Abstractions.CompletionResult> StreamCompletionAsync(
             Atelia.Completion.Abstractions.CompletionRequest request,
             Atelia.Completion.Abstractions.CompletionStreamObserver? observer,
             System.Threading.CancellationToken cancellationToken = default

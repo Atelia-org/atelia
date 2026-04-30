@@ -1,11 +1,10 @@
 using System.Collections.Generic;
-using System.Linq;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
 
-public sealed class AggregatedActionTests {
+public sealed class CompletionResultTests {
     private static readonly CompletionDescriptor Descriptor = new("provider", "spec", "model");
 
     [Fact]
@@ -17,31 +16,41 @@ public sealed class AggregatedActionTests {
         var sourceErrors = new List<string> { "boom-1" };
 
         var message = new ActionMessage(sourceBlocks);
-        var action = new AggregatedAction(message, Descriptor, sourceErrors);
+        var result = new CompletionResult(message, Descriptor, sourceErrors);
 
         sourceBlocks.Add(new ActionBlock.Text("omega"));
         sourceErrors.Add("boom-2");
 
         Assert.Collection(
-            action.Blocks,
+            result.Message.Blocks,
             block => Assert.Equal("alpha", Assert.IsType<ActionBlock.Text>(block).Content),
             block => Assert.Equal("call-1", Assert.IsType<ActionBlock.ToolCall>(block).Call.ToolCallId)
         );
-        Assert.Equal("alpha", action.GetFlattenedText());
-        Assert.Collection(((IActionMessage)action).ToolCalls, call => Assert.Equal("call-1", call.ToolCallId));
-        Assert.Equal(new[] { "boom-1" }, action.Errors);
+        Assert.Equal("alpha", result.Message.GetFlattenedText());
+        Assert.Collection(result.Message.ToolCalls, call => Assert.Equal("call-1", call.ToolCallId));
+        Assert.Equal(new[] { "boom-1" }, result.Errors);
+    }
+
+    [Fact]
+    public void CompletionResult_RemainsEnvelope_NotActionMessage() {
+        var result = new CompletionResult(
+            message: new ActionMessage(new[] { new ActionBlock.Text("alpha") }),
+            invocation: Descriptor
+        );
+
+        Assert.IsNotAssignableFrom<IActionMessage>(result);
     }
 
     [Fact]
     public void WithExpression_AlsoFreezesAssignedLists() {
-        var baseAction = new AggregatedAction(
+        var baseResult = new CompletionResult(
             message: new ActionMessage(new[] { new ActionBlock.Text("seed") }),
             invocation: Descriptor
         );
         var replacementBlocks = new List<ActionBlock> { new ActionBlock.Text("beta") };
         var replacementErrors = new List<string> { "warn-1" };
 
-        var cloned = baseAction with {
+        var cloned = baseResult with {
             Message = new ActionMessage(replacementBlocks),
             Errors = replacementErrors,
         };
@@ -50,10 +59,10 @@ public sealed class AggregatedActionTests {
         replacementErrors.Add("warn-2");
 
         Assert.Collection(
-            cloned.Blocks,
+            cloned.Message.Blocks,
             block => Assert.Equal("beta", Assert.IsType<ActionBlock.Text>(block).Content)
         );
-        Assert.Equal("beta", cloned.GetFlattenedText());
+        Assert.Equal("beta", cloned.Message.GetFlattenedText());
         Assert.Equal(new[] { "warn-1" }, cloned.Errors);
     }
 }

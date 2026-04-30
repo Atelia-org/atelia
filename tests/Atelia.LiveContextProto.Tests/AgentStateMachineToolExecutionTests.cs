@@ -274,7 +274,7 @@ public sealed class AgentStateMachineToolExecutionTests {
             _responses = new Queue<Action<CompletionAggregator>[]>(responses ?? throw new ArgumentNullException(nameof(responses)));
         }
 
-        public Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default) {
+        public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default) {
             if (_responses.Count == 0) { throw new InvalidOperationException("No provider responses configured."); }
 
             CapturedRequests.Add(request);

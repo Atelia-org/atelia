@@ -42,9 +42,9 @@ public sealed class OpenAIChatStreamParserTests {
 
         var result = aggregator.Build();
 
-        Assert.DoesNotContain(result.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
+        Assert.DoesNotContain(result.Message.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
 
-        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCallBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
         var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
         Assert.Equal("call_123", toolCall.ToolCallId);
         Assert.Equal("get_weather", toolCall.ToolName);
@@ -81,10 +81,10 @@ public sealed class OpenAIChatStreamParserTests {
 
         var result = aggregator.Build();
 
-        var contentBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
+        var contentBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
         Assert.Equal("\n", ((ActionBlock.Text)contentBlock).Content);
 
-        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCallBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
         Assert.Equal("call_123", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.ToolCallId);
     }
 
@@ -119,9 +119,9 @@ public sealed class OpenAIChatStreamParserTests {
 
         var result = aggregator.Build();
 
-        Assert.DoesNotContain(result.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
+        Assert.DoesNotContain(result.Message.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
 
-        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCallBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
         Assert.Equal("call_123", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.ToolCallId);
         Assert.Equal("Paris", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.Arguments!["city"]);
     }
@@ -162,7 +162,7 @@ public sealed class OpenAIChatStreamParserTests {
 
         var result = aggregator.Build();
 
-        var toolCallBlocks = result.Blocks.Where(b => b.Kind == ActionBlockKind.ToolCall).ToArray();
+        var toolCallBlocks = result.Message.Blocks.Where(b => b.Kind == ActionBlockKind.ToolCall).ToArray();
         Assert.Equal(2, toolCallBlocks.Length);
         Assert.Equal("alpha", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[0]).Call.ToolName);
         Assert.Equal("A", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[0]).Call.Arguments!["value"]);

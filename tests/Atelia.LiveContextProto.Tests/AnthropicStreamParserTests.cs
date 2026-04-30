@@ -35,9 +35,9 @@ public sealed class AnthropicStreamParserTests {
 
         var result = aggregator.Build();
 
-        Assert.Single(result.Blocks);
-        Assert.IsType<ActionBlock.Text>(result.Blocks[0]);
-        Assert.Equal("", ((ActionBlock.Text)result.Blocks[0]).Content);
+        Assert.Single(result.Message.Blocks);
+        Assert.IsType<ActionBlock.Text>(result.Message.Blocks[0]);
+        Assert.Equal("", ((ActionBlock.Text)result.Message.Blocks[0]).Content);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class AnthropicStreamParserTests {
 
         var result = aggregator.Build();
 
-        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCallBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
         var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
 
         Assert.Equal("toolu_123", toolCall.ToolCallId);
@@ -109,7 +109,7 @@ public sealed class AnthropicStreamParserTests {
 
         var result = aggregator.Build();
 
-        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCallBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
         var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
 
         Assert.Equal("toolu_456", toolCall.ToolCallId);
@@ -160,7 +160,7 @@ public sealed class AnthropicStreamParserTests {
 
         var result = aggregator.Build();
 
-        var thinkingBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.Thinking);
+        var thinkingBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.Thinking);
         var thinking = Assert.IsType<ActionBlock.Thinking>(thinkingBlock);
 
         Assert.Equal("Let me consider this carefully.", thinking.PlainTextForDebug);
@@ -208,7 +208,7 @@ public sealed class AnthropicStreamParserTests {
         var result = aggregator.Build();
 
         Assert.Collection(
-            result.Blocks,
+            result.Message.Blocks,
             block => Assert.Equal(ActionBlockKind.Thinking, block.Kind),
             block => {
                 Assert.Equal(ActionBlockKind.Text, block.Kind);
