@@ -243,7 +243,7 @@ Completion + Completion.Abstractions
 **测试**：`tests/Atelia.LiveContextProto.Tests/AgentEngineTurnLockTests.cs` 覆盖 6 个场景：首次调用、同 turn 工具往返同 profile、同 turn 切 ModelId、同 turn 切 ProviderId、跨 turn 切换、`BeforeModelCall` handler 篡改 profile。
 
 **后续依赖此约束的 PR**：
-- ✅ `ActionBlock.Thinking` 端到端落地（Anthropic extended thinking）——`ActionBlock` 已上提到 `Completion.Abstractions`，`ActionEntry.Blocks` 为唯一真相，`Content`/`ToolCalls` 退为 lossy compatibility view。
+- ✅ `ActionBlock.Thinking` 端到端落地（Anthropic extended thinking）——`ActionBlock` 已上提到 `Completion.Abstractions`，`ActionEntry.Message.Blocks` 为唯一真相，`ActionMessage.GetFlattenedText()`/`ToolCalls` 作为 lossy derived view。
 - ✅ MessageConverter 投影时按 turn 边界裁剪 thinking blocks：`AgentState.ProjectInvocationContext` 只在 ActiveTurnTail 中按 4 个条件（`isInActiveTurn` / `TargetInvocation != null` / `HasExplicitStartBoundary` / `ThinkingMode == CurrentTurnOnly`）且 `Origin == TargetInvocation` 保留，Stable Prefix 始终剩离。
 - ✅ OpenAI reasoning_content 双轨并行：本轮仅实现 Anthropic；OpenAI Chat Completions 仍丢弃 reasoning，留待后续多-provider 阶段。
 

@@ -38,7 +38,7 @@ root: DurableDict<string>
 - **每条消息写入后 `Freeze()`**：把"消息一旦落盘即不可篡改"这条业务承诺写进对象状态。frozen 路径在下次 commit 时会触发一次 `force-rebase` 完整快照，体积代价 ~10%，换语义清晰度。
 - **messages 这一条 deque 不 freeze**：要持续 PushBack。整链归档语义留待将来另开 branch + full-rebase。
 
-`PersistentSession.BuildContext()` 把上述 durable graph 投影成 `IReadOnlyList<IHistoryMessage>` 喂给 `ICompletionClient`。`assistant` 一侧用一个本地的 `TextOnlyAction` record 当 `IActionMessage`（无 tool_call、无 thinking）——这是下一刀的扩展点。
+`PersistentSession.BuildContext()` 把上述 durable graph 投影成 `IReadOnlyList<IHistoryMessage>` 喂给 `ICompletionClient`。`assistant` 一侧投影为纯文本 `ActionMessage`（无 tool_call、无 thinking）——这是下一刀的扩展点。
 
 ## 3. 实测体积
 
@@ -57,7 +57,7 @@ cost-model fix 经过：参见 `gitignore/persistent-proto/{claude,gpt5}-sendbox
 
 ## 4. 下一刀：富 schema 持久化
 
-要把当前的"纯文本 message"扩展到完整 `IActionMessage`（OpenAI/Anthropic converter 的全集），需要把以下结构持久化进 message dict：
+要把当前的"纯文本 message"扩展到完整 `ActionMessage`（OpenAI/Anthropic converter 的全集），需要把以下结构持久化进 message dict：
 
 ```text
 toolCalls: DurableDeque<DurableDict<string>>?
@@ -70,7 +70,7 @@ opaqueThinking: bytes?                ← Anthropic redacted thinking 原文
 
 **待决策**：
 - `ActionBlock.Thinking.OpaquePayload` 是 `byte[]` —— 直接进 mixed value box（如果支持 byte[]）？还是包成 base64 string？前者结构更准；后者付 ~33% base64 膨胀。
-- `Blocks` 顺序：deque 自然保序；`IActionMessage.Blocks` 本来就是 `IReadOnlyList<ActionBlock>`，deque 是自然映射。
+- `Blocks` 顺序：deque 自然保序；`ActionMessage.Blocks` 本来就是 `IReadOnlyList<ActionBlock>`，deque 是自然映射。
 - `ToolCalls` 是不是直接复用同一个 ordered structure？可以，但 tool_call_id 是稳定 join key，建议独立 deque + per-id 索引。
 
 这些将在 `RichPersistentSession`（同名文件 / 渐进替换）中验证。

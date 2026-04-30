@@ -38,7 +38,7 @@ public sealed class CompletionResultTests {
             invocation: Descriptor
         );
 
-        Assert.IsNotAssignableFrom<IActionMessage>(result);
+        Assert.IsNotAssignableFrom<IHistoryMessage>(result);
     }
 
     [Fact]

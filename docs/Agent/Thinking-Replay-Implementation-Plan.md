@@ -162,8 +162,8 @@ dotnet build Atelia.sln
 
 ### 2.4 具体任务
 
-1. 新增 `IRichActionMessage`，放在 `Completion.Abstractions`
-2. 新增 `ProjectedActionMessage`
+1. 删除富 action 接口层，直接使用 `ActionMessage : IHistoryMessage`，放在 `Completion.Abstractions`
+2. 投影层直接产出 `ActionMessage`
 3. 新增：
    - `ContextProjectionOptions`
    - `ThinkingProjectionMode`
@@ -195,7 +195,7 @@ Claude 审阅时重点检查：
 1. 依赖方向是否仍然健康
 2. `TargetInvocation = null` 是否确实是一等公民语义，而非兼容层残影
 3. `StablePrefix / ActiveTurnTail` 的分割是否完全由 Turn 起点决定
-4. `ProjectedActionMessage` 是否统一用于两段投影，而不是让输出类型分裂
+4. `ActionMessage` 是否统一用于两段投影，而不是让输出类型分裂
 5. 所有旧 `ProjectContext` 路径是否已清理干净
 
 ### 2.8 建议新增测试
@@ -324,7 +324,7 @@ dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cs
 1. 在 `ProjectInvocationContext` 中落地 thinking 过滤规则表
 2. `StablePrefix` 始终过滤 thinking
 3. `ActiveTurnTail` 仅在 4 条件同时满足时保留 thinking
-4. `AnthropicMessageConverter` 识别 `IRichActionMessage`
+4. `AnthropicMessageConverter` 识别 `ActionMessage`
 5. 反序列化 `ThinkingBlock.OpaquePayload` 回 native content block
 6. 不支持/反序列化失败时 fail-fast
 
@@ -396,12 +396,12 @@ dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cs
 
 ### 5.6 落地结果（PR 5 完成）
 
-- ✅ `docs/Agent/memory-notebook.md`：核心数据流改写为 `ProjectInvocationContext`，新增 ActionEntry.Blocks 源 + Thinking 投影 4 条件描述；Turn 锁定小节"后续依赖此约束的 PR"标记为已落地（Anthropic 端到端、ProjectInvocationContext 过滤），并指明 OpenAI reasoning_content 仍未实现。
-- ✅ `docs/Completion/memory-notebook.md`：第 1/2/7 节扩展（IRichActionMessage/ActionBlock sum type、CompletionChunkKind.Thinking、Anthropic SSE 表新增 thinking/signature 处理），最后边界小节明确 `ActionBlock.Thinking.Origin` 与 Turn lock 同构 + ProjectInvocationContext 过滤策略。
+- ✅ `docs/Agent/memory-notebook.md`：核心数据流改写为 `ProjectInvocationContext`，新增 `ActionEntry.Message.Blocks` 源 + Thinking 投影 4 条件描述；Turn 锁定小节"后续依赖此约束的 PR"标记为已落地（Anthropic 端到端、ProjectInvocationContext 过滤），并指明 OpenAI reasoning_content 仍未实现。
+- ✅ `docs/Completion/memory-notebook.md`：第 1/2/7 节扩展（ActionMessage/ActionBlock sum type、ThinkingChunk、Anthropic SSE 表新增 thinking/signature 处理），最后边界小节明确 `ActionBlock.Thinking.Origin` 与 Turn lock 同构 + ProjectInvocationContext 过滤策略。
 - ✅ `docs/Agent/Thinking-Replay-Design.md`：D9 已在 PR 2.5 修订；本 PR 不需进一步改动。
 - ✅ `prototypes/Agent.Core/History/RecapBuilder.cs:49`：cref 由 `AgentState.ProjectContext` 修正为 `AgentState.ProjectInvocationContext`。
 - ✅ Recap 路径兼容性已确认：`RecapBuilder.ExtractRecapText` 只读 `RecapEntry.Content` / `ObservationEntry.Notifications.Detail`，不触碰 `ActionEntry` 内容；`BuildActionObservationPairs` 仅按交替顺序成对消费 entry 引用，对内部 Blocks 透明。**结论：Recap 无需新增兼容代码或测试。**
-- ⚠️ **已知 v1 边界（暂不修，记录在此）**：`TokenEstimateHelper.EstimateAction` 使用 lossy compat view `action.Content`，**不计入 Thinking blocks 的 token 成本**。对当前 turn 注入 thinking 时实际 prompt 体积会显著高于估算。后续校准 token 估算时需同步增加 `Blocks` 中 `Thinking.PlainTextForDebug` 长度（或更精确的 OpaquePayload 体积估算）。
+- ⚠️ **已知 v1 边界（暂不修，记录在此）**：`TokenEstimateHelper.EstimateAction` 只估算 `ActionMessage` 中的 Text / ToolCall，**不计入 Thinking blocks 的 token 成本**。对当前 turn 注入 thinking 时实际 prompt 体积会显著高于估算。后续校准 token 估算时需同步增加 `Blocks` 中 `Thinking.PlainTextForDebug` 长度（或更精确的 OpaquePayload 体积估算）。
 
 
 ---

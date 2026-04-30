@@ -94,7 +94,7 @@ public abstract record class HistoryEntry : ITokenEstimateSource {
 /// 并附加 Agent 历史所需的 <see cref="Invocation"/> 元信息。
 /// </summary>
 /// <remarks>
-/// <b>分层边界</b>：本类型<b>不</b>实现 <see cref="IActionMessage"/>。
+/// <b>分层边界</b>：本类型<b>不</b>实现 <see cref="IHistoryMessage"/>。
 /// 需要纯消息体时请使用 <see cref="Message"/>（<see cref="ActionMessage"/>），
 /// 例如 provider converter 的输入应使用 <see cref="AgentState.ProjectInvocationContext"/> 投影后的 <see cref="ActionMessage"/>。
 /// </remarks>
