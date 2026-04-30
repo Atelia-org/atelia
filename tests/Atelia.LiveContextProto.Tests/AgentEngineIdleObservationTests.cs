@@ -120,7 +120,8 @@ public sealed class AgentEngineIdleObservationTests {
 
         public System.Threading.Tasks.Task<Atelia.Completion.Abstractions.AggregatedAction> StreamCompletionAsync(
             Atelia.Completion.Abstractions.CompletionRequest request,
-            System.Threading.CancellationToken cancellationToken
+            Atelia.Completion.Abstractions.CompletionStreamObserver? observer,
+            System.Threading.CancellationToken cancellationToken = default
         ) => throw new InvalidOperationException("Idle observation tests must not reach the completion client.");
     }
 }

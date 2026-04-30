@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Linq;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
 using Xunit;
@@ -39,7 +40,7 @@ public sealed class OpenAIChatClientTests {
         var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.SgLangCompatible);
         var request = CreateRequest();
 
-        var aggregated = await client.StreamCompletionAsync(request, CancellationToken.None);
+        var aggregated = await client.StreamCompletionAsync(request, null, CancellationToken.None);
 
         var requestBody = Assert.Single(handler.RequestBodies);
         Assert.Contains("\"stream_options\":{\"include_usage\":true}", requestBody, StringComparison.Ordinal);
@@ -73,7 +74,7 @@ public sealed class OpenAIChatClientTests {
 
         var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.SgLangCompatible);
 
-        await client.StreamCompletionAsync(CreateRequest(), CancellationToken.None);
+        await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
 
         Assert.Equal(2, handler.RequestBodies.Count);
         Assert.Contains("\"stream_options\":{\"include_usage\":true}", handler.RequestBodies[0], StringComparison.Ordinal);
@@ -95,7 +96,7 @@ public sealed class OpenAIChatClientTests {
         var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.Strict);
 
         var exception = await Assert.ThrowsAsync<HttpRequestException>(
-            async () => await client.StreamCompletionAsync(CreateRequest(), CancellationToken.None)
+            async () => await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
         );
 
         Assert.Single(handler.RequestBodies);
@@ -129,6 +130,39 @@ public sealed class OpenAIChatClientTests {
 
         Assert.NotNull(client);
         Assert.Equal(explicitAddress, httpClient.BaseAddress);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_EarlyStop_DoesNotFlushIncompleteToolCalls() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    """
+                    data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call_123","index":0,"type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Par"}}]},"finish_reason":null}],"usage":null}
+
+                    data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"is\"}"}}]},"finish_reason":"tool_calls"}],"usage":null}
+
+                    data: [DONE]
+
+                    """,
+                    Encoding.UTF8,
+                    "text/event-stream"
+                )
+            }
+        );
+
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.SgLangCompatible);
+        var observer = new CompletionStreamObserver { ShouldStop = true };
+
+        var aggregated = await client.StreamCompletionAsync(CreateRequest(), observer, CancellationToken.None);
+
+        Assert.DoesNotContain(aggregated.Blocks, block => block.Kind == ActionBlockKind.ToolCall);
+        var text = Assert.Single(aggregated.Blocks);
+        Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(text).Content);
     }
 
     private static CompletionRequest CreateRequest() {

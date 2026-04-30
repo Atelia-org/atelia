@@ -11,8 +11,12 @@ namespace Atelia.LiveContextProto.Tests;
 public sealed class CompletionAggregationTests {
     private static readonly CompletionDescriptor Descriptor = new("anthropic", "anthropic-messages-v1", "claude-3");
 
-    private static AggregatedAction Aggregate(Action<CompletionAggregator> feed, CompletionDescriptor? descriptor = null) {
-        var aggregator = new CompletionAggregator(descriptor ?? Descriptor);
+    private static AggregatedAction Aggregate(
+        Action<CompletionAggregator> feed,
+        CompletionDescriptor? descriptor = null,
+        CompletionStreamObserver? observer = null
+    ) {
+        var aggregator = new CompletionAggregator(descriptor ?? Descriptor, observer);
         feed(aggregator);
         return aggregator.Build();
     }
@@ -110,5 +114,29 @@ public sealed class CompletionAggregationTests {
         Assert.Equal(string.Empty, entry.GetFlattenedText());
         Assert.Equal(new[] { "recoverable" }, entry.Errors);
         Assert.Equal(usage, entry.Usage);
+    }
+
+    [Fact]
+    public void AbortIncompleteStreamingState_BalancesThinkingLifecycleWithoutPersistingPartialBlock() {
+        var observer = new CompletionStreamObserver();
+        var thinkingBeginCount = 0;
+        var thinkingEndCount = 0;
+        observer.ReceivedThinkingBegin += () => thinkingBeginCount++;
+        observer.ReceivedThinkingEnd += () => thinkingEndCount++;
+
+        var entry = Aggregate(
+            agg => {
+                agg.BeginThinking();
+                agg.AppendReasoningDelta("partial");
+                agg.AbortIncompleteStreamingState();
+            },
+            observer: observer
+        );
+
+        Assert.Equal(1, thinkingBeginCount);
+        Assert.Equal(1, thinkingEndCount);
+        Assert.DoesNotContain(entry.Blocks, block => block.Kind == ActionBlockKind.Thinking);
+        var text = Assert.Single(entry.Blocks);
+        Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(text).Content);
     }
 }

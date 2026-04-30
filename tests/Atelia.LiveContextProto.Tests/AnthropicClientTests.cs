@@ -1,6 +1,10 @@
 using System;
 using System.Net.Http;
+using System.Net;
+using System.Text;
+using System.Threading;
 using Atelia.Completion.Anthropic;
+using Atelia.Completion.Abstractions;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -34,9 +38,81 @@ public sealed class AnthropicClientTests {
         Assert.Equal(explicitAddress, httpClient.BaseAddress);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_EarlyStopAfterReasoningDelta_BalancesThinkingLifecycleWithoutReturningUsage() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    """
+                    data: {"type":"message_start","message":{"usage":{"input_tokens":17,"output_tokens":0}}}
+
+                    data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+                    data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"partial"}}
+
+                    data: {"type":"content_block_stop","index":0}
+
+                    data: [DONE]
+
+                    """,
+                    Encoding.UTF8,
+                    "text/event-stream"
+                )
+            }
+        );
+
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = new AnthropicClient(apiKey: null, httpClient: httpClient);
+        var observer = new CompletionStreamObserver();
+        var thinkingBeginCount = 0;
+        var thinkingEndCount = 0;
+        var reasoningDeltaCount = 0;
+        observer.ReceivedThinkingBegin += () => thinkingBeginCount++;
+        observer.ReceivedThinkingEnd += () => thinkingEndCount++;
+        observer.ReceivedReasoningDelta += delta => {
+            reasoningDeltaCount++;
+            Assert.Equal("partial", delta);
+            observer.ShouldStop = true;
+        };
+
+        var aggregated = await client.StreamCompletionAsync(
+            new CompletionRequest(
+                ModelId: "claude-3-5-sonnet-20241022",
+                SystemPrompt: "system",
+                Context: new[] { new ObservationMessage("hello") },
+                Tools: System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty
+            ),
+            observer,
+            CancellationToken.None
+        );
+
+        Assert.Equal(1, thinkingBeginCount);
+        Assert.Equal(1, thinkingEndCount);
+        Assert.Equal(1, reasoningDeltaCount);
+        Assert.DoesNotContain(aggregated.Blocks, block => block.Kind == ActionBlockKind.Thinking);
+        Assert.Null(aggregated.Usage);
+        var text = Assert.Single(aggregated.Blocks);
+        Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(text).Content);
+    }
+
     private sealed class EmptyHttpMessageHandler : HttpMessageHandler {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             throw new NotSupportedException();
+        }
+    }
+
+    private sealed class SequenceHttpMessageHandler : HttpMessageHandler {
+        private readonly Queue<HttpResponseMessage> _responses;
+
+        public SequenceHttpMessageHandler(params HttpResponseMessage[] responses) {
+            _responses = new Queue<HttpResponseMessage>(responses);
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+            return Task.FromResult(_responses.Dequeue());
         }
     }
 }

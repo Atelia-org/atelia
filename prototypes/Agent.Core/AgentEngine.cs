@@ -622,7 +622,7 @@ public class AgentEngine {
         invocation = args.Profile.ToCompletionDescriptor();
         var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
 
-        var aggregated = await args.Profile.Client.StreamCompletionAsync(request, cancellationToken).ConfigureAwait(false);
+        var aggregated = await args.Profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
         EnsureAggregatedInvocationMatchesExpected(invocation, aggregated.Invocation);
         var aggregatedOutput = new ActionEntry(aggregated.Blocks, invocation);
 

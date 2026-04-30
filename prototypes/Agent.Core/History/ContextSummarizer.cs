@@ -54,7 +54,7 @@ public static class ContextSummarizer {
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
-        var aggregated = await profile.Client.StreamCompletionAsync(request, cancellationToken).ConfigureAwait(false);
+        var aggregated = await profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
 
         return (aggregated.GetFlattenedText() ?? string.Empty, aggregated.Usage);
     }

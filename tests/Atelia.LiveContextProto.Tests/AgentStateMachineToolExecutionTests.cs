@@ -274,12 +274,12 @@ public sealed class AgentStateMachineToolExecutionTests {
             _responses = new Queue<Action<CompletionAggregator>[]>(responses ?? throw new ArgumentNullException(nameof(responses)));
         }
 
-        public Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken) {
+        public Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default) {
             if (_responses.Count == 0) { throw new InvalidOperationException("No provider responses configured."); }
 
             CapturedRequests.Add(request);
             var feeds = _responses.Dequeue();
-            var aggregator = new CompletionAggregator(CompletionDescriptor.From(this, request));
+            var aggregator = new CompletionAggregator(CompletionDescriptor.From(this, request), observer);
             foreach (var feed in feeds) {
                 feed(aggregator);
             }

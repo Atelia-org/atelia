@@ -72,7 +72,7 @@ internal static class Program {
             try {
                 Console.Write("assistant> ");
                 var aggregated = await client
-                    .StreamCompletionAsync(request, cts.Token);
+                    .StreamCompletionAsync(request, null, cts.Token);
 
                 Console.WriteLine(aggregated.GetFlattenedText());
                 if (aggregated.Errors is { Count: > 0 } errs) {
