@@ -1,8 +1,8 @@
 using System.Collections.Immutable;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
+using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Xunit;
@@ -10,9 +10,12 @@ using Xunit;
 namespace Atelia.LiveContextProto.Tests;
 
 public sealed class AnthropicStreamParserTests {
+    private static CompletionDescriptor DummyInvocation => new("test", "test-spec", "test-model");
+
     [Fact]
     public void ParseEvent_UsageAccumulatesAcrossMessageStartAndDeltas() {
         var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             """
@@ -26,9 +29,16 @@ public sealed class AnthropicStreamParserTests {
             """
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
 
-        Assert.Empty(chunks);
+        var result = aggregator.Build();
+
+        // usage 事件不产生任何 Block
+        Assert.Single(result.Blocks);
+        Assert.IsType<ActionBlock.Text>(result.Blocks[0]);
+        Assert.Equal("", ((ActionBlock.Text)result.Blocks[0]).Content);
 
         var usage = parser.GetFinalUsage();
         Assert.NotNull(usage);
@@ -50,6 +60,7 @@ public sealed class AnthropicStreamParserTests {
                 )
             )
         );
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             """
@@ -66,10 +77,14 @@ public sealed class AnthropicStreamParserTests {
             """
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
 
-        var toolCallChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.ToolCall);
-        var toolCall = toolCallChunk.ToolCall!;
+        var result = aggregator.Build();
+
+        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
 
         Assert.Equal("toolu_123", toolCall.ToolCallId);
         Assert.Equal("get_weather", toolCall.ToolName);
@@ -81,6 +96,7 @@ public sealed class AnthropicStreamParserTests {
     [Fact]
     public void ParseEvent_UnknownToolFallbackPreservesStringLiterals() {
         var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             """
@@ -94,10 +110,14 @@ public sealed class AnthropicStreamParserTests {
             """
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
 
-        var toolCallChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.ToolCall);
-        var toolCall = toolCallChunk.ToolCall!;
+        var result = aggregator.Build();
+
+        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
 
         Assert.Equal("toolu_456", toolCall.ToolCallId);
         Assert.Equal("unknown_tool", toolCall.ToolName);
@@ -118,6 +138,7 @@ public sealed class AnthropicStreamParserTests {
     [Fact]
     public void ParseEvent_AggregatesThinkingDeltasIntoOpaquePayload() {
         var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             """
@@ -140,14 +161,19 @@ public sealed class AnthropicStreamParserTests {
             """
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
 
-        var thinkingChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.Thinking).Thinking!;
+        var result = aggregator.Build();
 
-        Assert.Equal("Let me consider this carefully.", thinkingChunk.PlainTextForDebug);
+        var thinkingBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.Thinking);
+        var thinking = Assert.IsType<ActionBlock.Thinking>(thinkingBlock);
+
+        Assert.Equal("Let me consider this carefully.", thinking.PlainTextForDebug);
 
         // OpaquePayload 应当是完整的 Anthropic-native thinking content block JSON 字节
-        using var doc = JsonDocument.Parse(thinkingChunk.OpaquePayload);
+        using var doc = JsonDocument.Parse(thinking.OpaquePayload);
         Assert.Equal("thinking", doc.RootElement.GetProperty("type").GetString());
         Assert.Equal("Let me consider this carefully.", doc.RootElement.GetProperty("thinking").GetString());
         Assert.Equal("sig-abc-xyz", doc.RootElement.GetProperty("signature").GetString());
@@ -156,6 +182,7 @@ public sealed class AnthropicStreamParserTests {
     [Fact]
     public void ParseEvent_PreservesThinkingThenTextOrdering() {
         var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             """
@@ -181,14 +208,18 @@ public sealed class AnthropicStreamParserTests {
             """
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
+
+        var result = aggregator.Build();
 
         Assert.Collection(
-            chunks,
-            chunk => Assert.Equal(CompletionChunkKind.Thinking, chunk.Kind),
-            chunk => {
-                Assert.Equal(CompletionChunkKind.Content, chunk.Kind);
-                Assert.Equal("answer", chunk.Content);
+            result.Blocks,
+            block => Assert.Equal(ActionBlockKind.Thinking, block.Kind),
+            block => {
+                Assert.Equal(ActionBlockKind.Text, block.Kind);
+                Assert.Equal("answer", ((ActionBlock.Text)block).Content);
             }
         );
     }

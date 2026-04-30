@@ -44,7 +44,6 @@ internal static class Program {
             baseAddress: new Uri(LocalLlmEndpoint),
             dialect: OpenAIChatDialects.SgLangCompatible
         );
-        var invocation = new CompletionDescriptor("sglang", client.ApiSpecId, DefaultModelId);
 
         var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
@@ -73,8 +72,7 @@ internal static class Program {
             try {
                 Console.Write("assistant> ");
                 var aggregated = await client
-                    .StreamCompletionAsync(request, cts.Token)
-                    .AggregateAsync(invocation, cts.Token);
+                    .StreamCompletionAsync(request, cts.Token);
 
                 Console.WriteLine(aggregated.GetFlattenedText());
                 if (aggregated.Errors is { Count: > 0 } errs) {

@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Net;
 using System.Net.Http;
@@ -40,14 +39,14 @@ public sealed class OpenAIChatClientTests {
         var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.SgLangCompatible);
         var request = CreateRequest();
 
-        var chunks = await CollectAsync(client.StreamCompletionAsync(request, CancellationToken.None));
+        var aggregated = await client.StreamCompletionAsync(request, CancellationToken.None);
 
         var requestBody = Assert.Single(handler.RequestBodies);
         Assert.Contains("\"stream_options\":{\"include_usage\":true}", requestBody, StringComparison.Ordinal);
 
-        var usageChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.TokenUsage);
-        Assert.Equal(5, usageChunk.TokenUsage!.PromptTokens);
-        Assert.Equal(2, usageChunk.TokenUsage!.CompletionTokens);
+        Assert.NotNull(aggregated.Usage);
+        Assert.Equal(5, aggregated.Usage!.PromptTokens);
+        Assert.Equal(2, aggregated.Usage!.CompletionTokens);
     }
 
     [Fact]
@@ -74,7 +73,7 @@ public sealed class OpenAIChatClientTests {
 
         var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.SgLangCompatible);
 
-        await CollectAsync(client.StreamCompletionAsync(CreateRequest(), CancellationToken.None));
+        await client.StreamCompletionAsync(CreateRequest(), CancellationToken.None);
 
         Assert.Equal(2, handler.RequestBodies.Count);
         Assert.Contains("\"stream_options\":{\"include_usage\":true}", handler.RequestBodies[0], StringComparison.Ordinal);
@@ -96,7 +95,7 @@ public sealed class OpenAIChatClientTests {
         var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.Strict);
 
         var exception = await Assert.ThrowsAsync<HttpRequestException>(
-            async () => await CollectAsync(client.StreamCompletionAsync(CreateRequest(), CancellationToken.None))
+            async () => await client.StreamCompletionAsync(CreateRequest(), CancellationToken.None)
         );
 
         Assert.Single(handler.RequestBodies);
@@ -139,15 +138,6 @@ public sealed class OpenAIChatClientTests {
             Context: new[] { new ObservationMessage("hello") },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
-    }
-
-    private static async Task<List<CompletionChunk>> CollectAsync(IAsyncEnumerable<CompletionChunk> deltas) {
-        var list = new List<CompletionChunk>();
-        await foreach (var delta in deltas) {
-            list.Add(delta);
-        }
-
-        return list;
     }
 
     private sealed class SequenceHttpMessageHandler : HttpMessageHandler {

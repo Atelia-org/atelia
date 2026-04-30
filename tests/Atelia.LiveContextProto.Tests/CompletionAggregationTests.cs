@@ -1,39 +1,35 @@
-using System.Collections.Generic;
+using System;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
+using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
 
-public sealed class CompletionChunkAggregationTests {
+public sealed class CompletionAggregationTests {
     private static readonly CompletionDescriptor Descriptor = new("anthropic", "anthropic-messages-v1", "claude-3");
 
-    private static async IAsyncEnumerable<CompletionChunk> ToAsync(IEnumerable<CompletionChunk> chunks) {
-        foreach (var chunk in chunks) {
-            yield return chunk;
-            await Task.Yield();
-        }
+    private static AggregatedAction Aggregate(Action<CompletionAggregator> feed, CompletionDescriptor? descriptor = null) {
+        var aggregator = new CompletionAggregator(descriptor ?? Descriptor);
+        feed(aggregator);
+        return aggregator.Build();
     }
 
     [Fact]
-    public async Task AggregateAsync_PreservesTextThinkingTextOrdering() {
+    public void AppendBuild_PreservesTextThinkingTextOrdering() {
         var thinkingPayload = JsonSerializer.SerializeToUtf8Bytes(new {
             type = "thinking",
             thinking = "deliberation",
             signature = "sig"
         });
 
-        var chunks = new[] {
-            CompletionChunk.FromContent("alpha"),
-            CompletionChunk.FromThinking(new ThinkingChunk(thinkingPayload, "deliberation")),
-            CompletionChunk.FromContent("omega")
-        };
-
-        var entry = await ToAsync(chunks).AggregateAsync(Descriptor, CancellationToken.None);
+        var entry = Aggregate(agg => {
+            agg.AppendContent("alpha");
+            agg.AppendThinking(new ThinkingChunk(thinkingPayload, "deliberation"));
+            agg.AppendContent("omega");
+        });
 
         Assert.Collection(
             entry.Blocks,
@@ -53,33 +49,28 @@ public sealed class CompletionChunkAggregationTests {
     }
 
     [Fact]
-    public async Task AggregateAsync_InjectsCurrentInvocationAsThinkingOrigin() {
+    public void AppendBuild_InjectsCurrentInvocationAsThinkingOrigin() {
         var payload = Encoding.UTF8.GetBytes("""{"type":"thinking","thinking":"x","signature":"s"}""");
         var customDescriptor = new CompletionDescriptor("anthropic", "anthropic-messages-v1", "claude-opus-4");
 
-        var entry = await ToAsync(new[] {
-                CompletionChunk.FromThinking(new ThinkingChunk(payload, null))
-            }).AggregateAsync(
-                customDescriptor,
-                CancellationToken.None
-            );
+        var entry = Aggregate(
+            agg => agg.AppendThinking(new ThinkingChunk(payload, null)),
+            descriptor: customDescriptor
+        );
 
         var thinking = Assert.IsType<ActionBlock.Thinking>(entry.Blocks.Single());
         Assert.Same(customDescriptor, thinking.Origin);
     }
 
     [Fact]
-    public async Task AggregateAsync_CollectsErrorsAndUsageWithoutTurningThemIntoBlocks() {
+    public void AppendBuild_CollectsErrorsAndUsageWithoutTurningThemIntoBlocks() {
         var usage = new TokenUsage(11, 7, 3);
-        var entry = await ToAsync(new[] {
-                CompletionChunk.FromContent("alpha"),
-                CompletionChunk.FromError("boom-1"),
-                CompletionChunk.FromError("boom-2"),
-                CompletionChunk.FromTokenUsage(usage),
-            }).AggregateAsync(
-                Descriptor,
-                CancellationToken.None
-            );
+        var entry = Aggregate(agg => {
+            agg.AppendContent("alpha");
+            agg.AppendError("boom-1");
+            agg.AppendError("boom-2");
+            agg.AppendTokenUsage(usage);
+        });
 
         Assert.Collection(
             entry.Blocks,
@@ -91,8 +82,8 @@ public sealed class CompletionChunkAggregationTests {
     }
 
     [Fact]
-    public async Task AggregateAsync_ReturnsSingleEmptyTextBlock_ForEmptyStream() {
-        var entry = await ToAsync(Array.Empty<CompletionChunk>()).AggregateAsync(Descriptor, CancellationToken.None);
+    public void AppendBuild_ReturnsSingleEmptyTextBlock_ForEmptyStream() {
+        var entry = Aggregate(_ => { });
 
         Assert.Collection(
             entry.Blocks,
@@ -105,15 +96,12 @@ public sealed class CompletionChunkAggregationTests {
     }
 
     [Fact]
-    public async Task AggregateAsync_ReturnsSingleEmptyTextBlock_ForMetaOnlyStream() {
+    public void AppendBuild_ReturnsSingleEmptyTextBlock_ForMetaOnlyStream() {
         var usage = new TokenUsage(5, 2);
-        var entry = await ToAsync(new[] {
-                CompletionChunk.FromError("recoverable"),
-                CompletionChunk.FromTokenUsage(usage),
-            }).AggregateAsync(
-                Descriptor,
-                CancellationToken.None
-            );
+        var entry = Aggregate(agg => {
+            agg.AppendError("recoverable");
+            agg.AppendTokenUsage(usage);
+        });
 
         Assert.Collection(
             entry.Blocks,

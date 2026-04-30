@@ -118,7 +118,7 @@ public sealed class AgentEngineIdleObservationTests {
         public string Name => "throwing";
         public string ApiSpecId => "throwing";
 
-        public IAsyncEnumerable<Atelia.Completion.Abstractions.CompletionChunk> StreamCompletionAsync(
+        public System.Threading.Tasks.Task<Atelia.Completion.Abstractions.AggregatedAction> StreamCompletionAsync(
             Atelia.Completion.Abstractions.CompletionRequest request,
             System.Threading.CancellationToken cancellationToken
         ) => throw new InvalidOperationException("Idle observation tests must not reach the completion client.");

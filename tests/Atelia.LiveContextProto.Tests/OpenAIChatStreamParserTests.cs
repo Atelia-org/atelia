@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Linq;
+using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
 using Xunit;
@@ -7,6 +8,8 @@ using Xunit;
 namespace Atelia.LiveContextProto.Tests;
 
 public sealed class OpenAIChatStreamParserTests {
+    private static CompletionDescriptor DummyInvocation => new("test", "test-spec", "test-model");
+
     [Fact]
     public void ParseEvent_IgnoresReasoningContentAndAggregatesToolCallFragments() {
         var parser = new OpenAIChatStreamParser(
@@ -21,6 +24,7 @@ public sealed class OpenAIChatStreamParserTests {
             ),
             OpenAIChatWhitespaceContentMode.IgnoreWhitespaceDuringToolCalls
         );
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             "{\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":null,\"tool_calls\":null},\"finish_reason\":null}],\"usage\":null}",
@@ -32,12 +36,16 @@ public sealed class OpenAIChatStreamParserTests {
             "{\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":null,\"content\":null,\"reasoning_content\":null,\"tool_calls\":null},\"finish_reason\":\"tool_calls\"}],\"usage\":null}"
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
 
-        Assert.DoesNotContain(chunks, chunk => chunk.Kind == CompletionChunkKind.Content);
+        var result = aggregator.Build();
 
-        var toolCallChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.ToolCall);
-        var toolCall = toolCallChunk.ToolCall!;
+        Assert.DoesNotContain(result.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
+
+        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
         Assert.Equal("call_123", toolCall.ToolCallId);
         Assert.Equal("get_weather", toolCall.ToolName);
         Assert.Null(toolCall.ParseError);
@@ -59,6 +67,7 @@ public sealed class OpenAIChatStreamParserTests {
             ),
             OpenAIChatWhitespaceContentMode.Preserve
         );
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"call_123\",\"index\":0,\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]},\"finish_reason\":null}],\"usage\":null}",
@@ -66,13 +75,17 @@ public sealed class OpenAIChatStreamParserTests {
             "{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":null}"
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
 
-        var contentChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.Content);
-        Assert.Equal("\n", contentChunk.Content);
+        var result = aggregator.Build();
 
-        var toolCallChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.ToolCall);
-        Assert.Equal("call_123", toolCallChunk.ToolCall!.ToolCallId);
+        var contentBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
+        Assert.Equal("\n", ((ActionBlock.Text)contentBlock).Content);
+
+        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        Assert.Equal("call_123", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.ToolCallId);
     }
 
     [Fact]
@@ -89,6 +102,7 @@ public sealed class OpenAIChatStreamParserTests {
             ),
             OpenAIChatWhitespaceContentMode.IgnoreWhitespaceDuringToolCalls
         );
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             """
@@ -99,13 +113,17 @@ public sealed class OpenAIChatStreamParserTests {
             """
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
 
-        Assert.DoesNotContain(chunks, chunk => chunk.Kind == CompletionChunkKind.Content);
+        var result = aggregator.Build();
 
-        var toolCallChunk = Assert.Single(chunks, chunk => chunk.Kind == CompletionChunkKind.ToolCall);
-        Assert.Equal("call_123", toolCallChunk.ToolCall!.ToolCallId);
-        Assert.Equal("Paris", toolCallChunk.ToolCall!.Arguments!["city"]);
+        Assert.DoesNotContain(result.Blocks, b => b.Kind == ActionBlockKind.Text && ((ActionBlock.Text)b).Content.Length > 0);
+
+        var toolCallBlock = Assert.Single(result.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        Assert.Equal("call_123", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.ToolCallId);
+        Assert.Equal("Paris", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.Arguments!["city"]);
     }
 
     [Fact]
@@ -124,6 +142,7 @@ public sealed class OpenAIChatStreamParserTests {
                 )
             )
         );
+        var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
             """
@@ -137,14 +156,18 @@ public sealed class OpenAIChatStreamParserTests {
             """
         };
 
-        var chunks = events.SelectMany(parser.ParseEvent).ToArray();
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
 
-        var toolCallChunks = chunks.Where(chunk => chunk.Kind == CompletionChunkKind.ToolCall).ToArray();
-        Assert.Equal(2, toolCallChunks.Length);
-        Assert.Equal("alpha", toolCallChunks[0].ToolCall!.ToolName);
-        Assert.Equal("A", toolCallChunks[0].ToolCall!.Arguments!["value"]);
-        Assert.Equal("beta", toolCallChunks[1].ToolCall!.ToolName);
-        Assert.Equal(7, toolCallChunks[1].ToolCall!.Arguments!["count"]);
-        Assert.Equal("call_b", toolCallChunks[1].ToolCall!.ToolCallId);
+        var result = aggregator.Build();
+
+        var toolCallBlocks = result.Blocks.Where(b => b.Kind == ActionBlockKind.ToolCall).ToArray();
+        Assert.Equal(2, toolCallBlocks.Length);
+        Assert.Equal("alpha", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[0]).Call.ToolName);
+        Assert.Equal("A", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[0]).Call.Arguments!["value"]);
+        Assert.Equal("beta", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.ToolName);
+        Assert.Equal(7, Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.Arguments!["count"]);
+        Assert.Equal("call_b", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.ToolCallId);
     }
 }

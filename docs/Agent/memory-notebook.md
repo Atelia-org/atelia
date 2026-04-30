@@ -100,9 +100,9 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
    ├─ ToolExecutor.GetVisibleToolDefinitions() 收集可见工具
    └─ 触发 BeforeModelCall（宿主可改 request）
 
-3. ICompletionClient.StreamCompletionAsync(request)
-   ├─ CompletionChunkAggregation.AggregateAsync() 消费 chunk 流
-   ├─ 累积 Blocks + Errors + TokenUsage，产出 AggregatedAction
+3. `await ICompletionClient.StreamCompletionAsync(request)`
+   ├─ Completion 层内部消费 provider 流并聚合
+   ├─ 产出 `AggregatedAction`（Blocks + Errors + TokenUsage）
    └─ AgentEngine 包装为 ActionEntry → AppendAction()
 
 4. 若 ToolCalls 空 → 状态回 WaitingInput
@@ -137,7 +137,7 @@ prototypes/Agent.Core/
 ├─ History/
 │  ├─ AgentState.cs            ⭐ 工作记忆主体
 │  ├─ HistoryEntry.cs          抽象基类 + 4 种派生（ObservationEntry 非 sealed，可被扩展；其余均为 sealed）
-│  ├─ AgentEngine.cs / CompletionChunkAggregation.AggregateAsync 流 chunk → AggregatedAction / ActionEntry
+│  ├─ AgentEngine.cs / ICompletionClient.StreamCompletionAsync 聚合结果 → AggregatedAction / ActionEntry
 │  ├─ RecapBuilder.cs          摘要工作面（流程未闭环）
 │  ├─ TokenEstimateHelper.cs   Token 估算（硬编码系数）
 │  └─ ITokenEstimator.cs       Token 策略接口

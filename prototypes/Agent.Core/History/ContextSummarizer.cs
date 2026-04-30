@@ -54,9 +54,7 @@ public static class ContextSummarizer {
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
-        var invocation = profile.ToCompletionDescriptor();
-        var chunks = profile.Client.StreamCompletionAsync(request, cancellationToken);
-        var aggregated = await chunks.AggregateAsync(invocation, cancellationToken).ConfigureAwait(false);
+        var aggregated = await profile.Client.StreamCompletionAsync(request, cancellationToken).ConfigureAwait(false);
 
         return (aggregated.GetFlattenedText() ?? string.Empty, aggregated.Usage);
     }

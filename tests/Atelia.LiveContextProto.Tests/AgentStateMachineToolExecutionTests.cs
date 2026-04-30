@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
+using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
@@ -30,8 +31,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
 
         var firstResponse = CreateDeltaSequence(
-            CompletionChunk.FromContent("calling tool"),
-            CompletionChunk.FromToolCall(
+            agg => agg.AppendContent("calling tool"),
+            agg => agg.AppendToolCall(
                 CreateToolCallRequest(
                     "echo",
                     "call-1",
@@ -42,7 +43,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
 
         var secondResponse = CreateDeltaSequence(
-            CompletionChunk.FromContent("tool complete")
+            agg => agg.AppendContent("tool complete")
         );
 
         var provider = new FakeProviderClient(new[] { firstResponse, secondResponse });
@@ -120,8 +121,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         var provider = new FakeProviderClient(
             new[] {
                 CreateDeltaSequence(
-                    CompletionChunk.FromContent("call broken"),
-                    CompletionChunk.FromToolCall(CreateToolCallRequest("broken", "fail-1", ImmutableDictionary<string, string>.Empty))
+                    agg => agg.AppendContent("call broken"),
+                    agg => agg.AppendToolCall(CreateToolCallRequest("broken", "fail-1", ImmutableDictionary<string, string>.Empty))
                 )
             }
         );
@@ -162,7 +163,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var provider = new FakeProviderClient(
             new[] {
-                CreateDeltaSequence(CompletionChunk.FromContent("no tool call"))
+                CreateDeltaSequence(agg => agg.AppendContent("no tool call"))
             }
         );
 
@@ -189,9 +190,9 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var provider = new FakeProviderClient(
             new[] {
-                CreateDeltaSequence(CompletionChunk.FromContent("cycle-1")),
-                CreateDeltaSequence(CompletionChunk.FromContent("cycle-2")),
-                CreateDeltaSequence(CompletionChunk.FromContent("cycle-3"))
+                CreateDeltaSequence(agg => agg.AppendContent("cycle-1")),
+                CreateDeltaSequence(agg => agg.AppendContent("cycle-2")),
+                CreateDeltaSequence(agg => agg.AppendContent("cycle-3"))
             }
         );
 
@@ -256,33 +257,33 @@ public sealed class AgentStateMachineToolExecutionTests {
         return new(toolName, callId, rawArguments, materializedArguments, null, null);
     }
 
-    private static async IAsyncEnumerable<CompletionChunk> CreateDeltaSequence(params CompletionChunk[] deltas) {
-        foreach (var delta in deltas) {
-            yield return delta;
-            await Task.Yield();
-        }
-    }
+    private static Action<CompletionAggregator>[] CreateDeltaSequence(params Action<CompletionAggregator>[] feeds) => feeds;
 
     private static LevelOfDetailContent UniformContent(string text)
         => new(text);
 
     private sealed class FakeProviderClient : ICompletionClient {
-        private readonly Queue<IAsyncEnumerable<CompletionChunk>> _responses;
+        private readonly Queue<Action<CompletionAggregator>[]> _responses;
 
         public string Name => "test-provider";
         public string ApiSpecId => "test-spec";
 
         public List<CompletionRequest> CapturedRequests { get; } = new();
 
-        public FakeProviderClient(IEnumerable<IAsyncEnumerable<CompletionChunk>> responses) {
-            _responses = new Queue<IAsyncEnumerable<CompletionChunk>>(responses ?? throw new ArgumentNullException(nameof(responses)));
+        public FakeProviderClient(IEnumerable<Action<CompletionAggregator>[]> responses) {
+            _responses = new Queue<Action<CompletionAggregator>[]>(responses ?? throw new ArgumentNullException(nameof(responses)));
         }
 
-        public IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken) {
+        public Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken) {
             if (_responses.Count == 0) { throw new InvalidOperationException("No provider responses configured."); }
 
             CapturedRequests.Add(request);
-            return _responses.Dequeue();
+            var feeds = _responses.Dequeue();
+            var aggregator = new CompletionAggregator(CompletionDescriptor.From(this, request));
+            foreach (var feed in feeds) {
+                feed(aggregator);
+            }
+            return Task.FromResult(aggregator.Build());
         }
     }
 

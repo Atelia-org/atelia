@@ -622,9 +622,9 @@ public class AgentEngine {
         invocation = args.Profile.ToCompletionDescriptor();
         var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
 
-        var deltas = args.Profile.Client.StreamCompletionAsync(request, cancellationToken);
-        var aggregated = await deltas.AggregateAsync(invocation, cancellationToken).ConfigureAwait(false);
-        var aggregatedOutput = new ActionEntry(aggregated.Blocks, aggregated.Invocation);
+        var aggregated = await args.Profile.Client.StreamCompletionAsync(request, cancellationToken).ConfigureAwait(false);
+        EnsureAggregatedInvocationMatchesExpected(invocation, aggregated.Invocation);
+        var aggregatedOutput = new ActionEntry(aggregated.Blocks, invocation);
 
         DebugUtil.Info(
             ProviderDebugCategory,
@@ -762,6 +762,17 @@ public class AgentEngine {
 
     private static string DescribeDescriptor(CompletionDescriptor descriptor)
         => $"{{Provider={descriptor.ProviderId}, ApiSpec={descriptor.ApiSpecId}, Model={descriptor.Model}}}";
+
+    private static void EnsureAggregatedInvocationMatchesExpected(CompletionDescriptor expected, CompletionDescriptor actual) {
+        if (expected is null) { throw new ArgumentNullException(nameof(expected)); }
+        if (actual is null) { throw new ArgumentNullException(nameof(actual)); }
+        if (Equals(expected, actual)) { return; }
+
+        throw new InvalidOperationException(
+            "Completion client returned an AggregatedAction.Invocation that does not match the requested profile. " +
+            $"Expected {DescribeDescriptor(expected)}, but received {DescribeDescriptor(actual)}."
+        );
+    }
 
     private static string DescribeCurrentTurn(CurrentTurnInfo turn)
         => turn.HasExplicitStartBoundary

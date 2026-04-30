@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
+using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
@@ -24,7 +25,7 @@ public sealed class AgentEngineTurnLockTests {
     [Fact]
     public async Task FirstTurn_AnyProfile_IsAllowed() {
         var provider = new FakeProviderClient(
-            CreateDeltaSequence(CompletionChunk.FromContent("ok"))
+            CreateDeltaSequence(agg => agg.AppendContent("ok"))
         );
         var profile = new LlmProfile(provider, Model, ProfileName);
         var engine = new AgentEngine();
@@ -43,9 +44,9 @@ public sealed class AgentEngineTurnLockTests {
         var tool = new EchoTool("echo");
         var provider = new FakeProviderClient(
             CreateDeltaSequence(
-                CompletionChunk.FromToolCall(MakeToolCall("echo", "call-1"))
+                agg => agg.AppendToolCall(MakeToolCall("echo", "call-1"))
             ),
-            CreateDeltaSequence(CompletionChunk.FromContent("done"))
+            CreateDeltaSequence(agg => agg.AppendContent("done"))
         );
         var profile = new LlmProfile(provider, Model, ProfileName);
         var engine = new AgentEngine();
@@ -69,11 +70,11 @@ public sealed class AgentEngineTurnLockTests {
         var tool = new EchoTool("echo");
         var providerA = new FakeProviderClient(
             CreateDeltaSequence(
-                CompletionChunk.FromToolCall(MakeToolCall("echo", "call-1"))
+                agg => agg.AppendToolCall(MakeToolCall("echo", "call-1"))
             )
         );
         var providerB = new FakeProviderClient(
-            CreateDeltaSequence(CompletionChunk.FromContent("from-B"))
+            CreateDeltaSequence(agg => agg.AppendContent("from-B"))
         );
         var profileA = new LlmProfile(providerA, "model-A", "profile-A");
         var profileB = new LlmProfile(providerB, "model-B", "profile-B");
@@ -101,12 +102,12 @@ public sealed class AgentEngineTurnLockTests {
         var providerA = new FakeProviderClient(
             name: "provider-A",
             CreateDeltaSequence(
-                CompletionChunk.FromToolCall(MakeToolCall("echo", "call-1"))
+                agg => agg.AppendToolCall(MakeToolCall("echo", "call-1"))
             )
         );
         var providerB = new FakeProviderClient(
             name: "provider-B",
-            CreateDeltaSequence(CompletionChunk.FromContent("from-B"))
+            CreateDeltaSequence(agg => agg.AppendContent("from-B"))
         );
         var profileA = new LlmProfile(providerA, Model, "profile-A");
         var profileB = new LlmProfile(providerB, Model, "profile-B");
@@ -134,13 +135,13 @@ public sealed class AgentEngineTurnLockTests {
             name: "test-provider",
             apiSpecId: "spec-A",
             CreateDeltaSequence(
-                CompletionChunk.FromToolCall(MakeToolCall("echo", "call-1"))
+                agg => agg.AppendToolCall(MakeToolCall("echo", "call-1"))
             )
         );
         var providerB = new FakeProviderClient(
             name: "test-provider",
             apiSpecId: "spec-B",
-            CreateDeltaSequence(CompletionChunk.FromContent("from-B"))
+            CreateDeltaSequence(agg => agg.AppendContent("from-B"))
         );
         var profileA = new LlmProfile(providerA, Model, "profile-A");
         var profileB = new LlmProfile(providerB, Model, "profile-B");
@@ -166,9 +167,9 @@ public sealed class AgentEngineTurnLockTests {
         var tool = new EchoTool("echo");
         var provider = new FakeProviderClient(
             CreateDeltaSequence(
-                CompletionChunk.FromToolCall(MakeToolCall("echo", "call-1"))
+                agg => agg.AppendToolCall(MakeToolCall("echo", "call-1"))
             ),
-            CreateDeltaSequence(CompletionChunk.FromContent("done"))
+            CreateDeltaSequence(agg => agg.AppendContent("done"))
         );
         var profileA = new LlmProfile(provider, Model, "profile-A");
         var profileB = new LlmProfile(provider, Model, "profile-B");
@@ -188,13 +189,35 @@ public sealed class AgentEngineTurnLockTests {
     }
 
     [Fact]
+    public async Task ProviderReturningMismatchedInvocation_Throws() {
+        var provider = new FakeProviderClient(
+            name: "provider-A",
+            apiSpecId: "spec-A",
+            invocationFactory: static _ => new CompletionDescriptor("provider-B", "spec-B", "model-B"),
+            CreateDeltaSequence(agg => agg.AppendContent("done"))
+        );
+        var profile = new LlmProfile(provider, "model-A", "profile-A");
+        var engine = new AgentEngine();
+
+        engine.AppendNotification("turn 1");
+        await engine.StepAsync(profile);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await engine.StepAsync(profile)
+        );
+
+        Assert.Contains("Expected {Provider=provider-A, ApiSpec=spec-A, Model=model-A}", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("received {Provider=provider-B, ApiSpec=spec-B, Model=model-B}", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SwitchProfile_AcrossTurnBoundary_IsAllowed() {
         var providerA = new FakeProviderClient(
-            CreateDeltaSequence(CompletionChunk.FromContent("turn-1 done"))
+            CreateDeltaSequence(agg => agg.AppendContent("turn-1 done"))
         );
         var providerB = new FakeProviderClient(
             name: "provider-B",
-            CreateDeltaSequence(CompletionChunk.FromContent("turn-2 done"))
+            CreateDeltaSequence(agg => agg.AppendContent("turn-2 done"))
         );
         var profileA = new LlmProfile(providerA, "model-A", "profile-A");
         var profileB = new LlmProfile(providerB, "model-B", "profile-B");
@@ -220,14 +243,14 @@ public sealed class AgentEngineTurnLockTests {
         var tool = new EchoTool("echo");
         var providerA = new FakeProviderClient(
             CreateDeltaSequence(
-                CompletionChunk.FromToolCall(MakeToolCall("echo", "call-1"))
+                agg => agg.AppendToolCall(MakeToolCall("echo", "call-1"))
             ),
             // 第二次 call（工具往返后）会被 handler 替换 profile，期望抛错而不会用到本响应。
-            CreateDeltaSequence(CompletionChunk.FromContent("should not reach"))
+            CreateDeltaSequence(agg => agg.AppendContent("should not reach"))
         );
         var providerB = new FakeProviderClient(
             name: "provider-B",
-            CreateDeltaSequence(CompletionChunk.FromContent("usurper"))
+            CreateDeltaSequence(agg => agg.AppendContent("usurper"))
         );
         var profileA = new LlmProfile(providerA, "model-A", "profile-A");
         var profileB = new LlmProfile(providerB, "model-B", "profile-B");
@@ -300,36 +323,51 @@ public sealed class AgentEngineTurnLockTests {
         );
     }
 
-    private static async IAsyncEnumerable<CompletionChunk> CreateDeltaSequence(params CompletionChunk[] chunks) {
-        foreach (var chunk in chunks) {
-            yield return chunk;
-            await Task.Yield();
-        }
-    }
+    private static Action<CompletionAggregator>[] CreateDeltaSequence(params Action<CompletionAggregator>[] feeds) => feeds;
 
     private sealed class FakeProviderClient : ICompletionClient {
-        private readonly Queue<IAsyncEnumerable<CompletionChunk>> _responses;
+        private readonly Queue<Action<CompletionAggregator>[]> _responses;
+        private readonly Func<CompletionRequest, CompletionDescriptor>? _invocationFactory;
 
         public string Name { get; }
         public string ApiSpecId { get; }
 
-        public FakeProviderClient(params IAsyncEnumerable<CompletionChunk>[] responses)
-            : this("test-provider", "test-spec", responses) {
+        public FakeProviderClient(params Action<CompletionAggregator>[][] responses)
+            : this("test-provider", "test-spec", null, responses) {
         }
 
-        public FakeProviderClient(string name, params IAsyncEnumerable<CompletionChunk>[] responses)
-            : this(name, "test-spec", responses) {
+        public FakeProviderClient(string name, params Action<CompletionAggregator>[][] responses)
+            : this(name, "test-spec", null, responses) {
         }
 
-        public FakeProviderClient(string name, string apiSpecId, params IAsyncEnumerable<CompletionChunk>[] responses) {
+        public FakeProviderClient(string name, string apiSpecId, params Action<CompletionAggregator>[][] responses) {
             Name = name;
             ApiSpecId = apiSpecId;
-            _responses = new Queue<IAsyncEnumerable<CompletionChunk>>(responses);
+            _responses = new Queue<Action<CompletionAggregator>[]>(responses);
         }
 
-        public IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken) {
+        public FakeProviderClient(
+            string name,
+            string apiSpecId,
+            Func<CompletionRequest, CompletionDescriptor>? invocationFactory,
+            params Action<CompletionAggregator>[][] responses
+        ) {
+            Name = name;
+            ApiSpecId = apiSpecId;
+            _invocationFactory = invocationFactory;
+            _responses = new Queue<Action<CompletionAggregator>[]>(responses);
+        }
+
+        public Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken) {
             if (_responses.Count == 0) { throw new InvalidOperationException("No provider responses configured."); }
-            return _responses.Dequeue();
+
+            var feeds = _responses.Dequeue();
+            var invocation = _invocationFactory?.Invoke(request) ?? CompletionDescriptor.From(this, request);
+            var aggregator = new CompletionAggregator(invocation);
+            foreach (var feed in feeds) {
+                feed(aggregator);
+            }
+            return Task.FromResult(aggregator.Build());
         }
     }
 
