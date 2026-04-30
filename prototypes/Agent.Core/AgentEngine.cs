@@ -25,6 +25,7 @@ public class AgentEngine {
     private readonly Dictionary<string, LodToolCallResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
     private readonly IIdleObservationProvider _idleProvider;
     private readonly Func<DateTimeOffset> _utcNowProvider;
+    private readonly AutoCompactionOptions? _autoCompactionOptions;
 
     private ToolExecutor? _toolExecutor;
     private ToolExecutor ToolExecutor => EnsureToolsBuilt();
@@ -69,12 +70,15 @@ public class AgentEngine {
     /// <param name="idleProvider">在无外部输入且无待处理通知时产生"心跳观测"的提供器；
     /// 传 <c>null</c> 使用默认的 <see cref="TimestampHeartbeatObservationProvider"/>。</param>
     /// <param name="utcNowProvider">UTC 时间源（可选，主要供测试注入）。</param>
+    /// <param name="autoCompaction">自动上下文压缩配置（可选）。
+    /// 传 <c>null</c> 不启用自动压缩触发，仅保留手动 <see cref="RequestCompaction"/> 路径。</param>
     public AgentEngine(
         AgentState? state = null,
         IEnumerable<IApp>? initialApps = null,
         IEnumerable<ITool>? initialTools = null,
         IIdleObservationProvider? idleProvider = null,
-        Func<DateTimeOffset>? utcNowProvider = null
+        Func<DateTimeOffset>? utcNowProvider = null,
+        AutoCompactionOptions? autoCompaction = null
     ) {
         _state = state ?? AgentState.CreateDefault();
         _appHost = new DefaultAppHost();
@@ -82,6 +86,7 @@ public class AgentEngine {
         _toolsDirty = true;
         _idleProvider = idleProvider ?? new TimestampHeartbeatObservationProvider();
         _utcNowProvider = utcNowProvider ?? (() => DateTimeOffset.UtcNow);
+        _autoCompactionOptions = autoCompaction;
 
         if (initialApps is not null) {
             foreach (var app in initialApps) {
@@ -463,6 +468,60 @@ public class AgentEngine {
     }
 
     /// <summary>
+    /// 估算当前上下文的 token 信息量，用于与 <see cref="LlmProfile.SoftContextTokenCap"/> 比较以决定是否触发自动压缩。
+    /// </summary>
+    /// <remarks>
+    /// 此值为近似估算，不包含 App Windows 注入、tool definitions、Detail/Basic 级差等投影变形。
+    /// 作为软上限触发条件已足够准确——其目的是在明显超过上限时提前介入，而非精确到个位数。
+    /// 估算基准与 <see cref="ContextSplitter.FindHalfContextSplitPoint"/> 一致（均基于 <see cref="HistoryEntry.TokenEstimate"/>），
+    /// 保证压缩决策与切分算法共享同一 token 坐标系。
+    /// </remarks>
+    private ulong EstimateCurrentContextTokens() {
+        ulong total = TokenEstimateHelper.GetDefault().EstimateString(SystemPrompt);
+        foreach (var entry in _state.RecentHistory) {
+            total += entry.TokenEstimate;
+        }
+        return total;
+    }
+
+    /// <summary>
+    /// 尝试发起一次自动上下文压缩请求，仅在已配置 <see cref="AutoCompactionOptions"/> 且无待处理的手动请求时生效。
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> 表示成功写入 <see cref="_compactionRequest"/>；
+    /// <c>false</c> 表示跳过（未配置或已存在手动请求或历史量不足以进行有效压缩）。
+    /// </returns>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item>手动 <see cref="RequestCompaction"/> 优先：若 <see cref="_compactionRequest"/> 已存在，不会覆盖。</item>
+    /// <item><b>防抖守卫</b>：要求历史至少 4 条（约 2 个完整 Turn）才允许自动触发，
+    /// 避免压缩后剩余条目仍超 cap 导致立即再次触发（因为压缩后的 Recap→Action 边界仍可通过切分校验，
+    /// 但再次压缩仅会"摘要掉刚刚产生的 Recap"，毫无收益）。</item>
+    /// </list>
+    /// </remarks>
+    private bool TryRequestAutoCompaction() {
+        if (_autoCompactionOptions is null) {
+            DebugUtil.Trace(StateMachineDebugCategory, "[Compacting] Auto compaction skipped: no AutoCompactionOptions configured.");
+            return false;
+        }
+
+        if (_compactionRequest.HasValue) {
+            DebugUtil.Trace(StateMachineDebugCategory, "[Compacting] Auto compaction skipped: compaction request already pending.");
+            return false;
+        }
+
+        // 防抖：历史量不足以进行有效压缩（需至少 4 条 = 2 个完整 Turn）
+        if (_state.RecentHistory.Count < 4) {
+            DebugUtil.Trace(StateMachineDebugCategory,
+                $"[Compacting] Auto compaction skipped: history too short (count={_state.RecentHistory.Count}, need >= 4)."
+            );
+            return false;
+        }
+
+        return RequestCompaction(_autoCompactionOptions.SystemPrompt, _autoCompactionOptions.SummarizePrompt);
+    }
+
+    /// <summary>
     /// 将历史条目投影为 <see cref="IHistoryMessage"/> 列表，末尾追加摘要请求消息。
     /// </summary>
     /// <remarks>
@@ -615,6 +674,24 @@ public class AgentEngine {
 
         // 二次校验：BeforeModelCall handler 可能替换了 Profile，需再次确认仍在 turn 锁定范围内。
         EnsureProfileMatchesCurrentTurnLock(args.Profile);
+
+        // 软上下文上限检查：若当前上下文 token 量已达到配置的上限，
+        // 插入一次 Compacting 状态（半上下文压缩）后再继续原调用。
+        // 检查放在 BeforeModelCall 之后，以确保使用 handler 可能修改后的最终 Profile 与上下文。
+        if (args.Profile.SoftContextTokenCap is uint cap && EstimateCurrentContextTokens() >= cap) {
+            if (TryRequestAutoCompaction()) {
+                DebugUtil.Info(
+                    StateMachineDebugCategory,
+                    $"[Engine] Soft context token cap hit (estimate>={cap}); deferring model call for auto compaction."
+                );
+                return StepOutcome.FromStateMutation();
+            }
+            // RequestCompaction 失败（如无合法切分点）时回退到正常调用，避免死锁。
+            DebugUtil.Warning(
+                StateMachineDebugCategory,
+                $"[Engine] Soft cap hit but no valid split point; falling back to normal model call. cap={cap}"
+            );
+        }
 
         toolExecutor = ToolExecutor;
         toolDefinitions = toolExecutor.GetVisibleToolDefinitions();

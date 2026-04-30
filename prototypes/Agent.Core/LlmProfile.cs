@@ -20,4 +20,14 @@ public sealed record LlmProfile(
     ICompletionClient Client,
     string ModelId,
     string Name
-);
+) {
+    /// <summary>
+    /// 获取此 Provider-Model 组合的有效上下文窗口软上限（token 估算值）。
+    /// 超过此值太多会变得不经济或模型能力下降，建议触发上下文压缩。
+    /// </summary>
+    /// <remarks>
+    /// <c>null</c> 表示未配置上限，不启用自动上下文压缩触发。
+    /// 此值远小于硬性上下文窗口限制，仅作为自动压缩的推荐阈值。
+    /// </remarks>
+    public uint? SoftContextTokenCap { get; init; }
+}
