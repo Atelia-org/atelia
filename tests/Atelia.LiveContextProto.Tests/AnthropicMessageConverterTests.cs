@@ -333,11 +333,13 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var action = new ActionMessage(new ActionBlock[] {
-            new ActionBlock.Text("alpha"),
-            new ActionBlock.ToolCall(toolCall),
-            new ActionBlock.Text("omega")
-        });
+        var action = new ActionMessage(
+            new ActionBlock[] {
+                new ActionBlock.Text("alpha"),
+                new ActionBlock.ToolCall(toolCall),
+                new ActionBlock.Text("omega")
+        }
+        );
 
         var request = new CompletionRequest(
             ModelId: "claude-3",
@@ -369,17 +371,21 @@ public sealed class AnthropicMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_RichActionMessageRoundTripsThinkingPayload() {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new {
-            type = "thinking",
-            thinking = "Let me reason about the tool result.",
-            signature = "sig-123"
-        });
+        var payload = JsonSerializer.SerializeToUtf8Bytes(
+            new {
+                type = "thinking",
+                thinking = "Let me reason about the tool result.",
+                signature = "sig-123"
+            }
+        );
 
-        var action = new ActionMessage(new ActionBlock[] {
-            new ActionBlock.Text("alpha"),
-            new ActionBlock.Thinking(new CompletionDescriptor("provider", "spec", "model"), payload, "debug"),
-            new ActionBlock.Text("omega")
-        });
+        var action = new ActionMessage(
+            new ActionBlock[] {
+                new ActionBlock.Text("alpha"),
+                new AnthropicReasoningBlock(payload, new CompletionDescriptor("provider", "spec", "model"), "debug"),
+                new ActionBlock.Text("omega")
+        }
+        );
 
         var request = new CompletionRequest(
             ModelId: "claude-3",
@@ -405,13 +411,15 @@ public sealed class AnthropicMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_InvalidThinkingPayloadFailsFast() {
-        var action = new ActionMessage(new ActionBlock[] {
-            new ActionBlock.Thinking(
-                new CompletionDescriptor("provider", "spec", "model"),
-                System.Text.Encoding.UTF8.GetBytes("""{"type":"not-thinking","foo":1}"""),
-                null
-            )
-        });
+        var action = new ActionMessage(
+            new ActionBlock[] {
+                new AnthropicReasoningBlock(
+                    System.Text.Encoding.UTF8.GetBytes("""{"type":"not-thinking","foo":1}"""),
+                    new CompletionDescriptor("provider", "spec", "model"),
+                    null
+                )
+        }
+        );
 
         var request = new CompletionRequest(
             ModelId: "claude-3",
@@ -425,5 +433,30 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         Assert.Contains("Failed to deserialize Anthropic thinking block payload", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_NonAnthropicReasoningBlockFailsFast() {
+        var action = new ActionMessage(
+            new ActionBlock[] {
+                new ActionBlock.TextReasoningBlock(
+                    "plain reasoning",
+                    new CompletionDescriptor("provider", "spec", "model")
+                )
+        }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), action },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+        );
+
+        Assert.Contains("Cannot replay non-Anthropic reasoning block", exception.Message, StringComparison.Ordinal);
     }
 }

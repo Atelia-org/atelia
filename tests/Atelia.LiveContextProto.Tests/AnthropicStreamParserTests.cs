@@ -161,7 +161,7 @@ public sealed class AnthropicStreamParserTests {
         var result = aggregator.Build();
 
         var thinkingBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.Thinking);
-        var thinking = Assert.IsType<ActionBlock.Thinking>(thinkingBlock);
+        var thinking = Assert.IsType<AnthropicReasoningBlock>(thinkingBlock);
 
         Assert.Equal("Let me consider this carefully.", thinking.PlainTextForDebug);
 

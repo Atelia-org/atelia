@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -34,7 +35,7 @@ public sealed class CompletionAggregationTests {
         var entry = Aggregate(
             agg => {
                 agg.AppendContent("alpha");
-                agg.AppendThinking(new ThinkingChunk(thinkingPayload, "deliberation"));
+                agg.AppendThinking(new AnthropicReasoningBlock(thinkingPayload, agg.Invocation, "deliberation"));
                 agg.AppendContent("omega");
             }
         );
@@ -43,7 +44,7 @@ public sealed class CompletionAggregationTests {
             entry.Message.Blocks,
             block => Assert.Equal("alpha", Assert.IsType<ActionBlock.Text>(block).Content),
             block => {
-                var thinking = Assert.IsType<ActionBlock.Thinking>(block);
+                var thinking = Assert.IsType<AnthropicReasoningBlock>(block);
                 Assert.Same(Descriptor, thinking.Origin);
                 Assert.Equal("deliberation", thinking.PlainTextForDebug);
                 using var doc = JsonDocument.Parse(thinking.OpaquePayload);
@@ -57,17 +58,43 @@ public sealed class CompletionAggregationTests {
     }
 
     [Fact]
+    public void AppendBuild_RejectsReasoningBlockWithMismatchedOrigin() {
+        var payload = Encoding.UTF8.GetBytes("""{"type":"thinking","thinking":"x","signature":"s"}""");
+        var mismatchedDescriptor = new CompletionDescriptor("other", "other-v1", "other-model");
+
+        var aggregator = new CompletionAggregator(Descriptor);
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => aggregator.EndThinking(new AnthropicReasoningBlock(payload, mismatchedDescriptor, null))
+        );
+        Assert.Contains("Origin mismatch", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AppendBuild_InjectsCurrentInvocationAsThinkingOrigin() {
         var payload = Encoding.UTF8.GetBytes("""{"type":"thinking","thinking":"x","signature":"s"}""");
         var customDescriptor = new CompletionDescriptor("anthropic", "anthropic-messages-v1", "claude-opus-4");
 
         var entry = Aggregate(
-            agg => agg.AppendThinking(new ThinkingChunk(payload, null)),
+            agg => agg.AppendThinking(new AnthropicReasoningBlock(payload, agg.Invocation, null)),
             descriptor: customDescriptor
         );
 
-        var thinking = Assert.IsType<ActionBlock.Thinking>(entry.Message.Blocks.Single());
+        var thinking = Assert.IsType<AnthropicReasoningBlock>(entry.Message.Blocks.Single());
         Assert.Same(customDescriptor, thinking.Origin);
+    }
+
+    [Fact]
+    public void AppendBuild_AcceptsReasoningBlockWithValueEqualOrigin() {
+        var payload = Encoding.UTF8.GetBytes("""{"type":"thinking","thinking":"x","signature":"s"}""");
+        var equalDescriptor = new CompletionDescriptor(Descriptor.ProviderId, Descriptor.ApiSpecId, Descriptor.Model);
+
+        var entry = Aggregate(
+            agg => agg.AppendThinking(new AnthropicReasoningBlock(payload, equalDescriptor, null))
+        );
+
+        var thinking = Assert.IsType<AnthropicReasoningBlock>(entry.Message.Blocks.Single());
+        Assert.Equal(Descriptor, thinking.Origin);
+        Assert.NotSame(Descriptor, thinking.Origin);
     }
 
     [Fact]
