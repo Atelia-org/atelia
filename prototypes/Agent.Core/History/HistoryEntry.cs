@@ -90,51 +90,22 @@ public abstract record class HistoryEntry : ITokenEstimateSource {
 }
 
 /// <summary>
-/// 表示 Agent 的一个动作条目，封装了聊天（Chat）范式中助手的有序内容块序列。
-/// 真相层（source of truth）是 <see cref="Blocks"/>；<see cref="Content"/> 与 <see cref="ToolCalls"/>
-/// 仅作为兼容旧消费者的 lossy 派生视图。新代码应优先读取 <see cref="Blocks"/>。
-/// 完整设计见 <c>docs/Agent/Thinking-Replay-Design.md</c>。
+/// 表示 Agent 的一个动作条目，是 History 层的 envelope：持有纯消息体 <see cref="Message"/>，
+/// 并附加 Agent 历史所需的 <see cref="Invocation"/> 元信息。
 /// </summary>
-/// <param name="Blocks">有序的内容块序列，反映 provider 流式协议输出的真实顺序。</param>
-/// <param name="Invocation">记录生成此次动作所使用的模型来源信息。</param>
+/// <remarks>
+/// <b>分层边界</b>：本类型<b>不</b>实现 <see cref="IActionMessage"/>。
+/// 需要纯消息体时请使用 <see cref="Message"/>（<see cref="ActionMessage"/>），
+/// 例如 provider converter 的输入应使用 <see cref="AgentState.ProjectInvocationContext"/> 投影后的 <see cref="ActionMessage"/>。
+/// </remarks>
+/// <param name="Message">Canonical action 消息体；<see cref="ActionMessage.Blocks"/> 已在构造时冻结。</param>
+/// <param name="Invocation">记录生成此次动作所使用的模型来源信息，用于 turn lock 与 thinking origin 对齐。</param>
 public sealed record ActionEntry(
-    IReadOnlyList<ActionBlock> Blocks,
+    ActionMessage Message,
     CompletionDescriptor Invocation
-) : HistoryEntry, IActionMessage {
+) : HistoryEntry {
     /// <inheritdoc />
     public override HistoryEntryKind Kind => HistoryEntryKind.Action;
-
-    // ===== Compatibility views（lossy by design）=====
-    //
-    // 这些视图仅为兼容现有消费者保留，存在以下不保证：
-    // (1) 不保留 Blocks 之间的 ordering——例如 [Text(a), ToolCall, Text(b)]
-    //     在 Content 中变为 "ab"，丢失文本被工具调用打断的边界信息
-    // (2) 不暴露未来的 Thinking / Citation 等富 block 类型
-    // (3) 任何依赖结构边界的下游应直接读取 Blocks，不要走这两个视图
-    //
-    // 选择 string.Concat 而非 string.Join('\n', ...) 的理由：
-    // Anthropic / OpenAI / Gemini 的流式协议本身不保证 text block 之间有换行；
-    // 在 compat view 强加 '\n' 反而会注入虚假信息。换行语义应由具体 provider
-    // converter 在编码时按需添加，而非 compat view 越权决定。
-
-    /// <summary>
-    /// Lossy derived view：将 <see cref="Blocks"/> 中所有 <see cref="ActionBlock.Text"/>
-    /// 块的内容按顺序串接（无分隔符）。非真相源——优先使用 <see cref="Blocks"/>。
-    /// </summary>
-    public string GetFlattenedText() => string.Concat(
-        Blocks.OfType<ActionBlock.Text>().Select(b => b.Content)
-    );
-
-    /// <summary>
-    /// Lossy compatibility view：从 <see cref="Blocks"/> 中按顺序提取所有
-    /// <see cref="ActionBlock.ToolCall"/> 块的工具调用信息。
-    /// </summary>
-    public IReadOnlyList<ParsedToolCall> ToolCalls => Blocks
-        .OfType<ActionBlock.ToolCall>()
-        .Select(b => b.Call)
-        .ToArray();
-
-    HistoryMessageKind IHistoryMessage.Kind => HistoryMessageKind.Action;
 }
 
 

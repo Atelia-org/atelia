@@ -380,9 +380,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         bool isInActiveTurn
     ) {
         var retainThinkingInActiveTurn = isInActiveTurn && ShouldRetainThinkingInActiveTurn(options, currentTurn);
-        var projectedBlocks = new List<ActionBlock>(actionEntry.Blocks.Count);
+        var projectedBlocks = new List<ActionBlock>(actionEntry.Message.Blocks.Count);
 
-        foreach (var block in actionEntry.Blocks) {
+        foreach (var block in actionEntry.Message.Blocks) {
             if (block is not ActionBlock.Thinking thinkingBlock) {
                 projectedBlocks.Add(block);
                 continue;

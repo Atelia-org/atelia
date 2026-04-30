@@ -91,12 +91,12 @@ public static class PeerEntry {
             }
 
             if (step.Output is { } actionEntry) {
-                var actionText = actionEntry.GetFlattenedText();
+                var actionText = actionEntry.Message.GetFlattenedText();
                 if (!string.IsNullOrEmpty(actionText)) {
                     output.WriteLine(actionText);
                 }
                 if (!quiet) {
-                    foreach (var call in actionEntry.ToolCalls) {
+                    foreach (var call in actionEntry.Message.ToolCalls) {
                         output.WriteLine($"  [ToolCall] {call.ToolCallId} {call.ToolName}");
                     }
                 }

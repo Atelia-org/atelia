@@ -5,7 +5,6 @@ using System.Linq;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
-using Atelia.Agent.Core.History;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -27,9 +26,8 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ActionEntry(
-            Blocks: new ActionBlock[] { new ActionBlock.ToolCall(toolCall) },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] { new ActionBlock.ToolCall(toolCall) }
         );
 
         var request = new CompletionRequest(
@@ -37,7 +35,7 @@ public sealed class AnthropicMessageConverterTests {
             SystemPrompt: string.Empty,
             Context: new IHistoryMessage[] {
                 new ObservationMessage("hi"),
-                historyEntry,
+                actionMessage,
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
@@ -80,9 +78,8 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ActionEntry(
-            Blocks: new ActionBlock[] { new ActionBlock.Text("call"), new ActionBlock.ToolCall(toolCall) },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] { new ActionBlock.Text("call"), new ActionBlock.ToolCall(toolCall) }
         );
 
         var request = new CompletionRequest(
@@ -90,7 +87,7 @@ public sealed class AnthropicMessageConverterTests {
             SystemPrompt: string.Empty,
             Context: new IHistoryMessage[] {
                 new ObservationMessage("hi"),
-                historyEntry,
+                actionMessage,
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
@@ -125,9 +122,8 @@ public sealed class AnthropicMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ActionEntry(
-            Blocks: new ActionBlock[] { new ActionBlock.Text("call"), new ActionBlock.ToolCall(toolCall) },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] { new ActionBlock.Text("call"), new ActionBlock.ToolCall(toolCall) }
         );
 
         var request = new CompletionRequest(
@@ -135,7 +131,7 @@ public sealed class AnthropicMessageConverterTests {
             SystemPrompt: string.Empty,
             Context: new IHistoryMessage[] {
                 new ObservationMessage("hi"),
-                historyEntry,
+                actionMessage,
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
@@ -157,12 +153,11 @@ public sealed class AnthropicMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_ToolResultsFollowPendingAssistantToolCallOrder() {
-        var actionEntry = new ActionEntry(
-            Blocks: new ActionBlock[] {
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] {
                 new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
                 new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
-            },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+            }
         );
 
         var toolResults = new ToolResultsMessage(
@@ -177,7 +172,7 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionEntry, toolResults },
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
@@ -218,12 +213,11 @@ public sealed class AnthropicMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
-        var actionEntry = new ActionEntry(
-            Blocks: new ActionBlock[] {
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] {
                 new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
                 new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
-            },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+            }
         );
 
         var toolResults = new ToolResultsMessage(
@@ -235,7 +229,7 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionEntry, toolResults },
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
@@ -310,15 +304,14 @@ public sealed class AnthropicMessageConverterTests {
     public void ConvertToApiRequest_LeadingAssistantThrows() {
         // Anthropic 要求第一条消息必须是 user；上游提供了以 Action 开头的历史应被早期拒绝，
         // 而不是静默垫一个会被 API 拒绝的空文本块。
-        var actionEntry = new ActionEntry(
-            Blocks: new ActionBlock[] { new ActionBlock.Text("hello") },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] { new ActionBlock.Text("hello") }
         );
 
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionEntry },
+            Context: new IHistoryMessage[] { actionMessage },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 

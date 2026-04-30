@@ -126,8 +126,8 @@ internal sealed class ConsoleTui {
             }
 
             if (step.Output is { } outputEntry) {
-                Console.WriteLine(outputEntry.GetFlattenedText());
-                foreach (var call in outputEntry.ToolCalls) {
+                Console.WriteLine(outputEntry.Message.GetFlattenedText());
+                foreach (var call in outputEntry.Message.ToolCalls) {
                     Console.WriteLine($"  [ToolCall] {call.ToolCallId} {call.ToolName}");
                 }
             }

@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
-using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
 using Xunit;
@@ -27,16 +26,15 @@ public sealed class OpenAIChatMessageConverterTests {
             ParseWarning: null
         );
 
-        var historyEntry = new ActionEntry(
-            Blocks: new ActionBlock[] { new ActionBlock.ToolCall(toolCall) },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] { new ActionBlock.ToolCall(toolCall) }
         );
 
         var request = new CompletionRequest(
             ModelId: "gpt-4.1",
             SystemPrompt: string.Empty,
             Context: new IHistoryMessage[] {
-                historyEntry,
+                actionMessage,
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
@@ -67,12 +65,11 @@ public sealed class OpenAIChatMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_ToolResultsFollowPendingAssistantToolCallOrder() {
-        var actionEntry = new ActionEntry(
-            Blocks: new ActionBlock[] {
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] {
                 new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
                 new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
-            },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+            }
         );
 
         var toolResults = new ToolResultsMessage(
@@ -87,7 +84,7 @@ public sealed class OpenAIChatMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "gpt-4.1",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionEntry, toolResults },
+            Context: new IHistoryMessage[] { actionMessage, toolResults },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
@@ -123,12 +120,11 @@ public sealed class OpenAIChatMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
-        var actionEntry = new ActionEntry(
-            Blocks: new ActionBlock[] {
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] {
                 new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
                 new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
-            },
-            Invocation: new CompletionDescriptor("provider", "spec", "model")
+            }
         );
 
         var toolResults = new ToolResultsMessage(
@@ -140,7 +136,7 @@ public sealed class OpenAIChatMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "gpt-4.1",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionEntry, toolResults },
+            Context: new IHistoryMessage[] { actionMessage, toolResults },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 

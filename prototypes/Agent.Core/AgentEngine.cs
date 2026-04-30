@@ -407,7 +407,7 @@ public class AgentEngine {
     }
 
     private AgentRunState DetermineOutputState(ActionEntry outputEntry) {
-        if (outputEntry.ToolCalls is not { Count: > 0 }) { return AgentRunState.WaitingInput; }
+        if (outputEntry.Message.ToolCalls is not { Count: > 0 }) { return AgentRunState.WaitingInput; }
         return HasAllToolResults(outputEntry)
             ? AgentRunState.ToolResultsReady
             : AgentRunState.WaitingToolResults;
@@ -538,7 +538,7 @@ public class AgentEngine {
         foreach (var entry in entries) {
             switch (entry) {
                 case ActionEntry action:
-                    messages.Add(action);
+                    messages.Add(action.Message);
                     break;
 
                 case ObservationEntry observation:
@@ -701,11 +701,11 @@ public class AgentEngine {
 
         var result = await args.Profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
         EnsureCompletionInvocationMatchesExpected(invocation, result.Invocation);
-        var aggregatedOutput = new ActionEntry(result.Message.Blocks, invocation);
+        var aggregatedOutput = new ActionEntry(result.Message, invocation);
 
         DebugUtil.Info(
             ProviderDebugCategory,
-            $"[Engine] Completion result blocks={result.Message.Blocks.Count} toolCalls={aggregatedOutput.ToolCalls.Count} errors={result.Errors?.Count ?? 0}"
+            $"[Engine] Completion result blocks={result.Message.Blocks.Count} toolCalls={aggregatedOutput.Message.ToolCalls.Count} errors={result.Errors?.Count ?? 0}"
         );
 
         _pendingToolResults.Clear();
@@ -715,8 +715,8 @@ public class AgentEngine {
         var afterArgs = new AfterModelCallEventArgs(state, args.Profile, appended);
         OnAfterModelCall(afterArgs);
 
-        var toolCallCount = appended.ToolCalls?.Count ?? 0;
-        var textLen = appended.Blocks.OfType<ActionBlock.Text>().Sum(b => b.Content.Length);
+        var toolCallCount = appended.Message.ToolCalls?.Count ?? 0;
+        var textLen = appended.Message.Blocks.OfType<ActionBlock.Text>().Sum(b => b.Content.Length);
         DebugUtil.Info(ProviderDebugCategory, $"[Engine] Model output appended textLen={textLen} toolCalls={toolCallCount}");
 
         return StepOutcome.FromOutput(appended);
@@ -765,12 +765,12 @@ public class AgentEngine {
 
     private StepOutcome ProcessToolResultsReady() {
         if (_state.RecentHistory.Count == 0 || _state.RecentHistory[^1] is not ActionEntry outputEntry) { return StepOutcome.NoProgress; }
-        if (outputEntry.ToolCalls is not { Count: > 0 }) { return StepOutcome.NoProgress; }
+        if (outputEntry.Message.ToolCalls is not { Count: > 0 }) { return StepOutcome.NoProgress; }
 
-        var collectedResults = new List<LodToolCallResult>(outputEntry.ToolCalls.Count);
+        var collectedResults = new List<LodToolCallResult>(outputEntry.Message.ToolCalls.Count);
 
-        for (var index = 0; index < outputEntry.ToolCalls.Count; index++) {
-            var call = outputEntry.ToolCalls[index];
+        for (var index = 0; index < outputEntry.Message.ToolCalls.Count; index++) {
+            var call = outputEntry.Message.ToolCalls[index];
             if (!_pendingToolResults.TryGetValue(call.ToolCallId, out var result)) {
                 DebugUtil.Warning(StateMachineDebugCategory, $"[Engine] Missing tool execution result callId={call.ToolCallId}");
                 return StepOutcome.NoProgress;
@@ -797,9 +797,9 @@ public class AgentEngine {
     }
 
     private ParsedToolCall? FindNextPendingToolCall(ActionEntry outputEntry) {
-        if (outputEntry.ToolCalls is not { Count: > 0 }) { return null; }
+        if (outputEntry.Message.ToolCalls is not { Count: > 0 }) { return null; }
 
-        foreach (var call in outputEntry.ToolCalls) {
+        foreach (var call in outputEntry.Message.ToolCalls) {
             if (!_pendingToolResults.ContainsKey(call.ToolCallId)) { return call; }
         }
 
@@ -807,10 +807,10 @@ public class AgentEngine {
     }
 
     private bool HasAllToolResults(ActionEntry outputEntry) {
-        if (outputEntry.ToolCalls is not { Count: > 0 }) { return false; }
-        if (_pendingToolResults.Count < outputEntry.ToolCalls.Count) { return false; }
+        if (outputEntry.Message.ToolCalls is not { Count: > 0 }) { return false; }
+        if (_pendingToolResults.Count < outputEntry.Message.ToolCalls.Count) { return false; }
 
-        foreach (var call in outputEntry.ToolCalls) {
+        foreach (var call in outputEntry.Message.ToolCalls) {
             if (!_pendingToolResults.ContainsKey(call.ToolCallId)) { return false; }
         }
 

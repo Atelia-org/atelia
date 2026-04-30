@@ -64,7 +64,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.NotNull(step2.Output);
         Assert.Equal(AgentRunState.PendingInput, step2.StateBefore);
         Assert.Equal(AgentRunState.WaitingToolResults, step2.StateAfter);
-        Assert.Single(step2.Output!.ToolCalls);
+        Assert.Single(step2.Output!.Message.ToolCalls);
 
         var step3 = await engine.StepAsync(profile);
         Assert.True(step3.ProgressMade);
