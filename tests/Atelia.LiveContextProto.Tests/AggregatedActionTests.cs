@@ -17,7 +17,7 @@ public sealed class AggregatedActionTests {
         var sourceErrors = new List<string> { "boom-1" };
 
         var message = new ActionMessage(sourceBlocks);
-        var action = new AggregatedAction(message, Descriptor, new TokenUsage(3, 2), sourceErrors);
+        var action = new AggregatedAction(message, Descriptor, sourceErrors);
 
         sourceBlocks.Add(new ActionBlock.Text("omega"));
         sourceErrors.Add("boom-2");

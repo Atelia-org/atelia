@@ -35,17 +35,14 @@ public static class ContextSummarizer {
     /// <param name="messages">已投影的消息序列（按时间升序），末尾应包含摘要请求消息（role=Observation）。</param>
     /// <param name="systemPrompt">摘要 LLM 的系统提示词（由调用方注入）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>
-    /// 摘要文本与 token 用量元组；若输入为空则返回 <c>(string.Empty, null)</c>。
-    /// 调用方可将 <see cref="TokenUsage"/> 记录到 JSONL 用于后续成本分析与跑分对比。
-    /// </returns>
-    public static async Task<(string Content, TokenUsage? Usage)> SummarizeAsync(
+    /// <returns>摘要文本；若输入为空则返回 <see cref="string.Empty"/>。</returns>
+    public static async Task<string> SummarizeAsync(
         LlmProfile profile,
         IReadOnlyList<IHistoryMessage> messages,
         string systemPrompt,
         CancellationToken cancellationToken = default
     ) {
-        if (messages.Count == 0) { return (string.Empty, null); }
+        if (messages.Count == 0) { return string.Empty; }
 
         var request = new CompletionRequest(
             ModelId: profile.ModelId,
@@ -56,6 +53,6 @@ public static class ContextSummarizer {
 
         var aggregated = await profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
 
-        return (aggregated.GetFlattenedText() ?? string.Empty, aggregated.Usage);
+        return aggregated.GetFlattenedText() ?? string.Empty;
     }
 }

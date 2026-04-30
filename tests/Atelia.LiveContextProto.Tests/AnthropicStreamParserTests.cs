@@ -13,7 +13,7 @@ public sealed class AnthropicStreamParserTests {
     private static CompletionDescriptor DummyInvocation => new("test", "test-spec", "test-model");
 
     [Fact]
-    public void ParseEvent_UsageAccumulatesAcrossMessageStartAndDeltas() {
+    public void ParseEvent_UsageEventsDoNotAffectBlocks() {
         var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
         var aggregator = new CompletionAggregator(DummyInvocation);
 
@@ -35,16 +35,9 @@ public sealed class AnthropicStreamParserTests {
 
         var result = aggregator.Build();
 
-        // usage 事件不产生任何 Block
         Assert.Single(result.Blocks);
         Assert.IsType<ActionBlock.Text>(result.Blocks[0]);
         Assert.Equal("", ((ActionBlock.Text)result.Blocks[0]).Content);
-
-        var usage = parser.GetFinalUsage();
-        Assert.NotNull(usage);
-        Assert.Equal(123, usage.PromptTokens);
-        Assert.Equal(46, usage.CompletionTokens);
-        Assert.Equal(18, usage.CachedPromptTokens);
     }
 
     [Fact]

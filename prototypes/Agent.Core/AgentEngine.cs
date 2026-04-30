@@ -529,7 +529,7 @@ public class AgentEngine {
             prefix.Add(snapshot[i]);
         }
         var messages = ProjectForSummarization(prefix, request.SummarizePrompt);
-        var (summary, usage) = await ContextSummarizer.SummarizeAsync(
+        var summary = await ContextSummarizer.SummarizeAsync(
             profile, messages, request.SystemPrompt, cancellationToken
         ).ConfigureAwait(false);
 
@@ -541,7 +541,7 @@ public class AgentEngine {
 
         _state.ReplacePrefixWithRecap(splitIndex, summary);
         _compactionRequest = null;
-        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Done. splitIndex={splitIndex} summaryLen={summary.Length} usage={(usage is null ? "N/A" : $"prompt={usage.PromptTokens} completion={usage.CompletionTokens}")} remaining={_state.RecentHistory.Count}");
+        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Done. splitIndex={splitIndex} summaryLen={summary.Length} remaining={_state.RecentHistory.Count}");
         return StepOutcome.FromStateMutation();
     }
 
@@ -628,7 +628,7 @@ public class AgentEngine {
 
         DebugUtil.Info(
             ProviderDebugCategory,
-            $"[Engine] Aggregated completion blocks={aggregated.Blocks.Count} toolCalls={aggregatedOutput.ToolCalls.Count} errors={aggregated.Errors?.Count ?? 0} usage={(aggregated.Usage is null ? "<none>" : $"prompt={aggregated.Usage.PromptTokens},completion={aggregated.Usage.CompletionTokens}")}"
+            $"[Engine] Aggregated completion blocks={aggregated.Blocks.Count} toolCalls={aggregatedOutput.ToolCalls.Count} errors={aggregated.Errors?.Count ?? 0}"
         );
 
         _pendingToolResults.Clear();

@@ -13,7 +13,7 @@ namespace Atelia.LiveContextProto.Tests;
 
 public sealed class OpenAIChatClientTests {
     [Fact]
-    public async Task StreamCompletionAsync_RequestsStreamUsageWhenEnabled() {
+    public async Task StreamCompletionAsync_ParsesContentWithoutRequestingUsage() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(
                 HttpStatusCode.OK
@@ -43,65 +43,8 @@ public sealed class OpenAIChatClientTests {
         var aggregated = await client.StreamCompletionAsync(request, null, CancellationToken.None);
 
         var requestBody = Assert.Single(handler.RequestBodies);
-        Assert.Contains("\"stream_options\":{\"include_usage\":true}", requestBody, StringComparison.Ordinal);
-
-        Assert.NotNull(aggregated.Usage);
-        Assert.Equal(5, aggregated.Usage!.PromptTokens);
-        Assert.Equal(2, aggregated.Usage!.CompletionTokens);
-    }
-
-    [Fact]
-    public async Task StreamCompletionAsync_RetriesWithoutStreamOptionsWhenProviderRejectsThem() {
-        var handler = new SequenceHttpMessageHandler(
-            new HttpResponseMessage(HttpStatusCode.BadRequest) {
-                Content = new StringContent("{\"error\":{\"message\":\"unknown field stream_options\"}}", Encoding.UTF8, "application/json")
-            },
-            new HttpResponseMessage(HttpStatusCode.OK) {
-                Content = new StringContent(
-                    """
-                    data: [DONE]
-
-                    """,
-                    Encoding.UTF8,
-                    "text/event-stream"
-                )
-            }
-        );
-
-        using var httpClient = new HttpClient(handler) {
-            BaseAddress = new Uri("http://localhost:8000/")
-        };
-
-        var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.SgLangCompatible);
-
-        await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
-
-        Assert.Equal(2, handler.RequestBodies.Count);
-        Assert.Contains("\"stream_options\":{\"include_usage\":true}", handler.RequestBodies[0], StringComparison.Ordinal);
-        Assert.DoesNotContain("\"stream_options\"", handler.RequestBodies[1], StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task StreamCompletionAsync_StrictDialectDoesNotRetryWhenStreamOptionsAreRejected() {
-        var handler = new SequenceHttpMessageHandler(
-            new HttpResponseMessage(HttpStatusCode.BadRequest) {
-                Content = new StringContent("{\"error\":{\"message\":\"unknown field stream_options\"}}", Encoding.UTF8, "application/json")
-            }
-        );
-
-        using var httpClient = new HttpClient(handler) {
-            BaseAddress = new Uri("http://localhost:8000/")
-        };
-
-        var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.Strict);
-
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
-            async () => await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
-        );
-
-        Assert.Single(handler.RequestBodies);
-        Assert.Contains("status=400", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("stream_options", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"stream_options\"", requestBody, StringComparison.Ordinal);
+        Assert.Equal("hello", aggregated.GetFlattenedText());
     }
 
     [Fact]

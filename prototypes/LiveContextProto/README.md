@@ -31,7 +31,7 @@ dotnet run --project prototypes/LiveContextProto/LiveContextProto.csproj
 - /notebook view|set <内容>|clear：查看/设置/清空记忆笔记；下次渲染会以 Window 装饰附加到最新输入或工具结果。
 - /exit：退出。
 
-> 小贴士：命令输出的 Metadata 会跳过重复的 `token_usage` 字段，若需更详细的调试日志，可同时开启 `ATELIA_DEBUG_CATEGORIES=History,Provider,Tools`。
+> 小贴士：若需更详细的调试日志，可同时开启 `ATELIA_DEBUG_CATEGORIES=History,Provider,Tools`。
 
 想要继续使用脚本化 stub、示例工具或 `/demo` 命令，请改用伴随项目 `prototypes/LiveContextProto.Demo`。
 
@@ -40,7 +40,7 @@ dotnet run --project prototypes/LiveContextProto/LiveContextProto.csproj
 - `Provider/`：
   - `IProviderClient`：统一模型调用接口（provider 内部消费流式响应并返回聚合后的完整结果）。
   - `ProviderRouter`：按策略选择 Provider，并生成 `ModelInvocationDescriptor`。
-  - `ModelOutputAccumulator`：聚合 delta → `ModelOutputEntry`/`ToolResultsEntry`，并回填 `TokenUsage` 元数据。
+  - `ModelOutputAccumulator`：聚合 delta → `ModelOutputEntry`/`ToolResultsEntry`。
   - `Anthropic/AnthropicProviderClient`：对接 Anthropic Messages API 的流式客户端实现。
 - `Tools/`：
   - `ToolExecutor`：根据 `ToolCallRequest` 查找注册的工具适配器，记录耗时并生成 `ToolCallResult`。
@@ -55,5 +55,5 @@ dotnet test prototypes/LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cspr
 覆盖点：
 - 时间戳注入与上下文顺序
 - Window 装饰只应用于最新一条可装饰消息
-- 增量聚合（内容/工具调用/TokenUsage）与错误路径（仅 ExecuteError）
+- 增量聚合（内容/工具调用）与错误路径（仅 ExecuteError）
 - ToolExecutor 自动执行模型声明的工具调用，并将耗时/失败信息写入 Metadata

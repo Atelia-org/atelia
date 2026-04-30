@@ -67,13 +67,11 @@ public sealed class CompletionAggregationTests {
     }
 
     [Fact]
-    public void AppendBuild_CollectsErrorsAndUsageWithoutTurningThemIntoBlocks() {
-        var usage = new TokenUsage(11, 7, 3);
+    public void AppendBuild_CollectsErrorsWithoutTurningThemIntoBlocks() {
         var entry = Aggregate(agg => {
             agg.AppendContent("alpha");
             agg.AppendError("boom-1");
             agg.AppendError("boom-2");
-            agg.AppendTokenUsage(usage);
         });
 
         Assert.Collection(
@@ -81,7 +79,6 @@ public sealed class CompletionAggregationTests {
             block => Assert.Equal("alpha", Assert.IsType<ActionBlock.Text>(block).Content)
         );
         Assert.Equal("alpha", entry.GetFlattenedText());
-        Assert.Equal(usage, entry.Usage);
         Assert.Equal(new[] { "boom-1", "boom-2" }, entry.Errors);
     }
 
@@ -96,15 +93,12 @@ public sealed class CompletionAggregationTests {
         Assert.Equal(string.Empty, entry.GetFlattenedText());
         Assert.Empty(((IActionMessage)entry).ToolCalls);
         Assert.Null(entry.Errors);
-        Assert.Null(entry.Usage);
     }
 
     [Fact]
     public void AppendBuild_ReturnsSingleEmptyTextBlock_ForMetaOnlyStream() {
-        var usage = new TokenUsage(5, 2);
         var entry = Aggregate(agg => {
             agg.AppendError("recoverable");
-            agg.AppendTokenUsage(usage);
         });
 
         Assert.Collection(
@@ -113,7 +107,6 @@ public sealed class CompletionAggregationTests {
         );
         Assert.Equal(string.Empty, entry.GetFlattenedText());
         Assert.Equal(new[] { "recoverable" }, entry.Errors);
-        Assert.Equal(usage, entry.Usage);
     }
 
     [Fact]

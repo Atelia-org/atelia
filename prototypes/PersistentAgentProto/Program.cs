@@ -78,9 +78,6 @@ internal static class Program {
                 if (aggregated.Errors is { Count: > 0 } errs) {
                     foreach (var e in errs) { Console.WriteLine($"[error] {e}"); }
                 }
-                if (aggregated.Usage is { } u) {
-                    DebugUtil.Info("Boot", $"usage prompt={u.PromptTokens} completion={u.CompletionTokens}");
-                }
 
                 session.AppendAssistant(aggregated.GetFlattenedText());
             }
