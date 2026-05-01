@@ -359,16 +359,6 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(AgentRunState.PendingInput, step.StateAfter);
     }
 
-    [Fact]
-    public void BeforeModelCallEventArgs_LiveContext_IsReadOnly() {
-        var property = typeof(BeforeModelCallEventArgs).GetProperty(nameof(BeforeModelCallEventArgs.LiveContext));
-
-        Assert.NotNull(property);
-        Assert.True(property!.CanRead);
-        Assert.False(property.CanWrite);
-        Assert.Null(property.SetMethod);
-    }
-
     private static AgentEngine CreateEngine(params ITool[] tools) {
         var engine = new AgentEngine();
 

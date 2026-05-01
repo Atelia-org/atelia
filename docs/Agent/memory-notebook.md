@@ -72,16 +72,14 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 
 ### 7. 事件系统允许宿主在关键节点插桩
 
-`AgentEngine` 暴露一组事件供宿主参与 profile 决议、观察状态转移，并在少数关键节点取消或覆写执行结果：
+`AgentEngine` 暴露一组更收敛的扩展点，供宿主参与输入推进、profile 决议、请求前准备与状态观察：
 
 - `WaitingInput` — 当前状态为等待输入，宿主应提供一条 `ObservationEntry`
 - `ResolveProfile` — 在构造模型请求前决议本次调用的最终 `LlmProfile`
 - `PrepareInvocationAsync` — 在最终 profile 已确定后、请求构造前刷新本轮所需的外部状态
-- `BeforeModelCall` / `AfterModelCall` — LLM 调用前后（宿主可做最终观测、取消调用、记录响应）
-- `BeforeToolExecute` / `AfterToolExecute` — 单个工具调用前后（宿主可覆盖结果）
 - `StateTransition` — `AgentRunState` 变更时触发
 
-设计契约已按阶段收紧：profile 只能在 `ResolveProfile` 阶段决议；`PrepareInvocationAsync` 是唯一正式的 awaited freshness gate；`BeforeModelCall` 不再允许切换 profile。
+设计契约已按阶段收紧：profile 只能在 `ResolveProfile` 阶段决议；`PrepareInvocationAsync` 是唯一正式的 awaited freshness gate；其余模型调用与工具执行细节重新收回为引擎内部实现。
 
 ---
 
@@ -103,7 +101,7 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
    │      且存在显式 Turn 起点与 `ThinkingMode == CurrentTurnOnly` 同时成立时保留
    ├─ 拼上 DefaultAppHost.RenderWindows() 生成的窗口块
    ├─ ToolExecutor.GetVisibleToolDefinitions() 收集可见工具
-   └─ 触发 BeforeModelCall（宿主可做最终观测或取消调用，但不再改写 liveContext）
+   └─ 直接构造 CompletionRequest 并发起模型调用
 
 3. `await ICompletionClient.StreamCompletionAsync(request)`
    ├─ Completion 层内部消费 provider 流并聚合
@@ -113,9 +111,8 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 4. 若 ToolCalls 空 → 状态回 WaitingInput
    否则 → 状态 = WaitingToolResults
    ├─ 逐个 FindNextPendingToolCall()
-   ├─ 触发 BeforeToolExecute
    ├─ ToolExecutor.ExecuteAsync(call) → 结果存 _pendingToolResults
-   └─ 触发 AfterToolExecute
+   └─ 等待所有结果就绪
 
 5. 收齐后 → 状态 = ToolResultsReady
    └─ 合成 ToolResultsEntry → AppendToolResults()

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
@@ -15,7 +14,7 @@ namespace Atelia.Agent.Core;
 /// 所有公开方法（包括异步方法）都不应从多个线程同时调用。
 /// 如需并发执行多个 Agent，请为每个执行上下文创建独立的 <see cref="AgentEngine"/> 实例。
 /// </remarks>
-public class AgentEngine {
+public partial class AgentEngine {
     private const string ProviderDebugCategory = "Provider";
     private const string StateMachineDebugCategory = "StateMachine";
 
@@ -31,35 +30,6 @@ public class AgentEngine {
     private ToolExecutor ToolExecutor => EnsureToolsBuilt();
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
-
-    /// <summary>
-    /// 捆绑一次上下文压缩请求所需的全部参数：切分点与 LLM 调用所需的两个 prompt。
-    /// </summary>
-    /// <remarks>
-    /// prompt 文本不由引擎内置，而是由 <see cref="RequestCompaction"/> 的调用者注入，
-    /// 便于在不同实验台项目中进行提示词工程。
-    /// </remarks>
-    /// <param name="SplitIndex">suffix 起始索引（由 <see cref="ContextSplitter.FindHalfContextSplitPoint"/> 返回）。</param>
-    /// <param name="SystemPrompt">摘要 LLM 的系统提示词。</param>
-    /// <param name="SummarizePrompt">追加在待摘要历史末尾的请求消息。</param>
-    private readonly record struct CompactionRequest(int SplitIndex, string SystemPrompt, string SummarizePrompt);
-
-    /// <summary>
-    /// 待执行的上下文压缩请求。
-    /// <c>null</c> 表示无待处理的压缩请求；非 <c>null</c> 时，<see cref="DetermineState"/> 返回 <see cref="AgentRunState.Compacting"/>。
-    /// </summary>
-    /// <remarks>
-    /// 在 <see cref="RequestCompaction"/> 中计算并写入。
-    /// 清除时机：
-    /// <list type="bullet">
-    /// <item><see cref="ProcessCompactingAsync"/> 成功调用 <see cref="AgentState.ReplacePrefixWithRecap"/> 后清除（正常完成）；</item>
-    /// <item>stale 校验失败（splitIndex 越界或不再满足 Observation→Action 边界不变式）时清除；</item>
-    /// <item>LLM 摘要返回空字符串时清除。</item>
-    /// </list>
-    /// LLM 调用抛出异常或 cancellation 时<em>不</em>清除，允许下一次 <see cref="StepAsync"/> 自动重试。
-    /// 这替代了原先的 <c>bool _compactionPending</c>，使得状态标志同时携带切分点与 prompt 信息，避免 flag 与各参数分离导致的一致性问题。
-    /// </remarks>
-    private CompactionRequest? _compactionRequest;
 
     /// <summary>
     /// 初始化 <see cref="AgentEngine"/> 的新实例。
@@ -321,26 +291,6 @@ public class AgentEngine {
     public PrepareInvocationAsyncHandler? PrepareInvocationAsync { get; set; }
 
     /// <summary>
-    /// 在模型请求已构造完成后触发，允许做最终观测或取消调用。
-    /// </summary>
-    public event EventHandler<BeforeModelCallEventArgs>? BeforeModelCall;
-
-    /// <summary>
-    /// 在模型调用完成后触发。
-    /// </summary>
-    public event EventHandler<AfterModelCallEventArgs>? AfterModelCall;
-
-    /// <summary>
-    /// 在工具执行前触发，允许取消或覆盖执行结果。
-    /// </summary>
-    public event EventHandler<BeforeToolExecuteEventArgs>? BeforeToolExecute;
-
-    /// <summary>
-    /// 在工具执行完成后触发，允许修改执行结果。
-    /// </summary>
-    public event EventHandler<AfterToolExecuteEventArgs>? AfterToolExecute;
-
-    /// <summary>
     /// 当 Agent 状态发生转换时触发。
     /// </summary>
     public event EventHandler<StateTransitionEventArgs>? StateTransition;
@@ -401,22 +351,6 @@ public class AgentEngine {
             : Task.CompletedTask;
     }
 
-    protected virtual void OnBeforeModelCall(BeforeModelCallEventArgs e) {
-        BeforeModelCall?.Invoke(this, e);
-    }
-
-    protected virtual void OnAfterModelCall(AfterModelCallEventArgs e) {
-        AfterModelCall?.Invoke(this, e);
-    }
-
-    protected virtual void OnBeforeToolExecute(BeforeToolExecuteEventArgs e) {
-        BeforeToolExecute?.Invoke(this, e);
-    }
-
-    protected virtual void OnAfterToolExecute(AfterToolExecuteEventArgs e) {
-        AfterToolExecute?.Invoke(this, e);
-    }
-
     protected virtual void OnStateTransition(AgentRunState from, AgentRunState to) {
         StateTransition?.Invoke(this, new StateTransitionEventArgs(from, to));
     }
@@ -457,188 +391,6 @@ public class AgentEngine {
             default:
                 return StepOutcome.NoProgress;
         }
-    }
-
-    /// <summary>
-    /// 请求下一次 <see cref="StepAsync"/> 调用时执行上下文压缩。
-    /// 主要用于测试目的；自动触发策略留待后续设计。
-    /// </summary>
-    /// <param name="systemPrompt">摘要 LLM 的系统提示词（由调用方注入，便于提示词工程）。</param>
-    /// <param name="summarizePrompt">追加在待摘要历史末尾的摘要请求消息（由调用方注入）。</param>
-    /// <returns>
-    /// <c>true</c> 表示找到合法切分点并已记录到 <see cref="_compactionRequest"/>；
-    /// <c>false</c> 表示当前历史没有可用的切分点（如条目数不足 2），不会进入 <see cref="AgentRunState.Compacting"/> 状态。
-    /// </returns>
-    /// <remarks>
-    /// 若已有待处理的压缩请求（<see cref="_compactionRequest"/> 非 <c>null</c>），
-    /// 本次调用会刷新切分点与 prompt（重新采样当前历史快照）。重复调用是幂等的：只要历史量足够，
-    /// 始终返回 <c>true</c>。
-    /// <para>
-    /// Compaction 是一个高优先级内部状态：一旦 <see cref="_compactionRequest"/> 被设置，
-    /// <see cref="DetermineState"/> 会优先返回 <see cref="AgentRunState.Compacting"/>，
-    /// 插队到 <c>PendingInput</c> / <c>PendingToolResults</c> 等状态之前。
-    /// 由于 suffix 部分原样保留，此插队不会破坏 <see cref="_pendingToolResults"/> 与末尾 <see cref="ActionEntry"/> 的对应关系。
-    /// </para>
-    /// </remarks>
-    public bool RequestCompaction(string systemPrompt, string summarizePrompt) {
-        if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
-        if (summarizePrompt is null) { throw new ArgumentNullException(nameof(summarizePrompt)); }
-
-        var snapshot = _state.RecentHistory;
-        int splitIndex = ContextSplitter.FindHalfContextSplitPoint(snapshot);
-        if (splitIndex < 0) {
-            DebugUtil.Trace(StateMachineDebugCategory, "[Compacting] RequestCompaction: no valid split point; skipping.");
-            return false;
-        }
-        _compactionRequest = new CompactionRequest(splitIndex, systemPrompt, summarizePrompt);
-        DebugUtil.Trace(StateMachineDebugCategory, $"[Compacting] RequestCompaction: splitIndex={splitIndex} historyCount={snapshot.Count}");
-        return true;
-    }
-
-    /// <summary>
-    /// 获取是否有待处理的上下文压缩请求。
-    /// </summary>
-    /// <remarks>
-    /// 工具 App（如 <see cref="App.EnginePanelApp"/>）可通过此属性判断是否已有压缩请求排队，
-    /// 避免重复发起。
-    /// </remarks>
-    public bool HasPendingCompaction => _compactionRequest.HasValue;
-
-    /// <summary>
-    /// 估算当前上下文的 token 信息量，用于与 <see cref="LlmProfile.SoftContextTokenCap"/> 比较以决定是否触发自动压缩。
-    /// </summary>
-    /// <remarks>
-    /// 此值为近似估算，不包含 App Windows 注入、tool definitions、Detail/Basic 级差等投影变形。
-    /// 作为软上限触发条件已足够准确——其目的是在明显超过上限时提前介入，而非精确到个位数。
-    /// 估算基准与 <see cref="ContextSplitter.FindHalfContextSplitPoint"/> 一致（均基于 <see cref="HistoryEntry.TokenEstimate"/>），
-    /// 保证压缩决策与切分算法共享同一 token 坐标系。
-    /// </remarks>
-    public ulong EstimateCurrentContextTokens() {
-        ulong total = TokenEstimateHelper.GetDefault().EstimateString(SystemPrompt);
-        foreach (var entry in _state.RecentHistory) {
-            total += entry.TokenEstimate;
-        }
-        return total;
-    }
-
-    /// <summary>
-    /// 尝试发起一次自动上下文压缩请求，仅在已配置 <see cref="AutoCompactionOptions"/> 且无待处理的手动请求时生效。
-    /// </summary>
-    /// <returns>
-    /// <c>true</c> 表示成功写入 <see cref="_compactionRequest"/>；
-    /// <c>false</c> 表示跳过（未配置或已存在手动请求或历史量不足以进行有效压缩）。
-    /// </returns>
-    /// <remarks>
-    /// <list type="bullet">
-    /// <item>手动 <see cref="RequestCompaction"/> 优先：若 <see cref="_compactionRequest"/> 已存在，不会覆盖。</item>
-    /// <item><b>防抖守卫</b>：要求历史至少 4 条（约 2 个完整 Turn）才允许自动触发，
-    /// 避免压缩后剩余条目仍超 cap 导致立即再次触发（因为压缩后的 Recap→Action 边界仍可通过切分校验，
-    /// 但再次压缩仅会"摘要掉刚刚产生的 Recap"，毫无收益）。</item>
-    /// </list>
-    /// </remarks>
-    private bool TryRequestAutoCompaction() {
-        if (_autoCompactionOptions is null) {
-            DebugUtil.Trace(StateMachineDebugCategory, "[Compacting] Auto compaction skipped: no AutoCompactionOptions configured.");
-            return false;
-        }
-
-        if (_compactionRequest.HasValue) {
-            DebugUtil.Trace(StateMachineDebugCategory, "[Compacting] Auto compaction skipped: compaction request already pending.");
-            return false;
-        }
-
-        // 防抖：历史量不足以进行有效压缩（需至少 4 条 = 2 个完整 Turn）
-        if (_state.RecentHistory.Count < 4) {
-            DebugUtil.Trace(StateMachineDebugCategory,
-                $"[Compacting] Auto compaction skipped: history too short (count={_state.RecentHistory.Count}, need >= 4)."
-            );
-            return false;
-        }
-
-        return RequestCompaction(_autoCompactionOptions.SystemPrompt, _autoCompactionOptions.SummarizePrompt);
-    }
-
-    /// <summary>
-    /// 将历史条目投影为 <see cref="IHistoryMessage"/> 列表，末尾追加摘要请求消息。
-    /// </summary>
-    /// <remarks>
-    /// 这是原 <c>ContextSummarizer.ProjectToMessages</c> 的迁移版本。
-    /// 使用 Detail 级别、不注入 windows、不处理 Turn 切分——
-    /// 摘要场景下 LLM 只需看到内容文本，无需完整投影管线。
-    /// </remarks>
-    private static List<IHistoryMessage> ProjectForSummarization(
-        IReadOnlyList<HistoryEntry> entries,
-        string summarizePrompt
-    ) {
-        var messages = new List<IHistoryMessage>(entries.Count + 1);
-
-        foreach (var entry in entries) {
-            switch (entry) {
-                case ActionEntry action:
-                    messages.Add(action.Message);
-                    break;
-
-                case ObservationEntry observation:
-                    messages.Add(observation.GetMessage(LevelOfDetail.Detail, windows: null));
-                    break;
-
-                case RecapEntry recap:
-                    messages.Add(new ObservationMessage(recap.Content));
-                    break;
-
-                default:
-                    throw new InvalidOperationException(
-                        $"Unsupported HistoryEntry type: {entry.GetType().Name} (Kind={entry.Kind})"
-                    );
-            }
-        }
-
-        messages.Add(new ObservationMessage(summarizePrompt));
-        return messages;
-    }
-
-    private async Task<StepOutcome> ProcessCompactingAsync(LlmProfile profile, CancellationToken cancellationToken) {
-        if (!_compactionRequest.HasValue) {
-            // 防御性：状态机不应走到这里，但保留安全处理。
-            DebugUtil.Warning(StateMachineDebugCategory, "[Compacting] Entered without valid compaction request; aborting.");
-            return StepOutcome.NoProgress;
-        }
-
-        var request = _compactionRequest.Value;
-        int splitIndex = request.SplitIndex;
-        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Starting half-context compaction. splitIndex={splitIndex}");
-
-        // 校验 splitIndex 对当前历史仍然合法（RequestCompaction 与执行之间历史可能变化）
-        // 需要同时验证索引边界和 Observation→Action 结构不变式，因为 ReplacePrefixWithRecap
-        // 仅在 DEBUG 下对这些前置条件做 Assert，Release 下不会阻止。
-        var snapshot = _state.RecentHistory;
-        if (splitIndex < 1 || splitIndex >= snapshot.Count
-            || !snapshot[splitIndex - 1].IsObservationLike
-            || snapshot[splitIndex] is not ActionEntry) {
-            DebugUtil.Warning(StateMachineDebugCategory, $"[Compacting] splitIndex={splitIndex} no longer valid for current history (count={snapshot.Count}); aborting.");
-            _compactionRequest = null;
-            return StepOutcome.NoProgress;
-        }
-
-        var prefix = new List<HistoryEntry>(splitIndex);
-        for (int i = 0; i < splitIndex; i++) {
-            prefix.Add(snapshot[i]);
-        }
-        var messages = ProjectForSummarization(prefix, request.SummarizePrompt);
-        var summary = await ContextSummarizer.SummarizeAsync(
-            profile, messages, request.SystemPrompt, cancellationToken
-        ).ConfigureAwait(false);
-
-        if (string.IsNullOrEmpty(summary)) {
-            DebugUtil.Warning(StateMachineDebugCategory, "[Compacting] Summarization returned empty; skipping replacement.");
-            _compactionRequest = null;
-            return StepOutcome.NoProgress;
-        }
-
-        _state.ReplacePrefixWithRecap(splitIndex, summary);
-        _compactionRequest = null;
-        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Done. splitIndex={splitIndex} summaryLen={summary.Length} remaining={_state.RecentHistory.Count}");
-        return StepOutcome.FromStateMutation();
     }
 
     private StepOutcome ProcessWaitingInput() {
@@ -739,14 +491,9 @@ public class AgentEngine {
         var toolExecutor = ToolExecutor;
         var toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
 
-        var args = new BeforeModelCallEventArgs(state, resolvedProfile, liveContext, toolDefinitions);
-        OnBeforeModelCall(args);
+        var request = new CompletionRequest(resolvedProfile.ModelId, SystemPrompt, liveContext, toolDefinitions);
 
-        if (args.Cancel) { return StepOutcome.NoProgress; }
-
-        var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, args.ToolDefinitions);
-
-        var result = await args.Profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
+        var result = await resolvedProfile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
         EnsureCompletionInvocationMatchesExpected(invocation, result.Invocation);
         var aggregatedOutput = new ActionEntry(result.Message, invocation);
 
@@ -758,9 +505,6 @@ public class AgentEngine {
         _pendingToolResults.Clear();
 
         var appended = _state.AppendAction(aggregatedOutput);
-
-        var afterArgs = new AfterModelCallEventArgs(state, args.Profile, appended);
-        OnAfterModelCall(afterArgs);
 
         var toolCallCount = appended.Message.ToolCalls?.Count ?? 0;
         var textLen = appended.Message.Blocks.OfType<ActionBlock.Text>().Sum(b => b.Content.Length);
@@ -778,31 +522,9 @@ public class AgentEngine {
         var nextCall = FindNextPendingToolCall(outputEntry);
         if (nextCall is null) { return StepOutcome.NoProgress; }
 
-        var beforeArgs = new BeforeToolExecuteEventArgs(nextCall);
-        OnBeforeToolExecute(beforeArgs);
-
-        if (beforeArgs.Cancel) {
-            var cancelledResult = beforeArgs.OverrideResult ?? new LodToolCallResult(
-                new LodToolExecuteResult(ToolExecutionStatus.Failed, new LevelOfDetailContent("工具执行被取消", "工具执行在调度前被扩展逻辑取消。")),
-                nextCall.ToolName,
-                nextCall.ToolCallId
-            );
-
-            _pendingToolResults[nextCall.ToolCallId] = cancelledResult;
-            return StepOutcome.FromToolExecution();
-        }
-
         var toolExecutor = ToolExecutor;
         var result = await toolExecutor.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         _pendingToolResults[nextCall.ToolCallId] = result;
-
-        var afterArgs = new AfterToolExecuteEventArgs(nextCall, result);
-        OnAfterToolExecute(afterArgs);
-
-        if (!ReferenceEquals(afterArgs.Result, result)) {
-            result = afterArgs.Result ?? result;
-            _pendingToolResults[nextCall.ToolCallId] = result;
-        }
 
         var toolName = result.ToolName ?? nextCall.ToolName;
         DebugUtil.Info(StateMachineDebugCategory, $"[Engine] Tool executed toolName={toolName} callId={result.ToolCallId} status={result.ExecuteResult.Status}");
@@ -961,235 +683,4 @@ public class AgentEngine {
         public static StepOutcome FromStateMutation()
             => FromToolExecution();
     }
-}
-
-public delegate Task PrepareInvocationAsyncHandler(PrepareInvocationEventArgs args, CancellationToken cancellationToken);
-
-/// <summary>
-/// <see cref="AgentEngine.ResolveProfile"/> 事件的参数。
-/// </summary>
-public sealed class ResolveProfileEventArgs : EventArgs {
-    internal ResolveProfileEventArgs(AgentRunState state, LlmProfile profile) {
-        State = state;
-        Profile = profile;
-    }
-
-    /// <summary>
-    /// 获取当前 Agent 运行状态。
-    /// </summary>
-    public AgentRunState State { get; }
-
-    /// <summary>
-    /// 获取或设置本次模型调用的最终 LLM 配置文件。
-    /// 引擎会在本事件结束后对该 profile 执行 Turn 锁定校验，并据此构造上下文与请求。
-    /// </summary>
-    public LlmProfile Profile { get; set; }
-
-    /// <summary>
-    /// 获取或设置一个值，指示是否取消本次模型调用。
-    /// </summary>
-    public bool Cancel { get; set; }
-}
-
-/// <summary>
-/// <see cref="AgentEngine.PrepareInvocationAsync"/> 钩子的参数。
-/// </summary>
-public sealed class PrepareInvocationEventArgs : EventArgs {
-    internal PrepareInvocationEventArgs(AgentRunState state, LlmProfile profile, ulong estimatedContextTokens) {
-        State = state;
-        Profile = profile;
-        EstimatedContextTokens = estimatedContextTokens;
-    }
-
-    /// <summary>
-    /// 获取当前 Agent 运行状态。
-    /// </summary>
-    public AgentRunState State { get; }
-
-    /// <summary>
-    /// 获取本次模型调用已决议完成的最终 LLM 配置文件。
-    /// 本阶段不得再切换 profile；如需决议模型，请使用 <see cref="AgentEngine.ResolveProfile"/>。
-    /// </summary>
-    public LlmProfile Profile { get; }
-
-    /// <summary>
-    /// 获取当前历史的 token 估算值。
-    /// 此值按历史与系统提示词估算，不包含后续 window / tool definitions 注入的额外投影成本。
-    /// </summary>
-    public ulong EstimatedContextTokens { get; }
-
-    /// <summary>
-    /// 获取或设置一个值，指示是否取消本次模型调用。
-    /// </summary>
-    public bool Cancel { get; set; }
-}
-
-/// <summary>
-/// <see cref="AgentEngine.WaitingInput"/> 事件的参数。
-/// </summary>
-public sealed class WaitingInputEventArgs : EventArgs {
-    internal WaitingInputEventArgs(bool hasPendingNotification, HistoryEntry? lastEntry) {
-        HasPendingNotification = hasPendingNotification;
-        LastEntry = lastEntry;
-        ShouldContinue = hasPendingNotification;
-    }
-
-    /// <summary>
-    /// 获取一个值，指示是否有待处理的主机通知。
-    /// </summary>
-    public bool HasPendingNotification { get; }
-
-    /// <summary>
-    /// 获取历史中的最后一个条目（可能为 <c>null</c>）。
-    /// </summary>
-    public HistoryEntry? LastEntry { get; }
-
-    /// <summary>
-    /// 获取或设置一个值，指示是否应继续执行（默认为 <see cref="HasPendingNotification"/>）。
-    /// </summary>
-    public bool ShouldContinue { get; set; }
-
-    /// <summary>
-    /// 获取或设置要追加的用户输入条目（可选）。
-    /// </summary>
-    public ObservationEntry? InputEntry { get; set; }
-
-    /// <summary>
-    /// 获取或设置额外的主机通知内容（可选）。
-    /// </summary>
-    public LevelOfDetailContent? AdditionalNotification { get; set; }
-}
-
-/// <summary>
-/// <see cref="AgentEngine.BeforeModelCall"/> 事件的参数。
-/// </summary>
-public sealed class BeforeModelCallEventArgs : EventArgs {
-    internal BeforeModelCallEventArgs(
-        AgentRunState state,
-        LlmProfile profile,
-        IReadOnlyList<IHistoryMessage> liveContext,
-        ImmutableArray<ToolDefinition> toolDefinitions
-    ) {
-        State = state;
-        Profile = profile;
-        LiveContext = liveContext;
-        ToolDefinitions = toolDefinitions;
-    }
-
-    /// <summary>
-    /// 获取当前 Agent 运行状态。
-    /// </summary>
-    public AgentRunState State { get; }
-
-    /// <summary>
-    /// 获取本次模型调用使用的最终 LLM 配置文件。
-    /// </summary>
-    public LlmProfile Profile { get; }
-
-    /// <summary>
-    /// 获取实时上下文消息列表。
-    /// 此时 profile、工具定义与 liveContext 均已冻结；如需刷新 snapshot 或工具可见性，应使用 <see cref="AgentEngine.PrepareInvocationAsync"/>。
-    /// 如需切换 profile，应使用 <see cref="AgentEngine.ResolveProfile"/>。
-    /// </summary>
-    public IReadOnlyList<IHistoryMessage> LiveContext { get; }
-
-    /// <summary>
-    /// 获取当前对模型可见的工具定义列表。
-    /// </summary>
-    public ImmutableArray<ToolDefinition> ToolDefinitions { get; }
-
-    /// <summary>
-    /// 获取或设置一个值，指示是否取消本次模型调用。
-    /// </summary>
-    public bool Cancel { get; set; }
-}
-
-/// <summary>
-/// <see cref="AgentEngine.AfterModelCall"/> 事件的参数。
-/// </summary>
-public sealed class AfterModelCallEventArgs : EventArgs {
-    internal AfterModelCallEventArgs(AgentRunState state, LlmProfile profile, ActionEntry output) {
-        State = state;
-        Profile = profile;
-        Output = output ?? throw new ArgumentNullException(nameof(output));
-    }
-
-    /// <summary>
-    /// 获取当前 Agent 运行状态。
-    /// </summary>
-    public AgentRunState State { get; }
-
-    /// <summary>
-    /// 获取使用的 LLM 配置文件。
-    /// </summary>
-    public LlmProfile Profile { get; }
-
-    /// <summary>
-    /// 获取模型输出的动作条目。
-    /// </summary>
-    public ActionEntry Output { get; }
-}
-
-/// <summary>
-/// <see cref="AgentEngine.BeforeToolExecute"/> 事件的参数。
-/// </summary>
-public sealed class BeforeToolExecuteEventArgs : EventArgs {
-    internal BeforeToolExecuteEventArgs(ParsedToolCall toolCall) {
-        ToolCall = toolCall ?? throw new ArgumentNullException(nameof(toolCall));
-    }
-
-    /// <summary>
-    /// 获取待执行的工具调用信息。
-    /// </summary>
-    public ParsedToolCall ToolCall { get; }
-
-    /// <summary>
-    /// 获取或设置一个值，指示是否取消本次工具执行。
-    /// </summary>
-    public bool Cancel { get; set; }
-
-    /// <summary>
-    /// 获取或设置覆盖结果（当 <see cref="Cancel"/> 为 <c>true</c> 时使用）。
-    /// </summary>
-    public LodToolCallResult? OverrideResult { get; set; }
-}
-
-/// <summary>
-/// <see cref="AgentEngine.AfterToolExecute"/> 事件的参数。
-/// </summary>
-public sealed class AfterToolExecuteEventArgs : EventArgs {
-    internal AfterToolExecuteEventArgs(ParsedToolCall toolCall, LodToolCallResult result) {
-        ToolCall = toolCall ?? throw new ArgumentNullException(nameof(toolCall));
-        Result = result ?? throw new ArgumentNullException(nameof(result));
-    }
-
-    /// <summary>
-    /// 获取已执行的工具调用信息。
-    /// </summary>
-    public ParsedToolCall ToolCall { get; }
-
-    /// <summary>
-    /// 获取或设置工具执行结果（可被事件处理器修改）。
-    /// </summary>
-    public LodToolCallResult Result { get; set; }
-}
-
-/// <summary>
-/// <see cref="AgentEngine.StateTransition"/> 事件的参数。
-/// </summary>
-public sealed class StateTransitionEventArgs : EventArgs {
-    internal StateTransitionEventArgs(AgentRunState fromState, AgentRunState toState) {
-        FromState = fromState;
-        ToState = toState;
-    }
-
-    /// <summary>
-    /// 获取转换前的状态。
-    /// </summary>
-    public AgentRunState FromState { get; }
-
-    /// <summary>
-    /// 获取转换后的状态。
-    /// </summary>
-    public AgentRunState ToState { get; }
 }

@@ -181,6 +181,6 @@ public sealed record ToolMatrixEntry(
 - [`Refactor-TextEditor2Widget`](./Refactor-TextEditor2Widget.md)：编辑 Widget 的职责与状态机。
 - [`DataSourceBindingWidget`](./DataSourceBindingWidget.md)：同步 Widget 的状态机与工具矩阵。
 - [`IApp-Orchestrator-Guide`](./IApp-Orchestrator-Guide.md)：组合两个 Widget 的 orchestrator 流程。
-- [`AgentEngine`](../../prototypes/Agent.Core/AgentEngine.cs)：事件生命周期，以及 `ResolveProfile` / `PrepareInvocationAsync` / `BeforeModelCall` 各阶段职责。
+- [`AgentEngine`](../../prototypes/Agent.Core/AgentEngine.cs)：状态机生命周期，以及 `WaitingInput` / `ResolveProfile` / `PrepareInvocationAsync` / `StateTransition` 这些保留扩展点的职责。
 
 > **维护信息**：2025-11-09 创建，维护者 Atelia 开发团队。文档更新后请同步调整相关单元测试与集成测试，确保契约演进得到验证。
