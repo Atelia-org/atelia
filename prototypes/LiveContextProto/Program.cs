@@ -28,15 +28,16 @@ internal static class Program {
 
         // 旧 Anthropic 路径暂保留为参考，待长期稳定后清理：
         // var anthropicClient = new AnthropicClient(apiKey: null, baseAddress: new Uri(LocalLlmEndpoint));
-        // var defaultProfile = new LlmProfile(anthropicClient, DefaultModelId, "LocaQwen-anthropic-v1");
+        // var defaultProfile = new LlmProfile(anthropicClient, DefaultModelId, "LocaQwen-anthropic-v1", 64_000u);
         // var loop = new ConsoleTui(agent, defaultProfile);
 
         var oaiClient = new OpenAIChatClient(
             apiKey: null,
             baseAddress: new Uri(EnsureTrailingSlash(LocalLlmEndpoint)),
-            dialect: OpenAIChatDialects.SgLangCompatible
+            dialect: OpenAIChatDialects.SgLangCompatible,
+            options: OpenAIChatClientOptions.QwenThinkingDisabled()
         );
-        var oaiProfile = new LlmProfile(oaiClient, DefaultModelId, "LocaQwen-oai-chat");
+        var oaiProfile = new LlmProfile(oaiClient, DefaultModelId, "LocaQwen-oai-chat", 64_000u);
         var loop = new ConsoleTui(agent, oaiProfile);
 
         loop.Run();

@@ -79,7 +79,8 @@ LLM → 调用工具函数 → 工具执行 → ToolResult 写入历史
   - `AppSnapshot` 存储渲染结果与可见工具列表。
   - IApp 仅依赖 Snapshot，不直接访问 Widget 内部状态。
 - 与 AgentEngine 集成：
-  - `BeforeModelCall` Hook 调用 Orchestrator，确保帧与工具集合在下一轮生效。
+  - `PrepareInvocationAsync` Hook 调用 Orchestrator，确保帧与工具集合在当前轮请求中生效。
+  - `BeforeModelCall` 仅保留为只读的最终观测/取消点，不再改写 liveContext。
   - 更新后的 Snapshot 注入 `IApp.UpdateSnapshot(...)`，`RenderWindow()` 返回 Markdown 帧。
 
 ## 关键设计决策
@@ -137,7 +138,8 @@ LLM → 调用工具函数 → 工具执行 → ToolResult 写入历史
   - `AppSnapshot` 存储渲染结果与可见工具列表。
   - IApp 仅依赖 Snapshot，不直接访问 Widget 内部状态。
 - 与 AgentEngine 集成：
-  - `BeforeModelCall` Hook 调用 Orchestrator，确保帧与工具集合在下一轮生效。
+  - `PrepareInvocationAsync` Hook 调用 Orchestrator，确保帧与工具集合在当前轮请求中生效。
+  - `BeforeModelCall` 仅保留为只读的最终观测/取消点，不再改写 liveContext。
   - 更新后的 Snapshot 注入 `IApp.UpdateSnapshot(...)`，`RenderWindow()` 返回 Markdown 帧。
 
 ## 关键设计决策

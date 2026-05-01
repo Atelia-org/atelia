@@ -194,7 +194,7 @@ public static class PeerEntry {
                 var newModel = model ?? s_profile.ModelId;
                 var newEndpoint = endpoint ?? DefaultEndpoint;
                 s_client = new AnthropicClient(apiKey: null, baseAddress: new Uri(newEndpoint));
-                s_profile = new LlmProfile(s_client, newModel, DefaultProfileName);
+                s_profile = new LlmProfile(s_client, newModel, DefaultProfileName, 64_000u);
                 output.WriteLine($"Profile updated: model={newModel} endpoint={newEndpoint}");
             }
             else {

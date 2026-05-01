@@ -26,8 +26,6 @@ partial class MethodToolWrapper {
         }
     }
 
-    private static readonly NullabilityInfoContext NullabilityContext = new();
-
     private readonly string _name;
     private readonly string _description;
     private readonly IReadOnlyList<ToolParamSpec> _parameters;
@@ -216,7 +214,9 @@ partial class MethodToolWrapper {
         if (Nullable.GetUnderlyingType(parameter.ParameterType) is not null) { return true; }
 
         if (!parameter.ParameterType.IsValueType) {
-            var nullability = NullabilityContext.Create(parameter);
+            // NullabilityInfoContext 内部会维护按 Module 组织的缓存；这里避免跨线程共享实例，
+            // 否则并发注册多个 MethodToolWrapper 时可能在其内部字典上触发重复键异常。
+            var nullability = new NullabilityInfoContext().Create(parameter);
             return nullability.WriteState == NullabilityState.Nullable;
         }
 

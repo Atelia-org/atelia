@@ -9,6 +9,7 @@ namespace Atelia.Agent.Core;
 /// <param name="ModelId">具体模型标识，会与 <see cref="ICompletionClient.Name"/>、<see cref="ICompletionClient.ApiSpecId"/>
 /// 一同写入 <see cref="CompletionDescriptor"/>。</param>
 /// <param name="Name">用于在UI中显示，以及区分不同的LlmProfile实例。</param>
+/// <param name="SoftContextTokenCap">此 Provider-Model 组合的有效上下文窗口软上限（token 估算值）。应传入大于 0 的合理预算值，用于在接近物理窗口前提前触发上下文管理。</param>
 /// <remarks>
 /// <b>切换时机约束</b>：profile 切换仅允许在 Turn 起点发生，即历史末尾不存在 <see cref="Atelia.Agent.Core.History.ActionEntry"/>
 /// 跨越当前 <see cref="Atelia.Agent.Core.History.ObservationEntry"/> 之后的情况。
@@ -19,15 +20,6 @@ namespace Atelia.Agent.Core;
 public sealed record LlmProfile(
     ICompletionClient Client,
     string ModelId,
-    string Name
-) {
-    /// <summary>
-    /// 获取此 Provider-Model 组合的有效上下文窗口软上限（token 估算值）。
-    /// 超过此值太多会变得不经济或模型能力下降，建议触发上下文压缩。
-    /// </summary>
-    /// <remarks>
-    /// <c>null</c> 表示未配置上限，不启用自动上下文压缩触发。
-    /// 此值远小于硬性上下文窗口限制，仅作为自动压缩的推荐阈值。
-    /// </remarks>
-    public uint? SoftContextTokenCap { get; init; }
-}
+    string Name,
+    uint SoftContextTokenCap
+);

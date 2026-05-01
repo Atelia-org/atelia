@@ -1,14 +1,21 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using Atelia.Agent.Core.Tool;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent.Core;
+
+public readonly record struct AppRenderContext(
+    LlmProfile? CurrentProfile,
+    ulong EstimatedContextTokens,
+    bool HasPendingCompaction
+);
 
 public interface IApp {
     string Name { get; }
     string Description { get; }
     IReadOnlyList<ITool> Tools { get; }
-    string? RenderWindow();
+    string? RenderWindow(AppRenderContext context);
 }
 
 internal interface IAppHost {
@@ -18,5 +25,5 @@ internal interface IAppHost {
     void RegisterApp(IApp app);
     bool RemoveApp(string name);
 
-    string? RenderWindows();
+    string? RenderWindows(AppRenderContext context);
 }

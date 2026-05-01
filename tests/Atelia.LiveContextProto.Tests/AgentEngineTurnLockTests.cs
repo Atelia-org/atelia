@@ -27,7 +27,7 @@ public sealed class AgentEngineTurnLockTests {
         var provider = new FakeProviderClient(
             CreateDeltaSequence(agg => agg.AppendContent("ok"))
         );
-        var profile = new LlmProfile(provider, Model, ProfileName);
+        var profile = new LlmProfile(provider, Model, ProfileName, 64_000u);
         var engine = new AgentEngine();
 
         engine.AppendNotification("hello");
@@ -48,7 +48,7 @@ public sealed class AgentEngineTurnLockTests {
             ),
             CreateDeltaSequence(agg => agg.AppendContent("done"))
         );
-        var profile = new LlmProfile(provider, Model, ProfileName);
+        var profile = new LlmProfile(provider, Model, ProfileName, 64_000u);
         var engine = new AgentEngine();
         engine.RegisterTool(tool);
 
@@ -76,8 +76,8 @@ public sealed class AgentEngineTurnLockTests {
         var providerB = new FakeProviderClient(
             CreateDeltaSequence(agg => agg.AppendContent("from-B"))
         );
-        var profileA = new LlmProfile(providerA, "model-A", "profile-A");
-        var profileB = new LlmProfile(providerB, "model-B", "profile-B");
+        var profileA = new LlmProfile(providerA, "model-A", "profile-A", 64_000u);
+        var profileB = new LlmProfile(providerB, "model-B", "profile-B", 64_000u);
         var engine = new AgentEngine();
         engine.RegisterTool(tool);
 
@@ -109,8 +109,8 @@ public sealed class AgentEngineTurnLockTests {
             name: "provider-B",
             CreateDeltaSequence(agg => agg.AppendContent("from-B"))
         );
-        var profileA = new LlmProfile(providerA, Model, "profile-A");
-        var profileB = new LlmProfile(providerB, Model, "profile-B");
+        var profileA = new LlmProfile(providerA, Model, "profile-A", 64_000u);
+        var profileB = new LlmProfile(providerB, Model, "profile-B", 64_000u);
         var engine = new AgentEngine();
         engine.RegisterTool(tool);
 
@@ -143,8 +143,8 @@ public sealed class AgentEngineTurnLockTests {
             apiSpecId: "spec-B",
             CreateDeltaSequence(agg => agg.AppendContent("from-B"))
         );
-        var profileA = new LlmProfile(providerA, Model, "profile-A");
-        var profileB = new LlmProfile(providerB, Model, "profile-B");
+        var profileA = new LlmProfile(providerA, Model, "profile-A", 64_000u);
+        var profileB = new LlmProfile(providerB, Model, "profile-B", 64_000u);
         var engine = new AgentEngine();
         engine.RegisterTool(tool);
 
@@ -171,8 +171,8 @@ public sealed class AgentEngineTurnLockTests {
             ),
             CreateDeltaSequence(agg => agg.AppendContent("done"))
         );
-        var profileA = new LlmProfile(provider, Model, "profile-A");
-        var profileB = new LlmProfile(provider, Model, "profile-B");
+        var profileA = new LlmProfile(provider, Model, "profile-A", 64_000u);
+        var profileB = new LlmProfile(provider, Model, "profile-B", 64_000u);
         var engine = new AgentEngine();
         engine.RegisterTool(tool);
 
@@ -196,7 +196,7 @@ public sealed class AgentEngineTurnLockTests {
             invocationFactory: static _ => new CompletionDescriptor("provider-B", "spec-B", "model-B"),
             CreateDeltaSequence(agg => agg.AppendContent("done"))
         );
-        var profile = new LlmProfile(provider, "model-A", "profile-A");
+        var profile = new LlmProfile(provider, "model-A", "profile-A", 64_000u);
         var engine = new AgentEngine();
 
         engine.AppendNotification("turn 1");
@@ -219,8 +219,8 @@ public sealed class AgentEngineTurnLockTests {
             name: "provider-B",
             CreateDeltaSequence(agg => agg.AppendContent("turn-2 done"))
         );
-        var profileA = new LlmProfile(providerA, "model-A", "profile-A");
-        var profileB = new LlmProfile(providerB, "model-B", "profile-B");
+        var profileA = new LlmProfile(providerA, "model-A", "profile-A", 64_000u);
+        var profileB = new LlmProfile(providerB, "model-B", "profile-B", 64_000u);
         var engine = new AgentEngine();
 
         // Turn 1 with profile A
@@ -239,7 +239,7 @@ public sealed class AgentEngineTurnLockTests {
     }
 
     [Fact]
-    public async Task BeforeModelCallHandler_ReplacingProfileMidTurn_Throws() {
+    public async Task ResolveProfileHandler_ReplacingProfileMidTurn_Throws() {
         var tool = new EchoTool("echo");
         var providerA = new FakeProviderClient(
             CreateDeltaSequence(
@@ -252,8 +252,8 @@ public sealed class AgentEngineTurnLockTests {
             name: "provider-B",
             CreateDeltaSequence(agg => agg.AppendContent("usurper"))
         );
-        var profileA = new LlmProfile(providerA, "model-A", "profile-A");
-        var profileB = new LlmProfile(providerB, "model-B", "profile-B");
+        var profileA = new LlmProfile(providerA, "model-A", "profile-A", 64_000u);
+        var profileB = new LlmProfile(providerB, "model-B", "profile-B", 64_000u);
         var engine = new AgentEngine();
         engine.RegisterTool(tool);
 
@@ -264,8 +264,8 @@ public sealed class AgentEngineTurnLockTests {
         await engine.StepAsync(profileA); // WaitingToolResults -> ToolResultsReady
         await engine.StepAsync(profileA); // ToolResultsReady -> PendingToolResults
 
-        // Handler 在事件中将 Profile 偷换为 profileB，应在二次校验中被拒。
-        engine.BeforeModelCall += (_, e) => {
+        // ResolveProfile 在本次模型调用真正构造上下文前将 Profile 偷换为 profileB，应被 turn lock 拒绝。
+        engine.ResolveProfile += (_, e) => {
             e.Profile = profileB;
         };
 

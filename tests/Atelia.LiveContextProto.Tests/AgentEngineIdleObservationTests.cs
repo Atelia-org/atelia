@@ -98,7 +98,7 @@ public sealed class AgentEngineIdleObservationTests {
     private static LlmProfile CreateNoOpProfile() {
         // ProcessWaitingInput 永远不会真的调用 client，因为状态机会停在 PendingInput。
         var client = new ThrowingCompletionClient();
-        return new LlmProfile(Client: client, ModelId: "model", Name: "test");
+        return new LlmProfile(Client: client, ModelId: "model", Name: "test", SoftContextTokenCap: 64_000u);
     }
 
     private sealed class SilentIdleProvider : IIdleObservationProvider {

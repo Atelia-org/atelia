@@ -72,14 +72,16 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 
 ### 7. 事件系统允许宿主在关键节点插桩
 
-`AgentEngine` 暴露一组事件供宿主修改请求/结果、观察状态转移：
+`AgentEngine` 暴露一组事件供宿主参与 profile 决议、观察状态转移，并在少数关键节点取消或覆写执行结果：
 
 - `WaitingInput` — 当前状态为等待输入，宿主应提供一条 `ObservationEntry`
-- `BeforeModelCall` / `AfterModelCall` — LLM 调用前后（宿主可改 request / 记录响应）
+- `ResolveProfile` — 在构造模型请求前决议本次调用的最终 `LlmProfile`
+- `PrepareInvocationAsync` — 在最终 profile 已确定后、请求构造前刷新本轮所需的外部状态
+- `BeforeModelCall` / `AfterModelCall` — LLM 调用前后（宿主可做最终观测、取消调用、记录响应）
 - `BeforeToolExecute` / `AfterToolExecute` — 单个工具调用前后（宿主可覆盖结果）
 - `StateTransition` — `AgentRunState` 变更时触发
 
-设计契约偏松：宿主可以替换 Profile / Request / 工具结果，没有强校验。
+设计契约已按阶段收紧：profile 只能在 `ResolveProfile` 阶段决议；`PrepareInvocationAsync` 是唯一正式的 awaited freshness gate；`BeforeModelCall` 不再允许切换 profile。
 
 ---
 
@@ -91,6 +93,9 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
    └─ 宿主提供 ObservationEntry（含用户消息 + pending notifications）
 
 2. 状态 = PendingInput → 准备 LLM 调用
+   ├─ 触发 ResolveProfile（宿主可决议最终 profile）
+   ├─ 按最终 profile 做 soft cap 判定
+   ├─ `await PrepareInvocationAsync(...)` 刷新本轮所需 snapshot / tool visibility
    ├─ ProjectInvocationContext(options) 把 RecentHistory 投影成 IHistoryMessage 序列
    │    · 拆分为 StablePrefix + ActiveTurnTail（以最近一条 Observation 为分界）
    │    · ActionEntry 的有序内容以 `Blocks: IReadOnlyList<ActionBlock>` 为唯一真相
@@ -98,7 +103,7 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
    │      且存在显式 Turn 起点与 `ThinkingMode == CurrentTurnOnly` 同时成立时保留
    ├─ 拼上 DefaultAppHost.RenderWindows() 生成的窗口块
    ├─ ToolExecutor.GetVisibleToolDefinitions() 收集可见工具
-   └─ 触发 BeforeModelCall（宿主可改 request）
+   └─ 触发 BeforeModelCall（宿主可做最终观测或取消调用，但不再改写 liveContext）
 
 3. `await ICompletionClient.StreamCompletionAsync(request)`
    ├─ Completion 层内部消费 provider 流并聚合
@@ -228,7 +233,7 @@ Completion + Completion.Abstractions
 - **Turn 起点**：精确匹配 `HistoryEntryKind.Observation` 的条目。
   - 注意 `ToolResultsEntry` 虽继承自 `ObservationEntry`，但 `Kind == ToolResults`，**不**视为 Turn 起点（它是 Turn 中段的环境反馈）。
 - **是否锁定**：从末尾向起点反扫，若沿途出现至少一条 `ActionEntry`，则该 Turn 已锁定到该 `ActionEntry.Invocation`。
-- **校验时机**：在 `ProcessPendingModelCallAsync` 入口（事件触发**之前**）执行一次；在 `OnBeforeModelCall` 事件**之后**复查一次（防止 handler 通过 `args.Profile = ...` 绕过）。
+- **校验时机**：在 `ResolveProfile` 阶段结束后，仅对最终决议出的 profile 执行一次校验。
 - **违反后果**：抛 `InvalidOperationException`，错误消息包含锁定信息与传入信息，便于排查。
 
 **为何如此设计**：
@@ -240,7 +245,7 @@ Completion + Completion.Abstractions
 
 **实现位置**：`prototypes/Agent.Core/History/TurnAnalyzer.cs` 负责纯函数式 Turn 分析；`prototypes/Agent.Core/AgentEngine.cs` 中 `EnsureProfileMatchesCurrentTurnLock(profile)` 负责执行业务约束。
 
-**测试**：`tests/Atelia.LiveContextProto.Tests/AgentEngineTurnLockTests.cs` 覆盖 6 个场景：首次调用、同 turn 工具往返同 profile、同 turn 切 ModelId、同 turn 切 ProviderId、跨 turn 切换、`BeforeModelCall` handler 篡改 profile。
+**测试**：`tests/Atelia.LiveContextProto.Tests/AgentEngineTurnLockTests.cs` 覆盖 6 个场景：首次调用、同 turn 工具往返同 profile、同 turn 切 ModelId、同 turn 切 ProviderId、跨 turn 切换、`ResolveProfile` handler 篡改 profile。
 
 **后续依赖此约束的 PR**：
 - ✅ `ActionBlock.Thinking` 端到端落地（Anthropic extended thinking）——`ActionBlock` 已上提到 `Completion.Abstractions`，`ActionEntry.Message.Blocks` 为唯一真相，`ActionMessage.GetFlattenedText()`/`ToolCalls` 作为 lossy derived view。

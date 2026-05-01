@@ -88,6 +88,8 @@ public class AgentEngine {
         _utcNowProvider = utcNowProvider ?? (() => DateTimeOffset.UtcNow);
         _autoCompactionOptions = autoCompaction;
 
+        RegisterDefaultEnginePanels();
+
         if (initialApps is not null) {
             foreach (var app in initialApps) {
                 if (app is null) { continue; }
@@ -114,6 +116,10 @@ public class AgentEngine {
     /// 获取当前系统指令。
     /// </summary>
     public string SystemPrompt => _state.SystemPrompt;
+
+    private void RegisterDefaultEnginePanels() {
+        RegisterApp(new EnginePanelApp(this));
+    }
 
     /// <summary>
     /// 注册一个应用（App）及其提供的工具。
@@ -303,7 +309,19 @@ public class AgentEngine {
     public event EventHandler<WaitingInputEventArgs>? WaitingInput;
 
     /// <summary>
-    /// 在调用模型前触发，允许修改或取消调用。
+    /// 在构造模型请求前触发，用于决议本次调用的最终 LLM 配置文件。
+    /// </summary>
+    public event EventHandler<ResolveProfileEventArgs>? ResolveProfile;
+
+    /// <summary>
+    /// 在真正构造模型请求前执行一次可等待的准备阶段。
+    /// 适用于刷新 orchestrator、App snapshot 或工具可见性等会影响当前轮请求的外部状态。
+    /// 仅支持单个处理器；如需组合多个准备步骤，请在宿主侧自行封装一个顺序调用链。
+    /// </summary>
+    public PrepareInvocationAsyncHandler? PrepareInvocationAsync { get; set; }
+
+    /// <summary>
+    /// 在模型请求已构造完成后触发，允许做最终观测或取消调用。
     /// </summary>
     public event EventHandler<BeforeModelCallEventArgs>? BeforeModelCall;
 
@@ -371,6 +389,16 @@ public class AgentEngine {
 
     protected virtual void OnWaitingInput(WaitingInputEventArgs e) {
         WaitingInput?.Invoke(this, e);
+    }
+
+    protected virtual void OnResolveProfile(ResolveProfileEventArgs e) {
+        ResolveProfile?.Invoke(this, e);
+    }
+
+    protected virtual Task OnPrepareInvocationAsync(PrepareInvocationEventArgs e, CancellationToken cancellationToken) {
+        return PrepareInvocationAsync is { } prepare
+            ? prepare(e, cancellationToken)
+            : Task.CompletedTask;
     }
 
     protected virtual void OnBeforeModelCall(BeforeModelCallEventArgs e) {
@@ -471,7 +499,7 @@ public class AgentEngine {
     /// 获取是否有待处理的上下文压缩请求。
     /// </summary>
     /// <remarks>
-    /// 工具 App（如 ContextCompressionApp）可通过此属性判断是否已有压缩请求排队，
+    /// 工具 App（如 <see cref="App.EnginePanelApp"/>）可通过此属性判断是否已有压缩请求排队，
     /// 避免重复发起。
     /// </remarks>
     public bool HasPendingCompaction => _compactionRequest.HasValue;
@@ -657,37 +685,23 @@ public class AgentEngine {
     }
 
     private async Task<StepOutcome> ProcessPendingModelCallAsync(AgentRunState state, LlmProfile profile, CancellationToken cancellationToken) {
-        // Turn 锁定校验：在事件触发前拦截，防止宿主侧绕过约束。
-        EnsureProfileMatchesCurrentTurnLock(profile);
+        var resolveArgs = new ResolveProfileEventArgs(state, profile);
+        OnResolveProfile(resolveArgs);
 
-        var invocation = profile.ToCompletionDescriptor();
-        var projection = _state.ProjectInvocationContext(
-            new ContextProjectionOptions(
-                TargetInvocation: invocation,
-                Windows: _appHost.RenderWindows()
-            )
-        );
-        var liveContext = projection.ToFlat();
-        DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
+        if (resolveArgs.Cancel) { return StepOutcome.NoProgress; }
+        if (resolveArgs.Profile is null) { throw new InvalidOperationException("ResolveProfile handlers must not set Profile to null."); }
 
-        var toolExecutor = ToolExecutor;
-        var toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
+        var resolvedProfile = resolveArgs.Profile;
 
-        var args = new BeforeModelCallEventArgs(state, profile, liveContext, toolDefinitions);
-        OnBeforeModelCall(args);
+        // Turn 锁定校验：ResolveProfile 阶段给出本次实际要调用的 profile 后，仅对最终结果做一次校验。
+        EnsureProfileMatchesCurrentTurnLock(resolvedProfile);
 
-        if (args.Cancel) { return StepOutcome.NoProgress; }
+        var estimatedContextTokens = EstimateCurrentContextTokens();
 
-        if (args.Profile is null) { throw new InvalidOperationException("BeforeModelCall handlers must not set Profile to null."); }
-        if (args.LiveContext is null) { throw new InvalidOperationException("BeforeModelCall handlers must provide a LiveContext instance."); }
-
-        // 二次校验：BeforeModelCall handler 可能替换了 Profile，需再次确认仍在 turn 锁定范围内。
-        EnsureProfileMatchesCurrentTurnLock(args.Profile);
-
-        // 软上下文上限检查：若当前上下文 token 量已达到配置的上限，
-        // 插入一次 Compacting 状态（半上下文压缩）后再继续原调用。
-        // 检查放在 BeforeModelCall 之后，以确保使用 handler 可能修改后的最终 Profile 与上下文。
-        if (args.Profile.SoftContextTokenCap is uint cap && EstimateCurrentContextTokens() >= cap) {
+        // 软上下文上限检查：在最终 profile 已确定后、构造 liveContext 前执行。
+        // 这样窗口渲染、上下文投影、cap 判定与最终调用 profile 始终保持一致。
+        var cap = resolvedProfile.SoftContextTokenCap;
+        if (estimatedContextTokens >= cap) {
             if (TryRequestAutoCompaction()) {
                 DebugUtil.Info(
                     StateMachineDebugCategory,
@@ -702,11 +716,35 @@ public class AgentEngine {
             );
         }
 
-        toolExecutor = ToolExecutor;
-        toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
+        var prepareArgs = new PrepareInvocationEventArgs(state, resolvedProfile, estimatedContextTokens);
+        await OnPrepareInvocationAsync(prepareArgs, cancellationToken).ConfigureAwait(false);
 
-        invocation = args.Profile.ToCompletionDescriptor();
-        var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, toolDefinitions);
+        if (prepareArgs.Cancel) { return StepOutcome.NoProgress; }
+
+        var invocation = resolvedProfile.ToCompletionDescriptor();
+        var renderContext = new AppRenderContext(
+            CurrentProfile: resolvedProfile,
+            EstimatedContextTokens: estimatedContextTokens,
+            HasPendingCompaction: HasPendingCompaction
+        );
+        var projection = _state.ProjectInvocationContext(
+            new ContextProjectionOptions(
+                TargetInvocation: invocation,
+                Windows: _appHost.RenderWindows(renderContext)
+            )
+        );
+        var liveContext = projection.ToFlat();
+        DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
+
+        var toolExecutor = ToolExecutor;
+        var toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
+
+        var args = new BeforeModelCallEventArgs(state, resolvedProfile, liveContext, toolDefinitions);
+        OnBeforeModelCall(args);
+
+        if (args.Cancel) { return StepOutcome.NoProgress; }
+
+        var request = new CompletionRequest(args.Profile.ModelId, SystemPrompt, args.LiveContext, args.ToolDefinitions);
 
         var result = await args.Profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
         EnsureCompletionInvocationMatchesExpected(invocation, result.Invocation);
@@ -925,6 +963,67 @@ public class AgentEngine {
     }
 }
 
+public delegate Task PrepareInvocationAsyncHandler(PrepareInvocationEventArgs args, CancellationToken cancellationToken);
+
+/// <summary>
+/// <see cref="AgentEngine.ResolveProfile"/> 事件的参数。
+/// </summary>
+public sealed class ResolveProfileEventArgs : EventArgs {
+    internal ResolveProfileEventArgs(AgentRunState state, LlmProfile profile) {
+        State = state;
+        Profile = profile;
+    }
+
+    /// <summary>
+    /// 获取当前 Agent 运行状态。
+    /// </summary>
+    public AgentRunState State { get; }
+
+    /// <summary>
+    /// 获取或设置本次模型调用的最终 LLM 配置文件。
+    /// 引擎会在本事件结束后对该 profile 执行 Turn 锁定校验，并据此构造上下文与请求。
+    /// </summary>
+    public LlmProfile Profile { get; set; }
+
+    /// <summary>
+    /// 获取或设置一个值，指示是否取消本次模型调用。
+    /// </summary>
+    public bool Cancel { get; set; }
+}
+
+/// <summary>
+/// <see cref="AgentEngine.PrepareInvocationAsync"/> 钩子的参数。
+/// </summary>
+public sealed class PrepareInvocationEventArgs : EventArgs {
+    internal PrepareInvocationEventArgs(AgentRunState state, LlmProfile profile, ulong estimatedContextTokens) {
+        State = state;
+        Profile = profile;
+        EstimatedContextTokens = estimatedContextTokens;
+    }
+
+    /// <summary>
+    /// 获取当前 Agent 运行状态。
+    /// </summary>
+    public AgentRunState State { get; }
+
+    /// <summary>
+    /// 获取本次模型调用已决议完成的最终 LLM 配置文件。
+    /// 本阶段不得再切换 profile；如需决议模型，请使用 <see cref="AgentEngine.ResolveProfile"/>。
+    /// </summary>
+    public LlmProfile Profile { get; }
+
+    /// <summary>
+    /// 获取当前历史的 token 估算值。
+    /// 此值按历史与系统提示词估算，不包含后续 window / tool definitions 注入的额外投影成本。
+    /// </summary>
+    public ulong EstimatedContextTokens { get; }
+
+    /// <summary>
+    /// 获取或设置一个值，指示是否取消本次模型调用。
+    /// </summary>
+    public bool Cancel { get; set; }
+}
+
 /// <summary>
 /// <see cref="AgentEngine.WaitingInput"/> 事件的参数。
 /// </summary>
@@ -983,14 +1082,16 @@ public sealed class BeforeModelCallEventArgs : EventArgs {
     public AgentRunState State { get; }
 
     /// <summary>
-    /// 获取或设置 LLM 配置文件（可被事件处理器修改）。
+    /// 获取本次模型调用使用的最终 LLM 配置文件。
     /// </summary>
-    public LlmProfile Profile { get; set; }
+    public LlmProfile Profile { get; }
 
     /// <summary>
-    /// 获取或设置实时上下文消息列表（可被事件处理器修改）。
+    /// 获取实时上下文消息列表。
+    /// 此时 profile、工具定义与 liveContext 均已冻结；如需刷新 snapshot 或工具可见性，应使用 <see cref="AgentEngine.PrepareInvocationAsync"/>。
+    /// 如需切换 profile，应使用 <see cref="AgentEngine.ResolveProfile"/>。
     /// </summary>
-    public IReadOnlyList<IHistoryMessage> LiveContext { get; set; }
+    public IReadOnlyList<IHistoryMessage> LiveContext { get; }
 
     /// <summary>
     /// 获取当前对模型可见的工具定义列表。

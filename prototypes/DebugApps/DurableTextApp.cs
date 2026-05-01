@@ -48,7 +48,7 @@ public sealed class DurableTextApp : IApp {
 
     public IReadOnlyList<ITool> Tools { get; }
 
-    public string? RenderWindow() {
+    public string? RenderWindow(AppRenderContext context) {
         var blocks = _text.GetAllBlocks();
         var sb = new StringBuilder();
         sb.Append("## DurableText\n\n");

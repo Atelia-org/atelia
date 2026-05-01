@@ -29,7 +29,7 @@ public sealed class MemoryNotebookApp : IApp {
 
     public IReadOnlyList<ITool> Tools => _editor.Tools;
 
-    public string? RenderWindow() {
+    public string? RenderWindow(AppRenderContext context) {
         var builder = new StringBuilder();
         // 为了全项目内统一使用'\n'行尾，有意避免使用AppendLine / Environment.NewLine
         builder.Append("## Memory Notebook\n\n");

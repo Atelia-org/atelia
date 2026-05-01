@@ -2,6 +2,8 @@ using System.Collections.Immutable;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Linq;
@@ -45,6 +47,81 @@ public sealed class OpenAIChatClientTests {
         var requestBody = Assert.Single(handler.RequestBodies);
         Assert.DoesNotContain("\"stream_options\"", requestBody, StringComparison.Ordinal);
         Assert.Equal("hello", aggregated.Message.GetFlattenedText());
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_IncludesConfiguredExtraBodyFieldsAtRequestRoot() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    """
+                    data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":null}
+
+                    data: [DONE]
+
+                    """,
+                    Encoding.UTF8,
+                    "text/event-stream"
+                )
+            }
+        );
+
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = new OpenAIChatClient(
+            apiKey: null,
+            httpClient: httpClient,
+            dialect: OpenAIChatDialects.SgLangCompatible,
+            options: OpenAIChatClientOptions.QwenThinkingDisabled()
+        );
+
+        await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        var requestBody = Assert.Single(handler.RequestBodies);
+        using var document = JsonDocument.Parse(requestBody);
+        var root = document.RootElement;
+        Assert.False(root.TryGetProperty("extra_body", out _));
+        Assert.True(root.TryGetProperty("chat_template_kwargs", out var kwargs));
+        Assert.False(kwargs.GetProperty("enable_thinking").GetBoolean());
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_ThrowsWhenExtraBodyCollidesWithReservedFields() {
+        using var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    """
+                    data: [DONE]
+
+                    """,
+                    Encoding.UTF8,
+                    "text/event-stream"
+                )
+            }
+        );
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = new OpenAIChatClient(
+            apiKey: null,
+            httpClient: httpClient,
+            dialect: OpenAIChatDialects.Strict,
+            options: new OpenAIChatClientOptions {
+                ExtraBody = new JsonObject {
+                    ["model"] = "should-not-override"
+                }
+            }
+        );
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Contains("collides with a reserved request property", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.RequestBodies);
     }
 
     [Fact]

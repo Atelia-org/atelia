@@ -33,7 +33,7 @@ public sealed class AgentEngineAutoCompactionTests {
         var client = new CapturingFakeClient(
             CreateDeltaSequence(agg => agg.AppendContent("ok"))
         );
-        var profile = new LlmProfile(client, Model, ProfileName) { SoftContextTokenCap = 100_000u };
+        var profile = new LlmProfile(client, Model, ProfileName, 100_000u);
         var engine = CreateEngineWithAutoCompaction();
 
         engine.AppendNotification("hello");
@@ -53,7 +53,7 @@ public sealed class AgentEngineAutoCompactionTests {
             CreateDeltaSequence(agg => agg.AppendContent("turn-1")),
             CreateDeltaSequence(agg => agg.AppendContent("turn-2"))
         );
-        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName) { SoftContextTokenCap = 100_000u };
+        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName, 100_000u);
         var engine = CreateEngineWithAutoCompaction();
 
         engine.AppendNotification("t1");
@@ -71,7 +71,7 @@ public sealed class AgentEngineAutoCompactionTests {
             CreateDeltaSequence(agg => agg.AppendContent("summary")),
             CreateDeltaSequence(agg => agg.AppendContent("after-compact"))
         );
-        var lowCapProfile = highCapProfile with { SoftContextTokenCap = (uint?)1, Client = compactClient };
+        var lowCapProfile = highCapProfile with { SoftContextTokenCap = 1u, Client = compactClient };
 
         engine.AppendNotification("t3");
         await engine.StepAsync(lowCapProfile); // → PendingInput
@@ -95,14 +95,14 @@ public sealed class AgentEngineAutoCompactionTests {
         Assert.Equal(2, compactClient.CapturedRequests.Count);
     }
 
-    // ──── 3. cap 为 null 不触发 ────
+    // ──── 3. 保守 cap 下正常调用不会误触发压缩 ────
 
     [Fact]
-    public async Task CapIsNull_DoesNotTriggerCompaction() {
+    public async Task ConservativeCap_DoesNotTriggerCompaction() {
         var client = new CapturingFakeClient(
             CreateDeltaSequence(agg => agg.AppendContent("ok"))
         );
-        var profile = new LlmProfile(client, Model, ProfileName); // null cap
+        var profile = new LlmProfile(client, Model, ProfileName, 64_000u);
         var engine = CreateEngineWithAutoCompaction();
 
         engine.AppendNotification("hello");
@@ -120,7 +120,7 @@ public sealed class AgentEngineAutoCompactionTests {
         var client = new CapturingFakeClient(
             CreateDeltaSequence(agg => agg.AppendContent("fallback-ok"))
         );
-        var profile = new LlmProfile(client, Model, ProfileName) { SoftContextTokenCap = 1u };
+        var profile = new LlmProfile(client, Model, ProfileName, 1u);
         var engine = new AgentEngine(); // 无 AutoCompactionOptions
 
         engine.AppendNotification("trigger");
@@ -140,7 +140,7 @@ public sealed class AgentEngineAutoCompactionTests {
             CreateDeltaSequence(agg => agg.AppendContent("turn-1")),
             CreateDeltaSequence(agg => agg.AppendContent("turn-2"))
         );
-        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName) { SoftContextTokenCap = 100_000u };
+        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName, 100_000u);
         var engine = CreateEngineWithAutoCompaction();
 
         engine.AppendNotification("t1");
@@ -159,7 +159,7 @@ public sealed class AgentEngineAutoCompactionTests {
         var summaryClient = new CapturingFakeClient(
             CreateDeltaSequence(agg => agg.AppendContent("manual-summary"))
         );
-        var lowCapProfile = highCapProfile with { SoftContextTokenCap = (uint?)1, Client = summaryClient };
+        var lowCapProfile = highCapProfile with { SoftContextTokenCap = 1u, Client = summaryClient };
 
         var step = await engine.StepAsync(lowCapProfile);
         Assert.Equal(AgentRunState.Compacting, step.StateBefore);
@@ -167,16 +167,16 @@ public sealed class AgentEngineAutoCompactionTests {
         Assert.Equal("custom-system", summaryClient.CapturedRequests[0].SystemPrompt);
     }
 
-    // ──── 6. BeforeModelCall 修改 profile → 以 handler 修改后的 cap 为准 ────
+    // ──── 6. ResolveProfile 修改 profile → 以最终 profile 的 cap 为准 ────
 
     [Fact]
-    public async Task BeforeModelCall_ProfileSwap_UsesFinalCap() {
+    public async Task ResolveProfile_ProfileSwap_UsesFinalCap() {
         // Phase A：构建历史（高 cap）
         var buildClient = new CapturingFakeClient(
             CreateDeltaSequence(agg => agg.AppendContent("turn-1")),
             CreateDeltaSequence(agg => agg.AppendContent("turn-2"))
         );
-        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName) { SoftContextTokenCap = 100_000u };
+        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName, 100_000u);
         var engine = CreateEngineWithAutoCompaction();
 
         engine.AppendNotification("t1");
@@ -186,21 +186,49 @@ public sealed class AgentEngineAutoCompactionTests {
         await engine.StepAsync(highCapProfile);
         await engine.StepAsync(highCapProfile);
 
-        // Phase B：低 cap profile，但 handler 替换为无 cap
+        // Phase B：低 cap profile，但 handler 替换为高 cap
         var normalClient = new CapturingFakeClient(
             CreateDeltaSequence(agg => agg.AppendContent("ok"))
         );
-        var lowCapProfile = highCapProfile with { SoftContextTokenCap = (uint?)1, Client = normalClient };
-        var noCapProfile = lowCapProfile with { SoftContextTokenCap = (uint?)null };
+        var lowCapProfile = highCapProfile with { SoftContextTokenCap = 1u, Client = normalClient };
+        var relaxedCapProfile = lowCapProfile with { SoftContextTokenCap = 100_000u };
 
-        engine.BeforeModelCall += (_, args) => { args.Profile = noCapProfile; };
+        engine.ResolveProfile += (_, args) => { args.Profile = relaxedCapProfile; };
 
         engine.AppendNotification("t3");
         await engine.StepAsync(lowCapProfile); // → PendingInput
-        var step = await engine.StepAsync(lowCapProfile); // handler 移除 cap → 不触发
+        var step = await engine.StepAsync(lowCapProfile); // ResolveProfile 提高 cap → 不触发
 
         Assert.NotNull(step.Output);
         Assert.Single(normalClient.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task ResolveProfile_ProfileSwap_RendersWindowAgainstResolvedProfile() {
+        var client = new CapturingFakeClient(
+            CreateDeltaSequence(agg => agg.AppendContent("ok"))
+        );
+        var initialProfile = new LlmProfile(client, Model, "initial-profile", 100_000u);
+        var resolvedProfile = initialProfile with { Name = "resolved-profile" };
+        var engine = new AgentEngine();
+        engine.RegisterApp(new ProfileEchoApp());
+
+        engine.ResolveProfile += (_, args) => { args.Profile = resolvedProfile; };
+
+        engine.AppendNotification("trigger");
+        await engine.StepAsync(initialProfile);
+        var step = await engine.StepAsync(initialProfile);
+
+        Assert.NotNull(step.Output);
+
+        var request = Assert.Single(client.CapturedRequests);
+        var windowMessage = Assert.Single(
+            request.Context.OfType<ObservationMessage>(),
+            message => message.Content is not null && message.Content.Contains("ProfileWindow:", StringComparison.Ordinal)
+        );
+
+        Assert.Contains("resolved-profile", windowMessage.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("initial-profile", windowMessage.Content, StringComparison.Ordinal);
     }
 
     // ──── 7. 工具往返后触发（PendingToolResults 路径） ────
@@ -217,7 +245,7 @@ public sealed class AgentEngineAutoCompactionTests {
             ),
             CreateDeltaSequence(agg => agg.AppendContent("done"))
         );
-        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName) { SoftContextTokenCap = 100_000u };
+        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName, 100_000u);
         var engine = CreateEngineWithAutoCompaction(tool);
 
         engine.AppendNotification("trigger");
@@ -234,7 +262,7 @@ public sealed class AgentEngineAutoCompactionTests {
             CreateDeltaSequence(agg => agg.AppendContent("summary")),
             CreateDeltaSequence(agg => agg.AppendContent("final"))
         );
-        var lowCapProfile = highCapProfile with { SoftContextTokenCap = (uint?)1, Client = compactClient };
+        var lowCapProfile = highCapProfile with { SoftContextTokenCap = 1u, Client = compactClient };
 
         engine.AppendNotification("t2");
         await engine.StepAsync(lowCapProfile); // → PendingInput (5 entries)
@@ -266,7 +294,7 @@ public sealed class AgentEngineAutoCompactionTests {
             CreateDeltaSequence(agg => agg.AppendContent("turn-1")),
             CreateDeltaSequence(agg => agg.AppendContent("turn-2"))
         );
-        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName) { SoftContextTokenCap = 100_000u };
+        var highCapProfile = new LlmProfile(buildClient, Model, ProfileName, 100_000u);
         var engine = CreateEngineWithAutoCompaction();
 
         engine.AppendNotification("t1");
@@ -281,7 +309,7 @@ public sealed class AgentEngineAutoCompactionTests {
             CreateDeltaSequence(agg => agg.AppendContent("summary")),
             CreateDeltaSequence(agg => agg.AppendContent("fallback-final"))
         );
-        var lowCapProfile = highCapProfile with { SoftContextTokenCap = (uint?)1, Client = compactClient };
+        var lowCapProfile = highCapProfile with { SoftContextTokenCap = 1u, Client = compactClient };
 
         engine.AppendNotification("t3");
         await engine.StepAsync(lowCapProfile); // → PendingInput
@@ -347,5 +375,14 @@ public sealed class AgentEngineAutoCompactionTests {
         public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
             return ValueTask.FromResult(new LodToolExecuteResult(ToolExecutionStatus.Success, new LevelOfDetailContent("ok")));
         }
+    }
+
+    private sealed class ProfileEchoApp : IApp {
+        public string Name => "ProfileEcho";
+        public string Description => "Echoes the resolved profile name into a window for testing.";
+        public IReadOnlyList<ITool> Tools => Array.Empty<ITool>();
+
+        public string? RenderWindow(AppRenderContext context)
+            => $"ProfileWindow: {context.CurrentProfile?.Name}";
     }
 }

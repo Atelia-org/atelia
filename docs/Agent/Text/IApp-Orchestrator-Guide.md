@@ -14,12 +14,12 @@
 | `string Name` | App 名称，需唯一 | 用于 `DefaultAppHost` 管理与调试日志输出 |
 | `string Description` | 简要描述 | 可在 UI 或提示中呈现 |
 | `IReadOnlyList<ITool> Tools` | App 暴露的全部工具 | 必须合并编辑与同步工具集（例如 `edit.*` 与 `sync.*`） |
-| `string? RenderWindow()` | 返回面向 LLM 的 TUI | 负责将两个 Widget 渲染结果合并为单个窗口 |
+| `string? RenderWindow(AppRenderContext context)` | 返回面向 LLM 的 TUI | 负责将两个 Widget 渲染结果合并为单个窗口，并读取框架注入的渲染上下文 |
 
-`DefaultAppHost` 会聚合所有 App 的工具与窗口文本，`AgentEngine` 在调用模型前通过 `ProjectContext()` 将窗口文本注入上下文。因此，IApp 实现应保证：
+`DefaultAppHost` 会聚合所有 App 的工具与窗口文本，`AgentEngine` 在调用模型前通过 `ProjectContext()` 将窗口文本注入上下文，同时以 `AppRenderContext` 显式传入当前 profile 等运行时信息。因此，IApp 实现应保证：
 
 1. 工具列表实时反映两个 Widget 的可见工具；
-2. `RenderWindow()` 输出的 Markdown/TUI 始终与最新状态一致；
+2. `RenderWindow(AppRenderContext context)` 输出的 Markdown/TUI 始终与最新状态一致；
 3. 不直接在 IApp 内部访问底层数据源，所有 I/O 由 Widget 层负责。
 
 ---
@@ -53,7 +53,7 @@ public sealed class MemoryNotebookApp : IApp
     public void UpdateSnapshot(AppSnapshot snapshot)
         => _snapshot = snapshot;
 
-    public string? RenderWindow()
+    public string? RenderWindow(AppRenderContext context)
     {
         if (!_snapshot.HasContent)
         {
@@ -160,7 +160,7 @@ public sealed class MemoryNotebookAppHost
     }
 }
 
-> **首帧初始化**：应用启动时即可调用一次 `UpdateAsync` + `Snapshot()`，把初始快照注入 IApp，避免第一轮 `RenderWindow()` 读到空白内容。
+> **首帧初始化**：应用启动时即可调用一次 `UpdateAsync` + `Snapshot()`，把初始快照注入 IApp，避免第一轮 `RenderWindow(AppRenderContext context)` 读到空白内容。
 > **工具冲突监测**：在合并前建议调用 `ToolMatrixUtilities.ValidateUniqueNames(editorTools, syncTools)`（示例方法）或自定义校验逻辑，并将冲突写入 `AppHost.Orchestrator` 日志，避免模型访问到重复命名的工具。
 ```
 
@@ -177,29 +177,31 @@ public sealed class MemoryNotebookAppHost
 
 ## 4. 将 orchestrator 嵌入 AgentEngine 生命周期
 
-### 4.1 在模型调用前驱动 Update
+### 4.1 在 PrepareInvocationAsync 阶段驱动 Update
 
-最简单的做法是勾住 `AgentEngine.BeforeModelCall` 事件，在事件处理器中调用 orchestrator 的 `UpdateAsync`：
+如果希望当前轮看到最新 orchestrator 快照，推荐使用 `AgentEngine.PrepareInvocationAsync`。该 awaited hook 发生在最终 profile 已确定、但 liveContext 与窗口尚未构造之前，正适合刷新 snapshot：
 
 ```csharp
 var app = new MemoryNotebookApp(editorWidget, bindingWidget);
 var host = new MemoryNotebookAppHost(editorWidget, bindingWidget);
 var engine = new AgentEngine(initialApps: new[] { app });
 
-engine.BeforeModelCall += async (_, args) =>
+engine.PrepareInvocationAsync = async (_, cancellationToken) =>
 {
-    await host.UpdateAsync(args.CancellationToken);
+    await host.UpdateAsync(cancellationToken);
 
     // 将最新渲染结果同步回 IApp（例如通过公开的 UpdateSnapshot 方法）。
     app.UpdateSnapshot(host.Snapshot());
 };
+
+await engine.StepAsync(profile, cancellationToken);
 ```
 
-> **线程模型**：`AgentEngine` 明确标注“非线程安全”。事件处理器必须与引擎的 `StepAsync` 在同一线程/上下文顺序执行，禁止并发。
+> **线程模型**：`AgentEngine` 明确标注“非线程安全”。`PrepareInvocationAsync` 会在 `StepAsync` 内串行 await；宿主不应并发更新 orchestrator 或并发推进引擎。
 
 ### 4.2 RenderWindow 读取缓存
 
-`RenderWindow()` 不应直接访问 Widget,而是读取第 2 节示例中 `UpdateSnapshot` 预先注入的 `AppSnapshot`。当 `AppSnapshot.HasContent` 为 `false` 时返回 `null` 或空窗口,以避免模型读取到陈旧内容。
+`RenderWindow(AppRenderContext context)` 不应直接访问 Widget,而是读取第 2 节示例中 `UpdateSnapshot` 预先注入的 `AppSnapshot`。`context` 只承载框架侧运行时信息，不应替代快照本身。当 `AppSnapshot.HasContent` 为 `false` 时返回 `null` 或空窗口,以避免模型读取到陈旧内容。
 
 ---
 
@@ -233,9 +235,9 @@ engine.BeforeModelCall += async (_, args) =>
 | 场景 | 风险 | 建议 |
 | --- | --- | --- |
 | 并发调用 `UpdateAsync` | 状态竞态，版本号不一致 | 严格在事件循环中顺序执行，禁止多线程同时访问 |
-| `RenderWindow()` 直接调用 Widget.Render | 破坏双 Pass 模式，可能出现旧状态 | 始终通过 orchestrator 缓存好的最新快照 |
+| `RenderWindow(AppRenderContext context)` 直接调用 Widget.Render | 破坏双 Pass 模式，可能出现旧状态 | 始终通过 orchestrator 缓存好的最新快照 |
 | IApp.Tools 未合并 | 某些工具缺失，模型无法调用 | 构造工具集合时合并两个 Widget 的可见工具 |
-| `RenderWindow()` 返回空字符串 | 模型误判“窗口仍存在但为空” | 如需暂时隐藏窗口请返回 `null`，返回空字符串表示窗口仍可见只是没有正文 |
+| `RenderWindow(AppRenderContext context)` 返回空字符串 | 模型误判“窗口仍存在但为空” | 如需暂时隐藏窗口请返回 `null`，返回空字符串表示窗口仍可见只是没有正文 |
 | 版本号不同步 | 同步 Widget 误判状态 | 确保 `ContentChanged` / `DataSourceChanged` 事件携带最新版本号，并在 Update pass 后刷新快照 |
 | 忽略错误恢复 | Flush/Refresh 失败后状态悬挂 | 依赖同步 Widget 的 `SyncState.Failed` + Flags，并在 TUI 中给出重试指引 |
 
@@ -246,8 +248,8 @@ engine.BeforeModelCall += async (_, args) =>
 - [ ] 双 Widget 在单元测试中独立通过 Update/Render 回合。
 - [ ] orchestrator 单测覆盖“缓存变更”“外部变更”“冲突”三个入口。
 - [ ] IApp.Tools 在工具状态变更后能正确刷新。
-- [ ] AgentEngine.BeforeModelCall 事件处理器已串联 orchestrator。
-- [ ] RenderWindow 输出符合 Markdown/TUI 规范。
+- [ ] AgentEngine.PrepareInvocationAsync 已串联 orchestrator。
+- [ ] RenderWindow(AppRenderContext context) 输出符合 Markdown/TUI 规范。
 
 ---
 

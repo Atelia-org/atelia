@@ -42,7 +42,8 @@ internal static class Program {
         var client = new OpenAIChatClient(
             apiKey: null,
             baseAddress: new Uri(LocalLlmEndpoint),
-            dialect: OpenAIChatDialects.SgLangCompatible
+            dialect: OpenAIChatDialects.SgLangCompatible,
+            options: OpenAIChatClientOptions.QwenThinkingDisabled()
         );
 
         var cts = new CancellationTokenSource();

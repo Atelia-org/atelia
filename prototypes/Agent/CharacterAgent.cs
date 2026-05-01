@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Atelia.Agent.Core;
 using Atelia.Agent.Apps;
-using Atelia.Completion.Abstractions;
+using Atelia.Agent.Core;
 using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Agent;
 

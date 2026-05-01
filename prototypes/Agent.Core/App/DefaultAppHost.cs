@@ -56,13 +56,13 @@ internal sealed class DefaultAppHost : IAppHost {
         return true;
     }
 
-    public string? RenderWindows() {
+    public string? RenderWindows(AppRenderContext context) {
         if (_apps.IsDefaultOrEmpty) { return null; }
 
         var fragments = new List<string>();
 
         foreach (var app in _apps) {
-            var fragment = app.RenderWindow();
+            var fragment = app.RenderWindow(context);
             if (!string.IsNullOrWhiteSpace(fragment)) {
                 fragments.Add(fragment.TrimEnd());
             }
