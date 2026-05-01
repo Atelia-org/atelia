@@ -468,6 +468,15 @@ public class AgentEngine {
     }
 
     /// <summary>
+    /// 获取是否有待处理的上下文压缩请求。
+    /// </summary>
+    /// <remarks>
+    /// 工具 App（如 ContextCompressionApp）可通过此属性判断是否已有压缩请求排队，
+    /// 避免重复发起。
+    /// </remarks>
+    public bool HasPendingCompaction => _compactionRequest.HasValue;
+
+    /// <summary>
     /// 估算当前上下文的 token 信息量，用于与 <see cref="LlmProfile.SoftContextTokenCap"/> 比较以决定是否触发自动压缩。
     /// </summary>
     /// <remarks>
@@ -476,7 +485,7 @@ public class AgentEngine {
     /// 估算基准与 <see cref="ContextSplitter.FindHalfContextSplitPoint"/> 一致（均基于 <see cref="HistoryEntry.TokenEstimate"/>），
     /// 保证压缩决策与切分算法共享同一 token 坐标系。
     /// </remarks>
-    private ulong EstimateCurrentContextTokens() {
+    public ulong EstimateCurrentContextTokens() {
         ulong total = TokenEstimateHelper.GetDefault().EstimateString(SystemPrompt);
         foreach (var entry in _state.RecentHistory) {
             total += entry.TokenEstimate;
