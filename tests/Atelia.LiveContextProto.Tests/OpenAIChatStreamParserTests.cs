@@ -54,6 +54,49 @@ public sealed class OpenAIChatStreamParserTests {
     }
 
     [Fact]
+    public void ParseEvent_DeepSeekModeCapturesReasoningContentBeforeToolCalls() {
+        var parser = new OpenAIChatStreamParser(
+            ImmutableArray.Create(
+                new ToolDefinition(
+                    Name: "get_weather",
+                    Description: "Get weather",
+                    Parameters: ImmutableArray.Create(
+                        new ToolParamSpec("city", "city", ToolParamType.String)
+                    )
+                )
+            ),
+            OpenAIChatWhitespaceContentMode.Preserve,
+            OpenAIChatReasoningMode.ReplayCompatible
+        );
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        var events = new[] {
+            "{\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":null,\"content\":null,\"reasoning_content\":\"The model is \",\"tool_calls\":null},\"finish_reason\":null}],\"usage\":null}",
+            "{\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":null,\"content\":null,\"reasoning_content\":\"thinking\",\"tool_calls\":null},\"finish_reason\":null}],\"usage\":null}",
+            "{\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":null,\"content\":null,\"reasoning_content\":null,\"tool_calls\":[{\"id\":\"call_123\",\"index\":0,\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]},\"finish_reason\":null}],\"usage\":null}",
+            "{\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":null,\"content\":null,\"reasoning_content\":null,\"tool_calls\":null},\"finish_reason\":\"tool_calls\"}],\"usage\":null}"
+        };
+
+        foreach (var e in events) {
+            parser.ParseEvent(e, aggregator);
+        }
+
+        var result = aggregator.Build();
+
+        var reasoningBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.Thinking);
+        Assert.Equal(
+            "The model is thinking",
+            Assert.IsType<OpenAIChatReasoningBlock>(reasoningBlock).Content
+        );
+
+        var toolCallBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
+        var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
+        Assert.Equal("call_123", toolCall.ToolCallId);
+        Assert.Equal("get_weather", toolCall.ToolName);
+        Assert.Equal("Paris", toolCall.Arguments!["city"]);
+    }
+
+    [Fact]
     public void ParseEvent_StrictModePreservesWhitespaceContentDuringToolCalls() {
         var parser = new OpenAIChatStreamParser(
             ImmutableArray.Create(

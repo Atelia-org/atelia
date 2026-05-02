@@ -10,6 +10,8 @@ using Xunit;
 namespace Atelia.LiveContextProto.Tests;
 
 public sealed class OpenAIChatMessageConverterTests {
+    private static CompletionDescriptor DummyInvocation => new("api.deepseek.com", "openai-chat-v1", "deepseek-v4");
+
     [Fact]
     public void ConvertToApiRequest_ParseErrorFallsBackToRawArguments() {
         var toolCall = new ParsedToolCall(
@@ -188,5 +190,71 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         Assert.Contains("without a preceding assistant tool_calls", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_DeepSeekDialectReplaysReasoningContentAlongsideToolCalls() {
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] {
+                new OpenAIChatReasoningBlock("Need tool continuity.", DummyInvocation),
+                new ActionBlock.ToolCall(
+                    new ParsedToolCall(
+                        "search",
+                        "call-1",
+                        new Dictionary<string, string>(),
+                        new Dictionary<string, object?>(),
+                        null,
+                        null
+                    )
+                )
+            }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "deepseek-v4",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                actionMessage,
+                new ToolResultsMessage(
+                    Content: null,
+                    Results: new[] {
+                        new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                    },
+                    ExecuteError: null
+                )
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, OpenAIChatDialects.DeepSeekV4);
+
+        var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
+        Assert.Equal("Need tool continuity.", assistantMessage.ReasoningContent);
+        Assert.NotNull(assistantMessage.ToolCalls);
+        Assert.Single(assistantMessage.ToolCalls!);
+        Assert.Null(assistantMessage.Content);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_StrictDialectStillIgnoresReasoningContent() {
+        var request = new CompletionRequest(
+            ModelId: "gpt-4.1",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ActionMessage(
+                    new ActionBlock[] {
+                        new OpenAIChatReasoningBlock("Should stay local.", DummyInvocation),
+                        new ActionBlock.Text("hello")
+                    }
+                )
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, OpenAIChatDialects.Strict);
+
+        var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
+        Assert.Equal("hello", assistantMessage.Content);
+        Assert.Null(assistantMessage.ReasoningContent);
     }
 }

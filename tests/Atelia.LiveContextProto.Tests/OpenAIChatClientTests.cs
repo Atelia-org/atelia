@@ -217,6 +217,55 @@ public sealed class OpenAIChatClientTests {
         Assert.Contains("bad input", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_DeepSeekClientReplaysReasoningContentIntoRequestBody() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    """
+                    data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":null}
+
+                    data: [DONE]
+
+                    """,
+                    Encoding.UTF8,
+                    "text/event-stream"
+                )
+            }
+        );
+
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = new DeepSeekV4ChatClient(apiKey: null, httpClient: httpClient, baseAddress: null);
+        var request = new CompletionRequest(
+            ModelId: "deepseek-v4",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ActionMessage(
+                    new ActionBlock[] {
+                        new OpenAIChatReasoningBlock(
+                            "Need continuity.",
+                            new CompletionDescriptor("localhost", "openai-chat-v1", "deepseek-v4")
+                        ),
+                        new ActionBlock.Text("hello")
+                    }
+                )
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        await client.StreamCompletionAsync(request, null, CancellationToken.None);
+
+        var requestBody = Assert.Single(handler.RequestBodies);
+        using var document = JsonDocument.Parse(requestBody);
+        var messages = document.RootElement.GetProperty("messages");
+        var assistantMessage = messages.EnumerateArray().Single(message => message.GetProperty("role").GetString() == "assistant");
+        Assert.Equal("Need continuity.", assistantMessage.GetProperty("reasoning_content").GetString());
+        Assert.Equal("hello", assistantMessage.GetProperty("content").GetString());
+    }
+
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
             ModelId: "gpt-4.1",
