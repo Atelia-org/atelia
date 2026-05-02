@@ -185,6 +185,38 @@ public sealed class OpenAIChatClientTests {
         Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(text).Content);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_NonSuccessStatus_IncludesResponseBodySnippetInException() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.BadRequest) {
+                Content = new StringContent(
+                    """
+                    {"error":{"message":"bad input","type":"invalid_request_error"}}
+                    """,
+                    Encoding.UTF8,
+                    "application/json"
+                )
+            }
+        );
+
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = new OpenAIChatClient(
+            apiKey: null,
+            httpClient: httpClient,
+            dialect: OpenAIChatDialects.SgLangCompatible
+        );
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Contains("bad input", exception.Message, StringComparison.Ordinal);
+    }
+
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
             ModelId: "gpt-4.1",

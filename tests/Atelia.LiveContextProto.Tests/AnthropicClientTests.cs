@@ -97,6 +97,42 @@ public sealed class AnthropicClientTests {
         Assert.Equal(string.Empty, Assert.IsType<ActionBlock.Text>(text).Content);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_NonSuccessStatus_IncludesResponseBodySnippetInException() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.BadRequest) {
+                Content = new StringContent(
+                    """
+                    {"type":"error","error":{"type":"invalid_request_error","message":"bad input"}}
+                    """,
+                    Encoding.UTF8,
+                    "application/json"
+                )
+            }
+        );
+
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = new AnthropicClient(apiKey: null, httpClient: httpClient);
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.StreamCompletionAsync(
+                new CompletionRequest(
+                    ModelId: "claude-3-5-sonnet-20241022",
+                    SystemPrompt: "system",
+                    Context: new[] { new ObservationMessage("hello") },
+                    Tools: System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty
+                ),
+                observer: null,
+                CancellationToken.None
+            )
+        );
+
+        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Contains("bad input", exception.Message, StringComparison.Ordinal);
+    }
+
     private sealed class EmptyHttpMessageHandler : HttpMessageHandler {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             throw new NotSupportedException();

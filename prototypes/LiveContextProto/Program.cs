@@ -7,6 +7,7 @@ using Atelia.Agent.Core;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
 
 namespace Atelia.LiveContextProto;
 
@@ -18,6 +19,8 @@ internal static class Program {
     // private const string DefaultProfileName = "anthropic-v1";
     private const string DefaultModelId = "Qwen3.5-27b-GPTQ-Int4";
     private const string LocalLlmEndpoint = "http://localhost:8000/";
+    private const string GoldenLogPathEnvVar = "ATELIA_COMPLETION_GOLDEN_LOG";
+    private const string ReplayLogPathEnvVar = "ATELIA_COMPLETION_REPLAY_LOG";
 
     public static int Main(string[] args) {
         Console.InputEncoding = Encoding.UTF8;
@@ -31,9 +34,17 @@ internal static class Program {
         // var defaultProfile = new LlmProfile(anthropicClient, DefaultModelId, "LocaQwen-anthropic-v1", 64_000u);
         // var loop = new ConsoleTui(agent, defaultProfile);
 
+        var transport = CompletionHttpTransportFactory.CreateFromEnvironmentVariables(
+            new Uri(EnsureTrailingSlash(LocalLlmEndpoint)),
+            GoldenLogPathEnvVar,
+            ReplayLogPathEnvVar
+        );
+        using var httpClient = transport.HttpClient;
+        PrintTransportStartup(transport);
+
         var oaiClient = new OpenAIChatClient(
             apiKey: null,
-            baseAddress: new Uri(EnsureTrailingSlash(LocalLlmEndpoint)),
+            httpClient: httpClient,
             dialect: OpenAIChatDialects.SgLangCompatible,
             options: OpenAIChatClientOptions.QwenThinkingDisabled()
         );
@@ -48,4 +59,18 @@ internal static class Program {
 
     private static string EnsureTrailingSlash(string value)
         => value.EndsWith('/') ? value : value + "/";
+
+    private static void PrintTransportStartup(CompletionHttpTransportSetup transport) {
+        ArgumentNullException.ThrowIfNull(transport);
+        var recordValue = Environment.GetEnvironmentVariable(GoldenLogPathEnvVar) ?? "<unset>";
+        var replayValue = Environment.GetEnvironmentVariable(ReplayLogPathEnvVar) ?? "<unset>";
+
+        Console.WriteLine($"[startup] {transport.Describe()}");
+        Console.WriteLine($"[startup] env: {GoldenLogPathEnvVar}={recordValue}, {ReplayLogPathEnvVar}={replayValue}");
+
+        DebugUtil.Info(DebugCategory, transport.Describe());
+        if (transport.ArtifactPath is not null) {
+            DebugUtil.Info(DebugCategory, $"LiveContextProto transport artifact={transport.ArtifactPath}");
+        }
+    }
 }
