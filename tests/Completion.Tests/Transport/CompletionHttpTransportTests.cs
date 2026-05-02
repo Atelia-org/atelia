@@ -1,16 +1,13 @@
 using System.Collections.Immutable;
-using System.IO;
 using System.Net;
-using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Atelia.Completion.OpenAI;
-using Atelia.Completion.Transport;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Transport.Tests;
 
 public sealed class CompletionHttpTransportTests {
     private const string LocalLlmE2EEnvVar = "ATELIA_RUN_LOCAL_LLM_E2E";

@@ -1,8 +1,7 @@
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Utils;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Utils.Tests;
 
 public sealed class ToolArgumentParserTests {
     [Fact]

@@ -1,11 +1,8 @@
 using System.Collections.Immutable;
-using System.Linq;
-using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.OpenAI;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAIChatStreamParserTests {
     private static CompletionDescriptor DummyInvocation => new("test", "test-spec", "test-model");

@@ -1,8 +1,6 @@
-using System;
-using Atelia.Completion.Abstractions;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Abstractions.Tests;
 
 public sealed class ToolParamSpecTests {
     [Fact]

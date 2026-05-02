@@ -1,8 +1,7 @@
 using System.Text;
-using Atelia.Completion.Anthropic;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicThinkingPayloadCodecTests {
     [Fact]

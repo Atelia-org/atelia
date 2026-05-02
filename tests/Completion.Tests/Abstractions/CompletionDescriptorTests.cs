@@ -1,11 +1,7 @@
-using System;
 using System.Collections.Immutable;
-using System.Threading;
-using System.Threading.Tasks;
-using Atelia.Completion.Abstractions;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Abstractions.Tests;
 
 public sealed class CompletionDescriptorTests {
     [Fact]

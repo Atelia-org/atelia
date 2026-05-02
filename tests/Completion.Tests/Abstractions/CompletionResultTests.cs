@@ -1,8 +1,6 @@
-using System.Collections.Generic;
-using Atelia.Completion.Abstractions;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Abstractions.Tests;
 
 public sealed class CompletionResultTests {
     private static readonly CompletionDescriptor Descriptor = new("provider", "spec", "model");

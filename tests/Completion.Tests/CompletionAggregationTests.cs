@@ -1,13 +1,10 @@
-using System;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
-using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Tests;
 
 public sealed class CompletionAggregationTests {
     private static readonly CompletionDescriptor Descriptor = new("anthropic", "anthropic-messages-v1", "claude-3");

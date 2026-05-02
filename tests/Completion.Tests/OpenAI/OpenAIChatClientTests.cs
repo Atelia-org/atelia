@@ -1,17 +1,12 @@
 using System.Collections.Immutable;
 using System.Net;
-using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Linq;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.OpenAI;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAIChatClientTests {
     [Fact]

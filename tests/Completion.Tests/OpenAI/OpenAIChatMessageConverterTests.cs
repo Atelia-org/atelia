@@ -1,13 +1,9 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.OpenAI;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAIChatMessageConverterTests {
     private static CompletionDescriptor DummyInvocation => new("api.deepseek.com", "openai-chat-v1", "deepseek-v4");

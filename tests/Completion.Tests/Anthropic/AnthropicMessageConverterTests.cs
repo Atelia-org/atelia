@@ -1,13 +1,9 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Anthropic;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicMessageConverterTests {
     [Fact]

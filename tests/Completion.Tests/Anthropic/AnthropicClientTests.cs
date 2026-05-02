@@ -1,13 +1,9 @@
-using System;
-using System.Net.Http;
 using System.Net;
 using System.Text;
-using System.Threading;
-using Atelia.Completion.Anthropic;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
-namespace Atelia.LiveContextProto.Tests;
+namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicClientTests {
     [Fact]
