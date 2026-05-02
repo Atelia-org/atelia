@@ -41,13 +41,13 @@ public sealed class AgentEngineIdleObservationTests {
     }
 
     [Fact]
-    public async Task IdleProviderIsSkippedWhenAdditionalNotificationProvided() {
+    public async Task IdleProviderIsSkippedWhenRecentEventsProvided() {
         var idle = new RecordingIdleProvider();
         var engine = new AgentEngine(idleProvider: idle);
 
         engine.WaitingInput += (_, args) => {
             args.ShouldContinue = true;
-            args.AdditionalNotification = new LevelOfDetailContent("real-notification");
+            args.Observation = IncomingObservation.FromRecentEvents(new LevelOfDetailContent("real-notification"));
         };
 
         var result = await engine.StepAsync(CreateNoOpProfile());
@@ -60,7 +60,7 @@ public sealed class AgentEngineIdleObservationTests {
     }
 
     [Fact]
-    public async Task IdleProviderIsSkippedWhenInputEntryProvided() {
+    public async Task IdleProviderIsSkippedWhenExplicitObservationEntryProvided() {
         var idle = new RecordingIdleProvider();
         var engine = new AgentEngine(idleProvider: idle);
 
@@ -69,7 +69,7 @@ public sealed class AgentEngineIdleObservationTests {
 
         engine.WaitingInput += (_, args) => {
             args.ShouldContinue = true;
-            args.InputEntry = explicitInput;
+            args.Observation = IncomingObservation.FromEntry(explicitInput);
         };
 
         var result = await engine.StepAsync(CreateNoOpProfile());

@@ -159,6 +159,24 @@ public record class ObservationEntry : HistoryEntry {
     }
 
     /// <summary>
+    /// （内部方法）将通知内容并入当前 observation。
+    /// 若当前条目尚无通知，则等价于首次赋值；否则按行拼接追加。
+    /// </summary>
+    internal void MergeNotifications(LevelOfDetailContent notifications) {
+        if (notifications is null) { throw new ArgumentNullException(nameof(notifications)); }
+
+        if (!_notificationsAssigned) {
+            _notifications = notifications;
+            _notificationsAssigned = true;
+            return;
+        }
+
+        _notifications = _notifications is null
+            ? notifications
+            : LevelOfDetailContent.Join("\n", _notifications, notifications);
+    }
+
+    /// <summary>
     /// 根据通知文本与窗口内容拼接统一的观测文本。
     /// </summary>
     /// <param name="notifications">可选的通知内容。</param>

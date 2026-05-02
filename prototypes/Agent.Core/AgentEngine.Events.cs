@@ -6,6 +6,41 @@ namespace Atelia.Agent.Core;
 public delegate Task PrepareInvocationAsyncHandler(PrepareInvocationEventArgs args, CancellationToken cancellationToken);
 
 /// <summary>
+/// 表示宿主在一次 <see cref="AgentRunState.WaitingInput"/> 决议中提交给引擎的 observation 草案。
+/// </summary>
+/// <remarks>
+/// 这是当前 decision boundary 的单一输入对象：宿主可以直接提供一条现成的 <see cref="ObservationEntry"/>，
+/// 也可以只补充一段 recent events 文本，由引擎组装为新的 observation。
+/// </remarks>
+public sealed class IncomingObservation {
+    public IncomingObservation(ObservationEntry? entry = null, LevelOfDetailContent? recentEvents = null) {
+        Entry = entry;
+        RecentEvents = recentEvents;
+    }
+
+    /// <summary>
+    /// 获取当前轮要提交的显式 observation 条目（可选）。
+    /// </summary>
+    public ObservationEntry? Entry { get; init; }
+
+    /// <summary>
+    /// 获取当前轮新增的 recent events 文本（可选）。
+    /// 引擎会把它与队列中的 pending notifications 一起并入最终 observation。
+    /// </summary>
+    public LevelOfDetailContent? RecentEvents { get; init; }
+
+    public static IncomingObservation FromEntry(ObservationEntry entry) {
+        if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
+        return new IncomingObservation(entry: entry);
+    }
+
+    public static IncomingObservation FromRecentEvents(LevelOfDetailContent recentEvents) {
+        if (recentEvents is null) { throw new ArgumentNullException(nameof(recentEvents)); }
+        return new IncomingObservation(recentEvents: recentEvents);
+    }
+}
+
+/// <summary>
 /// <see cref="AgentEngine.ResolveProfile"/> 事件的参数。
 /// </summary>
 public sealed class ResolveProfileEventArgs : EventArgs {
@@ -90,14 +125,9 @@ public sealed class WaitingInputEventArgs : EventArgs {
     public bool ShouldContinue { get; set; }
 
     /// <summary>
-    /// 获取或设置要追加的用户输入条目（可选）。
+    /// 获取或设置当前轮要提交的 observation 草案（可选）。
     /// </summary>
-    public ObservationEntry? InputEntry { get; set; }
-
-    /// <summary>
-    /// 获取或设置额外的主机通知内容（可选）。
-    /// </summary>
-    public LevelOfDetailContent? AdditionalNotification { get; set; }
+    public IncomingObservation? Observation { get; set; }
 }
 
 /// <summary>

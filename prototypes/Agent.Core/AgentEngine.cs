@@ -402,16 +402,15 @@ public partial class AgentEngine {
 
         if (!args.ShouldContinue) { return StepOutcome.NoProgress; }
 
-        if (args.AdditionalNotification is not null) {
-            _state.AppendNotification(args.AdditionalNotification);
-        }
+        var observation = args.Observation;
+        var inputEntry = observation?.Entry;
+        var recentEvents = observation?.RecentEvents;
 
-        var inputEntry = args.InputEntry;
         if (inputEntry is null) {
             // 上游决定推进但未提供任何输入：若此时连 pending notification 也没有，调用 idle provider 填充
             // 一条内源性"心跳"通知。这避免向下游 provider 提交"完全空"的 user 消息（会被 Anthropic 等拒绝），
             // 同时使"空推进"这个语义变成可配置的宛转点而不是 provider 层隐式兼容。
-            if (!_state.HasPendingNotification) {
+            if (recentEvents is null && !_state.HasPendingNotification) {
                 var idleContext = new IdleObservationContext {
                     UtcNow = _utcNowProvider(),
                     RecentHistory = _state.RecentHistory
@@ -423,13 +422,13 @@ public partial class AgentEngine {
                     return StepOutcome.NoProgress;
                 }
 
-                _state.AppendNotification(heartbeat);
+                recentEvents = heartbeat;
             }
 
             inputEntry = new ObservationEntry();
         }
 
-        var appended = _state.AppendObservation(inputEntry);
+        var appended = _state.AppendObservation(inputEntry, recentEvents);
 
         DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
 

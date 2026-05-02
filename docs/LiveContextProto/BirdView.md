@@ -1,5 +1,6 @@
 ## 架构鸟瞰
 - **AgentEngine（状态机核心）**：围绕 `AgentRunState` 驱动 Sense–Think–Act 循环，按状态分派等待输入、profile 决议、请求前准备、模型调用、工具执行、汇总结果等分支，并仅保留一组收敛后的扩展点（`WaitingInput`/`ResolveProfile`/`PrepareInvocationAsync`/`StateTransition`）开放宿主接入能力。
+- **WaitingInput 输入语义**：宿主在 decision boundary 上不再零散地分别塞 `InputEntry` / `AdditionalNotification`，而是统一提交一份 `IncomingObservation` 草案；引擎再把它与 pending notifications 合成为最终 observation。
 - **AgentState（历史存储）**：维护 `HistoryEntry` 列表、系统提示词与待注入的通知队列。各条目分为 `ObservationEntry`、`ActionEntry`、`ToolEntry`，都带时间戳和 `LevelOfDetailContent`，可按 Basic/Detail 两档输出。`ProjectContext()` 会回溯历史，优先给最近一条 Observation 使用 Detail，其余默认 Basic，并只在最合适的那一条注入由 App 输出的 `[Window]` 片段。
 - **Tool 与 App 生态**：`MethodToolWrapper` 负责把带 Attribute 的方法自动包装成 `ITool`；`DefaultAppHost` 聚合 App，并把每个 App 渲染的 Window 拼成统一视图。当前默认装配 `MemoryNotebookApp`，提供 `memory_notebook_replace` / `_replace_span` 工具和窗口快照。
 - **通知机制**：主机侧通过 `AppendNotification` 写入待处理通知，下一条 Observation 或 Tool 结果会自动附带，并可在模型失败重试前保留（TODO 文档还计划补强 ID 与确认语义）。

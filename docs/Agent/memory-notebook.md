@@ -74,7 +74,7 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 
 `AgentEngine` 暴露一组更收敛的扩展点，供宿主参与输入推进、profile 决议、请求前准备与状态观察：
 
-- `WaitingInput` — 当前状态为等待输入，宿主应提供一条 `ObservationEntry`
+- `WaitingInput` — 当前状态为等待输入，宿主应决议本轮的 `IncomingObservation`
 - `ResolveProfile` — 在构造模型请求前决议本次调用的最终 `LlmProfile`
 - `PrepareInvocationAsync` — 在最终 profile 已确定后、请求构造前刷新本轮所需的外部状态
 - `StateTransition` — `AgentRunState` 变更时触发
@@ -88,7 +88,7 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 ```text
 1. 宿主调 StepAsync()
    ├─ 状态 = WaitingInput → 触发 WaitingInput 事件
-   └─ 宿主提供 ObservationEntry（含用户消息 + pending notifications）
+   └─ 宿主提交 `IncomingObservation`（显式 ObservationEntry 或 recent events 草案）
 
 2. 状态 = PendingInput → 准备 LLM 调用
    ├─ 触发 ResolveProfile（宿主可决议最终 profile）

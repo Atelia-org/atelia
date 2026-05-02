@@ -4,8 +4,7 @@ namespace Atelia.Agent.Core;
 
 /// <summary>
 /// 在 Agent 处于 <see cref="AgentRunState.WaitingInput"/> 且事件处理器决定继续推进、
-/// 但既未提供 <see cref="WaitingInputEventArgs.InputEntry"/>、也未提供
-/// <see cref="WaitingInputEventArgs.AdditionalNotification"/>、且 <see cref="AgentState"/>
+/// 但既未提供 <see cref="WaitingInputEventArgs.Observation"/>、且 <see cref="AgentState"/>
 /// 中也没有任何待处理通知时被调用的"内源性观测"扩展点。
 /// </summary>
 /// <remarks>
