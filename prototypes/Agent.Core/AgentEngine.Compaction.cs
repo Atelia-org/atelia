@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
 using Atelia.Diagnostics;
@@ -163,6 +164,7 @@ public partial class AgentEngine {
             }
         }
 
+        DebugUtil.Trace(StateMachineDebugCategory, $"[Compacting] Preview built. splitIndex={splitIndex} prefixEntries={splitIndex}/{snapshot.Count} prefixTokens={prefixTokens}/{totalHistoryTokens}");
         return new CompactionPreview(
             SplitIndex: splitIndex,
             PrefixEntryCount: splitIndex,
@@ -439,6 +441,7 @@ public partial class AgentEngine {
         CompactionRequest request,
         CancellationToken cancellationToken
     ) {
+        var startTimestamp = Stopwatch.GetTimestamp();
         var snapshot = _state.RecentHistory;
         var softContextTokenCap = (ulong)profile.SoftContextTokenCap;
         var historyCountBefore = snapshot.Count;
@@ -488,6 +491,11 @@ public partial class AgentEngine {
         _state.ReplacePrefixWithRecap(splitIndex, summary);
         var historyCountAfter = _state.RecentHistory.Count;
         var tokensAfter = EstimateCurrentContextTokens();
+        var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+        DebugUtil.Info(
+            StateMachineDebugCategory,
+            $"[Compacting] Core compaction succeeded. splitIndex={splitIndex} history={historyCountBefore}→{historyCountAfter} tokens={tokensBefore}→{tokensAfter} summaryLen={summary.Length} elapsedMs={elapsed.TotalMilliseconds:F0}"
+        );
 
         return CompactionExecutionResult.Succeeded(
             splitIndex: splitIndex,

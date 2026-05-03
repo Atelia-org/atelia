@@ -24,6 +24,7 @@ public sealed class EnginePanelApp : IApp {
 
     private readonly Func<string, string, string> _buildSystemPrompt;
     private readonly string _summarizePrompt;
+    private readonly ITool _compressTool;
 
     public EnginePanelApp(
         AgentEngine engine,
@@ -35,9 +36,11 @@ public sealed class EnginePanelApp : IApp {
         _buildSystemPrompt = BuildSystemPromptFactory(systemPromptTemplate);
         _summarizePrompt = summarizePrompt ?? ContextCompressionPrompts.DefaultSummarizePrompt;
 
-        Tools = new ITool[] {
-            MethodToolWrapper.FromDelegate<string?, string?>(CompressAsync),
-        };
+        _compressTool = MethodToolWrapper.FromDelegate<string?, string?>(CompressAsync);
+        // 工具初始对 LLM 不可见；在 RenderWindow 计算阈值后再决定是否可见，
+        // 保证工具出现时机与提示窗口完全对齐，避免模型在低 token 占比时被不必要地分心。
+        _compressTool.Visible = false;
+        Tools = new ITool[] { _compressTool };
     }
 
     /// <summary>
@@ -62,8 +65,13 @@ public sealed class EnginePanelApp : IApp {
         var remaining = tokens >= capValue ? 0UL : capValue - tokens;
         var profileName = profile.Name;
 
-        if (percentage < 85.0) { return null; }
+        if (percentage < 85.0) {
+            _compressTool.Visible = false;
+            return null;
+        }
 
+        _compressTool.Visible = true;
+        DebugUtil.Info(DebugCategory, $"[ctx_compress] Window visible. tokens={tokens}/{capValue} ({percentage:F1}%) remaining={remaining} profile={profileName}");
         return BuildActionWindow(tokens, capValue, percentage, remaining, profileName, context.EstimatedCompactionPreview);
     }
 
@@ -118,6 +126,7 @@ public sealed class EnginePanelApp : IApp {
             return Fail(BuildCompactionFailureMessage(outcome));
         }
 
+        DebugUtil.Info(DebugCategory, $"[ctx_compress] Succeeded. before={FormatPercent(outcome.BeforeCapacityRatio)} after={FormatPercent(outcome.AfterCapacityRatio)} released={FormatPercent(outcome.ReleasedCapacityRatio)} history={outcome.HistoryCountBefore}→{outcome.HistoryCountAfter} summaryLen={outcome.SummaryLength}");
         return Ok(BuildCompactionSuccessMessage(outcome));
     }
 

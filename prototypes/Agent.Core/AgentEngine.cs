@@ -491,6 +491,7 @@ public partial class AgentEngine {
         // 软上下文上限检查：在最终 profile 已确定后、构造 liveContext 前执行。
         // 这样窗口渲染、上下文投影、cap 判定与最终调用 profile 始终保持一致。
         var cap = resolvedProfile.SoftContextTokenCap;
+        DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Context tokens estimate={estimatedContextTokens}/{cap} ({(cap > 0 ? (double)estimatedContextTokens / cap * 100.0 : 0):F1}%)");
         if (estimatedContextTokens >= cap) {
             if (TryRequestAutoCompaction()) {
                 DebugUtil.Info(
