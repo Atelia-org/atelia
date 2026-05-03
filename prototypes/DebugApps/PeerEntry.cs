@@ -22,7 +22,7 @@ public static class PeerEntry {
     private const string DefaultProfileName = "anthropic-v1";
 
     private static AnthropicClient s_client = new(apiKey: null, baseAddress: new Uri(DefaultEndpoint));
-    private static LlmProfile s_profile = new(s_client, DefaultModel, DefaultProfileName);
+    private static LlmProfile s_profile = new(s_client, DefaultModel, DefaultProfileName, 64000);
     private static CharacterAgent s_agent = CreateAgent();
     private static DurableTextApp? s_dtApp;
 
