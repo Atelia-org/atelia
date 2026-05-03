@@ -315,13 +315,32 @@ public partial class AgentEngine {
     /// 该约束为后续 thinking/reasoning 内容的窗口化注入提供前提保证。
     /// </para>
     /// </remarks>
-    public async Task<AgentStepResult> StepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
+    public Task<AgentStepResult> StepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
+        return StepAsync(profile, completionObserver: null, cancellationToken);
+    }
+
+    /// <summary>
+    /// 执行 Agent 状态机的单步推进，并将本次模型调用的流式输出转发给指定 observer。
+    /// </summary>
+    /// <param name="profile">LLM 配置文件。</param>
+    /// <param name="completionObserver">本次真实模型调用使用的流式观察者；当前步若未触发模型调用则忽略。</param>
+    /// <param name="cancellationToken">取消令牌（可选）。</param>
+    /// <returns>包含本次步进结果的 <see cref="AgentStepResult"/>。</returns>
+    /// <remarks>
+    /// 每次 <see cref="StepAsync(LlmProfile, CompletionStreamObserver?, CancellationToken)"/> 最多只会转发一次真实模型调用。
+    /// 如宿主需要跨多步持续观察一个完整 turn（例如工具往返后的二次模型调用），应在外层推进循环中为每次步进传入新的 observer。
+    /// </remarks>
+    public async Task<AgentStepResult> StepAsync(
+        LlmProfile profile,
+        CompletionStreamObserver? completionObserver,
+        CancellationToken cancellationToken = default
+    ) {
         if (profile is null) { throw new ArgumentNullException(nameof(profile)); }
 
         var stateBefore = DetermineState();
         LogStateIfChanged(stateBefore);
 
-        var outcome = await ExecuteStateAsync(stateBefore, profile, cancellationToken).ConfigureAwait(false);
+        var outcome = await ExecuteStateAsync(stateBefore, profile, completionObserver, cancellationToken).ConfigureAwait(false);
 
         var stateAfter = DetermineState();
         LogStateIfChanged(stateAfter);
@@ -375,13 +394,18 @@ public partial class AgentEngine {
             : AgentRunState.WaitingToolResults;
     }
 
-    private async Task<StepOutcome> ExecuteStateAsync(AgentRunState state, LlmProfile profile, CancellationToken cancellationToken) {
+    private async Task<StepOutcome> ExecuteStateAsync(
+        AgentRunState state,
+        LlmProfile profile,
+        CompletionStreamObserver? completionObserver,
+        CancellationToken cancellationToken
+    ) {
         switch (state) {
             case AgentRunState.WaitingInput:
                 return ProcessWaitingInput();
             case AgentRunState.PendingInput:
             case AgentRunState.PendingToolResults:
-                return await ProcessPendingModelCallAsync(state, profile, cancellationToken).ConfigureAwait(false);
+                return await ProcessPendingModelCallAsync(state, profile, completionObserver, cancellationToken).ConfigureAwait(false);
             case AgentRunState.WaitingToolResults:
                 return await ProcessWaitingToolResultsAsync(cancellationToken).ConfigureAwait(false);
             case AgentRunState.ToolResultsReady:
@@ -435,7 +459,12 @@ public partial class AgentEngine {
         return StepOutcome.FromInput(appended);
     }
 
-    private async Task<StepOutcome> ProcessPendingModelCallAsync(AgentRunState state, LlmProfile profile, CancellationToken cancellationToken) {
+    private async Task<StepOutcome> ProcessPendingModelCallAsync(
+        AgentRunState state,
+        LlmProfile profile,
+        CompletionStreamObserver? completionObserver,
+        CancellationToken cancellationToken
+    ) {
         var resolveArgs = new ResolveProfileEventArgs(state, profile);
         OnResolveProfile(resolveArgs);
 
@@ -492,7 +521,7 @@ public partial class AgentEngine {
 
         var request = new CompletionRequest(resolvedProfile.ModelId, SystemPrompt, liveContext, toolDefinitions);
 
-        var result = await resolvedProfile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
+        var result = await resolvedProfile.Client.StreamCompletionAsync(request, completionObserver, cancellationToken).ConfigureAwait(false);
         EnsureCompletionInvocationMatchesExpected(invocation, result.Invocation);
         var aggregatedOutput = new ActionEntry(result.Message, invocation);
 

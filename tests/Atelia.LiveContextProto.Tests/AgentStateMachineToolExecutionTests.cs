@@ -360,6 +360,44 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal(AgentRunState.PendingInput, step.StateAfter);
     }
 
+    [Fact]
+    public async Task StepAsync_ForwardsCompletionObserverToProvider() {
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(
+                    agg => agg.AppendContent("streamed-text"),
+                    agg => agg.AppendToolCall(
+                        CreateToolCallRequest(
+                            "echo",
+                            "call-stream",
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["payload"] = "value" }
+                        )
+                    )
+                )
+            }
+        );
+
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId, SoftContextTokenCap: 64_000u);
+        var engine = CreateEngine();
+        var observedText = string.Empty;
+        RawToolCall? observedToolCall = null;
+
+        engine.AppendNotification("trigger stream observer");
+        await engine.StepAsync(profile);
+
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedTextDelta += delta => observedText += delta;
+        observer.ReceivedToolCall += toolCall => observedToolCall = toolCall;
+
+        var step = await engine.StepAsync(profile, observer);
+
+        Assert.NotNull(step.Output);
+        Assert.Equal("streamed-text", observedText);
+        Assert.NotNull(observedToolCall);
+        Assert.Equal("echo", observedToolCall!.ToolName);
+        Assert.Equal("{\"payload\":\"value\"}", observedToolCall.RawArgumentsJson);
+    }
+
     private static AgentEngine CreateEngine(params ITool[] tools) {
         var engine = new AgentEngine();
 
