@@ -312,14 +312,11 @@ public sealed class AgentEngineTurnLockTests {
         Assert.Equal(descriptor, turn.LockedInvocation);
     }
 
-    private static ParsedToolCall MakeToolCall(string toolName, string callId) {
-        return new ParsedToolCall(
+    private static RawToolCall MakeToolCall(string toolName, string callId) {
+        return new RawToolCall(
             toolName,
             callId,
-            ImmutableDictionary<string, string>.Empty,
-            ImmutableDictionary<string, object?>.Empty,
-            null,
-            null
+            "{}"
         );
     }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Text.Json;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Tool;
@@ -372,14 +373,23 @@ public sealed class AgentStateMachineToolExecutionTests {
         return engine;
     }
 
-    private static ParsedToolCall CreateToolCallRequest(
+    private static RawToolCall CreateToolCallRequest(
         string toolName,
         string callId,
         IReadOnlyDictionary<string, string>? rawArguments,
         IReadOnlyDictionary<string, object?>? arguments = null
     ) {
-        var materializedArguments = arguments ?? ImmutableDictionary<string, object?>.Empty;
-        return new(toolName, callId, rawArguments, materializedArguments, null, null);
+        if (rawArguments is { Count: > 0 }) {
+            var json = JsonSerializer.Serialize(rawArguments.ToDictionary(pair => pair.Key, pair => pair.Value));
+            return new(toolName, callId, json);
+        }
+
+        if (arguments is { Count: > 0 }) {
+            var json = JsonSerializer.Serialize(arguments);
+            return new(toolName, callId, json);
+        }
+
+        return new(toolName, callId, "{}");
     }
 
     private static Action<CompletionAggregator>[] CreateDeltaSequence(params Action<CompletionAggregator>[] feeds) => feeds;

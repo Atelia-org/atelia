@@ -103,7 +103,7 @@ public abstract record ActionBlock {
         public override ActionBlockKind Kind => ActionBlockKind.Text;
     }
 
-    public sealed record ToolCall(ParsedToolCall Call) : ActionBlock {
+    public sealed record ToolCall(RawToolCall Call) : ActionBlock {
         public override ActionBlockKind Kind => ActionBlockKind.ToolCall;
     }
 
@@ -160,7 +160,7 @@ namespace Atelia.Completion.Abstractions;
 /// </summary>
 public sealed record ActionMessage : IHistoryMessage {
     public IReadOnlyList<ActionBlock> Blocks { get; }
-    public IReadOnlyList<ParsedToolCall> ToolCalls { get; }
+    public IReadOnlyList<RawToolCall> ToolCalls { get; }
     public string GetFlattenedText() => string.Concat(
         Blocks.OfType<ActionBlock.Text>().Select(b => b.Content)
     );
@@ -282,7 +282,7 @@ public enum CompletionChunkKind {
 public sealed record CompletionChunk {
     public CompletionChunkKind Kind { get; init; }
     public string? Content { get; init; }
-    public ParsedToolCall? ToolCall { get; init; }
+    public RawToolCall? ToolCall { get; init; }
     public ThinkingChunk? Thinking { get; init; }    // 新增
     public string? Error { get; init; }
     public TokenUsage? TokenUsage { get; init; }
@@ -390,7 +390,7 @@ internal sealed class CompletionAccumulator {
 - 新增 `ActionBlock` sum type（仅 `Text` / `ToolCall` 两个子类型）
 - 新增 `ActionMessage : IHistoryMessage`，并以 `Blocks` 作为唯一真相源
 - `ActionEntry` 主构造参数改为 `ActionMessage Message`
-- 删除旧构造重载（`string content + IReadOnlyList<ParsedToolCall> toolCalls + CompletionDescriptor`）
+- 删除旧构造重载（`string content + IReadOnlyList<RawToolCall> toolCalls + CompletionDescriptor`）
 - `GetFlattenedText()` / `ToolCalls` 成为 `ActionMessage` 上的派生视图
 - `CompletionAccumulator` 内部改用 Blocks 累积
 

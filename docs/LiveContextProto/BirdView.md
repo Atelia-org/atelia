@@ -8,7 +8,7 @@
 ## 历史管理现状
 - **写入即生成双 LOD**：所有新增条目都要求在写入时就准备好 Basic/Detail，两档内容可通过 `LevelOfDetailContent.Join` 聚合，避免渲染期做昂贵裁剪。
 - **上下文渲染策略**：`AgentEngine.ProjectContext()` 先向各 App 拉取 `[Window]`，再委托 `AgentState` 将历史投影成 `IHistoryMessage` 列表。Detail 主要保留最近一条 Observation，其余条目走 Basic，适配不同模型上下文预算。
-- **模型调用与工具回填**：`CompletionAccumulator` 聚合流式 delta；工具调用流程会按照模型给出的 `ParsedToolCall` 顺序执行，结果暂存 `_pendingToolResults`，等全部到齐再生成一条 `ToolEntry`。失败会从 Basic 内容中摘取摘要写入 `ExecuteError`。
+- **模型调用与工具回填**：`CompletionAccumulator` 聚合流式 delta；工具调用流程会按照模型给出的 `RawToolCall` 顺序执行，结果暂存 `_pendingToolResults`，等全部到齐再生成一条 `ToolEntry`。参数会在 `ToolExecutor` 执行边界按当前工具定义解析；失败会从 Basic 内容中摘取摘要写入 `ExecuteError`。
 
 ## Memory Notebook 与潜在 Recap 接入点
 - Memory Notebook 作为内建 App，窗口渲染在最新上下文中始终可见，工具调用返回的 LOD 文案也能提醒操作差异（长度、锚点等）。

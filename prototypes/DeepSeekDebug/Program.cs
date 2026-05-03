@@ -132,7 +132,7 @@ internal static class Program {
             foreach (var toolCall in toolCalls) {
                 var toolResult = ExecuteTool(toolCall);
                 toolResults.Add(toolResult);
-                Console.WriteLine($"[tool] {toolCall.ToolName}({FormatArguments(toolCall.Arguments)}) => {toolResult.Result}");
+                Console.WriteLine($"[tool] {toolCall.ToolName}({FormatArguments(toolCall.RawArgumentsJson)}) => {toolResult.Result}");
             }
 
             context.Add(new ToolResultsMessage(Content: null, Results: toolResults, ExecuteError: null));
@@ -188,7 +188,7 @@ internal static class Program {
         }
     }
 
-    private static ToolResult ExecuteTool(ParsedToolCall toolCall) {
+    private static ToolResult ExecuteTool(RawToolCall toolCall) {
         return toolCall.ToolName switch {
             "get_date" => new ToolResult(
                 ToolName: toolCall.ToolName,
@@ -206,18 +206,24 @@ internal static class Program {
         };
     }
 
-    private static string BuildWeatherResult(ParsedToolCall toolCall) {
-        if (toolCall.Arguments is null) {
-            throw new InvalidOperationException($"Tool '{toolCall.ToolName}' arguments are null. parseError={toolCall.ParseError}");
+    private static string BuildWeatherResult(RawToolCall toolCall) {
+        using var document = JsonDocument.Parse(toolCall.RawArgumentsJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object) {
+            throw new InvalidOperationException($"Tool '{toolCall.ToolName}' arguments must be a JSON object.");
         }
 
-        var location = GetRequiredStringArgument(toolCall.Arguments, "location");
-        var date = GetRequiredStringArgument(toolCall.Arguments, "date");
+        var location = GetRequiredStringArgument(document.RootElement, "location");
+        var date = GetRequiredStringArgument(document.RootElement, "date");
         return $"{location}: Cloudy 7~13°C on {date}";
     }
 
-    private static string GetRequiredStringArgument(IReadOnlyDictionary<string, object?> arguments, string name) {
-        if (!arguments.TryGetValue(name, out var value) || value is not string text || string.IsNullOrWhiteSpace(text)) {
+    private static string GetRequiredStringArgument(JsonElement arguments, string name) {
+        if (!arguments.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String) {
+            throw new InvalidOperationException($"Missing required string argument '{name}'.");
+        }
+
+        var text = value.GetString();
+        if (string.IsNullOrWhiteSpace(text)) {
             throw new InvalidOperationException($"Missing required string argument '{name}'.");
         }
 
@@ -237,12 +243,12 @@ internal static class Program {
         }
     }
 
-    private static string FormatArguments(IReadOnlyDictionary<string, object?>? arguments) {
-        if (arguments is null || arguments.Count == 0) {
+    private static string FormatArguments(string rawArgumentsJson) {
+        if (string.IsNullOrWhiteSpace(rawArgumentsJson) || rawArgumentsJson == "{}") {
             return string.Empty;
         }
 
-        return string.Join(", ", arguments.Select(pair => $"{pair.Key}={pair.Value}"));
+        return rawArgumentsJson;
     }
 
     private static string FormatPreview(string? text) {

@@ -564,7 +564,7 @@ public partial class AgentEngine {
         return StepOutcome.FromToolResults(appended);
     }
 
-    private ParsedToolCall? FindNextPendingToolCall(ActionEntry outputEntry) {
+    private RawToolCall? FindNextPendingToolCall(ActionEntry outputEntry) {
         if (outputEntry.Message.ToolCalls is not { Count: > 0 }) { return null; }
 
         foreach (var call in outputEntry.Message.ToolCalls) {

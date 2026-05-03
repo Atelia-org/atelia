@@ -3,35 +3,14 @@ using System.Globalization;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
 
-namespace Atelia.Completion.Utils;
+namespace Atelia.Agent.Core.Tool;
 
-/// <summary>
-/// Provides JSON based argument parsing for providers that receive tool calls as structured payloads.
-/// </summary>
-/// <remarks>
-/// Parsing always attempts to recover original parameter text so that callers can rehydrate failed invocations.
-/// </remarks>
 internal static class JsonArgumentParser {
     private static readonly JsonDocumentOptions DocumentOptions = new() {
         AllowTrailingCommas = true,
         CommentHandling = JsonCommentHandling.Skip
     };
 
-    // public static ToolCallRequest CreateRequest(ITool tool, string toolCallId, string rawArguments) {
-    //     if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
-    //     if (toolCallId is null) { throw new ArgumentNullException(nameof(toolCallId)); }
-
-    //     var result = ParseArguments(tool, rawArguments);
-    //     return new ToolCallRequest(tool.Name, toolCallId, rawArguments ?? string.Empty, result.Arguments, result.ParseError, result.ParseWarning);
-    // }
-
-    /// <summary>
-    /// Parses raw JSON arguments against the parameter specification.
-    /// </summary>
-    /// <remarks>
-    /// Even when an individual parameter fails to parse, the raw textual representation is preserved in the returned
-    /// <see cref="ToolArgumentParsingResult.RawArguments"/> map.
-    /// </remarks>
     public static ToolArgumentParsingResult ParseArguments(IReadOnlyList<ToolParamSpec> parameters, string rawArguments) {
         if (parameters is null) { throw new ArgumentNullException(nameof(parameters)); }
 
@@ -142,9 +121,6 @@ internal static class JsonArgumentParser {
             _ => ParseResult.CreateError("unsupported_value_kind")
         };
 
-        if (!result.IsSuccess) { return result; }
-
-        // TODO: 引入统一的参数约束校验流程（枚举、范围等），在此处接入。
         return result;
     }
 
@@ -169,9 +145,7 @@ internal static class JsonArgumentParser {
 
     private static ParseResult ParseBooleanString(string? text) {
         if (string.Equals(text, "true", StringComparison.OrdinalIgnoreCase)) { return ParseResult.CreateSuccess(true, "string_literal_converted_to_boolean"); }
-
         if (string.Equals(text, "false", StringComparison.OrdinalIgnoreCase)) { return ParseResult.CreateSuccess(false, "string_literal_converted_to_boolean"); }
-
         return ParseResult.CreateError("invalid_boolean_string");
     }
 
@@ -376,9 +350,6 @@ internal static class JsonArgumentParser {
         public string? Error { get; }
 
         public static ParseResult CreateSuccess(object? value, string? warning = null)
-            => new(true, value, warning, null);
-
-        public static ParseResult CreateWarning(object? value, string warning)
             => new(true, value, warning, null);
 
         public static ParseResult CreateError(string error)

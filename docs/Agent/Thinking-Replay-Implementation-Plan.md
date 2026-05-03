@@ -82,7 +82,7 @@
    - `CompletionDescriptor Invocation`
 3. 保留旧构造重载：
    - `string content`
-   - `IReadOnlyList<ParsedToolCall> toolCalls`
+   - `IReadOnlyList<RawToolCall> toolCalls`
    - `CompletionDescriptor invocation`
 4. `Content` / `ToolCalls` 改为派生视图
 5. `CompletionAccumulator` 内部改为按 `ActionBlock` 累积

@@ -1,7 +1,4 @@
 using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Globalization;
 using System.Threading;
 using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
@@ -143,7 +140,7 @@ public sealed class TokenEstimateHelper {
         return total;
     }
 
-    private uint EstimateToolCalls(IReadOnlyList<ParsedToolCall> toolCalls) {
+    private uint EstimateToolCalls(IReadOnlyList<RawToolCall> toolCalls) {
         if (toolCalls is not { Count: > 0 }) { return 0; }
 
         uint total = 0;
@@ -151,80 +148,7 @@ public sealed class TokenEstimateHelper {
         foreach (var call in toolCalls) {
             total += EstimateString(call.ToolName);
             total += EstimateString(call.ToolCallId);
-            var rawArgumentsEstimate = EstimateRawArguments(call.RawArguments);
-            var argumentsEstimate = EstimateParsedArguments(call.Arguments);
-            total += Math.Max(rawArgumentsEstimate, argumentsEstimate);
-            // total += EstimateString(call.ParseError); 是元信息，不会序列化到LLM调用上下文中
-            // total += EstimateString(call.ParseWarning); 是元信息，不会序列化到LLM调用上下文中
-        }
-
-        return total;
-    }
-
-    private uint EstimateRawArguments(IReadOnlyDictionary<string, string>? rawArguments) {
-        if (rawArguments is null || rawArguments.Count == 0) { return 0; }
-
-        uint total = 0;
-
-        foreach (var kvp in rawArguments) {
-            total += EstimateString(kvp.Key);
-            total += EstimateString(kvp.Value);
-        }
-
-        return total;
-    }
-
-    private uint EstimateParsedArguments(IReadOnlyDictionary<string, object?>? parsedArguments) {
-        if (parsedArguments is null || parsedArguments.Count == 0) { return 0; }
-
-        uint total = 0;
-
-        foreach (var kvp in parsedArguments) {
-            total += EstimateString(kvp.Key);
-            total += EstimateArgumentValue(kvp.Value);
-        }
-
-        return total;
-    }
-
-    private uint EstimateArgumentValue(object? value) {
-        if (value is null) { return 0; }
-
-        if (value is string text) { return EstimateString(text); }
-        if (value is Enum enumValue) { return EstimateString(enumValue.ToString()); }
-
-        if (value is IReadOnlyDictionary<string, object?> nestedReadonlyDictionary) {
-            uint nestedTotal = 0;
-            foreach (var kvp in nestedReadonlyDictionary) {
-                nestedTotal += EstimateString(kvp.Key);
-                nestedTotal += EstimateArgumentValue(kvp.Value);
-            }
-
-            return nestedTotal;
-        }
-
-        if (value is IDictionary dictionary) {
-            uint nestedTotal = 0;
-            foreach (DictionaryEntry entry in dictionary) {
-                nestedTotal += EstimateArgumentValue(entry.Key);
-                nestedTotal += EstimateArgumentValue(entry.Value);
-            }
-
-            return nestedTotal;
-        }
-
-        if (value is IFormattable formattable) { return EstimateString(formattable.ToString(null, CultureInfo.InvariantCulture)); }
-
-        if (value is IEnumerable enumerable) { return EstimateEnumerable(enumerable); }
-
-        return EstimateString(value.ToString());
-    }
-
-    private uint EstimateEnumerable(IEnumerable enumerable) {
-        uint total = 0;
-
-        foreach (var item in enumerable) {
-            total += EstimateArgumentValue(item);
+            total += EstimateString(call.RawArgumentsJson);
         }
 
         return total;

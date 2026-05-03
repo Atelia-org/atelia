@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace Atelia.Completion.Utils;
+namespace Atelia.Agent.Core.Tool;
 
 internal sealed record ToolArgumentParsingResult(
     ImmutableDictionary<string, object?> Arguments,

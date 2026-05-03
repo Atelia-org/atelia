@@ -83,7 +83,7 @@ internal sealed class ToolExecutor {
     }
 
     public async ValueTask<LodToolCallResult> ExecuteAsync(
-        ParsedToolCall request,
+        RawToolCall request,
         CancellationToken cancellationToken
     ) {
         DebugUtil.Info(DebugCategory, $"[Executor] Dispatch toolName={request.ToolName} toolCallId={request.ToolCallId}");
@@ -100,26 +100,20 @@ internal sealed class ToolExecutor {
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var normalizedRequest = request;
+        var resolvedRequest = ResolveToolCall(request, tool);
 
-        if (normalizedRequest.Arguments is null && string.IsNullOrWhiteSpace(normalizedRequest.ParseError)) {
-            normalizedRequest = normalizedRequest with {
-                ParseError = "arguments_missing_from_provider"
-            };
-        }
-
-        if (!string.IsNullOrWhiteSpace(normalizedRequest.ParseError)) {
+        if (!string.IsNullOrWhiteSpace(resolvedRequest.ParseError)) {
             stopwatch.Stop();
             DebugUtil.Warning(
                 DebugCategory,
-                $"[Executor] Argument parse failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={normalizedRequest.ParseError}"
+                $"[Executor] Argument parse failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={resolvedRequest.ParseError}"
             );
 
-            return CreateParseFailureResult(normalizedRequest);
+            return CreateParseFailureResult(request, resolvedRequest);
         }
 
         try {
-            var arguments = normalizedRequest.Arguments ?? ImmutableDictionary<string, object?>.Empty;
+            var arguments = resolvedRequest.Arguments;
             var executeResult = await tool.ExecuteAsync(arguments, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Tool '{tool.Name}' returned null result.");
             stopwatch.Stop();
@@ -129,7 +123,7 @@ internal sealed class ToolExecutor {
                 $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            var enrichedContent = AttachParseWarning(executeResult.Result, normalizedRequest.ParseWarning);
+            var enrichedContent = AttachParseWarning(executeResult.Result, resolvedRequest.ParseWarning);
             var callResult = new LodToolCallResult(new LodToolExecuteResult(executeResult.Status, enrichedContent), request.ToolName, request.ToolCallId, stopwatch.Elapsed);
             return callResult;
         }
@@ -159,15 +153,35 @@ internal sealed class ToolExecutor {
         }
     }
 
-    private static LodToolCallResult CreateParseFailureResult(ParsedToolCall request) {
-        var basic = "工具参数解析失败。";
-        var detail = string.IsNullOrWhiteSpace(request.ParseError)
-            ? basic
-            : $"解析错误: {request.ParseError}";
+    private ResolvedToolCall ResolveToolCall(RawToolCall request, ITool tool) {
+        if (!_definitionByInstance.TryGetValue(tool, out var definition)) {
+            return new ResolvedToolCall(
+                request.ToolName,
+                request.ToolCallId,
+                ImmutableDictionary<string, object?>.Empty,
+                "tool_definition_missing",
+                null
+            );
+        }
 
-        if (request.RawArguments is { Count: > 0 }) {
-            var snapshot = string.Join(", ", request.RawArguments.Select(pair => $"{pair.Key}={pair.Value}"));
-            detail = string.Concat(detail, "\nraw_arguments: ", snapshot);
+        var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, request.RawArgumentsJson);
+        return new ResolvedToolCall(
+            request.ToolName,
+            request.ToolCallId,
+            parsed.Arguments,
+            parsed.ParseError,
+            parsed.ParseWarning
+        );
+    }
+
+    private static LodToolCallResult CreateParseFailureResult(RawToolCall request, ResolvedToolCall resolvedRequest) {
+        var basic = "工具参数解析失败。";
+        var detail = string.IsNullOrWhiteSpace(resolvedRequest.ParseError)
+            ? basic
+            : $"解析错误: {resolvedRequest.ParseError}";
+
+        if (!string.IsNullOrWhiteSpace(request.RawArgumentsJson)) {
+            detail = string.Concat(detail, "\nraw_arguments_json: ", request.RawArgumentsJson);
         }
 
         return new LodToolCallResult(

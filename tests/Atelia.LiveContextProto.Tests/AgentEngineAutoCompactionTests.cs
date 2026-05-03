@@ -341,8 +341,8 @@ public sealed class AgentEngineAutoCompactionTests {
 
     private static Action<CompletionAggregator>[] CreateDeltaSequence(params Action<CompletionAggregator>[] feeds) => feeds;
 
-    private static ParsedToolCall MakeToolCall(string toolName, string callId) =>
-        new(toolName, callId, ImmutableDictionary<string, string>.Empty, ImmutableDictionary<string, object?>.Empty, null, null);
+    private static RawToolCall MakeToolCall(string toolName, string callId) =>
+        new(toolName, callId, "{}");
 
     // ──── Fake ────
 
