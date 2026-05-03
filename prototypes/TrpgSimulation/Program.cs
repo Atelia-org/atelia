@@ -96,8 +96,9 @@ public static class Program {
 
             // ─── Player 回合 ───
             if (lastGmText is not null) {
-                // 注入当前时间状态
-                var playerInput = $"[系统] 当前时间：{timeLabel}。\n{lastGmText}";
+                var playerInput = pack.GmToPlayerEnvelope
+                    .Replace("{time}", timeLabel)
+                    .Replace("{content}", lastGmText);
                 playerEngine.AppendNotification(playerInput);
             }
             else {
@@ -135,21 +136,32 @@ public static class Program {
 
             // ─── GM 回合 ───
             if (playerText is not null) {
-                var gmInput = $"[系统] 当前时间：{timeLabel}。\n{playerText}";
+                var gmInput = pack.PlayerToGmEnvelope
+                    .Replace("{time}", timeLabel)
+                    .Replace("{content}", playerText);
                 gmEngine.AppendNotification(gmInput);
             }
 
             lastGmText = await DrainUntilOutput(gmEngine, gmProfile, GmStyle);
             if (lastGmText is not null) {
-                // 重复检测：与最近 2 轮 GM 输出比较
-                if (IsRepetitive(lastGmText, recentGmTexts, threshold: 0.7)) {
+                // 格式校验：GM 输出不应含【内心】【行动】（说明串台了）
+                if (HasPlayerFormat(lastGmText)) {
+                    WriteSystemLine($"[系统] GM 输出含【内心】/【行动】格式，疑似串台，注入纠偏");
+                    gmEngine.AppendNotification(
+                        "[系统] 你刚才的输出包含了【内心】或【行动】格式，这是玩家格式，不是 GM 格式。" +
+                        "你是 1990 年的物理世界，绝不输出【内心】或【行动】。" +
+                        "请重新以第二人称世界叙述的方式，描述刚才那个时刻的场景与感官。"
+                    );
+                    lastGmText = await DrainUntilOutput(gmEngine, gmProfile, GmStyle);
+                }
+
+                // 重复检测
+                if (lastGmText is not null && IsRepetitive(lastGmText, recentGmTexts, threshold: 0.7)) {
                     WriteSystemLine($"[系统] 检测到 GM 重复输出，注入纠偏提示");
                     gmEngine.AppendNotification(
-                        "[系统] 你刚才的叙述与上一轮高度相似。立即引入一个新事件打破重复——" +
-                        "妈妈推门进来、窗外有人喊、电话铃响了、爸爸回家了、电视里动画片开始了——" +
-                        "选一个日常事件。时间必须推进，场景必须变化。"
+                        "[系统] 你刚才的叙述与上一轮高度相似。引入一个新的具体变化——" +
+                        "时间推进、光线变化、家人动静、窗外声音——让这个下午继续流动。"
                     );
-                    // 重试一次
                     lastGmText = await DrainUntilOutput(gmEngine, gmProfile, GmStyle);
                 }
 
@@ -223,6 +235,10 @@ public static class Program {
         WriteSystemLine("[警告] DrainUntilOutput 步数耗尽，强制返回 null");
         return null;
     }
+
+    /// <summary>检测文本是否含有玩家专属格式（串台检测）。</summary>
+    private static bool HasPlayerFormat(string text) =>
+        text.Contains("【内心】") || text.Contains("【行动】");
 
     /// <summary>
     /// 简易重复检测：将文本归一化后与历史输出比较字符级相似度。
