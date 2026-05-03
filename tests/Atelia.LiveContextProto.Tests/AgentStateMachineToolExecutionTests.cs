@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Reflection;
 using System.Text.Json;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
@@ -335,6 +336,45 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     [Fact]
+    public async Task ContextCompressionWindow_IncludesEstimatedCompactionRangePreview() {
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(agg => agg.AppendContent("turn-1 reply")),
+                CreateDeltaSequence(agg => agg.AppendContent("turn-2 reply")),
+                CreateDeltaSequence(agg => agg.AppendContent("turn-3 reply"))
+            }
+        );
+
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId, SoftContextTokenCap: 1u);
+        var engine = CreateEngine();
+
+        engine.AppendNotification("turn-1 note");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        engine.AppendNotification("turn-2 note");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        engine.AppendNotification("turn-3 note");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        var request = provider.CapturedRequests[2];
+        var window = Assert.Single(
+            request.Context.OfType<ObservationMessage>(),
+            message => message.Content is not null && message.Content.Contains("## ContextCompression", StringComparison.Ordinal)
+        );
+
+        Assert.Contains("预计压缩范围", window.Content, StringComparison.Ordinal);
+        Assert.Contains("边界前最后一条", window.Content, StringComparison.Ordinal);
+        Assert.Contains("边界后第一条保留内容", window.Content, StringComparison.Ordinal);
+        Assert.Contains("turn-2 note", window.Content, StringComparison.Ordinal);
+        Assert.Contains("turn-2 reply", window.Content, StringComparison.Ordinal);
+        Assert.Contains("keep_hints", window.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PrepareInvocationAsync_CanCancelCurrentModelCall() {
         var provider = new FakeProviderClient(
             new[] {
@@ -358,6 +398,65 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Null(step.Output);
         Assert.Empty(provider.CapturedRequests);
         Assert.Equal(AgentRunState.PendingInput, step.StateAfter);
+    }
+
+    [Fact]
+    public async Task PrepareInvocationAsync_RequestCompaction_DefersCurrentModelCallUntilCompactionCompletes() {
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(agg => agg.AppendContent("turn-1 reply")),
+                CreateDeltaSequence(agg => agg.AppendContent("turn-2 reply")),
+                CreateDeltaSequence(agg => agg.AppendContent("summary-text")),
+                CreateDeltaSequence(agg => agg.AppendContent("after-prepare-compaction"))
+            }
+        );
+
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId, SoftContextTokenCap: 100_000u);
+        var engine = CreateEngine();
+
+        engine.AppendNotification("turn-1");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        engine.AppendNotification("turn-2");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        var compactionRequested = false;
+        engine.PrepareInvocationAsync = (_, _) => {
+            if (compactionRequested) {
+                return Task.CompletedTask;
+            }
+
+            compactionRequested = true;
+            engine.RequestCompaction("custom-system", "custom-summarize");
+            return Task.CompletedTask;
+        };
+
+        engine.AppendNotification("turn-3");
+        await engine.StepAsync(profile);
+
+        var deferredStep = await engine.StepAsync(profile);
+        Assert.True(deferredStep.ProgressMade);
+        Assert.Null(deferredStep.Output);
+        Assert.Equal(AgentRunState.PendingInput, deferredStep.StateBefore);
+        Assert.Equal(AgentRunState.Compacting, deferredStep.StateAfter);
+        Assert.Equal(2, provider.CapturedRequests.Count);
+
+        var compactingStep = await engine.StepAsync(profile);
+        Assert.True(compactingStep.ProgressMade);
+        Assert.Equal(AgentRunState.Compacting, compactingStep.StateBefore);
+        Assert.Equal(AgentRunState.PendingInput, compactingStep.StateAfter);
+        Assert.Equal(3, provider.CapturedRequests.Count);
+        Assert.Equal("custom-system", provider.CapturedRequests[2].SystemPrompt);
+
+        var finalStep = await engine.StepAsync(profile);
+        Assert.True(finalStep.ProgressMade);
+        Assert.NotNull(finalStep.Output);
+        Assert.Equal(AgentRunState.PendingInput, finalStep.StateBefore);
+        Assert.Equal(AgentRunState.WaitingInput, finalStep.StateAfter);
+        Assert.Equal(4, provider.CapturedRequests.Count);
+        Assert.Equal("after-prepare-compaction", finalStep.Output!.Message.GetFlattenedText());
     }
 
     [Fact]
@@ -396,6 +495,208 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.NotNull(observedToolCall);
         Assert.Equal("echo", observedToolCall!.ToolName);
         Assert.Equal("{\"payload\":\"value\"}", observedToolCall.RawArgumentsJson);
+    }
+
+    [Fact]
+    public async Task CtxCompress_ExecutesImmediateCompactionWithinToolStep() {
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(agg => agg.AppendContent("turn-1")),
+                CreateDeltaSequence(agg => agg.AppendContent("turn-2")),
+                CreateDeltaSequence(
+                    agg => agg.AppendContent("compress now"),
+                    agg => agg.AppendToolCall(
+                        CreateToolCallRequest(
+                            "ctx_compress",
+                            "compress-1",
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                                ["keep_hints"] = "保留当前目标",
+                                ["forget_hints"] = "淡化已完成试错"
+                            }
+                        )
+                    )
+                ),
+                CreateDeltaSequence(agg => agg.AppendContent("summary-text")),
+                CreateDeltaSequence(agg => agg.AppendContent("after-compress"))
+            }
+        );
+
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId, SoftContextTokenCap: 100u);
+        var engine = CreateEngine();
+
+        engine.AppendNotification("turn-1");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        engine.AppendNotification("turn-2");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        Assert.Equal(4, engine.State.RecentHistory.Count);
+
+        engine.AppendNotification("turn-3");
+        await engine.StepAsync(profile);
+
+        var toolCallStep = await engine.StepAsync(profile);
+        Assert.Equal(AgentRunState.PendingInput, toolCallStep.StateBefore);
+        Assert.Equal(AgentRunState.WaitingToolResults, toolCallStep.StateAfter);
+        Assert.Equal(3, provider.CapturedRequests.Count);
+
+        var historyCountBeforeCompaction = engine.State.RecentHistory.Count;
+        var executeToolStep = await engine.StepAsync(profile);
+        Assert.Equal(AgentRunState.WaitingToolResults, executeToolStep.StateBefore);
+        Assert.Equal(AgentRunState.ToolResultsReady, executeToolStep.StateAfter);
+        Assert.Equal(4, provider.CapturedRequests.Count);
+        Assert.True(engine.State.RecentHistory.Count < historyCountBeforeCompaction);
+
+        var toolResultsStep = await engine.StepAsync(profile);
+        Assert.Equal(AgentRunState.ToolResultsReady, toolResultsStep.StateBefore);
+        Assert.Equal(AgentRunState.PendingToolResults, toolResultsStep.StateAfter);
+        var toolResult = Assert.Single(toolResultsStep.ToolResults!.Results);
+        Assert.Equal("ctx_compress", toolResult.ToolName);
+        Assert.Equal(ToolExecutionStatus.Success, toolResult.ExecuteResult.Status);
+        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Result.Basic, StringComparison.Ordinal);
+        Assert.Contains("释放了约", toolResult.ExecuteResult.Result.Basic, StringComparison.Ordinal);
+
+        var finalModelStep = await engine.StepAsync(profile);
+        Assert.Equal(AgentRunState.PendingToolResults, finalModelStep.StateBefore);
+        Assert.Equal(AgentRunState.WaitingInput, finalModelStep.StateAfter);
+        Assert.Equal(5, provider.CapturedRequests.Count);
+        Assert.NotNull(finalModelStep.Output);
+        Assert.Equal("after-compress", finalModelStep.Output!.Message.GetFlattenedText());
+    }
+
+    [Fact]
+    public async Task CtxCompress_ImmediateCompactionReusesResolvedProfileFromCurrentTurn() {
+        var initialClient = new FakeProviderClient(Array.Empty<Action<CompletionAggregator>[]>());
+        var resolvedClient = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(agg => agg.AppendContent("turn-1")),
+                CreateDeltaSequence(agg => agg.AppendContent("turn-2")),
+                CreateDeltaSequence(
+                    agg => agg.AppendContent("compress now"),
+                    agg => agg.AppendToolCall(
+                        CreateToolCallRequest(
+                            "ctx_compress",
+                            "compress-1",
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                                ["keep_hints"] = "保留当前目标"
+                            }
+                        )
+                    )
+                ),
+                CreateDeltaSequence(agg => agg.AppendContent("summary-text")),
+                CreateDeltaSequence(agg => agg.AppendContent("after-compress"))
+            }
+        );
+
+        var initialProfile = new LlmProfile(Client: initialClient, ModelId: Model, Name: "initial", SoftContextTokenCap: 100u);
+        var resolvedProfile = new LlmProfile(Client: resolvedClient, ModelId: Model, Name: "resolved", SoftContextTokenCap: 100u);
+        var engine = CreateEngine();
+        engine.ResolveProfile += (_, args) => { args.Profile = resolvedProfile; };
+
+        engine.AppendNotification("turn-1");
+        await engine.StepAsync(initialProfile);
+        await engine.StepAsync(initialProfile);
+
+        engine.AppendNotification("turn-2");
+        await engine.StepAsync(initialProfile);
+        await engine.StepAsync(initialProfile);
+
+        engine.AppendNotification("turn-3");
+        await engine.StepAsync(initialProfile);
+        await engine.StepAsync(initialProfile);
+        await engine.StepAsync(initialProfile);
+
+        var toolResultsStep = await engine.StepAsync(initialProfile);
+        var toolResult = Assert.Single(toolResultsStep.ToolResults!.Results);
+        Assert.Equal(ToolExecutionStatus.Success, toolResult.ExecuteResult.Status);
+        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Result.Basic, StringComparison.Ordinal);
+
+        var finalModelStep = await engine.StepAsync(initialProfile);
+        Assert.NotNull(finalModelStep.Output);
+        Assert.Equal("after-compress", finalModelStep.Output!.Message.GetFlattenedText());
+
+        Assert.Empty(initialClient.CapturedRequests);
+        Assert.Equal(5, resolvedClient.CapturedRequests.Count);
+    }
+
+    [Fact]
+    public async Task CtxCompress_UsesSplitPointFromPreviewSeenByModel() {
+        var hugeCurrentActionText = new string('x', 12_000);
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(agg => agg.AppendContent("turn-1 reply")),
+                CreateDeltaSequence(agg => agg.AppendContent("turn-2 reply")),
+                CreateDeltaSequence(
+                    agg => agg.AppendContent(hugeCurrentActionText),
+                    agg => agg.AppendToolCall(
+                        CreateToolCallRequest(
+                            "ctx_compress",
+                            "compress-1",
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                                ["keep_hints"] = "保留当前目标"
+                            }
+                        )
+                    )
+                ),
+                CreateDeltaSequence(agg => agg.AppendContent("summary-text"))
+            }
+        );
+
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId, SoftContextTokenCap: 1u);
+        var engine = CreateEngine();
+
+        engine.AppendNotification("turn-1 note");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        engine.AppendNotification("turn-2 note");
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        engine.AppendNotification("turn-3 note");
+        await engine.StepAsync(profile);
+
+        var previewBeforeModelCall = engine.BuildCompactionPreview();
+        Assert.True(previewBeforeModelCall.HasValue);
+        Assert.Equal(3, previewBeforeModelCall.Value.SplitIndex);
+
+        var toolCallStep = await engine.StepAsync(profile);
+        Assert.Equal(AgentRunState.PendingInput, toolCallStep.StateBefore);
+        Assert.Equal(AgentRunState.WaitingToolResults, toolCallStep.StateAfter);
+
+        var previewWindow = Assert.Single(
+            provider.CapturedRequests[2].Context.OfType<ObservationMessage>(),
+            message => message.Content is not null && message.Content.Contains("## ContextCompression", StringComparison.Ordinal)
+        );
+        Assert.Contains("预计压缩范围", previewWindow.Content, StringComparison.Ordinal);
+
+        var previewAfterCurrentAction = engine.BuildCompactionPreview();
+        Assert.True(previewAfterCurrentAction.HasValue);
+        Assert.Equal(5, previewAfterCurrentAction.Value.SplitIndex);
+
+        var executeToolStep = await engine.StepAsync(profile);
+        Assert.Equal(AgentRunState.WaitingToolResults, executeToolStep.StateBefore);
+        Assert.Equal(AgentRunState.ToolResultsReady, executeToolStep.StateAfter);
+
+        var summaryRequest = provider.CapturedRequests[3];
+        Assert.Equal(previewBeforeModelCall.Value.SplitIndex + 1, summaryRequest.Context.Count);
+        Assert.NotEqual(previewAfterCurrentAction.Value.SplitIndex + 1, summaryRequest.Context.Count);
+    }
+
+    [Fact]
+    public void TrimForPreview_DoesNotReportFalseEllipsisAfterWhitespaceCollapse() {
+        var method = typeof(AgentEngine).GetMethod(
+            "TrimForPreview",
+            BindingFlags.NonPublic | BindingFlags.Static
+        );
+
+        Assert.NotNull(method);
+
+        var preview = (string)method!.Invoke(null, new object?[] { "alpha\n\nbeta", 96 })!;
+
+        Assert.Equal("alpha beta", preview);
     }
 
     private static AgentEngine CreateEngine(params ITool[] tools) {

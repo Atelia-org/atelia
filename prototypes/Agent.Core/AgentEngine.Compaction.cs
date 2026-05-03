@@ -17,6 +17,74 @@ public partial class AgentEngine {
     /// <param name="SummarizePrompt">追加在待摘要历史末尾的请求消息。</param>
     private readonly record struct CompactionRequest(int SplitIndex, string SystemPrompt, string SummarizePrompt);
 
+    internal enum CompactionFailureReason {
+        NoValidSplitPoint,
+        InvalidSplitPoint,
+        EmptySummary
+    }
+
+    internal readonly record struct CompactionExecutionResult(
+        bool Applied,
+        CompactionFailureReason? FailureReason,
+        int SplitIndex,
+        int SummaryLength,
+        int HistoryCountBefore,
+        int HistoryCountAfter,
+        ulong TokensBefore,
+        ulong TokensAfter,
+        ulong SoftContextTokenCap
+    ) {
+        public ulong TokensReleased => TokensBefore > TokensAfter ? TokensBefore - TokensAfter : 0;
+
+        public double BeforeCapacityRatio => SoftContextTokenCap == 0 ? 0.0 : (double)TokensBefore / SoftContextTokenCap;
+
+        public double AfterCapacityRatio => SoftContextTokenCap == 0 ? 0.0 : (double)TokensAfter / SoftContextTokenCap;
+
+        public double ReleasedCapacityRatio => SoftContextTokenCap == 0 ? 0.0 : (double)TokensReleased / SoftContextTokenCap;
+
+        public static CompactionExecutionResult Failed(
+            CompactionFailureReason failureReason,
+            int splitIndex,
+            int historyCountBefore,
+            ulong tokensBefore,
+            ulong softContextTokenCap
+        ) {
+            return new CompactionExecutionResult(
+                Applied: false,
+                FailureReason: failureReason,
+                SplitIndex: splitIndex,
+                SummaryLength: 0,
+                HistoryCountBefore: historyCountBefore,
+                HistoryCountAfter: historyCountBefore,
+                TokensBefore: tokensBefore,
+                TokensAfter: tokensBefore,
+                SoftContextTokenCap: softContextTokenCap
+            );
+        }
+
+        public static CompactionExecutionResult Succeeded(
+            int splitIndex,
+            int summaryLength,
+            int historyCountBefore,
+            int historyCountAfter,
+            ulong tokensBefore,
+            ulong tokensAfter,
+            ulong softContextTokenCap
+        ) {
+            return new CompactionExecutionResult(
+                Applied: true,
+                FailureReason: null,
+                SplitIndex: splitIndex,
+                SummaryLength: summaryLength,
+                HistoryCountBefore: historyCountBefore,
+                HistoryCountAfter: historyCountAfter,
+                TokensBefore: tokensBefore,
+                TokensAfter: tokensAfter,
+                SoftContextTokenCap: softContextTokenCap
+            );
+        }
+    }
+
     /// <summary>
     /// 待执行的上下文压缩请求。
     /// <c>null</c> 表示无待处理的压缩请求；非 <c>null</c> 时，<see cref="DetermineState"/> 返回 <see cref="AgentRunState.Compacting"/>。
@@ -79,6 +147,79 @@ public partial class AgentEngine {
     /// 避免重复发起。
     /// </remarks>
     public bool HasPendingCompaction => _compactionRequest.HasValue;
+
+    internal CompactionPreview? BuildCompactionPreview() {
+        var snapshot = _state.RecentHistory;
+        int splitIndex = ContextSplitter.FindHalfContextSplitPoint(snapshot);
+        if (splitIndex < 1 || splitIndex >= snapshot.Count) { return null; }
+
+        ulong totalHistoryTokens = 0;
+        ulong prefixTokens = 0;
+        for (int i = 0; i < snapshot.Count; i++) {
+            ulong entryTokens = snapshot[i].TokenEstimate;
+            totalHistoryTokens += entryTokens;
+            if (i < splitIndex) {
+                prefixTokens += entryTokens;
+            }
+        }
+
+        return new CompactionPreview(
+            SplitIndex: splitIndex,
+            PrefixEntryCount: splitIndex,
+            PrefixTokenEstimate: prefixTokens,
+            TotalHistoryTokenEstimate: totalHistoryTokens,
+            PrefixEndPreview: BuildHistoryEntryPreview(snapshot[splitIndex - 1]),
+            SuffixStartPreview: BuildHistoryEntryPreview(snapshot[splitIndex])
+        );
+    }
+
+    internal async Task<CompactionExecutionResult> ExecuteCompactionImmediateAsync(
+        string systemPrompt,
+        string summarizePrompt,
+        CancellationToken cancellationToken
+    ) {
+        if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
+        if (summarizePrompt is null) { throw new ArgumentNullException(nameof(summarizePrompt)); }
+
+        if (_turnRuntime.ActiveToolExecutionProfile is null) {
+            throw new InvalidOperationException("Immediate compaction requires an active tool-execution LlmProfile.");
+        }
+
+        var profile = _turnRuntime.ActiveToolExecutionProfile;
+        EnsureProfileMatchesCurrentTurnLock(profile);
+
+        var snapshot = _state.RecentHistory;
+        var softContextTokenCap = (ulong)profile.SoftContextTokenCap;
+        var tokensBefore = EstimateCurrentContextTokens();
+        var lockedSplitIndex = _turnRuntime.LockedCompactionSplitIndex;
+        int splitIndex = lockedSplitIndex ?? ContextSplitter.FindHalfContextSplitPoint(snapshot);
+        if (splitIndex < 0) {
+            DebugUtil.Trace(StateMachineDebugCategory, "[Compacting] Immediate compaction skipped: no valid split point.");
+            return CompactionExecutionResult.Failed(
+                failureReason: CompactionFailureReason.NoValidSplitPoint,
+                splitIndex: splitIndex,
+                historyCountBefore: snapshot.Count,
+                tokensBefore: tokensBefore,
+                softContextTokenCap: softContextTokenCap
+            );
+        }
+
+        if (lockedSplitIndex.HasValue) {
+            DebugUtil.Info(
+                StateMachineDebugCategory,
+                $"[Compacting] Immediate compaction requested from tool path. Using action-locked splitIndex={splitIndex}."
+            );
+        }
+        else {
+            DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Immediate compaction requested from tool path. splitIndex={splitIndex}");
+        }
+
+        return await ExecuteCompactionCoreAsync(
+            profile,
+            new CompactionRequest(splitIndex, systemPrompt, summarizePrompt),
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// 估算当前上下文的 token 信息量，用于与 <see cref="LlmProfile.SoftContextTokenCap"/> 比较以决定是否触发自动压缩。
@@ -171,23 +312,153 @@ public partial class AgentEngine {
         return messages;
     }
 
-    private async Task<StepOutcome> ProcessCompactingAsync(LlmProfile profile, CancellationToken cancellationToken) {
-        if (!_compactionRequest.HasValue) {
-            DebugUtil.Warning(StateMachineDebugCategory, "[Compacting] Entered without valid compaction request; aborting.");
-            return StepOutcome.NoProgress;
+    private static string BuildHistoryEntryPreview(HistoryEntry entry) {
+        string label = entry.Kind switch {
+            HistoryEntryKind.Observation => "Observation",
+            HistoryEntryKind.Action => "Action",
+            HistoryEntryKind.ToolResults => "ToolResults",
+            HistoryEntryKind.Recap => "Recap",
+            _ => entry.Kind.ToString()
+        };
+
+        string raw = entry switch {
+            ActionEntry action => BuildActionPreview(action),
+            ToolResultsEntry toolResults => BuildToolResultsPreview(toolResults),
+            ObservationEntry observation => observation.GetMessage(LevelOfDetail.Basic, windows: null).Content ?? string.Empty,
+            RecapEntry recap => recap.Content,
+            _ => string.Empty
+        };
+
+        string preview = TrimForPreview(raw, 96);
+        return string.IsNullOrWhiteSpace(preview)
+            ? label
+            : $"{label}: {preview}";
+    }
+
+    private static string BuildActionPreview(ActionEntry action) {
+        var flattened = action.Message.GetFlattenedText();
+        if (!string.IsNullOrWhiteSpace(flattened)) { return flattened; }
+
+        var toolCalls = action.Message.ToolCalls;
+        if (toolCalls.Count == 0) { return string.Empty; }
+
+        var names = new List<string>(capacity: Math.Min(toolCalls.Count, 3));
+        for (int i = 0; i < toolCalls.Count && names.Count < 3; i++) {
+            var name = toolCalls[i].ToolName;
+            if (string.IsNullOrWhiteSpace(name) || ContainsIgnoreCase(names, name)) { continue; }
+            names.Add(name);
         }
 
-        var request = _compactionRequest.Value;
-        int splitIndex = request.SplitIndex;
-        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Starting half-context compaction. splitIndex={splitIndex}");
+        return names.Count == 0
+            ? "工具调用"
+            : "工具调用: " + string.Join(", ", names);
+    }
 
+    private static string BuildToolResultsPreview(ToolResultsEntry toolResults) {
+        if (!string.IsNullOrWhiteSpace(toolResults.ExecuteError)) {
+            return "工具执行失败: " + toolResults.ExecuteError;
+        }
+
+        if (toolResults.Results.Count > 0) {
+            var names = new List<string>(capacity: Math.Min(toolResults.Results.Count, 3));
+            for (int i = 0; i < toolResults.Results.Count && names.Count < 3; i++) {
+                var name = toolResults.Results[i].ToolName;
+                if (string.IsNullOrWhiteSpace(name) || ContainsIgnoreCase(names, name)) { continue; }
+                names.Add(name);
+            }
+
+            if (names.Count > 0) {
+                return "工具结果: " + string.Join(", ", names);
+            }
+        }
+
+        return toolResults.GetMessage(LevelOfDetail.Basic, windows: null).Content ?? string.Empty;
+    }
+
+    private static bool ContainsIgnoreCase(List<string> values, string candidate) {
+        for (int i = 0; i < values.Count; i++) {
+            if (string.Equals(values[i], candidate, StringComparison.OrdinalIgnoreCase)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string TrimForPreview(string? value, int maxLength) {
+        if (string.IsNullOrWhiteSpace(value) || maxLength <= 0) { return string.Empty; }
+
+        var chars = new List<char>(capacity: Math.Min(value.Length, maxLength));
+        bool pendingWhitespace = false;
+        int lastConsumedSourceIndex = -1;
+        bool truncated = false;
+
+        for (int i = 0; i < value.Length; i++) {
+            var ch = value[i];
+            if (char.IsWhiteSpace(ch)) {
+                pendingWhitespace = chars.Count > 0;
+                continue;
+            }
+
+            if (pendingWhitespace) {
+                if (chars.Count >= maxLength) {
+                    truncated = true;
+                    break;
+                }
+                chars.Add(' ');
+            }
+
+            pendingWhitespace = false;
+
+            if (chars.Count >= maxLength) {
+                truncated = true;
+                break;
+            }
+            chars.Add(ch);
+            lastConsumedSourceIndex = i;
+        }
+
+        if (chars.Count == 0) { return string.Empty; }
+
+        if (!truncated) {
+            for (int i = lastConsumedSourceIndex + 1; i < value.Length; i++) {
+                if (!char.IsWhiteSpace(value[i])) {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+
+        return truncated
+            ? new string(chars.ToArray()).TrimEnd() + "..."
+            : new string(chars.ToArray()).TrimEnd();
+    }
+
+    private async Task<CompactionExecutionResult> ExecuteCompactionCoreAsync(
+        LlmProfile profile,
+        CompactionRequest request,
+        CancellationToken cancellationToken
+    ) {
         var snapshot = _state.RecentHistory;
+        var softContextTokenCap = (ulong)profile.SoftContextTokenCap;
+        var historyCountBefore = snapshot.Count;
+        var tokensBefore = EstimateCurrentContextTokens();
+        int splitIndex = request.SplitIndex;
+
         if (splitIndex < 1 || splitIndex >= snapshot.Count
             || !snapshot[splitIndex - 1].IsObservationLike
             || snapshot[splitIndex] is not ActionEntry) {
-            DebugUtil.Warning(StateMachineDebugCategory, $"[Compacting] splitIndex={splitIndex} no longer valid for current history (count={snapshot.Count}); aborting.");
-            _compactionRequest = null;
-            return StepOutcome.NoProgress;
+            DebugUtil.Warning(
+                StateMachineDebugCategory,
+                $"[Compacting] splitIndex={splitIndex} no longer valid for current history (count={snapshot.Count}); aborting."
+            );
+            return CompactionExecutionResult.Failed(
+                failureReason: CompactionFailureReason.InvalidSplitPoint,
+                splitIndex: splitIndex,
+                historyCountBefore: historyCountBefore,
+                tokensBefore: tokensBefore,
+                softContextTokenCap: softContextTokenCap
+            );
         }
 
         var prefix = new List<HistoryEntry>(splitIndex);
@@ -205,13 +476,52 @@ public partial class AgentEngine {
 
         if (string.IsNullOrEmpty(summary)) {
             DebugUtil.Warning(StateMachineDebugCategory, "[Compacting] Summarization returned empty; skipping replacement.");
-            _compactionRequest = null;
-            return StepOutcome.NoProgress;
+            return CompactionExecutionResult.Failed(
+                failureReason: CompactionFailureReason.EmptySummary,
+                splitIndex: splitIndex,
+                historyCountBefore: historyCountBefore,
+                tokensBefore: tokensBefore,
+                softContextTokenCap: softContextTokenCap
+            );
         }
 
         _state.ReplacePrefixWithRecap(splitIndex, summary);
+        var historyCountAfter = _state.RecentHistory.Count;
+        var tokensAfter = EstimateCurrentContextTokens();
+
+        return CompactionExecutionResult.Succeeded(
+            splitIndex: splitIndex,
+            summaryLength: summary.Length,
+            historyCountBefore: historyCountBefore,
+            historyCountAfter: historyCountAfter,
+            tokensBefore: tokensBefore,
+            tokensAfter: tokensAfter,
+            softContextTokenCap: softContextTokenCap
+        );
+    }
+
+    private async Task<StepOutcome> ProcessCompactingAsync(LlmProfile profile, CancellationToken cancellationToken) {
+        if (!_compactionRequest.HasValue) {
+            DebugUtil.Warning(StateMachineDebugCategory, "[Compacting] Entered without valid compaction request; aborting.");
+            return StepOutcome.NoProgress;
+        }
+
+        var request = _compactionRequest.Value;
+        int splitIndex = request.SplitIndex;
+        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Starting half-context compaction. splitIndex={splitIndex}");
+
+        var outcome = await ExecuteCompactionCoreAsync(profile, request, cancellationToken).ConfigureAwait(false);
+        if (!outcome.Applied) {
+            _compactionRequest = null;
+            DebugUtil.Warning(StateMachineDebugCategory, $"[Compacting] Compaction aborted reason={outcome.FailureReason?.ToString() ?? "unknown"}.");
+            return StepOutcome.NoProgress;
+        }
+
         _compactionRequest = null;
-        DebugUtil.Info(StateMachineDebugCategory, $"[Compacting] Done. splitIndex={splitIndex} summaryLen={summary.Length} remaining={_state.RecentHistory.Count}");
+        DebugUtil.Info(
+            StateMachineDebugCategory,
+            $"[Compacting] Done. splitIndex={outcome.SplitIndex} summaryLen={outcome.SummaryLength} remaining={outcome.HistoryCountAfter} releasedTokens={outcome.TokensReleased}"
+        );
         return StepOutcome.FromStateMutation();
     }
 }

@@ -30,6 +30,7 @@ public partial class AgentEngine {
     private ToolExecutor ToolExecutor => EnsureToolsBuilt();
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
+    private readonly TurnRuntimeState _turnRuntime = new();
 
     /// <summary>
     /// 初始化 <see cref="AgentEngine"/> 的新实例。
@@ -407,7 +408,15 @@ public partial class AgentEngine {
             case AgentRunState.PendingToolResults:
                 return await ProcessPendingModelCallAsync(state, profile, completionObserver, cancellationToken).ConfigureAwait(false);
             case AgentRunState.WaitingToolResults:
-                return await ProcessWaitingToolResultsAsync(cancellationToken).ConfigureAwait(false);
+                _turnRuntime.BeginToolExecution(ResolveProfileForToolExecution(profile));
+                try {
+                    // TODO: If we later add engine-owned tool priorities, ctx_compress may want a dedicated "execute last in batch" rule.
+                    // For now we preserve the model-emitted tool order for simplicity and predictability.
+                    return await ProcessWaitingToolResultsAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally {
+                    _turnRuntime.EndToolExecution();
+                }
             case AgentRunState.ToolResultsReady:
                 return ProcessToolResultsReady();
             case AgentRunState.Compacting:
@@ -453,6 +462,7 @@ public partial class AgentEngine {
         }
 
         var appended = _state.AppendObservation(inputEntry, recentEvents);
+        _turnRuntime.BeginNewTurn();
 
         DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
 
@@ -501,11 +511,20 @@ public partial class AgentEngine {
 
         if (prepareArgs.Cancel) { return StepOutcome.NoProgress; }
 
+        if (HasPendingCompaction) {
+            DebugUtil.Info(
+                StateMachineDebugCategory,
+                "[Engine] PrepareInvocationAsync queued compaction; deferring current model call until compaction completes."
+            );
+            return StepOutcome.FromStateMutation();
+        }
+
         var invocation = resolvedProfile.ToCompletionDescriptor();
+        var compactionPreview = BuildCompactionPreview();
         var renderContext = new AppRenderContext(
             CurrentProfile: resolvedProfile,
             EstimatedContextTokens: estimatedContextTokens,
-            HasPendingCompaction: HasPendingCompaction
+            EstimatedCompactionPreview: compactionPreview
         );
         var projection = _state.ProjectInvocationContext(
             new ContextProjectionOptions(
@@ -533,6 +552,8 @@ public partial class AgentEngine {
         _pendingToolResults.Clear();
 
         var appended = _state.AppendAction(aggregatedOutput);
+        _turnRuntime.RememberResolvedProfile(resolvedProfile);
+        _turnRuntime.RememberCompactionSplitIndex(compactionPreview?.SplitIndex);
 
         var toolCallCount = appended.Message.ToolCalls?.Count ?? 0;
         var textLen = appended.Message.Blocks.OfType<ActionBlock.Text>().Sum(b => b.Content.Length);
@@ -672,6 +693,72 @@ public partial class AgentEngine {
             $"A Turn spans from the most recent ObservationEntry to the end of history; " +
             $"to switch profile, complete the current Turn (return to WaitingInput) and start a new ObservationEntry."
         );
+    }
+
+    /// <summary>
+    /// 在工具执行阶段解析本 Turn 实际应复用的 resolved profile。
+    /// </summary>
+    /// <remarks>
+    /// 调用方传入的 profile 可能只是 nominal profile；若本 Turn 的首次模型调用经过了
+    /// <see cref="ResolveProfile"/> 改写，则工具阶段的内部 LLM 调用必须继续复用当时真实生效的 profile。
+    /// </remarks>
+    private LlmProfile ResolveProfileForToolExecution(LlmProfile requestedProfile) {
+        var turn = AnalyzeCurrentTurn();
+        var locked = turn.LockedInvocation;
+        if (locked is null) {
+            throw new InvalidOperationException("WaitingToolResults requires an active Turn lock, but no locked invocation was found.");
+        }
+
+        if (_turnRuntime.ResolvedProfile is not null) {
+            var tracked = _turnRuntime.ResolvedProfile.ToCompletionDescriptor();
+            if (Equals(tracked, locked)) {
+                return _turnRuntime.ResolvedProfile;
+            }
+        }
+
+        var requested = requestedProfile.ToCompletionDescriptor();
+        if (Equals(requested, locked)) {
+            return requestedProfile;
+        }
+
+        throw new InvalidOperationException(
+            $"Unable to resolve the concrete LlmProfile for current tool execution. " +
+            $"Turn is locked to {DescribeDescriptor(locked)}, but the requested profile is {DescribeDescriptor(requested)}. " +
+            $"{DescribeCurrentTurn(turn)}."
+        );
+    }
+
+    /// <summary>
+    /// 收拢当前 Turn 的短生命周期运行态，避免零散字段在状态机中四处流动。
+    /// </summary>
+    private sealed class TurnRuntimeState {
+        public LlmProfile? ResolvedProfile { get; private set; }
+
+        public LlmProfile? ActiveToolExecutionProfile { get; private set; }
+
+        public int? LockedCompactionSplitIndex { get; private set; }
+
+        public void BeginNewTurn() {
+            ResolvedProfile = null;
+            ActiveToolExecutionProfile = null;
+            LockedCompactionSplitIndex = null;
+        }
+
+        public void RememberResolvedProfile(LlmProfile profile) {
+            ResolvedProfile = profile ?? throw new ArgumentNullException(nameof(profile));
+        }
+
+        public void RememberCompactionSplitIndex(int? splitIndex) {
+            LockedCompactionSplitIndex = splitIndex;
+        }
+
+        public void BeginToolExecution(LlmProfile profile) {
+            ActiveToolExecutionProfile = profile ?? throw new ArgumentNullException(nameof(profile));
+        }
+
+        public void EndToolExecution() {
+            ActiveToolExecutionProfile = null;
+        }
     }
 
     private void LogStateIfChanged(AgentRunState state) {

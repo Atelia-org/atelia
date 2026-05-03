@@ -64,6 +64,8 @@ public static class ContextCompressionPrompts {
 
         Agent 明确告诉了你本轮需要关注什么。
         将这些视为对上述优先级分层的覆盖性提示。
+        这些提示有时是在用当前上下文中刚刚显现的重要性，
+        反向提醒你保留旧历史里看似普通、但其实是关键前因、伏笔或支撑线索的内容。
 
         ### Agent 希望保留的内容：
         {KEEP_HINTS}
