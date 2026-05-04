@@ -56,4 +56,7 @@ public sealed class CharacterAgent {
 
     public Task<AgentStepResult> DoStepAsync(LlmProfile profile, CancellationToken cancellationToken = default)
         => _engine.StepAsync(profile, cancellationToken);
+
+    public Task<AgentStepResult> DoStepAsync(LlmProfile profile, CompletionStreamObserver? completionObserver, CancellationToken cancellationToken = default)
+        => _engine.StepAsync(profile, completionObserver, cancellationToken);
 }

@@ -13,11 +13,11 @@ namespace Atelia.LiveContextProto;
 
 internal static class Program {
     private const string DebugCategory = "History";
+    private const string DefaultLocalModelId = "Qwen3.5-27b-GPTQ-Int4";
     // 历史 Anthropic 路径备忘：
     // private const string DefaultModelId = "vscode-lm-proxy";
     // private const string LocalLlmEndpoint = "http://localhost:4000/anthropic/";
     // private const string DefaultProfileName = "anthropic-v1";
-    private const string DefaultModelId = "Qwen3.5-27b-GPTQ-Int4";
     private const string LocalLlmEndpoint = "http://localhost:8000/";
     private const string GoldenLogPathEnvVar = "ATELIA_COMPLETION_GOLDEN_LOG";
     private const string ReplayLogPathEnvVar = "ATELIA_COMPLETION_REPLAY_LOG";
@@ -34,22 +34,41 @@ internal static class Program {
         // var defaultProfile = new LlmProfile(anthropicClient, DefaultModelId, "LocaQwen-anthropic-v1", 64_000u);
         // var loop = new ConsoleTui(agent, defaultProfile);
 
-        var transport = CompletionHttpTransportFactory.CreateFromEnvironmentVariables(
-            new Uri(EnsureTrailingSlash(LocalLlmEndpoint)),
-            GoldenLogPathEnvVar,
-            ReplayLogPathEnvVar
-        );
-        using var httpClient = transport.HttpClient;
-        PrintTransportStartup(transport);
+        HttpClient? ownedHttpClient = null;
+        LlmProfile defaultProfile;
+        var deepSeekApiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
+        if (!string.IsNullOrWhiteSpace(deepSeekApiKey)) {
+            var deepSeekV4Client = new DeepSeekV4ChatClient(
+                apiKey: deepSeekApiKey,
+                baseAddress: new Uri("https://api.deepseek.com/")
+            );
+            defaultProfile = new LlmProfile(deepSeekV4Client, "deepseek-v4-flash", "Player", 8000u);
+            Console.WriteLine("[startup] profile: deepseek-v4-flash (DEEPSEEK_API_KEY detected)");
+            DebugUtil.Info(DebugCategory, "LiveContextProto profile=deepseek-v4-flash");
+        }
+        else {
+            var transport = CompletionHttpTransportFactory.CreateFromEnvironmentVariables(
+                new Uri(EnsureTrailingSlash(LocalLlmEndpoint)),
+                GoldenLogPathEnvVar,
+                ReplayLogPathEnvVar
+            );
+            ownedHttpClient = transport.HttpClient;
+            PrintTransportStartup(transport);
 
-        var oaiClient = new OpenAIChatClient(
-            apiKey: null,
-            httpClient: httpClient,
-            dialect: OpenAIChatDialects.SgLangCompatible,
-            options: OpenAIChatClientOptions.QwenThinkingDisabled()
-        );
-        var oaiProfile = new LlmProfile(oaiClient, DefaultModelId, "LocaQwen-oai-chat", 64_000u);
-        var loop = new ConsoleTui(agent, oaiProfile);
+            var localClient = new OpenAIChatClient(
+                apiKey: null,
+                httpClient: ownedHttpClient,
+                dialect: OpenAIChatDialects.SgLangCompatible,
+                options: OpenAIChatClientOptions.QwenThinkingDisabled()
+            );
+            defaultProfile = new LlmProfile(localClient, DefaultLocalModelId, "LocaQwen-oai-chat", 8000u);
+            Console.WriteLine($"[startup] profile: {DefaultLocalModelId} @ {LocalLlmEndpoint}");
+            DebugUtil.Info(DebugCategory, $"LiveContextProto profile={DefaultLocalModelId}");
+        }
+
+        using var httpClientLifetime = ownedHttpClient;
+
+        var loop = new ConsoleTui(agent, defaultProfile);
 
         loop.Run();
 
