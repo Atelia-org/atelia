@@ -46,27 +46,27 @@ dotnet test --filter "FullyQualifiedName~TestMethodName"
 - **Data**: High-performance data structures
   - `ChunkedReservableWriter`: Buffer writer with reserve-and-backfill support for serialization
   - Used for message framing, nested structures, length/CRC backfilling
-  
+
 - **StateJournal**: Memory and persistence system for agent state
   - Provides durable storage for agent memory and state transitions
-  
+
 - **Rbf** (Reversible Binary Framing): Binary serialization format
   - Implements `IRbfFrame` interface (ref struct can implement interfaces in C# 14)
-  
+
 - **DocGraph**: Documentation system with glossary and issue tracking
   - Supports distributed authoring with automatic key information aggregation
-  
+
 - **Diagnostics**: Debugging utilities
   - `DebugUtil.Trace/Info/Warning/Error`: Conditional debug output
   - Controlled by `ATELIA_DEBUG_CATEGORIES` environment variable
   - Logs to `.atelia/debug-logs/{category}.log` or `gitignore/debug-logs/{category}.log`
-  
+
 - **Primitives**: Core primitive types and utilities
   - Includes `AteliaResult` with `allows ref struct` constraint
-  
+
 - **Analyzers.Style**: Custom Roslyn analyzers for code style enforcement
   - Automatically applied to all projects via `Directory.Build.props`
-  
+
 - **DesignDsl**: Design specification DSL for formal documentation
 
 ### Prototypes (`prototypes/`)
@@ -78,6 +78,7 @@ Experimental implementations for rapid iteration:
 - **Completion**: LLM completion system
 - **Completion.Abstractions**: Completion abstractions
 - **PersistentAgentProto**: Persistent agent prototype
+- **TextAdv**: Text adventure prototype using PipeMux + StateJournal for persistent game state (see `prototypes/TextAdv/README.md`)
 
 ## Naming Conventions
 
@@ -205,6 +206,15 @@ export ATELIA_DEBUG_CONSOLE_LEVEL="Info"
 
 ## Common Pitfalls
 
+### StateJournal: Revision has no public constructor
+- **Always** use `Repository.Create/Open` → `CreateBranch/CheckoutBranch` to get a `Revision`
+- The `internal Revision(uint)` constructor is for testing only; do NOT add `InternalsVisibleTo` for normal consumers
+- See `docs/StateJournal/usage-guide.md` §0 for the canonical path
+
+### AteliaResult<T>.Value is a property, not a method
+- `result.Value;` alone fails with CS0201 (only assignment/call/increment can be used as statement)
+- Fix: `_ = result.Value;` or `var v = result.Value;` — the discard `_ =` makes it a valid statement
+
 ### Git Operations
 - Always use `timeout: 0` for `run_in_terminal` with blocking commands
 - Never use `--no-verify` or `--no-gpg-sign` unless explicitly requested
@@ -235,3 +245,14 @@ From `AGENTS.md`, the high-level objectives:
 - **docs/Atelia_Naming_Convention.md**: Naming standards
 - **docs/Line_Endings_Standard.md**: Line ending policies
 - **docs/Atelia.Data-LLM-Guide.md**: Guide for using Atelia.Data components
+
+## PipeMux Integration
+
+**PipeMux** wraps persistent CLI processes as reusable instant commands, enabling LLM agents to interact with stateful programs via terminal.
+
+- External docs: `/repos/focus/PipeMux/docs/user-guide.md`, `/repos/focus/PipeMux/docs/sdk-authoring.md`
+- Register DLL-based app: `pmux :register <name> <dll-abs-path> <Namespace.Class.BuildMethod>`
+- State lives in static fields within the persistent process; survives across `pmux` calls
+- If using `Repository` (not bare `Revision`), state survives process restart via disk persistence
+- Reference implementation: `prototypes/TextAdv/FridgeEntry.cs`
+- csproj requirement: `<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>` for pmux-host DLL loading

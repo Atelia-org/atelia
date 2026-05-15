@@ -729,7 +729,7 @@ repo.Commit(root).Value;
 - `SymbolTable` 是持久化 mirror，不是业务可见数据表。
 - `Repository` 目录文件不要手工改；branch refs 是 CAS 保护的元数据。
 - 业务对象创建优先用 `Revision.Create*`，不要直接用 `Durable.*` 工厂绕过绑定。
-- `Revision` 裸构造和 `RbfFile` 直连 commit 多见于测试；实际集成优先用 `Repository`。
+- `Revision` 没有 public 构造函数。`internal Revision(uint)` 仅供测试；普通使用者必须走 `Repository.Create/Open` → `CreateBranch/CheckoutBranch`（见 §0）。不要为普通消费者添加 `InternalsVisibleTo`。
 
 ---
 
