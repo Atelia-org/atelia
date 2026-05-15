@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Atelia.TextAdv</RootNamespace>
+    <AssemblyName>Atelia.TextAdv</AssemblyName>
+    <!-- pmux-host 通过绝对路径加载 DLL，需要把 NuGet 依赖也复制到输出目录 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.6" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\StateJournal\StateJournal.csproj" />
+  </ItemGroup>
+</Project>

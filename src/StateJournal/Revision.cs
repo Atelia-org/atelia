@@ -84,7 +84,13 @@ public partial class Revision {
 
 
 
-    /// <summary>从头创建一个新的 root commit（未 Commit 前 _head 为 null）。</summary>
+    /// <summary>
+    /// 从头创建一个裸的、不绑定任何 <see cref="Repository"/> 的 Revision（未 Commit 前 _head 为 null）。
+    /// </summary>
+    /// <remarks>
+    /// 这是 internal 测试入口。普通使用者请走 public 路径：
+    /// <see cref="Repository.Create(string)"/> → <see cref="Repository.CreateBranch(string)"/>。
+    /// </remarks>
     internal Revision(uint boundSegmentNumber) {
         ArgumentOutOfRangeException.ThrowIfZero(boundSegmentNumber);
         _headSegmentNumber = boundSegmentNumber;
