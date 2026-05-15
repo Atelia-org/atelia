@@ -53,11 +53,13 @@ public static class GameEntry
 
     public static RootCommand BuildGame()
     {
-        var root = new RootCommand("荒岛求生 — 文本冒险原型");
+        var root = new RootCommand("荒岛求生 — 最小回合流程原型");
 
         root.Add(BuildNewCommand());
-        root.Add(BuildGoCommand());
         root.Add(BuildLookAroundCommand());
+        root.Add(BuildEditMemoryNotebookCommand());
+        root.Add(BuildRestAWhileCommand());
+        root.Add(BuildGoCommand());
 
         return root;
     }
@@ -90,7 +92,7 @@ public static class GameEntry
             output.WriteLine("✅ 新世界已创建！");
             output.WriteLine();
             output.Write(GamePresenter.RenderPerception(
-                GameSimulation.DescribeCurrentLocation(_root)));
+                GameSimulation.DescribeCurrentPerception(_root)));
         });
         return cmd;
     }
@@ -98,7 +100,7 @@ public static class GameEntry
     private static Command BuildGoCommand()
     {
         var directionArg = new Argument<string>("direction");
-        var cmd = new Command("go", "移动到相邻区域") { directionArg };
+        var cmd = new Command("go", "调试：直接移动到相邻区域（不参与回合结算）") { directionArg };
         cmd.SetAction(ctx =>
         {
             var output = ctx.InvocationConfiguration.Output;
@@ -122,6 +124,7 @@ public static class GameEntry
 
             _ = repo.Commit(root).Value;
 
+            output.WriteLine("⚠️ 这是调试移动，不会记录为回合步骤，也不会触发 validator。");
             output.WriteLine($"🚶 你向 {direction} 方向走去…");
             output.WriteLine();
             output.Write(GamePresenter.RenderPerception(moveResult.Value!));
@@ -131,7 +134,7 @@ public static class GameEntry
 
     private static Command BuildLookAroundCommand()
     {
-        var cmd = new Command("look-around", "重新查看当前位置的感知信息");
+        var cmd = new Command("look-around", "查看当前最小 Perception-Bundle");
         cmd.SetAction(ctx =>
         {
             var output = ctx.InvocationConfiguration.Output;
@@ -145,7 +148,136 @@ public static class GameEntry
 
             var (_, root) = state.Value;
             output.Write(GamePresenter.RenderPerception(
-                GameSimulation.DescribeCurrentLocation(root)));
+                GameSimulation.DescribeCurrentPerception(root)));
+        });
+        return cmd;
+    }
+
+    private static Command BuildEditMemoryNotebookCommand()
+    {
+        var contentArg = new Argument<string>("content")
+        {
+            Description = "替换后的 Memory-Notebook 全文"
+        };
+        var reasonArg = new Argument<string>("reason")
+        {
+            Description = "支撑这一步 notebook 编辑的 grounded Reason-Trace"
+        };
+        var cmd = new Command("edit-memory-notebook", "Small-Action：编辑私人 Memory-Notebook")
+        {
+            contentArg,
+            reasonArg,
+        };
+        cmd.SetAction(async (ctx, ct) =>
+        {
+            var output = ctx.InvocationConfiguration.Output;
+            var content = ctx.GetValue(contentArg)!;
+            var reason = ctx.GetValue(reasonArg)!;
+
+            var state = GetState();
+            if (state is null)
+            {
+                output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+                return;
+            }
+
+            var (repo, root) = state.Value;
+            var perception = GameSimulation.DescribeCurrentPerception(root);
+            var actionSummary = $"replace notebook ({perception.NotebookContent.Length} -> {content.Length} chars)";
+
+            GameActionValidator.ValidationResult validation;
+            try
+            {
+                validation = await GameActionValidator.ValidateActionAsync(
+                    perception,
+                    actionKind: "small/edit-memory-notebook",
+                    actionSummary,
+                    reasonTrace: reason,
+                    actionPayload: content,
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                output.WriteLine($"❌ validator 调用失败：{ex.Message}");
+                return;
+            }
+
+            if (!validation.Accepted)
+            {
+                output.WriteLine("❌ validator 未通过这一步 Small-Action。");
+                output.WriteLine(validation.Feedback);
+                return;
+            }
+
+            var updatedPerception = GameSimulation.ApplyNotebookEdit(root, content, reason, validation.Feedback);
+            _ = repo.Commit(root).Value;
+
+            output.WriteLine("✅ Small-Action 已接受：edit-memory-notebook");
+            output.WriteLine($"🧪 validator: {validation.Feedback}");
+            output.WriteLine();
+            output.Write(GamePresenter.RenderPerception(updatedPerception));
+        });
+        return cmd;
+    }
+
+    private static Command BuildRestAWhileCommand()
+    {
+        var reasonArg = new Argument<string>("reason")
+        {
+            Description = "支撑这一步“原地休息一会”的 grounded Reason-Trace"
+        };
+        var cmd = new Command("rest-a-while", "Large-Action：原地休息一会，并结束当前回合")
+        {
+            reasonArg,
+        };
+        cmd.SetAction(async (ctx, ct) =>
+        {
+            var output = ctx.InvocationConfiguration.Output;
+            var reason = ctx.GetValue(reasonArg)!;
+            const string actionSummary = "原地休息一会";
+
+            var state = GetState();
+            if (state is null)
+            {
+                output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+                return;
+            }
+
+            var (repo, root) = state.Value;
+            var perception = GameSimulation.DescribeCurrentPerception(root);
+
+            GameActionValidator.ValidationResult validation;
+            try
+            {
+                validation = await GameActionValidator.ValidateActionAsync(
+                    perception,
+                    actionKind: "large/rest-a-while",
+                    actionSummary,
+                    reasonTrace: reason,
+                    actionPayload: null,
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                output.WriteLine($"❌ validator 调用失败：{ex.Message}");
+                return;
+            }
+
+            if (!validation.Accepted)
+            {
+                output.WriteLine("❌ validator 未通过这一步 Large-Action。");
+                output.WriteLine(validation.Feedback);
+                return;
+            }
+
+            var resolution = GameSimulation.ApplyRestAWhile(root, reason, validation.Feedback);
+            _ = repo.Commit(root).Value;
+
+            output.WriteLine("✅ Large-Action 已接受：原地休息一会。当前回合已结束。");
+            output.WriteLine($"🧪 validator: {validation.Feedback}");
+            output.WriteLine($"📣 结算: {resolution.Summary}");
+            output.WriteLine();
+            output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
         });
         return cmd;
     }

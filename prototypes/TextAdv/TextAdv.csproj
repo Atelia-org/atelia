@@ -13,5 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\StateJournal\StateJournal.csproj" />
+    <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" />
+    <ProjectReference Include="..\Completion\Completion.csproj" />
   </ItemGroup>
 </Project>
