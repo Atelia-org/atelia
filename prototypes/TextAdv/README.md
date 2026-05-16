@@ -28,14 +28,14 @@ LLM Agent (Copilot / Claude Code)
 | 入口 | 文件 | 说明 |
 |:---|:---|:---|
 | `fridge` | `FridgeEntry.cs` | 调试/echo 测试：冰箱状态持久化（put-egg / get-egg / status / reset） |
-| `game` | `GameEntry.cs` | **主入口**：荒岛求生文本冒险游戏（new / go / look-around） |
+| `game` | `GameEntry.cs` | **主入口**：荒岛求生文本冒险游戏（new / look-around / edit-memory-notebook / rest-a-while / dev-go） |
 
 ## 当前代码分层
 
 - `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
 - `GameSimulation.cs`：世界 bootstrap、状态查询、移动结算等核心逻辑
 - `GamePresenter.cs`：把 `LocationPerception` 渲染成玩家看到的文本
-- `GameActionValidator.cs`：DeepSeekV4 + tool call 驱动的 validator，负责逐步校验 `Reason-Trace`
+- `GameActionValidator.cs`：DeepSeekV4 + tool call 驱动的 validator，负责逐步校验事前推理（PreActionReason）
 
 ## 设计文档
 
@@ -56,18 +56,24 @@ pmux game new
 # 查看当前最小 Perception-Bundle
 pmux game look-around
 
-# Small-Action：编辑私人 Memory-Notebook（每步都要求 Reason-Trace）
+# Small-Action：用 TextEditScript 编辑私人 Memory-Notebook（第一个参数永远是事前推理）
+# 玩家输入时可以省略 <text-edit-script> 根节点；宿主会自动补齐。
 pmux game edit-memory-notebook \
-  "记住：沙滩 north 通往密林。" \
-  "我需要把当前直接可见且可能很快遗忘的导航信息记进私人笔记。"
+  "我需要把当前直接可见且可能很快遗忘的导航信息记进私人笔记。" \
+  '<insert side="after" anchor="tail">记住：沙滩 north 通往密林。</insert>'
+
+# 只预演，不落地：仍会执行同一套 parse、after-view 预测和 validator
+pmux game edit-memory-notebook --dry-run \
+  "我想先看看这条笔记在当前证据边界下能否通过 validator。" \
+  '<insert side="after" anchor="tail">怀疑北边树林里可能有淡水，尚未确认。</insert>'
 
 # Large-Action：原地休息一会，并结束回合
 pmux game rest-a-while \
   "我已经先把当前最关键信息写进 notebook，而且当前没有比短暂休息更急迫的动作，所以现在原地休息一会是合理的。"
 
 # 调试移动：不参与回合结算，只用于两个地点的最小地图 sanity check
-pmux game go north
-pmux game go south
+pmux game dev-go north
+pmux game dev-go south
 
 # 冰箱测试入口（调试用）
 pmux :register fridge \
@@ -101,6 +107,10 @@ root (DurableDict<string>)
 - 每个有意义的操作结束后 `Commit`，保证 crash recovery
 - 当前最小原型优先立住“Perception-Bundle -> Small-Action -> Large-Action -> 结算”流程
 - `Memory-Notebook` 作为 Player 私有持久状态，当前以 `DurableText` 承载
+- `Memory-Notebook` 当前以 block view 向 Player 展示；玩家可输入不带根节点的编辑片段，宿主会自动补成 canonical XML `TextEditScript`
+- 所有玩家动作的第一个必填参数都应表示事前推理：先说明依据当前证据为什么准备这么做，再给出动作本身；不鼓励事后合理化式解释
+- `edit-memory-notebook --dry-run` 会执行与正式提交同构的 preview + validator，但不会写入状态；适合先试探 after-view 与 validator 边界
+- 玩家视图应自带“当前可执行动作”速查，默认按失忆玩家设计，不假定玩家记得上一次输出里的规则说明
 - 当前 validator 默认走 `DeepSeekV4ChatClient`
 - 数据目录：`/tmp/atelia-textadv-game/`（后续可改为 repo 内路径）
 
@@ -115,5 +125,7 @@ root (DurableDict<string>)
 
 - 若模型没有调用问题指出工具，则视为验证通过
 - 若模型调用 `point_out_issues`，则视为验证不通过，并将工具参数转成反馈文本
+- 对于 notebook 编辑，宿主会把“当前 notebook 块视图 + TextEditScript + 预测 after-view + 事前推理”一起喂给 validator
+- dry-run / validator 里的预测 after-view 不承诺真实新 block id；新插入块只会以 `[new-N]` 形式占位显示，实际 block id 要等真正写入时才会分配
 
 之所以使用 `point_out_issues` 这个 ASCII 工具名，而不是直接用中文工具名，是为了避免 OpenAI-compatible function name 约束带来的 provider 兼容性问题；中文语义通过 tool description 传达给模型。

@@ -9,10 +9,16 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Atelia.TextAdv.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.6" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\StateJournal\StateJournal.csproj" />
+    <ProjectReference Include="..\..\src\TextEditScript\TextEditScript.csproj" />
     <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" />
     <ProjectReference Include="..\Completion\Completion.csproj" />
   </ItemGroup>

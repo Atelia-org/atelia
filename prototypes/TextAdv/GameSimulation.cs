@@ -1,9 +1,9 @@
 using Atelia.StateJournal;
+using Atelia.TextEditScript;
 
 namespace Atelia.TextAdv;
 
-internal static class GameSimulation
-{
+internal static class GameSimulation {
     private const string WorldKey = "world";
     private const string GameKey = "game";
     private const string LocationsKey = "locations";
@@ -30,7 +30,7 @@ internal static class GameSimulation
     private const string ActionKindKey = "actionKind";
     private const string ActionSummaryKey = "actionSummary";
     private const string ActionPayloadKey = "actionPayload";
-    private const string ReasonTraceKey = "reasonTrace";
+    private const string PreActionReasonKey = "preActionReason";
     private const string ValidatorFeedbackKey = "validatorFeedback";
     private const string EndsTurnKey = "endsTurn";
     private const string NameKey = "name";
@@ -38,44 +38,7 @@ internal static class GameSimulation
     private const string ExitsKey = "exits";
     private const int DefaultSlotsPerDay = 4;
 
-    private sealed record GameError(string ErrorCode, string Message)
-        : AteliaError(ErrorCode, Message);
-
-    internal sealed record LocationPerception(
-        string LocationId,
-        string Name,
-        string Description,
-        IReadOnlyList<LocationExitPerception> Exits);
-
-    internal sealed record LocationExitPerception(
-        string Direction,
-        string TargetLocationId,
-        string TargetName);
-
-    internal sealed record TurnStep(
-        int StepNumber,
-        string ActionKind,
-        string ActionSummary,
-        string? ActionPayload,
-        string ReasonTrace,
-        string ValidatorFeedback,
-        bool EndsTurn);
-
-    internal sealed record PerceptionBundle(
-        int Day,
-        int Slot,
-        int SlotsPerDay,
-        LocationPerception Location,
-        string NotebookContent,
-        IReadOnlyList<TurnStep> AcceptedSteps,
-        string? LastResolution);
-
-    internal sealed record TurnResolution(
-        string Summary,
-        PerceptionBundle NextPerception);
-
-    internal static DurableDict<string> CreateNewWorld(Repository repo)
-    {
+    internal static DurableDict<string> CreateNewWorld(Repository repo) {
         var revResult = repo.GetOrCreateBranch("main");
         var rev = revResult.Value!;
 
@@ -92,10 +55,12 @@ internal static class GameSimulation
 
         var beach = CreateLocation(rev, "沙滩",
             "一片开阔的沙滩，海浪轻拍着海岸线。"
-            + "细白的沙子在阳光下闪闪发光。远处可以看到茂密的树林。");
+            + "细白的沙子在阳光下闪闪发光。远处可以看到茂密的树林。"
+        );
         var forest = CreateLocation(rev, "密林",
             "茂密的树林遮天蔽日，空气中弥漫着泥土和树叶的气味。"
-            + "树影间隐约能听到鸟鸣声。南边透过树缝可以看到沙滩的亮光。");
+            + "树影间隐约能听到鸟鸣声。南边透过树缝可以看到沙滩的亮光。"
+        );
 
         AddExit(beach, "north", forestId);
         AddExit(forest, "south", beachId);
@@ -124,44 +89,47 @@ internal static class GameSimulation
         return root;
     }
 
-    internal static PerceptionBundle DescribeCurrentPerception(DurableDict<string> root)
-    {
+    internal static PerceptionBundle DescribeCurrentPerception(DurableDict<string> root) {
         var game = GetGame(root);
         var day = game.GetOrThrow<int>(DayKey);
         var slot = game.GetOrThrow<int>(SlotKey);
         var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
         var lastResolution = TryGetOptionalString(game, LastResolutionKey);
+        var notebookSnapshot = GetNotebookSnapshot(root);
+        var acceptedSteps = ReadAcceptedSteps(root);
 
         return new PerceptionBundle(
             day,
             slot,
             slotsPerDay,
             DescribeCurrentLocation(root),
-            GetNotebookContent(root),
-            ReadAcceptedSteps(root),
-            lastResolution);
+            notebookSnapshot,
+            acceptedSteps,
+            lastResolution
+        );
     }
 
     internal static LocationPerception DescribeCurrentLocation(DurableDict<string> root)
         => DescribeLocation(root, GetPlayerLocationId(root));
 
-    internal static AteliaResult<PerceptionBundle> MovePlayer(DurableDict<string> root, string direction)
-    {
+    internal static AteliaResult<PerceptionBundle> MovePlayer(DurableDict<string> root, string direction) {
         var player = root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
         var currentLocationId = GetPlayerLocationId(root);
         var currentLocation = GetLocation(root, currentLocationId);
         var exits = currentLocation.GetOrThrow<DurableDict<string>>(ExitsKey)!;
 
         if (!exits.TryGet(direction, out string? targetLocationId)
-            || string.IsNullOrWhiteSpace(targetLocationId))
-        {
+            || string.IsNullOrWhiteSpace(targetLocationId)) {
             var available = string.Join(", ",
                 EnumerateExits(root, currentLocationId)
-                    .Select(exit => $"{exit.Direction} → {exit.TargetName}"));
+                    .Select(exit => $"{exit.Direction} → {exit.TargetName}")
+            );
             var currentName = currentLocation.GetOrThrow<string>(NameKey)!;
             return AteliaResult<PerceptionBundle>.Failure(
-                new GameError("TextAdv.InvalidDirection",
-                    $"「{currentName}」没有通往「{direction}」的出口。可用的出口: {available}"));
+                new TextAdvError("TextAdv.InvalidDirection",
+                    $"「{currentName}」没有通往「{direction}」的出口。可用的出口: {available}"
+                )
+            );
         }
 
         _ = GetLocation(root, targetLocationId);
@@ -171,32 +139,31 @@ internal static class GameSimulation
 
     internal static PerceptionBundle ApplyNotebookEdit(
         DurableDict<string> root,
-        string newContent,
-        string reasonTrace,
-        string validatorFeedback)
-    {
-        var player = GetPlayer(root);
-        var oldContent = GetNotebookContent(root);
-        var newNotebook = CreateNotebookText(root.Revision, newContent);
-        player.Upsert(MemoryNotebookKey, newNotebook);
+        NotebookEditProposal proposal,
+        string preActionReason,
+        string validatorFeedback
+    ) {
+        var notebook = GetNotebook(root);
+        GameNotebookEditService.ApplyOrThrow(notebook, proposal);
 
         AppendAcceptedStep(
             root,
             actionKind: "small/edit-memory-notebook",
-            actionSummary: $"replace notebook ({oldContent.Length} -> {newContent.Length} chars)",
-            actionPayload: newContent,
-            reasonTrace,
+            actionSummary: proposal.ActionSummary,
+            actionPayload: proposal.CanonicalScriptXml,
+            preActionReason,
             validatorFeedback,
-            endsTurn: false);
+            endsTurn: false
+        );
 
         return DescribeCurrentPerception(root);
     }
 
     internal static TurnResolution ApplyRestAWhile(
         DurableDict<string> root,
-        string reasonTrace,
-        string validatorFeedback)
-    {
+        string preActionReason,
+        string validatorFeedback
+    ) {
         const string actionSummary = "原地休息一会";
 
         AppendAcceptedStep(
@@ -204,17 +171,19 @@ internal static class GameSimulation
             actionKind: "large/rest-a-while",
             actionSummary,
             actionPayload: null,
-            reasonTrace,
+            preActionReason,
             validatorFeedback,
-            endsTurn: true);
+            endsTurn: true
+        );
 
         var game = GetGame(root);
         var previousDay = game.GetOrThrow<int>(DayKey);
         var previousSlot = game.GetOrThrow<int>(SlotKey);
+        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
         var nextClock = AdvanceClock(root);
         var resolutionSummary =
             $"你原地休息了一会。当前原型只推进时钟，不结算更复杂的世界后果。"
-            + $" 时间从 Day {previousDay} Slot {previousSlot} 前进到 Day {nextClock.Day} Slot {nextClock.Slot}。";
+            + $" 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)} 前进到 {GameClock.FormatClock(nextClock.Day, nextClock.Slot, slotsPerDay)}。";
 
         ArchiveCompletedTurn(root, resolutionSummary);
         game.Upsert(LastResolutionKey, resolutionSummary);
@@ -223,14 +192,12 @@ internal static class GameSimulation
         return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
     }
 
-    private static string GetPlayerLocationId(DurableDict<string> root)
-    {
+    private static string GetPlayerLocationId(DurableDict<string> root) {
         var player = root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
         return player.GetOrThrow<string>(PlayerLocationKey)!;
     }
 
-    private static LocationPerception DescribeLocation(DurableDict<string> root, string locationId)
-    {
+    private static LocationPerception DescribeLocation(DurableDict<string> root, string locationId) {
         var location = GetLocation(root, locationId);
         var name = location.GetOrThrow<string>(NameKey)!;
         var description = location.GetOrThrow<string>(DescriptionKey)!;
@@ -240,13 +207,12 @@ internal static class GameSimulation
 
     private static IEnumerable<LocationExitPerception> EnumerateExits(
         DurableDict<string> root,
-        string locationId)
-    {
+        string locationId
+    ) {
         var location = GetLocation(root, locationId);
         var exits = location.GetOrThrow<DurableDict<string>>(ExitsKey)!;
 
-        foreach (var direction in exits.Keys)
-        {
+        foreach (var direction in exits.Keys) {
             var targetLocationId = exits.GetOrThrow<string>(direction)!;
             var targetLocation = GetLocation(root, targetLocationId);
             var targetName = targetLocation.GetOrThrow<string>(NameKey)!;
@@ -254,8 +220,7 @@ internal static class GameSimulation
         }
     }
 
-    private static DurableDict<string> GetLocation(DurableDict<string> root, string locationId)
-    {
+    private static DurableDict<string> GetLocation(DurableDict<string> root, string locationId) {
         var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
         var locations = world.GetOrThrow<DurableDict<string>>(LocationsKey)!;
         return locations.GetOrThrow<DurableDict<string>>(locationId)!;
@@ -267,25 +232,30 @@ internal static class GameSimulation
     private static DurableDict<string> GetPlayer(DurableDict<string> root)
         => root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
 
-    private static DurableDict<string> GetCurrentTurn(DurableDict<string> root)
-    {
+    private static DurableText GetNotebook(DurableDict<string> root)
+        => GetPlayer(root).GetOrThrow<DurableText>(MemoryNotebookKey)!;
+
+    private static DurableDict<string> GetCurrentTurn(DurableDict<string> root) {
         var game = GetGame(root);
         return game.GetOrThrow<DurableDict<string>>(CurrentTurnKey)!;
     }
 
-    private static string GetNotebookContent(DurableDict<string> root)
-    {
-        var player = GetPlayer(root);
-        var notebook = player.GetOrThrow<DurableText>(MemoryNotebookKey)!;
-        var blocks = notebook.GetAllBlocks();
-        return string.Join("\n", blocks.Select(static block => block.Content));
+    private static TextBlockSnapshotDocument GetNotebookSnapshot(DurableDict<string> root) {
+        var notebook = GetNotebook(root);
+        return new TextBlockSnapshotDocument(
+            notebook.GetAllBlocks()
+                .Select(static block => new TextBlockSnapshot(block.Id, block.Content))
+                .ToArray()
+        );
     }
 
-    private static DurableText CreateNotebookText(Revision rev, string content)
-    {
+    private static string GetNotebookContent(TextBlockSnapshotDocument snapshot) {
+        return string.Join("\n", snapshot.Blocks.Select(static block => block.Content));
+    }
+
+    private static DurableText CreateNotebookText(Revision rev, string content) {
         var notebook = rev.CreateText();
-        if (!string.IsNullOrEmpty(content))
-        {
+        if (!string.IsNullOrEmpty(content)) {
             notebook.LoadText(content);
         }
 
@@ -297,8 +267,8 @@ internal static class GameSimulation
         int day,
         int slot,
         string locationId,
-        string notebookSnapshot)
-    {
+        string notebookSnapshot
+    ) {
         var currentTurn = rev.CreateDict<string>();
         var acceptedSteps = rev.CreateDict<string>();
 
@@ -312,14 +282,13 @@ internal static class GameSimulation
         return currentTurn;
     }
 
-    private static IReadOnlyList<TurnStep> ReadAcceptedSteps(DurableDict<string> root)
-    {
+    private static IReadOnlyList<TurnStep> ReadAcceptedSteps(DurableDict<string> root) {
         var currentTurn = GetCurrentTurn(root);
         var acceptedSteps = currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsKey)!;
         return acceptedSteps.Keys
             .OrderBy(static key => key, StringComparer.Ordinal)
-            .Select(key =>
-            {
+            .Select(
+            key => {
                 var step = acceptedSteps.GetOrThrow<DurableDict<string>>(key)!;
                 var numberPart = key.Split('-').Last();
                 var stepNumber = int.Parse(numberPart);
@@ -329,10 +298,12 @@ internal static class GameSimulation
                     step.GetOrThrow<string>(ActionKindKey)!,
                     step.GetOrThrow<string>(ActionSummaryKey)!,
                     actionPayload,
-                    step.GetOrThrow<string>(ReasonTraceKey)!,
+                    step.GetOrThrow<string>(PreActionReasonKey)!,
                     step.GetOrThrow<string>(ValidatorFeedbackKey)!,
-                    step.GetOrThrow<bool>(EndsTurnKey));
-            })
+                    step.GetOrThrow<bool>(EndsTurnKey)
+                );
+            }
+        )
             .ToArray();
     }
 
@@ -341,10 +312,10 @@ internal static class GameSimulation
         string actionKind,
         string actionSummary,
         string? actionPayload,
-        string reasonTrace,
+        string preActionReason,
         string validatorFeedback,
-        bool endsTurn)
-    {
+        bool endsTurn
+    ) {
         var currentTurn = GetCurrentTurn(root);
         var acceptedSteps = currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsKey)!;
         var stepNumber = currentTurn.GetOrThrow<int>(NextStepNumberKey);
@@ -353,23 +324,21 @@ internal static class GameSimulation
 
         step.Upsert(ActionKindKey, actionKind);
         step.Upsert(ActionSummaryKey, actionSummary);
-        if (actionPayload is not null)
-        {
+        if (actionPayload is not null) {
             step.Upsert(ActionPayloadKey, actionPayload);
         }
 
-        step.Upsert(ReasonTraceKey, reasonTrace);
+        step.Upsert(PreActionReasonKey, preActionReason);
         step.Upsert(ValidatorFeedbackKey, validatorFeedback);
         step.Upsert(EndsTurnKey, endsTurn);
 
         acceptedSteps.Upsert(stepId, step);
         currentTurn.Upsert(NextStepNumberKey, stepNumber + 1);
 
-        return new TurnStep(stepNumber, actionKind, actionSummary, actionPayload, reasonTrace, validatorFeedback, endsTurn);
+        return new TurnStep(stepNumber, actionKind, actionSummary, actionPayload, preActionReason, validatorFeedback, endsTurn);
     }
 
-    private static void ArchiveCompletedTurn(DurableDict<string> root, string resolutionSummary)
-    {
+    private static void ArchiveCompletedTurn(DurableDict<string> root, string resolutionSummary) {
         var rev = root.Revision;
         var game = GetGame(root);
         var currentTurn = GetCurrentTurn(root);
@@ -385,37 +354,29 @@ internal static class GameSimulation
         archivedTurn.Upsert(NotebookSnapshotKey, currentTurn.GetOrThrow<string>(NotebookSnapshotKey)!);
         archivedTurn.Upsert(AcceptedStepsKey, currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsKey)!);
         archivedTurn.Upsert(ResolutionSummaryKey, resolutionSummary);
-        archivedTurn.Upsert(EndingNotebookKey, GetNotebookContent(root));
+        archivedTurn.Upsert(EndingNotebookKey, GetNotebookContent(GetNotebookSnapshot(root)));
 
         turnHistory.Upsert($"turn-{turnNumber:D4}", archivedTurn);
         game.Upsert(CompletedTurnCountKey, turnNumber);
     }
 
-    private static (int Day, int Slot) AdvanceClock(DurableDict<string> root)
-    {
+    private static (int Day, int Slot) AdvanceClock(DurableDict<string> root) {
         var game = GetGame(root);
         var day = game.GetOrThrow<int>(DayKey);
         var slot = game.GetOrThrow<int>(SlotKey);
         var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var nextSlot = slot + 1;
-        var nextDay = day;
+        var nextClock = GameClock.PreviewNextClock(day, slot, slotsPerDay);
 
-        if (nextSlot > slotsPerDay)
-        {
-            nextDay++;
-            nextSlot = 1;
-        }
-
-        game.Upsert(DayKey, nextDay);
-        game.Upsert(SlotKey, nextSlot);
-        return (nextDay, nextSlot);
+        game.Upsert(DayKey, nextClock.Day);
+        game.Upsert(SlotKey, nextClock.Slot);
+        return nextClock;
     }
 
-    private static void ResetCurrentTurn(DurableDict<string> root)
-    {
+    private static void ResetCurrentTurn(DurableDict<string> root) {
         var game = GetGame(root);
         var day = game.GetOrThrow<int>(DayKey);
         var slot = game.GetOrThrow<int>(SlotKey);
+        var notebookSnapshot = GetNotebookSnapshot(root);
         game.Upsert(
             CurrentTurnKey,
             CreateCurrentTurnState(
@@ -423,21 +384,18 @@ internal static class GameSimulation
                 day,
                 slot,
                 GetPlayerLocationId(root),
-                GetNotebookContent(root)));
+                GetNotebookContent(notebookSnapshot)
+            )
+        );
     }
 
-    private static string? TryGetOptionalString(DurableDict<string> dict, string key)
-    {
-        if (!dict.TryGet(key, out string? value) || string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
+    private static string? TryGetOptionalString(DurableDict<string> dict, string key) {
+        if (!dict.TryGet(key, out string? value) || string.IsNullOrWhiteSpace(value)) { return null; }
 
         return value;
     }
 
-    private static DurableDict<string> CreateLocation(Revision rev, string name, string description)
-    {
+    private static DurableDict<string> CreateLocation(Revision rev, string name, string description) {
         var location = rev.CreateDict<string>();
         location.Upsert(NameKey, name);
         location.Upsert(DescriptionKey, description);
@@ -445,8 +403,7 @@ internal static class GameSimulation
         return location;
     }
 
-    private static void AddExit(DurableDict<string> from, string direction, string targetLocationId)
-    {
+    private static void AddExit(DurableDict<string> from, string direction, string targetLocationId) {
         var exits = from.GetOrThrow<DurableDict<string>>(ExitsKey)!;
         exits.Upsert(direction, targetLocationId);
     }
