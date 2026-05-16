@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
-using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
 
@@ -379,7 +378,7 @@ public static class Program {
                     ? $", {elapsed.TotalMilliseconds:F0}ms"
                     : string.Empty;
                 WriteDiagnosticLine(
-                    $"[{_style.Label}/tool-result] {result.ToolName}#{result.ToolCallId} [{result.ExecuteResult.Status}{elapsedText}] => {FormatToolResult(result.ExecuteResult.Result.Basic)}"
+                    $"[{_style.Label}/tool-result] {result.ToolName}#{result.ToolCallId} [{result.ExecuteResult.Status}{elapsedText}] => {FormatToolResult(result.ExecuteResult.Basic)}"
                 );
             }
 
