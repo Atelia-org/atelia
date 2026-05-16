@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 
 namespace Atelia.Agent.Core.History;
 
@@ -212,7 +212,7 @@ public sealed record class ToolResultsEntry : ObservationEntry {
     /// <param name="results">按不同细节等级存储的工具调用结果列表。</param>
     /// <param name="executeError">工具执行过程中产生的错误信息。</param>
     public ToolResultsEntry(
-        IReadOnlyList<LodToolCallResult> results,
+        IReadOnlyList<ToolCallExecutionResult> results,
         string? executeError
     ) {
         Results = results ?? throw new ArgumentNullException(nameof(results));
@@ -225,7 +225,7 @@ public sealed record class ToolResultsEntry : ObservationEntry {
     /// <summary>
     /// 获取工具调用结果列表。
     /// </summary>
-    public IReadOnlyList<LodToolCallResult> Results { get; init; }
+    public IReadOnlyList<ToolCallExecutionResult> Results { get; init; }
 
     /// <summary>
     /// 获取工具执行错误信息。
@@ -255,7 +255,7 @@ public sealed record class ToolResultsEntry : ObservationEntry {
     /// <param name="detailLevel">目标输出的细节等级。</param>
     /// <returns>一个根据细节等级裁剪后的只读工具结果列表。</returns>
     private static IReadOnlyList<ToolResult> ProjectResults(
-        IReadOnlyList<LodToolCallResult> source,
+        IReadOnlyList<ToolCallExecutionResult> source,
         LevelOfDetail detailLevel
     ) {
         if (source.Count == 0) { return ImmutableArray<ToolResult>.Empty; }
@@ -263,14 +263,17 @@ public sealed record class ToolResultsEntry : ObservationEntry {
         var builder = ImmutableArray.CreateBuilder<ToolResult>(source.Count);
 
         for (int i = 0; i < source.Count; i++) {
-            LodToolCallResult item = source[i];
+            ToolCallExecutionResult item = source[i];
+            var content = detailLevel == LevelOfDetail.Detail
+                ? item.ExecuteResult.Detail
+                : item.ExecuteResult.Basic;
 
             builder.Add(
                 new ToolResult(
-                    item.ToolName ?? string.Empty,
-                    item.ToolCallId ?? string.Empty,
+                    item.ToolName,
+                    item.ToolCallId,
                     item.ExecuteResult.Status,
-                    item.ExecuteResult.Result.GetContent(detailLevel)
+                    content
                 )
             );
         }

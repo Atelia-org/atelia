@@ -1,5 +1,5 @@
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;

@@ -1,4 +1,4 @@
-namespace Atelia.Agent.Core.Tool;
+namespace Atelia.Completion.Tools;
 
 internal sealed record ResolvedToolCall(
     string ToolName,

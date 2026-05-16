@@ -2,8 +2,8 @@ using System.Globalization;
 using System.Text;
 using Atelia.Agent.Core.Apps;
 using Atelia.Agent.Core.History;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.Diagnostics;
 
 namespace Atelia.Agent.Core.App;
@@ -84,7 +84,7 @@ public sealed class EnginePanelApp : IApp {
         "适用时机：当上下文 token 占比较高时主动调用，避免被动截断。" +
         "为简化执行语义，本轮若存在多个工具调用，当前实现仍按模型给出的原始顺序依次执行。"
     )]
-    private async ValueTask<LodToolExecuteResult> CompressAsync(
+    private async ValueTask<ToolExecuteResult> CompressAsync(
         [ToolParam(
             "希望摘要中重点保留的内容（自然语言描述）。例如：" +
             "\"用户的核心目标与未完成的子任务、所有数字结论、文件路径与 blockId 引用\"。" +
@@ -172,16 +172,16 @@ public sealed class EnginePanelApp : IApp {
         return sb.ToString();
     }
 
-    private static LodToolExecuteResult Ok(string message)
+    private static ToolExecuteResult Ok(string message)
         => new(
             ToolExecutionStatus.Success,
-            new LevelOfDetailContent(message)
+            message
         );
 
-    private static LodToolExecuteResult Fail(string message)
+    private static ToolExecuteResult Fail(string message)
         => new(
             ToolExecutionStatus.Failed,
-            new LevelOfDetailContent(message)
+            message
         );
 
     private static string BuildCompactionSuccessMessage(AgentEngine.CompactionExecutionResult outcome) {

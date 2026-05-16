@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Text;
 using Atelia.Diagnostics;
 using Atelia.Agent.Core;
-using Atelia.Agent.Core.Tool;
 using Atelia.Agent.Text;
+using Atelia.Completion.Tools;
 
 namespace Atelia.Agent.Apps;
 

@@ -2,20 +2,10 @@ using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using Atelia.Completion.Abstractions;
-using Atelia.Agent.Core.Tool;
 
-namespace Atelia.Agent.Core;
+namespace Atelia.Completion.Tools;
 
 partial class MethodToolWrapper {
-    /// <summary>
-    /// 从参数字典中按名称提取参数值，若字典中不存在则使用默认值。
-    /// </summary>
-    /// <remarks>
-    /// 参数名匹配规则：使用原生的 <see cref="IReadOnlyDictionary{TKey, TValue}.TryGetValue"/> 进行查找，
-    /// 严格区分大小写。不支持忽略大小写或别名匹配。
-    /// 设计原因：保持简单、明确的契约，避免引入参数名碰撞检测与优先级决策的复杂性。
-    /// 当前团队调用路径可控，大小写一致性由工具定义与调用方共同保证。
-    /// </remarks>
     internal sealed record ArgGetter(string Name, ParamDefault? DefaultValue) {
         public object? GetValue(IReadOnlyDictionary<string, object?>? arguments) {
             if (arguments is not null && arguments.TryGetValue(Name, out var value)) { return value; }
@@ -30,14 +20,14 @@ partial class MethodToolWrapper {
     private readonly string _description;
     private readonly IReadOnlyList<ToolParamSpec> _parameters;
     private readonly IReadOnlyList<ArgGetter> _argGetters;
-    private readonly Func<object?[], CancellationToken, ValueTask<LodToolExecuteResult>> _invoker;
+    private readonly Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> _invoker;
 
     private MethodToolWrapper(
         string name,
         string description,
         IReadOnlyList<ToolParamSpec> parameters,
         IReadOnlyList<ArgGetter> argGetters,
-        Func<object?[], CancellationToken, ValueTask<LodToolExecuteResult>> invoker
+        Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> invoker
     ) {
         _name = name;
         _description = description;
@@ -52,26 +42,9 @@ partial class MethodToolWrapper {
 
     public IReadOnlyList<ToolParamSpec> Parameters => _parameters;
 
-    /// <inheritdoc />
-    /// <remarks>
-    /// 默认情况下工具对模型可见；调用方可以在运行时修改该值以进行临时隐藏。
-    /// </remarks>
     public bool Visible { get; set; } = true;
 
-    /// <summary>
-    /// 执行包装的目标方法。
-    /// </summary>
-    /// <param name="arguments">
-    /// 参数字典，键为参数名（严格区分大小写），值为参数值。
-    /// 参数名必须与 <see cref="ToolParamSpec.Name"/> 完全匹配，否则会因缺少必填参数而抛出 <see cref="ArgumentException"/>。
-    /// </param>
-    /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>工具执行结果。</returns>
-    /// <remarks>
-    /// 本方法通过 <see cref="ArgGetter"/> 从 <paramref name="arguments"/> 中按原始参数名提取值，
-    /// 不进行大小写转换或别名匹配。若字典中缺少必填参数，会抛出异常由 <see cref="ToolExecutor"/> 捕获并转换为失败结果。
-    /// </remarks>
-    public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
+    public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
         var args = BuildArgs(_argGetters, arguments);
         return _invoker(args, cancellationToken);
     }
@@ -88,7 +61,7 @@ partial class MethodToolWrapper {
             ? formatArgs
             : Array.Empty<object?>();
 
-        if (method.ReturnType != typeof(ValueTask<LodToolExecuteResult>)) { throw new InvalidOperationException($"Method '{method.Name}' must return ValueTask<LodToolExecuteResult>."); }
+        if (method.ReturnType != typeof(ValueTask<ToolExecuteResult>)) { throw new InvalidOperationException($"Method '{method.Name}' must return ValueTask<ToolExecuteResult>."); }
 
         var parameters = method.GetParameters();
         if (parameters.Length == 0 || parameters[^1].ParameterType != typeof(CancellationToken)) { throw new InvalidOperationException($"Method '{method.Name}' must declare CancellationToken as the last parameter."); }
@@ -148,7 +121,7 @@ partial class MethodToolWrapper {
         return args;
     }
 
-    private static Func<object?[], CancellationToken, ValueTask<LodToolExecuteResult>> CreateInvoker(MethodInfo method, object? targetInstance) {
+    private static Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> CreateInvoker(MethodInfo method, object? targetInstance) {
         var parameters = method.GetParameters();
 
         var argsParameter = Expression.Parameter(typeof(object?[]), "args");
@@ -172,11 +145,11 @@ partial class MethodToolWrapper {
         var callExpression = Expression.Call(instanceExpression, method, callArguments);
 
         return Expression
-            .Lambda<Func<object?[], CancellationToken, ValueTask<LodToolExecuteResult>>>(
-            callExpression,
-            argsParameter,
-            cancellationTokenParameter
-        )
+            .Lambda<Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>>>(
+                callExpression,
+                argsParameter,
+                cancellationTokenParameter
+            )
             .Compile();
     }
 
@@ -214,8 +187,6 @@ partial class MethodToolWrapper {
         if (Nullable.GetUnderlyingType(parameter.ParameterType) is not null) { return true; }
 
         if (!parameter.ParameterType.IsValueType) {
-            // NullabilityInfoContext 内部会维护按 Module 组织的缓存；这里避免跨线程共享实例，
-            // 否则并发注册多个 MethodToolWrapper 时可能在其内部字典上触发重复键异常。
             var nullability = new NullabilityInfoContext().Create(parameter);
             return nullability.WriteState == NullabilityState.Nullable;
         }
@@ -243,7 +214,6 @@ partial class MethodToolWrapper {
         return string.Concat(baseDescription, "；", string.Join("；", hints));
     }
 
-    // TODO: 挪到Provider.Kits命名空间中，让各个LLM Provider自己决定默认值的文本表示
     private static string DescribeDefaultValue(object? value) {
         if (value is null) { return "null"; }
 

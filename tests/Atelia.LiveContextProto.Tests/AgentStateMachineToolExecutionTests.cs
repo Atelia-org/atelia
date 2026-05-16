@@ -5,9 +5,9 @@ using System.Reflection;
 using System.Text.Json;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -25,9 +25,9 @@ public sealed class AgentStateMachineToolExecutionTests {
             "echo",
             arguments => {
                 toolInvocations.Add(arguments);
-                return new LodToolExecuteResult(
+                return new ToolExecuteResult(
                     ToolExecutionStatus.Success,
-                    UniformContent("tool-output")
+                    "tool-output"
                 );
             }
         );
@@ -86,7 +86,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var historyResult = toolResults.Results[0];
         Assert.Equal(ToolExecutionStatus.Success, historyResult.ExecuteResult.Status);
-        var plainText = historyResult.ExecuteResult.Result.Basic;
+        var plainText = historyResult.ExecuteResult.Basic;
         Assert.Contains("tool-output", plainText, StringComparison.Ordinal);
 
         Assert.Single(toolInvocations);
@@ -114,9 +114,9 @@ public sealed class AgentStateMachineToolExecutionTests {
     public async Task DoStepAsync_ToolFailureProducesExecuteError() {
         var failingTool = new DelegateTool(
             "broken",
-            _ => new LodToolExecuteResult(
+            _ => new ToolExecuteResult(
                 ToolExecutionStatus.Failed,
-                UniformContent("tool failed")
+                "tool failed"
             )
         );
 
@@ -153,12 +153,12 @@ public sealed class AgentStateMachineToolExecutionTests {
     public async Task StepAsync_HiddenToolsAreExcludedFromCompletionRequest() {
         var visibleTool = new DelegateTool(
             "visible",
-            _ => new LodToolExecuteResult(ToolExecutionStatus.Success, UniformContent("unused"))
+            _ => new ToolExecuteResult(ToolExecutionStatus.Success, "unused")
         );
 
         var hiddenTool = new DelegateTool(
             "hidden",
-            _ => new LodToolExecuteResult(ToolExecutionStatus.Success, UniformContent("unused"))
+            _ => new ToolExecuteResult(ToolExecutionStatus.Success, "unused")
         ) {
             Visible = false
         };
@@ -178,8 +178,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         await engine.StepAsync(profile); // PendingInput -> WaitingInput / ActionEntry
 
         var capturedRequest = Assert.Single(provider.CapturedRequests);
-        Assert.Equal(2, capturedRequest.Tools.Length);
-        Assert.Contains(capturedRequest.Tools, definition => definition.Name.Equals("ctx_compress", StringComparison.Ordinal));
+        Assert.Single(capturedRequest.Tools);
         Assert.Contains(capturedRequest.Tools, definition => definition.Name.Equals("visible", StringComparison.Ordinal));
         Assert.DoesNotContain(capturedRequest.Tools, definition => definition.Name.Equals("hidden", StringComparison.OrdinalIgnoreCase));
     }
@@ -188,7 +187,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     public async Task StepAsync_TogglingVisibilityUsesCachedDefinitions() {
         var toggleTool = new DelegateTool(
             "toggle",
-            _ => new LodToolExecuteResult(ToolExecutionStatus.Success, UniformContent("unused"))
+            _ => new ToolExecuteResult(ToolExecutionStatus.Success, "unused")
         );
 
         var provider = new FakeProviderClient(
@@ -226,13 +225,12 @@ public sealed class AgentStateMachineToolExecutionTests {
         var second = captured[1].Tools;
         var third = captured[2].Tools;
 
-        Assert.Equal(2, first.Length);
+        Assert.Single(first);
         var definition = Assert.Single(first.Where(definition => definition.Name.Equals("toggle", StringComparison.Ordinal)));
 
-        Assert.Single(second);
-        Assert.Equal("ctx_compress", second[0].Name);
+        Assert.Empty(second);
 
-        Assert.Equal(2, third.Length);
+        Assert.Single(third);
         var thirdDefinition = Assert.Single(third.Where(definition => definition.Name.Equals("toggle", StringComparison.Ordinal)));
 
         Assert.Same(definition, thirdDefinition);
@@ -242,7 +240,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     public async Task PrepareInvocationAsync_RefreshesWindowAndToolVisibility_ForCurrentPendingInputCall() {
         var preparedTool = new DelegateTool(
             "prepared",
-            _ => new LodToolExecuteResult(ToolExecutionStatus.Success, UniformContent("unused"))
+            _ => new ToolExecuteResult(ToolExecutionStatus.Success, "unused")
         ) {
             Visible = false
         };
@@ -286,7 +284,7 @@ public sealed class AgentStateMachineToolExecutionTests {
     public async Task PrepareInvocationAsync_RunsAgain_ForPendingToolResultsModelCall() {
         var echoTool = new DelegateTool(
             "echo",
-            _ => new LodToolExecuteResult(ToolExecutionStatus.Success, UniformContent("tool-output"))
+            _ => new ToolExecuteResult(ToolExecutionStatus.Success, "tool-output")
         );
         var preparedApp = new PrepareAwareApp();
 
@@ -555,8 +553,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         var toolResult = Assert.Single(toolResultsStep.ToolResults!.Results);
         Assert.Equal("ctx_compress", toolResult.ToolName);
         Assert.Equal(ToolExecutionStatus.Success, toolResult.ExecuteResult.Status);
-        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Result.Basic, StringComparison.Ordinal);
-        Assert.Contains("释放了约", toolResult.ExecuteResult.Result.Basic, StringComparison.Ordinal);
+        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Basic, StringComparison.Ordinal);
+        Assert.Contains("释放了约", toolResult.ExecuteResult.Basic, StringComparison.Ordinal);
 
         var finalModelStep = await engine.StepAsync(profile);
         Assert.Equal(AgentRunState.PendingToolResults, finalModelStep.StateBefore);
@@ -611,7 +609,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         var toolResultsStep = await engine.StepAsync(initialProfile);
         var toolResult = Assert.Single(toolResultsStep.ToolResults!.Results);
         Assert.Equal(ToolExecutionStatus.Success, toolResult.ExecuteResult.Status);
-        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Result.Basic, StringComparison.Ordinal);
+        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Basic, StringComparison.Ordinal);
 
         var finalModelStep = await engine.StepAsync(initialProfile);
         Assert.NotNull(finalModelStep.Output);
@@ -733,9 +731,6 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     private static Action<CompletionAggregator>[] CreateDeltaSequence(params Action<CompletionAggregator>[] feeds) => feeds;
 
-    private static LevelOfDetailContent UniformContent(string text)
-        => new(text);
-
     private sealed class FakeProviderClient : ICompletionClient {
         private readonly Queue<Action<CompletionAggregator>[]> _responses;
 
@@ -762,9 +757,9 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     private sealed class DelegateTool : ITool {
-        private readonly Func<IReadOnlyDictionary<string, object?>?, LodToolExecuteResult> _execute;
+        private readonly Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> _execute;
 
-        public DelegateTool(string name, Func<IReadOnlyDictionary<string, object?>?, LodToolExecuteResult> execute) {
+        public DelegateTool(string name, Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> execute) {
             Name = name ?? throw new ArgumentNullException(nameof(name));
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
         }
@@ -777,7 +772,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         public bool Visible { get; set; } = true;
 
-        public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
+        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
             => new(_execute(arguments));
     }
 

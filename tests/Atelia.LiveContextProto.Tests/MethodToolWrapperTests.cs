@@ -1,8 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Atelia.Agent.Core;
-using Atelia.Agent.Core.Tool;
+using Atelia.Completion.Tools;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -10,7 +9,7 @@ namespace Atelia.LiveContextProto.Tests;
 public sealed class MethodToolWrapperTests {
     private sealed class SampleToolHost {
         [Tool("sample_tool", "Sample tool for unit testing")]
-        public ValueTask<LodToolExecuteResult> SampleAsync(
+        public ValueTask<ToolExecuteResult> SampleAsync(
             [ToolParam("nullable note")] string? note,
             [ToolParam("optional value")] int optionalValue = 0,
             [ToolParam("explicit default parameter")] int count = 42,
@@ -20,13 +19,13 @@ public sealed class MethodToolWrapperTests {
 
     private sealed class MissingAttributeHost {
         [Tool("missing_attribute_tool", "Tool missing parameter attribute for testing")]
-        public ValueTask<LodToolExecuteResult> ExecuteAsync(string note, CancellationToken cancellationToken = default)
+        public ValueTask<ToolExecuteResult> ExecuteAsync(string note, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
     }
 
     private sealed class FormattedToolHost {
         [Tool("{0}_formatted", "内测工具：{2} -> {1}")]
-        public ValueTask<LodToolExecuteResult> FormatAsync(
+        public ValueTask<ToolExecuteResult> FormatAsync(
             [ToolParam("{2} 输入文本")] string text,
             CancellationToken cancellationToken = default
         ) => throw new NotImplementedException();

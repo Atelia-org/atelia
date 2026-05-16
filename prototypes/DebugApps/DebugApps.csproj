@@ -16,6 +16,7 @@
     <ProjectReference Include="..\Agent.Core\Agent.Core.csproj" />
     <ProjectReference Include="..\Agent\Agent.csproj" />
     <ProjectReference Include="..\Completion\Completion.csproj" />
+    <ProjectReference Include="..\Completion.Tools\Completion.Tools.csproj" />
   </ItemGroup>
 
   <ItemGroup>

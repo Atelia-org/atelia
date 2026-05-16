@@ -1,7 +1,7 @@
 using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.History;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.Diagnostics;
 
 namespace Atelia.Agent.Core;
@@ -21,7 +21,7 @@ public partial class AgentEngine {
     private readonly AgentState _state;
     private readonly DefaultAppHost _appHost;
     private readonly Dictionary<string, ITool> _standaloneTools;
-    private readonly Dictionary<string, LodToolCallResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ToolCallExecutionResult> _pendingToolResults = new(StringComparer.OrdinalIgnoreCase);
     private readonly IIdleObservationProvider _idleProvider;
     private readonly Func<DateTimeOffset> _utcNowProvider;
     private readonly AutoCompactionOptions? _autoCompactionOptions;
@@ -586,7 +586,7 @@ public partial class AgentEngine {
         if (_state.RecentHistory.Count == 0 || _state.RecentHistory[^1] is not ActionEntry outputEntry) { return StepOutcome.NoProgress; }
         if (outputEntry.Message.ToolCalls is not { Count: > 0 }) { return StepOutcome.NoProgress; }
 
-        var collectedResults = new List<LodToolCallResult>(outputEntry.Message.ToolCalls.Count);
+        var collectedResults = new List<ToolCallExecutionResult>(outputEntry.Message.ToolCalls.Count);
 
         for (var index = 0; index < outputEntry.Message.ToolCalls.Count; index++) {
             var call = outputEntry.Message.ToolCalls[index];
@@ -601,7 +601,7 @@ public partial class AgentEngine {
         var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
-            : failure.ExecuteResult.Result.GetContent(LevelOfDetail.Basic);
+            : failure.ExecuteResult.Basic;
 
         var results = collectedResults.ToArray();
         var entry = new ToolResultsEntry(results, executeError);

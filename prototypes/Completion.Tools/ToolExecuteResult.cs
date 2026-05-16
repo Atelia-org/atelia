@@ -1,24 +1,28 @@
 using Atelia.Completion.Abstractions;
 
-namespace Atelia.Agent.Core.Tool;
+namespace Atelia.Completion.Tools;
 
-public sealed record LodToolExecuteResult {
-    public LodToolExecuteResult(
+public sealed record ToolExecuteResult {
+    public ToolExecuteResult(
         ToolExecutionStatus status,
-        LevelOfDetailContent result
+        string basic,
+        string? detail = null
     ) {
         Status = status;
-        Result = result ?? throw new ArgumentNullException(nameof(result));
+        Basic = basic ?? throw new ArgumentNullException(nameof(basic));
+        Detail = detail ?? basic;
     }
 
     public ToolExecutionStatus Status { get; }
 
-    public LevelOfDetailContent Result { get; }
+    public string Basic { get; }
+
+    public string Detail { get; }
 }
 
-public sealed record LodToolCallResult {
-    public LodToolCallResult(
-        LodToolExecuteResult executeResult,
+public sealed record ToolCallExecutionResult {
+    public ToolCallExecutionResult(
+        ToolExecuteResult executeResult,
         string toolName,
         string toolCallId,
         TimeSpan elapsed = default
@@ -29,7 +33,7 @@ public sealed record LodToolCallResult {
         Elapsed = elapsed;
     }
 
-    public LodToolExecuteResult ExecuteResult { get; init; }
+    public ToolExecuteResult ExecuteResult { get; init; }
 
     public string ToolName { get; init; }
 

@@ -5,9 +5,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -282,7 +282,7 @@ public sealed class AgentEngineTurnLockTests {
         var history = new HistoryEntry[] {
             new ObservationEntry(),
             new ActionEntry(new ActionMessage(new ActionBlock[] { new ActionBlock.Text("first") }), oldDescriptor),
-            new ToolResultsEntry(Array.Empty<LodToolCallResult>(), "runner_failed"),
+            new ToolResultsEntry(Array.Empty<ToolCallExecutionResult>(), "runner_failed"),
             new ActionEntry(new ActionMessage(new ActionBlock[] { new ActionBlock.Text("second") }), newDescriptor)
         };
 
@@ -301,7 +301,7 @@ public sealed class AgentEngineTurnLockTests {
         var history = new HistoryEntry[] {
             new RecapEntry("recap", 42),
             new ActionEntry(new ActionMessage(new ActionBlock[] { new ActionBlock.Text("tool call") }), descriptor),
-            new ToolResultsEntry(Array.Empty<LodToolCallResult>(), "runner_failed")
+            new ToolResultsEntry(Array.Empty<ToolCallExecutionResult>(), "runner_failed")
         };
 
         var turn = TurnAnalyzer.Analyze(history);
@@ -374,10 +374,10 @@ public sealed class AgentEngineTurnLockTests {
         public string Description => "echo";
         public bool Visible { get; set; } = true;
         public IReadOnlyList<ToolParamSpec> Parameters => Array.Empty<ToolParamSpec>();
-        public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
-            var result = new LodToolExecuteResult(
+        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
+            var result = new ToolExecuteResult(
                 ToolExecutionStatus.Success,
-                new LevelOfDetailContent("ok")
+                "ok"
             );
             return ValueTask.FromResult(result);
         }

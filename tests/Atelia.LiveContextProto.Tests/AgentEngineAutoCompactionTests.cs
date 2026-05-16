@@ -6,9 +6,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -372,8 +372,8 @@ public sealed class AgentEngineAutoCompactionTests {
         public string Description => "echo";
         public bool Visible { get; set; } = true;
         public IReadOnlyList<ToolParamSpec> Parameters => Array.Empty<ToolParamSpec>();
-        public ValueTask<LodToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
-            return ValueTask.FromResult(new LodToolExecuteResult(ToolExecutionStatus.Success, new LevelOfDetailContent("ok")));
+        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "ok"));
         }
     }
 

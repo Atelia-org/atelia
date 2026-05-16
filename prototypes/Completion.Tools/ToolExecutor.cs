@@ -3,9 +3,9 @@ using System.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Atelia.Diagnostics;
 
-namespace Atelia.Agent.Core.Tool;
+namespace Atelia.Completion.Tools;
 
-internal sealed class ToolExecutor {
+public sealed class ToolExecutor {
     private const string DebugCategory = "Tools";
     private readonly IReadOnlyDictionary<string, ITool> _tools;
     private readonly ImmutableArray<ToolDefinition> _allToolDefinitions;
@@ -25,7 +25,6 @@ internal sealed class ToolExecutor {
 
         _tools = dictionary;
 
-        // 预先缓存每个工具实例对应的 ToolDefinition，以便后续按可见性筛选时避免重复构建。
         var definitionMap = new Dictionary<ITool, ToolDefinition>(ReferenceEqualityComparer.Instance);
         var definitionBuilder = ImmutableArray.CreateBuilder<ToolDefinition>(_tools.Count);
 
@@ -46,18 +45,8 @@ internal sealed class ToolExecutor {
 
     public IEnumerable<ITool> Tools => _tools.Values;
 
-    /// <summary>
-    /// 获取所有已注册工具的定义（包含当前被隐藏的工具）。
-    /// </summary>
     public ImmutableArray<ToolDefinition> AllToolDefinitions => _allToolDefinitions;
 
-    /// <summary>
-    /// 获取当前对模型可见的工具定义快照。
-    /// </summary>
-    /// <remarks>
-    /// 每次调用都会根据工具的 <see cref="ITool.Visible"/> 状态重新构建结果，
-    /// 以便调用方可以在运行时动态切换工具可见性。
-    /// </remarks>
     public ImmutableArray<ToolDefinition> GetVisibleToolDefinitions() {
         if (_tools.Count == 0) { return ImmutableArray<ToolDefinition>.Empty; }
 
@@ -82,7 +71,7 @@ internal sealed class ToolExecutor {
         return _tools.TryGetValue(name, out tool!);
     }
 
-    public async ValueTask<LodToolCallResult> ExecuteAsync(
+    public async ValueTask<ToolCallExecutionResult> ExecuteAsync(
         RawToolCall request,
         CancellationToken cancellationToken
     ) {
@@ -92,8 +81,8 @@ internal sealed class ToolExecutor {
             DebugUtil.Warning(DebugCategory, $"[Executor] Missing tool toolName={request.ToolName}");
 
             var message = $"未找到工具: {request.ToolName}";
-            return new LodToolCallResult(
-                new LodToolExecuteResult(ToolExecutionStatus.Failed, new LevelOfDetailContent(message)),
+            return new ToolCallExecutionResult(
+                new ToolExecuteResult(ToolExecutionStatus.Failed, message),
                 request.ToolName,
                 request.ToolCallId
             );
@@ -113,8 +102,7 @@ internal sealed class ToolExecutor {
         }
 
         try {
-            var arguments = resolvedRequest.Arguments;
-            var executeResult = await tool.ExecuteAsync(arguments, cancellationToken).ConfigureAwait(false)
+            var executeResult = await tool.ExecuteAsync(resolvedRequest.Arguments, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Tool '{tool.Name}' returned null result.");
             stopwatch.Stop();
 
@@ -123,17 +111,15 @@ internal sealed class ToolExecutor {
                 $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            var enrichedContent = AttachParseWarning(executeResult.Result, resolvedRequest.ParseWarning);
-            var callResult = new LodToolCallResult(new LodToolExecuteResult(executeResult.Status, enrichedContent), request.ToolName, request.ToolCallId, stopwatch.Elapsed);
-            return callResult;
+            var enrichedResult = AttachParseWarning(executeResult, resolvedRequest.ParseWarning);
+            return new ToolCallExecutionResult(enrichedResult, request.ToolName, request.ToolCallId, stopwatch.Elapsed);
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
             DebugUtil.Warning(DebugCategory, $"[Executor] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId}");
 
-            var message = "工具执行被取消";
-            return new LodToolCallResult(
-                new LodToolExecuteResult(ToolExecutionStatus.Skipped, new LevelOfDetailContent(message)),
+            return new ToolCallExecutionResult(
+                new ToolExecuteResult(ToolExecutionStatus.Skipped, "工具执行被取消"),
                 request.ToolName,
                 request.ToolCallId,
                 stopwatch.Elapsed
@@ -144,8 +130,8 @@ internal sealed class ToolExecutor {
             DebugUtil.Error(DebugCategory, $"[Executor] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={ex.Message}", ex);
 
             var message = $"工具执行异常: {ex.Message}";
-            return new LodToolCallResult(
-                new LodToolExecuteResult(ToolExecutionStatus.Failed, new LevelOfDetailContent(message)),
+            return new ToolCallExecutionResult(
+                new ToolExecuteResult(ToolExecutionStatus.Failed, message),
                 request.ToolName,
                 request.ToolCallId,
                 stopwatch.Elapsed
@@ -174,7 +160,7 @@ internal sealed class ToolExecutor {
         );
     }
 
-    private static LodToolCallResult CreateParseFailureResult(RawToolCall request, ResolvedToolCall resolvedRequest) {
+    private static ToolCallExecutionResult CreateParseFailureResult(RawToolCall request, ResolvedToolCall resolvedRequest) {
         var basic = "工具参数解析失败。";
         var detail = string.IsNullOrWhiteSpace(resolvedRequest.ParseError)
             ? basic
@@ -184,18 +170,17 @@ internal sealed class ToolExecutor {
             detail = string.Concat(detail, "\nraw_arguments_json: ", request.RawArgumentsJson);
         }
 
-        return new LodToolCallResult(
-            new LodToolExecuteResult(ToolExecutionStatus.Failed, new LevelOfDetailContent(basic, detail)),
+        return new ToolCallExecutionResult(
+            new ToolExecuteResult(ToolExecutionStatus.Failed, basic, detail),
             request.ToolName,
             request.ToolCallId
         );
     }
 
-    private static LevelOfDetailContent AttachParseWarning(LevelOfDetailContent content, string? parseWarning) {
+    private static ToolExecuteResult AttachParseWarning(ToolExecuteResult content, string? parseWarning) {
         if (string.IsNullOrWhiteSpace(parseWarning)) { return content; }
 
         var detail = string.Concat(content.Detail, "\n[ParseWarning] ", parseWarning);
-        return new LevelOfDetailContent(content!.Basic, detail);
+        return new ToolExecuteResult(content.Status, content.Basic, detail);
     }
-
 }

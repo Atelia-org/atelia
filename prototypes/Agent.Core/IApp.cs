@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 
 namespace Atelia.Agent.Core;
 

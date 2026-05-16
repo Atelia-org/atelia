@@ -5,8 +5,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Agent.Core;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.Diagnostics;
 
 namespace Atelia.Agent.Text;
@@ -117,7 +117,7 @@ public sealed class TextEditorWidget {
     }
 
     [Tool(AppendToolFormat, "向 {1} 末尾追加新的文本段落；追加逻辑会自动根据现有内容插入所需换行。")]
-    private ValueTask<LodToolExecuteResult> AppendAsync(
+    private ValueTask<ToolExecuteResult> AppendAsync(
         [ToolParam("要追加的新文本；为空字符串表示不追加。")] string new_text,
         CancellationToken cancellationToken = default
     ) {
@@ -129,7 +129,7 @@ public sealed class TextEditorWidget {
     }
 
     [Tool(ReplaceToolFormat, "在 {1} 中查找并替换文本；需提供精确匹配的旧文本，执行结果会返回 operation/delta/new_length 等细节。")]
-    private ValueTask<LodToolExecuteResult> ReplaceAsync(
+    private ValueTask<ToolExecuteResult> ReplaceAsync(
         [ToolParam("要替换的旧文本；需与 {1} 内容精确匹配。")] string old_text,
         [ToolParam("替换后的新文本；为空字符串表示删除匹配到的旧文本。")] string new_text,
         CancellationToken cancellationToken = default
@@ -142,7 +142,7 @@ public sealed class TextEditorWidget {
     }
 
     [Tool(ReplaceSpanToolFormat, "通过起止标记精确定位 {1} 中的区块并替换；适合多段相似内容时依靠首尾锚点锁定唯一目标。")]
-    private ValueTask<LodToolExecuteResult> ReplaceSpanAsync(
+    private ValueTask<ToolExecuteResult> ReplaceSpanAsync(
         [ToolParam("区块起始标记文本，需与 {1} 内容完全匹配。")] string old_span_start,
         [ToolParam("区块结束标记文本，需与 {1} 内容完全匹配。")] string old_span_end,
         [ToolParam("替换后的新文本，需包含希望保留的首尾标记。")] string new_text,
@@ -155,7 +155,7 @@ public sealed class TextEditorWidget {
         return ValueTask.FromResult(result);
     }
 
-    private LodToolExecuteResult ExecuteAppendInternal(string newText) {
+    private ToolExecuteResult ExecuteAppendInternal(string newText) {
         var request = new ReplacementRequest(
             OldText: string.Empty,
             NewText: newText,
@@ -171,9 +171,10 @@ public sealed class TextEditorWidget {
 
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
                     const string noChangeSummary = "未追加任何内容";
-                    return new LodToolExecuteResult(
+                    return new ToolExecuteResult(
                         ToolExecutionStatus.Success,
-                        CreateSuccessContent(
+                        noChangeSummary,
+                        CreateSuccessDetail(
                             noChangeSummary,
                             operation: "append",
                             _targetTextName,
@@ -185,9 +186,10 @@ public sealed class TextEditorWidget {
                 }
 
                 var summary = $"✓ 已向{_targetTextName}追加内容";
-                return new LodToolExecuteResult(
+                return new ToolExecuteResult(
                     ToolExecutionStatus.Success,
-                    CreateSuccessContent(
+                    summary,
+                    CreateSuccessDetail(
                         summary,
                         operation: "append",
                         _targetTextName,
@@ -200,7 +202,7 @@ public sealed class TextEditorWidget {
         );
     }
 
-    private LodToolExecuteResult ExecuteReplaceInternal(string oldText, string newText) {
+    private ToolExecuteResult ExecuteReplaceInternal(string oldText, string newText) {
         if (string.IsNullOrEmpty(oldText)) {
             return EngineFailure(
                 $"old_text 不能为空；如需追加请改用 {_appendTool.Name} 工具。",
@@ -228,9 +230,10 @@ public sealed class TextEditorWidget {
 
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
                     const string noChangeSummary = "替换内容未发生变化";
-                    return new LodToolExecuteResult(
+                    return new ToolExecuteResult(
                         ToolExecutionStatus.Success,
-                        CreateSuccessContent(
+                        noChangeSummary,
+                        CreateSuccessDetail(
                             noChangeSummary,
                             operation: "replace",
                             _targetTextName,
@@ -243,9 +246,10 @@ public sealed class TextEditorWidget {
 
                 var summary = $"✓ 已完成{_targetTextName}文本替换";
 
-                return new LodToolExecuteResult(
+                return new ToolExecuteResult(
                     ToolExecutionStatus.Success,
-                    CreateSuccessContent(
+                    summary,
+                    CreateSuccessDetail(
                         summary,
                         operation: "replace",
                         _targetTextName,
@@ -258,7 +262,7 @@ public sealed class TextEditorWidget {
         );
     }
 
-    private LodToolExecuteResult ExecuteReplaceSpanInternal(string oldSpanStart, string oldSpanEnd, string newText) {
+    private ToolExecuteResult ExecuteReplaceSpanInternal(string oldSpanStart, string oldSpanEnd, string newText) {
         var normalizedStart = NormalizeLineEndings(oldSpanStart);
         var normalizedEnd = NormalizeLineEndings(oldSpanEnd);
 
@@ -279,9 +283,10 @@ public sealed class TextEditorWidget {
 
                 if (string.Equals(previous, updated, StringComparison.Ordinal)) {
                     const string noChangeSummary = "替换内容未发生变化";
-                    return new LodToolExecuteResult(
+                    return new ToolExecuteResult(
                         ToolExecutionStatus.Success,
-                        CreateSuccessContent(
+                        noChangeSummary,
+                        CreateSuccessDetail(
                             noChangeSummary,
                             operation: "replace_span",
                             _targetTextName,
@@ -293,9 +298,10 @@ public sealed class TextEditorWidget {
                 }
 
                 var summary = $"✓ 已完成{_targetTextName}区块替换";
-                return new LodToolExecuteResult(
+                return new ToolExecuteResult(
                     ToolExecutionStatus.Success,
-                    CreateSuccessContent(
+                    summary,
+                    CreateSuccessDetail(
                         summary,
                         operation: "replace_span",
                         _targetTextName,
@@ -308,10 +314,10 @@ public sealed class TextEditorWidget {
         );
     }
 
-    private LodToolExecuteResult ExecuteReplacement(
+    private ToolExecuteResult ExecuteReplacement(
         ReplacementRequest request,
         IRegionLocator? locator,
-        Func<string, string, string, LodToolExecuteResult> onSuccess
+        Func<string, string, string, ToolExecuteResult> onSuccess
     ) {
         var previous = GetNormalizedContent();
 
@@ -411,7 +417,7 @@ public sealed class TextEditorWidget {
         if (_isNotifying) { throw new InvalidOperationException("TextEditorWidget is in read-only notification scope; write operations are not allowed."); }
     }
 
-    private static LodToolExecuteResult EngineFailure(string message, string operationName, string targetName) {
+    private static ToolExecuteResult EngineFailure(string message, string operationName, string targetName) {
         var summary = string.IsNullOrWhiteSpace(message) ? "✗ 操作失败" : $"✗ {message}";
 
         var detailBuilder = new StringBuilder();
@@ -423,13 +429,14 @@ public sealed class TextEditorWidget {
         detailBuilder.Append("- target: ").Append(targetName).Append('\n');
         detailBuilder.Append("- tool_operation: ").Append(operationName);
 
-        return new LodToolExecuteResult(
+        return new ToolExecuteResult(
             ToolExecutionStatus.Failed,
-            new LevelOfDetailContent(summary, detailBuilder.ToString())
+            summary,
+            detailBuilder.ToString()
         );
     }
 
-    private static LevelOfDetailContent CreateSuccessContent(
+    private static string CreateSuccessDetail(
         string summary,
         string operation,
         string targetName,
@@ -449,7 +456,7 @@ public sealed class TextEditorWidget {
         detailBuilder.Append("- delta: ").Append(FormatDelta(newLength - previousLength)).Append('\n');
         detailBuilder.Append("- new_length: ").Append(newLength);
 
-        return new LevelOfDetailContent(summary, detailBuilder.ToString());
+        return detailBuilder.ToString();
     }
 
     private static string FormatDelta(int delta) {

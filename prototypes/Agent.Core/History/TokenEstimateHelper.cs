@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 
 namespace Atelia.Agent.Core.History;
 
@@ -119,7 +119,7 @@ public sealed class TokenEstimateHelper {
         if (entry.Results is { Count: > 0 }) {
             foreach (var result in entry.Results) {
                 total += EstimateString(result.ExecuteResult.Status.ToString());
-                total += EstimateContent(result.ExecuteResult.Result);
+                total += EstimateToolExecuteResult(result.ExecuteResult);
                 total += EstimateString(result.ToolName);
                 total += EstimateString(result.ToolCallId);
                 // total += EstimateElapsed(result.Elapsed); 元信息，不会单独序列化到LLM调用上下文中，已包含在result.Result.Detail中
@@ -162,6 +162,14 @@ public sealed class TokenEstimateHelper {
         var estimate = Math.Max(basicEstimate, detailEstimate);
 
         return estimate;
+    }
+
+    private uint EstimateToolExecuteResult(ToolExecuteResult result) {
+        if (result is null) { return 0u; }
+
+        var basicEstimate = EstimateString(result.Basic);
+        var detailEstimate = EstimateString(result.Detail);
+        return Math.Max(basicEstimate, detailEstimate);
     }
 
     private uint EstimateFallback(HistoryEntry entry)

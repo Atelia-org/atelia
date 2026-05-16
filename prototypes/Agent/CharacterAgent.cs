@@ -6,8 +6,8 @@ using Atelia.Agent.Apps;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.History;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 
 namespace Atelia.Agent;
 

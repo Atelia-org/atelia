@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Text;
-using Atelia.Agent.Core.Tool;
+using Atelia.Completion.Tools;
 
 namespace Atelia.Agent.Core.App;
 

@@ -1,6 +1,7 @@
 using Atelia.Agent.Core;
 using Atelia.Agent.Text;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Xunit;
 
 namespace Atelia.LiveContextProto.Tests;
@@ -312,7 +313,7 @@ public sealed class TextEditStateControllerTests {
         public IReadOnlyList<ToolParamSpec> Parameters => Array.Empty<ToolParamSpec>();
         public bool Visible { get; set; } = true;
 
-        public System.Threading.Tasks.ValueTask<Atelia.Agent.Core.Tool.LodToolExecuteResult> ExecuteAsync(
+        public System.Threading.Tasks.ValueTask<ToolExecuteResult> ExecuteAsync(
             IReadOnlyDictionary<string, object?>? arguments,
             System.Threading.CancellationToken cancellationToken
         ) {

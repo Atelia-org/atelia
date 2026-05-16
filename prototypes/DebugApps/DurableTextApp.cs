@@ -2,8 +2,8 @@ using System.Text;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.Text;
-using Atelia.Agent.Core.Tool;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.StateJournal;
 
 namespace Atelia.DebugApps;
@@ -92,7 +92,7 @@ public sealed class DurableTextApp : IApp {
     // ─────────────────────────────────────────
 
     [Tool("dt_append", "在 DurableText 尾部追加一个 block。返回新分配的 blockId。")]
-    private ValueTask<LodToolExecuteResult> AppendAsync(
+    private ValueTask<ToolExecuteResult> AppendAsync(
         [ToolParam("要追加的 block 正文（可含换行符；不要包含 blockId 或 │ 分隔符）")] string content,
         CancellationToken cancellationToken
     ) {
@@ -102,7 +102,7 @@ public sealed class DurableTextApp : IApp {
     }
 
     [Tool("dt_prepend", "在 DurableText 头部插入一个 block。返回新分配的 blockId。")]
-    private ValueTask<LodToolExecuteResult> PrependAsync(
+    private ValueTask<ToolExecuteResult> PrependAsync(
         [ToolParam("要插入的 block 内容")] string content,
         CancellationToken cancellationToken
     ) {
@@ -112,7 +112,7 @@ public sealed class DurableTextApp : IApp {
     }
 
     [Tool("dt_insert_after", "在指定 block 之后插入新 block。返回新分配的 blockId。")]
-    private ValueTask<LodToolExecuteResult> InsertAfterAsync(
+    private ValueTask<ToolExecuteResult> InsertAfterAsync(
         [ToolParam("已存在的 block ID（在它之后插入）")] long after_id,
         [ToolParam("要插入的 block 内容")] string content,
         CancellationToken cancellationToken
@@ -128,7 +128,7 @@ public sealed class DurableTextApp : IApp {
     }
 
     [Tool("dt_insert_before", "在指定 block 之前插入新 block。返回新分配的 blockId。")]
-    private ValueTask<LodToolExecuteResult> InsertBeforeAsync(
+    private ValueTask<ToolExecuteResult> InsertBeforeAsync(
         [ToolParam("已存在的 block ID（在它之前插入）")] long before_id,
         [ToolParam("要插入的 block 内容")] string content,
         CancellationToken cancellationToken
@@ -144,7 +144,7 @@ public sealed class DurableTextApp : IApp {
     }
 
     [Tool("dt_set", "替换指定 block 的内容（block ID 不变）。")]
-    private ValueTask<LodToolExecuteResult> SetAsync(
+    private ValueTask<ToolExecuteResult> SetAsync(
         [ToolParam("要修改的 block ID")] long block_id,
         [ToolParam("新内容")] string content,
         CancellationToken cancellationToken
@@ -160,7 +160,7 @@ public sealed class DurableTextApp : IApp {
     }
 
     [Tool("dt_delete", "删除指定 block。该 block ID 不再可用，但其他 block 的 ID 不受影响。")]
-    private ValueTask<LodToolExecuteResult> DeleteAsync(
+    private ValueTask<ToolExecuteResult> DeleteAsync(
         [ToolParam("要删除的 block ID")] long block_id,
         CancellationToken cancellationToken
     ) {
@@ -175,7 +175,7 @@ public sealed class DurableTextApp : IApp {
     }
 
     [Tool("dt_clear", "重置 DurableText 为空文档。所有 block 与其 ID 都会丢失。")]
-    private ValueTask<LodToolExecuteResult> ClearAsync(
+    private ValueTask<ToolExecuteResult> ClearAsync(
         CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
@@ -185,7 +185,7 @@ public sealed class DurableTextApp : IApp {
     }
 
     [Tool("dt_load", "把多行文本一次性加载为多个 block（按 \\n 分割）。仅当文档为空时可用。")]
-    private ValueTask<LodToolExecuteResult> LoadAsync(
+    private ValueTask<ToolExecuteResult> LoadAsync(
         [ToolParam("要加载的多行文本")] string text,
         CancellationToken cancellationToken
     ) {
@@ -200,7 +200,7 @@ public sealed class DurableTextApp : IApp {
     }
 
     [Tool("dt_load_markdown", "把 Markdown 文档加载为多个 block，每个顶层 BlockElement (标题/段落/列表/代码块/引用 等) 是一个独立的 block。仅当文档为空时可用。")]
-    private ValueTask<LodToolExecuteResult> LoadMarkdownAsync(
+    private ValueTask<ToolExecuteResult> LoadMarkdownAsync(
         [ToolParam("要加载的 Markdown 文本")] string markdown,
         CancellationToken cancellationToken
     ) {
@@ -221,13 +221,13 @@ public sealed class DurableTextApp : IApp {
 
     public DurableText Snapshot() => _text;
 
-    private static ValueTask<LodToolExecuteResult> Ok(string message)
-        => ValueTask.FromResult(new LodToolExecuteResult(
+    private static ValueTask<ToolExecuteResult> Ok(string message)
+        => ValueTask.FromResult(new ToolExecuteResult(
             ToolExecutionStatus.Success,
-            new LevelOfDetailContent(message)));
+            message));
 
-    private static ValueTask<LodToolExecuteResult> Fail(string message)
-        => ValueTask.FromResult(new LodToolExecuteResult(
+    private static ValueTask<ToolExecuteResult> Fail(string message)
+        => ValueTask.FromResult(new ToolExecuteResult(
             ToolExecutionStatus.Failed,
-            new LevelOfDetailContent(message)));
+            message));
 }

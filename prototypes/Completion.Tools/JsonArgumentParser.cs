@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
 
-namespace Atelia.Agent.Core.Tool;
+namespace Atelia.Completion.Tools;
 
 internal static class JsonArgumentParser {
     private static readonly JsonDocumentOptions DocumentOptions = new() {
@@ -110,7 +110,7 @@ internal static class JsonArgumentParser {
                 : ParseResult.CreateError("null_not_allowed");
         }
 
-        var result = parameter.ValueKind switch {
+        return parameter.ValueKind switch {
             ToolParamType.String => ParseString(element),
             ToolParamType.Boolean => ParseBoolean(element),
             ToolParamType.Int32 => ParseInt32(element),
@@ -120,8 +120,6 @@ internal static class JsonArgumentParser {
             ToolParamType.Decimal => ParseDecimal(element),
             _ => ParseResult.CreateError("unsupported_value_kind")
         };
-
-        return result;
     }
 
     private static ParseResult ParseString(JsonElement element) {

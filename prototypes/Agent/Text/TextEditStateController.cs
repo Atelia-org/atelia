@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Atelia.Agent.Core;
+using Atelia.Completion.Tools;
 
 namespace Atelia.Agent.Text;
 
