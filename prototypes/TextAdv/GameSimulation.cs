@@ -10,6 +10,7 @@ internal static partial class GameSimulation {
     private const string ItemsKey = "items";
     private const string ActorsKey = "actors";
     private const string InteractionsKey = "interactions";
+    private const string ActorJournalsKey = "actorJournals";
     private const string InitialLocationKey = "initialLocation";
     private const string ActiveActorIdsKey = "activeActorIds";
     private const string MemoryNotebookKey = "memoryNotebook";
@@ -87,6 +88,7 @@ internal static partial class GameSimulation {
         var items = rev.CreateDict<string>();
         var actors = rev.CreateDict<string>();
         var interactions = rev.CreateDict<string>();
+        var actorJournals = rev.CreateDict<string>();
         var activeActorIds = rev.CreateDict<string>();
         var notebook = CreateNotebookText(rev, string.Empty);
         var turnHistory = rev.CreateDict<string>();
@@ -120,12 +122,14 @@ internal static partial class GameSimulation {
         );
         terminalActor.Upsert(MemoryNotebookKey, notebook);
         actors.Upsert(TerminalPlayerActorId, terminalActor);
+        actorJournals.Upsert(TerminalPlayerActorId, CreateJournalText(rev));
         activeActorIds.Upsert(TerminalPlayerActorId, TerminalPlayerActorId);
 
         world.Upsert(LocationsKey, locations);
         world.Upsert(ItemsKey, items);
         world.Upsert(ActorsKey, actors);
         world.Upsert(InteractionsKey, interactions);
+        world.Upsert(ActorJournalsKey, actorJournals);
         world.Upsert(InitialLocationKey, beachId);
 
         game.Upsert(DayKey, 1);
@@ -237,6 +241,9 @@ internal static partial class GameSimulation {
 
         return notebook;
     }
+
+    private static DurableText CreateJournalText(Revision rev)
+        => rev.CreateText();
 
     private static DurableDict<string> CreateCurrentTurnState(
         Revision rev,

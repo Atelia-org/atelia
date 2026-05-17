@@ -92,3 +92,20 @@ internal sealed record TurnResolution(
     string Summary,
     PerceptionBundle NextPerception
 );
+
+internal sealed record ActorJournalExport(
+    string ActorId,
+    string ActorName,
+    string ActorKind,
+    string FileName,
+    string Content
+);
+
+internal sealed record AutonomousRoundReport(
+    int RoundNumber,
+    string TerminalActionKind,
+    string TerminalActionSummary,
+    string? TerminalActionPayload,
+    string ResolutionSummary,
+    TurnCollectionStatus EndingStatus
+);

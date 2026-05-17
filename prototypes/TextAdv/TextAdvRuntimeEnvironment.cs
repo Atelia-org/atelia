@@ -2,10 +2,15 @@ namespace Atelia.TextAdv;
 
 internal static class TextAdvRuntimeEnvironment {
     internal const string RepoDirEnv = "ATELIA_TEXTADV_REPO_DIR";
+    internal const string ActorJournalDirEnv = "ATELIA_TEXTADV_ACTOR_JOURNAL_DIR";
     private const string DefaultRepoDir = "/tmp/atelia-textadv-game";
 
     internal static string GetRepoDir() {
         return GetEnvironmentOrDefault(RepoDirEnv, DefaultRepoDir);
+    }
+
+    internal static string GetActorJournalDir() {
+        return GetEnvironmentOrDefault(ActorJournalDirEnv, Path.Combine(GetRepoDir(), "actor-journals"));
     }
 
     internal static string GetEnvironmentOrDefault(string key, string defaultValue) {

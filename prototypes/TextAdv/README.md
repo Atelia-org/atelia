@@ -34,6 +34,8 @@ LLM Agent (Copilot / Claude Code)
 
 - `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
 - `GameSimulation.cs`：Schema/Core；世界 bootstrap、StateJournal schema key、底层 ledger accessor
+- `GameSimulation.ActorJournal.cs`：每个 actor 的第一人称诊断日志；账本内持久化，按需导出 Markdown
+- `GameSimulation.AutonomousDiagnostics.cs`：开发者诊断跑批；托管终端玩家、补足 diagnostic LLM players、自动推进固定回合数
 - `GameSimulation.Perception.cs`：Read-side projection；`Perception-Bundle`、可见性枚举、turn status、interaction lookup
 - `GameSimulation.TurnFlow.cs`：Write-side workflow；Small/Large-Action 落账、回合归档、GM/LLM player 驱动与 deterministic fallback
 - `GmWorldEditService.cs`：GM-style 世界编辑工具集；通过 `MethodToolWrapper` 暴露 Location / Item / Actor / Interaction 账本工具
@@ -108,6 +110,7 @@ root (DurableDict<string>)
 │   ├── actors → DurableDict<string>
 │   │   ├── player → { kind: "terminal-player", name, locationId, profileNote, active, memoryNotebook }
 │   │   └── ...     → { kind: "llm-player" | "npc", name, locationId, profileNote, active, memoryNotebook? }
+│   ├── actorJournals → DurableDict<string> # actorId → DurableText 第一人称诊断日志
 │   ├── interactions → DurableDict<string>
 │   └── initialLocation → "beach"
 ├── game → DurableDict<string>
@@ -151,10 +154,15 @@ root (DurableDict<string>)
 - `pmux game dev-look-actor <actor-id>`：按指定 actor 投影并渲染 `Perception-Bundle`
 - `pmux game dev-turn-status`：查看当前推导出的 barrier / next actor，以及每个 active actor 的 Large-Action 提交状态
 - `pmux game dev-submit-large-action [--payload <payload>] <actor-id> <action-kind> <summary> <reason>`：绕过 validator 为任意 active actor 提交一个 Large-Action，用来验证 `acceptedStepsByActor` / `largeActionByActor` 和 barrier 流转
+- `pmux game dev-show-actor-journal <actor-id>`：显示指定 actor 的第一人称诊断日志
+- `pmux game dev-export-actor-journals [--output-dir <dir>]`：把所有 actor journal 导出为 Markdown 文件
+- `pmux game dev-run-autonomous-rounds [--ensure-llm-players <n>] [--real-agents] [--skip-export] [--output-dir <dir>] <rounds>`：托管终端玩家自动推进若干诊断回合；默认 deterministic，不调用真实 provider
 
 当前 `llm-player` 会被创建、持久化和投影视角；每个 `Perception-Bundle` 会包含 actor 自身的 name / kind / profileNote，避免内部玩家不知道“自己是谁”。真实 LLM Player 默认使用两阶段 `director-executor` 管线：先用无工具的导演阶段整理角色事实、猜测、欲望/恐惧、风险姿态、notebook 建议和推荐 Large-Action，再把这份导演札记作为 observation 交给带工具的执行阶段。执行阶段仍必须通过 `player_edit_memory_notebook` / `player_rest_a_while` / `player_explore` / `player_interact` 行动，并继续走同一套 validator。未配置 API key、模式为 deterministic、provider 失败或多次重试失败时，系统会 fallback 提交“谨慎观察并暂不移动”。开发者仍可用 `dev-submit-large-action` 手动模拟其它动作。
 
 多主体 Large-Action 收齐后，系统会先尝试真实 GM collected-turn staged resolver。该 resolver 把所有 active actor 的 Large-Action intent、事前推理、validator feedback 和各自行前 `Perception-Bundle` 注入同一个 GM 会话，分三阶段执行：多主体意图裁决与 hard truth 落账 → 账本审计 → 各 actor 私有结算反馈与终端玩家摘要。GM 工具集新增 `gm_move_actor`，因此真实 GM 可以移动任意 active player actor，而不是只能移动终端玩家。`gm_move_player` 仍保留为 `gm_move_actor(player, ...)` 的便捷别名。GM 工具集还提供 `gm_set_actor_resolution`，用于写入 `game.lastResolutionByActor[actorId]`；下一回合每个 actor 的 `Perception-Bundle.LastResolution` 直接读取自己的私有反馈。若真实 GM 未启用或失败，当前 MVP 仍回退到终端玩家主导的 deterministic 结算，并把同一摘要补给所有 active actor。
+
+`actorJournals` 是诊断优先的账本：每个 active actor 在回合完成时追加一段第一人称日志，来源是该 actor 的私有 resolution。`dev-run-autonomous-rounds` 默认会补足 2 个 diagnostic `llm-player`，由 deterministic harness 让托管终端玩家持续探索，并在结束后导出日志；传 `--real-agents` 才会启用真实 LLM Player / GM Agent 管线。这个默认值刻意偏保守，避免 PipeMux 30s timeout 或 provider 抖动影响基本回归测试。
 
 ## Validator 配置
 
@@ -168,6 +176,7 @@ root (DurableDict<string>)
 - `ATELIA_TEXTADV_LLM_PLAYER_MODEL_ID`：可选，默认 `deepseek-v4-flash`
 - `ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS`：可选，每个 LLM Player 每回合最多提交尝试次数，默认 `3`
 - `ATELIA_TEXTADV_REPO_DIR`：可选，覆盖游戏存档目录；默认 `/tmp/atelia-textadv-game/`
+- `ATELIA_TEXTADV_ACTOR_JOURNAL_DIR`：可选，覆盖 actor journal Markdown 导出目录；默认 `<repoDir>/actor-journals`
 - `DEEPSEEK_MODEL`：可选 fallback，若未设置 `ATELIA_TEXTADV_VALIDATOR_MODEL_ID` 则使用它
 - `DEEPSEEK_BASE_URL`：可选，覆盖默认 DeepSeek base URL
 

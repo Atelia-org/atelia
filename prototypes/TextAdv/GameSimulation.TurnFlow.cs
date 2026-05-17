@@ -228,6 +228,7 @@ internal static partial class GameSimulation {
         );
         actor.Upsert(MemoryNotebookKey, CreateNotebookText(root.Revision, string.Empty));
         actors.Upsert(actorId, actor);
+        EnsureActorJournal(root, actorId);
 
         var game = GetGame(root);
         var activeActorIds = game.GetOrThrow<DurableDict<string>>(ActiveActorIdsKey)!;
@@ -697,6 +698,7 @@ internal static partial class GameSimulation {
                 throw new ArgumentOutOfRangeException(nameof(actorResolutionMode), actorResolutionMode, "Unknown actor resolution commit mode.");
         }
 
+        AppendActorJournalsForCompletedTurn(root, resolutionSummary);
         ArchiveCompletedTurn(root, resolutionSummary);
         ResetCurrentTurn(root);
         return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
