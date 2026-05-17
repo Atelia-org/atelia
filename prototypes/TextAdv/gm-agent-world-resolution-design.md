@@ -213,7 +213,7 @@ GM 的自由文本可以保留，但宿主只信任工具结果和结构化 summ
 - `ATELIA_TEXTADV_GM_MODE=auto` 时，有 `DEEPSEEK_API_KEY` 就优先尝试真实 GM Agent；未配置或失败时回退 deterministic resolver。
 - `ATELIA_TEXTADV_GM_MODE=deterministic` 可强制关闭真实 GM，便于离线调试。
 - `ATELIA_TEXTADV_GM_MODE=llm` 可用于验证真实 GM 路径；若 provider 或工具循环失败，当前仍回退 deterministic resolver 以保护游戏可玩性。
-- 首版真实 GM 的工具集合包含 `gm_create_location` / `gm_link_locations` / `gm_move_player`，以及 Phase 3 的 `gm_create_item` / `gm_add_interaction`。GM 可以创建少量可见物品和 affordance，但仍不创建 NPC 或复杂规则。
+- 首版真实 GM 的工具集合包含 `gm_create_location` / `gm_link_locations` / `gm_move_player`，以及 Phase 3 的 `gm_create_item` / `gm_create_npc` / `gm_add_interaction` / `gm_set_visibility`。GM 可以创建少量可见物品、NPC 和 affordance，但仍不创建复杂规则。
 
 ### Phase 3: Item / NPC / Interaction Ledger
 
@@ -269,10 +269,20 @@ world
 |:---|:---|:---|
 | `gm_create_item` | 创建物品并放置到 Location | 必须指定稳定 item_id、name、description、location_id |
 | `gm_create_npc` | 创建 NPC actor | 必须指定 actor_id、name、locationId、profileNote |
-| `gm_add_interaction` | 给 item / location 增加 affordance | target 必须存在；actionKind 必须来自小枚举 |
+| `gm_add_interaction` | 给 item / actor / location 增加 affordance | target 必须存在；actionKind 首版用自然语言小枚举约束 |
 | `gm_set_visibility` | 调整 item/NPC 可见性 | 只能在 GM 结算时调用，不能静默改历史 |
 
 `Interaction Ledger` 的重要性在于：它把“可以做什么”从叙事文本里捞出来，供 Player Agent 和终端玩家在下一回合的 Perception-Bundle 里稳定读取。这样 LLM Player 不需要凭自然语言猜按钮，GM 也不需要把所有规则写进 prompt。
+
+当前实现状态：
+
+- `world.items`、`world.actors`、`world.interactions` 已经进入 StateJournal 账本。
+- 新游戏会创建 `actor:player`，并在 `game.activeActorIds` 中登记终端玩家；旧的 `root.player.location` 暂时保留为终端玩家控制状态，移动时同步镜像到 actor ledger。
+- `PerceptionBundle` 会投影当前地点的可见物品、可见 NPC、地点交互、物品交互和 actor 交互。
+- Validator 和 GM Agent observation 都包含可见 NPC 与 affordance，避免 Player Agent 或 GM 只靠叙事文本猜测“能做什么”。
+- 真实 GM 工具循环已经能通过 `gm_create_npc` 创建可见 NPC，并通过 `gm_add_interaction` 给 `actor:<id>` 添加 `talk` / `inspect` 等交互。
+
+这一落地方式特意没有把 `interactions` 嵌入 item 或 actor 内部，而是保留全局 `world.interactions` 索引。原因是后续 Phase 4 里，不同主体的可见 affordance 可能会按 actor、位置、关系、记忆单独过滤；全局交互账本更利于审计、投影和工具校验。
 
 ### Phase 4: 简化多主体同步回合
 
@@ -307,6 +317,13 @@ game
 │   └── barrierState          # collecting-terminal / collecting-llm / ready-for-gm
 └── turnHistory
 ```
+
+当前 Phase 4 前置落地：
+
+- `game.activeActorIds` 已存在，但首版只登记 `actor:player`；它代表“需要参与 Player 回合收集的主体”，不等同于所有 NPC。
+- `world.actors` 中的 `kind` 已预留 `terminal-player` / `llm-player` / `npc`。NPC 可以被 GM 创建和被玩家感知，但暂不自动声明 Large-Action。
+- `actor:player` 与旧 `root.player` 并存。下一步实现 LLM Player Agent 时，建议将 `Memory-Notebook` 与 location 逐步收敛到 actor ledger，再让 `root.player` 变成兼容层或删除。
+- 多主体 barrier 尚未实现；目前仍是终端玩家 Large-Action 直接触发 GM 结算。这个选择让 Phase 3 的实体/交互账本先稳定下来，再扩展回合收集协议。
 
 `LLM Player Agent` 的最小行为协议：
 

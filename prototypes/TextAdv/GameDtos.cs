@@ -8,6 +8,7 @@ internal sealed record LocationPerception(
     string Description,
     IReadOnlyList<LocationExitPerception> Exits,
     IReadOnlyList<ItemPerception> Items,
+    IReadOnlyList<ActorPerception> Actors,
     IReadOnlyList<InteractionPerception> Interactions
 );
 
@@ -21,6 +22,14 @@ internal sealed record ItemPerception(
     string ItemId,
     string Name,
     string Description,
+    IReadOnlyList<InteractionPerception> Interactions
+);
+
+internal sealed record ActorPerception(
+    string ActorId,
+    string Kind,
+    string Name,
+    string ProfileNote,
     IReadOnlyList<InteractionPerception> Interactions
 );
 

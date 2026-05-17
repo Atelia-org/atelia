@@ -11,11 +11,16 @@ internal sealed class GmWorldEditService {
     private const string WorldKey = "world";
     private const string LocationsKey = "locations";
     private const string ItemsKey = "items";
+    private const string ActorsKey = "actors";
     private const string InteractionsKey = "interactions";
     private const string PlayerKey = "player";
     private const string PlayerLocationKey = "location";
+    private const string TerminalPlayerActorId = "player";
     private const string NameKey = "name";
+    private const string KindKey = "kind";
     private const string DescriptionKey = "description";
+    private const string ProfileNoteKey = "profileNote";
+    private const string ActiveKey = "active";
     private const string ExitsKey = "exits";
     private const string LocationIdKey = "locationId";
     private const string VisibilityKey = "visibility";
@@ -100,6 +105,7 @@ internal sealed class GmWorldEditService {
 
         var player = _root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
         player.Upsert(PlayerLocationKey, locationId);
+        UpsertActorLocation(TerminalPlayerActorId, locationId);
         return locationId;
     }
 
@@ -136,6 +142,41 @@ internal sealed class GmWorldEditService {
         return itemId;
     }
 
+    internal AteliaResult<string> CreateNpc(
+        string actorId,
+        string name,
+        string profileNote,
+        string locationId
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        name = NormalizeRequired(name, nameof(name));
+        profileNote = NormalizeRequired(profileNote, nameof(profileNote));
+        locationId = NormalizeRequired(locationId, nameof(locationId));
+
+        var location = TryGetLocation(locationId);
+        if (!location.IsSuccess) { return AteliaResult<string>.Failure(location.Error!); }
+
+        var actors = GetOrCreateWorldDict(ActorsKey);
+        if (actors.TryGet(actorId, out DurableDict<string>? _)) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.ActorAlreadyExists",
+                    $"Actor '{actorId}' 已存在。"
+                )
+            );
+        }
+
+        var actor = _root.Revision.CreateDict<string>();
+        actor.Upsert(KindKey, "npc");
+        actor.Upsert(NameKey, name);
+        actor.Upsert(ProfileNoteKey, profileNote);
+        actor.Upsert(LocationIdKey, locationId);
+        actor.Upsert(VisibilityKey, VisibleValue);
+        actor.Upsert(ActiveKey, true);
+        actors.Upsert(actorId, actor);
+        return actorId;
+    }
+
     internal AteliaResult<string> AddInteraction(
         string interactionId,
         string targetRef,
@@ -153,7 +194,7 @@ internal sealed class GmWorldEditService {
             return AteliaResult<string>.Failure(
                 new TextAdvError(
                     "TextAdv.Gm.InvalidTargetRef",
-                    $"target_ref '{targetRef}' 无效；格式应为 location:<id> 或 item:<id>。"
+                    $"target_ref '{targetRef}' 无效；格式应为 location:<id>、item:<id> 或 actor:<id>。"
                 )
             );
         }
@@ -180,6 +221,64 @@ internal sealed class GmWorldEditService {
         interactions.Upsert(interactionId, interaction);
 
         return interactionId;
+    }
+
+    internal AteliaResult<string> SetVisibility(
+        string targetRef,
+        string visibility
+    ) {
+        targetRef = NormalizeRequired(targetRef, nameof(targetRef));
+        visibility = NormalizeRequired(visibility, nameof(visibility));
+
+        if (!string.Equals(visibility, "visible", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(visibility, "hidden", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(visibility, "discovered", StringComparison.OrdinalIgnoreCase)) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.InvalidVisibility",
+                    $"Visibility '{visibility}' 无效；允许 visible / hidden / discovered。"
+                )
+            );
+        }
+
+        if (!TryParseTargetRef(targetRef, out var targetKind, out var targetId)) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.InvalidTargetRef",
+                    $"target_ref '{targetRef}' 无效；格式应为 item:<id> 或 actor:<id>。"
+                )
+            );
+        }
+
+        DurableDict<string>? target = null;
+        if (string.Equals(targetKind, "item", StringComparison.OrdinalIgnoreCase)) {
+            var items = GetOrCreateWorldDict(ItemsKey);
+            _ = items.TryGet(targetId, out target);
+        }
+        else if (string.Equals(targetKind, "actor", StringComparison.OrdinalIgnoreCase)) {
+            var actors = GetOrCreateWorldDict(ActorsKey);
+            _ = actors.TryGet(targetId, out target);
+        }
+        else {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.UnsupportedVisibilityTarget",
+                    $"gm_set_visibility 仅支持 item 或 actor，不支持 '{targetKind}'。"
+                )
+            );
+        }
+
+        if (target is null) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.TargetNotFound",
+                    $"Target '{targetRef}' 不存在。"
+                )
+            );
+        }
+
+        target.Upsert(VisibilityKey, visibility.ToLowerInvariant());
+        return $"{targetKind}:{targetId}={visibility.ToLowerInvariant()}";
     }
 
     [Tool("gm_create_location", "创建一个新的 Location。location_id 必须稳定且唯一。")]
@@ -226,10 +325,22 @@ internal sealed class GmWorldEditService {
         return ToToolResult(CreateItem(item_id, name, description, location_id), "created item");
     }
 
-    [Tool("gm_add_interaction", "给 Location 或 Item 增加一个玩家可见的交互 affordance。")]
+    [Tool("gm_create_npc", "创建一个玩家可见的 NPC Actor，并放置在指定 Location。")]
+    public ValueTask<ToolExecuteResult> CreateNpcAsync(
+        [ToolParam("新的 ActorId，建议使用小写 ASCII、数字和连字符。")] string actor_id,
+        [ToolParam("玩家可见的 NPC 名称。")] string name,
+        [ToolParam("NPC 的简短 GM profile note；应包含玩家可见气质，不包含需要隐藏的秘密。")] string profile_note,
+        [ToolParam("NPC 所在 LocationId。")] string location_id,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ToToolResult(CreateNpc(actor_id, name, profile_note, location_id), "created npc");
+    }
+
+    [Tool("gm_add_interaction", "给 Location、Item 或 Actor 增加一个玩家可见的交互 affordance。")]
     public ValueTask<ToolExecuteResult> AddInteractionAsync(
         [ToolParam("新的 InteractionId，建议使用小写 ASCII、数字和连字符。")] string interaction_id,
-        [ToolParam("交互目标，格式为 location:<locationId> 或 item:<itemId>。")] string target_ref,
+        [ToolParam("交互目标，格式为 location:<locationId>、item:<itemId> 或 actor:<actorId>。")] string target_ref,
         [ToolParam("交互类型，例如 inspect / take / use / open / listen。")] string action_kind,
         [ToolParam("玩家可见的交互标签，例如“检查贝壳边缘”。")] string visible_label,
         [ToolParam("交互效果的简短 GM note；首版可用自然语言。")] string effect_note,
@@ -237,6 +348,16 @@ internal sealed class GmWorldEditService {
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         return ToToolResult(AddInteraction(interaction_id, target_ref, action_kind, visible_label, effect_note), "added interaction");
+    }
+
+    [Tool("gm_set_visibility", "设置 Item 或 Actor 的可见性。visibility 只能是 visible / hidden / discovered。")]
+    public ValueTask<ToolExecuteResult> SetVisibilityAsync(
+        [ToolParam("目标，格式为 item:<itemId> 或 actor:<actorId>。")] string target_ref,
+        [ToolParam("新的可见性：visible / hidden / discovered。")] string visibility,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ToToolResult(SetVisibility(target_ref, visibility), "set visibility");
     }
 
     private AteliaResult<DurableDict<string>> TryGetLocation(string locationId) {
@@ -285,6 +406,18 @@ internal sealed class GmWorldEditService {
             );
         }
 
+        if (string.Equals(targetKind, "actor", StringComparison.OrdinalIgnoreCase)) {
+            var actors = GetOrCreateWorldDict(ActorsKey);
+            if (actors.TryGet(targetId, out DurableDict<string>? _)) { return targetId; }
+
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.ActorNotFound",
+                    $"Actor '{targetId}' 不存在。"
+                )
+            );
+        }
+
         return AteliaResult<string>.Failure(
             new TextAdvError(
                 "TextAdv.Gm.UnsupportedTargetKind",
@@ -304,6 +437,13 @@ internal sealed class GmWorldEditService {
         targetKind = targetRef[..separatorIndex].Trim();
         targetId = targetRef[(separatorIndex + 1)..].Trim();
         return !string.IsNullOrWhiteSpace(targetKind) && !string.IsNullOrWhiteSpace(targetId);
+    }
+
+    private void UpsertActorLocation(string actorId, string locationId) {
+        var actors = GetOrCreateWorldDict(ActorsKey);
+        if (!actors.TryGet(actorId, out DurableDict<string>? actor) || actor is null) { return; }
+
+        actor.Upsert(LocationIdKey, locationId);
     }
 
     private static void LinkOneWay(DurableDict<string> location, string direction, string targetLocationId) {

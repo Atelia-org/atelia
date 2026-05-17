@@ -47,6 +47,21 @@ internal static class GamePresenter {
         }
         sb.AppendLine();
 
+        sb.AppendLine("👥 你目前看得到的角色:");
+        if (perception.Location.Actors.Count == 0) {
+            sb.AppendLine("   (none)");
+        }
+        else {
+            foreach (var actor in perception.Location.Actors) {
+                sb.AppendLine($"   [{actor.ActorId}] {actor.Name} ({actor.Kind})");
+                if (!string.IsNullOrWhiteSpace(actor.ProfileNote)) {
+                    AppendIndented(sb, actor.ProfileNote, "      ");
+                }
+                AppendInteractions(sb, actor.Interactions, "      ");
+            }
+        }
+        sb.AppendLine();
+
         sb.AppendLine("🧩 你目前看得到的交互:");
         if (perception.Location.Interactions.Count == 0) {
             sb.AppendLine("   (none)");

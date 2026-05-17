@@ -34,7 +34,7 @@ LLM Agent (Copilot / Claude Code)
 
 - `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
 - `GameSimulation.cs`：世界 bootstrap、状态查询、移动结算等核心逻辑
-- `GmWorldEditService.cs`：GM-style 世界编辑工具集；通过 `MethodToolWrapper` 暴露 Location / Item / Interaction 账本工具
+- `GmWorldEditService.cs`：GM-style 世界编辑工具集；通过 `MethodToolWrapper` 暴露 Location / Item / Actor / Interaction 账本工具
 - `GameMasterResolver.cs`：真实 GM Agent 工具循环；把 `GmWorldEditService` 包装为 LLM 可调用工具，失败时回退 deterministic resolver
 - `GamePresenter.cs`：把 `LocationPerception` 渲染成玩家看到的文本
 - `GameActionValidator.cs`：DeepSeekV4 + tool call 驱动的 validator，负责逐步校验事前推理（PreActionReason）
@@ -97,9 +97,14 @@ root (DurableDict<string>)
 │   ├── locations → DurableDict<string>
 │   │   ├── beach → { name, description, exits: { north → "forest" } }
 │   │   └── forest → { name, description, exits: { south → "beach" } }
+│   ├── items → DurableDict<string>
+│   ├── actors → DurableDict<string>
+│   │   └── player → { kind: "terminal-player", name, locationId, profileNote, active }
+│   ├── interactions → DurableDict<string>
 │   └── initialLocation → "beach"
 ├── game → DurableDict<string>
 │   ├── day / slot / slotsPerDay
+│   ├── activeActorIds → DurableDict<string>
 │   ├── currentTurn → { notebookSnapshot, acceptedSteps, nextStepNumber, ... }
 │   ├── turnHistory → DurableDict<string>
 │   └── lastResolution → string?
@@ -147,6 +152,8 @@ root (DurableDict<string>)
 
 - `gm_create_location` / `gm_link_locations` / `gm_move_player`
 - `gm_create_item`
+- `gm_create_npc`
 - `gm_add_interaction`
+- `gm_set_visibility`
 
-因此 GM 可以在探索新区域时创建新 Location、可见物品和可交互 affordance。下一回合 `Perception-Bundle` 会把当前地点可见物品与交互项渲染给玩家。
+因此 GM 可以在探索新区域时创建新 Location、可见物品、可见 NPC 和可交互 affordance。下一回合 `Perception-Bundle` 会把当前地点可见物品、角色与交互项渲染给玩家。

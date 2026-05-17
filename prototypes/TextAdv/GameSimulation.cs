@@ -8,11 +8,14 @@ internal static class GameSimulation {
     private const string GameKey = "game";
     private const string LocationsKey = "locations";
     private const string ItemsKey = "items";
+    private const string ActorsKey = "actors";
     private const string InteractionsKey = "interactions";
     private const string InitialLocationKey = "initialLocation";
+    private const string ActiveActorIdsKey = "activeActorIds";
     private const string PlayerKey = "player";
     private const string PlayerLocationKey = "location";
     private const string MemoryNotebookKey = "memoryNotebook";
+    private const string TerminalPlayerActorId = "player";
     private const string DayKey = "day";
     private const string SlotKey = "slot";
     private const string SlotsPerDayKey = "slotsPerDay";
@@ -36,7 +39,10 @@ internal static class GameSimulation {
     private const string ValidatorFeedbackKey = "validatorFeedback";
     private const string EndsTurnKey = "endsTurn";
     private const string NameKey = "name";
+    private const string KindKey = "kind";
     private const string DescriptionKey = "description";
+    private const string ProfileNoteKey = "profileNote";
+    private const string ActiveKey = "active";
     private const string ExitsKey = "exits";
     private const string LocationIdKey = "locationId";
     private const string VisibilityKey = "visibility";
@@ -58,7 +64,9 @@ internal static class GameSimulation {
         var game = rev.CreateDict<string>();
         var locations = rev.CreateDict<string>();
         var items = rev.CreateDict<string>();
+        var actors = rev.CreateDict<string>();
         var interactions = rev.CreateDict<string>();
+        var activeActorIds = rev.CreateDict<string>();
         var player = rev.CreateDict<string>();
         var notebook = CreateNotebookText(rev, string.Empty);
         var turnHistory = rev.CreateDict<string>();
@@ -81,8 +89,22 @@ internal static class GameSimulation {
         locations.Upsert(beachId, beach);
         locations.Upsert(forestId, forest);
 
+        actors.Upsert(
+            TerminalPlayerActorId,
+            CreateActor(
+                rev,
+                kind: "terminal-player",
+                name: "你",
+                profileNote: "通过终端命令操作的玩家角色。",
+                locationId: beachId,
+                active: true
+            )
+        );
+        activeActorIds.Upsert(TerminalPlayerActorId, TerminalPlayerActorId);
+
         world.Upsert(LocationsKey, locations);
         world.Upsert(ItemsKey, items);
+        world.Upsert(ActorsKey, actors);
         world.Upsert(InteractionsKey, interactions);
         world.Upsert(InitialLocationKey, beachId);
 
@@ -92,6 +114,7 @@ internal static class GameSimulation {
         game.Upsert(DayKey, 1);
         game.Upsert(SlotKey, 1);
         game.Upsert(SlotsPerDayKey, DefaultSlotsPerDay);
+        game.Upsert(ActiveActorIdsKey, activeActorIds);
         game.Upsert(CompletedTurnCountKey, 0);
         game.Upsert(TurnHistoryKey, turnHistory);
         game.Upsert(CurrentTurnKey, CreateCurrentTurnState(rev, day: 1, slot: 1, beachId, string.Empty));
@@ -149,6 +172,7 @@ internal static class GameSimulation {
 
         _ = GetLocation(root, targetLocationId);
         player.Upsert(PlayerLocationKey, targetLocationId);
+        UpsertActorLocation(root, TerminalPlayerActorId, targetLocationId);
         return DescribeCurrentPerception(root);
     }
 
@@ -336,8 +360,9 @@ internal static class GameSimulation {
         var description = location.GetOrThrow<string>(DescriptionKey)!;
         var exits = EnumerateExits(root, locationId).ToArray();
         var items = EnumerateVisibleItemsAtLocation(root, locationId).ToArray();
+        var actors = EnumerateVisibleActorsAtLocation(root, locationId).ToArray();
         var interactions = EnumerateVisibleInteractions(root, "location", locationId).ToArray();
-        return new LocationPerception(locationId, name, description, exits, items, interactions);
+        return new LocationPerception(locationId, name, description, exits, items, actors, interactions);
     }
 
     private static IEnumerable<LocationExitPerception> EnumerateExits(
@@ -385,6 +410,44 @@ internal static class GameSimulation {
                 item.GetOrThrow<string>(NameKey)!,
                 item.GetOrThrow<string>(DescriptionKey)!,
                 EnumerateVisibleInteractions(root, "item", itemId).ToArray()
+            );
+        }
+    }
+
+    private static IEnumerable<ActorPerception> EnumerateVisibleActorsAtLocation(
+        DurableDict<string> root,
+        string locationId
+    ) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        if (!world.TryGet(ActorsKey, out DurableDict<string>? actors) || actors is null) { yield break; }
+
+        foreach (var actorId in actors.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
+            if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) { continue; }
+
+            var actor = actors.GetOrThrow<DurableDict<string>>(actorId)!;
+            if (!actor.TryGet(LocationIdKey, out string? actorLocationId)
+                || !string.Equals(actorLocationId, locationId, StringComparison.Ordinal)) {
+                continue;
+            }
+
+            var visibility = actor.TryGet(VisibilityKey, out string? rawVisibility)
+                ? rawVisibility
+                : VisibleValue;
+            if (!IsVisibleToPlayer(visibility)) { continue; }
+
+            var kind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
+                ? rawKind
+                : "npc";
+            var profileNote = actor.TryGet(ProfileNoteKey, out string? rawProfileNote)
+                ? rawProfileNote ?? string.Empty
+                : string.Empty;
+
+            yield return new ActorPerception(
+                actorId,
+                kind,
+                actor.GetOrThrow<string>(NameKey)!,
+                profileNote,
+                EnumerateVisibleInteractions(root, "actor", actorId).ToArray()
             );
         }
     }
@@ -598,6 +661,32 @@ internal static class GameSimulation {
         location.Upsert(DescriptionKey, description);
         location.Upsert(ExitsKey, rev.CreateDict<string>());
         return location;
+    }
+
+    private static DurableDict<string> CreateActor(
+        Revision rev,
+        string kind,
+        string name,
+        string profileNote,
+        string locationId,
+        bool active
+    ) {
+        var actor = rev.CreateDict<string>();
+        actor.Upsert(KindKey, kind);
+        actor.Upsert(NameKey, name);
+        actor.Upsert(ProfileNoteKey, profileNote);
+        actor.Upsert(LocationIdKey, locationId);
+        actor.Upsert(VisibilityKey, VisibleValue);
+        actor.Upsert(ActiveKey, active);
+        return actor;
+    }
+
+    private static void UpsertActorLocation(DurableDict<string> root, string actorId, string locationId) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        if (!world.TryGet(ActorsKey, out DurableDict<string>? actors) || actors is null) { return; }
+        if (!actors.TryGet(actorId, out DurableDict<string>? actor) || actor is null) { return; }
+
+        actor.Upsert(LocationIdKey, locationId);
     }
 
     private static void AddExit(DurableDict<string> from, string direction, string targetLocationId) {

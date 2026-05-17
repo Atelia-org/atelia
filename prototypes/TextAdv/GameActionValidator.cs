@@ -186,8 +186,19 @@ internal static class GameActionValidator {
             }
         }
 
+        if (perception.Location.Actors.Count == 0) {
+            sb.AppendLine("- VisibleActors: (none)");
+        }
+        else {
+            sb.AppendLine("- VisibleActors:");
+            foreach (var actor in perception.Location.Actors) {
+                sb.AppendLine($"  - {actor.ActorId}: {actor.Name} ({actor.Kind}) | {actor.ProfileNote}");
+            }
+        }
+
         if (perception.Location.Interactions.Count == 0
-            && perception.Location.Items.All(static item => item.Interactions.Count == 0)) {
+            && perception.Location.Items.All(static item => item.Interactions.Count == 0)
+            && perception.Location.Actors.All(static actor => actor.Interactions.Count == 0)) {
             sb.AppendLine("- VisibleInteractions: (none)");
         }
         else {
@@ -198,6 +209,12 @@ internal static class GameActionValidator {
 
             foreach (var item in perception.Location.Items) {
                 foreach (var interaction in item.Interactions) {
+                    sb.AppendLine($"  - {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel}");
+                }
+            }
+
+            foreach (var actor in perception.Location.Actors) {
+                foreach (var interaction in actor.Interactions) {
                     sb.AppendLine($"  - {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel}");
                 }
             }
