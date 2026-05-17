@@ -288,6 +288,8 @@ internal static class GameMasterResolver {
             MethodToolWrapper.FromDelegate<string>(toolService.MovePlayerAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateNpcAsync),
+            MethodToolWrapper.FromDelegate<string, string>(toolService.MoveItemToActorAsync),
+            MethodToolWrapper.FromDelegate<string, string>(toolService.PlaceItemAtLocationAsync),
             MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.SetVisibilityAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.SetInteractionVisibilityAsync),
@@ -330,6 +332,7 @@ internal static class GameMasterResolver {
 你必须通过工具更新世界状态：
 - 如果交互揭示了新的可见物品或人物，必须调用 gm_create_item 或 gm_create_npc。
 - 如果交互让某个对象变得可操作，必须调用 gm_add_interaction；precondition_note 若无特别条件写 none。
+- 如果 actionKind 是 take / pick-up / give / drop / place，并且物品持有关系发生变化，必须调用 gm_move_item_to_actor 或 gm_place_item_at_location 落账；当前终端玩家 ActorId 是 player。
 - 如果旧交互已经被消耗或暂时不应继续显示，调用 gm_set_interaction_visibility 将它设为 hidden。
 - 如果交互只产生感知反馈、没有 hard truth 变化，可以不调用工具，直接输出 1 到 3 句玩家可见结算摘要。
 - 如果最终摘要提到玩家能看见的具体物品或人物，该实体必须已经落账。
@@ -372,6 +375,17 @@ internal static class GameMasterResolver {
         }
 
         sb.AppendLine();
+        sb.AppendLine("[当前持有物品]");
+        if (perception.InventoryItems.Count == 0) {
+            sb.AppendLine("(none)");
+        }
+        else {
+            foreach (var item in perception.InventoryItems) {
+                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
+            }
+        }
+
+        sb.AppendLine();
         sb.AppendLine("[当前可见角色]");
         if (perception.Location.Actors.Count == 0) {
             sb.AppendLine("(none)");
@@ -386,6 +400,9 @@ internal static class GameMasterResolver {
         sb.AppendLine("[当前可见交互]");
         AppendInteractions(sb, perception.Location.Interactions);
         foreach (var item in perception.Location.Items) {
+            AppendInteractions(sb, item.Interactions);
+        }
+        foreach (var item in perception.InventoryItems) {
             AppendInteractions(sb, item.Interactions);
         }
         foreach (var actor in perception.Location.Actors) {
@@ -505,6 +522,17 @@ internal static class GameMasterResolver {
         }
 
         sb.AppendLine();
+        sb.AppendLine("[当前持有物品]");
+        if (perception.InventoryItems.Count == 0) {
+            sb.AppendLine("(none)");
+        }
+        else {
+            foreach (var item in perception.InventoryItems) {
+                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
+            }
+        }
+
+        sb.AppendLine();
         sb.AppendLine("[当前可见角色]");
         if (perception.Location.Actors.Count == 0) {
             sb.AppendLine("(none)");
@@ -519,6 +547,9 @@ internal static class GameMasterResolver {
         sb.AppendLine("[当前可见交互]");
         AppendInteractions(sb, perception.Location.Interactions);
         foreach (var item in perception.Location.Items) {
+            AppendInteractions(sb, item.Interactions);
+        }
+        foreach (var item in perception.InventoryItems) {
             AppendInteractions(sb, item.Interactions);
         }
         foreach (var actor in perception.Location.Actors) {
@@ -545,6 +576,7 @@ internal static class GameMasterResolver {
         sb.AppendLine("若创建 Item/NPC/Interaction，ID 必须稳定、唯一，并且 target_ref 必须引用已经存在的对象；precondition_note 无特别条件时写 none。");
         sb.AppendLine("若只是检查、倾听、交谈第一句等低风险反馈，可以不改账本，只输出玩家可见摘要。");
         sb.AppendLine("若当前 interaction 已被消耗或下一回合不应继续显示，请用 gm_set_interaction_visibility 把它设为 hidden。");
+        sb.AppendLine("若玩家拿起或放下物品，请用 gm_move_item_to_actor 或 gm_place_item_at_location 更新 ownerActorId/locationId。当前终端玩家 ActorId 是 player。");
         sb.AppendLine("若摘要提到新的可见物品、人物或可执行动作，必须先调用相应工具落账。");
 
         return sb.ToString();
@@ -634,6 +666,17 @@ internal static class GameMasterResolver {
         }
         else {
             foreach (var item in perception.Location.Items) {
+                sb.AppendLine($"  - {item.ItemId}: {item.Name} | {item.Description}");
+                AppendInteractions(sb, item.Interactions);
+            }
+        }
+
+        sb.AppendLine("- InventoryItems:");
+        if (perception.InventoryItems.Count == 0) {
+            sb.AppendLine("  (none)");
+        }
+        else {
+            foreach (var item in perception.InventoryItems) {
                 sb.AppendLine($"  - {item.ItemId}: {item.Name} | {item.Description}");
                 AppendInteractions(sb, item.Interactions);
             }

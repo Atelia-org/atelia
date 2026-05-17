@@ -269,6 +269,8 @@ world
 |:---|:---|:---|
 | `gm_create_item` | 创建物品并放置到 Location | 必须指定稳定 item_id、name、description、location_id |
 | `gm_create_npc` | 创建 NPC actor | 必须指定 actor_id、name、locationId、profileNote |
+| `gm_move_item_to_actor` | 把 Item 转移到 Actor 持有 | 用于 take / give / pick-up；当前终端玩家 ActorId 是 `player` |
+| `gm_place_item_at_location` | 把 Item 放置到 Location | 用于 drop / place / reveal |
 | `gm_add_interaction` | 给 item / actor / location 增加 affordance | target 必须存在；actionKind 首版用自然语言小枚举约束 |
 | `gm_set_visibility` | 调整 item/NPC 可见性 | 只能在 GM 结算时调用，不能静默改历史 |
 | `gm_set_interaction_visibility` | 调整 affordance 可见性 | 用于隐藏已消耗、暂不可用或被条件遮蔽的交互 |
@@ -284,6 +286,7 @@ world
 - 真实 GM 工具循环已经能通过 `gm_create_npc` 创建可见 NPC，并通过 `gm_add_interaction` 给 `actor:<id>` 添加 `talk` / `inspect` 等交互。
 - `pmux game interact '<reason>' '<interaction-id>'` 已经把可见 affordance 提升为可执行的 Large-Action。宿主只允许执行当前 Perception-Bundle 中存在的 interaction，动作通过 validator 后交给 GM Agent 按 `targetKind` / `targetId` / `actionKind` / `effectNote` 结算。
 - `interactions` 现在记录 `preconditionNote` 和自身 `visibility`。`preconditionNote` 会进入玩家可见交互说明和 validator observation；`visibility` 让 GM 可以用 `gm_set_interaction_visibility` 隐藏已消耗或暂时不该显示的 affordance。
+- `items` 现在支持 `ownerActorId`，玩家视图会显示 `actor:player` 持有的物品。GM 可用 `gm_move_item_to_actor` / `gm_place_item_at_location` 结算拿起、交给、放下等持有关系变化。
 
 这一落地方式特意没有把 `interactions` 嵌入 item 或 actor 内部，而是保留全局 `world.interactions` 索引。原因是后续 Phase 4 里，不同主体的可见 affordance 可能会按 actor、位置、关系、记忆单独过滤；全局交互账本更利于审计、投影和工具校验。
 

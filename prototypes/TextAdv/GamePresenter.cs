@@ -47,6 +47,19 @@ internal static class GamePresenter {
         }
         sb.AppendLine();
 
+        sb.AppendLine("🧺 你目前持有的物品:");
+        if (perception.InventoryItems.Count == 0) {
+            sb.AppendLine("   (none)");
+        }
+        else {
+            foreach (var item in perception.InventoryItems) {
+                sb.AppendLine($"   [{item.ItemId}] {item.Name}");
+                AppendIndented(sb, item.Description, "      ");
+                AppendInteractions(sb, item.Interactions, "      ");
+            }
+        }
+        sb.AppendLine();
+
         sb.AppendLine("👥 你目前看得到的角色:");
         if (perception.Location.Actors.Count == 0) {
             sb.AppendLine("   (none)");
@@ -226,6 +239,12 @@ internal static class GamePresenter {
         }
 
         foreach (var item in perception.Location.Items) {
+            foreach (var interaction in item.Interactions) {
+                yield return interaction;
+            }
+        }
+
+        foreach (var item in perception.InventoryItems) {
             foreach (var interaction in item.Interactions) {
                 yield return interaction;
             }

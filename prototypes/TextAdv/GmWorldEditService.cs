@@ -23,6 +23,7 @@ internal sealed class GmWorldEditService {
     private const string ActiveKey = "active";
     private const string ExitsKey = "exits";
     private const string LocationIdKey = "locationId";
+    private const string OwnerActorIdKey = "ownerActorId";
     private const string VisibilityKey = "visibility";
     private const string TargetKindKey = "targetKind";
     private const string TargetIdKey = "targetId";
@@ -141,6 +142,46 @@ internal sealed class GmWorldEditService {
         item.Upsert(VisibilityKey, VisibleValue);
         items.Upsert(itemId, item);
         return itemId;
+    }
+
+    internal AteliaResult<string> MoveItemToActor(
+        string itemId,
+        string actorId
+    ) {
+        itemId = NormalizeRequired(itemId, nameof(itemId));
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+
+        var itemResult = TryGetItem(itemId);
+        if (!itemResult.TryGetValue(out var item) || item is null) {
+            return AteliaResult<string>.Failure(itemResult.Error!);
+        }
+
+        var actorResult = ValidateTargetExists("actor", actorId);
+        if (!actorResult.IsSuccess) { return AteliaResult<string>.Failure(actorResult.Error!); }
+
+        item.Upsert(OwnerActorIdKey, actorId);
+        item.Remove(LocationIdKey);
+        return $"{itemId}->actor:{actorId}";
+    }
+
+    internal AteliaResult<string> PlaceItemAtLocation(
+        string itemId,
+        string locationId
+    ) {
+        itemId = NormalizeRequired(itemId, nameof(itemId));
+        locationId = NormalizeRequired(locationId, nameof(locationId));
+
+        var itemResult = TryGetItem(itemId);
+        if (!itemResult.TryGetValue(out var item) || item is null) {
+            return AteliaResult<string>.Failure(itemResult.Error!);
+        }
+
+        var location = TryGetLocation(locationId);
+        if (!location.IsSuccess) { return AteliaResult<string>.Failure(location.Error!); }
+
+        item.Upsert(LocationIdKey, locationId);
+        item.Remove(OwnerActorIdKey);
+        return $"{itemId}->location:{locationId}";
     }
 
     internal AteliaResult<string> CreateNpc(
@@ -370,6 +411,26 @@ internal sealed class GmWorldEditService {
         return ToToolResult(CreateNpc(actor_id, name, profile_note, location_id), "created npc");
     }
 
+    [Tool("gm_move_item_to_actor", "把 Item 转移到 Actor 持有。用于 take / give / pick-up 等交互。")]
+    public ValueTask<ToolExecuteResult> MoveItemToActorAsync(
+        [ToolParam("目标 ItemId。")] string item_id,
+        [ToolParam("持有该物品的 ActorId；当前终端玩家为 player。")] string actor_id,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ToToolResult(MoveItemToActor(item_id, actor_id), "moved item to actor");
+    }
+
+    [Tool("gm_place_item_at_location", "把 Item 放置到指定 Location。用于 drop / place / reveal 等交互。")]
+    public ValueTask<ToolExecuteResult> PlaceItemAtLocationAsync(
+        [ToolParam("目标 ItemId。")] string item_id,
+        [ToolParam("目标 LocationId。")] string location_id,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ToToolResult(PlaceItemAtLocation(item_id, location_id), "placed item at location");
+    }
+
     [Tool("gm_add_interaction", "给 Location、Item 或 Actor 增加一个玩家可见的交互 affordance。")]
     public ValueTask<ToolExecuteResult> AddInteractionAsync(
         [ToolParam("新的 InteractionId，建议使用小写 ASCII、数字和连字符。")] string interaction_id,
@@ -421,6 +482,20 @@ internal sealed class GmWorldEditService {
     private DurableDict<string> GetLocations() {
         var world = _root.GetOrThrow<DurableDict<string>>(WorldKey)!;
         return world.GetOrThrow<DurableDict<string>>(LocationsKey)!;
+    }
+
+    private AteliaResult<DurableDict<string>> TryGetItem(string itemId) {
+        var items = GetOrCreateWorldDict(ItemsKey);
+        if (!items.TryGet(itemId, out DurableDict<string>? item) || item is null) {
+            return AteliaResult<DurableDict<string>>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.ItemNotFound",
+                    $"Item '{itemId}' 不存在。"
+                )
+            );
+        }
+
+        return item;
     }
 
     private DurableDict<string> GetOrCreateWorldDict(string key) {

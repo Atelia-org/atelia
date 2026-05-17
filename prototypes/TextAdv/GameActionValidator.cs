@@ -187,6 +187,16 @@ internal static class GameActionValidator {
             }
         }
 
+        if (perception.InventoryItems.Count == 0) {
+            sb.AppendLine("- InventoryItems: (none)");
+        }
+        else {
+            sb.AppendLine("- InventoryItems:");
+            foreach (var item in perception.InventoryItems) {
+                sb.AppendLine($"  - {item.ItemId}: {item.Name} | {item.Description}");
+            }
+        }
+
         if (perception.Location.Actors.Count == 0) {
             sb.AppendLine("- VisibleActors: (none)");
         }
@@ -199,6 +209,7 @@ internal static class GameActionValidator {
 
         if (perception.Location.Interactions.Count == 0
             && perception.Location.Items.All(static item => item.Interactions.Count == 0)
+            && perception.InventoryItems.All(static item => item.Interactions.Count == 0)
             && perception.Location.Actors.All(static actor => actor.Interactions.Count == 0)) {
             sb.AppendLine("- VisibleInteractions: (none)");
         }
@@ -209,6 +220,12 @@ internal static class GameActionValidator {
             }
 
             foreach (var item in perception.Location.Items) {
+                foreach (var interaction in item.Interactions) {
+                    sb.AppendLine($"  - {FormatInteraction(interaction)}");
+                }
+            }
+
+            foreach (var item in perception.InventoryItems) {
                 foreach (var interaction in item.Interactions) {
                     sb.AppendLine($"  - {FormatInteraction(interaction)}");
                 }

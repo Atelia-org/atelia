@@ -102,7 +102,7 @@ root (DurableDict<string>)
 │   ├── locations → DurableDict<string>
 │   │   ├── beach → { name, description, exits: { north → "forest" } }
 │   │   └── forest → { name, description, exits: { south → "beach" } }
-│   ├── items → DurableDict<string>
+│   ├── items → DurableDict<string> # item: { name, description, locationId | ownerActorId, visibility }
 │   ├── actors → DurableDict<string>
 │   │   └── player → { kind: "terminal-player", name, locationId, profileNote, active }
 │   ├── interactions → DurableDict<string>
@@ -161,6 +161,7 @@ root (DurableDict<string>)
 - `gm_create_location` / `gm_link_locations` / `gm_move_player`
 - `gm_create_item`
 - `gm_create_npc`
+- `gm_move_item_to_actor` / `gm_place_item_at_location`
 - `gm_add_interaction`
 - `gm_set_visibility`
 - `gm_set_interaction_visibility`
@@ -175,3 +176,4 @@ root (DurableDict<string>)
 - 若 GM 在摘要中引入新的可见物品、NPC 或可执行动作，应先通过工具落账
 - `gm_add_interaction` 会要求 `precondition_note`；没有特别条件时写 `none`
 - GM 可以用 `gm_set_interaction_visibility` 隐藏已经消耗或暂时不该显示的 affordance
+- `take` / `drop` / `give` 这类交互应通过 `gm_move_item_to_actor` 或 `gm_place_item_at_location` 更新 `ownerActorId` / `locationId`

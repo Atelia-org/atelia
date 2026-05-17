@@ -58,6 +58,7 @@ internal sealed record PerceptionBundle(
     int Slot,
     int SlotsPerDay,
     LocationPerception Location,
+    IReadOnlyList<ItemPerception> InventoryItems,
     TextBlockSnapshotDocument NotebookBlocks,
     IReadOnlyList<TurnStep> AcceptedSteps,
     string? LastResolution

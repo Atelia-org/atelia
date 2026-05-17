@@ -45,6 +45,7 @@ internal static class GameSimulation {
     private const string ActiveKey = "active";
     private const string ExitsKey = "exits";
     private const string LocationIdKey = "locationId";
+    private const string OwnerActorIdKey = "ownerActorId";
     private const string VisibilityKey = "visibility";
     private const string TargetKindKey = "targetKind";
     private const string TargetIdKey = "targetId";
@@ -142,6 +143,7 @@ internal static class GameSimulation {
             slot,
             slotsPerDay,
             DescribeCurrentLocation(root),
+            EnumerateVisibleItemsOwnedByActor(root, TerminalPlayerActorId).ToArray(),
             notebookSnapshot,
             acceptedSteps,
             lastResolution
@@ -500,8 +502,41 @@ internal static class GameSimulation {
 
         foreach (var itemId in items.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
             var item = items.GetOrThrow<DurableDict<string>>(itemId)!;
+            if (item.TryGet(OwnerActorIdKey, out string? ownerActorId)
+                && !string.IsNullOrWhiteSpace(ownerActorId)) {
+                continue;
+            }
+
             if (!item.TryGet(LocationIdKey, out string? itemLocationId)
                 || !string.Equals(itemLocationId, locationId, StringComparison.Ordinal)) {
+                continue;
+            }
+
+            var visibility = item.TryGet(VisibilityKey, out string? rawVisibility)
+                ? rawVisibility
+                : VisibleValue;
+            if (!IsVisibleToPlayer(visibility)) { continue; }
+
+            yield return new ItemPerception(
+                itemId,
+                item.GetOrThrow<string>(NameKey)!,
+                item.GetOrThrow<string>(DescriptionKey)!,
+                EnumerateVisibleInteractions(root, "item", itemId).ToArray()
+            );
+        }
+    }
+
+    private static IEnumerable<ItemPerception> EnumerateVisibleItemsOwnedByActor(
+        DurableDict<string> root,
+        string actorId
+    ) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        if (!world.TryGet(ItemsKey, out DurableDict<string>? items) || items is null) { yield break; }
+
+        foreach (var itemId in items.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
+            var item = items.GetOrThrow<DurableDict<string>>(itemId)!;
+            if (!item.TryGet(OwnerActorIdKey, out string? ownerActorId)
+                || !string.Equals(ownerActorId, actorId, StringComparison.Ordinal)) {
                 continue;
             }
 
@@ -599,6 +634,12 @@ internal static class GameSimulation {
         }
 
         foreach (var item in perception.Location.Items) {
+            foreach (var interaction in item.Interactions) {
+                yield return interaction;
+            }
+        }
+
+        foreach (var item in perception.InventoryItems) {
             foreach (var interaction in item.Interactions) {
                 yield return interaction;
             }
