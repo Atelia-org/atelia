@@ -140,8 +140,9 @@ root (DurableDict<string>)
 - `edit-memory-notebook --dry-run` 会执行与正式提交同构的 preview + validator，但不会写入状态；适合先试探 after-view 与 validator 边界
 - 玩家视图应自带“当前可执行动作”速查，默认按失忆玩家设计，不假定玩家记得上一次输出里的规则说明
 - `Perception-Bundle` 已经支持按 `actorId` 投影：当前位置、可见角色、持有物品和 Memory-Notebook 都来自 actor ledger；终端玩家的旧 `root.player` 字段暂时只作为兼容镜像
-- `currentTurn` 已经预留 `acceptedStepsByActor`、`largeActionByActor`、`turnOwnerActorId`、`barrierState`，当前仍以单终端玩家流程运行，后续 LLM Player loop 可直接接入这组账本
-- 当存在多个 active actor 时，终端玩家的真实 Large-Action 通过 validator 后会先写入回合收集账本，不再直接触发 GM 结算；完整的“收齐后统一 GM 结算”仍是下一步
+- `currentTurn` 已经预留并使用 `acceptedStepsByActor`、`largeActionByActor`、`turnOwnerActorId`、`barrierState`；后续真实 LLM Player loop 可直接接入这组账本
+- 当存在多个 active actor 时，终端玩家的真实 Large-Action 通过 validator 后会先写入回合收集账本；当前 MVP 会为 pending `llm-player` 自动提交保守 fallback Large-Action，并在收齐后进入 collected-turn resolver
+- collected-turn resolver 首版按终端玩家的大型动作推进世界，其它 active actor 的意图会进入 `turnHistory` 和结算摘要；后续再升级为真正的多意图 GM 裁决
 - 当前 validator 默认走 `DeepSeekV4ChatClient`
 - 数据目录：`/tmp/atelia-textadv-game/`（后续可改为 repo 内路径）
 
@@ -154,7 +155,7 @@ root (DurableDict<string>)
 - `pmux game dev-turn-status`：查看当前 `barrierState`、`turnOwnerActorId` 和每个 active actor 的 Large-Action 提交状态
 - `pmux game dev-submit-large-action [--payload <payload>] <actor-id> <action-kind> <summary> <reason>`：绕过 validator 为任意 active actor 提交一个 Large-Action，用来验证 `acceptedStepsByActor` / `largeActionByActor` 和 barrier 流转
 
-当前 `llm-player` 只会被创建、持久化和投影视角，尚不会自动声明 Large-Action。开发者可以用 `dev-submit-large-action` 模拟其交卷，让 barrier 进入 `ready-for-gm`。下一步应在同一套 validator 边界内实现内部 LLM Player Agent 行动提交，并在 `ready-for-gm` 后执行统一 GM 结算。
+当前 `llm-player` 会被创建、持久化和投影视角；真实 Agent 行动尚未接入前，系统会用 fallback 提交“谨慎观察并暂不移动”。开发者仍可用 `dev-submit-large-action` 手动模拟其它动作。下一步应把 fallback 替换为同一套 validator 边界内的内部 LLM Player Agent 行动提交，并让 collected-turn resolver 把所有 actor intent 注入 GM staged resolver。
 
 ## Validator 配置
 

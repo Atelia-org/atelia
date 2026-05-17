@@ -65,6 +65,17 @@ internal static class GameSimulation {
     private const string DiscoveredValue = "discovered";
     private const int DefaultSlotsPerDay = 4;
 
+    private sealed record LargeActionIntent(
+        string ActorId,
+        string ActorName,
+        string ActorKind,
+        string ActionKind,
+        string ActionSummary,
+        string? ActionPayload,
+        string PreActionReason,
+        string ValidatorFeedback
+    );
+
     internal static DurableDict<string> CreateNewWorld(Repository repo) {
         var revResult = repo.GetOrCreateBranch("main");
         var rev = revResult.Value!;
@@ -286,6 +297,102 @@ internal static class GameSimulation {
         return DescribeCurrentTurnStatus(root);
     }
 
+    internal static AteliaResult<TurnCollectionStatus> SubmitFallbackLargeActionsForPendingLlmPlayers(
+        DurableDict<string> root
+    ) {
+        foreach (var actorId in EnumerateActiveActorIds(root).ToArray()) {
+            if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) { continue; }
+            if (HasSubmittedLargeAction(root, actorId)) { continue; }
+
+            var actor = GetActor(root, actorId);
+            var kind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
+                ? rawKind
+                : "npc";
+            if (!string.Equals(kind, "llm-player", StringComparison.Ordinal)) { continue; }
+
+            var name = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
+                ? rawName
+                : actorId;
+            var perception = DescribePerceptionForActor(root, actorId);
+            var result = SubmitLargeActionForActor(
+                root,
+                actorId,
+                actionKind: "large/rest-a-while",
+                actionSummary: "谨慎观察并暂不移动",
+                actionPayload: null,
+                preActionReason: $"MVP fallback：{name} 位于「{perception.Location.Name}」，当前先保持观察，不主动改变世界状态。",
+                validatorFeedback: "llm-player fallback bypassed validator"
+            );
+            if (!result.IsSuccess) {
+                return result;
+            }
+        }
+
+        return DescribeCurrentTurnStatus(root);
+    }
+
+    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
+        DurableDict<string> root,
+        CancellationToken cancellationToken
+    ) {
+        var status = DescribeCurrentTurnStatus(root);
+        if (!status.AllActiveActorsSubmittedLargeAction) {
+            return AsyncAteliaResult<TurnResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.TurnNotReadyForGm",
+                    "当前回合还没有收齐所有 active actor 的 Large-Action。"
+                )
+            );
+        }
+
+        var intents = ReadLargeActionIntents(root);
+        var terminalIntent = intents.FirstOrDefault(static intent => string.Equals(intent.ActorId, TerminalPlayerActorId, StringComparison.Ordinal));
+        if (terminalIntent is null) {
+            return AsyncAteliaResult<TurnResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.TerminalActionMissing",
+                    "当前回合缺少终端玩家的 Large-Action，不能进入统一结算。"
+                )
+            );
+        }
+
+        try {
+            var lead = BuildCollectedTurnLead(intents);
+            return terminalIntent.ActionKind switch {
+                "large/rest-a-while" => AsyncAteliaResult<TurnResolution>.Success(ResolveRestAccepted(root, collectedTurnLead: lead)),
+                "large/explore" => await ResolveExploreAcceptedAsync(
+                    root,
+                    ParseRequiredPayloadValue(terminalIntent.ActionPayload, "direction"),
+                    ParseOptionalPayloadValue(terminalIntent.ActionPayload, "focus"),
+                    terminalIntent.PreActionReason,
+                    collectedTurnLead: lead,
+                    cancellationToken
+                ).ConfigureAwait(false),
+                "large/interact" => await ResolveInteractionAcceptedAsync(
+                    root,
+                    ParseRequiredPayloadValue(terminalIntent.ActionPayload, "interactionId"),
+                    terminalIntent.PreActionReason,
+                    collectedTurnLead: lead,
+                    cancellationToken
+                ).ConfigureAwait(false),
+                _ => AsyncAteliaResult<TurnResolution>.Failure(
+                    new TextAdvError(
+                        "TextAdv.UnsupportedCollectedAction",
+                        $"当前 MVP 尚不支持统一结算 Large-Action '{terminalIntent.ActionKind}'。"
+                    )
+                )
+            };
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AsyncAteliaResult<TurnResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.InvalidCollectedActionPayload",
+                    ex.Message
+                )
+            );
+        }
+    }
+
     internal static AteliaResult<string> CreateLlmPlayerActor(
         DurableDict<string> root,
         string actorId,
@@ -427,6 +534,31 @@ internal static class GameSimulation {
             endsTurn: true
         );
 
+        return await ResolveExploreAcceptedAsync(
+            root,
+            direction,
+            focus,
+            preActionReason,
+            collectedTurnLead: null,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveExploreAcceptedAsync(
+        DurableDict<string> root,
+        string direction,
+        string? focus,
+        string preActionReason,
+        string? collectedTurnLead,
+        CancellationToken cancellationToken
+    ) {
+        direction = NormalizeRequired(direction, nameof(direction));
+        focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
+
+        var currentLocationId = GetPlayerLocationId(root);
+        var currentLocation = GetLocation(root, currentLocationId);
+        var currentLocationName = currentLocation.GetOrThrow<string>(NameKey)!;
+        var currentExits = currentLocation.GetOrThrow<DurableDict<string>>(ExitsKey)!;
         var game = GetGame(root);
         var previousDay = game.GetOrThrow<int>(DayKey);
         var previousSlot = game.GetOrThrow<int>(SlotKey);
@@ -455,6 +587,7 @@ internal static class GameSimulation {
                 llmNextClock.Slot,
                 slotsPerDay
             );
+            llmResolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, llmResolutionSummary);
 
             ArchiveCompletedTurn(root, llmResolutionSummary);
             game.Upsert(LastResolutionKey, llmResolutionSummary);
@@ -507,6 +640,7 @@ internal static class GameSimulation {
             nextClock.Slot,
             slotsPerDay
         );
+        resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
         ArchiveCompletedTurn(root, resolutionSummary);
         game.Upsert(LastResolutionKey, resolutionSummary);
@@ -522,22 +656,42 @@ internal static class GameSimulation {
         string validatorFeedback,
         CancellationToken cancellationToken
     ) {
-        var startingPerception = DescribeCurrentPerception(root);
-        var interactionResult = TryGetVisibleInteraction(startingPerception, interactionId);
+        var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
         if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
             return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!);
         }
 
-        var actionSummary = $"{interaction.VisibleLabel} ({interaction.ActionKind})";
         AppendAcceptedStep(
             root,
             actionKind: "large/interact",
-            actionSummary,
+            actionSummary: $"{interaction.VisibleLabel} ({interaction.ActionKind})",
             actionPayload: BuildInteractionPayload(interaction),
             preActionReason,
             validatorFeedback,
             endsTurn: true
         );
+
+        return await ResolveInteractionAcceptedAsync(
+            root,
+            interactionId,
+            preActionReason,
+            collectedTurnLead: null,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveInteractionAcceptedAsync(
+        DurableDict<string> root,
+        string interactionId,
+        string preActionReason,
+        string? collectedTurnLead,
+        CancellationToken cancellationToken
+    ) {
+        var startingPerception = DescribeCurrentPerception(root);
+        var interactionResult = TryGetVisibleInteraction(startingPerception, interactionId);
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
+            return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!);
+        }
 
         var game = GetGame(root);
         var previousDay = game.GetOrThrow<int>(DayKey);
@@ -566,6 +720,7 @@ internal static class GameSimulation {
             nextClock.Slot,
             slotsPerDay
         );
+        resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
         ArchiveCompletedTurn(root, resolutionSummary);
         game.Upsert(LastResolutionKey, resolutionSummary);
@@ -613,6 +768,10 @@ internal static class GameSimulation {
             endsTurn: true
         );
 
+        return ResolveRestAccepted(root, collectedTurnLead: null);
+    }
+
+    private static TurnResolution ResolveRestAccepted(DurableDict<string> root, string? collectedTurnLead) {
         var game = GetGame(root);
         var previousDay = game.GetOrThrow<int>(DayKey);
         var previousSlot = game.GetOrThrow<int>(SlotKey);
@@ -621,6 +780,7 @@ internal static class GameSimulation {
         var resolutionSummary =
             $"你原地休息了一会。当前原型只推进时钟，不结算更复杂的世界后果。"
             + $" 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)} 前进到 {GameClock.FormatClock(nextClock.Day, nextClock.Slot, slotsPerDay)}。";
+        resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
         ArchiveCompletedTurn(root, resolutionSummary);
         game.Upsert(LastResolutionKey, resolutionSummary);
@@ -1102,6 +1262,86 @@ internal static class GameSimulation {
                 ? ReadyForGmBarrierState
                 : CollectingLlmBarrierState
         );
+    }
+
+    private static bool HasSubmittedLargeAction(DurableDict<string> root, string actorId) {
+        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
+        return largeActionByActor.TryGet(actorId, out DurableDict<string>? action) && action is not null;
+    }
+
+    private static IReadOnlyList<LargeActionIntent> ReadLargeActionIntents(DurableDict<string> root) {
+        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
+        return largeActionByActor.Keys
+            .OrderBy(static key => key, StringComparer.Ordinal)
+            .Select(actorId => {
+                var actor = GetActor(root, actorId);
+                var action = largeActionByActor.GetOrThrow<DurableDict<string>>(actorId)!;
+                _ = action.TryGet(ActionPayloadKey, out string? actionPayload);
+                var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
+                    ? rawName
+                    : actorId;
+                var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
+                    ? rawKind
+                    : "npc";
+
+                return new LargeActionIntent(
+                    actorId,
+                    actorName,
+                    actorKind,
+                    action.GetOrThrow<string>(ActionKindKey)!,
+                    action.GetOrThrow<string>(ActionSummaryKey)!,
+                    actionPayload,
+                    action.GetOrThrow<string>(PreActionReasonKey)!,
+                    action.GetOrThrow<string>(ValidatorFeedbackKey)!
+                );
+            })
+            .ToArray();
+    }
+
+    private static string BuildCollectedTurnLead(IReadOnlyList<LargeActionIntent> intents) {
+        var lines = new List<string>
+        {
+            "本回合采用多主体同步收集："
+        };
+
+        foreach (var intent in intents) {
+            lines.Add($"- {intent.ActorName} [{intent.ActorId}, {intent.ActorKind}]：{intent.ActionSummary} ({intent.ActionKind})");
+        }
+
+        lines.Add("当前 MVP 先按终端玩家的大型动作推进世界，其它 active actor 的意图已进入 turnHistory，后续会升级为真正的多意图 GM 裁决。");
+        return string.Join("\n", lines);
+    }
+
+    private static string PrefixCollectedTurnLead(string? collectedTurnLead, string summary) {
+        if (string.IsNullOrWhiteSpace(collectedTurnLead)) { return summary; }
+        return $"{collectedTurnLead.Trim()}\n\n{summary}";
+    }
+
+    private static string ParseRequiredPayloadValue(string? payload, string key) {
+        var value = ParseOptionalPayloadValue(payload, key);
+        if (string.IsNullOrWhiteSpace(value)) {
+            throw new InvalidOperationException($"Large-Action payload 缺少必填字段 '{key}'。");
+        }
+
+        return value;
+    }
+
+    private static string? ParseOptionalPayloadValue(string? payload, string key) {
+        if (string.IsNullOrWhiteSpace(payload)) { return null; }
+
+        foreach (var line in payload.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')) {
+            var separatorIndex = line.IndexOf('=');
+            if (separatorIndex <= 0) { continue; }
+            var actualKey = line[..separatorIndex].Trim();
+            if (!string.Equals(actualKey, key, StringComparison.Ordinal)) { continue; }
+
+            var value = line[(separatorIndex + 1)..].Trim();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
+        return null;
     }
 
     private static bool HaveAllActiveActorsSubmittedLargeAction(

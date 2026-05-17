@@ -373,7 +373,7 @@ public static class GameEntry {
         }
     }
 
-    private static bool TryCollectTerminalLargeActionInsteadOfResolving(
+    private static async Task<bool> TryCollectTerminalLargeActionInsteadOfResolvingAsync(
         TextWriter output,
         Repository repo,
         DurableDict<string> root,
@@ -381,7 +381,8 @@ public static class GameEntry {
         string actionSummary,
         string? actionPayload,
         string preActionReason,
-        string validatorFeedback
+        string validatorFeedback,
+        CancellationToken cancellationToken
     ) {
         if (!GameSimulation.RequiresMultiActorCollection(root)) { return false; }
 
@@ -400,10 +401,34 @@ public static class GameEntry {
             return true;
         }
 
+        var fallbackResult = GameSimulation.SubmitFallbackLargeActionsForPendingLlmPlayers(root);
+        if (!fallbackResult.TryGetValue(out status) || status is null) {
+            output.WriteLine("❌ LLM Player fallback 行动提交失败。");
+            WriteAteliaError(output, fallbackResult.Error);
+            return true;
+        }
+
+        if (status.AllActiveActorsSubmittedLargeAction) {
+            var resolutionResult = await GameSimulation.ApplyReadyCollectedTurnAsync(root, cancellationToken);
+            if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
+                output.WriteLine("❌ 多主体统一结算失败。");
+                WriteAteliaError(output, resolutionResult.Error);
+                return true;
+            }
+
+            _ = repo.Commit(root).Value;
+            output.WriteLine($"✅ Large-Action 已接受并完成多主体回合结算：{actionSummary}");
+            output.WriteLine($"🧪 validator: {validatorFeedback}");
+            output.WriteLine($"📣 结算: {resolution.Summary}");
+            output.WriteLine();
+            output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+            return true;
+        }
+
         _ = repo.Commit(root).Value;
         output.WriteLine($"✅ Large-Action 已接受并进入多主体回合收集：{actionSummary}");
         output.WriteLine($"🧪 validator: {validatorFeedback}");
-        output.WriteLine("⏳ 仍需等待其他 active actor 提交 Large-Action；当前 MVP 暂不自动驱动 LLM Player。");
+        output.WriteLine("⏳ 仍需等待其他 active actor 提交 Large-Action。");
         output.WriteLine();
         output.Write(GamePresenter.RenderTurnCollectionStatus(status));
         return true;
@@ -469,7 +494,7 @@ public static class GameEntry {
                     return;
                 }
 
-                if (TryCollectTerminalLargeActionInsteadOfResolving(
+                if (await TryCollectTerminalLargeActionInsteadOfResolvingAsync(
                     output,
                     repo,
                     root,
@@ -477,7 +502,8 @@ public static class GameEntry {
                     actionSummary,
                     actionPayload,
                     preActionReason,
-                    validation.Feedback
+                    validation.Feedback,
+                    ct
                 )) {
                     return;
                 }
@@ -559,7 +585,7 @@ public static class GameEntry {
                     return;
                 }
 
-                if (TryCollectTerminalLargeActionInsteadOfResolving(
+                if (await TryCollectTerminalLargeActionInsteadOfResolvingAsync(
                     output,
                     repo,
                     root,
@@ -567,7 +593,8 @@ public static class GameEntry {
                     actionSummary,
                     actionPayload,
                     preActionReason,
-                    validation.Feedback
+                    validation.Feedback,
+                    ct
                 )) {
                     return;
                 }
@@ -642,7 +669,7 @@ public static class GameEntry {
                     return;
                 }
 
-                if (TryCollectTerminalLargeActionInsteadOfResolving(
+                if (await TryCollectTerminalLargeActionInsteadOfResolvingAsync(
                     output,
                     repo,
                     root,
@@ -650,7 +677,8 @@ public static class GameEntry {
                     actionSummary,
                     actionPayload: null,
                     preActionReason,
-                    validation.Feedback
+                    validation.Feedback,
+                    ct
                 )) {
                     return;
                 }
