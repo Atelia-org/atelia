@@ -207,6 +207,14 @@ GM 的自由文本可以保留，但宿主只信任工具结果和结构化 summ
 - 真实 GM Agent 根据玩家意图、Perception-Bundle 和账本摘要选择调用哪些工具；
 - 宿主继续只信任工具结果和账本状态。
 
+当前落地策略：
+
+- `GameMasterResolver` 手写最小工具循环：LLM 输出 tool calls，`ToolExecutor` 执行，宿主用 `ToolResultsMessage` 回灌，直到 LLM 停止调用工具并输出玩家可见摘要。
+- `ATELIA_TEXTADV_GM_MODE=auto` 时，有 `DEEPSEEK_API_KEY` 就优先尝试真实 GM Agent；未配置或失败时回退 deterministic resolver。
+- `ATELIA_TEXTADV_GM_MODE=deterministic` 可强制关闭真实 GM，便于离线调试。
+- `ATELIA_TEXTADV_GM_MODE=llm` 可用于验证真实 GM 路径；若 provider 或工具循环失败，当前仍回退 deterministic resolver 以保护游戏可玩性。
+- 首版真实 GM 的工具集合仍限制为 `gm_create_location` / `gm_link_locations` / `gm_move_player`，符合 Phase 1 的账本闭环。
+
 ### Phase 3: Item / NPC / Interaction Ledger
 
 将物品、NPC、交互 affordance 提升为账本对象。

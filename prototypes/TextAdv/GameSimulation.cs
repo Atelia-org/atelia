@@ -137,12 +137,13 @@ internal static class GameSimulation {
         return DescribeCurrentPerception(root);
     }
 
-    internal static AteliaResult<TurnResolution> ApplyExplore(
+    internal static async Task<TurnResolutionApplyResult> ApplyExploreAsync(
         DurableDict<string> root,
         string direction,
         string? focus,
         string preActionReason,
-        string validatorFeedback
+        string validatorFeedback,
+        CancellationToken cancellationToken
     ) {
         direction = NormalizeRequired(direction, nameof(direction));
         focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
@@ -166,6 +167,42 @@ internal static class GameSimulation {
             endsTurn: true
         );
 
+        var game = GetGame(root);
+        var previousDay = game.GetOrThrow<int>(DayKey);
+        var previousSlot = game.GetOrThrow<int>(SlotKey);
+        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
+        var gmResolution = await GameMasterResolver.TryResolveExploreAsync(
+            root,
+            new GmExploreContext(
+                DescribeCurrentPerception(root),
+                currentLocationId,
+                direction,
+                focus,
+                preActionReason,
+                TryGetReverseDirection(direction)
+            ),
+            cancellationToken
+        ).ConfigureAwait(false);
+
+        if (gmResolution is { UsedLlm: true }
+            && !string.Equals(GetPlayerLocationId(root), currentLocationId, StringComparison.Ordinal)) {
+            var llmNextClock = AdvanceClock(root);
+            var llmResolutionSummary = AppendClockAdvance(
+                gmResolution.Summary,
+                previousDay,
+                previousSlot,
+                llmNextClock.Day,
+                llmNextClock.Slot,
+                slotsPerDay
+            );
+
+            ArchiveCompletedTurn(root, llmResolutionSummary);
+            game.Upsert(LastResolutionKey, llmResolutionSummary);
+            ResetCurrentTurn(root);
+
+            return TurnResolutionApplyResult.Success(new TurnResolution(llmResolutionSummary, DescribeCurrentPerception(root)));
+        }
+
         var gmTools = new GmWorldEditService(root);
         var createdNewLocation = false;
         string targetLocationId;
@@ -180,7 +217,7 @@ internal static class GameSimulation {
             var targetDescription = CreateExplorationLocationDescription(currentLocationName, direction, focus);
 
             var createResult = gmTools.CreateLocation(targetLocationId, targetName, targetDescription);
-            if (!createResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(createResult.Error!); }
+            if (!createResult.IsSuccess) { return TurnResolutionApplyResult.Failure(createResult.Error!); }
 
             var linkResult = gmTools.LinkLocations(
                 currentLocationId,
@@ -188,33 +225,34 @@ internal static class GameSimulation {
                 targetLocationId,
                 TryGetReverseDirection(direction)
             );
-            if (!linkResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(linkResult.Error!); }
+            if (!linkResult.IsSuccess) { return TurnResolutionApplyResult.Failure(linkResult.Error!); }
 
             createdNewLocation = true;
         }
 
         var moveResult = gmTools.MovePlayerTo(targetLocationId);
-        if (!moveResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(moveResult.Error!); }
+        if (!moveResult.IsSuccess) { return TurnResolutionApplyResult.Failure(moveResult.Error!); }
 
         var targetLocation = GetLocation(root, targetLocationId);
         var targetLocationName = targetLocation.GetOrThrow<string>(NameKey)!;
-        var game = GetGame(root);
-        var previousDay = game.GetOrThrow<int>(DayKey);
-        var previousSlot = game.GetOrThrow<int>(SlotKey);
-        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
         var nextClock = AdvanceClock(root);
         var discoveryText = createdNewLocation
             ? $"GM 账本新增了地点「{targetLocationName}」，并记录了从「{currentLocationName}」向 {direction} 的出口。"
             : $"你沿着已知出口从「{currentLocationName}」向 {direction} 前进，来到「{targetLocationName}」。";
-        var resolutionSummary =
-            $"{discoveryText} 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)}"
-            + $" 前进到 {GameClock.FormatClock(nextClock.Day, nextClock.Slot, slotsPerDay)}。";
+        var resolutionSummary = AppendClockAdvance(
+            discoveryText,
+            previousDay,
+            previousSlot,
+            nextClock.Day,
+            nextClock.Slot,
+            slotsPerDay
+        );
 
         ArchiveCompletedTurn(root, resolutionSummary);
         game.Upsert(LastResolutionKey, resolutionSummary);
         ResetCurrentTurn(root);
 
-        return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
+        return TurnResolutionApplyResult.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
     }
 
     internal static PerceptionBundle ApplyNotebookEdit(
@@ -492,6 +530,19 @@ internal static class GameSimulation {
         => focus is null
             ? $"direction={direction}"
             : $"direction={direction}\nfocus={focus}";
+
+    private static string AppendClockAdvance(
+        string summary,
+        int previousDay,
+        int previousSlot,
+        int nextDay,
+        int nextSlot,
+        int slotsPerDay
+    ) {
+        var trimmed = string.IsNullOrWhiteSpace(summary) ? "本回合探索已经完成。" : summary.Trim();
+        return $"{trimmed} 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)}"
+            + $" 前进到 {GameClock.FormatClock(nextDay, nextSlot, slotsPerDay)}。";
+    }
 
     private static string CreateExplorationLocationId(DurableDict<string> root, string currentLocationId, string direction) {
         var baseId = $"{Slugify(currentLocationId)}-{Slugify(direction)}";

@@ -290,8 +290,8 @@ public static class GameEntry {
                     return;
                 }
 
-                var resolutionResult = GameSimulation.ApplyExplore(root, direction, focus, preActionReason, validation.Feedback);
-                if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
+                var resolutionResult = await GameSimulation.ApplyExploreAsync(root, direction, focus, preActionReason, validation.Feedback, ct);
+                if (!resolutionResult.IsSuccess || resolutionResult.Resolution is null) {
                     output.WriteLine("❌ GM 探索结算失败。");
                     WriteAteliaError(output, resolutionResult.Error);
                     return;
@@ -301,9 +301,9 @@ public static class GameEntry {
 
                 output.WriteLine($"✅ Large-Action 已接受：{actionSummary}。当前回合已结束。");
                 output.WriteLine($"🧪 validator: {validation.Feedback}");
-                output.WriteLine($"📣 结算: {resolution.Summary}");
+                output.WriteLine($"📣 结算: {resolutionResult.Resolution.Summary}");
                 output.WriteLine();
-                output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+                output.Write(GamePresenter.RenderPerception(resolutionResult.Resolution.NextPerception));
             }
         );
         return cmd;

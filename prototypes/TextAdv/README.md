@@ -35,6 +35,7 @@ LLM Agent (Copilot / Claude Code)
 - `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
 - `GameSimulation.cs`：世界 bootstrap、状态查询、移动结算等核心逻辑
 - `GmWorldEditService.cs`：GM-style 世界编辑工具集；当前由代码直接调用，后续可用 `MethodToolWrapper` 暴露给 LLM GM Agent
+- `GameMasterResolver.cs`：真实 GM Agent 工具循环；把 `GmWorldEditService` 包装为 LLM 可调用工具，失败时回退 deterministic resolver
 - `GamePresenter.cs`：把 `LocationPerception` 渲染成玩家看到的文本
 - `GameActionValidator.cs`：DeepSeekV4 + tool call 驱动的 validator，负责逐步校验事前推理（PreActionReason）
 
@@ -125,6 +126,9 @@ root (DurableDict<string>)
 
 - `DEEPSEEK_API_KEY`：必需，用于真实 DeepSeek validator 调用
 - `ATELIA_TEXTADV_VALIDATOR_MODEL_ID`：可选，默认 `deepseek-v4-flash`
+- `ATELIA_TEXTADV_GM_MODEL_ID`：可选，默认跟 validator 一样使用 `deepseek-v4-flash`
+- `ATELIA_TEXTADV_GM_MODE`：可选，`auto` / `llm` / `deterministic`；默认 `auto`，有 `DEEPSEEK_API_KEY` 时优先尝试真实 GM Agent
+- `ATELIA_TEXTADV_GM_MAX_ROUNDS`：可选，真实 GM Agent 工具循环最大轮数，默认 `4`
 - `DEEPSEEK_MODEL`：可选 fallback，若未设置 `ATELIA_TEXTADV_VALIDATOR_MODEL_ID` 则使用它
 - `DEEPSEEK_BASE_URL`：可选，覆盖默认 DeepSeek base URL
 
