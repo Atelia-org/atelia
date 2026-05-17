@@ -677,8 +677,6 @@ internal static partial class GameSimulation {
         archivedTurn.Upsert(NotebookSnapshotKey, currentTurn.GetOrThrow<string>(NotebookSnapshotKey)!);
         archivedTurn.Upsert(AcceptedStepsByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsByActorKey)!);
         archivedTurn.Upsert(LargeActionByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!);
-        archivedTurn.Upsert(BarrierStateKey, currentTurn.GetOrThrow<string>(BarrierStateKey)!);
-        archivedTurn.Upsert(TurnOwnerActorIdKey, currentTurn.GetOrThrow<string>(TurnOwnerActorIdKey)!);
         archivedTurn.Upsert(ResolutionSummaryKey, resolutionSummary);
         archivedTurn.Upsert(LastResolutionByActorKey, GetOrCreateLastResolutionByActor(root));
         archivedTurn.Upsert(EndingNotebookKey, GetNotebookContent(GetNotebookSnapshot(root)));
@@ -752,13 +750,6 @@ internal static partial class GameSimulation {
         action.Upsert(PreActionReasonKey, step.PreActionReason);
         action.Upsert(ValidatorFeedbackKey, step.ValidatorFeedback);
         largeActionByActor.Upsert(actorId, action);
-
-        currentTurn.Upsert(
-            BarrierStateKey,
-            HaveAllActiveActorsSubmittedLargeAction(root, largeActionByActor)
-                ? ReadyForGmBarrierState
-                : CollectingLlmBarrierState
-        );
     }
 
     private static bool HasSubmittedLargeAction(DurableDict<string> root, string actorId) {

@@ -114,8 +114,6 @@ root (DurableDict<string>)
 │   ├── day / slot / slotsPerDay
 │   ├── activeActorIds → DurableDict<string>
 │   ├── currentTurn → {
-│   │     turnOwnerActorId,
-│   │     barrierState,
 │   │     acceptedStepsByActor,
 │   │     largeActionByActor,
 │   │     notebookSnapshot,
@@ -138,7 +136,7 @@ root (DurableDict<string>)
 - `edit-memory-notebook --dry-run` 会执行与正式提交同构的 preview + validator，但不会写入状态；适合先试探 after-view 与 validator 边界
 - 玩家视图应自带“当前可执行动作”速查，默认按失忆玩家设计，不假定玩家记得上一次输出里的规则说明
 - `Perception-Bundle` 已经支持按 `actorId` 投影：当前位置、可见角色、持有物品和 Memory-Notebook 都来自 actor ledger；终端玩家不再维护额外镜像
-- `currentTurn` 已经预留并使用 `acceptedStepsByActor`、`largeActionByActor`、`turnOwnerActorId`、`barrierState`；后续真实 LLM Player loop 可直接接入这组账本
+- `currentTurn` 当前只保留真正驱动流程的账本字段：`acceptedStepsByActor`、`largeActionByActor`、`notebookSnapshot`、`nextStepNumber` 等；`dev-turn-status` 里的 barrier / next actor 由当前提交状态即时推导
 - 当存在多个 active actor 时，终端玩家的真实 Large-Action 通过 validator 后会先写入回合收集账本；当前 MVP 会依次驱动 pending `llm-player`，让它基于自己的 `Perception-Bundle` 调用工具提交 Large-Action，通过同一套 validator 后进入 collected-turn resolver
 - LLM Player Agent 首版开放 `player_edit_memory_notebook` Small-Action，以及 `player_rest_a_while`、`player_explore`、`player_interact` 三个 Large-Action 工具；若未配置 API key、模式为 deterministic、provider 失败或 validator 多次拒绝，会回退为“谨慎观察并暂不移动”
 - collected-turn resolver 首版按终端玩家的大型动作推进世界，其它 active actor 的意图会进入 `turnHistory` 和结算摘要；后续再升级为真正的多意图 GM 裁决
@@ -151,7 +149,7 @@ root (DurableDict<string>)
 
 - `pmux game dev-add-llm-player [--location <locationId>] <actor-id> <name> <profile-note>`：创建一个 active `llm-player` actor，并加入 `game.activeActorIds`
 - `pmux game dev-look-actor <actor-id>`：按指定 actor 投影并渲染 `Perception-Bundle`
-- `pmux game dev-turn-status`：查看当前 `barrierState`、`turnOwnerActorId` 和每个 active actor 的 Large-Action 提交状态
+- `pmux game dev-turn-status`：查看当前推导出的 barrier / next actor，以及每个 active actor 的 Large-Action 提交状态
 - `pmux game dev-submit-large-action [--payload <payload>] <actor-id> <action-kind> <summary> <reason>`：绕过 validator 为任意 active actor 提交一个 Large-Action，用来验证 `acceptedStepsByActor` / `largeActionByActor` 和 barrier 流转
 
 当前 `llm-player` 会被创建、持久化和投影视角；每个 `Perception-Bundle` 会包含 actor 自身的 name / kind / profileNote，避免内部玩家不知道“自己是谁”。真实 LLM Player 默认使用两阶段 `director-executor` 管线：先用无工具的导演阶段整理角色事实、猜测、欲望/恐惧、风险姿态、notebook 建议和推荐 Large-Action，再把这份导演札记作为 observation 交给带工具的执行阶段。执行阶段仍必须通过 `player_edit_memory_notebook` / `player_rest_a_while` / `player_explore` / `player_interact` 行动，并继续走同一套 validator。未配置 API key、模式为 deterministic、provider 失败或多次重试失败时，系统会 fallback 提交“谨慎观察并暂不移动”。开发者仍可用 `dev-submit-large-action` 手动模拟其它动作。

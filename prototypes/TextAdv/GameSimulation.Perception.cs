@@ -50,6 +50,7 @@ internal static partial class GameSimulation {
         var game = GetGame(root);
         var currentTurn = GetCurrentTurn(root);
         var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
+        var actorIds = EnumerateActiveActorIds(root).ToArray();
         var actorStatuses = EnumerateActiveActorIds(root)
             .Select(actorId => {
                 var actor = GetActor(root, actorId);
@@ -83,12 +84,20 @@ internal static partial class GameSimulation {
 
         var allSubmitted = actorStatuses.Length > 0
             && actorStatuses.All(static actor => actor.HasSubmittedLargeAction);
+        var pendingActorId = actorIds.FirstOrDefault(
+            actorId => !largeActionByActor.TryGet(actorId, out DurableDict<string>? action) || action is null
+        );
+        var barrierState = allSubmitted
+            ? ReadyForGmBarrierState
+            : largeActionByActor.Keys.Any()
+                ? CollectingLlmBarrierState
+                : CollectingTerminalBarrierState;
         return new TurnCollectionStatus(
             game.GetOrThrow<int>(DayKey),
             game.GetOrThrow<int>(SlotKey),
             game.GetOrThrow<int>(SlotsPerDayKey),
-            currentTurn.GetOrThrow<string>(TurnOwnerActorIdKey)!,
-            currentTurn.GetOrThrow<string>(BarrierStateKey)!,
+            string.IsNullOrWhiteSpace(pendingActorId) ? TerminalPlayerActorId : pendingActorId,
+            barrierState,
             allSubmitted,
             actorStatuses
         );

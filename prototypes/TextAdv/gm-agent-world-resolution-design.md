@@ -317,10 +317,9 @@ Phase 4 暂不引入动作耗时、reservation、事件队列和出队重验。M
 game
 ├── activeActorIds
 ├── currentTurn
-│   ├── turnOwnerActorId      # 当前终端玩家或内部 LLM player
 │   ├── acceptedStepsByActor
 │   ├── largeActionByActor
-│   └── barrierState          # collecting-terminal / collecting-llm / ready-for-gm
+│   └── ...                   # barrier / next actor 可由提交状态即时推导
 └── turnHistory
 ```
 
@@ -329,7 +328,7 @@ game
 - `game.activeActorIds` 已存在；新游戏会登记 `actor:player`，开发者可用 `dev-add-llm-player` 添加 active `llm-player`。它代表“需要参与 Player 回合收集的主体”，不等同于所有 NPC。
 - `world.actors` 中的 `kind` 已预留 `terminal-player` / `llm-player` / `npc`。NPC 可以被 GM 创建和被玩家感知，但暂不自动声明 Large-Action。
 - `PerceptionBundle` 已经可以通过 `DescribePerceptionForActor(root, actorId)` 按 actor 投影。地点、可见角色、持有物品和 Memory-Notebook 都从 actor ledger 读取；`DescribeCurrentPerception` 只是 `actor:player` 的便捷入口。
-- `currentTurn` 已使用 `turnOwnerActorId`、`barrierState`、`acceptedStepsByActor`、`largeActionByActor`。终端玩家步骤也直接写进 `acceptedStepsByActor["player"]`，不再保留旧镜像或旧存档补齐逻辑。
+- `currentTurn` 现在只保留真正驱动流程的账本字段，如 `acceptedStepsByActor`、`largeActionByActor`。`barrier` 和“下一个待行动 actor”改为由当前提交状态即时推导，避免把展示性状态写进持久化层。
 - Large-Action 现在会落入 `largeActionByActor`。只有 `actor:player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，并驱动 pending `llm-player` 提交保守 fallback Large-Action。
 - pending `llm-player` 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明。`Perception-Bundle` 已包含 actor 自身的 name / kind / profileNote，避免角色缺少自我锚点；输出必须调用 `player_rest_a_while`、`player_explore` 或 `player_interact` 之一提交 Large-Action。
 - LLM Player Agent 默认使用 `director-executor` 两阶段管线：导演阶段无工具，专门把该 actor 的确认事实、怀疑、不安/欲望、风险姿态、notebook 建议和推荐行动整理为“导演札记”；执行阶段再拿着这份札记和原始 Perception-Bundle 调用工具。这样把“第三人称心理建模”与“工具可靠执行”拆开，减少角色扮演模式沉迷叙事或 assistant 模式角色驱动力不足的问题。可用 `ATELIA_TEXTADV_LLM_PLAYER_PIPELINE=single` 临时回到单阶段执行。

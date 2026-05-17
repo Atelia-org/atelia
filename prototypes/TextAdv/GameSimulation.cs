@@ -27,10 +27,8 @@ internal static partial class GameSimulation {
     private const string StartLocationIdKey = "startLocationId";
     private const string NotebookSnapshotKey = "notebookSnapshot";
     private const string NextStepNumberKey = "nextStepNumber";
-    private const string TurnOwnerActorIdKey = "turnOwnerActorId";
     private const string AcceptedStepsByActorKey = "acceptedStepsByActor";
     private const string LargeActionByActorKey = "largeActionByActor";
-    private const string BarrierStateKey = "barrierState";
     private const string TurnNumberKey = "turnNumber";
     private const string ResolutionSummaryKey = "resolutionSummary";
     private const string EndingNotebookKey = "endingNotebook";
@@ -257,10 +255,8 @@ internal static partial class GameSimulation {
         currentTurn.Upsert(StartLocationIdKey, locationId);
         currentTurn.Upsert(NotebookSnapshotKey, notebookSnapshot);
         currentTurn.Upsert(NextStepNumberKey, 1);
-        currentTurn.Upsert(TurnOwnerActorIdKey, TerminalPlayerActorId);
         currentTurn.Upsert(AcceptedStepsByActorKey, acceptedStepsByActor);
         currentTurn.Upsert(LargeActionByActorKey, largeActionByActor);
-        currentTurn.Upsert(BarrierStateKey, CollectingTerminalBarrierState);
         acceptedStepsByActor.Upsert(TerminalPlayerActorId, rev.CreateDict<string>());
 
         return currentTurn;
