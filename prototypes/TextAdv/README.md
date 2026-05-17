@@ -33,7 +33,9 @@ LLM Agent (Copilot / Claude Code)
 ## 当前代码分层
 
 - `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
-- `GameSimulation.cs`：世界 bootstrap、状态查询、移动结算等核心逻辑
+- `GameSimulation.cs`：Schema/Core；世界 bootstrap、StateJournal schema key、兼容镜像、底层 ledger accessor
+- `GameSimulation.Perception.cs`：Read-side projection；`Perception-Bundle`、可见性枚举、turn status、interaction lookup
+- `GameSimulation.TurnFlow.cs`：Write-side workflow；Small/Large-Action 落账、回合归档、GM/LLM player 驱动与 deterministic fallback
 - `GmWorldEditService.cs`：GM-style 世界编辑工具集；通过 `MethodToolWrapper` 暴露 Location / Item / Actor / Interaction 账本工具
 - `GameMasterResolver.cs`：真实 GM Agent 工具循环；把 `GmWorldEditService` 包装为 LLM 可调用工具，失败时回退 deterministic resolver
 - `GamePresenter.cs`：把 `LocationPerception` 渲染成玩家看到的文本
