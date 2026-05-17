@@ -77,6 +77,11 @@ internal static class GameSimulation {
         string ValidatorFeedback
     );
 
+    private enum ActorResolutionCommitMode {
+        ReplaceAllWithSummary,
+        PreserveExistingAndFillMissing
+    }
+
     internal static DurableDict<string> CreateNewWorld(Repository repo) {
         var revResult = repo.GetOrCreateBranch("main");
         var rev = revResult.Value!;
@@ -392,11 +397,9 @@ internal static class GameSimulation {
                     nextClock.Slot,
                     slotsPerDay
                 );
-                SetLastResolutionForMissingActiveActors(root, resolutionSummary);
-                ArchiveCompletedTurn(root, resolutionSummary);
-                ResetCurrentTurn(root);
-
-                return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
+                return AsyncAteliaResult<TurnResolution>.Success(
+                    CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
+                );
             }
 
             var lead = BuildCollectedTurnLead(intents, gmResolution?.FallbackReason);
@@ -631,11 +634,9 @@ internal static class GameSimulation {
             );
             llmResolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, llmResolutionSummary);
 
-            SetLastResolutionForMissingActiveActors(root, llmResolutionSummary);
-            ArchiveCompletedTurn(root, llmResolutionSummary);
-            ResetCurrentTurn(root);
-
-            return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(llmResolutionSummary, DescribeCurrentPerception(root)));
+            return AsyncAteliaResult<TurnResolution>.Success(
+                CompleteTurn(root, llmResolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary)
+            );
         }
 
         var gmTools = new GmWorldEditService(root);
@@ -684,11 +685,9 @@ internal static class GameSimulation {
         );
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
-        SetLastResolutionForActiveActors(root, resolutionSummary);
-        ArchiveCompletedTurn(root, resolutionSummary);
-        ResetCurrentTurn(root);
-
-        return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
+        return AsyncAteliaResult<TurnResolution>.Success(
+            CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary)
+        );
     }
 
     internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyInteractionAsync(
@@ -764,11 +763,9 @@ internal static class GameSimulation {
         );
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
-        SetLastResolutionForActiveActors(root, resolutionSummary);
-        ArchiveCompletedTurn(root, resolutionSummary);
-        ResetCurrentTurn(root);
-
-        return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
+        return AsyncAteliaResult<TurnResolution>.Success(
+            CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary)
+        );
     }
 
     internal static PerceptionBundle ApplyNotebookEdit(
@@ -842,11 +839,7 @@ internal static class GameSimulation {
             + $" 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)} 前进到 {GameClock.FormatClock(nextClock.Day, nextClock.Slot, slotsPerDay)}。";
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
-        SetLastResolutionForActiveActors(root, resolutionSummary);
-        ArchiveCompletedTurn(root, resolutionSummary);
-        ResetCurrentTurn(root);
-
-        return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
+        return CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary);
     }
 
     private static string GetPlayerLocationId(DurableDict<string> root) {
@@ -1353,6 +1346,27 @@ internal static class GameSimulation {
 
         turnHistory.Upsert($"turn-{turnNumber:D4}", archivedTurn);
         game.Upsert(CompletedTurnCountKey, turnNumber);
+    }
+
+    private static TurnResolution CompleteTurn(
+        DurableDict<string> root,
+        string resolutionSummary,
+        ActorResolutionCommitMode actorResolutionMode
+    ) {
+        switch (actorResolutionMode) {
+            case ActorResolutionCommitMode.ReplaceAllWithSummary:
+                SetLastResolutionForActiveActors(root, resolutionSummary);
+                break;
+            case ActorResolutionCommitMode.PreserveExistingAndFillMissing:
+                SetLastResolutionForMissingActiveActors(root, resolutionSummary);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(actorResolutionMode), actorResolutionMode, "Unknown actor resolution commit mode.");
+        }
+
+        ArchiveCompletedTurn(root, resolutionSummary);
+        ResetCurrentTurn(root);
+        return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
     }
 
     private static (int Day, int Slot) AdvanceClock(DurableDict<string> root) {
