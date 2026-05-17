@@ -52,6 +52,12 @@ internal static class GameMasterResolver {
         int MaxRounds
     );
 
+    private sealed record GmResolutionStage(
+        string Name,
+        Func<string> BuildObservation,
+        bool RequireFinalSummary
+    );
+
     internal static async Task<GmExploreResolution?> TryResolveExploreAsync(
         DurableDict<string> root,
         GmExploreContext context,
@@ -126,67 +132,30 @@ internal static class GameMasterResolver {
         GmConfig config,
         CancellationToken cancellationToken
     ) {
-        var toolExecutor = CreateToolExecutor(root);
-        var history = new List<IHistoryMessage> {
-            new ObservationMessage(BuildExploreObservation(context))
-        };
-        var client = GetClient(config);
-        ActionMessage? lastAction = null;
-
-        for (var round = 1; round <= config.MaxRounds; round++) {
-            var request = new CompletionRequest(
-                ModelId: config.ModelId,
-                SystemPrompt: BuildExploreSystemPrompt(),
-                Context: history,
-                Tools: toolExecutor.GetVisibleToolDefinitions()
-            );
-            var result = await client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
-            if (result.Errors is { Count: > 0 }) {
-                throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors));
-            }
-
-            lastAction = result.Message;
-            history.Add(lastAction);
-
-            if (lastAction.ToolCalls.Count == 0) {
-                var finalSummary = NormalizeSummary(lastAction.GetFlattenedText());
-                if (string.IsNullOrWhiteSpace(finalSummary)) {
-                    finalSummary = "GM Agent 完成了本回合探索结算。";
-                }
-
-                return new GmExploreResolution(finalSummary, UsedLlm: true, FallbackReason: null);
-            }
-
-            var executionResults = new List<ToolCallExecutionResult>(lastAction.ToolCalls.Count);
-            foreach (var toolCall in lastAction.ToolCalls) {
-                var execution = await toolExecutor.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
-                executionResults.Add(execution);
-            }
-
-            var toolResults = executionResults
-                .Select(static result => new ToolResult(
-                    result.ToolName,
-                    result.ToolCallId,
-                    result.ExecuteResult.Status,
-                    result.ExecuteResult.Content
-                ))
-                .ToArray();
-            var failure = executionResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
-            history.Add(
-                new ToolResultsMessage(
-                    BuildToolResultsObservation(executionResults),
-                    toolResults,
-                    failure?.ExecuteResult.Content
-                )
-            );
-        }
-
-        var text = NormalizeSummary(lastAction?.GetFlattenedText() ?? string.Empty);
-        throw new InvalidOperationException(
-            string.IsNullOrWhiteSpace(text)
-                ? $"GM Agent 在 {config.MaxRounds} 轮内没有完成结算。"
-                : $"GM Agent 在 {config.MaxRounds} 轮内仍未停止调用工具。最后文本：{text}"
-        );
+        return await RunStagedToolLoopAsync(
+            root,
+            config,
+            BuildExploreSystemPrompt(),
+            [
+                new GmResolutionStage(
+                    "explore-map",
+                    () => BuildExploreMapStageObservation(context),
+                    RequireFinalSummary: false
+                ),
+                new GmResolutionStage(
+                    "explore-ledger-audit",
+                    () => BuildExploreLedgerAuditStageObservation(root, context),
+                    RequireFinalSummary: false
+                ),
+                new GmResolutionStage(
+                    "explore-summary",
+                    () => BuildExploreSummaryStageObservation(root, context),
+                    RequireFinalSummary: true
+                ),
+            ],
+            defaultSummary: "GM Agent 完成了本回合探索结算。",
+            cancellationToken
+        ).ConfigureAwait(false);
     }
 
     private static async Task<GmExploreResolution> ResolveInteractionWithLlmAsync(
@@ -195,67 +164,119 @@ internal static class GameMasterResolver {
         GmConfig config,
         CancellationToken cancellationToken
     ) {
+        return await RunStagedToolLoopAsync(
+            root,
+            config,
+            BuildInteractionSystemPrompt(),
+            [
+                new GmResolutionStage(
+                    "interaction-consequence",
+                    () => BuildInteractionConsequenceStageObservation(context),
+                    RequireFinalSummary: false
+                ),
+                new GmResolutionStage(
+                    "interaction-affordance-audit",
+                    () => BuildInteractionAffordanceAuditStageObservation(root, context),
+                    RequireFinalSummary: false
+                ),
+                new GmResolutionStage(
+                    "interaction-summary",
+                    () => BuildInteractionSummaryStageObservation(root, context),
+                    RequireFinalSummary: true
+                ),
+            ],
+            defaultSummary: "GM Agent 完成了本回合交互结算。",
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private static async Task<GmExploreResolution> RunStagedToolLoopAsync(
+        DurableDict<string> root,
+        GmConfig config,
+        string systemPrompt,
+        IReadOnlyList<GmResolutionStage> stages,
+        string defaultSummary,
+        CancellationToken cancellationToken
+    ) {
         var toolExecutor = CreateToolExecutor(root);
-        var history = new List<IHistoryMessage> {
-            new ObservationMessage(BuildInteractionObservation(context))
-        };
+        var history = new List<IHistoryMessage>();
         var client = GetClient(config);
-        ActionMessage? lastAction = null;
 
-        for (var round = 1; round <= config.MaxRounds; round++) {
-            var request = new CompletionRequest(
-                ModelId: config.ModelId,
-                SystemPrompt: BuildInteractionSystemPrompt(),
-                Context: history,
-                Tools: toolExecutor.GetVisibleToolDefinitions()
-            );
-            var result = await client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
-            if (result.Errors is { Count: > 0 }) {
-                throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors));
-            }
+        foreach (var stage in stages) {
+            history.Add(new ObservationMessage(stage.BuildObservation()));
+            ActionMessage? lastAction = null;
+            var stageCompleted = false;
 
-            lastAction = result.Message;
-            history.Add(lastAction);
-
-            if (lastAction.ToolCalls.Count == 0) {
-                var finalSummary = NormalizeSummary(lastAction.GetFlattenedText());
-                if (string.IsNullOrWhiteSpace(finalSummary)) {
-                    finalSummary = "GM Agent 完成了本回合交互结算。";
+            for (var round = 1; round <= config.MaxRounds; round++) {
+                var request = new CompletionRequest(
+                    ModelId: config.ModelId,
+                    SystemPrompt: systemPrompt,
+                    Context: history,
+                    Tools: toolExecutor.GetVisibleToolDefinitions()
+                );
+                var result = await client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
+                if (result.Errors is { Count: > 0 }) {
+                    throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors));
                 }
 
-                return new GmExploreResolution(finalSummary, UsedLlm: true, FallbackReason: null);
+                lastAction = result.Message;
+                history.Add(lastAction);
+
+                if (lastAction.ToolCalls.Count == 0) {
+                    stageCompleted = true;
+                    if (!stage.RequireFinalSummary) { break; }
+
+                    var finalSummary = NormalizeSummary(lastAction.GetFlattenedText());
+                    if (string.IsNullOrWhiteSpace(finalSummary)) {
+                        finalSummary = defaultSummary;
+                    }
+
+                    return new GmExploreResolution(finalSummary, UsedLlm: true, FallbackReason: null);
+                }
+
+                var executionResults = new List<ToolCallExecutionResult>(lastAction.ToolCalls.Count);
+                foreach (var toolCall in lastAction.ToolCalls) {
+                    var execution = await toolExecutor.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
+                    executionResults.Add(execution);
+                }
+
+                var toolResults = executionResults
+                    .Select(static result => new ToolResult(
+                        result.ToolName,
+                        result.ToolCallId,
+                        result.ExecuteResult.Status,
+                        result.ExecuteResult.Content
+                    ))
+                    .ToArray();
+                var failure = executionResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
+                history.Add(
+                    new ToolResultsMessage(
+                        BuildToolResultsObservation(stage.Name, executionResults),
+                        toolResults,
+                        failure?.ExecuteResult.Content
+                    )
+                );
             }
 
-            var executionResults = new List<ToolCallExecutionResult>(lastAction.ToolCalls.Count);
-            foreach (var toolCall in lastAction.ToolCalls) {
-                var execution = await toolExecutor.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
-                executionResults.Add(execution);
+            if (stageCompleted) { continue; }
+
+            var text = NormalizeSummary(lastAction?.GetFlattenedText() ?? string.Empty);
+            if (stage.RequireFinalSummary) {
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(text)
+                        ? $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内没有完成结算摘要。"
+                        : $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内仍未停止调用工具。最后文本：{text}"
+                );
             }
 
-            var toolResults = executionResults
-                .Select(static result => new ToolResult(
-                    result.ToolName,
-                    result.ToolCallId,
-                    result.ExecuteResult.Status,
-                    result.ExecuteResult.Content
-                ))
-                .ToArray();
-            var failure = executionResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
-            history.Add(
-                new ToolResultsMessage(
-                    BuildToolResultsObservation(executionResults),
-                    toolResults,
-                    failure?.ExecuteResult.Content
-                )
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(text)
+                    ? $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内没有完成工具阶段。"
+                    : $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内仍未停止调用工具。最后文本：{text}"
             );
         }
 
-        var text = NormalizeSummary(lastAction?.GetFlattenedText() ?? string.Empty);
-        throw new InvalidOperationException(
-            string.IsNullOrWhiteSpace(text)
-                ? $"GM Agent 在 {config.MaxRounds} 轮内没有完成交互结算。"
-                : $"GM Agent 在 {config.MaxRounds} 轮内仍未停止调用工具。最后文本：{text}"
-        );
+        return new GmExploreResolution(defaultSummary, UsedLlm: true, FallbackReason: null);
     }
 
     private static ToolExecutor CreateToolExecutor(DurableDict<string> root) {
@@ -404,6 +425,43 @@ internal static class GameMasterResolver {
         return sb.ToString();
     }
 
+    private static string BuildExploreMapStageObservation(GmExploreContext context) {
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 1/3: 地图与移动落账]");
+        sb.AppendLine("只处理 Location / Exit / Player location。");
+        sb.AppendLine("若目标方向已有出口，调用 gm_move_player。若没有出口，调用 gm_create_location、gm_link_locations、gm_move_player。");
+        sb.AppendLine("本阶段不要创建 Item / NPC / Interaction，也不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
+        sb.AppendLine();
+        sb.Append(BuildExploreObservation(context));
+        return sb.ToString();
+    }
+
+    private static string BuildExploreLedgerAuditStageObservation(DurableDict<string> root, GmExploreContext context) {
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 2/3: 实体与交互账本审计]");
+        sb.AppendLine("检查刚完成的探索结果：如果最终叙事需要提到具体可见物品、NPC 或可执行动作，必须现在用工具落账。");
+        sb.AppendLine("可调用 gm_create_item、gm_create_npc、gm_add_interaction、gm_set_visibility、gm_set_interaction_visibility。");
+        sb.AppendLine("gm_add_interaction 的 precondition_note 没有特别条件时写 none。");
+        sb.AppendLine("本阶段不要移动玩家，不要创建更多地点，不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
+        sb.AppendLine();
+        AppendExploreIntent(sb, context);
+        AppendPerceptionSnapshot(sb, perception, "当前探索后账本投影");
+        return sb.ToString();
+    }
+
+    private static string BuildExploreSummaryStageObservation(DurableDict<string> root, GmExploreContext context) {
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 3/3: 玩家可见结算摘要]");
+        sb.AppendLine("请输出 1 到 3 句中文结算摘要。原则：只描述当前玩家能感知到的内容，只引用已经落账的地点、物品、NPC 和可执行动作。");
+        sb.AppendLine("若你发现摘要必需的实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+        sb.AppendLine();
+        AppendExploreIntent(sb, context);
+        AppendPerceptionSnapshot(sb, perception, "最终账本投影");
+        return sb.ToString();
+    }
+
     private static string BuildInteractionObservation(GmInteractionContext context) {
         var perception = context.Perception;
         var interaction = context.Interaction;
@@ -492,6 +550,111 @@ internal static class GameMasterResolver {
         return sb.ToString();
     }
 
+    private static string BuildInteractionConsequenceStageObservation(GmInteractionContext context) {
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 1/3: 交互直接后果]");
+        sb.AppendLine("只处理玩家选择的 interaction 的直接 hard truth 后果。可创建/显示物品或 NPC，可调整可见性，可在有充分依据时移动玩家。");
+        sb.AppendLine("不要补一长串后续按钮；不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
+        sb.AppendLine();
+        sb.Append(BuildInteractionObservation(context));
+        return sb.ToString();
+    }
+
+    private static string BuildInteractionAffordanceAuditStageObservation(DurableDict<string> root, GmInteractionContext context) {
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 2/3: affordance 生命周期审计]");
+        sb.AppendLine("检查交互后玩家下一回合应该看到哪些可执行动作。");
+        sb.AppendLine("若当前 interaction 已经被消耗或下一回合不该重复显示，用 gm_set_interaction_visibility 设为 hidden。");
+        sb.AppendLine("若出现新的合理后续动作，用 gm_add_interaction 落账；precondition_note 无特别条件时写 none。");
+        sb.AppendLine("本阶段不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
+        sb.AppendLine();
+        AppendInteractionIntent(sb, context);
+        AppendPerceptionSnapshot(sb, perception, "交互后账本投影");
+        return sb.ToString();
+    }
+
+    private static string BuildInteractionSummaryStageObservation(DurableDict<string> root, GmInteractionContext context) {
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 3/3: 玩家可见结算摘要]");
+        sb.AppendLine("请输出 1 到 3 句中文结算摘要。原则：只描述当前玩家能感知到的内容，只引用已经落账的物品、NPC 和可执行动作。");
+        sb.AppendLine("若你发现摘要必需的新实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+        sb.AppendLine();
+        AppendInteractionIntent(sb, context);
+        AppendPerceptionSnapshot(sb, perception, "最终账本投影");
+        return sb.ToString();
+    }
+
+    private static void AppendExploreIntent(StringBuilder sb, GmExploreContext context) {
+        sb.AppendLine("[探索意图]");
+        sb.AppendLine($"- OriginalLocationId: {context.CurrentLocationId}");
+        sb.AppendLine($"- Direction: {context.Direction}");
+        sb.AppendLine($"- Focus: {context.Focus ?? "(none)"}");
+        sb.AppendLine($"- SuggestedReverseDirection: {context.SuggestedReverseDirection ?? "null"}");
+        sb.AppendLine("- PreActionReason:");
+        sb.AppendLine(context.PreActionReason);
+        sb.AppendLine();
+    }
+
+    private static void AppendInteractionIntent(StringBuilder sb, GmInteractionContext context) {
+        var interaction = context.Interaction;
+        sb.AppendLine("[交互意图]");
+        sb.AppendLine($"- OriginalLocationId: {context.CurrentLocationId}");
+        sb.AppendLine($"- InteractionId: {interaction.InteractionId}");
+        sb.AppendLine($"- Target: {interaction.TargetKind}:{interaction.TargetId}");
+        sb.AppendLine($"- ActionKind: {interaction.ActionKind}");
+        sb.AppendLine($"- VisibleLabel: {interaction.VisibleLabel}");
+        sb.AppendLine($"- PreconditionNote: {interaction.PreconditionNote ?? "(none)"}");
+        sb.AppendLine($"- EffectNote: {interaction.EffectNote ?? "(none)"}");
+        sb.AppendLine("- PreActionReason:");
+        sb.AppendLine(context.PreActionReason);
+        sb.AppendLine();
+    }
+
+    private static void AppendPerceptionSnapshot(StringBuilder sb, PerceptionBundle perception, string title) {
+        sb.AppendLine($"[{title}]");
+        sb.AppendLine($"- Time: {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
+        sb.AppendLine($"- LocationId: {perception.Location.LocationId}");
+        sb.AppendLine($"- LocationName: {perception.Location.Name}");
+        sb.AppendLine($"- LocationDescription: {perception.Location.Description}");
+        sb.AppendLine("- Exits:");
+        if (perception.Location.Exits.Count == 0) {
+            sb.AppendLine("  (none)");
+        }
+        else {
+            foreach (var exit in perception.Location.Exits) {
+                sb.AppendLine($"  - {exit.Direction} -> {exit.TargetLocationId} ({exit.TargetName})");
+            }
+        }
+
+        sb.AppendLine("- VisibleItems:");
+        if (perception.Location.Items.Count == 0) {
+            sb.AppendLine("  (none)");
+        }
+        else {
+            foreach (var item in perception.Location.Items) {
+                sb.AppendLine($"  - {item.ItemId}: {item.Name} | {item.Description}");
+                AppendInteractions(sb, item.Interactions);
+            }
+        }
+
+        sb.AppendLine("- VisibleActors:");
+        if (perception.Location.Actors.Count == 0) {
+            sb.AppendLine("  (none)");
+        }
+        else {
+            foreach (var actor in perception.Location.Actors) {
+                sb.AppendLine($"  - {actor.ActorId}: {actor.Name} ({actor.Kind}) | {actor.ProfileNote}");
+                AppendInteractions(sb, actor.Interactions);
+            }
+        }
+
+        sb.AppendLine("- LocationInteractions:");
+        AppendInteractions(sb, perception.Location.Interactions);
+        sb.AppendLine();
+    }
+
     private static void AppendInteractions(StringBuilder sb, IReadOnlyList<InteractionPerception> interactions) {
         if (interactions.Count == 0) { return; }
 
@@ -503,16 +666,16 @@ internal static class GameMasterResolver {
         }
     }
 
-    private static string BuildToolResultsObservation(IReadOnlyList<ToolCallExecutionResult> results) {
+    private static string BuildToolResultsObservation(string stageName, IReadOnlyList<ToolCallExecutionResult> results) {
         var sb = new StringBuilder();
-        sb.AppendLine("[工具执行结果]");
+        sb.AppendLine($"[工具执行结果: {stageName}]");
         foreach (var result in results) {
             sb.AppendLine($"- {result.ToolName}#{result.ToolCallId}: {result.ExecuteResult.Status}");
             sb.AppendLine(result.ExecuteResult.Content);
         }
 
         sb.AppendLine();
-        sb.AppendLine("如果必要工具都成功，请停止调用工具，并输出玩家可见结算摘要。若工具失败，请修正参数后继续。");
+        sb.AppendLine("如果本阶段必要工具都成功，请停止调用工具。若工具失败，请修正参数后继续。最终摘要只应在 summary 阶段输出。");
         return sb.ToString();
     }
 

@@ -327,6 +327,7 @@ game
 - `world.actors` 中的 `kind` 已预留 `terminal-player` / `llm-player` / `npc`。NPC 可以被 GM 创建和被玩家感知，但暂不自动声明 Large-Action。
 - `actor:player` 与旧 `root.player` 并存。下一步实现 LLM Player Agent 时，建议将 `Memory-Notebook` 与 location 逐步收敛到 actor ledger，再让 `root.player` 变成兼容层或删除。
 - 多主体 barrier 尚未实现；目前仍是终端玩家 Large-Action 直接触发 GM 结算。这个选择让 Phase 3 的实体/交互账本先稳定下来，再扩展回合收集协议。
+- GM 结算已经从单次宽 prompt 改为同一会话内的分阶段工具循环：`explore` 依次执行“地图与移动落账 → 实体与交互账本审计 → 玩家可见摘要”，`interact` 依次执行“交互直接后果 → affordance 生命周期审计 → 玩家可见摘要”。每个阶段都会保留前文 history，并在阶段开始注入最新 Perception/账本投影，以减少遗漏实体、交互或可见性更新的概率。
 
 `LLM Player Agent` 的最小行为协议：
 

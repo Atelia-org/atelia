@@ -153,7 +153,10 @@ root (DurableDict<string>)
 
 ## GM Agent 工具循环
 
-`explore` / `interact` 当前会优先尝试真实 GM Agent。GM Agent 通过工具更新账本，而不是只输出叙事文本：
+`explore` / `interact` 当前会优先尝试真实 GM Agent。GM Agent 通过工具更新账本，而不是只输出叙事文本。结算已经拆成同一会话内的少数阶段，每个阶段用更专注的 observation 驱动 GM：
+
+- `explore`: 地图与移动落账 → 实体与交互账本审计 → 玩家可见摘要
+- `interact`: 交互直接后果 → affordance 生命周期审计 → 玩家可见摘要
 
 - `gm_create_location` / `gm_link_locations` / `gm_move_player`
 - `gm_create_item`
