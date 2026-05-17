@@ -16,7 +16,7 @@ internal static class LlmPlayerAgentDriver {
     private const string ModeEnv = "ATELIA_TEXTADV_LLM_PLAYER_MODE";
     private const string MaxAttemptsEnv = "ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS";
     private const string DefaultModelId = "deepseek-v4-flash";
-    private const int DefaultMaxAttempts = 2;
+    private const int DefaultMaxAttempts = 3;
 
     private static readonly Lock s_gate = new();
     private static DeepSeekV4ChatClient? s_client;
@@ -99,6 +99,7 @@ internal static class LlmPlayerAgentDriver {
                 );
 
                 if (failure is not null) {
+                    toolService.ClearProposal();
                     history.Add(new ObservationMessage("工具调用失败。请修正参数；可以先编辑 notebook，最终必须调用一个 Large-Action 工具。"));
                     continue;
                 }
