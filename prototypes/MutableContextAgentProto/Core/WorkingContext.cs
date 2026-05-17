@@ -31,10 +31,33 @@ public sealed class WorkingContext {
     public MemoryItem Remember(
         string content,
         MemoryKind kind = MemoryKind.Fact,
+        string? source = null,
+        string? key = null
+    ) {
+        var item = MemoryItem.Create(content, kind, source, key);
+        _memories.Add(item);
+        return item;
+    }
+
+    public MemoryItem UpsertMemory(
+        string key,
+        string content,
+        MemoryKind kind = MemoryKind.Fact,
         string? source = null
     ) {
-        var item = MemoryItem.Create(content, kind, source);
-        _memories.Add(item);
+        if (string.IsNullOrWhiteSpace(key)) {
+            throw new ArgumentException("Memory key must not be empty.", nameof(key));
+        }
+
+        var item = MemoryItem.Create(content, kind, source, key.Trim());
+        var index = _memories.FindIndex(memory => string.Equals(memory.Key, item.Key, StringComparison.Ordinal));
+        if (index < 0) {
+            _memories.Add(item);
+        }
+        else {
+            _memories[index] = item;
+        }
+
         return item;
     }
 

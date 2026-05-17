@@ -66,7 +66,8 @@ public sealed class SingleUserContextRenderer {
         else {
             foreach (var item in memories) {
                 var source = string.IsNullOrWhiteSpace(item.Source) ? string.Empty : $" (source: {item.Source})";
-                builder.AppendLine($"- [{item.Kind}] {item.Content}{source}");
+                var key = string.IsNullOrWhiteSpace(item.Key) ? string.Empty : $" `{item.Key}`";
+                builder.AppendLine($"- [{item.Kind}]{key} {item.Content}{source}");
             }
         }
 

@@ -85,7 +85,7 @@ internal static class Phase1Commands {
                 var detail = result.Succeeded ? result.Content : result.Error;
                 eventLog.Append(EventLogEntryKind.ToolResult, $"Tool {result.ToolName}: {detail}", detail, result.CallId);
                 context.RecordAction($"调用工具 {result.ToolName}", SummarizeToolContent(detail), result.Succeeded ? ActionStatus.Completed : ActionStatus.Failed);
-                context.Remember($"迷宫当前位置: {world.Position}; 目标: {world.Goal}; 步数: {world.StepsTaken}.", MemoryKind.Fact, result.ToolName);
+                context.UpsertMemory("maze.current_state", $"迷宫当前位置: {world.Position}; 目标: {world.Goal}; 步数: {world.StepsTaken}.", MemoryKind.Fact, result.ToolName);
 
                 Console.WriteLine($"tool: {result.ToolName} => {SummarizeToolContent(detail)}");
                 Console.WriteLine();
@@ -171,7 +171,7 @@ internal static class Phase1Commands {
                 var detail = result.Succeeded ? result.Content : result.Error;
                 eventLog.Append(EventLogEntryKind.ToolResult, $"Tool {result.ToolName}: {detail}", detail, result.CallId);
                 context.RecordAction($"调用工具 {result.ToolName}", SummarizeToolContent(detail), result.Succeeded ? ActionStatus.Completed : ActionStatus.Failed);
-                context.Remember($"迷宫状态: position={world.Position}, goal={world.Goal}, steps={world.StepsTaken}, atGoal={world.IsAtGoal}.", MemoryKind.Fact, result.ToolName);
+                context.UpsertMemory("maze.current_state", $"迷宫状态: position={world.Position}, goal={world.Goal}, steps={world.StepsTaken}, atGoal={world.IsAtGoal}.", MemoryKind.Fact, result.ToolName);
                 Console.WriteLine($"tool: {result.ToolName} => {SummarizeToolContent(detail)}");
             }
 

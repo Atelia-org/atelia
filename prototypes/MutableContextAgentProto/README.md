@@ -29,3 +29,8 @@ DEEPSEEK_BASE_URL=... DEEPSEEK_API_KEY=... \
 - `Maze/`: deterministic maze world, tools, and fake policy.
 
 This prototype intentionally avoids references to the older `Agent.Core` / `Completion.*` implementations.
+
+## Notes
+
+- [Phase 1 findings](notes/phase-1-findings.md)
+- [Phase 2 view_file micro-wizard design](notes/phase-2-microwizard-design.md)
