@@ -137,6 +137,86 @@ internal static class GameSimulation {
         return DescribeCurrentPerception(root);
     }
 
+    internal static AteliaResult<TurnResolution> ApplyExplore(
+        DurableDict<string> root,
+        string direction,
+        string? focus,
+        string preActionReason,
+        string validatorFeedback
+    ) {
+        direction = NormalizeRequired(direction, nameof(direction));
+        focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
+
+        var currentLocationId = GetPlayerLocationId(root);
+        var currentLocation = GetLocation(root, currentLocationId);
+        var currentLocationName = currentLocation.GetOrThrow<string>(NameKey)!;
+        var currentExits = currentLocation.GetOrThrow<DurableDict<string>>(ExitsKey)!;
+        var actionSummary = focus is null
+            ? $"向 {direction} 探索"
+            : $"向 {direction} 探索：{focus}";
+        var actionPayload = BuildExplorePayload(direction, focus);
+
+        AppendAcceptedStep(
+            root,
+            actionKind: "large/explore",
+            actionSummary,
+            actionPayload,
+            preActionReason,
+            validatorFeedback,
+            endsTurn: true
+        );
+
+        var gmTools = new GmWorldEditService(root);
+        var createdNewLocation = false;
+        string targetLocationId;
+
+        if (currentExits.TryGet(direction, out string? existingTargetLocationId)
+            && !string.IsNullOrWhiteSpace(existingTargetLocationId)) {
+            targetLocationId = existingTargetLocationId;
+        }
+        else {
+            targetLocationId = CreateExplorationLocationId(root, currentLocationId, direction);
+            var targetName = CreateExplorationLocationName(direction, focus);
+            var targetDescription = CreateExplorationLocationDescription(currentLocationName, direction, focus);
+
+            var createResult = gmTools.CreateLocation(targetLocationId, targetName, targetDescription);
+            if (!createResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(createResult.Error!); }
+
+            var linkResult = gmTools.LinkLocations(
+                currentLocationId,
+                direction,
+                targetLocationId,
+                TryGetReverseDirection(direction)
+            );
+            if (!linkResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(linkResult.Error!); }
+
+            createdNewLocation = true;
+        }
+
+        var moveResult = gmTools.MovePlayerTo(targetLocationId);
+        if (!moveResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(moveResult.Error!); }
+
+        var targetLocation = GetLocation(root, targetLocationId);
+        var targetLocationName = targetLocation.GetOrThrow<string>(NameKey)!;
+        var game = GetGame(root);
+        var previousDay = game.GetOrThrow<int>(DayKey);
+        var previousSlot = game.GetOrThrow<int>(SlotKey);
+        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
+        var nextClock = AdvanceClock(root);
+        var discoveryText = createdNewLocation
+            ? $"GM 账本新增了地点「{targetLocationName}」，并记录了从「{currentLocationName}」向 {direction} 的出口。"
+            : $"你沿着已知出口从「{currentLocationName}」向 {direction} 前进，来到「{targetLocationName}」。";
+        var resolutionSummary =
+            $"{discoveryText} 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)}"
+            + $" 前进到 {GameClock.FormatClock(nextClock.Day, nextClock.Slot, slotsPerDay)}。";
+
+        ArchiveCompletedTurn(root, resolutionSummary);
+        game.Upsert(LastResolutionKey, resolutionSummary);
+        ResetCurrentTurn(root);
+
+        return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
+    }
+
     internal static PerceptionBundle ApplyNotebookEdit(
         DurableDict<string> root,
         NotebookEditProposal proposal,
@@ -406,5 +486,99 @@ internal static class GameSimulation {
     private static void AddExit(DurableDict<string> from, string direction, string targetLocationId) {
         var exits = from.GetOrThrow<DurableDict<string>>(ExitsKey)!;
         exits.Upsert(direction, targetLocationId);
+    }
+
+    private static string BuildExplorePayload(string direction, string? focus)
+        => focus is null
+            ? $"direction={direction}"
+            : $"direction={direction}\nfocus={focus}";
+
+    private static string CreateExplorationLocationId(DurableDict<string> root, string currentLocationId, string direction) {
+        var baseId = $"{Slugify(currentLocationId)}-{Slugify(direction)}";
+        var candidate = baseId;
+        var index = 1;
+        while (LocationExists(root, candidate)) {
+            candidate = $"{baseId}-{index:D2}";
+            index++;
+        }
+
+        return candidate;
+    }
+
+    private static bool LocationExists(DurableDict<string> root, string locationId) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        var locations = world.GetOrThrow<DurableDict<string>>(LocationsKey)!;
+        return locations.TryGet(locationId, out DurableDict<string>? _);
+    }
+
+    private static string CreateExplorationLocationName(string direction, string? focus) {
+        if (!string.IsNullOrWhiteSpace(focus)) { return focus.Trim(); }
+
+        return TryGetDirectionDisplayName(direction) is { } display
+            ? $"{display}的未知区域"
+            : $"{direction} 方向的未知区域";
+    }
+
+    private static string CreateExplorationLocationDescription(string fromLocationName, string direction, string? focus) {
+        var targetText = string.IsNullOrWhiteSpace(focus)
+            ? "一处刚被确认的新区域"
+            : $"你原本想寻找的「{focus.Trim()}」";
+        return $"这是你从「{fromLocationName}」向 {direction} 探索时确认的地点。"
+            + $"{targetText}已经被记录进世界账本；当前只掌握入口附近的轮廓，更多细节仍需要后续观察。";
+    }
+
+    private static string? TryGetReverseDirection(string direction) {
+        return direction.Trim().ToLowerInvariant() switch {
+            "north" or "n" => "south",
+            "south" or "s" => "north",
+            "east" or "e" => "west",
+            "west" or "w" => "east",
+            "up" => "down",
+            "down" => "up",
+            "inside" or "in" => "outside",
+            "outside" or "out" => "inside",
+            "northeast" or "ne" => "southwest",
+            "northwest" or "nw" => "southeast",
+            "southeast" or "se" => "northwest",
+            "southwest" or "sw" => "northeast",
+            _ => null
+        };
+    }
+
+    private static string? TryGetDirectionDisplayName(string direction) {
+        return direction.Trim().ToLowerInvariant() switch {
+            "north" or "n" => "北侧",
+            "south" or "s" => "南侧",
+            "east" or "e" => "东侧",
+            "west" or "w" => "西侧",
+            "up" => "上方",
+            "down" => "下方",
+            "inside" or "in" => "内部",
+            "outside" or "out" => "外侧",
+            "northeast" or "ne" => "东北侧",
+            "northwest" or "nw" => "西北侧",
+            "southeast" or "se" => "东南侧",
+            "southwest" or "sw" => "西南侧",
+            _ => null
+        };
+    }
+
+    private static string Slugify(string text) {
+        var normalized = text.Trim().ToLowerInvariant();
+        var chars = normalized
+            .Select(static ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+        var slug = string.Join(
+            "-",
+            new string(chars)
+                .Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        );
+
+        return string.IsNullOrWhiteSpace(slug) ? "location" : slug;
+    }
+
+    private static string NormalizeRequired(string value, string parameterName) {
+        if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException("Value cannot be null or whitespace.", parameterName); }
+        return value.Trim();
     }
 }

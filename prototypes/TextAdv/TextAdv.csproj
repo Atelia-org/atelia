@@ -20,6 +20,7 @@
     <ProjectReference Include="..\..\src\StateJournal\StateJournal.csproj" />
     <ProjectReference Include="..\..\src\TextEditScript\TextEditScript.csproj" />
     <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" />
+    <ProjectReference Include="..\Completion.Tools\Completion.Tools.csproj" />
     <ProjectReference Include="..\Completion\Completion.csproj" />
   </ItemGroup>
 </Project>

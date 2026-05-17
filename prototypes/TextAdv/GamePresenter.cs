@@ -32,8 +32,6 @@ internal static class GamePresenter {
                 sb.AppendLine($"   {exit.Direction} → {exit.TargetName}");
             }
         }
-
-        sb.AppendLine("   这些出口是你当前能看见的事实，但正式移动动作尚未开放；不要把它们当成你现在可执行的常规命令。");
         sb.AppendLine();
 
         sb.AppendLine("📝 当前回合已接受步骤:");
@@ -122,10 +120,15 @@ internal static class GamePresenter {
         sb.AppendLine();
 
         sb.AppendLine("   Large-Action（会结束当前回合）:");
+        sb.AppendLine("   - pmux game explore '<事前推理>' '<方向>'");
+        sb.AppendLine("     向某个方向探索。若该方向已有出口，你会沿已知出口移动；若没有，GM 账本可以创建一个新 Location 并记录连接。");
+        sb.AppendLine("     可选加 --focus '<目标>'，例如:");
+        sb.AppendLine("     pmux game explore --focus '山洞入口' '北边已有密林，继续寻找遮蔽处或山洞入口有助于获得更稳定的庇护。' north");
+        sb.AppendLine();
         sb.AppendLine("   - pmux game rest-a-while '<事前推理>'");
         sb.AppendLine("     这个参数同样表示事前推理：先说明为什么你准备在此刻结束回合，再执行动作。 ");
         sb.AppendLine($"     原地休息一会。执行后会结束本回合，并把时间从 {currentClock} 推进到 {nextClockText}。");
-        sb.AppendLine("     当前正式开放的大动作只有这一种；只有当你觉得没有更急的 small action 时，再执行它。");
+        sb.AppendLine("     只有当你觉得没有更急的 small action 或探索目标时，再执行它。");
     }
 
     private static void AppendNotebookEditRecipes(StringBuilder sb, TextBlockSnapshotDocument snapshot) {

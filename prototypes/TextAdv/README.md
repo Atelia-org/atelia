@@ -28,12 +28,13 @@ LLM Agent (Copilot / Claude Code)
 | 入口 | 文件 | 说明 |
 |:---|:---|:---|
 | `fridge` | `FridgeEntry.cs` | 调试/echo 测试：冰箱状态持久化（put-egg / get-egg / status / reset） |
-| `game` | `GameEntry.cs` | **主入口**：荒岛求生文本冒险游戏（new / look-around / edit-memory-notebook / rest-a-while / dev-go） |
+| `game` | `GameEntry.cs` | **主入口**：荒岛求生文本冒险游戏（new / look-around / edit-memory-notebook / explore / rest-a-while / dev-go） |
 
 ## 当前代码分层
 
 - `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
 - `GameSimulation.cs`：世界 bootstrap、状态查询、移动结算等核心逻辑
+- `GmWorldEditService.cs`：GM-style 世界编辑工具集；当前由代码直接调用，后续可用 `MethodToolWrapper` 暴露给 LLM GM Agent
 - `GamePresenter.cs`：把 `LocationPerception` 渲染成玩家看到的文本
 - `GameActionValidator.cs`：DeepSeekV4 + tool call 驱动的 validator，负责逐步校验事前推理（PreActionReason）
 
@@ -71,6 +72,11 @@ pmux game edit-memory-notebook --dry-run \
 # Large-Action：原地休息一会，并结束回合
 pmux game rest-a-while \
   "我已经先把当前最关键信息写进 notebook，而且当前没有比短暂休息更急迫的动作，所以现在原地休息一会是合理的。"
+
+# Large-Action：向指定方向探索；若该方向没有出口，GM-style resolver 会创建新 Location 并移动玩家
+pmux game explore --focus "山洞入口" \
+  "北边已有密林，继续寻找遮蔽处或山洞入口有助于获得更稳定的庇护。" \
+  north
 
 # 调试移动：不参与回合结算，只用于两个地点的最小地图 sanity check
 pmux game dev-go north

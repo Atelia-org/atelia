@@ -44,6 +44,7 @@ public static class GameEntry {
         root.Add(BuildNewCommand());
         root.Add(BuildLookAroundCommand());
         root.Add(BuildEditMemoryNotebookCommand());
+        root.Add(BuildExploreCommand());
         root.Add(BuildRestAWhileCommand());
         root.Add(BuildDevGoCommand());
 
@@ -227,6 +228,85 @@ public static class GameEntry {
         if (!string.IsNullOrWhiteSpace(error.RecoveryHint)) {
             output.WriteLine($"💡 {error.RecoveryHint}");
         }
+    }
+
+    private static Command BuildExploreCommand() {
+        var focusOption = new Option<string?>("--focus") {
+            Description = "可选：你希望重点寻找或确认的对象，例如“山洞入口”“淡水痕迹”。"
+        };
+        var reasonArg = new Argument<string>("reason") {
+            Description = "这一步动作的事前推理。应先根据当前证据说明你为什么准备探索这个方向，而不是事后合理化。"
+        };
+        var directionArg = new Argument<string>("direction") {
+            Description = "探索方向，例如 north/south/east/west/inside。"
+        };
+        var cmd = new Command("explore", "Large-Action：向指定方向探索；必要时由 GM 账本创建新地点")
+        {
+            focusOption,
+            reasonArg,
+            directionArg,
+        };
+        cmd.SetAction(
+            async (ctx, ct) => {
+                var output = ctx.InvocationConfiguration.Output;
+                var preActionReason = ctx.GetValue(reasonArg)!;
+                var direction = ctx.GetValue(directionArg)!;
+                var focus = ctx.GetValue(focusOption);
+                var actionSummary = string.IsNullOrWhiteSpace(focus)
+                    ? $"向 {direction} 探索"
+                    : $"向 {direction} 探索：{focus}";
+                var actionPayload = string.IsNullOrWhiteSpace(focus)
+                    ? $"direction={direction}"
+                    : $"direction={direction}\nfocus={focus!.Trim()}";
+
+                var state = GetState();
+                if (state is null) {
+                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+                    return;
+                }
+
+                var (repo, root) = state.Value;
+                var perception = GameSimulation.DescribeCurrentPerception(root);
+
+                GameActionValidator.ValidationResult validation;
+                try {
+                    validation = await GameActionValidator.ValidateActionAsync(
+                        perception,
+                        actionKind: "large/explore",
+                        actionSummary,
+                        preActionReason,
+                        actionPayload,
+                        cancellationToken: ct
+                    );
+                }
+                catch (Exception ex) {
+                    output.WriteLine($"❌ validator 调用失败：{ex.Message}");
+                    return;
+                }
+
+                if (!validation.Accepted) {
+                    output.WriteLine("❌ validator 未通过这一步 Large-Action。");
+                    output.WriteLine(validation.Feedback);
+                    return;
+                }
+
+                var resolutionResult = GameSimulation.ApplyExplore(root, direction, focus, preActionReason, validation.Feedback);
+                if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
+                    output.WriteLine("❌ GM 探索结算失败。");
+                    WriteAteliaError(output, resolutionResult.Error);
+                    return;
+                }
+
+                _ = repo.Commit(root).Value;
+
+                output.WriteLine($"✅ Large-Action 已接受：{actionSummary}。当前回合已结束。");
+                output.WriteLine($"🧪 validator: {validation.Feedback}");
+                output.WriteLine($"📣 结算: {resolution.Summary}");
+                output.WriteLine();
+                output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+            }
+        );
+        return cmd;
     }
 
     private static Command BuildRestAWhileCommand() {
