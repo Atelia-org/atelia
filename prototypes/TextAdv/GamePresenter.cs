@@ -157,6 +157,12 @@ internal static class GamePresenter {
         sb.AppendLine();
 
         sb.AppendLine("   Large-Action（会结束当前回合）:");
+        sb.AppendLine("   - pmux game interact '<事前推理>' '<interaction-id>'");
+        sb.AppendLine("     执行当前可见的交互 affordance，例如 inspect / talk / use / open。interaction-id 来自上方“可交互”列表。");
+        sb.AppendLine("     这会走 validator，并由 GM Agent 根据该 affordance 的 target、actionKind 和 effectNote 结算世界后果。");
+        AppendInteractionRecipes(sb, perception);
+        sb.AppendLine();
+
         sb.AppendLine("   - pmux game explore '<事前推理>' '<方向>'");
         sb.AppendLine("     向某个方向探索。若该方向已有出口，你会沿已知出口移动；若没有，GM 账本可以创建一个新 Location 并记录连接。");
         sb.AppendLine("     可选加 --focus '<目标>'，例如:");
@@ -166,6 +172,18 @@ internal static class GamePresenter {
         sb.AppendLine("     这个参数同样表示事前推理：先说明为什么你准备在此刻结束回合，再执行动作。 ");
         sb.AppendLine($"     原地休息一会。执行后会结束本回合，并把时间从 {currentClock} 推进到 {nextClockText}。");
         sb.AppendLine("     只有当你觉得没有更急的 small action 或探索目标时，再执行它。");
+    }
+
+    private static void AppendInteractionRecipes(StringBuilder sb, PerceptionBundle perception) {
+        var interactions = EnumerateVisibleInteractions(perception).ToArray();
+        if (interactions.Length == 0) {
+            sb.AppendLine("     当前没有可见 interaction；通常应先 look-around、记笔记，或用 explore 寻找新的地点/线索。");
+            return;
+        }
+
+        var first = interactions[0];
+        sb.AppendLine($"     当前可执行的 interaction id: {string.Join(", ", interactions.Select(static interaction => interaction.InteractionId))}");
+        sb.AppendLine($"     示例: pmux game interact '当前可见交互提示允许我{first.VisibleLabel}，执行它是基于眼前线索的直接检查。' {first.InteractionId}");
     }
 
     private static void AppendNotebookEditRecipes(StringBuilder sb, TextBlockSnapshotDocument snapshot) {
@@ -195,6 +213,24 @@ internal static class GamePresenter {
         sb.AppendLine($"{indent}可交互:");
         foreach (var interaction in interactions) {
             sb.AppendLine($"{indent}- [{interaction.InteractionId}] {interaction.VisibleLabel} ({interaction.ActionKind})");
+        }
+    }
+
+    private static IEnumerable<InteractionPerception> EnumerateVisibleInteractions(PerceptionBundle perception) {
+        foreach (var interaction in perception.Location.Interactions) {
+            yield return interaction;
+        }
+
+        foreach (var item in perception.Location.Items) {
+            foreach (var interaction in item.Interactions) {
+                yield return interaction;
+            }
+        }
+
+        foreach (var actor in perception.Location.Actors) {
+            foreach (var interaction in actor.Interactions) {
+                yield return interaction;
+            }
         }
     }
 

@@ -28,7 +28,7 @@ LLM Agent (Copilot / Claude Code)
 | 入口 | 文件 | 说明 |
 |:---|:---|:---|
 | `fridge` | `FridgeEntry.cs` | 调试/echo 测试：冰箱状态持久化（put-egg / get-egg / status / reset） |
-| `game` | `GameEntry.cs` | **主入口**：荒岛求生文本冒险游戏（new / look-around / edit-memory-notebook / explore / rest-a-while / dev-go） |
+| `game` | `GameEntry.cs` | **主入口**：荒岛求生文本冒险游戏（new / look-around / edit-memory-notebook / interact / explore / rest-a-while / dev-go） |
 
 ## 当前代码分层
 
@@ -73,6 +73,11 @@ pmux game edit-memory-notebook --dry-run \
 # Large-Action：原地休息一会，并结束回合
 pmux game rest-a-while \
   "我已经先把当前最关键信息写进 notebook，而且当前没有比短暂休息更急迫的动作，所以现在原地休息一会是合理的。"
+
+# Large-Action：执行当前可见的交互 affordance；interaction-id 来自 look-around 的“可交互”列表
+pmux game interact \
+  "当前可见交互提示允许我检查这处痕迹，执行它是基于眼前线索的直接观察。" \
+  inspect-drag-marks
 
 # Large-Action：向指定方向探索；若该方向没有出口，GM-style resolver 会创建新 Location 并移动玩家
 pmux game explore --focus "山洞入口" \
@@ -148,7 +153,7 @@ root (DurableDict<string>)
 
 ## GM Agent 工具循环
 
-`explore` 当前会优先尝试真实 GM Agent。GM Agent 通过工具更新账本，而不是只输出叙事文本：
+`explore` / `interact` 当前会优先尝试真实 GM Agent。GM Agent 通过工具更新账本，而不是只输出叙事文本：
 
 - `gm_create_location` / `gm_link_locations` / `gm_move_player`
 - `gm_create_item`
@@ -157,3 +162,10 @@ root (DurableDict<string>)
 - `gm_set_visibility`
 
 因此 GM 可以在探索新区域时创建新 Location、可见物品、可见 NPC 和可交互 affordance。下一回合 `Perception-Bundle` 会把当前地点可见物品、角色与交互项渲染给玩家。
+
+`interact` 会把已落账的 affordance 变成真正的 Large-Action：
+
+- 终端玩家只能执行当前 `Perception-Bundle` 中可见的 `interaction-id`
+- 动作仍走 `GameActionValidator`
+- 通过后由 GM Agent 根据 `targetKind` / `targetId` / `actionKind` / `effectNote` 结算
+- 若 GM 在摘要中引入新的可见物品、NPC 或可执行动作，应先通过工具落账

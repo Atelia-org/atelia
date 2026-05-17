@@ -44,6 +44,7 @@ public static class GameEntry {
         root.Add(BuildNewCommand());
         root.Add(BuildLookAroundCommand());
         root.Add(BuildEditMemoryNotebookCommand());
+        root.Add(BuildInteractCommand());
         root.Add(BuildExploreCommand());
         root.Add(BuildRestAWhileCommand());
         root.Add(BuildDevGoCommand());
@@ -293,6 +294,89 @@ public static class GameEntry {
                 var resolutionResult = await GameSimulation.ApplyExploreAsync(root, direction, focus, preActionReason, validation.Feedback, ct);
                 if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
                     output.WriteLine("❌ GM 探索结算失败。");
+                    WriteAteliaError(output, resolutionResult.Error);
+                    return;
+                }
+
+                _ = repo.Commit(root).Value;
+
+                output.WriteLine($"✅ Large-Action 已接受：{actionSummary}。当前回合已结束。");
+                output.WriteLine($"🧪 validator: {validation.Feedback}");
+                output.WriteLine($"📣 结算: {resolution.Summary}");
+                output.WriteLine();
+                output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+            }
+        );
+        return cmd;
+    }
+
+    private static Command BuildInteractCommand() {
+        var reasonArg = new Argument<string>("reason") {
+            Description = "这一步动作的事前推理。应先根据当前可见交互说明你为什么准备执行它。"
+        };
+        var interactionIdArg = new Argument<string>("interaction-id") {
+            Description = "当前 Perception-Bundle 中可见的 InteractionId，例如 inspect-drag-marks。"
+        };
+        var cmd = new Command("interact", "Large-Action：执行一个当前可见的交互 affordance")
+        {
+            reasonArg,
+            interactionIdArg,
+        };
+        cmd.SetAction(
+            async (ctx, ct) => {
+                var output = ctx.InvocationConfiguration.Output;
+                var preActionReason = ctx.GetValue(reasonArg)!;
+                var interactionId = ctx.GetValue(interactionIdArg)!;
+
+                var state = GetState();
+                if (state is null) {
+                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+                    return;
+                }
+
+                var (repo, root) = state.Value;
+                var perception = GameSimulation.DescribeCurrentPerception(root);
+                var interactionResult = GameSimulation.TryGetVisibleInteraction(perception, interactionId);
+                if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
+                    output.WriteLine("❌ 当前看不到这个 interaction，不能执行。");
+                    WriteAteliaError(output, interactionResult.Error);
+                    return;
+                }
+
+                var actionSummary = $"{interaction.VisibleLabel} ({interaction.ActionKind})";
+                var actionPayload = GameSimulation.BuildInteractionPayload(interaction);
+
+                GameActionValidator.ValidationResult validation;
+                try {
+                    validation = await GameActionValidator.ValidateActionAsync(
+                        perception,
+                        actionKind: "large/interact",
+                        actionSummary,
+                        preActionReason,
+                        actionPayload,
+                        cancellationToken: ct
+                    );
+                }
+                catch (Exception ex) {
+                    output.WriteLine($"❌ validator 调用失败：{ex.Message}");
+                    return;
+                }
+
+                if (!validation.Accepted) {
+                    output.WriteLine("❌ validator 未通过这一步 Large-Action。");
+                    output.WriteLine(validation.Feedback);
+                    return;
+                }
+
+                var resolutionResult = await GameSimulation.ApplyInteractionAsync(
+                    root,
+                    interaction.InteractionId,
+                    preActionReason,
+                    validation.Feedback,
+                    ct
+                );
+                if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
+                    output.WriteLine("❌ GM 交互结算失败。");
                     WriteAteliaError(output, resolutionResult.Error);
                     return;
                 }

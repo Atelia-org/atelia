@@ -150,6 +150,51 @@ internal static class GameSimulation {
     internal static LocationPerception DescribeCurrentLocation(DurableDict<string> root)
         => DescribeLocation(root, GetPlayerLocationId(root));
 
+    internal static AteliaResult<InteractionPerception> TryGetVisibleInteraction(
+        PerceptionBundle perception,
+        string interactionId
+    ) {
+        interactionId = NormalizeRequired(interactionId, nameof(interactionId));
+        var interactions = EnumerateVisibleInteractions(perception)
+            .Where(interaction => string.Equals(interaction.InteractionId, interactionId, StringComparison.Ordinal))
+            .ToArray();
+
+        if (interactions.Length == 1) { return interactions[0]; }
+
+        if (interactions.Length > 1) {
+            return AteliaResult<InteractionPerception>.Failure(
+                new TextAdvError(
+                    "TextAdv.AmbiguousInteraction",
+                    $"InteractionId '{interactionId}' 在当前感知中出现了多次；请先修复世界账本。"
+                )
+            );
+        }
+
+        var available = string.Join(", ", EnumerateVisibleInteractions(perception).Select(static interaction => interaction.InteractionId));
+        if (string.IsNullOrWhiteSpace(available)) { available = "(none)"; }
+        return AteliaResult<InteractionPerception>.Failure(
+            new TextAdvError(
+                "TextAdv.InteractionNotVisible",
+                $"当前看不到 Interaction '{interactionId}'。可见 interaction: {available}"
+            )
+        );
+    }
+
+    internal static string BuildInteractionPayload(InteractionPerception interaction) {
+        var lines = new List<string>
+        {
+            $"interactionId={interaction.InteractionId}",
+            $"target={interaction.TargetKind}:{interaction.TargetId}",
+            $"actionKind={interaction.ActionKind}",
+            $"visibleLabel={interaction.VisibleLabel}",
+        };
+        if (!string.IsNullOrWhiteSpace(interaction.EffectNote)) {
+            lines.Add($"effectNote={interaction.EffectNote}");
+        }
+
+        return string.Join("\n", lines);
+    }
+
     internal static AteliaResult<PerceptionBundle> MovePlayer(DurableDict<string> root, string direction) {
         var player = root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
         var currentLocationId = GetPlayerLocationId(root);
@@ -280,6 +325,65 @@ internal static class GameSimulation {
             : $"你沿着已知出口从「{currentLocationName}」向 {direction} 前进，来到「{targetLocationName}」。";
         var resolutionSummary = AppendClockAdvance(
             discoveryText,
+            previousDay,
+            previousSlot,
+            nextClock.Day,
+            nextClock.Slot,
+            slotsPerDay
+        );
+
+        ArchiveCompletedTurn(root, resolutionSummary);
+        game.Upsert(LastResolutionKey, resolutionSummary);
+        ResetCurrentTurn(root);
+
+        return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
+    }
+
+    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyInteractionAsync(
+        DurableDict<string> root,
+        string interactionId,
+        string preActionReason,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        var startingPerception = DescribeCurrentPerception(root);
+        var interactionResult = TryGetVisibleInteraction(startingPerception, interactionId);
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
+            return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!);
+        }
+
+        var actionSummary = $"{interaction.VisibleLabel} ({interaction.ActionKind})";
+        AppendAcceptedStep(
+            root,
+            actionKind: "large/interact",
+            actionSummary,
+            actionPayload: BuildInteractionPayload(interaction),
+            preActionReason,
+            validatorFeedback,
+            endsTurn: true
+        );
+
+        var game = GetGame(root);
+        var previousDay = game.GetOrThrow<int>(DayKey);
+        var previousSlot = game.GetOrThrow<int>(SlotKey);
+        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
+        var gmResolution = await GameMasterResolver.TryResolveInteractionAsync(
+            root,
+            new GmInteractionContext(
+                DescribeCurrentPerception(root),
+                GetPlayerLocationId(root),
+                interaction,
+                preActionReason
+            ),
+            cancellationToken
+        ).ConfigureAwait(false);
+
+        var nextClock = AdvanceClock(root);
+        var summary = gmResolution is { UsedLlm: true }
+            ? gmResolution.Summary
+            : BuildDeterministicInteractionSummary(interaction);
+        var resolutionSummary = AppendClockAdvance(
+            summary,
             previousDay,
             previousSlot,
             nextClock.Day,
@@ -478,6 +582,24 @@ internal static class GameSimulation {
                 interaction.GetOrThrow<string>(VisibleLabelKey)!,
                 effectNote
             );
+        }
+    }
+
+    private static IEnumerable<InteractionPerception> EnumerateVisibleInteractions(PerceptionBundle perception) {
+        foreach (var interaction in perception.Location.Interactions) {
+            yield return interaction;
+        }
+
+        foreach (var item in perception.Location.Items) {
+            foreach (var interaction in item.Interactions) {
+                yield return interaction;
+            }
+        }
+
+        foreach (var actor in perception.Location.Actors) {
+            foreach (var interaction in actor.Interactions) {
+                yield return interaction;
+            }
         }
     }
 
@@ -698,6 +820,14 @@ internal static class GameSimulation {
         => focus is null
             ? $"direction={direction}"
             : $"direction={direction}\nfocus={focus}";
+
+    private static string BuildDeterministicInteractionSummary(InteractionPerception interaction) {
+        if (!string.IsNullOrWhiteSpace(interaction.EffectNote)) {
+            return interaction.EffectNote!;
+        }
+
+        return $"你执行了「{interaction.VisibleLabel}」。当前原型只推进时钟；更具体的后果需要真实 GM Agent 或后续规则工具结算。";
+    }
 
     private static string AppendClockAdvance(
         string summary,

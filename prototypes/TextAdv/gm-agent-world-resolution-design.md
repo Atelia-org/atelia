@@ -281,6 +281,7 @@ world
 - `PerceptionBundle` 会投影当前地点的可见物品、可见 NPC、地点交互、物品交互和 actor 交互。
 - Validator 和 GM Agent observation 都包含可见 NPC 与 affordance，避免 Player Agent 或 GM 只靠叙事文本猜测“能做什么”。
 - 真实 GM 工具循环已经能通过 `gm_create_npc` 创建可见 NPC，并通过 `gm_add_interaction` 给 `actor:<id>` 添加 `talk` / `inspect` 等交互。
+- `pmux game interact '<reason>' '<interaction-id>'` 已经把可见 affordance 提升为可执行的 Large-Action。宿主只允许执行当前 Perception-Bundle 中存在的 interaction，动作通过 validator 后交给 GM Agent 按 `targetKind` / `targetId` / `actionKind` / `effectNote` 结算。
 
 这一落地方式特意没有把 `interactions` 嵌入 item 或 actor 内部，而是保留全局 `world.interactions` 索引。原因是后续 Phase 4 里，不同主体的可见 affordance 可能会按 actor、位置、关系、记忆单独过滤；全局交互账本更利于审计、投影和工具校验。
 
@@ -329,7 +330,7 @@ game
 
 - 输入：只给该 actor 的 Perception-Bundle、Memory-Notebook、当前动作指南。
 - 输出：通过工具提交动作，而不是直接返回自由文本。
-- 工具：复用终端玩家能做的动作边界，例如 `player_edit_memory_notebook`、`player_explore`、`player_rest_a_while`。
+- 工具：复用终端玩家能做的动作边界，例如 `player_edit_memory_notebook`、`player_interact`、`player_explore`、`player_rest_a_while`。
 - Validator：与终端玩家同一套 `GameActionValidator`，不为内部 Agent 开后门。
 - 失败：validator 不通过时，把反馈作为 Observation 回灌给该 LLM Player，让它重试；MVP 可设置每 actor 每回合最多 2 到 3 次尝试，超过则自动 `rest-a-while` 或 `hesitate`。
 

@@ -145,6 +145,7 @@ internal static class GameActionValidator {
 5. 标准是“防君子不防小人”的 groundedness 检查，不追求吹毛求疵。
 6. 对于 notebook 编辑，输入会额外提供当前 notebook 的块视图、TextEditScript，以及宿主侧预测出的编辑后块视图；你应重点检查 after-view 中新增、修改、删除的内容是否 grounded。
 7. 对于 large/explore，玩家可以探索当前尚未列为出口的方向；这表示“试探未知”，不要求该方向已经出现在 Exits 中。你只需要检查玩家是否把未知方向说成已确认事实，或是否声称已有输入中不存在的地点/线索。
+8. 对于 large/interact，玩家必须选择当前 VisibleInteractions 中存在的 interaction，并且事前推理应依据该交互的 visibleLabel、target 和当前可见信息；不能凭空假定 interaction 执行后的隐藏结果。
 
 请把工具调用当作填写裁决表：
 - 若你认为这一步动作合理，请不要调用任何工具。
