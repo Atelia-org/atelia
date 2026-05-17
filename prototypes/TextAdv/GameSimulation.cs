@@ -358,7 +358,35 @@ internal static class GameSimulation {
         }
 
         try {
-            var lead = BuildCollectedTurnLead(intents);
+            var game = GetGame(root);
+            var previousDay = game.GetOrThrow<int>(DayKey);
+            var previousSlot = game.GetOrThrow<int>(SlotKey);
+            var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
+            var gmResolution = await GameMasterResolver.TryResolveCollectedTurnAsync(
+                root,
+                BuildGmCollectedTurnContext(root, intents),
+                cancellationToken
+            ).ConfigureAwait(false);
+
+            if (gmResolution is { UsedLlm: true }) {
+                var nextClock = AdvanceClock(root);
+                var resolutionSummary = AppendClockAdvance(
+                    gmResolution.Summary,
+                    previousDay,
+                    previousSlot,
+                    nextClock.Day,
+                    nextClock.Slot,
+                    slotsPerDay
+                );
+
+                ArchiveCompletedTurn(root, resolutionSummary);
+                game.Upsert(LastResolutionKey, resolutionSummary);
+                ResetCurrentTurn(root);
+
+                return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
+            }
+
+            var lead = BuildCollectedTurnLead(intents, gmResolution?.FallbackReason);
             return terminalIntent.ActionKind switch {
                 "large/rest-a-while" => AsyncAteliaResult<TurnResolution>.Success(ResolveRestAccepted(root, collectedTurnLead: lead)),
                 "large/explore" => await ResolveExploreAcceptedAsync(
@@ -1319,7 +1347,29 @@ internal static class GameSimulation {
             .ToArray();
     }
 
-    private static string BuildCollectedTurnLead(IReadOnlyList<LargeActionIntent> intents) {
+    private static GmCollectedTurnContext BuildGmCollectedTurnContext(
+        DurableDict<string> root,
+        IReadOnlyList<LargeActionIntent> intents
+    ) {
+        return new GmCollectedTurnContext(
+            TerminalPlayerActorId,
+            intents
+                .Select(intent => new GmCollectedTurnIntent(
+                    intent.ActorId,
+                    intent.ActorName,
+                    intent.ActorKind,
+                    intent.ActionKind,
+                    intent.ActionSummary,
+                    intent.ActionPayload,
+                    intent.PreActionReason,
+                    intent.ValidatorFeedback,
+                    DescribePerceptionForActor(root, intent.ActorId)
+                ))
+                .ToArray()
+        );
+    }
+
+    private static string BuildCollectedTurnLead(IReadOnlyList<LargeActionIntent> intents, string? fallbackReason) {
         var lines = new List<string>
         {
             "本回合采用多主体同步收集："
@@ -1329,7 +1379,11 @@ internal static class GameSimulation {
             lines.Add($"- {intent.ActorName} [{intent.ActorId}, {intent.ActorKind}]：{intent.ActionSummary} ({intent.ActionKind})");
         }
 
-        lines.Add("当前 MVP 先按终端玩家的大型动作推进世界，其它 active actor 的意图已进入 turnHistory，后续会升级为真正的多意图 GM 裁决。");
+        lines.Add(
+            string.IsNullOrWhiteSpace(fallbackReason)
+                ? "当前 deterministic fallback 先按终端玩家的大型动作推进世界；真实 GM Agent 启用时会尝试统一裁决所有意图。"
+                : $"真实多主体 GM Agent 未完成，本回合回退到终端玩家主导的 deterministic 结算。原因：{fallbackReason}"
+        );
         return string.Join("\n", lines);
     }
 

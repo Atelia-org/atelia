@@ -156,7 +156,9 @@ root (DurableDict<string>)
 - `pmux game dev-turn-status`：查看当前 `barrierState`、`turnOwnerActorId` 和每个 active actor 的 Large-Action 提交状态
 - `pmux game dev-submit-large-action [--payload <payload>] <actor-id> <action-kind> <summary> <reason>`：绕过 validator 为任意 active actor 提交一个 Large-Action，用来验证 `acceptedStepsByActor` / `largeActionByActor` 和 barrier 流转
 
-当前 `llm-player` 会被创建、持久化和投影视角；每个 `Perception-Bundle` 会包含 actor 自身的 name / kind / profileNote，避免内部玩家不知道“自己是谁”。真实 LLM Player 默认使用两阶段 `director-executor` 管线：先用无工具的导演阶段整理角色事实、猜测、欲望/恐惧、风险姿态、notebook 建议和推荐 Large-Action，再把这份导演札记作为 observation 交给带工具的执行阶段。执行阶段仍必须通过 `player_edit_memory_notebook` / `player_rest_a_while` / `player_explore` / `player_interact` 行动，并继续走同一套 validator。未配置 API key、模式为 deterministic、provider 失败或多次重试失败时，系统会 fallback 提交“谨慎观察并暂不移动”。开发者仍可用 `dev-submit-large-action` 手动模拟其它动作。下一步应让 collected-turn resolver 把所有 actor intent 注入 GM staged resolver。
+当前 `llm-player` 会被创建、持久化和投影视角；每个 `Perception-Bundle` 会包含 actor 自身的 name / kind / profileNote，避免内部玩家不知道“自己是谁”。真实 LLM Player 默认使用两阶段 `director-executor` 管线：先用无工具的导演阶段整理角色事实、猜测、欲望/恐惧、风险姿态、notebook 建议和推荐 Large-Action，再把这份导演札记作为 observation 交给带工具的执行阶段。执行阶段仍必须通过 `player_edit_memory_notebook` / `player_rest_a_while` / `player_explore` / `player_interact` 行动，并继续走同一套 validator。未配置 API key、模式为 deterministic、provider 失败或多次重试失败时，系统会 fallback 提交“谨慎观察并暂不移动”。开发者仍可用 `dev-submit-large-action` 手动模拟其它动作。
+
+多主体 Large-Action 收齐后，系统会先尝试真实 GM collected-turn staged resolver。该 resolver 把所有 active actor 的 Large-Action intent、事前推理、validator feedback 和各自行前 `Perception-Bundle` 注入同一个 GM 会话，分三阶段执行：多主体意图裁决与 hard truth 落账 → 账本审计 → 终端玩家可见摘要。GM 工具集新增 `gm_move_actor`，因此真实 GM 可以移动任意 active player actor，而不是只能移动终端玩家。若真实 GM 未启用或失败，当前 MVP 仍回退到终端玩家主导的 deterministic 结算。
 
 ## Validator 配置
 
@@ -171,6 +173,8 @@ root (DurableDict<string>)
 - `ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS`：可选，每个 LLM Player 每回合最多提交尝试次数，默认 `3`
 - `DEEPSEEK_MODEL`：可选 fallback，若未设置 `ATELIA_TEXTADV_VALIDATOR_MODEL_ID` 则使用它
 - `DEEPSEEK_BASE_URL`：可选，覆盖默认 DeepSeek base URL
+
+PipeMux 的持久 host 进程可能不会读取每次 `pmux game ...` 调用前临时设置的 env；需要稳定切换模式时，建议在注册或启动 host 前设置好相关环境变量。
 
 当前 validator 用 tool call 做结构化裁决：
 
@@ -188,7 +192,7 @@ root (DurableDict<string>)
 - `explore`: 地图与移动落账 → 实体与交互账本审计 → 玩家可见摘要
 - `interact`: 交互直接后果 → affordance 生命周期审计 → 玩家可见摘要
 
-- `gm_create_location` / `gm_link_locations` / `gm_move_player`
+- `gm_create_location` / `gm_link_locations` / `gm_move_player` / `gm_move_actor`
 - `gm_create_item`
 - `gm_create_npc`
 - `gm_move_item_to_actor` / `gm_place_item_at_location`

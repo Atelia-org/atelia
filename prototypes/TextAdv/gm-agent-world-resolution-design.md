@@ -338,9 +338,10 @@ game
 - LLM Player Agent 提交的 Large-Action 会走同一套 `GameActionValidator`。provider 失败、未配置 API key、模式为 deterministic、没有调用工具，或 validator 多次拒绝时，才回退到 `large/rest-a-while`，语义为“谨慎观察并暂不移动”。
 - `dev-look-actor <actor-id>` 可用于查看任意 actor 的 Perception-Bundle；这验证了未来 LLM Player Agent 的输入可以只包含该 actor 的视角，而不是完整世界真相。
 - `dev-turn-status` 可审计当前 barrier 与每个 active actor 的 Large-Action 提交状态。`dev-submit-large-action` 可绕过 validator 模拟任意 active actor 交卷，用于测试 `acceptedStepsByActor` / `largeActionByActor` 和 `ready-for-gm` 流转。
-- 多主体收齐后已经进入 `collected-turn resolver`，首版按终端玩家的大型动作推进世界，并把所有 actor 的 Large-Action intent 写入 `turnHistory` 和玩家可见结算摘要。这让 MVP 不再停在 `ready-for-gm`，但还不是最终的多意图 GM 裁决。
-- 下一步应把 `collected-turn resolver` 升级为真正的 GM staged resolver：把所有 actor 的 Large-Action intent、各自 Perception-Bundle 和必要账本投影注入同一 GM 会话，由 GM 一次性裁决冲突、顺序和后果。
+- 多主体收齐后已经进入 `collected-turn resolver`。真实 GM 模式下，resolver 会把所有 actor 的 Large-Action intent、各自 Perception-Bundle、事前推理和 validator feedback 注入同一 GM staged loop，由 GM 一次性裁决冲突、顺序和后果；deterministic / fallback 模式下仍按终端玩家的大型动作推进世界，以保持 MVP 可测。
+- GM 工具集已新增 `gm_move_actor`，真实多主体 GM 不再只能移动终端玩家，可以裁决 LLM Player 的探索、移动、分头行动和停留。`gm_move_player` 仍保留给单玩家 explore/interact 路径。
 - GM 结算已经从单次宽 prompt 改为同一会话内的分阶段工具循环：`explore` 依次执行“地图与移动落账 → 实体与交互账本审计 → 玩家可见摘要”，`interact` 依次执行“交互直接后果 → affordance 生命周期审计 → 玩家可见摘要”。每个阶段都会保留前文 history，并在阶段开始注入最新 Perception/账本投影，以减少遗漏实体、交互或可见性更新的概率。
+- 多主体 collected-turn 也采用三阶段工具循环：“多主体意图裁决与 hard truth 落账 → 多主体账本审计 → 终端玩家可见摘要”。当前摘要仍只返回终端玩家视角；为每个 LLM Player 分别生成结算后私有 observation/recap 是后续阶段。
 
 `LLM Player Agent` 的最小行为协议：
 

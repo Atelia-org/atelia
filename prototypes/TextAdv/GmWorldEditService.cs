@@ -111,6 +111,29 @@ internal sealed class GmWorldEditService {
         return locationId;
     }
 
+    internal AteliaResult<string> MoveActorTo(string actorId, string locationId) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        locationId = NormalizeRequired(locationId, nameof(locationId));
+
+        var location = TryGetLocation(locationId);
+        if (!location.IsSuccess) {
+            return AteliaResult<string>.Failure(location.Error!);
+        }
+
+        var actor = TryGetActor(actorId);
+        if (!actor.IsSuccess) {
+            return AteliaResult<string>.Failure(actor.Error!);
+        }
+
+        actor.Value!.Upsert(LocationIdKey, locationId);
+        if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) {
+            var player = _root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
+            player.Upsert(PlayerLocationKey, locationId);
+        }
+
+        return $"{actorId}->{locationId}";
+    }
+
     internal AteliaResult<string> CreateItem(
         string itemId,
         string name,
@@ -387,6 +410,16 @@ internal sealed class GmWorldEditService {
         return ToToolResult(MovePlayerTo(location_id), "moved player");
     }
 
+    [Tool("gm_move_actor", "把指定 Actor 移动到指定 Location。多主体回合中优先使用；终端玩家 ActorId 是 player。")]
+    public ValueTask<ToolExecuteResult> MoveActorAsync(
+        [ToolParam("目标 ActorId；终端玩家为 player。")] string actor_id,
+        [ToolParam("目标 LocationId。")] string location_id,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ToToolResult(MoveActorTo(actor_id, location_id), "moved actor");
+    }
+
     [Tool("gm_create_item", "创建一个玩家可见的 Item，并放置在指定 Location。")]
     public ValueTask<ToolExecuteResult> CreateItemAsync(
         [ToolParam("新的 ItemId，建议使用小写 ASCII、数字和连字符。")] string item_id,
@@ -496,6 +529,20 @@ internal sealed class GmWorldEditService {
         }
 
         return item;
+    }
+
+    private AteliaResult<DurableDict<string>> TryGetActor(string actorId) {
+        var actors = GetOrCreateWorldDict(ActorsKey);
+        if (!actors.TryGet(actorId, out DurableDict<string>? actor) || actor is null) {
+            return AteliaResult<DurableDict<string>>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.ActorNotFound",
+                    $"Actor '{actorId}' 不存在。"
+                )
+            );
+        }
+
+        return actor;
     }
 
     private DurableDict<string> GetOrCreateWorldDict(string key) {

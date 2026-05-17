@@ -30,6 +30,23 @@ internal sealed record GmInteractionContext(
     string PreActionReason
 );
 
+internal sealed record GmCollectedTurnIntent(
+    string ActorId,
+    string ActorName,
+    string ActorKind,
+    string ActionKind,
+    string ActionSummary,
+    string? ActionPayload,
+    string PreActionReason,
+    string ValidatorFeedback,
+    PerceptionBundle Perception
+);
+
+internal sealed record GmCollectedTurnContext(
+    string TerminalActorId,
+    IReadOnlyList<GmCollectedTurnIntent> Intents
+);
+
 internal static class GameMasterResolver {
     private const string BaseAddressEnv = "DEEPSEEK_BASE_URL";
     private const string ModelIdEnv = "ATELIA_TEXTADV_GM_MODEL_ID";
@@ -126,6 +143,40 @@ internal static class GameMasterResolver {
         }
     }
 
+    internal static async Task<GmExploreResolution?> TryResolveCollectedTurnAsync(
+        DurableDict<string> root,
+        GmCollectedTurnContext context,
+        CancellationToken cancellationToken
+    ) {
+        var config = GetConfig();
+        if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)) {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.ApiKey)) {
+            if (string.Equals(config.Mode, "llm", StringComparison.OrdinalIgnoreCase)) {
+                return new GmExploreResolution(
+                    Summary: string.Empty,
+                    UsedLlm: false,
+                    FallbackReason: $"{ApiKeyEnv} 未配置，无法运行真实 GM Agent。"
+                );
+            }
+
+            return null;
+        }
+
+        try {
+            return await ResolveCollectedTurnWithLlmAsync(root, context, config, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) {
+            return new GmExploreResolution(
+                Summary: string.Empty,
+                UsedLlm: false,
+                FallbackReason: $"真实多主体 GM Agent 失败，已回退 deterministic resolver：{ex.Message}"
+            );
+        }
+    }
+
     private static async Task<GmExploreResolution> ResolveExploreWithLlmAsync(
         DurableDict<string> root,
         GmExploreContext context,
@@ -186,6 +237,38 @@ internal static class GameMasterResolver {
                 ),
             ],
             defaultSummary: "GM Agent 完成了本回合交互结算。",
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private static async Task<GmExploreResolution> ResolveCollectedTurnWithLlmAsync(
+        DurableDict<string> root,
+        GmCollectedTurnContext context,
+        GmConfig config,
+        CancellationToken cancellationToken
+    ) {
+        return await RunStagedToolLoopAsync(
+            root,
+            config,
+            BuildCollectedTurnSystemPrompt(),
+            [
+                new GmResolutionStage(
+                    "collected-turn-consequence",
+                    () => BuildCollectedTurnConsequenceStageObservation(context),
+                    RequireFinalSummary: false
+                ),
+                new GmResolutionStage(
+                    "collected-turn-ledger-audit",
+                    () => BuildCollectedTurnLedgerAuditStageObservation(root, context),
+                    RequireFinalSummary: false
+                ),
+                new GmResolutionStage(
+                    "collected-turn-summary",
+                    () => BuildCollectedTurnSummaryStageObservation(root, context),
+                    RequireFinalSummary: true
+                ),
+            ],
+            defaultSummary: "GM Agent 完成了本回合多主体结算。",
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -286,6 +369,7 @@ internal static class GameMasterResolver {
             MethodToolWrapper.FromDelegate<string, string, string>(toolService.CreateLocationAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string?>(toolService.LinkLocationsAsync),
             MethodToolWrapper.FromDelegate<string>(toolService.MovePlayerAsync),
+            MethodToolWrapper.FromDelegate<string, string>(toolService.MoveActorAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateNpcAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.MoveItemToActorAsync),
@@ -315,6 +399,30 @@ internal static class GameMasterResolver {
 - 若有建议反向方向，应在 gm_link_locations 中填写 reverse_direction；否则传 null。
 - 不要用普通文本声称世界已改变；只有工具调用成功才算落账。
 - 必要工具调用完成后，停止调用工具，并输出 1 到 3 句玩家可见的中文结算摘要。
+""";
+    }
+
+    private static string BuildCollectedTurnSystemPrompt() {
+        return """
+你是 TextAdv 的 TRPG GM Agent，负责在离散回合制下统一裁决多个 active player actor 的 Large-Action。
+
+你的主持方式应接近优秀的人类 TRPG 主持人：
+1. 先把每个玩家的声明视为“意图”，不是已经发生的事实。
+2. 根据每个 actor 行动前自己的 Perception-Bundle 判断其意图是否合理、是否冲突、是否能同时发生。
+3. 冲突时优先使用常识、位置、可见信息和行动风险裁决；不要引入复杂 initiative、耗时或 reservation 系统。
+4. 只把 hard truth 变化落到账本：地点、出口、actor 位置、物品持有/放置、NPC、interaction、可见性。
+5. 克制生成：每个回合只创建必要的新 Location / Item / NPC / Interaction，避免一次扩张太多。
+6. 视角安全：最终摘要面向终端玩家角色，只描述该角色可感知或在本回合声明阶段公开知道的内容，不泄露隐藏真相。
+
+工具规则：
+- 移动任意 actor 时优先调用 gm_move_actor；终端玩家 ActorId 是 player。
+- 若某 actor 探索已有出口，调用 gm_move_actor(actor_id, target_location_id)。
+- 若某 actor 探索未知方向，先 gm_create_location，再 gm_link_locations，最后 gm_move_actor。
+- 若交互揭示新物品/NPC/动作，必须用 gm_create_item / gm_create_npc / gm_add_interaction 落账。
+- 若 take / give / drop / place 导致持有关系变化，必须用 gm_move_item_to_actor 或 gm_place_item_at_location 落账。
+- 若 interaction 被消耗或不应继续显示，调用 gm_set_interaction_visibility。
+- 不要用普通文本声称世界已改变；只有工具调用成功才算落账。
+- 必要工具调用完成后，停止调用工具，并在 summary 阶段输出 1 到 4 句中文结算摘要。
 """;
     }
 
@@ -620,6 +728,42 @@ internal static class GameMasterResolver {
         return sb.ToString();
     }
 
+    private static string BuildCollectedTurnConsequenceStageObservation(GmCollectedTurnContext context) {
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 1/3: 多主体意图裁决与 hard truth 落账]");
+        sb.AppendLine("统一裁决所有 active player actor 的 Large-Action。只处理必要 hard truth：Location/Exit/Actor location/Item ownership/NPC/Interaction/visibility。");
+        sb.AppendLine("本阶段不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
+        sb.AppendLine();
+        AppendCollectedTurnIntents(sb, context);
+        return sb.ToString();
+    }
+
+    private static string BuildCollectedTurnLedgerAuditStageObservation(DurableDict<string> root, GmCollectedTurnContext context) {
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 2/3: 多主体账本审计]");
+        sb.AppendLine("检查刚才的多主体结算是否遗漏必要账本：终端玩家/LLM Player 的位置、物品位置/持有者、新地点出口、可见 NPC、可执行 interaction。");
+        sb.AppendLine("如果最终摘要或下一回合 Perception-Bundle 需要某实体或 affordance，请现在补工具调用。不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
+        sb.AppendLine();
+        AppendCollectedTurnIntents(sb, context);
+        AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.TerminalActorId), "当前终端玩家账本投影");
+        foreach (var intent in context.Intents.Where(intent => !string.Equals(intent.ActorId, context.TerminalActorId, StringComparison.Ordinal))) {
+            AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, intent.ActorId), $"当前 {intent.ActorName} 账本投影");
+        }
+
+        return sb.ToString();
+    }
+
+    private static string BuildCollectedTurnSummaryStageObservation(DurableDict<string> root, GmCollectedTurnContext context) {
+        var sb = new StringBuilder();
+        sb.AppendLine("[阶段 3/3: 终端玩家可见结算摘要]");
+        sb.AppendLine("请输出 1 到 4 句中文结算摘要。原则：面向终端玩家角色，只写它能感知到、参与声明时公开知道、或自然能推断的内容。不要泄露其它 actor 离开视野后的隐藏发现。");
+        sb.AppendLine("若你发现摘要必需的新实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+        sb.AppendLine();
+        AppendCollectedTurnIntents(sb, context);
+        AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.TerminalActorId), "最终终端玩家账本投影");
+        return sb.ToString();
+    }
+
     private static void AppendExploreIntent(StringBuilder sb, GmExploreContext context) {
         sb.AppendLine("[探索意图]");
         sb.AppendLine($"- OriginalLocationId: {context.CurrentLocationId}");
@@ -646,9 +790,34 @@ internal static class GameMasterResolver {
         sb.AppendLine();
     }
 
+    private static void AppendCollectedTurnIntents(StringBuilder sb, GmCollectedTurnContext context) {
+        sb.AppendLine("[本回合 active player actor 的 Large-Action 声明]");
+        foreach (var intent in context.Intents) {
+            sb.AppendLine($"- Actor: {intent.ActorName} [{intent.ActorId}, {intent.ActorKind}]");
+            sb.AppendLine($"  ActionKind: {intent.ActionKind}");
+            sb.AppendLine($"  ActionSummary: {intent.ActionSummary}");
+            sb.AppendLine($"  ActionPayload: {intent.ActionPayload ?? "(none)"}");
+            sb.AppendLine($"  ValidatorFeedback: {intent.ValidatorFeedback}");
+            sb.AppendLine("  PreActionReason:");
+            sb.AppendLine(Indent(intent.PreActionReason, "    "));
+            AppendPerceptionSnapshot(sb, intent.Perception, $"行动前私有 Perception-Bundle: {intent.ActorName}");
+        }
+
+        sb.AppendLine("[裁决提示]");
+        sb.AppendLine("- large/rest-a-while: 通常只推进回合，不主动改变位置；可作为保守观察。");
+        sb.AppendLine("- large/explore: payload 通常包含 direction=... 和可选 focus=...；从该 actor 行动前所在 Location 出发裁决。");
+        sb.AppendLine("- large/interact: payload 通常包含 interactionId、target、actionKind、visibleLabel；只能裁决该 actor 行动前可见的 interaction。");
+        sb.AppendLine("- 若两个 actor 同时探索同一未知方向，可复用同一个新 Location，不要重复创建等价地点。");
+        sb.AppendLine("- 若 actor 分头行动，终端玩家最终摘要不要泄露它看不见的远处细节。");
+        sb.AppendLine();
+    }
+
     private static void AppendPerceptionSnapshot(StringBuilder sb, PerceptionBundle perception, string title) {
         sb.AppendLine($"[{title}]");
         sb.AppendLine($"- ActorId: {perception.ActorId}");
+        sb.AppendLine($"- ActorName: {perception.ActorName}");
+        sb.AppendLine($"- ActorKind: {perception.ActorKind}");
+        sb.AppendLine($"- ActorProfileNote: {perception.ActorProfileNote}");
         sb.AppendLine($"- Time: {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
         sb.AppendLine($"- LocationId: {perception.Location.LocationId}");
         sb.AppendLine($"- LocationName: {perception.Location.Name}");
@@ -699,6 +868,13 @@ internal static class GameMasterResolver {
         sb.AppendLine("- LocationInteractions:");
         AppendInteractions(sb, perception.Location.Interactions);
         sb.AppendLine();
+    }
+
+    private static string Indent(string text, string indentation) {
+        if (string.IsNullOrEmpty(text)) { return string.Empty; }
+
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        return string.Join("\n", lines.Select(line => indentation + line));
     }
 
     private static void AppendInteractions(StringBuilder sb, IReadOnlyList<InteractionPerception> interactions) {
