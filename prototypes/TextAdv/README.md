@@ -104,18 +104,28 @@ root (DurableDict<string>)
 │   │   └── forest → { name, description, exits: { south → "beach" } }
 │   ├── items → DurableDict<string> # item: { name, description, locationId | ownerActorId, visibility }
 │   ├── actors → DurableDict<string>
-│   │   └── player → { kind: "terminal-player", name, locationId, profileNote, active }
+│   │   ├── player → { kind: "terminal-player", name, locationId, profileNote, active, memoryNotebook }
+│   │   └── ...     → { kind: "llm-player" | "npc", name, locationId, profileNote, active, memoryNotebook? }
 │   ├── interactions → DurableDict<string>
 │   └── initialLocation → "beach"
 ├── game → DurableDict<string>
 │   ├── day / slot / slotsPerDay
 │   ├── activeActorIds → DurableDict<string>
-│   ├── currentTurn → { notebookSnapshot, acceptedSteps, nextStepNumber, ... }
+│   ├── currentTurn → {
+│   │     turnOwnerActorId,
+│   │     barrierState,
+│   │     acceptedSteps,          # legacy mirror for terminal player
+│   │     acceptedStepsByActor,
+│   │     largeActionByActor,
+│   │     notebookSnapshot,
+│   │     nextStepNumber,
+│   │     ...
+│   │   }
 │   ├── turnHistory → DurableDict<string>
 │   └── lastResolution → string?
 └── player → DurableDict<string>
-  ├── location → "beach"          # 当前位置 ID
-  └── memoryNotebook → DurableText # 私人持久笔记
+  ├── location → "beach"          # 终端玩家兼容镜像
+  └── memoryNotebook → DurableText # 终端玩家兼容镜像
 ```
 
 ## 设计原则
@@ -129,8 +139,19 @@ root (DurableDict<string>)
 - 所有玩家动作的第一个必填参数都应表示事前推理：先说明依据当前证据为什么准备这么做，再给出动作本身；不鼓励事后合理化式解释
 - `edit-memory-notebook --dry-run` 会执行与正式提交同构的 preview + validator，但不会写入状态；适合先试探 after-view 与 validator 边界
 - 玩家视图应自带“当前可执行动作”速查，默认按失忆玩家设计，不假定玩家记得上一次输出里的规则说明
+- `Perception-Bundle` 已经支持按 `actorId` 投影：当前位置、可见角色、持有物品和 Memory-Notebook 都来自 actor ledger；终端玩家的旧 `root.player` 字段暂时只作为兼容镜像
+- `currentTurn` 已经预留 `acceptedStepsByActor`、`largeActionByActor`、`turnOwnerActorId`、`barrierState`，当前仍以单终端玩家流程运行，后续 LLM Player loop 可直接接入这组账本
 - 当前 validator 默认走 `DeepSeekV4ChatClient`
 - 数据目录：`/tmp/atelia-textadv-game/`（后续可改为 repo 内路径）
+
+## Phase 4 调试命令
+
+这些命令只用于开发者验证多主体账本，不代表正式玩家 API：
+
+- `pmux game dev-add-llm-player [--location <locationId>] <actor-id> <name> <profile-note>`：创建一个 active `llm-player` actor，并加入 `game.activeActorIds`
+- `pmux game dev-look-actor <actor-id>`：按指定 actor 投影并渲染 `Perception-Bundle`
+
+当前 `llm-player` 只会被创建、持久化和投影视角，尚不会自动声明 Large-Action。下一步应在同一套 validator 边界内实现内部 LLM Player Agent 行动提交。
 
 ## Validator 配置
 

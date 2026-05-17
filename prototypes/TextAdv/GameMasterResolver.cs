@@ -349,6 +349,7 @@ internal static class GameMasterResolver {
         sb.AppendLine("结算玩家本回合的 explore Large-Action。");
         sb.AppendLine();
         sb.AppendLine("[当前玩家位置]");
+        sb.AppendLine($"- ActorId: {perception.ActorId}");
         sb.AppendLine($"- LocationId: {context.CurrentLocationId}");
         sb.AppendLine($"- Name: {perception.Location.Name}");
         sb.AppendLine($"- Description: {perception.Location.Description}");
@@ -488,6 +489,7 @@ internal static class GameMasterResolver {
         sb.AppendLine("结算玩家本回合选择的 interact Large-Action。");
         sb.AppendLine();
         sb.AppendLine("[当前玩家位置]");
+        sb.AppendLine($"- ActorId: {perception.ActorId}");
         sb.AppendLine($"- LocationId: {context.CurrentLocationId}");
         sb.AppendLine($"- Name: {perception.Location.Name}");
         sb.AppendLine($"- Description: {perception.Location.Description}");
@@ -646,6 +648,7 @@ internal static class GameMasterResolver {
 
     private static void AppendPerceptionSnapshot(StringBuilder sb, PerceptionBundle perception, string title) {
         sb.AppendLine($"[{title}]");
+        sb.AppendLine($"- ActorId: {perception.ActorId}");
         sb.AppendLine($"- Time: {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
         sb.AppendLine($"- LocationId: {perception.Location.LocationId}");
         sb.AppendLine($"- LocationName: {perception.Location.Name}");

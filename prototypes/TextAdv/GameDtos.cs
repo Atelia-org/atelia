@@ -54,6 +54,7 @@ internal sealed record TurnStep(
 );
 
 internal sealed record PerceptionBundle(
+    string ActorId,
     int Day,
     int Slot,
     int SlotsPerDay,

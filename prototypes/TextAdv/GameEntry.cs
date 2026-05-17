@@ -48,6 +48,8 @@ public static class GameEntry {
         root.Add(BuildExploreCommand());
         root.Add(BuildRestAWhileCommand());
         root.Add(BuildDevGoCommand());
+        root.Add(BuildDevAddLlmPlayerCommand());
+        root.Add(BuildDevLookActorCommand());
 
         return root;
     }
@@ -114,6 +116,77 @@ public static class GameEntry {
                 output.WriteLine($"🚶 你向 {direction} 方向走去…");
                 output.WriteLine();
                 output.Write(GamePresenter.RenderPerception(moveResult.Value!));
+            }
+        );
+        return cmd;
+    }
+
+    private static Command BuildDevAddLlmPlayerCommand() {
+        var locationOption = new Option<string?>("--location") {
+            Description = "可选：新 LLM player 的初始 LocationId；默认使用终端玩家当前位置。"
+        };
+        var actorIdArg = new Argument<string>("actor-id");
+        var nameArg = new Argument<string>("name");
+        var profileNoteArg = new Argument<string>("profile-note");
+        var cmd = new Command("dev-add-llm-player", "开发者调试：创建一个 active llm-player actor（不驱动行动）")
+        {
+            locationOption,
+            actorIdArg,
+            nameArg,
+            profileNoteArg,
+        };
+        cmd.SetAction(
+            ctx => {
+                var output = ctx.InvocationConfiguration.Output;
+                var actorId = ctx.GetValue(actorIdArg)!;
+                var name = ctx.GetValue(nameArg)!;
+                var profileNote = ctx.GetValue(profileNoteArg)!;
+                var locationId = ctx.GetValue(locationOption);
+
+                var state = GetState();
+                if (state is null) {
+                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+                    return;
+                }
+
+                var (repo, root) = state.Value;
+                var result = GameSimulation.CreateLlmPlayerActor(root, actorId, name, profileNote, locationId);
+                if (!result.TryGetValue(out var createdActorId) || string.IsNullOrWhiteSpace(createdActorId)) {
+                    output.WriteLine("❌ 创建 LLM player actor 失败。");
+                    WriteAteliaError(output, result.Error);
+                    return;
+                }
+
+                _ = repo.Commit(root).Value;
+                output.WriteLine($"✅ 已创建 llm-player actor: {createdActorId}");
+                output.WriteLine();
+                output.Write(GamePresenter.RenderPerception(GameSimulation.DescribePerceptionForActor(root, createdActorId)));
+            }
+        );
+        return cmd;
+    }
+
+    private static Command BuildDevLookActorCommand() {
+        var actorIdArg = new Argument<string>("actor-id");
+        var cmd = new Command("dev-look-actor", "开发者调试：查看指定 actor 的 Perception-Bundle") { actorIdArg };
+        cmd.SetAction(
+            ctx => {
+                var output = ctx.InvocationConfiguration.Output;
+                var actorId = ctx.GetValue(actorIdArg)!;
+
+                var state = GetState();
+                if (state is null) {
+                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+                    return;
+                }
+
+                try {
+                    var (_, root) = state.Value;
+                    output.Write(GamePresenter.RenderPerception(GameSimulation.DescribePerceptionForActor(root, actorId)));
+                }
+                catch (Exception ex) {
+                    output.WriteLine($"❌ 无法查看 actor '{actorId}'：{ex.Message}");
+                }
             }
         );
         return cmd;

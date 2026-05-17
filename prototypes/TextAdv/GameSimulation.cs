@@ -29,9 +29,14 @@ internal static class GameSimulation {
     private const string NotebookSnapshotKey = "notebookSnapshot";
     private const string NextStepNumberKey = "nextStepNumber";
     private const string AcceptedStepsKey = "acceptedSteps";
+    private const string TurnOwnerActorIdKey = "turnOwnerActorId";
+    private const string AcceptedStepsByActorKey = "acceptedStepsByActor";
+    private const string LargeActionByActorKey = "largeActionByActor";
+    private const string BarrierStateKey = "barrierState";
     private const string TurnNumberKey = "turnNumber";
     private const string ResolutionSummaryKey = "resolutionSummary";
     private const string EndingNotebookKey = "endingNotebook";
+    private const string CollectingTerminalBarrierState = "collecting-terminal";
     private const string ActionKindKey = "actionKind";
     private const string ActionSummaryKey = "actionSummary";
     private const string ActionPayloadKey = "actionPayload";
@@ -91,17 +96,16 @@ internal static class GameSimulation {
         locations.Upsert(beachId, beach);
         locations.Upsert(forestId, forest);
 
-        actors.Upsert(
-            TerminalPlayerActorId,
-            CreateActor(
-                rev,
-                kind: "terminal-player",
-                name: "你",
-                profileNote: "通过终端命令操作的玩家角色。",
-                locationId: beachId,
-                active: true
-            )
+        var terminalActor = CreateActor(
+            rev,
+            kind: "terminal-player",
+            name: "你",
+            profileNote: "通过终端命令操作的玩家角色。",
+            locationId: beachId,
+            active: true
         );
+        terminalActor.Upsert(MemoryNotebookKey, notebook);
+        actors.Upsert(TerminalPlayerActorId, terminalActor);
         activeActorIds.Upsert(TerminalPlayerActorId, TerminalPlayerActorId);
 
         world.Upsert(LocationsKey, locations);
@@ -129,21 +133,28 @@ internal static class GameSimulation {
         return root;
     }
 
-    internal static PerceptionBundle DescribeCurrentPerception(DurableDict<string> root) {
+    internal static PerceptionBundle DescribeCurrentPerception(DurableDict<string> root)
+        => DescribePerceptionForActor(root, TerminalPlayerActorId);
+
+    internal static PerceptionBundle DescribePerceptionForActor(DurableDict<string> root, string actorId) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        var actor = GetActor(root, actorId);
         var game = GetGame(root);
         var day = game.GetOrThrow<int>(DayKey);
         var slot = game.GetOrThrow<int>(SlotKey);
         var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
         var lastResolution = TryGetOptionalString(game, LastResolutionKey);
-        var notebookSnapshot = GetNotebookSnapshot(root);
-        var acceptedSteps = ReadAcceptedSteps(root);
+        var notebookSnapshot = GetNotebookSnapshot(root, actorId);
+        var acceptedSteps = ReadAcceptedSteps(root, actorId);
+        var locationId = actor.GetOrThrow<string>(LocationIdKey)!;
 
         return new PerceptionBundle(
+            actorId,
             day,
             slot,
             slotsPerDay,
-            DescribeCurrentLocation(root),
-            EnumerateVisibleItemsOwnedByActor(root, TerminalPlayerActorId).ToArray(),
+            DescribeLocation(root, locationId, actorId),
+            EnumerateVisibleItemsOwnedByActor(root, actorId).ToArray(),
             notebookSnapshot,
             acceptedSteps,
             lastResolution
@@ -151,7 +162,47 @@ internal static class GameSimulation {
     }
 
     internal static LocationPerception DescribeCurrentLocation(DurableDict<string> root)
-        => DescribeLocation(root, GetPlayerLocationId(root));
+        => DescribeLocation(root, GetPlayerLocationId(root), TerminalPlayerActorId);
+
+    internal static AteliaResult<string> CreateLlmPlayerActor(
+        DurableDict<string> root,
+        string actorId,
+        string name,
+        string profileNote,
+        string? locationId
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        name = NormalizeRequired(name, nameof(name));
+        profileNote = NormalizeRequired(profileNote, nameof(profileNote));
+        locationId = string.IsNullOrWhiteSpace(locationId) ? GetPlayerLocationId(root) : locationId.Trim();
+
+        _ = GetLocation(root, locationId);
+        var actors = GetActors(root);
+        if (actors.TryGet(actorId, out DurableDict<string>? _)) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.ActorAlreadyExists",
+                    $"Actor '{actorId}' 已存在。"
+                )
+            );
+        }
+
+        var actor = CreateActor(
+            root.Revision,
+            kind: "llm-player",
+            name,
+            profileNote,
+            locationId,
+            active: true
+        );
+        actor.Upsert(MemoryNotebookKey, CreateNotebookText(root.Revision, string.Empty));
+        actors.Upsert(actorId, actor);
+
+        var game = GetGame(root);
+        var activeActorIds = game.GetOrThrow<DurableDict<string>>(ActiveActorIdsKey)!;
+        activeActorIds.Upsert(actorId, actorId);
+        return actorId;
+    }
 
     internal static AteliaResult<InteractionPerception> TryGetVisibleInteraction(
         PerceptionBundle perception,
@@ -457,17 +508,25 @@ internal static class GameSimulation {
     }
 
     private static string GetPlayerLocationId(DurableDict<string> root) {
+        var actors = GetActors(root);
+        if (actors.TryGet(TerminalPlayerActorId, out DurableDict<string>? actor)
+            && actor is not null
+            && actor.TryGet(LocationIdKey, out string? actorLocationId)
+            && !string.IsNullOrWhiteSpace(actorLocationId)) {
+            return actorLocationId;
+        }
+
         var player = root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
         return player.GetOrThrow<string>(PlayerLocationKey)!;
     }
 
-    private static LocationPerception DescribeLocation(DurableDict<string> root, string locationId) {
+    private static LocationPerception DescribeLocation(DurableDict<string> root, string locationId, string observerActorId) {
         var location = GetLocation(root, locationId);
         var name = location.GetOrThrow<string>(NameKey)!;
         var description = location.GetOrThrow<string>(DescriptionKey)!;
         var exits = EnumerateExits(root, locationId).ToArray();
         var items = EnumerateVisibleItemsAtLocation(root, locationId).ToArray();
-        var actors = EnumerateVisibleActorsAtLocation(root, locationId).ToArray();
+        var actors = EnumerateVisibleActorsAtLocation(root, locationId, observerActorId).ToArray();
         var interactions = EnumerateVisibleInteractions(root, "location", locationId).ToArray();
         return new LocationPerception(locationId, name, description, exits, items, actors, interactions);
     }
@@ -556,13 +615,14 @@ internal static class GameSimulation {
 
     private static IEnumerable<ActorPerception> EnumerateVisibleActorsAtLocation(
         DurableDict<string> root,
-        string locationId
+        string locationId,
+        string observerActorId
     ) {
         var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
         if (!world.TryGet(ActorsKey, out DurableDict<string>? actors) || actors is null) { yield break; }
 
         foreach (var actorId in actors.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
-            if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) { continue; }
+            if (string.Equals(actorId, observerActorId, StringComparison.Ordinal)) { continue; }
 
             var actor = actors.GetOrThrow<DurableDict<string>>(actorId)!;
             if (!actor.TryGet(LocationIdKey, out string? actorLocationId)
@@ -664,15 +724,45 @@ internal static class GameSimulation {
         => root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
 
     private static DurableText GetNotebook(DurableDict<string> root)
-        => GetPlayer(root).GetOrThrow<DurableText>(MemoryNotebookKey)!;
+        => GetNotebook(root, TerminalPlayerActorId);
+
+    private static DurableText GetNotebook(DurableDict<string> root, string actorId) {
+        var actor = GetActor(root, actorId);
+        if (actor.TryGet(MemoryNotebookKey, out DurableText? notebook) && notebook is not null) {
+            return notebook;
+        }
+
+        if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) {
+            var playerNotebook = GetPlayer(root).GetOrThrow<DurableText>(MemoryNotebookKey)!;
+            actor.Upsert(MemoryNotebookKey, playerNotebook);
+            return playerNotebook;
+        }
+
+        notebook = CreateNotebookText(root.Revision, string.Empty);
+        actor.Upsert(MemoryNotebookKey, notebook);
+        return notebook;
+    }
+
+    private static DurableDict<string> GetActors(DurableDict<string> root) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        return world.GetOrThrow<DurableDict<string>>(ActorsKey)!;
+    }
+
+    private static DurableDict<string> GetActor(DurableDict<string> root, string actorId) {
+        var actors = GetActors(root);
+        return actors.GetOrThrow<DurableDict<string>>(actorId)!;
+    }
 
     private static DurableDict<string> GetCurrentTurn(DurableDict<string> root) {
         var game = GetGame(root);
         return game.GetOrThrow<DurableDict<string>>(CurrentTurnKey)!;
     }
 
-    private static TextBlockSnapshotDocument GetNotebookSnapshot(DurableDict<string> root) {
-        var notebook = GetNotebook(root);
+    private static TextBlockSnapshotDocument GetNotebookSnapshot(DurableDict<string> root)
+        => GetNotebookSnapshot(root, TerminalPlayerActorId);
+
+    private static TextBlockSnapshotDocument GetNotebookSnapshot(DurableDict<string> root, string actorId) {
+        var notebook = GetNotebook(root, actorId);
         return new TextBlockSnapshotDocument(
             notebook.GetAllBlocks()
                 .Select(static block => new TextBlockSnapshot(block.Id, block.Content))
@@ -702,6 +792,8 @@ internal static class GameSimulation {
     ) {
         var currentTurn = rev.CreateDict<string>();
         var acceptedSteps = rev.CreateDict<string>();
+        var acceptedStepsByActor = rev.CreateDict<string>();
+        var largeActionByActor = rev.CreateDict<string>();
 
         currentTurn.Upsert(StartDayKey, day);
         currentTurn.Upsert(StartSlotKey, slot);
@@ -709,13 +801,27 @@ internal static class GameSimulation {
         currentTurn.Upsert(NotebookSnapshotKey, notebookSnapshot);
         currentTurn.Upsert(NextStepNumberKey, 1);
         currentTurn.Upsert(AcceptedStepsKey, acceptedSteps);
+        currentTurn.Upsert(TurnOwnerActorIdKey, TerminalPlayerActorId);
+        currentTurn.Upsert(AcceptedStepsByActorKey, acceptedStepsByActor);
+        currentTurn.Upsert(LargeActionByActorKey, largeActionByActor);
+        currentTurn.Upsert(BarrierStateKey, CollectingTerminalBarrierState);
+        acceptedStepsByActor.Upsert(TerminalPlayerActorId, acceptedSteps);
 
         return currentTurn;
     }
 
     private static IReadOnlyList<TurnStep> ReadAcceptedSteps(DurableDict<string> root) {
-        var currentTurn = GetCurrentTurn(root);
-        var acceptedSteps = currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsKey)!;
+        return ReadAcceptedSteps(root, TerminalPlayerActorId);
+    }
+
+    private static IReadOnlyList<TurnStep> ReadAcceptedSteps(DurableDict<string> root, string actorId) {
+        var acceptedSteps = GetAcceptedStepsForActor(root, actorId, createIfMissing: false);
+        if (acceptedSteps is null) { return Array.Empty<TurnStep>(); }
+
+        return ReadAcceptedStepList(acceptedSteps);
+    }
+
+    private static IReadOnlyList<TurnStep> ReadAcceptedStepList(DurableDict<string> acceptedSteps) {
         return acceptedSteps.Keys
             .OrderBy(static key => key, StringComparer.Ordinal)
             .Select(
@@ -748,7 +854,7 @@ internal static class GameSimulation {
         bool endsTurn
     ) {
         var currentTurn = GetCurrentTurn(root);
-        var acceptedSteps = currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsKey)!;
+        var acceptedSteps = GetAcceptedStepsForActor(root, TerminalPlayerActorId, createIfMissing: true)!;
         var stepNumber = currentTurn.GetOrThrow<int>(NextStepNumberKey);
         var stepId = $"step-{stepNumber:D4}";
         var step = root.Revision.CreateDict<string>();
@@ -773,6 +879,7 @@ internal static class GameSimulation {
         var rev = root.Revision;
         var game = GetGame(root);
         var currentTurn = GetCurrentTurn(root);
+        EnsureCurrentTurnPhase4Fields(root);
         var turnHistory = game.GetOrThrow<DurableDict<string>>(TurnHistoryKey)!;
         var completedTurnCount = game.GetOrThrow<int>(CompletedTurnCountKey);
         var turnNumber = completedTurnCount + 1;
@@ -784,6 +891,9 @@ internal static class GameSimulation {
         archivedTurn.Upsert(StartLocationIdKey, currentTurn.GetOrThrow<string>(StartLocationIdKey)!);
         archivedTurn.Upsert(NotebookSnapshotKey, currentTurn.GetOrThrow<string>(NotebookSnapshotKey)!);
         archivedTurn.Upsert(AcceptedStepsKey, currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsKey)!);
+        archivedTurn.Upsert(AcceptedStepsByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsByActorKey)!);
+        archivedTurn.Upsert(LargeActionByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!);
+        archivedTurn.Upsert(BarrierStateKey, currentTurn.GetOrThrow<string>(BarrierStateKey)!);
         archivedTurn.Upsert(ResolutionSummaryKey, resolutionSummary);
         archivedTurn.Upsert(EndingNotebookKey, GetNotebookContent(GetNotebookSnapshot(root)));
 
@@ -818,6 +928,68 @@ internal static class GameSimulation {
                 GetNotebookContent(notebookSnapshot)
             )
         );
+    }
+
+    private static DurableDict<string>? GetAcceptedStepsForActor(
+        DurableDict<string> root,
+        string actorId,
+        bool createIfMissing
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var acceptedStepsByActor = currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsByActorKey)!;
+        if (acceptedStepsByActor.TryGet(actorId, out DurableDict<string>? acceptedSteps)
+            && acceptedSteps is not null) {
+            return acceptedSteps;
+        }
+
+        if (!createIfMissing) { return null; }
+
+        acceptedSteps = root.Revision.CreateDict<string>();
+        acceptedStepsByActor.Upsert(actorId, acceptedSteps);
+
+        if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) {
+            currentTurn.Upsert(AcceptedStepsKey, acceptedSteps);
+        }
+
+        return acceptedSteps;
+    }
+
+    private static DurableDict<string> EnsureCurrentTurnPhase4Fields(DurableDict<string> root) {
+        var currentTurn = GetCurrentTurn(root);
+
+        if (!currentTurn.TryGet(AcceptedStepsByActorKey, out DurableDict<string>? acceptedStepsByActor)
+            || acceptedStepsByActor is null) {
+            acceptedStepsByActor = root.Revision.CreateDict<string>();
+            currentTurn.Upsert(AcceptedStepsByActorKey, acceptedStepsByActor);
+        }
+
+        if (!acceptedStepsByActor.TryGet(TerminalPlayerActorId, out DurableDict<string>? terminalSteps)
+            || terminalSteps is null) {
+            terminalSteps = currentTurn.TryGet(AcceptedStepsKey, out DurableDict<string>? legacySteps)
+                && legacySteps is not null
+                    ? legacySteps
+                    : root.Revision.CreateDict<string>();
+            acceptedStepsByActor.Upsert(TerminalPlayerActorId, terminalSteps);
+            currentTurn.Upsert(AcceptedStepsKey, terminalSteps);
+        }
+
+        if (!currentTurn.TryGet(LargeActionByActorKey, out DurableDict<string>? largeActionByActor)
+            || largeActionByActor is null) {
+            currentTurn.Upsert(LargeActionByActorKey, root.Revision.CreateDict<string>());
+        }
+
+        if (!currentTurn.TryGet(TurnOwnerActorIdKey, out string? turnOwnerActorId)
+            || string.IsNullOrWhiteSpace(turnOwnerActorId)) {
+            currentTurn.Upsert(TurnOwnerActorIdKey, TerminalPlayerActorId);
+        }
+
+        if (!currentTurn.TryGet(BarrierStateKey, out string? barrierState)
+            || string.IsNullOrWhiteSpace(barrierState)) {
+            currentTurn.Upsert(BarrierStateKey, CollectingTerminalBarrierState);
+        }
+
+        return currentTurn;
     }
 
     private static string? TryGetOptionalString(DurableDict<string> dict, string key) {

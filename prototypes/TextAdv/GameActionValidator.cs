@@ -166,6 +166,7 @@ internal static class GameActionValidator {
         var sb = new StringBuilder();
         sb.AppendLine("请验证下面这一步动作是否 grounded。\n");
         sb.AppendLine("[当前可见信息]");
+        sb.AppendLine($"- ActorId: {perception.ActorId}");
         sb.AppendLine($"- Time: {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
         sb.AppendLine($"- Location: {perception.Location.Name}");
         sb.AppendLine($"- LocationDescription: {perception.Location.Description}");

@@ -326,9 +326,12 @@ game
 
 当前 Phase 4 前置落地：
 
-- `game.activeActorIds` 已存在，但首版只登记 `actor:player`；它代表“需要参与 Player 回合收集的主体”，不等同于所有 NPC。
+- `game.activeActorIds` 已存在；新游戏会登记 `actor:player`，开发者可用 `dev-add-llm-player` 添加 active `llm-player`。它代表“需要参与 Player 回合收集的主体”，不等同于所有 NPC。
 - `world.actors` 中的 `kind` 已预留 `terminal-player` / `llm-player` / `npc`。NPC 可以被 GM 创建和被玩家感知，但暂不自动声明 Large-Action。
-- `actor:player` 与旧 `root.player` 并存。下一步实现 LLM Player Agent 时，建议将 `Memory-Notebook` 与 location 逐步收敛到 actor ledger，再让 `root.player` 变成兼容层或删除。
+- `PerceptionBundle` 已经可以通过 `DescribePerceptionForActor(root, actorId)` 按 actor 投影。地点、可见角色、持有物品和 Memory-Notebook 都从 actor ledger 读取；`DescribeCurrentPerception` 只是 `actor:player` 的便捷入口。
+- `actor:player` 与旧 `root.player` 并存。终端玩家的 `location` 和 `memoryNotebook` 已镜像到 actor ledger；旧字段暂时作为兼容层保留，后续可以在 LLM Player loop 稳定后删除。
+- `currentTurn` 已预留 `turnOwnerActorId`、`barrierState`、`acceptedStepsByActor`、`largeActionByActor`。当前终端玩家路径仍写入 legacy `acceptedSteps`，同时把同一组步骤挂到 `acceptedStepsByActor["player"]`；旧存档读取时会自动补齐这些 Phase 4 字段。
+- `dev-look-actor <actor-id>` 可用于查看任意 actor 的 Perception-Bundle；这验证了未来 LLM Player Agent 的输入可以只包含该 actor 的视角，而不是完整世界真相。
 - 多主体 barrier 尚未实现；目前仍是终端玩家 Large-Action 直接触发 GM 结算。这个选择让 Phase 3 的实体/交互账本先稳定下来，再扩展回合收集协议。
 - GM 结算已经从单次宽 prompt 改为同一会话内的分阶段工具循环：`explore` 依次执行“地图与移动落账 → 实体与交互账本审计 → 玩家可见摘要”，`interact` 依次执行“交互直接后果 → affordance 生命周期审计 → 玩家可见摘要”。每个阶段都会保留前文 history，并在阶段开始注入最新 Perception/账本投影，以减少遗漏实体、交互或可见性更新的概率。
 
