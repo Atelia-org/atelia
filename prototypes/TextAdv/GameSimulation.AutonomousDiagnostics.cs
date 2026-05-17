@@ -166,7 +166,13 @@ internal static partial class GameSimulation {
             resolution = realResolution;
         }
         else {
-            var resolutionResult = ApplyDeterministicDiagnosticCollectedTurn(root);
+            var resolutionResult = await ApplyReadyCollectedTurnAsync(
+                    root,
+                    CollectedTurnResolutionMode.DeterministicOnly,
+                    collectedTurnLeadOverride: null,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
             if (!resolutionResult.TryGetValue(out var deterministicResolution) || deterministicResolution is null) {
                 return AsyncAteliaResult<AutonomousRoundReport>.Failure(resolutionResult.Error!);
             }
@@ -215,112 +221,6 @@ internal static partial class GameSimulation {
         }
 
         return DescribeCurrentTurnStatus(root);
-    }
-
-    private static AteliaResult<TurnResolution> ApplyDeterministicDiagnosticCollectedTurn(DurableDict<string> root) {
-        var status = DescribeCurrentTurnStatus(root);
-        if (!status.AllActiveActorsSubmittedLargeAction) {
-            return AteliaResult<TurnResolution>.Failure(
-                new TextAdvError(
-                    "TextAdv.TurnNotReadyForGm",
-                    "当前回合还没有收齐所有 active actor 的 Large-Action。"
-                )
-            );
-        }
-
-        var intents = ReadLargeActionIntents(root);
-        var terminalIntent = intents.FirstOrDefault(static intent => string.Equals(intent.ActorId, TerminalPlayerActorId, StringComparison.Ordinal));
-        if (terminalIntent is null) {
-            return AteliaResult<TurnResolution>.Failure(
-                new TextAdvError(
-                    "TextAdv.TerminalActionMissing",
-                    "当前回合缺少终端玩家的 Large-Action，不能进入诊断结算。"
-                )
-            );
-        }
-
-        var lead = BuildCollectedTurnLead(intents, "diagnostic harness 使用 deterministic 结算，未调用真实 GM Agent。");
-        return terminalIntent.ActionKind switch {
-            "large/explore" => ApplyDeterministicDiagnosticExplore(
-                root,
-                ParseRequiredPayloadValue(terminalIntent.ActionPayload, "direction"),
-                ParseOptionalPayloadValue(terminalIntent.ActionPayload, "focus"),
-                lead
-            ),
-            "large/rest-a-while" => ResolveRestAccepted(root, lead),
-            _ => AteliaResult<TurnResolution>.Failure(
-                new TextAdvError(
-                    "TextAdv.UnsupportedDiagnosticAction",
-                    $"diagnostic deterministic harness 尚不支持 Large-Action '{terminalIntent.ActionKind}'。"
-                )
-            )
-        };
-    }
-
-    private static AteliaResult<TurnResolution> ApplyDeterministicDiagnosticExplore(
-        DurableDict<string> root,
-        string direction,
-        string? focus,
-        string collectedTurnLead
-    ) {
-        direction = NormalizeRequired(direction, nameof(direction));
-        focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
-
-        var currentLocationId = GetActorLocationId(root, TerminalPlayerActorId);
-        var currentLocation = GetLocation(root, currentLocationId);
-        var currentLocationName = currentLocation.GetOrThrow<string>(NameKey)!;
-        var currentExits = currentLocation.GetOrThrow<DurableDict<string>>(ExitsKey)!;
-        var game = GetGame(root);
-        var previousDay = game.GetOrThrow<int>(DayKey);
-        var previousSlot = game.GetOrThrow<int>(SlotKey);
-        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var gmTools = new GmWorldEditService(root);
-        var createdNewLocation = false;
-        string targetLocationId;
-
-        if (currentExits.TryGet(direction, out string? existingTargetLocationId)
-            && !string.IsNullOrWhiteSpace(existingTargetLocationId)) {
-            targetLocationId = existingTargetLocationId;
-        }
-        else {
-            targetLocationId = CreateExplorationLocationId(root, currentLocationId, direction);
-            var targetName = CreateExplorationLocationName(direction, focus);
-            var targetDescription = CreateExplorationLocationDescription(currentLocationName, direction, focus);
-
-            var createResult = gmTools.CreateLocation(targetLocationId, targetName, targetDescription);
-            if (!createResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(createResult.Error!); }
-
-            var linkResult = gmTools.LinkLocations(
-                currentLocationId,
-                direction,
-                targetLocationId,
-                TryGetReverseDirection(direction)
-            );
-            if (!linkResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(linkResult.Error!); }
-
-            createdNewLocation = true;
-        }
-
-        var moveResult = gmTools.MoveActorTo(TerminalPlayerActorId, targetLocationId);
-        if (!moveResult.IsSuccess) { return AteliaResult<TurnResolution>.Failure(moveResult.Error!); }
-
-        var targetLocation = GetLocation(root, targetLocationId);
-        var targetLocationName = targetLocation.GetOrThrow<string>(NameKey)!;
-        var nextClock = AdvanceClock(root);
-        var discoveryText = createdNewLocation
-            ? $"GM 账本新增了地点「{targetLocationName}」，并记录了从「{currentLocationName}」向 {direction} 的出口。"
-            : $"你沿着已知出口从「{currentLocationName}」向 {direction} 前进，来到「{targetLocationName}」。";
-        var resolutionSummary = AppendClockAdvance(
-            discoveryText,
-            previousDay,
-            previousSlot,
-            nextClock.Day,
-            nextClock.Slot,
-            slotsPerDay
-        );
-        resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
-
-        return CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary);
     }
 
     private static DiagnosticTerminalAction BuildDiagnosticTerminalAction(DurableDict<string> root, int roundNumber) {

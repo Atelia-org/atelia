@@ -32,10 +32,11 @@ LLM Agent (Copilot / Claude Code)
 
 ## 当前代码分层
 
-- `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
+- `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责主命令入口与共享宿主状态
+- `GameEntry.Dev.cs`：开发者调试命令；从主入口拆分出的 dev CLI 绑定与导出 helper
 - `GameSimulation.cs`：Schema/Core；世界 bootstrap、StateJournal schema key、底层 ledger accessor
-- `GameSimulation.ActorJournal.cs`：每个 actor 的第一人称诊断日志；账本内持久化，按需导出 Markdown
-- `GameSimulation.AutonomousDiagnostics.cs`：开发者诊断跑批；托管终端玩家、补足 diagnostic LLM players、自动推进固定回合数
+- `GameSimulation.ActorJournal.cs`：每个 actor 的第一人称诊断导出视图；尽量基于 `turnHistory` / 私有 resolution 按需生成 Markdown，而不是维护独立持久化副本
+- `GameSimulation.AutonomousDiagnostics.cs`：开发者诊断跑批；托管终端玩家、补足 diagnostic LLM players，并尽量复用统一的 collected-turn 流程自动推进固定回合数
 - `GameSimulation.Perception.cs`：Read-side projection；`Perception-Bundle`、可见性枚举、turn status、interaction lookup
 - `GameSimulation.TurnFlow.cs`：Write-side workflow；Small/Large-Action 落账、回合归档、GM/LLM player 驱动与 deterministic fallback
 - `GmWorldEditService.cs`：GM-style 世界编辑工具集；通过 `MethodToolWrapper` 暴露 Location / Item / Actor / Interaction 账本工具
@@ -110,7 +111,6 @@ root (DurableDict<string>)
 │   ├── actors → DurableDict<string>
 │   │   ├── player → { kind: "terminal-player", name, locationId, profileNote, active, memoryNotebook }
 │   │   └── ...     → { kind: "llm-player" | "npc", name, locationId, profileNote, active, memoryNotebook? }
-│   ├── actorJournals → DurableDict<string> # actorId → DurableText 第一人称诊断日志
 │   ├── interactions → DurableDict<string>
 │   └── initialLocation → "beach"
 ├── game → DurableDict<string>
@@ -123,7 +123,7 @@ root (DurableDict<string>)
 │   │     nextStepNumber,
 │   │     ...
 │   │   }
-│   ├── turnHistory → DurableDict<string>
+│   ├── turnHistory → DurableDict<string> # actor journal 导出等诊断视图优先从这里派生
 │   └── lastResolutionByActor → DurableDict<string>
 ```
 
@@ -142,7 +142,7 @@ root (DurableDict<string>)
 - `currentTurn` 当前只保留真正驱动流程的账本字段：`acceptedStepsByActor`、`largeActionByActor`、`notebookSnapshot`、`nextStepNumber` 等；`dev-turn-status` 里的 barrier / next actor 由当前提交状态即时推导
 - 当存在多个 active actor 时，终端玩家的真实 Large-Action 通过 validator 后会先写入回合收集账本；当前 MVP 会依次驱动 pending `llm-player`，让它基于自己的 `Perception-Bundle` 调用工具提交 Large-Action，通过同一套 validator 后进入 collected-turn resolver
 - LLM Player Agent 首版开放 `player_edit_memory_notebook` Small-Action，以及 `player_rest_a_while`、`player_explore`、`player_interact` 三个 Large-Action 工具；若未配置 API key、模式为 deterministic、provider 失败或 validator 多次拒绝，会回退为“谨慎观察并暂不移动”
-- collected-turn resolver 首版按终端玩家的大型动作推进世界，其它 active actor 的意图会进入 `turnHistory` 和结算摘要；后续再升级为真正的多意图 GM 裁决
+- collected-turn resolver 首版按终端玩家的大型动作推进世界，其它 active actor 的意图会进入 `turnHistory` 和结算摘要；自动诊断回合也应尽量复用这条统一流程，而不是维护一套平行结算逻辑
 - 当前 validator 默认走 `DeepSeekV4ChatClient`
 - 数据目录默认是 `/tmp/atelia-textadv-game/`，可通过 `ATELIA_TEXTADV_REPO_DIR` 覆盖（适合并行开多个试验世界）
 
@@ -154,15 +154,15 @@ root (DurableDict<string>)
 - `pmux game dev-look-actor <actor-id>`：按指定 actor 投影并渲染 `Perception-Bundle`
 - `pmux game dev-turn-status`：查看当前推导出的 barrier / next actor，以及每个 active actor 的 Large-Action 提交状态
 - `pmux game dev-submit-large-action [--payload <payload>] <actor-id> <action-kind> <summary> <reason>`：绕过 validator 为任意 active actor 提交一个 Large-Action，用来验证 `acceptedStepsByActor` / `largeActionByActor` 和 barrier 流转
-- `pmux game dev-show-actor-journal <actor-id>`：显示指定 actor 的第一人称诊断日志
-- `pmux game dev-export-actor-journals [--output-dir <dir>]`：把所有 actor journal 导出为 Markdown 文件
+- `pmux game dev-show-actor-journal <actor-id>`：显示指定 actor 的第一人称诊断导出视图
+- `pmux game dev-export-actor-journals [--output-dir <dir>]`：把所有 actor journal 导出为 Markdown 文件（优先从 `turnHistory` 等现有账本信息派生）
 - `pmux game dev-run-autonomous-rounds [--ensure-llm-players <n>] [--real-agents] [--skip-export] [--output-dir <dir>] <rounds>`：托管终端玩家自动推进若干诊断回合；默认 deterministic，不调用真实 provider
 
 当前 `llm-player` 会被创建、持久化和投影视角；每个 `Perception-Bundle` 会包含 actor 自身的 name / kind / profileNote，避免内部玩家不知道“自己是谁”。真实 LLM Player 默认使用两阶段 `director-executor` 管线：先用无工具的导演阶段整理角色事实、猜测、欲望/恐惧、风险姿态、notebook 建议和推荐 Large-Action，再把这份导演札记作为 observation 交给带工具的执行阶段。执行阶段仍必须通过 `player_edit_memory_notebook` / `player_rest_a_while` / `player_explore` / `player_interact` 行动，并继续走同一套 validator。未配置 API key、模式为 deterministic、provider 失败或多次重试失败时，系统会 fallback 提交“谨慎观察并暂不移动”。开发者仍可用 `dev-submit-large-action` 手动模拟其它动作。
 
 多主体 Large-Action 收齐后，系统会先尝试真实 GM collected-turn staged resolver。该 resolver 把所有 active actor 的 Large-Action intent、事前推理、validator feedback 和各自行前 `Perception-Bundle` 注入同一个 GM 会话，分三阶段执行：多主体意图裁决与 hard truth 落账 → 账本审计 → 各 actor 私有结算反馈与终端玩家摘要。GM 工具集新增 `gm_move_actor`，因此真实 GM 可以移动任意 active player actor，而不是只能移动终端玩家。`gm_move_player` 仍保留为 `gm_move_actor(player, ...)` 的便捷别名。GM 工具集还提供 `gm_set_actor_resolution`，用于写入 `game.lastResolutionByActor[actorId]`；下一回合每个 actor 的 `Perception-Bundle.LastResolution` 直接读取自己的私有反馈。若真实 GM 未启用或失败，当前 MVP 仍回退到终端玩家主导的 deterministic 结算，并把同一摘要补给所有 active actor。
 
-`actorJournals` 是诊断优先的账本：每个 active actor 在回合完成时追加一段第一人称日志，来源是该 actor 的私有 resolution。`dev-run-autonomous-rounds` 默认会补足 2 个 diagnostic `llm-player`，由 deterministic harness 让托管终端玩家持续探索，并在结束后导出日志；传 `--real-agents` 才会启用真实 LLM Player / GM Agent 管线。这个默认值刻意偏保守，避免 PipeMux 30s timeout 或 provider 抖动影响基本回归测试。
+actor journal 是诊断优先的只读导出视图：每个 active actor 的第一人称日志优先基于 `turnHistory`、私有 resolution 和相关回合摘要按需生成，而不是单独维护一份持久化账本。`dev-run-autonomous-rounds` 默认会补足 2 个 diagnostic `llm-player`，托管终端玩家持续探索，并在结束后导出日志；默认模式仍偏 deterministic，但目标是尽量走与正式多主体回合同一套 collected-turn 收集与结算路径，只有真实 provider 未启用或失败时才退回 fallback。这个默认值刻意偏保守，避免 PipeMux 30s timeout 或 provider 抖动影响基本回归测试。
 
 ## Validator 配置
 

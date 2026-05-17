@@ -10,7 +10,6 @@ internal static partial class GameSimulation {
     private const string ItemsKey = "items";
     private const string ActorsKey = "actors";
     private const string InteractionsKey = "interactions";
-    private const string ActorJournalsKey = "actorJournals";
     private const string InitialLocationKey = "initialLocation";
     private const string ActiveActorIdsKey = "activeActorIds";
     private const string MemoryNotebookKey = "memoryNotebook";
@@ -32,6 +31,9 @@ internal static partial class GameSimulation {
     private const string TurnNumberKey = "turnNumber";
     private const string ResolutionSummaryKey = "resolutionSummary";
     private const string EndingNotebookKey = "endingNotebook";
+    private const string EndDayKey = "endDay";
+    private const string EndSlotKey = "endSlot";
+    private const string ActorTurnContextByActorKey = "actorTurnContextByActor";
     private const string CollectingTerminalBarrierState = "collecting-terminal";
     private const string CollectingLlmBarrierState = "collecting-llm";
     private const string ReadyForGmBarrierState = "ready-for-gm";
@@ -49,6 +51,7 @@ internal static partial class GameSimulation {
     private const string ActiveKey = "active";
     private const string ExitsKey = "exits";
     private const string LocationIdKey = "locationId";
+    private const string LocationNameKey = "locationName";
     private const string OwnerActorIdKey = "ownerActorId";
     private const string VisibilityKey = "visibility";
     private const string TargetKindKey = "targetKind";
@@ -77,6 +80,11 @@ internal static partial class GameSimulation {
         PreserveExistingAndFillMissing
     }
 
+    private enum CollectedTurnResolutionMode {
+        RealAgentWithDeterministicFallback,
+        DeterministicOnly
+    }
+
     internal static DurableDict<string> CreateNewWorld(Repository repo) {
         var revResult = repo.GetOrCreateBranch("main");
         var rev = revResult.Value!;
@@ -88,7 +96,6 @@ internal static partial class GameSimulation {
         var items = rev.CreateDict<string>();
         var actors = rev.CreateDict<string>();
         var interactions = rev.CreateDict<string>();
-        var actorJournals = rev.CreateDict<string>();
         var activeActorIds = rev.CreateDict<string>();
         var notebook = CreateNotebookText(rev, string.Empty);
         var turnHistory = rev.CreateDict<string>();
@@ -122,14 +129,12 @@ internal static partial class GameSimulation {
         );
         terminalActor.Upsert(MemoryNotebookKey, notebook);
         actors.Upsert(TerminalPlayerActorId, terminalActor);
-        actorJournals.Upsert(TerminalPlayerActorId, CreateJournalText(rev));
         activeActorIds.Upsert(TerminalPlayerActorId, TerminalPlayerActorId);
 
         world.Upsert(LocationsKey, locations);
         world.Upsert(ItemsKey, items);
         world.Upsert(ActorsKey, actors);
         world.Upsert(InteractionsKey, interactions);
-        world.Upsert(ActorJournalsKey, actorJournals);
         world.Upsert(InitialLocationKey, beachId);
 
         game.Upsert(DayKey, 1);
@@ -241,9 +246,6 @@ internal static partial class GameSimulation {
 
         return notebook;
     }
-
-    private static DurableText CreateJournalText(Revision rev)
-        => rev.CreateText();
 
     private static DurableDict<string> CreateCurrentTurnState(
         Revision rev,

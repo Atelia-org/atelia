@@ -6,40 +6,22 @@ namespace Atelia.TextAdv;
 internal static partial class GameSimulation {
     internal static IReadOnlyList<ActorJournalExport> BuildActorJournalExports(DurableDict<string> root) {
         var actors = GetActors(root);
-        var journals = TryGetActorJournals(root);
         return actors.Keys
             .OrderBy(static actorId => actorId, StringComparer.Ordinal)
-            .Select(actorId => {
-                var actor = actors.GetOrThrow<DurableDict<string>>(actorId)!;
-                var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
-                    ? rawName
-                    : actorId;
-                var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-                    ? rawKind
-                    : "npc";
-                var content = GetActorJournalContent(journals, actorId);
-                return new ActorJournalExport(
-                    actorId,
-                    actorName,
-                    actorKind,
-                    BuildActorJournalFileName(actorId, actorName),
-                    content
-                );
-            })
+            .Select(actorId => BuildActorJournalExport(root, actorId))
             .ToArray();
     }
 
     internal static ActorJournalExport BuildActorJournalExport(DurableDict<string> root, string actorId) {
         actorId = NormalizeRequired(actorId, nameof(actorId));
         var actor = GetActor(root, actorId);
-        var journals = TryGetActorJournals(root);
         var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
             ? rawName
             : actorId;
         var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
             ? rawKind
             : "npc";
-        var content = GetActorJournalContent(journals, actorId);
+        var content = BuildActorJournalContent(root, actorId, actorName, actorKind);
         return new ActorJournalExport(
             actorId,
             actorName,
@@ -49,90 +31,135 @@ internal static partial class GameSimulation {
         );
     }
 
-    private static void AppendActorJournalsForCompletedTurn(DurableDict<string> root, string fallbackSummary) {
-        var game = GetGame(root);
-        var currentTurn = GetCurrentTurn(root);
-        var startDay = currentTurn.GetOrThrow<int>(StartDayKey);
-        var startSlot = currentTurn.GetOrThrow<int>(StartSlotKey);
-        var endDay = game.GetOrThrow<int>(DayKey);
-        var endSlot = game.GetOrThrow<int>(SlotKey);
-        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var completedTurnCount = game.GetOrThrow<int>(CompletedTurnCountKey);
-        var turnNumber = completedTurnCount + 1;
-        var lastResolutionByActor = GetOrCreateLastResolutionByActor(root);
+    private static string BuildActorJournalContent(
+        DurableDict<string> root,
+        string actorId,
+        string fallbackActorName,
+        string fallbackActorKind
+    ) {
+        var archivedTurns = GetArchivedTurns(root);
+        var entries = new List<string>(archivedTurns.Count);
+        for (var index = 0; index < archivedTurns.Count; index++) {
+            var entry = TryBuildActorJournalEntry(root, archivedTurns, index, actorId, fallbackActorName, fallbackActorKind);
+            if (!string.IsNullOrWhiteSpace(entry)) {
+                entries.Add(entry);
+            }
+        }
 
-        foreach (var actorId in EnumerateActiveActorIds(root)) {
-            var actor = GetActor(root, actorId);
-            var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
+        return entries.Count == 0 ? "(journal is empty)" : string.Join("\n\n", entries);
+    }
+
+    private static string? TryBuildActorJournalEntry(
+        DurableDict<string> root,
+        IReadOnlyList<DurableDict<string>> archivedTurns,
+        int turnIndex,
+        string actorId,
+        string fallbackActorName,
+        string fallbackActorKind
+    ) {
+        var archivedTurn = archivedTurns[turnIndex];
+        var actorResolution = ReadArchivedActorResolution(archivedTurn, actorId);
+        var actorContext = ReadArchivedActorTurnContext(archivedTurn, actorId);
+        if (actorResolution is null && actorContext is null) {
+            return null;
+        }
+
+        var actorName = actorContext?.ActorName ?? fallbackActorName;
+        var actorKind = actorContext?.ActorKind ?? fallbackActorKind;
+        var locationName = actorContext?.LocationName ?? TryGetCurrentActorLocationName(root, actorId) ?? "未知地点";
+        var startDay = archivedTurn.GetOrThrow<int>(StartDayKey);
+        var startSlot = archivedTurn.GetOrThrow<int>(StartSlotKey);
+        var (endDay, endSlot) = ResolveArchivedTurnEndClock(root, archivedTurns, turnIndex);
+        var slotsPerDay = GetGame(root).GetOrThrow<int>(SlotsPerDayKey);
+        return BuildActorJournalEntry(
+            archivedTurn.GetOrThrow<int>(TurnNumberKey),
+            actorId,
+            actorName,
+            actorKind,
+            locationName,
+            GameClock.FormatClock(startDay, startSlot, slotsPerDay),
+            GameClock.FormatClock(endDay, endSlot, slotsPerDay),
+            actorResolution ?? archivedTurn.GetOrThrow<string>(ResolutionSummaryKey)!
+        );
+    }
+
+    private static IReadOnlyList<DurableDict<string>> GetArchivedTurns(DurableDict<string> root) {
+        var game = GetGame(root);
+        var turnHistory = game.GetOrThrow<DurableDict<string>>(TurnHistoryKey)!;
+        return turnHistory.Keys
+            .OrderBy(static turnId => turnId, StringComparer.Ordinal)
+            .Select(turnId => turnHistory.GetOrThrow<DurableDict<string>>(turnId)!)
+            .ToArray();
+    }
+
+    private static (int EndDay, int EndSlot) ResolveArchivedTurnEndClock(
+        DurableDict<string> root,
+        IReadOnlyList<DurableDict<string>> archivedTurns,
+        int turnIndex
+    ) {
+        var archivedTurn = archivedTurns[turnIndex];
+        if (archivedTurn.TryGet(EndDayKey, out int endDay) && archivedTurn.TryGet(EndSlotKey, out int endSlot)) {
+            return (endDay, endSlot);
+        }
+
+        if (turnIndex + 1 < archivedTurns.Count) {
+            var nextTurn = archivedTurns[turnIndex + 1];
+            return (
+                nextTurn.GetOrThrow<int>(StartDayKey),
+                nextTurn.GetOrThrow<int>(StartSlotKey)
+            );
+        }
+
+        var game = GetGame(root);
+        return (
+            game.GetOrThrow<int>(DayKey),
+            game.GetOrThrow<int>(SlotKey)
+        );
+    }
+
+    private static string? ReadArchivedActorResolution(DurableDict<string> archivedTurn, string actorId) {
+        if (archivedTurn.TryGet(LastResolutionByActorKey, out DurableDict<string>? lastResolutionByActor)
+            && lastResolutionByActor is not null
+            && lastResolutionByActor.TryGet(actorId, out string? actorResolution)
+            && !string.IsNullOrWhiteSpace(actorResolution)) {
+            return actorResolution;
+        }
+
+        return null;
+    }
+
+    private static (string ActorName, string ActorKind, string LocationName)? ReadArchivedActorTurnContext(
+        DurableDict<string> archivedTurn,
+        string actorId
+    ) {
+        if (archivedTurn.TryGet(ActorTurnContextByActorKey, out DurableDict<string>? contextsByActor)
+            && contextsByActor is not null
+            && contextsByActor.TryGet(actorId, out DurableDict<string>? context)
+            && context is not null) {
+            var actorName = context.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
                 ? rawName
                 : actorId;
-            var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
+            var actorKind = context.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
                 ? rawKind
                 : "npc";
-            var locationId = GetActorLocationId(root, actorId);
-            var location = GetLocation(root, locationId);
-            var locationName = location.GetOrThrow<string>(NameKey)!;
-            var actorResolution = lastResolutionByActor.TryGet(actorId, out string? rawResolution)
-                && !string.IsNullOrWhiteSpace(rawResolution)
-                    ? rawResolution
-                    : fallbackSummary;
-
-            var entry = BuildActorJournalEntry(
-                turnNumber,
-                actorId,
-                actorName,
-                actorKind,
-                locationName,
-                GameClock.FormatClock(startDay, startSlot, slotsPerDay),
-                GameClock.FormatClock(endDay, endSlot, slotsPerDay),
-                actorResolution
-            );
-            EnsureActorJournal(root, actorId).Append(entry);
-        }
-    }
-
-    private static DurableText EnsureActorJournal(DurableDict<string> root, string actorId) {
-        actorId = NormalizeRequired(actorId, nameof(actorId));
-        _ = GetActor(root, actorId);
-        var journals = GetOrCreateActorJournals(root);
-        if (journals.TryGet(actorId, out DurableText? journal) && journal is not null) {
-            return journal;
+            var locationName = context.TryGet(LocationNameKey, out string? rawLocationName) && !string.IsNullOrWhiteSpace(rawLocationName)
+                ? rawLocationName
+                : "未知地点";
+            return (actorName, actorKind, locationName);
         }
 
-        journal = CreateJournalText(root.Revision);
-        journals.Upsert(actorId, journal);
-        return journal;
+        return null;
     }
 
-    private static DurableDict<string>? TryGetActorJournals(DurableDict<string> root) {
-        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
-        return world.TryGet(ActorJournalsKey, out DurableDict<string>? journals) ? journals : null;
-    }
-
-    private static DurableDict<string> GetOrCreateActorJournals(DurableDict<string> root) {
-        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
-        if (world.TryGet(ActorJournalsKey, out DurableDict<string>? journals) && journals is not null) {
-            return journals;
+    private static string? TryGetCurrentActorLocationName(DurableDict<string> root, string actorId) {
+        var actors = GetActors(root);
+        if (!actors.TryGet(actorId, out DurableDict<string>? actor) || actor is null) {
+            return null;
         }
 
-        journals = root.Revision.CreateDict<string>();
-        world.Upsert(ActorJournalsKey, journals);
-        return journals;
-    }
-
-    private static string GetJournalContent(DurableText journal) {
-        var content = string.Join("\n\n", journal.GetAllBlocks().Select(static block => block.Content));
-        return string.IsNullOrWhiteSpace(content) ? "(journal is empty)" : content;
-    }
-
-    private static string GetActorJournalContent(DurableDict<string>? journals, string actorId) {
-        if (journals is not null
-            && journals.TryGet(actorId, out DurableText? journal)
-            && journal is not null) {
-            return GetJournalContent(journal);
-        }
-
-        return "(journal is empty)";
+        var locationId = actor.GetOrThrow<string>(LocationIdKey)!;
+        var location = GetLocation(root, locationId);
+        return location.GetOrThrow<string>(NameKey);
     }
 
     private static string BuildActorJournalEntry(

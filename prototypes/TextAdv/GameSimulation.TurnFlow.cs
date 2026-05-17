@@ -97,8 +97,20 @@ internal static partial class GameSimulation {
         return AsyncAteliaResult<TurnCollectionStatus>.Success(DescribeCurrentTurnStatus(root));
     }
 
-    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
+    internal static Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
         DurableDict<string> root,
+        CancellationToken cancellationToken
+    ) => ApplyReadyCollectedTurnAsync(
+        root,
+        CollectedTurnResolutionMode.RealAgentWithDeterministicFallback,
+        collectedTurnLeadOverride: null,
+        cancellationToken
+    );
+
+    private static async Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
+        DurableDict<string> root,
+        CollectedTurnResolutionMode resolutionMode,
+        string? collectedTurnLeadOverride,
         CancellationToken cancellationToken
     ) {
         var status = DescribeCurrentTurnStatus(root);
@@ -123,67 +135,59 @@ internal static partial class GameSimulation {
         }
 
         try {
-            var game = GetGame(root);
-            var previousDay = game.GetOrThrow<int>(DayKey);
-            var previousSlot = game.GetOrThrow<int>(SlotKey);
-            var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-            var gmContext = BuildGmCollectedTurnContext(root, intents);
-            ClearLastResolutionByActor(root);
-            var gmResolution = await GameMasterResolver.TryResolveCollectedTurnAsync(
-                root,
-                gmContext,
-                cancellationToken
-            ).ConfigureAwait(false);
-
-            if (gmResolution is { UsedLlm: true }) {
-                var nextClock = AdvanceClock(root);
-                var resolutionSummary = AppendClockAdvance(
-                    gmResolution.Summary,
-                    previousDay,
-                    previousSlot,
-                    nextClock.Day,
-                    nextClock.Slot,
-                    slotsPerDay
-                );
-
-                AppendClockAdvanceToExistingActorResolutions(
+            if (resolutionMode is CollectedTurnResolutionMode.RealAgentWithDeterministicFallback) {
+                var game = GetGame(root);
+                var previousDay = game.GetOrThrow<int>(DayKey);
+                var previousSlot = game.GetOrThrow<int>(SlotKey);
+                var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
+                var gmContext = BuildGmCollectedTurnContext(root, intents);
+                ClearLastResolutionByActor(root);
+                var gmResolution = await GameMasterResolver.TryResolveCollectedTurnAsync(
                     root,
-                    previousDay,
-                    previousSlot,
-                    nextClock.Day,
-                    nextClock.Slot,
-                    slotsPerDay
-                );
-                return AsyncAteliaResult<TurnResolution>.Success(
-                    CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
+                    gmContext,
+                    cancellationToken
+                ).ConfigureAwait(false);
+
+                if (gmResolution is { UsedLlm: true }) {
+                    var nextClock = AdvanceClock(root);
+                    var resolutionSummary = AppendClockAdvance(
+                        gmResolution.Summary,
+                        previousDay,
+                        previousSlot,
+                        nextClock.Day,
+                        nextClock.Slot,
+                        slotsPerDay
+                    );
+
+                    AppendClockAdvanceToExistingActorResolutions(
+                        root,
+                        previousDay,
+                        previousSlot,
+                        nextClock.Day,
+                        nextClock.Slot,
+                        slotsPerDay
+                    );
+                    return AsyncAteliaResult<TurnResolution>.Success(
+                        CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
+                    );
+                }
+
+                collectedTurnLeadOverride ??= BuildCollectedTurnLead(intents, gmResolution?.FallbackReason);
+            }
+            else {
+                collectedTurnLeadOverride ??= BuildCollectedTurnLead(
+                    intents,
+                    "diagnostic harness 使用 deterministic 结算，未调用真实 GM Agent。"
                 );
             }
 
-            var lead = BuildCollectedTurnLead(intents, gmResolution?.FallbackReason);
-            return terminalIntent.ActionKind switch {
-                "large/rest-a-while" => AsyncAteliaResult<TurnResolution>.Success(ResolveRestAccepted(root, collectedTurnLead: lead)),
-                "large/explore" => await ResolveExploreAcceptedAsync(
-                    root,
-                    ParseRequiredPayloadValue(terminalIntent.ActionPayload, "direction"),
-                    ParseOptionalPayloadValue(terminalIntent.ActionPayload, "focus"),
-                    terminalIntent.PreActionReason,
-                    collectedTurnLead: lead,
-                    cancellationToken
-                ).ConfigureAwait(false),
-                "large/interact" => await ResolveInteractionAcceptedAsync(
-                    root,
-                    ParseRequiredPayloadValue(terminalIntent.ActionPayload, "interactionId"),
-                    terminalIntent.PreActionReason,
-                    collectedTurnLead: lead,
-                    cancellationToken
-                ).ConfigureAwait(false),
-                _ => AsyncAteliaResult<TurnResolution>.Failure(
-                    new TextAdvError(
-                        "TextAdv.UnsupportedCollectedAction",
-                        $"当前 MVP 尚不支持统一结算 Large-Action '{terminalIntent.ActionKind}'。"
-                    )
-                )
-            };
+            return await ResolveCollectedTurnFromTerminalIntentAsync(
+                root,
+                terminalIntent,
+                collectedTurnLeadOverride,
+                useGmAgent: resolutionMode is CollectedTurnResolutionMode.RealAgentWithDeterministicFallback,
+                cancellationToken
+            ).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
             return AsyncAteliaResult<TurnResolution>.Failure(
@@ -228,7 +232,6 @@ internal static partial class GameSimulation {
         );
         actor.Upsert(MemoryNotebookKey, CreateNotebookText(root.Revision, string.Empty));
         actors.Upsert(actorId, actor);
-        EnsureActorJournal(root, actorId);
 
         var game = GetGame(root);
         var activeActorIds = game.GetOrThrow<DurableDict<string>>(ActiveActorIdsKey)!;
@@ -292,6 +295,7 @@ internal static partial class GameSimulation {
             focus,
             preActionReason,
             collectedTurnLead: null,
+            useGmAgent: true,
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -323,6 +327,7 @@ internal static partial class GameSimulation {
             interactionId,
             preActionReason,
             collectedTurnLead: null,
+            useGmAgent: true,
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -393,6 +398,7 @@ internal static partial class GameSimulation {
         string? focus,
         string preActionReason,
         string? collectedTurnLead,
+        bool useGmAgent,
         CancellationToken cancellationToken
     ) {
         direction = NormalizeRequired(direction, nameof(direction));
@@ -406,20 +412,23 @@ internal static partial class GameSimulation {
         var previousDay = game.GetOrThrow<int>(DayKey);
         var previousSlot = game.GetOrThrow<int>(SlotKey);
         var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var gmResolution = await GameMasterResolver.TryResolveExploreAsync(
-            root,
-            new GmExploreContext(
-                DescribeCurrentPerception(root),
-                currentLocationId,
-                direction,
-                focus,
-                preActionReason,
-                TryGetReverseDirection(direction)
-            ),
-            cancellationToken
-        ).ConfigureAwait(false);
+        var gmResolution = useGmAgent
+            ? await GameMasterResolver.TryResolveExploreAsync(
+                root,
+                new GmExploreContext(
+                    DescribeCurrentPerception(root),
+                    currentLocationId,
+                    direction,
+                    focus,
+                    preActionReason,
+                    TryGetReverseDirection(direction)
+                ),
+                cancellationToken
+            ).ConfigureAwait(false)
+            : null;
 
-        if (gmResolution is { UsedLlm: true }
+        if (useGmAgent
+            && gmResolution is { UsedLlm: true }
             && !string.Equals(GetActorLocationId(root, TerminalPlayerActorId), currentLocationId, StringComparison.Ordinal)) {
             var llmNextClock = AdvanceClock(root);
             var llmResolutionSummary = AppendClockAdvance(
@@ -493,6 +502,7 @@ internal static partial class GameSimulation {
         string interactionId,
         string preActionReason,
         string? collectedTurnLead,
+        bool useGmAgent,
         CancellationToken cancellationToken
     ) {
         var startingPerception = DescribeCurrentPerception(root);
@@ -505,16 +515,18 @@ internal static partial class GameSimulation {
         var previousDay = game.GetOrThrow<int>(DayKey);
         var previousSlot = game.GetOrThrow<int>(SlotKey);
         var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var gmResolution = await GameMasterResolver.TryResolveInteractionAsync(
-            root,
-            new GmInteractionContext(
-                DescribeCurrentPerception(root),
-                GetActorLocationId(root, TerminalPlayerActorId),
-                interaction,
-                preActionReason
-            ),
-            cancellationToken
-        ).ConfigureAwait(false);
+        var gmResolution = useGmAgent
+            ? await GameMasterResolver.TryResolveInteractionAsync(
+                root,
+                new GmInteractionContext(
+                    DescribeCurrentPerception(root),
+                    GetActorLocationId(root, TerminalPlayerActorId),
+                    interaction,
+                    preActionReason
+                ),
+                cancellationToken
+            ).ConfigureAwait(false)
+            : null;
 
         var nextClock = AdvanceClock(root);
         var summary = gmResolution is { UsedLlm: true }
@@ -664,6 +676,8 @@ internal static partial class GameSimulation {
         var currentTurn = GetCurrentTurn(root);
         var turnHistory = game.GetOrThrow<DurableDict<string>>(TurnHistoryKey)!;
         var completedTurnCount = game.GetOrThrow<int>(CompletedTurnCountKey);
+        var endDay = game.GetOrThrow<int>(DayKey);
+        var endSlot = game.GetOrThrow<int>(SlotKey);
         var turnNumber = completedTurnCount + 1;
         var archivedTurn = rev.CreateDict<string>();
 
@@ -676,6 +690,9 @@ internal static partial class GameSimulation {
         archivedTurn.Upsert(LargeActionByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!);
         archivedTurn.Upsert(ResolutionSummaryKey, resolutionSummary);
         archivedTurn.Upsert(LastResolutionByActorKey, GetOrCreateLastResolutionByActor(root));
+        archivedTurn.Upsert(EndDayKey, endDay);
+        archivedTurn.Upsert(EndSlotKey, endSlot);
+        archivedTurn.Upsert(ActorTurnContextByActorKey, CreateArchivedActorTurnContextByActor(root));
         archivedTurn.Upsert(EndingNotebookKey, GetNotebookContent(GetNotebookSnapshot(root)));
 
         turnHistory.Upsert($"turn-{turnNumber:D4}", archivedTurn);
@@ -698,10 +715,73 @@ internal static partial class GameSimulation {
                 throw new ArgumentOutOfRangeException(nameof(actorResolutionMode), actorResolutionMode, "Unknown actor resolution commit mode.");
         }
 
-        AppendActorJournalsForCompletedTurn(root, resolutionSummary);
         ArchiveCompletedTurn(root, resolutionSummary);
         ResetCurrentTurn(root);
         return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
+    }
+
+    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveCollectedTurnFromTerminalIntentAsync(
+        DurableDict<string> root,
+        LargeActionIntent terminalIntent,
+        string? collectedTurnLead,
+        bool useGmAgent,
+        CancellationToken cancellationToken
+    ) {
+        return terminalIntent.ActionKind switch {
+            "large/rest-a-while" => AsyncAteliaResult<TurnResolution>.Success(
+                ResolveRestAccepted(root, collectedTurnLead)
+            ),
+            "large/explore" => await ResolveExploreAcceptedAsync(
+                root,
+                ParseRequiredPayloadValue(terminalIntent.ActionPayload, "direction"),
+                ParseOptionalPayloadValue(terminalIntent.ActionPayload, "focus"),
+                terminalIntent.PreActionReason,
+                collectedTurnLead,
+                useGmAgent,
+                cancellationToken
+            ).ConfigureAwait(false),
+            "large/interact" => await ResolveInteractionAcceptedAsync(
+                root,
+                ParseRequiredPayloadValue(terminalIntent.ActionPayload, "interactionId"),
+                terminalIntent.PreActionReason,
+                collectedTurnLead,
+                useGmAgent,
+                cancellationToken
+            ).ConfigureAwait(false),
+            _ => AsyncAteliaResult<TurnResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.UnsupportedCollectedAction",
+                    $"当前 MVP 尚不支持统一结算 Large-Action '{terminalIntent.ActionKind}'。"
+                )
+            )
+        };
+    }
+
+    private static DurableDict<string> CreateArchivedActorTurnContextByActor(DurableDict<string> root) {
+        var contexts = root.Revision.CreateDict<string>();
+        foreach (var actorId in EnumerateActiveActorIds(root)) {
+            contexts.Upsert(actorId, CreateArchivedActorTurnContext(root, actorId));
+        }
+
+        return contexts;
+    }
+
+    private static DurableDict<string> CreateArchivedActorTurnContext(DurableDict<string> root, string actorId) {
+        var actor = GetActor(root, actorId);
+        var location = GetLocation(root, GetActorLocationId(root, actorId));
+        var context = root.Revision.CreateDict<string>();
+        var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
+            ? rawName
+            : actorId;
+        var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
+            ? rawKind
+            : "npc";
+
+        context.Upsert(NameKey, actorName);
+        context.Upsert(KindKey, actorKind);
+        context.Upsert(LocationIdKey, GetActorLocationId(root, actorId));
+        context.Upsert(LocationNameKey, location.GetOrThrow<string>(NameKey)!);
+        return context;
     }
 
     private static (int Day, int Slot) AdvanceClock(DurableDict<string> root) {
