@@ -23,6 +23,7 @@ internal static class GameSimulation {
     private const string TurnHistoryKey = "turnHistory";
     private const string CompletedTurnCountKey = "completedTurnCount";
     private const string LastResolutionKey = "lastResolution";
+    private const string LastResolutionByActorKey = "lastResolutionByActor";
     private const string StartDayKey = "startDay";
     private const string StartSlotKey = "startSlot";
     private const string StartLocationIdKey = "startLocationId";
@@ -91,6 +92,7 @@ internal static class GameSimulation {
         var player = rev.CreateDict<string>();
         var notebook = CreateNotebookText(rev, string.Empty);
         var turnHistory = rev.CreateDict<string>();
+        var lastResolutionByActor = rev.CreateDict<string>();
 
         var beachId = "beach";
         var forestId = "forest";
@@ -137,6 +139,7 @@ internal static class GameSimulation {
         game.Upsert(ActiveActorIdsKey, activeActorIds);
         game.Upsert(CompletedTurnCountKey, 0);
         game.Upsert(TurnHistoryKey, turnHistory);
+        game.Upsert(LastResolutionByActorKey, lastResolutionByActor);
         game.Upsert(CurrentTurnKey, CreateCurrentTurnState(rev, day: 1, slot: 1, beachId, string.Empty));
 
         root.Upsert(WorldKey, world);
@@ -157,7 +160,7 @@ internal static class GameSimulation {
         var day = game.GetOrThrow<int>(DayKey);
         var slot = game.GetOrThrow<int>(SlotKey);
         var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var lastResolution = TryGetOptionalString(game, LastResolutionKey);
+        var lastResolution = ReadLastResolutionForActor(game, actorId);
         var notebookSnapshot = GetNotebookSnapshot(root, actorId);
         var acceptedSteps = ReadAcceptedSteps(root, actorId);
         var locationId = actor.GetOrThrow<string>(LocationIdKey)!;
@@ -362,9 +365,11 @@ internal static class GameSimulation {
             var previousDay = game.GetOrThrow<int>(DayKey);
             var previousSlot = game.GetOrThrow<int>(SlotKey);
             var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
+            var gmContext = BuildGmCollectedTurnContext(root, intents);
+            ClearLastResolutionByActor(root);
             var gmResolution = await GameMasterResolver.TryResolveCollectedTurnAsync(
                 root,
-                BuildGmCollectedTurnContext(root, intents),
+                gmContext,
                 cancellationToken
             ).ConfigureAwait(false);
 
@@ -379,8 +384,16 @@ internal static class GameSimulation {
                     slotsPerDay
                 );
 
+                AppendClockAdvanceToExistingActorResolutions(
+                    root,
+                    previousDay,
+                    previousSlot,
+                    nextClock.Day,
+                    nextClock.Slot,
+                    slotsPerDay
+                );
+                SetLastResolutionForMissingActiveActors(root, resolutionSummary);
                 ArchiveCompletedTurn(root, resolutionSummary);
-                game.Upsert(LastResolutionKey, resolutionSummary);
                 ResetCurrentTurn(root);
 
                 return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
@@ -618,8 +631,8 @@ internal static class GameSimulation {
             );
             llmResolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, llmResolutionSummary);
 
+            SetLastResolutionForMissingActiveActors(root, llmResolutionSummary);
             ArchiveCompletedTurn(root, llmResolutionSummary);
-            game.Upsert(LastResolutionKey, llmResolutionSummary);
             ResetCurrentTurn(root);
 
             return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(llmResolutionSummary, DescribeCurrentPerception(root)));
@@ -671,8 +684,8 @@ internal static class GameSimulation {
         );
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
+        SetLastResolutionForActiveActors(root, resolutionSummary);
         ArchiveCompletedTurn(root, resolutionSummary);
-        game.Upsert(LastResolutionKey, resolutionSummary);
         ResetCurrentTurn(root);
 
         return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
@@ -751,8 +764,8 @@ internal static class GameSimulation {
         );
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
+        SetLastResolutionForActiveActors(root, resolutionSummary);
         ArchiveCompletedTurn(root, resolutionSummary);
-        game.Upsert(LastResolutionKey, resolutionSummary);
         ResetCurrentTurn(root);
 
         return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
@@ -829,8 +842,8 @@ internal static class GameSimulation {
             + $" 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)} 前进到 {GameClock.FormatClock(nextClock.Day, nextClock.Slot, slotsPerDay)}。";
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
+        SetLastResolutionForActiveActors(root, resolutionSummary);
         ArchiveCompletedTurn(root, resolutionSummary);
-        game.Upsert(LastResolutionKey, resolutionSummary);
         ResetCurrentTurn(root);
 
         return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
@@ -1046,6 +1059,89 @@ internal static class GameSimulation {
             || string.Equals(visibility, VisibleValue, StringComparison.OrdinalIgnoreCase)
             || string.Equals(visibility, DiscoveredValue, StringComparison.OrdinalIgnoreCase);
 
+    private static string? ReadLastResolutionForActor(DurableDict<string> game, string actorId) {
+        if (game.TryGet(LastResolutionByActorKey, out DurableDict<string>? lastResolutionByActor)
+            && lastResolutionByActor is not null
+            && lastResolutionByActor.TryGet(actorId, out string? actorResolution)
+            && !string.IsNullOrWhiteSpace(actorResolution)) {
+            return actorResolution;
+        }
+
+        return TryGetOptionalString(game, LastResolutionKey);
+    }
+
+    private static void SetLastResolutionForActiveActors(DurableDict<string> root, string summary) {
+        summary = NormalizeRequired(summary, nameof(summary));
+        var game = GetGame(root);
+        var lastResolutionByActor = root.Revision.CreateDict<string>();
+        foreach (var actorId in EnumerateActiveActorIds(root)) {
+            lastResolutionByActor.Upsert(actorId, summary);
+        }
+
+        game.Upsert(LastResolutionByActorKey, lastResolutionByActor);
+        game.Upsert(LastResolutionKey, summary);
+    }
+
+    private static void SetLastResolutionForMissingActiveActors(DurableDict<string> root, string fallbackSummary) {
+        fallbackSummary = NormalizeRequired(fallbackSummary, nameof(fallbackSummary));
+        var game = GetGame(root);
+        var lastResolutionByActor = GetOrCreateLastResolutionByActor(root);
+        foreach (var actorId in EnumerateActiveActorIds(root)) {
+            if (!lastResolutionByActor.TryGet(actorId, out string? actorResolution)
+                || string.IsNullOrWhiteSpace(actorResolution)) {
+                lastResolutionByActor.Upsert(actorId, fallbackSummary);
+            }
+        }
+
+        game.Upsert(LastResolutionKey, fallbackSummary);
+    }
+
+    private static void AppendClockAdvanceToExistingActorResolutions(
+        DurableDict<string> root,
+        int previousDay,
+        int previousSlot,
+        int nextDay,
+        int nextSlot,
+        int slotsPerDay
+    ) {
+        var lastResolutionByActor = GetOrCreateLastResolutionByActor(root);
+        foreach (var actorId in EnumerateActiveActorIds(root)) {
+            if (!lastResolutionByActor.TryGet(actorId, out string? actorResolution)
+                || string.IsNullOrWhiteSpace(actorResolution)) {
+                continue;
+            }
+
+            lastResolutionByActor.Upsert(
+                actorId,
+                AppendClockAdvance(
+                    actorResolution,
+                    previousDay,
+                    previousSlot,
+                    nextDay,
+                    nextSlot,
+                    slotsPerDay
+                )
+            );
+        }
+    }
+
+    private static void ClearLastResolutionByActor(DurableDict<string> root) {
+        var game = GetGame(root);
+        game.Upsert(LastResolutionByActorKey, root.Revision.CreateDict<string>());
+    }
+
+    private static DurableDict<string> GetOrCreateLastResolutionByActor(DurableDict<string> root) {
+        var game = GetGame(root);
+        if (game.TryGet(LastResolutionByActorKey, out DurableDict<string>? lastResolutionByActor)
+            && lastResolutionByActor is not null) {
+            return lastResolutionByActor;
+        }
+
+        lastResolutionByActor = root.Revision.CreateDict<string>();
+        game.Upsert(LastResolutionByActorKey, lastResolutionByActor);
+        return lastResolutionByActor;
+    }
+
     private static DurableDict<string> GetGame(DurableDict<string> root)
         => root.GetOrThrow<DurableDict<string>>(GameKey)!;
 
@@ -1252,6 +1348,7 @@ internal static class GameSimulation {
         archivedTurn.Upsert(BarrierStateKey, currentTurn.GetOrThrow<string>(BarrierStateKey)!);
         archivedTurn.Upsert(TurnOwnerActorIdKey, currentTurn.GetOrThrow<string>(TurnOwnerActorIdKey)!);
         archivedTurn.Upsert(ResolutionSummaryKey, resolutionSummary);
+        archivedTurn.Upsert(LastResolutionByActorKey, GetOrCreateLastResolutionByActor(root));
         archivedTurn.Upsert(EndingNotebookKey, GetNotebookContent(GetNotebookSnapshot(root)));
 
         turnHistory.Upsert($"turn-{turnNumber:D4}", archivedTurn);

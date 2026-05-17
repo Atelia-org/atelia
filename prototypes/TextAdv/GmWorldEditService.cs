@@ -9,6 +9,7 @@ namespace Atelia.TextAdv;
 /// </summary>
 internal sealed class GmWorldEditService {
     private const string WorldKey = "world";
+    private const string GameKey = "game";
     private const string LocationsKey = "locations";
     private const string ItemsKey = "items";
     private const string ActorsKey = "actors";
@@ -31,6 +32,7 @@ internal sealed class GmWorldEditService {
     private const string VisibleLabelKey = "visibleLabel";
     private const string PreconditionNoteKey = "preconditionNote";
     private const string EffectNoteKey = "effectNote";
+    private const string LastResolutionByActorKey = "lastResolutionByActor";
     private const string VisibleValue = "visible";
 
     private readonly DurableDict<string> _root;
@@ -322,6 +324,23 @@ internal sealed class GmWorldEditService {
         return $"{interactionId}={visibility.ToLowerInvariant()}";
     }
 
+    internal AteliaResult<string> SetActorResolution(
+        string actorId,
+        string summary
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        summary = NormalizeRequired(summary, nameof(summary));
+
+        var actor = TryGetActor(actorId);
+        if (!actor.IsSuccess) {
+            return AteliaResult<string>.Failure(actor.Error!);
+        }
+
+        var lastResolutionByActor = GetOrCreateGameDict(LastResolutionByActorKey);
+        lastResolutionByActor.Upsert(actorId, summary);
+        return actorId;
+    }
+
     internal AteliaResult<string> SetVisibility(
         string targetRef,
         string visibility
@@ -498,6 +517,16 @@ internal sealed class GmWorldEditService {
         return ToToolResult(SetInteractionVisibility(interaction_id, visibility), "set interaction visibility");
     }
 
+    [Tool("gm_set_actor_resolution", "为指定 active player actor 写入下一回合可见的私有结算反馈。多主体 summary 阶段应为每个 active player actor 调用一次。")]
+    public ValueTask<ToolExecuteResult> SetActorResolutionAsync(
+        [ToolParam("目标 ActorId；终端玩家为 player。")] string actor_id,
+        [ToolParam("该 actor 下一回合可见的 1 到 4 句中文私有结算反馈。不能泄露此 actor 不应知道的信息。")] string summary,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ToToolResult(SetActorResolution(actor_id, summary), "set actor resolution");
+    }
+
     private AteliaResult<DurableDict<string>> TryGetLocation(string locationId) {
         var locations = GetLocations();
         if (!locations.TryGet(locationId, out DurableDict<string>? location) || location is null) {
@@ -551,6 +580,15 @@ internal sealed class GmWorldEditService {
 
         dict = _root.Revision.CreateDict<string>();
         world.Upsert(key, dict);
+        return dict;
+    }
+
+    private DurableDict<string> GetOrCreateGameDict(string key) {
+        var game = _root.GetOrThrow<DurableDict<string>>(GameKey)!;
+        if (game.TryGet(key, out DurableDict<string>? dict) && dict is not null) { return dict; }
+
+        dict = _root.Revision.CreateDict<string>();
+        game.Upsert(key, dict);
         return dict;
     }
 

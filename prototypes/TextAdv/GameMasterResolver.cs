@@ -377,6 +377,7 @@ internal static class GameMasterResolver {
             MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.SetVisibilityAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.SetInteractionVisibilityAsync),
+            MethodToolWrapper.FromDelegate<string, string>(toolService.SetActorResolutionAsync),
         ]);
     }
 
@@ -421,6 +422,7 @@ internal static class GameMasterResolver {
 - 若交互揭示新物品/NPC/动作，必须用 gm_create_item / gm_create_npc / gm_add_interaction 落账。
 - 若 take / give / drop / place 导致持有关系变化，必须用 gm_move_item_to_actor 或 gm_place_item_at_location 落账。
 - 若 interaction 被消耗或不应继续显示，调用 gm_set_interaction_visibility。
+- 在 summary 阶段必须为每个 active player actor 调用 gm_set_actor_resolution，写入它下一回合可见的私有反馈；不同 actor 只能知道自己可感知或合理推断的信息。
 - 不要用普通文本声称世界已改变；只有工具调用成功才算落账。
 - 必要工具调用完成后，停止调用工具，并在 summary 阶段输出 1 到 4 句中文结算摘要。
 """;
@@ -755,12 +757,24 @@ internal static class GameMasterResolver {
 
     private static string BuildCollectedTurnSummaryStageObservation(DurableDict<string> root, GmCollectedTurnContext context) {
         var sb = new StringBuilder();
-        sb.AppendLine("[阶段 3/3: 终端玩家可见结算摘要]");
-        sb.AppendLine("请输出 1 到 4 句中文结算摘要。原则：面向终端玩家角色，只写它能感知到、参与声明时公开知道、或自然能推断的内容。不要泄露其它 actor 离开视野后的隐藏发现。");
+        sb.AppendLine("[阶段 3/3: 各 actor 私有结算反馈与终端玩家摘要]");
+        sb.AppendLine("先为每个 active player actor 调用 gm_set_actor_resolution(actor_id, summary)，写入该 actor 下一回合可见的私有反馈。");
+        sb.AppendLine("每份私有反馈 1 到 4 句中文，只写该 actor 能感知到、参与声明时公开知道、或自然能推断的内容；不要泄露其它 actor 离开视野后的隐藏发现。");
+        sb.AppendLine("所有 actor resolution 都写入后，停止调用工具，并输出 1 到 4 句终端玩家可见中文摘要。");
         sb.AppendLine("若你发现摘要必需的新实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+        sb.AppendLine();
+        sb.AppendLine("[必须写入私有反馈的 ActorId]");
+        foreach (var intent in context.Intents) {
+            sb.AppendLine($"- {intent.ActorId}: {intent.ActorName} ({intent.ActorKind})");
+        }
+
         sb.AppendLine();
         AppendCollectedTurnIntents(sb, context);
         AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.TerminalActorId), "最终终端玩家账本投影");
+        foreach (var intent in context.Intents.Where(intent => !string.Equals(intent.ActorId, context.TerminalActorId, StringComparison.Ordinal))) {
+            AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, intent.ActorId), $"最终 {intent.ActorName} 账本投影");
+        }
+
         return sb.ToString();
     }
 
