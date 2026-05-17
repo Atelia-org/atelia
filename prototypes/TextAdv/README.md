@@ -141,7 +141,8 @@ root (DurableDict<string>)
 - 玩家视图应自带“当前可执行动作”速查，默认按失忆玩家设计，不假定玩家记得上一次输出里的规则说明
 - `Perception-Bundle` 已经支持按 `actorId` 投影：当前位置、可见角色、持有物品和 Memory-Notebook 都来自 actor ledger；终端玩家的旧 `root.player` 字段暂时只作为兼容镜像
 - `currentTurn` 已经预留并使用 `acceptedStepsByActor`、`largeActionByActor`、`turnOwnerActorId`、`barrierState`；后续真实 LLM Player loop 可直接接入这组账本
-- 当存在多个 active actor 时，终端玩家的真实 Large-Action 通过 validator 后会先写入回合收集账本；当前 MVP 会为 pending `llm-player` 自动提交保守 fallback Large-Action，并在收齐后进入 collected-turn resolver
+- 当存在多个 active actor 时，终端玩家的真实 Large-Action 通过 validator 后会先写入回合收集账本；当前 MVP 会依次驱动 pending `llm-player`，让它基于自己的 `Perception-Bundle` 调用工具提交 Large-Action，通过同一套 validator 后进入 collected-turn resolver
+- LLM Player Agent 首版开放 `player_rest_a_while`、`player_explore`、`player_interact` 三个工具；若未配置 API key、模式为 deterministic、provider 失败或 validator 多次拒绝，会回退为“谨慎观察并暂不移动”
 - collected-turn resolver 首版按终端玩家的大型动作推进世界，其它 active actor 的意图会进入 `turnHistory` 和结算摘要；后续再升级为真正的多意图 GM 裁决
 - 当前 validator 默认走 `DeepSeekV4ChatClient`
 - 数据目录：`/tmp/atelia-textadv-game/`（后续可改为 repo 内路径）
@@ -164,6 +165,9 @@ root (DurableDict<string>)
 - `ATELIA_TEXTADV_GM_MODEL_ID`：可选，默认跟 validator 一样使用 `deepseek-v4-flash`
 - `ATELIA_TEXTADV_GM_MODE`：可选，`auto` / `llm` / `deterministic`；默认 `auto`，有 `DEEPSEEK_API_KEY` 时优先尝试真实 GM Agent
 - `ATELIA_TEXTADV_GM_MAX_ROUNDS`：可选，真实 GM Agent 工具循环最大轮数，默认 `4`
+- `ATELIA_TEXTADV_LLM_PLAYER_MODE`：可选，`auto` / `llm` / `deterministic`；默认 `auto`，有 `DEEPSEEK_API_KEY` 时尝试真实 LLM Player Agent
+- `ATELIA_TEXTADV_LLM_PLAYER_MODEL_ID`：可选，默认 `deepseek-v4-flash`
+- `ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS`：可选，每个 LLM Player 每回合最多提交尝试次数，默认 `2`
 - `DEEPSEEK_MODEL`：可选 fallback，若未设置 `ATELIA_TEXTADV_VALIDATOR_MODEL_ID` 则使用它
 - `DEEPSEEK_BASE_URL`：可选，覆盖默认 DeepSeek base URL
 

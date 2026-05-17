@@ -297,8 +297,9 @@ internal static class GameSimulation {
         return DescribeCurrentTurnStatus(root);
     }
 
-    internal static AteliaResult<TurnCollectionStatus> SubmitFallbackLargeActionsForPendingLlmPlayers(
-        DurableDict<string> root
+    internal static async Task<AsyncAteliaResult<TurnCollectionStatus>> SubmitLargeActionsForPendingLlmPlayersAsync(
+        DurableDict<string> root,
+        CancellationToken cancellationToken
     ) {
         foreach (var actorId in EnumerateActiveActorIds(root).ToArray()) {
             if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) { continue; }
@@ -310,25 +311,13 @@ internal static class GameSimulation {
                 : "npc";
             if (!string.Equals(kind, "llm-player", StringComparison.Ordinal)) { continue; }
 
-            var name = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
-                ? rawName
-                : actorId;
-            var perception = DescribePerceptionForActor(root, actorId);
-            var result = SubmitLargeActionForActor(
-                root,
-                actorId,
-                actionKind: "large/rest-a-while",
-                actionSummary: "谨慎观察并暂不移动",
-                actionPayload: null,
-                preActionReason: $"MVP fallback：{name} 位于「{perception.Location.Name}」，当前先保持观察，不主动改变世界状态。",
-                validatorFeedback: "llm-player fallback bypassed validator"
-            );
+            var result = await LlmPlayerAgentDriver.TrySubmitLargeActionAsync(root, actorId, cancellationToken).ConfigureAwait(false);
             if (!result.IsSuccess) {
                 return result;
             }
         }
 
-        return DescribeCurrentTurnStatus(root);
+        return AsyncAteliaResult<TurnCollectionStatus>.Success(DescribeCurrentTurnStatus(root));
     }
 
     internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
@@ -735,11 +724,29 @@ internal static class GameSimulation {
         string preActionReason,
         string validatorFeedback
     ) {
-        var notebook = GetNotebook(root);
+        return ApplyNotebookEditForActor(
+            root,
+            TerminalPlayerActorId,
+            proposal,
+            preActionReason,
+            validatorFeedback
+        );
+    }
+
+    internal static PerceptionBundle ApplyNotebookEditForActor(
+        DurableDict<string> root,
+        string actorId,
+        NotebookEditProposal proposal,
+        string preActionReason,
+        string validatorFeedback
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        var notebook = GetNotebook(root, actorId);
         GameNotebookEditService.ApplyOrThrow(notebook, proposal);
 
-        AppendAcceptedStep(
+        AppendAcceptedStepForActor(
             root,
+            actorId,
             actionKind: "small/edit-memory-notebook",
             actionSummary: proposal.ActionSummary,
             actionPayload: proposal.CanonicalScriptXml,
@@ -748,7 +755,7 @@ internal static class GameSimulation {
             endsTurn: false
         );
 
-        return DescribeCurrentPerception(root);
+        return DescribePerceptionForActor(root, actorId);
     }
 
     internal static TurnResolution ApplyRestAWhile(

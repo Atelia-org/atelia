@@ -401,9 +401,9 @@ public static class GameEntry {
             return true;
         }
 
-        var fallbackResult = GameSimulation.SubmitFallbackLargeActionsForPendingLlmPlayers(root);
+        var fallbackResult = await GameSimulation.SubmitLargeActionsForPendingLlmPlayersAsync(root, cancellationToken);
         if (!fallbackResult.TryGetValue(out status) || status is null) {
-            output.WriteLine("❌ LLM Player fallback 行动提交失败。");
+            output.WriteLine("❌ LLM Player 行动提交失败。");
             WriteAteliaError(output, fallbackResult.Error);
             return true;
         }

@@ -332,7 +332,8 @@ game
 - `actor:player` 与旧 `root.player` 并存。终端玩家的 `location` 和 `memoryNotebook` 已镜像到 actor ledger；旧字段暂时作为兼容层保留，后续可以在 LLM Player loop 稳定后删除。
 - `currentTurn` 已预留 `turnOwnerActorId`、`barrierState`、`acceptedStepsByActor`、`largeActionByActor`。当前终端玩家路径仍写入 legacy `acceptedSteps`，同时把同一组步骤挂到 `acceptedStepsByActor["player"]`；旧存档读取时会自动补齐这些 Phase 4 字段。
 - Large-Action 现在会落入 `largeActionByActor`。只有 `actor:player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，并驱动 pending `llm-player` 提交保守 fallback Large-Action。
-- pending `llm-player` 的首版 fallback 是 `large/rest-a-while`，语义为“谨慎观察并暂不移动”。这不是最终 Player Agent，只是让 Phase 4 闭环能端到端前进，并把后续真实 LLM Player Agent 的替换点留在同一套提交/validator 边界上。
+- pending `llm-player` 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明；输出必须调用 `player_rest_a_while`、`player_explore` 或 `player_interact` 之一提交 Large-Action。
+- LLM Player Agent 提交的 Large-Action 会走同一套 `GameActionValidator`。provider 失败、未配置 API key、模式为 deterministic、没有调用工具，或 validator 多次拒绝时，才回退到 `large/rest-a-while`，语义为“谨慎观察并暂不移动”。
 - `dev-look-actor <actor-id>` 可用于查看任意 actor 的 Perception-Bundle；这验证了未来 LLM Player Agent 的输入可以只包含该 actor 的视角，而不是完整世界真相。
 - `dev-turn-status` 可审计当前 barrier 与每个 active actor 的 Large-Action 提交状态。`dev-submit-large-action` 可绕过 validator 模拟任意 active actor 交卷，用于测试 `acceptedStepsByActor` / `largeActionByActor` 和 `ready-for-gm` 流转。
 - 多主体收齐后已经进入 `collected-turn resolver`，首版按终端玩家的大型动作推进世界，并把所有 actor 的 Large-Action intent 写入 `turnHistory` 和玩家可见结算摘要。这让 MVP 不再停在 `ready-for-gm`，但还不是最终的多意图 GM 裁决。
