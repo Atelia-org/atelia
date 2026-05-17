@@ -421,12 +421,15 @@ Notebook 规则：
             if (s_config is not null) { return s_config; }
 
             s_config = new LlmPlayerConfig(
-                BaseAddress: GetOptionalEnvironment(BaseAddressEnv),
-                ModelId: GetEnvironmentOrDefault(ModelIdEnv, GetEnvironmentOrDefault(FallbackModelIdEnv, DefaultModelId)),
-                ApiKey: GetOptionalEnvironment(ApiKeyEnv),
-                Mode: GetEnvironmentOrDefault(ModeEnv, "auto"),
-                Pipeline: GetEnvironmentOrDefault(PipelineEnv, DirectorExecutorPipeline),
-                MaxAttempts: GetPositiveIntEnvironment(MaxAttemptsEnv, DefaultMaxAttempts)
+                BaseAddress: TextAdvRuntimeEnvironment.GetOptionalEnvironment(BaseAddressEnv),
+                ModelId: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(
+                    ModelIdEnv,
+                    TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(FallbackModelIdEnv, DefaultModelId)
+                ),
+                ApiKey: TextAdvRuntimeEnvironment.GetOptionalEnvironment(ApiKeyEnv),
+                Mode: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(ModeEnv, "auto"),
+                Pipeline: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(PipelineEnv, DirectorExecutorPipeline),
+                MaxAttempts: TextAdvRuntimeEnvironment.GetPositiveIntEnvironment(MaxAttemptsEnv, DefaultMaxAttempts)
             );
             return s_config;
         }
@@ -436,32 +439,11 @@ Notebook 规则：
         => !string.Equals(config.Pipeline, SinglePipeline, StringComparison.OrdinalIgnoreCase);
 
     private static string BuildProviderErrorMessage(IReadOnlyList<string> errors) {
-        var message = string.Join(
-            "; ",
-            errors
-                .Select(static error => error?.Trim())
-                .Where(static error => !string.IsNullOrWhiteSpace(error))
+        return TextAdvRuntimeEnvironment.BuildProviderErrorMessage(
+            errors,
+            prefix: "LLM Player provider error: ",
+            defaultMessage: "LLM Player provider returned unknown error."
         );
-
-        return string.IsNullOrWhiteSpace(message)
-            ? "LLM Player provider returned unknown error."
-            : $"LLM Player provider error: {message}";
-    }
-
-    private static string GetEnvironmentOrDefault(string key, string defaultValue) {
-        var value = Environment.GetEnvironmentVariable(key);
-        return string.IsNullOrWhiteSpace(value) ? defaultValue : value.Trim();
-    }
-
-    private static string? GetOptionalEnvironment(string key) {
-        var value = Environment.GetEnvironmentVariable(key);
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    }
-
-    private static int GetPositiveIntEnvironment(string key, int defaultValue) {
-        var value = Environment.GetEnvironmentVariable(key);
-        if (string.IsNullOrWhiteSpace(value)) { return defaultValue; }
-        return int.TryParse(value, out var parsed) && parsed > 0 ? parsed : defaultValue;
     }
 
     private sealed class PlayerActionToolService {

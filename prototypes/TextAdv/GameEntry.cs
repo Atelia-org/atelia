@@ -15,27 +15,63 @@ namespace Atelia.TextAdv;
 /// 状态全部持久化在 StateJournal 中，进程重启不丢失。
 /// </summary>
 public static class GameEntry {
-    private const string RepoDir = "/tmp/atelia-textadv-game";
-
     private static Repository? _repo;
     private static DurableDict<string>? _root;
 
-    private static (Repository repo, DurableDict<string> root)? GetState() {
+    private static (Repository repo, DurableDict<string> root)? GetState(out string? errorMessage) {
+        errorMessage = null;
         if (_repo is not null && _root is not null) { return (_repo, _root); }
 
-        if (!Directory.Exists(RepoDir)) { return null; }
+        var repoDir = TextAdvRuntimeEnvironment.GetRepoDir();
+        if (!Directory.Exists(repoDir)) { return null; }
 
-        var openResult = Repository.Open(RepoDir);
-        if (!openResult.IsSuccess) { return null; }
+        _repo = null;
+        _root = null;
+
+        var openResult = Repository.Open(repoDir);
+        if (!openResult.IsSuccess) {
+            errorMessage = $"无法打开游戏存档目录 '{repoDir}'：{openResult.Error?.Message ?? openResult.Error?.ToString() ?? "未知错误"}";
+            return null;
+        }
 
         _repo = openResult.Value!;
         var revResult = _repo.GetOrCreateBranch("main");
+        if (!revResult.IsSuccess) {
+            _repo = null;
+            _root = null;
+            errorMessage = $"无法打开游戏分支 'main'：{revResult.Error?.Message ?? revResult.Error?.ToString() ?? "未知错误"}";
+            return null;
+        }
+
         var rev = revResult.Value!;
 
         _root = rev.GraphRoot as DurableDict<string>;
-        if (_root is null) { return null; }
+        if (_root is null) {
+            _repo = null;
+            _root = null;
+            errorMessage = $"游戏存档目录 '{repoDir}' 中的根状态不是 DurableDict<string>。";
+            return null;
+        }
 
         return (_repo, _root);
+    }
+
+    private static bool TryGetState(TextWriter output, out (Repository repo, DurableDict<string> root) state) {
+        var loadedState = GetState(out var errorMessage);
+        if (loadedState is not null) {
+            state = loadedState.Value;
+            return true;
+        }
+
+        state = default;
+        if (errorMessage is not null) {
+            output.WriteLine($"❌ {errorMessage}");
+            return false;
+        }
+
+        output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+        output.WriteLine($"💡 当前存档目录：{TextAdvRuntimeEnvironment.GetRepoDir()}");
+        return false;
     }
 
     public static RootCommand BuildGame() {
@@ -61,15 +97,16 @@ public static class GameEntry {
         cmd.SetAction(
             ctx => {
                 var output = ctx.InvocationConfiguration.Output;
+                var repoDir = TextAdvRuntimeEnvironment.GetRepoDir();
 
                 _repo = null;
                 _root = null;
 
-                if (Directory.Exists(RepoDir)) {
-                    Directory.Delete(RepoDir, recursive: true);
+                if (Directory.Exists(repoDir)) {
+                    Directory.Delete(repoDir, recursive: true);
                 }
 
-                var createResult = Repository.Create(RepoDir);
+                var createResult = Repository.Create(repoDir);
                 if (!createResult.IsSuccess) {
                     output.WriteLine($"❌ 创建游戏世界失败：{createResult.Error}");
                     return;
@@ -79,6 +116,7 @@ public static class GameEntry {
                 _root = GameSimulation.CreateNewWorld(_repo);
 
                 output.WriteLine("✅ 新世界已创建！");
+                output.WriteLine($"💾 存档目录：{repoDir}");
                 output.WriteLine();
                 output.Write(
                     GamePresenter.RenderPerception(
@@ -98,13 +136,9 @@ public static class GameEntry {
                 var output = ctx.InvocationConfiguration.Output;
                 var direction = ctx.GetValue(directionArg)!;
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (repo, root) = state.Value;
+                var (repo, root) = state;
                 var moveResult = GameSimulation.MovePlayer(root, direction);
 
                 if (!moveResult.IsSuccess) {
@@ -145,13 +179,9 @@ public static class GameEntry {
                 var profileNote = ctx.GetValue(profileNoteArg)!;
                 var locationId = ctx.GetValue(locationOption);
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (repo, root) = state.Value;
+                var (repo, root) = state;
                 var result = GameSimulation.CreateLlmPlayerActor(root, actorId, name, profileNote, locationId);
                 if (!result.TryGetValue(out var createdActorId) || string.IsNullOrWhiteSpace(createdActorId)) {
                     output.WriteLine("❌ 创建 LLM player actor 失败。");
@@ -176,14 +206,10 @@ public static class GameEntry {
                 var output = ctx.InvocationConfiguration.Output;
                 var actorId = ctx.GetValue(actorIdArg)!;
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
-
                 try {
-                    var (_, root) = state.Value;
+                    if (!TryGetState(output, out var state)) { return; }
+
+                    var (_, root) = state;
                     output.Write(GamePresenter.RenderPerception(GameSimulation.DescribePerceptionForActor(root, actorId)));
                 }
                 catch (Exception ex) {
@@ -200,13 +226,9 @@ public static class GameEntry {
             ctx => {
                 var output = ctx.InvocationConfiguration.Output;
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (_, root) = state.Value;
+                var (_, root) = state;
                 output.Write(GamePresenter.RenderTurnCollectionStatus(GameSimulation.DescribeCurrentTurnStatus(root)));
             }
         );
@@ -238,13 +260,9 @@ public static class GameEntry {
                 var reason = ctx.GetValue(reasonArg)!;
                 var payload = ctx.GetValue(payloadOption);
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (repo, root) = state.Value;
+                var (repo, root) = state;
                 var result = GameSimulation.SubmitDevLargeActionForActor(root, actorId, actionKind, summary, payload, reason);
                 if (!result.TryGetValue(out var status) || status is null) {
                     output.WriteLine("❌ dev Large-Action 提交失败。");
@@ -267,13 +285,9 @@ public static class GameEntry {
             ctx => {
                 var output = ctx.InvocationConfiguration.Output;
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (_, root) = state.Value;
+                var (_, root) = state;
                 output.Write(
                     GamePresenter.RenderPerception(
                         GameSimulation.DescribeCurrentPerception(root)
@@ -307,13 +321,9 @@ public static class GameEntry {
                 var scriptXml = ctx.GetValue(scriptArg)!;
                 var preActionReason = ctx.GetValue(reasonArg)!;
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (repo, root) = state.Value;
+                var (repo, root) = state;
                 var perception = GameSimulation.DescribeCurrentPerception(root);
                 var notebookEditResult = GameNotebookEditService.Prepare(perception.NotebookBlocks, scriptXml);
                 if (!notebookEditResult.TryGetValue(out var notebookEdit) || notebookEdit is null) {
@@ -463,13 +473,9 @@ public static class GameEntry {
                     ? $"direction={direction}"
                     : $"direction={direction}\nfocus={focus!.Trim()}";
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (repo, root) = state.Value;
+                var (repo, root) = state;
                 var perception = GameSimulation.DescribeCurrentPerception(root);
 
                 GameActionValidator.ValidationResult validation;
@@ -545,13 +551,9 @@ public static class GameEntry {
                 var preActionReason = ctx.GetValue(reasonArg)!;
                 var interactionId = ctx.GetValue(interactionIdArg)!;
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (repo, root) = state.Value;
+                var (repo, root) = state;
                 var perception = GameSimulation.DescribeCurrentPerception(root);
                 var interactionResult = GameSimulation.TryGetVisibleInteraction(perception, interactionId);
                 if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
@@ -638,13 +640,9 @@ public static class GameEntry {
                 var preActionReason = ctx.GetValue(reasonArg)!;
                 const string actionSummary = "原地休息一会";
 
-                var state = GetState();
-                if (state is null) {
-                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
-                    return;
-                }
+                if (!TryGetState(output, out var state)) { return; }
 
-                var (repo, root) = state.Value;
+                var (repo, root) = state;
                 var perception = GameSimulation.DescribeCurrentPerception(root);
 
                 GameActionValidator.ValidationResult validation;

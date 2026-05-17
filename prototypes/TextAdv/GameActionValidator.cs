@@ -123,9 +123,12 @@ internal static class GameActionValidator {
             if (s_config is not null) { return s_config; }
 
             s_config = new ValidatorConfig(
-                BaseAddress: GetOptionalEnvironment(BaseAddressEnv),
-                ModelId: GetEnvironmentOrDefault(ModelIdEnv, GetEnvironmentOrDefault(FallbackModelIdEnv, DefaultModelId)),
-                ApiKey: RequireEnvironment(ApiKeyEnv)
+                BaseAddress: TextAdvRuntimeEnvironment.GetOptionalEnvironment(BaseAddressEnv),
+                ModelId: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(
+                    ModelIdEnv,
+                    TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(FallbackModelIdEnv, DefaultModelId)
+                ),
+                ApiKey: TextAdvRuntimeEnvironment.RequireEnvironment(ApiKeyEnv, "DeepSeek validator")
             );
             return s_config;
         }
@@ -329,35 +332,11 @@ internal static class GameActionValidator {
     }
 
     private static string BuildProviderErrorMessage(IReadOnlyList<string> errors) {
-        var message = string.Join(
-            "; ",
-            errors
-                .Select(static error => error?.Trim())
-                .Where(static error => !string.IsNullOrWhiteSpace(error))
+        return TextAdvRuntimeEnvironment.BuildProviderErrorMessage(
+            errors,
+            prefix: "DeepSeek validator 返回 provider error：",
+            defaultMessage: "Unknown provider error."
         );
-
-        if (string.IsNullOrWhiteSpace(message)) {
-            message = "Unknown provider error.";
-        }
-
-        return $"DeepSeek validator 返回 provider error：{message}";
-    }
-
-    private static string GetEnvironmentOrDefault(string key, string defaultValue) {
-        var value = Environment.GetEnvironmentVariable(key);
-        return string.IsNullOrWhiteSpace(value) ? defaultValue : value.Trim();
-    }
-
-    private static string? GetOptionalEnvironment(string key) {
-        var value = Environment.GetEnvironmentVariable(key);
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    }
-
-    private static string RequireEnvironment(string key) {
-        var value = Environment.GetEnvironmentVariable(key);
-        if (string.IsNullOrWhiteSpace(value)) { throw new InvalidOperationException($"Environment variable '{key}' is required for DeepSeek validator."); }
-
-        return value.Trim();
     }
 
     private static string? TryGetString(JsonElement root, string propertyName) {

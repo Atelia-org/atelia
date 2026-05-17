@@ -145,7 +145,7 @@ root (DurableDict<string>)
 - LLM Player Agent 首版开放 `player_edit_memory_notebook` Small-Action，以及 `player_rest_a_while`、`player_explore`、`player_interact` 三个 Large-Action 工具；若未配置 API key、模式为 deterministic、provider 失败或 validator 多次拒绝，会回退为“谨慎观察并暂不移动”
 - collected-turn resolver 首版按终端玩家的大型动作推进世界，其它 active actor 的意图会进入 `turnHistory` 和结算摘要；后续再升级为真正的多意图 GM 裁决
 - 当前 validator 默认走 `DeepSeekV4ChatClient`
-- 数据目录：`/tmp/atelia-textadv-game/`（后续可改为 repo 内路径）
+- 数据目录默认是 `/tmp/atelia-textadv-game/`，可通过 `ATELIA_TEXTADV_REPO_DIR` 覆盖（适合并行开多个试验世界）
 
 ## Phase 4 调试命令
 
@@ -171,6 +171,7 @@ root (DurableDict<string>)
 - `ATELIA_TEXTADV_LLM_PLAYER_PIPELINE`：可选，`director-executor` / `single`；默认 `director-executor`。`single` 会跳过导演札记，直接进入工具执行阶段
 - `ATELIA_TEXTADV_LLM_PLAYER_MODEL_ID`：可选，默认 `deepseek-v4-flash`
 - `ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS`：可选，每个 LLM Player 每回合最多提交尝试次数，默认 `3`
+- `ATELIA_TEXTADV_REPO_DIR`：可选，覆盖游戏存档目录；默认 `/tmp/atelia-textadv-game/`
 - `DEEPSEEK_MODEL`：可选 fallback，若未设置 `ATELIA_TEXTADV_VALIDATOR_MODEL_ID` 则使用它
 - `DEEPSEEK_BASE_URL`：可选，覆盖默认 DeepSeek base URL
 

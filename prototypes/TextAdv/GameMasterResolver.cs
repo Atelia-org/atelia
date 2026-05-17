@@ -940,11 +940,14 @@ internal static class GameMasterResolver {
             if (s_config is not null) { return s_config; }
 
             s_config = new GmConfig(
-                BaseAddress: GetOptionalEnvironment(BaseAddressEnv),
-                ModelId: GetEnvironmentOrDefault(ModelIdEnv, GetEnvironmentOrDefault(FallbackModelIdEnv, DefaultModelId)),
-                ApiKey: GetOptionalEnvironment(ApiKeyEnv),
-                Mode: GetEnvironmentOrDefault(ModeEnv, "auto"),
-                MaxRounds: GetPositiveIntEnvironment(MaxRoundsEnv, DefaultMaxRounds)
+                BaseAddress: TextAdvRuntimeEnvironment.GetOptionalEnvironment(BaseAddressEnv),
+                ModelId: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(
+                    ModelIdEnv,
+                    TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(FallbackModelIdEnv, DefaultModelId)
+                ),
+                ApiKey: TextAdvRuntimeEnvironment.GetOptionalEnvironment(ApiKeyEnv),
+                Mode: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(ModeEnv, "auto"),
+                MaxRounds: TextAdvRuntimeEnvironment.GetPositiveIntEnvironment(MaxRoundsEnv, DefaultMaxRounds)
             );
             return s_config;
         }
@@ -958,30 +961,10 @@ internal static class GameMasterResolver {
     }
 
     private static string BuildProviderErrorMessage(IReadOnlyList<string> errors) {
-        var message = string.Join(
-            "; ",
-            errors
-                .Select(static error => error?.Trim())
-                .Where(static error => !string.IsNullOrWhiteSpace(error))
+        return TextAdvRuntimeEnvironment.BuildProviderErrorMessage(
+            errors,
+            prefix: string.Empty,
+            defaultMessage: "Unknown provider error."
         );
-
-        return string.IsNullOrWhiteSpace(message)
-            ? "Unknown provider error."
-            : message;
-    }
-
-    private static int GetPositiveIntEnvironment(string key, int defaultValue) {
-        var value = Environment.GetEnvironmentVariable(key);
-        return int.TryParse(value, out var parsed) && parsed > 0 ? parsed : defaultValue;
-    }
-
-    private static string GetEnvironmentOrDefault(string key, string defaultValue) {
-        var value = Environment.GetEnvironmentVariable(key);
-        return string.IsNullOrWhiteSpace(value) ? defaultValue : value.Trim();
-    }
-
-    private static string? GetOptionalEnvironment(string key) {
-        var value = Environment.GetEnvironmentVariable(key);
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }
