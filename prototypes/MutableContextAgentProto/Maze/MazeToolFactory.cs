@@ -21,9 +21,9 @@ public sealed record MazeToolResult(
 );
 
 public sealed class MazeToolFactory {
-    public const string LookToolName = "maze.look";
-    public const string MoveToolName = "maze.move";
-    public const string StatusToolName = "maze.status";
+    public const string LookToolName = "maze_look";
+    public const string MoveToolName = "maze_move";
+    public const string StatusToolName = "maze_status";
 
     private static readonly MazeToolSpec[] ToolSpecs =
     [

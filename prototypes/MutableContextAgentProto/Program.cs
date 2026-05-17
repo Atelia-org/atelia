@@ -35,8 +35,8 @@ Commands:
   render-demo    Render a sample mutable working context as one user message.
   maze-demo      Show the deterministic maze environment.
   maze-fake-run  Run the maze tool-loop with a scripted fake policy.
-  ping-llm       Send a one-message JSON-protocol ping to DeepSeek V4.
-  maze-llm-run   Let DeepSeek V4 drive the maze through the JSON tool protocol.
+  ping-llm       Send a one-message connectivity ping to DeepSeek V4.
+  maze-llm-run   Let DeepSeek V4 drive the maze through native server tool calls.
 """
         );
         return 0;

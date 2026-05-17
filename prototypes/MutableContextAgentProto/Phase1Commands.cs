@@ -78,9 +78,8 @@ internal static class Phase1Commands {
                 return 1;
             }
 
-            var fakeModelJson = BuildFakeModelJson(decision, step);
-            var parsed = ToolCallParser.Parse(fakeModelJson);
-            eventLog.Append(EventLogEntryKind.ModelOutput, decision.Thought, fakeModelJson);
+            var parsed = BuildFakeModelResponse(decision, step);
+            eventLog.Append(EventLogEntryKind.ModelOutput, decision.Thought, parsed.RawResponse);
             var results = dispatcher.DispatchAsync(parsed.ToolCalls).AsTask().GetAwaiter().GetResult();
             foreach (var result in results) {
                 var detail = result.Succeeded ? result.Content : result.Error;
@@ -99,23 +98,21 @@ internal static class Phase1Commands {
 
     public static async Task<int> RunPingLlmAsync(CancellationToken cancellationToken = default) {
         using var client = new DeepSeekChatClient(DeepSeekOptions.FromEnvironment());
-        var context = new WorkingContext("验证 DeepSeek V4 是否能在单 user message 中按 JSON 协议响应。");
-        context.RecordAction("准备 ping-llm 请求", "不提供工具，只要求模型返回 final。");
-        context.Remember("输出必须是单个 JSON object，不能使用自然语言包裹。", MemoryKind.Decision);
+        var context = new WorkingContext("验证 DeepSeek V4 Chat Completions 连通性。");
+        context.RecordAction("准备 ping-llm 请求", "不提供工具，只要求模型用正文给出简短回复。");
 
         var renderer = new SingleUserContextRenderer(
             new SingleUserContextRendererOptions {
-                NextStepInstruction = BuildJsonInstruction(allowTools: false)
+                NextStepInstruction = "请用一句话回复 ping ok。"
             }
         );
         var userMessage = renderer.Render(context);
-        var raw = await client.SendUserMessageAsync(userMessage, cancellationToken).ConfigureAwait(false);
-        var parsed = ToolCallParser.Parse(raw);
+        var response = await client.SendTurnAsync(new ChatTurnRequest(userMessage, [], ChatToolChoice.None), cancellationToken).ConfigureAwait(false);
 
         Console.WriteLine("DeepSeek ping succeeded.");
-        Console.WriteLine($"thought: {parsed.Thought}");
-        Console.WriteLine($"final: {parsed.Final}");
-        Console.WriteLine($"tool_calls: {parsed.ToolCalls.Count}");
+        Console.WriteLine($"content: {response.Content}");
+        Console.WriteLine($"tool_calls: {response.ToolCalls.Count}");
+        Console.WriteLine($"finish_reason: {response.FinishReason}");
         return 0;
     }
 
@@ -125,17 +122,18 @@ internal static class Phase1Commands {
         var eventLog = new EventLog();
         var world = new MazeWorld();
         var context = CreateBaseMazeContext("走出迷宫。你只能通过可用工具观察和移动。");
-        var dispatcher = new ToolDispatcher(CreateMazeProtocolTools(world));
+        var tools = CreateMazeProtocolTools(world);
+        var dispatcher = new ToolDispatcher(tools);
         var renderer = new SingleUserContextRenderer(
             new SingleUserContextRendererOptions {
                 MaxRecentActions = 16,
                 MaxMemories = 20,
-                NextStepInstruction = BuildJsonInstruction(allowTools: true)
+                NextStepInstruction = BuildNativeToolInstruction()
             }
         );
 
         context.RecordAction("初始化迷宫任务", world.Look().Description);
-        context.Remember("如果已经到达 goal，请返回 final；否则请选择一个 maze 工具调用。", MemoryKind.Decision);
+        context.Remember("如果已经到达 goal，请直接给出最终答复；否则调用一个 maze 工具继续探索或移动。", MemoryKind.Decision);
         eventLog.Append(EventLogEntryKind.Note, "LLM maze run started.", world.RenderMap());
 
         for (var step = 1; step <= MaxMazeSteps; step++) {
@@ -143,42 +141,32 @@ internal static class Phase1Commands {
             eventLog.Append(EventLogEntryKind.UserInput, $"Rendered single user message for LLM step {step}.", userMessage);
 
             Console.WriteLine($"== llm step {step} ==");
-            var raw = await client.SendUserMessageAsync(userMessage, cancellationToken).ConfigureAwait(false);
+            var response = await client.SendTurnAsync(
+                new ChatTurnRequest(userMessage, tools.Select(tool => tool.Definition).ToArray(), ChatToolChoice.Auto),
+                cancellationToken
+            ).ConfigureAwait(false);
             await runLog.AppendAsync("request", client.LastRawRequest, cancellationToken).ConfigureAwait(false);
             await runLog.AppendAsync("response", client.LastRawResponse, cancellationToken).ConfigureAwait(false);
-            eventLog.Append(EventLogEntryKind.ModelOutput, $"LLM response for step {step}.", raw);
+            eventLog.Append(EventLogEntryKind.ModelOutput, $"LLM response for step {step}.", response.RawResponse);
 
-            AgentModelResponse parsed;
-            try {
-                parsed = ToolCallParser.Parse(raw);
-            }
-            catch (ToolCallParseException ex) {
-                context.RecordAction("模型输出 JSON 解析失败", ex.Message, ActionStatus.Failed);
-                context.Remember("上一轮模型输出无法解析；下一轮必须只输出符合协议的 JSON object。", MemoryKind.Warning, "ToolCallParser");
-                context.AddTransientView("last-invalid-json", "上一轮无效模型输出", ex.RawText, "DeepSeek response");
-                Console.Error.WriteLine(ex.Message);
-                Console.Error.WriteLine(Preview(ex.RawText, maxLength: 600));
-                continue;
+            if (!string.IsNullOrWhiteSpace(response.Content)) {
+                context.RecordAction("模型正文", response.Content);
             }
 
-            if (!string.IsNullOrWhiteSpace(parsed.Thought)) {
-                context.RecordAction("模型思路", parsed.Thought);
-            }
-
-            if (!string.IsNullOrWhiteSpace(parsed.Final) && parsed.ToolCalls.Count == 0) {
-                context.RecordAction("模型给出最终答案", parsed.Final);
-                Console.WriteLine(parsed.Final);
+            if (!string.IsNullOrWhiteSpace(response.Content) && response.ToolCalls.Count == 0) {
+                context.RecordAction("模型给出最终答案", response.Content);
+                Console.WriteLine(response.Content);
                 Console.WriteLine($"EventLog entries: {eventLog.Count}");
                 Console.WriteLine($"Run log: {runLog.Path}");
                 return world.IsAtGoal ? 0 : 1;
             }
 
-            if (parsed.ToolCalls.Count == 0) {
-                context.RecordAction("模型未给出工具调用", "需要继续要求它按协议行动。", ActionStatus.Failed);
+            if (response.ToolCalls.Count == 0) {
+                context.RecordAction("模型未给出工具调用", "需要继续要求它调用服务端工具或给出最终答案。", ActionStatus.Failed);
                 continue;
             }
 
-            var results = await dispatcher.DispatchAsync(parsed.ToolCalls, cancellationToken).ConfigureAwait(false);
+            var results = await dispatcher.DispatchAsync(response.ToolCalls, cancellationToken).ConfigureAwait(false);
             foreach (var result in results) {
                 var detail = result.Succeeded ? result.Content : result.Error;
                 eventLog.Append(EventLogEntryKind.ToolResult, $"Tool {result.ToolName}: {detail}", detail, result.CallId);
@@ -217,50 +205,41 @@ internal static class Phase1Commands {
             .ToArray();
     }
 
-    private static string BuildJsonInstruction(bool allowTools) {
-        var toolPart = allowTools
-            ? """
-            如需行动，返回 tool_calls 数组。可用工具名只允许 `maze.look`、`maze.move`、`maze.status`。
-            `maze.move` 参数示例：{ "direction": "east" }。
-            """
-            : "本轮不允许调用工具，tool_calls 必须是空数组。";
+    private static string BuildNativeToolInstruction()
+        => """
+        你是这个任务中的 Agent。需要观察、移动或确认状态时，请调用服务端提供的工具。
+        如果任务已经完成，请不要再调用工具，直接用一句话给出最终结果。
+        """;
 
-        return string.Concat(
-            """
-        你是这个任务中的 Agent。请只输出一个 JSON object，不要使用 Markdown，不要添加额外说明。
-        JSON shape:
-        { "thought": "一句简短思路", "tool_calls": [], "final": "完成时的答案或 null" }
-        """, toolPart, """
-
-        如果任务已完成，返回 `final` 字符串，并让 `tool_calls` 为空数组。
-        """
-        );
-    }
-
-    private static string BuildFakeModelJson(FakeMazeDecision decision, int step) {
+    private static ChatTurnResponse BuildFakeModelResponse(FakeMazeDecision decision, int step) {
         if (decision.ToolCall is null) {
-            return JsonSerializer.Serialize(
+            var rawFinal = JsonSerializer.Serialize(
                 new {
-                    thought = decision.Thought,
-                    tool_calls = Array.Empty<object>(),
-                    final = decision.Final
+                    content = decision.Final,
+                    tool_calls = Array.Empty<object>()
                 }
             );
+            return new ChatTurnResponse(decision.Final, [], "stop", rawFinal);
         }
 
-        return JsonSerializer.Serialize(
+        var arguments = JsonSerializer.SerializeToElement(decision.ToolCall.Arguments);
+        var call = new ToolCallRequest($"fake-{step}", decision.ToolCall.Name, arguments);
+        var rawToolCall = JsonSerializer.Serialize(
             new {
-                thought = decision.Thought,
+                content = (string?)null,
                 tool_calls = new[] {
                     new {
-                    id = $"fake-{step}",
-                    name = decision.ToolCall.Name,
-                    arguments = decision.ToolCall.Arguments
+                        id = call.Id,
+                        type = "function",
+                        function = new {
+                            name = call.Name,
+                            arguments = call.Arguments
+                        }
+                    }
                 }
-            },
-                final = (string?)null
             }
         );
+        return new ChatTurnResponse(null, [call], "tool_calls", rawToolCall);
     }
 
     private static string Preview(string text, int maxLength) {

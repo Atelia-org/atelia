@@ -1,6 +1,6 @@
 # Phase 1 Findings: Single User Message Tool Loop
 
-**状态**：Completed smoke validation
+**状态**：Completed smoke validation; JSON 正文工具协议已被 native server tool-calls 重构取代
 **日期**：2026-05-17
 
 ---
@@ -9,13 +9,15 @@
 
 单条 `user` message 驱动 tool-loop 在最小迷宫任务上可行。
 
-本阶段已经跑通：
+本阶段最初跑通：
 
 - 本地 fake policy tool-loop。
 - DeepSeek V4 `ping-llm` JSON 协议测试。
 - DeepSeek V4 `maze-llm-run` 真实工具循环。
 
-真实迷宫运行中，模型连续调用 `maze.move`，按路径：
+后续重构已把工具调用从“assistant 正文 JSON”迁移为 OpenAI Chat 风格 `request.tools` / `response.choices[].message.tool_calls`。下面保留的 JSON 协议经验属于 Phase 1 历史记录，不再代表当前实现。
+
+真实迷宫运行中，模型连续调用 `maze_move`，按路径：
 
 ```text
 east -> east -> south -> south -> east -> east -> north
@@ -37,8 +39,8 @@ Reached the goal at (5,2) in 7 steps.
 - T-01：实现 `EventLog`、`WorkingContext`、行动日志、记忆项、临时视图。
 - T-02：实现 `SingleUserContextRenderer`，可渲染一条完整 user message。
 - T-10：实现绑定 DeepSeek V4 的最小 Chat client。
-- T-11：实现 JSON 工具协议、parser、tool dispatcher。
-- T-12：实现固定迷宫环境与 `maze.look` / `maze.move` / `maze.status`。
+- T-11：最初实现 JSON 工具协议、parser、tool dispatcher；后续改为 native server tool-call adapter + dispatcher。
+- T-12：实现固定迷宫环境与 `maze_look` / `maze_move` / `maze_status`。
 - T-13：实现 fake policy 并跑通迷宫。
 - T-14：接入 DeepSeek V4 并跑通真实迷宫。
 - T-15：记录本复盘文档。
@@ -49,7 +51,7 @@ Reached the goal at (5,2) in 7 steps.
 
 ### 3.1 单 user message 形态没有天然阻塞 tool-loop
 
-模型可以接受“当前工作上下文 + 可用工具 + JSON 输出协议”作为唯一输入，并持续执行多步任务。
+模型可以接受“当前工作上下文 + 可用工具意图 + 服务端 tool schema”作为输入，并持续执行多步任务。
 
 这里的关键不是 message role 交替，而是每轮投影中必须明确包含：
 
@@ -57,9 +59,9 @@ Reached the goal at (5,2) in 7 steps.
 - 近期行动日志
 - 当前已知状态
 - 可用工具说明
-- 严格输出格式
+- 需要行动时调用服务端工具、完成时直接给出最终正文的行为指令
 
-### 3.2 模型会偏离自定义 JSON 协议
+### 3.2 自定义 JSON 协议容易漂移
 
 第一次真实 `maze-llm-run` 暴露了协议坑：
 
@@ -67,20 +69,20 @@ Reached the goal at (5,2) in 7 steps.
 - 模型有时不用 `name`，而是用 `tool` 或 `tool_name`。
 - 模型可能把 JSON 包在 markdown fence 里。
 
-因此 `ToolCallParser` 从严格 parser 调整为宽容 parser：
+因此历史实现曾把 `ToolCallParser` 从严格 parser 调整为宽容 parser：
 
 - 自动提取 fenced JSON 或文本中的首尾 JSON object。
 - 缺失 `id` 时自动补 `call-N`。
 - 接受 `name` / `tool` / `tool_name`。
 - 接受 `arguments` / `args`。
 
-这不意味着协议可以无限宽松，而是 Phase 1 的真实结论：自定义 tool protocol 必须设计 repair/normalization 层。
+这不意味着协议可以无限宽松，而是 Phase 1 的真实结论：自定义 assistant 正文 tool protocol 会把大量脆弱性推给本地 parser。当前实现已改为让服务端推理引擎解析 `tool_calls`，本地直接消费 provider wire shape；旧 `ToolCallParser` 类型已删除。随后又把迷宫工具名直接重命名为 provider-safe 的 `maze_look` / `maze_move` / `maze_status`，删除了额外的名字映射层。
 
-### 3.3 tool result 不用 `tool` role 回灌也可行
+### 3.3 tool result 可以折叠进 WorkingContext
 
 工具结果通过 `WorkingContext` 的行动日志与记忆项进入下一轮单 user message。模型仍能利用这些状态继续行动。
 
-这支持后续 micro-wizard 方向：工具结果不必原样回灌，可以由框架转成可控的工作上下文节点。
+这支持后续 micro-wizard 方向：工具结果不必作为长期原始历史回灌，可以由框架转成可控的工作上下文节点。当前原型仍保持“每轮单 user message 投影”，但真实 LLM 请求已经使用服务端 `tools` / `tool_calls` 字段。
 
 ### 3.4 当前上下文仍会线性膨胀
 
@@ -98,7 +100,7 @@ Fake run 与 LLM run 都会把每步位置记忆追加到 `WorkingContext.Memori
 
 Reviewer 复盘后补了两点：
 
-- `maze-fake-run` 现在也会生成 fake model JSON，并经过 `ToolCallParser` 与 `ToolDispatcher` 执行，因此无 API key 路径也覆盖 T-11 的协议链路。
+- `maze-fake-run` 现在直接生成内部 normalized `ToolCallRequest`，不再伪造 assistant 正文 JSON。
 - `maze-llm-run` 会把 raw request/response 写入 `.atelia/debug-logs/MutableContextAgentProto/*.jsonl`，方便复盘真实模型协议偏移。
 
 同时，`WorkingContext` 中的工具行动日志只保留短摘要；完整工具 payload 留在 `EventLog` 或 run log，避免 fake/LLM 路径把工具结果原样塞回上下文。
@@ -132,6 +134,25 @@ DEEPSEEK_API_KEY=...
 ```bash
 dotnet build prototypes/MutableContextAgentProto/MutableContextAgentProto.csproj
 dotnet run --project prototypes/MutableContextAgentProto -- smoke
+dotnet run --project prototypes/MutableContextAgentProto -- maze-fake-run
+dotnet run --project prototypes/MutableContextAgentProto -- ping-llm
+dotnet run --project prototypes/MutableContextAgentProto -- maze-llm-run
+```
+
+当前 native server tool-calls 迷宫结果：
+
+```text
+已成功走出迷宫！起点 (1,1) -> 终点 (5,2)，共用了 7 步，路径为：东->东->南->南->东->东->北。
+EventLog entries: 48
+Run log: .atelia/debug-logs/MutableContextAgentProto/20260517-161945-maze-llm-run.jsonl
+```
+
+该 run log 确认请求体使用 `tools[].function.name = maze_look / maze_move / maze_status`，响应体使用 `choices[].message.tool_calls[].function.name` 与 JSON string `arguments`，本地直接以同名工具执行。
+
+历史 JSON 协议阶段曾通过：
+
+```bash
+dotnet run --project prototypes/MutableContextAgentProto -- smoke
 dotnet run --project prototypes/MutableContextAgentProto -- render-demo
 dotnet run --project prototypes/MutableContextAgentProto -- maze-demo
 dotnet run --project prototypes/MutableContextAgentProto -- maze-fake-run
@@ -146,7 +167,7 @@ Reached the goal at (5,2) in 7 steps.
 EventLog entries: 24
 ```
 
-补充复验中，模型探索性地撞了一次墙并多次调用 `maze.look`，最终仍在 7 次有效移动后到达终点：
+补充复验中，模型探索性地撞了一次墙并多次调用 `maze_look`，最终仍在 7 次有效移动后到达终点：
 
 ```text
 Reached goal at (5,2) in 7 steps.
