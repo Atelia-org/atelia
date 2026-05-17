@@ -50,6 +50,7 @@ internal static class GameSimulation {
     private const string TargetIdKey = "targetId";
     private const string ActionKindLedgerKey = "actionKind";
     private const string VisibleLabelKey = "visibleLabel";
+    private const string PreconditionNoteKey = "preconditionNote";
     private const string EffectNoteKey = "effectNote";
     private const string VisibleValue = "visible";
     private const string DiscoveredValue = "discovered";
@@ -188,8 +189,8 @@ internal static class GameSimulation {
             $"actionKind={interaction.ActionKind}",
             $"visibleLabel={interaction.VisibleLabel}",
         };
-        if (!string.IsNullOrWhiteSpace(interaction.EffectNote)) {
-            lines.Add($"effectNote={interaction.EffectNote}");
+        if (!string.IsNullOrWhiteSpace(interaction.PreconditionNote)) {
+            lines.Add($"preconditionNote={interaction.PreconditionNote}");
         }
 
         return string.Join("\n", lines);
@@ -573,6 +574,12 @@ internal static class GameSimulation {
                 continue;
             }
 
+            var visibility = interaction.TryGet(VisibilityKey, out string? rawVisibility)
+                ? rawVisibility
+                : VisibleValue;
+            if (!IsVisibleToPlayer(visibility)) { continue; }
+
+            _ = interaction.TryGet(PreconditionNoteKey, out string? preconditionNote);
             _ = interaction.TryGet(EffectNoteKey, out string? effectNote);
             yield return new InteractionPerception(
                 interactionId,
@@ -580,6 +587,7 @@ internal static class GameSimulation {
                 actualTargetId,
                 interaction.GetOrThrow<string>(ActionKindLedgerKey)!,
                 interaction.GetOrThrow<string>(VisibleLabelKey)!,
+                preconditionNote,
                 effectNote
             );
         }

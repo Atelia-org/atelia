@@ -213,6 +213,10 @@ internal static class GamePresenter {
         sb.AppendLine($"{indent}可交互:");
         foreach (var interaction in interactions) {
             sb.AppendLine($"{indent}- [{interaction.InteractionId}] {interaction.VisibleLabel} ({interaction.ActionKind})");
+            if (!string.IsNullOrWhiteSpace(interaction.PreconditionNote)
+                && !string.Equals(interaction.PreconditionNote, "none", StringComparison.OrdinalIgnoreCase)) {
+                sb.AppendLine($"{indent}  条件: {interaction.PreconditionNote}");
+            }
         }
     }
 

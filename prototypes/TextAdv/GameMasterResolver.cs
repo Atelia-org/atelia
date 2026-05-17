@@ -267,8 +267,9 @@ internal static class GameMasterResolver {
             MethodToolWrapper.FromDelegate<string>(toolService.MovePlayerAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateNpcAsync),
-            MethodToolWrapper.FromDelegate<string, string, string, string, string>(toolService.AddInteractionAsync),
+            MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.SetVisibilityAsync),
+            MethodToolWrapper.FromDelegate<string, string>(toolService.SetInteractionVisibilityAsync),
         ]);
     }
 
@@ -286,7 +287,7 @@ internal static class GameMasterResolver {
 你必须通过工具更新世界状态：
 - 如果目标方向已有出口，只调用 gm_move_player 移动到该目标 LocationId。
 - 如果目标方向没有出口，先调用 gm_create_location，再调用 gm_link_locations，最后调用 gm_move_player。
-- 可选：若新地点需要一个可见可操作细节，可以创建 0 到 1 个 Item 或 0 到 1 个 NPC，再调用 gm_add_interaction 给新地点、该 Item 或该 Actor 添加 0 到 2 个交互 affordance。
+- 可选：若新地点需要一个可见可操作细节，可以创建 0 到 1 个 Item 或 0 到 1 个 NPC，再调用 gm_add_interaction 给新地点、该 Item 或该 Actor 添加 0 到 2 个交互 affordance；precondition_note 若无特别条件写 none。
 - 如果最终摘要提到玩家能看见的具体物品或人物，该实体必须已经通过 gm_create_item 或 gm_create_npc 落账；若可以对话、检查、拿取或操作，必须通过 gm_add_interaction 落账。
 - 若有建议反向方向，应在 gm_link_locations 中填写 reverse_direction；否则传 null。
 - 不要用普通文本声称世界已改变；只有工具调用成功才算落账。
@@ -307,7 +308,8 @@ internal static class GameMasterResolver {
 
 你必须通过工具更新世界状态：
 - 如果交互揭示了新的可见物品或人物，必须调用 gm_create_item 或 gm_create_npc。
-- 如果交互让某个对象变得可操作，必须调用 gm_add_interaction。
+- 如果交互让某个对象变得可操作，必须调用 gm_add_interaction；precondition_note 若无特别条件写 none。
+- 如果旧交互已经被消耗或暂时不应继续显示，调用 gm_set_interaction_visibility 将它设为 hidden。
 - 如果交互只产生感知反馈、没有 hard truth 变化，可以不调用工具，直接输出 1 到 3 句玩家可见结算摘要。
 - 如果最终摘要提到玩家能看见的具体物品或人物，该实体必须已经落账。
 - 不要用普通文本声称世界已改变；只有工具调用成功才算落账。
@@ -397,7 +399,7 @@ internal static class GameMasterResolver {
         sb.AppendLine("新地点 description 只描述入口附近已经确认的低风险信息，不要塞入物品、NPC 或隐藏剧情。");
         sb.AppendLine("如果你创建 Item，item_id 必须稳定；物品描述应是玩家一眼能看到的东西，不要包含隐藏功能。");
         sb.AppendLine("如果你创建 NPC，actor_id 必须稳定；profile_note 只写玩家可感知的外观/姿态和 GM 可用的轻量主持提示，不写隐藏秘密。");
-        sb.AppendLine("如果你创建 Interaction，target_ref 使用 location:<id>、item:<id> 或 actor:<id>；visible_label 是玩家看到的动作提示。");
+        sb.AppendLine("如果你创建 Interaction，target_ref 使用 location:<id>、item:<id> 或 actor:<id>；visible_label 是玩家看到的动作提示；precondition_note 无特别条件时写 none。");
 
         return sb.ToString();
     }
@@ -420,6 +422,7 @@ internal static class GameMasterResolver {
         sb.AppendLine($"- Target: {interaction.TargetKind}:{interaction.TargetId}");
         sb.AppendLine($"- ActionKind: {interaction.ActionKind}");
         sb.AppendLine($"- VisibleLabel: {interaction.VisibleLabel}");
+        sb.AppendLine($"- PreconditionNote: {interaction.PreconditionNote ?? "(none)"}");
         sb.AppendLine($"- EffectNote: {interaction.EffectNote ?? "(none)"}");
         sb.AppendLine();
         sb.AppendLine("[当前可见出口]");
@@ -480,9 +483,10 @@ internal static class GameMasterResolver {
 
         sb.AppendLine();
         sb.AppendLine("[工具使用要求]");
-        sb.AppendLine("优先根据所选 Interaction 的 target、actionKind、visibleLabel 和 effectNote 裁决，不要把玩家事前推理当成事实来源。");
-        sb.AppendLine("若创建 Item/NPC/Interaction，ID 必须稳定、唯一，并且 target_ref 必须引用已经存在的对象。");
+        sb.AppendLine("优先根据所选 Interaction 的 target、actionKind、visibleLabel、preconditionNote 和 effectNote 裁决，不要把玩家事前推理当成事实来源。");
+        sb.AppendLine("若创建 Item/NPC/Interaction，ID 必须稳定、唯一，并且 target_ref 必须引用已经存在的对象；precondition_note 无特别条件时写 none。");
         sb.AppendLine("若只是检查、倾听、交谈第一句等低风险反馈，可以不改账本，只输出玩家可见摘要。");
+        sb.AppendLine("若当前 interaction 已被消耗或下一回合不应继续显示，请用 gm_set_interaction_visibility 把它设为 hidden。");
         sb.AppendLine("若摘要提到新的可见物品、人物或可执行动作，必须先调用相应工具落账。");
 
         return sb.ToString();
@@ -492,7 +496,10 @@ internal static class GameMasterResolver {
         if (interactions.Count == 0) { return; }
 
         foreach (var interaction in interactions) {
-            sb.AppendLine($"- {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel}");
+            var precondition = string.IsNullOrWhiteSpace(interaction.PreconditionNote)
+                ? "none"
+                : interaction.PreconditionNote;
+            sb.AppendLine($"- {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel} | precondition: {precondition}");
         }
     }
 

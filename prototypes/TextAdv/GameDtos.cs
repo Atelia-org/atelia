@@ -39,6 +39,7 @@ internal sealed record InteractionPerception(
     string TargetId,
     string ActionKind,
     string VisibleLabel,
+    string? PreconditionNote,
     string? EffectNote
 );
 

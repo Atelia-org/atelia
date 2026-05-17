@@ -205,18 +205,18 @@ internal static class GameActionValidator {
         else {
             sb.AppendLine("- VisibleInteractions:");
             foreach (var interaction in perception.Location.Interactions) {
-                sb.AppendLine($"  - {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel}");
+                sb.AppendLine($"  - {FormatInteraction(interaction)}");
             }
 
             foreach (var item in perception.Location.Items) {
                 foreach (var interaction in item.Interactions) {
-                    sb.AppendLine($"  - {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel}");
+                    sb.AppendLine($"  - {FormatInteraction(interaction)}");
                 }
             }
 
             foreach (var actor in perception.Location.Actors) {
                 foreach (var interaction in actor.Interactions) {
-                    sb.AppendLine($"  - {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel}");
+                    sb.AppendLine($"  - {FormatInteraction(interaction)}");
                 }
             }
         }
@@ -257,6 +257,13 @@ internal static class GameActionValidator {
 
     private static string BuildAcceptedFeedback() {
         return "通过：validator 未指出 groundedness 问题。";
+    }
+
+    private static string FormatInteraction(InteractionPerception interaction) {
+        var precondition = string.IsNullOrWhiteSpace(interaction.PreconditionNote)
+            ? "none"
+            : interaction.PreconditionNote;
+        return $"{interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel} | precondition: {precondition}";
     }
 
     private static string BuildRejectedFeedback(IReadOnlyList<RawToolCall> toolCalls) {

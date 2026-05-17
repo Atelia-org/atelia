@@ -28,6 +28,7 @@ internal sealed class GmWorldEditService {
     private const string TargetIdKey = "targetId";
     private const string ActionKindKey = "actionKind";
     private const string VisibleLabelKey = "visibleLabel";
+    private const string PreconditionNoteKey = "preconditionNote";
     private const string EffectNoteKey = "effectNote";
     private const string VisibleValue = "visible";
 
@@ -182,12 +183,14 @@ internal sealed class GmWorldEditService {
         string targetRef,
         string actionKind,
         string visibleLabel,
+        string preconditionNote,
         string effectNote
     ) {
         interactionId = NormalizeRequired(interactionId, nameof(interactionId));
         targetRef = NormalizeRequired(targetRef, nameof(targetRef));
         actionKind = NormalizeRequired(actionKind, nameof(actionKind));
         visibleLabel = NormalizeRequired(visibleLabel, nameof(visibleLabel));
+        preconditionNote = NormalizeRequired(preconditionNote, nameof(preconditionNote));
         effectNote = NormalizeRequired(effectNote, nameof(effectNote));
 
         if (!TryParseTargetRef(targetRef, out var targetKind, out var targetId)) {
@@ -217,10 +220,42 @@ internal sealed class GmWorldEditService {
         interaction.Upsert(TargetIdKey, targetId);
         interaction.Upsert(ActionKindKey, actionKind);
         interaction.Upsert(VisibleLabelKey, visibleLabel);
+        interaction.Upsert(PreconditionNoteKey, preconditionNote);
         interaction.Upsert(EffectNoteKey, effectNote);
+        interaction.Upsert(VisibilityKey, VisibleValue);
         interactions.Upsert(interactionId, interaction);
 
         return interactionId;
+    }
+
+    internal AteliaResult<string> SetInteractionVisibility(
+        string interactionId,
+        string visibility
+    ) {
+        interactionId = NormalizeRequired(interactionId, nameof(interactionId));
+        visibility = NormalizeRequired(visibility, nameof(visibility));
+
+        if (!IsAllowedVisibility(visibility)) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.InvalidVisibility",
+                    $"Visibility '{visibility}' 无效；允许 visible / hidden / discovered。"
+                )
+            );
+        }
+
+        var interactions = GetOrCreateWorldDict(InteractionsKey);
+        if (!interactions.TryGet(interactionId, out DurableDict<string>? interaction) || interaction is null) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.InteractionNotFound",
+                    $"Interaction '{interactionId}' 不存在。"
+                )
+            );
+        }
+
+        interaction.Upsert(VisibilityKey, visibility.ToLowerInvariant());
+        return $"{interactionId}={visibility.ToLowerInvariant()}";
     }
 
     internal AteliaResult<string> SetVisibility(
@@ -230,9 +265,7 @@ internal sealed class GmWorldEditService {
         targetRef = NormalizeRequired(targetRef, nameof(targetRef));
         visibility = NormalizeRequired(visibility, nameof(visibility));
 
-        if (!string.Equals(visibility, "visible", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(visibility, "hidden", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(visibility, "discovered", StringComparison.OrdinalIgnoreCase)) {
+        if (!IsAllowedVisibility(visibility)) {
             return AteliaResult<string>.Failure(
                 new TextAdvError(
                     "TextAdv.Gm.InvalidVisibility",
@@ -343,11 +376,12 @@ internal sealed class GmWorldEditService {
         [ToolParam("交互目标，格式为 location:<locationId>、item:<itemId> 或 actor:<actorId>。")] string target_ref,
         [ToolParam("交互类型，例如 inspect / take / use / open / listen。")] string action_kind,
         [ToolParam("玩家可见的交互标签，例如“检查贝壳边缘”。")] string visible_label,
+        [ToolParam("基础前置条件说明；若没有特别条件，写 none。")] string precondition_note,
         [ToolParam("交互效果的简短 GM note；首版可用自然语言。")] string effect_note,
         CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
-        return ToToolResult(AddInteraction(interaction_id, target_ref, action_kind, visible_label, effect_note), "added interaction");
+        return ToToolResult(AddInteraction(interaction_id, target_ref, action_kind, visible_label, precondition_note, effect_note), "added interaction");
     }
 
     [Tool("gm_set_visibility", "设置 Item 或 Actor 的可见性。visibility 只能是 visible / hidden / discovered。")]
@@ -358,6 +392,16 @@ internal sealed class GmWorldEditService {
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         return ToToolResult(SetVisibility(target_ref, visibility), "set visibility");
+    }
+
+    [Tool("gm_set_interaction_visibility", "设置 Interaction affordance 的可见性。visibility 只能是 visible / hidden / discovered。")]
+    public ValueTask<ToolExecuteResult> SetInteractionVisibilityAsync(
+        [ToolParam("目标 InteractionId。")] string interaction_id,
+        [ToolParam("新的可见性：visible / hidden / discovered。")] string visibility,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ToToolResult(SetInteractionVisibility(interaction_id, visibility), "set interaction visibility");
     }
 
     private AteliaResult<DurableDict<string>> TryGetLocation(string locationId) {
@@ -438,6 +482,11 @@ internal sealed class GmWorldEditService {
         targetId = targetRef[(separatorIndex + 1)..].Trim();
         return !string.IsNullOrWhiteSpace(targetKind) && !string.IsNullOrWhiteSpace(targetId);
     }
+
+    private static bool IsAllowedVisibility(string visibility)
+        => string.Equals(visibility, "visible", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(visibility, "hidden", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(visibility, "discovered", StringComparison.OrdinalIgnoreCase);
 
     private void UpsertActorLocation(string actorId, string locationId) {
         var actors = GetOrCreateWorldDict(ActorsKey);

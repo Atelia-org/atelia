@@ -160,6 +160,7 @@ root (DurableDict<string>)
 - `gm_create_npc`
 - `gm_add_interaction`
 - `gm_set_visibility`
+- `gm_set_interaction_visibility`
 
 因此 GM 可以在探索新区域时创建新 Location、可见物品、可见 NPC 和可交互 affordance。下一回合 `Perception-Bundle` 会把当前地点可见物品、角色与交互项渲染给玩家。
 
@@ -169,3 +170,5 @@ root (DurableDict<string>)
 - 动作仍走 `GameActionValidator`
 - 通过后由 GM Agent 根据 `targetKind` / `targetId` / `actionKind` / `effectNote` 结算
 - 若 GM 在摘要中引入新的可见物品、NPC 或可执行动作，应先通过工具落账
+- `gm_add_interaction` 会要求 `precondition_note`；没有特别条件时写 `none`
+- GM 可以用 `gm_set_interaction_visibility` 隐藏已经消耗或暂时不该显示的 affordance
