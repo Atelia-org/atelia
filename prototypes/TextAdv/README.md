@@ -156,7 +156,7 @@ root (DurableDict<string>)
 - `pmux game dev-turn-status`：查看当前 `barrierState`、`turnOwnerActorId` 和每个 active actor 的 Large-Action 提交状态
 - `pmux game dev-submit-large-action [--payload <payload>] <actor-id> <action-kind> <summary> <reason>`：绕过 validator 为任意 active actor 提交一个 Large-Action，用来验证 `acceptedStepsByActor` / `largeActionByActor` 和 barrier 流转
 
-当前 `llm-player` 会被创建、持久化和投影视角；真实 Agent 行动尚未接入前，系统会用 fallback 提交“谨慎观察并暂不移动”。开发者仍可用 `dev-submit-large-action` 手动模拟其它动作。下一步应把 fallback 替换为同一套 validator 边界内的内部 LLM Player Agent 行动提交，并让 collected-turn resolver 把所有 actor intent 注入 GM staged resolver。
+当前 `llm-player` 会被创建、持久化和投影视角；每个 `Perception-Bundle` 会包含 actor 自身的 name / kind / profileNote，避免内部玩家不知道“自己是谁”。真实 LLM Player 默认使用两阶段 `director-executor` 管线：先用无工具的导演阶段整理角色事实、猜测、欲望/恐惧、风险姿态、notebook 建议和推荐 Large-Action，再把这份导演札记作为 observation 交给带工具的执行阶段。执行阶段仍必须通过 `player_edit_memory_notebook` / `player_rest_a_while` / `player_explore` / `player_interact` 行动，并继续走同一套 validator。未配置 API key、模式为 deterministic、provider 失败或多次重试失败时，系统会 fallback 提交“谨慎观察并暂不移动”。开发者仍可用 `dev-submit-large-action` 手动模拟其它动作。下一步应让 collected-turn resolver 把所有 actor intent 注入 GM staged resolver。
 
 ## Validator 配置
 
@@ -166,6 +166,7 @@ root (DurableDict<string>)
 - `ATELIA_TEXTADV_GM_MODE`：可选，`auto` / `llm` / `deterministic`；默认 `auto`，有 `DEEPSEEK_API_KEY` 时优先尝试真实 GM Agent
 - `ATELIA_TEXTADV_GM_MAX_ROUNDS`：可选，真实 GM Agent 工具循环最大轮数，默认 `4`
 - `ATELIA_TEXTADV_LLM_PLAYER_MODE`：可选，`auto` / `llm` / `deterministic`；默认 `auto`，有 `DEEPSEEK_API_KEY` 时尝试真实 LLM Player Agent
+- `ATELIA_TEXTADV_LLM_PLAYER_PIPELINE`：可选，`director-executor` / `single`；默认 `director-executor`。`single` 会跳过导演札记，直接进入工具执行阶段
 - `ATELIA_TEXTADV_LLM_PLAYER_MODEL_ID`：可选，默认 `deepseek-v4-flash`
 - `ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS`：可选，每个 LLM Player 每回合最多提交尝试次数，默认 `3`
 - `DEEPSEEK_MODEL`：可选 fallback，若未设置 `ATELIA_TEXTADV_VALIDATOR_MODEL_ID` 则使用它

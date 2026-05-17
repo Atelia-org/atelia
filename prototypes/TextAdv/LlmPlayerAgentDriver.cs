@@ -14,8 +14,11 @@ internal static class LlmPlayerAgentDriver {
     private const string FallbackModelIdEnv = "DEEPSEEK_MODEL";
     private const string ApiKeyEnv = "DEEPSEEK_API_KEY";
     private const string ModeEnv = "ATELIA_TEXTADV_LLM_PLAYER_MODE";
+    private const string PipelineEnv = "ATELIA_TEXTADV_LLM_PLAYER_PIPELINE";
     private const string MaxAttemptsEnv = "ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS";
     private const string DefaultModelId = "deepseek-v4-flash";
+    private const string DirectorExecutorPipeline = "director-executor";
+    private const string SinglePipeline = "single";
     private const int DefaultMaxAttempts = 3;
 
     private static readonly Lock s_gate = new();
@@ -27,6 +30,7 @@ internal static class LlmPlayerAgentDriver {
         string ModelId,
         string? ApiKey,
         string Mode,
+        string Pipeline,
         int MaxAttempts
     );
 
@@ -50,10 +54,22 @@ internal static class LlmPlayerAgentDriver {
 
         try {
             var perception = GameSimulation.DescribePerceptionForActor(root, actorId);
+            var initialObservation = BuildInitialObservation(perception);
             var history = new List<IHistoryMessage>
             {
-                new ObservationMessage(BuildInitialObservation(perception))
+                new ObservationMessage(initialObservation)
             };
+
+            if (UsesDirectorExecutorPipeline(config)) {
+                var directorNotes = await BuildDirectorNotesAsync(config, initialObservation, cancellationToken)
+                    .ConfigureAwait(false);
+                if (directorNotes.IsFailure) {
+                    return SubmitFallback(root, actorId, directorNotes.Error!.Message);
+                }
+
+                history.Add(new ObservationMessage(BuildDirectorNotesObservation(directorNotes.Value!)));
+            }
+
             var toolService = new PlayerActionToolService(root, actorId, perception);
 
             for (var attempt = 1; attempt <= config.MaxAttempts; attempt++) {
@@ -186,7 +202,7 @@ internal static class LlmPlayerAgentDriver {
         return """
 你是 TextAdv 的 LLM Player Agent，负责扮演一个 active player actor。
 
-你的任务是根据自己的 Perception-Bundle 和 Memory-Notebook，为当前回合提交一个 Large-Action。
+你的任务是根据自己的 Perception-Bundle、Memory-Notebook，以及可能出现的导演札记，为当前回合提交一个 Large-Action。
 
 硬规则：
 1. 你只能依据输入给你的 actor 私有视角行动，不能假装知道完整世界真相。
@@ -196,6 +212,7 @@ internal static class LlmPlayerAgentDriver {
 5. 每个工具的事前推理必须先说明当前证据如何支持这个动作，不要写成事后解释。
 6. 如果没有明确目标，优先选择 player_rest_a_while，语义是谨慎观察并暂不移动。
 7. 不要试图直接改世界账本；你只是更新自己的记忆或声明玩家意图，GM 会统一结算。
+8. 导演札记是行动参考，不是世界真相；若札记与 Perception-Bundle 冲突，以 Perception-Bundle 和工具结果为准。
 
 Notebook 规则：
 - 记录猜测时请写“可能 / 怀疑 / 尚未确认”，不要把未证实内容写成确定事实。
@@ -204,10 +221,75 @@ Notebook 规则：
 """;
     }
 
+    private static string BuildDirectorSystemPrompt() {
+        return """
+你是 TextAdv 的 LLM Player 导演/心理建模器。你不调用工具，不直接扮演角色说台词。
+
+你的任务是把当前 actor 的私有感知整理成一份短小、可执行的导演札记，帮助后续执行阶段更像“有脑子、有欲望、有顾虑的角色”，同时仍保持工具调用可靠。
+
+请只依据输入的 Perception-Bundle 和 Memory-Notebook，不要引入完整世界真相。输出必须是简洁可见文本，包含：
+
+1. perceived_facts: 角色此刻确实能确认的事实。
+2. beliefs_and_uncertainties: 角色合理怀疑但尚未确认的事。
+3. motive_pressure: 此刻驱动角色行动的欲望、恐惧、利益、责任或惯性。
+4. risk_posture: 倾向谨慎、冒险、社交、控制、逃避等哪种姿态，以及原因。
+5. notebook_update: 是否建议先更新 Memory-Notebook，若建议，写出应记录的内容。
+6. intended_large_action: 推荐的 Large-Action 类型和目标；若证据不足，推荐 rest-a-while。
+
+不要写世界结算，不要假装行动已经成功，不要编造工具返回结果。
+""";
+    }
+
+    private static async Task<AsyncAteliaResult<string>> BuildDirectorNotesAsync(
+        LlmPlayerConfig config,
+        string initialObservation,
+        CancellationToken cancellationToken
+    ) {
+        var request = new CompletionRequest(
+            ModelId: config.ModelId,
+            SystemPrompt: BuildDirectorSystemPrompt(),
+            Context: [new ObservationMessage(initialObservation)],
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var result = await GetClient(config).StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
+        if (result.Errors is { Count: > 0 }) {
+            return AsyncAteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.LlmPlayerDirectorProviderError",
+                    BuildProviderErrorMessage(result.Errors)
+                )
+            );
+        }
+
+        var text = result.Message.GetFlattenedText().Trim();
+        if (string.IsNullOrWhiteSpace(text)) {
+            text = "导演阶段没有产出可见文本。执行阶段请只依据 Perception-Bundle、Memory-Notebook 和可用工具，保守提交 Large-Action。";
+        }
+
+        return AsyncAteliaResult<string>.Success(text);
+    }
+
+    private static string BuildDirectorNotesObservation(string directorNotes) {
+        return $"""
+[导演札记：供本回合工具执行阶段参考]
+{directorNotes}
+
+[执行要求]
+- 你现在必须通过工具行动。
+- 如果导演札记建议更新 notebook，可以先调用 player_edit_memory_notebook。
+- 最终必须调用 exactly one Large-Action 工具。
+- 不要把导演札记中的猜测当成已确认世界事实。
+""";
+    }
+
     private static string BuildInitialObservation(PerceptionBundle perception) {
         var sb = new StringBuilder();
         sb.AppendLine("[你的当前 Perception-Bundle]");
         sb.AppendLine($"- ActorId: {perception.ActorId}");
+        sb.AppendLine($"- ActorKind: {perception.ActorKind}");
+        sb.AppendLine($"- ActorName: {perception.ActorName}");
+        sb.AppendLine($"- ActorProfileNote: {perception.ActorProfileNote}");
         sb.AppendLine($"- Time: {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
         sb.AppendLine($"- LocationId: {perception.Location.LocationId}");
         sb.AppendLine($"- LocationName: {perception.Location.Name}");
@@ -343,11 +425,15 @@ Notebook 规则：
                 ModelId: GetEnvironmentOrDefault(ModelIdEnv, GetEnvironmentOrDefault(FallbackModelIdEnv, DefaultModelId)),
                 ApiKey: GetOptionalEnvironment(ApiKeyEnv),
                 Mode: GetEnvironmentOrDefault(ModeEnv, "auto"),
+                Pipeline: GetEnvironmentOrDefault(PipelineEnv, DirectorExecutorPipeline),
                 MaxAttempts: GetPositiveIntEnvironment(MaxAttemptsEnv, DefaultMaxAttempts)
             );
             return s_config;
         }
     }
+
+    private static bool UsesDirectorExecutorPipeline(LlmPlayerConfig config)
+        => !string.Equals(config.Pipeline, SinglePipeline, StringComparison.OrdinalIgnoreCase);
 
     private static string BuildProviderErrorMessage(IReadOnlyList<string> errors) {
         var message = string.Join(

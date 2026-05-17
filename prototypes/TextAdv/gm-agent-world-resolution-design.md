@@ -332,7 +332,8 @@ game
 - `actor:player` 与旧 `root.player` 并存。终端玩家的 `location` 和 `memoryNotebook` 已镜像到 actor ledger；旧字段暂时作为兼容层保留，后续可以在 LLM Player loop 稳定后删除。
 - `currentTurn` 已预留 `turnOwnerActorId`、`barrierState`、`acceptedStepsByActor`、`largeActionByActor`。当前终端玩家路径仍写入 legacy `acceptedSteps`，同时把同一组步骤挂到 `acceptedStepsByActor["player"]`；旧存档读取时会自动补齐这些 Phase 4 字段。
 - Large-Action 现在会落入 `largeActionByActor`。只有 `actor:player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，并驱动 pending `llm-player` 提交保守 fallback Large-Action。
-- pending `llm-player` 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明；输出必须调用 `player_rest_a_while`、`player_explore` 或 `player_interact` 之一提交 Large-Action。
+- pending `llm-player` 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明。`Perception-Bundle` 已包含 actor 自身的 name / kind / profileNote，避免角色缺少自我锚点；输出必须调用 `player_rest_a_while`、`player_explore` 或 `player_interact` 之一提交 Large-Action。
+- LLM Player Agent 默认使用 `director-executor` 两阶段管线：导演阶段无工具，专门把该 actor 的确认事实、怀疑、不安/欲望、风险姿态、notebook 建议和推荐行动整理为“导演札记”；执行阶段再拿着这份札记和原始 Perception-Bundle 调用工具。这样把“第三人称心理建模”与“工具可靠执行”拆开，减少角色扮演模式沉迷叙事或 assistant 模式角色驱动力不足的问题。可用 `ATELIA_TEXTADV_LLM_PLAYER_PIPELINE=single` 临时回到单阶段执行。
 - LLM Player Agent 首版也开放 `player_edit_memory_notebook` Small-Action。它可在提交 Large-Action 前编辑自己的 Memory-Notebook，编辑同样经过 `GameActionValidator`，并写入 `acceptedStepsByActor[actorId]`。
 - LLM Player Agent 提交的 Large-Action 会走同一套 `GameActionValidator`。provider 失败、未配置 API key、模式为 deterministic、没有调用工具，或 validator 多次拒绝时，才回退到 `large/rest-a-while`，语义为“谨慎观察并暂不移动”。
 - `dev-look-actor <actor-id>` 可用于查看任意 actor 的 Perception-Bundle；这验证了未来 LLM Player Agent 的输入可以只包含该 actor 的视角，而不是完整世界真相。

@@ -8,7 +8,10 @@ internal static class GamePresenter {
         var sb = new StringBuilder();
 
         sb.AppendLine($"🗓️ {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
-        sb.AppendLine($"🎭 Actor: {perception.ActorId}");
+        sb.AppendLine($"🎭 Actor: {perception.ActorName} [{perception.ActorId}, {perception.ActorKind}]");
+        if (!string.IsNullOrWhiteSpace(perception.ActorProfileNote)) {
+            AppendIndented(sb, perception.ActorProfileNote);
+        }
 
         if (!string.IsNullOrWhiteSpace(perception.LastResolution)) {
             sb.AppendLine("📣 上回合结算:");

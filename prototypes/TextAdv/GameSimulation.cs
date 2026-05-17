@@ -161,9 +161,21 @@ internal static class GameSimulation {
         var notebookSnapshot = GetNotebookSnapshot(root, actorId);
         var acceptedSteps = ReadAcceptedSteps(root, actorId);
         var locationId = actor.GetOrThrow<string>(LocationIdKey)!;
+        var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
+            ? rawKind
+            : "npc";
+        var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
+            ? rawName
+            : actorId;
+        var actorProfileNote = actor.TryGet(ProfileNoteKey, out string? rawProfileNote) && rawProfileNote is not null
+            ? rawProfileNote
+            : string.Empty;
 
         return new PerceptionBundle(
             actorId,
+            actorKind,
+            actorName,
+            actorProfileNote,
             day,
             slot,
             slotsPerDay,

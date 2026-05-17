@@ -75,6 +75,9 @@ internal sealed record TurnCollectionStatus(
 
 internal sealed record PerceptionBundle(
     string ActorId,
+    string ActorKind,
+    string ActorName,
+    string ActorProfileNote,
     int Day,
     int Slot,
     int SlotsPerDay,
