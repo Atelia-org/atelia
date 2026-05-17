@@ -14,8 +14,6 @@ internal sealed class GmWorldEditService {
     private const string ItemsKey = "items";
     private const string ActorsKey = "actors";
     private const string InteractionsKey = "interactions";
-    private const string PlayerKey = "player";
-    private const string PlayerLocationKey = "location";
     private const string TerminalPlayerActorId = "player";
     private const string NameKey = "name";
     private const string KindKey = "kind";
@@ -107,8 +105,6 @@ internal sealed class GmWorldEditService {
             return AteliaResult<string>.Failure(location.Error!);
         }
 
-        var player = _root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
-        player.Upsert(PlayerLocationKey, locationId);
         UpsertActorLocation(TerminalPlayerActorId, locationId);
         return locationId;
     }
@@ -128,11 +124,6 @@ internal sealed class GmWorldEditService {
         }
 
         actor.Value!.Upsert(LocationIdKey, locationId);
-        if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) {
-            var player = _root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
-            player.Upsert(PlayerLocationKey, locationId);
-        }
-
         return $"{actorId}->{locationId}";
     }
 

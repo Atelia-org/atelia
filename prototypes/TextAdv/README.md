@@ -33,7 +33,7 @@ LLM Agent (Copilot / Claude Code)
 ## 当前代码分层
 
 - `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
-- `GameSimulation.cs`：Schema/Core；世界 bootstrap、StateJournal schema key、兼容镜像、底层 ledger accessor
+- `GameSimulation.cs`：Schema/Core；世界 bootstrap、StateJournal schema key、底层 ledger accessor
 - `GameSimulation.Perception.cs`：Read-side projection；`Perception-Bundle`、可见性枚举、turn status、interaction lookup
 - `GameSimulation.TurnFlow.cs`：Write-side workflow；Small/Large-Action 落账、回合归档、GM/LLM player 驱动与 deterministic fallback
 - `GmWorldEditService.cs`：GM-style 世界编辑工具集；通过 `MethodToolWrapper` 暴露 Location / Item / Actor / Interaction 账本工具
@@ -116,7 +116,6 @@ root (DurableDict<string>)
 │   ├── currentTurn → {
 │   │     turnOwnerActorId,
 │   │     barrierState,
-│   │     acceptedSteps,          # legacy mirror for terminal player
 │   │     acceptedStepsByActor,
 │   │     largeActionByActor,
 │   │     notebookSnapshot,
@@ -125,9 +124,6 @@ root (DurableDict<string>)
 │   │   }
 │   ├── turnHistory → DurableDict<string>
 │   └── lastResolution → string?
-└── player → DurableDict<string>
-  ├── location → "beach"          # 终端玩家兼容镜像
-  └── memoryNotebook → DurableText # 终端玩家兼容镜像
 ```
 
 ## 设计原则
@@ -141,7 +137,7 @@ root (DurableDict<string>)
 - 所有玩家动作的第一个必填参数都应表示事前推理：先说明依据当前证据为什么准备这么做，再给出动作本身；不鼓励事后合理化式解释
 - `edit-memory-notebook --dry-run` 会执行与正式提交同构的 preview + validator，但不会写入状态；适合先试探 after-view 与 validator 边界
 - 玩家视图应自带“当前可执行动作”速查，默认按失忆玩家设计，不假定玩家记得上一次输出里的规则说明
-- `Perception-Bundle` 已经支持按 `actorId` 投影：当前位置、可见角色、持有物品和 Memory-Notebook 都来自 actor ledger；终端玩家的旧 `root.player` 字段暂时只作为兼容镜像
+- `Perception-Bundle` 已经支持按 `actorId` 投影：当前位置、可见角色、持有物品和 Memory-Notebook 都来自 actor ledger；终端玩家不再维护额外镜像
 - `currentTurn` 已经预留并使用 `acceptedStepsByActor`、`largeActionByActor`、`turnOwnerActorId`、`barrierState`；后续真实 LLM Player loop 可直接接入这组账本
 - 当存在多个 active actor 时，终端玩家的真实 Large-Action 通过 validator 后会先写入回合收集账本；当前 MVP 会依次驱动 pending `llm-player`，让它基于自己的 `Perception-Bundle` 调用工具提交 Large-Action，通过同一套 validator 后进入 collected-turn resolver
 - LLM Player Agent 首版开放 `player_edit_memory_notebook` Small-Action，以及 `player_rest_a_while`、`player_explore`、`player_interact` 三个 Large-Action 工具；若未配置 API key、模式为 deterministic、provider 失败或 validator 多次拒绝，会回退为“谨慎观察并暂不移动”

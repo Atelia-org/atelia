@@ -44,11 +44,11 @@ internal static partial class GameSimulation {
     }
 
     internal static LocationPerception DescribeCurrentLocation(DurableDict<string> root)
-        => DescribeLocation(root, GetPlayerLocationId(root), TerminalPlayerActorId);
+        => DescribeLocation(root, GetActorLocationId(root, TerminalPlayerActorId), TerminalPlayerActorId);
 
     internal static TurnCollectionStatus DescribeCurrentTurnStatus(DurableDict<string> root) {
         var game = GetGame(root);
-        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var currentTurn = GetCurrentTurn(root);
         var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
         var actorStatuses = EnumerateActiveActorIds(root)
             .Select(actorId => {

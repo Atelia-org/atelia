@@ -205,7 +205,7 @@ internal static partial class GameSimulation {
         actorId = NormalizeRequired(actorId, nameof(actorId));
         name = NormalizeRequired(name, nameof(name));
         profileNote = NormalizeRequired(profileNote, nameof(profileNote));
-        locationId = string.IsNullOrWhiteSpace(locationId) ? GetPlayerLocationId(root) : locationId.Trim();
+        locationId = string.IsNullOrWhiteSpace(locationId) ? GetActorLocationId(root, TerminalPlayerActorId) : locationId.Trim();
 
         _ = GetLocation(root, locationId);
         var actors = GetActors(root);
@@ -236,8 +236,7 @@ internal static partial class GameSimulation {
     }
 
     internal static AteliaResult<PerceptionBundle> MovePlayer(DurableDict<string> root, string direction) {
-        var player = root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
-        var currentLocationId = GetPlayerLocationId(root);
+        var currentLocationId = GetActorLocationId(root, TerminalPlayerActorId);
         var currentLocation = GetLocation(root, currentLocationId);
         var exits = currentLocation.GetOrThrow<DurableDict<string>>(ExitsKey)!;
 
@@ -256,7 +255,6 @@ internal static partial class GameSimulation {
         }
 
         _ = GetLocation(root, targetLocationId);
-        player.Upsert(PlayerLocationKey, targetLocationId);
         UpsertActorLocation(root, TerminalPlayerActorId, targetLocationId);
         return DescribeCurrentPerception(root);
     }
@@ -399,7 +397,7 @@ internal static partial class GameSimulation {
         direction = NormalizeRequired(direction, nameof(direction));
         focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
 
-        var currentLocationId = GetPlayerLocationId(root);
+        var currentLocationId = GetActorLocationId(root, TerminalPlayerActorId);
         var currentLocation = GetLocation(root, currentLocationId);
         var currentLocationName = currentLocation.GetOrThrow<string>(NameKey)!;
         var currentExits = currentLocation.GetOrThrow<DurableDict<string>>(ExitsKey)!;
@@ -421,7 +419,7 @@ internal static partial class GameSimulation {
         ).ConfigureAwait(false);
 
         if (gmResolution is { UsedLlm: true }
-            && !string.Equals(GetPlayerLocationId(root), currentLocationId, StringComparison.Ordinal)) {
+            && !string.Equals(GetActorLocationId(root, TerminalPlayerActorId), currentLocationId, StringComparison.Ordinal)) {
             var llmNextClock = AdvanceClock(root);
             var llmResolutionSummary = AppendClockAdvance(
                 gmResolution.Summary,
@@ -510,7 +508,7 @@ internal static partial class GameSimulation {
             root,
             new GmInteractionContext(
                 DescribeCurrentPerception(root),
-                GetPlayerLocationId(root),
+                GetActorLocationId(root, TerminalPlayerActorId),
                 interaction,
                 preActionReason
             ),
@@ -667,7 +665,6 @@ internal static partial class GameSimulation {
         var rev = root.Revision;
         var game = GetGame(root);
         var currentTurn = GetCurrentTurn(root);
-        EnsureCurrentTurnPhase4Fields(root);
         var turnHistory = game.GetOrThrow<DurableDict<string>>(TurnHistoryKey)!;
         var completedTurnCount = game.GetOrThrow<int>(CompletedTurnCountKey);
         var turnNumber = completedTurnCount + 1;
@@ -678,7 +675,6 @@ internal static partial class GameSimulation {
         archivedTurn.Upsert(StartSlotKey, currentTurn.GetOrThrow<int>(StartSlotKey));
         archivedTurn.Upsert(StartLocationIdKey, currentTurn.GetOrThrow<string>(StartLocationIdKey)!);
         archivedTurn.Upsert(NotebookSnapshotKey, currentTurn.GetOrThrow<string>(NotebookSnapshotKey)!);
-        archivedTurn.Upsert(AcceptedStepsKey, currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsKey)!);
         archivedTurn.Upsert(AcceptedStepsByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsByActorKey)!);
         archivedTurn.Upsert(LargeActionByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!);
         archivedTurn.Upsert(BarrierStateKey, currentTurn.GetOrThrow<string>(BarrierStateKey)!);
@@ -735,14 +731,14 @@ internal static partial class GameSimulation {
                 root.Revision,
                 day,
                 slot,
-                GetPlayerLocationId(root),
+                GetActorLocationId(root, TerminalPlayerActorId),
                 GetNotebookContent(notebookSnapshot)
             )
         );
     }
 
     private static void RecordLargeActionForActor(DurableDict<string> root, string actorId, TurnStep step) {
-        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var currentTurn = GetCurrentTurn(root);
         var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
         var action = root.Revision.CreateDict<string>();
 
@@ -766,13 +762,13 @@ internal static partial class GameSimulation {
     }
 
     private static bool HasSubmittedLargeAction(DurableDict<string> root, string actorId) {
-        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var currentTurn = GetCurrentTurn(root);
         var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
         return largeActionByActor.TryGet(actorId, out DurableDict<string>? action) && action is not null;
     }
 
     private static IReadOnlyList<LargeActionIntent> ReadLargeActionIntents(DurableDict<string> root) {
-        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var currentTurn = GetCurrentTurn(root);
         var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
         return largeActionByActor.Keys
             .OrderBy(static key => key, StringComparer.Ordinal)

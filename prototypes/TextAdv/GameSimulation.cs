@@ -12,8 +12,6 @@ internal static partial class GameSimulation {
     private const string InteractionsKey = "interactions";
     private const string InitialLocationKey = "initialLocation";
     private const string ActiveActorIdsKey = "activeActorIds";
-    private const string PlayerKey = "player";
-    private const string PlayerLocationKey = "location";
     private const string MemoryNotebookKey = "memoryNotebook";
     private const string TerminalPlayerActorId = "player";
     private const string DayKey = "day";
@@ -29,7 +27,6 @@ internal static partial class GameSimulation {
     private const string StartLocationIdKey = "startLocationId";
     private const string NotebookSnapshotKey = "notebookSnapshot";
     private const string NextStepNumberKey = "nextStepNumber";
-    private const string AcceptedStepsKey = "acceptedSteps";
     private const string TurnOwnerActorIdKey = "turnOwnerActorId";
     private const string AcceptedStepsByActorKey = "acceptedStepsByActor";
     private const string LargeActionByActorKey = "largeActionByActor";
@@ -94,7 +91,6 @@ internal static partial class GameSimulation {
         var actors = rev.CreateDict<string>();
         var interactions = rev.CreateDict<string>();
         var activeActorIds = rev.CreateDict<string>();
-        var player = rev.CreateDict<string>();
         var notebook = CreateNotebookText(rev, string.Empty);
         var turnHistory = rev.CreateDict<string>();
         var lastResolutionByActor = rev.CreateDict<string>();
@@ -135,9 +131,6 @@ internal static partial class GameSimulation {
         world.Upsert(InteractionsKey, interactions);
         world.Upsert(InitialLocationKey, beachId);
 
-        player.Upsert(PlayerLocationKey, beachId);
-        player.Upsert(MemoryNotebookKey, notebook);
-
         game.Upsert(DayKey, 1);
         game.Upsert(SlotKey, 1);
         game.Upsert(SlotsPerDayKey, DefaultSlotsPerDay);
@@ -149,7 +142,6 @@ internal static partial class GameSimulation {
 
         root.Upsert(WorldKey, world);
         root.Upsert(GameKey, game);
-        root.Upsert(PlayerKey, player);
 
         _ = repo.Commit(root).Value;
         return root;
@@ -186,9 +178,6 @@ internal static partial class GameSimulation {
     private static DurableDict<string> GetGame(DurableDict<string> root)
         => root.GetOrThrow<DurableDict<string>>(GameKey)!;
 
-    private static DurableDict<string> GetPlayer(DurableDict<string> root)
-        => root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
-
     private static DurableText GetNotebook(DurableDict<string> root)
         => GetNotebook(root, TerminalPlayerActorId);
 
@@ -196,12 +185,6 @@ internal static partial class GameSimulation {
         var actor = GetActor(root, actorId);
         if (actor.TryGet(MemoryNotebookKey, out DurableText? notebook) && notebook is not null) {
             return notebook;
-        }
-
-        if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) {
-            var playerNotebook = GetPlayer(root).GetOrThrow<DurableText>(MemoryNotebookKey)!;
-            actor.Upsert(MemoryNotebookKey, playerNotebook);
-            return playerNotebook;
         }
 
         notebook = CreateNotebookText(root.Revision, string.Empty);
@@ -230,18 +213,8 @@ internal static partial class GameSimulation {
         return locations.GetOrThrow<DurableDict<string>>(locationId)!;
     }
 
-    private static string GetPlayerLocationId(DurableDict<string> root) {
-        var actors = GetActors(root);
-        if (actors.TryGet(TerminalPlayerActorId, out DurableDict<string>? actor)
-            && actor is not null
-            && actor.TryGet(LocationIdKey, out string? actorLocationId)
-            && !string.IsNullOrWhiteSpace(actorLocationId)) {
-            return actorLocationId;
-        }
-
-        var player = root.GetOrThrow<DurableDict<string>>(PlayerKey)!;
-        return player.GetOrThrow<string>(PlayerLocationKey)!;
-    }
+    private static string GetActorLocationId(DurableDict<string> root, string actorId)
+        => GetActor(root, actorId).GetOrThrow<string>(LocationIdKey)!;
 
     private static TextBlockSnapshotDocument GetNotebookSnapshot(DurableDict<string> root)
         => GetNotebookSnapshot(root, TerminalPlayerActorId);
@@ -276,7 +249,6 @@ internal static partial class GameSimulation {
         string notebookSnapshot
     ) {
         var currentTurn = rev.CreateDict<string>();
-        var acceptedSteps = rev.CreateDict<string>();
         var acceptedStepsByActor = rev.CreateDict<string>();
         var largeActionByActor = rev.CreateDict<string>();
 
@@ -285,12 +257,11 @@ internal static partial class GameSimulation {
         currentTurn.Upsert(StartLocationIdKey, locationId);
         currentTurn.Upsert(NotebookSnapshotKey, notebookSnapshot);
         currentTurn.Upsert(NextStepNumberKey, 1);
-        currentTurn.Upsert(AcceptedStepsKey, acceptedSteps);
         currentTurn.Upsert(TurnOwnerActorIdKey, TerminalPlayerActorId);
         currentTurn.Upsert(AcceptedStepsByActorKey, acceptedStepsByActor);
         currentTurn.Upsert(LargeActionByActorKey, largeActionByActor);
         currentTurn.Upsert(BarrierStateKey, CollectingTerminalBarrierState);
-        acceptedStepsByActor.Upsert(TerminalPlayerActorId, acceptedSteps);
+        acceptedStepsByActor.Upsert(TerminalPlayerActorId, rev.CreateDict<string>());
 
         return currentTurn;
     }
@@ -311,7 +282,7 @@ internal static partial class GameSimulation {
         bool createIfMissing
     ) {
         actorId = NormalizeRequired(actorId, nameof(actorId));
-        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var currentTurn = GetCurrentTurn(root);
         var acceptedStepsByActor = currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsByActorKey)!;
         if (acceptedStepsByActor.TryGet(actorId, out DurableDict<string>? acceptedSteps)
             && acceptedSteps is not null) {
@@ -322,49 +293,7 @@ internal static partial class GameSimulation {
 
         acceptedSteps = root.Revision.CreateDict<string>();
         acceptedStepsByActor.Upsert(actorId, acceptedSteps);
-
-        if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) {
-            currentTurn.Upsert(AcceptedStepsKey, acceptedSteps);
-        }
-
         return acceptedSteps;
-    }
-
-    private static DurableDict<string> EnsureCurrentTurnPhase4Fields(DurableDict<string> root) {
-        var currentTurn = GetCurrentTurn(root);
-
-        if (!currentTurn.TryGet(AcceptedStepsByActorKey, out DurableDict<string>? acceptedStepsByActor)
-            || acceptedStepsByActor is null) {
-            acceptedStepsByActor = root.Revision.CreateDict<string>();
-            currentTurn.Upsert(AcceptedStepsByActorKey, acceptedStepsByActor);
-        }
-
-        if (!acceptedStepsByActor.TryGet(TerminalPlayerActorId, out DurableDict<string>? terminalSteps)
-            || terminalSteps is null) {
-            terminalSteps = currentTurn.TryGet(AcceptedStepsKey, out DurableDict<string>? legacySteps)
-                && legacySteps is not null
-                    ? legacySteps
-                    : root.Revision.CreateDict<string>();
-            acceptedStepsByActor.Upsert(TerminalPlayerActorId, terminalSteps);
-            currentTurn.Upsert(AcceptedStepsKey, terminalSteps);
-        }
-
-        if (!currentTurn.TryGet(LargeActionByActorKey, out DurableDict<string>? largeActionByActor)
-            || largeActionByActor is null) {
-            currentTurn.Upsert(LargeActionByActorKey, root.Revision.CreateDict<string>());
-        }
-
-        if (!currentTurn.TryGet(TurnOwnerActorIdKey, out string? turnOwnerActorId)
-            || string.IsNullOrWhiteSpace(turnOwnerActorId)) {
-            currentTurn.Upsert(TurnOwnerActorIdKey, TerminalPlayerActorId);
-        }
-
-        if (!currentTurn.TryGet(BarrierStateKey, out string? barrierState)
-            || string.IsNullOrWhiteSpace(barrierState)) {
-            currentTurn.Upsert(BarrierStateKey, CollectingTerminalBarrierState);
-        }
-
-        return currentTurn;
     }
 
     private static string? TryGetOptionalString(DurableDict<string> dict, string key) {
