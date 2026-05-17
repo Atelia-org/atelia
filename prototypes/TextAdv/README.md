@@ -141,6 +141,7 @@ root (DurableDict<string>)
 - 玩家视图应自带“当前可执行动作”速查，默认按失忆玩家设计，不假定玩家记得上一次输出里的规则说明
 - `Perception-Bundle` 已经支持按 `actorId` 投影：当前位置、可见角色、持有物品和 Memory-Notebook 都来自 actor ledger；终端玩家的旧 `root.player` 字段暂时只作为兼容镜像
 - `currentTurn` 已经预留 `acceptedStepsByActor`、`largeActionByActor`、`turnOwnerActorId`、`barrierState`，当前仍以单终端玩家流程运行，后续 LLM Player loop 可直接接入这组账本
+- 当存在多个 active actor 时，终端玩家的真实 Large-Action 通过 validator 后会先写入回合收集账本，不再直接触发 GM 结算；完整的“收齐后统一 GM 结算”仍是下一步
 - 当前 validator 默认走 `DeepSeekV4ChatClient`
 - 数据目录：`/tmp/atelia-textadv-game/`（后续可改为 repo 内路径）
 
@@ -150,8 +151,10 @@ root (DurableDict<string>)
 
 - `pmux game dev-add-llm-player [--location <locationId>] <actor-id> <name> <profile-note>`：创建一个 active `llm-player` actor，并加入 `game.activeActorIds`
 - `pmux game dev-look-actor <actor-id>`：按指定 actor 投影并渲染 `Perception-Bundle`
+- `pmux game dev-turn-status`：查看当前 `barrierState`、`turnOwnerActorId` 和每个 active actor 的 Large-Action 提交状态
+- `pmux game dev-submit-large-action [--payload <payload>] <actor-id> <action-kind> <summary> <reason>`：绕过 validator 为任意 active actor 提交一个 Large-Action，用来验证 `acceptedStepsByActor` / `largeActionByActor` 和 barrier 流转
 
-当前 `llm-player` 只会被创建、持久化和投影视角，尚不会自动声明 Large-Action。下一步应在同一套 validator 边界内实现内部 LLM Player Agent 行动提交。
+当前 `llm-player` 只会被创建、持久化和投影视角，尚不会自动声明 Large-Action。开发者可以用 `dev-submit-large-action` 模拟其交卷，让 barrier 进入 `ready-for-gm`。下一步应在同一套 validator 边界内实现内部 LLM Player Agent 行动提交，并在 `ready-for-gm` 后执行统一 GM 结算。
 
 ## Validator 配置
 

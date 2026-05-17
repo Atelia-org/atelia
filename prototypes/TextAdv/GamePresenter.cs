@@ -145,6 +145,31 @@ internal static class GamePresenter {
         return sb.ToString();
     }
 
+    internal static string RenderTurnCollectionStatus(TurnCollectionStatus status) {
+        var sb = new StringBuilder();
+        sb.AppendLine($"🗓️ {GameClock.FormatClock(status.Day, status.Slot, status.SlotsPerDay)}");
+        sb.AppendLine($"🚧 Barrier: {status.BarrierState}");
+        sb.AppendLine($"🎭 Turn owner: {status.TurnOwnerActorId}");
+        sb.AppendLine($"✅ All active actors submitted Large-Action: {status.AllActiveActorsSubmittedLargeAction}");
+        sb.AppendLine();
+
+        sb.AppendLine("👥 Active actor submissions:");
+        if (status.Actors.Count == 0) {
+            sb.AppendLine("   (none)");
+            return sb.ToString();
+        }
+
+        foreach (var actor in status.Actors) {
+            var submissionText = actor.HasSubmittedLargeAction
+                ? $"{actor.LargeActionKind} — {actor.LargeActionSummary}"
+                : "(pending)";
+            sb.AppendLine($"   [{actor.ActorId}] {actor.Name} ({actor.Kind}) active={actor.Active}");
+            sb.AppendLine($"      Large-Action: {submissionText}");
+        }
+
+        return sb.ToString();
+    }
+
     private static void AppendActionGuide(StringBuilder sb, PerceptionBundle perception) {
         var currentClock = GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay);
         var nextClock = GameClock.PreviewNextClock(perception.Day, perception.Slot, perception.SlotsPerDay);

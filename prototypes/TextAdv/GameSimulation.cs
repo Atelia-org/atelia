@@ -37,12 +37,15 @@ internal static class GameSimulation {
     private const string ResolutionSummaryKey = "resolutionSummary";
     private const string EndingNotebookKey = "endingNotebook";
     private const string CollectingTerminalBarrierState = "collecting-terminal";
+    private const string CollectingLlmBarrierState = "collecting-llm";
+    private const string ReadyForGmBarrierState = "ready-for-gm";
     private const string ActionKindKey = "actionKind";
     private const string ActionSummaryKey = "actionSummary";
     private const string ActionPayloadKey = "actionPayload";
     private const string PreActionReasonKey = "preActionReason";
     private const string ValidatorFeedbackKey = "validatorFeedback";
     private const string EndsTurnKey = "endsTurn";
+    private const string SourceStepNumberKey = "sourceStepNumber";
     private const string NameKey = "name";
     private const string KindKey = "kind";
     private const string DescriptionKey = "description";
@@ -163,6 +166,125 @@ internal static class GameSimulation {
 
     internal static LocationPerception DescribeCurrentLocation(DurableDict<string> root)
         => DescribeLocation(root, GetPlayerLocationId(root), TerminalPlayerActorId);
+
+    internal static TurnCollectionStatus DescribeCurrentTurnStatus(DurableDict<string> root) {
+        var game = GetGame(root);
+        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
+        var actorStatuses = EnumerateActiveActorIds(root)
+            .Select(actorId => {
+                var actor = GetActor(root, actorId);
+                var kind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
+                    ? rawKind
+                    : "npc";
+                var name = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
+                    ? rawName
+                    : actorId;
+                var active = !actor.TryGet(ActiveKey, out bool rawActive) || rawActive;
+                var hasLargeAction = largeActionByActor.TryGet(actorId, out DurableDict<string>? action)
+                    && action is not null;
+                string? actionKind = null;
+                string? actionSummary = null;
+                if (hasLargeAction && action is not null) {
+                    _ = action.TryGet(ActionKindKey, out actionKind);
+                    _ = action.TryGet(ActionSummaryKey, out actionSummary);
+                }
+
+                return new TurnActorStatus(
+                    actorId,
+                    kind,
+                    name,
+                    active,
+                    hasLargeAction,
+                    actionKind,
+                    actionSummary
+                );
+            })
+            .ToArray();
+
+        var allSubmitted = actorStatuses.Length > 0
+            && actorStatuses.All(static actor => actor.HasSubmittedLargeAction);
+        return new TurnCollectionStatus(
+            game.GetOrThrow<int>(DayKey),
+            game.GetOrThrow<int>(SlotKey),
+            game.GetOrThrow<int>(SlotsPerDayKey),
+            currentTurn.GetOrThrow<string>(TurnOwnerActorIdKey)!,
+            currentTurn.GetOrThrow<string>(BarrierStateKey)!,
+            allSubmitted,
+            actorStatuses
+        );
+    }
+
+    internal static AteliaResult<TurnCollectionStatus> SubmitDevLargeActionForActor(
+        DurableDict<string> root,
+        string actorId,
+        string actionKind,
+        string actionSummary,
+        string? actionPayload,
+        string preActionReason
+    ) {
+        return SubmitLargeActionForActor(
+            root,
+            actorId,
+            actionKind,
+            actionSummary,
+            actionPayload,
+            preActionReason,
+            validatorFeedback: "dev-submit-large-action bypassed validator"
+        );
+    }
+
+    internal static bool RequiresMultiActorCollection(DurableDict<string> root)
+        => EnumerateActiveActorIds(root).Count() > 1;
+
+    internal static AteliaResult<TurnCollectionStatus> SubmitLargeActionForActor(
+        DurableDict<string> root,
+        string actorId,
+        string actionKind,
+        string actionSummary,
+        string? actionPayload,
+        string preActionReason,
+        string validatorFeedback
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        actionKind = NormalizeRequired(actionKind, nameof(actionKind));
+        actionSummary = NormalizeRequired(actionSummary, nameof(actionSummary));
+        preActionReason = NormalizeRequired(preActionReason, nameof(preActionReason));
+        validatorFeedback = NormalizeRequired(validatorFeedback, nameof(validatorFeedback));
+        actionPayload = string.IsNullOrWhiteSpace(actionPayload) ? null : actionPayload.Trim();
+
+        var actors = GetActors(root);
+        if (!actors.TryGet(actorId, out DurableDict<string>? actor) || actor is null) {
+            return AteliaResult<TurnCollectionStatus>.Failure(
+                new TextAdvError(
+                    "TextAdv.ActorNotFound",
+                    $"Actor '{actorId}' 不存在。"
+                )
+            );
+        }
+
+        if (actor.TryGet(ActiveKey, out bool active) && !active) {
+            return AteliaResult<TurnCollectionStatus>.Failure(
+                new TextAdvError(
+                    "TextAdv.ActorInactive",
+                    $"Actor '{actorId}' 不是 active actor，不能参与当前回合提交。"
+                )
+            );
+        }
+
+        _ = AppendAcceptedStepForActor(
+            root,
+            actorId,
+            actionKind,
+            actionSummary,
+            actionPayload,
+            preActionReason,
+            validatorFeedback,
+            endsTurn: true
+        );
+
+        return DescribeCurrentTurnStatus(root);
+    }
 
     internal static AteliaResult<string> CreateLlmPlayerActor(
         DurableDict<string> root,
@@ -853,8 +975,30 @@ internal static class GameSimulation {
         string validatorFeedback,
         bool endsTurn
     ) {
+        return AppendAcceptedStepForActor(
+            root,
+            TerminalPlayerActorId,
+            actionKind,
+            actionSummary,
+            actionPayload,
+            preActionReason,
+            validatorFeedback,
+            endsTurn
+        );
+    }
+
+    private static TurnStep AppendAcceptedStepForActor(
+        DurableDict<string> root,
+        string actorId,
+        string actionKind,
+        string actionSummary,
+        string? actionPayload,
+        string preActionReason,
+        string validatorFeedback,
+        bool endsTurn
+    ) {
         var currentTurn = GetCurrentTurn(root);
-        var acceptedSteps = GetAcceptedStepsForActor(root, TerminalPlayerActorId, createIfMissing: true)!;
+        var acceptedSteps = GetAcceptedStepsForActor(root, actorId, createIfMissing: true)!;
         var stepNumber = currentTurn.GetOrThrow<int>(NextStepNumberKey);
         var stepId = $"step-{stepNumber:D4}";
         var step = root.Revision.CreateDict<string>();
@@ -872,7 +1016,12 @@ internal static class GameSimulation {
         acceptedSteps.Upsert(stepId, step);
         currentTurn.Upsert(NextStepNumberKey, stepNumber + 1);
 
-        return new TurnStep(stepNumber, actionKind, actionSummary, actionPayload, preActionReason, validatorFeedback, endsTurn);
+        var turnStep = new TurnStep(stepNumber, actionKind, actionSummary, actionPayload, preActionReason, validatorFeedback, endsTurn);
+        if (endsTurn) {
+            RecordLargeActionForActor(root, actorId, turnStep);
+        }
+
+        return turnStep;
     }
 
     private static void ArchiveCompletedTurn(DurableDict<string> root, string resolutionSummary) {
@@ -894,6 +1043,7 @@ internal static class GameSimulation {
         archivedTurn.Upsert(AcceptedStepsByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsByActorKey)!);
         archivedTurn.Upsert(LargeActionByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!);
         archivedTurn.Upsert(BarrierStateKey, currentTurn.GetOrThrow<string>(BarrierStateKey)!);
+        archivedTurn.Upsert(TurnOwnerActorIdKey, currentTurn.GetOrThrow<string>(TurnOwnerActorIdKey)!);
         archivedTurn.Upsert(ResolutionSummaryKey, resolutionSummary);
         archivedTurn.Upsert(EndingNotebookKey, GetNotebookContent(GetNotebookSnapshot(root)));
 
@@ -928,6 +1078,49 @@ internal static class GameSimulation {
                 GetNotebookContent(notebookSnapshot)
             )
         );
+    }
+
+    private static void RecordLargeActionForActor(DurableDict<string> root, string actorId, TurnStep step) {
+        var currentTurn = EnsureCurrentTurnPhase4Fields(root);
+        var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
+        var action = root.Revision.CreateDict<string>();
+
+        action.Upsert(SourceStepNumberKey, step.StepNumber);
+        action.Upsert(ActionKindKey, step.ActionKind);
+        action.Upsert(ActionSummaryKey, step.ActionSummary);
+        if (step.ActionPayload is not null) {
+            action.Upsert(ActionPayloadKey, step.ActionPayload);
+        }
+
+        action.Upsert(PreActionReasonKey, step.PreActionReason);
+        action.Upsert(ValidatorFeedbackKey, step.ValidatorFeedback);
+        largeActionByActor.Upsert(actorId, action);
+
+        currentTurn.Upsert(
+            BarrierStateKey,
+            HaveAllActiveActorsSubmittedLargeAction(root, largeActionByActor)
+                ? ReadyForGmBarrierState
+                : CollectingLlmBarrierState
+        );
+    }
+
+    private static bool HaveAllActiveActorsSubmittedLargeAction(
+        DurableDict<string> root,
+        DurableDict<string> largeActionByActor
+    ) {
+        var activeActorIds = EnumerateActiveActorIds(root).ToArray();
+        return activeActorIds.Length > 0
+            && activeActorIds.All(actorId => largeActionByActor.TryGet(actorId, out DurableDict<string>? action) && action is not null);
+    }
+
+    private static IEnumerable<string> EnumerateActiveActorIds(DurableDict<string> root) {
+        var game = GetGame(root);
+        var activeActorIds = game.GetOrThrow<DurableDict<string>>(ActiveActorIdsKey)!;
+        foreach (var actorId in activeActorIds.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
+            var actor = GetActor(root, actorId);
+            if (actor.TryGet(ActiveKey, out bool active) && !active) { continue; }
+            yield return actorId;
+        }
     }
 
     private static DurableDict<string>? GetAcceptedStepsForActor(

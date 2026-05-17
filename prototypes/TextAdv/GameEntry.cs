@@ -50,6 +50,8 @@ public static class GameEntry {
         root.Add(BuildDevGoCommand());
         root.Add(BuildDevAddLlmPlayerCommand());
         root.Add(BuildDevLookActorCommand());
+        root.Add(BuildDevTurnStatusCommand());
+        root.Add(BuildDevSubmitLargeActionCommand());
 
         return root;
     }
@@ -192,6 +194,73 @@ public static class GameEntry {
         return cmd;
     }
 
+    private static Command BuildDevTurnStatusCommand() {
+        var cmd = new Command("dev-turn-status", "开发者调试：查看当前回合 barrier 与各 active actor 的 Large-Action 提交状态");
+        cmd.SetAction(
+            ctx => {
+                var output = ctx.InvocationConfiguration.Output;
+
+                var state = GetState();
+                if (state is null) {
+                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+                    return;
+                }
+
+                var (_, root) = state.Value;
+                output.Write(GamePresenter.RenderTurnCollectionStatus(GameSimulation.DescribeCurrentTurnStatus(root)));
+            }
+        );
+        return cmd;
+    }
+
+    private static Command BuildDevSubmitLargeActionCommand() {
+        var payloadOption = new Option<string?>("--payload") {
+            Description = "可选：动作 payload，按行保存到 actionPayload。"
+        };
+        var actorIdArg = new Argument<string>("actor-id");
+        var actionKindArg = new Argument<string>("action-kind");
+        var summaryArg = new Argument<string>("summary");
+        var reasonArg = new Argument<string>("reason");
+        var cmd = new Command("dev-submit-large-action", "开发者调试：为任意 active actor 提交一个 Large-Action（绕过 validator，不触发 GM）")
+        {
+            payloadOption,
+            actorIdArg,
+            actionKindArg,
+            summaryArg,
+            reasonArg,
+        };
+        cmd.SetAction(
+            ctx => {
+                var output = ctx.InvocationConfiguration.Output;
+                var actorId = ctx.GetValue(actorIdArg)!;
+                var actionKind = ctx.GetValue(actionKindArg)!;
+                var summary = ctx.GetValue(summaryArg)!;
+                var reason = ctx.GetValue(reasonArg)!;
+                var payload = ctx.GetValue(payloadOption);
+
+                var state = GetState();
+                if (state is null) {
+                    output.WriteLine("❌ 还没有游戏存档。请先运行 new 命令创建新世界。");
+                    return;
+                }
+
+                var (repo, root) = state.Value;
+                var result = GameSimulation.SubmitDevLargeActionForActor(root, actorId, actionKind, summary, payload, reason);
+                if (!result.TryGetValue(out var status) || status is null) {
+                    output.WriteLine("❌ dev Large-Action 提交失败。");
+                    WriteAteliaError(output, result.Error);
+                    return;
+                }
+
+                _ = repo.Commit(root).Value;
+                output.WriteLine($"✅ dev Large-Action 已提交：[{actorId}] {actionKind} — {summary}");
+                output.WriteLine();
+                output.Write(GamePresenter.RenderTurnCollectionStatus(status));
+            }
+        );
+        return cmd;
+    }
+
     private static Command BuildLookAroundCommand() {
         var cmd = new Command("look-around", "重新显示当前局面、笔记本和操作速查");
         cmd.SetAction(
@@ -304,6 +373,42 @@ public static class GameEntry {
         }
     }
 
+    private static bool TryCollectTerminalLargeActionInsteadOfResolving(
+        TextWriter output,
+        Repository repo,
+        DurableDict<string> root,
+        string actionKind,
+        string actionSummary,
+        string? actionPayload,
+        string preActionReason,
+        string validatorFeedback
+    ) {
+        if (!GameSimulation.RequiresMultiActorCollection(root)) { return false; }
+
+        var result = GameSimulation.SubmitLargeActionForActor(
+            root,
+            actorId: "player",
+            actionKind,
+            actionSummary,
+            actionPayload,
+            preActionReason,
+            validatorFeedback
+        );
+        if (!result.TryGetValue(out var status) || status is null) {
+            output.WriteLine("❌ 多主体回合收集失败。");
+            WriteAteliaError(output, result.Error);
+            return true;
+        }
+
+        _ = repo.Commit(root).Value;
+        output.WriteLine($"✅ Large-Action 已接受并进入多主体回合收集：{actionSummary}");
+        output.WriteLine($"🧪 validator: {validatorFeedback}");
+        output.WriteLine("⏳ 仍需等待其他 active actor 提交 Large-Action；当前 MVP 暂不自动驱动 LLM Player。");
+        output.WriteLine();
+        output.Write(GamePresenter.RenderTurnCollectionStatus(status));
+        return true;
+    }
+
     private static Command BuildExploreCommand() {
         var focusOption = new Option<string?>("--focus") {
             Description = "可选：你希望重点寻找或确认的对象，例如“山洞入口”“淡水痕迹”。"
@@ -361,6 +466,19 @@ public static class GameEntry {
                 if (!validation.Accepted) {
                     output.WriteLine("❌ validator 未通过这一步 Large-Action。");
                     output.WriteLine(validation.Feedback);
+                    return;
+                }
+
+                if (TryCollectTerminalLargeActionInsteadOfResolving(
+                    output,
+                    repo,
+                    root,
+                    actionKind: "large/explore",
+                    actionSummary,
+                    actionPayload,
+                    preActionReason,
+                    validation.Feedback
+                )) {
                     return;
                 }
 
@@ -441,6 +559,19 @@ public static class GameEntry {
                     return;
                 }
 
+                if (TryCollectTerminalLargeActionInsteadOfResolving(
+                    output,
+                    repo,
+                    root,
+                    actionKind: "large/interact",
+                    actionSummary,
+                    actionPayload,
+                    preActionReason,
+                    validation.Feedback
+                )) {
+                    return;
+                }
+
                 var resolutionResult = await GameSimulation.ApplyInteractionAsync(
                     root,
                     interaction.InteractionId,
@@ -508,6 +639,19 @@ public static class GameEntry {
                 if (!validation.Accepted) {
                     output.WriteLine("❌ validator 未通过这一步 Large-Action。");
                     output.WriteLine(validation.Feedback);
+                    return;
+                }
+
+                if (TryCollectTerminalLargeActionInsteadOfResolving(
+                    output,
+                    repo,
+                    root,
+                    actionKind: "large/rest-a-while",
+                    actionSummary,
+                    actionPayload: null,
+                    preActionReason,
+                    validation.Feedback
+                )) {
                     return;
                 }
 

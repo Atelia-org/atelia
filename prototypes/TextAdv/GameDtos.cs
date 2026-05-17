@@ -53,6 +53,26 @@ internal sealed record TurnStep(
     bool EndsTurn
 );
 
+internal sealed record TurnActorStatus(
+    string ActorId,
+    string Kind,
+    string Name,
+    bool Active,
+    bool HasSubmittedLargeAction,
+    string? LargeActionKind,
+    string? LargeActionSummary
+);
+
+internal sealed record TurnCollectionStatus(
+    int Day,
+    int Slot,
+    int SlotsPerDay,
+    string TurnOwnerActorId,
+    string BarrierState,
+    bool AllActiveActorsSubmittedLargeAction,
+    IReadOnlyList<TurnActorStatus> Actors
+);
+
 internal sealed record PerceptionBundle(
     string ActorId,
     int Day,

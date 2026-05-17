@@ -331,8 +331,10 @@ game
 - `PerceptionBundle` 已经可以通过 `DescribePerceptionForActor(root, actorId)` 按 actor 投影。地点、可见角色、持有物品和 Memory-Notebook 都从 actor ledger 读取；`DescribeCurrentPerception` 只是 `actor:player` 的便捷入口。
 - `actor:player` 与旧 `root.player` 并存。终端玩家的 `location` 和 `memoryNotebook` 已镜像到 actor ledger；旧字段暂时作为兼容层保留，后续可以在 LLM Player loop 稳定后删除。
 - `currentTurn` 已预留 `turnOwnerActorId`、`barrierState`、`acceptedStepsByActor`、`largeActionByActor`。当前终端玩家路径仍写入 legacy `acceptedSteps`，同时把同一组步骤挂到 `acceptedStepsByActor["player"]`；旧存档读取时会自动补齐这些 Phase 4 字段。
+- Large-Action 现在会落入 `largeActionByActor`。只有 `actor:player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，`barrierState` 从 `collecting-terminal` 推进到 `collecting-llm` 或 `ready-for-gm`，不会静默忽略其他 LLM player。
 - `dev-look-actor <actor-id>` 可用于查看任意 actor 的 Perception-Bundle；这验证了未来 LLM Player Agent 的输入可以只包含该 actor 的视角，而不是完整世界真相。
-- 多主体 barrier 尚未实现；目前仍是终端玩家 Large-Action 直接触发 GM 结算。这个选择让 Phase 3 的实体/交互账本先稳定下来，再扩展回合收集协议。
+- `dev-turn-status` 可审计当前 barrier 与每个 active actor 的 Large-Action 提交状态。`dev-submit-large-action` 可绕过 validator 模拟任意 active actor 交卷，用于测试 `acceptedStepsByActor` / `largeActionByActor` 和 `ready-for-gm` 流转。
+- 多主体“收齐后统一 GM 结算”尚未实现；目前 `ready-for-gm` 是可观测的收集终点，而不是最终结算入口。下一步应把所有 actor 的 Large-Action intent 注入 GM staged resolver，并由 GM 一次性裁决后再投影下一回合 Perception-Bundle。
 - GM 结算已经从单次宽 prompt 改为同一会话内的分阶段工具循环：`explore` 依次执行“地图与移动落账 → 实体与交互账本审计 → 玩家可见摘要”，`interact` 依次执行“交互直接后果 → affordance 生命周期审计 → 玩家可见摘要”。每个阶段都会保留前文 history，并在阶段开始注入最新 Perception/账本投影，以减少遗漏实体、交互或可见性更新的概率。
 
 `LLM Player Agent` 的最小行为协议：
