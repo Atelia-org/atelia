@@ -13,12 +13,16 @@ dotnet run --project prototypes/MutableContextAgentProto -- smoke
 dotnet run --project prototypes/MutableContextAgentProto -- render-demo
 dotnet run --project prototypes/MutableContextAgentProto -- maze-demo
 dotnet run --project prototypes/MutableContextAgentProto -- maze-fake-run
+dotnet run --project prototypes/MutableContextAgentProto -- phase2-fake-wizard
 
 DEEPSEEK_BASE_URL=... DEEPSEEK_API_KEY=... \
   dotnet run --project prototypes/MutableContextAgentProto -- ping-llm
 
 DEEPSEEK_BASE_URL=... DEEPSEEK_API_KEY=... \
   dotnet run --project prototypes/MutableContextAgentProto -- maze-llm-run
+
+DEEPSEEK_BASE_URL=... DEEPSEEK_API_KEY=... \
+  dotnet run --project prototypes/MutableContextAgentProto -- phase2-llm-wizard
 ```
 
 ## Phase 1 Scope
@@ -34,3 +38,4 @@ This prototype intentionally avoids references to the older `Agent.Core` / `Comp
 
 - [Phase 1 findings](notes/phase-1-findings.md)
 - [Phase 2 view_file micro-wizard design](notes/phase-2-microwizard-design.md)
+- [Phase 2 findings](notes/phase-2-findings.md)

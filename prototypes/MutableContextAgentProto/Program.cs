@@ -14,6 +14,8 @@ internal static class Program {
             "maze-fake-run" => Phase1Commands.RunMazeFake(),
             "ping-llm" => await Phase1Commands.RunPingLlmAsync(),
             "maze-llm-run" => await Phase1Commands.RunMazeLlmAsync(),
+            "phase2-fake-wizard" => Phase2Commands.RunFakeWizard(),
+            "phase2-llm-wizard" => await Phase2Commands.RunLlmWizardAsync(),
             "help" or "-h" or "--help" => RunHelp(),
             _ => RunUnknown(command)
         };
@@ -37,6 +39,10 @@ Commands:
   maze-fake-run  Run the maze tool-loop with a scripted fake policy.
   ping-llm       Send a one-message connectivity ping to DeepSeek V4.
   maze-llm-run   Let DeepSeek V4 drive the maze through native server tool calls.
+  phase2-fake-wizard
+                 Run local view_file -> select_remember -> reduced view demo.
+  phase2-llm-wizard
+                 Run DeepSeek view_file micro-wizard with history tool calls.
 """
         );
         return 0;

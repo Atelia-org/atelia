@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atelia.MutableContextAgentProto.Core;
 using Atelia.MutableContextAgentProto.Llm;
@@ -309,6 +310,10 @@ internal static class Phase1Commands {
     }
 
     private sealed class RunLog : IDisposable {
+        private static readonly JsonSerializerOptions JsonLineOptions = new() {
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        };
+
         private readonly StreamWriter _writer;
 
         private RunLog(string path) {
@@ -336,7 +341,8 @@ internal static class Phase1Commands {
                     ts = DateTimeOffset.Now,
                     kind,
                     raw = rawJson
-                }
+                },
+                JsonLineOptions
             );
             await _writer.WriteLineAsync(line.AsMemory(), cancellationToken).ConfigureAwait(false);
             await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
