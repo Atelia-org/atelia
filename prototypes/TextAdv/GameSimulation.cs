@@ -137,7 +137,7 @@ internal static class GameSimulation {
         return DescribeCurrentPerception(root);
     }
 
-    internal static async Task<TurnResolutionApplyResult> ApplyExploreAsync(
+    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyExploreAsync(
         DurableDict<string> root,
         string direction,
         string? focus,
@@ -200,7 +200,7 @@ internal static class GameSimulation {
             game.Upsert(LastResolutionKey, llmResolutionSummary);
             ResetCurrentTurn(root);
 
-            return TurnResolutionApplyResult.Success(new TurnResolution(llmResolutionSummary, DescribeCurrentPerception(root)));
+            return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(llmResolutionSummary, DescribeCurrentPerception(root)));
         }
 
         var gmTools = new GmWorldEditService(root);
@@ -217,7 +217,7 @@ internal static class GameSimulation {
             var targetDescription = CreateExplorationLocationDescription(currentLocationName, direction, focus);
 
             var createResult = gmTools.CreateLocation(targetLocationId, targetName, targetDescription);
-            if (!createResult.IsSuccess) { return TurnResolutionApplyResult.Failure(createResult.Error!); }
+            if (!createResult.IsSuccess) { return AsyncAteliaResult<TurnResolution>.Failure(createResult.Error!); }
 
             var linkResult = gmTools.LinkLocations(
                 currentLocationId,
@@ -225,13 +225,13 @@ internal static class GameSimulation {
                 targetLocationId,
                 TryGetReverseDirection(direction)
             );
-            if (!linkResult.IsSuccess) { return TurnResolutionApplyResult.Failure(linkResult.Error!); }
+            if (!linkResult.IsSuccess) { return AsyncAteliaResult<TurnResolution>.Failure(linkResult.Error!); }
 
             createdNewLocation = true;
         }
 
         var moveResult = gmTools.MovePlayerTo(targetLocationId);
-        if (!moveResult.IsSuccess) { return TurnResolutionApplyResult.Failure(moveResult.Error!); }
+        if (!moveResult.IsSuccess) { return AsyncAteliaResult<TurnResolution>.Failure(moveResult.Error!); }
 
         var targetLocation = GetLocation(root, targetLocationId);
         var targetLocationName = targetLocation.GetOrThrow<string>(NameKey)!;
@@ -252,7 +252,7 @@ internal static class GameSimulation {
         game.Upsert(LastResolutionKey, resolutionSummary);
         ResetCurrentTurn(root);
 
-        return TurnResolutionApplyResult.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
+        return AsyncAteliaResult<TurnResolution>.Success(new TurnResolution(resolutionSummary, DescribeCurrentPerception(root)));
     }
 
     internal static PerceptionBundle ApplyNotebookEdit(

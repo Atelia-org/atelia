@@ -217,7 +217,42 @@ GM 的自由文本可以保留，但宿主只信任工具结果和结构化 summ
 
 ### Phase 3: Item / NPC / Interaction Ledger
 
-将物品、NPC、交互 affordance 提升为账本对象。
+将 Item、NPC、Interaction affordance 提升为账本对象，但仍保持“少而硬”的 MVP 范围。
+
+这一阶段的目标不是做完整 RPG 物品系统，而是防止叙事漂移：
+
+- 如果 GM 文本说“洞口有一块锋利贝壳”，账本里就必须有 `Item`。
+- 如果 GM 文本说“有人影在密林边缘观察”，账本里就必须有 `NPC` 或至少有 pending entity note。
+- 如果某个对象可以被玩家操作，账本里必须记录可交互 affordance，而不是只藏在描述里。
+
+推荐最小 schema：
+
+```text
+world
+├── items
+│   └── item-id
+│       ├── name
+│       ├── description
+│       ├── locationId | ownerActorId
+│       ├── visibility       # visible / hidden / discovered
+│       └── interactions     # inspect / take / use / open / talk 等 affordance id 列表
+├── actors
+│   └── actor-id
+│       ├── kind             # terminal-player / llm-player / npc
+│       ├── name
+│       ├── locationId
+│       ├── memoryNotebook
+│       ├── profileNote
+│       └── active
+└── interactions
+    └── interaction-id
+        ├── targetKind       # item / actor / location
+        ├── targetId
+        ├── actionKind       # inspect / take / talk / use / explore-detail
+        ├── visibleLabel
+        ├── preconditionNote
+        └── effectNote
+```
 
 创建 Item 或 NPC 时，GM 不只写描述，还要写：
 
@@ -228,13 +263,67 @@ GM 的自由文本可以保留，但宿主只信任工具结果和结构化 summ
 - 可交互动作列表。
 - 基础前置条件。
 
-这一阶段要开始防止“描述里有钥匙，但账本里没有钥匙”的漂移。
+首版工具建议：
 
-### Phase 4: 事件队列与多主体同步
+| 工具 | 作用 | 约束 |
+|:---|:---|:---|
+| `gm_create_item` | 创建物品并放置到 Location 或 Actor | 必须指定稳定 item_id、name、description、location/owner 二选一 |
+| `gm_create_npc` | 创建 NPC actor | 必须指定 actor_id、name、locationId、profileNote |
+| `gm_add_interaction` | 给 item / actor / location 增加 affordance | target 必须存在；actionKind 必须来自小枚举 |
+| `gm_set_visibility` | 调整 item/NPC 可见性 | 只能在 GM 结算时调用，不能静默改历史 |
 
-引入 SimWorld 方向中的“动作耗时 + 事件队列”。
+`Interaction Ledger` 的重要性在于：它把“可以做什么”从叙事文本里捞出来，供 Player Agent 和终端玩家在下一回合的 Perception-Bundle 里稳定读取。这样 LLM Player 不需要凭自然语言猜按钮，GM 也不需要把所有规则写进 prompt。
 
-Large-Action 不一定立即完成，而是可以创建 reservation。事件真正出队时重验前置条件。如果条件失效，生成失败、打断、阻塞或部分成功结果。
+### Phase 4: 简化多主体同步回合
+
+Phase 4 暂不引入动作耗时、reservation、事件队列和出队重验。MVP 继续保持当前离散回合制。
+
+核心规则：
+
+1. 只有一个终端玩家通过 `pmux game ...` 操作。
+2. 终端玩家完成一个 validator 通过的 Large-Action 后，形成本回合 barrier。
+3. TextAdv 内部依次驱动所有 active LLM Player。
+4. 每个 LLM Player 看到自己的 Perception-Bundle、自己的 Memory-Notebook、自己的可用动作说明。
+5. 每个 LLM Player 可执行零到多个 Small-Action，最终必须提交一个 Large-Action。
+6. 所有 active Player 的 Large-Action 都收齐后，GM Agent 一次性拿到所有大型动作意图，统一结算世界。
+7. 结算后为每个 Player 投影下一回合 Perception-Bundle。
+
+这比事件队列更适合当前 TextAdv：
+
+- 保留行动机会稀缺和回合交卷感。
+- 避免实时调度、等待、抢占、reservation 重验。
+- GM Agent 每回合有完整的多主体意图表，裁决更接近桌面 TRPG 的“所有人声明行动后统一处理”。
+- 训练数据天然包含多主体对照：同一个世界状态下，不同 Agent 如何观察、记忆、推理和行动。
+
+推荐新增结构：
+
+```text
+game
+├── activeActorIds
+├── currentTurn
+│   ├── turnOwnerActorId      # 当前终端玩家或内部 LLM player
+│   ├── acceptedStepsByActor
+│   ├── largeActionByActor
+│   └── barrierState          # collecting-terminal / collecting-llm / ready-for-gm
+└── turnHistory
+```
+
+`LLM Player Agent` 的最小行为协议：
+
+- 输入：只给该 actor 的 Perception-Bundle、Memory-Notebook、当前动作指南。
+- 输出：通过工具提交动作，而不是直接返回自由文本。
+- 工具：复用终端玩家能做的动作边界，例如 `player_edit_memory_notebook`、`player_explore`、`player_rest_a_while`。
+- Validator：与终端玩家同一套 `GameActionValidator`，不为内部 Agent 开后门。
+- 失败：validator 不通过时，把反馈作为 Observation 回灌给该 LLM Player，让它重试；MVP 可设置每 actor 每回合最多 2 到 3 次尝试，超过则自动 `rest-a-while` 或 `hesitate`。
+
+优秀人类 TRPG 主持人的对应模式：
+
+- 先让每个玩家声明“这一回合做什么”。
+- 对声明含糊或越界的玩家追问/要求改写。
+- 收齐后统一判断冲突、顺序和后果。
+- 每个玩家只听到自己角色能感知到的反馈。
+
+这正是 Phase 4 应模拟的东西。
 
 ### Phase 5: 多 GM role 拆分
 
