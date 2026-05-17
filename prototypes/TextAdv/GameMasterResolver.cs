@@ -91,6 +91,8 @@ internal static class GameMasterResolver {
             MethodToolWrapper.FromDelegate<string, string, string>(toolService.CreateLocationAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string?>(toolService.LinkLocationsAsync),
             MethodToolWrapper.FromDelegate<string>(toolService.MovePlayerAsync),
+            MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync),
+            MethodToolWrapper.FromDelegate<string, string, string, string, string>(toolService.AddInteractionAsync),
         ]);
         var history = new List<IHistoryMessage> {
             new ObservationMessage(BuildExploreObservation(context))
@@ -162,12 +164,13 @@ internal static class GameMasterResolver {
 1. 公平：只依据当前输入和账本，不奖励偷用信息，也不随意惩罚合理试探。
 2. 连续：尊重已有地点、出口和玩家位置；不要改写既有历史。
 3. 具体：可以给新地点一点感官细节，但不要把未落账内容当硬事实。
-4. 克制：首版只处理 Location 创建、地点连接、玩家移动；不要创建物品、NPC 或复杂规则。
+4. 克制：首版主要处理 Location 创建、地点连接、玩家移动；只在新地点确实需要一个可见细节时创建少量 Item / Interaction，不要创建 NPC 或复杂规则。
 5. 视角安全：最终文本只写当前玩家可以感知到的结算，不泄露隐藏真相。
 
 你必须通过工具更新世界状态：
 - 如果目标方向已有出口，只调用 gm_move_player 移动到该目标 LocationId。
 - 如果目标方向没有出口，先调用 gm_create_location，再调用 gm_link_locations，最后调用 gm_move_player。
+- 可选：若新地点需要一个可见可操作细节，可以调用 gm_create_item 创建 0 到 1 个 Item，再调用 gm_add_interaction 给新地点或该 Item 添加 0 到 2 个交互 affordance。
 - 若有建议反向方向，应在 gm_link_locations 中填写 reverse_direction；否则传 null。
 - 不要用普通文本声称世界已改变；只有工具调用成功才算落账。
 - 必要工具调用完成后，停止调用工具，并输出 1 到 3 句玩家可见的中文结算摘要。
@@ -197,6 +200,24 @@ internal static class GameMasterResolver {
         }
 
         sb.AppendLine();
+        sb.AppendLine("[当前可见物品]");
+        if (perception.Location.Items.Count == 0) {
+            sb.AppendLine("(none)");
+        }
+        else {
+            foreach (var item in perception.Location.Items) {
+                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("[当前可见交互]");
+        AppendInteractions(sb, perception.Location.Interactions);
+        foreach (var item in perception.Location.Items) {
+            AppendInteractions(sb, item.Interactions);
+        }
+
+        sb.AppendLine();
         sb.AppendLine("[玩家动作]");
         sb.AppendLine($"- ActionKind: large/explore");
         sb.AppendLine($"- Direction: {context.Direction}");
@@ -222,8 +243,18 @@ internal static class GameMasterResolver {
         sb.AppendLine("若 Direction 不存在于当前可见出口，新 LocationId 应使用小写 ASCII、数字和连字符，且能表达来源与方向。");
         sb.AppendLine("新地点 name 优先贴近 Focus；若 Focus 为空，可用“未知区域”等克制命名。");
         sb.AppendLine("新地点 description 只描述入口附近已经确认的低风险信息，不要塞入物品、NPC 或隐藏剧情。");
+        sb.AppendLine("如果你创建 Item，item_id 必须稳定；物品描述应是玩家一眼能看到的东西，不要包含隐藏功能。");
+        sb.AppendLine("如果你创建 Interaction，target_ref 使用 location:<id> 或 item:<id>；visible_label 是玩家看到的动作提示。");
 
         return sb.ToString();
+    }
+
+    private static void AppendInteractions(StringBuilder sb, IReadOnlyList<InteractionPerception> interactions) {
+        if (interactions.Count == 0) { return; }
+
+        foreach (var interaction in interactions) {
+            sb.AppendLine($"- {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel}");
+        }
     }
 
     private static string BuildToolResultsObservation(IReadOnlyList<ToolCallExecutionResult> results) {

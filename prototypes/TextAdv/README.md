@@ -34,7 +34,7 @@ LLM Agent (Copilot / Claude Code)
 
 - `GameEntry.cs`：PipeMux + System.CommandLine 薄入口，负责打开仓库与绑定命令
 - `GameSimulation.cs`：世界 bootstrap、状态查询、移动结算等核心逻辑
-- `GmWorldEditService.cs`：GM-style 世界编辑工具集；当前由代码直接调用，后续可用 `MethodToolWrapper` 暴露给 LLM GM Agent
+- `GmWorldEditService.cs`：GM-style 世界编辑工具集；通过 `MethodToolWrapper` 暴露 Location / Item / Interaction 账本工具
 - `GameMasterResolver.cs`：真实 GM Agent 工具循环；把 `GmWorldEditService` 包装为 LLM 可调用工具，失败时回退 deterministic resolver
 - `GamePresenter.cs`：把 `LocationPerception` 渲染成玩家看到的文本
 - `GameActionValidator.cs`：DeepSeekV4 + tool call 驱动的 validator，负责逐步校验事前推理（PreActionReason）
@@ -140,3 +140,13 @@ root (DurableDict<string>)
 - dry-run / validator 里的预测 after-view 不承诺真实新 block id；新插入块只会以 `[new-N]` 形式占位显示，实际 block id 要等真正写入时才会分配
 
 之所以使用 `point_out_issues` 这个 ASCII 工具名，而不是直接用中文工具名，是为了避免 OpenAI-compatible function name 约束带来的 provider 兼容性问题；中文语义通过 tool description 传达给模型。
+
+## GM Agent 工具循环
+
+`explore` 当前会优先尝试真实 GM Agent。GM Agent 通过工具更新账本，而不是只输出叙事文本：
+
+- `gm_create_location` / `gm_link_locations` / `gm_move_player`
+- `gm_create_item`
+- `gm_add_interaction`
+
+因此 GM 可以在探索新区域时创建新 Location、可见物品和可交互 affordance。下一回合 `Perception-Bundle` 会把当前地点可见物品与交互项渲染给玩家。

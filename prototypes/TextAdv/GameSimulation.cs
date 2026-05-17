@@ -7,6 +7,8 @@ internal static class GameSimulation {
     private const string WorldKey = "world";
     private const string GameKey = "game";
     private const string LocationsKey = "locations";
+    private const string ItemsKey = "items";
+    private const string InteractionsKey = "interactions";
     private const string InitialLocationKey = "initialLocation";
     private const string PlayerKey = "player";
     private const string PlayerLocationKey = "location";
@@ -36,6 +38,15 @@ internal static class GameSimulation {
     private const string NameKey = "name";
     private const string DescriptionKey = "description";
     private const string ExitsKey = "exits";
+    private const string LocationIdKey = "locationId";
+    private const string VisibilityKey = "visibility";
+    private const string TargetKindKey = "targetKind";
+    private const string TargetIdKey = "targetId";
+    private const string ActionKindLedgerKey = "actionKind";
+    private const string VisibleLabelKey = "visibleLabel";
+    private const string EffectNoteKey = "effectNote";
+    private const string VisibleValue = "visible";
+    private const string DiscoveredValue = "discovered";
     private const int DefaultSlotsPerDay = 4;
 
     internal static DurableDict<string> CreateNewWorld(Repository repo) {
@@ -46,6 +57,8 @@ internal static class GameSimulation {
         var world = rev.CreateDict<string>();
         var game = rev.CreateDict<string>();
         var locations = rev.CreateDict<string>();
+        var items = rev.CreateDict<string>();
+        var interactions = rev.CreateDict<string>();
         var player = rev.CreateDict<string>();
         var notebook = CreateNotebookText(rev, string.Empty);
         var turnHistory = rev.CreateDict<string>();
@@ -69,6 +82,8 @@ internal static class GameSimulation {
         locations.Upsert(forestId, forest);
 
         world.Upsert(LocationsKey, locations);
+        world.Upsert(ItemsKey, items);
+        world.Upsert(InteractionsKey, interactions);
         world.Upsert(InitialLocationKey, beachId);
 
         player.Upsert(PlayerLocationKey, beachId);
@@ -320,7 +335,9 @@ internal static class GameSimulation {
         var name = location.GetOrThrow<string>(NameKey)!;
         var description = location.GetOrThrow<string>(DescriptionKey)!;
         var exits = EnumerateExits(root, locationId).ToArray();
-        return new LocationPerception(locationId, name, description, exits);
+        var items = EnumerateVisibleItemsAtLocation(root, locationId).ToArray();
+        var interactions = EnumerateVisibleInteractions(root, "location", locationId).ToArray();
+        return new LocationPerception(locationId, name, description, exits, items, interactions);
     }
 
     private static IEnumerable<LocationExitPerception> EnumerateExits(
@@ -343,6 +360,68 @@ internal static class GameSimulation {
         var locations = world.GetOrThrow<DurableDict<string>>(LocationsKey)!;
         return locations.GetOrThrow<DurableDict<string>>(locationId)!;
     }
+
+    private static IEnumerable<ItemPerception> EnumerateVisibleItemsAtLocation(
+        DurableDict<string> root,
+        string locationId
+    ) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        if (!world.TryGet(ItemsKey, out DurableDict<string>? items) || items is null) { yield break; }
+
+        foreach (var itemId in items.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
+            var item = items.GetOrThrow<DurableDict<string>>(itemId)!;
+            if (!item.TryGet(LocationIdKey, out string? itemLocationId)
+                || !string.Equals(itemLocationId, locationId, StringComparison.Ordinal)) {
+                continue;
+            }
+
+            var visibility = item.TryGet(VisibilityKey, out string? rawVisibility)
+                ? rawVisibility
+                : VisibleValue;
+            if (!IsVisibleToPlayer(visibility)) { continue; }
+
+            yield return new ItemPerception(
+                itemId,
+                item.GetOrThrow<string>(NameKey)!,
+                item.GetOrThrow<string>(DescriptionKey)!,
+                EnumerateVisibleInteractions(root, "item", itemId).ToArray()
+            );
+        }
+    }
+
+    private static IEnumerable<InteractionPerception> EnumerateVisibleInteractions(
+        DurableDict<string> root,
+        string targetKind,
+        string targetId
+    ) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        if (!world.TryGet(InteractionsKey, out DurableDict<string>? interactions) || interactions is null) { yield break; }
+
+        foreach (var interactionId in interactions.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
+            var interaction = interactions.GetOrThrow<DurableDict<string>>(interactionId)!;
+            var actualTargetKind = interaction.GetOrThrow<string>(TargetKindKey)!;
+            var actualTargetId = interaction.GetOrThrow<string>(TargetIdKey)!;
+            if (!string.Equals(actualTargetKind, targetKind, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(actualTargetId, targetId, StringComparison.Ordinal)) {
+                continue;
+            }
+
+            _ = interaction.TryGet(EffectNoteKey, out string? effectNote);
+            yield return new InteractionPerception(
+                interactionId,
+                actualTargetKind,
+                actualTargetId,
+                interaction.GetOrThrow<string>(ActionKindLedgerKey)!,
+                interaction.GetOrThrow<string>(VisibleLabelKey)!,
+                effectNote
+            );
+        }
+    }
+
+    private static bool IsVisibleToPlayer(string? visibility)
+        => string.IsNullOrWhiteSpace(visibility)
+            || string.Equals(visibility, VisibleValue, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(visibility, DiscoveredValue, StringComparison.OrdinalIgnoreCase);
 
     private static DurableDict<string> GetGame(DurableDict<string> root)
         => root.GetOrThrow<DurableDict<string>>(GameKey)!;

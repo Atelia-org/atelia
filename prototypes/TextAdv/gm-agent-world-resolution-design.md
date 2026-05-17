@@ -213,7 +213,7 @@ GM 的自由文本可以保留，但宿主只信任工具结果和结构化 summ
 - `ATELIA_TEXTADV_GM_MODE=auto` 时，有 `DEEPSEEK_API_KEY` 就优先尝试真实 GM Agent；未配置或失败时回退 deterministic resolver。
 - `ATELIA_TEXTADV_GM_MODE=deterministic` 可强制关闭真实 GM，便于离线调试。
 - `ATELIA_TEXTADV_GM_MODE=llm` 可用于验证真实 GM 路径；若 provider 或工具循环失败，当前仍回退 deterministic resolver 以保护游戏可玩性。
-- 首版真实 GM 的工具集合仍限制为 `gm_create_location` / `gm_link_locations` / `gm_move_player`，符合 Phase 1 的账本闭环。
+- 首版真实 GM 的工具集合包含 `gm_create_location` / `gm_link_locations` / `gm_move_player`，以及 Phase 3 的 `gm_create_item` / `gm_add_interaction`。GM 可以创建少量可见物品和 affordance，但仍不创建 NPC 或复杂规则。
 
 ### Phase 3: Item / NPC / Interaction Ledger
 
@@ -267,9 +267,9 @@ world
 
 | 工具 | 作用 | 约束 |
 |:---|:---|:---|
-| `gm_create_item` | 创建物品并放置到 Location 或 Actor | 必须指定稳定 item_id、name、description、location/owner 二选一 |
+| `gm_create_item` | 创建物品并放置到 Location | 必须指定稳定 item_id、name、description、location_id |
 | `gm_create_npc` | 创建 NPC actor | 必须指定 actor_id、name、locationId、profileNote |
-| `gm_add_interaction` | 给 item / actor / location 增加 affordance | target 必须存在；actionKind 必须来自小枚举 |
+| `gm_add_interaction` | 给 item / location 增加 affordance | target 必须存在；actionKind 必须来自小枚举 |
 | `gm_set_visibility` | 调整 item/NPC 可见性 | 只能在 GM 结算时调用，不能静默改历史 |
 
 `Interaction Ledger` 的重要性在于：它把“可以做什么”从叙事文本里捞出来，供 Player Agent 和终端玩家在下一回合的 Perception-Bundle 里稳定读取。这样 LLM Player 不需要凭自然语言猜按钮，GM 也不需要把所有规则写进 prompt。

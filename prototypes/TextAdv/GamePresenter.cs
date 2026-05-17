@@ -34,6 +34,28 @@ internal static class GamePresenter {
         }
         sb.AppendLine();
 
+        sb.AppendLine("🎒 你目前看得到的物品:");
+        if (perception.Location.Items.Count == 0) {
+            sb.AppendLine("   (none)");
+        }
+        else {
+            foreach (var item in perception.Location.Items) {
+                sb.AppendLine($"   [{item.ItemId}] {item.Name}");
+                AppendIndented(sb, item.Description, "      ");
+                AppendInteractions(sb, item.Interactions, "      ");
+            }
+        }
+        sb.AppendLine();
+
+        sb.AppendLine("🧩 你目前看得到的交互:");
+        if (perception.Location.Interactions.Count == 0) {
+            sb.AppendLine("   (none)");
+        }
+        else {
+            AppendInteractions(sb, perception.Location.Interactions, "   ");
+        }
+        sb.AppendLine();
+
         sb.AppendLine("📝 当前回合已接受步骤:");
         if (perception.AcceptedSteps.Count == 0) {
             sb.AppendLine("   (none)");
@@ -149,10 +171,25 @@ internal static class GamePresenter {
         sb.AppendLine("     你也可以直接用 head / tail 作为 anchor；如果要一次连续改多条，就把多个操作元素并列写进同一个 <编辑片段> 参数里。");
     }
 
-    private static void AppendIndented(StringBuilder sb, string text) {
+    private static void AppendInteractions(StringBuilder sb, IReadOnlyList<InteractionPerception> interactions, string indent) {
+        if (interactions.Count == 0) {
+            sb.AppendLine($"{indent}可交互: (none)");
+            return;
+        }
+
+        sb.AppendLine($"{indent}可交互:");
+        foreach (var interaction in interactions) {
+            sb.AppendLine($"{indent}- [{interaction.InteractionId}] {interaction.VisibleLabel} ({interaction.ActionKind})");
+        }
+    }
+
+    private static void AppendIndented(StringBuilder sb, string text)
+        => AppendIndented(sb, text, "   ");
+
+    private static void AppendIndented(StringBuilder sb, string text, string indent) {
         var normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal);
         foreach (var line in normalized.Split('\n')) {
-            sb.AppendLine($"   {line}");
+            sb.AppendLine($"{indent}{line}");
         }
     }
 
