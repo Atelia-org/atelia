@@ -183,9 +183,7 @@ public partial class AgentEngine {
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
         if (summarizePrompt is null) { throw new ArgumentNullException(nameof(summarizePrompt)); }
 
-        if (_turnRuntime.ActiveToolExecutionProfile is null) {
-            throw new InvalidOperationException("Immediate compaction requires an active tool-execution LlmProfile.");
-        }
+        if (_turnRuntime.ActiveToolExecutionProfile is null) { throw new InvalidOperationException("Immediate compaction requires an active tool-execution LlmProfile."); }
 
         var profile = _turnRuntime.ActiveToolExecutionProfile;
         EnsureProfileMatchesCurrentTurnLock(profile);
@@ -283,7 +281,7 @@ public partial class AgentEngine {
     /// </summary>
     /// <remarks>
     /// 这是原 <c>ContextSummarizer.ProjectToMessages</c> 的迁移版本。
-    /// 使用 Detail 级别、不注入 windows、不处理 Turn 切分——
+    /// 不注入 windows、不处理 Turn 切分——
     /// 摘要场景下 LLM 只需看到内容文本，无需完整投影管线。
     /// </remarks>
     private static List<IHistoryMessage> ProjectForSummarization(
@@ -298,7 +296,7 @@ public partial class AgentEngine {
                     messages.Add(action.Message);
                     break;
                 case ObservationEntry observation:
-                    messages.Add(observation.GetMessage(LevelOfDetail.Detail, windows: null));
+                    messages.Add(observation.GetMessage(windows: null));
                     break;
                 case RecapEntry recap:
                     messages.Add(new ObservationMessage(recap.Content));
@@ -326,7 +324,7 @@ public partial class AgentEngine {
         string raw = entry switch {
             ActionEntry action => BuildActionPreview(action),
             ToolResultsEntry toolResults => BuildToolResultsPreview(toolResults),
-            ObservationEntry observation => observation.GetMessage(LevelOfDetail.Basic, windows: null).Content ?? string.Empty,
+            ObservationEntry observation => observation.GetMessage(windows: null).Content ?? string.Empty,
             RecapEntry recap => recap.Content,
             _ => string.Empty
         };
@@ -357,9 +355,7 @@ public partial class AgentEngine {
     }
 
     private static string BuildToolResultsPreview(ToolResultsEntry toolResults) {
-        if (!string.IsNullOrWhiteSpace(toolResults.ExecuteError)) {
-            return "工具执行失败: " + toolResults.ExecuteError;
-        }
+        if (!string.IsNullOrWhiteSpace(toolResults.ExecuteError)) { return "工具执行失败: " + toolResults.ExecuteError; }
 
         if (toolResults.Results.Count > 0) {
             var names = new List<string>(capacity: Math.Min(toolResults.Results.Count, 3));
@@ -369,19 +365,15 @@ public partial class AgentEngine {
                 names.Add(name);
             }
 
-            if (names.Count > 0) {
-                return "工具结果: " + string.Join(", ", names);
-            }
+            if (names.Count > 0) { return "工具结果: " + string.Join(", ", names); }
         }
 
-        return toolResults.GetMessage(LevelOfDetail.Basic, windows: null).Content ?? string.Empty;
+        return toolResults.GetMessage(windows: null).Content ?? string.Empty;
     }
 
     private static bool ContainsIgnoreCase(List<string> values, string candidate) {
         for (int i = 0; i < values.Count; i++) {
-            if (string.Equals(values[i], candidate, StringComparison.OrdinalIgnoreCase)) {
-                return true;
-            }
+            if (string.Equals(values[i], candidate, StringComparison.OrdinalIgnoreCase)) { return true; }
         }
 
         return false;

@@ -173,14 +173,16 @@ public sealed class TextEditorWidget {
                     const string noChangeSummary = "未追加任何内容";
                     return new ToolExecuteResult(
                         ToolExecutionStatus.Success,
-                        noChangeSummary,
-                        CreateSuccessDetail(
+                        CreateContent(
                             noChangeSummary,
-                            operation: "append",
-                            _targetTextName,
-                            previous.Length,
-                            updated.Length,
-                            extraMessage
+                            CreateSuccessDetail(
+                                noChangeSummary,
+                                operation: "append",
+                                _targetTextName,
+                                previous.Length,
+                                updated.Length,
+                                extraMessage
+                            )
                         )
                     );
                 }
@@ -188,14 +190,16 @@ public sealed class TextEditorWidget {
                 var summary = $"✓ 已向{_targetTextName}追加内容";
                 return new ToolExecuteResult(
                     ToolExecutionStatus.Success,
-                    summary,
-                    CreateSuccessDetail(
+                    CreateContent(
                         summary,
-                        operation: "append",
-                        _targetTextName,
-                        previous.Length,
-                        updated.Length,
-                        extraMessage
+                        CreateSuccessDetail(
+                            summary,
+                            operation: "append",
+                            _targetTextName,
+                            previous.Length,
+                            updated.Length,
+                            extraMessage
+                        )
                     )
                 );
             }
@@ -232,14 +236,16 @@ public sealed class TextEditorWidget {
                     const string noChangeSummary = "替换内容未发生变化";
                     return new ToolExecuteResult(
                         ToolExecutionStatus.Success,
-                        noChangeSummary,
-                        CreateSuccessDetail(
+                        CreateContent(
                             noChangeSummary,
-                            operation: "replace",
-                            _targetTextName,
-                            previous.Length,
-                            updated.Length,
-                            extraMessage
+                            CreateSuccessDetail(
+                                noChangeSummary,
+                                operation: "replace",
+                                _targetTextName,
+                                previous.Length,
+                                updated.Length,
+                                extraMessage
+                            )
                         )
                     );
                 }
@@ -248,14 +254,16 @@ public sealed class TextEditorWidget {
 
                 return new ToolExecuteResult(
                     ToolExecutionStatus.Success,
-                    summary,
-                    CreateSuccessDetail(
+                    CreateContent(
                         summary,
-                        operation: "replace",
-                        _targetTextName,
-                        previous.Length,
-                        updated.Length,
-                        extraMessage
+                        CreateSuccessDetail(
+                            summary,
+                            operation: "replace",
+                            _targetTextName,
+                            previous.Length,
+                            updated.Length,
+                            extraMessage
+                        )
                     )
                 );
             }
@@ -285,14 +293,16 @@ public sealed class TextEditorWidget {
                     const string noChangeSummary = "替换内容未发生变化";
                     return new ToolExecuteResult(
                         ToolExecutionStatus.Success,
-                        noChangeSummary,
-                        CreateSuccessDetail(
+                        CreateContent(
                             noChangeSummary,
-                            operation: "replace_span",
-                            _targetTextName,
-                            previous.Length,
-                            updated.Length,
-                            extraMessage
+                            CreateSuccessDetail(
+                                noChangeSummary,
+                                operation: "replace_span",
+                                _targetTextName,
+                                previous.Length,
+                                updated.Length,
+                                extraMessage
+                            )
                         )
                     );
                 }
@@ -300,14 +310,16 @@ public sealed class TextEditorWidget {
                 var summary = $"✓ 已完成{_targetTextName}区块替换";
                 return new ToolExecuteResult(
                     ToolExecutionStatus.Success,
-                    summary,
-                    CreateSuccessDetail(
+                    CreateContent(
                         summary,
-                        operation: "replace_span",
-                        _targetTextName,
-                        previous.Length,
-                        updated.Length,
-                        extraMessage
+                        CreateSuccessDetail(
+                            summary,
+                            operation: "replace_span",
+                            _targetTextName,
+                            previous.Length,
+                            updated.Length,
+                            extraMessage
+                        )
                     )
                 );
             }
@@ -431,9 +443,13 @@ public sealed class TextEditorWidget {
 
         return new ToolExecuteResult(
             ToolExecutionStatus.Failed,
-            summary,
-            detailBuilder.ToString()
+            CreateContent(summary, detailBuilder.ToString())
         );
+    }
+
+    private static string CreateContent(string summary, string? detail) {
+        if (string.IsNullOrWhiteSpace(detail)) { return summary; }
+        return string.Concat(summary, "\n", detail.TrimEnd());
     }
 
     private static string CreateSuccessDetail(

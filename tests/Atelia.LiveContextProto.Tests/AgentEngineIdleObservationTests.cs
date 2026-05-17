@@ -21,7 +21,7 @@ public sealed class AgentEngineIdleObservationTests {
         Assert.True(result.ProgressMade);
         var observation = Assert.IsType<ObservationEntry>(result.Input);
         Assert.NotNull(observation.Notifications);
-        var text = observation.Notifications!.Basic;
+        var text = observation.Notifications!;
         Assert.Contains("[Heartbeat]", text, StringComparison.Ordinal);
         Assert.Contains("2030-01-02", text, StringComparison.Ordinal);
     }
@@ -47,7 +47,7 @@ public sealed class AgentEngineIdleObservationTests {
 
         engine.WaitingInput += (_, args) => {
             args.ShouldContinue = true;
-            args.Observation = IncomingObservation.FromRecentEvents(new LevelOfDetailContent("real-notification"));
+            args.Observation = IncomingObservation.FromRecentEvents("real-notification");
         };
 
         var result = await engine.StepAsync(CreateNoOpProfile());
@@ -56,7 +56,7 @@ public sealed class AgentEngineIdleObservationTests {
         Assert.Equal(0, idle.CallCount);
 
         var observation = Assert.IsType<ObservationEntry>(result.Input);
-        Assert.Equal("real-notification", observation.Notifications!.Basic);
+        Assert.Equal("real-notification", observation.Notifications);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public sealed class AgentEngineIdleObservationTests {
         var engine = new AgentEngine(idleProvider: idle);
 
         var explicitInput = new ObservationEntry();
-        explicitInput.AssignNotifications(new LevelOfDetailContent("explicit-input"));
+        explicitInput.AssignNotifications("explicit-input");
 
         engine.WaitingInput += (_, args) => {
             args.ShouldContinue = true;
@@ -92,7 +92,7 @@ public sealed class AgentEngineIdleObservationTests {
         Assert.True(result.ProgressMade);
         Assert.Equal(0, idle.CallCount);
         var observation = Assert.IsType<ObservationEntry>(result.Input);
-        Assert.Equal("pre-queued", observation.Notifications!.Basic);
+        Assert.Equal("pre-queued", observation.Notifications);
     }
 
     private static LlmProfile CreateNoOpProfile() {
@@ -102,15 +102,15 @@ public sealed class AgentEngineIdleObservationTests {
     }
 
     private sealed class SilentIdleProvider : IIdleObservationProvider {
-        public LevelOfDetailContent? CreateIdleNotification(in IdleObservationContext context) => null;
+        public string? CreateIdleNotification(in IdleObservationContext context) => null;
     }
 
     private sealed class RecordingIdleProvider : IIdleObservationProvider {
         public int CallCount { get; private set; }
 
-        public LevelOfDetailContent? CreateIdleNotification(in IdleObservationContext context) {
+        public string? CreateIdleNotification(in IdleObservationContext context) {
             CallCount++;
-            return new LevelOfDetailContent("recorded-idle");
+            return "recorded-idle";
         }
     }
 

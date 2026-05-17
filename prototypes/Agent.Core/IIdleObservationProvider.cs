@@ -27,7 +27,7 @@ public interface IIdleObservationProvider {
     /// 在 idle 时刻产生一条"内源性"通知，将被附加到一条新的 <see cref="ObservationEntry"/> 上。
     /// 返回 <c>null</c> 表示"本次不应推进"。
     /// </summary>
-    LevelOfDetailContent? CreateIdleNotification(in IdleObservationContext context);
+    string? CreateIdleNotification(in IdleObservationContext context);
 }
 
 /// <summary>
@@ -53,8 +53,6 @@ public readonly struct IdleObservationContext {
 /// 后续可被替换为反思、目标推进、记忆巩固等更高层策略。
 /// </remarks>
 public sealed class TimestampHeartbeatObservationProvider : IIdleObservationProvider {
-    public LevelOfDetailContent? CreateIdleNotification(in IdleObservationContext context) {
-        var text = $"[Heartbeat] No external input. UtcNow={context.UtcNow:O}";
-        return new LevelOfDetailContent(text);
-    }
+    public string? CreateIdleNotification(in IdleObservationContext context)
+        => $"[Heartbeat] No external input. UtcNow={context.UtcNow:O}";
 }

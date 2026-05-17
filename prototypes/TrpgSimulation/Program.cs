@@ -378,7 +378,7 @@ public static class Program {
                     ? $", {elapsed.TotalMilliseconds:F0}ms"
                     : string.Empty;
                 WriteDiagnosticLine(
-                    $"[{_style.Label}/tool-result] {result.ToolName}#{result.ToolCallId} [{result.ExecuteResult.Status}{elapsedText}] => {FormatToolResult(result.ExecuteResult.Basic)}"
+                    $"[{_style.Label}/tool-result] {result.ToolName}#{result.ToolCallId} [{result.ExecuteResult.Status}{elapsedText}] => {FormatToolResult(result.ExecuteResult.Content)}"
                 );
             }
 

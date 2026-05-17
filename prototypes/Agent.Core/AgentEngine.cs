@@ -188,26 +188,13 @@ public partial class AgentEngine {
     /// <summary>
     /// 向 Agent 追加主机通知（Host Notification）。
     /// </summary>
-    /// <param name="notificationContent">通知内容（包含基础与详细两级）。</param>
+    /// <param name="notificationContent">通知内容。</param>
     /// <exception cref="ArgumentNullException"><paramref name="notificationContent"/> 为 <c>null</c>。</exception>
     /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
-    public void AppendNotification(LevelOfDetailContent notificationContent) {
+    public void AppendNotification(string notificationContent) {
         if (notificationContent is null) { throw new ArgumentNullException(nameof(notificationContent)); }
         _state.AppendNotification(notificationContent);
-        DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Host notification appended basicLength={notificationContent.Basic.Length}");
-    }
-
-    /// <summary>
-    /// 向 Agent 追加主机通知（Host Notification）。
-    /// </summary>
-    /// <param name="basic">基础通知文本。</param>
-    /// <param name="detail">详细通知文本（可选，默认同 <paramref name="basic"/>）。</param>
-    /// <exception cref="ArgumentNullException"><paramref name="basic"/> 为 <c>null</c>。</exception>
-    /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
-    public void AppendNotification(string basic, string? detail = null) {
-        if (basic is null) { throw new ArgumentNullException(nameof(basic)); }
-        var content = new LevelOfDetailContent(basic, detail ?? basic);
-        AppendNotification(content);
+        DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Host notification appended length={notificationContent.Length}");
     }
 
     private void EnsureToolNameAvailable(string toolName) {
@@ -601,7 +588,7 @@ public partial class AgentEngine {
         var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
-            : failure.ExecuteResult.Basic;
+            : failure.ExecuteResult.Content;
 
         var results = collectedResults.ToArray();
         var entry = new ToolResultsEntry(results, executeError);
@@ -706,21 +693,15 @@ public partial class AgentEngine {
     private LlmProfile ResolveProfileForToolExecution(LlmProfile requestedProfile) {
         var turn = AnalyzeCurrentTurn();
         var locked = turn.LockedInvocation;
-        if (locked is null) {
-            throw new InvalidOperationException("WaitingToolResults requires an active Turn lock, but no locked invocation was found.");
-        }
+        if (locked is null) { throw new InvalidOperationException("WaitingToolResults requires an active Turn lock, but no locked invocation was found."); }
 
         if (_turnRuntime.ResolvedProfile is not null) {
             var tracked = _turnRuntime.ResolvedProfile.ToCompletionDescriptor();
-            if (Equals(tracked, locked)) {
-                return _turnRuntime.ResolvedProfile;
-            }
+            if (Equals(tracked, locked)) { return _turnRuntime.ResolvedProfile; }
         }
 
         var requested = requestedProfile.ToCompletionDescriptor();
-        if (Equals(requested, locked)) {
-            return requestedProfile;
-        }
+        if (Equals(requested, locked)) { return requestedProfile; }
 
         throw new InvalidOperationException(
             $"Unable to resolve the concrete LlmProfile for current tool execution. " +

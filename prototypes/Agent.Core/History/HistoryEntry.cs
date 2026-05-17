@@ -113,7 +113,7 @@ public sealed record ActionEntry(
 /// 作为观测类历史条目的基类，用于聚合多种形式的观测数据，如系统通知、窗口渲染和工具结果等。
 /// </summary>
 public record class ObservationEntry : HistoryEntry {
-    private LevelOfDetailContent? _notifications;
+    private string? _notifications;
     private bool _notificationsAssigned;
 
     /// <summary>
@@ -127,17 +127,14 @@ public record class ObservationEntry : HistoryEntry {
     /// <summary>
     /// 获取当前条目的通知内容。
     /// </summary>
-    public LevelOfDetailContent? Notifications => _notifications;
+    public string? Notifications => _notifications;
 
     /// <summary>
     /// 将内部存储的观测数据转换为 <see cref="ObservationMessage"/>，以供补全（Completion）层或外部策略使用。
-    /// 可通过 <paramref name="detailLevel"/> 参数控制内容的详细程度，以平衡信息量与成本。
     /// </summary>
-    /// <param name="detailLevel">期望输出内容的细节等级。</param>
     /// <param name="windows">由外部渲染好的窗口状态描述。</param>
-    public virtual ObservationMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
-        var notificationText = Notifications?.GetContent(detailLevel);
-        var content = MergeContent(notificationText, windows);
+    public virtual ObservationMessage GetMessage(string? windows) {
+        var content = MergeContent(Notifications, windows);
 
         return new ObservationMessage(
             Content: content
@@ -150,7 +147,7 @@ public record class ObservationEntry : HistoryEntry {
     /// <param name="notifications">新的通知内容。</param>
     /// <exception cref="ArgumentNullException">当传入的通知内容为 <c>null</c> 时抛出。</exception>
     /// <exception cref="InvalidOperationException">当通知内容已被设置过。</exception>
-    internal void AssignNotifications(LevelOfDetailContent notifications) {
+    internal void AssignNotifications(string notifications) {
         if (notifications is null) { throw new ArgumentNullException(nameof(notifications)); }
         if (_notificationsAssigned) { throw new InvalidOperationException("ObservationEntry notifications have already been assigned."); }
 
@@ -162,7 +159,7 @@ public record class ObservationEntry : HistoryEntry {
     /// （内部方法）将通知内容并入当前 observation。
     /// 若当前条目尚无通知，则等价于首次赋值；否则按行拼接追加。
     /// </summary>
-    internal void MergeNotifications(LevelOfDetailContent notifications) {
+    internal void MergeNotifications(string notifications) {
         if (notifications is null) { throw new ArgumentNullException(nameof(notifications)); }
 
         if (!_notificationsAssigned) {
@@ -173,7 +170,7 @@ public record class ObservationEntry : HistoryEntry {
 
         _notifications = _notifications is null
             ? notifications
-            : LevelOfDetailContent.Join("\n", _notifications, notifications);
+            : string.Join("\n", _notifications, notifications);
     }
 
     /// <summary>
@@ -209,7 +206,7 @@ public sealed record class ToolResultsEntry : ObservationEntry {
     /// <summary>
     /// 初始化工具结果条目。
     /// </summary>
-    /// <param name="results">按不同细节等级存储的工具调用结果列表。</param>
+    /// <param name="results">工具调用结果列表。</param>
     /// <param name="executeError">工具执行过程中产生的错误信息。</param>
     public ToolResultsEntry(
         IReadOnlyList<ToolCallExecutionResult> results,
@@ -233,47 +230,37 @@ public sealed record class ToolResultsEntry : ObservationEntry {
     public string? ExecuteError { get; init; }
 
     /// <summary>
-    /// 将此条目投影为 <see cref="ToolResultsMessage"/>，并根据指定的细节等级裁剪结果内容。
+    /// 将此条目投影为 <see cref="ToolResultsMessage"/>。
     /// </summary>
-    /// <param name="detailLevel">期望输出内容的细节等级。</param>
     /// <param name="windows">渲染后的窗口视图。</param>
-    public override ToolResultsMessage GetMessage(LevelOfDetail detailLevel, string? windows) {
-        IReadOnlyList<ToolResult> projectedResults = ProjectResults(Results, detailLevel);
+    public override ToolResultsMessage GetMessage(string? windows) {
+        IReadOnlyList<ToolResult> projectedResults = ProjectResults(Results);
 
         return new ToolResultsMessage(
-            Content: MergeContent(Notifications?.GetContent(detailLevel), windows),
+            Content: MergeContent(Notifications, windows),
             Results: projectedResults,
             ExecuteError: ExecuteError
         );
     }
 
     /// <summary>
-    /// 根据指定的细节等级，从原始工具调用结果列表中投影出裁剪后的版本。
-    /// 此方法可避免将内部缓存或冗余信息暴露给外部策略。
+    /// 从原始工具调用结果列表中投影出面向外部策略的版本。
     /// </summary>
-    /// <param name="source">包含多细节等级内容的原始工具调用结果列表。</param>
-    /// <param name="detailLevel">目标输出的细节等级。</param>
-    /// <returns>一个根据细节等级裁剪后的只读工具结果列表。</returns>
-    private static IReadOnlyList<ToolResult> ProjectResults(
-        IReadOnlyList<ToolCallExecutionResult> source,
-        LevelOfDetail detailLevel
-    ) {
+    /// <param name="source">原始工具调用结果列表。</param>
+    /// <returns>投影后的只读工具结果列表。</returns>
+    private static IReadOnlyList<ToolResult> ProjectResults(IReadOnlyList<ToolCallExecutionResult> source) {
         if (source.Count == 0) { return ImmutableArray<ToolResult>.Empty; }
 
         var builder = ImmutableArray.CreateBuilder<ToolResult>(source.Count);
 
         for (int i = 0; i < source.Count; i++) {
             ToolCallExecutionResult item = source[i];
-            var content = detailLevel == LevelOfDetail.Detail
-                ? item.ExecuteResult.Detail
-                : item.ExecuteResult.Basic;
-
             builder.Add(
                 new ToolResult(
                     item.ToolName,
                     item.ToolCallId,
                     item.ExecuteResult.Status,
-                    content
+                    item.ExecuteResult.Content
                 )
             );
         }

@@ -154,22 +154,14 @@ public sealed class TokenEstimateHelper {
         return total;
     }
 
-    private uint EstimateContent(LevelOfDetailContent? content) {
+    private uint EstimateContent(string? content) {
         if (content is null) { return 0u; }
-
-        var basicEstimate = EstimateString(content.Basic);
-        var detailEstimate = EstimateString(content.Detail);
-        var estimate = Math.Max(basicEstimate, detailEstimate);
-
-        return estimate;
+        return EstimateString(content);
     }
 
     private uint EstimateToolExecuteResult(ToolExecuteResult result) {
         if (result is null) { return 0u; }
-
-        var basicEstimate = EstimateString(result.Basic);
-        var detailEstimate = EstimateString(result.Detail);
-        return Math.Max(basicEstimate, detailEstimate);
+        return EstimateString(result.Content);
     }
 
     private uint EstimateFallback(HistoryEntry entry)

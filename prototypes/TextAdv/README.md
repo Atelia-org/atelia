@@ -41,6 +41,7 @@ LLM Agent (Copilot / Claude Code)
 
 - `amnesia-core-loop-decisions.md`：围绕 `Amnesia`、离散回合、`Large-Action`、`Reason-Trace`、`Memory-Notebook` 的核心玩法收敛
 - `turn-sequence-and-memory-notebook-decisions.md`：围绕回合步骤序列、`Memory-Notebook` 状态模型、逐步验证与语料产出形态的当前共识
+- `gm-agent-world-resolution-design.md`：围绕 TRPG GM Agent、世界账本、工具化结算与动态世界生成的设计草案
 
 ## 注册与使用
 

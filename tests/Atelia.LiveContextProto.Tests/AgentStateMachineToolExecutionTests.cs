@@ -86,7 +86,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var historyResult = toolResults.Results[0];
         Assert.Equal(ToolExecutionStatus.Success, historyResult.ExecuteResult.Status);
-        var plainText = historyResult.ExecuteResult.Basic;
+        var plainText = historyResult.ExecuteResult.Content;
         Assert.Contains("tool-output", plainText, StringComparison.Ordinal);
 
         Assert.Single(toolInvocations);
@@ -288,13 +288,15 @@ public sealed class AgentStateMachineToolExecutionTests {
         );
         var preparedApp = new PrepareAwareApp();
 
-        var provider = new FakeProviderClient(new[] {
-            CreateDeltaSequence(
-                agg => agg.AppendContent("calling tool"),
-                agg => agg.AppendToolCall(CreateToolCallRequest("echo", "call-1", ImmutableDictionary<string, string>.Empty))
-            ),
-            CreateDeltaSequence(agg => agg.AppendContent("done"))
-        });
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(
+                    agg => agg.AppendContent("calling tool"),
+                    agg => agg.AppendToolCall(CreateToolCallRequest("echo", "call-1", ImmutableDictionary<string, string>.Empty))
+                ),
+                CreateDeltaSequence(agg => agg.AppendContent("done"))
+        }
+        );
 
         var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId, SoftContextTokenCap: 64_000u);
         var engine = new AgentEngine();
@@ -422,9 +424,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         var compactionRequested = false;
         engine.PrepareInvocationAsync = (_, _) => {
-            if (compactionRequested) {
-                return Task.CompletedTask;
-            }
+            if (compactionRequested) { return Task.CompletedTask; }
 
             compactionRequested = true;
             engine.RequestCompaction("custom-system", "custom-summarize");
@@ -553,8 +553,8 @@ public sealed class AgentStateMachineToolExecutionTests {
         var toolResult = Assert.Single(toolResultsStep.ToolResults!.Results);
         Assert.Equal("ctx_compress", toolResult.ToolName);
         Assert.Equal(ToolExecutionStatus.Success, toolResult.ExecuteResult.Status);
-        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Basic, StringComparison.Ordinal);
-        Assert.Contains("释放了约", toolResult.ExecuteResult.Basic, StringComparison.Ordinal);
+        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Content, StringComparison.Ordinal);
+        Assert.Contains("释放了约", toolResult.ExecuteResult.Content, StringComparison.Ordinal);
 
         var finalModelStep = await engine.StepAsync(profile);
         Assert.Equal(AgentRunState.PendingToolResults, finalModelStep.StateBefore);
@@ -609,7 +609,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         var toolResultsStep = await engine.StepAsync(initialProfile);
         var toolResult = Assert.Single(toolResultsStep.ToolResults!.Results);
         Assert.Equal(ToolExecutionStatus.Success, toolResult.ExecuteResult.Status);
-        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Basic, StringComparison.Ordinal);
+        Assert.Contains("上下文压缩成功", toolResult.ExecuteResult.Content, StringComparison.Ordinal);
 
         var finalModelStep = await engine.StepAsync(initialProfile);
         Assert.NotNull(finalModelStep.Output);

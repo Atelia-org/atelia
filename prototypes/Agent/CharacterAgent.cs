@@ -50,9 +50,7 @@ public sealed class CharacterAgent {
     public void UpdateMemoryNotebook(string content)
         => _memoryNotebookApp.ReplaceNotebookFromHost(content);
 
-    public void AppendNotification(LevelOfDetailContent notificationContent) => _engine.AppendNotification(notificationContent);
-
-    public void AppendNotification(string basic, string? detail = null) => _engine.AppendNotification(basic, detail);
+    public void AppendNotification(string notificationContent) => _engine.AppendNotification(notificationContent);
 
     public Task<AgentStepResult> DoStepAsync(LlmProfile profile, CancellationToken cancellationToken = default)
         => _engine.StepAsync(profile, cancellationToken);

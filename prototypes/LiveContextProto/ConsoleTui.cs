@@ -21,9 +21,11 @@ internal sealed class ConsoleTui {
         _defaultProfile = defaultProfile ?? throw new ArgumentNullException(nameof(defaultProfile));
         _input = input ?? System.Console.In;
         _output = output ?? System.Console.Out;
-        _console = AnsiConsole.Create(new AnsiConsoleSettings {
-            Out = new AnsiConsoleOutput(_output)
-        });
+        _console = AnsiConsole.Create(
+            new AnsiConsoleSettings {
+                Out = new AnsiConsoleOutput(_output)
+            }
+        );
     }
 
     public void Run() {
@@ -112,7 +114,7 @@ internal sealed class ConsoleTui {
         var text = entry switch {
             ActionEntry action => action.Message.GetFlattenedText(),
             ToolResultsEntry tr => $"{tr.Results.Count} tool results",
-            ObservationEntry obs => obs.GetMessage(LevelOfDetail.Basic, null)?.Content ?? string.Empty,
+            ObservationEntry obs => obs.GetMessage(null)?.Content ?? string.Empty,
             RecapEntry recap => recap.Content,
             _ => string.Empty
         };
@@ -148,8 +150,7 @@ internal sealed class ConsoleTui {
 
     private void PrintNotebookSnapshot() {
         var snapshot = _agent.MemoryNotebookSnapshot;
-        var panel = new Panel(Markup.Escape(snapshot))
-        {
+        var panel = new Panel(Markup.Escape(snapshot)) {
             Border = BoxBorder.Rounded,
             Header = new PanelHeader("Memory Notebook"),
         };

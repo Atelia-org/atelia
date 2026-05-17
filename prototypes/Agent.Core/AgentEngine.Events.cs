@@ -13,7 +13,7 @@ public delegate Task PrepareInvocationAsyncHandler(PrepareInvocationEventArgs ar
 /// 也可以只补充一段 recent events 文本，由引擎组装为新的 observation。
 /// </remarks>
 public sealed class IncomingObservation {
-    public IncomingObservation(ObservationEntry? entry = null, LevelOfDetailContent? recentEvents = null) {
+    public IncomingObservation(ObservationEntry? entry = null, string? recentEvents = null) {
         Entry = entry;
         RecentEvents = recentEvents;
     }
@@ -27,14 +27,14 @@ public sealed class IncomingObservation {
     /// 获取当前轮新增的 recent events 文本（可选）。
     /// 引擎会把它与队列中的 pending notifications 一起并入最终 observation。
     /// </summary>
-    public LevelOfDetailContent? RecentEvents { get; init; }
+    public string? RecentEvents { get; init; }
 
     public static IncomingObservation FromEntry(ObservationEntry entry) {
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         return new IncomingObservation(entry: entry);
     }
 
-    public static IncomingObservation FromRecentEvents(LevelOfDetailContent recentEvents) {
+    public static IncomingObservation FromRecentEvents(string recentEvents) {
         if (recentEvents is null) { throw new ArgumentNullException(nameof(recentEvents)); }
         return new IncomingObservation(recentEvents: recentEvents);
     }
