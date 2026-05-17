@@ -20,7 +20,6 @@ internal static partial class GameSimulation {
     private const string CurrentTurnKey = "currentTurn";
     private const string TurnHistoryKey = "turnHistory";
     private const string CompletedTurnCountKey = "completedTurnCount";
-    private const string LastResolutionKey = "lastResolution";
     private const string LastResolutionByActorKey = "lastResolutionByActor";
     private const string StartDayKey = "startDay";
     private const string StartSlotKey = "startSlot";
@@ -153,7 +152,7 @@ internal static partial class GameSimulation {
             return actorResolution;
         }
 
-        return TryGetOptionalString(game, LastResolutionKey);
+        return null;
     }
 
     private static void ClearLastResolutionByActor(DurableDict<string> root) {
@@ -290,12 +289,6 @@ internal static partial class GameSimulation {
         acceptedSteps = root.Revision.CreateDict<string>();
         acceptedStepsByActor.Upsert(actorId, acceptedSteps);
         return acceptedSteps;
-    }
-
-    private static string? TryGetOptionalString(DurableDict<string> dict, string key) {
-        if (!dict.TryGet(key, out string? value) || string.IsNullOrWhiteSpace(value)) { return null; }
-
-        return value;
     }
 
     private static DurableDict<string> CreateLocation(Revision rev, string name, string description) {

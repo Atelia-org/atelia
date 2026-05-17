@@ -337,9 +337,9 @@ game
 - `dev-look-actor <actor-id>` 可用于查看任意 actor 的 Perception-Bundle；这验证了未来 LLM Player Agent 的输入可以只包含该 actor 的视角，而不是完整世界真相。
 - `dev-turn-status` 可审计当前 barrier 与每个 active actor 的 Large-Action 提交状态。`dev-submit-large-action` 可绕过 validator 模拟任意 active actor 交卷，用于测试 `acceptedStepsByActor` / `largeActionByActor` 和 `ready-for-gm` 流转。
 - 多主体收齐后已经进入 `collected-turn resolver`。真实 GM 模式下，resolver 会把所有 actor 的 Large-Action intent、各自 Perception-Bundle、事前推理和 validator feedback 注入同一 GM staged loop，由 GM 一次性裁决冲突、顺序和后果；deterministic / fallback 模式下仍按终端玩家的大型动作推进世界，以保持 MVP 可测。
-- GM 工具集已新增 `gm_move_actor`，真实多主体 GM 不再只能移动终端玩家，可以裁决 LLM Player 的探索、移动、分头行动和停留。`gm_move_player` 仍保留给单玩家 explore/interact 路径。
+- GM 工具集已新增 `gm_move_actor`，真实多主体 GM 不再只能移动终端玩家，可以裁决 LLM Player 的探索、移动、分头行动和停留。`gm_move_player` 仍保留给单玩家 explore/interact 路径，但在实现上只是 `gm_move_actor(player, ...)` 的别名。
 - GM 结算已经从单次宽 prompt 改为同一会话内的分阶段工具循环：`explore` 依次执行“地图与移动落账 → 实体与交互账本审计 → 玩家可见摘要”，`interact` 依次执行“交互直接后果 → affordance 生命周期审计 → 玩家可见摘要”。每个阶段都会保留前文 history，并在阶段开始注入最新 Perception/账本投影，以减少遗漏实体、交互或可见性更新的概率。
-- 多主体 collected-turn 也采用三阶段工具循环：“多主体意图裁决与 hard truth 落账 → 多主体账本审计 → 各 actor 私有结算反馈与终端玩家摘要”。GM 可调用 `gm_set_actor_resolution(actor_id, summary)` 写入 `game.lastResolutionByActor`；下一回合任意 actor 的 `Perception-Bundle.LastResolution` 优先读取自己的私有反馈，缺失时才回退全局摘要。fallback 路径会把同一摘要补给所有 active actor，保证 Player Agent 总能获得上一回合反馈。
+- 多主体 collected-turn 也采用三阶段工具循环：“多主体意图裁决与 hard truth 落账 → 多主体账本审计 → 各 actor 私有结算反馈与终端玩家摘要”。GM 可调用 `gm_set_actor_resolution(actor_id, summary)` 写入 `game.lastResolutionByActor`；下一回合任意 actor 的 `Perception-Bundle.LastResolution` 直接读取自己的私有反馈。fallback 路径会把同一摘要补给所有 active actor，保证 Player Agent 总能获得上一回合反馈。
 
 `LLM Player Agent` 的最小行为协议：
 

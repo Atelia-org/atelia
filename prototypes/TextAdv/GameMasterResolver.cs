@@ -393,7 +393,7 @@ internal static class GameMasterResolver {
 5. 视角安全：最终文本只写当前玩家可以感知到的结算，不泄露隐藏真相。
 
 你必须通过工具更新世界状态：
-- 如果目标方向已有出口，只调用 gm_move_player 移动到该目标 LocationId。
+- 如果目标方向已有出口，只调用 gm_move_player 移动到该目标 LocationId。它在工具实现上等价于 gm_move_actor(player, ...) 的别名。
 - 如果目标方向没有出口，先调用 gm_create_location，再调用 gm_link_locations，最后调用 gm_move_player。
 - 可选：若新地点需要一个可见可操作细节，可以创建 0 到 1 个 Item 或 0 到 1 个 NPC，再调用 gm_add_interaction 给新地点、该 Item 或该 Actor 添加 0 到 2 个交互 affordance；precondition_note 若无特别条件写 none。
 - 如果最终摘要提到玩家能看见的具体物品或人物，该实体必须已经通过 gm_create_item 或 gm_create_npc 落账；若可以对话、检查、拿取或操作，必须通过 gm_add_interaction 落账。
@@ -557,7 +557,7 @@ internal static class GameMasterResolver {
         var sb = new StringBuilder();
         sb.AppendLine("[阶段 1/3: 地图与移动落账]");
         sb.AppendLine("只处理 Location / Exit / Player location。");
-        sb.AppendLine("若目标方向已有出口，调用 gm_move_player。若没有出口，调用 gm_create_location、gm_link_locations、gm_move_player。");
+        sb.AppendLine("若目标方向已有出口，调用 gm_move_player（它等价于 gm_move_actor(player, ...) 的别名）。若没有出口，调用 gm_create_location、gm_link_locations、gm_move_player。");
         sb.AppendLine("本阶段不要创建 Item / NPC / Interaction，也不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
         sb.AppendLine();
         sb.Append(BuildExploreObservation(context));

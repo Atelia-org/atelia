@@ -463,7 +463,7 @@ internal static partial class GameSimulation {
             createdNewLocation = true;
         }
 
-        var moveResult = gmTools.MovePlayerTo(targetLocationId);
+        var moveResult = gmTools.MoveActorTo(TerminalPlayerActorId, targetLocationId);
         if (!moveResult.IsSuccess) { return AsyncAteliaResult<TurnResolution>.Failure(moveResult.Error!); }
 
         var targetLocation = GetLocation(root, targetLocationId);
@@ -557,12 +557,10 @@ internal static partial class GameSimulation {
         }
 
         game.Upsert(LastResolutionByActorKey, lastResolutionByActor);
-        game.Upsert(LastResolutionKey, summary);
     }
 
     private static void SetLastResolutionForMissingActiveActors(DurableDict<string> root, string fallbackSummary) {
         fallbackSummary = NormalizeRequired(fallbackSummary, nameof(fallbackSummary));
-        var game = GetGame(root);
         var lastResolutionByActor = GetOrCreateLastResolutionByActor(root);
         foreach (var actorId in EnumerateActiveActorIds(root)) {
             if (!lastResolutionByActor.TryGet(actorId, out string? actorResolution)
@@ -570,8 +568,6 @@ internal static partial class GameSimulation {
                 lastResolutionByActor.Upsert(actorId, fallbackSummary);
             }
         }
-
-        game.Upsert(LastResolutionKey, fallbackSummary);
     }
 
     private static void AppendClockAdvanceToExistingActorResolutions(

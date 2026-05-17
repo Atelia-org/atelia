@@ -98,17 +98,6 @@ internal sealed class GmWorldEditService {
             : $"{fromLocationId}.{direction}->{toLocationId}; {toLocationId}.{reverseDirection}->{fromLocationId}";
     }
 
-    internal AteliaResult<string> MovePlayerTo(string locationId) {
-        locationId = NormalizeRequired(locationId, nameof(locationId));
-        var location = TryGetLocation(locationId);
-        if (!location.IsSuccess) {
-            return AteliaResult<string>.Failure(location.Error!);
-        }
-
-        UpsertActorLocation(TerminalPlayerActorId, locationId);
-        return locationId;
-    }
-
     internal AteliaResult<string> MoveActorTo(string actorId, string locationId) {
         actorId = NormalizeRequired(actorId, nameof(actorId));
         locationId = NormalizeRequired(locationId, nameof(locationId));
@@ -417,7 +406,7 @@ internal sealed class GmWorldEditService {
         CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
-        return ToToolResult(MovePlayerTo(location_id), "moved player");
+        return ToToolResult(MoveActorTo(TerminalPlayerActorId, location_id), "moved player");
     }
 
     [Tool("gm_move_actor", "把指定 Actor 移动到指定 Location。多主体回合中优先使用；终端玩家 ActorId 是 player。")]

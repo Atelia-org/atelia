@@ -383,6 +383,90 @@ public static class GameEntry {
         }
     }
 
+    private static async Task<GameActionValidator.ValidationResult?> TryValidateLargeActionAsync(
+        TextWriter output,
+        PerceptionBundle perception,
+        string actionKind,
+        string actionSummary,
+        string preActionReason,
+        string? actionPayload,
+        CancellationToken cancellationToken
+    ) {
+        try {
+            return await GameActionValidator.ValidateActionAsync(
+                perception,
+                actionKind,
+                actionSummary,
+                preActionReason,
+                actionPayload,
+                cancellationToken
+            );
+        }
+        catch (Exception ex) {
+            output.WriteLine($"❌ validator 调用失败：{ex.Message}");
+            return null;
+        }
+    }
+
+    private static async Task ExecuteTerminalLargeActionAsync(
+        TextWriter output,
+        string actionKind,
+        string actionSummary,
+        string? actionPayload,
+        string preActionReason,
+        Func<DurableDict<string>, GameActionValidator.ValidationResult, CancellationToken, Task<AsyncAteliaResult<TurnResolution>>> resolveAsync,
+        CancellationToken cancellationToken
+    ) {
+        if (!TryGetState(output, out var state)) { return; }
+
+        var (repo, root) = state;
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var validation = await TryValidateLargeActionAsync(
+            output,
+            perception,
+            actionKind,
+            actionSummary,
+            preActionReason,
+            actionPayload,
+            cancellationToken
+        );
+        if (validation is null) { return; }
+
+        if (!validation.Accepted) {
+            output.WriteLine("❌ validator 未通过这一步 Large-Action。");
+            output.WriteLine(validation.Feedback);
+            return;
+        }
+
+        if (await TryCollectTerminalLargeActionInsteadOfResolvingAsync(
+            output,
+            repo,
+            root,
+            actionKind,
+            actionSummary,
+            actionPayload,
+            preActionReason,
+            validation.Feedback,
+            cancellationToken
+        )) {
+            return;
+        }
+
+        var resolutionResult = await resolveAsync(root, validation, cancellationToken);
+        if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
+            output.WriteLine($"❌ Large-Action 结算失败：{actionSummary}");
+            WriteAteliaError(output, resolutionResult.Error);
+            return;
+        }
+
+        _ = repo.Commit(root).Value;
+        output.WriteLine($"✅ Large-Action 已接受：{actionSummary}。当前回合已结束。");
+        output.WriteLine($"🧪 validator: {validation.Feedback}");
+        output.WriteLine($"📣 结算: {resolution.Summary}");
+        output.WriteLine();
+        output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+    }
+
     private static async Task<bool> TryCollectTerminalLargeActionInsteadOfResolvingAsync(
         TextWriter output,
         Repository repo,
@@ -472,62 +556,22 @@ public static class GameEntry {
                 var actionPayload = string.IsNullOrWhiteSpace(focus)
                     ? $"direction={direction}"
                     : $"direction={direction}\nfocus={focus!.Trim()}";
-
-                if (!TryGetState(output, out var state)) { return; }
-
-                var (repo, root) = state;
-                var perception = GameSimulation.DescribeCurrentPerception(root);
-
-                GameActionValidator.ValidationResult validation;
-                try {
-                    validation = await GameActionValidator.ValidateActionAsync(
-                        perception,
-                        actionKind: "large/explore",
-                        actionSummary,
-                        preActionReason,
-                        actionPayload,
-                        cancellationToken: ct
-                    );
-                }
-                catch (Exception ex) {
-                    output.WriteLine($"❌ validator 调用失败：{ex.Message}");
-                    return;
-                }
-
-                if (!validation.Accepted) {
-                    output.WriteLine("❌ validator 未通过这一步 Large-Action。");
-                    output.WriteLine(validation.Feedback);
-                    return;
-                }
-
-                if (await TryCollectTerminalLargeActionInsteadOfResolvingAsync(
+                await ExecuteTerminalLargeActionAsync(
                     output,
-                    repo,
-                    root,
                     actionKind: "large/explore",
                     actionSummary,
                     actionPayload,
                     preActionReason,
-                    validation.Feedback,
+                    (root, validation, token) => GameSimulation.ApplyExploreAsync(
+                        root,
+                        direction,
+                        focus,
+                        preActionReason,
+                        validation.Feedback,
+                        token
+                    ),
                     ct
-                )) {
-                    return;
-                }
-
-                var resolutionResult = await GameSimulation.ApplyExploreAsync(root, direction, focus, preActionReason, validation.Feedback, ct);
-                if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
-                    output.WriteLine("❌ GM 探索结算失败。");
-                    WriteAteliaError(output, resolutionResult.Error);
-                    return;
-                }
-
-                _ = repo.Commit(root).Value;
-
-                output.WriteLine($"✅ Large-Action 已接受：{actionSummary}。当前回合已结束。");
-                output.WriteLine($"🧪 validator: {validation.Feedback}");
-                output.WriteLine($"📣 结算: {resolution.Summary}");
-                output.WriteLine();
-                output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+                );
             }
         );
         return cmd;
@@ -564,63 +608,21 @@ public static class GameEntry {
 
                 var actionSummary = $"{interaction.VisibleLabel} ({interaction.ActionKind})";
                 var actionPayload = GameSimulation.BuildInteractionPayload(interaction);
-
-                GameActionValidator.ValidationResult validation;
-                try {
-                    validation = await GameActionValidator.ValidateActionAsync(
-                        perception,
-                        actionKind: "large/interact",
-                        actionSummary,
-                        preActionReason,
-                        actionPayload,
-                        cancellationToken: ct
-                    );
-                }
-                catch (Exception ex) {
-                    output.WriteLine($"❌ validator 调用失败：{ex.Message}");
-                    return;
-                }
-
-                if (!validation.Accepted) {
-                    output.WriteLine("❌ validator 未通过这一步 Large-Action。");
-                    output.WriteLine(validation.Feedback);
-                    return;
-                }
-
-                if (await TryCollectTerminalLargeActionInsteadOfResolvingAsync(
+                await ExecuteTerminalLargeActionAsync(
                     output,
-                    repo,
-                    root,
                     actionKind: "large/interact",
                     actionSummary,
                     actionPayload,
                     preActionReason,
-                    validation.Feedback,
-                    ct
-                )) {
-                    return;
-                }
-
-                var resolutionResult = await GameSimulation.ApplyInteractionAsync(
-                    root,
-                    interaction.InteractionId,
-                    preActionReason,
-                    validation.Feedback,
+                    (resolvedRoot, validation, token) => GameSimulation.ApplyInteractionAsync(
+                        resolvedRoot,
+                        interaction.InteractionId,
+                        preActionReason,
+                        validation.Feedback,
+                        token
+                    ),
                     ct
                 );
-                if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
-                    output.WriteLine("❌ GM 交互结算失败。");
-                    WriteAteliaError(output, resolutionResult.Error);
-                    return;
-                }
-
-                _ = repo.Commit(root).Value;
-
-                output.WriteLine($"✅ Large-Action 已接受：{actionSummary}。当前回合已结束。");
-                output.WriteLine($"🧪 validator: {validation.Feedback}");
-                output.WriteLine($"📣 结算: {resolution.Summary}");
-                output.WriteLine();
-                output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
             }
         );
         return cmd;
@@ -639,56 +641,19 @@ public static class GameEntry {
                 var output = ctx.InvocationConfiguration.Output;
                 var preActionReason = ctx.GetValue(reasonArg)!;
                 const string actionSummary = "原地休息一会";
-
-                if (!TryGetState(output, out var state)) { return; }
-
-                var (repo, root) = state;
-                var perception = GameSimulation.DescribeCurrentPerception(root);
-
-                GameActionValidator.ValidationResult validation;
-                try {
-                    validation = await GameActionValidator.ValidateActionAsync(
-                        perception,
-                        actionKind: "large/rest-a-while",
-                        actionSummary,
-                        preActionReason,
-                        actionPayload: null,
-                        cancellationToken: ct
-                    );
-                }
-                catch (Exception ex) {
-                    output.WriteLine($"❌ validator 调用失败：{ex.Message}");
-                    return;
-                }
-
-                if (!validation.Accepted) {
-                    output.WriteLine("❌ validator 未通过这一步 Large-Action。");
-                    output.WriteLine(validation.Feedback);
-                    return;
-                }
-
-                if (await TryCollectTerminalLargeActionInsteadOfResolvingAsync(
+                await ExecuteTerminalLargeActionAsync(
                     output,
-                    repo,
-                    root,
                     actionKind: "large/rest-a-while",
                     actionSummary,
                     actionPayload: null,
                     preActionReason,
-                    validation.Feedback,
+                    (root, validation, _) => Task.FromResult(
+                        AsyncAteliaResult<TurnResolution>.Success(
+                            GameSimulation.ApplyRestAWhile(root, preActionReason, validation.Feedback)
+                        )
+                    ),
                     ct
-                )) {
-                    return;
-                }
-
-                var resolution = GameSimulation.ApplyRestAWhile(root, preActionReason, validation.Feedback);
-                _ = repo.Commit(root).Value;
-
-                output.WriteLine("✅ Large-Action 已接受：原地休息一会。当前回合已结束。");
-                output.WriteLine($"🧪 validator: {validation.Feedback}");
-                output.WriteLine($"📣 结算: {resolution.Summary}");
-                output.WriteLine();
-                output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+                );
             }
         );
         return cmd;
