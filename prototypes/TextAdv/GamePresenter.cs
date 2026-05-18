@@ -6,99 +6,7 @@ namespace Atelia.TextAdv;
 internal static class GamePresenter {
     internal static string RenderPerception(PerceptionBundle perception) {
         var sb = new StringBuilder();
-
-        sb.AppendLine($"🗓️ {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
-        sb.AppendLine($"🎭 Actor: {perception.ActorName} [{perception.ActorId}, {perception.ActorKind}]");
-        if (!string.IsNullOrWhiteSpace(perception.ActorProfileNote)) {
-            AppendIndented(sb, perception.ActorProfileNote);
-        }
-
-        if (!string.IsNullOrWhiteSpace(perception.LastResolution)) {
-            sb.AppendLine("📣 上回合结算:");
-            AppendIndented(sb, perception.LastResolution!);
-            sb.AppendLine();
-        }
-
-        sb.AppendLine($"📍 {perception.Location.Name}");
-        AppendIndented(sb, perception.Location.Description);
-        sb.AppendLine();
-
-        sb.AppendLine("🧠 Private Memory-Notebook (block view):");
-        AppendIndented(sb, NotebookBlockViewRenderer.RenderBlockView(perception.NotebookBlocks));
-        sb.AppendLine();
-
-        sb.AppendLine("🚪 你目前看得到的出口:");
-        if (perception.Location.Exits.Count == 0) {
-            sb.AppendLine("   (none)");
-        }
-        else {
-            foreach (var exit in perception.Location.Exits) {
-                sb.AppendLine($"   {exit.Direction} → {exit.TargetName}");
-            }
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("🎒 你目前看得到的物品:");
-        if (perception.Location.Items.Count == 0) {
-            sb.AppendLine("   (none)");
-        }
-        else {
-            foreach (var item in perception.Location.Items) {
-                sb.AppendLine($"   [{item.ItemId}] {item.Name}");
-                AppendIndented(sb, item.Description, "      ");
-                AppendInteractions(sb, item.Interactions, "      ");
-            }
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("🧺 你目前持有的物品:");
-        if (perception.InventoryItems.Count == 0) {
-            sb.AppendLine("   (none)");
-        }
-        else {
-            foreach (var item in perception.InventoryItems) {
-                sb.AppendLine($"   [{item.ItemId}] {item.Name}");
-                AppendIndented(sb, item.Description, "      ");
-                AppendInteractions(sb, item.Interactions, "      ");
-            }
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("👥 你目前看得到的角色:");
-        if (perception.Location.Actors.Count == 0) {
-            sb.AppendLine("   (none)");
-        }
-        else {
-            foreach (var actor in perception.Location.Actors) {
-                sb.AppendLine($"   [{actor.ActorId}] {actor.Name} ({actor.Kind})");
-                if (!string.IsNullOrWhiteSpace(actor.ProfileNote)) {
-                    AppendIndented(sb, actor.ProfileNote, "      ");
-                }
-                AppendInteractions(sb, actor.Interactions, "      ");
-            }
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("🧩 你目前看得到的交互:");
-        if (perception.Location.Interactions.Count == 0) {
-            sb.AppendLine("   (none)");
-        }
-        else {
-            AppendInteractions(sb, perception.Location.Interactions, "   ");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("📝 当前回合已接受步骤:");
-        if (perception.AcceptedSteps.Count == 0) {
-            sb.AppendLine("   (none)");
-        }
-        else {
-            foreach (var step in perception.AcceptedSteps) {
-                sb.AppendLine($"   {step.StepNumber}. {step.ActionKind} — {step.ActionSummary}");
-                AppendLabeledBlock(sb, "事前推理", step.PreActionReason, "      ");
-                AppendLabeledBlock(sb, "validator", step.ValidatorFeedback, "      ");
-            }
-        }
+        sb.Append(PerceptionEvidenceRenderer.RenderForPlayer(perception));
         sb.AppendLine();
 
         AppendActionGuide(sb, perception);
@@ -217,7 +125,7 @@ internal static class GamePresenter {
     }
 
     private static void AppendInteractionRecipes(StringBuilder sb, PerceptionBundle perception) {
-        var interactions = EnumerateVisibleInteractions(perception).ToArray();
+        var interactions = PerceptionEvidenceRenderer.EnumerateVisibleInteractions(perception).ToArray();
         if (interactions.Length == 0) {
             sb.AppendLine("     当前没有可见 interaction；通常应先 look-around、记笔记，或用 explore 寻找新的地点/线索。");
             return;
@@ -244,46 +152,6 @@ internal static class GamePresenter {
         sb.AppendLine("     pmux game edit-memory-notebook '我想把最前面的旧笔记改成更谨慎的表述。' '<replace anchor=\"head\">怀疑北边树林里可能有淡水，尚未确认。</replace>'");
         sb.AppendLine($"     pmux game edit-memory-notebook '这条笔记已经明显过时或写错了。' '<delete anchor=\"{sampleDeleteId}\" />'");
         sb.AppendLine("     你也可以直接用 head / tail 作为 anchor；如果要一次连续改多条，就把多个操作元素并列写进同一个 <编辑片段> 参数里。");
-    }
-
-    private static void AppendInteractions(StringBuilder sb, IReadOnlyList<InteractionPerception> interactions, string indent) {
-        if (interactions.Count == 0) {
-            sb.AppendLine($"{indent}可交互: (none)");
-            return;
-        }
-
-        sb.AppendLine($"{indent}可交互:");
-        foreach (var interaction in interactions) {
-            sb.AppendLine($"{indent}- [{interaction.InteractionId}] {interaction.VisibleLabel} ({interaction.ActionKind})");
-            if (!string.IsNullOrWhiteSpace(interaction.PreconditionNote)
-                && !string.Equals(interaction.PreconditionNote, "none", StringComparison.OrdinalIgnoreCase)) {
-                sb.AppendLine($"{indent}  条件: {interaction.PreconditionNote}");
-            }
-        }
-    }
-
-    private static IEnumerable<InteractionPerception> EnumerateVisibleInteractions(PerceptionBundle perception) {
-        foreach (var interaction in perception.Location.Interactions) {
-            yield return interaction;
-        }
-
-        foreach (var item in perception.Location.Items) {
-            foreach (var interaction in item.Interactions) {
-                yield return interaction;
-            }
-        }
-
-        foreach (var item in perception.InventoryItems) {
-            foreach (var interaction in item.Interactions) {
-                yield return interaction;
-            }
-        }
-
-        foreach (var actor in perception.Location.Actors) {
-            foreach (var interaction in actor.Interactions) {
-                yield return interaction;
-            }
-        }
     }
 
     private static void AppendIndented(StringBuilder sb, string text)

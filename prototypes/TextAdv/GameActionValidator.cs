@@ -141,14 +141,15 @@ internal static class GameActionValidator {
 你的任务不是判断玩家是否猜中世界真相，而是判断这一步动作前提交的“事前推理（pre-action reason）”是否 grounded 于给定证据，并且是否足以支持候选动作。
 
 判定原则：
-1. 只能依据输入里给出的当前可见信息、当前 Memory-Notebook 快照、以及当前回合已接受步骤。
-2. 如果玩家把猜测当成确定事实、引用了输入中不存在的记忆、或者出现明显跳步，就应拒绝。
-3. 允许玩家在 notebook 中记录假说、不确定事项、待确认线索，但不能把未给出的事实写成已经确认。
-4. 这段事前推理应体现“先推理、后行动”，而不是动作做完后的事后合理化。
-5. 标准是“防君子不防小人”的 groundedness 检查，不追求吹毛求疵。
-6. 对于 notebook 编辑，输入会额外提供当前 notebook 的块视图、TextEditScript，以及宿主侧预测出的编辑后块视图；你应重点检查 after-view 中新增、修改、删除的内容是否 grounded。
-7. 对于 large/explore，玩家可以探索当前尚未列为出口的方向；这表示“试探未知”，不要求该方向已经出现在 Exits 中。你只需要检查玩家是否把未知方向说成已确认事实，或是否声称已有输入中不存在的地点/线索。
-8. 对于 large/interact，玩家必须选择当前 VisibleInteractions 中存在的 interaction，并且事前推理应依据该交互的 visibleLabel、target 和当前可见信息；不能凭空假定 interaction 执行后的隐藏结果。
+1. 只能依据输入里给出的当前可见信息、上回合结算结果、当前 Memory-Notebook 快照、以及当前回合已接受步骤。
+2. 上回合结算结果（[上回合结算结果]）中描述的世界事实，视为已确立的世界状态，玩家可以在事前推理中直接引用。但不能把结算结果中未出现的内容说成已发生。
+3. 如果玩家把猜测当成确定事实、引用了输入中不存在的记忆、或者出现明显跳步，就应拒绝。
+4. 允许玩家在 notebook 中记录假说、不确定事项、待确认线索，但不能把未给出的事实写成已经确认。
+5. 这段事前推理应体现"先推理、后行动"，而不是动作做完后的事后合理化。
+6. 标准是"防君子不防小人"的 groundedness 检查，不追求吹毛求疵。
+7. 对于 notebook 编辑，输入会额外提供当前 notebook 的块视图、TextEditScript，以及宿主侧预测出的编辑后块视图；你应重点检查 after-view 中新增、修改、删除的内容是否 grounded。
+8. 对于 large/explore，玩家可以探索当前尚未列为出口的方向；这表示"试探未知"，不要求该方向已经出现在 Exits 中。你只需要检查玩家是否把未知方向说成已确认事实，或是否声称已有输入中不存在的地点/线索。
+9. 对于 large/interact，玩家必须选择当前 VisibleInteractions 中存在的 interaction，并且事前推理应依据该交互的 visibleLabel、target 和当前可见信息；不能凭空假定 interaction 执行后的隐藏结果。
 
 请把工具调用当作填写裁决表：
 - 若你认为这一步动作合理，请不要调用任何工具。
@@ -168,95 +169,8 @@ internal static class GameActionValidator {
     ) {
         var sb = new StringBuilder();
         sb.AppendLine("请验证下面这一步动作是否 grounded。\n");
-        sb.AppendLine("[当前可见信息]");
-        sb.AppendLine($"- ActorId: {perception.ActorId}");
-        sb.AppendLine($"- Time: {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
-        sb.AppendLine($"- Location: {perception.Location.Name}");
-        sb.AppendLine($"- LocationDescription: {perception.Location.Description}");
-
-        if (perception.Location.Exits.Count == 0) {
-            sb.AppendLine("- Exits: (none)");
-        }
-        else {
-            sb.AppendLine($"- Exits: {string.Join(", ", perception.Location.Exits.Select(static exit => $"{exit.Direction}->{exit.TargetName}"))}");
-        }
-
-        if (perception.Location.Items.Count == 0) {
-            sb.AppendLine("- VisibleItems: (none)");
-        }
-        else {
-            sb.AppendLine("- VisibleItems:");
-            foreach (var item in perception.Location.Items) {
-                sb.AppendLine($"  - {item.ItemId}: {item.Name} | {item.Description}");
-            }
-        }
-
-        if (perception.InventoryItems.Count == 0) {
-            sb.AppendLine("- InventoryItems: (none)");
-        }
-        else {
-            sb.AppendLine("- InventoryItems:");
-            foreach (var item in perception.InventoryItems) {
-                sb.AppendLine($"  - {item.ItemId}: {item.Name} | {item.Description}");
-            }
-        }
-
-        if (perception.Location.Actors.Count == 0) {
-            sb.AppendLine("- VisibleActors: (none)");
-        }
-        else {
-            sb.AppendLine("- VisibleActors:");
-            foreach (var actor in perception.Location.Actors) {
-                sb.AppendLine($"  - {actor.ActorId}: {actor.Name} ({actor.Kind}) | {actor.ProfileNote}");
-            }
-        }
-
-        if (perception.Location.Interactions.Count == 0
-            && perception.Location.Items.All(static item => item.Interactions.Count == 0)
-            && perception.InventoryItems.All(static item => item.Interactions.Count == 0)
-            && perception.Location.Actors.All(static actor => actor.Interactions.Count == 0)) {
-            sb.AppendLine("- VisibleInteractions: (none)");
-        }
-        else {
-            sb.AppendLine("- VisibleInteractions:");
-            foreach (var interaction in perception.Location.Interactions) {
-                sb.AppendLine($"  - {FormatInteraction(interaction)}");
-            }
-
-            foreach (var item in perception.Location.Items) {
-                foreach (var interaction in item.Interactions) {
-                    sb.AppendLine($"  - {FormatInteraction(interaction)}");
-                }
-            }
-
-            foreach (var item in perception.InventoryItems) {
-                foreach (var interaction in item.Interactions) {
-                    sb.AppendLine($"  - {FormatInteraction(interaction)}");
-                }
-            }
-
-            foreach (var actor in perception.Location.Actors) {
-                foreach (var interaction in actor.Interactions) {
-                    sb.AppendLine($"  - {FormatInteraction(interaction)}");
-                }
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[Memory-Notebook 当前块视图]");
-        sb.AppendLine(NotebookBlockViewRenderer.RenderBlockView(perception.NotebookBlocks));
-
-        sb.AppendLine();
-        sb.AppendLine("[当前回合已接受步骤]");
-        if (perception.AcceptedSteps.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var step in perception.AcceptedSteps) {
-                sb.AppendLine($"{step.StepNumber}. {step.ActionKind} | {step.ActionSummary}");
-                sb.AppendLine($"   事前推理: {step.PreActionReason}");
-            }
-        }
+        sb.AppendLine("[当前与玩家共享的证据视图]");
+        sb.AppendLine(PerceptionEvidenceRenderer.RenderForPrompt(perception));
 
         sb.AppendLine();
         sb.AppendLine("[事前推理]");
@@ -278,13 +192,6 @@ internal static class GameActionValidator {
 
     private static string BuildAcceptedFeedback() {
         return "通过：validator 未指出 groundedness 问题。";
-    }
-
-    private static string FormatInteraction(InteractionPerception interaction) {
-        var precondition = string.IsNullOrWhiteSpace(interaction.PreconditionNote)
-            ? "none"
-            : interaction.PreconditionNote;
-        return $"{interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel} | precondition: {precondition}";
     }
 
     private static string BuildRejectedFeedback(IReadOnlyList<RawToolCall> toolCalls) {

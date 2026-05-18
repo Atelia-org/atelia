@@ -48,9 +48,7 @@ internal static class LlmPlayerAgentDriver {
     ) {
         var config = GetConfig();
         if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)
-            || string.IsNullOrWhiteSpace(config.ApiKey)) {
-            return SubmitFallback(root, actorId, "LLM Player Agent 未启用或未配置 API key。");
-        }
+            || string.IsNullOrWhiteSpace(config.ApiKey)) { return SubmitFallback(root, actorId, "LLM Player Agent 未启用或未配置 API key。"); }
 
         try {
             var perception = GameSimulation.DescribePerceptionForActor(root, actorId);
@@ -63,9 +61,7 @@ internal static class LlmPlayerAgentDriver {
             if (UsesDirectorExecutorPipeline(config)) {
                 var directorNotes = await BuildDirectorNotesAsync(config, initialObservation, cancellationToken)
                     .ConfigureAwait(false);
-                if (directorNotes.IsFailure) {
-                    return SubmitFallback(root, actorId, directorNotes.Error!.Message);
-                }
+                if (directorNotes.IsFailure) { return SubmitFallback(root, actorId, directorNotes.Error!.Message); }
 
                 history.Add(new ObservationMessage(BuildDirectorNotesObservation(directorNotes.Value!)));
             }
@@ -81,9 +77,7 @@ internal static class LlmPlayerAgentDriver {
                     Tools: toolExecutor.GetVisibleToolDefinitions()
                 );
                 var result = await GetClient(config).StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
-                if (result.Errors is { Count: > 0 }) {
-                    return SubmitFallback(root, actorId, BuildProviderErrorMessage(result.Errors));
-                }
+                if (result.Errors is { Count: > 0 }) { return SubmitFallback(root, actorId, BuildProviderErrorMessage(result.Errors)); }
 
                 var action = result.Message;
                 history.Add(action);
@@ -98,12 +92,14 @@ internal static class LlmPlayerAgentDriver {
                 }
 
                 var toolResults = executionResults
-                    .Select(static item => new ToolResult(
+                    .Select(
+                    static item => new ToolResult(
                         item.ToolName,
                         item.ToolCallId,
                         item.ExecuteResult.Status,
                         item.ExecuteResult.Content
-                    ))
+                    )
+                )
                     .ToArray();
                 var failure = executionResults.FirstOrDefault(static item => item.ExecuteResult.Status == ToolExecutionStatus.Failed);
                 history.Add(
@@ -143,9 +139,11 @@ internal static class LlmPlayerAgentDriver {
 
                 if (!validation.Accepted) {
                     toolService.ClearProposal();
-                    history.Add(new ObservationMessage(
-                        $"validator 拒绝了你的行动，请根据反馈重试。\n[validator feedback]\n{validation.Feedback}"
-                    ));
+                    history.Add(
+                        new ObservationMessage(
+                            $"validator 拒绝了你的行动，请根据反馈重试。\n[validator feedback]\n{validation.Feedback}"
+                        )
+                    );
                     continue;
                 }
 
@@ -286,84 +284,7 @@ Notebook 规则：
     private static string BuildInitialObservation(PerceptionBundle perception) {
         var sb = new StringBuilder();
         sb.AppendLine("[你的当前 Perception-Bundle]");
-        sb.AppendLine($"- ActorId: {perception.ActorId}");
-        sb.AppendLine($"- ActorKind: {perception.ActorKind}");
-        sb.AppendLine($"- ActorName: {perception.ActorName}");
-        sb.AppendLine($"- ActorProfileNote: {perception.ActorProfileNote}");
-        sb.AppendLine($"- Time: {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
-        sb.AppendLine($"- LocationId: {perception.Location.LocationId}");
-        sb.AppendLine($"- LocationName: {perception.Location.Name}");
-        sb.AppendLine($"- LocationDescription: {perception.Location.Description}");
-        sb.AppendLine();
-
-        sb.AppendLine("[Exits]");
-        if (perception.Location.Exits.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var exit in perception.Location.Exits) {
-                sb.AppendLine($"- {exit.Direction} -> {exit.TargetLocationId} ({exit.TargetName})");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[VisibleItems]");
-        if (perception.Location.Items.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var item in perception.Location.Items) {
-                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
-                AppendInteractions(sb, item.Interactions);
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[InventoryItems]");
-        if (perception.InventoryItems.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var item in perception.InventoryItems) {
-                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
-                AppendInteractions(sb, item.Interactions);
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[VisibleActors]");
-        if (perception.Location.Actors.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var actor in perception.Location.Actors) {
-                sb.AppendLine($"- {actor.ActorId}: {actor.Name} ({actor.Kind}) | {actor.ProfileNote}");
-                AppendInteractions(sb, actor.Interactions);
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[LocationInteractions]");
-        AppendInteractions(sb, perception.Location.Interactions);
-        if (perception.Location.Interactions.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[Memory-Notebook]");
-        sb.AppendLine(NotebookBlockViewRenderer.RenderBlockView(perception.NotebookBlocks));
-
-        sb.AppendLine();
-        sb.AppendLine("[Your Accepted Steps This Turn]");
-        if (perception.AcceptedSteps.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var step in perception.AcceptedSteps) {
-                sb.AppendLine($"- {step.StepNumber}. {step.ActionKind}: {step.ActionSummary}");
-                sb.AppendLine($"  reason: {step.PreActionReason}");
-            }
-        }
+        sb.AppendLine(PerceptionEvidenceRenderer.RenderForPrompt(perception));
 
         sb.AppendLine();
         sb.AppendLine("[可用 Small-Action 工具]");
@@ -374,15 +295,6 @@ Notebook 规则：
         sb.AppendLine("- player_explore(reason, direction, focus)");
         sb.AppendLine("- player_interact(reason, interaction_id)");
         return sb.ToString();
-    }
-
-    private static void AppendInteractions(StringBuilder sb, IReadOnlyList<InteractionPerception> interactions) {
-        foreach (var interaction in interactions) {
-            var precondition = string.IsNullOrWhiteSpace(interaction.PreconditionNote)
-                ? "none"
-                : interaction.PreconditionNote;
-            sb.AppendLine($"  - interaction {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel} | precondition: {precondition}");
-        }
     }
 
     private static string BuildToolResultsObservation(IReadOnlyList<ToolCallExecutionResult> results) {
@@ -537,9 +449,7 @@ Notebook 规则：
                     reason
                 ),
                 out var result
-            )) {
-                return ValueTask.FromResult(result);
-            }
+            )) { return ValueTask.FromResult(result); }
 
             return ValueTask.FromResult(result);
         }
@@ -554,10 +464,12 @@ Notebook 规则：
             direction = string.IsNullOrWhiteSpace(direction) ? string.Empty : direction.Trim();
             focus = NormalizeOptionalToolString(focus);
             if (string.IsNullOrWhiteSpace(direction)) {
-                return ValueTask.FromResult(new ToolExecuteResult(
-                    ToolExecutionStatus.Failed,
-                    "direction 不能为空。"
-                ));
+                return ValueTask.FromResult(
+                    new ToolExecuteResult(
+                        ToolExecutionStatus.Failed,
+                        "direction 不能为空。"
+                    )
+                );
             }
 
             var summary = focus is null
@@ -575,9 +487,7 @@ Notebook 规则：
                     reason
                 ),
                 out var result
-            )) {
-                return ValueTask.FromResult(result);
-            }
+            )) { return ValueTask.FromResult(result); }
 
             return ValueTask.FromResult(result);
         }
@@ -590,10 +500,12 @@ Notebook 规则：
         ) {
             var interactionResult = GameSimulation.TryGetVisibleInteraction(CurrentPerception, interaction_id);
             if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
-                return ValueTask.FromResult(new ToolExecuteResult(
-                    ToolExecutionStatus.Failed,
-                    interactionResult.Error?.Message ?? $"当前看不到 interaction '{interaction_id}'。"
-                ));
+                return ValueTask.FromResult(
+                    new ToolExecuteResult(
+                        ToolExecutionStatus.Failed,
+                        interactionResult.Error?.Message ?? $"当前看不到 interaction '{interaction_id}'。"
+                    )
+                );
             }
 
             if (!TrySetProposal(
@@ -604,9 +516,7 @@ Notebook 规则：
                     reason
                 ),
                 out var result
-            )) {
-                return ValueTask.FromResult(result);
-            }
+            )) { return ValueTask.FromResult(result); }
 
             return ValueTask.FromResult(result);
         }

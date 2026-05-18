@@ -81,9 +81,7 @@ internal static class GameMasterResolver {
         CancellationToken cancellationToken
     ) {
         var config = GetConfig();
-        if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)) {
-            return null;
-        }
+        if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)) { return null; }
 
         if (string.IsNullOrWhiteSpace(config.ApiKey)) {
             if (string.Equals(config.Mode, "llm", StringComparison.OrdinalIgnoreCase)) {
@@ -115,9 +113,7 @@ internal static class GameMasterResolver {
         CancellationToken cancellationToken
     ) {
         var config = GetConfig();
-        if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)) {
-            return null;
-        }
+        if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)) { return null; }
 
         if (string.IsNullOrWhiteSpace(config.ApiKey)) {
             if (string.Equals(config.Mode, "llm", StringComparison.OrdinalIgnoreCase)) {
@@ -149,9 +145,7 @@ internal static class GameMasterResolver {
         CancellationToken cancellationToken
     ) {
         var config = GetConfig();
-        if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)) {
-            return null;
-        }
+        if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)) { return null; }
 
         if (string.IsNullOrWhiteSpace(config.ApiKey)) {
             if (string.Equals(config.Mode, "llm", StringComparison.OrdinalIgnoreCase)) {
@@ -298,9 +292,7 @@ internal static class GameMasterResolver {
                     Tools: toolExecutor.GetVisibleToolDefinitions()
                 );
                 var result = await client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
-                if (result.Errors is { Count: > 0 }) {
-                    throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors));
-                }
+                if (result.Errors is { Count: > 0 }) { throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors)); }
 
                 lastAction = result.Message;
                 history.Add(lastAction);
@@ -324,12 +316,14 @@ internal static class GameMasterResolver {
                 }
 
                 var toolResults = executionResults
-                    .Select(static result => new ToolResult(
+                    .Select(
+                    static result => new ToolResult(
                         result.ToolName,
                         result.ToolCallId,
                         result.ExecuteResult.Status,
                         result.ExecuteResult.Content
-                    ))
+                    )
+                )
                     .ToArray();
                 var failure = executionResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
                 history.Add(
@@ -365,7 +359,7 @@ internal static class GameMasterResolver {
     private static ToolExecutor CreateToolExecutor(DurableDict<string> root) {
         var toolService = new GmWorldEditService(root);
         return new ToolExecutor(
-        [
+            [
             MethodToolWrapper.FromDelegate<string, string, string>(toolService.CreateLocationAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string?>(toolService.LinkLocationsAsync),
             MethodToolWrapper.FromDelegate<string>(toolService.MovePlayerAsync),
@@ -378,7 +372,8 @@ internal static class GameMasterResolver {
             MethodToolWrapper.FromDelegate<string, string>(toolService.SetVisibilityAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.SetInteractionVisibilityAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.SetActorResolutionAsync),
-        ]);
+        ]
+        );
     }
 
     private static string BuildExploreSystemPrompt() {
@@ -458,67 +453,8 @@ internal static class GameMasterResolver {
         sb.AppendLine("[任务]");
         sb.AppendLine("结算玩家本回合的 explore Large-Action。");
         sb.AppendLine();
-        sb.AppendLine("[当前玩家位置]");
-        sb.AppendLine($"- ActorId: {perception.ActorId}");
-        sb.AppendLine($"- LocationId: {context.CurrentLocationId}");
-        sb.AppendLine($"- Name: {perception.Location.Name}");
-        sb.AppendLine($"- Description: {perception.Location.Description}");
-        sb.AppendLine();
-        sb.AppendLine("[当前可见出口]");
-        if (perception.Location.Exits.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var exit in perception.Location.Exits) {
-                sb.AppendLine($"- {exit.Direction} -> {exit.TargetLocationId} ({exit.TargetName})");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[当前可见物品]");
-        if (perception.Location.Items.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var item in perception.Location.Items) {
-                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[当前持有物品]");
-        if (perception.InventoryItems.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var item in perception.InventoryItems) {
-                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[当前可见角色]");
-        if (perception.Location.Actors.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var actor in perception.Location.Actors) {
-                sb.AppendLine($"- {actor.ActorId}: {actor.Name} ({actor.Kind}) | {actor.ProfileNote}");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[当前可见交互]");
-        AppendInteractions(sb, perception.Location.Interactions);
-        foreach (var item in perception.Location.Items) {
-            AppendInteractions(sb, item.Interactions);
-        }
-        foreach (var item in perception.InventoryItems) {
-            AppendInteractions(sb, item.Interactions);
-        }
-        foreach (var actor in perception.Location.Actors) {
-            AppendInteractions(sb, actor.Interactions);
-        }
+        sb.AppendLine("[当前玩家私有 Perception-Bundle]");
+        sb.AppendLine(PerceptionEvidenceRenderer.RenderForPrompt(perception));
 
         sb.AppendLine();
         sb.AppendLine("[玩家动作]");
@@ -529,16 +465,6 @@ internal static class GameMasterResolver {
         sb.AppendLine();
         sb.AppendLine("[玩家事前推理]");
         sb.AppendLine(context.PreActionReason);
-        sb.AppendLine();
-        sb.AppendLine("[当前回合已接受步骤]");
-        if (perception.AcceptedSteps.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var step in perception.AcceptedSteps) {
-                sb.AppendLine($"- {step.StepNumber}. {step.ActionKind}: {step.ActionSummary}");
-            }
-        }
 
         sb.AppendLine();
         sb.AppendLine("[工具使用要求]");
@@ -598,11 +524,8 @@ internal static class GameMasterResolver {
         sb.AppendLine("[任务]");
         sb.AppendLine("结算玩家本回合选择的 interact Large-Action。");
         sb.AppendLine();
-        sb.AppendLine("[当前玩家位置]");
-        sb.AppendLine($"- ActorId: {perception.ActorId}");
-        sb.AppendLine($"- LocationId: {context.CurrentLocationId}");
-        sb.AppendLine($"- Name: {perception.Location.Name}");
-        sb.AppendLine($"- Description: {perception.Location.Description}");
+        sb.AppendLine("[当前玩家私有 Perception-Bundle]");
+        sb.AppendLine(PerceptionEvidenceRenderer.RenderForPrompt(perception));
         sb.AppendLine();
         sb.AppendLine("[玩家选择的交互]");
         sb.AppendLine($"- InteractionId: {interaction.InteractionId}");
@@ -611,76 +534,10 @@ internal static class GameMasterResolver {
         sb.AppendLine($"- VisibleLabel: {interaction.VisibleLabel}");
         sb.AppendLine($"- PreconditionNote: {interaction.PreconditionNote ?? "(none)"}");
         sb.AppendLine($"- EffectNote: {interaction.EffectNote ?? "(none)"}");
-        sb.AppendLine();
-        sb.AppendLine("[当前可见出口]");
-        if (perception.Location.Exits.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var exit in perception.Location.Exits) {
-                sb.AppendLine($"- {exit.Direction} -> {exit.TargetLocationId} ({exit.TargetName})");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[当前可见物品]");
-        if (perception.Location.Items.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var item in perception.Location.Items) {
-                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[当前持有物品]");
-        if (perception.InventoryItems.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var item in perception.InventoryItems) {
-                sb.AppendLine($"- {item.ItemId}: {item.Name} | {item.Description}");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[当前可见角色]");
-        if (perception.Location.Actors.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var actor in perception.Location.Actors) {
-                sb.AppendLine($"- {actor.ActorId}: {actor.Name} ({actor.Kind}) | {actor.ProfileNote}");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("[当前可见交互]");
-        AppendInteractions(sb, perception.Location.Interactions);
-        foreach (var item in perception.Location.Items) {
-            AppendInteractions(sb, item.Interactions);
-        }
-        foreach (var item in perception.InventoryItems) {
-            AppendInteractions(sb, item.Interactions);
-        }
-        foreach (var actor in perception.Location.Actors) {
-            AppendInteractions(sb, actor.Interactions);
-        }
 
         sb.AppendLine();
         sb.AppendLine("[玩家事前推理]");
         sb.AppendLine(context.PreActionReason);
-        sb.AppendLine();
-        sb.AppendLine("[当前回合已接受步骤]");
-        if (perception.AcceptedSteps.Count == 0) {
-            sb.AppendLine("(none)");
-        }
-        else {
-            foreach (var step in perception.AcceptedSteps) {
-                sb.AppendLine($"- {step.StepNumber}. {step.ActionKind}: {step.ActionSummary}");
-            }
-        }
 
         sb.AppendLine();
         sb.AppendLine("[工具使用要求]");
@@ -828,59 +685,7 @@ internal static class GameMasterResolver {
 
     private static void AppendPerceptionSnapshot(StringBuilder sb, PerceptionBundle perception, string title) {
         sb.AppendLine($"[{title}]");
-        sb.AppendLine($"- ActorId: {perception.ActorId}");
-        sb.AppendLine($"- ActorName: {perception.ActorName}");
-        sb.AppendLine($"- ActorKind: {perception.ActorKind}");
-        sb.AppendLine($"- ActorProfileNote: {perception.ActorProfileNote}");
-        sb.AppendLine($"- Time: {GameClock.FormatClock(perception.Day, perception.Slot, perception.SlotsPerDay)}");
-        sb.AppendLine($"- LocationId: {perception.Location.LocationId}");
-        sb.AppendLine($"- LocationName: {perception.Location.Name}");
-        sb.AppendLine($"- LocationDescription: {perception.Location.Description}");
-        sb.AppendLine("- Exits:");
-        if (perception.Location.Exits.Count == 0) {
-            sb.AppendLine("  (none)");
-        }
-        else {
-            foreach (var exit in perception.Location.Exits) {
-                sb.AppendLine($"  - {exit.Direction} -> {exit.TargetLocationId} ({exit.TargetName})");
-            }
-        }
-
-        sb.AppendLine("- VisibleItems:");
-        if (perception.Location.Items.Count == 0) {
-            sb.AppendLine("  (none)");
-        }
-        else {
-            foreach (var item in perception.Location.Items) {
-                sb.AppendLine($"  - {item.ItemId}: {item.Name} | {item.Description}");
-                AppendInteractions(sb, item.Interactions);
-            }
-        }
-
-        sb.AppendLine("- InventoryItems:");
-        if (perception.InventoryItems.Count == 0) {
-            sb.AppendLine("  (none)");
-        }
-        else {
-            foreach (var item in perception.InventoryItems) {
-                sb.AppendLine($"  - {item.ItemId}: {item.Name} | {item.Description}");
-                AppendInteractions(sb, item.Interactions);
-            }
-        }
-
-        sb.AppendLine("- VisibleActors:");
-        if (perception.Location.Actors.Count == 0) {
-            sb.AppendLine("  (none)");
-        }
-        else {
-            foreach (var actor in perception.Location.Actors) {
-                sb.AppendLine($"  - {actor.ActorId}: {actor.Name} ({actor.Kind}) | {actor.ProfileNote}");
-                AppendInteractions(sb, actor.Interactions);
-            }
-        }
-
-        sb.AppendLine("- LocationInteractions:");
-        AppendInteractions(sb, perception.Location.Interactions);
+        sb.AppendLine(PerceptionEvidenceRenderer.RenderForPrompt(perception));
         sb.AppendLine();
     }
 
@@ -889,17 +694,6 @@ internal static class GameMasterResolver {
 
         var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         return string.Join("\n", lines.Select(line => indentation + line));
-    }
-
-    private static void AppendInteractions(StringBuilder sb, IReadOnlyList<InteractionPerception> interactions) {
-        if (interactions.Count == 0) { return; }
-
-        foreach (var interaction in interactions) {
-            var precondition = string.IsNullOrWhiteSpace(interaction.PreconditionNote)
-                ? "none"
-                : interaction.PreconditionNote;
-            sb.AppendLine($"- {interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel} | precondition: {precondition}");
-        }
     }
 
     private static string BuildToolResultsObservation(string stageName, IReadOnlyList<ToolCallExecutionResult> results) {
