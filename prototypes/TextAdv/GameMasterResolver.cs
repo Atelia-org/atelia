@@ -479,41 +479,11 @@ internal static class GameMasterResolver {
         return new GmExploreResolution(defaultSummary, UsedLlm: true, FallbackReason: null);
     }
 
-    private static ToolExecutor CreateToolExecutor(DurableDict<string> root) {
-        var toolService = new GmWorldEditService(root);
-        return new ToolExecutor(
-            [
-            MethodToolWrapper.FromDelegate<string, string, string>(toolService.CreateLocationAsync),
-            MethodToolWrapper.FromDelegate<string, string, string, string?>(toolService.LinkLocationsAsync),
-            MethodToolWrapper.FromDelegate<string>(toolService.MovePlayerAsync),
-            MethodToolWrapper.FromDelegate<string, string>(toolService.MoveActorAsync),
-            MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync),
-            MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateNpcAsync),
-            MethodToolWrapper.FromDelegate<string, string?, string?>(toolService.UpdateItemAsync),
-            MethodToolWrapper.FromDelegate<string, string>(toolService.MoveItemToActorAsync),
-            MethodToolWrapper.FromDelegate<string, string>(toolService.PlaceItemAtLocationAsync),
-            MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync),
-            MethodToolWrapper.FromDelegate<string, string>(toolService.SetVisibilityAsync),
-            MethodToolWrapper.FromDelegate<string, string>(toolService.SetInteractionVisibilityAsync),
-            MethodToolWrapper.FromDelegate<string, string>(toolService.SetActorResolutionAsync),
-        ]
-        );
-    }
+    private static ToolExecutor CreateToolExecutor(DurableDict<string> root)
+        => GmToolCatalog.CreateExecutor(root, GmToolProfile.Full);
 
-    private static ToolExecutor CreateImmediateSelfToolExecutor(DurableDict<string> root) {
-        var toolService = new GmWorldEditService(root);
-        return new ToolExecutor(
-            [
-                MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync),
-                MethodToolWrapper.FromDelegate<string, string?, string?>(toolService.UpdateItemAsync),
-                MethodToolWrapper.FromDelegate<string, string>(toolService.MoveItemToActorAsync),
-                MethodToolWrapper.FromDelegate<string, string>(toolService.PlaceItemAtLocationAsync),
-                MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync),
-                MethodToolWrapper.FromDelegate<string, string>(toolService.SetVisibilityAsync),
-                MethodToolWrapper.FromDelegate<string, string>(toolService.SetInteractionVisibilityAsync),
-            ]
-        );
-    }
+    private static ToolExecutor CreateImmediateSelfToolExecutor(DurableDict<string> root)
+        => GmToolCatalog.CreateExecutor(root, GmToolProfile.ImmediateSelf);
 
     private static string BuildExploreSystemPrompt() {
         return $$"""

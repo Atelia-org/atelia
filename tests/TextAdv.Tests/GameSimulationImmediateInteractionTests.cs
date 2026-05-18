@@ -1,5 +1,3 @@
-using System.Reflection;
-using Atelia.Completion.Tools;
 using Atelia.StateJournal;
 using Xunit;
 
@@ -297,28 +295,41 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
 
-        var normalTools = GetVisibleToolNames("CreateToolExecutor", root);
-        var immediateTools = GetVisibleToolNames("CreateImmediateSelfToolExecutor", root);
-
-        Assert.Contains("gm_update_item", normalTools);
-        Assert.Contains("gm_update_item", immediateTools);
+        Assert.Equal(
+            [
+                "gm_create_location",
+                "gm_link_locations",
+                "gm_move_player",
+                "gm_move_actor",
+                "gm_create_item",
+                "gm_create_npc",
+                "gm_update_item",
+                "gm_move_item_to_actor",
+                "gm_place_item_at_location",
+                "gm_add_interaction",
+                "gm_set_visibility",
+                "gm_set_interaction_visibility",
+                "gm_set_actor_resolution",
+            ],
+            GmToolCatalog.GetVisibleToolNames(root, GmToolProfile.Full)
+        );
+        Assert.Equal(
+            [
+                "gm_create_item",
+                "gm_update_item",
+                "gm_move_item_to_actor",
+                "gm_place_item_at_location",
+                "gm_add_interaction",
+                "gm_set_visibility",
+                "gm_set_interaction_visibility",
+            ],
+            GmToolCatalog.GetVisibleToolNames(root, GmToolProfile.ImmediateSelf)
+        );
     }
 
     private Repository CreateRepository() {
         var createResult = Repository.Create(_repoDir);
         return AssertSuccess(createResult);
-    }
-
-    private static string[] GetVisibleToolNames(string methodName, DurableDict<string> root) {
-        var method = typeof(GameMasterResolver).GetMethod(
-            methodName,
-            BindingFlags.NonPublic | BindingFlags.Static
-        );
-        Assert.NotNull(method);
-
-        var executor = method!.Invoke(null, [root]);
-        var toolExecutor = Assert.IsType<ToolExecutor>(executor);
-        return toolExecutor.GetVisibleToolDefinitions().Select(static definition => definition.Name).ToArray();
     }
 
     private static T AssertSuccess<T>(AteliaResult<T> result)
