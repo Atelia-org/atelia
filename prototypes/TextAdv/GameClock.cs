@@ -12,7 +12,7 @@ internal static class GameClock {
     }
 
     internal static string FormatClock(int day, int slot, int slotsPerDay)
-        => $"Day {day} · {GetNamedSlot(slot, slotsPerDay)} (Slot {slot}/{slotsPerDay})";
+        => $"Day {day} · {GetNamedSlot(slot, slotsPerDay)}";
 
     internal static (int Day, int Slot) PreviewNextClock(int day, int slot, int slotsPerDay) {
         var nextSlot = slot + 1;

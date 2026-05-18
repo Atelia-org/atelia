@@ -107,7 +107,7 @@ internal static class PerceptionEvidenceRenderer {
 
         var sb = new StringBuilder();
         sb.AppendLine($"🗓️ {evidence.TimeText}");
-        sb.AppendLine($"🎭 Actor: {evidence.ActorName} [{evidence.ActorId}, {evidence.ActorKind}]");
+        sb.AppendLine($"🎭 {evidence.ActorName}");
         if (!string.IsNullOrWhiteSpace(evidence.ActorProfileNote)) {
             AppendIndentedBlock(sb, evidence.ActorProfileNote, "   ");
         }
@@ -118,12 +118,12 @@ internal static class PerceptionEvidenceRenderer {
             sb.AppendLine();
         }
 
-        sb.AppendLine($"📍 {evidence.LocationName} [{evidence.LocationId}]");
+        sb.AppendLine($"📍 {evidence.LocationName}");
         AppendIndentedBlock(sb, evidence.LocationDescription, "   ");
         sb.AppendLine();
 
-        sb.AppendLine("🧠 Private Memory-Notebook (block view):");
-        AppendIndentedBlock(sb, evidence.NotebookBlockView, "   ");
+        sb.AppendLine("🧠 你的记事本:");
+        AppendIndentedBlock(sb, LocalizePlayerEmptyText(evidence.NotebookBlockView), "   ");
         sb.AppendLine();
 
         sb.AppendLine("🚪 你目前看得到的出口:");
@@ -142,11 +142,11 @@ internal static class PerceptionEvidenceRenderer {
         AppendPlayerActors(sb, evidence.VisibleActors);
         sb.AppendLine();
 
-        sb.AppendLine("🧩 全部可见交互（速查）:");
+        sb.AppendLine("🧩 你现在能直接尝试的动作:");
         AppendPlayerInteractionQuickRef(sb, evidence.AllVisibleInteractions);
         sb.AppendLine();
 
-        sb.AppendLine("📝 当前回合已接受步骤:");
+        sb.AppendLine("📝 这一回合你已经做过的事:");
         AppendAcceptedStepsForPlayer(sb, evidence.AcceptedSteps);
         return sb.ToString();
     }
@@ -241,7 +241,7 @@ internal static class PerceptionEvidenceRenderer {
 
     private static void AppendPlayerExits(StringBuilder sb, IReadOnlyList<LocationExitPerception> exits) {
         if (exits.Count == 0) {
-            sb.AppendLine("   (none)");
+            sb.AppendLine("   （暂无）");
             return;
         }
 
@@ -252,12 +252,12 @@ internal static class PerceptionEvidenceRenderer {
 
     private static void AppendPlayerItems(StringBuilder sb, IReadOnlyList<ItemPerception> items) {
         if (items.Count == 0) {
-            sb.AppendLine("   (none)");
+            sb.AppendLine("   （暂无）");
             return;
         }
 
         foreach (var item in items) {
-            sb.AppendLine($"   [{item.ItemId}] {item.Name}");
+            sb.AppendLine($"   {item.Name}");
             AppendIndentedBlock(sb, item.Description, "      ");
             AppendPlayerNestedInteractions(sb, item.Interactions, "      ");
         }
@@ -265,12 +265,12 @@ internal static class PerceptionEvidenceRenderer {
 
     private static void AppendPlayerActors(StringBuilder sb, IReadOnlyList<ActorPerception> actors) {
         if (actors.Count == 0) {
-            sb.AppendLine("   (none)");
+            sb.AppendLine("   （暂无）");
             return;
         }
 
         foreach (var actor in actors) {
-            sb.AppendLine($"   [{actor.ActorId}] {actor.Name} ({actor.Kind})");
+            sb.AppendLine($"   {actor.Name} ({actor.Kind})");
             if (!string.IsNullOrWhiteSpace(actor.ProfileNote)) {
                 AppendIndentedBlock(sb, actor.ProfileNote, "      ");
             }
@@ -285,11 +285,11 @@ internal static class PerceptionEvidenceRenderer {
         string indent
     ) {
         if (interactions.Count == 0) {
-            sb.AppendLine($"{indent}可交互: (none)");
+            sb.AppendLine($"{indent}可尝试动作: （暂无）");
             return;
         }
 
-        sb.AppendLine($"{indent}可交互:");
+        sb.AppendLine($"{indent}可尝试动作:");
         foreach (var interaction in interactions) {
             sb.AppendLine($"{indent}- [{interaction.InteractionId}] {interaction.VisibleLabel} ({interaction.ActionKind})");
             if (!string.IsNullOrWhiteSpace(interaction.PreconditionNote)
@@ -301,7 +301,7 @@ internal static class PerceptionEvidenceRenderer {
 
     private static void AppendPlayerInteractionQuickRef(StringBuilder sb, IReadOnlyList<VisibleInteractionEntry> interactions) {
         if (interactions.Count == 0) {
-            sb.AppendLine("   (none)");
+            sb.AppendLine("   （暂无）");
             return;
         }
 
@@ -318,14 +318,14 @@ internal static class PerceptionEvidenceRenderer {
 
     private static void AppendAcceptedStepsForPlayer(StringBuilder sb, IReadOnlyList<TurnStep> steps) {
         if (steps.Count == 0) {
-            sb.AppendLine("   (none)");
+            sb.AppendLine("   （暂无）");
             return;
         }
 
         foreach (var step in steps) {
-            sb.AppendLine($"   {step.StepNumber}. {step.ActionKind} — {step.ActionSummary}");
-            AppendLabeledBlock(sb, "事前推理", step.PreActionReason, "      ");
-            AppendLabeledBlock(sb, "validator", step.ValidatorFeedback, "      ");
+            sb.AppendLine($"   {step.StepNumber}. {step.ActionSummary}");
+            AppendLabeledBlock(sb, "当时的想法", step.PreActionReason, "      ");
+            AppendLabeledBlock(sb, "检查备注", step.ValidatorFeedback, "      ");
         }
     }
 
@@ -382,6 +382,9 @@ internal static class PerceptionEvidenceRenderer {
             _ => entry.SourceLabel
         };
     }
+
+    private static string LocalizePlayerEmptyText(string text)
+        => string.Equals(text, "(empty)", StringComparison.Ordinal) ? "（空）" : text;
 
     private static string OrNone(string? text)
         => string.IsNullOrWhiteSpace(text) ? "(none)" : text;

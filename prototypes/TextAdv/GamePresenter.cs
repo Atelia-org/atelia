@@ -22,36 +22,36 @@ internal static class GamePresenter {
     ) {
         var sb = new StringBuilder();
         var statusLine = validation.Accepted
-            ? "✅ Dry-Run 完成：preview 已生成，validator 当前通过。"
-            : "⚠️ Dry-Run 完成：preview 已生成，但 validator 当前未通过。";
+            ? "✅ 试写完成：已生成预览，这一步目前能通过检查。"
+            : "⚠️ 试写完成：已生成预览，但这一步目前还过不了检查。";
 
         sb.AppendLine(statusLine);
-        sb.AppendLine("当前没有写入 notebook，也没有记录 accepted step。");
-        sb.AppendLine("如果当前局面保持不变，去掉 --dry-run 重跑通常会看到相近结果；但正式执行仍会按当下状态重新走一遍 validator。");
+        sb.AppendLine("这次只是预演，不会真的落笔，也不会记入本回合。");
+        sb.AppendLine("如果局面没有变化，去掉 --dry-run 重跑，通常会得到相近结果。");
         sb.AppendLine();
 
-        sb.AppendLine("🧠 你提交的事前推理:");
+        sb.AppendLine("🧠 你的行动依据:");
         AppendIndented(sb, preActionReason);
         sb.AppendLine();
 
-        sb.AppendLine("📝 候选 Small-Action:");
+        sb.AppendLine("📝 这次准备怎么改:");
         sb.AppendLine($"   {proposal.ActionSummary}");
         sb.AppendLine();
 
-        sb.AppendLine("🧠 当前 Memory-Notebook (before):");
+        sb.AppendLine("🧠 当前记事本:");
         AppendIndented(sb, NotebookBlockViewRenderer.RenderBlockView(perception.NotebookBlocks));
         sb.AppendLine();
 
-        sb.AppendLine("🔧 Canonical TextEditScript:");
+        sb.AppendLine("🔧 系统整理后的编辑脚本:");
         AppendIndented(sb, proposal.CanonicalScriptXml);
         sb.AppendLine();
 
-        sb.AppendLine("🔮 Predicted Memory-Notebook (after):");
+        sb.AppendLine("🔮 改完后大概会变成:");
         AppendIndented(sb, NotebookBlockViewRenderer.RenderPreviewBlockView(perception.NotebookBlocks, proposal.PredictedAfterSnapshot));
-        sb.AppendLine("   注：新插入块暂以 [new-N] 显示；真正提交后系统才会分配实际 block id。");
+        sb.AppendLine("   注：新插入的块暂时显示为 [new-N]；真正提交后才会分配正式 block id。");
         sb.AppendLine();
 
-        sb.AppendLine("🧪 Validator:");
+        sb.AppendLine("🧪 检查结果:");
         AppendIndented(sb, validation.Feedback);
         return sb.ToString();
     }
@@ -59,12 +59,12 @@ internal static class GamePresenter {
     internal static string RenderTurnCollectionStatus(TurnCollectionStatus status) {
         var sb = new StringBuilder();
         sb.AppendLine($"🗓️ {GameClock.FormatClock(status.Day, status.Slot, status.SlotsPerDay)}");
-        sb.AppendLine($"🚧 Barrier: {status.BarrierState}");
-        sb.AppendLine($"🎭 Turn owner: {status.TurnOwnerActorId}");
-        sb.AppendLine($"✅ All active actors submitted Large-Action: {status.AllActiveActorsSubmittedLargeAction}");
+        sb.AppendLine("⏳ 当前回合仍在等待其他同行。");
+        sb.AppendLine($"🎭 现在轮到: {status.TurnOwnerActorId}");
+        sb.AppendLine($"✅ 所有人都已决定本回合动作: {status.AllActiveActorsSubmittedLargeAction}");
         sb.AppendLine();
 
-        sb.AppendLine("👥 Active actor submissions:");
+        sb.AppendLine("👥 当前同行状态:");
         if (status.Actors.Count == 0) {
             sb.AppendLine("   (none)");
             return sb.ToString();
@@ -72,10 +72,11 @@ internal static class GamePresenter {
 
         foreach (var actor in status.Actors) {
             var submissionText = actor.HasSubmittedLargeAction
-                ? $"{actor.LargeActionKind} — {actor.LargeActionSummary}"
-                : "(pending)";
-            sb.AppendLine($"   [{actor.ActorId}] {actor.Name} ({actor.Kind}) active={actor.Active}");
-            sb.AppendLine($"      Large-Action: {submissionText}");
+                ? actor.LargeActionSummary ?? actor.LargeActionKind ?? "(已决定)"
+                : "(还没决定)";
+            sb.AppendLine($"   {actor.Name} ({actor.Kind})");
+            sb.AppendLine($"      当前状态: {(actor.Active ? "仍在本回合内" : "当前未参与")}");
+            sb.AppendLine($"      本回合动作: {submissionText}");
         }
 
         return sb.ToString();
@@ -86,60 +87,83 @@ internal static class GamePresenter {
         var nextClock = GameClock.PreviewNextClock(perception.Day, perception.Slot, perception.SlotsPerDay);
         var nextClockText = GameClock.FormatClock(nextClock.Day, nextClock.Slot, perception.SlotsPerDay);
 
-        sb.AppendLine("🧭 你现在可以做什么:");
-        sb.AppendLine("   下面是给失忆状态准备的速查。你不需要记住以前的规则说明，照着这里做就行。");
+        sb.AppendLine("🧭 操作速查:");
+        sb.AppendLine("   把下面当作失忆时随身带着的小抄。");
         sb.AppendLine();
 
-        sb.AppendLine("   信息命令（不会记入回合，也不会结束回合）:");
+        sb.AppendLine("   先记住这一条:");
+        sb.AppendLine("   只要命令里出现 '<行动依据>'，就先写一句你此刻凭什么这么做。");
+        sb.AppendLine("   它应该像临动手前给自己的提醒，而不是事后解释。");
+        sb.AppendLine("   可以提到当前直接看到的东西、记事本里已有的记录、或上回合刚发生的事。");
+        sb.AppendLine("   不要写你没亲眼看到也没记在记事本里的内容。");
+        sb.AppendLine();
+
+        sb.AppendLine("   随时可用（不推进时间）:");
         sb.AppendLine("   - pmux game look-around");
-        sb.AppendLine("     重新显示当前局面、当前 notebook，以及这回合已经做过的步骤。");
+        sb.AppendLine("     重新看看周围、记事本，以及这回合已经做过的事。");
         sb.AppendLine();
 
-        sb.AppendLine("   Small-Action（不会结束当前回合）:");
-        sb.AppendLine("   - pmux game edit-memory-notebook '<事前推理>' '<编辑片段>'");
-        sb.AppendLine("     第一个参数永远是事前推理：先说明你依据当前证据为什么准备这么做，再给出实际动作。不要把它写成动作做完后的解释词。 ");
-        sb.AppendLine("     用来编辑你的私人 Memory-Notebook。你可以直接写 insert / replace / delete 片段，系统会自动补 <text-edit-script> 根节点。");
+        sb.AppendLine("   整理记事本（不推进时间）:");
+        sb.AppendLine("   - pmux game edit-memory-notebook '<行动依据>' '<编辑片段>'");
+        sb.AppendLine("     用来增删改你的私人记事本。你可以直接写 insert / replace / delete 片段，系统会自动补根节点。");
         sb.AppendLine("     一次可以放一个或多个并列操作元素；每个操作只处理一个 block，内容不能换行。");
         sb.AppendLine("     记录猜测时请写成“可能 / 怀疑 / 尚未确认”，不要把未证实内容写成已确认事实。");
-        sb.AppendLine("     如果你想先试探 validator 和 after-view，可以改用: pmux game edit-memory-notebook --dry-run '<事前推理>' '<编辑片段>'");
-
+        sb.AppendLine("     如果你想先试写、先看改后预览和检查意见，可以改用:");
+        sb.AppendLine("     pmux game edit-memory-notebook --dry-run '<行动依据>' '<编辑片段>'");
+        sb.AppendLine("     如果检查没通过，按提示修改行动依据或编辑内容后重试即可；不会扣回合也不会丢数据。");
         AppendNotebookEditRecipes(sb, perception.NotebookBlocks);
         sb.AppendLine();
 
-        sb.AppendLine("   Large-Action（会结束当前回合）:");
-        sb.AppendLine("   - pmux game interact '<事前推理>' '<interaction-id>'");
-        sb.AppendLine("     执行当前可见的交互 affordance，例如 inspect / talk / use / open。interaction-id 来自上方“可交互”列表。");
-        sb.AppendLine("     这会走 validator，并由 GM Agent 根据该 affordance 的 target、actionKind 和 effectNote 结算世界后果。");
+        sb.AppendLine(
+            "   以下动作都会结束这一回合，并将时间从 "
+            + $"{currentClock} 推进到 {nextClockText}："
+        );
+        sb.AppendLine();
+
+        sb.AppendLine("   直接尝试眼前动作:");
+        sb.AppendLine("   - pmux game interact '<行动依据>' '<动作编号>'");
+        sb.AppendLine("     '<动作编号>' 来自上方\u201c你现在能直接尝试的动作\u201d。");
+        sb.AppendLine("     执行后，世界会给出此刻你能感知到的结果。");
         AppendInteractionRecipes(sb, perception);
         sb.AppendLine();
 
-        sb.AppendLine("   - pmux game explore '<事前推理>' '<方向>'");
-        sb.AppendLine("     向某个方向探索。若该方向已有出口，你会沿已知出口移动；若没有，GM 账本可以创建一个新 Location 并记录连接。");
-        sb.AppendLine("     可选加 --focus '<目标>'，例如:");
+        sb.AppendLine("   前往别处:");
+        sb.AppendLine("   - pmux game explore '<行动依据>' '<方向>'");
+        sb.AppendLine("     你可以沿已知出口前进，也可以朝未知方向试探。");
+        sb.AppendLine("     如果想提醒自己重点找什么，可选加 --focus '<目标>'，例如:");
         sb.AppendLine("     pmux game explore --focus '山洞入口' '北边已有密林，继续寻找遮蔽处或山洞入口有助于获得更稳定的庇护。' north");
         sb.AppendLine();
-        sb.AppendLine("   - pmux game rest-a-while '<事前推理>'");
-        sb.AppendLine("     这个参数同样表示事前推理：先说明为什么你准备在此刻结束回合，再执行动作。 ");
-        sb.AppendLine($"     原地休息一会。执行后会结束本回合，并把时间从 {currentClock} 推进到 {nextClockText}。");
-        sb.AppendLine("     只有当你觉得没有更急的 small action 或探索目标时，再执行它。");
+        sb.AppendLine("   暂时按兵不动:");
+        sb.AppendLine("   - pmux game rest-a-while '<行动依据>'");
+        sb.AppendLine("     原地缓一缓。当你想先观察、整理思路，或者眼下没有更稳妥的目标时，用它结束这一回合。");
     }
 
     private static void AppendInteractionRecipes(StringBuilder sb, PerceptionBundle perception) {
         var interactions = PerceptionEvidenceRenderer.EnumerateVisibleInteractions(perception).ToArray();
         if (interactions.Length == 0) {
-            sb.AppendLine("     当前没有可见 interaction；通常应先 look-around、记笔记，或用 explore 寻找新的地点/线索。");
+            sb.AppendLine("     眼下没有可直接尝试的动作；通常先看看四周、记笔记，或换个方向探索。");
             return;
         }
 
         var first = interactions[0];
-        sb.AppendLine($"     当前可执行的 interaction id: {string.Join(", ", interactions.Select(static interaction => interaction.InteractionId))}");
-        sb.AppendLine($"     示例: pmux game interact '当前可见交互提示允许我{first.VisibleLabel}，执行它是基于眼前线索的直接检查。' {first.InteractionId}");
+        sb.AppendLine($"     当前可用的动作编号: {string.Join(", ", interactions.Select(static interaction => interaction.InteractionId))}");
+        sb.AppendLine($"     示例: pmux game interact '眼前已经有“{first.VisibleLabel}”这个选择，我想先顺着这条线索试一下。' {first.InteractionId}");
     }
 
     private static void AppendNotebookEditRecipes(StringBuilder sb, TextBlockSnapshotDocument snapshot) {
+        sb.AppendLine();
+        sb.AppendLine("     编辑片段是 XML 格式。你只需要写操作元素，系统会自动补 <text-edit-script> 根节点:");
+        sb.AppendLine("     - 插入: <insert side=\"after|before\" anchor=\"head|tail|数字\">新内容</insert>");
+        sb.AppendLine("     - 替换: <replace anchor=\"head|tail|数字\">新内容</replace>");
+        sb.AppendLine("     - 删除: <delete anchor=\"head|tail|数字\" />  （自闭合，不需要内容）");
+        sb.AppendLine("     anchor 含义: head=第一条, tail=最后一条, 数字=指定 block id");
+        sb.AppendLine("     side 含义: before=在 anchor 前面, after=在 anchor 后面");
+        sb.AppendLine("     每个操作只处理一个 block，内容不能换行。多个操作可以并列写。");
+        sb.AppendLine();
+
         if (snapshot.Blocks.Count == 0) {
-            sb.AppendLine("     当前 notebook 为空。最自然的第一步通常是先新增一条:");
-            sb.AppendLine("     pmux game edit-memory-notebook '这是当前直接可见、而且我可能很快会忘掉的信息。' '<insert side=\"after\" anchor=\"tail\">记住：这里是沙滩，北边通往密林。</insert>'");
+            sb.AppendLine("     你的记事本现在是空的。第一笔最常见是记下眼前最容易忘的事实:");
+            sb.AppendLine("     pmux game edit-memory-notebook '这是当前直接可见，而且我很快可能会忘掉的信息。' '<insert side=\"after\" anchor=\"tail\">记住：这里是沙滩，北边通往密林。</insert>'");
             return;
         }
 
@@ -147,11 +171,10 @@ internal static class GamePresenter {
         var sampleDeleteId = snapshot.Blocks[0].BlockId;
 
         sb.AppendLine($"     当前可直接引用的 block id: {blockIdText}");
-        sb.AppendLine("     常用写法示例:");
-        sb.AppendLine("     pmux game edit-memory-notebook '我想把新的线索补到笔记最后。' '<insert side=\"after\" anchor=\"tail\">记住：北边树林里可能有淡水，尚未确认。</insert>'");
-        sb.AppendLine("     pmux game edit-memory-notebook '我想把最前面的旧笔记改成更谨慎的表述。' '<replace anchor=\"head\">怀疑北边树林里可能有淡水，尚未确认。</replace>'");
-        sb.AppendLine($"     pmux game edit-memory-notebook '这条笔记已经明显过时或写错了。' '<delete anchor=\"{sampleDeleteId}\" />'");
-        sb.AppendLine("     你也可以直接用 head / tail 作为 anchor；如果要一次连续改多条，就把多个操作元素并列写进同一个 <编辑片段> 参数里。");
+        sb.AppendLine("     常见写法示例:");
+        sb.AppendLine("     pmux game edit-memory-notebook '我想把新线索补到最后。' '<insert side=\"after\" anchor=\"tail\">记住：北边树林里可能有淡水，尚未确认。</insert>'");
+        sb.AppendLine("     pmux game edit-memory-notebook '我想把最前面的旧记录改得更谨慎些。' '<replace anchor=\"head\">怀疑北边树林里可能有淡水，尚未确认。</replace>'");
+        sb.AppendLine($"     pmux game edit-memory-notebook '这条记录已经明显过时或写错了。' '<delete anchor=\"{sampleDeleteId}\" />'");
     }
 
     private static void AppendIndented(StringBuilder sb, string text)

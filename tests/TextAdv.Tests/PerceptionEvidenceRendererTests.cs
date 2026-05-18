@@ -34,6 +34,10 @@ public sealed class PerceptionEvidenceRendererTests {
             Assert.Contains(snippet, promptText);
             Assert.Contains(snippet, playerText);
         }
+
+        Assert.DoesNotContain("[spring]", playerText);
+        Assert.DoesNotContain("[berries]", playerText);
+        Assert.DoesNotContain("[guide]", playerText);
     }
 
     [Fact]
@@ -42,12 +46,13 @@ public sealed class PerceptionEvidenceRendererTests {
 
         var rendered = GamePresenter.RenderPerception(perception);
 
-        Assert.Contains("🧩 全部可见交互（速查）:", rendered);
+        Assert.Contains("🧩 你现在能直接尝试的动作:", rendered);
         Assert.Contains("inspect-berries", rendered);
         Assert.Contains("use-rope", rendered);
         Assert.Contains("talk-guide", rendered);
         Assert.Contains("listen-water", rendered);
         Assert.Contains("pmux game interact", rendered);
+        Assert.Contains("<行动依据>", rendered);
         Assert.Contains("确认它清凉无异味", rendered);
     }
 

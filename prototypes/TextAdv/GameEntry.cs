@@ -196,7 +196,7 @@ public static partial class GameEntry {
                     );
                 }
                 catch (Exception ex) {
-                    output.WriteLine($"❌ validator 调用失败：{ex.Message}");
+                    output.WriteLine($"❌ 动作检查失败：{ex.Message}");
                     return;
                 }
 
@@ -206,7 +206,7 @@ public static partial class GameEntry {
                 }
 
                 if (!validation.Accepted) {
-                    output.WriteLine("❌ validator 未通过这一步 Small-Action。");
+                    output.WriteLine("❌ 这次改动没有通过检查。");
                     output.WriteLine(validation.Feedback);
                     return;
                 }
@@ -214,8 +214,7 @@ public static partial class GameEntry {
                 var updatedPerception = GameSimulation.ApplyNotebookEdit(root, notebookEdit, preActionReason, validation.Feedback);
                 _ = repo.Commit(root).Value;
 
-                output.WriteLine("✅ Small-Action 已接受：edit-memory-notebook");
-                output.WriteLine($"🧪 validator: {validation.Feedback}");
+                output.WriteLine("✅ 记事本已更新。");
                 output.WriteLine();
                 output.Write(GamePresenter.RenderPerception(updatedPerception));
             }
@@ -255,7 +254,7 @@ public static partial class GameEntry {
             );
         }
         catch (Exception ex) {
-            output.WriteLine($"❌ validator 调用失败：{ex.Message}");
+            output.WriteLine($"❌ 动作检查失败：{ex.Message}");
             return null;
         }
     }
@@ -285,7 +284,7 @@ public static partial class GameEntry {
         if (validation is null) { return; }
 
         if (!validation.Accepted) {
-            output.WriteLine("❌ validator 未通过这一步 Large-Action。");
+            output.WriteLine("❌ 这一步没有通过检查。");
             output.WriteLine(validation.Feedback);
             return;
         }
@@ -300,9 +299,7 @@ public static partial class GameEntry {
             preActionReason,
             validation.Feedback,
             cancellationToken
-        )) {
-            return;
-        }
+        )) { return; }
 
         var resolutionResult = await resolveAsync(root, validation, cancellationToken);
         if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
@@ -312,9 +309,8 @@ public static partial class GameEntry {
         }
 
         _ = repo.Commit(root).Value;
-        output.WriteLine($"✅ Large-Action 已接受：{actionSummary}。当前回合已结束。");
-        output.WriteLine($"🧪 validator: {validation.Feedback}");
-        output.WriteLine($"📣 结算: {resolution.Summary}");
+        output.WriteLine($"✅ 你决定了：{actionSummary}");
+        output.WriteLine($"📣 {resolution.Summary}");
         output.WriteLine();
         output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
     }
@@ -363,18 +359,16 @@ public static partial class GameEntry {
             }
 
             _ = repo.Commit(root).Value;
-            output.WriteLine($"✅ Large-Action 已接受并完成多主体回合结算：{actionSummary}");
-            output.WriteLine($"🧪 validator: {validatorFeedback}");
-            output.WriteLine($"📣 结算: {resolution.Summary}");
+            output.WriteLine($"✅ 你决定了：{actionSummary}");
+            output.WriteLine($"📣 {resolution.Summary}");
             output.WriteLine();
             output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
             return true;
         }
 
         _ = repo.Commit(root).Value;
-        output.WriteLine($"✅ Large-Action 已接受并进入多主体回合收集：{actionSummary}");
-        output.WriteLine($"🧪 validator: {validatorFeedback}");
-        output.WriteLine("⏳ 仍需等待其他 active actor 提交 Large-Action。");
+        output.WriteLine($"✅ 你决定了：{actionSummary}");
+        output.WriteLine("⏳ 其他同行还在行动，这一回合暂时还没完全结束。");
         output.WriteLine();
         output.Write(GamePresenter.RenderTurnCollectionStatus(status));
         return true;
