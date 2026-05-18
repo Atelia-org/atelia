@@ -297,11 +297,17 @@ internal static partial class GameSimulation {
                 && !string.IsNullOrWhiteSpace(rawEffectScope)
                 ? rawEffectScope
                 : RoomEffectScope;
+            var actionKind = interaction.GetOrThrow<string>(ActionKindLedgerKey)!;
+            if (string.Equals(actualTargetKind, "item", StringComparison.OrdinalIgnoreCase)
+                && ShouldHideItemInteractionForCurrentItemState(root, actualTargetId, actionKind)) {
+                continue;
+            }
+
             yield return new InteractionPerception(
                 interactionId,
                 actualTargetKind,
                 actualTargetId,
-                interaction.GetOrThrow<string>(ActionKindLedgerKey)!,
+                actionKind,
                 interaction.GetOrThrow<string>(VisibleLabelKey)!,
                 preconditionNote,
                 effectNote,
@@ -340,6 +346,26 @@ internal static partial class GameSimulation {
         => string.IsNullOrWhiteSpace(visibility)
             || string.Equals(visibility, VisibleValue, StringComparison.OrdinalIgnoreCase)
             || string.Equals(visibility, DiscoveredValue, StringComparison.OrdinalIgnoreCase);
+
+    private static bool ShouldHideItemInteractionForCurrentItemState(
+        DurableDict<string> root,
+        string itemId,
+        string actionKind
+    ) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        if (!world.TryGet(ItemsKey, out DurableDict<string>? items)
+            || items is null
+            || !items.TryGet(itemId, out DurableDict<string>? item)
+            || item is null) { return false; }
+
+        var ownedByActor = item.TryGet(OwnerActorIdKey, out string? ownerActorId)
+            && !string.IsNullOrWhiteSpace(ownerActorId);
+        if (ownedByActor && InteractionActionKinds.IsPickup(actionKind)) {
+            return true;
+        }
+
+        return false;
+    }
 
     private static IReadOnlyList<TurnStep> ReadAcceptedSteps(DurableDict<string> root, string actorId) {
         var acceptedSteps = GetAcceptedStepsForActor(root, actorId, createIfMissing: false);

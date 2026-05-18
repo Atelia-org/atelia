@@ -1,3 +1,5 @@
+using System.Reflection;
+using Atelia.Completion.Tools;
 using Atelia.StateJournal;
 using Xunit;
 
@@ -123,9 +125,200 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
         Assert.False(string.IsNullOrWhiteSpace(step.StepOutcomeSummary));
     }
 
+    [Fact]
+    public async Task ApplyImmediateSelfInteractionAsync_CanRefreshExistingItemMetadataAfterInspection() {
+        GameMasterResolver.SetStubForTests(
+            new GameMasterStub(
+                ImmediateSelfInteractionResolver: (root, context, cancellationToken) => {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var gmTools = new GmWorldEditService(root);
+                    var updateResult = gmTools.UpdateItem(
+                        context.Interaction.TargetId,
+                        name: "铜钥匙",
+                        description: "一枚刚从泉底捞出的铜钥匙，齿纹间还沾着湿润细沙。"
+                    );
+                    Assert.True(updateResult.IsSuccess, updateResult.Error?.Message);
+                    return Task.FromResult(
+                        new GmExploreResolution(
+                            "你把那件闪光的小东西捞到手边，认出它其实是一枚铜钥匙。",
+                            UsedLlm: false,
+                            FallbackReason: null
+                        )
+                    );
+                }
+            )
+        );
+
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(
+            gmWorldEdit.CreateItem(
+                itemId: "spring-glint",
+                name: "泉底闪光的物件",
+                description: "半埋在泉底细沙中，只露出一点模糊的金属反光。",
+                locationId: "beach"
+            ).IsSuccess
+        );
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "inspect-spring-glint",
+                targetRef: "item:spring-glint",
+                actionKind: "inspect",
+                visibleLabel: "俯身查看泉底那件闪光的物件",
+                preconditionNote: "none",
+                effectNote: "你把那件闪光的小东西捞到手边，认出它其实是一枚铜钥匙。",
+                turnCost: 0,
+                effectScope: GameSimulation.SelfEffectScope,
+                effectSlots: GameSimulation.ImmediateEffectSlot
+            ).IsSuccess
+        );
+
+        var resolutionResult = await GameSimulation.ApplyImmediateSelfInteractionAsync(
+            root,
+            "inspect-spring-glint",
+            "先确认那点反光到底是什么，再决定要不要拿走。",
+            "通过：这一步 grounded。",
+            CancellationToken.None
+        );
+        Assert.True(resolutionResult.IsSuccess, resolutionResult.Error?.Message);
+
+        var item = Assert.Single(resolutionResult.Value!.NextPerception.Location.Items);
+        Assert.Equal("spring-glint", item.ItemId);
+        Assert.Equal("铜钥匙", item.Name);
+        Assert.Equal("一枚刚从泉底捞出的铜钥匙，齿纹间还沾着湿润细沙。", item.Description);
+    }
+
+    [Fact]
+    public void DescribeCurrentPerception_ShouldHidePickupInteractionForOwnedItemEvenIfStillVisibleInLedger() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(
+            gmWorldEdit.CreateItem(
+                itemId: "flint",
+                name: "燧石",
+                description: "一块边缘锋利的燧石。",
+                locationId: "beach"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.MoveItemToActor("flint", "player").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "take-flint",
+                targetRef: "item:flint",
+                actionKind: "take",
+                visibleLabel: "捡起燧石",
+                preconditionNote: "none",
+                effectNote: "你把燧石拿了起来。",
+                turnCost: 0,
+                effectScope: GameSimulation.SelfEffectScope,
+                effectSlots: GameSimulation.ImmediateEffectSlot
+            ).IsSuccess
+        );
+
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var flint = Assert.Single(perception.InventoryItems);
+        Assert.DoesNotContain(flint.Interactions, static interaction => interaction.InteractionId == "take-flint");
+        Assert.DoesNotContain(
+            PerceptionEvidenceRenderer.EnumerateVisibleInteractions(perception),
+            static interaction => interaction.InteractionId == "take-flint"
+        );
+    }
+
+    [Fact]
+    public void PlaceItemAtLocation_ShouldNotSilentlyConsumeExistingPickupInteraction() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(
+            gmWorldEdit.CreateItem(
+                itemId: "shell-token",
+                name: "贝壳片",
+                description: "一枚边缘磨圆的白色贝壳片。",
+                locationId: "beach"
+            ).IsSuccess
+        );
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "take-shell-token",
+                targetRef: "item:shell-token",
+                actionKind: "take",
+                visibleLabel: "捡起贝壳片",
+                preconditionNote: "none",
+                effectNote: "你把贝壳片拾了起来。",
+                turnCost: 0,
+                effectScope: GameSimulation.SelfEffectScope,
+                effectSlots: GameSimulation.ImmediateEffectSlot
+            ).IsSuccess
+        );
+
+        Assert.True(gmWorldEdit.MoveItemToActor("shell-token", "player").IsSuccess);
+        Assert.True(gmWorldEdit.PlaceItemAtLocation("shell-token", "beach").IsSuccess);
+
+        var item = Assert.Single(GameSimulation.DescribeCurrentPerception(root).Location.Items);
+        Assert.Contains(item.Interactions, static interaction => interaction.InteractionId == "take-shell-token");
+    }
+
+    [Fact]
+    public void AddInteraction_ShouldCanonicalizeLegacyPickupAliasToTake() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(
+            gmWorldEdit.CreateItem(
+                itemId: "hook",
+                name: "弯钩",
+                description: "一枚小小的金属弯钩。",
+                locationId: "beach"
+            ).IsSuccess
+        );
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "pick-up-hook",
+                targetRef: "item:hook",
+                actionKind: "pick-up",
+                visibleLabel: "捡起弯钩",
+                preconditionNote: "none",
+                effectNote: "你把弯钩捡了起来。",
+                turnCost: 0,
+                effectScope: GameSimulation.SelfEffectScope,
+                effectSlots: GameSimulation.ImmediateEffectSlot
+            ).IsSuccess
+        );
+
+        var item = Assert.Single(GameSimulation.DescribeCurrentPerception(root).Location.Items);
+        var interaction = Assert.Single(item.Interactions);
+        Assert.Equal("take", interaction.ActionKind);
+    }
+
+    [Fact]
+    public void GameMasterResolver_ToolExecutors_ShouldExposeUpdateItemTool() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+
+        var normalTools = GetVisibleToolNames("CreateToolExecutor", root);
+        var immediateTools = GetVisibleToolNames("CreateImmediateSelfToolExecutor", root);
+
+        Assert.Contains("gm_update_item", normalTools);
+        Assert.Contains("gm_update_item", immediateTools);
+    }
+
     private Repository CreateRepository() {
         var createResult = Repository.Create(_repoDir);
         return AssertSuccess(createResult);
+    }
+
+    private static string[] GetVisibleToolNames(string methodName, DurableDict<string> root) {
+        var method = typeof(GameMasterResolver).GetMethod(
+            methodName,
+            BindingFlags.NonPublic | BindingFlags.Static
+        );
+        Assert.NotNull(method);
+
+        var executor = method!.Invoke(null, [root]);
+        var toolExecutor = Assert.IsType<ToolExecutor>(executor);
+        return toolExecutor.GetVisibleToolDefinitions().Select(static definition => definition.Name).ToArray();
     }
 
     private static T AssertSuccess<T>(AteliaResult<T> result)

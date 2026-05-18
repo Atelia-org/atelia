@@ -101,8 +101,7 @@ internal static class GameMasterTestStubs {
         var interaction = context.Interaction;
 
         if (string.Equals(interaction.TargetKind, "item", StringComparison.Ordinal)
-            && (string.Equals(interaction.ActionKind, "take", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(interaction.ActionKind, "pick-up", StringComparison.OrdinalIgnoreCase))) {
+            && InteractionActionKinds.IsPickup(interaction.ActionKind)) {
             _ = gmTools.MoveItemToActor(interaction.TargetId, context.Perception.ActorId);
             _ = gmTools.SetInteractionVisibility(interaction.InteractionId, "hidden");
         }

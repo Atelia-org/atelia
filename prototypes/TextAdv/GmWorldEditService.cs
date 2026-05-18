@@ -180,6 +180,38 @@ internal sealed class GmWorldEditService {
         return $"{itemId}->location:{locationId}";
     }
 
+    internal AteliaResult<string> UpdateItem(
+        string itemId,
+        string? name,
+        string? description
+    ) {
+        itemId = NormalizeRequired(itemId, nameof(itemId));
+        name = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+        description = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+
+        if (name is null && description is null) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.ItemUpdateEmpty",
+                    "gm_update_item 至少要更新 name 或 description 之一。"
+                )
+            );
+        }
+
+        var itemResult = TryGetItem(itemId);
+        if (!itemResult.TryGetValue(out var item) || item is null) { return AteliaResult<string>.Failure(itemResult.Error!); }
+
+        if (name is not null) {
+            item.Upsert(NameKey, name);
+        }
+
+        if (description is not null) {
+            item.Upsert(DescriptionKey, description);
+        }
+
+        return itemId;
+    }
+
     internal AteliaResult<string> CreateNpc(
         string actorId,
         string name,
@@ -228,7 +260,7 @@ internal sealed class GmWorldEditService {
     ) {
         interactionId = NormalizeRequired(interactionId, nameof(interactionId));
         targetRef = NormalizeRequired(targetRef, nameof(targetRef));
-        actionKind = NormalizeRequired(actionKind, nameof(actionKind));
+        actionKind = InteractionActionKinds.Canonicalize(NormalizeRequired(actionKind, nameof(actionKind)));
         visibleLabel = NormalizeRequired(visibleLabel, nameof(visibleLabel));
         preconditionNote = NormalizeRequired(preconditionNote, nameof(preconditionNote));
         effectNote = NormalizeRequired(effectNote, nameof(effectNote));
@@ -483,8 +515,8 @@ internal sealed class GmWorldEditService {
     [Tool("gm_create_item", "创建一个玩家可见的 Item，并放置在指定 Location。")]
     public ValueTask<ToolExecuteResult> CreateItemAsync(
         [ToolParam("新的 ItemId，建议使用小写 ASCII、数字和连字符。")] string item_id,
-        [ToolParam("玩家可见的物品名称。")] string name,
-        [ToolParam("玩家可见的物品描述。")] string description,
+        [ToolParam("玩家可见的物品名称。未识别前应使用不剧透的通用叫法。")] string name,
+        [ToolParam("玩家可见的物品描述。未识别前不要写出隐藏身份。")] string description,
         [ToolParam("物品所在 LocationId。")] string location_id,
         CancellationToken cancellationToken
     ) {
@@ -502,6 +534,17 @@ internal sealed class GmWorldEditService {
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         return ToToolResult(CreateNpc(actor_id, name, profile_note, location_id), "created npc");
+    }
+
+    [Tool("gm_update_item", "更新一个已存在 Item 的玩家可见名称或描述。用于识别后改名，或在拿起、翻动、清洗后刷新描述。")]
+    public ValueTask<ToolExecuteResult> UpdateItemAsync(
+        [ToolParam("目标 ItemId。")] string item_id,
+        [ToolParam("新的玩家可见名称；若本次不改名，传 null。")] string? name,
+        [ToolParam("新的玩家可见描述；若本次不改描述，传 null。")] string? description,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ToToolResult(UpdateItem(item_id, name, description), "updated item");
     }
 
     [Tool("gm_move_item_to_actor", "把 Item 转移到 Actor 持有。用于 take / give / pick-up 等交互。")]
@@ -526,10 +569,10 @@ internal sealed class GmWorldEditService {
 
     [Tool("gm_add_interaction", "给 Location、Item 或 Actor 增加一个玩家可见的交互 affordance。")]
     public ValueTask<ToolExecuteResult> AddInteractionAsync(
-        [ToolParam("新的 InteractionId，建议使用小写 ASCII、数字和连字符。")] string interaction_id,
+        [ToolParam("新的 InteractionId，建议使用小写 ASCII、数字和连字符。它会暴露给玩家，不要在未确认前剧透隐藏真相。")] string interaction_id,
         [ToolParam("交互目标，格式为 location:<locationId>、item:<itemId> 或 actor:<actorId>。")] string target_ref,
         [ToolParam("交互类型，例如 inspect / take / use / open / listen。")] string action_kind,
-        [ToolParam("玩家可见的交互标签，例如“检查贝壳边缘”。")] string visible_label,
+        [ToolParam("玩家可见的交互标签，例如“检查贝壳边缘”。未确认前不要剧透真实身份。")] string visible_label,
         [ToolParam("基础前置条件说明；若没有特别条件，写 none。")] string precondition_note,
         [ToolParam("交互效果的简短 GM note；首版可用自然语言。")] string effect_note,
         [ToolParam("该交互消耗几个回合。0=顺手动作，1=结束本回合，N=进入持续工作。")] int turn_cost,

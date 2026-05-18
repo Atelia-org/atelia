@@ -80,6 +80,10 @@ internal static class GameMasterResolver {
     private const string MaxRoundsEnv = "ATELIA_TEXTADV_GM_MAX_ROUNDS";
     private const string DefaultModelId = "deepseek-v4-flash";
     private const int DefaultMaxRounds = 4;
+    private const string ViewSafeNamingContractPromptLine =
+        "所有会暴露给玩家的命名都必须视角安全：location / item 的名称与描述，以及 visibleLabel / interaction_id，都不能在识别前剧透真相。";
+    private const string ItemRefreshWithUpdateToolPromptLine =
+        "若这一步确认了既有 item 的真实身份，或其外观状态已变化，调用 gm_update_item 刷新名称或描述。";
 
     private static readonly Lock s_gate = new();
     private static DeepSeekV4ChatClient? s_client;
@@ -485,6 +489,7 @@ internal static class GameMasterResolver {
             MethodToolWrapper.FromDelegate<string, string>(toolService.MoveActorAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync),
             MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateNpcAsync),
+            MethodToolWrapper.FromDelegate<string, string?, string?>(toolService.UpdateItemAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.MoveItemToActorAsync),
             MethodToolWrapper.FromDelegate<string, string>(toolService.PlaceItemAtLocationAsync),
             MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync),
@@ -500,6 +505,7 @@ internal static class GameMasterResolver {
         return new ToolExecutor(
             [
                 MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync),
+                MethodToolWrapper.FromDelegate<string, string?, string?>(toolService.UpdateItemAsync),
                 MethodToolWrapper.FromDelegate<string, string>(toolService.MoveItemToActorAsync),
                 MethodToolWrapper.FromDelegate<string, string>(toolService.PlaceItemAtLocationAsync),
                 MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync),
@@ -510,7 +516,7 @@ internal static class GameMasterResolver {
     }
 
     private static string BuildExploreSystemPrompt() {
-        return """
+        return $$"""
 你是 TextAdv 的 TRPG GM Agent，负责把玩家的探索类 Large-Action 结算成世界账本变化。
 
 你的主持风格应接近优秀的人类 TRPG 主持人：
@@ -524,6 +530,8 @@ internal static class GameMasterResolver {
 - 如果目标方向已有出口，只调用 gm_move_player 移动到该目标 LocationId。它在工具实现上等价于 gm_move_actor(player, ...) 的别名。
 - 如果目标方向没有出口，先调用 gm_create_location，再调用 gm_link_locations，最后调用 gm_move_player。
 - 可选：若新地点需要一个可见可操作细节，可以创建 0 到 1 个 Item 或 0 到 1 个 NPC，再调用 gm_add_interaction 给新地点、该 Item 或该 Actor 添加 0 到 2 个交互 affordance；precondition_note 若无特别条件写 none，且必须同时给出 turn_cost / effect_scope / effect_slots。
+- {{ViewSafeNamingContractPromptLine}} {{ItemRefreshWithUpdateToolPromptLine}}
+- 编写 location description 时避免写死“晨光”“黄昏”“昏暗天光”这类会随时段失真的锚定词，除非它描述的是恒定光源或不随时间变化的事实。
 - 如果最终摘要提到玩家能看见的具体物品或人物，该实体必须已经通过 gm_create_item 或 gm_create_npc 落账；若可以对话、检查、拿取或操作，必须通过 gm_add_interaction 落账。
 - 若有建议反向方向，应在 gm_link_locations 中填写 reverse_direction；否则传 null。
 - 不要用普通文本声称世界已改变；只有工具调用成功才算落账。
@@ -532,7 +540,7 @@ internal static class GameMasterResolver {
     }
 
     private static string BuildCollectedTurnSystemPrompt() {
-        return """
+        return $$"""
 你是 TextAdv 的 TRPG GM Agent，负责在离散回合制下统一裁决多个 active player actor 的 Large-Action。
 
 你的主持方式应接近优秀的人类 TRPG 主持人：
@@ -548,6 +556,7 @@ internal static class GameMasterResolver {
 - 若某 actor 探索已有出口，调用 gm_move_actor(actor_id, target_location_id)。
 - 若某 actor 探索未知方向，先 gm_create_location，再 gm_link_locations，最后 gm_move_actor。
 - 若交互揭示新物品/NPC/动作，必须用 gm_create_item / gm_create_npc / gm_add_interaction 落账；gm_add_interaction 时必须明确给出 turn_cost / effect_scope / effect_slots。
+- {{ViewSafeNamingContractPromptLine}} {{ItemRefreshWithUpdateToolPromptLine}}
 - 若 take / give / drop / place 导致持有关系变化，必须用 gm_move_item_to_actor 或 gm_place_item_at_location 落账。
 - 若 interaction 被消耗或不应继续显示，调用 gm_set_interaction_visibility。
 - 在 summary 阶段必须为每个 active player actor 调用 gm_set_actor_resolution，写入它下一回合可见的私有反馈；不同 actor 只能知道自己可感知或合理推断的信息。
@@ -557,7 +566,7 @@ internal static class GameMasterResolver {
     }
 
     private static string BuildInteractionSystemPrompt() {
-        return """
+        return $$"""
 你是 TextAdv 的 TRPG GM Agent，负责把玩家选择的 Interaction affordance 结算成世界账本变化。
 
 你的主持风格应接近优秀的人类 TRPG 主持人：
@@ -570,6 +579,7 @@ internal static class GameMasterResolver {
 你必须通过工具更新世界状态：
 - 如果交互揭示了新的可见物品或人物，必须调用 gm_create_item 或 gm_create_npc。
 - 如果交互让某个对象变得可操作，必须调用 gm_add_interaction；precondition_note 若无特别条件写 none，且必须同时给出 turn_cost / effect_scope / effect_slots。
+- {{ViewSafeNamingContractPromptLine}} {{ItemRefreshWithUpdateToolPromptLine}}
 - 如果 actionKind 是 take / pick-up / give / drop / place，并且物品持有关系发生变化，必须调用 gm_move_item_to_actor 或 gm_place_item_at_location 落账；当前终端玩家 ActorId 是 player。
 - 如果旧交互已经被消耗或暂时不应继续显示，调用 gm_set_interaction_visibility 将它设为 hidden。
 - 如果交互只产生感知反馈、没有 hard truth 变化，可以不调用工具，直接输出 1 到 3 句玩家可见结算摘要。
@@ -580,7 +590,7 @@ internal static class GameMasterResolver {
     }
 
     private static string BuildImmediateSelfInteractionSystemPrompt() {
-        return """
+        return $$"""
 你是 TextAdv 的 TRPG GM Agent，负责结算一个 `TurnCost=0`、且只影响 acting actor 当前局部状态的即时小动作。
 
 约束：
@@ -589,9 +599,11 @@ internal static class GameMasterResolver {
 3. 只允许落账与 acting actor 及其眼前局部对象直接相关的必要 hard truth；不要扩写成整回合结算。
 4. 不创建地点、不连接出口、不移动 actor、不创建 NPC，也不处理远处世界的连锁变化。
 5. 若物品持有关系发生变化，必须调用 gm_move_item_to_actor 或 gm_place_item_at_location。
-6. 若当前 interaction 已经被消耗或不该继续显示，必须调用 gm_set_interaction_visibility。
-7. 若当前摘要提到玩家现在看得见、摸得着的新物品或新可执行动作，该实体或 affordance 必须已经通过工具落账。
-8. 输出 1 到 2 句简洁中文反馈即可，不要解释系统规则，不要泄露隐藏真相。
+6. {{ItemRefreshWithUpdateToolPromptLine}}
+7. 若当前 interaction 已经被消耗或不该继续显示，必须调用 gm_set_interaction_visibility。
+8. 若当前摘要提到玩家现在看得见、摸得着的新物品或新可执行动作，该实体或 affordance 必须已经通过工具落账。
+9. {{ViewSafeNamingContractPromptLine}}
+10. 输出 1 到 2 句简洁中文反馈即可，不要解释系统规则，不要泄露隐藏真相。
 
 如果当前输入明显不符合“self + immediate”的约束，也仍然只在当前工具约束内给出克制反馈，不要擅自扩写成整回合结算。
 """;
@@ -727,6 +739,8 @@ internal static class GameMasterResolver {
         sb.AppendLine("优先根据所选 Interaction 的 target、actionKind、visibleLabel、preconditionNote、effectNote、turnCost、effectScope 和 effectSlots 裁决，不要把玩家事前推理当成事实来源。");
         sb.AppendLine("若创建 Item/NPC/Interaction，ID 必须稳定、唯一，并且 target_ref 必须引用已经存在的对象；precondition_note 无特别条件时写 none。");
         sb.AppendLine("若创建 Interaction，还必须明确填写 turn_cost、effect_scope、effect_slots。只有 effect_scope=self 的 interaction 才能使用 immediate 槽位。");
+        AppendViewSafeNamingContract(sb);
+        AppendItemRefreshGuidance(sb);
         sb.AppendLine("若只是检查、倾听、交谈第一句等低风险反馈，可以不改账本，只输出玩家可见摘要。");
         sb.AppendLine("若当前 interaction 已被消耗或下一回合不应继续显示，请用 gm_set_interaction_visibility 把它设为 hidden。");
         sb.AppendLine("若玩家拿起或放下物品，请用 gm_move_item_to_actor 或 gm_place_item_at_location 更新 ownerActorId/locationId。当前终端玩家 ActorId 是 player。");
@@ -894,12 +908,21 @@ internal static class GameMasterResolver {
         sb.AppendLine("[阶段 2/3: immediate-local affordance audit]");
         sb.AppendLine("检查这个即时小动作完成后，下一次 look-around 时玩家现在应看到哪些局部 affordance。");
         sb.AppendLine("若当前 interaction 已被消耗或不该重复显示，用 gm_set_interaction_visibility 设为 hidden。");
+        AppendItemRefreshGuidance(sb);
         sb.AppendLine("若物品到了玩家手中且需要新的后续动作，用 gm_add_interaction 落账；无特别前提写 none。");
         sb.AppendLine("本阶段不要输出最终摘要；必要工具调用完成后停止调用工具，文本可留空。");
         sb.AppendLine();
         AppendInteractionIntent(sb, context);
         AppendPerceptionSnapshot(sb, perception, "即时动作后账本投影");
         return sb.ToString();
+    }
+
+    private static void AppendViewSafeNamingContract(StringBuilder sb) {
+        sb.AppendLine("interaction_id、visible_label、item 名称与 item 描述都会暴露给玩家；未确认身份前必须使用不剧透的通用叫法。");
+    }
+
+    private static void AppendItemRefreshGuidance(StringBuilder sb) {
+        sb.AppendLine("若这一步确认了既有 item 的真实身份，或其外观状态已变化，用 gm_update_item 刷新现有 item 的名称或描述。");
     }
 
     private static string BuildImmediateSelfInteractionSummaryStageObservation(
