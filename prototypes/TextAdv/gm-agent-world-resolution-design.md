@@ -210,9 +210,8 @@ GM 的自由文本可以保留，但宿主只信任工具结果和结构化 summ
 当前落地策略：
 
 - `GameMasterResolver` 手写最小工具循环：LLM 输出 tool calls，`ToolExecutor` 执行，宿主用 `ToolResultsMessage` 回灌，直到 LLM 停止调用工具并输出玩家可见摘要。
-- `ATELIA_TEXTADV_GM_MODE=auto` 时，有 `DEEPSEEK_API_KEY` 就优先尝试真实 GM Agent；未配置或失败时回退 deterministic resolver。
-- `ATELIA_TEXTADV_GM_MODE=deterministic` 可强制关闭真实 GM，便于离线调试。
-- `ATELIA_TEXTADV_GM_MODE=llm` 可用于验证真实 GM 路径；若 provider 或工具循环失败，当前仍回退 deterministic resolver 以保护游戏可玩性。
+- 运行时现在不再提供 `ATELIA_TEXTADV_GM_MODE`。世界裁决默认且必须走真实 GM Agent。
+- 若需要可控回归、离线验证或白盒测试，应在测试代码中显式注入 `GameMasterStub`，而不是在产品路径里保留 deterministic world-resolution fallback。
 - 首版真实 GM 的工具集合包含 `gm_create_location` / `gm_link_locations` / `gm_move_player`，以及 Phase 3 的 `gm_create_item` / `gm_create_npc` / `gm_add_interaction` / `gm_set_visibility`。GM 可以创建少量可见物品、NPC 和 affordance，但仍不创建复杂规则。
 
 ### Phase 3: Item / NPC / Interaction Ledger
@@ -329,17 +328,17 @@ game
 - `world.actors` 中的 `kind` 已预留 `terminal-player` / `llm-player` / `npc`。NPC 可以被 GM 创建和被玩家感知，但暂不自动声明 Large-Action。
 - `PerceptionBundle` 已经可以通过 `DescribePerceptionForActor(root, actorId)` 按 actor 投影。地点、可见角色、持有物品和 Memory-Notebook 都从 actor ledger 读取；`DescribeCurrentPerception` 只是 `actor:player` 的便捷入口。
 - `currentTurn` 现在只保留真正驱动流程的账本字段，如 `acceptedStepsByActor`、`largeActionByActor`。`barrier` 和“下一个待行动 actor”改为由当前提交状态即时推导，避免把展示性状态写进持久化层。
-- Large-Action 现在会落入 `largeActionByActor`。只有 `actor:player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，并驱动 pending `llm-player` 提交保守 fallback Large-Action。
+- Large-Action 现在会落入 `largeActionByActor`。只有 `actor:player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，并驱动 pending `llm-player` 通过同一套 LLM Player driver 提交 Large-Action。诊断若不想启用真实内部玩家，应在外层显式提交保守动作，而不是让 driver 自己 fallback。
 - pending `llm-player` 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明。`Perception-Bundle` 已包含 actor 自身的 name / kind / profileNote，避免角色缺少自我锚点；输出必须调用 `player_rest_a_while`、`player_explore` 或 `player_interact` 之一提交 Large-Action。
 - LLM Player Agent 默认使用 `director-executor` 两阶段管线：导演阶段无工具，专门把该 actor 的确认事实、怀疑、不安/欲望、风险姿态、notebook 建议和推荐行动整理为“导演札记”；执行阶段再拿着这份札记和原始 Perception-Bundle 调用工具。这样把“第三人称心理建模”与“工具可靠执行”拆开，减少角色扮演模式沉迷叙事或 assistant 模式角色驱动力不足的问题。可用 `ATELIA_TEXTADV_LLM_PLAYER_PIPELINE=single` 临时回到单阶段执行。
 - LLM Player Agent 首版也开放 `player_edit_memory_notebook` Small-Action。它可在提交 Large-Action 前编辑自己的 Memory-Notebook，编辑同样经过 `GameActionValidator`，并写入 `acceptedStepsByActor[actorId]`。
-- LLM Player Agent 提交的 Large-Action 会走同一套 `GameActionValidator`。provider 失败、未配置 API key、模式为 deterministic、没有调用工具，或 validator 多次拒绝时，才回退到 `large/rest-a-while`，语义为“谨慎观察并暂不移动”。
+- LLM Player Agent 提交的 Large-Action 会走同一套 `GameActionValidator`。运行时不再提供“provider 失败就回退 `large/rest-a-while`”的产品路径；provider / validator /工具阶段失败会直接返回错误。若测试需要可控输入，应显式注入 `LlmPlayerStub`；若诊断想省掉真实内部玩家，则在更外层直接提交保守动作。
 - `dev-look-actor <actor-id>` 可用于查看任意 actor 的 Perception-Bundle；这验证了未来 LLM Player Agent 的输入可以只包含该 actor 的视角，而不是完整世界真相。
 - `dev-turn-status` 可审计当前 barrier 与每个 active actor 的 Large-Action 提交状态。`dev-submit-large-action` 可绕过 validator 模拟任意 active actor 交卷，用于测试 `acceptedStepsByActor` / `largeActionByActor` 和 `ready-for-gm` 流转。
-- 多主体收齐后已经进入 `collected-turn resolver`。真实 GM 模式下，resolver 会把所有 actor 的 Large-Action intent、各自 Perception-Bundle、事前推理和 validator feedback 注入同一 GM staged loop，由 GM 一次性裁决冲突、顺序和后果；deterministic / fallback 模式下仍按终端玩家的大型动作推进世界，以保持 MVP 可测。
+- 多主体收齐后已经进入 `collected-turn resolver`。resolver 会把所有 actor 的 Large-Action intent、各自 Perception-Bundle、事前推理和 validator feedback 注入同一 GM staged loop，由 GM 一次性裁决冲突、顺序和后果。测试若需要可控输入，应通过显式 stub 注入，而不是复活产品运行时 fallback。
 - GM 工具集已新增 `gm_move_actor`，真实多主体 GM 不再只能移动终端玩家，可以裁决 LLM Player 的探索、移动、分头行动和停留。`gm_move_player` 仍保留给单玩家 explore/interact 路径，但在实现上只是 `gm_move_actor(player, ...)` 的别名。
 - GM 结算已经从单次宽 prompt 改为同一会话内的分阶段工具循环：`explore` 依次执行“地图与移动落账 → 实体与交互账本审计 → 玩家可见摘要”，`interact` 依次执行“交互直接后果 → affordance 生命周期审计 → 玩家可见摘要”。每个阶段都会保留前文 history，并在阶段开始注入最新 Perception/账本投影，以减少遗漏实体、交互或可见性更新的概率。
-- 多主体 collected-turn 也采用三阶段工具循环：“多主体意图裁决与 hard truth 落账 → 多主体账本审计 → 各 actor 私有结算反馈与终端玩家摘要”。GM 可调用 `gm_set_actor_resolution(actor_id, summary)` 写入 `game.lastResolutionByActor`；下一回合任意 actor 的 `Perception-Bundle.LastResolution` 直接读取自己的私有反馈。fallback 路径会把同一摘要补给所有 active actor，保证 Player Agent 总能获得上一回合反馈。
+- 多主体 collected-turn 也采用三阶段工具循环：“多主体意图裁决与 hard truth 落账 → 多主体账本审计 → 各 actor 私有结算反馈与终端玩家摘要”。GM 可调用 `gm_set_actor_resolution(actor_id, summary)` 写入 `game.lastResolutionByActor`；下一回合任意 actor 的 `Perception-Bundle.LastResolution` 直接读取自己的私有反馈。`prelude` 产生的 actor-facing 摘要应与这些私有反馈合并，而不是只写进 terminal summary。
 
 `LLM Player Agent` 的最小行为协议：
 

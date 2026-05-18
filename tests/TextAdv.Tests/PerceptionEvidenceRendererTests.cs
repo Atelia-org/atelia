@@ -35,6 +35,12 @@ public sealed class PerceptionEvidenceRendererTests {
             Assert.Contains(snippet, playerText);
         }
 
+        Assert.Contains("turnCost: 0", promptText);
+        Assert.Contains("effectSlots: immediate", promptText);
+        Assert.Contains("turnCost: 1", promptText);
+        Assert.Contains("顺手可做", playerText);
+        Assert.Contains("会占用这一回合", playerText);
+
         Assert.DoesNotContain("[spring]", playerText);
         Assert.DoesNotContain("[berries]", playerText);
         Assert.DoesNotContain("[guide]", playerText);
@@ -44,7 +50,7 @@ public sealed class PerceptionEvidenceRendererTests {
     public void GamePresenter_RenderPerception_ShouldIncludeCanonicalEvidenceAndActionGuide() {
         var perception = CreateSamplePerception();
 
-        var rendered = GamePresenter.RenderPerception(perception);
+        var rendered = GamePresenter.RenderPerception(perception, TerminalHelpMode.On);
 
         Assert.Contains("🧩 你现在能直接尝试的动作:", rendered);
         Assert.Contains("inspect-berries", rendered);
@@ -54,6 +60,16 @@ public sealed class PerceptionEvidenceRendererTests {
         Assert.Contains("pmux game interact", rendered);
         Assert.Contains("<行动依据>", rendered);
         Assert.Contains("确认它清凉无异味", rendered);
+    }
+
+    [Fact]
+    public void GamePresenter_RenderPerception_WhenHelpModeOff_ShouldShowMinimalHelpHint() {
+        var perception = CreateSamplePerception();
+
+        var rendered = GamePresenter.RenderPerception(perception, TerminalHelpMode.Off);
+
+        Assert.Contains("🧭 帮助：pmux game help", rendered);
+        Assert.DoesNotContain("🧭 操作速查:", rendered);
     }
 
     private static PerceptionBundle CreateSamplePerception() {
@@ -85,7 +101,10 @@ public sealed class PerceptionEvidenceRendererTests {
                                 ActionKind: "inspect",
                                 VisibleLabel: "检查浆果",
                                 PreconditionNote: "none",
-                                EffectNote: null
+                                EffectNote: null,
+                                TurnCost: 1,
+                                EffectScope: GameSimulation.RoomEffectScope,
+                                EffectSlots: [GameSimulation.TurnEndEffectSlot]
                             )
                         ]
                     )
@@ -104,7 +123,10 @@ public sealed class PerceptionEvidenceRendererTests {
                                 ActionKind: "talk",
                                 VisibleLabel: "询问陌生人",
                                 PreconditionNote: "需要先靠近",
-                                EffectNote: null
+                                EffectNote: null,
+                                TurnCost: 1,
+                                EffectScope: GameSimulation.RoomEffectScope,
+                                EffectSlots: [GameSimulation.TurnEndEffectSlot]
                             )
                         ]
                     )
@@ -117,7 +139,10 @@ public sealed class PerceptionEvidenceRendererTests {
                         ActionKind: "inspect",
                         VisibleLabel: "倾听水声",
                         PreconditionNote: "none",
-                        EffectNote: null
+                        EffectNote: null,
+                        TurnCost: 1,
+                        EffectScope: GameSimulation.RoomEffectScope,
+                        EffectSlots: [GameSimulation.TurnEndEffectSlot]
                     )
                 ]
             ),
@@ -134,7 +159,10 @@ public sealed class PerceptionEvidenceRendererTests {
                             ActionKind: "use",
                             VisibleLabel: "用麻绳试探水深",
                             PreconditionNote: "none",
-                            EffectNote: null
+                            EffectNote: null,
+                            TurnCost: 0,
+                            EffectScope: GameSimulation.SelfEffectScope,
+                            EffectSlots: [GameSimulation.ImmediateEffectSlot]
                         )
                     ]
                 )
@@ -152,7 +180,9 @@ public sealed class PerceptionEvidenceRendererTests {
                     ActionPayload: null,
                     PreActionReason: "先把可疑线索记下，免得下一回合忘掉。",
                     ValidatorFeedback: "通过：前一步 grounded。",
-                    EndsTurn: false
+                    EndsTurn: false,
+                    StepOutcomeSummary: "你把泉眼这条线索及时记了下来。",
+                    StepOutcomeState: GameSimulation.StepOutcomeCommittedNow
                 )
             ],
             LastResolution: "你俯身尝了泉水，确认它清凉无异味，暂时可以饮用。"

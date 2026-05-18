@@ -73,9 +73,7 @@ internal static partial class GameSimulation {
                 template.ProfileNote,
                 locationId: null
             );
-            if (!createResult.TryGetValue(out var actorId) || string.IsNullOrWhiteSpace(actorId)) {
-                return AteliaResult<IReadOnlyList<string>>.Failure(createResult.Error!);
-            }
+            if (!createResult.TryGetValue(out var actorId) || string.IsNullOrWhiteSpace(actorId)) { return AteliaResult<IReadOnlyList<string>>.Failure(createResult.Error!); }
 
             ensured.Add(actorId);
             activeDiagnosticLlmPlayerCount++;
@@ -128,22 +126,16 @@ internal static partial class GameSimulation {
             terminalAction.PreActionReason,
             validatorFeedback: "diagnostic autonomous runner bypassed validator"
         );
-        if (!submitTerminalResult.TryGetValue(out var status) || status is null) {
-            return AsyncAteliaResult<AutonomousRoundReport>.Failure(submitTerminalResult.Error!);
-        }
+        if (!submitTerminalResult.TryGetValue(out var status) || status is null) { return AsyncAteliaResult<AutonomousRoundReport>.Failure(submitTerminalResult.Error!); }
 
         if (useRealAgents) {
-            var submitLlmResult = await SubmitLargeActionsForPendingLlmPlayersAsync(root, cancellationToken)
+            var submitLlmResult = await SubmitLargeActionsForPendingInternalPlayersAsync(root, cancellationToken)
                 .ConfigureAwait(false);
-            if (!submitLlmResult.TryGetValue(out status) || status is null) {
-                return AsyncAteliaResult<AutonomousRoundReport>.Failure(submitLlmResult.Error!);
-            }
+            if (!submitLlmResult.TryGetValue(out status) || status is null) { return AsyncAteliaResult<AutonomousRoundReport>.Failure(submitLlmResult.Error!); }
         }
         else {
             var submitFallbackResult = SubmitDiagnosticFallbackActionsForPendingLlmPlayers(root);
-            if (!submitFallbackResult.TryGetValue(out status) || status is null) {
-                return AsyncAteliaResult<AutonomousRoundReport>.Failure(submitFallbackResult.Error!);
-            }
+            if (!submitFallbackResult.TryGetValue(out status) || status is null) { return AsyncAteliaResult<AutonomousRoundReport>.Failure(submitFallbackResult.Error!); }
         }
 
         if (!status.AllActiveActorsSubmittedLargeAction) {
@@ -155,30 +147,9 @@ internal static partial class GameSimulation {
             );
         }
 
-        TurnResolution resolution;
-        if (useRealAgents) {
-            var resolutionResult = await ApplyReadyCollectedTurnAsync(root, cancellationToken)
-                .ConfigureAwait(false);
-            if (!resolutionResult.TryGetValue(out var realResolution) || realResolution is null) {
-                return AsyncAteliaResult<AutonomousRoundReport>.Failure(resolutionResult.Error!);
-            }
-
-            resolution = realResolution;
-        }
-        else {
-            var resolutionResult = await ApplyReadyCollectedTurnAsync(
-                    root,
-                    CollectedTurnResolutionMode.DeterministicOnly,
-                    collectedTurnLeadOverride: null,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-            if (!resolutionResult.TryGetValue(out var deterministicResolution) || deterministicResolution is null) {
-                return AsyncAteliaResult<AutonomousRoundReport>.Failure(resolutionResult.Error!);
-            }
-
-            resolution = deterministicResolution;
-        }
+        var resolutionResult = await ApplyReadyCollectedTurnAsync(root, cancellationToken)
+            .ConfigureAwait(false);
+        if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) { return AsyncAteliaResult<AutonomousRoundReport>.Failure(resolutionResult.Error!); }
 
         return AsyncAteliaResult<AutonomousRoundReport>.Success(
             new AutonomousRoundReport(
@@ -196,14 +167,8 @@ internal static partial class GameSimulation {
         DurableDict<string> root
     ) {
         foreach (var actorId in EnumerateActiveActorIds(root).ToArray()) {
-            if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) { continue; }
             if (HasSubmittedLargeAction(root, actorId)) { continue; }
-
-            var actor = GetActor(root, actorId);
-            var kind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-                ? rawKind
-                : "npc";
-            if (!string.Equals(kind, "llm-player", StringComparison.Ordinal)) { continue; }
+            if (!IsInternallyDrivenPlayerActor(root, actorId)) { continue; }
 
             var perception = DescribePerceptionForActor(root, actorId);
             var submitResult = SubmitLargeActionForActor(
@@ -215,9 +180,7 @@ internal static partial class GameSimulation {
                 preActionReason: $"deterministic diagnostic harness：当前先在「{perception.Location.Name}」保持观察，等待 GM 结算托管玩家的探索结果。",
                 validatorFeedback: "diagnostic deterministic fallback bypassed validator"
             );
-            if (!submitResult.IsSuccess) {
-                return AteliaResult<TurnCollectionStatus>.Failure(submitResult.Error!);
-            }
+            if (!submitResult.IsSuccess) { return AteliaResult<TurnCollectionStatus>.Failure(submitResult.Error!); }
         }
 
         return DescribeCurrentTurnStatus(root);
@@ -243,13 +206,14 @@ internal static partial class GameSimulation {
     }
 
     private static int CountActiveDiagnosticLlmPlayers(DurableDict<string> root) {
-        return DiagnosticLlmPlayerTemplates.Count(template => {
-            if (!IsActiveActor(root, template.ActorId)) { return false; }
+        return DiagnosticLlmPlayerTemplates.Count(
+            template => {
+                if (!IsActiveActor(root, template.ActorId)) { return false; }
 
-            var actor = GetActor(root, template.ActorId);
-            return actor.TryGet(KindKey, out string? kind)
-                && string.Equals(kind, "llm-player", StringComparison.Ordinal);
-        });
+                var actor = GetActor(root, template.ActorId);
+                return IsInternallyDrivenPlayerActor(root, template.ActorId);
+            }
+        );
     }
 
     private static bool ActorExists(DurableDict<string> root, string actorId) {

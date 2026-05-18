@@ -18,9 +18,7 @@ internal static partial class GameSimulation {
         var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
             ? rawName
             : actorId;
-        var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-            ? rawKind
-            : "npc";
+        var actorKind = GetActorKind(actor);
         var content = BuildActorJournalContent(root, actorId, actorName, actorKind);
         return new ActorJournalExport(
             actorId,
@@ -139,9 +137,7 @@ internal static partial class GameSimulation {
             var actorName = context.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
                 ? rawName
                 : actorId;
-            var actorKind = context.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-                ? rawKind
-                : "npc";
+            var actorKind = GetActorKind(context);
             var locationName = context.TryGet(LocationNameKey, out string? rawLocationName) && !string.IsNullOrWhiteSpace(rawLocationName)
                 ? rawLocationName
                 : "未知地点";

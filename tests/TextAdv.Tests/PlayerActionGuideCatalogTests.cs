@@ -1,0 +1,135 @@
+using System.CommandLine;
+using System.Reflection;
+using Atelia.Completion.Tools;
+using Xunit;
+
+namespace Atelia.TextAdv.Tests;
+
+public sealed class PlayerActionGuideCatalogTests {
+    [Fact]
+    public void SharedReasoningRules_ShouldStayAlignedAcrossLlmManualAndValidatorSection() {
+        var sharedRules = PlayerActionGuideCatalog.GetSharedReasoningRuleLines();
+        var notebookRule = PlayerActionGuideCatalog.GetNotebookRuleLine();
+        var llmManual = PlayerActionGuideCatalog.BuildLlmPlayerManual();
+        var validatorSection = GameActionValidator.BuildSharedReasoningSectionForTests();
+
+        foreach (var rule in sharedRules) {
+            Assert.Contains(rule, llmManual);
+            Assert.Contains(rule, validatorSection);
+        }
+
+        Assert.Contains(notebookRule, llmManual);
+        Assert.Contains(notebookRule, validatorSection);
+    }
+
+    [Fact]
+    public void GameEntry_ReasonArgumentDescriptions_ShouldReuseSharedContract() {
+        var root = GameEntry.BuildGame();
+
+        AssertReasonArgumentDescription(
+            root,
+            "edit-memory-notebook",
+            PlayerActionGuideCatalog.GetEditMemoryNotebookReasonArgumentDescription()
+        );
+        AssertReasonArgumentDescription(
+            root,
+            "explore",
+            PlayerActionGuideCatalog.GetExploreReasonArgumentDescription()
+        );
+        AssertReasonArgumentDescription(
+            root,
+            "interact",
+            PlayerActionGuideCatalog.GetInteractReasonArgumentDescription()
+        );
+        AssertReasonArgumentDescription(
+            root,
+            "rest-a-while",
+            PlayerActionGuideCatalog.GetRestReasonArgumentDescription()
+        );
+    }
+
+    [Fact]
+    public void PlayerToolMetadata_ShouldReuseSharedTextConstants() {
+        var editMetadata = PlayerActionGuideCatalog.GetEditMemoryNotebookToolMetadata();
+        Assert.Equal(PlayerActionGuideText.EditMemoryNotebookToolDescription, editMetadata.Description);
+        Assert.Equal(PlayerActionGuideText.EditMemoryNotebookReasonToolParamDescription, editMetadata.Parameters[0].Description);
+        Assert.Equal(PlayerActionGuideText.EditScriptParameterDescription, editMetadata.Parameters[1].Description);
+
+        var restMetadata = PlayerActionGuideCatalog.GetRestAWhileToolMetadata();
+        Assert.Equal(PlayerActionGuideText.RestAWhileToolDescription, restMetadata.Description);
+        Assert.Equal(PlayerActionGuideText.RestReasonToolParamDescription, restMetadata.Parameters[0].Description);
+
+        var exploreMetadata = PlayerActionGuideCatalog.GetExploreToolMetadata();
+        Assert.Equal(PlayerActionGuideText.ExploreToolDescription, exploreMetadata.Description);
+        Assert.Equal(PlayerActionGuideText.ExploreReasonToolParamDescription, exploreMetadata.Parameters[0].Description);
+        Assert.Equal(PlayerActionGuideText.DirectionParameterDescription, exploreMetadata.Parameters[1].Description);
+        Assert.Equal(PlayerActionGuideText.FocusParameterDescription, exploreMetadata.Parameters[2].Description);
+
+        var interactMetadata = PlayerActionGuideCatalog.GetInteractToolMetadata();
+        Assert.Equal(PlayerActionGuideText.InteractToolDescription, interactMetadata.Description);
+        Assert.Equal(PlayerActionGuideText.InteractReasonToolParamDescription, interactMetadata.Parameters[0].Description);
+        Assert.Equal(PlayerActionGuideText.InteractionIdParameterDescription, interactMetadata.Parameters[1].Description);
+    }
+
+    [Fact]
+    public void LlmPlayerToolAttributes_ShouldReuseSharedTextConstants() {
+        var toolServiceType = typeof(LlmPlayerAgentDriver).GetNestedType("PlayerActionToolService", BindingFlags.NonPublic);
+        Assert.NotNull(toolServiceType);
+
+        AssertToolAndParams(
+            toolServiceType!,
+            "EditMemoryNotebookAsync",
+            PlayerActionGuideText.EditMemoryNotebookToolDescription,
+            ("reason", PlayerActionGuideText.EditMemoryNotebookReasonAttributeDescription),
+            ("edit_script", PlayerActionGuideText.EditScriptParameterDescription)
+        );
+        AssertToolAndParams(
+            toolServiceType!,
+            "RestAWhileAsync",
+            PlayerActionGuideText.RestAWhileToolDescription,
+            ("reason", PlayerActionGuideText.RestReasonAttributeDescription)
+        );
+        AssertToolAndParams(
+            toolServiceType!,
+            "ExploreAsync",
+            PlayerActionGuideText.ExploreToolDescription,
+            ("reason", PlayerActionGuideText.ExploreReasonAttributeDescription),
+            ("direction", PlayerActionGuideText.DirectionParameterDescription),
+            ("focus", PlayerActionGuideText.FocusParameterDescription)
+        );
+        AssertToolAndParams(
+            toolServiceType!,
+            "InteractAsync",
+            PlayerActionGuideText.InteractToolDescription,
+            ("reason", PlayerActionGuideText.InteractReasonAttributeDescription),
+            ("interaction_id", PlayerActionGuideText.InteractionIdParameterDescription)
+        );
+    }
+
+    private static void AssertReasonArgumentDescription(RootCommand root, string commandName, string expectedDescription) {
+        var command = Assert.Single(root.Subcommands, cmd => cmd.Name == commandName);
+        var reasonArgument = Assert.Single(command.Arguments, static arg => arg.Name == "reason");
+        Assert.Equal(expectedDescription, reasonArgument.Description);
+    }
+
+    private static void AssertToolAndParams(
+        Type toolServiceType,
+        string methodName,
+        string expectedToolDescription,
+        params (string ParameterName, string ExpectedDescription)[] expectedParameters
+    ) {
+        var method = toolServiceType.GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var toolAttribute = method!.GetCustomAttribute<ToolAttribute>();
+        Assert.NotNull(toolAttribute);
+        Assert.Equal(expectedToolDescription, toolAttribute!.Description);
+
+        foreach (var (parameterName, expectedDescription) in expectedParameters) {
+            var parameter = Assert.Single(method.GetParameters(), parameter => parameter.Name == parameterName);
+            var parameterAttribute = parameter.GetCustomAttribute<ToolParamAttribute>();
+            Assert.NotNull(parameterAttribute);
+            Assert.Equal(expectedDescription, parameterAttribute!.Description);
+        }
+    }
+}

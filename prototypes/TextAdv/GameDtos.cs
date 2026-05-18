@@ -40,7 +40,10 @@ internal sealed record InteractionPerception(
     string ActionKind,
     string VisibleLabel,
     string? PreconditionNote,
-    string? EffectNote
+    string? EffectNote,
+    int TurnCost,
+    string EffectScope,
+    IReadOnlyList<string> EffectSlots
 );
 
 internal sealed record TurnStep(
@@ -50,7 +53,9 @@ internal sealed record TurnStep(
     string? ActionPayload,
     string PreActionReason,
     string ValidatorFeedback,
-    bool EndsTurn
+    bool EndsTurn,
+    string? StepOutcomeSummary,
+    string StepOutcomeState
 );
 
 internal sealed record TurnActorStatus(
@@ -89,6 +94,11 @@ internal sealed record PerceptionBundle(
 );
 
 internal sealed record TurnResolution(
+    string Summary,
+    PerceptionBundle NextPerception
+);
+
+internal sealed record SmallActionResolution(
     string Summary,
     PerceptionBundle NextPerception
 );

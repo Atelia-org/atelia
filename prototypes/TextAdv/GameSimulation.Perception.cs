@@ -17,9 +17,7 @@ internal static partial class GameSimulation {
         var notebookSnapshot = GetNotebookSnapshot(root, actorId);
         var acceptedSteps = ReadAcceptedSteps(root, actorId);
         var locationId = actor.GetOrThrow<string>(LocationIdKey)!;
-        var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-            ? rawKind
-            : "npc";
+        var actorKind = GetActorKind(actor);
         var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
             ? rawName
             : actorId;
@@ -52,11 +50,10 @@ internal static partial class GameSimulation {
         var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
         var actorIds = EnumerateActiveActorIds(root).ToArray();
         var actorStatuses = EnumerateActiveActorIds(root)
-            .Select(actorId => {
+            .Select(
+            actorId => {
                 var actor = GetActor(root, actorId);
-                var kind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-                    ? rawKind
-                    : "npc";
+                var kind = GetActorKind(actor);
                 var name = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
                     ? rawName
                     : actorId;
@@ -79,7 +76,8 @@ internal static partial class GameSimulation {
                     actionKind,
                     actionSummary
                 );
-            })
+            }
+        )
             .ToArray();
 
         var allSubmitted = actorStatuses.Length > 0
@@ -90,13 +88,13 @@ internal static partial class GameSimulation {
         var barrierState = allSubmitted
             ? ReadyForGmBarrierState
             : largeActionByActor.Keys.Any()
-                ? CollectingLlmBarrierState
-                : CollectingTerminalBarrierState;
+                ? CollectingActionsBarrierState
+                : AwaitingActionsBarrierState;
         return new TurnCollectionStatus(
             game.GetOrThrow<int>(DayKey),
             game.GetOrThrow<int>(SlotKey),
             game.GetOrThrow<int>(SlotsPerDayKey),
-            string.IsNullOrWhiteSpace(pendingActorId) ? TerminalPlayerActorId : pendingActorId,
+            string.IsNullOrWhiteSpace(pendingActorId) ? actorIds.FirstOrDefault() ?? string.Empty : pendingActorId,
             barrierState,
             allSubmitted,
             actorStatuses
@@ -140,9 +138,15 @@ internal static partial class GameSimulation {
             $"target={interaction.TargetKind}:{interaction.TargetId}",
             $"actionKind={interaction.ActionKind}",
             $"visibleLabel={interaction.VisibleLabel}",
+            $"turnCost={interaction.TurnCost}",
+            $"effectScope={interaction.EffectScope}",
+            $"effectSlots={string.Join(",", interaction.EffectSlots)}",
         };
         if (!string.IsNullOrWhiteSpace(interaction.PreconditionNote)) {
             lines.Add($"preconditionNote={interaction.PreconditionNote}");
+        }
+        if (!string.IsNullOrWhiteSpace(interaction.EffectNote)) {
+            lines.Add($"effectNote={interaction.EffectNote}");
         }
 
         return string.Join("\n", lines);
@@ -184,14 +188,10 @@ internal static partial class GameSimulation {
         foreach (var itemId in items.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
             var item = items.GetOrThrow<DurableDict<string>>(itemId)!;
             if (item.TryGet(OwnerActorIdKey, out string? ownerActorId)
-                && !string.IsNullOrWhiteSpace(ownerActorId)) {
-                continue;
-            }
+                && !string.IsNullOrWhiteSpace(ownerActorId)) { continue; }
 
             if (!item.TryGet(LocationIdKey, out string? itemLocationId)
-                || !string.Equals(itemLocationId, locationId, StringComparison.Ordinal)) {
-                continue;
-            }
+                || !string.Equals(itemLocationId, locationId, StringComparison.Ordinal)) { continue; }
 
             var visibility = item.TryGet(VisibilityKey, out string? rawVisibility)
                 ? rawVisibility
@@ -217,9 +217,7 @@ internal static partial class GameSimulation {
         foreach (var itemId in items.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
             var item = items.GetOrThrow<DurableDict<string>>(itemId)!;
             if (!item.TryGet(OwnerActorIdKey, out string? ownerActorId)
-                || !string.Equals(ownerActorId, actorId, StringComparison.Ordinal)) {
-                continue;
-            }
+                || !string.Equals(ownerActorId, actorId, StringComparison.Ordinal)) { continue; }
 
             var visibility = item.TryGet(VisibilityKey, out string? rawVisibility)
                 ? rawVisibility
@@ -248,18 +246,14 @@ internal static partial class GameSimulation {
 
             var actor = actors.GetOrThrow<DurableDict<string>>(actorId)!;
             if (!actor.TryGet(LocationIdKey, out string? actorLocationId)
-                || !string.Equals(actorLocationId, locationId, StringComparison.Ordinal)) {
-                continue;
-            }
+                || !string.Equals(actorLocationId, locationId, StringComparison.Ordinal)) { continue; }
 
             var visibility = actor.TryGet(VisibilityKey, out string? rawVisibility)
                 ? rawVisibility
                 : VisibleValue;
             if (!IsVisibleToPlayer(visibility)) { continue; }
 
-            var kind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-                ? rawKind
-                : "npc";
+            var kind = GetActorKind(actor);
             var profileNote = actor.TryGet(ProfileNoteKey, out string? rawProfileNote)
                 ? rawProfileNote ?? string.Empty
                 : string.Empty;
@@ -287,9 +281,7 @@ internal static partial class GameSimulation {
             var actualTargetKind = interaction.GetOrThrow<string>(TargetKindKey)!;
             var actualTargetId = interaction.GetOrThrow<string>(TargetIdKey)!;
             if (!string.Equals(actualTargetKind, targetKind, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(actualTargetId, targetId, StringComparison.Ordinal)) {
-                continue;
-            }
+                || !string.Equals(actualTargetId, targetId, StringComparison.Ordinal)) { continue; }
 
             var visibility = interaction.TryGet(VisibilityKey, out string? rawVisibility)
                 ? rawVisibility
@@ -298,6 +290,13 @@ internal static partial class GameSimulation {
 
             _ = interaction.TryGet(PreconditionNoteKey, out string? preconditionNote);
             _ = interaction.TryGet(EffectNoteKey, out string? effectNote);
+            var turnCost = interaction.TryGet(TurnCostLedgerKey, out int rawTurnCost)
+                ? rawTurnCost
+                : 1;
+            var effectScope = interaction.TryGet(EffectScopeKey, out string? rawEffectScope)
+                && !string.IsNullOrWhiteSpace(rawEffectScope)
+                ? rawEffectScope
+                : RoomEffectScope;
             yield return new InteractionPerception(
                 interactionId,
                 actualTargetKind,
@@ -305,7 +304,10 @@ internal static partial class GameSimulation {
                 interaction.GetOrThrow<string>(ActionKindLedgerKey)!,
                 interaction.GetOrThrow<string>(VisibleLabelKey)!,
                 preconditionNote,
-                effectNote
+                effectNote,
+                turnCost,
+                effectScope,
+                ReadInteractionEffectSlots(interaction)
             );
         }
     }
@@ -350,22 +352,38 @@ internal static partial class GameSimulation {
         return acceptedSteps.Keys
             .OrderBy(static key => key, StringComparer.Ordinal)
             .Select(
-                key => {
-                    var step = acceptedSteps.GetOrThrow<DurableDict<string>>(key)!;
-                    var numberPart = key.Split('-').Last();
-                    var stepNumber = int.Parse(numberPart);
-                    _ = step.TryGet(ActionPayloadKey, out string? actionPayload);
-                    return new TurnStep(
-                        stepNumber,
-                        step.GetOrThrow<string>(ActionKindKey)!,
-                        step.GetOrThrow<string>(ActionSummaryKey)!,
-                        actionPayload,
-                        step.GetOrThrow<string>(PreActionReasonKey)!,
-                        step.GetOrThrow<string>(ValidatorFeedbackKey)!,
-                        step.GetOrThrow<bool>(EndsTurnKey)
-                    );
-                }
-            )
+            key => {
+                var step = acceptedSteps.GetOrThrow<DurableDict<string>>(key)!;
+                var numberPart = key.Split('-').Last();
+                var stepNumber = int.Parse(numberPart);
+                _ = step.TryGet(ActionPayloadKey, out string? actionPayload);
+                return new TurnStep(
+                    stepNumber,
+                    step.GetOrThrow<string>(ActionKindKey)!,
+                    step.GetOrThrow<string>(ActionSummaryKey)!,
+                    actionPayload,
+                    step.GetOrThrow<string>(PreActionReasonKey)!,
+                    step.GetOrThrow<string>(ValidatorFeedbackKey)!,
+                    step.GetOrThrow<bool>(EndsTurnKey),
+                    step.TryGet(StepOutcomeSummaryKey, out string? stepOutcomeSummary) ? stepOutcomeSummary : null,
+                    step.TryGet(StepOutcomeStateKey, out string? stepOutcomeState) && !string.IsNullOrWhiteSpace(stepOutcomeState)
+                        ? stepOutcomeState
+                        : (step.GetOrThrow<bool>(EndsTurnKey) ? StepOutcomeCompleted : StepOutcomeCommittedNow)
+                );
+            }
+        )
             .ToArray();
+    }
+
+    private static IReadOnlyList<string> ReadInteractionEffectSlots(DurableDict<string> interaction) {
+        if (!interaction.TryGet(EffectSlotsKey, out DurableDict<string>? effectSlots)
+            || effectSlots is null) { return [TurnEndEffectSlot]; }
+
+        var orderedSlots = effectSlots.Keys
+            .OrderBy(static key => key, StringComparer.Ordinal)
+            .Select(key => effectSlots.GetOrThrow<string>(key)!)
+            .Where(static slot => !string.IsNullOrWhiteSpace(slot))
+            .ToArray();
+        return orderedSlots.Length == 0 ? [TurnEndEffectSlot] : orderedSlots;
     }
 }

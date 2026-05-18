@@ -30,6 +30,9 @@ internal sealed class GmWorldEditService {
     private const string VisibleLabelKey = "visibleLabel";
     private const string PreconditionNoteKey = "preconditionNote";
     private const string EffectNoteKey = "effectNote";
+    private const string TurnCostLedgerKey = "turnCost";
+    private const string EffectScopeKey = "effectScope";
+    private const string EffectSlotsKey = "effectSlots";
     private const string LastResolutionByActorKey = "lastResolutionByActor";
     private const string VisibleValue = "visible";
 
@@ -79,14 +82,10 @@ internal sealed class GmWorldEditService {
         reverseDirection = string.IsNullOrWhiteSpace(reverseDirection) ? null : reverseDirection.Trim();
 
         var from = TryGetLocation(fromLocationId);
-        if (!from.TryGetValue(out var fromLocation) || fromLocation is null) {
-            return AteliaResult<string>.Failure(from.Error!);
-        }
+        if (!from.TryGetValue(out var fromLocation) || fromLocation is null) { return AteliaResult<string>.Failure(from.Error!); }
 
         var to = TryGetLocation(toLocationId);
-        if (!to.TryGetValue(out var toLocation) || toLocation is null) {
-            return AteliaResult<string>.Failure(to.Error!);
-        }
+        if (!to.TryGetValue(out var toLocation) || toLocation is null) { return AteliaResult<string>.Failure(to.Error!); }
 
         LinkOneWay(fromLocation, direction, toLocationId);
         if (reverseDirection is not null) {
@@ -103,14 +102,10 @@ internal sealed class GmWorldEditService {
         locationId = NormalizeRequired(locationId, nameof(locationId));
 
         var location = TryGetLocation(locationId);
-        if (!location.IsSuccess) {
-            return AteliaResult<string>.Failure(location.Error!);
-        }
+        if (!location.IsSuccess) { return AteliaResult<string>.Failure(location.Error!); }
 
         var actor = TryGetActor(actorId);
-        if (!actor.IsSuccess) {
-            return AteliaResult<string>.Failure(actor.Error!);
-        }
+        if (!actor.IsSuccess) { return AteliaResult<string>.Failure(actor.Error!); }
 
         actor.Value!.Upsert(LocationIdKey, locationId);
         return $"{actorId}->{locationId}";
@@ -157,9 +152,7 @@ internal sealed class GmWorldEditService {
         actorId = NormalizeRequired(actorId, nameof(actorId));
 
         var itemResult = TryGetItem(itemId);
-        if (!itemResult.TryGetValue(out var item) || item is null) {
-            return AteliaResult<string>.Failure(itemResult.Error!);
-        }
+        if (!itemResult.TryGetValue(out var item) || item is null) { return AteliaResult<string>.Failure(itemResult.Error!); }
 
         var actorResult = ValidateTargetExists("actor", actorId);
         if (!actorResult.IsSuccess) { return AteliaResult<string>.Failure(actorResult.Error!); }
@@ -177,9 +170,7 @@ internal sealed class GmWorldEditService {
         locationId = NormalizeRequired(locationId, nameof(locationId));
 
         var itemResult = TryGetItem(itemId);
-        if (!itemResult.TryGetValue(out var item) || item is null) {
-            return AteliaResult<string>.Failure(itemResult.Error!);
-        }
+        if (!itemResult.TryGetValue(out var item) || item is null) { return AteliaResult<string>.Failure(itemResult.Error!); }
 
         var location = TryGetLocation(locationId);
         if (!location.IsSuccess) { return AteliaResult<string>.Failure(location.Error!); }
@@ -230,7 +221,10 @@ internal sealed class GmWorldEditService {
         string actionKind,
         string visibleLabel,
         string preconditionNote,
-        string effectNote
+        string effectNote,
+        int turnCost,
+        string effectScope,
+        string effectSlots
     ) {
         interactionId = NormalizeRequired(interactionId, nameof(interactionId));
         targetRef = NormalizeRequired(targetRef, nameof(targetRef));
@@ -238,6 +232,8 @@ internal sealed class GmWorldEditService {
         visibleLabel = NormalizeRequired(visibleLabel, nameof(visibleLabel));
         preconditionNote = NormalizeRequired(preconditionNote, nameof(preconditionNote));
         effectNote = NormalizeRequired(effectNote, nameof(effectNote));
+        effectScope = NormalizeRequired(effectScope, nameof(effectScope)).ToLowerInvariant();
+        effectSlots = NormalizeRequired(effectSlots, nameof(effectSlots));
 
         if (!TryParseTargetRef(targetRef, out var targetKind, out var targetId)) {
             return AteliaResult<string>.Failure(
@@ -250,6 +246,66 @@ internal sealed class GmWorldEditService {
 
         var targetResult = ValidateTargetExists(targetKind, targetId);
         if (!targetResult.IsSuccess) { return AteliaResult<string>.Failure(targetResult.Error!); }
+
+        var effectSlotList = ParseEffectSlots(effectSlots);
+        if (turnCost < 0) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.InvalidTurnCost",
+                    $"turn_cost '{turnCost}' 无效；必须是 0 或正整数。"
+                )
+            );
+        }
+
+        if (!IsAllowedEffectScope(effectScope)) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.InvalidEffectScope",
+                    $"effect_scope '{effectScope}' 无效；允许 self / room / adjacent-room / scene。"
+                )
+            );
+        }
+
+        if (effectSlotList.Count == 0) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.InvalidEffectSlots",
+                    "effect_slots 不能为空；至少应包含 immediate / turn-end / per-turn-end / on-completion 之一。"
+                )
+            );
+        }
+
+        if (effectSlotList.Any(static slot => !IsAllowedEffectSlot(slot))) {
+            var invalid = string.Join(", ", effectSlotList.Where(static slot => !IsAllowedEffectSlot(slot)));
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.InvalidEffectSlots",
+                    $"存在无效 effect_slot: {invalid}。允许 immediate / turn-end / per-turn-end / on-completion。"
+                )
+            );
+        }
+
+        if (effectSlotList.Contains(GameSimulation.ImmediateEffectSlot, StringComparer.Ordinal)
+            && !string.Equals(effectScope, GameSimulation.SelfEffectScope, StringComparison.Ordinal)) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.ImmediateScopeMismatch",
+                    "只有 effect_scope=self 的交互才能包含 immediate 槽位。"
+                )
+            );
+        }
+
+        if (turnCost == 0 && effectSlotList.Any(
+            static slot => string.Equals(slot, GameSimulation.PerTurnEndEffectSlot, StringComparison.Ordinal)
+                    || string.Equals(slot, GameSimulation.OnCompletionEffectSlot, StringComparison.Ordinal)
+        )) {
+            return AteliaResult<string>.Failure(
+                new TextAdvError(
+                    "TextAdv.Gm.ZeroTurnCompletionMismatch",
+                    "turn_cost=0 的交互不能使用 per-turn-end 或 on-completion 槽位。"
+                )
+            );
+        }
 
         var interactions = GetOrCreateWorldDict(InteractionsKey);
         if (interactions.TryGet(interactionId, out DurableDict<string>? _)) {
@@ -268,6 +324,13 @@ internal sealed class GmWorldEditService {
         interaction.Upsert(VisibleLabelKey, visibleLabel);
         interaction.Upsert(PreconditionNoteKey, preconditionNote);
         interaction.Upsert(EffectNoteKey, effectNote);
+        interaction.Upsert(TurnCostLedgerKey, turnCost);
+        interaction.Upsert(EffectScopeKey, effectScope);
+        var effectSlotDict = _root.Revision.CreateDict<string>();
+        for (var i = 0; i < effectSlotList.Count; i++) {
+            effectSlotDict.Upsert($"slot-{i:D2}", effectSlotList[i]);
+        }
+        interaction.Upsert(EffectSlotsKey, effectSlotDict);
         interaction.Upsert(VisibilityKey, VisibleValue);
         interactions.Upsert(interactionId, interaction);
 
@@ -312,9 +375,7 @@ internal sealed class GmWorldEditService {
         summary = NormalizeRequired(summary, nameof(summary));
 
         var actor = TryGetActor(actorId);
-        if (!actor.IsSuccess) {
-            return AteliaResult<string>.Failure(actor.Error!);
-        }
+        if (!actor.IsSuccess) { return AteliaResult<string>.Failure(actor.Error!); }
 
         var lastResolutionByActor = GetOrCreateGameDict(LastResolutionByActorKey);
         lastResolutionByActor.Upsert(actorId, summary);
@@ -471,10 +532,26 @@ internal sealed class GmWorldEditService {
         [ToolParam("玩家可见的交互标签，例如“检查贝壳边缘”。")] string visible_label,
         [ToolParam("基础前置条件说明；若没有特别条件，写 none。")] string precondition_note,
         [ToolParam("交互效果的简短 GM note；首版可用自然语言。")] string effect_note,
+        [ToolParam("该交互消耗几个回合。0=顺手动作，1=结束本回合，N=进入持续工作。")] int turn_cost,
+        [ToolParam("效果触达范围：self / room / adjacent-room / scene。")] string effect_scope,
+        [ToolParam("效果槽位，使用逗号分隔：immediate,turn-end,per-turn-end,on-completion。")] string effect_slots,
         CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
-        return ToToolResult(AddInteraction(interaction_id, target_ref, action_kind, visible_label, precondition_note, effect_note), "added interaction");
+        return ToToolResult(
+            AddInteraction(
+                interaction_id,
+                target_ref,
+                action_kind,
+                visible_label,
+                precondition_note,
+                effect_note,
+                turn_cost,
+                effect_scope,
+                effect_slots
+            ),
+            "added interaction"
+        );
     }
 
     [Tool("gm_set_visibility", "设置 Item 或 Actor 的可见性。visibility 只能是 visible / hidden / discovered。")]
@@ -627,6 +704,25 @@ internal sealed class GmWorldEditService {
         => string.Equals(visibility, "visible", StringComparison.OrdinalIgnoreCase)
             || string.Equals(visibility, "hidden", StringComparison.OrdinalIgnoreCase)
             || string.Equals(visibility, "discovered", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAllowedEffectScope(string effectScope)
+        => string.Equals(effectScope, GameSimulation.SelfEffectScope, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(effectScope, GameSimulation.RoomEffectScope, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(effectScope, GameSimulation.AdjacentRoomEffectScope, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(effectScope, GameSimulation.SceneEffectScope, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAllowedEffectSlot(string effectSlot)
+        => string.Equals(effectSlot, GameSimulation.ImmediateEffectSlot, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(effectSlot, GameSimulation.TurnEndEffectSlot, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(effectSlot, GameSimulation.PerTurnEndEffectSlot, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(effectSlot, GameSimulation.OnCompletionEffectSlot, StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<string> ParseEffectSlots(string effectSlots)
+        => effectSlots
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(static slot => slot.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
     private void UpsertActorLocation(string actorId, string locationId) {
         var actors = GetOrCreateWorldDict(ActorsKey);

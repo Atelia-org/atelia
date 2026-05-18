@@ -13,7 +13,7 @@ internal static partial class GameSimulation {
     private const string InitialLocationKey = "initialLocation";
     private const string ActiveActorIdsKey = "activeActorIds";
     private const string MemoryNotebookKey = "memoryNotebook";
-    private const string TerminalPlayerActorId = "player";
+    internal const string TerminalPlayerActorId = "player";
     private const string DayKey = "day";
     private const string SlotKey = "slot";
     private const string SlotsPerDayKey = "slotsPerDay";
@@ -21,6 +21,7 @@ internal static partial class GameSimulation {
     private const string TurnHistoryKey = "turnHistory";
     private const string CompletedTurnCountKey = "completedTurnCount";
     private const string LastResolutionByActorKey = "lastResolutionByActor";
+    private const string TerminalHelpModeKey = "terminalHelpMode";
     private const string StartDayKey = "startDay";
     private const string StartSlotKey = "startSlot";
     private const string StartLocationIdKey = "startLocationId";
@@ -28,14 +29,15 @@ internal static partial class GameSimulation {
     private const string NextStepNumberKey = "nextStepNumber";
     private const string AcceptedStepsByActorKey = "acceptedStepsByActor";
     private const string LargeActionByActorKey = "largeActionByActor";
+    private const string PendingTurnEndEffectsByActorKey = "pendingTurnEndEffectsByActor";
     private const string TurnNumberKey = "turnNumber";
     private const string ResolutionSummaryKey = "resolutionSummary";
     private const string EndingNotebookKey = "endingNotebook";
     private const string EndDayKey = "endDay";
     private const string EndSlotKey = "endSlot";
     private const string ActorTurnContextByActorKey = "actorTurnContextByActor";
-    private const string CollectingTerminalBarrierState = "collecting-terminal";
-    private const string CollectingLlmBarrierState = "collecting-llm";
+    private const string AwaitingActionsBarrierState = "awaiting-actions";
+    private const string CollectingActionsBarrierState = "collecting-actions";
     private const string ReadyForGmBarrierState = "ready-for-gm";
     private const string ActionKindKey = "actionKind";
     private const string ActionSummaryKey = "actionSummary";
@@ -46,6 +48,7 @@ internal static partial class GameSimulation {
     private const string SourceStepNumberKey = "sourceStepNumber";
     private const string NameKey = "name";
     private const string KindKey = "kind";
+    private const string ControllerKindKey = "controllerKind";
     private const string DescriptionKey = "description";
     private const string ProfileNoteKey = "profileNote";
     private const string ActiveKey = "active";
@@ -60,9 +63,80 @@ internal static partial class GameSimulation {
     private const string VisibleLabelKey = "visibleLabel";
     private const string PreconditionNoteKey = "preconditionNote";
     private const string EffectNoteKey = "effectNote";
+    private const string TurnCostLedgerKey = "turnCost";
+    private const string EffectScopeKey = "effectScope";
+    private const string EffectSlotsKey = "effectSlots";
+    private const string StepOutcomeSummaryKey = "stepOutcomeSummary";
+    private const string StepOutcomeStateKey = "stepOutcomeState";
+    private const string WorkingByActorKey = "workingByActor";
+    private const string ActorIdKey = "actorId";
+    private const string EffectSlotKey = "effectSlot";
+    private const string RemainingTurnsKey = "remainingTurns";
     private const string VisibleValue = "visible";
     private const string DiscoveredValue = "discovered";
     private const int DefaultSlotsPerDay = 4;
+
+    internal const string ImmediateEffectSlot = "immediate";
+    internal const string TurnEndEffectSlot = "turn-end";
+    internal const string PerTurnEndEffectSlot = "per-turn-end";
+    internal const string OnCompletionEffectSlot = "on-completion";
+    internal const string SelfEffectScope = "self";
+    internal const string RoomEffectScope = "room";
+    internal const string AdjacentRoomEffectScope = "adjacent-room";
+    internal const string SceneEffectScope = "scene";
+    internal const string StepOutcomeCommittedNow = "committed-now";
+    internal const string StepOutcomePendingTurnEnd = "pending-turn-end";
+    internal const string StepOutcomeWorking = "working";
+    internal const string StepOutcomeCompleted = "completed";
+    internal const string PlayerActorKind = "player";
+    internal const string NpcActorKind = "npc";
+    internal const string ExternalTerminalControllerKind = "external-terminal";
+    internal const string InternalLlmControllerKind = "internal-llm";
+
+    private sealed record PendingTurnEndEffect(
+        string EffectId,
+        string ActorId,
+        string ActionKind,
+        string ActionSummary,
+        string? ActionPayload,
+        string PreActionReason,
+        string ValidatorFeedback,
+        string EffectSlot,
+        int SourceStepNumber
+    );
+
+    private sealed record WorkOrder(
+        string ActorId,
+        string ActionKind,
+        string ActionSummary,
+        string? ActionPayload,
+        string PreActionReason,
+        string ValidatorFeedback,
+        int RemainingTurns
+    );
+
+    private sealed record TurnResolutionPrelude(
+        EffectBatchResolution PendingTurnEndEffects,
+        EffectBatchResolution BackgroundWorkingEffects,
+        int PreviousDay,
+        int PreviousSlot,
+        int SlotsPerDay
+    );
+
+    private sealed record ActorEffectSummary(
+        string ActorId,
+        string Summary
+    );
+
+    private sealed record EffectResolution(
+        string ActorFacingSummary,
+        string? TerminalVisibleSummary
+    );
+
+    private sealed record EffectBatchResolution(
+        string TerminalVisibleSummary,
+        IReadOnlyList<ActorEffectSummary> ActorFacingSummaries
+    );
 
     private sealed record LargeActionIntent(
         string ActorId,
@@ -80,11 +154,6 @@ internal static partial class GameSimulation {
         PreserveExistingAndFillMissing
     }
 
-    private enum CollectedTurnResolutionMode {
-        RealAgentWithDeterministicFallback,
-        DeterministicOnly
-    }
-
     internal static DurableDict<string> CreateNewWorld(Repository repo) {
         var revResult = repo.GetOrCreateBranch("main");
         var rev = revResult.Value!;
@@ -100,6 +169,7 @@ internal static partial class GameSimulation {
         var notebook = CreateNotebookText(rev, string.Empty);
         var turnHistory = rev.CreateDict<string>();
         var lastResolutionByActor = rev.CreateDict<string>();
+        var workingByActor = rev.CreateDict<string>();
 
         var beachId = "beach";
         var forestId = "forest";
@@ -121,11 +191,12 @@ internal static partial class GameSimulation {
 
         var terminalActor = CreateActor(
             rev,
-            kind: "terminal-player",
+            kind: PlayerActorKind,
             name: "你",
             profileNote: "通过终端命令操作的玩家角色。",
             locationId: beachId,
-            active: true
+            active: true,
+            controllerKind: ExternalTerminalControllerKind
         );
         terminalActor.Upsert(MemoryNotebookKey, notebook);
         actors.Upsert(TerminalPlayerActorId, terminalActor);
@@ -144,6 +215,8 @@ internal static partial class GameSimulation {
         game.Upsert(CompletedTurnCountKey, 0);
         game.Upsert(TurnHistoryKey, turnHistory);
         game.Upsert(LastResolutionByActorKey, lastResolutionByActor);
+        game.Upsert(TerminalHelpModeKey, TerminalHelpMode.Off.ToString());
+        game.Upsert(WorkingByActorKey, workingByActor);
         game.Upsert(CurrentTurnKey, CreateCurrentTurnState(rev, day: 1, slot: 1, beachId, string.Empty));
 
         root.Upsert(WorldKey, world);
@@ -157,9 +230,7 @@ internal static partial class GameSimulation {
         if (game.TryGet(LastResolutionByActorKey, out DurableDict<string>? lastResolutionByActor)
             && lastResolutionByActor is not null
             && lastResolutionByActor.TryGet(actorId, out string? actorResolution)
-            && !string.IsNullOrWhiteSpace(actorResolution)) {
-            return actorResolution;
-        }
+            && !string.IsNullOrWhiteSpace(actorResolution)) { return actorResolution; }
 
         return null;
     }
@@ -172,26 +243,44 @@ internal static partial class GameSimulation {
     private static DurableDict<string> GetOrCreateLastResolutionByActor(DurableDict<string> root) {
         var game = GetGame(root);
         if (game.TryGet(LastResolutionByActorKey, out DurableDict<string>? lastResolutionByActor)
-            && lastResolutionByActor is not null) {
-            return lastResolutionByActor;
-        }
+            && lastResolutionByActor is not null) { return lastResolutionByActor; }
 
         lastResolutionByActor = root.Revision.CreateDict<string>();
         game.Upsert(LastResolutionByActorKey, lastResolutionByActor);
         return lastResolutionByActor;
     }
 
+    private static void SetLastResolutionForActor(DurableDict<string> root, string actorId, string summary) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        summary = NormalizeRequired(summary, nameof(summary));
+        var lastResolutionByActor = GetOrCreateLastResolutionByActor(root);
+        lastResolutionByActor.Upsert(actorId, summary);
+    }
+
     private static DurableDict<string> GetGame(DurableDict<string> root)
         => root.GetOrThrow<DurableDict<string>>(GameKey)!;
+
+    internal static TerminalHelpMode GetTerminalHelpMode(DurableDict<string> root) {
+        var game = GetGame(root);
+        if (game.TryGet(TerminalHelpModeKey, out string? rawMode)
+            && Enum.TryParse<TerminalHelpMode>(rawMode, ignoreCase: true, out var parsedMode)) {
+            return parsedMode;
+        }
+
+        return TerminalHelpMode.Off;
+    }
+
+    internal static void SetTerminalHelpMode(DurableDict<string> root, TerminalHelpMode mode) {
+        var game = GetGame(root);
+        game.Upsert(TerminalHelpModeKey, mode.ToString());
+    }
 
     private static DurableText GetNotebook(DurableDict<string> root)
         => GetNotebook(root, TerminalPlayerActorId);
 
     private static DurableText GetNotebook(DurableDict<string> root, string actorId) {
         var actor = GetActor(root, actorId);
-        if (actor.TryGet(MemoryNotebookKey, out DurableText? notebook) && notebook is not null) {
-            return notebook;
-        }
+        if (actor.TryGet(MemoryNotebookKey, out DurableText? notebook) && notebook is not null) { return notebook; }
 
         notebook = CreateNotebookText(root.Revision, string.Empty);
         actor.Upsert(MemoryNotebookKey, notebook);
@@ -208,9 +297,48 @@ internal static partial class GameSimulation {
         return actors.GetOrThrow<DurableDict<string>>(actorId)!;
     }
 
+    private static string GetActorName(DurableDict<string> root, string actorId) {
+        var actor = GetActor(root, actorId);
+        return actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
+            ? rawName
+            : actorId;
+    }
+
+    private static string GetActorKind(DurableDict<string> actor) {
+        return actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
+            ? rawKind
+            : NpcActorKind;
+    }
+
+    private static string GetActorKind(DurableDict<string> root, string actorId)
+        => GetActorKind(GetActor(root, actorId));
+
+    private static string? GetActorControllerKind(DurableDict<string> actor) {
+        if (!actor.TryGet(ControllerKindKey, out string? rawControllerKind)
+            || string.IsNullOrWhiteSpace(rawControllerKind)) { return null; }
+
+        return rawControllerKind;
+    }
+
+    private static bool IsInternallyDrivenPlayerActor(DurableDict<string> root, string actorId) {
+        var actor = GetActor(root, actorId);
+        return string.Equals(GetActorKind(actor), PlayerActorKind, StringComparison.Ordinal)
+            && string.Equals(GetActorControllerKind(actor), InternalLlmControllerKind, StringComparison.Ordinal);
+    }
+
     private static DurableDict<string> GetCurrentTurn(DurableDict<string> root) {
         var game = GetGame(root);
         return game.GetOrThrow<DurableDict<string>>(CurrentTurnKey)!;
+    }
+
+    private static DurableDict<string> GetOrCreateWorkingByActor(DurableDict<string> root) {
+        var game = GetGame(root);
+        if (game.TryGet(WorkingByActorKey, out DurableDict<string>? workingByActor)
+            && workingByActor is not null) { return workingByActor; }
+
+        workingByActor = root.Revision.CreateDict<string>();
+        game.Upsert(WorkingByActorKey, workingByActor);
+        return workingByActor;
     }
 
     private static DurableDict<string> GetLocation(DurableDict<string> root, string locationId) {
@@ -257,6 +385,7 @@ internal static partial class GameSimulation {
         var currentTurn = rev.CreateDict<string>();
         var acceptedStepsByActor = rev.CreateDict<string>();
         var largeActionByActor = rev.CreateDict<string>();
+        var pendingTurnEndEffectsByActor = rev.CreateDict<string>();
 
         currentTurn.Upsert(StartDayKey, day);
         currentTurn.Upsert(StartSlotKey, slot);
@@ -265,6 +394,7 @@ internal static partial class GameSimulation {
         currentTurn.Upsert(NextStepNumberKey, 1);
         currentTurn.Upsert(AcceptedStepsByActorKey, acceptedStepsByActor);
         currentTurn.Upsert(LargeActionByActorKey, largeActionByActor);
+        currentTurn.Upsert(PendingTurnEndEffectsByActorKey, pendingTurnEndEffectsByActor);
         acceptedStepsByActor.Upsert(TerminalPlayerActorId, rev.CreateDict<string>());
 
         return currentTurn;
@@ -280,6 +410,23 @@ internal static partial class GameSimulation {
         }
     }
 
+    private static IEnumerable<string> EnumerateTrackedActorIds(DurableDict<string> root) {
+        var game = GetGame(root);
+        var activeActorIds = game.GetOrThrow<DurableDict<string>>(ActiveActorIdsKey)!;
+        foreach (var actorId in activeActorIds.Keys.OrderBy(static key => key, StringComparer.Ordinal)) {
+            yield return actorId;
+        }
+    }
+
+    private static bool HasAnyActiveActor(DurableDict<string> root)
+        => EnumerateActiveActorIds(root).Any();
+
+    private static void SetActorActiveState(DurableDict<string> root, string actorId, bool active) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        var actor = GetActor(root, actorId);
+        actor.Upsert(ActiveKey, active);
+    }
+
     private static DurableDict<string>? GetAcceptedStepsForActor(
         DurableDict<string> root,
         string actorId,
@@ -289,9 +436,7 @@ internal static partial class GameSimulation {
         var currentTurn = GetCurrentTurn(root);
         var acceptedStepsByActor = currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsByActorKey)!;
         if (acceptedStepsByActor.TryGet(actorId, out DurableDict<string>? acceptedSteps)
-            && acceptedSteps is not null) {
-            return acceptedSteps;
-        }
+            && acceptedSteps is not null) { return acceptedSteps; }
 
         if (!createIfMissing) { return null; }
 
@@ -314,10 +459,15 @@ internal static partial class GameSimulation {
         string name,
         string profileNote,
         string locationId,
-        bool active
+        bool active,
+        string? controllerKind = null
     ) {
         var actor = rev.CreateDict<string>();
         actor.Upsert(KindKey, kind);
+        if (!string.IsNullOrWhiteSpace(controllerKind)) {
+            actor.Upsert(ControllerKindKey, controllerKind!.Trim());
+        }
+
         actor.Upsert(NameKey, name);
         actor.Upsert(ProfileNoteKey, profileNote);
         actor.Upsert(LocationIdKey, locationId);
@@ -348,5 +498,48 @@ internal static partial class GameSimulation {
     private static string NormalizeRequired(string value, string parameterName) {
         if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException("Value cannot be null or whitespace.", parameterName); }
         return value.Trim();
+    }
+
+    internal static bool InteractionConsumesTurn(InteractionPerception interaction) {
+        ArgumentNullException.ThrowIfNull(interaction);
+        return interaction.TurnCost > 0;
+    }
+
+    internal static bool SupportsImmediateSelfInteraction(InteractionPerception interaction) {
+        ArgumentNullException.ThrowIfNull(interaction);
+        return interaction.TurnCost == 0
+            && string.Equals(interaction.EffectScope, SelfEffectScope, StringComparison.Ordinal)
+            && interaction.EffectSlots.Count > 0
+            && interaction.EffectSlots.All(static slot => string.Equals(slot, ImmediateEffectSlot, StringComparison.Ordinal));
+    }
+
+    internal static bool SupportsDeferredTurnEndInteraction(InteractionPerception interaction) {
+        ArgumentNullException.ThrowIfNull(interaction);
+        return interaction.TurnCost == 0
+            && interaction.EffectSlots.Count > 0
+            && interaction.EffectSlots.All(static slot => string.Equals(slot, TurnEndEffectSlot, StringComparison.Ordinal));
+    }
+
+    internal static bool SupportsWorkingInteraction(InteractionPerception interaction) {
+        ArgumentNullException.ThrowIfNull(interaction);
+        return interaction.TurnCost > 1;
+    }
+
+    internal static string DescribeInteractionTurnCostForPlayer(InteractionPerception interaction) {
+        ArgumentNullException.ThrowIfNull(interaction);
+
+        if (interaction.TurnCost <= 0) { return "顺手可做"; }
+        if (interaction.TurnCost == 1) { return "会占用这一回合"; }
+        return $"会持续忙碌 {interaction.TurnCost} 个回合";
+    }
+
+    internal static string DescribeInteractionExecutionClass(InteractionPerception interaction) {
+        ArgumentNullException.ThrowIfNull(interaction);
+
+        if (SupportsImmediateSelfInteraction(interaction)) { return "immediate-self"; }
+        if (SupportsDeferredTurnEndInteraction(interaction)) { return "deferred-turn-end"; }
+        if (SupportsWorkingInteraction(interaction)) { return "working-start"; }
+        if (interaction.TurnCost == 0) { return "unsupported-zero-turn"; }
+        return "turn-ending";
     }
 }

@@ -19,7 +19,7 @@ internal static class GameActionValidator {
     private static readonly ImmutableArray<ToolDefinition> s_tools = [
         new ToolDefinition(
             Name: PointOutIssuesToolName,
-            Description: "指出不合理之处。仅当你发现这一步动作或其事前推理不 grounded、有跳步、偷用输入外记忆、或把猜测写成确定事实时调用。若动作合理，请不要调用任何工具。",
+            Description: BuildPointOutIssuesToolDescription(),
             Parameters: [
                 new ToolParamSpec(
                     name: "problem_summary",
@@ -135,29 +135,30 @@ internal static class GameActionValidator {
     }
 
     private static string BuildSystemPrompt() {
-        return """
-你是 TextAdv 的专用动作验证器。
-
-你的任务不是判断玩家是否猜中世界真相，而是判断这一步动作前提交的“事前推理（pre-action reason）”是否 grounded 于给定证据，并且是否足以支持候选动作。
-
-判定原则：
-1. 只能依据输入里给出的当前可见信息、上回合结算结果、当前 Memory-Notebook 快照、以及当前回合已接受步骤。
-2. 上回合结算结果（[上回合结算结果]）中描述的世界事实，视为已确立的世界状态，玩家可以在事前推理中直接引用。但不能把结算结果中未出现的内容说成已发生。
-3. 如果玩家把猜测当成确定事实、引用了输入中不存在的记忆、或者出现明显跳步，就应拒绝。
-4. 允许玩家在 notebook 中记录假说、不确定事项、待确认线索，但不能把未给出的事实写成已经确认。
-5. 这段事前推理应体现"先推理、后行动"，而不是动作做完后的事后合理化。
-6. 标准是"防君子不防小人"的 groundedness 检查，不追求吹毛求疵。
-7. 对于 notebook 编辑，输入会额外提供当前 notebook 的块视图、TextEditScript，以及宿主侧预测出的编辑后块视图；你应重点检查 after-view 中新增、修改、删除的内容是否 grounded。
-8. 对于 large/explore，玩家可以探索当前尚未列为出口的方向；这表示"试探未知"，不要求该方向已经出现在 Exits 中。你只需要检查玩家是否把未知方向说成已确认事实，或是否声称已有输入中不存在的地点/线索。
-9. 对于 large/interact，玩家必须选择当前 VisibleInteractions 中存在的 interaction，并且事前推理应依据该交互的 visibleLabel、target 和当前可见信息；不能凭空假定 interaction 执行后的隐藏结果。
-
-请把工具调用当作填写裁决表：
-- 若你认为这一步动作合理，请不要调用任何工具。
-- 若你认为这一步动作不合理，请调用一次或多次 point_out_issues 工具，逐条指出问题。
-- 当你调用工具时，普通文本可以留空；不要再输出“好的我来仅用 JSON 回答”之类的多余前后缀。
-
-重要：没有工具调用，就表示验证通过。
-""";
+        var sb = new StringBuilder();
+        sb.AppendLine("你是 TextAdv 的专用动作验证器。");
+        sb.AppendLine();
+        sb.AppendLine("你的任务不是判断玩家是否猜中世界真相，而是判断这一步动作前提交的“事前推理（pre-action reason）”是否 grounded 于给定证据，并且是否足以支持候选动作。");
+        sb.AppendLine();
+        sb.AppendLine("[共享事前推理要求]");
+        sb.AppendLine(PlayerActionGuideCatalog.BuildValidatorSharedReasoningSection());
+        sb.AppendLine();
+        sb.AppendLine("[validator 额外裁决规则]");
+        sb.AppendLine("1. 只能依据输入里给出的当前可见信息、上回合结算结果、当前 Memory-Notebook 快照、以及当前回合已接受步骤。");
+        sb.AppendLine("2. 上回合结算结果（[上回合结算结果]）中描述的世界事实，视为已确立的世界状态，玩家可以在事前推理中直接引用。但不能把结算结果中未出现的内容说成已发生。");
+        sb.AppendLine("3. 标准是“防君子不防小人”的 groundedness 检查，不追求吹毛求疵。");
+        sb.AppendLine("4. 对于 notebook 编辑，输入会额外提供当前 notebook 的块视图、TextEditScript，以及宿主侧预测出的编辑后块视图；你应重点检查 after-view 中新增、修改、删除的内容是否 grounded。");
+        sb.AppendLine("5. 对于 large/explore，玩家可以探索当前尚未列为出口的方向；这表示“试探未知”，不要求该方向已经出现在 Exits 中。你只需要检查玩家是否把未知方向说成已确认事实，或是否声称已有输入中不存在的地点/线索。");
+        sb.AppendLine("6. 对于 small/interact 或 large/interact，玩家必须选择当前 VisibleInteractions 中存在的 interaction，并且事前推理应依据该交互的 visibleLabel、target、turnCost、effectScope、effectSlots 和当前可见信息；不能凭空假定 interaction 执行后的隐藏结果。");
+        sb.AppendLine("7. 如果某一步的先前已接受步骤仍处于 pending-turn-end / working 状态，玩家不能把那些尚未完成的结果当成已经到手或已经发生的事实继续推理。");
+        sb.AppendLine();
+        sb.AppendLine("请把工具调用当作填写裁决表：");
+        sb.AppendLine("- 若你认为这一步动作合理，请不要调用任何工具。");
+        sb.AppendLine("- 若你认为这一步动作不合理，请调用一次或多次 point_out_issues 工具，逐条指出问题。");
+        sb.AppendLine("- 当你调用工具时，普通文本可以留空；不要再输出“好的我来仅用 JSON 回答”之类的多余前后缀。");
+        sb.AppendLine();
+        sb.Append("重要：没有工具调用，就表示验证通过。");
+        return sb.ToString();
     }
 
     private static string BuildObservation(
@@ -174,6 +175,7 @@ internal static class GameActionValidator {
 
         sb.AppendLine();
         sb.AppendLine("[事前推理]");
+        sb.AppendLine(PlayerActionGuideCatalog.BuildSharedReasoningReminder());
         sb.AppendLine(preActionReason);
 
         sb.AppendLine();
@@ -188,6 +190,12 @@ internal static class GameActionValidator {
         sb.AppendLine();
         sb.AppendLine("若动作合理，请不要调用任何工具。若动作不合理，请调用 point_out_issues 工具。\n不要输出与裁决无关的寒暄。 ");
         return sb.ToString();
+    }
+
+    internal static string BuildSharedReasoningSectionForTests() => PlayerActionGuideCatalog.BuildValidatorSharedReasoningSection();
+
+    private static string BuildPointOutIssuesToolDescription() {
+        return "指出不合理之处。仅当你发现这一步动作或其事前推理违反共享事前推理要求、有明显跳步、偷用输入外记忆，或把猜测写成确定事实时调用。若动作合理，请不要调用任何工具。";
     }
 
     private static string BuildAcceptedFeedback() {

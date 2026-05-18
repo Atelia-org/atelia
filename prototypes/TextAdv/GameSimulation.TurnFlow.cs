@@ -74,43 +74,23 @@ internal static partial class GameSimulation {
         return DescribeCurrentTurnStatus(root);
     }
 
-    internal static async Task<AsyncAteliaResult<TurnCollectionStatus>> SubmitLargeActionsForPendingLlmPlayersAsync(
+    internal static async Task<AsyncAteliaResult<TurnCollectionStatus>> SubmitLargeActionsForPendingInternalPlayersAsync(
         DurableDict<string> root,
         CancellationToken cancellationToken
     ) {
         foreach (var actorId in EnumerateActiveActorIds(root).ToArray()) {
-            if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) { continue; }
             if (HasSubmittedLargeAction(root, actorId)) { continue; }
-
-            var actor = GetActor(root, actorId);
-            var kind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-                ? rawKind
-                : "npc";
-            if (!string.Equals(kind, "llm-player", StringComparison.Ordinal)) { continue; }
+            if (!IsInternallyDrivenPlayerActor(root, actorId)) { continue; }
 
             var result = await LlmPlayerAgentDriver.TrySubmitLargeActionAsync(root, actorId, cancellationToken).ConfigureAwait(false);
-            if (!result.IsSuccess) {
-                return result;
-            }
+            if (!result.IsSuccess) { return result; }
         }
 
         return AsyncAteliaResult<TurnCollectionStatus>.Success(DescribeCurrentTurnStatus(root));
     }
 
-    internal static Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
+    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
         DurableDict<string> root,
-        CancellationToken cancellationToken
-    ) => ApplyReadyCollectedTurnAsync(
-        root,
-        CollectedTurnResolutionMode.RealAgentWithDeterministicFallback,
-        collectedTurnLeadOverride: null,
-        cancellationToken
-    );
-
-    private static async Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
-        DurableDict<string> root,
-        CollectedTurnResolutionMode resolutionMode,
-        string? collectedTurnLeadOverride,
         CancellationToken cancellationToken
     ) {
         var status = DescribeCurrentTurnStatus(root);
@@ -123,77 +103,59 @@ internal static partial class GameSimulation {
             );
         }
 
+        var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<TurnResolution>.Failure(preludeResult.Error!); }
+
         var intents = ReadLargeActionIntents(root);
-        var terminalIntent = intents.FirstOrDefault(static intent => string.Equals(intent.ActorId, TerminalPlayerActorId, StringComparison.Ordinal));
-        if (terminalIntent is null) {
-            return AsyncAteliaResult<TurnResolution>.Failure(
-                new TextAdvError(
-                    "TextAdv.TerminalActionMissing",
-                    "当前回合缺少终端玩家的 Large-Action，不能进入统一结算。"
-                )
-            );
+        if (intents.Count == 1) {
+            try {
+                return await ResolveCollectedTurnFromIntentAsync(
+                    root,
+                    intents[0],
+                    prelude,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+                return AsyncAteliaResult<TurnResolution>.Failure(
+                    new TextAdvError(
+                        "TextAdv.CollectedTurnSingleIntentFailed",
+                        $"单意图 collected-turn 结算失败：{ex.Message}"
+                    )
+                );
+            }
         }
 
         try {
-            if (resolutionMode is CollectedTurnResolutionMode.RealAgentWithDeterministicFallback) {
-                var game = GetGame(root);
-                var previousDay = game.GetOrThrow<int>(DayKey);
-                var previousSlot = game.GetOrThrow<int>(SlotKey);
-                var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-                var gmContext = BuildGmCollectedTurnContext(root, intents);
-                ClearLastResolutionByActor(root);
-                var gmResolution = await GameMasterResolver.TryResolveCollectedTurnAsync(
-                    root,
-                    gmContext,
-                    cancellationToken
-                ).ConfigureAwait(false);
-
-                if (gmResolution is { UsedLlm: true }) {
-                    var nextClock = AdvanceClock(root);
-                    var resolutionSummary = AppendClockAdvance(
-                        gmResolution.Summary,
-                        previousDay,
-                        previousSlot,
-                        nextClock.Day,
-                        nextClock.Slot,
-                        slotsPerDay
-                    );
-
-                    AppendClockAdvanceToExistingActorResolutions(
-                        root,
-                        previousDay,
-                        previousSlot,
-                        nextClock.Day,
-                        nextClock.Slot,
-                        slotsPerDay
-                    );
-                    return AsyncAteliaResult<TurnResolution>.Success(
-                        CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
-                    );
-                }
-
-                collectedTurnLeadOverride ??= BuildCollectedTurnLead(intents, gmResolution?.FallbackReason);
-            }
-            else {
-                collectedTurnLeadOverride ??= BuildCollectedTurnLead(
-                    intents,
-                    "diagnostic harness 使用 deterministic 结算，未调用真实 GM Agent。"
-                );
-            }
-
-            return await ResolveCollectedTurnFromTerminalIntentAsync(
+            var gmContext = BuildGmCollectedTurnContext(root, intents);
+            ClearLastResolutionByActor(root);
+            var gmResolution = await GameMasterResolver.ResolveCollectedTurnAsync(
                 root,
-                terminalIntent,
-                collectedTurnLeadOverride,
-                useGmAgent: resolutionMode is CollectedTurnResolutionMode.RealAgentWithDeterministicFallback,
+                gmContext,
                 cancellationToken
             ).ConfigureAwait(false);
+
+            _ = AdvanceClock(root);
+            var resolutionSummary = CombineNonEmptySummaries(
+                prelude.PendingTurnEndEffects.TerminalVisibleSummary,
+                prelude.BackgroundWorkingEffects.TerminalVisibleSummary,
+                gmResolution.Summary
+            );
+
+            MergeActorFacingSummariesIntoExistingResolutions(
+                root,
+                prelude.PendingTurnEndEffects,
+                prelude.BackgroundWorkingEffects
+            );
+            return AsyncAteliaResult<TurnResolution>.Success(
+                CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
+            );
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
             return AsyncAteliaResult<TurnResolution>.Failure(
                 new TextAdvError(
-                    "TextAdv.InvalidCollectedActionPayload",
-                    ex.Message
+                    "TextAdv.CollectedTurnGmFailed",
+                    $"多主体统一结算依赖 GM Agent，但本次调用失败：{ex.Message}"
                 )
             );
         }
@@ -224,11 +186,12 @@ internal static partial class GameSimulation {
 
         var actor = CreateActor(
             root.Revision,
-            kind: "llm-player",
+            kind: PlayerActorKind,
             name,
             profileNote,
             locationId,
-            active: true
+            active: true,
+            controllerKind: InternalLlmControllerKind
         );
         actor.Upsert(MemoryNotebookKey, CreateNotebookText(root.Revision, string.Empty));
         actors.Upsert(actorId, actor);
@@ -295,7 +258,6 @@ internal static partial class GameSimulation {
             focus,
             preActionReason,
             collectedTurnLead: null,
-            useGmAgent: true,
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -308,9 +270,7 @@ internal static partial class GameSimulation {
         CancellationToken cancellationToken
     ) {
         var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
-            return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!);
-        }
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!); }
 
         AppendAcceptedStep(
             root,
@@ -327,9 +287,176 @@ internal static partial class GameSimulation {
             interactionId,
             preActionReason,
             collectedTurnLead: null,
-            useGmAgent: true,
             cancellationToken
         ).ConfigureAwait(false);
+    }
+
+    internal static async Task<AsyncAteliaResult<SmallActionResolution>> ApplyImmediateSelfInteractionAsync(
+        DurableDict<string> root,
+        string interactionId,
+        string preActionReason,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<SmallActionResolution>.Failure(interactionResult.Error!); }
+
+        if (!SupportsImmediateSelfInteraction(interaction)) {
+            return AsyncAteliaResult<SmallActionResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.UnsupportedImmediateInteraction",
+                    $"Interaction '{interaction.InteractionId}' 不是当前可直接即时结算的 self/immediate 小动作。"
+                )
+            );
+        }
+
+        GmExploreResolution gmResolution;
+        try {
+            gmResolution = await GameMasterResolver.ResolveImmediateSelfInteractionAsync(
+                root,
+                new GmInteractionContext(
+                    DescribeCurrentPerception(root),
+                    GetActorLocationId(root, TerminalPlayerActorId),
+                    interaction,
+                    preActionReason
+                ),
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AsyncAteliaResult<SmallActionResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.ImmediateInteractionGmFailed",
+                    $"即时小动作结算依赖 GM Agent，但本次调用失败：{ex.Message}"
+                )
+            );
+        }
+
+        var summary = gmResolution.Summary;
+
+        AppendAcceptedStep(
+            root,
+            actionKind: "small/interact",
+            actionSummary: $"{interaction.VisibleLabel} ({interaction.ActionKind})",
+            actionPayload: BuildInteractionPayload(interaction),
+            preActionReason,
+            validatorFeedback,
+            endsTurn: false,
+            stepOutcomeSummary: summary,
+            stepOutcomeState: StepOutcomeCommittedNow
+        );
+
+        return AsyncAteliaResult<SmallActionResolution>.Success(
+            new SmallActionResolution(summary, DescribeCurrentPerception(root))
+        );
+    }
+
+    internal static AsyncAteliaResult<SmallActionResolution> ApplyDeferredTurnEndInteraction(
+        DurableDict<string> root,
+        string interactionId,
+        string preActionReason,
+        string validatorFeedback
+    ) {
+        var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<SmallActionResolution>.Failure(interactionResult.Error!); }
+
+        if (!SupportsDeferredTurnEndInteraction(interaction)) {
+            return AsyncAteliaResult<SmallActionResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.UnsupportedDeferredInteraction",
+                    $"Interaction '{interaction.InteractionId}' 不是当前可走 turn-end 延迟结算的小动作。"
+                )
+            );
+        }
+
+        var pendingSummary = BuildDeferredTurnEndInteractionSummary(interaction);
+        var step = AppendAcceptedStep(
+            root,
+            actionKind: "small/interact",
+            actionSummary: $"{interaction.VisibleLabel} ({interaction.ActionKind})",
+            actionPayload: BuildInteractionPayload(interaction),
+            preActionReason,
+            validatorFeedback,
+            endsTurn: false,
+            stepOutcomeSummary: pendingSummary,
+            stepOutcomeState: StepOutcomePendingTurnEnd
+        );
+        EnqueuePendingTurnEndEffect(
+            root,
+            TerminalPlayerActorId,
+            step,
+            effectSlot: TurnEndEffectSlot
+        );
+
+        return AsyncAteliaResult<SmallActionResolution>.Success(
+            new SmallActionResolution(pendingSummary, DescribeCurrentPerception(root))
+        );
+    }
+
+    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyWorkingInteractionAsync(
+        DurableDict<string> root,
+        string interactionId,
+        string preActionReason,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!); }
+
+        if (!SupportsWorkingInteraction(interaction)) {
+            return AsyncAteliaResult<TurnResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.UnsupportedWorkingInteraction",
+                    $"Interaction '{interaction.InteractionId}' 不是当前可进入 Working 的交互。"
+                )
+            );
+        }
+
+        AppendAcceptedStep(
+            root,
+            actionKind: "large/interact",
+            actionSummary: $"{interaction.VisibleLabel} ({interaction.ActionKind})",
+            actionPayload: BuildInteractionPayload(interaction),
+            preActionReason,
+            validatorFeedback,
+            endsTurn: true,
+            stepOutcomeSummary: BuildWorkingStartSummary(interaction),
+            stepOutcomeState: StepOutcomeWorking
+        );
+
+        StartWorkingForActor(
+            root,
+            TerminalPlayerActorId,
+            "large/interact",
+            $"{interaction.VisibleLabel} ({interaction.ActionKind})",
+            BuildInteractionPayload(interaction),
+            preActionReason,
+            validatorFeedback,
+            interaction.TurnCost - 1
+        );
+
+        var turnSummary = await ResolveWorkingTurnAndCompleteAsync(
+            root,
+            TerminalPlayerActorId,
+            BuildWorkingStartSummary(interaction),
+            collectedTurnLead: null,
+            consumeFutureTurn: false,
+            cancellationToken
+        ).ConfigureAwait(false);
+        if (!turnSummary.TryGetValue(out var resolution) || resolution is null) { return AsyncAteliaResult<TurnResolution>.Failure(turnSummary.Error!); }
+
+        if (!HasAnyActiveActor(root)) {
+            var autoSummary = await AutoAdvanceBackgroundWorkUntilAnyActorActiveAsync(root, cancellationToken).ConfigureAwait(false);
+            if (!autoSummary.TryGetValue(out var combinedSummary) || string.IsNullOrWhiteSpace(combinedSummary)) { return AsyncAteliaResult<TurnResolution>.Success(resolution); }
+
+            var fullSummary = CombineNonEmptySummaries(resolution.Summary, combinedSummary);
+            SetLastResolutionForActiveActors(root, fullSummary);
+            return AsyncAteliaResult<TurnResolution>.Success(
+                new TurnResolution(fullSummary, DescribeCurrentPerception(root))
+            );
+        }
+
+        return AsyncAteliaResult<TurnResolution>.Success(resolution);
     }
 
     internal static PerceptionBundle ApplyNotebookEdit(
@@ -366,7 +493,9 @@ internal static partial class GameSimulation {
             actionPayload: proposal.CanonicalScriptXml,
             preActionReason,
             validatorFeedback,
-            endsTurn: false
+            endsTurn: false,
+            stepOutcomeSummary: "你的记事本已按这一步修改更新。",
+            stepOutcomeState: StepOutcomeCommittedNow
         );
 
         return DescribePerceptionForActor(root, actorId);
@@ -392,109 +521,54 @@ internal static partial class GameSimulation {
         return ResolveRestAccepted(root, collectedTurnLead: null);
     }
 
+    private static async Task<AsyncAteliaResult<TurnResolutionPrelude>> PrepareTurnResolutionPreludeAsync(
+        DurableDict<string> root,
+        CancellationToken cancellationToken,
+        string? excludeWorkingActorId = null
+    ) {
+        var pendingTurnEndSummaryResult = await ResolvePendingTurnEndEffectsAsync(root, cancellationToken).ConfigureAwait(false);
+        if (!pendingTurnEndSummaryResult.TryGetValue(out var pendingTurnEndSummary)) { return AsyncAteliaResult<TurnResolutionPrelude>.Failure(pendingTurnEndSummaryResult.Error!); }
+
+        var backgroundWorkingSummaryResult = await ResolveBackgroundWorkingEffectsAsync(
+            root,
+            cancellationToken,
+            excludeWorkingActorId
+        ).ConfigureAwait(false);
+        if (!backgroundWorkingSummaryResult.TryGetValue(out var backgroundWorkingSummary)) { return AsyncAteliaResult<TurnResolutionPrelude>.Failure(backgroundWorkingSummaryResult.Error!); }
+
+        var game = GetGame(root);
+        return AsyncAteliaResult<TurnResolutionPrelude>.Success(
+            new TurnResolutionPrelude(
+                pendingTurnEndSummary!,
+                backgroundWorkingSummary!,
+                game.GetOrThrow<int>(DayKey),
+                game.GetOrThrow<int>(SlotKey),
+                game.GetOrThrow<int>(SlotsPerDayKey)
+            )
+        );
+    }
+
     private static async Task<AsyncAteliaResult<TurnResolution>> ResolveExploreAcceptedAsync(
         DurableDict<string> root,
         string direction,
         string? focus,
         string preActionReason,
         string? collectedTurnLead,
-        bool useGmAgent,
         CancellationToken cancellationToken
     ) {
-        direction = NormalizeRequired(direction, nameof(direction));
-        focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
+        var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<TurnResolution>.Failure(preludeResult.Error!); }
 
-        var currentLocationId = GetActorLocationId(root, TerminalPlayerActorId);
-        var currentLocation = GetLocation(root, currentLocationId);
-        var currentLocationName = currentLocation.GetOrThrow<string>(NameKey)!;
-        var currentExits = currentLocation.GetOrThrow<DurableDict<string>>(ExitsKey)!;
-        var game = GetGame(root);
-        var previousDay = game.GetOrThrow<int>(DayKey);
-        var previousSlot = game.GetOrThrow<int>(SlotKey);
-        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var gmResolution = useGmAgent
-            ? await GameMasterResolver.TryResolveExploreAsync(
-                root,
-                new GmExploreContext(
-                    DescribeCurrentPerception(root),
-                    currentLocationId,
-                    direction,
-                    focus,
-                    preActionReason,
-                    TryGetReverseDirection(direction)
-                ),
-                cancellationToken
-            ).ConfigureAwait(false)
-            : null;
-
-        if (useGmAgent
-            && gmResolution is { UsedLlm: true }
-            && !string.Equals(GetActorLocationId(root, TerminalPlayerActorId), currentLocationId, StringComparison.Ordinal)) {
-            var llmNextClock = AdvanceClock(root);
-            var llmResolutionSummary = AppendClockAdvance(
-                gmResolution.Summary,
-                previousDay,
-                previousSlot,
-                llmNextClock.Day,
-                llmNextClock.Slot,
-                slotsPerDay
-            );
-            llmResolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, llmResolutionSummary);
-
-            return AsyncAteliaResult<TurnResolution>.Success(
-                CompleteTurn(root, llmResolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary)
-            );
-        }
-
-        var gmTools = new GmWorldEditService(root);
-        var createdNewLocation = false;
-        string targetLocationId;
-
-        if (currentExits.TryGet(direction, out string? existingTargetLocationId)
-            && !string.IsNullOrWhiteSpace(existingTargetLocationId)) {
-            targetLocationId = existingTargetLocationId;
-        }
-        else {
-            targetLocationId = CreateExplorationLocationId(root, currentLocationId, direction);
-            var targetName = CreateExplorationLocationName(direction, focus);
-            var targetDescription = CreateExplorationLocationDescription(currentLocationName, direction, focus);
-
-            var createResult = gmTools.CreateLocation(targetLocationId, targetName, targetDescription);
-            if (!createResult.IsSuccess) { return AsyncAteliaResult<TurnResolution>.Failure(createResult.Error!); }
-
-            var linkResult = gmTools.LinkLocations(
-                currentLocationId,
-                direction,
-                targetLocationId,
-                TryGetReverseDirection(direction)
-            );
-            if (!linkResult.IsSuccess) { return AsyncAteliaResult<TurnResolution>.Failure(linkResult.Error!); }
-
-            createdNewLocation = true;
-        }
-
-        var moveResult = gmTools.MoveActorTo(TerminalPlayerActorId, targetLocationId);
-        if (!moveResult.IsSuccess) { return AsyncAteliaResult<TurnResolution>.Failure(moveResult.Error!); }
-
-        var targetLocation = GetLocation(root, targetLocationId);
-        var targetLocationName = targetLocation.GetOrThrow<string>(NameKey)!;
-        var nextClock = AdvanceClock(root);
-        var discoveryText = createdNewLocation
-            ? $"GM 账本新增了地点「{targetLocationName}」，并记录了从「{currentLocationName}」向 {direction} 的出口。"
-            : $"你沿着已知出口从「{currentLocationName}」向 {direction} 前进，来到「{targetLocationName}」。";
-        var resolutionSummary = AppendClockAdvance(
-            discoveryText,
-            previousDay,
-            previousSlot,
-            nextClock.Day,
-            nextClock.Slot,
-            slotsPerDay
-        );
-        resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
-
-        return AsyncAteliaResult<TurnResolution>.Success(
-            CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary)
-        );
+        return await ResolveExploreAcceptedForActorAsync(
+            root,
+            TerminalPlayerActorId,
+            direction,
+            focus,
+            preActionReason,
+            prelude,
+            collectedTurnLead,
+            cancellationToken
+        ).ConfigureAwait(false);
     }
 
     private static async Task<AsyncAteliaResult<TurnResolution>> ResolveInteractionAcceptedAsync(
@@ -502,70 +576,236 @@ internal static partial class GameSimulation {
         string interactionId,
         string preActionReason,
         string? collectedTurnLead,
-        bool useGmAgent,
         CancellationToken cancellationToken
     ) {
-        var startingPerception = DescribeCurrentPerception(root);
-        var interactionResult = TryGetVisibleInteraction(startingPerception, interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
-            return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!);
-        }
+        var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<TurnResolution>.Failure(preludeResult.Error!); }
 
-        var game = GetGame(root);
-        var previousDay = game.GetOrThrow<int>(DayKey);
-        var previousSlot = game.GetOrThrow<int>(SlotKey);
-        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var gmResolution = useGmAgent
-            ? await GameMasterResolver.TryResolveInteractionAsync(
+        return await ResolveInteractionAcceptedForActorAsync(
+            root,
+            TerminalPlayerActorId,
+            interactionId,
+            preActionReason,
+            prelude,
+            collectedTurnLead,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private static TurnResolution ResolveRestAccepted(DurableDict<string> root, string? collectedTurnLead) {
+        var preludeResult = PrepareTurnResolutionPreludeAsync(root, CancellationToken.None).GetAwaiter().GetResult();
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { throw new InvalidOperationException(preludeResult.Error?.Message ?? "无法准备本回合的 turn resolution prelude。"); }
+
+        return ResolveRestAcceptedForActor(
+            root,
+            TerminalPlayerActorId,
+            prelude,
+            collectedTurnLead
+        );
+    }
+
+    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveExploreAcceptedForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        string direction,
+        string? focus,
+        string preActionReason,
+        TurnResolutionPrelude prelude,
+        string? collectedTurnLead,
+        CancellationToken cancellationToken
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        direction = NormalizeRequired(direction, nameof(direction));
+        focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
+
+        var actorPerception = DescribePerceptionForActor(root, actorId);
+        var currentLocationId = GetActorLocationId(root, actorId);
+        var currentLocationName = actorPerception.Location.Name;
+        GmExploreResolution gmResolution;
+        try {
+            gmResolution = await GameMasterResolver.ResolveExploreAsync(
                 root,
-                new GmInteractionContext(
-                    DescribeCurrentPerception(root),
-                    GetActorLocationId(root, TerminalPlayerActorId),
-                    interaction,
-                    preActionReason
+                new GmExploreContext(
+                    actorPerception,
+                    currentLocationId,
+                    direction,
+                    focus,
+                    preActionReason,
+                    TryGetReverseDirection(direction)
                 ),
                 cancellationToken
-            ).ConfigureAwait(false)
-            : null;
+            );
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AsyncAteliaResult<TurnResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.ExploreGmFailed",
+                    $"探索结算依赖 GM Agent，但本次调用失败：{ex.Message}"
+                )
+            );
+        }
+        var nextLocationId = GetActorLocationId(root, actorId);
+        var nextLocationName = DescribePerceptionForActor(root, actorId).Location.Name;
+        _ = AdvanceClock(root);
+        var actorSummaryText = gmResolution.Summary;
+        ApplyActorFacingSummariesForTurn(
+            root,
+            new[] { prelude.PendingTurnEndEffects, prelude.BackgroundWorkingEffects },
+            new ActorEffectSummary(actorId, actorSummaryText)
+        );
 
-        var nextClock = AdvanceClock(root);
-        var summary = gmResolution is { UsedLlm: true }
-            ? gmResolution.Summary
-            : BuildDeterministicInteractionSummary(interaction);
-        var resolutionSummary = AppendClockAdvance(
-            summary,
-            previousDay,
-            previousSlot,
-            nextClock.Day,
-            nextClock.Slot,
-            slotsPerDay
+        var resolutionSummary = CombineNonEmptySummaries(
+            prelude.PendingTurnEndEffects.TerminalVisibleSummary,
+            prelude.BackgroundWorkingEffects.TerminalVisibleSummary,
+            actorId == TerminalPlayerActorId
+                ? actorSummaryText
+                : BuildTerminalObservationForExplore(
+                    root,
+                    actorId,
+                    currentLocationId,
+                    currentLocationName,
+                    nextLocationId,
+                    nextLocationName,
+                    direction,
+                    !string.Equals(currentLocationId, nextLocationId, StringComparison.Ordinal)
+                        && !actorPerception.Location.Exits.Any(exit => string.Equals(exit.Direction, direction, StringComparison.Ordinal))
+                )
         );
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
         return AsyncAteliaResult<TurnResolution>.Success(
-            CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary)
+            CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
         );
     }
 
-    private static TurnResolution ResolveRestAccepted(DurableDict<string> root, string? collectedTurnLead) {
-        var game = GetGame(root);
-        var previousDay = game.GetOrThrow<int>(DayKey);
-        var previousSlot = game.GetOrThrow<int>(SlotKey);
-        var slotsPerDay = game.GetOrThrow<int>(SlotsPerDayKey);
-        var nextClock = AdvanceClock(root);
-        var resolutionSummary =
-            $"你原地休息了一会。当前原型只推进时钟，不结算更复杂的世界后果。"
-            + $" 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)} 前进到 {GameClock.FormatClock(nextClock.Day, nextClock.Slot, slotsPerDay)}。";
+    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveInteractionAcceptedForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        string interactionId,
+        string preActionReason,
+        TurnResolutionPrelude prelude,
+        string? collectedTurnLead,
+        CancellationToken cancellationToken
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        var actorPerception = DescribePerceptionForActor(root, actorId);
+        var interactionResult = TryGetVisibleInteraction(actorPerception, interactionId);
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!); }
+
+        if (SupportsWorkingInteraction(interaction)) {
+            StartWorkingForActor(
+                root,
+                actorId,
+                "large/interact",
+                $"{interaction.VisibleLabel} ({interaction.ActionKind})",
+                BuildInteractionPayload(interaction),
+                preActionReason,
+                validatorFeedback: "collected-turn working start",
+                interaction.TurnCost - 1
+            );
+
+            var workingResolution = await ResolveWorkingTurnAndCompleteWithPreludeAsync(
+                root,
+                actorId,
+                BuildWorkingStartSummary(interaction),
+                prelude,
+                collectedTurnLead,
+                consumeFutureTurn: false,
+                cancellationToken
+            ).ConfigureAwait(false);
+            if (!workingResolution.TryGetValue(out var resolvedWorking) || resolvedWorking is null) { return AsyncAteliaResult<TurnResolution>.Failure(workingResolution.Error!); }
+
+            if (!HasAnyActiveActor(root)) {
+                var autoSummary = await AutoAdvanceBackgroundWorkUntilAnyActorActiveAsync(root, cancellationToken).ConfigureAwait(false);
+                if (!autoSummary.TryGetValue(out var combinedSummary) || string.IsNullOrWhiteSpace(combinedSummary)) { return AsyncAteliaResult<TurnResolution>.Success(resolvedWorking); }
+
+                var fullSummary = CombineNonEmptySummaries(resolvedWorking.Summary, combinedSummary);
+                SetLastResolutionForActiveActors(root, fullSummary);
+                return AsyncAteliaResult<TurnResolution>.Success(
+                    new TurnResolution(fullSummary, DescribeCurrentPerception(root))
+                );
+            }
+
+            return AsyncAteliaResult<TurnResolution>.Success(resolvedWorking);
+        }
+
+        GmExploreResolution gmResolution;
+        try {
+            gmResolution = await GameMasterResolver.ResolveInteractionAsync(
+                root,
+                new GmInteractionContext(
+                    actorPerception,
+                    GetActorLocationId(root, actorId),
+                    interaction,
+                    preActionReason
+                ),
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AsyncAteliaResult<TurnResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.InteractionGmFailed",
+                    $"交互结算依赖 GM Agent，但本次调用失败：{ex.Message}"
+                )
+            );
+        }
+
+        _ = AdvanceClock(root);
+        var actorSummaryText = gmResolution.Summary;
+        ApplyActorFacingSummariesForTurn(
+            root,
+            new[] { prelude.PendingTurnEndEffects, prelude.BackgroundWorkingEffects },
+            new ActorEffectSummary(actorId, actorSummaryText)
+        );
+
+        var resolutionSummary = CombineNonEmptySummaries(
+            prelude.PendingTurnEndEffects.TerminalVisibleSummary,
+            prelude.BackgroundWorkingEffects.TerminalVisibleSummary,
+            actorId == TerminalPlayerActorId
+                ? actorSummaryText
+                : BuildTerminalObservationForInteraction(root, actorId, interaction)
+        );
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
-        return CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.ReplaceAllWithSummary);
+        return AsyncAteliaResult<TurnResolution>.Success(
+            CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
+        );
+    }
+
+    private static TurnResolution ResolveRestAcceptedForActor(
+        DurableDict<string> root,
+        string actorId,
+        TurnResolutionPrelude prelude,
+        string? collectedTurnLead
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        _ = AdvanceClock(root);
+        var actorSummaryText = "你原地休息了一会。当前原型只推进时钟，不结算更复杂的世界后果。";
+        ApplyActorFacingSummariesForTurn(
+            root,
+            new[] { prelude.PendingTurnEndEffects, prelude.BackgroundWorkingEffects },
+            new ActorEffectSummary(actorId, actorSummaryText)
+        );
+
+        var terminalObservation = actorId == TerminalPlayerActorId
+            ? actorSummaryText
+            : BuildTerminalObservationForRest(root, actorId);
+        var resolutionSummary = CombineNonEmptySummaries(
+            prelude.PendingTurnEndEffects.TerminalVisibleSummary,
+            prelude.BackgroundWorkingEffects.TerminalVisibleSummary,
+            terminalObservation
+        );
+        resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
+
+        return CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing);
     }
 
     private static void SetLastResolutionForActiveActors(DurableDict<string> root, string summary) {
         summary = NormalizeRequired(summary, nameof(summary));
         var game = GetGame(root);
         var lastResolutionByActor = root.Revision.CreateDict<string>();
-        foreach (var actorId in EnumerateActiveActorIds(root)) {
+        foreach (var actorId in EnumerateTrackedActorIds(root)) {
             lastResolutionByActor.Upsert(actorId, summary);
         }
 
@@ -575,40 +815,11 @@ internal static partial class GameSimulation {
     private static void SetLastResolutionForMissingActiveActors(DurableDict<string> root, string fallbackSummary) {
         fallbackSummary = NormalizeRequired(fallbackSummary, nameof(fallbackSummary));
         var lastResolutionByActor = GetOrCreateLastResolutionByActor(root);
-        foreach (var actorId in EnumerateActiveActorIds(root)) {
+        foreach (var actorId in EnumerateTrackedActorIds(root)) {
             if (!lastResolutionByActor.TryGet(actorId, out string? actorResolution)
                 || string.IsNullOrWhiteSpace(actorResolution)) {
                 lastResolutionByActor.Upsert(actorId, fallbackSummary);
             }
-        }
-    }
-
-    private static void AppendClockAdvanceToExistingActorResolutions(
-        DurableDict<string> root,
-        int previousDay,
-        int previousSlot,
-        int nextDay,
-        int nextSlot,
-        int slotsPerDay
-    ) {
-        var lastResolutionByActor = GetOrCreateLastResolutionByActor(root);
-        foreach (var actorId in EnumerateActiveActorIds(root)) {
-            if (!lastResolutionByActor.TryGet(actorId, out string? actorResolution)
-                || string.IsNullOrWhiteSpace(actorResolution)) {
-                continue;
-            }
-
-            lastResolutionByActor.Upsert(
-                actorId,
-                AppendClockAdvance(
-                    actorResolution,
-                    previousDay,
-                    previousSlot,
-                    nextDay,
-                    nextSlot,
-                    slotsPerDay
-                )
-            );
         }
     }
 
@@ -619,7 +830,9 @@ internal static partial class GameSimulation {
         string? actionPayload,
         string preActionReason,
         string validatorFeedback,
-        bool endsTurn
+        bool endsTurn,
+        string? stepOutcomeSummary = null,
+        string? stepOutcomeState = null
     ) {
         return AppendAcceptedStepForActor(
             root,
@@ -629,7 +842,9 @@ internal static partial class GameSimulation {
             actionPayload,
             preActionReason,
             validatorFeedback,
-            endsTurn
+            endsTurn,
+            stepOutcomeSummary,
+            stepOutcomeState
         );
     }
 
@@ -641,7 +856,9 @@ internal static partial class GameSimulation {
         string? actionPayload,
         string preActionReason,
         string validatorFeedback,
-        bool endsTurn
+        bool endsTurn,
+        string? stepOutcomeSummary = null,
+        string? stepOutcomeState = null
     ) {
         var currentTurn = GetCurrentTurn(root);
         var acceptedSteps = GetAcceptedStepsForActor(root, actorId, createIfMissing: true)!;
@@ -658,11 +875,29 @@ internal static partial class GameSimulation {
         step.Upsert(PreActionReasonKey, preActionReason);
         step.Upsert(ValidatorFeedbackKey, validatorFeedback);
         step.Upsert(EndsTurnKey, endsTurn);
+        if (!string.IsNullOrWhiteSpace(stepOutcomeSummary)) {
+            step.Upsert(StepOutcomeSummaryKey, stepOutcomeSummary);
+        }
+
+        var normalizedStepOutcomeState = string.IsNullOrWhiteSpace(stepOutcomeState)
+            ? (endsTurn ? StepOutcomeCompleted : StepOutcomeCommittedNow)
+            : stepOutcomeState.Trim();
+        step.Upsert(StepOutcomeStateKey, normalizedStepOutcomeState);
 
         acceptedSteps.Upsert(stepId, step);
         currentTurn.Upsert(NextStepNumberKey, stepNumber + 1);
 
-        var turnStep = new TurnStep(stepNumber, actionKind, actionSummary, actionPayload, preActionReason, validatorFeedback, endsTurn);
+        var turnStep = new TurnStep(
+            stepNumber,
+            actionKind,
+            actionSummary,
+            actionPayload,
+            preActionReason,
+            validatorFeedback,
+            endsTurn,
+            stepOutcomeSummary,
+            normalizedStepOutcomeState
+        );
         if (endsTurn) {
             RecordLargeActionForActor(root, actorId, turnStep);
         }
@@ -688,6 +923,7 @@ internal static partial class GameSimulation {
         archivedTurn.Upsert(NotebookSnapshotKey, currentTurn.GetOrThrow<string>(NotebookSnapshotKey)!);
         archivedTurn.Upsert(AcceptedStepsByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(AcceptedStepsByActorKey)!);
         archivedTurn.Upsert(LargeActionByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!);
+        archivedTurn.Upsert(PendingTurnEndEffectsByActorKey, currentTurn.GetOrThrow<DurableDict<string>>(PendingTurnEndEffectsByActorKey)!);
         archivedTurn.Upsert(ResolutionSummaryKey, resolutionSummary);
         archivedTurn.Upsert(LastResolutionByActorKey, GetOrCreateLastResolutionByActor(root));
         archivedTurn.Upsert(EndDayKey, endDay);
@@ -720,38 +956,39 @@ internal static partial class GameSimulation {
         return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
     }
 
-    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveCollectedTurnFromTerminalIntentAsync(
+    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveCollectedTurnFromIntentAsync(
         DurableDict<string> root,
-        LargeActionIntent terminalIntent,
-        string? collectedTurnLead,
-        bool useGmAgent,
+        LargeActionIntent intent,
+        TurnResolutionPrelude prelude,
         CancellationToken cancellationToken
     ) {
-        return terminalIntent.ActionKind switch {
+        return intent.ActionKind switch {
             "large/rest-a-while" => AsyncAteliaResult<TurnResolution>.Success(
-                ResolveRestAccepted(root, collectedTurnLead)
+                ResolveRestAcceptedForActor(root, intent.ActorId, prelude, collectedTurnLead: null)
             ),
-            "large/explore" => await ResolveExploreAcceptedAsync(
+            "large/explore" => await ResolveExploreAcceptedForActorAsync(
                 root,
-                ParseRequiredPayloadValue(terminalIntent.ActionPayload, "direction"),
-                ParseOptionalPayloadValue(terminalIntent.ActionPayload, "focus"),
-                terminalIntent.PreActionReason,
-                collectedTurnLead,
-                useGmAgent,
+                intent.ActorId,
+                ParseRequiredPayloadValue(intent.ActionPayload, "direction"),
+                ParseOptionalPayloadValue(intent.ActionPayload, "focus"),
+                intent.PreActionReason,
+                prelude,
+                collectedTurnLead: null,
                 cancellationToken
             ).ConfigureAwait(false),
-            "large/interact" => await ResolveInteractionAcceptedAsync(
+            "large/interact" => await ResolveInteractionAcceptedForActorAsync(
                 root,
-                ParseRequiredPayloadValue(terminalIntent.ActionPayload, "interactionId"),
-                terminalIntent.PreActionReason,
-                collectedTurnLead,
-                useGmAgent,
+                intent.ActorId,
+                ParseRequiredPayloadValue(intent.ActionPayload, "interactionId"),
+                intent.PreActionReason,
+                prelude,
+                collectedTurnLead: null,
                 cancellationToken
             ).ConfigureAwait(false),
             _ => AsyncAteliaResult<TurnResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedCollectedAction",
-                    $"当前 MVP 尚不支持统一结算 Large-Action '{terminalIntent.ActionKind}'。"
+                    $"当前尚不支持 collected-turn 中的 Large-Action '{intent.ActionKind}'。"
                 )
             )
         };
@@ -759,7 +996,7 @@ internal static partial class GameSimulation {
 
     private static DurableDict<string> CreateArchivedActorTurnContextByActor(DurableDict<string> root) {
         var contexts = root.Revision.CreateDict<string>();
-        foreach (var actorId in EnumerateActiveActorIds(root)) {
+        foreach (var actorId in EnumerateTrackedActorIds(root)) {
             contexts.Upsert(actorId, CreateArchivedActorTurnContext(root, actorId));
         }
 
@@ -773,9 +1010,7 @@ internal static partial class GameSimulation {
         var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
             ? rawName
             : actorId;
-        var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-            ? rawKind
-            : "npc";
+        var actorKind = GetActorKind(actor);
 
         context.Upsert(NameKey, actorName);
         context.Upsert(KindKey, actorKind);
@@ -841,16 +1076,15 @@ internal static partial class GameSimulation {
         var largeActionByActor = currentTurn.GetOrThrow<DurableDict<string>>(LargeActionByActorKey)!;
         return largeActionByActor.Keys
             .OrderBy(static key => key, StringComparer.Ordinal)
-            .Select(actorId => {
+            .Select(
+            actorId => {
                 var actor = GetActor(root, actorId);
                 var action = largeActionByActor.GetOrThrow<DurableDict<string>>(actorId)!;
                 _ = action.TryGet(ActionPayloadKey, out string? actionPayload);
                 var actorName = actor.TryGet(NameKey, out string? rawName) && !string.IsNullOrWhiteSpace(rawName)
                     ? rawName
                     : actorId;
-                var actorKind = actor.TryGet(KindKey, out string? rawKind) && !string.IsNullOrWhiteSpace(rawKind)
-                    ? rawKind
-                    : "npc";
+                var actorKind = GetActorKind(actor);
 
                 return new LargeActionIntent(
                     actorId,
@@ -862,8 +1096,412 @@ internal static partial class GameSimulation {
                     action.GetOrThrow<string>(PreActionReasonKey)!,
                     action.GetOrThrow<string>(ValidatorFeedbackKey)!
                 );
-            })
+            }
+        )
             .ToArray();
+    }
+
+    private static DurableDict<string> GetOrCreatePendingTurnEndEffectsForActor(
+        DurableDict<string> root,
+        string actorId
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        var currentTurn = GetCurrentTurn(root);
+        var pendingByActor = currentTurn.GetOrThrow<DurableDict<string>>(PendingTurnEndEffectsByActorKey)!;
+        if (pendingByActor.TryGet(actorId, out DurableDict<string>? pendingEffects)
+            && pendingEffects is not null) { return pendingEffects; }
+
+        pendingEffects = root.Revision.CreateDict<string>();
+        pendingByActor.Upsert(actorId, pendingEffects);
+        return pendingEffects;
+    }
+
+    private static IReadOnlyList<PendingTurnEndEffect> ReadPendingTurnEndEffects(DurableDict<string> root) {
+        var currentTurn = GetCurrentTurn(root);
+        var pendingByActor = currentTurn.GetOrThrow<DurableDict<string>>(PendingTurnEndEffectsByActorKey)!;
+        return pendingByActor.Keys
+            .OrderBy(static key => key, StringComparer.Ordinal)
+            .SelectMany(
+            actorId => {
+                var pendingEffects = pendingByActor.GetOrThrow<DurableDict<string>>(actorId)!;
+                return pendingEffects.Keys
+                    .OrderBy(static key => key, StringComparer.Ordinal)
+                    .Select(
+                    effectId => {
+                        var effect = pendingEffects.GetOrThrow<DurableDict<string>>(effectId)!;
+                        _ = effect.TryGet(ActionPayloadKey, out string? actionPayload);
+                        return new PendingTurnEndEffect(
+                            effectId,
+                            effect.GetOrThrow<string>(ActorIdKey)!,
+                            effect.GetOrThrow<string>(ActionKindKey)!,
+                            effect.GetOrThrow<string>(ActionSummaryKey)!,
+                            actionPayload,
+                            effect.GetOrThrow<string>(PreActionReasonKey)!,
+                            effect.GetOrThrow<string>(ValidatorFeedbackKey)!,
+                            effect.GetOrThrow<string>(EffectSlotKey)!,
+                            effect.GetOrThrow<int>(SourceStepNumberKey)
+                        );
+                    }
+                );
+            }
+        )
+            .OrderBy(static effect => effect.SourceStepNumber)
+            .ToArray();
+    }
+
+    private static void ClearPendingTurnEndEffects(DurableDict<string> root) {
+        var currentTurn = GetCurrentTurn(root);
+        currentTurn.Upsert(PendingTurnEndEffectsByActorKey, root.Revision.CreateDict<string>());
+    }
+
+    private static void EnqueuePendingTurnEndEffect(
+        DurableDict<string> root,
+        string actorId,
+        TurnStep step,
+        string effectSlot
+    ) {
+        var pendingEffects = GetOrCreatePendingTurnEndEffectsForActor(root, actorId);
+        var effect = root.Revision.CreateDict<string>();
+        var effectId = $"pending-{step.StepNumber:D4}";
+
+        effect.Upsert(ActorIdKey, actorId);
+        effect.Upsert(ActionKindKey, step.ActionKind);
+        effect.Upsert(ActionSummaryKey, step.ActionSummary);
+        if (step.ActionPayload is not null) {
+            effect.Upsert(ActionPayloadKey, step.ActionPayload);
+        }
+
+        effect.Upsert(PreActionReasonKey, step.PreActionReason);
+        effect.Upsert(ValidatorFeedbackKey, step.ValidatorFeedback);
+        effect.Upsert(EffectSlotKey, effectSlot);
+        effect.Upsert(SourceStepNumberKey, step.StepNumber);
+        pendingEffects.Upsert(effectId, effect);
+    }
+
+    private static async Task<AsyncAteliaResult<EffectBatchResolution>> ResolvePendingTurnEndEffectsAsync(
+        DurableDict<string> root,
+        CancellationToken cancellationToken
+    ) {
+        var pendingEffects = ReadPendingTurnEndEffects(root);
+        if (pendingEffects.Count == 0) {
+            return AsyncAteliaResult<EffectBatchResolution>.Success(
+                new EffectBatchResolution(string.Empty, [])
+            );
+        }
+
+        var terminalSummaries = new List<string>();
+        var actorSummaries = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var effect in pendingEffects) {
+            if (string.IsNullOrWhiteSpace(effect.ActionPayload)) {
+                return AsyncAteliaResult<EffectBatchResolution>.Failure(
+                    new TextAdvError(
+                        "TextAdv.PendingTurnEndPayloadMissing",
+                        $"Pending turn-end effect '{effect.EffectId}' 缺少 action payload。"
+                    )
+                );
+            }
+
+            InteractionPerception interaction;
+            try {
+                interaction = BuildInteractionSnapshotFromPayload(effect.ActionPayload!);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+                return AsyncAteliaResult<EffectBatchResolution>.Failure(
+                    new TextAdvError(
+                        "TextAdv.PendingTurnEndPayloadInvalid",
+                        ex.Message
+                    )
+                );
+            }
+
+            var effectSummary = await ResolveInteractionEffectAsync(
+                root,
+                effect.ActorId,
+                interaction,
+                effect.PreActionReason,
+                effect.EffectSlot,
+                cancellationToken
+            ).ConfigureAwait(false);
+            if (!effectSummary.TryGetValue(out var narration) || narration is null) { return AsyncAteliaResult<EffectBatchResolution>.Failure(effectSummary.Error!); }
+
+            AppendActorFacingSummary(actorSummaries, effect.ActorId, narration.ActorFacingSummary);
+            if (!string.IsNullOrWhiteSpace(narration.TerminalVisibleSummary)) {
+                terminalSummaries.Add($"此前的顺手动作：{narration.TerminalVisibleSummary!.Trim()}");
+            }
+        }
+
+        ClearPendingTurnEndEffects(root);
+        return AsyncAteliaResult<EffectBatchResolution>.Success(
+            new EffectBatchResolution(
+                terminalSummaries.Count == 0 ? string.Empty : string.Join("\n", terminalSummaries),
+                BuildActorEffectSummaries(actorSummaries)
+            )
+        );
+    }
+
+    private static void StartWorkingForActor(
+        DurableDict<string> root,
+        string actorId,
+        string actionKind,
+        string actionSummary,
+        string? actionPayload,
+        string preActionReason,
+        string validatorFeedback,
+        int remainingTurns
+    ) {
+        var workingByActor = GetOrCreateWorkingByActor(root);
+        var workOrder = root.Revision.CreateDict<string>();
+        workOrder.Upsert(ActorIdKey, actorId);
+        workOrder.Upsert(ActionKindKey, actionKind);
+        workOrder.Upsert(ActionSummaryKey, actionSummary);
+        if (actionPayload is not null) {
+            workOrder.Upsert(ActionPayloadKey, actionPayload);
+        }
+
+        workOrder.Upsert(PreActionReasonKey, preActionReason);
+        workOrder.Upsert(ValidatorFeedbackKey, validatorFeedback);
+        workOrder.Upsert(RemainingTurnsKey, remainingTurns);
+        workingByActor.Upsert(actorId, workOrder);
+        SetActorActiveState(root, actorId, active: false);
+    }
+
+    private static WorkOrder? TryReadWorkOrder(DurableDict<string> root, string actorId) {
+        var workingByActor = GetOrCreateWorkingByActor(root);
+        if (!workingByActor.TryGet(actorId, out DurableDict<string>? workOrder)
+            || workOrder is null) { return null; }
+
+        _ = workOrder.TryGet(ActionPayloadKey, out string? actionPayload);
+        return new WorkOrder(
+            workOrder.GetOrThrow<string>(ActorIdKey)!,
+            workOrder.GetOrThrow<string>(ActionKindKey)!,
+            workOrder.GetOrThrow<string>(ActionSummaryKey)!,
+            actionPayload,
+            workOrder.GetOrThrow<string>(PreActionReasonKey)!,
+            workOrder.GetOrThrow<string>(ValidatorFeedbackKey)!,
+            workOrder.GetOrThrow<int>(RemainingTurnsKey)
+        );
+    }
+
+    private static void UpdateWorkOrderRemainingTurns(DurableDict<string> root, string actorId, int remainingTurns) {
+        var workingByActor = GetOrCreateWorkingByActor(root);
+        if (!workingByActor.TryGet(actorId, out DurableDict<string>? workOrder)
+            || workOrder is null) { return; }
+
+        workOrder.Upsert(RemainingTurnsKey, remainingTurns);
+    }
+
+    private static void RemoveWorkOrder(DurableDict<string> root, string actorId) {
+        var workingByActor = GetOrCreateWorkingByActor(root);
+        _ = workingByActor.Remove(actorId);
+    }
+
+    private static async Task<AsyncAteliaResult<EffectBatchResolution>> ResolveBackgroundWorkingEffectsAsync(
+        DurableDict<string> root,
+        CancellationToken cancellationToken,
+        string? excludeActorId = null
+    ) {
+        var workingByActor = GetOrCreateWorkingByActor(root);
+        if (!workingByActor.Keys.Any()) {
+            return AsyncAteliaResult<EffectBatchResolution>.Success(
+                new EffectBatchResolution(string.Empty, [])
+            );
+        }
+
+        var terminalSummaries = new List<string>();
+        var actorSummaries = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var actorId in workingByActor.Keys.OrderBy(static key => key, StringComparer.Ordinal).ToArray()) {
+            if (!string.IsNullOrWhiteSpace(excludeActorId)
+                && string.Equals(actorId, excludeActorId, StringComparison.Ordinal)) { continue; }
+
+            var effectResult = await ResolveWorkingEffectForTurnAsync(
+                root,
+                actorId,
+                consumeFutureTurn: true,
+                cancellationToken
+            ).ConfigureAwait(false);
+            if (!effectResult.TryGetValue(out var batch) || batch is null) { return AsyncAteliaResult<EffectBatchResolution>.Failure(effectResult.Error!); }
+
+            MergeActorFacingSummaries(actorSummaries, batch.ActorFacingSummaries);
+            if (!string.IsNullOrWhiteSpace(batch.TerminalVisibleSummary)) {
+                terminalSummaries.Add(batch.TerminalVisibleSummary);
+            }
+        }
+
+        return AsyncAteliaResult<EffectBatchResolution>.Success(
+            new EffectBatchResolution(
+                CombineNonEmptySummaries(terminalSummaries.ToArray()),
+                BuildActorEffectSummaries(actorSummaries)
+            )
+        );
+    }
+
+    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveWorkingTurnAndCompleteAsync(
+        DurableDict<string> root,
+        string actorId,
+        string baseSummary,
+        string? collectedTurnLead,
+        bool consumeFutureTurn,
+        CancellationToken cancellationToken
+    ) {
+        var preludeResult = await PrepareTurnResolutionPreludeAsync(
+            root,
+            cancellationToken,
+            excludeWorkingActorId: actorId
+        ).ConfigureAwait(false);
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<TurnResolution>.Failure(preludeResult.Error!); }
+
+        return await ResolveWorkingTurnAndCompleteWithPreludeAsync(
+            root,
+            actorId,
+            baseSummary,
+            prelude,
+            collectedTurnLead,
+            consumeFutureTurn,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveWorkingTurnAndCompleteWithPreludeAsync(
+        DurableDict<string> root,
+        string actorId,
+        string baseSummary,
+        TurnResolutionPrelude prelude,
+        string? collectedTurnLead,
+        bool consumeFutureTurn,
+        CancellationToken cancellationToken
+    ) {
+        var workEffectSummaryResult = await ResolveWorkingEffectForTurnAsync(
+            root,
+            actorId,
+            consumeFutureTurn,
+            cancellationToken
+        ).ConfigureAwait(false);
+        if (!workEffectSummaryResult.TryGetValue(out var workEffectBatch) || workEffectBatch is null) { return AsyncAteliaResult<TurnResolution>.Failure(workEffectSummaryResult.Error!); }
+
+        _ = AdvanceClock(root);
+        ApplyActorFacingSummariesForTurn(
+            root,
+            new[] { prelude.PendingTurnEndEffects, prelude.BackgroundWorkingEffects, workEffectBatch },
+            extraActorSummary: new ActorEffectSummary(actorId, baseSummary)
+        );
+
+        var combinedSummary = CombineNonEmptySummaries(
+            prelude.PendingTurnEndEffects.TerminalVisibleSummary,
+            prelude.BackgroundWorkingEffects.TerminalVisibleSummary,
+            baseSummary,
+            workEffectBatch.TerminalVisibleSummary
+        );
+        var resolutionSummary = combinedSummary;
+        resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
+        return AsyncAteliaResult<TurnResolution>.Success(
+            CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
+        );
+    }
+
+    private static async Task<AsyncAteliaResult<EffectBatchResolution>> ResolveWorkingEffectForTurnAsync(
+        DurableDict<string> root,
+        string actorId,
+        bool consumeFutureTurn,
+        CancellationToken cancellationToken
+    ) {
+        var workOrder = TryReadWorkOrder(root, actorId);
+        if (workOrder is null) { return AsyncAteliaResult<EffectBatchResolution>.Success(new EffectBatchResolution(string.Empty, [])); }
+        if (string.IsNullOrWhiteSpace(workOrder.ActionPayload)) { return AsyncAteliaResult<EffectBatchResolution>.Success(new EffectBatchResolution(string.Empty, [])); }
+
+        InteractionPerception interaction;
+        try {
+            interaction = BuildInteractionSnapshotFromPayload(workOrder.ActionPayload!);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AsyncAteliaResult<EffectBatchResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.WorkPayloadInvalid",
+                    ex.Message
+                )
+            );
+        }
+
+        var terminalSummaries = new List<string>();
+        var actorSummaries = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var remainingTurnsAfterThisTurn = workOrder.RemainingTurns;
+        if (consumeFutureTurn) {
+            remainingTurnsAfterThisTurn = Math.Max(0, workOrder.RemainingTurns - 1);
+            UpdateWorkOrderRemainingTurns(root, actorId, remainingTurnsAfterThisTurn);
+        }
+
+        if (interaction.EffectSlots.Contains(PerTurnEndEffectSlot, StringComparer.Ordinal)) {
+            var perTurnSummaryResult = await ResolveInteractionEffectAsync(
+                root,
+                actorId,
+                interaction,
+                workOrder.PreActionReason,
+                PerTurnEndEffectSlot,
+                cancellationToken
+            ).ConfigureAwait(false);
+            if (!perTurnSummaryResult.TryGetValue(out var perTurnNarration) || perTurnNarration is null) { return AsyncAteliaResult<EffectBatchResolution>.Failure(perTurnSummaryResult.Error!); }
+
+            AppendActorFacingSummary(actorSummaries, actorId, perTurnNarration.ActorFacingSummary);
+            if (!string.IsNullOrWhiteSpace(perTurnNarration.TerminalVisibleSummary)) {
+                terminalSummaries.Add(perTurnNarration.TerminalVisibleSummary!);
+            }
+        }
+
+        if (consumeFutureTurn && remainingTurnsAfterThisTurn == 0) {
+            if (interaction.EffectSlots.Contains(OnCompletionEffectSlot, StringComparer.Ordinal)) {
+                var completionSummaryResult = await ResolveInteractionEffectAsync(
+                    root,
+                    actorId,
+                    interaction,
+                    workOrder.PreActionReason,
+                    OnCompletionEffectSlot,
+                    cancellationToken
+                ).ConfigureAwait(false);
+                if (!completionSummaryResult.TryGetValue(out var completionNarration) || completionNarration is null) { return AsyncAteliaResult<EffectBatchResolution>.Failure(completionSummaryResult.Error!); }
+
+                AppendActorFacingSummary(actorSummaries, actorId, completionNarration.ActorFacingSummary);
+                if (!string.IsNullOrWhiteSpace(completionNarration.TerminalVisibleSummary)) {
+                    terminalSummaries.Add(completionNarration.TerminalVisibleSummary!);
+                }
+            }
+
+            RemoveWorkOrder(root, actorId);
+            SetActorActiveState(root, actorId, active: true);
+        }
+
+        return AsyncAteliaResult<EffectBatchResolution>.Success(
+            new EffectBatchResolution(
+                CombineNonEmptySummaries(terminalSummaries.ToArray()),
+                BuildActorEffectSummaries(actorSummaries)
+            )
+        );
+    }
+
+    private static async Task<AsyncAteliaResult<string>> AutoAdvanceBackgroundWorkUntilAnyActorActiveAsync(
+        DurableDict<string> root,
+        CancellationToken cancellationToken
+    ) {
+        if (HasAnyActiveActor(root)) { return AsyncAteliaResult<string>.Success(string.Empty); }
+
+        var summaries = new List<string>();
+        while (!HasAnyActiveActor(root) && GetOrCreateWorkingByActor(root).Keys.Any()) {
+            var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
+            if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<string>.Failure(preludeResult.Error!); }
+
+            _ = AdvanceClock(root);
+            ApplyActorFacingSummariesForTurn(
+                root,
+                new[] { prelude.PendingTurnEndEffects, prelude.BackgroundWorkingEffects }
+            );
+
+            var resolutionSummary = CombineNonEmptySummaries(
+                prelude.PendingTurnEndEffects.TerminalVisibleSummary,
+                prelude.BackgroundWorkingEffects.TerminalVisibleSummary
+            );
+            var resolution = CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing);
+            summaries.Add(resolution.Summary);
+        }
+
+        return AsyncAteliaResult<string>.Success(summaries.Count == 0 ? string.Empty : string.Join("\n\n", summaries));
     }
 
     private static GmCollectedTurnContext BuildGmCollectedTurnContext(
@@ -873,7 +1511,8 @@ internal static partial class GameSimulation {
         return new GmCollectedTurnContext(
             TerminalPlayerActorId,
             intents
-                .Select(intent => new GmCollectedTurnIntent(
+                .Select(
+                intent => new GmCollectedTurnIntent(
                     intent.ActorId,
                     intent.ActorName,
                     intent.ActorKind,
@@ -883,27 +1522,10 @@ internal static partial class GameSimulation {
                     intent.PreActionReason,
                     intent.ValidatorFeedback,
                     DescribePerceptionForActor(root, intent.ActorId)
-                ))
+                )
+            )
                 .ToArray()
         );
-    }
-
-    private static string BuildCollectedTurnLead(IReadOnlyList<LargeActionIntent> intents, string? fallbackReason) {
-        var lines = new List<string>
-        {
-            "本回合采用多主体同步收集："
-        };
-
-        foreach (var intent in intents) {
-            lines.Add($"- {intent.ActorName} [{intent.ActorId}, {intent.ActorKind}]：{intent.ActionSummary} ({intent.ActionKind})");
-        }
-
-        lines.Add(
-            string.IsNullOrWhiteSpace(fallbackReason)
-                ? "当前 deterministic fallback 先按终端玩家的大型动作推进世界；真实 GM Agent 启用时会尝试统一裁决所有意图。"
-                : $"真实多主体 GM Agent 未完成，本回合回退到终端玩家主导的 deterministic 结算。原因：{fallbackReason}"
-        );
-        return string.Join("\n", lines);
     }
 
     private static string PrefixCollectedTurnLead(string? collectedTurnLead, string summary) {
@@ -911,11 +1533,176 @@ internal static partial class GameSimulation {
         return $"{collectedTurnLead.Trim()}\n\n{summary}";
     }
 
+    private static string PrefixDeferredEffectSummary(string? deferredEffectSummary, string summary)
+        => string.IsNullOrWhiteSpace(deferredEffectSummary)
+            ? summary
+            : $"{deferredEffectSummary!.Trim()}\n\n{summary}";
+
+    private static string CombineNonEmptySummaries(params string?[] parts)
+        => string.Join(
+            "\n",
+            parts.Where(static part => !string.IsNullOrWhiteSpace(part)).Select(static part => part!.Trim())
+        );
+
+    private static void AppendActorFacingSummary(
+        Dictionary<string, List<string>> actorSummaries,
+        string actorId,
+        string? summary
+    ) {
+        if (string.IsNullOrWhiteSpace(summary)) { return; }
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        if (!actorSummaries.TryGetValue(actorId, out var list)) {
+            list = [];
+            actorSummaries.Add(actorId, list);
+        }
+
+        list.Add(summary.Trim());
+    }
+
+    private static void MergeActorFacingSummaries(
+        Dictionary<string, List<string>> actorSummaries,
+        IReadOnlyList<ActorEffectSummary> summaries
+    ) {
+        foreach (var summary in summaries) {
+            AppendActorFacingSummary(actorSummaries, summary.ActorId, summary.Summary);
+        }
+    }
+
+    private static IReadOnlyList<ActorEffectSummary> BuildActorEffectSummaries(
+        Dictionary<string, List<string>> actorSummaries
+    ) {
+        return actorSummaries
+            .OrderBy(static entry => entry.Key, StringComparer.Ordinal)
+            .Select(static entry => new ActorEffectSummary(entry.Key, CombineNonEmptySummaries(entry.Value.ToArray())))
+            .Where(static entry => !string.IsNullOrWhiteSpace(entry.Summary))
+            .ToArray();
+    }
+
+    private static void ApplyActorFacingSummariesForTurn(
+        DurableDict<string> root,
+        IReadOnlyList<EffectBatchResolution> batches,
+        ActorEffectSummary? extraActorSummary = null
+    ) {
+        var actorSummaries = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var batch in batches) {
+            MergeActorFacingSummaries(actorSummaries, batch.ActorFacingSummaries);
+        }
+
+        if (extraActorSummary is not null) {
+            AppendActorFacingSummary(actorSummaries, extraActorSummary.ActorId, extraActorSummary.Summary);
+        }
+
+        foreach (var summary in BuildActorEffectSummaries(actorSummaries)) {
+            SetLastResolutionForActor(root, summary.ActorId, summary.Summary);
+        }
+    }
+
+    private static void MergeActorFacingSummariesIntoExistingResolutions(
+        DurableDict<string> root,
+        params EffectBatchResolution[] batches
+    ) {
+        var actorSummaries = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var batch in batches) {
+            MergeActorFacingSummaries(actorSummaries, batch.ActorFacingSummaries);
+        }
+
+        foreach (var summary in BuildActorEffectSummaries(actorSummaries)) {
+            MergeSummaryIntoActorResolution(root, summary.ActorId, summary.Summary);
+        }
+    }
+
+    private static void MergeSummaryIntoActorResolution(
+        DurableDict<string> root,
+        string actorId,
+        string? summary
+    ) {
+        if (string.IsNullOrWhiteSpace(summary)) { return; }
+
+        var lastResolutionByActor = GetOrCreateLastResolutionByActor(root);
+        if (lastResolutionByActor.TryGet(actorId, out string? existing)
+            && !string.IsNullOrWhiteSpace(existing)) {
+            lastResolutionByActor.Upsert(
+                actorId,
+                CombineNonEmptySummaries(summary, existing)
+            );
+            return;
+        }
+
+        lastResolutionByActor.Upsert(actorId, summary.Trim());
+    }
+
+    private static InteractionPerception BuildInteractionSnapshotFromPayload(string payload) {
+        var interactionId = ParseRequiredPayloadValue(payload, "interactionId");
+        var target = ParseRequiredPayloadValue(payload, "target");
+        var separatorIndex = target.IndexOf(':', StringComparison.Ordinal);
+        if (separatorIndex <= 0 || separatorIndex >= target.Length - 1) { throw new InvalidOperationException($"interaction payload 中的 target 无效：'{target}'。"); }
+
+        var effectSlots = ParseRequiredPayloadValue(payload, "effectSlots")
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(static slot => slot.Trim())
+            .Where(static slot => !string.IsNullOrWhiteSpace(slot))
+            .ToArray();
+        return new InteractionPerception(
+            interactionId,
+            target[..separatorIndex],
+            target[(separatorIndex + 1)..],
+            ParseRequiredPayloadValue(payload, "actionKind"),
+            ParseRequiredPayloadValue(payload, "visibleLabel"),
+            ParseOptionalPayloadValue(payload, "preconditionNote"),
+            ParseOptionalPayloadValue(payload, "effectNote"),
+            int.Parse(ParseRequiredPayloadValue(payload, "turnCost")),
+            ParseRequiredPayloadValue(payload, "effectScope"),
+            effectSlots.Length == 0 ? [TurnEndEffectSlot] : effectSlots
+        );
+    }
+
+    private static async Task<AsyncAteliaResult<EffectResolution>> ResolveInteractionEffectAsync(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction,
+        string preActionReason,
+        string effectSlot,
+        CancellationToken cancellationToken
+    ) {
+        var terminalCanObserveActor = string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)
+            || CanTerminalObserveActorAtLocation(root, actorId, GetActorLocationId(root, actorId));
+        GmInteractionEffectResolution gmResolution;
+        try {
+            gmResolution = await GameMasterResolver.ResolveInteractionEffectAsync(
+                root,
+                new GmInteractionEffectContext(
+                    DescribePerceptionForActor(root, actorId),
+                    GetActorLocationId(root, actorId),
+                    interaction,
+                    preActionReason,
+                    effectSlot,
+                    DescribeCurrentPerception(root),
+                    terminalCanObserveActor
+                ),
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AsyncAteliaResult<EffectResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.InteractionEffectGmFailed",
+                    $"effect-slot 结算依赖 GM Agent，但本次调用失败：{ex.Message}"
+                )
+            );
+        }
+
+        var actorFacingSummary = gmResolution.ActorFacingSummary;
+        var terminalVisibleSummary = string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)
+            ? gmResolution.TerminalVisibleSummary ?? actorFacingSummary
+            : gmResolution.TerminalVisibleSummary;
+        return AsyncAteliaResult<EffectResolution>.Success(
+            new EffectResolution(actorFacingSummary, terminalVisibleSummary)
+        );
+    }
+
     private static string ParseRequiredPayloadValue(string? payload, string key) {
         var value = ParseOptionalPayloadValue(payload, key);
-        if (string.IsNullOrWhiteSpace(value)) {
-            throw new InvalidOperationException($"Large-Action payload 缺少必填字段 '{key}'。");
-        }
+        if (string.IsNullOrWhiteSpace(value)) { throw new InvalidOperationException($"Large-Action payload 缺少必填字段 '{key}'。"); }
 
         return value;
     }
@@ -950,26 +1737,145 @@ internal static partial class GameSimulation {
             ? $"direction={direction}"
             : $"direction={direction}\nfocus={focus}";
 
+    private static bool CanTerminalObserveActorAtLocation(
+        DurableDict<string> root,
+        string actorId,
+        string locationId
+    ) {
+        if (string.Equals(actorId, TerminalPlayerActorId, StringComparison.Ordinal)) { return true; }
+        if (!string.Equals(GetActorLocationId(root, TerminalPlayerActorId), locationId, StringComparison.Ordinal)) { return false; }
+
+        var actor = GetActor(root, actorId);
+        var visibility = actor.TryGet(VisibilityKey, out string? rawVisibility)
+            ? rawVisibility
+            : VisibleValue;
+        return IsVisibleToPlayer(visibility);
+    }
+
+    private static string? BuildTerminalObservationForRest(DurableDict<string> root, string actorId) {
+        var locationId = GetActorLocationId(root, actorId);
+        if (!CanTerminalObserveActorAtLocation(root, actorId, locationId)) { return null; }
+        return $"你看见{GetActorName(root, actorId)}原地歇了一会。";
+    }
+
+    private static string? BuildTerminalObservationForExplore(
+        DurableDict<string> root,
+        string actorId,
+        string sourceLocationId,
+        string sourceLocationName,
+        string targetLocationId,
+        string targetLocationName,
+        string direction,
+        bool createdNewLocation
+    ) {
+        if (!CanTerminalObserveActorAtLocation(root, actorId, sourceLocationId)) { return null; }
+
+        if (createdNewLocation) { return $"你看见{GetActorName(root, actorId)}朝 {direction} 方向试探前行，离开了「{sourceLocationName}」的视线范围。"; }
+
+        return string.Equals(sourceLocationId, targetLocationId, StringComparison.Ordinal)
+            ? $"你看见{GetActorName(root, actorId)}在「{sourceLocationName}」附近来回试探了一阵。"
+            : $"你看见{GetActorName(root, actorId)}沿着通往「{targetLocationName}」的 {direction} 出口离开了「{sourceLocationName}」。";
+    }
+
+    private static string? BuildTerminalObservationForInteraction(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction
+    ) {
+        var actorLocationId = GetActorLocationId(root, actorId);
+        if (!CanTerminalObserveActorAtLocation(root, actorId, actorLocationId)) { return null; }
+
+        return interaction.TargetKind switch {
+            "location" when string.Equals(interaction.TargetId, actorLocationId, StringComparison.Ordinal)
+                => $"你看见{GetActorName(root, actorId)}试着去做「{interaction.VisibleLabel}」。",
+            "item" when IsObservableLocationItem(root, interaction.TargetId, actorLocationId)
+                => $"你看见{GetActorName(root, actorId)}对眼前的物件试了试「{interaction.VisibleLabel}」。",
+            "actor" when IsObservableActor(root, interaction.TargetId, actorLocationId)
+                => $"你看见{GetActorName(root, actorId)}对{GetActorName(root, interaction.TargetId)}试了试「{interaction.VisibleLabel}」。",
+            _ => null
+        };
+    }
+
+    private static string? BuildTerminalObservationForEffect(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction,
+        string effectSlot
+    ) {
+        var actorLocationId = GetActorLocationId(root, actorId);
+        if (!CanTerminalObserveActorAtLocation(root, actorId, actorLocationId)) { return null; }
+
+        return effectSlot switch {
+            TurnEndEffectSlot => $"你注意到{GetActorName(root, actorId)}刚才着手的「{interaction.VisibleLabel}」这时见了分晓。",
+            PerTurnEndEffectSlot => $"你看见{GetActorName(root, actorId)}手头的「{interaction.VisibleLabel}」又往前推进了一点。",
+            OnCompletionEffectSlot => $"你看见{GetActorName(root, actorId)}手头的「{interaction.VisibleLabel}」终于做完了。",
+            _ => $"你注意到{GetActorName(root, actorId)}那边的「{interaction.VisibleLabel}」有了新的结果。"
+        };
+    }
+
+    private static bool IsObservableLocationItem(DurableDict<string> root, string itemId, string locationId) {
+        var world = root.GetOrThrow<DurableDict<string>>(WorldKey)!;
+        if (!world.TryGet(ItemsKey, out DurableDict<string>? items)
+            || items is null
+            || !items.TryGet(itemId, out DurableDict<string>? item)
+            || item is null) { return false; }
+
+        if (item.TryGet(OwnerActorIdKey, out string? ownerActorId) && !string.IsNullOrWhiteSpace(ownerActorId)) { return false; }
+
+        if (!item.TryGet(LocationIdKey, out string? itemLocationId)
+            || !string.Equals(itemLocationId, locationId, StringComparison.Ordinal)) { return false; }
+
+        var visibility = item.TryGet(VisibilityKey, out string? rawVisibility)
+            ? rawVisibility
+            : VisibleValue;
+        return IsVisibleToPlayer(visibility);
+    }
+
+    private static bool IsObservableActor(DurableDict<string> root, string actorId, string locationId) {
+        var actor = GetActor(root, actorId);
+        if (!actor.TryGet(LocationIdKey, out string? actorLocationId)
+            || !string.Equals(actorLocationId, locationId, StringComparison.Ordinal)) { return false; }
+
+        var visibility = actor.TryGet(VisibilityKey, out string? rawVisibility)
+            ? rawVisibility
+            : VisibleValue;
+        return IsVisibleToPlayer(visibility);
+    }
+
     private static string BuildDeterministicInteractionSummary(InteractionPerception interaction) {
-        if (!string.IsNullOrWhiteSpace(interaction.EffectNote)) {
-            return interaction.EffectNote!;
-        }
+        if (!string.IsNullOrWhiteSpace(interaction.EffectNote)) { return interaction.EffectNote!; }
 
         return $"你执行了「{interaction.VisibleLabel}」。当前原型只推进时钟；更具体的后果需要真实 GM Agent 或后续规则工具结算。";
     }
 
-    private static string AppendClockAdvance(
-        string summary,
-        int previousDay,
-        int previousSlot,
-        int nextDay,
-        int nextSlot,
-        int slotsPerDay
-    ) {
-        var trimmed = string.IsNullOrWhiteSpace(summary) ? "本回合探索已经完成。" : summary.Trim();
-        return $"{trimmed} 时间从 {GameClock.FormatClock(previousDay, previousSlot, slotsPerDay)}"
-            + $" 前进到 {GameClock.FormatClock(nextDay, nextSlot, slotsPerDay)}。";
+    private static string BuildDeterministicImmediateInteractionSummary(InteractionPerception interaction) {
+        if (!string.IsNullOrWhiteSpace(interaction.EffectNote)) { return interaction.EffectNote!; }
+
+        return $"你顺手试了试「{interaction.VisibleLabel}」。当前原型暂时只记录这次即时尝试，并把它留在本回合步骤里。";
     }
+
+    private static string BuildDeterministicDeferredInteractionSummary(InteractionPerception interaction, string effectSlot) {
+        if (!string.IsNullOrWhiteSpace(interaction.EffectNote)) { return interaction.EffectNote!; }
+
+        return effectSlot switch {
+            TurnEndEffectSlot => $"到本回合结束时，你此前试着进行的「{interaction.VisibleLabel}」终于见了分晓。",
+            PerTurnEndEffectSlot => $"这回合末，你持续进行的「{interaction.VisibleLabel}」又推进了一点。",
+            OnCompletionEffectSlot => $"经过持续忙碌，「{interaction.VisibleLabel}」终于做完了。",
+            _ => $"「{interaction.VisibleLabel}」在 {effectSlot} 阶段产生了结果。"
+        };
+    }
+
+    private static string BuildDeferredTurnEndInteractionSummary(InteractionPerception interaction)
+        => $"你着手去做「{interaction.VisibleLabel}」，它会在本回合结束时统一见分晓。";
+
+    private static string BuildWorkingStartSummary(InteractionPerception interaction)
+        => $"你开始持续处理「{interaction.VisibleLabel}」，若不被打断，接下来几个回合会一直忙于这件事。";
+
+    private static string BuildWorkingContinueLead(InteractionPerception interaction)
+        => $"你继续处理「{interaction.VisibleLabel}」。";
+
+    private static string BuildWorkingCompletionLead(InteractionPerception interaction)
+        => $"你把「{interaction.VisibleLabel}」继续做到了收尾阶段。";
 
     private static string CreateExplorationLocationId(DurableDict<string> root, string currentLocationId, string direction) {
         var baseId = $"{Slugify(currentLocationId)}-{Slugify(direction)}";

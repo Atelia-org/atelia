@@ -219,6 +219,10 @@ internal static class PerceptionEvidenceRenderer {
         else {
             foreach (var step in evidence.AcceptedSteps) {
                 sb.AppendLine($"- {step.StepNumber}. {step.ActionKind} | {step.ActionSummary}");
+                sb.AppendLine($"  StepOutcomeState: {step.StepOutcomeState}");
+                if (!string.IsNullOrWhiteSpace(step.StepOutcomeSummary)) {
+                    sb.AppendLine($"  StepOutcomeSummary: {step.StepOutcomeSummary}");
+                }
                 sb.AppendLine($"  PreActionReason: {step.PreActionReason}");
                 sb.AppendLine($"  ValidatorFeedback: {step.ValidatorFeedback}");
             }
@@ -291,7 +295,9 @@ internal static class PerceptionEvidenceRenderer {
 
         sb.AppendLine($"{indent}可尝试动作:");
         foreach (var interaction in interactions) {
-            sb.AppendLine($"{indent}- [{interaction.InteractionId}] {interaction.VisibleLabel} ({interaction.ActionKind})");
+            sb.AppendLine(
+                $"{indent}- [{interaction.InteractionId}] {interaction.VisibleLabel} ({interaction.ActionKind}) · {GameSimulation.DescribeInteractionTurnCostForPlayer(interaction)}"
+            );
             if (!string.IsNullOrWhiteSpace(interaction.PreconditionNote)
                 && !string.Equals(interaction.PreconditionNote, "none", StringComparison.OrdinalIgnoreCase)) {
                 sb.AppendLine($"{indent}  条件: {interaction.PreconditionNote}");
@@ -307,7 +313,7 @@ internal static class PerceptionEvidenceRenderer {
 
         foreach (var entry in interactions) {
             sb.AppendLine(
-                $"   - [{entry.Interaction.InteractionId}] {entry.Interaction.VisibleLabel} ({entry.Interaction.ActionKind}) @ {FormatPlayerSource(entry)}"
+                $"   - [{entry.Interaction.InteractionId}] {entry.Interaction.VisibleLabel} ({entry.Interaction.ActionKind}) · {GameSimulation.DescribeInteractionTurnCostForPlayer(entry.Interaction)} @ {FormatPlayerSource(entry)}"
             );
             if (!string.IsNullOrWhiteSpace(entry.Interaction.PreconditionNote)
                 && !string.Equals(entry.Interaction.PreconditionNote, "none", StringComparison.OrdinalIgnoreCase)) {
@@ -324,6 +330,10 @@ internal static class PerceptionEvidenceRenderer {
 
         foreach (var step in steps) {
             sb.AppendLine($"   {step.StepNumber}. {step.ActionSummary}");
+            AppendLabeledBlock(sb, "结果状态", LocalizeStepOutcomeState(step.StepOutcomeState), "      ");
+            if (!string.IsNullOrWhiteSpace(step.StepOutcomeSummary)) {
+                AppendLabeledBlock(sb, "这一步发生了什么", step.StepOutcomeSummary!, "      ");
+            }
             AppendLabeledBlock(sb, "当时的想法", step.PreActionReason, "      ");
             AppendLabeledBlock(sb, "检查备注", step.ValidatorFeedback, "      ");
         }
@@ -370,7 +380,7 @@ internal static class PerceptionEvidenceRenderer {
     }
 
     private static string FormatPromptInteraction(InteractionPerception interaction) {
-        return $"{interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel} | precondition: {OrNone(interaction.PreconditionNote)}";
+        return $"{interaction.InteractionId}: {interaction.TargetKind}:{interaction.TargetId} | {interaction.ActionKind} | {interaction.VisibleLabel} | turnCost: {interaction.TurnCost} | effectScope: {interaction.EffectScope} | effectSlots: {string.Join(",", interaction.EffectSlots)} | precondition: {OrNone(interaction.PreconditionNote)}";
     }
 
     private static string FormatPlayerSource(VisibleInteractionEntry entry) {
@@ -385,6 +395,15 @@ internal static class PerceptionEvidenceRenderer {
 
     private static string LocalizePlayerEmptyText(string text)
         => string.Equals(text, "(empty)", StringComparison.Ordinal) ? "（空）" : text;
+
+    private static string LocalizeStepOutcomeState(string value)
+        => value switch {
+            GameSimulation.StepOutcomeCommittedNow => "已立即生效",
+            GameSimulation.StepOutcomePendingTurnEnd => "待本回合结束统一结算",
+            GameSimulation.StepOutcomeWorking => "正在持续进行",
+            GameSimulation.StepOutcomeCompleted => "已完成",
+            _ => value
+        };
 
     private static string OrNone(string? text)
         => string.IsNullOrWhiteSpace(text) ? "(none)" : text;

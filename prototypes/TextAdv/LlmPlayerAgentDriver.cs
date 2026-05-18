@@ -13,7 +13,6 @@ internal static class LlmPlayerAgentDriver {
     private const string ModelIdEnv = "ATELIA_TEXTADV_LLM_PLAYER_MODEL_ID";
     private const string FallbackModelIdEnv = "DEEPSEEK_MODEL";
     private const string ApiKeyEnv = "DEEPSEEK_API_KEY";
-    private const string ModeEnv = "ATELIA_TEXTADV_LLM_PLAYER_MODE";
     private const string PipelineEnv = "ATELIA_TEXTADV_LLM_PLAYER_PIPELINE";
     private const string MaxAttemptsEnv = "ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS";
     private const string DefaultModelId = "deepseek-v4-flash";
@@ -24,14 +23,18 @@ internal static class LlmPlayerAgentDriver {
     private static readonly Lock s_gate = new();
     private static DeepSeekV4ChatClient? s_client;
     private static LlmPlayerConfig? s_config;
+    private static LlmPlayerStub? s_stub;
 
     private sealed record LlmPlayerConfig(
         string? BaseAddress,
         string ModelId,
         string? ApiKey,
-        string Mode,
         string Pipeline,
         int MaxAttempts
+    );
+
+    internal sealed record LlmPlayerStub(
+        Func<DurableDict<string>, string, CancellationToken, Task<AsyncAteliaResult<TurnCollectionStatus>>> SubmitLargeActionAsync
     );
 
     private sealed record PlayerActionProposal(
@@ -46,13 +49,16 @@ internal static class LlmPlayerAgentDriver {
         string actorId,
         CancellationToken cancellationToken
     ) {
+        var stub = GetStub();
+        if (stub is not null) { return await stub.SubmitLargeActionAsync(root, actorId, cancellationToken).ConfigureAwait(false); }
+
         var config = GetConfig();
-        if (string.Equals(config.Mode, "deterministic", StringComparison.OrdinalIgnoreCase)
-            || string.IsNullOrWhiteSpace(config.ApiKey)) { return SubmitFallback(root, actorId, "LLM Player Agent 未启用或未配置 API key。"); }
 
         try {
             var perception = GameSimulation.DescribePerceptionForActor(root, actorId);
-            var initialObservation = BuildInitialObservation(perception);
+            var toolService = new PlayerActionToolService(root, actorId, perception);
+            var toolExecutor = CreateToolExecutor(toolService);
+            var initialObservation = BuildInitialObservation(perception, toolExecutor.GetVisibleToolDefinitions());
             var history = new List<IHistoryMessage>
             {
                 new ObservationMessage(initialObservation)
@@ -61,15 +67,12 @@ internal static class LlmPlayerAgentDriver {
             if (UsesDirectorExecutorPipeline(config)) {
                 var directorNotes = await BuildDirectorNotesAsync(config, initialObservation, cancellationToken)
                     .ConfigureAwait(false);
-                if (directorNotes.IsFailure) { return SubmitFallback(root, actorId, directorNotes.Error!.Message); }
+                if (directorNotes.IsFailure) { return AsyncAteliaResult<TurnCollectionStatus>.Failure(directorNotes.Error!); }
 
                 history.Add(new ObservationMessage(BuildDirectorNotesObservation(directorNotes.Value!)));
             }
 
-            var toolService = new PlayerActionToolService(root, actorId, perception);
-
             for (var attempt = 1; attempt <= config.MaxAttempts; attempt++) {
-                var toolExecutor = CreateToolExecutor(toolService);
                 var request = new CompletionRequest(
                     ModelId: config.ModelId,
                     SystemPrompt: BuildSystemPrompt(),
@@ -77,7 +80,14 @@ internal static class LlmPlayerAgentDriver {
                     Tools: toolExecutor.GetVisibleToolDefinitions()
                 );
                 var result = await GetClient(config).StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
-                if (result.Errors is { Count: > 0 }) { return SubmitFallback(root, actorId, BuildProviderErrorMessage(result.Errors)); }
+                if (result.Errors is { Count: > 0 }) {
+                    return AsyncAteliaResult<TurnCollectionStatus>.Failure(
+                        new TextAdvError(
+                            "TextAdv.LlmPlayerProviderError",
+                            BuildProviderErrorMessage(result.Errors)
+                        )
+                    );
+                }
 
                 var action = result.Message;
                 history.Add(action);
@@ -134,7 +144,12 @@ internal static class LlmPlayerAgentDriver {
                     ).ConfigureAwait(false);
                 }
                 catch (Exception ex) {
-                    return SubmitFallback(root, actorId, $"LLM Player validator 调用失败：{ex.Message}");
+                    return AsyncAteliaResult<TurnCollectionStatus>.Failure(
+                        new TextAdvError(
+                            "TextAdv.LlmPlayerValidatorFailed",
+                            $"LLM Player validator 调用失败：{ex.Message}"
+                        )
+                    );
                 }
 
                 if (!validation.Accepted) {
@@ -161,61 +176,56 @@ internal static class LlmPlayerAgentDriver {
                     : AsyncAteliaResult<TurnCollectionStatus>.Failure(submitResult.Error!);
             }
 
-            return SubmitFallback(root, actorId, $"LLM Player Agent 在 {config.MaxAttempts} 次尝试内没有提交 validator 通过的 Large-Action。");
+            return AsyncAteliaResult<TurnCollectionStatus>.Failure(
+                new TextAdvError(
+                    "TextAdv.LlmPlayerNoAcceptedLargeAction",
+                    $"LLM Player Agent 在 {config.MaxAttempts} 次尝试内没有提交 validator 通过的 Large-Action。"
+                )
+            );
         }
         catch (Exception ex) when (ex is not OperationCanceledException) {
-            return SubmitFallback(root, actorId, $"LLM Player Agent 失败：{ex.Message}");
+            return AsyncAteliaResult<TurnCollectionStatus>.Failure(
+                new TextAdvError(
+                    "TextAdv.LlmPlayerFailed",
+                    $"LLM Player Agent 失败：{ex.Message}"
+                )
+            );
         }
-    }
-
-    private static AsyncAteliaResult<TurnCollectionStatus> SubmitFallback(
-        DurableDict<string> root,
-        string actorId,
-        string reason
-    ) {
-        var perception = GameSimulation.DescribePerceptionForActor(root, actorId);
-        var submitResult = GameSimulation.SubmitLargeActionForActor(
-            root,
-            actorId,
-            actionKind: "large/rest-a-while",
-            actionSummary: "谨慎观察并暂不移动",
-            actionPayload: null,
-            preActionReason: $"MVP fallback：{reason} 当前先在「{perception.Location.Name}」保持观察，不主动改变世界状态。",
-            validatorFeedback: "llm-player fallback bypassed validator"
-        );
-        return submitResult.IsSuccess
-            ? AsyncAteliaResult<TurnCollectionStatus>.Success(submitResult.Value!)
-            : AsyncAteliaResult<TurnCollectionStatus>.Failure(submitResult.Error!);
     }
 
     private static ToolExecutor CreateToolExecutor(PlayerActionToolService toolService)
         => new([
-            MethodToolWrapper.FromDelegate<string, string>(toolService.EditMemoryNotebookAsync),
-            MethodToolWrapper.FromDelegate<string>(toolService.RestAWhileAsync),
-            MethodToolWrapper.FromDelegate<string, string, string?>(toolService.ExploreAsync),
-            MethodToolWrapper.FromDelegate<string, string>(toolService.InteractAsync),
+            OverrideToolMetadata(
+                MethodToolWrapper.FromDelegate<string, string>(toolService.EditMemoryNotebookAsync),
+                PlayerActionGuideCatalog.GetEditMemoryNotebookToolMetadata()
+            ),
+            OverrideToolMetadata(
+                MethodToolWrapper.FromDelegate<string>(toolService.RestAWhileAsync),
+                PlayerActionGuideCatalog.GetRestAWhileToolMetadata()
+            ),
+            OverrideToolMetadata(
+                MethodToolWrapper.FromDelegate<string, string, string?>(toolService.ExploreAsync),
+                PlayerActionGuideCatalog.GetExploreToolMetadata()
+            ),
+            OverrideToolMetadata(
+                MethodToolWrapper.FromDelegate<string, string>(toolService.InteractAsync),
+                PlayerActionGuideCatalog.GetInteractToolMetadata()
+            ),
         ]);
 
     private static string BuildSystemPrompt() {
         return """
 你是 TextAdv 的 LLM Player Agent，负责扮演一个 active player actor。
 
-你的任务是根据自己的 Perception-Bundle、Memory-Notebook，以及可能出现的导演札记，为当前回合提交一个 Large-Action。
+你的任务是根据自己的 Perception-Bundle、Memory-Notebook、原生工具 schema，以及可能出现的导演札记，为当前回合提交一个 Large-Action。
 
 硬规则：
 1. 你只能依据输入给你的 actor 私有视角行动，不能假装知道完整世界真相。
-2. 你可以先调用零到多个 player_edit_memory_notebook Small-Action 工具更新自己的 Memory-Notebook。
+2. 工具参数里的 reason 必须先说明当前证据如何支持这个动作，不要写成事后解释。
 3. 最终必须调用 exactly one Large-Action 工具提交回合，不要只返回自然语言。
-4. 你可以选择休息、探索、或执行当前可见 interaction。
-5. 每个工具的事前推理必须先说明当前证据如何支持这个动作，不要写成事后解释。
-6. 如果没有明确目标，优先选择 player_rest_a_while，语义是谨慎观察并暂不移动。
-7. 不要试图直接改世界账本；你只是更新自己的记忆或声明玩家意图，GM 会统一结算。
-8. 导演札记是行动参考，不是世界真相；若札记与 Perception-Bundle 冲突，以 Perception-Bundle 和工具结果为准。
-
-Notebook 规则：
-- 记录猜测时请写“可能 / 怀疑 / 尚未确认”，不要把未证实内容写成确定事实。
-- edit_script 可直接传 <insert side="after" anchor="tail">...</insert> 这类片段，系统会补根节点。
-- 每次工具调用后你会收到结果；如果 notebook 已经足够，继续提交 Large-Action。
+4. 不要试图直接改世界账本；你只是更新自己的记忆或声明玩家意图，GM 会统一结算。
+5. 导演札记是行动参考，不是世界真相；若札记与 Perception-Bundle 冲突，以 Perception-Bundle 和工具结果为准。
+6. 每次工具调用后你会收到结果；若小动作已足够，请继续提交 Large-Action 完成本回合。
 """;
     }
 
@@ -281,19 +291,25 @@ Notebook 规则：
 """;
     }
 
-    private static string BuildInitialObservation(PerceptionBundle perception) {
+    private static string BuildInitialObservation(
+        PerceptionBundle perception,
+        ImmutableArray<ToolDefinition> toolDefinitions
+    ) {
         var sb = new StringBuilder();
         sb.AppendLine("[你的当前 Perception-Bundle]");
         sb.AppendLine(PerceptionEvidenceRenderer.RenderForPrompt(perception));
 
         sb.AppendLine();
-        sb.AppendLine("[可用 Small-Action 工具]");
-        sb.AppendLine("- player_edit_memory_notebook(reason, edit_script)");
+        sb.AppendLine(PlayerActionGuideCatalog.BuildLlmPlayerManual());
         sb.AppendLine();
-        sb.AppendLine("[可用 Large-Action 工具]");
-        sb.AppendLine("- player_rest_a_while(reason)");
-        sb.AppendLine("- player_explore(reason, direction, focus)");
-        sb.AppendLine("- player_interact(reason, interaction_id)");
+        sb.AppendLine("[当前可用原生工具 schema]");
+        foreach (var tool in toolDefinitions) {
+            sb.AppendLine($"- {tool.Name}: {tool.Description}");
+            foreach (var parameter in tool.Parameters) {
+                sb.AppendLine($"  - {parameter.Name}: {parameter.Description}");
+            }
+        }
+
         return sb.ToString();
     }
 
@@ -332,6 +348,13 @@ Notebook 规则：
         lock (s_gate) {
             if (s_config is not null) { return s_config; }
 
+            var removedMode = TextAdvRuntimeEnvironment.GetOptionalEnvironment("ATELIA_TEXTADV_LLM_PLAYER_MODE");
+            if (!string.IsNullOrWhiteSpace(removedMode)) {
+                throw new InvalidOperationException(
+                    "ATELIA_TEXTADV_LLM_PLAYER_MODE 已移除。运行时现在只支持真实 LLM Player；测试请显式注入 LlmPlayerStub。"
+                );
+            }
+
             s_config = new LlmPlayerConfig(
                 BaseAddress: TextAdvRuntimeEnvironment.GetOptionalEnvironment(BaseAddressEnv),
                 ModelId: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(
@@ -339,11 +362,38 @@ Notebook 规则：
                     TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(FallbackModelIdEnv, DefaultModelId)
                 ),
                 ApiKey: TextAdvRuntimeEnvironment.GetOptionalEnvironment(ApiKeyEnv),
-                Mode: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(ModeEnv, "auto"),
                 Pipeline: TextAdvRuntimeEnvironment.GetEnvironmentOrDefault(PipelineEnv, DirectorExecutorPipeline),
                 MaxAttempts: TextAdvRuntimeEnvironment.GetPositiveIntEnvironment(MaxAttemptsEnv, DefaultMaxAttempts)
             );
+            if (string.IsNullOrWhiteSpace(s_config.ApiKey)) {
+                throw new InvalidOperationException(
+                    $"{ApiKeyEnv} 未配置。TextAdv 运行时现在要求真实 LLM Player 可用；测试请显式注入 LlmPlayerStub。"
+                );
+            }
+
             return s_config;
+        }
+    }
+
+    internal static void SetStubForTests(LlmPlayerStub? stub) {
+        lock (s_gate) {
+            s_stub = stub;
+            s_client = null;
+            s_config = null;
+        }
+    }
+
+    internal static void ResetForTests() {
+        lock (s_gate) {
+            s_stub = null;
+            s_client = null;
+            s_config = null;
+        }
+    }
+
+    private static LlmPlayerStub? GetStub() {
+        lock (s_gate) {
+            return s_stub;
         }
     }
 
@@ -356,6 +406,46 @@ Notebook 规则：
             prefix: "LLM Player provider error: ",
             defaultMessage: "LLM Player provider returned unknown error."
         );
+    }
+
+    private static ITool OverrideToolMetadata(
+        ITool inner,
+        PlayerActionGuideCatalog.PlayerToolMetadata metadata
+    ) {
+        return new ToolMetadataOverrideTool(inner, metadata);
+    }
+
+    private sealed class ToolMetadataOverrideTool : ITool {
+        private readonly ITool _inner;
+        private readonly IReadOnlyList<ToolParamSpec> _parameters;
+
+        public ToolMetadataOverrideTool(
+            ITool inner,
+            PlayerActionGuideCatalog.PlayerToolMetadata metadata
+        ) {
+            _inner = inner;
+            Name = metadata.Name;
+            Description = metadata.Description;
+            _parameters = metadata.Parameters;
+        }
+
+        public string Name { get; }
+
+        public string Description { get; }
+
+        public IReadOnlyList<ToolParamSpec> Parameters => _parameters;
+
+        public bool Visible {
+            get => _inner.Visible;
+            set => _inner.Visible = value;
+        }
+
+        public ValueTask<ToolExecuteResult> ExecuteAsync(
+            IReadOnlyDictionary<string, object?>? arguments,
+            CancellationToken cancellationToken
+        ) {
+            return _inner.ExecuteAsync(arguments, cancellationToken);
+        }
     }
 
     private sealed class PlayerActionToolService {
@@ -376,10 +466,10 @@ Notebook 规则：
             Proposal = null;
         }
 
-        [Tool("player_edit_memory_notebook", "Small-Action：编辑自己的私人 Memory-Notebook，不结束当前回合。")]
+        [Tool("player_edit_memory_notebook", PlayerActionGuideText.EditMemoryNotebookToolDescription)]
         public async ValueTask<ToolExecuteResult> EditMemoryNotebookAsync(
-            [ToolParam("事前推理：依据当前可见信息说明为什么要这样更新记忆。")] string reason,
-            [ToolParam("TextEditScript 片段或完整 XML，例如 <insert side=\"after\" anchor=\"tail\">...</insert>。")] string edit_script,
+            [ToolParam(PlayerActionGuideText.EditMemoryNotebookReasonAttributeDescription)] string reason,
+            [ToolParam(PlayerActionGuideText.EditScriptParameterDescription)] string edit_script,
             CancellationToken cancellationToken
         ) {
             if (Proposal is not null) {
@@ -436,9 +526,9 @@ Notebook 规则：
             );
         }
 
-        [Tool("player_rest_a_while", "提交 Large-Action：谨慎观察并暂不移动。没有明确目标或风险较高时优先选择。")]
+        [Tool("player_rest_a_while", PlayerActionGuideText.RestAWhileToolDescription)]
         public ValueTask<ToolExecuteResult> RestAWhileAsync(
-            [ToolParam("事前推理：依据当前可见信息说明为什么此刻选择暂不移动。")] string reason,
+            [ToolParam(PlayerActionGuideText.RestReasonAttributeDescription)] string reason,
             CancellationToken cancellationToken
         ) {
             if (!TrySetProposal(
@@ -454,11 +544,11 @@ Notebook 规则：
             return ValueTask.FromResult(result);
         }
 
-        [Tool("player_explore", "提交 Large-Action：向指定方向探索。可以探索可见出口，也可以试探未知方向。")]
+        [Tool("player_explore", PlayerActionGuideText.ExploreToolDescription)]
         public ValueTask<ToolExecuteResult> ExploreAsync(
-            [ToolParam("事前推理：依据当前可见信息说明为什么探索这个方向。")] string reason,
-            [ToolParam("探索方向，例如 north/south/east/west/inside。")] string direction,
-            [ToolParam("可选：希望重点寻找或确认的对象；没有则传 null。")] string? focus,
+            [ToolParam(PlayerActionGuideText.ExploreReasonAttributeDescription)] string reason,
+            [ToolParam(PlayerActionGuideText.DirectionParameterDescription)] string direction,
+            [ToolParam(PlayerActionGuideText.FocusParameterDescription)] string? focus,
             CancellationToken cancellationToken
         ) {
             direction = string.IsNullOrWhiteSpace(direction) ? string.Empty : direction.Trim();
@@ -492,10 +582,10 @@ Notebook 规则：
             return ValueTask.FromResult(result);
         }
 
-        [Tool("player_interact", "提交 Large-Action：执行当前 Perception-Bundle 中可见的 interaction。")]
+        [Tool("player_interact", PlayerActionGuideText.InteractToolDescription)]
         public ValueTask<ToolExecuteResult> InteractAsync(
-            [ToolParam("事前推理：依据当前可见 interaction 和环境说明为什么执行它。")] string reason,
-            [ToolParam("当前 Perception-Bundle 中可见的 interaction_id。")] string interaction_id,
+            [ToolParam(PlayerActionGuideText.InteractReasonAttributeDescription)] string reason,
+            [ToolParam(PlayerActionGuideText.InteractionIdParameterDescription)] string interaction_id,
             CancellationToken cancellationToken
         ) {
             var interactionResult = GameSimulation.TryGetVisibleInteraction(CurrentPerception, interaction_id);
@@ -504,6 +594,15 @@ Notebook 规则：
                     new ToolExecuteResult(
                         ToolExecutionStatus.Failed,
                         interactionResult.Error?.Message ?? $"当前看不到 interaction '{interaction_id}'。"
+                    )
+                );
+            }
+
+            if (!GameSimulation.InteractionConsumesTurn(interaction)) {
+                return ValueTask.FromResult(
+                    new ToolExecuteResult(
+                        ToolExecutionStatus.Failed,
+                        $"interaction '{interaction_id}' 当前属于顺手小动作，不是 Large-Action；请改选会占用本回合的 interaction，或使用其他 Large-Action 工具。"
                     )
                 );
             }

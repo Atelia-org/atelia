@@ -78,6 +78,7 @@ public static partial class GameEntry {
         var root = new RootCommand("荒岛求生 — 最小回合流程原型");
 
         root.Add(BuildNewCommand());
+        root.Add(BuildHelpCommand());
         root.Add(BuildLookAroundCommand());
         root.Add(BuildEditMemoryNotebookCommand());
         root.Add(BuildInteractCommand());
@@ -93,6 +94,29 @@ public static partial class GameEntry {
         root.Add(BuildDevRunAutonomousRoundsCommand());
 
         return root;
+    }
+
+    private static string RenderPerceptionForTerminal(
+        DurableDict<string> root,
+        PerceptionBundle perception,
+        bool forceShowFullHelp = false
+    ) {
+        return GamePresenter.RenderPerception(
+            perception,
+            GameSimulation.GetTerminalHelpMode(root),
+            forceShowFullHelp
+        );
+    }
+
+    private static string RenderCurrentPerceptionForTerminal(
+        DurableDict<string> root,
+        bool forceShowFullHelp = false
+    ) {
+        return RenderPerceptionForTerminal(
+            root,
+            GameSimulation.DescribeCurrentPerception(root),
+            forceShowFullHelp
+        );
     }
 
     private static Command BuildNewCommand() {
@@ -121,18 +145,79 @@ public static partial class GameEntry {
                 output.WriteLine("✅ 新世界已创建！");
                 output.WriteLine($"💾 存档目录：{repoDir}");
                 output.WriteLine();
-                output.Write(
-                    GamePresenter.RenderPerception(
-                        GameSimulation.DescribeCurrentPerception(_root)
-                    )
-                );
+                output.Write(RenderCurrentPerceptionForTerminal(_root, forceShowFullHelp: true));
+            }
+        );
+        return cmd;
+    }
+
+    private static Command BuildHelpCommand() {
+        var modeArg = new Argument<string?>("mode") {
+            Description = "可选：on=以后每次都显示完整速查，off=以后只保留最简帮助提示，status=查看当前设置。省略时只显示一次完整帮助。",
+            Arity = ArgumentArity.ZeroOrOne
+        };
+        var cmd = new Command("help", "显示或切换终端玩家帮助模式") { modeArg };
+        cmd.SetAction(
+            ctx => {
+                var output = ctx.InvocationConfiguration.Output;
+                var mode = ctx.GetValue(modeArg);
+
+                if (string.IsNullOrWhiteSpace(mode)) {
+                    var loadedState = GetState(out _);
+                    if (loadedState is null) {
+                        output.Write(GamePresenter.RenderStandaloneHelp(perception: null, TerminalHelpMode.Off));
+                        return;
+                    }
+
+                    var (_, currentRoot) = loadedState.Value;
+                    output.Write(
+                        GamePresenter.RenderStandaloneHelp(
+                            GameSimulation.DescribeCurrentPerception(currentRoot),
+                            GameSimulation.GetTerminalHelpMode(currentRoot)
+                        )
+                    );
+                    return;
+                }
+
+                if (!TryGetState(output, out var configuredState)) { return; }
+
+                var (repo, root) = configuredState;
+                switch (mode.Trim().ToLowerInvariant()) {
+                    case "on":
+                        GameSimulation.SetTerminalHelpMode(root, TerminalHelpMode.On);
+                        _ = repo.Commit(root).Value;
+                        output.WriteLine("✅ 以后每次局面渲染后都会附带完整操作速查。");
+                        output.WriteLine();
+                        output.Write(
+                            GamePresenter.RenderStandaloneHelp(
+                                GameSimulation.DescribeCurrentPerception(root),
+                                GameSimulation.GetTerminalHelpMode(root)
+                            )
+                        );
+                        return;
+                    case "off":
+                        GameSimulation.SetTerminalHelpMode(root, TerminalHelpMode.Off);
+                        _ = repo.Commit(root).Value;
+                        output.WriteLine("✅ 以后默认只保留最简帮助提示；完整速查可随时用 `pmux game help` 查看。");
+                        output.WriteLine();
+                        output.WriteLine(GamePresenter.RenderStandaloneHelpStatus(TerminalHelpMode.Off));
+                        output.WriteLine();
+                        output.Write(PlayerActionGuideCatalog.RenderTerminalMinimalHelpHint());
+                        return;
+                    case "status":
+                        output.WriteLine(GamePresenter.RenderStandaloneHelpStatus(GameSimulation.GetTerminalHelpMode(root)));
+                        return;
+                    default:
+                        output.WriteLine("❌ help mode 只支持 on / off / status。");
+                        return;
+                }
             }
         );
         return cmd;
     }
 
     private static Command BuildLookAroundCommand() {
-        var cmd = new Command("look-around", "重新显示当前局面、笔记本和操作速查");
+        var cmd = new Command("look-around", "重新显示当前局面、笔记本和帮助提示");
         cmd.SetAction(
             ctx => {
                 var output = ctx.InvocationConfiguration.Output;
@@ -140,11 +225,7 @@ public static partial class GameEntry {
                 if (!TryGetState(output, out var state)) { return; }
 
                 var (_, root) = state;
-                output.Write(
-                    GamePresenter.RenderPerception(
-                        GameSimulation.DescribeCurrentPerception(root)
-                    )
-                );
+                output.Write(RenderCurrentPerceptionForTerminal(root));
             }
         );
         return cmd;
@@ -155,7 +236,7 @@ public static partial class GameEntry {
             Description = "只做 parse、after-view 预演和 validator 校验，不写入 notebook，也不记录 accepted step。"
         };
         var reasonArg = new Argument<string>("reason") {
-            Description = "这一步动作的事前推理。应先根据当前证据说明你为什么准备这么做，而不是事后合理化。"
+            Description = PlayerActionGuideCatalog.GetEditMemoryNotebookReasonArgumentDescription()
         };
         var scriptArg = new Argument<string>("edit-script") {
             Description = "notebook 编辑片段或完整文档。可直接传 <insert side=\"after\" anchor=\"tail\">…</insert>；系统会自动补 text-edit-script 根节点。"
@@ -216,7 +297,7 @@ public static partial class GameEntry {
 
                 output.WriteLine("✅ 记事本已更新。");
                 output.WriteLine();
-                output.Write(GamePresenter.RenderPerception(updatedPerception));
+                output.Write(RenderPerceptionForTerminal(root, updatedPerception));
             }
         );
         return cmd;
@@ -234,7 +315,7 @@ public static partial class GameEntry {
         }
     }
 
-    private static async Task<GameActionValidator.ValidationResult?> TryValidateLargeActionAsync(
+    private static async Task<GameActionValidator.ValidationResult?> TryValidateActionAsync(
         TextWriter output,
         PerceptionBundle perception,
         string actionKind,
@@ -272,7 +353,7 @@ public static partial class GameEntry {
 
         var (repo, root) = state;
         var perception = GameSimulation.DescribeCurrentPerception(root);
-        var validation = await TryValidateLargeActionAsync(
+        var validation = await TryValidateActionAsync(
             output,
             perception,
             actionKind,
@@ -310,9 +391,51 @@ public static partial class GameEntry {
 
         _ = repo.Commit(root).Value;
         output.WriteLine($"✅ 你决定了：{actionSummary}");
-        output.WriteLine($"📣 {resolution.Summary}");
         output.WriteLine();
-        output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+        output.Write(RenderPerceptionForTerminal(root, resolution.NextPerception));
+    }
+
+    private static async Task ExecuteTerminalImmediateActionAsync(
+        TextWriter output,
+        string actionKind,
+        string actionSummary,
+        string? actionPayload,
+        string preActionReason,
+        Func<DurableDict<string>, GameActionValidator.ValidationResult, CancellationToken, Task<AsyncAteliaResult<SmallActionResolution>>> resolveAsync,
+        CancellationToken cancellationToken
+    ) {
+        if (!TryGetState(output, out var state)) { return; }
+
+        var (repo, root) = state;
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var validation = await TryValidateActionAsync(
+            output,
+            perception,
+            actionKind,
+            actionSummary,
+            preActionReason,
+            actionPayload,
+            cancellationToken
+        );
+        if (validation is null) { return; }
+
+        if (!validation.Accepted) {
+            output.WriteLine("❌ 这一步没有通过检查。");
+            output.WriteLine(validation.Feedback);
+            return;
+        }
+
+        var resolutionResult = await resolveAsync(root, validation, cancellationToken);
+        if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
+            output.WriteLine($"❌ 小动作结算失败：{actionSummary}");
+            WriteAteliaError(output, resolutionResult.Error);
+            return;
+        }
+
+        _ = repo.Commit(root).Value;
+        output.WriteLine($"✅ 你顺手做了：{actionSummary}");
+        output.WriteLine();
+        output.Write(RenderPerceptionForTerminal(root, resolution.NextPerception));
     }
 
     private static async Task<bool> TryCollectTerminalLargeActionInsteadOfResolvingAsync(
@@ -343,7 +466,7 @@ public static partial class GameEntry {
             return true;
         }
 
-        var fallbackResult = await GameSimulation.SubmitLargeActionsForPendingLlmPlayersAsync(root, cancellationToken);
+        var fallbackResult = await GameSimulation.SubmitLargeActionsForPendingInternalPlayersAsync(root, cancellationToken);
         if (!fallbackResult.TryGetValue(out status) || status is null) {
             output.WriteLine("❌ LLM Player 行动提交失败。");
             WriteAteliaError(output, fallbackResult.Error);
@@ -360,9 +483,8 @@ public static partial class GameEntry {
 
             _ = repo.Commit(root).Value;
             output.WriteLine($"✅ 你决定了：{actionSummary}");
-            output.WriteLine($"📣 {resolution.Summary}");
             output.WriteLine();
-            output.Write(GamePresenter.RenderPerception(resolution.NextPerception));
+            output.Write(RenderPerceptionForTerminal(root, resolution.NextPerception));
             return true;
         }
 
@@ -379,7 +501,7 @@ public static partial class GameEntry {
             Description = "可选：你希望重点寻找或确认的对象，例如“山洞入口”“淡水痕迹”。"
         };
         var reasonArg = new Argument<string>("reason") {
-            Description = "这一步动作的事前推理。应先根据当前证据说明你为什么准备探索这个方向，而不是事后合理化。"
+            Description = PlayerActionGuideCatalog.GetExploreReasonArgumentDescription()
         };
         var directionArg = new Argument<string>("direction") {
             Description = "探索方向，例如 north/south/east/west/inside。"
@@ -425,12 +547,12 @@ public static partial class GameEntry {
 
     private static Command BuildInteractCommand() {
         var reasonArg = new Argument<string>("reason") {
-            Description = "这一步动作的事前推理。应先根据当前可见交互说明你为什么准备执行它。"
+            Description = PlayerActionGuideCatalog.GetInteractReasonArgumentDescription()
         };
         var interactionIdArg = new Argument<string>("interaction-id") {
             Description = "当前 Perception-Bundle 中可见的 InteractionId，例如 inspect-drag-marks。"
         };
-        var cmd = new Command("interact", "Large-Action：执行一个当前可见的交互 affordance")
+        var cmd = new Command("interact", "执行一个当前可见的交互 affordance；有些只是顺手动作，有些会结束本回合")
         {
             reasonArg,
             interactionIdArg,
@@ -454,21 +576,81 @@ public static partial class GameEntry {
 
                 var actionSummary = $"{interaction.VisibleLabel} ({interaction.ActionKind})";
                 var actionPayload = GameSimulation.BuildInteractionPayload(interaction);
-                await ExecuteTerminalLargeActionAsync(
-                    output,
-                    actionKind: "large/interact",
-                    actionSummary,
-                    actionPayload,
-                    preActionReason,
-                    (resolvedRoot, validation, token) => GameSimulation.ApplyInteractionAsync(
-                        resolvedRoot,
-                        interaction.InteractionId,
-                        preActionReason,
-                        validation.Feedback,
-                        token
-                    ),
-                    ct
-                );
+                switch (GameSimulation.DescribeInteractionExecutionClass(interaction)) {
+                    case "immediate-self":
+                        await ExecuteTerminalImmediateActionAsync(
+                            output,
+                            actionKind: "small/interact",
+                            actionSummary,
+                            actionPayload,
+                            preActionReason,
+                            (resolvedRoot, validation, token) => GameSimulation.ApplyImmediateSelfInteractionAsync(
+                                resolvedRoot,
+                                interaction.InteractionId,
+                                preActionReason,
+                                validation.Feedback,
+                                token
+                            ),
+                            ct
+                        );
+                        break;
+                    case "deferred-turn-end":
+                        await ExecuteTerminalImmediateActionAsync(
+                            output,
+                            actionKind: "small/interact",
+                            actionSummary,
+                            actionPayload,
+                            preActionReason,
+                            (resolvedRoot, validation, _) => Task.FromResult(
+                                GameSimulation.ApplyDeferredTurnEndInteraction(
+                                    resolvedRoot,
+                                    interaction.InteractionId,
+                                    preActionReason,
+                                    validation.Feedback
+                                )
+                            ),
+                            ct
+                        );
+                        break;
+                    case "working-start":
+                        await ExecuteTerminalLargeActionAsync(
+                            output,
+                            actionKind: "large/interact",
+                            actionSummary,
+                            actionPayload,
+                            preActionReason,
+                            (resolvedRoot, validation, token) => GameSimulation.ApplyWorkingInteractionAsync(
+                                resolvedRoot,
+                                interaction.InteractionId,
+                                preActionReason,
+                                validation.Feedback,
+                                token
+                            ),
+                            ct
+                        );
+                        break;
+                    case "turn-ending":
+                        await ExecuteTerminalLargeActionAsync(
+                            output,
+                            actionKind: "large/interact",
+                            actionSummary,
+                            actionPayload,
+                            preActionReason,
+                            (resolvedRoot, validation, token) => GameSimulation.ApplyInteractionAsync(
+                                resolvedRoot,
+                                interaction.InteractionId,
+                                preActionReason,
+                                validation.Feedback,
+                                token
+                            ),
+                            ct
+                        );
+                        break;
+                    default:
+                        output.WriteLine("❌ 这个 interaction 目前属于零回合但非即时私有效果的动作类型。");
+                        output.WriteLine("当前实现还不能安全结算它；请先改用会结束回合的动作，或补完 turn-end / working 流程。");
+                        break;
+                }
             }
         );
         return cmd;
@@ -476,7 +658,7 @@ public static partial class GameEntry {
 
     private static Command BuildRestAWhileCommand() {
         var reasonArg = new Argument<string>("reason") {
-            Description = "这一步动作的事前推理。应先根据当前证据说明你为什么准备原地休息，而不是事后合理化。"
+            Description = PlayerActionGuideCatalog.GetRestReasonArgumentDescription()
         };
         var cmd = new Command("rest-a-while", "Large-Action：原地休息一会，并结束当前回合")
         {

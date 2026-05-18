@@ -27,7 +27,7 @@ public static partial class GameEntry {
                 output.WriteLine("⚠️ 这是 dev-go 开发者调试移动，不会记录为回合步骤，也不会触发 validator。");
                 output.WriteLine($"🚶 你向 {direction} 方向走去…");
                 output.WriteLine();
-                output.Write(GamePresenter.RenderPerception(moveResult.Value!));
+                output.Write(RenderPerceptionForTerminal(root, moveResult.Value!));
             }
         );
         return cmd;
@@ -35,12 +35,12 @@ public static partial class GameEntry {
 
     private static Command BuildDevAddLlmPlayerCommand() {
         var locationOption = new Option<string?>("--location") {
-            Description = "可选：新 LLM player 的初始 LocationId；默认使用终端玩家当前位置。"
+            Description = "可选：新内部玩家的初始 LocationId；默认使用终端玩家当前位置。"
         };
         var actorIdArg = new Argument<string>("actor-id");
         var nameArg = new Argument<string>("name");
         var profileNoteArg = new Argument<string>("profile-note");
-        var cmd = new Command("dev-add-llm-player", "开发者调试：创建一个 active llm-player actor（不驱动行动）")
+        var cmd = new Command("dev-add-llm-player", "开发者调试：创建一个 active 内部玩家 actor（默认由 internal LLM 管线驱动）")
         {
             locationOption,
             actorIdArg,
@@ -60,15 +60,20 @@ public static partial class GameEntry {
                 var (repo, root) = state;
                 var result = GameSimulation.CreateLlmPlayerActor(root, actorId, name, profileNote, locationId);
                 if (!result.TryGetValue(out var createdActorId) || string.IsNullOrWhiteSpace(createdActorId)) {
-                    output.WriteLine("❌ 创建 LLM player actor 失败。");
+                    output.WriteLine("❌ 创建内部玩家 actor 失败。");
                     WriteAteliaError(output, result.Error);
                     return;
                 }
 
                 _ = repo.Commit(root).Value;
-                output.WriteLine($"✅ 已创建 llm-player actor: {createdActorId}");
+                output.WriteLine($"✅ 已创建内部玩家 actor: {createdActorId}");
                 output.WriteLine();
-                output.Write(GamePresenter.RenderPerception(GameSimulation.DescribePerceptionForActor(root, createdActorId)));
+                output.Write(
+                    RenderPerceptionForTerminal(
+                        root,
+                        GameSimulation.DescribePerceptionForActor(root, createdActorId)
+                    )
+                );
             }
         );
         return cmd;
@@ -86,7 +91,12 @@ public static partial class GameEntry {
                     if (!TryGetState(output, out var state)) { return; }
 
                     var (_, root) = state;
-                    output.Write(GamePresenter.RenderPerception(GameSimulation.DescribePerceptionForActor(root, actorId)));
+                    output.Write(
+                        RenderPerceptionForTerminal(
+                            root,
+                            GameSimulation.DescribePerceptionForActor(root, actorId)
+                        )
+                    );
                 }
                 catch (Exception ex) {
                     output.WriteLine($"❌ 无法查看 actor '{actorId}'：{ex.Message}");
@@ -163,14 +173,14 @@ public static partial class GameEntry {
 
     private static Command BuildDevRunAutonomousRoundsCommand() {
         var ensureLlmPlayersOption = new Option<int>("--ensure-llm-players") {
-            Description = "运行前至少补足多少个 diagnostic llm-player；默认 2，传 0 可只托管终端玩家。",
+            Description = "运行前至少补足多少个 diagnostic 内部玩家；默认 2，传 0 可只托管终端玩家。",
             DefaultValueFactory = _ => 2
         };
         var skipExportOption = new Option<bool>("--skip-export") {
             Description = "只推进世界与账本，不在结束后导出 actor journal 文件。"
         };
         var realAgentsOption = new Option<bool>("--real-agents") {
-            Description = "使用真实 LLM Player / GM Agent 管线；默认关闭，以保证诊断跑批不依赖 provider 与 PipeMux timeout。"
+            Description = "为其他 diagnostic 内部玩家启用真实 LLM Player 管线；GM 结算始终要求真实 GM Agent。默认关闭时，其它 actor 会提交保守的诊断动作。"
         };
         var outputDirOption = new Option<string?>("--output-dir") {
             Description = $"actor journal 导出目录；默认 {TextAdvRuntimeEnvironment.ActorJournalDirEnv} 或存档目录下 actor-journals。"
@@ -205,17 +215,17 @@ public static partial class GameEntry {
                 var (repo, root) = state;
                 var ensureResult = GameSimulation.EnsureDiagnosticLlmPlayers(root, ensureLlmPlayers);
                 if (!ensureResult.TryGetValue(out var ensuredActorIds) || ensuredActorIds is null) {
-                    output.WriteLine("❌ diagnostic LLM player 准备失败。");
+                    output.WriteLine("❌ diagnostic 内部玩家准备失败。");
                     WriteAteliaError(output, ensureResult.Error);
                     return;
                 }
 
                 _ = repo.Commit(root).Value;
                 if (ensuredActorIds.Count > 0) {
-                    output.WriteLine($"✅ 已补充 diagnostic LLM players: {string.Join(", ", ensuredActorIds)}");
+                    output.WriteLine($"✅ 已补充 diagnostic 内部玩家: {string.Join(", ", ensuredActorIds)}");
                 }
                 else {
-                    output.WriteLine("✅ diagnostic LLM players 已满足目标数量。");
+                    output.WriteLine("✅ diagnostic 内部玩家已满足目标数量。");
                 }
 
                 var completedRounds = 0;
