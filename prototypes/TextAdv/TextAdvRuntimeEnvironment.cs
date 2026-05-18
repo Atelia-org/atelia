@@ -4,12 +4,26 @@ internal static class TextAdvRuntimeEnvironment {
     internal const string RepoDirEnv = "ATELIA_TEXTADV_REPO_DIR";
     internal const string ActorJournalDirEnv = "ATELIA_TEXTADV_ACTOR_JOURNAL_DIR";
     private const string DefaultRepoDir = "/tmp/atelia-textadv-game";
+    private static string? s_repoDirOverride;
+    private static string? s_actorJournalDirOverride;
+
+    internal static void SetRepoDirOverride(string? repoDir) {
+        s_repoDirOverride = string.IsNullOrWhiteSpace(repoDir) ? null : repoDir.Trim();
+    }
+
+    internal static void SetActorJournalDirOverride(string? actorJournalDir) {
+        s_actorJournalDirOverride = string.IsNullOrWhiteSpace(actorJournalDir) ? null : actorJournalDir.Trim();
+    }
 
     internal static string GetRepoDir() {
+        if (!string.IsNullOrWhiteSpace(s_repoDirOverride)) { return s_repoDirOverride; }
+
         return GetEnvironmentOrDefault(RepoDirEnv, DefaultRepoDir);
     }
 
     internal static string GetActorJournalDir() {
+        if (!string.IsNullOrWhiteSpace(s_actorJournalDirOverride)) { return s_actorJournalDirOverride; }
+
         return GetEnvironmentOrDefault(ActorJournalDirEnv, Path.Combine(GetRepoDir(), "actor-journals"));
     }
 
