@@ -470,7 +470,7 @@ internal sealed class GmWorldEditService {
         return $"{targetKind}:{targetId}={visibility.ToLowerInvariant()}";
     }
 
-    [Tool("gm_create_location", "创建一个新的 Location。location_id 必须稳定且唯一。")]
+    [Tool(GmToolCatalog.CreateLocationToolName, "创建一个新的 Location。location_id 必须稳定且唯一。")]
     public ValueTask<ToolExecuteResult> CreateLocationAsync(
         [ToolParam("新的 LocationId，建议使用小写 ASCII、数字和连字符。")] string location_id,
         [ToolParam("玩家可见的地点名称。")] string name,
@@ -481,7 +481,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(CreateLocation(location_id, name, description), "created location");
     }
 
-    [Tool("gm_link_locations", "建立两个 Location 之间的出口连接；reverse_direction 可为空。")]
+    [Tool(GmToolCatalog.LinkLocationsToolName, "建立两个 Location 之间的出口连接；reverse_direction 可为空。")]
     public ValueTask<ToolExecuteResult> LinkLocationsAsync(
         [ToolParam("起点 LocationId。")] string from_location_id,
         [ToolParam("从起点看见的出口方向。")] string direction,
@@ -493,7 +493,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(LinkLocations(from_location_id, direction, to_location_id, reverse_direction), "linked locations");
     }
 
-    [Tool("gm_move_actor", "把指定 Actor 移动到指定 Location。多主体回合中优先使用；终端玩家 ActorId 是 player。")]
+    [Tool(GmToolCatalog.MoveActorToolName, "把指定 Actor 移动到指定 Location。多主体回合中优先使用；终端玩家 ActorId 是 player。")]
     public ValueTask<ToolExecuteResult> MoveActorAsync(
         [ToolParam("目标 ActorId；终端玩家为 player。")] string actor_id,
         [ToolParam("目标 LocationId。")] string location_id,
@@ -503,7 +503,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(MoveActorTo(actor_id, location_id), "moved actor");
     }
 
-    [Tool("gm_create_item", "创建一个玩家可见的 Item，并放置在指定 Location。")]
+    [Tool(GmToolCatalog.CreateItemToolName, "创建一个玩家可见的 Item，并放置在指定 Location。")]
     public ValueTask<ToolExecuteResult> CreateItemAsync(
         [ToolParam("新的 ItemId，建议使用小写 ASCII、数字和连字符。")] string item_id,
         [ToolParam("玩家可见的物品名称。未识别前应使用不剧透的通用叫法。")] string name,
@@ -515,7 +515,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(CreateItem(item_id, name, description, location_id), "created item");
     }
 
-    [Tool("gm_create_npc", "创建一个玩家可见的 NPC Actor，并放置在指定 Location。")]
+    [Tool(GmToolCatalog.CreateNpcToolName, "创建一个玩家可见的 NPC Actor，并放置在指定 Location。")]
     public ValueTask<ToolExecuteResult> CreateNpcAsync(
         [ToolParam("新的 ActorId，建议使用小写 ASCII、数字和连字符。")] string actor_id,
         [ToolParam("玩家可见的 NPC 名称。")] string name,
@@ -527,7 +527,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(CreateNpc(actor_id, name, profile_note, location_id), "created npc");
     }
 
-    [Tool("gm_update_item", "更新一个已存在 Item 的玩家可见名称或描述。用于识别后改名，或在拿起、翻动、清洗后刷新描述。")]
+    [Tool(GmToolCatalog.UpdateItemToolName, "更新一个已存在 Item 的玩家可见名称或描述。用于识别后改名，或在拿起、翻动、清洗后刷新描述。")]
     public ValueTask<ToolExecuteResult> UpdateItemAsync(
         [ToolParam("目标 ItemId。")] string item_id,
         [ToolParam("新的玩家可见名称；若本次不改名，传 null。")] string? name,
@@ -538,7 +538,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(UpdateItem(item_id, name, description), "updated item");
     }
 
-    [Tool("gm_move_item_to_actor", "把 Item 转移到 Actor 持有。用于 take / give / pick-up 等交互。")]
+    [Tool(GmToolCatalog.MoveItemToActorToolName, "把 Item 转移到 Actor 持有。用于 take / give / pick-up 等交互。")]
     public ValueTask<ToolExecuteResult> MoveItemToActorAsync(
         [ToolParam("目标 ItemId。")] string item_id,
         [ToolParam("持有该物品的 ActorId；当前终端玩家为 player。")] string actor_id,
@@ -548,7 +548,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(MoveItemToActor(item_id, actor_id), "moved item to actor");
     }
 
-    [Tool("gm_place_item_at_location", "把 Item 放置到指定 Location。用于 drop / place / reveal 等交互。")]
+    [Tool(GmToolCatalog.PlaceItemAtLocationToolName, "把 Item 放置到指定 Location。用于 drop / place / reveal 等交互。")]
     public ValueTask<ToolExecuteResult> PlaceItemAtLocationAsync(
         [ToolParam("目标 ItemId。")] string item_id,
         [ToolParam("目标 LocationId。")] string location_id,
@@ -558,7 +558,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(PlaceItemAtLocation(item_id, location_id), "placed item at location");
     }
 
-    [Tool("gm_add_interaction", "给 Location、Item 或 Actor 增加一个玩家可见的交互 affordance。")]
+    [Tool(GmToolCatalog.AddInteractionToolName, "给 Location、Item 或 Actor 增加一个玩家可见的交互 affordance。")]
     public ValueTask<ToolExecuteResult> AddInteractionAsync(
         [ToolParam("新的 InteractionId，建议使用小写 ASCII、数字和连字符。它会暴露给玩家，不要在未确认前剧透隐藏真相。")] string interaction_id,
         [ToolParam("交互目标，格式为 location:<locationId>、item:<itemId> 或 actor:<actorId>。")] string target_ref,
@@ -588,7 +588,7 @@ internal sealed class GmWorldEditService {
         );
     }
 
-    [Tool("gm_set_visibility", "设置 Item 或 Actor 的可见性。visibility 只能是 visible / hidden / discovered。")]
+    [Tool(GmToolCatalog.SetVisibilityToolName, "设置 Item 或 Actor 的可见性。visibility 只能是 visible / hidden / discovered。")]
     public ValueTask<ToolExecuteResult> SetVisibilityAsync(
         [ToolParam("目标，格式为 item:<itemId> 或 actor:<actorId>。")] string target_ref,
         [ToolParam("新的可见性：visible / hidden / discovered。")] string visibility,
@@ -598,7 +598,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(SetVisibility(target_ref, visibility), "set visibility");
     }
 
-    [Tool("gm_set_interaction_visibility", "设置 Interaction affordance 的可见性。visibility 只能是 visible / hidden / discovered。")]
+    [Tool(GmToolCatalog.SetInteractionVisibilityToolName, "设置 Interaction affordance 的可见性。visibility 只能是 visible / hidden / discovered。")]
     public ValueTask<ToolExecuteResult> SetInteractionVisibilityAsync(
         [ToolParam("目标 InteractionId。")] string interaction_id,
         [ToolParam("新的可见性：visible / hidden / discovered。")] string visibility,
@@ -608,7 +608,7 @@ internal sealed class GmWorldEditService {
         return ToToolResult(SetInteractionVisibility(interaction_id, visibility), "set interaction visibility");
     }
 
-    [Tool("gm_set_actor_resolution", "为指定 active player actor 写入下一回合可见的私有结算反馈。多主体 summary 阶段应为每个 active player actor 调用一次。")]
+    [Tool(GmToolCatalog.SetActorResolutionToolName, "为指定 active player actor 写入下一回合可见的私有结算反馈。多主体 summary 阶段应为每个 active player actor 调用一次。")]
     public ValueTask<ToolExecuteResult> SetActorResolutionAsync(
         [ToolParam("目标 ActorId；终端玩家为 player。")] string actor_id,
         [ToolParam("该 actor 下一回合可见的 1 到 4 句中文私有结算反馈。不能泄露此 actor 不应知道的信息。")] string summary,

@@ -97,10 +97,27 @@ internal static class GameMasterResolver {
         int MaxRounds
     );
 
+    private readonly record struct GmToolSelection(
+        GmToolProfile Profile,
+        GmToolFacet Facets = GmToolFacet.None
+    );
+
     private sealed record GmResolutionStage(
         string Name,
         Func<string> BuildObservation,
-        bool RequireFinalSummary
+        bool RequireFinalSummary,
+        GmToolSelection ToolSelection
+    );
+
+    private readonly record struct GmStageRunResult(
+        bool Completed,
+        string RawText,
+        string LastText
+    );
+
+    private readonly record struct GmFinalOutputPolicy<TResult>(
+        Func<string, TResult> ParseFinalText,
+        Func<TResult> BuildDefaultResult
     );
 
     internal static async Task<GmExploreResolution> ResolveExploreAsync(
@@ -177,20 +194,32 @@ internal static class GameMasterResolver {
                 new GmResolutionStage(
                     "explore-map",
                     () => BuildExploreMapStageObservation(context),
-                    RequireFinalSummary: false
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.Map | GmToolFacet.ActorMovement
+                    )
                 ),
                 new GmResolutionStage(
                     "explore-ledger-audit",
                     () => BuildExploreLedgerAuditStageObservation(root, context),
-                    RequireFinalSummary: false
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
+                    )
                 ),
                 new GmResolutionStage(
                     "explore-summary",
                     () => BuildExploreSummaryStageObservation(root, context),
-                    RequireFinalSummary: true
+                    RequireFinalSummary: true,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
+                    )
                 ),
             ],
-            defaultSummary: "GM Agent 完成了本回合探索结算。",
+            CreateSummaryOutputPolicy("GM Agent 完成了本回合探索结算。"),
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -209,20 +238,38 @@ internal static class GameMasterResolver {
                 new GmResolutionStage(
                     "interaction-consequence",
                     () => BuildInteractionConsequenceStageObservation(context),
-                    RequireFinalSummary: false
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.ActorMovement
+                            | GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
+                    )
                 ),
                 new GmResolutionStage(
                     "interaction-affordance-audit",
                     () => BuildInteractionAffordanceAuditStageObservation(root, context),
-                    RequireFinalSummary: false
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
+                    )
                 ),
                 new GmResolutionStage(
                     "interaction-summary",
                     () => BuildInteractionSummaryStageObservation(root, context),
-                    RequireFinalSummary: true
+                    RequireFinalSummary: true,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.ActorMovement
+                            | GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
+                    )
                 ),
             ],
-            defaultSummary: "GM Agent 完成了本回合交互结算。",
+            CreateSummaryOutputPolicy("GM Agent 完成了本回合交互结算。"),
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -241,20 +288,45 @@ internal static class GameMasterResolver {
                 new GmResolutionStage(
                     "collected-turn-consequence",
                     () => BuildCollectedTurnConsequenceStageObservation(context),
-                    RequireFinalSummary: false
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.Map
+                            | GmToolFacet.ActorMovement
+                            | GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
+                    )
                 ),
                 new GmResolutionStage(
                     "collected-turn-ledger-audit",
                     () => BuildCollectedTurnLedgerAuditStageObservation(root, context),
-                    RequireFinalSummary: false
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.Map
+                            | GmToolFacet.ActorMovement
+                            | GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
+                    )
                 ),
                 new GmResolutionStage(
                     "collected-turn-summary",
                     () => BuildCollectedTurnSummaryStageObservation(root, context),
-                    RequireFinalSummary: true
+                    RequireFinalSummary: true,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.Map
+                            | GmToolFacet.ActorMovement
+                            | GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
+                            | GmToolFacet.ActorResolution
+                    )
                 ),
             ],
-            defaultSummary: "GM Agent 完成了本回合多主体结算。",
+            CreateSummaryOutputPolicy("GM Agent 完成了本回合多主体结算。"),
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -273,22 +345,35 @@ internal static class GameMasterResolver {
                 new GmResolutionStage(
                     "immediate-self-consequence",
                     () => BuildImmediateSelfInteractionConsequenceStageObservation(context),
-                    RequireFinalSummary: false
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.ImmediateSelf,
+                        GmToolFacet.EntityPresentation | GmToolFacet.ItemTransfer
+                    )
                 ),
                 new GmResolutionStage(
                     "immediate-self-affordance-audit",
                     () => BuildImmediateSelfInteractionAffordanceAuditStageObservation(root, context),
-                    RequireFinalSummary: false
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.ImmediateSelf,
+                        GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
+                    )
                 ),
                 new GmResolutionStage(
                     "immediate-self-summary",
                     () => BuildImmediateSelfInteractionSummaryStageObservation(root, context),
-                    RequireFinalSummary: true
+                    RequireFinalSummary: true,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.ImmediateSelf,
+                        GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
+                    )
                 ),
             ],
-            defaultSummary: "你顺手做了这个动作，并得到了一点当前能确认的即时反馈。",
-            cancellationToken,
-            CreateImmediateSelfToolExecutor(root)
+            CreateSummaryOutputPolicy("你顺手做了这个动作，并得到了一点当前能确认的即时反馈。"),
+            cancellationToken
         ).ConfigureAwait(false);
     }
 
@@ -298,192 +383,135 @@ internal static class GameMasterResolver {
         GmConfig config,
         CancellationToken cancellationToken
     ) {
-        var toolExecutor = CreateToolExecutor(root);
-        var history = new List<IHistoryMessage>();
-        var client = GetClient(config);
-        var stages = new[]
-        {
-            new GmResolutionStage(
-                "interaction-effect-consequence",
-                () => BuildInteractionEffectConsequenceStageObservation(context),
-                RequireFinalSummary: false
-            ),
-            new GmResolutionStage(
-                "interaction-effect-audit",
-                () => BuildInteractionEffectAuditStageObservation(root, context),
-                RequireFinalSummary: false
-            ),
-            new GmResolutionStage(
-                "interaction-effect-summary",
-                () => BuildInteractionEffectSummaryStageObservation(root, context),
-                RequireFinalSummary: true
-            ),
-        };
-
-        foreach (var stage in stages) {
-            history.Add(new ObservationMessage(stage.BuildObservation()));
-            ActionMessage? lastAction = null;
-            var stageCompleted = false;
-
-            for (var round = 1; round <= config.MaxRounds; round++) {
-                var request = new CompletionRequest(
-                    ModelId: config.ModelId,
-                    SystemPrompt: BuildInteractionEffectSystemPrompt(),
-                    Context: history,
-                    Tools: toolExecutor.GetVisibleToolDefinitions()
-                );
-                var result = await client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
-                if (result.Errors is { Count: > 0 }) { throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors)); }
-
-                lastAction = result.Message;
-                history.Add(lastAction);
-
-                if (lastAction.ToolCalls.Count == 0) {
-                    stageCompleted = true;
-                    if (!stage.RequireFinalSummary) { break; }
-
-                    var parsed = ParseInteractionEffectSummary(lastAction.GetFlattenedText(), context.TerminalCanObserveActor);
-                    return new GmInteractionEffectResolution(
-                        parsed.ActorFacingSummary,
-                        parsed.TerminalVisibleSummary,
-                        UsedLlm: true,
-                        FallbackReason: null
-                    );
-                }
-
-                var executionResults = new List<ToolCallExecutionResult>(lastAction.ToolCalls.Count);
-                foreach (var toolCall in lastAction.ToolCalls) {
-                    var execution = await toolExecutor.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
-                    executionResults.Add(execution);
-                }
-
-                var toolResults = executionResults
-                    .Select(
-                    static result => new ToolResult(
-                        result.ToolName,
-                        result.ToolCallId,
-                        result.ExecuteResult.Status,
-                        result.ExecuteResult.Content
+        return await RunStagedToolLoopAsync(
+            root,
+            config,
+            BuildInteractionEffectSystemPrompt(),
+            [
+                new GmResolutionStage(
+                    "interaction-effect-consequence",
+                    () => BuildInteractionEffectConsequenceStageObservation(context),
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.ActorMovement
+                            | GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
                     )
-                )
-                    .ToArray();
-                var failure = executionResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
-                history.Add(
-                    new ToolResultsMessage(
-                        BuildToolResultsObservation(stage.Name, executionResults),
-                        toolResults,
-                        failure?.ExecuteResult.Content
+                ),
+                new GmResolutionStage(
+                    "interaction-effect-audit",
+                    () => BuildInteractionEffectAuditStageObservation(root, context),
+                    RequireFinalSummary: false,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
                     )
-                );
-            }
-
-            if (stageCompleted) { continue; }
-            throw new InvalidOperationException($"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内没有完成 effect-slot 结算。");
-        }
-
-        return new GmInteractionEffectResolution(
-            ActorFacingSummary: "这一步效果已经产生，只是细节暂时不足。",
-            TerminalVisibleSummary: context.TerminalCanObserveActor ? "你注意到这一步效果已经产生，只是细节暂时不足。" : null,
-            UsedLlm: true,
-            FallbackReason: null
-        );
+                ),
+                new GmResolutionStage(
+                    "interaction-effect-summary",
+                    () => BuildInteractionEffectSummaryStageObservation(root, context),
+                    RequireFinalSummary: true,
+                    ToolSelection: new GmToolSelection(
+                        GmToolProfile.Full,
+                        GmToolFacet.ActorMovement
+                            | GmToolFacet.EntityPresentation
+                            | GmToolFacet.ItemTransfer
+                            | GmToolFacet.InteractionLifecycle
+                    )
+                ),
+            ],
+            CreateInteractionEffectOutputPolicy(context.TerminalCanObserveActor),
+            cancellationToken
+        ).ConfigureAwait(false);
     }
 
-    private static async Task<GmExploreResolution> RunStagedToolLoopAsync(
+    private static async Task<TResult> RunStagedToolLoopAsync<TResult>(
         DurableDict<string> root,
         GmConfig config,
         string systemPrompt,
         IReadOnlyList<GmResolutionStage> stages,
-        string defaultSummary,
-        CancellationToken cancellationToken,
-        ToolExecutor? toolExecutor = null
+        GmFinalOutputPolicy<TResult> outputPolicy,
+        CancellationToken cancellationToken
     ) {
-        toolExecutor ??= CreateToolExecutor(root);
         var history = new List<IHistoryMessage>();
         var client = GetClient(config);
+        var toolExecutors = new Dictionary<GmToolSelection, ToolExecutor>();
 
         foreach (var stage in stages) {
             history.Add(new ObservationMessage(stage.BuildObservation()));
-            ActionMessage? lastAction = null;
-            var stageCompleted = false;
+            var toolExecutor = GetOrCreateToolExecutor(root, stage.ToolSelection, toolExecutors);
+            var stageResult = await RunStageAsync(
+                client,
+                config,
+                systemPrompt,
+                history,
+                stage,
+                toolExecutor,
+                cancellationToken
+            ).ConfigureAwait(false);
 
-            for (var round = 1; round <= config.MaxRounds; round++) {
-                var request = new CompletionRequest(
-                    ModelId: config.ModelId,
-                    SystemPrompt: systemPrompt,
-                    Context: history,
-                    Tools: toolExecutor.GetVisibleToolDefinitions()
-                );
-                var result = await client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
-                if (result.Errors is { Count: > 0 }) { throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors)); }
-
-                lastAction = result.Message;
-                history.Add(lastAction);
-
-                if (lastAction.ToolCalls.Count == 0) {
-                    stageCompleted = true;
-                    if (!stage.RequireFinalSummary) { break; }
-
-                    var finalSummary = NormalizeSummary(lastAction.GetFlattenedText());
-                    if (string.IsNullOrWhiteSpace(finalSummary)) {
-                        finalSummary = defaultSummary;
-                    }
-
-                    return new GmExploreResolution(finalSummary, UsedLlm: true, FallbackReason: null);
-                }
-
-                var executionResults = new List<ToolCallExecutionResult>(lastAction.ToolCalls.Count);
-                foreach (var toolCall in lastAction.ToolCalls) {
-                    var execution = await toolExecutor.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
-                    executionResults.Add(execution);
-                }
-
-                var toolResults = executionResults
-                    .Select(
-                    static result => new ToolResult(
-                        result.ToolName,
-                        result.ToolCallId,
-                        result.ExecuteResult.Status,
-                        result.ExecuteResult.Content
-                    )
-                )
-                    .ToArray();
-                var failure = executionResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
-                history.Add(
-                    new ToolResultsMessage(
-                        BuildToolResultsObservation(stage.Name, executionResults),
-                        toolResults,
-                        failure?.ExecuteResult.Content
-                    )
-                );
+            if (stageResult.Completed) {
+                if (!stage.RequireFinalSummary) { continue; }
+                return outputPolicy.ParseFinalText(stageResult.RawText);
             }
 
-            if (stageCompleted) { continue; }
-
-            var text = NormalizeSummary(lastAction?.GetFlattenedText() ?? string.Empty);
             if (stage.RequireFinalSummary) {
                 throw new InvalidOperationException(
-                    string.IsNullOrWhiteSpace(text)
+                    string.IsNullOrWhiteSpace(stageResult.LastText)
                         ? $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内没有完成结算摘要。"
-                        : $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内仍未停止调用工具。最后文本：{text}"
+                        : $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内仍未停止调用工具。最后文本：{stageResult.LastText}"
                 );
             }
 
             throw new InvalidOperationException(
-                string.IsNullOrWhiteSpace(text)
+                string.IsNullOrWhiteSpace(stageResult.LastText)
                     ? $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内没有完成工具阶段。"
-                    : $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内仍未停止调用工具。最后文本：{text}"
+                    : $"GM Agent 在阶段 {stage.Name} 的 {config.MaxRounds} 轮内仍未停止调用工具。最后文本：{stageResult.LastText}"
             );
         }
 
-        return new GmExploreResolution(defaultSummary, UsedLlm: true, FallbackReason: null);
+        return outputPolicy.BuildDefaultResult();
     }
 
-    private static ToolExecutor CreateToolExecutor(DurableDict<string> root)
-        => GmToolCatalog.CreateExecutor(root, GmToolProfile.Full);
+    private static GmFinalOutputPolicy<GmExploreResolution> CreateSummaryOutputPolicy(string defaultSummary) {
+        return new GmFinalOutputPolicy<GmExploreResolution>(
+            ParseFinalText: text => {
+                var finalSummary = NormalizeSummary(text);
+                if (string.IsNullOrWhiteSpace(finalSummary)) {
+                    finalSummary = defaultSummary;
+                }
 
-    private static ToolExecutor CreateImmediateSelfToolExecutor(DurableDict<string> root)
-        => GmToolCatalog.CreateExecutor(root, GmToolProfile.ImmediateSelf);
+                return new GmExploreResolution(finalSummary, UsedLlm: true, FallbackReason: null);
+            },
+            BuildDefaultResult: () => new GmExploreResolution(defaultSummary, UsedLlm: true, FallbackReason: null)
+        );
+    }
+
+    private static GmFinalOutputPolicy<GmInteractionEffectResolution> CreateInteractionEffectOutputPolicy(
+        bool terminalCanObserveActor
+    ) {
+        return new GmFinalOutputPolicy<GmInteractionEffectResolution>(
+            ParseFinalText: text => {
+                var parsed = ParseInteractionEffectSummary(text, terminalCanObserveActor);
+                return new GmInteractionEffectResolution(
+                    parsed.ActorFacingSummary,
+                    parsed.TerminalVisibleSummary,
+                    UsedLlm: true,
+                    FallbackReason: null
+                );
+            },
+            BuildDefaultResult: () => new GmInteractionEffectResolution(
+                ActorFacingSummary: "这一步效果已经产生，只是细节暂时不足。",
+                TerminalVisibleSummary: terminalCanObserveActor ? "你注意到这一步效果已经产生，只是细节暂时不足。" : null,
+                UsedLlm: true,
+                FallbackReason: null
+            )
+        );
+    }
 
     private static string BuildExploreSystemPrompt() {
         return $$"""
@@ -1022,6 +1050,85 @@ internal static class GameMasterResolver {
 
         var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         return string.Join("\n", lines.Select(line => indentation + line));
+    }
+
+    private static ToolExecutor GetOrCreateToolExecutor(
+        DurableDict<string> root,
+        GmToolSelection selection,
+        IDictionary<GmToolSelection, ToolExecutor> cache
+    ) {
+        if (cache.TryGetValue(selection, out var executor)) {
+            return executor;
+        }
+
+        executor = GmToolCatalog.CreateExecutor(root, selection.Profile, selection.Facets);
+        cache.Add(selection, executor);
+        return executor;
+    }
+
+    private static async Task<GmStageRunResult> RunStageAsync(
+        DeepSeekV4ChatClient client,
+        GmConfig config,
+        string systemPrompt,
+        List<IHistoryMessage> history,
+        GmResolutionStage stage,
+        ToolExecutor toolExecutor,
+        CancellationToken cancellationToken
+    ) {
+        ActionMessage? lastAction = null;
+
+        for (var round = 1; round <= config.MaxRounds; round++) {
+            var request = new CompletionRequest(
+                ModelId: config.ModelId,
+                SystemPrompt: systemPrompt,
+                Context: history,
+                Tools: toolExecutor.GetVisibleToolDefinitions()
+            );
+            var result = await client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
+            if (result.Errors is { Count: > 0 }) { throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors)); }
+
+            lastAction = result.Message;
+            history.Add(lastAction);
+
+            if (lastAction.ToolCalls.Count == 0) {
+                return new GmStageRunResult(
+                    Completed: true,
+                    RawText: lastAction.GetFlattenedText(),
+                    LastText: NormalizeSummary(lastAction.GetFlattenedText())
+                );
+            }
+
+            var executionResults = new List<ToolCallExecutionResult>(lastAction.ToolCalls.Count);
+            foreach (var toolCall in lastAction.ToolCalls) {
+                var execution = await toolExecutor.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
+                executionResults.Add(execution);
+            }
+
+            var toolResults = executionResults
+                .Select(
+                static result => new ToolResult(
+                    result.ToolName,
+                    result.ToolCallId,
+                    result.ExecuteResult.Status,
+                    result.ExecuteResult.Content
+                )
+            )
+                .ToArray();
+            var failure = executionResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
+            history.Add(
+                new ToolResultsMessage(
+                    BuildToolResultsObservation(stage.Name, executionResults),
+                    toolResults,
+                    failure?.ExecuteResult.Content
+                )
+            );
+        }
+
+        return new GmStageRunResult(
+            Completed: false,
+            RawText: lastAction?.GetFlattenedText() ?? string.Empty,
+            LastText: NormalizeSummary(lastAction?.GetFlattenedText() ?? string.Empty)
+        );
     }
 
     private static string BuildToolResultsObservation(string stageName, IReadOnlyList<ToolCallExecutionResult> results) {

@@ -58,9 +58,13 @@ internal static class GmToolCatalog {
         new(SetActorResolutionToolName, GmToolProfile.Full, GmToolFacet.ActorResolution, static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.SetActorResolutionAsync)),
     ];
 
-    internal static ToolExecutor CreateExecutor(DurableDict<string> root, GmToolProfile profile) {
+    internal static ToolExecutor CreateExecutor(
+        DurableDict<string> root,
+        GmToolProfile profile,
+        GmToolFacet facets = GmToolFacet.None
+    ) {
         var toolService = new GmWorldEditService(root);
-        return new ToolExecutor(CreateTools(toolService, profile));
+        return new ToolExecutor(CreateTools(toolService, profile, facets));
     }
 
     internal static IReadOnlyList<string> GetVisibleToolNames(
@@ -79,8 +83,12 @@ internal static class GmToolCatalog {
         return string.Join("、", GetVisibleToolNames(profile, facets));
     }
 
-    private static IEnumerable<ITool> CreateTools(GmWorldEditService toolService, GmToolProfile profile) {
-        foreach (var registration in EnumerateRegistrations(profile)) {
+    private static IEnumerable<ITool> CreateTools(
+        GmWorldEditService toolService,
+        GmToolProfile profile,
+        GmToolFacet facets = GmToolFacet.None
+    ) {
+        foreach (var registration in EnumerateRegistrations(profile, facets)) {
             yield return registration.Factory(toolService);
         }
     }

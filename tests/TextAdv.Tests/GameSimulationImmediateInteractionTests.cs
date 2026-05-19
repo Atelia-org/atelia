@@ -313,6 +313,9 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
 
     [Fact]
     public void GmToolCatalog_FacetFilteringShouldExposeExploreAuditTools() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+
         Assert.Equal(
             [
                 GmToolCatalog.CreateItemToolName,
@@ -326,6 +329,20 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
                 GmToolProfile.Full,
                 GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
             )
+        );
+        Assert.Equal(
+            GmToolCatalog.GetVisibleToolNames(
+                GmToolProfile.Full,
+                GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
+            ),
+            GmToolCatalog.CreateExecutor(
+                root,
+                GmToolProfile.Full,
+                GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
+            )
+                .GetVisibleToolDefinitions()
+                .Select(static definition => definition.Name)
+                .ToArray()
         );
     }
 
