@@ -493,15 +493,6 @@ internal sealed class GmWorldEditService {
         return ToToolResult(LinkLocations(from_location_id, direction, to_location_id, reverse_direction), "linked locations");
     }
 
-    [Tool("gm_move_player", "把当前玩家移动到指定 Location。")]
-    public ValueTask<ToolExecuteResult> MovePlayerAsync(
-        [ToolParam("目标 LocationId。")] string location_id,
-        CancellationToken cancellationToken
-    ) {
-        cancellationToken.ThrowIfCancellationRequested();
-        return ToToolResult(MoveActorTo(TerminalPlayerActorId, location_id), "moved player");
-    }
-
     [Tool("gm_move_actor", "把指定 Actor 移动到指定 Location。多主体回合中优先使用；终端玩家 ActorId 是 player。")]
     public ValueTask<ToolExecuteResult> MoveActorAsync(
         [ToolParam("目标 ActorId；终端玩家为 player。")] string actor_id,

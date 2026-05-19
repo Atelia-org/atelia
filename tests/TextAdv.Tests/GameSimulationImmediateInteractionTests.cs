@@ -291,39 +291,41 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
-    public void GameMasterResolver_ToolExecutors_ShouldExposeUpdateItemTool() {
+    public void GmToolCatalog_MetadataShouldMatchWrappedToolDefinitions() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
 
         Assert.Equal(
-            [
-                "gm_create_location",
-                "gm_link_locations",
-                "gm_move_player",
-                "gm_move_actor",
-                "gm_create_item",
-                "gm_create_npc",
-                "gm_update_item",
-                "gm_move_item_to_actor",
-                "gm_place_item_at_location",
-                "gm_add_interaction",
-                "gm_set_visibility",
-                "gm_set_interaction_visibility",
-                "gm_set_actor_resolution",
-            ],
-            GmToolCatalog.GetVisibleToolNames(root, GmToolProfile.Full)
+            GmToolCatalog.GetVisibleToolNames(GmToolProfile.Full),
+            GmToolCatalog.CreateExecutor(root, GmToolProfile.Full)
+                .GetVisibleToolDefinitions()
+                .Select(static definition => definition.Name)
+                .ToArray()
         );
         Assert.Equal(
+            GmToolCatalog.GetVisibleToolNames(GmToolProfile.ImmediateSelf),
+            GmToolCatalog.CreateExecutor(root, GmToolProfile.ImmediateSelf)
+                .GetVisibleToolDefinitions()
+                .Select(static definition => definition.Name)
+                .ToArray()
+        );
+    }
+
+    [Fact]
+    public void GmToolCatalog_FacetFilteringShouldExposeExploreAuditTools() {
+        Assert.Equal(
             [
-                "gm_create_item",
-                "gm_update_item",
-                "gm_move_item_to_actor",
-                "gm_place_item_at_location",
-                "gm_add_interaction",
-                "gm_set_visibility",
-                "gm_set_interaction_visibility",
+                GmToolCatalog.CreateItemToolName,
+                GmToolCatalog.CreateNpcToolName,
+                GmToolCatalog.UpdateItemToolName,
+                GmToolCatalog.AddInteractionToolName,
+                GmToolCatalog.SetVisibilityToolName,
+                GmToolCatalog.SetInteractionVisibilityToolName,
             ],
-            GmToolCatalog.GetVisibleToolNames(root, GmToolProfile.ImmediateSelf)
+            GmToolCatalog.GetVisibleToolNames(
+                GmToolProfile.Full,
+                GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
+            )
         );
     }
 
