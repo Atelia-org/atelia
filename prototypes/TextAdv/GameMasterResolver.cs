@@ -101,7 +101,7 @@ internal static class GameMasterResolver {
         string Name,
         Func<string> BuildObservation,
         bool RequireFinalSummary,
-        GmToolSet ToolSet,
+        GmToolCatalog.ToolSet ToolSet,
         Func<GmStageRunResult, string?>? ValidatePostcondition = null
     );
 
@@ -117,6 +117,28 @@ internal static class GameMasterResolver {
         Func<string, TResult> ParseFinalText,
         Func<TResult> BuildDefaultResult
     );
+
+    private static GmResolutionStage ToolStage(
+        string name,
+        Func<string> buildObservation,
+        GmToolCatalog.ToolSet toolSet,
+        Func<GmStageRunResult, string?>? validatePostcondition = null
+    ) => new(name, buildObservation, RequireFinalSummary: false, toolSet, validatePostcondition);
+
+    private static GmResolutionStage SummaryStage(
+        string name,
+        Func<string> buildObservation,
+        GmToolCatalog.ToolSet toolSet,
+        Func<GmStageRunResult, string?>? validatePostcondition = null
+    ) => new(name, buildObservation, RequireFinalSummary: true, toolSet, validatePostcondition);
+
+    private static GmResolutionFlow<TResult> CreateThreeStageFlow<TResult>(
+        string systemPrompt,
+        GmResolutionStage firstStage,
+        GmResolutionStage secondStage,
+        GmResolutionStage finalStage,
+        GmFinalOutputPolicy<TResult> outputPolicy
+    ) => new(systemPrompt, [firstStage, secondStage, finalStage], outputPolicy);
 
     internal static async Task<GmExploreResolution> ResolveExploreAsync(
         DurableDict<string> root,
@@ -256,7 +278,7 @@ internal static class GameMasterResolver {
     ) {
         var history = new List<IHistoryMessage>();
         var client = GetClient(config);
-        var toolExecutors = new Dictionary<GmToolSet, ToolExecutor>();
+        var toolExecutors = new Dictionary<GmToolCatalog.ToolSet, ToolExecutor>();
 
         foreach (var stage in flow.Stages) {
             var toolExecutor = GetOrCreateToolExecutor(root, stage.ToolSet, toolExecutors);
@@ -343,31 +365,25 @@ internal static class GameMasterResolver {
         DurableDict<string> root,
         GmExploreContext context
     ) {
-        return new GmResolutionFlow<GmExploreResolution>(
-            SystemPrompt: BuildExploreSystemPrompt(),
-            Stages:
-            [
-                new GmResolutionStage(
-                    "explore-map",
-                    () => BuildExploreMapStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.ExploreMap,
-                    ValidatePostcondition: _ => ValidateExploreMapStageCompletion(root, context)
-                ),
-                new GmResolutionStage(
-                    "explore-ledger-audit",
-                    () => BuildExploreLedgerAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.ExploreAudit
-                ),
-                new GmResolutionStage(
-                    "explore-summary",
-                    () => BuildExploreSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSet: GmToolCatalog.ToolSets.ExploreAudit
-                ),
-            ],
-            OutputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合探索结算。")
+        return CreateThreeStageFlow(
+            systemPrompt: BuildExploreSystemPrompt(),
+            firstStage: ToolStage(
+                "explore-map",
+                () => BuildExploreMapStageObservation(context),
+                GmToolCatalog.ToolSets.ExploreMap,
+                validatePostcondition: _ => ValidateExploreMapStageCompletion(root, context)
+            ),
+            secondStage: ToolStage(
+                "explore-ledger-audit",
+                () => BuildExploreLedgerAuditStageObservation(root, context),
+                GmToolCatalog.ToolSets.ExploreAudit
+            ),
+            finalStage: SummaryStage(
+                "explore-summary",
+                () => BuildExploreSummaryStageObservation(root, context),
+                GmToolCatalog.ToolSets.ExploreAudit
+            ),
+            outputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合探索结算。")
         );
     }
 
@@ -375,30 +391,24 @@ internal static class GameMasterResolver {
         DurableDict<string> root,
         GmInteractionContext context
     ) {
-        return new GmResolutionFlow<GmExploreResolution>(
-            SystemPrompt: BuildInteractionSystemPrompt(),
-            Stages:
-            [
-                new GmResolutionStage(
-                    "interaction-consequence",
-                    () => BuildInteractionConsequenceStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.InteractionConsequence
-                ),
-                new GmResolutionStage(
-                    "interaction-affordance-audit",
-                    () => BuildInteractionAffordanceAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.InteractionAudit
-                ),
-                new GmResolutionStage(
-                    "interaction-summary",
-                    () => BuildInteractionSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSet: GmToolCatalog.ToolSets.InteractionConsequence
-                ),
-            ],
-            OutputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合交互结算。")
+        return CreateThreeStageFlow(
+            systemPrompt: BuildInteractionSystemPrompt(),
+            firstStage: ToolStage(
+                "interaction-consequence",
+                () => BuildInteractionConsequenceStageObservation(context),
+                GmToolCatalog.ToolSets.InteractionConsequence
+            ),
+            secondStage: ToolStage(
+                "interaction-affordance-audit",
+                () => BuildInteractionAffordanceAuditStageObservation(root, context),
+                GmToolCatalog.ToolSets.InteractionAudit
+            ),
+            finalStage: SummaryStage(
+                "interaction-summary",
+                () => BuildInteractionSummaryStageObservation(root, context),
+                GmToolCatalog.ToolSets.InteractionConsequence
+            ),
+            outputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合交互结算。")
         );
     }
 
@@ -406,31 +416,25 @@ internal static class GameMasterResolver {
         DurableDict<string> root,
         GmCollectedTurnContext context
     ) {
-        return new GmResolutionFlow<GmExploreResolution>(
-            SystemPrompt: BuildCollectedTurnSystemPrompt(),
-            Stages:
-            [
-                new GmResolutionStage(
-                    "collected-turn-consequence",
-                    () => BuildCollectedTurnConsequenceStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.CollectedTurnCore
-                ),
-                new GmResolutionStage(
-                    "collected-turn-ledger-audit",
-                    () => BuildCollectedTurnLedgerAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.CollectedTurnCore
-                ),
-                new GmResolutionStage(
-                    "collected-turn-summary",
-                    () => BuildCollectedTurnSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSet: GmToolCatalog.ToolSets.CollectedTurnSummary,
-                    ValidatePostcondition: _ => ValidateCollectedTurnSummaryStageCompletion(root, context)
-                ),
-            ],
-            OutputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合多主体结算。")
+        return CreateThreeStageFlow(
+            systemPrompt: BuildCollectedTurnSystemPrompt(),
+            firstStage: ToolStage(
+                "collected-turn-consequence",
+                () => BuildCollectedTurnConsequenceStageObservation(context),
+                GmToolCatalog.ToolSets.CollectedTurnCore
+            ),
+            secondStage: ToolStage(
+                "collected-turn-ledger-audit",
+                () => BuildCollectedTurnLedgerAuditStageObservation(root, context),
+                GmToolCatalog.ToolSets.CollectedTurnCore
+            ),
+            finalStage: SummaryStage(
+                "collected-turn-summary",
+                () => BuildCollectedTurnSummaryStageObservation(root, context),
+                GmToolCatalog.ToolSets.CollectedTurnSummary,
+                validatePostcondition: _ => ValidateCollectedTurnSummaryStageCompletion(root, context)
+            ),
+            outputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合多主体结算。")
         );
     }
 
@@ -438,30 +442,24 @@ internal static class GameMasterResolver {
         DurableDict<string> root,
         GmInteractionContext context
     ) {
-        return new GmResolutionFlow<GmExploreResolution>(
-            SystemPrompt: BuildImmediateSelfInteractionSystemPrompt(),
-            Stages:
-            [
-                new GmResolutionStage(
-                    "immediate-self-consequence",
-                    () => BuildImmediateSelfInteractionConsequenceStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.ImmediateSelfConsequence
-                ),
-                new GmResolutionStage(
-                    "immediate-self-affordance-audit",
-                    () => BuildImmediateSelfInteractionAffordanceAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.ImmediateSelfAudit
-                ),
-                new GmResolutionStage(
-                    "immediate-self-summary",
-                    () => BuildImmediateSelfInteractionSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSet: GmToolCatalog.ToolSets.ImmediateSelfSummary
-                ),
-            ],
-            OutputPolicy: CreateSummaryOutputPolicy("你顺手做了这个动作，并得到了一点当前能确认的即时反馈。")
+        return CreateThreeStageFlow(
+            systemPrompt: BuildImmediateSelfInteractionSystemPrompt(),
+            firstStage: ToolStage(
+                "immediate-self-consequence",
+                () => BuildImmediateSelfInteractionConsequenceStageObservation(context),
+                GmToolCatalog.ToolSets.ImmediateSelfConsequence
+            ),
+            secondStage: ToolStage(
+                "immediate-self-affordance-audit",
+                () => BuildImmediateSelfInteractionAffordanceAuditStageObservation(root, context),
+                GmToolCatalog.ToolSets.ImmediateSelfAudit
+            ),
+            finalStage: SummaryStage(
+                "immediate-self-summary",
+                () => BuildImmediateSelfInteractionSummaryStageObservation(root, context),
+                GmToolCatalog.ToolSets.ImmediateSelfSummary
+            ),
+            outputPolicy: CreateSummaryOutputPolicy("你顺手做了这个动作，并得到了一点当前能确认的即时反馈。")
         );
     }
 
@@ -469,30 +467,24 @@ internal static class GameMasterResolver {
         DurableDict<string> root,
         GmInteractionEffectContext context
     ) {
-        return new GmResolutionFlow<GmInteractionEffectResolution>(
-            SystemPrompt: BuildInteractionEffectSystemPrompt(),
-            Stages:
-            [
-                new GmResolutionStage(
-                    "interaction-effect-consequence",
-                    () => BuildInteractionEffectConsequenceStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.InteractionEffectConsequence
-                ),
-                new GmResolutionStage(
-                    "interaction-effect-audit",
-                    () => BuildInteractionEffectAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSet: GmToolCatalog.ToolSets.InteractionEffectAudit
-                ),
-                new GmResolutionStage(
-                    "interaction-effect-summary",
-                    () => BuildInteractionEffectSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSet: GmToolCatalog.ToolSets.InteractionEffectConsequence
-                ),
-            ],
-            OutputPolicy: CreateInteractionEffectOutputPolicy(context.TerminalCanObserveActor)
+        return CreateThreeStageFlow(
+            systemPrompt: BuildInteractionEffectSystemPrompt(),
+            firstStage: ToolStage(
+                "interaction-effect-consequence",
+                () => BuildInteractionEffectConsequenceStageObservation(context),
+                GmToolCatalog.ToolSets.InteractionEffectConsequence
+            ),
+            secondStage: ToolStage(
+                "interaction-effect-audit",
+                () => BuildInteractionEffectAuditStageObservation(root, context),
+                GmToolCatalog.ToolSets.InteractionEffectAudit
+            ),
+            finalStage: SummaryStage(
+                "interaction-effect-summary",
+                () => BuildInteractionEffectSummaryStageObservation(root, context),
+                GmToolCatalog.ToolSets.InteractionEffectConsequence
+            ),
+            outputPolicy: CreateInteractionEffectOutputPolicy(context.TerminalCanObserveActor)
         );
     }
 
@@ -651,42 +643,49 @@ internal static class GameMasterResolver {
     }
 
     private static string BuildExploreMapStageObservation(GmExploreContext context) {
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 1/3: 地图与移动落账]");
-        sb.AppendLine("只处理 Location / Exit / Player location。");
-        sb.AppendLine($"若目标方向已有出口，调用 {GmToolCatalog.MoveActorToolName}(player, target_location_id)。若没有出口，调用 {GmToolCatalog.CreateLocationToolName}、{GmToolCatalog.LinkLocationsToolName}、{GmToolCatalog.MoveActorToolName}(player, new_location_id)。");
-        sb.AppendLine("本阶段不要创建 Item / NPC / Interaction，也不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        sb.Append(BuildExploreObservation(context));
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 1/3: 地图与移动落账]",
+            sb => {
+                sb.AppendLine("只处理 Location / Exit / Player location。");
+                sb.AppendLine($"若目标方向已有出口，调用 {GmToolCatalog.MoveActorToolName}(player, target_location_id)。若没有出口，调用 {GmToolCatalog.CreateLocationToolName}、{GmToolCatalog.LinkLocationsToolName}、{GmToolCatalog.MoveActorToolName}(player, new_location_id)。");
+                sb.AppendLine("本阶段不要创建 Item / NPC / Interaction，也不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
+            },
+            sb => sb.Append(BuildExploreObservation(context))
+        );
     }
 
     private static string BuildExploreLedgerAuditStageObservation(DurableDict<string> root, GmExploreContext context) {
         var perception = GameSimulation.DescribeCurrentPerception(root);
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 2/3: 实体与交互账本审计]");
-        sb.AppendLine("检查刚完成的探索结果：如果最终叙事需要提到具体可见物品、NPC 或可执行动作，必须现在用工具落账。");
-        sb.AppendLine($"可调用 {GmToolCatalog.FormatVisibleToolNames(GmToolCatalog.ToolSets.ExploreAudit)}。");
-        sb.AppendLine($"{GmToolCatalog.AddInteractionToolName} 的 precondition_note 没有特别条件时写 none，并明确填写 turn_cost / effect_scope / effect_slots。");
-        sb.AppendLine("本阶段不要移动玩家，不要创建更多地点，不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        AppendExploreIntent(sb, context);
-        AppendPerceptionSnapshot(sb, perception, "当前探索后账本投影");
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 2/3: 实体与交互账本审计]",
+            sb => {
+                sb.AppendLine("检查刚完成的探索结果：如果最终叙事需要提到具体可见物品、NPC 或可执行动作，必须现在用工具落账。");
+                sb.AppendLine($"可调用 {GmToolCatalog.FormatVisibleToolNames(GmToolCatalog.ToolSets.ExploreAudit)}。");
+                sb.AppendLine($"{GmToolCatalog.AddInteractionToolName} 的 precondition_note 没有特别条件时写 none，并明确填写 turn_cost / effect_scope / effect_slots。");
+                sb.AppendLine("本阶段不要移动玩家，不要创建更多地点，不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
+            },
+            sb => {
+                AppendExploreIntent(sb, context);
+                AppendPerceptionSnapshot(sb, perception, "当前探索后账本投影");
+            }
+        );
     }
 
     private static string BuildExploreSummaryStageObservation(DurableDict<string> root, GmExploreContext context) {
         var perception = GameSimulation.DescribeCurrentPerception(root);
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 3/3: 玩家可见结算摘要]");
-        sb.AppendLine("请输出 1 到 3 句中文结算摘要。原则：只描述当前玩家能感知到的新增结果与直接确认，只引用已经落账的地点、物品、NPC 和可执行动作。");
-        sb.AppendLine("不要写时间推进，不要复述下一屏结构化 Perception 已直接展示的地点名、出口清单、地上物品清单、在场角色清单、背包清单或可执行动作清单。");
-        sb.AppendLine("可以保留必要的桥接叙事，例如“你拨开树枝后确认前方有路”；但不要把最终清单再整段讲一遍。");
-        sb.AppendLine("若你发现摘要必需的实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
-        sb.AppendLine();
-        AppendExploreIntent(sb, context);
-        AppendPerceptionSnapshot(sb, perception, "最终账本投影");
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 3/3: 玩家可见结算摘要]",
+            sb => {
+                sb.AppendLine("请输出 1 到 3 句中文结算摘要。原则：只描述当前玩家能感知到的新增结果与直接确认，只引用已经落账的地点、物品、NPC 和可执行动作。");
+                sb.AppendLine("不要写时间推进，不要复述下一屏结构化 Perception 已直接展示的地点名、出口清单、地上物品清单、在场角色清单、背包清单或可执行动作清单。");
+                sb.AppendLine("可以保留必要的桥接叙事，例如“你拨开树枝后确认前方有路”；但不要把最终清单再整段讲一遍。");
+                sb.AppendLine("若你发现摘要必需的实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+            },
+            sb => {
+                AppendExploreIntent(sb, context);
+                AppendPerceptionSnapshot(sb, perception, "最终账本投影");
+            }
+        );
     }
 
     private static string BuildInteractionObservation(GmInteractionContext context) {
@@ -764,80 +763,94 @@ internal static class GameMasterResolver {
     }
 
     private static string BuildInteractionEffectConsequenceStageObservation(GmInteractionEffectContext context) {
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 1/3: effect-slot 直接后果]");
-        sb.AppendLine("只处理这一 effect-slot 直接引发的 hard truth 变化。若只需要叙事反馈而无账本变化，可以不调用工具。");
-        sb.AppendLine("本阶段不要输出最终 JSON；工具完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        sb.Append(BuildInteractionEffectObservation(context));
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 1/3: effect-slot 直接后果]",
+            sb => {
+                sb.AppendLine("只处理这一 effect-slot 直接引发的 hard truth 变化。若只需要叙事反馈而无账本变化，可以不调用工具。");
+                sb.AppendLine("本阶段不要输出最终 JSON；工具完成后停止调用工具，文本可留空。");
+            },
+            sb => sb.Append(BuildInteractionEffectObservation(context))
+        );
     }
 
     private static string BuildInteractionEffectAuditStageObservation(DurableDict<string> root, GmInteractionEffectContext context) {
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 2/3: effect-slot affordance / visibility 审计]");
-        sb.AppendLine("检查这一效果是否需要消耗旧 interaction、改变可见性、或补充新的 affordance。");
-        sb.AppendLine("若需要变更，使用工具落账；本阶段不要输出最终 JSON。");
-        sb.AppendLine();
-        sb.Append(BuildInteractionEffectObservation(context));
-        sb.AppendLine();
-        AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.ActorPerception.ActorId), "acting actor 当前账本投影");
-        AppendPerceptionSnapshot(sb, GameSimulation.DescribeCurrentPerception(root), "terminal player 当前账本投影");
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 2/3: effect-slot affordance / visibility 审计]",
+            sb => {
+                sb.AppendLine("检查这一效果是否需要消耗旧 interaction、改变可见性、或补充新的 affordance。");
+                sb.AppendLine("若需要变更，使用工具落账；本阶段不要输出最终 JSON。");
+            },
+            sb => {
+                sb.Append(BuildInteractionEffectObservation(context));
+                sb.AppendLine();
+                AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.ActorPerception.ActorId), "acting actor 当前账本投影");
+                AppendPerceptionSnapshot(sb, GameSimulation.DescribeCurrentPerception(root), "terminal player 当前账本投影");
+            }
+        );
     }
 
     private static string BuildInteractionEffectSummaryStageObservation(DurableDict<string> root, GmInteractionEffectContext context) {
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 3/3: 输出 actor-facing / terminal-visible JSON]");
-        sb.AppendLine("请只输出一个 JSON object：{\"actor_facing_summary\":\"...\",\"terminal_visible_summary\":\"...\"}");
-        sb.AppendLine("若 terminal 在当前条件下不该得知结果，terminal_visible_summary 写空字符串。");
-        sb.AppendLine("两个 summary 都只写这一 effect-slot 新增发生的结果，不要写时间推进，不要复述结构化 Perception 已直接列出的地点/物品/角色/交互清单。");
-        sb.AppendLine("若需要提及新发现，请用简短桥接句说明“因此确认了什么”，而不是把最终画面完整重讲。");
-        sb.AppendLine("如发现摘要依赖的账本变更尚未落地，可以最后补工具调用；否则不要调用工具。");
-        sb.AppendLine();
-        sb.Append(BuildInteractionEffectObservation(context));
-        sb.AppendLine();
-        AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.ActorPerception.ActorId), "acting actor 最终账本投影");
-        AppendPerceptionSnapshot(sb, GameSimulation.DescribeCurrentPerception(root), "terminal player 最终账本投影");
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 3/3: 输出 actor-facing / terminal-visible JSON]",
+            sb => {
+                sb.AppendLine("请只输出一个 JSON object：{\"actor_facing_summary\":\"...\",\"terminal_visible_summary\":\"...\"}");
+                sb.AppendLine("若 terminal 在当前条件下不该得知结果，terminal_visible_summary 写空字符串。");
+                sb.AppendLine("两个 summary 都只写这一 effect-slot 新增发生的结果，不要写时间推进，不要复述结构化 Perception 已直接列出的地点/物品/角色/交互清单。");
+                sb.AppendLine("若需要提及新发现，请用简短桥接句说明“因此确认了什么”，而不是把最终画面完整重讲。");
+                sb.AppendLine("如发现摘要依赖的账本变更尚未落地，可以最后补工具调用；否则不要调用工具。");
+            },
+            sb => {
+                sb.Append(BuildInteractionEffectObservation(context));
+                sb.AppendLine();
+                AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.ActorPerception.ActorId), "acting actor 最终账本投影");
+                AppendPerceptionSnapshot(sb, GameSimulation.DescribeCurrentPerception(root), "terminal player 最终账本投影");
+            }
+        );
     }
 
     private static string BuildInteractionConsequenceStageObservation(GmInteractionContext context) {
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 1/3: 交互直接后果]");
-        sb.AppendLine("只处理玩家选择的 interaction 的直接 hard truth 后果。可创建/显示物品或 NPC，可调整可见性，可在有充分依据时移动玩家。");
-        sb.AppendLine("不要补一长串后续按钮；不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        sb.Append(BuildInteractionObservation(context));
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 1/3: 交互直接后果]",
+            sb => {
+                sb.AppendLine("只处理玩家选择的 interaction 的直接 hard truth 后果。可创建/显示物品或 NPC，可调整可见性，可在有充分依据时移动玩家。");
+                sb.AppendLine("不要补一长串后续按钮；不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
+            },
+            sb => sb.Append(BuildInteractionObservation(context))
+        );
     }
 
     private static string BuildInteractionAffordanceAuditStageObservation(DurableDict<string> root, GmInteractionContext context) {
         var perception = GameSimulation.DescribeCurrentPerception(root);
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 2/3: affordance 生命周期审计]");
-        sb.AppendLine("检查交互后玩家下一回合应该看到哪些可执行动作。");
-        sb.AppendLine($"若当前 interaction 已经被消耗或下一回合不该重复显示，用 {GmToolCatalog.SetInteractionVisibilityToolName} 设为 hidden。");
-        sb.AppendLine($"若出现新的合理后续动作，用 {GmToolCatalog.AddInteractionToolName} 落账；precondition_note 无特别条件时写 none，并明确填写 turn_cost / effect_scope / effect_slots。");
-        sb.AppendLine("本阶段不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        AppendInteractionIntent(sb, context);
-        AppendPerceptionSnapshot(sb, perception, "交互后账本投影");
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 2/3: affordance 生命周期审计]",
+            sb => {
+                sb.AppendLine("检查交互后玩家下一回合应该看到哪些可执行动作。");
+                sb.AppendLine($"若当前 interaction 已经被消耗或下一回合不该重复显示，用 {GmToolCatalog.SetInteractionVisibilityToolName} 设为 hidden。");
+                sb.AppendLine($"若出现新的合理后续动作，用 {GmToolCatalog.AddInteractionToolName} 落账；precondition_note 无特别条件时写 none，并明确填写 turn_cost / effect_scope / effect_slots。");
+                sb.AppendLine("本阶段不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
+            },
+            sb => {
+                AppendInteractionIntent(sb, context);
+                AppendPerceptionSnapshot(sb, perception, "交互后账本投影");
+            }
+        );
     }
 
     private static string BuildInteractionSummaryStageObservation(DurableDict<string> root, GmInteractionContext context) {
         var perception = GameSimulation.DescribeCurrentPerception(root);
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 3/3: 玩家可见结算摘要]");
-        sb.AppendLine("请输出 1 到 3 句中文结算摘要。原则：只描述当前玩家能感知到的新增结果与直接确认，只引用已经落账的物品、NPC 和可执行动作。");
-        sb.AppendLine("不要写时间推进，不要复述下一屏结构化 Perception 已直接展示的地点、地上物品、在场角色、背包或可执行动作清单。");
-        sb.AppendLine("可以保留必要的因果桥接，例如“你掀开叶堆后摸到一枚金属片”；但不要把新清单重新完整朗读一遍。");
-        sb.AppendLine("若你发现摘要必需的新实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
-        sb.AppendLine();
-        AppendInteractionIntent(sb, context);
-        AppendPerceptionSnapshot(sb, perception, "最终账本投影");
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 3/3: 玩家可见结算摘要]",
+            sb => {
+                sb.AppendLine("请输出 1 到 3 句中文结算摘要。原则：只描述当前玩家能感知到的新增结果与直接确认，只引用已经落账的物品、NPC 和可执行动作。");
+                sb.AppendLine("不要写时间推进，不要复述下一屏结构化 Perception 已直接展示的地点、地上物品、在场角色、背包或可执行动作清单。");
+                sb.AppendLine("可以保留必要的因果桥接，例如“你掀开叶堆后摸到一枚金属片”；但不要把新清单重新完整朗读一遍。");
+                sb.AppendLine("若你发现摘要必需的新实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+            },
+            sb => {
+                AppendInteractionIntent(sb, context);
+                AppendPerceptionSnapshot(sb, perception, "最终账本投影");
+            }
+        );
     }
 
     private static string BuildImmediateSelfInteractionObservation(GmInteractionContext context) {
@@ -870,14 +883,15 @@ internal static class GameMasterResolver {
     }
 
     private static string BuildImmediateSelfInteractionConsequenceStageObservation(GmInteractionContext context) {
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 1/3: immediate-local consequence]");
-        sb.AppendLine("只处理当前 acting actor 与眼前目标直接相关的必要 hard truth。");
-        sb.AppendLine("如果拿起、放下、收入口袋或从身上取出某个物品，必须用工具更新 item 持有关系。");
-        sb.AppendLine("本阶段不要输出最终摘要；必要工具调用完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        sb.Append(BuildImmediateSelfInteractionObservation(context));
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 1/3: immediate-local consequence]",
+            sb => {
+                sb.AppendLine("只处理当前 acting actor 与眼前目标直接相关的必要 hard truth。");
+                sb.AppendLine("如果拿起、放下、收入口袋或从身上取出某个物品，必须用工具更新 item 持有关系。");
+                sb.AppendLine("本阶段不要输出最终摘要；必要工具调用完成后停止调用工具，文本可留空。");
+            },
+            sb => sb.Append(BuildImmediateSelfInteractionObservation(context))
+        );
     }
 
     private static string BuildImmediateSelfInteractionAffordanceAuditStageObservation(
@@ -885,17 +899,20 @@ internal static class GameMasterResolver {
         GmInteractionContext context
     ) {
         var perception = GameSimulation.DescribeCurrentPerception(root);
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 2/3: immediate-local affordance audit]");
-        sb.AppendLine("检查这个即时小动作完成后，下一次 look-around 时玩家现在应看到哪些局部 affordance。");
-        sb.AppendLine($"若当前 interaction 已被消耗或不该重复显示，用 {GmToolCatalog.SetInteractionVisibilityToolName} 设为 hidden。");
-        AppendItemRefreshGuidance(sb);
-        sb.AppendLine($"若物品到了玩家手中且需要新的后续动作，用 {GmToolCatalog.AddInteractionToolName} 落账；无特别前提写 none。");
-        sb.AppendLine("本阶段不要输出最终摘要；必要工具调用完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        AppendInteractionIntent(sb, context);
-        AppendPerceptionSnapshot(sb, perception, "即时动作后账本投影");
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 2/3: immediate-local affordance audit]",
+            sb => {
+                sb.AppendLine("检查这个即时小动作完成后，下一次 look-around 时玩家现在应看到哪些局部 affordance。");
+                sb.AppendLine($"若当前 interaction 已被消耗或不该重复显示，用 {GmToolCatalog.SetInteractionVisibilityToolName} 设为 hidden。");
+                AppendItemRefreshGuidance(sb);
+                sb.AppendLine($"若物品到了玩家手中且需要新的后续动作，用 {GmToolCatalog.AddInteractionToolName} 落账；无特别前提写 none。");
+                sb.AppendLine("本阶段不要输出最终摘要；必要工具调用完成后停止调用工具，文本可留空。");
+            },
+            sb => {
+                AppendInteractionIntent(sb, context);
+                AppendPerceptionSnapshot(sb, perception, "即时动作后账本投影");
+            }
+        );
     }
 
     private static void AppendViewSafeNamingContract(StringBuilder sb) {
@@ -911,64 +928,84 @@ internal static class GameMasterResolver {
         GmInteractionContext context
     ) {
         var perception = GameSimulation.DescribeCurrentPerception(root);
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 3/3: immediate-local summary]");
-        sb.AppendLine("请输出 1 到 2 句中文即时反馈。只写 acting actor 此刻能确认的结果，只引用已经落账的物品与动作。");
-        sb.AppendLine("不要写时间推进，不要写整回合总结，不要复述下一屏结构化清单里已经显而易见的大段信息。");
-        sb.AppendLine("若你发现摘要依赖的新物品、可执行动作或可见性变更仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
-        sb.AppendLine();
-        AppendInteractionIntent(sb, context);
-        AppendPerceptionSnapshot(sb, perception, "最终账本投影");
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 3/3: immediate-local summary]",
+            sb => {
+                sb.AppendLine("请输出 1 到 2 句中文即时反馈。只写 acting actor 此刻能确认的结果，只引用已经落账的物品与动作。");
+                sb.AppendLine("不要写时间推进，不要写整回合总结，不要复述下一屏结构化清单里已经显而易见的大段信息。");
+                sb.AppendLine("若你发现摘要依赖的新物品、可执行动作或可见性变更仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+            },
+            sb => {
+                AppendInteractionIntent(sb, context);
+                AppendPerceptionSnapshot(sb, perception, "最终账本投影");
+            }
+        );
     }
 
     private static string BuildCollectedTurnConsequenceStageObservation(GmCollectedTurnContext context) {
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 1/3: 多主体意图裁决与 hard truth 落账]");
-        sb.AppendLine("统一裁决所有 active player actor 的 Large-Action。只处理必要 hard truth：Location/Exit/Actor location/Item ownership/NPC/Interaction/visibility。");
-        sb.AppendLine("本阶段不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        AppendCollectedTurnIntents(sb, context);
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 1/3: 多主体意图裁决与 hard truth 落账]",
+            sb => {
+                sb.AppendLine("统一裁决所有 active player actor 的 Large-Action。只处理必要 hard truth：Location/Exit/Actor location/Item ownership/NPC/Interaction/visibility。");
+                sb.AppendLine("本阶段不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
+            },
+            sb => AppendCollectedTurnIntents(sb, context)
+        );
     }
 
     private static string BuildCollectedTurnLedgerAuditStageObservation(DurableDict<string> root, GmCollectedTurnContext context) {
-        var sb = new StringBuilder();
-        sb.AppendLine("[阶段 2/3: 多主体账本审计]");
-        sb.AppendLine("检查刚才的多主体结算是否遗漏必要账本：终端玩家/LLM Player 的位置、物品位置/持有者、新地点出口、可见 NPC、可执行 interaction。");
-        sb.AppendLine("如果最终摘要或下一回合 Perception-Bundle 需要某实体或 affordance，请现在补工具调用。不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
-        sb.AppendLine();
-        AppendCollectedTurnIntents(sb, context);
-        AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.TerminalActorId), "当前终端玩家账本投影");
-        foreach (var intent in context.Intents.Where(intent => !string.Equals(intent.ActorId, context.TerminalActorId, StringComparison.Ordinal))) {
-            AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, intent.ActorId), $"当前 {intent.ActorName} 账本投影");
-        }
-
-        return sb.ToString();
+        return BuildStagePrompt(
+            "[阶段 2/3: 多主体账本审计]",
+            sb => {
+                sb.AppendLine("检查刚才的多主体结算是否遗漏必要账本：终端玩家/LLM Player 的位置、物品位置/持有者、新地点出口、可见 NPC、可执行 interaction。");
+                sb.AppendLine("如果最终摘要或下一回合 Perception-Bundle 需要某实体或 affordance，请现在补工具调用。不要输出最终摘要。工具完成后停止调用工具，文本可留空。");
+            },
+            sb => {
+                AppendCollectedTurnIntents(sb, context);
+                AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.TerminalActorId), "当前终端玩家账本投影");
+                foreach (var intent in context.Intents.Where(intent => !string.Equals(intent.ActorId, context.TerminalActorId, StringComparison.Ordinal))) {
+                    AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, intent.ActorId), $"当前 {intent.ActorName} 账本投影");
+                }
+            }
+        );
     }
 
     private static string BuildCollectedTurnSummaryStageObservation(DurableDict<string> root, GmCollectedTurnContext context) {
+        return BuildStagePrompt(
+            "[阶段 3/3: 各 actor 私有结算反馈与终端玩家摘要]",
+            sb => {
+                sb.AppendLine($"先为每个 active player actor 调用 {GmToolCatalog.SetActorResolutionToolName}(actor_id, summary)，写入该 actor 下一回合可见的私有反馈。");
+                sb.AppendLine("每份私有反馈 1 到 4 句中文，只写该 actor 这一回合新增感知到、参与声明时公开知道、或自然能推断的内容；不要泄露其它 actor 离开视野后的隐藏发现。");
+                sb.AppendLine("所有 actor resolution 都写入后，停止调用工具，并输出 1 到 4 句终端玩家可见中文摘要。");
+                sb.AppendLine("私有反馈与终端摘要都不要写时间推进，不要把结构化 Perception 已直接展示的地点、出口、物品、角色、背包或交互清单再完整复述一遍。");
+                sb.AppendLine("若需要提及新发现，请优先写“这一步发生了什么，因此确认了什么”的桥接信息，而不是重新描述整张场景卡。");
+                sb.AppendLine("若你发现摘要必需的新实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+                sb.AppendLine();
+                sb.AppendLine("[必须写入私有反馈的 ActorId]");
+                foreach (var intent in context.Intents) {
+                    sb.AppendLine($"- {intent.ActorId}: {intent.ActorName} ({intent.ActorKind})");
+                }
+            },
+            sb => {
+                AppendCollectedTurnIntents(sb, context);
+                AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.TerminalActorId), "最终终端玩家账本投影");
+                foreach (var intent in context.Intents.Where(intent => !string.Equals(intent.ActorId, context.TerminalActorId, StringComparison.Ordinal))) {
+                    AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, intent.ActorId), $"最终 {intent.ActorName} 账本投影");
+                }
+            }
+        );
+    }
+
+    private static string BuildStagePrompt(
+        string stageTitle,
+        Action<StringBuilder> appendGuidance,
+        Action<StringBuilder> appendContext
+    ) {
         var sb = new StringBuilder();
-        sb.AppendLine("[阶段 3/3: 各 actor 私有结算反馈与终端玩家摘要]");
-        sb.AppendLine($"先为每个 active player actor 调用 {GmToolCatalog.SetActorResolutionToolName}(actor_id, summary)，写入该 actor 下一回合可见的私有反馈。");
-        sb.AppendLine("每份私有反馈 1 到 4 句中文，只写该 actor 这一回合新增感知到、参与声明时公开知道、或自然能推断的内容；不要泄露其它 actor 离开视野后的隐藏发现。");
-        sb.AppendLine("所有 actor resolution 都写入后，停止调用工具，并输出 1 到 4 句终端玩家可见中文摘要。");
-        sb.AppendLine("私有反馈与终端摘要都不要写时间推进，不要把结构化 Perception 已直接展示的地点、出口、物品、角色、背包或交互清单再完整复述一遍。");
-        sb.AppendLine("若需要提及新发现，请优先写“这一步发生了什么，因此确认了什么”的桥接信息，而不是重新描述整张场景卡。");
-        sb.AppendLine("若你发现摘要必需的新实体或 affordance 仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
+        sb.AppendLine(stageTitle);
+        appendGuidance(sb);
         sb.AppendLine();
-        sb.AppendLine("[必须写入私有反馈的 ActorId]");
-        foreach (var intent in context.Intents) {
-            sb.AppendLine($"- {intent.ActorId}: {intent.ActorName} ({intent.ActorKind})");
-        }
-
-        sb.AppendLine();
-        AppendCollectedTurnIntents(sb, context);
-        AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, context.TerminalActorId), "最终终端玩家账本投影");
-        foreach (var intent in context.Intents.Where(intent => !string.Equals(intent.ActorId, context.TerminalActorId, StringComparison.Ordinal))) {
-            AppendPerceptionSnapshot(sb, GameSimulation.DescribePerceptionForActor(root, intent.ActorId), $"最终 {intent.ActorName} 账本投影");
-        }
-
+        appendContext(sb);
         return sb.ToString();
     }
 
@@ -1128,8 +1165,8 @@ internal static class GameMasterResolver {
 
     private static ToolExecutor GetOrCreateToolExecutor(
         DurableDict<string> root,
-        GmToolSet toolSet,
-        IDictionary<GmToolSet, ToolExecutor> cache
+        GmToolCatalog.ToolSet toolSet,
+        IDictionary<GmToolCatalog.ToolSet, ToolExecutor> cache
     ) {
         if (cache.TryGetValue(toolSet, out var executor)) {
             return executor;

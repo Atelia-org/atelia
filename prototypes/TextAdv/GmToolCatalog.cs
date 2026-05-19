@@ -4,20 +4,25 @@ using Atelia.StateJournal;
 
 namespace Atelia.TextAdv;
 
-internal sealed class GmToolSet {
-    internal GmToolSet(string name, IReadOnlyList<string> toolNames) {
-        Name = string.IsNullOrWhiteSpace(name)
-            ? throw new ArgumentException("Tool set name is required.", nameof(name))
-            : name;
-        ToolNames = toolNames ?? throw new ArgumentNullException(nameof(toolNames));
+internal static class GmToolCatalog {
+    internal sealed class ToolSet {
+        private ToolSet(string name, IReadOnlyList<string> toolNames) {
+            Name = string.IsNullOrWhiteSpace(name)
+                ? throw new ArgumentException("Tool set name is required.", nameof(name))
+                : name;
+            ToolNames = toolNames ?? throw new ArgumentNullException(nameof(toolNames));
+        }
+
+        internal string Name { get; }
+
+        internal IReadOnlyList<string> ToolNames { get; }
+
+        public override string ToString() => Name;
+
+        internal static ToolSet Create(string name, IReadOnlyList<string> toolNames)
+            => new(name, toolNames);
     }
 
-    internal string Name { get; }
-
-    internal IReadOnlyList<string> ToolNames { get; }
-}
-
-internal static class GmToolCatalog {
     internal const string CreateLocationToolName = "gm_create_location";
     internal const string LinkLocationsToolName = "gm_link_locations";
     internal const string MoveActorToolName = "gm_move_actor";
@@ -88,12 +93,12 @@ internal static class GmToolCatalog {
     ];
 
     internal static class ToolSets {
-        internal static readonly GmToolSet ExploreMap = CreateToolSet(
+        internal static readonly ToolSet ExploreMap = CreateToolSet(
             "ExploreMap",
             s_mapTools
         );
 
-        internal static readonly GmToolSet ExploreAudit = CreateToolSet(
+        internal static readonly ToolSet ExploreAudit = CreateToolSet(
             "ExploreAudit",
             s_entityRevealTools,
             s_addInteractionTools,
@@ -101,7 +106,7 @@ internal static class GmToolCatalog {
             s_interactionVisibilityTools
         );
 
-        internal static readonly GmToolSet InteractionConsequence = CreateToolSet(
+        internal static readonly ToolSet InteractionConsequence = CreateToolSet(
             "InteractionConsequence",
             [MoveActorToolName],
             s_entityRevealTools,
@@ -111,13 +116,13 @@ internal static class GmToolCatalog {
             s_interactionVisibilityTools
         );
 
-        internal static readonly GmToolSet InteractionAudit = CreateToolSet(
+        internal static readonly ToolSet InteractionAudit = CreateToolSet(
             "InteractionAudit",
             s_addInteractionTools,
             s_interactionVisibilityTools
         );
 
-        internal static readonly GmToolSet CollectedTurnCore = CreateToolSet(
+        internal static readonly ToolSet CollectedTurnCore = CreateToolSet(
             "CollectedTurnCore",
             s_mapTools,
             s_entityRevealTools,
@@ -127,20 +132,20 @@ internal static class GmToolCatalog {
             s_interactionVisibilityTools
         );
 
-        internal static readonly GmToolSet CollectedTurnSummary = CreateToolSet(
+        internal static readonly ToolSet CollectedTurnSummary = CreateToolSet(
             "CollectedTurnSummary",
             CollectedTurnCore.ToolNames,
             s_actorResolutionTools
         );
 
-        internal static readonly GmToolSet ImmediateSelfConsequence = CreateToolSet(
+        internal static readonly ToolSet ImmediateSelfConsequence = CreateToolSet(
             "ImmediateSelfConsequence",
             [CreateItemToolName, UpdateItemToolName],
             s_itemPlacementTools,
             s_visibilityTools
         );
 
-        internal static readonly GmToolSet ImmediateSelfAudit = CreateToolSet(
+        internal static readonly ToolSet ImmediateSelfAudit = CreateToolSet(
             "ImmediateSelfAudit",
             [UpdateItemToolName],
             s_addInteractionTools,
@@ -148,7 +153,7 @@ internal static class GmToolCatalog {
             s_interactionVisibilityTools
         );
 
-        internal static readonly GmToolSet ImmediateSelfSummary = CreateToolSet(
+        internal static readonly ToolSet ImmediateSelfSummary = CreateToolSet(
             "ImmediateSelfSummary",
             [CreateItemToolName, UpdateItemToolName],
             s_itemPlacementTools,
@@ -157,7 +162,7 @@ internal static class GmToolCatalog {
             s_interactionVisibilityTools
         );
 
-        internal static readonly GmToolSet InteractionEffectConsequence = CreateToolSet(
+        internal static readonly ToolSet InteractionEffectConsequence = CreateToolSet(
             "InteractionEffectConsequence",
             [MoveActorToolName],
             s_entityRevealTools,
@@ -167,7 +172,7 @@ internal static class GmToolCatalog {
             s_interactionVisibilityTools
         );
 
-        internal static readonly GmToolSet InteractionEffectAudit = CreateToolSet(
+        internal static readonly ToolSet InteractionEffectAudit = CreateToolSet(
             "InteractionEffectAudit",
             [CreateItemToolName, UpdateItemToolName],
             s_itemPlacementTools,
@@ -177,7 +182,7 @@ internal static class GmToolCatalog {
         );
     }
 
-    internal static IReadOnlyList<GmToolSet> AllToolSets =>
+    internal static IReadOnlyList<ToolSet> AllToolSets =>
     [
         ToolSets.ExploreMap,
         ToolSets.ExploreAudit,
@@ -192,24 +197,24 @@ internal static class GmToolCatalog {
         ToolSets.InteractionEffectAudit,
     ];
 
-    internal static ToolExecutor CreateExecutor(DurableDict<string> root, GmToolSet toolSet) {
+    internal static ToolExecutor CreateExecutor(DurableDict<string> root, ToolSet toolSet) {
         var toolService = new GmWorldEditService(root);
         return new ToolExecutor(CreateTools(toolService, toolSet));
     }
 
-    internal static IReadOnlyList<string> GetVisibleToolNames(GmToolSet toolSet)
+    internal static IReadOnlyList<string> GetVisibleToolNames(ToolSet toolSet)
         => toolSet.ToolNames;
 
-    internal static string FormatVisibleToolNames(GmToolSet toolSet)
+    internal static string FormatVisibleToolNames(ToolSet toolSet)
         => string.Join("、", GetVisibleToolNames(toolSet));
 
-    private static IEnumerable<ITool> CreateTools(GmWorldEditService toolService, GmToolSet toolSet) {
+    private static IEnumerable<ITool> CreateTools(GmWorldEditService toolService, ToolSet toolSet) {
         foreach (var toolName in toolSet.ToolNames) {
             yield return s_toolFactories[toolName](toolService);
         }
     }
 
-    private static GmToolSet CreateToolSet(string name, params IReadOnlyList<string>[] toolGroups) {
+    private static ToolSet CreateToolSet(string name, params IReadOnlyList<string>[] toolGroups) {
         var toolNames = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
@@ -225,6 +230,6 @@ internal static class GmToolCatalog {
             }
         }
 
-        return new GmToolSet(name, toolNames.ToArray());
+        return ToolSet.Create(name, toolNames.ToArray());
     }
 }
