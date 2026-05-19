@@ -1,3 +1,5 @@
+using Atelia.Data;
+using Atelia.StateJournal;
 using Atelia.TextEditScript;
 using Xunit;
 
@@ -60,6 +62,18 @@ public sealed class PerceptionEvidenceRendererTests {
         Assert.Contains("pmux game interact", rendered);
         Assert.Contains("<行动依据>", rendered);
         Assert.Contains("确认它清凉无异味", rendered);
+    }
+
+    [Fact]
+    public void GamePresenter_RenderPerception_WhenVersionProvided_ShouldShowCommittedVersion() {
+        var perception = CreateSamplePerception();
+        var versionAddress = CommitAddress.Create(3, new CommitTicket(SizedPtr.Create(64, 16)));
+
+        var rendered = GamePresenter.RenderPerception(perception, TerminalHelpMode.Off, versionAddress);
+
+        Assert.Contains($"🔖 已提交版本: {versionAddress}", rendered);
+        Assert.Contains("load-version", rendered);
+        Assert.Contains("继续游玩", rendered);
     }
 
     [Fact]

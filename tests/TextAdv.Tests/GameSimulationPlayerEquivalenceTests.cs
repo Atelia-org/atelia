@@ -39,14 +39,12 @@ public sealed class GameSimulationPlayerEquivalenceTests : IDisposable {
     }
 
     [Fact]
-    public void NewWorld_ShouldDefaultTerminalHelpModeToOff_AndAllowToggle() {
+    public void NewWorld_ShouldNotPersistTerminalHelpModeInsideWorldState() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
+        var game = root.GetOrThrow<DurableDict<string>>("game")!;
 
-        Assert.Equal(TerminalHelpMode.Off, GameSimulation.GetTerminalHelpMode(root));
-
-        GameSimulation.SetTerminalHelpMode(root, TerminalHelpMode.On);
-        Assert.Equal(TerminalHelpMode.On, GameSimulation.GetTerminalHelpMode(root));
+        Assert.False(game.TryGet("terminalHelpMode", out string? _));
     }
 
     [Fact]

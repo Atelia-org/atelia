@@ -55,7 +55,7 @@ items.PushBack("alpha");
 items.PushBack("beta");
 root.Upsert("items", items);
 
-var outcome = repo.Commit(root).Value;
+var head = repo.Commit(root).Value;
 ```
 
 要点：
@@ -129,14 +129,19 @@ using var reopened = Repository.Open(repoDir).Value;
 var main = repo.CreateBranch("main").Value;
 var feature = repo.CreateBranch("feature", "main").Value;
 var checkedOut = repo.CheckoutBranch("main").Value;
+repo.TryGetBranchHeadAddress("main", out var head);
+var replay = repo.CreateBranch("replay", head).Value;
 ```
 
 规则：
 
-- `CreateBranch(name)` 创建 unborn branch，`HeadId == default`，`GraphRoot == null`。
+- `CreateBranch(name)` 创建 unborn branch，`HeadAddress == null`，`GraphRoot == null`。
 - `CreateBranch(name, fromBranch)` 从源 branch 的**已提交 HEAD**派生，不复制未提交工作态。
+- `CreateBranch(name, fromCommitAddress)` 可直接从任意历史 `CommitAddress` 派生新 branch，适合“从旧存档继续演化”。
 - branch 名只允许 ASCII 字母、数字、`. _ - /`，必须以字母或数字开头，不能以 `/ . -` 结尾。
 - 可用 `Repository.ValidateBranchName(name)` 预检。
+- `TryGetBranchHeadAddress(branch, out head)` 读取该 branch 当前 HEAD 的完整 `CommitAddress`；成功返回 `true`，失败时 `head` 为 `default`。
+- `Repository.Commit(root)` 也直接返回新的 `CommitAddress`，用于后续展示、记录或派生新 branch。
 
 ### 2.3 Segment
 

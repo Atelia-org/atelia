@@ -90,7 +90,7 @@ public class RepositorySegmentCatalogTests : IDisposable {
         }
 
         Assert.True(result.IsFailure);
-        Assert.Contains("Failed to materialize Revision", result.Error!.Message);
+        Assert.Contains("Failed to materialize", result.Error!.Message);
     }
 
     [Fact]

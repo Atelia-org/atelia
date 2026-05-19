@@ -21,7 +21,6 @@ internal static partial class GameSimulation {
     private const string TurnHistoryKey = "turnHistory";
     private const string CompletedTurnCountKey = "completedTurnCount";
     private const string LastResolutionByActorKey = "lastResolutionByActor";
-    private const string TerminalHelpModeKey = "terminalHelpMode";
     private const string StartDayKey = "startDay";
     private const string StartSlotKey = "startSlot";
     private const string StartLocationIdKey = "startLocationId";
@@ -215,7 +214,6 @@ internal static partial class GameSimulation {
         game.Upsert(CompletedTurnCountKey, 0);
         game.Upsert(TurnHistoryKey, turnHistory);
         game.Upsert(LastResolutionByActorKey, lastResolutionByActor);
-        game.Upsert(TerminalHelpModeKey, TerminalHelpMode.Off.ToString());
         game.Upsert(WorkingByActorKey, workingByActor);
         game.Upsert(CurrentTurnKey, CreateCurrentTurnState(rev, day: 1, slot: 1, beachId, string.Empty));
 
@@ -259,21 +257,6 @@ internal static partial class GameSimulation {
 
     private static DurableDict<string> GetGame(DurableDict<string> root)
         => root.GetOrThrow<DurableDict<string>>(GameKey)!;
-
-    internal static TerminalHelpMode GetTerminalHelpMode(DurableDict<string> root) {
-        var game = GetGame(root);
-        if (game.TryGet(TerminalHelpModeKey, out string? rawMode)
-            && Enum.TryParse<TerminalHelpMode>(rawMode, ignoreCase: true, out var parsedMode)) {
-            return parsedMode;
-        }
-
-        return TerminalHelpMode.Off;
-    }
-
-    internal static void SetTerminalHelpMode(DurableDict<string> root, TerminalHelpMode mode) {
-        var game = GetGame(root);
-        game.Upsert(TerminalHelpModeKey, mode.ToString());
-    }
 
     private static DurableText GetNotebook(DurableDict<string> root)
         => GetNotebook(root, TerminalPlayerActorId);

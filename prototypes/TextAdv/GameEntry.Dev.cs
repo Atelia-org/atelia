@@ -12,9 +12,10 @@ public static partial class GameEntry {
                 var output = ctx.InvocationConfiguration.Output;
                 var direction = ctx.GetValue(directionArg)!;
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (repo, root) = state;
+                var repo = session.Repo;
+                var root = session.Root;
                 var moveResult = GameSimulation.MovePlayer(root, direction);
 
                 if (!moveResult.IsSuccess) {
@@ -27,7 +28,7 @@ public static partial class GameEntry {
                 output.WriteLine("⚠️ 这是 dev-go 开发者调试移动，不会记录为回合步骤，也不会触发 validator。");
                 output.WriteLine($"🚶 你向 {direction} 方向走去…");
                 output.WriteLine();
-                output.Write(RenderPerceptionForTerminal(root, moveResult.Value!));
+                output.Write(RenderPerceptionForTerminal(session, moveResult.Value!));
             }
         );
         return cmd;
@@ -55,9 +56,10 @@ public static partial class GameEntry {
                 var profileNote = ctx.GetValue(profileNoteArg)!;
                 var locationId = ctx.GetValue(locationOption);
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (repo, root) = state;
+                var repo = session.Repo;
+                var root = session.Root;
                 var result = GameSimulation.CreateLlmPlayerActor(root, actorId, name, profileNote, locationId);
                 if (!result.TryGetValue(out var createdActorId) || string.IsNullOrWhiteSpace(createdActorId)) {
                     output.WriteLine("❌ 创建内部玩家 actor 失败。");
@@ -70,7 +72,7 @@ public static partial class GameEntry {
                 output.WriteLine();
                 output.Write(
                     RenderPerceptionForTerminal(
-                        root,
+                        session,
                         GameSimulation.DescribePerceptionForActor(root, createdActorId)
                     )
                 );
@@ -88,12 +90,12 @@ public static partial class GameEntry {
                 var actorId = ctx.GetValue(actorIdArg)!;
 
                 try {
-                    if (!TryGetState(output, out var state)) { return; }
+                    if (!TryGetSession(output, out var session)) { return; }
 
-                    var (_, root) = state;
+                    var root = session.Root;
                     output.Write(
                         RenderPerceptionForTerminal(
-                            root,
+                            session,
                             GameSimulation.DescribePerceptionForActor(root, actorId)
                         )
                     );
@@ -112,9 +114,9 @@ public static partial class GameEntry {
             ctx => {
                 var output = ctx.InvocationConfiguration.Output;
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (_, root) = state;
+                var root = session.Root;
                 output.Write(GamePresenter.RenderTurnCollectionStatus(GameSimulation.DescribeCurrentTurnStatus(root)));
             }
         );
@@ -130,9 +132,9 @@ public static partial class GameEntry {
                 var actorId = ctx.GetValue(actorIdArg)!;
 
                 try {
-                    if (!TryGetState(output, out var state)) { return; }
+                    if (!TryGetSession(output, out var session)) { return; }
 
-                    var (_, root) = state;
+                    var root = session.Root;
                     var journal = GameSimulation.BuildActorJournalExport(root, actorId);
                     output.WriteLine($"# {journal.ActorName} [{journal.ActorId}, {journal.ActorKind}]");
                     output.WriteLine();
@@ -162,9 +164,9 @@ public static partial class GameEntry {
                     ? TextAdvRuntimeEnvironment.GetActorJournalDir()
                     : outputDir.Trim();
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (_, root) = state;
+                var root = session.Root;
                 ExportActorJournals(output, root, outputDir);
             }
         );
@@ -210,9 +212,10 @@ public static partial class GameEntry {
                     return;
                 }
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (repo, root) = state;
+                var repo = session.Repo;
+                var root = session.Root;
                 var ensureResult = GameSimulation.EnsureDiagnosticLlmPlayers(root, ensureLlmPlayers);
                 if (!ensureResult.TryGetValue(out var ensuredActorIds) || ensuredActorIds is null) {
                     output.WriteLine("❌ diagnostic 内部玩家准备失败。");
@@ -283,9 +286,10 @@ public static partial class GameEntry {
                 var reason = ctx.GetValue(reasonArg)!;
                 var payload = ctx.GetValue(payloadOption);
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (repo, root) = state;
+                var repo = session.Repo;
+                var root = session.Root;
                 var result = GameSimulation.SubmitDevLargeActionForActor(root, actorId, actionKind, summary, payload, reason);
                 if (!result.TryGetValue(out var status) || status is null) {
                     output.WriteLine("❌ dev Large-Action 提交失败。");

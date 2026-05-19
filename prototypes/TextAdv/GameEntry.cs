@@ -15,57 +15,45 @@ namespace Atelia.TextAdv;
 /// 状态全部持久化在 StateJournal 中，进程重启不丢失。
 /// </summary>
 public static partial class GameEntry {
-    private static Repository? _repo;
-    private static DurableDict<string>? _root;
+    private static TextAdvSession? _session;
 
-    private static (Repository repo, DurableDict<string> root)? GetState(out string? errorMessage) {
-        errorMessage = null;
-        if (_repo is not null && _root is not null) { return (_repo, _root); }
-
-        var repoDir = TextAdvRuntimeEnvironment.GetRepoDir();
-        if (!Directory.Exists(repoDir)) { return null; }
-
-        _repo = null;
-        _root = null;
-
-        var openResult = Repository.Open(repoDir);
-        if (!openResult.IsSuccess) {
-            errorMessage = $"无法打开游戏存档目录 '{repoDir}'：{openResult.Error?.Message ?? openResult.Error?.ToString() ?? "未知错误"}";
-            return null;
-        }
-
-        _repo = openResult.Value!;
-        var revResult = _repo.GetOrCreateBranch("main");
-        if (!revResult.IsSuccess) {
-            _repo = null;
-            _root = null;
-            errorMessage = $"无法打开游戏分支 'main'：{revResult.Error?.Message ?? revResult.Error?.ToString() ?? "未知错误"}";
-            return null;
-        }
-
-        var rev = revResult.Value!;
-
-        _root = rev.GraphRoot as DurableDict<string>;
-        if (_root is null) {
-            _repo = null;
-            _root = null;
-            errorMessage = $"游戏存档目录 '{repoDir}' 中的根状态不是 DurableDict<string>。";
-            return null;
-        }
-
-        return (_repo, _root);
-    }
-
-    private static bool TryGetState(TextWriter output, out (Repository repo, DurableDict<string> root) state) {
-        var loadedState = GetState(out var errorMessage);
-        if (loadedState is not null) {
-            state = loadedState.Value;
+    private static bool TryLoadSession(out TextAdvSession? session, out AteliaError? error) {
+        if (_session is not null) {
+            session = _session;
+            error = null;
             return true;
         }
 
-        state = default;
-        if (errorMessage is not null) {
-            output.WriteLine($"❌ {errorMessage}");
+        var repoDir = TextAdvRuntimeEnvironment.GetRepoDir();
+        if (!Directory.Exists(repoDir)) {
+            session = null;
+            error = null;
+            return false;
+        }
+
+        var sessionResult = TextAdvSession.Load(repoDir);
+        if (sessionResult.TryGetValue(out var loadedSession) && loadedSession is not null) {
+            _session = loadedSession;
+            session = loadedSession;
+            error = null;
+            return true;
+        }
+
+        error = sessionResult.Error;
+        session = null;
+        return false;
+    }
+
+    private static bool TryGetSession(TextWriter output, out TextAdvSession session) {
+        if (TryLoadSession(out var loadedSession, out var error) && loadedSession is not null) {
+            session = loadedSession;
+            return true;
+        }
+
+        session = null!;
+        if (error is not null) {
+            output.WriteLine("❌ 无法打开当前游戏会话。");
+            WriteAteliaError(output, error);
             return false;
         }
 
@@ -78,6 +66,7 @@ public static partial class GameEntry {
         var root = new RootCommand("荒岛求生 — 最小回合流程原型");
 
         root.Add(BuildNewCommand());
+        root.Add(BuildLoadVersionCommand());
         root.Add(BuildHelpCommand());
         root.Add(BuildLookAroundCommand());
         root.Add(BuildEditMemoryNotebookCommand());
@@ -97,24 +86,25 @@ public static partial class GameEntry {
     }
 
     private static string RenderPerceptionForTerminal(
-        DurableDict<string> root,
+        TextAdvSession session,
         PerceptionBundle perception,
         bool forceShowFullHelp = false
     ) {
         return GamePresenter.RenderPerception(
             perception,
-            GameSimulation.GetTerminalHelpMode(root),
+            session.HelpMode,
+            session.HeadAddress,
             forceShowFullHelp
         );
     }
 
     private static string RenderCurrentPerceptionForTerminal(
-        DurableDict<string> root,
+        TextAdvSession session,
         bool forceShowFullHelp = false
     ) {
         return RenderPerceptionForTerminal(
-            root,
-            GameSimulation.DescribeCurrentPerception(root),
+            session,
+            GameSimulation.DescribeCurrentPerception(session.Root),
             forceShowFullHelp
         );
     }
@@ -126,26 +116,73 @@ public static partial class GameEntry {
                 var output = ctx.InvocationConfiguration.Output;
                 var repoDir = TextAdvRuntimeEnvironment.GetRepoDir();
 
-                _repo = null;
-                _root = null;
+                _session = null;
 
                 if (Directory.Exists(repoDir)) {
                     Directory.Delete(repoDir, recursive: true);
                 }
 
-                var createResult = Repository.Create(repoDir);
-                if (!createResult.IsSuccess) {
-                    output.WriteLine($"❌ 创建游戏世界失败：{createResult.Error}");
+                var createResult = TextAdvSession.CreateNew(repoDir);
+                if (!createResult.TryGetValue(out var session) || session is null) {
+                    output.WriteLine("❌ 创建游戏世界失败。");
+                    WriteAteliaError(output, createResult.Error);
                     return;
                 }
 
-                _repo = createResult.Value!;
-                _root = GameSimulation.CreateNewWorld(_repo);
+                _session = session;
 
                 output.WriteLine("✅ 新世界已创建！");
                 output.WriteLine($"💾 存档目录：{repoDir}");
                 output.WriteLine();
-                output.Write(RenderCurrentPerceptionForTerminal(_root, forceShowFullHelp: true));
+                output.Write(RenderCurrentPerceptionForTerminal(session, forceShowFullHelp: true));
+            }
+        );
+        return cmd;
+    }
+
+    private static Command BuildLoadVersionCommand() {
+        var versionArg = new Argument<string>("version-address") {
+            Description = "要加载的历史版本地址，例如 seg:1:0123abcd4567ef89。"
+        };
+        var cmd = new Command("load-version", "从指定历史版本派生一条新的存档线，并切换过去继续游玩") {
+            versionArg
+        };
+        cmd.SetAction(
+            ctx => {
+                var output = ctx.InvocationConfiguration.Output;
+                var versionText = ctx.GetValue(versionArg)!;
+
+                if (!TryGetSession(output, out var session)) { return; }
+
+                var parsedAddress = CommitAddress.TryParse(versionText);
+                if (parsedAddress is null) {
+                    output.WriteLine($"❌ version-address 格式无效：{versionText}");
+                    output.WriteLine("💡 期待格式：seg:<segmentNumber>:<ticketHex16>");
+                    return;
+                }
+
+                var loadResult = session.LoadVersionAsNewBranch(parsedAddress.Value);
+                if (!loadResult.TryGetValue(out var loadedSession) || loadedSession is null) {
+                    output.WriteLine("❌ 无法加载指定版本。");
+                    WriteAteliaError(output, loadResult.Error);
+                    return;
+                }
+
+                var persistResult = loadedSession.Persist(TextAdvRuntimeEnvironment.GetRepoDir());
+                if (!persistResult.TryGetValue(out loadedSession) || loadedSession is null) {
+                    output.WriteLine("❌ 已创建新的存档线，但无法保存当前会话指针。");
+                    WriteAteliaError(output, persistResult.Error);
+                    return;
+                }
+
+                _session = loadedSession;
+                var perception = GameSimulation.DescribeCurrentPerception(loadedSession.Root);
+
+                output.WriteLine($"✅ 已从版本 {parsedAddress.Value} 加载新的存档线。");
+                output.WriteLine($"🌿 当前 branch: {loadedSession.BranchName}");
+                output.WriteLine("⚠️ 原来的 main 不会被改写；之后的操作会继续写入这条新 branch。");
+                output.WriteLine();
+                output.Write(RenderPerceptionForTerminal(loadedSession, perception));
             }
         );
         return cmd;
@@ -163,41 +200,48 @@ public static partial class GameEntry {
                 var mode = ctx.GetValue(modeArg);
 
                 if (string.IsNullOrWhiteSpace(mode)) {
-                    var loadedState = GetState(out _);
-                    if (loadedState is null) {
+                    if (!TryLoadSession(out var currentSession, out _ ) || currentSession is null) {
                         output.Write(GamePresenter.RenderStandaloneHelp(perception: null, TerminalHelpMode.Off));
                         return;
                     }
 
-                    var (_, currentRoot) = loadedState.Value;
                     output.Write(
                         GamePresenter.RenderStandaloneHelp(
-                            GameSimulation.DescribeCurrentPerception(currentRoot),
-                            GameSimulation.GetTerminalHelpMode(currentRoot)
+                            GameSimulation.DescribeCurrentPerception(currentSession.Root),
+                            currentSession.HelpMode
                         )
                     );
                     return;
                 }
 
-                if (!TryGetState(output, out var configuredState)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (repo, root) = configuredState;
                 switch (mode.Trim().ToLowerInvariant()) {
                     case "on":
-                        GameSimulation.SetTerminalHelpMode(root, TerminalHelpMode.On);
-                        _ = repo.Commit(root).Value;
+                        var helpOnResult = session.WithHelpMode(TerminalHelpMode.On).Persist(TextAdvRuntimeEnvironment.GetRepoDir());
+                        if (!helpOnResult.TryGetValue(out session) || session is null) {
+                            output.WriteLine("❌ 无法保存帮助模式设置。");
+                            WriteAteliaError(output, helpOnResult.Error);
+                            return;
+                        }
+                        _session = session;
                         output.WriteLine("✅ 以后每次局面渲染后都会附带完整操作速查。");
                         output.WriteLine();
                         output.Write(
                             GamePresenter.RenderStandaloneHelp(
-                                GameSimulation.DescribeCurrentPerception(root),
-                                GameSimulation.GetTerminalHelpMode(root)
+                                GameSimulation.DescribeCurrentPerception(session.Root),
+                                session.HelpMode
                             )
                         );
                         return;
                     case "off":
-                        GameSimulation.SetTerminalHelpMode(root, TerminalHelpMode.Off);
-                        _ = repo.Commit(root).Value;
+                        var helpOffResult = session.WithHelpMode(TerminalHelpMode.Off).Persist(TextAdvRuntimeEnvironment.GetRepoDir());
+                        if (!helpOffResult.TryGetValue(out session) || session is null) {
+                            output.WriteLine("❌ 无法保存帮助模式设置。");
+                            WriteAteliaError(output, helpOffResult.Error);
+                            return;
+                        }
+                        _session = session;
                         output.WriteLine("✅ 以后默认只保留最简帮助提示；完整速查可随时用 `pmux game help` 查看。");
                         output.WriteLine();
                         output.WriteLine(GamePresenter.RenderStandaloneHelpStatus(TerminalHelpMode.Off));
@@ -205,7 +249,7 @@ public static partial class GameEntry {
                         output.Write(PlayerActionGuideCatalog.RenderTerminalMinimalHelpHint());
                         return;
                     case "status":
-                        output.WriteLine(GamePresenter.RenderStandaloneHelpStatus(GameSimulation.GetTerminalHelpMode(root)));
+                        output.WriteLine(GamePresenter.RenderStandaloneHelpStatus(session.HelpMode));
                         return;
                     default:
                         output.WriteLine("❌ help mode 只支持 on / off / status。");
@@ -222,10 +266,9 @@ public static partial class GameEntry {
             ctx => {
                 var output = ctx.InvocationConfiguration.Output;
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (_, root) = state;
-                output.Write(RenderCurrentPerceptionForTerminal(root));
+                output.Write(RenderCurrentPerceptionForTerminal(session));
             }
         );
         return cmd;
@@ -254,9 +297,10 @@ public static partial class GameEntry {
                 var scriptXml = ctx.GetValue(scriptArg)!;
                 var preActionReason = ctx.GetValue(reasonArg)!;
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (repo, root) = state;
+                var repo = session.Repo;
+                var root = session.Root;
                 var perception = GameSimulation.DescribeCurrentPerception(root);
                 var notebookEditResult = GameNotebookEditService.Prepare(perception.NotebookBlocks, scriptXml);
                 if (!notebookEditResult.TryGetValue(out var notebookEdit) || notebookEdit is null) {
@@ -297,7 +341,7 @@ public static partial class GameEntry {
 
                 output.WriteLine("✅ 记事本已更新。");
                 output.WriteLine();
-                output.Write(RenderPerceptionForTerminal(root, updatedPerception));
+                output.Write(RenderPerceptionForTerminal(session, updatedPerception));
             }
         );
         return cmd;
@@ -349,9 +393,10 @@ public static partial class GameEntry {
         Func<DurableDict<string>, GameActionValidator.ValidationResult, CancellationToken, Task<AsyncAteliaResult<TurnResolution>>> resolveAsync,
         CancellationToken cancellationToken
     ) {
-        if (!TryGetState(output, out var state)) { return; }
+        if (!TryGetSession(output, out var session)) { return; }
 
-        var (repo, root) = state;
+        var repo = session.Repo;
+        var root = session.Root;
         var perception = GameSimulation.DescribeCurrentPerception(root);
         var validation = await TryValidateActionAsync(
             output,
@@ -372,8 +417,7 @@ public static partial class GameEntry {
 
         if (await TryCollectTerminalLargeActionInsteadOfResolvingAsync(
             output,
-            repo,
-            root,
+            session,
             actionKind,
             actionSummary,
             actionPayload,
@@ -392,7 +436,7 @@ public static partial class GameEntry {
         _ = repo.Commit(root).Value;
         output.WriteLine($"✅ 你决定了：{actionSummary}");
         output.WriteLine();
-        output.Write(RenderPerceptionForTerminal(root, resolution.NextPerception));
+        output.Write(RenderPerceptionForTerminal(session, resolution.NextPerception));
     }
 
     private static async Task ExecuteTerminalImmediateActionAsync(
@@ -404,9 +448,10 @@ public static partial class GameEntry {
         Func<DurableDict<string>, GameActionValidator.ValidationResult, CancellationToken, Task<AsyncAteliaResult<SmallActionResolution>>> resolveAsync,
         CancellationToken cancellationToken
     ) {
-        if (!TryGetState(output, out var state)) { return; }
+        if (!TryGetSession(output, out var session)) { return; }
 
-        var (repo, root) = state;
+        var repo = session.Repo;
+        var root = session.Root;
         var perception = GameSimulation.DescribeCurrentPerception(root);
         var validation = await TryValidateActionAsync(
             output,
@@ -435,13 +480,12 @@ public static partial class GameEntry {
         _ = repo.Commit(root).Value;
         output.WriteLine($"✅ 你顺手做了：{actionSummary}");
         output.WriteLine();
-        output.Write(RenderPerceptionForTerminal(root, resolution.NextPerception));
+        output.Write(RenderPerceptionForTerminal(session, resolution.NextPerception));
     }
 
     private static async Task<bool> TryCollectTerminalLargeActionInsteadOfResolvingAsync(
         TextWriter output,
-        Repository repo,
-        DurableDict<string> root,
+        TextAdvSession session,
         string actionKind,
         string actionSummary,
         string? actionPayload,
@@ -449,6 +493,8 @@ public static partial class GameEntry {
         string validatorFeedback,
         CancellationToken cancellationToken
     ) {
+        var repo = session.Repo;
+        var root = session.Root;
         if (!GameSimulation.RequiresMultiActorCollection(root)) { return false; }
 
         var result = GameSimulation.SubmitLargeActionForActor(
@@ -484,7 +530,7 @@ public static partial class GameEntry {
             _ = repo.Commit(root).Value;
             output.WriteLine($"✅ 你决定了：{actionSummary}");
             output.WriteLine();
-            output.Write(RenderPerceptionForTerminal(root, resolution.NextPerception));
+            output.Write(RenderPerceptionForTerminal(session, resolution.NextPerception));
             return true;
         }
 
@@ -563,9 +609,9 @@ public static partial class GameEntry {
                 var preActionReason = ctx.GetValue(reasonArg)!;
                 var interactionId = ctx.GetValue(interactionIdArg)!;
 
-                if (!TryGetState(output, out var state)) { return; }
+                if (!TryGetSession(output, out var session)) { return; }
 
-                var (repo, root) = state;
+                var root = session.Root;
                 var perception = GameSimulation.DescribeCurrentPerception(root);
                 var interactionResult = GameSimulation.TryGetVisibleInteraction(perception, interactionId);
                 if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {

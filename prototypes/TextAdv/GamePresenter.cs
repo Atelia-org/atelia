@@ -1,4 +1,5 @@
 using System.Text;
+using Atelia.StateJournal;
 using Atelia.TextEditScript;
 
 namespace Atelia.TextAdv;
@@ -7,10 +8,11 @@ internal static class GamePresenter {
     internal static string RenderPerception(
         PerceptionBundle perception,
         TerminalHelpMode helpMode,
+        CommitAddress? versionAddress = null,
         bool forceShowFullHelp = false
     ) {
         var sb = new StringBuilder();
-        sb.Append(PerceptionEvidenceRenderer.RenderForPlayer(perception));
+        sb.Append(PerceptionEvidenceRenderer.RenderForPlayer(perception, versionAddress));
         sb.AppendLine();
         sb.Append(PlayerActionGuideCatalog.RenderTerminalHelpFooter(perception, helpMode, forceShowFullHelp));
 

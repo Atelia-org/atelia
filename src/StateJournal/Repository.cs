@@ -314,7 +314,7 @@ public sealed partial class Repository : IDisposable {
     /// <summary>
     /// 对外的简洁提交入口。从 <paramref name="graphRoot"/> 反查所属 Revision，再映射到对应 branch。
     /// </summary>
-    public AteliaResult<CommitOutcome> Commit(DurableObject graphRoot) {
+    public AteliaResult<CommitAddress> Commit(DurableObject graphRoot) {
         using var scope = _gate.EnterScope();
         if (!EnsureUsable(out var err)) { return err; }
         ArgumentNullException.ThrowIfNull(graphRoot);
@@ -333,7 +333,7 @@ public sealed partial class Repository : IDisposable {
     /// <summary>
     /// 内部入口：推进指定 branch。
     /// </summary>
-    internal AteliaResult<CommitOutcome> Commit(string branchName, DurableObject graphRoot) {
+    internal AteliaResult<CommitAddress> Commit(string branchName, DurableObject graphRoot) {
         using var scope = _gate.EnterScope();
         if (!EnsureUsable(out var err)) { return err; }
         ArgumentNullException.ThrowIfNull(graphRoot);
@@ -363,6 +363,30 @@ public sealed partial class Repository : IDisposable {
     }
 
     /// <summary>
+    /// 尝试读取指定 branch 当前 HEAD 的 <see cref="CommitAddress"/>。
+    /// branch 不存在、Repository 不可用、或 branch 尚未 commit 时返回 <c>false</c>。
+    /// </summary>
+    public bool TryGetBranchHeadAddress(string branchName, out CommitAddress headAddress) {
+        if (ValidateBranchName(branchName) is not null) {
+            headAddress = default;
+            return false;
+        }
+
+        using var scope = _gate.EnterScope();
+        if (_disposed || _isPoisoned) {
+            headAddress = default;
+            return false;
+        }
+        if (!_branches.TryGetValue(branchName, out var branchState) || branchState.Head is not { } head) {
+            headAddress = default;
+            return false;
+        }
+
+        headAddress = head;
+        return true;
+    }
+
+    /// <summary>
     /// 若指定 branch 存在则等价于 <see cref="CheckoutBranch(string)"/>；否则等价于 <see cref="CreateBranch(string)"/>（unborn 起点）。
     /// 不提供带 <c>fromBranch</c> 的重载，以避免"已有 vs 派生"语义模糊。
     /// </summary>
@@ -374,7 +398,7 @@ public sealed partial class Repository : IDisposable {
         if (_branches.ContainsKey(branchName)) {
             return GetOrCheckoutBranchCore(branchName);
         }
-        return CreateBranchCore(branchName, sourceBranchName: null);
+        return CreateBranchCore(branchName, sourceAddress: null, sourceDescription: null);
     }
 
     /// <summary>
@@ -386,7 +410,7 @@ public sealed partial class Repository : IDisposable {
         if (!EnsureUsable(out var err)) { return err; }
         ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
 
-        return CreateBranchCore(branchName, sourceBranchName: null);
+        return CreateBranchCore(branchName, sourceAddress: null, sourceDescription: null);
     }
 
     /// <summary>
@@ -399,10 +423,33 @@ public sealed partial class Repository : IDisposable {
         ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
         ArgumentException.ThrowIfNullOrWhiteSpace(fromBranchName);
 
-        return CreateBranchCore(branchName, fromBranchName);
+        if (!_branches.TryGetValue(fromBranchName, out var existingSource)) {
+            return new SjRepositoryError(
+                $"Source branch '{fromBranchName}' was not found.",
+                RecoveryHint: "Checkout or create the source branch before branching from it."
+            );
+        }
+
+        return CreateBranchCore(
+            branchName,
+            sourceAddress: existingSource.Head,
+            sourceDescription: $"branch '{fromBranchName}'"
+        );
     }
 
-    private AteliaResult<CommitOutcome> CommitCore(string branchName, DurableObject graphRoot) {
+    /// <summary>
+    /// 从指定历史 <see cref="CommitAddress"/> 派生一个新 branch，并返回其独立的工作会话。
+    /// 后续 commit 会沿新 branch 继续推进，不影响原来指向该 commit 的任何 branch。
+    /// </summary>
+    public AteliaResult<Revision> CreateBranch(string branchName, CommitAddress fromCommit) {
+        using var scope = _gate.EnterScope();
+        if (!EnsureUsable(out var err)) { return err; }
+        ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
+
+        return CreateBranchCore(branchName, sourceAddress: fromCommit, sourceDescription: $"commit {fromCommit}");
+    }
+
+    private AteliaResult<CommitAddress> CommitCore(string branchName, DurableObject graphRoot) {
         ArgumentNullException.ThrowIfNull(graphRoot);
 
         if (!_branches.TryGetValue(branchName, out var branchState) || branchState.LoadedRevision is null) {
@@ -449,7 +496,7 @@ public sealed partial class Repository : IDisposable {
         branchState.Head = newHead;
         if (newHead.SegmentNumber > _maxCommittedSegmentNumber) { _maxCommittedSegmentNumber = newHead.SegmentNumber; }
 
-        return commitResult;
+        return newHead;
     }
 
     private AteliaResult<RevisionWritePlan> CreateWritePlan(Revision revision, bool shouldRotate) {
@@ -521,7 +568,11 @@ public sealed partial class Repository : IDisposable {
         }
     }
 
-    private AteliaResult<Revision> CreateBranchCore(string branchName, string? sourceBranchName) {
+    private AteliaResult<Revision> CreateBranchCore(
+        string branchName,
+        CommitAddress? sourceAddress,
+        string? sourceDescription
+    ) {
         var nameError = ValidateBranchName(branchName);
         if (nameError is not null) {
             return new SjRepositoryError(
@@ -537,33 +588,16 @@ public sealed partial class Repository : IDisposable {
             );
         }
 
-        BranchState sourceState;
-        if (sourceBranchName is null) {
-            sourceState = new BranchState {
-                BranchName = branchName,
-                Head = null,
-                LoadedRevision = null,
-            };
-        }
-        else {
-            if (!_branches.TryGetValue(sourceBranchName, out var existingSource)) {
-                return new SjRepositoryError(
-                    $"Source branch '{sourceBranchName}' was not found.",
-                    RecoveryHint: "Checkout or create the source branch before branching from it."
-                );
-            }
-
-            sourceState = existingSource;
-        }
-
-        AteliaResult<Revision> revisionResult = CreateDetachedRevisionForBranch(sourceState);
+        AteliaResult<Revision> revisionResult = sourceAddress is { } address
+            ? CreateDetachedRevisionAtAddress(address, sourceDescription ?? $"commit {address}")
+            : new Revision(_segments.ActiveSegmentNumber);
         if (revisionResult.IsFailure) { return revisionResult.Error!; }
 
         var revision = revisionResult.Value!;
         revision.BranchName = branchName;
         var newBranchState = new BranchState {
             BranchName = branchName,
-            Head = sourceState.Head,
+            Head = sourceAddress,
             LoadedRevision = revision,
         };
 
@@ -578,7 +612,7 @@ public sealed partial class Repository : IDisposable {
         }
 
         _branches.Add(branchName, newBranchState);
-        if (sourceState.Head is { } srcHead && srcHead.SegmentNumber > _maxCommittedSegmentNumber) {
+        if (sourceAddress is { } srcHead && srcHead.SegmentNumber > _maxCommittedSegmentNumber) {
             _maxCommittedSegmentNumber = srcHead.SegmentNumber;
         }
         return revision;
@@ -596,18 +630,30 @@ public sealed partial class Repository : IDisposable {
     private AteliaResult<Revision> CreateDetachedRevisionForBranch(BranchState branchState) {
         try {
             if (branchState.Head is not { } head) { return new Revision(_segments.ActiveSegmentNumber); }
-
-            if (head.SegmentNumber == _segments.ActiveSegmentNumber) {
-                return Revision.Open(head.CommitTicket, _segments.ActiveFile, head.SegmentNumber);
-            }
-
-            using var file = _segments.OpenHistoricalFile(head.SegmentNumber);
-            return Revision.Open(head.CommitTicket, file, head.SegmentNumber);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException) {
             return new SjRepositoryError(
                 $"Failed to materialize Revision for branch '{branchState.BranchName}': {ex.Message}",
                 RecoveryHint: "Check the branch metadata and referenced segment files."
+            );
+        }
+
+        return CreateDetachedRevisionAtAddress(branchState.Head.Value, $"branch '{branchState.BranchName}'");
+    }
+
+    private AteliaResult<Revision> CreateDetachedRevisionAtAddress(CommitAddress address, string targetDescription) {
+        try {
+            if (address.SegmentNumber == _segments.ActiveSegmentNumber) {
+                return Revision.Open(address.CommitTicket, _segments.ActiveFile, address.SegmentNumber);
+            }
+
+            using var file = _segments.OpenHistoricalFile(address.SegmentNumber);
+            return Revision.Open(address.CommitTicket, file, address.SegmentNumber);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException) {
+            return new SjRepositoryError(
+                $"Failed to materialize {targetDescription}: {ex.Message}",
+                RecoveryHint: "Check that the segment file still exists and hasn't been archived or corrupted."
             );
         }
     }

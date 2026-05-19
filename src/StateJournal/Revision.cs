@@ -36,10 +36,13 @@ public partial class Revision {
     /// <summary>最近一次成功 Commit 的快照。首次 Commit 前为 null。</summary>
     private CommitSnapshot? _head;
 
-    public CommitTicket HeadId => _head?.Id ?? default;
+    internal CommitTicket HeadId => _head?.Id ?? default;
     public CommitTicket HeadParentId => _head?.ParentId ?? default;
     /// <summary>最近一次 Commit 时使用的 GraphRoot。首次 Commit 前为 null。Open 后自动从 TailMeta 恢复。</summary>
     public DurableObject? GraphRoot => _head?.GraphRoot;
+    /// <summary>最近一次成功 Commit 的完整地址。首次 Commit 前为 null。</summary>
+    public CommitAddress? HeadAddress => HeadId.IsNull ? null : CommitAddress.Create(_headSegmentNumber, HeadId);
+    /// <summary>最近一次 Commit 所在的 segment 编号，与 <see cref="HeadId"/> 组合构成完整的 <see cref="CommitAddress"/>。</summary>
     internal uint HeadSegmentNumber => _headSegmentNumber;
 
     /// <summary>测试用：当前 intern 池中 symbol slot 数量（已分配未释放）。</summary>
@@ -435,7 +438,7 @@ public partial class Revision {
     /// GraphRoot 的 LocalId 会序列化到 ObjectMap 帧的 TailMeta 中，Open 时自动恢复。
     /// </summary>
     /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
-    /// <returns>返回显式的 <see cref="CommitOutcome"/>；failure 表示“可诊断但非 bug”的失败。</returns>
+    /// <returns>返回内部使用的提交结果；failure 表示“可诊断但非 bug”的失败。</returns>
     /// <remarks>
     /// 提交流程分为三段：
     /// 1) WalkAndMark — 从 graphRoot DFS 遍历对象图，同时执行 GcPool Mark（用 mark bitmap 替代 HashSet 去重）；
@@ -471,7 +474,7 @@ public partial class Revision {
     /// </remarks>
     /// <param name="graphRoot">对象图的根节点，必须属于当前 Revision。</param>
     /// <param name="targetFile">另存为目标 RBF 文件。</param>
-    /// <returns>与 <see cref="Commit"/> 相同的 <see cref="CommitOutcome"/>。</returns>
+    /// <returns>与 <see cref="Commit"/> 相同的内部提交结果。</returns>
     internal partial AteliaResult<CommitOutcome> SaveAs(DurableObject graphRoot, IRbfFile targetFile);
 
     /// <summary>

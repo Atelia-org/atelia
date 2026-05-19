@@ -1,3 +1,4 @@
+using Atelia.StateJournal;
 using System.Text;
 
 namespace Atelia.TextAdv;
@@ -19,6 +20,7 @@ internal sealed record PerceptionEvidenceView(
     string LocationName,
     string LocationDescription,
     string? LastResolution,
+    CommitAddress? VersionAddress,
     string NotebookBlockView,
     IReadOnlyList<LocationExitPerception> Exits,
     IReadOnlyList<ItemPerception> VisibleItems,
@@ -30,7 +32,7 @@ internal sealed record PerceptionEvidenceView(
 );
 
 internal static class PerceptionEvidenceRenderer {
-    internal static PerceptionEvidenceView Create(PerceptionBundle perception) {
+    internal static PerceptionEvidenceView Create(PerceptionBundle perception, CommitAddress? versionAddress = null) {
         ArgumentNullException.ThrowIfNull(perception);
 
         var allVisibleInteractions = new List<VisibleInteractionEntry>();
@@ -82,6 +84,7 @@ internal static class PerceptionEvidenceRenderer {
             perception.Location.Name,
             perception.Location.Description,
             perception.LastResolution,
+            versionAddress,
             NotebookBlockViewRenderer.RenderBlockView(perception.NotebookBlocks),
             perception.Location.Exits,
             perception.Location.Items,
@@ -93,11 +96,11 @@ internal static class PerceptionEvidenceRenderer {
         );
     }
 
-    internal static string RenderForPlayer(PerceptionBundle perception)
-        => RenderForPlayer(Create(perception));
+    internal static string RenderForPlayer(PerceptionBundle perception, CommitAddress? versionAddress = null)
+        => RenderForPlayer(Create(perception, versionAddress));
 
-    internal static string RenderForPrompt(PerceptionBundle perception)
-        => RenderForPrompt(Create(perception));
+    internal static string RenderForPrompt(PerceptionBundle perception, CommitAddress? versionAddress = null)
+        => RenderForPrompt(Create(perception, versionAddress));
 
     internal static IReadOnlyList<InteractionPerception> EnumerateVisibleInteractions(PerceptionBundle perception)
         => Create(perception).AllVisibleInteractions.Select(static entry => entry.Interaction).ToArray();
@@ -148,6 +151,13 @@ internal static class PerceptionEvidenceRenderer {
 
         sb.AppendLine("📝 这一回合你已经做过的事:");
         AppendAcceptedStepsForPlayer(sb, evidence.AcceptedSteps);
+
+        if (evidence.VersionAddress is { } versionAddress) {
+            sb.AppendLine();
+            sb.AppendLine($"🔖 已提交版本: {versionAddress}");
+            sb.AppendLine("   如需从这个已提交世界状态继续游玩，可使用 load-version。");
+        }
+
         return sb.ToString();
     }
 
@@ -164,6 +174,7 @@ internal static class PerceptionEvidenceRenderer {
         sb.AppendLine($"- LocationId: {evidence.LocationId}");
         sb.AppendLine($"- LocationName: {evidence.LocationName}");
         sb.AppendLine($"- LocationDescription: {evidence.LocationDescription}");
+        sb.AppendLine($"- VersionAddress: {evidence.VersionAddress?.ToString() ?? "(none)"}");
 
         sb.AppendLine();
         sb.AppendLine("[上回合结算结果]");

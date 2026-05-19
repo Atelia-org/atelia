@@ -54,7 +54,8 @@ public class RepositoryTests : IDisposable {
             var root = main.CreateDict<int, int>();
             root.Upsert(1, 10);
             root.Upsert(2, 20);
-            AssertSuccess(repo.Commit(root));
+            var headAddress = AssertSuccess(repo.Commit(root));
+            Assert.Equal(main.HeadAddress, headAddress);
         }
 
         // Open + verify
@@ -509,6 +510,134 @@ public class RepositoryTests : IDisposable {
         // 再次调用应返回同一会话。
         var again = AssertSuccess(repo.GetOrCreateBranch("feature"));
         Assert.Same(feature, again);
+    }
+
+    [Fact]
+    public void CommitAddress_StringRoundTrip_UsesStableSerializedTicket() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+
+        var root = main.CreateDict<int, int>();
+        root.Upsert(1, 10);
+        AssertSuccess(repo.Commit(root));
+
+        Assert.True(repo.TryGetBranchHeadAddress("main", out var head));
+
+        var serialized = head.ToString();
+        var parsed = CommitAddress.Parse(serialized);
+
+        Assert.Equal(head, parsed);
+        Assert.Equal(serialized, parsed.ToString());
+    }
+
+    [Fact]
+    public void CommitAddress_TryParse_NullTicketText_ReturnsNullInsteadOfThrowing() {
+        var parsed = CommitAddress.TryParse("seg:1:0000000000000000");
+
+        Assert.Null(parsed);
+    }
+
+    [Fact]
+    public void CommitAddress_PublicConstructor_RejectsInvalidValues() {
+        Assert.Throws<InvalidOperationException>(() => new CommitAddress(0, default));
+    }
+
+    [Fact]
+    public void CreateBranch_FromCommitAddress_CanReopenHistoricalSnapshotByCommitAddress() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+
+        var root = main.CreateDict<int, int>();
+        root.Upsert(1, 10);
+        AssertSuccess(repo.Commit(root));
+        Assert.True(repo.TryGetBranchHeadAddress("main", out var firstHead));
+
+        root.Upsert(2, 20);
+        AssertSuccess(repo.Commit(root));
+
+        var oldRevision = AssertSuccess(repo.CreateBranch("replay", firstHead));
+        var oldRoot = Assert.IsAssignableFrom<DurableDict<int, int>>(oldRevision.GraphRoot);
+        Assert.Equal(1, oldRoot.Count);
+        Assert.Equal(GetIssue.None, oldRoot.Get(1, out int value1));
+        Assert.Equal(10, value1);
+        Assert.Equal(GetIssue.NotFound, oldRoot.Get(2, out _));
+        Assert.True(repo.TryGetBranchHeadAddress("replay", out var replayHead));
+        Assert.Equal(firstHead, replayHead);
+    }
+
+    [Fact]
+    public void Commit_ReturnsFullHeadAddress() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+
+        var root = main.CreateDict<int, int>();
+        root.Upsert(1, 10);
+
+        var headAddress = AssertSuccess(repo.Commit(root));
+
+        Assert.Equal(main.HeadAddress, headAddress);
+        Assert.True(repo.TryGetBranchHeadAddress("main", out var mainHead));
+        Assert.Equal(mainHead, headAddress);
+    }
+
+    [Fact]
+    public void CreateBranch_FromCommitAddress_AllowsContinuingFromOldCheckpointWithoutMovingMain() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+
+        var root = main.CreateDict<int, int>();
+        root.Upsert(1, 10);
+        AssertSuccess(repo.Commit(root));
+        Assert.True(repo.TryGetBranchHeadAddress("main", out var firstHead));
+
+        root.Upsert(2, 20);
+        var latestMainHead = AssertSuccess(repo.Commit(root));
+
+        var rewound = AssertSuccess(repo.CreateBranch("replay", firstHead));
+        var rewoundRoot = Assert.IsAssignableFrom<DurableDict<int, int>>(rewound.GraphRoot);
+        Assert.Equal(1, rewoundRoot.Count);
+        Assert.Equal(GetIssue.None, rewoundRoot.Get(1, out int value1));
+        Assert.Equal(10, value1);
+        Assert.Equal(GetIssue.NotFound, rewoundRoot.Get(2, out _));
+        Assert.True(repo.TryGetBranchHeadAddress("replay", out var replayHeadBeforeCommit));
+        Assert.Equal(firstHead, replayHeadBeforeCommit);
+        Assert.True(repo.TryGetBranchHeadAddress("main", out var mainHeadBeforeReplayCommit));
+        Assert.Equal(latestMainHead, mainHeadBeforeReplayCommit);
+
+        rewoundRoot.Upsert(3, 30);
+        AssertSuccess(repo.Commit(rewoundRoot));
+
+        var currentReplay = AssertSuccess(repo.CheckoutBranch("replay"));
+        var currentReplayRoot = Assert.IsAssignableFrom<DurableDict<int, int>>(currentReplay.GraphRoot);
+        Assert.Equal(GetIssue.None, currentReplayRoot.Get(1, out value1));
+        Assert.Equal(10, value1);
+        Assert.Equal(GetIssue.NotFound, currentReplayRoot.Get(2, out _));
+        Assert.Equal(GetIssue.None, currentReplayRoot.Get(3, out int value3));
+        Assert.Equal(30, value3);
+
+        var currentMain = AssertSuccess(repo.CheckoutBranch("main"));
+        var currentMainRoot = Assert.IsAssignableFrom<DurableDict<int, int>>(currentMain.GraphRoot);
+        Assert.Equal(GetIssue.None, currentMainRoot.Get(1, out value1));
+        Assert.Equal(10, value1);
+        Assert.Equal(GetIssue.None, currentMainRoot.Get(2, out int value2));
+        Assert.Equal(20, value2);
+        Assert.Equal(GetIssue.NotFound, currentMainRoot.Get(3, out _));
+    }
+
+    [Fact]
+    public void CreateBranch_FromCommitAddress_MissingSegment_ReturnsFailureInsteadOfThrowing() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+
+        var root = main.CreateDict<int, int>();
+        root.Upsert(1, 10);
+        AssertSuccess(repo.Commit(root));
+
+        var missingAddress = CommitAddress.Create(999, main.HeadAddress!.Value.CommitTicket);
+        var result = repo.CreateBranch("replay", missingAddress);
+
+        Assert.True(result.IsFailure);
+        Assert.Contains("Failed to materialize", result.Error!.Message);
     }
 
     #endregion

@@ -103,6 +103,7 @@ public partial class RevisionTests : IDisposable {
 
         Assert.True(rev.HeadId.IsNull); // 未 Commit 前 Id 为 null
         Assert.True(rev.HeadParentId.IsNull);
+        Assert.Null(rev.HeadAddress);
     }
 
     [Fact]
@@ -125,6 +126,20 @@ public partial class RevisionTests : IDisposable {
         Assert.True(second.IsSuccess, $"Second load failed: {second.Error}");
 
         Assert.Same(first.Value, second.Value);
+    }
+
+    [Fact]
+    public void CommitToFile_AfterAcceptPersistedSegment_RevisionExposesHeadAddress() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision(segmentNumber: 7);
+        var root = rev.CreateDict<int, int>();
+        root.Upsert(1, 10);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file, segmentNumber: 7));
+
+        Assert.Equal(CommitAddress.Create(7, outcome.HeadCommitTicket), rev.HeadAddress);
     }
 
     [Fact]
