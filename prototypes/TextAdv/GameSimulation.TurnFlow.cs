@@ -89,13 +89,13 @@ internal static partial class GameSimulation {
         return AsyncAteliaResult<TurnCollectionStatus>.Success(DescribeCurrentTurnStatus(root));
     }
 
-    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyReadyCollectedTurnAsync(
+    internal static async Task<AsyncAteliaResult<ActionResolution>> ApplyReadyCollectedTurnAsync(
         DurableDict<string> root,
         CancellationToken cancellationToken
     ) {
         var status = DescribeCurrentTurnStatus(root);
         if (!status.AllActiveActorsSubmittedLargeAction) {
-            return AsyncAteliaResult<TurnResolution>.Failure(
+            return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.TurnNotReadyForGm",
                     "当前回合还没有收齐所有 active actor 的 Large-Action。"
@@ -104,7 +104,7 @@ internal static partial class GameSimulation {
         }
 
         var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
-        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<TurnResolution>.Failure(preludeResult.Error!); }
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<ActionResolution>.Failure(preludeResult.Error!); }
 
         var intents = ReadLargeActionIntents(root);
         if (intents.Count == 1) {
@@ -117,7 +117,7 @@ internal static partial class GameSimulation {
                 ).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
-                return AsyncAteliaResult<TurnResolution>.Failure(
+                return AsyncAteliaResult<ActionResolution>.Failure(
                     new TextAdvError(
                         "TextAdv.CollectedTurnSingleIntentFailed",
                         $"单意图 collected-turn 结算失败：{ex.Message}"
@@ -147,12 +147,12 @@ internal static partial class GameSimulation {
                 prelude.PendingTurnEndEffects,
                 prelude.BackgroundWorkingEffects
             );
-            return AsyncAteliaResult<TurnResolution>.Success(
+            return AsyncAteliaResult<ActionResolution>.Success(
                 CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
             );
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
-            return AsyncAteliaResult<TurnResolution>.Failure(
+            return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.CollectedTurnGmFailed",
                     $"多主体统一结算依赖 GM Agent，但本次调用失败：{ex.Message}"
@@ -226,7 +226,7 @@ internal static partial class GameSimulation {
         return DescribeCurrentPerception(root);
     }
 
-    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyExploreAsync(
+    internal static async Task<AsyncAteliaResult<ActionResolution>> ApplyExploreAsync(
         DurableDict<string> root,
         string direction,
         string? focus,
@@ -262,7 +262,7 @@ internal static partial class GameSimulation {
         ).ConfigureAwait(false);
     }
 
-    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyInteractionAsync(
+    internal static async Task<AsyncAteliaResult<ActionResolution>> ApplyInteractionAsync(
         DurableDict<string> root,
         string interactionId,
         string preActionReason,
@@ -270,7 +270,7 @@ internal static partial class GameSimulation {
         CancellationToken cancellationToken
     ) {
         var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!); }
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
 
         AppendAcceptedStep(
             root,
@@ -291,7 +291,7 @@ internal static partial class GameSimulation {
         ).ConfigureAwait(false);
     }
 
-    internal static async Task<AsyncAteliaResult<SmallActionResolution>> ApplyImmediateSelfInteractionAsync(
+    internal static async Task<AsyncAteliaResult<ActionResolution>> ApplyImmediateSelfInteractionAsync(
         DurableDict<string> root,
         string interactionId,
         string preActionReason,
@@ -299,10 +299,10 @@ internal static partial class GameSimulation {
         CancellationToken cancellationToken
     ) {
         var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<SmallActionResolution>.Failure(interactionResult.Error!); }
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
 
         if (!SupportsImmediateSelfInteraction(interaction)) {
-            return AsyncAteliaResult<SmallActionResolution>.Failure(
+            return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedImmediateInteraction",
                     $"Interaction '{interaction.InteractionId}' 不是当前可直接即时结算的 self/immediate 小动作。"
@@ -324,7 +324,7 @@ internal static partial class GameSimulation {
             ).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
-            return AsyncAteliaResult<SmallActionResolution>.Failure(
+            return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.ImmediateInteractionGmFailed",
                     $"即时小动作结算依赖 GM Agent，但本次调用失败：{ex.Message}"
@@ -346,22 +346,22 @@ internal static partial class GameSimulation {
             stepOutcomeState: StepOutcomeCommittedNow
         );
 
-        return AsyncAteliaResult<SmallActionResolution>.Success(
-            new SmallActionResolution(summary, DescribeCurrentPerception(root))
+        return AsyncAteliaResult<ActionResolution>.Success(
+            new ActionResolution(summary, DescribeCurrentPerception(root))
         );
     }
 
-    internal static AsyncAteliaResult<SmallActionResolution> ApplyDeferredTurnEndInteraction(
+    internal static AsyncAteliaResult<ActionResolution> ApplyDeferredTurnEndInteraction(
         DurableDict<string> root,
         string interactionId,
         string preActionReason,
         string validatorFeedback
     ) {
         var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<SmallActionResolution>.Failure(interactionResult.Error!); }
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
 
         if (!SupportsDeferredTurnEndInteraction(interaction)) {
-            return AsyncAteliaResult<SmallActionResolution>.Failure(
+            return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedDeferredInteraction",
                     $"Interaction '{interaction.InteractionId}' 不是当前可走 turn-end 延迟结算的小动作。"
@@ -388,12 +388,12 @@ internal static partial class GameSimulation {
             effectSlot: TurnEndEffectSlot
         );
 
-        return AsyncAteliaResult<SmallActionResolution>.Success(
-            new SmallActionResolution(pendingSummary, DescribeCurrentPerception(root))
+        return AsyncAteliaResult<ActionResolution>.Success(
+            new ActionResolution(pendingSummary, DescribeCurrentPerception(root))
         );
     }
 
-    internal static async Task<AsyncAteliaResult<TurnResolution>> ApplyWorkingInteractionAsync(
+    internal static async Task<AsyncAteliaResult<ActionResolution>> ApplyWorkingInteractionAsync(
         DurableDict<string> root,
         string interactionId,
         string preActionReason,
@@ -401,10 +401,10 @@ internal static partial class GameSimulation {
         CancellationToken cancellationToken
     ) {
         var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!); }
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
 
         if (!SupportsWorkingInteraction(interaction)) {
-            return AsyncAteliaResult<TurnResolution>.Failure(
+            return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedWorkingInteraction",
                     $"Interaction '{interaction.InteractionId}' 不是当前可进入 Working 的交互。"
@@ -443,20 +443,20 @@ internal static partial class GameSimulation {
             consumeFutureTurn: false,
             cancellationToken
         ).ConfigureAwait(false);
-        if (!turnSummary.TryGetValue(out var resolution) || resolution is null) { return AsyncAteliaResult<TurnResolution>.Failure(turnSummary.Error!); }
+        if (!turnSummary.TryGetValue(out var resolution) || resolution is null) { return AsyncAteliaResult<ActionResolution>.Failure(turnSummary.Error!); }
 
         if (!HasAnyActiveActor(root)) {
             var autoSummary = await AutoAdvanceBackgroundWorkUntilAnyActorActiveAsync(root, cancellationToken).ConfigureAwait(false);
-            if (!autoSummary.TryGetValue(out var combinedSummary) || string.IsNullOrWhiteSpace(combinedSummary)) { return AsyncAteliaResult<TurnResolution>.Success(resolution); }
+            if (!autoSummary.TryGetValue(out var combinedSummary) || string.IsNullOrWhiteSpace(combinedSummary)) { return AsyncAteliaResult<ActionResolution>.Success(resolution); }
 
             var fullSummary = CombineNonEmptySummaries(resolution.Summary, combinedSummary);
             SetLastResolutionForActiveActors(root, fullSummary);
-            return AsyncAteliaResult<TurnResolution>.Success(
-                new TurnResolution(fullSummary, DescribeCurrentPerception(root))
+            return AsyncAteliaResult<ActionResolution>.Success(
+                new ActionResolution(fullSummary, DescribeCurrentPerception(root))
             );
         }
 
-        return AsyncAteliaResult<TurnResolution>.Success(resolution);
+        return AsyncAteliaResult<ActionResolution>.Success(resolution);
     }
 
     internal static PerceptionBundle ApplyNotebookEdit(
@@ -501,7 +501,7 @@ internal static partial class GameSimulation {
         return DescribePerceptionForActor(root, actorId);
     }
 
-    internal static TurnResolution ApplyRestAWhile(
+    internal static ActionResolution ApplyRestAWhile(
         DurableDict<string> root,
         string preActionReason,
         string validatorFeedback
@@ -519,6 +519,85 @@ internal static partial class GameSimulation {
         );
 
         return ResolveRestAccepted(root, collectedTurnLead: null);
+    }
+
+    internal static Task<AsyncAteliaResult<ActionResolution>> ExecuteTerminalActionPlanAsync(
+        DurableDict<string> root,
+        TerminalActionExecutionPlan plan,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(plan);
+        validatorFeedback = NormalizeRequired(validatorFeedback, nameof(validatorFeedback));
+
+        return plan.Resolver switch {
+            TerminalActionResolver.Explore explore => ApplyExploreAsync(
+                root,
+                explore.Direction,
+                explore.Focus,
+                plan.Request.PreActionReason,
+                validatorFeedback,
+                cancellationToken
+            ),
+            TerminalActionResolver.RestAWhile => Task.FromResult(
+                AsyncAteliaResult<ActionResolution>.Success(
+                    ApplyRestAWhile(root, plan.Request.PreActionReason, validatorFeedback)
+                )
+            ),
+            TerminalActionResolver.Interaction interaction => ExecuteTerminalInteractionPlanAsync(
+                root,
+                interaction,
+                plan.Request.PreActionReason,
+                validatorFeedback,
+                cancellationToken
+            ),
+            _ => throw new InvalidOperationException($"Unknown terminal action resolver type: {plan.Resolver.GetType().FullName}")
+        };
+    }
+
+    private static Task<AsyncAteliaResult<ActionResolution>> ExecuteTerminalInteractionPlanAsync(
+        DurableDict<string> root,
+        TerminalActionResolver.Interaction interaction,
+        string preActionReason,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        return interaction.ExecutionClass switch {
+            InteractionExecutionClass.ImmediateSelf => ApplyImmediateSelfInteractionAsync(
+                root,
+                interaction.InteractionId,
+                preActionReason,
+                validatorFeedback,
+                cancellationToken
+            ),
+            InteractionExecutionClass.DeferredTurnEnd => Task.FromResult(
+                ApplyDeferredTurnEndInteraction(
+                    root,
+                    interaction.InteractionId,
+                    preActionReason,
+                    validatorFeedback
+                )
+            ),
+            InteractionExecutionClass.WorkingStart => ApplyWorkingInteractionAsync(
+                root,
+                interaction.InteractionId,
+                preActionReason,
+                validatorFeedback,
+                cancellationToken
+            ),
+            InteractionExecutionClass.TurnEnding => ApplyInteractionAsync(
+                root,
+                interaction.InteractionId,
+                preActionReason,
+                validatorFeedback,
+                cancellationToken
+            ),
+            InteractionExecutionClass.UnsupportedZeroTurn => throw new InvalidOperationException(
+                $"Interaction '{interaction.InteractionId}' 暂不支持零回合但非即时私有效果的执行计划。"
+            ),
+            _ => throw new InvalidOperationException($"Unknown interaction execution class: {interaction.ExecutionClass}")
+        };
     }
 
     private static async Task<AsyncAteliaResult<TurnResolutionPrelude>> PrepareTurnResolutionPreludeAsync(
@@ -548,7 +627,7 @@ internal static partial class GameSimulation {
         );
     }
 
-    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveExploreAcceptedAsync(
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveExploreAcceptedAsync(
         DurableDict<string> root,
         string direction,
         string? focus,
@@ -557,7 +636,7 @@ internal static partial class GameSimulation {
         CancellationToken cancellationToken
     ) {
         var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
-        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<TurnResolution>.Failure(preludeResult.Error!); }
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<ActionResolution>.Failure(preludeResult.Error!); }
 
         return await ResolveExploreAcceptedForActorAsync(
             root,
@@ -571,7 +650,7 @@ internal static partial class GameSimulation {
         ).ConfigureAwait(false);
     }
 
-    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveInteractionAcceptedAsync(
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveInteractionAcceptedAsync(
         DurableDict<string> root,
         string interactionId,
         string preActionReason,
@@ -579,7 +658,7 @@ internal static partial class GameSimulation {
         CancellationToken cancellationToken
     ) {
         var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
-        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<TurnResolution>.Failure(preludeResult.Error!); }
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<ActionResolution>.Failure(preludeResult.Error!); }
 
         return await ResolveInteractionAcceptedForActorAsync(
             root,
@@ -592,7 +671,7 @@ internal static partial class GameSimulation {
         ).ConfigureAwait(false);
     }
 
-    private static TurnResolution ResolveRestAccepted(DurableDict<string> root, string? collectedTurnLead) {
+    private static ActionResolution ResolveRestAccepted(DurableDict<string> root, string? collectedTurnLead) {
         var preludeResult = PrepareTurnResolutionPreludeAsync(root, CancellationToken.None).GetAwaiter().GetResult();
         if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { throw new InvalidOperationException(preludeResult.Error?.Message ?? "无法准备本回合的 turn resolution prelude。"); }
 
@@ -604,7 +683,7 @@ internal static partial class GameSimulation {
         );
     }
 
-    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveExploreAcceptedForActorAsync(
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveExploreAcceptedForActorAsync(
         DurableDict<string> root,
         string actorId,
         string direction,
@@ -637,7 +716,7 @@ internal static partial class GameSimulation {
             );
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
-            return AsyncAteliaResult<TurnResolution>.Failure(
+            return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.ExploreGmFailed",
                     $"探索结算依赖 GM Agent，但本次调用失败：{ex.Message}"
@@ -673,12 +752,12 @@ internal static partial class GameSimulation {
         );
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
-        return AsyncAteliaResult<TurnResolution>.Success(
+        return AsyncAteliaResult<ActionResolution>.Success(
             CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
         );
     }
 
-    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveInteractionAcceptedForActorAsync(
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveInteractionAcceptedForActorAsync(
         DurableDict<string> root,
         string actorId,
         string interactionId,
@@ -690,7 +769,7 @@ internal static partial class GameSimulation {
         actorId = NormalizeRequired(actorId, nameof(actorId));
         var actorPerception = DescribePerceptionForActor(root, actorId);
         var interactionResult = TryGetVisibleInteraction(actorPerception, interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<TurnResolution>.Failure(interactionResult.Error!); }
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
 
         if (SupportsWorkingInteraction(interaction)) {
             StartWorkingForActor(
@@ -713,20 +792,20 @@ internal static partial class GameSimulation {
                 consumeFutureTurn: false,
                 cancellationToken
             ).ConfigureAwait(false);
-            if (!workingResolution.TryGetValue(out var resolvedWorking) || resolvedWorking is null) { return AsyncAteliaResult<TurnResolution>.Failure(workingResolution.Error!); }
+            if (!workingResolution.TryGetValue(out var resolvedWorking) || resolvedWorking is null) { return AsyncAteliaResult<ActionResolution>.Failure(workingResolution.Error!); }
 
             if (!HasAnyActiveActor(root)) {
                 var autoSummary = await AutoAdvanceBackgroundWorkUntilAnyActorActiveAsync(root, cancellationToken).ConfigureAwait(false);
-                if (!autoSummary.TryGetValue(out var combinedSummary) || string.IsNullOrWhiteSpace(combinedSummary)) { return AsyncAteliaResult<TurnResolution>.Success(resolvedWorking); }
+                if (!autoSummary.TryGetValue(out var combinedSummary) || string.IsNullOrWhiteSpace(combinedSummary)) { return AsyncAteliaResult<ActionResolution>.Success(resolvedWorking); }
 
                 var fullSummary = CombineNonEmptySummaries(resolvedWorking.Summary, combinedSummary);
                 SetLastResolutionForActiveActors(root, fullSummary);
-                return AsyncAteliaResult<TurnResolution>.Success(
-                    new TurnResolution(fullSummary, DescribeCurrentPerception(root))
+                return AsyncAteliaResult<ActionResolution>.Success(
+                    new ActionResolution(fullSummary, DescribeCurrentPerception(root))
                 );
             }
 
-            return AsyncAteliaResult<TurnResolution>.Success(resolvedWorking);
+            return AsyncAteliaResult<ActionResolution>.Success(resolvedWorking);
         }
 
         GmExploreResolution gmResolution;
@@ -743,7 +822,7 @@ internal static partial class GameSimulation {
             ).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
-            return AsyncAteliaResult<TurnResolution>.Failure(
+            return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.InteractionGmFailed",
                     $"交互结算依赖 GM Agent，但本次调用失败：{ex.Message}"
@@ -768,12 +847,12 @@ internal static partial class GameSimulation {
         );
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
 
-        return AsyncAteliaResult<TurnResolution>.Success(
+        return AsyncAteliaResult<ActionResolution>.Success(
             CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
         );
     }
 
-    private static TurnResolution ResolveRestAcceptedForActor(
+    private static ActionResolution ResolveRestAcceptedForActor(
         DurableDict<string> root,
         string actorId,
         TurnResolutionPrelude prelude,
@@ -935,7 +1014,7 @@ internal static partial class GameSimulation {
         game.Upsert(CompletedTurnCountKey, turnNumber);
     }
 
-    private static TurnResolution CompleteTurn(
+    private static ActionResolution CompleteTurn(
         DurableDict<string> root,
         string resolutionSummary,
         ActorResolutionCommitMode actorResolutionMode
@@ -953,17 +1032,17 @@ internal static partial class GameSimulation {
 
         ArchiveCompletedTurn(root, resolutionSummary);
         ResetCurrentTurn(root);
-        return new TurnResolution(resolutionSummary, DescribeCurrentPerception(root));
+        return new ActionResolution(resolutionSummary, DescribeCurrentPerception(root));
     }
 
-    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveCollectedTurnFromIntentAsync(
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveCollectedTurnFromIntentAsync(
         DurableDict<string> root,
         LargeActionIntent intent,
         TurnResolutionPrelude prelude,
         CancellationToken cancellationToken
     ) {
         return intent.ActionKind switch {
-            "large/rest-a-while" => AsyncAteliaResult<TurnResolution>.Success(
+            "large/rest-a-while" => AsyncAteliaResult<ActionResolution>.Success(
                 ResolveRestAcceptedForActor(root, intent.ActorId, prelude, collectedTurnLead: null)
             ),
             "large/explore" => await ResolveExploreAcceptedForActorAsync(
@@ -985,7 +1064,7 @@ internal static partial class GameSimulation {
                 collectedTurnLead: null,
                 cancellationToken
             ).ConfigureAwait(false),
-            _ => AsyncAteliaResult<TurnResolution>.Failure(
+            _ => AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedCollectedAction",
                     $"当前尚不支持 collected-turn 中的 Large-Action '{intent.ActionKind}'。"
@@ -1335,7 +1414,7 @@ internal static partial class GameSimulation {
         );
     }
 
-    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveWorkingTurnAndCompleteAsync(
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveWorkingTurnAndCompleteAsync(
         DurableDict<string> root,
         string actorId,
         string baseSummary,
@@ -1348,7 +1427,7 @@ internal static partial class GameSimulation {
             cancellationToken,
             excludeWorkingActorId: actorId
         ).ConfigureAwait(false);
-        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<TurnResolution>.Failure(preludeResult.Error!); }
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<ActionResolution>.Failure(preludeResult.Error!); }
 
         return await ResolveWorkingTurnAndCompleteWithPreludeAsync(
             root,
@@ -1361,7 +1440,7 @@ internal static partial class GameSimulation {
         ).ConfigureAwait(false);
     }
 
-    private static async Task<AsyncAteliaResult<TurnResolution>> ResolveWorkingTurnAndCompleteWithPreludeAsync(
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveWorkingTurnAndCompleteWithPreludeAsync(
         DurableDict<string> root,
         string actorId,
         string baseSummary,
@@ -1376,7 +1455,7 @@ internal static partial class GameSimulation {
             consumeFutureTurn,
             cancellationToken
         ).ConfigureAwait(false);
-        if (!workEffectSummaryResult.TryGetValue(out var workEffectBatch) || workEffectBatch is null) { return AsyncAteliaResult<TurnResolution>.Failure(workEffectSummaryResult.Error!); }
+        if (!workEffectSummaryResult.TryGetValue(out var workEffectBatch) || workEffectBatch is null) { return AsyncAteliaResult<ActionResolution>.Failure(workEffectSummaryResult.Error!); }
 
         _ = AdvanceClock(root);
         ApplyActorFacingSummariesForTurn(
@@ -1393,7 +1472,7 @@ internal static partial class GameSimulation {
         );
         var resolutionSummary = combinedSummary;
         resolutionSummary = PrefixCollectedTurnLead(collectedTurnLead, resolutionSummary);
-        return AsyncAteliaResult<TurnResolution>.Success(
+        return AsyncAteliaResult<ActionResolution>.Success(
             CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
         );
     }

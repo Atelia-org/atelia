@@ -382,28 +382,10 @@ public static partial class GameEntry {
                 var focus = ctx.GetValue(focusOption);
                 if (!TryGetSession(output, out var session)) { return; }
 
-                var actionSummary = string.IsNullOrWhiteSpace(focus)
-                    ? $"向 {direction} 探索"
-                    : $"向 {direction} 探索：{focus}";
-                var actionPayload = string.IsNullOrWhiteSpace(focus)
-                    ? $"direction={direction}"
-                    : $"direction={direction}\nfocus={focus!.Trim()}";
-                var result = await s_actionRunner.RunLargeActionAsync(
+                var plan = GameSimulation.BuildExploreTerminalPlan(direction, focus, preActionReason);
+                var result = await s_actionRunner.RunAsync(
                     session,
-                    new TerminalActionRequest(
-                        ActionKind: "large/explore",
-                        ActionSummary: actionSummary,
-                        ActionPayload: actionPayload,
-                        PreActionReason: preActionReason
-                    ),
-                    (root, validation, token) => GameSimulation.ApplyExploreAsync(
-                        root,
-                        direction,
-                        focus,
-                        preActionReason,
-                        validation.Feedback,
-                        token
-                    ),
+                    plan,
                     ct
                 );
                 WriteTerminalActionRunResult(output, result);
@@ -434,110 +416,14 @@ public static partial class GameEntry {
 
                 var root = session.Root;
                 var perception = GameSimulation.DescribeCurrentPerception(root);
-                var interactionResult = GameSimulation.TryGetVisibleInteraction(perception, interactionId);
-                if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
-                    output.WriteLine("❌ 当前看不到这个 interaction，不能执行。");
-                    WriteAteliaError(output, interactionResult.Error);
+                var planResult = GameSimulation.BuildTerminalInteractionPlan(perception, interactionId, preActionReason);
+                if (!planResult.TryGetValue(out var plan) || plan is null) {
+                    output.WriteLine("❌ 当前不能执行这个 interaction。");
+                    WriteAteliaError(output, planResult.Error);
                     return;
                 }
 
-                var actionSummary = $"{interaction.VisibleLabel} ({interaction.ActionKind})";
-                var actionPayload = GameSimulation.BuildInteractionPayload(interaction);
-                switch (GameSimulation.DescribeInteractionExecutionClass(interaction)) {
-                    case "immediate-self":
-                        WriteTerminalActionRunResult(
-                            output,
-                            await s_actionRunner.RunImmediateActionAsync(
-                                session,
-                                new TerminalActionRequest(
-                                    ActionKind: "small/interact",
-                                    ActionSummary: actionSummary,
-                                    ActionPayload: actionPayload,
-                                    PreActionReason: preActionReason
-                                ),
-                                (resolvedRoot, validation, token) => GameSimulation.ApplyImmediateSelfInteractionAsync(
-                                    resolvedRoot,
-                                    interaction.InteractionId,
-                                    preActionReason,
-                                    validation.Feedback,
-                                    token
-                                ),
-                                ct
-                            )
-                        );
-                        break;
-                    case "deferred-turn-end":
-                        WriteTerminalActionRunResult(
-                            output,
-                            await s_actionRunner.RunImmediateActionAsync(
-                                session,
-                                new TerminalActionRequest(
-                                    ActionKind: "small/interact",
-                                    ActionSummary: actionSummary,
-                                    ActionPayload: actionPayload,
-                                    PreActionReason: preActionReason
-                                ),
-                                (resolvedRoot, validation, _) => Task.FromResult(
-                                    GameSimulation.ApplyDeferredTurnEndInteraction(
-                                        resolvedRoot,
-                                        interaction.InteractionId,
-                                        preActionReason,
-                                        validation.Feedback
-                                    )
-                                ),
-                                ct
-                            )
-                        );
-                        break;
-                    case "working-start":
-                        WriteTerminalActionRunResult(
-                            output,
-                            await s_actionRunner.RunLargeActionAsync(
-                                session,
-                                new TerminalActionRequest(
-                                    ActionKind: "large/interact",
-                                    ActionSummary: actionSummary,
-                                    ActionPayload: actionPayload,
-                                    PreActionReason: preActionReason
-                                ),
-                                (resolvedRoot, validation, token) => GameSimulation.ApplyWorkingInteractionAsync(
-                                    resolvedRoot,
-                                    interaction.InteractionId,
-                                    preActionReason,
-                                    validation.Feedback,
-                                    token
-                                ),
-                                ct
-                            )
-                        );
-                        break;
-                    case "turn-ending":
-                        WriteTerminalActionRunResult(
-                            output,
-                            await s_actionRunner.RunLargeActionAsync(
-                                session,
-                                new TerminalActionRequest(
-                                    ActionKind: "large/interact",
-                                    ActionSummary: actionSummary,
-                                    ActionPayload: actionPayload,
-                                    PreActionReason: preActionReason
-                                ),
-                                (resolvedRoot, validation, token) => GameSimulation.ApplyInteractionAsync(
-                                    resolvedRoot,
-                                    interaction.InteractionId,
-                                    preActionReason,
-                                    validation.Feedback,
-                                    token
-                                ),
-                                ct
-                            )
-                        );
-                        break;
-                    default:
-                        output.WriteLine("❌ 这个 interaction 目前属于零回合但非即时私有效果的动作类型。");
-                        output.WriteLine("当前实现还不能安全结算它；请先改用会结束回合的动作，或补完 turn-end / working 流程。");
-                        break;
-                }
+                WriteTerminalActionRunResult(output, await s_actionRunner.RunAsync(session, plan, ct));
             }
         );
         return cmd;
@@ -557,20 +443,10 @@ public static partial class GameEntry {
                 var preActionReason = ctx.GetValue(reasonArg)!;
                 if (!TryGetSession(output, out var session)) { return; }
 
-                const string actionSummary = "原地休息一会";
-                var result = await s_actionRunner.RunLargeActionAsync(
+                var plan = GameSimulation.BuildRestAWhileTerminalPlan(preActionReason);
+                var result = await s_actionRunner.RunAsync(
                     session,
-                    new TerminalActionRequest(
-                        ActionKind: "large/rest-a-while",
-                        ActionSummary: actionSummary,
-                        ActionPayload: null,
-                        PreActionReason: preActionReason
-                    ),
-                    (root, validation, _) => Task.FromResult(
-                        AsyncAteliaResult<TurnResolution>.Success(
-                            GameSimulation.ApplyRestAWhile(root, preActionReason, validation.Feedback)
-                        )
-                    ),
+                    plan,
                     ct
                 );
                 WriteTerminalActionRunResult(output, result);

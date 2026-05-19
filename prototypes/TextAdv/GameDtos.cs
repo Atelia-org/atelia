@@ -93,12 +93,7 @@ internal sealed record PerceptionBundle(
     string? LastResolution
 );
 
-internal sealed record TurnResolution(
-    string Summary,
-    PerceptionBundle NextPerception
-);
-
-internal sealed record SmallActionResolution(
+internal sealed record ActionResolution(
     string Summary,
     PerceptionBundle NextPerception
 );

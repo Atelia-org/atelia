@@ -2,13 +2,6 @@ using Atelia.StateJournal;
 
 namespace Atelia.TextAdv;
 
-internal sealed record TerminalActionRequest(
-    string ActionKind,
-    string ActionSummary,
-    string? ActionPayload,
-    string PreActionReason
-);
-
 internal abstract record TerminalActionRunResult {
     internal sealed record Success(string Message, string BodyText) : TerminalActionRunResult;
 
@@ -38,76 +31,67 @@ internal sealed class TextAdvTerminalActionRunner {
         CancellationToken cancellationToken
     );
 
+    internal delegate Task<AsyncAteliaResult<ActionResolution>> ExecutePlanAsyncDelegate(
+        DurableDict<string> root,
+        TerminalActionExecutionPlan plan,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    );
+
     private readonly ValidateActionAsyncDelegate _validateAsync;
+    private readonly ExecutePlanAsyncDelegate _executePlanAsync;
 
-    internal static TextAdvTerminalActionRunner Default { get; } = new(GameActionValidator.ValidateActionAsync);
+    internal static TextAdvTerminalActionRunner Default { get; } = new(
+        GameActionValidator.ValidateActionAsync,
+        GameSimulation.ExecuteTerminalActionPlanAsync
+    );
 
-    internal TextAdvTerminalActionRunner(ValidateActionAsyncDelegate validateAsync) {
+    internal TextAdvTerminalActionRunner(
+        ValidateActionAsyncDelegate validateAsync,
+        ExecutePlanAsyncDelegate executePlanAsync
+    ) {
         _validateAsync = validateAsync ?? throw new ArgumentNullException(nameof(validateAsync));
+        _executePlanAsync = executePlanAsync ?? throw new ArgumentNullException(nameof(executePlanAsync));
     }
 
-    internal async Task<TerminalActionRunResult> RunLargeActionAsync(
+    internal async Task<TerminalActionRunResult> RunAsync(
         TextAdvSession session,
-        TerminalActionRequest request,
-        Func<DurableDict<string>, GameActionValidator.ValidationResult, CancellationToken, Task<AsyncAteliaResult<TurnResolution>>> resolveAsync,
+        TerminalActionExecutionPlan plan,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(session);
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(resolveAsync);
+        ArgumentNullException.ThrowIfNull(plan);
 
-        var validationResult = await ValidateAsync(session, request, cancellationToken).ConfigureAwait(false);
+        var validationResult = await ValidateAsync(session, plan.Request, cancellationToken).ConfigureAwait(false);
         if (validationResult.TerminalResult is not null) { return validationResult.TerminalResult; }
         var validation = validationResult.Validation!;
 
-        var collectedResult = await TryCollectLargeActionInsteadOfResolvingAsync(
-            session,
-            request,
+        if (plan.Mode == TerminalActionMode.Large) {
+            var collectedResult = await TryCollectLargeActionInsteadOfResolvingAsync(
+                session,
+                plan,
+                validation.Feedback,
+                cancellationToken
+            ).ConfigureAwait(false);
+            if (collectedResult is not null) { return collectedResult; }
+        }
+
+        var resolutionResult = await _executePlanAsync(
+            session.Root,
+            plan,
             validation.Feedback,
             cancellationToken
         ).ConfigureAwait(false);
-        if (collectedResult is not null) { return collectedResult; }
-
-        var resolutionResult = await resolveAsync(session.Root, validation, cancellationToken).ConfigureAwait(false);
         if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
             return new TerminalActionRunResult.Failure(
-                $"❌ Large-Action 结算失败：{request.ActionSummary}",
+                BuildResolutionFailureMessage(plan),
                 resolutionResult.Error
             );
         }
 
         _ = session.Repo.Commit(session.Root).Value;
         return new TerminalActionRunResult.Success(
-            $"✅ 你决定了：{request.ActionSummary}",
-            session.RenderPerception(resolution.NextPerception)
-        );
-    }
-
-    internal async Task<TerminalActionRunResult> RunImmediateActionAsync(
-        TextAdvSession session,
-        TerminalActionRequest request,
-        Func<DurableDict<string>, GameActionValidator.ValidationResult, CancellationToken, Task<AsyncAteliaResult<SmallActionResolution>>> resolveAsync,
-        CancellationToken cancellationToken
-    ) {
-        ArgumentNullException.ThrowIfNull(session);
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(resolveAsync);
-
-        var validationResult = await ValidateAsync(session, request, cancellationToken).ConfigureAwait(false);
-        if (validationResult.TerminalResult is not null) { return validationResult.TerminalResult; }
-        var validation = validationResult.Validation!;
-
-        var resolutionResult = await resolveAsync(session.Root, validation, cancellationToken).ConfigureAwait(false);
-        if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
-            return new TerminalActionRunResult.Failure(
-                $"❌ 小动作结算失败：{request.ActionSummary}",
-                resolutionResult.Error
-            );
-        }
-
-        _ = session.Repo.Commit(session.Root).Value;
-        return new TerminalActionRunResult.Success(
-            $"✅ 你顺手做了：{request.ActionSummary}",
+            BuildSuccessMessage(plan),
             session.RenderPerception(resolution.NextPerception)
         );
     }
@@ -144,12 +128,13 @@ internal sealed class TextAdvTerminalActionRunner {
 
     private static async Task<TerminalActionRunResult?> TryCollectLargeActionInsteadOfResolvingAsync(
         TextAdvSession session,
-        TerminalActionRequest request,
+        TerminalActionExecutionPlan plan,
         string validatorFeedback,
         CancellationToken cancellationToken
     ) {
         var root = session.Root;
         if (!GameSimulation.RequiresMultiActorCollection(root)) { return null; }
+        var request = plan.Request;
 
         var result = GameSimulation.SubmitLargeActionForActor(
             root,
@@ -177,16 +162,32 @@ internal sealed class TextAdvTerminalActionRunner {
 
             _ = session.Repo.Commit(root).Value;
             return new TerminalActionRunResult.Success(
-                $"✅ 你决定了：{request.ActionSummary}",
+                BuildSuccessMessage(plan),
                 session.RenderPerception(resolution.NextPerception)
             );
         }
 
         _ = session.Repo.Commit(root).Value;
         return new TerminalActionRunResult.Success(
-            $"✅ 你决定了：{request.ActionSummary}",
+            BuildSuccessMessage(plan),
             "⏳ 其他同行还在行动，这一回合暂时还没完全结束。\n\n"
             + GamePresenter.RenderTurnCollectionStatus(status)
         );
+    }
+
+    private static string BuildSuccessMessage(TerminalActionExecutionPlan plan) {
+        return plan.Mode switch {
+            TerminalActionMode.Immediate => $"✅ 你顺手做了：{plan.Request.ActionSummary}",
+            TerminalActionMode.Large => $"✅ 你决定了：{plan.Request.ActionSummary}",
+            _ => throw new InvalidOperationException($"Unknown terminal action mode: {plan.Mode}")
+        };
+    }
+
+    private static string BuildResolutionFailureMessage(TerminalActionExecutionPlan plan) {
+        return plan.Mode switch {
+            TerminalActionMode.Immediate => $"❌ 小动作结算失败：{plan.Request.ActionSummary}",
+            TerminalActionMode.Large => $"❌ Large-Action 结算失败：{plan.Request.ActionSummary}",
+            _ => throw new InvalidOperationException($"Unknown terminal action mode: {plan.Mode}")
+        };
     }
 }

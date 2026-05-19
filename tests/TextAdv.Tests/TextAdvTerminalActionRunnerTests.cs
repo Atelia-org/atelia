@@ -21,50 +21,58 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
     }
 
     [Fact]
-    public async Task RunLargeActionAsync_WhenValidatorRejects_ShouldNotResolveOrCommit() {
+    public async Task RunAsync_WhenValidatorRejects_ShouldNotExecuteOrCommit() {
         var session = AssertSuccess(TextAdvSession.CreateNew(_repoDir));
         var initialHead = session.HeadAddress;
-        var resolveCalled = false;
+        var executeCalled = false;
         var runner = new TextAdvTerminalActionRunner(
-            static (_, _, _, _, _, _) => Task.FromResult(new GameActionValidator.ValidationResult(false, "证据不足。"))
+            static (_, _, _, _, _, _) => Task.FromResult(new GameActionValidator.ValidationResult(false, "证据不足。")),
+            (_, _, _, _) => {
+                executeCalled = true;
+                return Task.FromResult(AsyncAteliaResult<ActionResolution>.Success(
+                    new ActionResolution("不应走到这里。", GameSimulation.DescribeCurrentPerception(session.Root))
+                ));
+            }
         );
 
-        var result = await runner.RunLargeActionAsync(
+        var result = await runner.RunAsync(
             session,
-            new TerminalActionRequest("large/test", "测试大动作", null, "先试试看。"),
-            (_, _, _) => {
-                resolveCalled = true;
-                return Task.FromResult(AsyncAteliaResult<TurnResolution>.Success(
-                    new TurnResolution("不应走到这里。", GameSimulation.DescribeCurrentPerception(session.Root))
-                ));
-            },
+            new TerminalActionExecutionPlan(
+                TerminalActionMode.Large,
+                new TerminalActionRequest("large/test", "测试大动作", null, "先试试看。"),
+                new TerminalActionResolver.RestAWhile()
+            ),
             CancellationToken.None
         );
 
         var rejected = Assert.IsType<TerminalActionRunResult.ValidationRejected>(result);
         Assert.Equal("证据不足。", rejected.Feedback);
-        Assert.False(resolveCalled);
+        Assert.False(executeCalled);
         Assert.Equal(initialHead, session.HeadAddress);
         session.Repo.Dispose();
     }
 
     [Fact]
-    public async Task RunImmediateActionAsync_WhenResolveSucceeds_ShouldCommitAndRenderSessionPerception() {
+    public async Task RunAsync_WhenImmediatePlanSucceeds_ShouldCommitAndRenderSessionPerception() {
         var session = AssertSuccess(TextAdvSession.CreateNew(_repoDir));
         var initialHead = session.HeadAddress;
         var runner = new TextAdvTerminalActionRunner(
-            static (_, _, _, _, _, _) => Task.FromResult(new GameActionValidator.ValidationResult(true, "通过。"))
+            static (_, _, _, _, _, _) => Task.FromResult(new GameActionValidator.ValidationResult(true, "通过。")),
+            (root, _, _, _) => {
+                root.Upsert("runnerTestFlag", true);
+                return Task.FromResult(AsyncAteliaResult<ActionResolution>.Success(
+                    new ActionResolution("已经记下。", GameSimulation.DescribeCurrentPerception(root))
+                ));
+            }
         );
 
-        var result = await runner.RunImmediateActionAsync(
+        var result = await runner.RunAsync(
             session,
-            new TerminalActionRequest("small/test", "测试顺手动作", null, "先记一笔。"),
-            (root, _, _) => {
-                root.Upsert("runnerTestFlag", true);
-                return Task.FromResult(AsyncAteliaResult<SmallActionResolution>.Success(
-                    new SmallActionResolution("已经记下。", GameSimulation.DescribeCurrentPerception(root))
-                ));
-            },
+            new TerminalActionExecutionPlan(
+                TerminalActionMode.Immediate,
+                new TerminalActionRequest("small/test", "测试顺手动作", null, "先记一笔。"),
+                new TerminalActionResolver.RestAWhile()
+            ),
             CancellationToken.None
         );
 
@@ -78,20 +86,24 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
     }
 
     [Fact]
-    public async Task RunImmediateActionAsync_WhenResolveFails_ShouldReturnFailureWithoutCommit() {
+    public async Task RunAsync_WhenImmediatePlanFails_ShouldReturnFailureWithoutCommit() {
         var session = AssertSuccess(TextAdvSession.CreateNew(_repoDir));
         var initialHead = session.HeadAddress;
         var runner = new TextAdvTerminalActionRunner(
-            static (_, _, _, _, _, _) => Task.FromResult(new GameActionValidator.ValidationResult(true, "通过。"))
-        );
-
-        var result = await runner.RunImmediateActionAsync(
-            session,
-            new TerminalActionRequest("small/test", "测试顺手动作", null, "先记一笔。"),
-            (_, _, _) => Task.FromResult(
-                AsyncAteliaResult<SmallActionResolution>.Failure(
+            static (_, _, _, _, _, _) => Task.FromResult(new GameActionValidator.ValidationResult(true, "通过。")),
+            (_, _, _, _) => Task.FromResult(
+                AsyncAteliaResult<ActionResolution>.Failure(
                     new TextAdvError("TextAdv.RunnerTestFailure", "模拟失败")
                 )
+            )
+        );
+
+        var result = await runner.RunAsync(
+            session,
+            new TerminalActionExecutionPlan(
+                TerminalActionMode.Immediate,
+                new TerminalActionRequest("small/test", "测试顺手动作", null, "先记一笔。"),
+                new TerminalActionResolver.RestAWhile()
             ),
             CancellationToken.None
         );
@@ -104,21 +116,25 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
     }
 
     [Fact]
-    public async Task RunLargeActionAsync_WhenValidationIsCanceled_ShouldPropagateCancellation() {
+    public async Task RunAsync_WhenValidationIsCanceled_ShouldPropagateCancellation() {
         var session = AssertSuccess(TextAdvSession.CreateNew(_repoDir));
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         var runner = new TextAdvTerminalActionRunner(
-            static (_, _, _, _, _, token) => Task.FromCanceled<GameActionValidator.ValidationResult>(token)
+            static (_, _, _, _, _, token) => Task.FromCanceled<GameActionValidator.ValidationResult>(token),
+            (_, _, _, _) => Task.FromResult(AsyncAteliaResult<ActionResolution>.Success(
+                new ActionResolution("不应走到这里。", GameSimulation.DescribeCurrentPerception(session.Root))
+            ))
         );
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => runner.RunLargeActionAsync(
+            () => runner.RunAsync(
                 session,
-                new TerminalActionRequest("large/test", "测试大动作", null, "先试试看。"),
-                (_, _, _) => Task.FromResult(AsyncAteliaResult<TurnResolution>.Success(
-                    new TurnResolution("不应走到这里。", GameSimulation.DescribeCurrentPerception(session.Root))
-                )),
+                new TerminalActionExecutionPlan(
+                    TerminalActionMode.Large,
+                    new TerminalActionRequest("large/test", "测试大动作", null, "先试试看。"),
+                    new TerminalActionResolver.RestAWhile()
+                ),
                 cts.Token
             )
         );
