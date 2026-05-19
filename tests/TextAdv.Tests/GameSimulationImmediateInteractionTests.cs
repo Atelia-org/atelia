@@ -296,15 +296,15 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
         var root = GameSimulation.CreateNewWorld(repo);
 
         Assert.Equal(
-            GmToolCatalog.GetVisibleToolNames(GmToolProfile.Full),
-            GmToolCatalog.CreateExecutor(root, GmToolProfile.Full)
+            GmToolCatalog.GetVisibleToolNames(GmToolPack.Full),
+            GmToolCatalog.CreateExecutor(root, GmToolPack.Full)
                 .GetVisibleToolDefinitions()
                 .Select(static definition => definition.Name)
                 .ToArray()
         );
         Assert.Equal(
-            GmToolCatalog.GetVisibleToolNames(GmToolProfile.ImmediateSelf),
-            GmToolCatalog.CreateExecutor(root, GmToolProfile.ImmediateSelf)
+            GmToolCatalog.GetVisibleToolNames(GmToolPack.ImmediateSelf),
+            GmToolCatalog.CreateExecutor(root, GmToolPack.ImmediateSelf)
                 .GetVisibleToolDefinitions()
                 .Select(static definition => definition.Name)
                 .ToArray()
@@ -312,7 +312,7 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
-    public void GmToolCatalog_FacetFilteringShouldExposeExploreAuditTools() {
+    public void GmToolCatalog_ExploreAuditPackShouldExposeExploreAuditTools() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
 
@@ -325,25 +325,100 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
                 GmToolCatalog.SetVisibilityToolName,
                 GmToolCatalog.SetInteractionVisibilityToolName,
             ],
-            GmToolCatalog.GetVisibleToolNames(
-                GmToolProfile.Full,
-                GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
-            )
+            GmToolCatalog.GetVisibleToolNames(GmToolPack.ExploreAudit)
         );
         Assert.Equal(
-            GmToolCatalog.GetVisibleToolNames(
-                GmToolProfile.Full,
-                GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
-            ),
-            GmToolCatalog.CreateExecutor(
-                root,
-                GmToolProfile.Full,
-                GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
-            )
+            GmToolCatalog.GetVisibleToolNames(GmToolPack.ExploreAudit),
+            GmToolCatalog.CreateExecutor(root, GmToolPack.ExploreAudit)
                 .GetVisibleToolDefinitions()
                 .Select(static definition => definition.Name)
                 .ToArray()
         );
+    }
+
+    [Fact]
+    public void GmToolCatalog_ExploreMapPackShouldExposeOnlyMapMovementTools() {
+        Assert.Equal(
+            [
+                GmToolCatalog.CreateLocationToolName,
+                GmToolCatalog.LinkLocationsToolName,
+                GmToolCatalog.MoveActorToolName,
+            ],
+            GmToolCatalog.GetVisibleToolNames(GmToolPack.ExploreMap)
+        );
+    }
+
+    [Fact]
+    public void GmToolCatalog_CollectedTurnSummaryPackShouldAddActorResolutionTool() {
+        var coreTools = GmToolCatalog.GetVisibleToolNames(GmToolPack.CollectedTurnCore);
+        var summaryTools = GmToolCatalog.GetVisibleToolNames(GmToolPack.CollectedTurnSummary);
+
+        Assert.Contains(GmToolCatalog.SetActorResolutionToolName, summaryTools);
+        Assert.DoesNotContain(GmToolCatalog.SetActorResolutionToolName, coreTools);
+        Assert.Equal(coreTools.Count + 1, summaryTools.Count);
+    }
+
+    [Fact]
+    public void ValidateExploreMapStageCompletion_ShouldRejectUnknownDirectionWithoutLinkedExit() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var context = new GmExploreContext(
+            Perception: GameSimulation.DescribeCurrentPerception(root),
+            CurrentLocationId: "beach",
+            Direction: "east",
+            Focus: "岩缝",
+            PreActionReason: "我想看看东边是否有能遮风的地方。",
+            SuggestedReverseDirection: "west"
+        );
+
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(gmWorldEdit.MoveActorTo("player", "forest").IsSuccess);
+
+        var error = GameMasterResolver.ValidateExploreMapStageCompletion(root, context);
+        Assert.Contains("出口 'east' 正确连接", error);
+    }
+
+    [Fact]
+    public void ValidateExploreMapStageCompletion_ShouldRejectMissingSuggestedReverseExit() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var context = new GmExploreContext(
+            Perception: GameSimulation.DescribeCurrentPerception(root),
+            CurrentLocationId: "beach",
+            Direction: "east",
+            Focus: "岩缝",
+            PreActionReason: "我想看看东边是否有能遮风的地方。",
+            SuggestedReverseDirection: "west"
+        );
+
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(gmWorldEdit.CreateLocation("beach-east-cove", "东侧岩湾", "一片紧贴礁石的浅湾。").IsSuccess);
+        Assert.True(gmWorldEdit.LinkLocations("beach", "east", "beach-east-cove", reverseDirection: null).IsSuccess);
+        Assert.True(gmWorldEdit.MoveActorTo("player", "beach-east-cove").IsSuccess);
+
+        var error = GameMasterResolver.ValidateExploreMapStageCompletion(root, context);
+        Assert.Contains("建议反向出口 'west'", error);
+    }
+
+    [Fact]
+    public void ValidateExploreMapStageCompletion_ShouldAcceptUnknownDirectionWhenExitAndReverseExitExist() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var context = new GmExploreContext(
+            Perception: GameSimulation.DescribeCurrentPerception(root),
+            CurrentLocationId: "beach",
+            Direction: "east",
+            Focus: "岩缝",
+            PreActionReason: "我想看看东边是否有能遮风的地方。",
+            SuggestedReverseDirection: "west"
+        );
+
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(gmWorldEdit.CreateLocation("beach-east-cove", "东侧岩湾", "一片紧贴礁石的浅湾。").IsSuccess);
+        Assert.True(gmWorldEdit.LinkLocations("beach", "east", "beach-east-cove", reverseDirection: "west").IsSuccess);
+        Assert.True(gmWorldEdit.MoveActorTo("player", "beach-east-cove").IsSuccess);
+
+        Assert.Null(GameMasterResolver.ValidateExploreMapStageCompletion(root, context));
     }
 
     private Repository CreateRepository() {

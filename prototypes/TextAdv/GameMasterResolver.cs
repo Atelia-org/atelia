@@ -97,16 +97,12 @@ internal static class GameMasterResolver {
         int MaxRounds
     );
 
-    private readonly record struct GmToolSelection(
-        GmToolProfile Profile,
-        GmToolFacet Facets = GmToolFacet.None
-    );
-
     private sealed record GmResolutionStage(
         string Name,
         Func<string> BuildObservation,
         bool RequireFinalSummary,
-        GmToolSelection ToolSelection
+        GmToolPack ToolPack,
+        Func<GmStageRunResult, string?>? ValidatePostcondition = null
     );
 
     private readonly record struct GmStageRunResult(
@@ -114,6 +110,8 @@ internal static class GameMasterResolver {
         string RawText,
         string LastText
     );
+
+    private sealed record GmResolutionFlow<TResult>(string SystemPrompt, IReadOnlyList<GmResolutionStage> Stages, GmFinalOutputPolicy<TResult> OutputPolicy);
 
     private readonly record struct GmFinalOutputPolicy<TResult>(
         Func<string, TResult> ParseFinalText,
@@ -189,37 +187,7 @@ internal static class GameMasterResolver {
         return await RunStagedToolLoopAsync(
             root,
             config,
-            BuildExploreSystemPrompt(),
-            [
-                new GmResolutionStage(
-                    "explore-map",
-                    () => BuildExploreMapStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.Map | GmToolFacet.ActorMovement
-                    )
-                ),
-                new GmResolutionStage(
-                    "explore-ledger-audit",
-                    () => BuildExploreLedgerAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-                new GmResolutionStage(
-                    "explore-summary",
-                    () => BuildExploreSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-            ],
-            CreateSummaryOutputPolicy("GM Agent 完成了本回合探索结算。"),
+            CreateExploreFlow(root, context),
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -233,43 +201,7 @@ internal static class GameMasterResolver {
         return await RunStagedToolLoopAsync(
             root,
             config,
-            BuildInteractionSystemPrompt(),
-            [
-                new GmResolutionStage(
-                    "interaction-consequence",
-                    () => BuildInteractionConsequenceStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.ActorMovement
-                            | GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-                new GmResolutionStage(
-                    "interaction-affordance-audit",
-                    () => BuildInteractionAffordanceAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-                new GmResolutionStage(
-                    "interaction-summary",
-                    () => BuildInteractionSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.ActorMovement
-                            | GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-            ],
-            CreateSummaryOutputPolicy("GM Agent 完成了本回合交互结算。"),
+            CreateInteractionFlow(root, context),
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -283,50 +215,7 @@ internal static class GameMasterResolver {
         return await RunStagedToolLoopAsync(
             root,
             config,
-            BuildCollectedTurnSystemPrompt(),
-            [
-                new GmResolutionStage(
-                    "collected-turn-consequence",
-                    () => BuildCollectedTurnConsequenceStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.Map
-                            | GmToolFacet.ActorMovement
-                            | GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-                new GmResolutionStage(
-                    "collected-turn-ledger-audit",
-                    () => BuildCollectedTurnLedgerAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.Map
-                            | GmToolFacet.ActorMovement
-                            | GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-                new GmResolutionStage(
-                    "collected-turn-summary",
-                    () => BuildCollectedTurnSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.Map
-                            | GmToolFacet.ActorMovement
-                            | GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                            | GmToolFacet.ActorResolution
-                    )
-                ),
-            ],
-            CreateSummaryOutputPolicy("GM Agent 完成了本回合多主体结算。"),
+            CreateCollectedTurnFlow(root, context),
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -340,39 +229,7 @@ internal static class GameMasterResolver {
         return await RunStagedToolLoopAsync(
             root,
             config,
-            BuildImmediateSelfInteractionSystemPrompt(),
-            [
-                new GmResolutionStage(
-                    "immediate-self-consequence",
-                    () => BuildImmediateSelfInteractionConsequenceStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.ImmediateSelf,
-                        GmToolFacet.EntityPresentation | GmToolFacet.ItemTransfer
-                    )
-                ),
-                new GmResolutionStage(
-                    "immediate-self-affordance-audit",
-                    () => BuildImmediateSelfInteractionAffordanceAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.ImmediateSelf,
-                        GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-                new GmResolutionStage(
-                    "immediate-self-summary",
-                    () => BuildImmediateSelfInteractionSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.ImmediateSelf,
-                        GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-            ],
-            CreateSummaryOutputPolicy("你顺手做了这个动作，并得到了一点当前能确认的即时反馈。"),
+            CreateImmediateSelfInteractionFlow(root, context),
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -386,45 +243,7 @@ internal static class GameMasterResolver {
         return await RunStagedToolLoopAsync(
             root,
             config,
-            BuildInteractionEffectSystemPrompt(),
-            [
-                new GmResolutionStage(
-                    "interaction-effect-consequence",
-                    () => BuildInteractionEffectConsequenceStageObservation(context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.ActorMovement
-                            | GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-                new GmResolutionStage(
-                    "interaction-effect-audit",
-                    () => BuildInteractionEffectAuditStageObservation(root, context),
-                    RequireFinalSummary: false,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-                new GmResolutionStage(
-                    "interaction-effect-summary",
-                    () => BuildInteractionEffectSummaryStageObservation(root, context),
-                    RequireFinalSummary: true,
-                    ToolSelection: new GmToolSelection(
-                        GmToolProfile.Full,
-                        GmToolFacet.ActorMovement
-                            | GmToolFacet.EntityPresentation
-                            | GmToolFacet.ItemTransfer
-                            | GmToolFacet.InteractionLifecycle
-                    )
-                ),
-            ],
-            CreateInteractionEffectOutputPolicy(context.TerminalCanObserveActor),
+            CreateInteractionEffectFlow(root, context),
             cancellationToken
         ).ConfigureAwait(false);
     }
@@ -432,31 +251,38 @@ internal static class GameMasterResolver {
     private static async Task<TResult> RunStagedToolLoopAsync<TResult>(
         DurableDict<string> root,
         GmConfig config,
-        string systemPrompt,
-        IReadOnlyList<GmResolutionStage> stages,
-        GmFinalOutputPolicy<TResult> outputPolicy,
+        GmResolutionFlow<TResult> flow,
         CancellationToken cancellationToken
     ) {
         var history = new List<IHistoryMessage>();
         var client = GetClient(config);
-        var toolExecutors = new Dictionary<GmToolSelection, ToolExecutor>();
+        var toolExecutors = new Dictionary<GmToolPack, ToolExecutor>();
 
-        foreach (var stage in stages) {
-            history.Add(new ObservationMessage(stage.BuildObservation()));
-            var toolExecutor = GetOrCreateToolExecutor(root, stage.ToolSelection, toolExecutors);
+        foreach (var stage in flow.Stages) {
+            var toolExecutor = GetOrCreateToolExecutor(root, stage.ToolPack, toolExecutors);
+            var visibleToolDefinitions = toolExecutor.GetVisibleToolDefinitions();
+            history.Add(new ObservationMessage(BuildStageObservation(stage, visibleToolDefinitions)));
             var stageResult = await RunStageAsync(
                 client,
                 config,
-                systemPrompt,
+                flow.SystemPrompt,
                 history,
                 stage,
                 toolExecutor,
+                visibleToolDefinitions,
                 cancellationToken
             ).ConfigureAwait(false);
 
             if (stageResult.Completed) {
+                if (stage.ValidatePostcondition is not null) {
+                    var validationError = stage.ValidatePostcondition(stageResult);
+                    if (!string.IsNullOrWhiteSpace(validationError)) {
+                        throw new InvalidOperationException(validationError);
+                    }
+                }
+
                 if (!stage.RequireFinalSummary) { continue; }
-                return outputPolicy.ParseFinalText(stageResult.RawText);
+                return flow.OutputPolicy.ParseFinalText(stageResult.RawText);
             }
 
             if (stage.RequireFinalSummary) {
@@ -474,7 +300,7 @@ internal static class GameMasterResolver {
             );
         }
 
-        return outputPolicy.BuildDefaultResult();
+        return flow.OutputPolicy.BuildDefaultResult();
     }
 
     private static GmFinalOutputPolicy<GmExploreResolution> CreateSummaryOutputPolicy(string defaultSummary) {
@@ -510,6 +336,163 @@ internal static class GameMasterResolver {
                 UsedLlm: true,
                 FallbackReason: null
             )
+        );
+    }
+
+    private static GmResolutionFlow<GmExploreResolution> CreateExploreFlow(
+        DurableDict<string> root,
+        GmExploreContext context
+    ) {
+        return new GmResolutionFlow<GmExploreResolution>(
+            SystemPrompt: BuildExploreSystemPrompt(),
+            Stages:
+            [
+                new GmResolutionStage(
+                    "explore-map",
+                    () => BuildExploreMapStageObservation(context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.ExploreMap,
+                    ValidatePostcondition: _ => ValidateExploreMapStageCompletion(root, context)
+                ),
+                new GmResolutionStage(
+                    "explore-ledger-audit",
+                    () => BuildExploreLedgerAuditStageObservation(root, context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.ExploreAudit
+                ),
+                new GmResolutionStage(
+                    "explore-summary",
+                    () => BuildExploreSummaryStageObservation(root, context),
+                    RequireFinalSummary: true,
+                    ToolPack: GmToolPack.ExploreAudit
+                ),
+            ],
+            OutputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合探索结算。")
+        );
+    }
+
+    private static GmResolutionFlow<GmExploreResolution> CreateInteractionFlow(
+        DurableDict<string> root,
+        GmInteractionContext context
+    ) {
+        return new GmResolutionFlow<GmExploreResolution>(
+            SystemPrompt: BuildInteractionSystemPrompt(),
+            Stages:
+            [
+                new GmResolutionStage(
+                    "interaction-consequence",
+                    () => BuildInteractionConsequenceStageObservation(context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.InteractionConsequence
+                ),
+                new GmResolutionStage(
+                    "interaction-affordance-audit",
+                    () => BuildInteractionAffordanceAuditStageObservation(root, context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.InteractionAudit
+                ),
+                new GmResolutionStage(
+                    "interaction-summary",
+                    () => BuildInteractionSummaryStageObservation(root, context),
+                    RequireFinalSummary: true,
+                    ToolPack: GmToolPack.InteractionConsequence
+                ),
+            ],
+            OutputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合交互结算。")
+        );
+    }
+
+    private static GmResolutionFlow<GmExploreResolution> CreateCollectedTurnFlow(
+        DurableDict<string> root,
+        GmCollectedTurnContext context
+    ) {
+        return new GmResolutionFlow<GmExploreResolution>(
+            SystemPrompt: BuildCollectedTurnSystemPrompt(),
+            Stages:
+            [
+                new GmResolutionStage(
+                    "collected-turn-consequence",
+                    () => BuildCollectedTurnConsequenceStageObservation(context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.CollectedTurnCore
+                ),
+                new GmResolutionStage(
+                    "collected-turn-ledger-audit",
+                    () => BuildCollectedTurnLedgerAuditStageObservation(root, context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.CollectedTurnCore
+                ),
+                new GmResolutionStage(
+                    "collected-turn-summary",
+                    () => BuildCollectedTurnSummaryStageObservation(root, context),
+                    RequireFinalSummary: true,
+                    ToolPack: GmToolPack.CollectedTurnSummary,
+                    ValidatePostcondition: _ => ValidateCollectedTurnSummaryStageCompletion(root, context)
+                ),
+            ],
+            OutputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合多主体结算。")
+        );
+    }
+
+    private static GmResolutionFlow<GmExploreResolution> CreateImmediateSelfInteractionFlow(
+        DurableDict<string> root,
+        GmInteractionContext context
+    ) {
+        return new GmResolutionFlow<GmExploreResolution>(
+            SystemPrompt: BuildImmediateSelfInteractionSystemPrompt(),
+            Stages:
+            [
+                new GmResolutionStage(
+                    "immediate-self-consequence",
+                    () => BuildImmediateSelfInteractionConsequenceStageObservation(context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.ImmediateSelfConsequence
+                ),
+                new GmResolutionStage(
+                    "immediate-self-affordance-audit",
+                    () => BuildImmediateSelfInteractionAffordanceAuditStageObservation(root, context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.ImmediateSelfAudit
+                ),
+                new GmResolutionStage(
+                    "immediate-self-summary",
+                    () => BuildImmediateSelfInteractionSummaryStageObservation(root, context),
+                    RequireFinalSummary: true,
+                    ToolPack: GmToolPack.ImmediateSelf
+                ),
+            ],
+            OutputPolicy: CreateSummaryOutputPolicy("你顺手做了这个动作，并得到了一点当前能确认的即时反馈。")
+        );
+    }
+
+    private static GmResolutionFlow<GmInteractionEffectResolution> CreateInteractionEffectFlow(
+        DurableDict<string> root,
+        GmInteractionEffectContext context
+    ) {
+        return new GmResolutionFlow<GmInteractionEffectResolution>(
+            SystemPrompt: BuildInteractionEffectSystemPrompt(),
+            Stages:
+            [
+                new GmResolutionStage(
+                    "interaction-effect-consequence",
+                    () => BuildInteractionEffectConsequenceStageObservation(context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.InteractionEffectConsequence
+                ),
+                new GmResolutionStage(
+                    "interaction-effect-audit",
+                    () => BuildInteractionEffectAuditStageObservation(root, context),
+                    RequireFinalSummary: false,
+                    ToolPack: GmToolPack.InteractionEffectAudit
+                ),
+                new GmResolutionStage(
+                    "interaction-effect-summary",
+                    () => BuildInteractionEffectSummaryStageObservation(root, context),
+                    RequireFinalSummary: true,
+                    ToolPack: GmToolPack.InteractionEffectConsequence
+                ),
+            ],
+            OutputPolicy: CreateInteractionEffectOutputPolicy(context.TerminalCanObserveActor)
         );
     }
 
@@ -683,7 +666,7 @@ internal static class GameMasterResolver {
         var sb = new StringBuilder();
         sb.AppendLine("[阶段 2/3: 实体与交互账本审计]");
         sb.AppendLine("检查刚完成的探索结果：如果最终叙事需要提到具体可见物品、NPC 或可执行动作，必须现在用工具落账。");
-        sb.AppendLine($"可调用 {GmToolCatalog.FormatVisibleToolNames(GmToolProfile.Full, GmToolFacet.EntityPresentation | GmToolFacet.InteractionLifecycle)}。");
+        sb.AppendLine($"可调用 {GmToolCatalog.FormatVisibleToolNames(GmToolPack.ExploreAudit)}。");
         sb.AppendLine($"{GmToolCatalog.AddInteractionToolName} 的 precondition_note 没有特别条件时写 none，并明确填写 turn_cost / effect_scope / effect_slots。");
         sb.AppendLine("本阶段不要移动玩家，不要创建更多地点，不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
         sb.AppendLine();
@@ -1045,6 +1028,58 @@ internal static class GameMasterResolver {
         sb.AppendLine();
     }
 
+    internal static string? ValidateExploreMapStageCompletion(DurableDict<string> root, GmExploreContext context) {
+        var actorPerception = GameSimulation.DescribePerceptionForActor(root, context.Perception.ActorId);
+        var currentLocationId = actorPerception.Location.LocationId;
+        var existingExit = context.Perception.Location.Exits.FirstOrDefault(
+            exit => string.Equals(exit.Direction, context.Direction, StringComparison.Ordinal)
+        );
+
+        if (existingExit is not null) {
+            if (!string.Equals(currentLocationId, existingExit.TargetLocationId, StringComparison.Ordinal)) {
+                return
+                    $"GM Agent 在阶段 explore-map 结束后仍未把 actor '{context.Perception.ActorId}' 移动到已知出口 '{context.Direction}' 的目标地点 '{existingExit.TargetLocationId}'。当前地点：{currentLocationId}";
+            }
+
+            return null;
+        }
+
+        if (string.Equals(currentLocationId, context.CurrentLocationId, StringComparison.Ordinal)) {
+            return
+                $"GM Agent 在阶段 explore-map 结束后仍未把 actor '{context.Perception.ActorId}' 从原地点 '{context.CurrentLocationId}' 移开。";
+        }
+
+        var linkedTargetLocationId = TryGetExitTargetLocationId(root, context.CurrentLocationId, context.Direction);
+        if (!string.Equals(linkedTargetLocationId, currentLocationId, StringComparison.Ordinal)) {
+            return
+                $"GM Agent 在阶段 explore-map 结束后未把原地点 '{context.CurrentLocationId}' 的出口 '{context.Direction}' 正确连接到当前地点 '{currentLocationId}'。当前账本中的目标地点：{linkedTargetLocationId ?? "(missing)"}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(context.SuggestedReverseDirection)) {
+            var reverseTargetLocationId = TryGetExitTargetLocationId(root, currentLocationId, context.SuggestedReverseDirection);
+            if (!string.Equals(reverseTargetLocationId, context.CurrentLocationId, StringComparison.Ordinal)) {
+                return
+                    $"GM Agent 在阶段 explore-map 结束后未为新地点 '{currentLocationId}' 写入建议反向出口 '{context.SuggestedReverseDirection}' -> '{context.CurrentLocationId}'。当前账本中的目标地点：{reverseTargetLocationId ?? "(missing)"}";
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ValidateCollectedTurnSummaryStageCompletion(
+        DurableDict<string> root,
+        GmCollectedTurnContext context
+    ) {
+        foreach (var intent in context.Intents) {
+            var actorPerception = GameSimulation.DescribePerceptionForActor(root, intent.ActorId);
+            if (string.IsNullOrWhiteSpace(actorPerception.LastResolution)) {
+                return $"GM Agent 在阶段 collected-turn-summary 结束后仍未为 actor '{intent.ActorId}' 写入私有结算反馈。";
+            }
+        }
+
+        return null;
+    }
+
     private static string Indent(string text, string indentation) {
         if (string.IsNullOrEmpty(text)) { return string.Empty; }
 
@@ -1052,17 +1087,55 @@ internal static class GameMasterResolver {
         return string.Join("\n", lines.Select(line => indentation + line));
     }
 
+    private static string? TryGetExitTargetLocationId(
+        DurableDict<string> root,
+        string locationId,
+        string direction
+    ) {
+        if (string.IsNullOrWhiteSpace(locationId) || string.IsNullOrWhiteSpace(direction)) { return null; }
+
+        var world = root.GetOrThrow<DurableDict<string>>("world");
+        if (world is null || !world.TryGet("locations", out DurableDict<string>? locations) || locations is null) { return null; }
+        if (!locations.TryGet(locationId, out DurableDict<string>? location) || location is null) { return null; }
+        if (!location.TryGet("exits", out DurableDict<string>? exits) || exits is null) { return null; }
+
+        return exits.TryGet(direction, out string? targetLocationId) && !string.IsNullOrWhiteSpace(targetLocationId)
+            ? targetLocationId
+            : null;
+    }
+
+    private static string BuildStageObservation(
+        GmResolutionStage stage,
+        ImmutableArray<ToolDefinition> visibleToolDefinitions
+    ) {
+        var sb = new StringBuilder();
+        sb.Append(stage.BuildObservation().TrimEnd());
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine("[本阶段当前可用工具]");
+        if (visibleToolDefinitions.Length == 0) {
+            sb.AppendLine("- (none)");
+            return sb.ToString();
+        }
+
+        foreach (var tool in visibleToolDefinitions) {
+            sb.AppendLine($"- {tool.Name}: {tool.Description}");
+        }
+
+        return sb.ToString();
+    }
+
     private static ToolExecutor GetOrCreateToolExecutor(
         DurableDict<string> root,
-        GmToolSelection selection,
-        IDictionary<GmToolSelection, ToolExecutor> cache
+        GmToolPack pack,
+        IDictionary<GmToolPack, ToolExecutor> cache
     ) {
-        if (cache.TryGetValue(selection, out var executor)) {
+        if (cache.TryGetValue(pack, out var executor)) {
             return executor;
         }
 
-        executor = GmToolCatalog.CreateExecutor(root, selection.Profile, selection.Facets);
-        cache.Add(selection, executor);
+        executor = GmToolCatalog.CreateExecutor(root, pack);
+        cache.Add(pack, executor);
         return executor;
     }
 
@@ -1073,6 +1146,7 @@ internal static class GameMasterResolver {
         List<IHistoryMessage> history,
         GmResolutionStage stage,
         ToolExecutor toolExecutor,
+        ImmutableArray<ToolDefinition> visibleToolDefinitions,
         CancellationToken cancellationToken
     ) {
         ActionMessage? lastAction = null;
@@ -1082,7 +1156,7 @@ internal static class GameMasterResolver {
                 ModelId: config.ModelId,
                 SystemPrompt: systemPrompt,
                 Context: history,
-                Tools: toolExecutor.GetVisibleToolDefinitions()
+                Tools: visibleToolDefinitions
             );
             var result = await client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
             if (result.Errors is { Count: > 0 }) { throw new InvalidOperationException(BuildProviderErrorMessage(result.Errors)); }

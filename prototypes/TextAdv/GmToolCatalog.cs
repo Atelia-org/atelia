@@ -4,21 +4,19 @@ using Atelia.StateJournal;
 
 namespace Atelia.TextAdv;
 
-[Flags]
-internal enum GmToolProfile {
-    Full = 1 << 0,
-    ImmediateSelf = 1 << 1,
-}
-
-[Flags]
-internal enum GmToolFacet {
-    None = 0,
-    Map = 1 << 0,
-    ActorMovement = 1 << 1,
-    EntityPresentation = 1 << 2,
-    ItemTransfer = 1 << 3,
-    InteractionLifecycle = 1 << 4,
-    ActorResolution = 1 << 5,
+internal enum GmToolPack {
+    Full,
+    ImmediateSelf,
+    ExploreMap,
+    ExploreAudit,
+    InteractionConsequence,
+    InteractionAudit,
+    CollectedTurnCore,
+    CollectedTurnSummary,
+    ImmediateSelfConsequence,
+    ImmediateSelfAudit,
+    InteractionEffectConsequence,
+    InteractionEffectAudit,
 }
 
 internal static class GmToolCatalog {
@@ -37,74 +35,98 @@ internal static class GmToolCatalog {
 
     private sealed record ToolRegistration(
         string Name,
-        GmToolProfile Profiles,
-        GmToolFacet Facets,
+        IReadOnlyList<GmToolPack> Packs,
         Func<GmWorldEditService, ITool> Factory
     );
 
     private static readonly ToolRegistration[] s_registrations =
     [
-        new(CreateLocationToolName, GmToolProfile.Full, GmToolFacet.Map, static toolService => MethodToolWrapper.FromDelegate<string, string, string>(toolService.CreateLocationAsync)),
-        new(LinkLocationsToolName, GmToolProfile.Full, GmToolFacet.Map, static toolService => MethodToolWrapper.FromDelegate<string, string, string, string?>(toolService.LinkLocationsAsync)),
-        new(MoveActorToolName, GmToolProfile.Full, GmToolFacet.ActorMovement, static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.MoveActorAsync)),
-        new(CreateItemToolName, GmToolProfile.Full | GmToolProfile.ImmediateSelf, GmToolFacet.EntityPresentation, static toolService => MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync)),
-        new(CreateNpcToolName, GmToolProfile.Full, GmToolFacet.EntityPresentation, static toolService => MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateNpcAsync)),
-        new(UpdateItemToolName, GmToolProfile.Full | GmToolProfile.ImmediateSelf, GmToolFacet.EntityPresentation, static toolService => MethodToolWrapper.FromDelegate<string, string?, string?>(toolService.UpdateItemAsync)),
-        new(MoveItemToActorToolName, GmToolProfile.Full | GmToolProfile.ImmediateSelf, GmToolFacet.ItemTransfer, static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.MoveItemToActorAsync)),
-        new(PlaceItemAtLocationToolName, GmToolProfile.Full | GmToolProfile.ImmediateSelf, GmToolFacet.ItemTransfer, static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.PlaceItemAtLocationAsync)),
-        new(AddInteractionToolName, GmToolProfile.Full | GmToolProfile.ImmediateSelf, GmToolFacet.InteractionLifecycle, static toolService => MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync)),
-        new(SetVisibilityToolName, GmToolProfile.Full | GmToolProfile.ImmediateSelf, GmToolFacet.EntityPresentation, static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.SetVisibilityAsync)),
-        new(SetInteractionVisibilityToolName, GmToolProfile.Full | GmToolProfile.ImmediateSelf, GmToolFacet.InteractionLifecycle, static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.SetInteractionVisibilityAsync)),
-        new(SetActorResolutionToolName, GmToolProfile.Full, GmToolFacet.ActorResolution, static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.SetActorResolutionAsync)),
+        new(
+            CreateLocationToolName,
+            [GmToolPack.Full, GmToolPack.ExploreMap, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary],
+            static toolService => MethodToolWrapper.FromDelegate<string, string, string>(toolService.CreateLocationAsync)
+        ),
+        new(
+            LinkLocationsToolName,
+            [GmToolPack.Full, GmToolPack.ExploreMap, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary],
+            static toolService => MethodToolWrapper.FromDelegate<string, string, string, string?>(toolService.LinkLocationsAsync)
+        ),
+        new(
+            MoveActorToolName,
+            [GmToolPack.Full, GmToolPack.ExploreMap, GmToolPack.InteractionConsequence, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.InteractionEffectConsequence],
+            static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.MoveActorAsync)
+        ),
+        new(
+            CreateItemToolName,
+            [GmToolPack.Full, GmToolPack.ImmediateSelf, GmToolPack.ExploreAudit, GmToolPack.InteractionConsequence, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.ImmediateSelfConsequence, GmToolPack.InteractionEffectConsequence, GmToolPack.InteractionEffectAudit],
+            static toolService => MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateItemAsync)
+        ),
+        new(
+            CreateNpcToolName,
+            [GmToolPack.Full, GmToolPack.ExploreAudit, GmToolPack.InteractionConsequence, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.InteractionEffectConsequence],
+            static toolService => MethodToolWrapper.FromDelegate<string, string, string, string>(toolService.CreateNpcAsync)
+        ),
+        new(
+            UpdateItemToolName,
+            [GmToolPack.Full, GmToolPack.ImmediateSelf, GmToolPack.ExploreAudit, GmToolPack.InteractionConsequence, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.ImmediateSelfConsequence, GmToolPack.ImmediateSelfAudit, GmToolPack.InteractionEffectConsequence, GmToolPack.InteractionEffectAudit],
+            static toolService => MethodToolWrapper.FromDelegate<string, string?, string?>(toolService.UpdateItemAsync)
+        ),
+        new(
+            MoveItemToActorToolName,
+            [GmToolPack.Full, GmToolPack.ImmediateSelf, GmToolPack.InteractionConsequence, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.ImmediateSelfConsequence, GmToolPack.InteractionEffectConsequence, GmToolPack.InteractionEffectAudit],
+            static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.MoveItemToActorAsync)
+        ),
+        new(
+            PlaceItemAtLocationToolName,
+            [GmToolPack.Full, GmToolPack.ImmediateSelf, GmToolPack.InteractionConsequence, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.ImmediateSelfConsequence, GmToolPack.InteractionEffectConsequence, GmToolPack.InteractionEffectAudit],
+            static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.PlaceItemAtLocationAsync)
+        ),
+        new(
+            AddInteractionToolName,
+            [GmToolPack.Full, GmToolPack.ImmediateSelf, GmToolPack.ExploreAudit, GmToolPack.InteractionConsequence, GmToolPack.InteractionAudit, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.ImmediateSelfAudit, GmToolPack.InteractionEffectConsequence, GmToolPack.InteractionEffectAudit],
+            static toolService => MethodToolWrapper.FromDelegate(toolService.AddInteractionAsync)
+        ),
+        new(
+            SetVisibilityToolName,
+            [GmToolPack.Full, GmToolPack.ImmediateSelf, GmToolPack.ExploreAudit, GmToolPack.InteractionConsequence, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.ImmediateSelfConsequence, GmToolPack.ImmediateSelfAudit, GmToolPack.InteractionEffectConsequence, GmToolPack.InteractionEffectAudit],
+            static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.SetVisibilityAsync)
+        ),
+        new(
+            SetInteractionVisibilityToolName,
+            [GmToolPack.Full, GmToolPack.ImmediateSelf, GmToolPack.ExploreAudit, GmToolPack.InteractionConsequence, GmToolPack.InteractionAudit, GmToolPack.CollectedTurnCore, GmToolPack.CollectedTurnSummary, GmToolPack.ImmediateSelfAudit, GmToolPack.InteractionEffectConsequence, GmToolPack.InteractionEffectAudit],
+            static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.SetInteractionVisibilityAsync)
+        ),
+        new(
+            SetActorResolutionToolName,
+            [GmToolPack.Full, GmToolPack.CollectedTurnSummary],
+            static toolService => MethodToolWrapper.FromDelegate<string, string>(toolService.SetActorResolutionAsync)
+        ),
     ];
 
-    internal static ToolExecutor CreateExecutor(
-        DurableDict<string> root,
-        GmToolProfile profile,
-        GmToolFacet facets = GmToolFacet.None
-    ) {
+    internal static ToolExecutor CreateExecutor(DurableDict<string> root, GmToolPack pack) {
         var toolService = new GmWorldEditService(root);
-        return new ToolExecutor(CreateTools(toolService, profile, facets));
+        return new ToolExecutor(CreateTools(toolService, pack));
     }
 
-    internal static IReadOnlyList<string> GetVisibleToolNames(
-        GmToolProfile profile,
-        GmToolFacet facets = GmToolFacet.None
-    ) {
-        return EnumerateRegistrations(profile, facets)
+    internal static IReadOnlyList<string> GetVisibleToolNames(GmToolPack pack) {
+        return EnumerateRegistrations(pack)
             .Select(static registration => registration.Name)
             .ToArray();
     }
 
-    internal static string FormatVisibleToolNames(
-        GmToolProfile profile,
-        GmToolFacet facets = GmToolFacet.None
-    ) {
-        return string.Join("、", GetVisibleToolNames(profile, facets));
+    internal static string FormatVisibleToolNames(GmToolPack pack) {
+        return string.Join("、", GetVisibleToolNames(pack));
     }
 
-    private static IEnumerable<ITool> CreateTools(
-        GmWorldEditService toolService,
-        GmToolProfile profile,
-        GmToolFacet facets = GmToolFacet.None
-    ) {
-        foreach (var registration in EnumerateRegistrations(profile, facets)) {
+    private static IEnumerable<ITool> CreateTools(GmWorldEditService toolService, GmToolPack pack) {
+        foreach (var registration in EnumerateRegistrations(pack)) {
             yield return registration.Factory(toolService);
         }
     }
 
-    private static IEnumerable<ToolRegistration> EnumerateRegistrations(
-        GmToolProfile profile,
-        GmToolFacet facets = GmToolFacet.None
-    ) {
+    private static IEnumerable<ToolRegistration> EnumerateRegistrations(GmToolPack pack) {
         foreach (var registration in s_registrations) {
-            if ((registration.Profiles & profile) == 0) {
-                continue;
-            }
-
-            if (facets != GmToolFacet.None && (registration.Facets & facets) == 0) {
-                continue;
-            }
+            if (!registration.Packs.Contains(pack)) { continue; }
 
             yield return registration;
         }
