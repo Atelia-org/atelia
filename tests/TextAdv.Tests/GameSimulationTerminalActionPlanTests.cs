@@ -46,9 +46,8 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
 
         var plan = AssertSuccess(planResult);
         Assert.Equal(TerminalActionMode.Immediate, plan.Mode);
-        Assert.Equal("small/interact", plan.Request.ActionKind);
-        var interaction = Assert.IsType<TerminalActionResolver.Interaction>(plan.Resolver);
-        Assert.Equal(InteractionExecutionClass.ImmediateSelf, interaction.ExecutionClass);
+        Assert.Equal("small/interact", plan.ActionKind);
+        _ = Assert.IsType<TerminalActionExecutionPlan.Interaction.ImmediateSelf>(plan);
     }
 
     [Fact]
@@ -80,9 +79,8 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
 
         var plan = AssertSuccess(planResult);
         Assert.Equal(TerminalActionMode.Large, plan.Mode);
-        Assert.Equal("large/interact", plan.Request.ActionKind);
-        var interaction = Assert.IsType<TerminalActionResolver.Interaction>(plan.Resolver);
-        Assert.Equal(InteractionExecutionClass.WorkingStart, interaction.ExecutionClass);
+        Assert.Equal("large/interact", plan.ActionKind);
+        _ = Assert.IsType<TerminalActionExecutionPlan.Interaction.WorkingStart>(plan);
     }
 
     [Fact]
@@ -113,7 +111,7 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
         );
 
         Assert.True(planResult.IsFailure);
-        Assert.Equal("TextAdv.UnsupportedInteractionExecutionClass", planResult.Error!.ErrorCode);
+        Assert.Equal("TextAdv.UnsupportedInteractionExecutionSpec", planResult.Error!.ErrorCode);
     }
 
     private Repository CreateRepository() {

@@ -37,11 +37,7 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
 
         var result = await runner.RunAsync(
             session,
-            new TerminalActionExecutionPlan(
-                TerminalActionMode.Large,
-                new TerminalActionRequest("large/test", "测试大动作", null, "先试试看。"),
-                new TerminalActionResolver.RestAWhile()
-            ),
+            new TerminalActionExecutionPlan.RestAWhile("先试试看。"),
             CancellationToken.None
         );
 
@@ -68,16 +64,18 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
 
         var result = await runner.RunAsync(
             session,
-            new TerminalActionExecutionPlan(
-                TerminalActionMode.Immediate,
-                new TerminalActionRequest("small/test", "测试顺手动作", null, "先记一笔。"),
-                new TerminalActionResolver.RestAWhile()
+            new TerminalActionExecutionPlan.Interaction.ImmediateSelf(
+                "test-interaction",
+                "测试顺手动作",
+                "test",
+                "interactionId=test-interaction",
+                "先记一笔。"
             ),
             CancellationToken.None
         );
 
         var success = Assert.IsType<TerminalActionRunResult.Success>(result);
-        Assert.Equal("✅ 你顺手做了：测试顺手动作", success.Message);
+        Assert.Equal("✅ 你顺手做了：测试顺手动作 (test)", success.Message);
         Assert.Contains("🗓️", success.BodyText);
         Assert.NotEqual(initialHead, session.HeadAddress);
         Assert.Equal(GetIssue.None, session.Root.Get("runnerTestFlag", out bool flag));
@@ -100,16 +98,18 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
 
         var result = await runner.RunAsync(
             session,
-            new TerminalActionExecutionPlan(
-                TerminalActionMode.Immediate,
-                new TerminalActionRequest("small/test", "测试顺手动作", null, "先记一笔。"),
-                new TerminalActionResolver.RestAWhile()
+            new TerminalActionExecutionPlan.Interaction.ImmediateSelf(
+                "test-interaction",
+                "测试顺手动作",
+                "test",
+                "interactionId=test-interaction",
+                "先记一笔。"
             ),
             CancellationToken.None
         );
 
         var failure = Assert.IsType<TerminalActionRunResult.Failure>(result);
-        Assert.Equal("❌ 小动作结算失败：测试顺手动作", failure.Message);
+        Assert.Equal("❌ 小动作结算失败：测试顺手动作 (test)", failure.Message);
         Assert.Equal("TextAdv.RunnerTestFailure", failure.Error?.ErrorCode);
         Assert.Equal(initialHead, session.HeadAddress);
         session.Repo.Dispose();
@@ -130,11 +130,7 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => runner.RunAsync(
                 session,
-                new TerminalActionExecutionPlan(
-                    TerminalActionMode.Large,
-                    new TerminalActionRequest("large/test", "测试大动作", null, "先试试看。"),
-                    new TerminalActionResolver.RestAWhile()
-                ),
+                new TerminalActionExecutionPlan.RestAWhile("先试试看。"),
                 cts.Token
             )
         );

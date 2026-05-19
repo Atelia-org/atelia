@@ -62,7 +62,7 @@ internal sealed class TextAdvTerminalActionRunner {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(plan);
 
-        var validationResult = await ValidateAsync(session, plan.Request, cancellationToken).ConfigureAwait(false);
+        var validationResult = await ValidateAsync(session, plan, cancellationToken).ConfigureAwait(false);
         if (validationResult.TerminalResult is not null) { return validationResult.TerminalResult; }
         var validation = validationResult.Validation!;
 
@@ -98,16 +98,16 @@ internal sealed class TextAdvTerminalActionRunner {
 
     private async Task<ValidationStageResult> ValidateAsync(
         TextAdvSession session,
-        TerminalActionRequest request,
+        TerminalActionExecutionPlan plan,
         CancellationToken cancellationToken
     ) {
         try {
             var validation = await _validateAsync(
                 GameSimulation.DescribeCurrentPerception(session.Root),
-                request.ActionKind,
-                request.ActionSummary,
-                request.PreActionReason,
-                request.ActionPayload,
+                plan.ActionKind,
+                plan.ActionSummary,
+                plan.PreActionReason,
+                plan.ActionPayload,
                 cancellationToken
             ).ConfigureAwait(false);
 
@@ -134,15 +134,14 @@ internal sealed class TextAdvTerminalActionRunner {
     ) {
         var root = session.Root;
         if (!GameSimulation.RequiresMultiActorCollection(root)) { return null; }
-        var request = plan.Request;
 
         var result = GameSimulation.SubmitLargeActionForActor(
             root,
             actorId: GameSimulation.TerminalPlayerActorId,
-            request.ActionKind,
-            request.ActionSummary,
-            request.ActionPayload,
-            request.PreActionReason,
+            plan.ActionKind,
+            plan.ActionSummary,
+            plan.ActionPayload,
+            plan.PreActionReason,
             validatorFeedback
         );
         if (!result.TryGetValue(out var status) || status is null) {
@@ -177,16 +176,16 @@ internal sealed class TextAdvTerminalActionRunner {
 
     private static string BuildSuccessMessage(TerminalActionExecutionPlan plan) {
         return plan.Mode switch {
-            TerminalActionMode.Immediate => $"✅ 你顺手做了：{plan.Request.ActionSummary}",
-            TerminalActionMode.Large => $"✅ 你决定了：{plan.Request.ActionSummary}",
+            TerminalActionMode.Immediate => $"✅ 你顺手做了：{plan.ActionSummary}",
+            TerminalActionMode.Large => $"✅ 你决定了：{plan.ActionSummary}",
             _ => throw new InvalidOperationException($"Unknown terminal action mode: {plan.Mode}")
         };
     }
 
     private static string BuildResolutionFailureMessage(TerminalActionExecutionPlan plan) {
         return plan.Mode switch {
-            TerminalActionMode.Immediate => $"❌ 小动作结算失败：{plan.Request.ActionSummary}",
-            TerminalActionMode.Large => $"❌ Large-Action 结算失败：{plan.Request.ActionSummary}",
+            TerminalActionMode.Immediate => $"❌ 小动作结算失败：{plan.ActionSummary}",
+            TerminalActionMode.Large => $"❌ Large-Action 结算失败：{plan.ActionSummary}",
             _ => throw new InvalidOperationException($"Unknown terminal action mode: {plan.Mode}")
         };
     }

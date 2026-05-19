@@ -37,13 +37,6 @@ internal static class LlmPlayerAgentDriver {
         Func<DurableDict<string>, string, CancellationToken, Task<AsyncAteliaResult<TurnCollectionStatus>>> SubmitLargeActionAsync
     );
 
-    private sealed record PlayerActionProposal(
-        string ActionKind,
-        string ActionSummary,
-        string? ActionPayload,
-        string PreActionReason
-    );
-
     internal static async Task<AsyncAteliaResult<TurnCollectionStatus>> TrySubmitLargeActionAsync(
         DurableDict<string> root,
         string actorId,
@@ -92,7 +85,7 @@ internal static class LlmPlayerAgentDriver {
                 var action = result.Message;
                 history.Add(action);
                 if (action.ToolCalls.Count == 0) {
-                    history.Add(new ObservationMessage("你必须调用工具行动：可以先调用 Small-Action 工具编辑 notebook，最终必须调用一个 Large-Action 工具提交回合。不要只返回自然语言。"));
+                    history.Add(new ObservationMessage("你必须调用工具行动：可以先调用 Small-Action 工具编辑 notebook 或执行顺手 interaction，最终必须调用一个 Large-Action 工具提交回合。不要只返回自然语言。"));
                     continue;
                 }
 
@@ -122,24 +115,24 @@ internal static class LlmPlayerAgentDriver {
 
                 if (failure is not null) {
                     toolService.ClearProposal();
-                    history.Add(new ObservationMessage("工具调用失败。请修正参数；可以先编辑 notebook，最终必须调用一个 Large-Action 工具。"));
+                    history.Add(new ObservationMessage("工具调用失败。请修正参数；可以先做 Small-Action（编辑 notebook 或顺手 interaction），最终必须调用一个 Large-Action 工具。"));
                     continue;
                 }
 
                 if (toolService.Proposal is null) {
-                    history.Add(new ObservationMessage("Small-Action 已处理。现在请根据更新后的 Memory-Notebook 和感知，调用一个 Large-Action 工具提交本回合。"));
+                    history.Add(new ObservationMessage("Small-Action 已处理。现在请根据更新后的 Perception-Bundle、Memory-Notebook 和工具结果，继续调用一个 Large-Action 工具提交本回合。"));
                     continue;
                 }
 
-                var proposal = toolService.Proposal;
+                var plan = toolService.Proposal;
                 GameActionValidator.ValidationResult validation;
                 try {
                     validation = await GameActionValidator.ValidateActionAsync(
                         toolService.CurrentPerception,
-                        proposal.ActionKind,
-                        proposal.ActionSummary,
-                        proposal.PreActionReason,
-                        proposal.ActionPayload,
+                        plan.ActionKind,
+                        plan.ActionSummary,
+                        plan.PreActionReason,
+                        plan.ActionPayload,
                         cancellationToken
                     ).ConfigureAwait(false);
                 }
@@ -165,10 +158,10 @@ internal static class LlmPlayerAgentDriver {
                 var submitResult = GameSimulation.SubmitLargeActionForActor(
                     root,
                     actorId,
-                    proposal.ActionKind,
-                    proposal.ActionSummary,
-                    proposal.ActionPayload,
-                    proposal.PreActionReason,
+                    plan.ActionKind,
+                    plan.ActionSummary,
+                    plan.ActionPayload,
+                    plan.PreActionReason,
                     validation.Feedback
                 );
                 return submitResult.IsSuccess
@@ -451,14 +444,28 @@ internal static class LlmPlayerAgentDriver {
     private sealed class PlayerActionToolService {
         private readonly DurableDict<string> _root;
         private readonly string _actorId;
+        private readonly Func<PerceptionBundle, string, string, string, string?, CancellationToken, Task<GameActionValidator.ValidationResult>> _validateActionAsync;
 
         public PlayerActionToolService(DurableDict<string> root, string actorId, PerceptionBundle perception) {
             _root = root;
             _actorId = actorId;
             CurrentPerception = perception;
+            _validateActionAsync = GameActionValidator.ValidateActionAsync;
         }
 
-        public PlayerActionProposal? Proposal { get; private set; }
+        public PlayerActionToolService(
+            DurableDict<string> root,
+            string actorId,
+            PerceptionBundle perception,
+            Func<PerceptionBundle, string, string, string, string?, CancellationToken, Task<GameActionValidator.ValidationResult>> validateActionAsync
+        ) {
+            _root = root;
+            _actorId = actorId;
+            CurrentPerception = perception;
+            _validateActionAsync = validateActionAsync ?? throw new ArgumentNullException(nameof(validateActionAsync));
+        }
+
+        public TerminalActionExecutionPlan? Proposal { get; private set; }
 
         public PerceptionBundle CurrentPerception { get; private set; }
 
@@ -531,15 +538,9 @@ internal static class LlmPlayerAgentDriver {
             [ToolParam(PlayerActionGuideText.RestReasonAttributeDescription)] string reason,
             CancellationToken cancellationToken
         ) {
-            if (!TrySetProposal(
-                new PlayerActionProposal(
-                    "large/rest-a-while",
-                    "谨慎观察并暂不移动",
-                    null,
-                    reason
-                ),
-                out var result
-            )) { return ValueTask.FromResult(result); }
+            if (!TrySetProposal(GameSimulation.BuildRestAWhileTerminalPlan(reason), out var result)) {
+                return ValueTask.FromResult(result);
+            }
 
             return ValueTask.FromResult(result);
         }
@@ -562,65 +563,106 @@ internal static class LlmPlayerAgentDriver {
                 );
             }
 
-            var summary = focus is null
-                ? $"向 {direction} 探索"
-                : $"向 {direction} 探索：{focus}";
-            var payload = focus is null
-                ? $"direction={direction}"
-                : $"direction={direction}\nfocus={focus}";
-
-            if (!TrySetProposal(
-                new PlayerActionProposal(
-                    "large/explore",
-                    summary,
-                    payload,
-                    reason
-                ),
-                out var result
-            )) { return ValueTask.FromResult(result); }
+            if (!TrySetProposal(GameSimulation.BuildExploreTerminalPlan(direction, focus, reason), out var result)) {
+                return ValueTask.FromResult(result);
+            }
 
             return ValueTask.FromResult(result);
         }
 
         [Tool("player_interact", PlayerActionGuideText.InteractToolDescription)]
-        public ValueTask<ToolExecuteResult> InteractAsync(
+        public async ValueTask<ToolExecuteResult> InteractAsync(
             [ToolParam(PlayerActionGuideText.InteractReasonAttributeDescription)] string reason,
             [ToolParam(PlayerActionGuideText.InteractionIdParameterDescription)] string interaction_id,
             CancellationToken cancellationToken
         ) {
-            var interactionResult = GameSimulation.TryGetVisibleInteraction(CurrentPerception, interaction_id);
-            if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
-                return ValueTask.FromResult(
-                    new ToolExecuteResult(
-                        ToolExecutionStatus.Failed,
-                        interactionResult.Error?.Message ?? $"当前看不到 interaction '{interaction_id}'。"
-                    )
+            if (Proposal is not null) {
+                return new ToolExecuteResult(
+                    ToolExecutionStatus.Failed,
+                    "已经提交了 Large-Action，不能再执行 Small-Action。"
                 );
             }
 
-            if (!GameSimulation.InteractionConsumesTurn(interaction)) {
-                return ValueTask.FromResult(
-                    new ToolExecuteResult(
-                        ToolExecutionStatus.Failed,
-                        $"interaction '{interaction_id}' 当前属于顺手小动作，不是 Large-Action；请改选会占用本回合的 interaction，或使用其他 Large-Action 工具。"
-                    )
+            var planResult = GameSimulation.BuildTerminalInteractionPlan(CurrentPerception, interaction_id, reason);
+            if (!planResult.TryGetValue(out var plan) || plan is null) {
+                return new ToolExecuteResult(
+                    ToolExecutionStatus.Failed,
+                    planResult.Error?.Message ?? $"当前不能执行 interaction '{interaction_id}'。"
                 );
             }
 
-            if (!TrySetProposal(
-                new PlayerActionProposal(
-                    "large/interact",
-                    $"{interaction.VisibleLabel} ({interaction.ActionKind})",
-                    GameSimulation.BuildInteractionPayload(interaction),
-                    reason
+            if (plan.IsLargeAction) {
+                if (!TrySetProposal(plan, out var result)) { return result; }
+                return result;
+            }
+
+            GameActionValidator.ValidationResult validation;
+            try {
+                validation = await _validateActionAsync(
+                    CurrentPerception,
+                    plan.ActionKind,
+                    plan.ActionSummary,
+                    plan.PreActionReason,
+                    plan.ActionPayload,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            }
+            catch (Exception ex) {
+                return new ToolExecuteResult(
+                    ToolExecutionStatus.Failed,
+                    $"interaction validator 调用失败：{ex.Message}"
+                );
+            }
+
+            if (!validation.Accepted) {
+                return new ToolExecuteResult(
+                    ToolExecutionStatus.Failed,
+                    $"validator 拒绝 interaction：{validation.Feedback}"
+                );
+            }
+
+            AsyncAteliaResult<ActionResolution> resolutionResult = plan switch {
+                TerminalActionExecutionPlan.Interaction.ImmediateSelf immediate => await GameSimulation.ApplyImmediateSelfInteractionForActorAsync(
+                    _root,
+                    _actorId,
+                    immediate.InteractionId,
+                    immediate.PreActionReason,
+                    validation.Feedback,
+                    cancellationToken
+                ).ConfigureAwait(false),
+                TerminalActionExecutionPlan.Interaction.DeferredTurnEnd deferred => GameSimulation.ApplyDeferredTurnEndInteractionForActor(
+                    _root,
+                    _actorId,
+                    deferred.InteractionId,
+                    deferred.PreActionReason,
+                    validation.Feedback
                 ),
-                out var result
-            )) { return ValueTask.FromResult(result); }
+                _ => AsyncAteliaResult<ActionResolution>.Failure(
+                    new TextAdvError(
+                        "TextAdv.UnsupportedLlmPlayerImmediatePlan",
+                        $"LLM Player 当前不能直接执行 small interaction plan '{plan.GetType().Name}'。"
+                    )
+                )
+            };
 
-            return ValueTask.FromResult(result);
+            if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
+                return new ToolExecuteResult(
+                    ToolExecutionStatus.Failed,
+                    resolutionResult.Error?.Message ?? $"interaction '{interaction_id}' 结算失败。"
+                );
+            }
+
+            CurrentPerception = resolution.NextPerception;
+            return new ToolExecuteResult(
+                ToolExecutionStatus.Success,
+                "Small-Action 已执行。\n[结算摘要]\n"
+                + resolution.Summary
+                + "\n\n[当前 Perception-Bundle]\n"
+                + PerceptionEvidenceRenderer.RenderForPrompt(CurrentPerception)
+            );
         }
 
-        private bool TrySetProposal(PlayerActionProposal proposal, out ToolExecuteResult result) {
+        private bool TrySetProposal(TerminalActionExecutionPlan plan, out ToolExecuteResult result) {
             if (Proposal is not null) {
                 result = new ToolExecuteResult(
                     ToolExecutionStatus.Failed,
@@ -629,7 +671,15 @@ internal static class LlmPlayerAgentDriver {
                 return false;
             }
 
-            if (string.IsNullOrWhiteSpace(proposal.PreActionReason)) {
+            if (!plan.IsLargeAction) {
+                result = new ToolExecuteResult(
+                    ToolExecutionStatus.Failed,
+                    "当前工具只能暂存会结束本回合的 Large-Action。"
+                );
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(plan.PreActionReason)) {
                 result = new ToolExecuteResult(
                     ToolExecutionStatus.Failed,
                     "reason 不能为空；必须提供 grounded 的事前推理。"
@@ -637,10 +687,10 @@ internal static class LlmPlayerAgentDriver {
                 return false;
             }
 
-            Proposal = proposal;
+            Proposal = plan;
             result = new ToolExecuteResult(
                 ToolExecutionStatus.Success,
-                $"已暂存 Large-Action: {proposal.ActionKind} — {proposal.ActionSummary}"
+                $"已暂存 Large-Action: {plan.ActionKind} — {plan.ActionSummary}"
             );
             return true;
         }

@@ -1,0 +1,193 @@
+using System.Reflection;
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
+using Atelia.StateJournal;
+using Xunit;
+
+namespace Atelia.TextAdv.Tests;
+
+public sealed class LlmPlayerActionToolServiceTests : IDisposable {
+    private readonly string _repoDir = Path.Combine(
+        Path.GetTempPath(),
+        "textadv-llm-tool-tests",
+        Guid.NewGuid().ToString("N")
+    );
+
+    public LlmPlayerActionToolServiceTests() {
+        GameMasterResolver.SetStubForTests(GameMasterTestStubs.CreateDeterministicLikeStub());
+    }
+
+    public void Dispose() {
+        GameMasterResolver.ResetForTests();
+        if (Directory.Exists(_repoDir)) {
+            Directory.Delete(_repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RestAWhileAsync_ShouldStoreSharedRestPlan() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var service = CreateToolService(root, GameSimulation.TerminalPlayerActorId);
+
+        var result = await InvokeToolAsync(service, "RestAWhileAsync", "先观察再说。");
+        var plan = GetProposal(service);
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        _ = Assert.IsType<TerminalActionExecutionPlan.RestAWhile>(plan);
+        Assert.Equal("large/rest-a-while", plan!.ActionKind);
+        Assert.Equal("原地休息一会", plan.ActionSummary);
+    }
+
+    [Fact]
+    public async Task InteractAsync_WhenInteractionIsImmediate_ShouldExecuteSmallActionForInternalPlayer() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(
+            GameSimulation.CreateLlmPlayerActor(
+                root,
+                "ally",
+                "同伴",
+                "另一个由 internal LLM 驱动的玩家。",
+                "beach"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.CreateItem("waterskin", "水袋", "一个还空着的旧水袋。", "beach").IsSuccess);
+        Assert.True(gmWorldEdit.MoveItemToActor("waterskin", "ally").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "steady-breath",
+                targetRef: "item:waterskin",
+                actionKind: "prepare",
+                visibleLabel: "把水袋口理顺",
+                preconditionNote: "none",
+                effectNote: "你深吸一口气，让心绪稍稍平复下来。",
+                turnCost: 0,
+                effectScope: GameSimulation.SelfEffectScope,
+                effectSlots: GameSimulation.ImmediateEffectSlot
+            ).IsSuccess
+        );
+
+        var service = CreateToolService(root, "ally", AcceptAllValidationAsync);
+        var result = await InvokeToolAsync(service, "InteractAsync", "先稳住呼吸。", "steady-breath");
+        var perception = GetCurrentPerception(service);
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        Assert.Contains("Small-Action 已执行", result.Content);
+        Assert.Contains("当前 Perception-Bundle", result.Content);
+        Assert.Null(GetProposal(service));
+        Assert.Equal("ally", perception.ActorId);
+        var step = Assert.Single(perception.AcceptedSteps);
+        Assert.Equal("small/interact", step.ActionKind);
+        Assert.False(step.EndsTurn);
+        Assert.Equal(GameSimulation.StepOutcomeCommittedNow, step.StepOutcomeState);
+    }
+
+    [Fact]
+    public async Task InteractAsync_WhenInteractionIsDeferredTurnEnd_ShouldExecuteSmallActionForInternalPlayer() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(
+            GameSimulation.CreateLlmPlayerActor(
+                root,
+                "ally",
+                "同伴",
+                "另一个由 internal LLM 驱动的玩家。",
+                "beach"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.CreateItem("shell", "贝壳", "一枚带着海潮光泽的贝壳。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "nudge-shell",
+                targetRef: "item:shell",
+                actionKind: "inspect",
+                visibleLabel: "拨弄贝壳",
+                preconditionNote: "none",
+                effectNote: "你先把贝壳拨到一边，打算在回合结尾再整理这点发现。",
+                turnCost: 0,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: GameSimulation.TurnEndEffectSlot
+            ).IsSuccess
+        );
+
+        var service = CreateToolService(root, "ally", AcceptAllValidationAsync);
+        var result = await InvokeToolAsync(service, "InteractAsync", "先把贝壳拨开，留到回合末再统一消化。", "nudge-shell");
+        var perception = GetCurrentPerception(service);
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        Assert.Null(GetProposal(service));
+        Assert.Equal("ally", perception.ActorId);
+        var step = Assert.Single(perception.AcceptedSteps);
+        Assert.Equal("small/interact", step.ActionKind);
+        Assert.False(step.EndsTurn);
+        Assert.Equal(GameSimulation.StepOutcomePendingTurnEnd, step.StepOutcomeState);
+    }
+
+    private Repository CreateRepository() {
+        var createResult = Repository.Create(_repoDir);
+        return AssertSuccess(createResult);
+    }
+
+    private static object CreateToolService(
+        DurableDict<string> root,
+        string actorId,
+        Func<PerceptionBundle, string, string, string, string?, CancellationToken, Task<GameActionValidator.ValidationResult>>? validateActionAsync = null
+    ) {
+        var toolServiceType = typeof(LlmPlayerAgentDriver).GetNestedType("PlayerActionToolService", BindingFlags.NonPublic);
+        Assert.NotNull(toolServiceType);
+
+        var perception = GameSimulation.DescribePerceptionForActor(root, actorId);
+        object? service = validateActionAsync is null
+            ? Activator.CreateInstance(toolServiceType!, root, actorId, perception)
+            : Activator.CreateInstance(toolServiceType!, root, actorId, perception, validateActionAsync);
+        Assert.NotNull(service);
+        return service!;
+    }
+
+    private static TerminalActionExecutionPlan? GetProposal(object service) {
+        var property = service.GetType().GetProperty("Proposal", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(property);
+        return property!.GetValue(service) as TerminalActionExecutionPlan;
+    }
+
+    private static PerceptionBundle GetCurrentPerception(object service) {
+        var property = service.GetType().GetProperty("CurrentPerception", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(property);
+        return Assert.IsType<PerceptionBundle>(property!.GetValue(service));
+    }
+
+    private static async Task<ToolExecuteResult> InvokeToolAsync(object service, string methodName, params object?[] args) {
+        var method = service.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(method);
+
+        var invokeArgs = new object?[args.Length + 1];
+        Array.Copy(args, invokeArgs, args.Length);
+        invokeArgs[^1] = CancellationToken.None;
+
+        var valueTask = Assert.IsType<ValueTask<ToolExecuteResult>>(method!.Invoke(service, invokeArgs));
+        return await valueTask;
+    }
+
+    private static T AssertSuccess<T>(AteliaResult<T> result) where T : notnull {
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        Assert.NotNull(result.Value);
+        return result.Value!;
+    }
+
+    private static Task<GameActionValidator.ValidationResult> AcceptAllValidationAsync(
+        PerceptionBundle perception,
+        string actionKind,
+        string actionSummary,
+        string preActionReason,
+        string? actionPayload,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new GameActionValidator.ValidationResult(true, "通过：测试接受。"));
+    }
+}

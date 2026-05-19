@@ -483,11 +483,6 @@ internal static partial class GameSimulation {
         return value.Trim();
     }
 
-    internal static bool InteractionConsumesTurn(InteractionPerception interaction) {
-        ArgumentNullException.ThrowIfNull(interaction);
-        return interaction.TurnCost > 0;
-    }
-
     internal static bool SupportsImmediateSelfInteraction(InteractionPerception interaction) {
         ArgumentNullException.ThrowIfNull(interaction);
         return interaction.TurnCost == 0
@@ -516,16 +511,6 @@ internal static partial class GameSimulation {
         return $"会持续忙碌 {interaction.TurnCost} 个回合";
     }
 
-    internal static InteractionExecutionClass GetInteractionExecutionClass(InteractionPerception interaction) {
-        ArgumentNullException.ThrowIfNull(interaction);
-
-        if (SupportsImmediateSelfInteraction(interaction)) { return InteractionExecutionClass.ImmediateSelf; }
-        if (SupportsDeferredTurnEndInteraction(interaction)) { return InteractionExecutionClass.DeferredTurnEnd; }
-        if (SupportsWorkingInteraction(interaction)) { return InteractionExecutionClass.WorkingStart; }
-        if (interaction.TurnCost == 0) { return InteractionExecutionClass.UnsupportedZeroTurn; }
-        return InteractionExecutionClass.TurnEnding;
-    }
-
     internal static TerminalActionExecutionPlan BuildExploreTerminalPlan(
         string direction,
         string? focus,
@@ -533,32 +518,11 @@ internal static partial class GameSimulation {
     ) {
         direction = NormalizeRequired(direction, nameof(direction));
         focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
-        var actionSummary = focus is null
-            ? $"向 {direction} 探索"
-            : $"向 {direction} 探索：{focus}";
-        return new TerminalActionExecutionPlan(
-            TerminalActionMode.Large,
-            new TerminalActionRequest(
-                ActionKind: "large/explore",
-                ActionSummary: actionSummary,
-                ActionPayload: BuildExplorePayload(direction, focus),
-                PreActionReason: preActionReason
-            ),
-            new TerminalActionResolver.Explore(direction, focus)
-        );
+        return new TerminalActionExecutionPlan.Explore(direction, focus, preActionReason);
     }
 
     internal static TerminalActionExecutionPlan BuildRestAWhileTerminalPlan(string preActionReason) {
-        return new TerminalActionExecutionPlan(
-            TerminalActionMode.Large,
-            new TerminalActionRequest(
-                ActionKind: "large/rest-a-while",
-                ActionSummary: "原地休息一会",
-                ActionPayload: null,
-                PreActionReason: preActionReason
-            ),
-            new TerminalActionResolver.RestAWhile()
-        );
+        return new TerminalActionExecutionPlan.RestAWhile(preActionReason);
     }
 
     internal static AteliaResult<TerminalActionExecutionPlan> BuildTerminalInteractionPlan(
@@ -574,30 +538,11 @@ internal static partial class GameSimulation {
             return interactionResult.Error!;
         }
 
-        var executionClass = GetInteractionExecutionClass(interaction);
-        if (executionClass == InteractionExecutionClass.UnsupportedZeroTurn) {
-            return new TextAdvError(
-                "TextAdv.UnsupportedInteractionExecutionClass",
-                "这个 interaction 目前属于零回合但非即时私有效果的动作类型。",
-                "当前实现还不能安全结算它；请先改用会结束回合的动作，或补完 turn-end / working 流程。"
-            );
+        var executionSpecResult = InteractionExecutionSpec.Describe(interaction);
+        if (!executionSpecResult.TryGetValue(out var executionSpec) || executionSpec is null) {
+            return executionSpecResult.Error!;
         }
 
-        var mode = executionClass switch {
-            InteractionExecutionClass.ImmediateSelf or InteractionExecutionClass.DeferredTurnEnd => TerminalActionMode.Immediate,
-            InteractionExecutionClass.WorkingStart or InteractionExecutionClass.TurnEnding => TerminalActionMode.Large,
-            _ => throw new InvalidOperationException($"Unknown interaction execution class: {executionClass}")
-        };
-        var actionKind = mode == TerminalActionMode.Immediate ? "small/interact" : "large/interact";
-        return new TerminalActionExecutionPlan(
-            mode,
-            new TerminalActionRequest(
-                ActionKind: actionKind,
-                ActionSummary: $"{interaction.VisibleLabel} ({interaction.ActionKind})",
-                ActionPayload: BuildInteractionPayload(interaction),
-                PreActionReason: preActionReason
-            ),
-            new TerminalActionResolver.Interaction(interaction.InteractionId, executionClass)
-        );
+        return executionSpec.BuildPlan(interaction, preActionReason);
     }
 }
