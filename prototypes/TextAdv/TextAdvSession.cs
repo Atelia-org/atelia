@@ -126,6 +126,14 @@ internal sealed class TextAdvSession {
     internal TextAdvSession WithHelpMode(TerminalHelpMode helpMode)
         => new(Repo, Root, BranchName, helpMode);
 
+    internal string RenderPerception(PerceptionBundle perception, bool forceShowFullHelp = false) {
+        ArgumentNullException.ThrowIfNull(perception);
+        return GamePresenter.RenderPerception(perception, HelpMode, HeadAddress, forceShowFullHelp);
+    }
+
+    internal string RenderCurrentPerception(bool forceShowFullHelp = false)
+        => RenderPerception(GameSimulation.DescribeCurrentPerception(Root), forceShowFullHelp);
+
     internal AteliaResult<TextAdvSession> Persist(string repoDir) {
         var state = new TextAdvSessionState {
             CurrentBranchName = BranchName,

@@ -28,7 +28,7 @@ public static partial class GameEntry {
                 output.WriteLine("⚠️ 这是 dev-go 开发者调试移动，不会记录为回合步骤，也不会触发 validator。");
                 output.WriteLine($"🚶 你向 {direction} 方向走去…");
                 output.WriteLine();
-                output.Write(RenderPerceptionForTerminal(session, moveResult.Value!));
+                output.Write(session.RenderPerception(moveResult.Value!));
             }
         );
         return cmd;
@@ -71,10 +71,7 @@ public static partial class GameEntry {
                 output.WriteLine($"✅ 已创建内部玩家 actor: {createdActorId}");
                 output.WriteLine();
                 output.Write(
-                    RenderPerceptionForTerminal(
-                        session,
-                        GameSimulation.DescribePerceptionForActor(root, createdActorId)
-                    )
+                    session.RenderPerception(GameSimulation.DescribePerceptionForActor(root, createdActorId))
                 );
             }
         );
@@ -94,10 +91,7 @@ public static partial class GameEntry {
 
                     var root = session.Root;
                     output.Write(
-                        RenderPerceptionForTerminal(
-                            session,
-                            GameSimulation.DescribePerceptionForActor(root, actorId)
-                        )
+                        session.RenderPerception(GameSimulation.DescribePerceptionForActor(root, actorId))
                     );
                 }
                 catch (Exception ex) {
