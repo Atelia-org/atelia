@@ -291,13 +291,13 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
-    public void GmToolCatalog_PackMetadataShouldMatchWrappedToolDefinitions() {
+    public void GmToolCatalog_ToolSetMetadataShouldMatchWrappedToolDefinitions() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
 
-        foreach (var pack in Enum.GetValues<GmToolPack>()) {
-            var declaredToolNames = GmToolCatalog.GetVisibleToolNames(pack);
-            var wrappedToolNames = GmToolCatalog.CreateExecutor(root, pack)
+        foreach (var toolSet in GmToolCatalog.AllToolSets) {
+            var declaredToolNames = GmToolCatalog.GetVisibleToolNames(toolSet);
+            var wrappedToolNames = GmToolCatalog.CreateExecutor(root, toolSet)
                 .GetVisibleToolDefinitions()
                 .Select(static definition => definition.Name)
                 .ToArray();
@@ -308,7 +308,7 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
-    public void GmToolCatalog_ExploreAuditPackShouldExposeExploreAuditTools() {
+    public void GmToolCatalog_ExploreAuditToolSetShouldExposeExploreAuditTools() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
 
@@ -321,11 +321,11 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
                 GmToolCatalog.SetVisibilityToolName,
                 GmToolCatalog.SetInteractionVisibilityToolName,
             ],
-            GmToolCatalog.GetVisibleToolNames(GmToolPack.ExploreAudit)
+            GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.ExploreAudit)
         );
         Assert.Equal(
-            GmToolCatalog.GetVisibleToolNames(GmToolPack.ExploreAudit),
-            GmToolCatalog.CreateExecutor(root, GmToolPack.ExploreAudit)
+            GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.ExploreAudit),
+            GmToolCatalog.CreateExecutor(root, GmToolCatalog.ToolSets.ExploreAudit)
                 .GetVisibleToolDefinitions()
                 .Select(static definition => definition.Name)
                 .ToArray()
@@ -333,21 +333,21 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
-    public void GmToolCatalog_ExploreMapPackShouldExposeOnlyMapMovementTools() {
+    public void GmToolCatalog_ExploreMapToolSetShouldExposeOnlyMapMovementTools() {
         Assert.Equal(
             [
                 GmToolCatalog.CreateLocationToolName,
                 GmToolCatalog.LinkLocationsToolName,
                 GmToolCatalog.MoveActorToolName,
             ],
-            GmToolCatalog.GetVisibleToolNames(GmToolPack.ExploreMap)
+            GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.ExploreMap)
         );
     }
 
     [Fact]
-    public void GmToolCatalog_CollectedTurnSummaryPackShouldAddActorResolutionTool() {
-        var coreTools = GmToolCatalog.GetVisibleToolNames(GmToolPack.CollectedTurnCore);
-        var summaryTools = GmToolCatalog.GetVisibleToolNames(GmToolPack.CollectedTurnSummary);
+    public void GmToolCatalog_CollectedTurnSummaryToolSetShouldAddActorResolutionTool() {
+        var coreTools = GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.CollectedTurnCore);
+        var summaryTools = GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.CollectedTurnSummary);
 
         Assert.Contains(GmToolCatalog.SetActorResolutionToolName, summaryTools);
         Assert.DoesNotContain(GmToolCatalog.SetActorResolutionToolName, coreTools);
@@ -355,7 +355,7 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
-    public void GmToolCatalog_ImmediateSelfSummaryPackShouldExposeSummaryRepairTools() {
+    public void GmToolCatalog_ImmediateSelfSummaryToolSetShouldExposeSummaryRepairTools() {
         Assert.Equal(
             [
                 GmToolCatalog.CreateItemToolName,
@@ -366,8 +366,34 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
                 GmToolCatalog.SetVisibilityToolName,
                 GmToolCatalog.SetInteractionVisibilityToolName,
             ],
-            GmToolCatalog.GetVisibleToolNames(GmToolPack.ImmediateSelfSummary)
+            GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.ImmediateSelfSummary)
         );
+    }
+
+    [Fact]
+    public void GmToolCatalog_InteractionAuditToolSetShouldBeRestrictedSubsetOfInteractionConsequence() {
+        var auditTools = GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.InteractionAudit);
+        var consequenceTools = GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.InteractionConsequence);
+
+        Assert.All(auditTools, toolName => Assert.Contains(toolName, consequenceTools));
+        Assert.True(auditTools.Count < consequenceTools.Count);
+    }
+
+    [Fact]
+    public void GmToolCatalog_ImmediateSelfConsequenceToolSetShouldExcludeNpcAndActorMovement() {
+        var consequenceTools = GmToolCatalog.GetVisibleToolNames(GmToolCatalog.ToolSets.ImmediateSelfConsequence);
+
+        Assert.DoesNotContain(GmToolCatalog.CreateNpcToolName, consequenceTools);
+        Assert.DoesNotContain(GmToolCatalog.MoveActorToolName, consequenceTools);
+    }
+
+    [Fact]
+    public void GmToolCatalog_AllToolSetNamesShouldBeUnique() {
+        var names = GmToolCatalog.AllToolSets
+            .Select(static toolSet => toolSet.Name)
+            .ToArray();
+
+        Assert.Equal(names.Length, names.Distinct(StringComparer.Ordinal).Count());
     }
 
     [Fact]

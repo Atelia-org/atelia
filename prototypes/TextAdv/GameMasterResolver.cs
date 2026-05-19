@@ -101,7 +101,7 @@ internal static class GameMasterResolver {
         string Name,
         Func<string> BuildObservation,
         bool RequireFinalSummary,
-        GmToolPack ToolPack,
+        GmToolSet ToolSet,
         Func<GmStageRunResult, string?>? ValidatePostcondition = null
     );
 
@@ -256,10 +256,10 @@ internal static class GameMasterResolver {
     ) {
         var history = new List<IHistoryMessage>();
         var client = GetClient(config);
-        var toolExecutors = new Dictionary<GmToolPack, ToolExecutor>();
+        var toolExecutors = new Dictionary<GmToolSet, ToolExecutor>();
 
         foreach (var stage in flow.Stages) {
-            var toolExecutor = GetOrCreateToolExecutor(root, stage.ToolPack, toolExecutors);
+            var toolExecutor = GetOrCreateToolExecutor(root, stage.ToolSet, toolExecutors);
             var visibleToolDefinitions = toolExecutor.GetVisibleToolDefinitions();
             history.Add(new ObservationMessage(BuildStageObservation(stage, visibleToolDefinitions)));
             var stageResult = await RunStageAsync(
@@ -351,20 +351,20 @@ internal static class GameMasterResolver {
                     "explore-map",
                     () => BuildExploreMapStageObservation(context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.ExploreMap,
+                    ToolSet: GmToolCatalog.ToolSets.ExploreMap,
                     ValidatePostcondition: _ => ValidateExploreMapStageCompletion(root, context)
                 ),
                 new GmResolutionStage(
                     "explore-ledger-audit",
                     () => BuildExploreLedgerAuditStageObservation(root, context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.ExploreAudit
+                    ToolSet: GmToolCatalog.ToolSets.ExploreAudit
                 ),
                 new GmResolutionStage(
                     "explore-summary",
                     () => BuildExploreSummaryStageObservation(root, context),
                     RequireFinalSummary: true,
-                    ToolPack: GmToolPack.ExploreAudit
+                    ToolSet: GmToolCatalog.ToolSets.ExploreAudit
                 ),
             ],
             OutputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合探索结算。")
@@ -383,19 +383,19 @@ internal static class GameMasterResolver {
                     "interaction-consequence",
                     () => BuildInteractionConsequenceStageObservation(context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.InteractionConsequence
+                    ToolSet: GmToolCatalog.ToolSets.InteractionConsequence
                 ),
                 new GmResolutionStage(
                     "interaction-affordance-audit",
                     () => BuildInteractionAffordanceAuditStageObservation(root, context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.InteractionAudit
+                    ToolSet: GmToolCatalog.ToolSets.InteractionAudit
                 ),
                 new GmResolutionStage(
                     "interaction-summary",
                     () => BuildInteractionSummaryStageObservation(root, context),
                     RequireFinalSummary: true,
-                    ToolPack: GmToolPack.InteractionConsequence
+                    ToolSet: GmToolCatalog.ToolSets.InteractionConsequence
                 ),
             ],
             OutputPolicy: CreateSummaryOutputPolicy("GM Agent 完成了本回合交互结算。")
@@ -414,19 +414,19 @@ internal static class GameMasterResolver {
                     "collected-turn-consequence",
                     () => BuildCollectedTurnConsequenceStageObservation(context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.CollectedTurnCore
+                    ToolSet: GmToolCatalog.ToolSets.CollectedTurnCore
                 ),
                 new GmResolutionStage(
                     "collected-turn-ledger-audit",
                     () => BuildCollectedTurnLedgerAuditStageObservation(root, context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.CollectedTurnCore
+                    ToolSet: GmToolCatalog.ToolSets.CollectedTurnCore
                 ),
                 new GmResolutionStage(
                     "collected-turn-summary",
                     () => BuildCollectedTurnSummaryStageObservation(root, context),
                     RequireFinalSummary: true,
-                    ToolPack: GmToolPack.CollectedTurnSummary,
+                    ToolSet: GmToolCatalog.ToolSets.CollectedTurnSummary,
                     ValidatePostcondition: _ => ValidateCollectedTurnSummaryStageCompletion(root, context)
                 ),
             ],
@@ -446,19 +446,19 @@ internal static class GameMasterResolver {
                     "immediate-self-consequence",
                     () => BuildImmediateSelfInteractionConsequenceStageObservation(context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.ImmediateSelfConsequence
+                    ToolSet: GmToolCatalog.ToolSets.ImmediateSelfConsequence
                 ),
                 new GmResolutionStage(
                     "immediate-self-affordance-audit",
                     () => BuildImmediateSelfInteractionAffordanceAuditStageObservation(root, context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.ImmediateSelfAudit
+                    ToolSet: GmToolCatalog.ToolSets.ImmediateSelfAudit
                 ),
                 new GmResolutionStage(
                     "immediate-self-summary",
                     () => BuildImmediateSelfInteractionSummaryStageObservation(root, context),
                     RequireFinalSummary: true,
-                    ToolPack: GmToolPack.ImmediateSelfSummary
+                    ToolSet: GmToolCatalog.ToolSets.ImmediateSelfSummary
                 ),
             ],
             OutputPolicy: CreateSummaryOutputPolicy("你顺手做了这个动作，并得到了一点当前能确认的即时反馈。")
@@ -477,19 +477,19 @@ internal static class GameMasterResolver {
                     "interaction-effect-consequence",
                     () => BuildInteractionEffectConsequenceStageObservation(context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.InteractionEffectConsequence
+                    ToolSet: GmToolCatalog.ToolSets.InteractionEffectConsequence
                 ),
                 new GmResolutionStage(
                     "interaction-effect-audit",
                     () => BuildInteractionEffectAuditStageObservation(root, context),
                     RequireFinalSummary: false,
-                    ToolPack: GmToolPack.InteractionEffectAudit
+                    ToolSet: GmToolCatalog.ToolSets.InteractionEffectAudit
                 ),
                 new GmResolutionStage(
                     "interaction-effect-summary",
                     () => BuildInteractionEffectSummaryStageObservation(root, context),
                     RequireFinalSummary: true,
-                    ToolPack: GmToolPack.InteractionEffectConsequence
+                    ToolSet: GmToolCatalog.ToolSets.InteractionEffectConsequence
                 ),
             ],
             OutputPolicy: CreateInteractionEffectOutputPolicy(context.TerminalCanObserveActor)
@@ -666,7 +666,7 @@ internal static class GameMasterResolver {
         var sb = new StringBuilder();
         sb.AppendLine("[阶段 2/3: 实体与交互账本审计]");
         sb.AppendLine("检查刚完成的探索结果：如果最终叙事需要提到具体可见物品、NPC 或可执行动作，必须现在用工具落账。");
-        sb.AppendLine($"可调用 {GmToolCatalog.FormatVisibleToolNames(GmToolPack.ExploreAudit)}。");
+        sb.AppendLine($"可调用 {GmToolCatalog.FormatVisibleToolNames(GmToolCatalog.ToolSets.ExploreAudit)}。");
         sb.AppendLine($"{GmToolCatalog.AddInteractionToolName} 的 precondition_note 没有特别条件时写 none，并明确填写 turn_cost / effect_scope / effect_slots。");
         sb.AppendLine("本阶段不要移动玩家，不要创建更多地点，不要输出最终摘要；工具完成后停止调用工具，文本可留空。");
         sb.AppendLine();
@@ -1128,15 +1128,15 @@ internal static class GameMasterResolver {
 
     private static ToolExecutor GetOrCreateToolExecutor(
         DurableDict<string> root,
-        GmToolPack pack,
-        IDictionary<GmToolPack, ToolExecutor> cache
+        GmToolSet toolSet,
+        IDictionary<GmToolSet, ToolExecutor> cache
     ) {
-        if (cache.TryGetValue(pack, out var executor)) {
+        if (cache.TryGetValue(toolSet, out var executor)) {
             return executor;
         }
 
-        executor = GmToolCatalog.CreateExecutor(root, pack);
-        cache.Add(pack, executor);
+        executor = GmToolCatalog.CreateExecutor(root, toolSet);
+        cache.Add(toolSet, executor);
         return executor;
     }
 
