@@ -511,18 +511,30 @@ internal static partial class GameSimulation {
         return $"会持续忙碌 {interaction.TurnCost} 个回合";
     }
 
-    internal static TerminalActionExecutionPlan BuildExploreTerminalPlan(
+    internal static AteliaResult<TerminalActionExecutionPlan> BuildExploreTerminalPlan(
         string direction,
         string? focus,
         string preActionReason
     ) {
-        direction = NormalizeRequired(direction, nameof(direction));
-        focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
-        return new TerminalActionExecutionPlan.Explore(direction, focus, preActionReason);
+        try {
+            direction = NormalizeRequired(direction, nameof(direction));
+            preActionReason = NormalizeRequired(preActionReason, nameof(preActionReason));
+            focus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
+            return new TerminalActionExecutionPlan.Explore(direction, focus, preActionReason);
+        }
+        catch (ArgumentException ex) {
+            return BuildInvalidTerminalPlanInputError(ex, "explore");
+        }
     }
 
-    internal static TerminalActionExecutionPlan BuildRestAWhileTerminalPlan(string preActionReason) {
-        return new TerminalActionExecutionPlan.RestAWhile(preActionReason);
+    internal static AteliaResult<TerminalActionExecutionPlan> BuildRestAWhileTerminalPlan(string preActionReason) {
+        try {
+            preActionReason = NormalizeRequired(preActionReason, nameof(preActionReason));
+            return new TerminalActionExecutionPlan.RestAWhile(preActionReason);
+        }
+        catch (ArgumentException ex) {
+            return BuildInvalidTerminalPlanInputError(ex, "rest-a-while");
+        }
     }
 
     internal static AteliaResult<TerminalActionExecutionPlan> BuildTerminalInteractionPlan(
@@ -531,18 +543,77 @@ internal static partial class GameSimulation {
         string preActionReason
     ) {
         ArgumentNullException.ThrowIfNull(perception);
-        interactionId = NormalizeRequired(interactionId, nameof(interactionId));
+        try {
+            interactionId = NormalizeRequired(interactionId, nameof(interactionId));
+            preActionReason = NormalizeRequired(preActionReason, nameof(preActionReason));
+        }
+        catch (ArgumentException ex) {
+            return BuildInvalidTerminalPlanInputError(ex, "interact");
+        }
 
         var interactionResult = TryGetVisibleInteraction(perception, interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
-            return interactionResult.Error!;
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return interactionResult.Error!; }
+
+        var interactionPayload = BuildInteractionPayload(interaction);
+        if (SupportsImmediateSelfInteraction(interaction)) {
+            return new TerminalActionExecutionPlan.Interaction(
+                interaction.InteractionId,
+                interaction.VisibleLabel,
+                interaction.ActionKind,
+                interactionPayload,
+                InteractionExecutionKind.ImmediateSelf,
+                preActionReason
+            );
         }
 
-        var executionSpecResult = InteractionExecutionSpec.Describe(interaction);
-        if (!executionSpecResult.TryGetValue(out var executionSpec) || executionSpec is null) {
-            return executionSpecResult.Error!;
+        if (SupportsDeferredTurnEndInteraction(interaction)) {
+            return new TerminalActionExecutionPlan.Interaction(
+                interaction.InteractionId,
+                interaction.VisibleLabel,
+                interaction.ActionKind,
+                interactionPayload,
+                InteractionExecutionKind.DeferredTurnEnd,
+                preActionReason
+            );
         }
 
-        return executionSpec.BuildPlan(interaction, preActionReason);
+        if (SupportsWorkingInteraction(interaction)) {
+            return new TerminalActionExecutionPlan.Interaction(
+                interaction.InteractionId,
+                interaction.VisibleLabel,
+                interaction.ActionKind,
+                interactionPayload,
+                InteractionExecutionKind.WorkingStart,
+                preActionReason
+            );
+        }
+
+        if (interaction.TurnCost == 0) {
+            return new TextAdvError(
+                "TextAdv.UnsupportedInteractionExecutionPlan",
+                "这个 interaction 目前属于零回合但非即时私有效果的动作类型。",
+                "当前实现还不能安全结算它；请先改用会结束回合的动作，或补完 turn-end / working 流程。"
+            );
+        }
+
+        return new TerminalActionExecutionPlan.Interaction(
+            interaction.InteractionId,
+            interaction.VisibleLabel,
+            interaction.ActionKind,
+            interactionPayload,
+            InteractionExecutionKind.TurnEnding,
+            preActionReason
+        );
+    }
+
+    private static TextAdvError BuildInvalidTerminalPlanInputError(ArgumentException ex, string actionName) {
+        ArgumentNullException.ThrowIfNull(ex);
+        actionName = NormalizeRequired(actionName, nameof(actionName));
+        var parameterName = string.IsNullOrWhiteSpace(ex.ParamName) ? "unknown" : ex.ParamName;
+        return new TextAdvError(
+            "TextAdv.InvalidTerminalPlanInput",
+            $"无法构造 '{actionName}' 的终端动作计划：参数 '{parameterName}' 不能为空。",
+            "请提供非空白的 reason、direction 或 interaction-id。"
+        );
     }
 }

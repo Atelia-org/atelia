@@ -148,9 +148,9 @@ internal static class GameMasterTestStubs {
         GmCollectedTurnIntent intent
     ) {
         return intent.ActionKind switch {
-            "large/rest-a-while" => ResolveCollectedRest(root, terminalActorId, intent),
-            "large/explore" => ResolveCollectedExplore(root, gmTools, terminalActorId, intent),
-            "large/interact" => ResolveCollectedInteraction(root, terminalActorId, intent),
+            TerminalActionKinds.LargeRestAWhile => ResolveCollectedRest(root, terminalActorId, intent),
+            TerminalActionKinds.LargeExplore => ResolveCollectedExplore(root, gmTools, terminalActorId, intent),
+            TerminalActionKinds.LargeInteract => ResolveCollectedInteraction(root, terminalActorId, intent),
             _ => ($"你完成了「{intent.ActionSummary}」。", null)
         };
     }

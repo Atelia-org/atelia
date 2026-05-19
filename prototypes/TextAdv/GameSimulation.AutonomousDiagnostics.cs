@@ -174,7 +174,7 @@ internal static partial class GameSimulation {
             var submitResult = SubmitLargeActionForActor(
                 root,
                 actorId,
-                actionKind: "large/rest-a-while",
+                actionKind: TerminalActionKinds.LargeRestAWhile,
                 actionSummary: "诊断模式：谨慎观察并暂不移动",
                 actionPayload: null,
                 preActionReason: $"deterministic diagnostic harness：当前先在「{perception.Location.Name}」保持观察，等待 GM 结算托管玩家的探索结果。",
@@ -198,7 +198,7 @@ internal static partial class GameSimulation {
             + $"选择向 {direction} 探索并寻找「{focus}」。";
 
         return new DiagnosticTerminalAction(
-            "large/explore",
+            TerminalActionKinds.LargeExplore,
             actionSummary,
             actionPayload,
             preActionReason

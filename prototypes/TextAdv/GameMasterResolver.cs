@@ -298,9 +298,7 @@ internal static class GameMasterResolver {
             if (stageResult.Completed) {
                 if (stage.ValidatePostcondition is not null) {
                     var validationError = stage.ValidatePostcondition(stageResult);
-                    if (!string.IsNullOrWhiteSpace(validationError)) {
-                        throw new InvalidOperationException(validationError);
-                    }
+                    if (!string.IsNullOrWhiteSpace(validationError)) { throw new InvalidOperationException(validationError); }
                 }
 
                 if (!stage.RequireFinalSummary) { continue; }
@@ -620,7 +618,7 @@ internal static class GameMasterResolver {
 
         sb.AppendLine();
         sb.AppendLine("[玩家动作]");
-        sb.AppendLine($"- ActionKind: large/explore");
+        sb.AppendLine($"- ActionKind: {TerminalActionKinds.LargeExplore}");
         sb.AppendLine($"- Direction: {context.Direction}");
         sb.AppendLine($"- Focus: {context.Focus ?? "(none)"}");
         sb.AppendLine($"- SuggestedReverseDirection: {context.SuggestedReverseDirection ?? "null"}");
@@ -1110,9 +1108,7 @@ internal static class GameMasterResolver {
     ) {
         foreach (var intent in context.Intents) {
             var actorPerception = GameSimulation.DescribePerceptionForActor(root, intent.ActorId);
-            if (string.IsNullOrWhiteSpace(actorPerception.LastResolution)) {
-                return $"GM Agent 在阶段 collected-turn-summary 结束后仍未为 actor '{intent.ActorId}' 写入私有结算反馈。";
-            }
+            if (string.IsNullOrWhiteSpace(actorPerception.LastResolution)) { return $"GM Agent 在阶段 collected-turn-summary 结束后仍未为 actor '{intent.ActorId}' 写入私有结算反馈。"; }
         }
 
         return null;
@@ -1168,9 +1164,7 @@ internal static class GameMasterResolver {
         GmToolCatalog.ToolSet toolSet,
         IDictionary<GmToolCatalog.ToolSet, ToolExecutor> cache
     ) {
-        if (cache.TryGetValue(toolSet, out var executor)) {
-            return executor;
-        }
+        if (cache.TryGetValue(toolSet, out var executor)) { return executor; }
 
         executor = GmToolCatalog.CreateExecutor(root, toolSet);
         cache.Add(toolSet, executor);

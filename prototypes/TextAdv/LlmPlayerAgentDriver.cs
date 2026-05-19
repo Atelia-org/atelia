@@ -498,7 +498,7 @@ internal static class LlmPlayerAgentDriver {
             try {
                 validation = await GameActionValidator.ValidateActionAsync(
                     CurrentPerception,
-                    actionKind: "small/edit-memory-notebook",
+                    actionKind: TerminalActionKinds.SmallEditMemoryNotebook,
                     proposal.ActionSummary,
                     reason,
                     actionPayload: proposal.ValidatorPayload,
@@ -538,9 +538,17 @@ internal static class LlmPlayerAgentDriver {
             [ToolParam(PlayerActionGuideText.RestReasonAttributeDescription)] string reason,
             CancellationToken cancellationToken
         ) {
-            if (!TrySetProposal(GameSimulation.BuildRestAWhileTerminalPlan(reason), out var result)) {
-                return ValueTask.FromResult(result);
+            var planResult = GameSimulation.BuildRestAWhileTerminalPlan(reason);
+            if (!planResult.TryGetValue(out var plan) || plan is null) {
+                return ValueTask.FromResult(
+                    new ToolExecuteResult(
+                        ToolExecutionStatus.Failed,
+                        planResult.Error?.Message ?? "当前不能构造 rest-a-while 动作。"
+                    )
+                );
             }
+
+            if (!TrySetProposal(plan, out var result)) { return ValueTask.FromResult(result); }
 
             return ValueTask.FromResult(result);
         }
@@ -552,20 +560,18 @@ internal static class LlmPlayerAgentDriver {
             [ToolParam(PlayerActionGuideText.FocusParameterDescription)] string? focus,
             CancellationToken cancellationToken
         ) {
-            direction = string.IsNullOrWhiteSpace(direction) ? string.Empty : direction.Trim();
             focus = NormalizeOptionalToolString(focus);
-            if (string.IsNullOrWhiteSpace(direction)) {
+            var planResult = GameSimulation.BuildExploreTerminalPlan(direction, focus, reason);
+            if (!planResult.TryGetValue(out var plan) || plan is null) {
                 return ValueTask.FromResult(
                     new ToolExecuteResult(
                         ToolExecutionStatus.Failed,
-                        "direction 不能为空。"
+                        planResult.Error?.Message ?? "当前不能构造 explore 动作。"
                     )
                 );
             }
 
-            if (!TrySetProposal(GameSimulation.BuildExploreTerminalPlan(direction, focus, reason), out var result)) {
-                return ValueTask.FromResult(result);
-            }
+            if (!TrySetProposal(plan, out var result)) { return ValueTask.FromResult(result); }
 
             return ValueTask.FromResult(result);
         }
@@ -591,7 +597,7 @@ internal static class LlmPlayerAgentDriver {
                 );
             }
 
-            if (plan.IsLargeAction) {
+            if (plan.Mode == TerminalActionMode.Large) {
                 if (!TrySetProposal(plan, out var result)) { return result; }
                 return result;
             }
@@ -621,26 +627,34 @@ internal static class LlmPlayerAgentDriver {
                 );
             }
 
-            AsyncAteliaResult<ActionResolution> resolutionResult = plan switch {
-                TerminalActionExecutionPlan.Interaction.ImmediateSelf immediate => await GameSimulation.ApplyImmediateSelfInteractionForActorAsync(
+            var interactionPlan = plan as TerminalActionExecutionPlan.Interaction;
+            if (interactionPlan is null) {
+                return new ToolExecuteResult(
+                    ToolExecutionStatus.Failed,
+                    $"interaction '{interaction_id}' 没有生成合法的 interaction plan。"
+                );
+            }
+
+            AsyncAteliaResult<ActionResolution> resolutionResult = interactionPlan.ExecutionKind switch {
+                InteractionExecutionKind.ImmediateSelf => await GameSimulation.ApplyImmediateSelfInteractionForActorAsync(
                     _root,
                     _actorId,
-                    immediate.InteractionId,
-                    immediate.PreActionReason,
+                    interactionPlan.InteractionId,
+                    interactionPlan.PreActionReason,
                     validation.Feedback,
                     cancellationToken
                 ).ConfigureAwait(false),
-                TerminalActionExecutionPlan.Interaction.DeferredTurnEnd deferred => GameSimulation.ApplyDeferredTurnEndInteractionForActor(
+                InteractionExecutionKind.DeferredTurnEnd => GameSimulation.ApplyDeferredTurnEndInteractionForActor(
                     _root,
                     _actorId,
-                    deferred.InteractionId,
-                    deferred.PreActionReason,
+                    interactionPlan.InteractionId,
+                    interactionPlan.PreActionReason,
                     validation.Feedback
                 ),
                 _ => AsyncAteliaResult<ActionResolution>.Failure(
                     new TextAdvError(
                         "TextAdv.UnsupportedLlmPlayerImmediatePlan",
-                        $"LLM Player 当前不能直接执行 small interaction plan '{plan.GetType().Name}'。"
+                        $"LLM Player 当前不能直接执行 executionKind='{interactionPlan.ExecutionKind}' 的 small interaction。"
                     )
                 )
             };
@@ -671,18 +685,10 @@ internal static class LlmPlayerAgentDriver {
                 return false;
             }
 
-            if (!plan.IsLargeAction) {
+            if (plan.Mode != TerminalActionMode.Large) {
                 result = new ToolExecuteResult(
                     ToolExecutionStatus.Failed,
                     "当前工具只能暂存会结束本回合的 Large-Action。"
-                );
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(plan.PreActionReason)) {
-                result = new ToolExecuteResult(
-                    ToolExecutionStatus.Failed,
-                    "reason 不能为空；必须提供 grounded 的事前推理。"
                 );
                 return false;
             }

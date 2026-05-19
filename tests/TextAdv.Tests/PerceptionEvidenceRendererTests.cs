@@ -189,7 +189,7 @@ public sealed class PerceptionEvidenceRendererTests {
             AcceptedSteps: [
                 new TurnStep(
                     StepNumber: 1,
-                    ActionKind: "small/edit-memory-notebook",
+                    ActionKind: TerminalActionKinds.SmallEditMemoryNotebook,
                     ActionSummary: "把泉眼记进 notebook",
                     ActionPayload: null,
                     PreActionReason: "先把可疑线索记下，免得下一回合忘掉。",

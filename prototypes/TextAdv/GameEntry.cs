@@ -177,7 +177,7 @@ public static partial class GameEntry {
                 var mode = ctx.GetValue(modeArg);
 
                 if (string.IsNullOrWhiteSpace(mode)) {
-                    if (!TryLoadSession(out var currentSession, out _ ) || currentSession is null) {
+                    if (!TryLoadSession(out var currentSession, out _) || currentSession is null) {
                         output.Write(GamePresenter.RenderStandaloneHelp(perception: null, TerminalHelpMode.Off));
                         return;
                     }
@@ -290,7 +290,7 @@ public static partial class GameEntry {
                 try {
                     validation = await GameActionValidator.ValidateActionAsync(
                         perception,
-                        actionKind: "small/edit-memory-notebook",
+                        actionKind: TerminalActionKinds.SmallEditMemoryNotebook,
                         notebookEdit.ActionSummary,
                         preActionReason,
                         actionPayload: notebookEdit.ValidatorPayload,
@@ -382,7 +382,13 @@ public static partial class GameEntry {
                 var focus = ctx.GetValue(focusOption);
                 if (!TryGetSession(output, out var session)) { return; }
 
-                var plan = GameSimulation.BuildExploreTerminalPlan(direction, focus, preActionReason);
+                var planResult = GameSimulation.BuildExploreTerminalPlan(direction, focus, preActionReason);
+                if (!planResult.TryGetValue(out var plan) || plan is null) {
+                    output.WriteLine("❌ 当前不能构造这个 explore 动作。");
+                    WriteAteliaError(output, planResult.Error);
+                    return;
+                }
+
                 var result = await s_actionRunner.RunAsync(
                     session,
                     plan,
@@ -443,7 +449,13 @@ public static partial class GameEntry {
                 var preActionReason = ctx.GetValue(reasonArg)!;
                 if (!TryGetSession(output, out var session)) { return; }
 
-                var plan = GameSimulation.BuildRestAWhileTerminalPlan(preActionReason);
+                var planResult = GameSimulation.BuildRestAWhileTerminalPlan(preActionReason);
+                if (!planResult.TryGetValue(out var plan) || plan is null) {
+                    output.WriteLine("❌ 当前不能构造这个 rest-a-while 动作。");
+                    WriteAteliaError(output, planResult.Error);
+                    return;
+                }
+
                 var result = await s_actionRunner.RunAsync(
                     session,
                     plan,

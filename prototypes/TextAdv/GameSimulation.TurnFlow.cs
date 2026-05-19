@@ -242,7 +242,7 @@ internal static partial class GameSimulation {
             : $"向 {direction} 探索：{focus}";
         return await AppendAcceptedLargeActionAndResolveAsync(
             root,
-            actionKind: "large/explore",
+            actionKind: TerminalActionKinds.LargeExplore,
             actionSummary,
             BuildExplorePayload(direction, focus),
             preActionReason,
@@ -270,7 +270,7 @@ internal static partial class GameSimulation {
 
         return await AppendAcceptedLargeActionAndResolveAsync(
             root,
-            actionKind: "large/interact",
+            actionKind: TerminalActionKinds.LargeInteract,
             actionSummary: BuildInteractionActionSummary(interaction),
             actionPayload: BuildInteractionPayload(interaction),
             preActionReason,
@@ -351,7 +351,7 @@ internal static partial class GameSimulation {
         AppendAcceptedStepForActor(
             root,
             actorId,
-            actionKind: "small/interact",
+            actionKind: TerminalActionKinds.SmallInteract,
             actionSummary: BuildInteractionActionSummary(interaction),
             actionPayload: BuildInteractionPayload(interaction),
             preActionReason,
@@ -406,7 +406,7 @@ internal static partial class GameSimulation {
         var step = AppendAcceptedStepForActor(
             root,
             actorId,
-            actionKind: "small/interact",
+            actionKind: TerminalActionKinds.SmallInteract,
             actionSummary: BuildInteractionActionSummary(interaction),
             actionPayload: BuildInteractionPayload(interaction),
             preActionReason,
@@ -452,7 +452,7 @@ internal static partial class GameSimulation {
 
         AppendAcceptedStep(
             root,
-            actionKind: "large/interact",
+            actionKind: TerminalActionKinds.LargeInteract,
             actionSummary,
             actionPayload,
             preActionReason,
@@ -465,7 +465,7 @@ internal static partial class GameSimulation {
         StartWorkingForActor(
             root,
             TerminalPlayerActorId,
-            "large/interact",
+            TerminalActionKinds.LargeInteract,
             actionSummary,
             actionPayload,
             preActionReason,
@@ -513,7 +513,7 @@ internal static partial class GameSimulation {
         AppendAcceptedStepForActor(
             root,
             actorId,
-            actionKind: "small/edit-memory-notebook",
+            actionKind: TerminalActionKinds.SmallEditMemoryNotebook,
             actionSummary: proposal.ActionSummary,
             actionPayload: proposal.CanonicalScriptXml,
             preActionReason,
@@ -534,7 +534,7 @@ internal static partial class GameSimulation {
         const string actionSummary = "原地休息一会";
         return AppendAcceptedLargeActionAndResolve(
             root,
-            actionKind: "large/rest-a-while",
+            actionKind: TerminalActionKinds.LargeRestAWhile,
             actionSummary,
             actionPayload: null,
             preActionReason,
@@ -583,7 +583,38 @@ internal static partial class GameSimulation {
         string validatorFeedback,
         CancellationToken cancellationToken
     ) {
-        return interaction.ExecutionSpec.ExecuteAsync(root, interaction, validatorFeedback, cancellationToken);
+        return interaction.ExecutionKind switch {
+            InteractionExecutionKind.ImmediateSelf => ApplyImmediateSelfInteractionAsync(
+                root,
+                interaction.InteractionId,
+                interaction.PreActionReason,
+                validatorFeedback,
+                cancellationToken
+            ),
+            InteractionExecutionKind.DeferredTurnEnd => Task.FromResult(
+                ApplyDeferredTurnEndInteraction(
+                    root,
+                    interaction.InteractionId,
+                    interaction.PreActionReason,
+                    validatorFeedback
+                )
+            ),
+            InteractionExecutionKind.WorkingStart => ApplyWorkingInteractionAsync(
+                root,
+                interaction.InteractionId,
+                interaction.PreActionReason,
+                validatorFeedback,
+                cancellationToken
+            ),
+            InteractionExecutionKind.TurnEnding => ApplyInteractionAsync(
+                root,
+                interaction.InteractionId,
+                interaction.PreActionReason,
+                validatorFeedback,
+                cancellationToken
+            ),
+            _ => throw new InvalidOperationException($"Unknown interaction execution kind: {interaction.ExecutionKind}")
+        };
     }
 
     private static async Task<AsyncAteliaResult<TurnResolutionPrelude>> PrepareTurnResolutionPreludeAsync(
@@ -765,7 +796,7 @@ internal static partial class GameSimulation {
             StartWorkingForActor(
                 root,
                 actorId,
-                "large/interact",
+                TerminalActionKinds.LargeInteract,
                 actionSummary,
                 actionPayload,
                 preActionReason,
@@ -1074,10 +1105,10 @@ internal static partial class GameSimulation {
         CancellationToken cancellationToken
     ) {
         return intent.ActionKind switch {
-            "large/rest-a-while" => AsyncAteliaResult<ActionResolution>.Success(
+            TerminalActionKinds.LargeRestAWhile => AsyncAteliaResult<ActionResolution>.Success(
                 ResolveRestAcceptedForActor(root, intent.ActorId, prelude, collectedTurnLead: null)
             ),
-            "large/explore" => await ResolveExploreAcceptedForActorAsync(
+            TerminalActionKinds.LargeExplore => await ResolveExploreAcceptedForActorAsync(
                 root,
                 intent.ActorId,
                 ParseRequiredPayloadValue(intent.ActionPayload, "direction"),
@@ -1087,7 +1118,7 @@ internal static partial class GameSimulation {
                 collectedTurnLead: null,
                 cancellationToken
             ).ConfigureAwait(false),
-            "large/interact" => await ResolveInteractionAcceptedForActorAsync(
+            TerminalActionKinds.LargeInteract => await ResolveInteractionAcceptedForActorAsync(
                 root,
                 intent.ActorId,
                 ParseRequiredPayloadValue(intent.ActionPayload, "interactionId"),
@@ -1594,16 +1625,12 @@ internal static partial class GameSimulation {
     ) {
         ArgumentNullException.ThrowIfNull(root);
 
-        if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
-            return AsyncAteliaResult<ActionResolution>.Failure(resolutionResult.Error!);
-        }
+        if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) { return AsyncAteliaResult<ActionResolution>.Failure(resolutionResult.Error!); }
 
         if (HasAnyActiveActor(root)) { return AsyncAteliaResult<ActionResolution>.Success(resolution); }
 
         var autoSummary = await AutoAdvanceBackgroundWorkUntilAnyActorActiveAsync(root, cancellationToken).ConfigureAwait(false);
-        if (!autoSummary.TryGetValue(out var combinedSummary) || string.IsNullOrWhiteSpace(combinedSummary)) {
-            return AsyncAteliaResult<ActionResolution>.Success(resolution);
-        }
+        if (!autoSummary.TryGetValue(out var combinedSummary) || string.IsNullOrWhiteSpace(combinedSummary)) { return AsyncAteliaResult<ActionResolution>.Success(resolution); }
 
         var fullSummary = CombineNonEmptySummaries(resolution.Summary, combinedSummary);
         SetLastResolutionForActiveActors(root, fullSummary);

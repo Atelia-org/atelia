@@ -70,7 +70,7 @@ public sealed class GameSimulationPlayerEquivalenceTests : IDisposable {
                     var submitResult = GameSimulation.SubmitDevLargeActionForActor(
                         stubRoot,
                         actorId,
-                        "large/rest-a-while",
+                        TerminalActionKinds.LargeRestAWhile,
                         $"{actorId} 谨慎观察并暂不移动",
                         null,
                         "测试桩：为 pending internal player 提交保守动作。"
@@ -87,7 +87,7 @@ public sealed class GameSimulationPlayerEquivalenceTests : IDisposable {
         var terminalSubmit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             GameSimulation.TerminalPlayerActorId,
-            "large/rest-a-while",
+            TerminalActionKinds.LargeRestAWhile,
             "终端玩家先提交本回合动作",
             null,
             "测试桩：先让 external-terminal actor 入 barrier。"

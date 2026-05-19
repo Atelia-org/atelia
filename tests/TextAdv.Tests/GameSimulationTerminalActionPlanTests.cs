@@ -46,8 +46,25 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
 
         var plan = AssertSuccess(planResult);
         Assert.Equal(TerminalActionMode.Immediate, plan.Mode);
-        Assert.Equal("small/interact", plan.ActionKind);
-        _ = Assert.IsType<TerminalActionExecutionPlan.Interaction.ImmediateSelf>(plan);
+        Assert.Equal(TerminalActionKinds.SmallInteract, plan.ActionKind);
+        var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
+        Assert.Equal(InteractionExecutionKind.ImmediateSelf, interactionPlan.ExecutionKind);
+    }
+
+    [Fact]
+    public void BuildExploreTerminalPlan_WhenReasonIsBlank_ShouldFailFast() {
+        var planResult = GameSimulation.BuildExploreTerminalPlan(" north ", "观察海岸线", "   ");
+
+        Assert.True(planResult.IsFailure);
+        Assert.Equal("TextAdv.InvalidTerminalPlanInput", planResult.Error!.ErrorCode);
+    }
+
+    [Fact]
+    public void BuildRestAWhileTerminalPlan_WhenReasonIsBlank_ShouldFailFast() {
+        var planResult = GameSimulation.BuildRestAWhileTerminalPlan("   ");
+
+        Assert.True(planResult.IsFailure);
+        Assert.Equal("TextAdv.InvalidTerminalPlanInput", planResult.Error!.ErrorCode);
     }
 
     [Fact]
@@ -79,8 +96,77 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
 
         var plan = AssertSuccess(planResult);
         Assert.Equal(TerminalActionMode.Large, plan.Mode);
-        Assert.Equal("large/interact", plan.ActionKind);
-        _ = Assert.IsType<TerminalActionExecutionPlan.Interaction.WorkingStart>(plan);
+        Assert.Equal(TerminalActionKinds.LargeInteract, plan.ActionKind);
+        var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
+        Assert.Equal(InteractionExecutionKind.WorkingStart, interactionPlan.ExecutionKind);
+    }
+
+    [Fact]
+    public void BuildTerminalInteractionPlan_WhenInteractionIsDeferredTurnEnd_ShouldReturnImmediatePlan() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(gmWorldEdit.CreateItem("shell", "贝壳", "一枚带着海潮光泽的贝壳。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "nudge-shell",
+                targetRef: "item:shell",
+                actionKind: "inspect",
+                visibleLabel: "拨弄贝壳",
+                preconditionNote: "none",
+                effectNote: "你先把贝壳拨到一边，打算在回合结尾再整理这点发现。",
+                turnCost: 0,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: GameSimulation.TurnEndEffectSlot
+            ).IsSuccess
+        );
+
+        var planResult = GameSimulation.BuildTerminalInteractionPlan(
+            GameSimulation.DescribeCurrentPerception(root),
+            "nudge-shell",
+            "先把贝壳拨到一边。"
+        );
+
+        var plan = AssertSuccess(planResult);
+        Assert.Equal(TerminalActionMode.Immediate, plan.Mode);
+        Assert.Equal(TerminalActionKinds.SmallInteract, plan.ActionKind);
+        var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
+        Assert.Equal(InteractionExecutionKind.DeferredTurnEnd, interactionPlan.ExecutionKind);
+    }
+
+    [Fact]
+    public void BuildTerminalInteractionPlan_WhenInteractionEndsTurn_ShouldReturnLargePlan() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(gmWorldEdit.CreateItem("driftwood", "浮木", "一截潮湿而沉重的浮木。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "haul-driftwood",
+                targetRef: "item:driftwood",
+                actionKind: "move",
+                visibleLabel: "把浮木拖回营地边",
+                preconditionNote: "none",
+                effectNote: "你费了一整回合，终于把那截浮木拖到了更顺手的位置。",
+                turnCost: 1,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: GameSimulation.TurnEndEffectSlot
+            ).IsSuccess
+        );
+
+        var planResult = GameSimulation.BuildTerminalInteractionPlan(
+            GameSimulation.DescribeCurrentPerception(root),
+            "haul-driftwood",
+            "先把这截浮木处理好。"
+        );
+
+        var plan = AssertSuccess(planResult);
+        Assert.Equal(TerminalActionMode.Large, plan.Mode);
+        Assert.Equal(TerminalActionKinds.LargeInteract, plan.ActionKind);
+        var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
+        Assert.Equal(InteractionExecutionKind.TurnEnding, interactionPlan.ExecutionKind);
     }
 
     [Fact]
@@ -111,7 +197,7 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
         );
 
         Assert.True(planResult.IsFailure);
-        Assert.Equal("TextAdv.UnsupportedInteractionExecutionSpec", planResult.Error!.ErrorCode);
+        Assert.Equal("TextAdv.UnsupportedInteractionExecutionPlan", planResult.Error!.ErrorCode);
     }
 
     private Repository CreateRepository() {

@@ -35,7 +35,7 @@ public sealed class LlmPlayerActionToolServiceTests : IDisposable {
 
         Assert.Equal(ToolExecutionStatus.Success, result.Status);
         _ = Assert.IsType<TerminalActionExecutionPlan.RestAWhile>(plan);
-        Assert.Equal("large/rest-a-while", plan!.ActionKind);
+        Assert.Equal(TerminalActionKinds.LargeRestAWhile, plan!.ActionKind);
         Assert.Equal("原地休息一会", plan.ActionSummary);
     }
 
@@ -80,7 +80,7 @@ public sealed class LlmPlayerActionToolServiceTests : IDisposable {
         Assert.Null(GetProposal(service));
         Assert.Equal("ally", perception.ActorId);
         var step = Assert.Single(perception.AcceptedSteps);
-        Assert.Equal("small/interact", step.ActionKind);
+        Assert.Equal(TerminalActionKinds.SmallInteract, step.ActionKind);
         Assert.False(step.EndsTurn);
         Assert.Equal(GameSimulation.StepOutcomeCommittedNow, step.StepOutcomeState);
     }
@@ -123,9 +123,51 @@ public sealed class LlmPlayerActionToolServiceTests : IDisposable {
         Assert.Null(GetProposal(service));
         Assert.Equal("ally", perception.ActorId);
         var step = Assert.Single(perception.AcceptedSteps);
-        Assert.Equal("small/interact", step.ActionKind);
+        Assert.Equal(TerminalActionKinds.SmallInteract, step.ActionKind);
         Assert.False(step.EndsTurn);
         Assert.Equal(GameSimulation.StepOutcomePendingTurnEnd, step.StepOutcomeState);
+    }
+
+    [Fact]
+    public async Task InteractAsync_WhenInteractionEndsTurn_ShouldStoreLargeProposalForInternalPlayer() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(
+            GameSimulation.CreateLlmPlayerActor(
+                root,
+                "ally",
+                "同伴",
+                "另一个由 internal LLM 驱动的玩家。",
+                "beach"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.CreateItem("driftwood", "浮木", "一截潮湿而沉重的浮木。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "haul-driftwood",
+                targetRef: "item:driftwood",
+                actionKind: "move",
+                visibleLabel: "把浮木拖回营地边",
+                preconditionNote: "none",
+                effectNote: "你费了一整回合，终于把那截浮木拖到了更顺手的位置。",
+                turnCost: 1,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: GameSimulation.TurnEndEffectSlot
+            ).IsSuccess
+        );
+
+        var service = CreateToolService(root, "ally", AcceptAllValidationAsync);
+        var result = await InvokeToolAsync(service, "InteractAsync", "先把这截浮木处理好。", "haul-driftwood");
+        var plan = GetProposal(service);
+        var perception = GetCurrentPerception(service);
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
+        Assert.Equal(InteractionExecutionKind.TurnEnding, interactionPlan.ExecutionKind);
+        Assert.Empty(perception.AcceptedSteps);
+        Assert.Contains("已暂存 Large-Action", result.Content);
     }
 
     private Repository CreateRepository() {

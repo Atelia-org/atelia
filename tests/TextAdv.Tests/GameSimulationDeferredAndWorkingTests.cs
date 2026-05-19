@@ -146,7 +146,7 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var firstSubmit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            "large/rest-a-while",
+            TerminalActionKinds.LargeRestAWhile,
             "同伴原地休息一会",
             null,
             "让同伴先稳住节奏。"
@@ -167,7 +167,7 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var secondSubmit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            "large/rest-a-while",
+            TerminalActionKinds.LargeRestAWhile,
             "同伴再次原地休息一会",
             null,
             "继续等待石壁那边完工。"
@@ -219,7 +219,7 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var submit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            "large/explore",
+            TerminalActionKinds.LargeExplore,
             "向 north 探索",
             "direction=north",
             "先去北边的密林看看。"
@@ -287,7 +287,7 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var submit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            "large/interact",
+            TerminalActionKinds.LargeInteract,
             "端详贝壳 (inspect)",
             payload,
             "先看看这枚贝壳值不值得带走。"
@@ -354,7 +354,7 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var allySubmit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            "large/interact",
+            TerminalActionKinds.LargeInteract,
             "整理碎石 (work)",
             allyPayload,
             "我收尾石壁时，让同伴继续在旁边整理碎石。"

@@ -64,7 +64,7 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
         Assert.Equal(1, resolution.NextPerception.Slot);
 
         var step = Assert.Single(resolution.NextPerception.AcceptedSteps);
-        Assert.Equal("small/interact", step.ActionKind);
+        Assert.Equal(TerminalActionKinds.SmallInteract, step.ActionKind);
         Assert.False(step.EndsTurn);
         Assert.Equal(GameSimulation.StepOutcomeCommittedNow, step.StepOutcomeState);
         Assert.Equal(resolution.Summary, step.StepOutcomeSummary);
