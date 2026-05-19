@@ -291,24 +291,20 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
-    public void GmToolCatalog_MetadataShouldMatchWrappedToolDefinitions() {
+    public void GmToolCatalog_PackMetadataShouldMatchWrappedToolDefinitions() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
 
-        Assert.Equal(
-            GmToolCatalog.GetVisibleToolNames(GmToolPack.Full),
-            GmToolCatalog.CreateExecutor(root, GmToolPack.Full)
+        foreach (var pack in Enum.GetValues<GmToolPack>()) {
+            var declaredToolNames = GmToolCatalog.GetVisibleToolNames(pack);
+            var wrappedToolNames = GmToolCatalog.CreateExecutor(root, pack)
                 .GetVisibleToolDefinitions()
                 .Select(static definition => definition.Name)
-                .ToArray()
-        );
-        Assert.Equal(
-            GmToolCatalog.GetVisibleToolNames(GmToolPack.ImmediateSelf),
-            GmToolCatalog.CreateExecutor(root, GmToolPack.ImmediateSelf)
-                .GetVisibleToolDefinitions()
-                .Select(static definition => definition.Name)
-                .ToArray()
-        );
+                .ToArray();
+
+            Assert.Equal(declaredToolNames, wrappedToolNames);
+            Assert.Equal(declaredToolNames.Count, declaredToolNames.Distinct(StringComparer.Ordinal).Count());
+        }
     }
 
     [Fact]
@@ -356,6 +352,22 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
         Assert.Contains(GmToolCatalog.SetActorResolutionToolName, summaryTools);
         Assert.DoesNotContain(GmToolCatalog.SetActorResolutionToolName, coreTools);
         Assert.Equal(coreTools.Count + 1, summaryTools.Count);
+    }
+
+    [Fact]
+    public void GmToolCatalog_ImmediateSelfSummaryPackShouldExposeSummaryRepairTools() {
+        Assert.Equal(
+            [
+                GmToolCatalog.CreateItemToolName,
+                GmToolCatalog.UpdateItemToolName,
+                GmToolCatalog.MoveItemToActorToolName,
+                GmToolCatalog.PlaceItemAtLocationToolName,
+                GmToolCatalog.AddInteractionToolName,
+                GmToolCatalog.SetVisibilityToolName,
+                GmToolCatalog.SetInteractionVisibilityToolName,
+            ],
+            GmToolCatalog.GetVisibleToolNames(GmToolPack.ImmediateSelfSummary)
+        );
     }
 
     [Fact]

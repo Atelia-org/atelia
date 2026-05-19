@@ -458,7 +458,7 @@ internal static class GameMasterResolver {
                     "immediate-self-summary",
                     () => BuildImmediateSelfInteractionSummaryStageObservation(root, context),
                     RequireFinalSummary: true,
-                    ToolPack: GmToolPack.ImmediateSelf
+                    ToolPack: GmToolPack.ImmediateSelfSummary
                 ),
             ],
             OutputPolicy: CreateSummaryOutputPolicy("你顺手做了这个动作，并得到了一点当前能确认的即时反馈。")
@@ -915,6 +915,7 @@ internal static class GameMasterResolver {
         sb.AppendLine("[阶段 3/3: immediate-local summary]");
         sb.AppendLine("请输出 1 到 2 句中文即时反馈。只写 acting actor 此刻能确认的结果，只引用已经落账的物品与动作。");
         sb.AppendLine("不要写时间推进，不要写整回合总结，不要复述下一屏结构化清单里已经显而易见的大段信息。");
+        sb.AppendLine("若你发现摘要依赖的新物品、可执行动作或可见性变更仍未落账，可以最后补充必要工具调用；否则不要调用工具。");
         sb.AppendLine();
         AppendInteractionIntent(sb, context);
         AppendPerceptionSnapshot(sb, perception, "最终账本投影");
