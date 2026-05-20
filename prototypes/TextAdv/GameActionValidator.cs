@@ -19,10 +19,10 @@ internal static class GameActionValidator {
 
     private static readonly Lock s_gate = new();
     private static readonly ImmutableArray<ToolDefinition> s_tools = [
-        new ToolDefinition(
-            Name: PointOutIssuesToolName,
-            Description: BuildPointOutIssuesToolDescription(),
-            Parameters: [
+        ToolDefinition.CreateFlat(
+            name: PointOutIssuesToolName,
+            description: BuildPointOutIssuesToolDescription(),
+            parameters: [
                 new ToolParamSpec(
                     name: "problem_summary",
                     description: "一句话概括最主要的不合理之处。",
