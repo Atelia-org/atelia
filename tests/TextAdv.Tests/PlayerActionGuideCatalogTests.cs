@@ -23,6 +23,21 @@ public sealed class PlayerActionGuideCatalogTests {
     }
 
     [Fact]
+    public void LlmManual_AndInteractToolMetadata_ShouldDescribeUnifiedInteractEntry() {
+        var llmManual = PlayerActionGuideCatalog.BuildLlmPlayerManual();
+        var interactMetadata = PlayerActionGuideCatalog.GetInteractToolMetadata();
+
+        Assert.Contains("player_interact 是统一 interact 入口", llmManual);
+        Assert.Contains("small interaction 立即执行且不结束回合", llmManual);
+        Assert.Contains("最终仍必须提交 exactly one Large-Action", llmManual);
+
+        Assert.Contains("统一入口", interactMetadata.Description);
+        Assert.Contains("small interaction 立即执行且不结束回合", interactMetadata.Description);
+        Assert.Contains("Large-Action proposal 暂存", interactMetadata.Description);
+        Assert.Contains("判定这是 small 还是 large", interactMetadata.Parameters[1].Description);
+    }
+
+    [Fact]
     public void GameEntry_ReasonArgumentDescriptions_ShouldReuseSharedContract() {
         var root = GameEntry.BuildGame();
 

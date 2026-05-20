@@ -283,7 +283,7 @@ world
 - `PerceptionBundle` 会投影当前地点的可见物品、可见 NPC、地点交互、物品交互和 actor 交互。
 - Validator 和 GM Agent observation 都包含可见 NPC 与 affordance，避免 Player Agent 或 GM 只靠叙事文本猜测“能做什么”。
 - 真实 GM 工具循环已经能通过 `gm_create_npc` 创建可见 NPC，并通过 `gm_add_interaction` 给 `actor:<id>` 添加 `talk` / `inspect` 等交互。
-- `pmux game interact '<reason>' '<interaction-id>'` 已经把可见 affordance 提升为可执行的 Large-Action。宿主只允许执行当前 Perception-Bundle 中存在的 interaction，动作通过 validator 后交给 GM Agent 按 `targetKind` / `targetId` / `actionKind` / `effectNote` 结算。
+- `pmux game interact '<reason>' '<interaction-id>'` 已经成为可见 affordance 的统一入口。宿主只允许执行当前 Perception-Bundle 中存在的 interaction，并会先按该 interaction 的 turn cost 判定 small / large：small interaction 立即执行；large interaction 通过 validator 后作为本回合的 Large-Action proposal 暂存，再交给 GM Agent 按 `targetKind` / `targetId` / `actionKind` / `effectNote` 结算。
 - `interactions` 现在记录 `preconditionNote` 和自身 `visibility`。`preconditionNote` 会进入玩家可见交互说明和 validator observation；`visibility` 让 GM 可以用 `gm_set_interaction_visibility` 隐藏已消耗或暂时不该显示的 affordance。
 - `items` 现在支持 `ownerActorId`，玩家视图会显示 `actor:player` 持有的物品。GM 可用 `gm_move_item_to_actor` / `gm_place_item_at_location` 结算拿起、交给、放下等持有关系变化。
 
@@ -329,7 +329,7 @@ game
 - `PerceptionBundle` 已经可以通过 `DescribePerceptionForActor(root, actorId)` 按 actor 投影。地点、可见角色、持有物品和 Memory-Notebook 都从 actor ledger 读取；`DescribeCurrentPerception` 只是 `actor:player` 的便捷入口。
 - `currentTurn` 现在只保留真正驱动流程的账本字段，如 `acceptedStepsByActor`、`largeActionByActor`。`barrier` 和“下一个待行动 actor”改为由当前提交状态即时推导，避免把展示性状态写进持久化层。
 - Large-Action 现在会落入 `largeActionByActor`。只有 `actor:player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，并驱动 pending `llm-player` 通过同一套 LLM Player driver 提交 Large-Action。诊断若不想启用真实内部玩家，应在外层显式提交保守动作，而不是让 driver 自己 fallback。
-- pending `llm-player` 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明。`Perception-Bundle` 已包含 actor 自身的 name / kind / profileNote，避免角色缺少自我锚点；输出必须调用 `player_rest_a_while`、`player_explore` 或 `player_interact` 之一提交 Large-Action。
+- pending `llm-player` 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明。`Perception-Bundle` 已包含 actor 自身的 name / kind / profileNote，避免角色缺少自我锚点；输出可先做零到多个 Small-Action，并且可用 `player_interact` 处理当前可见 interaction。系统会按该 interaction 判定 small / large；若是 large，则它会成为该 actor 本回合的 Large-Action proposal。每回合最终仍必须落成 exactly one Large-Action。
 - LLM Player Agent 默认使用 `director-executor` 两阶段管线：导演阶段无工具，专门把该 actor 的确认事实、怀疑、不安/欲望、风险姿态、notebook 建议和推荐行动整理为“导演札记”；执行阶段再拿着这份札记和原始 Perception-Bundle 调用工具。这样把“第三人称心理建模”与“工具可靠执行”拆开，减少角色扮演模式沉迷叙事或 assistant 模式角色驱动力不足的问题。可用 `ATELIA_TEXTADV_LLM_PLAYER_PIPELINE=single` 临时回到单阶段执行。
 - LLM Player Agent 首版也开放 `player_edit_memory_notebook` Small-Action。它可在提交 Large-Action 前编辑自己的 Memory-Notebook，编辑同样经过 `GameActionValidator`，并写入 `acceptedStepsByActor[actorId]`。
 - LLM Player Agent 提交的 Large-Action 会走同一套 `GameActionValidator`。运行时不再提供“provider 失败就回退 `large/rest-a-while`”的产品路径；provider / validator /工具阶段失败会直接返回错误。若测试需要可控输入，应显式注入 `LlmPlayerStub`；若诊断想省掉真实内部玩家，则在更外层直接提交保守动作。
@@ -345,6 +345,7 @@ game
 - 输入：只给该 actor 的 Perception-Bundle、Memory-Notebook、当前动作指南。
 - 输出：通过工具提交动作，而不是直接返回自由文本。
 - 工具：复用终端玩家能做的动作边界，例如 `player_edit_memory_notebook`、`player_interact`、`player_explore`、`player_rest_a_while`。
+- `player_interact`：统一 interaction 入口；small interaction 立即执行，large interaction 暂存为本回合 proposal，但每回合最终仍必须提交 exactly one Large-Action。
 - Validator：与终端玩家同一套 `GameActionValidator`，不为内部 Agent 开后门。
 - 失败：validator 不通过时，把反馈作为 Observation 回灌给该 LLM Player，让它重试；MVP 可设置每 actor 每回合最多 2 到 3 次尝试，超过则自动 `rest-a-while` 或 `hesitate`。
 

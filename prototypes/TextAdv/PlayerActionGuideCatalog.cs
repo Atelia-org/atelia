@@ -46,12 +46,12 @@ internal static class PlayerActionGuideText {
     internal const string EditMemoryNotebookToolDescription = "Small-Action：编辑自己的私人 Memory-Notebook，不结束当前回合。" + NotebookRuleLine;
     internal const string RestAWhileToolDescription = "Large-Action：谨慎观察并暂不移动。没有明确目标、信息不足或风险偏高时优先选择。";
     internal const string ExploreToolDescription = "Large-Action：向指定方向探索。可以沿已知出口前进，也可以朝未知方向试探；若有重点目标，可写进 focus。";
-    internal const string InteractToolDescription = "Large-Action：执行当前 Perception-Bundle 中可见且会占用本回合的 interaction。不要用它提交顺手小动作。";
+    internal const string InteractToolDescription = "当前 Perception-Bundle 中可见 interaction 的统一入口。系统会按该 interaction 的 turn cost 判定 small / large：small interaction 立即执行且不结束回合；large interaction 会作为本回合的 Large-Action proposal 暂存。";
 
     internal const string EditScriptParameterDescription = "TextEditScript 片段或完整 XML。可直接传 <insert side=\"after\" anchor=\"tail\">...</insert>；系统会自动补根节点。每个操作只处理一个 block，内容不能换行。";
     internal const string DirectionParameterDescription = "探索方向，例如 north/south/east/west/inside。可以探索已知出口，也可以试探未知方向。";
     internal const string FocusParameterDescription = "可选：希望重点寻找或确认的对象；没有则传 null。";
-    internal const string InteractionIdParameterDescription = "当前 Perception-Bundle 中可见、且会占用这一回合的 interaction_id。";
+    internal const string InteractionIdParameterDescription = "当前 Perception-Bundle 中可见的 interaction_id。系统会根据该 interaction 判定这是 small 还是 large。";
 }
 
 internal static class PlayerActionGuideCatalog {
@@ -192,9 +192,9 @@ internal static class PlayerActionGuideCatalog {
             sb.AppendLine($"- {line}");
         }
         sb.AppendLine($"- {PlayerActionGuideText.NotebookRuleLine}");
-        sb.AppendLine("- 你可以先调用零到多个不推进时间的 player_edit_memory_notebook。");
-        sb.AppendLine("- 最终必须调用 exactly one 会结束本回合的 Large-Action 工具：player_rest_a_while、player_explore 或 player_interact。");
-        sb.AppendLine("- player_interact 只用于提交当前可见、且会占用这一回合的 interaction；顺手小动作不要用它提交。");
+        sb.AppendLine("- 你可以先调用零到多个不推进时间的 player_edit_memory_notebook，也可以调用 player_interact 处理当前可见 interaction。");
+        sb.AppendLine("- player_interact 是统一 interact 入口：系统会根据当前 interaction 判定 small / large；small interaction 立即执行且不结束回合，large interaction 会作为本回合的 Large-Action proposal 暂存。");
+        sb.AppendLine("- 最终仍必须提交 exactly one Large-Action：可以是 player_rest_a_while、player_explore，或由 player_interact 提交的 large interaction。");
         sb.AppendLine("- 若没有明确目标，或证据不足以支持更积极的动作，优先选择 player_rest_a_while。");
         return sb.ToString();
     }
