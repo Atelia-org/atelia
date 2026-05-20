@@ -85,7 +85,7 @@ internal static class LlmPlayerAgentDriver {
                 var action = result.Message;
                 history.Add(action);
                 if (action.ToolCalls.Count == 0) {
-                    history.Add(new ObservationMessage("你必须调用工具行动：可以先调用 Small-Action 工具编辑 notebook 或执行顺手 interaction，最终必须调用一个 Large-Action 工具提交回合。不要只返回自然语言。"));
+                    history.Add(new ObservationMessage(BuildMissingToolCallObservation()));
                     continue;
                 }
 
@@ -115,12 +115,12 @@ internal static class LlmPlayerAgentDriver {
 
                 if (failure is not null) {
                     toolService.ClearProposal();
-                    history.Add(new ObservationMessage("工具调用失败。请修正参数；可以先做 Small-Action（编辑 notebook 或顺手 interaction），最终必须调用一个 Large-Action 工具。"));
+                    history.Add(new ObservationMessage(BuildToolFailureObservation()));
                     continue;
                 }
 
                 if (toolService.Proposal is null) {
-                    history.Add(new ObservationMessage("Small-Action 已处理。现在请根据更新后的 Perception-Bundle、Memory-Notebook 和工具结果，继续调用一个 Large-Action 工具提交本回合。"));
+                    history.Add(new ObservationMessage(BuildAfterSmallActionObservation()));
                     continue;
                 }
 
@@ -210,15 +210,15 @@ internal static class LlmPlayerAgentDriver {
         return """
 你是 TextAdv 的 LLM Player Agent，负责扮演一个 active player actor。
 
-你的任务是根据自己的 Perception-Bundle、Memory-Notebook、原生工具 schema，以及可能出现的导演札记，为当前回合提交一个 Large-Action。
+你的任务是根据自己的 Perception-Bundle、Memory-Notebook、原生工具 schema，以及可能出现的导演札记，为当前回合完成行动：你可以先做 small actions，也可以用 `player_interact` 处理当前可见 interaction；系统会判定 interaction 属于 small 还是 large，但本回合最终仍必须落成 exactly one Large-Action。
 
 硬规则：
 1. 你只能依据输入给你的 actor 私有视角行动，不能假装知道完整世界真相。
 2. 工具参数里的 reason 必须先说明当前证据如何支持这个动作，不要写成事后解释。
-3. 最终必须调用 exactly one Large-Action 工具提交回合，不要只返回自然语言。
+3. 你必须通过工具行动；可以先做零到多个 Small-Action，也可以用 `player_interact` 处理当前可见 interaction。若该 interaction 属于 small，会立即执行；若属于 large，会成为本回合 proposal。不要只返回自然语言。
 4. 不要试图直接改世界账本；你只是更新自己的记忆或声明玩家意图，GM 会统一结算。
 5. 导演札记是行动参考，不是世界真相；若札记与 Perception-Bundle 冲突，以 Perception-Bundle 和工具结果为准。
-6. 每次工具调用后你会收到结果；若小动作已足够，请继续提交 Large-Action 完成本回合。
+6. 每次工具调用后你会收到结果；若当前只完成了 small actions，请继续行动，直到本回合最终落成 exactly one Large-Action。
 """;
     }
 
@@ -265,7 +265,7 @@ internal static class LlmPlayerAgentDriver {
 
         var text = result.Message.GetFlattenedText().Trim();
         if (string.IsNullOrWhiteSpace(text)) {
-            text = "导演阶段没有产出可见文本。执行阶段请只依据 Perception-Bundle、Memory-Notebook 和可用工具，保守提交 Large-Action。";
+            text = "导演阶段没有产出可见文本。执行阶段请只依据 Perception-Bundle、Memory-Notebook 和可用工具；你可以先做 small actions，也可以用 player_interact 处理当前可见 interaction。系统会判定 small / large，但本回合最终仍要落成 exactly one Large-Action。";
         }
 
         return AsyncAteliaResult<string>.Success(text);
@@ -279,9 +279,22 @@ internal static class LlmPlayerAgentDriver {
 [执行要求]
 - 你现在必须通过工具行动。
 - 如果导演札记建议更新 notebook，可以先调用 player_edit_memory_notebook。
-- 最终必须调用 exactly one Large-Action 工具。
+- 你也可以用 player_interact 处理当前可见 interaction；系统会判定它是 small 还是 large。
+- 若当前只完成了 small actions，请继续行动，直到本回合最终落成 exactly one Large-Action。
 - 不要把导演札记中的猜测当成已确认世界事实。
 """;
+    }
+
+    private static string BuildMissingToolCallObservation() {
+        return "你必须调用工具行动：可以先做 Small-Action（编辑 notebook，或用 player_interact 处理当前可见 interaction）。系统会判定 interaction 是 small 还是 large；若当前只完成了 small actions，请继续行动，直到本回合最终落成 exactly one Large-Action。不要只返回自然语言。";
+    }
+
+    private static string BuildToolFailureObservation() {
+        return "工具调用失败。请修正参数；你可以先做 Small-Action（编辑 notebook，或用 player_interact 处理当前可见 interaction）。系统会判定 interaction 是 small 还是 large；本回合最终仍必须落成 exactly one Large-Action。";
+    }
+
+    private static string BuildAfterSmallActionObservation() {
+        return "Small-Action 已处理。现在请根据更新后的 Perception-Bundle、Memory-Notebook 和工具结果继续行动；你也可以用 player_interact 处理当前可见 interaction。系统会判定它是 small 还是 large，本回合最终仍要落成 exactly one Large-Action。";
     }
 
     private static string BuildInitialObservation(

@@ -38,6 +38,38 @@ public sealed class PlayerActionGuideCatalogTests {
     }
 
     [Fact]
+    public void LlmPlayerRuntimePrompts_ShouldDescribeUnifiedInteractEntry() {
+        var systemPrompt = InvokePrivateStringMethod(typeof(LlmPlayerAgentDriver), "BuildSystemPrompt");
+        var directorObservation = InvokePrivateStringMethod(
+            typeof(LlmPlayerAgentDriver),
+            "BuildDirectorNotesObservation",
+            "先记住眼前事实。"
+        );
+        var missingToolCall = InvokePrivateStringMethod(typeof(LlmPlayerAgentDriver), "BuildMissingToolCallObservation");
+        var toolFailure = InvokePrivateStringMethod(typeof(LlmPlayerAgentDriver), "BuildToolFailureObservation");
+        var afterSmallAction = InvokePrivateStringMethod(typeof(LlmPlayerAgentDriver), "BuildAfterSmallActionObservation");
+
+        Assert.Contains("可以先做 small actions", systemPrompt);
+        Assert.Contains("也可以用 `player_interact` 处理当前可见 interaction", systemPrompt);
+        Assert.DoesNotContain("exactly one Large-Action 工具", systemPrompt);
+
+        Assert.Contains("系统会判定它是 small 还是 large", directorObservation);
+        Assert.Contains("最终落成 exactly one Large-Action", directorObservation);
+
+        Assert.Contains("player_interact 处理当前可见 interaction", missingToolCall);
+        Assert.Contains("最终落成 exactly one Large-Action", missingToolCall);
+        Assert.DoesNotContain("Large-Action 工具", missingToolCall);
+
+        Assert.Contains("player_interact 处理当前可见 interaction", toolFailure);
+        Assert.Contains("最终仍必须落成 exactly one Large-Action", toolFailure);
+        Assert.DoesNotContain("Large-Action 工具", toolFailure);
+
+        Assert.Contains("player_interact 处理当前可见 interaction", afterSmallAction);
+        Assert.Contains("最终仍要落成 exactly one Large-Action", afterSmallAction);
+        Assert.DoesNotContain("Large-Action 工具", afterSmallAction);
+    }
+
+    [Fact]
     public void GameEntry_ReasonArgumentDescriptions_ShouldReuseSharedContract() {
         var root = GameEntry.BuildGame();
 
@@ -146,5 +178,11 @@ public sealed class PlayerActionGuideCatalogTests {
             Assert.NotNull(parameterAttribute);
             Assert.Equal(expectedDescription, parameterAttribute!.Description);
         }
+    }
+
+    private static string InvokePrivateStringMethod(Type type, string methodName, params object?[] args) {
+        var method = type.GetMethod(methodName, BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        return Assert.IsType<string>(method!.Invoke(null, args));
     }
 }

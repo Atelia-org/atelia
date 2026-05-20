@@ -21,7 +21,7 @@
 当前 TextAdv 已经具备这条路线的几个关键支点：
 
 - `GameEntry.cs` 已经提供 PipeMux + System.CommandLine 入口。
-- `GameSimulation.cs` 已经维护 `world/game/player/currentTurn/turnHistory`。
+- `GameSimulation.cs` 已经维护 `world/game/currentTurn/turnHistory`，而玩家状态位于 `world.actors`。
 - `GameActionValidator.cs` 已经有 LLM tool-call 风格的 groundedness validator。
 - `PerceptionBundle`、`TurnStep`、`TurnResolution` 已经表达了“看到局面、提交步骤、回合结算”的骨架。
 - StateJournal 已经承担跨进程持久化，PipeMux static 状态只是热态缓存。
@@ -179,7 +179,7 @@ GM 的自由文本可以保留，但宿主只信任工具结果和结构化 summ
 
 将原先设想的 `rest-a-while` GM-assisted resolution 与正式 `explore` / `move` Large-Action 合并。
 
-原因是：单纯让 GM 为 `rest-a-while` 写结算摘要，目标和效用都不够清晰；而探索和移动可以直接依托现有 `world.locations`、`exits`、`player.location` 数据结构，形成玩家能感知、能验证、能继续游玩的功能闭环。
+原因是：单纯让 GM 为 `rest-a-while` 写结算摘要，目标和效用都不够清晰；而探索和移动可以直接依托现有 `world.locations`、`exits`、`world.actors["player"].locationId` 数据结构，形成玩家能感知、能验证、能继续游玩的功能闭环。
 
 这一阶段的目标是：
 
@@ -237,7 +237,8 @@ world
 │       └── interactions     # inspect / take / use / open / talk 等 affordance id 列表
 ├── actors
 │   └── actor-id
-│       ├── kind             # terminal-player / llm-player / npc
+│       ├── kind             # player / npc
+│       ├── controllerKind?  # external-terminal / internal-llm（player 时使用）
 │       ├── name
 │       ├── locationId
 │       ├── memoryNotebook
@@ -279,13 +280,13 @@ world
 当前实现状态：
 
 - `world.items`、`world.actors`、`world.interactions` 已经进入 StateJournal 账本。
-- 新游戏会创建 `actor:player`，并在 `game.activeActorIds` 中登记终端玩家；终端玩家位置直接存放在 actor ledger 中。
+- 新游戏会创建 actor id 为 `player` 的终端玩家，并在 `game.activeActorIds` 中登记；终端玩家位置直接存放在 actor ledger 中。
 - `PerceptionBundle` 会投影当前地点的可见物品、可见 NPC、地点交互、物品交互和 actor 交互。
 - Validator 和 GM Agent observation 都包含可见 NPC 与 affordance，避免 Player Agent 或 GM 只靠叙事文本猜测“能做什么”。
 - 真实 GM 工具循环已经能通过 `gm_create_npc` 创建可见 NPC，并通过 `gm_add_interaction` 给 `actor:<id>` 添加 `talk` / `inspect` 等交互。
 - `pmux game interact '<reason>' '<interaction-id>'` 已经成为可见 affordance 的统一入口。宿主只允许执行当前 Perception-Bundle 中存在的 interaction，并会先按该 interaction 的 turn cost 判定 small / large：small interaction 立即执行；large interaction 通过 validator 后作为本回合的 Large-Action proposal 暂存，再交给 GM Agent 按 `targetKind` / `targetId` / `actionKind` / `effectNote` 结算。
 - `interactions` 现在记录 `preconditionNote` 和自身 `visibility`。`preconditionNote` 会进入玩家可见交互说明和 validator observation；`visibility` 让 GM 可以用 `gm_set_interaction_visibility` 隐藏已消耗或暂时不该显示的 affordance。
-- `items` 现在支持 `ownerActorId`，玩家视图会显示 `actor:player` 持有的物品。GM 可用 `gm_move_item_to_actor` / `gm_place_item_at_location` 结算拿起、交给、放下等持有关系变化。
+- `items` 现在支持 `ownerActorId`，玩家视图会显示 `player` 持有的物品。GM 可用 `gm_move_item_to_actor` / `gm_place_item_at_location` 结算拿起、交给、放下等持有关系变化。
 
 这一落地方式特意没有把 `interactions` 嵌入 item 或 actor 内部，而是保留全局 `world.interactions` 索引。原因是后续 Phase 4 里，不同主体的可见 affordance 可能会按 actor、位置、关系、记忆单独过滤；全局交互账本更利于审计、投影和工具校验。
 
@@ -324,12 +325,12 @@ game
 
 当前 Phase 4 前置落地：
 
-- `game.activeActorIds` 已存在；新游戏会登记 `actor:player`，开发者可用 `dev-add-llm-player` 添加 active `llm-player`。它代表“需要参与 Player 回合收集的主体”，不等同于所有 NPC。
-- `world.actors` 中的 `kind` 已预留 `terminal-player` / `llm-player` / `npc`。NPC 可以被 GM 创建和被玩家感知，但暂不自动声明 Large-Action。
-- `PerceptionBundle` 已经可以通过 `DescribePerceptionForActor(root, actorId)` 按 actor 投影。地点、可见角色、持有物品和 Memory-Notebook 都从 actor ledger 读取；`DescribeCurrentPerception` 只是 `actor:player` 的便捷入口。
+- `game.activeActorIds` 已存在；新游戏会登记 `player`，开发者可用 `dev-add-llm-player` 添加由 `controllerKind=internal-llm` 驱动的 active player actor。它代表“需要参与 Player 回合收集的主体”，不等同于所有 NPC。
+- `world.actors` 现在用 `kind = player | npc` 表示角色类型；若是 player，再用 `controllerKind = external-terminal | internal-llm` 区分终端玩家与内置 LLM 玩家。NPC 可以被 GM 创建和被玩家感知，但暂不自动声明 Large-Action。
+- `PerceptionBundle` 已经可以通过 `DescribePerceptionForActor(root, actorId)` 按 actor 投影。地点、可见角色、持有物品和 Memory-Notebook 都从 actor ledger 读取；`DescribeCurrentPerception` 只是 `player` 的便捷入口。
 - `currentTurn` 现在只保留真正驱动流程的账本字段，如 `acceptedStepsByActor`、`largeActionByActor`。`barrier` 和“下一个待行动 actor”改为由当前提交状态即时推导，避免把展示性状态写进持久化层。
-- Large-Action 现在会落入 `largeActionByActor`。只有 `actor:player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，并驱动 pending `llm-player` 通过同一套 LLM Player driver 提交 Large-Action。诊断若不想启用真实内部玩家，应在外层显式提交保守动作，而不是让 driver 自己 fallback。
-- pending `llm-player` 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明。`Perception-Bundle` 已包含 actor 自身的 name / kind / profileNote，避免角色缺少自我锚点；输出可先做零到多个 Small-Action，并且可用 `player_interact` 处理当前可见 interaction。系统会按该 interaction 判定 small / large；若是 large，则它会成为该 actor 本回合的 Large-Action proposal。每回合最终仍必须落成 exactly one Large-Action。
+- Large-Action 现在会落入 `largeActionByActor`。只有 `player` active 时仍保持原有“通过 validator 后立刻 GM 结算”的单玩家流程；如果存在多个 active actor，终端玩家 Large-Action 会先进入回合收集态，并驱动 pending 的 `controllerKind=internal-llm` player 通过同一套 LLM Player driver 提交 Large-Action。诊断若不想启用真实内部玩家，应在外层显式提交保守动作，而不是让 driver 自己 fallback。
+- pending 的 `controllerKind=internal-llm` player 现在会先尝试真实 LLM Player Agent：输入只包含该 actor 的 `Perception-Bundle`、Memory-Notebook 和可用动作工具说明。`Perception-Bundle` 已包含 actor 自身的 name / kind / profileNote，避免角色缺少自我锚点；输出可先做零到多个 Small-Action，并且可用 `player_interact` 处理当前可见 interaction。系统会按该 interaction 判定 small / large；若是 large，则它会成为该 actor 本回合的 Large-Action proposal。每回合最终仍必须落成 exactly one Large-Action。
 - LLM Player Agent 默认使用 `director-executor` 两阶段管线：导演阶段无工具，专门把该 actor 的确认事实、怀疑、不安/欲望、风险姿态、notebook 建议和推荐行动整理为“导演札记”；执行阶段再拿着这份札记和原始 Perception-Bundle 调用工具。这样把“第三人称心理建模”与“工具可靠执行”拆开，减少角色扮演模式沉迷叙事或 assistant 模式角色驱动力不足的问题。可用 `ATELIA_TEXTADV_LLM_PLAYER_PIPELINE=single` 临时回到单阶段执行。
 - LLM Player Agent 首版也开放 `player_edit_memory_notebook` Small-Action。它可在提交 Large-Action 前编辑自己的 Memory-Notebook，编辑同样经过 `GameActionValidator`，并写入 `acceptedStepsByActor[actorId]`。
 - LLM Player Agent 提交的 Large-Action 会走同一套 `GameActionValidator`。运行时不再提供“provider 失败就回退 `large/rest-a-while`”的产品路径；provider / validator /工具阶段失败会直接返回错误。若测试需要可控输入，应显式注入 `LlmPlayerStub`；若诊断想省掉真实内部玩家，则在更外层直接提交保守动作。
@@ -402,9 +403,10 @@ root
 │   ├── turnHistory
 │   ├── gmTrace
 │   └── eventQueue
-└── player
-    ├── location
-    └── memoryNotebook
+└── world.actors["player"]
+    ├── locationId
+    ├── memoryNotebook
+    └── controllerKind
 ```
 
 `rulebook` 首版可以是 `DurableText`，用 TextEditScript 风格的小增量编辑维护。等规则结构稳定后，再把高频字段提升到 durable dict schema。
