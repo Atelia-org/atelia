@@ -694,16 +694,17 @@ internal static partial class GameSimulation {
         actorId = NormalizeRequired(actorId, nameof(actorId));
         ArgumentNullException.ThrowIfNull(plan);
 
-        var interactionResult = TryGetVisibleInteraction(DescribePerceptionForActor(root, actorId), plan.InteractionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
-            return Task.FromResult(AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!));
+        var planResult = TryBuildVisibleInteractionPlanForActor(root, actorId, plan.InteractionId, plan.PreActionReason);
+        if (!planResult.TryGetValue(out var interactionPlanPair)) {
+            return Task.FromResult(AsyncAteliaResult<ActionResolution>.Failure(planResult.Error!));
         }
 
+        var (interaction, canonicalPlan) = interactionPlanPair!;
         return ExecuteInteractionPlanForActorAsync(
             root,
             actorId,
             interaction,
-            plan,
+            canonicalPlan,
             validatorFeedback,
             cancellationToken
         );

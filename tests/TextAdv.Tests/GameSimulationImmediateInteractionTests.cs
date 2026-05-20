@@ -75,6 +75,74 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
+    public async Task ExecuteInteractionPlanForActorAsync_ShouldRebuildCanonicalPlanInsteadOfTrustingForgedExecutionKindOrDescriptor() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(
+            gmWorldEdit.CreateItem(
+                itemId: "waterskin",
+                name: "水袋",
+                description: "一个还空着的旧水袋。",
+                locationId: "beach"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.MoveItemToActor("waterskin", "player").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "steady-breath",
+                targetRef: "item:waterskin",
+                actionKind: "prepare",
+                visibleLabel: "把水袋口理顺",
+                preconditionNote: "none",
+                effectNote: "你深吸一口气，让心绪稍稍平复下来。",
+                turnCost: 0,
+                effectScope: GameSimulation.SelfEffectScope,
+                effectSlots: GameSimulation.ImmediateEffectSlot
+            ).IsSuccess
+        );
+
+        var canonicalPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(
+            AssertSuccess(
+                GameSimulation.BuildTerminalInteractionPlan(
+                    GameSimulation.DescribeCurrentPerception(root),
+                    "steady-breath",
+                    "先稳住呼吸，再决定接下来要做什么。"
+                )
+            )
+        );
+        var forgedPlan = canonicalPlan with {
+            VisibleLabel = "伪造动作",
+            InteractionActionKind = "hack",
+            InteractionPayload = "{\"forged\":true}",
+            ExecutionKind = InteractionExecutionKind.TurnEnding
+        };
+
+        var resolutionResult = await GameSimulation.ExecuteInteractionPlanForActorAsync(
+            root,
+            GameSimulation.TerminalPlayerActorId,
+            forgedPlan,
+            "通过：这一步 grounded。",
+            CancellationToken.None
+        );
+        Assert.True(resolutionResult.IsSuccess, resolutionResult.Error?.Message);
+
+        var resolution = resolutionResult.Value!;
+        Assert.Equal(1, resolution.NextPerception.Day);
+        Assert.Equal(1, resolution.NextPerception.Slot);
+
+        var step = Assert.Single(resolution.NextPerception.AcceptedSteps);
+        Assert.Equal(TerminalActionKinds.SmallInteract, step.ActionKind);
+        Assert.Equal("把水袋口理顺 (prepare)", step.ActionSummary);
+        Assert.False(step.EndsTurn);
+        Assert.Equal(GameSimulation.StepOutcomeCommittedNow, step.StepOutcomeState);
+        Assert.DoesNotContain("伪造动作", step.ActionSummary);
+
+        var turnStatus = GameSimulation.DescribeCurrentTurnStatus(root);
+        Assert.False(turnStatus.AllActiveActorsSubmittedLargeAction);
+    }
+
+    [Fact]
     public async Task ApplyImmediateSelfInteractionAsync_TakeItem_ShouldUpdateInventoryAndHideConsumedInteraction() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
