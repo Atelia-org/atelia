@@ -171,6 +171,49 @@ public sealed class LlmPlayerActionToolServiceTests : IDisposable {
     }
 
     [Fact]
+    public async Task InteractAsync_WhenInteractionStartsWorking_ShouldStoreLargeProposalForInternalPlayer() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(
+            GameSimulation.CreateLlmPlayerActor(
+                root,
+                "ally",
+                "同伴",
+                "另一个由 internal LLM 驱动的玩家。",
+                "beach"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.CreateItem("wall", "薄石壁", "石壁上有一处可继续凿开的薄弱点。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "chip-wall",
+                targetRef: "item:wall",
+                actionKind: "work",
+                visibleLabel: "继续凿石壁",
+                preconditionNote: "none",
+                effectNote: "石屑簌簌落下，你把这项活又往前推进了一截。",
+                turnCost: 3,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: $"{GameSimulation.PerTurnEndEffectSlot},{GameSimulation.OnCompletionEffectSlot}"
+            ).IsSuccess
+        );
+
+        var service = CreateToolService(root, "ally", AcceptAllValidationAsync);
+        var result = await InvokeToolAsync(service, "InteractAsync", "先持续处理这面薄石壁。", "chip-wall");
+        var plan = GetProposal(service);
+        var perception = GetCurrentPerception(service);
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
+        Assert.Equal(InteractionExecutionKind.WorkingStart, interactionPlan.ExecutionKind);
+        Assert.Equal(TerminalActionTier.Large, interactionPlan.Tier);
+        Assert.Empty(perception.AcceptedSteps);
+        Assert.Contains("已暂存 Large-Action", result.Content);
+    }
+
+    [Fact]
     public async Task InteractAsync_WhenInteractionIsSmall_ShouldValidateUsingPlanDescriptor() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);

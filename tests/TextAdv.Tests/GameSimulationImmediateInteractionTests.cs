@@ -143,6 +143,60 @@ public sealed class GameSimulationImmediateInteractionTests : IDisposable {
     }
 
     [Fact]
+    public async Task ExecuteInteractionPlanForActorAsync_ShouldFailWhenCanonicalInteractionIsNoLongerVisible() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+        Assert.True(
+            gmWorldEdit.CreateItem(
+                itemId: "waterskin",
+                name: "水袋",
+                description: "一个还空着的旧水袋。",
+                locationId: "beach"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.MoveItemToActor("waterskin", "player").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "steady-breath",
+                targetRef: "item:waterskin",
+                actionKind: "prepare",
+                visibleLabel: "把水袋口理顺",
+                preconditionNote: "none",
+                effectNote: "你深吸一口气，让心绪稍稍平复下来。",
+                turnCost: 0,
+                effectScope: GameSimulation.SelfEffectScope,
+                effectSlots: GameSimulation.ImmediateEffectSlot
+            ).IsSuccess
+        );
+
+        var canonicalPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(
+            AssertSuccess(
+                GameSimulation.BuildTerminalInteractionPlan(
+                    GameSimulation.DescribeCurrentPerception(root),
+                    "steady-breath",
+                    "先稳住呼吸，再决定接下来要做什么。"
+                )
+            )
+        );
+        Assert.True(gmWorldEdit.SetInteractionVisibility("steady-breath", "hidden").IsSuccess);
+
+        var resolutionResult = await GameSimulation.ExecuteInteractionPlanForActorAsync(
+            root,
+            GameSimulation.TerminalPlayerActorId,
+            canonicalPlan,
+            "通过：这一步 grounded。",
+            CancellationToken.None
+        );
+
+        Assert.False(resolutionResult.IsSuccess);
+        Assert.Equal("TextAdv.InteractionNotVisible", resolutionResult.Error?.ErrorCode);
+        Assert.Empty(GameSimulation.DescribeCurrentPerception(root).AcceptedSteps);
+        var turnStatus = GameSimulation.DescribeCurrentTurnStatus(root);
+        Assert.False(turnStatus.AllActiveActorsSubmittedLargeAction);
+    }
+
+    [Fact]
     public async Task ApplyImmediateSelfInteractionAsync_TakeItem_ShouldUpdateInventoryAndHideConsumedInteraction() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);

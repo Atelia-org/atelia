@@ -319,19 +319,13 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         );
         Assert.True(startResult.IsSuccess, startResult.Error?.Message);
 
-        var payload = GameSimulation.BuildInteractionPayload(
-            GameSimulation.TryGetVisibleInteraction(
-                GameSimulation.DescribePerceptionForActor(root, "ally"),
-                "inspect-shell"
-            ).Value!
-        );
         var submit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
             new ActionDescriptor(
                 TerminalActionKinds.LargeInteract,
-                "端详贝壳 (inspect)",
-                payload,
+                "伪造动作 (hack)",
+                "interactionId=inspect-shell\ntarget=item:forged-shell\nactionKind=hack\nvisibleLabel=伪造动作\neffectNote=伪造效果\nturnCost=99\neffectScope=self\neffectSlots=immediate",
                 "先看看这枚贝壳值不值得带走。"
             )
         );
@@ -340,7 +334,132 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var resolution = await GameSimulation.ApplyReadyCollectedTurnAsync(root, CancellationToken.None);
         Assert.True(resolution.IsSuccess, resolution.Error?.Message);
         Assert.Contains("端详贝壳", resolution.Value!.Summary);
+        Assert.DoesNotContain("伪造动作", resolution.Value.Summary);
         Assert.Contains("普通海边拾到的东西", GameSimulation.DescribePerceptionForActor(root, "ally").LastResolution);
+    }
+
+    [Fact]
+    public async Task CollectedTurn_ShouldRejectSubmittedLargeInteraction_WhenCanonicalInteractionIsDeferredTurnEnd() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(GameSimulation.CreateLlmPlayerActor(root, "ally", "同伴", "另一个活跃中的同行者。", "beach").IsSuccess);
+        Assert.True(gmWorldEdit.CreateItem("wall", "薄石壁", "石壁上有一处可继续凿开的薄弱点。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "chip-wall",
+                targetRef: "item:wall",
+                actionKind: "work",
+                visibleLabel: "继续凿石壁",
+                preconditionNote: "none",
+                effectNote: "石屑簌簌落下，你把这项活又往前推进了一截。",
+                turnCost: 3,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: $"{GameSimulation.PerTurnEndEffectSlot},{GameSimulation.OnCompletionEffectSlot}"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.CreateItem("shell", "贝壳", "一枚带着海潮光泽的贝壳。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "nudge-shell",
+                targetRef: "item:shell",
+                actionKind: "poke",
+                visibleLabel: "拨一下贝壳",
+                preconditionNote: "none",
+                effectNote: "你顺手拨了拨那枚贝壳，让它在沙面上打了个转。",
+                turnCost: 0,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: GameSimulation.TurnEndEffectSlot
+            ).IsSuccess
+        );
+
+        var startResult = await GameSimulation.ApplyWorkingInteractionAsync(
+            root,
+            "chip-wall",
+            "我继续凿石壁，让同伴顺手碰碰旁边的贝壳。",
+            "通过",
+            CancellationToken.None
+        );
+        Assert.True(startResult.IsSuccess, startResult.Error?.Message);
+
+        var submit = GameSimulation.SubmitDevLargeActionForActor(
+            root,
+            "ally",
+            new ActionDescriptor(
+                TerminalActionKinds.LargeInteract,
+                "硬塞成大动作",
+                "interactionId=nudge-shell\nvisibleLabel=硬塞成大动作\nturnCost=1",
+                "想故意验证 collected-turn 会不会盲信提交内容。"
+            )
+        );
+        Assert.True(submit.IsSuccess, submit.Error?.Message);
+
+        var resolution = await GameSimulation.ApplyReadyCollectedTurnAsync(root, CancellationToken.None);
+        Assert.False(resolution.IsSuccess);
+        Assert.Equal("TextAdv.UnsupportedCollectedInteractionExecutionKind", resolution.Error?.ErrorCode);
+
+        var turnStatus = GameSimulation.DescribeCurrentTurnStatus(root);
+        Assert.Equal(1, turnStatus.Day);
+        Assert.Equal(2, turnStatus.Slot);
+        Assert.Single(turnStatus.Actors);
+        Assert.Equal("ally", turnStatus.TurnOwnerActorId);
+        Assert.True(turnStatus.AllActiveActorsSubmittedLargeAction);
+    }
+
+    [Fact]
+    public async Task CollectedTurn_ShouldFailBeforePreludeMutatesState_WhenSubmittedLargeInteractionPayloadIsMissingInteractionId() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(GameSimulation.CreateLlmPlayerActor(root, "ally", "同伴", "另一个活跃中的同行者。", "beach").IsSuccess);
+        Assert.True(gmWorldEdit.CreateItem("wall", "薄石壁", "石壁上有一处可继续凿开的薄弱点。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "chip-wall",
+                targetRef: "item:wall",
+                actionKind: "work",
+                visibleLabel: "继续凿石壁",
+                preconditionNote: "none",
+                effectNote: "石屑簌簌落下，你把这项活又往前推进了一截。",
+                turnCost: 3,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: $"{GameSimulation.PerTurnEndEffectSlot},{GameSimulation.OnCompletionEffectSlot}"
+            ).IsSuccess
+        );
+
+        var startResult = await GameSimulation.ApplyWorkingInteractionAsync(
+            root,
+            "chip-wall",
+            "我继续凿石壁，让同伴先提交一个坏掉的 interaction payload。",
+            "通过",
+            CancellationToken.None
+        );
+        Assert.True(startResult.IsSuccess, startResult.Error?.Message);
+
+        var submit = GameSimulation.SubmitDevLargeActionForActor(
+            root,
+            "ally",
+            new ActionDescriptor(
+                TerminalActionKinds.LargeInteract,
+                "坏掉的 payload",
+                "visibleLabel=坏掉的 payload\nturnCost=1",
+                "想故意验证 collected-turn 会不会在失败前污染 turn state。"
+            )
+        );
+        Assert.True(submit.IsSuccess, submit.Error?.Message);
+
+        var resolution = await GameSimulation.ApplyReadyCollectedTurnAsync(root, CancellationToken.None);
+        Assert.False(resolution.IsSuccess);
+        Assert.Equal("TextAdv.InvalidCollectedActionDescriptor", resolution.Error?.ErrorCode);
+
+        var turnStatus = GameSimulation.DescribeCurrentTurnStatus(root);
+        Assert.Equal(1, turnStatus.Day);
+        Assert.Equal(2, turnStatus.Slot);
+        Assert.Single(turnStatus.Actors);
+        Assert.Equal("ally", turnStatus.TurnOwnerActorId);
+        Assert.True(turnStatus.AllActiveActorsSubmittedLargeAction);
     }
 
     [Fact]

@@ -88,15 +88,27 @@ internal static partial class GameSimulation {
             );
         }
 
-        var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
-        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<ActionResolution>.Failure(preludeResult.Error!); }
-
         var intents = ReadLargeActionIntents(root);
         if (intents.Count == 1) {
+            var singleIntentValidationResult = ValidateAcceptedCollectedTurnDescriptorForCanonicalBuild(intents[0]);
+            if (!singleIntentValidationResult.IsSuccess) {
+                return AsyncAteliaResult<ActionResolution>.Failure(singleIntentValidationResult.Error!);
+            }
+
+            var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
+            if (!preludeResult.TryGetValue(out var prelude) || prelude is null) { return AsyncAteliaResult<ActionResolution>.Failure(preludeResult.Error!); }
+
+            var singleIntentTargetResult = TryBuildAcceptedCollectedTurnResolutionTargetForActor(root, intents[0]);
+            if (!singleIntentTargetResult.TryGetValue(out var singleIntentTarget)) {
+                return AsyncAteliaResult<ActionResolution>.Failure(singleIntentTargetResult.Error!);
+            }
+
             try {
-                return await ResolveCollectedTurnFromIntentAsync(
+                return await ResolveAcceptedCollectedTurnResolutionTargetForActorAsync(
                     root,
-                    intents[0],
+                    intents[0].ActorId,
+                    singleIntentTarget.Plan,
+                    singleIntentTarget.Interaction,
                     prelude,
                     cancellationToken
                 ).ConfigureAwait(false);
@@ -111,6 +123,9 @@ internal static partial class GameSimulation {
             }
         }
 
+        var gmPreludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
+        if (!gmPreludeResult.TryGetValue(out var gmPrelude) || gmPrelude is null) { return AsyncAteliaResult<ActionResolution>.Failure(gmPreludeResult.Error!); }
+
         try {
             var gmContext = BuildGmCollectedTurnContext(root, intents);
             ClearLastResolutionByActor(root);
@@ -122,15 +137,15 @@ internal static partial class GameSimulation {
 
             _ = AdvanceClock(root);
             var resolutionSummary = CombineNonEmptySummaries(
-                prelude.PendingTurnEndEffects.TerminalVisibleSummary,
-                prelude.BackgroundWorkingEffects.TerminalVisibleSummary,
+                gmPrelude.PendingTurnEndEffects.TerminalVisibleSummary,
+                gmPrelude.BackgroundWorkingEffects.TerminalVisibleSummary,
                 gmResolution.Summary
             );
 
             MergeActorFacingSummariesIntoExistingResolutions(
                 root,
-                prelude.PendingTurnEndEffects,
-                prelude.BackgroundWorkingEffects
+                gmPrelude.PendingTurnEndEffects,
+                gmPrelude.BackgroundWorkingEffects
             );
             return AsyncAteliaResult<ActionResolution>.Success(
                 CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
@@ -1055,6 +1070,167 @@ internal static partial class GameSimulation {
         return $"{interaction.VisibleLabel} ({interaction.ActionKind})";
     }
 
+    private static AteliaResult<bool> ValidateAcceptedCollectedTurnDescriptorForCanonicalBuild(LargeActionIntent intent) {
+        var descriptor = NormalizeActionDescriptor(
+            new ActionDescriptor(
+                intent.ActionKind,
+                intent.ActionSummary,
+                intent.ActionPayload,
+                intent.PreActionReason
+            )
+        );
+
+        try {
+            switch (descriptor.ActionKind) {
+                case TerminalActionKinds.LargeRestAWhile:
+                    _ = BuildRestAWhileTerminalPlan(descriptor.PreActionReason);
+                    break;
+                case TerminalActionKinds.LargeExplore:
+                    _ = BuildExploreTerminalPlan(
+                        ParseRequiredPayloadValue(descriptor.ActionPayload, "direction"),
+                        ParseOptionalPayloadValue(descriptor.ActionPayload, "focus"),
+                        descriptor.PreActionReason
+                    );
+                    break;
+                case TerminalActionKinds.LargeInteract:
+                    _ = ParseRequiredPayloadValue(descriptor.ActionPayload, "interactionId");
+                    break;
+                default:
+                    return AteliaResult<bool>.Failure(
+                        new TextAdvError(
+                            "TextAdv.UnsupportedCollectedAction",
+                            $"当前尚不支持 collected-turn 中的 Large-Action '{descriptor.ActionKind}'。"
+                        )
+                    );
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AteliaResult<bool>.Failure(
+                new TextAdvError(
+                    "TextAdv.InvalidCollectedActionDescriptor",
+                    $"无法从已提交的 Large-Action 重建 canonical terminal plan：{ex.Message}"
+                )
+            );
+        }
+    }
+
+    private static AteliaResult<(TerminalActionExecutionPlan Plan, InteractionPerception? Interaction)> TryBuildAcceptedCollectedTurnResolutionTargetForActor(
+        DurableDict<string> root,
+        LargeActionIntent intent
+    ) {
+        var actorId = NormalizeRequired(intent.ActorId, nameof(intent.ActorId));
+        var descriptor = NormalizeActionDescriptor(
+            new ActionDescriptor(
+                intent.ActionKind,
+                intent.ActionSummary,
+                intent.ActionPayload,
+                intent.PreActionReason
+            )
+        );
+
+        if (descriptor.ActionKind == TerminalActionKinds.LargeInteract) {
+            try {
+                var interactionId = ParseRequiredPayloadValue(descriptor.ActionPayload, "interactionId");
+                var planResult = TryBuildVisibleInteractionPlanForActor(root, actorId, interactionId, descriptor.PreActionReason);
+                if (!planResult.TryGetValue(out var interactionPlanPair)) {
+                    return AteliaResult<(TerminalActionExecutionPlan Plan, InteractionPerception? Interaction)>.Failure(planResult.Error!);
+                }
+
+                var (interaction, plan) = interactionPlanPair;
+                return AteliaResult<(TerminalActionExecutionPlan Plan, InteractionPerception? Interaction)>.Success((plan, interaction));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+                return AteliaResult<(TerminalActionExecutionPlan Plan, InteractionPerception? Interaction)>.Failure(
+                    new TextAdvError(
+                        "TextAdv.InvalidCollectedActionDescriptor",
+                        $"无法从已提交的 Large-Action 重建 canonical terminal plan：{ex.Message}"
+                    )
+                );
+            }
+        }
+
+        try {
+            var planResult = descriptor.ActionKind switch {
+                TerminalActionKinds.LargeRestAWhile => BuildRestAWhileTerminalPlan(descriptor.PreActionReason),
+                TerminalActionKinds.LargeExplore => BuildExploreTerminalPlan(
+                    ParseRequiredPayloadValue(descriptor.ActionPayload, "direction"),
+                    ParseOptionalPayloadValue(descriptor.ActionPayload, "focus"),
+                    descriptor.PreActionReason
+                ),
+                _ => AteliaResult<TerminalActionExecutionPlan>.Failure(
+                    new TextAdvError(
+                        "TextAdv.UnsupportedCollectedAction",
+                        $"当前尚不支持 collected-turn 中的 Large-Action '{descriptor.ActionKind}'。"
+                    )
+                )
+            };
+            if (!planResult.TryGetValue(out var plan) || plan is null) {
+                return AteliaResult<(TerminalActionExecutionPlan Plan, InteractionPerception? Interaction)>.Failure(planResult.Error!);
+            }
+
+            return AteliaResult<(TerminalActionExecutionPlan Plan, InteractionPerception? Interaction)>.Success((plan, null));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AteliaResult<(TerminalActionExecutionPlan Plan, InteractionPerception? Interaction)>.Failure(
+                new TextAdvError(
+                    "TextAdv.InvalidCollectedActionDescriptor",
+                    $"无法从已提交的 Large-Action 重建 canonical terminal plan：{ex.Message}"
+                )
+            );
+        }
+    }
+
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveAcceptedCollectedTurnResolutionTargetForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        TerminalActionExecutionPlan plan,
+        InteractionPerception? interaction,
+        TurnResolutionPrelude prelude,
+        CancellationToken cancellationToken
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        ArgumentNullException.ThrowIfNull(plan);
+
+        return plan switch {
+            TerminalActionExecutionPlan.RestAWhile => AsyncAteliaResult<ActionResolution>.Success(
+                ResolveRestAcceptedForActor(root, actorId, prelude, collectedTurnLead: null)
+            ),
+            TerminalActionExecutionPlan.Explore explore => await ResolveExploreAcceptedForActorAsync(
+                root,
+                actorId,
+                explore.Direction,
+                explore.Focus,
+                explore.PreActionReason,
+                prelude,
+                collectedTurnLead: null,
+                cancellationToken
+            ).ConfigureAwait(false),
+            TerminalActionExecutionPlan.Interaction interactionPlan when interaction is not null => await ResolveAcceptedInteractionPlanForActorAsync(
+                root,
+                actorId,
+                interaction,
+                interactionPlan,
+                prelude,
+                collectedTurnLead: null,
+                cancellationToken
+            ).ConfigureAwait(false),
+            TerminalActionExecutionPlan.Interaction => AsyncAteliaResult<ActionResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.InvalidCollectedActionDescriptor",
+                    "interaction collected-turn 缺少 canonical interaction 上下文。"
+                )
+            ),
+            _ => AsyncAteliaResult<ActionResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.UnsupportedCollectedAction",
+                    $"当前尚不支持 collected-turn 中的 terminal plan '{plan.GetType().Name}'。"
+                )
+            )
+        };
+    }
+
     private static ActionResolution AppendAcceptedLargeActionAndResolve(
         DurableDict<string> root,
         ActionDescriptor descriptor,
@@ -1238,44 +1414,6 @@ internal static partial class GameSimulation {
         ArchiveCompletedTurn(root, resolutionSummary);
         ResetCurrentTurn(root);
         return new ActionResolution(resolutionSummary, DescribeCurrentPerception(root));
-    }
-
-    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveCollectedTurnFromIntentAsync(
-        DurableDict<string> root,
-        LargeActionIntent intent,
-        TurnResolutionPrelude prelude,
-        CancellationToken cancellationToken
-    ) {
-        return intent.ActionKind switch {
-            TerminalActionKinds.LargeRestAWhile => AsyncAteliaResult<ActionResolution>.Success(
-                ResolveRestAcceptedForActor(root, intent.ActorId, prelude, collectedTurnLead: null)
-            ),
-            TerminalActionKinds.LargeExplore => await ResolveExploreAcceptedForActorAsync(
-                root,
-                intent.ActorId,
-                ParseRequiredPayloadValue(intent.ActionPayload, "direction"),
-                ParseOptionalPayloadValue(intent.ActionPayload, "focus"),
-                intent.PreActionReason,
-                prelude,
-                collectedTurnLead: null,
-                cancellationToken
-            ).ConfigureAwait(false),
-            TerminalActionKinds.LargeInteract => await ResolveInteractionAcceptedForActorAsync(
-                root,
-                intent.ActorId,
-                ParseRequiredPayloadValue(intent.ActionPayload, "interactionId"),
-                intent.PreActionReason,
-                prelude,
-                collectedTurnLead: null,
-                cancellationToken
-            ).ConfigureAwait(false),
-            _ => AsyncAteliaResult<ActionResolution>.Failure(
-                new TextAdvError(
-                    "TextAdv.UnsupportedCollectedAction",
-                    $"当前尚不支持 collected-turn 中的 Large-Action '{intent.ActionKind}'。"
-                )
-            )
-        };
     }
 
     private static DurableDict<string> CreateArchivedActorTurnContextByActor(DurableDict<string> root) {

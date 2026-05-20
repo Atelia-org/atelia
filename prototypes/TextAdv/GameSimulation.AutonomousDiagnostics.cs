@@ -3,15 +3,6 @@ using Atelia.StateJournal;
 namespace Atelia.TextAdv;
 
 internal static partial class GameSimulation {
-    private sealed record DiagnosticTerminalAction(
-        string ActionKind,
-        string ActionSummary,
-        string? ActionPayload,
-        string PreActionReason
-    ) {
-        internal ActionDescriptor Descriptor => new(ActionKind, ActionSummary, ActionPayload, PreActionReason);
-    }
-
     private static readonly (string ActorId, string Name, string ProfileNote)[] DiagnosticLlmPlayerTemplates =
     [
         (
@@ -122,7 +113,7 @@ internal static partial class GameSimulation {
         var submitTerminalResult = SubmitLargeActionForActor(
             root,
             TerminalPlayerActorId,
-            terminalAction.Descriptor,
+            terminalAction,
             validatorFeedback: "diagnostic autonomous runner bypassed validator"
         );
         if (!submitTerminalResult.TryGetValue(out var status) || status is null) { return AsyncAteliaResult<AutonomousRoundReport>.Failure(submitTerminalResult.Error!); }
@@ -187,7 +178,7 @@ internal static partial class GameSimulation {
         return DescribeCurrentTurnStatus(root);
     }
 
-    private static DiagnosticTerminalAction BuildDiagnosticTerminalAction(DurableDict<string> root, int roundNumber) {
+    private static ActionDescriptor BuildDiagnosticTerminalAction(DurableDict<string> root, int roundNumber) {
         var perception = DescribeCurrentPerception(root);
         var direction = DiagnosticExploreDirections[(roundNumber - 1) % DiagnosticExploreDirections.Length];
         var focus = $"诊断探索点 {roundNumber:D2}";
@@ -198,7 +189,7 @@ internal static partial class GameSimulation {
             + $"为了让世界账本、GM 结算、LLM Player 行动和 actor journal 产生可观察变化，"
             + $"选择向 {direction} 探索并寻找「{focus}」。";
 
-        return new DiagnosticTerminalAction(
+        return new ActionDescriptor(
             TerminalActionKinds.LargeExplore,
             actionSummary,
             actionPayload,
