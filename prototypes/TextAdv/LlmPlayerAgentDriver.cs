@@ -496,12 +496,12 @@ internal static class LlmPlayerAgentDriver {
 
             GameActionValidator.ValidationResult validation;
             try {
-                validation = await GameActionValidator.ValidateActionAsync(
+                validation = await _validateActionAsync(
                     CurrentPerception,
-                    actionKind: TerminalActionKinds.SmallEditMemoryNotebook,
+                    TerminalActionKinds.SmallEditMemoryNotebook,
                     proposal.ActionSummary,
                     reason,
-                    actionPayload: proposal.ValidatorPayload,
+                    proposal.ValidatorPayload,
                     cancellationToken
                 ).ConfigureAwait(false);
             }
@@ -538,19 +538,10 @@ internal static class LlmPlayerAgentDriver {
             [ToolParam(PlayerActionGuideText.RestReasonAttributeDescription)] string reason,
             CancellationToken cancellationToken
         ) {
-            var planResult = GameSimulation.BuildRestAWhileTerminalPlan(reason);
-            if (!planResult.TryGetValue(out var plan) || plan is null) {
-                return ValueTask.FromResult(
-                    new ToolExecuteResult(
-                        ToolExecutionStatus.Failed,
-                        planResult.Error?.Message ?? "当前不能构造 rest-a-while 动作。"
-                    )
-                );
-            }
-
-            if (!TrySetProposal(plan, out var result)) { return ValueTask.FromResult(result); }
-
-            return ValueTask.FromResult(result);
+            return BuildLargeProposalResult(
+                GameSimulation.BuildRestAWhileTerminalPlan(reason),
+                "当前不能构造 rest-a-while 动作。"
+            );
         }
 
         [Tool("player_explore", PlayerActionGuideText.ExploreToolDescription)]
@@ -561,19 +552,10 @@ internal static class LlmPlayerAgentDriver {
             CancellationToken cancellationToken
         ) {
             focus = NormalizeOptionalToolString(focus);
-            var planResult = GameSimulation.BuildExploreTerminalPlan(direction, focus, reason);
-            if (!planResult.TryGetValue(out var plan) || plan is null) {
-                return ValueTask.FromResult(
-                    new ToolExecuteResult(
-                        ToolExecutionStatus.Failed,
-                        planResult.Error?.Message ?? "当前不能构造 explore 动作。"
-                    )
-                );
-            }
-
-            if (!TrySetProposal(plan, out var result)) { return ValueTask.FromResult(result); }
-
-            return ValueTask.FromResult(result);
+            return BuildLargeProposalResult(
+                GameSimulation.BuildExploreTerminalPlan(direction, focus, reason),
+                "当前不能构造 explore 动作。"
+            );
         }
 
         [Tool("player_interact", PlayerActionGuideText.InteractToolDescription)]
@@ -597,7 +579,7 @@ internal static class LlmPlayerAgentDriver {
                 );
             }
 
-            if (plan.Mode == TerminalActionMode.Large) {
+            if (plan.Tier == TerminalActionTier.Large) {
                 if (!TrySetProposal(plan, out var result)) { return result; }
                 return result;
             }
@@ -685,7 +667,7 @@ internal static class LlmPlayerAgentDriver {
                 return false;
             }
 
-            if (plan.Mode != TerminalActionMode.Large) {
+            if (plan.Tier != TerminalActionTier.Large) {
                 result = new ToolExecuteResult(
                     ToolExecutionStatus.Failed,
                     "当前工具只能暂存会结束本回合的 Large-Action。"
@@ -699,6 +681,23 @@ internal static class LlmPlayerAgentDriver {
                 $"已暂存 Large-Action: {plan.ActionKind} — {plan.ActionSummary}"
             );
             return true;
+        }
+
+        private ValueTask<ToolExecuteResult> BuildLargeProposalResult(
+            AteliaResult<TerminalActionExecutionPlan> planResult,
+            string fallbackFailureMessage
+        ) {
+            if (!planResult.TryGetValue(out var plan) || plan is null) {
+                return ValueTask.FromResult(
+                    new ToolExecuteResult(
+                        ToolExecutionStatus.Failed,
+                        planResult.Error?.Message ?? fallbackFailureMessage
+                    )
+                );
+            }
+
+            if (!TrySetProposal(plan, out var result)) { return ValueTask.FromResult(result); }
+            return ValueTask.FromResult(result);
         }
 
         private static string? NormalizeOptionalToolString(string? value) {

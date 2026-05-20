@@ -2,8 +2,8 @@ using Atelia.StateJournal;
 
 namespace Atelia.TextAdv;
 
-internal enum TerminalActionMode {
-    Immediate,
+internal enum TerminalActionTier {
+    Small,
     Large
 }
 
@@ -15,7 +15,7 @@ internal enum InteractionExecutionKind {
 }
 
 internal abstract record TerminalActionExecutionPlan(string PreActionReason) {
-    internal abstract TerminalActionMode Mode { get; }
+    internal abstract TerminalActionTier Tier { get; }
 
     internal abstract string ActionKind { get; }
 
@@ -28,7 +28,7 @@ internal abstract record TerminalActionExecutionPlan(string PreActionReason) {
         string? Focus,
         string PreActionReason
     ) : TerminalActionExecutionPlan(PreActionReason) {
-        internal override TerminalActionMode Mode => TerminalActionMode.Large;
+        internal override TerminalActionTier Tier => TerminalActionTier.Large;
 
         internal override string ActionKind => TerminalActionKinds.LargeExplore;
 
@@ -40,7 +40,7 @@ internal abstract record TerminalActionExecutionPlan(string PreActionReason) {
     }
 
     internal sealed record RestAWhile(string PreActionReason) : TerminalActionExecutionPlan(PreActionReason) {
-        internal override TerminalActionMode Mode => TerminalActionMode.Large;
+        internal override TerminalActionTier Tier => TerminalActionTier.Large;
 
         internal override string ActionKind => TerminalActionKinds.LargeRestAWhile;
 
@@ -57,9 +57,9 @@ internal abstract record TerminalActionExecutionPlan(string PreActionReason) {
         InteractionExecutionKind ExecutionKind,
         string PreActionReason
     ) : TerminalActionExecutionPlan(PreActionReason) {
-        internal override TerminalActionMode Mode => ExecutionKind switch {
-            InteractionExecutionKind.ImmediateSelf or InteractionExecutionKind.DeferredTurnEnd => TerminalActionMode.Immediate,
-            InteractionExecutionKind.WorkingStart or InteractionExecutionKind.TurnEnding => TerminalActionMode.Large,
+        internal override TerminalActionTier Tier => ExecutionKind switch {
+            InteractionExecutionKind.ImmediateSelf or InteractionExecutionKind.DeferredTurnEnd => TerminalActionTier.Small,
+            InteractionExecutionKind.WorkingStart or InteractionExecutionKind.TurnEnding => TerminalActionTier.Large,
             _ => throw new InvalidOperationException($"Unknown interaction execution kind: {ExecutionKind}")
         };
 

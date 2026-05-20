@@ -503,6 +503,11 @@ internal static partial class GameSimulation {
         return interaction.TurnCost > 1;
     }
 
+    internal static bool SupportsTurnEndingInteraction(InteractionPerception interaction) {
+        ArgumentNullException.ThrowIfNull(interaction);
+        return interaction.TurnCost == 1;
+    }
+
     internal static string DescribeInteractionTurnCostForPlayer(InteractionPerception interaction) {
         ArgumentNullException.ThrowIfNull(interaction);
 
@@ -554,39 +559,19 @@ internal static partial class GameSimulation {
         var interactionResult = TryGetVisibleInteraction(perception, interactionId);
         if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return interactionResult.Error!; }
 
-        var interactionPayload = BuildInteractionPayload(interaction);
-        if (SupportsImmediateSelfInteraction(interaction)) {
-            return new TerminalActionExecutionPlan.Interaction(
-                interaction.InteractionId,
-                interaction.VisibleLabel,
-                interaction.ActionKind,
-                interactionPayload,
-                InteractionExecutionKind.ImmediateSelf,
-                preActionReason
-            );
-        }
+        var executionKindResult = ClassifyInteractionExecutionKind(interaction);
+        if (!executionKindResult.TryGetValue(out var executionKind)) { return executionKindResult.Error!; }
 
-        if (SupportsDeferredTurnEndInteraction(interaction)) {
-            return new TerminalActionExecutionPlan.Interaction(
-                interaction.InteractionId,
-                interaction.VisibleLabel,
-                interaction.ActionKind,
-                interactionPayload,
-                InteractionExecutionKind.DeferredTurnEnd,
-                preActionReason
-            );
-        }
+        return CreateInteractionPlan(interaction, executionKind, preActionReason);
+    }
 
-        if (SupportsWorkingInteraction(interaction)) {
-            return new TerminalActionExecutionPlan.Interaction(
-                interaction.InteractionId,
-                interaction.VisibleLabel,
-                interaction.ActionKind,
-                interactionPayload,
-                InteractionExecutionKind.WorkingStart,
-                preActionReason
-            );
-        }
+    internal static AteliaResult<InteractionExecutionKind> ClassifyInteractionExecutionKind(InteractionPerception interaction) {
+        ArgumentNullException.ThrowIfNull(interaction);
+
+        if (SupportsImmediateSelfInteraction(interaction)) { return InteractionExecutionKind.ImmediateSelf; }
+        if (SupportsDeferredTurnEndInteraction(interaction)) { return InteractionExecutionKind.DeferredTurnEnd; }
+        if (SupportsWorkingInteraction(interaction)) { return InteractionExecutionKind.WorkingStart; }
+        if (SupportsTurnEndingInteraction(interaction)) { return InteractionExecutionKind.TurnEnding; }
 
         if (interaction.TurnCost == 0) {
             return new TextAdvError(
@@ -596,12 +581,26 @@ internal static partial class GameSimulation {
             );
         }
 
+        return new TextAdvError(
+            "TextAdv.UnsupportedInteractionExecutionPlan",
+            $"这个 interaction 目前具有不受支持的 turnCost={interaction.TurnCost}。",
+            "当前实现只支持 immediate self、turn-end deferred、turn-ending 和 multi-turn working 这几类交互。"
+        );
+    }
+
+    private static TerminalActionExecutionPlan.Interaction CreateInteractionPlan(
+        InteractionPerception interaction,
+        InteractionExecutionKind executionKind,
+        string preActionReason
+    ) {
+        ArgumentNullException.ThrowIfNull(interaction);
+        preActionReason = NormalizeRequired(preActionReason, nameof(preActionReason));
         return new TerminalActionExecutionPlan.Interaction(
             interaction.InteractionId,
             interaction.VisibleLabel,
             interaction.ActionKind,
-            interactionPayload,
-            InteractionExecutionKind.TurnEnding,
+            BuildInteractionPayload(interaction),
+            executionKind,
             preActionReason
         );
     }

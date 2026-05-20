@@ -170,6 +170,24 @@ public sealed class LlmPlayerActionToolServiceTests : IDisposable {
         Assert.Contains("已暂存 Large-Action", result.Content);
     }
 
+    [Fact]
+    public async Task EditMemoryNotebookAsync_ShouldUseInjectedValidatorDelegate() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var service = CreateToolService(root, GameSimulation.TerminalPlayerActorId, RejectNotebookValidationAsync);
+
+        var result = await InvokeToolAsync(
+            service,
+            "EditMemoryNotebookAsync",
+            "先记一笔。",
+            "<insert side=\"after\" anchor=\"tail\">记住：这里是沙滩。</insert>"
+        );
+
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        Assert.Contains("validator 拒绝 notebook edit", result.Content);
+        Assert.Null(GetProposal(service));
+    }
+
     private Repository CreateRepository() {
         var createResult = Repository.Create(_repoDir);
         return AssertSuccess(createResult);
@@ -231,5 +249,17 @@ public sealed class LlmPlayerActionToolServiceTests : IDisposable {
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(new GameActionValidator.ValidationResult(true, "通过：测试接受。"));
+    }
+
+    private static Task<GameActionValidator.ValidationResult> RejectNotebookValidationAsync(
+        PerceptionBundle perception,
+        string actionKind,
+        string actionSummary,
+        string preActionReason,
+        string? actionPayload,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new GameActionValidator.ValidationResult(false, "测试拒绝 notebook edit。"));
     }
 }

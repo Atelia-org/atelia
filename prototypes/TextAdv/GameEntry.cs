@@ -380,21 +380,17 @@ public static partial class GameEntry {
                 var preActionReason = ctx.GetValue(reasonArg)!;
                 var direction = ctx.GetValue(directionArg)!;
                 var focus = ctx.GetValue(focusOption);
-                if (!TryGetSession(output, out var session)) { return; }
-
-                var planResult = GameSimulation.BuildExploreTerminalPlan(direction, focus, preActionReason);
-                if (!planResult.TryGetValue(out var plan) || plan is null) {
-                    output.WriteLine("❌ 当前不能构造这个 explore 动作。");
-                    WriteAteliaError(output, planResult.Error);
-                    return;
-                }
-
-                var result = await s_actionRunner.RunAsync(
-                    session,
-                    plan,
+                await RunPlanCommandAsync(
+                    output,
+                    static (_, state) => GameSimulation.BuildExploreTerminalPlan(
+                        state.Direction,
+                        state.Focus,
+                        state.PreActionReason
+                    ),
+                    (Direction: direction, Focus: focus, PreActionReason: preActionReason),
+                    "❌ 当前不能构造这个 explore 动作。",
                     ct
                 );
-                WriteTerminalActionRunResult(output, result);
             }
         );
         return cmd;
@@ -418,18 +414,17 @@ public static partial class GameEntry {
                 var preActionReason = ctx.GetValue(reasonArg)!;
                 var interactionId = ctx.GetValue(interactionIdArg)!;
 
-                if (!TryGetSession(output, out var session)) { return; }
-
-                var root = session.Root;
-                var perception = GameSimulation.DescribeCurrentPerception(root);
-                var planResult = GameSimulation.BuildTerminalInteractionPlan(perception, interactionId, preActionReason);
-                if (!planResult.TryGetValue(out var plan) || plan is null) {
-                    output.WriteLine("❌ 当前不能执行这个 interaction。");
-                    WriteAteliaError(output, planResult.Error);
-                    return;
-                }
-
-                WriteTerminalActionRunResult(output, await s_actionRunner.RunAsync(session, plan, ct));
+                await RunPlanCommandAsync(
+                    output,
+                    static (session, state) => GameSimulation.BuildTerminalInteractionPlan(
+                        GameSimulation.DescribeCurrentPerception(session.Root),
+                        state.InteractionId,
+                        state.PreActionReason
+                    ),
+                    (InteractionId: interactionId, PreActionReason: preActionReason),
+                    "❌ 当前不能执行这个 interaction。",
+                    ct
+                );
             }
         );
         return cmd;
@@ -447,23 +442,34 @@ public static partial class GameEntry {
             async (ctx, ct) => {
                 var output = ctx.InvocationConfiguration.Output;
                 var preActionReason = ctx.GetValue(reasonArg)!;
-                if (!TryGetSession(output, out var session)) { return; }
-
-                var planResult = GameSimulation.BuildRestAWhileTerminalPlan(preActionReason);
-                if (!planResult.TryGetValue(out var plan) || plan is null) {
-                    output.WriteLine("❌ 当前不能构造这个 rest-a-while 动作。");
-                    WriteAteliaError(output, planResult.Error);
-                    return;
-                }
-
-                var result = await s_actionRunner.RunAsync(
-                    session,
-                    plan,
+                await RunPlanCommandAsync(
+                    output,
+                    static (_, reason) => GameSimulation.BuildRestAWhileTerminalPlan(reason),
+                    preActionReason,
+                    "❌ 当前不能构造这个 rest-a-while 动作。",
                     ct
                 );
-                WriteTerminalActionRunResult(output, result);
             }
         );
         return cmd;
+    }
+
+    private static async Task RunPlanCommandAsync<TState>(
+        TextWriter output,
+        Func<TextAdvSession, TState, AteliaResult<TerminalActionExecutionPlan>> buildPlan,
+        TState state,
+        string buildFailureMessage,
+        CancellationToken cancellationToken
+    ) {
+        if (!TryGetSession(output, out var session)) { return; }
+
+        var planResult = buildPlan(session, state);
+        if (!planResult.TryGetValue(out var plan) || plan is null) {
+            output.WriteLine(buildFailureMessage);
+            WriteAteliaError(output, planResult.Error);
+            return;
+        }
+
+        WriteTerminalActionRunResult(output, await s_actionRunner.RunAsync(session, plan, cancellationToken));
     }
 }

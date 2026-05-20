@@ -51,7 +51,7 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
     }
 
     [Fact]
-    public async Task RunAsync_WhenImmediatePlanSucceeds_ShouldCommitAndRenderSessionPerception() {
+    public async Task RunAsync_WhenSmallPlanSucceeds_ShouldCommitAndRenderSessionPerception() {
         var session = AssertSuccess(TextAdvSession.CreateNew(_repoDir));
         var initialHead = session.HeadAddress;
         var runner = new TextAdvTerminalActionRunner(
@@ -89,7 +89,7 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
     }
 
     [Fact]
-    public async Task RunAsync_WhenImmediatePlanFails_ShouldReturnFailureWithoutCommit() {
+    public async Task RunAsync_WhenSmallPlanFails_ShouldReturnFailureWithoutCommit() {
         var session = AssertSuccess(TextAdvSession.CreateNew(_repoDir));
         var initialHead = session.HeadAddress;
         var runner = new TextAdvTerminalActionRunner(

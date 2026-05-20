@@ -17,7 +17,7 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
     }
 
     [Fact]
-    public void BuildTerminalInteractionPlan_WhenInteractionIsImmediate_ShouldReturnImmediatePlan() {
+    public void BuildTerminalInteractionPlan_WhenInteractionIsImmediate_ShouldReturnSmallPlan() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
         var gmWorldEdit = new GmWorldEditService(root);
@@ -44,8 +44,16 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
             "先稳住呼吸。"
         );
 
+        var interaction = AssertSuccess(
+            GameSimulation.TryGetVisibleInteraction(GameSimulation.DescribeCurrentPerception(root), "steady-breath")
+        );
+        Assert.Equal(
+            InteractionExecutionKind.ImmediateSelf,
+            AssertSuccess(GameSimulation.ClassifyInteractionExecutionKind(interaction))
+        );
+
         var plan = AssertSuccess(planResult);
-        Assert.Equal(TerminalActionMode.Immediate, plan.Mode);
+        Assert.Equal(TerminalActionTier.Small, plan.Tier);
         Assert.Equal(TerminalActionKinds.SmallInteract, plan.ActionKind);
         var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
         Assert.Equal(InteractionExecutionKind.ImmediateSelf, interactionPlan.ExecutionKind);
@@ -94,15 +102,23 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
             "先持续处理这面薄石壁。"
         );
 
+        var interaction = AssertSuccess(
+            GameSimulation.TryGetVisibleInteraction(GameSimulation.DescribeCurrentPerception(root), "chip-wall")
+        );
+        Assert.Equal(
+            InteractionExecutionKind.WorkingStart,
+            AssertSuccess(GameSimulation.ClassifyInteractionExecutionKind(interaction))
+        );
+
         var plan = AssertSuccess(planResult);
-        Assert.Equal(TerminalActionMode.Large, plan.Mode);
+        Assert.Equal(TerminalActionTier.Large, plan.Tier);
         Assert.Equal(TerminalActionKinds.LargeInteract, plan.ActionKind);
         var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
         Assert.Equal(InteractionExecutionKind.WorkingStart, interactionPlan.ExecutionKind);
     }
 
     [Fact]
-    public void BuildTerminalInteractionPlan_WhenInteractionIsDeferredTurnEnd_ShouldReturnImmediatePlan() {
+    public void BuildTerminalInteractionPlan_WhenInteractionIsDeferredTurnEnd_ShouldReturnSmallPlan() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
         var gmWorldEdit = new GmWorldEditService(root);
@@ -128,8 +144,16 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
             "先把贝壳拨到一边。"
         );
 
+        var interaction = AssertSuccess(
+            GameSimulation.TryGetVisibleInteraction(GameSimulation.DescribeCurrentPerception(root), "nudge-shell")
+        );
+        Assert.Equal(
+            InteractionExecutionKind.DeferredTurnEnd,
+            AssertSuccess(GameSimulation.ClassifyInteractionExecutionKind(interaction))
+        );
+
         var plan = AssertSuccess(planResult);
-        Assert.Equal(TerminalActionMode.Immediate, plan.Mode);
+        Assert.Equal(TerminalActionTier.Small, plan.Tier);
         Assert.Equal(TerminalActionKinds.SmallInteract, plan.ActionKind);
         var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
         Assert.Equal(InteractionExecutionKind.DeferredTurnEnd, interactionPlan.ExecutionKind);
@@ -162,8 +186,16 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
             "先把这截浮木处理好。"
         );
 
+        var interaction = AssertSuccess(
+            GameSimulation.TryGetVisibleInteraction(GameSimulation.DescribeCurrentPerception(root), "haul-driftwood")
+        );
+        Assert.Equal(
+            InteractionExecutionKind.TurnEnding,
+            AssertSuccess(GameSimulation.ClassifyInteractionExecutionKind(interaction))
+        );
+
         var plan = AssertSuccess(planResult);
-        Assert.Equal(TerminalActionMode.Large, plan.Mode);
+        Assert.Equal(TerminalActionTier.Large, plan.Tier);
         Assert.Equal(TerminalActionKinds.LargeInteract, plan.ActionKind);
         var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
         Assert.Equal(InteractionExecutionKind.TurnEnding, interactionPlan.ExecutionKind);

@@ -66,7 +66,7 @@ internal sealed class TextAdvTerminalActionRunner {
         if (validationResult.TerminalResult is not null) { return validationResult.TerminalResult; }
         var validation = validationResult.Validation!;
 
-        if (plan.Mode == TerminalActionMode.Large) {
+        if (plan.Tier == TerminalActionTier.Large) {
             var collectedResult = await TryCollectLargeActionInsteadOfResolvingAsync(
                 session,
                 plan,
@@ -175,18 +175,18 @@ internal sealed class TextAdvTerminalActionRunner {
     }
 
     private static string BuildSuccessMessage(TerminalActionExecutionPlan plan) {
-        return plan.Mode switch {
-            TerminalActionMode.Immediate => $"✅ 你顺手做了：{plan.ActionSummary}",
-            TerminalActionMode.Large => $"✅ 你决定了：{plan.ActionSummary}",
-            _ => throw new InvalidOperationException($"Unknown terminal action mode: {plan.Mode}")
+        return plan.Tier switch {
+            TerminalActionTier.Small => $"✅ 你顺手做了：{plan.ActionSummary}",
+            TerminalActionTier.Large => $"✅ 你决定了：{plan.ActionSummary}",
+            _ => throw new InvalidOperationException($"Unknown terminal action tier: {plan.Tier}")
         };
     }
 
     private static string BuildResolutionFailureMessage(TerminalActionExecutionPlan plan) {
-        return plan.Mode switch {
-            TerminalActionMode.Immediate => $"❌ 小动作结算失败：{plan.ActionSummary}",
-            TerminalActionMode.Large => $"❌ Large-Action 结算失败：{plan.ActionSummary}",
-            _ => throw new InvalidOperationException($"Unknown terminal action mode: {plan.Mode}")
+        return plan.Tier switch {
+            TerminalActionTier.Small => $"❌ 小动作结算失败：{plan.ActionSummary}",
+            TerminalActionTier.Large => $"❌ Large-Action 结算失败：{plan.ActionSummary}",
+            _ => throw new InvalidOperationException($"Unknown terminal action tier: {plan.Tier}")
         };
     }
 }

@@ -99,6 +99,41 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
     }
 
     [Fact]
+    public async Task ApplyInteractionAsync_WhenInteractionIsWorking_ShouldRejectInsteadOfTreatingItAsTurnEnding() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(gmWorldEdit.CreateItem("wall", "薄石壁", "石壁上有一处可继续凿开的薄弱点。", "beach").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "chip-wall",
+                targetRef: "item:wall",
+                actionKind: "work",
+                visibleLabel: "继续凿石壁",
+                preconditionNote: "none",
+                effectNote: "石屑簌簌落下，你把这项活又往前推进了一截。",
+                turnCost: 3,
+                effectScope: GameSimulation.RoomEffectScope,
+                effectSlots: $"{GameSimulation.PerTurnEndEffectSlot},{GameSimulation.OnCompletionEffectSlot}"
+            ).IsSuccess
+        );
+
+        var resolutionResult = await GameSimulation.ApplyInteractionAsync(
+            root,
+            "chip-wall",
+            "这里需要持续投入多个回合，不该走单回合 interaction 入口。",
+            "通过",
+            CancellationToken.None
+        );
+
+        Assert.False(resolutionResult.IsSuccess);
+        Assert.Equal("TextAdv.UnsupportedTurnEndingInteraction", resolutionResult.Error?.ErrorCode);
+        Assert.Empty(GameSimulation.DescribeCurrentPerception(root).AcceptedSteps);
+        Assert.Equal(1, GameSimulation.DescribeCurrentPerception(root).Slot);
+    }
+
+    [Fact]
     public async Task WorkingActor_ShouldStayInactiveWhileOtherActorTurnsAdvanceUntilCompletion() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
