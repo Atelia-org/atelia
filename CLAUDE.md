@@ -53,9 +53,6 @@ dotnet test --filter "FullyQualifiedName~TestMethodName"
 - **Rbf** (Reversible Binary Framing): Binary serialization format
   - Implements `IRbfFrame` interface (ref struct can implement interfaces in C# 14)
 
-- **DocGraph**: Documentation system with glossary and issue tracking
-  - Supports distributed authoring with automatic key information aggregation
-
 - **Diagnostics**: Debugging utilities
   - `DebugUtil.Trace/Info/Warning/Error`: Conditional debug output
   - Controlled by `ATELIA_DEBUG_CATEGORIES` environment variable
@@ -66,8 +63,6 @@ dotnet test --filter "FullyQualifiedName~TestMethodName"
 
 - **Analyzers.Style**: Custom Roslyn analyzers for code style enforcement
   - Automatically applied to all projects via `Directory.Build.props`
-
-- **DesignDsl**: Design specification DSL for formal documentation
 
 ### Prototypes (`prototypes/`)
 
