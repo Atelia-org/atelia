@@ -8,7 +8,9 @@ internal static partial class GameSimulation {
         string ActionSummary,
         string? ActionPayload,
         string PreActionReason
-    );
+    ) {
+        internal ActionDescriptor Descriptor => new(ActionKind, ActionSummary, ActionPayload, PreActionReason);
+    }
 
     private static readonly (string ActorId, string Name, string ProfileNote)[] DiagnosticLlmPlayerTemplates =
     [
@@ -120,10 +122,7 @@ internal static partial class GameSimulation {
         var submitTerminalResult = SubmitLargeActionForActor(
             root,
             TerminalPlayerActorId,
-            terminalAction.ActionKind,
-            terminalAction.ActionSummary,
-            terminalAction.ActionPayload,
-            terminalAction.PreActionReason,
+            terminalAction.Descriptor,
             validatorFeedback: "diagnostic autonomous runner bypassed validator"
         );
         if (!submitTerminalResult.TryGetValue(out var status) || status is null) { return AsyncAteliaResult<AutonomousRoundReport>.Failure(submitTerminalResult.Error!); }
@@ -174,10 +173,12 @@ internal static partial class GameSimulation {
             var submitResult = SubmitLargeActionForActor(
                 root,
                 actorId,
-                actionKind: TerminalActionKinds.LargeRestAWhile,
-                actionSummary: "诊断模式：谨慎观察并暂不移动",
-                actionPayload: null,
-                preActionReason: $"deterministic diagnostic harness：当前先在「{perception.Location.Name}」保持观察，等待 GM 结算托管玩家的探索结果。",
+                new ActionDescriptor(
+                    TerminalActionKinds.LargeRestAWhile,
+                    "诊断模式：谨慎观察并暂不移动",
+                    null,
+                    $"deterministic diagnostic harness：当前先在「{perception.Location.Name}」保持观察，等待 GM 结算托管玩家的探索结果。"
+                ),
                 validatorFeedback: "diagnostic deterministic fallback bypassed validator"
             );
             if (!submitResult.IsSuccess) { return AteliaResult<TurnCollectionStatus>.Failure(submitResult.Error!); }

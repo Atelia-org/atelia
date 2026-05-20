@@ -70,10 +70,12 @@ public sealed class GameSimulationPlayerEquivalenceTests : IDisposable {
                     var submitResult = GameSimulation.SubmitDevLargeActionForActor(
                         stubRoot,
                         actorId,
-                        TerminalActionKinds.LargeRestAWhile,
-                        $"{actorId} 谨慎观察并暂不移动",
-                        null,
-                        "测试桩：为 pending internal player 提交保守动作。"
+                        new ActionDescriptor(
+                            TerminalActionKinds.LargeRestAWhile,
+                            $"{actorId} 谨慎观察并暂不移动",
+                            null,
+                            "测试桩：为 pending internal player 提交保守动作。"
+                        )
                     );
                     return Task.FromResult(
                         submitResult.IsSuccess
@@ -87,10 +89,12 @@ public sealed class GameSimulationPlayerEquivalenceTests : IDisposable {
         var terminalSubmit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             GameSimulation.TerminalPlayerActorId,
-            TerminalActionKinds.LargeRestAWhile,
-            "终端玩家先提交本回合动作",
-            null,
-            "测试桩：先让 external-terminal actor 入 barrier。"
+            new ActionDescriptor(
+                TerminalActionKinds.LargeRestAWhile,
+                "终端玩家先提交本回合动作",
+                null,
+                "测试桩：先让 external-terminal actor 入 barrier。"
+            )
         );
         Assert.True(terminalSubmit.IsSuccess, terminalSubmit.Error?.Message);
 

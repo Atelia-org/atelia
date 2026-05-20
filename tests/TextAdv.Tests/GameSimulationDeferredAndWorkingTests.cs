@@ -181,10 +181,12 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var firstSubmit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            TerminalActionKinds.LargeRestAWhile,
-            "同伴原地休息一会",
-            null,
-            "让同伴先稳住节奏。"
+            new ActionDescriptor(
+                TerminalActionKinds.LargeRestAWhile,
+                "同伴原地休息一会",
+                null,
+                "让同伴先稳住节奏。"
+            )
         );
         Assert.True(firstSubmit.IsSuccess, firstSubmit.Error?.Message);
 
@@ -202,10 +204,12 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var secondSubmit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            TerminalActionKinds.LargeRestAWhile,
-            "同伴再次原地休息一会",
-            null,
-            "继续等待石壁那边完工。"
+            new ActionDescriptor(
+                TerminalActionKinds.LargeRestAWhile,
+                "同伴再次原地休息一会",
+                null,
+                "继续等待石壁那边完工。"
+            )
         );
         Assert.True(secondSubmit.IsSuccess, secondSubmit.Error?.Message);
 
@@ -254,10 +258,12 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var submit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            TerminalActionKinds.LargeExplore,
-            "向 north 探索",
-            "direction=north",
-            "先去北边的密林看看。"
+            new ActionDescriptor(
+                TerminalActionKinds.LargeExplore,
+                "向 north 探索",
+                "direction=north",
+                "先去北边的密林看看。"
+            )
         );
         Assert.True(submit.IsSuccess, submit.Error?.Message);
 
@@ -322,10 +328,12 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var submit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            TerminalActionKinds.LargeInteract,
-            "端详贝壳 (inspect)",
-            payload,
-            "先看看这枚贝壳值不值得带走。"
+            new ActionDescriptor(
+                TerminalActionKinds.LargeInteract,
+                "端详贝壳 (inspect)",
+                payload,
+                "先看看这枚贝壳值不值得带走。"
+            )
         );
         Assert.True(submit.IsSuccess, submit.Error?.Message);
 
@@ -389,10 +397,12 @@ public sealed class GameSimulationDeferredAndWorkingTests : IDisposable {
         var allySubmit = GameSimulation.SubmitDevLargeActionForActor(
             root,
             "ally",
-            TerminalActionKinds.LargeInteract,
-            "整理碎石 (work)",
-            allyPayload,
-            "我收尾石壁时，让同伴继续在旁边整理碎石。"
+            new ActionDescriptor(
+                TerminalActionKinds.LargeInteract,
+                "整理碎石 (work)",
+                allyPayload,
+                "我收尾石壁时，让同伴继续在旁边整理碎石。"
+            )
         );
         Assert.True(allySubmit.IsSuccess, allySubmit.Error?.Message);
 

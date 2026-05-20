@@ -158,10 +158,7 @@ internal static class LlmPlayerAgentDriver {
                 var submitResult = GameSimulation.SubmitLargeActionForActor(
                     root,
                     actorId,
-                    plan.ActionKind,
-                    plan.ActionSummary,
-                    plan.ActionPayload,
-                    plan.PreActionReason,
+                    plan.Descriptor,
                     validation.Feedback
                 );
                 return submitResult.IsSuccess

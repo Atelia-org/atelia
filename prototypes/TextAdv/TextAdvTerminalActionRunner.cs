@@ -138,10 +138,7 @@ internal sealed class TextAdvTerminalActionRunner {
         var result = GameSimulation.SubmitLargeActionForActor(
             root,
             actorId: GameSimulation.TerminalPlayerActorId,
-            plan.ActionKind,
-            plan.ActionSummary,
-            plan.ActionPayload,
-            plan.PreActionReason,
+            plan.Descriptor,
             validatorFeedback
         );
         if (!result.TryGetValue(out var status) || status is null) {

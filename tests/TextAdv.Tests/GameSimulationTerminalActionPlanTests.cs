@@ -55,8 +55,22 @@ public sealed class GameSimulationTerminalActionPlanTests : IDisposable {
         var plan = AssertSuccess(planResult);
         Assert.Equal(TerminalActionTier.Small, plan.Tier);
         Assert.Equal(TerminalActionKinds.SmallInteract, plan.ActionKind);
+        Assert.Equal(plan.ActionKind, plan.Descriptor.ActionKind);
+        Assert.Equal(plan.ActionSummary, plan.Descriptor.ActionSummary);
+        Assert.Equal(plan.ActionPayload, plan.Descriptor.ActionPayload);
+        Assert.Equal(plan.PreActionReason, plan.Descriptor.PreActionReason);
         var interactionPlan = Assert.IsType<TerminalActionExecutionPlan.Interaction>(plan);
         Assert.Equal(InteractionExecutionKind.ImmediateSelf, interactionPlan.ExecutionKind);
+    }
+
+    [Fact]
+    public void BuildExploreTerminalPlan_ShouldExposeDescriptorBridge() {
+        var plan = AssertSuccess(GameSimulation.BuildExploreTerminalPlan("north", "山洞入口", "先去北边找遮蔽处。"));
+
+        Assert.Equal(plan.ActionKind, plan.Descriptor.ActionKind);
+        Assert.Equal(plan.ActionSummary, plan.Descriptor.ActionSummary);
+        Assert.Equal(plan.ActionPayload, plan.Descriptor.ActionPayload);
+        Assert.Equal(plan.PreActionReason, plan.Descriptor.PreActionReason);
     }
 
     [Fact]

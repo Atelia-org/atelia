@@ -284,7 +284,11 @@ public static partial class GameEntry {
 
                 var repo = session.Repo;
                 var root = session.Root;
-                var result = GameSimulation.SubmitDevLargeActionForActor(root, actorId, actionKind, summary, payload, reason);
+                var result = GameSimulation.SubmitDevLargeActionForActor(
+                    root,
+                    actorId,
+                    new ActionDescriptor(actionKind, summary, payload, reason)
+                );
                 if (!result.TryGetValue(out var status) || status is null) {
                     output.WriteLine("❌ dev Large-Action 提交失败。");
                     WriteAteliaError(output, result.Error);

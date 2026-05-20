@@ -6,18 +6,12 @@ internal static partial class GameSimulation {
     internal static AteliaResult<TurnCollectionStatus> SubmitDevLargeActionForActor(
         DurableDict<string> root,
         string actorId,
-        string actionKind,
-        string actionSummary,
-        string? actionPayload,
-        string preActionReason
+        ActionDescriptor descriptor
     ) {
         return SubmitLargeActionForActor(
             root,
             actorId,
-            actionKind,
-            actionSummary,
-            actionPayload,
-            preActionReason,
+            descriptor,
             validatorFeedback: "dev-submit-large-action bypassed validator"
         );
     }
@@ -28,18 +22,12 @@ internal static partial class GameSimulation {
     internal static AteliaResult<TurnCollectionStatus> SubmitLargeActionForActor(
         DurableDict<string> root,
         string actorId,
-        string actionKind,
-        string actionSummary,
-        string? actionPayload,
-        string preActionReason,
+        ActionDescriptor descriptor,
         string validatorFeedback
     ) {
         actorId = NormalizeRequired(actorId, nameof(actorId));
-        actionKind = NormalizeRequired(actionKind, nameof(actionKind));
-        actionSummary = NormalizeRequired(actionSummary, nameof(actionSummary));
-        preActionReason = NormalizeRequired(preActionReason, nameof(preActionReason));
+        descriptor = NormalizeActionDescriptor(descriptor);
         validatorFeedback = NormalizeRequired(validatorFeedback, nameof(validatorFeedback));
-        actionPayload = string.IsNullOrWhiteSpace(actionPayload) ? null : actionPayload.Trim();
 
         var actors = GetActors(root);
         if (!actors.TryGet(actorId, out DurableDict<string>? actor) || actor is null) {
@@ -63,10 +51,7 @@ internal static partial class GameSimulation {
         _ = AppendAcceptedStepForActor(
             root,
             actorId,
-            actionKind,
-            actionSummary,
-            actionPayload,
-            preActionReason,
+            descriptor,
             validatorFeedback,
             endsTurn: true
         );
@@ -241,10 +226,7 @@ internal static partial class GameSimulation {
         );
         return await AppendAcceptedLargeActionAndResolveAsync(
             root,
-            actionKind: plan.ActionKind,
-            plan.ActionSummary,
-            plan.ActionPayload,
-            plan.PreActionReason,
+            plan.Descriptor,
             validatorFeedback,
             () => ResolveExploreAcceptedAsync(
                 root,
@@ -280,10 +262,7 @@ internal static partial class GameSimulation {
 
         return await AppendAcceptedLargeActionAndResolveAsync(
             root,
-            actionKind: plan.ActionKind,
-            actionSummary: plan.ActionSummary,
-            actionPayload: plan.ActionPayload,
-            plan.PreActionReason,
+            plan.Descriptor,
             validatorFeedback,
             () => ResolveInteractionAcceptedAsync(
                 root,
@@ -363,10 +342,7 @@ internal static partial class GameSimulation {
         AppendAcceptedStepForActor(
             root,
             actorId,
-            actionKind: plan.ActionKind,
-            actionSummary: plan.ActionSummary,
-            actionPayload: plan.ActionPayload,
-            plan.PreActionReason,
+            plan.Descriptor,
             validatorFeedback,
             endsTurn: false,
             stepOutcomeSummary: summary,
@@ -420,10 +396,7 @@ internal static partial class GameSimulation {
         var step = AppendAcceptedStepForActor(
             root,
             actorId,
-            actionKind: plan.ActionKind,
-            actionSummary: plan.ActionSummary,
-            actionPayload: plan.ActionPayload,
-            plan.PreActionReason,
+            plan.Descriptor,
             validatorFeedback,
             endsTurn: false,
             stepOutcomeSummary: pendingSummary,
@@ -466,10 +439,7 @@ internal static partial class GameSimulation {
 
         AppendAcceptedStep(
             root,
-            actionKind: plan.ActionKind,
-            actionSummary: plan.ActionSummary,
-            actionPayload: plan.ActionPayload,
-            plan.PreActionReason,
+            plan.Descriptor,
             validatorFeedback,
             endsTurn: true,
             stepOutcomeSummary: workingStartSummary,
@@ -479,10 +449,7 @@ internal static partial class GameSimulation {
         StartWorkingForActor(
             root,
             TerminalPlayerActorId,
-            plan.ActionKind,
-            plan.ActionSummary,
-            plan.ActionPayload,
-            plan.PreActionReason,
+            plan.Descriptor,
             validatorFeedback,
             interaction.TurnCost - 1
         );
@@ -527,10 +494,12 @@ internal static partial class GameSimulation {
         AppendAcceptedStepForActor(
             root,
             actorId,
-            actionKind: TerminalActionKinds.SmallEditMemoryNotebook,
-            actionSummary: proposal.ActionSummary,
-            actionPayload: proposal.CanonicalScriptXml,
-            preActionReason,
+            new ActionDescriptor(
+                TerminalActionKinds.SmallEditMemoryNotebook,
+                proposal.ActionSummary,
+                proposal.CanonicalScriptXml,
+                preActionReason
+            ),
             validatorFeedback,
             endsTurn: false,
             stepOutcomeSummary: "你的记事本已按这一步修改更新。",
@@ -545,13 +514,15 @@ internal static partial class GameSimulation {
         string preActionReason,
         string validatorFeedback
     ) {
-        const string actionSummary = "原地休息一会";
+        var descriptor = new ActionDescriptor(
+            TerminalActionKinds.LargeRestAWhile,
+            "原地休息一会",
+            null,
+            preActionReason
+        );
         return AppendAcceptedLargeActionAndResolve(
             root,
-            actionKind: TerminalActionKinds.LargeRestAWhile,
-            actionSummary,
-            actionPayload: null,
-            preActionReason,
+            descriptor,
             validatorFeedback,
             () => ResolveRestAccepted(root, collectedTurnLead: null)
         );
@@ -815,10 +786,7 @@ internal static partial class GameSimulation {
                 StartWorkingForActor(
                     root,
                     actorId,
-                    plan.ActionKind,
-                    plan.ActionSummary,
-                    plan.ActionPayload,
-                    plan.PreActionReason,
+                    plan.Descriptor,
                     validatorFeedback: "collected-turn working start",
                     interaction.TurnCost - 1
                 );
@@ -924,10 +892,7 @@ internal static partial class GameSimulation {
 
     private static ActionResolution AppendAcceptedLargeActionAndResolve(
         DurableDict<string> root,
-        string actionKind,
-        string actionSummary,
-        string? actionPayload,
-        string preActionReason,
+        ActionDescriptor descriptor,
         string validatorFeedback,
         Func<ActionResolution> resolve
     ) {
@@ -936,10 +901,7 @@ internal static partial class GameSimulation {
 
         AppendAcceptedStep(
             root,
-            actionKind,
-            actionSummary,
-            actionPayload,
-            preActionReason,
+            descriptor,
             validatorFeedback,
             endsTurn: true
         );
@@ -949,10 +911,7 @@ internal static partial class GameSimulation {
 
     private static Task<AsyncAteliaResult<ActionResolution>> AppendAcceptedLargeActionAndResolveAsync(
         DurableDict<string> root,
-        string actionKind,
-        string actionSummary,
-        string? actionPayload,
-        string preActionReason,
+        ActionDescriptor descriptor,
         string validatorFeedback,
         Func<Task<AsyncAteliaResult<ActionResolution>>> resolveAsync
     ) {
@@ -961,10 +920,7 @@ internal static partial class GameSimulation {
 
         AppendAcceptedStep(
             root,
-            actionKind,
-            actionSummary,
-            actionPayload,
-            preActionReason,
+            descriptor,
             validatorFeedback,
             endsTurn: true
         );
@@ -996,10 +952,7 @@ internal static partial class GameSimulation {
 
     private static TurnStep AppendAcceptedStep(
         DurableDict<string> root,
-        string actionKind,
-        string actionSummary,
-        string? actionPayload,
-        string preActionReason,
+        ActionDescriptor descriptor,
         string validatorFeedback,
         bool endsTurn,
         string? stepOutcomeSummary = null,
@@ -1008,10 +961,7 @@ internal static partial class GameSimulation {
         return AppendAcceptedStepForActor(
             root,
             TerminalPlayerActorId,
-            actionKind,
-            actionSummary,
-            actionPayload,
-            preActionReason,
+            descriptor,
             validatorFeedback,
             endsTurn,
             stepOutcomeSummary,
@@ -1022,28 +972,26 @@ internal static partial class GameSimulation {
     private static TurnStep AppendAcceptedStepForActor(
         DurableDict<string> root,
         string actorId,
-        string actionKind,
-        string actionSummary,
-        string? actionPayload,
-        string preActionReason,
+        ActionDescriptor descriptor,
         string validatorFeedback,
         bool endsTurn,
         string? stepOutcomeSummary = null,
         string? stepOutcomeState = null
     ) {
+        descriptor = NormalizeActionDescriptor(descriptor);
         var currentTurn = GetCurrentTurn(root);
         var acceptedSteps = GetAcceptedStepsForActor(root, actorId, createIfMissing: true)!;
         var stepNumber = currentTurn.GetOrThrow<int>(NextStepNumberKey);
         var stepId = $"step-{stepNumber:D4}";
         var step = root.Revision.CreateDict<string>();
 
-        step.Upsert(ActionKindKey, actionKind);
-        step.Upsert(ActionSummaryKey, actionSummary);
-        if (actionPayload is not null) {
-            step.Upsert(ActionPayloadKey, actionPayload);
+        step.Upsert(ActionKindKey, descriptor.ActionKind);
+        step.Upsert(ActionSummaryKey, descriptor.ActionSummary);
+        if (descriptor.ActionPayload is not null) {
+            step.Upsert(ActionPayloadKey, descriptor.ActionPayload);
         }
 
-        step.Upsert(PreActionReasonKey, preActionReason);
+        step.Upsert(PreActionReasonKey, descriptor.PreActionReason);
         step.Upsert(ValidatorFeedbackKey, validatorFeedback);
         step.Upsert(EndsTurnKey, endsTurn);
         if (!string.IsNullOrWhiteSpace(stepOutcomeSummary)) {
@@ -1060,10 +1008,10 @@ internal static partial class GameSimulation {
 
         var turnStep = new TurnStep(
             stepNumber,
-            actionKind,
-            actionSummary,
-            actionPayload,
-            preActionReason,
+            descriptor.ActionKind,
+            descriptor.ActionSummary,
+            descriptor.ActionPayload,
+            descriptor.PreActionReason,
             validatorFeedback,
             endsTurn,
             stepOutcomeSummary,
@@ -1413,27 +1361,35 @@ internal static partial class GameSimulation {
     private static void StartWorkingForActor(
         DurableDict<string> root,
         string actorId,
-        string actionKind,
-        string actionSummary,
-        string? actionPayload,
-        string preActionReason,
+        ActionDescriptor descriptor,
         string validatorFeedback,
         int remainingTurns
     ) {
+        descriptor = NormalizeActionDescriptor(descriptor);
         var workingByActor = GetOrCreateWorkingByActor(root);
         var workOrder = root.Revision.CreateDict<string>();
         workOrder.Upsert(ActorIdKey, actorId);
-        workOrder.Upsert(ActionKindKey, actionKind);
-        workOrder.Upsert(ActionSummaryKey, actionSummary);
-        if (actionPayload is not null) {
-            workOrder.Upsert(ActionPayloadKey, actionPayload);
+        workOrder.Upsert(ActionKindKey, descriptor.ActionKind);
+        workOrder.Upsert(ActionSummaryKey, descriptor.ActionSummary);
+        if (descriptor.ActionPayload is not null) {
+            workOrder.Upsert(ActionPayloadKey, descriptor.ActionPayload);
         }
 
-        workOrder.Upsert(PreActionReasonKey, preActionReason);
+        workOrder.Upsert(PreActionReasonKey, descriptor.PreActionReason);
         workOrder.Upsert(ValidatorFeedbackKey, validatorFeedback);
         workOrder.Upsert(RemainingTurnsKey, remainingTurns);
         workingByActor.Upsert(actorId, workOrder);
         SetActorActiveState(root, actorId, active: false);
+    }
+
+    private static ActionDescriptor NormalizeActionDescriptor(ActionDescriptor descriptor) {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        return new ActionDescriptor(
+            NormalizeRequired(descriptor.ActionKind, nameof(descriptor.ActionKind)),
+            NormalizeRequired(descriptor.ActionSummary, nameof(descriptor.ActionSummary)),
+            string.IsNullOrWhiteSpace(descriptor.ActionPayload) ? null : descriptor.ActionPayload.Trim(),
+            NormalizeRequired(descriptor.PreActionReason, nameof(descriptor.PreActionReason))
+        );
     }
 
     private static WorkOrder? TryReadWorkOrder(DurableDict<string> root, string actorId) {

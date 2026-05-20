@@ -23,6 +23,13 @@ internal abstract record TerminalActionExecutionPlan(string PreActionReason) {
 
     internal abstract string? ActionPayload { get; }
 
+    internal ActionDescriptor Descriptor => new(
+        ActionKind,
+        ActionSummary,
+        ActionPayload,
+        PreActionReason
+    );
+
     internal sealed record Explore(
         string Direction,
         string? Focus,
