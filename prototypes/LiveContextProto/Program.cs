@@ -30,7 +30,8 @@ internal static class Program {
         var agent = new CharacterAgent();
 
         // 旧 Anthropic 路径暂保留为参考，待长期稳定后清理：
-        // var anthropicClient = new AnthropicClient(apiKey: null, baseAddress: new Uri(LocalLlmEndpoint));
+        // using var anthropicHttpClient = new HttpClient { BaseAddress = new Uri(LocalLlmEndpoint) };
+        // var anthropicClient = new AnthropicClient(apiKey: null, httpClient: anthropicHttpClient);
         // var defaultProfile = new LlmProfile(anthropicClient, DefaultModelId, "LocaQwen-anthropic-v1", 64_000u);
         // var loop = new ConsoleTui(agent, defaultProfile);
 
@@ -38,9 +39,12 @@ internal static class Program {
         LlmProfile defaultProfile;
         var deepSeekApiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
         if (!string.IsNullOrWhiteSpace(deepSeekApiKey)) {
+            ownedHttpClient = new HttpClient {
+                BaseAddress = new Uri("https://api.deepseek.com/")
+            };
             var deepSeekV4Client = new DeepSeekV4ChatClient(
                 apiKey: deepSeekApiKey,
-                baseAddress: new Uri("https://api.deepseek.com/")
+                httpClient: ownedHttpClient
             );
             defaultProfile = new LlmProfile(deepSeekV4Client, "deepseek-v4-flash", "Player", 8000u);
             Console.WriteLine("[startup] profile: deepseek-v4-flash (DEEPSEEK_API_KEY detected)");

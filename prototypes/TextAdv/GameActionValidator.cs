@@ -13,6 +13,7 @@ internal static class GameActionValidator {
     private const string FallbackModelIdEnv = "DEEPSEEK_MODEL";
     private const string ApiKeyEnv = "DEEPSEEK_API_KEY";
     private const string DefaultModelId = "deepseek-v4-flash";
+    private const string DefaultBaseAddress = "https://api.deepseek.com/";
     private const string PointOutIssuesToolName = "point_out_issues";
 
     private static readonly Lock s_gate = new();
@@ -45,6 +46,7 @@ internal static class GameActionValidator {
     ];
 
     private static DeepSeekV4ChatClient? s_client;
+    private static HttpClient? s_httpClient;
     private static ValidatorConfig? s_config;
 
     private sealed record ValidatorConfig(string? BaseAddress, string ModelId, string ApiKey);
@@ -102,9 +104,12 @@ internal static class GameActionValidator {
             if (s_client is not null) { return s_client; }
 
             var config = GetConfig();
+            s_httpClient = new HttpClient {
+                BaseAddress = ResolveBaseAddress(config.BaseAddress)
+            };
             s_client = new DeepSeekV4ChatClient(
                 apiKey: config.ApiKey,
-                baseAddress: string.IsNullOrWhiteSpace(config.BaseAddress) ? null : new Uri(config.BaseAddress),
+                httpClient: s_httpClient,
                 options: new OpenAIChatClientOptions {
                     ExtraBody = new JsonObject {
                         ["thinking"] = new JsonObject {
@@ -116,6 +121,17 @@ internal static class GameActionValidator {
             );
             return s_client;
         }
+    }
+
+    private static Uri ResolveBaseAddress(string? configuredBaseAddress) {
+        return string.IsNullOrWhiteSpace(configuredBaseAddress)
+            ? new Uri(DefaultBaseAddress)
+            : new Uri(EnsureTrailingSlash(configuredBaseAddress));
+    }
+
+    private static string EnsureTrailingSlash(string value) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        return value.EndsWith("/", StringComparison.Ordinal) ? value : value + "/";
     }
 
     private static ValidatorConfig GetConfig() {

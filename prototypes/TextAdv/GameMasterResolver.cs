@@ -79,6 +79,7 @@ internal static class GameMasterResolver {
     private const string ApiKeyEnv = "DEEPSEEK_API_KEY";
     private const string MaxRoundsEnv = "ATELIA_TEXTADV_GM_MAX_ROUNDS";
     private const string DefaultModelId = "deepseek-v4-flash";
+    private const string DefaultBaseAddress = "https://api.deepseek.com/";
     private const int DefaultMaxRounds = 4;
     private const string ViewSafeNamingContractPromptLine =
         "所有会暴露给玩家的命名都必须视角安全：location / item 的名称与描述，以及 visibleLabel / interaction_id，都不能在识别前剧透真相。";
@@ -87,6 +88,7 @@ internal static class GameMasterResolver {
 
     private static readonly Lock s_gate = new();
     private static DeepSeekV4ChatClient? s_client;
+    private static HttpClient? s_httpClient;
     private static GmConfig? s_config;
     private static GameMasterStub? s_stub;
 
@@ -1254,9 +1256,12 @@ internal static class GameMasterResolver {
         lock (s_gate) {
             if (s_client is not null) { return s_client; }
 
+            s_httpClient = new HttpClient {
+                BaseAddress = ResolveBaseAddress(config.BaseAddress)
+            };
             s_client = new DeepSeekV4ChatClient(
                 apiKey: config.ApiKey,
-                baseAddress: string.IsNullOrWhiteSpace(config.BaseAddress) ? null : new Uri(config.BaseAddress),
+                httpClient: s_httpClient,
                 options: new OpenAIChatClientOptions {
                     ExtraBody = new JsonObject {
                         ["thinking"] = new JsonObject {
@@ -1268,6 +1273,17 @@ internal static class GameMasterResolver {
             );
             return s_client;
         }
+    }
+
+    private static Uri ResolveBaseAddress(string? configuredBaseAddress) {
+        return string.IsNullOrWhiteSpace(configuredBaseAddress)
+            ? new Uri(DefaultBaseAddress)
+            : new Uri(EnsureTrailingSlash(configuredBaseAddress));
+    }
+
+    private static string EnsureTrailingSlash(string value) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        return value.EndsWith("/", StringComparison.Ordinal) ? value : value + "/";
     }
 
     private static GmConfig GetConfig() {
@@ -1303,6 +1319,8 @@ internal static class GameMasterResolver {
     internal static void SetStubForTests(GameMasterStub? stub) {
         lock (s_gate) {
             s_stub = stub;
+            s_httpClient?.Dispose();
+            s_httpClient = null;
             s_client = null;
             s_config = null;
         }
@@ -1311,6 +1329,8 @@ internal static class GameMasterResolver {
     internal static void ResetForTests() {
         lock (s_gate) {
             s_stub = null;
+            s_httpClient?.Dispose();
+            s_httpClient = null;
             s_client = null;
             s_config = null;
         }

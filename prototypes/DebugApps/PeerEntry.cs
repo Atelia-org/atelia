@@ -21,7 +21,9 @@ public static class PeerEntry {
     private const string DefaultModel = "Qwen3.5-27b-GPTQ-Int4";
     private const string DefaultProfileName = "anthropic-v1";
 
-    private static AnthropicClient s_client = new(apiKey: null, baseAddress: new Uri(DefaultEndpoint));
+    private static string s_currentEndpoint = DefaultEndpoint;
+    private static HttpClient s_httpClient = CreateAnthropicHttpClient(DefaultEndpoint);
+    private static AnthropicClient s_client = new(apiKey: null, httpClient: s_httpClient);
     private static LlmProfile s_profile = new(s_client, DefaultModel, DefaultProfileName, 64000);
     private static CharacterAgent s_agent = CreateAgent();
     private static DurableTextApp? s_dtApp;
@@ -52,22 +54,24 @@ public static class PeerEntry {
             DefaultValueFactory = _ => false,
         };
         var cmd = new Command("ask", "发一条消息，等待 agent 状态机推进至空闲并打印所有输出") { msgArg, quietOpt };
-        cmd.SetAction(async (ctx, ct) => {
-            var msg = ctx.GetValue(msgArg)!;
-            var quiet = ctx.GetValue(quietOpt);
-            var output = ctx.InvocationConfiguration.Output;
-            var error = ctx.InvocationConfiguration.Error;
+        cmd.SetAction(
+            async (ctx, ct) => {
+                var msg = ctx.GetValue(msgArg)!;
+                var quiet = ctx.GetValue(quietOpt);
+                var output = ctx.InvocationConfiguration.Output;
+                var error = ctx.InvocationConfiguration.Error;
 
-            var notification = $"你收到消息:\n``````\n{msg}\n``````";
-            s_agent.AppendNotification(notification);
+                var notification = $"你收到消息:\n``````\n{msg}\n``````";
+                s_agent.AppendNotification(notification);
 
-            try {
-                await DrainAsync(output, error, quiet, ct);
+                try {
+                    await DrainAsync(output, error, quiet, ct);
+                }
+                catch (Exception ex) {
+                    error.WriteLine($"模型调用失败: {ex.Message}");
+                }
             }
-            catch (Exception ex) {
-                error.WriteLine($"模型调用失败: {ex.Message}");
-            }
-        });
+        );
         return cmd;
     }
 
@@ -108,22 +112,26 @@ public static class PeerEntry {
 
     private static Command BuildStateCommand() {
         var cmd = new Command("state", "查看 agent 当前状态");
-        cmd.SetAction(ctx => {
-            var output = ctx.InvocationConfiguration.Output;
-            output.WriteLine($"Profile:        {s_profile.Name} (model={s_profile.ModelId})");
-            output.WriteLine($"Endpoint:       {DefaultEndpoint}");
-            output.WriteLine($"HistoryEntries: {s_agent.State.RecentHistory.Count}");
-            output.WriteLine($"PendingNotif:   {s_agent.State.HasPendingNotification}");
-            output.WriteLine($"NotebookLen:    {s_agent.MemoryNotebookSnapshot.Length}");
-        });
+        cmd.SetAction(
+            ctx => {
+                var output = ctx.InvocationConfiguration.Output;
+                output.WriteLine($"Profile:        {s_profile.Name} (model={s_profile.ModelId})");
+                output.WriteLine($"Endpoint:       {s_currentEndpoint}");
+                output.WriteLine($"HistoryEntries: {s_agent.State.RecentHistory.Count}");
+                output.WriteLine($"PendingNotif:   {s_agent.State.HasPendingNotification}");
+                output.WriteLine($"NotebookLen:    {s_agent.MemoryNotebookSnapshot.Length}");
+            }
+        );
         return cmd;
     }
 
     private static Command BuildSystemCommand() {
         var cmd = new Command("system", "打印 agent 的 system prompt");
-        cmd.SetAction(ctx => {
-            ctx.InvocationConfiguration.Output.WriteLine(s_agent.SystemPrompt);
-        });
+        cmd.SetAction(
+            ctx => {
+                ctx.InvocationConfiguration.Output.WriteLine(s_agent.SystemPrompt);
+            }
+        );
         return cmd;
     }
 
@@ -131,19 +139,23 @@ public static class PeerEntry {
         var cmd = new Command("notebook", "查看或修改记忆笔记");
 
         var viewCmd = new Command("view", "查看当前记忆笔记内容");
-        viewCmd.SetAction(ctx => {
-            var snap = s_agent.MemoryNotebookSnapshot;
-            ctx.InvocationConfiguration.Output.WriteLine($"--- notebook ({snap.Length} chars) ---");
-            ctx.InvocationConfiguration.Output.WriteLine(snap);
-        });
+        viewCmd.SetAction(
+            ctx => {
+                var snap = s_agent.MemoryNotebookSnapshot;
+                ctx.InvocationConfiguration.Output.WriteLine($"--- notebook ({snap.Length} chars) ---");
+                ctx.InvocationConfiguration.Output.WriteLine(snap);
+            }
+        );
 
         var contentArg = new Argument<string>("content") { Description = "新的笔记内容" };
         var setCmd = new Command("set", "完全替换笔记内容") { contentArg };
-        setCmd.SetAction(ctx => {
-            var content = ctx.GetValue(contentArg)!;
-            s_agent.UpdateMemoryNotebook(content);
-            ctx.InvocationConfiguration.Output.WriteLine($"笔记已更新（{content.Length} 字符）");
-        });
+        setCmd.SetAction(
+            ctx => {
+                var content = ctx.GetValue(contentArg)!;
+                s_agent.UpdateMemoryNotebook(content);
+                ctx.InvocationConfiguration.Output.WriteLine($"笔记已更新（{content.Length} 字符）");
+            }
+        );
 
         cmd.Add(viewCmd);
         cmd.Add(setCmd);
@@ -152,32 +164,36 @@ public static class PeerEntry {
 
     private static Command BuildResetCommand() {
         var cmd = new Command("reset", "重新创建 CharacterAgent（清空所有历史与笔记，重新挂载 DurableTextApp）");
-        cmd.SetAction(ctx => {
-            s_agent = CreateAgent();
-            ctx.InvocationConfiguration.Output.WriteLine("Agent reset (DurableTextApp re-registered).");
-        });
+        cmd.SetAction(
+            ctx => {
+                s_agent = CreateAgent();
+                ctx.InvocationConfiguration.Output.WriteLine("Agent reset (DurableTextApp re-registered).");
+            }
+        );
         return cmd;
     }
 
     private static Command BuildDtCommand() {
         var cmd = new Command("dt", "查看 DurableTextApp 当前内容（旁观刘德智的编辑成果）");
-        cmd.SetAction(ctx => {
-            var output = ctx.InvocationConfiguration.Output;
-            if (s_dtApp is null) {
-                output.WriteLine("(DurableTextApp not initialized)");
-                return;
+        cmd.SetAction(
+            ctx => {
+                var output = ctx.InvocationConfiguration.Output;
+                if (s_dtApp is null) {
+                    output.WriteLine("(DurableTextApp not initialized)");
+                    return;
+                }
+                var snap = s_dtApp.Snapshot();
+                var blocks = snap.GetAllBlocks();
+                output.WriteLine($"--- DurableText ({blocks.Count} blocks) ---");
+                if (blocks.Count == 0) {
+                    output.WriteLine("(empty)");
+                    return;
+                }
+                foreach (var b in blocks) {
+                    output.WriteLine($"[{b.Id}] {b.Content}");
+                }
             }
-            var snap = s_dtApp.Snapshot();
-            var blocks = snap.GetAllBlocks();
-            output.WriteLine($"--- DurableText ({blocks.Count} blocks) ---");
-            if (blocks.Count == 0) {
-                output.WriteLine("(empty)");
-                return;
-            }
-            foreach (var b in blocks) {
-                output.WriteLine($"[{b.Id}] {b.Content}");
-            }
-        });
+        );
         return cmd;
     }
 
@@ -185,24 +201,42 @@ public static class PeerEntry {
         var modelOpt = new Option<string?>("--model") { Description = "切换模型名" };
         var endpointOpt = new Option<string?>("--endpoint") { Description = "切换 endpoint URL" };
         var cmd = new Command("profile", "查看或切换 LLM profile") { modelOpt, endpointOpt };
-        cmd.SetAction(ctx => {
-            var model = ctx.GetValue(modelOpt);
-            var endpoint = ctx.GetValue(endpointOpt);
-            var output = ctx.InvocationConfiguration.Output;
+        cmd.SetAction(
+            ctx => {
+                var model = ctx.GetValue(modelOpt);
+                var endpoint = ctx.GetValue(endpointOpt);
+                var output = ctx.InvocationConfiguration.Output;
 
-            if (model is not null || endpoint is not null) {
-                var newModel = model ?? s_profile.ModelId;
-                var newEndpoint = endpoint ?? DefaultEndpoint;
-                s_client = new AnthropicClient(apiKey: null, baseAddress: new Uri(newEndpoint));
-                s_profile = new LlmProfile(s_client, newModel, DefaultProfileName, 64_000u);
-                output.WriteLine($"Profile updated: model={newModel} endpoint={newEndpoint}");
+                if (model is not null || endpoint is not null) {
+                    var newModel = model ?? s_profile.ModelId;
+                    var newEndpoint = endpoint ?? s_currentEndpoint;
+                    var nextHttpClient = CreateAnthropicHttpClient(newEndpoint);
+                    var previousHttpClient = s_httpClient;
+                    s_httpClient = nextHttpClient;
+                    s_currentEndpoint = newEndpoint;
+                    s_client = new AnthropicClient(apiKey: null, httpClient: s_httpClient);
+                    previousHttpClient.Dispose();
+                    s_profile = new LlmProfile(s_client, newModel, DefaultProfileName, 64_000u);
+                    output.WriteLine($"Profile updated: model={newModel} endpoint={newEndpoint}");
+                }
+                else {
+                    output.WriteLine($"Model:    {s_profile.ModelId}");
+                    output.WriteLine($"Profile:  {s_profile.Name}");
+                    output.WriteLine($"Endpoint: {s_currentEndpoint}");
+                }
             }
-            else {
-                output.WriteLine($"Model:    {s_profile.ModelId}");
-                output.WriteLine($"Profile:  {s_profile.Name}");
-                output.WriteLine($"Endpoint: {DefaultEndpoint}");
-            }
-        });
+        );
         return cmd;
+    }
+
+    private static HttpClient CreateAnthropicHttpClient(string endpoint) {
+        return new HttpClient {
+            BaseAddress = new Uri(EnsureTrailingSlash(endpoint))
+        };
+    }
+
+    private static string EnsureTrailingSlash(string endpoint) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
+        return endpoint.EndsWith("/", StringComparison.Ordinal) ? endpoint : endpoint + "/";
     }
 }

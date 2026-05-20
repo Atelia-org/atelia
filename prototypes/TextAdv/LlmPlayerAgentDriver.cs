@@ -16,12 +16,14 @@ internal static class LlmPlayerAgentDriver {
     private const string PipelineEnv = "ATELIA_TEXTADV_LLM_PLAYER_PIPELINE";
     private const string MaxAttemptsEnv = "ATELIA_TEXTADV_LLM_PLAYER_MAX_ATTEMPTS";
     private const string DefaultModelId = "deepseek-v4-flash";
+    private const string DefaultBaseAddress = "https://api.deepseek.com/";
     private const string DirectorExecutorPipeline = "director-executor";
     private const string SinglePipeline = "single";
     private const int DefaultMaxAttempts = 3;
 
     private static readonly Lock s_gate = new();
     private static DeepSeekV4ChatClient? s_client;
+    private static HttpClient? s_httpClient;
     private static LlmPlayerConfig? s_config;
     private static LlmPlayerStub? s_stub;
 
@@ -332,9 +334,12 @@ internal static class LlmPlayerAgentDriver {
         lock (s_gate) {
             if (s_client is not null) { return s_client; }
 
+            s_httpClient = new HttpClient {
+                BaseAddress = ResolveBaseAddress(config.BaseAddress)
+            };
             s_client = new DeepSeekV4ChatClient(
                 apiKey: config.ApiKey!,
-                baseAddress: string.IsNullOrWhiteSpace(config.BaseAddress) ? null : new Uri(config.BaseAddress),
+                httpClient: s_httpClient,
                 options: new OpenAIChatClientOptions {
                     ExtraBody = new JsonObject {
                         ["thinking"] = new JsonObject {
@@ -346,6 +351,17 @@ internal static class LlmPlayerAgentDriver {
             );
             return s_client;
         }
+    }
+
+    private static Uri ResolveBaseAddress(string? configuredBaseAddress) {
+        return string.IsNullOrWhiteSpace(configuredBaseAddress)
+            ? new Uri(DefaultBaseAddress)
+            : new Uri(EnsureTrailingSlash(configuredBaseAddress));
+    }
+
+    private static string EnsureTrailingSlash(string value) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        return value.EndsWith("/", StringComparison.Ordinal) ? value : value + "/";
     }
 
     private static LlmPlayerConfig GetConfig() {
@@ -382,6 +398,8 @@ internal static class LlmPlayerAgentDriver {
     internal static void SetStubForTests(LlmPlayerStub? stub) {
         lock (s_gate) {
             s_stub = stub;
+            s_httpClient?.Dispose();
+            s_httpClient = null;
             s_client = null;
             s_config = null;
         }
@@ -390,6 +408,8 @@ internal static class LlmPlayerAgentDriver {
     internal static void ResetForTests() {
         lock (s_gate) {
             s_stub = null;
+            s_httpClient?.Dispose();
+            s_httpClient = null;
             s_client = null;
             s_config = null;
         }

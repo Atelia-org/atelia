@@ -39,9 +39,12 @@ internal static class Program {
     }
 
     private static async Task<int> RunInteractiveLoop(PersistentSession session) {
+        using var httpClient = new HttpClient {
+            BaseAddress = new Uri(LocalLlmEndpoint)
+        };
         var client = new OpenAIChatClient(
             apiKey: null,
-            baseAddress: new Uri(LocalLlmEndpoint),
+            httpClient: httpClient,
             dialect: OpenAIChatDialects.SgLangCompatible,
             options: OpenAIChatClientOptions.QwenThinkingDisabled()
         );

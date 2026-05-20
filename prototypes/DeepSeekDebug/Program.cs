@@ -39,11 +39,12 @@ internal static class Program {
         var model = Environment.GetEnvironmentVariable(ModelEnvVar) ?? DefaultModel;
 
         var recordingHandler = new RecordingHandler(new HttpClientHandler());
-        using var httpClient = new HttpClient(recordingHandler);
+        using var httpClient = new HttpClient(recordingHandler) {
+            BaseAddress = new Uri(EnsureTrailingSlash(baseUrl))
+        };
         var client = new DeepSeekV4ChatClient(
             apiKey: apiKey,
             httpClient: httpClient,
-            baseAddress: new Uri(EnsureTrailingSlash(baseUrl)),
             options: new OpenAIChatClientOptions {
                 ExtraBody = new JsonObject {
                     ["thinking"] = new JsonObject {
@@ -143,25 +144,17 @@ internal static class Program {
     }
 
     private static void ValidateRun(IReadOnlyList<string> requestBodies, int totalToolCalls) {
-        if (requestBodies.Count < 3) {
-            throw new InvalidOperationException($"Expected at least 3 outbound requests, got {requestBodies.Count}.");
-        }
+        if (requestBodies.Count < 3) { throw new InvalidOperationException($"Expected at least 3 outbound requests, got {requestBodies.Count}."); }
 
-        if (totalToolCalls < 1) {
-            throw new InvalidOperationException("Expected at least one real tool call, but the model emitted none.");
-        }
+        if (totalToolCalls < 1) { throw new InvalidOperationException("Expected at least one real tool call, but the model emitted none."); }
 
         var laterRequestHasReplay = false;
         for (var i = 1; i < requestBodies.Count; i++) {
             using var document = JsonDocument.Parse(requestBodies[i]);
-            if (!document.RootElement.TryGetProperty("messages", out var messages)) {
-                continue;
-            }
+            if (!document.RootElement.TryGetProperty("messages", out var messages)) { continue; }
 
             foreach (var message in messages.EnumerateArray()) {
-                if (!message.TryGetProperty("role", out var roleProperty) || roleProperty.GetString() != "assistant") {
-                    continue;
-                }
+                if (!message.TryGetProperty("role", out var roleProperty) || roleProperty.GetString() != "assistant") { continue; }
 
                 var hasToolCalls = message.TryGetProperty("tool_calls", out var toolCallsProperty)
                     && toolCallsProperty.ValueKind == JsonValueKind.Array
@@ -176,9 +169,7 @@ internal static class Program {
                 }
             }
 
-            if (laterRequestHasReplay) {
-                break;
-            }
+            if (laterRequestHasReplay) { break; }
         }
 
         if (!laterRequestHasReplay) {
@@ -208,9 +199,7 @@ internal static class Program {
 
     private static string BuildWeatherResult(RawToolCall toolCall) {
         using var document = JsonDocument.Parse(toolCall.RawArgumentsJson);
-        if (document.RootElement.ValueKind != JsonValueKind.Object) {
-            throw new InvalidOperationException($"Tool '{toolCall.ToolName}' arguments must be a JSON object.");
-        }
+        if (document.RootElement.ValueKind != JsonValueKind.Object) { throw new InvalidOperationException($"Tool '{toolCall.ToolName}' arguments must be a JSON object."); }
 
         var location = GetRequiredStringArgument(document.RootElement, "location");
         var date = GetRequiredStringArgument(document.RootElement, "date");
@@ -218,14 +207,10 @@ internal static class Program {
     }
 
     private static string GetRequiredStringArgument(JsonElement arguments, string name) {
-        if (!arguments.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String) {
-            throw new InvalidOperationException($"Missing required string argument '{name}'.");
-        }
+        if (!arguments.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String) { throw new InvalidOperationException($"Missing required string argument '{name}'."); }
 
         var text = value.GetString();
-        if (string.IsNullOrWhiteSpace(text)) {
-            throw new InvalidOperationException($"Missing required string argument '{name}'.");
-        }
+        if (string.IsNullOrWhiteSpace(text)) { throw new InvalidOperationException($"Missing required string argument '{name}'."); }
 
         return text;
     }
@@ -244,17 +229,13 @@ internal static class Program {
     }
 
     private static string FormatArguments(string rawArgumentsJson) {
-        if (string.IsNullOrWhiteSpace(rawArgumentsJson) || rawArgumentsJson == "{}") {
-            return string.Empty;
-        }
+        if (string.IsNullOrWhiteSpace(rawArgumentsJson) || rawArgumentsJson == "{}") { return string.Empty; }
 
         return rawArgumentsJson;
     }
 
     private static string FormatPreview(string? text) {
-        if (string.IsNullOrWhiteSpace(text)) {
-            return "<empty>";
-        }
+        if (string.IsNullOrWhiteSpace(text)) { return "<empty>"; }
 
         var normalized = text.Replace('\n', ' ').Replace('\r', ' ').Trim();
         return normalized.Length <= 160 ? normalized : normalized[..160] + "...";
@@ -269,9 +250,7 @@ internal static class Program {
 
     private static string RequireEnvironmentVariable(string name) {
         var value = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrWhiteSpace(value)) {
-            throw new InvalidOperationException($"Environment variable '{name}' is required.");
-        }
+        if (string.IsNullOrWhiteSpace(value)) { throw new InvalidOperationException($"Environment variable '{name}' is required."); }
 
         return value;
     }
@@ -319,9 +298,7 @@ internal static class Program {
                 using var document = JsonDocument.Parse(body);
                 if (document.RootElement.TryGetProperty("messages", out var messages)) {
                     foreach (var message in messages.EnumerateArray()) {
-                        if (!message.TryGetProperty("role", out var roleProperty) || roleProperty.GetString() != "assistant") {
-                            continue;
-                        }
+                        if (!message.TryGetProperty("role", out var roleProperty) || roleProperty.GetString() != "assistant") { continue; }
 
                         assistantCount++;
 
@@ -332,17 +309,11 @@ internal static class Program {
                             && toolCallsProperty.ValueKind == JsonValueKind.Array
                             && toolCallsProperty.GetArrayLength() > 0;
 
-                        if (hasReasoning) {
-                            assistantWithReasoningCount++;
-                        }
+                        if (hasReasoning) { assistantWithReasoningCount++; }
 
-                        if (hasToolCalls) {
-                            assistantWithToolCallsCount++;
-                        }
+                        if (hasToolCalls) { assistantWithToolCallsCount++; }
 
-                        if (hasReasoning && hasToolCalls) {
-                            assistantToolCallsWithReasoningCount++;
-                        }
+                        if (hasReasoning && hasToolCalls) { assistantToolCallsWithReasoningCount++; }
                     }
                 }
             }

@@ -34,14 +34,21 @@ public static class Program {
         Console.WriteLine();
 
         // ── 创建 LLM Profile ──
-        // var client = new AnthropicClient(apiKey, baseAddress:new Uri(EnsureTrailingSlash(baseUrl)));
+        // using var anthropicHttpClient = new HttpClient { BaseAddress = new Uri(EnsureTrailingSlash(baseUrl)) };
+        // var client = new AnthropicClient(apiKey, anthropicHttpClient);
+        using var deepSeekHttpClient = new HttpClient {
+            BaseAddress = new Uri("https://api.deepseek.com/")
+        };
+        using var localHttpClient = new HttpClient {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
         var deepSeekV4Cient = new DeepSeekV4ChatClient(
             apiKey: Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY"),
-            baseAddress: new Uri("https://api.deepseek.com/")
+            httpClient: deepSeekHttpClient
         );
         var localCient = new OpenAIChatClient(
             apiKey: null,
-            baseAddress: new Uri("http://localhost:8000/"),
+            httpClient: localHttpClient,
             dialect: OpenAIChatDialects.SgLangCompatible,
             options: OpenAIChatClientOptions.QwenThinkingDisabled()
         );
