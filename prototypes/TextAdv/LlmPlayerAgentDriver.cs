@@ -629,29 +629,13 @@ internal static class LlmPlayerAgentDriver {
                 );
             }
 
-            AsyncAteliaResult<ActionResolution> resolutionResult = interactionPlan.ExecutionKind switch {
-                InteractionExecutionKind.ImmediateSelf => await GameSimulation.ApplyImmediateSelfInteractionForActorAsync(
-                    _root,
-                    _actorId,
-                    interactionPlan.InteractionId,
-                    interactionPlan.PreActionReason,
-                    validation.Feedback,
-                    cancellationToken
-                ).ConfigureAwait(false),
-                InteractionExecutionKind.DeferredTurnEnd => GameSimulation.ApplyDeferredTurnEndInteractionForActor(
-                    _root,
-                    _actorId,
-                    interactionPlan.InteractionId,
-                    interactionPlan.PreActionReason,
-                    validation.Feedback
-                ),
-                _ => AsyncAteliaResult<ActionResolution>.Failure(
-                    new TextAdvError(
-                        "TextAdv.UnsupportedLlmPlayerImmediatePlan",
-                        $"LLM Player 当前不能直接执行 executionKind='{interactionPlan.ExecutionKind}' 的 small interaction。"
-                    )
-                )
-            };
+            var resolutionResult = await GameSimulation.ExecuteInteractionPlanForActorAsync(
+                _root,
+                _actorId,
+                interactionPlan,
+                validation.Feedback,
+                cancellationToken
+            ).ConfigureAwait(false);
 
             if (!resolutionResult.TryGetValue(out var resolution) || resolution is null) {
                 return new ToolExecuteResult(

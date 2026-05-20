@@ -246,10 +246,11 @@ internal static partial class GameSimulation {
         string validatorFeedback,
         CancellationToken cancellationToken
     ) {
-        var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
-        var executionKindResult = ClassifyInteractionExecutionKind(interaction);
-        if (!executionKindResult.TryGetValue(out var executionKind) || executionKind != InteractionExecutionKind.TurnEnding) {
+        var planResult = TryBuildVisibleInteractionPlanForActor(root, TerminalPlayerActorId, interactionId, preActionReason);
+        if (!planResult.TryGetValue(out var interactionPlanPair)) { return AsyncAteliaResult<ActionResolution>.Failure(planResult.Error!); }
+
+        var (interaction, plan) = interactionPlanPair!;
+        if (plan.ExecutionKind != InteractionExecutionKind.TurnEnding) {
             return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedTurnEndingInteraction",
@@ -258,19 +259,13 @@ internal static partial class GameSimulation {
             );
         }
 
-        var plan = CreateInteractionPlan(interaction, executionKind, preActionReason);
-
-        return await AppendAcceptedLargeActionAndResolveAsync(
+        return await ExecuteInteractionPlanForActorAsync(
             root,
-            plan.Descriptor,
+            TerminalPlayerActorId,
+            interaction,
+            plan,
             validatorFeedback,
-            () => ResolveInteractionAcceptedAsync(
-                root,
-                plan.InteractionId,
-                plan.PreActionReason,
-                collectedTurnLead: null,
-                cancellationToken
-            )
+            cancellationToken
         ).ConfigureAwait(false);
     }
 
@@ -299,13 +294,11 @@ internal static partial class GameSimulation {
         string validatorFeedback,
         CancellationToken cancellationToken
     ) {
-        actorId = NormalizeRequired(actorId, nameof(actorId));
-        var actorPerception = DescribePerceptionForActor(root, actorId);
-        var interactionResult = TryGetVisibleInteraction(actorPerception, interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
+        var planResult = TryBuildVisibleInteractionPlanForActor(root, actorId, interactionId, preActionReason);
+        if (!planResult.TryGetValue(out var interactionPlanPair)) { return AsyncAteliaResult<ActionResolution>.Failure(planResult.Error!); }
 
-        var executionKindResult = ClassifyInteractionExecutionKind(interaction);
-        if (!executionKindResult.TryGetValue(out var executionKind) || executionKind != InteractionExecutionKind.ImmediateSelf) {
+        var (interaction, plan) = interactionPlanPair!;
+        if (plan.ExecutionKind != InteractionExecutionKind.ImmediateSelf) {
             return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedImmediateInteraction",
@@ -314,44 +307,14 @@ internal static partial class GameSimulation {
             );
         }
 
-        GmExploreResolution gmResolution;
-        try {
-            gmResolution = await GameMasterResolver.ResolveImmediateSelfInteractionAsync(
-                root,
-                new GmInteractionContext(
-                    actorPerception,
-                    GetActorLocationId(root, actorId),
-                    interaction,
-                    preActionReason
-                ),
-                cancellationToken
-            ).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
-            return AsyncAteliaResult<ActionResolution>.Failure(
-                new TextAdvError(
-                    "TextAdv.ImmediateInteractionGmFailed",
-                    $"即时小动作结算依赖 GM Agent，但本次调用失败：{ex.Message}"
-                )
-            );
-        }
-
-        var summary = gmResolution.Summary;
-        var plan = CreateInteractionPlan(interaction, InteractionExecutionKind.ImmediateSelf, preActionReason);
-
-        AppendAcceptedStepForActor(
+        return await ExecuteInteractionPlanForActorAsync(
             root,
-            actorId,
-            plan.Descriptor,
+            NormalizeRequired(actorId, nameof(actorId)),
+            interaction,
+            plan,
             validatorFeedback,
-            endsTurn: false,
-            stepOutcomeSummary: summary,
-            stepOutcomeState: StepOutcomeCommittedNow
-        );
-
-        return AsyncAteliaResult<ActionResolution>.Success(
-            new ActionResolution(summary, DescribePerceptionForActor(root, actorId))
-        );
+            cancellationToken
+        ).ConfigureAwait(false);
     }
 
     internal static AsyncAteliaResult<ActionResolution> ApplyDeferredTurnEndInteraction(
@@ -376,13 +339,11 @@ internal static partial class GameSimulation {
         string preActionReason,
         string validatorFeedback
     ) {
-        actorId = NormalizeRequired(actorId, nameof(actorId));
-        var actorPerception = DescribePerceptionForActor(root, actorId);
-        var interactionResult = TryGetVisibleInteraction(actorPerception, interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
+        var planResult = TryBuildVisibleInteractionPlanForActor(root, actorId, interactionId, preActionReason);
+        if (!planResult.TryGetValue(out var interactionPlanPair)) { return AsyncAteliaResult<ActionResolution>.Failure(planResult.Error!); }
 
-        var executionKindResult = ClassifyInteractionExecutionKind(interaction);
-        if (!executionKindResult.TryGetValue(out var executionKind) || executionKind != InteractionExecutionKind.DeferredTurnEnd) {
+        var (interaction, plan) = interactionPlanPair!;
+        if (plan.ExecutionKind != InteractionExecutionKind.DeferredTurnEnd) {
             return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedDeferredInteraction",
@@ -391,26 +352,12 @@ internal static partial class GameSimulation {
             );
         }
 
-        var pendingSummary = BuildDeferredTurnEndInteractionSummary(interaction);
-        var plan = CreateInteractionPlan(interaction, InteractionExecutionKind.DeferredTurnEnd, preActionReason);
-        var step = AppendAcceptedStepForActor(
+        return ExecuteDeferredTurnEndInteractionPlanForActor(
             root,
-            actorId,
-            plan.Descriptor,
-            validatorFeedback,
-            endsTurn: false,
-            stepOutcomeSummary: pendingSummary,
-            stepOutcomeState: StepOutcomePendingTurnEnd
-        );
-        EnqueuePendingTurnEndEffect(
-            root,
-            actorId,
-            step,
-            effectSlot: TurnEndEffectSlot
-        );
-
-        return AsyncAteliaResult<ActionResolution>.Success(
-            new ActionResolution(pendingSummary, DescribePerceptionForActor(root, actorId))
+            NormalizeRequired(actorId, nameof(actorId)),
+            interaction,
+            plan,
+            validatorFeedback
         );
     }
 
@@ -421,11 +368,11 @@ internal static partial class GameSimulation {
         string validatorFeedback,
         CancellationToken cancellationToken
     ) {
-        var interactionResult = TryGetVisibleInteraction(DescribeCurrentPerception(root), interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
+        var planResult = TryBuildVisibleInteractionPlanForActor(root, TerminalPlayerActorId, interactionId, preActionReason);
+        if (!planResult.TryGetValue(out var interactionPlanPair)) { return AsyncAteliaResult<ActionResolution>.Failure(planResult.Error!); }
 
-        var executionKindResult = ClassifyInteractionExecutionKind(interaction);
-        if (!executionKindResult.TryGetValue(out var executionKind) || executionKind != InteractionExecutionKind.WorkingStart) {
+        var (interaction, plan) = interactionPlanPair!;
+        if (plan.ExecutionKind != InteractionExecutionKind.WorkingStart) {
             return AsyncAteliaResult<ActionResolution>.Failure(
                 new TextAdvError(
                     "TextAdv.UnsupportedWorkingInteraction",
@@ -434,35 +381,14 @@ internal static partial class GameSimulation {
             );
         }
 
-        var plan = CreateInteractionPlan(interaction, InteractionExecutionKind.WorkingStart, preActionReason);
-        var workingStartSummary = BuildWorkingStartSummary(interaction);
-
-        AppendAcceptedStep(
-            root,
-            plan.Descriptor,
-            validatorFeedback,
-            endsTurn: true,
-            stepOutcomeSummary: workingStartSummary,
-            stepOutcomeState: StepOutcomeWorking
-        );
-
-        StartWorkingForActor(
+        return await ExecuteInteractionPlanForActorAsync(
             root,
             TerminalPlayerActorId,
-            plan.Descriptor,
+            interaction,
+            plan,
             validatorFeedback,
-            interaction.TurnCost - 1
-        );
-
-        var turnSummary = await ResolveWorkingTurnAndCompleteAsync(
-            root,
-            TerminalPlayerActorId,
-            workingStartSummary,
-            collectedTurnLead: null,
-            consumeFutureTurn: false,
             cancellationToken
         ).ConfigureAwait(false);
-        return await CompleteWorkingActionWithAutoAdvanceAsync(root, turnSummary, cancellationToken).ConfigureAwait(false);
     }
 
     internal static PerceptionBundle ApplyNotebookEdit(
@@ -568,38 +494,13 @@ internal static partial class GameSimulation {
         string validatorFeedback,
         CancellationToken cancellationToken
     ) {
-        return interaction.ExecutionKind switch {
-            InteractionExecutionKind.ImmediateSelf => ApplyImmediateSelfInteractionAsync(
-                root,
-                interaction.InteractionId,
-                interaction.PreActionReason,
-                validatorFeedback,
-                cancellationToken
-            ),
-            InteractionExecutionKind.DeferredTurnEnd => Task.FromResult(
-                ApplyDeferredTurnEndInteraction(
-                    root,
-                    interaction.InteractionId,
-                    interaction.PreActionReason,
-                    validatorFeedback
-                )
-            ),
-            InteractionExecutionKind.WorkingStart => ApplyWorkingInteractionAsync(
-                root,
-                interaction.InteractionId,
-                interaction.PreActionReason,
-                validatorFeedback,
-                cancellationToken
-            ),
-            InteractionExecutionKind.TurnEnding => ApplyInteractionAsync(
-                root,
-                interaction.InteractionId,
-                interaction.PreActionReason,
-                validatorFeedback,
-                cancellationToken
-            ),
-            _ => throw new InvalidOperationException($"Unknown interaction execution kind: {interaction.ExecutionKind}")
-        };
+        return ExecuteInteractionPlanForActorAsync(
+            root,
+            TerminalPlayerActorId,
+            interaction,
+            validatorFeedback,
+            cancellationToken
+        );
     }
 
     private static async Task<AsyncAteliaResult<TurnResolutionPrelude>> PrepareTurnResolutionPreludeAsync(
@@ -768,19 +669,254 @@ internal static partial class GameSimulation {
         string? collectedTurnLead,
         CancellationToken cancellationToken
     ) {
-        actorId = NormalizeRequired(actorId, nameof(actorId));
-        var actorPerception = DescribePerceptionForActor(root, actorId);
-        var interactionResult = TryGetVisibleInteraction(actorPerception, interactionId);
-        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) { return AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!); }
+        var planResult = TryBuildVisibleInteractionPlanForActor(root, actorId, interactionId, preActionReason);
+        if (!planResult.TryGetValue(out var interactionPlanPair)) { return AsyncAteliaResult<ActionResolution>.Failure(planResult.Error!); }
 
-        var executionKindResult = ClassifyInteractionExecutionKind(interaction);
-        if (!executionKindResult.TryGetValue(out var executionKind)) {
-            return AsyncAteliaResult<ActionResolution>.Failure(executionKindResult.Error!);
+        var (interaction, plan) = interactionPlanPair!;
+        return await ResolveAcceptedInteractionPlanForActorAsync(
+            root,
+            NormalizeRequired(actorId, nameof(actorId)),
+            interaction,
+            plan,
+            prelude,
+            collectedTurnLead,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    internal static Task<AsyncAteliaResult<ActionResolution>> ExecuteInteractionPlanForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        TerminalActionExecutionPlan.Interaction plan,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        ArgumentNullException.ThrowIfNull(plan);
+
+        var interactionResult = TryGetVisibleInteraction(DescribePerceptionForActor(root, actorId), plan.InteractionId);
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
+            return Task.FromResult(AsyncAteliaResult<ActionResolution>.Failure(interactionResult.Error!));
         }
 
-        switch (executionKind) {
+        return ExecuteInteractionPlanForActorAsync(
+            root,
+            actorId,
+            interaction,
+            plan,
+            validatorFeedback,
+            cancellationToken
+        );
+    }
+
+    private static async Task<AsyncAteliaResult<ActionResolution>> ExecuteInteractionPlanForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction,
+        TerminalActionExecutionPlan.Interaction plan,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        return plan.ExecutionKind switch {
+            InteractionExecutionKind.ImmediateSelf => await ExecuteImmediateSelfInteractionPlanForActorAsync(
+                root,
+                actorId,
+                interaction,
+                plan,
+                validatorFeedback,
+                cancellationToken
+            ).ConfigureAwait(false),
+            InteractionExecutionKind.DeferredTurnEnd => ExecuteDeferredTurnEndInteractionPlanForActor(
+                root,
+                actorId,
+                interaction,
+                plan,
+                validatorFeedback
+            ),
+            InteractionExecutionKind.WorkingStart => await ExecuteWorkingInteractionPlanForActorAsync(
+                root,
+                actorId,
+                interaction,
+                plan,
+                validatorFeedback,
+                cancellationToken
+            ).ConfigureAwait(false),
+            InteractionExecutionKind.TurnEnding => await ExecuteTurnEndingInteractionPlanForActorAsync(
+                root,
+                actorId,
+                interaction,
+                plan,
+                validatorFeedback,
+                cancellationToken
+            ).ConfigureAwait(false),
+            _ => AsyncAteliaResult<ActionResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.UnsupportedInteractionExecutionKind",
+                    $"当前不支持 executionKind='{plan.ExecutionKind}' 的 interaction 执行。"
+                )
+            )
+        };
+    }
+
+    private static async Task<AsyncAteliaResult<ActionResolution>> ExecuteImmediateSelfInteractionPlanForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction,
+        TerminalActionExecutionPlan.Interaction plan,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        var actorPerception = DescribePerceptionForActor(root, actorId);
+
+        GmExploreResolution gmResolution;
+        try {
+            gmResolution = await GameMasterResolver.ResolveImmediateSelfInteractionAsync(
+                root,
+                new GmInteractionContext(
+                    actorPerception,
+                    GetActorLocationId(root, actorId),
+                    interaction,
+                    plan.PreActionReason
+                ),
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) {
+            return AsyncAteliaResult<ActionResolution>.Failure(
+                new TextAdvError(
+                    "TextAdv.ImmediateInteractionGmFailed",
+                    $"即时小动作结算依赖 GM Agent，但本次调用失败：{ex.Message}"
+                )
+            );
+        }
+
+        var summary = gmResolution.Summary;
+        AppendAcceptedStepForActor(
+            root,
+            actorId,
+            plan.Descriptor,
+            validatorFeedback,
+            endsTurn: false,
+            stepOutcomeSummary: summary,
+            stepOutcomeState: StepOutcomeCommittedNow
+        );
+
+        return AsyncAteliaResult<ActionResolution>.Success(
+            new ActionResolution(summary, DescribePerceptionForActor(root, actorId))
+        );
+    }
+
+    private static AsyncAteliaResult<ActionResolution> ExecuteDeferredTurnEndInteractionPlanForActor(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction,
+        TerminalActionExecutionPlan.Interaction plan,
+        string validatorFeedback
+    ) {
+        var pendingSummary = BuildDeferredTurnEndInteractionSummary(interaction);
+        var step = AppendAcceptedStepForActor(
+            root,
+            actorId,
+            plan.Descriptor,
+            validatorFeedback,
+            endsTurn: false,
+            stepOutcomeSummary: pendingSummary,
+            stepOutcomeState: StepOutcomePendingTurnEnd
+        );
+        EnqueuePendingTurnEndEffect(
+            root,
+            actorId,
+            step,
+            effectSlot: TurnEndEffectSlot
+        );
+
+        return AsyncAteliaResult<ActionResolution>.Success(
+            new ActionResolution(pendingSummary, DescribePerceptionForActor(root, actorId))
+        );
+    }
+
+    private static async Task<AsyncAteliaResult<ActionResolution>> ExecuteWorkingInteractionPlanForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction,
+        TerminalActionExecutionPlan.Interaction plan,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        var workingStartSummary = BuildWorkingStartSummary(interaction);
+
+        AppendAcceptedStepForActor(
+            root,
+            actorId,
+            plan.Descriptor,
+            validatorFeedback,
+            endsTurn: true,
+            stepOutcomeSummary: workingStartSummary,
+            stepOutcomeState: StepOutcomeWorking
+        );
+
+        StartWorkingForActor(
+            root,
+            actorId,
+            plan.Descriptor,
+            validatorFeedback,
+            interaction.TurnCost - 1
+        );
+
+        var turnSummary = await ResolveWorkingTurnAndCompleteAsync(
+            root,
+            actorId,
+            workingStartSummary,
+            collectedTurnLead: null,
+            consumeFutureTurn: false,
+            cancellationToken
+        ).ConfigureAwait(false);
+        return await CompleteWorkingActionWithAutoAdvanceAsync(root, turnSummary, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<AsyncAteliaResult<ActionResolution>> ExecuteTurnEndingInteractionPlanForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction,
+        TerminalActionExecutionPlan.Interaction plan,
+        string validatorFeedback,
+        CancellationToken cancellationToken
+    ) {
+        AppendAcceptedStepForActor(
+            root,
+            actorId,
+            plan.Descriptor,
+            validatorFeedback,
+            endsTurn: true
+        );
+
+        var preludeResult = await PrepareTurnResolutionPreludeAsync(root, cancellationToken).ConfigureAwait(false);
+        if (!preludeResult.TryGetValue(out var prelude) || prelude is null) {
+            return AsyncAteliaResult<ActionResolution>.Failure(preludeResult.Error!);
+        }
+
+        return await ResolveAcceptedInteractionPlanForActorAsync(
+            root,
+            actorId,
+            interaction,
+            plan,
+            prelude,
+            collectedTurnLead: null,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private static async Task<AsyncAteliaResult<ActionResolution>> ResolveAcceptedInteractionPlanForActorAsync(
+        DurableDict<string> root,
+        string actorId,
+        InteractionPerception interaction,
+        TerminalActionExecutionPlan.Interaction plan,
+        TurnResolutionPrelude prelude,
+        string? collectedTurnLead,
+        CancellationToken cancellationToken
+    ) {
+        switch (plan.ExecutionKind) {
             case InteractionExecutionKind.WorkingStart: {
-                var plan = CreateInteractionPlan(interaction, executionKind, preActionReason);
                 var workingStartSummary = BuildWorkingStartSummary(interaction);
 
                 StartWorkingForActor(
@@ -808,11 +944,12 @@ internal static partial class GameSimulation {
                 return AsyncAteliaResult<ActionResolution>.Failure(
                     new TextAdvError(
                         "TextAdv.UnsupportedCollectedInteractionExecutionKind",
-                        $"当前 collected-turn 不支持 executionKind='{executionKind}' 的 interaction。"
+                        $"当前 collected-turn 不支持 executionKind='{plan.ExecutionKind}' 的 interaction。"
                     )
                 );
         }
 
+        var actorPerception = DescribePerceptionForActor(root, actorId);
         GmExploreResolution gmResolution;
         try {
             gmResolution = await GameMasterResolver.ResolveInteractionAsync(
@@ -821,7 +958,7 @@ internal static partial class GameSimulation {
                     actorPerception,
                     GetActorLocationId(root, actorId),
                     interaction,
-                    preActionReason
+                    plan.PreActionReason
                 ),
                 cancellationToken
             ).ConfigureAwait(false);
@@ -854,6 +991,33 @@ internal static partial class GameSimulation {
 
         return AsyncAteliaResult<ActionResolution>.Success(
             CompleteTurn(root, resolutionSummary, ActorResolutionCommitMode.PreserveExistingAndFillMissing)
+        );
+    }
+
+    private static AteliaResult<(InteractionPerception Interaction, TerminalActionExecutionPlan.Interaction Plan)> TryBuildVisibleInteractionPlanForActor(
+        DurableDict<string> root,
+        string actorId,
+        string interactionId,
+        string preActionReason
+    ) {
+        actorId = NormalizeRequired(actorId, nameof(actorId));
+        var actorPerception = DescribePerceptionForActor(root, actorId);
+        var interactionResult = TryGetVisibleInteraction(actorPerception, interactionId);
+        if (!interactionResult.TryGetValue(out var interaction) || interaction is null) {
+            return AteliaResult<(InteractionPerception Interaction, TerminalActionExecutionPlan.Interaction Plan)>.Failure(
+                interactionResult.Error!
+            );
+        }
+
+        var executionKindResult = ClassifyInteractionExecutionKind(interaction);
+        if (!executionKindResult.TryGetValue(out var executionKind)) {
+            return AteliaResult<(InteractionPerception Interaction, TerminalActionExecutionPlan.Interaction Plan)>.Failure(
+                executionKindResult.Error!
+            );
+        }
+
+        return AteliaResult<(InteractionPerception Interaction, TerminalActionExecutionPlan.Interaction Plan)>.Success(
+            (interaction, CreateInteractionPlan(interaction, executionKind, preActionReason))
         );
     }
 
