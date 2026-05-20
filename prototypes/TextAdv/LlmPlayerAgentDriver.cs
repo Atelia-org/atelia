@@ -127,12 +127,13 @@ internal static class LlmPlayerAgentDriver {
                 var plan = toolService.Proposal;
                 GameActionValidator.ValidationResult validation;
                 try {
+                    var descriptor = plan.Descriptor;
                     validation = await GameActionValidator.ValidateActionAsync(
                         toolService.CurrentPerception,
-                        plan.ActionKind,
-                        plan.ActionSummary,
-                        plan.PreActionReason,
-                        plan.ActionPayload,
+                        descriptor.ActionKind,
+                        descriptor.ActionSummary,
+                        descriptor.PreActionReason,
+                        descriptor.ActionPayload,
                         cancellationToken
                     ).ConfigureAwait(false);
                 }
@@ -596,12 +597,13 @@ internal static class LlmPlayerAgentDriver {
 
             GameActionValidator.ValidationResult validation;
             try {
+                var descriptor = plan.Descriptor;
                 validation = await _validateActionAsync(
                     CurrentPerception,
-                    plan.ActionKind,
-                    plan.ActionSummary,
-                    plan.PreActionReason,
-                    plan.ActionPayload,
+                    descriptor.ActionKind,
+                    descriptor.ActionSummary,
+                    descriptor.PreActionReason,
+                    descriptor.ActionPayload,
                     cancellationToken
                 ).ConfigureAwait(false);
             }

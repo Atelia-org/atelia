@@ -102,12 +102,13 @@ internal sealed class TextAdvTerminalActionRunner {
         CancellationToken cancellationToken
     ) {
         try {
+            var descriptor = plan.Descriptor;
             var validation = await _validateAsync(
                 GameSimulation.DescribeCurrentPerception(session.Root),
-                plan.ActionKind,
-                plan.ActionSummary,
-                plan.PreActionReason,
-                plan.ActionPayload,
+                descriptor.ActionKind,
+                descriptor.ActionSummary,
+                descriptor.PreActionReason,
+                descriptor.ActionPayload,
                 cancellationToken
             ).ConfigureAwait(false);
 

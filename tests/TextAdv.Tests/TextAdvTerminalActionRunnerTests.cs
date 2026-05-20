@@ -183,6 +183,47 @@ public sealed class TextAdvTerminalActionRunnerTests : IDisposable {
         session.Repo.Dispose();
     }
 
+    [Fact]
+    public async Task RunAsync_ShouldPassDescriptorValuesToValidator() {
+        var session = AssertSuccess(TextAdvSession.CreateNew(_repoDir));
+        var plan = new TerminalActionExecutionPlan.Interaction(
+            "test-interaction",
+            "测试整回合交互",
+            "move",
+            "interactionId=test-interaction",
+            InteractionExecutionKind.TurnEnding,
+            "先把这一步做完。"
+        );
+
+        string? validatedActionKind = null;
+        string? validatedActionSummary = null;
+        string? validatedActionPayload = null;
+        string? validatedPreActionReason = null;
+        var runner = new TextAdvTerminalActionRunner(
+            (_, actionKind, actionSummary, preActionReason, actionPayload, _) => {
+                validatedActionKind = actionKind;
+                validatedActionSummary = actionSummary;
+                validatedActionPayload = actionPayload;
+                validatedPreActionReason = preActionReason;
+                return Task.FromResult(new GameActionValidator.ValidationResult(false, "测试拒绝。"));
+            },
+            (_, _, _, _) => Task.FromResult(
+                AsyncAteliaResult<ActionResolution>.Success(
+                    new ActionResolution("不应走到这里。", GameSimulation.DescribeCurrentPerception(session.Root))
+                )
+            )
+        );
+
+        var result = await runner.RunAsync(session, plan, CancellationToken.None);
+
+        _ = Assert.IsType<TerminalActionRunResult.ValidationRejected>(result);
+        Assert.Equal(plan.Descriptor.ActionKind, validatedActionKind);
+        Assert.Equal(plan.Descriptor.ActionSummary, validatedActionSummary);
+        Assert.Equal(plan.Descriptor.ActionPayload, validatedActionPayload);
+        Assert.Equal(plan.Descriptor.PreActionReason, validatedPreActionReason);
+        session.Repo.Dispose();
+    }
+
     private static T AssertSuccess<T>(AteliaResult<T> result) where T : notnull {
         Assert.True(result.IsSuccess, $"Expected success but got error: {result.Error}");
         return result.Value!;

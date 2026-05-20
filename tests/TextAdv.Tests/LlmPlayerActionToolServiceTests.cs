@@ -171,6 +171,71 @@ public sealed class LlmPlayerActionToolServiceTests : IDisposable {
     }
 
     [Fact]
+    public async Task InteractAsync_WhenInteractionIsSmall_ShouldValidateUsingPlanDescriptor() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+        var gmWorldEdit = new GmWorldEditService(root);
+
+        Assert.True(
+            GameSimulation.CreateLlmPlayerActor(
+                root,
+                "ally",
+                "同伴",
+                "另一个由 internal LLM 驱动的玩家。",
+                "beach"
+            ).IsSuccess
+        );
+        Assert.True(gmWorldEdit.CreateItem("waterskin", "水袋", "一个还空着的旧水袋。", "beach").IsSuccess);
+        Assert.True(gmWorldEdit.MoveItemToActor("waterskin", "ally").IsSuccess);
+        Assert.True(
+            gmWorldEdit.AddInteraction(
+                interactionId: "steady-breath",
+                targetRef: "item:waterskin",
+                actionKind: "prepare",
+                visibleLabel: "把水袋口理顺",
+                preconditionNote: "none",
+                effectNote: "你深吸一口气，让心绪稍稍平复下来。",
+                turnCost: 0,
+                effectScope: GameSimulation.SelfEffectScope,
+                effectSlots: GameSimulation.ImmediateEffectSlot
+            ).IsSuccess
+        );
+
+        var expectedPlan = AssertSuccess(
+            GameSimulation.BuildTerminalInteractionPlan(
+                GameSimulation.DescribePerceptionForActor(root, "ally"),
+                "steady-breath",
+                "先稳住呼吸。"
+            )
+        );
+
+        string? validatedActionKind = null;
+        string? validatedActionSummary = null;
+        string? validatedActionPayload = null;
+        string? validatedPreActionReason = null;
+        var service = CreateToolService(
+            root,
+            "ally",
+            (perception, actionKind, actionSummary, preActionReason, actionPayload, cancellationToken) => {
+                cancellationToken.ThrowIfCancellationRequested();
+                validatedActionKind = actionKind;
+                validatedActionSummary = actionSummary;
+                validatedActionPayload = actionPayload;
+                validatedPreActionReason = preActionReason;
+                return Task.FromResult(new GameActionValidator.ValidationResult(true, "通过：测试接受。"));
+            }
+        );
+
+        var result = await InvokeToolAsync(service, "InteractAsync", "先稳住呼吸。", "steady-breath");
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        Assert.Equal(expectedPlan.Descriptor.ActionKind, validatedActionKind);
+        Assert.Equal(expectedPlan.Descriptor.ActionSummary, validatedActionSummary);
+        Assert.Equal(expectedPlan.Descriptor.ActionPayload, validatedActionPayload);
+        Assert.Equal(expectedPlan.Descriptor.PreActionReason, validatedPreActionReason);
+    }
+
+    [Fact]
     public async Task EditMemoryNotebookAsync_ShouldUseInjectedValidatorDelegate() {
         using var repo = CreateRepository();
         var root = GameSimulation.CreateNewWorld(repo);
