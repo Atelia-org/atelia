@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
 
 namespace Atelia.TextAdv;
 
@@ -104,9 +105,7 @@ internal static class GameActionValidator {
             if (s_client is not null) { return s_client; }
 
             var config = GetConfig();
-            s_httpClient = new HttpClient {
-                BaseAddress = ResolveBaseAddress(config.BaseAddress)
-            };
+            s_httpClient = CompletionHttpTransportFactory.CreateLiveClient(ResolveBaseAddress(config.BaseAddress));
             s_client = new DeepSeekV4ChatClient(
                 apiKey: config.ApiKey,
                 httpClient: s_httpClient,
@@ -126,12 +125,7 @@ internal static class GameActionValidator {
     private static Uri ResolveBaseAddress(string? configuredBaseAddress) {
         return string.IsNullOrWhiteSpace(configuredBaseAddress)
             ? new Uri(DefaultBaseAddress)
-            : new Uri(EnsureTrailingSlash(configuredBaseAddress));
-    }
-
-    private static string EnsureTrailingSlash(string value) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        return value.EndsWith("/", StringComparison.Ordinal) ? value : value + "/";
+            : new Uri(configuredBaseAddress, UriKind.Absolute);
     }
 
     private static ValidatorConfig GetConfig() {

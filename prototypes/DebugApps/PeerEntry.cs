@@ -2,6 +2,7 @@ using System.CommandLine;
 using Atelia.Agent;
 using Atelia.Agent.Core;
 using Atelia.Completion.Anthropic;
+using Atelia.Completion.Transport;
 
 namespace Atelia.DebugApps;
 
@@ -230,13 +231,6 @@ public static class PeerEntry {
     }
 
     private static HttpClient CreateAnthropicHttpClient(string endpoint) {
-        return new HttpClient {
-            BaseAddress = new Uri(EnsureTrailingSlash(endpoint))
-        };
-    }
-
-    private static string EnsureTrailingSlash(string endpoint) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
-        return endpoint.EndsWith("/", StringComparison.Ordinal) ? endpoint : endpoint + "/";
+        return CompletionHttpTransportFactory.CreateLiveClient(new Uri(endpoint, UriKind.Absolute));
     }
 }

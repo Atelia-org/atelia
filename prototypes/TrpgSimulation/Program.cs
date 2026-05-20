@@ -3,6 +3,7 @@ using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
 
 namespace Atelia.DebugApps.TrpgSimulation;
 
@@ -34,14 +35,10 @@ public static class Program {
         Console.WriteLine();
 
         // ── 创建 LLM Profile ──
-        // using var anthropicHttpClient = new HttpClient { BaseAddress = new Uri(EnsureTrailingSlash(baseUrl)) };
+        // using var anthropicHttpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(baseUrl, UriKind.Absolute));
         // var client = new AnthropicClient(apiKey, anthropicHttpClient);
-        using var deepSeekHttpClient = new HttpClient {
-            BaseAddress = new Uri("https://api.deepseek.com/")
-        };
-        using var localHttpClient = new HttpClient {
-            BaseAddress = new Uri("http://localhost:8000/")
-        };
+        using var deepSeekHttpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri("https://api.deepseek.com/", UriKind.Absolute));
+        using var localHttpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri("http://localhost:8000/", UriKind.Absolute));
         var deepSeekV4Cient = new DeepSeekV4ChatClient(
             apiKey: Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY"),
             httpClient: deepSeekHttpClient

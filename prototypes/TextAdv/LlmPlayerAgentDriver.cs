@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
 using Atelia.Completion.Tools;
 using Atelia.StateJournal;
 
@@ -334,9 +335,7 @@ internal static class LlmPlayerAgentDriver {
         lock (s_gate) {
             if (s_client is not null) { return s_client; }
 
-            s_httpClient = new HttpClient {
-                BaseAddress = ResolveBaseAddress(config.BaseAddress)
-            };
+            s_httpClient = CompletionHttpTransportFactory.CreateLiveClient(ResolveBaseAddress(config.BaseAddress));
             s_client = new DeepSeekV4ChatClient(
                 apiKey: config.ApiKey!,
                 httpClient: s_httpClient,
@@ -356,12 +355,7 @@ internal static class LlmPlayerAgentDriver {
     private static Uri ResolveBaseAddress(string? configuredBaseAddress) {
         return string.IsNullOrWhiteSpace(configuredBaseAddress)
             ? new Uri(DefaultBaseAddress)
-            : new Uri(EnsureTrailingSlash(configuredBaseAddress));
-    }
-
-    private static string EnsureTrailingSlash(string value) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        return value.EndsWith("/", StringComparison.Ordinal) ? value : value + "/";
+            : new Uri(configuredBaseAddress, UriKind.Absolute);
     }
 
     private static LlmPlayerConfig GetConfig() {

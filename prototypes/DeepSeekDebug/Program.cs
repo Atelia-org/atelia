@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
 
 namespace Atelia.DeepSeekDebug;
 
@@ -39,9 +40,10 @@ internal static class Program {
         var model = Environment.GetEnvironmentVariable(ModelEnvVar) ?? DefaultModel;
 
         var recordingHandler = new RecordingHandler(new HttpClientHandler());
-        using var httpClient = new HttpClient(recordingHandler) {
-            BaseAddress = new Uri(EnsureTrailingSlash(baseUrl))
-        };
+        using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
+            new Uri(baseUrl, UriKind.Absolute),
+            recordingHandler
+        );
         var client = new DeepSeekV4ChatClient(
             apiKey: apiKey,
             httpClient: httpClient,
@@ -55,7 +57,7 @@ internal static class Program {
             }
         );
 
-        Console.WriteLine($"[startup] base={EnsureTrailingSlash(baseUrl)} model={model}");
+        Console.WriteLine($"[startup] base={httpClient.BaseAddress} model={model}");
 
         var context = new List<IHistoryMessage>();
         var totalToolCalls = 0;
@@ -254,9 +256,6 @@ internal static class Program {
 
         return value;
     }
-
-    private static string EnsureTrailingSlash(string value)
-        => value.EndsWith('/') ? value : value + "/";
 
     private sealed record TurnRunResult(string FinalText, int ToolCallCount);
 

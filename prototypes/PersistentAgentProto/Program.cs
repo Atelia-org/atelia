@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
 using Atelia.Diagnostics;
 
 namespace Atelia.PersistentAgentProto;
@@ -39,9 +40,7 @@ internal static class Program {
     }
 
     private static async Task<int> RunInteractiveLoop(PersistentSession session) {
-        using var httpClient = new HttpClient {
-            BaseAddress = new Uri(LocalLlmEndpoint)
-        };
+        using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(LocalLlmEndpoint, UriKind.Absolute));
         var client = new OpenAIChatClient(
             apiKey: null,
             httpClient: httpClient,

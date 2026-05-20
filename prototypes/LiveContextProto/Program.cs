@@ -30,7 +30,7 @@ internal static class Program {
         var agent = new CharacterAgent();
 
         // 旧 Anthropic 路径暂保留为参考，待长期稳定后清理：
-        // using var anthropicHttpClient = new HttpClient { BaseAddress = new Uri(LocalLlmEndpoint) };
+        // using var anthropicHttpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(LocalLlmEndpoint, UriKind.Absolute));
         // var anthropicClient = new AnthropicClient(apiKey: null, httpClient: anthropicHttpClient);
         // var defaultProfile = new LlmProfile(anthropicClient, DefaultModelId, "LocaQwen-anthropic-v1", 64_000u);
         // var loop = new ConsoleTui(agent, defaultProfile);
@@ -39,9 +39,7 @@ internal static class Program {
         LlmProfile defaultProfile;
         var deepSeekApiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
         if (!string.IsNullOrWhiteSpace(deepSeekApiKey)) {
-            ownedHttpClient = new HttpClient {
-                BaseAddress = new Uri("https://api.deepseek.com/")
-            };
+            ownedHttpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri("https://api.deepseek.com/", UriKind.Absolute));
             var deepSeekV4Client = new DeepSeekV4ChatClient(
                 apiKey: deepSeekApiKey,
                 httpClient: ownedHttpClient
@@ -52,7 +50,7 @@ internal static class Program {
         }
         else {
             var transport = CompletionHttpTransportFactory.CreateFromEnvironmentVariables(
-                new Uri(EnsureTrailingSlash(LocalLlmEndpoint)),
+                new Uri(LocalLlmEndpoint, UriKind.Absolute),
                 GoldenLogPathEnvVar,
                 ReplayLogPathEnvVar
             );
@@ -79,9 +77,6 @@ internal static class Program {
         DebugUtil.Info(DebugCategory, "LiveContextProto shutdown");
         return 0;
     }
-
-    private static string EnsureTrailingSlash(string value)
-        => value.EndsWith('/') ? value : value + "/";
 
     private static void PrintTransportStartup(CompletionHttpTransportSetup transport) {
         ArgumentNullException.ThrowIfNull(transport);
