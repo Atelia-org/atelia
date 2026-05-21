@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Tools;
 using Atelia.TextEditScript;
 using Xunit;
 
@@ -9,7 +8,7 @@ namespace Atelia.TextAdv.Tests;
 
 public sealed class LlmPlayerAgentDriverPromptTests {
     [Fact]
-    public void BuildInitialObservation_RendersSchemaFromInputSchemaWhenFlatProjectionIsUnavailable() {
+    public void BuildInitialObservation_RendersSchemaFromInputSchema() {
         var definition = new ToolDefinition(
             "nested_tool",
             "Render nested schema",
@@ -37,9 +36,6 @@ public sealed class LlmPlayerAgentDriverPromptTests {
                 ]
             )
         );
-
-        var ex = Assert.Throws<InvalidOperationException>(() => ToolContracts.EnsureStableFlatProjection(definition, definition.Name));
-        Assert.Contains("property 'payload' is not a flat value schema.", ex.Message, StringComparison.Ordinal);
 
         var observation = InvokeBuildInitialObservation(CreateMinimalPerception(), ImmutableArray.Create(definition));
 

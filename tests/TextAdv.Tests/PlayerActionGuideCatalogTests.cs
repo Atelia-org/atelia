@@ -137,7 +137,7 @@ public sealed class PlayerActionGuideCatalogTests {
     }
 
     [Fact]
-    public void ExploreToolMetadata_ShouldRemainCompatibleWithAuthoritativeMethodSchema() {
+    public void ExploreToolMetadata_ShouldRemainMetadataCompatibleWithAuthoritativeMethodSchema() {
         var toolServiceType = typeof(LlmPlayerAgentDriver).GetNestedType("PlayerActionToolService", BindingFlags.NonPublic);
         Assert.NotNull(toolServiceType);
 
@@ -154,7 +154,7 @@ public sealed class PlayerActionGuideCatalogTests {
         Assert.NotNull(method);
 
         var authoritative = MethodToolWrapper.FromMethod(toolService!, method!).Definition;
-        var result = ToolContracts.CreateCompatibleFlatOverride(authoritative, PlayerActionGuideCatalog.GetExploreToolMetadata());
+        var result = ToolContracts.CreateCompatibleMetadataOverride(authoritative, PlayerActionGuideCatalog.GetExploreToolMetadata());
 
         Assert.Equal("player_explore", result.Name);
     }

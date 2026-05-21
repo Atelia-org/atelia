@@ -6,7 +6,7 @@ namespace Atelia.LiveContextProto.Tests;
 
 public sealed class ToolContractsTests {
     [Fact]
-    public void CreateCompatibleFlatOverride_AllowsDisplayMetadataChangesOnly() {
+    public void CreateCompatibleMetadataOverride_AllowsDisplayMetadataChangesOnly() {
         var authoritative = new ToolDefinition(
             "search",
             "authoritative",
@@ -45,23 +45,23 @@ public sealed class ToolContractsTests {
             )
         );
 
-        var result = ToolContracts.CreateCompatibleFlatOverride(authoritative, metadataOverride);
+        var result = ToolContracts.CreateCompatibleMetadataOverride(authoritative, metadataOverride);
 
         Assert.Same(metadataOverride, result);
     }
 
     [Fact]
-    public void CreateCompatibleFlatOverride_RejectsToolRename() {
+    public void CreateCompatibleMetadataOverride_RejectsToolRename() {
         var authoritative = new ToolDefinition("search", "authoritative", new ToolSchema.Object());
         var metadataOverride = new ToolDefinition("search_override", "override description", new ToolSchema.Object());
 
-        var ex = Assert.Throws<InvalidOperationException>(() => ToolContracts.CreateCompatibleFlatOverride(authoritative, metadataOverride));
+        var ex = Assert.Throws<InvalidOperationException>(() => ToolContracts.CreateCompatibleMetadataOverride(authoritative, metadataOverride));
 
         Assert.Contains("不能改名", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void CreateCompatibleFlatOverride_RejectsProviderVisibleSchemaChanges() {
+    public void CreateCompatibleMetadataOverride_RejectsProviderVisibleSchemaChanges() {
         var authoritative = new ToolDefinition(
             "search",
             "authoritative",
@@ -98,6 +98,6 @@ public sealed class ToolContractsTests {
             )
         );
 
-        Assert.Throws<InvalidOperationException>(() => ToolContracts.CreateCompatibleFlatOverride(authoritative, metadataOverride));
+        Assert.Throws<InvalidOperationException>(() => ToolContracts.CreateCompatibleMetadataOverride(authoritative, metadataOverride));
     }
 }

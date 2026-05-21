@@ -436,7 +436,7 @@ internal static class LlmPlayerAgentDriver {
             ToolDefinition metadata
         ) {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            Definition = ToolContracts.CreateCompatibleFlatOverride(inner.Definition, metadata);
+            Definition = ToolContracts.CreateCompatibleMetadataOverride(inner.Definition, metadata);
         }
 
         public ToolDefinition Definition { get; }
