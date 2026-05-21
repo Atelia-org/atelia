@@ -38,31 +38,41 @@ public sealed class MethodToolWrapperTests {
         var method = typeof(SampleToolHost).GetMethod(nameof(SampleToolHost.SampleAsync))!;
         var wrapper = MethodToolWrapper.FromMethod(host, method);
 
-        Assert.Equal(3, wrapper.Definition.Parameters.Length);
+        var inputSchema = Assert.IsType<ToolSchema.Object>(wrapper.Definition.InputSchema);
+        Assert.Equal(3, inputSchema.Properties.Length);
 
-        var noteSpec = wrapper.Definition.Parameters[0];
-        Assert.False(noteSpec.IsOptional);
-        Assert.False(noteSpec.TryGetDefaultValue(out var noteDefault));
-        Assert.Null(noteDefault);
-        Assert.DoesNotContain("可省略", noteSpec.Description);
-        Assert.DoesNotContain("默认值:", noteSpec.Description);
-        Assert.Contains("允许 null", noteSpec.Description);
+        var noteProperty = inputSchema.Properties[0];
+        Assert.Equal("note", noteProperty.Name);
+        Assert.True(noteProperty.IsRequired);
+        var noteSchema = Assert.IsType<ToolSchema.Value>(noteProperty.Schema);
+        Assert.True(noteSchema.IsNullable);
+        Assert.False(noteSchema.Default.HasValue);
+        Assert.Contains("必填", noteSchema.Description);
+        Assert.DoesNotContain("可省略", noteSchema.Description);
+        Assert.DoesNotContain("默认值:", noteSchema.Description);
+        Assert.Contains("允许 null", noteSchema.Description);
 
-        var optionalValueSpec = wrapper.Definition.Parameters[1];
-        Assert.True(optionalValueSpec.IsOptional);
-        Assert.True(optionalValueSpec.TryGetDefaultValue(out var optionalDefault));
-        Assert.Equal(0, Assert.IsType<int>(optionalDefault));
-        Assert.Contains("可省略", optionalValueSpec.Description);
-        Assert.Contains("默认值: 0", optionalValueSpec.Description);
-        Assert.DoesNotContain("允许 null", optionalValueSpec.Description);
+        var optionalValueProperty = inputSchema.Properties[1];
+        Assert.Equal("optionalValue", optionalValueProperty.Name);
+        Assert.False(optionalValueProperty.IsRequired);
+        var optionalValueSchema = Assert.IsType<ToolSchema.Value>(optionalValueProperty.Schema);
+        Assert.False(optionalValueSchema.IsNullable);
+        Assert.True(optionalValueSchema.Default.HasValue);
+        Assert.Equal(0, Assert.IsType<int>(optionalValueSchema.Default.Value.Value));
+        Assert.Contains("可省略", optionalValueSchema.Description);
+        Assert.Contains("默认值: 0", optionalValueSchema.Description);
+        Assert.DoesNotContain("允许 null", optionalValueSchema.Description);
 
-        var countSpec = wrapper.Definition.Parameters[2];
-        Assert.True(countSpec.IsOptional);
-        Assert.True(countSpec.TryGetDefaultValue(out var countDefault));
-        Assert.Equal(42, Assert.IsType<int>(countDefault));
-        Assert.Contains("可省略", countSpec.Description);
-        Assert.Contains("默认值: 42", countSpec.Description);
-        Assert.DoesNotContain("允许 null", countSpec.Description);
+        var countProperty = inputSchema.Properties[2];
+        Assert.Equal("count", countProperty.Name);
+        Assert.False(countProperty.IsRequired);
+        var countSchema = Assert.IsType<ToolSchema.Value>(countProperty.Schema);
+        Assert.False(countSchema.IsNullable);
+        Assert.True(countSchema.Default.HasValue);
+        Assert.Equal(42, Assert.IsType<int>(countSchema.Default.Value.Value));
+        Assert.Contains("可省略", countSchema.Description);
+        Assert.Contains("默认值: 42", countSchema.Description);
+        Assert.DoesNotContain("允许 null", countSchema.Description);
     }
 
     [Fact]
@@ -84,9 +94,13 @@ public sealed class MethodToolWrapperTests {
         Assert.Equal("demo_formatted", wrapper.Definition.Name);
         Assert.Equal("内测工具：展示 -> 目标", wrapper.Definition.Description);
 
-        Assert.Single(wrapper.Definition.Parameters);
-        var param = wrapper.Definition.Parameters[0];
-        Assert.Contains("展示 输入文本", param.Description);
+        var inputSchema = Assert.IsType<ToolSchema.Object>(wrapper.Definition.InputSchema);
+        var property = Assert.Single(inputSchema.Properties);
+        Assert.Equal("text", property.Name);
+        var paramSchema = Assert.IsType<ToolSchema.Value>(property.Schema);
+        Assert.True(property.IsRequired);
+        Assert.Contains("必填", paramSchema.Description);
+        Assert.Contains("展示 输入文本", paramSchema.Description);
     }
 
     [Fact]
