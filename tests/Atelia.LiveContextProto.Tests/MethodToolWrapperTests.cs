@@ -9,13 +9,24 @@ namespace Atelia.LiveContextProto.Tests;
 
 public sealed class MethodToolWrapperTests {
     private sealed class SampleToolHost {
+        public int InvocationCount { get; private set; }
+        public string? LastNote { get; private set; }
+        public int LastOptionalValue { get; private set; }
+        public int LastCount { get; private set; }
+
         [Tool("sample_tool", "Sample tool for unit testing")]
         public ValueTask<ToolExecuteResult> SampleAsync(
             [ToolParam("nullable note")] string? note,
             [ToolParam("optional value")] int optionalValue = 0,
             [ToolParam("explicit default parameter")] int count = 42,
             CancellationToken cancellationToken = default
-        ) => throw new NotImplementedException();
+        ) {
+            InvocationCount++;
+            LastNote = note;
+            LastOptionalValue = optionalValue;
+            LastCount = count;
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, $"note={note ?? "<null>"} optional={optionalValue} count={count}"));
+        }
     }
 
     private sealed class MissingAttributeHost {
@@ -101,6 +112,40 @@ public sealed class MethodToolWrapperTests {
         Assert.True(property.IsRequired);
         Assert.Contains("必填", paramSchema.Description);
         Assert.Contains("展示 输入文本", paramSchema.Description);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RawToolCall_BindsJsonAndAppliesDefaults() {
+        var host = new SampleToolHost();
+        var method = typeof(SampleToolHost).GetMethod(nameof(SampleToolHost.SampleAsync))!;
+        var wrapper = MethodToolWrapper.FromMethod(host, method);
+        var request = new RawToolCall("sample_tool", "call-1", "{\"note\":null,\"count\":7}");
+
+        var result = await wrapper.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        Assert.Equal(1, host.InvocationCount);
+        Assert.Null(host.LastNote);
+        Assert.Equal(0, host.LastOptionalValue);
+        Assert.Equal(7, host.LastCount);
+        Assert.Equal("note=<null> optional=0 count=7", result.Content);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RawToolCall_ParseFailureReturnsFailedResultWithoutInvokingMethod() {
+        var host = new SampleToolHost();
+        var method = typeof(SampleToolHost).GetMethod(nameof(SampleToolHost.SampleAsync))!;
+        var wrapper = MethodToolWrapper.FromMethod(host, method);
+        const string rawArguments = "{\"note\":null,\"count\":\"oops\"}";
+        var request = new RawToolCall("sample_tool", "call-2", rawArguments);
+
+        var result = await wrapper.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        Assert.Equal(0, host.InvocationCount);
+        Assert.Contains("工具参数解析失败。", result.Content, StringComparison.Ordinal);
+        Assert.Contains("count:expected_integer", result.Content, StringComparison.Ordinal);
+        Assert.Contains($"raw_arguments_json: {rawArguments}", result.Content, StringComparison.Ordinal);
     }
 
     [Fact]
