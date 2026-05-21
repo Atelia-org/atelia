@@ -177,6 +177,26 @@ public sealed class MethodToolWrapperTests {
     }
 
     [Fact]
+    public async Task ToolExecutor_WithMethodToolWrapper_PropagatesParseFailureResult() {
+        var host = new SampleToolHost();
+        var method = typeof(SampleToolHost).GetMethod(nameof(SampleToolHost.SampleAsync))!;
+        var wrapper = MethodToolWrapper.FromMethod(host, method);
+        var executor = new ToolExecutor([wrapper]);
+        const string rawArguments = "{\"note\":null,\"count\":\"oops\"}";
+        var request = new RawToolCall("sample_tool", "call-executor-fail", rawArguments);
+
+        var result = await executor.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(ToolExecutionStatus.Failed, result.ExecuteResult.Status);
+        Assert.Equal("sample_tool", result.ToolName);
+        Assert.Equal("call-executor-fail", result.ToolCallId);
+        Assert.Equal(0, host.InvocationCount);
+        Assert.Contains("工具参数解析失败。", result.ExecuteResult.Content, StringComparison.Ordinal);
+        Assert.Contains("count:expected_integer", result.ExecuteResult.Content, StringComparison.Ordinal);
+        Assert.Contains($"raw_arguments_json: {rawArguments}", result.ExecuteResult.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ToolExecutor_ForwardsRawToolCallWithoutSchemaParsing() {
         var tool = new SchemaTool(
             new ToolDefinition(
