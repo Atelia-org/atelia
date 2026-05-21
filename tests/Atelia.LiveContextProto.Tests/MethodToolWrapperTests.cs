@@ -149,7 +149,7 @@ public sealed class MethodToolWrapperTests {
     }
 
     [Fact]
-    public void ToolExecutor_ShouldAcceptNestedDefinitionAfterSchemaDrivenParsing() {
+    public async Task ToolExecutor_ForwardsRawToolCallWithoutSchemaParsing() {
         var tool = new SchemaTool(
             new ToolDefinition(
                 "nested_schema_tool",
@@ -176,9 +176,20 @@ public sealed class MethodToolWrapperTests {
         );
 
         var executor = new ToolExecutor([tool]);
+        var request = new RawToolCall(
+            "nested_schema_tool",
+            "call-1",
+            "{\"payload\":{\"note\":\"hello\"}}"
+        );
+        var result = await executor.ExecuteAsync(request, CancellationToken.None);
 
         Assert.Single(executor.AllToolDefinitions);
         Assert.Same(tool.Definition, executor.AllToolDefinitions[0]);
+        Assert.Equal(ToolExecutionStatus.Success, result.ExecuteResult.Status);
+        Assert.NotNull(tool.LastRequest);
+        Assert.Equal(request.ToolName, tool.LastRequest!.ToolName);
+        Assert.Equal(request.ToolCallId, tool.LastRequest.ToolCallId);
+        Assert.Equal(request.RawArgumentsJson, tool.LastRequest.RawArgumentsJson);
     }
 
     private sealed class SchemaTool : ITool {
@@ -188,8 +199,11 @@ public sealed class MethodToolWrapperTests {
 
         public ToolDefinition Definition { get; }
         public bool Visible { get; set; } = true;
+        public RawToolCall? LastRequest { get; private set; }
 
-        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
-            => throw new NotImplementedException();
+        public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
+            LastRequest = request;
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "ok"));
+        }
     }
 }

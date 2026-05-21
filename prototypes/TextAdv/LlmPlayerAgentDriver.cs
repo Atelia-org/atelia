@@ -447,10 +447,10 @@ internal static class LlmPlayerAgentDriver {
         }
 
         public ValueTask<ToolExecuteResult> ExecuteAsync(
-            IReadOnlyDictionary<string, object?>? arguments,
+            RawToolCall request,
             CancellationToken cancellationToken
         ) {
-            return _inner.ExecuteAsync(arguments, cancellationToken);
+            return _inner.ExecuteAsync(request, cancellationToken);
         }
     }
 

@@ -370,7 +370,7 @@ public sealed class AgentEngineAutoCompactionTests {
         public EchoTool(string name) { Definition = new ToolDefinition(name, "echo", new ToolSchema.Object()); }
         public ToolDefinition Definition { get; }
         public bool Visible { get; set; } = true;
-        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
+        public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
             return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "ok"));
         }
     }

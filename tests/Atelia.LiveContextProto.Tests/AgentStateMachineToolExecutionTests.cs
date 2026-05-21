@@ -20,7 +20,7 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     [Fact]
     public async Task DoStepAsync_CompletesToolCallLifecycle() {
-        var toolInvocations = new List<IReadOnlyDictionary<string, object?>?>();
+        var toolInvocations = new List<RawToolCall>();
         var echoDefinition = new ToolDefinition(
             "echo",
             "delegate-tool",
@@ -103,9 +103,10 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Contains("tool-output", plainText, StringComparison.Ordinal);
 
         Assert.Single(toolInvocations);
-        var capturedArguments = toolInvocations[0];
-        Assert.NotNull(capturedArguments);
-        Assert.Equal("value", capturedArguments!["payload"]);
+        var capturedRequest = toolInvocations[0];
+        Assert.Equal("echo", capturedRequest.ToolName);
+        Assert.Equal("call-1", capturedRequest.ToolCallId);
+        Assert.Equal("{\"payload\":\"value\"}", capturedRequest.RawArgumentsJson);
 
         Assert.Equal("call-1", historyResult.ToolCallId);
         Assert.Equal("echo", historyResult.ToolName);
@@ -124,8 +125,8 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     [Fact]
-    public async Task DoStepAsync_NestedSchemaToolParsesArgumentsFromInputSchema() {
-        var toolInvocations = new List<IReadOnlyDictionary<string, object?>?>();
+    public async Task DoStepAsync_NestedSchemaToolForwardsRawArgumentsToTool() {
+        var toolInvocations = new List<RawToolCall>();
         var searchDefinition = new ToolDefinition(
             "search",
             "nested-search",
@@ -200,11 +201,15 @@ public sealed class AgentStateMachineToolExecutionTests {
         var toolResult = Assert.Single(toolResultsStep.ToolResults!.Results);
         Assert.Equal(ToolExecutionStatus.Success, toolResult.ExecuteResult.Status);
 
-        var capturedArguments = Assert.Single(toolInvocations);
-        var filters = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(capturedArguments!["filters"]);
-        var tags = Assert.IsAssignableFrom<IReadOnlyList<object?>>(filters["tags"]);
-        Assert.Equal(["go", "ai"], tags);
-        Assert.Equal(2, Assert.IsType<int>(capturedArguments["count"]));
+        var capturedRequest = Assert.Single(toolInvocations);
+        using var json = JsonDocument.Parse(capturedRequest.RawArgumentsJson);
+        var root = json.RootElement;
+        Assert.Equal("search", capturedRequest.ToolName);
+        Assert.Equal("call-nested", capturedRequest.ToolCallId);
+        Assert.Equal(2, root.GetProperty("count").GetInt32());
+        var tags = root.GetProperty("filters").GetProperty("tags");
+        Assert.Equal("go", tags[0].GetString());
+        Assert.Equal("ai", tags[1].GetString());
     }
 
     [Fact]
@@ -897,14 +902,14 @@ public sealed class AgentStateMachineToolExecutionTests {
     }
 
     private sealed class DelegateTool : ITool {
-        private readonly Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> _execute;
+        private readonly Func<RawToolCall, ToolExecuteResult> _execute;
 
-        public DelegateTool(string name, Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> execute) {
+        public DelegateTool(string name, Func<RawToolCall, ToolExecuteResult> execute) {
             Definition = CreateToolDefinition(name ?? throw new ArgumentNullException(nameof(name)), "delegate-tool");
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
         }
 
-        public DelegateTool(ToolDefinition definition, Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> execute) {
+        public DelegateTool(ToolDefinition definition, Func<RawToolCall, ToolExecuteResult> execute) {
             Definition = definition ?? throw new ArgumentNullException(nameof(definition));
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
         }
@@ -913,8 +918,8 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         public bool Visible { get; set; } = true;
 
-        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
-            => new(_execute(arguments));
+        public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken)
+            => new(_execute(request));
     }
 
     private sealed class MismatchedNameTool : ITool {
@@ -929,7 +934,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         public ToolDefinition Definition { get; }
         public bool Visible { get; set; } = true;
 
-        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
+        public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
             return new(new ToolExecuteResult(ToolExecutionStatus.Success, "ok"));
         }
     }
