@@ -788,6 +788,45 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.Equal("alpha beta", preview);
     }
 
+    [Fact]
+    public void RegisterTool_UsesDefinitionName_ForDuplicateDetection() {
+        var engine = new AgentEngine();
+
+        engine.RegisterTool(new MismatchedNameTool(surfaceName: "legacy_echo_a", definitionName: "echo"));
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => engine.RegisterTool(new MismatchedNameTool(surfaceName: "legacy_echo_b", definitionName: "echo"))
+        );
+
+        Assert.Contains("echo", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RemoveTool_UsesDefinitionName_WhenSurfaceNameDiffers() {
+        var engine = new AgentEngine();
+
+        engine.RegisterTool(new MismatchedNameTool(surfaceName: "legacy_echo", definitionName: "echo"));
+
+        Assert.False(engine.RemoveTool("legacy_echo"));
+        Assert.True(engine.RemoveTool("echo"));
+
+        engine.RegisterTool(new MismatchedNameTool(surfaceName: "legacy_echo_again", definitionName: "echo"));
+    }
+
+    [Fact]
+    public void RegisterApp_UsesDefinitionName_WhenReplacingAppChecksStandaloneConflicts() {
+        var engine = new AgentEngine();
+
+        engine.RegisterTool(new MismatchedNameTool(surfaceName: "legacy_standalone_echo", definitionName: "echo"));
+        engine.RegisterApp(new StaticApp("tool-app", new MismatchedNameTool(surfaceName: "legacy_old", definitionName: "old-tool")));
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => engine.RegisterApp(new StaticApp("tool-app", new MismatchedNameTool(surfaceName: "legacy_new", definitionName: "echo")))
+        );
+
+        Assert.Contains("echo", ex.Message, StringComparison.Ordinal);
+    }
+
     private static AgentEngine CreateEngine(params ITool[] tools) {
         var engine = new AgentEngine();
 
@@ -869,6 +908,35 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
             => new(_execute(arguments));
+    }
+
+    private sealed class MismatchedNameTool : ITool {
+        public MismatchedNameTool(string surfaceName, string definitionName) {
+            Name = surfaceName ?? throw new ArgumentNullException(nameof(surfaceName));
+            Definition = ToolDefinition.CreateFlat(definitionName ?? throw new ArgumentNullException(nameof(definitionName)), "mismatched-name-tool");
+        }
+
+        public ToolDefinition Definition { get; }
+        public string Name { get; }
+        public string Description => Definition.Description;
+        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
+        public bool Visible { get; set; } = true;
+
+        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
+            return new(new ToolExecuteResult(ToolExecutionStatus.Success, "ok"));
+        }
+    }
+
+    private sealed class StaticApp : IApp {
+        public StaticApp(string name, params ITool[] tools) {
+            Name = name ?? throw new ArgumentNullException(nameof(name));
+            Tools = tools ?? Array.Empty<ITool>();
+        }
+
+        public string Name { get; }
+        public string Description => "static-app";
+        public IReadOnlyList<ITool> Tools { get; }
+        public string? RenderWindow(AppRenderContext context) => null;
     }
 
     private sealed class PrepareAwareApp : IApp {

@@ -27,7 +27,7 @@ public sealed class ToolContractsTests {
         );
 
         var metadataOverride = new ToolDefinition(
-            "search_override",
+            "search",
             "override description",
             new ToolSchema.Object(
                 [
@@ -48,6 +48,16 @@ public sealed class ToolContractsTests {
         var result = ToolContracts.CreateCompatibleFlatOverride(authoritative, metadataOverride);
 
         Assert.Same(metadataOverride, result);
+    }
+
+    [Fact]
+    public void CreateCompatibleFlatOverride_RejectsToolRename() {
+        var authoritative = ToolDefinition.CreateFlat("search", "authoritative");
+        var metadataOverride = ToolDefinition.CreateFlat("search_override", "override description");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ToolContracts.CreateCompatibleFlatOverride(authoritative, metadataOverride));
+
+        Assert.Contains("不能改名", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

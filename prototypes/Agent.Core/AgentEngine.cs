@@ -133,10 +133,14 @@ public partial class AgentEngine {
     public void RegisterTool(ITool tool) {
         if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
 
-        if (_standaloneTools.ContainsKey(tool.Name)) { throw new InvalidOperationException($"Duplicate tool registration detected for '{tool.Name}'."); }
+        var definitionName = GetDefinitionName(tool);
 
-        EnsureToolNameAvailable(tool.Name);
-        _standaloneTools[tool.Name] = tool;
+        if (_standaloneTools.ContainsKey(definitionName)) {
+            throw new InvalidOperationException($"Duplicate tool registration detected for '{definitionName}'.");
+        }
+
+        EnsureToolNameAvailable(definitionName);
+        _standaloneTools[definitionName] = tool;
         _toolsDirty = true;
     }
 
@@ -212,9 +216,15 @@ public partial class AgentEngine {
         foreach (var tool in tools) {
             if (tool is null) { continue; }
 
-            if (!newNames.Add(tool.Name)) { throw new InvalidOperationException($"App '{replacingAppName ?? "<unknown>"}' attempted to register duplicate tool name '{tool.Name}'."); }
+            var definitionName = GetDefinitionName(tool);
 
-            if (existingNames.Contains(tool.Name)) { throw new InvalidOperationException($"Tool name conflict detected for '{tool.Name}'."); }
+            if (!newNames.Add(definitionName)) {
+                throw new InvalidOperationException($"App '{replacingAppName ?? "<unknown>"}' attempted to register duplicate tool name '{definitionName}'.");
+            }
+
+            if (existingNames.Contains(definitionName)) {
+                throw new InvalidOperationException($"Tool name conflict detected for '{definitionName}'.");
+            }
         }
     }
 
@@ -230,7 +240,7 @@ public partial class AgentEngine {
                 if (app.Tools is { Count: > 0 }) {
                     foreach (var tool in app.Tools) {
                         if (tool is not null) {
-                            names.Add(tool.Name);
+                            names.Add(GetDefinitionName(tool));
                         }
                     }
                 }
@@ -238,7 +248,7 @@ public partial class AgentEngine {
         }
 
         foreach (var tool in _standaloneTools.Values) {
-            names.Add(tool.Name);
+            names.Add(GetDefinitionName(tool));
         }
 
         return names;
@@ -253,12 +263,16 @@ public partial class AgentEngine {
 
                 foreach (var tool in app.Tools) {
                     if (tool is null) { continue; }
-                    if (string.Equals(tool.Name, toolName, StringComparison.OrdinalIgnoreCase)) { return true; }
+                    if (string.Equals(GetDefinitionName(tool), toolName, StringComparison.OrdinalIgnoreCase)) { return true; }
                 }
             }
         }
 
         return false;
+    }
+
+    private static string GetDefinitionName(ITool tool) {
+        return ToolContracts.GetValidatedDefinition(tool).Name;
     }
 
     /// <summary>
