@@ -19,30 +19,41 @@ internal static class GameActionValidator {
 
     private static readonly Lock s_gate = new();
     private static readonly ImmutableArray<ToolDefinition> s_tools = [
-        ToolDefinition.CreateFlat(
+        new ToolDefinition(
             name: PointOutIssuesToolName,
             description: BuildPointOutIssuesToolDescription(),
-            parameters: [
-                new ToolParamSpec(
-                    name: "problem_summary",
-                    description: "一句话概括最主要的不合理之处。",
-                    valueKind: ToolParamType.String
-                ),
-                new ToolParamSpec(
-                    name: "evidence_boundary",
-                    description: "说明它越过了哪条证据边界，或引用了哪些输入中不存在的事实。",
-                    valueKind: ToolParamType.String,
-                    isNullable: true,
-                    defaultValue: new ParamDefault(null)
-                ),
-                new ToolParamSpec(
-                    name: "rewrite_suggestion",
-                    description: "给 Player 的简短修正建议。",
-                    valueKind: ToolParamType.String,
-                    isNullable: true,
-                    defaultValue: new ParamDefault(null)
-                )
-            ]
+            inputSchema: new ToolSchema.Object(
+                [
+                    new ToolSchema.Property(
+                        "problem_summary",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: "一句话概括最主要的不合理之处。"
+                        ),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "evidence_boundary",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            isNullable: true,
+                            defaultValue: new ParamDefault(null),
+                            description: "说明它越过了哪条证据边界，或引用了哪些输入中不存在的事实。"
+                        ),
+                        isRequired: false
+                    ),
+                    new ToolSchema.Property(
+                        "rewrite_suggestion",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            isNullable: true,
+                            defaultValue: new ParamDefault(null),
+                            description: "给 Player 的简短修正建议。"
+                        ),
+                        isRequired: false
+                    )
+                ]
+            )
         )
     ];
 

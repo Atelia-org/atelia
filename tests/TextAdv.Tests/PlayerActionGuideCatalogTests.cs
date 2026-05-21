@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Reflection;
+using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Xunit;
 
@@ -119,6 +120,43 @@ public sealed class PlayerActionGuideCatalogTests {
     }
 
     [Fact]
+    public void ExploreToolMetadata_ShouldKeepOptionalNullableFocusWithNullDefault() {
+        var metadata = PlayerActionGuideCatalog.GetExploreToolMetadata();
+
+        var rootSchema = Assert.IsType<ToolSchema.Object>(metadata.InputSchema);
+        var focusProperty = Assert.Single(rootSchema.Properties, static property => property.Name == "focus");
+        Assert.False(focusProperty.IsRequired);
+
+        var focusSchema = Assert.IsType<ToolSchema.Value>(focusProperty.Schema);
+        Assert.True(focusSchema.IsNullable);
+        Assert.True(focusSchema.Default.HasValue);
+        Assert.Null(focusSchema.Default.Value.Value);
+
+        var projectedFocus = Assert.Single(metadata.Parameters, static parameter => parameter.Name == "focus");
+        Assert.True(projectedFocus.IsNullable);
+        Assert.True(projectedFocus.IsOptional);
+        Assert.True(projectedFocus.TryGetDefaultValue(out var defaultValue));
+        Assert.Null(defaultValue);
+    }
+
+    [Fact]
+    public void ValidatorIssueToolMetadata_ShouldKeepOptionalNullableDiagnosticsFieldsWithNullDefault() {
+        var field = typeof(GameActionValidator).GetField("s_tools", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+
+        var tools = (System.Collections.Immutable.ImmutableArray<ToolDefinition>)field!.GetValue(null)!;
+        var metadata = Assert.Single(tools);
+        Assert.Equal("point_out_issues", metadata.Name);
+
+        var rootSchema = Assert.IsType<ToolSchema.Object>(metadata.InputSchema);
+        var problemSummary = Assert.Single(rootSchema.Properties, static property => property.Name == "problem_summary");
+        Assert.True(problemSummary.IsRequired);
+
+        AssertOptionalNullableNullDefault(rootSchema, "evidence_boundary");
+        AssertOptionalNullableNullDefault(rootSchema, "rewrite_suggestion");
+    }
+
+    [Fact]
     public void LlmPlayerToolAttributes_ShouldReuseSharedTextConstants() {
         var toolServiceType = typeof(LlmPlayerAgentDriver).GetNestedType("PlayerActionToolService", BindingFlags.NonPublic);
         Assert.NotNull(toolServiceType);
@@ -184,5 +222,15 @@ public sealed class PlayerActionGuideCatalogTests {
         var method = type.GetMethod(methodName, BindingFlags.Static | BindingFlags.NonPublic);
         Assert.NotNull(method);
         return Assert.IsType<string>(method!.Invoke(null, args));
+    }
+
+    private static void AssertOptionalNullableNullDefault(ToolSchema.Object rootSchema, string propertyName) {
+        var property = Assert.Single(rootSchema.Properties, candidate => candidate.Name == propertyName);
+        Assert.False(property.IsRequired);
+
+        var valueSchema = Assert.IsType<ToolSchema.Value>(property.Schema);
+        Assert.True(valueSchema.IsNullable);
+        Assert.True(valueSchema.Default.HasValue);
+        Assert.Null(valueSchema.Default.Value.Value);
     }
 }

@@ -194,80 +194,112 @@ internal static class PlayerActionGuideCatalog {
     }
 
     internal static ToolDefinition GetEditMemoryNotebookToolMetadata() {
-        return ToolDefinition.CreateFlat(
+        return new ToolDefinition(
             "player_edit_memory_notebook",
             PlayerActionGuideText.EditMemoryNotebookToolDescription,
-            [
-                new ToolParamSpec(
-                    "reason",
-                    PlayerActionGuideText.EditMemoryNotebookReasonToolParamDescription,
-                    ToolParamType.String
-                ),
-                new ToolParamSpec(
-                    "edit_script",
-                    PlayerActionGuideText.EditScriptParameterDescription,
-                    ToolParamType.String
-                )
-            ]
+            new ToolSchema.Object(
+                [
+                    new ToolSchema.Property(
+                        "reason",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: PlayerActionGuideText.EditMemoryNotebookReasonToolParamDescription
+                        ),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "edit_script",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: PlayerActionGuideText.EditScriptParameterDescription
+                        ),
+                        isRequired: true
+                    )
+                ]
+            )
         );
     }
 
     internal static ToolDefinition GetRestAWhileToolMetadata() {
-        return ToolDefinition.CreateFlat(
+        return new ToolDefinition(
             "player_rest_a_while",
             PlayerActionGuideText.RestAWhileToolDescription,
-            [
-                new ToolParamSpec(
-                    "reason",
-                    PlayerActionGuideText.RestReasonToolParamDescription,
-                    ToolParamType.String
-                )
-            ]
+            new ToolSchema.Object(
+                [
+                    new ToolSchema.Property(
+                        "reason",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: PlayerActionGuideText.RestReasonToolParamDescription
+                        ),
+                        isRequired: true
+                    )
+                ]
+            )
         );
     }
 
     internal static ToolDefinition GetExploreToolMetadata() {
-        return ToolDefinition.CreateFlat(
+        return new ToolDefinition(
             "player_explore",
             PlayerActionGuideText.ExploreToolDescription,
-            [
-                new ToolParamSpec(
-                    "reason",
-                    PlayerActionGuideText.ExploreReasonToolParamDescription,
-                    ToolParamType.String
-                ),
-                new ToolParamSpec(
-                    "direction",
-                    PlayerActionGuideText.DirectionParameterDescription,
-                    ToolParamType.String
-                ),
-                new ToolParamSpec(
-                    "focus",
-                    PlayerActionGuideText.FocusParameterDescription,
-                    ToolParamType.String,
-                    isNullable: true,
-                    defaultValue: new ParamDefault(null)
-                )
-            ]
+            new ToolSchema.Object(
+                [
+                    new ToolSchema.Property(
+                        "reason",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: PlayerActionGuideText.ExploreReasonToolParamDescription
+                        ),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "direction",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: PlayerActionGuideText.DirectionParameterDescription
+                        ),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "focus",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            isNullable: true,
+                            defaultValue: new ParamDefault(null),
+                            description: PlayerActionGuideText.FocusParameterDescription
+                        ),
+                        isRequired: false
+                    )
+                ]
+            )
         );
     }
 
     internal static ToolDefinition GetInteractToolMetadata() {
-        return ToolDefinition.CreateFlat(
+        return new ToolDefinition(
             "player_interact",
             PlayerActionGuideText.InteractToolDescription,
-            [
-                new ToolParamSpec(
-                    "reason",
-                    PlayerActionGuideText.InteractReasonToolParamDescription,
-                    ToolParamType.String
-                ),
-                new ToolParamSpec(
-                    "interaction_id",
-                    PlayerActionGuideText.InteractionIdParameterDescription,
-                    ToolParamType.String
-                )
-            ]
+            new ToolSchema.Object(
+                [
+                    new ToolSchema.Property(
+                        "reason",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: PlayerActionGuideText.InteractReasonToolParamDescription
+                        ),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "interaction_id",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: PlayerActionGuideText.InteractionIdParameterDescription
+                        ),
+                        isRequired: true
+                    )
+                ]
+            )
         );
     }
 

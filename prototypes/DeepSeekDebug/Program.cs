@@ -17,18 +17,34 @@ internal static class Program {
     private const string FixedToday = "2026-04-19";
 
     private static readonly ImmutableArray<ToolDefinition> Tools = [
-        ToolDefinition.CreateFlat(
+        new ToolDefinition(
             name: "get_date",
             description: "Get today's date in YYYY-MM-DD format.",
-            parameters: ImmutableArray<ToolParamSpec>.Empty
+            inputSchema: new ToolSchema.Object()
         ),
-        ToolDefinition.CreateFlat(
+        new ToolDefinition(
             name: "get_weather",
             description: "Get weather of a location on a date.",
-            parameters: [
-                new ToolParamSpec("location", "The city name.", ToolParamType.String),
-                new ToolParamSpec("date", "The date in YYYY-MM-DD format.", ToolParamType.String)
-            ]
+            inputSchema: new ToolSchema.Object(
+                [
+                    new ToolSchema.Property(
+                        "location",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: "The city name."
+                        ),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "date",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: "The date in YYYY-MM-DD format."
+                        ),
+                        isRequired: true
+                    )
+                ]
+            )
         )
     ];
 
