@@ -32,7 +32,7 @@ public sealed class ToolArgumentParserTests {
     }
 
     [Fact]
-    public void ParseArguments_DecimalFromStringProducesWarning() {
+    public void ParseArguments_DecimalFromStringReturnsTypeError() {
         var schema = new ToolSchema.Object(
             [
                 new ToolSchema.Property(
@@ -46,14 +46,12 @@ public sealed class ToolArgumentParserTests {
         var payload = "{\"amount\": \"42.42\"}";
         var result = JsonArgumentParser.ParseArguments(schema, payload);
 
-        Assert.Null(result.ParseError);
-        Assert.NotNull(result.ParseWarning);
-        Assert.Contains("amount:string_literal_converted_to_decimal", result.ParseWarning!, StringComparison.Ordinal);
+        Assert.NotNull(result.ParseError);
+        Assert.Contains("amount:expected_number", result.ParseError!, StringComparison.Ordinal);
+        Assert.Null(result.ParseWarning);
 
         Assert.Equal("42.42", result.RawArguments["amount"]);
-
-        var decimalValue = Assert.IsType<decimal>(result.Arguments["amount"]);
-        Assert.Equal(42.42m, decimalValue);
+        Assert.False(result.Arguments.ContainsKey("amount"));
     }
 
     [Fact]
@@ -279,5 +277,91 @@ public sealed class ToolArgumentParserTests {
 
         var aboveMaximum = JsonArgumentParser.ParseArguments(schema, "{\"mode\":\"safe\",\"count\":5}");
         Assert.Contains("count:number_above_maximum", aboveMaximum.ParseError!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseArguments_StringSchemaRejectsNonStringJsonTypes() {
+        var schema = new ToolSchema.Object(
+            [
+                new ToolSchema.Property(
+                    "text",
+                    new ToolSchema.Value(ToolParamType.String, description: "text"),
+                    isRequired: true
+                )
+            ]
+        );
+
+        Assert.Contains("text:expected_string", JsonArgumentParser.ParseArguments(schema, "{\"text\":123}").ParseError!, StringComparison.Ordinal);
+        Assert.Contains("text:expected_string", JsonArgumentParser.ParseArguments(schema, "{\"text\":true}").ParseError!, StringComparison.Ordinal);
+        Assert.Contains("text:expected_string", JsonArgumentParser.ParseArguments(schema, "{\"text\":{}}").ParseError!, StringComparison.Ordinal);
+        Assert.Contains("text:expected_string", JsonArgumentParser.ParseArguments(schema, "{\"text\":[]}").ParseError!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseArguments_BooleanSchemaRejectsStringAndNumber() {
+        var schema = new ToolSchema.Object(
+            [
+                new ToolSchema.Property(
+                    "flag",
+                    new ToolSchema.Value(ToolParamType.Boolean, description: "flag"),
+                    isRequired: true
+                )
+            ]
+        );
+
+        Assert.Contains("flag:expected_boolean", JsonArgumentParser.ParseArguments(schema, "{\"flag\":\"true\"}").ParseError!, StringComparison.Ordinal);
+        Assert.Contains("flag:expected_boolean", JsonArgumentParser.ParseArguments(schema, "{\"flag\":1}").ParseError!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseArguments_IntegerSchemasRejectStringAndFractionalNumber() {
+        var int32Schema = new ToolSchema.Object(
+            [
+                new ToolSchema.Property(
+                    "count",
+                    new ToolSchema.Value(ToolParamType.Int32, description: "count"),
+                    isRequired: true
+                )
+            ]
+        );
+        var int64Schema = new ToolSchema.Object(
+            [
+                new ToolSchema.Property(
+                    "total",
+                    new ToolSchema.Value(ToolParamType.Int64, description: "total"),
+                    isRequired: true
+                )
+            ]
+        );
+
+        Assert.Contains("count:expected_integer", JsonArgumentParser.ParseArguments(int32Schema, "{\"count\":\"12\"}").ParseError!, StringComparison.Ordinal);
+        Assert.Contains("count:expected_integer", JsonArgumentParser.ParseArguments(int32Schema, "{\"count\":12.5}").ParseError!, StringComparison.Ordinal);
+        Assert.Contains("total:expected_integer", JsonArgumentParser.ParseArguments(int64Schema, "{\"total\":\"12\"}").ParseError!, StringComparison.Ordinal);
+        Assert.Contains("total:expected_integer", JsonArgumentParser.ParseArguments(int64Schema, "{\"total\":12.5}").ParseError!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseArguments_FloatingPointSchemasRejectStringValues() {
+        var float64Schema = new ToolSchema.Object(
+            [
+                new ToolSchema.Property(
+                    "score",
+                    new ToolSchema.Value(ToolParamType.Float64, description: "score"),
+                    isRequired: true
+                )
+            ]
+        );
+        var decimalSchema = new ToolSchema.Object(
+            [
+                new ToolSchema.Property(
+                    "amount",
+                    new ToolSchema.Value(ToolParamType.Decimal, description: "amount"),
+                    isRequired: true
+                )
+            ]
+        );
+
+        Assert.Contains("score:expected_number", JsonArgumentParser.ParseArguments(float64Schema, "{\"score\":\"3.14\"}").ParseError!, StringComparison.Ordinal);
+        Assert.Contains("amount:expected_number", JsonArgumentParser.ParseArguments(decimalSchema, "{\"amount\":\"3.14\"}").ParseError!, StringComparison.Ordinal);
     }
 }
