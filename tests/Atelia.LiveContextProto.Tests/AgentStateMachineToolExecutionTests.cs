@@ -21,8 +21,15 @@ public sealed class AgentStateMachineToolExecutionTests {
     [Fact]
     public async Task DoStepAsync_CompletesToolCallLifecycle() {
         var toolInvocations = new List<IReadOnlyDictionary<string, object?>?>();
-        var echoTool = new DelegateTool(
+        var echoDefinition = ToolDefinition.CreateFlat(
             "echo",
+            "delegate-tool",
+            [
+                new ToolParamSpec("payload", "payload", ToolParamType.String)
+            ]
+        );
+        var echoTool = new DelegateTool(
+            echoDefinition,
             arguments => {
                 toolInvocations.Add(arguments);
                 return new ToolExecuteResult(
@@ -108,6 +115,90 @@ public sealed class AgentStateMachineToolExecutionTests {
         Assert.IsType<ActionEntry>(state.RecentHistory[1]);
         Assert.IsType<ToolResultsEntry>(state.RecentHistory[2]);
         Assert.IsType<ActionEntry>(state.RecentHistory[3]);
+    }
+
+    [Fact]
+    public async Task DoStepAsync_NestedSchemaToolParsesArgumentsFromInputSchema() {
+        var toolInvocations = new List<IReadOnlyDictionary<string, object?>?>();
+        var searchDefinition = new ToolDefinition(
+            "search",
+            "nested-search",
+            new ToolSchema.Object(
+                [
+                    new ToolSchema.Property(
+                        "filters",
+                        new ToolSchema.Object(
+                            [
+                                new ToolSchema.Property(
+                                    "tags",
+                                    new ToolSchema.Array(
+                                        new ToolSchema.Value(ToolParamType.String, minLength: 2, description: "tag"),
+                                        description: "tags"
+                                    ),
+                                    isRequired: true
+                                )
+                            ],
+                            description: "filters"
+                        ),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "count",
+                        new ToolSchema.Value(ToolParamType.Int32, minimum: 1, maximum: 5, description: "count"),
+                        isRequired: true
+                    )
+                ]
+            )
+        );
+
+        var searchTool = new DelegateTool(
+            searchDefinition,
+            arguments => {
+                toolInvocations.Add(arguments);
+                return new ToolExecuteResult(ToolExecutionStatus.Success, "search-ok");
+            }
+        );
+
+        var provider = new FakeProviderClient(
+            new[] {
+                CreateDeltaSequence(
+                    agg => agg.AppendContent("call nested tool"),
+                    agg => agg.AppendToolCall(
+                        CreateToolCallRequest(
+                            "search",
+                            "call-nested",
+                            rawArguments: null,
+                            arguments: new Dictionary<string, object?> {
+                                ["filters"] = new Dictionary<string, object?> {
+                                    ["tags"] = new[] { "go", "ai" }
+                                },
+                                ["count"] = 2
+                            }
+                        )
+                    )
+                ),
+                CreateDeltaSequence(agg => agg.AppendContent("done"))
+            }
+        );
+
+        var profile = new LlmProfile(Client: provider, ModelId: Model, Name: StrategyId, SoftContextTokenCap: 64_000u);
+        var engine = CreateEngine(searchTool);
+
+        engine.AppendNotification("trigger nested tool");
+
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+        await engine.StepAsync(profile);
+
+        var toolResultsStep = await engine.StepAsync(profile);
+        var toolResult = Assert.Single(toolResultsStep.ToolResults!.Results);
+        Assert.Equal(ToolExecutionStatus.Success, toolResult.ExecuteResult.Status);
+
+        var capturedArguments = Assert.Single(toolInvocations);
+        var filters = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(capturedArguments!["filters"]);
+        var tags = Assert.IsAssignableFrom<IReadOnlyList<object?>>(filters["tags"]);
+        Assert.Equal(["go", "ai"], tags);
+        Assert.Equal(2, Assert.IsType<int>(capturedArguments["count"]));
     }
 
     [Fact]
@@ -761,6 +852,11 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         public DelegateTool(string name, Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> execute) {
             Definition = ToolDefinition.CreateFlat(name ?? throw new ArgumentNullException(nameof(name)), "delegate-tool");
+            _execute = execute ?? throw new ArgumentNullException(nameof(execute));
+        }
+
+        public DelegateTool(ToolDefinition definition, Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> execute) {
+            Definition = definition ?? throw new ArgumentNullException(nameof(definition));
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
         }
 
