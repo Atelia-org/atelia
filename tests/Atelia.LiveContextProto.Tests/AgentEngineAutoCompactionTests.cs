@@ -367,7 +367,7 @@ public sealed class AgentEngineAutoCompactionTests {
     }
 
     private sealed class EchoTool : ITool {
-        public EchoTool(string name) { Definition = ToolDefinition.CreateFlat(name, "echo"); }
+        public EchoTool(string name) { Definition = new ToolDefinition(name, "echo", new ToolSchema.Object()); }
         public ToolDefinition Definition { get; }
         public bool Visible { get; set; } = true;
         public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {

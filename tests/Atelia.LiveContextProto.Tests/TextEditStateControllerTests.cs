@@ -305,7 +305,7 @@ public sealed class TextEditStateControllerTests {
     // 模拟 ITool 实现，用于测试
     private sealed class MockTool : ITool {
         public MockTool(string name) {
-            Definition = ToolDefinition.CreateFlat(name, "Mock tool for testing");
+            Definition = new ToolDefinition(name, "Mock tool for testing", new ToolSchema.Object());
         }
 
         public ToolDefinition Definition { get; }

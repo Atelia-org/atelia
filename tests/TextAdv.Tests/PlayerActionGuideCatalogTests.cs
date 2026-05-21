@@ -35,7 +35,7 @@ public sealed class PlayerActionGuideCatalogTests {
         Assert.Contains("统一入口", interactMetadata.Description);
         Assert.Contains("small interaction 立即执行且不结束回合", interactMetadata.Description);
         Assert.Contains("Large-Action proposal 暂存", interactMetadata.Description);
-        Assert.Contains("判定这是 small 还是 large", interactMetadata.Parameters[1].Description);
+        Assert.Contains("判定这是 small 还是 large", GetValueProperty(interactMetadata, "interaction_id").Description);
     }
 
     [Fact]
@@ -100,23 +100,26 @@ public sealed class PlayerActionGuideCatalogTests {
     public void PlayerToolMetadata_ShouldReuseSharedTextConstants() {
         var editMetadata = PlayerActionGuideCatalog.GetEditMemoryNotebookToolMetadata();
         Assert.Equal(PlayerActionGuideText.EditMemoryNotebookToolDescription, editMetadata.Description);
-        Assert.Equal(PlayerActionGuideText.EditMemoryNotebookReasonToolParamDescription, editMetadata.Parameters[0].Description);
-        Assert.Equal(PlayerActionGuideText.EditScriptParameterDescription, editMetadata.Parameters[1].Description);
+        Assert.Equal(
+            PlayerActionGuideText.EditMemoryNotebookReasonToolParamDescription,
+            GetValueProperty(editMetadata, "reason").Description
+        );
+        Assert.Equal(PlayerActionGuideText.EditScriptParameterDescription, GetValueProperty(editMetadata, "edit_script").Description);
 
         var restMetadata = PlayerActionGuideCatalog.GetRestAWhileToolMetadata();
         Assert.Equal(PlayerActionGuideText.RestAWhileToolDescription, restMetadata.Description);
-        Assert.Equal(PlayerActionGuideText.RestReasonToolParamDescription, restMetadata.Parameters[0].Description);
+        Assert.Equal(PlayerActionGuideText.RestReasonToolParamDescription, GetValueProperty(restMetadata, "reason").Description);
 
         var exploreMetadata = PlayerActionGuideCatalog.GetExploreToolMetadata();
         Assert.Equal(PlayerActionGuideText.ExploreToolDescription, exploreMetadata.Description);
-        Assert.Equal(PlayerActionGuideText.ExploreReasonToolParamDescription, exploreMetadata.Parameters[0].Description);
-        Assert.Equal(PlayerActionGuideText.DirectionParameterDescription, exploreMetadata.Parameters[1].Description);
-        Assert.Equal(PlayerActionGuideText.FocusParameterDescription, exploreMetadata.Parameters[2].Description);
+        Assert.Equal(PlayerActionGuideText.ExploreReasonToolParamDescription, GetValueProperty(exploreMetadata, "reason").Description);
+        Assert.Equal(PlayerActionGuideText.DirectionParameterDescription, GetValueProperty(exploreMetadata, "direction").Description);
+        Assert.Equal(PlayerActionGuideText.FocusParameterDescription, GetValueProperty(exploreMetadata, "focus").Description);
 
         var interactMetadata = PlayerActionGuideCatalog.GetInteractToolMetadata();
         Assert.Equal(PlayerActionGuideText.InteractToolDescription, interactMetadata.Description);
-        Assert.Equal(PlayerActionGuideText.InteractReasonToolParamDescription, interactMetadata.Parameters[0].Description);
-        Assert.Equal(PlayerActionGuideText.InteractionIdParameterDescription, interactMetadata.Parameters[1].Description);
+        Assert.Equal(PlayerActionGuideText.InteractReasonToolParamDescription, GetValueProperty(interactMetadata, "reason").Description);
+        Assert.Equal(PlayerActionGuideText.InteractionIdParameterDescription, GetValueProperty(interactMetadata, "interaction_id").Description);
     }
 
     [Fact]
@@ -131,12 +134,6 @@ public sealed class PlayerActionGuideCatalogTests {
         Assert.True(focusSchema.IsNullable);
         Assert.True(focusSchema.Default.HasValue);
         Assert.Null(focusSchema.Default.Value.Value);
-
-        var projectedFocus = Assert.Single(metadata.Parameters, static parameter => parameter.Name == "focus");
-        Assert.True(projectedFocus.IsNullable);
-        Assert.True(projectedFocus.IsOptional);
-        Assert.True(projectedFocus.TryGetDefaultValue(out var defaultValue));
-        Assert.Null(defaultValue);
     }
 
     [Fact]
@@ -255,6 +252,12 @@ public sealed class PlayerActionGuideCatalogTests {
         Assert.True(valueSchema.IsNullable);
         Assert.True(valueSchema.Default.HasValue);
         Assert.Null(valueSchema.Default.Value.Value);
+    }
+
+    private static ToolSchema.Value GetValueProperty(ToolDefinition definition, string propertyName) {
+        var rootSchema = Assert.IsType<ToolSchema.Object>(definition.InputSchema);
+        var property = Assert.Single(rootSchema.Properties, candidate => candidate.Name == propertyName);
+        return Assert.IsType<ToolSchema.Value>(property.Schema);
     }
 
     private static PerceptionBundle CreateMinimalPerception() {

@@ -21,12 +21,18 @@ public sealed class AgentStateMachineToolExecutionTests {
     [Fact]
     public async Task DoStepAsync_CompletesToolCallLifecycle() {
         var toolInvocations = new List<IReadOnlyDictionary<string, object?>?>();
-        var echoDefinition = ToolDefinition.CreateFlat(
+        var echoDefinition = new ToolDefinition(
             "echo",
             "delegate-tool",
-            [
-                new ToolParamSpec("payload", "payload", ToolParamType.String)
-            ]
+            new ToolSchema.Object(
+                [
+                    new ToolSchema.Property(
+                        "payload",
+                        new ToolSchema.Value(ToolParamType.String, description: "payload"),
+                        isRequired: true
+                    )
+                ]
+            )
         );
         var echoTool = new DelegateTool(
             echoDefinition,
@@ -861,6 +867,10 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     private static Action<CompletionAggregator>[] CreateDeltaSequence(params Action<CompletionAggregator>[] feeds) => feeds;
 
+    private static ToolDefinition CreateToolDefinition(string name, string description, params ToolSchema.Property[] properties) {
+        return new ToolDefinition(name, description, new ToolSchema.Object(properties));
+    }
+
     private sealed class FakeProviderClient : ICompletionClient {
         private readonly Queue<Action<CompletionAggregator>[]> _responses;
 
@@ -890,7 +900,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         private readonly Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> _execute;
 
         public DelegateTool(string name, Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> execute) {
-            Definition = ToolDefinition.CreateFlat(name ?? throw new ArgumentNullException(nameof(name)), "delegate-tool");
+            Definition = CreateToolDefinition(name ?? throw new ArgumentNullException(nameof(name)), "delegate-tool");
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
         }
 
@@ -910,7 +920,10 @@ public sealed class AgentStateMachineToolExecutionTests {
     private sealed class MismatchedNameTool : ITool {
         public MismatchedNameTool(string surfaceName, string definitionName) {
             ArgumentNullException.ThrowIfNull(surfaceName);
-            Definition = ToolDefinition.CreateFlat(definitionName ?? throw new ArgumentNullException(nameof(definitionName)), "mismatched-name-tool");
+            Definition = CreateToolDefinition(
+                definitionName ?? throw new ArgumentNullException(nameof(definitionName)),
+                "mismatched-name-tool"
+            );
         }
 
         public ToolDefinition Definition { get; }

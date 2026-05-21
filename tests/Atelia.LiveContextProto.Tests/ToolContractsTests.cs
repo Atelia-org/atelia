@@ -52,8 +52,8 @@ public sealed class ToolContractsTests {
 
     [Fact]
     public void CreateCompatibleFlatOverride_RejectsToolRename() {
-        var authoritative = ToolDefinition.CreateFlat("search", "authoritative");
-        var metadataOverride = ToolDefinition.CreateFlat("search_override", "override description");
+        var authoritative = new ToolDefinition("search", "authoritative", new ToolSchema.Object());
+        var metadataOverride = new ToolDefinition("search_override", "override description", new ToolSchema.Object());
 
         var ex = Assert.Throws<InvalidOperationException>(() => ToolContracts.CreateCompatibleFlatOverride(authoritative, metadataOverride));
 
