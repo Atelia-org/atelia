@@ -93,7 +93,7 @@ public sealed class MethodToolWrapperTests {
     }
 
     [Fact]
-    public void ToolExecutor_ShouldRejectNonFlatStableProjectionDefinition() {
+    public void ToolExecutor_ShouldAcceptNestedDefinitionAfterSchemaDrivenParsing() {
         var tool = new SchemaTool(
             new ToolDefinition(
                 "nested_schema_tool",
@@ -119,9 +119,10 @@ public sealed class MethodToolWrapperTests {
             )
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(() => new ToolExecutor([tool]));
-        Assert.Contains("flat", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("payload", exception.Message, StringComparison.OrdinalIgnoreCase);
+        var executor = new ToolExecutor([tool]);
+
+        Assert.Single(executor.AllToolDefinitions);
+        Assert.Same(tool.Definition, executor.AllToolDefinitions[0]);
     }
 
     private sealed class SchemaTool : ITool {
