@@ -561,8 +561,8 @@ internal static class LlmPlayerAgentDriver {
         public ValueTask<ToolExecuteResult> ExploreAsync(
             [ToolParam(PlayerActionGuideText.ExploreReasonAttributeDescription)] string reason,
             [ToolParam(PlayerActionGuideText.DirectionParameterDescription)] string direction,
-            [ToolParam(PlayerActionGuideText.FocusParameterDescription)] string? focus,
-            CancellationToken cancellationToken
+            [ToolParam(PlayerActionGuideText.FocusParameterDescription)] string? focus = null,
+            CancellationToken cancellationToken = default
         ) {
             focus = NormalizeOptionalToolString(focus);
             return BuildLargeProposalResult(

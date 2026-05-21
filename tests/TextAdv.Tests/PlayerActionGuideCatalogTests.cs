@@ -140,6 +140,29 @@ public sealed class PlayerActionGuideCatalogTests {
     }
 
     [Fact]
+    public void ExploreToolMetadata_ShouldRemainCompatibleWithAuthoritativeMethodSchema() {
+        var toolServiceType = typeof(LlmPlayerAgentDriver).GetNestedType("PlayerActionToolService", BindingFlags.NonPublic);
+        Assert.NotNull(toolServiceType);
+
+        var toolService = Activator.CreateInstance(
+            toolServiceType!,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [null, "player", CreateMinimalPerception()],
+            culture: null
+        );
+        Assert.NotNull(toolService);
+
+        var method = toolServiceType!.GetMethod("ExploreAsync", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var authoritative = MethodToolWrapper.FromMethod(toolService!, method!).Definition;
+        var result = ToolContracts.CreateCompatibleFlatOverride(authoritative, PlayerActionGuideCatalog.GetExploreToolMetadata());
+
+        Assert.Equal("player_explore", result.Name);
+    }
+
+    [Fact]
     public void ValidatorIssueToolMetadata_ShouldKeepOptionalNullableDiagnosticsFieldsWithNullDefault() {
         var field = typeof(GameActionValidator).GetField("s_tools", BindingFlags.Static | BindingFlags.NonPublic);
         Assert.NotNull(field);
@@ -232,5 +255,30 @@ public sealed class PlayerActionGuideCatalogTests {
         Assert.True(valueSchema.IsNullable);
         Assert.True(valueSchema.Default.HasValue);
         Assert.Null(valueSchema.Default.Value.Value);
+    }
+
+    private static PerceptionBundle CreateMinimalPerception() {
+        return new PerceptionBundle(
+            ActorId: "player",
+            ActorKind: "player",
+            ActorName: "测试者",
+            ActorProfileNote: "override compatibility",
+            Day: 1,
+            Slot: 1,
+            SlotsPerDay: 4,
+            Location: new LocationPerception(
+                LocationId: "room",
+                Name: "测试房间",
+                Description: "只有一张桌子。",
+                Exits: [],
+                Items: [],
+                Actors: [],
+                Interactions: []
+            ),
+            InventoryItems: [],
+            NotebookBlocks: Atelia.TextEditScript.TextBlockSnapshotDocument.Empty,
+            AcceptedSteps: [],
+            LastResolution: null
+        );
     }
 }
