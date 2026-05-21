@@ -900,9 +900,6 @@ public sealed class AgentStateMachineToolExecutionTests {
         }
 
         public ToolDefinition Definition { get; }
-        public string Name => Definition.Name;
-        public string Description => Definition.Description;
-        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
 
         public bool Visible { get; set; } = true;
 
@@ -912,14 +909,11 @@ public sealed class AgentStateMachineToolExecutionTests {
 
     private sealed class MismatchedNameTool : ITool {
         public MismatchedNameTool(string surfaceName, string definitionName) {
-            Name = surfaceName ?? throw new ArgumentNullException(nameof(surfaceName));
+            ArgumentNullException.ThrowIfNull(surfaceName);
             Definition = ToolDefinition.CreateFlat(definitionName ?? throw new ArgumentNullException(nameof(definitionName)), "mismatched-name-tool");
         }
 
         public ToolDefinition Definition { get; }
-        public string Name { get; }
-        public string Description => Definition.Description;
-        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
         public bool Visible { get; set; } = true;
 
         public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {

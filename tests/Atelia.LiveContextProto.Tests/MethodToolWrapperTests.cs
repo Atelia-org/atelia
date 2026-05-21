@@ -38,12 +38,9 @@ public sealed class MethodToolWrapperTests {
         var method = typeof(SampleToolHost).GetMethod(nameof(SampleToolHost.SampleAsync))!;
         var wrapper = MethodToolWrapper.FromMethod(host, method);
 
-        Assert.Equal(3, wrapper.Parameters.Count);
-        Assert.Equal(wrapper.Definition.Parameters, wrapper.Parameters);
-        Assert.Equal(wrapper.Definition.Name, wrapper.Name);
-        Assert.Equal(wrapper.Definition.Description, wrapper.Description);
+        Assert.Equal(3, wrapper.Definition.Parameters.Length);
 
-        var noteSpec = wrapper.Parameters[0];
+        var noteSpec = wrapper.Definition.Parameters[0];
         Assert.False(noteSpec.IsOptional);
         Assert.False(noteSpec.TryGetDefaultValue(out var noteDefault));
         Assert.Null(noteDefault);
@@ -51,7 +48,7 @@ public sealed class MethodToolWrapperTests {
         Assert.DoesNotContain("默认值:", noteSpec.Description);
         Assert.Contains("允许 null", noteSpec.Description);
 
-        var optionalValueSpec = wrapper.Parameters[1];
+        var optionalValueSpec = wrapper.Definition.Parameters[1];
         Assert.True(optionalValueSpec.IsOptional);
         Assert.True(optionalValueSpec.TryGetDefaultValue(out var optionalDefault));
         Assert.Equal(0, Assert.IsType<int>(optionalDefault));
@@ -59,7 +56,7 @@ public sealed class MethodToolWrapperTests {
         Assert.Contains("默认值: 0", optionalValueSpec.Description);
         Assert.DoesNotContain("允许 null", optionalValueSpec.Description);
 
-        var countSpec = wrapper.Parameters[2];
+        var countSpec = wrapper.Definition.Parameters[2];
         Assert.True(countSpec.IsOptional);
         Assert.True(countSpec.TryGetDefaultValue(out var countDefault));
         Assert.Equal(42, Assert.IsType<int>(countDefault));
@@ -84,11 +81,11 @@ public sealed class MethodToolWrapperTests {
 
         var wrapper = MethodToolWrapper.FromMethod(host, method, "demo", "目标", "展示");
 
-        Assert.Equal("demo_formatted", wrapper.Name);
-        Assert.Equal("内测工具：展示 -> 目标", wrapper.Description);
+        Assert.Equal("demo_formatted", wrapper.Definition.Name);
+        Assert.Equal("内测工具：展示 -> 目标", wrapper.Definition.Description);
 
-        Assert.Single(wrapper.Parameters);
-        var param = wrapper.Parameters[0];
+        Assert.Single(wrapper.Definition.Parameters);
+        var param = wrapper.Definition.Parameters[0];
         Assert.Contains("展示 输入文本", param.Description);
     }
 
@@ -131,9 +128,6 @@ public sealed class MethodToolWrapperTests {
         }
 
         public ToolDefinition Definition { get; }
-        public string Name => Definition.Name;
-        public string Description => Definition.Description;
-        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
         public bool Visible { get; set; } = true;
 
         public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)

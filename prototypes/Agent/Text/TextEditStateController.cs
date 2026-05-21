@@ -150,12 +150,12 @@ public sealed class TextEditStateController {
     /// 检查当前状态下指定工具是否应该可见。
     /// </summary>
     public bool ShouldToolBeVisible(string toolName) {
-        if (toolName == _replaceTool.Name) {
+        if (toolName == _replaceTool.Definition.Name) {
             // replace 工具在 Refreshing 状态下隐藏
             return _currentState != TextEditWorkflowState.Refreshing;
         }
 
-        if (toolName == _replaceSelectionTool.Name) {
+        if (toolName == _replaceSelectionTool.Definition.Name) {
             // replace_selection 仅在 SelectionPending 状态可见
             return _currentState == TextEditWorkflowState.SelectionPending;
         }
@@ -168,8 +168,8 @@ public sealed class TextEditStateController {
     /// 根据当前状态更新工具可见性。
     /// </summary>
     private void UpdateToolVisibility() {
-        _replaceTool.Visible = ShouldToolBeVisible(_replaceTool.Name);
-        _replaceSelectionTool.Visible = ShouldToolBeVisible(_replaceSelectionTool.Name);
+        _replaceTool.Visible = ShouldToolBeVisible(_replaceTool.Definition.Name);
+        _replaceSelectionTool.Visible = ShouldToolBeVisible(_replaceSelectionTool.Definition.Name);
     }
 
     /// <summary>

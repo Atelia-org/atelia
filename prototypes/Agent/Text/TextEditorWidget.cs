@@ -160,7 +160,7 @@ public sealed class TextEditorWidget {
             OldText: string.Empty,
             NewText: newText,
             IsAppend: true,
-            OperationName: _appendTool.Name
+            OperationName: _appendTool.Definition.Name
         );
 
         return ExecuteReplacement(
@@ -209,8 +209,8 @@ public sealed class TextEditorWidget {
     private ToolExecuteResult ExecuteReplaceInternal(string oldText, string newText) {
         if (string.IsNullOrEmpty(oldText)) {
             return EngineFailure(
-                $"old_text 不能为空；如需追加请改用 {_appendTool.Name} 工具。",
-                _replaceTool.Name,
+                $"old_text 不能为空；如需追加请改用 {_appendTool.Definition.Name} 工具。",
+                _replaceTool.Definition.Name,
                 _targetTextName
             );
         }
@@ -221,7 +221,7 @@ public sealed class TextEditorWidget {
             normalizedOld,
             newText,
             IsAppend: false,
-            _replaceTool.Name
+            _replaceTool.Definition.Name
         );
 
         var locator = new LiteralRegionLocator(normalizedOld);
@@ -278,7 +278,7 @@ public sealed class TextEditorWidget {
             normalizedStart,
             newText,
             IsAppend: false,
-            _replaceSpanTool.Name
+            _replaceSpanTool.Definition.Name
         );
 
         var locator = new SpanRegionLocator(normalizedStart, normalizedEnd);

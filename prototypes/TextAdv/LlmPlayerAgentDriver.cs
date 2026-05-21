@@ -310,12 +310,7 @@ internal static class LlmPlayerAgentDriver {
         sb.AppendLine(PlayerActionGuideCatalog.BuildLlmPlayerManual());
         sb.AppendLine();
         sb.AppendLine("[当前可用原生工具 schema]");
-        foreach (var tool in toolDefinitions) {
-            sb.AppendLine($"- {tool.Name}: {tool.Description}");
-            foreach (var parameter in tool.Parameters) {
-                sb.AppendLine($"  - {parameter.Name}: {parameter.Description}");
-            }
-        }
+        sb.Append(ToolSchemaTextRenderer.RenderDefinitions(toolDefinitions));
 
         return sb.ToString();
     }
@@ -445,12 +440,6 @@ internal static class LlmPlayerAgentDriver {
         }
 
         public ToolDefinition Definition { get; }
-
-        public string Name => Definition.Name;
-
-        public string Description => Definition.Description;
-
-        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
 
         public bool Visible {
             get => _inner.Visible;

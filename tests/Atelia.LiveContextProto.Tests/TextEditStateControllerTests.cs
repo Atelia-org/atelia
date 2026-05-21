@@ -208,7 +208,7 @@ public sealed class TextEditStateControllerTests {
         // 这个测试在实现 Refreshing 状态后补充
 
         // Act & Assert (当前状态下 replace 应该可见)
-        Assert.True(controller.ShouldToolBeVisible(replaceTool.Name));
+        Assert.True(controller.ShouldToolBeVisible(replaceTool.Definition.Name));
     }
 
     [Fact]
@@ -217,19 +217,19 @@ public sealed class TextEditStateControllerTests {
         var (controller, _, replaceSelectionTool) = CreateController(PersistMode.Immediate);
 
         // Assert: 初始状态 (Idle) 应该隐藏
-        Assert.False(controller.ShouldToolBeVisible(replaceSelectionTool.Name));
+        Assert.False(controller.ShouldToolBeVisible(replaceSelectionTool.Definition.Name));
 
         // Act: 进入 SelectionPending
         controller.OnMultiMatch();
 
         // Assert: 现在应该可见
-        Assert.True(controller.ShouldToolBeVisible(replaceSelectionTool.Name));
+        Assert.True(controller.ShouldToolBeVisible(replaceSelectionTool.Definition.Name));
 
         // Act: 退出 SelectionPending
         controller.OnClearSelection();
 
         // Assert: 应该再次隐藏
-        Assert.False(controller.ShouldToolBeVisible(replaceSelectionTool.Name));
+        Assert.False(controller.ShouldToolBeVisible(replaceSelectionTool.Definition.Name));
     }
 
     [Fact]
@@ -241,13 +241,13 @@ public sealed class TextEditStateControllerTests {
         // Act
         var guidance = controller.GetRecommendedGuidance(
             TextEditStatus.MultiMatch,
-            replaceTool.Name,
-            replaceSelectionTool.Name
+            replaceTool.Definition.Name,
+            replaceSelectionTool.Definition.Name
         );
 
         // Assert
         Assert.NotNull(guidance);
-        Assert.Contains(replaceSelectionTool.Name, guidance);
+        Assert.Contains(replaceSelectionTool.Definition.Name, guidance);
         Assert.Contains("selection_id", guidance);
     }
 
@@ -259,8 +259,8 @@ public sealed class TextEditStateControllerTests {
         // Act
         var guidance = controller.GetRecommendedGuidance(
             TextEditStatus.Success,
-            replaceTool.Name,
-            replaceSelectionTool.Name
+            replaceTool.Definition.Name,
+            replaceSelectionTool.Definition.Name
         );
 
         // Assert
@@ -309,9 +309,6 @@ public sealed class TextEditStateControllerTests {
         }
 
         public ToolDefinition Definition { get; }
-        public string Name => Definition.Name;
-        public string Description => Definition.Description;
-        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
         public bool Visible { get; set; } = true;
 
         public System.Threading.Tasks.ValueTask<ToolExecuteResult> ExecuteAsync(
