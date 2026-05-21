@@ -241,6 +241,17 @@ public sealed class MethodToolWrapperTests {
         Assert.Equal(request.RawArgumentsJson, tool.LastRequest.RawToolCall.RawArgumentsJson);
     }
 
+    [Fact]
+    public void ToolExecutionRequest_RejectsNonPositiveExecutionSequence() {
+        var rawToolCall = new RawToolCall("sample_tool", "call-invalid-seq", "{}");
+
+        var zeroException = Assert.Throws<ArgumentOutOfRangeException>(() => new ToolExecutionRequest(rawToolCall, 0));
+        Assert.Equal("executionSequence", zeroException.ParamName);
+
+        var negativeException = Assert.Throws<ArgumentOutOfRangeException>(() => new ToolExecutionRequest(rawToolCall, -1));
+        Assert.Equal("executionSequence", negativeException.ParamName);
+    }
+
     private sealed class SchemaTool : ITool {
         public SchemaTool(ToolDefinition definition) {
             Definition = definition;
