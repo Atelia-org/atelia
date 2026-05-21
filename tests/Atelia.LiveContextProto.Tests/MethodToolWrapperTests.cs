@@ -134,7 +134,7 @@ public sealed class MethodToolWrapperTests {
         var wrapper = MethodToolWrapper.FromMethod(host, method);
         var request = new RawToolCall("sample_tool", "call-1", "{\"note\":null,\"count\":7}");
 
-        var result = await wrapper.ExecuteAsync(request, CancellationToken.None);
+        var result = await wrapper.ExecuteAsync(CreateExecutionRequest(request), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Success, result.Status);
         Assert.Equal(1, host.InvocationCount);
@@ -152,7 +152,7 @@ public sealed class MethodToolWrapperTests {
         const string rawArguments = "{\"note\":null,\"count\":\"oops\"}";
         var request = new RawToolCall("sample_tool", "call-2", rawArguments);
 
-        var result = await wrapper.ExecuteAsync(request, CancellationToken.None);
+        var result = await wrapper.ExecuteAsync(CreateExecutionRequest(request), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
         Assert.Equal(0, host.InvocationCount);
@@ -168,7 +168,7 @@ public sealed class MethodToolWrapperTests {
         var wrapper = MethodToolWrapper.FromMethod(host, method);
         var request = new RawToolCall("float_tool", "call-3", "{\"score\":0.1}");
 
-        var result = await wrapper.ExecuteAsync(request, CancellationToken.None);
+        var result = await wrapper.ExecuteAsync(CreateExecutionRequest(request), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Success, result.Status);
         Assert.Equal(0.1f, host.LastScore);
@@ -235,9 +235,10 @@ public sealed class MethodToolWrapperTests {
         Assert.Same(tool.Definition, executor.AllToolDefinitions[0]);
         Assert.Equal(ToolExecutionStatus.Success, result.ExecuteResult.Status);
         Assert.NotNull(tool.LastRequest);
-        Assert.Equal(request.ToolName, tool.LastRequest!.ToolName);
-        Assert.Equal(request.ToolCallId, tool.LastRequest.ToolCallId);
-        Assert.Equal(request.RawArgumentsJson, tool.LastRequest.RawArgumentsJson);
+        Assert.Equal(1, tool.LastRequest!.ExecutionSequence);
+        Assert.Equal(request.ToolName, tool.LastRequest.RawToolCall.ToolName);
+        Assert.Equal(request.ToolCallId, tool.LastRequest.RawToolCall.ToolCallId);
+        Assert.Equal(request.RawArgumentsJson, tool.LastRequest.RawToolCall.RawArgumentsJson);
     }
 
     private sealed class SchemaTool : ITool {
@@ -247,11 +248,14 @@ public sealed class MethodToolWrapperTests {
 
         public ToolDefinition Definition { get; }
         public bool Visible { get; set; } = true;
-        public RawToolCall? LastRequest { get; private set; }
+        public ToolExecutionRequest? LastRequest { get; private set; }
 
-        public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
+        public ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken) {
             LastRequest = request;
             return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "ok"));
         }
     }
+
+    private static ToolExecutionRequest CreateExecutionRequest(RawToolCall rawToolCall, long executionSequence = 1)
+        => new(rawToolCall, executionSequence);
 }

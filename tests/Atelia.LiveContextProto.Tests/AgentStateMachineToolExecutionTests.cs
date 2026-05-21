@@ -918,8 +918,8 @@ public sealed class AgentStateMachineToolExecutionTests {
 
         public bool Visible { get; set; } = true;
 
-        public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken)
-            => new(_execute(request));
+        public ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken)
+            => new(_execute(request.RawToolCall));
     }
 
     private sealed class MismatchedNameTool : ITool {
@@ -934,7 +934,7 @@ public sealed class AgentStateMachineToolExecutionTests {
         public ToolDefinition Definition { get; }
         public bool Visible { get; set; } = true;
 
-        public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
+        public ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken) {
             return new(new ToolExecuteResult(ToolExecutionStatus.Success, "ok"));
         }
     }

@@ -372,7 +372,7 @@ public sealed class AgentEngineTurnLockTests {
         public EchoTool(string name) { Definition = new ToolDefinition(name, "echo", new ToolSchema.Object()); }
         public ToolDefinition Definition { get; }
         public bool Visible { get; set; } = true;
-        public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
+        public ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken) {
             var result = new ToolExecuteResult(
                 ToolExecutionStatus.Success,
                 "ok"

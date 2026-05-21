@@ -13,9 +13,9 @@ public sealed class ArtifactToolWrapperTests {
         ArtifactEnvelope? captured = null;
         var wrapper = ArtifactToolWrapper<ArtifactEnvelope>.Create(
             "submit_artifact",
-            (sequence, artifact) => {
+            (artifact, executionSequence) => {
                 captured = artifact;
-                return new ValidateResult(true, $"accepted sequence={sequence}");
+                return new ValidateResult(true, $"accepted sequence={executionSequence}");
             }
         );
 
@@ -33,7 +33,7 @@ public sealed class ArtifactToolWrapperTests {
             "{\"title\":\"alpha\",\"tags\":[\"focus\",\"tools\"],\"kind\":\"Note\"}"
         );
 
-        var result = await wrapper.ExecuteAsync(request, CancellationToken.None);
+        var result = await wrapper.ExecuteAsync(CreateExecutionRequest(request), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Success, result.Status);
         Assert.Equal("accepted sequence=1", result.Content);
@@ -56,7 +56,7 @@ public sealed class ArtifactToolWrapperTests {
         );
         const string rawArguments = "{\"title\":123,\"tags\":[\"focus\"],\"kind\":\"Note\"}";
 
-        var result = await wrapper.ExecuteAsync(new RawToolCall("submit_artifact", "call-2", rawArguments), CancellationToken.None);
+        var result = await wrapper.ExecuteAsync(CreateExecutionRequest(new RawToolCall("submit_artifact", "call-2", rawArguments)), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
         Assert.False(invoked);
@@ -77,7 +77,7 @@ public sealed class ArtifactToolWrapperTests {
         );
         const string rawArguments = "{\"title\":\"abc\",\"tags\":[],\"kind\":\"Note\"}";
 
-        var result = await wrapper.ExecuteAsync(new RawToolCall("submit_artifact", "call-3", rawArguments), CancellationToken.None);
+        var result = await wrapper.ExecuteAsync(CreateExecutionRequest(new RawToolCall("submit_artifact", "call-3", rawArguments)), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
         Assert.False(invoked);
@@ -91,11 +91,11 @@ public sealed class ArtifactToolWrapperTests {
     public async Task ExecuteAsync_HandlerReturnsInvalid_MapsToFailedResult() {
         var wrapper = ArtifactToolWrapper<ArtifactEnvelope>.Create(
             "submit_artifact",
-            (sequence, artifact) => new ValidateResult(false, $"duplicate title '{artifact.Title}' at sequence {sequence}")
+            (artifact, executionSequence) => new ValidateResult(false, $"duplicate title '{artifact.Title}' at sequence {executionSequence}")
         );
 
         var result = await wrapper.ExecuteAsync(
-            new RawToolCall("submit_artifact", "call-4", "{\"title\":\"alpha-ok\",\"tags\":[\"focus\"],\"kind\":\"Todo\"}"),
+            CreateExecutionRequest(new RawToolCall("submit_artifact", "call-4", "{\"title\":\"alpha-ok\",\"tags\":[\"focus\"],\"kind\":\"Todo\"}")),
             CancellationToken.None
         );
 
@@ -105,63 +105,59 @@ public sealed class ArtifactToolWrapperTests {
     }
 
     [Fact]
-    public async Task ExecuteAsync_SequenceIncrementsPerWrapperInstance() {
-        var sequences = new List<int>();
+    public async Task ExecuteAsync_UsesExecutionSequenceProvidedByRequest() {
+        var sequences = new List<long>();
         var wrapper = ArtifactToolWrapper<ArtifactEnvelope>.Create(
             "submit_artifact",
-            (sequence, artifact) => {
-                sequences.Add(sequence);
-                return new ValidateResult(true, $"accepted {artifact.Title} seq={sequence}");
+            (artifact, executionSequence) => {
+                sequences.Add(executionSequence);
+                return new ValidateResult(true, $"accepted {artifact.Title} seq={executionSequence}");
             }
         );
 
         var first = await wrapper.ExecuteAsync(
-            new RawToolCall("submit_artifact", "call-5", "{\"title\":\"alpha-ok\",\"tags\":[\"focus\"],\"kind\":\"Note\"}"),
+            CreateExecutionRequest(new RawToolCall("submit_artifact", "call-5", "{\"title\":\"alpha-ok\",\"tags\":[\"focus\"],\"kind\":\"Note\"}"), executionSequence: 7),
             CancellationToken.None
         );
         var second = await wrapper.ExecuteAsync(
-            new RawToolCall("submit_artifact", "call-6", "{\"title\":\"beta-ok\",\"tags\":[\"tools\"],\"kind\":\"Todo\"}"),
+            CreateExecutionRequest(new RawToolCall("submit_artifact", "call-6", "{\"title\":\"beta-ok\",\"tags\":[\"tools\"],\"kind\":\"Todo\"}"), executionSequence: 42),
             CancellationToken.None
         );
 
         Assert.Equal(ToolExecutionStatus.Success, first.Status);
         Assert.Equal(ToolExecutionStatus.Success, second.Status);
-        Assert.Equal([1, 2], sequences);
-        Assert.Contains("seq=1", first.Content, StringComparison.Ordinal);
-        Assert.Contains("seq=2", second.Content, StringComparison.Ordinal);
+        Assert.Equal([7L, 42L], sequences);
+        Assert.Contains("seq=7", first.Content, StringComparison.Ordinal);
+        Assert.Contains("seq=42", second.Content, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ExecuteAsync_HandlerValidationFailure_DoesNotConsumeSequence() {
-        var sequences = new List<int>();
-        var shouldFail = true;
+    public async Task ExecuteAsync_HandlerValidationFailure_PreservesProvidedSequence() {
+        var sequences = new List<long>();
         var wrapper = ArtifactToolWrapper<ArtifactEnvelope>.Create(
             "submit_artifact",
-            (sequence, artifact) => {
-                sequences.Add(sequence);
-                return shouldFail
-                    ? new ValidateResult(false, $"reject seq={sequence}")
-                    : new ValidateResult(true, $"accept seq={sequence}");
+            (_, executionSequence) => {
+                sequences.Add(executionSequence);
+                return executionSequence == 11
+                    ? new ValidateResult(false, $"reject seq={executionSequence}")
+                    : new ValidateResult(true, $"accept seq={executionSequence}");
             }
         );
 
         var failed = await wrapper.ExecuteAsync(
-            new RawToolCall("submit_artifact", "call-5", "{\"title\":\"alpha-ok\",\"tags\":[\"focus\"],\"kind\":\"Note\"}"),
+            CreateExecutionRequest(new RawToolCall("submit_artifact", "call-5", "{\"title\":\"alpha-ok\",\"tags\":[\"focus\"],\"kind\":\"Note\"}"), executionSequence: 11),
             CancellationToken.None
         );
-
-        shouldFail = false;
-
         var succeeded = await wrapper.ExecuteAsync(
-            new RawToolCall("submit_artifact", "call-6", "{\"title\":\"beta-ok\",\"tags\":[\"tools\"],\"kind\":\"Todo\"}"),
+            CreateExecutionRequest(new RawToolCall("submit_artifact", "call-6", "{\"title\":\"beta-ok\",\"tags\":[\"tools\"],\"kind\":\"Todo\"}"), executionSequence: 12),
             CancellationToken.None
         );
 
         Assert.Equal(ToolExecutionStatus.Failed, failed.Status);
         Assert.Equal(ToolExecutionStatus.Success, succeeded.Status);
-        Assert.Equal([1, 1], sequences);
-        Assert.Contains("reject seq=1", failed.Content, StringComparison.Ordinal);
-        Assert.Contains("accept seq=1", succeeded.Content, StringComparison.Ordinal);
+        Assert.Equal([11L, 12L], sequences);
+        Assert.Contains("reject seq=11", failed.Content, StringComparison.Ordinal);
+        Assert.Contains("accept seq=12", succeeded.Content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -176,7 +172,7 @@ public sealed class ArtifactToolWrapperTests {
         );
         const string rawArguments = "{\"title\":\"alpha-ok\",\"metadata\":{\"owner\":\"xy\"}}";
 
-        var result = await wrapper.ExecuteAsync(new RawToolCall("submit_nested_artifact", "call-nested", rawArguments), CancellationToken.None);
+        var result = await wrapper.ExecuteAsync(CreateExecutionRequest(new RawToolCall("submit_nested_artifact", "call-nested", rawArguments)), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
         Assert.False(invoked);
@@ -196,7 +192,7 @@ public sealed class ArtifactToolWrapperTests {
         );
 
         var result = await wrapper.ExecuteAsync(
-            new RawToolCall("submit_ignored_validation_artifact", "call-ignored", "{\"title\":\"alpha-ok\"}"),
+            CreateExecutionRequest(new RawToolCall("submit_ignored_validation_artifact", "call-ignored", "{\"title\":\"alpha-ok\"}")),
             CancellationToken.None
         );
 
@@ -209,7 +205,7 @@ public sealed class ArtifactToolWrapperTests {
     public async Task ToolExecutor_WithArtifactToolWrapper_ExecutesThroughToolLoop() {
         var wrapper = ArtifactToolWrapper<ArtifactEnvelope>.Create(
             "submit_artifact",
-            (sequence, artifact) => new ValidateResult(true, $"accepted {artifact.Kind} seq={sequence}")
+            (artifact, executionSequence) => new ValidateResult(true, $"accepted {artifact.Kind} seq={executionSequence}")
         );
         var executor = new ToolExecutor([wrapper]);
 
@@ -223,6 +219,33 @@ public sealed class ArtifactToolWrapperTests {
         Assert.Equal(ToolExecutionStatus.Success, result.ExecuteResult.Status);
         Assert.Contains("accepted Todo seq=1", result.ExecuteResult.Content, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task ToolExecutor_MissingToolAttempt_ConsumesSequenceBeforeArtifactToolExecutes() {
+        var wrapper = ArtifactToolWrapper<ArtifactEnvelope>.Create(
+            "submit_artifact",
+            (_, executionSequence) => new ValidateResult(true, $"accepted seq={executionSequence}")
+        );
+        var executor = new ToolExecutor([wrapper]);
+
+        var missingResult = await executor.ExecuteAsync(
+            new RawToolCall("missing_tool", "call-missing", "{}"),
+            CancellationToken.None
+        );
+        var artifactResult = await executor.ExecuteAsync(
+            new RawToolCall("submit_artifact", "call-executor-2", "{\"title\":\"delta-ok\",\"tags\":[\"loop\"],\"kind\":\"Note\"}"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(ToolExecutionStatus.Failed, missingResult.ExecuteResult.Status);
+        Assert.Equal("missing_tool", missingResult.ToolName);
+        Assert.Contains("未找到工具: missing_tool", missingResult.ExecuteResult.Content, StringComparison.Ordinal);
+        Assert.Equal(ToolExecutionStatus.Success, artifactResult.ExecuteResult.Status);
+        Assert.Contains("accepted seq=2", artifactResult.ExecuteResult.Content, StringComparison.Ordinal);
+    }
+
+    private static ToolExecutionRequest CreateExecutionRequest(RawToolCall rawToolCall, long executionSequence = 1)
+        => new(rawToolCall, executionSequence);
 
     [Description("Accept a structured artifact from the model.")]
     private sealed record class ArtifactEnvelope(

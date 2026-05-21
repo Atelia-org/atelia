@@ -312,7 +312,7 @@ public sealed class TextEditStateControllerTests {
         public bool Visible { get; set; } = true;
 
         public System.Threading.Tasks.ValueTask<ToolExecuteResult> ExecuteAsync(
-            RawToolCall request,
+            ToolExecutionRequest request,
             System.Threading.CancellationToken cancellationToken
         ) {
             throw new NotImplementedException();
