@@ -36,7 +36,7 @@ public sealed class ArtifactToolWrapperTests {
         var result = await wrapper.ExecuteAsync(request, CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Success, result.Status);
-        Assert.Equal("accepted sequence=0", result.Content);
+        Assert.Equal("accepted sequence=1", result.Content);
         Assert.NotNull(captured);
         Assert.Equal("alpha", captured!.Title);
         Assert.Equal(["focus", "tools"], captured.Tags);
@@ -101,7 +101,7 @@ public sealed class ArtifactToolWrapperTests {
 
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
         Assert.Contains("产物校验失败。", result.Content, StringComparison.Ordinal);
-        Assert.Contains("duplicate title 'alpha-ok' at sequence 0", result.Content, StringComparison.Ordinal);
+        Assert.Contains("duplicate title 'alpha-ok' at sequence 1", result.Content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -126,9 +126,83 @@ public sealed class ArtifactToolWrapperTests {
 
         Assert.Equal(ToolExecutionStatus.Success, first.Status);
         Assert.Equal(ToolExecutionStatus.Success, second.Status);
-        Assert.Equal([0, 1], sequences);
-        Assert.Contains("seq=0", first.Content, StringComparison.Ordinal);
-        Assert.Contains("seq=1", second.Content, StringComparison.Ordinal);
+        Assert.Equal([1, 2], sequences);
+        Assert.Contains("seq=1", first.Content, StringComparison.Ordinal);
+        Assert.Contains("seq=2", second.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HandlerValidationFailure_DoesNotConsumeSequence() {
+        var sequences = new List<int>();
+        var shouldFail = true;
+        var wrapper = ArtifactToolWrapper<ArtifactEnvelope>.Create(
+            "submit_artifact",
+            (sequence, artifact) => {
+                sequences.Add(sequence);
+                return shouldFail
+                    ? new ValidateResult(false, $"reject seq={sequence}")
+                    : new ValidateResult(true, $"accept seq={sequence}");
+            }
+        );
+
+        var failed = await wrapper.ExecuteAsync(
+            new RawToolCall("submit_artifact", "call-5", "{\"title\":\"alpha-ok\",\"tags\":[\"focus\"],\"kind\":\"Note\"}"),
+            CancellationToken.None
+        );
+
+        shouldFail = false;
+
+        var succeeded = await wrapper.ExecuteAsync(
+            new RawToolCall("submit_artifact", "call-6", "{\"title\":\"beta-ok\",\"tags\":[\"tools\"],\"kind\":\"Todo\"}"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(ToolExecutionStatus.Failed, failed.Status);
+        Assert.Equal(ToolExecutionStatus.Success, succeeded.Status);
+        Assert.Equal([1, 1], sequences);
+        Assert.Contains("reject seq=1", failed.Content, StringComparison.Ordinal);
+        Assert.Contains("accept seq=1", succeeded.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RecursivelyValidatesNestedObjectGraph() {
+        var invoked = false;
+        var wrapper = ArtifactToolWrapper<NestedArtifactEnvelope>.Create(
+            "submit_nested_artifact",
+            (_, _) => {
+                invoked = true;
+                return new ValidateResult(true, "should not be reached");
+            }
+        );
+        const string rawArguments = "{\"title\":\"alpha-ok\",\"metadata\":{\"owner\":\"xy\"}}";
+
+        var result = await wrapper.ExecuteAsync(new RawToolCall("submit_nested_artifact", "call-nested", rawArguments), CancellationToken.None);
+
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        Assert.False(invoked);
+        Assert.Contains("工具参数验证失败。", result.Content, StringComparison.Ordinal);
+        Assert.Contains("metadata.owner:", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IgnoresValidationOnJsonIgnoredMembers() {
+        var invoked = false;
+        var wrapper = ArtifactToolWrapper<IgnoredValidationArtifact>.Create(
+            "submit_ignored_validation_artifact",
+            (_, _) => {
+                invoked = true;
+                return new ValidateResult(true, "accepted");
+            }
+        );
+
+        var result = await wrapper.ExecuteAsync(
+            new RawToolCall("submit_ignored_validation_artifact", "call-ignored", "{\"title\":\"alpha-ok\"}"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        Assert.True(invoked);
+        Assert.Equal("accepted", result.Content);
     }
 
     [Fact]
@@ -147,7 +221,7 @@ public sealed class ArtifactToolWrapperTests {
         Assert.Equal("submit_artifact", result.ToolName);
         Assert.Equal("call-executor", result.ToolCallId);
         Assert.Equal(ToolExecutionStatus.Success, result.ExecuteResult.Status);
-        Assert.Contains("accepted Todo seq=0", result.ExecuteResult.Content, StringComparison.Ordinal);
+        Assert.Contains("accepted Todo seq=1", result.ExecuteResult.Content, StringComparison.Ordinal);
     }
 
     [Description("Accept a structured artifact from the model.")]
@@ -171,4 +245,33 @@ public sealed class ArtifactToolWrapperTests {
         Note,
         Todo
     }
+
+    [Description("Accept a structured artifact with nested metadata.")]
+    private sealed record class NestedArtifactEnvelope(
+        [property: Description("Artifact title.")]
+        [property: JsonPropertyName("title")]
+        [property: MinLength(5)]
+        string Title,
+        [property: Description("Artifact metadata.")]
+        [property: JsonPropertyName("metadata")]
+        NestedArtifactMetadata Metadata
+    );
+
+    private sealed class NestedArtifactMetadata {
+        [Description("Owner handle.")]
+        [JsonPropertyName("owner")]
+        [MinLength(3)]
+        public string Owner { get; init; } = string.Empty;
+    }
+
+    [Description("Artifact with ignored internal validation members.")]
+    private sealed record class IgnoredValidationArtifact(
+        [property: Description("Artifact title.")]
+        [property: JsonPropertyName("title")]
+        [property: MinLength(5)]
+        string Title,
+        [property: JsonIgnore]
+        [property: Required]
+        string? InternalOnly = null
+    );
 }
