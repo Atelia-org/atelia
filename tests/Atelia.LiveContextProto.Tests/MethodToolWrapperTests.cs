@@ -43,6 +43,19 @@ public sealed class MethodToolWrapperTests {
         ) => throw new NotImplementedException();
     }
 
+    private sealed class FloatToolHost {
+        public float LastScore { get; private set; }
+
+        [Tool("float_tool", "Float tool for warning propagation")]
+        public ValueTask<ToolExecuteResult> MeasureAsync(
+            [ToolParam("float score")] float score,
+            CancellationToken cancellationToken = default
+        ) {
+            LastScore = score;
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, $"score={score}"));
+        }
+    }
+
     [Fact]
     public void FromMethod_PopulatesDefaultMetadataAndDescriptionHints() {
         var host = new SampleToolHost();
@@ -146,6 +159,21 @@ public sealed class MethodToolWrapperTests {
         Assert.Contains("工具参数解析失败。", result.Content, StringComparison.Ordinal);
         Assert.Contains("count:expected_integer", result.Content, StringComparison.Ordinal);
         Assert.Contains($"raw_arguments_json: {rawArguments}", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RawToolCall_AttachesParseWarningToSuccessfulResult() {
+        var host = new FloatToolHost();
+        var method = typeof(FloatToolHost).GetMethod(nameof(FloatToolHost.MeasureAsync))!;
+        var wrapper = MethodToolWrapper.FromMethod(host, method);
+        var request = new RawToolCall("float_tool", "call-3", "{\"score\":0.1}");
+
+        var result = await wrapper.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        Assert.Equal(0.1f, host.LastScore);
+        Assert.Contains("score=0.1", result.Content, StringComparison.Ordinal);
+        Assert.Contains("[ParseWarning] score:float64_precision_loss", result.Content, StringComparison.Ordinal);
     }
 
     [Fact]
