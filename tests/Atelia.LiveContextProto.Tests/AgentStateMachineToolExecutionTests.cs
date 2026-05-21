@@ -760,15 +760,14 @@ public sealed class AgentStateMachineToolExecutionTests {
         private readonly Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> _execute;
 
         public DelegateTool(string name, Func<IReadOnlyDictionary<string, object?>?, ToolExecuteResult> execute) {
-            Name = name ?? throw new ArgumentNullException(nameof(name));
+            Definition = ToolDefinition.CreateFlat(name ?? throw new ArgumentNullException(nameof(name)), "delegate-tool");
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
         }
 
-        public string Name { get; }
-
-        public string Description => "delegate-tool";
-
-        public IReadOnlyList<ToolParamSpec> Parameters { get; } = Array.Empty<ToolParamSpec>();
+        public ToolDefinition Definition { get; }
+        public string Name => Definition.Name;
+        public string Description => Definition.Description;
+        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
 
         public bool Visible { get; set; } = true;
 

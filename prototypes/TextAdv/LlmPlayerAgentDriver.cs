@@ -428,30 +428,29 @@ internal static class LlmPlayerAgentDriver {
 
     private static ITool OverrideToolMetadata(
         ITool inner,
-        PlayerActionGuideCatalog.PlayerToolMetadata metadata
+        ToolDefinition metadata
     ) {
         return new ToolMetadataOverrideTool(inner, metadata);
     }
 
     private sealed class ToolMetadataOverrideTool : ITool {
         private readonly ITool _inner;
-        private readonly IReadOnlyList<ToolParamSpec> _parameters;
 
         public ToolMetadataOverrideTool(
             ITool inner,
-            PlayerActionGuideCatalog.PlayerToolMetadata metadata
+            ToolDefinition metadata
         ) {
-            _inner = inner;
-            Name = metadata.Name;
-            Description = metadata.Description;
-            _parameters = metadata.Parameters;
+            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+            Definition = ToolContracts.CreateCompatibleFlatOverride(inner.Definition, metadata);
         }
 
-        public string Name { get; }
+        public ToolDefinition Definition { get; }
 
-        public string Description { get; }
+        public string Name => Definition.Name;
 
-        public IReadOnlyList<ToolParamSpec> Parameters => _parameters;
+        public string Description => Definition.Description;
+
+        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
 
         public bool Visible {
             get => _inner.Visible;

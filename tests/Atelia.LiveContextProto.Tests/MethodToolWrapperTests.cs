@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Xunit;
 
@@ -38,6 +39,9 @@ public sealed class MethodToolWrapperTests {
         var wrapper = MethodToolWrapper.FromMethod(host, method);
 
         Assert.Equal(3, wrapper.Parameters.Count);
+        Assert.Equal(wrapper.Definition.Parameters, wrapper.Parameters);
+        Assert.Equal(wrapper.Definition.Name, wrapper.Name);
+        Assert.Equal(wrapper.Definition.Description, wrapper.Description);
 
         var noteSpec = wrapper.Parameters[0];
         Assert.False(noteSpec.IsOptional);
@@ -86,5 +90,52 @@ public sealed class MethodToolWrapperTests {
         Assert.Single(wrapper.Parameters);
         var param = wrapper.Parameters[0];
         Assert.Contains("展示 输入文本", param.Description);
+    }
+
+    [Fact]
+    public void ToolExecutor_ShouldRejectNonFlatStableProjectionDefinition() {
+        var tool = new SchemaTool(
+            new ToolDefinition(
+                "nested_schema_tool",
+                "Tool with nested input schema",
+                new ToolSchema.Object(
+                    [
+                        new ToolSchema.Property(
+                            "payload",
+                            new ToolSchema.Object(
+                                [
+                                    new ToolSchema.Property(
+                                        "note",
+                                        new ToolSchema.Value(ToolParamType.String, description: "nested note"),
+                                        isRequired: true
+                                    )
+                                ],
+                                description: "nested payload"
+                            ),
+                            isRequired: true
+                        )
+                    ]
+                )
+            )
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(() => new ToolExecutor([tool]));
+        Assert.Contains("flat", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("payload", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class SchemaTool : ITool {
+        public SchemaTool(ToolDefinition definition) {
+            Definition = definition;
+        }
+
+        public ToolDefinition Definition { get; }
+        public string Name => Definition.Name;
+        public string Description => Definition.Description;
+        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
+        public bool Visible { get; set; } = true;
+
+        public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken)
+            => throw new NotImplementedException();
     }
 }

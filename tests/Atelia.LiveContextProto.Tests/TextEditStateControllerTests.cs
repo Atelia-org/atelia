@@ -305,12 +305,13 @@ public sealed class TextEditStateControllerTests {
     // 模拟 ITool 实现，用于测试
     private sealed class MockTool : ITool {
         public MockTool(string name) {
-            Name = name;
+            Definition = ToolDefinition.CreateFlat(name, "Mock tool for testing");
         }
 
-        public string Name { get; }
-        public string Description => "Mock tool for testing";
-        public IReadOnlyList<ToolParamSpec> Parameters => Array.Empty<ToolParamSpec>();
+        public ToolDefinition Definition { get; }
+        public string Name => Definition.Name;
+        public string Description => Definition.Description;
+        public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
         public bool Visible { get; set; } = true;
 
         public System.Threading.Tasks.ValueTask<ToolExecuteResult> ExecuteAsync(

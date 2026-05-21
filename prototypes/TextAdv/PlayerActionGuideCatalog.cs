@@ -55,12 +55,6 @@ internal static class PlayerActionGuideText {
 }
 
 internal static class PlayerActionGuideCatalog {
-    internal sealed record PlayerToolMetadata(
-        string Name,
-        string Description,
-        IReadOnlyList<ToolParamSpec> Parameters
-    );
-
     private static readonly string[] s_sharedReasoningRuleLines = [
         PlayerActionGuideText.SharedReasonRuleLine1,
         PlayerActionGuideText.SharedReasonRuleLine2,
@@ -199,8 +193,8 @@ internal static class PlayerActionGuideCatalog {
         return sb.ToString();
     }
 
-    internal static PlayerToolMetadata GetEditMemoryNotebookToolMetadata() {
-        return new PlayerToolMetadata(
+    internal static ToolDefinition GetEditMemoryNotebookToolMetadata() {
+        return ToolDefinition.CreateFlat(
             "player_edit_memory_notebook",
             PlayerActionGuideText.EditMemoryNotebookToolDescription,
             [
@@ -218,8 +212,8 @@ internal static class PlayerActionGuideCatalog {
         );
     }
 
-    internal static PlayerToolMetadata GetRestAWhileToolMetadata() {
-        return new PlayerToolMetadata(
+    internal static ToolDefinition GetRestAWhileToolMetadata() {
+        return ToolDefinition.CreateFlat(
             "player_rest_a_while",
             PlayerActionGuideText.RestAWhileToolDescription,
             [
@@ -232,8 +226,8 @@ internal static class PlayerActionGuideCatalog {
         );
     }
 
-    internal static PlayerToolMetadata GetExploreToolMetadata() {
-        return new PlayerToolMetadata(
+    internal static ToolDefinition GetExploreToolMetadata() {
+        return ToolDefinition.CreateFlat(
             "player_explore",
             PlayerActionGuideText.ExploreToolDescription,
             [
@@ -258,8 +252,8 @@ internal static class PlayerActionGuideCatalog {
         );
     }
 
-    internal static PlayerToolMetadata GetInteractToolMetadata() {
-        return new PlayerToolMetadata(
+    internal static ToolDefinition GetInteractToolMetadata() {
+        return ToolDefinition.CreateFlat(
             "player_interact",
             PlayerActionGuideText.InteractToolDescription,
             [
