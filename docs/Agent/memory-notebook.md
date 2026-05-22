@@ -100,7 +100,7 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
    │    · `ActionBlock.Thinking` 仅在 ActiveTurnTail 内、`Origin == TargetInvocation`、
    │      且存在显式 Turn 起点与 `ThinkingMode == CurrentTurnOnly` 同时成立时保留
    ├─ 拼上 DefaultAppHost.RenderWindows() 生成的窗口块
-   ├─ ToolExecutor.GetVisibleToolDefinitions() 收集可见工具
+   ├─ ToolExecutor.VisibleToolDefinitions 收集当前 session 可见工具
    └─ 直接构造 CompletionRequest 并发起模型调用
 
 3. `await ICompletionClient.StreamCompletionAsync(request)`
@@ -145,7 +145,7 @@ prototypes/Agent.Core/
 │  └─ ITokenEstimator.cs       Token 策略接口
 │
 ├─ Tool/
-│  ├─ ToolExecutor.cs          执行调度 + 可见性管理
+│  ├─ ToolExecutor.cs          session 级执行调度壳（可见性由 session policy 决定）
 │  ├─ ToolContracts.cs         ITool → ToolDefinition 转换
 │  └─ LodToolCallResult.cs     工具结果 LOD 包装
 │

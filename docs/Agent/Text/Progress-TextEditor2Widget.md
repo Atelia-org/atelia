@@ -480,8 +480,8 @@ Assert.Equal(TextEditWorkflowState.OutOfSync, stateController.CurrentState);
    - 理由：符合文档规范，让 LLM 明确感知当前的持久化策略
 
 3. **工具可见性的集中管理**:
-   - 控制器持有工具引用，在状态转换时自动更新可见性
-   - Widget 无需手动管理 `tool.Visible`，避免遗漏或不一致
+   - 控制器持有 session 级工具视图，在状态转换时自动更新 `ToolAccessPolicy`
+   - Widget 无需手动管理工具实例上的可见性状态，避免遗漏或不一致
    - 理由：减少状态同步错误，确保工具列表与状态机严格对应
 
 4. **Flags 的双层推断**:
@@ -771,4 +771,3 @@ private TextEditWorkflowState _stateBeforeSelection;
 5. ✅ 修复现有测试，确保兼容性
 
 下次会话可以从 Phase 3（候选强化）或 Phase 4（持久化策略）开始，根据优先级选择推进方向。
-
