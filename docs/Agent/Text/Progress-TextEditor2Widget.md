@@ -31,7 +31,7 @@
 #### 2. 技术栈理解
 - **LodToolExecuteResult**: 包含 `Status` (ToolExecutionStatus) 和 `Result` (LevelOfDetailContent)
 - **LevelOfDetailContent**: 双级内容容器，`Basic` 用于简要信息，`Detail` 用于完整上下文
-- **MethodToolWrapper**: 通过 `[Tool]` 和 `[ToolParam]` 注解自动生成工具定义
+- **MethodToolWrapper**: 通过 `[Tool]` + 单输入对象 DTO 自动生成工具定义；字段说明来自 DTO 属性上的 `[Description]`
 - **ToolExecutionStatus**: Success / Failed / Skipped 三种状态
 
 #### 3. 设计原则确认

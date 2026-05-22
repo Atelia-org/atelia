@@ -56,13 +56,13 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 - `IApp.Tools` 列出该 App 暴露的 `ITool` 实例
 - `IApp.RenderWindow()` 返回一段 markdown，被 `DefaultAppHost.RenderWindows()` 拼到 `# [Window]` 区块塞进 LiveContext
 - App 不能主动 push Observation，所有外部输入都走宿主 → `AppendObservation`
-- `MethodToolWrapper.FromMethod/FromDelegate` 把标 `[Tool]` 的方法反射成 `ITool`，这是注册工具的主路径
+- `MethodToolWrapper.FromMethod/FromDelegate` 把标 `[Tool]`、并采用“单输入对象 + `ToolExecutionContext` + `CancellationToken`”签名的方法反射成 `ITool`，这是注册工具的主路径
 
 ### 5. 工具参数类型受限于 MethodToolWrapper
 
-当前只支持 `bool/int/long/float/double/decimal/string` 及其 nullable 形式，外加末尾必须有 `CancellationToken`。
+当前要求工具以单个 `class/record class` 输入对象建模；对象字段可递归声明 `object / array / value`，但仍受 `ReflectedToolDefinitionBuilder` 约束（如不支持循环、nullable object/array、nullable collection element）。
 
-> 复杂类型（数组、嵌套对象）需要走自定义 `ITool` 实现，绕开 wrapper。
+> 真正超出这些约束的复杂类型（如循环对象图、特殊 union、自定义反序列化协议）仍建议手写 `ITool`。
 
 ### 6. LevelOfDetailContent：Basic/Detail 全量替代
 
@@ -179,8 +179,8 @@ prototypes/Agent.Core/
 
 ### 工具参数类型受限
 
-- `MethodToolWrapper` 仅支持基本标量 + string
-- 复杂参数（数组、对象、union）需要自己实现 `ITool`，绕开 wrapper
+- `MethodToolWrapper` 采用单输入对象模型；常规对象/数组可直接进 schema，但仍受声明器约束
+- 超出声明器约束的复杂参数（如循环对象图、特殊 union）需要自己实现 `ITool`
 - LLM JSON 没有 uint，所以 ID 类参数要用 `long` + `checked((uint)x)` 的模式
 
 ### App.RenderWindow 渲染契约

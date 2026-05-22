@@ -211,14 +211,17 @@ public LevelOfDetailContent Render()
 #### 4.1.1 `_flush` - 提交缓存到下层
 ```csharp
 [Tool("sync.flush", "将缓存内容写入下层数据源")]
-public async ValueTask<LodToolExecuteResult> FlushAsync(
-    [ToolParam("是否强制覆盖（忽略下层变更）")] bool force = false,
-    CancellationToken ct = default)
+public async ValueTask<ToolExecuteResult> FlushAsync(
+    FlushInput input,
+    ToolExecutionContext context,
+    CancellationToken ct)
 {
+    _ = context;
+
     if (_syncState == SyncState.Synced)
         return Success("缓存与下层已同步，无需提交");
 
-    if (_syncState == SyncState.Conflicted && !force)
+    if (_syncState == SyncState.Conflicted && !input.Force)
         return Failed("检测到冲突，请先调用 _diff 查看差异，或使用 force=true 强制覆盖");
 
     _syncState = SyncState.Flushing;
@@ -237,20 +240,27 @@ public async ValueTask<LodToolExecuteResult> FlushAsync(
     _pendingFlags |= SyncFlag.DiagnosticHint;
     return Failed($"提交失败: {writeResult.ErrorCode ?? "Unknown"} {writeResult.Message}");
 }
+
+public sealed record FlushInput(
+    [property: Description("是否强制覆盖（忽略下层变更）")] bool Force = false
+);
 ```
 
 > **说明**：写入操作在发起时切换至 `Flushing` 状态并设置 `FlushInProgress`，由后续的 `UpdateAsyncOperationStatusAsync` 统一清除标志、恢复工具可见性。`_dataSource.WriteAsync` 返回 `OperationResult<WriteReceipt>`（命名示例），失败路径需提供 `ErrorCode`/`Message` 供 Formatter 与日志使用。
 
-> **返回助手说明**：示例中的 `Success(...)` / `Failed(...)` 代表封装 `LodToolExecuteResult` 的辅助方法，实际实现可复用公共基类或在当前 Widget 内定义统一的格式化逻辑。
+> **返回助手说明**：示例中的 `Success(...)` / `Failed(...)` 代表封装 `ToolExecuteResult` 的辅助方法，实际实现可复用公共基类或在当前 Widget 内定义统一的格式化逻辑。
 
 #### 4.1.2 `_refresh` - 从下层刷新缓存
 ```csharp
 [Tool("sync.refresh", "从下层数据源刷新缓存（丢弃未提交修改）")]
-public async ValueTask<LodToolExecuteResult> RefreshAsync(
-    [ToolParam("是否确认丢弃缓存修改")] bool confirm = false,
-    CancellationToken ct = default)
+public async ValueTask<ToolExecuteResult> RefreshAsync(
+    RefreshInput input,
+    ToolExecutionContext context,
+    CancellationToken ct)
 {
-    if (_syncState == SyncState.BufferDirty && !confirm)
+    _ = context;
+
+    if (_syncState == SyncState.BufferDirty && !input.Confirm)
         return Failed("缓存有未提交修改，使用 confirm=true 确认丢弃");
 
     _syncState = SyncState.Refreshing;
@@ -269,6 +279,10 @@ public async ValueTask<LodToolExecuteResult> RefreshAsync(
     _pendingFlags |= SyncFlag.DiagnosticHint;
     return Failed($"刷新失败: {updateResult.ErrorCode ?? "BufferRejected"} {updateResult.Message}");
 }
+
+public sealed record RefreshInput(
+    [property: Description("是否确认丢弃缓存修改")] bool Confirm = false
+);
 ```
 
 > **说明**：刷新同样通过进入 `Refreshing` 状态与设置 `RefreshInProgress` 来阻止工具重复曝光，最终状态由 `UpdateAsync` 统一结算；`TryUpdateContentAsync` 返回的 `OperationResult<bool>` 需在失败时提供诊断信息（例如 `BufferRejected`）。
@@ -276,17 +290,24 @@ public async ValueTask<LodToolExecuteResult> RefreshAsync(
 #### 4.1.3 `_diff` - 对比缓存与下层差异
 ```csharp
 [Tool("sync.diff", "对比缓存与下层数据源的差异")]
-public async ValueTask<LodToolExecuteResult> DiffAsync(
-    [ToolParam("差异上下文行数")] int contextLines = 3,
-    CancellationToken ct = default)
+public async ValueTask<ToolExecuteResult> DiffAsync(
+    DiffInput input,
+    ToolExecutionContext context,
+    CancellationToken ct)
 {
+    _ = context;
+
     var bufferContent = _buffer.GetSnapshot();
     var sourceContent = await _dataSource.ReadAsync(ct);
 
-    var diff = GenerateUnifiedDiff(sourceContent, bufferContent, contextLines);
+    var diff = GenerateUnifiedDiff(sourceContent, bufferContent, input.ContextLines);
 
     return Success($"差异统计: {diff.Stats}\n\n{diff.Patch}");
 }
+
+public sealed record DiffInput(
+    [property: Description("差异上下文行数")] int ContextLines = 3
+);
 ```
 
 > **渲染提示**：工具返回中仅包含原始 diff 文本，`Render()` 方法会在 Detail 级别的 Markdown 中用 `### [Diff]` 区块嵌入补充展示，保持结构化输出与工具结果一致。
@@ -294,13 +315,16 @@ public async ValueTask<LodToolExecuteResult> DiffAsync(
 #### 4.1.4 `_accept_source` - 接受下层变更（合并到缓存）
 ```csharp
 [Tool("sync.accept_source", "接受下层数据源的变更并合并到缓存")]
-public async ValueTask<LodToolExecuteResult> AcceptSourceAsync(
-    [ToolParam("合并策略: overwrite | merge_lines")] string strategy = "overwrite",
-    CancellationToken ct = default)
+public async ValueTask<ToolExecuteResult> AcceptSourceAsync(
+    AcceptSourceInput input,
+    ToolExecutionContext context,
+    CancellationToken ct)
 {
+    _ = context;
+
     var sourceContent = await _dataSource.ReadAsync(ct);
 
-    if (strategy == "overwrite")
+    if (input.Strategy == "overwrite")
     {
         var updateResult = await _buffer.TryUpdateContentAsync(sourceContent, ct);
         if (updateResult.Success)
@@ -321,9 +345,13 @@ public async ValueTask<LodToolExecuteResult> AcceptSourceAsync(
     }
     else
     {
-        return Failed($"未知合并策略: {strategy}");
+        return Failed($"未知合并策略: {input.Strategy}");
     }
 }
+
+public sealed record AcceptSourceInput(
+    [property: Description("合并策略: overwrite | merge_lines")] string Strategy = "overwrite"
+);
 ```
 
 ### 4.2 工具可见性矩阵

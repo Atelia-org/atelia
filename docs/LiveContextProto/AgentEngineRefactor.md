@@ -46,7 +46,7 @@ AgentEngine外部:
   - AgentEngine
   - ITool
   - IApp
-  - ToolAttribute, ToolParamAttribute, MethodToolWrapper
+  - ToolAttribute, MethodToolWrapper
   - LlmProfile
 
 引擎实现:

@@ -64,7 +64,7 @@ LLM → 调用工具函数 → 工具执行 → ToolResult 写入历史
 ## 工具层设计
 - **工具命名空间**：遵循 `edit.*`，如 `edit.replace`, `edit.insert_line`, `edit.move_cursor`.
 - **契约**：
-  - 输入参数显式标注描述 (`[ToolParam]`)。
+  - 若接当前主线 `MethodToolWrapper`，应使用单输入对象 DTO；字段描述来自 DTO 属性上的 `[Description]`，而不是旧的逐参数 attribute 方案。
   - 返回 `LodToolExecuteResult`：成功/失败、变更概览、上下文版本号。
   - 所有工具在执行后更新 Buffer 版本并触发事件。
 - **工具可见性矩阵 (EditToolMatrix)**：
@@ -122,7 +122,7 @@ LLM → 调用工具函数 → 工具执行 → ToolResult 写入历史
 ## 工具层设计
 - **工具命名空间**：遵循 `edit.*`，如 `edit.replace`, `edit.insert_line`, `edit.move_cursor`.
 - **契约**：
-  - 输入参数显式标注描述 (`[ToolParam]`)。
+  - 若接当前主线 `MethodToolWrapper`，应使用单输入对象 DTO；字段描述来自 DTO 属性上的 `[Description]`，而不是旧的逐参数 attribute 方案。
   - 返回 `LodToolExecuteResult`：成功/失败、变更概览、上下文版本号。
   - 所有工具在执行后更新 Buffer 版本并触发事件。
 - **工具可见性矩阵 (EditToolMatrix)**：

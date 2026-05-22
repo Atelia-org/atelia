@@ -48,9 +48,9 @@
 ## 2. 技术背景与依赖
 
 ### 2.1 工具注册机制 (`MethodToolWrapper`)
-- **自动推断**: 通过 `[Tool]` 和 `[ToolParam]` 注解自动生成工具定义,支持格式化占位符(如 `{0}_replace`)
-- **类型约束**: 方法签名必须返回 `ValueTask<LodToolExecuteResult>`,最后一个参数必须为 `CancellationToken`
-- **元数据生成**: 自动附加参数的必填/可选、默认值、可空性等提示信息
+- **自动推断**: 通过 `[Tool]` + 单输入对象 DTO 自动生成工具定义；tool description 来自 `[Tool]`,字段 description 来自 DTO 属性上的 `[Description]`
+- **类型约束**: 当前主线签名为 `ValueTask<ToolExecuteResult> Method(TInput input, ToolExecutionContext context, CancellationToken ct)`
+- **元数据生成**: 自动附加字段的必填/可选、默认值、可空性等提示信息
 
 ### 2.2 工具执行与结果 (`ToolExecutor` & `LodToolExecuteResult`)
 - **分发调用**: `ToolExecutor` 根据 `toolName` 和 `toolCallId` 分发请求,记录耗时与状态
