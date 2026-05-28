@@ -139,6 +139,11 @@ internal ref struct BinaryDiffReader {
     internal string BareStringPayload(bool asKey) => StringPayloadCodec.ReadFrom(ref this);
 
     /// <summary>
+    /// 可空 string 的裸读取。头部规则：<c>0</c> 表示 null；非 null 时将原始 string payload header 整体减一。
+    /// </summary>
+    internal string? BareNullableStringPayload(bool asKey) => StringPayloadCodec.ReadNullableFrom(ref this);
+
+    /// <summary>
     /// 值语义 <see cref="ByteString"/> (BlobPayload) 的裸读取。格式：<c>VarUInt(byteLength)</c> 后跟原始字节。
     /// 长度为 0 时返回 <see cref="ByteString.Empty"/>，不做额外分配。
     /// </summary>
@@ -146,6 +151,17 @@ internal ref struct BinaryDiffReader {
         int length = ReadCount();
         if (length == 0) { return ByteString.Empty; }
         ReadOnlySpan<byte> bytes = ReadSpan(length);
+        return new ByteString(bytes);
+    }
+
+    /// <summary>
+    /// 可空 blob 的裸读取。头部规则：<c>0</c> 表示 null；非 null 时将实际字节长度整体减一。
+    /// </summary>
+    internal ByteString? BareNullableBlobPayload(bool asKey) {
+        uint encodedLength = BareUInt32(asKey);
+        if (!NullablePayloadHeader.TryDecode(encodedLength, out uint rawLength)) { return null; }
+        if (rawLength == 0) { return ByteString.Empty; }
+        ReadOnlySpan<byte> bytes = ReadSpan(checked((int)rawLength));
         return new ByteString(bytes);
     }
     #endregion

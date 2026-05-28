@@ -42,7 +42,15 @@ internal ref struct BinaryDiffWriter {
     /// header LSB=1 → UTF-8，payloadByteCount = header &gt;&gt; 1。
     /// </summary>
     public void BareStringPayload(string? value, bool asKey) {
-        StringPayloadCodec.WriteTo(_downstream, value ?? string.Empty);
+        ArgumentNullException.ThrowIfNull(value);
+        StringPayloadCodec.WriteTo(_downstream, value);
+    }
+
+    /// <summary>
+    /// 可空 string 的裸写入。头部规则：<c>0</c> 表示 null；非 null 时将原始 string payload header 整体加一。
+    /// </summary>
+    public void BareNullableStringPayload(string? value, bool asKey) {
+        StringPayloadCodec.WriteNullableTo(_downstream, value);
     }
 
     /// <summary>
@@ -54,6 +62,23 @@ internal ref struct BinaryDiffWriter {
         if (value.Length > 0) {
             value.CopyTo(_downstream.GetSpan(value.Length));
             _downstream.Advance(value.Length);
+        }
+    }
+
+    /// <summary>
+    /// 可空 blob 的裸写入。头部规则：<c>0</c> 表示 null；非 null 时将实际字节长度整体加一。
+    /// </summary>
+    public void BareNullableBlobPayload(ByteString? value, bool asKey) {
+        if (!value.HasValue) {
+            VarInt.WriteUInt32(_downstream, NullablePayloadHeader.EncodeNull());
+            return;
+        }
+
+        ReadOnlySpan<byte> span = value.Value.AsSpan();
+        VarInt.WriteUInt32(_downstream, NullablePayloadHeader.EncodePresent((uint)span.Length));
+        if (!span.IsEmpty) {
+            span.CopyTo(_downstream.GetSpan(span.Length));
+            _downstream.Advance(span.Length);
         }
     }
 

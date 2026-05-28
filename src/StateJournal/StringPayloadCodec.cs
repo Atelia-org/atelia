@@ -51,11 +51,56 @@ internal static class StringPayloadCodec {
         }
     }
 
+    /// <summary>
+    /// 可空 string 的 bare 写入。
+    /// 头部规则：<c>0</c> 表示 null；非 null 时把非空/空字符串原本的 header 整体加一。
+    /// </summary>
+    internal static void WriteNullableTo(IBufferWriter<byte> downstream, string? value) => WriteNullableTo<FastPathOnLe>(downstream, value);
+    internal static void WriteNullableTo<FastPathStrategy>(IBufferWriter<byte> downstream, string? value) where FastPathStrategy : unmanaged, IFastPathStrategy {
+        if (value is null) {
+            Serialization.VarInt.WriteUInt32(downstream, Serialization.NullablePayloadHeader.EncodeNull());
+            return;
+        }
+
+        if (value.Length == 0) {
+            Serialization.VarInt.WriteUInt32(downstream, Serialization.NullablePayloadHeader.EncodePresent(0));
+            return;
+        }
+
+        int utf16Bytes = value.Length * 2;
+        int utf8Bytes = Encoding.UTF8.GetByteCount(value);
+
+        if (utf8Bytes < utf16Bytes) {
+            uint rawHeader = EncodeUtf8Header(utf8Bytes);
+            Serialization.VarInt.WriteUInt32(downstream, Serialization.NullablePayloadHeader.EncodePresent(rawHeader));
+            var span = downstream.GetSpan(utf8Bytes);
+            int written = Encoding.UTF8.GetBytes(value, span);
+            Debug.Assert(written == utf8Bytes);
+            downstream.Advance(utf8Bytes);
+        }
+        else {
+            uint rawHeader = EncodeUtf16LeHeader(value.Length);
+            Serialization.VarInt.WriteUInt32(downstream, Serialization.NullablePayloadHeader.EncodePresent(rawHeader));
+            WriteUtf16Le<FastPathStrategy>(downstream, value, utf16Bytes);
+            downstream.Advance(utf16Bytes);
+        }
+    }
+
     internal static string ReadFrom(ref Serialization.BinaryDiffReader reader) => ReadFrom<FastPathOnLe>(ref reader);
     internal static string ReadFrom<FastPathStrategy>(ref Serialization.BinaryDiffReader reader) where FastPathStrategy : unmanaged, IFastPathStrategy {
-        uint header = reader.BareUInt32(asKey: false);
-        bool isUtf8 = DecodeIsUtf8AndByteCount(header, out int payloadByteCount);
+        uint rawHeader = reader.BareUInt32(asKey: false);
+        return ReadFromRawHeader<FastPathStrategy>(ref reader, rawHeader);
+    }
 
+    internal static string? ReadNullableFrom(ref Serialization.BinaryDiffReader reader) => ReadNullableFrom<FastPathOnLe>(ref reader);
+    internal static string? ReadNullableFrom<FastPathStrategy>(ref Serialization.BinaryDiffReader reader) where FastPathStrategy : unmanaged, IFastPathStrategy {
+        uint encodedHeader = reader.BareUInt32(asKey: false);
+        if (!Serialization.NullablePayloadHeader.TryDecode(encodedHeader, out uint rawHeader)) { return null; }
+        return ReadFromRawHeader<FastPathStrategy>(ref reader, rawHeader);
+    }
+
+    private static string ReadFromRawHeader<FastPathStrategy>(ref Serialization.BinaryDiffReader reader, uint rawHeader) where FastPathStrategy : unmanaged, IFastPathStrategy {
+        bool isUtf8 = DecodeIsUtf8AndByteCount(rawHeader, out int payloadByteCount);
         if (payloadByteCount == 0) { return string.Empty; }
 
         var payload = reader.ReadSpan(payloadByteCount);

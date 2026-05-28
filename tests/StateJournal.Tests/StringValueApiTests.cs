@@ -4,7 +4,7 @@ namespace Atelia.StateJournal.Tests;
 
 public class StringValueApiTests {
     [Fact]
-    public void TypedString_NormalizesNullToEmptyString_OnRoundTrip() {
+    public void TypedString_PreservesNull_OnRoundTrip() {
         string repoDir = Path.Combine(Path.GetTempPath(), $"state-journal-string-null-{Guid.NewGuid():N}");
 
         try {
@@ -29,7 +29,8 @@ public class StringValueApiTests {
             Assert.True(checkout.IsSuccess, $"CheckoutBranch failed: {checkout.Error}");
             var reopenedRev = checkout.Value!;
             var reopenedRoot = Assert.IsAssignableFrom<DurableDict<string, string>>(reopenedRev.GraphRoot);
-            Assert.Equal(string.Empty, reopenedRoot.GetOrThrow("title"));
+            Assert.Equal(GetIssue.None, reopenedRoot.Get("title", out string? value));
+            Assert.Null(value);
         }
         finally {
             try {

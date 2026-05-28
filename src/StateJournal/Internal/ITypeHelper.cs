@@ -194,18 +194,20 @@ internal readonly struct SymbolHelper : ITypeHelper<Symbol> {
 internal readonly struct StringHelper : ITypeHelper<string> {
     public static bool Equals(string? a, string? b) => string.Equals(a, b, StringComparison.Ordinal);
     public static int Compare(string? a, string? b) => string.Compare(a, b, StringComparison.Ordinal);
-    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareStringPayload(v, asKey);
-    public static string Read(ref BinaryDiffReader reader, bool asKey) => reader.BareStringPayload(asKey);
+    public static void Write(BinaryDiffWriter writer, string? v, bool asKey) => writer.BareNullableStringPayload(v, asKey);
+    public static string? Read(ref BinaryDiffReader reader, bool asKey) => reader.BareNullableStringPayload(asKey);
     public static bool NeedVisitChildRefs => false;
     public static bool NeedValidateReconstructed => false;
     public static void UpdateOrInit(ref BinaryDiffReader reader, ref string? old) => old = Read(ref reader, asKey: false);
     public static uint EstimateBareSize(string? value, bool asKey) {
-        if (string.IsNullOrEmpty(value)) { return 1; }
+        if (value is null) { return 1; }
+        if (value.Length == 0) { return 1; }
         int utf8Bytes = Encoding.UTF8.GetByteCount(value);
         int utf16Bytes = value.Length * 2;
         bool useUtf8 = utf8Bytes < utf16Bytes;
         int payloadBytes = useUtf8 ? utf8Bytes : utf16Bytes;
-        uint header = useUtf8 ? ((uint)utf8Bytes << 1) | 1u : (uint)utf16Bytes;
+        uint rawHeader = useUtf8 ? ((uint)utf8Bytes << 1) | 1u : (uint)utf16Bytes;
+        uint header = NullablePayloadHeader.EncodePresent(rawHeader);
         return CostEstimateUtil.VarIntSize(header) + (uint)payloadBytes;
     }
 

@@ -34,6 +34,20 @@ public class TaggedBlobPayloadTests {
         return value;
     }
 
+    private static byte[] WriteBareNullableBlob(ByteString? value) {
+        var buffer = new ArrayBufferWriter<byte>();
+        var writer = new BinaryDiffWriter(buffer);
+        writer.BareNullableBlobPayload(value, asKey: false);
+        return buffer.WrittenSpan.ToArray();
+    }
+
+    private static ByteString? ReadBareNullableBlob(byte[] data) {
+        var reader = new BinaryDiffReader(data);
+        ByteString? value = reader.BareNullableBlobPayload(asKey: false);
+        Assert.True(reader.End, "expected reader to fully consume the bare nullable blob payload");
+        return value;
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
@@ -49,6 +63,34 @@ public class TaggedBlobPayloadTests {
         ByteString decoded = ReadBareBlob(data);
         Assert.Equal(length, decoded.Length);
         Assert.True(decoded.AsSpan().SequenceEqual(payload));
+    }
+
+    [Fact]
+    public void BareNullableBlobPayload_Null_RoundTrips() {
+        byte[] data = WriteBareNullableBlob(null);
+
+        Assert.Equal([0x00], data);
+        Assert.Null(ReadBareNullableBlob(data));
+    }
+
+    [Fact]
+    public void BareNullableBlobPayload_Empty_RoundTrips() {
+        byte[] data = WriteBareNullableBlob(ByteString.Empty);
+
+        Assert.Equal([0x01], data);
+        ByteString? decoded = ReadBareNullableBlob(data);
+        Assert.True(decoded.HasValue);
+        Assert.True(decoded.Value.IsEmpty);
+    }
+
+    [Fact]
+    public void BareNullableBlobPayload_NonEmpty_OffsetsLengthByOne() {
+        byte[] data = WriteBareNullableBlob(new ByteString(new byte[] { 1, 2, 3 }));
+
+        Assert.Equal(new byte[] { 0x04, 0x01, 0x02, 0x03 }, data);
+        ByteString? decoded = ReadBareNullableBlob(data);
+        Assert.True(decoded.HasValue);
+        Assert.Equal(new ByteString(new byte[] { 1, 2, 3 }), decoded.Value);
     }
 
     [Fact]
