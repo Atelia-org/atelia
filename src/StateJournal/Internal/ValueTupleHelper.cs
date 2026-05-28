@@ -1,6 +1,12 @@
+using System.Runtime.CompilerServices;
 using Atelia.StateJournal.Serialization;
 
 namespace Atelia.StateJournal.Internal;
+
+internal static class TupleHashCode {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int Combine(int h1, int h2) => unchecked((h1 * 397) ^ h2);
+}
 
 internal readonly struct ValueTuple2Helper<T1, T2, H1, H2> : ITypeHelper<ValueTuple<T1, T2>>
     where T1 : notnull
@@ -9,6 +15,9 @@ internal readonly struct ValueTuple2Helper<T1, T2, H1, H2> : ITypeHelper<ValueTu
     where H2 : unmanaged, ITypeHelper<T2> {
     public static bool Equals(ValueTuple<T1, T2> a, ValueTuple<T1, T2> b) =>
         H1.Equals(a.Item1, b.Item1) && H2.Equals(a.Item2, b.Item2);
+
+    public static int GetHashCode(ValueTuple<T1, T2> value) =>
+        TupleHashCode.Combine(H1.GetHashCode(value.Item1), H2.GetHashCode(value.Item2));
 
     public static int Compare(ValueTuple<T1, T2> a, ValueTuple<T1, T2> b) {
         int c = H1.Compare(a.Item1, b.Item1);
@@ -72,6 +81,12 @@ internal readonly struct ValueTuple3Helper<T1, T2, T3, H1, H2, H3> : ITypeHelper
     where H3 : unmanaged, ITypeHelper<T3> {
     public static bool Equals(ValueTuple<T1, T2, T3> a, ValueTuple<T1, T2, T3> b) =>
         H1.Equals(a.Item1, b.Item1) && H2.Equals(a.Item2, b.Item2) && H3.Equals(a.Item3, b.Item3);
+
+    public static int GetHashCode(ValueTuple<T1, T2, T3> value) =>
+        TupleHashCode.Combine(
+            TupleHashCode.Combine(H1.GetHashCode(value.Item1), H2.GetHashCode(value.Item2)),
+            H3.GetHashCode(value.Item3)
+        );
 
     public static int Compare(ValueTuple<T1, T2, T3> a, ValueTuple<T1, T2, T3> b) {
         int c = H1.Compare(a.Item1, b.Item1);
@@ -150,6 +165,15 @@ internal readonly struct ValueTuple4Helper<T1, T2, T3, T4, H1, H2, H3, H4> : ITy
         && H2.Equals(a.Item2, b.Item2)
         && H3.Equals(a.Item3, b.Item3)
         && H4.Equals(a.Item4, b.Item4);
+
+    public static int GetHashCode(ValueTuple<T1, T2, T3, T4> value) =>
+        TupleHashCode.Combine(
+            TupleHashCode.Combine(
+                TupleHashCode.Combine(H1.GetHashCode(value.Item1), H2.GetHashCode(value.Item2)),
+                H3.GetHashCode(value.Item3)
+            ),
+            H4.GetHashCode(value.Item4)
+        );
 
     public static int Compare(ValueTuple<T1, T2, T3, T4> a, ValueTuple<T1, T2, T3, T4> b) {
         int c = H1.Compare(a.Item1, b.Item1);
@@ -246,6 +270,18 @@ internal readonly struct ValueTuple5Helper<T1, T2, T3, T4, T5, H1, H2, H3, H4, H
         && H3.Equals(a.Item3, b.Item3)
         && H4.Equals(a.Item4, b.Item4)
         && H5.Equals(a.Item5, b.Item5);
+
+    public static int GetHashCode(ValueTuple<T1, T2, T3, T4, T5> value) =>
+        TupleHashCode.Combine(
+            TupleHashCode.Combine(
+                TupleHashCode.Combine(
+                    TupleHashCode.Combine(H1.GetHashCode(value.Item1), H2.GetHashCode(value.Item2)),
+                    H3.GetHashCode(value.Item3)
+                ),
+                H4.GetHashCode(value.Item4)
+            ),
+            H5.GetHashCode(value.Item5)
+        );
 
     public static int Compare(ValueTuple<T1, T2, T3, T4, T5> a, ValueTuple<T1, T2, T3, T4, T5> b) {
         int c = H1.Compare(a.Item1, b.Item1);
@@ -355,6 +391,21 @@ internal readonly struct ValueTuple6Helper<T1, T2, T3, T4, T5, T6, H1, H2, H3, H
         && H4.Equals(a.Item4, b.Item4)
         && H5.Equals(a.Item5, b.Item5)
         && H6.Equals(a.Item6, b.Item6);
+
+    public static int GetHashCode(ValueTuple<T1, T2, T3, T4, T5, T6> value) =>
+        TupleHashCode.Combine(
+            TupleHashCode.Combine(
+                TupleHashCode.Combine(
+                    TupleHashCode.Combine(
+                        TupleHashCode.Combine(H1.GetHashCode(value.Item1), H2.GetHashCode(value.Item2)),
+                        H3.GetHashCode(value.Item3)
+                    ),
+                    H4.GetHashCode(value.Item4)
+                ),
+                H5.GetHashCode(value.Item5)
+            ),
+            H6.GetHashCode(value.Item6)
+        );
 
     public static int Compare(ValueTuple<T1, T2, T3, T4, T5, T6> a, ValueTuple<T1, T2, T3, T4, T5, T6> b) {
         int c = H1.Compare(a.Item1, b.Item1);
@@ -477,6 +528,24 @@ internal readonly struct ValueTuple7Helper<T1, T2, T3, T4, T5, T6, T7, H1, H2, H
         && H5.Equals(a.Item5, b.Item5)
         && H6.Equals(a.Item6, b.Item6)
         && H7.Equals(a.Item7, b.Item7);
+
+    public static int GetHashCode(ValueTuple<T1, T2, T3, T4, T5, T6, T7> value) =>
+        TupleHashCode.Combine(
+            TupleHashCode.Combine(
+                TupleHashCode.Combine(
+                    TupleHashCode.Combine(
+                        TupleHashCode.Combine(
+                            TupleHashCode.Combine(H1.GetHashCode(value.Item1), H2.GetHashCode(value.Item2)),
+                            H3.GetHashCode(value.Item3)
+                        ),
+                        H4.GetHashCode(value.Item4)
+                    ),
+                    H5.GetHashCode(value.Item5)
+                ),
+                H6.GetHashCode(value.Item6)
+            ),
+            H7.GetHashCode(value.Item7)
+        );
 
     public static int Compare(ValueTuple<T1, T2, T3, T4, T5, T6, T7> a, ValueTuple<T1, T2, T3, T4, T5, T6, T7> b) {
         int c = H1.Compare(a.Item1, b.Item1);

@@ -58,6 +58,13 @@ internal interface ITypeHelper<T> where T : notnull {
     static virtual int Compare(T? a, T? b) => Comparer<T>.Default.Compare(a!, b!);
 
     /// <summary>
+    /// 与 <see cref="Equals"/> 语义一致的 hash。
+    /// 默认回退到 <see cref="EqualityComparer{T}.Default"/>；
+    /// 对使用自定义相等语义的 Helper（例如 bit-equality 浮点数）必须同步覆写。
+    /// </summary>
+    static virtual int GetHashCode(T value) => EqualityComparer<T>.Default.GetHashCode(value);
+
+    /// <summary>
     /// 将值从 Exclusive 状态转为 Frozen 状态，用于 Commit 时让 committed 与 current 共享同一份值。
     /// </summary>
     /// <remarks>
@@ -231,6 +238,7 @@ internal readonly struct LocalIdAsRefHelper : ITypeHelper<LocalId> {
 internal readonly struct DoubleHelper : ITypeHelper<double> {
     public static bool Equals(double a, double b) =>
         BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b);
+    public static int GetHashCode(double value) => BitConverter.DoubleToInt64Bits(value).GetHashCode();
     public static int Compare(double a, double b) => a.CompareTo(b);
     public static void Write(BinaryDiffWriter writer, double v, bool asKey) => writer.BareDouble(v, asKey);
     public static double Read(ref BinaryDiffReader reader, bool asKey) => reader.BareDouble(asKey);
@@ -241,6 +249,7 @@ internal readonly struct DoubleHelper : ITypeHelper<double> {
 internal readonly struct SingleHelper : ITypeHelper<float> {
     public static bool Equals(float a, float b) =>
         BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b);
+    public static int GetHashCode(float value) => BitConverter.SingleToInt32Bits(value);
     public static int Compare(float a, float b) => a.CompareTo(b);
     public static void Write(BinaryDiffWriter writer, float v, bool asKey) => writer.BareSingle(v, asKey);
     public static float Read(ref BinaryDiffReader reader, bool asKey) => reader.BareSingle(asKey);
@@ -251,6 +260,7 @@ internal readonly struct SingleHelper : ITypeHelper<float> {
 internal readonly struct HalfHelper : ITypeHelper<Half> {
     public static bool Equals(Half a, Half b) =>
         BitConverter.HalfToUInt16Bits(a) == BitConverter.HalfToUInt16Bits(b);
+    public static int GetHashCode(Half value) => BitConverter.HalfToUInt16Bits(value).GetHashCode();
     public static int Compare(Half a, Half b) => a.CompareTo(b);
     public static void Write(BinaryDiffWriter writer, Half v, bool asKey) => writer.BareHalf(v, asKey);
     public static Half Read(ref BinaryDiffReader reader, bool asKey) => reader.BareHalf(asKey);

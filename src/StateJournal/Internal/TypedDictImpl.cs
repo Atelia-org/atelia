@@ -11,7 +11,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     private DictChangeTracker<TKey, TValue> _core;
 
     internal TypedDictImpl() {
-        _core = new();
+        _core = new(TypeHelperEqualityComparer<TKey, KHelper>.Instance);
     }
 
     #region DurableDictBase abstract properties

@@ -24,6 +24,43 @@ partial class RevisionTests {
     }
 
     [Fact]
+    public void Commit_ValueTuple2AsDictKey_RoundTrips() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<ValueTuple<int, int>, int>();
+        root.Upsert((3, 7), 10);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
+        var openResult = OpenRevision(outcome.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = Assert.IsAssignableFrom<DurableDict<ValueTuple<int, int>, int>>(openResult.Value!.GraphRoot);
+        Assert.Equal(GetIssue.None, loaded.Get((3, 7), out int value));
+        Assert.Equal(10, value);
+    }
+
+    [Fact]
+    public void Commit_ValueTuple2AsOrderedDictKey_RoundTrips() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateOrderedDict<ValueTuple<int, int>, int>();
+        root.Upsert((3, 7), 10);
+        root.Upsert((1, 2), 5);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
+        var openResult = OpenRevision(outcome.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = Assert.IsAssignableFrom<DurableOrderedDict<ValueTuple<int, int>, int>>(openResult.Value!.GraphRoot);
+        Assert.True(loaded.TryGet((3, 7), out int value));
+        Assert.Equal(10, value);
+    }
+
+    [Fact]
     public void Commit_ValueTuple3Deque_RoundTrips() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);

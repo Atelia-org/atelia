@@ -33,6 +33,8 @@ public class TypeCodePrecomputeTests {
     [InlineData(typeof(int))]
     [InlineData(typeof(short))]
     [InlineData(typeof(sbyte))]
+    [InlineData(typeof((int, int)))]
+    [InlineData(typeof((int, (int, int))))]
     public void ResolveKeyHelper_TypeCode_RoundTrips(Type keyType) {
         var entry = HelperRegistry.ResolveKeyHelper(keyType);
         Assert.True(entry.IsValid);

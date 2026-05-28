@@ -230,6 +230,42 @@ public class DictChangeTrackerTests {
         AssertEstimateMatchesSerializedBody<int, int, Int32Helper, Int32Helper>(fork);
     }
 
+    [Fact]
+    public void TupleDoubleKey_UsesHelperComparerForDictionaryAndDirtyTracking() {
+        var tracker = new DictChangeTracker<(double, int), int>(
+            TypeHelperEqualityComparer<(double, int), ValueTuple2Helper<double, int, DoubleHelper, Int32Helper>>.Instance
+        );
+        double posZero = 0.0;
+        double negZero = BitConverter.Int64BitsToDouble(unchecked((long)0x8000_0000_0000_0000ul));
+
+        Assert.Equal(UpsertStatus.Inserted, tracker.Upsert<ValueTuple2Helper<double, int, DoubleHelper, Int32Helper>, Int32Helper>((posZero, 1), 10));
+        Assert.Equal(UpsertStatus.Inserted, tracker.Upsert<ValueTuple2Helper<double, int, DoubleHelper, Int32Helper>, Int32Helper>((negZero, 1), 20));
+
+        Assert.Equal(2, tracker.Current.Count);
+        Assert.True(tracker.HasChanges);
+        Assert.Equal(2, tracker.UpsertCount);
+
+        tracker.Commit<Int32Helper>();
+        Assert.Equal(2, tracker.CommittedKeys.Count);
+
+        Assert.True(tracker.Current.ContainsKey((posZero, 1)));
+        Assert.True(tracker.Current.ContainsKey((negZero, 1)));
+    }
+
+    [Fact]
+    public void TupleStringKey_NullAndEmpty_AreHashedSafelyAndRemainDistinct() {
+        var tracker = new DictChangeTracker<(int, string), int>(
+            TypeHelperEqualityComparer<(int, string), ValueTuple2Helper<int, string, Int32Helper, StringHelper>>.Instance
+        );
+
+        Assert.Equal(UpsertStatus.Inserted, tracker.Upsert<ValueTuple2Helper<int, string, Int32Helper, StringHelper>, Int32Helper>((1, null!), 10));
+        Assert.Equal(UpsertStatus.Inserted, tracker.Upsert<ValueTuple2Helper<int, string, Int32Helper, StringHelper>, Int32Helper>((1, string.Empty), 20));
+
+        Assert.Equal(2, tracker.Current.Count);
+        Assert.True(tracker.Current.ContainsKey((1, null!)));
+        Assert.True(tracker.Current.ContainsKey((1, string.Empty)));
+    }
+
     private sealed class FakeDurableDictForEstimate : DurableDictBase<int> {
         private readonly byte[] _typeCode;
         private readonly uint _estimatedRebaseBytes;

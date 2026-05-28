@@ -10,7 +10,7 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     private int _symbolRefCount;
 
     internal MixedDictImpl() {
-        _core = new();
+        _core = new(TypeHelperEqualityComparer<TKey, KHelper>.Instance);
     }
 
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<KHelper, ValueBoxHelper>();
@@ -101,9 +101,7 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
 
         if (symbolPool is not null) {
             foreach (var pair in _core.ReconstructedOrCurrent) {
-                if (ValueBox.ValidateReconstructedMixedSymbol(pair.Value, symbolPool, "MixedDict") is { } symbolError) {
-                    return symbolError;
-                }
+                if (ValueBox.ValidateReconstructedMixedSymbol(pair.Value, symbolPool, "MixedDict") is { } symbolError) { return symbolError; }
             }
         }
 
@@ -125,6 +123,7 @@ internal class MixedDictImpl<TKey, KHelper> : DurableDict<TKey>
     private void AssertRefCountConsistency() {
         var (durCount, symCount) = ComputeRefCounts();
         Debug.Assert(_durableRefCount == durCount && _symbolRefCount == symCount,
-            $"MixedDict refcount drift: durable={_durableRefCount}(expect {durCount}), symbol={_symbolRefCount}(expect {symCount})");
+            $"MixedDict refcount drift: durable={_durableRefCount}(expect {durCount}), symbol={_symbolRefCount}(expect {symCount})"
+        );
     }
 }

@@ -102,6 +102,7 @@ internal static class HelperRegistry {
         if (t == typeof(int)) { return _int32; }
         if (t == typeof(short)) { return _int16; }
         if (t == typeof(sbyte)) { return _sbyte; }
+        if (TryResolveTupleHelper(t, out TypeEntry tupleEntry)) { return tupleEntry; }
         return default;
     }
 

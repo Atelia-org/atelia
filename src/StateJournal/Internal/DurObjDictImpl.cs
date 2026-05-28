@@ -16,7 +16,7 @@ internal class DurObjDictImpl<TKey, TDurObj, KHelper> : DurableDict<TKey, TDurOb
     private DictChangeTracker<TKey, LocalId> _core;
 
     internal DurObjDictImpl() {
-        _core = new();
+        _core = new(TypeHelperEqualityComparer<TKey, KHelper>.Instance);
     }
 
     #region DurableDictBase abstract properties

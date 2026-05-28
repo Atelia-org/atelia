@@ -23,9 +23,14 @@ public class GenericRulesTests {
     [InlineData(typeof(double), true)]
     [InlineData(typeof(float), true)]
     [InlineData(typeof(Half), true)]
+    [InlineData(typeof(ValueTuple<int, int>), true)]
     [InlineData(typeof(decimal), false)]
     public void IsValidKey(Type type, bool expected) =>
         Assert.Equal(expected, HelperRegistry.IsValidKey(type));
+
+    [Fact]
+    public void IsValidKey_NestedValueTuple_Valid() =>
+        Assert.True(HelperRegistry.IsValidKey(typeof(ValueTuple<int, ValueTuple<int, int>>)));
 
     // ═══════════════════════ Value 验证 — 叶子 ═══════════════════════
 

@@ -1,3 +1,5 @@
+using Xunit;
+
 namespace Atelia.StateJournal.Internal.Tests;
 
 /// <summary>
@@ -10,6 +12,23 @@ public class BitDivisionTests : BoolDivisionContractTests {
 
     protected override ITestBoolDivision<int> CreateInt(IEqualityComparer<int>? comparer = null)
         => new Adapter<int>(new BitDivision<int>(comparer));
+
+    [Fact]
+    public void TupleDoubleKey_HelperComparer_DistinguishesBitwiseDifferentKeys() {
+        var comparer = TypeHelperEqualityComparer<(double, int), ValueTuple2Helper<double, int, DoubleHelper, Int32Helper>>.Instance;
+        var division = new BitDivision<(double, int)>(comparer);
+        double posZero = 0.0;
+        double negZero = BitConverter.Int64BitsToDouble(unchecked((long)0x8000_0000_0000_0000ul));
+
+        division.SetTrue((posZero, 1));
+        division.SetFalse((negZero, 1));
+
+        Assert.True(division.TryGetSubset((posZero, 1), out bool posSubset));
+        Assert.True(division.TryGetSubset((negZero, 1), out bool negSubset));
+        Assert.True(posSubset);
+        Assert.False(negSubset);
+        Assert.Equal(2, division.Count);
+    }
 
     private class Adapter<TKey>(BitDivision<TKey> inner) : ITestBoolDivision<TKey> where TKey : notnull {
         public int Count => inner.Count;

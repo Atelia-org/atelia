@@ -18,6 +18,7 @@ where TValue : notnull {
     private Dictionary<TKey, TValue?>? _committed;  // 上次 commit 时的状态；null 表示 frozen（作为 frozen sentinel 替代旧 _isFrozen）
     private Dictionary<TKey, TValue?> _current;    // 当前工作状态 / frozen 只读视图
     private BitDivision<TKey>? _dirtyKeys; // 发生变更的 key 集合, false = remove; true = upsert；null 表示 frozen
+    private readonly IEqualityComparer<TKey>? _comparer;
     private EstimateSummary _estimate;
 
     /// <summary>
@@ -28,6 +29,7 @@ where TValue : notnull {
 
     private readonly Dictionary<TKey, TValue?> Committed => _committed ?? throw new InvalidOperationException("Frozen DictChangeTracker has no mutable committed dictionary.");
     private readonly BitDivision<TKey> DirtyKeys => _dirtyKeys ?? throw new InvalidOperationException("Frozen DictChangeTracker has no dirty-key tracker.");
+    private readonly IEqualityComparer<TKey> Comparer => _comparer ?? EqualityComparer<TKey>.Default;
     private void ThrowIfFrozen() {
         if (_committed is null) {
             // 防御 default-initialized 无效实例：合法的 frozen tracker 必须有 _current。
@@ -137,15 +139,23 @@ where TValue : notnull {
     internal IReadOnlyCollection<TKey> CommittedKeys => (_committed ?? _current).Keys;
 
     public DictChangeTracker() {
+        _comparer = null;
         _committed = new();
         _current = new();
         _dirtyKeys = new();
     }
 
+    public DictChangeTracker(IEqualityComparer<TKey>? comparer) {
+        _comparer = comparer;
+        _committed = new(Comparer);
+        _current = new(Comparer);
+        _dirtyKeys = new(Comparer);
+    }
+
     public DictChangeTracker<TKey, TValue> ForkMutableFromCommitted<KHelper, VHelper>()
     where KHelper : unmanaged, ITypeHelper<TKey>
     where VHelper : unmanaged, ITypeHelper<TValue> {
-        var fork = new DictChangeTracker<TKey, TValue>();
+        var fork = new DictChangeTracker<TKey, TValue>(_comparer);
         var source = IsFrozen ? _current : Committed;
         foreach (var (key, value) in source) {
             TKey forkKey = KHelper.ForkFrozenForNewOwner(key)!;
@@ -322,8 +332,8 @@ where TValue : notnull {
     public void UnfreezeToMutableClean<VHelper>()
     where VHelper : unmanaged, ITypeHelper<TValue> {
         if (!IsFrozen) { throw new InvalidOperationException("DictChangeTracker is not frozen."); }
-        _committed = new(_current);
-        _dirtyKeys = new();
+        _committed = new(_current, Comparer);
+        _dirtyKeys = new(Comparer);
         _estimate.CommittedPayloadBareBytes = _estimate.CurrentPayloadBareBytes;
         _estimate.DirtyRemovedKeyBareBytes = 0;
         _estimate.DirtyUpsertPayloadBareBytes = 0;
