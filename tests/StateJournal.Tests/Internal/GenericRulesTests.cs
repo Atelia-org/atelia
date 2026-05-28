@@ -190,6 +190,13 @@ public class GenericRulesTests {
     }
 
     [Fact]
+    public void SJ_HashSet_ValueTuple2_ReturnsInstance() {
+        var set = Durable.HashSet<ValueTuple<int, int>>();
+        Assert.NotNull(set);
+        Assert.IsAssignableFrom<DurableHashSet<ValueTuple<int, int>>>(set);
+    }
+
+    [Fact]
     public void SJ_Deque_Valid_ReturnsInstance() {
         var l = Durable.Deque<int>();
         Assert.NotNull(l);

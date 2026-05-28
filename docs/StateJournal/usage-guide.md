@@ -16,7 +16,7 @@ StateJournal 是一个**可持久化的增量对象图工作态引擎**。
 |---|---|---|
 | Repository | `Repository` | 一个进程独占打开的状态仓库，管理 branch、segment 文件、repo lock |
 | Workspace | `Revision` | 一个 branch 当前 checkout 出来的可编辑对象图会话 |
-| Durable Objects | `DurableDict` / `DurableDeque` / `DurableOrderedDict` / `DurableText` | 被 `Revision` 管理、可提交、可重载的对象图节点 |
+| Durable Objects | `DurableDict` / `DurableDeque` / `DurableHashSet` / `DurableOrderedDict` / `DurableText` | 被 `Revision` 管理、可提交、可重载的对象图节点 |
 
 最常用路径：
 
@@ -172,6 +172,7 @@ var dict = rev.CreateDict<string, int>();          // typed dict
 var mixed = rev.CreateDict<string>();              // mixed dict
 var deque = rev.CreateDeque<string>();             // typed deque
 var mixedDeque = rev.CreateDeque();                // mixed deque
+var set = rev.CreateHashSet<int>();                // typed hash set
 var ordered = rev.CreateOrderedDict<int, string>(); // typed ordered dict
 var mixedOrdered = rev.CreateOrderedDict<int>();   // mixed ordered dict
 var text = rev.CreateText();                       // DurableText
@@ -202,7 +203,7 @@ root.Upsert("bad", foreign); // InvalidOperationException
 
 ### 3.1 Fork committed state
 
-当前只有 `DurableDict` 路线公开支持 fork：
+当前 `DurableDict` 与 `DurableHashSet` 路线公开支持 fork：
 
 ```csharp
 var template = rev.CreateDict<string, int>();
@@ -211,6 +212,13 @@ repo.Commit(template).Value;
 
 var draft = template.ForkCommittedAsMutable();
 draft.Upsert("b", 2);
+
+var setTemplate = rev.CreateHashSet<int>();
+setTemplate.Add(1);
+repo.Commit(setTemplate).Value;
+
+var setDraft = setTemplate.ForkCommittedAsMutable();
+setDraft.Add(2);
 ```
 
 语义要点：
@@ -227,7 +235,7 @@ draft.Upsert("b", 2);
 
 ### 3.2 Freeze / frozen
 
-`Freeze()` 是 `DurableObject` 基类上的对象级能力；当前 `DurableDict` 与 `DurableDeque` 路线已正式支持：
+`Freeze()` 是 `DurableObject` 基类上的对象级能力；当前 `DurableDict`、`DurableHashSet` 与 `DurableDeque` 路线已正式支持：
 
 ```csharp
 var deque = rev.CreateDeque<int>();
@@ -237,6 +245,11 @@ deque.Freeze();
 bool frozen = deque.IsFrozen; // true
 
 deque.PushBack(2); // ObjectFrozenException
+
+var set = rev.CreateHashSet<int>();
+set.Add(1);
+set.Freeze();
+set.Add(2); // ObjectFrozenException
 ```
 
 语义要点：
@@ -263,6 +276,7 @@ deque.PushBack(2); // ObjectFrozenException
 |---|---|
 | key/value schema 明确 | `DurableDict<TKey, TValue>` |
 | 队列元素类型明确 | `DurableDeque<T>` |
+| 只关心成员存在性 / 去重集合 | `DurableHashSet<T>` |
 | 需要按 key 有序遍历 / range query | `DurableOrderedDict<TKey, TValue>` |
 | 同一容器里要混放 int/string/ByteString/bool/DurableObject | `DurableDict<TKey>` / `DurableDeque` / `DurableOrderedDict<TKey>` |
 | 需要稳定 block ID 的文本编辑 | `DurableText` |
@@ -272,6 +286,7 @@ Typed 容器的优点：
 - 编译期类型更清晰。
 - API 更直接。
 - 更适合作为长期 schema。
+- `DurableHashSet<T>` 目前只有 typed 路线；元素支持矩阵与 dict key 一致，不支持 `DurableObject` 作为元素。
 
 typed 容器里的字符串类型选择：
 
@@ -724,11 +739,12 @@ repo.Commit(root).Value;
 - 不要跨 `Revision` 存 DurableObject。
 - 不要继续使用被 GC sweep 后的 detached 对象。
 - `Commit(root)` 的 root 决定可达性；没挂在 root 下的对象不会保留。
-- 当前只有 `DurableDict` 正式支持 `ForkCommittedAsMutable()`。
-- 当前 `DurableDict` 与 `DurableDeque` 正式支持 `Freeze()` / `IsFrozen`；`DurableDeque` 仍未暴露 public fork，`OrderedDict` / `DurableText` 仍不支持 freeze。
+- 当前 `DurableDict` 与 `DurableHashSet` 正式支持 `ForkCommittedAsMutable()`。
+- 当前 `DurableDict`、`DurableHashSet` 与 `DurableDeque` 正式支持 `Freeze()` / `IsFrozen`；`DurableDeque` 仍未暴露 public fork，`OrderedDict` / `DurableText` 仍不支持 freeze。
 - `ForkCommittedAsMutable()` 复制 committed state，不复制 source 的未提交 working state。
 - `Freeze()` 后的修改会抛 `ObjectFrozenException`。
 - dirty frozen source 不能直接 fork；先 commit 让 frozen snapshot 落盘。
+- `DurableHashSet<T>` 当前只有 typed 版本；若需求是异构集合，当前没有 mixed hash set，通常改用 mixed dict 模拟 membership。
 - mixed 容器里的 `double` 默认可能采用紧凑编码；需要精确保存所有 double bit 时使用 `UpsertExactDouble` 或 exact double helpers。
 - typed `string` 和 mixed `string` 都走值语义 payload 路线；typed/mixed `Symbol` 才走 intern 池。注意 typed `string` 的 `null` 规范化为空字符串，而 mixed `string` 的 `null` 存为 `ValueBox.Null`。
 - `SymbolTable` 是持久化 mirror，不是业务可见数据表。
@@ -748,6 +764,7 @@ repo.Commit(root).Value;
 - [`src/StateJournal/DurableDict.Mixed.cs`](../../src/StateJournal/DurableDict.Mixed.cs)
 - [`src/StateJournal/DurableDeque.Typed.cs`](../../src/StateJournal/DurableDeque.Typed.cs)
 - [`src/StateJournal/DurableDeque.Mixed.cs`](../../src/StateJournal/DurableDeque.Mixed.cs)
+- [`src/StateJournal/DurableHashSet.cs`](../../src/StateJournal/DurableHashSet.cs)
 - [`src/StateJournal/DurableOrderedDict.cs`](../../src/StateJournal/DurableOrderedDict.cs)
 - [`src/StateJournal/DurableOrderedDict.Mixed.cs`](../../src/StateJournal/DurableOrderedDict.Mixed.cs)
 - [`src/StateJournal/DurableText.cs`](../../src/StateJournal/DurableText.cs)
@@ -757,6 +774,7 @@ repo.Commit(root).Value;
 - [`tests/StateJournal.Tests/RepositoryTests.cs`](../../tests/StateJournal.Tests/RepositoryTests.cs)
 - [`tests/StateJournal.Tests/DurableDictApiTests.cs`](../../tests/StateJournal.Tests/DurableDictApiTests.cs)
 - [`tests/StateJournal.Tests/DurableDequeApiTests.cs`](../../tests/StateJournal.Tests/DurableDequeApiTests.cs)
+- [`tests/StateJournal.Tests/RevisionTests.HashSet.cs`](../../tests/StateJournal.Tests/RevisionTests.HashSet.cs)
 - [`tests/StateJournal.Tests/DurableOrderedDictTests.cs`](../../tests/StateJournal.Tests/DurableOrderedDictTests.cs)
 - [`tests/StateJournal.Tests/MixedOrderedDictTests.cs`](../../tests/StateJournal.Tests/MixedOrderedDictTests.cs)
 - [`tests/StateJournal.Tests/DurableTextTests.cs`](../../tests/StateJournal.Tests/DurableTextTests.cs)

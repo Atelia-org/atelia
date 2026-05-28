@@ -56,6 +56,14 @@ internal static class Durable {
         ?? throw new ArgumentException(TypedDequeFactory<T>.ErrorReason);
 
     /// <summary>
+    /// 创建 <see cref="DurableHashSet{T}"/> (TypedHashSet)。
+    /// 支持的 TKey 与 dict key 保持一致。
+    /// </summary>
+    public static DurableHashSet<T> HashSet<T>() where T : notnull =>
+        TypedHashSetFactory<T>.Create?.Invoke()
+        ?? throw new ArgumentException(TypedHashSetFactory<T>.ErrorReason);
+
+    /// <summary>
     /// 创建 <see cref="DurableDeque"/> (MixedDeque)。
     /// </summary>
     /// <returns>空的 <see cref="DurableDeque"/> 实例。</returns>

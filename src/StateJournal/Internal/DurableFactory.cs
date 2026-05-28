@@ -147,6 +147,37 @@ internal static class TypedDequeFactory<T>
     }
 }
 
+internal static class TypedHashSetFactory<T>
+    where T : notnull {
+
+    internal static readonly Func<DurableHashSet<T>>? Create;
+    internal static readonly byte[]? TypeCode;
+    internal static readonly string? ErrorReason;
+
+    static TypedHashSetFactory() {
+        var kEntry = HelperRegistry.ResolveKeyHelper(typeof(T));
+        if (!kEntry.IsValid) {
+            ErrorReason = $"Unsupported hash set key type: {HelperRegistry.FormatTypeName(typeof(T))}.";
+            return;
+        }
+
+        var implType = typeof(TypedHashSetImpl<,>).MakeGenericType(typeof(T), kEntry.HelperType!);
+        var ctor = implType.GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes
+        )!;
+
+        Create = Expression.Lambda<Func<DurableHashSet<T>>>(
+            Expression.New(ctor)
+        ).Compile();
+
+        var tc = new byte[kEntry.TypeCode!.Length + 1];
+        kEntry.TypeCode.CopyTo(tc, 0);
+        tc[^1] = (byte)TypeOpCode.MakeTypedHashSet;
+        TypeCode = tc;
+        DurableHashSet<T>.s_typeCode = tc;
+    }
+}
+
 /// <summary>
 /// 非泛型工厂：从运行时 <see cref="Type"/> 实例构建 <see cref="DurableObject"/>。
 /// 通过反射访问泛型 Factory 的 <c>Create</c> 委托并用 Expression 包装为
@@ -177,6 +208,7 @@ internal static class DurableFactory {
             def == typeof(DurableDict<>) ? typeof(MixedDictFactory<>).MakeGenericType(args) :
             def == typeof(DurableDict<,>) ? typeof(TypedDictFactory<,>).MakeGenericType(args) :
             def == typeof(DurableDeque<>) ? typeof(TypedDequeFactory<>).MakeGenericType(args) :
+            def == typeof(DurableHashSet<>) ? typeof(TypedHashSetFactory<>).MakeGenericType(args) :
             def == typeof(DurableOrderedDict<>) ? typeof(MixedOrderedDictFactory<>).MakeGenericType(args) :
             def == typeof(DurableOrderedDict<,>) ? typeof(TypedOrderedDictFactory<,>).MakeGenericType(args) :
             null;

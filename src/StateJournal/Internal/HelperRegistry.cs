@@ -164,6 +164,16 @@ internal static class HelperRegistry {
                 return new(typeCode);
             }
 
+            // DurableHashSet<TKey> (TypedHashSet)
+            if (def == typeof(DurableHashSet<>)) {
+                var kEntry = ResolveKeyHelper(t.GenericTypeArguments[0]);
+                if (!kEntry.IsValid) { return default; }
+                var typeCode = new byte[kEntry.TypeCode!.Length + 1];
+                kEntry.TypeCode.CopyTo(typeCode, 0);
+                typeCode[^1] = (byte)TypeOpCode.MakeTypedHashSet;
+                return new(typeCode);
+            }
+
             // DurableOrderedDict<TKey, TValue> (TypedOrderedDict)
             if (def == typeof(DurableOrderedDict<,>)) {
                 var args = t.GenericTypeArguments;

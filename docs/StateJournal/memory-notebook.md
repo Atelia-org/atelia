@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-04-26
+> **最后更新**：2026-05-29
 
 > **使用者入口**：面向实际接入与 API 调用的高密度手册见 [`usage-guide.md`](usage-guide.md)。
 
@@ -117,6 +117,7 @@ private T[]?[] _slabs;
 但当前落地范围是**有选择的**：
 
 - `DurableDict<TKey, TValue>` / `DurableDict<TKey>`：已完整支持 fork + freeze
+- `DurableHashSet<T>`：已完整支持 fork + freeze；当前只有 typed 路线，没有 mixed / durable-object-element 特化
 - `DurableDeque<T>` / `DurableDeque`：已完整支持 freeze，但当前仍不支持 public fork
 - `DurableOrderedDict<...>` / `DurableText`：
   - 当前不支持 public fork
@@ -267,6 +268,8 @@ DurableObject
   ├─ DurableDeque<T>                    // TypedDeque facade
   │    ├─ TypedDequeImpl<...>           // 一般 typed value
   │    └─ DurObjDequeImpl<...>          // TValue : DurableObject，内部存 LocalId
+  ├─ DurableHashSet<T>                  // TypedHashSet facade（无 mixed 版本）
+  │    └─ TypedHashSetImpl<...>         // 元素支持矩阵与 dict key 保持一致
   └─ DurableDeque                       // MixedDeque facade
        └─ MixedDequeImpl                // 内部值为 ValueBox
 ```
@@ -277,6 +280,8 @@ DurableObject
 - `DurableOrderedDict<TKey>` 继承自 `DurableDictBase<TKey>`，支持 Mixed value（ValueBox），与 `DurableDict<TKey>` 平行
 - `DurableDeque` 现在已实现，不再是“占位”
 - typed / mixed 两条 deque 路线都已经打通
+- `DurableHashSet<T>` 直接继承 `DurableObject`，没有单独的 mixed facade / base 层
+- `DurableHashSet<T>` 的元素类型走 `ResolveKeyHelper` 路线，因此支持矩阵与 dict key 一致，不支持 `DurableObject` 作为元素
 
 ### `DurableState` 生命周期
 
@@ -316,6 +321,7 @@ rev.CreateOrderedDict<string, int>(); // TypedOrderedDict
 rev.CreateOrderedDict<string>();      // MixedOrderedDict
 rev.CreateDeque<int>();               // TypedDeque
 rev.CreateDeque();                    // MixedDeque
+rev.CreateHashSet<int>();             // DurableHashSet
 ```
 
 创建时自动：
@@ -735,8 +741,9 @@ Load ObjectMap frame chain
 |:-----|:-----|:-----|
 | ValueBox（Tagged-Pointer + Faces） | ✅ 已完成 | mixed string 继续 symbol-backed |
 | SlotPool / GcPool / InternPool / StringPool | ✅ 已完成 | `SlotPool` 已支持 sparse value slab |
-| DictChangeTracker / DequeChangeTracker | ✅ 已完成 | dict + deque 两条都已工作 |
+| DictChangeTracker / DequeChangeTracker / SetChangeTracker | ✅ 已完成 | dict + deque + hash set 三条都已工作 |
 | DurableDict（Typed / Mixed / DurObj） | ✅ 已完成 | typed Symbol 延迟 intern 已打通 |
+| DurableHashSet（Typed） | ✅ 已完成 | typed-only；已支持 roundtrip / discard / freeze / fork |
 | DurableDeque（Typed / Mixed / DurObj） | ✅ 已完成 | 不再是占位 |
 | BinaryDiffWriter / Reader | ✅ 已完成 | typed Symbol late intern + placeholder load |
 | TypeCodec / HelperRegistry / DurableFactory | ✅ 已完成 | helper 多态已扩展到 reconstruction 校验 |
@@ -794,13 +801,14 @@ mixed：
 
 不应覆盖本文件作为“当前主线事实地图”的角色。
 
-### 5. 当前 DurableDict 已支持 fork + freeze，DurableDeque 已支持 freeze
+### 5. 当前 DurableDict / DurableHashSet 已支持 fork + freeze，DurableDeque 已支持 freeze
 
 不要把“基类已有 `Freeze()` / `IsFrozen` / object flags”误读成“所有容器都已支持 readonly / mutable fork”。
 
 当前事实是：
 
 - dict：正式支持 fork + freeze，并已有 roundtrip / retry / fork matrix 测试
+- hash set：正式支持 fork + freeze，并已有 roundtrip / discard / tuple-key / symbol / freeze / fork 测试
 - deque：正式支持 freeze，并已有 roundtrip / discard / child-ref 测试；public fork 仍未开放
 - ordered dict / text：仍待后续 PR 推进
 - 设计推进应以 `frozen-durable-object-design.md` 为基线，而不是从基类表面 API 反推“应该已经可用”
@@ -817,6 +825,7 @@ src/StateJournal/
 ├── DurableDict.Mixed.cs
 ├── DurableDeque.Typed.cs
 ├── DurableDeque.Mixed.cs
+├── DurableHashSet.cs
 ├── DurableOrderedDict.cs
 ├── Revision.cs
 ├── Revision.Commit.cs

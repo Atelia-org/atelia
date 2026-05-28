@@ -44,6 +44,7 @@ internal enum TypeOpCode : byte {
     MakeTypedDeque,
     MakeMixedOrderedDict,
     MakeTypedOrderedDict,
+    MakeTypedHashSet,
 
     MakeValueTuple2 = 192,
     MakeValueTuple3,
@@ -131,6 +132,10 @@ internal static class TypeCodec {
                 case TypeOpCode.MakeTypedOrderedDict:
                     if (operands.Count < 2) { return false; }
                     operands.Push(typeof(DurableOrderedDict<,>).MakeGenericType(operands.Pop(), operands.Pop()));
+                    break;
+                case TypeOpCode.MakeTypedHashSet:
+                    if (operands.Count < 1) { return false; }
+                    operands.Push(typeof(DurableHashSet<>).MakeGenericType(operands.Pop()));
                     break;
 
                 case TypeOpCode.MakeValueTuple2:

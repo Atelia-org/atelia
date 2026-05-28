@@ -45,7 +45,7 @@ internal readonly struct FrameTag(uint bits) {
 
     #region Static Helper
     internal static bool IsValidVersionKind(VersionKind value) => value is VersionKind.Rebase or VersionKind.Delta;
-    internal static bool IsValidObjectKind(DurableObjectKind value) => DurableRef.IsValidObjectKind(value);
+    internal static bool IsValidObjectKind(DurableObjectKind value) => DurableObjectKindHelper.IsValidObjectKind(value);
     internal static bool IsValidUsage(FrameUsage value) => value is FrameUsage.UserPayload or FrameUsage.ObjectMap;
     internal static bool IsValidSource(FrameSource value) => value is FrameSource.PrimaryCommit or FrameSource.Compaction or FrameSource.CrossFileSnapshot;
     #endregion

@@ -403,6 +403,37 @@ partial class RevisionTests {
         Assert.Equal("2026-03-25", loadedMeta.OfSymbol.Get(2));
     }
 
+    [Fact]
+    public void MixedDict_WithNestedHashSet_Commit_Open_RoundTrips() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int>();
+        root.OfSymbol.Upsert(1, "with-set");
+
+        var members = rev.CreateHashSet<int>();
+        Assert.True(members.Add(3));
+        Assert.True(members.Add(7));
+        Assert.True(members.Add(11));
+        root.Upsert(10, members);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
+
+        var openResult = OpenRevision(outcome.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = Assert.IsAssignableFrom<DurableDict<int>>(openResult.Value!.GraphRoot);
+        Assert.Equal("with-set", loaded.OfSymbol.Get(1));
+
+        var loadedSet = loaded.GetOrThrow<DurableHashSet<int>>(10);
+        Assert.NotNull(loadedSet);
+        Assert.Equal(3, loadedSet.Count);
+        Assert.True(loadedSet.Contains(3));
+        Assert.True(loadedSet.Contains(7));
+        Assert.True(loadedSet.Contains(11));
+    }
+
     // ═══════════════════════ TypedDict<int, string> ═══════════════════════
 
     [Fact]

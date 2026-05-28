@@ -9,13 +9,4 @@ internal readonly record struct DurableRef(DurableObjectKind Kind, LocalId Id) {
     internal static DurableRef Null => default;
 
     internal bool IsNull => Id.IsNull;
-
-    internal static bool IsValidObjectKind(DurableObjectKind kind) => kind is
-        DurableObjectKind.MixedDict
-        or DurableObjectKind.TypedDict
-        or DurableObjectKind.MixedDeque
-        or DurableObjectKind.TypedDeque
-        or DurableObjectKind.MixedOrderedDict
-        or DurableObjectKind.TypedOrderedDict
-        or DurableObjectKind.Text;
 }

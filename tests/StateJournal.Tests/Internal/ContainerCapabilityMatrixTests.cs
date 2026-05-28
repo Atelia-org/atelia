@@ -14,6 +14,7 @@ public class ContainerCapabilityMatrixTests {
         { typeof(DurableDict<int>), DurableObjectKind.MixedDict },
         { typeof(DurableDeque), DurableObjectKind.MixedDeque },
         { typeof(DurableDeque<int>), DurableObjectKind.TypedDeque },
+        { typeof(DurableHashSet<int>), DurableObjectKind.TypedHashSet },
         { typeof(DurableOrderedDict<int, double>), DurableObjectKind.TypedOrderedDict },
         { typeof(DurableOrderedDict<int>), DurableObjectKind.MixedOrderedDict },
     };
@@ -50,7 +51,8 @@ public class ContainerCapabilityMatrixTests {
         var entry = HelperRegistry.ResolveValueHelper(containerType);
         Assert.True(entry.IsValid);
         Assert.True(TypeCodec.TryDecode(entry.TypeCode, out var decoded),
-            $"TypeCodec.TryDecode failed for {containerType}");
+            $"TypeCodec.TryDecode failed for {containerType}"
+        );
         Assert.Equal(containerType, decoded);
     }
 
@@ -60,7 +62,8 @@ public class ContainerCapabilityMatrixTests {
         var entry = HelperRegistry.ResolveValueHelper(containerType);
         Assert.True(entry.IsValid);
         Assert.True(TypeCodec.TryDecode(entry.TypeCode, out var decoded),
-            $"TypeCodec.TryDecode failed for {containerType}");
+            $"TypeCodec.TryDecode failed for {containerType}"
+        );
         Assert.Equal(containerType, decoded);
     }
 
@@ -70,7 +73,8 @@ public class ContainerCapabilityMatrixTests {
     [MemberData(nameof(AllContainerTypes))]
     public void DurableFactory_Creates_CorrectKind(Type containerType, DurableObjectKind expectedKind) {
         Assert.True(DurableFactory.TryCreate(containerType, out var obj),
-            $"DurableFactory.TryCreate failed for {containerType}");
+            $"DurableFactory.TryCreate failed for {containerType}"
+        );
         Assert.Equal(expectedKind, obj!.Kind);
     }
 
@@ -78,7 +82,8 @@ public class ContainerCapabilityMatrixTests {
     [MemberData(nameof(StringKeyContainerTypes))]
     public void DurableFactory_StringKey_Creates_CorrectKind(Type containerType, DurableObjectKind expectedKind) {
         Assert.True(DurableFactory.TryCreate(containerType, out var obj),
-            $"DurableFactory.TryCreate failed for {containerType}");
+            $"DurableFactory.TryCreate failed for {containerType}"
+        );
         Assert.Equal(expectedKind, obj!.Kind);
     }
 
@@ -93,12 +98,14 @@ public class ContainerCapabilityMatrixTests {
 
         // 2. TypeCodec → round-trip Type
         Assert.True(TypeCodec.TryDecode(entry.TypeCode, out var decodedType),
-            $"Step 2 (TypeCodec.TryDecode) failed for {containerType}");
+            $"Step 2 (TypeCodec.TryDecode) failed for {containerType}"
+        );
         Assert.Equal(containerType, decodedType);
 
         // 3. DurableFactory → create instance from decoded type
         Assert.True(DurableFactory.TryCreate(decodedType!, out var obj),
-            $"Step 3 (DurableFactory.TryCreate) failed for decoded type {decodedType}");
+            $"Step 3 (DurableFactory.TryCreate) failed for decoded type {decodedType}"
+        );
 
         // 4. Kind matches
         Assert.Equal(expectedKind, obj!.Kind);

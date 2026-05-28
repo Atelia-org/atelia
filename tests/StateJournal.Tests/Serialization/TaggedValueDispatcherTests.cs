@@ -173,6 +173,7 @@ public class TaggedValueDispatcherTests {
         Assert.Equal((byte)DurableObjectKind.TypedDict, (byte)TaggedRefKindHelper.FromDurableObjectKind(DurableObjectKind.TypedDict));
         Assert.Equal((byte)DurableObjectKind.MixedDeque, (byte)TaggedRefKindHelper.FromDurableObjectKind(DurableObjectKind.MixedDeque));
         Assert.Equal((byte)DurableObjectKind.TypedDeque, (byte)TaggedRefKindHelper.FromDurableObjectKind(DurableObjectKind.TypedDeque));
+        Assert.Equal((byte)DurableObjectKind.TypedHashSet, (byte)TaggedRefKindHelper.FromDurableObjectKind(DurableObjectKind.TypedHashSet));
     }
 
     [Fact]

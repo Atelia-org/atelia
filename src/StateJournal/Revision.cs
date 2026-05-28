@@ -343,6 +343,13 @@ public partial class Revision {
         return obj;
     }
 
+    /// <summary>创建 TypedHashSet 并绑定到当前 Revision。支持的 TKey 与 dict key 一致。</summary>
+    public DurableHashSet<T> CreateHashSet<T>() where T : notnull {
+        var obj = Durable.HashSet<T>();
+        BindNewObject(obj);
+        return obj;
+    }
+
     /// <summary>创建 MixedDeque 并绑定到当前 Revision。</summary>
     public DurableDeque CreateDeque() {
         var obj = Durable.Deque();

@@ -74,6 +74,13 @@ public class TypeCodePrecomputeTests {
     }
 
     [Fact]
+    public void ResolveValueHelper_TypedHashSet_TypeCode_RoundTrips() {
+        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableHashSet<int>));
+        Assert.True(entry.IsValid);
+        AssertRoundTrip(entry.TypeCode, typeof(DurableHashSet<int>));
+    }
+
+    [Fact]
     public void ResolveValueHelper_MixedOrderedDict_TypeCode_RoundTrips() {
         var entry = HelperRegistry.ResolveValueHelper(typeof(DurableOrderedDict<int>));
         Assert.True(entry.IsValid);
@@ -153,6 +160,18 @@ public class TypeCodePrecomputeTests {
     }
 
     [Fact]
+    public void TypedHashSetFactory_TypeCode_RoundTrips() {
+        AssertRoundTrip(TypedHashSetFactory<int>.TypeCode, typeof(DurableHashSet<int>));
+    }
+
+    [Fact]
+    public void TypedHashSetFactory_TypeCode_MatchesHelperRegistry() {
+        var factoryCode = TypedHashSetFactory<int>.TypeCode;
+        var registryCode = HelperRegistry.ResolveValueHelper(typeof(DurableHashSet<int>)).TypeCode;
+        Assert.Equal(registryCode, factoryCode);
+    }
+
+    [Fact]
     public void TypedOrderedDictFactory_TypeCode_RoundTrips() {
         AssertRoundTrip(TypedOrderedDictFactory<string, int>.TypeCode, typeof(DurableOrderedDict<string, int>));
     }
@@ -190,5 +209,41 @@ public class TypeCodePrecomputeTests {
         var entry = HelperRegistry.ResolveValueHelper(typeof(DurableObject));
         Assert.False(entry.IsValid);
         Assert.Null(entry.TypeCode);
+    }
+
+    [Fact]
+    public void ResolveValueHelper_HashSetOfDurableObject_ReturnsDefault() {
+        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableHashSet<DurableText>));
+        Assert.False(entry.IsValid);
+        Assert.Null(entry.TypeCode);
+    }
+
+    [Fact]
+    public void DurableFactory_HashSetOfDurableObject_ReturnsFalse() {
+        Assert.False(DurableFactory.TryCreate(typeof(DurableHashSet<DurableText>), out var obj));
+        Assert.Null(obj);
+    }
+
+    [Fact]
+    public void ResolveValueHelper_HashSetOfTupleKey_TypeCode_RoundTrips() {
+        var entry = HelperRegistry.ResolveValueHelper(typeof(DurableHashSet<(int, int)>));
+        Assert.True(entry.IsValid);
+        AssertRoundTrip(entry.TypeCode, typeof(DurableHashSet<(int, int)>));
+    }
+
+    [Fact]
+    public void DurableFactory_HashSetOfTupleKey_ReturnsTrue() {
+        Assert.True(DurableFactory.TryCreate(typeof(DurableHashSet<(int, int)>), out var obj));
+        Assert.IsAssignableFrom<DurableHashSet<(int, int)>>(obj);
+    }
+
+    [Fact]
+    public void TypedHashSetFactory_TupleKey_TypeCode_MatchesHelperRegistry() {
+        var factoryCode = TypedHashSetFactory<(int, int)>.TypeCode;
+        var registryCode = HelperRegistry.ResolveValueHelper(typeof(DurableHashSet<(int, int)>)).TypeCode;
+        Assert.NotNull(TypedHashSetFactory<(int, int)>.Create);
+        Assert.Null(TypedHashSetFactory<(int, int)>.ErrorReason);
+        Assert.Equal(registryCode, factoryCode);
+        AssertRoundTrip(factoryCode, typeof(DurableHashSet<(int, int)>));
     }
 }

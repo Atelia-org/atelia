@@ -108,7 +108,7 @@ internal ref struct BinaryDiffWriter {
 
     public void TaggedDurableRef(DurableRef value) {
         // 内部方法，填入正确参数是调用方的责任。
-        Debug.Assert(DurableRef.IsValidObjectKind(value.Kind), $"Invalid DurableRef kind '{value.Kind}'.");
+        Debug.Assert(DurableObjectKindHelper.IsValidObjectKind(value.Kind), $"Invalid DurableRef kind '{value.Kind}'.");
         Debug.Assert(!value.IsNull, "TaggedDurableRef requires a resolved DurableRef; use TaggedNull for the no-object sentinel.");
         if (value.IsNull) {
             TaggedNull(); // Release 尽量弥补。

@@ -73,6 +73,10 @@ internal static class VersionChain {
             kind = DurableObjectKind.TypedDeque;
             return true;
         }
+        if (def == typeof(DurableHashSet<>)) {
+            kind = DurableObjectKind.TypedHashSet;
+            return true;
+        }
         if (def == typeof(DurableOrderedDict<>)) {
             kind = DurableObjectKind.MixedOrderedDict;
             return true;

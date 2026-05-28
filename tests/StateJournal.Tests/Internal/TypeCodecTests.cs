@@ -141,6 +141,19 @@ public class TypeCodecTests {
         Assert.False(Decode(bytes, out _));
     }
 
+    [Fact]
+    public void MakeTypedHashSet_Int32() {
+        byte[] bytes = [(byte)TypeOpCode.PushInt32, (byte)TypeOpCode.MakeTypedHashSet];
+        Assert.True(Decode(bytes, out var result));
+        Assert.Equal(typeof(DurableHashSet<int>), result);
+    }
+
+    [Fact]
+    public void MakeTypedHashSet_InsufficientOperands_ReturnsFalse() {
+        byte[] bytes = [(byte)TypeOpCode.MakeTypedHashSet];
+        Assert.False(Decode(bytes, out _));
+    }
+
     // ═══════════════════════ MakeMixedDict (→ DurableDict<TKey>) ═══════════════════════
 
     [Fact]
