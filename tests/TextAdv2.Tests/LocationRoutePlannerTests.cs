@@ -84,6 +84,38 @@ public class LocationRoutePlannerTests {
     }
 
     [Fact]
+    public void PlanShortestRouteForActor_UsesActorCurrentLocationAsStart() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+
+            var plan = LocationRoutePlanner.PlanShortestRouteForActor(
+                world,
+                TestWorldBuilder.ActorIds.Scout,
+                TestWorldBuilder.LocationIds.Aerie
+            );
+
+            Assert.Equal(RoutePlanStatus.Found, plan.Status);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, plan.FromLocationId);
+            Assert.Equal(TestWorldBuilder.LocationIds.Aerie, plan.ToLocationId);
+            Assert.Equal(2, plan.StepCount);
+            Assert.Equal(10, plan.TotalTravelCost);
+            Assert.Collection(
+                plan.Steps,
+                step => Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, step.PassageId),
+                step => Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, step.PassageId)
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void PlanShortestRoute_DeltaToHarbor_ReturnsUnreachable() {
         string repoDir = CreateTempRepoDir();
 

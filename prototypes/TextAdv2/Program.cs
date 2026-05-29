@@ -47,6 +47,9 @@ using (var repo = Repository.Open(repoDir).Unwrap()) {
 				NavigationObservationProjector.ObserveActorNavigation(world, command.Arg1!),
 				jsonOptions
 			),
+			"plan-actor-route" => LocationRoutePlanTextRenderer.Render(
+				LocationRoutePlanner.PlanShortestRouteForActor(world, command.Arg1!, command.Arg2!)
+			),
 			"plan-route" => LocationRoutePlanTextRenderer.Render(
 				LocationRoutePlanner.PlanShortestRoute(world, command.Arg1!, command.Arg2!)
 			),
@@ -108,6 +111,10 @@ static CommandSpec[] ParseCommands(string[] args) {
 				commands.Add(new("observe-actor-navigation", RequireArg(args, index + 1), null));
 				index += 2;
 				break;
+			case "--plan-actor-route":
+				commands.Add(new("plan-actor-route", RequireArg(args, index + 1), RequireArg(args, index + 2)));
+				index += 3;
+				break;
 			case "--plan-route":
 				commands.Add(new("plan-route", RequireArg(args, index + 1), RequireArg(args, index + 2)));
 				index += 3;
@@ -143,6 +150,7 @@ static string DescribeCommand(CommandSpec command)
 		"observe-actor" => $"observe actor {command.Arg1}",
 		"observe-navigation" => $"observe navigation {command.Arg1}",
 		"observe-actor-navigation" => $"observe actor navigation {command.Arg1}",
+		"plan-actor-route" => $"plan actor route {command.Arg1} -> {command.Arg2}",
 		"plan-route" => $"plan route {command.Arg1} -> {command.Arg2}",
 		"trace-actor-route" => $"trace actor route {command.Arg1}",
 		"move-actor-quiet" => $"move actor quietly {command.Arg1} via {command.Arg2}",
@@ -214,6 +222,7 @@ static string BuildUsage()
 		+ " [--observe-actor <actorId>]"
 		+ " [--observe-navigation <locationId>]"
 		+ " [--observe-actor-navigation <actorId>]"
+		+ " [--plan-actor-route <actorId> <toLocationId>]"
 		+ " [--plan-route <fromLocationId> <toLocationId>]"
 		+ " [--trace-actor-route <actorId>]"
 		+ " [--move-actor-quiet <actorId> <passageId>]"

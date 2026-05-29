@@ -13,6 +13,19 @@ namespace Atelia.TextAdv2.ReadOnlyView;
 /// 这让 MVP 先把 correctness、结果语义和文本可检视性钉住，后续若加入 admissible heuristic，再向真正的 A* 推进。
 /// </summary>
 internal static class LocationRoutePlanner {
+    public static LocationRoutePlanObservation PlanShortestRouteForActor(
+        WorldState world,
+        string actorId,
+        string toLocationId
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        WorldState.ValidateEntityId(actorId, nameof(actorId));
+        WorldState.ValidateEntityId(toLocationId, nameof(toLocationId));
+
+        var actor = world.GetActor(actorId);
+        return PlanShortestRoute(world, actor.CurrentLocationId, toLocationId);
+    }
+
     public static LocationRoutePlanObservation PlanShortestRoute(
         WorldState world,
         string fromLocationId,
@@ -169,6 +182,9 @@ internal static class LocationRoutePlanner {
         return string.IsNullOrEmpty(pathKey) ? segment : $"{pathKey}>{segment}";
     }
 
+    // 当前没有任何可证明 admissible 的领域启发信息，因此先固定 h=0。
+    // 这仍然是正确的最短路搜索，只是会退化成 Dijkstra。
+    // 未来若引入坐标、分区下界或 landmark-based lower bound，可在这里替换为真实 heuristic。
     private static int EstimateRemainingCost(string currentLocationId, string targetLocationId) {
         _ = currentLocationId;
         _ = targetLocationId;
