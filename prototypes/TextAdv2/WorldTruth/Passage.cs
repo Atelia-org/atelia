@@ -291,4 +291,10 @@ internal static class TravelModeCodec {
             TravelMode.Portal => "portal",
             _ => throw new InvalidOperationException($"Unsupported travel mode '{value}'."),
         };
+
+    public static int TotalTravelCost(this PassageDirectionRule direction, Passage passage) {
+        ArgumentNullException.ThrowIfNull(direction);
+        ArgumentNullException.ThrowIfNull(passage);
+        return passage.BaseTravelCost + direction.TravelCostModifier;
+    }
 }

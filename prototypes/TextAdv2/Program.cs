@@ -4,7 +4,7 @@ using Atelia.StateJournal;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-var command = ParseCommand(args);
+var commands = ParseCommands(args);
 var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-textadv2-{Guid.NewGuid():N}");
 var jsonOptions = new JsonSerializerOptions {
 	WriteIndented = true,
@@ -24,42 +24,152 @@ using (var repo = Repository.Open(repoDir).Unwrap()) {
 	var world = WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap());
 
 	Console.WriteLine($"TextAdv2 world repo: {repoDir}");
-	Console.WriteLine();
 
-	string output = command.Mode switch {
-		"world" => WorldDumpRenderer.Render(world),
-		"location" => WorldDumpRenderer.RenderLocation(world, command.Id!),
-		"observe-location" => JsonSerializer.Serialize(
-			LocationObservationProjector.ObserveLocation(world, command.Id!),
-			jsonOptions
-		),
-		"observe-actor" => JsonSerializer.Serialize(
-			LocationObservationProjector.ObserveActorLocation(world, command.Id!),
-			jsonOptions
-		),
-		_ => throw new InvalidOperationException($"Unsupported command mode '{command.Mode}'."),
-	};
+	for (int i = 0; i < commands.Length; i++) {
+		var command = commands[i];
+		string output = command.Mode switch {
+			"world" => WorldDumpRenderer.Render(world),
+			"location" => WorldDumpRenderer.RenderLocation(world, command.Arg1!),
+			"observe-location" => JsonSerializer.Serialize(
+				LocationObservationProjector.ObserveLocation(world, command.Arg1!),
+				jsonOptions
+			),
+			"observe-actor" => JsonSerializer.Serialize(
+				LocationObservationProjector.ObserveActorLocation(world, command.Arg1!),
+				jsonOptions
+			),
+			"observe-navigation" => JsonSerializer.Serialize(
+				NavigationObservationProjector.ObserveLocationNavigation(world, command.Arg1!),
+				jsonOptions
+			),
+			"observe-actor-navigation" => JsonSerializer.Serialize(
+				NavigationObservationProjector.ObserveActorNavigation(world, command.Arg1!),
+				jsonOptions
+			),
+			"move-actor" => JsonSerializer.Serialize(
+				ExecuteMoveActor(world, repo, command.Arg1!, command.Arg2!),
+				jsonOptions
+			),
+			_ => throw new InvalidOperationException($"Unsupported command mode '{command.Mode}'."),
+		};
 
-	Console.WriteLine(output);
+		Console.WriteLine();
+		if (commands.Length > 1) {
+			Console.WriteLine($"[{i + 1}/{commands.Length}] {DescribeCommand(command)}");
+		}
+		Console.WriteLine(output);
+	}
 }
 
-static (string Mode, string? Id) ParseCommand(string[] args) {
+static CommandSpec[] ParseCommands(string[] args) {
 	if (args.Length == 0) {
-		return ("world", null);
+		return [new("world", null, null)];
 	}
 
-	if (args.Length == 2) {
-		return args[0] switch {
-			"--location" => ("location", args[1]),
-			"--observe-location" => ("observe-location", args[1]),
-			"--observe-actor" => ("observe-actor", args[1]),
-			_ => throw new InvalidOperationException(BuildUsage()),
-		};
+	var commands = new List<CommandSpec>();
+	int index = 0;
+	while (index < args.Length) {
+		switch (args[index]) {
+			case "--world":
+				commands.Add(new("world", null, null));
+				index += 1;
+				break;
+			case "--location":
+				commands.Add(new("location", RequireArg(args, index + 1), null));
+				index += 2;
+				break;
+			case "--observe-location":
+				commands.Add(new("observe-location", RequireArg(args, index + 1), null));
+				index += 2;
+				break;
+			case "--observe-actor":
+				commands.Add(new("observe-actor", RequireArg(args, index + 1), null));
+				index += 2;
+				break;
+			case "--observe-navigation":
+				commands.Add(new("observe-navigation", RequireArg(args, index + 1), null));
+				index += 2;
+				break;
+			case "--observe-actor-navigation":
+				commands.Add(new("observe-actor-navigation", RequireArg(args, index + 1), null));
+				index += 2;
+				break;
+			case "--move-actor":
+				commands.Add(new("move-actor", RequireArg(args, index + 1), RequireArg(args, index + 2)));
+				index += 3;
+				break;
+			default:
+				throw new InvalidOperationException(BuildUsage());
+		}
 	}
 
-	throw new InvalidOperationException(BuildUsage());
+	return commands.ToArray();
+}
+
+static string RequireArg(string[] args, int index)
+	=> index < args.Length ? args[index] : throw new InvalidOperationException(BuildUsage());
+
+static string DescribeCommand(CommandSpec command)
+	=> command.Mode switch {
+		"world" => "world dump",
+		"location" => $"location dump {command.Arg1}",
+		"observe-location" => $"observe location {command.Arg1}",
+		"observe-actor" => $"observe actor {command.Arg1}",
+		"observe-navigation" => $"observe navigation {command.Arg1}",
+		"observe-actor-navigation" => $"observe actor navigation {command.Arg1}",
+		"move-actor" => $"move actor {command.Arg1} via {command.Arg2}",
+		_ => command.Mode,
+	};
+
+static ActorMovementObservation ExecuteMoveActor(WorldState world, Repository repo, string actorId, string passageId) {
+	var actor = world.GetActor(actorId);
+	var fromLocation = world.GetLocation(actor.CurrentLocationId);
+	var passage = world.GetPassage(passageId);
+	var exit = passage.GetEndpointFor(fromLocation.Id);
+	var direction = passage.GetDirectionFrom(fromLocation.Id);
+	var toLocation = world.GetLocation(passage.GetOtherLocationId(fromLocation.Id));
+
+	world.MoveActorAlongPassage(actorId, passageId);
+	repo.Commit(world.Root).Unwrap();
+
+	var currentObservation = LocationObservationProjector.ObserveActorLocation(world, actorId);
+	return new ActorMovementObservation(
+		currentObservation.ActorId,
+		currentObservation.ActorName,
+		passage.Id,
+		exit.ExitName,
+		fromLocation.Id,
+		fromLocation.Name,
+		toLocation.Id,
+		toLocation.Name,
+		passage.TravelMode,
+		direction.TotalTravelCost(passage),
+		currentObservation.Location
+	);
 }
 
 static string BuildUsage()
 	=> "Usage: dotnet run --project prototypes/TextAdv2/TextAdv2.csproj"
-		+ " [--location <locationId> | --observe-location <locationId> | --observe-actor <actorId>]";
+		+ " [--world]"
+		+ " [--location <locationId>]"
+		+ " [--observe-location <locationId>]"
+		+ " [--observe-actor <actorId>]"
+		+ " [--observe-navigation <locationId>]"
+		+ " [--observe-actor-navigation <actorId>]"
+		+ " [--move-actor <actorId> <passageId>]";
+
+sealed record CommandSpec(string Mode, string? Arg1, string? Arg2);
+
+sealed record ActorMovementObservation(
+	string ActorId,
+	string ActorName,
+	string PassageId,
+	string ExitName,
+	string FromLocationId,
+	string FromLocationName,
+	string ToLocationId,
+	string ToLocationName,
+	TravelMode TravelMode,
+	int TravelCost,
+	LocationObservation CurrentLocation
+);
