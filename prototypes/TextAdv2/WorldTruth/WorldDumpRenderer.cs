@@ -14,6 +14,9 @@ internal static class WorldDumpRenderer {
     public static string Render(WorldState world) {
         ArgumentNullException.ThrowIfNull(world);
 
+        var actors = world.EnumerateActors()
+            .OrderBy(actor => actor.Id, StringComparer.Ordinal)
+            .ToArray();
         var locations = world.EnumerateLocations()
             .OrderBy(location => location.Id, StringComparer.Ordinal)
             .ToArray();
@@ -23,6 +26,7 @@ internal static class WorldDumpRenderer {
 
         var builder = new StringBuilder();
         builder.AppendLine("WORLD");
+        builder.AppendLine($"actors={actors.Length}");
         builder.AppendLine($"locations={locations.Length}");
         builder.AppendLine($"passages={passages.Length}");
         builder.AppendLine();
@@ -34,6 +38,22 @@ internal static class WorldDumpRenderer {
             }
 
             AppendLocation(builder, world, locations[i]);
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("ACTORS");
+
+        if (actors.Length == 0) {
+            builder.AppendLine("- <none>");
+        }
+        else {
+            for (int i = 0; i < actors.Length; i++) {
+                if (i > 0) {
+                    builder.AppendLine();
+                }
+
+                AppendActor(builder, world, actors[i]);
+            }
         }
 
         builder.AppendLine();
@@ -93,6 +113,11 @@ internal static class WorldDumpRenderer {
             AppendOptionalLine(builder, "      shared", entry.Passage.SharedConditionNote);
             AppendOptionalLine(builder, "      directional", entry.Direction.DirectionConditionNote);
         }
+    }
+
+    private static void AppendActor(StringBuilder builder, WorldState world, Actor actor) {
+        var location = world.GetLocation(actor.CurrentLocationId);
+        builder.AppendLine($"- {actor.Id} | {actor.Name} | location={location.Id} ({location.Name})");
     }
 
     private static void AppendPassage(StringBuilder builder, Passage passage) {

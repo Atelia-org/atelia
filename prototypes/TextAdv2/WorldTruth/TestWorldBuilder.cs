@@ -9,6 +9,11 @@ namespace Atelia.TextAdv2.WorldTruth;
 /// 普通双向路、双向非对称代价、单向禁行、水路、传送、空路、共享说明、本地出口视角与方向说明。
 /// </summary>
 internal static class TestWorldBuilder {
+    internal static class ActorIds {
+        public const string Boatman = "boatman";
+        public const string Scout = "scout";
+    }
+
     internal static class LocationIds {
         public const string Aerie = "aerie";
         public const string Delta = "delta";
@@ -33,6 +38,17 @@ internal static class TestWorldBuilder {
         var world = WorldState.Create(revision);
         Populate(world);
         return world;
+    }
+
+    /// <summary>
+    /// 可选的示例 actor 集合。
+    /// 它们不属于空间测试地图本体，因此与 <see cref="Populate"/> 分开，便于按需启用 actor 相关演示或测试。
+    /// </summary>
+    public static void PopulateSampleActors(WorldState world) {
+        ArgumentNullException.ThrowIfNull(world);
+
+        world.CreateActor(ActorIds.Scout, "Scout", LocationIds.Square);
+        world.CreateActor(ActorIds.Boatman, "Boatman", LocationIds.Harbor);
     }
 
     public static void Populate(WorldState world) {

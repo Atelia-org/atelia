@@ -14,6 +14,7 @@ internal sealed class WorldState {
     private const string KindValue = "world-state";
     private const string SchemaVersionKey = "schemaVersion";
     private const int CurrentSchemaVersion = 1;
+    private const string ActorsKey = "actors";
     private const string LocationsKey = "locations";
     private const string PassagesKey = "passages";
 
@@ -24,6 +25,7 @@ internal sealed class WorldState {
         _root = root;
         EnsureKind(root, KindValue);
 
+        _ = ActorsLedger;
         _ = LocationsLedger;
         _ = PassagesLedger;
     }
@@ -31,6 +33,8 @@ internal sealed class WorldState {
     public DurableDict<string> Root => _root;
 
     public Revision Revision => _root.Revision;
+
+    public DurableDict<string> ActorsLedger => _root.GetOrThrow<DurableDict<string>>(ActorsKey)!;
 
     public DurableDict<string> LocationsLedger => _root.GetOrThrow<DurableDict<string>>(LocationsKey)!;
 
@@ -42,12 +46,49 @@ internal sealed class WorldState {
         var root = revision.CreateDict<string>();
         root.Upsert(KindKey, KindValue);
         root.Upsert(SchemaVersionKey, CurrentSchemaVersion);
+        root.Upsert(ActorsKey, revision.CreateDict<string>());
         root.Upsert(LocationsKey, revision.CreateDict<string>());
         root.Upsert(PassagesKey, revision.CreateDict<string>());
         return new WorldState(root);
     }
 
     public static WorldState FromRoot(DurableDict<string> root) => new(root);
+
+    public Actor CreateActor(string id, string name, string currentLocationId) {
+        ValidateEntityId(id, nameof(id));
+        ValidateRequiredText(name, nameof(name));
+        ValidateEntityId(currentLocationId, nameof(currentLocationId));
+
+        if (TryGetActor(id, out _)) {
+            throw new InvalidOperationException($"Actor '{id}' already exists.");
+        }
+
+        EnsureLocationExists(currentLocationId);
+
+        var actor = Actor.Create(Revision, id, name, currentLocationId);
+        ActorsLedger.Upsert(id, actor.Data);
+        return actor;
+    }
+
+    public Actor GetActor(string id) {
+        if (TryGetActor(id, out var actor) && actor is not null) {
+            return actor;
+        }
+
+        throw new InvalidOperationException($"Actor '{id}' does not exist.");
+    }
+
+    public bool TryGetActor(string id, out Actor? actor) {
+        ValidateEntityId(id, nameof(id));
+
+        if (ActorsLedger.TryGet(id, out DurableDict<string>? data)) {
+            actor = new Actor(data!);
+            return true;
+        }
+
+        actor = null;
+        return false;
+    }
 
     public Location CreateLocation(string id, string name, string description) {
         ValidateEntityId(id, nameof(id));
@@ -143,6 +184,53 @@ internal sealed class WorldState {
 
         passage = null;
         return false;
+    }
+
+    /// <summary>
+    /// 按当前 actor 所在地点，沿指定 passage 的合法方向移动。
+    /// 该 API 会校验：
+    /// - actor 与 passage 必须存在；
+    /// - actor 当前地点必须是该 passage 的一端；
+    /// - 从当前位置出发的方向必须 enabled。
+    /// </summary>
+    public Actor MoveActorAlongPassage(string actorId, string passageId) {
+        var actor = GetActor(actorId);
+        var passage = GetPassage(passageId);
+        var fromLocationId = actor.CurrentLocationId;
+
+        if (!passage.Connects(fromLocationId)) {
+            throw new InvalidOperationException(
+                $"Actor '{actorId}' is at location '{fromLocationId}', which is not connected by passage '{passageId}'."
+            );
+        }
+
+        var direction = passage.GetDirectionFrom(fromLocationId);
+        if (!direction.IsEnabled) {
+            throw new InvalidOperationException(
+                $"Passage '{passageId}' is not traversable from location '{fromLocationId}'."
+            );
+        }
+
+        var toLocationId = passage.GetOtherLocationId(fromLocationId);
+        EnsureLocationExists(toLocationId);
+        actor.MoveTo(toLocationId);
+        return actor;
+    }
+
+    public IEnumerable<Actor> EnumerateActors() {
+        foreach (var actorId in ActorsLedger.Keys) {
+            yield return new Actor(ActorsLedger.GetOrThrow<DurableDict<string>>(actorId)!);
+        }
+    }
+
+    public IEnumerable<Actor> EnumerateActorsAtLocation(string locationId) {
+        EnsureLocationExists(locationId);
+
+        foreach (var actor in EnumerateActors()) {
+            if (string.Equals(actor.CurrentLocationId, locationId, StringComparison.Ordinal)) {
+                yield return actor;
+            }
+        }
     }
 
     public IEnumerable<Location> EnumerateLocations() {

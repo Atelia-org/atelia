@@ -101,6 +101,7 @@ public class TestWorldBuilderTests {
 
     private const string ExpectedWorldDump = """
 WORLD
+actors=0
 locations=7
 passages=5
 
@@ -168,6 +169,9 @@ LOCATIONS
   exits:
     - east -> square (Square) | passage=village-square-road | mode=land | base=1 | modifier=0 | total=1 | enabled=true
       local: Main street leaves the village between the bakery and the well.
+
+ACTORS
+- <none>
 
 PASSAGES
 - harbor-delta-current
