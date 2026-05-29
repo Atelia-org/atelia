@@ -145,7 +145,10 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
     public bool Remove(TKey key) => TryRemove(key, out _);
 
     public bool TryRemove(TKey key, out TValue? value) {
-        if (_head.IsNull) { value = default; return false; }
+        if (_head.IsNull) {
+            value = default;
+            return false;
+        }
 
         var (headKey, headValue) = _arena.GetEntry(ref _head);
         int headCmp = KHelper.Compare(headKey, key);
@@ -159,18 +162,30 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
             RemoveFromTower(key, headUpdate);
             return true;
         }
-        if (headCmp > 0) { value = default; return false; }
+        if (headCmp > 0) {
+            value = default;
+            return false;
+        }
 
         Span<int> towerUpdate = stackalloc int[MaxTowerHeight];
         towerUpdate.Fill(-1);
         LeafHandle pred = FindLeafPredecessorAndTowerUpdate(key, towerUpdate);
-        if (pred.IsNull) { value = default; return false; }
+        if (pred.IsNull) {
+            value = default;
+            return false;
+        }
 
         LeafHandle candidate = _arena.GetNext(ref pred);
-        if (candidate.IsNull) { value = default; return false; }
+        if (candidate.IsNull) {
+            value = default;
+            return false;
+        }
 
         var (candKey, candValue) = _arena.GetEntry(ref candidate);
-        if (KHelper.Compare(candKey, key) != 0) { value = default; return false; }
+        if (KHelper.Compare(candKey, key) != 0) {
+            value = default;
+            return false;
+        }
 
         // 重链接：pred → candidate.next
         value = candValue;
@@ -448,11 +463,12 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
     /// <summary>
     /// 基于 key 哈希的塔高分配（trailing ones 计数）。
     /// 概率：height=0 → 50%, height=1 → 25%, height=2 → 12.5%, ...
-    /// 依赖 <c>GetHashCode()</c>（对 string 等跨进程不稳定），但塔不持久化，每次 load 后从叶链重建。
+    /// 使用 <see cref="ITypeHelper{T}.GetHashCode(T)"/> 与 key equality 语义保持一致。
+    /// hash 可跨进程不稳定（如 string），因为塔不持久化，每次 load 后都会从叶链重建。
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int DeterministicTowerHeight(TKey key) {
-        uint hash = (uint)(key.GetHashCode() * 2654435761u);
+        uint hash = unchecked((uint)(KHelper.GetHashCode(key) * 2654435761u));
         hash ^= hash >> 16;
         int height = BitOperations.TrailingZeroCount(~hash);
         return height > MaxTowerHeight ? MaxTowerHeight : height;

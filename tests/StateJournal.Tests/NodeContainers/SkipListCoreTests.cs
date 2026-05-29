@@ -49,6 +49,30 @@ public class SkipListCoreTests {
     }
 
     [Fact]
+    public void Upsert_DoubleKeys_DistinguishesSignedZero_AndNaNPayload() {
+        SkipListCore<double, int, DoubleHelper, Int32Helper> core = new();
+        double posZero = 0.0;
+        double negZero = -0.0;
+        double nan1 = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0001);
+        double nan2 = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0002);
+
+        core.Upsert(posZero, 10);
+        core.Upsert(negZero, 20);
+        core.Upsert(nan1, 30);
+        core.Upsert(nan2, 40);
+
+        Assert.Equal(4, core.Count);
+        Assert.True(core.TryGet(posZero, out var v1));
+        Assert.Equal(10, v1);
+        Assert.True(core.TryGet(negZero, out var v2));
+        Assert.Equal(20, v2);
+        Assert.True(core.TryGet(nan1, out var v3));
+        Assert.Equal(30, v3);
+        Assert.True(core.TryGet(nan2, out var v4));
+        Assert.Equal(40, v4);
+    }
+
+    [Fact]
     public void Remove_ExistingKey_ReturnsTrue() {
         SkipListCore<int, int, Int32Helper, Int32Helper> core = new();
         core.Upsert(10, 100);

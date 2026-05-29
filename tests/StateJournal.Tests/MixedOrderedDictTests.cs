@@ -199,6 +199,54 @@ public class MixedOrderedDictTests : IDisposable {
         Assert.Equal(60, keys[2]);
     }
 
+    [Fact]
+    public void DoubleKeys_DistinguishSignedZero_AndNaNPayload_AcrossOpen() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+        var rev = CreateRevision();
+
+        var dict = rev.CreateOrderedDict<double>();
+        double posZero = 0.0;
+        double negZero = -0.0;
+        double nan1 = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0001);
+        double nan2 = BitConverter.UInt64BitsToDouble(0x7FF8_0000_0000_0002);
+
+        dict.Upsert(posZero, 10);
+        dict.Upsert(negZero, 20);
+        dict.Upsert(nan1, 30);
+        dict.Upsert(nan2, 40);
+
+        Assert.Equal(4, dict.Count);
+        Assert.True(dict.TryGet<int>(posZero, out var pv));
+        Assert.Equal(10, pv);
+        Assert.True(dict.TryGet<int>(negZero, out var nv));
+        Assert.Equal(20, nv);
+        Assert.True(dict.TryGet<int>(nan1, out var n1));
+        Assert.Equal(30, n1);
+        Assert.True(dict.TryGet<int>(nan2, out var n2));
+        Assert.Equal(40, n2);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, dict, file));
+
+        var openResult = OpenRevision(outcome.HeadCommitTicket, file);
+        Assert.True(openResult.IsSuccess, $"Open failed: {openResult.Error}");
+
+        var loaded = openResult.Value!;
+        var loadResult = loaded.Load(dict.LocalId);
+        Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
+        var loadedDict = Assert.IsAssignableFrom<DurableOrderedDict<double>>(loadResult.Value);
+
+        Assert.Equal(4, loadedDict.Count);
+        Assert.True(loadedDict.TryGet<int>(posZero, out pv));
+        Assert.Equal(10, pv);
+        Assert.True(loadedDict.TryGet<int>(negZero, out nv));
+        Assert.Equal(20, nv);
+        Assert.True(loadedDict.TryGet<int>(nan1, out n1));
+        Assert.Equal(30, n1);
+        Assert.True(loadedDict.TryGet<int>(nan2, out n2));
+        Assert.Equal(40, n2);
+    }
+
     // ──────────────────────────────────────────────────────────────
     // TryGetValueKind
     // ──────────────────────────────────────────────────────────────

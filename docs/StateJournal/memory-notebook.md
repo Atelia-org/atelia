@@ -187,7 +187,22 @@ load / 历史回放完成后：
 - 塔索引依赖压缩后的物理 index，因此 committed canonicalization 必须发生在 `RebuildIndex` 之前
 - 这也让 `SyncCurrentFromCommitted` 与其他 typed/mixed 容器保持更一致的职责边界
 
-### 8. `LeafChainStore` 里移动 committed 槽位的 GC 不能与活跃 dirty tracking 共存
+### 8. OrderedDict key 语义以 `ITypeHelper` 为准，但唯一性真源仍是 `Compare == 0`
+
+当前 `DurableOrderedDict` / `SkipListCore` 的 key 语义边界是：
+
+- 叶链排序、查找命中、重复 key 判定都走 `KHelper.Compare(...)`
+- 纯内存塔高分配走 `KHelper.GetHashCode(...)`，以便与 helper 自定义 equality/hash 保持一致
+- 因此对可作为 ordered key 的 helper，必须满足：
+  - `Compare(a, b) == 0` 当且仅当 `Equals(a, b)` 为 true
+  - `GetHashCode` 与 `Equals` 同语义
+
+特别注意：
+
+- 对 `double` / `float` / `Half`，当前 helper 的 `Compare` 已做 bit-pattern tie-break
+- 这样 `OrderedDict` 会区分 `+0.0` / `-0.0` 和不同 NaN payload，不再像默认 `CompareTo` 那样把它们折叠成同一个 key
+
+### 9. `LeafChainStore` 里移动 committed 槽位的 GC 不能与活跃 dirty tracking 共存
 
 `LeafChainStore` 当前有一条必须牢记的不变量：
 
@@ -201,7 +216,7 @@ load / 历史回放完成后：
 - 再 `CollectCommitted(head)` 做 committed canonicalization
 - 最后 `SyncCurrentFromCommitted()` 与 `RebuildIndex()`
 
-### 9. frozen 状态通过 VersionChain object flags 持久化
+### 10. frozen 状态通过 VersionChain object flags 持久化
 
 freeze PR 之后，`VersionChainStatus` 的 metadata 里新增了 resultant object flags：
 
@@ -222,7 +237,7 @@ objectFlags
 - `_mutabilityDirty` 表示 working flags 是否不同于 committed flags
 - 因此 clean/tracked 对象只做 `Freeze()` 也必须写一帧；否则 reopen 会丢失 readonly 语义
 
-### 10. `rebase vs deltify` 已从 count-based 切到基于序列化字节的估算
+### 11. `rebase vs deltify` 已从 count-based 切到基于序列化字节的估算
 
 当前主线里，是否写 rebase frame 不再由聚合 `count` 启发式决定，而是统一走：
 
@@ -237,7 +252,7 @@ objectFlags
 - `RemoveCount` / `UpsertCount` / `KeepDirtyCount` / `dirtyLinkCount` / `dirtyValueCount` / `appendedCount` 这类 count 仍然保留，因为它们描述的是当前 wire shape
 - 旧的聚合 `RebaseCount` / `DeltifyCount` 残留语义已经不再是主线合同，也不应再作为设计心智模型
 
-### 11. enum Mask 成员已提取为 helper class 常量
+### 12. enum Mask 成员已提取为 helper class 常量
 
 `DurableObjectKind.Mask`、`HeapValueKind.Mask`、`VersionKind.Mask`、`FrameUsage.Mask`、`FrameSource.Mask` 已全部从 enum 中移除，改为对应 helper 静态类中的 `const byte BitMask`（或 `FrameTag` 内部的私有 `const`）。
 
