@@ -95,6 +95,58 @@ public class NavigationAndCliWorkflowTests {
         }
     }
 
+    [Fact]
+    public void ObserveActorRouteTrace_SummarizesMultiStepMovementAsCompactText() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+
+            var movementHistory = new[] {
+                ExecuteMove(world, TestWorldBuilder.ActorIds.Scout, TestWorldBuilder.PassageIds.SquareRidgeTrail),
+                ExecuteMove(world, TestWorldBuilder.ActorIds.Scout, TestWorldBuilder.PassageIds.RidgeAerieWinch),
+            };
+            var trace = ActorRouteTraceProjector.ObserveActorRouteTrace(
+                world,
+                TestWorldBuilder.ActorIds.Scout,
+                movementHistory
+            );
+            string text = ActorRouteTraceTextRenderer.Render(trace);
+
+            Assert.Equal(Normalize(ExpectedScoutRouteTrace), Normalize(text));
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void ObserveActorRouteTrace_WithoutMoves_UsesCurrentLocationAsStartAndEnd() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+
+            var trace = ActorRouteTraceProjector.ObserveActorRouteTrace(
+                world,
+                TestWorldBuilder.ActorIds.Boatman,
+                []
+            );
+            string text = ActorRouteTraceTextRenderer.Render(trace);
+
+            Assert.Equal(Normalize(ExpectedBoatmanIdleTrace), Normalize(text));
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-navigation-tests-{Guid.NewGuid():N}");
 
@@ -103,4 +155,47 @@ public class NavigationAndCliWorkflowTests {
             Directory.Delete(repoDir, recursive: true);
         }
     }
+
+    private static ActorMovementObservation ExecuteMove(WorldState world, string actorId, string passageId) {
+        var actor = world.GetActor(actorId);
+        var fromLocation = world.GetLocation(actor.CurrentLocationId);
+        var passage = world.GetPassage(passageId);
+        var exit = passage.GetEndpointFor(fromLocation.Id);
+        var direction = passage.GetDirectionFrom(fromLocation.Id);
+        var toLocation = world.GetLocation(passage.GetOtherLocationId(fromLocation.Id));
+
+        world.MoveActorAlongPassage(actorId, passageId);
+
+        var currentObservation = LocationObservationProjector.ObserveActorLocation(world, actorId);
+        return new ActorMovementObservation(
+            currentObservation.ActorId,
+            currentObservation.ActorName,
+            passage.Id,
+            exit.ExitName,
+            fromLocation.Id,
+            fromLocation.Name,
+            toLocation.Id,
+            toLocation.Name,
+            passage.TravelMode,
+            direction.TotalTravelCost(passage),
+            currentObservation.Location
+        );
+    }
+
+    private static string Normalize(string text) => text.Replace("\r\n", "\n");
+
+    private const string ExpectedScoutRouteTrace = """
+ROUTE TRACE actor=scout name=Scout
+start=square (Square)
+1. square --north gate/square-ridge-trail--> ridge | land | cost=5
+2. ridge --cliff lift/ridge-aerie-winch--> aerie | air | cost=5
+end=aerie (Aerie) | steps=2 | totalCost=10
+""";
+
+    private const string ExpectedBoatmanIdleTrace = """
+ROUTE TRACE actor=boatman name=Boatman
+start=harbor (Harbor)
+<no movement in this run>
+end=harbor (Harbor) | steps=0 | totalCost=0
+""";
 }
