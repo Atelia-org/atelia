@@ -48,8 +48,8 @@ TextAdv2 顶层命名空间当前建议固定为三层：
 | 命名空间 | 责任 | 当前状态 |
 |:---|:---|:---|
 | `Atelia.TextAdv2.WorldTruth` | 世界唯一真相；持久化 schema；ID、连接、位置、规则约束 | 当前正在建设 |
-| `Atelia.TextAdv2.AccelerationIndex` | 为查询、投影、导航服务的缓存、索引、派生结构 | 暂缓实现 |
-| `Atelia.TextAdv2.ReadOnlyView` | 面向调用方的只读投影；把真相组织成“看见什么”“能去哪”这类稳定视图 | 下一阶段 |
+| `Atelia.TextAdv2.AccelerationIndex` | 为查询、投影、导航服务的缓存、索引、派生结构 | 已开始最小引入，用于 landmark heuristic snapshot |
+| `Atelia.TextAdv2.ReadOnlyView` | 面向调用方的只读投影；把真相组织成“看见什么”“能去哪”这类稳定视图 | 已建立并被观察 / 导航 / 路由组件使用 |
 
 近期阶段的一个重要约束是：
 
@@ -224,6 +224,9 @@ ExitObservation
 - 每一步的出口名和目标地点
 
 但它不应反向改变世界结构，也不应要求在 `WorldTruth` 中提前存一份导航缓存。
+
+近期主线已先落下一个最小 heuristic seam，并开始在 `AccelerationIndex` 中试行基于 landmark 的 lower-bound snapshot。
+更细的近期方案见 [`landmark-heuristic-near-term-plan.md`](./landmark-heuristic-near-term-plan.md)。
 
 ## 角色在空间中的最小语义
 

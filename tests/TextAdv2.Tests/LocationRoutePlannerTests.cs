@@ -1,4 +1,5 @@
 using Atelia.StateJournal;
+using Atelia.TextAdv2.AccelerationIndex;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
@@ -106,6 +107,63 @@ public class LocationRoutePlannerTests {
             Assert.Equal(10, plan.TotalTravelCost);
             Assert.Collection(
                 plan.Steps,
+                step => Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, step.PassageId),
+                step => Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, step.PassageId)
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void LocationLandmarkHeuristicSnapshot_TargetLandmarkYieldsExactLowerBound() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var heuristic = LocationLandmarkHeuristicSnapshot.Create(
+                world,
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
+            );
+
+            Assert.Equal(11, heuristic.EstimateRemainingCost(TestWorldBuilder.LocationIds.Village, TestWorldBuilder.LocationIds.Aerie));
+            Assert.Equal(2, heuristic.EstimateRemainingCost(TestWorldBuilder.LocationIds.Village, TestWorldBuilder.LocationIds.Shrine));
+            Assert.Equal(0, heuristic.EstimateRemainingCost(TestWorldBuilder.LocationIds.Delta, TestWorldBuilder.LocationIds.Harbor));
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void PlanShortestRoute_WithLandmarkHeuristic_FindsSameStableShortestPath() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var heuristic = LocationLandmarkHeuristicSnapshot.Create(
+                world,
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
+            );
+
+            var plan = LocationRoutePlanner.PlanShortestRoute(
+                world,
+                TestWorldBuilder.LocationIds.Village,
+                TestWorldBuilder.LocationIds.Aerie,
+                new LocationRoutePlanningOptions(heuristic)
+            );
+
+            Assert.Equal(RoutePlanStatus.Found, plan.Status);
+            Assert.Equal(3, plan.StepCount);
+            Assert.Equal(11, plan.TotalTravelCost);
+            Assert.Collection(
+                plan.Steps,
+                step => Assert.Equal(TestWorldBuilder.PassageIds.VillageSquareRoad, step.PassageId),
                 step => Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, step.PassageId),
                 step => Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, step.PassageId)
             );

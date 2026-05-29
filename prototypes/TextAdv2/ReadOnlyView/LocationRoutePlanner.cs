@@ -6,7 +6,7 @@ namespace Atelia.TextAdv2.ReadOnlyView;
 /// 基于 Location 节点 / Passage 有向边 的最短路规划器。
 ///
 /// 当前实现使用 Dijkstra core：
-/// - 启发函数固定为 0；
+/// - 默认启发函数固定为 0；
 /// - 数据面来自 <see cref="NavigationObservationProjector"/>；
 /// - 结果对等成本路径采用稳定 tie-break。
 ///
@@ -17,23 +17,38 @@ internal static class LocationRoutePlanner {
         WorldState world,
         string actorId,
         string toLocationId
+    ) => PlanShortestRouteForActor(world, actorId, toLocationId, options: null);
+
+    public static LocationRoutePlanObservation PlanShortestRouteForActor(
+        WorldState world,
+        string actorId,
+        string toLocationId,
+        LocationRoutePlanningOptions? options
     ) {
         ArgumentNullException.ThrowIfNull(world);
         WorldState.ValidateEntityId(actorId, nameof(actorId));
         WorldState.ValidateEntityId(toLocationId, nameof(toLocationId));
 
         var actor = world.GetActor(actorId);
-        return PlanShortestRoute(world, actor.CurrentLocationId, toLocationId);
+        return PlanShortestRoute(world, actor.CurrentLocationId, toLocationId, options);
     }
 
     public static LocationRoutePlanObservation PlanShortestRoute(
         WorldState world,
         string fromLocationId,
         string toLocationId
+    ) => PlanShortestRoute(world, fromLocationId, toLocationId, options: null);
+
+    public static LocationRoutePlanObservation PlanShortestRoute(
+        WorldState world,
+        string fromLocationId,
+        string toLocationId,
+        LocationRoutePlanningOptions? options
     ) {
         ArgumentNullException.ThrowIfNull(world);
         WorldState.ValidateEntityId(fromLocationId, nameof(fromLocationId));
         WorldState.ValidateEntityId(toLocationId, nameof(toLocationId));
+        var planningOptions = LocationRoutePlanningOptions.Resolve(options);
 
         var fromLocation = world.GetLocation(fromLocationId);
         var toLocation = world.GetLocation(toLocationId);
@@ -55,7 +70,15 @@ internal static class LocationRoutePlanner {
         var best = new Dictionary<string, BestRouteCandidate>(StringComparer.Ordinal) {
             [fromLocationId] = new BestRouteCandidate(0, string.Empty, PreviousLocationId: null, IncomingEdge: null),
         };
-        frontier.Enqueue(new SearchState(fromLocationId, 0, string.Empty), new SearchPriority(0, 0, fromLocationId, string.Empty));
+        frontier.Enqueue(
+            new SearchState(fromLocationId, 0, string.Empty),
+            new SearchPriority(
+                EstimateRemainingCost(planningOptions.Heuristic, fromLocationId, toLocationId),
+                0,
+                fromLocationId,
+                string.Empty
+            )
+        );
 
         while (frontier.TryDequeue(out var current, out _)) {
             if (!best.TryGetValue(current.LocationId, out var bestForCurrent)
@@ -85,9 +108,10 @@ internal static class LocationRoutePlanner {
                 }
 
                 best[edge.TargetLocationId] = new BestRouteCandidate(newCost, newPathKey, current.LocationId, edge);
+                int estimatedRemaining = EstimateRemainingCost(planningOptions.Heuristic, edge.TargetLocationId, toLocationId);
                 frontier.Enqueue(
                     new SearchState(edge.TargetLocationId, newCost, newPathKey),
-                    new SearchPriority(newCost + EstimateRemainingCost(edge.TargetLocationId, toLocationId), newCost, edge.TargetLocationId, newPathKey)
+                    new SearchPriority(newCost + estimatedRemaining, newCost, edge.TargetLocationId, newPathKey)
                 );
             }
         }
@@ -182,13 +206,21 @@ internal static class LocationRoutePlanner {
         return string.IsNullOrEmpty(pathKey) ? segment : $"{pathKey}>{segment}";
     }
 
-    // 当前没有任何可证明 admissible 的领域启发信息，因此先固定 h=0。
-    // 这仍然是正确的最短路搜索，只是会退化成 Dijkstra。
-    // 未来若引入坐标、分区下界或 landmark-based lower bound，可在这里替换为真实 heuristic。
-    private static int EstimateRemainingCost(string currentLocationId, string targetLocationId) {
-        _ = currentLocationId;
-        _ = targetLocationId;
-        return 0;
+    private static int EstimateRemainingCost(
+        ILocationRouteHeuristic heuristic,
+        string currentLocationId,
+        string targetLocationId
+    ) {
+        ArgumentNullException.ThrowIfNull(heuristic);
+
+        int estimate = heuristic.EstimateRemainingCost(currentLocationId, targetLocationId);
+        if (estimate < 0) {
+            throw new InvalidOperationException(
+                $"Route heuristic returned a negative estimate for '{currentLocationId}' -> '{targetLocationId}': {estimate}."
+            );
+        }
+
+        return estimate;
     }
 
     private sealed record SearchState(string LocationId, int CostSoFar, string PathKey);
