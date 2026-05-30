@@ -51,8 +51,8 @@
   - `WorldState.FromRoot(...)` 已具备 schema gate；
   - `Location` / `Passage` 的写入权威仍明显分散在叶子对象上。
 - `P4` 也不是“从零开始”：
-  - `NavigationObservationProjector.ObserveLocationNavigationGraph(...)` 已经被 planner、landmark heuristic、route-acceleration stale 判定复用；
-  - 它实质上已经是一个隐式 canonical graph seam，只是还没正式收口。
+  - `LocationNavigationGraphProjector.Project(...)` 现在承载 canonical graph seam；
+  - `NavigationObservationProjector` 与当前 planner、landmark heuristic、route-acceleration stale 判定都从这份 seam 读取，不再把图语义藏在展示 projector 内部。
 - `P5` 需要改写得更具体：
   - sample-world 创建、默认 landmark profile、open-or-create/reset 等 dev 语义虽然已有 helper，但仍在 runtime 主路径中留下明显耦合。
 
@@ -238,7 +238,7 @@ P2 后续修订说明：
 
 修订后的建议切口：
 
-- P4a：把现有 `ObserveLocationNavigationGraph(...)` 及其等价语义正式收口成 canonical graph seam。
+- P4a：把隐式 navigation graph seam 正式收口为 `LocationNavigationGraph` / `LocationNavigationGraphProjector`。
 - P4b：让 planner / landmark heuristic / route-acceleration stale signature 显式改读这份 seam，而不是继续把它当作 projector 内部细节。
 - P4c：在 graph seam 稳定后，再决定 `PlanRoute` / `PlanActorRoute` 的 public typed seam，以及是否保留显式 `Observe/RebuildRouteAcceleration` API。
 

@@ -107,8 +107,8 @@ internal static class LocationRoutePlanner {
                 );
             }
 
-            var navigation = NavigationObservationProjector.ObserveLocationNavigationGraph(world, current.LocationId);
-            foreach (var edge in navigation.Edges) {
+            var graph = LocationNavigationGraphProjector.Project(world, current.LocationId);
+            foreach (var edge in graph.Edges) {
                 if (edge.TravelCost < 0) {
                     throw new InvalidOperationException(
                         $"Negative travel cost is not supported for shortest-path planning: passage '{edge.PassageId}' from '{current.LocationId}' has cost {edge.TravelCost}."
@@ -234,7 +234,7 @@ internal static class LocationRoutePlanner {
             && string.CompareOrdinal(newPathKey, existing.PathKey) < 0;
     }
 
-    private static string AppendPathKey(string pathKey, NavigationGraphEdgeObservation edge) {
+    private static string AppendPathKey(string pathKey, LocationNavigationGraphEdge edge) {
         string segment = $"{edge.PassageId}|{edge.TargetLocationId}";
         return string.IsNullOrEmpty(pathKey) ? segment : $"{pathKey}>{segment}";
     }
@@ -262,10 +262,10 @@ internal static class LocationRoutePlanner {
         int CostSoFar,
         string PathKey,
         string? PreviousLocationId,
-        NavigationGraphEdgeObservation? IncomingEdge
+        LocationNavigationGraphEdge? IncomingEdge
     );
 
-    private sealed record RouteSegment(Location FromLocation, Location ToLocation, NavigationGraphEdgeObservation Edge);
+    private sealed record RouteSegment(Location FromLocation, Location ToLocation, LocationNavigationGraphEdge Edge);
 
     private readonly record struct SearchPriority(int EstimatedCost, int CostSoFar, string LocationId, string PathKey)
         : IComparable<SearchPriority> {

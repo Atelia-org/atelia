@@ -74,8 +74,8 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
     private static Dictionary<string, GraphEdge[]> BuildGraph(WorldState world) {
         var graph = new Dictionary<string, GraphEdge[]>(StringComparer.Ordinal);
         foreach (var location in world.EnumerateLocations().OrderBy(location => location.Id, StringComparer.Ordinal)) {
-            var navigation = NavigationObservationProjector.ObserveLocationNavigationGraph(world, location.Id);
-            var edges = navigation.Edges
+            var navigationGraph = LocationNavigationGraphProjector.Project(world, location.Id);
+            var edges = navigationGraph.Edges
                 .Select(edge => ToGraphEdge(location.Id, edge))
                 .ToArray();
             graph.Add(location.Id, edges);
@@ -109,7 +109,7 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
         );
     }
 
-    private static GraphEdge ToGraphEdge(string sourceLocationId, NavigationGraphEdgeObservation edge) {
+    private static GraphEdge ToGraphEdge(string sourceLocationId, LocationNavigationGraphEdge edge) {
         if (edge.TravelCost < 0) {
             throw new InvalidOperationException(
                 $"Negative travel cost is not supported for landmark heuristic precomputation: passage '{edge.PassageId}' from '{sourceLocationId}' has cost {edge.TravelCost}."

@@ -7,6 +7,48 @@ namespace Atelia.TextAdv2.Tests;
 
 public class NavigationAndCliWorkflowTests {
     [Fact]
+    public void ProjectLocationNavigationGraph_ExposesCanonicalGraphSeam() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+
+            var graph = LocationNavigationGraphProjector.Project(
+                world,
+                TestWorldBuilder.LocationIds.Square
+            );
+
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, graph.LocationId);
+            Assert.Collection(
+                graph.Edges,
+                edge => {
+                    Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, edge.PassageId);
+                    Assert.Equal(TestWorldBuilder.LocationIds.Ridge, edge.TargetLocationId);
+                    Assert.Equal(TravelMode.Land, edge.TravelMode);
+                    Assert.Equal(5, edge.TravelCost);
+                },
+                edge => {
+                    Assert.Equal(TestWorldBuilder.PassageIds.SquareShrineGate, edge.PassageId);
+                    Assert.Equal(TestWorldBuilder.LocationIds.Shrine, edge.TargetLocationId);
+                    Assert.Equal(TravelMode.Portal, edge.TravelMode);
+                    Assert.Equal(1, edge.TravelCost);
+                },
+                edge => {
+                    Assert.Equal(TestWorldBuilder.PassageIds.VillageSquareRoad, edge.PassageId);
+                    Assert.Equal(TestWorldBuilder.LocationIds.Village, edge.TargetLocationId);
+                    Assert.Equal(TravelMode.Land, edge.TravelMode);
+                    Assert.Equal(1, edge.TravelCost);
+                }
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void ObserveLocationNavigation_UsesOnlyEnabledEdges() {
         string repoDir = CreateTempRepoDir();
 
