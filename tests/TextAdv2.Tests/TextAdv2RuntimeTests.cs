@@ -100,6 +100,17 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
+    public void AdvanceTime_RejectsNegativeTickDeltaForTypedSeam() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => runtime.AdvanceTime(-1));
+        var observed = runtime.ObserveTime();
+
+        Assert.Equal("ticks", exception.ParamName);
+        Assert.Contains("\"CurrentTick\": 0", observed.Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OpenOrCreateSampleWorld_ReopensLogicalTimeAndMovementHistory() {
         string repoDir = CreateTempRepoDir();
 

@@ -66,6 +66,36 @@ public class TextAdv2RouteAccelerationStateTests {
         }
     }
 
+    [Fact]
+    public void Observe_AfterDisplayNoteChange_RemainsActiveBecauseGraphSignatureIgnoresDisplayFields() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var routeAcceleration = new TextAdv2RouteAccelerationState();
+
+            routeAcceleration.Rebuild(
+                world,
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
+            );
+
+            world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail)
+                .SetEndpointLocalViewNote(TestWorldBuilder.LocationIds.Square, "Renamed display hint only.");
+
+            var observedAfterNoteChange = routeAcceleration.Observe(world);
+            var planningOptionsAfterNoteChange = routeAcceleration.GetPlanningOptions(world);
+
+            Assert.Equal("landmark", observedAfterNoteChange.PlannerMode);
+            Assert.Equal("active", observedAfterNoteChange.SnapshotStatus);
+            Assert.NotNull(planningOptionsAfterNoteChange);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-route-acceleration-tests-{Guid.NewGuid():N}");
 

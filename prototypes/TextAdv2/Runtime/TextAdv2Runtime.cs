@@ -157,6 +157,7 @@ public sealed class TextAdv2Runtime : IDisposable {
 
     public TextAdv2RuntimeCommandResult AdvanceTime(long ticks) {
         EnsureNotDisposed();
+        ArgumentOutOfRangeException.ThrowIfNegative(ticks);
         return Json(AdvanceLogicalTime(ticks));
     }
 
