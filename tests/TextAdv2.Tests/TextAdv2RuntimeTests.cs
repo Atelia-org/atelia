@@ -298,7 +298,7 @@ public class TextAdv2RuntimeTests {
         try {
             using var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
 
-            var rebuilt = runtime.RebuildRouteAcceleration();
+            var rebuilt = TextAdv2SampleWorldDevBootstrap.RebuildRouteAcceleration(runtime);
 
             Assert.Equal("landmark", rebuilt.PlannerMode);
             Assert.Equal("active", rebuilt.SnapshotStatus);
@@ -325,7 +325,9 @@ public class TextAdv2RuntimeTests {
             }
 
             using var runtime = TextAdv2Runtime.OpenExisting(repoDir);
-            var exception = Assert.Throws<InvalidOperationException>(() => runtime.RebuildRouteAcceleration());
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => TextAdv2SampleWorldDevBootstrap.RebuildRouteAcceleration(runtime)
+            );
 
             Assert.Equal(
                 "RebuildRouteAcceleration without an explicit landmark list requires a world with a known recommended landmark profile.",

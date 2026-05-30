@@ -150,7 +150,7 @@ internal static class Program {
                         operations.Add(
                             new RuntimeOperation(
                                 $"rebuild route acceleration {(rebuildLandmarks is null ? "default-profile" : rebuildLandmarks)}",
-                                runtime => RenderJson(runtime.RebuildRouteAcceleration(rebuildLandmarks))
+                                runtime => RenderJson(TextAdv2SampleWorldDevBootstrap.RebuildRouteAcceleration(runtime, rebuildLandmarks))
                             )
                         );
                         index += rebuildLandmarks is null ? 1 : 2;

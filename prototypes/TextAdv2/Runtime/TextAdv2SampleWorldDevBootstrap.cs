@@ -51,6 +51,26 @@ public static class TextAdv2SampleWorldDevBootstrap {
         return CreateFreshRuntime(repoDir);
     }
 
+    public static TextAdv2RouteAccelerationObservation RebuildRouteAcceleration(
+        TextAdv2Runtime runtime,
+        string? requestedLandmarks = null
+    ) {
+        ArgumentNullException.ThrowIfNull(runtime);
+
+        if (string.IsNullOrWhiteSpace(requestedLandmarks) || string.Equals(requestedLandmarks, "default", StringComparison.OrdinalIgnoreCase)) {
+            var defaultProfile = runtime.ResolveDefaultLandmarkProfile();
+            if (defaultProfile is null) {
+                throw new InvalidOperationException(
+                    "RebuildRouteAcceleration without an explicit landmark list requires a world with a known recommended landmark profile."
+                );
+            }
+
+            return runtime.RebuildRouteAcceleration(defaultProfile.LandmarkLocationIds, defaultProfile.ProfileName);
+        }
+
+        return runtime.RebuildRouteAcceleration(requestedLandmarks);
+    }
+
     private static WorldState CreateSampleWorld(Revision revision) {
         var world = TestWorldBuilder.Create(revision);
         TestWorldBuilder.PopulateSampleActors(world);

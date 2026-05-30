@@ -242,7 +242,7 @@ P2 后续修订说明：
 
 ### P5. sample-world / dev harness 下沉
 
-状态：建议改写并前移
+状态：进行中
 
 主张：
 
@@ -265,6 +265,13 @@ P2 后续修订说明：
 - runtime 不再直接依赖 `TestWorldBuilder`、默认 landmark profile、或 open-or-create/reset 语义。
 - 宿主层对哪些接口是 dev-only 有清晰边界。
 
+P5a 本轮落地结果：
+
+- sample-world world seed 已从 `TextAdv2Runtime` 中移出，改由 `TextAdv2SampleWorldDevBootstrap` 显式持有。
+- `RebuildRouteAcceleration` 的“无参/`default` => 推荐 profile”决策已从 runtime public seam 移到 `TextAdv2SampleWorldDevBootstrap`，宿主仍保留原有 dev/admin 行为，但 runtime 本体只接受显式 landmark 请求。
+- 新增回归测试，明确区分“通过 dev bootstrap 打开的 runtime 可以走 sample-world 默认 landmark profile”与“直接 `OpenExisting(...)` 的 runtime 不应隐式拥有该 policy”。
+- 下一自然入口转为 `P2b2c MoveActor typed seam`；`P5b` 继续留待后续处理 open-or-create/reset 与 admin surface 收口。
+
 ## 6. 不在本轮顺手做的事
 
 - 不把 `WorldTruth` 直接升级成完整剧情/知识/可见性系统。
@@ -276,19 +283,19 @@ P2 后续修订说明：
 
 推荐顺序改为：
 
-1. `P5a sample-world profile / 默认 landmark policy 下沉`
-2. `P2b2c MoveActor typed seam`
-3. `P4 canonical navigation graph seam`
-4. `P4c / P4-adjacent route plan typed seam`
-5. `P3b world editor / 写入权威收口`
-6. `P2c + P5b/P5c` 清理 text/dev/admin surface
+1. `P2b2c MoveActor typed seam`
+2. `P4 canonical navigation graph seam`
+3. `P4c / P4-adjacent route plan typed seam`
+4. `P3b world editor / 写入权威收口`
+5. `P5b open-or-create/reset 与 admin surface 收口`
+6. `P2c + P5c` 清理 text/dev/admin surface
 
 排序理由：
 
-- `P5a` 当前已经反向渗入 runtime 主对象，继续拖延会让后续每一包都带着 sample-world policy 包袱。
 - `MoveActor` 是剩余 runtime 核心 use case 中最自然的一条 typed seam。
 - `P4` 的真实价值高于 route plan public seam；应先收内部 graph 真源，再决定 route plan 的对外契约。
 - `P3b` 目前还缺承接设计，放在更后面更可行。
+- `P5a` 已经把 sample-world seed 与默认 landmark policy 从 runtime public seam 中剥离，后续可以把焦点切回 runtime 核心 typed seam 与 graph 真源。
 - text/dev/admin surface 最后一起清，会比一边做核心 seam 一边分散清理更稳。
 
 ## 8. 每包统一验证策略
@@ -304,10 +311,10 @@ P2 后续修订说明：
 
 ## 9. 当前推荐起点
 
-当前推荐从 `P5a sample-world profile / 默认 landmark policy 下沉` 开始。
+当前推荐从 `P2b2c MoveActor typed seam` 开始。
 
 原因：
 
-- sample-world policy 目前仍直接渗进 `TextAdv2Runtime`，已经开始反向污染后续各包的边界。
-- 它与 `MoveActor` seam、`P4` 相对正交，适合在继续扩张 runtime public surface 前先下沉。
-- 做完它之后，再推进 `MoveActor` seam 或 canonical graph seam，都会更干净。
+- `P5a` 已经完成最小闭环，runtime 与 sample/dev policy 之间的最显性耦合点已被压回显式 dev support 层。
+- `MoveActor` 现在是 runtime 核心 public seam 中最突出的剩余收口点，继续推进能让 `P2` 真正接近完成。
+- 等 `MoveActor` 收口后，再做 canonical navigation graph seam，会比现在同时穿插 dev policy 与核心 use case 更干净。

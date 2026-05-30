@@ -175,9 +175,10 @@ public sealed class TextAdv2Runtime : IDisposable {
         );
     }
 
-    public TextAdv2RouteAccelerationObservation RebuildRouteAcceleration(string? requestedLandmarks = null) {
+    public TextAdv2RouteAccelerationObservation RebuildRouteAcceleration(string requestedLandmarks) {
         EnsureNotDisposed();
-        return RebuildRouteAccelerationCore(requestedLandmarks);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestedLandmarks);
+        return RebuildRouteAccelerationCore(ParseExplicitLandmarkLocationIds(requestedLandmarks), "custom");
     }
 
     public TextAdv2RuntimeCommandResult TraceActorRoute(string actorId) {
@@ -272,13 +273,14 @@ public sealed class TextAdv2Runtime : IDisposable {
 
     private TextAdv2LogicalTimeObservation ObserveLogicalTime() => new(_logicalTick);
 
-    private TextAdv2RouteAccelerationObservation RebuildRouteAccelerationCore(string? requestedLandmarks) {
-        var rebuildRequest = ResolveLandmarkRebuildRequest(
-            _world,
-            requestedLandmarks,
-            _options.DefaultLandmarkProfileResolver
-        );
-        return _routeAcceleration.Rebuild(_world, rebuildRequest.LandmarkLocationIds, rebuildRequest.LandmarkProfileName);
+    internal TextAdv2RouteAccelerationObservation RebuildRouteAcceleration(
+        IEnumerable<string> landmarkLocationIds,
+        string landmarkProfileName
+    ) {
+        EnsureNotDisposed();
+        ArgumentNullException.ThrowIfNull(landmarkLocationIds);
+        ArgumentException.ThrowIfNullOrWhiteSpace(landmarkProfileName);
+        return RebuildRouteAccelerationCore(landmarkLocationIds, landmarkProfileName);
     }
 
     private TextAdv2LogicalTimeObservation AdvanceLogicalTime(long ticks) {
@@ -308,28 +310,16 @@ public sealed class TextAdv2Runtime : IDisposable {
         => $"{movement.ActorId}: {movement.FromLocationId} --{movement.ExitName}/{movement.PassageId}--> {movement.ToLocationId}"
             + $" | {movement.TravelMode.ToStorageValue()} | cost={movement.TravelCost}";
 
-    private static LandmarkRebuildRequest ResolveLandmarkRebuildRequest(
-        WorldState world,
-        string? value,
-        Func<WorldState, TextAdv2DefaultLandmarkProfile?>? defaultLandmarkProfileResolver
+    internal TextAdv2DefaultLandmarkProfile? ResolveDefaultLandmarkProfile() {
+        EnsureNotDisposed();
+        return _options.DefaultLandmarkProfileResolver?.Invoke(_world);
+    }
+
+    private TextAdv2RouteAccelerationObservation RebuildRouteAccelerationCore(
+        IEnumerable<string> landmarkLocationIds,
+        string landmarkProfileName
     ) {
-        ArgumentNullException.ThrowIfNull(world);
-
-        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "default", StringComparison.OrdinalIgnoreCase)) {
-            var defaultProfile = defaultLandmarkProfileResolver?.Invoke(world);
-            if (defaultProfile is not null) {
-                return new LandmarkRebuildRequest(
-                    [.. defaultProfile.LandmarkLocationIds],
-                    defaultProfile.ProfileName
-                );
-            }
-
-            throw new InvalidOperationException(
-                "RebuildRouteAcceleration without an explicit landmark list requires a world with a known recommended landmark profile."
-            );
-        }
-
-        return new LandmarkRebuildRequest(ParseExplicitLandmarkLocationIds(value), "custom");
+        return _routeAcceleration.Rebuild(_world, landmarkLocationIds, landmarkProfileName);
     }
 
     private static string[] ParseExplicitLandmarkLocationIds(string value) {
@@ -341,9 +331,6 @@ public sealed class TextAdv2Runtime : IDisposable {
 
         return landmarkLocationIds;
     }
-
-    private sealed record LandmarkRebuildRequest(string[] LandmarkLocationIds, string LandmarkProfileName);
-
     private void EnsureNotDisposed() {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }

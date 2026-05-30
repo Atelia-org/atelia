@@ -28,7 +28,7 @@ app.MapGet("/admin/route-acceleration",
 );
 app.MapPost("/admin/route-acceleration/rebuild",
     (string? landmarks, TextAdv2RuntimeService runtime)
-    => ExecuteJson(runtime, x => x.RebuildRouteAcceleration(landmarks))
+    => ExecuteJson(runtime, x => TextAdv2SampleWorldDevBootstrap.RebuildRouteAcceleration(x, landmarks))
 );
 app.MapPost("/admin/reset-sample-world",
     (TextAdv2RuntimeService runtime) => {
