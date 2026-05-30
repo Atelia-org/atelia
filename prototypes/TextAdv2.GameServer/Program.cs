@@ -150,6 +150,7 @@ file static class TextAdv2HostJson {
 
     private static JsonSerializerOptions CreateOptions() {
         var options = new JsonSerializerOptions {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true,
         };
         options.Converters.Add(new JsonStringEnumConverter());

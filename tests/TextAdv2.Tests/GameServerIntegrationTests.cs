@@ -9,6 +9,8 @@ using Xunit;
 namespace Atelia.TextAdv2.Tests;
 
 public class GameServerIntegrationTests {
+    private static readonly JsonSerializerOptions HostJsonOptions = new(JsonSerializerDefaults.Web);
+
     [Fact]
     public async Task AdminWorld_ReturnsPlainTextWorldDumpAsync() {
         string repoDir = CreateTempRepoDir();
@@ -45,10 +47,13 @@ public class GameServerIntegrationTests {
             Assert.Equal("square", initialObservation.Location.LocationId);
 
             using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
-            var moveJson = await ReadJsonAsync<TextAdv2RuntimeActorMovementObservation>(moveResponse);
+            string moveText = await moveResponse.Content.ReadAsStringAsync();
+            var moveJson = JsonSerializer.Deserialize<TextAdv2RuntimeActorMovementObservation>(moveText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
             Assert.Equal("application/json", moveResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(moveJson);
+            Assert.Contains("\"actorId\"", moveText, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"ActorId\"", moveText, StringComparison.Ordinal);
             Assert.Equal("scout", moveJson.ActorId);
             Assert.Equal("ridge", moveJson.ToLocationId);
             Assert.Equal("land", moveJson.TravelMode);
@@ -135,7 +140,7 @@ public class GameServerIntegrationTests {
 
             using var initialTime = await client.GetAsync("/admin/time");
             string initialText = await initialTime.Content.ReadAsStringAsync();
-            var initialTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(initialText);
+            var initialTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(initialText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, initialTime.StatusCode);
             Assert.Equal("application/json", initialTime.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(initialTimeJson);
@@ -143,7 +148,7 @@ public class GameServerIntegrationTests {
 
             using var advancedTime = await client.PostAsync("/admin/advance-time/9", content: null);
             string advancedText = await advancedTime.Content.ReadAsStringAsync();
-            var advancedTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(advancedText);
+            var advancedTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(advancedText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, advancedTime.StatusCode);
             Assert.Equal("application/json", advancedTime.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(advancedTimeJson);
@@ -154,7 +159,7 @@ public class GameServerIntegrationTests {
 
             using var resetTime = await client.GetAsync("/admin/time");
             string resetTimeText = await resetTime.Content.ReadAsStringAsync();
-            var resetTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(resetTimeText);
+            var resetTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(resetTimeText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, resetTime.StatusCode);
             Assert.Equal("application/json", resetTime.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(resetTimeJson);
@@ -222,7 +227,7 @@ public class GameServerIntegrationTests {
 
             using var adminAcceleration = await client.GetAsync("/admin/route-acceleration");
             string adminAccelerationText = await adminAcceleration.Content.ReadAsStringAsync();
-            var adminAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(adminAccelerationText);
+            var adminAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(adminAccelerationText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, adminAcceleration.StatusCode);
             Assert.Equal("application/json", adminAcceleration.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminAccelerationJson);
@@ -233,7 +238,7 @@ public class GameServerIntegrationTests {
 
             using var rebuiltAcceleration = await client.PostAsync("/admin/route-acceleration/rebuild", content: null);
             string rebuiltAccelerationText = await rebuiltAcceleration.Content.ReadAsStringAsync();
-            var rebuiltAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(rebuiltAccelerationText);
+            var rebuiltAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(rebuiltAccelerationText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, rebuiltAcceleration.StatusCode);
             Assert.Equal("application/json", rebuiltAcceleration.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(rebuiltAccelerationJson);
@@ -284,7 +289,7 @@ public class GameServerIntegrationTests {
                 content: null
             );
             string jsonText = await response.Content.ReadAsStringAsync();
-            var json = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(jsonText);
+            var json = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(jsonText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
@@ -325,7 +330,7 @@ public class GameServerIntegrationTests {
             using var timeAfterRestart = await secondClient.GetAsync("/admin/time");
             string timeText = await timeAfterRestart.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, timeAfterRestart.StatusCode);
-            Assert.Contains("\"CurrentTick\":0", timeText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.Contains("\"currentTick\":0", timeText.Replace(" ", string.Empty), StringComparison.Ordinal);
 
             using var traceAfterRestart = await secondClient.GetAsync("/actors/scout/route-trace");
             string traceText = await traceAfterRestart.Content.ReadAsStringAsync();
@@ -347,7 +352,7 @@ public class GameServerIntegrationTests {
     private static TextAdv2GameServerFactory CreateFactory(string repoDir) => new(repoDir);
 
     private static async Task<T?> ReadJsonAsync<T>(HttpResponseMessage response)
-        => JsonSerializer.Deserialize<T>(await response.Content.ReadAsStringAsync());
+        => JsonSerializer.Deserialize<T>(await response.Content.ReadAsStringAsync(), HostJsonOptions);
 
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-gameserver-tests-{Guid.NewGuid():N}");
