@@ -290,19 +290,18 @@ P5a 本轮落地结果：
 
 推荐顺序改为：
 
-1. `P2b2c MoveActor typed seam`
-2. `P4 canonical navigation graph seam`
-3. `P4c / P4-adjacent route plan typed seam`
-4. `P3b world editor / 写入权威收口`
-5. `P5b open-or-create/reset 与 admin surface 收口`
-6. `P2c + P5c` 清理 text/dev/admin surface
+1. `P4 canonical navigation graph seam`
+2. `P4c / P4-adjacent route plan typed seam`
+3. `P3b world editor / 写入权威收口`
+4. `P5b open-or-create/reset 与 admin surface 收口`
+5. `P2c + P5c` 清理 text/dev/admin surface
 
 排序理由：
 
-- `MoveActor` 是剩余 runtime 核心 use case 中最自然的一条 typed seam。
 - `P4` 的真实价值高于 route plan public seam；应先收内部 graph 真源，再决定 route plan 的对外契约。
 - `P3b` 目前还缺承接设计，放在更后面更可行。
 - `P5a` 已经把 sample-world seed 与默认 landmark policy 从 runtime public seam 中剥离，后续可以把焦点切回 runtime 核心 typed seam 与 graph 真源。
+- `P2b2c` 已完成，runtime 核心 use case 的 public seam 已进一步收口，下一步最值得解决的是导航图单一真源问题。
 - text/dev/admin surface 最后一起清，会比一边做核心 seam 一边分散清理更稳。
 
 ## 8. 每包统一验证策略
@@ -318,10 +317,10 @@ P5a 本轮落地结果：
 
 ## 9. 当前推荐起点
 
-当前推荐从 `P2b2c MoveActor typed seam` 开始。
+当前推荐从 `P4 canonical navigation graph seam` 开始。
 
 原因：
 
 - `P5a` 已经完成最小闭环，runtime 与 sample/dev policy 之间的最显性耦合点已被压回显式 dev support 层。
-- `MoveActor` 现在是 runtime 核心 public seam 中最突出的剩余收口点，继续推进能让 `P2` 真正接近完成。
-- 等 `MoveActor` 收口后，再做 canonical navigation graph seam，会比现在同时穿插 dev policy 与核心 use case 更干净。
+- `P2b2c` 也已完成，runtime 核心 public seam 已从 observation 延伸到核心写入 use case。
+- 当前最突出的剩余复杂度集中在导航图派生结构的多处复用与隐式共享上，优先做 `P4` 会比先清 text/dev/admin surface 更值当。
