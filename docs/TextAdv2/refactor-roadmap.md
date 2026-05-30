@@ -127,6 +127,14 @@ P2b2a 本轮落地结果：
 - `GameServer` / `E2eCli` 对应入口已迁到宿主边界序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
 - 下一自然入口是 `P2b2b`：决定 navigation observation 是否沿用同类 runtime-facing DTO 策略，或与 `P4 canonical navigation graph seam` 一起收口。
 
+P2b2b 本轮落地结果：
+
+- `ObserveNavigation(string)` 已直接返回 `TextAdv2RuntimeLocationNavigationObservation`。
+- `ObserveActorNavigation(string)` 已直接返回 `TextAdv2RuntimeActorNavigationObservation`。
+- 新 seam 没有直接公开 `ReadOnlyView.NavigationObservation*`，也没有把 `TravelMode` 公开成 public enum；runtime 继续在边界前把 travel mode 投影成字符串 token。
+- `GameServer` / `E2eCli` 对应 navigation 入口已迁到宿主边界序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
+- 下一自然入口是 `P2b2c`：决定 `MoveActor` 是否也采用独立 runtime-facing DTO seam，或先转入 `P4 canonical navigation graph seam` 做内部图真源收口。
+
 ### P3. 收紧 world root 与写入权威
 
 主张：
