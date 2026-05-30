@@ -12,10 +12,12 @@
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/TextAdv2/TextAdv2.csproj" />
+    <ProjectReference Include="../../prototypes/TextAdv2.GameServer/TextAdv2.GameServer.csproj" />
   </ItemGroup>
 
 </Project>

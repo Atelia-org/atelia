@@ -9,6 +9,8 @@ namespace Atelia.TextAdv2.WorldTruth;
 /// 普通双向路、双向非对称代价、单向禁行、水路、传送、空路、共享说明、本地出口视角与方向说明。
 /// </summary>
 internal static class TestWorldBuilder {
+    public const string RecommendedLandmarkProfileName = "sample-world-default";
+
     internal static class ActorIds {
         public const string Boatman = "boatman";
         public const string Scout = "scout";
@@ -166,5 +168,58 @@ internal static class TestWorldBuilder {
         ridgeAerieWinch.FromAToB.TravelCostModifier = 1;
         ridgeAerieWinch.FromAToB.DirectionConditionNote = "Operators slow the ascent when the wind shifts.";
         ridgeAerieWinch.FromBToA.DirectionConditionNote = "Descending is steady once the cradle is balanced.";
+    }
+
+    public static bool TryGetRecommendedLandmarkLocationIds(WorldState world, out string[] landmarkLocationIds) {
+        ArgumentNullException.ThrowIfNull(world);
+
+        var actualLocationIds = world.EnumerateLocations()
+            .Select(location => location.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var actualPassageIds = world.EnumeratePassages()
+            .Select(passage => passage.Id)
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (!ContainsAll(actualLocationIds,
+            [
+                LocationIds.Aerie,
+                LocationIds.Delta,
+                LocationIds.Harbor,
+                LocationIds.Ridge,
+                LocationIds.Shrine,
+                LocationIds.Square,
+                LocationIds.Village,
+            ]
+        )
+            || !ContainsAll(actualPassageIds,
+                [
+                PassageIds.HarborDeltaCurrent,
+                PassageIds.RidgeAerieWinch,
+                PassageIds.SquareRidgeTrail,
+                PassageIds.SquareShrineGate,
+                PassageIds.VillageSquareRoad,
+            ]
+            )) {
+            landmarkLocationIds = [];
+            return false;
+        }
+
+        landmarkLocationIds = [
+            LocationIds.Aerie,
+            LocationIds.Harbor,
+            LocationIds.Shrine,
+        ];
+        return true;
+    }
+
+    private static bool ContainsAll(HashSet<string> actualIds, IEnumerable<string> expectedIds) {
+        ArgumentNullException.ThrowIfNull(actualIds);
+        ArgumentNullException.ThrowIfNull(expectedIds);
+
+        foreach (string expectedId in expectedIds) {
+            if (!actualIds.Contains(expectedId)) { return false; }
+        }
+
+        return true;
     }
 }

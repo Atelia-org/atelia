@@ -21,7 +21,17 @@ internal sealed record LocationRoutePlanObservation(
     RoutePlanStatus Status,
     int StepCount,
     int? TotalTravelCost,
-    LocationRoutePlanStepObservation[] Steps
+    LocationRoutePlanStepObservation[] Steps,
+    LocationRoutePlanSearchStatsObservation SearchStats
+);
+
+internal sealed record LocationRoutePlanSearchStatsObservation(
+    string HeuristicName,
+    int LandmarkCount,
+    int ExpandedNodeCount,
+    int RelaxedEdgeCount,
+    int FrontierPeakSize,
+    int StaleStateSkipCount
 );
 
 /// <summary>
@@ -77,6 +87,12 @@ internal static class LocationRoutePlanTextRenderer {
 
         builder.Append(
             $"summary: steps={plan.StepCount} | totalCost={(plan.TotalTravelCost is null ? "<unreachable>" : plan.TotalTravelCost.Value)}"
+        );
+        builder.AppendLine();
+        builder.Append(
+            $"search: heuristic={plan.SearchStats.HeuristicName} | landmarks={plan.SearchStats.LandmarkCount}"
+            + $" | expanded={plan.SearchStats.ExpandedNodeCount} | relaxed={plan.SearchStats.RelaxedEdgeCount}"
+            + $" | frontierPeak={plan.SearchStats.FrontierPeakSize} | staleSkips={plan.SearchStats.StaleStateSkipCount}"
         );
         return builder.ToString();
     }

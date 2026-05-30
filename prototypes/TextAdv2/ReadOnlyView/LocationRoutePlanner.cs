@@ -49,6 +49,7 @@ internal static class LocationRoutePlanner {
         WorldState.ValidateEntityId(fromLocationId, nameof(fromLocationId));
         WorldState.ValidateEntityId(toLocationId, nameof(toLocationId));
         var planningOptions = LocationRoutePlanningOptions.Resolve(options);
+        var heuristicObservation = planningOptions.Heuristic.Observe();
 
         var fromLocation = world.GetLocation(fromLocationId);
         var toLocation = world.GetLocation(toLocationId);
@@ -62,11 +63,16 @@ internal static class LocationRoutePlanner {
                 RoutePlanStatus.AlreadyThere,
                 0,
                 0,
-                []
+                [],
+                CreateSearchStats(heuristicObservation, 0, 0, 0, 0)
             );
         }
 
         var frontier = new PriorityQueue<SearchState, SearchPriority>();
+        int expandedNodeCount = 0;
+        int relaxedEdgeCount = 0;
+        int staleStateSkipCount = 0;
+        int frontierPeakSize = 0;
         var best = new Dictionary<string, BestRouteCandidate>(StringComparer.Ordinal) {
             [fromLocationId] = new BestRouteCandidate(0, string.Empty, PreviousLocationId: null, IncomingEdge: null),
         };
@@ -79,16 +85,26 @@ internal static class LocationRoutePlanner {
                 string.Empty
             )
         );
+        frontierPeakSize = Math.Max(frontierPeakSize, frontier.Count);
 
         while (frontier.TryDequeue(out var current, out _)) {
             if (!best.TryGetValue(current.LocationId, out var bestForCurrent)
                 || current.CostSoFar != bestForCurrent.CostSoFar
                 || !string.Equals(current.PathKey, bestForCurrent.PathKey, StringComparison.Ordinal)) {
+                staleStateSkipCount++;
                 continue;
             }
 
+            expandedNodeCount++;
+
             if (string.Equals(current.LocationId, toLocationId, StringComparison.Ordinal)) {
-                return BuildFoundPlan(world, fromLocation, toLocation, best);
+                return BuildFoundPlan(
+                    world,
+                    fromLocation,
+                    toLocation,
+                    best,
+                    CreateSearchStats(heuristicObservation, expandedNodeCount, relaxedEdgeCount, frontierPeakSize, staleStateSkipCount)
+                );
             }
 
             var navigation = NavigationObservationProjector.ObserveLocationNavigation(world, current.LocationId);
@@ -103,16 +119,16 @@ internal static class LocationRoutePlanner {
 
                 int newCost = current.CostSoFar + edge.TravelCost;
                 string newPathKey = AppendPathKey(current.PathKey, edge);
-                if (!ShouldReplace(best, edge.TargetLocationId, newCost, newPathKey)) {
-                    continue;
-                }
+                if (!ShouldReplace(best, edge.TargetLocationId, newCost, newPathKey)) { continue; }
 
                 best[edge.TargetLocationId] = new BestRouteCandidate(newCost, newPathKey, current.LocationId, edge);
+                relaxedEdgeCount++;
                 int estimatedRemaining = EstimateRemainingCost(planningOptions.Heuristic, edge.TargetLocationId, toLocationId);
                 frontier.Enqueue(
                     new SearchState(edge.TargetLocationId, newCost, newPathKey),
                     new SearchPriority(newCost + estimatedRemaining, newCost, edge.TargetLocationId, newPathKey)
                 );
+                frontierPeakSize = Math.Max(frontierPeakSize, frontier.Count);
             }
         }
 
@@ -124,7 +140,8 @@ internal static class LocationRoutePlanner {
             RoutePlanStatus.Unreachable,
             0,
             null,
-            []
+            [],
+            CreateSearchStats(heuristicObservation, expandedNodeCount, relaxedEdgeCount, frontierPeakSize, staleStateSkipCount)
         );
     }
 
@@ -132,7 +149,8 @@ internal static class LocationRoutePlanner {
         WorldState world,
         Location fromLocation,
         Location toLocation,
-        IReadOnlyDictionary<string, BestRouteCandidate> best
+        IReadOnlyDictionary<string, BestRouteCandidate> best,
+        LocationRoutePlanSearchStatsObservation searchStats
     ) {
         var reversedSegments = new List<RouteSegment>();
         string currentLocationId = toLocation.Id;
@@ -179,7 +197,27 @@ internal static class LocationRoutePlanner {
             RoutePlanStatus.Found,
             steps.Length,
             cumulativeCost,
-            steps
+            steps,
+            searchStats
+        );
+    }
+
+    private static LocationRoutePlanSearchStatsObservation CreateSearchStats(
+        LocationRouteHeuristicObservation heuristicObservation,
+        int expandedNodeCount,
+        int relaxedEdgeCount,
+        int frontierPeakSize,
+        int staleStateSkipCount
+    ) {
+        ArgumentNullException.ThrowIfNull(heuristicObservation);
+
+        return new LocationRoutePlanSearchStatsObservation(
+            heuristicObservation.Name,
+            heuristicObservation.LandmarkCount,
+            expandedNodeCount,
+            relaxedEdgeCount,
+            frontierPeakSize,
+            staleStateSkipCount
         );
     }
 
@@ -189,13 +227,9 @@ internal static class LocationRoutePlanner {
         int newCost,
         string newPathKey
     ) {
-        if (!best.TryGetValue(locationId, out var existing)) {
-            return true;
-        }
+        if (!best.TryGetValue(locationId, out var existing)) { return true; }
 
-        if (newCost < existing.CostSoFar) {
-            return true;
-        }
+        if (newCost < existing.CostSoFar) { return true; }
 
         return newCost == existing.CostSoFar
             && string.CompareOrdinal(newPathKey, existing.PathKey) < 0;
@@ -238,19 +272,13 @@ internal static class LocationRoutePlanner {
         : IComparable<SearchPriority> {
         public int CompareTo(SearchPriority other) {
             int byEstimated = EstimatedCost.CompareTo(other.EstimatedCost);
-            if (byEstimated != 0) {
-                return byEstimated;
-            }
+            if (byEstimated != 0) { return byEstimated; }
 
             int byCost = CostSoFar.CompareTo(other.CostSoFar);
-            if (byCost != 0) {
-                return byCost;
-            }
+            if (byCost != 0) { return byCost; }
 
             int byLocation = string.CompareOrdinal(LocationId, other.LocationId);
-            if (byLocation != 0) {
-                return byLocation;
-            }
+            if (byLocation != 0) { return byLocation; }
 
             return string.CompareOrdinal(PathKey, other.PathKey);
         }

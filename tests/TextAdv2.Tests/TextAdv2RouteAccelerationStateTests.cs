@@ -1,0 +1,77 @@
+using Atelia.StateJournal;
+using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.WorldTruth;
+using Xunit;
+
+namespace Atelia.TextAdv2.Tests;
+
+public class TextAdv2RouteAccelerationStateTests {
+    [Fact]
+    public void Observe_AfterNavigationGraphMutation_ReportsStaleAndFallsBackToZeroHeuristic() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var routeAcceleration = new TextAdv2RouteAccelerationState();
+
+            var rebuilt = routeAcceleration.Rebuild(
+                world,
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
+            );
+            world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail).BaseTravelCost = 9;
+            var observedAfterMutation = routeAcceleration.Observe(world);
+            var planningOptionsAfterMutation = routeAcceleration.GetPlanningOptions(world);
+
+            Assert.Equal("landmark", rebuilt.PlannerMode);
+            Assert.Equal("active", rebuilt.SnapshotStatus);
+            Assert.Equal("zero", observedAfterMutation.PlannerMode);
+            Assert.Equal("stale", observedAfterMutation.SnapshotStatus);
+            Assert.Equal("landmark", observedAfterMutation.SnapshotKind);
+            Assert.Equal(2, observedAfterMutation.LandmarkCount);
+            Assert.Null(planningOptionsAfterMutation);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void Observe_AfterActorMovement_RemainsActiveBecauseNavigationGraphDidNotChange() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+            var routeAcceleration = new TextAdv2RouteAccelerationState();
+
+            routeAcceleration.Rebuild(
+                world,
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
+            );
+
+            world.MoveActorAlongPassage(TestWorldBuilder.ActorIds.Scout, TestWorldBuilder.PassageIds.SquareRidgeTrail);
+            var observedAfterMovement = routeAcceleration.Observe(world);
+            var planningOptionsAfterMovement = routeAcceleration.GetPlanningOptions(world);
+
+            Assert.Equal("landmark", observedAfterMovement.PlannerMode);
+            Assert.Equal("active", observedAfterMovement.SnapshotStatus);
+            Assert.NotNull(planningOptionsAfterMovement);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    private static string CreateTempRepoDir()
+        => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-route-acceleration-tests-{Guid.NewGuid():N}");
+
+    private static void DeleteDirectoryIfExists(string repoDir) {
+        if (Directory.Exists(repoDir)) {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+}

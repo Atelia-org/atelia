@@ -25,6 +25,8 @@ public class LocationRoutePlannerTests {
             Assert.Equal(RoutePlanStatus.Found, plan.Status);
             Assert.Equal(3, plan.StepCount);
             Assert.Equal(11, plan.TotalTravelCost);
+            Assert.Equal("zero", plan.SearchStats.HeuristicName);
+            Assert.Equal(0, plan.SearchStats.LandmarkCount);
             Assert.Collection(
                 plan.Steps,
                 step => {
@@ -48,6 +50,63 @@ public class LocationRoutePlannerTests {
                     Assert.Equal(5, step.TravelCost);
                     Assert.Equal(11, step.CumulativeTravelCost);
                 }
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void PlanShortestRoute_WithLandmarkHeuristic_ReportsSearchStatsAndShrinksExpandedNodes() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = WorldState.Create(revision);
+
+            var start = world.CreateLocation("start", "Start", "search stats start");
+            var fast = world.CreateLocation("fast", "Fast", "short branch");
+            var slow1 = world.CreateLocation("slow1", "Slow1", "slow branch 1");
+            var slow2 = world.CreateLocation("slow2", "Slow2", "slow branch 2");
+            var goal = world.CreateLocation("goal", "Goal", "search stats goal");
+
+            world.CreatePassage("start-fast", start.Id, "fast", fast.Id, "back", TravelMode.Land, 1);
+            world.CreatePassage("fast-goal", fast.Id, "finish", goal.Id, "return-fast", TravelMode.Land, 1);
+            world.CreatePassage("start-slow1", start.Id, "slow", slow1.Id, "return-start", TravelMode.Land, 1);
+            world.CreatePassage("slow1-slow2", slow1.Id, "slower", slow2.Id, "return-slow1", TravelMode.Land, 1);
+            world.CreatePassage("slow2-goal", slow2.Id, "late-finish", goal.Id, "return-slow2", TravelMode.Land, 10);
+
+            var zeroPlan = LocationRoutePlanner.PlanShortestRoute(world, start.Id, goal.Id);
+            var heuristic = LocationLandmarkHeuristicSnapshot.Create(world, [goal.Id]);
+            var landmarkPlan = LocationRoutePlanner.PlanShortestRoute(
+                world,
+                start.Id,
+                goal.Id,
+                new LocationRoutePlanningOptions(heuristic)
+            );
+
+            Assert.Equal(RoutePlanStatus.Found, zeroPlan.Status);
+            Assert.Equal(RoutePlanStatus.Found, landmarkPlan.Status);
+            Assert.Equal(2, zeroPlan.TotalTravelCost);
+            Assert.Equal(2, landmarkPlan.TotalTravelCost);
+            Assert.Equal("zero", zeroPlan.SearchStats.HeuristicName);
+            Assert.Equal(0, zeroPlan.SearchStats.LandmarkCount);
+            Assert.Equal("landmark", landmarkPlan.SearchStats.HeuristicName);
+            Assert.Equal(1, landmarkPlan.SearchStats.LandmarkCount);
+            Assert.True(
+                landmarkPlan.SearchStats.ExpandedNodeCount < zeroPlan.SearchStats.ExpandedNodeCount,
+                $"Expected landmark heuristic to expand fewer nodes than zero heuristic, but saw zero={zeroPlan.SearchStats.ExpandedNodeCount}, landmark={landmarkPlan.SearchStats.ExpandedNodeCount}."
+            );
+            Assert.True(
+                landmarkPlan.SearchStats.RelaxedEdgeCount <= zeroPlan.SearchStats.RelaxedEdgeCount,
+                $"Expected landmark heuristic to relax no more edges than zero heuristic, but saw zero={zeroPlan.SearchStats.RelaxedEdgeCount}, landmark={landmarkPlan.SearchStats.RelaxedEdgeCount}."
+            );
+            Assert.Collection(
+                landmarkPlan.Steps,
+                step => Assert.Equal("start-fast", step.PassageId),
+                step => Assert.Equal("fast-goal", step.PassageId)
             );
         }
         finally {
@@ -333,17 +392,20 @@ ROUTE PLAN from=village (Village) to=aerie (Aerie) status=found
 2. square --north gate/square-ridge-trail--> ridge | land | cost=5 | total=6
 3. ridge --cliff lift/ridge-aerie-winch--> aerie | air | cost=5 | total=11
 summary: steps=3 | totalCost=11
+search: heuristic=zero | landmarks=0 | expanded=5 | relaxed=4 | frontierPeak=2 | staleSkips=0
 """;
 
     private const string ExpectedAlreadyTherePlanText = """
 ROUTE PLAN from=shrine (Shrine) to=shrine (Shrine) status=already-there
 <already at destination>
 summary: steps=0 | totalCost=0
+search: heuristic=zero | landmarks=0 | expanded=0 | relaxed=0 | frontierPeak=0 | staleSkips=0
 """;
 
     private const string ExpectedUnreachablePlanText = """
 ROUTE PLAN from=delta (Delta) to=harbor (Harbor) status=unreachable
 <no route found>
 summary: steps=0 | totalCost=<unreachable>
+search: heuristic=zero | landmarks=0 | expanded=1 | relaxed=0 | frontierPeak=1 | staleSkips=0
 """;
 }

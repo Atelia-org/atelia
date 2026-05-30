@@ -26,9 +26,7 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
             .OrderBy(landmarkLocationId => landmarkLocationId, StringComparer.Ordinal)
             .ToArray();
 
-        if (landmarkIds.Length == 0) {
-            throw new ArgumentException("At least one landmark location ID is required.", nameof(landmarkLocationIds));
-        }
+        if (landmarkIds.Length == 0) { throw new ArgumentException("At least one landmark location ID is required.", nameof(landmarkLocationIds)); }
 
         var graph = BuildGraph(world);
         var reverseGraph = BuildReverseGraph(graph);
@@ -64,6 +62,8 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
 
         return Math.Max(bestLowerBound, 0);
     }
+
+    public LocationRouteHeuristicObservation Observe() => new("landmark", _tables.Length);
 
     private static string ValidateAndNormalizeLandmark(WorldState world, string landmarkLocationId) {
         WorldState.ValidateEntityId(landmarkLocationId, nameof(landmarkLocationId));
@@ -133,9 +133,7 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
             int currentCost = best[currentLocationId];
             foreach (var edge in graph[currentLocationId]) {
                 int newCost = currentCost + edge.TravelCost;
-                if (best.TryGetValue(edge.TargetLocationId, out int existingCost) && newCost >= existingCost) {
-                    continue;
-                }
+                if (best.TryGetValue(edge.TargetLocationId, out int existingCost) && newCost >= existingCost) { continue; }
 
                 best[edge.TargetLocationId] = newCost;
                 frontier.Enqueue(edge.TargetLocationId, new LandmarkSearchPriority(newCost, edge.TargetLocationId));
@@ -155,9 +153,7 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
     private readonly record struct LandmarkSearchPriority(int CostSoFar, string LocationId) : IComparable<LandmarkSearchPriority> {
         public int CompareTo(LandmarkSearchPriority other) {
             int byCost = CostSoFar.CompareTo(other.CostSoFar);
-            if (byCost != 0) {
-                return byCost;
-            }
+            if (byCost != 0) { return byCost; }
 
             return string.CompareOrdinal(LocationId, other.LocationId);
         }
