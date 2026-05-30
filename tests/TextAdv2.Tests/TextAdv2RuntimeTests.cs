@@ -316,6 +316,27 @@ public class TextAdv2RuntimeTests {
         }
     }
 
+    [Fact]
+    public void OpenExisting_WithoutDevBootstrapPolicy_RejectsImplicitDefaultLandmarks() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (TextAdv2SampleWorldDevBootstrap.CreateFreshRuntime(repoDir)) {
+            }
+
+            using var runtime = TextAdv2Runtime.OpenExisting(repoDir);
+            var exception = Assert.Throws<InvalidOperationException>(() => runtime.RebuildRouteAcceleration());
+
+            Assert.Equal(
+                "RebuildRouteAcceleration without an explicit landmark list requires a world with a known recommended landmark profile.",
+                exception.Message
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-runtime-tests-{Guid.NewGuid():N}");
 

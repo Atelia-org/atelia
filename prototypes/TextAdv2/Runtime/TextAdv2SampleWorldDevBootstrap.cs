@@ -1,3 +1,6 @@
+using Atelia.StateJournal;
+using Atelia.TextAdv2.WorldTruth;
+
 namespace Atelia.TextAdv2.Runtime;
 
 /// <summary>
@@ -6,18 +9,21 @@ namespace Atelia.TextAdv2.Runtime;
 /// </summary>
 public static class TextAdv2SampleWorldDevBootstrap {
     private const string LegacyRuntimeSidecarFileName = ".textadv2-runtime-state.json";
+    private static readonly TextAdv2RuntimeOptions SampleWorldRuntimeOptions = new() {
+        DefaultLandmarkProfileResolver = TryResolveDefaultLandmarkProfile,
+    };
 
     public static TextAdv2Runtime CreateTemporaryRuntime()
-        => TextAdv2Runtime.CreateTemporarySampleWorld();
+        => CreateFreshRuntime(Path.Combine(Path.GetTempPath(), $"atelia-textadv2-{Guid.NewGuid():N}"));
 
     public static TextAdv2Runtime CreateFreshRuntime(string repoDir)
-        => TextAdv2Runtime.CreateSampleWorld(repoDir);
+        => TextAdv2Runtime.CreateNew(repoDir, CreateSampleWorld, SampleWorldRuntimeOptions);
 
     public static TextAdv2Runtime OpenOrCreateRuntime(string repoDir) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
 
         if (!Directory.Exists(repoDir)) {
-            return TextAdv2Runtime.CreateSampleWorld(repoDir);
+            return CreateFreshRuntime(repoDir);
         }
 
         string[] entries = Directory.EnumerateFileSystemEntries(repoDir).ToArray();
@@ -27,12 +33,12 @@ public static class TextAdv2SampleWorldDevBootstrap {
 
         if (containsOnlyLegacySidecar) {
             File.Delete(legacySidecarPath);
-            return TextAdv2Runtime.CreateSampleWorld(repoDir);
+            return CreateFreshRuntime(repoDir);
         }
 
         return entries.Length > 0
-            ? TextAdv2Runtime.OpenExisting(repoDir)
-            : TextAdv2Runtime.CreateSampleWorld(repoDir);
+            ? TextAdv2Runtime.OpenExisting(repoDir, SampleWorldRuntimeOptions)
+            : CreateFreshRuntime(repoDir);
     }
 
     public static TextAdv2Runtime ResetRuntime(string repoDir) {
@@ -42,6 +48,21 @@ public static class TextAdv2SampleWorldDevBootstrap {
             Directory.Delete(repoDir, recursive: true);
         }
 
-        return TextAdv2Runtime.CreateSampleWorld(repoDir);
+        return CreateFreshRuntime(repoDir);
+    }
+
+    private static WorldState CreateSampleWorld(Revision revision) {
+        var world = TestWorldBuilder.Create(revision);
+        TestWorldBuilder.PopulateSampleActors(world);
+        return world;
+    }
+
+    private static TextAdv2DefaultLandmarkProfile? TryResolveDefaultLandmarkProfile(WorldState world) {
+        return TestWorldBuilder.TryGetRecommendedLandmarkLocationIds(world, out var recommendedLandmarkLocationIds)
+            ? new TextAdv2DefaultLandmarkProfile(
+                TestWorldBuilder.RecommendedLandmarkProfileName,
+                recommendedLandmarkLocationIds
+            )
+            : null;
     }
 }

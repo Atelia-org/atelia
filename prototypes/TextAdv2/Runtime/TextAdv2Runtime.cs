@@ -24,13 +24,14 @@ public sealed class TextAdv2Runtime : IDisposable {
 
     private readonly Repository _repo;
     private readonly WorldState _world;
+    private readonly TextAdv2RuntimeOptions _options;
     private readonly TextAdv2RouteAccelerationState _routeAcceleration = new();
     private readonly Dictionary<string, List<ActorMovementHistoryEntry>> _movementHistoryByActor = new(StringComparer.Ordinal);
     private readonly JsonSerializerOptions _jsonOptions;
     private long _logicalTick;
     private bool _disposed;
 
-    private TextAdv2Runtime(string repoDir, Repository repo, WorldState world) {
+    private TextAdv2Runtime(string repoDir, Repository repo, WorldState world, TextAdv2RuntimeOptions? options) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(world);
@@ -38,32 +39,32 @@ public sealed class TextAdv2Runtime : IDisposable {
         RepoDir = repoDir;
         _repo = repo;
         _world = world;
+        _options = options ?? TextAdv2RuntimeOptions.Default;
         _jsonOptions = CreateJsonOptions();
     }
 
     public string RepoDir { get; }
 
-    public static TextAdv2Runtime CreateTemporarySampleWorld() {
-        string repoDir = Path.Combine(Path.GetTempPath(), $"atelia-textadv2-{Guid.NewGuid():N}");
-        return CreateSampleWorld(repoDir);
-    }
-
-    public static TextAdv2Runtime CreateSampleWorld(string repoDir) {
+    internal static TextAdv2Runtime CreateNew(
+        string repoDir,
+        Func<Revision, WorldState> worldFactory,
+        TextAdv2RuntimeOptions? options = null
+    ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
+        ArgumentNullException.ThrowIfNull(worldFactory);
 
         if (Directory.Exists(repoDir) && Directory.EnumerateFileSystemEntries(repoDir).Any()) {
             throw new InvalidOperationException(
-                $"Repository directory '{repoDir}' already exists and is not empty. Use OpenExisting/OpenOrCreateSampleWorld instead."
+                $"Repository directory '{repoDir}' already exists and is not empty. Use OpenExisting or a dev bootstrap open-or-create flow instead."
             );
         }
 
         var repo = Repository.Create(repoDir).Unwrap();
         try {
             var revision = repo.CreateBranch(MainBranchName).Unwrap();
-            var world = TestWorldBuilder.Create(revision);
-            TestWorldBuilder.PopulateSampleActors(world);
+            var world = worldFactory(revision);
             repo.Commit(world.Root).Unwrap();
-            return new TextAdv2Runtime(repoDir, repo, world);
+            return new TextAdv2Runtime(repoDir, repo, world, options);
         }
         catch {
             repo.Dispose();
@@ -71,27 +72,22 @@ public sealed class TextAdv2Runtime : IDisposable {
         }
     }
 
-    public static TextAdv2Runtime OpenExisting(string repoDir) {
+    public static TextAdv2Runtime OpenExisting(string repoDir)
+        => OpenExisting(repoDir, options: null);
+
+    internal static TextAdv2Runtime OpenExisting(string repoDir, TextAdv2RuntimeOptions? options) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
 
         var repo = Repository.Open(repoDir).Unwrap();
         try {
             var revision = repo.CheckoutBranch(MainBranchName).Unwrap();
             var world = LoadWorldState(revision);
-            return new TextAdv2Runtime(repoDir, repo, world);
+            return new TextAdv2Runtime(repoDir, repo, world, options);
         }
         catch {
             repo.Dispose();
             throw;
         }
-    }
-
-    public static TextAdv2Runtime OpenOrCreateSampleWorld(string repoDir) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
-
-        return Directory.Exists(repoDir) && Directory.EnumerateFileSystemEntries(repoDir).Any()
-            ? OpenExisting(repoDir)
-            : CreateSampleWorld(repoDir);
     }
 
     public TextAdv2RuntimeCommandResult DumpWorld() {
@@ -277,7 +273,11 @@ public sealed class TextAdv2Runtime : IDisposable {
     private TextAdv2LogicalTimeObservation ObserveLogicalTime() => new(_logicalTick);
 
     private TextAdv2RouteAccelerationObservation RebuildRouteAccelerationCore(string? requestedLandmarks) {
-        var rebuildRequest = ResolveLandmarkRebuildRequest(_world, requestedLandmarks);
+        var rebuildRequest = ResolveLandmarkRebuildRequest(
+            _world,
+            requestedLandmarks,
+            _options.DefaultLandmarkProfileResolver
+        );
         return _routeAcceleration.Rebuild(_world, rebuildRequest.LandmarkLocationIds, rebuildRequest.LandmarkProfileName);
     }
 
@@ -308,14 +308,19 @@ public sealed class TextAdv2Runtime : IDisposable {
         => $"{movement.ActorId}: {movement.FromLocationId} --{movement.ExitName}/{movement.PassageId}--> {movement.ToLocationId}"
             + $" | {movement.TravelMode.ToStorageValue()} | cost={movement.TravelCost}";
 
-    private static LandmarkRebuildRequest ResolveLandmarkRebuildRequest(WorldState world, string? value) {
+    private static LandmarkRebuildRequest ResolveLandmarkRebuildRequest(
+        WorldState world,
+        string? value,
+        Func<WorldState, TextAdv2DefaultLandmarkProfile?>? defaultLandmarkProfileResolver
+    ) {
         ArgumentNullException.ThrowIfNull(world);
 
         if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "default", StringComparison.OrdinalIgnoreCase)) {
-            if (TestWorldBuilder.TryGetRecommendedLandmarkLocationIds(world, out var recommendedLandmarkLocationIds)) {
+            var defaultProfile = defaultLandmarkProfileResolver?.Invoke(world);
+            if (defaultProfile is not null) {
                 return new LandmarkRebuildRequest(
-                    recommendedLandmarkLocationIds,
-                    TestWorldBuilder.RecommendedLandmarkProfileName
+                    [.. defaultProfile.LandmarkLocationIds],
+                    defaultProfile.ProfileName
                 );
             }
 
