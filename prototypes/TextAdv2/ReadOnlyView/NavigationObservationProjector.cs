@@ -1,3 +1,5 @@
+using Atelia.TextAdv2.WorldTruth;
+
 namespace Atelia.TextAdv2.ReadOnlyView;
 
 /// <summary>
@@ -13,28 +15,66 @@ internal static class NavigationObservationProjector {
         ArgumentNullException.ThrowIfNull(world);
         WorldTruth.WorldState.ValidateEntityId(locationId, nameof(locationId));
 
-        var location = LocationObservationProjector.ObserveLocation(world, locationId);
-        var edges = location.Exits
-            .Where(exit => exit.IsEnabled)
-            .Select(exit => new NavigationEdgeObservation(
-                exit.PassageId,
-                exit.ExitName,
-                exit.TargetLocationId,
-                exit.TargetLocationName,
-                exit.TravelMode,
-                exit.TotalTravelCost
-            ))
+        var location = world.GetLocation(locationId);
+        var graph = ObserveLocationNavigationGraph(world, locationId);
+        var edges = graph.Edges
+            .Select(edge => {
+                var passage = world.GetPassage(edge.PassageId);
+                var endpoint = passage.GetEndpointFor(locationId);
+                var targetLocation = world.GetLocation(edge.TargetLocationId);
+
+                return new NavigationEdgeObservation(
+                    edge.PassageId,
+                    endpoint.ExitName,
+                    targetLocation.Id,
+                    targetLocation.Name,
+                    edge.TravelMode,
+                    edge.TravelCost
+                );
+            })
+            .OrderBy(edge => edge.ExitName, StringComparer.Ordinal)
+            .ThenBy(edge => edge.PassageId, StringComparer.Ordinal)
+            .ThenBy(edge => edge.TargetLocationId, StringComparer.Ordinal)
             .ToArray();
 
-        return new LocationNavigationObservation(location.LocationId, location.LocationName, edges);
+        return new LocationNavigationObservation(location.Id, location.Name, edges);
+    }
+
+    internal static LocationNavigationGraphObservation ObserveLocationNavigationGraph(WorldTruth.WorldState world, string locationId) {
+        ArgumentNullException.ThrowIfNull(world);
+        WorldTruth.WorldState.ValidateEntityId(locationId, nameof(locationId));
+
+        _ = world.GetLocation(locationId);
+        var edges = world.EnumeratePassagesTouching(locationId)
+            .Select(passage => TryProjectGraphEdge(locationId, passage))
+            .Where(edge => edge is not null)
+            .Select(edge => edge!)
+            .OrderBy(edge => edge.TargetLocationId, StringComparer.Ordinal)
+            .ThenBy(edge => edge.PassageId, StringComparer.Ordinal)
+            .ThenBy(edge => edge.TravelCost, Comparer<int>.Default)
+            .ToArray();
+
+        return new LocationNavigationGraphObservation(locationId, edges);
     }
 
     public static ActorNavigationObservation ObserveActorNavigation(WorldTruth.WorldState world, string actorId) {
         ArgumentNullException.ThrowIfNull(world);
         WorldTruth.WorldState.ValidateEntityId(actorId, nameof(actorId));
 
-        var actorObservation = LocationObservationProjector.ObserveActorLocation(world, actorId);
-        var navigation = ObserveLocationNavigation(world, actorObservation.Location.LocationId);
-        return new ActorNavigationObservation(actorObservation.ActorId, actorObservation.ActorName, navigation);
+        var actor = world.GetActor(actorId);
+        var navigation = ObserveLocationNavigation(world, actor.CurrentLocationId);
+        return new ActorNavigationObservation(actor.Id, actor.Name, navigation);
+    }
+
+    private static NavigationGraphEdgeObservation? TryProjectGraphEdge(string locationId, WorldTruth.Passage passage) {
+        var direction = passage.GetDirectionFrom(locationId);
+        if (!direction.IsEnabled) { return null; }
+
+        return new NavigationGraphEdgeObservation(
+            passage.Id,
+            passage.GetOtherLocationId(locationId),
+            passage.TravelMode,
+            direction.TotalTravelCost(passage)
+        );
     }
 }

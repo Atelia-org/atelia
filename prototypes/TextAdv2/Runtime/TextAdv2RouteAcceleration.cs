@@ -100,12 +100,12 @@ internal sealed class TextAdv2RouteAccelerationState {
         foreach (var location in world.EnumerateLocations().OrderBy(location => location.Id, StringComparer.Ordinal)) {
             builder.Append("L|").Append(location.Id).AppendLine();
 
-            var navigation = NavigationObservationProjector.ObserveLocationNavigation(world, location.Id);
-            foreach (var edge in navigation.Edges
-                         .OrderBy(edge => edge.TargetLocationId, StringComparer.Ordinal)
-                         .ThenBy(edge => edge.TravelCost, Comparer<int>.Default)) {
+            var navigation = NavigationObservationProjector.ObserveLocationNavigationGraph(world, location.Id);
+            foreach (var edge in navigation.Edges) {
                 builder.Append("E|")
                     .Append(location.Id)
+                    .Append('|')
+                    .Append(edge.PassageId)
                     .Append('|')
                     .Append(edge.TargetLocationId)
                     .Append('|')

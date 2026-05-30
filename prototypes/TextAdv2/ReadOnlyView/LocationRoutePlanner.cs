@@ -7,7 +7,7 @@ namespace Atelia.TextAdv2.ReadOnlyView;
 ///
 /// 当前实现使用 Dijkstra core：
 /// - 默认启发函数固定为 0；
-/// - 数据面来自 <see cref="NavigationObservationProjector"/>；
+/// - 数据面来自更小的内部 navigation graph seam；
 /// - 结果对等成本路径采用稳定 tie-break。
 ///
 /// 这让 MVP 先把 correctness、结果语义和文本可检视性钉住，后续若加入 admissible heuristic，再向真正的 A* 推进。
@@ -107,10 +107,8 @@ internal static class LocationRoutePlanner {
                 );
             }
 
-            var navigation = NavigationObservationProjector.ObserveLocationNavigation(world, current.LocationId);
-            foreach (var edge in navigation.Edges.OrderBy(edge => edge.ExitName, StringComparer.Ordinal)
-                         .ThenBy(edge => edge.PassageId, StringComparer.Ordinal)
-                         .ThenBy(edge => edge.TargetLocationId, StringComparer.Ordinal)) {
+            var navigation = NavigationObservationProjector.ObserveLocationNavigationGraph(world, current.LocationId);
+            foreach (var edge in navigation.Edges) {
                 if (edge.TravelCost < 0) {
                     throw new InvalidOperationException(
                         $"Negative travel cost is not supported for shortest-path planning: passage '{edge.PassageId}' from '{current.LocationId}' has cost {edge.TravelCost}."
@@ -174,11 +172,12 @@ internal static class LocationRoutePlanner {
         var steps = new LocationRoutePlanStepObservation[reversedSegments.Count];
         for (int i = 0; i < reversedSegments.Count; i++) {
             var segment = reversedSegments[i];
+            var passage = world.GetPassage(segment.Edge.PassageId);
             cumulativeCost += segment.Edge.TravelCost;
             steps[i] = new LocationRoutePlanStepObservation(
                 i + 1,
                 segment.Edge.PassageId,
-                segment.Edge.ExitName,
+                passage.GetEndpointFor(segment.FromLocation.Id).ExitName,
                 segment.FromLocation.Id,
                 segment.FromLocation.Name,
                 segment.ToLocation.Id,
@@ -235,8 +234,8 @@ internal static class LocationRoutePlanner {
             && string.CompareOrdinal(newPathKey, existing.PathKey) < 0;
     }
 
-    private static string AppendPathKey(string pathKey, NavigationEdgeObservation edge) {
-        string segment = $"{edge.ExitName}|{edge.PassageId}|{edge.TargetLocationId}";
+    private static string AppendPathKey(string pathKey, NavigationGraphEdgeObservation edge) {
+        string segment = $"{edge.PassageId}|{edge.TargetLocationId}";
         return string.IsNullOrEmpty(pathKey) ? segment : $"{pathKey}>{segment}";
     }
 
@@ -263,10 +262,10 @@ internal static class LocationRoutePlanner {
         int CostSoFar,
         string PathKey,
         string? PreviousLocationId,
-        NavigationEdgeObservation? IncomingEdge
+        NavigationGraphEdgeObservation? IncomingEdge
     );
 
-    private sealed record RouteSegment(Location FromLocation, Location ToLocation, NavigationEdgeObservation Edge);
+    private sealed record RouteSegment(Location FromLocation, Location ToLocation, NavigationGraphEdgeObservation Edge);
 
     private readonly record struct SearchPriority(int EstimatedCost, int CostSoFar, string LocationId, string PathKey)
         : IComparable<SearchPriority> {
