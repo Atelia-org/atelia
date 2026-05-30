@@ -87,6 +87,36 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
+    public void OpenOrCreateRuntime_WithOnlyLegacyRuntimeSidecar_CreatesFreshSampleWorld() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            Directory.CreateDirectory(repoDir);
+            File.WriteAllText(
+                Path.Combine(repoDir, ".textadv2-runtime-state.json"),
+                """
+                {
+                  "SchemaVersion": 1,
+                  "CurrentTick": 99,
+                  "MovementHistoryByActor": {}
+                }
+                """
+            );
+
+            using var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
+            var observedActor = runtime.ObserveActor(TestWorldBuilder.ActorIds.Scout);
+            var observedTime = runtime.ObserveTime();
+
+            Assert.Contains("\"ActorId\": \"scout\"", observedActor.Output, StringComparison.Ordinal);
+            Assert.Contains("\"LocationId\": \"square\"", observedActor.Output, StringComparison.Ordinal);
+            Assert.Contains("\"CurrentTick\": 0", observedTime.Output, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void AdvanceTimeThenObserveTime_TracksLogicalTickWithinRuntime() {
         using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
 
