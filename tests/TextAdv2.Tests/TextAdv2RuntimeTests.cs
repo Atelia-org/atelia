@@ -97,7 +97,7 @@ public class TextAdv2RuntimeTests {
 
             Assert.Contains("\"ActorId\": \"scout\"", observedActor.Output, StringComparison.Ordinal);
             Assert.Contains("\"LocationId\": \"square\"", observedActor.Output, StringComparison.Ordinal);
-            Assert.Contains("\"CurrentTick\": 0", observedTime.Output, StringComparison.Ordinal);
+            Assert.Equal(0, observedTime.CurrentTick);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -111,10 +111,8 @@ public class TextAdv2RuntimeTests {
         var advanced = runtime.AdvanceTime(7);
         var observed = runtime.ObserveTime();
 
-        Assert.Equal(TextAdv2RuntimeContentTypes.Json, advanced.ContentType);
-        Assert.Contains("\"CurrentTick\": 7", advanced.Output, StringComparison.Ordinal);
-        Assert.Equal(TextAdv2RuntimeContentTypes.Json, observed.ContentType);
-        Assert.Contains("\"CurrentTick\": 7", observed.Output, StringComparison.Ordinal);
+        Assert.Equal(7, advanced.CurrentTick);
+        Assert.Equal(7, observed.CurrentTick);
     }
 
     [Fact]
@@ -125,7 +123,7 @@ public class TextAdv2RuntimeTests {
         var observed = runtime.ObserveTime();
 
         Assert.Equal("ticks", exception.ParamName);
-        Assert.Contains("\"CurrentTick\": 0", observed.Output, StringComparison.Ordinal);
+        Assert.Equal(0, observed.CurrentTick);
     }
 
     [Fact]
@@ -140,7 +138,7 @@ public class TextAdv2RuntimeTests {
                     TestWorldBuilder.PassageIds.SquareRidgeTrail
                 );
 
-                Assert.Contains("\"CurrentTick\": 11", time.Output, StringComparison.Ordinal);
+                Assert.Equal(11, time.CurrentTick);
                 Assert.Equal(
                     "scout: square --north gate/square-ridge-trail--> ridge | land | cost=5",
                     move.Output
@@ -152,7 +150,7 @@ public class TextAdv2RuntimeTests {
             var traceAfterReopen = reopened.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
             var observedAfterReopen = reopened.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
-            Assert.Contains("\"CurrentTick\": 0", timeAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Equal(0, timeAfterReopen.CurrentTick);
             Assert.Contains("start=ridge (Ridge)", traceAfterReopen.Output, StringComparison.Ordinal);
             Assert.Contains("<no movement in this run>", traceAfterReopen.Output, StringComparison.Ordinal);
             Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceAfterReopen.Output, StringComparison.Ordinal);

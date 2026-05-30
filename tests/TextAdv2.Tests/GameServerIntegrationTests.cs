@@ -129,11 +129,13 @@ public class GameServerIntegrationTests {
             using var initialTime = await client.GetAsync("/admin/time");
             string initialText = await initialTime.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, initialTime.StatusCode);
+            Assert.Equal("application/json", initialTime.Content.Headers.ContentType?.MediaType);
             Assert.Contains("\"CurrentTick\":0", initialText.Replace(" ", string.Empty), StringComparison.Ordinal);
 
             using var advancedTime = await client.PostAsync("/admin/advance-time/9", content: null);
             string advancedText = await advancedTime.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, advancedTime.StatusCode);
+            Assert.Equal("application/json", advancedTime.Content.Headers.ContentType?.MediaType);
             Assert.Contains("\"CurrentTick\":9", advancedText.Replace(" ", string.Empty), StringComparison.Ordinal);
 
             using var resetResponse = await client.PostAsync("/admin/reset-sample-world", content: null);
@@ -142,6 +144,7 @@ public class GameServerIntegrationTests {
             using var resetTime = await client.GetAsync("/admin/time");
             string resetTimeText = await resetTime.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, resetTime.StatusCode);
+            Assert.Equal("application/json", resetTime.Content.Headers.ContentType?.MediaType);
             Assert.Contains("\"CurrentTick\":0", resetTimeText.Replace(" ", string.Empty), StringComparison.Ordinal);
         }
         finally {

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Atelia.TextAdv2.Runtime;
 
 namespace Atelia.TextAdv2.E2eCli;
@@ -48,14 +49,14 @@ internal static class Program {
 
         for (int i = 0; i < request.Operations.Length; i++) {
             var operation = request.Operations[i];
-            var result = operation.Execute(runtime);
+            string output = operation.Execute(runtime);
 
             Console.WriteLine();
             if (request.Operations.Length > 1) {
                 Console.WriteLine($"[{i + 1}/{request.Operations.Length}] {operation.Description}");
             }
 
-            Console.WriteLine(result.Output);
+            Console.WriteLine(output);
         }
 
         return 0;
@@ -73,57 +74,57 @@ internal static class Program {
                     index += 2;
                     break;
                 case "--world":
-                    operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld()));
+                    operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld().Output));
                     index += 1;
                     break;
                 case "--location":
                     {
                         string locationId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"location dump {locationId}", runtime => runtime.DumpLocation(locationId)));
+                        operations.Add(new RuntimeOperation($"location dump {locationId}", runtime => runtime.DumpLocation(locationId).Output));
                     }
                     index += 2;
                     break;
                 case "--observe-location":
                     {
                         string locationId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe location {locationId}", runtime => runtime.ObserveLocation(locationId)));
+                        operations.Add(new RuntimeOperation($"observe location {locationId}", runtime => runtime.ObserveLocation(locationId).Output));
                     }
                     index += 2;
                     break;
                 case "--observe-actor":
                     {
                         string actorId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe actor {actorId}", runtime => runtime.ObserveActor(actorId)));
+                        operations.Add(new RuntimeOperation($"observe actor {actorId}", runtime => runtime.ObserveActor(actorId).Output));
                     }
                     index += 2;
                     break;
                 case "--observe-navigation":
                     {
                         string locationId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe navigation {locationId}", runtime => runtime.ObserveNavigation(locationId)));
+                        operations.Add(new RuntimeOperation($"observe navigation {locationId}", runtime => runtime.ObserveNavigation(locationId).Output));
                     }
                     index += 2;
                     break;
                 case "--observe-actor-navigation":
                     {
                         string actorId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe actor navigation {actorId}", runtime => runtime.ObserveActorNavigation(actorId)));
+                        operations.Add(new RuntimeOperation($"observe actor navigation {actorId}", runtime => runtime.ObserveActorNavigation(actorId).Output));
                     }
                     index += 2;
                     break;
                 case "--observe-route-acceleration":
-                    operations.Add(new RuntimeOperation("observe route acceleration", static runtime => runtime.ObserveRouteAcceleration()));
+                    operations.Add(new RuntimeOperation("observe route acceleration", static runtime => runtime.ObserveRouteAcceleration().Output));
                     index += 1;
                     break;
                 case "--observe-time":
-                    operations.Add(new RuntimeOperation("observe logical time", static runtime => runtime.ObserveTime()));
+                    operations.Add(new RuntimeOperation("observe logical time", static runtime => RenderJson(runtime.ObserveTime())));
                     index += 1;
                     break;
                 case "--advance-time":
                     {
                         string ticksText = RequireArg(args, index + 1);
                         long ticks = ParseNonNegativeTickDelta(ticksText);
-                        operations.Add(new RuntimeOperation($"advance logical time by {ticksText}", runtime => runtime.AdvanceTime(ticks)));
+                        operations.Add(new RuntimeOperation($"advance logical time by {ticksText}", runtime => RenderJson(runtime.AdvanceTime(ticks))));
                     }
                     index += 2;
                     break;
@@ -131,7 +132,7 @@ internal static class Program {
                     {
                         string actorId = RequireArg(args, index + 1);
                         string toLocationId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"plan actor route {actorId} -> {toLocationId}", runtime => runtime.PlanActorRoute(actorId, toLocationId)));
+                        operations.Add(new RuntimeOperation($"plan actor route {actorId} -> {toLocationId}", runtime => runtime.PlanActorRoute(actorId, toLocationId).Output));
                     }
                     index += 3;
                     break;
@@ -139,7 +140,7 @@ internal static class Program {
                     {
                         string fromLocationId = RequireArg(args, index + 1);
                         string toLocationId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"plan route {fromLocationId} -> {toLocationId}", runtime => runtime.PlanRoute(fromLocationId, toLocationId)));
+                        operations.Add(new RuntimeOperation($"plan route {fromLocationId} -> {toLocationId}", runtime => runtime.PlanRoute(fromLocationId, toLocationId).Output));
                     }
                     index += 3;
                     break;
@@ -149,7 +150,7 @@ internal static class Program {
                         operations.Add(
                             new RuntimeOperation(
                                 $"rebuild route acceleration {(rebuildLandmarks is null ? "default-profile" : rebuildLandmarks)}",
-                                runtime => runtime.RebuildRouteAcceleration(rebuildLandmarks)
+                                runtime => runtime.RebuildRouteAcceleration(rebuildLandmarks).Output
                             )
                         );
                         index += rebuildLandmarks is null ? 1 : 2;
@@ -158,7 +159,7 @@ internal static class Program {
                 case "--trace-actor-route":
                     {
                         string actorId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"trace actor route {actorId}", runtime => runtime.TraceActorRoute(actorId)));
+                        operations.Add(new RuntimeOperation($"trace actor route {actorId}", runtime => runtime.TraceActorRoute(actorId).Output));
                     }
                     index += 2;
                     break;
@@ -166,7 +167,7 @@ internal static class Program {
                     {
                         string actorId = RequireArg(args, index + 1);
                         string passageId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"move actor quietly {actorId} via {passageId}", runtime => runtime.MoveActorQuiet(actorId, passageId)));
+                        operations.Add(new RuntimeOperation($"move actor quietly {actorId} via {passageId}", runtime => runtime.MoveActorQuiet(actorId, passageId).Output));
                     }
                     index += 3;
                     break;
@@ -174,7 +175,7 @@ internal static class Program {
                     {
                         string actorId = RequireArg(args, index + 1);
                         string passageId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"move actor {actorId} via {passageId}", runtime => runtime.MoveActor(actorId, passageId)));
+                        operations.Add(new RuntimeOperation($"move actor {actorId} via {passageId}", runtime => runtime.MoveActor(actorId, passageId).Output));
                     }
                     index += 3;
                     break;
@@ -184,7 +185,7 @@ internal static class Program {
         }
 
         if (operations.Count == 0) {
-            operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld()));
+            operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld().Output));
         }
 
         return new RuntimeRequest(repoDir, operations.ToArray());
@@ -198,6 +199,8 @@ internal static class Program {
 
     private static string? TryReadOptionalArg(string[] args, int index)
         => index < args.Length && !args[index].StartsWith("--", StringComparison.Ordinal) ? args[index] : null;
+
+    private static string RenderJson<T>(T value) => JsonSerializer.Serialize(value, JsonOptions);
 
     private static long ParseNonNegativeTickDelta(string value) {
         if (!long.TryParse(value, out long ticks)) { throw new InvalidOperationException($"AdvanceTime requires an integer tick delta, but received '{value}'."); }
@@ -257,10 +260,20 @@ Runtime options:
         return 1;
     }
 
+    private static JsonSerializerOptions CreateJsonOptions() {
+        var options = new JsonSerializerOptions {
+            WriteIndented = true,
+        };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
     private sealed record RuntimeRequest(string? RepoDir, RuntimeOperation[] Operations);
 
     private sealed record RuntimeOperation(
         string Description,
-        Func<TextAdv2Runtime, TextAdv2RuntimeCommandResult> Execute
+        Func<TextAdv2Runtime, string> Execute
     );
 }

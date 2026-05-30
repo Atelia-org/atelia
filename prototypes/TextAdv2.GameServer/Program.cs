@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Atelia.TextAdv2.GameServer;
 using Atelia.TextAdv2.Runtime;
 
@@ -15,10 +17,10 @@ app.MapGet("/", (TextAdv2RuntimeService runtime) => Results.Ok(BuildRuntimeStatu
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.GameServer", mode = "runtime-connected" }));
 app.MapGet("/admin/runtime-status", (TextAdv2RuntimeService runtime) => Results.Ok(BuildRuntimeStatus(runtime)));
 app.MapGet("/admin/world", (TextAdv2RuntimeService runtime) => Execute(runtime, static x => x.DumpWorld()));
-app.MapGet("/admin/time", (TextAdv2RuntimeService runtime) => Execute(runtime, static x => x.ObserveTime()));
+app.MapGet("/admin/time", (TextAdv2RuntimeService runtime) => ExecuteJson(runtime, static x => x.ObserveTime()));
 app.MapPost("/admin/advance-time/{ticks}",
     (string ticks, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.AdvanceTime(ParseNonNegativeTickDelta(ticks)))
+    => ExecuteJson(runtime, x => x.AdvanceTime(ParseNonNegativeTickDelta(ticks)))
 );
 app.MapGet("/admin/route-acceleration",
     (TextAdv2RuntimeService runtime)
@@ -89,6 +91,19 @@ static IResult Execute(TextAdv2RuntimeService runtime, Func<TextAdv2Runtime, Tex
     }
 }
 
+static IResult ExecuteJson<T>(TextAdv2RuntimeService runtime, Func<TextAdv2Runtime, T> operation) {
+    try {
+        var result = runtime.Invoke(operation);
+        return Results.Content(JsonSerializer.Serialize(result, TextAdv2HostJson.Options), TextAdv2RuntimeContentTypes.Json);
+    }
+    catch (ArgumentException ex) {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (InvalidOperationException ex) {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+}
+
 static long ParseNonNegativeTickDelta(string value) {
     if (!long.TryParse(value, out long ticks)) { throw new InvalidOperationException($"AdvanceTime requires an integer tick delta, but received '{value}'."); }
 
@@ -128,4 +143,16 @@ object BuildRuntimeStatus(TextAdv2RuntimeService runtime) {
 }
 
 public partial class Program {
+}
+
+file static class TextAdv2HostJson {
+    public static readonly JsonSerializerOptions Options = CreateOptions();
+
+    private static JsonSerializerOptions CreateOptions() {
+        var options = new JsonSerializerOptions {
+            WriteIndented = true,
+        };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
 }

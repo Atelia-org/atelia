@@ -134,15 +134,15 @@ public sealed class TextAdv2Runtime : IDisposable {
         return Json(_routeAcceleration.Observe(_world));
     }
 
-    public TextAdv2RuntimeCommandResult ObserveTime() {
+    public TextAdv2LogicalTimeObservation ObserveTime() {
         EnsureNotDisposed();
-        return Json(ObserveLogicalTime());
+        return ObserveLogicalTime();
     }
 
-    public TextAdv2RuntimeCommandResult AdvanceTime(long ticks) {
+    public TextAdv2LogicalTimeObservation AdvanceTime(long ticks) {
         EnsureNotDisposed();
         ArgumentOutOfRangeException.ThrowIfNegative(ticks);
-        return Json(AdvanceLogicalTime(ticks));
+        return AdvanceLogicalTime(ticks);
     }
 
     public TextAdv2RuntimeCommandResult PlanActorRoute(string actorId, string toLocationId) {
