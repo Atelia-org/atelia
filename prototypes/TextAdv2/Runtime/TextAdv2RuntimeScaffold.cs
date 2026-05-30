@@ -17,7 +17,8 @@ public static class TextAdv2RuntimeScaffold {
             "TextAdv2Runtime 已承载 repo/world 生命周期，并直接暴露 typed runtime methods。",
             "TextAdv2 本体现已回退为 Library；一次性 CLI 入口已迁移到 TextAdv2.E2eCli。",
             "GameServer 与 E2E CLI 都已直接调用 TextAdv2Runtime；宿主仍自行负责 CLI/HTTP 请求到 runtime method 的分发。",
-            "当前阶段还没有建立 public typed DTO seam；下一阶段应继续收口 host 专属契约与集成测试。"
+            "logical time 与 route acceleration 已建立 public typed DTO seam，并在宿主边界完成 JSON 序列化。",
+            "下一阶段应继续把 actor/location/navigation/move 等结构化结果迁出 string/contentType seam，并补齐 host-level 集成测试。"
         ]
     );
 }

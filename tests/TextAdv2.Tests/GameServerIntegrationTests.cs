@@ -129,24 +129,30 @@ public class GameServerIntegrationTests {
 
             using var initialTime = await client.GetAsync("/admin/time");
             string initialText = await initialTime.Content.ReadAsStringAsync();
+            var initialTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(initialText);
             Assert.Equal(HttpStatusCode.OK, initialTime.StatusCode);
             Assert.Equal("application/json", initialTime.Content.Headers.ContentType?.MediaType);
-            Assert.Contains("\"CurrentTick\":0", initialText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.NotNull(initialTimeJson);
+            Assert.Equal(0, initialTimeJson.CurrentTick);
 
             using var advancedTime = await client.PostAsync("/admin/advance-time/9", content: null);
             string advancedText = await advancedTime.Content.ReadAsStringAsync();
+            var advancedTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(advancedText);
             Assert.Equal(HttpStatusCode.OK, advancedTime.StatusCode);
             Assert.Equal("application/json", advancedTime.Content.Headers.ContentType?.MediaType);
-            Assert.Contains("\"CurrentTick\":9", advancedText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.NotNull(advancedTimeJson);
+            Assert.Equal(9, advancedTimeJson.CurrentTick);
 
             using var resetResponse = await client.PostAsync("/admin/reset-sample-world", content: null);
             Assert.Equal(HttpStatusCode.OK, resetResponse.StatusCode);
 
             using var resetTime = await client.GetAsync("/admin/time");
             string resetTimeText = await resetTime.Content.ReadAsStringAsync();
+            var resetTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(resetTimeText);
             Assert.Equal(HttpStatusCode.OK, resetTime.StatusCode);
             Assert.Equal("application/json", resetTime.Content.Headers.ContentType?.MediaType);
-            Assert.Contains("\"CurrentTick\":0", resetTimeText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.NotNull(resetTimeJson);
+            Assert.Equal(0, resetTimeJson.CurrentTick);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -178,7 +184,7 @@ public class GameServerIntegrationTests {
             string adminAccelerationText = await adminAcceleration.Content.ReadAsStringAsync();
             var adminAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(adminAccelerationText);
             Assert.Equal(HttpStatusCode.OK, adminAcceleration.StatusCode);
-            Assert.Contains("\"PlannerMode\":\"zero\"", adminAccelerationText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.Equal("application/json", adminAcceleration.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminAccelerationJson);
             Assert.Equal("zero", adminAccelerationJson.PlannerMode);
             Assert.Equal("inactive", adminAccelerationJson.SnapshotStatus);
@@ -189,8 +195,7 @@ public class GameServerIntegrationTests {
             string rebuiltAccelerationText = await rebuiltAcceleration.Content.ReadAsStringAsync();
             var rebuiltAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(rebuiltAccelerationText);
             Assert.Equal(HttpStatusCode.OK, rebuiltAcceleration.StatusCode);
-            Assert.Contains("\"PlannerMode\":\"landmark\"", rebuiltAccelerationText.Replace(" ", string.Empty), StringComparison.Ordinal);
-            Assert.Contains("\"LandmarkProfileName\":\"sample-world-default\"", rebuiltAccelerationText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.Equal("application/json", rebuiltAcceleration.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(rebuiltAccelerationJson);
             Assert.Equal("landmark", rebuiltAccelerationJson.PlannerMode);
             Assert.Equal("active", rebuiltAccelerationJson.SnapshotStatus);
@@ -206,6 +211,37 @@ public class GameServerIntegrationTests {
 
             using var publicAcceleration = await client.GetAsync("/route-acceleration");
             Assert.Equal(HttpStatusCode.NotFound, publicAcceleration.StatusCode);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task RouteAccelerationRebuild_BindsCustomLandmarksFromQueryAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var factory = CreateFactory(repoDir);
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/admin/route-acceleration/rebuild?landmarks=shrine,aerie",
+                content: null
+            );
+            string jsonText = await response.Content.ReadAsStringAsync();
+            var json = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(jsonText);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(json);
+            Assert.Equal("landmark", json.PlannerMode);
+            Assert.Equal("active", json.SnapshotStatus);
+            Assert.Equal("custom", json.LandmarkProfileName);
+            Assert.Equal(
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine],
+                json.LandmarkLocationIds
+            );
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
