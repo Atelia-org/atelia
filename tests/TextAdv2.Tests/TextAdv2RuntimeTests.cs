@@ -6,14 +6,27 @@ namespace Atelia.TextAdv2.Tests;
 
 public class TextAdv2RuntimeTests {
     [Fact]
-    public void ObserveActor_ReturnsIndentedJsonPayload() {
+    public void ObserveLocation_ReturnsTypedObservationWithRuntimeFacingTravelMode() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var result = runtime.ObserveLocation(TestWorldBuilder.LocationIds.Square);
+
+        Assert.Equal(TestWorldBuilder.LocationIds.Square, result.LocationId);
+        Assert.Equal("Square", result.LocationName);
+        Assert.Contains(result.Exits, static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate && exit.TravelMode == "portal");
+        Assert.Contains(result.PresentActors, static actor => actor.ActorId == TestWorldBuilder.ActorIds.Scout);
+    }
+
+    [Fact]
+    public void ObserveActor_ReturnsTypedObservationWithRuntimeFacingTravelMode() {
         using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
 
         var result = runtime.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
-        Assert.Equal(TextAdv2RuntimeContentTypes.Json, result.ContentType);
-        Assert.Contains("\"ActorId\": \"scout\"", result.Output, StringComparison.Ordinal);
-        Assert.Contains("\"LocationId\": \"square\"", result.Output, StringComparison.Ordinal);
+        Assert.Equal(TestWorldBuilder.ActorIds.Scout, result.ActorId);
+        Assert.Equal("Scout", result.ActorName);
+        Assert.Equal(TestWorldBuilder.LocationIds.Square, result.Location.LocationId);
+        Assert.Contains(result.Location.Exits, static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareRidgeTrail && exit.TravelMode == "land");
     }
 
     [Fact]
@@ -66,8 +79,8 @@ public class TextAdv2RuntimeTests {
             using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
             var observed = reopened.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
-            Assert.Contains("\"ActorId\": \"scout\"", observed.Output, StringComparison.Ordinal);
-            Assert.Contains("\"LocationId\": \"ridge\"", observed.Output, StringComparison.Ordinal);
+            Assert.Equal(TestWorldBuilder.ActorIds.Scout, observed.ActorId);
+            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, observed.Location.LocationId);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -95,8 +108,8 @@ public class TextAdv2RuntimeTests {
             var observedActor = runtime.ObserveActor(TestWorldBuilder.ActorIds.Scout);
             var observedTime = runtime.ObserveTime();
 
-            Assert.Contains("\"ActorId\": \"scout\"", observedActor.Output, StringComparison.Ordinal);
-            Assert.Contains("\"LocationId\": \"square\"", observedActor.Output, StringComparison.Ordinal);
+            Assert.Equal(TestWorldBuilder.ActorIds.Scout, observedActor.ActorId);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, observedActor.Location.LocationId);
             Assert.Equal(0, observedTime.CurrentTick);
         }
         finally {
@@ -154,7 +167,7 @@ public class TextAdv2RuntimeTests {
             Assert.Contains("start=ridge (Ridge)", traceAfterReopen.Output, StringComparison.Ordinal);
             Assert.Contains("<no movement in this run>", traceAfterReopen.Output, StringComparison.Ordinal);
             Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceAfterReopen.Output, StringComparison.Ordinal);
-            Assert.Contains("\"LocationId\": \"ridge\"", observedAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, observedAfterReopen.Location.LocationId);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

@@ -40,8 +40,9 @@ public class GameServerIntegrationTests {
             using var client = factory.CreateClient();
 
             using var initialObserve = await client.GetAsync("/actors/scout/observation");
-            var initialJson = JsonDocument.Parse(await initialObserve.Content.ReadAsStringAsync());
-            Assert.Equal("square", GetActorLocationId(initialJson));
+            var initialObservation = await ReadJsonAsync<TextAdv2RuntimeActorObservation>(initialObserve);
+            Assert.NotNull(initialObservation);
+            Assert.Equal("square", initialObservation.Location.LocationId);
 
             using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
             string moveText = await moveResponse.Content.ReadAsStringAsync();
@@ -62,8 +63,9 @@ public class GameServerIntegrationTests {
             Assert.Equal("runtime-connected", resetJson.RootElement.GetProperty("mode").GetString());
 
             using var reopenedObserve = await client.GetAsync("/actors/scout/observation");
-            var reopenedJson = JsonDocument.Parse(await reopenedObserve.Content.ReadAsStringAsync());
-            Assert.Equal("square", GetActorLocationId(reopenedJson));
+            var reopenedObservation = await ReadJsonAsync<TextAdv2RuntimeActorObservation>(reopenedObserve);
+            Assert.NotNull(reopenedObservation);
+            Assert.Equal("square", reopenedObservation.Location.LocationId);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -171,6 +173,16 @@ public class GameServerIntegrationTests {
             string adminLocationText = await adminLocation.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, adminLocation.StatusCode);
             Assert.Contains("Square", adminLocationText, StringComparison.Ordinal);
+
+            using var adminObservation = await client.GetAsync("/admin/locations/square/observation");
+            var adminLocationObservation = await ReadJsonAsync<TextAdv2RuntimeLocationObservation>(adminObservation);
+            Assert.Equal(HttpStatusCode.OK, adminObservation.StatusCode);
+            Assert.Equal("application/json", adminObservation.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(adminLocationObservation);
+            Assert.Contains(
+                adminLocationObservation.Exits,
+                static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate && exit.TravelMode == "portal"
+            );
 
             using var publicLocation = await client.GetAsync("/locations/square");
             Assert.Equal(HttpStatusCode.NotFound, publicLocation.StatusCode);
@@ -281,8 +293,9 @@ public class GameServerIntegrationTests {
             Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceText, StringComparison.Ordinal);
 
             using var observedAfterRestart = await secondClient.GetAsync("/actors/scout/observation");
-            var observedJson = JsonDocument.Parse(await observedAfterRestart.Content.ReadAsStringAsync());
-            Assert.Equal("ridge", GetActorLocationId(observedJson));
+            var observedAfterRestartJson = await ReadJsonAsync<TextAdv2RuntimeActorObservation>(observedAfterRestart);
+            Assert.NotNull(observedAfterRestartJson);
+            Assert.Equal("ridge", observedAfterRestartJson.Location.LocationId);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -291,9 +304,8 @@ public class GameServerIntegrationTests {
 
     private static TextAdv2GameServerFactory CreateFactory(string repoDir) => new(repoDir);
 
-    private static string GetActorLocationId(JsonDocument json)
-        => json.RootElement.GetProperty("Location").GetProperty("LocationId").GetString()
-            ?? throw new InvalidOperationException("Actor observation did not contain Location.LocationId.");
+    private static async Task<T?> ReadJsonAsync<T>(HttpResponseMessage response)
+        => JsonSerializer.Deserialize<T>(await response.Content.ReadAsStringAsync());
 
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-gameserver-tests-{Guid.NewGuid():N}");

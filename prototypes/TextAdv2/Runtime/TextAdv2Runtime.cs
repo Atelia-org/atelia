@@ -105,16 +105,16 @@ public sealed class TextAdv2Runtime : IDisposable {
         return Text(WorldDumpRenderer.RenderLocation(_world, locationId));
     }
 
-    public TextAdv2RuntimeCommandResult ObserveLocation(string locationId) {
+    public TextAdv2RuntimeLocationObservation ObserveLocation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return Json(LocationObservationProjector.ObserveLocation(_world, locationId));
+        return TextAdv2RuntimeObservationProjector.ProjectLocation(_world, locationId);
     }
 
-    public TextAdv2RuntimeCommandResult ObserveActor(string actorId) {
+    public TextAdv2RuntimeActorObservation ObserveActor(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return Json(LocationObservationProjector.ObserveActorLocation(_world, actorId));
+        return TextAdv2RuntimeObservationProjector.ProjectActor(_world, actorId);
     }
 
     public TextAdv2RuntimeCommandResult ObserveNavigation(string locationId) {

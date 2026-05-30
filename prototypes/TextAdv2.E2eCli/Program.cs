@@ -87,14 +87,14 @@ internal static class Program {
                 case "--observe-location":
                     {
                         string locationId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe location {locationId}", runtime => runtime.ObserveLocation(locationId).Output));
+                        operations.Add(new RuntimeOperation($"observe location {locationId}", runtime => RenderJson(runtime.ObserveLocation(locationId))));
                     }
                     index += 2;
                     break;
                 case "--observe-actor":
                     {
                         string actorId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe actor {actorId}", runtime => runtime.ObserveActor(actorId).Output));
+                        operations.Add(new RuntimeOperation($"observe actor {actorId}", runtime => RenderJson(runtime.ObserveActor(actorId))));
                     }
                     index += 2;
                     break;
