@@ -41,18 +41,18 @@ internal static class Program {
     private static int RunRuntimeCommands(string[] args) {
         var request = ParseRuntimeRequest(args);
         using var runtime = request.RepoDir is null
-            ? TextAdv2Runtime.CreateTemporarySampleWorld()
-            : TextAdv2Runtime.OpenOrCreateSampleWorld(request.RepoDir);
+            ? TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime()
+            : TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(request.RepoDir);
 
         Console.WriteLine($"TextAdv2 runtime repo: {runtime.RepoDir}");
 
-        for (int i = 0; i < request.Commands.Length; i++) {
-            var command = request.Commands[i];
-            var result = runtime.Execute(command);
+        for (int i = 0; i < request.Operations.Length; i++) {
+            var operation = request.Operations[i];
+            var result = operation.Execute(runtime);
 
             Console.WriteLine();
-            if (request.Commands.Length > 1) {
-                Console.WriteLine($"[{i + 1}/{request.Commands.Length}] {DescribeCommand(command)}");
+            if (request.Operations.Length > 1) {
+                Console.WriteLine($"[{i + 1}/{request.Operations.Length}] {operation.Description}");
             }
 
             Console.WriteLine(result.Output);
@@ -63,7 +63,7 @@ internal static class Program {
 
     private static RuntimeRequest ParseRuntimeRequest(string[] args) {
         string? repoDir = null;
-        var commands = new List<TextAdv2RuntimeCommand>();
+        var operations = new List<RuntimeOperation>();
         int index = 0;
 
         while (index < args.Length) {
@@ -73,64 +73,109 @@ internal static class Program {
                     index += 2;
                     break;
                 case "--world":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.World));
+                    operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld()));
                     index += 1;
                     break;
                 case "--location":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.Location, RequireArg(args, index + 1)));
+                    {
+                        string locationId = RequireArg(args, index + 1);
+                        operations.Add(new RuntimeOperation($"location dump {locationId}", runtime => runtime.DumpLocation(locationId)));
+                    }
                     index += 2;
                     break;
                 case "--observe-location":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveLocation, RequireArg(args, index + 1)));
+                    {
+                        string locationId = RequireArg(args, index + 1);
+                        operations.Add(new RuntimeOperation($"observe location {locationId}", runtime => runtime.ObserveLocation(locationId)));
+                    }
                     index += 2;
                     break;
                 case "--observe-actor":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveActor, RequireArg(args, index + 1)));
+                    {
+                        string actorId = RequireArg(args, index + 1);
+                        operations.Add(new RuntimeOperation($"observe actor {actorId}", runtime => runtime.ObserveActor(actorId)));
+                    }
                     index += 2;
                     break;
                 case "--observe-navigation":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveNavigation, RequireArg(args, index + 1)));
+                    {
+                        string locationId = RequireArg(args, index + 1);
+                        operations.Add(new RuntimeOperation($"observe navigation {locationId}", runtime => runtime.ObserveNavigation(locationId)));
+                    }
                     index += 2;
                     break;
                 case "--observe-actor-navigation":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveActorNavigation, RequireArg(args, index + 1)));
+                    {
+                        string actorId = RequireArg(args, index + 1);
+                        operations.Add(new RuntimeOperation($"observe actor navigation {actorId}", runtime => runtime.ObserveActorNavigation(actorId)));
+                    }
                     index += 2;
                     break;
                 case "--observe-route-acceleration":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveRouteAcceleration));
+                    operations.Add(new RuntimeOperation("observe route acceleration", static runtime => runtime.ObserveRouteAcceleration()));
                     index += 1;
                     break;
                 case "--observe-time":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveTime));
+                    operations.Add(new RuntimeOperation("observe logical time", static runtime => runtime.ObserveTime()));
                     index += 1;
                     break;
                 case "--advance-time":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.AdvanceTime, RequireArg(args, index + 1)));
+                    {
+                        string ticksText = RequireArg(args, index + 1);
+                        long ticks = ParseNonNegativeTickDelta(ticksText);
+                        operations.Add(new RuntimeOperation($"advance logical time by {ticksText}", runtime => runtime.AdvanceTime(ticks)));
+                    }
                     index += 2;
                     break;
                 case "--plan-actor-route":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.PlanActorRoute, RequireArg(args, index + 1), RequireArg(args, index + 2)));
+                    {
+                        string actorId = RequireArg(args, index + 1);
+                        string toLocationId = RequireArg(args, index + 2);
+                        operations.Add(new RuntimeOperation($"plan actor route {actorId} -> {toLocationId}", runtime => runtime.PlanActorRoute(actorId, toLocationId)));
+                    }
                     index += 3;
                     break;
                 case "--plan-route":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.PlanRoute, RequireArg(args, index + 1), RequireArg(args, index + 2)));
+                    {
+                        string fromLocationId = RequireArg(args, index + 1);
+                        string toLocationId = RequireArg(args, index + 2);
+                        operations.Add(new RuntimeOperation($"plan route {fromLocationId} -> {toLocationId}", runtime => runtime.PlanRoute(fromLocationId, toLocationId)));
+                    }
                     index += 3;
                     break;
                 case "--rebuild-route-acceleration":
-                    string? rebuildLandmarks = TryReadOptionalArg(args, index + 1);
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.RebuildRouteAcceleration, rebuildLandmarks));
-                    index += rebuildLandmarks is null ? 1 : 2;
+                    {
+                        string? rebuildLandmarks = TryReadOptionalArg(args, index + 1);
+                        operations.Add(
+                            new RuntimeOperation(
+                                $"rebuild route acceleration {(rebuildLandmarks is null ? "default-profile" : rebuildLandmarks)}",
+                                runtime => runtime.RebuildRouteAcceleration(rebuildLandmarks)
+                            )
+                        );
+                        index += rebuildLandmarks is null ? 1 : 2;
+                    }
                     break;
                 case "--trace-actor-route":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.TraceActorRoute, RequireArg(args, index + 1)));
+                    {
+                        string actorId = RequireArg(args, index + 1);
+                        operations.Add(new RuntimeOperation($"trace actor route {actorId}", runtime => runtime.TraceActorRoute(actorId)));
+                    }
                     index += 2;
                     break;
                 case "--move-actor-quiet":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.MoveActorQuiet, RequireArg(args, index + 1), RequireArg(args, index + 2)));
+                    {
+                        string actorId = RequireArg(args, index + 1);
+                        string passageId = RequireArg(args, index + 2);
+                        operations.Add(new RuntimeOperation($"move actor quietly {actorId} via {passageId}", runtime => runtime.MoveActorQuiet(actorId, passageId)));
+                    }
                     index += 3;
                     break;
                 case "--move-actor":
-                    commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.MoveActor, RequireArg(args, index + 1), RequireArg(args, index + 2)));
+                    {
+                        string actorId = RequireArg(args, index + 1);
+                        string passageId = RequireArg(args, index + 2);
+                        operations.Add(new RuntimeOperation($"move actor {actorId} via {passageId}", runtime => runtime.MoveActor(actorId, passageId)));
+                    }
                     index += 3;
                     break;
                 default:
@@ -138,11 +183,11 @@ internal static class Program {
             }
         }
 
-        if (commands.Count == 0) {
-            commands.Add(new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.World));
+        if (operations.Count == 0) {
+            operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld()));
         }
 
-        return new RuntimeRequest(repoDir, commands.ToArray());
+        return new RuntimeRequest(repoDir, operations.ToArray());
     }
 
     private static bool IsMetaCommand(string command)
@@ -154,25 +199,12 @@ internal static class Program {
     private static string? TryReadOptionalArg(string[] args, int index)
         => index < args.Length && !args[index].StartsWith("--", StringComparison.Ordinal) ? args[index] : null;
 
-    private static string DescribeCommand(TextAdv2RuntimeCommand command)
-        => command.Mode switch {
-            TextAdv2RuntimeCommandMode.World => "world dump",
-            TextAdv2RuntimeCommandMode.Location => $"location dump {command.Arg1}",
-            TextAdv2RuntimeCommandMode.ObserveLocation => $"observe location {command.Arg1}",
-            TextAdv2RuntimeCommandMode.ObserveActor => $"observe actor {command.Arg1}",
-            TextAdv2RuntimeCommandMode.ObserveNavigation => $"observe navigation {command.Arg1}",
-            TextAdv2RuntimeCommandMode.ObserveActorNavigation => $"observe actor navigation {command.Arg1}",
-            TextAdv2RuntimeCommandMode.ObserveRouteAcceleration => "observe route acceleration",
-            TextAdv2RuntimeCommandMode.ObserveTime => "observe logical time",
-            TextAdv2RuntimeCommandMode.AdvanceTime => $"advance logical time by {command.Arg1}",
-            TextAdv2RuntimeCommandMode.PlanActorRoute => $"plan actor route {command.Arg1} -> {command.Arg2}",
-            TextAdv2RuntimeCommandMode.PlanRoute => $"plan route {command.Arg1} -> {command.Arg2}",
-            TextAdv2RuntimeCommandMode.RebuildRouteAcceleration => $"rebuild route acceleration {(command.Arg1 is null ? "default-profile" : command.Arg1)}",
-            TextAdv2RuntimeCommandMode.TraceActorRoute => $"trace actor route {command.Arg1}",
-            TextAdv2RuntimeCommandMode.MoveActorQuiet => $"move actor quietly {command.Arg1} via {command.Arg2}",
-            TextAdv2RuntimeCommandMode.MoveActor => $"move actor {command.Arg1} via {command.Arg2}",
-            _ => command.Mode.ToString(),
-        };
+    private static long ParseNonNegativeTickDelta(string value) {
+        if (!long.TryParse(value, out long ticks)) { throw new InvalidOperationException($"AdvanceTime requires an integer tick delta, but received '{value}'."); }
+
+        ArgumentOutOfRangeException.ThrowIfNegative(ticks);
+        return ticks;
+    }
 
     private static string BuildUsage()
         => "Usage: dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj"
@@ -225,5 +257,10 @@ Runtime options:
         return 1;
     }
 
-    private sealed record RuntimeRequest(string? RepoDir, TextAdv2RuntimeCommand[] Commands);
+    private sealed record RuntimeRequest(string? RepoDir, RuntimeOperation[] Operations);
+
+    private sealed record RuntimeOperation(
+        string Description,
+        Func<TextAdv2Runtime, TextAdv2RuntimeCommandResult> Execute
+    );
 }

@@ -6,12 +6,10 @@ namespace Atelia.TextAdv2.Tests;
 
 public class TextAdv2RuntimeTests {
     [Fact]
-    public void Execute_ObserveActor_ReturnsIndentedJsonPayload() {
-        using var runtime = TextAdv2Runtime.CreateTemporarySampleWorld();
+    public void ObserveActor_ReturnsIndentedJsonPayload() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
 
-        var result = runtime.Execute(
-            new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveActor, TestWorldBuilder.ActorIds.Scout)
-        );
+        var result = runtime.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
         Assert.Equal(TextAdv2RuntimeContentTypes.Json, result.ContentType);
         Assert.Contains("\"ActorId\": \"scout\"", result.Output, StringComparison.Ordinal);
@@ -19,22 +17,29 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
-    public void Execute_MoveActorQuietThenTraceActorRoute_UsesRuntimeMovementHistory() {
+    public void Execute_ObserveActor_UsesThinTypedAdapter() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var typed = runtime.ObserveActor(TestWorldBuilder.ActorIds.Scout);
+        var viaCommand = runtime.Execute(
+            new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveActor, TestWorldBuilder.ActorIds.Scout)
+        );
+
+        Assert.Equal(typed, viaCommand);
+    }
+
+    [Fact]
+    public void MoveActorQuietThenTraceActorRoute_UsesRuntimeMovementHistory() {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using var runtime = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir);
+            using var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
 
-            var move = runtime.Execute(
-                new TextAdv2RuntimeCommand(
-                    TextAdv2RuntimeCommandMode.MoveActorQuiet,
-                    TestWorldBuilder.ActorIds.Scout,
-                    TestWorldBuilder.PassageIds.SquareRidgeTrail
-                )
+            var move = runtime.MoveActorQuiet(
+                TestWorldBuilder.ActorIds.Scout,
+                TestWorldBuilder.PassageIds.SquareRidgeTrail
             );
-            var trace = runtime.Execute(
-                new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.TraceActorRoute, TestWorldBuilder.ActorIds.Scout)
-            );
+            var trace = runtime.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
 
             Assert.Equal(TextAdv2RuntimeContentTypes.PlainText, move.ContentType);
             Assert.Equal(
@@ -60,23 +65,18 @@ public class TextAdv2RuntimeTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (var runtime = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir)) {
-                var move = runtime.Execute(
-                    new TextAdv2RuntimeCommand(
-                        TextAdv2RuntimeCommandMode.MoveActor,
-                        TestWorldBuilder.ActorIds.Scout,
-                        TestWorldBuilder.PassageIds.SquareRidgeTrail
-                    )
+            using (var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir)) {
+                var move = runtime.MoveActor(
+                    TestWorldBuilder.ActorIds.Scout,
+                    TestWorldBuilder.PassageIds.SquareRidgeTrail
                 );
 
                 Assert.Equal(TextAdv2RuntimeContentTypes.Json, move.ContentType);
                 Assert.Contains("\"ToLocationId\": \"ridge\"", move.Output, StringComparison.Ordinal);
             }
 
-            using var reopened = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir);
-            var observed = reopened.Execute(
-                new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveActor, TestWorldBuilder.ActorIds.Scout)
-            );
+            using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
+            var observed = reopened.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
             Assert.Contains("\"ActorId\": \"scout\"", observed.Output, StringComparison.Ordinal);
             Assert.Contains("\"LocationId\": \"ridge\"", observed.Output, StringComparison.Ordinal);
@@ -87,15 +87,11 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
-    public void Execute_AdvanceTimeThenObserveTime_TracksLogicalTickWithinRuntime() {
-        using var runtime = TextAdv2Runtime.CreateTemporarySampleWorld();
+    public void AdvanceTimeThenObserveTime_TracksLogicalTickWithinRuntime() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
 
-        var advanced = runtime.Execute(
-            new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.AdvanceTime, "7")
-        );
-        var observed = runtime.Execute(
-            new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveTime)
-        );
+        var advanced = runtime.AdvanceTime(7);
+        var observed = runtime.ObserveTime();
 
         Assert.Equal(TextAdv2RuntimeContentTypes.Json, advanced.ContentType);
         Assert.Contains("\"CurrentTick\": 7", advanced.Output, StringComparison.Ordinal);
@@ -108,16 +104,11 @@ public class TextAdv2RuntimeTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (var runtime = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir)) {
-                var time = runtime.Execute(
-                    new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.AdvanceTime, "11")
-                );
-                var move = runtime.Execute(
-                    new TextAdv2RuntimeCommand(
-                        TextAdv2RuntimeCommandMode.MoveActorQuiet,
-                        TestWorldBuilder.ActorIds.Scout,
-                        TestWorldBuilder.PassageIds.SquareRidgeTrail
-                    )
+            using (var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir)) {
+                var time = runtime.AdvanceTime(11);
+                var move = runtime.MoveActorQuiet(
+                    TestWorldBuilder.ActorIds.Scout,
+                    TestWorldBuilder.PassageIds.SquareRidgeTrail
                 );
 
                 Assert.Contains("\"CurrentTick\": 11", time.Output, StringComparison.Ordinal);
@@ -127,13 +118,9 @@ public class TextAdv2RuntimeTests {
                 );
             }
 
-            using var reopened = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir);
-            var timeAfterReopen = reopened.Execute(
-                new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveTime)
-            );
-            var traceAfterReopen = reopened.Execute(
-                new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.TraceActorRoute, TestWorldBuilder.ActorIds.Scout)
-            );
+            using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
+            var timeAfterReopen = reopened.ObserveTime();
+            var traceAfterReopen = reopened.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
 
             Assert.Contains("\"CurrentTick\": 11", timeAfterReopen.Output, StringComparison.Ordinal);
             Assert.Contains(
@@ -153,22 +140,14 @@ public class TextAdv2RuntimeTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (var runtime = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir)) {
-                var initial = runtime.Execute(
-                    new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveRouteAcceleration)
+            using (var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir)) {
+                var initial = runtime.ObserveRouteAcceleration();
+                var rebuilt = runtime.RebuildRouteAcceleration(
+                    $"{TestWorldBuilder.LocationIds.Aerie},{TestWorldBuilder.LocationIds.Shrine}"
                 );
-                var rebuilt = runtime.Execute(
-                    new TextAdv2RuntimeCommand(
-                        TextAdv2RuntimeCommandMode.RebuildRouteAcceleration,
-                        $"{TestWorldBuilder.LocationIds.Aerie},{TestWorldBuilder.LocationIds.Shrine}"
-                    )
-                );
-                var planned = runtime.Execute(
-                    new TextAdv2RuntimeCommand(
-                        TextAdv2RuntimeCommandMode.PlanRoute,
-                        TestWorldBuilder.LocationIds.Village,
-                        TestWorldBuilder.LocationIds.Aerie
-                    )
+                var planned = runtime.PlanRoute(
+                    TestWorldBuilder.LocationIds.Village,
+                    TestWorldBuilder.LocationIds.Aerie
                 );
 
                 Assert.Contains("\"PlannerMode\": \"zero\"", initial.Output, StringComparison.Ordinal);
@@ -179,10 +158,8 @@ public class TextAdv2RuntimeTests {
                 Assert.Contains("totalCost=11", planned.Output, StringComparison.Ordinal);
             }
 
-            using var reopened = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir);
-            var observedAfterReopen = reopened.Execute(
-                new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveRouteAcceleration)
-            );
+            using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
+            var observedAfterReopen = reopened.ObserveRouteAcceleration();
 
             Assert.Contains("\"PlannerMode\": \"zero\"", observedAfterReopen.Output, StringComparison.Ordinal);
             Assert.Contains("\"SnapshotStatus\": \"inactive\"", observedAfterReopen.Output, StringComparison.Ordinal);
@@ -198,11 +175,9 @@ public class TextAdv2RuntimeTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using var runtime = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir);
+            using var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
 
-            var rebuilt = runtime.Execute(
-                new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.RebuildRouteAcceleration)
-            );
+            var rebuilt = runtime.RebuildRouteAcceleration();
 
             Assert.Contains("\"PlannerMode\": \"landmark\"", rebuilt.Output, StringComparison.Ordinal);
             Assert.Contains("\"LandmarkProfileName\": \"sample-world-default\"", rebuilt.Output, StringComparison.Ordinal);

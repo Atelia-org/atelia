@@ -14,19 +14,19 @@ var app = builder.Build();
 app.MapGet("/", (TextAdv2RuntimeService runtime) => Results.Ok(BuildRuntimeStatus(runtime)));
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.GameServer", mode = "runtime-connected" }));
 app.MapGet("/admin/runtime-status", (TextAdv2RuntimeService runtime) => Results.Ok(BuildRuntimeStatus(runtime)));
-app.MapGet("/admin/world", (TextAdv2RuntimeService runtime) => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.World)));
-app.MapGet("/admin/time", (TextAdv2RuntimeService runtime) => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveTime)));
+app.MapGet("/admin/world", (TextAdv2RuntimeService runtime) => Execute(runtime, static x => x.DumpWorld()));
+app.MapGet("/admin/time", (TextAdv2RuntimeService runtime) => Execute(runtime, static x => x.ObserveTime()));
 app.MapPost("/admin/advance-time/{ticks}",
     (string ticks, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.AdvanceTime, ticks))
+    => Execute(runtime, x => x.AdvanceTime(ParseNonNegativeTickDelta(ticks)))
 );
 app.MapGet("/admin/route-acceleration",
     (TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveRouteAcceleration))
+    => Execute(runtime, static x => x.ObserveRouteAcceleration())
 );
 app.MapPost("/admin/route-acceleration/rebuild",
     (string? landmarks, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.RebuildRouteAcceleration, landmarks))
+    => Execute(runtime, x => x.RebuildRouteAcceleration(landmarks))
 );
 app.MapPost("/admin/reset-sample-world",
     (TextAdv2RuntimeService runtime) => {
@@ -37,48 +37,48 @@ app.MapPost("/admin/reset-sample-world",
 
 app.MapGet("/admin/locations/{locationId}",
     (string locationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.Location, locationId))
+    => Execute(runtime, x => x.DumpLocation(locationId))
 );
 app.MapGet("/admin/locations/{locationId}/observation",
     (string locationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveLocation, locationId))
+    => Execute(runtime, x => x.ObserveLocation(locationId))
 );
 app.MapGet("/admin/locations/{locationId}/navigation",
     (string locationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveNavigation, locationId))
+    => Execute(runtime, x => x.ObserveNavigation(locationId))
 );
 
 app.MapGet("/actors/{actorId}/observation",
     (string actorId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveActor, actorId))
+    => Execute(runtime, x => x.ObserveActor(actorId))
 );
 app.MapGet("/actors/{actorId}/navigation",
     (string actorId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveActorNavigation, actorId))
+    => Execute(runtime, x => x.ObserveActorNavigation(actorId))
 );
 app.MapPost("/actors/{actorId}/moves/{passageId}",
     (string actorId, string passageId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.MoveActor, actorId, passageId))
+    => Execute(runtime, x => x.MoveActor(actorId, passageId))
 );
 app.MapGet("/actors/{actorId}/route-trace",
     (string actorId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.TraceActorRoute, actorId))
+    => Execute(runtime, x => x.TraceActorRoute(actorId))
 );
 app.MapGet("/actors/{actorId}/plan-route/{toLocationId}",
     (string actorId, string toLocationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.PlanActorRoute, actorId, toLocationId))
+    => Execute(runtime, x => x.PlanActorRoute(actorId, toLocationId))
 );
 
 app.MapGet("/admin/routes/{fromLocationId}/{toLocationId}",
     (string fromLocationId, string toLocationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.PlanRoute, fromLocationId, toLocationId))
+    => Execute(runtime, x => x.PlanRoute(fromLocationId, toLocationId))
 );
 
 app.Run();
 
-static IResult Execute(TextAdv2RuntimeService runtime, TextAdv2RuntimeCommand command) {
+static IResult Execute(TextAdv2RuntimeService runtime, Func<TextAdv2Runtime, TextAdv2RuntimeCommandResult> operation) {
     try {
-        var result = runtime.Execute(command);
+        var result = runtime.Invoke(operation);
         return Results.Content(result.Output, result.ContentType);
     }
     catch (ArgumentException ex) {
@@ -87,6 +87,13 @@ static IResult Execute(TextAdv2RuntimeService runtime, TextAdv2RuntimeCommand co
     catch (InvalidOperationException ex) {
         return Results.BadRequest(new { error = ex.Message });
     }
+}
+
+static long ParseNonNegativeTickDelta(string value) {
+    if (!long.TryParse(value, out long ticks)) { throw new InvalidOperationException($"AdvanceTime requires an integer tick delta, but received '{value}'."); }
+
+    ArgumentOutOfRangeException.ThrowIfNegative(ticks);
+    return ticks;
 }
 
 object BuildRuntimeStatus(TextAdv2RuntimeService runtime) {

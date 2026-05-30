@@ -246,7 +246,7 @@ public class GameServerIntegrationTests {
 
         for (int attempt = 0; attempt < 40; attempt++) {
             try {
-                using var runtime = TextAdv2Runtime.OpenOrCreateSampleWorld(repoDir);
+                using var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
                 return;
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to acquire lock", StringComparison.Ordinal)) {

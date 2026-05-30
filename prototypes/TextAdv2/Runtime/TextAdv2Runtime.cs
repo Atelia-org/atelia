@@ -110,63 +110,156 @@ public sealed class TextAdv2Runtime : IDisposable {
             : CreateSampleWorld(repoDir);
     }
 
+    public TextAdv2RuntimeCommandResult DumpWorld() {
+        EnsureNotDisposed();
+        return Text(WorldDumpRenderer.Render(_world));
+    }
+
+    public TextAdv2RuntimeCommandResult DumpLocation(string locationId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
+        return Text(WorldDumpRenderer.RenderLocation(_world, locationId));
+    }
+
+    public TextAdv2RuntimeCommandResult ObserveLocation(string locationId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
+        return Json(LocationObservationProjector.ObserveLocation(_world, locationId));
+    }
+
+    public TextAdv2RuntimeCommandResult ObserveActor(string actorId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        return Json(LocationObservationProjector.ObserveActorLocation(_world, actorId));
+    }
+
+    public TextAdv2RuntimeCommandResult ObserveNavigation(string locationId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
+        return Json(NavigationObservationProjector.ObserveLocationNavigation(_world, locationId));
+    }
+
+    public TextAdv2RuntimeCommandResult ObserveActorNavigation(string actorId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        return Json(NavigationObservationProjector.ObserveActorNavigation(_world, actorId));
+    }
+
+    public TextAdv2RuntimeCommandResult ObserveRouteAcceleration() {
+        EnsureNotDisposed();
+        return Json(_routeAcceleration.Observe(_world));
+    }
+
+    public TextAdv2RuntimeCommandResult ObserveTime() {
+        EnsureNotDisposed();
+        return Json(ObserveLogicalTime());
+    }
+
+    public TextAdv2RuntimeCommandResult AdvanceTime(long ticks) {
+        EnsureNotDisposed();
+        return Json(AdvanceLogicalTime(ticks));
+    }
+
+    public TextAdv2RuntimeCommandResult PlanActorRoute(string actorId, string toLocationId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
+
+        return Text(
+            LocationRoutePlanTextRenderer.Render(
+                LocationRoutePlanner.PlanShortestRouteForActor(
+                    _world,
+                    actorId,
+                    toLocationId,
+                    _routeAcceleration.GetPlanningOptions(_world)
+                )
+            )
+        );
+    }
+
+    public TextAdv2RuntimeCommandResult PlanRoute(string fromLocationId, string toLocationId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(fromLocationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
+
+        return Text(
+            LocationRoutePlanTextRenderer.Render(
+                LocationRoutePlanner.PlanShortestRoute(
+                    _world,
+                    fromLocationId,
+                    toLocationId,
+                    _routeAcceleration.GetPlanningOptions(_world)
+                )
+            )
+        );
+    }
+
+    public TextAdv2RuntimeCommandResult RebuildRouteAcceleration(string? requestedLandmarks = null) {
+        EnsureNotDisposed();
+        return Json(RebuildRouteAccelerationCore(requestedLandmarks));
+    }
+
+    public TextAdv2RuntimeCommandResult TraceActorRoute(string actorId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+
+        return Text(
+            ActorRouteTraceTextRenderer.Render(
+                ActorRouteTraceProjector.ObserveActorRouteTrace(
+                    _world,
+                    actorId,
+                    GetMovementHistory(actorId)
+                )
+            )
+        );
+    }
+
+    public TextAdv2RuntimeCommandResult MoveActorQuiet(string actorId, string passageId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
+
+        return Text(RenderCompactMovement(MoveActorCore(actorId, passageId)));
+    }
+
+    public TextAdv2RuntimeCommandResult MoveActor(string actorId, string passageId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
+
+        return Json(MoveActorCore(actorId, passageId));
+    }
+
     public TextAdv2RuntimeCommandResult Execute(TextAdv2RuntimeCommand command) {
         ArgumentNullException.ThrowIfNull(command);
-        EnsureNotDisposed();
 
         return command.Mode switch {
-            TextAdv2RuntimeCommandMode.World => Text(WorldDumpRenderer.Render(_world)),
-            TextAdv2RuntimeCommandMode.Location => Text(WorldDumpRenderer.RenderLocation(_world, RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)))),
-            TextAdv2RuntimeCommandMode.ObserveLocation => Json(LocationObservationProjector.ObserveLocation(_world, RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)))),
-            TextAdv2RuntimeCommandMode.ObserveActor => Json(LocationObservationProjector.ObserveActorLocation(_world, RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)))),
-            TextAdv2RuntimeCommandMode.ObserveNavigation => Json(NavigationObservationProjector.ObserveLocationNavigation(_world, RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)))),
-            TextAdv2RuntimeCommandMode.ObserveActorNavigation => Json(NavigationObservationProjector.ObserveActorNavigation(_world, RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)))),
-            TextAdv2RuntimeCommandMode.ObserveRouteAcceleration => Json(_routeAcceleration.Observe(_world)),
-            TextAdv2RuntimeCommandMode.ObserveTime => Json(ObserveLogicalTime()),
-            TextAdv2RuntimeCommandMode.AdvanceTime => Json(AdvanceLogicalTime(ParseAdvanceTickDelta(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))))),
-            TextAdv2RuntimeCommandMode.PlanActorRoute => Text(
-                LocationRoutePlanTextRenderer.Render(
-                    LocationRoutePlanner.PlanShortestRouteForActor(
-                        _world,
-                        RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                        RequireArg(command.Arg2, command.Mode, nameof(command.Arg2)),
-                        _routeAcceleration.GetPlanningOptions(_world)
-                    )
-                )
+            TextAdv2RuntimeCommandMode.World => DumpWorld(),
+            TextAdv2RuntimeCommandMode.Location => DumpLocation(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
+            TextAdv2RuntimeCommandMode.ObserveLocation => ObserveLocation(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
+            TextAdv2RuntimeCommandMode.ObserveActor => ObserveActor(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
+            TextAdv2RuntimeCommandMode.ObserveNavigation => ObserveNavigation(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
+            TextAdv2RuntimeCommandMode.ObserveActorNavigation => ObserveActorNavigation(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
+            TextAdv2RuntimeCommandMode.ObserveRouteAcceleration => ObserveRouteAcceleration(),
+            TextAdv2RuntimeCommandMode.ObserveTime => ObserveTime(),
+            TextAdv2RuntimeCommandMode.AdvanceTime => AdvanceTime(ParseAdvanceTickDelta(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)))),
+            TextAdv2RuntimeCommandMode.PlanActorRoute => PlanActorRoute(
+                RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
+                RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
             ),
-            TextAdv2RuntimeCommandMode.PlanRoute => Text(
-                LocationRoutePlanTextRenderer.Render(
-                    LocationRoutePlanner.PlanShortestRoute(
-                        _world,
-                        RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                        RequireArg(command.Arg2, command.Mode, nameof(command.Arg2)),
-                        _routeAcceleration.GetPlanningOptions(_world)
-                    )
-                )
+            TextAdv2RuntimeCommandMode.PlanRoute => PlanRoute(
+                RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
+                RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
             ),
-            TextAdv2RuntimeCommandMode.RebuildRouteAcceleration => Json(RebuildRouteAcceleration(command.Arg1)),
-            TextAdv2RuntimeCommandMode.TraceActorRoute => Text(
-                ActorRouteTraceTextRenderer.Render(
-                    ActorRouteTraceProjector.ObserveActorRouteTrace(
-                        _world,
-                        RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                        GetMovementHistory(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)))
-                    )
-                )
+            TextAdv2RuntimeCommandMode.RebuildRouteAcceleration => RebuildRouteAcceleration(command.Arg1),
+            TextAdv2RuntimeCommandMode.TraceActorRoute => TraceActorRoute(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
+            TextAdv2RuntimeCommandMode.MoveActorQuiet => MoveActorQuiet(
+                RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
+                RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
             ),
-            TextAdv2RuntimeCommandMode.MoveActorQuiet => Text(
-                RenderCompactMovement(
-                    MoveActor(
-                        RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                        RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
-                    )
-                )
-            ),
-            TextAdv2RuntimeCommandMode.MoveActor => Json(
-                MoveActor(
-                    RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                    RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
-                )
+            TextAdv2RuntimeCommandMode.MoveActor => MoveActor(
+                RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
+                RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
             ),
             _ => throw new InvalidOperationException($"Unsupported command mode '{command.Mode}'."),
         };
@@ -192,7 +285,7 @@ public sealed class TextAdv2Runtime : IDisposable {
         return options;
     }
 
-    private ActorMovementObservation MoveActor(string actorId, string passageId) {
+    private ActorMovementObservation MoveActorCore(string actorId, string passageId) {
         var actor = _world.GetActor(actorId);
         var fromLocation = _world.GetLocation(actor.CurrentLocationId);
         var passage = _world.GetPassage(passageId);
@@ -224,7 +317,7 @@ public sealed class TextAdv2Runtime : IDisposable {
 
     private TextAdv2LogicalTimeObservation ObserveLogicalTime() => new(_logicalTick);
 
-    private TextAdv2RouteAccelerationObservation RebuildRouteAcceleration(string? requestedLandmarks) {
+    private TextAdv2RouteAccelerationObservation RebuildRouteAccelerationCore(string? requestedLandmarks) {
         var rebuildRequest = ResolveLandmarkRebuildRequest(_world, requestedLandmarks);
         return _routeAcceleration.Rebuild(_world, rebuildRequest.LandmarkLocationIds, rebuildRequest.LandmarkProfileName);
     }

@@ -22,12 +22,11 @@ internal sealed class TextAdv2RuntimeService : IDisposable {
 
     public bool AutoBootstrapSampleWorld => _autoBootstrapSampleWorld;
 
-    public TextAdv2RuntimeCommandResult Execute(TextAdv2RuntimeCommand command) {
-        ArgumentNullException.ThrowIfNull(command);
-
+    public TResult Invoke<TResult>(Func<TextAdv2Runtime, TResult> operation) {
+        ArgumentNullException.ThrowIfNull(operation);
         lock (_gate) {
             EnsureNotDisposed();
-            return _runtime.Execute(command);
+            return operation(_runtime);
         }
     }
 
@@ -36,11 +35,7 @@ internal sealed class TextAdv2RuntimeService : IDisposable {
             EnsureNotDisposed();
 
             _runtime.Dispose();
-            if (Directory.Exists(RepoDir)) {
-                Directory.Delete(RepoDir, recursive: true);
-            }
-
-            _runtime = TextAdv2Runtime.CreateSampleWorld(RepoDir);
+            _runtime = TextAdv2SampleWorldDevBootstrap.ResetRuntime(RepoDir);
         }
     }
 
@@ -57,7 +52,7 @@ internal sealed class TextAdv2RuntimeService : IDisposable {
         for (int attempt = 0; ; attempt++) {
             try {
                 return _autoBootstrapSampleWorld
-                    ? TextAdv2Runtime.OpenOrCreateSampleWorld(RepoDir)
+                    ? TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(RepoDir)
                     : TextAdv2Runtime.OpenExisting(RepoDir);
             }
             catch (InvalidOperationException ex) when (attempt < MaxOpenRetryCount && IsRepositoryLockFailure(ex)) {
