@@ -107,6 +107,11 @@ public class GameServerIntegrationTests {
             Assert.Equal("runtime-connected", json.RootElement.GetProperty("mode").GetString());
             Assert.Equal(repoDir, json.RootElement.GetProperty("configuration").GetProperty("resolvedRepoDir").GetString());
             Assert.True(json.RootElement.GetProperty("runtime").GetProperty("runtimeExtracted").GetBoolean());
+            Assert.Contains(
+                json.RootElement.GetProperty("runtime").GetProperty("notes").EnumerateArray().Select(static x => x.GetString()),
+                static note => note is not null
+                    && note.Contains("宿主仍自行负责 CLI/HTTP 请求到 runtime method 的分发。", StringComparison.Ordinal)
+            );
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
