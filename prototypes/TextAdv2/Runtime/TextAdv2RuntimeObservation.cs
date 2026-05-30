@@ -34,12 +34,39 @@ public sealed record TextAdv2RuntimeActorObservation(
     TextAdv2RuntimeLocationObservation Location
 );
 
+public sealed record TextAdv2RuntimeLocationNavigationObservation(
+    string LocationId,
+    string LocationName,
+    TextAdv2RuntimeNavigationEdgeObservation[] Edges
+);
+
+public sealed record TextAdv2RuntimeNavigationEdgeObservation(
+    string PassageId,
+    string ExitName,
+    string TargetLocationId,
+    string TargetLocationName,
+    string TravelMode,
+    int TravelCost
+);
+
+public sealed record TextAdv2RuntimeActorNavigationObservation(
+    string ActorId,
+    string ActorName,
+    TextAdv2RuntimeLocationNavigationObservation Navigation
+);
+
 internal static class TextAdv2RuntimeObservationProjector {
     public static TextAdv2RuntimeLocationObservation ProjectLocation(WorldState world, string locationId)
         => ProjectLocation(LocationObservationProjector.ObserveLocation(world, locationId));
 
     public static TextAdv2RuntimeActorObservation ProjectActor(WorldState world, string actorId)
         => ProjectActor(LocationObservationProjector.ObserveActorLocation(world, actorId));
+
+    public static TextAdv2RuntimeLocationNavigationObservation ProjectNavigation(WorldState world, string locationId)
+        => ProjectNavigation(NavigationObservationProjector.ObserveLocationNavigation(world, locationId));
+
+    public static TextAdv2RuntimeActorNavigationObservation ProjectActorNavigation(WorldState world, string actorId)
+        => ProjectActorNavigation(NavigationObservationProjector.ObserveActorNavigation(world, actorId));
 
     public static TextAdv2RuntimeLocationObservation ProjectLocation(LocationObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
@@ -60,6 +87,26 @@ internal static class TextAdv2RuntimeObservationProjector {
             observation.ActorId,
             observation.ActorName,
             ProjectLocation(observation.Location)
+        );
+    }
+
+    public static TextAdv2RuntimeLocationNavigationObservation ProjectNavigation(LocationNavigationObservation observation) {
+        ArgumentNullException.ThrowIfNull(observation);
+
+        return new TextAdv2RuntimeLocationNavigationObservation(
+            observation.LocationId,
+            observation.LocationName,
+            observation.Edges.Select(ProjectNavigationEdge).ToArray()
+        );
+    }
+
+    public static TextAdv2RuntimeActorNavigationObservation ProjectActorNavigation(ActorNavigationObservation observation) {
+        ArgumentNullException.ThrowIfNull(observation);
+
+        return new TextAdv2RuntimeActorNavigationObservation(
+            observation.ActorId,
+            observation.ActorName,
+            ProjectNavigation(observation.Navigation)
         );
     }
 
@@ -86,5 +133,18 @@ internal static class TextAdv2RuntimeObservationProjector {
         ArgumentNullException.ThrowIfNull(observation);
 
         return new TextAdv2RuntimeActorPresenceObservation(observation.ActorId, observation.ActorName);
+    }
+
+    private static TextAdv2RuntimeNavigationEdgeObservation ProjectNavigationEdge(NavigationEdgeObservation observation) {
+        ArgumentNullException.ThrowIfNull(observation);
+
+        return new TextAdv2RuntimeNavigationEdgeObservation(
+            observation.PassageId,
+            observation.ExitName,
+            observation.TargetLocationId,
+            observation.TargetLocationName,
+            observation.TravelMode.ToStorageValue(),
+            observation.TravelCost
+        );
     }
 }

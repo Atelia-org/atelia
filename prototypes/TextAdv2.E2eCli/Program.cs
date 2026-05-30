@@ -101,14 +101,14 @@ internal static class Program {
                 case "--observe-navigation":
                     {
                         string locationId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe navigation {locationId}", runtime => runtime.ObserveNavigation(locationId).Output));
+                        operations.Add(new RuntimeOperation($"observe navigation {locationId}", runtime => RenderJson(runtime.ObserveNavigation(locationId))));
                     }
                     index += 2;
                     break;
                 case "--observe-actor-navigation":
                     {
                         string actorId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe actor navigation {actorId}", runtime => runtime.ObserveActorNavigation(actorId).Output));
+                        operations.Add(new RuntimeOperation($"observe actor navigation {actorId}", runtime => RenderJson(runtime.ObserveActorNavigation(actorId))));
                     }
                     index += 2;
                     break;

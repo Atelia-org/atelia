@@ -47,7 +47,7 @@ app.MapGet("/admin/locations/{locationId}/observation",
 );
 app.MapGet("/admin/locations/{locationId}/navigation",
     (string locationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.ObserveNavigation(locationId))
+    => ExecuteJson(runtime, x => x.ObserveNavigation(locationId))
 );
 
 app.MapGet("/actors/{actorId}/observation",
@@ -56,7 +56,7 @@ app.MapGet("/actors/{actorId}/observation",
 );
 app.MapGet("/actors/{actorId}/navigation",
     (string actorId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.ObserveActorNavigation(actorId))
+    => ExecuteJson(runtime, x => x.ObserveActorNavigation(actorId))
 );
 app.MapPost("/actors/{actorId}/moves/{passageId}",
     (string actorId, string passageId, TextAdv2RuntimeService runtime)

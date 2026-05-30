@@ -30,6 +30,72 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
+    public void ObserveNavigation_ReturnsTypedNavigationObservationWithStringTravelMode() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var result = runtime.ObserveNavigation(TestWorldBuilder.LocationIds.Square);
+
+        Assert.Equal(TestWorldBuilder.LocationIds.Square, result.LocationId);
+        Assert.Equal("Square", result.LocationName);
+        Assert.Collection(
+            result.Edges,
+            edge => {
+                Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, edge.PassageId);
+                Assert.Equal("north gate", edge.ExitName);
+                Assert.Equal(TestWorldBuilder.LocationIds.Ridge, edge.TargetLocationId);
+                Assert.Equal("land", edge.TravelMode);
+                Assert.Equal(5, edge.TravelCost);
+            },
+            edge => {
+                Assert.Equal(TestWorldBuilder.PassageIds.SquareShrineGate, edge.PassageId);
+                Assert.Equal("old arch", edge.ExitName);
+                Assert.Equal(TestWorldBuilder.LocationIds.Shrine, edge.TargetLocationId);
+                Assert.Equal("portal", edge.TravelMode);
+                Assert.Equal(1, edge.TravelCost);
+            },
+            edge => {
+                Assert.Equal(TestWorldBuilder.PassageIds.VillageSquareRoad, edge.PassageId);
+                Assert.Equal("west", edge.ExitName);
+                Assert.Equal(TestWorldBuilder.LocationIds.Village, edge.TargetLocationId);
+                Assert.Equal("land", edge.TravelMode);
+                Assert.Equal(1, edge.TravelCost);
+            }
+        );
+    }
+
+    [Fact]
+    public void ObserveActorNavigation_ReturnsTypedNavigationAtActorsCurrentLocation() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+        _ = runtime.MoveActorQuiet(
+            TestWorldBuilder.ActorIds.Scout,
+            TestWorldBuilder.PassageIds.SquareRidgeTrail
+        );
+
+        var result = runtime.ObserveActorNavigation(TestWorldBuilder.ActorIds.Scout);
+
+        Assert.Equal(TestWorldBuilder.ActorIds.Scout, result.ActorId);
+        Assert.Equal("Scout", result.ActorName);
+        Assert.Equal(TestWorldBuilder.LocationIds.Ridge, result.Navigation.LocationId);
+        Assert.Collection(
+            result.Navigation.Edges,
+            edge => {
+                Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, edge.PassageId);
+                Assert.Equal("cliff lift", edge.ExitName);
+                Assert.Equal(TestWorldBuilder.LocationIds.Aerie, edge.TargetLocationId);
+                Assert.Equal("air", edge.TravelMode);
+                Assert.Equal(5, edge.TravelCost);
+            },
+            edge => {
+                Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, edge.PassageId);
+                Assert.Equal("downhill trail", edge.ExitName);
+                Assert.Equal(TestWorldBuilder.LocationIds.Square, edge.TargetLocationId);
+                Assert.Equal("land", edge.TravelMode);
+                Assert.Equal(2, edge.TravelCost);
+            }
+        );
+    }
+
+    [Fact]
     public void MoveActorQuietThenTraceActorRoute_UsesRuntimeMovementHistory() {
         string repoDir = CreateTempRepoDir();
 

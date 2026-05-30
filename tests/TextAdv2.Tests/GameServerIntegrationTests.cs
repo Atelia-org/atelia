@@ -184,6 +184,30 @@ public class GameServerIntegrationTests {
                 static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate && exit.TravelMode == "portal"
             );
 
+            using var adminNavigation = await client.GetAsync("/admin/locations/square/navigation");
+            var adminNavigationObservation = await ReadJsonAsync<TextAdv2RuntimeLocationNavigationObservation>(adminNavigation);
+            Assert.Equal(HttpStatusCode.OK, adminNavigation.StatusCode);
+            Assert.Equal("application/json", adminNavigation.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(adminNavigationObservation);
+            Assert.Collection(
+                adminNavigationObservation.Edges,
+                edge => {
+                    Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, edge.PassageId);
+                    Assert.Equal("land", edge.TravelMode);
+                    Assert.Equal(5, edge.TravelCost);
+                },
+                edge => {
+                    Assert.Equal(TestWorldBuilder.PassageIds.SquareShrineGate, edge.PassageId);
+                    Assert.Equal("portal", edge.TravelMode);
+                    Assert.Equal(1, edge.TravelCost);
+                },
+                edge => {
+                    Assert.Equal(TestWorldBuilder.PassageIds.VillageSquareRoad, edge.PassageId);
+                    Assert.Equal("land", edge.TravelMode);
+                    Assert.Equal(1, edge.TravelCost);
+                }
+            );
+
             using var publicLocation = await client.GetAsync("/locations/square");
             Assert.Equal(HttpStatusCode.NotFound, publicLocation.StatusCode);
 
@@ -223,6 +247,20 @@ public class GameServerIntegrationTests {
 
             using var publicAcceleration = await client.GetAsync("/route-acceleration");
             Assert.Equal(HttpStatusCode.NotFound, publicAcceleration.StatusCode);
+
+            using var actorNavigation = await client.GetAsync("/actors/scout/navigation");
+            var actorNavigationObservation = await ReadJsonAsync<TextAdv2RuntimeActorNavigationObservation>(actorNavigation);
+            Assert.Equal(HttpStatusCode.OK, actorNavigation.StatusCode);
+            Assert.Equal("application/json", actorNavigation.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(actorNavigationObservation);
+            Assert.Equal(TestWorldBuilder.ActorIds.Scout, actorNavigationObservation.ActorId);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, actorNavigationObservation.Navigation.LocationId);
+            Assert.Contains(
+                actorNavigationObservation.Navigation.Edges,
+                static edge => edge.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate
+                    && edge.TravelMode == "portal"
+                    && edge.TravelCost == 1
+            );
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
