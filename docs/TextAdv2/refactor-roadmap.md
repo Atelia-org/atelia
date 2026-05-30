@@ -119,6 +119,14 @@ P2b1 本轮落地结果：
 - 对应的 runtime 测试，以及 time/route-acceleration 的 GameServer JSON 边界断言，已跟随迁移完成更新。
 - 下一自然入口是 `P2b2`：为 actor/location/navigation/move 设计更干净的 public DTO seam，再继续缩减 `TextAdv2RuntimeCommandResult` 的残留范围。
 
+P2b2a 本轮落地结果：
+
+- `ObserveLocation(string)` 已直接返回 `TextAdv2RuntimeLocationObservation`。
+- `ObserveActor(string)` 已直接返回 `TextAdv2RuntimeActorObservation`。
+- 新 seam 没有直接公开 `ReadOnlyView` DTO，也没有把 `TravelMode` 公开成 public enum；runtime 在边界前把 travel mode 投影成字符串 token。
+- `GameServer` / `E2eCli` 对应入口已迁到宿主边界序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
+- 下一自然入口是 `P2b2b`：决定 navigation observation 是否沿用同类 runtime-facing DTO 策略，或与 `P4 canonical navigation graph seam` 一起收口。
+
 ### P3. 收紧 world root 与写入权威
 
 主张：
