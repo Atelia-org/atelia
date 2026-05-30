@@ -1,4 +1,5 @@
 using Atelia.StateJournal;
+using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.Runtime;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
@@ -90,6 +91,55 @@ public class TextAdv2RouteAccelerationStateTests {
             Assert.Equal("landmark", observedAfterNoteChange.PlannerMode);
             Assert.Equal("active", observedAfterNoteChange.SnapshotStatus);
             Assert.NotNull(planningOptionsAfterNoteChange);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void DisablePassageDirection_ChangesNavigationAndRoutePlanWhileMarkingAccelerationStale() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var routeAcceleration = new TextAdv2RouteAccelerationState();
+
+            routeAcceleration.Rebuild(
+                world,
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
+            );
+
+            var planBeforeMutation = LocationRoutePlanner.PlanShortestRoute(
+                world,
+                TestWorldBuilder.LocationIds.Village,
+                TestWorldBuilder.LocationIds.Aerie
+            );
+            world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail)
+                .SetDirectionEnabledFrom(TestWorldBuilder.LocationIds.Square, false);
+
+            var navigationAfterMutation = NavigationObservationProjector.ObserveLocationNavigation(
+                world,
+                TestWorldBuilder.LocationIds.Square
+            );
+            var planAfterMutation = LocationRoutePlanner.PlanShortestRoute(
+                world,
+                TestWorldBuilder.LocationIds.Village,
+                TestWorldBuilder.LocationIds.Aerie
+            );
+            var accelerationAfterMutation = routeAcceleration.Observe(world);
+
+            Assert.Equal(RoutePlanStatus.Found, planBeforeMutation.Status);
+            Assert.Equal(11, planBeforeMutation.TotalTravelCost);
+            Assert.DoesNotContain(
+                navigationAfterMutation.Edges,
+                static edge => edge.PassageId == TestWorldBuilder.PassageIds.SquareRidgeTrail
+            );
+            Assert.Equal(RoutePlanStatus.Unreachable, planAfterMutation.Status);
+            Assert.Equal("stale", accelerationAfterMutation.SnapshotStatus);
+            Assert.Equal("zero", accelerationAfterMutation.PlannerMode);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

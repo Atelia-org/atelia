@@ -223,7 +223,7 @@ P2 后续修订说明：
 
 ### P4. 建立 canonical navigation graph seam
 
-状态：建议优先级上调
+状态：进行中
 
 主张：
 
@@ -246,6 +246,14 @@ P2 后续修订说明：
 
 - 图的 enabled/filter/cost 语义只定义一次。
 - route acceleration 的 stale 判定不再拼接另一份手写图描述。
+
+P4a/P4b 本轮落地结果：
+
+- 隐式 graph seam 已正式收口为 `LocationNavigationGraph` / `LocationNavigationGraphProjector`。
+- `NavigationObservationProjector` 已退回为展示层 adapter：先读 canonical graph，再补 `ExitName`、`TargetLocationName` 等展示字段。
+- `LocationRoutePlanner`、`LocationLandmarkHeuristicSnapshot`、`TextAdv2RouteAcceleration` 的 stale-signature 计算已显式改读这份 seam，不再依赖 `NavigationObservationProjector` 的内部细节。
+- 已补“同一次拓扑变更同时影响 navigation / planner / route-acceleration stale”回归测试，进一步锁住单一真源收口。
+- 下一自然入口转为 `P4c / P4-adjacent route plan typed seam`；`Observe/RebuildRouteAcceleration` 的 public API 仍保持现状，留待后续按需要评估。
 
 ### P5. sample-world / dev harness 下沉
 
@@ -290,15 +298,14 @@ P5a 本轮落地结果：
 
 推荐顺序改为：
 
-1. `P4 canonical navigation graph seam`
-2. `P4c / P4-adjacent route plan typed seam`
-3. `P3b world editor / 写入权威收口`
-4. `P5b open-or-create/reset 与 admin surface 收口`
-5. `P2c + P5c` 清理 text/dev/admin surface
+1. `P4c / P4-adjacent route plan typed seam`
+2. `P3b world editor / 写入权威收口`
+3. `P5b open-or-create/reset 与 admin surface 收口`
+4. `P2c + P5c` 清理 text/dev/admin surface
 
 排序理由：
 
-- `P4` 的真实价值高于 route plan public seam；应先收内部 graph 真源，再决定 route plan 的对外契约。
+- `P4a/P4b` 已完成，当前最自然的后续是决定 route plan 是否建立 public typed seam，而不是再让它长期停留在 text-only surface。
 - `P3b` 目前还缺承接设计，放在更后面更可行。
 - `P5a` 已经把 sample-world seed 与默认 landmark policy 从 runtime public seam 中剥离，后续可以把焦点切回 runtime 核心 typed seam 与 graph 真源。
 - `P2b2c` 已完成，runtime 核心 use case 的 public seam 已进一步收口，下一步最值得解决的是导航图单一真源问题。
@@ -317,10 +324,10 @@ P5a 本轮落地结果：
 
 ## 9. 当前推荐起点
 
-当前推荐从 `P4 canonical navigation graph seam` 开始。
+当前推荐从 `P4c / P4-adjacent route plan typed seam` 开始。
 
 原因：
 
 - `P5a` 已经完成最小闭环，runtime 与 sample/dev policy 之间的最显性耦合点已被压回显式 dev support 层。
-- `P2b2c` 也已完成，runtime 核心 public seam 已从 observation 延伸到核心写入 use case。
-- 当前最突出的剩余复杂度集中在导航图派生结构的多处复用与隐式共享上，优先做 `P4` 会比先清 text/dev/admin surface 更值当。
+- `P2b2c` 与 `P4a/P4b` 都已完成，runtime 核心 public seam 与导航图单一真源都已比此前更收敛。
+- 当前最自然的下一步是决定 route plan 是否沿用与 observation / movement 一致的 typed runtime seam，而不是继续把它留在 text-only surface。
