@@ -112,6 +112,125 @@ public class TestWorldBuilderTests {
         }
     }
 
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenSchemaVersionIsMissing() {
+        string repoDir = CreateTempRepoDir();
+        int supportedVersion;
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = WorldState.Create(revision);
+                supportedVersion = world.Root.GetOrThrow<int>("schemaVersion");
+                Assert.True(world.Root.Remove("schemaVersion"));
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    $"Expected world-state schemaVersion '{supportedVersion}', but found '<missing>'.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenSchemaVersionIsUnsupported() {
+        string repoDir = CreateTempRepoDir();
+        int supportedVersion;
+        int unsupportedVersion;
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = WorldState.Create(revision);
+                supportedVersion = world.Root.GetOrThrow<int>("schemaVersion");
+                unsupportedVersion = supportedVersion + 98;
+                world.Root.Upsert("schemaVersion", unsupportedVersion);
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    $"Expected world-state schemaVersion '{supportedVersion}', but found '{unsupportedVersion}'.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_FromRoot_StillChecksKindBeforeSchemaGate() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = WorldState.Create(revision);
+                world.Root.Upsert(WorldState.KindKey, "not-world-state");
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    "Expected durable object kind 'world-state', but found 'not-world-state'.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_FromRoot_AllowsCurrentSchemaVersionHappyPath() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = WorldState.Create(revision);
+                world.CreateLocation("start", "Start", "schema gate happy path");
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var reopened = WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap());
+
+                Assert.Equal("Start", reopened.GetLocation("start").Name);
+                Assert.Single(reopened.EnumerateLocations());
+                Assert.Empty(reopened.EnumeratePassages());
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-tests-{Guid.NewGuid():N}");
 

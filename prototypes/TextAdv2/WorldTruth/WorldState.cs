@@ -24,6 +24,7 @@ internal sealed class WorldState {
         ArgumentNullException.ThrowIfNull(root);
         _root = root;
         EnsureKind(root, KindValue);
+        EnsureSupportedSchemaVersion(root);
 
         _ = ActorsLedger;
         _ = LocationsLedger;
@@ -267,6 +268,32 @@ internal sealed class WorldState {
             throw new InvalidOperationException(
                 $"Expected durable object kind '{expectedKind}', but found '{actualKind ?? "<missing>"}'."
             );
+        }
+    }
+
+    internal static void EnsureSupportedSchemaVersion(DurableDict<string> data) {
+        ArgumentNullException.ThrowIfNull(data);
+
+        GetIssue issue = data.Get(SchemaVersionKey, out int schemaVersion);
+        switch (issue) {
+            case GetIssue.None:
+                if (schemaVersion != CurrentSchemaVersion) {
+                    throw new InvalidOperationException(
+                        $"Expected world-state schemaVersion '{CurrentSchemaVersion}', but found '{schemaVersion}'."
+                    );
+                }
+
+                return;
+
+            case GetIssue.NotFound:
+                throw new InvalidOperationException(
+                    $"Expected world-state schemaVersion '{CurrentSchemaVersion}', but found '<missing>'."
+                );
+
+            default:
+                throw new InvalidOperationException(
+                    $"Expected world-state schemaVersion '{CurrentSchemaVersion}', but found '<invalid:{issue}>'."
+                );
         }
     }
 
