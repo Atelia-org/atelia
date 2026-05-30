@@ -156,7 +156,7 @@ public class NavigationAndCliWorkflowTests {
         }
     }
 
-    private static ActorMovementObservation ExecuteMove(WorldState world, string actorId, string passageId) {
+    private static ActorMovementHistoryEntry ExecuteMove(WorldState world, string actorId, string passageId) {
         var actor = world.GetActor(actorId);
         var fromLocation = world.GetLocation(actor.CurrentLocationId);
         var passage = world.GetPassage(passageId);
@@ -166,10 +166,7 @@ public class NavigationAndCliWorkflowTests {
 
         world.MoveActorAlongPassage(actorId, passageId);
 
-        var currentObservation = LocationObservationProjector.ObserveActorLocation(world, actorId);
-        return new ActorMovementObservation(
-            currentObservation.ActorId,
-            currentObservation.ActorName,
+        return new ActorMovementHistoryEntry(
             passage.Id,
             exit.ExitName,
             fromLocation.Id,
@@ -177,8 +174,7 @@ public class NavigationAndCliWorkflowTests {
             toLocation.Id,
             toLocation.Name,
             passage.TravelMode,
-            direction.TotalTravelCost(passage),
-            currentObservation.Location
+            direction.TotalTravelCost(passage)
         );
     }
 

@@ -188,7 +188,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task RuntimeOwnedState_SurvivesHostRestartAsync() {
+    public async Task HostRestart_ReopensWorldTruthButResetsRuntimeOwnedStateAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -210,12 +210,14 @@ public class GameServerIntegrationTests {
             using var timeAfterRestart = await secondClient.GetAsync("/admin/time");
             string timeText = await timeAfterRestart.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, timeAfterRestart.StatusCode);
-            Assert.Contains("\"CurrentTick\":13", timeText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.Contains("\"CurrentTick\":0", timeText.Replace(" ", string.Empty), StringComparison.Ordinal);
 
             using var traceAfterRestart = await secondClient.GetAsync("/actors/scout/route-trace");
             string traceText = await traceAfterRestart.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, traceAfterRestart.StatusCode);
-            Assert.Contains("1. square --north gate/square-ridge-trail--> ridge | land | cost=5", traceText, StringComparison.Ordinal);
+            Assert.Contains("start=ridge (Ridge)", traceText, StringComparison.Ordinal);
+            Assert.Contains("<no movement in this run>", traceText, StringComparison.Ordinal);
+            Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceText, StringComparison.Ordinal);
 
             using var observedAfterRestart = await secondClient.GetAsync("/actors/scout/observation");
             var observedJson = JsonDocument.Parse(await observedAfterRestart.Content.ReadAsStringAsync());

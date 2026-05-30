@@ -24,6 +24,23 @@ internal sealed record ActorMovementObservation(
 );
 
 /// <summary>
+/// runtime 内部维护的轻量移动历史。
+///
+/// 它只保留 route trace 真正需要的稳定字段，属于本次运行的易失调试态，
+/// 不持有完整 LocationObservation，也不承诺跨 reopen 恢复。
+/// </summary>
+internal sealed record ActorMovementHistoryEntry(
+    string PassageId,
+    string ExitName,
+    string FromLocationId,
+    string FromLocationName,
+    string ToLocationId,
+    string ToLocationName,
+    TravelMode TravelMode,
+    int TravelCost
+);
+
+/// <summary>
 /// 单次 CLI 运行期间累计得到的 actor 路线 trace。
 /// 其输入是“当前 actor 位置 + 本次运行内已发生的移动序列”。
 /// </summary>
@@ -59,7 +76,7 @@ internal static class ActorRouteTraceProjector {
     public static ActorRouteTraceObservation ObserveActorRouteTrace(
         WorldState world,
         string actorId,
-        IReadOnlyList<ActorMovementObservation> movementHistory
+        IReadOnlyList<ActorMovementHistoryEntry> movementHistory
     ) {
         ArgumentNullException.ThrowIfNull(world);
         WorldState.ValidateEntityId(actorId, nameof(actorId));

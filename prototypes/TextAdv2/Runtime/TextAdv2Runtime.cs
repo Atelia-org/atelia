@@ -11,8 +11,8 @@ namespace Atelia.TextAdv2.Runtime;
 ///
 /// 当前阶段它统一持有：
 /// - Repository / WorldState 生命周期；
-/// - runtime-owned logical time；
-/// - runtime sidecar state 中的 movement history；
+/// - runtime-owned logical time（进程内易失）；
+/// - runtime-owned movement history（进程内易失）；
 /// - runtime-owned route acceleration snapshot；
 /// - 现有 CLI 已支持命令的执行编排。
 ///
@@ -23,33 +23,22 @@ public sealed class TextAdv2Runtime : IDisposable {
     private const string MainBranchName = "main";
 
     private readonly Repository _repo;
-    private readonly TextAdv2RuntimePersistentStateStore _persistentStateStore;
     private readonly WorldState _world;
     private readonly TextAdv2RouteAccelerationState _routeAcceleration = new();
-    private readonly Dictionary<string, List<ActorMovementObservation>> _movementHistoryByActor = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<ActorMovementHistoryEntry>> _movementHistoryByActor = new(StringComparer.Ordinal);
     private readonly JsonSerializerOptions _jsonOptions;
     private long _logicalTick;
     private bool _disposed;
 
-    private TextAdv2Runtime(
-        string repoDir,
-        Repository repo,
-        WorldState world,
-        TextAdv2RuntimePersistentStateStore persistentStateStore,
-        TextAdv2RuntimePersistentState persistentState
-    ) {
+    private TextAdv2Runtime(string repoDir, Repository repo, WorldState world) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(world);
-        ArgumentNullException.ThrowIfNull(persistentStateStore);
-        ArgumentNullException.ThrowIfNull(persistentState);
 
         RepoDir = repoDir;
         _repo = repo;
-        _persistentStateStore = persistentStateStore;
         _world = world;
         _jsonOptions = CreateJsonOptions();
-        RestorePersistentState(persistentState);
     }
 
     public string RepoDir { get; }
@@ -74,10 +63,7 @@ public sealed class TextAdv2Runtime : IDisposable {
             var world = TestWorldBuilder.Create(revision);
             TestWorldBuilder.PopulateSampleActors(world);
             repo.Commit(world.Root).Unwrap();
-
-            var persistentStateStore = new TextAdv2RuntimePersistentStateStore(repoDir);
-            persistentStateStore.Save(TextAdv2RuntimePersistentState.Empty);
-            return new TextAdv2Runtime(repoDir, repo, world, persistentStateStore, TextAdv2RuntimePersistentState.Empty);
+            return new TextAdv2Runtime(repoDir, repo, world);
         }
         catch {
             repo.Dispose();
@@ -92,9 +78,7 @@ public sealed class TextAdv2Runtime : IDisposable {
         try {
             var revision = repo.CheckoutBranch(MainBranchName).Unwrap();
             var world = LoadWorldState(revision);
-            var persistentStateStore = new TextAdv2RuntimePersistentStateStore(repoDir);
-            var persistentState = persistentStateStore.LoadOrDefault();
-            return new TextAdv2Runtime(repoDir, repo, world, persistentStateStore, persistentState);
+            return new TextAdv2Runtime(repoDir, repo, world);
         }
         catch {
             repo.Dispose();
@@ -297,10 +281,7 @@ public sealed class TextAdv2Runtime : IDisposable {
         _world.MoveActorAlongPassage(actorId, passageId);
         _repo.Commit(_world.Root).Unwrap();
 
-        var currentObservation = LocationObservationProjector.ObserveActorLocation(_world, actorId);
-        var movement = new ActorMovementObservation(
-            currentObservation.ActorId,
-            currentObservation.ActorName,
+        var historyEntry = new ActorMovementHistoryEntry(
             passage.Id,
             exit.ExitName,
             fromLocation.Id,
@@ -308,12 +289,24 @@ public sealed class TextAdv2Runtime : IDisposable {
             toLocation.Id,
             toLocation.Name,
             passage.TravelMode,
-            direction.TotalTravelCost(passage),
+            direction.TotalTravelCost(passage)
+        );
+        GetOrCreateMovementHistory(actorId).Add(historyEntry);
+
+        var currentObservation = LocationObservationProjector.ObserveActorLocation(_world, actorId);
+        return new ActorMovementObservation(
+            currentObservation.ActorId,
+            currentObservation.ActorName,
+            historyEntry.PassageId,
+            historyEntry.ExitName,
+            historyEntry.FromLocationId,
+            historyEntry.FromLocationName,
+            historyEntry.ToLocationId,
+            historyEntry.ToLocationName,
+            historyEntry.TravelMode,
+            historyEntry.TravelCost,
             currentObservation.Location
         );
-        GetOrCreateMovementHistory(actorId).Add(movement);
-        PersistRuntimeState();
-        return movement;
     }
 
     private TextAdv2LogicalTimeObservation ObserveLogicalTime() => new(_logicalTick);
@@ -325,14 +318,13 @@ public sealed class TextAdv2Runtime : IDisposable {
 
     private TextAdv2LogicalTimeObservation AdvanceLogicalTime(long ticks) {
         _logicalTick = checked(_logicalTick + ticks);
-        PersistRuntimeState();
         return ObserveLogicalTime();
     }
 
-    private IReadOnlyList<ActorMovementObservation> GetMovementHistory(string actorId)
+    private IReadOnlyList<ActorMovementHistoryEntry> GetMovementHistory(string actorId)
         => _movementHistoryByActor.TryGetValue(actorId, out var history) ? history : [];
 
-    private List<ActorMovementObservation> GetOrCreateMovementHistory(string actorId) {
+    private List<ActorMovementHistoryEntry> GetOrCreateMovementHistory(string actorId) {
         if (!_movementHistoryByActor.TryGetValue(actorId, out var history)) {
             history = [];
             _movementHistoryByActor.Add(actorId, history);
@@ -394,29 +386,5 @@ public sealed class TextAdv2Runtime : IDisposable {
 
     private void EnsureNotDisposed() {
         ObjectDisposedException.ThrowIf(_disposed, this);
-    }
-
-    private void RestorePersistentState(TextAdv2RuntimePersistentState persistentState) {
-        _logicalTick = persistentState.CurrentTick;
-
-        foreach (var entry in persistentState.MovementHistoryByActor) {
-            _movementHistoryByActor[entry.Key] = [.. entry.Value];
-        }
-    }
-
-    private void PersistRuntimeState() {
-        var movementHistory = _movementHistoryByActor.ToDictionary(
-            entry => entry.Key,
-            entry => entry.Value.ToArray(),
-            StringComparer.Ordinal
-        );
-
-        _persistentStateStore.Save(
-            new TextAdv2RuntimePersistentState(
-                TextAdv2RuntimePersistentState.CurrentSchemaVersion,
-                _logicalTick,
-                movementHistory
-            )
-        );
     }
 }

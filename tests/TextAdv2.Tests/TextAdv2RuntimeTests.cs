@@ -111,7 +111,7 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
-    public void OpenOrCreateSampleWorld_ReopensLogicalTimeAndMovementHistory() {
+    public void OpenOrCreateSampleWorld_ReopensWorldTruthButResetsRuntimeOwnedTimeAndHistory() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -132,14 +132,13 @@ public class TextAdv2RuntimeTests {
             using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
             var timeAfterReopen = reopened.ObserveTime();
             var traceAfterReopen = reopened.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
+            var observedAfterReopen = reopened.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
-            Assert.Contains("\"CurrentTick\": 11", timeAfterReopen.Output, StringComparison.Ordinal);
-            Assert.Contains(
-                "1. square --north gate/square-ridge-trail--> ridge | land | cost=5",
-                traceAfterReopen.Output,
-                StringComparison.Ordinal
-            );
-            Assert.Contains("end=ridge (Ridge) | steps=1 | totalCost=5", traceAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Contains("\"CurrentTick\": 0", timeAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Contains("start=ridge (Ridge)", traceAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Contains("<no movement in this run>", traceAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Contains("\"LocationId\": \"ridge\"", observedAfterReopen.Output, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
