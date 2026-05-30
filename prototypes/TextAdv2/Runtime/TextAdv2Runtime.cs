@@ -129,9 +129,9 @@ public sealed class TextAdv2Runtime : IDisposable {
         return Json(NavigationObservationProjector.ObserveActorNavigation(_world, actorId));
     }
 
-    public TextAdv2RuntimeCommandResult ObserveRouteAcceleration() {
+    public TextAdv2RouteAccelerationObservation ObserveRouteAcceleration() {
         EnsureNotDisposed();
-        return Json(_routeAcceleration.Observe(_world));
+        return _routeAcceleration.Observe(_world);
     }
 
     public TextAdv2LogicalTimeObservation ObserveTime() {
@@ -179,9 +179,9 @@ public sealed class TextAdv2Runtime : IDisposable {
         );
     }
 
-    public TextAdv2RuntimeCommandResult RebuildRouteAcceleration(string? requestedLandmarks = null) {
+    public TextAdv2RouteAccelerationObservation RebuildRouteAcceleration(string? requestedLandmarks = null) {
         EnsureNotDisposed();
-        return Json(RebuildRouteAccelerationCore(requestedLandmarks));
+        return RebuildRouteAccelerationCore(requestedLandmarks);
     }
 
     public TextAdv2RuntimeCommandResult TraceActorRoute(string actorId) {

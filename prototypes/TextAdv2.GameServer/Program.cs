@@ -24,11 +24,11 @@ app.MapPost("/admin/advance-time/{ticks}",
 );
 app.MapGet("/admin/route-acceleration",
     (TextAdv2RuntimeService runtime)
-    => Execute(runtime, static x => x.ObserveRouteAcceleration())
+    => ExecuteJson(runtime, static x => x.ObserveRouteAcceleration())
 );
 app.MapPost("/admin/route-acceleration/rebuild",
     (string? landmarks, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.RebuildRouteAcceleration(landmarks))
+    => ExecuteJson(runtime, x => x.RebuildRouteAcceleration(landmarks))
 );
 app.MapPost("/admin/reset-sample-world",
     (TextAdv2RuntimeService runtime) => {

@@ -176,10 +176,23 @@ public class TextAdv2RuntimeTests {
                     TestWorldBuilder.LocationIds.Aerie
                 );
 
-                Assert.Contains("\"PlannerMode\": \"zero\"", initial.Output, StringComparison.Ordinal);
-                Assert.Contains("\"SnapshotStatus\": \"inactive\"", initial.Output, StringComparison.Ordinal);
-                Assert.Contains("\"PlannerMode\": \"landmark\"", rebuilt.Output, StringComparison.Ordinal);
-                Assert.Contains("\"LandmarkCount\": 2", rebuilt.Output, StringComparison.Ordinal);
+                Assert.Equal("zero", initial.PlannerMode);
+                Assert.Equal("inactive", initial.SnapshotStatus);
+                Assert.Equal("none", initial.SnapshotKind);
+                Assert.Equal("none", initial.LandmarkProfileName);
+                Assert.False(initial.IsPersistent);
+                Assert.Empty(initial.LandmarkLocationIds);
+
+                Assert.Equal("landmark", rebuilt.PlannerMode);
+                Assert.Equal("active", rebuilt.SnapshotStatus);
+                Assert.Equal("landmark", rebuilt.SnapshotKind);
+                Assert.Equal("custom", rebuilt.LandmarkProfileName);
+                Assert.False(rebuilt.IsPersistent);
+                Assert.Equal(2, rebuilt.LandmarkCount);
+                Assert.Equal(
+                    [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine],
+                    rebuilt.LandmarkLocationIds
+                );
                 Assert.Contains("ROUTE PLAN from=village (Village) to=aerie (Aerie) status=found", planned.Output, StringComparison.Ordinal);
                 Assert.Contains("totalCost=11", planned.Output, StringComparison.Ordinal);
             }
@@ -187,9 +200,12 @@ public class TextAdv2RuntimeTests {
             using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
             var observedAfterReopen = reopened.ObserveRouteAcceleration();
 
-            Assert.Contains("\"PlannerMode\": \"zero\"", observedAfterReopen.Output, StringComparison.Ordinal);
-            Assert.Contains("\"SnapshotStatus\": \"inactive\"", observedAfterReopen.Output, StringComparison.Ordinal);
-            Assert.Contains("\"IsPersistent\": false", observedAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Equal("zero", observedAfterReopen.PlannerMode);
+            Assert.Equal("inactive", observedAfterReopen.SnapshotStatus);
+            Assert.Equal("none", observedAfterReopen.SnapshotKind);
+            Assert.Equal("none", observedAfterReopen.LandmarkProfileName);
+            Assert.False(observedAfterReopen.IsPersistent);
+            Assert.Empty(observedAfterReopen.LandmarkLocationIds);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -205,12 +221,16 @@ public class TextAdv2RuntimeTests {
 
             var rebuilt = runtime.RebuildRouteAcceleration();
 
-            Assert.Contains("\"PlannerMode\": \"landmark\"", rebuilt.Output, StringComparison.Ordinal);
-            Assert.Contains("\"LandmarkProfileName\": \"sample-world-default\"", rebuilt.Output, StringComparison.Ordinal);
-            Assert.Contains("\"LandmarkCount\": 3", rebuilt.Output, StringComparison.Ordinal);
-            Assert.Contains("\"aerie\"", rebuilt.Output, StringComparison.Ordinal);
-            Assert.Contains("\"harbor\"", rebuilt.Output, StringComparison.Ordinal);
-            Assert.Contains("\"shrine\"", rebuilt.Output, StringComparison.Ordinal);
+            Assert.Equal("landmark", rebuilt.PlannerMode);
+            Assert.Equal("active", rebuilt.SnapshotStatus);
+            Assert.Equal("landmark", rebuilt.SnapshotKind);
+            Assert.Equal("sample-world-default", rebuilt.LandmarkProfileName);
+            Assert.False(rebuilt.IsPersistent);
+            Assert.Equal(3, rebuilt.LandmarkCount);
+            Assert.Equal(
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Harbor, TestWorldBuilder.LocationIds.Shrine],
+                rebuilt.LandmarkLocationIds
+            );
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

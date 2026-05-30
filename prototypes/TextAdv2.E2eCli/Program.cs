@@ -113,7 +113,7 @@ internal static class Program {
                     index += 2;
                     break;
                 case "--observe-route-acceleration":
-                    operations.Add(new RuntimeOperation("observe route acceleration", static runtime => runtime.ObserveRouteAcceleration().Output));
+                    operations.Add(new RuntimeOperation("observe route acceleration", static runtime => RenderJson(runtime.ObserveRouteAcceleration())));
                     index += 1;
                     break;
                 case "--observe-time":
@@ -150,7 +150,7 @@ internal static class Program {
                         operations.Add(
                             new RuntimeOperation(
                                 $"rebuild route acceleration {(rebuildLandmarks is null ? "default-profile" : rebuildLandmarks)}",
-                                runtime => runtime.RebuildRouteAcceleration(rebuildLandmarks).Output
+                                runtime => RenderJson(runtime.RebuildRouteAcceleration(rebuildLandmarks))
                             )
                         );
                         index += rebuildLandmarks is null ? 1 : 2;

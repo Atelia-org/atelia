@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.WorldTruth;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
@@ -175,14 +176,30 @@ public class GameServerIntegrationTests {
 
             using var adminAcceleration = await client.GetAsync("/admin/route-acceleration");
             string adminAccelerationText = await adminAcceleration.Content.ReadAsStringAsync();
+            var adminAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(adminAccelerationText);
             Assert.Equal(HttpStatusCode.OK, adminAcceleration.StatusCode);
             Assert.Contains("\"PlannerMode\":\"zero\"", adminAccelerationText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.NotNull(adminAccelerationJson);
+            Assert.Equal("zero", adminAccelerationJson.PlannerMode);
+            Assert.Equal("inactive", adminAccelerationJson.SnapshotStatus);
+            Assert.Equal("none", adminAccelerationJson.SnapshotKind);
+            Assert.Empty(adminAccelerationJson.LandmarkLocationIds);
 
             using var rebuiltAcceleration = await client.PostAsync("/admin/route-acceleration/rebuild", content: null);
             string rebuiltAccelerationText = await rebuiltAcceleration.Content.ReadAsStringAsync();
+            var rebuiltAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(rebuiltAccelerationText);
             Assert.Equal(HttpStatusCode.OK, rebuiltAcceleration.StatusCode);
             Assert.Contains("\"PlannerMode\":\"landmark\"", rebuiltAccelerationText.Replace(" ", string.Empty), StringComparison.Ordinal);
             Assert.Contains("\"LandmarkProfileName\":\"sample-world-default\"", rebuiltAccelerationText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.NotNull(rebuiltAccelerationJson);
+            Assert.Equal("landmark", rebuiltAccelerationJson.PlannerMode);
+            Assert.Equal("active", rebuiltAccelerationJson.SnapshotStatus);
+            Assert.Equal("landmark", rebuiltAccelerationJson.SnapshotKind);
+            Assert.Equal("sample-world-default", rebuiltAccelerationJson.LandmarkProfileName);
+            Assert.Equal(
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Harbor, TestWorldBuilder.LocationIds.Shrine],
+                rebuiltAccelerationJson.LandmarkLocationIds
+            );
 
             using var publicRoute = await client.GetAsync("/routes/village/aerie");
             Assert.Equal(HttpStatusCode.NotFound, publicRoute.StatusCode);
