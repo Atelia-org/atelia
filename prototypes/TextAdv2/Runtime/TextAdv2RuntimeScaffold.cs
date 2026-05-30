@@ -18,7 +18,7 @@ public static class TextAdv2RuntimeScaffold {
             "TextAdv2 本体现已回退为 Library；一次性 CLI 入口已迁移到 TextAdv2.E2eCli。",
             "GameServer 与 E2E CLI 都已直接调用 TextAdv2Runtime；宿主仍自行负责 CLI/HTTP 请求到 runtime method 的分发。",
             "logical time、route acceleration、location observation、actor observation、navigation observation 已建立 public typed DTO seam，并在宿主边界完成 JSON 序列化。",
-            "修订后的近程路线是：先补 world root schema gate，再下沉 sample/dev policy，然后处理 MoveActor typed seam 与 canonical navigation graph seam。"
+            "world root schema gate 已补齐；修订后的近程路线是：先下沉 sample/dev policy，再处理 MoveActor typed seam 与 canonical navigation graph seam。"
         ]
     );
 }

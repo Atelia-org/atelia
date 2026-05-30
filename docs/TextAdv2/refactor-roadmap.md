@@ -48,7 +48,7 @@
   - `DumpWorld` / `DumpLocation`
 - `P3` 在代码里并没有形成一个可整体落地的包：
   - `schemaVersion` 字段已经写入 world root；
-  - 但 `WorldState.FromRoot(...)` 还没有 schema gate；
+  - `WorldState.FromRoot(...)` 已具备 schema gate；
   - `Location` / `Passage` 的写入权威仍明显分散在叶子对象上。
 - `P4` 也不是“从零开始”：
   - `NavigationObservationProjector.ObserveLocationNavigationGraph(...)` 已经被 planner、landmark heuristic、route-acceleration stale 判定复用；
@@ -170,7 +170,7 @@ P2 后续修订说明：
 
 ### P3a. world root schema gate
 
-状态：建议尽快执行
+状态：已完成（2026-05-31）
 
 主张：
 
@@ -186,6 +186,11 @@ P2 后续修订说明：
 
 - `FromRoot(...)` 在 schema 不匹配时抛出清晰错误。
 - 覆盖 happy path 与 bad-schema path 的测试。
+
+本轮落地结果：
+
+- `WorldState.FromRoot(...)` 已在 reopen 边界对 `schemaVersion` 做 fail-fast。
+- 当前已覆盖 missing、unsupported version、invalid type、wrong kind 与 happy path reopen 测试。
 
 ### P3b. 收紧 world root 与写入权威
 
@@ -271,17 +276,15 @@ P2 后续修订说明：
 
 推荐顺序改为：
 
-1. `P3a schema gate`
-2. `P5a sample-world profile / 默认 landmark policy 下沉`
-3. `P2b2c MoveActor typed seam`
-4. `P4 canonical navigation graph seam`
-5. `P4c / P4-adjacent route plan typed seam`
-6. `P3b world editor / 写入权威收口`
-7. `P2c + P5b/P5c` 清理 text/dev/admin surface
+1. `P5a sample-world profile / 默认 landmark policy 下沉`
+2. `P2b2c MoveActor typed seam`
+3. `P4 canonical navigation graph seam`
+4. `P4c / P4-adjacent route plan typed seam`
+5. `P3b world editor / 写入权威收口`
+6. `P2c + P5b/P5c` 清理 text/dev/admin surface
 
 排序理由：
 
-- `P3a` 是最小但高价值的正确性闸门，适合尽快补齐。
 - `P5a` 当前已经反向渗入 runtime 主对象，继续拖延会让后续每一包都带着 sample-world policy 包袱。
 - `MoveActor` 是剩余 runtime 核心 use case 中最自然的一条 typed seam。
 - `P4` 的真实价值高于 route plan public seam；应先收内部 graph 真源，再决定 route plan 的对外契约。
@@ -301,10 +304,10 @@ P2 后续修订说明：
 
 ## 9. 当前推荐起点
 
-当前推荐从 `P3a schema gate` 开始。
+当前推荐从 `P5a sample-world profile / 默认 landmark policy 下沉` 开始。
 
 原因：
 
-- 这是当前路线里最小、最成熟、也最不容易和别的包缠在一起的一刀。
-- 它能尽快把 reopen 边界从“只看 kind、不看版本”的半成品状态补成真正的 fail-fast。
-- 做完它之后，再继续 `P5a` 或 `P2b2c`，路线会更干净。
+- sample-world policy 目前仍直接渗进 `TextAdv2Runtime`，已经开始反向污染后续各包的边界。
+- 它与 `MoveActor` seam、`P4` 相对正交，适合在继续扩张 runtime public surface 前先下沉。
+- 做完它之后，再推进 `MoveActor` seam 或 canonical graph seam，都会更干净。

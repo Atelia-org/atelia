@@ -177,6 +177,37 @@ public class TestWorldBuilderTests {
     }
 
     [Fact]
+    public void WorldState_FromRoot_FailsFastWhenSchemaVersionHasInvalidType() {
+        string repoDir = CreateTempRepoDir();
+        int supportedVersion;
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = WorldState.Create(revision);
+                supportedVersion = world.Root.GetOrThrow<int>("schemaVersion");
+                world.Root.Upsert("schemaVersion", "not-an-int");
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    $"Expected world-state schemaVersion '{supportedVersion}', but found '<invalid:TypeMismatch>'.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void WorldState_FromRoot_StillChecksKindBeforeSchemaGate() {
         string repoDir = CreateTempRepoDir();
 
