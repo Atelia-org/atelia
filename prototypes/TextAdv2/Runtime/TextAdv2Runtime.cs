@@ -14,7 +14,7 @@ namespace Atelia.TextAdv2.Runtime;
 /// - runtime-owned logical time（进程内易失）；
 /// - runtime-owned movement history（进程内易失）；
 /// - runtime-owned route acceleration snapshot；
-/// - 现有 CLI 已支持命令的执行编排。
+/// - 对 typed runtime API 的直接编排。
 ///
 /// 它故意先保持为单线程、单世界、单会话模型，优先把业务编排从入口程序中抽出，
 /// 后续再在此基础上演进到真正的 authoritative GameServer runtime。
@@ -215,41 +215,6 @@ public sealed class TextAdv2Runtime : IDisposable {
         return Json(MoveActorCore(actorId, passageId));
     }
 
-    public TextAdv2RuntimeCommandResult Execute(TextAdv2RuntimeCommand command) {
-        ArgumentNullException.ThrowIfNull(command);
-
-        return command.Mode switch {
-            TextAdv2RuntimeCommandMode.World => DumpWorld(),
-            TextAdv2RuntimeCommandMode.Location => DumpLocation(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
-            TextAdv2RuntimeCommandMode.ObserveLocation => ObserveLocation(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
-            TextAdv2RuntimeCommandMode.ObserveActor => ObserveActor(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
-            TextAdv2RuntimeCommandMode.ObserveNavigation => ObserveNavigation(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
-            TextAdv2RuntimeCommandMode.ObserveActorNavigation => ObserveActorNavigation(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
-            TextAdv2RuntimeCommandMode.ObserveRouteAcceleration => ObserveRouteAcceleration(),
-            TextAdv2RuntimeCommandMode.ObserveTime => ObserveTime(),
-            TextAdv2RuntimeCommandMode.AdvanceTime => AdvanceTime(ParseAdvanceTickDelta(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)))),
-            TextAdv2RuntimeCommandMode.PlanActorRoute => PlanActorRoute(
-                RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
-            ),
-            TextAdv2RuntimeCommandMode.PlanRoute => PlanRoute(
-                RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
-            ),
-            TextAdv2RuntimeCommandMode.RebuildRouteAcceleration => RebuildRouteAcceleration(command.Arg1),
-            TextAdv2RuntimeCommandMode.TraceActorRoute => TraceActorRoute(RequireArg(command.Arg1, command.Mode, nameof(command.Arg1))),
-            TextAdv2RuntimeCommandMode.MoveActorQuiet => MoveActorQuiet(
-                RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
-            ),
-            TextAdv2RuntimeCommandMode.MoveActor => MoveActor(
-                RequireArg(command.Arg1, command.Mode, nameof(command.Arg1)),
-                RequireArg(command.Arg2, command.Mode, nameof(command.Arg2))
-            ),
-            _ => throw new InvalidOperationException($"Unsupported command mode '{command.Mode}'."),
-        };
-    }
-
     public void Dispose() {
         if (_disposed) { return; }
 
@@ -342,16 +307,6 @@ public sealed class TextAdv2Runtime : IDisposable {
     private static string RenderCompactMovement(ActorMovementObservation movement)
         => $"{movement.ActorId}: {movement.FromLocationId} --{movement.ExitName}/{movement.PassageId}--> {movement.ToLocationId}"
             + $" | {movement.TravelMode.ToStorageValue()} | cost={movement.TravelCost}";
-
-    private static string RequireArg(string? value, TextAdv2RuntimeCommandMode mode, string argumentName)
-        => value ?? throw new InvalidOperationException($"Command '{mode}' requires {argumentName}.");
-
-    private static long ParseAdvanceTickDelta(string value) {
-        if (!long.TryParse(value, out long ticks)) { throw new InvalidOperationException($"AdvanceTime requires an integer tick delta, but received '{value}'."); }
-
-        ArgumentOutOfRangeException.ThrowIfNegative(ticks);
-        return ticks;
-    }
 
     private static LandmarkRebuildRequest ResolveLandmarkRebuildRequest(WorldState world, string? value) {
         ArgumentNullException.ThrowIfNull(world);

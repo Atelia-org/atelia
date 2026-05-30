@@ -17,18 +17,6 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
-    public void Execute_ObserveActor_UsesThinTypedAdapter() {
-        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
-
-        var typed = runtime.ObserveActor(TestWorldBuilder.ActorIds.Scout);
-        var viaCommand = runtime.Execute(
-            new TextAdv2RuntimeCommand(TextAdv2RuntimeCommandMode.ObserveActor, TestWorldBuilder.ActorIds.Scout)
-        );
-
-        Assert.Equal(typed, viaCommand);
-    }
-
-    [Fact]
     public void MoveActorQuietThenTraceActorRoute_UsesRuntimeMovementHistory() {
         string repoDir = CreateTempRepoDir();
 
