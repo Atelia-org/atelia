@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Atelia.StateJournal;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
@@ -27,7 +25,6 @@ public sealed class TextAdv2Runtime : IDisposable {
     private readonly TextAdv2RuntimeOptions _options;
     private readonly TextAdv2RouteAccelerationState _routeAcceleration = new();
     private readonly Dictionary<string, List<ActorMovementHistoryEntry>> _movementHistoryByActor = new(StringComparer.Ordinal);
-    private readonly JsonSerializerOptions _jsonOptions;
     private long _logicalTick;
     private bool _disposed;
 
@@ -40,7 +37,6 @@ public sealed class TextAdv2Runtime : IDisposable {
         _repo = repo;
         _world = world;
         _options = options ?? TextAdv2RuntimeOptions.Default;
-        _jsonOptions = CreateJsonOptions();
     }
 
     public string RepoDir { get; }
@@ -204,12 +200,12 @@ public sealed class TextAdv2Runtime : IDisposable {
         return Text(RenderCompactMovement(MoveActorCore(actorId, passageId)));
     }
 
-    public TextAdv2RuntimeCommandResult MoveActor(string actorId, string passageId) {
+    public TextAdv2RuntimeActorMovementObservation MoveActor(string actorId, string passageId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
 
-        return Json(MoveActorCore(actorId, passageId));
+        return TextAdv2RuntimeObservationProjector.ProjectMovement(MoveActorCore(actorId, passageId));
     }
 
     public void Dispose() {
@@ -222,14 +218,6 @@ public sealed class TextAdv2Runtime : IDisposable {
     private static WorldState LoadWorldState(Revision revision) {
         ArgumentNullException.ThrowIfNull(revision);
         return WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap());
-    }
-
-    private static JsonSerializerOptions CreateJsonOptions() {
-        var options = new JsonSerializerOptions {
-            WriteIndented = true,
-        };
-        options.Converters.Add(new JsonStringEnumConverter());
-        return options;
     }
 
     private ActorMovementObservation MoveActorCore(string actorId, string passageId) {
@@ -299,9 +287,6 @@ public sealed class TextAdv2Runtime : IDisposable {
 
         return history;
     }
-
-    private TextAdv2RuntimeCommandResult Json<T>(T value)
-        => new(JsonSerializer.Serialize(value, _jsonOptions), TextAdv2RuntimeContentTypes.Json);
 
     private static TextAdv2RuntimeCommandResult Text(string output)
         => new(output, TextAdv2RuntimeContentTypes.PlainText);

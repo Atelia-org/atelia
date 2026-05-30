@@ -60,7 +60,7 @@ app.MapGet("/actors/{actorId}/navigation",
 );
 app.MapPost("/actors/{actorId}/moves/{passageId}",
     (string actorId, string passageId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.MoveActor(actorId, passageId))
+    => ExecuteJson(runtime, x => x.MoveActor(actorId, passageId))
 );
 app.MapGet("/actors/{actorId}/route-trace",
     (string actorId, TextAdv2RuntimeService runtime)

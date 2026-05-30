@@ -175,7 +175,7 @@ internal static class Program {
                     {
                         string actorId = RequireArg(args, index + 1);
                         string passageId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"move actor {actorId} via {passageId}", runtime => runtime.MoveActor(actorId, passageId).Output));
+                        operations.Add(new RuntimeOperation($"move actor {actorId} via {passageId}", runtime => RenderJson(runtime.MoveActor(actorId, passageId))));
                     }
                     index += 3;
                     break;

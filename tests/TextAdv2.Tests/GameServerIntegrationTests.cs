@@ -45,10 +45,14 @@ public class GameServerIntegrationTests {
             Assert.Equal("square", initialObservation.Location.LocationId);
 
             using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
-            string moveText = await moveResponse.Content.ReadAsStringAsync();
+            var moveJson = await ReadJsonAsync<TextAdv2RuntimeActorMovementObservation>(moveResponse);
             Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
             Assert.Equal("application/json", moveResponse.Content.Headers.ContentType?.MediaType);
-            Assert.Contains("\"ToLocationId\": \"ridge\"", moveText, StringComparison.Ordinal);
+            Assert.NotNull(moveJson);
+            Assert.Equal("scout", moveJson.ActorId);
+            Assert.Equal("ridge", moveJson.ToLocationId);
+            Assert.Equal("land", moveJson.TravelMode);
+            Assert.Equal("ridge", moveJson.CurrentLocation.LocationId);
 
             using var traceResponse = await client.GetAsync("/actors/scout/route-trace");
             string traceText = await traceResponse.Content.ReadAsStringAsync();

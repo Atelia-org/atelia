@@ -34,6 +34,20 @@ public sealed record TextAdv2RuntimeActorObservation(
     TextAdv2RuntimeLocationObservation Location
 );
 
+public sealed record TextAdv2RuntimeActorMovementObservation(
+    string ActorId,
+    string ActorName,
+    string PassageId,
+    string ExitName,
+    string FromLocationId,
+    string FromLocationName,
+    string ToLocationId,
+    string ToLocationName,
+    string TravelMode,
+    int TravelCost,
+    TextAdv2RuntimeLocationObservation CurrentLocation
+);
+
 public sealed record TextAdv2RuntimeLocationNavigationObservation(
     string LocationId,
     string LocationName,
@@ -61,6 +75,24 @@ internal static class TextAdv2RuntimeObservationProjector {
 
     public static TextAdv2RuntimeActorObservation ProjectActor(WorldState world, string actorId)
         => ProjectActor(LocationObservationProjector.ObserveActorLocation(world, actorId));
+
+    public static TextAdv2RuntimeActorMovementObservation ProjectMovement(ActorMovementObservation observation) {
+        ArgumentNullException.ThrowIfNull(observation);
+
+        return new TextAdv2RuntimeActorMovementObservation(
+            observation.ActorId,
+            observation.ActorName,
+            observation.PassageId,
+            observation.ExitName,
+            observation.FromLocationId,
+            observation.FromLocationName,
+            observation.ToLocationId,
+            observation.ToLocationName,
+            observation.TravelMode.ToStorageValue(),
+            observation.TravelCost,
+            ProjectLocation(observation.CurrentLocation)
+        );
+    }
 
     public static TextAdv2RuntimeLocationNavigationObservation ProjectNavigation(WorldState world, string locationId)
         => ProjectNavigation(NavigationObservationProjector.ObserveLocationNavigation(world, locationId));

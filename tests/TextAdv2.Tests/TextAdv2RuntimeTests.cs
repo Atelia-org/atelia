@@ -138,8 +138,12 @@ public class TextAdv2RuntimeTests {
                     TestWorldBuilder.PassageIds.SquareRidgeTrail
                 );
 
-                Assert.Equal(TextAdv2RuntimeContentTypes.Json, move.ContentType);
-                Assert.Contains("\"ToLocationId\": \"ridge\"", move.Output, StringComparison.Ordinal);
+                Assert.Equal(TestWorldBuilder.ActorIds.Scout, move.ActorId);
+                Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, move.PassageId);
+                Assert.Equal(TestWorldBuilder.LocationIds.Square, move.FromLocationId);
+                Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.ToLocationId);
+                Assert.Equal("land", move.TravelMode);
+                Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.CurrentLocation.LocationId);
             }
 
             using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
@@ -151,6 +155,32 @@ public class TextAdv2RuntimeTests {
         finally {
             DeleteDirectoryIfExists(repoDir);
         }
+    }
+
+    [Fact]
+    public void MoveActor_ReturnsTypedMovementObservationWithRuntimeFacingTravelMode() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var move = runtime.MoveActor(
+            TestWorldBuilder.ActorIds.Scout,
+            TestWorldBuilder.PassageIds.SquareRidgeTrail
+        );
+
+        Assert.Equal(TestWorldBuilder.ActorIds.Scout, move.ActorId);
+        Assert.Equal("Scout", move.ActorName);
+        Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, move.PassageId);
+        Assert.Equal("north gate", move.ExitName);
+        Assert.Equal(TestWorldBuilder.LocationIds.Square, move.FromLocationId);
+        Assert.Equal("Square", move.FromLocationName);
+        Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.ToLocationId);
+        Assert.Equal("Ridge", move.ToLocationName);
+        Assert.Equal("land", move.TravelMode);
+        Assert.Equal(5, move.TravelCost);
+        Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.CurrentLocation.LocationId);
+        Assert.Contains(
+            move.CurrentLocation.Exits,
+            static exit => exit.PassageId == TestWorldBuilder.PassageIds.RidgeAerieWinch && exit.TravelMode == "air"
+        );
     }
 
     [Fact]

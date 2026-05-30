@@ -162,6 +162,13 @@ P2b2b 本轮落地结果：
 - `GameServer` / `E2eCli` 对应 navigation 入口已迁到宿主边界序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
 - 下一自然入口是 `P2b2c`：决定 `MoveActor` 是否也采用独立 runtime-facing DTO seam，或先转入 `P4 canonical navigation graph seam` 做内部图真源收口。
 
+P2b2c 本轮落地结果：
+
+- `MoveActor(string, string)` 已直接返回 `TextAdv2RuntimeActorMovementObservation`。
+- 新 seam 没有直接公开 internal `ActorMovementObservation`，并继续把 `TravelMode` 投影成字符串 token；`CurrentLocation` 复用 `TextAdv2RuntimeLocationObservation`。
+- `GameServer` move endpoint 与 `E2eCli --move-actor` 已迁到宿主边界 JSON 序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
+- `MoveActorQuiet`、`TraceActorRoute`、`PlanRoute`、`PlanActorRoute`、`Dump*` 仍保持现状，留待后续工作包收口。
+
 P2 后续修订说明：
 
 - `MoveActor` 仍应留在 `P2`，因为它是最后一个明显属于 runtime 核心 use case、但仍停留在 `string/contentType` seam 上的写入入口。
