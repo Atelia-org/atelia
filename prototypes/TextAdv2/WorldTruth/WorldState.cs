@@ -30,15 +30,18 @@ internal sealed class WorldState {
         _ = PassagesLedger;
     }
 
+    /// <summary>
+    /// 仅用于仓储提交边界；除 commit/reopen 以外，不应绕过 WorldState API 直接改写 root。
+    /// </summary>
     public DurableDict<string> Root => _root;
 
     public Revision Revision => _root.Revision;
 
-    public DurableDict<string> ActorsLedger => _root.GetOrThrow<DurableDict<string>>(ActorsKey)!;
+    private DurableDict<string> ActorsLedger => _root.GetOrThrow<DurableDict<string>>(ActorsKey)!;
 
-    public DurableDict<string> LocationsLedger => _root.GetOrThrow<DurableDict<string>>(LocationsKey)!;
+    private DurableDict<string> LocationsLedger => _root.GetOrThrow<DurableDict<string>>(LocationsKey)!;
 
-    public DurableDict<string> PassagesLedger => _root.GetOrThrow<DurableDict<string>>(PassagesKey)!;
+    private DurableDict<string> PassagesLedger => _root.GetOrThrow<DurableDict<string>>(PassagesKey)!;
 
     public static WorldState Create(Revision revision) {
         ArgumentNullException.ThrowIfNull(revision);

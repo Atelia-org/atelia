@@ -317,7 +317,7 @@ public class LocationRoutePlannerTests {
     }
 
     [Fact]
-    public void PlanShortestRoute_WithNegativeTravelCost_FailsFast() {
+    public void PassageMutation_WithNegativeTravelCost_FailsFastBeforePlanning() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -328,10 +328,8 @@ public class LocationRoutePlannerTests {
             var start = world.CreateLocation("start", "Start", "negative-cost start");
             var goal = world.CreateLocation("goal", "Goal", "negative-cost goal");
             var passage = world.CreatePassage("negative-edge", start.Id, "shortcut", goal.Id, "return", TravelMode.Land, 1);
-            passage.FromAToB.TravelCostModifier = -2;
-
             var exception = Assert.Throws<InvalidOperationException>(
-                () => LocationRoutePlanner.PlanShortestRoute(world, start.Id, goal.Id)
+                () => passage.SetDirectionTravelCostModifierFrom(start.Id, -2)
             );
 
             Assert.Contains("Negative travel cost", exception.Message, StringComparison.Ordinal);

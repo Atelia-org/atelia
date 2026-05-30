@@ -101,8 +101,8 @@ internal static class TestWorldBuilder {
             TravelMode.Land,
             baseTravelCost: 1
         );
-        villageSquareRoad.EndpointA.LocalViewNote = "Main street leaves the village between the bakery and the well.";
-        villageSquareRoad.EndpointB.LocalViewNote = "The road back to the village starts beside the market fountain.";
+        villageSquareRoad.SetEndpointLocalViewNote(village.Id, "Main street leaves the village between the bakery and the well.");
+        villageSquareRoad.SetEndpointLocalViewNote(square.Id, "The road back to the village starts beside the market fountain.");
 
         var squareRidgeTrail = world.CreatePassage(
             PassageIds.SquareRidgeTrail,
@@ -113,13 +113,13 @@ internal static class TestWorldBuilder {
             TravelMode.Land,
             baseTravelCost: 3
         );
-        squareRidgeTrail.EndpointA.LocalViewNote = "The trail begins at the square's north retaining wall.";
-        squareRidgeTrail.EndpointB.LocalViewNote = "This path drops from the ridge toward town.";
-        squareRidgeTrail.SharedConditionNote = "Wet stone steps make the whole trail slippery.";
-        squareRidgeTrail.FromAToB.TravelCostModifier = 2;
-        squareRidgeTrail.FromAToB.DirectionConditionNote = "Climbing to the ridge is slow and tiring.";
-        squareRidgeTrail.FromBToA.TravelCostModifier = -1;
-        squareRidgeTrail.FromBToA.DirectionConditionNote = "Descending is faster, but the sharp turns still matter.";
+        squareRidgeTrail.SetEndpointLocalViewNote(square.Id, "The trail begins at the square's north retaining wall.");
+        squareRidgeTrail.SetEndpointLocalViewNote(ridge.Id, "This path drops from the ridge toward town.");
+        squareRidgeTrail.SetSharedConditionNote("Wet stone steps make the whole trail slippery.");
+        squareRidgeTrail.SetDirectionTravelCostModifierFrom(square.Id, 2);
+        squareRidgeTrail.SetDirectionConditionNoteFrom(square.Id, "Climbing to the ridge is slow and tiring.");
+        squareRidgeTrail.SetDirectionTravelCostModifierFrom(ridge.Id, -1);
+        squareRidgeTrail.SetDirectionConditionNoteFrom(ridge.Id, "Descending is faster, but the sharp turns still matter.");
 
         var harborDeltaCurrent = world.CreatePassage(
             PassageIds.HarborDeltaCurrent,
@@ -130,13 +130,13 @@ internal static class TestWorldBuilder {
             TravelMode.Water,
             baseTravelCost: 2
         );
-        harborDeltaCurrent.EndpointA.LocalViewNote = "A wooden launch ramp points directly into the current.";
-        harborDeltaCurrent.EndpointB.LocalViewNote = "Old tow posts mark the only upstream landing.";
-        harborDeltaCurrent.SharedConditionNote = "The channel is narrow and cluttered along its full length.";
-        harborDeltaCurrent.FromAToB.TravelCostModifier = -1;
-        harborDeltaCurrent.FromAToB.DirectionConditionNote = "The boat drifts with the current and needs almost no rowing.";
-        harborDeltaCurrent.FromBToA.IsEnabled = false;
-        harborDeltaCurrent.FromBToA.DirectionConditionNote = "No upstream tow service is operating right now.";
+        harborDeltaCurrent.SetEndpointLocalViewNote(harbor.Id, "A wooden launch ramp points directly into the current.");
+        harborDeltaCurrent.SetEndpointLocalViewNote(delta.Id, "Old tow posts mark the only upstream landing.");
+        harborDeltaCurrent.SetSharedConditionNote("The channel is narrow and cluttered along its full length.");
+        harborDeltaCurrent.SetDirectionTravelCostModifierFrom(harbor.Id, -1);
+        harborDeltaCurrent.SetDirectionConditionNoteFrom(harbor.Id, "The boat drifts with the current and needs almost no rowing.");
+        harborDeltaCurrent.SetDirectionEnabledFrom(delta.Id, false);
+        harborDeltaCurrent.SetDirectionConditionNoteFrom(delta.Id, "No upstream tow service is operating right now.");
 
         var squareShrineGate = world.CreatePassage(
             PassageIds.SquareShrineGate,
@@ -147,11 +147,11 @@ internal static class TestWorldBuilder {
             TravelMode.Portal,
             baseTravelCost: 1
         );
-        squareShrineGate.EndpointA.LocalViewNote = "The old arch is inset into the square's northern colonnade.";
-        squareShrineGate.EndpointB.LocalViewNote = "The return seal glows on the shrine floor.";
-        squareShrineGate.SharedConditionNote = "The gate is stable and open at both ends.";
-        squareShrineGate.FromAToB.DirectionConditionNote = "Transit is effectively instantaneous from the square side.";
-        squareShrineGate.FromBToA.DirectionConditionNote = "Transit is effectively instantaneous from the shrine side.";
+        squareShrineGate.SetEndpointLocalViewNote(square.Id, "The old arch is inset into the square's northern colonnade.");
+        squareShrineGate.SetEndpointLocalViewNote(shrine.Id, "The return seal glows on the shrine floor.");
+        squareShrineGate.SetSharedConditionNote("The gate is stable and open at both ends.");
+        squareShrineGate.SetDirectionConditionNoteFrom(square.Id, "Transit is effectively instantaneous from the square side.");
+        squareShrineGate.SetDirectionConditionNoteFrom(shrine.Id, "Transit is effectively instantaneous from the shrine side.");
 
         var ridgeAerieWinch = world.CreatePassage(
             PassageIds.RidgeAerieWinch,
@@ -162,12 +162,12 @@ internal static class TestWorldBuilder {
             TravelMode.Air,
             baseTravelCost: 4
         );
-        ridgeAerieWinch.EndpointA.LocalViewNote = "A suspended cargo cradle hangs below the ridge station.";
-        ridgeAerieWinch.EndpointB.LocalViewNote = "The lift berth is bolted directly to the aerie deck.";
-        ridgeAerieWinch.SharedConditionNote = "The lift is exposed to crosswinds for the entire ascent.";
-        ridgeAerieWinch.FromAToB.TravelCostModifier = 1;
-        ridgeAerieWinch.FromAToB.DirectionConditionNote = "Operators slow the ascent when the wind shifts.";
-        ridgeAerieWinch.FromBToA.DirectionConditionNote = "Descending is steady once the cradle is balanced.";
+        ridgeAerieWinch.SetEndpointLocalViewNote(ridge.Id, "A suspended cargo cradle hangs below the ridge station.");
+        ridgeAerieWinch.SetEndpointLocalViewNote(aerie.Id, "The lift berth is bolted directly to the aerie deck.");
+        ridgeAerieWinch.SetSharedConditionNote("The lift is exposed to crosswinds for the entire ascent.");
+        ridgeAerieWinch.SetDirectionTravelCostModifierFrom(ridge.Id, 1);
+        ridgeAerieWinch.SetDirectionConditionNoteFrom(ridge.Id, "Operators slow the ascent when the wind shifts.");
+        ridgeAerieWinch.SetDirectionConditionNoteFrom(aerie.Id, "Descending is steady once the cradle is balanced.");
     }
 
     public static bool TryGetRecommendedLandmarkLocationIds(WorldState world, out string[] landmarkLocationIds) {

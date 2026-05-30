@@ -40,9 +40,10 @@ internal sealed class Passage {
         _ = TravelMode;
         _ = BaseTravelCost;
         _ = SharedConditionNote;
+        ValidateNonNegativeTotalTravelCosts();
     }
 
-    public DurableDict<string> Data => _data;
+    internal DurableDict<string> Data => _data;
 
     public string Id => _data.GetOrThrow<string>(IdKey)!;
 
@@ -70,28 +71,41 @@ internal sealed class Passage {
 
     public TravelMode TravelMode {
         get => TravelModeCodec.FromStorageValue(SharedData.GetOrThrow<string>(TravelModeKey)!);
-        set => SharedData.Upsert(TravelModeKey, value.ToStorageValue());
     }
 
-    public int BaseTravelCost {
-        get => SharedData.GetOrThrow<int>(BaseTravelCostKey);
-        set {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
-            SharedData.Upsert(BaseTravelCostKey, value);
-        }
-    }
+    public int BaseTravelCost => SharedData.GetOrThrow<int>(BaseTravelCostKey);
 
     /// <summary>
     /// Passage 级别、且两端共享的局部状况说明。
     /// 这里只留给“这条路本身”的共享异常，不用于承载更高层的全局天气系统。
     /// </summary>
-    public string SharedConditionNote {
-        get => SharedData.GetOrThrow<string>(SharedConditionNoteKey)!;
-        set {
-            ArgumentNullException.ThrowIfNull(value);
-            SharedData.Upsert(SharedConditionNoteKey, value);
-        }
+    public string SharedConditionNote => SharedData.GetOrThrow<string>(SharedConditionNoteKey)!;
+
+    public void SetTravelMode(TravelMode value) => SharedData.Upsert(TravelModeKey, value.ToStorageValue());
+
+    public void SetBaseTravelCost(int value) {
+        ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+        EnsureTotalTravelCostIsNonNegative(EndpointA.LocationId, EndpointB.LocationId, value, FromAToB.TravelCostModifier);
+        EnsureTotalTravelCostIsNonNegative(EndpointB.LocationId, EndpointA.LocationId, value, FromBToA.TravelCostModifier);
+        SharedData.Upsert(BaseTravelCostKey, value);
     }
+
+    public void SetSharedConditionNote(string value) {
+        ArgumentNullException.ThrowIfNull(value);
+        SharedData.Upsert(SharedConditionNoteKey, value);
+    }
+
+    public void SetEndpointLocalViewNote(string locationId, string value) => GetEndpointFor(locationId).SetLocalViewNote(value);
+
+    public void SetDirectionEnabledFrom(string locationId, bool isEnabled) => GetDirectionFrom(locationId).SetIsEnabled(isEnabled);
+
+    public void SetDirectionTravelCostModifierFrom(string locationId, int value) {
+        EnsureTotalTravelCostIsNonNegative(locationId, GetOtherLocationId(locationId), BaseTravelCost, value);
+        GetDirectionFrom(locationId).SetTravelCostModifier(value);
+    }
+
+    public void SetDirectionConditionNoteFrom(string locationId, string value)
+        => GetDirectionFrom(locationId).SetDirectionConditionNote(value);
 
     public bool Connects(string locationId)
         => string.Equals(EndpointA.LocationId, locationId, StringComparison.Ordinal)
@@ -151,6 +165,25 @@ internal sealed class Passage {
 
     private DurableDict<string> SharedData => _data.GetOrThrow<DurableDict<string>>(SharedKey)!;
 
+    private void ValidateNonNegativeTotalTravelCosts() {
+        EnsureTotalTravelCostIsNonNegative(EndpointA.LocationId, EndpointB.LocationId, BaseTravelCost, FromAToB.TravelCostModifier);
+        EnsureTotalTravelCostIsNonNegative(EndpointB.LocationId, EndpointA.LocationId, BaseTravelCost, FromBToA.TravelCostModifier);
+    }
+
+    private void EnsureTotalTravelCostIsNonNegative(
+        string fromLocationId,
+        string toLocationId,
+        int baseTravelCost,
+        int travelCostModifier
+    ) {
+        int totalTravelCost = baseTravelCost + travelCostModifier;
+        if (totalTravelCost < 0) {
+            throw new InvalidOperationException(
+                $"Negative travel cost is not allowed in WorldTruth: passage '{Id}' from '{fromLocationId}' to '{toLocationId}' has total cost {totalTravelCost} (base={baseTravelCost}, modifier={travelCostModifier})."
+            );
+        }
+    }
+
     private static DurableDict<string> CreateSharedData(Revision revision, TravelMode travelMode, int baseTravelCost) {
         var shared = revision.CreateDict<string>();
         shared.Upsert(TravelModeKey, travelMode.ToStorageValue());
@@ -180,28 +213,15 @@ internal sealed class PassageEndpoint {
         _ = LocalViewNote;
     }
 
-    public string LocationId {
-        get => _data.GetOrThrow<string>(LocationIdKey)!;
-        set {
-            WorldState.ValidateEntityId(value, nameof(value));
-            _data.Upsert(LocationIdKey, value);
-        }
-    }
+    public string LocationId => _data.GetOrThrow<string>(LocationIdKey)!;
 
-    public string ExitName {
-        get => _data.GetOrThrow<string>(ExitNameKey)!;
-        set {
-            WorldState.ValidateRequiredText(value, nameof(value));
-            _data.Upsert(ExitNameKey, value);
-        }
-    }
+    public string ExitName => _data.GetOrThrow<string>(ExitNameKey)!;
 
-    public string LocalViewNote {
-        get => _data.GetOrThrow<string>(LocalViewNoteKey)!;
-        set {
-            ArgumentNullException.ThrowIfNull(value);
-            _data.Upsert(LocalViewNoteKey, value);
-        }
+    public string LocalViewNote => _data.GetOrThrow<string>(LocalViewNoteKey)!;
+
+    internal void SetLocalViewNote(string value) {
+        ArgumentNullException.ThrowIfNull(value);
+        _data.Upsert(LocalViewNoteKey, value);
     }
 
     internal static DurableDict<string> CreateData(Revision revision, string locationId, string exitName) {
@@ -237,22 +257,24 @@ internal sealed class PassageDirectionRule {
         _ = DirectionConditionNote;
     }
 
-    public bool IsEnabled {
-        get => _data.GetOrThrow<bool>(EnabledKey);
-        set => _data.Upsert(EnabledKey, value);
+    public bool IsEnabled => _data.GetOrThrow<bool>(EnabledKey);
+
+    public int TravelCostModifier => _data.GetOrThrow<int>(TravelCostModifierKey);
+
+    public string DirectionConditionNote => _data.GetOrThrow<string>(DirectionConditionNoteKey)!;
+
+    public int TotalTravelCost(Passage passage) {
+        ArgumentNullException.ThrowIfNull(passage);
+        return passage.BaseTravelCost + TravelCostModifier;
     }
 
-    public int TravelCostModifier {
-        get => _data.GetOrThrow<int>(TravelCostModifierKey);
-        set => _data.Upsert(TravelCostModifierKey, value);
-    }
+    internal void SetIsEnabled(bool value) => _data.Upsert(EnabledKey, value);
 
-    public string DirectionConditionNote {
-        get => _data.GetOrThrow<string>(DirectionConditionNoteKey)!;
-        set {
-            ArgumentNullException.ThrowIfNull(value);
-            _data.Upsert(DirectionConditionNoteKey, value);
-        }
+    internal void SetTravelCostModifier(int value) => _data.Upsert(TravelCostModifierKey, value);
+
+    internal void SetDirectionConditionNote(string value) {
+        ArgumentNullException.ThrowIfNull(value);
+        _data.Upsert(DirectionConditionNoteKey, value);
     }
 
     internal static DurableDict<string> CreateData(Revision revision) {

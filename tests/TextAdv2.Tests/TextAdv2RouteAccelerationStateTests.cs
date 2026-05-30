@@ -20,7 +20,7 @@ public class TextAdv2RouteAccelerationStateTests {
                 world,
                 [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
             );
-            world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail).BaseTravelCost = 9;
+            world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail).SetBaseTravelCost(9);
             var observedAfterMutation = routeAcceleration.Observe(world);
             var planningOptionsAfterMutation = routeAcceleration.GetPlanningOptions(world);
 

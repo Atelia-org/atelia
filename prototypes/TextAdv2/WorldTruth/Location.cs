@@ -25,7 +25,7 @@ internal sealed class Location {
         _ = Description;
     }
 
-    public DurableDict<string> Data => _data;
+    internal DurableDict<string> Data => _data;
 
     public string Id => _data.GetOrThrow<string>(IdKey)!;
 

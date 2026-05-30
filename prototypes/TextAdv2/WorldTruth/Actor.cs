@@ -27,7 +27,7 @@ internal sealed class Actor {
         _ = CurrentLocationId;
     }
 
-    public DurableDict<string> Data => _data;
+    internal DurableDict<string> Data => _data;
 
     public string Id => _data.GetOrThrow<string>(IdKey)!;
 
