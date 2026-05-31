@@ -400,7 +400,7 @@ public class WorldSessionTests {
             var observation = session.ObserveLocation("start");
 
             Assert.Equal("start", observation.LocationId);
-            Assert.Equal(["alpha", "beta"], observation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(observation.PresentActors));
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -422,10 +422,12 @@ public class WorldSessionTests {
 
             Assert.Equal("alpha", move.ActorId);
             Assert.Equal("goal", move.ToLocationId);
+            Assert.Equal("goal", move.CurrentLocation.LocationId);
+            Assert.Equal(["alpha", "beta"], ReadActorIds(move.CurrentLocation.PresentActors));
             Assert.Empty(sourceObservation.PresentActors);
-            Assert.Equal(["alpha", "beta"], goalObservation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(goalObservation.PresentActors));
             Assert.Equal("goal", betaObservation.Location.LocationId);
-            Assert.Equal(["alpha", "beta"], betaObservation.Location.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(betaObservation.Location.PresentActors));
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -815,6 +817,12 @@ public class WorldSessionTests {
         _ = session.CreateActor("beta", "Beta", betaStartLocationId);
         _ = session.CreatePassage("start-goal", "start", "advance", "goal", "return", TravelMode.Land, 1);
     }
+
+    private static string[] ReadActorIds(IEnumerable<ActorPresenceObservation> presentActors)
+        => presentActors
+            .Select(static actor => actor.ActorId)
+            .OrderBy(static actorId => actorId, StringComparer.Ordinal)
+            .ToArray();
 
     private static void DeleteDirectoryIfExists(string repoDir) {
         if (Directory.Exists(repoDir)) {

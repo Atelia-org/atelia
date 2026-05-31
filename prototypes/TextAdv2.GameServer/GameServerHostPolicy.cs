@@ -130,6 +130,7 @@ internal sealed class GameServerHostPolicy {
             "GET /admin/locations/{locationId}/navigation",
             "GET /admin/routes/{fromLocationId}/{toLocationId}",
             "GET /actors/{actorId}/observation",
+            "GET /actors/{actorId}/context",
             "GET /actors/{actorId}/navigation",
             "POST /actors/{actorId}/moves/{passageId}",
             "GET /actors/{actorId}/route-trace",

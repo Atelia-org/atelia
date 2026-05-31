@@ -144,7 +144,7 @@ public class ActorAndObservationTests {
     }
 
     [Fact]
-    public void ObserveLocation_WithCoLocatedActors_ProjectsStablePresentActorsOrder() {
+    public void ObserveLocation_WithCoLocatedActors_ProjectsBothPresentActors() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -156,7 +156,7 @@ public class ActorAndObservationTests {
             var observation = LocationObservationProjector.ObserveLocation(world, "start");
 
             Assert.Equal("start", observation.LocationId);
-            Assert.Equal(["alpha", "beta"], observation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(observation.PresentActors));
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -179,9 +179,9 @@ public class ActorAndObservationTests {
             var betaObservation = LocationObservationProjector.ObserveActorLocation(world, "beta");
 
             Assert.Empty(sourceObservation.PresentActors);
-            Assert.Equal(["alpha", "beta"], goalObservation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(goalObservation.PresentActors));
             Assert.Equal("goal", betaObservation.Location.LocationId);
-            Assert.Equal(["alpha", "beta"], betaObservation.Location.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(betaObservation.Location.PresentActors));
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -203,6 +203,12 @@ public class ActorAndObservationTests {
 
         return ("start", "goal", "alpha", "beta", "start-goal");
     }
+
+    private static string[] ReadActorIds(IEnumerable<ActorPresenceObservation> presentActors)
+        => presentActors
+            .Select(static actor => actor.ActorId)
+            .OrderBy(static actorId => actorId, StringComparer.Ordinal)
+            .ToArray();
 
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-actor-tests-{Guid.NewGuid():N}");

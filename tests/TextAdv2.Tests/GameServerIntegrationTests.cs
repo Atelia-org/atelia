@@ -118,6 +118,10 @@ public class GameServerIntegrationTests {
                 ["ridge", "shrine", "village"],
                 initialContext.AvailableMoves.Select(static edge => edge.TargetLocationId).ToArray()
             );
+            Assert.Contains(
+                initialContext.CurrentLocation.PresentActors,
+                static actor => actor.ActorId == "scout"
+            );
 
             using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
             Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
@@ -143,6 +147,104 @@ public class GameServerIntegrationTests {
                 ["aerie", "square"],
                 movedContext.AvailableMoves.Select(static edge => edge.TargetLocationId).ToArray()
             );
+            Assert.Contains(
+                movedContext.CurrentLocation.PresentActors,
+                static actor => actor.ActorId == "scout"
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task ActorContextEndpoint_TracksLogicalTimeAndSharedPresenceAcrossRestartAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (WorldSession.CreateEmpty(repoDir)) {
+            }
+            WaitUntilSessionCanReopen(repoDir);
+
+            using (var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode))
+            using (var client = factory.CreateClient()) {
+                _ = await client.PostAsJsonAsync(
+                    "/admin/locations",
+                    new {
+                        id = "start",
+                        name = "Start",
+                        description = "Shared-world start.",
+                    }
+                );
+                _ = await client.PostAsJsonAsync(
+                    "/admin/locations",
+                    new {
+                        id = "goal",
+                        name = "Goal",
+                        description = "Shared-world goal.",
+                    }
+                );
+                _ = await client.PostAsJsonAsync(
+                    "/admin/actors",
+                    new {
+                        id = "alpha",
+                        name = "Alpha",
+                        currentLocationId = "start",
+                    }
+                );
+                _ = await client.PostAsJsonAsync(
+                    "/admin/actors",
+                    new {
+                        id = "beta",
+                        name = "Beta",
+                        currentLocationId = "goal",
+                    }
+                );
+                _ = await client.PostAsJsonAsync(
+                    "/admin/passages",
+                    new {
+                        id = "start-goal",
+                        locationAId = "start",
+                        exitNameFromA = "advance",
+                        locationBId = "goal",
+                        exitNameFromB = "return",
+                    }
+                );
+
+                using var advanceTime = await client.PostAsync("/admin/advance-time/7", content: null);
+                Assert.Equal(HttpStatusCode.OK, advanceTime.StatusCode);
+
+                using var moveResponse = await client.PostAsync("/actors/alpha/moves/start-goal", content: null);
+                Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
+
+                using var contextResponse = await client.GetAsync("/actors/beta/context");
+                var context = await ReadJsonAsync<ActorContextObservation>(contextResponse);
+
+                Assert.Equal(HttpStatusCode.OK, contextResponse.StatusCode);
+                Assert.NotNull(context);
+                Assert.Equal("beta", context.ActorId);
+                Assert.Equal("Beta", context.ActorName);
+                Assert.Equal(7, context.CurrentTick);
+                Assert.Equal("goal", context.CurrentLocation.LocationId);
+                Assert.Equal(["alpha", "beta"], ReadActorIds(context.CurrentLocation.PresentActors));
+                Assert.Equal(["start-goal"], context.AvailableMoves.Select(static edge => edge.PassageId).ToArray());
+                Assert.Equal(["start-goal"], context.CurrentLocation.Exits.Select(static edge => edge.PassageId).ToArray());
+            }
+
+            WaitUntilSessionCanReopen(repoDir);
+
+            using var reopenedFactory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
+            using var reopenedClient = reopenedFactory.CreateClient();
+
+            using var reopenedContextResponse = await reopenedClient.GetAsync("/actors/beta/context");
+            var reopenedContext = await ReadJsonAsync<ActorContextObservation>(reopenedContextResponse);
+
+            Assert.Equal(HttpStatusCode.OK, reopenedContextResponse.StatusCode);
+            Assert.NotNull(reopenedContext);
+            Assert.Equal(7, reopenedContext.CurrentTick);
+            Assert.Equal("goal", reopenedContext.CurrentLocation.LocationId);
+            Assert.Equal(["alpha", "beta"], ReadActorIds(reopenedContext.CurrentLocation.PresentActors));
+            Assert.Equal(["start-goal"], reopenedContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray());
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -193,6 +295,10 @@ public class GameServerIntegrationTests {
             Assert.Contains(
                 json.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
                 static endpoint => string.Equals(endpoint, "POST /admin/reset-sample-world", StringComparison.Ordinal)
+            );
+            Assert.Contains(
+                json.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
+                static endpoint => string.Equals(endpoint, "GET /actors/{actorId}/context", StringComparison.Ordinal)
             );
             Assert.Equal("Atelia.TextAdv2", json.RootElement.GetProperty("session").GetProperty("engineAssemblyName").GetString());
         }
@@ -245,6 +351,10 @@ public class GameServerIntegrationTests {
             Assert.Contains(
                 statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
                 static endpoint => string.Equals(endpoint, "POST /admin/passages", StringComparison.Ordinal)
+            );
+            Assert.Contains(
+                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
+                static endpoint => string.Equals(endpoint, "GET /actors/{actorId}/context", StringComparison.Ordinal)
             );
         }
         finally {
@@ -415,6 +525,8 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
             Assert.NotNull(move);
             Assert.Equal("goal", move.ToLocationId);
+            Assert.Equal("goal", move.CurrentLocation.LocationId);
+            Assert.Equal(["alpha", "beta"], ReadActorIds(move.CurrentLocation.PresentActors));
 
             using var sourceResponse = await client.GetAsync("/admin/locations/start/observation");
             var sourceObservation = await ReadJsonAsync<LocationObservation>(sourceResponse);
@@ -426,14 +538,14 @@ public class GameServerIntegrationTests {
             var goalObservation = await ReadJsonAsync<LocationObservation>(goalResponse);
             Assert.Equal(HttpStatusCode.OK, goalResponse.StatusCode);
             Assert.NotNull(goalObservation);
-            Assert.Equal(["alpha", "beta"], goalObservation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(goalObservation.PresentActors));
 
             using var betaResponse = await client.GetAsync("/actors/beta/observation");
             var betaObservation = await ReadJsonAsync<ActorLocationObservation>(betaResponse);
             Assert.Equal(HttpStatusCode.OK, betaResponse.StatusCode);
             Assert.NotNull(betaObservation);
             Assert.Equal("goal", betaObservation.Location.LocationId);
-            Assert.Equal(["alpha", "beta"], betaObservation.Location.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(betaObservation.Location.PresentActors));
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -993,6 +1105,12 @@ public class GameServerIntegrationTests {
             lastLockFailure
         );
     }
+
+    private static string[] ReadActorIds(IEnumerable<ActorPresenceObservation> presentActors)
+        => presentActors
+            .Select(static actor => actor.ActorId)
+            .OrderBy(static actorId => actorId, StringComparer.Ordinal)
+            .ToArray();
 
     private sealed class TextAdv2GameServerFactory(string repoDir, string bootstrapMode) : WebApplicationFactory<Program> {
         protected override void ConfigureWebHost(IWebHostBuilder builder) {

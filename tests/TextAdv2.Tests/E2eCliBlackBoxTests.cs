@@ -115,6 +115,10 @@ public sealed class E2eCliBlackBoxTests {
                 ["ridge", "shrine", "village"],
                 initialContext.AvailableMoves.Select(static edge => edge.TargetLocationId).ToArray()
             );
+            Assert.Contains(
+                initialContext.CurrentLocation.PresentActors,
+                static actor => actor.ActorId == "scout"
+            );
 
             Assert.NotNull(movedContext);
             Assert.Equal("scout", movedContext.ActorId);
@@ -133,6 +137,42 @@ public sealed class E2eCliBlackBoxTests {
                 ["aerie", "square"],
                 movedContext.AvailableMoves.Select(static edge => edge.TargetLocationId).ToArray()
             );
+            Assert.Contains(
+                movedContext.CurrentLocation.PresentActors,
+                static actor => actor.ActorId == "scout"
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void RepoDir_ObserveActorContext_TracksLogicalTimeAndFiltersDisabledExitsFromAvailableMoves() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult init = RunCli("init-sample", repoDir);
+            CliRunResult advanceTime = RunCli("--repo-dir", repoDir, "--advance-time", "4");
+            CliRunResult moveBoatman = RunCli("--repo-dir", repoDir, "--move-actor", "boatman", "harbor-delta-current");
+            CliRunResult observeContext = RunCli("--repo-dir", repoDir, "--observe-actor-context", "boatman");
+
+            Assert.Equal(0, init.ExitCode);
+            Assert.Equal(0, advanceTime.ExitCode);
+            Assert.Equal(0, moveBoatman.ExitCode);
+            Assert.Equal(0, observeContext.ExitCode);
+
+            var context = DeserializeCliJson<ActorContextObservation>(observeContext.StandardOutput);
+
+            Assert.NotNull(context);
+            Assert.Equal("boatman", context.ActorId);
+            Assert.Equal("Boatman", context.ActorName);
+            Assert.Equal(4, context.CurrentTick);
+            Assert.Equal("delta", context.CurrentLocation.LocationId);
+            Assert.Empty(context.AvailableMoves);
+            Assert.Equal(["harbor-delta-current"], context.CurrentLocation.Exits.Select(static edge => edge.PassageId).ToArray());
+            Assert.False(context.CurrentLocation.Exits[0].IsEnabled);
+            Assert.Equal("harbor", context.CurrentLocation.Exits[0].TargetLocationId);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -372,7 +412,13 @@ public sealed class E2eCliBlackBoxTests {
             using JsonDocument goalJson = ExtractJsonBlock(observeGoal.StandardOutput);
             using JsonDocument startJson = ExtractJsonBlock(observeStart.StandardOutput);
             using JsonDocument betaJson = ExtractJsonBlock(observeBeta.StandardOutput);
+            using JsonDocument moveJson = ExtractJsonBlock(moveAlpha.StandardOutput);
 
+            Assert.Equal("goal", moveJson.RootElement.GetProperty("CurrentLocation").GetProperty("LocationId").GetString());
+            Assert.Equal(
+                ["alpha", "beta"],
+                ReadActorIds(moveJson.RootElement.GetProperty("CurrentLocation").GetProperty("PresentActors"))
+            );
             Assert.Equal(["alpha", "beta"], ReadActorIds(goalJson.RootElement.GetProperty("PresentActors")));
             Assert.Empty(ReadActorIds(startJson.RootElement.GetProperty("PresentActors")));
             Assert.Equal("goal", betaJson.RootElement.GetProperty("Location").GetProperty("LocationId").GetString());
@@ -484,6 +530,7 @@ public sealed class E2eCliBlackBoxTests {
     private static string[] ReadActorIds(JsonElement presentActors)
         => presentActors.EnumerateArray()
             .Select(static actor => actor.GetProperty("ActorId").GetString() ?? string.Empty)
+            .OrderBy(static actorId => actorId, StringComparer.Ordinal)
             .ToArray();
 
     private static JsonSerializerOptions CreateCliJsonOptions() {
