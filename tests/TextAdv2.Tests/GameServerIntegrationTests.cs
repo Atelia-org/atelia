@@ -76,7 +76,7 @@ public class GameServerIntegrationTests {
             string resetText = await resetResponse.Content.ReadAsStringAsync();
             var resetJson = JsonDocument.Parse(resetText);
             Assert.Equal(HttpStatusCode.OK, resetResponse.StatusCode);
-            Assert.Equal("session-connected", resetJson.RootElement.GetProperty("mode").GetString());
+            Assert.Equal("host-running", resetJson.RootElement.GetProperty("mode").GetString());
 
             using var reopenedObserve = await client.GetAsync("/actors/scout/observation");
             var reopenedObservation = await ReadJsonAsync<ActorLocationObservation>(reopenedObserve);
@@ -123,7 +123,7 @@ public class GameServerIntegrationTests {
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
-            Assert.Equal("session-connected", json.RootElement.GetProperty("mode").GetString());
+            Assert.Equal("host-running", json.RootElement.GetProperty("mode").GetString());
             Assert.Equal(repoDir, json.RootElement.GetProperty("configuration").GetProperty("resolvedRepoDir").GetString());
             Assert.Equal("sample-world-dev", json.RootElement.GetProperty("configuration").GetProperty("bootstrapMode").GetString());
             Assert.Equal("sample-world-dev", json.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
@@ -188,7 +188,16 @@ public class GameServerIntegrationTests {
             using var client = factory.CreateClient();
 
             using var statusResponse = await client.GetAsync("/admin/session-status");
+            string statusText = await statusResponse.Content.ReadAsStringAsync();
+            var statusJson = JsonDocument.Parse(statusText);
             Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
+            Assert.Equal("host-running", statusJson.RootElement.GetProperty("mode").GetString());
+
+            using var healthzResponse = await client.GetAsync("/healthz");
+            string healthzText = await healthzResponse.Content.ReadAsStringAsync();
+            var healthzJson = JsonDocument.Parse(healthzText);
+            Assert.Equal(HttpStatusCode.OK, healthzResponse.StatusCode);
+            Assert.Equal("host-running", healthzJson.RootElement.GetProperty("mode").GetString());
 
             using var worldResponse = await client.GetAsync("/admin/world");
             Assert.Equal(HttpStatusCode.InternalServerError, worldResponse.StatusCode);

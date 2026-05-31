@@ -3,6 +3,8 @@ using Atelia.TextAdv2.GameServer;
 using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.Session;
 
+const string HostRunningMode = "host-running";
+
 var builder = WebApplication.CreateBuilder(args);
 
 var configuredRepoDir = builder.Configuration["TextAdv2:RepoDir"] ?? ".atelia/textadv2-dev-world";
@@ -16,7 +18,7 @@ builder.Services.AddSingleton(_ => new SessionService(hostPolicy.OpenSession()))
 var app = builder.Build();
 
 app.MapGet("/", () => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode)));
-app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.GameServer", mode = "session-connected" }));
+app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.GameServer", mode = HostRunningMode }));
 app.MapGet("/admin/session-status", () => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode)));
 app.MapGet("/admin/world", (SessionService session) => ExecuteText(session, DevTextRenderer.RenderWorld));
 app.MapGet("/admin/time", (SessionService session) => ExecuteJson(session, static x => x.ObserveTime()));
@@ -120,7 +122,7 @@ static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstr
     var scaffold = HostingScaffold.DescribeCurrentState();
     return new {
         service = "TextAdv2.GameServer",
-        mode = "session-connected",
+        mode = HostRunningMode,
         configuration = new {
             configuredRepoDir = hostPolicy.ConfiguredRepoDir,
             resolvedRepoDir = hostPolicy.ResolvedRepoDir,
