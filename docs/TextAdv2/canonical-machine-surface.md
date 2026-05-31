@@ -1,6 +1,6 @@
 # TextAdv2 Canonical Machine Surface
 
-> 状态：F8b 第一拍 + F9 runtime boundary freeze 第一拍 + T1 cross-host parity 第二批（read-only observation/navigation seams）
+> 状态：F8b 第一拍 + F9 runtime boundary freeze 第一拍 + T1 cross-host parity 第二批（read-only observation/navigation + location-to-location plan-route）
 > 适用范围：当前 `TextAdv2.GameServer` 与 `TextAdv2.E2eCli` 的 machine-consumable surface
 
 当前文档只声明“已被 parity guard 守住的 canonical machine surface”。
@@ -38,6 +38,9 @@
 - actor route plan
   - `GET /actors/{actorId}/plan-route/{toLocationId}`
   - `... --json-only --plan-actor-route <actorId> <toLocationId>`
+- location-to-location route plan
+  - `GET /admin/routes/{fromLocationId}/{toLocationId}`
+  - `... --json-only --plan-route <fromLocationId> <toLocationId>`
 - minimal authoring snapshot
   - `POST /admin/locations`
   - `... --json-only --create-location <locationId> <name> <description>`
@@ -68,7 +71,6 @@
 ## 当前不属于 canonical machine surface 的内容
 
 - 尚未进入 parity guard 的其他 JSON seam
-  - 例如 location-to-location `plan-route`
   - `create-actor`、`create-passage`
   - `route-trace/json`
   - `observe-route-acceleration`、`rebuild-route-acceleration`

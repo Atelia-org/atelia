@@ -323,6 +323,90 @@ public sealed class CrossHostMachineContractParityTests {
     }
 
     [Fact]
+    public async Task LocationRoutePlanFound_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepo(cliRepoDir);
+            PrepareSampleRepo(hostRepoDir);
+
+            string cliJson = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir,
+                "--json-only",
+                "--plan-route", "village", "aerie"
+            );
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/admin/routes/village/aerie");
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "location route plan found");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
+    public async Task LocationRoutePlanAlreadyThere_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepo(cliRepoDir);
+            PrepareSampleRepo(hostRepoDir);
+
+            string cliJson = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir,
+                "--json-only",
+                "--plan-route", "shrine", "shrine"
+            );
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/admin/routes/shrine/shrine");
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "location route plan already-there");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
+    public async Task LocationRoutePlanUnreachable_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepo(cliRepoDir);
+            PrepareSampleRepo(hostRepoDir);
+
+            string cliJson = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir,
+                "--json-only",
+                "--plan-route", "delta", "harbor"
+            );
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/admin/routes/delta/harbor");
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "location route plan unreachable");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
     public async Task CreateLocationSnapshot_ParityBetweenGameServerAndCliJsonOnlyAsync() {
         string cliRepoDir = CreateTempRepoDir();
         string hostRepoDir = CreateTempRepoDir();
