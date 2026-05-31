@@ -178,6 +178,53 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
+    public async Task OpenExistingOnlyMode_RuntimeEndpointsFailWhenRepoDoesNotExistAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
+            using var client = factory.CreateClient();
+
+            using var statusResponse = await client.GetAsync("/admin/runtime-status");
+            Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
+
+            using var worldResponse = await client.GetAsync("/admin/world");
+            Assert.Equal(HttpStatusCode.InternalServerError, worldResponse.StatusCode);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task OpenExistingOnlyMode_RebuildRouteAccelerationWithoutLandmarks_DoesNotRecoverSampleWorldDefaultPolicyAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (TextAdv2SampleWorldDevBootstrap.CreateFreshRuntime(repoDir)) {
+            }
+            WaitUntilRuntimeCanReopen(repoDir);
+
+            using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync("/admin/route-acceleration/rebuild", content: null);
+            string jsonText = await response.Content.ReadAsStringAsync();
+            var json = JsonDocument.Parse(jsonText);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains(
+                "requires a world with a known recommended landmark profile",
+                json.RootElement.GetProperty("error").GetString(),
+                StringComparison.Ordinal
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public async Task TimeEndpoints_AdvanceAndResetLogicalClockAsync() {
         string repoDir = CreateTempRepoDir();
 

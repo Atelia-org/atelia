@@ -330,11 +330,10 @@ P5a 本轮落地结果：
 
 推荐顺序改为：
 
-1. `P5b1 GameServer bootstrap/admin boundary 收口`
-2. `P2c1 + P2c2` 清理 `MoveActorQuiet` / `TraceActorRoute` text residual
-3. `P5b2 E2eCli dev-mode 显式化`
-4. `P5c` 决定 `DumpWorld` / `DumpLocation` 的最终归属，并视结果删除 `TextAdv2RuntimeCommandResult`
-5. `P3c` 仅在真实 world editing 需求出现后，再处理 `Location` / `Actor` 写入权威
+1. `P2c1 + P2c2` 清理 `MoveActorQuiet` / `TraceActorRoute` text residual
+2. `P5b2 E2eCli dev-mode 显式化`
+3. `P5c` 决定 `DumpWorld` / `DumpLocation` 的最终归属，并视结果删除 `TextAdv2RuntimeCommandResult`
+4. `P3c` 仅在真实 world editing 需求出现后，再处理 `Location` / `Actor` 写入权威
 
 排序理由：
 
@@ -357,10 +356,10 @@ P5a 本轮落地结果：
 
 ## 9. 当前推荐起点
 
-当前推荐从 `P3b world editor / 写入权威收口` 开始。
+当前推荐从 `P2c1 + P2c2` 开始。
 
 原因：
 
-- `P5a` 已经完成最小闭环，runtime 与 sample/dev policy 之间的最显性耦合点已被压回显式 dev support 层。
-- `P2b2c` 与 `P4a/P4b/P4c` 都已完成，runtime 核心 public seam 与导航图单一真源都已比此前更收敛。
-- 当前更突出的剩余复杂度开始回到 `WorldTruth` 写入权威分散，以及 dev/text surface 仍残留在 runtime 主对象上的问题。
+- `P5b1` 已完成，GameServer 的 host bootstrap/admin policy 已显式化，当前更值得收掉的是 runtime 残余 text surface。
+- `MoveActorQuiet` 与 `TraceActorRoute` 都已有稳定的结构化底座，切成宿主本地渲染/typed seam 的成本低于继续追 `WorldTruth` 的形式对称收权。
+- `E2eCli` 的 dev-mode 显式化与 `DumpWorld` / `DumpLocation` 的最终归属，都更适合建立在这一步之后。
