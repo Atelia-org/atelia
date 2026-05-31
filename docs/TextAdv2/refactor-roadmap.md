@@ -42,7 +42,6 @@
   - `ObserveNavigation` / `ObserveActorNavigation`
 - `TextAdv2RuntimeCommandResult` 的残余面，已主要收缩到：
   - `MoveActor`
-  - `PlanRoute` / `PlanActorRoute`
   - `TraceActorRoute`
   - `MoveActorQuiet`
   - `DumpWorld` / `DumpLocation`
@@ -169,10 +168,17 @@ P2b2c 本轮落地结果：
 - `GameServer` move endpoint 与 `E2eCli --move-actor` 已迁到宿主边界 JSON 序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
 - `MoveActorQuiet`、`TraceActorRoute`、`PlanRoute`、`PlanActorRoute`、`Dump*` 仍保持现状，留待后续工作包收口。
 
+P4c 本轮落地结果：
+
+- `PlanRoute(string, string)` 与 `PlanActorRoute(string, string)` 已直接返回 `TextAdv2RuntimeRoutePlanObservation`。
+- 新 seam 没有直接公开 internal `LocationRoutePlanObservation`，并继续把 `RoutePlanStatus` / `TravelMode` 投影成 runtime-facing string token。
+- `GameServer` route-plan endpoints 与 `E2eCli --plan-route` / `--plan-actor-route` 已迁到宿主边界 JSON 序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
+- `LocationRoutePlanTextRenderer` 仍保留为内部文本调试能力；是否继续保留长期 text surface，留待 `P2c + P5c` 统一处理。
+
 P2 后续修订说明：
 
 - `MoveActor` 仍应留在 `P2`，因为它是最后一个明显属于 runtime 核心 use case、但仍停留在 `string/contentType` seam 上的写入入口。
-- `PlanRoute` / `PlanActorRoute` 不再视为 `P2b2c` 的自然尾巴；它们更适合放到 `P4` 之后，等 canonical graph seam 收口后再决定 public typed DTO。
+- `PlanRoute` / `PlanActorRoute` 已在 `P4c` 中收口为 typed seam；后续不再属于 `TextAdv2RuntimeCommandResult` 的主残余面。
 - `DumpWorld` / `DumpLocation`、`TraceActorRoute`、`MoveActorQuiet` 不再视为“typed runtime seam 收尾”，而是显式归类到 `P2c` / `P5` 的 text-dev-admin surface。
 
 ### P3a. world root schema gate
@@ -253,7 +259,7 @@ P4a/P4b 本轮落地结果：
 - `NavigationObservationProjector` 已退回为展示层 adapter：先读 canonical graph，再补 `ExitName`、`TargetLocationName` 等展示字段。
 - `LocationRoutePlanner`、`LocationLandmarkHeuristicSnapshot`、`TextAdv2RouteAcceleration` 的 stale-signature 计算已显式改读这份 seam，不再依赖 `NavigationObservationProjector` 的内部细节。
 - 已补“同一次拓扑变更同时影响 navigation / planner / route-acceleration stale”回归测试，进一步锁住单一真源收口。
-- 下一自然入口转为 `P4c / P4-adjacent route plan typed seam`；`Observe/RebuildRouteAcceleration` 的 public API 仍保持现状，留待后续按需要评估。
+- `P4c` 也已完成；`Observe/RebuildRouteAcceleration` 的 public API 仍保持现状，留待后续按需要评估。
 
 ### P5. sample-world / dev harness 下沉
 
@@ -298,14 +304,13 @@ P5a 本轮落地结果：
 
 推荐顺序改为：
 
-1. `P4c / P4-adjacent route plan typed seam`
-2. `P3b world editor / 写入权威收口`
-3. `P5b open-or-create/reset 与 admin surface 收口`
-4. `P2c + P5c` 清理 text/dev/admin surface
+1. `P3b world editor / 写入权威收口`
+2. `P5b open-or-create/reset 与 admin surface 收口`
+3. `P2c + P5c` 清理 text/dev/admin surface
 
 排序理由：
 
-- `P4a/P4b` 已完成，当前最自然的后续是决定 route plan 是否建立 public typed seam，而不是再让它长期停留在 text-only surface。
+- `P4a/P4b/P4c` 已完成，导航图单一真源与 route-plan public seam 都已比此前更收敛，下一步更值得处理的是写入权威与剩余 dev/text 面。
 - `P3b` 目前还缺承接设计，放在更后面更可行。
 - `P5a` 已经把 sample-world seed 与默认 landmark policy 从 runtime public seam 中剥离，后续可以把焦点切回 runtime 核心 typed seam 与 graph 真源。
 - `P2b2c` 已完成，runtime 核心 use case 的 public seam 已进一步收口，下一步最值得解决的是导航图单一真源问题。
@@ -324,10 +329,10 @@ P5a 本轮落地结果：
 
 ## 9. 当前推荐起点
 
-当前推荐从 `P4c / P4-adjacent route plan typed seam` 开始。
+当前推荐从 `P3b world editor / 写入权威收口` 开始。
 
 原因：
 
 - `P5a` 已经完成最小闭环，runtime 与 sample/dev policy 之间的最显性耦合点已被压回显式 dev support 层。
-- `P2b2c` 与 `P4a/P4b` 都已完成，runtime 核心 public seam 与导航图单一真源都已比此前更收敛。
-- 当前最自然的下一步是决定 route plan 是否沿用与 observation / movement 一致的 typed runtime seam，而不是继续把它留在 text-only surface。
+- `P2b2c` 与 `P4a/P4b/P4c` 都已完成，runtime 核心 public seam 与导航图单一真源都已比此前更收敛。
+- 当前更突出的剩余复杂度开始回到 `WorldTruth` 写入权威分散，以及 dev/text surface 仍残留在 runtime 主对象上的问题。

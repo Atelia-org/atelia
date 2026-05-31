@@ -172,6 +172,56 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
+    public void PlanActorRoute_ProjectsAlreadyThereAndUnreachableStatesThroughTypedSeam() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var alreadyThere = runtime.PlanActorRoute(
+            TestWorldBuilder.ActorIds.Scout,
+            TestWorldBuilder.LocationIds.Square
+        );
+        var unreachable = runtime.PlanActorRoute(
+            TestWorldBuilder.ActorIds.Boatman,
+            TestWorldBuilder.LocationIds.Village
+        );
+
+        Assert.Equal("already-there", alreadyThere.Status);
+        Assert.Equal(0, alreadyThere.StepCount);
+        Assert.Equal(0, alreadyThere.TotalTravelCost);
+        Assert.Empty(alreadyThere.Steps);
+
+        Assert.Equal("unreachable", unreachable.Status);
+        Assert.Equal(0, unreachable.StepCount);
+        Assert.Null(unreachable.TotalTravelCost);
+        Assert.Empty(unreachable.Steps);
+    }
+
+    [Fact]
+    public void PlanRoute_ProjectsAlreadyThereAndUnreachableStatesThroughTypedSeam() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var alreadyThere = runtime.PlanRoute(
+            TestWorldBuilder.LocationIds.Shrine,
+            TestWorldBuilder.LocationIds.Shrine
+        );
+        var unreachable = runtime.PlanRoute(
+            TestWorldBuilder.LocationIds.Delta,
+            TestWorldBuilder.LocationIds.Harbor
+        );
+
+        Assert.Equal("already-there", alreadyThere.Status);
+        Assert.Equal(0, alreadyThere.StepCount);
+        Assert.Equal(0, alreadyThere.TotalTravelCost);
+        Assert.Empty(alreadyThere.Steps);
+        Assert.Equal("zero", alreadyThere.SearchStats.HeuristicName);
+
+        Assert.Equal("unreachable", unreachable.Status);
+        Assert.Equal(0, unreachable.StepCount);
+        Assert.Null(unreachable.TotalTravelCost);
+        Assert.Empty(unreachable.Steps);
+        Assert.Equal("zero", unreachable.SearchStats.HeuristicName);
+    }
+
+    [Fact]
     public void MoveActorQuietThenTraceActorRoute_UsesRuntimeMovementHistory() {
         string repoDir = CreateTempRepoDir();
 

@@ -326,6 +326,80 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
+    public async Task RoutePlanEndpoints_ProjectAlreadyThereAndUnreachableStatesAsJsonAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var factory = CreateFactory(repoDir);
+            using var client = factory.CreateClient();
+
+            using var alreadyThereResponse = await client.GetAsync("/admin/routes/shrine/shrine");
+            string alreadyThereText = await alreadyThereResponse.Content.ReadAsStringAsync();
+            var alreadyThereJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(alreadyThereText, HostJsonOptions);
+
+            Assert.Equal(HttpStatusCode.OK, alreadyThereResponse.StatusCode);
+            Assert.Equal("application/json", alreadyThereResponse.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(alreadyThereJson);
+            Assert.Equal("already-there", alreadyThereJson.Status);
+            Assert.Equal(0, alreadyThereJson.StepCount);
+            Assert.Equal(0, alreadyThereJson.TotalTravelCost);
+            Assert.Empty(alreadyThereJson.Steps);
+
+            using var unreachableResponse = await client.GetAsync("/admin/routes/delta/harbor");
+            string unreachableText = await unreachableResponse.Content.ReadAsStringAsync();
+            var unreachableJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(unreachableText, HostJsonOptions);
+
+            Assert.Equal(HttpStatusCode.OK, unreachableResponse.StatusCode);
+            Assert.Equal("application/json", unreachableResponse.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(unreachableJson);
+            Assert.Equal("unreachable", unreachableJson.Status);
+            Assert.Equal(0, unreachableJson.StepCount);
+            Assert.Null(unreachableJson.TotalTravelCost);
+            Assert.Empty(unreachableJson.Steps);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task ActorRoutePlanEndpoint_ProjectsAlreadyThereAndUnreachableStatesAsJsonAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var factory = CreateFactory(repoDir);
+            using var client = factory.CreateClient();
+
+            using var alreadyThereResponse = await client.GetAsync("/actors/scout/plan-route/square");
+            string alreadyThereText = await alreadyThereResponse.Content.ReadAsStringAsync();
+            var alreadyThereJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(alreadyThereText, HostJsonOptions);
+
+            Assert.Equal(HttpStatusCode.OK, alreadyThereResponse.StatusCode);
+            Assert.Equal("application/json", alreadyThereResponse.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(alreadyThereJson);
+            Assert.Equal("already-there", alreadyThereJson.Status);
+            Assert.Equal(0, alreadyThereJson.StepCount);
+            Assert.Equal(0, alreadyThereJson.TotalTravelCost);
+            Assert.Empty(alreadyThereJson.Steps);
+
+            using var unreachableResponse = await client.GetAsync("/actors/boatman/plan-route/village");
+            string unreachableText = await unreachableResponse.Content.ReadAsStringAsync();
+            var unreachableJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(unreachableText, HostJsonOptions);
+
+            Assert.Equal(HttpStatusCode.OK, unreachableResponse.StatusCode);
+            Assert.Equal("application/json", unreachableResponse.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(unreachableJson);
+            Assert.Equal("unreachable", unreachableJson.Status);
+            Assert.Equal(0, unreachableJson.StepCount);
+            Assert.Null(unreachableJson.TotalTravelCost);
+            Assert.Empty(unreachableJson.Steps);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public async Task HostRestart_ReopensWorldTruthButResetsRuntimeOwnedStateAsync() {
         string repoDir = CreateTempRepoDir();
 
