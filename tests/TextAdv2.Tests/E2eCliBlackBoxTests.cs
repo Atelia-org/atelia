@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Xunit;
 
 namespace Atelia.TextAdv2.Tests;
@@ -278,6 +279,53 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
+    public void InitEmpty_CanAuthorMoveAndObserveOtherActorAcrossCliInvocations() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult init = RunCli("init-empty", repoDir);
+            CliRunResult createStart = RunCli("--repo-dir", repoDir, "--create-location", "start", "Start", "Shared-world start.");
+            CliRunResult createGoal = RunCli("--repo-dir", repoDir, "--create-location", "goal", "Goal", "Shared-world goal.");
+            CliRunResult createAlpha = RunCli("--repo-dir", repoDir, "--create-actor", "alpha", "Alpha", "start");
+            CliRunResult createBeta = RunCli("--repo-dir", repoDir, "--create-actor", "beta", "Beta", "goal");
+            CliRunResult createPassage = RunCli(
+                "--repo-dir", repoDir,
+                "--create-passage", "start-goal", "start", "advance", "goal", "return"
+            );
+            CliRunResult moveAlpha = RunCli("--repo-dir", repoDir, "--move-actor", "alpha", "start-goal");
+            CliRunResult observeGoal = RunCli("--repo-dir", repoDir, "--observe-location", "goal");
+            CliRunResult observeStart = RunCli("--repo-dir", repoDir, "--observe-location", "start");
+            CliRunResult observeBeta = RunCli("--repo-dir", repoDir, "--observe-actor", "beta");
+
+            Assert.Equal(0, init.ExitCode);
+            Assert.Equal(0, createStart.ExitCode);
+            Assert.Equal(0, createGoal.ExitCode);
+            Assert.Equal(0, createAlpha.ExitCode);
+            Assert.Equal(0, createBeta.ExitCode);
+            Assert.Equal(0, createPassage.ExitCode);
+            Assert.Equal(0, moveAlpha.ExitCode);
+            Assert.Equal(0, observeGoal.ExitCode);
+            Assert.Equal(0, observeStart.ExitCode);
+            Assert.Equal(0, observeBeta.ExitCode);
+
+            using JsonDocument goalJson = ExtractJsonBlock(observeGoal.StandardOutput);
+            using JsonDocument startJson = ExtractJsonBlock(observeStart.StandardOutput);
+            using JsonDocument betaJson = ExtractJsonBlock(observeBeta.StandardOutput);
+
+            Assert.Equal(["alpha", "beta"], ReadActorIds(goalJson.RootElement.GetProperty("PresentActors")));
+            Assert.Empty(ReadActorIds(startJson.RootElement.GetProperty("PresentActors")));
+            Assert.Equal("goal", betaJson.RootElement.GetProperty("Location").GetProperty("LocationId").GetString());
+            Assert.Equal(
+                ["alpha", "beta"],
+                ReadActorIds(betaJson.RootElement.GetProperty("Location").GetProperty("PresentActors"))
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void CreatePassage_WithoutOptionalArgs_UsesDefaultTravelModeAndCost() {
         string repoDir = CreateTempRepoDir();
 
@@ -350,6 +398,20 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     private static string Normalize(string text) => text.Replace("\r\n", "\n");
+
+    private static JsonDocument ExtractJsonBlock(string output) {
+        int jsonStart = output.IndexOf('{');
+        if (jsonStart < 0) {
+            throw new InvalidOperationException("CLI output did not contain a JSON object.");
+        }
+
+        return JsonDocument.Parse(output[jsonStart..]);
+    }
+
+    private static string[] ReadActorIds(JsonElement presentActors)
+        => presentActors.EnumerateArray()
+            .Select(static actor => actor.GetProperty("ActorId").GetString() ?? string.Empty)
+            .ToArray();
 
     private sealed record CliRunResult(
         int ExitCode,

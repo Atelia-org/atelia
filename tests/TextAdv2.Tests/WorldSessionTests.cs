@@ -390,6 +390,49 @@ public class WorldSessionTests {
     }
 
     [Fact]
+    public void SessionAuthoringSeam_ObserveLocation_IncludesBothActorsWhenTheyShareTheSameLocation() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var session = CreateEmptySession(repoDir);
+            AuthorMiniWorld(session, alphaStartLocationId: "start", betaStartLocationId: "start");
+
+            var observation = session.ObserveLocation("start");
+
+            Assert.Equal("start", observation.LocationId);
+            Assert.Equal(["alpha", "beta"], observation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void SessionAuthoringSeam_MovingActorIntoOccupiedLocation_UpdatesLocationAndActorObservations() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var session = CreateEmptySession(repoDir);
+            AuthorMiniWorld(session, alphaStartLocationId: "start", betaStartLocationId: "goal");
+
+            var move = session.MoveActor("alpha", "start-goal");
+            var sourceObservation = session.ObserveLocation("start");
+            var goalObservation = session.ObserveLocation("goal");
+            var betaObservation = session.ObserveActor("beta");
+
+            Assert.Equal("alpha", move.ActorId);
+            Assert.Equal("goal", move.ToLocationId);
+            Assert.Empty(sourceObservation.PresentActors);
+            Assert.Equal(["alpha", "beta"], goalObservation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal("goal", betaObservation.Location.LocationId);
+            Assert.Equal(["alpha", "beta"], betaObservation.Location.PresentActors.Select(static actor => actor.ActorId).ToArray());
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void CreateEmpty_CreatesDurableEmptyWorldWithZeroLogicalTime() {
         string repoDir = CreateTempRepoDir();
 
@@ -758,6 +801,20 @@ public class WorldSessionTests {
 
     private static WorldSession CreateEmptySession(string repoDir)
         => WorldSession.CreateEmpty(repoDir);
+
+    private static void AuthorMiniWorld(
+        WorldSession session,
+        string alphaStartLocationId,
+        string betaStartLocationId
+    ) {
+        ArgumentNullException.ThrowIfNull(session);
+
+        _ = session.CreateLocation("start", "Start", "Shared-world start.");
+        _ = session.CreateLocation("goal", "Goal", "Shared-world goal.");
+        _ = session.CreateActor("alpha", "Alpha", alphaStartLocationId);
+        _ = session.CreateActor("beta", "Beta", betaStartLocationId);
+        _ = session.CreatePassage("start-goal", "start", "advance", "goal", "return", TravelMode.Land, 1);
+    }
 
     private static void DeleteDirectoryIfExists(string repoDir) {
         if (Directory.Exists(repoDir)) {

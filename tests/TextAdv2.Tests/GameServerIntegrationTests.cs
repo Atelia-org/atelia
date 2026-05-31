@@ -296,6 +296,91 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
+    public async Task OpenExistingOnlyMode_AuthorMoveAndObserveOtherActor_ProjectsSharedWorldStateAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (WorldSession.CreateEmpty(repoDir)) {
+            }
+            WaitUntilSessionCanReopen(repoDir);
+
+            using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
+            using var client = factory.CreateClient();
+
+            _ = await client.PostAsJsonAsync(
+                "/admin/locations",
+                new {
+                    id = "start",
+                    name = "Start",
+                    description = "Shared-world start.",
+                }
+            );
+            _ = await client.PostAsJsonAsync(
+                "/admin/locations",
+                new {
+                    id = "goal",
+                    name = "Goal",
+                    description = "Shared-world goal.",
+                }
+            );
+            _ = await client.PostAsJsonAsync(
+                "/admin/actors",
+                new {
+                    id = "alpha",
+                    name = "Alpha",
+                    currentLocationId = "start",
+                }
+            );
+            _ = await client.PostAsJsonAsync(
+                "/admin/actors",
+                new {
+                    id = "beta",
+                    name = "Beta",
+                    currentLocationId = "goal",
+                }
+            );
+            _ = await client.PostAsJsonAsync(
+                "/admin/passages",
+                new {
+                    id = "start-goal",
+                    locationAId = "start",
+                    exitNameFromA = "advance",
+                    locationBId = "goal",
+                    exitNameFromB = "return",
+                }
+            );
+
+            using var moveResponse = await client.PostAsync("/actors/alpha/moves/start-goal", content: null);
+            var move = await ReadJsonAsync<ActorMoveResult>(moveResponse);
+            Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
+            Assert.NotNull(move);
+            Assert.Equal("goal", move.ToLocationId);
+
+            using var sourceResponse = await client.GetAsync("/admin/locations/start/observation");
+            var sourceObservation = await ReadJsonAsync<LocationObservation>(sourceResponse);
+            Assert.Equal(HttpStatusCode.OK, sourceResponse.StatusCode);
+            Assert.NotNull(sourceObservation);
+            Assert.Empty(sourceObservation.PresentActors);
+
+            using var goalResponse = await client.GetAsync("/admin/locations/goal/observation");
+            var goalObservation = await ReadJsonAsync<LocationObservation>(goalResponse);
+            Assert.Equal(HttpStatusCode.OK, goalResponse.StatusCode);
+            Assert.NotNull(goalObservation);
+            Assert.Equal(["alpha", "beta"], goalObservation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+
+            using var betaResponse = await client.GetAsync("/actors/beta/observation");
+            var betaObservation = await ReadJsonAsync<ActorLocationObservation>(betaResponse);
+            Assert.Equal(HttpStatusCode.OK, betaResponse.StatusCode);
+            Assert.NotNull(betaObservation);
+            Assert.Equal("goal", betaObservation.Location.LocationId);
+            Assert.Equal(["alpha", "beta"], betaObservation.Location.PresentActors.Select(static actor => actor.ActorId).ToArray());
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public async Task AdminCreatePassage_InvalidTravelMode_ReturnsBadRequestWithErrorPayloadAsync() {
         string repoDir = CreateTempRepoDir();
 

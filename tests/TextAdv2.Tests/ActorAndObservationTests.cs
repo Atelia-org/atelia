@@ -143,6 +143,67 @@ public class ActorAndObservationTests {
         }
     }
 
+    [Fact]
+    public void ObserveLocation_WithCoLocatedActors_ProjectsStablePresentActorsOrder() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = WorldState.Create(revision);
+            _ = AuthorMiniWorld(world, alphaStartLocationId: "start", betaStartLocationId: "start");
+
+            var observation = LocationObservationProjector.ObserveLocation(world, "start");
+
+            Assert.Equal("start", observation.LocationId);
+            Assert.Equal(["alpha", "beta"], observation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void ObserveActorAndLocation_AfterMove_ProjectsSharedPresenceAtDestinationAndRemovesActorFromSource() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = WorldState.Create(revision);
+            _ = AuthorMiniWorld(world, alphaStartLocationId: "start", betaStartLocationId: "goal");
+
+            _ = world.MoveActorAlongPassage("alpha", "start-goal");
+            var sourceObservation = LocationObservationProjector.ObserveLocation(world, "start");
+            var goalObservation = LocationObservationProjector.ObserveLocation(world, "goal");
+            var betaObservation = LocationObservationProjector.ObserveActorLocation(world, "beta");
+
+            Assert.Empty(sourceObservation.PresentActors);
+            Assert.Equal(["alpha", "beta"], goalObservation.PresentActors.Select(static actor => actor.ActorId).ToArray());
+            Assert.Equal("goal", betaObservation.Location.LocationId);
+            Assert.Equal(["alpha", "beta"], betaObservation.Location.PresentActors.Select(static actor => actor.ActorId).ToArray());
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    private static (string StartId, string GoalId, string AlphaId, string BetaId, string PassageId) AuthorMiniWorld(
+        WorldState world,
+        string alphaStartLocationId,
+        string betaStartLocationId
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+
+        _ = world.CreateLocation("start", "Start", "Shared-world start.");
+        _ = world.CreateLocation("goal", "Goal", "Shared-world goal.");
+        _ = world.CreateActor("alpha", "Alpha", alphaStartLocationId);
+        _ = world.CreateActor("beta", "Beta", betaStartLocationId);
+        _ = world.CreatePassage("start-goal", "start", "advance", "goal", "return", TravelMode.Land, 1);
+
+        return ("start", "goal", "alpha", "beta", "start-goal");
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-actor-tests-{Guid.NewGuid():N}");
 
