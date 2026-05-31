@@ -263,7 +263,7 @@ Runtime target:
   --repo-dir <repoDir>
            Open or create a persistent sample world at the specified directory.
   --dev-sample-world
-           Create a temporary sample world for this invocation only.
+           Create a dev sample world under the system temp directory for this invocation.
 
            Exactly one runtime target must be specified.
 

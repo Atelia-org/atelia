@@ -5,6 +5,15 @@ namespace Atelia.TextAdv2.Tests;
 
 public sealed class E2eCliBlackBoxTests {
     [Fact]
+    public void BareRuntimeInvocation_WithoutRuntimeTarget_FailsFast() {
+        CliRunResult result = RunCli();
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("缺少 runtime target，请传 --repo-dir <repoDir> 或 --dev-sample-world", result.StandardError, StringComparison.Ordinal);
+        Assert.DoesNotContain("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WorldCommand_WithoutRuntimeTarget_FailsFast() {
         CliRunResult result = RunCli("--world");
 
