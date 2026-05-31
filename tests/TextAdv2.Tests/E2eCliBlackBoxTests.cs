@@ -117,6 +117,60 @@ public sealed class E2eCliBlackBoxTests {
         }
     }
 
+    [Fact]
+    public void InitEmpty_CreatesOpenableEmptyWorldRepo() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult init = RunCli("init-empty", repoDir);
+            CliRunResult time = RunCli("--repo-dir", repoDir, "--observe-time");
+            CliRunResult acceleration = RunCli("--repo-dir", repoDir, "--observe-route-acceleration");
+
+            Assert.Equal(0, init.ExitCode);
+            Assert.Contains("Initialized empty TextAdv2 world repo:", init.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, time.ExitCode);
+            Assert.Contains("\"CurrentTick\": 0", time.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, acceleration.ExitCode);
+            Assert.Contains("\"LocationCount\": 0", acceleration.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"PassageCount\": 0", acceleration.StandardOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"LocationCount\": 7", acceleration.StandardOutput, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void InitSample_CreatesExplicitSampleWorldRepo() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult init = RunCli("init-sample", repoDir);
+            CliRunResult observe = RunCli("--repo-dir", repoDir, "--observe-actor", "scout");
+
+            Assert.Equal(0, init.ExitCode);
+            Assert.Contains("Initialized sample TextAdv2 world repo:", init.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, observe.ExitCode);
+            Assert.Contains("\"ActorId\": \"scout\"", observe.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"LocationId\": \"square\"", observe.StandardOutput, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void Help_ShowsExplicitInitCommands() {
+        CliRunResult result = RunCli("help");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("init-empty <repoDir>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("init-sample <repoDir>", result.StandardOutput, StringComparison.Ordinal);
+    }
+
     private static CliRunResult RunCli(params string[] args) {
         string repoRoot = GetRepoRoot();
         string projectPath = Path.Combine(repoRoot, "prototypes", "TextAdv2.E2eCli", "TextAdv2.E2eCli.csproj");

@@ -11,6 +11,8 @@ internal static class Program {
                 return args[0] switch {
                     "smoke" => RunSmoke(),
                     "status" => RunStatus(),
+                    "init-empty" => RunInitEmpty(RequireArg(args, 1)),
+                    "init-sample" => RunInitSample(RequireArg(args, 1)),
                     "help" or "-h" or "--help" => RunHelp(),
                     _ => RunUnknown(args[0]),
                 };
@@ -35,6 +37,18 @@ internal static class Program {
         var scaffold = HostingScaffold.DescribeCurrentState();
         var json = JsonSerializer.Serialize(scaffold, new JsonSerializerOptions { WriteIndented = true });
         Console.WriteLine(json);
+        return 0;
+    }
+
+    private static int RunInitEmpty(string repoDir) {
+        using var session = WorldSession.CreateEmpty(repoDir);
+        Console.WriteLine($"Initialized empty TextAdv2 world repo: {session.RepoDir}");
+        return 0;
+    }
+
+    private static int RunInitSample(string repoDir) {
+        using var session = SampleWorldBootstrap.CreateFreshSession(repoDir);
+        Console.WriteLine($"Initialized sample TextAdv2 world repo: {session.RepoDir}");
         return 0;
     }
 
@@ -205,7 +219,7 @@ internal static class Program {
     }
 
     private static bool IsMetaCommand(string command)
-        => command is "smoke" or "status" or "help" or "-h" or "--help";
+        => command is "smoke" or "status" or "init-empty" or "init-sample" or "help" or "-h" or "--help";
 
     private static string RequireArg(string[] args, int index)
         => index < args.Length ? args[index] : throw new InvalidOperationException(BuildUsage());
@@ -234,6 +248,8 @@ internal static class Program {
         => """
 Usage:
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj [smoke|status|help]
+  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-empty <repoDir>
+  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-sample <repoDir>
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--world] [--location <locationId>] [--observe-location <locationId>] [--observe-actor <actorId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
 """;
 
@@ -245,6 +261,10 @@ TextAdv2.E2eCli
 Meta commands:
   smoke   Validate the host project starts and can reference Atelia.TextAdv2.
   status  Print the current session scaffold state as JSON.
+  init-empty <repoDir>
+          Create a persistent empty world repository.
+  init-sample <repoDir>
+          Create a persistent sample world repository.
   help    Show this message.
 
 Session target:

@@ -390,6 +390,35 @@ public class WorldSessionTests {
     }
 
     [Fact]
+    public void CreateEmpty_CreatesDurableEmptyWorldWithZeroLogicalTime() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var session = WorldSession.CreateEmpty(repoDir)) {
+                var time = session.ObserveTime();
+                var acceleration = session.ObserveRouteAcceleration();
+
+                Assert.Equal(0, time.CurrentTick);
+                Assert.Equal(0, acceleration.LocationCount);
+                Assert.Equal(0, acceleration.PassageCount);
+                Assert.Equal("inactive", acceleration.SnapshotStatus);
+                Assert.Equal("zero", acceleration.PlannerMode);
+            }
+
+            using var reopened = WorldSession.OpenExisting(repoDir);
+            var reopenedTime = reopened.ObserveTime();
+            var reopenedAcceleration = reopened.ObserveRouteAcceleration();
+
+            Assert.Equal(0, reopenedTime.CurrentTick);
+            Assert.Equal(0, reopenedAcceleration.LocationCount);
+            Assert.Equal(0, reopenedAcceleration.PassageCount);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void SessionAuthoringSeam_SetPassageMutationsReturnUpdatedTypedSnapshotAndAffectObservation() {
         string repoDir = CreateTempRepoDir();
 
@@ -728,7 +757,7 @@ public class WorldSessionTests {
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-session-tests-{Guid.NewGuid():N}");
 
     private static WorldSession CreateEmptySession(string repoDir)
-        => WorldSession.CreateNew(repoDir, WorldState.Create);
+        => WorldSession.CreateEmpty(repoDir);
 
     private static void DeleteDirectoryIfExists(string repoDir) {
         if (Directory.Exists(repoDir)) {

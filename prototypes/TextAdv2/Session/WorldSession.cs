@@ -38,6 +38,9 @@ public sealed class WorldSession : IDisposable {
 
     public string RepoDir { get; }
 
+    public static WorldSession CreateEmpty(string repoDir)
+        => CreateNew(repoDir, WorldState.Create);
+
     internal static WorldSession CreateNew(
         string repoDir,
         Func<Revision, WorldState> worldFactory
