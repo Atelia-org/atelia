@@ -545,6 +545,7 @@ Session options:
 
     private static JsonSerializerOptions CreateJsonOptions() {
         var options = new JsonSerializerOptions {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true,
         };
         TextAdv2Json.AddHostConverters(options);

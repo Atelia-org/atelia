@@ -65,8 +65,8 @@ public sealed class E2eCliBlackBoxTests {
 
         using JsonDocument json = JsonDocument.Parse(result.StandardOutput);
 
-        Assert.Equal("scout", json.RootElement.GetProperty("ActorId").GetString());
-        Assert.Equal("square", json.RootElement.GetProperty("Location").GetProperty("LocationId").GetString());
+        Assert.Equal("scout", json.RootElement.GetProperty("actorId").GetString());
+        Assert.Equal("square", json.RootElement.GetProperty("location").GetProperty("locationId").GetString());
     }
 
     [Fact]
@@ -143,9 +143,9 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Equal(0, init.ExitCode);
             Assert.Equal(0, move.ExitCode);
             Assert.Equal(0, observe.ExitCode);
-            Assert.Contains("\"ToLocationId\": \"ridge\"", move.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"TravelMode\": \"land\"", move.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"LocationId\": \"ridge\"", observe.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"toLocationId\": \"ridge\"", move.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"travelMode\": \"land\"", move.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"locationId\": \"ridge\"", observe.StandardOutput, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -310,12 +310,12 @@ public sealed class E2eCliBlackBoxTests {
 
         using JsonDocument json = JsonDocument.Parse(result.StandardOutput);
 
-        Assert.Equal("scout", json.RootElement.GetProperty("ActorId").GetString());
-        Assert.Equal("square", json.RootElement.GetProperty("StartLocationId").GetString());
-        Assert.Equal("square", json.RootElement.GetProperty("EndLocationId").GetString());
-        Assert.Equal(0, json.RootElement.GetProperty("StepCount").GetInt32());
-        Assert.Equal(0, json.RootElement.GetProperty("TotalTravelCost").GetInt32());
-        Assert.Empty(json.RootElement.GetProperty("Steps").EnumerateArray());
+        Assert.Equal("scout", json.RootElement.GetProperty("actorId").GetString());
+        Assert.Equal("square", json.RootElement.GetProperty("startLocationId").GetString());
+        Assert.Equal("square", json.RootElement.GetProperty("endLocationId").GetString());
+        Assert.Equal(0, json.RootElement.GetProperty("stepCount").GetInt32());
+        Assert.Equal(0, json.RootElement.GetProperty("totalTravelCost").GetInt32());
+        Assert.Empty(json.RootElement.GetProperty("steps").EnumerateArray());
     }
 
     [Fact]
@@ -324,11 +324,11 @@ public sealed class E2eCliBlackBoxTests {
         CliRunResult plan = RunCli("--dev-sample-world", "--plan-route", "shrine", "shrine");
 
         Assert.Equal(0, observe.ExitCode);
-        Assert.Contains("\"TravelMode\": \"land\"", observe.StandardOutput, StringComparison.Ordinal);
-        Assert.Contains("\"TravelMode\": \"portal\"", observe.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("\"travelMode\": \"land\"", observe.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("\"travelMode\": \"portal\"", observe.StandardOutput, StringComparison.Ordinal);
 
         Assert.Equal(0, plan.ExitCode);
-        Assert.Contains("\"Status\": \"already-there\"", plan.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("\"status\": \"already-there\"", plan.StandardOutput, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -385,12 +385,12 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Contains("Initialized empty TextAdv2 world repo:", init.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, time.ExitCode);
-            Assert.Contains("\"CurrentTick\": 0", time.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"currentTick\": 0", time.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, acceleration.ExitCode);
-            Assert.Contains("\"LocationCount\": 0", acceleration.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"PassageCount\": 0", acceleration.StandardOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"LocationCount\": 7", acceleration.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"locationCount\": 0", acceleration.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"passageCount\": 0", acceleration.StandardOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"locationCount\": 7", acceleration.StandardOutput, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -409,8 +409,8 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Contains("Initialized sample TextAdv2 world repo:", init.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, observe.ExitCode);
-            Assert.Contains("\"ActorId\": \"scout\"", observe.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"LocationId\": \"square\"", observe.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"actorId\": \"scout\"", observe.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"locationId\": \"square\"", observe.StandardOutput, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -498,31 +498,31 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Equal(0, init.ExitCode);
 
             Assert.Equal(0, createStart.ExitCode);
-            Assert.Contains("\"LocationId\": \"start\"", createStart.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"LocationName\": \"Start\"", createStart.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"locationId\": \"start\"", createStart.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"locationName\": \"Start\"", createStart.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, createGoal.ExitCode);
-            Assert.Contains("\"LocationId\": \"goal\"", createGoal.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"locationId\": \"goal\"", createGoal.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, createActor.ExitCode);
-            Assert.Contains("\"ActorId\": \"runner\"", createActor.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"CurrentLocationId\": \"start\"", createActor.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"actorId\": \"runner\"", createActor.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"currentLocationId\": \"start\"", createActor.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, createPassage.ExitCode);
-            Assert.Contains("\"PassageId\": \"start-goal\"", createPassage.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"TravelMode\": \"land\"", createPassage.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"BaseTravelCost\": 2", createPassage.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"passageId\": \"start-goal\"", createPassage.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"travelMode\": \"land\"", createPassage.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"baseTravelCost\": 2", createPassage.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, plan.ExitCode);
-            Assert.Contains("\"Status\": \"found\"", plan.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"PassageId\": \"start-goal\"", plan.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"status\": \"found\"", plan.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"passageId\": \"start-goal\"", plan.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, move.ExitCode);
-            Assert.Contains("\"ToLocationId\": \"goal\"", move.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"toLocationId\": \"goal\"", move.StandardOutput, StringComparison.Ordinal);
 
             Assert.Equal(0, observe.ExitCode);
-            Assert.Contains("\"ActorId\": \"runner\"", observe.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"LocationId\": \"goal\"", observe.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"actorId\": \"runner\"", observe.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"locationId\": \"goal\"", observe.StandardOutput, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -564,17 +564,17 @@ public sealed class E2eCliBlackBoxTests {
             using JsonDocument betaJson = ExtractJsonBlock(observeBeta.StandardOutput);
             using JsonDocument moveJson = ExtractJsonBlock(moveAlpha.StandardOutput);
 
-            Assert.Equal("goal", moveJson.RootElement.GetProperty("CurrentLocation").GetProperty("LocationId").GetString());
+            Assert.Equal("goal", moveJson.RootElement.GetProperty("currentLocation").GetProperty("locationId").GetString());
             Assert.Equal(
                 ["alpha", "beta"],
-                ReadActorIds(moveJson.RootElement.GetProperty("CurrentLocation").GetProperty("PresentActors"))
+                ReadActorIds(moveJson.RootElement.GetProperty("currentLocation").GetProperty("presentActors"))
             );
-            Assert.Equal(["alpha", "beta"], ReadActorIds(goalJson.RootElement.GetProperty("PresentActors")));
-            Assert.Empty(ReadActorIds(startJson.RootElement.GetProperty("PresentActors")));
-            Assert.Equal("goal", betaJson.RootElement.GetProperty("Location").GetProperty("LocationId").GetString());
+            Assert.Equal(["alpha", "beta"], ReadActorIds(goalJson.RootElement.GetProperty("presentActors")));
+            Assert.Empty(ReadActorIds(startJson.RootElement.GetProperty("presentActors")));
+            Assert.Equal("goal", betaJson.RootElement.GetProperty("location").GetProperty("locationId").GetString());
             Assert.Equal(
                 ["alpha", "beta"],
-                ReadActorIds(betaJson.RootElement.GetProperty("Location").GetProperty("PresentActors"))
+                ReadActorIds(betaJson.RootElement.GetProperty("location").GetProperty("presentActors"))
             );
         }
         finally {
@@ -597,8 +597,8 @@ public sealed class E2eCliBlackBoxTests {
             );
 
             Assert.Equal(0, createPassage.ExitCode);
-            Assert.Contains("\"TravelMode\": \"land\"", createPassage.StandardOutput, StringComparison.Ordinal);
-            Assert.Contains("\"BaseTravelCost\": 1", createPassage.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"travelMode\": \"land\"", createPassage.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"baseTravelCost\": 1", createPassage.StandardOutput, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -679,12 +679,14 @@ public sealed class E2eCliBlackBoxTests {
 
     private static string[] ReadActorIds(JsonElement presentActors)
         => presentActors.EnumerateArray()
-            .Select(static actor => actor.GetProperty("ActorId").GetString() ?? string.Empty)
+            .Select(static actor => actor.GetProperty("actorId").GetString() ?? string.Empty)
             .OrderBy(static actorId => actorId, StringComparer.Ordinal)
             .ToArray();
 
     private static JsonSerializerOptions CreateCliJsonOptions() {
         var options = new JsonSerializerOptions {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true,
             WriteIndented = true,
         };
         TextAdv2Json.AddHostConverters(options);
