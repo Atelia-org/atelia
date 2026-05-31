@@ -45,10 +45,10 @@
   - `TraceActorRoute`
   - `MoveActorQuiet`
   - `DumpWorld` / `DumpLocation`
-- `P3` 在代码里并没有形成一个可整体落地的包：
-  - `schemaVersion` 字段已经写入 world root；
-  - `WorldState.FromRoot(...)` 已具备 schema gate；
-  - `Location` / `Passage` 的写入权威仍明显分散在叶子对象上。
+- `P3` 已拆成多个更小的内部收口切口：
+  - `schemaVersion` 字段已经写入 world root，且 `WorldState.FromRoot(...)` 已具备 schema gate；
+  - `Passage` 高频写操作已新增显式 `WorldState.SetPassage*` authority seam，并已迁移 sample builder 与关键测试；
+  - `Location` / `Actor` 的写入权威，以及 `Passage` 叶子写口的进一步封闭，仍留待后续子包。
 - `P4` 也不是“从零开始”：
   - `LocationNavigationGraphProjector.Project(...)` 现在承载 canonical graph seam；
   - `NavigationObservationProjector` 与当前 planner、landmark heuristic、route-acceleration stale 判定都从这份 seam 读取，不再把图语义藏在展示 projector 内部。
@@ -226,6 +226,16 @@ P2 后续修订说明：
 
 - world root 入口具备明确版本闸门。
 - 新增或修改跨实体规则时，不需要在多个叶子对象上分散维护 invariant。
+
+P3b.1 本轮落地结果：
+
+- `WorldState` 已新增 `SetPassage*` world-level write seam，覆盖 travel mode、base cost、shared note、endpoint local view note、direction enabled、direction travel-cost modifier、direction condition note。
+- `TestWorldBuilder` 与关键 route-acceleration / planner / world-builder tests 已迁移到这些 world-level API，不再把 `Passage.Set*` 当主写入口。
+- `Passage.Set*` 已从 public 收紧为 internal，开始把 `Passage` 朝只读 facade 收口。
+
+P3b 下一自然入口：
+
+- `P3b.2` 继续封闭叶子写口，避免 `GetPassage()` 返回对象仍可在同程序集内作为并列写入口；必要时再引入更显式的 world editor 内部实现形态。
 
 ### P4. 建立 canonical navigation graph seam
 

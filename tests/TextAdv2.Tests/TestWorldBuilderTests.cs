@@ -89,6 +89,35 @@ public class TestWorldBuilderTests {
     }
 
     [Fact]
+    public void WorldState_SetPassageEndpointLocalViewNote_RejectsLocationOutsidePassage() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = WorldState.Create(revision);
+            var start = world.CreateLocation("start", "Start", "unrelated-location start");
+            var goal = world.CreateLocation("goal", "Goal", "unrelated-location goal");
+            var unrelated = world.CreateLocation("unrelated", "Unrelated", "not connected to passage");
+            var passage = world.CreatePassage("start-goal", start.Id, "go", goal.Id, "back", TravelMode.Land, 1);
+
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => world.SetPassageEndpointLocalViewNote(passage.Id, unrelated.Id, "should fail")
+            );
+
+            Assert.Equal(
+                $"Passage '{passage.Id}' does not connect location '{unrelated.Id}'.",
+                exception.Message
+            );
+            Assert.Equal(string.Empty, world.GetPassage(passage.Id).EndpointA.LocalViewNote);
+            Assert.Equal(string.Empty, world.GetPassage(passage.Id).EndpointB.LocalViewNote);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void WorldDumpRenderer_Render_IsDeterministic() {
         string repoDir = CreateTempRepoDir();
 
