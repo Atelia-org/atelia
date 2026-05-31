@@ -1,20 +1,36 @@
+using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.Session;
 
 namespace Atelia.TextAdv2.GameServer;
 
 internal sealed class SessionService : IDisposable {
     private readonly object _gate = new();
-    private WorldSession _session;
+    private readonly HostingRuntimeInfo _runtimeInfo = HostingScaffold.DescribeCurrentState();
+    private WorldSession? _session;
+    private SessionStatusSnapshot _status = null!;
     private bool _disposed;
 
-    public SessionService(WorldSession session)
-        => _session = session ?? throw new ArgumentNullException(nameof(session));
+    public SessionService(Func<WorldSession> openSession) {
+        ArgumentNullException.ThrowIfNull(openSession);
+        TryOpenSession(openSession);
+    }
 
     public TResult Invoke<TResult>(Func<WorldSession, TResult> operation) {
         ArgumentNullException.ThrowIfNull(operation);
         lock (_gate) {
             EnsureNotDisposed();
+            if (_session is null) {
+                throw new SessionUnavailableException(_status.Error?.Message ?? "Game session is unavailable.");
+            }
+
             return operation(_session);
+        }
+    }
+
+    public SessionStatusSnapshot DescribeStatus() {
+        lock (_gate) {
+            EnsureNotDisposed();
+            return _status;
         }
     }
 
@@ -24,8 +40,9 @@ internal sealed class SessionService : IDisposable {
         lock (_gate) {
             EnsureNotDisposed();
 
-            _session.Dispose();
-            _session = replacementFactory();
+            _session?.Dispose();
+            _session = null;
+            TryOpenSession(replacementFactory);
         }
     }
 
@@ -33,7 +50,7 @@ internal sealed class SessionService : IDisposable {
         lock (_gate) {
             if (_disposed) { return; }
 
-            _session.Dispose();
+            _session?.Dispose();
             _disposed = true;
         }
     }
@@ -41,4 +58,40 @@ internal sealed class SessionService : IDisposable {
     private void EnsureNotDisposed() {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
+
+    private void TryOpenSession(Func<WorldSession> openSession) {
+        try {
+            _session = openSession();
+            _status = SessionStatusSnapshot.CreateReady(_runtimeInfo);
+        }
+        catch (Exception ex) {
+            _session = null;
+            _status = SessionStatusSnapshot.CreateOpenFailed(_runtimeInfo, ex.Message);
+        }
+    }
 }
+
+internal sealed record SessionStatusSnapshot(
+    string Readiness,
+    string EngineAssemblyName,
+    SessionErrorSnapshot? Error
+) {
+    public static SessionStatusSnapshot CreateReady(HostingRuntimeInfo runtimeInfo)
+        => new(Readiness: SessionReadiness.Ready, EngineAssemblyName: runtimeInfo.EngineAssemblyName, Error: null);
+
+    public static SessionStatusSnapshot CreateOpenFailed(HostingRuntimeInfo runtimeInfo, string message)
+        => new(
+            Readiness: SessionReadiness.OpenFailed,
+            EngineAssemblyName: runtimeInfo.EngineAssemblyName,
+            Error: new SessionErrorSnapshot(message)
+        );
+}
+
+internal sealed record SessionErrorSnapshot(string Message);
+
+internal static class SessionReadiness {
+    public const string Ready = "ready";
+    public const string OpenFailed = "open-failed";
+}
+
+internal sealed class SessionUnavailableException(string message) : Exception(message);

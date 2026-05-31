@@ -4,6 +4,7 @@ using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.Session;
 
 const string HostRunningMode = "host-running";
+const string HostAliveReadiness = "alive";
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,13 +14,13 @@ string bootstrapMode = builder.Configuration["TextAdv2:BootstrapMode"] ?? GameSe
 var hostPolicy = GameServerHostPolicy.Create(configuredRepoDir, resolvedRepoDir, bootstrapMode);
 
 builder.Services.AddSingleton(hostPolicy);
-builder.Services.AddSingleton(_ => new SessionService(hostPolicy.OpenSession()));
+builder.Services.AddSingleton<SessionService>(_ => new SessionService(hostPolicy.OpenSession));
 
 var app = builder.Build();
 
-app.MapGet("/", () => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode)));
-app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.GameServer", mode = HostRunningMode }));
-app.MapGet("/admin/session-status", () => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode)));
+app.MapGet("/", (SessionService session) => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode, session)));
+app.MapGet("/healthz", (SessionService session) => BuildHealthStatus(session));
+app.MapGet("/admin/session-status", (SessionService session) => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode, session)));
 app.MapGet("/admin/world", (SessionService session) => ExecuteText(session, DevTextRenderer.RenderWorld));
 app.MapGet("/admin/time", (SessionService session) => ExecuteJson(session, static x => x.ObserveTime()));
 app.MapPost("/admin/locations",
@@ -62,7 +63,7 @@ if (hostPolicy.SampleWorldResetEnabled) {
     app.MapPost("/admin/reset-sample-world",
         (SessionService session) => {
             session.ReplaceSession(hostPolicy.ResetSession);
-            return Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode));
+            return Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode, session));
         }
     );
 }
@@ -145,11 +146,31 @@ static long ParseNonNegativeTickDelta(string value) {
     return ticks;
 }
 
-static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstrapMode) {
-    var scaffold = HostingScaffold.DescribeCurrentState();
+static IResult BuildHealthStatus(SessionService sessionService) {
+    var session = sessionService.DescribeStatus();
+    var payload = new {
+        status = session.Readiness == SessionReadiness.Ready ? "ok" : "degraded",
+        service = "TextAdv2.GameServer",
+        mode = HostRunningMode,
+        host = new {
+            readiness = HostAliveReadiness,
+        },
+        session,
+    };
+
+    return session.Readiness == SessionReadiness.Ready
+        ? Results.Ok(payload)
+        : Results.Json(payload, statusCode: StatusCodes.Status503ServiceUnavailable);
+}
+
+static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstrapMode, SessionService sessionService) {
+    var session = sessionService.DescribeStatus();
     return new {
         service = "TextAdv2.GameServer",
         mode = HostRunningMode,
+        host = new {
+            readiness = HostAliveReadiness,
+        },
         configuration = new {
             configuredRepoDir = hostPolicy.ConfiguredRepoDir,
             resolvedRepoDir = hostPolicy.ResolvedRepoDir,
@@ -165,7 +186,7 @@ static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstr
             },
             notes = hostPolicy.Notes,
         },
-        session = scaffold,
+        session,
         plannedEndpoints = hostPolicy.PlannedEndpoints,
     };
 }
