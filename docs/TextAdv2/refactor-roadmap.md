@@ -237,7 +237,7 @@ P3b.2 本轮落地结果：
 
 - `WorldState.CreatePassage(...)`、`GetPassage(...)`、`TryGetPassage(...)`、`EnumeratePassages()`、`EnumeratePassagesTouching(...)` 已统一改为返回 distinct `PassageView` 只读 facade，不再把 concrete mutable `Passage` 暴露给主读链路。
 - `WorldState` 内部 writable `Passage` 获取已收成 private helper，仅供 `SetPassage*` 与合法移动路径使用，没有新增对外可滥用的 mutable get 旁路。
-- `ReadOnlyView`、`Runtime`、`WorldDumpRenderer` 与关键测试已迁到 facade，`Passage` concrete type 不再出现在这些主读链路里。
+- `ReadOnlyView`、`Runtime`、`WorldDumpRenderer` 与关键测试已迁到 facade，`Passage` concrete type 不再出现在这些主读链路里；并已补充 seam guard tests 锁住 `Create/Get/TryGet/EnumeratePassages*` 的只读返回面。
 
 P3b 下一自然入口：
 

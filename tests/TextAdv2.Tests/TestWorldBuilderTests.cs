@@ -118,6 +118,39 @@ public class TestWorldBuilderTests {
     }
 
     [Fact]
+    public void WorldState_PassageReadSurface_ReturnsReadOnlyFacade() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = WorldState.Create(revision);
+            var start = world.CreateLocation("start", "Start", "facade start");
+            var goal = world.CreateLocation("goal", "Goal", "facade goal");
+
+            var created = world.CreatePassage("start-goal", start.Id, "go", goal.Id, "back", TravelMode.Land, 1);
+            var fetched = world.GetPassage(created.Id);
+
+            Assert.IsType<PassageView>(created);
+            Assert.IsType<PassageView>(fetched);
+            Assert.True(world.TryGetPassage(created.Id, out var viaTryGet));
+            Assert.NotNull(viaTryGet);
+            Assert.IsType<PassageView>(viaTryGet);
+            Assert.Collection(
+                world.EnumeratePassages(),
+                passage => Assert.IsType<PassageView>(passage)
+            );
+            Assert.Collection(
+                world.EnumeratePassagesTouching(start.Id),
+                passage => Assert.IsType<PassageView>(passage)
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void WorldDumpRenderer_Render_IsDeterministic() {
         string repoDir = CreateTempRepoDir();
 
