@@ -79,6 +79,12 @@ internal static class Program {
     }
 
     private static WorldSession OpenExistingRepoSession(string repoDir) {
+        if (File.Exists(repoDir)) {
+            throw new InvalidOperationException(
+                $"--repo-dir 必须指向目录，但收到的是文件路径: '{repoDir}'。请改为已初始化的 world repo 目录，或先运行 init-empty <repoDir> / init-sample <repoDir>。"
+            );
+        }
+
         if (!Directory.Exists(repoDir)) {
             throw new InvalidOperationException(
                 $"--repo-dir 指向的仓库不存在: '{repoDir}'。请先运行 init-empty <repoDir> 或 init-sample <repoDir> 初始化，或改用 --dev-sample-world。"
@@ -94,9 +100,17 @@ internal static class Program {
         try {
             return WorldSession.OpenExisting(repoDir);
         }
-        catch (InvalidOperationException) {
+        catch (InvalidOperationException ex) {
+            if (ex.Message.Contains("Failed to acquire lock", StringComparison.Ordinal)) {
+                throw new InvalidOperationException(
+                    $"--repo-dir 指向的 repo 当前无法打开，可能仍被其他进程占用: '{repoDir}'。底层错误: {ex.Message}",
+                    ex
+                );
+            }
+
             throw new InvalidOperationException(
-                $"--repo-dir 未指向可打开的 TextAdv2 world repo: '{repoDir}'。请确认该目录已通过 init-empty 或 init-sample 初始化。"
+                $"--repo-dir 未指向可打开的 TextAdv2 world repo: '{repoDir}'。如果这是新目录，请先运行 init-empty <repoDir> 或 init-sample <repoDir>；若目录已初始化，请检查仓库状态。底层错误: {ex.Message}",
+                ex
             );
         }
     }

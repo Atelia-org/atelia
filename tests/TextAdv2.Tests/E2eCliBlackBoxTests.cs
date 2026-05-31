@@ -196,6 +196,25 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
+    public void RepoDir_FilePath_FailsWithPathTypeMessage() {
+        string repoDir = CreateTempRepoDir();
+        Directory.CreateDirectory(repoDir);
+        string filePath = Path.Combine(repoDir, "not-a-directory.txt");
+        File.WriteAllText(filePath, "not a repo");
+
+        try {
+            CliRunResult result = RunCli("--repo-dir", filePath, "--world");
+
+            Assert.Equal(1, result.ExitCode);
+            Assert.Contains("--repo-dir 必须指向目录，但收到的是文件路径:", result.StandardError, StringComparison.Ordinal);
+            Assert.Contains("init-empty <repoDir> / init-sample <repoDir>", result.StandardError, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void Help_ShowsExplicitInitCommands() {
         CliRunResult result = RunCli("help");
 

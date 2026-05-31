@@ -255,9 +255,14 @@ public class GameServerIntegrationTests {
                     exitNameFromB = "back",
                 }
             );
-            var createdPassage = await ReadJsonAsync<PassageAuthoringSnapshot>(createPassageResponse);
+            string createPassageText = await createPassageResponse.Content.ReadAsStringAsync();
+            var createdPassage = JsonSerializer.Deserialize<PassageAuthoringSnapshot>(createPassageText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, createPassageResponse.StatusCode);
+            Assert.Equal("application/json", createPassageResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(createdPassage);
+            Assert.Contains("\"passageId\"", createPassageText, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"PassageId\"", createPassageText, StringComparison.Ordinal);
+            Assert.Contains("\"travelMode\": \"land\"", createPassageText, StringComparison.Ordinal);
             Assert.Equal("start-goal", createdPassage.PassageId);
             Assert.Equal(TravelMode.Land, createdPassage.TravelMode);
             Assert.Equal(1, createdPassage.BaseTravelCost);
@@ -336,6 +341,72 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
             Assert.Contains("Unsupported travelMode", json.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task AdminCreatePassage_ExplicitTravelModeAndCost_RoundTripThroughHttpBindingAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (WorldSession.CreateEmpty(repoDir)) {
+            }
+            WaitUntilSessionCanReopen(repoDir);
+
+            using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
+            using var client = factory.CreateClient();
+
+            _ = await client.PostAsJsonAsync(
+                "/admin/locations",
+                new {
+                    id = "start",
+                    name = "Start",
+                    description = "Start.",
+                }
+            );
+            _ = await client.PostAsJsonAsync(
+                "/admin/locations",
+                new {
+                    id = "goal",
+                    name = "Goal",
+                    description = "Goal.",
+                }
+            );
+
+            using var createPassageResponse = await client.PostAsJsonAsync(
+                "/admin/passages",
+                new {
+                    id = "start-goal",
+                    locationAId = "start",
+                    exitNameFromA = "skiff",
+                    locationBId = "goal",
+                    exitNameFromB = "dock",
+                    travelMode = "  WATER ",
+                    baseTravelCost = 3,
+                }
+            );
+            string createPassageText = await createPassageResponse.Content.ReadAsStringAsync();
+            var createdPassage = JsonSerializer.Deserialize<PassageAuthoringSnapshot>(createPassageText, HostJsonOptions);
+
+            Assert.Equal(HttpStatusCode.OK, createPassageResponse.StatusCode);
+            Assert.Equal("application/json", createPassageResponse.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(createdPassage);
+            Assert.Contains("\"travelMode\": \"water\"", createPassageText, StringComparison.Ordinal);
+            Assert.Equal(TravelMode.Water, createdPassage.TravelMode);
+            Assert.Equal(3, createdPassage.BaseTravelCost);
+
+            using var planResponse = await client.GetAsync("/admin/routes/start/goal");
+            var plan = await ReadJsonAsync<LocationRoutePlanObservation>(planResponse);
+
+            Assert.Equal(HttpStatusCode.OK, planResponse.StatusCode);
+            Assert.NotNull(plan);
+            Assert.Equal(RoutePlanStatus.Found, plan.Status);
+            Assert.Equal(3, plan.TotalTravelCost);
+            Assert.Equal("start-goal", plan.Steps[0].PassageId);
+            Assert.Equal(TravelMode.Water, plan.Steps[0].TravelMode);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
