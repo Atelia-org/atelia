@@ -221,8 +221,8 @@ internal sealed class Passage {
         WorldState.ValidateEntityId(id, nameof(id));
         WorldState.ValidateEntityId(locationAId, nameof(locationAId));
         WorldState.ValidateEntityId(locationBId, nameof(locationBId));
-        WorldState.ValidateRequiredText(exitNameFromA, nameof(exitNameFromA));
-        WorldState.ValidateRequiredText(exitNameFromB, nameof(exitNameFromB));
+        WorldState.ValidateExitName(exitNameFromA, nameof(exitNameFromA));
+        WorldState.ValidateExitName(exitNameFromB, nameof(exitNameFromB));
         ArgumentOutOfRangeException.ThrowIfLessThan(baseTravelCost, 1);
 
         var data = revision.CreateDict<string>();
@@ -299,7 +299,7 @@ internal sealed class PassageEndpoint {
     internal static DurableDict<string> CreateData(Revision revision, string locationId, string exitName) {
         ArgumentNullException.ThrowIfNull(revision);
         WorldState.ValidateEntityId(locationId, nameof(locationId));
-        WorldState.ValidateRequiredText(exitName, nameof(exitName));
+        WorldState.ValidateExitName(exitName, nameof(exitName));
 
         var data = revision.CreateDict<string>();
         data.Upsert(LocationIdKey, locationId);

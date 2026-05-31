@@ -151,6 +151,28 @@ public class TestWorldBuilderTests {
     }
 
     [Fact]
+    public void WorldState_CreatePassage_RejectsExitNameWithLeadingOrTrailingWhitespace() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = WorldState.Create(revision);
+            var start = world.CreateLocation("start", "Start", "trimmed-exit start");
+            var goal = world.CreateLocation("goal", "Goal", "trimmed-exit goal");
+
+            var exception = Assert.Throws<ArgumentException>(
+                () => world.CreatePassage("start-goal", start.Id, " north gate", goal.Id, "back", TravelMode.Land, 1)
+            );
+
+            Assert.Equal("Exit name must not have leading or trailing whitespace. (Parameter 'exitNameFromA')", exception.Message);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void WorldDumpRenderer_Render_IsDeterministic() {
         string repoDir = CreateTempRepoDir();
 
@@ -432,6 +454,38 @@ public class TestWorldBuilderTests {
 
                 Assert.Equal(
                     "Location 'square' reuses exit name 'north gate' during world load; duplicate detected at passage 'square-ridge-trail'.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenPassageUsesExitNameWithLeadingWhitespace() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = TestWorldBuilder.Create(revision);
+                var passagesLedger = world.Root.GetOrThrow<DurableDict<string>>("passages")!;
+                var passage = passagesLedger.GetOrThrow<DurableDict<string>>(TestWorldBuilder.PassageIds.SquareRidgeTrail)!;
+                var endpointA = passage.GetOrThrow<DurableDict<string>>("endpointA")!;
+                endpointA.Upsert("exitName", " north gate");
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    "Passage 'square-ridge-trail' uses invalid exit name ' north gate' at location 'square' during world load: Exit name must not have leading or trailing whitespace.",
                     exception.Message
                 );
             }

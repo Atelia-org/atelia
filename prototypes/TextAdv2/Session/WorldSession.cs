@@ -22,13 +22,12 @@ public sealed class WorldSession : IDisposable {
 
     private readonly Repository _repo;
     private readonly WorldState _world;
-    private readonly WorldSessionOptions _options;
     private readonly RouteAccelerationCache _routeAcceleration = new();
     private readonly Dictionary<string, List<ActorMovementHistoryEntry>> _movementHistoryByActor = new(StringComparer.Ordinal);
     private long _logicalTick;
     private bool _disposed;
 
-    private WorldSession(string repoDir, Repository repo, WorldState world, WorldSessionOptions? options) {
+    private WorldSession(string repoDir, Repository repo, WorldState world) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(world);
@@ -36,22 +35,13 @@ public sealed class WorldSession : IDisposable {
         RepoDir = repoDir;
         _repo = repo;
         _world = world;
-        _options = options ?? WorldSessionOptions.Default;
     }
 
     public string RepoDir { get; }
 
-    internal WorldState WorldForDevSupport {
-        get {
-            EnsureNotDisposed();
-            return _world;
-        }
-    }
-
     internal static WorldSession CreateNew(
         string repoDir,
-        Func<Revision, WorldState> worldFactory,
-        WorldSessionOptions? options = null
+        Func<Revision, WorldState> worldFactory
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
         ArgumentNullException.ThrowIfNull(worldFactory);
@@ -67,7 +57,7 @@ public sealed class WorldSession : IDisposable {
             var revision = repo.CreateBranch(MainBranchName).Unwrap();
             var world = worldFactory(revision);
             repo.Commit(world.Root).Unwrap();
-            return new WorldSession(repoDir, repo, world, options);
+            return new WorldSession(repoDir, repo, world);
         }
         catch {
             repo.Dispose();
@@ -76,22 +66,20 @@ public sealed class WorldSession : IDisposable {
     }
 
     public static WorldSession OpenExisting(string repoDir)
-        => OpenExisting(repoDir, options: null);
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
 
-    internal static WorldSession OpenExisting(string repoDir, WorldSessionOptions? options) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
-
-        var repo = Repository.Open(repoDir).Unwrap();
-        try {
-            var revision = repo.CheckoutBranch(MainBranchName).Unwrap();
-            var world = LoadWorldState(revision);
-            return new WorldSession(repoDir, repo, world, options);
+            var repo = Repository.Open(repoDir).Unwrap();
+            try {
+                var revision = repo.CheckoutBranch(MainBranchName).Unwrap();
+                var world = LoadWorldState(revision);
+                return new WorldSession(repoDir, repo, world);
+            }
+            catch {
+                repo.Dispose();
+                throw;
+            }
         }
-        catch {
-            repo.Dispose();
-            throw;
-        }
-    }
 
     public LocationObservation ObserveLocation(string locationId) {
         EnsureNotDisposed();
@@ -198,6 +186,22 @@ public sealed class WorldSession : IDisposable {
         return WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap());
     }
 
+    internal string RenderWorldDumpForDevSupport() {
+        EnsureNotDisposed();
+        return WorldDumpRenderer.Render(_world);
+    }
+
+    internal string RenderLocationDumpForDevSupport(string locationId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
+        return WorldDumpRenderer.RenderLocation(_world, locationId);
+    }
+
+    internal bool TryGetRecommendedLandmarkLocationIdsForDevSupport(out string[] landmarkLocationIds) {
+        EnsureNotDisposed();
+        return TestWorldBuilder.TryGetRecommendedLandmarkLocationIds(_world, out landmarkLocationIds);
+    }
+
     private ActorMovementObservation MoveActorCore(string actorId, string passageId) {
         var receipt = _world.MoveActorAlongPassage(actorId, passageId);
         _repo.Commit(_world.Root).Unwrap();
@@ -259,11 +263,6 @@ public sealed class WorldSession : IDisposable {
         }
 
         return history;
-    }
-
-    internal LandmarkProfile? ResolveLandmarkProfile() {
-        EnsureNotDisposed();
-        return _options.LandmarkProfileResolver?.Invoke(_world);
     }
 
     private RouteAccelerationSnapshot RebuildRouteAccelerationCore(

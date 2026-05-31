@@ -13,20 +13,20 @@ namespace Atelia.TextAdv2.DevSupport;
 public static class DevTextRenderer {
     public static string RenderWorld(WorldSession session) {
         ArgumentNullException.ThrowIfNull(session);
-        return WorldDumpRenderer.Render(session.WorldForDevSupport);
+        return session.RenderWorldDumpForDevSupport();
     }
 
     public static string RenderLocation(WorldSession session, string locationId) {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return WorldDumpRenderer.RenderLocation(session.WorldForDevSupport, locationId);
+        return session.RenderLocationDumpForDevSupport(locationId);
     }
 
     public static string RenderCompactMovement(ActorMoveResult movement) {
         ArgumentNullException.ThrowIfNull(movement);
 
         return $"{movement.ActorId}: {movement.FromLocationId} --{movement.ExitName}/{movement.PassageId}--> {movement.ToLocationId}"
-            + $" | {movement.TravelMode} | cost={movement.TravelCost}";
+            + $" | {movement.TravelMode.ToStorageValue()} | cost={movement.TravelCost}";
     }
 
     public static string RenderRouteTrace(ActorRouteTrace trace) {

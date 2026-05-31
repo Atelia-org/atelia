@@ -10,15 +10,16 @@ namespace Atelia.TextAdv2.DevSupport;
 /// </summary>
 public static class SampleWorldBootstrap {
     private const string LegacySessionSidecarFileName = ".textadv2-runtime-state.json";
-    private static readonly WorldSessionOptions SampleWorldSessionOptions = new() {
-        LandmarkProfileResolver = TryResolveLandmarkProfile,
-    };
+    private sealed record RecommendedLandmarkProfile(
+        string ProfileName,
+        IReadOnlyList<string> LandmarkLocationIds
+    );
 
     public static WorldSession CreateTemporarySession()
         => CreateFreshSession(Path.Combine(Path.GetTempPath(), $"atelia-textadv2-{Guid.NewGuid():N}"));
 
     public static WorldSession CreateFreshSession(string repoDir)
-        => WorldSession.CreateNew(repoDir, CreateSampleWorld, SampleWorldSessionOptions);
+        => WorldSession.CreateNew(repoDir, CreateSampleWorld);
 
     public static WorldSession OpenOrCreateSession(string repoDir) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
@@ -36,7 +37,7 @@ public static class SampleWorldBootstrap {
         }
 
         return entries.Length > 0
-            ? WorldSession.OpenExisting(repoDir, SampleWorldSessionOptions)
+            ? WorldSession.OpenExisting(repoDir)
             : CreateFreshSession(repoDir);
     }
 
@@ -57,7 +58,7 @@ public static class SampleWorldBootstrap {
         ArgumentNullException.ThrowIfNull(session);
 
         if (string.IsNullOrWhiteSpace(requestedLandmarks) || string.Equals(requestedLandmarks, "default", StringComparison.OrdinalIgnoreCase)) {
-            var defaultProfile = session.ResolveLandmarkProfile();
+            var defaultProfile = TryResolveLandmarkProfile(session);
             if (defaultProfile is null) {
                 throw new InvalidOperationException(
                     "RebuildRouteAcceleration without an explicit landmark list requires a world with a known recommended landmark profile."
@@ -76,9 +77,11 @@ public static class SampleWorldBootstrap {
         return world;
     }
 
-    private static LandmarkProfile? TryResolveLandmarkProfile(WorldState world) {
-        return TestWorldBuilder.TryGetRecommendedLandmarkLocationIds(world, out var recommendedLandmarkLocationIds)
-            ? new LandmarkProfile(
+    private static RecommendedLandmarkProfile? TryResolveLandmarkProfile(WorldSession session) {
+        ArgumentNullException.ThrowIfNull(session);
+
+        return session.TryGetRecommendedLandmarkLocationIdsForDevSupport(out var recommendedLandmarkLocationIds)
+            ? new RecommendedLandmarkProfile(
                 TestWorldBuilder.RecommendedLandmarkProfileName,
                 recommendedLandmarkLocationIds
             )

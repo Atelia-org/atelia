@@ -245,7 +245,7 @@ public class WorldSessionTests {
             Assert.Equal(TestWorldBuilder.ActorIds.Scout, move.ActorId);
             Assert.Equal(TestWorldBuilder.LocationIds.Square, move.FromLocationId);
             Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.ToLocationId);
-            Assert.Equal("land", move.TravelMode);
+            Assert.Equal(TravelMode.Land, move.TravelMode);
 
             Assert.Equal(TestWorldBuilder.ActorIds.Scout, trace.ActorId);
             Assert.Equal("Scout", trace.ActorName);
@@ -290,7 +290,7 @@ public class WorldSessionTests {
                 Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, move.PassageId);
                 Assert.Equal(TestWorldBuilder.LocationIds.Square, move.FromLocationId);
                 Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.ToLocationId);
-                Assert.Equal("land", move.TravelMode);
+                Assert.Equal(TravelMode.Land, move.TravelMode);
                 Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.CurrentLocation.LocationId);
             }
 
@@ -306,7 +306,7 @@ public class WorldSessionTests {
     }
 
     [Fact]
-    public void MoveActor_ReturnsTypedMoveResultWithSessionFacingTravelMode() {
+    public void MoveActor_ReturnsTypedMoveResultWithReadOnlyViewLocationShape() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var move = session.MoveActor(
@@ -322,12 +322,12 @@ public class WorldSessionTests {
         Assert.Equal("Square", move.FromLocationName);
         Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.ToLocationId);
         Assert.Equal("Ridge", move.ToLocationName);
-        Assert.Equal("land", move.TravelMode);
+        Assert.Equal(TravelMode.Land, move.TravelMode);
         Assert.Equal(5, move.TravelCost);
         Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.CurrentLocation.LocationId);
         Assert.Contains(
             move.CurrentLocation.Exits,
-            static exit => exit.PassageId == TestWorldBuilder.PassageIds.RidgeAerieWinch && exit.TravelMode == "air"
+            static exit => exit.PassageId == TestWorldBuilder.PassageIds.RidgeAerieWinch && exit.TravelMode == TravelMode.Air
         );
     }
 
@@ -398,7 +398,7 @@ public class WorldSessionTests {
                 Assert.Equal(11, time.CurrentTick);
                 Assert.Equal(TestWorldBuilder.LocationIds.Square, move.FromLocationId);
                 Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.ToLocationId);
-                Assert.Equal("land", move.TravelMode);
+                Assert.Equal(TravelMode.Land, move.TravelMode);
             }
 
             using var reopened = SampleWorldBootstrap.OpenOrCreateSession(repoDir);
@@ -500,7 +500,7 @@ public class WorldSessionTests {
     }
 
     [Fact]
-    public void OpenExisting_WithoutDevBootstrapPolicy_RejectsImplicitDefaultLandmarks() {
+    public void OpenExisting_CanStillUseRecommendedSampleWorldLandmarksWithoutSessionPolicyInjection() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -508,13 +508,13 @@ public class WorldSessionTests {
             }
 
             using var session = WorldSession.OpenExisting(repoDir);
-            var exception = Assert.Throws<InvalidOperationException>(
-                () => SampleWorldBootstrap.RebuildRouteAcceleration(session)
-            );
+            var rebuilt = SampleWorldBootstrap.RebuildRouteAcceleration(session);
 
+            Assert.Equal("landmark", rebuilt.PlannerMode);
+            Assert.Equal("sample-world-default", rebuilt.LandmarkProfileName);
             Assert.Equal(
-                "RebuildRouteAcceleration without an explicit landmark list requires a world with a known recommended landmark profile.",
-                exception.Message
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Harbor, TestWorldBuilder.LocationIds.Shrine],
+                rebuilt.LandmarkLocationIds
             );
         }
         finally {

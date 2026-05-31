@@ -189,7 +189,7 @@ public class NavigationAndCliWorkflowTests {
 
         string text = DevTextRenderer.RenderWorld(session);
 
-        Assert.Equal(WorldDumpRenderer.Render(session.WorldForDevSupport), text);
+        Assert.Equal(CreateExpectedSampleWorldDump(), text);
     }
 
     [Fact]
@@ -198,7 +198,7 @@ public class NavigationAndCliWorkflowTests {
 
         string text = DevTextRenderer.RenderLocation(session, TestWorldBuilder.LocationIds.Square);
 
-        Assert.Equal(WorldDumpRenderer.RenderLocation(session.WorldForDevSupport, TestWorldBuilder.LocationIds.Square), text);
+        Assert.Equal(CreateExpectedSampleWorldLocationDump(TestWorldBuilder.LocationIds.Square), text);
     }
 
     private static string CreateTempRepoDir()
@@ -209,6 +209,37 @@ public class NavigationAndCliWorkflowTests {
             Directory.Delete(repoDir, recursive: true);
         }
     }
+
+    private static string CreateExpectedSampleWorldDump() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+            return WorldDumpRenderer.Render(world);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    private static string CreateExpectedSampleWorldLocationDump(string locationId) {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+            return WorldDumpRenderer.RenderLocation(world, locationId);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
     private static string Normalize(string text) => text.Replace("\r\n", "\n");
 
     private const string ExpectedScoutRouteTrace = """

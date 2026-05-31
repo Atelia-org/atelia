@@ -67,6 +67,7 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Equal(0, move.ExitCode);
             Assert.Equal(0, observe.ExitCode);
             Assert.Contains("\"ToLocationId\": \"ridge\"", move.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"TravelMode\": \"land\"", move.StandardOutput, StringComparison.Ordinal);
             Assert.Contains("\"LocationId\": \"ridge\"", observe.StandardOutput, StringComparison.Ordinal);
         }
         finally {

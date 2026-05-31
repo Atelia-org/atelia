@@ -61,7 +61,7 @@ public class GameServerIntegrationTests {
             Assert.Contains("\"travelMode\": \"land\"", moveText, StringComparison.Ordinal);
             Assert.Equal("scout", moveJson.ActorId);
             Assert.Equal("ridge", moveJson.ToLocationId);
-            Assert.Equal("land", moveJson.TravelMode);
+            Assert.Equal(TravelMode.Land, moveJson.TravelMode);
             Assert.Equal("ridge", moveJson.CurrentLocation.LocationId);
 
             using var traceResponse = await client.GetAsync("/actors/scout/route-trace");
@@ -202,7 +202,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task OpenExistingOnlyMode_RebuildRouteAccelerationWithoutLandmarks_DoesNotRecoverSampleWorldDefaultPolicyAsync() {
+    public async Task OpenExistingOnlyMode_RebuildRouteAccelerationWithoutLandmarks_UsesWorldDerivedSampleWorldProfileAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -214,14 +214,15 @@ public class GameServerIntegrationTests {
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsync("/admin/route-acceleration/rebuild", content: null);
-            string jsonText = await response.Content.ReadAsStringAsync();
-            var json = JsonDocument.Parse(jsonText);
+            var json = await ReadJsonAsync<RouteAccelerationSnapshot>(response);
 
-            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-            Assert.Contains(
-                "requires a world with a known recommended landmark profile",
-                json.RootElement.GetProperty("error").GetString(),
-                StringComparison.Ordinal
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.NotNull(json);
+            Assert.Equal("landmark", json.PlannerMode);
+            Assert.Equal("sample-world-default", json.LandmarkProfileName);
+            Assert.Equal(
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Harbor, TestWorldBuilder.LocationIds.Shrine],
+                json.LandmarkLocationIds
             );
         }
         finally {

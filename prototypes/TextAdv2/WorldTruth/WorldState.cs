@@ -141,8 +141,8 @@ internal sealed class WorldState {
         ValidateEntityId(id, nameof(id));
         ValidateEntityId(locationAId, nameof(locationAId));
         ValidateEntityId(locationBId, nameof(locationBId));
-        ValidateRequiredText(exitNameFromA, nameof(exitNameFromA));
-        ValidateRequiredText(exitNameFromB, nameof(exitNameFromB));
+        ValidateExitName(exitNameFromA, nameof(exitNameFromA));
+        ValidateExitName(exitNameFromB, nameof(exitNameFromB));
         ArgumentOutOfRangeException.ThrowIfLessThan(baseTravelCost, 1);
 
         if (string.Equals(locationAId, locationBId, StringComparison.Ordinal)) {
@@ -340,6 +340,13 @@ internal sealed class WorldState {
     internal static void ValidateRequiredText(string value, string paramName)
         => ArgumentException.ThrowIfNullOrWhiteSpace(value, paramName);
 
+    internal static void ValidateExitName(string value, string paramName) {
+        string? error = GetExitNameValidationError(value);
+        if (error is not null) {
+            throw new ArgumentException(error, paramName);
+        }
+    }
+
     private void ValidateIntegrity() {
         var locationIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var locationId in LocationsLedger.Keys) {
@@ -368,6 +375,8 @@ internal sealed class WorldState {
 
             EnsureReferencedLocationExists(locationIds, passage.Id, passage.EndpointA.LocationId, "endpointA");
             EnsureReferencedLocationExists(locationIds, passage.Id, passage.EndpointB.LocationId, "endpointB");
+            EnsureValidExitNameDuringWorldLoad(passage.Id, passage.EndpointA.LocationId, passage.EndpointA.ExitName);
+            EnsureValidExitNameDuringWorldLoad(passage.Id, passage.EndpointB.LocationId, passage.EndpointB.ExitName);
             EnsureExitNameUnique(exitNamesByLocation, passage.Id, passage.EndpointA.LocationId, passage.EndpointA.ExitName);
             EnsureExitNameUnique(exitNamesByLocation, passage.Id, passage.EndpointB.LocationId, passage.EndpointB.ExitName);
         }
@@ -416,6 +425,8 @@ internal sealed class WorldState {
     }
 
     private void EnsureExitNameAvailable(string locationId, string exitName) {
+        ValidateExitName(exitName, nameof(exitName));
+
         foreach (var passage in EnumerateWritablePassagesTouching(locationId)) {
             var existingExitName = passage.GetEndpointFor(locationId).ExitName;
             if (string.Equals(existingExitName, exitName, StringComparison.Ordinal)) {
@@ -439,6 +450,15 @@ internal sealed class WorldState {
         }
     }
 
+    private static void EnsureValidExitNameDuringWorldLoad(string passageId, string locationId, string exitName) {
+        string? error = GetExitNameValidationError(exitName);
+        if (error is not null) {
+            throw new InvalidOperationException(
+                $"Passage '{passageId}' uses invalid exit name '{exitName}' at location '{locationId}' during world load: {error}"
+            );
+        }
+    }
+
     private static void EnsureExitNameUnique(
         Dictionary<string, HashSet<string>> exitNamesByLocation,
         string passageId,
@@ -455,5 +475,17 @@ internal sealed class WorldState {
                 $"Location '{locationId}' reuses exit name '{exitName}' during world load; duplicate detected at passage '{passageId}'."
             );
         }
+    }
+
+    private static string? GetExitNameValidationError(string value) {
+        if (string.IsNullOrWhiteSpace(value)) {
+            return "Exit name must contain non-whitespace text.";
+        }
+
+        if (!string.Equals(value, value.Trim(), StringComparison.Ordinal)) {
+            return "Exit name must not have leading or trailing whitespace.";
+        }
+
+        return null;
     }
 }

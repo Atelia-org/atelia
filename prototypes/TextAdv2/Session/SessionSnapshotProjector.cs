@@ -3,31 +3,6 @@ using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Session;
 
-public sealed record LocationSnapshot(
-    string LocationId,
-    string LocationName,
-    string LocationDescription,
-    ExitSnapshot[] Exits,
-    ActorPresenceSnapshot[] PresentActors
-);
-
-public sealed record ExitSnapshot(
-    string PassageId,
-    string ExitName,
-    string TargetLocationId,
-    string TargetLocationName,
-    string TravelMode,
-    int BaseTravelCost,
-    int TravelCostModifier,
-    int TotalTravelCost,
-    string SharedConditionNote,
-    string DirectionalConditionNote,
-    string LocalViewNote,
-    bool IsEnabled
-);
-
-public sealed record ActorPresenceSnapshot(string ActorId, string ActorName);
-
 public sealed record ActorMoveResult(
     string ActorId,
     string ActorName,
@@ -37,9 +12,9 @@ public sealed record ActorMoveResult(
     string FromLocationName,
     string ToLocationId,
     string ToLocationName,
-    string TravelMode,
+    TravelMode TravelMode,
     int TravelCost,
-    LocationSnapshot CurrentLocation
+    LocationObservation CurrentLocation
 );
 
 internal static class SessionMovementProjector {
@@ -55,46 +30,9 @@ internal static class SessionMovementProjector {
             observation.FromLocationName,
             observation.ToLocationId,
             observation.ToLocationName,
-            observation.TravelMode.ToStorageValue(),
+            observation.TravelMode,
             observation.TravelCost,
-            ProjectLocation(observation.CurrentLocation)
+            observation.CurrentLocation
         );
-    }
-
-    private static LocationSnapshot ProjectLocation(LocationObservation observation) {
-        ArgumentNullException.ThrowIfNull(observation);
-
-        return new LocationSnapshot(
-            observation.LocationId,
-            observation.LocationName,
-            observation.LocationDescription,
-            observation.Exits.Select(ProjectExit).ToArray(),
-            observation.PresentActors.Select(ProjectActorPresence).ToArray()
-        );
-    }
-
-    private static ExitSnapshot ProjectExit(ExitObservation observation) {
-        ArgumentNullException.ThrowIfNull(observation);
-
-        return new ExitSnapshot(
-            observation.PassageId,
-            observation.ExitName,
-            observation.TargetLocationId,
-            observation.TargetLocationName,
-            observation.TravelMode.ToStorageValue(),
-            observation.BaseTravelCost,
-            observation.TravelCostModifier,
-            observation.TotalTravelCost,
-            observation.SharedConditionNote,
-            observation.DirectionalConditionNote,
-            observation.LocalViewNote,
-            observation.IsEnabled
-        );
-    }
-
-    private static ActorPresenceSnapshot ProjectActorPresence(ActorPresenceObservation observation) {
-        ArgumentNullException.ThrowIfNull(observation);
-
-        return new ActorPresenceSnapshot(observation.ActorId, observation.ActorName);
     }
 }
