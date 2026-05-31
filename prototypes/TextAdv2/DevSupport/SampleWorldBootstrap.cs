@@ -54,7 +54,11 @@ public static class SampleWorldBootstrap {
                 );
             }
 
-            return session.RebuildRouteAcceleration(defaultProfile.LandmarkLocationIds, defaultProfile.ProfileName);
+            return session.Runtime.RebuildRouteAcceleration(
+                session.Host.DurableWorld,
+                defaultProfile.LandmarkLocationIds,
+                defaultProfile.ProfileName
+            );
         }
 
         return session.RebuildRouteAcceleration(requestedLandmarks);
@@ -69,7 +73,7 @@ public static class SampleWorldBootstrap {
     private static RecommendedLandmarkProfile? TryResolveLandmarkProfile(SerialWorldRuntime session) {
         ArgumentNullException.ThrowIfNull(session);
 
-        return session.TryGetRecommendedLandmarkLocationIdsForDevSupport(out var recommendedLandmarkLocationIds)
+        return TestWorldBuilder.TryGetRecommendedLandmarkLocationIds(session.Host.DurableWorld, out var recommendedLandmarkLocationIds)
             ? new RecommendedLandmarkProfile(
                 TestWorldBuilder.RecommendedLandmarkProfileName,
                 recommendedLandmarkLocationIds

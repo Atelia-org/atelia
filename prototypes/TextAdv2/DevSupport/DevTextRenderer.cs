@@ -13,13 +13,13 @@ namespace Atelia.TextAdv2.DevSupport;
 public static class DevTextRenderer {
     public static string RenderWorld(SerialWorldRuntime session) {
         ArgumentNullException.ThrowIfNull(session);
-        return session.RenderWorldDumpForDevSupport();
+        return WorldDumpRenderer.Render(session.Host.DurableWorld);
     }
 
     public static string RenderLocation(SerialWorldRuntime session, string locationId) {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return session.RenderLocationDumpForDevSupport(locationId);
+        return WorldDumpRenderer.RenderLocation(session.Host.DurableWorld, locationId);
     }
 
     public static string RenderCompactMovement(ActorMoveResult movement) {

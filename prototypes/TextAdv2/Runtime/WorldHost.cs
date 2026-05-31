@@ -253,22 +253,6 @@ internal sealed class WorldHost : IDisposable {
         );
     }
 
-    internal string RenderWorldDumpForDevSupport() {
-        EnsureNotDisposed();
-        return WorldDumpRenderer.Render(_world);
-    }
-
-    internal string RenderLocationDumpForDevSupport(string locationId) {
-        EnsureNotDisposed();
-        ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return WorldDumpRenderer.RenderLocation(_world, locationId);
-    }
-
-    internal bool TryGetRecommendedLandmarkLocationIdsForDevSupport(out string[] landmarkLocationIds) {
-        EnsureNotDisposed();
-        return TestWorldBuilder.TryGetRecommendedLandmarkLocationIds(_world, out landmarkLocationIds);
-    }
-
     public void Dispose() {
         if (_disposed) { return; }
 

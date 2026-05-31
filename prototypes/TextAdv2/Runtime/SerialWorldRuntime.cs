@@ -30,6 +30,20 @@ public sealed class SerialWorldRuntime : IDisposable {
         }
     }
 
+    internal WorldHost Host {
+        get {
+            EnsureNotDisposed();
+            return _host;
+        }
+    }
+
+    internal WorldRuntime Runtime {
+        get {
+            EnsureNotDisposed();
+            return _runtime;
+        }
+    }
+
     public static SerialWorldRuntime CreateEmpty(string repoDir)
         => new(WorldHost.CreateEmpty(repoDir), new WorldRuntime());
 
@@ -196,31 +210,6 @@ public sealed class SerialWorldRuntime : IDisposable {
 
         _host.Dispose();
         _disposed = true;
-    }
-
-    internal string RenderWorldDumpForDevSupport() {
-        EnsureNotDisposed();
-        return _host.RenderWorldDumpForDevSupport();
-    }
-
-    internal string RenderLocationDumpForDevSupport(string locationId) {
-        EnsureNotDisposed();
-        return _host.RenderLocationDumpForDevSupport(locationId);
-    }
-
-    internal bool TryGetRecommendedLandmarkLocationIdsForDevSupport(out string[] landmarkLocationIds) {
-        EnsureNotDisposed();
-        return _host.TryGetRecommendedLandmarkLocationIdsForDevSupport(out landmarkLocationIds);
-    }
-
-    internal RouteAccelerationSnapshot RebuildRouteAcceleration(
-        IEnumerable<string> landmarkLocationIds,
-        string landmarkProfileName
-    ) {
-        EnsureNotDisposed();
-        ArgumentNullException.ThrowIfNull(landmarkLocationIds);
-        ArgumentException.ThrowIfNullOrWhiteSpace(landmarkProfileName);
-        return RebuildRouteAccelerationCore(landmarkLocationIds, landmarkProfileName);
     }
 
     private RouteAccelerationSnapshot RebuildRouteAccelerationCore(
