@@ -21,7 +21,7 @@ public static class TextAdv2RuntimeScaffold {
             "sample-world seed 与默认 landmark profile 已从 runtime public seam 下沉到显式 dev support 层。",
             "canonical navigation graph seam 已收口为显式 read model，并被 planner / heuristic / stale-signature 共享复用。",
             "world root schema gate 已补齐；Passage 高频写操作已收回到 WorldState.SetPassage* seam，主读链路也已切到只读 facade。",
-            "修订后的近程路线是：继续封闭剩余叶子写口，并再收口 text/dev/admin surface。"
+            "修订后的近程路线是：先收口 GameServer/E2eCli 的 bootstrap/admin 边界，再清理 runtime 残余 text/dev surface。"
         ]
     );
 }

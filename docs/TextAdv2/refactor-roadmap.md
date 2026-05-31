@@ -40,20 +40,24 @@
   - `ObserveRouteAcceleration` / `RebuildRouteAcceleration`
   - `ObserveLocation` / `ObserveActor`
   - `ObserveNavigation` / `ObserveActorNavigation`
-- `TextAdv2RuntimeCommandResult` 的残余面，已主要收缩到：
   - `MoveActor`
+  - `PlanRoute` / `PlanActorRoute`
+- `TextAdv2RuntimeCommandResult` 的残余面，现已只剩 text/dev/admin surface：
   - `TraceActorRoute`
   - `MoveActorQuiet`
   - `DumpWorld` / `DumpLocation`
+  - `GameServer` / `E2eCli` 仍直接依赖这些 runtime 文本输出与 `TextAdv2RuntimeCommandResult`
 - `P3` 已拆成多个更小的内部收口切口：
   - `schemaVersion` 字段已经写入 world root，且 `WorldState.FromRoot(...)` 已具备 schema gate；
-  - `Passage` 高频写操作已新增显式 `WorldState.SetPassage*` authority seam，并已迁移 sample builder 与关键测试；
-  - `Location` / `Actor` 的写入权威，以及 `Passage` 叶子写口的进一步封闭，仍留待后续子包。
-- `P4` 也不是“从零开始”：
+  - `Passage` 高频写操作已通过 `WorldState.SetPassage*` + `PassageView` façade 收回 world authority，并已补 seam guard tests；
+  - `Location` / `Actor` 仍保留叶子 setter，但当前几乎没有真实调用压力，已经不再是最近的关键路径阻塞。
+- `P4` 实际上已经完成：
   - `LocationNavigationGraphProjector.Project(...)` 现在承载 canonical graph seam；
   - `NavigationObservationProjector` 与当前 planner、landmark heuristic、route-acceleration stale 判定都从这份 seam 读取，不再把图语义藏在展示 projector 内部。
-- `P5` 需要改写得更具体：
-  - sample-world 创建、默认 landmark profile、open-or-create/reset 等 dev 语义虽然已有 helper，但仍在 runtime 主路径中留下明显耦合。
+- `P5` 的真实剩余问题需要按宿主边界重写：
+  - sample-world seed 与默认 landmark profile 已从 runtime public seam 下沉；
+  - 但 `GameServer` 仍由 `TextAdv2RuntimeService` 直接决定 open-existing vs open-or-create sample world，`E2eCli` 也仍默认走 sample-world dev bootstrap；
+  - `DumpWorld` / `DumpLocation` 的最终归属仍未定，导致 runtime 还保留调试文本输出责任。
 
 ## 5. 修订后的工作包顺序
 
@@ -105,7 +109,7 @@
 
 ### P2. 把 runtime 收回 typed use case 层
 
-状态：进行中
+状态：进行中（仅剩 text/dev/admin residual surface）
 
 主张：
 
@@ -124,8 +128,10 @@
 - P2b1：迁出 time / route acceleration typed seam（已完成）。
 - P2b2a：迁出 location / actor observation typed seam（已完成）。
 - P2b2b：迁出 navigation observation typed seam（已完成）。
-- P2b2c：只保留 `MoveActor` 这一条核心写入 use case 的 typed seam。
-- P2c：处理 text/dev/admin surface 的长期归属，包括 `MoveActorQuiet`、`TraceActorRoute`，以及是否继续保留 runtime 直接输出文本。
+- P2b2c：只保留 `MoveActor` 这一条核心写入 use case 的 typed seam（已完成）。
+- P2c1：删除 `MoveActorQuiet` 这类对 `MoveActor` 的文本别名，改由宿主本地渲染 compact movement。
+- P2c2：为 `TraceActorRoute` 建 typed seam，文本渲染下沉到宿主或显式 dev support。
+- P2c3：在 `DumpWorld` / `DumpLocation` 的最终归属明确后，再决定是否彻底删除 `TextAdv2RuntimeCommandResult`。
 
 完成定义：
 
@@ -177,9 +183,10 @@ P4c 本轮落地结果：
 
 P2 后续修订说明：
 
-- `MoveActor` 仍应留在 `P2`，因为它是最后一个明显属于 runtime 核心 use case、但仍停留在 `string/contentType` seam 上的写入入口。
+- `MoveActor` 已完成 typed seam 收口；它不再是 `P2` 的残余问题。
 - `PlanRoute` / `PlanActorRoute` 已在 `P4c` 中收口为 typed seam；后续不再属于 `TextAdv2RuntimeCommandResult` 的主残余面。
-- `DumpWorld` / `DumpLocation`、`TraceActorRoute`、`MoveActorQuiet` 不再视为“typed runtime seam 收尾”，而是显式归类到 `P2c` / `P5` 的 text-dev-admin surface。
+- `MoveActorQuiet` 与 `TraceActorRoute` 是更适合先清掉的 text residual，因为它们都已有稳定的内部结构化基础可复用。
+- `DumpWorld` / `DumpLocation` 不宜为了“删干净 `TextAdv2RuntimeCommandResult`”而仓促 DTO 化；更合理的顺序是先明确其 dev-only 归属，再决定 runtime 是否还保留这条面。
 
 ### P3a. world root schema gate
 
@@ -241,11 +248,12 @@ P3b.2 本轮落地结果：
 
 P3b 下一自然入口：
 
-- 继续评估 `Location` / `Actor` 的叶子写口收权方式，以及是否需要在更大范围内引入显式 world editor 形态。
+- `Location` / `Actor` 的叶子写口收权目前降为触发式后续项：等真正出现 world editor / rename / narrative editing 需求后，再按实际 invariants 设计后续切口。
+- 在没有真实调用压力前，不把它排进最近几包的关键路径。
 
 ### P4. 建立 canonical navigation graph seam
 
-状态：进行中
+状态：已完成（2026-05-31）
 
 主张：
 
@@ -293,9 +301,10 @@ P4a/P4b 本轮落地结果：
 
 修订后的建议切口：
 
-- P5a：把 sample-world profile / 默认 landmark policy 从 `TextAdv2Runtime` 中剥离到显式 dev support 层。
-- P5b：把 open-or-create/reset 等 dev bootstrap 语义从 runtime 主路径继续下沉，并收清 `GameServer` admin surface 的边界。
-- P5c：处理 `DumpWorld` / `DumpLocation` 等稳定调试文本输出的最终归属。
+- P5a：把 sample-world profile / 默认 landmark policy 从 `TextAdv2Runtime` 中剥离到显式 dev support 层（已完成）。
+- P5b1：把 `GameServer` 的 open-existing / open-or-create / reset-sample-world 决策从 `TextAdv2RuntimeService` 中提出，改成显式 host bootstrap/admin policy。
+- P5b2：让 `E2eCli` 的“未指定 repoDir 就创建临时 sample world”成为显式 dev mode，而不是 runtime command 主路径的隐含行为。
+- P5c：处理 `DumpWorld` / `DumpLocation` 等稳定调试文本输出的最终归属；若这一步完成后 `TextAdv2RuntimeCommandResult` 已无剩余，再彻底删除它。
 
 完成定义：
 
@@ -307,7 +316,7 @@ P5a 本轮落地结果：
 - sample-world world seed 已从 `TextAdv2Runtime` 中移出，改由 `TextAdv2SampleWorldDevBootstrap` 显式持有。
 - `RebuildRouteAcceleration` 的“无参/`default` => 推荐 profile”决策已从 runtime public seam 移到 `TextAdv2SampleWorldDevBootstrap`，宿主仍保留原有 dev/admin 行为，但 runtime 本体只接受显式 landmark 请求。
 - 新增回归测试，明确区分“通过 dev bootstrap 打开的 runtime 可以走 sample-world 默认 landmark profile”与“直接 `OpenExisting(...)` 的 runtime 不应隐式拥有该 policy”。
-- 下一自然入口转为 `P2b2c MoveActor typed seam`；`P5b` 继续留待后续处理 open-or-create/reset 与 admin surface 收口。
+- 下一自然入口不再是 runtime 核心 use case seam，而是宿主 bootstrap/admin 边界本身：`P5b1/P5b2` 与 `P2c1/P2c2`。
 
 ## 6. 不在本轮顺手做的事
 
@@ -320,17 +329,19 @@ P5a 本轮落地结果：
 
 推荐顺序改为：
 
-1. `P3b world editor / 写入权威收口`
-2. `P5b open-or-create/reset 与 admin surface 收口`
-3. `P2c + P5c` 清理 text/dev/admin surface
+1. `P5b1 GameServer bootstrap/admin boundary 收口`
+2. `P2c1 + P2c2` 清理 `MoveActorQuiet` / `TraceActorRoute` text residual
+3. `P5b2 E2eCli dev-mode 显式化`
+4. `P5c` 决定 `DumpWorld` / `DumpLocation` 的最终归属，并视结果删除 `TextAdv2RuntimeCommandResult`
+5. `P3c` 仅在真实 world editing 需求出现后，再处理 `Location` / `Actor` 写入权威
 
 排序理由：
 
-- `P4a/P4b/P4c` 已完成，导航图单一真源与 route-plan public seam 都已比此前更收敛，下一步更值得处理的是写入权威与剩余 dev/text 面。
-- `P3b` 目前还缺承接设计，放在更后面更可行。
-- `P5a` 已经把 sample-world seed 与默认 landmark policy 从 runtime public seam 中剥离，后续可以把焦点切回 runtime 核心 typed seam 与 graph 真源。
-- `P2b2c` 已完成，runtime 核心 use case 的 public seam 已进一步收口，下一步最值得解决的是导航图单一真源问题。
-- text/dev/admin surface 最后一起清，会比一边做核心 seam 一边分散清理更稳。
+- `P4` 与 `Passage` authority seam 已基本收口，继续深挖 `WorldTruth` 叶子 setter 已经不再是当前收益最高的路径。
+- 当前最真实的边界问题落在宿主：`GameServer` / `E2eCli` 仍把 sample-world bootstrap、reset、以及 runtime 文本输出混在主路径里。
+- `MoveActorQuiet` 与 `TraceActorRoute` 已有现成的结构化底座，先清这两条比一上来处理 `DumpWorld` / `DumpLocation` 更小更稳。
+- `DumpWorld` / `DumpLocation` 的最终形态仍带有明显 dev-only 色彩，应该放在 bootstrap/admin 边界更清楚之后再定。
+- `Location` / `Actor` 收权在当前代码里缺少真实调用压力；过早推进容易变成为了“形式对称”而设计，而不是为真实 invariant 收口。
 
 ## 8. 每包统一验证策略
 
