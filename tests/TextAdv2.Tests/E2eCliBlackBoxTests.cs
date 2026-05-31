@@ -169,6 +169,83 @@ public sealed class E2eCliBlackBoxTests {
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("init-empty <repoDir>", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("init-sample <repoDir>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--create-location <locationId> <name> <description>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--create-actor <actorId> <name> <currentLocationId>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB>", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InitEmpty_CanAuthorMinimalWorldAcrossCliInvocations() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult init = RunCli("init-empty", repoDir);
+            CliRunResult createStart = RunCli("--repo-dir", repoDir, "--create-location", "start", "Start", "Starting point.");
+            CliRunResult createGoal = RunCli("--repo-dir", repoDir, "--create-location", "goal", "Goal", "Goal point.");
+            CliRunResult createActor = RunCli("--repo-dir", repoDir, "--create-actor", "runner", "Runner", "start");
+            CliRunResult createPassage = RunCli(
+                "--repo-dir", repoDir,
+                "--create-passage", "start-goal", "start", "east", "goal", "west", "land", "2"
+            );
+            CliRunResult plan = RunCli("--repo-dir", repoDir, "--plan-actor-route", "runner", "goal");
+            CliRunResult move = RunCli("--repo-dir", repoDir, "--move-actor", "runner", "start-goal");
+            CliRunResult observe = RunCli("--repo-dir", repoDir, "--observe-actor", "runner");
+
+            Assert.Equal(0, init.ExitCode);
+
+            Assert.Equal(0, createStart.ExitCode);
+            Assert.Contains("\"LocationId\": \"start\"", createStart.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"LocationName\": \"Start\"", createStart.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, createGoal.ExitCode);
+            Assert.Contains("\"LocationId\": \"goal\"", createGoal.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, createActor.ExitCode);
+            Assert.Contains("\"ActorId\": \"runner\"", createActor.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"CurrentLocationId\": \"start\"", createActor.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, createPassage.ExitCode);
+            Assert.Contains("\"PassageId\": \"start-goal\"", createPassage.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"TravelMode\": \"land\"", createPassage.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"BaseTravelCost\": 2", createPassage.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, plan.ExitCode);
+            Assert.Contains("\"Status\": \"found\"", plan.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"PassageId\": \"start-goal\"", plan.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, move.ExitCode);
+            Assert.Contains("\"ToLocationId\": \"goal\"", move.StandardOutput, StringComparison.Ordinal);
+
+            Assert.Equal(0, observe.ExitCode);
+            Assert.Contains("\"ActorId\": \"runner\"", observe.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"LocationId\": \"goal\"", observe.StandardOutput, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void CreatePassage_WithoutOptionalArgs_UsesDefaultTravelModeAndCost() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            _ = RunCli("init-empty", repoDir);
+            _ = RunCli("--repo-dir", repoDir, "--create-location", "start", "Start", "Starting point.");
+            _ = RunCli("--repo-dir", repoDir, "--create-location", "goal", "Goal", "Goal point.");
+
+            CliRunResult createPassage = RunCli(
+                "--repo-dir", repoDir,
+                "--create-passage", "start-goal", "start", "east", "goal", "west"
+            );
+
+            Assert.Equal(0, createPassage.ExitCode);
+            Assert.Contains("\"TravelMode\": \"land\"", createPassage.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"BaseTravelCost\": 1", createPassage.StandardOutput, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
     }
 
     private static CliRunResult RunCli(params string[] args) {

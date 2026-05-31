@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.E2eCli;
 
@@ -114,11 +115,37 @@ internal static class Program {
                 }
                 index += 2;
                 break;
+                case "--create-location": {
+                    string locationId = RequireArg(args, index + 1);
+                    string locationName = RequireArg(args, index + 2);
+                    string locationDescription = RequireArg(args, index + 3);
+                    operations.Add(
+                        new SessionCommand(
+                            $"create location {locationId}",
+                            session => RenderJson(session.CreateLocation(locationId, locationName, locationDescription))
+                        )
+                    );
+                }
+                index += 4;
+                break;
                 case "--observe-actor": {
                     string actorId = RequireArg(args, index + 1);
                     operations.Add(new SessionCommand($"observe actor {actorId}", session => RenderJson(session.ObserveActor(actorId))));
                 }
                 index += 2;
+                break;
+                case "--create-actor": {
+                    string actorId = RequireArg(args, index + 1);
+                    string actorName = RequireArg(args, index + 2);
+                    string currentLocationId = RequireArg(args, index + 3);
+                    operations.Add(
+                        new SessionCommand(
+                            $"create actor {actorId}",
+                            session => RenderJson(session.CreateActor(actorId, actorName, currentLocationId))
+                        )
+                    );
+                }
+                index += 4;
                 break;
                 case "--observe-navigation": {
                     string locationId = RequireArg(args, index + 1);
@@ -160,6 +187,35 @@ internal static class Program {
                     operations.Add(new SessionCommand($"plan route {fromLocationId} -> {toLocationId}", session => RenderJson(session.PlanRoute(fromLocationId, toLocationId))));
                 }
                 index += 3;
+                break;
+                case "--create-passage": {
+                    string passageId = RequireArg(args, index + 1);
+                    string locationAId = RequireArg(args, index + 2);
+                    string exitNameFromA = RequireArg(args, index + 3);
+                    string locationBId = RequireArg(args, index + 4);
+                    string exitNameFromB = RequireArg(args, index + 5);
+                    string? travelModeText = TryReadOptionalArg(args, index + 6);
+                    TravelMode travelMode = travelModeText is null ? TravelMode.Land : ParseTravelMode(travelModeText);
+                    string? baseTravelCostText = travelModeText is null ? null : TryReadOptionalArg(args, index + 7);
+                    int baseTravelCost = baseTravelCostText is null ? 1 : ParseTravelCost(baseTravelCostText);
+                    operations.Add(
+                        new SessionCommand(
+                            $"create passage {passageId}",
+                            session => RenderJson(
+                                session.CreatePassage(
+                                    passageId,
+                                    locationAId,
+                                    exitNameFromA,
+                                    locationBId,
+                                    exitNameFromB,
+                                    travelMode,
+                                    baseTravelCost
+                                )
+                            )
+                        )
+                    );
+                    index += 6 + (travelModeText is null ? 0 : 1) + (baseTravelCostText is null ? 0 : 1);
+                }
                 break;
                 case "--rebuild-route-acceleration": {
                     string? rebuildLandmarks = TryReadOptionalArg(args, index + 1);
@@ -244,13 +300,33 @@ internal static class Program {
         return ticks;
     }
 
+    private static int ParseTravelCost(string value) {
+        if (!int.TryParse(value, out int travelCost)) {
+            throw new InvalidOperationException($"CreatePassage requires an integer base travel cost, but received '{value}'.");
+        }
+
+        ArgumentOutOfRangeException.ThrowIfLessThan(travelCost, 1);
+        return travelCost;
+    }
+
+    private static TravelMode ParseTravelMode(string value)
+        => value.ToLowerInvariant() switch {
+            "land" => TravelMode.Land,
+            "water" => TravelMode.Water,
+            "air" => TravelMode.Air,
+            "portal" => TravelMode.Portal,
+            _ => throw new InvalidOperationException(
+                $"CreatePassage requires travel mode land|water|air|portal, but received '{value}'."
+            ),
+        };
+
     private static string BuildUsage()
         => """
 Usage:
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj [smoke|status|help]
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-empty <repoDir>
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-sample <repoDir>
-  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--world] [--location <locationId>] [--observe-location <locationId>] [--observe-actor <actorId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
+  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--world] [--location <locationId>] [--observe-location <locationId>] [--create-location <locationId> <name> <description>] [--observe-actor <actorId>] [--create-actor <actorId> <name> <currentLocationId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> [<travelMode>] [<baseTravelCost>]] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
 """;
 
     private static int RunHelp() {
@@ -269,13 +345,20 @@ Meta commands:
 
 Session target:
   --repo-dir <repoDir>
-           Open or create a persistent sample world at the specified directory.
+           Open the specified repo. If the path is missing or empty, current compatibility behavior creates a persistent sample world.
+           For explicit authoring/bootstrap flows, prefer init-empty or init-sample first.
   --dev-sample-world
            Create a dev sample world under the system temp directory for this invocation.
 
            Exactly one session target must be specified.
 
 Session options:
+    --create-location <locationId> <name> <description>
+                     Create a location and print the typed authoring snapshot as JSON.
+    --create-actor <actorId> <name> <currentLocationId>
+                     Create an actor and print the typed authoring snapshot as JSON.
+    --create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> [<travelMode>] [<baseTravelCost>]
+                     Create a passage and print the typed authoring snapshot as JSON.
     --rebuild-route-acceleration
                      Without an argument, rebuild using the world's recommended landmark profile when available.
     --rebuild-route-acceleration default
