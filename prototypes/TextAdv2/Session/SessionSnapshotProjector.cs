@@ -28,12 +28,6 @@ public sealed record ExitSnapshot(
 
 public sealed record ActorPresenceSnapshot(string ActorId, string ActorName);
 
-public sealed record ActorSnapshot(
-    string ActorId,
-    string ActorName,
-    LocationSnapshot Location
-);
-
 public sealed record ActorMoveResult(
     string ActorId,
     string ActorName,
@@ -48,35 +42,8 @@ public sealed record ActorMoveResult(
     LocationSnapshot CurrentLocation
 );
 
-public sealed record LocationNavigationSnapshot(
-    string LocationId,
-    string LocationName,
-    NavigationEdgeSnapshot[] Edges
-);
-
-public sealed record NavigationEdgeSnapshot(
-    string PassageId,
-    string ExitName,
-    string TargetLocationId,
-    string TargetLocationName,
-    string TravelMode,
-    int TravelCost
-);
-
-public sealed record ActorNavigationSnapshot(
-    string ActorId,
-    string ActorName,
-    LocationNavigationSnapshot Navigation
-);
-
-internal static class SessionSnapshotProjector {
-    public static LocationSnapshot ProjectLocation(WorldState world, string locationId)
-        => ProjectLocation(LocationObservationProjector.ObserveLocation(world, locationId));
-
-    public static ActorSnapshot ProjectActor(WorldState world, string actorId)
-        => ProjectActor(LocationObservationProjector.ObserveActorLocation(world, actorId));
-
-    public static ActorMoveResult ProjectMovement(ActorMovementObservation observation) {
+internal static class SessionMovementProjector {
+    public static ActorMoveResult Project(ActorMovementObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
         return new ActorMoveResult(
@@ -94,13 +61,7 @@ internal static class SessionSnapshotProjector {
         );
     }
 
-    public static LocationNavigationSnapshot ProjectNavigation(WorldState world, string locationId)
-        => ProjectNavigation(NavigationObservationProjector.ObserveLocationNavigation(world, locationId));
-
-    public static ActorNavigationSnapshot ProjectActorNavigation(WorldState world, string actorId)
-        => ProjectActorNavigation(NavigationObservationProjector.ObserveActorNavigation(world, actorId));
-
-    public static LocationSnapshot ProjectLocation(LocationObservation observation) {
+    private static LocationSnapshot ProjectLocation(LocationObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
         return new LocationSnapshot(
@@ -109,36 +70,6 @@ internal static class SessionSnapshotProjector {
             observation.LocationDescription,
             observation.Exits.Select(ProjectExit).ToArray(),
             observation.PresentActors.Select(ProjectActorPresence).ToArray()
-        );
-    }
-
-    public static ActorSnapshot ProjectActor(ActorLocationObservation observation) {
-        ArgumentNullException.ThrowIfNull(observation);
-
-        return new ActorSnapshot(
-            observation.ActorId,
-            observation.ActorName,
-            ProjectLocation(observation.Location)
-        );
-    }
-
-    public static LocationNavigationSnapshot ProjectNavigation(LocationNavigationObservation observation) {
-        ArgumentNullException.ThrowIfNull(observation);
-
-        return new LocationNavigationSnapshot(
-            observation.LocationId,
-            observation.LocationName,
-            observation.Edges.Select(ProjectNavigationEdge).ToArray()
-        );
-    }
-
-    public static ActorNavigationSnapshot ProjectActorNavigation(ActorNavigationObservation observation) {
-        ArgumentNullException.ThrowIfNull(observation);
-
-        return new ActorNavigationSnapshot(
-            observation.ActorId,
-            observation.ActorName,
-            ProjectNavigation(observation.Navigation)
         );
     }
 
@@ -165,18 +96,5 @@ internal static class SessionSnapshotProjector {
         ArgumentNullException.ThrowIfNull(observation);
 
         return new ActorPresenceSnapshot(observation.ActorId, observation.ActorName);
-    }
-
-    private static NavigationEdgeSnapshot ProjectNavigationEdge(NavigationEdgeObservation observation) {
-        ArgumentNullException.ThrowIfNull(observation);
-
-        return new NavigationEdgeSnapshot(
-            observation.PassageId,
-            observation.ExitName,
-            observation.TargetLocationId,
-            observation.TargetLocationName,
-            observation.TravelMode.ToStorageValue(),
-            observation.TravelCost
-        );
     }
 }

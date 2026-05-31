@@ -360,7 +360,7 @@ internal sealed class PassageDirectionRule {
     }
 }
 
-internal enum TravelMode {
+public enum TravelMode {
     Land,
     Water,
     Air,

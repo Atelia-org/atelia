@@ -1,4 +1,5 @@
 using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 using Atelia.TextAdv2.DevSupport;
 using Xunit;
@@ -7,19 +8,22 @@ namespace Atelia.TextAdv2.Tests;
 
 public class WorldSessionTests {
     [Fact]
-    public void ObserveLocation_ReturnsTypedSnapshotWithSessionFacingTravelMode() {
+    public void ObserveLocation_ReturnsReadOnlyViewObservation() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.ObserveLocation(TestWorldBuilder.LocationIds.Square);
 
         Assert.Equal(TestWorldBuilder.LocationIds.Square, result.LocationId);
         Assert.Equal("Square", result.LocationName);
-        Assert.Contains(result.Exits, static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate && exit.TravelMode == "portal");
+        Assert.Contains(
+            result.Exits,
+            static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate && exit.TravelMode == TravelMode.Portal
+        );
         Assert.Contains(result.PresentActors, static actor => actor.ActorId == TestWorldBuilder.ActorIds.Scout);
     }
 
     [Fact]
-    public void ObserveActor_ReturnsTypedSnapshotWithSessionFacingTravelMode() {
+    public void ObserveActor_ReturnsReadOnlyViewObservation() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.ObserveActor(TestWorldBuilder.ActorIds.Scout);
@@ -27,11 +31,14 @@ public class WorldSessionTests {
         Assert.Equal(TestWorldBuilder.ActorIds.Scout, result.ActorId);
         Assert.Equal("Scout", result.ActorName);
         Assert.Equal(TestWorldBuilder.LocationIds.Square, result.Location.LocationId);
-        Assert.Contains(result.Location.Exits, static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareRidgeTrail && exit.TravelMode == "land");
+        Assert.Contains(
+            result.Location.Exits,
+            static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareRidgeTrail && exit.TravelMode == TravelMode.Land
+        );
     }
 
     [Fact]
-    public void ObserveNavigation_ReturnsTypedNavigationSnapshotWithStringTravelMode() {
+    public void ObserveNavigation_ReturnsReadOnlyViewNavigationObservation() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.ObserveNavigation(TestWorldBuilder.LocationIds.Square);
@@ -44,21 +51,21 @@ public class WorldSessionTests {
                 Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, edge.PassageId);
                 Assert.Equal("north gate", edge.ExitName);
                 Assert.Equal(TestWorldBuilder.LocationIds.Ridge, edge.TargetLocationId);
-                Assert.Equal("land", edge.TravelMode);
+                Assert.Equal(TravelMode.Land, edge.TravelMode);
                 Assert.Equal(5, edge.TravelCost);
             },
             edge => {
                 Assert.Equal(TestWorldBuilder.PassageIds.SquareShrineGate, edge.PassageId);
                 Assert.Equal("old arch", edge.ExitName);
                 Assert.Equal(TestWorldBuilder.LocationIds.Shrine, edge.TargetLocationId);
-                Assert.Equal("portal", edge.TravelMode);
+                Assert.Equal(TravelMode.Portal, edge.TravelMode);
                 Assert.Equal(1, edge.TravelCost);
             },
             edge => {
                 Assert.Equal(TestWorldBuilder.PassageIds.VillageSquareRoad, edge.PassageId);
                 Assert.Equal("west", edge.ExitName);
                 Assert.Equal(TestWorldBuilder.LocationIds.Village, edge.TargetLocationId);
-                Assert.Equal("land", edge.TravelMode);
+                Assert.Equal(TravelMode.Land, edge.TravelMode);
                 Assert.Equal(1, edge.TravelCost);
             }
         );
@@ -83,21 +90,21 @@ public class WorldSessionTests {
                 Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, edge.PassageId);
                 Assert.Equal("cliff lift", edge.ExitName);
                 Assert.Equal(TestWorldBuilder.LocationIds.Aerie, edge.TargetLocationId);
-                Assert.Equal("air", edge.TravelMode);
+                Assert.Equal(TravelMode.Air, edge.TravelMode);
                 Assert.Equal(5, edge.TravelCost);
             },
             edge => {
                 Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, edge.PassageId);
                 Assert.Equal("downhill trail", edge.ExitName);
                 Assert.Equal(TestWorldBuilder.LocationIds.Square, edge.TargetLocationId);
-                Assert.Equal("land", edge.TravelMode);
+                Assert.Equal(TravelMode.Land, edge.TravelMode);
                 Assert.Equal(2, edge.TravelCost);
             }
         );
     }
 
     [Fact]
-    public void PlanRoute_ReturnsTypedSnapshotWithSessionFacingTravelMode() {
+    public void PlanRoute_ReturnsReadOnlyViewRoutePlan() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.PlanRoute(
@@ -109,7 +116,7 @@ public class WorldSessionTests {
         Assert.Equal("Village", result.FromLocationName);
         Assert.Equal(TestWorldBuilder.LocationIds.Aerie, result.ToLocationId);
         Assert.Equal("Aerie", result.ToLocationName);
-        Assert.Equal("found", result.Status);
+        Assert.Equal(RoutePlanStatus.Found, result.Status);
         Assert.Equal(3, result.StepCount);
         Assert.Equal(11, result.TotalTravelCost);
         Assert.Collection(
@@ -120,7 +127,7 @@ public class WorldSessionTests {
                 Assert.Equal("east", step.ExitName);
                 Assert.Equal(TestWorldBuilder.LocationIds.Village, step.FromLocationId);
                 Assert.Equal(TestWorldBuilder.LocationIds.Square, step.ToLocationId);
-                Assert.Equal("land", step.TravelMode);
+                Assert.Equal(TravelMode.Land, step.TravelMode);
                 Assert.Equal(1, step.TravelCost);
                 Assert.Equal(1, step.CumulativeTravelCost);
             },
@@ -130,7 +137,7 @@ public class WorldSessionTests {
                 Assert.Equal("north gate", step.ExitName);
                 Assert.Equal(TestWorldBuilder.LocationIds.Square, step.FromLocationId);
                 Assert.Equal(TestWorldBuilder.LocationIds.Ridge, step.ToLocationId);
-                Assert.Equal("land", step.TravelMode);
+                Assert.Equal(TravelMode.Land, step.TravelMode);
                 Assert.Equal(5, step.TravelCost);
                 Assert.Equal(6, step.CumulativeTravelCost);
             },
@@ -140,7 +147,7 @@ public class WorldSessionTests {
                 Assert.Equal("cliff lift", step.ExitName);
                 Assert.Equal(TestWorldBuilder.LocationIds.Ridge, step.FromLocationId);
                 Assert.Equal(TestWorldBuilder.LocationIds.Aerie, step.ToLocationId);
-                Assert.Equal("air", step.TravelMode);
+                Assert.Equal(TravelMode.Air, step.TravelMode);
                 Assert.Equal(5, step.TravelCost);
                 Assert.Equal(11, step.CumulativeTravelCost);
             }
@@ -165,10 +172,10 @@ public class WorldSessionTests {
 
         Assert.Equal(TestWorldBuilder.LocationIds.Ridge, result.FromLocationId);
         Assert.Equal(TestWorldBuilder.LocationIds.Aerie, result.ToLocationId);
-        Assert.Equal("found", result.Status);
+        Assert.Equal(RoutePlanStatus.Found, result.Status);
         Assert.Single(result.Steps);
         Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, result.Steps[0].PassageId);
-        Assert.Equal("air", result.Steps[0].TravelMode);
+        Assert.Equal(TravelMode.Air, result.Steps[0].TravelMode);
         Assert.Equal(5, result.TotalTravelCost);
     }
 
@@ -185,12 +192,12 @@ public class WorldSessionTests {
             TestWorldBuilder.LocationIds.Village
         );
 
-        Assert.Equal("already-there", alreadyThere.Status);
+        Assert.Equal(RoutePlanStatus.AlreadyThere, alreadyThere.Status);
         Assert.Equal(0, alreadyThere.StepCount);
         Assert.Equal(0, alreadyThere.TotalTravelCost);
         Assert.Empty(alreadyThere.Steps);
 
-        Assert.Equal("unreachable", unreachable.Status);
+        Assert.Equal(RoutePlanStatus.Unreachable, unreachable.Status);
         Assert.Equal(0, unreachable.StepCount);
         Assert.Null(unreachable.TotalTravelCost);
         Assert.Empty(unreachable.Steps);
@@ -209,13 +216,13 @@ public class WorldSessionTests {
             TestWorldBuilder.LocationIds.Harbor
         );
 
-        Assert.Equal("already-there", alreadyThere.Status);
+        Assert.Equal(RoutePlanStatus.AlreadyThere, alreadyThere.Status);
         Assert.Equal(0, alreadyThere.StepCount);
         Assert.Equal(0, alreadyThere.TotalTravelCost);
         Assert.Empty(alreadyThere.Steps);
         Assert.Equal("zero", alreadyThere.SearchStats.HeuristicName);
 
-        Assert.Equal("unreachable", unreachable.Status);
+        Assert.Equal(RoutePlanStatus.Unreachable, unreachable.Status);
         Assert.Equal(0, unreachable.StepCount);
         Assert.Null(unreachable.TotalTravelCost);
         Assert.Empty(unreachable.Steps);
@@ -446,7 +453,7 @@ public class WorldSessionTests {
                     [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine],
                     rebuilt.LandmarkLocationIds
                 );
-                Assert.Equal("found", planned.Status);
+                Assert.Equal(RoutePlanStatus.Found, planned.Status);
                 Assert.Equal(11, planned.TotalTravelCost);
                 Assert.Equal("landmark", planned.SearchStats.HeuristicName);
                 Assert.Equal(2, planned.SearchStats.LandmarkCount);

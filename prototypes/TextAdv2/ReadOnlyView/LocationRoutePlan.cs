@@ -13,7 +13,7 @@ namespace Atelia.TextAdv2.ReadOnlyView;
 ///
 /// 不使用“零步 + 总成本 0”同时表达多种语义，避免调用方必须靠猜测解读结果。
 /// </summary>
-internal sealed record LocationRoutePlanObservation(
+public sealed record LocationRoutePlanObservation(
     string FromLocationId,
     string FromLocationName,
     string ToLocationId,
@@ -25,7 +25,7 @@ internal sealed record LocationRoutePlanObservation(
     LocationRoutePlanSearchStatsObservation SearchStats
 );
 
-internal sealed record LocationRoutePlanSearchStatsObservation(
+public sealed record LocationRoutePlanSearchStatsObservation(
     string HeuristicName,
     int LandmarkCount,
     int ExpandedNodeCount,
@@ -38,7 +38,7 @@ internal sealed record LocationRoutePlanSearchStatsObservation(
 /// 规划结果中的一步。
 /// 这是 Location 级图上的一条有向边选择，并保留累计成本，方便人工核对路径是否符合预期。
 /// </summary>
-internal sealed record LocationRoutePlanStepObservation(
+public sealed record LocationRoutePlanStepObservation(
     int StepNumber,
     string PassageId,
     string ExitName,
@@ -51,7 +51,7 @@ internal sealed record LocationRoutePlanStepObservation(
     int CumulativeTravelCost
 );
 
-internal enum RoutePlanStatus {
+public enum RoutePlanStatus {
     Found,
     AlreadyThere,
     Unreachable,

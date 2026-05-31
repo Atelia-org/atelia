@@ -93,28 +93,28 @@ public sealed class WorldSession : IDisposable {
         }
     }
 
-    public LocationSnapshot ObserveLocation(string locationId) {
+    public LocationObservation ObserveLocation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return SessionSnapshotProjector.ProjectLocation(_world, locationId);
+        return LocationObservationProjector.ObserveLocation(_world, locationId);
     }
 
-    public ActorSnapshot ObserveActor(string actorId) {
+    public ActorLocationObservation ObserveActor(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return SessionSnapshotProjector.ProjectActor(_world, actorId);
+        return LocationObservationProjector.ObserveActorLocation(_world, actorId);
     }
 
-    public LocationNavigationSnapshot ObserveNavigation(string locationId) {
+    public LocationNavigationObservation ObserveNavigation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return SessionSnapshotProjector.ProjectNavigation(_world, locationId);
+        return NavigationObservationProjector.ObserveLocationNavigation(_world, locationId);
     }
 
-    public ActorNavigationSnapshot ObserveActorNavigation(string actorId) {
+    public ActorNavigationObservation ObserveActorNavigation(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return SessionSnapshotProjector.ProjectActorNavigation(_world, actorId);
+        return NavigationObservationProjector.ObserveActorNavigation(_world, actorId);
     }
 
     public RouteAccelerationSnapshot ObserveRouteAcceleration() {
@@ -133,33 +133,29 @@ public sealed class WorldSession : IDisposable {
         return AdvanceLogicalTime(ticks);
     }
 
-    public RoutePlan PlanActorRoute(string actorId, string toLocationId) {
+    public LocationRoutePlanObservation PlanActorRoute(string actorId, string toLocationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
 
-        return SessionRoutePlanProjector.Project(
-            LocationRoutePlanner.PlanShortestRouteForActor(
-                _world,
-                actorId,
-                toLocationId,
-                _routeAcceleration.GetPlanningOptions(_world)
-            )
+        return LocationRoutePlanner.PlanShortestRouteForActor(
+            _world,
+            actorId,
+            toLocationId,
+            _routeAcceleration.GetPlanningOptions(_world)
         );
     }
 
-    public RoutePlan PlanRoute(string fromLocationId, string toLocationId) {
+    public LocationRoutePlanObservation PlanRoute(string fromLocationId, string toLocationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(fromLocationId);
         ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
 
-        return SessionRoutePlanProjector.Project(
-            LocationRoutePlanner.PlanShortestRoute(
-                _world,
-                fromLocationId,
-                toLocationId,
-                _routeAcceleration.GetPlanningOptions(_world)
-            )
+        return LocationRoutePlanner.PlanShortestRoute(
+            _world,
+            fromLocationId,
+            toLocationId,
+            _routeAcceleration.GetPlanningOptions(_world)
         );
     }
 
@@ -187,7 +183,7 @@ public sealed class WorldSession : IDisposable {
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
 
-        return SessionSnapshotProjector.ProjectMovement(MoveActorCore(actorId, passageId));
+        return SessionMovementProjector.Project(MoveActorCore(actorId, passageId));
     }
 
     public void Dispose() {

@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.Session;
 using Atelia.TextAdv2.WorldTruth;
 using Atelia.TextAdv2.DevSupport;
@@ -10,7 +12,7 @@ using Xunit;
 namespace Atelia.TextAdv2.Tests;
 
 public class GameServerIntegrationTests {
-    private static readonly JsonSerializerOptions HostJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions HostJsonOptions = CreateHostJsonOptions();
 
     [Fact]
     public async Task AdminWorld_ReturnsPlainTextWorldDumpAsync() {
@@ -45,7 +47,7 @@ public class GameServerIntegrationTests {
             using var client = factory.CreateClient();
 
             using var initialObserve = await client.GetAsync("/actors/scout/observation");
-            var initialObservation = await ReadJsonAsync<ActorSnapshot>(initialObserve);
+            var initialObservation = await ReadJsonAsync<ActorLocationObservation>(initialObserve);
             Assert.NotNull(initialObservation);
             Assert.Equal("square", initialObservation.Location.LocationId);
 
@@ -75,7 +77,7 @@ public class GameServerIntegrationTests {
             Assert.Equal("session-connected", resetJson.RootElement.GetProperty("mode").GetString());
 
             using var reopenedObserve = await client.GetAsync("/actors/scout/observation");
-            var reopenedObservation = await ReadJsonAsync<ActorSnapshot>(reopenedObserve);
+            var reopenedObservation = await ReadJsonAsync<ActorLocationObservation>(reopenedObserve);
             Assert.NotNull(reopenedObservation);
             Assert.Equal("square", reopenedObservation.Location.LocationId);
         }
@@ -287,17 +289,17 @@ public class GameServerIntegrationTests {
             }
 
             using var adminObservation = await client.GetAsync("/admin/locations/square/observation");
-            var adminLocationObservation = await ReadJsonAsync<LocationSnapshot>(adminObservation);
+            var adminLocationObservation = await ReadJsonAsync<LocationObservation>(adminObservation);
             Assert.Equal(HttpStatusCode.OK, adminObservation.StatusCode);
             Assert.Equal("application/json", adminObservation.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminLocationObservation);
             Assert.Contains(
                 adminLocationObservation.Exits,
-                static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate && exit.TravelMode == "portal"
+                static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate && exit.TravelMode == TravelMode.Portal
             );
 
             using var adminNavigation = await client.GetAsync("/admin/locations/square/navigation");
-            var adminNavigationObservation = await ReadJsonAsync<LocationNavigationSnapshot>(adminNavigation);
+            var adminNavigationObservation = await ReadJsonAsync<LocationNavigationObservation>(adminNavigation);
             Assert.Equal(HttpStatusCode.OK, adminNavigation.StatusCode);
             Assert.Equal("application/json", adminNavigation.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminNavigationObservation);
@@ -305,17 +307,17 @@ public class GameServerIntegrationTests {
                 adminNavigationObservation.Edges,
                 edge => {
                     Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, edge.PassageId);
-                    Assert.Equal("land", edge.TravelMode);
+                    Assert.Equal(TravelMode.Land, edge.TravelMode);
                     Assert.Equal(5, edge.TravelCost);
                 },
                 edge => {
                     Assert.Equal(TestWorldBuilder.PassageIds.SquareShrineGate, edge.PassageId);
-                    Assert.Equal("portal", edge.TravelMode);
+                    Assert.Equal(TravelMode.Portal, edge.TravelMode);
                     Assert.Equal(1, edge.TravelCost);
                 },
                 edge => {
                     Assert.Equal(TestWorldBuilder.PassageIds.VillageSquareRoad, edge.PassageId);
-                    Assert.Equal("land", edge.TravelMode);
+                    Assert.Equal(TravelMode.Land, edge.TravelMode);
                     Assert.Equal(1, edge.TravelCost);
                 }
             );
@@ -325,13 +327,13 @@ public class GameServerIntegrationTests {
 
             using var adminRoute = await client.GetAsync("/admin/routes/village/aerie");
             string adminRouteText = await adminRoute.Content.ReadAsStringAsync();
-            var adminRouteJson = JsonSerializer.Deserialize<RoutePlan>(adminRouteText, HostJsonOptions);
+            var adminRouteJson = JsonSerializer.Deserialize<LocationRoutePlanObservation>(adminRouteText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, adminRoute.StatusCode);
             Assert.Equal("application/json", adminRoute.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminRouteJson);
             Assert.Contains("\"fromLocationId\"", adminRouteText, StringComparison.Ordinal);
             Assert.DoesNotContain("\"FromLocationId\"", adminRouteText, StringComparison.Ordinal);
-            Assert.Equal("found", adminRouteJson.Status);
+            Assert.Equal(RoutePlanStatus.Found, adminRouteJson.Status);
             Assert.Equal(11, adminRouteJson.TotalTravelCost);
             Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, adminRouteJson.Steps[^1].PassageId);
 
@@ -368,7 +370,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.NotFound, publicAcceleration.StatusCode);
 
             using var actorNavigation = await client.GetAsync("/actors/scout/navigation");
-            var actorNavigationObservation = await ReadJsonAsync<ActorNavigationSnapshot>(actorNavigation);
+            var actorNavigationObservation = await ReadJsonAsync<ActorNavigationObservation>(actorNavigation);
             Assert.Equal(HttpStatusCode.OK, actorNavigation.StatusCode);
             Assert.Equal("application/json", actorNavigation.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(actorNavigationObservation);
@@ -377,19 +379,19 @@ public class GameServerIntegrationTests {
             Assert.Contains(
                 actorNavigationObservation.Navigation.Edges,
                 static edge => edge.PassageId == TestWorldBuilder.PassageIds.SquareShrineGate
-                    && edge.TravelMode == "portal"
+                    && edge.TravelMode == TravelMode.Portal
                     && edge.TravelCost == 1
             );
 
             using var actorRoutePlan = await client.GetAsync("/actors/scout/plan-route/aerie");
             string actorRoutePlanText = await actorRoutePlan.Content.ReadAsStringAsync();
-            var actorRoutePlanJson = JsonSerializer.Deserialize<RoutePlan>(actorRoutePlanText, HostJsonOptions);
+            var actorRoutePlanJson = JsonSerializer.Deserialize<LocationRoutePlanObservation>(actorRoutePlanText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, actorRoutePlan.StatusCode);
             Assert.Equal("application/json", actorRoutePlan.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(actorRoutePlanJson);
             Assert.Equal(TestWorldBuilder.LocationIds.Square, actorRoutePlanJson.FromLocationId);
             Assert.Equal(TestWorldBuilder.LocationIds.Aerie, actorRoutePlanJson.ToLocationId);
-            Assert.Equal("found", actorRoutePlanJson.Status);
+            Assert.Equal(RoutePlanStatus.Found, actorRoutePlanJson.Status);
             Assert.Equal(10, actorRoutePlanJson.TotalTravelCost);
         }
         finally {
@@ -438,24 +440,24 @@ public class GameServerIntegrationTests {
 
             using var alreadyThereResponse = await client.GetAsync("/admin/routes/shrine/shrine");
             string alreadyThereText = await alreadyThereResponse.Content.ReadAsStringAsync();
-            var alreadyThereJson = JsonSerializer.Deserialize<RoutePlan>(alreadyThereText, HostJsonOptions);
+            var alreadyThereJson = JsonSerializer.Deserialize<LocationRoutePlanObservation>(alreadyThereText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, alreadyThereResponse.StatusCode);
             Assert.Equal("application/json", alreadyThereResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(alreadyThereJson);
-            Assert.Equal("already-there", alreadyThereJson.Status);
+            Assert.Equal(RoutePlanStatus.AlreadyThere, alreadyThereJson.Status);
             Assert.Equal(0, alreadyThereJson.StepCount);
             Assert.Equal(0, alreadyThereJson.TotalTravelCost);
             Assert.Empty(alreadyThereJson.Steps);
 
             using var unreachableResponse = await client.GetAsync("/admin/routes/delta/harbor");
             string unreachableText = await unreachableResponse.Content.ReadAsStringAsync();
-            var unreachableJson = JsonSerializer.Deserialize<RoutePlan>(unreachableText, HostJsonOptions);
+            var unreachableJson = JsonSerializer.Deserialize<LocationRoutePlanObservation>(unreachableText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, unreachableResponse.StatusCode);
             Assert.Equal("application/json", unreachableResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(unreachableJson);
-            Assert.Equal("unreachable", unreachableJson.Status);
+            Assert.Equal(RoutePlanStatus.Unreachable, unreachableJson.Status);
             Assert.Equal(0, unreachableJson.StepCount);
             Assert.Null(unreachableJson.TotalTravelCost);
             Assert.Empty(unreachableJson.Steps);
@@ -475,24 +477,24 @@ public class GameServerIntegrationTests {
 
             using var alreadyThereResponse = await client.GetAsync("/actors/scout/plan-route/square");
             string alreadyThereText = await alreadyThereResponse.Content.ReadAsStringAsync();
-            var alreadyThereJson = JsonSerializer.Deserialize<RoutePlan>(alreadyThereText, HostJsonOptions);
+            var alreadyThereJson = JsonSerializer.Deserialize<LocationRoutePlanObservation>(alreadyThereText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, alreadyThereResponse.StatusCode);
             Assert.Equal("application/json", alreadyThereResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(alreadyThereJson);
-            Assert.Equal("already-there", alreadyThereJson.Status);
+            Assert.Equal(RoutePlanStatus.AlreadyThere, alreadyThereJson.Status);
             Assert.Equal(0, alreadyThereJson.StepCount);
             Assert.Equal(0, alreadyThereJson.TotalTravelCost);
             Assert.Empty(alreadyThereJson.Steps);
 
             using var unreachableResponse = await client.GetAsync("/actors/boatman/plan-route/village");
             string unreachableText = await unreachableResponse.Content.ReadAsStringAsync();
-            var unreachableJson = JsonSerializer.Deserialize<RoutePlan>(unreachableText, HostJsonOptions);
+            var unreachableJson = JsonSerializer.Deserialize<LocationRoutePlanObservation>(unreachableText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, unreachableResponse.StatusCode);
             Assert.Equal("application/json", unreachableResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(unreachableJson);
-            Assert.Equal("unreachable", unreachableJson.Status);
+            Assert.Equal(RoutePlanStatus.Unreachable, unreachableJson.Status);
             Assert.Equal(0, unreachableJson.StepCount);
             Assert.Null(unreachableJson.TotalTravelCost);
             Assert.Empty(unreachableJson.Steps);
@@ -535,7 +537,7 @@ public class GameServerIntegrationTests {
             Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceText, StringComparison.Ordinal);
 
             using var observedAfterRestart = await secondClient.GetAsync("/actors/scout/observation");
-            var observedAfterRestartJson = await ReadJsonAsync<ActorSnapshot>(observedAfterRestart);
+            var observedAfterRestartJson = await ReadJsonAsync<ActorLocationObservation>(observedAfterRestart);
             Assert.NotNull(observedAfterRestartJson);
             Assert.Equal("ridge", observedAfterRestartJson.Location.LocationId);
         }
@@ -586,5 +588,11 @@ public class GameServerIntegrationTests {
             builder.UseSetting("TextAdv2:RepoDir", repoDir);
             builder.UseSetting("TextAdv2:AutoBootstrapSampleWorld", autoBootstrapSampleWorld ? "true" : "false");
         }
+    }
+
+    private static JsonSerializerOptions CreateHostJsonOptions() {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
     }
 }
