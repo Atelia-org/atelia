@@ -50,6 +50,7 @@
 - parity 比较以 JSON 语义为准，不以 DTO 引用相等或原始字符串字节相等为准
 - `E2eCli` 的 machine 调用优先使用 `--json-only`
 - `GameServer` 的 machine 调用优先使用对应 JSON endpoint
+- 当前文档中的 canonical seam 默认都指“当前已被 parity suite 实际 guard 的运行基线”，不是对所有 runtime 子状态都已完成收口的广义承诺
 
 ## Runtime Boundary Notes
 
@@ -65,14 +66,16 @@
   - reopen / host restart / reset sample world 后会 reset，这一点是设计边界，不是偶然现象
 - route acceleration
   - 当前仍是 session-owned runtime cache
+  - `plan-route` / `plan-actor-route` 当前已进入 canonical machine surface，但当前 parity guard 只覆盖 fresh-session 默认 planning baseline
+  - 如果先 `rebuild-route-acceleration`，或进入 topology changed 后的 stale runtime，再去比较 route plan JSON，当前还不应默认视为已被完整 cross-host parity guard 守住
   - topology 变化后可 stale，reopen / host restart / reset sample world 后 reset
   - `route-acceleration` 相关 JSON 仍未进入 canonical machine surface，也不应默认视为 durable contract
 
 ## 当前不属于 canonical machine surface 的内容
 
-- 尚未进入 parity guard 的其他 JSON seam
+- 尚未进入完整 parity guard 的其他 JSON seam
   - `create-actor`、`create-passage`
-  - `route-trace/json`
+  - `route-trace/json`（当前只保留 fresh-session empty-trace compatibility guard）
   - `observe-route-acceleration`、`rebuild-route-acceleration`
 - CLI 默认 stdout（包括 repo banner、分段标题和文本输出）
 - `E2eCli help`
