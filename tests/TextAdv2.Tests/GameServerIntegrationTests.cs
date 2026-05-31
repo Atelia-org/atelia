@@ -319,6 +319,14 @@ public class GameServerIntegrationTests {
             using var factory = CreateFactory(repoDir);
             using var client = factory.CreateClient();
 
+            using var rootResponse = await client.GetAsync("/");
+            string rootText = await rootResponse.Content.ReadAsStringAsync();
+            var rootJson = JsonDocument.Parse(rootText);
+
+            Assert.Equal(HttpStatusCode.OK, rootResponse.StatusCode);
+            Assert.Equal("alive", rootJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
+            Assert.Equal("ready", rootJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+
             using var response = await client.GetAsync("/admin/session-status");
             string jsonText = await response.Content.ReadAsStringAsync();
             var json = JsonDocument.Parse(jsonText);
@@ -332,13 +340,33 @@ public class GameServerIntegrationTests {
             Assert.Equal("sample-world-dev", json.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
             Assert.Equal("open-or-create-sample-world", json.RootElement.GetProperty("hostPolicy").GetProperty("sessionOpenMode").GetString());
             Assert.True(json.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
-            Assert.Contains(
-                json.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
-                static endpoint => string.Equals(endpoint, "POST /admin/reset-sample-world", StringComparison.Ordinal)
-            );
-            Assert.Contains(
-                json.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
-                static endpoint => string.Equals(endpoint, "GET /actors/{actorId}/context", StringComparison.Ordinal)
+            Assert.Equal(
+                [
+                    "GET /",
+                    "GET /healthz",
+                    "GET /admin/session-status",
+                    "GET /admin/world",
+                    "GET /admin/time",
+                    "POST /admin/locations",
+                    "POST /admin/actors",
+                    "POST /admin/passages",
+                    "POST /admin/reset-sample-world",
+                    "POST /admin/advance-time/{ticks}",
+                    "GET /admin/route-acceleration",
+                    "POST /admin/route-acceleration/rebuild?landmarks=<locationId[,locationId...]|default>",
+                    "GET /admin/locations/{locationId}",
+                    "GET /admin/locations/{locationId}/observation",
+                    "GET /admin/locations/{locationId}/navigation",
+                    "GET /admin/routes/{fromLocationId}/{toLocationId}",
+                    "GET /actors/{actorId}/observation",
+                    "GET /actors/{actorId}/context",
+                    "GET /actors/{actorId}/navigation",
+                    "POST /actors/{actorId}/moves/{passageId}",
+                    "GET /actors/{actorId}/route-trace",
+                    "GET /actors/{actorId}/route-trace/json",
+                    "GET /actors/{actorId}/plan-route/{toLocationId}",
+                ],
+                ReadPlannedEndpoints(json.RootElement)
             );
             Assert.Equal("ready", json.RootElement.GetProperty("session").GetProperty("readiness").GetString());
             Assert.Equal("Atelia.TextAdv2", json.RootElement.GetProperty("session").GetProperty("engineAssemblyName").GetString());
@@ -388,25 +416,32 @@ public class GameServerIntegrationTests {
             Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
             Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sessionOpenMode").GetString());
             Assert.False(statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
-            Assert.DoesNotContain(
-                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
-                static endpoint => string.Equals(endpoint, "POST /admin/reset-sample-world", StringComparison.Ordinal)
-            );
-            Assert.Contains(
-                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
-                static endpoint => string.Equals(endpoint, "POST /admin/locations", StringComparison.Ordinal)
-            );
-            Assert.Contains(
-                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
-                static endpoint => string.Equals(endpoint, "POST /admin/actors", StringComparison.Ordinal)
-            );
-            Assert.Contains(
-                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
-                static endpoint => string.Equals(endpoint, "POST /admin/passages", StringComparison.Ordinal)
-            );
-            Assert.Contains(
-                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
-                static endpoint => string.Equals(endpoint, "GET /actors/{actorId}/context", StringComparison.Ordinal)
+            Assert.Equal(
+                [
+                    "GET /",
+                    "GET /healthz",
+                    "GET /admin/session-status",
+                    "GET /admin/world",
+                    "GET /admin/time",
+                    "POST /admin/locations",
+                    "POST /admin/actors",
+                    "POST /admin/passages",
+                    "POST /admin/advance-time/{ticks}",
+                    "GET /admin/route-acceleration",
+                    "POST /admin/route-acceleration/rebuild?landmarks=<locationId[,locationId...]|default>",
+                    "GET /admin/locations/{locationId}",
+                    "GET /admin/locations/{locationId}/observation",
+                    "GET /admin/locations/{locationId}/navigation",
+                    "GET /admin/routes/{fromLocationId}/{toLocationId}",
+                    "GET /actors/{actorId}/observation",
+                    "GET /actors/{actorId}/context",
+                    "GET /actors/{actorId}/navigation",
+                    "POST /actors/{actorId}/moves/{passageId}",
+                    "GET /actors/{actorId}/route-trace",
+                    "GET /actors/{actorId}/route-trace/json",
+                    "GET /actors/{actorId}/plan-route/{toLocationId}",
+                ],
+                ReadPlannedEndpoints(statusJson.RootElement)
             );
         }
         finally {
@@ -729,6 +764,13 @@ public class GameServerIntegrationTests {
         try {
             using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
             using var client = factory.CreateClient();
+
+            using var rootResponse = await client.GetAsync("/");
+            string rootText = await rootResponse.Content.ReadAsStringAsync();
+            var rootJson = JsonDocument.Parse(rootText);
+            Assert.Equal(HttpStatusCode.OK, rootResponse.StatusCode);
+            Assert.Equal("alive", rootJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
+            Assert.Equal("open-failed", rootJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
 
             using var statusResponse = await client.GetAsync("/admin/session-status");
             string statusText = await statusResponse.Content.ReadAsStringAsync();
@@ -1182,6 +1224,13 @@ public class GameServerIntegrationTests {
         => presentActors
             .Select(static actor => actor.ActorId)
             .OrderBy(static actorId => actorId, StringComparer.Ordinal)
+            .ToArray();
+
+    private static string[] ReadPlannedEndpoints(JsonElement root)
+        => root
+            .GetProperty("plannedEndpoints")
+            .EnumerateArray()
+            .Select(static x => x.GetString()!)
             .ToArray();
 
     private sealed class TextAdv2GameServerFactory(string repoDir, string bootstrapMode) : WebApplicationFactory<Program> {

@@ -6,13 +6,15 @@ namespace Atelia.TextAdv2.GameServer;
 internal sealed class SessionService : IDisposable {
     private readonly object _gate = new();
     private readonly HostingRuntimeInfo _runtimeInfo = HostingScaffold.DescribeCurrentState();
+    private readonly SessionStatusSnapshot _unavailableStatus;
     private WorldSession? _session;
     private SessionStatusSnapshot _status = null!;
     private bool _disposed;
 
     public SessionService(Func<WorldSession> openSession) {
         ArgumentNullException.ThrowIfNull(openSession);
-        TryOpenSession(openSession);
+        _unavailableStatus = SessionStatusSnapshot.CreateOpenFailed(_runtimeInfo, "Game session is unavailable.");
+        TryOpenSession(openSession, rethrowOpenFailure: false);
     }
 
     public TResult Invoke<TResult>(Func<WorldSession, TResult> operation) {
@@ -42,7 +44,8 @@ internal sealed class SessionService : IDisposable {
 
             _session?.Dispose();
             _session = null;
-            TryOpenSession(replacementFactory);
+            _status = _unavailableStatus;
+            TryOpenSession(replacementFactory, rethrowOpenFailure: true);
         }
     }
 
@@ -59,14 +62,17 @@ internal sealed class SessionService : IDisposable {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
-    private void TryOpenSession(Func<WorldSession> openSession) {
+    private void TryOpenSession(Func<WorldSession> openSession, bool rethrowOpenFailure) {
         try {
             _session = openSession();
             _status = SessionStatusSnapshot.CreateReady(_runtimeInfo);
         }
-        catch (Exception ex) {
+        catch (InvalidOperationException ex) {
             _session = null;
             _status = SessionStatusSnapshot.CreateOpenFailed(_runtimeInfo, ex.Message);
+            if (rethrowOpenFailure) {
+                throw;
+            }
         }
     }
 }

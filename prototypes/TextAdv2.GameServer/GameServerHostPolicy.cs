@@ -117,6 +117,9 @@ internal sealed class GameServerHostPolicy {
 
     private static string[] BuildPlannedEndpoints(bool sampleWorldResetEnabled) {
         var endpoints = new List<string> {
+            "GET /",
+            "GET /healthz",
+            "GET /admin/session-status",
             "GET /admin/world",
             "GET /admin/time",
             "POST /admin/locations",
@@ -139,7 +142,7 @@ internal sealed class GameServerHostPolicy {
         };
 
         if (sampleWorldResetEnabled) {
-            endpoints.Insert(5, "POST /admin/reset-sample-world");
+            endpoints.Insert(8, "POST /admin/reset-sample-world");
         }
 
         return [.. endpoints];
