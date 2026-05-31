@@ -233,9 +233,15 @@ P3b.1 本轮落地结果：
 - `TestWorldBuilder` 与关键 route-acceleration / planner / world-builder tests 已迁移到这些 world-level API，不再把 `Passage.Set*` 当主写入口。
 - `Passage.Set*` 已从 public 收紧为 internal，开始把 `Passage` 朝只读 facade 收口。
 
+P3b.2 本轮落地结果：
+
+- `WorldState.CreatePassage(...)`、`GetPassage(...)`、`TryGetPassage(...)`、`EnumeratePassages()`、`EnumeratePassagesTouching(...)` 已统一改为返回 distinct `PassageView` 只读 facade，不再把 concrete mutable `Passage` 暴露给主读链路。
+- `WorldState` 内部 writable `Passage` 获取已收成 private helper，仅供 `SetPassage*` 与合法移动路径使用，没有新增对外可滥用的 mutable get 旁路。
+- `ReadOnlyView`、`Runtime`、`WorldDumpRenderer` 与关键测试已迁到 facade，`Passage` concrete type 不再出现在这些主读链路里。
+
 P3b 下一自然入口：
 
-- `P3b.2` 继续封闭叶子写口，避免 `GetPassage()` 返回对象仍可在同程序集内作为并列写入口；必要时再引入更显式的 world editor 内部实现形态。
+- 继续评估 `Location` / `Actor` 的叶子写口收权方式，以及是否需要在更大范围内引入显式 world editor 形态。
 
 ### P4. 建立 canonical navigation graph seam
 

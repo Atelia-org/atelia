@@ -120,7 +120,7 @@ internal static class WorldDumpRenderer {
         builder.AppendLine($"- {actor.Id} | {actor.Name} | location={location.Id} ({location.Name})");
     }
 
-    private static void AppendPassage(StringBuilder builder, Passage passage) {
+    private static void AppendPassage(StringBuilder builder, PassageView passage) {
         builder.AppendLine($"- {passage.Id}");
         builder.AppendLine(
             $"  shared: mode={passage.TravelMode.ToStorageValue()} | base={passage.BaseTravelCost} | note={FormatOptional(passage.SharedConditionNote)}"
@@ -150,7 +150,7 @@ internal static class WorldDumpRenderer {
         StringBuilder builder,
         string fromLocationId,
         string toLocationId,
-        PassageDirectionRule direction,
+        PassageDirectionRuleView direction,
         int baseTravelCost
     ) {
         builder.AppendLine(

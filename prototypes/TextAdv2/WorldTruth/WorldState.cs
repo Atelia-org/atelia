@@ -128,7 +128,7 @@ internal sealed class WorldState {
         return false;
     }
 
-    public Passage CreatePassage(
+    public PassageView CreatePassage(
         string id,
         string locationAId,
         string exitNameFromA,
@@ -147,7 +147,7 @@ internal sealed class WorldState {
         if (string.Equals(locationAId, locationBId, StringComparison.Ordinal)) {
             throw new InvalidOperationException("A passage must connect two different locations.");
         }
-        if (TryGetPassage(id, out _)) {
+        if (TryGetWritablePassage(id, out _)) {
             throw new InvalidOperationException($"Passage '{id}' already exists.");
         }
 
@@ -167,22 +167,14 @@ internal sealed class WorldState {
             baseTravelCost
         );
         PassagesLedger.Upsert(id, passage.Data);
-        return passage;
+        return passage.AsView();
     }
 
-    public Passage GetPassage(string id) {
-        if (TryGetPassage(id, out var passage) && passage is not null) {
-            return passage;
-        }
+    public PassageView GetPassage(string id) => GetWritablePassage(id).AsView();
 
-        throw new InvalidOperationException($"Passage '{id}' does not exist.");
-    }
-
-    public bool TryGetPassage(string id, out Passage? passage) {
-        ValidateEntityId(id, nameof(id));
-
-        if (PassagesLedger.TryGet(id, out DurableDict<string>? data)) {
-            passage = new Passage(data!);
+    public bool TryGetPassage(string id, out PassageView? passage) {
+        if (TryGetWritablePassage(id, out var writablePassage) && writablePassage is not null) {
+            passage = writablePassage.AsView();
             return true;
         }
 
@@ -191,41 +183,41 @@ internal sealed class WorldState {
     }
 
     public void SetPassageTravelMode(string passageId, TravelMode value) {
-        var passage = GetPassage(passageId);
+        var passage = GetWritablePassage(passageId);
         passage.SetTravelMode(value);
     }
 
     public void SetPassageBaseTravelCost(string passageId, int value) {
-        var passage = GetPassage(passageId);
+        var passage = GetWritablePassage(passageId);
         passage.SetBaseTravelCost(value);
     }
 
     public void SetPassageSharedConditionNote(string passageId, string value) {
-        var passage = GetPassage(passageId);
+        var passage = GetWritablePassage(passageId);
         passage.SetSharedConditionNote(value);
     }
 
     public void SetPassageEndpointLocalViewNote(string passageId, string locationId, string value) {
         EnsureLocationExists(locationId);
-        var passage = GetPassage(passageId);
+        var passage = GetWritablePassage(passageId);
         passage.SetEndpointLocalViewNote(locationId, value);
     }
 
     public void SetPassageDirectionEnabledFrom(string passageId, string locationId, bool isEnabled) {
         EnsureLocationExists(locationId);
-        var passage = GetPassage(passageId);
+        var passage = GetWritablePassage(passageId);
         passage.SetDirectionEnabledFrom(locationId, isEnabled);
     }
 
     public void SetPassageDirectionTravelCostModifierFrom(string passageId, string locationId, int value) {
         EnsureLocationExists(locationId);
-        var passage = GetPassage(passageId);
+        var passage = GetWritablePassage(passageId);
         passage.SetDirectionTravelCostModifierFrom(locationId, value);
     }
 
     public void SetPassageDirectionConditionNoteFrom(string passageId, string locationId, string value) {
         EnsureLocationExists(locationId);
-        var passage = GetPassage(passageId);
+        var passage = GetWritablePassage(passageId);
         passage.SetDirectionConditionNoteFrom(locationId, value);
     }
 
@@ -238,7 +230,7 @@ internal sealed class WorldState {
     /// </summary>
     public Actor MoveActorAlongPassage(string actorId, string passageId) {
         var actor = GetActor(actorId);
-        var passage = GetPassage(passageId);
+        var passage = GetWritablePassage(passageId);
         var fromLocationId = actor.CurrentLocationId;
 
         if (!passage.Connects(fromLocationId)) {
@@ -282,19 +274,15 @@ internal sealed class WorldState {
         }
     }
 
-    public IEnumerable<Passage> EnumeratePassages() {
-        foreach (var passageId in PassagesLedger.Keys) {
-            yield return new Passage(PassagesLedger.GetOrThrow<DurableDict<string>>(passageId)!);
+    public IEnumerable<PassageView> EnumeratePassages() {
+        foreach (var passage in EnumerateWritablePassages()) {
+            yield return passage.AsView();
         }
     }
 
-    public IEnumerable<Passage> EnumeratePassagesTouching(string locationId) {
-        EnsureLocationExists(locationId);
-
-        foreach (var passage in EnumeratePassages()) {
-            if (passage.Connects(locationId)) {
-                yield return passage;
-            }
+    public IEnumerable<PassageView> EnumeratePassagesTouching(string locationId) {
+        foreach (var passage in EnumerateWritablePassagesTouching(locationId)) {
+            yield return passage.AsView();
         }
     }
 
@@ -342,6 +330,42 @@ internal sealed class WorldState {
     internal static void ValidateRequiredText(string value, string paramName)
         => ArgumentException.ThrowIfNullOrWhiteSpace(value, paramName);
 
+    private Passage GetWritablePassage(string id) {
+        if (TryGetWritablePassage(id, out var passage) && passage is not null) {
+            return passage;
+        }
+
+        throw new InvalidOperationException($"Passage '{id}' does not exist.");
+    }
+
+    private bool TryGetWritablePassage(string id, out Passage? passage) {
+        ValidateEntityId(id, nameof(id));
+
+        if (PassagesLedger.TryGet(id, out DurableDict<string>? data)) {
+            passage = new Passage(data!);
+            return true;
+        }
+
+        passage = null;
+        return false;
+    }
+
+    private IEnumerable<Passage> EnumerateWritablePassages() {
+        foreach (var passageId in PassagesLedger.Keys) {
+            yield return new Passage(PassagesLedger.GetOrThrow<DurableDict<string>>(passageId)!);
+        }
+    }
+
+    private IEnumerable<Passage> EnumerateWritablePassagesTouching(string locationId) {
+        EnsureLocationExists(locationId);
+
+        foreach (var passage in EnumerateWritablePassages()) {
+            if (passage.Connects(locationId)) {
+                yield return passage;
+            }
+        }
+    }
+
     private void EnsureLocationExists(string locationId) {
         if (!TryGetLocation(locationId, out _)) {
             throw new InvalidOperationException($"Location '{locationId}' does not exist.");
@@ -349,7 +373,7 @@ internal sealed class WorldState {
     }
 
     private void EnsureExitNameAvailable(string locationId, string exitName) {
-        foreach (var passage in EnumeratePassagesTouching(locationId)) {
+        foreach (var passage in EnumerateWritablePassagesTouching(locationId)) {
             var existingExitName = passage.GetEndpointFor(locationId).ExitName;
             if (string.Equals(existingExitName, exitName, StringComparison.Ordinal)) {
                 throw new InvalidOperationException(
