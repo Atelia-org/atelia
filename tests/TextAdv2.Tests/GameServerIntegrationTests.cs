@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
@@ -173,6 +174,168 @@ public class GameServerIntegrationTests {
                 statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
                 static endpoint => string.Equals(endpoint, "POST /admin/reset-sample-world", StringComparison.Ordinal)
             );
+            Assert.Contains(
+                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
+                static endpoint => string.Equals(endpoint, "POST /admin/locations", StringComparison.Ordinal)
+            );
+            Assert.Contains(
+                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
+                static endpoint => string.Equals(endpoint, "POST /admin/actors", StringComparison.Ordinal)
+            );
+            Assert.Contains(
+                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
+                static endpoint => string.Equals(endpoint, "POST /admin/passages", StringComparison.Ordinal)
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task OpenExistingOnlyMode_AdminAuthoringEndpoints_SupportEmptyRepoWorkflowAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (WorldSession.CreateEmpty(repoDir)) {
+            }
+            WaitUntilSessionCanReopen(repoDir);
+
+            using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
+            using var client = factory.CreateClient();
+
+            using var createStartResponse = await client.PostAsJsonAsync(
+                "/admin/locations",
+                new {
+                    id = "start",
+                    name = "Start",
+                    description = "Start of the authored route.",
+                }
+            );
+            var createdStart = await ReadJsonAsync<LocationAuthoringSnapshot>(createStartResponse);
+            Assert.Equal(HttpStatusCode.OK, createStartResponse.StatusCode);
+            Assert.NotNull(createdStart);
+            Assert.Equal("start", createdStart.LocationId);
+            Assert.Equal("Start", createdStart.LocationName);
+
+            using var createGoalResponse = await client.PostAsJsonAsync(
+                "/admin/locations",
+                new {
+                    id = "goal",
+                    name = "Goal",
+                    description = "Goal of the authored route.",
+                }
+            );
+            var createdGoal = await ReadJsonAsync<LocationAuthoringSnapshot>(createGoalResponse);
+            Assert.Equal(HttpStatusCode.OK, createGoalResponse.StatusCode);
+            Assert.NotNull(createdGoal);
+            Assert.Equal("goal", createdGoal.LocationId);
+
+            using var createActorResponse = await client.PostAsJsonAsync(
+                "/admin/actors",
+                new {
+                    id = "runner",
+                    name = "Runner",
+                    currentLocationId = "start",
+                }
+            );
+            var createdActor = await ReadJsonAsync<ActorAuthoringSnapshot>(createActorResponse);
+            Assert.Equal(HttpStatusCode.OK, createActorResponse.StatusCode);
+            Assert.NotNull(createdActor);
+            Assert.Equal("runner", createdActor.ActorId);
+            Assert.Equal("start", createdActor.CurrentLocationId);
+
+            using var createPassageResponse = await client.PostAsJsonAsync(
+                "/admin/passages",
+                new {
+                    id = "start-goal",
+                    locationAId = "start",
+                    exitNameFromA = "go",
+                    locationBId = "goal",
+                    exitNameFromB = "back",
+                }
+            );
+            var createdPassage = await ReadJsonAsync<PassageAuthoringSnapshot>(createPassageResponse);
+            Assert.Equal(HttpStatusCode.OK, createPassageResponse.StatusCode);
+            Assert.NotNull(createdPassage);
+            Assert.Equal("start-goal", createdPassage.PassageId);
+            Assert.Equal(TravelMode.Land, createdPassage.TravelMode);
+            Assert.Equal(1, createdPassage.BaseTravelCost);
+
+            using var planResponse = await client.GetAsync("/actors/runner/plan-route/goal");
+            var plan = await ReadJsonAsync<LocationRoutePlanObservation>(planResponse);
+            Assert.Equal(HttpStatusCode.OK, planResponse.StatusCode);
+            Assert.NotNull(plan);
+            Assert.Equal(RoutePlanStatus.Found, plan.Status);
+            Assert.Equal(1, plan.StepCount);
+            Assert.Equal("start-goal", plan.Steps[0].PassageId);
+            Assert.Equal(1, plan.TotalTravelCost);
+
+            using var moveResponse = await client.PostAsync("/actors/runner/moves/start-goal", content: null);
+            var move = await ReadJsonAsync<ActorMoveResult>(moveResponse);
+            Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
+            Assert.NotNull(move);
+            Assert.Equal("goal", move.ToLocationId);
+            Assert.Equal(TravelMode.Land, move.TravelMode);
+
+            using var observeResponse = await client.GetAsync("/actors/runner/observation");
+            var observation = await ReadJsonAsync<ActorLocationObservation>(observeResponse);
+            Assert.Equal(HttpStatusCode.OK, observeResponse.StatusCode);
+            Assert.NotNull(observation);
+            Assert.Equal("runner", observation.ActorId);
+            Assert.Equal("goal", observation.Location.LocationId);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task AdminCreatePassage_InvalidTravelMode_ReturnsBadRequestWithErrorPayloadAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (WorldSession.CreateEmpty(repoDir)) {
+            }
+            WaitUntilSessionCanReopen(repoDir);
+
+            using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
+            using var client = factory.CreateClient();
+
+            _ = await client.PostAsJsonAsync(
+                "/admin/locations",
+                new {
+                    id = "start",
+                    name = "Start",
+                    description = "Start.",
+                }
+            );
+            _ = await client.PostAsJsonAsync(
+                "/admin/locations",
+                new {
+                    id = "goal",
+                    name = "Goal",
+                    description = "Goal.",
+                }
+            );
+
+            using var response = await client.PostAsJsonAsync(
+                "/admin/passages",
+                new {
+                    id = "start-goal",
+                    locationAId = "start",
+                    exitNameFromA = "go",
+                    locationBId = "goal",
+                    exitNameFromB = "back",
+                    travelMode = "teleport",
+                }
+            );
+            string jsonText = await response.Content.ReadAsStringAsync();
+            var json = JsonDocument.Parse(jsonText);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            Assert.Contains("Unsupported travelMode", json.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

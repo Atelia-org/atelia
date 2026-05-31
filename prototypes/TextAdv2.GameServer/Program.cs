@@ -22,6 +22,29 @@ app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.Ga
 app.MapGet("/admin/session-status", () => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode)));
 app.MapGet("/admin/world", (SessionService session) => ExecuteText(session, DevTextRenderer.RenderWorld));
 app.MapGet("/admin/time", (SessionService session) => ExecuteJson(session, static x => x.ObserveTime()));
+app.MapPost("/admin/locations",
+    (CreateLocationRequest request, SessionService session)
+    => ExecuteJson(session, x => x.CreateLocation(request.Id, request.Name, request.Description))
+);
+app.MapPost("/admin/actors",
+    (CreateActorRequest request, SessionService session)
+    => ExecuteJson(session, x => x.CreateActor(request.Id, request.Name, request.CurrentLocationId))
+);
+app.MapPost("/admin/passages",
+    (CreatePassageRequest request, SessionService session)
+    => ExecuteJson(
+        session,
+        x => x.CreatePassage(
+            request.Id,
+            request.LocationAId,
+            request.ExitNameFromA,
+            request.LocationBId,
+            request.ExitNameFromB,
+            request.ResolveTravelMode(),
+            request.BaseTravelCost ?? 1
+        )
+    )
+);
 app.MapPost("/admin/advance-time/{ticks}",
     (string ticks, SessionService session)
     => ExecuteJson(session, x => x.AdvanceTime(ParseNonNegativeTickDelta(ticks)))

@@ -119,6 +119,9 @@ internal sealed class GameServerHostPolicy {
         var endpoints = new List<string> {
             "GET /admin/world",
             "GET /admin/time",
+            "POST /admin/locations",
+            "POST /admin/actors",
+            "POST /admin/passages",
             "POST /admin/advance-time/{ticks}",
             "GET /admin/route-acceleration",
             "POST /admin/route-acceleration/rebuild?landmarks=<locationId[,locationId...]|default>",
