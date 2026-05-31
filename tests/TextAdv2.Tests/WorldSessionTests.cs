@@ -332,6 +332,208 @@ public class WorldSessionTests {
     }
 
     [Fact]
+    public void SessionAuthoringSeam_CanCreateLocationsActorAndPassageWithoutLeakingWorldTruthTypes() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var session = CreateEmptySession(repoDir);
+
+            var village = session.CreateLocation("village", "Village", "A quiet riverside village.");
+            var square = session.CreateLocation("square", "Square", "A stone square for shared activity.");
+            var actor = session.CreateActor("runner", "Runner", village.LocationId);
+            var passage = session.CreatePassage(
+                "village-square-road",
+                village.LocationId,
+                "east",
+                square.LocationId,
+                "west",
+                TravelMode.Land,
+                2
+            );
+            var observedVillage = session.ObserveLocation(village.LocationId);
+            var observedActor = session.ObserveActor(actor.ActorId);
+
+            Assert.Equal("village", village.LocationId);
+            Assert.Equal("Village", village.LocationName);
+            Assert.Equal("A quiet riverside village.", village.LocationDescription);
+
+            Assert.Equal("runner", actor.ActorId);
+            Assert.Equal("Runner", actor.ActorName);
+            Assert.Equal(village.LocationId, actor.CurrentLocationId);
+
+            Assert.Equal("village-square-road", passage.PassageId);
+            Assert.Equal(village.LocationId, passage.EndpointA.LocationId);
+            Assert.Equal("east", passage.EndpointA.ExitName);
+            Assert.Equal(square.LocationId, passage.EndpointB.LocationId);
+            Assert.Equal("west", passage.EndpointB.ExitName);
+            Assert.Equal(TravelMode.Land, passage.TravelMode);
+            Assert.Equal(2, passage.BaseTravelCost);
+            Assert.True(passage.FromAToB.IsEnabled);
+            Assert.True(passage.FromBToA.IsEnabled);
+
+            Assert.Equal(village.LocationId, observedVillage.LocationId);
+            Assert.Contains(observedVillage.PresentActors, static presence => presence.ActorId == "runner");
+            Assert.Contains(
+                observedVillage.Exits,
+                static exit => exit.PassageId == "village-square-road"
+                    && exit.TargetLocationId == "square"
+                    && exit.TravelMode == TravelMode.Land
+                    && exit.TotalTravelCost == 2
+            );
+
+            Assert.Equal(actor.ActorId, observedActor.ActorId);
+            Assert.Equal(village.LocationId, observedActor.Location.LocationId);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void SessionAuthoringSeam_SetPassageMutationsReturnUpdatedTypedSnapshotAndAffectObservation() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var session = CreateEmptySession(repoDir);
+
+            var start = session.CreateLocation("start", "Start", "Start of the route.");
+            var goal = session.CreateLocation("goal", "Goal", "Goal of the route.");
+            _ = session.CreatePassage("start-goal", start.LocationId, "go", goal.LocationId, "back", TravelMode.Land, 2);
+
+            _ = session.SetPassageTravelMode("start-goal", TravelMode.Water);
+            _ = session.SetPassageBaseTravelCost("start-goal", 4);
+            _ = session.SetPassageSharedConditionNote("start-goal", "Water level is high.");
+            _ = session.SetPassageEndpointLocalViewNote("start-goal", start.LocationId, "A rope ferry waits here.");
+            _ = session.SetPassageDirectionTravelCostModifierFrom("start-goal", start.LocationId, 3);
+            _ = session.SetPassageDirectionConditionNoteFrom("start-goal", start.LocationId, "Current flows against the boat.");
+            var updated = session.SetPassageDirectionEnabledFrom("start-goal", start.LocationId, false);
+
+            var observedStart = session.ObserveLocation(start.LocationId);
+            var observedGoal = session.ObserveLocation(goal.LocationId);
+
+            Assert.Equal(TravelMode.Water, updated.TravelMode);
+            Assert.Equal(4, updated.BaseTravelCost);
+            Assert.Equal("Water level is high.", updated.SharedConditionNote);
+            Assert.Equal("A rope ferry waits here.", updated.EndpointA.LocalViewNote);
+            Assert.False(updated.FromAToB.IsEnabled);
+            Assert.Equal(3, updated.FromAToB.TravelCostModifier);
+            Assert.Equal("Current flows against the boat.", updated.FromAToB.DirectionConditionNote);
+            Assert.True(updated.FromBToA.IsEnabled);
+            Assert.Equal(0, updated.FromBToA.TravelCostModifier);
+
+            var outboundExit = Assert.Single(observedStart.Exits);
+            Assert.Equal("start-goal", outboundExit.PassageId);
+            Assert.Equal(TravelMode.Water, outboundExit.TravelMode);
+            Assert.Equal(4, outboundExit.BaseTravelCost);
+            Assert.Equal(3, outboundExit.TravelCostModifier);
+            Assert.Equal(7, outboundExit.TotalTravelCost);
+            Assert.Equal("Water level is high.", outboundExit.SharedConditionNote);
+            Assert.Equal("Current flows against the boat.", outboundExit.DirectionalConditionNote);
+            Assert.Equal("A rope ferry waits here.", outboundExit.LocalViewNote);
+            Assert.False(outboundExit.IsEnabled);
+
+            var returnExit = Assert.Single(observedGoal.Exits);
+            Assert.True(returnExit.IsEnabled);
+            Assert.Equal(4, returnExit.TotalTravelCost);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void SessionAuthoringSeam_PersistsCreatedWorldAcrossReopen() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var session = CreateEmptySession(repoDir)) {
+                var start = session.CreateLocation("start", "Start", "Start.");
+                var goal = session.CreateLocation("goal", "Goal", "Goal.");
+                _ = session.CreateActor("runner", "Runner", start.LocationId);
+                _ = session.CreatePassage("start-goal", start.LocationId, "go", goal.LocationId, "back", TravelMode.Land, 1);
+                _ = session.AdvanceTime(5);
+            }
+
+            using var reopened = WorldSession.OpenExisting(repoDir);
+            var observedActor = reopened.ObserveActor("runner");
+            var observedStart = reopened.ObserveLocation("start");
+            var observedTime = reopened.ObserveTime();
+
+            Assert.Equal("runner", observedActor.ActorId);
+            Assert.Equal("start", observedActor.Location.LocationId);
+            Assert.Contains(observedStart.Exits, static exit => exit.PassageId == "start-goal" && exit.TargetLocationId == "goal");
+            Assert.Equal(5, observedTime.CurrentTick);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void SessionAuthoringSeam_MarksRouteAccelerationSnapshotStaleAfterTopologyChange() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var session = SampleWorldBootstrap.OpenOrCreateSession(repoDir);
+            var rebuilt = session.RebuildRouteAcceleration(
+                $"{TestWorldBuilder.LocationIds.Aerie},{TestWorldBuilder.LocationIds.Shrine}"
+            );
+
+            _ = session.CreateLocation("detour", "Detour", "A newly authored detour.");
+            var updated = session.CreatePassage(
+                "square-detour",
+                TestWorldBuilder.LocationIds.Square,
+                "side trail",
+                "detour",
+                "back to square",
+                TravelMode.Land,
+                2
+            );
+            var observed = session.ObserveRouteAcceleration();
+
+            Assert.Equal("active", rebuilt.SnapshotStatus);
+            Assert.Equal("square-detour", updated.PassageId);
+            Assert.Equal("stale", observed.SnapshotStatus);
+            Assert.Equal("zero", observed.PlannerMode);
+            Assert.Equal("landmark", observed.SnapshotKind);
+            Assert.Equal("custom", observed.LandmarkProfileName);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void SessionAuthoringSeam_FailedMutation_DoesNotCommitPartialWorldState() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var session = CreateEmptySession(repoDir)) {
+                var start = session.CreateLocation("start", "Start", "Start.");
+                var goal = session.CreateLocation("goal", "Goal", "Goal.");
+                var other = session.CreateLocation("other", "Other", "Other.");
+                _ = session.CreatePassage("start-goal", start.LocationId, "go", goal.LocationId, "back", TravelMode.Land, 1);
+
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => session.CreatePassage("start-other", start.LocationId, "go", other.LocationId, "other way", TravelMode.Land, 1)
+                );
+
+                Assert.Contains("Location 'start' already uses exit name 'go'", exception.Message, StringComparison.Ordinal);
+            }
+
+            using var reopened = WorldSession.OpenExisting(repoDir);
+            var observedStart = reopened.ObserveLocation("start");
+
+            var exit = Assert.Single(observedStart.Exits);
+            Assert.Equal("start-goal", exit.PassageId);
+            Assert.Equal("goal", exit.TargetLocationId);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void OpenOrCreateSession_WithOnlyLegacySessionSidecar_CreatesFreshSampleWorld() {
         string repoDir = CreateTempRepoDir();
 
@@ -524,6 +726,9 @@ public class WorldSessionTests {
 
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-session-tests-{Guid.NewGuid():N}");
+
+    private static WorldSession CreateEmptySession(string repoDir)
+        => WorldSession.CreateNew(repoDir, WorldState.Create);
 
     private static void DeleteDirectoryIfExists(string repoDir) {
         if (Directory.Exists(repoDir)) {

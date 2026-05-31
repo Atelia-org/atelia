@@ -86,10 +86,24 @@ public sealed class WorldSession : IDisposable {
         return LocationObservationProjector.ObserveLocation(_world, locationId);
     }
 
+    public LocationAuthoringSnapshot CreateLocation(string id, string name, string description) {
+        EnsureNotDisposed();
+        var location = _world.CreateLocation(id, name, description);
+        _repo.Commit(_world.Root).Unwrap();
+        return SessionWorldAuthoringProjector.Project(location);
+    }
+
     public ActorLocationObservation ObserveActor(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         return LocationObservationProjector.ObserveActorLocation(_world, actorId);
+    }
+
+    public ActorAuthoringSnapshot CreateActor(string id, string name, string currentLocationId) {
+        EnsureNotDisposed();
+        var actor = _world.CreateActor(id, name, currentLocationId);
+        _repo.Commit(_world.Root).Unwrap();
+        return SessionWorldAuthoringProjector.Project(actor);
     }
 
     public LocationNavigationObservation ObserveNavigation(string locationId) {
@@ -171,6 +185,64 @@ public sealed class WorldSession : IDisposable {
         ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
 
         return SessionMovementProjector.Project(MoveActorCore(actorId, passageId));
+    }
+
+    public PassageAuthoringSnapshot CreatePassage(
+        string id,
+        string locationAId,
+        string exitNameFromA,
+        string locationBId,
+        string exitNameFromB,
+        TravelMode travelMode = TravelMode.Land,
+        int baseTravelCost = 1
+    ) {
+        EnsureNotDisposed();
+        var passage = _world.CreatePassage(
+            id,
+            locationAId,
+            exitNameFromA,
+            locationBId,
+            exitNameFromB,
+            travelMode,
+            baseTravelCost
+        );
+        _repo.Commit(_world.Root).Unwrap();
+        return SessionWorldAuthoringProjector.Project(passage);
+    }
+
+    public PassageAuthoringSnapshot SetPassageTravelMode(string passageId, TravelMode value) {
+        EnsureNotDisposed();
+        return MutatePassage(passageId, () => _world.SetPassageTravelMode(passageId, value));
+    }
+
+    public PassageAuthoringSnapshot SetPassageBaseTravelCost(string passageId, int value) {
+        EnsureNotDisposed();
+        return MutatePassage(passageId, () => _world.SetPassageBaseTravelCost(passageId, value));
+    }
+
+    public PassageAuthoringSnapshot SetPassageSharedConditionNote(string passageId, string value) {
+        EnsureNotDisposed();
+        return MutatePassage(passageId, () => _world.SetPassageSharedConditionNote(passageId, value));
+    }
+
+    public PassageAuthoringSnapshot SetPassageEndpointLocalViewNote(string passageId, string locationId, string value) {
+        EnsureNotDisposed();
+        return MutatePassage(passageId, () => _world.SetPassageEndpointLocalViewNote(passageId, locationId, value));
+    }
+
+    public PassageAuthoringSnapshot SetPassageDirectionEnabledFrom(string passageId, string locationId, bool isEnabled) {
+        EnsureNotDisposed();
+        return MutatePassage(passageId, () => _world.SetPassageDirectionEnabledFrom(passageId, locationId, isEnabled));
+    }
+
+    public PassageAuthoringSnapshot SetPassageDirectionTravelCostModifierFrom(string passageId, string locationId, int value) {
+        EnsureNotDisposed();
+        return MutatePassage(passageId, () => _world.SetPassageDirectionTravelCostModifierFrom(passageId, locationId, value));
+    }
+
+    public PassageAuthoringSnapshot SetPassageDirectionConditionNoteFrom(string passageId, string locationId, string value) {
+        EnsureNotDisposed();
+        return MutatePassage(passageId, () => _world.SetPassageDirectionConditionNoteFrom(passageId, locationId, value));
     }
 
     public void Dispose() {
@@ -273,6 +345,15 @@ public sealed class WorldSession : IDisposable {
         string landmarkProfileName
     ) {
         return _routeAcceleration.Rebuild(_world, landmarkLocationIds, landmarkProfileName);
+    }
+
+    private PassageAuthoringSnapshot MutatePassage(string passageId, Action mutation) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
+        ArgumentNullException.ThrowIfNull(mutation);
+
+        mutation();
+        _repo.Commit(_world.Root).Unwrap();
+        return SessionWorldAuthoringProjector.Project(_world.GetPassage(passageId));
     }
 
     private static string[] ParseExplicitLandmarkLocationIds(string value) {
