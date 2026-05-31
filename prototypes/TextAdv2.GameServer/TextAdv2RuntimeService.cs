@@ -3,24 +3,12 @@ using Atelia.TextAdv2.Runtime;
 namespace Atelia.TextAdv2.GameServer;
 
 internal sealed class TextAdv2RuntimeService : IDisposable {
-    private const int MaxOpenRetryCount = 5;
-
     private readonly object _gate = new();
-    private readonly bool _autoBootstrapSampleWorld;
     private TextAdv2Runtime _runtime;
     private bool _disposed;
 
-    public TextAdv2RuntimeService(string repoDir, bool autoBootstrapSampleWorld) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
-
-        RepoDir = repoDir;
-        _autoBootstrapSampleWorld = autoBootstrapSampleWorld;
-        _runtime = OpenConfiguredRuntime();
-    }
-
-    public string RepoDir { get; }
-
-    public bool AutoBootstrapSampleWorld => _autoBootstrapSampleWorld;
+    public TextAdv2RuntimeService(TextAdv2Runtime runtime)
+        => _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
 
     public TResult Invoke<TResult>(Func<TextAdv2Runtime, TResult> operation) {
         ArgumentNullException.ThrowIfNull(operation);
@@ -30,12 +18,14 @@ internal sealed class TextAdv2RuntimeService : IDisposable {
         }
     }
 
-    public void ResetToSampleWorld() {
+    public void ReplaceRuntime(Func<TextAdv2Runtime> replacementFactory) {
+        ArgumentNullException.ThrowIfNull(replacementFactory);
+
         lock (_gate) {
             EnsureNotDisposed();
 
             _runtime.Dispose();
-            _runtime = TextAdv2SampleWorldDevBootstrap.ResetRuntime(RepoDir);
+            _runtime = replacementFactory();
         }
     }
 
@@ -47,23 +37,6 @@ internal sealed class TextAdv2RuntimeService : IDisposable {
             _disposed = true;
         }
     }
-
-    private TextAdv2Runtime OpenConfiguredRuntime() {
-        for (int attempt = 0; ; attempt++) {
-            try {
-                return _autoBootstrapSampleWorld
-                    ? TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(RepoDir)
-                    : TextAdv2Runtime.OpenExisting(RepoDir);
-            }
-            catch (InvalidOperationException ex) when (attempt < MaxOpenRetryCount && IsRepositoryLockFailure(ex)) {
-                // Local host restarts can briefly overlap while the previous instance is still releasing the repo lock.
-                Thread.Sleep((attempt + 1) * 50);
-            }
-        }
-    }
-
-    private static bool IsRepositoryLockFailure(InvalidOperationException ex)
-        => ex.Message.Contains("Failed to acquire lock", StringComparison.Ordinal);
 
     private void EnsureNotDisposed() {
         ObjectDisposedException.ThrowIf(_disposed, this);

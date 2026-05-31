@@ -8,14 +8,16 @@ var builder = WebApplication.CreateBuilder(args);
 var configuredRepoDir = builder.Configuration["TextAdv2:RepoDir"] ?? ".atelia/textadv2-dev-world";
 string resolvedRepoDir = Path.GetFullPath(configuredRepoDir, builder.Environment.ContentRootPath);
 bool autoBootstrapSampleWorld = builder.Configuration.GetValue("TextAdv2:AutoBootstrapSampleWorld", true);
+var hostPolicy = TextAdv2GameServerHostPolicy.Create(configuredRepoDir, resolvedRepoDir, autoBootstrapSampleWorld);
 
-builder.Services.AddSingleton(_ => new TextAdv2RuntimeService(resolvedRepoDir, autoBootstrapSampleWorld));
+builder.Services.AddSingleton(hostPolicy);
+builder.Services.AddSingleton(_ => new TextAdv2RuntimeService(hostPolicy.OpenRuntime()));
 
 var app = builder.Build();
 
-app.MapGet("/", (TextAdv2RuntimeService runtime) => Results.Ok(BuildRuntimeStatus(runtime)));
+app.MapGet("/", () => Results.Ok(BuildRuntimeStatus(hostPolicy, autoBootstrapSampleWorld)));
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.GameServer", mode = "runtime-connected" }));
-app.MapGet("/admin/runtime-status", (TextAdv2RuntimeService runtime) => Results.Ok(BuildRuntimeStatus(runtime)));
+app.MapGet("/admin/runtime-status", () => Results.Ok(BuildRuntimeStatus(hostPolicy, autoBootstrapSampleWorld)));
 app.MapGet("/admin/world", (TextAdv2RuntimeService runtime) => Execute(runtime, static x => x.DumpWorld()));
 app.MapGet("/admin/time", (TextAdv2RuntimeService runtime) => ExecuteJson(runtime, static x => x.ObserveTime()));
 app.MapPost("/admin/advance-time/{ticks}",
@@ -30,12 +32,15 @@ app.MapPost("/admin/route-acceleration/rebuild",
     (string? landmarks, TextAdv2RuntimeService runtime)
     => ExecuteJson(runtime, x => TextAdv2SampleWorldDevBootstrap.RebuildRouteAcceleration(x, landmarks))
 );
-app.MapPost("/admin/reset-sample-world",
-    (TextAdv2RuntimeService runtime) => {
-        runtime.ResetToSampleWorld();
-        return Results.Ok(BuildRuntimeStatus(runtime));
-    }
-);
+
+if (hostPolicy.SampleWorldResetEnabled) {
+    app.MapPost("/admin/reset-sample-world",
+        (TextAdv2RuntimeService runtime) => {
+            runtime.ReplaceRuntime(hostPolicy.ResetRuntime);
+            return Results.Ok(BuildRuntimeStatus(hostPolicy, autoBootstrapSampleWorld));
+        }
+    );
+}
 
 app.MapGet("/admin/locations/{locationId}",
     (string locationId, TextAdv2RuntimeService runtime)
@@ -111,34 +116,28 @@ static long ParseNonNegativeTickDelta(string value) {
     return ticks;
 }
 
-object BuildRuntimeStatus(TextAdv2RuntimeService runtime) {
+static object BuildRuntimeStatus(TextAdv2GameServerHostPolicy hostPolicy, bool autoBootstrapSampleWorld) {
     var scaffold = TextAdv2RuntimeScaffold.DescribeCurrentState();
     return new {
         service = "TextAdv2.GameServer",
         mode = "runtime-connected",
         configuration = new {
-            configuredRepoDir,
-            resolvedRepoDir = runtime.RepoDir,
+            configuredRepoDir = hostPolicy.ConfiguredRepoDir,
+            resolvedRepoDir = hostPolicy.ResolvedRepoDir,
             autoBootstrapSampleWorld,
         },
-        runtime = scaffold,
-        plannedEndpoints = new[] {
-            "GET /admin/world",
-            "GET /admin/time",
-            "POST /admin/advance-time/{ticks}",
-            "GET /admin/route-acceleration",
-            "POST /admin/route-acceleration/rebuild?landmarks=<locationId[,locationId...]|default>",
-            "POST /admin/reset-sample-world",
-            "GET /admin/locations/{locationId}",
-            "GET /admin/locations/{locationId}/observation",
-            "GET /admin/locations/{locationId}/navigation",
-            "GET /admin/routes/{fromLocationId}/{toLocationId}",
-            "GET /actors/{actorId}/observation",
-            "GET /actors/{actorId}/navigation",
-            "POST /actors/{actorId}/moves/{passageId}",
-            "GET /actors/{actorId}/route-trace",
-            "GET /actors/{actorId}/plan-route/{toLocationId}",
+        hostPolicy = new {
+            bootstrapMode = hostPolicy.BootstrapMode,
+            runtimeOpenMode = hostPolicy.RuntimeOpenMode,
+            sampleWorldResetEnabled = hostPolicy.SampleWorldResetEnabled,
+            repositoryLockRetry = new {
+                enabled = hostPolicy.RepositoryLockRetryEnabled,
+                maxRetryCount = hostPolicy.RepositoryLockRetryCount,
+            },
+            notes = hostPolicy.Notes,
         },
+        runtime = scaffold,
+        plannedEndpoints = hostPolicy.PlannedEndpoints,
     };
 }
 

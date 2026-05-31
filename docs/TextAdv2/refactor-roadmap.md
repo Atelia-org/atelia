@@ -302,7 +302,7 @@ P4a/P4b 本轮落地结果：
 修订后的建议切口：
 
 - P5a：把 sample-world profile / 默认 landmark policy 从 `TextAdv2Runtime` 中剥离到显式 dev support 层（已完成）。
-- P5b1：把 `GameServer` 的 open-existing / open-or-create / reset-sample-world 决策从 `TextAdv2RuntimeService` 中提出，改成显式 host bootstrap/admin policy。
+- P5b1：把 `GameServer` 的 open-existing / open-or-create / reset-sample-world 决策从 `TextAdv2RuntimeService` 中提出，改成显式 host bootstrap/admin policy（已完成）。
 - P5b2：让 `E2eCli` 的“未指定 repoDir 就创建临时 sample world”成为显式 dev mode，而不是 runtime command 主路径的隐含行为。
 - P5c：处理 `DumpWorld` / `DumpLocation` 等稳定调试文本输出的最终归属；若这一步完成后 `TextAdv2RuntimeCommandResult` 已无剩余，再彻底删除它。
 
@@ -316,7 +316,8 @@ P5a 本轮落地结果：
 - sample-world world seed 已从 `TextAdv2Runtime` 中移出，改由 `TextAdv2SampleWorldDevBootstrap` 显式持有。
 - `RebuildRouteAcceleration` 的“无参/`default` => 推荐 profile”决策已从 runtime public seam 移到 `TextAdv2SampleWorldDevBootstrap`，宿主仍保留原有 dev/admin 行为，但 runtime 本体只接受显式 landmark 请求。
 - 新增回归测试，明确区分“通过 dev bootstrap 打开的 runtime 可以走 sample-world 默认 landmark profile”与“直接 `OpenExisting(...)` 的 runtime 不应隐式拥有该 policy”。
-- 下一自然入口不再是 runtime 核心 use case seam，而是宿主 bootstrap/admin 边界本身：`P5b1/P5b2` 与 `P2c1/P2c2`。
+- `GameServer` 已把 runtime handle 与 host bootstrap/admin policy 分离：`TextAdv2RuntimeService` 只保留持有/替换 runtime，sample-world dev open/reset 与 repo lock retry 都回到 host-local policy；`runtime-status`/`plannedEndpoints` 也已显式暴露这层边界。
+- 下一自然入口收窄为 `P5b2` 与 `P2c1/P2c2`。
 
 ## 6. 不在本轮顺手做的事
 

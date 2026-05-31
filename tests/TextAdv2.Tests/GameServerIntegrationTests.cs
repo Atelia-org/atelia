@@ -103,7 +103,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task RuntimeStatus_ReportsResolvedRepoAndConnectedModeAsync() {
+    public async Task RuntimeStatus_ReportsResolvedRepoAndDevHostPolicyAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -118,11 +118,58 @@ public class GameServerIntegrationTests {
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
             Assert.Equal("runtime-connected", json.RootElement.GetProperty("mode").GetString());
             Assert.Equal(repoDir, json.RootElement.GetProperty("configuration").GetProperty("resolvedRepoDir").GetString());
+            Assert.True(json.RootElement.GetProperty("configuration").GetProperty("autoBootstrapSampleWorld").GetBoolean());
+            Assert.Equal("sample-world-dev", json.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
+            Assert.Equal("open-or-create-sample-world", json.RootElement.GetProperty("hostPolicy").GetProperty("runtimeOpenMode").GetString());
+            Assert.True(json.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
+            Assert.Contains(
+                json.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
+                static endpoint => string.Equals(endpoint, "POST /admin/reset-sample-world", StringComparison.Ordinal)
+            );
             Assert.True(json.RootElement.GetProperty("runtime").GetProperty("runtimeExtracted").GetBoolean());
             Assert.Contains(
                 json.RootElement.GetProperty("runtime").GetProperty("notes").EnumerateArray().Select(static x => x.GetString()),
                 static note => note is not null
                     && note.Contains("宿主仍自行负责 CLI/HTTP 请求到 runtime method 的分发。", StringComparison.Ordinal)
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task OpenExistingOnlyMode_OpensExistingRepoAndHidesResetEndpointAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (TextAdv2SampleWorldDevBootstrap.CreateFreshRuntime(repoDir)) {
+            }
+            WaitUntilRuntimeCanReopen(repoDir);
+
+            using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
+            using var client = factory.CreateClient();
+
+            using var worldResponse = await client.GetAsync("/admin/world");
+            string worldText = await worldResponse.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, worldResponse.StatusCode);
+            Assert.Contains("WORLD", worldText, StringComparison.Ordinal);
+
+            using var resetResponse = await client.PostAsync("/admin/reset-sample-world", content: null);
+            Assert.Equal(HttpStatusCode.NotFound, resetResponse.StatusCode);
+
+            using var statusResponse = await client.GetAsync("/admin/runtime-status");
+            string statusText = await statusResponse.Content.ReadAsStringAsync();
+            var statusJson = JsonDocument.Parse(statusText);
+
+            Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
+            Assert.False(statusJson.RootElement.GetProperty("configuration").GetProperty("autoBootstrapSampleWorld").GetBoolean());
+            Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
+            Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("runtimeOpenMode").GetString());
+            Assert.False(statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
+            Assert.DoesNotContain(
+                statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
+                static endpoint => string.Equals(endpoint, "POST /admin/reset-sample-world", StringComparison.Ordinal)
             );
         }
         finally {
@@ -441,7 +488,8 @@ public class GameServerIntegrationTests {
         }
     }
 
-    private static TextAdv2GameServerFactory CreateFactory(string repoDir) => new(repoDir);
+    private static TextAdv2GameServerFactory CreateFactory(string repoDir, bool autoBootstrapSampleWorld = true)
+        => new(repoDir, autoBootstrapSampleWorld);
 
     private static async Task<T?> ReadJsonAsync<T>(HttpResponseMessage response)
         => JsonSerializer.Deserialize<T>(await response.Content.ReadAsStringAsync(), HostJsonOptions);
@@ -475,10 +523,10 @@ public class GameServerIntegrationTests {
         );
     }
 
-    private sealed class TextAdv2GameServerFactory(string repoDir) : WebApplicationFactory<Program> {
+    private sealed class TextAdv2GameServerFactory(string repoDir, bool autoBootstrapSampleWorld) : WebApplicationFactory<Program> {
         protected override void ConfigureWebHost(IWebHostBuilder builder) {
             builder.UseSetting("TextAdv2:RepoDir", repoDir);
-            builder.UseSetting("TextAdv2:AutoBootstrapSampleWorld", "true");
+            builder.UseSetting("TextAdv2:AutoBootstrapSampleWorld", autoBootstrapSampleWorld ? "true" : "false");
         }
     }
 }
