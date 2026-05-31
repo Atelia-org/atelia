@@ -101,6 +101,10 @@ app.MapGet("/actors/{actorId}/route-trace",
     (string actorId, SessionService session)
     => ExecuteText(session, x => DevTextRenderer.RenderRouteTrace(x.TraceActorRoute(actorId)))
 );
+app.MapGet("/actors/{actorId}/route-trace/json",
+    (string actorId, SessionService session)
+    => ExecuteJson(session, x => x.TraceActorRoute(actorId))
+);
 app.MapGet("/actors/{actorId}/plan-route/{toLocationId}",
     (string actorId, string toLocationId, SessionService session)
     => ExecuteJson(session, x => x.PlanActorRoute(actorId, toLocationId))

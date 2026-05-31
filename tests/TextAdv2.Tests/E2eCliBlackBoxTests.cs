@@ -94,6 +94,29 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
+    public void JsonOnly_WithTextRouteTraceOperation_FailsFast() {
+        CliRunResult result = RunCli("--dev-sample-world", "--json-only", "--trace-actor-route", "scout");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(string.Empty, result.StandardOutput);
+        Assert.Contains("--json-only 只支持 JSON 类 operation", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("trace actor route scout", result.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TraceActorRouteTextOperation_RemainsAvailableForHumanDebugging() {
+        CliRunResult result = RunCli("--dev-sample-world", "--trace-actor-route", "scout");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(string.Empty, result.StandardError);
+        Assert.Contains("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("ROUTE TRACE", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("start=square (Square)", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("<no movement in this run>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("end=square (Square) | steps=0 | totalCost=0", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void JsonOnly_WithoutExplicitOperation_FailsFast() {
         CliRunResult result = RunCli("--dev-sample-world", "--json-only");
 
@@ -229,6 +252,73 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
+    public void RepoDir_TraceActorRouteJson_ReturnsTypedTrace_AndResetsAfterReopen() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult init = RunCli("init-sample", repoDir);
+            CliRunResult trace = RunCli(
+                "--repo-dir", repoDir,
+                "--move-actor-quiet", "scout", "square-ridge-trail",
+                "--trace-actor-route-json", "scout"
+            );
+            CliRunResult traceAfterReopen = RunCli("--repo-dir", repoDir, "--trace-actor-route-json", "scout");
+
+            Assert.Equal(0, init.ExitCode);
+            Assert.Equal(0, trace.ExitCode);
+            Assert.Equal(0, traceAfterReopen.ExitCode);
+
+            var traceJson = DeserializeCliJson<ActorRouteTrace>(trace.StandardOutput);
+            var traceAfterReopenJson = DeserializeCliJson<ActorRouteTrace>(traceAfterReopen.StandardOutput);
+
+            Assert.NotNull(traceJson);
+            Assert.Equal("scout", traceJson.ActorId);
+            Assert.Equal("square", traceJson.StartLocationId);
+            Assert.Equal("ridge", traceJson.EndLocationId);
+            Assert.Equal(1, traceJson.StepCount);
+            Assert.Equal(5, traceJson.TotalTravelCost);
+            Assert.Single(traceJson.Steps);
+            Assert.Equal(1, traceJson.Steps[0].StepNumber);
+            Assert.Equal("square-ridge-trail", traceJson.Steps[0].PassageId);
+            Assert.Equal("north gate", traceJson.Steps[0].ExitName);
+            Assert.Equal("square", traceJson.Steps[0].FromLocationId);
+            Assert.Equal("ridge", traceJson.Steps[0].ToLocationId);
+            Assert.Equal("land", traceJson.Steps[0].TravelMode);
+            Assert.Equal(5, traceJson.Steps[0].TravelCost);
+
+            Assert.NotNull(traceAfterReopenJson);
+            Assert.Equal("scout", traceAfterReopenJson.ActorId);
+            Assert.Equal("ridge", traceAfterReopenJson.StartLocationId);
+            Assert.Equal("ridge", traceAfterReopenJson.EndLocationId);
+            Assert.Equal(0, traceAfterReopenJson.StepCount);
+            Assert.Equal(0, traceAfterReopenJson.TotalTravelCost);
+            Assert.Empty(traceAfterReopenJson.Steps);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void JsonOnly_WithJsonRouteTraceOperation_PrintsPureJsonDocument() {
+        CliRunResult result = RunCli("--dev-sample-world", "--json-only", "--trace-actor-route-json", "scout");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(string.Empty, result.StandardError);
+        Assert.DoesNotContain("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("[1/1]", result.StandardOutput, StringComparison.Ordinal);
+
+        using JsonDocument json = JsonDocument.Parse(result.StandardOutput);
+
+        Assert.Equal("scout", json.RootElement.GetProperty("ActorId").GetString());
+        Assert.Equal("square", json.RootElement.GetProperty("StartLocationId").GetString());
+        Assert.Equal("square", json.RootElement.GetProperty("EndLocationId").GetString());
+        Assert.Equal(0, json.RootElement.GetProperty("StepCount").GetInt32());
+        Assert.Equal(0, json.RootElement.GetProperty("TotalTravelCost").GetInt32());
+        Assert.Empty(json.RootElement.GetProperty("Steps").EnumerateArray());
+    }
+
+    [Fact]
     public void DevSampleWorld_JsonCommands_PreserveCanonicalEnumTokens() {
         CliRunResult observe = RunCli("--dev-sample-world", "--observe-navigation", "square");
         CliRunResult plan = RunCli("--dev-sample-world", "--plan-route", "shrine", "shrine");
@@ -248,6 +338,8 @@ public sealed class E2eCliBlackBoxTests {
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("--dev-sample-world", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("--json-only", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--trace-actor-route <actorId>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--trace-actor-route-json <actorId>", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("This no longer creates a sample world implicitly", result.StandardOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("current compatibility behavior creates a persistent sample world", result.StandardOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("runtime  Omit a meta command", result.StandardOutput, StringComparison.Ordinal);

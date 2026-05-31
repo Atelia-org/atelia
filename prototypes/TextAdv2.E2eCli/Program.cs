@@ -359,6 +359,18 @@ internal static class Program {
                 }
                 index += 2;
                 break;
+                case "--trace-actor-route-json": {
+                    string actorId = RequireArg(args, index + 1);
+                    operations.Add(
+                        new SessionCommand(
+                            $"trace actor route json {actorId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.TraceActorRoute(actorId))
+                        )
+                    );
+                }
+                index += 2;
+                break;
                 case "--move-actor-quiet": {
                     string actorId = RequireArg(args, index + 1);
                     string passageId = RequireArg(args, index + 2);
@@ -474,7 +486,7 @@ Usage:
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj [smoke|status|help]
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-empty <repoDir>
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-sample <repoDir>
-  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--json-only] [--world] [--location <locationId>] [--observe-location <locationId>] [--create-location <locationId> <name> <description>] [--observe-actor <actorId>] [--observe-actor-context <actorId>] [--create-actor <actorId> <name> <currentLocationId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> [<travelMode>] [<baseTravelCost>]] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
+  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--json-only] [--world] [--location <locationId>] [--observe-location <locationId>] [--create-location <locationId> <name> <description>] [--observe-actor <actorId>] [--observe-actor-context <actorId>] [--create-actor <actorId> <name> <currentLocationId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> [<travelMode>] [<baseTravelCost>]] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--trace-actor-route-json <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
 """;
 
     private static int RunHelp() {
@@ -515,6 +527,10 @@ Session options:
                      Without an argument, rebuild using the world's recommended landmark profile when available.
     --rebuild-route-acceleration default
                      Equivalent to omitting the argument.
+    --trace-actor-route <actorId>
+                     Print the text route trace for human debugging.
+    --trace-actor-route-json <actorId>
+                     Print the typed actor route trace as JSON.
 """
         );
         Console.WriteLine(BuildUsage());
