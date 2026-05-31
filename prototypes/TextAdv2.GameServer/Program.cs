@@ -68,12 +68,12 @@ app.MapGet("/actors/{actorId}/route-trace",
 );
 app.MapGet("/actors/{actorId}/plan-route/{toLocationId}",
     (string actorId, string toLocationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.PlanActorRoute(actorId, toLocationId))
+    => ExecuteJson(runtime, x => x.PlanActorRoute(actorId, toLocationId))
 );
 
 app.MapGet("/admin/routes/{fromLocationId}/{toLocationId}",
     (string fromLocationId, string toLocationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.PlanRoute(fromLocationId, toLocationId))
+    => ExecuteJson(runtime, x => x.PlanRoute(fromLocationId, toLocationId))
 );
 
 app.Run();

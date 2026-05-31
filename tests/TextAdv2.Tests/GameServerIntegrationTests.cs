@@ -222,8 +222,15 @@ public class GameServerIntegrationTests {
 
             using var adminRoute = await client.GetAsync("/admin/routes/village/aerie");
             string adminRouteText = await adminRoute.Content.ReadAsStringAsync();
+            var adminRouteJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(adminRouteText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, adminRoute.StatusCode);
-            Assert.Contains("ROUTE PLAN from=village (Village) to=aerie (Aerie) status=found", adminRouteText, StringComparison.Ordinal);
+            Assert.Equal("application/json", adminRoute.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(adminRouteJson);
+            Assert.Contains("\"fromLocationId\"", adminRouteText, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"FromLocationId\"", adminRouteText, StringComparison.Ordinal);
+            Assert.Equal("found", adminRouteJson.Status);
+            Assert.Equal(11, adminRouteJson.TotalTravelCost);
+            Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, adminRouteJson.Steps[^1].PassageId);
 
             using var adminAcceleration = await client.GetAsync("/admin/route-acceleration");
             string adminAccelerationText = await adminAcceleration.Content.ReadAsStringAsync();
@@ -270,6 +277,17 @@ public class GameServerIntegrationTests {
                     && edge.TravelMode == "portal"
                     && edge.TravelCost == 1
             );
+
+            using var actorRoutePlan = await client.GetAsync("/actors/scout/plan-route/aerie");
+            string actorRoutePlanText = await actorRoutePlan.Content.ReadAsStringAsync();
+            var actorRoutePlanJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(actorRoutePlanText, HostJsonOptions);
+            Assert.Equal(HttpStatusCode.OK, actorRoutePlan.StatusCode);
+            Assert.Equal("application/json", actorRoutePlan.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(actorRoutePlanJson);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, actorRoutePlanJson.FromLocationId);
+            Assert.Equal(TestWorldBuilder.LocationIds.Aerie, actorRoutePlanJson.ToLocationId);
+            Assert.Equal("found", actorRoutePlanJson.Status);
+            Assert.Equal(10, actorRoutePlanJson.TotalTravelCost);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

@@ -137,36 +137,32 @@ public sealed class TextAdv2Runtime : IDisposable {
         return AdvanceLogicalTime(ticks);
     }
 
-    public TextAdv2RuntimeCommandResult PlanActorRoute(string actorId, string toLocationId) {
+    public TextAdv2RuntimeRoutePlanObservation PlanActorRoute(string actorId, string toLocationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
 
-        return Text(
-            LocationRoutePlanTextRenderer.Render(
-                LocationRoutePlanner.PlanShortestRouteForActor(
-                    _world,
-                    actorId,
-                    toLocationId,
-                    _routeAcceleration.GetPlanningOptions(_world)
-                )
+        return TextAdv2RuntimeRoutePlanProjector.Project(
+            LocationRoutePlanner.PlanShortestRouteForActor(
+                _world,
+                actorId,
+                toLocationId,
+                _routeAcceleration.GetPlanningOptions(_world)
             )
         );
     }
 
-    public TextAdv2RuntimeCommandResult PlanRoute(string fromLocationId, string toLocationId) {
+    public TextAdv2RuntimeRoutePlanObservation PlanRoute(string fromLocationId, string toLocationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(fromLocationId);
         ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
 
-        return Text(
-            LocationRoutePlanTextRenderer.Render(
-                LocationRoutePlanner.PlanShortestRoute(
-                    _world,
-                    fromLocationId,
-                    toLocationId,
-                    _routeAcceleration.GetPlanningOptions(_world)
-                )
+        return TextAdv2RuntimeRoutePlanProjector.Project(
+            LocationRoutePlanner.PlanShortestRoute(
+                _world,
+                fromLocationId,
+                toLocationId,
+                _routeAcceleration.GetPlanningOptions(_world)
             )
         );
     }

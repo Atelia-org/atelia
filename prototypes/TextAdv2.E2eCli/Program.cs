@@ -132,7 +132,7 @@ internal static class Program {
                     {
                         string actorId = RequireArg(args, index + 1);
                         string toLocationId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"plan actor route {actorId} -> {toLocationId}", runtime => runtime.PlanActorRoute(actorId, toLocationId).Output));
+                        operations.Add(new RuntimeOperation($"plan actor route {actorId} -> {toLocationId}", runtime => RenderJson(runtime.PlanActorRoute(actorId, toLocationId))));
                     }
                     index += 3;
                     break;
@@ -140,7 +140,7 @@ internal static class Program {
                     {
                         string fromLocationId = RequireArg(args, index + 1);
                         string toLocationId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"plan route {fromLocationId} -> {toLocationId}", runtime => runtime.PlanRoute(fromLocationId, toLocationId).Output));
+                        operations.Add(new RuntimeOperation($"plan route {fromLocationId} -> {toLocationId}", runtime => RenderJson(runtime.PlanRoute(fromLocationId, toLocationId))));
                     }
                     index += 3;
                     break;

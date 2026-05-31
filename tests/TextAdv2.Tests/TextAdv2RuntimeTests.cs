@@ -96,6 +96,82 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
+    public void PlanRoute_ReturnsTypedObservationWithRuntimeFacingTravelMode() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var result = runtime.PlanRoute(
+            TestWorldBuilder.LocationIds.Village,
+            TestWorldBuilder.LocationIds.Aerie
+        );
+
+        Assert.Equal(TestWorldBuilder.LocationIds.Village, result.FromLocationId);
+        Assert.Equal("Village", result.FromLocationName);
+        Assert.Equal(TestWorldBuilder.LocationIds.Aerie, result.ToLocationId);
+        Assert.Equal("Aerie", result.ToLocationName);
+        Assert.Equal("found", result.Status);
+        Assert.Equal(3, result.StepCount);
+        Assert.Equal(11, result.TotalTravelCost);
+        Assert.Collection(
+            result.Steps,
+            step => {
+                Assert.Equal(1, step.StepNumber);
+                Assert.Equal(TestWorldBuilder.PassageIds.VillageSquareRoad, step.PassageId);
+                Assert.Equal("east", step.ExitName);
+                Assert.Equal(TestWorldBuilder.LocationIds.Village, step.FromLocationId);
+                Assert.Equal(TestWorldBuilder.LocationIds.Square, step.ToLocationId);
+                Assert.Equal("land", step.TravelMode);
+                Assert.Equal(1, step.TravelCost);
+                Assert.Equal(1, step.CumulativeTravelCost);
+            },
+            step => {
+                Assert.Equal(2, step.StepNumber);
+                Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, step.PassageId);
+                Assert.Equal("north gate", step.ExitName);
+                Assert.Equal(TestWorldBuilder.LocationIds.Square, step.FromLocationId);
+                Assert.Equal(TestWorldBuilder.LocationIds.Ridge, step.ToLocationId);
+                Assert.Equal("land", step.TravelMode);
+                Assert.Equal(5, step.TravelCost);
+                Assert.Equal(6, step.CumulativeTravelCost);
+            },
+            step => {
+                Assert.Equal(3, step.StepNumber);
+                Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, step.PassageId);
+                Assert.Equal("cliff lift", step.ExitName);
+                Assert.Equal(TestWorldBuilder.LocationIds.Ridge, step.FromLocationId);
+                Assert.Equal(TestWorldBuilder.LocationIds.Aerie, step.ToLocationId);
+                Assert.Equal("air", step.TravelMode);
+                Assert.Equal(5, step.TravelCost);
+                Assert.Equal(11, step.CumulativeTravelCost);
+            }
+        );
+        Assert.Equal("zero", result.SearchStats.HeuristicName);
+        Assert.Equal(0, result.SearchStats.LandmarkCount);
+        Assert.True(result.SearchStats.ExpandedNodeCount > 0);
+    }
+
+    [Fact]
+    public void PlanActorRoute_StartsFromActorsCurrentLocation() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+        _ = runtime.MoveActorQuiet(
+            TestWorldBuilder.ActorIds.Scout,
+            TestWorldBuilder.PassageIds.SquareRidgeTrail
+        );
+
+        var result = runtime.PlanActorRoute(
+            TestWorldBuilder.ActorIds.Scout,
+            TestWorldBuilder.LocationIds.Aerie
+        );
+
+        Assert.Equal(TestWorldBuilder.LocationIds.Ridge, result.FromLocationId);
+        Assert.Equal(TestWorldBuilder.LocationIds.Aerie, result.ToLocationId);
+        Assert.Equal("found", result.Status);
+        Assert.Single(result.Steps);
+        Assert.Equal(TestWorldBuilder.PassageIds.RidgeAerieWinch, result.Steps[0].PassageId);
+        Assert.Equal("air", result.Steps[0].TravelMode);
+        Assert.Equal(5, result.TotalTravelCost);
+    }
+
+    [Fact]
     public void MoveActorQuietThenTraceActorRoute_UsesRuntimeMovementHistory() {
         string repoDir = CreateTempRepoDir();
 
@@ -302,8 +378,10 @@ public class TextAdv2RuntimeTests {
                     [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine],
                     rebuilt.LandmarkLocationIds
                 );
-                Assert.Contains("ROUTE PLAN from=village (Village) to=aerie (Aerie) status=found", planned.Output, StringComparison.Ordinal);
-                Assert.Contains("totalCost=11", planned.Output, StringComparison.Ordinal);
+                Assert.Equal("found", planned.Status);
+                Assert.Equal(11, planned.TotalTravelCost);
+                Assert.Equal("landmark", planned.SearchStats.HeuristicName);
+                Assert.Equal(2, planned.SearchStats.LandmarkCount);
             }
 
             using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
