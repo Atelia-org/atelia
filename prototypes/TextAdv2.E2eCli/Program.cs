@@ -41,9 +41,11 @@ internal static class Program {
 
     private static int RunRuntimeCommands(string[] args) {
         var request = ParseRuntimeRequest(args);
-        using var runtime = request.RepoDir is null
-            ? TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime()
-            : TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(request.RepoDir);
+        using var runtime = request.BootstrapMode switch {
+            RuntimeBootstrapMode.RepoDir => TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(request.RepoDir!),
+            RuntimeBootstrapMode.DevSampleWorld => TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime(),
+            _ => throw new InvalidOperationException("Unsupported runtime bootstrap mode."),
+        };
 
         Console.WriteLine($"TextAdv2 runtime repo: {runtime.RepoDir}");
 
@@ -64,6 +66,7 @@ internal static class Program {
 
     private static RuntimeRequest ParseRuntimeRequest(string[] args) {
         string? repoDir = null;
+        bool useDevSampleWorld = false;
         var operations = new List<RuntimeOperation>();
         int index = 0;
 
@@ -72,6 +75,10 @@ internal static class Program {
                 case "--repo-dir":
                     repoDir = RequireArg(args, index + 1);
                     index += 2;
+                    break;
+                case "--dev-sample-world":
+                    useDevSampleWorld = true;
+                    index += 1;
                     break;
                 case "--world":
                     operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld().Output));
@@ -198,7 +205,11 @@ internal static class Program {
             operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld().Output));
         }
 
-        return new RuntimeRequest(repoDir, operations.ToArray());
+        return new RuntimeRequest(
+            ResolveBootstrapMode(repoDir, useDevSampleWorld),
+            repoDir,
+            operations.ToArray()
+        );
     }
 
     private static bool IsMetaCommand(string command)
@@ -210,6 +221,18 @@ internal static class Program {
     private static string? TryReadOptionalArg(string[] args, int index)
         => index < args.Length && !args[index].StartsWith("--", StringComparison.Ordinal) ? args[index] : null;
 
+    private static RuntimeBootstrapMode ResolveBootstrapMode(string? repoDir, bool useDevSampleWorld) {
+        if (repoDir is not null && useDevSampleWorld) {
+            throw new InvalidOperationException(RepoDirAndDevSampleWorldConflictError);
+        }
+
+        if (repoDir is null && !useDevSampleWorld) {
+            throw new InvalidOperationException(MissingRuntimeTargetError);
+        }
+
+        return useDevSampleWorld ? RuntimeBootstrapMode.DevSampleWorld : RuntimeBootstrapMode.RepoDir;
+    }
+
     private static string RenderJson<T>(T value) => JsonSerializer.Serialize(value, JsonOptions);
 
     private static long ParseNonNegativeTickDelta(string value) {
@@ -220,40 +243,31 @@ internal static class Program {
     }
 
     private static string BuildUsage()
-        => "Usage: dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj"
-            + " [smoke|status|help]"
-            + " [--repo-dir <repoDir>]"
-            + " [--world]"
-            + " [--location <locationId>]"
-            + " [--observe-location <locationId>]"
-            + " [--observe-actor <actorId>]"
-            + " [--observe-navigation <locationId>]"
-            + " [--observe-actor-navigation <actorId>]"
-            + " [--observe-route-acceleration]"
-            + " [--observe-time]"
-            + " [--advance-time <ticks>]"
-            + " [--plan-actor-route <actorId> <toLocationId>]"
-            + " [--plan-route <fromLocationId> <toLocationId>]"
-            + " [--rebuild-route-acceleration [<locationId[,locationId...]>|default]]"
-            + " [--trace-actor-route <actorId>]"
-            + " [--move-actor-quiet <actorId> <passageId>]"
-            + " [--move-actor <actorId> <passageId>]";
+        => """
+Usage:
+  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj [smoke|status|help]
+  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--world] [--location <locationId>] [--observe-location <locationId>] [--observe-actor <actorId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
+""";
 
     private static int RunHelp() {
         Console.WriteLine(
             """
 TextAdv2.E2eCli
 
-Commands:
+Meta commands:
   smoke   Validate the host project starts and can reference Atelia.TextAdv2.
   status  Print the current runtime scaffold state as JSON.
-  runtime  Omit a meta command and use the legacy TextAdv2 option-style commands below.
   help    Show this message.
 
-Runtime options:
+Runtime target:
   --repo-dir <repoDir>
            Open or create a persistent sample world at the specified directory.
-           If omitted, a temporary sample world is created for this invocation.
+  --dev-sample-world
+           Create a temporary sample world for this invocation only.
+
+           Exactly one runtime target must be specified.
+
+Runtime options:
     --rebuild-route-acceleration
                      Without an argument, rebuild using the world's recommended landmark profile when available.
     --rebuild-route-acceleration default
@@ -280,7 +294,19 @@ Runtime options:
 
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
-    private sealed record RuntimeRequest(string? RepoDir, RuntimeOperation[] Operations);
+    private const string MissingRuntimeTargetError = "缺少 runtime target，请传 --repo-dir <repoDir> 或 --dev-sample-world";
+    private const string RepoDirAndDevSampleWorldConflictError = "--repo-dir 不能与 --dev-sample-world 同时使用";
+
+    private sealed record RuntimeRequest(
+        RuntimeBootstrapMode BootstrapMode,
+        string? RepoDir,
+        RuntimeOperation[] Operations
+    );
+
+    private enum RuntimeBootstrapMode {
+        RepoDir,
+        DevSampleWorld,
+    }
 
     private sealed record RuntimeOperation(
         string Description,

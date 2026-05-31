@@ -1,0 +1,134 @@
+using System.Diagnostics;
+using Xunit;
+
+namespace Atelia.TextAdv2.Tests;
+
+public sealed class E2eCliBlackBoxTests {
+    [Fact]
+    public void WorldCommand_WithoutRuntimeTarget_FailsFast() {
+        CliRunResult result = RunCli("--world");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("缺少 runtime target，请传 --repo-dir <repoDir> 或 --dev-sample-world", result.StandardError, StringComparison.Ordinal);
+        Assert.DoesNotContain("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DevSampleWorld_WithWorldCommand_Succeeds() {
+        CliRunResult result = RunCli("--dev-sample-world", "--world");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("WORLD", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RepoDir_RuntimeState_PersistsAcrossInvocations() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult move = RunCli(
+                "--repo-dir", repoDir,
+                "--move-actor", "scout", "square-ridge-trail"
+            );
+            CliRunResult observe = RunCli(
+                "--repo-dir", repoDir,
+                "--observe-actor", "scout"
+            );
+
+            Assert.Equal(0, move.ExitCode);
+            Assert.Equal(0, observe.ExitCode);
+            Assert.Contains("\"ToLocationId\": \"ridge\"", move.StandardOutput, StringComparison.Ordinal);
+            Assert.Contains("\"LocationId\": \"ridge\"", observe.StandardOutput, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void Help_ShowsExplicitDevFlag_AndNoImplicitTemporaryWorldMessage() {
+        CliRunResult result = RunCli("help");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("--dev-sample-world", result.StandardOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("If omitted, a temporary sample world is created for this invocation.", result.StandardOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("runtime  Omit a meta command", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RepoDir_AndDevSampleWorld_CannotBeCombined() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult result = RunCli(
+                "--repo-dir", repoDir,
+                "--dev-sample-world",
+                "--world"
+            );
+
+            Assert.Equal(1, result.ExitCode);
+            Assert.Contains("--repo-dir 不能与 --dev-sample-world 同时使用", result.StandardError, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    private static CliRunResult RunCli(params string[] args) {
+        string repoRoot = GetRepoRoot();
+        string projectPath = Path.Combine(repoRoot, "prototypes", "TextAdv2.E2eCli", "TextAdv2.E2eCli.csproj");
+        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+            ?? throw new InvalidOperationException("Unable to resolve test build configuration.");
+
+        var startInfo = new ProcessStartInfo("dotnet") {
+            WorkingDirectory = repoRoot,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+
+        startInfo.ArgumentList.Add("run");
+        startInfo.ArgumentList.Add("--project");
+        startInfo.ArgumentList.Add(projectPath);
+        startInfo.ArgumentList.Add("--configuration");
+        startInfo.ArgumentList.Add(configuration);
+        startInfo.ArgumentList.Add("--no-build");
+        startInfo.ArgumentList.Add("--");
+        foreach (string arg in args) {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start TextAdv2.E2eCli.");
+        string standardOutput = process.StandardOutput.ReadToEnd();
+        string standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        return new CliRunResult(
+            process.ExitCode,
+            Normalize(standardOutput),
+            Normalize(standardError)
+        );
+    }
+
+    private static string GetRepoRoot()
+        => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
+
+    private static string CreateTempRepoDir()
+        => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-e2ecli-tests-{Guid.NewGuid():N}");
+
+    private static void DeleteDirectoryIfExists(string repoDir) {
+        if (Directory.Exists(repoDir)) {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    private static string Normalize(string text) => text.Replace("\r\n", "\n");
+
+    private sealed record CliRunResult(
+        int ExitCode,
+        string StandardOutput,
+        string StandardError
+    );
+}

@@ -23,7 +23,8 @@ public static class TextAdv2RuntimeScaffold {
             "sample-world seed 与默认 landmark profile 已从 runtime public seam 下沉到显式 dev support 层。",
             "canonical navigation graph seam 已收口为显式 read model，并被 planner / heuristic / stale-signature 共享复用。",
             "world root schema gate 已补齐；Passage 高频写操作已收回到 WorldState.SetPassage* seam，主读链路也已切到只读 facade。",
-            "修订后的近程路线是：先显式化 E2eCli dev-mode，再决定 DumpWorld/DumpLocation 这类残余 dev text surface 的最终归属。"
+            "E2eCli dev-mode 已显式化：runtime 命令现在必须显式选择 --repo-dir 或 --dev-sample-world。",
+            "修订后的近程路线现已收窄为：决定 DumpWorld/DumpLocation 这类残余 dev text surface 的最终归属。"
         ]
     );
 }

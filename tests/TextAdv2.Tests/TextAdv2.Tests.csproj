@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/TextAdv2/TextAdv2.csproj" />
+    <ProjectReference Include="../../prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj" />
     <ProjectReference Include="../../prototypes/TextAdv2.GameServer/TextAdv2.GameServer.csproj" />
   </ItemGroup>
 

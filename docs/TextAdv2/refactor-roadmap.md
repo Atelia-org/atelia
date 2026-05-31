@@ -54,9 +54,9 @@
   - `LocationNavigationGraphProjector.Project(...)` 现在承载 canonical graph seam；
   - `NavigationObservationProjector` 与当前 planner、landmark heuristic、route-acceleration stale 判定都从这份 seam 读取，不再把图语义藏在展示 projector 内部。
 - `P5` 的真实剩余问题需要按宿主边界重写：
-  - sample-world seed 与默认 landmark profile 已从 runtime public seam 下沉；
-  - `GameServer` 的 open/reset 策略已收口到显式 host policy，但 `E2eCli` 仍默认走 sample-world dev bootstrap；
-  - `DumpWorld` / `DumpLocation` 的最终归属仍未定，导致 runtime 还保留调试文本输出责任。
+- sample-world seed 与默认 landmark profile 已从 runtime public seam 下沉；
+- `GameServer` 的 open/reset 策略已收口到显式 host policy，`E2eCli` 也已要求显式选择 `--repo-dir` 或 `--dev-sample-world`；
+- `DumpWorld` / `DumpLocation` 的最终归属仍未定，导致 runtime 还保留调试文本输出责任。
 
 ## 5. 修订后的工作包顺序
 
@@ -310,7 +310,7 @@ P4a/P4b 本轮落地结果：
 
 - P5a：把 sample-world profile / 默认 landmark policy 从 `TextAdv2Runtime` 中剥离到显式 dev support 层（已完成）。
 - P5b1：把 `GameServer` 的 open-existing / open-or-create / reset-sample-world 决策从 `TextAdv2RuntimeService` 中提出，改成显式 host bootstrap/admin policy（已完成）。
-- P5b2：让 `E2eCli` 的“未指定 repoDir 就创建临时 sample world”成为显式 dev mode，而不是 runtime command 主路径的隐含行为。
+- P5b2：让 `E2eCli` 的“未指定 repoDir 就创建临时 sample world”成为显式 dev mode，而不是 runtime command 主路径的隐含行为（已完成）。
 - P5c：处理 `DumpWorld` / `DumpLocation` 等稳定调试文本输出的最终归属；若这一步完成后 `TextAdv2RuntimeCommandResult` 已无剩余，再彻底删除它。
 
 完成定义：
@@ -324,7 +324,15 @@ P5a 本轮落地结果：
 - `RebuildRouteAcceleration` 的“无参/`default` => 推荐 profile”决策已从 runtime public seam 移到 `TextAdv2SampleWorldDevBootstrap`，宿主仍保留原有 dev/admin 行为，但 runtime 本体只接受显式 landmark 请求。
 - 新增回归测试，明确区分“通过 dev bootstrap 打开的 runtime 可以走 sample-world 默认 landmark profile”与“直接 `OpenExisting(...)` 的 runtime 不应隐式拥有该 policy”。
 - `GameServer` 已把 runtime handle 与 host bootstrap/admin policy 分离：`TextAdv2RuntimeService` 只保留持有/替换 runtime，sample-world dev open/reset 与 repo lock retry 都回到 host-local policy；`runtime-status`/`plannedEndpoints` 也已显式暴露这层边界。
-- 下一自然入口收窄为 `P5b2` 与 `P5c`。
+- 下一自然入口收窄为 `P5b2`。
+
+P5b2 本轮落地结果：
+
+- `TextAdv2.E2eCli` 已新增显式 dev mode 旗标 `--dev-sample-world`，runtime 命令现在必须在 `--repo-dir <repoDir>` 与 `--dev-sample-world` 之间二选一。
+- 未指定 runtime target 时，CLI 会 fail-fast 报错：`缺少 runtime target，请传 --repo-dir <repoDir> 或 --dev-sample-world`。
+- 同时传 `--repo-dir` 与 `--dev-sample-world` 时，CLI 会 fail-fast 报错：`--repo-dir 不能与 --dev-sample-world 同时使用`。
+- `--repo-dir` 的 open-or-create sample world 语义保持不变；meta commands（`smoke` / `status` / `help`）保持不变。
+- 已补最小 CLI 黑盒测试，并同步去掉 help 文案里“省略 repo-dir 就自动创建临时 sample world”的误导描述。
 
 ## 6. 不在本轮顺手做的事
 
@@ -337,16 +345,14 @@ P5a 本轮落地结果：
 
 推荐顺序改为：
 
-1. `P5b2 E2eCli dev-mode 显式化`
-2. `P5c` 决定 `DumpWorld` / `DumpLocation` 的最终归属，并视结果删除 `TextAdv2RuntimeCommandResult`
-3. `P3c` 仅在真实 world editing 需求出现后，再处理 `Location` / `Actor` 写入权威
+1. `P5c` 决定 `DumpWorld` / `DumpLocation` 的最终归属，并视结果删除 `TextAdv2RuntimeCommandResult`
+2. `P3c` 仅在真实 world editing 需求出现后，再处理 `Location` / `Actor` 写入权威
 
 排序理由：
 
 - `P4` 与 `Passage` authority seam 已基本收口，继续深挖 `WorldTruth` 叶子 setter 已经不再是当前收益最高的路径。
-- 当前最真实的边界问题落在宿主：`GameServer` / `E2eCli` 仍把 sample-world bootstrap、reset、以及 runtime 文本输出混在主路径里。
-- `P2c1/P2c2` 已完成，runtime 主路径里的 movement/route trace 文本别名已清掉，下一步自然转向宿主 dev-mode 与 `Dump*` 归属。
-- `DumpWorld` / `DumpLocation` 的最终形态仍带有明显 dev-only 色彩，应该放在 bootstrap/admin 边界更清楚之后再定。
+- `P5b1`、`P5b2` 与 `P2c1/P2c2` 已完成，宿主侧 bootstrap/admin 与 dev-mode 的显式边界已经具备。
+- `DumpWorld` / `DumpLocation` 的最终形态仍带有明显 dev-only 色彩，现在已经可以在更清楚的宿主边界上单独判断。
 - `Location` / `Actor` 收权在当前代码里缺少真实调用压力；过早推进容易变成为了“形式对称”而设计，而不是为真实 invariant 收口。
 
 ## 8. 每包统一验证策略
@@ -362,10 +368,10 @@ P5a 本轮落地结果：
 
 ## 9. 当前推荐起点
 
-当前推荐从 `P5b2` 开始。
+当前推荐从 `P5c` 开始。
 
 原因：
 
-- `P5b1` 与 `P2c1/P2c2` 都已完成，GameServer host policy 与 runtime text residual 的第一轮收口都已经到位。
-- `E2eCli` 仍把“未指定 repoDir 就开临时 sample world”放在默认主路径里，是当前最显眼的隐式 dev 语义。
-- `DumpWorld` / `DumpLocation` 的最终归属更适合建立在 `E2eCli` dev-mode 显式化之后，再做一次更干净的边界判断。
+- `P5b1`、`P5b2` 与 `P2c1/P2c2` 都已完成，GameServer host policy、E2eCli dev-mode，以及 runtime text residual 的第一轮收口都已经到位。
+- `E2eCli` 已不再把“未指定 repoDir 就开临时 sample world”放在默认主路径里，当前最显眼的宿主隐式 dev 语义已经清掉。
+- `DumpWorld` / `DumpLocation` 的最终归属现在成为最自然的下一步，可以在 dev bootstrap/admin 边界更清楚的前提下单独判断。
