@@ -64,6 +64,105 @@ public sealed class CrossHostMachineContractParityTests {
     }
 
     [Fact]
+    public async Task ObserveLocation_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepo(cliRepoDir);
+            PrepareSampleRepo(hostRepoDir);
+
+            string cliJson = RunCliAndReadSuccessfulJson("--repo-dir", cliRepoDir, "--json-only", "--observe-location", "square");
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/admin/locations/square/observation");
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "observe location");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
+    public async Task ObserveNavigation_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepo(cliRepoDir);
+            PrepareSampleRepo(hostRepoDir);
+
+            string cliJson = RunCliAndReadSuccessfulJson("--repo-dir", cliRepoDir, "--json-only", "--observe-navigation", "square");
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/admin/locations/square/navigation");
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "observe navigation");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
+    public async Task ObserveNavigationDeltaEmpty_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepo(cliRepoDir);
+            PrepareSampleRepo(hostRepoDir);
+
+            string cliJson = RunCliAndReadSuccessfulJson("--repo-dir", cliRepoDir, "--json-only", "--observe-navigation", "delta");
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/admin/locations/delta/navigation");
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "observe navigation delta empty");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
+    public async Task ObserveActorNavigationAfterMove_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepo(cliRepoDir);
+            PrepareSampleRepo(hostRepoDir);
+
+            _ = RunCliAndReadSuccessfulJson("--repo-dir", cliRepoDir, "--json-only", "--move-actor", "scout", "square-ridge-trail");
+            string cliJson = RunCliAndReadSuccessfulJson("--repo-dir", cliRepoDir, "--json-only", "--observe-actor-navigation", "scout");
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
+            _ = await ReadSuccessfulHostJsonAsync(moveResponse);
+            using var observeResponse = await client.GetAsync("/actors/scout/navigation");
+            string hostJson = await ReadSuccessfulHostJsonAsync(observeResponse);
+
+            AssertJsonEquivalent(cliJson, hostJson, "observe actor navigation after move");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
     public async Task ObserveTime_ParityBetweenGameServerAndCliJsonOnlyAsync() {
         string cliRepoDir = CreateTempRepoDir();
         string hostRepoDir = CreateTempRepoDir();

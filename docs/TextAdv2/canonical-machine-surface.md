@@ -1,9 +1,9 @@
 # TextAdv2 Canonical Machine Surface
 
-> 状态：F8b 第一拍 + F9 runtime boundary freeze 第一拍
+> 状态：F8b 第一拍 + F9 runtime boundary freeze 第一拍 + T1 cross-host parity 第二批（read-only observation/navigation seams）
 > 适用范围：当前 `TextAdv2.GameServer` 与 `TextAdv2.E2eCli` 的 machine-consumable surface
 
-当前文档只声明“第一批已被 parity guard 守住的 canonical machine surface”。
+当前文档只声明“已被 parity guard 守住的 canonical machine surface”。
 
 它们都落在两类入口上：
 
@@ -12,14 +12,23 @@
 
 只有下面列出的 seam，当前才应被视为已经建立 cross-host parity guard 的 canonical contract。新增或修改 machine seam 时，应先把它补进这份列表，再补 parity tests。
 
-## 当前已钉住的第一批 seam
+## 当前已钉住的 canonical seams
 
+- observe location
+  - `GET /admin/locations/{locationId}/observation`
+  - `... --json-only --observe-location <locationId>`
+- observe navigation
+  - `GET /admin/locations/{locationId}/navigation`
+  - `... --json-only --observe-navigation <locationId>`
 - observe actor
   - `GET /actors/{actorId}/observation`
   - `dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj -- --json-only --observe-actor <actorId>`
 - observe actor context
   - `GET /actors/{actorId}/context`
   - `... --json-only --observe-actor-context <actorId>`
+- observe actor navigation
+  - `GET /actors/{actorId}/navigation`
+  - `... --json-only --observe-actor-navigation <actorId>`
 - observe time
   - `GET /admin/time`
   - `... --json-only --observe-time`
@@ -60,9 +69,8 @@
 
 ## 当前不属于 canonical machine surface 的内容
 
-- 尚未进入第一批 parity guard 的其他 JSON seam
-  - 例如 `observe-location`、`observe-navigation`、`observe-actor-navigation`
-  - `plan-route`
+- 尚未进入 parity guard 的其他 JSON seam
+  - 例如 `plan-route`
   - `create-actor`、`create-passage`
   - `observe-route-acceleration`、`rebuild-route-acceleration`
 - CLI 默认 stdout（包括 repo banner、分段标题和文本输出）
