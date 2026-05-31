@@ -122,6 +122,9 @@ static IResult ExecuteText(SessionService session, Func<WorldSession, string> op
         var result = session.Invoke(operation);
         return Results.Content(result, HostContentTypes.PlainText);
     }
+    catch (SessionUnavailableException) {
+        return BuildSessionUnavailableResult(session);
+    }
     catch (ArgumentException ex) {
         return Results.BadRequest(new { error = ex.Message });
     }
@@ -134,6 +137,9 @@ static IResult ExecuteJson<T>(SessionService session, Func<WorldSession, T> oper
     try {
         var result = session.Invoke(operation);
         return Results.Content(JsonSerializer.Serialize(result, TextAdv2HostJson.Options), HostContentTypes.Json);
+    }
+    catch (SessionUnavailableException) {
+        return BuildSessionUnavailableResult(session);
     }
     catch (ArgumentException ex) {
         return Results.BadRequest(new { error = ex.Message });
@@ -151,8 +157,22 @@ static long ParseNonNegativeTickDelta(string value) {
 }
 
 static IResult BuildHealthStatus(SessionService sessionService) {
+    var payload = BuildAvailabilityStatus(sessionService);
     var session = sessionService.DescribeStatus();
-    var payload = new {
+
+    return session.Readiness == SessionReadiness.Ready
+        ? Results.Ok(payload)
+        : Results.Json(payload, statusCode: StatusCodes.Status503ServiceUnavailable);
+}
+
+static IResult BuildSessionUnavailableResult(SessionService sessionService) {
+    var payload = BuildAvailabilityStatus(sessionService);
+    return Results.Json(payload, statusCode: StatusCodes.Status503ServiceUnavailable);
+}
+
+static object BuildAvailabilityStatus(SessionService sessionService) {
+    var session = sessionService.DescribeStatus();
+    return new {
         status = session.Readiness == SessionReadiness.Ready ? "ok" : "degraded",
         service = "TextAdv2.GameServer",
         mode = HostRunningMode,
@@ -161,10 +181,6 @@ static IResult BuildHealthStatus(SessionService sessionService) {
         },
         session,
     };
-
-    return session.Readiness == SessionReadiness.Ready
-        ? Results.Ok(payload)
-        : Results.Json(payload, statusCode: StatusCodes.Status503ServiceUnavailable);
 }
 
 static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstrapMode, SessionService sessionService) {

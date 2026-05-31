@@ -796,7 +796,28 @@ public class GameServerIntegrationTests {
             Assert.Contains(repoDir, healthzError, StringComparison.Ordinal);
 
             using var worldResponse = await client.GetAsync("/admin/world");
-            Assert.Equal(HttpStatusCode.InternalServerError, worldResponse.StatusCode);
+            string worldText = await worldResponse.Content.ReadAsStringAsync();
+            var worldJson = JsonDocument.Parse(worldText);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, worldResponse.StatusCode);
+            Assert.Equal("application/json", worldResponse.Content.Headers.ContentType?.MediaType);
+            Assert.Equal("degraded", worldJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal("alive", worldJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
+            Assert.Equal("open-failed", worldJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            string? worldError = worldJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
+            Assert.Contains("Repository", worldError, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(repoDir, worldError, StringComparison.Ordinal);
+
+            using var observeResponse = await client.GetAsync("/actors/scout/observation");
+            string observeText = await observeResponse.Content.ReadAsStringAsync();
+            var observeJson = JsonDocument.Parse(observeText);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, observeResponse.StatusCode);
+            Assert.Equal("application/json", observeResponse.Content.Headers.ContentType?.MediaType);
+            Assert.Equal("degraded", observeJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal("alive", observeJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
+            Assert.Equal("open-failed", observeJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            string? observeError = observeJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
+            Assert.Contains("Repository", observeError, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(repoDir, observeError, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -848,6 +869,13 @@ public class GameServerIntegrationTests {
             Assert.Equal("alive", resetJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
             Assert.Equal("ready", resetJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
             Assert.False(File.Exists(legacySidecarPath));
+
+            using var healthzAfterResetResponse = await client.GetAsync("/healthz");
+            string healthzAfterResetText = await healthzAfterResetResponse.Content.ReadAsStringAsync();
+            var healthzAfterResetJson = JsonDocument.Parse(healthzAfterResetText);
+            Assert.Equal(HttpStatusCode.OK, healthzAfterResetResponse.StatusCode);
+            Assert.Equal("ok", healthzAfterResetJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal("ready", healthzAfterResetJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
 
             using var observeResponse = await client.GetAsync("/actors/scout/observation");
             var observedActor = await ReadJsonAsync<ActorLocationObservation>(observeResponse);
