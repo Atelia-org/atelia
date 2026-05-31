@@ -56,7 +56,7 @@ internal static class Program {
     private static int RunSessionCommands(string[] args) {
         var request = ParseSessionRequest(args);
         using var session = request.BootstrapMode switch {
-            SessionBootstrapMode.RepoDir => SampleWorldBootstrap.OpenOrCreateSession(request.RepoDir!),
+            SessionBootstrapMode.RepoDir => OpenExistingRepoSession(request.RepoDir!),
             SessionBootstrapMode.DevSampleWorld => SampleWorldBootstrap.CreateTemporarySession(),
             _ => throw new InvalidOperationException("Unsupported session bootstrap mode."),
         };
@@ -76,6 +76,29 @@ internal static class Program {
         }
 
         return 0;
+    }
+
+    private static WorldSession OpenExistingRepoSession(string repoDir) {
+        if (!Directory.Exists(repoDir)) {
+            throw new InvalidOperationException(
+                $"--repo-dir 指向的仓库不存在: '{repoDir}'。请先运行 init-empty <repoDir> 或 init-sample <repoDir> 初始化，或改用 --dev-sample-world。"
+            );
+        }
+
+        if (!Directory.EnumerateFileSystemEntries(repoDir).Any()) {
+            throw new InvalidOperationException(
+                $"--repo-dir 指向的目录为空，尚未初始化为 TextAdv2 world repo: '{repoDir}'。请先运行 init-empty <repoDir> 或 init-sample <repoDir>。"
+            );
+        }
+
+        try {
+            return WorldSession.OpenExisting(repoDir);
+        }
+        catch (InvalidOperationException) {
+            throw new InvalidOperationException(
+                $"--repo-dir 未指向可打开的 TextAdv2 world repo: '{repoDir}'。请确认该目录已通过 init-empty 或 init-sample 初始化。"
+            );
+        }
     }
 
     private static SessionRequest ParseSessionRequest(string[] args) {
@@ -345,8 +368,8 @@ Meta commands:
 
 Session target:
   --repo-dir <repoDir>
-           Open the specified repo. If the path is missing or empty, current compatibility behavior creates a persistent sample world.
-           For explicit authoring/bootstrap flows, prefer init-empty or init-sample first.
+           Open an existing persistent TextAdv2 world repo.
+           This no longer creates a sample world implicitly; initialize first with init-empty or init-sample.
   --dev-sample-world
            Create a dev sample world under the system temp directory for this invocation.
 

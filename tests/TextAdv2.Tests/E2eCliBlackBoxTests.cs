@@ -55,6 +55,7 @@ public sealed class E2eCliBlackBoxTests {
         string repoDir = CreateTempRepoDir();
 
         try {
+            CliRunResult init = RunCli("init-sample", repoDir);
             CliRunResult move = RunCli(
                 "--repo-dir", repoDir,
                 "--move-actor", "scout", "square-ridge-trail"
@@ -64,6 +65,7 @@ public sealed class E2eCliBlackBoxTests {
                 "--observe-actor", "scout"
             );
 
+            Assert.Equal(0, init.ExitCode);
             Assert.Equal(0, move.ExitCode);
             Assert.Equal(0, observe.ExitCode);
             Assert.Contains("\"ToLocationId\": \"ridge\"", move.StandardOutput, StringComparison.Ordinal);
@@ -94,7 +96,8 @@ public sealed class E2eCliBlackBoxTests {
 
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("--dev-sample-world", result.StandardOutput, StringComparison.Ordinal);
-        Assert.DoesNotContain("If omitted, a temporary sample world is created for this invocation.", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("This no longer creates a sample world implicitly", result.StandardOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("current compatibility behavior creates a persistent sample world", result.StandardOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("runtime  Omit a meta command", result.StandardOutput, StringComparison.Ordinal);
     }
 
@@ -156,6 +159,36 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Equal(0, observe.ExitCode);
             Assert.Contains("\"ActorId\": \"scout\"", observe.StandardOutput, StringComparison.Ordinal);
             Assert.Contains("\"LocationId\": \"square\"", observe.StandardOutput, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void RepoDir_MissingRepo_FailsWithCliLevelMessage() {
+        string repoDir = CreateTempRepoDir();
+
+        CliRunResult result = RunCli("--repo-dir", repoDir, "--world");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("--repo-dir 指向的仓库不存在:", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("请先运行 init-empty <repoDir> 或 init-sample <repoDir> 初始化", result.StandardError, StringComparison.Ordinal);
+        Assert.DoesNotContain("StateJournal repository", result.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RepoDir_EmptyDirectory_FailsWithCliLevelMessage() {
+        string repoDir = CreateTempRepoDir();
+        Directory.CreateDirectory(repoDir);
+
+        try {
+            CliRunResult result = RunCli("--repo-dir", repoDir, "--world");
+
+            Assert.Equal(1, result.ExitCode);
+            Assert.Contains("--repo-dir 指向的目录为空，尚未初始化为 TextAdv2 world repo:", result.StandardError, StringComparison.Ordinal);
+            Assert.Contains("请先运行 init-empty <repoDir> 或 init-sample <repoDir>", result.StandardError, StringComparison.Ordinal);
+            Assert.DoesNotContain("StateJournal repository", result.StandardError, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
