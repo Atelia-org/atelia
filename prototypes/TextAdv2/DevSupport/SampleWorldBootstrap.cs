@@ -9,7 +9,6 @@ namespace Atelia.TextAdv2.DevSupport;
 /// “只打开既有 repo” 与 “必要时创建样例世界” 两种生命周期语义。
 /// </summary>
 public static class SampleWorldBootstrap {
-    private const string LegacySessionSidecarFileName = ".textadv2-runtime-state.json";
     private sealed record RecommendedLandmarkProfile(
         string ProfileName,
         IReadOnlyList<string> LandmarkLocationIds
@@ -26,17 +25,7 @@ public static class SampleWorldBootstrap {
 
         if (!Directory.Exists(repoDir)) { return CreateFreshSession(repoDir); }
 
-        string[] entries = Directory.EnumerateFileSystemEntries(repoDir).ToArray();
-        string legacySidecarPath = Path.Combine(repoDir, LegacySessionSidecarFileName);
-        bool containsOnlyLegacySidecar = entries.Length > 0
-            && entries.All(entry => string.Equals(entry, legacySidecarPath, StringComparison.Ordinal));
-
-        if (containsOnlyLegacySidecar) {
-            File.Delete(legacySidecarPath);
-            return CreateFreshSession(repoDir);
-        }
-
-        return entries.Length > 0
+        return Directory.EnumerateFileSystemEntries(repoDir).Any()
             ? WorldSession.OpenExisting(repoDir)
             : CreateFreshSession(repoDir);
     }

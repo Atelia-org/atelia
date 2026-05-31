@@ -804,6 +804,64 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
+    public async Task SampleWorldDevMode_LegacySidecarOnlyRepoStartsDegradedUntilResetAsync() {
+        string repoDir = CreateTempRepoDir();
+        string legacySidecarPath = Path.Combine(repoDir, ".textadv2-runtime-state.json");
+
+        try {
+            Directory.CreateDirectory(repoDir);
+            File.WriteAllText(
+                legacySidecarPath,
+                """
+                {
+                  "SchemaVersion": 1,
+                  "CurrentTick": 99,
+                  "MovementHistoryByActor": {}
+                }
+                """
+            );
+
+            using var factory = CreateFactory(repoDir);
+            using var client = factory.CreateClient();
+
+            using var rootResponse = await client.GetAsync("/");
+            string rootText = await rootResponse.Content.ReadAsStringAsync();
+            var rootJson = JsonDocument.Parse(rootText);
+            Assert.Equal(HttpStatusCode.OK, rootResponse.StatusCode);
+            Assert.Equal("alive", rootJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
+            Assert.Equal("open-failed", rootJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            string? rootError = rootJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
+            Assert.Contains("StateJournal repository", rootError, StringComparison.Ordinal);
+            Assert.Contains(repoDir, rootError, StringComparison.Ordinal);
+
+            using var healthzResponse = await client.GetAsync("/healthz");
+            string healthzText = await healthzResponse.Content.ReadAsStringAsync();
+            var healthzJson = JsonDocument.Parse(healthzText);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, healthzResponse.StatusCode);
+            Assert.Equal("degraded", healthzJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal("open-failed", healthzJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+
+            using var resetResponse = await client.PostAsync("/admin/reset-sample-world", content: null);
+            string resetText = await resetResponse.Content.ReadAsStringAsync();
+            var resetJson = JsonDocument.Parse(resetText);
+            Assert.Equal(HttpStatusCode.OK, resetResponse.StatusCode);
+            Assert.Equal("alive", resetJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
+            Assert.Equal("ready", resetJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.False(File.Exists(legacySidecarPath));
+
+            using var observeResponse = await client.GetAsync("/actors/scout/observation");
+            var observedActor = await ReadJsonAsync<ActorLocationObservation>(observeResponse);
+            Assert.Equal(HttpStatusCode.OK, observeResponse.StatusCode);
+            Assert.NotNull(observedActor);
+            Assert.Equal("scout", observedActor.ActorId);
+            Assert.Equal("square", observedActor.Location.LocationId);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public async Task OpenExistingOnlyMode_RebuildRouteAccelerationWithoutLandmarks_UsesWorldDerivedSampleWorldProfileAsync() {
         string repoDir = CreateTempRepoDir();
 

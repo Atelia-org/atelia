@@ -608,13 +608,14 @@ public class WorldSessionTests {
     }
 
     [Fact]
-    public void OpenOrCreateSession_WithOnlyLegacySessionSidecar_CreatesFreshSampleWorld() {
+    public void OpenOrCreateSession_WithOnlyLegacySessionSidecar_ThrowsInsteadOfSilentlyRecreatingSampleWorld() {
         string repoDir = CreateTempRepoDir();
+        string legacySidecarPath = Path.Combine(repoDir, ".textadv2-runtime-state.json");
 
         try {
             Directory.CreateDirectory(repoDir);
             File.WriteAllText(
-                Path.Combine(repoDir, ".textadv2-runtime-state.json"),
+                legacySidecarPath,
                 """
                 {
                   "SchemaVersion": 1,
@@ -624,13 +625,11 @@ public class WorldSessionTests {
                 """
             );
 
-            using var session = SampleWorldBootstrap.OpenOrCreateSession(repoDir);
-            var observedActor = session.ObserveActor(TestWorldBuilder.ActorIds.Scout);
-            var observedTime = session.ObserveTime();
+            var exception = Assert.Throws<InvalidOperationException>(() => SampleWorldBootstrap.OpenOrCreateSession(repoDir));
 
-            Assert.Equal(TestWorldBuilder.ActorIds.Scout, observedActor.ActorId);
-            Assert.Equal(TestWorldBuilder.LocationIds.Square, observedActor.Location.LocationId);
-            Assert.Equal(0, observedTime.CurrentTick);
+            Assert.Contains("StateJournal repository", exception.Message, StringComparison.Ordinal);
+            Assert.True(File.Exists(legacySidecarPath));
+            Assert.Equal([legacySidecarPath], Directory.EnumerateFileSystemEntries(repoDir).ToArray());
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
