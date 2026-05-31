@@ -13,7 +13,8 @@ internal sealed class WorldState {
 
     private const string KindValue = "world-state";
     private const string SchemaVersionKey = "schemaVersion";
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
+    private const string CurrentLogicalTickKey = "currentLogicalTick";
     private const string ActorsKey = "actors";
     private const string LocationsKey = "locations";
     private const string PassagesKey = "passages";
@@ -29,6 +30,7 @@ internal sealed class WorldState {
         _ = ActorsLedger;
         _ = LocationsLedger;
         _ = PassagesLedger;
+        _ = CurrentLogicalTick;
         ValidateIntegrity();
     }
 
@@ -38,6 +40,8 @@ internal sealed class WorldState {
     public DurableDict<string> Root => _root;
 
     public Revision Revision => _root.Revision;
+
+    public long CurrentLogicalTick => ReadCurrentLogicalTick();
 
     private DurableDict<string> ActorsLedger => _root.GetOrThrow<DurableDict<string>>(ActorsKey)!;
 
@@ -51,6 +55,7 @@ internal sealed class WorldState {
         var root = revision.CreateDict<string>();
         root.Upsert(KindKey, KindValue);
         root.Upsert(SchemaVersionKey, CurrentSchemaVersion);
+        root.Upsert(CurrentLogicalTickKey, 0L);
         root.Upsert(ActorsKey, revision.CreateDict<string>());
         root.Upsert(LocationsKey, revision.CreateDict<string>());
         root.Upsert(PassagesKey, revision.CreateDict<string>());
@@ -222,6 +227,18 @@ internal sealed class WorldState {
         passage.SetDirectionConditionNoteFrom(locationId, value);
     }
 
+    public long AdvanceLogicalTime(long ticks) {
+        ArgumentOutOfRangeException.ThrowIfNegative(ticks);
+
+        if (ticks == 0) {
+            return CurrentLogicalTick;
+        }
+
+        long updatedTick = checked(CurrentLogicalTick + ticks);
+        _root.Upsert(CurrentLogicalTickKey, updatedTick);
+        return updatedTick;
+    }
+
     /// <summary>
     /// 按当前 actor 所在地点，沿指定 passage 的合法方向移动，并返回 authoritative move receipt。
     /// 该 API 会校验：
@@ -379,6 +396,30 @@ internal sealed class WorldState {
             EnsureValidExitNameDuringWorldLoad(passage.Id, passage.EndpointB.LocationId, passage.EndpointB.ExitName);
             EnsureExitNameUnique(exitNamesByLocation, passage.Id, passage.EndpointA.LocationId, passage.EndpointA.ExitName);
             EnsureExitNameUnique(exitNamesByLocation, passage.Id, passage.EndpointB.LocationId, passage.EndpointB.ExitName);
+        }
+    }
+
+    private long ReadCurrentLogicalTick() {
+        GetIssue issue = _root.Get(CurrentLogicalTickKey, out long currentLogicalTick);
+        switch (issue) {
+            case GetIssue.None:
+                if (currentLogicalTick < 0) {
+                    throw new InvalidOperationException(
+                        $"Expected world-state logical tick to be non-negative, but found '{currentLogicalTick}'."
+                    );
+                }
+
+                return currentLogicalTick;
+
+            case GetIssue.NotFound:
+                throw new InvalidOperationException(
+                    "Expected world-state currentLogicalTick, but found '<missing>'."
+                );
+
+            default:
+                throw new InvalidOperationException(
+                    $"Expected world-state currentLogicalTick, but found '<invalid:{issue}>'."
+                );
         }
     }
 

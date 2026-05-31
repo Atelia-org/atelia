@@ -505,7 +505,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task HostRestart_ReopensWorldTruthButResetsSessionOwnedStateAsync() {
+    public async Task HostRestart_ReopensWorldTruthAndDurableTimeButResetsOtherSessionOwnedStateAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -527,7 +527,7 @@ public class GameServerIntegrationTests {
             using var timeAfterRestart = await secondClient.GetAsync("/admin/time");
             string timeText = await timeAfterRestart.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, timeAfterRestart.StatusCode);
-            Assert.Contains("\"currentTick\":0", timeText.Replace(" ", string.Empty), StringComparison.Ordinal);
+            Assert.Contains("\"currentTick\":13", timeText.Replace(" ", string.Empty), StringComparison.Ordinal);
 
             using var traceAfterRestart = await secondClient.GetAsync("/actors/scout/route-trace");
             string traceText = await traceAfterRestart.Content.ReadAsStringAsync();

@@ -384,7 +384,7 @@ public class WorldSessionTests {
     }
 
     [Fact]
-    public void OpenOrCreateSampleWorld_ReopensWorldTruthButResetsSessionOwnedTimeAndHistory() {
+    public void OpenOrCreateSampleWorld_ReopensWorldTruthAndDurableTimeButResetsOtherSessionOwnedState() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -406,7 +406,7 @@ public class WorldSessionTests {
             var traceAfterReopen = reopened.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
             var observedAfterReopen = reopened.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
-            Assert.Equal(0, timeAfterReopen.CurrentTick);
+            Assert.Equal(11, timeAfterReopen.CurrentTick);
             Assert.Equal(TestWorldBuilder.LocationIds.Ridge, traceAfterReopen.StartLocationId);
             Assert.Equal("Ridge", traceAfterReopen.StartLocationName);
             Assert.Equal(TestWorldBuilder.LocationIds.Ridge, traceAfterReopen.EndLocationId);

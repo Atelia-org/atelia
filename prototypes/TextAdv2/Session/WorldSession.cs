@@ -9,7 +9,7 @@ namespace Atelia.TextAdv2.Session;
 ///
 /// 当前阶段它统一持有：
 /// - Repository / WorldState 生命周期；
-/// - session-owned logical time（进程内易失）；
+/// - world-backed authoritative logical time；
 /// - session-owned movement history（进程内易失）；
 /// - session-owned route acceleration snapshot；
 /// - 对 typed session API 的直接编排。
@@ -24,7 +24,6 @@ public sealed class WorldSession : IDisposable {
     private readonly WorldState _world;
     private readonly RouteAccelerationCache _routeAcceleration = new();
     private readonly Dictionary<string, List<ActorMovementHistoryEntry>> _movementHistoryByActor = new(StringComparer.Ordinal);
-    private long _logicalTick;
     private bool _disposed;
 
     private WorldSession(string repoDir, Repository repo, WorldState world) {
@@ -236,7 +235,7 @@ public sealed class WorldSession : IDisposable {
         );
     }
 
-    private LogicalTimeSnapshot ObserveLogicalTime() => new(_logicalTick);
+    private LogicalTimeSnapshot ObserveLogicalTime() => new(_world.CurrentLogicalTick);
 
     internal RouteAccelerationSnapshot RebuildRouteAcceleration(
         IEnumerable<string> landmarkLocationIds,
@@ -249,7 +248,11 @@ public sealed class WorldSession : IDisposable {
     }
 
     private LogicalTimeSnapshot AdvanceLogicalTime(long ticks) {
-        _logicalTick = checked(_logicalTick + ticks);
+        _ = _world.AdvanceLogicalTime(ticks);
+        if (ticks > 0) {
+            _repo.Commit(_world.Root).Unwrap();
+        }
+
         return ObserveLogicalTime();
     }
 

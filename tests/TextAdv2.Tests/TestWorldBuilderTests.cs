@@ -350,6 +350,7 @@ public class TestWorldBuilderTests {
                 var revision = repo.CreateBranch("main").Unwrap();
                 var world = WorldState.Create(revision);
                 world.CreateLocation("start", "Start", "schema gate happy path");
+                Assert.Equal(5, world.AdvanceLogicalTime(5));
                 repo.Commit(world.Root).Unwrap();
             }
 
@@ -357,6 +358,7 @@ public class TestWorldBuilderTests {
                 var revision = repo.CheckoutBranch("main").Unwrap();
                 var reopened = WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap());
 
+                Assert.Equal(5, reopened.CurrentLogicalTick);
                 Assert.Equal("Start", reopened.GetLocation("start").Name);
                 Assert.Single(reopened.EnumerateLocations());
                 Assert.Empty(reopened.EnumeratePassages());
