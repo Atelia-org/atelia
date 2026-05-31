@@ -118,6 +118,31 @@ public class ActorAndObservationTests {
         }
     }
 
+    [Fact]
+    public void MoveActorAlongPassage_RejectsPassageThatDoesNotTouchActorsCurrentLocation() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => world.MoveActorAlongPassage(
+                    TestWorldBuilder.ActorIds.Scout,
+                    TestWorldBuilder.PassageIds.HarborDeltaCurrent
+                )
+            );
+
+            Assert.Contains("not connected by passage", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, world.GetActor(TestWorldBuilder.ActorIds.Scout).CurrentLocationId);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-actor-tests-{Guid.NewGuid():N}");
 

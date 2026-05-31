@@ -98,7 +98,7 @@ public class GameServerIntegrationTests {
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
-            Assert.Contains("does not connect location", json.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+            Assert.Contains("not connected by passage", json.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
