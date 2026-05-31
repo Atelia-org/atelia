@@ -54,6 +54,55 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
+    public void JsonOnly_WithSingleJsonOperation_PrintsPureJsonDocument() {
+        CliRunResult result = RunCli("--dev-sample-world", "--json-only", "--observe-actor", "scout");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(string.Empty, result.StandardError);
+        Assert.DoesNotContain("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("[1/1]", result.StandardOutput, StringComparison.Ordinal);
+        Assert.False(string.IsNullOrWhiteSpace(result.StandardOutput));
+
+        using JsonDocument json = JsonDocument.Parse(result.StandardOutput);
+
+        Assert.Equal("scout", json.RootElement.GetProperty("ActorId").GetString());
+        Assert.Equal("square", json.RootElement.GetProperty("Location").GetProperty("LocationId").GetString());
+    }
+
+    [Fact]
+    public void JsonOnly_WithMultipleJsonOperations_FailsFast() {
+        CliRunResult result = RunCli(
+            "--dev-sample-world",
+            "--json-only",
+            "--observe-actor", "scout",
+            "--observe-time"
+        );
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(string.Empty, result.StandardOutput);
+        Assert.Contains("--json-only 只允许一条 JSON 类 operation", result.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void JsonOnly_WithTextOperation_FailsFast() {
+        CliRunResult result = RunCli("--dev-sample-world", "--json-only", "--world");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(string.Empty, result.StandardOutput);
+        Assert.Contains("--json-only 只支持 JSON 类 operation", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("world dump", result.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void JsonOnly_WithoutExplicitOperation_FailsFast() {
+        CliRunResult result = RunCli("--dev-sample-world", "--json-only");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(string.Empty, result.StandardOutput);
+        Assert.Contains("--json-only 需要显式提供且只提供一条 JSON 类 operation", result.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RepoDir_SessionState_PersistsAcrossInvocations() {
         string repoDir = CreateTempRepoDir();
 
@@ -198,9 +247,18 @@ public sealed class E2eCliBlackBoxTests {
 
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("--dev-sample-world", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--json-only", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("This no longer creates a sample world implicitly", result.StandardOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("current compatibility behavior creates a persistent sample world", result.StandardOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("runtime  Omit a meta command", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Usage_ShowsJsonOnlyFlag() {
+        CliRunResult result = RunCli("--dev-sample-world", "--unknown-option");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("--json-only", result.StandardError, StringComparison.Ordinal);
     }
 
     [Fact]

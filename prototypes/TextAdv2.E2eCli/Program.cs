@@ -55,11 +55,17 @@ internal static class Program {
 
     private static int RunSessionCommands(string[] args) {
         var request = ParseSessionRequest(args);
+        ValidateMachineOutputRequest(request);
         using var session = request.BootstrapMode switch {
             SessionBootstrapMode.RepoDir => OpenExistingRepoSession(request.RepoDir!),
             SessionBootstrapMode.DevSampleWorld => SampleWorldBootstrap.CreateTemporarySession(),
             _ => throw new InvalidOperationException("Unsupported session bootstrap mode."),
         };
+
+        if (request.JsonOnly) {
+            Console.Out.Write(request.Operations[0].Execute(session));
+            return 0;
+        }
 
         Console.WriteLine($"TextAdv2 session repo: {session.RepoDir}");
 
@@ -118,6 +124,7 @@ internal static class Program {
     private static SessionRequest ParseSessionRequest(string[] args) {
         string? repoDir = null;
         bool useDevSampleWorld = false;
+        bool jsonOnly = false;
         var operations = new List<SessionCommand>();
         int index = 0;
 
@@ -131,8 +138,12 @@ internal static class Program {
                     useDevSampleWorld = true;
                     index += 1;
                     break;
+                case "--json-only":
+                    jsonOnly = true;
+                    index += 1;
+                    break;
                 case "--world":
-                    operations.Add(new SessionCommand("world dump", DevTextRenderer.RenderWorld));
+                    operations.Add(new SessionCommand("world dump", SessionCommandOutputKind.Text, DevTextRenderer.RenderWorld));
                     index += 1;
                     break;
                 case "--location": {
@@ -140,6 +151,7 @@ internal static class Program {
                     operations.Add(
                         new SessionCommand(
                             $"location dump {locationId}",
+                            SessionCommandOutputKind.Text,
                             session => DevTextRenderer.RenderLocation(session, locationId)
                         )
                     );
@@ -148,7 +160,13 @@ internal static class Program {
                 break;
                 case "--observe-location": {
                     string locationId = RequireArg(args, index + 1);
-                    operations.Add(new SessionCommand($"observe location {locationId}", session => RenderJson(session.ObserveLocation(locationId))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"observe location {locationId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.ObserveLocation(locationId))
+                        )
+                    );
                 }
                 index += 2;
                 break;
@@ -159,6 +177,7 @@ internal static class Program {
                     operations.Add(
                         new SessionCommand(
                             $"create location {locationId}",
+                            SessionCommandOutputKind.Json,
                             session => RenderJson(session.CreateLocation(locationId, locationName, locationDescription))
                         )
                     );
@@ -167,13 +186,25 @@ internal static class Program {
                 break;
                 case "--observe-actor": {
                     string actorId = RequireArg(args, index + 1);
-                    operations.Add(new SessionCommand($"observe actor {actorId}", session => RenderJson(session.ObserveActor(actorId))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"observe actor {actorId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.ObserveActor(actorId))
+                        )
+                    );
                 }
                 index += 2;
                 break;
                 case "--observe-actor-context": {
                     string actorId = RequireArg(args, index + 1);
-                    operations.Add(new SessionCommand($"observe actor context {actorId}", session => RenderJson(session.ObserveActorContext(actorId))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"observe actor context {actorId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.ObserveActorContext(actorId))
+                        )
+                    );
                 }
                 index += 2;
                 break;
@@ -184,6 +215,7 @@ internal static class Program {
                     operations.Add(
                         new SessionCommand(
                             $"create actor {actorId}",
+                            SessionCommandOutputKind.Json,
                             session => RenderJson(session.CreateActor(actorId, actorName, currentLocationId))
                         )
                     );
@@ -192,42 +224,84 @@ internal static class Program {
                 break;
                 case "--observe-navigation": {
                     string locationId = RequireArg(args, index + 1);
-                    operations.Add(new SessionCommand($"observe navigation {locationId}", session => RenderJson(session.ObserveNavigation(locationId))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"observe navigation {locationId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.ObserveNavigation(locationId))
+                        )
+                    );
                 }
                 index += 2;
                 break;
                 case "--observe-actor-navigation": {
                     string actorId = RequireArg(args, index + 1);
-                    operations.Add(new SessionCommand($"observe actor navigation {actorId}", session => RenderJson(session.ObserveActorNavigation(actorId))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"observe actor navigation {actorId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.ObserveActorNavigation(actorId))
+                        )
+                    );
                 }
                 index += 2;
                 break;
                 case "--observe-route-acceleration":
-                    operations.Add(new SessionCommand("observe route acceleration", static session => RenderJson(session.ObserveRouteAcceleration())));
+                    operations.Add(
+                        new SessionCommand(
+                            "observe route acceleration",
+                            SessionCommandOutputKind.Json,
+                            static session => RenderJson(session.ObserveRouteAcceleration())
+                        )
+                    );
                     index += 1;
                     break;
                 case "--observe-time":
-                    operations.Add(new SessionCommand("observe logical time", static session => RenderJson(session.ObserveTime())));
+                    operations.Add(
+                        new SessionCommand(
+                            "observe logical time",
+                            SessionCommandOutputKind.Json,
+                            static session => RenderJson(session.ObserveTime())
+                        )
+                    );
                     index += 1;
                     break;
                 case "--advance-time": {
                     string ticksText = RequireArg(args, index + 1);
                     long ticks = ParseNonNegativeTickDelta(ticksText);
-                    operations.Add(new SessionCommand($"advance logical time by {ticksText}", session => RenderJson(session.AdvanceTime(ticks))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"advance logical time by {ticksText}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.AdvanceTime(ticks))
+                        )
+                    );
                 }
                 index += 2;
                 break;
                 case "--plan-actor-route": {
                     string actorId = RequireArg(args, index + 1);
                     string toLocationId = RequireArg(args, index + 2);
-                    operations.Add(new SessionCommand($"plan actor route {actorId} -> {toLocationId}", session => RenderJson(session.PlanActorRoute(actorId, toLocationId))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"plan actor route {actorId} -> {toLocationId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.PlanActorRoute(actorId, toLocationId))
+                        )
+                    );
                 }
                 index += 3;
                 break;
                 case "--plan-route": {
                     string fromLocationId = RequireArg(args, index + 1);
                     string toLocationId = RequireArg(args, index + 2);
-                    operations.Add(new SessionCommand($"plan route {fromLocationId} -> {toLocationId}", session => RenderJson(session.PlanRoute(fromLocationId, toLocationId))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"plan route {fromLocationId} -> {toLocationId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.PlanRoute(fromLocationId, toLocationId))
+                        )
+                    );
                 }
                 index += 3;
                 break;
@@ -244,6 +318,7 @@ internal static class Program {
                     operations.Add(
                         new SessionCommand(
                             $"create passage {passageId}",
+                            SessionCommandOutputKind.Json,
                             session => RenderJson(
                                 session.CreatePassage(
                                     passageId,
@@ -265,6 +340,7 @@ internal static class Program {
                     operations.Add(
                         new SessionCommand(
                             $"rebuild route acceleration {(rebuildLandmarks is null ? "default-profile" : rebuildLandmarks)}",
+                            SessionCommandOutputKind.Json,
                             session => RenderJson(SampleWorldBootstrap.RebuildRouteAcceleration(session, rebuildLandmarks))
                         )
                     );
@@ -276,6 +352,7 @@ internal static class Program {
                     operations.Add(
                         new SessionCommand(
                             $"trace actor route {actorId}",
+                            SessionCommandOutputKind.Text,
                             session => DevTextRenderer.RenderRouteTrace(session.TraceActorRoute(actorId))
                         )
                     );
@@ -288,6 +365,7 @@ internal static class Program {
                     operations.Add(
                         new SessionCommand(
                             $"move actor quietly {actorId} via {passageId}",
+                            SessionCommandOutputKind.Text,
                             session => DevTextRenderer.RenderCompactMovement(session.MoveActor(actorId, passageId))
                         )
                     );
@@ -297,7 +375,13 @@ internal static class Program {
                 case "--move-actor": {
                     string actorId = RequireArg(args, index + 1);
                     string passageId = RequireArg(args, index + 2);
-                    operations.Add(new SessionCommand($"move actor {actorId} via {passageId}", session => RenderJson(session.MoveActor(actorId, passageId))));
+                    operations.Add(
+                        new SessionCommand(
+                            $"move actor {actorId} via {passageId}",
+                            SessionCommandOutputKind.Json,
+                            session => RenderJson(session.MoveActor(actorId, passageId))
+                        )
+                    );
                 }
                 index += 3;
                 break;
@@ -306,15 +390,36 @@ internal static class Program {
             }
         }
 
-        if (operations.Count == 0) {
-            operations.Add(new SessionCommand("world dump", DevTextRenderer.RenderWorld));
+        if (!jsonOnly && operations.Count == 0) {
+            operations.Add(new SessionCommand("world dump", SessionCommandOutputKind.Text, DevTextRenderer.RenderWorld));
         }
 
         return new SessionRequest(
             ResolveBootstrapMode(repoDir, useDevSampleWorld),
             repoDir,
+            jsonOnly,
             operations.ToArray()
         );
+    }
+
+    private static void ValidateMachineOutputRequest(SessionRequest request) {
+        if (!request.JsonOnly) {
+            return;
+        }
+
+        if (request.Operations.Length == 0) {
+            throw new InvalidOperationException(JsonOnlyRequiresExplicitOperationError);
+        }
+
+        if (request.Operations.Length > 1) {
+            throw new InvalidOperationException(JsonOnlyRequiresSingleOperationError);
+        }
+
+        if (request.Operations[0].OutputKind is not SessionCommandOutputKind.Json) {
+            throw new InvalidOperationException(
+                $"--json-only 只支持 JSON 类 operation，但收到文本输出 operation: {request.Operations[0].Description}"
+            );
+        }
     }
 
     private static bool IsMetaCommand(string command)
@@ -369,7 +474,7 @@ Usage:
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj [smoke|status|help]
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-empty <repoDir>
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-sample <repoDir>
-  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--world] [--location <locationId>] [--observe-location <locationId>] [--create-location <locationId> <name> <description>] [--observe-actor <actorId>] [--observe-actor-context <actorId>] [--create-actor <actorId> <name> <currentLocationId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> [<travelMode>] [<baseTravelCost>]] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
+  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--json-only] [--world] [--location <locationId>] [--observe-location <locationId>] [--create-location <locationId> <name> <description>] [--observe-actor <actorId>] [--observe-actor-context <actorId>] [--create-actor <actorId> <name> <currentLocationId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> [<travelMode>] [<baseTravelCost>]] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
 """;
 
     private static int RunHelp() {
@@ -396,6 +501,8 @@ Session target:
            Exactly one session target must be specified.
 
 Session options:
+    --json-only
+                     Session mode only. Require exactly one JSON-producing operation and print only that JSON document to stdout.
     --observe-actor-context <actorId>
                      Print the machine-consumable actor context as JSON.
     --create-location <locationId> <name> <description>
@@ -432,10 +539,13 @@ Session options:
 
     private const string MissingSessionTargetError = "缺少 session target，请传 --repo-dir <repoDir> 或 --dev-sample-world";
     private const string RepoDirAndDevSampleWorldConflictError = "--repo-dir 不能与 --dev-sample-world 同时使用";
+    private const string JsonOnlyRequiresExplicitOperationError = "--json-only 需要显式提供且只提供一条 JSON 类 operation。";
+    private const string JsonOnlyRequiresSingleOperationError = "--json-only 只允许一条 JSON 类 operation。";
 
     private sealed record SessionRequest(
         SessionBootstrapMode BootstrapMode,
         string? RepoDir,
+        bool JsonOnly,
         SessionCommand[] Operations
     );
 
@@ -446,6 +556,12 @@ Session options:
 
     private sealed record SessionCommand(
         string Description,
+        SessionCommandOutputKind OutputKind,
         Func<WorldSession, string> Execute
     );
+
+    private enum SessionCommandOutputKind {
+        Json,
+        Text,
+    }
 }
