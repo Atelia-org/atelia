@@ -346,6 +346,19 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
+    public void Status_PrintsCamelCaseJson() {
+        CliRunResult result = RunCli("status");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(string.Empty, result.StandardError);
+
+        using JsonDocument json = JsonDocument.Parse(result.StandardOutput);
+
+        Assert.Equal("Atelia.TextAdv2", json.RootElement.GetProperty("engineAssemblyName").GetString());
+        Assert.False(json.RootElement.TryGetProperty("EngineAssemblyName", out _));
+    }
+
+    [Fact]
     public void Usage_ShowsJsonOnlyFlag() {
         CliRunResult result = RunCli("--dev-sample-world", "--unknown-option");
 
@@ -686,7 +699,6 @@ public sealed class E2eCliBlackBoxTests {
     private static JsonSerializerOptions CreateCliJsonOptions() {
         var options = new JsonSerializerOptions {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            PropertyNameCaseInsensitive = true,
             WriteIndented = true,
         };
         TextAdv2Json.AddHostConverters(options);

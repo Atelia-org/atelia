@@ -36,7 +36,7 @@ internal static class Program {
 
     private static int RunStatus() {
         var scaffold = HostingScaffold.DescribeCurrentState();
-        var json = JsonSerializer.Serialize(scaffold, new JsonSerializerOptions { WriteIndented = true });
+        var json = JsonSerializer.Serialize(scaffold, JsonOptions);
         Console.WriteLine(json);
         return 0;
     }
