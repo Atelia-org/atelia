@@ -42,6 +42,15 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
+    public void DevSampleWorld_WithoutExplicitOperation_DefaultsToWorldDump() {
+        CliRunResult result = RunCli("--dev-sample-world");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("WORLD", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RepoDir_RuntimeState_PersistsAcrossInvocations() {
         string repoDir = CreateTempRepoDir();
 
