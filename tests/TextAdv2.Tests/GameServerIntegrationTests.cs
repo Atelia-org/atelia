@@ -131,12 +131,7 @@ public class GameServerIntegrationTests {
                 json.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
                 static endpoint => string.Equals(endpoint, "POST /admin/reset-sample-world", StringComparison.Ordinal)
             );
-            Assert.True(json.RootElement.GetProperty("session").GetProperty("sessionExtracted").GetBoolean());
-            Assert.Contains(
-                json.RootElement.GetProperty("session").GetProperty("notes").EnumerateArray().Select(static x => x.GetString()),
-                static note => note is not null
-                    && note.Contains("宿主仍自行负责 CLI/HTTP 请求到 session method 的分发。", StringComparison.Ordinal)
-            );
+            Assert.Equal("Atelia.TextAdv2", json.RootElement.GetProperty("session").GetProperty("engineAssemblyName").GetString());
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

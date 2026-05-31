@@ -86,7 +86,7 @@ app.Run();
 static IResult ExecuteText(SessionService session, Func<WorldSession, string> operation) {
     try {
         var result = session.Invoke(operation);
-        return Results.Content(result, SessionContentTypes.PlainText);
+        return Results.Content(result, HostContentTypes.PlainText);
     }
     catch (ArgumentException ex) {
         return Results.BadRequest(new { error = ex.Message });
@@ -99,7 +99,7 @@ static IResult ExecuteText(SessionService session, Func<WorldSession, string> op
 static IResult ExecuteJson<T>(SessionService session, Func<WorldSession, T> operation) {
     try {
         var result = session.Invoke(operation);
-        return Results.Content(JsonSerializer.Serialize(result, TextAdv2HostJson.Options), SessionContentTypes.Json);
+        return Results.Content(JsonSerializer.Serialize(result, TextAdv2HostJson.Options), HostContentTypes.Json);
     }
     catch (ArgumentException ex) {
         return Results.BadRequest(new { error = ex.Message });

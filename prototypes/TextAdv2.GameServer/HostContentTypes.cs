@@ -1,6 +1,6 @@
-namespace Atelia.TextAdv2.Session;
+namespace Atelia.TextAdv2.GameServer;
 
-public static class SessionContentTypes {
+internal static class HostContentTypes {
     public const string Json = "application/json";
     public const string PlainText = "text/plain; charset=utf-8";
 }

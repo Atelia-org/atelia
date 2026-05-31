@@ -28,7 +28,6 @@ internal static class Program {
         var scaffold = HostingScaffold.DescribeCurrentState();
         Console.WriteLine("TextAdv2.E2eCli smoke OK.");
         Console.WriteLine($"Engine assembly: {scaffold.EngineAssemblyName}");
-        Console.WriteLine($"Session extracted: {scaffold.SessionExtracted}");
         return 0;
     }
 
