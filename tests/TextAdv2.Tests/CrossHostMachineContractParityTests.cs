@@ -445,6 +445,154 @@ public sealed class CrossHostMachineContractParityTests {
         }
     }
 
+    [Fact]
+    public async Task CreateActorSnapshot_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareEmptyRepo(cliRepoDir);
+            PrepareEmptyRepo(hostRepoDir);
+
+            _ = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir,
+                "--json-only",
+                "--create-location", "start", "Start", "Starting point."
+            );
+            string cliJson = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir,
+                "--json-only",
+                "--create-actor", "guide", "Guide", "start"
+            );
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            const string createLocationRequestJson =
+                """
+                {
+                  "id": "start",
+                  "name": "Start",
+                  "description": "Starting point."
+                }
+                """;
+            using var createLocationResponse = await client.PostAsync(
+                "/admin/locations",
+                new StringContent(createLocationRequestJson, Encoding.UTF8, "application/json")
+            );
+            _ = await ReadSuccessfulHostJsonAsync(createLocationResponse);
+
+            const string createActorRequestJson =
+                """
+                {
+                  "id": "guide",
+                  "name": "Guide",
+                  "currentLocationId": "start"
+                }
+                """;
+            using var response = await client.PostAsync(
+                "/admin/actors",
+                new StringContent(createActorRequestJson, Encoding.UTF8, "application/json")
+            );
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "create actor snapshot");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
+    public async Task CreatePassageDefaultSnapshot_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareEmptyRepo(cliRepoDir);
+            PrepareEmptyRepo(hostRepoDir);
+
+            CreateStartAndEndLocationsViaCli(cliRepoDir);
+            string cliJson = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir,
+                "--json-only",
+                "--create-passage", "start-end", "start", "north", "end", "south"
+            );
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            await CreateStartAndEndLocationsViaHostAsync(client);
+
+            const string createPassageRequestJson =
+                """
+                {
+                  "id": "start-end",
+                  "locationAId": "start",
+                  "exitNameFromA": "north",
+                  "locationBId": "end",
+                  "exitNameFromB": "south"
+                }
+                """;
+            using var response = await client.PostAsync(
+                "/admin/passages",
+                new StringContent(createPassageRequestJson, Encoding.UTF8, "application/json")
+            );
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "create passage default snapshot");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
+    public async Task CreatePassageExplicitTravelModeAndBaseTravelCostSnapshot_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareEmptyRepo(cliRepoDir);
+            PrepareEmptyRepo(hostRepoDir);
+
+            CreateStartAndEndLocationsViaCli(cliRepoDir);
+            string cliJson = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir,
+                "--json-only",
+                "--create-passage", "start-end-portal", "start", "gate", "end", "return", "portal", "7"
+            );
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            await CreateStartAndEndLocationsViaHostAsync(client);
+
+            const string createPassageRequestJson =
+                """
+                {
+                  "id": "start-end-portal",
+                  "locationAId": "start",
+                  "exitNameFromA": "gate",
+                  "locationBId": "end",
+                  "exitNameFromB": "return",
+                  "travelMode": "portal",
+                  "baseTravelCost": 7
+                }
+                """;
+            using var response = await client.PostAsync(
+                "/admin/passages",
+                new StringContent(createPassageRequestJson, Encoding.UTF8, "application/json")
+            );
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "create passage explicit travel mode and base travel cost snapshot");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
     private static void PrepareSampleRepo(string repoDir) {
         using (SampleWorldBootstrap.CreateFreshSession(repoDir)) {
         }
@@ -457,6 +605,49 @@ public sealed class CrossHostMachineContractParityTests {
         }
 
         WaitUntilSessionCanReopen(repoDir);
+    }
+
+    private static void CreateStartAndEndLocationsViaCli(string repoDir) {
+        _ = RunCliAndReadSuccessfulJson(
+            "--repo-dir", repoDir,
+            "--json-only",
+            "--create-location", "start", "Start", "Starting point."
+        );
+        _ = RunCliAndReadSuccessfulJson(
+            "--repo-dir", repoDir,
+            "--json-only",
+            "--create-location", "end", "End", "Ending point."
+        );
+    }
+
+    private static async Task CreateStartAndEndLocationsViaHostAsync(HttpClient client) {
+        const string createStartLocationRequestJson =
+            """
+            {
+              "id": "start",
+              "name": "Start",
+              "description": "Starting point."
+            }
+            """;
+        using var createStartResponse = await client.PostAsync(
+            "/admin/locations",
+            new StringContent(createStartLocationRequestJson, Encoding.UTF8, "application/json")
+        );
+        _ = await ReadSuccessfulHostJsonAsync(createStartResponse);
+
+        const string createEndLocationRequestJson =
+            """
+            {
+              "id": "end",
+              "name": "End",
+              "description": "Ending point."
+            }
+            """;
+        using var createEndResponse = await client.PostAsync(
+            "/admin/locations",
+            new StringContent(createEndLocationRequestJson, Encoding.UTF8, "application/json")
+        );
+        _ = await ReadSuccessfulHostJsonAsync(createEndResponse);
     }
 
     private static TextAdv2GameServerFactory CreateFactory(string repoDir)

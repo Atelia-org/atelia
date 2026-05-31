@@ -1,6 +1,6 @@
 # TextAdv2 Canonical Machine Surface
 
-> 状态：F8b 第一拍 + F9 runtime boundary freeze 第一拍 + T1 cross-host parity 第二批（read-only observation/navigation + location-to-location plan-route）
+> 状态：F8b 第一拍 + F9 runtime boundary freeze 第一拍 + T1 cross-host parity 第三批（read-only observation/navigation + route-plan + authoring snapshot tail）
 > 适用范围：当前 `TextAdv2.GameServer` 与 `TextAdv2.E2eCli` 的 machine-consumable surface
 
 当前文档只声明“已被 parity guard 守住的 canonical machine surface”。
@@ -44,6 +44,12 @@
 - minimal authoring snapshot
   - `POST /admin/locations`
   - `... --json-only --create-location <locationId> <name> <description>`
+  - `POST /admin/actors`
+  - `... --json-only --create-actor <actorId> <name> <currentLocationId>`
+  - `POST /admin/passages`
+  - `... --json-only --create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB>`
+  - `POST /admin/passages`
+  - `... --json-only --create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> <travelMode> <baseTravelCost>`
 
 ## 约定
 
@@ -51,6 +57,8 @@
 - `E2eCli` 的 machine 调用优先使用 `--json-only`
 - `GameServer` 的 machine 调用优先使用对应 JSON endpoint
 - 当前文档中的 canonical seam 默认都指“当前已被 parity suite 实际 guard 的运行基线”，不是对所有 runtime 子状态都已完成收口的广义承诺
+- `create-passage` 当前进入 canonical machine surface 的范围，只覆盖上面两条 success-path snapshot
+- host JSON request 与 CLI positional 参数的更广义 authoring 语义差异，当前仍不是这份文档承诺已统一的内容
 
 ## Runtime Boundary Notes
 
@@ -74,7 +82,6 @@
 ## 当前不属于 canonical machine surface 的内容
 
 - 尚未进入完整 parity guard 的其他 JSON seam
-  - `create-actor`、`create-passage`
   - `route-trace/json`（当前只保留 fresh-session empty-trace compatibility guard）
   - `observe-route-acceleration`、`rebuild-route-acceleration`
 - CLI 默认 stdout（包括 repo banner、分段标题和文本输出）
