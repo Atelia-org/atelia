@@ -5,6 +5,9 @@ namespace Atelia.TextAdv2.GameServer;
 
 internal sealed class GameServerHostPolicy {
     private const int MaxOpenRetryCount = 5;
+    internal const string SampleWorldDevBootstrapMode = "sample-world-dev";
+    internal const string OpenExistingOnlyBootstrapMode = "open-existing-only";
+    private static readonly string[] SupportedBootstrapModes = [SampleWorldDevBootstrapMode, OpenExistingOnlyBootstrapMode];
 
     private GameServerHostPolicy(
         string configuredRepoDir,
@@ -51,16 +54,17 @@ internal sealed class GameServerHostPolicy {
     public static GameServerHostPolicy Create(
         string configuredRepoDir,
         string resolvedRepoDir,
-        bool autoBootstrapSampleWorld
+        string bootstrapMode
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(configuredRepoDir);
         ArgumentException.ThrowIfNullOrWhiteSpace(resolvedRepoDir);
+        ArgumentException.ThrowIfNullOrWhiteSpace(bootstrapMode);
 
-        return autoBootstrapSampleWorld
-            ? new GameServerHostPolicy(
+        return bootstrapMode switch {
+            SampleWorldDevBootstrapMode => new GameServerHostPolicy(
                 configuredRepoDir,
                 resolvedRepoDir,
-                bootstrapMode: "sample-world-dev",
+                bootstrapMode: SampleWorldDevBootstrapMode,
                 sessionOpenMode: "open-or-create-sample-world",
                 sampleWorldResetEnabled: true,
                 openSession: () => SampleWorldBootstrap.OpenOrCreateSession(resolvedRepoDir),
@@ -70,10 +74,11 @@ internal sealed class GameServerHostPolicy {
                     "POST /admin/reset-sample-world 只在 sample-world-dev host policy 下映射。"
                 ]
             )
-            : new GameServerHostPolicy(
+            ,
+            OpenExistingOnlyBootstrapMode => new GameServerHostPolicy(
                 configuredRepoDir,
                 resolvedRepoDir,
-                bootstrapMode: "open-existing-only",
+                bootstrapMode: OpenExistingOnlyBootstrapMode,
                 sessionOpenMode: "open-existing-only",
                 sampleWorldResetEnabled: false,
                 openSession: () => WorldSession.OpenExisting(resolvedRepoDir),
@@ -82,7 +87,11 @@ internal sealed class GameServerHostPolicy {
                     "startup 只允许打开既有 repo，不会隐式创建 sample world。",
                     "POST /admin/reset-sample-world 在 open-existing-only host policy 下不会映射。"
                 ]
-            );
+            ),
+            _ => throw new InvalidOperationException(
+                $"Unsupported GameServer bootstrap mode '{bootstrapMode}'. Allowed values: {string.Join(", ", SupportedBootstrapModes)}."
+            ),
+        };
     }
 
     public WorldSession OpenSession()

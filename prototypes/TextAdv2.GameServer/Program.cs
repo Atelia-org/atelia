@@ -7,17 +7,17 @@ var builder = WebApplication.CreateBuilder(args);
 
 var configuredRepoDir = builder.Configuration["TextAdv2:RepoDir"] ?? ".atelia/textadv2-dev-world";
 string resolvedRepoDir = Path.GetFullPath(configuredRepoDir, builder.Environment.ContentRootPath);
-bool autoBootstrapSampleWorld = builder.Configuration.GetValue("TextAdv2:AutoBootstrapSampleWorld", true);
-var hostPolicy = GameServerHostPolicy.Create(configuredRepoDir, resolvedRepoDir, autoBootstrapSampleWorld);
+string bootstrapMode = builder.Configuration["TextAdv2:BootstrapMode"] ?? GameServerHostPolicy.SampleWorldDevBootstrapMode;
+var hostPolicy = GameServerHostPolicy.Create(configuredRepoDir, resolvedRepoDir, bootstrapMode);
 
 builder.Services.AddSingleton(hostPolicy);
 builder.Services.AddSingleton(_ => new SessionService(hostPolicy.OpenSession()));
 
 var app = builder.Build();
 
-app.MapGet("/", () => Results.Ok(BuildSessionStatus(hostPolicy, autoBootstrapSampleWorld)));
+app.MapGet("/", () => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode)));
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.GameServer", mode = "session-connected" }));
-app.MapGet("/admin/session-status", () => Results.Ok(BuildSessionStatus(hostPolicy, autoBootstrapSampleWorld)));
+app.MapGet("/admin/session-status", () => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode)));
 app.MapGet("/admin/world", (SessionService session) => ExecuteText(session, DevTextRenderer.RenderWorld));
 app.MapGet("/admin/time", (SessionService session) => ExecuteJson(session, static x => x.ObserveTime()));
 app.MapPost("/admin/advance-time/{ticks}",
@@ -37,7 +37,7 @@ if (hostPolicy.SampleWorldResetEnabled) {
     app.MapPost("/admin/reset-sample-world",
         (SessionService session) => {
             session.ReplaceSession(hostPolicy.ResetSession);
-            return Results.Ok(BuildSessionStatus(hostPolicy, autoBootstrapSampleWorld));
+            return Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode));
         }
     );
 }
@@ -116,7 +116,7 @@ static long ParseNonNegativeTickDelta(string value) {
     return ticks;
 }
 
-static object BuildSessionStatus(GameServerHostPolicy hostPolicy, bool autoBootstrapSampleWorld) {
+static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstrapMode) {
     var scaffold = HostingScaffold.DescribeCurrentState();
     return new {
         service = "TextAdv2.GameServer",
@@ -124,7 +124,7 @@ static object BuildSessionStatus(GameServerHostPolicy hostPolicy, bool autoBoots
         configuration = new {
             configuredRepoDir = hostPolicy.ConfiguredRepoDir,
             resolvedRepoDir = hostPolicy.ResolvedRepoDir,
-            autoBootstrapSampleWorld,
+            bootstrapMode,
         },
         hostPolicy = new {
             bootstrapMode = hostPolicy.BootstrapMode,

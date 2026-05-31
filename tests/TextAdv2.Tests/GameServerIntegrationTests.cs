@@ -12,6 +12,8 @@ namespace Atelia.TextAdv2.Tests;
 
 public class GameServerIntegrationTests {
     private static readonly JsonSerializerOptions HostJsonOptions = CreateHostJsonOptions();
+    private const string SampleWorldDevBootstrapMode = "sample-world-dev";
+    private const string OpenExistingOnlyBootstrapMode = "open-existing-only";
 
     [Fact]
     public async Task AdminWorld_ReturnsPlainTextWorldDumpAsync() {
@@ -123,7 +125,7 @@ public class GameServerIntegrationTests {
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
             Assert.Equal("session-connected", json.RootElement.GetProperty("mode").GetString());
             Assert.Equal(repoDir, json.RootElement.GetProperty("configuration").GetProperty("resolvedRepoDir").GetString());
-            Assert.True(json.RootElement.GetProperty("configuration").GetProperty("autoBootstrapSampleWorld").GetBoolean());
+            Assert.Equal("sample-world-dev", json.RootElement.GetProperty("configuration").GetProperty("bootstrapMode").GetString());
             Assert.Equal("sample-world-dev", json.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
             Assert.Equal("open-or-create-sample-world", json.RootElement.GetProperty("hostPolicy").GetProperty("sessionOpenMode").GetString());
             Assert.True(json.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
@@ -147,7 +149,7 @@ public class GameServerIntegrationTests {
             }
             WaitUntilSessionCanReopen(repoDir);
 
-            using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
+            using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
             using var client = factory.CreateClient();
 
             using var worldResponse = await client.GetAsync("/admin/world");
@@ -163,7 +165,7 @@ public class GameServerIntegrationTests {
             var statusJson = JsonDocument.Parse(statusText);
 
             Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
-            Assert.False(statusJson.RootElement.GetProperty("configuration").GetProperty("autoBootstrapSampleWorld").GetBoolean());
+            Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("configuration").GetProperty("bootstrapMode").GetString());
             Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
             Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sessionOpenMode").GetString());
             Assert.False(statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
@@ -182,7 +184,7 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
+            using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
             using var client = factory.CreateClient();
 
             using var statusResponse = await client.GetAsync("/admin/session-status");
@@ -205,7 +207,7 @@ public class GameServerIntegrationTests {
             }
             WaitUntilSessionCanReopen(repoDir);
 
-            using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
+            using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsync("/admin/route-acceleration/rebuild", content: null);
@@ -546,8 +548,29 @@ public class GameServerIntegrationTests {
         }
     }
 
-    private static TextAdv2GameServerFactory CreateFactory(string repoDir, bool autoBootstrapSampleWorld = true)
-        => new(repoDir, autoBootstrapSampleWorld);
+    [Fact]
+    public void InvalidBootstrapMode_FailsFastWithAllowedValuesInError() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var factory = CreateFactory(repoDir, bootstrapMode: "invalid-mode");
+
+            var ex = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+            Assert.Contains("unsupported", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("bootstrap mode", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("sample-world-dev", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("open-existing-only", ex.Message, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    private static TextAdv2GameServerFactory CreateFactory(
+        string repoDir,
+        string bootstrapMode = SampleWorldDevBootstrapMode
+    )
+        => new(repoDir, bootstrapMode);
 
     private static async Task<T?> ReadJsonAsync<T>(HttpResponseMessage response)
         => JsonSerializer.Deserialize<T>(await response.Content.ReadAsStringAsync(), HostJsonOptions);
@@ -583,10 +606,10 @@ public class GameServerIntegrationTests {
         );
     }
 
-    private sealed class TextAdv2GameServerFactory(string repoDir, bool autoBootstrapSampleWorld) : WebApplicationFactory<Program> {
+    private sealed class TextAdv2GameServerFactory(string repoDir, string bootstrapMode) : WebApplicationFactory<Program> {
         protected override void ConfigureWebHost(IWebHostBuilder builder) {
             builder.UseSetting("TextAdv2:RepoDir", repoDir);
-            builder.UseSetting("TextAdv2:AutoBootstrapSampleWorld", autoBootstrapSampleWorld ? "true" : "false");
+            builder.UseSetting("TextAdv2:BootstrapMode", bootstrapMode);
         }
     }
 
