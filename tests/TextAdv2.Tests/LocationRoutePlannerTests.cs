@@ -329,7 +329,7 @@ public class LocationRoutePlannerTests {
             var goal = world.CreateLocation("goal", "Goal", "negative-cost goal");
             var passage = world.CreatePassage("negative-edge", start.Id, "shortcut", goal.Id, "return", TravelMode.Land, 1);
             var exception = Assert.Throws<InvalidOperationException>(
-                () => passage.SetDirectionTravelCostModifierFrom(start.Id, -2)
+                () => world.SetPassageDirectionTravelCostModifierFrom(passage.Id, start.Id, -2)
             );
 
             Assert.Contains("Negative travel cost", exception.Message, StringComparison.Ordinal);

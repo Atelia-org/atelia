@@ -81,30 +81,30 @@ internal sealed class Passage {
     /// </summary>
     public string SharedConditionNote => SharedData.GetOrThrow<string>(SharedConditionNoteKey)!;
 
-    public void SetTravelMode(TravelMode value) => SharedData.Upsert(TravelModeKey, value.ToStorageValue());
+    internal void SetTravelMode(TravelMode value) => SharedData.Upsert(TravelModeKey, value.ToStorageValue());
 
-    public void SetBaseTravelCost(int value) {
+    internal void SetBaseTravelCost(int value) {
         ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
         EnsureTotalTravelCostIsNonNegative(EndpointA.LocationId, EndpointB.LocationId, value, FromAToB.TravelCostModifier);
         EnsureTotalTravelCostIsNonNegative(EndpointB.LocationId, EndpointA.LocationId, value, FromBToA.TravelCostModifier);
         SharedData.Upsert(BaseTravelCostKey, value);
     }
 
-    public void SetSharedConditionNote(string value) {
+    internal void SetSharedConditionNote(string value) {
         ArgumentNullException.ThrowIfNull(value);
         SharedData.Upsert(SharedConditionNoteKey, value);
     }
 
-    public void SetEndpointLocalViewNote(string locationId, string value) => GetEndpointFor(locationId).SetLocalViewNote(value);
+    internal void SetEndpointLocalViewNote(string locationId, string value) => GetEndpointFor(locationId).SetLocalViewNote(value);
 
-    public void SetDirectionEnabledFrom(string locationId, bool isEnabled) => GetDirectionFrom(locationId).SetIsEnabled(isEnabled);
+    internal void SetDirectionEnabledFrom(string locationId, bool isEnabled) => GetDirectionFrom(locationId).SetIsEnabled(isEnabled);
 
-    public void SetDirectionTravelCostModifierFrom(string locationId, int value) {
+    internal void SetDirectionTravelCostModifierFrom(string locationId, int value) {
         EnsureTotalTravelCostIsNonNegative(locationId, GetOtherLocationId(locationId), BaseTravelCost, value);
         GetDirectionFrom(locationId).SetTravelCostModifier(value);
     }
 
-    public void SetDirectionConditionNoteFrom(string locationId, string value)
+    internal void SetDirectionConditionNoteFrom(string locationId, string value)
         => GetDirectionFrom(locationId).SetDirectionConditionNote(value);
 
     public bool Connects(string locationId)

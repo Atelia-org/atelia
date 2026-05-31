@@ -56,11 +56,32 @@ public class TestWorldBuilderTests {
             var passage = world.CreatePassage("start-goal", start.Id, "go", goal.Id, "back", TravelMode.Land, 1);
 
             var exception = Assert.Throws<InvalidOperationException>(
-                () => passage.SetDirectionTravelCostModifierFrom(start.Id, -2)
+                () => world.SetPassageDirectionTravelCostModifierFrom(passage.Id, start.Id, -2)
             );
 
             Assert.Contains("Negative travel cost", exception.Message, StringComparison.Ordinal);
             Assert.Equal(0, passage.FromAToB.TravelCostModifier);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_SetPassageTravelMode_UpdatesSharedTravelMode() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = WorldState.Create(revision);
+            var start = world.CreateLocation("start", "Start", "travel mode start");
+            var goal = world.CreateLocation("goal", "Goal", "travel mode goal");
+            var passage = world.CreatePassage("start-goal", start.Id, "go", goal.Id, "back", TravelMode.Land, 1);
+
+            world.SetPassageTravelMode(passage.Id, TravelMode.Water);
+
+            Assert.Equal(TravelMode.Water, world.GetPassage(passage.Id).TravelMode);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

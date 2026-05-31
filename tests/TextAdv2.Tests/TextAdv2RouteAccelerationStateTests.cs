@@ -21,7 +21,7 @@ public class TextAdv2RouteAccelerationStateTests {
                 world,
                 [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
             );
-            world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail).SetBaseTravelCost(9);
+            world.SetPassageBaseTravelCost(TestWorldBuilder.PassageIds.SquareRidgeTrail, 9);
             var observedAfterMutation = routeAcceleration.Observe(world);
             var planningOptionsAfterMutation = routeAcceleration.GetPlanningOptions(world);
 
@@ -82,8 +82,11 @@ public class TextAdv2RouteAccelerationStateTests {
                 [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
             );
 
-            world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail)
-                .SetEndpointLocalViewNote(TestWorldBuilder.LocationIds.Square, "Renamed display hint only.");
+            world.SetPassageEndpointLocalViewNote(
+                TestWorldBuilder.PassageIds.SquareRidgeTrail,
+                TestWorldBuilder.LocationIds.Square,
+                "Renamed display hint only."
+            );
 
             var observedAfterNoteChange = routeAcceleration.Observe(world);
             var planningOptionsAfterNoteChange = routeAcceleration.GetPlanningOptions(world);
@@ -117,8 +120,11 @@ public class TextAdv2RouteAccelerationStateTests {
                 TestWorldBuilder.LocationIds.Village,
                 TestWorldBuilder.LocationIds.Aerie
             );
-            world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail)
-                .SetDirectionEnabledFrom(TestWorldBuilder.LocationIds.Square, false);
+            world.SetPassageDirectionEnabledFrom(
+                TestWorldBuilder.PassageIds.SquareRidgeTrail,
+                TestWorldBuilder.LocationIds.Square,
+                false
+            );
 
             var navigationAfterMutation = NavigationObservationProjector.ObserveLocationNavigation(
                 world,

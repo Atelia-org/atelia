@@ -190,6 +190,45 @@ internal sealed class WorldState {
         return false;
     }
 
+    public void SetPassageTravelMode(string passageId, TravelMode value) {
+        var passage = GetPassage(passageId);
+        passage.SetTravelMode(value);
+    }
+
+    public void SetPassageBaseTravelCost(string passageId, int value) {
+        var passage = GetPassage(passageId);
+        passage.SetBaseTravelCost(value);
+    }
+
+    public void SetPassageSharedConditionNote(string passageId, string value) {
+        var passage = GetPassage(passageId);
+        passage.SetSharedConditionNote(value);
+    }
+
+    public void SetPassageEndpointLocalViewNote(string passageId, string locationId, string value) {
+        EnsureLocationExists(locationId);
+        var passage = GetPassage(passageId);
+        passage.SetEndpointLocalViewNote(locationId, value);
+    }
+
+    public void SetPassageDirectionEnabledFrom(string passageId, string locationId, bool isEnabled) {
+        EnsureLocationExists(locationId);
+        var passage = GetPassage(passageId);
+        passage.SetDirectionEnabledFrom(locationId, isEnabled);
+    }
+
+    public void SetPassageDirectionTravelCostModifierFrom(string passageId, string locationId, int value) {
+        EnsureLocationExists(locationId);
+        var passage = GetPassage(passageId);
+        passage.SetDirectionTravelCostModifierFrom(locationId, value);
+    }
+
+    public void SetPassageDirectionConditionNoteFrom(string passageId, string locationId, string value) {
+        EnsureLocationExists(locationId);
+        var passage = GetPassage(passageId);
+        passage.SetDirectionConditionNoteFrom(locationId, value);
+    }
+
     /// <summary>
     /// 按当前 actor 所在地点，沿指定 passage 的合法方向移动。
     /// 该 API 会校验：
