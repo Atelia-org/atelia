@@ -1,9 +1,9 @@
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Runtime;
+namespace Atelia.TextAdv2.Session;
 
-public sealed record TextAdv2RuntimeActorRouteTraceObservation(
+public sealed record ActorRouteTrace(
     string ActorId,
     string ActorName,
     string StartLocationId,
@@ -12,10 +12,10 @@ public sealed record TextAdv2RuntimeActorRouteTraceObservation(
     string EndLocationName,
     int StepCount,
     int TotalTravelCost,
-    TextAdv2RuntimeActorRouteTraceStepObservation[] Steps
+    ActorRouteTraceStep[] Steps
 );
 
-public sealed record TextAdv2RuntimeActorRouteTraceStepObservation(
+public sealed record ActorRouteTraceStep(
     int StepNumber,
     string PassageId,
     string ExitName,
@@ -27,11 +27,11 @@ public sealed record TextAdv2RuntimeActorRouteTraceStepObservation(
     int TravelCost
 );
 
-internal static class TextAdv2RuntimeActorRouteTraceProjector {
-    public static TextAdv2RuntimeActorRouteTraceObservation Project(ActorRouteTraceObservation observation) {
+internal static class SessionRouteTraceProjector {
+    public static ActorRouteTrace Project(ActorRouteTraceObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeActorRouteTraceObservation(
+        return new ActorRouteTrace(
             observation.ActorId,
             observation.ActorName,
             observation.StartLocationId,
@@ -44,10 +44,10 @@ internal static class TextAdv2RuntimeActorRouteTraceProjector {
         );
     }
 
-    private static TextAdv2RuntimeActorRouteTraceStepObservation ProjectStep(ActorRouteTraceStepObservation observation) {
+    private static ActorRouteTraceStep ProjectStep(ActorRouteTraceStepObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeActorRouteTraceStepObservation(
+        return new ActorRouteTraceStep(
             observation.StepNumber,
             observation.PassageId,
             observation.ExitName,

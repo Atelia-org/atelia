@@ -1,6 +1,6 @@
 using Atelia.StateJournal;
 using Atelia.TextAdv2.ReadOnlyView;
-using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
@@ -139,14 +139,14 @@ public class NavigationAndCliWorkflowTests {
     }
 
     [Fact]
-    public void RuntimeDevTextRenderer_RendersCompactMovementText() {
-        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+    public void DevTextRenderer_RendersCompactMovementText() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
 
-        var movement = runtime.MoveActor(
+        var movement = session.MoveActor(
             TestWorldBuilder.ActorIds.Scout,
             TestWorldBuilder.PassageIds.SquareRidgeTrail
         );
-        string text = TextAdv2RuntimeDevTextRenderer.RenderCompactMovement(movement);
+        string text = DevTextRenderer.RenderCompactMovement(movement);
 
         Assert.Equal(
             "scout: square --north gate/square-ridge-trail--> ridge | land | cost=5",
@@ -155,50 +155,50 @@ public class NavigationAndCliWorkflowTests {
     }
 
     [Fact]
-    public void RuntimeDevTextRenderer_RendersRouteTraceText() {
-        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+    public void DevTextRenderer_RendersRouteTraceText() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
 
-        _ = runtime.MoveActor(
+        _ = session.MoveActor(
             TestWorldBuilder.ActorIds.Scout,
             TestWorldBuilder.PassageIds.SquareRidgeTrail
         );
-        _ = runtime.MoveActor(
+        _ = session.MoveActor(
             TestWorldBuilder.ActorIds.Scout,
             TestWorldBuilder.PassageIds.RidgeAerieWinch
         );
 
-        var trace = runtime.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
-        string text = TextAdv2RuntimeDevTextRenderer.RenderRouteTrace(trace);
+        var trace = session.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
+        string text = DevTextRenderer.RenderRouteTrace(trace);
 
         Assert.Equal(Normalize(ExpectedScoutRouteTrace), Normalize(text));
     }
 
     [Fact]
-    public void RuntimeDevTextRenderer_RendersIdleRouteTraceText() {
-        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+    public void DevTextRenderer_RendersIdleRouteTraceText() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
 
-        var trace = runtime.TraceActorRoute(TestWorldBuilder.ActorIds.Boatman);
-        string text = TextAdv2RuntimeDevTextRenderer.RenderRouteTrace(trace);
+        var trace = session.TraceActorRoute(TestWorldBuilder.ActorIds.Boatman);
+        string text = DevTextRenderer.RenderRouteTrace(trace);
 
         Assert.Equal(Normalize(ExpectedBoatmanIdleTrace), Normalize(text));
     }
 
     [Fact]
-    public void RuntimeDevTextRenderer_RenderWorld_BridgesToCanonicalWorldDumpRenderer() {
-        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+    public void DevTextRenderer_RenderWorld_BridgesToCanonicalWorldDumpRenderer() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
 
-        string text = TextAdv2RuntimeDevTextRenderer.RenderWorld(runtime);
+        string text = DevTextRenderer.RenderWorld(session);
 
-        Assert.Equal(WorldDumpRenderer.Render(runtime.WorldForDevSupport), text);
+        Assert.Equal(WorldDumpRenderer.Render(session.WorldForDevSupport), text);
     }
 
     [Fact]
-    public void RuntimeDevTextRenderer_RenderLocation_BridgesToCanonicalWorldDumpRenderer() {
-        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+    public void DevTextRenderer_RenderLocation_BridgesToCanonicalWorldDumpRenderer() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
 
-        string text = TextAdv2RuntimeDevTextRenderer.RenderLocation(runtime, TestWorldBuilder.LocationIds.Square);
+        string text = DevTextRenderer.RenderLocation(session, TestWorldBuilder.LocationIds.Square);
 
-        Assert.Equal(WorldDumpRenderer.RenderLocation(runtime.WorldForDevSupport, TestWorldBuilder.LocationIds.Square), text);
+        Assert.Equal(WorldDumpRenderer.RenderLocation(session.WorldForDevSupport, TestWorldBuilder.LocationIds.Square), text);
     }
 
     private static string CreateTempRepoDir()

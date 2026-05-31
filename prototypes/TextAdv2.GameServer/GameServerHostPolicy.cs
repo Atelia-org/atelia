@@ -1,33 +1,34 @@
-using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.DevSupport;
 
 namespace Atelia.TextAdv2.GameServer;
 
-internal sealed class TextAdv2GameServerHostPolicy {
+internal sealed class GameServerHostPolicy {
     private const int MaxOpenRetryCount = 5;
 
-    private TextAdv2GameServerHostPolicy(
+    private GameServerHostPolicy(
         string configuredRepoDir,
         string resolvedRepoDir,
         string bootstrapMode,
-        string runtimeOpenMode,
+        string sessionOpenMode,
         bool sampleWorldResetEnabled,
-        Func<TextAdv2Runtime> openRuntime,
-        Func<TextAdv2Runtime>? resetRuntime,
+        Func<WorldSession> openSession,
+        Func<WorldSession>? resetSession,
         string[] notes
     ) {
         ConfiguredRepoDir = configuredRepoDir;
         ResolvedRepoDir = resolvedRepoDir;
         BootstrapMode = bootstrapMode;
-        RuntimeOpenMode = runtimeOpenMode;
+        SessionOpenMode = sessionOpenMode;
         SampleWorldResetEnabled = sampleWorldResetEnabled;
-        _openRuntime = openRuntime;
-        _resetRuntime = resetRuntime;
+        _openSession = openSession;
+        _resetSession = resetSession;
         Notes = notes;
         PlannedEndpoints = BuildPlannedEndpoints(sampleWorldResetEnabled);
     }
 
-    private readonly Func<TextAdv2Runtime> _openRuntime;
-    private readonly Func<TextAdv2Runtime>? _resetRuntime;
+    private readonly Func<WorldSession> _openSession;
+    private readonly Func<WorldSession>? _resetSession;
 
     public string ConfiguredRepoDir { get; }
 
@@ -35,7 +36,7 @@ internal sealed class TextAdv2GameServerHostPolicy {
 
     public string BootstrapMode { get; }
 
-    public string RuntimeOpenMode { get; }
+    public string SessionOpenMode { get; }
 
     public bool SampleWorldResetEnabled { get; }
 
@@ -47,7 +48,7 @@ internal sealed class TextAdv2GameServerHostPolicy {
 
     public string[] Notes { get; }
 
-    public static TextAdv2GameServerHostPolicy Create(
+    public static GameServerHostPolicy Create(
         string configuredRepoDir,
         string resolvedRepoDir,
         bool autoBootstrapSampleWorld
@@ -56,27 +57,27 @@ internal sealed class TextAdv2GameServerHostPolicy {
         ArgumentException.ThrowIfNullOrWhiteSpace(resolvedRepoDir);
 
         return autoBootstrapSampleWorld
-            ? new TextAdv2GameServerHostPolicy(
+            ? new GameServerHostPolicy(
                 configuredRepoDir,
                 resolvedRepoDir,
                 bootstrapMode: "sample-world-dev",
-                runtimeOpenMode: "open-or-create-sample-world",
+                sessionOpenMode: "open-or-create-sample-world",
                 sampleWorldResetEnabled: true,
-                openRuntime: () => TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(resolvedRepoDir),
-                resetRuntime: () => TextAdv2SampleWorldDevBootstrap.ResetRuntime(resolvedRepoDir),
+                openSession: () => SampleWorldBootstrap.OpenOrCreateSession(resolvedRepoDir),
+                resetSession: () => SampleWorldBootstrap.ResetSession(resolvedRepoDir),
                 notes: [
-                    "startup 通过 TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime 打开 runtime。",
+                    "startup 通过 SampleWorldBootstrap.OpenOrCreateSession 打开 session。",
                     "POST /admin/reset-sample-world 只在 sample-world-dev host policy 下映射。"
                 ]
             )
-            : new TextAdv2GameServerHostPolicy(
+            : new GameServerHostPolicy(
                 configuredRepoDir,
                 resolvedRepoDir,
                 bootstrapMode: "open-existing-only",
-                runtimeOpenMode: "open-existing-only",
+                sessionOpenMode: "open-existing-only",
                 sampleWorldResetEnabled: false,
-                openRuntime: () => TextAdv2Runtime.OpenExisting(resolvedRepoDir),
-                resetRuntime: null,
+                openSession: () => WorldSession.OpenExisting(resolvedRepoDir),
+                resetSession: null,
                 notes: [
                     "startup 只允许打开既有 repo，不会隐式创建 sample world。",
                     "POST /admin/reset-sample-world 在 open-existing-only host policy 下不会映射。"
@@ -84,21 +85,19 @@ internal sealed class TextAdv2GameServerHostPolicy {
             );
     }
 
-    public TextAdv2Runtime OpenRuntime()
-        => OpenWithRepositoryLockRetry(_openRuntime);
+    public WorldSession OpenSession()
+        => OpenWithRepositoryLockRetry(_openSession);
 
-    public TextAdv2Runtime ResetRuntime() {
-        if (_resetRuntime is null) {
-            throw new InvalidOperationException("Sample-world reset is not enabled for the current GameServer host policy.");
-        }
+    public WorldSession ResetSession() {
+        if (_resetSession is null) { throw new InvalidOperationException("Sample-world reset is not enabled for the current GameServer host policy."); }
 
-        return _resetRuntime();
+        return _resetSession();
     }
 
-    private static TextAdv2Runtime OpenWithRepositoryLockRetry(Func<TextAdv2Runtime> openRuntime) {
+    private static WorldSession OpenWithRepositoryLockRetry(Func<WorldSession> openSession) {
         for (int attempt = 0; ; attempt++) {
             try {
-                return openRuntime();
+                return openSession();
             }
             catch (InvalidOperationException ex) when (attempt < MaxOpenRetryCount && IsRepositoryLockFailure(ex)) {
                 // Local host restarts can briefly overlap while the previous instance is still releasing the repo lock.

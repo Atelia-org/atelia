@@ -2,33 +2,33 @@ using Atelia.StateJournal;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Runtime;
+namespace Atelia.TextAdv2.Session;
 
 /// <summary>
-/// TextAdv2 的第一版 runtime 会话对象。
+/// TextAdv2 的第一版 session 会话对象。
 ///
 /// 当前阶段它统一持有：
 /// - Repository / WorldState 生命周期；
-/// - runtime-owned logical time（进程内易失）；
-/// - runtime-owned movement history（进程内易失）；
-/// - runtime-owned route acceleration snapshot；
-/// - 对 typed runtime API 的直接编排。
+/// - session-owned logical time（进程内易失）；
+/// - session-owned movement history（进程内易失）；
+/// - session-owned route acceleration snapshot；
+/// - 对 typed session API 的直接编排。
 ///
 /// 它故意先保持为单线程、单世界、单会话模型，优先把业务编排从入口程序中抽出，
-/// 后续再在此基础上演进到真正的 authoritative GameServer runtime。
+/// 后续再在此基础上演进到真正的 authoritative GameServer session。
 /// </summary>
-public sealed class TextAdv2Runtime : IDisposable {
+public sealed class WorldSession : IDisposable {
     private const string MainBranchName = "main";
 
     private readonly Repository _repo;
     private readonly WorldState _world;
-    private readonly TextAdv2RuntimeOptions _options;
-    private readonly TextAdv2RouteAccelerationState _routeAcceleration = new();
+    private readonly WorldSessionOptions _options;
+    private readonly RouteAccelerationCache _routeAcceleration = new();
     private readonly Dictionary<string, List<ActorMovementHistoryEntry>> _movementHistoryByActor = new(StringComparer.Ordinal);
     private long _logicalTick;
     private bool _disposed;
 
-    private TextAdv2Runtime(string repoDir, Repository repo, WorldState world, TextAdv2RuntimeOptions? options) {
+    private WorldSession(string repoDir, Repository repo, WorldState world, WorldSessionOptions? options) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(world);
@@ -36,7 +36,7 @@ public sealed class TextAdv2Runtime : IDisposable {
         RepoDir = repoDir;
         _repo = repo;
         _world = world;
-        _options = options ?? TextAdv2RuntimeOptions.Default;
+        _options = options ?? WorldSessionOptions.Default;
     }
 
     public string RepoDir { get; }
@@ -48,10 +48,10 @@ public sealed class TextAdv2Runtime : IDisposable {
         }
     }
 
-    internal static TextAdv2Runtime CreateNew(
+    internal static WorldSession CreateNew(
         string repoDir,
         Func<Revision, WorldState> worldFactory,
-        TextAdv2RuntimeOptions? options = null
+        WorldSessionOptions? options = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
         ArgumentNullException.ThrowIfNull(worldFactory);
@@ -67,7 +67,7 @@ public sealed class TextAdv2Runtime : IDisposable {
             var revision = repo.CreateBranch(MainBranchName).Unwrap();
             var world = worldFactory(revision);
             repo.Commit(world.Root).Unwrap();
-            return new TextAdv2Runtime(repoDir, repo, world, options);
+            return new WorldSession(repoDir, repo, world, options);
         }
         catch {
             repo.Dispose();
@@ -75,17 +75,17 @@ public sealed class TextAdv2Runtime : IDisposable {
         }
     }
 
-    public static TextAdv2Runtime OpenExisting(string repoDir)
+    public static WorldSession OpenExisting(string repoDir)
         => OpenExisting(repoDir, options: null);
 
-    internal static TextAdv2Runtime OpenExisting(string repoDir, TextAdv2RuntimeOptions? options) {
+    internal static WorldSession OpenExisting(string repoDir, WorldSessionOptions? options) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
 
         var repo = Repository.Open(repoDir).Unwrap();
         try {
             var revision = repo.CheckoutBranch(MainBranchName).Unwrap();
             var world = LoadWorldState(revision);
-            return new TextAdv2Runtime(repoDir, repo, world, options);
+            return new WorldSession(repoDir, repo, world, options);
         }
         catch {
             repo.Dispose();
@@ -93,52 +93,52 @@ public sealed class TextAdv2Runtime : IDisposable {
         }
     }
 
-    public TextAdv2RuntimeLocationObservation ObserveLocation(string locationId) {
+    public LocationSnapshot ObserveLocation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return TextAdv2RuntimeObservationProjector.ProjectLocation(_world, locationId);
+        return SessionSnapshotProjector.ProjectLocation(_world, locationId);
     }
 
-    public TextAdv2RuntimeActorObservation ObserveActor(string actorId) {
+    public ActorSnapshot ObserveActor(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return TextAdv2RuntimeObservationProjector.ProjectActor(_world, actorId);
+        return SessionSnapshotProjector.ProjectActor(_world, actorId);
     }
 
-    public TextAdv2RuntimeLocationNavigationObservation ObserveNavigation(string locationId) {
+    public LocationNavigationSnapshot ObserveNavigation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return TextAdv2RuntimeObservationProjector.ProjectNavigation(_world, locationId);
+        return SessionSnapshotProjector.ProjectNavigation(_world, locationId);
     }
 
-    public TextAdv2RuntimeActorNavigationObservation ObserveActorNavigation(string actorId) {
+    public ActorNavigationSnapshot ObserveActorNavigation(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return TextAdv2RuntimeObservationProjector.ProjectActorNavigation(_world, actorId);
+        return SessionSnapshotProjector.ProjectActorNavigation(_world, actorId);
     }
 
-    public TextAdv2RouteAccelerationObservation ObserveRouteAcceleration() {
+    public RouteAccelerationSnapshot ObserveRouteAcceleration() {
         EnsureNotDisposed();
         return _routeAcceleration.Observe(_world);
     }
 
-    public TextAdv2LogicalTimeObservation ObserveTime() {
+    public LogicalTimeSnapshot ObserveTime() {
         EnsureNotDisposed();
         return ObserveLogicalTime();
     }
 
-    public TextAdv2LogicalTimeObservation AdvanceTime(long ticks) {
+    public LogicalTimeSnapshot AdvanceTime(long ticks) {
         EnsureNotDisposed();
         ArgumentOutOfRangeException.ThrowIfNegative(ticks);
         return AdvanceLogicalTime(ticks);
     }
 
-    public TextAdv2RuntimeRoutePlanObservation PlanActorRoute(string actorId, string toLocationId) {
+    public RoutePlan PlanActorRoute(string actorId, string toLocationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
 
-        return TextAdv2RuntimeRoutePlanProjector.Project(
+        return SessionRoutePlanProjector.Project(
             LocationRoutePlanner.PlanShortestRouteForActor(
                 _world,
                 actorId,
@@ -148,12 +148,12 @@ public sealed class TextAdv2Runtime : IDisposable {
         );
     }
 
-    public TextAdv2RuntimeRoutePlanObservation PlanRoute(string fromLocationId, string toLocationId) {
+    public RoutePlan PlanRoute(string fromLocationId, string toLocationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(fromLocationId);
         ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
 
-        return TextAdv2RuntimeRoutePlanProjector.Project(
+        return SessionRoutePlanProjector.Project(
             LocationRoutePlanner.PlanShortestRoute(
                 _world,
                 fromLocationId,
@@ -163,17 +163,17 @@ public sealed class TextAdv2Runtime : IDisposable {
         );
     }
 
-    public TextAdv2RouteAccelerationObservation RebuildRouteAcceleration(string requestedLandmarks) {
+    public RouteAccelerationSnapshot RebuildRouteAcceleration(string requestedLandmarks) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(requestedLandmarks);
         return RebuildRouteAccelerationCore(ParseExplicitLandmarkLocationIds(requestedLandmarks), "custom");
     }
 
-    public TextAdv2RuntimeActorRouteTraceObservation TraceActorRoute(string actorId) {
+    public ActorRouteTrace TraceActorRoute(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
 
-        return TextAdv2RuntimeActorRouteTraceProjector.Project(
+        return SessionRouteTraceProjector.Project(
             ActorRouteTraceProjector.ObserveActorRouteTrace(
                 _world,
                 actorId,
@@ -182,12 +182,12 @@ public sealed class TextAdv2Runtime : IDisposable {
         );
     }
 
-    public TextAdv2RuntimeActorMovementObservation MoveActor(string actorId, string passageId) {
+    public ActorMoveResult MoveActor(string actorId, string passageId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
 
-        return TextAdv2RuntimeObservationProjector.ProjectMovement(MoveActorCore(actorId, passageId));
+        return SessionSnapshotProjector.ProjectMovement(MoveActorCore(actorId, passageId));
     }
 
     public void Dispose() {
@@ -241,9 +241,9 @@ public sealed class TextAdv2Runtime : IDisposable {
         );
     }
 
-    private TextAdv2LogicalTimeObservation ObserveLogicalTime() => new(_logicalTick);
+    private LogicalTimeSnapshot ObserveLogicalTime() => new(_logicalTick);
 
-    internal TextAdv2RouteAccelerationObservation RebuildRouteAcceleration(
+    internal RouteAccelerationSnapshot RebuildRouteAcceleration(
         IEnumerable<string> landmarkLocationIds,
         string landmarkProfileName
     ) {
@@ -253,7 +253,7 @@ public sealed class TextAdv2Runtime : IDisposable {
         return RebuildRouteAccelerationCore(landmarkLocationIds, landmarkProfileName);
     }
 
-    private TextAdv2LogicalTimeObservation AdvanceLogicalTime(long ticks) {
+    private LogicalTimeSnapshot AdvanceLogicalTime(long ticks) {
         _logicalTick = checked(_logicalTick + ticks);
         return ObserveLogicalTime();
     }
@@ -270,12 +270,12 @@ public sealed class TextAdv2Runtime : IDisposable {
         return history;
     }
 
-    internal TextAdv2DefaultLandmarkProfile? ResolveDefaultLandmarkProfile() {
+    internal LandmarkProfile? ResolveLandmarkProfile() {
         EnsureNotDisposed();
-        return _options.DefaultLandmarkProfileResolver?.Invoke(_world);
+        return _options.LandmarkProfileResolver?.Invoke(_world);
     }
 
-    private TextAdv2RouteAccelerationObservation RebuildRouteAccelerationCore(
+    private RouteAccelerationSnapshot RebuildRouteAccelerationCore(
         IEnumerable<string> landmarkLocationIds,
         string landmarkProfileName
     ) {

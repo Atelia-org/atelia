@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.DevSupport;
 
 namespace Atelia.TextAdv2.E2eCli;
 
@@ -16,7 +17,7 @@ internal static class Program {
                 };
             }
 
-            return RunRuntimeCommands(args);
+            return RunSessionCommands(args);
         }
         catch (Exception ex) {
             Console.Error.WriteLine(ex.Message);
@@ -25,33 +26,33 @@ internal static class Program {
     }
 
     private static int RunSmoke() {
-        var scaffold = TextAdv2RuntimeScaffold.DescribeCurrentState();
+        var scaffold = HostingScaffold.DescribeCurrentState();
         Console.WriteLine("TextAdv2.E2eCli smoke OK.");
         Console.WriteLine($"Engine assembly: {scaffold.EngineAssemblyName}");
-        Console.WriteLine($"Runtime extracted: {scaffold.RuntimeExtracted}");
+        Console.WriteLine($"Session extracted: {scaffold.SessionExtracted}");
         return 0;
     }
 
     private static int RunStatus() {
-        var scaffold = TextAdv2RuntimeScaffold.DescribeCurrentState();
+        var scaffold = HostingScaffold.DescribeCurrentState();
         var json = JsonSerializer.Serialize(scaffold, new JsonSerializerOptions { WriteIndented = true });
         Console.WriteLine(json);
         return 0;
     }
 
-    private static int RunRuntimeCommands(string[] args) {
-        var request = ParseRuntimeRequest(args);
-        using var runtime = request.BootstrapMode switch {
-            RuntimeBootstrapMode.RepoDir => TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(request.RepoDir!),
-            RuntimeBootstrapMode.DevSampleWorld => TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime(),
-            _ => throw new InvalidOperationException("Unsupported runtime bootstrap mode."),
+    private static int RunSessionCommands(string[] args) {
+        var request = ParseSessionRequest(args);
+        using var session = request.BootstrapMode switch {
+            SessionBootstrapMode.RepoDir => SampleWorldBootstrap.OpenOrCreateSession(request.RepoDir!),
+            SessionBootstrapMode.DevSampleWorld => SampleWorldBootstrap.CreateTemporarySession(),
+            _ => throw new InvalidOperationException("Unsupported session bootstrap mode."),
         };
 
-        Console.WriteLine($"TextAdv2 runtime repo: {runtime.RepoDir}");
+        Console.WriteLine($"TextAdv2 session repo: {session.RepoDir}");
 
         for (int i = 0; i < request.Operations.Length; i++) {
             var operation = request.Operations[i];
-            string output = operation.Execute(runtime);
+            string output = operation.Execute(session);
 
             Console.WriteLine();
             if (request.Operations.Length > 1) {
@@ -64,10 +65,10 @@ internal static class Program {
         return 0;
     }
 
-    private static RuntimeRequest ParseRuntimeRequest(string[] args) {
+    private static SessionRequest ParseSessionRequest(string[] args) {
         string? repoDir = null;
         bool useDevSampleWorld = false;
-        var operations = new List<RuntimeOperation>();
+        var operations = new List<SessionCommand>();
         int index = 0;
 
         while (index < args.Length) {
@@ -81,136 +82,124 @@ internal static class Program {
                     index += 1;
                     break;
                 case "--world":
-                    operations.Add(new RuntimeOperation("world dump", TextAdv2RuntimeDevTextRenderer.RenderWorld));
+                    operations.Add(new SessionCommand("world dump", DevTextRenderer.RenderWorld));
                     index += 1;
                     break;
-                case "--location":
-                    {
-                        string locationId = RequireArg(args, index + 1);
-                        operations.Add(
-                            new RuntimeOperation(
-                                $"location dump {locationId}",
-                                runtime => TextAdv2RuntimeDevTextRenderer.RenderLocation(runtime, locationId)
-                            )
-                        );
-                    }
-                    index += 2;
-                    break;
-                case "--observe-location":
-                    {
-                        string locationId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe location {locationId}", runtime => RenderJson(runtime.ObserveLocation(locationId))));
-                    }
-                    index += 2;
-                    break;
-                case "--observe-actor":
-                    {
-                        string actorId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe actor {actorId}", runtime => RenderJson(runtime.ObserveActor(actorId))));
-                    }
-                    index += 2;
-                    break;
-                case "--observe-navigation":
-                    {
-                        string locationId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe navigation {locationId}", runtime => RenderJson(runtime.ObserveNavigation(locationId))));
-                    }
-                    index += 2;
-                    break;
-                case "--observe-actor-navigation":
-                    {
-                        string actorId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"observe actor navigation {actorId}", runtime => RenderJson(runtime.ObserveActorNavigation(actorId))));
-                    }
-                    index += 2;
-                    break;
+                case "--location": {
+                    string locationId = RequireArg(args, index + 1);
+                    operations.Add(
+                        new SessionCommand(
+                            $"location dump {locationId}",
+                            session => DevTextRenderer.RenderLocation(session, locationId)
+                        )
+                    );
+                }
+                index += 2;
+                break;
+                case "--observe-location": {
+                    string locationId = RequireArg(args, index + 1);
+                    operations.Add(new SessionCommand($"observe location {locationId}", session => RenderJson(session.ObserveLocation(locationId))));
+                }
+                index += 2;
+                break;
+                case "--observe-actor": {
+                    string actorId = RequireArg(args, index + 1);
+                    operations.Add(new SessionCommand($"observe actor {actorId}", session => RenderJson(session.ObserveActor(actorId))));
+                }
+                index += 2;
+                break;
+                case "--observe-navigation": {
+                    string locationId = RequireArg(args, index + 1);
+                    operations.Add(new SessionCommand($"observe navigation {locationId}", session => RenderJson(session.ObserveNavigation(locationId))));
+                }
+                index += 2;
+                break;
+                case "--observe-actor-navigation": {
+                    string actorId = RequireArg(args, index + 1);
+                    operations.Add(new SessionCommand($"observe actor navigation {actorId}", session => RenderJson(session.ObserveActorNavigation(actorId))));
+                }
+                index += 2;
+                break;
                 case "--observe-route-acceleration":
-                    operations.Add(new RuntimeOperation("observe route acceleration", static runtime => RenderJson(runtime.ObserveRouteAcceleration())));
+                    operations.Add(new SessionCommand("observe route acceleration", static session => RenderJson(session.ObserveRouteAcceleration())));
                     index += 1;
                     break;
                 case "--observe-time":
-                    operations.Add(new RuntimeOperation("observe logical time", static runtime => RenderJson(runtime.ObserveTime())));
+                    operations.Add(new SessionCommand("observe logical time", static session => RenderJson(session.ObserveTime())));
                     index += 1;
                     break;
-                case "--advance-time":
-                    {
-                        string ticksText = RequireArg(args, index + 1);
-                        long ticks = ParseNonNegativeTickDelta(ticksText);
-                        operations.Add(new RuntimeOperation($"advance logical time by {ticksText}", runtime => RenderJson(runtime.AdvanceTime(ticks))));
-                    }
-                    index += 2;
-                    break;
-                case "--plan-actor-route":
-                    {
-                        string actorId = RequireArg(args, index + 1);
-                        string toLocationId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"plan actor route {actorId} -> {toLocationId}", runtime => RenderJson(runtime.PlanActorRoute(actorId, toLocationId))));
-                    }
-                    index += 3;
-                    break;
-                case "--plan-route":
-                    {
-                        string fromLocationId = RequireArg(args, index + 1);
-                        string toLocationId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"plan route {fromLocationId} -> {toLocationId}", runtime => RenderJson(runtime.PlanRoute(fromLocationId, toLocationId))));
-                    }
-                    index += 3;
-                    break;
-                case "--rebuild-route-acceleration":
-                    {
-                        string? rebuildLandmarks = TryReadOptionalArg(args, index + 1);
-                        operations.Add(
-                            new RuntimeOperation(
-                                $"rebuild route acceleration {(rebuildLandmarks is null ? "default-profile" : rebuildLandmarks)}",
-                                runtime => RenderJson(TextAdv2SampleWorldDevBootstrap.RebuildRouteAcceleration(runtime, rebuildLandmarks))
-                            )
-                        );
-                        index += rebuildLandmarks is null ? 1 : 2;
-                    }
-                    break;
-                case "--trace-actor-route":
-                    {
-                        string actorId = RequireArg(args, index + 1);
-                        operations.Add(
-                            new RuntimeOperation(
-                                $"trace actor route {actorId}",
-                                runtime => TextAdv2RuntimeDevTextRenderer.RenderRouteTrace(runtime.TraceActorRoute(actorId))
-                            )
-                        );
-                    }
-                    index += 2;
-                    break;
-                case "--move-actor-quiet":
-                    {
-                        string actorId = RequireArg(args, index + 1);
-                        string passageId = RequireArg(args, index + 2);
-                        operations.Add(
-                            new RuntimeOperation(
-                                $"move actor quietly {actorId} via {passageId}",
-                                runtime => TextAdv2RuntimeDevTextRenderer.RenderCompactMovement(runtime.MoveActor(actorId, passageId))
-                            )
-                        );
-                    }
-                    index += 3;
-                    break;
-                case "--move-actor":
-                    {
-                        string actorId = RequireArg(args, index + 1);
-                        string passageId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"move actor {actorId} via {passageId}", runtime => RenderJson(runtime.MoveActor(actorId, passageId))));
-                    }
-                    index += 3;
-                    break;
+                case "--advance-time": {
+                    string ticksText = RequireArg(args, index + 1);
+                    long ticks = ParseNonNegativeTickDelta(ticksText);
+                    operations.Add(new SessionCommand($"advance logical time by {ticksText}", session => RenderJson(session.AdvanceTime(ticks))));
+                }
+                index += 2;
+                break;
+                case "--plan-actor-route": {
+                    string actorId = RequireArg(args, index + 1);
+                    string toLocationId = RequireArg(args, index + 2);
+                    operations.Add(new SessionCommand($"plan actor route {actorId} -> {toLocationId}", session => RenderJson(session.PlanActorRoute(actorId, toLocationId))));
+                }
+                index += 3;
+                break;
+                case "--plan-route": {
+                    string fromLocationId = RequireArg(args, index + 1);
+                    string toLocationId = RequireArg(args, index + 2);
+                    operations.Add(new SessionCommand($"plan route {fromLocationId} -> {toLocationId}", session => RenderJson(session.PlanRoute(fromLocationId, toLocationId))));
+                }
+                index += 3;
+                break;
+                case "--rebuild-route-acceleration": {
+                    string? rebuildLandmarks = TryReadOptionalArg(args, index + 1);
+                    operations.Add(
+                        new SessionCommand(
+                            $"rebuild route acceleration {(rebuildLandmarks is null ? "default-profile" : rebuildLandmarks)}",
+                            session => RenderJson(SampleWorldBootstrap.RebuildRouteAcceleration(session, rebuildLandmarks))
+                        )
+                    );
+                    index += rebuildLandmarks is null ? 1 : 2;
+                }
+                break;
+                case "--trace-actor-route": {
+                    string actorId = RequireArg(args, index + 1);
+                    operations.Add(
+                        new SessionCommand(
+                            $"trace actor route {actorId}",
+                            session => DevTextRenderer.RenderRouteTrace(session.TraceActorRoute(actorId))
+                        )
+                    );
+                }
+                index += 2;
+                break;
+                case "--move-actor-quiet": {
+                    string actorId = RequireArg(args, index + 1);
+                    string passageId = RequireArg(args, index + 2);
+                    operations.Add(
+                        new SessionCommand(
+                            $"move actor quietly {actorId} via {passageId}",
+                            session => DevTextRenderer.RenderCompactMovement(session.MoveActor(actorId, passageId))
+                        )
+                    );
+                }
+                index += 3;
+                break;
+                case "--move-actor": {
+                    string actorId = RequireArg(args, index + 1);
+                    string passageId = RequireArg(args, index + 2);
+                    operations.Add(new SessionCommand($"move actor {actorId} via {passageId}", session => RenderJson(session.MoveActor(actorId, passageId))));
+                }
+                index += 3;
+                break;
                 default:
                     throw new InvalidOperationException(BuildUsage());
             }
         }
 
         if (operations.Count == 0) {
-            operations.Add(new RuntimeOperation("world dump", TextAdv2RuntimeDevTextRenderer.RenderWorld));
+            operations.Add(new SessionCommand("world dump", DevTextRenderer.RenderWorld));
         }
 
-        return new RuntimeRequest(
+        return new SessionRequest(
             ResolveBootstrapMode(repoDir, useDevSampleWorld),
             repoDir,
             operations.ToArray()
@@ -226,16 +215,12 @@ internal static class Program {
     private static string? TryReadOptionalArg(string[] args, int index)
         => index < args.Length && !args[index].StartsWith("--", StringComparison.Ordinal) ? args[index] : null;
 
-    private static RuntimeBootstrapMode ResolveBootstrapMode(string? repoDir, bool useDevSampleWorld) {
-        if (repoDir is not null && useDevSampleWorld) {
-            throw new InvalidOperationException(RepoDirAndDevSampleWorldConflictError);
-        }
+    private static SessionBootstrapMode ResolveBootstrapMode(string? repoDir, bool useDevSampleWorld) {
+        if (repoDir is not null && useDevSampleWorld) { throw new InvalidOperationException(RepoDirAndDevSampleWorldConflictError); }
 
-        if (repoDir is null && !useDevSampleWorld) {
-            throw new InvalidOperationException(MissingRuntimeTargetError);
-        }
+        if (repoDir is null && !useDevSampleWorld) { throw new InvalidOperationException(MissingSessionTargetError); }
 
-        return useDevSampleWorld ? RuntimeBootstrapMode.DevSampleWorld : RuntimeBootstrapMode.RepoDir;
+        return useDevSampleWorld ? SessionBootstrapMode.DevSampleWorld : SessionBootstrapMode.RepoDir;
     }
 
     private static string RenderJson<T>(T value) => JsonSerializer.Serialize(value, JsonOptions);
@@ -261,18 +246,18 @@ TextAdv2.E2eCli
 
 Meta commands:
   smoke   Validate the host project starts and can reference Atelia.TextAdv2.
-  status  Print the current runtime scaffold state as JSON.
+  status  Print the current session scaffold state as JSON.
   help    Show this message.
 
-Runtime target:
+Session target:
   --repo-dir <repoDir>
            Open or create a persistent sample world at the specified directory.
   --dev-sample-world
            Create a dev sample world under the system temp directory for this invocation.
 
-           Exactly one runtime target must be specified.
+           Exactly one session target must be specified.
 
-Runtime options:
+Session options:
     --rebuild-route-acceleration
                      Without an argument, rebuild using the world's recommended landmark profile when available.
     --rebuild-route-acceleration default
@@ -299,22 +284,22 @@ Runtime options:
 
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
-    private const string MissingRuntimeTargetError = "缺少 runtime target，请传 --repo-dir <repoDir> 或 --dev-sample-world";
+    private const string MissingSessionTargetError = "缺少 session target，请传 --repo-dir <repoDir> 或 --dev-sample-world";
     private const string RepoDirAndDevSampleWorldConflictError = "--repo-dir 不能与 --dev-sample-world 同时使用";
 
-    private sealed record RuntimeRequest(
-        RuntimeBootstrapMode BootstrapMode,
+    private sealed record SessionRequest(
+        SessionBootstrapMode BootstrapMode,
         string? RepoDir,
-        RuntimeOperation[] Operations
+        SessionCommand[] Operations
     );
 
-    private enum RuntimeBootstrapMode {
+    private enum SessionBootstrapMode {
         RepoDir,
         DevSampleWorld,
     }
 
-    private sealed record RuntimeOperation(
+    private sealed record SessionCommand(
         string Description,
-        Func<TextAdv2Runtime, string> Execute
+        Func<WorldSession, string> Execute
     );
 }

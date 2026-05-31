@@ -1,17 +1,17 @@
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Runtime;
+namespace Atelia.TextAdv2.Session;
 
-public sealed record TextAdv2RuntimeLocationObservation(
+public sealed record LocationSnapshot(
     string LocationId,
     string LocationName,
     string LocationDescription,
-    TextAdv2RuntimeExitObservation[] Exits,
-    TextAdv2RuntimeActorPresenceObservation[] PresentActors
+    ExitSnapshot[] Exits,
+    ActorPresenceSnapshot[] PresentActors
 );
 
-public sealed record TextAdv2RuntimeExitObservation(
+public sealed record ExitSnapshot(
     string PassageId,
     string ExitName,
     string TargetLocationId,
@@ -26,15 +26,15 @@ public sealed record TextAdv2RuntimeExitObservation(
     bool IsEnabled
 );
 
-public sealed record TextAdv2RuntimeActorPresenceObservation(string ActorId, string ActorName);
+public sealed record ActorPresenceSnapshot(string ActorId, string ActorName);
 
-public sealed record TextAdv2RuntimeActorObservation(
+public sealed record ActorSnapshot(
     string ActorId,
     string ActorName,
-    TextAdv2RuntimeLocationObservation Location
+    LocationSnapshot Location
 );
 
-public sealed record TextAdv2RuntimeActorMovementObservation(
+public sealed record ActorMoveResult(
     string ActorId,
     string ActorName,
     string PassageId,
@@ -45,16 +45,16 @@ public sealed record TextAdv2RuntimeActorMovementObservation(
     string ToLocationName,
     string TravelMode,
     int TravelCost,
-    TextAdv2RuntimeLocationObservation CurrentLocation
+    LocationSnapshot CurrentLocation
 );
 
-public sealed record TextAdv2RuntimeLocationNavigationObservation(
+public sealed record LocationNavigationSnapshot(
     string LocationId,
     string LocationName,
-    TextAdv2RuntimeNavigationEdgeObservation[] Edges
+    NavigationEdgeSnapshot[] Edges
 );
 
-public sealed record TextAdv2RuntimeNavigationEdgeObservation(
+public sealed record NavigationEdgeSnapshot(
     string PassageId,
     string ExitName,
     string TargetLocationId,
@@ -63,23 +63,23 @@ public sealed record TextAdv2RuntimeNavigationEdgeObservation(
     int TravelCost
 );
 
-public sealed record TextAdv2RuntimeActorNavigationObservation(
+public sealed record ActorNavigationSnapshot(
     string ActorId,
     string ActorName,
-    TextAdv2RuntimeLocationNavigationObservation Navigation
+    LocationNavigationSnapshot Navigation
 );
 
-internal static class TextAdv2RuntimeObservationProjector {
-    public static TextAdv2RuntimeLocationObservation ProjectLocation(WorldState world, string locationId)
+internal static class SessionSnapshotProjector {
+    public static LocationSnapshot ProjectLocation(WorldState world, string locationId)
         => ProjectLocation(LocationObservationProjector.ObserveLocation(world, locationId));
 
-    public static TextAdv2RuntimeActorObservation ProjectActor(WorldState world, string actorId)
+    public static ActorSnapshot ProjectActor(WorldState world, string actorId)
         => ProjectActor(LocationObservationProjector.ObserveActorLocation(world, actorId));
 
-    public static TextAdv2RuntimeActorMovementObservation ProjectMovement(ActorMovementObservation observation) {
+    public static ActorMoveResult ProjectMovement(ActorMovementObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeActorMovementObservation(
+        return new ActorMoveResult(
             observation.ActorId,
             observation.ActorName,
             observation.PassageId,
@@ -94,16 +94,16 @@ internal static class TextAdv2RuntimeObservationProjector {
         );
     }
 
-    public static TextAdv2RuntimeLocationNavigationObservation ProjectNavigation(WorldState world, string locationId)
+    public static LocationNavigationSnapshot ProjectNavigation(WorldState world, string locationId)
         => ProjectNavigation(NavigationObservationProjector.ObserveLocationNavigation(world, locationId));
 
-    public static TextAdv2RuntimeActorNavigationObservation ProjectActorNavigation(WorldState world, string actorId)
+    public static ActorNavigationSnapshot ProjectActorNavigation(WorldState world, string actorId)
         => ProjectActorNavigation(NavigationObservationProjector.ObserveActorNavigation(world, actorId));
 
-    public static TextAdv2RuntimeLocationObservation ProjectLocation(LocationObservation observation) {
+    public static LocationSnapshot ProjectLocation(LocationObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeLocationObservation(
+        return new LocationSnapshot(
             observation.LocationId,
             observation.LocationName,
             observation.LocationDescription,
@@ -112,40 +112,40 @@ internal static class TextAdv2RuntimeObservationProjector {
         );
     }
 
-    public static TextAdv2RuntimeActorObservation ProjectActor(ActorLocationObservation observation) {
+    public static ActorSnapshot ProjectActor(ActorLocationObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeActorObservation(
+        return new ActorSnapshot(
             observation.ActorId,
             observation.ActorName,
             ProjectLocation(observation.Location)
         );
     }
 
-    public static TextAdv2RuntimeLocationNavigationObservation ProjectNavigation(LocationNavigationObservation observation) {
+    public static LocationNavigationSnapshot ProjectNavigation(LocationNavigationObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeLocationNavigationObservation(
+        return new LocationNavigationSnapshot(
             observation.LocationId,
             observation.LocationName,
             observation.Edges.Select(ProjectNavigationEdge).ToArray()
         );
     }
 
-    public static TextAdv2RuntimeActorNavigationObservation ProjectActorNavigation(ActorNavigationObservation observation) {
+    public static ActorNavigationSnapshot ProjectActorNavigation(ActorNavigationObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeActorNavigationObservation(
+        return new ActorNavigationSnapshot(
             observation.ActorId,
             observation.ActorName,
             ProjectNavigation(observation.Navigation)
         );
     }
 
-    private static TextAdv2RuntimeExitObservation ProjectExit(ExitObservation observation) {
+    private static ExitSnapshot ProjectExit(ExitObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeExitObservation(
+        return new ExitSnapshot(
             observation.PassageId,
             observation.ExitName,
             observation.TargetLocationId,
@@ -161,16 +161,16 @@ internal static class TextAdv2RuntimeObservationProjector {
         );
     }
 
-    private static TextAdv2RuntimeActorPresenceObservation ProjectActorPresence(ActorPresenceObservation observation) {
+    private static ActorPresenceSnapshot ProjectActorPresence(ActorPresenceObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeActorPresenceObservation(observation.ActorId, observation.ActorName);
+        return new ActorPresenceSnapshot(observation.ActorId, observation.ActorName);
     }
 
-    private static TextAdv2RuntimeNavigationEdgeObservation ProjectNavigationEdge(NavigationEdgeObservation observation) {
+    private static NavigationEdgeSnapshot ProjectNavigationEdge(NavigationEdgeObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeNavigationEdgeObservation(
+        return new NavigationEdgeSnapshot(
             observation.PassageId,
             observation.ExitName,
             observation.TargetLocationId,

@@ -1,31 +1,31 @@
-using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.Session;
 
 namespace Atelia.TextAdv2.GameServer;
 
-internal sealed class TextAdv2RuntimeService : IDisposable {
+internal sealed class SessionService : IDisposable {
     private readonly object _gate = new();
-    private TextAdv2Runtime _runtime;
+    private WorldSession _session;
     private bool _disposed;
 
-    public TextAdv2RuntimeService(TextAdv2Runtime runtime)
-        => _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+    public SessionService(WorldSession session)
+        => _session = session ?? throw new ArgumentNullException(nameof(session));
 
-    public TResult Invoke<TResult>(Func<TextAdv2Runtime, TResult> operation) {
+    public TResult Invoke<TResult>(Func<WorldSession, TResult> operation) {
         ArgumentNullException.ThrowIfNull(operation);
         lock (_gate) {
             EnsureNotDisposed();
-            return operation(_runtime);
+            return operation(_session);
         }
     }
 
-    public void ReplaceRuntime(Func<TextAdv2Runtime> replacementFactory) {
+    public void ReplaceSession(Func<WorldSession> replacementFactory) {
         ArgumentNullException.ThrowIfNull(replacementFactory);
 
         lock (_gate) {
             EnsureNotDisposed();
 
-            _runtime.Dispose();
-            _runtime = replacementFactory();
+            _session.Dispose();
+            _session = replacementFactory();
         }
     }
 
@@ -33,7 +33,7 @@ internal sealed class TextAdv2RuntimeService : IDisposable {
         lock (_gate) {
             if (_disposed) { return; }
 
-            _runtime.Dispose();
+            _session.Dispose();
             _disposed = true;
         }
     }

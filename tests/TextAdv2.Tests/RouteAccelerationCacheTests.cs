@@ -1,12 +1,12 @@
 using Atelia.StateJournal;
 using Atelia.TextAdv2.ReadOnlyView;
-using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.Session;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
 namespace Atelia.TextAdv2.Tests;
 
-public class TextAdv2RouteAccelerationStateTests {
+public class RouteAccelerationCacheTests {
     [Fact]
     public void Observe_AfterNavigationGraphMutation_ReportsStaleAndFallsBackToZeroHeuristic() {
         string repoDir = CreateTempRepoDir();
@@ -15,7 +15,7 @@ public class TextAdv2RouteAccelerationStateTests {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
             var world = TestWorldBuilder.Create(revision);
-            var routeAcceleration = new TextAdv2RouteAccelerationState();
+            var routeAcceleration = new RouteAccelerationCache();
 
             var rebuilt = routeAcceleration.Rebuild(
                 world,
@@ -47,7 +47,7 @@ public class TextAdv2RouteAccelerationStateTests {
             var revision = repo.CreateBranch("main").Unwrap();
             var world = TestWorldBuilder.Create(revision);
             TestWorldBuilder.PopulateSampleActors(world);
-            var routeAcceleration = new TextAdv2RouteAccelerationState();
+            var routeAcceleration = new RouteAccelerationCache();
 
             routeAcceleration.Rebuild(
                 world,
@@ -75,7 +75,7 @@ public class TextAdv2RouteAccelerationStateTests {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
             var world = TestWorldBuilder.Create(revision);
-            var routeAcceleration = new TextAdv2RouteAccelerationState();
+            var routeAcceleration = new RouteAccelerationCache();
 
             routeAcceleration.Rebuild(
                 world,
@@ -108,7 +108,7 @@ public class TextAdv2RouteAccelerationStateTests {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
             var world = TestWorldBuilder.Create(revision);
-            var routeAcceleration = new TextAdv2RouteAccelerationState();
+            var routeAcceleration = new RouteAccelerationCache();
 
             routeAcceleration.Rebuild(
                 world,

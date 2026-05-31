@@ -42,9 +42,10 @@
 | `Atelia.TextAdv2.WorldTruth` | 世界唯一真相；持久化 schema；authoritative state |
 | `Atelia.TextAdv2.ReadOnlyView` | 只读观察与导航投影；结构化查询结果 |
 | `Atelia.TextAdv2.AccelerationIndex` | 可丢弃、可重建的派生索引与 heuristic snapshot |
-| `Atelia.TextAdv2.Runtime` | repo/world 生命周期、命令执行、查询编排、时间推进、日志与一致性边界 |
+| `Atelia.TextAdv2.Session` | repo/world 生命周期、命令执行、查询编排、时间推进、日志与一致性边界 |
+| `Atelia.TextAdv2.DevSupport` | 开发态辅助：sample-world bootstrap、调试文本渲染、hosting scaffold |
 
-这里最关键的新增层是 `Runtime`：
+这里最关键的新增层是 `Session`：
 
 - HTTP handler 不应该直接碰 `WorldState`。
 - CLI 也不应该自己实现一套 move/observe/plan 逻辑。
@@ -141,7 +142,7 @@ flowchart LR
 
 近期建议新增例如下面这些概念：
 
-- `TextAdv2Runtime` 或 `GameRuntime`
+- `WorldSession` 或 `GameRuntime`
 - runtime 级 `OpenOrCreateSampleWorld(...)`
 - runtime 级 `ObserveActor(...)` / `ObserveNavigation(...)`
 - runtime 级 `MoveActor(...)`

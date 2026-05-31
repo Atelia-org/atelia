@@ -3,9 +3,9 @@ using Atelia.TextAdv2.AccelerationIndex;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Runtime;
+namespace Atelia.TextAdv2.Session;
 
-public sealed record TextAdv2RouteAccelerationObservation(
+public sealed record RouteAccelerationSnapshot(
     string PlannerMode,
     string SnapshotStatus,
     string SnapshotKind,
@@ -17,7 +17,7 @@ public sealed record TextAdv2RouteAccelerationObservation(
     string[] LandmarkLocationIds
 );
 
-internal sealed class TextAdv2RouteAccelerationState {
+internal sealed class RouteAccelerationCache {
     private const string NoneLandmarkProfileName = "none";
 
     private string? _graphSignature;
@@ -26,13 +26,13 @@ internal sealed class TextAdv2RouteAccelerationState {
     private LocationRoutePlanningOptions? _planningOptions;
     private string[] _landmarkLocationIds = [];
 
-    public TextAdv2RouteAccelerationObservation Observe(WorldState world) {
+    public RouteAccelerationSnapshot Observe(WorldState world) {
         ArgumentNullException.ThrowIfNull(world);
 
         string snapshotStatus = GetSnapshotStatus(world);
         var effectivePlanningOptions = GetPlanningOptions(world);
 
-        return new TextAdv2RouteAccelerationObservation(
+        return new RouteAccelerationSnapshot(
             effectivePlanningOptions?.Heuristic.Observe().Name ?? "zero",
             snapshotStatus,
             _planningOptions is null ? "none" : "landmark",
@@ -45,7 +45,7 @@ internal sealed class TextAdv2RouteAccelerationState {
         );
     }
 
-    public TextAdv2RouteAccelerationObservation Rebuild(
+    public RouteAccelerationSnapshot Rebuild(
         WorldState world,
         IEnumerable<string> landmarkLocationIds,
         string landmarkProfileName = "custom"

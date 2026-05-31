@@ -1,7 +1,8 @@
 using System.Net;
 using System.Text.Json;
-using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.Session;
 using Atelia.TextAdv2.WorldTruth;
+using Atelia.TextAdv2.DevSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
@@ -16,7 +17,7 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using var expectedRuntime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+            using var expectedSession = SampleWorldBootstrap.CreateTemporarySession();
             using var factory = CreateFactory(repoDir);
             using var client = factory.CreateClient();
 
@@ -26,7 +27,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
             Assert.Equal(
-                Normalize(TextAdv2RuntimeDevTextRenderer.RenderWorld(expectedRuntime)),
+                Normalize(DevTextRenderer.RenderWorld(expectedSession)),
                 Normalize(text)
             );
         }
@@ -36,7 +37,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task MoveTraceAndReset_RoundTripsThroughRuntimeBackedEndpointsAsync() {
+    public async Task MoveTraceAndReset_RoundTripsThroughSessionBackedEndpointsAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -44,13 +45,13 @@ public class GameServerIntegrationTests {
             using var client = factory.CreateClient();
 
             using var initialObserve = await client.GetAsync("/actors/scout/observation");
-            var initialObservation = await ReadJsonAsync<TextAdv2RuntimeActorObservation>(initialObserve);
+            var initialObservation = await ReadJsonAsync<ActorSnapshot>(initialObserve);
             Assert.NotNull(initialObservation);
             Assert.Equal("square", initialObservation.Location.LocationId);
 
             using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
             string moveText = await moveResponse.Content.ReadAsStringAsync();
-            var moveJson = JsonSerializer.Deserialize<TextAdv2RuntimeActorMovementObservation>(moveText, HostJsonOptions);
+            var moveJson = JsonSerializer.Deserialize<ActorMoveResult>(moveText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
             Assert.Equal("application/json", moveResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(moveJson);
@@ -71,10 +72,10 @@ public class GameServerIntegrationTests {
             string resetText = await resetResponse.Content.ReadAsStringAsync();
             var resetJson = JsonDocument.Parse(resetText);
             Assert.Equal(HttpStatusCode.OK, resetResponse.StatusCode);
-            Assert.Equal("runtime-connected", resetJson.RootElement.GetProperty("mode").GetString());
+            Assert.Equal("session-connected", resetJson.RootElement.GetProperty("mode").GetString());
 
             using var reopenedObserve = await client.GetAsync("/actors/scout/observation");
-            var reopenedObservation = await ReadJsonAsync<TextAdv2RuntimeActorObservation>(reopenedObserve);
+            var reopenedObservation = await ReadJsonAsync<ActorSnapshot>(reopenedObserve);
             Assert.NotNull(reopenedObservation);
             Assert.Equal("square", reopenedObservation.Location.LocationId);
         }
@@ -105,34 +106,34 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task RuntimeStatus_ReportsResolvedRepoAndDevHostPolicyAsync() {
+    public async Task SessionStatus_ReportsResolvedRepoAndDevHostPolicyAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
             using var factory = CreateFactory(repoDir);
             using var client = factory.CreateClient();
 
-            using var response = await client.GetAsync("/admin/runtime-status");
+            using var response = await client.GetAsync("/admin/session-status");
             string jsonText = await response.Content.ReadAsStringAsync();
             var json = JsonDocument.Parse(jsonText);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
-            Assert.Equal("runtime-connected", json.RootElement.GetProperty("mode").GetString());
+            Assert.Equal("session-connected", json.RootElement.GetProperty("mode").GetString());
             Assert.Equal(repoDir, json.RootElement.GetProperty("configuration").GetProperty("resolvedRepoDir").GetString());
             Assert.True(json.RootElement.GetProperty("configuration").GetProperty("autoBootstrapSampleWorld").GetBoolean());
             Assert.Equal("sample-world-dev", json.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
-            Assert.Equal("open-or-create-sample-world", json.RootElement.GetProperty("hostPolicy").GetProperty("runtimeOpenMode").GetString());
+            Assert.Equal("open-or-create-sample-world", json.RootElement.GetProperty("hostPolicy").GetProperty("sessionOpenMode").GetString());
             Assert.True(json.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
             Assert.Contains(
                 json.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
                 static endpoint => string.Equals(endpoint, "POST /admin/reset-sample-world", StringComparison.Ordinal)
             );
-            Assert.True(json.RootElement.GetProperty("runtime").GetProperty("runtimeExtracted").GetBoolean());
+            Assert.True(json.RootElement.GetProperty("session").GetProperty("sessionExtracted").GetBoolean());
             Assert.Contains(
-                json.RootElement.GetProperty("runtime").GetProperty("notes").EnumerateArray().Select(static x => x.GetString()),
+                json.RootElement.GetProperty("session").GetProperty("notes").EnumerateArray().Select(static x => x.GetString()),
                 static note => note is not null
-                    && note.Contains("宿主仍自行负责 CLI/HTTP 请求到 runtime method 的分发。", StringComparison.Ordinal)
+                    && note.Contains("宿主仍自行负责 CLI/HTTP 请求到 session method 的分发。", StringComparison.Ordinal)
             );
         }
         finally {
@@ -145,9 +146,9 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (TextAdv2SampleWorldDevBootstrap.CreateFreshRuntime(repoDir)) {
+            using (SampleWorldBootstrap.CreateFreshSession(repoDir)) {
             }
-            WaitUntilRuntimeCanReopen(repoDir);
+            WaitUntilSessionCanReopen(repoDir);
 
             using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
             using var client = factory.CreateClient();
@@ -160,14 +161,14 @@ public class GameServerIntegrationTests {
             using var resetResponse = await client.PostAsync("/admin/reset-sample-world", content: null);
             Assert.Equal(HttpStatusCode.NotFound, resetResponse.StatusCode);
 
-            using var statusResponse = await client.GetAsync("/admin/runtime-status");
+            using var statusResponse = await client.GetAsync("/admin/session-status");
             string statusText = await statusResponse.Content.ReadAsStringAsync();
             var statusJson = JsonDocument.Parse(statusText);
 
             Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
             Assert.False(statusJson.RootElement.GetProperty("configuration").GetProperty("autoBootstrapSampleWorld").GetBoolean());
             Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
-            Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("runtimeOpenMode").GetString());
+            Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sessionOpenMode").GetString());
             Assert.False(statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
             Assert.DoesNotContain(
                 statusJson.RootElement.GetProperty("plannedEndpoints").EnumerateArray().Select(static x => x.GetString()),
@@ -180,14 +181,14 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task OpenExistingOnlyMode_RuntimeEndpointsFailWhenRepoDoesNotExistAsync() {
+    public async Task OpenExistingOnlyMode_SessionEndpointsFailWhenRepoDoesNotExistAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
             using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
             using var client = factory.CreateClient();
 
-            using var statusResponse = await client.GetAsync("/admin/runtime-status");
+            using var statusResponse = await client.GetAsync("/admin/session-status");
             Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
 
             using var worldResponse = await client.GetAsync("/admin/world");
@@ -203,9 +204,9 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (TextAdv2SampleWorldDevBootstrap.CreateFreshRuntime(repoDir)) {
+            using (SampleWorldBootstrap.CreateFreshSession(repoDir)) {
             }
-            WaitUntilRuntimeCanReopen(repoDir);
+            WaitUntilSessionCanReopen(repoDir);
 
             using var factory = CreateFactory(repoDir, autoBootstrapSampleWorld: false);
             using var client = factory.CreateClient();
@@ -236,7 +237,7 @@ public class GameServerIntegrationTests {
 
             using var initialTime = await client.GetAsync("/admin/time");
             string initialText = await initialTime.Content.ReadAsStringAsync();
-            var initialTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(initialText, HostJsonOptions);
+            var initialTimeJson = JsonSerializer.Deserialize<LogicalTimeSnapshot>(initialText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, initialTime.StatusCode);
             Assert.Equal("application/json", initialTime.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(initialTimeJson);
@@ -244,7 +245,7 @@ public class GameServerIntegrationTests {
 
             using var advancedTime = await client.PostAsync("/admin/advance-time/9", content: null);
             string advancedText = await advancedTime.Content.ReadAsStringAsync();
-            var advancedTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(advancedText, HostJsonOptions);
+            var advancedTimeJson = JsonSerializer.Deserialize<LogicalTimeSnapshot>(advancedText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, advancedTime.StatusCode);
             Assert.Equal("application/json", advancedTime.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(advancedTimeJson);
@@ -255,7 +256,7 @@ public class GameServerIntegrationTests {
 
             using var resetTime = await client.GetAsync("/admin/time");
             string resetTimeText = await resetTime.Content.ReadAsStringAsync();
-            var resetTimeJson = JsonSerializer.Deserialize<TextAdv2LogicalTimeObservation>(resetTimeText, HostJsonOptions);
+            var resetTimeJson = JsonSerializer.Deserialize<LogicalTimeSnapshot>(resetTimeText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, resetTime.StatusCode);
             Assert.Equal("application/json", resetTime.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(resetTimeJson);
@@ -278,15 +279,15 @@ public class GameServerIntegrationTests {
             string adminLocationText = await adminLocation.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, adminLocation.StatusCode);
             Assert.Equal("text/plain", adminLocation.Content.Headers.ContentType?.MediaType);
-            using (var expectedRuntime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime()) {
+            using (var expectedSession = SampleWorldBootstrap.CreateTemporarySession()) {
                 Assert.Equal(
-                    Normalize(TextAdv2RuntimeDevTextRenderer.RenderLocation(expectedRuntime, TestWorldBuilder.LocationIds.Square)),
+                    Normalize(DevTextRenderer.RenderLocation(expectedSession, TestWorldBuilder.LocationIds.Square)),
                     Normalize(adminLocationText)
                 );
             }
 
             using var adminObservation = await client.GetAsync("/admin/locations/square/observation");
-            var adminLocationObservation = await ReadJsonAsync<TextAdv2RuntimeLocationObservation>(adminObservation);
+            var adminLocationObservation = await ReadJsonAsync<LocationSnapshot>(adminObservation);
             Assert.Equal(HttpStatusCode.OK, adminObservation.StatusCode);
             Assert.Equal("application/json", adminObservation.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminLocationObservation);
@@ -296,7 +297,7 @@ public class GameServerIntegrationTests {
             );
 
             using var adminNavigation = await client.GetAsync("/admin/locations/square/navigation");
-            var adminNavigationObservation = await ReadJsonAsync<TextAdv2RuntimeLocationNavigationObservation>(adminNavigation);
+            var adminNavigationObservation = await ReadJsonAsync<LocationNavigationSnapshot>(adminNavigation);
             Assert.Equal(HttpStatusCode.OK, adminNavigation.StatusCode);
             Assert.Equal("application/json", adminNavigation.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminNavigationObservation);
@@ -324,7 +325,7 @@ public class GameServerIntegrationTests {
 
             using var adminRoute = await client.GetAsync("/admin/routes/village/aerie");
             string adminRouteText = await adminRoute.Content.ReadAsStringAsync();
-            var adminRouteJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(adminRouteText, HostJsonOptions);
+            var adminRouteJson = JsonSerializer.Deserialize<RoutePlan>(adminRouteText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, adminRoute.StatusCode);
             Assert.Equal("application/json", adminRoute.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminRouteJson);
@@ -336,7 +337,7 @@ public class GameServerIntegrationTests {
 
             using var adminAcceleration = await client.GetAsync("/admin/route-acceleration");
             string adminAccelerationText = await adminAcceleration.Content.ReadAsStringAsync();
-            var adminAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(adminAccelerationText, HostJsonOptions);
+            var adminAccelerationJson = JsonSerializer.Deserialize<RouteAccelerationSnapshot>(adminAccelerationText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, adminAcceleration.StatusCode);
             Assert.Equal("application/json", adminAcceleration.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(adminAccelerationJson);
@@ -347,7 +348,7 @@ public class GameServerIntegrationTests {
 
             using var rebuiltAcceleration = await client.PostAsync("/admin/route-acceleration/rebuild", content: null);
             string rebuiltAccelerationText = await rebuiltAcceleration.Content.ReadAsStringAsync();
-            var rebuiltAccelerationJson = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(rebuiltAccelerationText, HostJsonOptions);
+            var rebuiltAccelerationJson = JsonSerializer.Deserialize<RouteAccelerationSnapshot>(rebuiltAccelerationText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, rebuiltAcceleration.StatusCode);
             Assert.Equal("application/json", rebuiltAcceleration.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(rebuiltAccelerationJson);
@@ -367,7 +368,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.NotFound, publicAcceleration.StatusCode);
 
             using var actorNavigation = await client.GetAsync("/actors/scout/navigation");
-            var actorNavigationObservation = await ReadJsonAsync<TextAdv2RuntimeActorNavigationObservation>(actorNavigation);
+            var actorNavigationObservation = await ReadJsonAsync<ActorNavigationSnapshot>(actorNavigation);
             Assert.Equal(HttpStatusCode.OK, actorNavigation.StatusCode);
             Assert.Equal("application/json", actorNavigation.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(actorNavigationObservation);
@@ -382,7 +383,7 @@ public class GameServerIntegrationTests {
 
             using var actorRoutePlan = await client.GetAsync("/actors/scout/plan-route/aerie");
             string actorRoutePlanText = await actorRoutePlan.Content.ReadAsStringAsync();
-            var actorRoutePlanJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(actorRoutePlanText, HostJsonOptions);
+            var actorRoutePlanJson = JsonSerializer.Deserialize<RoutePlan>(actorRoutePlanText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, actorRoutePlan.StatusCode);
             Assert.Equal("application/json", actorRoutePlan.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(actorRoutePlanJson);
@@ -409,7 +410,7 @@ public class GameServerIntegrationTests {
                 content: null
             );
             string jsonText = await response.Content.ReadAsStringAsync();
-            var json = JsonSerializer.Deserialize<TextAdv2RouteAccelerationObservation>(jsonText, HostJsonOptions);
+            var json = JsonSerializer.Deserialize<RouteAccelerationSnapshot>(jsonText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
@@ -437,7 +438,7 @@ public class GameServerIntegrationTests {
 
             using var alreadyThereResponse = await client.GetAsync("/admin/routes/shrine/shrine");
             string alreadyThereText = await alreadyThereResponse.Content.ReadAsStringAsync();
-            var alreadyThereJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(alreadyThereText, HostJsonOptions);
+            var alreadyThereJson = JsonSerializer.Deserialize<RoutePlan>(alreadyThereText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, alreadyThereResponse.StatusCode);
             Assert.Equal("application/json", alreadyThereResponse.Content.Headers.ContentType?.MediaType);
@@ -449,7 +450,7 @@ public class GameServerIntegrationTests {
 
             using var unreachableResponse = await client.GetAsync("/admin/routes/delta/harbor");
             string unreachableText = await unreachableResponse.Content.ReadAsStringAsync();
-            var unreachableJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(unreachableText, HostJsonOptions);
+            var unreachableJson = JsonSerializer.Deserialize<RoutePlan>(unreachableText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, unreachableResponse.StatusCode);
             Assert.Equal("application/json", unreachableResponse.Content.Headers.ContentType?.MediaType);
@@ -474,7 +475,7 @@ public class GameServerIntegrationTests {
 
             using var alreadyThereResponse = await client.GetAsync("/actors/scout/plan-route/square");
             string alreadyThereText = await alreadyThereResponse.Content.ReadAsStringAsync();
-            var alreadyThereJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(alreadyThereText, HostJsonOptions);
+            var alreadyThereJson = JsonSerializer.Deserialize<RoutePlan>(alreadyThereText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, alreadyThereResponse.StatusCode);
             Assert.Equal("application/json", alreadyThereResponse.Content.Headers.ContentType?.MediaType);
@@ -486,7 +487,7 @@ public class GameServerIntegrationTests {
 
             using var unreachableResponse = await client.GetAsync("/actors/boatman/plan-route/village");
             string unreachableText = await unreachableResponse.Content.ReadAsStringAsync();
-            var unreachableJson = JsonSerializer.Deserialize<TextAdv2RuntimeRoutePlanObservation>(unreachableText, HostJsonOptions);
+            var unreachableJson = JsonSerializer.Deserialize<RoutePlan>(unreachableText, HostJsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, unreachableResponse.StatusCode);
             Assert.Equal("application/json", unreachableResponse.Content.Headers.ContentType?.MediaType);
@@ -502,7 +503,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task HostRestart_ReopensWorldTruthButResetsRuntimeOwnedStateAsync() {
+    public async Task HostRestart_ReopensWorldTruthButResetsSessionOwnedStateAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -516,7 +517,7 @@ public class GameServerIntegrationTests {
                 Assert.Equal(HttpStatusCode.OK, movedActor.StatusCode);
             }
 
-            WaitUntilRuntimeCanReopen(repoDir);
+            WaitUntilSessionCanReopen(repoDir);
 
             await using var secondFactory = CreateFactory(repoDir);
             using var secondClient = secondFactory.CreateClient();
@@ -534,7 +535,7 @@ public class GameServerIntegrationTests {
             Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceText, StringComparison.Ordinal);
 
             using var observedAfterRestart = await secondClient.GetAsync("/actors/scout/observation");
-            var observedAfterRestartJson = await ReadJsonAsync<TextAdv2RuntimeActorObservation>(observedAfterRestart);
+            var observedAfterRestartJson = await ReadJsonAsync<ActorSnapshot>(observedAfterRestart);
             Assert.NotNull(observedAfterRestartJson);
             Assert.Equal("ridge", observedAfterRestartJson.Location.LocationId);
         }
@@ -560,12 +561,12 @@ public class GameServerIntegrationTests {
 
     private static string Normalize(string text) => text.Replace("\r\n", "\n");
 
-    private static void WaitUntilRuntimeCanReopen(string repoDir) {
+    private static void WaitUntilSessionCanReopen(string repoDir) {
         InvalidOperationException? lastLockFailure = null;
 
         for (int attempt = 0; attempt < 40; attempt++) {
             try {
-                using var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
+                using var session = SampleWorldBootstrap.OpenOrCreateSession(repoDir);
                 return;
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to acquire lock", StringComparison.Ordinal)) {

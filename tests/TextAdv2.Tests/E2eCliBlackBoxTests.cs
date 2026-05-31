@@ -5,21 +5,21 @@ namespace Atelia.TextAdv2.Tests;
 
 public sealed class E2eCliBlackBoxTests {
     [Fact]
-    public void BareRuntimeInvocation_WithoutRuntimeTarget_FailsFast() {
+    public void BareInvocation_WithoutSessionTarget_FailsFast() {
         CliRunResult result = RunCli();
 
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("缺少 runtime target，请传 --repo-dir <repoDir> 或 --dev-sample-world", result.StandardError, StringComparison.Ordinal);
-        Assert.DoesNotContain("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("缺少 session target，请传 --repo-dir <repoDir> 或 --dev-sample-world", result.StandardError, StringComparison.Ordinal);
+        Assert.DoesNotContain("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void WorldCommand_WithoutRuntimeTarget_FailsFast() {
+    public void WorldCommand_WithoutSessionTarget_FailsFast() {
         CliRunResult result = RunCli("--world");
 
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("缺少 runtime target，请传 --repo-dir <repoDir> 或 --dev-sample-world", result.StandardError, StringComparison.Ordinal);
-        Assert.DoesNotContain("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("缺少 session target，请传 --repo-dir <repoDir> 或 --dev-sample-world", result.StandardError, StringComparison.Ordinal);
+        Assert.DoesNotContain("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -27,7 +27,7 @@ public sealed class E2eCliBlackBoxTests {
         CliRunResult result = RunCli("--dev-sample-world", "--world");
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Contains("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("WORLD", result.StandardOutput, StringComparison.Ordinal);
     }
 
@@ -36,7 +36,7 @@ public sealed class E2eCliBlackBoxTests {
         CliRunResult result = RunCli("--dev-sample-world", "--location", "square");
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Contains("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("- square | Square", result.StandardOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("WORLD", result.StandardOutput, StringComparison.Ordinal);
     }
@@ -46,12 +46,12 @@ public sealed class E2eCliBlackBoxTests {
         CliRunResult result = RunCli("--dev-sample-world");
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Contains("TextAdv2 runtime repo:", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("WORLD", result.StandardOutput, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RepoDir_RuntimeState_PersistsAcrossInvocations() {
+    public void RepoDir_SessionState_PersistsAcrossInvocations() {
         string repoDir = CreateTempRepoDir();
 
         try {

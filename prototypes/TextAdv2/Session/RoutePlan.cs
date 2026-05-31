@@ -1,9 +1,9 @@
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Runtime;
+namespace Atelia.TextAdv2.Session;
 
-public sealed record TextAdv2RuntimeRoutePlanObservation(
+public sealed record RoutePlan(
     string FromLocationId,
     string FromLocationName,
     string ToLocationId,
@@ -11,11 +11,11 @@ public sealed record TextAdv2RuntimeRoutePlanObservation(
     string Status,
     int StepCount,
     int? TotalTravelCost,
-    TextAdv2RuntimeRoutePlanStepObservation[] Steps,
-    TextAdv2RuntimeRoutePlanSearchStatsObservation SearchStats
+    RoutePlanStep[] Steps,
+    RoutePlanSearchStats SearchStats
 );
 
-public sealed record TextAdv2RuntimeRoutePlanSearchStatsObservation(
+public sealed record RoutePlanSearchStats(
     string HeuristicName,
     int LandmarkCount,
     int ExpandedNodeCount,
@@ -24,7 +24,7 @@ public sealed record TextAdv2RuntimeRoutePlanSearchStatsObservation(
     int StaleStateSkipCount
 );
 
-public sealed record TextAdv2RuntimeRoutePlanStepObservation(
+public sealed record RoutePlanStep(
     int StepNumber,
     string PassageId,
     string ExitName,
@@ -37,11 +37,11 @@ public sealed record TextAdv2RuntimeRoutePlanStepObservation(
     int CumulativeTravelCost
 );
 
-internal static class TextAdv2RuntimeRoutePlanProjector {
-    public static TextAdv2RuntimeRoutePlanObservation Project(LocationRoutePlanObservation observation) {
+internal static class SessionRoutePlanProjector {
+    public static RoutePlan Project(LocationRoutePlanObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeRoutePlanObservation(
+        return new RoutePlan(
             observation.FromLocationId,
             observation.FromLocationName,
             observation.ToLocationId,
@@ -54,12 +54,12 @@ internal static class TextAdv2RuntimeRoutePlanProjector {
         );
     }
 
-    private static TextAdv2RuntimeRoutePlanSearchStatsObservation ProjectSearchStats(
+    private static RoutePlanSearchStats ProjectSearchStats(
         LocationRoutePlanSearchStatsObservation observation
     ) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeRoutePlanSearchStatsObservation(
+        return new RoutePlanSearchStats(
             observation.HeuristicName,
             observation.LandmarkCount,
             observation.ExpandedNodeCount,
@@ -69,10 +69,10 @@ internal static class TextAdv2RuntimeRoutePlanProjector {
         );
     }
 
-    private static TextAdv2RuntimeRoutePlanStepObservation ProjectStep(LocationRoutePlanStepObservation observation) {
+    private static RoutePlanStep ProjectStep(LocationRoutePlanStepObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new TextAdv2RuntimeRoutePlanStepObservation(
+        return new RoutePlanStep(
             observation.StepNumber,
             observation.PassageId,
             observation.ExitName,

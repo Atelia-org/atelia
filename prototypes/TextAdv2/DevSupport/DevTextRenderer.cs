@@ -1,34 +1,35 @@
 using System.Text;
 using Atelia.TextAdv2.WorldTruth;
+using Atelia.TextAdv2.Session;
 
-namespace Atelia.TextAdv2.Runtime;
+namespace Atelia.TextAdv2.DevSupport;
 
 /// <summary>
 /// 共享给宿主/dev-support 的轻量文本渲染器。
 ///
-/// runtime public seam 只返回 typed DTO；若宿主仍需要 compact text，
-/// 应显式调用这里，而不是回到 runtime 主对象要字符串别名。
+/// session public seam 只返回 typed DTO；若宿主仍需要 compact text，
+/// 应显式调用这里，而不是回到 session 主对象要字符串别名。
 /// </summary>
-public static class TextAdv2RuntimeDevTextRenderer {
-    public static string RenderWorld(TextAdv2Runtime runtime) {
-        ArgumentNullException.ThrowIfNull(runtime);
-        return WorldDumpRenderer.Render(runtime.WorldForDevSupport);
+public static class DevTextRenderer {
+    public static string RenderWorld(WorldSession session) {
+        ArgumentNullException.ThrowIfNull(session);
+        return WorldDumpRenderer.Render(session.WorldForDevSupport);
     }
 
-    public static string RenderLocation(TextAdv2Runtime runtime, string locationId) {
-        ArgumentNullException.ThrowIfNull(runtime);
+    public static string RenderLocation(WorldSession session, string locationId) {
+        ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return WorldDumpRenderer.RenderLocation(runtime.WorldForDevSupport, locationId);
+        return WorldDumpRenderer.RenderLocation(session.WorldForDevSupport, locationId);
     }
 
-    public static string RenderCompactMovement(TextAdv2RuntimeActorMovementObservation movement) {
+    public static string RenderCompactMovement(ActorMoveResult movement) {
         ArgumentNullException.ThrowIfNull(movement);
 
         return $"{movement.ActorId}: {movement.FromLocationId} --{movement.ExitName}/{movement.PassageId}--> {movement.ToLocationId}"
             + $" | {movement.TravelMode} | cost={movement.TravelCost}";
     }
 
-    public static string RenderRouteTrace(TextAdv2RuntimeActorRouteTraceObservation trace) {
+    public static string RenderRouteTrace(ActorRouteTrace trace) {
         ArgumentNullException.ThrowIfNull(trace);
 
         var builder = new StringBuilder();

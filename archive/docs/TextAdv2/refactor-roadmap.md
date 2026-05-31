@@ -43,9 +43,9 @@
   - `MoveActor`
   - `TraceActorRoute`
   - `PlanRoute` / `PlanActorRoute`
-- `TextAdv2Runtime` public surface 已不再暴露 `TextAdv2RuntimeCommandResult`。
+- `WorldSession` public surface 已不再暴露 `TextAdv2RuntimeCommandResult`。
   - `DumpWorld` / `DumpLocation` 已从 runtime 主对象移出。
-  - `GameServer` / `E2eCli` 的 world/location 文本入口已统一改走显式 `TextAdv2RuntimeDevTextRenderer.RenderWorld/RenderLocation(...)` helper。
+  - `GameServer` / `E2eCli` 的 world/location 文本入口已统一改走显式 `DevTextRenderer.RenderWorld/RenderLocation(...)` helper。
 - `P3` 已拆成多个更小的内部收口切口：
   - `schemaVersion` 字段已经写入 world root，且 `WorldState.FromRoot(...)` 已具备 schema gate；
   - `Passage` 高频写操作已通过 `WorldState.SetPassage*` + `PassageView` façade 收回 world authority，并已补 seam guard tests；
@@ -112,7 +112,7 @@
 
 主张：
 
-- `TextAdv2Runtime` 不再返回 `string + contentType`。
+- `WorldSession` 不再返回 `string + contentType`。
 - runtime 只返回 typed result；文本渲染、JSON 序列化、命令解析分别下沉到 `GameServer` / `E2eCli`。
 - `TextAdv2RuntimeCommand` 这类宿主导向命令适配器迁出 runtime 主对象。
 
@@ -134,55 +134,55 @@
 
 完成定义：
 
-- `TextAdv2Runtime` 的 public surface 不再暴露宿主渲染协议。
+- `WorldSession` 的 public surface 不再暴露宿主渲染协议。
 - CLI/HTTP 仍通过现有用例工作，但渲染责任在宿主项目。
 
 P2a 本轮落地结果：
 
 - `TextAdv2RuntimeCommand` / `Execute(...)` 已从 runtime 主对象删除。
-- `RuntimeScaffold` 的状态说明已同步到“runtime 直接暴露 typed methods，宿主自己做调用分发”。
+- `HostingScaffold` 的状态说明已同步到" runtime 直接暴露 typed methods，宿主自己做调用分发"。
 - 下一切口是 `P2b1`，不是继续扩大 `P2a`。
 
 P2b1 本轮落地结果：
 
-- `ObserveTime()` / `AdvanceTime(long)` 已直接返回 `TextAdv2LogicalTimeObservation`，由 `GameServer` / `E2eCli` 在宿主边界序列化。
-- `ObserveRouteAcceleration()` / `RebuildRouteAcceleration(...)` 已直接返回 `TextAdv2RouteAccelerationObservation`，对应 HTTP/CLI 入口也已迁到宿主边界序列化。
+- `ObserveTime()` / `AdvanceTime(long)` 已直接返回 `LogicalTimeSnapshot`，由 `GameServer` / `E2eCli` 在宿主边界序列化。
+- `ObserveRouteAcceleration()` / `RebuildRouteAcceleration(...)` 已直接返回 `RouteAccelerationSnapshot`，对应 HTTP/CLI 入口也已迁到宿主边界序列化。
 - 对应的 runtime 测试，以及 time/route-acceleration 的 GameServer JSON 边界断言，已跟随迁移完成更新。
 - 下一自然入口是 `P2b2`：为 actor/location/navigation/move 设计更干净的 public DTO seam，再继续缩减 `TextAdv2RuntimeCommandResult` 的残留范围。
 
 P2b2a 本轮落地结果：
 
-- `ObserveLocation(string)` 已直接返回 `TextAdv2RuntimeLocationObservation`。
-- `ObserveActor(string)` 已直接返回 `TextAdv2RuntimeActorObservation`。
+- `ObserveLocation(string)` 已直接返回 `LocationSnapshot`。
+- `ObserveActor(string)` 已直接返回 `ActorSnapshot`。
 - 新 seam 没有直接公开 `ReadOnlyView` DTO，也没有把 `TravelMode` 公开成 public enum；runtime 在边界前把 travel mode 投影成字符串 token。
 - `GameServer` / `E2eCli` 对应入口已迁到宿主边界序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
 - 下一自然入口是 `P2b2b`：决定 navigation observation 是否沿用同类 runtime-facing DTO 策略，或与 `P4 canonical navigation graph seam` 一起收口。
 
 P2b2b 本轮落地结果：
 
-- `ObserveNavigation(string)` 已直接返回 `TextAdv2RuntimeLocationNavigationObservation`。
-- `ObserveActorNavigation(string)` 已直接返回 `TextAdv2RuntimeActorNavigationObservation`。
+- `ObserveNavigation(string)` 已直接返回 `LocationNavigationSnapshot`。
+- `ObserveActorNavigation(string)` 已直接返回 `ActorNavigationSnapshot`。
 - 新 seam 没有直接公开 `ReadOnlyView.NavigationObservation*`，也没有把 `TravelMode` 公开成 public enum；runtime 继续在边界前把 travel mode 投影成字符串 token。
 - `GameServer` / `E2eCli` 对应 navigation 入口已迁到宿主边界序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
 - 下一自然入口是 `P2b2c`：决定 `MoveActor` 是否也采用独立 runtime-facing DTO seam，或先转入 `P4 canonical navigation graph seam` 做内部图真源收口。
 
 P2b2c 本轮落地结果：
 
-- `MoveActor(string, string)` 已直接返回 `TextAdv2RuntimeActorMovementObservation`。
-- 新 seam 没有直接公开 internal `ActorMovementObservation`，并继续把 `TravelMode` 投影成字符串 token；`CurrentLocation` 复用 `TextAdv2RuntimeLocationObservation`。
+- `MoveActor(string, string)` 已直接返回 `ActorMoveResult`。
+- 新 seam 没有直接公开 internal `ActorMovementObservation`，并继续把 `TravelMode` 投影成字符串 token；`CurrentLocation` 复用 `LocationSnapshot`。
 - `GameServer` move endpoint 与 `E2eCli --move-actor` 已迁到宿主边界 JSON 序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
 - `MoveActorQuiet`、`TraceActorRoute`、`PlanRoute`、`PlanActorRoute`、`Dump*` 仍保持现状，留待后续工作包收口。
 
 P2c1/P2c2 本轮落地结果：
 
-- `MoveActorQuiet` 已从 `TextAdv2Runtime` 删除；`E2eCli --move-actor-quiet` 改为 `MoveActor(...) + TextAdv2RuntimeDevTextRenderer.RenderCompactMovement(...)`。
-- `TraceActorRoute(string)` 已直接返回 `TextAdv2RuntimeActorRouteTraceObservation`；新 seam 没有公开 internal `ActorRouteTraceObservation`，并继续把 `TravelMode` 投影成 runtime-facing string token。
-- route trace / compact movement 的文本渲染已移到显式 `TextAdv2RuntimeDevTextRenderer`；`GameServer /actors/{actorId}/route-trace` 保持 `text/plain`，但文本现在在宿主边界渲染。
+- `MoveActorQuiet` 已从 `WorldSession` 删除；`E2eCli --move-actor-quiet` 改为 `MoveActor(...) + DevTextRenderer.RenderCompactMovement(...)`。
+- `TraceActorRoute(string)` 已直接返回 `ActorRouteTrace`；新 seam 没有公开 internal `ActorRouteTraceObservation`，并继续把 `TravelMode` 投影成 runtime-facing string token。
+- route trace / compact movement 的文本渲染已移到显式 `DevTextRenderer`；`GameServer /actors/{actorId}/route-trace` 保持 `text/plain`，但文本现在在宿主边界渲染。
 - 相关 runtime 测试已迁到 typed seam 主断言；文本 golden 已改到 renderer / host 边界测试。
 
 P4c 本轮落地结果：
 
-- `PlanRoute(string, string)` 与 `PlanActorRoute(string, string)` 已直接返回 `TextAdv2RuntimeRoutePlanObservation`。
+- `PlanRoute(string, string)` 与 `PlanActorRoute(string, string)` 已直接返回 `RoutePlan`。
 - 新 seam 没有直接公开 internal `LocationRoutePlanObservation`，并继续把 `RoutePlanStatus` / `TravelMode` 投影成 runtime-facing string token。
 - `GameServer` route-plan endpoints 与 `E2eCli --plan-route` / `--plan-actor-route` 已迁到宿主边界 JSON 序列化，相关 runtime / GameServer 测试已更新到 typed 断言。
 - `LocationRoutePlanTextRenderer` 仍保留为内部文本调试能力；是否继续保留长期 text surface，留待 `P2c + P5c` 统一处理。
@@ -193,8 +193,8 @@ P2 后续修订说明：
 - `TraceActorRoute` 已在 `P2c2` 中收口为 typed seam；后续不再属于 `TextAdv2RuntimeCommandResult` 的主残余面。
 - `PlanRoute` / `PlanActorRoute` 已在 `P4c` 中收口为 typed seam；后续不再属于 `TextAdv2RuntimeCommandResult` 的主残余面。
 - `MoveActorQuiet` 已删除，`compact movement` 文本改为显式 dev-support renderer；`TraceActorRoute` 文本也已下沉到宿主或显式 dev-support。
-- `DumpWorld` / `DumpLocation` 已在 `P5c` 中收口到显式 `TextAdv2RuntimeDevTextRenderer` bridge；`WorldDumpRenderer` 继续作为内部 canonical formatter，runtime public surface 不再保留 dump 文本 seam。
-- `TextAdv2RuntimeCommandResult` 已删除；`TextAdv2RuntimeContentTypes` 暂保留给 `GameServer` 宿主边界复用。
+- `DumpWorld` / `DumpLocation` 已在 `P5c` 中收口到显式 `DevTextRenderer` bridge；`WorldDumpRenderer` 继续作为内部 canonical formatter，runtime public surface 不再保留 dump 文本 seam。
+- `TextAdv2RuntimeCommandResult` 已删除；`SessionContentTypes` 暂保留给 `GameServer` 宿主边界复用。
 
 ### P3a. world root schema gate
 
@@ -309,7 +309,7 @@ P4a/P4b 本轮落地结果：
 
 修订后的建议切口：
 
-- P5a：把 sample-world profile / 默认 landmark policy 从 `TextAdv2Runtime` 中剥离到显式 dev support 层（已完成）。
+- P5a：把 sample-world profile / 默认 landmark policy 从 `WorldSession` 中剥离到显式 dev support 层（已完成）。
 - P5b1：把 `GameServer` 的 open-existing / open-or-create / reset-sample-world 决策从 `TextAdv2RuntimeService` 中提出，改成显式 host bootstrap/admin policy（已完成）。
 - P5b2：让 `E2eCli` 的“未指定 repoDir 就创建临时 sample world”成为显式 dev mode，而不是 runtime command 主路径的隐含行为（已完成）。
 - P5c：处理 `DumpWorld` / `DumpLocation` 等稳定调试文本输出的最终归属；若这一步完成后 `TextAdv2RuntimeCommandResult` 已无剩余，再彻底删除它。
@@ -321,8 +321,8 @@ P4a/P4b 本轮落地结果：
 
 P5a 本轮落地结果：
 
-- sample-world world seed 已从 `TextAdv2Runtime` 中移出，改由 `TextAdv2SampleWorldDevBootstrap` 显式持有。
-- `RebuildRouteAcceleration` 的“无参/`default` => 推荐 profile”决策已从 runtime public seam 移到 `TextAdv2SampleWorldDevBootstrap`，宿主仍保留原有 dev/admin 行为，但 runtime 本体只接受显式 landmark 请求。
+- sample-world world seed 已从 `WorldSession` 中移出，改由 `SampleWorldBootstrap` 显式持有。
+- `RebuildRouteAcceleration` 的"无参/`default` => 推荐 profile"决策已从 runtime public seam 移到 `SampleWorldBootstrap`，宿主仍保留原有 dev/admin 行为，但 runtime 本体只接受显式 landmark 请求。
 - 新增回归测试，明确区分“通过 dev bootstrap 打开的 runtime 可以走 sample-world 默认 landmark profile”与“直接 `OpenExisting(...)` 的 runtime 不应隐式拥有该 policy”。
 - `GameServer` 已把 runtime handle 与 host bootstrap/admin policy 分离：`TextAdv2RuntimeService` 只保留持有/替换 runtime，sample-world dev open/reset 与 repo lock retry 都回到 host-local policy；`runtime-status`/`plannedEndpoints` 也已显式暴露这层边界。
 - 下一自然入口收窄为 `P5b2`。
@@ -337,9 +337,9 @@ P5b2 本轮落地结果：
 
 P5c 本轮落地结果：
 
-- `DumpWorld()` / `DumpLocation()` 已从 `TextAdv2Runtime` public surface 删除，不再把 world/location dump 伪装成 runtime 主链 use case。
+- `DumpWorld()` / `DumpLocation()` 已从 `WorldSession` public surface 删除，不再把 world/location dump 伪装成 runtime 主链 use case。
 - `WorldDumpRenderer` 继续留在 `TextAdv2` 内部作为 canonical formatter；宿主不直接接触 `WorldState` / `WorldDumpRenderer`。
-- 显式 dev-support helper `TextAdv2RuntimeDevTextRenderer` 已新增 `RenderWorld(TextAdv2Runtime)` 与 `RenderLocation(TextAdv2Runtime, string)` bridge。
+- 显式 dev-support helper `DevTextRenderer` 已新增 `RenderWorld(WorldSession)` 与 `RenderLocation(WorldSession, string)` bridge。
 - `GameServer /admin/world`、`/admin/locations/{locationId}` 与 `E2eCli --world`、`--location`、默认 world dump 路径都已统一改走同一 helper。
 - `TextAdv2RuntimeCommandResult` 已无剩余主链依赖，现已删除。
 - 已补 helper bridge、GameServer wiring/content-type、E2eCli `--location` 黑盒回归测试。
