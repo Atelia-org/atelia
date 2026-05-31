@@ -43,9 +43,9 @@
   - `MoveActor`
   - `TraceActorRoute`
   - `PlanRoute` / `PlanActorRoute`
-- `TextAdv2RuntimeCommandResult` 的残余面，现已主要只剩 dev/admin text surface：
-  - `DumpWorld` / `DumpLocation`
-  - `GameServer` / `E2eCli` 仍直接依赖这些 runtime 文本输出与 `TextAdv2RuntimeCommandResult`
+- `TextAdv2Runtime` public surface 已不再暴露 `TextAdv2RuntimeCommandResult`。
+  - `DumpWorld` / `DumpLocation` 已从 runtime 主对象移出。
+  - `GameServer` / `E2eCli` 的 world/location 文本入口已统一改走显式 `TextAdv2RuntimeDevTextRenderer.RenderWorld/RenderLocation(...)` helper。
 - `P3` 已拆成多个更小的内部收口切口：
   - `schemaVersion` 字段已经写入 world root，且 `WorldState.FromRoot(...)` 已具备 schema gate；
   - `Passage` 高频写操作已通过 `WorldState.SetPassage*` + `PassageView` façade 收回 world authority，并已补 seam guard tests；
@@ -56,7 +56,7 @@
 - `P5` 的真实剩余问题需要按宿主边界重写：
 - sample-world seed 与默认 landmark profile 已从 runtime public seam 下沉；
 - `GameServer` 的 open/reset 策略已收口到显式 host policy，`E2eCli` 也已要求显式选择 `--repo-dir` 或 `--dev-sample-world`；
-- `DumpWorld` / `DumpLocation` 的最终归属仍未定，导致 runtime 还保留调试文本输出责任。
+- `DumpWorld` / `DumpLocation` 的最终归属已定为显式 dev-support helper；runtime 不再保留这条调试文本 public surface。
 
 ## 5. 修订后的工作包顺序
 
@@ -108,7 +108,7 @@
 
 ### P2. 把 runtime 收回 typed use case 层
 
-状态：进行中（仅剩少量 dev/admin text residual surface）
+状态：已完成（2026-05-31）
 
 主张：
 
@@ -130,7 +130,7 @@
 - P2b2c：只保留 `MoveActor` 这一条核心写入 use case 的 typed seam（已完成）。
 - P2c1：删除 `MoveActorQuiet` 这类对 `MoveActor` 的文本别名，改由宿主本地渲染 compact movement（已完成，2026-05-31）。
 - P2c2：为 `TraceActorRoute` 建 typed seam，文本渲染下沉到宿主或显式 dev support（已完成，2026-05-31）。
-- P2c3：在 `DumpWorld` / `DumpLocation` 的最终归属明确后，再决定是否彻底删除 `TextAdv2RuntimeCommandResult`。
+- P2c3：在 `DumpWorld` / `DumpLocation` 的最终归属明确后，再决定是否彻底删除 `TextAdv2RuntimeCommandResult`（已完成，2026-05-31）。
 
 完成定义：
 
@@ -193,7 +193,8 @@ P2 后续修订说明：
 - `TraceActorRoute` 已在 `P2c2` 中收口为 typed seam；后续不再属于 `TextAdv2RuntimeCommandResult` 的主残余面。
 - `PlanRoute` / `PlanActorRoute` 已在 `P4c` 中收口为 typed seam；后续不再属于 `TextAdv2RuntimeCommandResult` 的主残余面。
 - `MoveActorQuiet` 已删除，`compact movement` 文本改为显式 dev-support renderer；`TraceActorRoute` 文本也已下沉到宿主或显式 dev-support。
-- `DumpWorld` / `DumpLocation` 不宜为了“删干净 `TextAdv2RuntimeCommandResult`”而仓促 DTO 化；更合理的顺序是先明确其 dev-only 归属，再决定 runtime 是否还保留这条面。
+- `DumpWorld` / `DumpLocation` 已在 `P5c` 中收口到显式 `TextAdv2RuntimeDevTextRenderer` bridge；`WorldDumpRenderer` 继续作为内部 canonical formatter，runtime public surface 不再保留 dump 文本 seam。
+- `TextAdv2RuntimeCommandResult` 已删除；`TextAdv2RuntimeContentTypes` 暂保留给 `GameServer` 宿主边界复用。
 
 ### P3a. world root schema gate
 
@@ -294,7 +295,7 @@ P4a/P4b 本轮落地结果：
 
 ### P5. sample-world / dev harness 下沉
 
-状态：进行中
+状态：已完成（2026-05-31）
 
 主张：
 
@@ -334,6 +335,15 @@ P5b2 本轮落地结果：
 - `--repo-dir` 的 open-or-create sample world 语义保持不变；meta commands（`smoke` / `status` / `help`）保持不变。
 - 已补最小 CLI 黑盒测试，并同步去掉 help 文案里“省略 repo-dir 就自动创建临时 sample world”的误导描述。
 
+P5c 本轮落地结果：
+
+- `DumpWorld()` / `DumpLocation()` 已从 `TextAdv2Runtime` public surface 删除，不再把 world/location dump 伪装成 runtime 主链 use case。
+- `WorldDumpRenderer` 继续留在 `TextAdv2` 内部作为 canonical formatter；宿主不直接接触 `WorldState` / `WorldDumpRenderer`。
+- 显式 dev-support helper `TextAdv2RuntimeDevTextRenderer` 已新增 `RenderWorld(TextAdv2Runtime)` 与 `RenderLocation(TextAdv2Runtime, string)` bridge。
+- `GameServer /admin/world`、`/admin/locations/{locationId}` 与 `E2eCli --world`、`--location`、默认 world dump 路径都已统一改走同一 helper。
+- `TextAdv2RuntimeCommandResult` 已无剩余主链依赖，现已删除。
+- 已补 helper bridge、GameServer wiring/content-type、E2eCli `--location` 黑盒回归测试。
+
 ## 6. 不在本轮顺手做的事
 
 - 不把 `WorldTruth` 直接升级成完整剧情/知识/可见性系统。
@@ -345,14 +355,12 @@ P5b2 本轮落地结果：
 
 推荐顺序改为：
 
-1. `P5c` 决定 `DumpWorld` / `DumpLocation` 的最终归属，并视结果删除 `TextAdv2RuntimeCommandResult`
-2. `P3c` 仅在真实 world editing 需求出现后，再处理 `Location` / `Actor` 写入权威
+1. `P3c` 仅在真实 world editing 需求出现后，再处理 `Location` / `Actor` 写入权威
 
 排序理由：
 
 - `P4` 与 `Passage` authority seam 已基本收口，继续深挖 `WorldTruth` 叶子 setter 已经不再是当前收益最高的路径。
-- `P5b1`、`P5b2` 与 `P2c1/P2c2` 已完成，宿主侧 bootstrap/admin 与 dev-mode 的显式边界已经具备。
-- `DumpWorld` / `DumpLocation` 的最终形态仍带有明显 dev-only 色彩，现在已经可以在更清楚的宿主边界上单独判断。
+- `P5c` 已完成，runtime public surface 与宿主 dev-support 渲染边界已经收口。
 - `Location` / `Actor` 收权在当前代码里缺少真实调用压力；过早推进容易变成为了“形式对称”而设计，而不是为真实 invariant 收口。
 
 ## 8. 每包统一验证策略
@@ -368,10 +376,10 @@ P5b2 本轮落地结果：
 
 ## 9. 当前推荐起点
 
-当前推荐从 `P5c` 开始。
+当前没有必须立即处理的 runtime/dev-surface 残余包；若后续出现真实 world editing 需求，再从 `P3c` 开始。
 
 原因：
 
-- `P5b1`、`P5b2` 与 `P2c1/P2c2` 都已完成，GameServer host policy、E2eCli dev-mode，以及 runtime text residual 的第一轮收口都已经到位。
+- `P5c` 已完成，runtime public surface 与宿主 dev-support 渲染边界已经收口。
 - `E2eCli` 已不再把“未指定 repoDir 就开临时 sample world”放在默认主路径里，当前最显眼的宿主隐式 dev 语义已经清掉。
-- `DumpWorld` / `DumpLocation` 的最终归属现在成为最自然的下一步，可以在 dev bootstrap/admin 边界更清楚的前提下单独判断。
+- `Location` / `Actor` 收权仍是触发式后续项，应等真实 world editing 需求出现后再推进。

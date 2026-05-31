@@ -16,6 +16,7 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
+            using var expectedRuntime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
             using var factory = CreateFactory(repoDir);
             using var client = factory.CreateClient();
 
@@ -24,9 +25,10 @@ public class GameServerIntegrationTests {
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
-            Assert.Contains("WORLD", text, StringComparison.Ordinal);
-            Assert.Contains("actors=2", text, StringComparison.Ordinal);
-            Assert.Contains("locations=7", text, StringComparison.Ordinal);
+            Assert.Equal(
+                Normalize(TextAdv2RuntimeDevTextRenderer.RenderWorld(expectedRuntime)),
+                Normalize(text)
+            );
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -275,7 +277,13 @@ public class GameServerIntegrationTests {
             using var adminLocation = await client.GetAsync("/admin/locations/square");
             string adminLocationText = await adminLocation.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, adminLocation.StatusCode);
-            Assert.Contains("Square", adminLocationText, StringComparison.Ordinal);
+            Assert.Equal("text/plain", adminLocation.Content.Headers.ContentType?.MediaType);
+            using (var expectedRuntime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime()) {
+                Assert.Equal(
+                    Normalize(TextAdv2RuntimeDevTextRenderer.RenderLocation(expectedRuntime, TestWorldBuilder.LocationIds.Square)),
+                    Normalize(adminLocationText)
+                );
+            }
 
             using var adminObservation = await client.GetAsync("/admin/locations/square/observation");
             var adminLocationObservation = await ReadJsonAsync<TextAdv2RuntimeLocationObservation>(adminObservation);
@@ -549,6 +557,8 @@ public class GameServerIntegrationTests {
             Directory.Delete(repoDir, recursive: true);
         }
     }
+
+    private static string Normalize(string text) => text.Replace("\r\n", "\n");
 
     private static void WaitUntilRuntimeCanReopen(string repoDir) {
         InvalidOperationException? lastLockFailure = null;

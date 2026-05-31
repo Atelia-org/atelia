@@ -81,13 +81,18 @@ internal static class Program {
                     index += 1;
                     break;
                 case "--world":
-                    operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld().Output));
+                    operations.Add(new RuntimeOperation("world dump", TextAdv2RuntimeDevTextRenderer.RenderWorld));
                     index += 1;
                     break;
                 case "--location":
                     {
                         string locationId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"location dump {locationId}", runtime => runtime.DumpLocation(locationId).Output));
+                        operations.Add(
+                            new RuntimeOperation(
+                                $"location dump {locationId}",
+                                runtime => TextAdv2RuntimeDevTextRenderer.RenderLocation(runtime, locationId)
+                            )
+                        );
                     }
                     index += 2;
                     break;
@@ -202,7 +207,7 @@ internal static class Program {
         }
 
         if (operations.Count == 0) {
-            operations.Add(new RuntimeOperation("world dump", static runtime => runtime.DumpWorld().Output));
+            operations.Add(new RuntimeOperation("world dump", TextAdv2RuntimeDevTextRenderer.RenderWorld));
         }
 
         return new RuntimeRequest(

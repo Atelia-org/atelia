@@ -1,4 +1,5 @@
 using System.Text;
+using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Runtime;
 
@@ -9,6 +10,17 @@ namespace Atelia.TextAdv2.Runtime;
 /// 应显式调用这里，而不是回到 runtime 主对象要字符串别名。
 /// </summary>
 public static class TextAdv2RuntimeDevTextRenderer {
+    public static string RenderWorld(TextAdv2Runtime runtime) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        return WorldDumpRenderer.Render(runtime.WorldForDevSupport);
+    }
+
+    public static string RenderLocation(TextAdv2Runtime runtime, string locationId) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
+        return WorldDumpRenderer.RenderLocation(runtime.WorldForDevSupport, locationId);
+    }
+
     public static string RenderCompactMovement(TextAdv2RuntimeActorMovementObservation movement) {
         ArgumentNullException.ThrowIfNull(movement);
 

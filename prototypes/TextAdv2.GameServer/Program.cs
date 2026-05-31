@@ -18,7 +18,7 @@ var app = builder.Build();
 app.MapGet("/", () => Results.Ok(BuildRuntimeStatus(hostPolicy, autoBootstrapSampleWorld)));
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", host = "TextAdv2.GameServer", mode = "runtime-connected" }));
 app.MapGet("/admin/runtime-status", () => Results.Ok(BuildRuntimeStatus(hostPolicy, autoBootstrapSampleWorld)));
-app.MapGet("/admin/world", (TextAdv2RuntimeService runtime) => Execute(runtime, static x => x.DumpWorld()));
+app.MapGet("/admin/world", (TextAdv2RuntimeService runtime) => ExecuteText(runtime, TextAdv2RuntimeDevTextRenderer.RenderWorld));
 app.MapGet("/admin/time", (TextAdv2RuntimeService runtime) => ExecuteJson(runtime, static x => x.ObserveTime()));
 app.MapPost("/admin/advance-time/{ticks}",
     (string ticks, TextAdv2RuntimeService runtime)
@@ -44,7 +44,7 @@ if (hostPolicy.SampleWorldResetEnabled) {
 
 app.MapGet("/admin/locations/{locationId}",
     (string locationId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.DumpLocation(locationId))
+    => ExecuteText(runtime, x => TextAdv2RuntimeDevTextRenderer.RenderLocation(x, locationId))
 );
 app.MapGet("/admin/locations/{locationId}/observation",
     (string locationId, TextAdv2RuntimeService runtime)
@@ -82,19 +82,6 @@ app.MapGet("/admin/routes/{fromLocationId}/{toLocationId}",
 );
 
 app.Run();
-
-static IResult Execute(TextAdv2RuntimeService runtime, Func<TextAdv2Runtime, TextAdv2RuntimeCommandResult> operation) {
-    try {
-        var result = runtime.Invoke(operation);
-        return Results.Content(result.Output, result.ContentType);
-    }
-    catch (ArgumentException ex) {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-    catch (InvalidOperationException ex) {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-}
 
 static IResult ExecuteText(TextAdv2RuntimeService runtime, Func<TextAdv2Runtime, string> operation) {
     try {

@@ -41,6 +41,13 @@ public sealed class TextAdv2Runtime : IDisposable {
 
     public string RepoDir { get; }
 
+    internal WorldState WorldForDevSupport {
+        get {
+            EnsureNotDisposed();
+            return _world;
+        }
+    }
+
     internal static TextAdv2Runtime CreateNew(
         string repoDir,
         Func<Revision, WorldState> worldFactory,
@@ -84,17 +91,6 @@ public sealed class TextAdv2Runtime : IDisposable {
             repo.Dispose();
             throw;
         }
-    }
-
-    public TextAdv2RuntimeCommandResult DumpWorld() {
-        EnsureNotDisposed();
-        return Text(WorldDumpRenderer.Render(_world));
-    }
-
-    public TextAdv2RuntimeCommandResult DumpLocation(string locationId) {
-        EnsureNotDisposed();
-        ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return Text(WorldDumpRenderer.RenderLocation(_world, locationId));
     }
 
     public TextAdv2RuntimeLocationObservation ObserveLocation(string locationId) {
@@ -273,9 +269,6 @@ public sealed class TextAdv2Runtime : IDisposable {
 
         return history;
     }
-
-    private static TextAdv2RuntimeCommandResult Text(string output)
-        => new(output, TextAdv2RuntimeContentTypes.PlainText);
 
     internal TextAdv2DefaultLandmarkProfile? ResolveDefaultLandmarkProfile() {
         EnsureNotDisposed();

@@ -183,6 +183,24 @@ public class NavigationAndCliWorkflowTests {
         Assert.Equal(Normalize(ExpectedBoatmanIdleTrace), Normalize(text));
     }
 
+    [Fact]
+    public void RuntimeDevTextRenderer_RenderWorld_BridgesToCanonicalWorldDumpRenderer() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        string text = TextAdv2RuntimeDevTextRenderer.RenderWorld(runtime);
+
+        Assert.Equal(WorldDumpRenderer.Render(runtime.WorldForDevSupport), text);
+    }
+
+    [Fact]
+    public void RuntimeDevTextRenderer_RenderLocation_BridgesToCanonicalWorldDumpRenderer() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        string text = TextAdv2RuntimeDevTextRenderer.RenderLocation(runtime, TestWorldBuilder.LocationIds.Square);
+
+        Assert.Equal(WorldDumpRenderer.RenderLocation(runtime.WorldForDevSupport, TestWorldBuilder.LocationIds.Square), text);
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-navigation-tests-{Guid.NewGuid():N}");
 
