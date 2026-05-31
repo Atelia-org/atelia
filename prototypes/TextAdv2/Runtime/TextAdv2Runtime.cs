@@ -173,27 +173,17 @@ public sealed class TextAdv2Runtime : IDisposable {
         return RebuildRouteAccelerationCore(ParseExplicitLandmarkLocationIds(requestedLandmarks), "custom");
     }
 
-    public TextAdv2RuntimeCommandResult TraceActorRoute(string actorId) {
+    public TextAdv2RuntimeActorRouteTraceObservation TraceActorRoute(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
 
-        return Text(
-            ActorRouteTraceTextRenderer.Render(
-                ActorRouteTraceProjector.ObserveActorRouteTrace(
-                    _world,
-                    actorId,
-                    GetMovementHistory(actorId)
-                )
+        return TextAdv2RuntimeActorRouteTraceProjector.Project(
+            ActorRouteTraceProjector.ObserveActorRouteTrace(
+                _world,
+                actorId,
+                GetMovementHistory(actorId)
             )
         );
-    }
-
-    public TextAdv2RuntimeCommandResult MoveActorQuiet(string actorId, string passageId) {
-        EnsureNotDisposed();
-        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
-
-        return Text(RenderCompactMovement(MoveActorCore(actorId, passageId)));
     }
 
     public TextAdv2RuntimeActorMovementObservation MoveActor(string actorId, string passageId) {
@@ -286,10 +276,6 @@ public sealed class TextAdv2Runtime : IDisposable {
 
     private static TextAdv2RuntimeCommandResult Text(string output)
         => new(output, TextAdv2RuntimeContentTypes.PlainText);
-
-    private static string RenderCompactMovement(ActorMovementObservation movement)
-        => $"{movement.ActorId}: {movement.FromLocationId} --{movement.ExitName}/{movement.PassageId}--> {movement.ToLocationId}"
-            + $" | {movement.TravelMode.ToStorageValue()} | cost={movement.TravelCost}";
 
     internal TextAdv2DefaultLandmarkProfile? ResolveDefaultLandmarkProfile() {
         EnsureNotDisposed();

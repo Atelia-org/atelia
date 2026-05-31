@@ -66,7 +66,7 @@ public class TextAdv2RuntimeTests {
     [Fact]
     public void ObserveActorNavigation_ReturnsTypedNavigationAtActorsCurrentLocation() {
         using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
-        _ = runtime.MoveActorQuiet(
+        _ = runtime.MoveActor(
             TestWorldBuilder.ActorIds.Scout,
             TestWorldBuilder.PassageIds.SquareRidgeTrail
         );
@@ -152,7 +152,7 @@ public class TextAdv2RuntimeTests {
     [Fact]
     public void PlanActorRoute_StartsFromActorsCurrentLocation() {
         using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
-        _ = runtime.MoveActorQuiet(
+        _ = runtime.MoveActor(
             TestWorldBuilder.ActorIds.Scout,
             TestWorldBuilder.PassageIds.SquareRidgeTrail
         );
@@ -222,31 +222,45 @@ public class TextAdv2RuntimeTests {
     }
 
     [Fact]
-    public void MoveActorQuietThenTraceActorRoute_UsesRuntimeMovementHistory() {
+    public void MoveActorThenTraceActorRoute_UsesTypedRuntimeMovementHistory() {
         string repoDir = CreateTempRepoDir();
 
         try {
             using var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
 
-            var move = runtime.MoveActorQuiet(
+            var move = runtime.MoveActor(
                 TestWorldBuilder.ActorIds.Scout,
                 TestWorldBuilder.PassageIds.SquareRidgeTrail
             );
             var trace = runtime.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
 
-            Assert.Equal(TextAdv2RuntimeContentTypes.PlainText, move.ContentType);
-            Assert.Equal(
-                "scout: square --north gate/square-ridge-trail--> ridge | land | cost=5",
-                move.Output
+            Assert.Equal(TestWorldBuilder.ActorIds.Scout, move.ActorId);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, move.FromLocationId);
+            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.ToLocationId);
+            Assert.Equal("land", move.TravelMode);
+
+            Assert.Equal(TestWorldBuilder.ActorIds.Scout, trace.ActorId);
+            Assert.Equal("Scout", trace.ActorName);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, trace.StartLocationId);
+            Assert.Equal("Square", trace.StartLocationName);
+            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, trace.EndLocationId);
+            Assert.Equal("Ridge", trace.EndLocationName);
+            Assert.Equal(1, trace.StepCount);
+            Assert.Equal(5, trace.TotalTravelCost);
+            Assert.Collection(
+                trace.Steps,
+                step => {
+                    Assert.Equal(1, step.StepNumber);
+                    Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, step.PassageId);
+                    Assert.Equal("north gate", step.ExitName);
+                    Assert.Equal(TestWorldBuilder.LocationIds.Square, step.FromLocationId);
+                    Assert.Equal("Square", step.FromLocationName);
+                    Assert.Equal(TestWorldBuilder.LocationIds.Ridge, step.ToLocationId);
+                    Assert.Equal("Ridge", step.ToLocationName);
+                    Assert.Equal("land", step.TravelMode);
+                    Assert.Equal(5, step.TravelCost);
+                }
             );
-            Assert.Equal(TextAdv2RuntimeContentTypes.PlainText, trace.ContentType);
-            Assert.Contains("start=square (Square)", trace.Output, StringComparison.Ordinal);
-            Assert.Contains(
-                "1. square --north gate/square-ridge-trail--> ridge | land | cost=5",
-                trace.Output,
-                StringComparison.Ordinal
-            );
-            Assert.Contains("end=ridge (Ridge) | steps=1 | totalCost=5", trace.Output, StringComparison.Ordinal);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -368,16 +382,15 @@ public class TextAdv2RuntimeTests {
         try {
             using (var runtime = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir)) {
                 var time = runtime.AdvanceTime(11);
-                var move = runtime.MoveActorQuiet(
+                var move = runtime.MoveActor(
                     TestWorldBuilder.ActorIds.Scout,
                     TestWorldBuilder.PassageIds.SquareRidgeTrail
                 );
 
                 Assert.Equal(11, time.CurrentTick);
-                Assert.Equal(
-                    "scout: square --north gate/square-ridge-trail--> ridge | land | cost=5",
-                    move.Output
-                );
+                Assert.Equal(TestWorldBuilder.LocationIds.Square, move.FromLocationId);
+                Assert.Equal(TestWorldBuilder.LocationIds.Ridge, move.ToLocationId);
+                Assert.Equal("land", move.TravelMode);
             }
 
             using var reopened = TextAdv2SampleWorldDevBootstrap.OpenOrCreateRuntime(repoDir);
@@ -386,9 +399,13 @@ public class TextAdv2RuntimeTests {
             var observedAfterReopen = reopened.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
             Assert.Equal(0, timeAfterReopen.CurrentTick);
-            Assert.Contains("start=ridge (Ridge)", traceAfterReopen.Output, StringComparison.Ordinal);
-            Assert.Contains("<no movement in this run>", traceAfterReopen.Output, StringComparison.Ordinal);
-            Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceAfterReopen.Output, StringComparison.Ordinal);
+            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, traceAfterReopen.StartLocationId);
+            Assert.Equal("Ridge", traceAfterReopen.StartLocationName);
+            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, traceAfterReopen.EndLocationId);
+            Assert.Equal("Ridge", traceAfterReopen.EndLocationName);
+            Assert.Equal(0, traceAfterReopen.StepCount);
+            Assert.Equal(0, traceAfterReopen.TotalTravelCost);
+            Assert.Empty(traceAfterReopen.Steps);
             Assert.Equal(TestWorldBuilder.LocationIds.Ridge, observedAfterReopen.Location.LocationId);
         }
         finally {

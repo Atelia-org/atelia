@@ -159,7 +159,12 @@ internal static class Program {
                 case "--trace-actor-route":
                     {
                         string actorId = RequireArg(args, index + 1);
-                        operations.Add(new RuntimeOperation($"trace actor route {actorId}", runtime => runtime.TraceActorRoute(actorId).Output));
+                        operations.Add(
+                            new RuntimeOperation(
+                                $"trace actor route {actorId}",
+                                runtime => TextAdv2RuntimeDevTextRenderer.RenderRouteTrace(runtime.TraceActorRoute(actorId))
+                            )
+                        );
                     }
                     index += 2;
                     break;
@@ -167,7 +172,12 @@ internal static class Program {
                     {
                         string actorId = RequireArg(args, index + 1);
                         string passageId = RequireArg(args, index + 2);
-                        operations.Add(new RuntimeOperation($"move actor quietly {actorId} via {passageId}", runtime => runtime.MoveActorQuiet(actorId, passageId).Output));
+                        operations.Add(
+                            new RuntimeOperation(
+                                $"move actor quietly {actorId} via {passageId}",
+                                runtime => TextAdv2RuntimeDevTextRenderer.RenderCompactMovement(runtime.MoveActor(actorId, passageId))
+                            )
+                        );
                     }
                     index += 3;
                     break;

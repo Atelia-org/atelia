@@ -1,5 +1,6 @@
 using Atelia.StateJournal;
 using Atelia.TextAdv2.ReadOnlyView;
+using Atelia.TextAdv2.Runtime;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
@@ -138,55 +139,48 @@ public class NavigationAndCliWorkflowTests {
     }
 
     [Fact]
-    public void ObserveActorRouteTrace_SummarizesMultiStepMovementAsCompactText() {
-        string repoDir = CreateTempRepoDir();
+    public void RuntimeDevTextRenderer_RendersCompactMovementText() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
 
-        try {
-            using var repo = Repository.Create(repoDir).Unwrap();
-            var revision = repo.CreateBranch("main").Unwrap();
-            var world = TestWorldBuilder.Create(revision);
-            TestWorldBuilder.PopulateSampleActors(world);
+        var movement = runtime.MoveActor(
+            TestWorldBuilder.ActorIds.Scout,
+            TestWorldBuilder.PassageIds.SquareRidgeTrail
+        );
+        string text = TextAdv2RuntimeDevTextRenderer.RenderCompactMovement(movement);
 
-            var movementHistory = new[] {
-                ExecuteMove(world, TestWorldBuilder.ActorIds.Scout, TestWorldBuilder.PassageIds.SquareRidgeTrail),
-                ExecuteMove(world, TestWorldBuilder.ActorIds.Scout, TestWorldBuilder.PassageIds.RidgeAerieWinch),
-            };
-            var trace = ActorRouteTraceProjector.ObserveActorRouteTrace(
-                world,
-                TestWorldBuilder.ActorIds.Scout,
-                movementHistory
-            );
-            string text = ActorRouteTraceTextRenderer.Render(trace);
-
-            Assert.Equal(Normalize(ExpectedScoutRouteTrace), Normalize(text));
-        }
-        finally {
-            DeleteDirectoryIfExists(repoDir);
-        }
+        Assert.Equal(
+            "scout: square --north gate/square-ridge-trail--> ridge | land | cost=5",
+            text
+        );
     }
 
     [Fact]
-    public void ObserveActorRouteTrace_WithoutMoves_UsesCurrentLocationAsStartAndEnd() {
-        string repoDir = CreateTempRepoDir();
+    public void RuntimeDevTextRenderer_RendersRouteTraceText() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
 
-        try {
-            using var repo = Repository.Create(repoDir).Unwrap();
-            var revision = repo.CreateBranch("main").Unwrap();
-            var world = TestWorldBuilder.Create(revision);
-            TestWorldBuilder.PopulateSampleActors(world);
+        _ = runtime.MoveActor(
+            TestWorldBuilder.ActorIds.Scout,
+            TestWorldBuilder.PassageIds.SquareRidgeTrail
+        );
+        _ = runtime.MoveActor(
+            TestWorldBuilder.ActorIds.Scout,
+            TestWorldBuilder.PassageIds.RidgeAerieWinch
+        );
 
-            var trace = ActorRouteTraceProjector.ObserveActorRouteTrace(
-                world,
-                TestWorldBuilder.ActorIds.Boatman,
-                []
-            );
-            string text = ActorRouteTraceTextRenderer.Render(trace);
+        var trace = runtime.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
+        string text = TextAdv2RuntimeDevTextRenderer.RenderRouteTrace(trace);
 
-            Assert.Equal(Normalize(ExpectedBoatmanIdleTrace), Normalize(text));
-        }
-        finally {
-            DeleteDirectoryIfExists(repoDir);
-        }
+        Assert.Equal(Normalize(ExpectedScoutRouteTrace), Normalize(text));
+    }
+
+    [Fact]
+    public void RuntimeDevTextRenderer_RendersIdleRouteTraceText() {
+        using var runtime = TextAdv2SampleWorldDevBootstrap.CreateTemporaryRuntime();
+
+        var trace = runtime.TraceActorRoute(TestWorldBuilder.ActorIds.Boatman);
+        string text = TextAdv2RuntimeDevTextRenderer.RenderRouteTrace(trace);
+
+        Assert.Equal(Normalize(ExpectedBoatmanIdleTrace), Normalize(text));
     }
 
     private static string CreateTempRepoDir()
@@ -197,29 +191,6 @@ public class NavigationAndCliWorkflowTests {
             Directory.Delete(repoDir, recursive: true);
         }
     }
-
-    private static ActorMovementHistoryEntry ExecuteMove(WorldState world, string actorId, string passageId) {
-        var actor = world.GetActor(actorId);
-        var fromLocation = world.GetLocation(actor.CurrentLocationId);
-        var passage = world.GetPassage(passageId);
-        var exit = passage.GetEndpointFor(fromLocation.Id);
-        var direction = passage.GetDirectionFrom(fromLocation.Id);
-        var toLocation = world.GetLocation(passage.GetOtherLocationId(fromLocation.Id));
-
-        world.MoveActorAlongPassage(actorId, passageId);
-
-        return new ActorMovementHistoryEntry(
-            passage.Id,
-            exit.ExitName,
-            fromLocation.Id,
-            fromLocation.Name,
-            toLocation.Id,
-            toLocation.Name,
-            passage.TravelMode,
-            direction.TotalTravelCost(passage)
-        );
-    }
-
     private static string Normalize(string text) => text.Replace("\r\n", "\n");
 
     private const string ExpectedScoutRouteTrace = """

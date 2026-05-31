@@ -69,7 +69,7 @@ app.MapPost("/actors/{actorId}/moves/{passageId}",
 );
 app.MapGet("/actors/{actorId}/route-trace",
     (string actorId, TextAdv2RuntimeService runtime)
-    => Execute(runtime, x => x.TraceActorRoute(actorId))
+    => ExecuteText(runtime, x => TextAdv2RuntimeDevTextRenderer.RenderRouteTrace(x.TraceActorRoute(actorId)))
 );
 app.MapGet("/actors/{actorId}/plan-route/{toLocationId}",
     (string actorId, string toLocationId, TextAdv2RuntimeService runtime)
@@ -87,6 +87,19 @@ static IResult Execute(TextAdv2RuntimeService runtime, Func<TextAdv2Runtime, Tex
     try {
         var result = runtime.Invoke(operation);
         return Results.Content(result.Output, result.ContentType);
+    }
+    catch (ArgumentException ex) {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (InvalidOperationException ex) {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+}
+
+static IResult ExecuteText(TextAdv2RuntimeService runtime, Func<TextAdv2Runtime, string> operation) {
+    try {
+        var result = runtime.Invoke(operation);
+        return Results.Content(result, TextAdv2RuntimeContentTypes.PlainText);
     }
     catch (ArgumentException ex) {
         return Results.BadRequest(new { error = ex.Message });

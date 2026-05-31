@@ -1,4 +1,3 @@
-using System.Text;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.ReadOnlyView;
@@ -111,32 +110,5 @@ internal static class ActorRouteTraceProjector {
             steps.Sum(step => step.TravelCost),
             steps
         );
-    }
-}
-
-internal static class ActorRouteTraceTextRenderer {
-    public static string Render(ActorRouteTraceObservation trace) {
-        ArgumentNullException.ThrowIfNull(trace);
-
-        var builder = new StringBuilder();
-        builder.AppendLine($"ROUTE TRACE actor={trace.ActorId} name={trace.ActorName}");
-        builder.AppendLine($"start={trace.StartLocationId} ({trace.StartLocationName})");
-
-        if (trace.Steps.Length == 0) {
-            builder.AppendLine("<no movement in this run>");
-        }
-        else {
-            foreach (var step in trace.Steps) {
-                builder.AppendLine(
-                    $"{step.StepNumber}. {step.FromLocationId} --{step.ExitName}/{step.PassageId}--> {step.ToLocationId}"
-                    + $" | {step.TravelMode.ToStorageValue()} | cost={step.TravelCost}"
-                );
-            }
-        }
-
-        builder.Append(
-            $"end={trace.EndLocationId} ({trace.EndLocationName}) | steps={trace.StepCount} | totalCost={trace.TotalTravelCost}"
-        );
-        return builder.ToString();
     }
 }
