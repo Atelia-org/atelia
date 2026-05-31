@@ -22,7 +22,7 @@ internal sealed class SessionService : IDisposable {
         lock (_gate) {
             EnsureNotDisposed();
             if (_session is null) {
-                throw new SessionUnavailableException(_status.Error?.Message ?? "Game session is unavailable.");
+                throw new SessionUnavailableException(_status);
             }
 
             return operation(_session);
@@ -100,4 +100,7 @@ internal static class SessionReadiness {
     public const string OpenFailed = "open-failed";
 }
 
-internal sealed class SessionUnavailableException(string message) : Exception(message);
+internal sealed class SessionUnavailableException(SessionStatusSnapshot status)
+    : Exception(status.Error?.Message ?? "Game session is unavailable.") {
+    public SessionStatusSnapshot Status { get; } = status ?? throw new ArgumentNullException(nameof(status));
+}

@@ -295,6 +295,34 @@ public sealed class CrossHostMachineContractParityTests {
     }
 
     [Fact]
+    public async Task ActorRoutePlanUnreachable_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepo(cliRepoDir);
+            PrepareSampleRepo(hostRepoDir);
+
+            string cliJson = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir,
+                "--json-only",
+                "--plan-actor-route", "boatman", "village"
+            );
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/actors/boatman/plan-route/village");
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            AssertJsonEquivalent(cliJson, hostJson, "actor route plan unreachable");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
     public async Task CreateLocationSnapshot_ParityBetweenGameServerAndCliJsonOnlyAsync() {
         string cliRepoDir = CreateTempRepoDir();
         string hostRepoDir = CreateTempRepoDir();

@@ -801,11 +801,14 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.ServiceUnavailable, worldResponse.StatusCode);
             Assert.Equal("application/json", worldResponse.Content.Headers.ContentType?.MediaType);
             Assert.Equal("degraded", worldJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal("TextAdv2.GameServer", worldJson.RootElement.GetProperty("service").GetString());
+            Assert.Equal("host-running", worldJson.RootElement.GetProperty("mode").GetString());
             Assert.Equal("alive", worldJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
             Assert.Equal("open-failed", worldJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
             string? worldError = worldJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
             Assert.Contains("Repository", worldError, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(repoDir, worldError, StringComparison.Ordinal);
+            AssertAvailabilityEnvelopeMatches(healthzJson.RootElement, worldJson.RootElement);
 
             using var observeResponse = await client.GetAsync("/actors/scout/observation");
             string observeText = await observeResponse.Content.ReadAsStringAsync();
@@ -813,11 +816,14 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.ServiceUnavailable, observeResponse.StatusCode);
             Assert.Equal("application/json", observeResponse.Content.Headers.ContentType?.MediaType);
             Assert.Equal("degraded", observeJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal("TextAdv2.GameServer", observeJson.RootElement.GetProperty("service").GetString());
+            Assert.Equal("host-running", observeJson.RootElement.GetProperty("mode").GetString());
             Assert.Equal("alive", observeJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
             Assert.Equal("open-failed", observeJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
             string? observeError = observeJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
             Assert.Contains("Repository", observeError, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(repoDir, observeError, StringComparison.Ordinal);
+            AssertAvailabilityEnvelopeMatches(healthzJson.RootElement, observeJson.RootElement);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -1318,6 +1324,24 @@ public class GameServerIntegrationTests {
             .EnumerateArray()
             .Select(static x => x.GetString()!)
             .ToArray();
+
+    private static void AssertAvailabilityEnvelopeMatches(JsonElement expected, JsonElement actual) {
+        Assert.Equal(
+            expected.EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray(),
+            actual.EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray()
+        );
+        Assert.Equal(expected.GetProperty("status").GetString(), actual.GetProperty("status").GetString());
+        Assert.Equal(expected.GetProperty("service").GetString(), actual.GetProperty("service").GetString());
+        Assert.Equal(expected.GetProperty("mode").GetString(), actual.GetProperty("mode").GetString());
+        Assert.Equal(
+            expected.GetProperty("host").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray(),
+            actual.GetProperty("host").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray()
+        );
+        Assert.Equal(
+            expected.GetProperty("session").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray(),
+            actual.GetProperty("session").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray()
+        );
+    }
 
     private sealed class TextAdv2GameServerFactory(string repoDir, string bootstrapMode) : WebApplicationFactory<Program> {
         protected override void ConfigureWebHost(IWebHostBuilder builder) {

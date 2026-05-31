@@ -38,9 +38,6 @@
 - actor route plan
   - `GET /actors/{actorId}/plan-route/{toLocationId}`
   - `... --json-only --plan-actor-route <actorId> <toLocationId>`
-- route trace json
-  - `GET /actors/{actorId}/route-trace/json`
-  - `... --json-only --trace-actor-route-json <actorId>`
 - minimal authoring snapshot
   - `POST /admin/locations`
   - `... --json-only --create-location <locationId> <name> <description>`
@@ -60,7 +57,8 @@
   - 因而 `observe time` 既是 canonical seam，也是 durable seam
 - movement trace
   - `TraceActorRoute` 当前仍是 session-owned runtime debug seam
-  - route-trace JSON endpoint 的 shape 已进入 canonical machine surface，但其数据语义仍是“本次 session 内运行态痕迹”
+  - `route-trace` 当前仍不应默认视为完整 cross-host canonical seam
+  - 当前 parity suite 只守住了 fresh-session empty-trace baseline；一旦进入“先移动、再读 trace”的运行态，`GameServer` 与按 invocation 重开 session 的 `E2eCli` 还不会给出同一份 trace
   - reopen / host restart / reset sample world 后会 reset，这一点是设计边界，不是偶然现象
 - route acceleration
   - 当前仍是 session-owned runtime cache
@@ -70,8 +68,9 @@
 ## 当前不属于 canonical machine surface 的内容
 
 - 尚未进入 parity guard 的其他 JSON seam
-  - 例如 `plan-route`
+  - 例如 location-to-location `plan-route`
   - `create-actor`、`create-passage`
+  - `route-trace/json`
   - `observe-route-acceleration`、`rebuild-route-acceleration`
 - CLI 默认 stdout（包括 repo banner、分段标题和文本输出）
 - `E2eCli help`
