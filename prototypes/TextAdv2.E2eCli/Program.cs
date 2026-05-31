@@ -171,6 +171,12 @@ internal static class Program {
                 }
                 index += 2;
                 break;
+                case "--observe-actor-context": {
+                    string actorId = RequireArg(args, index + 1);
+                    operations.Add(new SessionCommand($"observe actor context {actorId}", session => RenderJson(session.ObserveActorContext(actorId))));
+                }
+                index += 2;
+                break;
                 case "--create-actor": {
                     string actorId = RequireArg(args, index + 1);
                     string actorName = RequireArg(args, index + 2);
@@ -363,7 +369,7 @@ Usage:
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj [smoke|status|help]
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-empty <repoDir>
   dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj init-sample <repoDir>
-  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--world] [--location <locationId>] [--observe-location <locationId>] [--create-location <locationId> <name> <description>] [--observe-actor <actorId>] [--create-actor <actorId> <name> <currentLocationId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> [<travelMode>] [<baseTravelCost>]] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
+  dotnet run --project prototypes/TextAdv2.E2eCli/TextAdv2.E2eCli.csproj (--repo-dir <repoDir> | --dev-sample-world) [--world] [--location <locationId>] [--observe-location <locationId>] [--create-location <locationId> <name> <description>] [--observe-actor <actorId>] [--observe-actor-context <actorId>] [--create-actor <actorId> <name> <currentLocationId>] [--observe-navigation <locationId>] [--observe-actor-navigation <actorId>] [--observe-route-acceleration] [--observe-time] [--advance-time <ticks>] [--plan-actor-route <actorId> <toLocationId>] [--plan-route <fromLocationId> <toLocationId>] [--create-passage <passageId> <locationAId> <exitNameFromA> <locationBId> <exitNameFromB> [<travelMode>] [<baseTravelCost>]] [--rebuild-route-acceleration [<locationId[,locationId...]>|default]] [--trace-actor-route <actorId>] [--move-actor-quiet <actorId> <passageId>] [--move-actor <actorId> <passageId>]
 """;
 
     private static int RunHelp() {
@@ -390,6 +396,8 @@ Session target:
            Exactly one session target must be specified.
 
 Session options:
+    --observe-actor-context <actorId>
+                     Print the machine-consumable actor context as JSON.
     --create-location <locationId> <name> <description>
                      Create a location and print the typed authoring snapshot as JSON.
     --create-actor <actorId> <name> <currentLocationId>

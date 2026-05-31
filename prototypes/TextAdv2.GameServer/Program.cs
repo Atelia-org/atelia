@@ -84,6 +84,10 @@ app.MapGet("/actors/{actorId}/observation",
     (string actorId, SessionService session)
     => ExecuteJson(session, x => x.ObserveActor(actorId))
 );
+app.MapGet("/actors/{actorId}/context",
+    (string actorId, SessionService session)
+    => ExecuteJson(session, x => x.ObserveActorContext(actorId))
+);
 app.MapGet("/actors/{actorId}/navigation",
     (string actorId, SessionService session)
     => ExecuteJson(session, x => x.ObserveActorNavigation(actorId))

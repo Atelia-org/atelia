@@ -102,6 +102,23 @@ public sealed class WorldSession : IDisposable {
         return LocationObservationProjector.ObserveActorLocation(_world, actorId);
     }
 
+    public ActorContextObservation ObserveActorContext(string actorId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+
+        var actorObservation = ObserveActor(actorId);
+        var actorNavigation = ObserveActorNavigation(actorId);
+        var time = ObserveTime();
+
+        return new ActorContextObservation(
+            actorObservation.ActorId,
+            actorObservation.ActorName,
+            time.CurrentTick,
+            actorObservation.Location,
+            actorNavigation.Navigation.Edges
+        );
+    }
+
     public ActorAuthoringSnapshot CreateActor(string id, string name, string currentLocationId) {
         EnsureNotDisposed();
         var actor = _world.CreateActor(id, name, currentLocationId);

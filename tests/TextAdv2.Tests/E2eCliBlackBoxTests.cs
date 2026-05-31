@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Atelia.TextAdv2.DevSupport;
+using Atelia.TextAdv2.Session;
 using Xunit;
 
 namespace Atelia.TextAdv2.Tests;
@@ -72,6 +74,65 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Contains("\"ToLocationId\": \"ridge\"", move.StandardOutput, StringComparison.Ordinal);
             Assert.Contains("\"TravelMode\": \"land\"", move.StandardOutput, StringComparison.Ordinal);
             Assert.Contains("\"LocationId\": \"ridge\"", observe.StandardOutput, StringComparison.Ordinal);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void RepoDir_ObserveActorContext_ReturnsStructuredContext_AndUpdatesAfterMove() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            CliRunResult init = RunCli("init-sample", repoDir);
+            CliRunResult initialContextRun = RunCli("--repo-dir", repoDir, "--observe-actor-context", "scout");
+            CliRunResult move = RunCli("--repo-dir", repoDir, "--move-actor", "scout", "square-ridge-trail");
+            CliRunResult movedContextRun = RunCli("--repo-dir", repoDir, "--observe-actor-context", "scout");
+
+            Assert.Equal(0, init.ExitCode);
+            Assert.Equal(0, initialContextRun.ExitCode);
+            Assert.Equal(0, move.ExitCode);
+            Assert.Equal(0, movedContextRun.ExitCode);
+
+            var initialContext = DeserializeCliJson<ActorContextObservation>(initialContextRun.StandardOutput);
+            var movedContext = DeserializeCliJson<ActorContextObservation>(movedContextRun.StandardOutput);
+
+            Assert.NotNull(initialContext);
+            Assert.Equal("scout", initialContext.ActorId);
+            Assert.Equal("Scout", initialContext.ActorName);
+            Assert.Equal(0, initialContext.CurrentTick);
+            Assert.Equal("square", initialContext.CurrentLocation.LocationId);
+            Assert.Equal(
+                ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
+                initialContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
+            );
+            Assert.Equal(
+                ["north gate", "old arch", "west"],
+                initialContext.AvailableMoves.Select(static edge => edge.ExitName).ToArray()
+            );
+            Assert.Equal(
+                ["ridge", "shrine", "village"],
+                initialContext.AvailableMoves.Select(static edge => edge.TargetLocationId).ToArray()
+            );
+
+            Assert.NotNull(movedContext);
+            Assert.Equal("scout", movedContext.ActorId);
+            Assert.Equal("Scout", movedContext.ActorName);
+            Assert.Equal(0, movedContext.CurrentTick);
+            Assert.Equal("ridge", movedContext.CurrentLocation.LocationId);
+            Assert.Equal(
+                ["ridge-aerie-winch", "square-ridge-trail"],
+                movedContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
+            );
+            Assert.Equal(
+                ["cliff lift", "downhill trail"],
+                movedContext.AvailableMoves.Select(static edge => edge.ExitName).ToArray()
+            );
+            Assert.Equal(
+                ["aerie", "square"],
+                movedContext.AvailableMoves.Select(static edge => edge.TargetLocationId).ToArray()
+            );
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -408,10 +469,32 @@ public sealed class E2eCliBlackBoxTests {
         return JsonDocument.Parse(output[jsonStart..]);
     }
 
+    private static T DeserializeCliJson<T>(string output)
+        where T : class
+    {
+        int jsonStart = output.IndexOf('{');
+        if (jsonStart < 0) {
+            throw new InvalidOperationException("CLI output did not contain a JSON object.");
+        }
+
+        return JsonSerializer.Deserialize<T>(output[jsonStart..], CliJsonOptions)
+            ?? throw new InvalidOperationException($"CLI output did not deserialize to {typeof(T).Name}.");
+    }
+
     private static string[] ReadActorIds(JsonElement presentActors)
         => presentActors.EnumerateArray()
             .Select(static actor => actor.GetProperty("ActorId").GetString() ?? string.Empty)
             .ToArray();
+
+    private static JsonSerializerOptions CreateCliJsonOptions() {
+        var options = new JsonSerializerOptions {
+            WriteIndented = true,
+        };
+        TextAdv2Json.AddHostConverters(options);
+        return options;
+    }
+
+    private static readonly JsonSerializerOptions CliJsonOptions = CreateCliJsonOptions();
 
     private sealed record CliRunResult(
         int ExitCode,

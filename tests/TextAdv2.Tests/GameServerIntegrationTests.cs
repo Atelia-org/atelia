@@ -90,6 +90,66 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
+    public async Task ActorContextEndpoint_ReturnsStructuredContext_AndUpdatesAfterMoveAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var factory = CreateFactory(repoDir);
+            using var client = factory.CreateClient();
+
+            using var initialResponse = await client.GetAsync("/actors/scout/context");
+            var initialContext = await ReadJsonAsync<ActorContextObservation>(initialResponse);
+
+            Assert.Equal(HttpStatusCode.OK, initialResponse.StatusCode);
+            Assert.NotNull(initialContext);
+            Assert.Equal("scout", initialContext.ActorId);
+            Assert.Equal("Scout", initialContext.ActorName);
+            Assert.Equal(0, initialContext.CurrentTick);
+            Assert.Equal("square", initialContext.CurrentLocation.LocationId);
+            Assert.Equal(
+                ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
+                initialContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
+            );
+            Assert.Equal(
+                ["north gate", "old arch", "west"],
+                initialContext.AvailableMoves.Select(static edge => edge.ExitName).ToArray()
+            );
+            Assert.Equal(
+                ["ridge", "shrine", "village"],
+                initialContext.AvailableMoves.Select(static edge => edge.TargetLocationId).ToArray()
+            );
+
+            using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
+            Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
+
+            using var movedResponse = await client.GetAsync("/actors/scout/context");
+            var movedContext = await ReadJsonAsync<ActorContextObservation>(movedResponse);
+
+            Assert.Equal(HttpStatusCode.OK, movedResponse.StatusCode);
+            Assert.NotNull(movedContext);
+            Assert.Equal("scout", movedContext.ActorId);
+            Assert.Equal("Scout", movedContext.ActorName);
+            Assert.Equal(0, movedContext.CurrentTick);
+            Assert.Equal("ridge", movedContext.CurrentLocation.LocationId);
+            Assert.Equal(
+                ["ridge-aerie-winch", "square-ridge-trail"],
+                movedContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
+            );
+            Assert.Equal(
+                ["cliff lift", "downhill trail"],
+                movedContext.AvailableMoves.Select(static edge => edge.ExitName).ToArray()
+            );
+            Assert.Equal(
+                ["aerie", "square"],
+                movedContext.AvailableMoves.Select(static edge => edge.TargetLocationId).ToArray()
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public async Task InvalidMove_ReturnsBadRequestWithErrorPayloadAsync() {
         string repoDir = CreateTempRepoDir();
 
