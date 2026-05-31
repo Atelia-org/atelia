@@ -55,7 +55,7 @@ public class ActorAndObservationTests {
     }
 
     [Fact]
-    public void MoveActorAlongPassage_UpdatesActorLocationAndObservation() {
+    public void MoveActorAlongPassage_ReturnsAuthoritativeReceiptAndUpdatesActorLocationAndObservation() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -64,13 +64,20 @@ public class ActorAndObservationTests {
             var world = TestWorldBuilder.Create(revision);
             TestWorldBuilder.PopulateSampleActors(world);
 
-            var movedActor = world.MoveActorAlongPassage(
+            var receipt = world.MoveActorAlongPassage(
                 TestWorldBuilder.ActorIds.Scout,
                 TestWorldBuilder.PassageIds.SquareRidgeTrail
             );
             var observation = LocationObservationProjector.ObserveActorLocation(world, TestWorldBuilder.ActorIds.Scout);
 
-            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, movedActor.CurrentLocationId);
+            Assert.Equal(TestWorldBuilder.ActorIds.Scout, receipt.ActorId);
+            Assert.Equal(TestWorldBuilder.PassageIds.SquareRidgeTrail, receipt.PassageId);
+            Assert.Equal("north gate", receipt.ExitName);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, receipt.FromLocationId);
+            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, receipt.ToLocationId);
+            Assert.Equal(TravelMode.Land, receipt.TravelMode);
+            Assert.Equal(5, receipt.TravelCost);
+            Assert.Equal(TestWorldBuilder.LocationIds.Ridge, world.GetActor(TestWorldBuilder.ActorIds.Scout).CurrentLocationId);
             Assert.Equal(TestWorldBuilder.LocationIds.Ridge, observation.Location.LocationId);
             Assert.Contains(
                 observation.Location.Exits,

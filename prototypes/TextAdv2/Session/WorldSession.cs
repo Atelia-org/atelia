@@ -203,25 +203,20 @@ public sealed class WorldSession : IDisposable {
     }
 
     private ActorMovementObservation MoveActorCore(string actorId, string passageId) {
-        var actor = _world.GetActor(actorId);
-        var fromLocation = _world.GetLocation(actor.CurrentLocationId);
-        var passage = _world.GetPassage(passageId);
-        var exit = passage.GetEndpointFor(fromLocation.Id);
-        var direction = passage.GetDirectionFrom(fromLocation.Id);
-        var toLocation = _world.GetLocation(passage.GetOtherLocationId(fromLocation.Id));
-
-        _world.MoveActorAlongPassage(actorId, passageId);
+        var receipt = _world.MoveActorAlongPassage(actorId, passageId);
         _repo.Commit(_world.Root).Unwrap();
 
+        var fromLocation = _world.GetLocation(receipt.FromLocationId);
+        var toLocation = _world.GetLocation(receipt.ToLocationId);
         var historyEntry = new ActorMovementHistoryEntry(
-            passage.Id,
-            exit.ExitName,
+            receipt.PassageId,
+            receipt.ExitName,
             fromLocation.Id,
             fromLocation.Name,
             toLocation.Id,
             toLocation.Name,
-            passage.TravelMode,
-            direction.TotalTravelCost(passage)
+            receipt.TravelMode,
+            receipt.TravelCost
         );
         GetOrCreateMovementHistory(actorId).Add(historyEntry);
 
@@ -229,14 +224,14 @@ public sealed class WorldSession : IDisposable {
         return new ActorMovementObservation(
             currentObservation.ActorId,
             currentObservation.ActorName,
-            historyEntry.PassageId,
-            historyEntry.ExitName,
-            historyEntry.FromLocationId,
-            historyEntry.FromLocationName,
-            historyEntry.ToLocationId,
-            historyEntry.ToLocationName,
-            historyEntry.TravelMode,
-            historyEntry.TravelCost,
+            receipt.PassageId,
+            receipt.ExitName,
+            receipt.FromLocationId,
+            fromLocation.Name,
+            receipt.ToLocationId,
+            toLocation.Name,
+            receipt.TravelMode,
+            receipt.TravelCost,
             currentObservation.Location
         );
     }

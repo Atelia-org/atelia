@@ -222,13 +222,13 @@ internal sealed class WorldState {
     }
 
     /// <summary>
-    /// 按当前 actor 所在地点，沿指定 passage 的合法方向移动。
+    /// 按当前 actor 所在地点，沿指定 passage 的合法方向移动，并返回 authoritative move receipt。
     /// 该 API 会校验：
     /// - actor 与 passage 必须存在；
     /// - actor 当前地点必须是该 passage 的一端；
     /// - 从当前位置出发的方向必须 enabled。
     /// </summary>
-    public Actor MoveActorAlongPassage(string actorId, string passageId) {
+    public ActorMoveReceipt MoveActorAlongPassage(string actorId, string passageId) {
         var actor = GetActor(actorId);
         var passage = GetWritablePassage(passageId);
         var fromLocationId = actor.CurrentLocationId;
@@ -246,10 +246,19 @@ internal sealed class WorldState {
             );
         }
 
+        var exit = passage.GetEndpointFor(fromLocationId);
         var toLocationId = passage.GetOtherLocationId(fromLocationId);
         EnsureLocationExists(toLocationId);
         actor.MoveTo(toLocationId);
-        return actor;
+        return new ActorMoveReceipt(
+            actor.Id,
+            passage.Id,
+            exit.ExitName,
+            fromLocationId,
+            toLocationId,
+            passage.TravelMode,
+            passage.BaseTravelCost + direction.TravelCostModifier
+        );
     }
 
     public IEnumerable<Actor> EnumerateActors() {
