@@ -1,6 +1,6 @@
 using System.Text;
+using Atelia.TextAdv2.Runtime;
 using Atelia.TextAdv2.WorldTruth;
-using Atelia.TextAdv2.Session;
 
 namespace Atelia.TextAdv2.DevSupport;
 
@@ -11,12 +11,12 @@ namespace Atelia.TextAdv2.DevSupport;
 /// 应显式调用这里，而不是回到 session 主对象要字符串别名。
 /// </summary>
 public static class DevTextRenderer {
-    public static string RenderWorld(WorldSession session) {
+    public static string RenderWorld(SerialWorldRuntime session) {
         ArgumentNullException.ThrowIfNull(session);
         return session.RenderWorldDumpForDevSupport();
     }
 
-    public static string RenderLocation(WorldSession session, string locationId) {
+    public static string RenderLocation(SerialWorldRuntime session, string locationId) {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
         return session.RenderLocationDumpForDevSupport(locationId);

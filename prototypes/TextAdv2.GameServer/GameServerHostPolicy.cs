@@ -1,5 +1,5 @@
-using Atelia.TextAdv2.Session;
 using Atelia.TextAdv2.DevSupport;
+using Atelia.TextAdv2.Runtime;
 
 namespace Atelia.TextAdv2.GameServer;
 
@@ -15,8 +15,8 @@ internal sealed class GameServerHostPolicy {
         string bootstrapMode,
         string sessionOpenMode,
         bool sampleWorldResetEnabled,
-        Func<WorldSession> openSession,
-        Func<WorldSession>? resetSession,
+        Func<SerialWorldRuntime> openSession,
+        Func<SerialWorldRuntime>? resetSession,
         string[] notes
     ) {
         ConfiguredRepoDir = configuredRepoDir;
@@ -30,8 +30,8 @@ internal sealed class GameServerHostPolicy {
         PlannedEndpoints = BuildPlannedEndpoints(sampleWorldResetEnabled);
     }
 
-    private readonly Func<WorldSession> _openSession;
-    private readonly Func<WorldSession>? _resetSession;
+    private readonly Func<SerialWorldRuntime> _openSession;
+    private readonly Func<SerialWorldRuntime>? _resetSession;
 
     public string ConfiguredRepoDir { get; }
 
@@ -81,7 +81,7 @@ internal sealed class GameServerHostPolicy {
                 bootstrapMode: OpenExistingOnlyBootstrapMode,
                 sessionOpenMode: "open-existing-only",
                 sampleWorldResetEnabled: false,
-                openSession: () => WorldSession.OpenExisting(resolvedRepoDir),
+                openSession: () => SerialWorldRuntime.OpenExisting(resolvedRepoDir),
                 resetSession: null,
                 notes: [
                     "startup 只允许打开既有 repo，不会隐式创建 sample world。",
@@ -94,16 +94,16 @@ internal sealed class GameServerHostPolicy {
         };
     }
 
-    public WorldSession OpenSession()
+    public SerialWorldRuntime OpenSession()
         => OpenWithRepositoryLockRetry(_openSession);
 
-    public WorldSession ResetSession() {
+    public SerialWorldRuntime ResetSession() {
         if (_resetSession is null) { throw new InvalidOperationException("Sample-world reset is not enabled for the current GameServer host policy."); }
 
         return _resetSession();
     }
 
-    private static WorldSession OpenWithRepositoryLockRetry(Func<WorldSession> openSession) {
+    private static SerialWorldRuntime OpenWithRepositoryLockRetry(Func<SerialWorldRuntime> openSession) {
         for (int attempt = 0; ; attempt++) {
             try {
                 return openSession();

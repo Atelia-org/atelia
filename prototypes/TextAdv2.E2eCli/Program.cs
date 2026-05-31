@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Atelia.TextAdv2.DevSupport;
-using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.Runtime;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.E2eCli;
@@ -42,7 +42,7 @@ internal static class Program {
     }
 
     private static int RunInitEmpty(string repoDir) {
-        using var session = WorldSession.CreateEmpty(repoDir);
+        using var session = SerialWorldRuntime.CreateEmpty(repoDir);
         Console.WriteLine($"Initialized empty TextAdv2 world repo: {session.RepoDir}");
         return 0;
     }
@@ -84,7 +84,7 @@ internal static class Program {
         return 0;
     }
 
-    private static WorldSession OpenExistingRepoSession(string repoDir) {
+    private static SerialWorldRuntime OpenExistingRepoSession(string repoDir) {
         if (File.Exists(repoDir)) {
             throw new InvalidOperationException(
                 $"--repo-dir 必须指向目录，但收到的是文件路径: '{repoDir}'。请改为已初始化的 world repo 目录，或先运行 init-empty <repoDir> / init-sample <repoDir>。"
@@ -104,7 +104,7 @@ internal static class Program {
         }
 
         try {
-            return WorldSession.OpenExisting(repoDir);
+            return SerialWorldRuntime.OpenExisting(repoDir);
         }
         catch (InvalidOperationException ex) {
             if (ex.Message.Contains("Failed to acquire lock", StringComparison.Ordinal)) {
@@ -574,7 +574,7 @@ Session options:
     private sealed record SessionCommand(
         string Description,
         SessionCommandOutputKind OutputKind,
-        Func<WorldSession, string> Execute
+        Func<SerialWorldRuntime, string> Execute
     );
 
     private enum SessionCommandOutputKind {

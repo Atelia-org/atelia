@@ -1,12 +1,12 @@
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Session;
+namespace Atelia.TextAdv2.Runtime;
 
 /// <summary>
 /// 一次成功移动后的结构化结果。
 ///
-/// 它不是持久化世界真相，而是当前 session 内对一次合法移动的只读记录，
+/// 它不是持久化世界真相，而是当前 runtime 内对一次合法移动的只读记录，
 /// 供 CLI 调试、trace 汇总和后续 route replay 使用。
 /// </summary>
 internal sealed record ActorMovementObservation(
@@ -24,7 +24,7 @@ internal sealed record ActorMovementObservation(
 );
 
 /// <summary>
-/// session 内部维护的轻量移动历史。
+/// runtime 内部维护的轻量移动历史。
 ///
 /// 它只保留 route trace 真正需要的稳定字段，属于本次运行的易失调试态，
 /// 不持有完整 LocationObservation，也不承诺跨 reopen 恢复。
@@ -41,7 +41,7 @@ internal sealed record ActorMovementHistoryEntry(
 );
 
 /// <summary>
-/// 单次 CLI 运行期间累计得到的 actor 路线 trace。
+/// 单次 runtime 期间累计得到的 actor 路线 trace。
 /// 其输入是“当前 actor 位置 + 本次运行内已发生的移动序列”。
 /// </summary>
 internal sealed record ActorRouteTraceObservation(

@@ -3,7 +3,7 @@ using Atelia.TextAdv2.AccelerationIndex;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Session;
+namespace Atelia.TextAdv2.Runtime;
 
 public sealed record RouteAccelerationSnapshot(
     string PlannerMode,

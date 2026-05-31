@@ -1,7 +1,7 @@
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Session;
+namespace Atelia.TextAdv2.Runtime;
 
 public sealed record ActorMoveResult(
     string ActorId,
@@ -17,7 +17,7 @@ public sealed record ActorMoveResult(
     LocationObservation CurrentLocation
 );
 
-internal static class SessionMovementProjector {
+internal static class RuntimeMovementProjector {
     public static ActorMoveResult Project(ActorMovementObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 

@@ -1,5 +1,3 @@
-using Atelia.TextAdv2.Session;
-
 namespace Atelia.TextAdv2.DevSupport;
 
 /// <summary>

@@ -1,4 +1,4 @@
-namespace Atelia.TextAdv2.Session;
+namespace Atelia.TextAdv2.Runtime;
 
 /// <summary>
 /// 第一版逻辑时间快照。

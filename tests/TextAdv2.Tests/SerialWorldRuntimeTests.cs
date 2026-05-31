@@ -1,4 +1,4 @@
-using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.Runtime;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 using Atelia.TextAdv2.DevSupport;
@@ -6,7 +6,7 @@ using Xunit;
 
 namespace Atelia.TextAdv2.Tests;
 
-public class WorldSessionTests {
+public class SerialWorldRuntimeTests {
     [Fact]
     public void ObserveLocation_ReturnsReadOnlyViewObservation() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
@@ -439,7 +439,7 @@ public class WorldSessionTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (var session = WorldSession.CreateEmpty(repoDir)) {
+            using (var session = SerialWorldRuntime.CreateEmpty(repoDir)) {
                 var time = session.ObserveTime();
                 var acceleration = session.ObserveRouteAcceleration();
 
@@ -450,7 +450,7 @@ public class WorldSessionTests {
                 Assert.Equal("zero", acceleration.PlannerMode);
             }
 
-            using var reopened = WorldSession.OpenExisting(repoDir);
+            using var reopened = SerialWorldRuntime.OpenExisting(repoDir);
             var reopenedTime = reopened.ObserveTime();
             var reopenedAcceleration = reopened.ObserveRouteAcceleration();
 
@@ -528,7 +528,7 @@ public class WorldSessionTests {
                 _ = session.AdvanceTime(5);
             }
 
-            using var reopened = WorldSession.OpenExisting(repoDir);
+            using var reopened = SerialWorldRuntime.OpenExisting(repoDir);
             var observedActor = reopened.ObserveActor("runner");
             var observedStart = reopened.ObserveLocation("start");
             var observedTime = reopened.ObserveTime();
@@ -595,7 +595,7 @@ public class WorldSessionTests {
                 Assert.Contains("Location 'start' already uses exit name 'go'", exception.Message, StringComparison.Ordinal);
             }
 
-            using var reopened = WorldSession.OpenExisting(repoDir);
+            using var reopened = SerialWorldRuntime.OpenExisting(repoDir);
             var observedStart = reopened.ObserveLocation("start");
 
             var exit = Assert.Single(observedStart.Exits);
@@ -782,7 +782,7 @@ public class WorldSessionTests {
             using (SampleWorldBootstrap.CreateFreshSession(repoDir)) {
             }
 
-            using var session = WorldSession.OpenExisting(repoDir);
+            using var session = SerialWorldRuntime.OpenExisting(repoDir);
             var rebuilt = SampleWorldBootstrap.RebuildRouteAcceleration(session);
 
             Assert.Equal("landmark", rebuilt.PlannerMode);
@@ -800,11 +800,11 @@ public class WorldSessionTests {
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-session-tests-{Guid.NewGuid():N}");
 
-    private static WorldSession CreateEmptySession(string repoDir)
-        => WorldSession.CreateEmpty(repoDir);
+    private static SerialWorldRuntime CreateEmptySession(string repoDir)
+        => SerialWorldRuntime.CreateEmpty(repoDir);
 
     private static void AuthorMiniWorld(
-        WorldSession session,
+        SerialWorldRuntime session,
         string alphaStartLocationId,
         string betaStartLocationId
     ) {

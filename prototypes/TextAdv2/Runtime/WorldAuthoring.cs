@@ -1,6 +1,6 @@
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Session;
+namespace Atelia.TextAdv2.Runtime;
 
 public sealed record LocationAuthoringSnapshot(
     string LocationId,
@@ -37,7 +37,7 @@ public sealed record PassageDirectionAuthoringSnapshot(
     string DirectionConditionNote
 );
 
-internal static class SessionWorldAuthoringProjector {
+internal static class RuntimeWorldAuthoringProjector {
     public static LocationAuthoringSnapshot Project(Location location) {
         ArgumentNullException.ThrowIfNull(location);
 

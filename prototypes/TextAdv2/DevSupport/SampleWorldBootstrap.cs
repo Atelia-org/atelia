@@ -1,6 +1,6 @@
 using Atelia.StateJournal;
+using Atelia.TextAdv2.Runtime;
 using Atelia.TextAdv2.WorldTruth;
-using Atelia.TextAdv2.Session;
 
 namespace Atelia.TextAdv2.DevSupport;
 
@@ -14,23 +14,23 @@ public static class SampleWorldBootstrap {
         IReadOnlyList<string> LandmarkLocationIds
     );
 
-    public static WorldSession CreateTemporarySession()
+    public static SerialWorldRuntime CreateTemporarySession()
         => CreateFreshSession(Path.Combine(Path.GetTempPath(), $"atelia-textadv2-{Guid.NewGuid():N}"));
 
-    public static WorldSession CreateFreshSession(string repoDir)
-        => WorldSession.CreateNew(repoDir, CreateSampleWorld);
+    public static SerialWorldRuntime CreateFreshSession(string repoDir)
+        => SerialWorldRuntime.CreateNew(repoDir, CreateSampleWorld);
 
-    public static WorldSession OpenOrCreateSession(string repoDir) {
+    public static SerialWorldRuntime OpenOrCreateSession(string repoDir) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
 
         if (!Directory.Exists(repoDir)) { return CreateFreshSession(repoDir); }
 
         return Directory.EnumerateFileSystemEntries(repoDir).Any()
-            ? WorldSession.OpenExisting(repoDir)
+            ? SerialWorldRuntime.OpenExisting(repoDir)
             : CreateFreshSession(repoDir);
     }
 
-    public static WorldSession ResetSession(string repoDir) {
+    public static SerialWorldRuntime ResetSession(string repoDir) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
 
         if (Directory.Exists(repoDir)) {
@@ -41,7 +41,7 @@ public static class SampleWorldBootstrap {
     }
 
     public static RouteAccelerationSnapshot RebuildRouteAcceleration(
-        WorldSession session,
+        SerialWorldRuntime session,
         string? requestedLandmarks = null
     ) {
         ArgumentNullException.ThrowIfNull(session);
@@ -66,7 +66,7 @@ public static class SampleWorldBootstrap {
         return world;
     }
 
-    private static RecommendedLandmarkProfile? TryResolveLandmarkProfile(WorldSession session) {
+    private static RecommendedLandmarkProfile? TryResolveLandmarkProfile(SerialWorldRuntime session) {
         ArgumentNullException.ThrowIfNull(session);
 
         return session.TryGetRecommendedLandmarkLocationIdsForDevSupport(out var recommendedLandmarkLocationIds)

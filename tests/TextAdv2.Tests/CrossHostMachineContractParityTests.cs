@@ -5,7 +5,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Atelia.TextAdv2.DevSupport;
-using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.Runtime;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
@@ -601,7 +601,7 @@ public sealed class CrossHostMachineContractParityTests {
     }
 
     private static void PrepareEmptyRepo(string repoDir) {
-        using (WorldSession.CreateEmpty(repoDir)) {
+        using (SerialWorldRuntime.CreateEmpty(repoDir)) {
         }
 
         WaitUntilSessionCanReopen(repoDir);
@@ -827,7 +827,7 @@ public sealed class CrossHostMachineContractParityTests {
 
         for (int attempt = 0; attempt < 40; attempt++) {
             try {
-                using var session = WorldSession.OpenExisting(repoDir);
+                using var session = SerialWorldRuntime.OpenExisting(repoDir);
                 return;
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to acquire lock", StringComparison.Ordinal)) {

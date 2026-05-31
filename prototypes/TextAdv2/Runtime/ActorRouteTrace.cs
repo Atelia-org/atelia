@@ -1,6 +1,6 @@
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.Session;
+namespace Atelia.TextAdv2.Runtime;
 
 public sealed record ActorRouteTrace(
     string ActorId,
@@ -26,7 +26,7 @@ public sealed record ActorRouteTraceStep(
     int TravelCost
 );
 
-internal static class SessionRouteTraceProjector {
+internal static class RuntimeRouteTraceProjector {
     public static ActorRouteTrace Project(ActorRouteTraceObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 

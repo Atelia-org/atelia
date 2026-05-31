@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Atelia.TextAdv2.DevSupport;
-using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.Runtime;
 using Xunit;
 
 namespace Atelia.TextAdv2.Tests;

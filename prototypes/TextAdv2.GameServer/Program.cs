@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Atelia.TextAdv2.GameServer;
 using Atelia.TextAdv2.DevSupport;
-using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.Runtime;
 
 const string HostRunningMode = "host-running";
 const string HostAliveReadiness = "alive";
@@ -117,7 +117,7 @@ app.MapGet("/admin/routes/{fromLocationId}/{toLocationId}",
 
 app.Run();
 
-static IResult ExecuteText(SessionService session, Func<WorldSession, string> operation) {
+static IResult ExecuteText(SessionService session, Func<SerialWorldRuntime, string> operation) {
     try {
         var result = session.Invoke(operation);
         return Results.Content(result, HostContentTypes.PlainText);
@@ -133,7 +133,7 @@ static IResult ExecuteText(SessionService session, Func<WorldSession, string> op
     }
 }
 
-static IResult ExecuteJson<T>(SessionService session, Func<WorldSession, T> operation) {
+static IResult ExecuteJson<T>(SessionService session, Func<SerialWorldRuntime, T> operation) {
     try {
         var result = session.Invoke(operation);
         return Results.Content(JsonSerializer.Serialize(result, TextAdv2HostJson.Options), HostContentTypes.Json);

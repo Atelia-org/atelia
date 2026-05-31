@@ -1,6 +1,6 @@
 using Atelia.TextAdv2.ReadOnlyView;
 
-namespace Atelia.TextAdv2.Session;
+namespace Atelia.TextAdv2.Runtime;
 
 /// <summary>
 /// 面向 machine-consumable 调用方的 actor 主 context。

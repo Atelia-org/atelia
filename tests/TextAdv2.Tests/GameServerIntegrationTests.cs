@@ -4,7 +4,7 @@ using System.Text.Json;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 using Atelia.TextAdv2.DevSupport;
-using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.Runtime;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
@@ -201,7 +201,7 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (WorldSession.CreateEmpty(repoDir)) {
+            using (SerialWorldRuntime.CreateEmpty(repoDir)) {
             }
             WaitUntilSessionCanReopen(repoDir);
 
@@ -454,7 +454,7 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (WorldSession.CreateEmpty(repoDir)) {
+            using (SerialWorldRuntime.CreateEmpty(repoDir)) {
             }
             WaitUntilSessionCanReopen(repoDir);
 
@@ -557,7 +557,7 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (WorldSession.CreateEmpty(repoDir)) {
+            using (SerialWorldRuntime.CreateEmpty(repoDir)) {
             }
             WaitUntilSessionCanReopen(repoDir);
 
@@ -644,7 +644,7 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (WorldSession.CreateEmpty(repoDir)) {
+            using (SerialWorldRuntime.CreateEmpty(repoDir)) {
             }
             WaitUntilSessionCanReopen(repoDir);
 
@@ -696,7 +696,7 @@ public class GameServerIntegrationTests {
         string repoDir = CreateTempRepoDir();
 
         try {
-            using (WorldSession.CreateEmpty(repoDir)) {
+            using (SerialWorldRuntime.CreateEmpty(repoDir)) {
             }
             WaitUntilSessionCanReopen(repoDir);
 

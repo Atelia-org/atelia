@@ -1,6 +1,6 @@
 using Atelia.StateJournal;
 using Atelia.TextAdv2.ReadOnlyView;
-using Atelia.TextAdv2.Session;
+using Atelia.TextAdv2.Runtime;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
