@@ -1,6 +1,7 @@
+using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Session;
 
 /// <summary>
 /// 一次成功移动后的结构化结果。
