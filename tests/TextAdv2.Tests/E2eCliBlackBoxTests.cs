@@ -75,6 +75,19 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
+    public void DevSampleWorld_JsonCommands_PreserveCanonicalEnumTokens() {
+        CliRunResult observe = RunCli("--dev-sample-world", "--observe-navigation", "square");
+        CliRunResult plan = RunCli("--dev-sample-world", "--plan-route", "shrine", "shrine");
+
+        Assert.Equal(0, observe.ExitCode);
+        Assert.Contains("\"TravelMode\": \"land\"", observe.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("\"TravelMode\": \"portal\"", observe.StandardOutput, StringComparison.Ordinal);
+
+        Assert.Equal(0, plan.ExitCode);
+        Assert.Contains("\"Status\": \"already-there\"", plan.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Help_ShowsExplicitDevFlag_AndNoImplicitTemporaryWorldMessage() {
         CliRunResult result = RunCli("help");
 

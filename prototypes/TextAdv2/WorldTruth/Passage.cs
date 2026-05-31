@@ -85,7 +85,6 @@ internal sealed class PassageDirectionRuleView {
 /// </summary>
 internal sealed class Passage {
     private const string KindValue = "passage";
-    private const string IdKey = "id";
     private const string EndpointAKey = "endpointA";
     private const string EndpointBKey = "endpointB";
     private const string SharedKey = "shared";
@@ -95,14 +94,16 @@ internal sealed class Passage {
     private const string BaseTravelCostKey = "baseTravelCost";
     private const string SharedConditionNoteKey = "sharedConditionNote";
 
+    private readonly string _id;
     private readonly DurableDict<string> _data;
 
-    internal Passage(DurableDict<string> data) {
+    internal Passage(string id, DurableDict<string> data) {
+        WorldState.ValidateEntityId(id, nameof(id));
         ArgumentNullException.ThrowIfNull(data);
+        _id = id;
         _data = data;
         WorldState.EnsureKind(data, KindValue);
 
-        _ = Id;
         _ = EndpointA;
         _ = EndpointB;
         _ = FromAToB;
@@ -117,7 +118,7 @@ internal sealed class Passage {
 
     internal PassageView AsView() => new(this);
 
-    public string Id => _data.GetOrThrow<string>(IdKey)!;
+    public string Id => _id;
 
     /// <summary>
     /// 端点 A 代表“从 A 这一端看这条路”的本地锚点和命名，不承载整条路的共享事实。
@@ -226,13 +227,12 @@ internal sealed class Passage {
 
         var data = revision.CreateDict<string>();
         data.Upsert(WorldState.KindKey, KindValue);
-        data.Upsert(IdKey, id);
         data.Upsert(EndpointAKey, PassageEndpoint.CreateData(revision, locationAId, exitNameFromA));
         data.Upsert(EndpointBKey, PassageEndpoint.CreateData(revision, locationBId, exitNameFromB));
         data.Upsert(SharedKey, CreateSharedData(revision, travelMode, baseTravelCost));
         data.Upsert(FromAToBKey, PassageDirectionRule.CreateData(revision));
         data.Upsert(FromBToAKey, PassageDirectionRule.CreateData(revision));
-        return new Passage(data);
+        return new Passage(id, data);
     }
 
     private DurableDict<string> SharedData => _data.GetOrThrow<DurableDict<string>>(SharedKey)!;

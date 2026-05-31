@@ -13,7 +13,7 @@ internal sealed class WorldState {
 
     private const string KindValue = "world-state";
     private const string SchemaVersionKey = "schemaVersion";
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
     private const string ActorsKey = "actors";
     private const string LocationsKey = "locations";
     private const string PassagesKey = "passages";
@@ -29,6 +29,7 @@ internal sealed class WorldState {
         _ = ActorsLedger;
         _ = LocationsLedger;
         _ = PassagesLedger;
+        ValidateIntegrity();
     }
 
     /// <summary>
@@ -86,7 +87,7 @@ internal sealed class WorldState {
         ValidateEntityId(id, nameof(id));
 
         if (ActorsLedger.TryGet(id, out DurableDict<string>? data)) {
-            actor = new Actor(data!);
+            actor = new Actor(id, data!);
             return true;
         }
 
@@ -120,7 +121,7 @@ internal sealed class WorldState {
         ValidateEntityId(id, nameof(id));
 
         if (LocationsLedger.TryGet(id, out DurableDict<string>? data)) {
-            location = new Location(data!);
+            location = new Location(id, data!);
             return true;
         }
 
@@ -263,7 +264,7 @@ internal sealed class WorldState {
 
     public IEnumerable<Actor> EnumerateActors() {
         foreach (var actorId in ActorsLedger.Keys) {
-            yield return new Actor(ActorsLedger.GetOrThrow<DurableDict<string>>(actorId)!);
+            yield return new Actor(actorId, ActorsLedger.GetOrThrow<DurableDict<string>>(actorId)!);
         }
     }
 
@@ -279,7 +280,7 @@ internal sealed class WorldState {
 
     public IEnumerable<Location> EnumerateLocations() {
         foreach (var locationId in LocationsLedger.Keys) {
-            yield return new Location(LocationsLedger.GetOrThrow<DurableDict<string>>(locationId)!);
+            yield return new Location(locationId, LocationsLedger.GetOrThrow<DurableDict<string>>(locationId)!);
         }
     }
 
@@ -339,6 +340,39 @@ internal sealed class WorldState {
     internal static void ValidateRequiredText(string value, string paramName)
         => ArgumentException.ThrowIfNullOrWhiteSpace(value, paramName);
 
+    private void ValidateIntegrity() {
+        var locationIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var locationId in LocationsLedger.Keys) {
+            _ = new Location(locationId, LocationsLedger.GetOrThrow<DurableDict<string>>(locationId)!);
+            locationIds.Add(locationId);
+        }
+
+        foreach (var actorId in ActorsLedger.Keys) {
+            var actor = new Actor(actorId, ActorsLedger.GetOrThrow<DurableDict<string>>(actorId)!);
+            if (!locationIds.Contains(actor.CurrentLocationId)) {
+                throw new InvalidOperationException(
+                    $"Actor '{actor.Id}' points to missing current location '{actor.CurrentLocationId}' during world load."
+                );
+            }
+        }
+
+        var exitNamesByLocation = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var passageId in PassagesLedger.Keys) {
+            var passage = new Passage(passageId, PassagesLedger.GetOrThrow<DurableDict<string>>(passageId)!);
+
+            if (string.Equals(passage.EndpointA.LocationId, passage.EndpointB.LocationId, StringComparison.Ordinal)) {
+                throw new InvalidOperationException(
+                    $"Passage '{passage.Id}' must connect two different locations, but both endpoints point to '{passage.EndpointA.LocationId}'."
+                );
+            }
+
+            EnsureReferencedLocationExists(locationIds, passage.Id, passage.EndpointA.LocationId, "endpointA");
+            EnsureReferencedLocationExists(locationIds, passage.Id, passage.EndpointB.LocationId, "endpointB");
+            EnsureExitNameUnique(exitNamesByLocation, passage.Id, passage.EndpointA.LocationId, passage.EndpointA.ExitName);
+            EnsureExitNameUnique(exitNamesByLocation, passage.Id, passage.EndpointB.LocationId, passage.EndpointB.ExitName);
+        }
+    }
+
     private Passage GetWritablePassage(string id) {
         if (TryGetWritablePassage(id, out var passage) && passage is not null) {
             return passage;
@@ -351,7 +385,7 @@ internal sealed class WorldState {
         ValidateEntityId(id, nameof(id));
 
         if (PassagesLedger.TryGet(id, out DurableDict<string>? data)) {
-            passage = new Passage(data!);
+            passage = new Passage(id, data!);
             return true;
         }
 
@@ -361,7 +395,7 @@ internal sealed class WorldState {
 
     private IEnumerable<Passage> EnumerateWritablePassages() {
         foreach (var passageId in PassagesLedger.Keys) {
-            yield return new Passage(PassagesLedger.GetOrThrow<DurableDict<string>>(passageId)!);
+            yield return new Passage(passageId, PassagesLedger.GetOrThrow<DurableDict<string>>(passageId)!);
         }
     }
 
@@ -389,6 +423,37 @@ internal sealed class WorldState {
                     $"Location '{locationId}' already uses exit name '{exitName}' for passage '{passage.Id}'."
                 );
             }
+        }
+    }
+
+    private static void EnsureReferencedLocationExists(
+        HashSet<string> locationIds,
+        string passageId,
+        string locationId,
+        string endpointName
+    ) {
+        if (!locationIds.Contains(locationId)) {
+            throw new InvalidOperationException(
+                $"Passage '{passageId}' {endpointName} points to missing location '{locationId}' during world load."
+            );
+        }
+    }
+
+    private static void EnsureExitNameUnique(
+        Dictionary<string, HashSet<string>> exitNamesByLocation,
+        string passageId,
+        string locationId,
+        string exitName
+    ) {
+        if (!exitNamesByLocation.TryGetValue(locationId, out var exitNames)) {
+            exitNames = new HashSet<string>(StringComparer.Ordinal);
+            exitNamesByLocation.Add(locationId, exitNames);
+        }
+
+        if (!exitNames.Add(exitName)) {
+            throw new InvalidOperationException(
+                $"Location '{locationId}' reuses exit name '{exitName}' during world load; duplicate detected at passage '{passageId}'."
+            );
         }
     }
 }

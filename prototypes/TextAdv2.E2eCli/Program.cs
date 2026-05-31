@@ -1,7 +1,6 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using Atelia.TextAdv2.Session;
 using Atelia.TextAdv2.DevSupport;
+using Atelia.TextAdv2.Session;
 
 namespace Atelia.TextAdv2.E2eCli;
 
@@ -278,7 +277,7 @@ Session options:
         var options = new JsonSerializerOptions {
             WriteIndented = true,
         };
-        options.Converters.Add(new JsonStringEnumConverter());
+        TextAdv2Json.AddHostConverters(options);
         return options;
     }
 

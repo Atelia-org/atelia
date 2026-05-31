@@ -345,6 +345,102 @@ public class TestWorldBuilderTests {
         }
     }
 
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenActorPointsToMissingLocation() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = TestWorldBuilder.Create(revision);
+                TestWorldBuilder.PopulateSampleActors(world);
+                var actorsLedger = world.Root.GetOrThrow<DurableDict<string>>("actors")!;
+                var scout = actorsLedger.GetOrThrow<DurableDict<string>>(TestWorldBuilder.ActorIds.Scout)!;
+                scout.Upsert("currentLocationId", "missing-location");
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    "Actor 'scout' points to missing current location 'missing-location' during world load.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenPassageEndpointPointsToMissingLocation() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = TestWorldBuilder.Create(revision);
+                var passagesLedger = world.Root.GetOrThrow<DurableDict<string>>("passages")!;
+                var passage = passagesLedger.GetOrThrow<DurableDict<string>>(TestWorldBuilder.PassageIds.SquareRidgeTrail)!;
+                var endpointB = passage.GetOrThrow<DurableDict<string>>("endpointB")!;
+                endpointB.Upsert("locationId", "missing-location");
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    "Passage 'square-ridge-trail' endpointB points to missing location 'missing-location' during world load.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenLocationReusesExitNameAcrossPassages() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = TestWorldBuilder.Create(revision);
+                var passagesLedger = world.Root.GetOrThrow<DurableDict<string>>("passages")!;
+                var villageRoad = passagesLedger.GetOrThrow<DurableDict<string>>(TestWorldBuilder.PassageIds.VillageSquareRoad)!;
+                var squareEndpoint = villageRoad.GetOrThrow<DurableDict<string>>("endpointB")!;
+                squareEndpoint.Upsert("exitName", "north gate");
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    "Location 'square' reuses exit name 'north gate' during world load; duplicate detected at passage 'square-ridge-trail'.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-tests-{Guid.NewGuid():N}");
 

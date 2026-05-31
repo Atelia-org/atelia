@@ -1,8 +1,7 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Atelia.TextAdv2.GameServer;
-using Atelia.TextAdv2.Session;
 using Atelia.TextAdv2.DevSupport;
+using Atelia.TextAdv2.Session;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -153,7 +152,7 @@ file static class TextAdv2HostJson {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true,
         };
-        options.Converters.Add(new JsonStringEnumConverter());
+        TextAdv2Json.AddHostConverters(options);
         return options;
     }
 }

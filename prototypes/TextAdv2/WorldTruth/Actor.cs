@@ -11,25 +11,26 @@ namespace Atelia.TextAdv2.WorldTruth;
 /// </summary>
 internal sealed class Actor {
     private const string KindValue = "actor";
-    private const string IdKey = "id";
     private const string NameKey = "name";
     private const string CurrentLocationIdKey = "currentLocationId";
 
+    private readonly string _id;
     private readonly DurableDict<string> _data;
 
-    internal Actor(DurableDict<string> data) {
+    internal Actor(string id, DurableDict<string> data) {
+        WorldState.ValidateEntityId(id, nameof(id));
         ArgumentNullException.ThrowIfNull(data);
+        _id = id;
         _data = data;
         WorldState.EnsureKind(data, KindValue);
 
-        _ = Id;
         _ = Name;
         _ = CurrentLocationId;
     }
 
     internal DurableDict<string> Data => _data;
 
-    public string Id => _data.GetOrThrow<string>(IdKey)!;
+    public string Id => _id;
 
     public string Name {
         get => _data.GetOrThrow<string>(NameKey)!;
@@ -54,9 +55,8 @@ internal sealed class Actor {
 
         var data = revision.CreateDict<string>();
         data.Upsert(WorldState.KindKey, KindValue);
-        data.Upsert(IdKey, id);
         data.Upsert(NameKey, name);
         data.Upsert(CurrentLocationIdKey, currentLocationId);
-        return new Actor(data);
+        return new Actor(id, data);
     }
 }

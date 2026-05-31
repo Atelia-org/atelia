@@ -1,10 +1,9 @@
 using System.Net;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Atelia.TextAdv2.ReadOnlyView;
-using Atelia.TextAdv2.Session;
 using Atelia.TextAdv2.WorldTruth;
 using Atelia.TextAdv2.DevSupport;
+using Atelia.TextAdv2.Session;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
@@ -59,6 +58,7 @@ public class GameServerIntegrationTests {
             Assert.NotNull(moveJson);
             Assert.Contains("\"actorId\"", moveText, StringComparison.Ordinal);
             Assert.DoesNotContain("\"ActorId\"", moveText, StringComparison.Ordinal);
+            Assert.Contains("\"travelMode\": \"land\"", moveText, StringComparison.Ordinal);
             Assert.Equal("scout", moveJson.ActorId);
             Assert.Equal("ridge", moveJson.ToLocationId);
             Assert.Equal("land", moveJson.TravelMode);
@@ -445,6 +445,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, alreadyThereResponse.StatusCode);
             Assert.Equal("application/json", alreadyThereResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(alreadyThereJson);
+            Assert.Contains("\"status\": \"already-there\"", alreadyThereText, StringComparison.Ordinal);
             Assert.Equal(RoutePlanStatus.AlreadyThere, alreadyThereJson.Status);
             Assert.Equal(0, alreadyThereJson.StepCount);
             Assert.Equal(0, alreadyThereJson.TotalTravelCost);
@@ -457,6 +458,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, unreachableResponse.StatusCode);
             Assert.Equal("application/json", unreachableResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(unreachableJson);
+            Assert.Contains("\"status\": \"unreachable\"", unreachableText, StringComparison.Ordinal);
             Assert.Equal(RoutePlanStatus.Unreachable, unreachableJson.Status);
             Assert.Equal(0, unreachableJson.StepCount);
             Assert.Null(unreachableJson.TotalTravelCost);
@@ -482,6 +484,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, alreadyThereResponse.StatusCode);
             Assert.Equal("application/json", alreadyThereResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(alreadyThereJson);
+            Assert.Contains("\"status\": \"already-there\"", alreadyThereText, StringComparison.Ordinal);
             Assert.Equal(RoutePlanStatus.AlreadyThere, alreadyThereJson.Status);
             Assert.Equal(0, alreadyThereJson.StepCount);
             Assert.Equal(0, alreadyThereJson.TotalTravelCost);
@@ -494,6 +497,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, unreachableResponse.StatusCode);
             Assert.Equal("application/json", unreachableResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(unreachableJson);
+            Assert.Contains("\"status\": \"unreachable\"", unreachableText, StringComparison.Ordinal);
             Assert.Equal(RoutePlanStatus.Unreachable, unreachableJson.Status);
             Assert.Equal(0, unreachableJson.StepCount);
             Assert.Null(unreachableJson.TotalTravelCost);
@@ -592,7 +596,7 @@ public class GameServerIntegrationTests {
 
     private static JsonSerializerOptions CreateHostJsonOptions() {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        options.Converters.Add(new JsonStringEnumConverter());
+        TextAdv2Json.AddHostConverters(options);
         return options;
     }
 }

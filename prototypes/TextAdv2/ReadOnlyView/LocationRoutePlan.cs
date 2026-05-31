@@ -98,10 +98,23 @@ internal static class LocationRoutePlanTextRenderer {
     }
 
     private static string ToText(RoutePlanStatus status)
-        => status switch {
+        => RoutePlanStatusCodec.ToStorageValue(status);
+}
+
+internal static class RoutePlanStatusCodec {
+    public static RoutePlanStatus FromStorageValue(string value)
+        => value switch {
+            "found" => RoutePlanStatus.Found,
+            "already-there" => RoutePlanStatus.AlreadyThere,
+            "unreachable" => RoutePlanStatus.Unreachable,
+            _ => throw new InvalidOperationException($"Unknown route plan status '{value}'."),
+        };
+
+    public static string ToStorageValue(RoutePlanStatus value)
+        => value switch {
             RoutePlanStatus.Found => "found",
             RoutePlanStatus.AlreadyThere => "already-there",
             RoutePlanStatus.Unreachable => "unreachable",
-            _ => throw new InvalidOperationException($"Unsupported route plan status '{status}'."),
+            _ => throw new InvalidOperationException($"Unsupported route plan status '{value}'."),
         };
 }
