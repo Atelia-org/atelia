@@ -138,12 +138,12 @@
 
 这类工作有价值，但已经属于 test hardening backlog，不再是主线结构风险。
 
-### 3.2 doc / archive hygiene
+### 3.2 active doc / comment hygiene
 
 仍可能存在少量旧表述，例如：
 
-- 非活跃文档或归档文档仍提到旧层名
-- 个别注释仍带有旧阶段措辞
+- 个别活跃文档仍带有旧阶段标签或旧层名
+- 个别活跃 xml doc / 注释仍会把读者拉回旧主对象或旧层名语境
 
 这类问题不会影响运行，但会增加后续阅读成本。
 
@@ -227,7 +227,7 @@ TextAdv2 当前仍是：
 - 受影响的 `CrossHostMachineContractParityTests`
 - 必要时补跑相关 route-plan / host integration tests
 
-### 6.2 Optional P2：active doc / comment hygiene
+### 6.2 已完成的 Optional P2：active doc / comment hygiene
 
 #### 目标
 
@@ -239,6 +239,11 @@ TextAdv2 当前仍是：
 1. 优先清活跃文档
 2. 同步清理仍会把读者拉回旧阶段语境的活跃 xml doc / 注释
 3. 不清 archive，也不把这包扩大成新的设计收口工程
+
+#### 完成情况
+
+- 已清理 canonical machine surface 活跃参考文档中的历史阶段标签与旧 runtime 归属措辞
+- 已清理 `DevTextRenderer`、`NavigationObservation`、`SerialWorldRuntime` 中会误导到旧阶段语境的 xml doc / 注释
 
 ### 6.3 已完成的 Optional P3：host wording cleanup
 
@@ -272,8 +277,7 @@ TextAdv2 当前仍是：
 
 1. 默认停在当前状态，不再继续结构重构
 2. 若还想继续补强，优先做 `Optional P1`
-3. 若只是清阅读噪音，再做 `Optional P2`
-4. host wording cleanup 已完成，不再列为后续顺位
+3. `Optional P2` 与 host wording cleanup 都已完成，不再列为后续顺位
 
 ## 8. 当前验收结论
 
@@ -292,7 +296,6 @@ TextAdv2 当前仍是：
 当前未完成、但仍可能值得做的，只剩：
 
 - optional contract hardening tail
-- 少量 doc / archive hygiene
 
 ## 9. 一句总纲
 
