@@ -1,5 +1,6 @@
 using Atelia.StateJournal;
 using Atelia.TextAdv2.Observation;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
@@ -47,6 +48,45 @@ public class ActorAndObservationTests {
                     Assert.Equal(TestWorldBuilder.ActorIds.Scout, actor.ActorId);
                     Assert.Equal("Scout", actor.ActorName);
                 }
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void ObserveLocation_WithSharedSpatialSnapshot_MatchesConvenienceWrapper() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+            var spatial = WorldSpatialSnapshotBuilder.Build(world);
+
+            var observedViaWrapper = LocationObservationProjector.ObserveLocation(world, TestWorldBuilder.LocationIds.Square);
+            var observedViaSharedSpatial = LocationObservationProjector.ObserveLocation(
+                world,
+                spatial,
+                TestWorldBuilder.LocationIds.Square
+            );
+
+            Assert.Equal(observedViaWrapper.LocationId, observedViaSharedSpatial.LocationId);
+            Assert.Equal(observedViaWrapper.LocationName, observedViaSharedSpatial.LocationName);
+            Assert.Equal(observedViaWrapper.LocationDescription, observedViaSharedSpatial.LocationDescription);
+            Assert.Equal(
+                observedViaWrapper.Exits.Select(static exit => exit.PassageId),
+                observedViaSharedSpatial.Exits.Select(static exit => exit.PassageId)
+            );
+            Assert.Equal(
+                observedViaWrapper.Exits.Select(static exit => exit.ExitName),
+                observedViaSharedSpatial.Exits.Select(static exit => exit.ExitName)
+            );
+            Assert.Equal(
+                observedViaWrapper.PresentActors.Select(static actor => actor.ActorId),
+                observedViaSharedSpatial.PresentActors.Select(static actor => actor.ActorId)
             );
         }
         finally {

@@ -1,3 +1,4 @@
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Observation;
@@ -11,30 +12,38 @@ namespace Atelia.TextAdv2.Observation;
 /// - 不替调用方做文学化润色。
 /// </summary>
 internal static class LocationObservationProjector {
-    public static LocationObservation ObserveLocation(WorldState world, string locationId) {
+    /// <summary>
+    /// 从调用方提供的 spatial snapshot 投影地点观察。
+    /// 调用方应保证 snapshot 来自同一个、且未在此期间发生空间变更的 <see cref="WorldState"/>。
+    /// </summary>
+    public static LocationObservation ObserveLocation(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        string locationId
+    ) {
         ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
         WorldState.ValidateEntityId(locationId, nameof(locationId));
 
         var location = world.GetLocation(locationId);
-        var exits = world.EnumeratePassagesTouching(locationId)
-            .Select(passage => {
-                var endpoint = passage.GetEndpointFor(locationId);
-                var direction = passage.GetDirectionFrom(locationId);
-                var targetLocation = world.GetLocation(passage.GetOtherLocationId(locationId));
+        var adjacency = spatial.Locations[locationId];
+        var exits = adjacency.Edges
+            .Select(edge => {
+                var targetLocation = world.GetLocation(edge.ToLocationId);
 
                 return new ExitObservation(
-                    passage.Id,
-                    endpoint.ExitName,
-                    targetLocation.Id,
+                    edge.PassageId,
+                    edge.ExitName,
+                    edge.ToLocationId,
                     targetLocation.Name,
-                    passage.TravelMode,
-                    passage.BaseTravelCost,
-                    direction.TravelCostModifier,
-                    passage.GetTotalTravelCostFrom(locationId),
-                    passage.SharedConditionNote,
-                    direction.DirectionConditionNote,
-                    endpoint.LocalViewNote,
-                    direction.IsEnabled
+                    edge.TravelMode,
+                    edge.BaseTravelCost,
+                    edge.TravelCostModifier,
+                    edge.TotalTravelCost,
+                    edge.SharedConditionNote,
+                    edge.DirectionConditionNote,
+                    edge.LocalViewNote,
+                    edge.IsEnabled
                 );
             })
             .OrderBy(exit => exit.ExitName, StringComparer.Ordinal)
@@ -48,11 +57,32 @@ internal static class LocationObservationProjector {
         return new LocationObservation(location.Id, location.Name, location.Description, exits, presentActors);
     }
 
-    public static ActorLocationObservation ObserveActorLocation(WorldState world, string actorId) {
+    public static LocationObservation ObserveLocation(WorldState world, string locationId) {
         ArgumentNullException.ThrowIfNull(world);
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return ObserveLocation(world, spatial, locationId);
+    }
+
+    /// <summary>
+    /// 从调用方提供的 spatial snapshot 投影 actor 当前所在地点观察。
+    /// 调用方应保证 snapshot 来自同一个、且未在此期间发生空间变更的 <see cref="WorldState"/>。
+    /// </summary>
+    public static ActorLocationObservation ObserveActorLocation(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        string actorId
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
         WorldState.ValidateEntityId(actorId, nameof(actorId));
 
         var actor = world.GetActor(actorId);
-        return new ActorLocationObservation(actor.Id, actor.Name, ObserveLocation(world, actor.CurrentLocationId));
+        return new ActorLocationObservation(actor.Id, actor.Name, ObserveLocation(world, spatial, actor.CurrentLocationId));
+    }
+
+    public static ActorLocationObservation ObserveActorLocation(WorldState world, string actorId) {
+        ArgumentNullException.ThrowIfNull(world);
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return ObserveActorLocation(world, spatial, actorId);
     }
 }

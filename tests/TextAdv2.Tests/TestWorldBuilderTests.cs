@@ -1,4 +1,5 @@
 using Atelia.StateJournal;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
@@ -482,6 +483,92 @@ public class TestWorldBuilderTests {
         finally {
             DeleteDirectoryIfExists(repoDir);
         }
+    }
+
+    [Fact]
+    public void WorldSpatialValidation_EnsureUniqueExitNames_ReportsCanonicalPassageIdForDuplicateGroup() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var passagesLedger = world.Root.GetOrThrow<DurableDict<string>>("passages")!;
+            var villageRoad = passagesLedger.GetOrThrow<DurableDict<string>>(TestWorldBuilder.PassageIds.VillageSquareRoad)!;
+            var squareEndpoint = villageRoad.GetOrThrow<DurableDict<string>>("endpointB")!;
+            squareEndpoint.Upsert("exitName", "north gate");
+
+            var spatial = WorldSpatialSnapshotBuilder.Build(world);
+            var exception = Assert.Throws<InvalidOperationException>(() => WorldSpatialValidation.EnsureUniqueExitNames(spatial));
+
+            Assert.Equal(
+                "Location 'square' reuses exit name 'north gate' during world load; duplicate detected at passage 'square-ridge-trail'.",
+                exception.Message
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldSpatialValidation_EnsureUniqueExitNames_DoesNotDependOnIncomingEdgeOrder() {
+        var spatial = new WorldSpatialSnapshot(new Dictionary<string, LocationAdjacencySnapshot>(StringComparer.Ordinal) {
+            ["square"] = new(
+                "square",
+                [
+                    new LocationAdjacencyEdge(
+                        "village-square-road",
+                        "square",
+                        "village",
+                        "north gate",
+                        TravelMode.Land,
+                        1,
+                        0,
+                        1,
+                        string.Empty,
+                        string.Empty,
+                        string.Empty,
+                        true
+                    ),
+                    new LocationAdjacencyEdge(
+                        "square-harbor-road",
+                        "square",
+                        "harbor",
+                        "south pier",
+                        TravelMode.Land,
+                        1,
+                        0,
+                        1,
+                        string.Empty,
+                        string.Empty,
+                        string.Empty,
+                        true
+                    ),
+                    new LocationAdjacencyEdge(
+                        "square-ridge-trail",
+                        "square",
+                        "ridge",
+                        "north gate",
+                        TravelMode.Land,
+                        1,
+                        0,
+                        1,
+                        string.Empty,
+                        string.Empty,
+                        string.Empty,
+                        true
+                    ),
+                ]
+            ),
+        });
+
+        var exception = Assert.Throws<InvalidOperationException>(() => WorldSpatialValidation.EnsureUniqueExitNames(spatial));
+
+        Assert.Equal(
+            "Location 'square' reuses exit name 'north gate' during world load; duplicate detected at passage 'square-ridge-trail'.",
+            exception.Message
+        );
     }
 
     [Fact]

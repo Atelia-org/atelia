@@ -1,4 +1,5 @@
 using Atelia.StateJournal;
+using Atelia.TextAdv2.Spatial;
 
 namespace Atelia.TextAdv2.WorldTruth;
 
@@ -159,8 +160,9 @@ internal sealed class WorldState {
 
         EnsureLocationExists(locationAId);
         EnsureLocationExists(locationBId);
-        EnsureExitNameAvailable(locationAId, exitNameFromA);
-        EnsureExitNameAvailable(locationBId, exitNameFromB);
+        var spatial = WorldSpatialSnapshotBuilder.Build(this);
+        WorldSpatialValidation.EnsureExitNameAvailable(spatial, locationAId, exitNameFromA);
+        WorldSpatialValidation.EnsureExitNameAvailable(spatial, locationBId, exitNameFromB);
 
         var passage = Passage.Create(
             Revision,
@@ -373,7 +375,6 @@ internal sealed class WorldState {
             }
         }
 
-        var exitNamesByLocation = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var passageId in PassagesLedger.Keys) {
             var passage = new Passage(passageId, PassagesLedger.GetOrThrow<DurableDict<string>>(passageId)!);
 
@@ -387,9 +388,9 @@ internal sealed class WorldState {
             EnsureReferencedLocationExists(locationIds, passage.Id, passage.EndpointB.LocationId, "endpointB");
             EnsureValidExitNameDuringWorldLoad(passage.Id, passage.EndpointA.LocationId, passage.EndpointA.ExitName);
             EnsureValidExitNameDuringWorldLoad(passage.Id, passage.EndpointB.LocationId, passage.EndpointB.ExitName);
-            EnsureExitNameUnique(exitNamesByLocation, passage.Id, passage.EndpointA.LocationId, passage.EndpointA.ExitName);
-            EnsureExitNameUnique(exitNamesByLocation, passage.Id, passage.EndpointB.LocationId, passage.EndpointB.ExitName);
         }
+
+        WorldSpatialValidation.EnsureUniqueExitNames(WorldSpatialSnapshotBuilder.Build(this));
     }
 
     private long ReadCurrentLogicalTick() {
@@ -458,19 +459,6 @@ internal sealed class WorldState {
         }
     }
 
-    private void EnsureExitNameAvailable(string locationId, string exitName) {
-        ValidateExitName(exitName, nameof(exitName));
-
-        foreach (var passage in EnumerateWritablePassagesTouching(locationId)) {
-            var existingExitName = passage.GetEndpointFor(locationId).ExitName;
-            if (string.Equals(existingExitName, exitName, StringComparison.Ordinal)) {
-                throw new InvalidOperationException(
-                    $"Location '{locationId}' already uses exit name '{exitName}' for passage '{passage.Id}'."
-                );
-            }
-        }
-    }
-
     private static void EnsureReferencedLocationExists(
         HashSet<string> locationIds,
         string passageId,
@@ -489,24 +477,6 @@ internal sealed class WorldState {
         if (error is not null) {
             throw new InvalidOperationException(
                 $"Passage '{passageId}' uses invalid exit name '{exitName}' at location '{locationId}' during world load: {error}"
-            );
-        }
-    }
-
-    private static void EnsureExitNameUnique(
-        Dictionary<string, HashSet<string>> exitNamesByLocation,
-        string passageId,
-        string locationId,
-        string exitName
-    ) {
-        if (!exitNamesByLocation.TryGetValue(locationId, out var exitNames)) {
-            exitNames = new HashSet<string>(StringComparer.Ordinal);
-            exitNamesByLocation.Add(locationId, exitNames);
-        }
-
-        if (!exitNames.Add(exitName)) {
-            throw new InvalidOperationException(
-                $"Location '{locationId}' reuses exit name '{exitName}' during world load; duplicate detected at passage '{passageId}'."
             );
         }
     }
