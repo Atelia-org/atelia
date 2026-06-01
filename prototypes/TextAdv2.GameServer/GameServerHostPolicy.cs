@@ -13,25 +13,25 @@ internal sealed class GameServerHostPolicy {
         string configuredRepoDir,
         string resolvedRepoDir,
         string bootstrapMode,
-        string sessionOpenMode,
+        string runtimeOpenMode,
         bool sampleWorldResetEnabled,
-        Func<SerialWorldRuntime> openSession,
-        Func<SerialWorldRuntime>? resetSession,
+        Func<SerialWorldRuntime> openRuntime,
+        Func<SerialWorldRuntime>? resetRuntime,
         string[] notes
     ) {
         ConfiguredRepoDir = configuredRepoDir;
         ResolvedRepoDir = resolvedRepoDir;
         BootstrapMode = bootstrapMode;
-        SessionOpenMode = sessionOpenMode;
+        RuntimeOpenMode = runtimeOpenMode;
         SampleWorldResetEnabled = sampleWorldResetEnabled;
-        _openSession = openSession;
-        _resetSession = resetSession;
+        _openRuntime = openRuntime;
+        _resetRuntime = resetRuntime;
         Notes = notes;
         PlannedEndpoints = BuildPlannedEndpoints(sampleWorldResetEnabled);
     }
 
-    private readonly Func<SerialWorldRuntime> _openSession;
-    private readonly Func<SerialWorldRuntime>? _resetSession;
+    private readonly Func<SerialWorldRuntime> _openRuntime;
+    private readonly Func<SerialWorldRuntime>? _resetRuntime;
 
     public string ConfiguredRepoDir { get; }
 
@@ -39,7 +39,7 @@ internal sealed class GameServerHostPolicy {
 
     public string BootstrapMode { get; }
 
-    public string SessionOpenMode { get; }
+    public string RuntimeOpenMode { get; }
 
     public bool SampleWorldResetEnabled { get; }
 
@@ -65,12 +65,12 @@ internal sealed class GameServerHostPolicy {
                 configuredRepoDir,
                 resolvedRepoDir,
                 bootstrapMode: SampleWorldDevBootstrapMode,
-                sessionOpenMode: "open-or-create-sample-world",
+                runtimeOpenMode: "open-or-create-sample-world",
                 sampleWorldResetEnabled: true,
-                openSession: () => SampleWorldBootstrap.OpenOrCreateSession(resolvedRepoDir),
-                resetSession: () => SampleWorldBootstrap.ResetSession(resolvedRepoDir),
+                openRuntime: () => SampleWorldBootstrap.OpenOrCreateSession(resolvedRepoDir),
+                resetRuntime: () => SampleWorldBootstrap.ResetSession(resolvedRepoDir),
                 notes: [
-                    "startup 通过 SampleWorldBootstrap.OpenOrCreateSession 打开 session。",
+                    "startup 通过 SampleWorldBootstrap.OpenOrCreateSession 打开 runtime。",
                     "POST /admin/reset-sample-world 只在 sample-world-dev host policy 下映射。"
                 ]
             )
@@ -79,10 +79,10 @@ internal sealed class GameServerHostPolicy {
                 configuredRepoDir,
                 resolvedRepoDir,
                 bootstrapMode: OpenExistingOnlyBootstrapMode,
-                sessionOpenMode: "open-existing-only",
+                runtimeOpenMode: "open-existing-only",
                 sampleWorldResetEnabled: false,
-                openSession: () => SerialWorldRuntime.OpenExisting(resolvedRepoDir),
-                resetSession: null,
+                openRuntime: () => SerialWorldRuntime.OpenExisting(resolvedRepoDir),
+                resetRuntime: null,
                 notes: [
                     "startup 只允许打开既有 repo，不会隐式创建 sample world。",
                     "POST /admin/reset-sample-world 在 open-existing-only host policy 下不会映射。"
@@ -94,19 +94,19 @@ internal sealed class GameServerHostPolicy {
         };
     }
 
-    public SerialWorldRuntime OpenSession()
-        => OpenWithRepositoryLockRetry(_openSession);
+    public SerialWorldRuntime OpenRuntime()
+        => OpenWithRepositoryLockRetry(_openRuntime);
 
-    public SerialWorldRuntime ResetSession() {
-        if (_resetSession is null) { throw new InvalidOperationException("Sample-world reset is not enabled for the current GameServer host policy."); }
+    public SerialWorldRuntime ResetRuntime() {
+        if (_resetRuntime is null) { throw new InvalidOperationException("Sample-world reset is not enabled for the current GameServer host policy."); }
 
-        return _resetSession();
+        return _resetRuntime();
     }
 
-    private static SerialWorldRuntime OpenWithRepositoryLockRetry(Func<SerialWorldRuntime> openSession) {
+    private static SerialWorldRuntime OpenWithRepositoryLockRetry(Func<SerialWorldRuntime> openRuntime) {
         for (int attempt = 0; ; attempt++) {
             try {
-                return openSession();
+                return openRuntime();
             }
             catch (InvalidOperationException ex) when (attempt < MaxOpenRetryCount && IsRepositoryLockFailure(ex)) {
                 // Local host restarts can briefly overlap while the previous instance is still releasing the repo lock.
@@ -119,7 +119,7 @@ internal sealed class GameServerHostPolicy {
         var endpoints = new List<string> {
             "GET /",
             "GET /healthz",
-            "GET /admin/session-status",
+            "GET /admin/runtime-status",
             "GET /admin/world",
             "GET /admin/time",
             "POST /admin/locations",

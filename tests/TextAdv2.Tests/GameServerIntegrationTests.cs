@@ -41,7 +41,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task MoveTraceAndReset_RoundTripsThroughSessionBackedEndpointsAsync() {
+    public async Task MoveTraceAndReset_RoundTripsThroughRuntimeBackedEndpointsAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -100,7 +100,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, resetResponse.StatusCode);
             Assert.Equal("host-running", resetJson.RootElement.GetProperty("mode").GetString());
             Assert.Equal("alive", resetJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("ready", resetJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.Equal("ready", resetJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
 
             using var reopenedObserve = await client.GetAsync("/actors/scout/observation");
             var reopenedObservation = await ReadJsonAsync<ActorLocationObservation>(reopenedObserve);
@@ -327,7 +327,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task SessionStatus_ReportsResolvedRepoAndDevHostPolicyAsync() {
+    public async Task RuntimeStatus_ReportsResolvedRepoAndDevHostPolicyAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -340,9 +340,9 @@ public class GameServerIntegrationTests {
 
             Assert.Equal(HttpStatusCode.OK, rootResponse.StatusCode);
             Assert.Equal("alive", rootJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("ready", rootJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.Equal("ready", rootJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
 
-            using var response = await client.GetAsync("/admin/session-status");
+            using var response = await client.GetAsync("/admin/runtime-status");
             string jsonText = await response.Content.ReadAsStringAsync();
             var json = JsonDocument.Parse(jsonText);
 
@@ -353,13 +353,13 @@ public class GameServerIntegrationTests {
             Assert.Equal(repoDir, json.RootElement.GetProperty("configuration").GetProperty("resolvedRepoDir").GetString());
             Assert.Equal("sample-world-dev", json.RootElement.GetProperty("configuration").GetProperty("bootstrapMode").GetString());
             Assert.Equal("sample-world-dev", json.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
-            Assert.Equal("open-or-create-sample-world", json.RootElement.GetProperty("hostPolicy").GetProperty("sessionOpenMode").GetString());
+            Assert.Equal("open-or-create-sample-world", json.RootElement.GetProperty("hostPolicy").GetProperty("runtimeOpenMode").GetString());
             Assert.True(json.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
             Assert.Equal(
                 [
                     "GET /",
                     "GET /healthz",
-                    "GET /admin/session-status",
+                    "GET /admin/runtime-status",
                     "GET /admin/world",
                     "GET /admin/time",
                     "POST /admin/locations",
@@ -383,8 +383,8 @@ public class GameServerIntegrationTests {
                 ],
                 ReadPlannedEndpoints(json.RootElement)
             );
-            Assert.Equal("ready", json.RootElement.GetProperty("session").GetProperty("readiness").GetString());
-            Assert.Equal("Atelia.TextAdv2", json.RootElement.GetProperty("session").GetProperty("engineAssemblyName").GetString());
+            Assert.Equal("ready", json.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
+            Assert.Equal("Atelia.TextAdv2", json.RootElement.GetProperty("runtime").GetProperty("engineAssemblyName").GetString());
 
             using var healthzResponse = await client.GetAsync("/healthz");
             string healthzText = await healthzResponse.Content.ReadAsStringAsync();
@@ -393,7 +393,7 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, healthzResponse.StatusCode);
             Assert.Equal("ok", healthzJson.RootElement.GetProperty("status").GetString());
             Assert.Equal("alive", healthzJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("ready", healthzJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.Equal("ready", healthzJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -420,22 +420,22 @@ public class GameServerIntegrationTests {
             using var resetResponse = await client.PostAsync("/admin/reset-sample-world", content: null);
             Assert.Equal(HttpStatusCode.NotFound, resetResponse.StatusCode);
 
-            using var statusResponse = await client.GetAsync("/admin/session-status");
+            using var statusResponse = await client.GetAsync("/admin/runtime-status");
             string statusText = await statusResponse.Content.ReadAsStringAsync();
             var statusJson = JsonDocument.Parse(statusText);
 
             Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
             Assert.Equal("alive", statusJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("ready", statusJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.Equal("ready", statusJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
             Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("configuration").GetProperty("bootstrapMode").GetString());
             Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("bootstrapMode").GetString());
-            Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sessionOpenMode").GetString());
+            Assert.Equal("open-existing-only", statusJson.RootElement.GetProperty("hostPolicy").GetProperty("runtimeOpenMode").GetString());
             Assert.False(statusJson.RootElement.GetProperty("hostPolicy").GetProperty("sampleWorldResetEnabled").GetBoolean());
             Assert.Equal(
                 [
                     "GET /",
                     "GET /healthz",
-                    "GET /admin/session-status",
+                    "GET /admin/runtime-status",
                     "GET /admin/world",
                     "GET /admin/time",
                     "POST /admin/locations",
@@ -773,7 +773,7 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
-    public async Task OpenExistingOnlyMode_SessionEndpointsFailWhenRepoDoesNotExistAsync() {
+    public async Task OpenExistingOnlyMode_RuntimeEndpointsFailWhenRepoDoesNotExistAsync() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -785,16 +785,16 @@ public class GameServerIntegrationTests {
             var rootJson = JsonDocument.Parse(rootText);
             Assert.Equal(HttpStatusCode.OK, rootResponse.StatusCode);
             Assert.Equal("alive", rootJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("open-failed", rootJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.Equal("open-failed", rootJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
 
-            using var statusResponse = await client.GetAsync("/admin/session-status");
+            using var statusResponse = await client.GetAsync("/admin/runtime-status");
             string statusText = await statusResponse.Content.ReadAsStringAsync();
             var statusJson = JsonDocument.Parse(statusText);
             Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
             Assert.Equal("host-running", statusJson.RootElement.GetProperty("mode").GetString());
             Assert.Equal("alive", statusJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("open-failed", statusJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
-            string? statusError = statusJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
+            Assert.Equal("open-failed", statusJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
+            string? statusError = statusJson.RootElement.GetProperty("runtime").GetProperty("error").GetProperty("message").GetString();
             Assert.Contains("Repository", statusError, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(repoDir, statusError, StringComparison.Ordinal);
 
@@ -805,8 +805,8 @@ public class GameServerIntegrationTests {
             Assert.Equal("degraded", healthzJson.RootElement.GetProperty("status").GetString());
             Assert.Equal("host-running", healthzJson.RootElement.GetProperty("mode").GetString());
             Assert.Equal("alive", healthzJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("open-failed", healthzJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
-            string? healthzError = healthzJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
+            Assert.Equal("open-failed", healthzJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
+            string? healthzError = healthzJson.RootElement.GetProperty("runtime").GetProperty("error").GetProperty("message").GetString();
             Assert.Contains("Repository", healthzError, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(repoDir, healthzError, StringComparison.Ordinal);
 
@@ -819,8 +819,8 @@ public class GameServerIntegrationTests {
             Assert.Equal("TextAdv2.GameServer", worldJson.RootElement.GetProperty("service").GetString());
             Assert.Equal("host-running", worldJson.RootElement.GetProperty("mode").GetString());
             Assert.Equal("alive", worldJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("open-failed", worldJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
-            string? worldError = worldJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
+            Assert.Equal("open-failed", worldJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
+            string? worldError = worldJson.RootElement.GetProperty("runtime").GetProperty("error").GetProperty("message").GetString();
             Assert.Contains("Repository", worldError, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(repoDir, worldError, StringComparison.Ordinal);
             AssertAvailabilityEnvelopeMatches(healthzJson.RootElement, worldJson.RootElement);
@@ -834,8 +834,8 @@ public class GameServerIntegrationTests {
             Assert.Equal("TextAdv2.GameServer", observeJson.RootElement.GetProperty("service").GetString());
             Assert.Equal("host-running", observeJson.RootElement.GetProperty("mode").GetString());
             Assert.Equal("alive", observeJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("open-failed", observeJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
-            string? observeError = observeJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
+            Assert.Equal("open-failed", observeJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
+            string? observeError = observeJson.RootElement.GetProperty("runtime").GetProperty("error").GetProperty("message").GetString();
             Assert.Contains("Repository", observeError, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(repoDir, observeError, StringComparison.Ordinal);
             AssertAvailabilityEnvelopeMatches(healthzJson.RootElement, observeJson.RootElement);
@@ -871,8 +871,8 @@ public class GameServerIntegrationTests {
             var rootJson = JsonDocument.Parse(rootText);
             Assert.Equal(HttpStatusCode.OK, rootResponse.StatusCode);
             Assert.Equal("alive", rootJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("open-failed", rootJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
-            string? rootError = rootJson.RootElement.GetProperty("session").GetProperty("error").GetProperty("message").GetString();
+            Assert.Equal("open-failed", rootJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
+            string? rootError = rootJson.RootElement.GetProperty("runtime").GetProperty("error").GetProperty("message").GetString();
             Assert.Contains("StateJournal repository", rootError, StringComparison.Ordinal);
             Assert.Contains(repoDir, rootError, StringComparison.Ordinal);
 
@@ -881,14 +881,14 @@ public class GameServerIntegrationTests {
             var healthzJson = JsonDocument.Parse(healthzText);
             Assert.Equal(HttpStatusCode.ServiceUnavailable, healthzResponse.StatusCode);
             Assert.Equal("degraded", healthzJson.RootElement.GetProperty("status").GetString());
-            Assert.Equal("open-failed", healthzJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.Equal("open-failed", healthzJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
 
             using var resetResponse = await client.PostAsync("/admin/reset-sample-world", content: null);
             string resetText = await resetResponse.Content.ReadAsStringAsync();
             var resetJson = JsonDocument.Parse(resetText);
             Assert.Equal(HttpStatusCode.OK, resetResponse.StatusCode);
             Assert.Equal("alive", resetJson.RootElement.GetProperty("host").GetProperty("readiness").GetString());
-            Assert.Equal("ready", resetJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.Equal("ready", resetJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
             Assert.False(File.Exists(legacySidecarPath));
 
             using var healthzAfterResetResponse = await client.GetAsync("/healthz");
@@ -896,7 +896,7 @@ public class GameServerIntegrationTests {
             var healthzAfterResetJson = JsonDocument.Parse(healthzAfterResetText);
             Assert.Equal(HttpStatusCode.OK, healthzAfterResetResponse.StatusCode);
             Assert.Equal("ok", healthzAfterResetJson.RootElement.GetProperty("status").GetString());
-            Assert.Equal("ready", healthzAfterResetJson.RootElement.GetProperty("session").GetProperty("readiness").GetString());
+            Assert.Equal("ready", healthzAfterResetJson.RootElement.GetProperty("runtime").GetProperty("readiness").GetString());
 
             using var observeResponse = await client.GetAsync("/actors/scout/observation");
             var observedActor = await ReadJsonAsync<ActorLocationObservation>(observeResponse);
@@ -1358,8 +1358,8 @@ public class GameServerIntegrationTests {
             actual.GetProperty("host").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray()
         );
         Assert.Equal(
-            expected.GetProperty("session").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray(),
-            actual.GetProperty("session").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray()
+            expected.GetProperty("runtime").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray(),
+            actual.GetProperty("runtime").EnumerateObject().Select(static property => property.Name).OrderBy(static x => x, StringComparer.Ordinal).ToArray()
         );
     }
 

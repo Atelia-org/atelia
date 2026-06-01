@@ -94,7 +94,7 @@
 - `E2eCli help`
 - `E2eCli status`
 - `GameServer /healthz`
-- `GameServer /admin/session-status`
+- `GameServer /admin/runtime-status`
 - 文本输出如 `GET /admin/world`、`GET /actors/{actorId}/route-trace`
 
 其中 `route-acceleration` 相关 JSON 当前尤其不应默认视为 canonical contract。

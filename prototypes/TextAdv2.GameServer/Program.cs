@@ -14,27 +14,27 @@ string bootstrapMode = builder.Configuration["TextAdv2:BootstrapMode"] ?? GameSe
 var hostPolicy = GameServerHostPolicy.Create(configuredRepoDir, resolvedRepoDir, bootstrapMode);
 
 builder.Services.AddSingleton(hostPolicy);
-builder.Services.AddSingleton<SessionService>(_ => new SessionService(hostPolicy.OpenSession));
+builder.Services.AddSingleton<RuntimeService>(_ => new RuntimeService(hostPolicy.OpenRuntime));
 
 var app = builder.Build();
 
-app.MapGet("/", (SessionService session) => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode, session)));
-app.MapGet("/healthz", (SessionService session) => BuildHealthStatus(session));
-app.MapGet("/admin/session-status", (SessionService session) => Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode, session)));
-app.MapGet("/admin/world", (SessionService session) => ExecuteText(session, DevTextRenderer.RenderWorld));
-app.MapGet("/admin/time", (SessionService session) => ExecuteJson(session, static x => x.ObserveTime()));
+app.MapGet("/", (RuntimeService runtime) => Results.Ok(BuildRuntimeStatus(hostPolicy, bootstrapMode, runtime)));
+app.MapGet("/healthz", (RuntimeService runtime) => BuildHealthStatus(runtime));
+app.MapGet("/admin/runtime-status", (RuntimeService runtime) => Results.Ok(BuildRuntimeStatus(hostPolicy, bootstrapMode, runtime)));
+app.MapGet("/admin/world", (RuntimeService runtime) => ExecuteText(runtime, DevTextRenderer.RenderWorld));
+app.MapGet("/admin/time", (RuntimeService runtime) => ExecuteJson(runtime, static x => x.ObserveTime()));
 app.MapPost("/admin/locations",
-    (CreateLocationRequest request, SessionService session)
-    => ExecuteJson(session, x => x.CreateLocation(request.Id, request.Name, request.Description))
+    (CreateLocationRequest request, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.CreateLocation(request.Id, request.Name, request.Description))
 );
 app.MapPost("/admin/actors",
-    (CreateActorRequest request, SessionService session)
-    => ExecuteJson(session, x => x.CreateActor(request.Id, request.Name, request.CurrentLocationId))
+    (CreateActorRequest request, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.CreateActor(request.Id, request.Name, request.CurrentLocationId))
 );
 app.MapPost("/admin/passages",
-    (CreatePassageRequest request, SessionService session)
+    (CreatePassageRequest request, RuntimeService runtime)
     => ExecuteJson(
-        session,
+        runtime,
         x => x.CreatePassage(
             request.Id,
             request.LocationAId,
@@ -47,83 +47,83 @@ app.MapPost("/admin/passages",
     )
 );
 app.MapPost("/admin/advance-time/{ticks}",
-    (string ticks, SessionService session)
-    => ExecuteJson(session, x => x.AdvanceTime(ParseNonNegativeTickDelta(ticks)))
+    (string ticks, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.AdvanceTime(ParseNonNegativeTickDelta(ticks)))
 );
 app.MapGet("/admin/route-acceleration",
-    (SessionService session)
-    => ExecuteJson(session, static x => x.ObserveRouteAcceleration())
+    (RuntimeService runtime)
+    => ExecuteJson(runtime, static x => x.ObserveRouteAcceleration())
 );
 app.MapPost("/admin/route-acceleration/rebuild",
-    (string? landmarks, SessionService session)
-    => ExecuteJson(session, x => SampleWorldBootstrap.RebuildRouteAcceleration(x, landmarks))
+    (string? landmarks, RuntimeService runtime)
+    => ExecuteJson(runtime, x => SampleWorldBootstrap.RebuildRouteAcceleration(x, landmarks))
 );
 
 if (hostPolicy.SampleWorldResetEnabled) {
     app.MapPost("/admin/reset-sample-world",
-        (SessionService session) => {
-            session.ReplaceSession(hostPolicy.ResetSession);
-            return Results.Ok(BuildSessionStatus(hostPolicy, bootstrapMode, session));
+        (RuntimeService runtime) => {
+            runtime.ReplaceRuntime(hostPolicy.ResetRuntime);
+            return Results.Ok(BuildRuntimeStatus(hostPolicy, bootstrapMode, runtime));
         }
     );
 }
 
 app.MapGet("/admin/locations/{locationId}",
-    (string locationId, SessionService session)
-    => ExecuteText(session, x => DevTextRenderer.RenderLocation(x, locationId))
+    (string locationId, RuntimeService runtime)
+    => ExecuteText(runtime, x => DevTextRenderer.RenderLocation(x, locationId))
 );
 app.MapGet("/admin/locations/{locationId}/observation",
-    (string locationId, SessionService session)
-    => ExecuteJson(session, x => x.ObserveLocation(locationId))
+    (string locationId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.ObserveLocation(locationId))
 );
 app.MapGet("/admin/locations/{locationId}/navigation",
-    (string locationId, SessionService session)
-    => ExecuteJson(session, x => x.ObserveNavigation(locationId))
+    (string locationId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.ObserveNavigation(locationId))
 );
 
 app.MapGet("/actors/{actorId}/observation",
-    (string actorId, SessionService session)
-    => ExecuteJson(session, x => x.ObserveActor(actorId))
+    (string actorId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.ObserveActor(actorId))
 );
 app.MapGet("/actors/{actorId}/context",
-    (string actorId, SessionService session)
-    => ExecuteJson(session, x => x.ObserveActorContext(actorId))
+    (string actorId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.ObserveActorContext(actorId))
 );
 app.MapGet("/actors/{actorId}/navigation",
-    (string actorId, SessionService session)
-    => ExecuteJson(session, x => x.ObserveActorNavigation(actorId))
+    (string actorId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.ObserveActorNavigation(actorId))
 );
 app.MapPost("/actors/{actorId}/moves/{passageId}",
-    (string actorId, string passageId, SessionService session)
-    => ExecuteJson(session, x => x.MoveActor(actorId, passageId))
+    (string actorId, string passageId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.MoveActor(actorId, passageId))
 );
 app.MapGet("/actors/{actorId}/route-trace",
-    (string actorId, SessionService session)
-    => ExecuteText(session, x => DevTextRenderer.RenderRouteTrace(x.TraceActorRoute(actorId)))
+    (string actorId, RuntimeService runtime)
+    => ExecuteText(runtime, x => DevTextRenderer.RenderRouteTrace(x.TraceActorRoute(actorId)))
 );
 app.MapGet("/actors/{actorId}/route-trace/json",
-    (string actorId, SessionService session)
-    => ExecuteJson(session, x => x.TraceActorRoute(actorId))
+    (string actorId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.TraceActorRoute(actorId))
 );
 app.MapGet("/actors/{actorId}/plan-route/{toLocationId}",
-    (string actorId, string toLocationId, SessionService session)
-    => ExecuteJson(session, x => x.PlanActorRoute(actorId, toLocationId))
+    (string actorId, string toLocationId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.PlanActorRoute(actorId, toLocationId))
 );
 
 app.MapGet("/admin/routes/{fromLocationId}/{toLocationId}",
-    (string fromLocationId, string toLocationId, SessionService session)
-    => ExecuteJson(session, x => x.PlanRoute(fromLocationId, toLocationId))
+    (string fromLocationId, string toLocationId, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.PlanRoute(fromLocationId, toLocationId))
 );
 
 app.Run();
 
-static IResult ExecuteText(SessionService session, Func<SerialWorldRuntime, string> operation) {
+static IResult ExecuteText(RuntimeService runtime, Func<SerialWorldRuntime, string> operation) {
     try {
-        var result = session.Invoke(operation);
+        var result = runtime.Invoke(operation);
         return Results.Content(result, HostContentTypes.PlainText);
     }
-    catch (SessionUnavailableException ex) {
-        return BuildSessionUnavailableResult(ex.Status);
+    catch (RuntimeUnavailableException ex) {
+        return BuildRuntimeUnavailableResult(ex.Status);
     }
     catch (ArgumentException ex) {
         return Results.BadRequest(new { error = ex.Message });
@@ -133,13 +133,13 @@ static IResult ExecuteText(SessionService session, Func<SerialWorldRuntime, stri
     }
 }
 
-static IResult ExecuteJson<T>(SessionService session, Func<SerialWorldRuntime, T> operation) {
+static IResult ExecuteJson<T>(RuntimeService runtime, Func<SerialWorldRuntime, T> operation) {
     try {
-        var result = session.Invoke(operation);
+        var result = runtime.Invoke(operation);
         return Results.Content(JsonSerializer.Serialize(result, TextAdv2HostJson.Options), HostContentTypes.Json);
     }
-    catch (SessionUnavailableException ex) {
-        return BuildSessionUnavailableResult(ex.Status);
+    catch (RuntimeUnavailableException ex) {
+        return BuildRuntimeUnavailableResult(ex.Status);
     }
     catch (ArgumentException ex) {
         return Results.BadRequest(new { error = ex.Message });
@@ -156,34 +156,34 @@ static long ParseNonNegativeTickDelta(string value) {
     return ticks;
 }
 
-static IResult BuildHealthStatus(SessionService sessionService) {
-    var session = sessionService.DescribeStatus();
-    var payload = BuildAvailabilityStatus(session);
+static IResult BuildHealthStatus(RuntimeService runtimeService) {
+    var runtime = runtimeService.DescribeStatus();
+    var payload = BuildAvailabilityStatus(runtime);
 
-    return session.Readiness == SessionReadiness.Ready
+    return runtime.Readiness == RuntimeReadiness.Ready
         ? Results.Ok(payload)
         : Results.Json(payload, statusCode: StatusCodes.Status503ServiceUnavailable);
 }
 
-static IResult BuildSessionUnavailableResult(SessionStatusSnapshot session) {
-    var payload = BuildAvailabilityStatus(session);
+static IResult BuildRuntimeUnavailableResult(RuntimeStatusSnapshot runtime) {
+    var payload = BuildAvailabilityStatus(runtime);
     return Results.Json(payload, statusCode: StatusCodes.Status503ServiceUnavailable);
 }
 
-static object BuildAvailabilityStatus(SessionStatusSnapshot session) {
+static object BuildAvailabilityStatus(RuntimeStatusSnapshot runtime) {
     return new {
-        status = session.Readiness == SessionReadiness.Ready ? "ok" : "degraded",
+        status = runtime.Readiness == RuntimeReadiness.Ready ? "ok" : "degraded",
         service = "TextAdv2.GameServer",
         mode = HostRunningMode,
         host = new {
             readiness = HostAliveReadiness,
         },
-        session,
+        runtime,
     };
 }
 
-static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstrapMode, SessionService sessionService) {
-    var session = sessionService.DescribeStatus();
+static object BuildRuntimeStatus(GameServerHostPolicy hostPolicy, string bootstrapMode, RuntimeService runtimeService) {
+    var runtime = runtimeService.DescribeStatus();
     return new {
         service = "TextAdv2.GameServer",
         mode = HostRunningMode,
@@ -197,7 +197,7 @@ static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstr
         },
         hostPolicy = new {
             bootstrapMode = hostPolicy.BootstrapMode,
-            sessionOpenMode = hostPolicy.SessionOpenMode,
+            runtimeOpenMode = hostPolicy.RuntimeOpenMode,
             sampleWorldResetEnabled = hostPolicy.SampleWorldResetEnabled,
             repositoryLockRetry = new {
                 enabled = hostPolicy.RepositoryLockRetryEnabled,
@@ -205,7 +205,7 @@ static object BuildSessionStatus(GameServerHostPolicy hostPolicy, string bootstr
             },
             notes = hostPolicy.Notes,
         },
-        session,
+        runtime,
         plannedEndpoints = hostPolicy.PlannedEndpoints,
     };
 }
