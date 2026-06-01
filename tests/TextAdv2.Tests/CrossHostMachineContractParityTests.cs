@@ -714,6 +714,11 @@ public sealed class CrossHostMachineContractParityTests {
 
     private static void AssertActorContextJsonUsesCanonicalActionSurface(JsonElement root, string source) {
         JsonElement currentLocation = root.GetProperty("currentLocation");
+        string[] currentLocationPropertyNames = currentLocation
+            .EnumerateObject()
+            .Select(static property => property.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
 
         Assert.True(currentLocation.TryGetProperty("locationId", out _), $"{source}: currentLocation.locationId should be present.");
         Assert.True(currentLocation.TryGetProperty("locationName", out _), $"{source}: currentLocation.locationName should be present.");
@@ -722,6 +727,10 @@ public sealed class CrossHostMachineContractParityTests {
         Assert.False(
             currentLocation.TryGetProperty("exits", out _),
             $"{source}: currentLocation.exits should be absent because availableMoves is the canonical action surface."
+        );
+        Assert.Equal(
+            ["locationDescription", "locationId", "locationName", "presentActors"],
+            currentLocationPropertyNames
         );
         Assert.True(root.TryGetProperty("availableMoves", out _), $"{source}: availableMoves should be present.");
     }
