@@ -77,7 +77,7 @@
 
 - 不再存在一个明显值得立即继续推进的结构性大包
 - 当前最合理的默认动作是停在这里
-- 剩余问题主要是低优先级的 host wording debt、contract hardening、文档清理
+- 剩余问题主要只剩低优先级的 contract hardening tail
 
 如果后续继续动，应该按“一个低噪音小包 + 明确完成定义”的方式推进，而不是重开一轮大重构。
 
@@ -138,15 +138,6 @@
 
 这类工作有价值，但已经属于 test hardening backlog，不再是主线结构风险。
 
-### 3.2 active doc / comment hygiene
-
-仍可能存在少量旧表述，例如：
-
-- 个别活跃文档仍带有旧阶段标签或旧层名
-- 个别活跃 xml doc / 注释仍会把读者拉回旧主对象或旧层名语境
-
-这类问题不会影响运行，但会增加后续阅读成本。
-
 ## 4. 修订后的设计原则
 
 ### 4.1 默认停止继续结构重构
@@ -155,12 +146,7 @@
 
 ### 4.2 若继续，优先做低 blast radius 的测试硬化
 
-在今天的代码状态下，最容易产生真实收益的后续动作，通常是：
-
-- 补更显式的 contract guard
-- 清理少量活跃文档 / 注释噪音
-
-而不是再继续做结构迁移。
+在今天的代码状态下，最容易产生真实收益的后续动作，通常是补更显式的 contract guard，而不是再继续做结构迁移。
 
 ### 4.3 host wording cleanup 只视为 host-only 清理
 
@@ -196,10 +182,11 @@ TextAdv2 当前仍是：
 7. `observe actor` / `observe location` JSON shape guards
 8. route-plan owner / wording cleanup
 9. host wording cleanup（`RuntimeService` / `/admin/runtime-status` / host payload `runtime`）
+10. active doc / comment hygiene（活跃文档、xml doc 与注释中的旧阶段措辞清理）
 
-## 6. 可选后续工作包
+## 6. 可选小包与完成记录
 
-下面这些不是“下一步必须做”，而是只有在确有收益时才建议启动的低优先级包。
+下面这些都不是“下一步必须做”的主线事项；其中已完成的小包保留在此，主要用于记录边界，未完成的则只有在确有收益时才建议启动。
 
 ### 6.1 Optional P1：canonical contract hardening tail
 
