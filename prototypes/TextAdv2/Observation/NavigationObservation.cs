@@ -1,6 +1,6 @@
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Observation;
 
 /// <summary>
 /// 面向导航算法与路线调试的轻量只读视图。

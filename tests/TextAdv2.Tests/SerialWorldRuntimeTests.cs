@@ -1,5 +1,5 @@
 using Atelia.TextAdv2.Runtime;
-using Atelia.TextAdv2.ReadOnlyView;
+using Atelia.TextAdv2.Observation;
 using Atelia.TextAdv2.WorldTruth;
 using Atelia.TextAdv2.DevSupport;
 using Xunit;
@@ -8,7 +8,7 @@ namespace Atelia.TextAdv2.Tests;
 
 public class SerialWorldRuntimeTests {
     [Fact]
-    public void ObserveLocation_ReturnsReadOnlyViewObservation() {
+    public void ObserveLocation_ReturnsObservationShape() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.ObserveLocation(TestWorldBuilder.LocationIds.Square);
@@ -23,7 +23,7 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
-    public void ObserveActor_ReturnsReadOnlyViewObservation() {
+    public void ObserveActor_ReturnsObservationShape() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.ObserveActor(TestWorldBuilder.ActorIds.Scout);
@@ -61,7 +61,7 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
-    public void ObserveNavigation_ReturnsReadOnlyViewNavigationObservation() {
+    public void ObserveNavigation_ReturnsObservationNavigationShape() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.ObserveNavigation(TestWorldBuilder.LocationIds.Square);
@@ -127,7 +127,7 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
-    public void PlanRoute_ReturnsReadOnlyViewRoutePlan() {
+    public void PlanRoute_ReturnsObservationRoutePlan() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.PlanRoute(
@@ -329,7 +329,7 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
-    public void MoveActor_ReturnsTypedMoveResultWithReadOnlyViewLocationShape() {
+    public void MoveActor_ReturnsTypedMoveResultWithObservationLocationShape() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var move = session.MoveActor(

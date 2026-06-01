@@ -1,6 +1,6 @@
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Observation;
 
 /// <summary>
 /// 把 WorldTruth 投影为稳定的 LocationObservation / ActorLocationObservation。

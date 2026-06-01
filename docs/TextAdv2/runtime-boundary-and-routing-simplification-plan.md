@@ -1,0 +1,333 @@
+# TextAdv2 Runtime Boundary And Routing Simplification Plan
+
+> 状态：首轮收口已完成，本文改为“基于当前实际代码”的后续精修计划
+> 适用范围：`prototypes/TextAdv2/`、`prototypes/TextAdv2.GameServer/`、`prototypes/TextAdv2.E2eCli/`
+> 前提：当前没有旧数据、没有已投入使用的稳定 API、没有兼容性包袱
+
+## 0. 文档目的
+
+这份文档不再描述最初那一轮三段式重构的“理想状态”。
+
+截至当前代码，原计划里最关键的三件事已经基本落地：
+
+1. runtime boundary freeze 已完成
+2. routing ownership consolidation 已完成
+3. machine-facing surface 的第一轮 convergence 已完成
+
+因此，后续计划应该从“大方向提案”收缩成“剩余设计债务与下一拍可执行工作包”。
+
+本文的目标是：
+
+- 先如实记录当前实际状态
+- 明确哪些问题已经解决，不要反复重开
+- 把剩余重构压缩成更小、更稳、更容易验收的工作包
+
+## 1. 当前实际状态
+
+### 1.1 已完成的收口
+
+当前代码已经具备下面这些结构性事实：
+
+- `WorldSession` 已移除，公共运行入口是 `Runtime/SerialWorldRuntime.cs`
+- durable world 与 runtime state 已拆开：
+  - `Runtime/WorldHost.cs`
+  - `Runtime/WorldRuntime.cs`
+  - `Runtime/SerialWorldRuntime.cs`
+- `RuntimeEpochId` 已存在于 runtime 层，但目前只作为 internal seam，不进入 machine-facing DTO
+- routing 已迁出 `Observation/`，当前主实现位于 `Routing/`
+- `AccelerationIndex/` 已被吸收到 `Routing/Heuristics/`
+- directed travel cost 的权威入口已收口到 `WorldTruth/Passage.cs` 的 `GetTotalTravelCostFrom(locationId)`
+- `PassageView/*View` 已删除，projector / dump / authoring 现在直接消费 `Passage`
+- `ActorContextObservation` 已完成第一轮收口：
+  - `AvailableMoves` 是 canonical actor-facing action surface
+  - `CurrentLocation` 已收窄为不含 `Exits` 的 context payload
+- `docs/TextAdv2/canonical-machine-surface.md` 与 cross-host parity tests 已同步到上述 actor-context contract
+
+### 1.2 当前代码的实际分层
+
+按今天的代码看，TextAdv2 已经大致形成下面四层：
+
+- `WorldTruth`
+  - durable authoritative truth
+  - actor / location / passage / logical time 的最小业务规则
+- `Runtime`
+  - 进程内 movement trace
+  - route acceleration cache
+  - `SerialWorldRuntime` façade
+- `Routing`
+  - navigation graph
+  - planner
+  - heuristic
+  - graph signature
+- `Observation`
+  - observation DTO 与 projector
+  - 以及 route-plan contract 与相邻 helper 的残余 ownership 议题
+
+### 1.3 当前最重要的判断
+
+当前主线已经不需要再做“大拆分”。
+
+后续真正值得继续做的，不是重开前面三包，而是把剩下那几处“命名与职责不完全对齐”的尾巴收干净：
+
+- `Observation` 内仍有少量历史表述与职责描述需要继续收口
+- route-plan contract 与相邻 wire/text helper 的 owner 仍有继续收口空间
+- 宿主侧还残留少量 `session` 命名，但这已经是 host wording debt，不再是核心域边界问题
+
+## 2. 已解决的问题，不再重开
+
+除非后续发现明确 bug 或新需求直接冲突，下面这些设计结论视为已定：
+
+### 2.1 runtime boundary
+
+- `WorldHost` 代表 durable world handle
+- `WorldRuntime` 代表 process-local runtime state
+- `SerialWorldRuntime` 只是当前单世界串行模型下的 façade
+- 不再恢复 `WorldSession` 这类混合主对象
+
+### 2.2 routing ownership
+
+- `Routing/` 是 routing graph / planner / heuristic / signature 的主语义归属
+- `WorldTruth/Passage` 是 travel cost 权威源
+- 不再把 routing 逻辑迁回 `Observation`
+
+### 2.3 machine-facing action surface
+
+- `ActorContextObservation.AvailableMoves` 是唯一 canonical actor-facing action surface
+- `ActorContextObservation.CurrentLocation` 不再重复承担地点级 exits 列举
+- 需要完整地点出口观察时，走 `observe location`
+
+### 2.4 `PassageView`
+
+- `PassageView/*View` 已被证明没有必要
+- 后续不再恢复任何等价的“伪 view”包装层
+
+## 3. 当前仍存在的设计债务
+
+### 3.1 `Observation` 已成为现行命名，但少量描述仍落后于职责
+
+今天的 `Observation/` 已是现行 observation layer 命名，但少量文档描述还是历史遗留。
+
+更具体地说：
+
+- `LocationObservation*` 与 `NavigationObservation*` 现在确实是 observation
+- 但 `LocationRoutePlanObservation` 及其辅助类型仍留在这里
+- `Routing/LocationRoutePlanner.cs` 仍然反向依赖 observation contract
+
+这不算结构性错误，但会持续制造“planner contract 究竟归谁”的理解噪音。
+
+### 3.2 route-plan contract 与相邻 helper 的 ownership 还可继续收口
+
+当前 route-plan 相关代码已经拆成三块，但 owner 还不算完全收干净：
+
+- observation contract
+  - `Observation/LocationRoutePlan.cs`
+  - `LocationRoutePlanObservation`
+  - `LocationRoutePlanStepObservation`
+  - `LocationRoutePlanSearchStatsObservation`
+  - `RoutePlanStatus`
+- wire helper
+  - `DevSupport/RoutePlanStatusWireToken.cs`
+- dev-only text helper
+  - `DevSupport/LocationRoutePlanTextRenderer.cs`
+
+它们已经不再混在同一文件里，但 planner contract、wire adapter、dev text helper 仍跨相邻层分布。
+
+更合理的归属应是：
+
+- DTO / enum：observation contract
+- codec：host / wire adapter
+- text renderer：`DevSupport`
+
+### 3.3 host wording 仍有历史残留
+
+`TextAdv2.GameServer` 里仍存在：
+
+- `SessionService`
+- `/admin/session-status`
+
+但它们现在表达的已经不是旧式 `WorldSession` 领域对象，而是 host 自己的 runtime/open-status 概念。
+
+这类命名残留会造成理解摩擦，但它已经不再是高优先级设计风险。
+
+### 3.4 少量注释与文档仍指向旧结构
+
+例如：
+
+- `WorldTruth/WorldState.cs` 的顶部注释仍提到过时层名与旧 acceleration 表述
+- 一些计划文档与归档文档还会提到已删除的 `PassageView`
+
+这些问题不会影响运行，但会拖慢后续阅读与 review。
+
+## 4. 修订后的设计原则
+
+接下来的重构不再追求“把整个世界再重命名一遍”，而是遵守下面几条：
+
+### 4.1 不重开已经完成的大包
+
+只要当前边界已经清楚、测试也守住了，就不为了“更纯粹”再回头重做：
+
+- 不再重开 runtime boundary freeze
+- 不再重开 routing ownership consolidation
+- 不再重开 `PassageView` 删除
+- 不再重开 actor-context canonical action surface
+
+### 4.2 优先拆职责，再做机械改名
+
+如果某个目录名已经不理想，优先先把职责拆干净。
+
+例如：
+
+- 先继续收 route-plan contract 与周边 helper 的 owner
+- 命名已收口到 `Observation`，后续只继续处理剩余职责边界
+
+不要反过来先做大面积重命名，再在新名字下面继续保留旧混合职责。
+
+### 4.3 不把“命名整齐”误当成“边界更好”
+
+`SessionService` 等名字确实不完美，但它们的风险等级不同：
+
+- `Observation` 的 route-plan 混责还会影响设计理解，值得继续收
+- `SessionService` 更像宿主内部措辞问题，可低优先级处理
+
+后续计划要按真实收益排序，而不是按“看起来不顺眼”的程度排序。
+
+### 4.4 保持单世界串行模型优先
+
+TextAdv2 当前仍是：
+
+- 单世界
+- 单进程内串行逻辑模型
+- 面向小世界模拟的 Agent RL Gym
+
+因此后续设计仍应优先：
+
+- 边界清楚
+- DTO 稳定
+- 测试易守
+- 宿主行为可检视
+
+而不是为未来多世界/并发/分布式预埋复杂抽象。
+
+## 5. 修订后的后续实施计划
+
+后续建议不再按原来的“三期大包”推进，而是改成下面三个更小、更实际的工作包。
+
+## 5.1 Package A：route-plan helper ownership cleanup
+
+这是当前最值得优先做的下一拍。
+
+### 目标
+
+- 继续收口 route-plan contract 与周边 helper 的 owner
+- 减少 `Routing -> Observation` / `DevSupport -> Observation` 的语义噪音
+- 保持现有 JSON contract 不变
+
+### 建议做法
+
+1. 保留 route-plan DTO 作为 observation contract
+2. 明确 `DevSupport/RoutePlanStatusWireToken.cs` 是否继续作为现阶段 wire helper 落点
+3. 保持 `LocationRoutePlanTextRenderer` 留在 `DevSupport/`
+4. 让 `TextAdv2Json` 继续依赖独立 wire helper，而不是反向依赖 observation contract 文件
+5. 视收口结果决定是否还需要进一步调整 route-plan 文件拆分
+
+### 明确不做
+
+- 不改 route-plan JSON shape
+- 不改 `RoutePlanStatus` 的语义
+- 不额外扩大为 host wording cleanup 或 contract shape 变更
+
+### 影响文件
+
+- `prototypes/TextAdv2/Observation/LocationRoutePlan.cs`
+- `prototypes/TextAdv2/DevSupport/TextAdv2Json.cs`
+- `prototypes/TextAdv2/Routing/LocationRoutePlanner.cs`
+- 相关测试与 text rendering tests
+
+### 完成定义
+
+- route-plan contract、wire helper、text helper 的当前 owner 有清晰说明
+- `TextAdv2Json` 不反向依赖 observation contract 文件内部 helper
+- 现有 route-plan tests / host parity tests 保持通过
+
+## 5.2 Package B：observation seam naming cleanup
+
+这是 Package A 之后的自然下一步，但不建议先做。
+
+### 目标
+
+- 保持 `Observation` 作为现行 observation seam 命名
+- 同步修正文档、注释和测试描述
+
+### 建议做法
+
+1. 保持 `Observation/` 作为现行目录名
+2. 保持对应 namespace 为 `Atelia.TextAdv2.Observation`
+3. 同步 `Runtime`、`Routing`、tests 的 observation using
+4. 顺手修正 `WorldState.cs` 等注释中的旧层名
+
+### 为什么放在 Package A 之后
+
+因为即使改名已经完成，route-plan 的 helper ownership 若不继续拆开，旧混责仍会原样留在新名字下面。
+
+### 完成定义
+
+- 运行时代码中不再出现 `ReadOnlyView` 作为现行层名
+- `WorldState` 等核心注释不再提到 `AccelerationIndex`
+- JSON contract 保持不变
+
+## 5.3 Package C：host wording cleanup 与 contract hardening
+
+这是低优先级包，只有在前两包收完后才建议做。
+
+### 目标
+
+- 清理宿主层历史措辞
+- 补强 machine contract 的结构型测试
+
+### 建议做法
+
+1. 评估是否将 `TextAdv2.GameServer/SessionService.cs` 重命名为 `RuntimeService`
+2. 评估是否把 `/admin/session-status` 重命名为更贴近 host/runtime 的路径
+3. 为 `observe actor` / `observe location` 增加更显式的 JSON shape guard，而不只依赖 typed/runtime 测试
+
+### 明确不做
+
+- 不把 host wording cleanup 和 domain boundary 重新混为一谈
+- 不为了“去掉 session 这个词”而修改核心 runtime 结构
+
+## 6. 推荐顺序
+
+如果只开一个短周期，建议顺序如下：
+
+1. 先做 Package A：route-plan helper ownership cleanup
+2. 继续做 Package B 后续尾修：observation seam naming cleanup
+3. 最后按需要做 Package C：host wording cleanup 与 contract hardening
+
+这个顺序比旧版计划更简单，原因是：
+
+- 最大的结构性工作已经做完了
+- 现在最该避免的是“大范围机械改名先行”
+- 先拆 route-plan 的混合职责，后续 rename 才不会继续搬运旧问题
+
+## 7. 当前验收结论
+
+按当前实际代码，可以认为下面这些目标已经达成：
+
+- durable world 与 runtime state 已拆清
+- `Routing/` 已成为 routing 主语义归属
+- travel cost 已有单一权威入口
+- `PassageView/*View` 已删除
+- actor-facing canonical action surface 已明确
+- canonical machine surface 文档与 parity tests 已同步到 actor context 新 contract
+
+当前未完成、但值得继续收口的，主要只剩：
+
+- route-plan 的职责拆分
+- `Observation` 的 route-plan 混责与残余历史表述
+- 少量 host wording / test hardening / 注释文档清理
+
+## 8. 一句总纲
+
+TextAdv2 现在已经跨过“先把边界拆清”的阶段。
+
+后续最合理的路线，不是再做一轮大重构，而是把剩下几处命名与职责不一致的尾巴，用小包、低噪音、可验证的方式逐个收干净。

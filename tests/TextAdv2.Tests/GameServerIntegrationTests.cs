@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Atelia.TextAdv2.ReadOnlyView;
+using Atelia.TextAdv2.Observation;
 using Atelia.TextAdv2.WorldTruth;
 using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.Runtime;

@@ -6,7 +6,7 @@ namespace Atelia.TextAdv2.WorldTruth;
 /// WorldState 是世界真相层的 graph root。
 ///
 /// 它只保存唯一真相：地点表、连接表，以及它们之间通过稳定 ID 建立的关系。
-/// 邻接缓存、反向索引、玩家可见投影都不属于这里；它们以后应放进 AccelerationIndex 或 ReadOnlyView 层。
+/// 邻接缓存、反向索引、玩家可见投影都不属于这里；它们以后应放进 acceleration 或 observation 层。
 /// </summary>
 internal sealed class WorldState {
     internal const string KindKey = "kind";

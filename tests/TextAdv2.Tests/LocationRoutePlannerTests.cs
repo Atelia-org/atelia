@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Atelia.StateJournal;
 using Atelia.TextAdv2.DevSupport;
-using Atelia.TextAdv2.ReadOnlyView;
+using Atelia.TextAdv2.Observation;
 using Atelia.TextAdv2.Routing;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;

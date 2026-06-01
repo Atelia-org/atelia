@@ -1,6 +1,6 @@
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Observation;
 
 /// <summary>
 /// 面向调用方的地点观察结果。

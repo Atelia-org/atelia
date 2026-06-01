@@ -1,4 +1,4 @@
-using Atelia.TextAdv2.ReadOnlyView;
+using Atelia.TextAdv2.Observation;
 
 namespace Atelia.TextAdv2.Runtime;
 

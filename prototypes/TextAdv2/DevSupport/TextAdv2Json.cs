@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Atelia.TextAdv2.ReadOnlyView;
+using Atelia.TextAdv2.Observation;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.DevSupport;

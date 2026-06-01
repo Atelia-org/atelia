@@ -1,7 +1,7 @@
 using Atelia.TextAdv2.Routing;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Observation;
 
 /// <summary>
 /// 把更丰富的地点观察投影为更轻量的导航读模型。
