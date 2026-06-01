@@ -102,6 +102,34 @@ public class RouteAccelerationCacheTests {
     }
 
     [Fact]
+    public void Observe_AfterPassageTravelModeChange_ReportsStaleAndDropsPlanningOptions() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var routeAcceleration = new RouteAccelerationCache();
+
+            routeAcceleration.Rebuild(
+                world,
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
+            );
+
+            world.SetPassageTravelMode(TestWorldBuilder.PassageIds.SquareRidgeTrail, TravelMode.Water);
+            var observedAfterMutation = routeAcceleration.Observe(world);
+            var planningOptionsAfterMutation = routeAcceleration.GetPlanningOptions(world);
+
+            Assert.Equal("stale", observedAfterMutation.SnapshotStatus);
+            Assert.Equal("zero", observedAfterMutation.PlannerMode);
+            Assert.Null(planningOptionsAfterMutation);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void DisablePassageDirection_ChangesNavigationAndRoutePlanWhileMarkingAccelerationStale() {
         string repoDir = CreateTempRepoDir();
 

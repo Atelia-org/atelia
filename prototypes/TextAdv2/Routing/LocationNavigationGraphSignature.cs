@@ -24,6 +24,8 @@ internal static class LocationNavigationGraphSignature {
                     .Append('|')
                     .Append(edge.TargetLocationId)
                     .Append('|')
+                    .Append(edge.TravelMode.ToStorageValue())
+                    .Append('|')
                     .Append(edge.TravelCost)
                     .AppendLine();
             }
