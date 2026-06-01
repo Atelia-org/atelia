@@ -117,7 +117,7 @@
 
 ### 3.2 route-plan owner 需要补足现状说明
 
-当前 route-plan 相关代码已经拆成三块，结构本身就是现阶段的预期落点；剩下的问题主要是 owner 表述还不够明确：
+当前 route-plan 相关代码已经拆成几块职责清晰的现行落点；剩下的问题主要是 owner 表述还不够明确：
 
 - machine-facing observation contract
   - `Observation/LocationRoutePlan.cs`

@@ -3,8 +3,8 @@ using Atelia.TextAdv2.Observation;
 namespace Atelia.TextAdv2.DevSupport;
 
 /// <summary>
-/// `RoutePlanStatus` 的 wire token helper。
-/// machine-facing contract 仍定义在 observation layer；这里仅负责 host / JSON token 映射。
+/// `RoutePlanStatus` 的 canonical token helper。
+/// machine-facing contract 仍定义在 observation layer；这里负责 host JSON 与 dev text helper 复用的 token 映射。
 /// </summary>
 internal static class RoutePlanStatusWireToken {
     public static RoutePlanStatus Parse(string value)
