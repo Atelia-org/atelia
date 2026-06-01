@@ -81,19 +81,7 @@ public sealed class SerialWorldRuntime : IDisposable {
 
     public ActorContextObservation ObserveActorContext(string actorId) {
         EnsureNotDisposed();
-        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-
-        var actorObservation = ObserveActor(actorId);
-        var actorNavigation = ObserveActorNavigation(actorId);
-        var time = ObserveTime();
-
-        return new ActorContextObservation(
-            actorObservation.ActorId,
-            actorObservation.ActorName,
-            time.CurrentTick,
-            ProjectActorContextLocation(actorObservation.Location),
-            actorNavigation.Navigation.Edges
-        );
+        return _host.ObserveActorContext(actorId);
     }
 
     public ActorAuthoringSnapshot CreateActor(string id, string name, string currentLocationId) {
@@ -218,17 +206,6 @@ public sealed class SerialWorldRuntime : IDisposable {
         string landmarkProfileName
     ) {
         return _runtime.RebuildRouteAcceleration(_host.DurableWorld, landmarkLocationIds, landmarkProfileName);
-    }
-
-    private static ActorContextLocationObservation ProjectActorContextLocation(LocationObservation location) {
-        ArgumentNullException.ThrowIfNull(location);
-
-        return new ActorContextLocationObservation(
-            location.LocationId,
-            location.LocationName,
-            location.LocationDescription,
-            location.PresentActors
-        );
     }
 
     private static string[] ParseExplicitLandmarkLocationIds(string value) {

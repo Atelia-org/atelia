@@ -1,5 +1,6 @@
 using Atelia.StateJournal;
 using Atelia.TextAdv2.Observation;
+using Atelia.TextAdv2.Runtime;
 using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
@@ -266,6 +267,44 @@ public class ActorAndObservationTests {
             Assert.Equal(["alpha", "beta"], ReadActorIds(goalObservation.PresentActors));
             Assert.Equal("goal", betaObservation.Location.LocationId);
             Assert.Equal(["alpha", "beta"], ReadActorIds(betaObservation.Location.PresentActors));
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void ObserveActorContext_WithSharedSpatialSnapshot_ProjectsFirstClassActorFacingContext() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+            _ = world.AdvanceLogicalTime(3);
+            var spatial = WorldSpatialSnapshotBuilder.Build(world);
+
+            var context = ActorContextObservationProjector.ObserveActorContext(
+                world,
+                spatial,
+                TestWorldBuilder.ActorIds.Scout
+            );
+
+            Assert.Equal(TestWorldBuilder.ActorIds.Scout, context.ActorId);
+            Assert.Equal("Scout", context.ActorName);
+            Assert.Equal(3, context.CurrentTick);
+            Assert.Equal(TestWorldBuilder.LocationIds.Square, context.CurrentLocation.LocationId);
+            Assert.Equal("Square", context.CurrentLocation.LocationName);
+            Assert.Equal(
+                ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
+                context.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
+            );
+            Assert.Equal(
+                ["scout"],
+                context.CurrentLocation.PresentActors.Select(static actor => actor.ActorId).ToArray()
+            );
+            Assert.Null(typeof(ActorContextLocationObservation).GetProperty(nameof(LocationObservation.Exits)));
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

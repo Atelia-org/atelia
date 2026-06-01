@@ -92,6 +92,12 @@ internal sealed class WorldHost : IDisposable {
         return LocationObservationProjector.ObserveActorLocation(_world, actorId);
     }
 
+    public ActorContextObservation ObserveActorContext(string actorId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        return ActorContextObservationProjector.ObserveActorContext(_world, actorId);
+    }
+
     public LocationNavigationObservation ObserveNavigation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);

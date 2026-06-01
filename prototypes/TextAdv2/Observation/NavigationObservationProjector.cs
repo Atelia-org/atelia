@@ -15,6 +15,32 @@ namespace Atelia.TextAdv2.Observation;
 /// ExitName / TravelMode / TotalTravelCost 直接从 spatial edge 取，只有 TargetLocationName 仍从 world 读取。
 /// </summary>
 internal static class NavigationObservationProjector {
+    internal static NavigationEdgeObservation[] ProjectNavigationEdges(
+        WorldState world,
+        LocationAdjacencySnapshot adjacency
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(adjacency);
+
+        return adjacency.Edges
+            .Where(edge => edge.IsEnabled)
+            .Select(edge => {
+                var targetLocation = world.GetLocation(edge.ToLocationId);
+                return new NavigationEdgeObservation(
+                    edge.PassageId,
+                    edge.ExitName,
+                    edge.ToLocationId,
+                    targetLocation.Name,
+                    edge.TravelMode,
+                    edge.TotalTravelCost
+                );
+            })
+            .OrderBy(edge => edge.ExitName, StringComparer.Ordinal)
+            .ThenBy(edge => edge.PassageId, StringComparer.Ordinal)
+            .ThenBy(edge => edge.TargetLocationId, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     /// <summary>
     /// 从 spatial seam 投影导航观察。
     /// 这是新的 canonical 路径。调用方若需对同一 world state 做多次导航查询，
@@ -31,23 +57,7 @@ internal static class NavigationObservationProjector {
 
         var location = world.GetLocation(locationId);
         var adjacency = spatial.Locations[locationId];
-        var edges = adjacency.Edges
-            .Where(e => e.IsEnabled)
-            .Select(e => {
-                var targetLocation = world.GetLocation(e.ToLocationId);
-                return new NavigationEdgeObservation(
-                    e.PassageId,
-                    e.ExitName,
-                    e.ToLocationId,
-                    targetLocation.Name,
-                    e.TravelMode,
-                    e.TotalTravelCost
-                );
-            })
-            .OrderBy(e => e.ExitName, StringComparer.Ordinal)
-            .ThenBy(e => e.PassageId, StringComparer.Ordinal)
-            .ThenBy(e => e.TargetLocationId, StringComparer.Ordinal)
-            .ToArray();
+        var edges = ProjectNavigationEdges(world, adjacency);
 
         return new LocationNavigationObservation(location.Id, location.Name, edges);
     }

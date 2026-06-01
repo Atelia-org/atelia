@@ -12,6 +12,16 @@ namespace Atelia.TextAdv2.Observation;
 /// - 不替调用方做文学化润色。
 /// </summary>
 internal static class LocationObservationProjector {
+    internal static ActorPresenceObservation[] ProjectPresentActors(WorldState world, string locationId) {
+        ArgumentNullException.ThrowIfNull(world);
+        WorldState.ValidateEntityId(locationId, nameof(locationId));
+
+        return world.EnumerateActorsAtLocation(locationId)
+            .OrderBy(actor => actor.Id, StringComparer.Ordinal)
+            .Select(actor => new ActorPresenceObservation(actor.Id, actor.Name))
+            .ToArray();
+    }
+
     /// <summary>
     /// 从调用方提供的 spatial snapshot 投影地点观察。
     /// 调用方应保证 snapshot 来自同一个、且未在此期间发生空间变更的 <see cref="WorldState"/>。
@@ -49,10 +59,7 @@ internal static class LocationObservationProjector {
             .OrderBy(exit => exit.ExitName, StringComparer.Ordinal)
             .ThenBy(exit => exit.PassageId, StringComparer.Ordinal)
             .ToArray();
-        var presentActors = world.EnumerateActorsAtLocation(locationId)
-            .OrderBy(actor => actor.Id, StringComparer.Ordinal)
-            .Select(actor => new ActorPresenceObservation(actor.Id, actor.Name))
-            .ToArray();
+        var presentActors = ProjectPresentActors(world, locationId);
 
         return new LocationObservation(location.Id, location.Name, location.Description, exits, presentActors);
     }
