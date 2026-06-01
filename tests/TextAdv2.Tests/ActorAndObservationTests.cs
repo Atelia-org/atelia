@@ -97,6 +97,50 @@ public class ActorAndObservationTests {
     }
 
     [Fact]
+    public void AuthoritativeTotalTravelCost_StaysInSyncAcrossReceiptObservationNavigationAndDump() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            TestWorldBuilder.PopulateSampleActors(world);
+
+            var passage = world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail);
+            int authoritativeTotal = passage.GetTotalTravelCostFrom(TestWorldBuilder.LocationIds.Square);
+
+            var receipt = world.MoveActorAlongPassage(
+                TestWorldBuilder.ActorIds.Scout,
+                TestWorldBuilder.PassageIds.SquareRidgeTrail
+            );
+            var observation = LocationObservationProjector.ObserveLocation(world, TestWorldBuilder.LocationIds.Square);
+            var navigation = NavigationObservationProjector.ObserveLocationNavigation(world, TestWorldBuilder.LocationIds.Square);
+            string dump = WorldDumpRenderer.RenderLocation(world, TestWorldBuilder.LocationIds.Square);
+
+            Assert.Equal(5, authoritativeTotal);
+            Assert.Equal(authoritativeTotal, receipt.TravelCost);
+            Assert.Contains(
+                observation.Exits,
+                exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareRidgeTrail
+                    && exit.TotalTravelCost == authoritativeTotal
+            );
+            Assert.Contains(
+                navigation.Edges,
+                edge => edge.PassageId == TestWorldBuilder.PassageIds.SquareRidgeTrail
+                    && edge.TravelCost == authoritativeTotal
+            );
+            Assert.Contains(
+                "passage=square-ridge-trail | mode=land | base=3 | modifier=2 | total=5 | enabled=true",
+                dump,
+                StringComparison.Ordinal
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void MoveActorAlongPassage_RejectsDisabledDirection() {
         string repoDir = CreateTempRepoDir();
 

@@ -37,8 +37,6 @@ internal sealed class PassageView {
     public PassageDirectionRuleView GetDirectionFrom(string locationId) => new(_passage.GetDirectionFrom(locationId));
 
     public string GetOtherLocationId(string locationId) => _passage.GetOtherLocationId(locationId);
-
-    internal Passage Model => _passage;
 }
 
 internal sealed class PassageEndpointView {
@@ -69,11 +67,6 @@ internal sealed class PassageDirectionRuleView {
     public int TravelCostModifier => _direction.TravelCostModifier;
 
     public string DirectionConditionNote => _direction.DirectionConditionNote;
-
-    public int TotalTravelCost(PassageView passage) {
-        ArgumentNullException.ThrowIfNull(passage);
-        return _direction.TotalTravelCost(passage.Model);
-    }
 }
 
 /// <summary>
@@ -211,7 +204,8 @@ internal sealed class Passage {
 
     public string GetOtherLocationId(string locationId) => GetOppositeEndpoint(locationId).LocationId;
 
-    public int GetTotalTravelCostFrom(string locationId) => GetTotalTravelCost(GetDirectionFrom(locationId));
+    public int GetTotalTravelCostFrom(string locationId)
+        => CalculateTotalTravelCost(BaseTravelCost, GetDirectionFrom(locationId).TravelCostModifier);
 
     internal static Passage Create(
         Revision revision,
@@ -260,25 +254,6 @@ internal sealed class Passage {
                 $"Negative travel cost is not allowed in WorldTruth: passage '{Id}' from '{fromLocationId}' to '{toLocationId}' has total cost {totalTravelCost} (base={baseTravelCost}, modifier={travelCostModifier})."
             );
         }
-    }
-
-    internal int GetTotalTravelCost(PassageDirectionRule direction) {
-        ArgumentNullException.ThrowIfNull(direction);
-        return CalculateTotalTravelCost(BaseTravelCost, GetTravelCostModifier(direction));
-    }
-
-    private int GetTravelCostModifier(PassageDirectionRule direction) {
-        var fromAToB = FromAToB;
-        if (ReferenceEquals(direction.Data, fromAToB.Data)) {
-            return fromAToB.TravelCostModifier;
-        }
-
-        var fromBToA = FromBToA;
-        if (ReferenceEquals(direction.Data, fromBToA.Data)) {
-            return fromBToA.TravelCostModifier;
-        }
-
-        throw new InvalidOperationException($"Direction rule does not belong to passage '{Id}'.");
     }
 
     private static int CalculateTotalTravelCost(int baseTravelCost, int travelCostModifier) => baseTravelCost + travelCostModifier;
@@ -362,11 +337,6 @@ internal sealed class PassageDirectionRule {
 
     public string DirectionConditionNote => _data.GetOrThrow<string>(DirectionConditionNoteKey)!;
 
-    public int TotalTravelCost(Passage passage) {
-        ArgumentNullException.ThrowIfNull(passage);
-        return passage.GetTotalTravelCost(this);
-    }
-
     internal DurableDict<string> Data => _data;
 
     internal void SetIsEnabled(bool value) => _data.Upsert(EnabledKey, value);
@@ -414,10 +384,4 @@ internal static class TravelModeCodec {
             TravelMode.Portal => "portal",
             _ => throw new InvalidOperationException($"Unsupported travel mode '{value}'."),
         };
-
-    public static int TotalTravelCost(this PassageDirectionRule direction, Passage passage) {
-        ArgumentNullException.ThrowIfNull(direction);
-        ArgumentNullException.ThrowIfNull(passage);
-        return passage.GetTotalTravelCost(direction);
-    }
 }

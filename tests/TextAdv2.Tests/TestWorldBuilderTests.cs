@@ -44,6 +44,25 @@ public class TestWorldBuilderTests {
     }
 
     [Fact]
+    public void PassageView_GetTotalTravelCostFrom_ReadsAuthoritativeDirectionTotal() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+
+            var passage = world.GetPassage(TestWorldBuilder.PassageIds.SquareRidgeTrail);
+
+            Assert.Equal(5, passage.GetTotalTravelCostFrom(TestWorldBuilder.LocationIds.Square));
+            Assert.Equal(2, passage.GetTotalTravelCostFrom(TestWorldBuilder.LocationIds.Ridge));
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public void PassageMutation_RejectsNegativeTotalTravelCost() {
         string repoDir = CreateTempRepoDir();
 
