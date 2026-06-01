@@ -275,25 +275,39 @@ TextAdv2 当前仍是：
 - `WorldState` 等核心注释不再提到 `AccelerationIndex`
 - JSON contract 保持不变
 
-## 5.3 Package C：host wording cleanup 与 contract hardening
+## 5.3 Package C：canonical observe contract hardening
 
-这是低优先级包，只有在前两包收完后才建议做。
+> 状态：`C1` 已完成；host wording cleanup 暂缓
 
-### 目标
+Package C 经再次审视后，已经收缩成一个更小的测试硬化包。
 
-- 清理宿主层历史措辞
-- 补强 machine contract 的结构型测试
+当前真正值得立即做的，只有 canonical observe seams 的结构型 guard；宿主层 `session` 措辞虽然不完美，但目前仍属于低收益、较高噪音的 host-only debt。
 
-### 建议做法
+### 已完成的 `C1`
 
-1. 评估是否将 `TextAdv2.GameServer/SessionService.cs` 重命名为 `RuntimeService`
-2. 评估是否把 `/admin/session-status` 重命名为更贴近 host/runtime 的路径
-3. 为 `observe actor` / `observe location` 增加更显式的 JSON shape guard，而不只依赖 typed/runtime 测试
+- 为 `observe actor` 增加显式 JSON shape guard
+- 为 `observe location` 增加显式 JSON shape guard
+- 保持改动只落在 parity suite，不修改 runtime、DTO、endpoint 或 host status contract
+
+### 暂缓的 host wording cleanup
+
+下面这些动作目前统一 parked，不作为当前主线：
+
+1. 将 `TextAdv2.GameServer/SessionService.cs` 重命名为 `RuntimeService`
+2. 把 `/admin/session-status` 改成更贴近 host/runtime 的路径
+3. 顺手改 `session` / `sessionOpenMode` 等 payload 字段措辞
+
+### 为什么暂缓
+
+- 它们不属于 canonical machine surface 的核心边界风险
+- 当前 `GameServer` 集成测试已经广泛锁住这些 host-only 措辞
+- 单独改其中一部分，只会制造新的半收口状态
 
 ### 明确不做
 
 - 不把 host wording cleanup 和 domain boundary 重新混为一谈
 - 不为了“去掉 session 这个词”而修改核心 runtime 结构
+- 不把 host wording debt 和 canonical observe contract hardening 绑成同一包
 
 ## 6. 推荐顺序
 
@@ -301,7 +315,8 @@ TextAdv2 当前仍是：
 
 1. 先做 Package A：route-plan helper ownership cleanup
 2. 继续做 Package B 后续尾修：observation seam naming cleanup
-3. 最后按需要做 Package C：host wording cleanup 与 contract hardening
+3. 再做 Package C1：canonical observe JSON shape guards
+4. host wording cleanup 只有在确有收益时，再作为独立低优先级包整体启动
 
 这个顺序比旧版计划更简单，原因是：
 
@@ -319,12 +334,13 @@ TextAdv2 当前仍是：
 - `PassageView/*View` 已删除
 - actor-facing canonical action surface 已明确
 - canonical machine surface 文档与 parity tests 已同步到 actor context 新 contract
+- `observe actor` / `observe location` 已补上显式 JSON shape guard
 
 当前未完成、但值得继续收口的，主要只剩：
 
 - route-plan 的职责拆分
 - `Observation` 的 route-plan 混责与残余历史表述
-- 少量 host wording / test hardening / 注释文档清理
+- 少量 host wording / 注释文档清理
 
 ## 8. 一句总纲
 
