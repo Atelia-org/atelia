@@ -38,6 +38,29 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
+    public void ObserveActorContext_UsesNarrowLocationPayloadAndAvailableMovesAsCanonicalActionSurface() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
+
+        var result = session.ObserveActorContext(TestWorldBuilder.ActorIds.Scout);
+
+        Assert.Equal(TestWorldBuilder.ActorIds.Scout, result.ActorId);
+        Assert.Equal("Scout", result.ActorName);
+        Assert.Equal(0, result.CurrentTick);
+        Assert.Equal(TestWorldBuilder.LocationIds.Square, result.CurrentLocation.LocationId);
+        Assert.Equal("Square", result.CurrentLocation.LocationName);
+        Assert.Equal("Central junction used to verify multiple outgoing passages.", result.CurrentLocation.LocationDescription);
+        Assert.Contains(
+            result.CurrentLocation.PresentActors,
+            static actor => actor.ActorId == TestWorldBuilder.ActorIds.Scout
+        );
+        Assert.Equal(
+            ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
+            result.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
+        );
+        Assert.Null(typeof(ActorContextLocationObservation).GetProperty(nameof(LocationObservation.Exits)));
+    }
+
+    [Fact]
     public void ObserveNavigation_ReturnsReadOnlyViewNavigationObservation() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 

@@ -138,6 +138,7 @@ public class GameServerIntegrationTests {
 
             using var initialResponse = await client.GetAsync("/actors/scout/context");
             var initialContext = await ReadJsonAsync<ActorContextObservation>(initialResponse);
+            using var initialContextJson = JsonDocument.Parse(await initialResponse.Content.ReadAsStringAsync());
 
             Assert.Equal(HttpStatusCode.OK, initialResponse.StatusCode);
             Assert.NotNull(initialContext);
@@ -145,6 +146,8 @@ public class GameServerIntegrationTests {
             Assert.Equal("Scout", initialContext.ActorName);
             Assert.Equal(0, initialContext.CurrentTick);
             Assert.Equal("square", initialContext.CurrentLocation.LocationId);
+            Assert.Equal("Square", initialContext.CurrentLocation.LocationName);
+            Assert.Equal("Central junction used to verify multiple outgoing passages.", initialContext.CurrentLocation.LocationDescription);
             Assert.Equal(
                 ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
                 initialContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
@@ -161,12 +164,14 @@ public class GameServerIntegrationTests {
                 initialContext.CurrentLocation.PresentActors,
                 static actor => actor.ActorId == "scout"
             );
+            AssertActorContextJsonHasNoCurrentLocationExits(initialContextJson.RootElement);
 
             using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
             Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
 
             using var movedResponse = await client.GetAsync("/actors/scout/context");
             var movedContext = await ReadJsonAsync<ActorContextObservation>(movedResponse);
+            using var movedContextJson = JsonDocument.Parse(await movedResponse.Content.ReadAsStringAsync());
 
             Assert.Equal(HttpStatusCode.OK, movedResponse.StatusCode);
             Assert.NotNull(movedContext);
@@ -174,6 +179,8 @@ public class GameServerIntegrationTests {
             Assert.Equal("Scout", movedContext.ActorName);
             Assert.Equal(0, movedContext.CurrentTick);
             Assert.Equal("ridge", movedContext.CurrentLocation.LocationId);
+            Assert.Equal("Ridge", movedContext.CurrentLocation.LocationName);
+            Assert.Equal("High ground connected by a steep trail and an aerial winch.", movedContext.CurrentLocation.LocationDescription);
             Assert.Equal(
                 ["ridge-aerie-winch", "square-ridge-trail"],
                 movedContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
@@ -190,6 +197,7 @@ public class GameServerIntegrationTests {
                 movedContext.CurrentLocation.PresentActors,
                 static actor => actor.ActorId == "scout"
             );
+            AssertActorContextJsonHasNoCurrentLocationExits(movedContextJson.RootElement);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -258,6 +266,7 @@ public class GameServerIntegrationTests {
 
                 using var contextResponse = await client.GetAsync("/actors/beta/context");
                 var context = await ReadJsonAsync<ActorContextObservation>(contextResponse);
+                using var contextJson = JsonDocument.Parse(await contextResponse.Content.ReadAsStringAsync());
 
                 Assert.Equal(HttpStatusCode.OK, contextResponse.StatusCode);
                 Assert.NotNull(context);
@@ -265,9 +274,11 @@ public class GameServerIntegrationTests {
                 Assert.Equal("Beta", context.ActorName);
                 Assert.Equal(7, context.CurrentTick);
                 Assert.Equal("goal", context.CurrentLocation.LocationId);
+                Assert.Equal("Goal", context.CurrentLocation.LocationName);
+                Assert.Equal("Shared-world goal.", context.CurrentLocation.LocationDescription);
                 Assert.Equal(["alpha", "beta"], ReadActorIds(context.CurrentLocation.PresentActors));
                 Assert.Equal(["start-goal"], context.AvailableMoves.Select(static edge => edge.PassageId).ToArray());
-                Assert.Equal(["start-goal"], context.CurrentLocation.Exits.Select(static edge => edge.PassageId).ToArray());
+                AssertActorContextJsonHasNoCurrentLocationExits(contextJson.RootElement);
             }
 
             WaitUntilSessionCanReopen(repoDir);
@@ -277,13 +288,17 @@ public class GameServerIntegrationTests {
 
             using var reopenedContextResponse = await reopenedClient.GetAsync("/actors/beta/context");
             var reopenedContext = await ReadJsonAsync<ActorContextObservation>(reopenedContextResponse);
+            using var reopenedContextJson = JsonDocument.Parse(await reopenedContextResponse.Content.ReadAsStringAsync());
 
             Assert.Equal(HttpStatusCode.OK, reopenedContextResponse.StatusCode);
             Assert.NotNull(reopenedContext);
             Assert.Equal(7, reopenedContext.CurrentTick);
             Assert.Equal("goal", reopenedContext.CurrentLocation.LocationId);
+            Assert.Equal("Goal", reopenedContext.CurrentLocation.LocationName);
+            Assert.Equal("Shared-world goal.", reopenedContext.CurrentLocation.LocationDescription);
             Assert.Equal(["alpha", "beta"], ReadActorIds(reopenedContext.CurrentLocation.PresentActors));
             Assert.Equal(["start-goal"], reopenedContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray());
+            AssertActorContextJsonHasNoCurrentLocationExits(reopenedContextJson.RootElement);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -1280,6 +1295,11 @@ public class GameServerIntegrationTests {
 
     private static async Task<T?> ReadJsonAsync<T>(HttpResponseMessage response)
         => JsonSerializer.Deserialize<T>(await response.Content.ReadAsStringAsync(), HostJsonOptions);
+
+    private static void AssertActorContextJsonHasNoCurrentLocationExits(JsonElement root) {
+        JsonElement currentLocation = root.GetProperty("currentLocation");
+        Assert.False(currentLocation.TryGetProperty("exits", out _));
+    }
 
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-gameserver-tests-{Guid.NewGuid():N}");

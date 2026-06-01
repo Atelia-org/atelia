@@ -91,7 +91,7 @@ public sealed class SerialWorldRuntime : IDisposable {
             actorObservation.ActorId,
             actorObservation.ActorName,
             time.CurrentTick,
-            actorObservation.Location,
+            ProjectActorContextLocation(actorObservation.Location),
             actorNavigation.Navigation.Edges
         );
     }
@@ -218,6 +218,17 @@ public sealed class SerialWorldRuntime : IDisposable {
         string landmarkProfileName
     ) {
         return _runtime.RebuildRouteAcceleration(_host.DurableWorld, landmarkLocationIds, landmarkProfileName);
+    }
+
+    private static ActorContextLocationObservation ProjectActorContextLocation(LocationObservation location) {
+        ArgumentNullException.ThrowIfNull(location);
+
+        return new ActorContextLocationObservation(
+            location.LocationId,
+            location.LocationName,
+            location.LocationDescription,
+            location.PresentActors
+        );
     }
 
     private static string[] ParseExplicitLandmarkLocationIds(string value) {

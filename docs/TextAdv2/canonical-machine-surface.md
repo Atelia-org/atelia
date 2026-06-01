@@ -26,6 +26,9 @@
 - observe actor context
   - `GET /actors/{actorId}/context`
   - `... --json-only --observe-actor-context <actorId>`
+  - `availableMoves` 是唯一 canonical actor-facing action surface
+  - `currentLocation` 只保留 `locationId` / `locationName` / `locationDescription` / `presentActors`
+  - `currentLocation.exits` 不属于该 seam，且不应再出现在 JSON 中
 - observe actor navigation
   - `GET /actors/{actorId}/navigation`
   - `... --json-only --observe-actor-navigation <actorId>`
@@ -84,6 +87,9 @@
 - 尚未进入完整 parity guard 的其他 JSON seam
   - `route-trace/json`（当前只保留 fresh-session empty-trace compatibility guard）
   - `observe-route-acceleration`、`rebuild-route-acceleration`
+- `observe actor context` 中任何试图通过 `currentLocation.exits` 暴露 actor 可行动面的旧形状
+  - 需要 actor-facing action list 时，使用 `availableMoves`
+  - 需要地点级完整出口观察时，使用 `observe location`
 - CLI 默认 stdout（包括 repo banner、分段标题和文本输出）
 - `E2eCli help`
 - `E2eCli status`

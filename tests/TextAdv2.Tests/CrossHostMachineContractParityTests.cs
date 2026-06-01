@@ -55,6 +55,10 @@ public sealed class CrossHostMachineContractParityTests {
             using var response = await client.GetAsync("/actors/scout/context");
             string hostJson = await ReadSuccessfulHostJsonAsync(response);
 
+            using JsonDocument cli = JsonDocument.Parse(cliJson);
+            using JsonDocument host = JsonDocument.Parse(hostJson);
+            AssertActorContextJsonUsesCanonicalActionSurface(cli.RootElement, "cli observe actor context");
+            AssertActorContextJsonUsesCanonicalActionSurface(host.RootElement, "host observe actor context");
             AssertJsonEquivalent(cliJson, hostJson, "observe actor context");
         }
         finally {
@@ -706,6 +710,20 @@ public sealed class CrossHostMachineContractParityTests {
         Assert.Equal(string.Empty, result.StandardError);
 
         return result.StandardOutput;
+    }
+
+    private static void AssertActorContextJsonUsesCanonicalActionSurface(JsonElement root, string source) {
+        JsonElement currentLocation = root.GetProperty("currentLocation");
+
+        Assert.True(currentLocation.TryGetProperty("locationId", out _), $"{source}: currentLocation.locationId should be present.");
+        Assert.True(currentLocation.TryGetProperty("locationName", out _), $"{source}: currentLocation.locationName should be present.");
+        Assert.True(currentLocation.TryGetProperty("locationDescription", out _), $"{source}: currentLocation.locationDescription should be present.");
+        Assert.True(currentLocation.TryGetProperty("presentActors", out _), $"{source}: currentLocation.presentActors should be present.");
+        Assert.False(
+            currentLocation.TryGetProperty("exits", out _),
+            $"{source}: currentLocation.exits should be absent because availableMoves is the canonical action surface."
+        );
+        Assert.True(root.TryGetProperty("availableMoves", out _), $"{source}: availableMoves should be present.");
     }
 
     private static void AssertJsonEquivalent(string cliJson, string hostJson, string contractName) {

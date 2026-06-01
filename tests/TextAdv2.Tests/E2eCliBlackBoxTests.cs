@@ -169,12 +169,16 @@ public sealed class E2eCliBlackBoxTests {
 
             var initialContext = DeserializeCliJson<ActorContextObservation>(initialContextRun.StandardOutput);
             var movedContext = DeserializeCliJson<ActorContextObservation>(movedContextRun.StandardOutput);
+            using var initialContextJson = ExtractJsonBlock(initialContextRun.StandardOutput);
+            using var movedContextJson = ExtractJsonBlock(movedContextRun.StandardOutput);
 
             Assert.NotNull(initialContext);
             Assert.Equal("scout", initialContext.ActorId);
             Assert.Equal("Scout", initialContext.ActorName);
             Assert.Equal(0, initialContext.CurrentTick);
             Assert.Equal("square", initialContext.CurrentLocation.LocationId);
+            Assert.Equal("Square", initialContext.CurrentLocation.LocationName);
+            Assert.Equal("Central junction used to verify multiple outgoing passages.", initialContext.CurrentLocation.LocationDescription);
             Assert.Equal(
                 ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
                 initialContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
@@ -191,12 +195,15 @@ public sealed class E2eCliBlackBoxTests {
                 initialContext.CurrentLocation.PresentActors,
                 static actor => actor.ActorId == "scout"
             );
+            AssertActorContextJsonHasNoCurrentLocationExits(initialContextJson.RootElement);
 
             Assert.NotNull(movedContext);
             Assert.Equal("scout", movedContext.ActorId);
             Assert.Equal("Scout", movedContext.ActorName);
             Assert.Equal(0, movedContext.CurrentTick);
             Assert.Equal("ridge", movedContext.CurrentLocation.LocationId);
+            Assert.Equal("Ridge", movedContext.CurrentLocation.LocationName);
+            Assert.Equal("High ground connected by a steep trail and an aerial winch.", movedContext.CurrentLocation.LocationDescription);
             Assert.Equal(
                 ["ridge-aerie-winch", "square-ridge-trail"],
                 movedContext.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
@@ -213,6 +220,7 @@ public sealed class E2eCliBlackBoxTests {
                 movedContext.CurrentLocation.PresentActors,
                 static actor => actor.ActorId == "scout"
             );
+            AssertActorContextJsonHasNoCurrentLocationExits(movedContextJson.RootElement);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -235,16 +243,17 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Equal(0, observeContext.ExitCode);
 
             var context = DeserializeCliJson<ActorContextObservation>(observeContext.StandardOutput);
+            using var contextJson = ExtractJsonBlock(observeContext.StandardOutput);
 
             Assert.NotNull(context);
             Assert.Equal("boatman", context.ActorId);
             Assert.Equal("Boatman", context.ActorName);
             Assert.Equal(4, context.CurrentTick);
             Assert.Equal("delta", context.CurrentLocation.LocationId);
+            Assert.Equal("Delta", context.CurrentLocation.LocationName);
+            Assert.Equal("Low-water landing used to test one-way river travel.", context.CurrentLocation.LocationDescription);
             Assert.Empty(context.AvailableMoves);
-            Assert.Equal(["harbor-delta-current"], context.CurrentLocation.Exits.Select(static edge => edge.PassageId).ToArray());
-            Assert.False(context.CurrentLocation.Exits[0].IsEnabled);
-            Assert.Equal("harbor", context.CurrentLocation.Exits[0].TargetLocationId);
+            AssertActorContextJsonHasNoCurrentLocationExits(contextJson.RootElement);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
@@ -688,6 +697,11 @@ public sealed class E2eCliBlackBoxTests {
 
         return JsonSerializer.Deserialize<T>(output[jsonStart..], CliJsonOptions)
             ?? throw new InvalidOperationException($"CLI output did not deserialize to {typeof(T).Name}.");
+    }
+
+    private static void AssertActorContextJsonHasNoCurrentLocationExits(JsonElement root) {
+        JsonElement currentLocation = root.GetProperty("currentLocation");
+        Assert.False(currentLocation.TryGetProperty("exits", out _));
     }
 
     private static string[] ReadActorIds(JsonElement presentActors)
