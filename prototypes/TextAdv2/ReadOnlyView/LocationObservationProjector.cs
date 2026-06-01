@@ -30,7 +30,7 @@ internal static class LocationObservationProjector {
                     passage.TravelMode,
                     passage.BaseTravelCost,
                     direction.TravelCostModifier,
-                    passage.BaseTravelCost + direction.TravelCostModifier,
+                    passage.GetTotalTravelCostFrom(locationId),
                     passage.SharedConditionNote,
                     direction.DirectionConditionNote,
                     endpoint.LocalViewNote,

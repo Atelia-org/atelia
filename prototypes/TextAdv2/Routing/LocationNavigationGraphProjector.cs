@@ -31,7 +31,7 @@ internal static class LocationNavigationGraphProjector {
             passage.Id,
             passage.GetOtherLocationId(locationId),
             passage.TravelMode,
-            direction.TotalTravelCost(passage)
+            passage.GetTotalTravelCostFrom(locationId)
         );
     }
 }

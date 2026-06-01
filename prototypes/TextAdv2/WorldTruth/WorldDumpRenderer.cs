@@ -105,7 +105,7 @@ internal static class WorldDumpRenderer {
                 $"    - {entry.Endpoint.ExitName} -> {entry.Destination.Id} ({entry.Destination.Name}) | "
                 + $"passage={entry.Passage.Id} | mode={entry.Passage.TravelMode.ToStorageValue()} | "
                 + $"base={entry.Passage.BaseTravelCost} | modifier={entry.Direction.TravelCostModifier} | "
-                + $"total={entry.Passage.BaseTravelCost + entry.Direction.TravelCostModifier} | "
+                + $"total={entry.Passage.GetTotalTravelCostFrom(location.Id)} | "
                 + $"enabled={entry.Direction.IsEnabled.ToString().ToLowerInvariant()}"
             );
 
@@ -132,30 +132,30 @@ internal static class WorldDumpRenderer {
 
         AppendDirectionLine(
             builder,
+            passage,
             passage.EndpointA.LocationId,
             passage.EndpointB.LocationId,
-            passage.FromAToB,
-            passage.BaseTravelCost
+            passage.FromAToB
         );
         AppendDirectionLine(
             builder,
+            passage,
             passage.EndpointB.LocationId,
             passage.EndpointA.LocationId,
-            passage.FromBToA,
-            passage.BaseTravelCost
+            passage.FromBToA
         );
     }
 
     private static void AppendDirectionLine(
         StringBuilder builder,
+        PassageView passage,
         string fromLocationId,
         string toLocationId,
-        PassageDirectionRuleView direction,
-        int baseTravelCost
+        PassageDirectionRuleView direction
     ) {
         builder.AppendLine(
             $"  {fromLocationId} -> {toLocationId}: enabled={direction.IsEnabled.ToString().ToLowerInvariant()} | "
-            + $"modifier={direction.TravelCostModifier} | total={baseTravelCost + direction.TravelCostModifier}"
+            + $"modifier={direction.TravelCostModifier} | total={passage.GetTotalTravelCostFrom(fromLocationId)}"
         );
         AppendOptionalLine(builder, "    directional", direction.DirectionConditionNote);
     }

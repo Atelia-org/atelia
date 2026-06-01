@@ -275,7 +275,7 @@ internal sealed class WorldState {
             fromLocationId,
             toLocationId,
             passage.TravelMode,
-            passage.BaseTravelCost + direction.TravelCostModifier
+            passage.GetTotalTravelCostFrom(fromLocationId)
         );
     }
 
