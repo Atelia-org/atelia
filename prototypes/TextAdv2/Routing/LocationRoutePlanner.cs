@@ -1,4 +1,5 @@
 using Atelia.TextAdv2.Observation;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Routing;
@@ -8,7 +9,7 @@ namespace Atelia.TextAdv2.Routing;
 ///
 /// 当前实现使用 Dijkstra core：
 /// - 默认启发函数固定为 0；
-/// - 数据面来自更小的内部 navigation graph seam；
+/// - 数据面来自 canonical spatial seam（WorldSpatialSnapshot）；
 /// - 结果对等成本路径采用稳定 tie-break。
 ///
 /// 当前阶段有意直接产出 `LocationRoutePlanObservation` 这个 machine-facing observation contract，
@@ -72,6 +73,8 @@ internal static class LocationRoutePlanner {
             );
         }
 
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+
         var frontier = new PriorityQueue<SearchState, SearchPriority>();
         int expandedNodeCount = 0;
         int relaxedEdgeCount = 0;
@@ -111,7 +114,7 @@ internal static class LocationRoutePlanner {
                 );
             }
 
-            var graph = LocationNavigationGraphProjector.Project(world, current.LocationId);
+            var graph = LocationNavigationGraph.FromAdjacency(spatial.Locations[current.LocationId]);
             foreach (var edge in graph.Edges) {
                 if (edge.TravelCost < 0) {
                     throw new InvalidOperationException(

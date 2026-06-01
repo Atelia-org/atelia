@@ -1,3 +1,4 @@
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Routing;
@@ -7,6 +8,8 @@ namespace Atelia.TextAdv2.Routing;
 ///
 /// 它通过预计算每个 landmark 的正向 / 反向最短路距离，提供 directed ALT 形式的 admissible heuristic。
 /// 这是一个只读派生结构：世界拓扑或 travel cost 变化后必须重建。
+///
+/// 重构后从 <see cref="WorldSpatialSnapshot"/> 构图，不再依赖 LocationNavigationGraphProjector。
 /// </summary>
 internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristic {
     private readonly LandmarkDistanceTable[] _tables;
@@ -17,6 +20,17 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
 
     public static LocationLandmarkHeuristicSnapshot Create(WorldState world, IEnumerable<string> landmarkLocationIds) {
         ArgumentNullException.ThrowIfNull(world);
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return Create(world, spatial, landmarkLocationIds);
+    }
+
+    internal static LocationLandmarkHeuristicSnapshot Create(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        IEnumerable<string> landmarkLocationIds
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
         ArgumentNullException.ThrowIfNull(landmarkLocationIds);
 
         var landmarkIds = landmarkLocationIds
@@ -27,7 +41,7 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
 
         if (landmarkIds.Length == 0) { throw new ArgumentException("At least one landmark location ID is required.", nameof(landmarkLocationIds)); }
 
-        var graph = BuildGraph(world);
+        var graph = BuildGraph(spatial);
         var reverseGraph = BuildReverseGraph(graph);
 
         var tables = new LandmarkDistanceTable[landmarkIds.Length];
@@ -70,14 +84,14 @@ internal sealed class LocationLandmarkHeuristicSnapshot : ILocationRouteHeuristi
         return landmarkLocationId;
     }
 
-    private static Dictionary<string, GraphEdge[]> BuildGraph(WorldState world) {
+    private static Dictionary<string, GraphEdge[]> BuildGraph(WorldSpatialSnapshot spatial) {
         var graph = new Dictionary<string, GraphEdge[]>(StringComparer.Ordinal);
-        foreach (var location in world.EnumerateLocations().OrderBy(location => location.Id, StringComparer.Ordinal)) {
-            var navigationGraph = LocationNavigationGraphProjector.Project(world, location.Id);
+        foreach (var (locationId, adjacency) in spatial.Locations) {
+            var navigationGraph = LocationNavigationGraph.FromAdjacency(adjacency);
             var edges = navigationGraph.Edges
-                .Select(edge => ToGraphEdge(location.Id, edge))
+                .Select(edge => ToGraphEdge(locationId, edge))
                 .ToArray();
-            graph.Add(location.Id, edges);
+            graph.Add(locationId, edges);
         }
 
         return graph;

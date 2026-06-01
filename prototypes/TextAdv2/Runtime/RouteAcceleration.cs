@@ -1,4 +1,5 @@
 using Atelia.TextAdv2.Routing;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Runtime;
@@ -26,21 +27,8 @@ internal sealed class RouteAccelerationCache {
 
     public RouteAccelerationSnapshot Observe(WorldState world) {
         ArgumentNullException.ThrowIfNull(world);
-
-        string snapshotStatus = GetSnapshotStatus(world);
-        var effectivePlanningOptions = GetPlanningOptions(world);
-
-        return new RouteAccelerationSnapshot(
-            effectivePlanningOptions?.Heuristic.Observe().Name ?? "zero",
-            snapshotStatus,
-            _planningOptions is null ? "none" : "landmark",
-            _planningOptions is null ? NoneLandmarkProfileName : _landmarkProfileName,
-            IsPersistent: false,
-            LocationCount: world.EnumerateLocations().Count(),
-            PassageCount: world.EnumeratePassages().Count(),
-            LandmarkCount: _landmarkLocationIds.Length,
-            LandmarkLocationIds: [.. _landmarkLocationIds]
-        );
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return Observe(world, spatial);
     }
 
     public RouteAccelerationSnapshot Rebuild(
@@ -61,16 +49,38 @@ internal sealed class RouteAccelerationCache {
 
         if (_landmarkLocationIds.Length == 0) { throw new InvalidOperationException("RebuildRouteAcceleration requires at least one landmark location ID."); }
 
-        _landmarkSnapshot = LocationLandmarkHeuristicSnapshot.Create(world, _landmarkLocationIds);
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        _landmarkSnapshot = LocationLandmarkHeuristicSnapshot.Create(world, spatial, _landmarkLocationIds);
         _landmarkProfileName = landmarkProfileName;
         _planningOptions = new LocationRoutePlanningOptions(_landmarkSnapshot);
-        _graphSignature = LocationNavigationGraphSignature.Build(world);
-        return Observe(world);
+        _graphSignature = LocationNavigationGraphSignature.Build(spatial);
+        return Observe(world, spatial);
     }
 
     public LocationRoutePlanningOptions? GetPlanningOptions(WorldState world) {
         ArgumentNullException.ThrowIfNull(world);
-        return string.Equals(GetSnapshotStatus(world), "active", StringComparison.Ordinal) ? _planningOptions : null;
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return GetPlanningOptions(GetSnapshotStatus(spatial));
+    }
+
+    private RouteAccelerationSnapshot Observe(WorldState world, WorldSpatialSnapshot spatial) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
+
+        string snapshotStatus = GetSnapshotStatus(spatial);
+        var effectivePlanningOptions = GetPlanningOptions(snapshotStatus);
+
+        return new RouteAccelerationSnapshot(
+            effectivePlanningOptions?.Heuristic.Observe().Name ?? "zero",
+            snapshotStatus,
+            _planningOptions is null ? "none" : "landmark",
+            _planningOptions is null ? NoneLandmarkProfileName : _landmarkProfileName,
+            IsPersistent: false,
+            LocationCount: world.EnumerateLocations().Count(),
+            PassageCount: world.EnumeratePassages().Count(),
+            LandmarkCount: _landmarkLocationIds.Length,
+            LandmarkLocationIds: [.. _landmarkLocationIds]
+        );
     }
 
     public void Clear() {
@@ -81,12 +91,14 @@ internal sealed class RouteAccelerationCache {
         _landmarkLocationIds = [];
     }
 
-    private string GetSnapshotStatus(WorldState world) {
-        ArgumentNullException.ThrowIfNull(world);
+    private LocationRoutePlanningOptions? GetPlanningOptions(string snapshotStatus)
+        => string.Equals(snapshotStatus, "active", StringComparison.Ordinal) ? _planningOptions : null;
 
+    private string GetSnapshotStatus(WorldSpatialSnapshot spatial) {
+        ArgumentNullException.ThrowIfNull(spatial);
         if (_planningOptions is null || _graphSignature is null) { return "inactive"; }
 
-        return string.Equals(_graphSignature, LocationNavigationGraphSignature.Build(world), StringComparison.Ordinal)
+        return string.Equals(_graphSignature, LocationNavigationGraphSignature.Build(spatial), StringComparison.Ordinal)
             ? "active"
             : "stale";
     }

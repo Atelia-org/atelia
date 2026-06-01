@@ -2,6 +2,7 @@ using Atelia.StateJournal;
 using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.Observation;
 using Atelia.TextAdv2.Routing;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
@@ -17,9 +18,9 @@ public class NavigationAndCliWorkflowTests {
             var revision = repo.CreateBranch("main").Unwrap();
             var world = TestWorldBuilder.Create(revision);
 
-            var graph = LocationNavigationGraphProjector.Project(
-                world,
-                TestWorldBuilder.LocationIds.Square
+            var spatial = WorldSpatialSnapshotBuilder.Build(world);
+            var graph = LocationNavigationGraph.FromAdjacency(
+                spatial.Locations[TestWorldBuilder.LocationIds.Square]
             );
 
             Assert.Equal(TestWorldBuilder.LocationIds.Square, graph.LocationId);
