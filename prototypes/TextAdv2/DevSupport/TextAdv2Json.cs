@@ -5,6 +5,10 @@ using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.DevSupport;
 
+/// <summary>
+/// Host-side JSON codec registration。
+/// Route-plan status tokenization 通过独立的 wire helper 处理，不回流到 observation contract。
+/// </summary>
 public static class TextAdv2Json {
     public static void AddHostConverters(JsonSerializerOptions options) {
         ArgumentNullException.ThrowIfNull(options);

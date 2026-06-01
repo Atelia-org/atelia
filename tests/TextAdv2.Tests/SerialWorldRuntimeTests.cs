@@ -127,7 +127,7 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
-    public void PlanRoute_ReturnsObservationRoutePlan() {
+    public void PlanRoute_ReturnsTypedRoutePlanContract() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var result = session.PlanRoute(
@@ -203,7 +203,7 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
-    public void PlanActorRoute_ProjectsAlreadyThereAndUnreachableStatesThroughTypedSeam() {
+    public void PlanActorRoute_ProjectsAlreadyThereAndUnreachableStatesThroughTypedRoutePlanContract() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var alreadyThere = session.PlanActorRoute(
@@ -227,7 +227,7 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
-    public void PlanRoute_ProjectsAlreadyThereAndUnreachableStatesThroughTypedSeam() {
+    public void PlanRoute_ProjectsAlreadyThereAndUnreachableStatesThroughTypedRoutePlanContract() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
         var alreadyThere = session.PlanRoute(

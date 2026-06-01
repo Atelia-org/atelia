@@ -4,6 +4,10 @@ using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.DevSupport;
 
+/// <summary>
+/// Dev-only text helper for route-plan inspection。
+/// 不属于 machine-facing contract，也不参与 wire / JSON shape 定义。
+/// </summary>
 internal static class LocationRoutePlanTextRenderer {
     public static string Render(LocationRoutePlanObservation plan) {
         ArgumentNullException.ThrowIfNull(plan);

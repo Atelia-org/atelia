@@ -70,7 +70,7 @@
 后续真正值得继续做的，不是重开前面三包，而是把剩下那几处“命名与职责不完全对齐”的尾巴收干净：
 
 - `Observation` 内仍有少量历史表述与职责描述需要继续收口
-- route-plan contract 与相邻 wire/text helper 的 owner 仍有继续收口空间
+- route-plan contract 与相邻 wire/text helper 的 owner 需要补足现状说明
 - 宿主侧还残留少量 `session` 命名，但这已经是 host wording debt，不再是核心域边界问题
 
 ## 2. 已解决的问题，不再重开
@@ -111,32 +111,31 @@
 
 - `LocationObservation*` 与 `NavigationObservation*` 现在确实是 observation
 - 但 `LocationRoutePlanObservation` 及其辅助类型仍留在这里
-- `Routing/LocationRoutePlanner.cs` 仍然反向依赖 observation contract
+- `Routing/LocationRoutePlanner.cs` 当前直接依赖该 observation contract
 
-这不算结构性错误，但会持续制造“planner contract 究竟归谁”的理解噪音。
+这不算结构性错误，但如果缺少 owner 说明，仍会制造“planner contract 究竟归谁”的理解噪音。
 
-### 3.2 route-plan contract 与相邻 helper 的 ownership 还可继续收口
+### 3.2 route-plan owner 需要补足现状说明
 
-当前 route-plan 相关代码已经拆成三块，但 owner 还不算完全收干净：
+当前 route-plan 相关代码已经拆成三块，结构本身就是现阶段的预期落点；剩下的问题主要是 owner 表述还不够明确：
 
-- observation contract
+- machine-facing observation contract
   - `Observation/LocationRoutePlan.cs`
   - `LocationRoutePlanObservation`
   - `LocationRoutePlanStepObservation`
   - `LocationRoutePlanSearchStatsObservation`
   - `RoutePlanStatus`
+- planner
+  - `Routing/LocationRoutePlanner.cs`
+  - 当前有意直接产出上述 observation contract，不再引入中间 routing result / projector
 - wire helper
   - `DevSupport/RoutePlanStatusWireToken.cs`
+- JSON codec
+  - `DevSupport/TextAdv2Json.cs`
 - dev-only text helper
   - `DevSupport/LocationRoutePlanTextRenderer.cs`
 
-它们已经不再混在同一文件里，但 planner contract、wire adapter、dev text helper 仍跨相邻层分布。
-
-更合理的归属应是：
-
-- DTO / enum：observation contract
-- codec：host / wire adapter
-- text renderer：`DevSupport`
+这不是继续做结构拆分的信号；当前包更适合做的是把这些 owner 用注释、文档和测试措辞写清楚，避免继续制造“planner contract 究竟归谁”的阅读噪音。
 
 ### 3.3 host wording 仍有历史残留
 
@@ -177,8 +176,8 @@
 
 例如：
 
-- 先继续收 route-plan contract 与周边 helper 的 owner
-- 命名已收口到 `Observation`，后续只继续处理剩余职责边界
+- 先把 route-plan contract / planner / codec / text helper 的 owner 写清楚
+- 命名已收口到 `Observation`，后续只继续处理残余历史表述
 
 不要反过来先做大面积重命名，再在新名字下面继续保留旧混合职责。
 
@@ -186,7 +185,7 @@
 
 `SessionService` 等名字确实不完美，但它们的风险等级不同：
 
-- `Observation` 的 route-plan 混责还会影响设计理解，值得继续收
+- route-plan owner 若缺少明确说明，仍会影响设计理解，值得继续收
 - `SessionService` 更像宿主内部措辞问题，可低优先级处理
 
 后续计划要按真实收益排序，而不是按“看起来不顺眼”的程度排序。
@@ -212,28 +211,30 @@ TextAdv2 当前仍是：
 
 后续建议不再按原来的“三期大包”推进，而是改成下面三个更小、更实际的工作包。
 
-## 5.1 Package A：route-plan helper ownership cleanup
+## 5.1 Package A：route-plan owner clarity / wording cleanup
 
 这是当前最值得优先做的下一拍。
 
 ### 目标
 
-- 继续收口 route-plan contract 与周边 helper 的 owner
-- 减少 `Routing -> Observation` / `DevSupport -> Observation` 的语义噪音
+- 把 route-plan contract / planner / codec / text helper 的当前 owner 写清楚
+- 去掉计划文档与活跃测试中的残余历史表述
 - 保持现有 JSON contract 不变
 
 ### 建议做法
 
-1. 保留 route-plan DTO 作为 observation contract
-2. 明确 `DevSupport/RoutePlanStatusWireToken.cs` 是否继续作为现阶段 wire helper 落点
-3. 保持 `LocationRoutePlanTextRenderer` 留在 `DevSupport/`
-4. 让 `TextAdv2Json` 继续依赖独立 wire helper，而不是反向依赖 observation contract 文件
-5. 视收口结果决定是否还需要进一步调整 route-plan 文件拆分
+1. 保留 route-plan DTO / enum 作为 machine-facing observation contract
+2. 在 `LocationRoutePlanner` 注释中明确：当前有意直接产出该 contract，不再引入中间 routing result
+3. 在 `RoutePlanStatusWireToken` / `TextAdv2Json` 注释中明确 wire token / JSON codec 的 owner
+4. 保持 `LocationRoutePlanTextRenderer` 留在 `DevSupport/`，并标明其 dev-only text helper 身份
+5. 同步修正文档和活跃测试中的历史措辞
 
 ### 明确不做
 
 - 不改 route-plan JSON shape
 - 不改 `RoutePlanStatus` 的语义
+- 不移动 DTO / enum
+- 不引入新的 internal planner result 或 projector
 - 不额外扩大为 host wording cleanup 或 contract shape 变更
 
 ### 影响文件
@@ -245,8 +246,8 @@ TextAdv2 当前仍是：
 
 ### 完成定义
 
-- route-plan contract、wire helper、text helper 的当前 owner 有清晰说明
-- `TextAdv2Json` 不反向依赖 observation contract 文件内部 helper
+- route-plan contract、planner、codec、text helper 的当前 owner 有清晰说明
+- 不再暗示还要继续做一轮更大的 route-plan 结构拆分
 - 现有 route-plan tests / host parity tests 保持通过
 
 ## 5.2 Package B：observation seam naming cleanup
@@ -267,7 +268,7 @@ TextAdv2 当前仍是：
 
 ### 为什么放在 Package A 之后
 
-因为即使改名已经完成，route-plan 的 helper ownership 若不继续拆开，旧混责仍会原样留在新名字下面。
+因为 Package A 先把 route-plan owner 与历史措辞收干净，后续命名类尾修才不会继续搬运旧叙述噪音。
 
 ### 完成定义
 
@@ -313,7 +314,7 @@ Package C 经再次审视后，已经收缩成一个更小的测试硬化包。
 
 如果只开一个短周期，建议顺序如下：
 
-1. 先做 Package A：route-plan helper ownership cleanup
+1. 先做 Package A：route-plan owner clarity / wording cleanup
 2. 继续做 Package B 后续尾修：observation seam naming cleanup
 3. 再做 Package C1：canonical observe JSON shape guards
 4. host wording cleanup 只有在确有收益时，再作为独立低优先级包整体启动
@@ -322,7 +323,7 @@ Package C 经再次审视后，已经收缩成一个更小的测试硬化包。
 
 - 最大的结构性工作已经做完了
 - 现在最该避免的是“大范围机械改名先行”
-- 先拆 route-plan 的混合职责，后续 rename 才不会继续搬运旧问题
+- 先把 route-plan owner 与文案写清，后续 rename 才不会继续搬运旧问题
 
 ## 7. 当前验收结论
 
@@ -338,12 +339,12 @@ Package C 经再次审视后，已经收缩成一个更小的测试硬化包。
 
 当前未完成、但值得继续收口的，主要只剩：
 
-- route-plan 的职责拆分
-- `Observation` 的 route-plan 混责与残余历史表述
+- route-plan owner 与残余历史表述清理
+- `Observation` 内 route-plan contract 的残余历史表述
 - 少量 host wording / 注释文档清理
 
 ## 8. 一句总纲
 
 TextAdv2 现在已经跨过“先把边界拆清”的阶段。
 
-后续最合理的路线，不是再做一轮大重构，而是把剩下几处命名与职责不一致的尾巴，用小包、低噪音、可验证的方式逐个收干净。
+后续最合理的路线，不是再做一轮大重构，而是把剩下几处 owner 与措辞不完全对齐的尾巴，用小包、低噪音、可验证的方式逐个收干净。

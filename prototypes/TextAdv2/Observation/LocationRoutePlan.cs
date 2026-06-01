@@ -3,14 +3,15 @@ using Atelia.TextAdv2.WorldTruth;
 namespace Atelia.TextAdv2.Observation;
 
 /// <summary>
-/// Location 级最短路规划结果。
+/// Machine-facing route-plan observation contract。
 ///
 /// 当前阶段显式区分三种结果：
 /// - Found：找到了从起点到终点的可达路径；
 /// - AlreadyThere：起点与终点相同；
 /// - Unreachable：当前图上不存在可达路径。
 ///
-/// 不使用“零步 + 总成本 0”同时表达多种语义，避免调用方必须靠猜测解读结果。
+/// `LocationRoutePlanner` 当前有意直接产出该 contract；
+/// wire token / JSON codec / dev text rendering 则留在相邻 helper 中。
 /// </summary>
 public sealed record LocationRoutePlanObservation(
     string FromLocationId,
@@ -35,7 +36,7 @@ public sealed record LocationRoutePlanSearchStatsObservation(
 
 /// <summary>
 /// 规划结果中的一步。
-/// 这是 Location 级图上的一条有向边选择，并保留累计成本，方便人工核对路径是否符合预期。
+/// 这是 Location 级图上的一条有向边选择，并保留累计成本，方便 machine consumer 与开发期人工核对路径。
 /// </summary>
 public sealed record LocationRoutePlanStepObservation(
     int StepNumber,
@@ -50,6 +51,9 @@ public sealed record LocationRoutePlanStepObservation(
     int CumulativeTravelCost
 );
 
+/// <summary>
+/// Route-plan observation contract 的 machine-facing result status。
+/// </summary>
 public enum RoutePlanStatus {
     Found,
     AlreadyThere,

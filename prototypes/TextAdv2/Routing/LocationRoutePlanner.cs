@@ -11,6 +11,9 @@ namespace Atelia.TextAdv2.Routing;
 /// - 数据面来自更小的内部 navigation graph seam；
 /// - 结果对等成本路径采用稳定 tie-break。
 ///
+/// 当前阶段有意直接产出 `LocationRoutePlanObservation` 这个 machine-facing observation contract，
+/// 不再额外引入中间 routing result / projector。
+///
 /// 这让 MVP 先把 correctness、结果语义和文本可检视性钉住，后续若加入 admissible heuristic，再向真正的 A* 推进。
 /// </summary>
 internal static class LocationRoutePlanner {
