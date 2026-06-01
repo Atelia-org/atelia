@@ -31,6 +31,10 @@ public sealed class CrossHostMachineContractParityTests {
             using var response = await client.GetAsync("/actors/scout/observation");
             string hostJson = await ReadSuccessfulHostJsonAsync(response);
 
+            using JsonDocument cli = JsonDocument.Parse(cliJson);
+            using JsonDocument host = JsonDocument.Parse(hostJson);
+            AssertActorObservationJsonUsesCanonicalShape(cli.RootElement, "cli observe actor");
+            AssertActorObservationJsonUsesCanonicalShape(host.RootElement, "host observe actor");
             AssertJsonEquivalent(cliJson, hostJson, "observe actor");
         }
         finally {
@@ -83,6 +87,10 @@ public sealed class CrossHostMachineContractParityTests {
             using var response = await client.GetAsync("/admin/locations/square/observation");
             string hostJson = await ReadSuccessfulHostJsonAsync(response);
 
+            using JsonDocument cli = JsonDocument.Parse(cliJson);
+            using JsonDocument host = JsonDocument.Parse(hostJson);
+            AssertLocationObservationJsonUsesCanonicalShape(cli.RootElement, "cli observe location");
+            AssertLocationObservationJsonUsesCanonicalShape(host.RootElement, "host observe location");
             AssertJsonEquivalent(cliJson, hostJson, "observe location");
         }
         finally {
@@ -733,6 +741,107 @@ public sealed class CrossHostMachineContractParityTests {
             currentLocationPropertyNames
         );
         Assert.True(root.TryGetProperty("availableMoves", out _), $"{source}: availableMoves should be present.");
+    }
+
+    private static void AssertActorObservationJsonUsesCanonicalShape(JsonElement root, string source) {
+        string[] propertyNames = ReadSortedPropertyNames(root);
+
+        Assert.True(root.TryGetProperty("actorId", out _), $"{source}: actorId should be present.");
+        Assert.True(root.TryGetProperty("actorName", out _), $"{source}: actorName should be present.");
+        Assert.True(root.TryGetProperty("location", out JsonElement location), $"{source}: location should be present.");
+        Assert.Equal(
+            ["actorId", "actorName", "location"],
+            propertyNames
+        );
+
+        AssertLocationObservationJsonUsesCanonicalShape(location, $"{source}: location");
+    }
+
+    private static void AssertLocationObservationJsonUsesCanonicalShape(JsonElement root, string source) {
+        string[] propertyNames = ReadSortedPropertyNames(root);
+
+        Assert.True(root.TryGetProperty("locationId", out _), $"{source}: locationId should be present.");
+        Assert.True(root.TryGetProperty("locationName", out _), $"{source}: locationName should be present.");
+        Assert.True(root.TryGetProperty("locationDescription", out _), $"{source}: locationDescription should be present.");
+        Assert.True(root.TryGetProperty("exits", out JsonElement exits), $"{source}: exits should be present.");
+        Assert.True(root.TryGetProperty("presentActors", out JsonElement presentActors), $"{source}: presentActors should be present.");
+        Assert.Equal(
+            ["exits", "locationDescription", "locationId", "locationName", "presentActors"],
+            propertyNames
+        );
+
+        AssertExitObservationArrayUsesCanonicalShape(exits, $"{source}: exits");
+        AssertActorPresenceArrayUsesCanonicalShape(presentActors, $"{source}: presentActors");
+    }
+
+    private static void AssertExitObservationArrayUsesCanonicalShape(JsonElement exits, string source) {
+        Assert.Equal(JsonValueKind.Array, exits.ValueKind);
+
+        int index = 0;
+        foreach (JsonElement exit in exits.EnumerateArray()) {
+            string itemSource = $"{source}[{index}]";
+            string[] propertyNames = ReadSortedPropertyNames(exit);
+
+            Assert.True(exit.TryGetProperty("passageId", out _), $"{itemSource}: passageId should be present.");
+            Assert.True(exit.TryGetProperty("exitName", out _), $"{itemSource}: exitName should be present.");
+            Assert.True(exit.TryGetProperty("targetLocationId", out _), $"{itemSource}: targetLocationId should be present.");
+            Assert.True(exit.TryGetProperty("targetLocationName", out _), $"{itemSource}: targetLocationName should be present.");
+            Assert.True(exit.TryGetProperty("travelMode", out _), $"{itemSource}: travelMode should be present.");
+            Assert.True(exit.TryGetProperty("baseTravelCost", out _), $"{itemSource}: baseTravelCost should be present.");
+            Assert.True(exit.TryGetProperty("travelCostModifier", out _), $"{itemSource}: travelCostModifier should be present.");
+            Assert.True(exit.TryGetProperty("totalTravelCost", out _), $"{itemSource}: totalTravelCost should be present.");
+            Assert.True(exit.TryGetProperty("sharedConditionNote", out _), $"{itemSource}: sharedConditionNote should be present.");
+            Assert.True(exit.TryGetProperty("directionalConditionNote", out _), $"{itemSource}: directionalConditionNote should be present.");
+            Assert.True(exit.TryGetProperty("localViewNote", out _), $"{itemSource}: localViewNote should be present.");
+            Assert.True(exit.TryGetProperty("isEnabled", out _), $"{itemSource}: isEnabled should be present.");
+            Assert.Equal(
+                [
+                    "baseTravelCost",
+                    "directionalConditionNote",
+                    "exitName",
+                    "isEnabled",
+                    "localViewNote",
+                    "passageId",
+                    "sharedConditionNote",
+                    "targetLocationId",
+                    "targetLocationName",
+                    "totalTravelCost",
+                    "travelCostModifier",
+                    "travelMode",
+                ],
+                propertyNames
+            );
+
+            index++;
+        }
+    }
+
+    private static void AssertActorPresenceArrayUsesCanonicalShape(JsonElement presentActors, string source) {
+        Assert.Equal(JsonValueKind.Array, presentActors.ValueKind);
+
+        int index = 0;
+        foreach (JsonElement actor in presentActors.EnumerateArray()) {
+            string itemSource = $"{source}[{index}]";
+            string[] propertyNames = ReadSortedPropertyNames(actor);
+
+            Assert.True(actor.TryGetProperty("actorId", out _), $"{itemSource}: actorId should be present.");
+            Assert.True(actor.TryGetProperty("actorName", out _), $"{itemSource}: actorName should be present.");
+            Assert.Equal(
+                ["actorId", "actorName"],
+                propertyNames
+            );
+
+            index++;
+        }
+    }
+
+    private static string[] ReadSortedPropertyNames(JsonElement element) {
+        Assert.Equal(JsonValueKind.Object, element.ValueKind);
+
+        return element.EnumerateObject()
+            .Select(static property => property.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static void AssertJsonEquivalent(string cliJson, string hostJson, string contractName) {
