@@ -1,6 +1,6 @@
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Routing;
 
 /// <summary>
 /// 仅供内部算法消费的最小 location graph 视图。

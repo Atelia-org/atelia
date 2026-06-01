@@ -1,4 +1,4 @@
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Routing;
 
 /// <summary>
 /// 最短路规划选项。

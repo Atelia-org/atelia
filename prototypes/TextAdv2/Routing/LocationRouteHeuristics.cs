@@ -1,4 +1,4 @@
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Routing;
 
 internal sealed record LocationRouteHeuristicObservation(string Name, int LandmarkCount);
 

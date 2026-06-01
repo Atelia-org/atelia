@@ -1,6 +1,6 @@
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Routing;
 
 /// <summary>
 /// 派生 planner、heuristic 与 graph signature 共享的 canonical location navigation graph seam。

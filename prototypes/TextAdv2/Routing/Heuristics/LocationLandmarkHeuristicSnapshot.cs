@@ -1,7 +1,6 @@
-using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.AccelerationIndex;
+namespace Atelia.TextAdv2.Routing;
 
 /// <summary>
 /// 基于显式 landmark 集合的最短路 lower-bound 快照。

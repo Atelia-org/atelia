@@ -1,6 +1,6 @@
 using Atelia.StateJournal;
-using Atelia.TextAdv2.AccelerationIndex;
 using Atelia.TextAdv2.ReadOnlyView;
+using Atelia.TextAdv2.Routing;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 

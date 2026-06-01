@@ -1,6 +1,5 @@
-using System.Text;
-using Atelia.TextAdv2.AccelerationIndex;
 using Atelia.TextAdv2.ReadOnlyView;
+using Atelia.TextAdv2.Routing;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Runtime;
@@ -66,7 +65,7 @@ internal sealed class RouteAccelerationCache {
         _landmarkSnapshot = LocationLandmarkHeuristicSnapshot.Create(world, _landmarkLocationIds);
         _landmarkProfileName = landmarkProfileName;
         _planningOptions = new LocationRoutePlanningOptions(_landmarkSnapshot);
-        _graphSignature = BuildNavigationGraphSignature(world);
+        _graphSignature = LocationNavigationGraphSignature.Build(world);
         return Observe(world);
     }
 
@@ -88,32 +87,8 @@ internal sealed class RouteAccelerationCache {
 
         if (_planningOptions is null || _graphSignature is null) { return "inactive"; }
 
-        return string.Equals(_graphSignature, BuildNavigationGraphSignature(world), StringComparison.Ordinal)
+        return string.Equals(_graphSignature, LocationNavigationGraphSignature.Build(world), StringComparison.Ordinal)
             ? "active"
             : "stale";
-    }
-
-    private static string BuildNavigationGraphSignature(WorldState world) {
-        ArgumentNullException.ThrowIfNull(world);
-
-        var builder = new StringBuilder();
-        foreach (var location in world.EnumerateLocations().OrderBy(location => location.Id, StringComparer.Ordinal)) {
-            builder.Append("L|").Append(location.Id).AppendLine();
-
-            var graph = LocationNavigationGraphProjector.Project(world, location.Id);
-            foreach (var edge in graph.Edges) {
-                builder.Append("E|")
-                    .Append(location.Id)
-                    .Append('|')
-                    .Append(edge.PassageId)
-                    .Append('|')
-                    .Append(edge.TargetLocationId)
-                    .Append('|')
-                    .Append(edge.TravelCost)
-                    .AppendLine();
-            }
-        }
-
-        return builder.ToString();
     }
 }

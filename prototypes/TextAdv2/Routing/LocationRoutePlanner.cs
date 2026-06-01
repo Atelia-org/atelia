@@ -1,6 +1,7 @@
+using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.WorldTruth;
 
-namespace Atelia.TextAdv2.ReadOnlyView;
+namespace Atelia.TextAdv2.Routing;
 
 /// <summary>
 /// 基于 Location 节点 / Passage 有向边 的最短路规划器。
