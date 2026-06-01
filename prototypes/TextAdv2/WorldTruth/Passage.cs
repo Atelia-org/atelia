@@ -297,7 +297,7 @@ public enum TravelMode {
     Portal,
 }
 
-internal static class TravelModeCodec {
+public static class TravelModeCodec {
     public static TravelMode FromStorageValue(string value)
         => value switch {
             "land" => TravelMode.Land,
@@ -306,6 +306,26 @@ internal static class TravelModeCodec {
             "portal" => TravelMode.Portal,
             _ => throw new InvalidOperationException($"Unsupported travel mode '{value}'."),
         };
+
+    public static bool TryParseStorageValue(string? value, out TravelMode result) {
+        switch (value?.Trim().ToLowerInvariant()) {
+            case "land":
+                result = TravelMode.Land;
+                return true;
+            case "water":
+                result = TravelMode.Water;
+                return true;
+            case "air":
+                result = TravelMode.Air;
+                return true;
+            case "portal":
+                result = TravelMode.Portal;
+                return true;
+            default:
+                result = default;
+                return false;
+        }
+    }
 
     public static string ToStorageValue(this TravelMode value)
         => value switch {

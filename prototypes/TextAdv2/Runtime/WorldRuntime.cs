@@ -31,21 +31,11 @@ internal sealed class WorldRuntime {
         return _routeAcceleration.Rebuild(world, landmarkLocationIds, landmarkProfileName);
     }
 
-    public void RecordMovement(ActorMovementObservation observation) {
-        ArgumentNullException.ThrowIfNull(observation);
+    public void RecordMovement(ActorMovementHistoryEntry entry, string actorId) {
+        ArgumentNullException.ThrowIfNull(entry);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
 
-        GetOrCreateMovementHistory(observation.ActorId).Add(
-            new ActorMovementHistoryEntry(
-                observation.PassageId,
-                observation.ExitName,
-                observation.FromLocationId,
-                observation.FromLocationName,
-                observation.ToLocationId,
-                observation.ToLocationName,
-                observation.TravelMode,
-                observation.TravelCost
-            )
-        );
+        GetOrCreateMovementHistory(actorId).Add(entry);
     }
 
     public ActorRuntimeRouteTraceObservation ObserveActorRuntimeRouteTrace(WorldState world, string actorId) {

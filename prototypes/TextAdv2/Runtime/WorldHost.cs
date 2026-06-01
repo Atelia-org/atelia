@@ -233,7 +233,7 @@ internal sealed class WorldHost : IDisposable {
         );
     }
 
-    public ActorMovementObservation MoveActor(string actorId, string passageId) {
+    public ActorMoveCommit MoveActor(string actorId, string passageId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
@@ -241,13 +241,13 @@ internal sealed class WorldHost : IDisposable {
         var receipt = _world.MoveActorAlongPassage(actorId, passageId);
         Commit();
 
+        var actor = _world.GetActor(actorId);
         var fromLocation = _world.GetLocation(receipt.FromLocationId);
         var toLocation = _world.GetLocation(receipt.ToLocationId);
-        var currentObservation = LocationObservationProjector.ObserveActorLocation(_world, actorId);
 
-        return new ActorMovementObservation(
-            currentObservation.ActorId,
-            currentObservation.ActorName,
+        return new ActorMoveCommit(
+            actor.Id,
+            actor.Name,
             receipt.PassageId,
             receipt.ExitName,
             receipt.FromLocationId,
@@ -255,8 +255,7 @@ internal sealed class WorldHost : IDisposable {
             receipt.ToLocationId,
             toLocation.Name,
             receipt.TravelMode,
-            receipt.TravelCost,
-            currentObservation.Location
+            receipt.TravelCost
         );
     }
 

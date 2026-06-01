@@ -4,26 +4,6 @@ using Atelia.TextAdv2.WorldTruth;
 namespace Atelia.TextAdv2.Runtime;
 
 /// <summary>
-/// 一次成功移动后的结构化结果。
-///
-/// 它不是持久化世界真相，而是当前 runtime 内对一次合法移动的只读记录，
-/// 供 CLI 调试、trace 汇总和后续 route replay 使用。
-/// </summary>
-internal sealed record ActorMovementObservation(
-    string ActorId,
-    string ActorName,
-    string PassageId,
-    string ExitName,
-    string FromLocationId,
-    string FromLocationName,
-    string ToLocationId,
-    string ToLocationName,
-    TravelMode TravelMode,
-    int TravelCost,
-    LocationObservation CurrentLocation
-);
-
-/// <summary>
 /// runtime 内部维护的轻量移动历史。
 ///
 /// 它只保留 runtime route trace 真正需要的稳定字段，属于本次运行的易失调试态，

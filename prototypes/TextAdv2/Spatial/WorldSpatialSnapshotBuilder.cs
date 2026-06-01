@@ -24,38 +24,67 @@ internal static class WorldSpatialSnapshotBuilder
     {
         ArgumentNullException.ThrowIfNull(world);
 
-        var locations = new Dictionary<string, LocationAdjacencySnapshot>(StringComparer.Ordinal);
+        var edgeBuckets = new Dictionary<string, List<LocationAdjacencyEdge>>(StringComparer.Ordinal);
 
         foreach (var location in world.EnumerateLocations().OrderBy(l => l.Id, StringComparer.Ordinal))
         {
-            var edges = world.EnumeratePassagesTouching(location.Id)
-                .Select(passage => BuildEdge(location.Id, passage))
-                .OrderBy(e => e.ExitName, StringComparer.Ordinal)
-                .ThenBy(e => e.PassageId, StringComparer.Ordinal)
-                .ThenBy(e => e.ToLocationId, StringComparer.Ordinal)
-                .ToArray();
+            edgeBuckets.Add(location.Id, []);
+        }
 
-            locations.Add(location.Id, new LocationAdjacencySnapshot(location.Id, edges));
+        foreach (var passage in world.EnumeratePassages())
+        {
+            AddEdge(edgeBuckets, passage.EndpointA.LocationId, BuildEdge(passage.EndpointA, passage.FromAToB, passage.EndpointB.LocationId, passage));
+            AddEdge(edgeBuckets, passage.EndpointB.LocationId, BuildEdge(passage.EndpointB, passage.FromBToA, passage.EndpointA.LocationId, passage));
+        }
+
+        var locations = new Dictionary<string, LocationAdjacencySnapshot>(edgeBuckets.Count, StringComparer.Ordinal);
+        foreach (var (locationId, edges) in edgeBuckets.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+        {
+            locations.Add(
+                locationId,
+                new LocationAdjacencySnapshot(
+                    locationId,
+                    edges.OrderBy(e => e.ExitName, StringComparer.Ordinal)
+                        .ThenBy(e => e.PassageId, StringComparer.Ordinal)
+                        .ThenBy(e => e.ToLocationId, StringComparer.Ordinal)
+                        .ToArray()
+                )
+            );
         }
 
         return new WorldSpatialSnapshot(locations);
     }
 
-    private static LocationAdjacencyEdge BuildEdge(string fromLocationId, Passage passage)
+    private static void AddEdge(
+        IReadOnlyDictionary<string, List<LocationAdjacencyEdge>> edgeBuckets,
+        string fromLocationId,
+        LocationAdjacencyEdge edge
+    )
     {
-        var endpoint = passage.GetEndpointFor(fromLocationId);
-        var direction = passage.GetDirectionFrom(fromLocationId);
-        var toLocationId = passage.GetOtherLocationId(fromLocationId);
+        if (!edgeBuckets.TryGetValue(fromLocationId, out var edges))
+        {
+            throw new InvalidOperationException($"WorldSpatialSnapshotBuilder encountered passage endpoint at missing location '{fromLocationId}'.");
+        }
 
+        edges.Add(edge);
+    }
+
+    private static LocationAdjacencyEdge BuildEdge(
+        PassageEndpoint endpoint,
+        PassageDirectionRule direction,
+        string toLocationId,
+        Passage passage
+    )
+    {
         return new LocationAdjacencyEdge(
             PassageId: passage.Id,
-            FromLocationId: fromLocationId,
+            FromLocationId: endpoint.LocationId,
             ToLocationId: toLocationId,
             ExitName: endpoint.ExitName,
             TravelMode: passage.TravelMode,
             BaseTravelCost: passage.BaseTravelCost,
             TravelCostModifier: direction.TravelCostModifier,
-            TotalTravelCost: passage.GetTotalTravelCostFrom(fromLocationId),
+            TotalTravelCost: passage.GetTotalTravelCostFrom(endpoint.LocationId),
             SharedConditionNote: passage.SharedConditionNote,
             DirectionConditionNote: direction.DirectionConditionNote,
             LocalViewNote: endpoint.LocalViewNote,

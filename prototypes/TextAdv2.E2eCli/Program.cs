@@ -470,15 +470,11 @@ internal static class Program {
     }
 
     private static TravelMode ParseTravelMode(string value)
-        => value.ToLowerInvariant() switch {
-            "land" => TravelMode.Land,
-            "water" => TravelMode.Water,
-            "air" => TravelMode.Air,
-            "portal" => TravelMode.Portal,
-            _ => throw new InvalidOperationException(
+        => TravelModeCodec.TryParseStorageValue(value, out var travelMode)
+            ? travelMode
+            : throw new InvalidOperationException(
                 $"CreatePassage requires travel mode land|water|air|portal, but received '{value}'."
-            ),
-        };
+            );
 
     private static string BuildUsage()
         => """

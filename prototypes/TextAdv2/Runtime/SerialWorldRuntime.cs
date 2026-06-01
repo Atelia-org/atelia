@@ -142,8 +142,8 @@ public sealed class SerialWorldRuntime : IDisposable {
     public ActorMoveResult MoveActor(string actorId, string passageId) {
         EnsureNotDisposed();
         var movement = _host.MoveActor(actorId, passageId);
-        _runtime.RecordMovement(movement);
-        return RuntimeMovementProjector.Project(movement);
+        _runtime.RecordMovement(movement.ToHistoryEntry(), movement.ActorId);
+        return movement.ToResult(_host.ObserveLocation(movement.ToLocationId));
     }
 
     public PassageAuthoringSnapshot CreatePassage(

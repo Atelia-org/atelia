@@ -24,34 +24,9 @@ internal sealed record CreatePassageRequest(
     int? BaseTravelCost
 ) {
     public TravelMode ResolveTravelMode()
-        => TryParseTravelMode(TravelMode, out var value)
+        => TravelModeCodec.TryParseStorageValue(TravelMode, out var value)
             ? value
             : throw new InvalidOperationException(
                 $"Unsupported travelMode '{TravelMode}'. Allowed values: land, water, air, portal."
             );
-
-    private static bool TryParseTravelMode(string? value, out TravelMode result) {
-        if (string.IsNullOrWhiteSpace(value)) {
-            result = WorldTruth.TravelMode.Land;
-            return true;
-        }
-
-        switch (value.Trim().ToLowerInvariant()) {
-            case "land":
-                result = WorldTruth.TravelMode.Land;
-                return true;
-            case "water":
-                result = WorldTruth.TravelMode.Water;
-                return true;
-            case "air":
-                result = WorldTruth.TravelMode.Air;
-                return true;
-            case "portal":
-                result = WorldTruth.TravelMode.Portal;
-                return true;
-            default:
-                result = default;
-                return false;
-        }
-    }
 }
