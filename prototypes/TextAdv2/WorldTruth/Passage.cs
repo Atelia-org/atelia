@@ -2,73 +2,6 @@ using Atelia.StateJournal;
 
 namespace Atelia.TextAdv2.WorldTruth;
 
-internal sealed class PassageView {
-    private readonly Passage _passage;
-
-    internal PassageView(Passage passage) {
-        ArgumentNullException.ThrowIfNull(passage);
-        _passage = passage;
-    }
-
-    public string Id => _passage.Id;
-
-    public PassageEndpointView EndpointA => new(_passage.EndpointA);
-
-    public PassageEndpointView EndpointB => new(_passage.EndpointB);
-
-    public PassageDirectionRuleView FromAToB => new(_passage.FromAToB);
-
-    public PassageDirectionRuleView FromBToA => new(_passage.FromBToA);
-
-    public TravelMode TravelMode => _passage.TravelMode;
-
-    public int BaseTravelCost => _passage.BaseTravelCost;
-
-    public string SharedConditionNote => _passage.SharedConditionNote;
-
-    public bool Connects(string locationId) => _passage.Connects(locationId);
-
-    public int GetTotalTravelCostFrom(string locationId) => _passage.GetTotalTravelCostFrom(locationId);
-
-    public PassageEndpointView GetEndpointFor(string locationId) => new(_passage.GetEndpointFor(locationId));
-
-    public PassageEndpointView GetOppositeEndpoint(string locationId) => new(_passage.GetOppositeEndpoint(locationId));
-
-    public PassageDirectionRuleView GetDirectionFrom(string locationId) => new(_passage.GetDirectionFrom(locationId));
-
-    public string GetOtherLocationId(string locationId) => _passage.GetOtherLocationId(locationId);
-}
-
-internal sealed class PassageEndpointView {
-    private readonly PassageEndpoint _endpoint;
-
-    internal PassageEndpointView(PassageEndpoint endpoint) {
-        ArgumentNullException.ThrowIfNull(endpoint);
-        _endpoint = endpoint;
-    }
-
-    public string LocationId => _endpoint.LocationId;
-
-    public string ExitName => _endpoint.ExitName;
-
-    public string LocalViewNote => _endpoint.LocalViewNote;
-}
-
-internal sealed class PassageDirectionRuleView {
-    private readonly PassageDirectionRule _direction;
-
-    internal PassageDirectionRuleView(PassageDirectionRule direction) {
-        ArgumentNullException.ThrowIfNull(direction);
-        _direction = direction;
-    }
-
-    public bool IsEnabled => _direction.IsEnabled;
-
-    public int TravelCostModifier => _direction.TravelCostModifier;
-
-    public string DirectionConditionNote => _direction.DirectionConditionNote;
-}
-
 /// <summary>
 /// Passage 是跨地点连接的唯一真相。
 ///
@@ -112,8 +45,6 @@ internal sealed class Passage {
     }
 
     internal DurableDict<string> Data => _data;
-
-    internal PassageView AsView() => new(this);
 
     public string Id => _id;
 

@@ -58,7 +58,7 @@ internal static class RuntimeWorldAuthoringProjector {
         );
     }
 
-    public static PassageAuthoringSnapshot Project(PassageView passage) {
+    public static PassageAuthoringSnapshot Project(Passage passage) {
         ArgumentNullException.ThrowIfNull(passage);
 
         return new PassageAuthoringSnapshot(
@@ -73,7 +73,7 @@ internal static class RuntimeWorldAuthoringProjector {
         );
     }
 
-    private static PassageEndpointAuthoringSnapshot Project(PassageEndpointView endpoint) {
+    private static PassageEndpointAuthoringSnapshot Project(PassageEndpoint endpoint) {
         ArgumentNullException.ThrowIfNull(endpoint);
 
         return new PassageEndpointAuthoringSnapshot(
@@ -83,7 +83,7 @@ internal static class RuntimeWorldAuthoringProjector {
         );
     }
 
-    private static PassageDirectionAuthoringSnapshot Project(PassageDirectionRuleView direction) {
+    private static PassageDirectionAuthoringSnapshot Project(PassageDirectionRule direction) {
         ArgumentNullException.ThrowIfNull(direction);
 
         return new PassageDirectionAuthoringSnapshot(

@@ -23,7 +23,7 @@ internal static class LocationNavigationGraphProjector {
         return new LocationNavigationGraph(locationId, edges);
     }
 
-    private static LocationNavigationGraphEdge? TryProjectEdge(string locationId, PassageView passage) {
+    private static LocationNavigationGraphEdge? TryProjectEdge(string locationId, Passage passage) {
         var direction = passage.GetDirectionFrom(locationId);
         if (!direction.IsEnabled) { return null; }
 

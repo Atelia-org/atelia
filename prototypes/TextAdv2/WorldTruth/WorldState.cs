@@ -134,7 +134,7 @@ internal sealed class WorldState {
         return false;
     }
 
-    public PassageView CreatePassage(
+    public Passage CreatePassage(
         string id,
         string locationAId,
         string exitNameFromA,
@@ -173,14 +173,14 @@ internal sealed class WorldState {
             baseTravelCost
         );
         PassagesLedger.Upsert(id, passage.Data);
-        return passage.AsView();
+        return passage;
     }
 
-    public PassageView GetPassage(string id) => GetWritablePassage(id).AsView();
+    public Passage GetPassage(string id) => GetWritablePassage(id);
 
-    public bool TryGetPassage(string id, out PassageView? passage) {
+    public bool TryGetPassage(string id, out Passage? passage) {
         if (TryGetWritablePassage(id, out var writablePassage) && writablePassage is not null) {
-            passage = writablePassage.AsView();
+            passage = writablePassage;
             return true;
         }
 
@@ -301,17 +301,10 @@ internal sealed class WorldState {
         }
     }
 
-    public IEnumerable<PassageView> EnumeratePassages() {
-        foreach (var passage in EnumerateWritablePassages()) {
-            yield return passage.AsView();
-        }
-    }
+    public IEnumerable<Passage> EnumeratePassages() => EnumerateWritablePassages();
 
-    public IEnumerable<PassageView> EnumeratePassagesTouching(string locationId) {
-        foreach (var passage in EnumerateWritablePassagesTouching(locationId)) {
-            yield return passage.AsView();
-        }
-    }
+    public IEnumerable<Passage> EnumeratePassagesTouching(string locationId)
+        => EnumerateWritablePassagesTouching(locationId);
 
     internal static void EnsureKind(DurableDict<string> data, string expectedKind) {
         ArgumentNullException.ThrowIfNull(data);

@@ -44,7 +44,7 @@ public class TestWorldBuilderTests {
     }
 
     [Fact]
-    public void PassageView_GetTotalTravelCostFrom_ReadsAuthoritativeDirectionTotal() {
+    public void Passage_GetTotalTravelCostFrom_ReadsAuthoritativeDirectionTotal() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -137,7 +137,7 @@ public class TestWorldBuilderTests {
     }
 
     [Fact]
-    public void WorldState_PassageReadSurface_ReturnsReadOnlyFacade() {
+    public void WorldState_PassageReadSurface_ReturnsAuthoritativePassage() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -150,18 +150,18 @@ public class TestWorldBuilderTests {
             var created = world.CreatePassage("start-goal", start.Id, "go", goal.Id, "back", TravelMode.Land, 1);
             var fetched = world.GetPassage(created.Id);
 
-            Assert.IsType<PassageView>(created);
-            Assert.IsType<PassageView>(fetched);
+            Assert.IsType<Passage>(created);
+            Assert.IsType<Passage>(fetched);
             Assert.True(world.TryGetPassage(created.Id, out var viaTryGet));
             Assert.NotNull(viaTryGet);
-            Assert.IsType<PassageView>(viaTryGet);
+            Assert.IsType<Passage>(viaTryGet);
             Assert.Collection(
                 world.EnumeratePassages(),
-                passage => Assert.IsType<PassageView>(passage)
+                passage => Assert.IsType<Passage>(passage)
             );
             Assert.Collection(
                 world.EnumeratePassagesTouching(start.Id),
-                passage => Assert.IsType<PassageView>(passage)
+                passage => Assert.IsType<Passage>(passage)
             );
         }
         finally {
