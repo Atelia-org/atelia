@@ -253,7 +253,7 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
-    public void MoveActorThenTraceActorRoute_UsesTypedSessionMovementHistory() {
+    public void MoveActorThenTraceActorRuntimeRoute_UsesTypedSessionMovementHistory() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -263,7 +263,7 @@ public class SerialWorldRuntimeTests {
                 TestWorldBuilder.ActorIds.Scout,
                 TestWorldBuilder.PassageIds.SquareRidgeTrail
             );
-            var trace = session.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
+            var trace = session.TraceActorRuntimeRoute(TestWorldBuilder.ActorIds.Scout);
 
             Assert.Equal(TestWorldBuilder.ActorIds.Scout, move.ActorId);
             Assert.Equal(TestWorldBuilder.LocationIds.Square, move.FromLocationId);
@@ -271,6 +271,7 @@ public class SerialWorldRuntimeTests {
             Assert.Equal(TravelMode.Land, move.TravelMode);
 
             Assert.Equal(TestWorldBuilder.ActorIds.Scout, trace.ActorId);
+            Assert.False(string.IsNullOrWhiteSpace(trace.RuntimeEpochId));
             Assert.Equal("Scout", trace.ActorName);
             Assert.Equal(TestWorldBuilder.LocationIds.Square, trace.StartLocationId);
             Assert.Equal("Square", trace.StartLocationName);
@@ -701,10 +702,11 @@ public class SerialWorldRuntimeTests {
 
             using var reopened = SampleWorldBootstrap.OpenOrCreateSession(repoDir);
             var timeAfterReopen = reopened.ObserveTime();
-            var traceAfterReopen = reopened.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
+            var traceAfterReopen = reopened.TraceActorRuntimeRoute(TestWorldBuilder.ActorIds.Scout);
             var observedAfterReopen = reopened.ObserveActor(TestWorldBuilder.ActorIds.Scout);
 
             Assert.Equal(11, timeAfterReopen.CurrentTick);
+            Assert.False(string.IsNullOrWhiteSpace(traceAfterReopen.RuntimeEpochId));
             Assert.Equal(TestWorldBuilder.LocationIds.Ridge, traceAfterReopen.StartLocationId);
             Assert.Equal("Ridge", traceAfterReopen.StartLocationName);
             Assert.Equal(TestWorldBuilder.LocationIds.Ridge, traceAfterReopen.EndLocationId);

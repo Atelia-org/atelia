@@ -169,20 +169,26 @@ public class NavigationAndCliWorkflowTests {
             TestWorldBuilder.PassageIds.RidgeAerieWinch
         );
 
-        var trace = session.TraceActorRoute(TestWorldBuilder.ActorIds.Scout);
-        string text = DevTextRenderer.RenderRouteTrace(trace);
+        var trace = session.TraceActorRuntimeRoute(TestWorldBuilder.ActorIds.Scout);
+        string text = DevTextRenderer.RenderRuntimeRouteTrace(trace);
 
-        Assert.Equal(Normalize(ExpectedScoutRouteTrace), Normalize(text));
+        Assert.Equal(
+            Normalize(ExpectedScoutRuntimeRouteTrace(trace.RuntimeEpochId)),
+            Normalize(text)
+        );
     }
 
     [Fact]
     public void DevTextRenderer_RendersIdleRouteTraceText() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
 
-        var trace = session.TraceActorRoute(TestWorldBuilder.ActorIds.Boatman);
-        string text = DevTextRenderer.RenderRouteTrace(trace);
+        var trace = session.TraceActorRuntimeRoute(TestWorldBuilder.ActorIds.Boatman);
+        string text = DevTextRenderer.RenderRuntimeRouteTrace(trace);
 
-        Assert.Equal(Normalize(ExpectedBoatmanIdleTrace), Normalize(text));
+        Assert.Equal(
+            Normalize(ExpectedBoatmanIdleRuntimeRouteTrace(trace.RuntimeEpochId)),
+            Normalize(text)
+        );
     }
 
     [Fact]
@@ -244,18 +250,18 @@ public class NavigationAndCliWorkflowTests {
 
     private static string Normalize(string text) => text.Replace("\r\n", "\n");
 
-    private const string ExpectedScoutRouteTrace = """
-ROUTE TRACE actor=scout name=Scout
+    private static string ExpectedScoutRuntimeRouteTrace(string runtimeEpochId) => $$"""
+RUNTIME ROUTE TRACE epoch={{runtimeEpochId}} actor=scout name=Scout
 start=square (Square)
 1. square --north gate/square-ridge-trail--> ridge | land | cost=5
 2. ridge --cliff lift/ridge-aerie-winch--> aerie | air | cost=5
 end=aerie (Aerie) | steps=2 | totalCost=10
 """;
 
-    private const string ExpectedBoatmanIdleTrace = """
-ROUTE TRACE actor=boatman name=Boatman
+    private static string ExpectedBoatmanIdleRuntimeRouteTrace(string runtimeEpochId) => $$"""
+RUNTIME ROUTE TRACE epoch={{runtimeEpochId}} actor=boatman name=Boatman
 start=harbor (Harbor)
-<no movement in this run>
+<no movement in this runtime>
 end=harbor (Harbor) | steps=0 | totalCost=0
 """;
 }

@@ -2,7 +2,8 @@ using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Runtime;
 
-public sealed record ActorRouteTrace(
+public sealed record ActorRuntimeRouteTrace(
+    string RuntimeEpochId,
     string ActorId,
     string ActorName,
     string StartLocationId,
@@ -11,10 +12,10 @@ public sealed record ActorRouteTrace(
     string EndLocationName,
     int StepCount,
     int TotalTravelCost,
-    ActorRouteTraceStep[] Steps
+    ActorRuntimeRouteTraceStep[] Steps
 );
 
-public sealed record ActorRouteTraceStep(
+public sealed record ActorRuntimeRouteTraceStep(
     int StepNumber,
     string PassageId,
     string ExitName,
@@ -26,11 +27,12 @@ public sealed record ActorRouteTraceStep(
     int TravelCost
 );
 
-internal static class RuntimeRouteTraceProjector {
-    public static ActorRouteTrace Project(ActorRouteTraceObservation observation) {
+internal static class ActorRuntimeRouteTraceProjector {
+    public static ActorRuntimeRouteTrace Project(ActorRuntimeRouteTraceObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new ActorRouteTrace(
+        return new ActorRuntimeRouteTrace(
+            observation.RuntimeEpochId.ToString(),
             observation.ActorId,
             observation.ActorName,
             observation.StartLocationId,
@@ -43,10 +45,10 @@ internal static class RuntimeRouteTraceProjector {
         );
     }
 
-    private static ActorRouteTraceStep ProjectStep(ActorRouteTraceStepObservation observation) {
+    private static ActorRuntimeRouteTraceStep ProjectStep(ActorRuntimeRouteTraceStepObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return new ActorRouteTraceStep(
+        return new ActorRuntimeRouteTraceStep(
             observation.StepNumber,
             observation.PassageId,
             observation.ExitName,

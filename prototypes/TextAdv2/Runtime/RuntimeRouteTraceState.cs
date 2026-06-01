@@ -26,7 +26,7 @@ internal sealed record ActorMovementObservation(
 /// <summary>
 /// runtime 内部维护的轻量移动历史。
 ///
-/// 它只保留 route trace 真正需要的稳定字段，属于本次运行的易失调试态，
+/// 它只保留 runtime route trace 真正需要的稳定字段，属于本次运行的易失调试态，
 /// 不持有完整 LocationObservation，也不承诺跨 reopen 恢复。
 /// </summary>
 internal sealed record ActorMovementHistoryEntry(
@@ -41,10 +41,11 @@ internal sealed record ActorMovementHistoryEntry(
 );
 
 /// <summary>
-/// 单次 runtime 期间累计得到的 actor 路线 trace。
-/// 其输入是“当前 actor 位置 + 本次运行内已发生的移动序列”。
+/// 单次 runtime 期间累计得到的 actor runtime route trace。
+/// 其输入是“当前 actor 位置 + 本次 runtime 内已发生的移动序列”。
 /// </summary>
-internal sealed record ActorRouteTraceObservation(
+internal sealed record ActorRuntimeRouteTraceObservation(
+    RuntimeEpochId RuntimeEpochId,
     string ActorId,
     string ActorName,
     string StartLocationId,
@@ -53,14 +54,14 @@ internal sealed record ActorRouteTraceObservation(
     string EndLocationName,
     int StepCount,
     int TotalTravelCost,
-    ActorRouteTraceStepObservation[] Steps
+    ActorRuntimeRouteTraceStepObservation[] Steps
 );
 
 /// <summary>
-/// Route trace 中的一步。
+/// Runtime route trace 中的一步。
 /// 保留足够的稳定字段以便断言和人工检查，但避免像完整 LocationObservation 那样过于冗长。
 /// </summary>
-internal sealed record ActorRouteTraceStepObservation(
+internal sealed record ActorRuntimeRouteTraceStepObservation(
     int StepNumber,
     string PassageId,
     string ExitName,
@@ -72,8 +73,9 @@ internal sealed record ActorRouteTraceStepObservation(
     int TravelCost
 );
 
-internal static class ActorRouteTraceProjector {
-    public static ActorRouteTraceObservation ObserveActorRouteTrace(
+internal static class ActorRuntimeRouteTraceObservationProjector {
+    public static ActorRuntimeRouteTraceObservation ObserveActorRuntimeRouteTrace(
+        RuntimeEpochId runtimeEpochId,
         WorldState world,
         string actorId,
         IReadOnlyList<ActorMovementHistoryEntry> movementHistory
@@ -87,7 +89,7 @@ internal static class ActorRouteTraceProjector {
         var startLocationId = movementHistory.Count > 0 ? movementHistory[0].FromLocationId : endLocation.Id;
         var startLocationName = movementHistory.Count > 0 ? movementHistory[0].FromLocationName : endLocation.Name;
         var steps = movementHistory
-            .Select((movement, index) => new ActorRouteTraceStepObservation(
+            .Select((movement, index) => new ActorRuntimeRouteTraceStepObservation(
                 index + 1,
                 movement.PassageId,
                 movement.ExitName,
@@ -100,7 +102,8 @@ internal static class ActorRouteTraceProjector {
             ))
             .ToArray();
 
-        return new ActorRouteTraceObservation(
+        return new ActorRuntimeRouteTraceObservation(
+            runtimeEpochId,
             actor.Id,
             actor.Name,
             startLocationId,

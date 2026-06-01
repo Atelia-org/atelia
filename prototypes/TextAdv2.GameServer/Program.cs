@@ -97,13 +97,13 @@ app.MapPost("/actors/{actorId}/moves/{passageId}",
     (string actorId, string passageId, RuntimeService runtime)
     => ExecuteJson(runtime, x => x.MoveActor(actorId, passageId))
 );
-app.MapGet("/actors/{actorId}/route-trace",
+app.MapGet("/actors/{actorId}/runtime-route-trace",
     (string actorId, RuntimeService runtime)
-    => ExecuteText(runtime, x => DevTextRenderer.RenderRouteTrace(x.TraceActorRoute(actorId)))
+    => ExecuteText(runtime, x => DevTextRenderer.RenderRuntimeRouteTrace(x.TraceActorRuntimeRoute(actorId)))
 );
-app.MapGet("/actors/{actorId}/route-trace/json",
+app.MapGet("/actors/{actorId}/runtime-route-trace/json",
     (string actorId, RuntimeService runtime)
-    => ExecuteJson(runtime, x => x.TraceActorRoute(actorId))
+    => ExecuteJson(runtime, x => x.TraceActorRuntimeRoute(actorId))
 );
 app.MapGet("/actors/{actorId}/plan-route/{toLocationId}",
     (string actorId, string toLocationId, RuntimeService runtime)

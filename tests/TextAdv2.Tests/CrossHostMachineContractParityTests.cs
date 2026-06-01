@@ -227,7 +227,7 @@ public sealed class CrossHostMachineContractParityTests {
     }
 
     [Fact]
-    public async Task RouteTraceJson_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+    public async Task RuntimeRouteTraceJson_ParityBetweenGameServerAndCliJsonOnlyAsync() {
         string cliRepoDir = CreateTempRepoDir();
         string hostRepoDir = CreateTempRepoDir();
 
@@ -238,11 +238,17 @@ public sealed class CrossHostMachineContractParityTests {
             using var factory = CreateFactory(hostRepoDir);
             using var client = factory.CreateClient();
 
-            string cliJson = RunCliAndReadSuccessfulJson("--repo-dir", cliRepoDir, "--json-only", "--trace-actor-route-json", "scout");
-            using var traceResponse = await client.GetAsync("/actors/scout/route-trace/json");
+            string cliJson = RunCliAndReadSuccessfulJson(
+                "--repo-dir", cliRepoDir, "--json-only", "--trace-actor-runtime-route-json", "scout"
+            );
+            using var traceResponse = await client.GetAsync("/actors/scout/runtime-route-trace/json");
             string hostJson = await ReadSuccessfulHostJsonAsync(traceResponse);
 
-            AssertJsonEquivalent(cliJson, hostJson, "route trace json");
+            using JsonDocument cli = JsonDocument.Parse(cliJson);
+            using JsonDocument host = JsonDocument.Parse(hostJson);
+            AssertRuntimeRouteTraceJsonUsesRuntimeBoundary(cli.RootElement, "cli runtime route trace");
+            AssertRuntimeRouteTraceJsonUsesRuntimeBoundary(host.RootElement, "host runtime route trace");
+            AssertJsonEquivalentIgnoringTopLevelProperty(cliJson, hostJson, "runtime route trace json", "runtimeEpochId");
         }
         finally {
             DeleteDirectoryIfExists(cliRepoDir);
@@ -757,6 +763,29 @@ public sealed class CrossHostMachineContractParityTests {
         AssertLocationObservationJsonUsesCanonicalShape(location, $"{source}: location");
     }
 
+    private static void AssertRuntimeRouteTraceJsonUsesRuntimeBoundary(JsonElement root, string source) {
+        string[] propertyNames = ReadSortedPropertyNames(root);
+
+        Assert.True(root.TryGetProperty("runtimeEpochId", out JsonElement runtimeEpochId), $"{source}: runtimeEpochId should be present.");
+        Assert.Equal(JsonValueKind.String, runtimeEpochId.ValueKind);
+        Assert.False(string.IsNullOrWhiteSpace(runtimeEpochId.GetString()), $"{source}: runtimeEpochId should be non-empty.");
+        Assert.Equal(
+            [
+                "actorId",
+                "actorName",
+                "endLocationId",
+                "endLocationName",
+                "runtimeEpochId",
+                "startLocationId",
+                "startLocationName",
+                "stepCount",
+                "steps",
+                "totalTravelCost",
+            ],
+            propertyNames
+        );
+    }
+
     private static void AssertLocationObservationJsonUsesCanonicalShape(JsonElement root, string source) {
         string[] propertyNames = ReadSortedPropertyNames(root);
 
@@ -855,6 +884,27 @@ public sealed class CrossHostMachineContractParityTests {
         );
     }
 
+    private static void AssertJsonEquivalentIgnoringTopLevelProperty(
+        string cliJson,
+        string hostJson,
+        string contractName,
+        string ignoredTopLevelPropertyName
+    ) {
+        using JsonDocument cli = JsonDocument.Parse(cliJson);
+        using JsonDocument host = JsonDocument.Parse(hostJson);
+
+        string? difference = FindJsonDifferenceIgnoringTopLevelProperty(
+            cli.RootElement,
+            host.RootElement,
+            "$",
+            ignoredTopLevelPropertyName
+        );
+        Assert.True(
+            difference is null,
+            $"Cross-host parity mismatch for {contractName} (ignoring top-level property '{ignoredTopLevelPropertyName}'): {difference}{Environment.NewLine}CLI JSON:{Environment.NewLine}{cliJson}{Environment.NewLine}GameServer JSON:{Environment.NewLine}{hostJson}"
+        );
+    }
+
     private static string? FindJsonDifference(JsonElement expected, JsonElement actual, string path) {
         if (expected.ValueKind != actual.ValueKind) {
             return $"{path}: expected {expected.ValueKind}, actual {actual.ValueKind}.";
@@ -925,6 +975,54 @@ public sealed class CrossHostMachineContractParityTests {
                     ? null
                     : $"{path}: expected {expected.GetRawText()}, actual {actual.GetRawText()}.";
         }
+    }
+
+    private static string? FindJsonDifferenceIgnoringTopLevelProperty(
+        JsonElement expected,
+        JsonElement actual,
+        string path,
+        string ignoredTopLevelPropertyName
+    ) {
+        if (path == "$") {
+            if (expected.ValueKind != JsonValueKind.Object || actual.ValueKind != JsonValueKind.Object) {
+                return FindJsonDifference(expected, actual, path);
+            }
+
+            JsonProperty[] expectedProperties = expected.EnumerateObject()
+                .Where(property => !string.Equals(property.Name, ignoredTopLevelPropertyName, StringComparison.Ordinal))
+                .OrderBy(static property => property.Name, StringComparer.Ordinal)
+                .ToArray();
+            JsonProperty[] actualProperties = actual.EnumerateObject()
+                .Where(property => !string.Equals(property.Name, ignoredTopLevelPropertyName, StringComparison.Ordinal))
+                .OrderBy(static property => property.Name, StringComparer.Ordinal)
+                .ToArray();
+
+            if (expectedProperties.Length != actualProperties.Length) {
+                return $"{path}: expected {expectedProperties.Length} properties, actual {actualProperties.Length}, after ignoring top-level property '{ignoredTopLevelPropertyName}'.";
+            }
+
+            for (int i = 0; i < expectedProperties.Length; i++) {
+                JsonProperty expectedProperty = expectedProperties[i];
+                JsonProperty actualProperty = actualProperties[i];
+
+                if (!string.Equals(expectedProperty.Name, actualProperty.Name, StringComparison.Ordinal)) {
+                    return $"{path}: expected property '{expectedProperty.Name}', actual property '{actualProperty.Name}', after ignoring top-level property '{ignoredTopLevelPropertyName}'.";
+                }
+
+                string? nestedDifference = FindJsonDifference(
+                    expectedProperty.Value,
+                    actualProperty.Value,
+                    $"{path}.{expectedProperty.Name}"
+                );
+                if (nestedDifference is not null) {
+                    return nestedDifference;
+                }
+            }
+
+            return null;
+        }
+
+        return FindJsonDifference(expected, actual, path);
     }
 
     private static bool NumbersAreEquivalent(JsonElement expected, JsonElement actual) {

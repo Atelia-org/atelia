@@ -29,15 +29,15 @@ public static class DevTextRenderer {
             + $" | {movement.TravelMode.ToStorageValue()} | cost={movement.TravelCost}";
     }
 
-    public static string RenderRouteTrace(ActorRouteTrace trace) {
+    public static string RenderRuntimeRouteTrace(ActorRuntimeRouteTrace trace) {
         ArgumentNullException.ThrowIfNull(trace);
 
         var builder = new StringBuilder();
-        builder.AppendLine($"ROUTE TRACE actor={trace.ActorId} name={trace.ActorName}");
+        builder.AppendLine($"RUNTIME ROUTE TRACE epoch={trace.RuntimeEpochId} actor={trace.ActorId} name={trace.ActorName}");
         builder.AppendLine($"start={trace.StartLocationId} ({trace.StartLocationName})");
 
         if (trace.Steps.Length == 0) {
-            builder.AppendLine("<no movement in this run>");
+            builder.AppendLine("<no movement in this runtime>");
         }
         else {
             foreach (var step in trace.Steps) {

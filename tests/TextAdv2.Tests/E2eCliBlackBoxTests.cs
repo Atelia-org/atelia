@@ -95,24 +95,24 @@ public sealed class E2eCliBlackBoxTests {
 
     [Fact]
     public void JsonOnly_WithTextRouteTraceOperation_FailsFast() {
-        CliRunResult result = RunCli("--dev-sample-world", "--json-only", "--trace-actor-route", "scout");
+        CliRunResult result = RunCli("--dev-sample-world", "--json-only", "--trace-actor-runtime-route", "scout");
 
         Assert.Equal(1, result.ExitCode);
         Assert.Equal(string.Empty, result.StandardOutput);
         Assert.Contains("--json-only 只支持 JSON 类 operation", result.StandardError, StringComparison.Ordinal);
-        Assert.Contains("trace actor route scout", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("trace actor runtime route scout", result.StandardError, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void TraceActorRouteTextOperation_RemainsAvailableForHumanDebugging() {
-        CliRunResult result = RunCli("--dev-sample-world", "--trace-actor-route", "scout");
+    public void TraceActorRuntimeRouteTextOperation_RemainsAvailableForHumanDebugging() {
+        CliRunResult result = RunCli("--dev-sample-world", "--trace-actor-runtime-route", "scout");
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(string.Empty, result.StandardError);
         Assert.Contains("TextAdv2 session repo:", result.StandardOutput, StringComparison.Ordinal);
-        Assert.Contains("ROUTE TRACE", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("RUNTIME ROUTE TRACE epoch=", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("start=square (Square)", result.StandardOutput, StringComparison.Ordinal);
-        Assert.Contains("<no movement in this run>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("<no movement in this runtime>", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("end=square (Square) | steps=0 | totalCost=0", result.StandardOutput, StringComparison.Ordinal);
     }
 
@@ -261,7 +261,7 @@ public sealed class E2eCliBlackBoxTests {
     }
 
     [Fact]
-    public void RepoDir_TraceActorRouteJson_ReturnsTypedTrace_AndResetsAfterReopen() {
+    public void RepoDir_TraceActorRuntimeRouteJson_ReturnsTypedTrace_AndResetsAfterReopen() {
         string repoDir = CreateTempRepoDir();
 
         try {
@@ -269,18 +269,19 @@ public sealed class E2eCliBlackBoxTests {
             CliRunResult trace = RunCli(
                 "--repo-dir", repoDir,
                 "--move-actor-quiet", "scout", "square-ridge-trail",
-                "--trace-actor-route-json", "scout"
+                "--trace-actor-runtime-route-json", "scout"
             );
-            CliRunResult traceAfterReopen = RunCli("--repo-dir", repoDir, "--trace-actor-route-json", "scout");
+            CliRunResult traceAfterReopen = RunCli("--repo-dir", repoDir, "--trace-actor-runtime-route-json", "scout");
 
             Assert.Equal(0, init.ExitCode);
             Assert.Equal(0, trace.ExitCode);
             Assert.Equal(0, traceAfterReopen.ExitCode);
 
-            var traceJson = DeserializeCliJson<ActorRouteTrace>(trace.StandardOutput);
-            var traceAfterReopenJson = DeserializeCliJson<ActorRouteTrace>(traceAfterReopen.StandardOutput);
+            var traceJson = DeserializeCliJson<ActorRuntimeRouteTrace>(trace.StandardOutput);
+            var traceAfterReopenJson = DeserializeCliJson<ActorRuntimeRouteTrace>(traceAfterReopen.StandardOutput);
 
             Assert.NotNull(traceJson);
+            Assert.False(string.IsNullOrWhiteSpace(traceJson.RuntimeEpochId));
             Assert.Equal("scout", traceJson.ActorId);
             Assert.Equal("square", traceJson.StartLocationId);
             Assert.Equal("ridge", traceJson.EndLocationId);
@@ -296,6 +297,8 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Equal(5, traceJson.Steps[0].TravelCost);
 
             Assert.NotNull(traceAfterReopenJson);
+            Assert.False(string.IsNullOrWhiteSpace(traceAfterReopenJson.RuntimeEpochId));
+            Assert.NotEqual(traceJson.RuntimeEpochId, traceAfterReopenJson.RuntimeEpochId);
             Assert.Equal("scout", traceAfterReopenJson.ActorId);
             Assert.Equal("ridge", traceAfterReopenJson.StartLocationId);
             Assert.Equal("ridge", traceAfterReopenJson.EndLocationId);
@@ -310,7 +313,7 @@ public sealed class E2eCliBlackBoxTests {
 
     [Fact]
     public void JsonOnly_WithJsonRouteTraceOperation_PrintsPureJsonDocument() {
-        CliRunResult result = RunCli("--dev-sample-world", "--json-only", "--trace-actor-route-json", "scout");
+        CliRunResult result = RunCli("--dev-sample-world", "--json-only", "--trace-actor-runtime-route-json", "scout");
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(string.Empty, result.StandardError);
@@ -319,6 +322,7 @@ public sealed class E2eCliBlackBoxTests {
 
         using JsonDocument json = JsonDocument.Parse(result.StandardOutput);
 
+        Assert.False(string.IsNullOrWhiteSpace(json.RootElement.GetProperty("runtimeEpochId").GetString()));
         Assert.Equal("scout", json.RootElement.GetProperty("actorId").GetString());
         Assert.Equal("square", json.RootElement.GetProperty("startLocationId").GetString());
         Assert.Equal("square", json.RootElement.GetProperty("endLocationId").GetString());
@@ -347,8 +351,8 @@ public sealed class E2eCliBlackBoxTests {
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("--dev-sample-world", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("--json-only", result.StandardOutput, StringComparison.Ordinal);
-        Assert.Contains("--trace-actor-route <actorId>", result.StandardOutput, StringComparison.Ordinal);
-        Assert.Contains("--trace-actor-route-json <actorId>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--trace-actor-runtime-route <actorId>", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--trace-actor-runtime-route-json <actorId>", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("This no longer creates a sample world implicitly", result.StandardOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("current compatibility behavior creates a persistent sample world", result.StandardOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("runtime  Omit a meta command", result.StandardOutput, StringComparison.Ordinal);

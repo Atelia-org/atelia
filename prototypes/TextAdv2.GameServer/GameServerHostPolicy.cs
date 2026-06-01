@@ -136,8 +136,8 @@ internal sealed class GameServerHostPolicy {
             "GET /actors/{actorId}/context",
             "GET /actors/{actorId}/navigation",
             "POST /actors/{actorId}/moves/{passageId}",
-            "GET /actors/{actorId}/route-trace",
-            "GET /actors/{actorId}/route-trace/json",
+            "GET /actors/{actorId}/runtime-route-trace",
+            "GET /actors/{actorId}/runtime-route-trace/json",
             "GET /actors/{actorId}/plan-route/{toLocationId}",
         };
 

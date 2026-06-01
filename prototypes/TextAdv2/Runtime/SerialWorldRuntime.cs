@@ -130,12 +130,12 @@ public sealed class SerialWorldRuntime : IDisposable {
         return RebuildRouteAccelerationCore(ParseExplicitLandmarkLocationIds(requestedLandmarks), "custom");
     }
 
-    public ActorRouteTrace TraceActorRoute(string actorId) {
+    public ActorRuntimeRouteTrace TraceActorRuntimeRoute(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
 
-        return RuntimeRouteTraceProjector.Project(
-            _runtime.ObserveActorRouteTrace(_host.DurableWorld, actorId)
+        return ActorRuntimeRouteTraceProjector.Project(
+            _runtime.ObserveActorRuntimeRouteTrace(_host.DurableWorld, actorId)
         );
     }
 

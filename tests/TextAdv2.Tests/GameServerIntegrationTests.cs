@@ -67,20 +67,22 @@ public class GameServerIntegrationTests {
             Assert.Equal(TravelMode.Land, moveJson.TravelMode);
             Assert.Equal("ridge", moveJson.CurrentLocation.LocationId);
 
-            using var traceResponse = await client.GetAsync("/actors/scout/route-trace");
+            using var traceResponse = await client.GetAsync("/actors/scout/runtime-route-trace");
             string traceText = await traceResponse.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, traceResponse.StatusCode);
             Assert.Equal("text/plain", traceResponse.Content.Headers.ContentType?.MediaType);
+            Assert.Contains("RUNTIME ROUTE TRACE epoch=", traceText, StringComparison.Ordinal);
             Assert.Contains("1. square --north gate/square-ridge-trail--> ridge | land | cost=5", traceText, StringComparison.Ordinal);
 
-            using var traceJsonResponse = await client.GetAsync("/actors/scout/route-trace/json");
+            using var traceJsonResponse = await client.GetAsync("/actors/scout/runtime-route-trace/json");
             string traceJsonText = await traceJsonResponse.Content.ReadAsStringAsync();
-            var traceJson = JsonSerializer.Deserialize<ActorRouteTrace>(traceJsonText, HostJsonOptions);
+            var traceJson = JsonSerializer.Deserialize<ActorRuntimeRouteTrace>(traceJsonText, HostJsonOptions);
             Assert.Equal(HttpStatusCode.OK, traceJsonResponse.StatusCode);
             Assert.Equal("application/json", traceJsonResponse.Content.Headers.ContentType?.MediaType);
             Assert.NotNull(traceJson);
             Assert.Contains("\"actorId\"", traceJsonText, StringComparison.Ordinal);
             Assert.DoesNotContain("\"ActorId\"", traceJsonText, StringComparison.Ordinal);
+            Assert.False(string.IsNullOrWhiteSpace(traceJson.RuntimeEpochId));
             Assert.Equal("scout", traceJson.ActorId);
             Assert.Equal("square", traceJson.StartLocationId);
             Assert.Equal("ridge", traceJson.EndLocationId);
@@ -107,16 +109,19 @@ public class GameServerIntegrationTests {
             Assert.NotNull(reopenedObservation);
             Assert.Equal("square", reopenedObservation.Location.LocationId);
 
-            using var reopenedTraceTextResponse = await client.GetAsync("/actors/scout/route-trace");
+            using var reopenedTraceTextResponse = await client.GetAsync("/actors/scout/runtime-route-trace");
             string reopenedTraceText = await reopenedTraceTextResponse.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, reopenedTraceTextResponse.StatusCode);
+            Assert.Contains("RUNTIME ROUTE TRACE epoch=", reopenedTraceText, StringComparison.Ordinal);
             Assert.Contains("start=square (Square)", reopenedTraceText, StringComparison.Ordinal);
-            Assert.Contains("<no movement in this run>", reopenedTraceText, StringComparison.Ordinal);
+            Assert.Contains("<no movement in this runtime>", reopenedTraceText, StringComparison.Ordinal);
             Assert.Contains("end=square (Square) | steps=0 | totalCost=0", reopenedTraceText, StringComparison.Ordinal);
 
-            using var reopenedTraceJsonResponse = await client.GetAsync("/actors/scout/route-trace/json");
-            var reopenedTraceJson = await ReadJsonAsync<ActorRouteTrace>(reopenedTraceJsonResponse);
+            using var reopenedTraceJsonResponse = await client.GetAsync("/actors/scout/runtime-route-trace/json");
+            var reopenedTraceJson = await ReadJsonAsync<ActorRuntimeRouteTrace>(reopenedTraceJsonResponse);
             Assert.NotNull(reopenedTraceJson);
+            Assert.False(string.IsNullOrWhiteSpace(reopenedTraceJson.RuntimeEpochId));
+            Assert.NotEqual(traceJson.RuntimeEpochId, reopenedTraceJson.RuntimeEpochId);
             Assert.Equal("square", reopenedTraceJson.StartLocationId);
             Assert.Equal("square", reopenedTraceJson.EndLocationId);
             Assert.Equal(0, reopenedTraceJson.StepCount);
@@ -377,8 +382,8 @@ public class GameServerIntegrationTests {
                     "GET /actors/{actorId}/context",
                     "GET /actors/{actorId}/navigation",
                     "POST /actors/{actorId}/moves/{passageId}",
-                    "GET /actors/{actorId}/route-trace",
-                    "GET /actors/{actorId}/route-trace/json",
+                    "GET /actors/{actorId}/runtime-route-trace",
+                    "GET /actors/{actorId}/runtime-route-trace/json",
                     "GET /actors/{actorId}/plan-route/{toLocationId}",
                 ],
                 ReadPlannedEndpoints(json.RootElement)
@@ -452,8 +457,8 @@ public class GameServerIntegrationTests {
                     "GET /actors/{actorId}/context",
                     "GET /actors/{actorId}/navigation",
                     "POST /actors/{actorId}/moves/{passageId}",
-                    "GET /actors/{actorId}/route-trace",
-                    "GET /actors/{actorId}/route-trace/json",
+                    "GET /actors/{actorId}/runtime-route-trace",
+                    "GET /actors/{actorId}/runtime-route-trace/json",
                     "GET /actors/{actorId}/plan-route/{toLocationId}",
                 ],
                 ReadPlannedEndpoints(statusJson.RootElement)
@@ -1243,16 +1248,18 @@ public class GameServerIntegrationTests {
             Assert.Equal(HttpStatusCode.OK, timeAfterRestart.StatusCode);
             Assert.Contains("\"currentTick\":13", timeText.Replace(" ", string.Empty), StringComparison.Ordinal);
 
-            using var traceAfterRestart = await secondClient.GetAsync("/actors/scout/route-trace");
+            using var traceAfterRestart = await secondClient.GetAsync("/actors/scout/runtime-route-trace");
             string traceText = await traceAfterRestart.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, traceAfterRestart.StatusCode);
+            Assert.Contains("RUNTIME ROUTE TRACE epoch=", traceText, StringComparison.Ordinal);
             Assert.Contains("start=ridge (Ridge)", traceText, StringComparison.Ordinal);
-            Assert.Contains("<no movement in this run>", traceText, StringComparison.Ordinal);
+            Assert.Contains("<no movement in this runtime>", traceText, StringComparison.Ordinal);
             Assert.Contains("end=ridge (Ridge) | steps=0 | totalCost=0", traceText, StringComparison.Ordinal);
 
-            using var traceJsonAfterRestart = await secondClient.GetAsync("/actors/scout/route-trace/json");
-            var traceJsonAfterRestartPayload = await ReadJsonAsync<ActorRouteTrace>(traceJsonAfterRestart);
+            using var traceJsonAfterRestart = await secondClient.GetAsync("/actors/scout/runtime-route-trace/json");
+            var traceJsonAfterRestartPayload = await ReadJsonAsync<ActorRuntimeRouteTrace>(traceJsonAfterRestart);
             Assert.NotNull(traceJsonAfterRestartPayload);
+            Assert.False(string.IsNullOrWhiteSpace(traceJsonAfterRestartPayload.RuntimeEpochId));
             Assert.Equal("ridge", traceJsonAfterRestartPayload.StartLocationId);
             Assert.Equal("ridge", traceJsonAfterRestartPayload.EndLocationId);
             Assert.Equal(0, traceJsonAfterRestartPayload.StepCount);

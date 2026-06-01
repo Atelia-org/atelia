@@ -48,11 +48,12 @@ internal sealed class WorldRuntime {
         );
     }
 
-    public ActorRouteTraceObservation ObserveActorRouteTrace(WorldState world, string actorId) {
+    public ActorRuntimeRouteTraceObservation ObserveActorRuntimeRouteTrace(WorldState world, string actorId) {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
 
-        return ActorRouteTraceProjector.ObserveActorRouteTrace(
+        return ActorRuntimeRouteTraceObservationProjector.ObserveActorRuntimeRouteTrace(
+            EpochId,
             world,
             actorId,
             GetMovementHistory(actorId)
