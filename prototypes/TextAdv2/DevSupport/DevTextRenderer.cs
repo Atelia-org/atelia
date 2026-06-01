@@ -7,8 +7,8 @@ namespace Atelia.TextAdv2.DevSupport;
 /// <summary>
 /// 共享给宿主/dev-support 的轻量文本渲染器。
 ///
-/// session public seam 只返回 typed DTO；若宿主仍需要 compact text，
-/// 应显式调用这里，而不是回到 session 主对象要字符串别名。
+/// 公开 runtime API 只返回 typed DTO；若宿主仍需要 compact text，
+/// 应显式调用这里，而不是把字符串别名塞回 runtime façade。
 /// </summary>
 public static class DevTextRenderer {
     public static string RenderWorld(SerialWorldRuntime session) {

@@ -3,7 +3,7 @@ using Atelia.TextAdv2.WorldTruth;
 namespace Atelia.TextAdv2.Observation;
 
 /// <summary>
-/// 面向导航算法与路线调试的轻量只读视图。
+/// 面向导航算法与路线调试的最小稳定导航观察。
 ///
 /// 与 <see cref="LocationObservation"/> 相比，这里只保留“从当前地点能沿哪些已启用边走出去”所需的最小稳定字段，
 /// 以免后续 A* 直接耦合到更重的观察 DTO。

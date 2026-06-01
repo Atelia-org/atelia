@@ -6,7 +6,7 @@ using Atelia.TextAdv2.WorldTruth;
 namespace Atelia.TextAdv2.Runtime;
 
 /// <summary>
-/// TextAdv2 第一阶段唯一 public runtime façade。
+/// TextAdv2 当前单世界串行模型下的 public runtime façade。
 ///
 /// 它保持单线程、单世界、单 runtime 模型，对外继续提供稳定的 typed API，
 /// 但内部已明确拆分为 durable world host 与进程内 runtime state。

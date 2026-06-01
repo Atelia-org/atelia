@@ -1,6 +1,6 @@
 # TextAdv2 Canonical Machine Surface
 
-> 状态：F8b 第一拍 + F9 runtime boundary freeze 第一拍 + T1 cross-host parity 第三批（read-only observation/navigation + route-plan + authoring snapshot tail）
+> 状态：基于当前已落地的 cross-host parity guard 基线（包含 observation/navigation、route-plan 与 minimal authoring snapshot tail）
 > 适用范围：当前 `TextAdv2.GameServer` 与 `TextAdv2.E2eCli` 的 machine-consumable surface
 
 当前文档只声明“已被 parity guard 守住的 canonical machine surface”。
@@ -71,12 +71,12 @@
   - reopen / host restart 后保持
   - 因而 `observe time` 既是 canonical seam，也是 durable seam
 - movement trace
-  - `TraceActorRoute` 当前仍是 session-owned runtime debug seam
+  - `TraceActorRoute` 当前仍是 process-local runtime debug seam
   - `route-trace` 当前仍不应默认视为完整 cross-host canonical seam
-  - 当前 parity suite 只守住了 fresh-session empty-trace baseline；一旦进入“先移动、再读 trace”的运行态，`GameServer` 与按 invocation 重开 session 的 `E2eCli` 还不会给出同一份 trace
+  - 当前 parity suite 只守住了 fresh-session empty-trace baseline；一旦进入“先移动、再读 trace”的运行态，`GameServer` 与按 invocation 重开 runtime 的 `E2eCli` 还不会给出同一份 trace
   - reopen / host restart / reset sample world 后会 reset，这一点是设计边界，不是偶然现象
 - route acceleration
-  - 当前仍是 session-owned runtime cache
+  - 当前仍是 process-local runtime cache
   - `plan-route` / `plan-actor-route` 当前已进入 canonical machine surface，但当前 parity guard 只覆盖 fresh-session 默认 planning baseline
   - 如果先 `rebuild-route-acceleration`，或进入 topology changed 后的 stale runtime，再去比较 route plan JSON，当前还不应默认视为已被完整 cross-host parity guard 守住
   - topology 变化后可 stale，reopen / host restart / reset sample world 后 reset
@@ -98,6 +98,6 @@
 - 文本输出如 `GET /admin/world`、`GET /actors/{actorId}/route-trace`
 
 其中 `route-acceleration` 相关 JSON 当前尤其不应默认视为 canonical contract。
-F9 第一拍已经把它的定位冻结为 runtime cache seam，而不是已承诺长期稳定的 agent-facing contract。
+当前已明确把它的定位限定为 runtime cache seam，而不是已承诺长期稳定的 agent-facing contract。
 
 这些 surface 仍然有价值，但它们当前承担的是 host-specific operability / human-debug 角色，不是 cross-host parity contract。

@@ -227,17 +227,18 @@ TextAdv2 当前仍是：
 - 受影响的 `CrossHostMachineContractParityTests`
 - 必要时补跑相关 route-plan / host integration tests
 
-### 6.2 Optional P2：doc / archive hygiene
+### 6.2 Optional P2：active doc / comment hygiene
 
 #### 目标
 
-- 清理活跃文档与必要归档文档中的旧层名 / 旧阶段措辞
+- 清理活跃文档与活跃 xml doc / 注释中的旧层名 / 旧阶段措辞
+- 避免继续用历史包名、阶段标签、旧主对象名来描述当前边界
 
 #### 建议做法
 
 1. 优先清活跃文档
-2. 归档文档只做低成本、不会引发历史失真的修正
-3. 不把这包扩大成新的设计收口工程
+2. 同步清理仍会把读者拉回旧阶段语境的活跃 xml doc / 注释
+3. 不清 archive，也不把这包扩大成新的设计收口工程
 
 ### 6.3 已完成的 Optional P3：host wording cleanup
 
