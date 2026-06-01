@@ -24,9 +24,9 @@ public static class TextAdv2Json {
 
     private sealed class RoutePlanStatusJsonConverter : JsonConverter<RoutePlanStatus> {
         public override RoutePlanStatus Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-            => RoutePlanStatusCodec.FromStorageValue(reader.GetString() ?? throw new JsonException("Route plan status token is required."));
+            => RoutePlanStatusWireToken.Parse(reader.GetString() ?? throw new JsonException("Route plan status token is required."));
 
         public override void Write(Utf8JsonWriter writer, RoutePlanStatus value, JsonSerializerOptions options)
-            => writer.WriteStringValue(RoutePlanStatusCodec.ToStorageValue(value));
+            => writer.WriteStringValue(value.ToWireToken());
     }
 }

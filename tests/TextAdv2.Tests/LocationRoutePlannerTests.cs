@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Atelia.StateJournal;
+using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.ReadOnlyView;
 using Atelia.TextAdv2.Routing;
 using Atelia.TextAdv2.WorldTruth;
@@ -367,6 +369,35 @@ public class LocationRoutePlannerTests {
             Assert.Equal(Normalize(ExpectedFoundPlanText), Normalize(LocationRoutePlanTextRenderer.Render(found)));
             Assert.Equal(Normalize(ExpectedAlreadyTherePlanText), Normalize(LocationRoutePlanTextRenderer.Render(alreadyThere)));
             Assert.Equal(Normalize(ExpectedUnreachablePlanText), Normalize(LocationRoutePlanTextRenderer.Render(unreachable)));
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void TextAdv2Json_RoutePlanStatus_UsesCanonicalWireTokens() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var plan = LocationRoutePlanner.PlanShortestRoute(
+                world,
+                TestWorldBuilder.LocationIds.Village,
+                TestWorldBuilder.LocationIds.Aerie
+            );
+            var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+            TextAdv2Json.AddHostConverters(options);
+
+            var json = JsonSerializer.Serialize(plan, options);
+            using var document = JsonDocument.Parse(json);
+            var roundTrip = JsonSerializer.Deserialize<LocationRoutePlanObservation>(json, options);
+
+            Assert.Equal("found", document.RootElement.GetProperty("status").GetString());
+            Assert.NotNull(roundTrip);
+            Assert.Equal(RoutePlanStatus.Found, roundTrip!.Status);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);
