@@ -7,7 +7,14 @@ public sealed partial class ChatSessionEngine {
     private const int MaxToolLoopIterations = 16;
     private const string OpenAIChatApiSpecId = "openai-chat-v1";
 
-    public async Task<ChatSessionTurnResult> SendMessageAsync(string message, CancellationToken ct = default) {
+    public Task<ChatSessionTurnResult> SendMessageAsync(string message, CancellationToken ct = default)
+        => SendMessageAsync(message, observer: null, ct);
+
+    public async Task<ChatSessionTurnResult> SendMessageAsync(
+        string message,
+        CompletionStreamObserver? observer,
+        CancellationToken ct = default
+    ) {
         ThrowIfDisposed();
         ValidateRuntimeSurfaceIdentity();
 
@@ -33,7 +40,7 @@ public sealed partial class ChatSessionEngine {
                 Tools: tools
             );
 
-            var result = await _runtime.CompletionClient.StreamCompletionAsync(request, null, ct)
+            var result = await _runtime.CompletionClient.StreamCompletionAsync(request, observer, ct)
                 .ConfigureAwait(false);
 
             invocation = result.Invocation;

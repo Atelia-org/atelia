@@ -50,10 +50,10 @@ internal static class MessageRecord {
         return record;
     }
 
-    public static DurableDict<string> AppendRecap(DurableDeque messages, string summary) {
+    public static DurableDict<string> PrependRecap(DurableDeque messages, string summary) {
         var record = CreateRecord(messages.Revision, KindRecap);
         record.Upsert(KeyContent, summary);
-        messages.PushBack<DurableObject>(record);
+        messages.PushFront<DurableObject>(record);
         return record;
     }
 
@@ -92,7 +92,7 @@ internal static class MessageRecord {
 
     private static ObservationMessage BuildRecap(DurableDict<string> record) {
         record.TryGet<string>(KeyContent, out var content);
-        return new ObservationMessage(content);
+        return new RecapMessage(content);
     }
 
     private static ActionMessage BuildAction(DurableDict<string> record) {

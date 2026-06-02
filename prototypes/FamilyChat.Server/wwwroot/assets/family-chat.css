@@ -1,0 +1,186 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+  color: #1d1c16;
+  background:
+    radial-gradient(circle at top left, rgba(228, 217, 187, 0.8), transparent 35%),
+    linear-gradient(180deg, #f4efe2 0%, #efe6d4 100%);
+}
+
+.login-body,
+.app-body {
+  min-height: 100vh;
+}
+
+.login-shell,
+.app-shell {
+  width: min(920px, calc(100vw - 24px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.login-shell {
+  max-width: 420px;
+  padding-top: 12vh;
+}
+
+.login-copy,
+.login-hint,
+.eyebrow,
+.status-text {
+  color: #6f6859;
+}
+
+.login-hint code {
+  font-family: "IBM Plex Mono", "Maple Mono", monospace;
+}
+
+.login-form,
+.composer form,
+.turn-card,
+.topbar {
+  border: 1px solid rgba(65, 54, 27, 0.14);
+  background: rgba(255, 250, 241, 0.84);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px rgba(89, 73, 39, 0.08);
+}
+
+.login-form,
+.composer form {
+  border-radius: 20px;
+  padding: 16px;
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+input,
+textarea,
+button {
+  font: inherit;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(74, 62, 32, 0.18);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 92px;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 18px;
+  background: #1f4f46;
+  color: #fffaf2;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.ghost-button {
+  background: rgba(31, 79, 70, 0.08);
+  color: #1f4f46;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 22px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.composer {
+  margin-bottom: 12px;
+}
+
+.composer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.history,
+.live-turn {
+  display: grid;
+  gap: 12px;
+}
+
+.turn-list {
+  display: grid;
+  gap: 12px;
+}
+
+.turn-card {
+  border-radius: 20px;
+  padding: 14px 16px;
+}
+
+.turn-card.user {
+  background: rgba(248, 243, 232, 0.92);
+}
+
+.turn-card.assistant {
+  background: rgba(255, 252, 247, 0.92);
+}
+
+.turn-card header {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7a705a;
+  margin-bottom: 8px;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "IBM Plex Mono", "Maple Mono", monospace;
+}
+
+.reasoning-panel {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(42, 82, 123, 0.06);
+}
+
+.reasoning-panel summary {
+  cursor: pointer;
+  color: #2f587f;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.error {
+  color: #b22929;
+}

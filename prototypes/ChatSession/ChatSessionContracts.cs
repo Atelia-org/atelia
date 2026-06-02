@@ -9,6 +9,8 @@ public sealed record ChatSessionTurnResult(
     int ToolCallsExecuted
 );
 
+public sealed record RecapMessage(string? Content) : ObservationMessage(Content);
+
 public sealed record CompactionResult(
     bool Applied,
     CompactionFailureReason? FailureReason,

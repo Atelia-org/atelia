@@ -59,6 +59,10 @@ public sealed partial class ChatSessionEngine {
 
             if (IsObservationLike(messages[i]) && messages[i + 1].Kind == HistoryMessageKind.Action) {
                 int suffixStart = i + 1;
+                if (suffixStart == 1 && messages[0] is RecapMessage) {
+                    continue;
+                }
+
                 lastValidSuffixStart = suffixStart;
 
                 if (cumulativeTokens >= halfTokens) { return suffixStart; }
@@ -160,7 +164,7 @@ public sealed partial class ChatSessionEngine {
             _messages.PopFront<DurableObject>(out _);
         }
 
-        MessageRecord.AppendRecap(_messages, summary);
+        MessageRecord.PrependRecap(_messages, summary);
         Commit();
 
         var remaining = MessageRecord.ToHistoryMessages(_messages);
