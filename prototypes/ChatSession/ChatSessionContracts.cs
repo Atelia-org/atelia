@@ -1,0 +1,36 @@
+using Atelia.Completion.Abstractions;
+
+namespace Atelia.ChatSession;
+
+public sealed record ChatSessionTurnResult(
+    ActionMessage Message,
+    CompletionDescriptor Invocation,
+    IReadOnlyList<string>? Errors,
+    int ToolCallsExecuted
+);
+
+public sealed record CompactionResult(
+    bool Applied,
+    CompactionFailureReason? FailureReason,
+    int SplitIndex,
+    int SummaryLength,
+    int HistoryCountBefore,
+    int HistoryCountAfter,
+    ulong TokensBefore,
+    ulong TokensAfter
+);
+
+public enum CompactionFailureReason {
+    NoValidSplitPoint,
+    InvalidSplitPoint,
+    EmptySummary
+}
+
+public sealed record ChatSessionStatistics(
+    int MessageCount,
+    int ObservationCount,
+    int ActionCount,
+    int ToolResultsCount,
+    int RecapCount,
+    ulong EstimatedTokens
+);

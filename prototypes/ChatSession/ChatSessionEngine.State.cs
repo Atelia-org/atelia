@@ -1,0 +1,251 @@
+using Atelia.Completion.Abstractions;
+using Atelia.StateJournal;
+
+namespace Atelia.ChatSession;
+
+public sealed partial class ChatSessionEngine : IDisposable {
+    private const string RootKind = "chat-session";
+    private const long SchemaVersion = 2L;
+    private const string GeminiApiSpecId = "google-gemini-generate-content-v1beta";
+
+    private const string KeyKind = "kind";
+    private const string KeySchemaVersion = "schemaVersion";
+    private const string KeyApiSpecId = "apiSpecId";
+    private const string KeyCompletionSurfaceId = "completionSurfaceId";
+    private const string KeyModelId = "modelId";
+    private const string KeySystemPrompt = "systemPrompt";
+    private const string KeyMessages = "messages";
+
+    private readonly Repository _repo;
+    private readonly DurableDict<string> _root;
+    private readonly DurableDeque _messages;
+    private readonly ChatSessionRuntime _runtime;
+
+    private readonly string _repoDir;
+    private readonly string _branchName;
+    private readonly string _apiSpecId;
+    private readonly string _modelId;
+    private readonly string _systemPrompt;
+    private readonly string _completionSurfaceId;
+
+    private bool _disposed;
+
+    private ChatSessionEngine(
+        Repository repo,
+        DurableDict<string> root,
+        DurableDeque messages,
+        ChatSessionRuntime runtime,
+        string repoDir,
+        string branchName
+    ) {
+        _repo = repo;
+        _root = root;
+        _messages = messages;
+        _runtime = runtime;
+        _repoDir = repoDir;
+        _branchName = branchName;
+
+        _apiSpecId = root.Get<string>(KeyApiSpecId, out var apiSpecId) == GetIssue.None
+            ? apiSpecId! : throw new InvalidDataException("Root is missing apiSpecId.");
+        _modelId = root.Get<string>(KeyModelId, out var modelId) == GetIssue.None
+            ? modelId! : throw new InvalidDataException("Root is missing modelId.");
+        _systemPrompt = root.Get<string>(KeySystemPrompt, out var sp) == GetIssue.None
+            ? sp! : throw new InvalidDataException("Root is missing systemPrompt.");
+        _completionSurfaceId = root.Get<string>(KeyCompletionSurfaceId, out var csid) == GetIssue.None
+            ? csid! : throw new InvalidDataException("Root is missing completionSurfaceId.");
+    }
+
+    public string RepoDir => _repoDir;
+    public string BranchName => _branchName;
+    public string ModelId => _modelId;
+    public string SystemPrompt => _systemPrompt;
+
+    public static Task<ChatSessionEngine> CreateAsync(
+        string repoDir,
+        ChatSessionCreateOptions options,
+        ChatSessionRuntime runtime,
+        CancellationToken ct = default
+    ) {
+        ct.ThrowIfCancellationRequested();
+        ValidateCreateArguments(options, runtime);
+
+        var repo = Repository.Create(repoDir).Unwrap();
+        try {
+            var revision = repo.CreateBranch(options.BranchName).Unwrap();
+            var root = revision.CreateDict<string>();
+            root.Upsert(KeyKind, RootKind);
+            root.Upsert(KeySchemaVersion, SchemaVersion);
+            root.Upsert(KeyApiSpecId, runtime.CompletionClient.ApiSpecId);
+            root.Upsert(KeyCompletionSurfaceId, options.CompletionSurfaceId);
+            root.Upsert(KeyModelId, options.ModelId);
+            root.Upsert(KeySystemPrompt, options.SystemPrompt);
+
+            var messages = revision.CreateDeque();
+            root.Upsert<DurableObject>(KeyMessages, messages);
+
+            repo.Commit(root).Unwrap();
+
+            var engine = new ChatSessionEngine(repo, root, messages, runtime, repoDir, options.BranchName);
+            return Task.FromResult(engine);
+        }
+        catch {
+            repo.Dispose();
+            throw;
+        }
+    }
+
+    public static Task<ChatSessionEngine> OpenAsync(
+        string repoDir,
+        ChatSessionRuntime runtime,
+        string branchName = "main",
+        CancellationToken ct = default
+    ) {
+        ct.ThrowIfCancellationRequested();
+
+        var repo = Repository.Open(repoDir).Unwrap();
+        try {
+            var revision = repo.CheckoutBranch(branchName).Unwrap();
+
+            if (revision.GraphRoot is not DurableDict<string> root) {
+                repo.Dispose();
+                throw new InvalidDataException("Repository graph root is not a valid chat session.");
+            }
+
+            ValidateRoot(root);
+            ValidateSurfaceIdentity(root, runtime);
+            ValidateRuntimeCompatibility(runtime);
+
+            if (!root.TryGet<DurableDeque>(KeyMessages, out var messages) || messages is null) {
+                repo.Dispose();
+                throw new InvalidDataException("Root is missing messages deque.");
+            }
+
+            var engine = new ChatSessionEngine(repo, root, messages, runtime, repoDir, branchName);
+            return Task.FromResult(engine);
+        }
+        catch {
+            repo.Dispose();
+            throw;
+        }
+    }
+
+    private static void ValidateCreateArguments(ChatSessionCreateOptions options, ChatSessionRuntime runtime) {
+        if (runtime.CompletionSurfaceId != options.CompletionSurfaceId) {
+            throw new ArgumentException(
+                $"Runtime CompletionSurfaceId '{runtime.CompletionSurfaceId}' does not match options '{options.CompletionSurfaceId}'."
+            );
+        }
+
+        if (runtime.CompletionClient.ApiSpecId == GeminiApiSpecId
+            && runtime.ToolSessionState.GetVisibleToolDefinitions(runtime.ToolRegistry).Length > 0) {
+            throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1.");
+        }
+    }
+
+    private static void ValidateRuntimeCompatibility(ChatSessionRuntime runtime) {
+        if (runtime.CompletionClient.ApiSpecId == GeminiApiSpecId
+            && runtime.ToolSessionState.GetVisibleToolDefinitions(runtime.ToolRegistry).Length > 0) {
+            throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1.");
+        }
+    }
+
+    private static void ValidateRoot(DurableDict<string> root) {
+        if (root.Get<string>(KeyKind, out var kind) != GetIssue.None || kind != RootKind) { throw new InvalidDataException("Root is not a chat-session."); }
+
+        if (root.Get<long>(KeySchemaVersion, out var version) != GetIssue.None || version != SchemaVersion) { throw new InvalidDataException($"Unsupported schema version. Expected {SchemaVersion}."); }
+    }
+
+    private static void ValidateSurfaceIdentity(DurableDict<string> root, ChatSessionRuntime runtime) {
+        root.Get<string>(KeyCompletionSurfaceId, out var persistedSurfaceId);
+        if (persistedSurfaceId != runtime.CompletionSurfaceId) {
+            throw new InvalidOperationException(
+                $"Runtime surface '{runtime.CompletionSurfaceId}' does not match persisted surface '{persistedSurfaceId}'."
+            );
+        }
+
+        root.Get<string>(KeyApiSpecId, out var persistedApiSpecId);
+        if (persistedApiSpecId != runtime.CompletionClient.ApiSpecId) {
+            throw new InvalidOperationException(
+                $"Runtime API spec '{runtime.CompletionClient.ApiSpecId}' does not match persisted '{persistedApiSpecId}'."
+            );
+        }
+    }
+
+    private void Commit() {
+        ThrowIfDisposed();
+        _repo.Commit(_root).Unwrap();
+    }
+
+    public IReadOnlyList<IHistoryMessage> Context => MessageRecord.ToHistoryMessages(_messages);
+
+    public ChatSessionStatistics GetStatistics() {
+        ThrowIfDisposed();
+        var allMessages = MessageRecord.ToHistoryMessages(_messages);
+        int obsCount = 0, actionCount = 0, toolCount = 0, recapCount = 0;
+        for (int i = 0; i < allMessages.Count; i++) {
+            switch (allMessages[i].Kind) {
+                case HistoryMessageKind.Observation:
+                    obsCount++;
+                    break;
+                case HistoryMessageKind.Action:
+                    actionCount++;
+                    break;
+                case HistoryMessageKind.ToolResults:
+                    toolCount++;
+                    break;
+            }
+        }
+
+        for (int i = 0; i < _messages.Count; i++) {
+            if (_messages.TryGetAt<DurableDict<string>>(i, out var record) && record is not null) {
+                if (record.TryGet<string>(MessageRecord.KeyKind, out var kind) && kind == MessageRecord.KindRecap) { recapCount++; }
+            }
+        }
+
+        return new ChatSessionStatistics(
+            MessageCount: allMessages.Count,
+            ObservationCount: obsCount,
+            ActionCount: actionCount,
+            ToolResultsCount: toolCount,
+            RecapCount: recapCount,
+            EstimatedTokens: ChatSessionTokenEstimator.Estimate(allMessages)
+        );
+    }
+
+    private void ThrowIfDisposed() {
+        if (_disposed) { throw new ObjectDisposedException(nameof(ChatSessionEngine)); }
+    }
+
+    public void Dispose() {
+        if (_disposed) { return; }
+        _disposed = true;
+        _repo.Dispose();
+    }
+}
+
+internal static class ChatSessionTokenEstimator {
+    public static ulong Estimate(IReadOnlyList<IHistoryMessage> messages) {
+        ulong total = 0;
+        for (int i = 0; i < messages.Count; i++) {
+            total += Estimate(messages[i]);
+        }
+        return total;
+    }
+
+    public static ulong Estimate(IHistoryMessage message) {
+        return message switch {
+            ActionMessage action => EstimateAction(action),
+            ObservationMessage obs => (ulong)(obs.Content?.Length ?? 0) / 2,
+            _ => 0
+        };
+    }
+
+    private static ulong EstimateAction(ActionMessage action) {
+        ulong total = (ulong)action.GetFlattenedText().Length / 2;
+        var toolCalls = action.ToolCalls;
+        for (int i = 0; i < toolCalls.Count; i++) {
+            total += (ulong)toolCalls[i].RawArgumentsJson.Length / 2;
+        }
+        return total;
+    }
+}
