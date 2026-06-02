@@ -3,6 +3,7 @@ using Atelia.StateJournal;
 using Atelia.TextAdv2.DevSupport;
 using Atelia.TextAdv2.Observation;
 using Atelia.TextAdv2.Routing;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
@@ -52,6 +53,45 @@ public class LocationRoutePlannerTests {
                     Assert.Equal(5, step.TravelCost);
                     Assert.Equal(11, step.CumulativeTravelCost);
                 }
+            );
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void PlanShortestRoute_WithSharedSpatialSnapshot_MatchesConvenienceWrapper() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var spatial = WorldSpatialSnapshotBuilder.Build(world);
+
+            var viaWrapper = LocationRoutePlanner.PlanShortestRoute(
+                world,
+                TestWorldBuilder.LocationIds.Village,
+                TestWorldBuilder.LocationIds.Aerie
+            );
+            var viaSharedSpatial = LocationRoutePlanner.PlanShortestRoute(
+                world,
+                spatial,
+                TestWorldBuilder.LocationIds.Village,
+                TestWorldBuilder.LocationIds.Aerie
+            );
+
+            Assert.Equal(viaWrapper.Status, viaSharedSpatial.Status);
+            Assert.Equal(viaWrapper.StepCount, viaSharedSpatial.StepCount);
+            Assert.Equal(viaWrapper.TotalTravelCost, viaSharedSpatial.TotalTravelCost);
+            Assert.Equal(
+                viaWrapper.Steps.Select(static step => step.PassageId),
+                viaSharedSpatial.Steps.Select(static step => step.PassageId)
+            );
+            Assert.Equal(
+                viaWrapper.Steps.Select(static step => step.ExitName),
+                viaSharedSpatial.Steps.Select(static step => step.ExitName)
             );
         }
         finally {

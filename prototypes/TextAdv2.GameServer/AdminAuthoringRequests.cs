@@ -24,7 +24,9 @@ internal sealed record CreatePassageRequest(
     int? BaseTravelCost
 ) {
     public TravelMode ResolveTravelMode()
-        => TravelModeCodec.TryParseStorageValue(TravelMode, out var value)
+        => string.IsNullOrWhiteSpace(TravelMode)
+            ? global::Atelia.TextAdv2.WorldTruth.TravelMode.Land
+            : TravelModeCodec.TryParseStorageValue(TravelMode, out var value)
             ? value
             : throw new InvalidOperationException(
                 $"Unsupported travelMode '{TravelMode}'. Allowed values: land, water, air, portal."

@@ -1,6 +1,7 @@
 using Atelia.StateJournal;
 using Atelia.TextAdv2.Observation;
 using Atelia.TextAdv2.Routing;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Runtime;
@@ -10,6 +11,7 @@ internal sealed class WorldHost : IDisposable {
 
     private readonly Repository _repo;
     private readonly WorldState _world;
+    private WorldSpatialSnapshot? _spatial;
     private bool _disposed;
 
     private WorldHost(string repoDir, Repository repo, WorldState world) {
@@ -29,6 +31,11 @@ internal sealed class WorldHost : IDisposable {
             EnsureNotDisposed();
             return _world;
         }
+    }
+
+    internal WorldSpatialSnapshot ObserveSpatial() {
+        EnsureNotDisposed();
+        return _spatial ??= WorldSpatialSnapshotBuilder.Build(_world);
     }
 
     public static WorldHost CreateEmpty(string repoDir)
@@ -83,31 +90,31 @@ internal sealed class WorldHost : IDisposable {
     public LocationObservation ObserveLocation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return LocationObservationProjector.ObserveLocation(_world, locationId);
+        return LocationObservationProjector.ObserveLocation(_world, ObserveSpatial(), locationId);
     }
 
     public ActorLocationObservation ObserveActor(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return LocationObservationProjector.ObserveActorLocation(_world, actorId);
+        return LocationObservationProjector.ObserveActorLocation(_world, ObserveSpatial(), actorId);
     }
 
     public ActorContextObservation ObserveActorContext(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return ActorContextObservationProjector.ObserveActorContext(_world, actorId);
+        return ActorContextObservationProjector.ObserveActorContext(_world, ObserveSpatial(), actorId);
     }
 
     public LocationNavigationObservation ObserveNavigation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return NavigationObservationProjector.ObserveLocationNavigation(_world, locationId);
+        return NavigationObservationProjector.ObserveLocationNavigation(_world, ObserveSpatial(), locationId);
     }
 
     public ActorNavigationObservation ObserveActorNavigation(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return NavigationObservationProjector.ObserveActorNavigation(_world, actorId);
+        return NavigationObservationProjector.ObserveActorNavigation(_world, ObserveSpatial(), actorId);
     }
 
     public LogicalTimeSnapshot ObserveTime() {
@@ -130,6 +137,7 @@ internal sealed class WorldHost : IDisposable {
     public LocationAuthoringSnapshot CreateLocation(string id, string name, string description) {
         EnsureNotDisposed();
         var location = _world.CreateLocation(id, name, description);
+        InvalidateSpatial();
         Commit();
         return RuntimeWorldAuthoringProjector.Project(location);
     }
@@ -160,56 +168,66 @@ internal sealed class WorldHost : IDisposable {
             travelMode,
             baseTravelCost
         );
+        InvalidateSpatial();
         Commit();
         return RuntimeWorldAuthoringProjector.Project(passage);
     }
 
     public PassageAuthoringSnapshot SetPassageTravelMode(string passageId, TravelMode value) {
         EnsureNotDisposed();
-        return MutatePassage(passageId, () => _world.SetPassageTravelMode(passageId, value));
+        return MutateSpatialPassage(passageId, () => _world.SetPassageTravelMode(passageId, value));
     }
 
     public PassageAuthoringSnapshot SetPassageBaseTravelCost(string passageId, int value) {
         EnsureNotDisposed();
-        return MutatePassage(passageId, () => _world.SetPassageBaseTravelCost(passageId, value));
+        return MutateSpatialPassage(passageId, () => _world.SetPassageBaseTravelCost(passageId, value));
     }
 
     public PassageAuthoringSnapshot SetPassageSharedConditionNote(string passageId, string value) {
         EnsureNotDisposed();
-        return MutatePassage(passageId, () => _world.SetPassageSharedConditionNote(passageId, value));
+        return MutateSpatialPassage(passageId, () => _world.SetPassageSharedConditionNote(passageId, value));
     }
 
     public PassageAuthoringSnapshot SetPassageEndpointLocalViewNote(string passageId, string locationId, string value) {
         EnsureNotDisposed();
-        return MutatePassage(passageId, () => _world.SetPassageEndpointLocalViewNote(passageId, locationId, value));
+        return MutateSpatialPassage(passageId, () => _world.SetPassageEndpointLocalViewNote(passageId, locationId, value));
     }
 
     public PassageAuthoringSnapshot SetPassageDirectionEnabledFrom(string passageId, string locationId, bool isEnabled) {
         EnsureNotDisposed();
-        return MutatePassage(passageId, () => _world.SetPassageDirectionEnabledFrom(passageId, locationId, isEnabled));
+        return MutateSpatialPassage(passageId, () => _world.SetPassageDirectionEnabledFrom(passageId, locationId, isEnabled));
     }
 
     public PassageAuthoringSnapshot SetPassageDirectionTravelCostModifierFrom(string passageId, string locationId, int value) {
         EnsureNotDisposed();
-        return MutatePassage(passageId, () => _world.SetPassageDirectionTravelCostModifierFrom(passageId, locationId, value));
+        return MutateSpatialPassage(passageId, () => _world.SetPassageDirectionTravelCostModifierFrom(passageId, locationId, value));
     }
 
     public PassageAuthoringSnapshot SetPassageDirectionConditionNoteFrom(string passageId, string locationId, string value) {
         EnsureNotDisposed();
-        return MutatePassage(passageId, () => _world.SetPassageDirectionConditionNoteFrom(passageId, locationId, value));
+        return MutateSpatialPassage(passageId, () => _world.SetPassageDirectionConditionNoteFrom(passageId, locationId, value));
     }
 
     public LocationRoutePlanObservation PlanActorRoute(
         string actorId,
         string toLocationId,
         LocationRoutePlanningOptions? planningOptions
+    ) => PlanActorRoute(actorId, toLocationId, ObserveSpatial(), planningOptions);
+
+    public LocationRoutePlanObservation PlanActorRoute(
+        string actorId,
+        string toLocationId,
+        WorldSpatialSnapshot spatial,
+        LocationRoutePlanningOptions? planningOptions
     ) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
+        ArgumentNullException.ThrowIfNull(spatial);
 
         return LocationRoutePlanner.PlanShortestRouteForActor(
             _world,
+            spatial,
             actorId,
             toLocationId,
             planningOptions
@@ -220,13 +238,22 @@ internal sealed class WorldHost : IDisposable {
         string fromLocationId,
         string toLocationId,
         LocationRoutePlanningOptions? planningOptions
+    ) => PlanRoute(fromLocationId, toLocationId, ObserveSpatial(), planningOptions);
+
+    public LocationRoutePlanObservation PlanRoute(
+        string fromLocationId,
+        string toLocationId,
+        WorldSpatialSnapshot spatial,
+        LocationRoutePlanningOptions? planningOptions
     ) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(fromLocationId);
         ArgumentException.ThrowIfNullOrWhiteSpace(toLocationId);
+        ArgumentNullException.ThrowIfNull(spatial);
 
         return LocationRoutePlanner.PlanShortestRoute(
             _world,
+            spatial,
             fromLocationId,
             toLocationId,
             planningOptions
@@ -266,16 +293,19 @@ internal sealed class WorldHost : IDisposable {
         _disposed = true;
     }
 
-    private PassageAuthoringSnapshot MutatePassage(string passageId, Action mutation) {
+    private PassageAuthoringSnapshot MutateSpatialPassage(string passageId, Action mutation) {
         ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
         ArgumentNullException.ThrowIfNull(mutation);
 
         mutation();
+        InvalidateSpatial();
         Commit();
         return RuntimeWorldAuthoringProjector.Project(_world.GetPassage(passageId));
     }
 
     private void Commit() => _repo.Commit(_world.Root).Unwrap();
+
+    private void InvalidateSpatial() => _spatial = null;
 
     private static WorldState LoadWorldState(Revision revision) {
         ArgumentNullException.ThrowIfNull(revision);

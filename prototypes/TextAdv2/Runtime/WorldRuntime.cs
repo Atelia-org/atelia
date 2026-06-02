@@ -1,4 +1,5 @@
 using Atelia.TextAdv2.Routing;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Runtime;
@@ -14,9 +15,20 @@ internal sealed class WorldRuntime {
         return _routeAcceleration.Observe(world);
     }
 
+    public RouteAccelerationSnapshot ObserveRouteAcceleration(WorldState world, WorldSpatialSnapshot spatial) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
+        return _routeAcceleration.Observe(world, spatial);
+    }
+
     public LocationRoutePlanningOptions? GetPlanningOptions(WorldState world) {
         ArgumentNullException.ThrowIfNull(world);
         return _routeAcceleration.GetPlanningOptions(world);
+    }
+
+    public LocationRoutePlanningOptions? GetPlanningOptions(WorldSpatialSnapshot spatial) {
+        ArgumentNullException.ThrowIfNull(spatial);
+        return _routeAcceleration.GetPlanningOptions(spatial);
     }
 
     public RouteAccelerationSnapshot RebuildRouteAcceleration(
@@ -29,6 +41,20 @@ internal sealed class WorldRuntime {
         ArgumentException.ThrowIfNullOrWhiteSpace(landmarkProfileName);
 
         return _routeAcceleration.Rebuild(world, landmarkLocationIds, landmarkProfileName);
+    }
+
+    public RouteAccelerationSnapshot RebuildRouteAcceleration(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        IEnumerable<string> landmarkLocationIds,
+        string landmarkProfileName
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
+        ArgumentNullException.ThrowIfNull(landmarkLocationIds);
+        ArgumentException.ThrowIfNullOrWhiteSpace(landmarkProfileName);
+
+        return _routeAcceleration.Rebuild(world, spatial, landmarkLocationIds, landmarkProfileName);
     }
 
     public void RecordMovement(ActorMovementHistoryEntry entry, string actorId) {

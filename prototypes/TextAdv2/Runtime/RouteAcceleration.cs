@@ -31,12 +31,30 @@ internal sealed class RouteAccelerationCache {
         return Observe(world, spatial);
     }
 
+    public RouteAccelerationSnapshot Observe(WorldState world, WorldSpatialSnapshot spatial) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
+        return ObserveCore(world, spatial);
+    }
+
     public RouteAccelerationSnapshot Rebuild(
         WorldState world,
         IEnumerable<string> landmarkLocationIds,
         string landmarkProfileName = "custom"
     ) {
         ArgumentNullException.ThrowIfNull(world);
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return Rebuild(world, spatial, landmarkLocationIds, landmarkProfileName);
+    }
+
+    public RouteAccelerationSnapshot Rebuild(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        IEnumerable<string> landmarkLocationIds,
+        string landmarkProfileName = "custom"
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
         ArgumentNullException.ThrowIfNull(landmarkLocationIds);
         ArgumentException.ThrowIfNullOrWhiteSpace(landmarkProfileName);
 
@@ -49,21 +67,25 @@ internal sealed class RouteAccelerationCache {
 
         if (_landmarkLocationIds.Length == 0) { throw new InvalidOperationException("RebuildRouteAcceleration requires at least one landmark location ID."); }
 
-        var spatial = WorldSpatialSnapshotBuilder.Build(world);
         _landmarkSnapshot = LocationLandmarkHeuristicSnapshot.Create(world, spatial, _landmarkLocationIds);
         _landmarkProfileName = landmarkProfileName;
         _planningOptions = new LocationRoutePlanningOptions(_landmarkSnapshot);
         _graphSignature = LocationNavigationGraphSignature.Build(spatial);
-        return Observe(world, spatial);
+        return ObserveCore(world, spatial);
     }
 
     public LocationRoutePlanningOptions? GetPlanningOptions(WorldState world) {
         ArgumentNullException.ThrowIfNull(world);
         var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return GetPlanningOptions(spatial);
+    }
+
+    public LocationRoutePlanningOptions? GetPlanningOptions(WorldSpatialSnapshot spatial) {
+        ArgumentNullException.ThrowIfNull(spatial);
         return GetPlanningOptions(GetSnapshotStatus(spatial));
     }
 
-    private RouteAccelerationSnapshot Observe(WorldState world, WorldSpatialSnapshot spatial) {
+    private RouteAccelerationSnapshot ObserveCore(WorldState world, WorldSpatialSnapshot spatial) {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(spatial);
 

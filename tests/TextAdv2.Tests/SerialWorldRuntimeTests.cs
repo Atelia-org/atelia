@@ -95,6 +95,30 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
+    public void ObserveLocation_AfterPassageNoteMutation_ReflectsUpdatedSpatialFields() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
+
+        var before = session.ObserveLocation(TestWorldBuilder.LocationIds.Square);
+        _ = session.SetPassageEndpointLocalViewNote(
+            TestWorldBuilder.PassageIds.SquareRidgeTrail,
+            TestWorldBuilder.LocationIds.Square,
+            "Updated square-side trail note."
+        );
+        var after = session.ObserveLocation(TestWorldBuilder.LocationIds.Square);
+
+        Assert.Contains(
+            before.Exits,
+            static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareRidgeTrail
+                && exit.LocalViewNote == "The trail begins at the square's north retaining wall."
+        );
+        Assert.Contains(
+            after.Exits,
+            static exit => exit.PassageId == TestWorldBuilder.PassageIds.SquareRidgeTrail
+                && exit.LocalViewNote == "Updated square-side trail note."
+        );
+    }
+
+    [Fact]
     public void ObserveActorNavigation_ReturnsTypedNavigationAtActorsCurrentLocation() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
         _ = session.MoveActor(

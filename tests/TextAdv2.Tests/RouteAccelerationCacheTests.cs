@@ -2,6 +2,7 @@ using Atelia.StateJournal;
 using Atelia.TextAdv2.Observation;
 using Atelia.TextAdv2.Routing;
 using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 using Xunit;
 
@@ -33,6 +34,43 @@ public class RouteAccelerationCacheTests {
             Assert.Equal("landmark", observedAfterMutation.SnapshotKind);
             Assert.Equal(2, observedAfterMutation.LandmarkCount);
             Assert.Null(planningOptionsAfterMutation);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void ObserveAndGetPlanningOptions_WithSharedSpatialSnapshot_MatchWorldWrappers() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var world = TestWorldBuilder.Create(revision);
+            var routeAcceleration = new RouteAccelerationCache();
+            var spatial = WorldSpatialSnapshotBuilder.Build(world);
+
+            var rebuilt = routeAcceleration.Rebuild(
+                world,
+                spatial,
+                [TestWorldBuilder.LocationIds.Aerie, TestWorldBuilder.LocationIds.Shrine]
+            );
+            var observedViaWrapper = routeAcceleration.Observe(world);
+            var observedViaSharedSpatial = routeAcceleration.Observe(world, spatial);
+            var planningOptionsViaWrapper = routeAcceleration.GetPlanningOptions(world);
+            var planningOptionsViaSharedSpatial = routeAcceleration.GetPlanningOptions(spatial);
+
+            Assert.Equal("active", rebuilt.SnapshotStatus);
+            Assert.Equal(observedViaWrapper.PlannerMode, observedViaSharedSpatial.PlannerMode);
+            Assert.Equal(observedViaWrapper.SnapshotStatus, observedViaSharedSpatial.SnapshotStatus);
+            Assert.Equal(observedViaWrapper.LandmarkCount, observedViaSharedSpatial.LandmarkCount);
+            Assert.NotNull(planningOptionsViaWrapper);
+            Assert.NotNull(planningOptionsViaSharedSpatial);
+            Assert.Equal(
+                planningOptionsViaWrapper!.Heuristic.Observe(),
+                planningOptionsViaSharedSpatial!.Heuristic.Observe()
+            );
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

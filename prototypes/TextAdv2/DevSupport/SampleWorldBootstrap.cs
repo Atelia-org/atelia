@@ -54,8 +54,7 @@ public static class SampleWorldBootstrap {
                 );
             }
 
-            return session.Runtime.RebuildRouteAcceleration(
-                session.Host.DurableWorld,
+            return session.RebuildRouteAcceleration(
                 defaultProfile.LandmarkLocationIds,
                 defaultProfile.ProfileName
             );
@@ -73,7 +72,7 @@ public static class SampleWorldBootstrap {
     private static RecommendedLandmarkProfile? TryResolveLandmarkProfile(SerialWorldRuntime session) {
         ArgumentNullException.ThrowIfNull(session);
 
-        return TestWorldBuilder.TryGetRecommendedLandmarkLocationIds(session.Host.DurableWorld, out var recommendedLandmarkLocationIds)
+        return TestWorldBuilder.TryGetRecommendedLandmarkLocationIds(session.DurableWorld, out var recommendedLandmarkLocationIds)
             ? new RecommendedLandmarkProfile(
                 TestWorldBuilder.RecommendedLandmarkProfileName,
                 recommendedLandmarkLocationIds

@@ -26,16 +26,36 @@ internal static class LocationRoutePlanner {
 
     public static LocationRoutePlanObservation PlanShortestRouteForActor(
         WorldState world,
+        WorldSpatialSnapshot spatial,
+        string actorId,
+        string toLocationId
+    ) => PlanShortestRouteForActor(world, spatial, actorId, toLocationId, options: null);
+
+    public static LocationRoutePlanObservation PlanShortestRouteForActor(
+        WorldState world,
         string actorId,
         string toLocationId,
         LocationRoutePlanningOptions? options
     ) {
         ArgumentNullException.ThrowIfNull(world);
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return PlanShortestRouteForActor(world, spatial, actorId, toLocationId, options);
+    }
+
+    public static LocationRoutePlanObservation PlanShortestRouteForActor(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        string actorId,
+        string toLocationId,
+        LocationRoutePlanningOptions? options
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
         WorldState.ValidateEntityId(actorId, nameof(actorId));
         WorldState.ValidateEntityId(toLocationId, nameof(toLocationId));
 
         var actor = world.GetActor(actorId);
-        return PlanShortestRoute(world, actor.CurrentLocationId, toLocationId, options);
+        return PlanShortestRoute(world, spatial, actor.CurrentLocationId, toLocationId, options);
     }
 
     public static LocationRoutePlanObservation PlanShortestRoute(
@@ -46,11 +66,31 @@ internal static class LocationRoutePlanner {
 
     public static LocationRoutePlanObservation PlanShortestRoute(
         WorldState world,
+        WorldSpatialSnapshot spatial,
+        string fromLocationId,
+        string toLocationId
+    ) => PlanShortestRoute(world, spatial, fromLocationId, toLocationId, options: null);
+
+    public static LocationRoutePlanObservation PlanShortestRoute(
+        WorldState world,
         string fromLocationId,
         string toLocationId,
         LocationRoutePlanningOptions? options
     ) {
         ArgumentNullException.ThrowIfNull(world);
+        var spatial = WorldSpatialSnapshotBuilder.Build(world);
+        return PlanShortestRoute(world, spatial, fromLocationId, toLocationId, options);
+    }
+
+    public static LocationRoutePlanObservation PlanShortestRoute(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        string fromLocationId,
+        string toLocationId,
+        LocationRoutePlanningOptions? options
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(spatial);
         WorldState.ValidateEntityId(fromLocationId, nameof(fromLocationId));
         WorldState.ValidateEntityId(toLocationId, nameof(toLocationId));
         var planningOptions = LocationRoutePlanningOptions.Resolve(options);
@@ -72,8 +112,6 @@ internal static class LocationRoutePlanner {
                 CreateSearchStats(heuristicObservation, 0, 0, 0, 0)
             );
         }
-
-        var spatial = WorldSpatialSnapshotBuilder.Build(world);
 
         var frontier = new PriorityQueue<SearchState, SearchPriority>();
         int expandedNodeCount = 0;

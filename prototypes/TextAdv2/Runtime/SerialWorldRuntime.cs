@@ -31,19 +31,7 @@ public sealed class SerialWorldRuntime : IDisposable {
         }
     }
 
-    internal WorldHost Host {
-        get {
-            EnsureNotDisposed();
-            return _host;
-        }
-    }
-
-    internal WorldRuntime Runtime {
-        get {
-            EnsureNotDisposed();
-            return _runtime;
-        }
-    }
+    internal WorldState DurableWorld => _host.DurableWorld;
 
     public static SerialWorldRuntime CreateEmpty(string repoDir)
         => new(WorldHost.CreateEmpty(repoDir), new WorldRuntime());
@@ -101,7 +89,8 @@ public sealed class SerialWorldRuntime : IDisposable {
 
     public RouteAccelerationSnapshot ObserveRouteAcceleration() {
         EnsureNotDisposed();
-        return _runtime.ObserveRouteAcceleration(_host.DurableWorld);
+        var spatial = _host.ObserveSpatial();
+        return _runtime.ObserveRouteAcceleration(_host.DurableWorld, spatial);
     }
 
     public LogicalTimeSnapshot ObserveTime() {
@@ -116,18 +105,30 @@ public sealed class SerialWorldRuntime : IDisposable {
 
     public LocationRoutePlanObservation PlanActorRoute(string actorId, string toLocationId) {
         EnsureNotDisposed();
-        return _host.PlanActorRoute(actorId, toLocationId, _runtime.GetPlanningOptions(_host.DurableWorld));
+        var spatial = _host.ObserveSpatial();
+        return _host.PlanActorRoute(actorId, toLocationId, spatial, _runtime.GetPlanningOptions(spatial));
     }
 
     public LocationRoutePlanObservation PlanRoute(string fromLocationId, string toLocationId) {
         EnsureNotDisposed();
-        return _host.PlanRoute(fromLocationId, toLocationId, _runtime.GetPlanningOptions(_host.DurableWorld));
+        var spatial = _host.ObserveSpatial();
+        return _host.PlanRoute(fromLocationId, toLocationId, spatial, _runtime.GetPlanningOptions(spatial));
     }
 
     public RouteAccelerationSnapshot RebuildRouteAcceleration(string requestedLandmarks) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(requestedLandmarks);
         return RebuildRouteAccelerationCore(ParseExplicitLandmarkLocationIds(requestedLandmarks), "custom");
+    }
+
+    internal RouteAccelerationSnapshot RebuildRouteAcceleration(
+        IEnumerable<string> landmarkLocationIds,
+        string landmarkProfileName
+    ) {
+        EnsureNotDisposed();
+        ArgumentNullException.ThrowIfNull(landmarkLocationIds);
+        ArgumentException.ThrowIfNullOrWhiteSpace(landmarkProfileName);
+        return RebuildRouteAccelerationCore(landmarkLocationIds, landmarkProfileName);
     }
 
     public ActorRuntimeRouteTrace TraceActorRuntimeRoute(string actorId) {
@@ -201,11 +202,23 @@ public sealed class SerialWorldRuntime : IDisposable {
         _disposed = true;
     }
 
+    internal string RenderWorldDump() {
+        EnsureNotDisposed();
+        return WorldDumpRenderer.Render(_host.DurableWorld);
+    }
+
+    internal string RenderLocationDump(string locationId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
+        return WorldDumpRenderer.RenderLocation(_host.DurableWorld, locationId);
+    }
+
     private RouteAccelerationSnapshot RebuildRouteAccelerationCore(
         IEnumerable<string> landmarkLocationIds,
         string landmarkProfileName
     ) {
-        return _runtime.RebuildRouteAcceleration(_host.DurableWorld, landmarkLocationIds, landmarkProfileName);
+        var spatial = _host.ObserveSpatial();
+        return _runtime.RebuildRouteAcceleration(_host.DurableWorld, spatial, landmarkLocationIds, landmarkProfileName);
     }
 
     private static string[] ParseExplicitLandmarkLocationIds(string value) {
