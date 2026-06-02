@@ -495,6 +495,139 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
+    public void ObserveBatch_ReturnsMixedReadModelsInOrder_AndProjectsPerItemErrors() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
+
+        var result = session.ObserveBatch(
+            new BatchObserveRequest {
+                Items = [
+                    new BatchObserveItem {
+                        RequestId = "ctx-scout",
+                        Kind = "actor-context",
+                        ActorId = TestWorldBuilder.ActorIds.Scout,
+                    },
+                    new BatchObserveItem {
+                        RequestId = "square-nav",
+                        Kind = "location-navigation",
+                        LocationId = TestWorldBuilder.LocationIds.Square,
+                    },
+                    new BatchObserveItem {
+                        RequestId = "clock",
+                        Kind = "time",
+                    },
+                    new BatchObserveItem {
+                        RequestId = "missing-actor",
+                        Kind = "actor",
+                        ActorId = "missing",
+                    },
+                ],
+            }
+        );
+
+        Assert.Equal(
+            ["ctx-scout", "square-nav", "clock", "missing-actor"],
+            result.Items.Select(static item => item.RequestId).ToArray()
+        );
+
+        var scoutContext = result.Items[0].ActorContext;
+        Assert.NotNull(scoutContext);
+        Assert.Equal("scout", scoutContext!.ActorId);
+        Assert.Equal("square", scoutContext.CurrentLocation.LocationId);
+        Assert.Null(result.Items[0].Error);
+
+        var squareNavigation = result.Items[1].LocationNavigation;
+        Assert.NotNull(squareNavigation);
+        Assert.Equal("square", squareNavigation!.LocationId);
+        Assert.Equal(
+            ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
+            squareNavigation.Edges.Select(static edge => edge.PassageId).ToArray()
+        );
+
+        Assert.NotNull(result.Items[2].Time);
+        Assert.Equal(0, result.Items[2].Time!.CurrentTick);
+
+        Assert.Null(result.Items[3].Actor);
+        Assert.NotNull(result.Items[3].Error);
+        Assert.Contains("missing", result.Items[3].Error!.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StepBatch_ExecutesSequentialMoves_ContinuesAfterFailure_AndRunsPostObservationsAfterTimeAdvance() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
+
+        var result = session.StepBatch(
+            new BatchStepRequest {
+                Steps = [
+                    new BatchStepCommand {
+                        RequestId = "step-1",
+                        ActorId = TestWorldBuilder.ActorIds.Scout,
+                        PassageId = TestWorldBuilder.PassageIds.SquareRidgeTrail,
+                    },
+                    new BatchStepCommand {
+                        RequestId = "step-2",
+                        ActorId = TestWorldBuilder.ActorIds.Scout,
+                        PassageId = TestWorldBuilder.PassageIds.RidgeAerieWinch,
+                    },
+                    new BatchStepCommand {
+                        RequestId = "step-3",
+                        ActorId = TestWorldBuilder.ActorIds.Scout,
+                        PassageId = TestWorldBuilder.PassageIds.SquareShrineGate,
+                    },
+                ],
+                AdvanceTimeAfterBatchTicks = 7,
+                PostObservations = [
+                    new BatchObserveItem {
+                        RequestId = "observe-scout",
+                        Kind = "actor-context",
+                        ActorId = TestWorldBuilder.ActorIds.Scout,
+                    },
+                    new BatchObserveItem {
+                        RequestId = "observe-aerie",
+                        Kind = "location",
+                        LocationId = TestWorldBuilder.LocationIds.Aerie,
+                    },
+                    new BatchObserveItem {
+                        RequestId = "observe-time",
+                        Kind = "time",
+                    },
+                ],
+            }
+        );
+
+        Assert.Equal(3, result.Steps.Length);
+
+        Assert.NotNull(result.Steps[0].Move);
+        Assert.Equal("ridge", result.Steps[0].Move!.ToLocationId);
+
+        Assert.NotNull(result.Steps[1].Move);
+        Assert.Equal("aerie", result.Steps[1].Move!.ToLocationId);
+
+        Assert.Null(result.Steps[2].Move);
+        Assert.NotNull(result.Steps[2].Error);
+        Assert.Contains("not connected by passage", result.Steps[2].Error!.Message, StringComparison.Ordinal);
+
+        Assert.Equal(7, result.Time.CurrentTick);
+        Assert.NotNull(result.PostObservations);
+        Assert.Equal(3, result.PostObservations!.Items.Length);
+
+        var observedScout = result.PostObservations.Items[0].ActorContext;
+        Assert.NotNull(observedScout);
+        Assert.Equal("aerie", observedScout!.CurrentLocation.LocationId);
+        Assert.Equal(7, observedScout.CurrentTick);
+
+        var observedAerie = result.PostObservations.Items[1].Location;
+        Assert.NotNull(observedAerie);
+        Assert.Equal(["scout"], ReadActorIds(observedAerie!.PresentActors));
+
+        var observedTime = result.PostObservations.Items[2].Time;
+        Assert.NotNull(observedTime);
+        Assert.Equal(7, observedTime!.CurrentTick);
+
+        var finalScout = session.ObserveActor(TestWorldBuilder.ActorIds.Scout);
+        Assert.Equal("aerie", finalScout.Location.LocationId);
+    }
+
+    [Fact]
     public void CreateEmpty_CreatesDurableEmptyWorldWithZeroLogicalTime() {
         string repoDir = CreateTempRepoDir();
 

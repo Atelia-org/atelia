@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using Atelia.StateJournal;
 using Atelia.TextAdv2.Observation;
+using Atelia.TextAdv2.ReadModel;
 using Atelia.TextAdv2.Routing;
+using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
 namespace Atelia.TextAdv2.Runtime;
@@ -98,9 +101,47 @@ public sealed class SerialWorldRuntime : IDisposable {
         return _host.ObserveTime();
     }
 
+    public BatchObserveResult ObserveBatch(BatchObserveRequest request) {
+        EnsureNotDisposed();
+        ArgumentNullException.ThrowIfNull(request);
+
+        var spatial = _host.ObserveSpatial();
+        var occupancy = _host.ObserveOccupancy();
+        return ObserveBatchCore(request.Items, spatial, occupancy);
+    }
+
     public LogicalTimeSnapshot AdvanceTime(long ticks) {
         EnsureNotDisposed();
         return _host.AdvanceTime(ticks);
+    }
+
+    public BatchStepResult StepBatch(BatchStepRequest request) {
+        EnsureNotDisposed();
+        ArgumentNullException.ThrowIfNull(request);
+
+        ValidateBatchStepRequest(request);
+
+        // Batch step 明确是“按给定顺序串行执行多个 step”，而不是同时结算。
+        // 因为 actor move 不改变 topology，这里可以在整批 step 中复用同一个 spatial snapshot。
+        var spatial = _host.ObserveSpatial();
+        var stepResults = new BatchStepStepResult[request.Steps.Length];
+
+        for (int i = 0; i < request.Steps.Length; i++) {
+            stepResults[i] = ExecuteBatchStep(request.Steps[i]);
+        }
+
+        var time = _host.AdvanceTime(request.AdvanceTimeAfterBatchTicks);
+        BatchObserveResult? postObservations = null;
+
+        if (request.PostObservations is { Length: > 0 }) {
+            postObservations = ObserveBatchCore(request.PostObservations, spatial, _host.ObserveOccupancy());
+        }
+
+        return new BatchStepResult {
+            Steps = stepResults,
+            Time = time,
+            PostObservations = postObservations,
+        };
     }
 
     public LocationRoutePlanObservation PlanActorRoute(string actorId, string toLocationId) {
@@ -220,6 +261,204 @@ public sealed class SerialWorldRuntime : IDisposable {
         var spatial = _host.ObserveSpatial();
         return _runtime.RebuildRouteAcceleration(_host.DurableWorld, spatial, landmarkLocationIds, landmarkProfileName);
     }
+
+    private BatchObserveResult ObserveBatchCore(
+        BatchObserveItem[]? items,
+        WorldSpatialSnapshot spatial,
+        ActorOccupancyIndex occupancy
+    ) {
+        ArgumentNullException.ThrowIfNull(spatial);
+        ArgumentNullException.ThrowIfNull(occupancy);
+
+        if (items is null) {
+            throw new ArgumentException("Batch observe requires a non-null items array.", nameof(items));
+        }
+
+        for (int i = 0; i < items.Length; i++) {
+            ValidateBatchObserveItemShape(items[i]);
+        }
+
+        var results = new BatchObserveResultItem[items.Length];
+        for (int i = 0; i < items.Length; i++) {
+            results[i] = ObserveBatchItem(items[i], spatial, occupancy);
+        }
+
+        return new BatchObserveResult {
+            Items = results,
+        };
+    }
+
+    private BatchObserveResultItem ObserveBatchItem(
+        BatchObserveItem item,
+        WorldSpatialSnapshot spatial,
+        ActorOccupancyIndex occupancy
+    ) {
+        ValidateBatchObserveItemShape(item);
+
+        var kind = NormalizeObserveKind(item.Kind);
+
+        try {
+            return kind switch {
+                "actor" => new BatchObserveResultItem {
+                    RequestId = item.RequestId,
+                    Kind = kind,
+                    Actor = LocationObservationProjector.ObserveActorLocation(
+                        _host.DurableWorld,
+                        spatial,
+                        occupancy,
+                        item.ActorId!
+                    ),
+                },
+                "actor-context" => new BatchObserveResultItem {
+                    RequestId = item.RequestId,
+                    Kind = kind,
+                    ActorContext = ActorContextObservationProjector.ObserveActorContext(
+                        _host.DurableWorld,
+                        spatial,
+                        occupancy,
+                        item.ActorId!
+                    ),
+                },
+                "actor-navigation" => new BatchObserveResultItem {
+                    RequestId = item.RequestId,
+                    Kind = kind,
+                    ActorNavigation = NavigationObservationProjector.ObserveActorNavigation(
+                        _host.DurableWorld,
+                        spatial,
+                        item.ActorId!
+                    ),
+                },
+                "location" => new BatchObserveResultItem {
+                    RequestId = item.RequestId,
+                    Kind = kind,
+                    Location = LocationObservationProjector.ObserveLocation(
+                        _host.DurableWorld,
+                        spatial,
+                        occupancy,
+                        item.LocationId!
+                    ),
+                },
+                "location-navigation" => new BatchObserveResultItem {
+                    RequestId = item.RequestId,
+                    Kind = kind,
+                    LocationNavigation = NavigationObservationProjector.ObserveLocationNavigation(
+                        _host.DurableWorld,
+                        spatial,
+                        item.LocationId!
+                    ),
+                },
+                "time" => new BatchObserveResultItem {
+                    RequestId = item.RequestId,
+                    Kind = kind,
+                    Time = _host.ObserveTime(),
+                },
+                _ => throw new UnreachableException($"Unexpected batch observe kind '{kind}'."),
+            };
+        }
+        catch (ArgumentException ex) {
+            return CreateObserveError(item.RequestId, kind, ex.Message);
+        }
+        catch (InvalidOperationException ex) {
+            return CreateObserveError(item.RequestId, kind, ex.Message);
+        }
+    }
+
+    private BatchStepStepResult ExecuteBatchStep(BatchStepCommand step) {
+        ValidateBatchStepCommand(step);
+
+        try {
+            return new BatchStepStepResult {
+                RequestId = step.RequestId,
+                ActorId = step.ActorId,
+                PassageId = step.PassageId,
+                Move = MoveActor(step.ActorId, step.PassageId),
+            };
+        }
+        catch (ArgumentException ex) {
+            return CreateStepError(step, ex.Message);
+        }
+        catch (InvalidOperationException ex) {
+            return CreateStepError(step, ex.Message);
+        }
+    }
+
+    private static BatchObserveResultItem CreateObserveError(string requestId, string kind, string message)
+        => new() {
+            RequestId = requestId,
+            Kind = kind,
+            Error = new BatchRuntimeError(message),
+        };
+
+    private static BatchStepStepResult CreateStepError(BatchStepCommand step, string message)
+        => new() {
+            RequestId = step.RequestId,
+            ActorId = step.ActorId,
+            PassageId = step.PassageId,
+            Error = new BatchRuntimeError(message),
+        };
+
+    private static void ValidateBatchStepRequest(BatchStepRequest request) {
+        if (request.Steps is null) {
+            throw new ArgumentException("Batch step requires a non-null steps array.", nameof(request));
+        }
+
+        for (int i = 0; i < request.Steps.Length; i++) {
+            ValidateBatchStepCommand(request.Steps[i]);
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegative(request.AdvanceTimeAfterBatchTicks);
+
+        if (request.PostObservations is null) {
+            return;
+        }
+
+        for (int i = 0; i < request.PostObservations.Length; i++) {
+            ValidateBatchObserveItemShape(request.PostObservations[i]);
+        }
+    }
+
+    private static void ValidateBatchStepCommand(BatchStepCommand step) {
+        ArgumentNullException.ThrowIfNull(step);
+        ArgumentException.ThrowIfNullOrWhiteSpace(step.RequestId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(step.ActorId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(step.PassageId);
+    }
+
+    private static void ValidateBatchObserveItemShape(BatchObserveItem item) {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentException.ThrowIfNullOrWhiteSpace(item.RequestId);
+
+        string kind = NormalizeObserveKind(item.Kind);
+        if (RequiresActorId(kind)) {
+            ArgumentException.ThrowIfNullOrWhiteSpace(item.ActorId);
+        }
+
+        if (RequiresLocationId(kind)) {
+            ArgumentException.ThrowIfNullOrWhiteSpace(item.LocationId);
+        }
+    }
+
+    private static string NormalizeObserveKind(string kind) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(kind);
+
+        return kind.Trim().ToLowerInvariant() switch {
+            "actor" => "actor",
+            "actor-context" => "actor-context",
+            "actor-navigation" => "actor-navigation",
+            "location" => "location",
+            "location-navigation" => "location-navigation",
+            "time" => "time",
+            _ => throw new InvalidOperationException(
+                $"Unsupported batch observe kind '{kind}'. Allowed values: actor, actor-context, actor-navigation, location, location-navigation, time."
+            ),
+        };
+    }
+
+    private static bool RequiresActorId(string kind)
+        => kind is "actor" or "actor-context" or "actor-navigation";
+
+    private static bool RequiresLocationId(string kind)
+        => kind is "location" or "location-navigation";
 
     private static string[] ParseExplicitLandmarkLocationIds(string value) {
         var landmarkLocationIds = value

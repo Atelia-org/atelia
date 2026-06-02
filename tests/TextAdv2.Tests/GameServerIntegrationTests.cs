@@ -332,6 +332,149 @@ public class GameServerIntegrationTests {
     }
 
     [Fact]
+    public async Task GymBatchObserve_ReturnsMixedTypedPayloadsAndPerItemErrorsAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var factory = CreateFactory(repoDir);
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/gym/batch-observe",
+                new BatchObserveRequest {
+                    Items = [
+                        new BatchObserveItem {
+                            RequestId = "actor-1",
+                            Kind = "actor",
+                            ActorId = "scout",
+                        },
+                        new BatchObserveItem {
+                            RequestId = "nav-1",
+                            Kind = "location-navigation",
+                            LocationId = "square",
+                        },
+                        new BatchObserveItem {
+                            RequestId = "time-1",
+                            Kind = "time",
+                        },
+                        new BatchObserveItem {
+                            RequestId = "missing",
+                            Kind = "actor-context",
+                            ActorId = "missing",
+                        },
+                    ],
+                }
+            );
+            string jsonText = await response.Content.ReadAsStringAsync();
+            var payload = JsonSerializer.Deserialize<BatchObserveResult>(jsonText, HostJsonOptions);
+            using var json = JsonDocument.Parse(jsonText);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(payload);
+            Assert.Equal(["actor-1", "nav-1", "time-1", "missing"], payload.Items.Select(static item => item.RequestId).ToArray());
+            Assert.Equal("square", payload.Items[0].Actor!.Location.LocationId);
+            Assert.Equal("square", payload.Items[1].LocationNavigation!.LocationId);
+            Assert.Equal(0, payload.Items[2].Time!.CurrentTick);
+            Assert.NotNull(payload.Items[3].Error);
+            Assert.Contains("missing", payload.Items[3].Error!.Message, StringComparison.Ordinal);
+
+            var items = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            var item0 = items[0];
+            Assert.True(item0.TryGetProperty("actor", out _));
+            Assert.False(item0.TryGetProperty("error", out _));
+
+            var item3 = items[3];
+            Assert.True(item3.TryGetProperty("error", out _));
+            Assert.False(item3.TryGetProperty("actorContext", out _));
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task GymBatchStep_ExecutesSequentialMoves_ContinuesAfterFailure_AndReturnsPostObservationsAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var factory = CreateFactory(repoDir);
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/gym/batch-step",
+                new BatchStepRequest {
+                    Steps = [
+                        new BatchStepCommand {
+                            RequestId = "move-1",
+                            ActorId = "scout",
+                            PassageId = "square-ridge-trail",
+                        },
+                        new BatchStepCommand {
+                            RequestId = "move-2",
+                            ActorId = "scout",
+                            PassageId = "ridge-aerie-winch",
+                        },
+                        new BatchStepCommand {
+                            RequestId = "move-3",
+                            ActorId = "scout",
+                            PassageId = "square-shrine-gate",
+                        },
+                    ],
+                    AdvanceTimeAfterBatchTicks = 9,
+                    PostObservations = [
+                        new BatchObserveItem {
+                            RequestId = "observe-scout",
+                            Kind = "actor-context",
+                            ActorId = "scout",
+                        },
+                        new BatchObserveItem {
+                            RequestId = "observe-aerie",
+                            Kind = "location",
+                            LocationId = "aerie",
+                        },
+                        new BatchObserveItem {
+                            RequestId = "observe-time",
+                            Kind = "time",
+                        },
+                    ],
+                }
+            );
+            string jsonText = await response.Content.ReadAsStringAsync();
+            var payload = JsonSerializer.Deserialize<BatchStepResult>(jsonText, HostJsonOptions);
+            using var json = JsonDocument.Parse(jsonText);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            Assert.NotNull(payload);
+            Assert.Equal(3, payload.Steps.Length);
+            Assert.Equal("ridge", payload.Steps[0].Move!.ToLocationId);
+            Assert.Equal("aerie", payload.Steps[1].Move!.ToLocationId);
+            Assert.NotNull(payload.Steps[2].Error);
+            Assert.Contains("not connected by passage", payload.Steps[2].Error!.Message, StringComparison.Ordinal);
+            Assert.Equal(9, payload.Time.CurrentTick);
+            Assert.NotNull(payload.PostObservations);
+            Assert.Equal("aerie", payload.PostObservations!.Items[0].ActorContext!.CurrentLocation.LocationId);
+            Assert.Equal(9, payload.PostObservations.Items[0].ActorContext!.CurrentTick);
+            Assert.Equal(["scout"], ReadActorIds(payload.PostObservations.Items[1].Location!.PresentActors));
+            Assert.Equal(9, payload.PostObservations.Items[2].Time!.CurrentTick);
+
+            var steps = json.RootElement.GetProperty("steps").EnumerateArray().ToArray();
+            var failedStep = steps[2];
+            Assert.True(failedStep.TryGetProperty("error", out _));
+            Assert.False(failedStep.TryGetProperty("move", out _));
+
+            using var finalObserve = await client.GetAsync("/actors/scout/observation");
+            var finalPayload = await ReadJsonAsync<ActorLocationObservation>(finalObserve);
+            Assert.NotNull(finalPayload);
+            Assert.Equal("aerie", finalPayload!.Location.LocationId);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
     public async Task RuntimeStatus_ReportsResolvedRepoAndDevHostPolicyAsync() {
         string repoDir = CreateTempRepoDir();
 
@@ -385,6 +528,8 @@ public class GameServerIntegrationTests {
                     "GET /actors/{actorId}/runtime-route-trace",
                     "GET /actors/{actorId}/runtime-route-trace/json",
                     "GET /actors/{actorId}/plan-route/{toLocationId}",
+                    "POST /gym/batch-observe",
+                    "POST /gym/batch-step",
                 ],
                 ReadPlannedEndpoints(json.RootElement)
             );
@@ -460,6 +605,8 @@ public class GameServerIntegrationTests {
                     "GET /actors/{actorId}/runtime-route-trace",
                     "GET /actors/{actorId}/runtime-route-trace/json",
                     "GET /actors/{actorId}/plan-route/{toLocationId}",
+                    "POST /gym/batch-observe",
+                    "POST /gym/batch-step",
                 ],
                 ReadPlannedEndpoints(statusJson.RootElement)
             );

@@ -139,6 +139,8 @@ internal sealed class GameServerHostPolicy {
             "GET /actors/{actorId}/runtime-route-trace",
             "GET /actors/{actorId}/runtime-route-trace/json",
             "GET /actors/{actorId}/plan-route/{toLocationId}",
+            "POST /gym/batch-observe",
+            "POST /gym/batch-step",
         };
 
         if (sampleWorldResetEnabled) {

@@ -109,6 +109,14 @@ app.MapGet("/actors/{actorId}/plan-route/{toLocationId}",
     (string actorId, string toLocationId, RuntimeService runtime)
     => ExecuteJson(runtime, x => x.PlanActorRoute(actorId, toLocationId))
 );
+app.MapPost("/gym/batch-observe",
+    (BatchObserveRequest request, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.ObserveBatch(request))
+);
+app.MapPost("/gym/batch-step",
+    (BatchStepRequest request, RuntimeService runtime)
+    => ExecuteJson(runtime, x => x.StepBatch(request))
+);
 
 app.MapGet("/admin/routes/{fromLocationId}/{toLocationId}",
     (string fromLocationId, string toLocationId, RuntimeService runtime)
