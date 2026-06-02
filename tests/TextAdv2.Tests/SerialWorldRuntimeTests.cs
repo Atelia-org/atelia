@@ -119,6 +119,18 @@ public class SerialWorldRuntimeTests {
     }
 
     [Fact]
+    public void CreateActor_AfterLocationObservation_UpdatesPresentActorsWithoutRebuildingWorldHost() {
+        using var session = SampleWorldBootstrap.CreateTemporarySession();
+
+        var before = session.ObserveLocation(TestWorldBuilder.LocationIds.Square);
+        _ = session.CreateActor("latecomer", "Latecomer", TestWorldBuilder.LocationIds.Square);
+        var after = session.ObserveLocation(TestWorldBuilder.LocationIds.Square);
+
+        Assert.Equal(["scout"], before.PresentActors.Select(static actor => actor.ActorId).ToArray());
+        Assert.Equal(["latecomer", "scout"], after.PresentActors.Select(static actor => actor.ActorId).ToArray());
+    }
+
+    [Fact]
     public void ObserveActorNavigation_ReturnsTypedNavigationAtActorsCurrentLocation() {
         using var session = SampleWorldBootstrap.CreateTemporarySession();
         _ = session.MoveActor(

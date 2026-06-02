@@ -1,3 +1,4 @@
+using Atelia.TextAdv2.ReadModel;
 using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
@@ -12,12 +13,18 @@ namespace Atelia.TextAdv2.Observation;
 /// - 不替调用方做文学化润色。
 /// </summary>
 internal static class LocationObservationProjector {
-    internal static ActorPresenceObservation[] ProjectPresentActors(WorldState world, string locationId) {
+
+    internal static ActorPresenceObservation[] ProjectPresentActors(
+        WorldState world,
+        ActorOccupancyIndex occupancy,
+        string locationId
+    ) {
         ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(occupancy);
         WorldState.ValidateEntityId(locationId, nameof(locationId));
 
-        return world.EnumerateActorsAtLocation(locationId)
-            .OrderBy(actor => actor.Id, StringComparer.Ordinal)
+        return occupancy.EnumerateActorIdsAtLocation(locationId)
+            .Select(world.GetActor)
             .Select(actor => new ActorPresenceObservation(actor.Id, actor.Name))
             .ToArray();
     }
@@ -29,10 +36,12 @@ internal static class LocationObservationProjector {
     public static LocationObservation ObserveLocation(
         WorldState world,
         WorldSpatialSnapshot spatial,
+        ActorOccupancyIndex occupancy,
         string locationId
     ) {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(spatial);
+        ArgumentNullException.ThrowIfNull(occupancy);
         WorldState.ValidateEntityId(locationId, nameof(locationId));
 
         var location = world.GetLocation(locationId);
@@ -59,15 +68,25 @@ internal static class LocationObservationProjector {
             .OrderBy(exit => exit.ExitName, StringComparer.Ordinal)
             .ThenBy(exit => exit.PassageId, StringComparer.Ordinal)
             .ToArray();
-        var presentActors = ProjectPresentActors(world, locationId);
+        var presentActors = ProjectPresentActors(world, occupancy, locationId);
 
         return new LocationObservation(location.Id, location.Name, location.Description, exits, presentActors);
+    }
+
+    public static LocationObservation ObserveLocation(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        string locationId
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        return ObserveLocation(world, spatial, ActorOccupancyIndex.Build(world), locationId);
     }
 
     public static LocationObservation ObserveLocation(WorldState world, string locationId) {
         ArgumentNullException.ThrowIfNull(world);
         var spatial = WorldSpatialSnapshotBuilder.Build(world);
-        return ObserveLocation(world, spatial, locationId);
+        var occupancy = ActorOccupancyIndex.Build(world);
+        return ObserveLocation(world, spatial, occupancy, locationId);
     }
 
     /// <summary>
@@ -77,19 +96,22 @@ internal static class LocationObservationProjector {
     public static ActorLocationObservation ObserveActorLocation(
         WorldState world,
         WorldSpatialSnapshot spatial,
+        ActorOccupancyIndex occupancy,
         string actorId
     ) {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(spatial);
+        ArgumentNullException.ThrowIfNull(occupancy);
         WorldState.ValidateEntityId(actorId, nameof(actorId));
 
         var actor = world.GetActor(actorId);
-        return new ActorLocationObservation(actor.Id, actor.Name, ObserveLocation(world, spatial, actor.CurrentLocationId));
+        return new ActorLocationObservation(actor.Id, actor.Name, ObserveLocation(world, spatial, occupancy, actor.CurrentLocationId));
     }
 
     public static ActorLocationObservation ObserveActorLocation(WorldState world, string actorId) {
         ArgumentNullException.ThrowIfNull(world);
         var spatial = WorldSpatialSnapshotBuilder.Build(world);
-        return ObserveActorLocation(world, spatial, actorId);
+        var occupancy = ActorOccupancyIndex.Build(world);
+        return ObserveActorLocation(world, spatial, occupancy, actorId);
     }
 }

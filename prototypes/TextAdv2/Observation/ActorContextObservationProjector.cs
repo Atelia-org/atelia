@@ -1,4 +1,5 @@
 using Atelia.TextAdv2.Runtime;
+using Atelia.TextAdv2.ReadModel;
 using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
 
@@ -18,15 +19,17 @@ internal static class ActorContextObservationProjector {
     public static ActorContextObservation ObserveActorContext(
         WorldState world,
         WorldSpatialSnapshot spatial,
+        ActorOccupancyIndex occupancy,
         string actorId
     ) {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(spatial);
+        ArgumentNullException.ThrowIfNull(occupancy);
         WorldState.ValidateEntityId(actorId, nameof(actorId));
 
         var actor = world.GetActor(actorId);
         var location = world.GetLocation(actor.CurrentLocationId);
-        var presentActors = LocationObservationProjector.ProjectPresentActors(world, location.Id);
+        var presentActors = LocationObservationProjector.ProjectPresentActors(world, occupancy, location.Id);
         var currentLocation = new ActorContextLocationObservation(
             location.Id,
             location.Name,
@@ -45,9 +48,19 @@ internal static class ActorContextObservationProjector {
         );
     }
 
+    public static ActorContextObservation ObserveActorContext(
+        WorldState world,
+        WorldSpatialSnapshot spatial,
+        string actorId
+    ) {
+        ArgumentNullException.ThrowIfNull(world);
+        return ObserveActorContext(world, spatial, ActorOccupancyIndex.Build(world), actorId);
+    }
+
     public static ActorContextObservation ObserveActorContext(WorldState world, string actorId) {
         ArgumentNullException.ThrowIfNull(world);
         var spatial = WorldSpatialSnapshotBuilder.Build(world);
-        return ObserveActorContext(world, spatial, actorId);
+        var occupancy = ActorOccupancyIndex.Build(world);
+        return ObserveActorContext(world, spatial, occupancy, actorId);
     }
 }

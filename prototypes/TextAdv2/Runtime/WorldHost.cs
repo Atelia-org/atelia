@@ -1,5 +1,6 @@
 using Atelia.StateJournal;
 using Atelia.TextAdv2.Observation;
+using Atelia.TextAdv2.ReadModel;
 using Atelia.TextAdv2.Routing;
 using Atelia.TextAdv2.Spatial;
 using Atelia.TextAdv2.WorldTruth;
@@ -11,6 +12,7 @@ internal sealed class WorldHost : IDisposable {
 
     private readonly Repository _repo;
     private readonly WorldState _world;
+    private ActorOccupancyIndex? _occupancy;
     private WorldSpatialSnapshot? _spatial;
     private bool _disposed;
 
@@ -36,6 +38,11 @@ internal sealed class WorldHost : IDisposable {
     internal WorldSpatialSnapshot ObserveSpatial() {
         EnsureNotDisposed();
         return _spatial ??= WorldSpatialSnapshotBuilder.Build(_world);
+    }
+
+    internal ActorOccupancyIndex ObserveOccupancy() {
+        EnsureNotDisposed();
+        return _occupancy ??= ActorOccupancyIndex.Build(_world);
     }
 
     public static WorldHost CreateEmpty(string repoDir)
@@ -90,19 +97,19 @@ internal sealed class WorldHost : IDisposable {
     public LocationObservation ObserveLocation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
-        return LocationObservationProjector.ObserveLocation(_world, ObserveSpatial(), locationId);
+        return LocationObservationProjector.ObserveLocation(_world, ObserveSpatial(), ObserveOccupancy(), locationId);
     }
 
     public ActorLocationObservation ObserveActor(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return LocationObservationProjector.ObserveActorLocation(_world, ObserveSpatial(), actorId);
+        return LocationObservationProjector.ObserveActorLocation(_world, ObserveSpatial(), ObserveOccupancy(), actorId);
     }
 
     public ActorContextObservation ObserveActorContext(string actorId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
-        return ActorContextObservationProjector.ObserveActorContext(_world, ObserveSpatial(), actorId);
+        return ActorContextObservationProjector.ObserveActorContext(_world, ObserveSpatial(), ObserveOccupancy(), actorId);
     }
 
     public LocationNavigationObservation ObserveNavigation(string locationId) {
@@ -146,6 +153,7 @@ internal sealed class WorldHost : IDisposable {
         EnsureNotDisposed();
         var actor = _world.CreateActor(id, name, currentLocationId);
         Commit();
+        _occupancy?.AddActor(actor.Id, actor.CurrentLocationId);
         return RuntimeWorldAuthoringProjector.Project(actor);
     }
 
@@ -267,6 +275,7 @@ internal sealed class WorldHost : IDisposable {
 
         var receipt = _world.MoveActorAlongPassage(actorId, passageId);
         Commit();
+        _occupancy?.MoveActor(receipt.ActorId, receipt.FromLocationId, receipt.ToLocationId);
 
         var actor = _world.GetActor(actorId);
         var fromLocation = _world.GetLocation(receipt.FromLocationId);
