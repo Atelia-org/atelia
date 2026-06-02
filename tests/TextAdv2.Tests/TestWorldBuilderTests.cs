@@ -603,6 +603,115 @@ public class TestWorldBuilderTests {
         }
     }
 
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenRouteFollowingTailBecomesUntraversable() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = WorldState.Create(revision);
+                _ = world.CreateLocation("start", "Start", "Start.");
+                _ = world.CreateLocation("mid", "Mid", "Mid.");
+                _ = world.CreateLocation("goal", "Goal", "Goal.");
+                _ = world.CreateActor("runner", "Runner", "start");
+                _ = world.CreatePassage("start-mid", "start", "forward", "mid", "back", TravelMode.Land, 1);
+                _ = world.CreatePassage("mid-goal", "mid", "forward", "goal", "back", TravelMode.Land, 1);
+                _ = world.StartActorRouteFollowing("runner", "goal", ["start-mid", "mid-goal"]);
+                world.SetPassageDirectionEnabledFrom("mid-goal", "mid", false);
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    "Passage 'mid-goal' is not traversable from route cursor location 'mid' for actor 'runner'.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenRouteFollowingRemainingTicksExceedCurrentLeg() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = WorldState.Create(revision);
+                _ = world.CreateLocation("start", "Start", "Start.");
+                _ = world.CreateLocation("goal", "Goal", "Goal.");
+                _ = world.CreateActor("runner", "Runner", "start");
+                _ = world.CreatePassage("start-goal", "start", "forward", "goal", "back", TravelMode.Land, 2);
+                _ = world.StartActorRouteFollowing("runner", "goal", ["start-goal"]);
+
+                var actorsLedger = world.Root.GetOrThrow<DurableDict<string>>("actors")!;
+                var runner = actorsLedger.GetOrThrow<DurableDict<string>>("runner")!;
+                var embodiedState = runner.GetOrThrow<DurableDict<string>>("embodiedState")!;
+                embodiedState.Upsert("remainingTravelTicksOnCurrentLeg", 99);
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    "Actor 'runner' route-following state uses invalid remainingTravelTicksOnCurrentLeg '99' during world load; expected 1..2.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void WorldState_FromRoot_FailsFastWhenInventoryContainsNegativeQuantity() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var world = WorldState.Create(revision);
+                _ = world.CreateLocation("start", "Start", "Start.");
+                _ = world.CreateActor("runner", "Runner", "start");
+
+                var actorsLedger = world.Root.GetOrThrow<DurableDict<string>>("actors")!;
+                var runner = actorsLedger.GetOrThrow<DurableDict<string>>("runner")!;
+                var inventory = runner.GetOrThrow<DurableDict<string, long>>("inventory")!;
+                inventory.Upsert("iron-ore", -1);
+                repo.Commit(world.Root).Unwrap();
+            }
+
+            using (var repo = Repository.Open(repoDir).Unwrap()) {
+                var revision = repo.CheckoutBranch("main").Unwrap();
+                var exception = Assert.Throws<InvalidOperationException>(
+                    () => WorldState.FromRoot(revision.GetGraphRoot<DurableDict<string>>().Unwrap())
+                );
+
+                Assert.Equal(
+                    "Actor 'runner' has negative carried resource quantity -1 for 'iron-ore'.",
+                    exception.Message
+                );
+            }
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
     private static string CreateTempRepoDir()
         => Path.Combine(Path.GetTempPath(), $"atelia-textadv2-tests-{Guid.NewGuid():N}");
 

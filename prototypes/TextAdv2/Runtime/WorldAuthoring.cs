@@ -5,7 +5,14 @@ namespace Atelia.TextAdv2.Runtime;
 public sealed record LocationAuthoringSnapshot(
     string LocationId,
     string LocationName,
-    string LocationDescription
+    string LocationDescription,
+    LocationMiningWorksiteAuthoringSnapshot? MiningWorksite
+);
+
+public sealed record LocationMiningWorksiteAuthoringSnapshot(
+    int TicksPerYield,
+    string YieldItemId,
+    int YieldAmount
 );
 
 public sealed record ActorAuthoringSnapshot(
@@ -41,10 +48,19 @@ internal static class RuntimeWorldAuthoringProjector {
     public static LocationAuthoringSnapshot Project(Location location) {
         ArgumentNullException.ThrowIfNull(location);
 
+        var miningWorksite = location.MiningWorksite;
+
         return new LocationAuthoringSnapshot(
             location.Id,
             location.Name,
-            location.Description
+            location.Description,
+            miningWorksite is null
+                ? null
+                : new LocationMiningWorksiteAuthoringSnapshot(
+                    miningWorksite.TicksPerYield,
+                    miningWorksite.YieldItemId,
+                    miningWorksite.YieldAmount
+                )
         );
     }
 

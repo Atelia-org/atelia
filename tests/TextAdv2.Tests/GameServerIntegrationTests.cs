@@ -169,6 +169,9 @@ public class GameServerIntegrationTests {
                 initialContext.CurrentLocation.PresentActors,
                 static actor => actor.ActorId == "scout"
             );
+            Assert.Equal("idle", initialContext.CurrentActivity.Kind);
+            Assert.False(initialContext.CurrentActivity.IsInterruptible);
+            Assert.Empty(initialContext.CarriedResources);
             AssertActorContextJsonHasNoCurrentLocationExits(initialContextJson.RootElement);
 
             using var moveResponse = await client.PostAsync("/actors/scout/moves/square-ridge-trail", content: null);
@@ -202,7 +205,40 @@ public class GameServerIntegrationTests {
                 movedContext.CurrentLocation.PresentActors,
                 static actor => actor.ActorId == "scout"
             );
+            Assert.Equal("idle", movedContext.CurrentActivity.Kind);
+            Assert.False(movedContext.CurrentActivity.IsInterruptible);
+            Assert.Empty(movedContext.CarriedResources);
             AssertActorContextJsonHasNoCurrentLocationExits(movedContextJson.RootElement);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public async Task ActorContextEndpoint_ShowsNonIdleRouteFollowingActivityAsync() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var session = SampleWorldBootstrap.CreateFreshSession(repoDir)) {
+                _ = session.StartActorRouteFollowing("scout", "aerie");
+            }
+            WaitUntilSessionCanReopen(repoDir);
+
+            using var factory = CreateFactory(repoDir, OpenExistingOnlyBootstrapMode);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/actors/scout/context");
+            var context = await ReadJsonAsync<ActorContextObservation>(response);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.NotNull(context);
+            Assert.Equal("route-following", context.CurrentActivity.Kind);
+            Assert.True(context.CurrentActivity.IsInterruptible);
+            Assert.NotNull(context.CurrentActivity.RouteFollowing);
+            Assert.Equal("aerie", context.CurrentActivity.RouteFollowing!.DestinationLocationId);
+            Assert.Equal("Aerie", context.CurrentActivity.RouteFollowing.DestinationLocationName);
+            Assert.Equal(["square-ridge-trail", "ridge-aerie-winch"], context.CurrentActivity.RouteFollowing.RemainingPassageIds);
+            Assert.Equal(5, context.CurrentActivity.RouteFollowing.RemainingTravelTicksOnCurrentLeg);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

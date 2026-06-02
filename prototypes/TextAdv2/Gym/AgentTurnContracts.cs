@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Atelia.TextAdv2.Runtime;
 
 namespace Atelia.TextAdv2.Gym;
@@ -38,6 +39,29 @@ public sealed record AgentTurnDecision {
         Reasoning = reasoning;
     }
 
+    public static AgentTurnDecision Keep(string? reasoning = null)
+        => new(KeepAgentActionIntent.Instance, reasoning);
+
+    public static AgentTurnDecision Move(string passageId, string? reasoning = null)
+        => new(new MoveAgentActionIntent(passageId), reasoning);
+
+    public static AgentTurnDecision StartRouteFollowing(
+        string destinationLocationId,
+        bool isInterruptible = true,
+        string? reasoning = null
+    )
+        => new(new StartRouteFollowingAgentActionIntent(destinationLocationId, isInterruptible), reasoning);
+
+    public static AgentTurnDecision StartMining(
+        string worksiteId,
+        bool isInterruptible = true,
+        string? reasoning = null
+    )
+        => new(new StartMiningAgentActionIntent(worksiteId, isInterruptible), reasoning);
+
+    public static AgentTurnDecision CancelCurrentProcess(string? reasoning = null)
+        => new(CancelCurrentProcessAgentActionIntent.Instance, reasoning);
+
     public AgentActionIntent Action { get; }
 
     public string? Reasoning { get; }
@@ -76,43 +100,162 @@ public sealed record AgentTurnResolutionRequest {
     public AgentIntentDeclaration[] Declarations { get; }
 }
 
-public sealed record ResolvedAgentAction {
-    public ResolvedAgentAction(
+public sealed record ResolvedAgentOperation {
+    public ResolvedAgentOperation(
         string actorId,
         AgentTurnDecision decision,
-        AgentTurnResolutionStatus status,
+        AgentTurnResolutionStatus resolutionStatus,
         string? resolutionMessage,
-        BatchStepCommand? Step
+        ExecutableAgentAction? executableAction
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentNullException.ThrowIfNull(decision);
+        if (resolutionStatus == AgentTurnResolutionStatus.Accepted && executableAction is null) {
+            throw new InvalidOperationException("Accepted resolved operation requires an executable action.");
+        }
+        if (resolutionStatus == AgentTurnResolutionStatus.Rejected && executableAction is not null) {
+            throw new InvalidOperationException("Rejected resolved operation cannot keep an executable action.");
+        }
 
         ActorId = actorId;
         Decision = decision;
-        Status = status;
+        ResolutionStatus = resolutionStatus;
         ResolutionMessage = resolutionMessage;
-        this.Step = Step;
+        ExecutableAction = executableAction;
     }
 
     public string ActorId { get; }
 
     public AgentTurnDecision Decision { get; }
 
-    public AgentTurnResolutionStatus Status { get; }
+    public AgentTurnResolutionStatus ResolutionStatus { get; }
 
     public string? ResolutionMessage { get; }
 
-    public BatchStepCommand? Step { get; }
+    public ExecutableAgentAction? ExecutableAction { get; }
 }
 
 public sealed record AgentTurnResolutionPlan {
-    public AgentTurnResolutionPlan(ResolvedAgentAction[] Actions) {
-        ArgumentNullException.ThrowIfNull(Actions);
-        this.Actions = Actions;
+    public AgentTurnResolutionPlan(ResolvedAgentOperation[] Operations) {
+        ArgumentNullException.ThrowIfNull(Operations);
+        this.Operations = Operations;
     }
 
-    public ResolvedAgentAction[] Actions { get; }
+    public ResolvedAgentOperation[] Operations { get; }
 }
+
+/// <summary>
+/// resolver 把原始 intent 收口成“host 可以直接执行”的 operation，
+/// 从而避免 host 再次解释 agent-facing intent surface。
+/// </summary>
+public abstract record ExecutableAgentAction {
+    public abstract AgentActionExecutionResult? Execute(SerialWorldRuntime runtime, string actorId);
+
+    protected static ActorActivityObservation ObserveActivityAfterMutation(
+        SerialWorldRuntime runtime,
+        string actorId,
+        Action mutation
+    ) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        ArgumentNullException.ThrowIfNull(mutation);
+
+        mutation();
+        return runtime.ObserveActorRuntimeState(actorId).CurrentActivity;
+    }
+}
+
+public sealed record KeepExecutableAgentAction : ExecutableAgentAction {
+    public static KeepExecutableAgentAction Instance { get; } = new();
+
+    public override AgentActionExecutionResult? Execute(SerialWorldRuntime runtime, string actorId) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        return null;
+    }
+}
+
+public sealed record CancelCurrentProcessExecutableAgentAction : ExecutableAgentAction {
+    public static CancelCurrentProcessExecutableAgentAction Instance { get; } = new();
+
+    public override AgentActionExecutionResult Execute(SerialWorldRuntime runtime, string actorId) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+
+        return new AgentActionExecutionResult(
+            "cancel-current-process",
+            Move: null,
+            ActivityAfterAction: ObserveActivityAfterMutation(runtime, actorId, () => {
+                _ = runtime.CancelActorEmbodiedState(actorId);
+            })
+        );
+    }
+}
+
+public sealed record MoveExecutableAgentAction(string PassageId) : ExecutableAgentAction {
+    public override AgentActionExecutionResult Execute(SerialWorldRuntime runtime, string actorId) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+
+        return new AgentActionExecutionResult(
+            "move",
+            runtime.MoveActor(actorId, PassageId),
+            runtime.ObserveActorRuntimeState(actorId).CurrentActivity
+        );
+    }
+}
+
+public sealed record StartRouteFollowingExecutableAgentAction(
+    string DestinationLocationId,
+    bool IsInterruptible
+) : ExecutableAgentAction {
+    public override AgentActionExecutionResult Execute(SerialWorldRuntime runtime, string actorId) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+
+        return new AgentActionExecutionResult(
+            "start-follow-route",
+            Move: null,
+            ActivityAfterAction: ObserveActivityAfterMutation(runtime, actorId, () => {
+                _ = runtime.StartActorRouteFollowing(actorId, DestinationLocationId, IsInterruptible);
+            })
+        );
+    }
+}
+
+public sealed record StartMiningExecutableAgentAction(
+    string WorksiteId,
+    bool IsInterruptible
+) : ExecutableAgentAction {
+    public override AgentActionExecutionResult Execute(SerialWorldRuntime runtime, string actorId) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+
+        return new AgentActionExecutionResult(
+            "start-mining",
+            Move: null,
+            ActivityAfterAction: ObserveActivityAfterMutation(runtime, actorId, () => {
+                _ = runtime.StartActorMining(actorId, WorksiteId, IsInterruptible);
+            })
+        );
+    }
+}
+
+public sealed record AgentActionExecutionResult(
+    string Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    ActorMoveResult? Move,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    ActorActivityObservation? ActivityAfterAction
+);
+
+internal sealed record AgentActionExecutionOutcome(
+    AgentTurnResolutionStatus ResolutionStatus,
+    string? ResolutionMessage,
+    AgentTurnExecutionStatus ExecutionStatus,
+    string? ExecutionMessage,
+    AgentActionExecutionResult? ActionResult
+);
 
 public sealed record AgentTurnActorResult {
     public AgentTurnActorResult(
@@ -121,8 +264,10 @@ public sealed record AgentTurnActorResult {
         AgentTurnDecision Decision,
         AgentTurnResolutionStatus ResolutionStatus,
         string? ResolutionMessage,
+        AgentTurnExecutionStatus ExecutionStatus,
+        string? ExecutionMessage,
         ActorContextObservation FinalObservation,
-        ActorMoveResult? MoveResult,
+        AgentActionExecutionResult? ActionResult,
         AgentTurnFault? Fault
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
@@ -135,8 +280,10 @@ public sealed record AgentTurnActorResult {
         this.Decision = Decision;
         this.ResolutionStatus = ResolutionStatus;
         this.ResolutionMessage = ResolutionMessage;
+        this.ExecutionStatus = ExecutionStatus;
+        this.ExecutionMessage = ExecutionMessage;
         this.FinalObservation = FinalObservation;
-        this.MoveResult = MoveResult;
+        this.ActionResult = ActionResult;
         this.Fault = Fault;
     }
 
@@ -150,9 +297,13 @@ public sealed record AgentTurnActorResult {
 
     public string? ResolutionMessage { get; }
 
+    public AgentTurnExecutionStatus ExecutionStatus { get; }
+
+    public string? ExecutionMessage { get; }
+
     public ActorContextObservation FinalObservation { get; }
 
-    public ActorMoveResult? MoveResult { get; }
+    public AgentActionExecutionResult? ActionResult { get; }
 
     public AgentTurnFault? Fault { get; }
 }
@@ -178,4 +329,10 @@ public sealed record AgentTurnResult {
 public enum AgentTurnResolutionStatus {
     Accepted = 0,
     Rejected = 1,
+}
+
+public enum AgentTurnExecutionStatus {
+    NotExecuted = 0,
+    Succeeded = 1,
+    Failed = 2,
 }

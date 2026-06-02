@@ -49,22 +49,10 @@ public sealed class AgentTurnHost {
         var initialObservations = ObserveActorContexts(activeAgents);
         var declarations = await CollectDeclarationsAsync(turnNumber, activeAgents, initialObservations, ct);
         var resolutionPlan = _resolver.Resolve(new AgentTurnResolutionRequest(turnNumber, declarations));
-
-        var batchResult = _runtime.StepBatch(
-            new BatchStepRequest {
-                Steps = resolutionPlan.Actions
-                    .Where(static action => action.Status == AgentTurnResolutionStatus.Accepted && action.Step is not null)
-                    .Select(static action => action.Step!)
-                    .ToArray(),
-                AdvanceTimeAfterBatchTicks = LogicalTicksPerTurn,
-                PostObservations = BuildActorContextObserveItems(activeAgents),
-            }
-        );
-
-        var finalObservations = MapActorContextObservations(batchResult.PostObservations, activeAgents);
-        var stepResultsByRequestId = batchResult.Steps.ToDictionary(static step => step.RequestId, StringComparer.Ordinal);
+        var executionOutcomes = ExecuteResolvedOperations(resolutionPlan.Operations);
+        var time = _runtime.AdvanceTime(LogicalTicksPerTurn);
+        var finalObservations = ObserveActorContexts(activeAgents);
         var declarationsByActorId = declarations.ToDictionary(static x => x.ActorId, StringComparer.Ordinal);
-        var actionsByActorId = resolutionPlan.Actions.ToDictionary(static x => x.ActorId, StringComparer.Ordinal);
 
         var actorResults = activeAgents
             .Select(agent => BuildActorResult(
@@ -72,13 +60,12 @@ public sealed class AgentTurnHost {
                 initialObservations[agent.ActorId],
                 finalObservations[agent.ActorId],
                 declarationsByActorId[agent.ActorId],
-                actionsByActorId[agent.ActorId],
-                stepResultsByRequestId
+                executionOutcomes[agent.ActorId]
             ))
             .ToArray();
 
         _completedTurnCount = turnNumber;
-        return new AgentTurnResult(turnNumber, batchResult.Time, actorResults);
+        return new AgentTurnResult(turnNumber, time, actorResults);
     }
 
     private static void ValidateAgents(HostedAgent[] agents) {
@@ -197,51 +184,69 @@ public sealed class AgentTurnHost {
     private static AgentIntentDeclaration CreateFaultedKeepDeclaration(string actorId, string message)
         => new(
             actorId,
-            new AgentTurnDecision(KeepAgentActionIntent.Instance, reasoning: "policy-fault"),
+            AgentTurnDecision.Keep(reasoning: "policy-fault"),
             new AgentTurnFault(message)
         );
+
+    private Dictionary<string, AgentActionExecutionOutcome> ExecuteResolvedOperations(ResolvedAgentOperation[] operations) {
+        ArgumentNullException.ThrowIfNull(operations);
+
+        var outcomes = new Dictionary<string, AgentActionExecutionOutcome>(StringComparer.Ordinal);
+        foreach (var operation in operations) {
+            AgentActionExecutionResult? actionResult = null;
+            AgentTurnExecutionStatus executionStatus = AgentTurnExecutionStatus.NotExecuted;
+            string? executionMessage = null;
+
+            if (operation.ResolutionStatus == AgentTurnResolutionStatus.Accepted) {
+                try {
+                    actionResult = operation.ExecutableAction!.Execute(_runtime, operation.ActorId);
+                    executionStatus = AgentTurnExecutionStatus.Succeeded;
+                }
+                catch (ArgumentException ex) {
+                    executionStatus = AgentTurnExecutionStatus.Failed;
+                    executionMessage = ex.Message;
+                }
+                catch (InvalidOperationException ex) {
+                    executionStatus = AgentTurnExecutionStatus.Failed;
+                    executionMessage = ex.Message;
+                }
+            }
+
+            outcomes.Add(operation.ActorId, new AgentActionExecutionOutcome(
+                operation.ResolutionStatus,
+                operation.ResolutionMessage,
+                executionStatus,
+                executionMessage,
+                actionResult
+            ));
+        }
+
+        return outcomes;
+    }
 
     private static AgentTurnActorResult BuildActorResult(
         string actorId,
         ActorContextObservation initialObservation,
         ActorContextObservation finalObservation,
         AgentIntentDeclaration declaration,
-        ResolvedAgentAction action,
-        Dictionary<string, BatchStepStepResult> stepResultsByRequestId
+        AgentActionExecutionOutcome executionOutcome
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentNullException.ThrowIfNull(initialObservation);
         ArgumentNullException.ThrowIfNull(finalObservation);
         ArgumentNullException.ThrowIfNull(declaration);
-        ArgumentNullException.ThrowIfNull(action);
-        ArgumentNullException.ThrowIfNull(stepResultsByRequestId);
-
-        ActorMoveResult? moveResult = null;
-        AgentTurnResolutionStatus resolutionStatus = action.Status;
-        string? resolutionMessage = action.ResolutionMessage;
-
-        if (action.Step is not null) {
-            if (!stepResultsByRequestId.TryGetValue(action.Step.RequestId, out var stepResult)) {
-                throw new InvalidOperationException(
-                    $"AgentTurnHost expected step result '{action.Step.RequestId}' for actor '{actorId}'."
-                );
-            }
-
-            moveResult = stepResult.Move;
-            if (stepResult.Error is not null) {
-                resolutionStatus = AgentTurnResolutionStatus.Rejected;
-                resolutionMessage = stepResult.Error.Message;
-            }
-        }
+        ArgumentNullException.ThrowIfNull(executionOutcome);
 
         return new AgentTurnActorResult(
             actorId,
             initialObservation,
             declaration.Decision,
-            resolutionStatus,
-            resolutionMessage,
+            executionOutcome.ResolutionStatus,
+            executionOutcome.ResolutionMessage,
+            executionOutcome.ExecutionStatus,
+            executionOutcome.ExecutionMessage,
             finalObservation,
-            moveResult,
+            executionOutcome.ActionResult,
             declaration.Fault
         );
     }

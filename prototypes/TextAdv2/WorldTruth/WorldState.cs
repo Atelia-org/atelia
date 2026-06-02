@@ -14,7 +14,7 @@ internal sealed class WorldState {
 
     private const string KindValue = "world-state";
     private const string SchemaVersionKey = "schemaVersion";
-    private const int CurrentSchemaVersion = 3;
+    private const int CurrentSchemaVersion = 5;
     private const string CurrentLogicalTickKey = "currentLogicalTick";
     private const string ActorsKey = "actors";
     private const string LocationsKey = "locations";
@@ -135,6 +135,31 @@ internal sealed class WorldState {
         return false;
     }
 
+    public Location ConfigureLocationMiningWorksite(
+        string locationId,
+        int ticksPerYield,
+        string yieldItemId,
+        int yieldAmount = 1
+    ) {
+        ValidateEntityId(locationId, nameof(locationId));
+
+        var location = GetLocation(locationId);
+        location.SetMiningWorksite(new LocationMiningWorksiteProfile(
+            ticksPerYield,
+            yieldItemId,
+            yieldAmount
+        ));
+        return location;
+    }
+
+    public Location ClearLocationMiningWorksite(string locationId) {
+        ValidateEntityId(locationId, nameof(locationId));
+
+        var location = GetLocation(locationId);
+        location.ClearMiningWorksite();
+        return location;
+    }
+
     public Passage CreatePassage(
         string id,
         string locationAId,
@@ -230,15 +255,23 @@ internal sealed class WorldState {
     }
 
     public long AdvanceLogicalTime(long ticks) {
+        return AdvanceLogicalTimeWithReport(ticks).CurrentTick;
+    }
+
+    internal WorldTimeAdvanceReport AdvanceLogicalTimeWithReport(long ticks) {
         ArgumentOutOfRangeException.ThrowIfNegative(ticks);
 
         if (ticks == 0) {
-            return CurrentLogicalTick;
+            return new WorldTimeAdvanceReport(CurrentLogicalTick, []);
         }
 
-        long updatedTick = checked(CurrentLogicalTick + ticks);
-        _root.Upsert(CurrentLogicalTickKey, updatedTick);
-        return updatedTick;
+        var movementReceipts = new List<ActorMoveReceipt>();
+        for (long i = 0; i < ticks; i++) {
+            movementReceipts.AddRange(WorldTurnExecutor.AdvanceOneTick(this));
+            _root.Upsert(CurrentLogicalTickKey, checked(CurrentLogicalTick + 1));
+        }
+
+        return new WorldTimeAdvanceReport(CurrentLogicalTick, [.. movementReceipts]);
     }
 
     /// <summary>
@@ -249,7 +282,102 @@ internal sealed class WorldState {
     /// - 从当前位置出发的方向必须 enabled。
     /// </summary>
     public ActorMoveReceipt MoveActorAlongPassage(string actorId, string passageId) {
+        return MoveActorAlongPassageCore(actorId, passageId, clearEmbodiedState: true);
+    }
+
+    public ActorEmbodiedState StartActorRouteFollowing(
+        string actorId,
+        string destinationLocationId,
+        IEnumerable<string> remainingPassageIds,
+        bool isInterruptible = true
+    ) {
+        ValidateEntityId(actorId, nameof(actorId));
+        ValidateEntityId(destinationLocationId, nameof(destinationLocationId));
+        ArgumentNullException.ThrowIfNull(remainingPassageIds);
+
         var actor = GetActor(actorId);
+        EmbodiedProcessRules.EnsureCanInterrupt(actor, "start route-following");
+        EnsureLocationExists(destinationLocationId);
+        var passageIds = remainingPassageIds.ToArray();
+        int remainingTravelTicksOnCurrentLeg = ValidateRouteFollowingPath(
+            actor.Id,
+            actor.CurrentLocationId,
+            destinationLocationId,
+            passageIds,
+            duringWorldLoad: false
+        );
+        var state = new RouteFollowingActorProcessState(
+            destinationLocationId,
+            passageIds,
+            remainingTravelTicksOnCurrentLeg,
+            isInterruptible
+        );
+        actor.SetEmbodiedState(state);
+        return state;
+    }
+
+    public ActorEmbodiedState StartActorMining(
+        string actorId,
+        string worksiteId,
+        bool isInterruptible = true
+    ) {
+        ValidateEntityId(actorId, nameof(actorId));
+        ValidateEntityId(worksiteId, nameof(worksiteId));
+
+        var actor = GetActor(actorId);
+        EmbodiedProcessRules.EnsureCanInterrupt(actor, "start mining");
+        var location = GetLocation(worksiteId);
+        var worksite = location.MiningWorksite ?? throw new InvalidOperationException(
+            $"Location '{worksiteId}' is not configured as a mining worksite."
+        );
+
+        if (!string.Equals(actor.CurrentLocationId, worksiteId, StringComparison.Ordinal)) {
+            throw new InvalidOperationException(
+                $"Actor '{actorId}' must be at worksite '{worksiteId}' to start mining, but is currently at '{actor.CurrentLocationId}'."
+            );
+        }
+
+        var state = new MiningActorProcessState(
+            worksiteId,
+            progressTicksInCurrentCycle: 0,
+            worksite.TicksPerYield,
+            worksite.YieldItemId,
+            producedYieldCount: 0,
+            worksite.YieldAmount,
+            isInterruptible
+        );
+        actor.SetEmbodiedState(state);
+        return state;
+    }
+
+    public ActorEmbodiedState CancelActorEmbodiedState(string actorId) {
+        ValidateEntityId(actorId, nameof(actorId));
+
+        var actor = GetActor(actorId);
+        EmbodiedProcessRules.EnsureCanInterrupt(actor, "cancel current process");
+        actor.SetEmbodiedState(ActorEmbodiedState.Idle);
+        return actor.EmbodiedState;
+    }
+
+    internal ActorMoveReceipt MoveActorAlongPassageDuringEmbodiedProcess(string actorId, string passageId) {
+        return MoveActorAlongPassageCore(actorId, passageId, clearEmbodiedState: false);
+    }
+
+    internal static int ComputeEmbodiedTravelTicks(Passage passage, string fromLocationId) {
+        ArgumentNullException.ThrowIfNull(passage);
+        ValidateEntityId(fromLocationId, nameof(fromLocationId));
+
+        // passage traversal 作为 embodied process 时，至少消耗 1 tick，
+        // 即便方向 modifier 使 total travel cost 降到了 0。
+        return Math.Max(1, passage.GetTotalTravelCostFrom(fromLocationId));
+    }
+
+    private ActorMoveReceipt MoveActorAlongPassageCore(string actorId, string passageId, bool clearEmbodiedState) {
+        var actor = GetActor(actorId);
+        if (clearEmbodiedState) {
+            EmbodiedProcessRules.EnsureCanInterrupt(actor, $"move manually via passage '{passageId}'");
+        }
+
         var passage = GetWritablePassage(passageId);
         var fromLocationId = actor.CurrentLocationId;
 
@@ -270,6 +398,10 @@ internal sealed class WorldState {
         var toLocationId = passage.GetOtherLocationId(fromLocationId);
         EnsureLocationExists(toLocationId);
         actor.MoveTo(toLocationId);
+        if (clearEmbodiedState) {
+            actor.SetEmbodiedState(ActorEmbodiedState.Idle);
+        }
+
         return new ActorMoveReceipt(
             actor.Id,
             passage.Id,
@@ -362,8 +494,9 @@ internal sealed class WorldState {
     private void ValidateIntegrity() {
         var locationIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var locationId in LocationsLedger.Keys) {
-            _ = new Location(locationId, LocationsLedger.GetOrThrow<DurableDict<string>>(locationId)!);
+            var location = new Location(locationId, LocationsLedger.GetOrThrow<DurableDict<string>>(locationId)!);
             locationIds.Add(locationId);
+            ValidateLocation(location);
         }
 
         foreach (var actorId in ActorsLedger.Keys) {
@@ -373,6 +506,8 @@ internal sealed class WorldState {
                     $"Actor '{actor.Id}' points to missing current location '{actor.CurrentLocationId}' during world load."
                 );
             }
+
+            ValidateActorEmbodiedState(actor, locationIds);
         }
 
         foreach (var passageId in PassagesLedger.Keys) {
@@ -391,6 +526,140 @@ internal sealed class WorldState {
         }
 
         WorldSpatialValidation.EnsureUniqueExitNames(WorldSpatialSnapshotBuilder.Build(this));
+    }
+
+    private void ValidateActorEmbodiedState(Actor actor, HashSet<string> locationIds) {
+        ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(locationIds);
+
+        switch (actor.EmbodiedState) {
+            case IdleActorEmbodiedState:
+                return;
+
+            case RouteFollowingActorProcessState routeFollowing:
+                if (!locationIds.Contains(routeFollowing.DestinationLocationId)) {
+                    throw new InvalidOperationException(
+                        $"Actor '{actor.Id}' route-following destination '{routeFollowing.DestinationLocationId}' does not exist during world load."
+                    );
+                }
+
+                int fullTravelTicksOnCurrentLeg = ValidateRouteFollowingPath(
+                    actor.Id,
+                    actor.CurrentLocationId,
+                    routeFollowing.DestinationLocationId,
+                    routeFollowing.RemainingPassageIds,
+                    duringWorldLoad: true
+                );
+
+                if (routeFollowing.RemainingTravelTicksOnCurrentLeg < 1
+                    || routeFollowing.RemainingTravelTicksOnCurrentLeg > fullTravelTicksOnCurrentLeg) {
+                    throw new InvalidOperationException(
+                        $"Actor '{actor.Id}' route-following state uses invalid remainingTravelTicksOnCurrentLeg '{routeFollowing.RemainingTravelTicksOnCurrentLeg}' during world load; expected 1..{fullTravelTicksOnCurrentLeg}."
+                    );
+                }
+
+                return;
+
+            case MiningActorProcessState mining:
+                if (!locationIds.Contains(mining.WorksiteId)) {
+                    throw new InvalidOperationException(
+                        $"Actor '{actor.Id}' mining worksite '{mining.WorksiteId}' does not exist during world load."
+                    );
+                }
+
+                if (GetLocation(mining.WorksiteId).MiningWorksite is null) {
+                    throw new InvalidOperationException(
+                        $"Actor '{actor.Id}' mining state points to location '{mining.WorksiteId}', but that location is not configured as a mining worksite during world load."
+                    );
+                }
+
+                if (mining.TicksPerYield < 1) {
+                    throw new InvalidOperationException(
+                        $"Actor '{actor.Id}' mining state uses invalid ticksPerYield '{mining.TicksPerYield}' during world load."
+                    );
+                }
+
+                if (!string.Equals(actor.CurrentLocationId, mining.WorksiteId, StringComparison.Ordinal)) {
+                    throw new InvalidOperationException(
+                        $"Actor '{actor.Id}' mining state requires current location '{mining.WorksiteId}', but world load found actor at '{actor.CurrentLocationId}'."
+                    );
+                }
+
+                return;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Actor '{actor.Id}' uses unsupported embodied state type '{actor.EmbodiedState.GetType().Name}' during world load."
+                );
+        }
+    }
+
+    private static void ValidateLocation(Location location) {
+        ArgumentNullException.ThrowIfNull(location);
+
+        // mining worksite profile 是 authoring truth 的一部分；
+        // 启动 mining process 时需要由世界侧解析它，因此这里提前 fail-fast。
+        _ = location.MiningWorksite;
+    }
+
+    private int ValidateRouteFollowingPath(
+        string actorId,
+        string currentLocationId,
+        string destinationLocationId,
+        IReadOnlyList<string> remainingPassageIds,
+        bool duringWorldLoad
+    ) {
+        ValidateEntityId(actorId, nameof(actorId));
+        ValidateEntityId(currentLocationId, nameof(currentLocationId));
+        ValidateEntityId(destinationLocationId, nameof(destinationLocationId));
+        ArgumentNullException.ThrowIfNull(remainingPassageIds);
+
+        if (remainingPassageIds.Count == 0) {
+            throw new InvalidOperationException(
+                duringWorldLoad
+                    ? $"Actor '{actorId}' route-following state must keep at least one remaining passage during world load."
+                    : "Route-following requires at least one remaining passage."
+            );
+        }
+
+        string cursorLocationId = currentLocationId;
+        Passage? firstPassage = null;
+
+        for (int i = 0; i < remainingPassageIds.Count; i++) {
+            string passageId = remainingPassageIds[i];
+            ValidateEntityId(passageId, $"remainingPassageIds[{i}]");
+
+            if (!TryGetWritablePassage(passageId, out var passage) || passage is null) {
+                throw new InvalidOperationException(
+                    duringWorldLoad
+                        ? $"Actor '{actorId}' route-following state points to missing passage '{passageId}' during world load."
+                        : $"Passage '{passageId}' does not exist."
+                );
+            }
+
+            if (!passage.Connects(cursorLocationId)) {
+                throw new InvalidOperationException(
+                    $"Passage '{passage.Id}' does not connect route cursor location '{cursorLocationId}' for actor '{actorId}'."
+                );
+            }
+
+            if (!passage.GetDirectionFrom(cursorLocationId).IsEnabled) {
+                throw new InvalidOperationException(
+                    $"Passage '{passage.Id}' is not traversable from route cursor location '{cursorLocationId}' for actor '{actorId}'."
+                );
+            }
+
+            firstPassage ??= passage;
+            cursorLocationId = passage.GetOtherLocationId(cursorLocationId);
+        }
+
+        if (!string.Equals(cursorLocationId, destinationLocationId, StringComparison.Ordinal)) {
+            throw new InvalidOperationException(
+                $"Route-following path for actor '{actorId}' ends at '{cursorLocationId}', not requested destination '{destinationLocationId}'."
+            );
+        }
+
+        return ComputeEmbodiedTravelTicks(firstPassage!, currentLocationId);
     }
 
     private long ReadCurrentLogicalTick() {
@@ -493,3 +762,5 @@ internal sealed class WorldState {
         return null;
     }
 }
+
+internal sealed record WorldTimeAdvanceReport(long CurrentTick, ActorMoveReceipt[] MovementReceipts);

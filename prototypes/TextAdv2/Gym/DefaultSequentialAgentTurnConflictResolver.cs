@@ -10,46 +10,66 @@ public sealed class DefaultSequentialAgentTurnConflictResolver : IAgentTurnConfl
     public AgentTurnResolutionPlan Resolve(AgentTurnResolutionRequest request) {
         ArgumentNullException.ThrowIfNull(request);
 
-        var actions = new ResolvedAgentAction[request.Declarations.Length];
+        var operations = new ResolvedAgentOperation[request.Declarations.Length];
         for (int i = 0; i < request.Declarations.Length; i++) {
-            actions[i] = ResolveDeclaration(request.TurnNumber, request.Declarations[i]);
+            operations[i] = ResolveDeclaration(request.Declarations[i]);
         }
 
-        return new AgentTurnResolutionPlan(actions);
+        return new AgentTurnResolutionPlan(operations);
     }
 
-    private static ResolvedAgentAction ResolveDeclaration(long turnNumber, AgentIntentDeclaration declaration) {
+    private static ResolvedAgentOperation ResolveDeclaration(AgentIntentDeclaration declaration) {
         ArgumentNullException.ThrowIfNull(declaration);
 
         return declaration.Decision.Action switch {
-            KeepAgentActionIntent => new ResolvedAgentAction(
+            KeepAgentActionIntent => new ResolvedAgentOperation(
                 declaration.ActorId,
                 declaration.Decision,
                 AgentTurnResolutionStatus.Accepted,
                 resolutionMessage: null,
-                Step: null
+                executableAction: KeepExecutableAgentAction.Instance
             ),
-            MoveAgentActionIntent move => new ResolvedAgentAction(
+            CancelCurrentProcessAgentActionIntent => new ResolvedAgentOperation(
                 declaration.ActorId,
                 declaration.Decision,
                 AgentTurnResolutionStatus.Accepted,
                 resolutionMessage: null,
-                Step: new BatchStepCommand {
-                    RequestId = BuildStepRequestId(turnNumber, declaration.ActorId),
-                    ActorId = declaration.ActorId,
-                    PassageId = move.PassageId,
-                }
+                executableAction: CancelCurrentProcessExecutableAgentAction.Instance
             ),
-            _ => new ResolvedAgentAction(
+            MoveAgentActionIntent move => new ResolvedAgentOperation(
+                declaration.ActorId,
+                declaration.Decision,
+                AgentTurnResolutionStatus.Accepted,
+                resolutionMessage: null,
+                executableAction: new MoveExecutableAgentAction(move.PassageId)
+            ),
+            StartRouteFollowingAgentActionIntent routeFollowing => new ResolvedAgentOperation(
+                declaration.ActorId,
+                declaration.Decision,
+                AgentTurnResolutionStatus.Accepted,
+                resolutionMessage: null,
+                executableAction: new StartRouteFollowingExecutableAgentAction(
+                    routeFollowing.DestinationLocationId,
+                    routeFollowing.IsInterruptible
+                )
+            ),
+            StartMiningAgentActionIntent mining => new ResolvedAgentOperation(
+                declaration.ActorId,
+                declaration.Decision,
+                AgentTurnResolutionStatus.Accepted,
+                resolutionMessage: null,
+                executableAction: new StartMiningExecutableAgentAction(
+                    mining.WorksiteId,
+                    mining.IsInterruptible
+                )
+            ),
+            _ => new ResolvedAgentOperation(
                 declaration.ActorId,
                 declaration.Decision,
                 AgentTurnResolutionStatus.Rejected,
                 resolutionMessage: $"Unsupported agent action intent '{declaration.Decision.Action.GetType().Name}'.",
-                Step: null
+                executableAction: null
             ),
         };
     }
-
-    internal static string BuildStepRequestId(long turnNumber, string actorId)
-        => $"turn-{turnNumber}:{actorId}";
 }

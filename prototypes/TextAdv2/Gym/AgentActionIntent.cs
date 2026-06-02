@@ -10,6 +10,10 @@ public sealed record KeepAgentActionIntent : AgentActionIntent {
     public static KeepAgentActionIntent Instance { get; } = new();
 }
 
+public sealed record CancelCurrentProcessAgentActionIntent : AgentActionIntent {
+    public static CancelCurrentProcessAgentActionIntent Instance { get; } = new();
+}
+
 public sealed record MoveAgentActionIntent : AgentActionIntent {
     public MoveAgentActionIntent(string passageId) {
         ArgumentException.ThrowIfNullOrWhiteSpace(passageId);
@@ -17,4 +21,30 @@ public sealed record MoveAgentActionIntent : AgentActionIntent {
     }
 
     public string PassageId { get; }
+}
+
+public sealed record StartRouteFollowingAgentActionIntent : AgentActionIntent {
+    public StartRouteFollowingAgentActionIntent(string destinationLocationId, bool isInterruptible = true) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationLocationId);
+
+        DestinationLocationId = destinationLocationId;
+        IsInterruptible = isInterruptible;
+    }
+
+    public string DestinationLocationId { get; }
+
+    public bool IsInterruptible { get; }
+}
+
+public sealed record StartMiningAgentActionIntent : AgentActionIntent {
+    public StartMiningAgentActionIntent(string worksiteId, bool isInterruptible = true) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(worksiteId);
+
+        WorksiteId = worksiteId;
+        IsInterruptible = isInterruptible;
+    }
+
+    public string WorksiteId { get; }
+
+    public bool IsInterruptible { get; }
 }

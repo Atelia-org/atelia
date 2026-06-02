@@ -112,6 +112,12 @@ internal sealed class WorldHost : IDisposable {
         return ActorContextObservationProjector.ObserveActorContext(_world, ObserveSpatial(), ObserveOccupancy(), actorId);
     }
 
+    public ActorRuntimeStateObservation ObserveActorRuntimeState(string actorId) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        return ActorRuntimeStateObservationProjector.ObserveActorRuntimeState(_world, _world.GetActor(actorId));
+    }
+
     public LocationNavigationObservation ObserveNavigation(string locationId) {
         EnsureNotDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(locationId);
@@ -129,22 +135,51 @@ internal sealed class WorldHost : IDisposable {
         return new LogicalTimeSnapshot(_world.CurrentLogicalTick);
     }
 
-    public LogicalTimeSnapshot AdvanceTime(long ticks) {
+    internal WorldAdvanceCommit AdvanceTime(long ticks) {
         EnsureNotDisposed();
         ArgumentOutOfRangeException.ThrowIfNegative(ticks);
 
-        _ = _world.AdvanceLogicalTime(ticks);
+        var report = _world.AdvanceLogicalTimeWithReport(ticks);
         if (ticks > 0) {
             Commit();
         }
 
-        return ObserveTime();
+        var movementCommits = report.MovementReceipts
+            .Select(CreateMoveCommit)
+            .ToArray();
+        foreach (var movement in report.MovementReceipts) {
+            _occupancy?.MoveActor(movement.ActorId, movement.FromLocationId, movement.ToLocationId);
+        }
+
+        return new WorldAdvanceCommit(
+            new LogicalTimeSnapshot(report.CurrentTick),
+            movementCommits
+        );
     }
 
     public LocationAuthoringSnapshot CreateLocation(string id, string name, string description) {
         EnsureNotDisposed();
         var location = _world.CreateLocation(id, name, description);
         InvalidateSpatial();
+        Commit();
+        return RuntimeWorldAuthoringProjector.Project(location);
+    }
+
+    public LocationAuthoringSnapshot ConfigureLocationMiningWorksite(
+        string locationId,
+        int ticksPerYield,
+        string yieldItemId,
+        int yieldAmount = 1
+    ) {
+        EnsureNotDisposed();
+        var location = _world.ConfigureLocationMiningWorksite(locationId, ticksPerYield, yieldItemId, yieldAmount);
+        Commit();
+        return RuntimeWorldAuthoringProjector.Project(location);
+    }
+
+    public LocationAuthoringSnapshot ClearLocationMiningWorksite(string locationId) {
+        EnsureNotDisposed();
+        var location = _world.ClearLocationMiningWorksite(locationId);
         Commit();
         return RuntimeWorldAuthoringProjector.Project(location);
     }
@@ -156,6 +191,28 @@ internal sealed class WorldHost : IDisposable {
         _occupancy?.AddActor(actor.Id, actor.CurrentLocationId);
         return RuntimeWorldAuthoringProjector.Project(actor);
     }
+
+    internal ActorRuntimeStateObservation StartActorRouteFollowing(
+        string actorId,
+        string destinationLocationId,
+        IEnumerable<string> remainingPassageIds,
+        bool isInterruptible = true
+    ) => MutateActorRuntimeState(
+        actorId,
+        () => _world.StartActorRouteFollowing(actorId, destinationLocationId, remainingPassageIds, isInterruptible)
+    );
+
+    internal ActorRuntimeStateObservation StartActorMining(
+        string actorId,
+        string worksiteId,
+        bool isInterruptible = true
+    ) => MutateActorRuntimeState(
+        actorId,
+        () => _world.StartActorMining(actorId, worksiteId, isInterruptible)
+    );
+
+    internal ActorRuntimeStateObservation CancelActorEmbodiedState(string actorId)
+        => MutateActorRuntimeState(actorId, () => _world.CancelActorEmbodiedState(actorId));
 
     public PassageAuthoringSnapshot CreatePassage(
         string id,
@@ -276,23 +333,7 @@ internal sealed class WorldHost : IDisposable {
         var receipt = _world.MoveActorAlongPassage(actorId, passageId);
         Commit();
         _occupancy?.MoveActor(receipt.ActorId, receipt.FromLocationId, receipt.ToLocationId);
-
-        var actor = _world.GetActor(actorId);
-        var fromLocation = _world.GetLocation(receipt.FromLocationId);
-        var toLocation = _world.GetLocation(receipt.ToLocationId);
-
-        return new ActorMoveCommit(
-            actor.Id,
-            actor.Name,
-            receipt.PassageId,
-            receipt.ExitName,
-            receipt.FromLocationId,
-            fromLocation.Name,
-            receipt.ToLocationId,
-            toLocation.Name,
-            receipt.TravelMode,
-            receipt.TravelCost
-        );
+        return CreateMoveCommit(receipt);
     }
 
     public void Dispose() {
@@ -312,6 +353,40 @@ internal sealed class WorldHost : IDisposable {
         return RuntimeWorldAuthoringProjector.Project(_world.GetPassage(passageId));
     }
 
+    private ActorRuntimeStateObservation MutateActorRuntimeState(
+        string actorId,
+        Func<ActorEmbodiedState> mutation
+    ) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        ArgumentNullException.ThrowIfNull(mutation);
+
+        _ = mutation();
+        Commit();
+        return ObserveActorRuntimeState(actorId);
+    }
+
+    private ActorMoveCommit CreateMoveCommit(ActorMoveReceipt receipt) {
+        ArgumentNullException.ThrowIfNull(receipt);
+
+        var actor = _world.GetActor(receipt.ActorId);
+        var fromLocation = _world.GetLocation(receipt.FromLocationId);
+        var toLocation = _world.GetLocation(receipt.ToLocationId);
+
+        return new ActorMoveCommit(
+            actor.Id,
+            actor.Name,
+            receipt.PassageId,
+            receipt.ExitName,
+            receipt.FromLocationId,
+            fromLocation.Name,
+            receipt.ToLocationId,
+            toLocation.Name,
+            receipt.TravelMode,
+            receipt.TravelCost
+        );
+    }
+
     private void Commit() => _repo.Commit(_world.Root).Unwrap();
 
     private void InvalidateSpatial() => _spatial = null;
@@ -325,3 +400,8 @@ internal sealed class WorldHost : IDisposable {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 }
+
+internal sealed record WorldAdvanceCommit(
+    LogicalTimeSnapshot Time,
+    ActorMoveCommit[] MovementCommits
+);

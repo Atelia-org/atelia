@@ -65,6 +65,21 @@ public sealed class SerialWorldRuntime : IDisposable {
         return _host.CreateLocation(id, name, description);
     }
 
+    public LocationAuthoringSnapshot ConfigureLocationMiningWorksite(
+        string locationId,
+        int ticksPerYield,
+        string yieldItemId,
+        int yieldAmount = 1
+    ) {
+        EnsureNotDisposed();
+        return _host.ConfigureLocationMiningWorksite(locationId, ticksPerYield, yieldItemId, yieldAmount);
+    }
+
+    public LocationAuthoringSnapshot ClearLocationMiningWorksite(string locationId) {
+        EnsureNotDisposed();
+        return _host.ClearLocationMiningWorksite(locationId);
+    }
+
     public ActorLocationObservation ObserveActor(string actorId) {
         EnsureNotDisposed();
         return _host.ObserveActor(actorId);
@@ -73,6 +88,11 @@ public sealed class SerialWorldRuntime : IDisposable {
     public ActorContextObservation ObserveActorContext(string actorId) {
         EnsureNotDisposed();
         return _host.ObserveActorContext(actorId);
+    }
+
+    public ActorRuntimeStateObservation ObserveActorRuntimeState(string actorId) {
+        EnsureNotDisposed();
+        return _host.ObserveActorRuntimeState(actorId);
     }
 
     public ActorAuthoringSnapshot CreateActor(string id, string name, string currentLocationId) {
@@ -112,7 +132,9 @@ public sealed class SerialWorldRuntime : IDisposable {
 
     public LogicalTimeSnapshot AdvanceTime(long ticks) {
         EnsureNotDisposed();
-        return _host.AdvanceTime(ticks);
+        var advance = _host.AdvanceTime(ticks);
+        RecordMovementCommits(advance.MovementCommits);
+        return advance.Time;
     }
 
     public BatchStepResult StepBatch(BatchStepRequest request) {
@@ -130,7 +152,9 @@ public sealed class SerialWorldRuntime : IDisposable {
             stepResults[i] = ExecuteBatchStep(request.Steps[i]);
         }
 
-        var time = _host.AdvanceTime(request.AdvanceTimeAfterBatchTicks);
+        var advance = _host.AdvanceTime(request.AdvanceTimeAfterBatchTicks);
+        RecordMovementCommits(advance.MovementCommits);
+        var time = advance.Time;
         BatchObserveResult? postObservations = null;
 
         if (request.PostObservations is { Length: > 0 }) {
@@ -148,6 +172,48 @@ public sealed class SerialWorldRuntime : IDisposable {
         EnsureNotDisposed();
         var spatial = _host.ObserveSpatial();
         return _host.PlanActorRoute(actorId, toLocationId, spatial, _runtime.GetPlanningOptions(spatial));
+    }
+
+    public ActorRuntimeStateObservation StartActorRouteFollowing(
+        string actorId,
+        string destinationLocationId,
+        bool isInterruptible = true
+    ) {
+        EnsureNotDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationLocationId);
+
+        var spatial = _host.ObserveSpatial();
+        var plan = _host.PlanActorRoute(actorId, destinationLocationId, spatial, _runtime.GetPlanningOptions(spatial));
+        return plan.Status switch {
+            RoutePlanStatus.Found => _host.StartActorRouteFollowing(
+                actorId,
+                destinationLocationId,
+                plan.Steps.Select(static step => step.PassageId),
+                isInterruptible
+            ),
+            RoutePlanStatus.AlreadyThere => throw new InvalidOperationException(
+                $"Actor '{actorId}' is already at destination '{destinationLocationId}'."
+            ),
+            RoutePlanStatus.Unreachable => throw new InvalidOperationException(
+                $"Actor '{actorId}' cannot reach destination '{destinationLocationId}' with the current world topology."
+            ),
+            _ => throw new UnreachableException($"Unexpected route plan status '{plan.Status}'."),
+        };
+    }
+
+    public ActorRuntimeStateObservation StartActorMining(
+        string actorId,
+        string worksiteId,
+        bool isInterruptible = true
+    ) {
+        EnsureNotDisposed();
+        return _host.StartActorMining(actorId, worksiteId, isInterruptible);
+    }
+
+    public ActorRuntimeStateObservation CancelActorEmbodiedState(string actorId) {
+        EnsureNotDisposed();
+        return _host.CancelActorEmbodiedState(actorId);
     }
 
     public LocationRoutePlanObservation PlanRoute(string fromLocationId, string toLocationId) {
@@ -286,6 +352,14 @@ public sealed class SerialWorldRuntime : IDisposable {
         return new BatchObserveResult {
             Items = results,
         };
+    }
+
+    private void RecordMovementCommits(IEnumerable<ActorMoveCommit> movementCommits) {
+        ArgumentNullException.ThrowIfNull(movementCommits);
+
+        foreach (var movement in movementCommits) {
+            _runtime.RecordMovement(movement.ToHistoryEntry(), movement.ActorId);
+        }
     }
 
     private BatchObserveResultItem ObserveBatchItem(

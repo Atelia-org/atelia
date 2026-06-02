@@ -300,6 +300,11 @@ public class ActorAndObservationTests {
                 ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
                 context.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
             );
+            Assert.Equal("idle", context.CurrentActivity.Kind);
+            Assert.False(context.CurrentActivity.IsInterruptible);
+            Assert.Null(context.CurrentActivity.RouteFollowing);
+            Assert.Null(context.CurrentActivity.Mining);
+            Assert.Empty(context.CarriedResources);
             Assert.Equal(
                 ["scout"],
                 context.CurrentLocation.PresentActors.Select(static actor => actor.ActorId).ToArray()

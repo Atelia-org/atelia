@@ -38,13 +38,16 @@ internal static class ActorContextObservationProjector {
         );
         var adjacency = spatial.Locations[location.Id];
         var availableMoves = NavigationObservationProjector.ProjectNavigationEdges(world, adjacency);
+        var runtimeState = ActorRuntimeStateObservationProjector.ObserveActorRuntimeState(world, actor);
 
         return new ActorContextObservation(
             actor.Id,
             actor.Name,
             world.CurrentLogicalTick,
             currentLocation,
-            availableMoves
+            availableMoves,
+            runtimeState.CurrentActivity,
+            runtimeState.CarriedResources
         );
     }
 

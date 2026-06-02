@@ -57,7 +57,102 @@ public class SerialWorldRuntimeTests {
             ["square-ridge-trail", "square-shrine-gate", "village-square-road"],
             result.AvailableMoves.Select(static edge => edge.PassageId).ToArray()
         );
+        Assert.Equal("idle", result.CurrentActivity.Kind);
+        Assert.False(result.CurrentActivity.IsInterruptible);
+        Assert.Null(result.CurrentActivity.RouteFollowing);
+        Assert.Null(result.CurrentActivity.Mining);
+        Assert.Empty(result.CarriedResources);
         Assert.Null(typeof(ActorContextLocationObservation).GetProperty(nameof(LocationObservation.Exits)));
+    }
+
+    [Fact]
+    public void ObserveActorRuntimeState_ReturnsCanonicalRuntimeStateShape() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var session = SerialWorldRuntime.CreateEmpty(repoDir);
+            _ = session.CreateLocation("mine", "Mine", "Ore seam.");
+            var configured = session.ConfigureLocationMiningWorksite("mine", ticksPerYield: 2, yieldItemId: "iron-ore", yieldAmount: 3);
+            _ = session.CreateActor("miner", "Miner", "mine");
+            _ = session.StartActorMining("miner", "mine");
+            _ = session.AdvanceTime(2);
+
+            var state = session.ObserveActorRuntimeState("miner");
+
+            Assert.NotNull(configured.MiningWorksite);
+            Assert.Equal(2, configured.MiningWorksite!.TicksPerYield);
+            Assert.Equal("iron-ore", configured.MiningWorksite.YieldItemId);
+            Assert.Equal(3, configured.MiningWorksite.YieldAmount);
+            Assert.Equal("mining", state.CurrentActivity.Kind);
+            Assert.True(state.CurrentActivity.IsInterruptible);
+            Assert.NotNull(state.CurrentActivity.Mining);
+            Assert.Equal("mine", state.CurrentActivity.Mining!.WorksiteId);
+            Assert.Equal("Mine", state.CurrentActivity.Mining.WorksiteName);
+            Assert.Equal("iron-ore", state.CurrentActivity.Mining.YieldItemId);
+            Assert.Equal(3, state.CurrentActivity.Mining.YieldAmount);
+            Assert.Equal(3, state.CurrentActivity.Mining.ProducedYieldCount);
+            Assert.Equal(["iron-ore"], state.CarriedResources.Select(static x => x.ItemId).ToArray());
+            Assert.Equal([3L], state.CarriedResources.Select(static x => x.Quantity).ToArray());
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void ConfigureAndClearLocationMiningWorksite_ReturnUpdatedAuthoringSnapshot() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var session = SerialWorldRuntime.CreateEmpty(repoDir);
+            _ = session.CreateLocation("mine", "Mine", "Ore seam.");
+
+            var configured = session.ConfigureLocationMiningWorksite("mine", ticksPerYield: 4, yieldItemId: "copper-ore", yieldAmount: 2);
+            var cleared = session.ClearLocationMiningWorksite("mine");
+
+            Assert.NotNull(configured.MiningWorksite);
+            Assert.Equal(4, configured.MiningWorksite!.TicksPerYield);
+            Assert.Equal("copper-ore", configured.MiningWorksite.YieldItemId);
+            Assert.Equal(2, configured.MiningWorksite.YieldAmount);
+            Assert.Null(cleared.MiningWorksite);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void StartAndCancelEmbodiedState_ReturnMachineFacingRuntimeStateObservation() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using var session = SerialWorldRuntime.CreateEmpty(repoDir);
+            _ = session.CreateLocation("start", "Start", "Start.");
+            _ = session.CreateLocation("goal", "Goal", "Goal.");
+            _ = session.CreateActor("runner", "Runner", "start");
+            _ = session.CreatePassage("start-goal", "start", "forward", "goal", "back", TravelMode.Land, 2);
+
+            var started = session.StartActorRouteFollowing("runner", "goal");
+            var cancelled = session.CancelActorEmbodiedState("runner");
+
+            Assert.Equal("route-following", started.CurrentActivity.Kind);
+            Assert.True(started.CurrentActivity.IsInterruptible);
+            Assert.NotNull(started.CurrentActivity.RouteFollowing);
+            Assert.Equal("goal", started.CurrentActivity.RouteFollowing!.DestinationLocationId);
+            Assert.Equal("Goal", started.CurrentActivity.RouteFollowing.DestinationLocationName);
+            Assert.Equal(["start-goal"], started.CurrentActivity.RouteFollowing.RemainingPassageIds);
+            Assert.Equal(2, started.CurrentActivity.RouteFollowing.RemainingTravelTicksOnCurrentLeg);
+            Assert.Empty(started.CarriedResources);
+
+            Assert.Equal("idle", cancelled.CurrentActivity.Kind);
+            Assert.False(cancelled.CurrentActivity.IsInterruptible);
+            Assert.Null(cancelled.CurrentActivity.RouteFollowing);
+            Assert.Null(cancelled.CurrentActivity.Mining);
+            Assert.Empty(cancelled.CarriedResources);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
     }
 
     [Fact]

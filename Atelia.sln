@@ -63,6 +63,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TextAdv2.E2eCli", "prototyp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TextAdv2.GameServer", "prototypes\TextAdv2.GameServer\TextAdv2.GameServer.csproj", "{AD2AF2A4-CA3D-48E0-9FD1-8202456CBE62}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TextAdv2.DefaultAgent", "prototypes\TextAdv2.DefaultAgent\TextAdv2.DefaultAgent.csproj", "{3B6D6491-0114-4381-B74D-00D0A59C02A7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -385,6 +387,18 @@ Global
 		{AD2AF2A4-CA3D-48E0-9FD1-8202456CBE62}.Release|x64.Build.0 = Release|Any CPU
 		{AD2AF2A4-CA3D-48E0-9FD1-8202456CBE62}.Release|x86.ActiveCfg = Release|Any CPU
 		{AD2AF2A4-CA3D-48E0-9FD1-8202456CBE62}.Release|x86.Build.0 = Release|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Debug|x64.Build.0 = Debug|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Debug|x86.Build.0 = Debug|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Release|x64.ActiveCfg = Release|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Release|x64.Build.0 = Release|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Release|x86.ActiveCfg = Release|Any CPU
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -416,6 +430,7 @@ Global
 		{595D180F-08E6-4AB6-A401-8FC117BD56D4} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{E0250E69-D458-4905-880A-9BF22FE2E705} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
 		{AD2AF2A4-CA3D-48E0-9FD1-8202456CBE62} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
+		{3B6D6491-0114-4381-B74D-00D0A59C02A7} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {27F8332B-5246-4251-9E70-572DD61ADC4C}

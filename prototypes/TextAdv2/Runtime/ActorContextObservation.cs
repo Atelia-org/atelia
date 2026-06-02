@@ -22,12 +22,16 @@ public sealed record ActorContextLocationObservation(
 /// - actor 身份；
 /// - 当前逻辑时间；
 /// - 当前地点的描述性上下文；
-/// - 当前可走导航边（唯一 canonical actor-facing action surface）。
+/// - 当前可走导航边（唯一 canonical actor-facing action surface）；
+/// - 当前具身活动；
+/// - 当前携带资源。
 /// </summary>
 public sealed record ActorContextObservation(
     string ActorId,
     string ActorName,
     long CurrentTick,
     ActorContextLocationObservation CurrentLocation,
-    NavigationEdgeObservation[] AvailableMoves
+    NavigationEdgeObservation[] AvailableMoves,
+    ActorActivityObservation CurrentActivity,
+    ActorCarriedResourceObservation[] CarriedResources
 );

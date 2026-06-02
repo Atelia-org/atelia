@@ -195,6 +195,9 @@ public sealed class E2eCliBlackBoxTests {
                 initialContext.CurrentLocation.PresentActors,
                 static actor => actor.ActorId == "scout"
             );
+            Assert.Equal("idle", initialContext.CurrentActivity.Kind);
+            Assert.False(initialContext.CurrentActivity.IsInterruptible);
+            Assert.Empty(initialContext.CarriedResources);
             AssertActorContextJsonHasNoCurrentLocationExits(initialContextJson.RootElement);
 
             Assert.NotNull(movedContext);
@@ -220,6 +223,9 @@ public sealed class E2eCliBlackBoxTests {
                 movedContext.CurrentLocation.PresentActors,
                 static actor => actor.ActorId == "scout"
             );
+            Assert.Equal("idle", movedContext.CurrentActivity.Kind);
+            Assert.False(movedContext.CurrentActivity.IsInterruptible);
+            Assert.Empty(movedContext.CarriedResources);
             AssertActorContextJsonHasNoCurrentLocationExits(movedContextJson.RootElement);
         }
         finally {
@@ -254,6 +260,35 @@ public sealed class E2eCliBlackBoxTests {
             Assert.Equal("Low-water landing used to test one-way river travel.", context.CurrentLocation.LocationDescription);
             Assert.Empty(context.AvailableMoves);
             AssertActorContextJsonHasNoCurrentLocationExits(contextJson.RootElement);
+        }
+        finally {
+            DeleteDirectoryIfExists(repoDir);
+        }
+    }
+
+    [Fact]
+    public void RepoDir_ObserveActorContext_ShowsNonIdleRouteFollowingActivity() {
+        string repoDir = CreateTempRepoDir();
+
+        try {
+            using (var session = SampleWorldBootstrap.CreateFreshSession(repoDir)) {
+                _ = session.StartActorRouteFollowing("scout", "aerie");
+            }
+
+            CliRunResult observeContext = RunCli("--repo-dir", repoDir, "--observe-actor-context", "scout");
+
+            Assert.Equal(0, observeContext.ExitCode);
+
+            var context = DeserializeCliJson<ActorContextObservation>(observeContext.StandardOutput);
+
+            Assert.NotNull(context);
+            Assert.Equal("route-following", context.CurrentActivity.Kind);
+            Assert.True(context.CurrentActivity.IsInterruptible);
+            Assert.NotNull(context.CurrentActivity.RouteFollowing);
+            Assert.Equal("aerie", context.CurrentActivity.RouteFollowing!.DestinationLocationId);
+            Assert.Equal("Aerie", context.CurrentActivity.RouteFollowing.DestinationLocationName);
+            Assert.Equal(["square-ridge-trail", "ridge-aerie-winch"], context.CurrentActivity.RouteFollowing.RemainingPassageIds);
+            Assert.Equal(5, context.CurrentActivity.RouteFollowing.RemainingTravelTicksOnCurrentLeg);
         }
         finally {
             DeleteDirectoryIfExists(repoDir);

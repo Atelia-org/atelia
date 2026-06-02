@@ -72,6 +72,36 @@ public sealed class CrossHostMachineContractParityTests {
     }
 
     [Fact]
+    public async Task ObserveActorContextRouteFollowing_ParityBetweenGameServerAndCliJsonOnlyAsync() {
+        string cliRepoDir = CreateTempRepoDir();
+        string hostRepoDir = CreateTempRepoDir();
+
+        try {
+            PrepareSampleRepoWithActiveRouteFollowing(cliRepoDir, "scout", "aerie");
+            PrepareSampleRepoWithActiveRouteFollowing(hostRepoDir, "scout", "aerie");
+
+            string cliJson = RunCliAndReadSuccessfulJson("--repo-dir", cliRepoDir, "--json-only", "--observe-actor-context", "scout");
+
+            using var factory = CreateFactory(hostRepoDir);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/actors/scout/context");
+            string hostJson = await ReadSuccessfulHostJsonAsync(response);
+
+            using JsonDocument cli = JsonDocument.Parse(cliJson);
+            using JsonDocument host = JsonDocument.Parse(hostJson);
+            AssertActorContextJsonUsesCanonicalActionSurface(cli.RootElement, "cli observe actor context route-following");
+            AssertActorContextJsonUsesCanonicalActionSurface(host.RootElement, "host observe actor context route-following");
+            AssertRouteFollowingActivityJson(cli.RootElement, "cli observe actor context route-following");
+            AssertRouteFollowingActivityJson(host.RootElement, "host observe actor context route-following");
+            AssertJsonEquivalent(cliJson, hostJson, "observe actor context route-following");
+        }
+        finally {
+            DeleteDirectoryIfExists(cliRepoDir);
+            DeleteDirectoryIfExists(hostRepoDir);
+        }
+    }
+
+    [Fact]
     public async Task ObserveLocation_ParityBetweenGameServerAndCliJsonOnlyAsync() {
         string cliRepoDir = CreateTempRepoDir();
         string hostRepoDir = CreateTempRepoDir();
@@ -618,6 +648,18 @@ public sealed class CrossHostMachineContractParityTests {
         WaitUntilSessionCanReopen(repoDir);
     }
 
+    private static void PrepareSampleRepoWithActiveRouteFollowing(
+        string repoDir,
+        string actorId,
+        string destinationLocationId
+    ) {
+        using (var session = SampleWorldBootstrap.CreateFreshSession(repoDir)) {
+            _ = session.StartActorRouteFollowing(actorId, destinationLocationId);
+        }
+
+        WaitUntilSessionCanReopen(repoDir);
+    }
+
     private static void PrepareEmptyRepo(string repoDir) {
         using (SerialWorldRuntime.CreateEmpty(repoDir)) {
         }
@@ -747,6 +789,25 @@ public sealed class CrossHostMachineContractParityTests {
             currentLocationPropertyNames
         );
         Assert.True(root.TryGetProperty("availableMoves", out _), $"{source}: availableMoves should be present.");
+        Assert.True(root.TryGetProperty("currentActivity", out JsonElement currentActivity), $"{source}: currentActivity should be present.");
+        Assert.True(currentActivity.TryGetProperty("kind", out _), $"{source}: currentActivity.kind should be present.");
+        Assert.True(root.TryGetProperty("carriedResources", out JsonElement carriedResources), $"{source}: carriedResources should be present.");
+        Assert.Equal(JsonValueKind.Array, carriedResources.ValueKind);
+    }
+
+    private static void AssertRouteFollowingActivityJson(JsonElement root, string source) {
+        JsonElement currentActivity = root.GetProperty("currentActivity");
+        Assert.Equal("route-following", currentActivity.GetProperty("kind").GetString());
+        Assert.True(currentActivity.GetProperty("isInterruptible").GetBoolean(), $"{source}: route-following should default to interruptible.");
+
+        JsonElement routeFollowing = currentActivity.GetProperty("routeFollowing");
+        Assert.Equal("aerie", routeFollowing.GetProperty("destinationLocationId").GetString());
+        Assert.Equal("Aerie", routeFollowing.GetProperty("destinationLocationName").GetString());
+        Assert.Equal(5, routeFollowing.GetProperty("remainingTravelTicksOnCurrentLeg").GetInt32());
+        Assert.Equal(
+            ["square-ridge-trail", "ridge-aerie-winch"],
+            routeFollowing.GetProperty("remainingPassageIds").EnumerateArray().Select(static x => x.GetString()!).ToArray()
+        );
     }
 
     private static void AssertActorObservationJsonUsesCanonicalShape(JsonElement root, string source) {

@@ -29,7 +29,7 @@
 世界内核继续以 `SerialWorldRuntime` 为中心，并复用已经存在的：
 
 - `ObserveBatch(...)`
-- `StepBatch(...)`
+- typed actor/world mutation API（如 `MoveActor(...)`、`StartActorRouteFollowing(...)`）
 
 它们是 Gym host 的底层 primitive。
 
@@ -99,14 +99,14 @@ Agent 实现边界使用异步接口。
 3. 并发调用各自的 policy
 4. 收集各自声明的 action intent
 5. 交给 conflict resolver 做统一裁决
-6. 将可执行效果批量提交给 world
+6. 按裁决顺序提交 world mutation
 7. 推进逻辑时间 1 tick
 8. 收集 turn 后 observation，形成 turn result
 
 以当前骨架来说，步骤 2 和 6 分别落在：
 
 - `ObserveBatch(actor-context...)`
-- `StepBatch(...)`
+- `MoveActor(...)` / `StartActorRouteFollowing(...)` / `StartActorMining(...)` / `CancelActorEmbodiedState(...)`
 
 ## Agent-facing canonical observation
 
@@ -133,20 +133,32 @@ Agent 实现边界使用异步接口。
 
 但这些属于 host-side context construction，不应污染世界内核本身。
 
+当前更推荐的做法是：
+
+- 保持 `Gym` 的最小 canonical seam 为 `AgentTurnInput -> AgentTurnDecision`
+- richer goal / memory / budget 放进 agent-side context builder
+- 像 `DefaultAgent` 这样的官方实现，可以在自己的 assembly 内通过 adapter 叠 richer context，而不是直接膨胀 `AgentTurnInput`
+
 ## Action 模型
 
-当前 skeleton 只定义两种 action intent：
+当前 action surface 已定义：
 
 - `keep`
 - `move(passageId)`
+- `start-follow-route(destinationLocationId)`
+- `start-mining(worksiteId)`
 
-这与 TextAdv2 当前已落地的世界能力一致。
+`StartActorMining(actorId, worksiteId)` 只表达“在此处开始采矿”，具体 `ticksPerYield / yieldItemId / yieldAmount` 由 world-side 的 `Location` mining worksite profile 提供。
+- `cancel-current-process`
+
+这与 TextAdv2 当前已落地的 embodied-process world 能力对齐。
 
 设计上先把“agent 声明动作”和“世界执行效果”分开：
 
 - agent 产出 `AgentActionIntent`
-- resolver 把 intent 裁成当前 turn 可执行的 plan
-- host 再把 plan 翻译成 world `BatchStepRequest`
+- resolver 把 intent 裁成 `ResolvedAgentOperation`
+- `ResolvedAgentOperation` 持有真正的 `ExecutableAgentAction`
+- host 只负责按顺序执行 operation、推进时间并收集结果
 
 这样后续就能自然扩展出：
 
@@ -163,19 +175,20 @@ Agent 实现边界使用异步接口。
 原因：
 
 - 多 agent 的 simultaneous declaration，是 turn host 的语义
-- 当前 `SerialWorldRuntime.StepBatch(...)` 明确仍是顺序执行的 world primitive
+- 当前 `SerialWorldRuntime` 的 mutation API 明确仍按确定顺序推进 world
 - “多个 agent 同时声明动作”与“底层如何提交 world mutation”不是同一层问题
 
 所以当前设计拆成两层：
 
 - declaration layer：agent 同步地“宣告意图”
-- execution layer：resolver 产出本 turn 的 executable plan
+- execution layer：resolver 产出本 turn 的 executable operation
 
 当前默认 resolver 很保守：
 
 - 保留输入顺序
-- `keep` 直接接受，但不生成 world step
-- `move` 转成单条 `BatchStepCommand`
+- 对当前已知 intent 一律按输入顺序接受
+- resolver 负责把原始 intent 映射成 typed `ExecutableAgentAction`
+- `AgentTurnHost` 不再二次解释 raw intent，只顺序执行 operation
 - 还不做 richer conflict semantics
 
 它的意义主要是先把扩展点钉住。
@@ -199,9 +212,10 @@ Agent 实现边界使用异步接口。
 - `IAgentTurnPolicy`
   - 单个 agent 的思考边界
 - `IAgentTurnConflictResolver`
-  - 多 agent intents 到 executable plan 的裁决边界
+  - 多 agent intents 到 executable operation 的裁决边界
 - `AgentTurnHost`
   - turn orchestration
+  - 负责区分 resolver acceptance 与 execution failure
 
 ## 为什么不是“世界异步推送 observation + agent 异步入队 action”
 
@@ -266,7 +280,7 @@ Agent 实现边界使用异步接口。
 下一步最自然的演进方向是：
 
 1. 加入 awake / sleep / busy activation policy
-2. 给 `AgentTurnInput` 增加 goal / memory / budget
+2. 在 agent-side context builder 上继续扩充 goal / memory / budget / dynamic context
 3. 把 turn result 接到 trace / replay / RL dataset
 4. 为 `E2eCli` 或专用 trainer host 提供一层 episode driver
 5. 在 resolver 中逐步引入真正的 conflict rules
