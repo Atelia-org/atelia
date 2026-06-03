@@ -29,8 +29,8 @@ public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatComple
             "openai-chat" => new OpenAIChatClient(
                 apiKey: backend.ApiKey,
                 httpClient: httpClient,
-                dialect: ResolveOpenAiChatDialect(user.CompletionSurfaceId),
-                options: OpenAIChatClientOptions.QwenThinkingDisabled()
+                dialect: ResolveOpenAiChatDialect(user.CompletionSurfaceId)
+                // , options: OpenAIChatClientOptions.QwenThinkingDisabled()
             ),
             "openai-responses" => new OpenAIResponsesClient(
                 apiKey: backend.ApiKey,
