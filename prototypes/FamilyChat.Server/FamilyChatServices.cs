@@ -537,15 +537,6 @@ internal static class FamilyChatHtml {
 </head>
 <body class="app-body">
   <main class="app-shell">
-    <header class="topbar">
-      <div>
-        <div class="eyebrow">Family Chat</div>
-        <h1>{{safeDisplayName}}</h1>
-      </div>
-      <form method="post" action="/logout">
-        <button type="submit" class="ghost-button">退出</button>
-      </form>
-    </header>
 
     <section class="composer">
       <form id="chat-form">
