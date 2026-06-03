@@ -15,6 +15,12 @@
   const liveText = document.getElementById("live-text");
   const liveReasoning = document.getElementById("live-reasoning");
   const liveReasoningPanel = document.getElementById("live-reasoning-panel");
+  const scrollToTop = document.getElementById("scroll-to-top");
+
+  scrollToTop?.addEventListener("click", () => {
+    input.scrollIntoView({ behavior: "smooth", block: "start" });
+    input.focus();
+  });
 
   async function fetchJson(url) {
     const response = await fetch(url, { credentials: "same-origin" });
@@ -152,7 +158,6 @@
         resetLive();
         setStreaming(false, "");
         input.value = "";
-        input.focus();
         break;
       case "error":
         setStreaming(false, payload?.message ?? "请求失败");

@@ -562,6 +562,8 @@ internal static class FamilyChatHtml {
     <section class="history">
       <div id="turn-list" class="turn-list"></div>
     </section>
+
+    <button id="scroll-to-top" class="scroll-to-top" title="回到顶端">↑ 回到顶端</button>
   </main>
 
   <script>

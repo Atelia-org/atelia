@@ -181,6 +181,26 @@ pre {
   display: none !important;
 }
 
+.scroll-to-top {
+  position: sticky;
+  bottom: 16px;
+  display: block;
+  margin: 24px auto 0;
+  padding: 8px 20px;
+  border: 1px solid rgba(31, 79, 70, 0.25);
+  border-radius: 999px;
+  background: rgba(255, 250, 241, 0.9);
+  backdrop-filter: blur(8px);
+  color: #1f4f46;
+  cursor: pointer;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.scroll-to-top:hover {
+  background: rgba(31, 79, 70, 0.1);
+}
+
 .error {
   color: #b22929;
 }
