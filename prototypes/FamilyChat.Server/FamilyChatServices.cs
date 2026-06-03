@@ -192,7 +192,22 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         observer.ReceivedThinkingBegin += () => writer.TryWrite(new StreamEventDto("meta", new { phase = "reasoning-start" }));
         observer.ReceivedThinkingEnd += () => writer.TryWrite(new StreamEventDto("meta", new { phase = "reasoning-end" }));
         observer.ReceivedReasoningDelta += delta => writer.TryWrite(new StreamEventDto("reasoning-delta", new { delta }));
-        observer.ReceivedTextDelta += delta => writer.TryWrite(new StreamEventDto("text-delta", new { delta }));
+        var thinkClosed = false;
+        observer.ReceivedTextDelta += delta => {
+            if (!thinkClosed) {
+                int closeIdx = delta.IndexOf("</think>", StringComparison.Ordinal);
+                if (closeIdx >= 0) {
+                    delta = delta.Substring(closeIdx + "</think>".Length);
+                    thinkClosed = true;
+                    if (string.IsNullOrEmpty(delta)) { return; }
+                }
+                else {
+                    return;
+                }
+            }
+
+            writer.TryWrite(new StreamEventDto("text-delta", new { delta }));
+        };
         observer.ReceivedToolCall += call => {
             if (Interlocked.Exchange(ref toolLoopStarted, 1) == 0) {
                 writer.TryWrite(new StreamEventDto("meta", new { phase = "tool-loop-start" }));
@@ -283,12 +298,33 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             return null;
         }
 
+        var cleanedText = StripThinkPrefix(textBuilder.ToString());
         string? reasoningText = reasoningBuilder.Length == 0 ? null : reasoningBuilder.ToString();
         return new AssistantMessageDto(
-            Text: textBuilder.ToString(),
+            Text: cleanedText,
             ReasoningText: reasoningText,
             HasReasoning: !string.IsNullOrEmpty(reasoningText)
         );
+    }
+
+    /// <summary>
+    /// Strips a leading <c>&lt;think&gt;...&lt;/think&gt;</c> block from the text.
+    /// Qwen models embed reasoning in inline XML tags that are not separated by
+    /// the OpenAI-compatible API into a <c>reasoning_content</c> field;
+    /// this method removes them so the frontend only sees the actual response.
+    /// </summary>
+    private static string StripThinkPrefix(string text) {
+        if (string.IsNullOrEmpty(text)) { return text; }
+
+        const string closeTag = "</think>";
+        int closeIdx = text.IndexOf(closeTag, StringComparison.Ordinal);
+        if (closeIdx < 0) { return text; }
+
+        // Only strip if an opening <think> appears before the closing tag.
+        int openIdx = text.IndexOf("<think>", 0, closeIdx, StringComparison.Ordinal);
+        if (openIdx < 0) { return text; }
+
+        return text.Substring(closeIdx + closeTag.Length);
     }
 }
 
