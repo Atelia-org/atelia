@@ -152,39 +152,19 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 
         await writer.WriteAsync(new StreamEventDto("meta", new { phase = "turn-start" }), ct).ConfigureAwait(false);
 
-        while (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
-            await writer.WriteAsync(
-                new StreamEventDto("meta", new { phase = "compaction-start" }),
-                ct
-            ).ConfigureAwait(false);
-
-            var compaction = await host.Engine.CompactAsync(
+        // Failsafe: if the previous turn's post-generation compaction didn't happen
+        // or failed, try once more before generating.  Otherwise the user would wait
+        // for compaction *plus* generation in a single turn.
+        if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
+            var emergency = await host.Engine.CompactAsync(
                 host.User.CompactionSystemPrompt,
                 host.User.CompactionPrompt,
                 ct
             ).ConfigureAwait(false);
 
-            await writer.WriteAsync(
-                new StreamEventDto(
-                    "meta",
-                    new {
-                        phase = "compaction-finish",
-                        applied = compaction.Applied,
-                        failureReason = compaction.FailureReason?.ToString(),
-                        tokensBefore = compaction.TokensBefore,
-                        tokensAfter = compaction.TokensAfter,
-                    }
-                ),
-                ct
-            ).ConfigureAwait(false);
-
-            if (!compaction.Applied) {
-                break;
+            if (!emergency.Applied) {
+                throw new InvalidOperationException("当前会话上下文过长，且无法继续压缩。");
             }
-        }
-
-        if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
-            throw new InvalidOperationException("当前会话上下文过长，且无法继续压缩。");
         }
 
         var observer = new CompletionStreamObserver();
@@ -236,6 +216,18 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             ),
             ct
         ).ConfigureAwait(false);
+
+        // ── Post-generation compaction ──────────────────────────────
+        // Compact *after* the response is sent so the user spends the
+        // reading / typing time waiting, not the generation latency.
+        if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
+            using var compactCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            await host.Engine.CompactAsync(
+                host.User.CompactionSystemPrompt,
+                host.User.CompactionPrompt,
+                compactCts.Token
+            ).ConfigureAwait(false);
+        }
     }
 
     public async ValueTask DisposeAsync() {
