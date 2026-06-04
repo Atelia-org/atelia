@@ -4,6 +4,8 @@
     liveText: "",
     liveReasoning: "",
     streaming: false,
+    activeTurnId: null,
+    streamGeneration: 0,
   };
 
   const turnList = document.getElementById("turn-list");
@@ -22,8 +24,11 @@
     input.focus();
   });
 
-  async function fetchJson(url) {
-    const response = await fetch(url, { credentials: "same-origin" });
+  async function fetchJson(url, options) {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      ...options,
+    });
     if (!response.ok) {
       throw new Error(await response.text());
     }
@@ -84,9 +89,33 @@
     liveReasoningPanel.classList.add("hidden");
   }
 
+  function clearActiveTurn() {
+    state.activeTurnId = null;
+    state.streamGeneration += 1;
+  }
+
   async function loadRecentTurns() {
     state.recentTurns = await fetchJson("/api/recent-turns");
     renderTurns();
+  }
+
+  async function loadCurrentTurn() {
+    return await fetchJson("/api/chat/turns/current");
+  }
+
+  async function waitForCurrentTurnIdle() {
+    while (true) {
+      const currentTurn = await loadCurrentTurn();
+      if (currentTurn?.status === "idle") {
+        return;
+      }
+
+      await sleep(250);
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
   async function readEventStream(response) {
@@ -131,16 +160,17 @@
     handleEvent(eventName, payload);
   }
 
-  function handleEvent(eventName, payload) {
+  async function handleEvent(eventName, payload) {
     switch (eventName) {
       case "meta":
         if (payload?.phase === "turn-start") {
-          beginLive();
           setStreaming(true, "正在生成…");
         } else if (payload?.phase === "compaction-start") {
           setStreaming(true, "正在压缩上下文…");
         } else if (payload?.phase === "compaction-finish") {
           setStreaming(true, "上下文压缩完成，继续生成…");
+        } else if (payload?.phase === "tool-loop-start") {
+          setStreaming(true, "正在调用工具…");
         }
         break;
       case "reasoning-delta":
@@ -155,13 +185,74 @@
       case "done":
         state.recentTurns = payload?.recentTurns ?? [];
         renderTurns();
+        clearActiveTurn();
         resetLive();
-        setStreaming(false, "");
+        setStreaming(true, "正在收尾…");
         input.value = "";
         break;
       case "error":
+        clearActiveTurn();
         setStreaming(false, payload?.message ?? "请求失败");
         break;
+    }
+  }
+
+  async function attachToTurn(turnId, status) {
+    const normalizedTurnId = turnId ?? "";
+    if (!normalizedTurnId) {
+      return;
+    }
+
+    state.activeTurnId = normalizedTurnId;
+    const generation = ++state.streamGeneration;
+
+    while (state.activeTurnId === normalizedTurnId && generation === state.streamGeneration) {
+      beginLive();
+      setStreaming(true, status || "正在连接生成流…");
+
+      try {
+        const response = await fetch(`/api/chat/turns/${encodeURIComponent(normalizedTurnId)}/events`, {
+          credentials: "same-origin",
+        });
+
+        if (response.status === 404) {
+          clearActiveTurn();
+          resetLive();
+          setStreaming(false, "生成任务已结束或不存在");
+          await loadRecentTurns();
+          return;
+        }
+
+        if (!response.ok || !response.body) {
+          throw new Error("连接生成流失败");
+        }
+
+        await readEventStream(response);
+        if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {
+          if (!state.activeTurnId) {
+            await waitForCurrentTurnIdle();
+            setStreaming(false, "");
+          }
+          return;
+        }
+
+        if (!state.streaming) {
+          return;
+        }
+
+        setStreaming(true, "连接已断开，正在重连…");
+      } catch (error) {
+        if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {
+          return;
+        }
+
+        setStreaming(true, error?.message || "连接已断开，正在重连…");
+      }
+
+      await sleep(800);
+      if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {
+        return;
+      }
     }
   }
 
@@ -178,7 +269,7 @@
 
     setStreaming(true, "正在发送…");
 
-    const response = await fetch("/api/chat/stream", {
+    const response = await fetch("/api/chat/turns", {
       method: "POST",
       credentials: "same-origin",
       headers: {
@@ -187,21 +278,41 @@
       body: JSON.stringify({ message }),
     });
 
+    const payload = await response.json().catch(() => null);
+
     if (response.status === 409) {
-      const payload = await response.json();
-      setStreaming(false, payload.error || "该账号当前正在生成，请稍后。");
+      if (payload?.turnId) {
+        await attachToTurn(payload.turnId, payload.error || "正在恢复生成…");
+        return;
+      }
+
+      setStreaming(false, payload?.error || "该账号当前正在生成，请稍后。");
       return;
     }
 
-    if (!response.ok || !response.body) {
-      setStreaming(false, "请求失败");
+    if (!response.ok) {
+      setStreaming(false, payload?.error || "请求失败");
       return;
     }
 
-    await readEventStream(response);
+    await attachToTurn(payload?.turnId, "正在生成…");
   });
 
-  loadRecentTurns().catch((error) => {
+  async function bootstrap() {
+    await loadRecentTurns();
+    const currentTurn = await loadCurrentTurn();
+    if (currentTurn?.status === "running" && currentTurn.turnId) {
+      await attachToTurn(currentTurn.turnId, "正在恢复生成…");
+      return;
+    }
+
+    resetLive();
+    setStreaming(false, "");
+  }
+
+  bootstrap().catch((error) => {
+    clearActiveTurn();
+    resetLive();
     setStreaming(false, error.message || "加载失败");
   });
 })();

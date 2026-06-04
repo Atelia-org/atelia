@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using System.Threading.Channels;
 using Atelia.FamilyChat.Server;
 using Microsoft.AspNetCore.Authentication;
 
@@ -139,8 +138,14 @@ api.MapGet(
 );
 
 api.MapPost(
-    "/chat/stream",
-    async (HttpContext httpContext, ClaimsPrincipal user, FamilyChatHostService hostService, ChatStreamRequest request) => {
+    "/chat/turns",
+    async (
+        HttpContext httpContext,
+        ClaimsPrincipal user,
+        FamilyChatHostService hostService,
+        IHostApplicationLifetime applicationLifetime,
+        ChatStreamRequest request
+    ) => {
         if (string.IsNullOrWhiteSpace(request.Message)) {
             return Results.BadRequest(new { error = "message must not be blank." });
         }
@@ -150,44 +155,108 @@ api.MapPost(
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
 
         if (!session.TurnLock.Wait(0)) {
+            var runningTurn = hostService.BuildCurrentTurn(session);
             return Results.Json(
-                new { error = "该账号当前正在生成，请稍后。" },
+                new StartTurnResponseDto(
+                    TurnId: runningTurn.TurnId ?? string.Empty,
+                    Status: "running",
+                    Error: "该账号当前正在生成，请稍后。"
+                ),
                 statusCode: StatusCodes.Status409Conflict
             );
+        }
+
+        var liveTurn = hostService.StartTurn(session, request.Message);
+        var runTask = Task.Run(
+            async () => {
+                try {
+                    await hostService.RunTurnAsync(session, liveTurn, applicationLifetime.ApplicationStopping);
+                }
+                catch (OperationCanceledException) when (applicationLifetime.ApplicationStopping.IsCancellationRequested) {
+                    liveTurn.Publish(
+                        new StreamEventDto("error", new { message = "服务器正在关闭，当前生成已终止。" }),
+                        status: "failed"
+                    );
+                }
+                catch (FamilyChatTurnException ex) {
+                    liveTurn.Publish(
+                        new StreamEventDto("error", new { message = ex.Message, failureReason = ex.FailureReason }),
+                        status: "failed"
+                    );
+                }
+                catch (Exception ex) {
+                    liveTurn.Publish(
+                        new StreamEventDto("error", new { message = ex.Message }),
+                        status: "failed"
+                    );
+                }
+                finally {
+                    hostService.FinishTurn(session, liveTurn);
+                    liveTurn.Complete();
+                    session.TurnLock.Release();
+                }
+            },
+            CancellationToken.None
+        );
+        liveTurn.RunTask = runTask;
+
+        return Results.Json(
+            new StartTurnResponseDto(liveTurn.TurnId, "running"),
+            statusCode: StatusCodes.Status202Accepted
+        );
+    }
+);
+
+api.MapGet(
+    "/chat/turns/current",
+    async (ClaimsPrincipal user, FamilyChatHostService hostService, CancellationToken ct) => {
+        string userId = user.FindFirstValue(FamilyChatClaimTypes.UserId)
+            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
+        var session = await hostService.GetSessionAsync(userId, ct);
+        return Results.Ok(hostService.BuildCurrentTurn(session));
+    }
+);
+
+api.MapGet(
+    "/chat/turns/{turnId}/events",
+    async (HttpContext httpContext, ClaimsPrincipal user, FamilyChatHostService hostService, string turnId) => {
+        string userId = user.FindFirstValue(FamilyChatClaimTypes.UserId)
+            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
+        var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
+        var liveTurn = hostService.FindTurn(session, turnId);
+        if (liveTurn is null) {
+            return Results.NotFound(new { error = "turn not found." });
         }
 
         httpContext.Response.StatusCode = StatusCodes.Status200OK;
         httpContext.Response.ContentType = "text/event-stream";
         httpContext.Response.Headers.CacheControl = "no-store";
 
-        var channel = Channel.CreateUnbounded<StreamEventDto>();
-        var runTask = Task.Run(
-            async () => {
-                try {
-                    await hostService.RunTurnAsync(session, request.Message, channel.Writer, httpContext.RequestAborted);
-                }
-                catch (OperationCanceledException) {
-                    // Browser disconnected or request cancelled.
-                }
-                catch (Exception ex) {
-                    await channel.Writer.WriteAsync(
-                        new StreamEventDto("error", new { message = ex.Message }),
-                        CancellationToken.None
-                    );
-                }
-                finally {
-                    channel.Writer.TryComplete();
-                    session.TurnLock.Release();
-                }
-            },
-            CancellationToken.None
-        );
+        using var subscription = liveTurn.Subscribe();
 
-        await foreach (var streamEvent in channel.Reader.ReadAllAsync(httpContext.RequestAborted)) {
-            await FamilyChatSseWriter.WriteEventAsync(httpContext.Response, streamEvent.Type, streamEvent.Payload, httpContext.RequestAborted);
+        try {
+            foreach (var replayEvent in subscription.ReplayEvents) {
+                await FamilyChatSseWriter.WriteEventAsync(
+                    httpContext.Response,
+                    replayEvent.Type,
+                    replayEvent.Payload,
+                    httpContext.RequestAborted
+                );
+            }
+
+            await foreach (var streamEvent in subscription.Reader.ReadAllAsync(httpContext.RequestAborted)) {
+                await FamilyChatSseWriter.WriteEventAsync(
+                    httpContext.Response,
+                    streamEvent.Type,
+                    streamEvent.Payload,
+                    httpContext.RequestAborted
+                );
+            }
+        }
+        catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested) {
+            return Results.Empty;
         }
 
-        await runTask;
         return Results.Empty;
     }
 );

@@ -56,7 +56,7 @@ http://0.0.0.0:3510
       "modelId": "REPLACE_WITH_YOUR_LOCAL_MODEL_ID",
       "completionSurfaceId": "openai-chat/sglang-compatible",
       "systemPrompt": "你是家庭局域网里的私人助手。优先用简洁、直接、可信的中文回答。不确定时明确说明不确定，不编造细节。",
-      "compactionThresholdTokens": 24000,
+      "compactionThresholdTokens": 32000,
       "compactionSystemPrompt": "你负责压缩长期对话上下文。请保留用户偏好、未完成事项、关键事实、约定、限制与后续行动线索。输出简洁中文摘要，避免虚构。",
       "compactionPrompt": "请把以上较早的对话压缩成一段可供后续继续聊天的中文 recap。保留人物偏好、进行中的任务、重要事实、未决问题与明确约定。"
     },
@@ -68,7 +68,7 @@ http://0.0.0.0:3510
       "modelId": "REPLACE_WITH_YOUR_LOCAL_MODEL_ID",
       "completionSurfaceId": "openai-chat/sglang-compatible",
       "systemPrompt": "你是家庭局域网里的私人助手。优先用简洁、直接、可信的中文回答。不确定时明确说明不确定，不编造细节。",
-      "compactionThresholdTokens": 24000,
+      "compactionThresholdTokens": 32000,
       "compactionSystemPrompt": "你负责压缩长期对话上下文。请保留用户偏好、未完成事项、关键事实、约定、限制与后续行动线索。输出简洁中文摘要，避免虚构。",
       "compactionPrompt": "请把以上较早的对话压缩成一段可供后续继续聊天的中文 recap。保留人物偏好、进行中的任务、重要事实、未决问题与明确约定。"
     }

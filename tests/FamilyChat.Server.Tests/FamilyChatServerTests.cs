@@ -205,7 +205,7 @@ public sealed class FamilyChatServerTests {
 
             var generated = ReadConfig(configPath);
             Assert.Equal("openai-chat", generated.Backend.Kind);
-            Assert.Equal("http://localhost:8000/", generated.Backend.BaseAddress);
+            Assert.Equal("http://localhost:8888/", generated.Backend.BaseAddress);
             Assert.Equal("http://0.0.0.0:3510", Assert.Single(generated.ListenUrls!));
             Assert.Equal(2, generated.Users.Count);
             Assert.Equal("alice", generated.Users[0].UserId);
@@ -228,7 +228,8 @@ public sealed class FamilyChatServerTests {
                 Users = config.Users
                     .Select(
                         user => user with {
-                            ModelId = "model-a"
+                            ModelId = "model-a",
+                            SessionDir = Path.Combine(tempDir, "generated-sessions", user.UserId)
                         }
                     )
                     .ToArray()
@@ -413,21 +414,18 @@ public sealed class FamilyChatServerTests {
             });
             await LoginAsync(client, "alice", "pw1");
 
-            var first = client.SendAsync(
-                new HttpRequestMessage(HttpMethod.Post, "/api/chat/stream") {
-                    Content = JsonContent.Create(new ChatStreamRequest("one")),
-                },
-                HttpCompletionOption.ResponseHeadersRead
-            );
+            var first = await StartTurnAsync(client, "one");
 
             await blocker.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-            var second = await client.PostAsJsonAsync("/api/chat/stream", new ChatStreamRequest("two"));
+            var second = await client.PostAsJsonAsync("/api/chat/turns", new ChatStreamRequest("two"));
             Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+            var secondPayload = await second.Content.ReadFromJsonAsync<StartTurnResponseDto>();
+            Assert.NotNull(secondPayload);
+            Assert.Equal(first.TurnId, secondPayload!.TurnId);
 
             release.TrySetResult();
-            using var firstResponse = await first;
-            string sse = await firstResponse.Content.ReadAsStringAsync();
+            string sse = await ReadTurnEventsAsStringAsync(client, first.TurnId);
             Assert.Contains("event: done", sse, StringComparison.Ordinal);
         }
         finally {
@@ -439,6 +437,17 @@ public sealed class FamilyChatServerTests {
     public async Task CompactionBeforeSend_EmitsMeta_And_HidesRecapFromRecentTurns() {
         string tempDir = CreateTempDirectory();
         try {
+            string sessionDir = Path.Combine(tempDir, "alice-session");
+            await SeedSessionAsync(
+                sessionDir,
+                "model-a",
+                "openai-chat/strict",
+                [
+                    ("first", new string('A', 80)),
+                    ("second", "keep"),
+                ]
+            );
+
             var configPath = WriteConfig(
                 tempDir,
                 thresholdTokens: 45,
@@ -447,7 +456,7 @@ public sealed class FamilyChatServerTests {
                         "alice",
                         "Alice",
                         "pw1",
-                        Path.Combine(tempDir, "alice-session"),
+                        sessionDir,
                         "model-a",
                         "openai-chat/strict",
                         "system",
@@ -459,8 +468,6 @@ public sealed class FamilyChatServerTests {
             );
 
             var scriptFactory = new ScriptedCompletionClientFactory();
-            scriptFactory.For("alice").EnqueueText(new string('A', 80));
-            scriptFactory.For("alice").EnqueueText("keep");
             scriptFactory.For("alice").EnqueueText("S");
             scriptFactory.For("alice").EnqueueText("after");
 
@@ -471,8 +478,6 @@ public sealed class FamilyChatServerTests {
             });
             await LoginAsync(client, "alice", "pw1");
 
-            await ReadSseAsStringAsync(client, "first");
-            await ReadSseAsStringAsync(client, "second");
             string third = await ReadSseAsStringAsync(client, "third");
 
             Assert.Contains("\"phase\":\"compaction-start\"", third, StringComparison.Ordinal);
@@ -537,6 +542,211 @@ public sealed class FamilyChatServerTests {
         }
     }
 
+    [Fact]
+    public async Task DisconnectingSse_DoesNotCancelBackendTurn() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        "system",
+                        200,
+                        "compact-system",
+                        "compact-prompt"
+                    )
+                ]
+            );
+
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var cancelled = false;
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                async (request, observer, ct) => {
+                    observer?.OnTextDelta("partial");
+                    started.TrySetResult();
+                    try {
+                        await release.Task.WaitAsync(ct);
+                    }
+                    catch (OperationCanceledException) {
+                        cancelled = true;
+                        throw;
+                    }
+
+                    observer?.OnTextDelta(" done");
+                    return new CompletionResult(
+                        new ActionMessage([new ActionBlock.Text("partial done")]),
+                        new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                    );
+                }
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            var start = await StartTurnAsync(client, "one");
+            using (var response = await OpenTurnEventsAsync(client, start.TurnId)) {
+                string partial = await ReadUntilContainsAsync(response, "\"delta\":\"partial\"");
+                Assert.Contains("\"delta\":\"partial\"", partial, StringComparison.Ordinal);
+            }
+
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            release.TrySetResult();
+            await WaitForRecentTurnCountAsync(client, 1);
+
+            Assert.False(cancelled);
+            var turns = await client.GetFromJsonAsync<List<RecentTurnDto>>("/api/recent-turns");
+            Assert.NotNull(turns);
+            Assert.Single(turns!);
+            Assert.Equal("partial done", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReconnectingEvents_ReplaysExistingDeltas_AndStreamsNewOnes() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        "system",
+                        200,
+                        "compact-system",
+                        "compact-prompt"
+                    )
+                ]
+            );
+
+            var firstDeltaSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                async (request, observer, ct) => {
+                    observer?.OnTextDelta("alpha");
+                    firstDeltaSeen.TrySetResult();
+                    await release.Task.WaitAsync(ct);
+                    observer?.OnTextDelta("beta");
+                    return new CompletionResult(
+                        new ActionMessage([new ActionBlock.Text("alphabeta")]),
+                        new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                    );
+                }
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            var start = await StartTurnAsync(client, "one");
+            using (var firstResponse = await OpenTurnEventsAsync(client, start.TurnId)) {
+                string partial = await ReadUntilContainsAsync(firstResponse, "\"delta\":\"alpha\"");
+                Assert.Contains("\"delta\":\"alpha\"", partial, StringComparison.Ordinal);
+            }
+
+            await firstDeltaSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var secondResponseTask = OpenTurnEventsAsync(client, start.TurnId);
+            release.TrySetResult();
+            using var secondResponse = await secondResponseTask;
+            string sse = await secondResponse.Content.ReadAsStringAsync();
+
+            Assert.Contains("\"delta\":\"alpha\"", sse, StringComparison.Ordinal);
+            Assert.Contains("\"delta\":\"beta\"", sse, StringComparison.Ordinal);
+            Assert.Contains("event: done", sse, StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CurrentTurnEndpoint_ReportsRunningTurn() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        "system",
+                        200,
+                        "compact-system",
+                        "compact-prompt"
+                    )
+                ]
+            );
+
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                async (request, observer, ct) => {
+                    observer?.OnTextDelta("working");
+                    await release.Task.WaitAsync(ct);
+                    return new CompletionResult(
+                        new ActionMessage([new ActionBlock.Text("working")]),
+                        new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                    );
+                }
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            var started = await StartTurnAsync(client, "one");
+            var current = await client.GetFromJsonAsync<CurrentTurnDto>("/api/chat/turns/current");
+
+            Assert.NotNull(current);
+            Assert.Equal("running", current!.Status);
+            Assert.Equal(started.TurnId, current.TurnId);
+            Assert.Equal("one", current.UserMessage);
+
+            release.TrySetResult();
+            await WaitForRecentTurnCountAsync(client, 1);
+
+            current = await client.GetFromJsonAsync<CurrentTurnDto>("/api/chat/turns/current");
+            Assert.NotNull(current);
+            Assert.Equal("idle", current!.Status);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static async Task LoginAsync(HttpClient client, string userId, string password) {
         var response = await client.PostAsync(
             "/login",
@@ -549,14 +759,115 @@ public sealed class FamilyChatServerTests {
     }
 
     private static async Task<string> ReadSseAsStringAsync(HttpClient client, string message) {
-        using var response = await client.SendAsync(
-            new HttpRequestMessage(HttpMethod.Post, "/api/chat/stream") {
-                Content = JsonContent.Create(new ChatStreamRequest(message)),
-            },
+        var started = await StartTurnAsync(client, message);
+        string sse = await ReadTurnEventsAsStringAsync(client, started.TurnId);
+        await WaitForCurrentTurnIdleAsync(client);
+        return sse;
+    }
+
+    private static async Task<StartTurnResponseDto> StartTurnAsync(HttpClient client, string message) {
+        using var response = await client.PostAsJsonAsync("/api/chat/turns", new ChatStreamRequest(message));
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var started = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
+        Assert.NotNull(started);
+        Assert.False(string.IsNullOrWhiteSpace(started!.TurnId));
+        return started!;
+    }
+
+    private static async Task<HttpResponseMessage> OpenTurnEventsAsync(HttpClient client, string turnId) {
+        var response = await client.SendAsync(
+            new HttpRequestMessage(HttpMethod.Get, $"/api/chat/turns/{turnId}/events"),
             HttpCompletionOption.ResponseHeadersRead
         );
         response.EnsureSuccessStatusCode();
+        return response;
+    }
+
+    private static async Task<string> ReadTurnEventsAsStringAsync(HttpClient client, string turnId) {
+        using var response = await OpenTurnEventsAsync(client, turnId);
         return await response.Content.ReadAsStringAsync();
+    }
+
+    private static async Task<string> ReadUntilContainsAsync(HttpResponseMessage response, string expected) {
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var reader = new StreamReader(stream);
+        var buffer = new char[256];
+        var builder = new StringBuilder();
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        while (!builder.ToString().Contains(expected, StringComparison.Ordinal)) {
+            int read = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length), timeoutCts.Token);
+            if (read == 0) {
+                break;
+            }
+
+            builder.Append(buffer, 0, read);
+        }
+
+        return builder.ToString();
+    }
+
+    private static async Task WaitForRecentTurnCountAsync(HttpClient client, int expectedCount) {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline) {
+            var turns = await client.GetFromJsonAsync<List<RecentTurnDto>>("/api/recent-turns");
+            if (turns?.Count == expectedCount) {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        var latest = await client.GetFromJsonAsync<List<RecentTurnDto>>("/api/recent-turns");
+        Assert.Equal(expectedCount, latest?.Count ?? 0);
+    }
+
+    private static async Task WaitForCurrentTurnIdleAsync(HttpClient client) {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline) {
+            var current = await client.GetFromJsonAsync<CurrentTurnDto>("/api/chat/turns/current");
+            if (current?.Status == "idle") {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        var latest = await client.GetFromJsonAsync<CurrentTurnDto>("/api/chat/turns/current");
+        Assert.Equal("idle", latest?.Status);
+    }
+
+    private static async Task SeedSessionAsync(
+        string sessionDir,
+        string modelId,
+        string completionSurfaceId,
+        IReadOnlyList<(string UserMessage, string AssistantText)> turns
+    ) {
+        var scriptedClient = new ScriptedCompletionClient("openai-chat-v1");
+        foreach (var turn in turns) {
+            scriptedClient.EnqueueText(turn.AssistantText);
+        }
+
+        var runtime = new ChatSessionRuntime(
+            scriptedClient,
+            completionSurfaceId,
+            new ToolRegistry(Array.Empty<ITool>()),
+            new ToolSessionState()
+        );
+        var engine = await ChatSessionEngine.CreateAsync(
+            sessionDir,
+            new ChatSessionCreateOptions(modelId, "system", completionSurfaceId),
+            runtime
+        );
+
+        try {
+            foreach (var turn in turns) {
+                await engine.SendMessageAsync(turn.UserMessage);
+            }
+        }
+        finally {
+            engine.Dispose();
+        }
     }
 
     private static string CreateTempDirectory() {

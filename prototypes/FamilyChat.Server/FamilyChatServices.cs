@@ -140,22 +140,48 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         return turns.Take(maxTurns).ToArray();
     }
 
-    public async Task RunTurnAsync(
+    public CurrentTurnDto BuildCurrentTurn(UserSessionHost host) {
+        ArgumentNullException.ThrowIfNull(host);
+
+        var currentTurn = host.GetCurrentTurn();
+        return currentTurn is null
+            ? new CurrentTurnDto("idle")
+            : new CurrentTurnDto("running", currentTurn.TurnId, currentTurn.UserMessage, currentTurn.Phase);
+    }
+
+    internal FamilyChatLiveTurn StartTurn(UserSessionHost host, string userMessage) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
+        return host.StartTurn(userMessage);
+    }
+
+    internal FamilyChatLiveTurn? FindTurn(UserSessionHost host, string turnId) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
+        return host.FindTurn(turnId);
+    }
+
+    internal void FinishTurn(UserSessionHost host, FamilyChatLiveTurn turn) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(turn);
+        host.FinishTurn(turn);
+    }
+
+    internal async Task RunTurnAsync(
         UserSessionHost host,
-        string userMessage,
-        ChannelWriter<StreamEventDto> writer,
+        FamilyChatLiveTurn liveTurn,
         CancellationToken ct
     ) {
         ArgumentNullException.ThrowIfNull(host);
-        ArgumentNullException.ThrowIfNull(writer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
+        ArgumentNullException.ThrowIfNull(liveTurn);
 
-        await writer.WriteAsync(new StreamEventDto("meta", new { phase = "turn-start" }), ct).ConfigureAwait(false);
+        liveTurn.Publish(new StreamEventDto("meta", new { phase = "turn-start" }), phase: "turn-start");
 
         // Failsafe: if the previous turn's post-generation compaction didn't happen
         // or failed, try once more before generating.  Otherwise the user would wait
         // for compaction *plus* generation in a single turn.
         if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
+            liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-start" }), phase: "compaction-start");
             var emergency = await host.Engine.CompactAsync(
                 host.User.CompactionSystemPrompt,
                 host.User.CompactionPrompt,
@@ -163,18 +189,36 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             ).ConfigureAwait(false);
 
             if (!emergency.Applied) {
-                throw new InvalidOperationException("当前会话上下文过长，且无法继续压缩。");
+                throw new FamilyChatTurnException(
+                    "当前会话上下文过长，且无法继续压缩。",
+                    emergency.FailureReason?.ToString()
+                );
             }
+
+            liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-finish" }), phase: "compaction-finish");
         }
 
         var observer = new CompletionStreamObserver();
         var toolLoopStarted = 0;
-        observer.ReceivedThinkingBegin += () => writer.TryWrite(new StreamEventDto("meta", new { phase = "reasoning-start" }));
-        observer.ReceivedThinkingEnd += () => writer.TryWrite(new StreamEventDto("meta", new { phase = "reasoning-end" }));
-        observer.ReceivedReasoningDelta += delta => writer.TryWrite(new StreamEventDto("reasoning-delta", new { delta }));
+        observer.ReceivedThinkingBegin += () => liveTurn.Publish(
+            new StreamEventDto("meta", new { phase = "reasoning-start" }),
+            phase: "reasoning-start"
+        );
+        observer.ReceivedThinkingEnd += () => liveTurn.Publish(
+            new StreamEventDto("meta", new { phase = "reasoning-end" }),
+            phase: "reasoning-end"
+        );
+        observer.ReceivedReasoningDelta += delta => liveTurn.Publish(new StreamEventDto("reasoning-delta", new { delta }));
         var thinkClosed = false;
+        var firstTextDelta = true;
+        var suppressUntilThinkClose = false;
         observer.ReceivedTextDelta += delta => {
-            if (!thinkClosed) {
+            if (firstTextDelta) {
+                firstTextDelta = false;
+                suppressUntilThinkClose = delta.Contains("<think>", StringComparison.Ordinal);
+            }
+
+            if (suppressUntilThinkClose && !thinkClosed) {
                 int closeIdx = delta.IndexOf("</think>", StringComparison.Ordinal);
                 if (closeIdx >= 0) {
                     delta = delta.Substring(closeIdx + "</think>".Length);
@@ -186,26 +230,27 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
                 }
             }
 
-            writer.TryWrite(new StreamEventDto("text-delta", new { delta }));
+            liveTurn.Publish(new StreamEventDto("text-delta", new { delta }));
         };
         observer.ReceivedToolCall += call => {
             if (Interlocked.Exchange(ref toolLoopStarted, 1) == 0) {
-                writer.TryWrite(new StreamEventDto("meta", new { phase = "tool-loop-start" }));
+                liveTurn.Publish(new StreamEventDto("meta", new { phase = "tool-loop-start" }), phase: "tool-loop-start");
             }
 
-            writer.TryWrite(
-                new StreamEventDto("meta", new { phase = "tool-call", toolName = call.ToolName, toolCallId = call.ToolCallId })
+            liveTurn.Publish(
+                new StreamEventDto("meta", new { phase = "tool-call", toolName = call.ToolName, toolCallId = call.ToolCallId }),
+                phase: "tool-call"
             );
         };
 
-        var turnResult = await host.Engine.SendMessageAsync(userMessage, observer, ct).ConfigureAwait(false);
+        var turnResult = await host.Engine.SendMessageAsync(liveTurn.UserMessage, observer, ct).ConfigureAwait(false);
         var snapshot = BuildRecentTurns(host.Engine);
 
         if (Volatile.Read(ref toolLoopStarted) == 1) {
-            await writer.WriteAsync(new StreamEventDto("meta", new { phase = "tool-loop-finish" }), ct).ConfigureAwait(false);
+            liveTurn.Publish(new StreamEventDto("meta", new { phase = "tool-loop-finish" }), phase: "tool-loop-finish");
         }
 
-        await writer.WriteAsync(
+        liveTurn.Publish(
             new StreamEventDto(
                 "done",
                 new {
@@ -214,8 +259,8 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
                     errors = turnResult.Errors
                 }
             ),
-            ct
-        ).ConfigureAwait(false);
+            status: "completed"
+        );
 
         // ── Post-generation compaction ──────────────────────────────
         // Compact *after* the response is sent so the user spends the
@@ -322,6 +367,9 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 
 public sealed class UserSessionHost : IAsyncDisposable {
     private readonly ICompletionClient _completionClient;
+    private readonly object _turnStateGate = new();
+    private FamilyChatLiveTurn? _currentTurn;
+    private FamilyChatLiveTurn? _lastTurn;
 
     public UserSessionHost(
         FamilyChatUserConfig user,
@@ -338,6 +386,54 @@ public sealed class UserSessionHost : IAsyncDisposable {
     public ChatSessionEngine Engine { get; }
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
+
+    internal FamilyChatLiveTurn StartTurn(string userMessage) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
+
+        var liveTurn = new FamilyChatLiveTurn(userMessage);
+        lock (_turnStateGate) {
+            _lastTurn = null;
+            _currentTurn = liveTurn;
+        }
+
+        return liveTurn;
+    }
+
+    internal FamilyChatLiveTurn? GetCurrentTurn() {
+        lock (_turnStateGate) {
+            return _currentTurn;
+        }
+    }
+
+    internal FamilyChatLiveTurn? FindTurn(string turnId) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
+
+        lock (_turnStateGate) {
+            if (string.Equals(_currentTurn?.TurnId, turnId, StringComparison.Ordinal)) {
+                return _currentTurn;
+            }
+
+            if (string.Equals(_lastTurn?.TurnId, turnId, StringComparison.Ordinal)) {
+                return _lastTurn;
+            }
+
+            return null;
+        }
+    }
+
+    internal void FinishTurn(FamilyChatLiveTurn turn) {
+        ArgumentNullException.ThrowIfNull(turn);
+
+        lock (_turnStateGate) {
+            if (ReferenceEquals(_currentTurn, turn)) {
+                _currentTurn = null;
+                _lastTurn = turn;
+            }
+            else if (ReferenceEquals(_lastTurn, turn)) {
+                _lastTurn = turn;
+            }
+        }
+    }
 
     public ValueTask DisposeAsync() {
         Engine.Dispose();

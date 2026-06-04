@@ -47,6 +47,19 @@ public sealed record ChatStreamRequest(
     [property: JsonPropertyName("message")] string Message
 );
 
+public sealed record StartTurnResponseDto(
+    string TurnId,
+    string Status,
+    string? Error = null
+);
+
+public sealed record CurrentTurnDto(
+    string Status,
+    string? TurnId = null,
+    string? UserMessage = null,
+    string? Phase = null
+);
+
 public sealed record StreamEventDto(
     string Type,
     object? Payload
