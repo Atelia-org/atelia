@@ -49,7 +49,7 @@ public sealed class FamilyChatServerTests {
                 }
             );
 
-            var engine = await ChatSessionEngine.CreateAsync(
+            using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
                 new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
                 new ChatSessionRuntime(
@@ -90,10 +90,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -143,6 +143,192 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ChatSession_TryRemoveLatestCompletedTurn_RemovesLatestTurnFromContext() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText("first reply");
+            client.EnqueueText("second reply");
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    new ToolRegistry(Array.Empty<ITool>()),
+                    new ToolSessionState()
+                )
+            );
+
+            await engine.SendMessageAsync("one");
+            await engine.SendMessageAsync("two");
+
+            bool removed = engine.TryRemoveLatestCompletedTurn(out var result);
+
+            Assert.True(removed);
+            Assert.NotNull(result);
+            Assert.Equal("two", result!.UserMessage);
+            Assert.Equal(2, result.RemovedMessageCount);
+            Assert.Collection(
+                engine.Context,
+                message => {
+                    var observation = Assert.IsType<ObservationMessage>(message);
+                    Assert.Equal("one", observation.Content);
+                },
+                message => {
+                    var action = Assert.IsType<ActionMessage>(message);
+                    Assert.Equal("first reply", action.GetFlattenedText());
+                }
+            );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSession_TryRemoveLatestCompletedTurn_WithToolLoop_RemovesWholeTurnSuffix() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.Enqueue(
+                async (request, observer, ct) => {
+                    var call = new RawToolCall("echo", "call-1", """{"value":"alpha"}""");
+                    observer?.OnToolCall(call);
+                    return new CompletionResult(
+                        new ActionMessage([
+                            new ActionBlock.ToolCall(call),
+                        ]),
+                        new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                    );
+                }
+            );
+            client.EnqueueText("final reply");
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    new ToolRegistry([new EchoTool()]),
+                    new ToolSessionState()
+                )
+            );
+
+            await engine.SendMessageAsync("one");
+
+            bool removed = engine.TryRemoveLatestCompletedTurn(out var result);
+
+            Assert.True(removed);
+            Assert.NotNull(result);
+            Assert.Equal("one", result!.UserMessage);
+            Assert.Equal(4, result.RemovedMessageCount);
+            Assert.Empty(engine.Context);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RegenerateLatestTurn_ReplacesPreviousAssistantReply() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").EnqueueText("bad reply");
+            scriptFactory.For("alice").EnqueueText("rerolled reply");
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            await ReadSseAsStringAsync(client, "one");
+
+            var regenerate = await StartRegenerateLatestTurnAsync(client);
+            string sse = await ReadTurnEventsAsStringAsync(client, regenerate.TurnId);
+            await WaitForCurrentTurnIdleAsync(client);
+
+            Assert.Contains("event: done", sse, StringComparison.Ordinal);
+
+            var turns = await client.GetFromJsonAsync<List<RecentTurnDto>>("/api/recent-turns");
+            Assert.NotNull(turns);
+            Assert.Single(turns!);
+            Assert.Equal("one", turns[0].UserText);
+            Assert.Equal("rerolled reply", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RegenerateLatestTurn_WithoutCompletedTurn_Returns409() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, new ScriptedCompletionClientFactory());
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            using var response = await client.PostAsync("/api/chat/turns/regenerate-latest", content: null);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            var payload = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
+            Assert.NotNull(payload);
+            Assert.Equal("idle", payload!.Status);
+            Assert.Contains("当前没有可重新生成", payload.Error, StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Login_WithWrongPassword_Returns401() {
         string tempDir = CreateTempDirectory();
         try {
@@ -157,10 +343,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -276,10 +462,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -313,10 +499,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     ),
                     new FamilyChatUserConfig(
                         "alice",
@@ -325,10 +511,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session-2"),
                         "model-b",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -384,10 +570,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -459,10 +645,10 @@ public sealed class FamilyChatServerTests {
                         sessionDir,
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         45,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -510,10 +696,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         20,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -557,10 +743,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -632,10 +818,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -699,10 +885,10 @@ public sealed class FamilyChatServerTests {
                         Path.Combine(tempDir, "alice-session"),
                         "model-a",
                         "openai-chat/strict",
-                        "system",
                         200,
                         "compact-system",
-                        "compact-prompt"
+                        "compact-prompt",
+                        "system"
                     )
                 ]
             );
@@ -767,6 +953,15 @@ public sealed class FamilyChatServerTests {
 
     private static async Task<StartTurnResponseDto> StartTurnAsync(HttpClient client, string message) {
         using var response = await client.PostAsJsonAsync("/api/chat/turns", new ChatStreamRequest(message));
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var started = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
+        Assert.NotNull(started);
+        Assert.False(string.IsNullOrWhiteSpace(started!.TurnId));
+        return started!;
+    }
+
+    private static async Task<StartTurnResponseDto> StartRegenerateLatestTurnAsync(HttpClient client) {
+        using var response = await client.PostAsync("/api/chat/turns/regenerate-latest", content: null);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var started = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
         Assert.NotNull(started);

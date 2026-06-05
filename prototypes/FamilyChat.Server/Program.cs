@@ -155,55 +155,44 @@ api.MapPost(
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
 
         if (!session.TurnLock.Wait(0)) {
-            var runningTurn = hostService.BuildCurrentTurn(session);
+            return BuildTurnBusyConflict(hostService, session);
+        }
+
+        var liveTurn = hostService.StartTurn(session, request.Message);
+        return StartAcceptedTurn(session, liveTurn, hostService, applicationLifetime);
+    }
+);
+
+api.MapPost(
+    "/chat/turns/regenerate-latest",
+    async (
+        HttpContext httpContext,
+        ClaimsPrincipal user,
+        FamilyChatHostService hostService,
+        IHostApplicationLifetime applicationLifetime
+    ) => {
+        string userId = user.FindFirstValue(FamilyChatClaimTypes.UserId)
+            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
+        var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
+
+        if (!session.TurnLock.Wait(0)) {
+            return BuildTurnBusyConflict(hostService, session);
+        }
+
+        var liveTurn = hostService.StartLatestTurnRegeneration(session);
+        if (liveTurn is null) {
+            session.TurnLock.Release();
             return Results.Json(
                 new StartTurnResponseDto(
-                    TurnId: runningTurn.TurnId ?? string.Empty,
-                    Status: "running",
-                    Error: "该账号当前正在生成，请稍后。"
+                    TurnId: string.Empty,
+                    Status: "idle",
+                    Error: "当前没有可重新生成的最近 assistant 回复。"
                 ),
                 statusCode: StatusCodes.Status409Conflict
             );
         }
 
-        var liveTurn = hostService.StartTurn(session, request.Message);
-        var runTask = Task.Run(
-            async () => {
-                try {
-                    await hostService.RunTurnAsync(session, liveTurn, applicationLifetime.ApplicationStopping);
-                }
-                catch (OperationCanceledException) when (applicationLifetime.ApplicationStopping.IsCancellationRequested) {
-                    liveTurn.Publish(
-                        new StreamEventDto("error", new { message = "服务器正在关闭，当前生成已终止。" }),
-                        status: "failed"
-                    );
-                }
-                catch (FamilyChatTurnException ex) {
-                    liveTurn.Publish(
-                        new StreamEventDto("error", new { message = ex.Message, failureReason = ex.FailureReason }),
-                        status: "failed"
-                    );
-                }
-                catch (Exception ex) {
-                    liveTurn.Publish(
-                        new StreamEventDto("error", new { message = ex.Message }),
-                        status: "failed"
-                    );
-                }
-                finally {
-                    hostService.FinishTurn(session, liveTurn);
-                    liveTurn.Complete();
-                    session.TurnLock.Release();
-                }
-            },
-            CancellationToken.None
-        );
-        liveTurn.RunTask = runTask;
-
-        return Results.Json(
-            new StartTurnResponseDto(liveTurn.TurnId, "running"),
-            statusCode: StatusCodes.Status202Accepted
-        );
+        return StartAcceptedTurn(session, liveTurn, hostService, applicationLifetime);
     }
 );
 
@@ -262,5 +251,62 @@ api.MapGet(
 );
 
 app.Run();
+
+static IResult BuildTurnBusyConflict(FamilyChatHostService hostService, UserSessionHost session) {
+    var runningTurn = hostService.BuildCurrentTurn(session);
+    return Results.Json(
+        new StartTurnResponseDto(
+            TurnId: runningTurn.TurnId ?? string.Empty,
+            Status: "running",
+            Error: "该账号当前正在生成，请稍后。"
+        ),
+        statusCode: StatusCodes.Status409Conflict
+    );
+}
+
+static IResult StartAcceptedTurn(
+    UserSessionHost session,
+    FamilyChatLiveTurn liveTurn,
+    FamilyChatHostService hostService,
+    IHostApplicationLifetime applicationLifetime
+) {
+    var runTask = Task.Run(
+        async () => {
+            try {
+                await hostService.RunTurnAsync(session, liveTurn, applicationLifetime.ApplicationStopping);
+            }
+            catch (OperationCanceledException) when (applicationLifetime.ApplicationStopping.IsCancellationRequested) {
+                liveTurn.Publish(
+                    new StreamEventDto("error", new { message = "服务器正在关闭，当前生成已终止。" }),
+                    status: "failed"
+                );
+            }
+            catch (FamilyChatTurnException ex) {
+                liveTurn.Publish(
+                    new StreamEventDto("error", new { message = ex.Message, failureReason = ex.FailureReason }),
+                    status: "failed"
+                );
+            }
+            catch (Exception ex) {
+                liveTurn.Publish(
+                    new StreamEventDto("error", new { message = ex.Message }),
+                    status: "failed"
+                );
+            }
+            finally {
+                hostService.FinishTurn(session, liveTurn);
+                liveTurn.Complete();
+                session.TurnLock.Release();
+            }
+        },
+        CancellationToken.None
+    );
+    liveTurn.RunTask = runTask;
+
+    return Results.Json(
+        new StartTurnResponseDto(liveTurn.TurnId, "running"),
+        statusCode: StatusCodes.Status202Accepted
+    );
+}
 
 public partial class Program;

@@ -12,6 +12,7 @@
   const form = document.getElementById("chat-form");
   const input = document.getElementById("message-input");
   const sendButton = document.getElementById("send-button");
+  const regenerateButton = document.getElementById("regenerate-button");
   const statusText = document.getElementById("status-text");
   const liveTurn = document.getElementById("live-turn");
   const liveText = document.getElementById("live-text");
@@ -44,6 +45,7 @@
 
   function renderTurns() {
     turnList.innerHTML = state.recentTurns.map(renderTurn).join("");
+    refreshRegenerateButton();
   }
 
   function renderTurn(turn) {
@@ -69,6 +71,24 @@
     sendButton.disabled = streaming;
     input.disabled = streaming;
     statusText.textContent = status || "";
+    refreshRegenerateButton();
+  }
+
+  function refreshRegenerateButton() {
+    if (!regenerateButton) {
+      return;
+    }
+
+    regenerateButton.disabled = state.streaming || state.recentTurns.length === 0;
+  }
+
+  function removeLatestTurnFromView() {
+    if (state.recentTurns.length === 0) {
+      return;
+    }
+
+    state.recentTurns = state.recentTurns.slice(1);
+    renderTurns();
   }
 
   function resetLive() {
@@ -296,6 +316,40 @@
     }
 
     await attachToTurn(payload?.turnId, "正在生成…");
+  });
+
+  regenerateButton?.addEventListener("click", async () => {
+    if (state.streaming || state.recentTurns.length === 0) {
+      return;
+    }
+
+    setStreaming(true, "正在准备重新生成…");
+
+    const response = await fetch("/api/chat/turns/regenerate-latest", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+
+    const payload = await response.json().catch(() => null);
+
+    if (response.status === 409) {
+      if (payload?.turnId) {
+        await attachToTurn(payload.turnId, payload.error || "正在恢复生成…");
+        return;
+      }
+
+      await loadRecentTurns().catch(() => {});
+      setStreaming(false, payload?.error || "当前没有可重新生成的最近回复");
+      return;
+    }
+
+    if (!response.ok) {
+      setStreaming(false, payload?.error || "请求失败");
+      return;
+    }
+
+    removeLatestTurnFromView();
+    await attachToTurn(payload?.turnId, "正在重新生成…");
   });
 
   async function bootstrap() {

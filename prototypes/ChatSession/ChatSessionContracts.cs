@@ -36,3 +36,8 @@ public sealed record ChatSessionStatistics(
     int RecapCount,
     ulong EstimatedTokens
 );
+
+public sealed record RemovedChatTurnResult(
+    string UserMessage,
+    int RemovedMessageCount
+);

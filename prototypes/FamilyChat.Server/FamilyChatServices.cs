@@ -155,6 +155,16 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         return host.StartTurn(userMessage);
     }
 
+    internal FamilyChatLiveTurn? StartLatestTurnRegeneration(UserSessionHost host) {
+        ArgumentNullException.ThrowIfNull(host);
+
+        if (!host.Engine.TryRemoveLatestCompletedTurn(out var removedTurn) || removedTurn is null) {
+            return null;
+        }
+
+        return host.StartTurn(removedTurn.UserMessage);
+    }
+
     internal FamilyChatLiveTurn? FindTurn(UserSessionHost host, string turnId) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
@@ -666,7 +676,10 @@ internal static class FamilyChatHtml {
         <textarea id="message-input" rows="3" placeholder="说点什么……" required></textarea>
         <div class="composer-actions">
           <span id="status-text" class="status-text"></span>
-          <button id="send-button" type="submit">发送</button>
+          <div class="composer-buttons">
+            <button id="regenerate-button" type="button" class="ghost-button">重抽最近回复</button>
+            <button id="send-button" type="submit">发送</button>
+          </div>
         </div>
       </form>
     </section>

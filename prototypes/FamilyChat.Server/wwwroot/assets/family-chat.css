@@ -126,6 +126,13 @@ button:disabled {
   margin-top: 10px;
 }
 
+.composer-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .history,
 .live-turn {
   display: grid;
@@ -203,4 +210,19 @@ pre {
 
 .error {
   color: #b22929;
+}
+
+@media (max-width: 640px) {
+  .composer-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .composer-buttons {
+    justify-content: stretch;
+  }
+
+  .composer-buttons button {
+    width: 100%;
+  }
 }
