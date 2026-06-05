@@ -155,14 +155,15 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         return host.StartTurn(userMessage);
     }
 
-    internal FamilyChatLiveTurn? StartLatestTurnRegeneration(UserSessionHost host) {
+    internal RecentTurnDto? PopLatestTurn(UserSessionHost host) {
         ArgumentNullException.ThrowIfNull(host);
 
+        var previousLatestTurn = BuildRecentTurns(host.Engine, maxTurns: 1).FirstOrDefault();
         if (!host.Engine.TryRemoveLatestCompletedTurn(out var removedTurn) || removedTurn is null) {
             return null;
         }
 
-        return host.StartTurn(removedTurn.UserMessage);
+        return previousLatestTurn;
     }
 
     internal FamilyChatLiveTurn? FindTurn(UserSessionHost host, string turnId) {
@@ -675,8 +676,13 @@ internal static class FamilyChatHtml {
       <form id="chat-form">
         <textarea id="message-input" rows="3" placeholder="说点什么……" required></textarea>
         <div class="composer-actions">
-          <span id="status-text" class="status-text"></span>
+          <div class="composer-status">
+            <span id="composer-mode-hint" class="eyebrow hidden"></span>
+            <span id="status-text" class="status-text"></span>
+          </div>
           <div class="composer-buttons">
+            <button id="edit-latest-button" type="button" class="ghost-button">编辑上一条消息</button>
+            <button id="cancel-edit-button" type="button" class="ghost-button hidden">退出编辑</button>
             <button id="regenerate-button" type="button" class="ghost-button">重抽最近回复</button>
             <button id="send-button" type="submit">发送</button>
           </div>

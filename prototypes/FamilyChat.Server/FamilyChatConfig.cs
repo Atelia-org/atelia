@@ -51,6 +51,10 @@ public sealed record ChatStreamRequest(
     [property: JsonPropertyName("message")] string Message
 );
 
+public sealed record PopLatestTurnResponseDto(
+    RecentTurnDto Turn
+);
+
 public sealed record StartTurnResponseDto(
     string TurnId,
     string Status,

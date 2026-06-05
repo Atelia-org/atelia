@@ -164,12 +164,11 @@ api.MapPost(
 );
 
 api.MapPost(
-    "/chat/turns/regenerate-latest",
+    "/chat/turns/pop-latest",
     async (
         HttpContext httpContext,
         ClaimsPrincipal user,
-        FamilyChatHostService hostService,
-        IHostApplicationLifetime applicationLifetime
+        FamilyChatHostService hostService
     ) => {
         string userId = user.FindFirstValue(FamilyChatClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
@@ -179,20 +178,20 @@ api.MapPost(
             return BuildTurnBusyConflict(hostService, session);
         }
 
-        var liveTurn = hostService.StartLatestTurnRegeneration(session);
-        if (liveTurn is null) {
-            session.TurnLock.Release();
+        var poppedTurn = hostService.PopLatestTurn(session);
+        session.TurnLock.Release();
+        if (poppedTurn is null) {
             return Results.Json(
                 new StartTurnResponseDto(
                     TurnId: string.Empty,
                     Status: "idle",
-                    Error: "当前没有可重新生成的最近 assistant 回复。"
+                    Error: "当前没有可取出的最近一轮。"
                 ),
                 statusCode: StatusCodes.Status409Conflict
             );
         }
 
-        return StartAcceptedTurn(session, liveTurn, hostService, applicationLifetime);
+        return Results.Ok(new PopLatestTurnResponseDto(poppedTurn));
     }
 );
 

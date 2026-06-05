@@ -126,6 +126,11 @@ button:disabled {
   margin-top: 10px;
 }
 
+.composer-status {
+  display: grid;
+  gap: 6px;
+}
+
 .composer-buttons {
   display: flex;
   flex-wrap: wrap;

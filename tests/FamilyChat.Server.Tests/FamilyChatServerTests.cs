@@ -143,6 +143,61 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ExistingSession_ReopenServer_StillReturnsRecentTurns() {
+        string tempDir = CreateTempDirectory();
+        try {
+            string sessionDir = Path.Combine(tempDir, "alice-session");
+            await SeedSessionAsync(
+                sessionDir,
+                "model-a",
+                "openai-chat/strict",
+                [
+                    ("one", "first reply"),
+                    ("two", "second reply"),
+                ]
+            );
+
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        sessionDir,
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, new ScriptedCompletionClientFactory());
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            var turns = await client.GetFromJsonAsync<List<RecentTurnDto>>("/api/recent-turns");
+
+            Assert.NotNull(turns);
+            Assert.Equal(2, turns!.Count);
+            Assert.Equal("two", turns[0].UserText);
+            Assert.Equal("second reply", turns[0].Assistant.Text);
+            Assert.Equal("one", turns[1].UserText);
+            Assert.Equal("first reply", turns[1].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ChatSession_TryRemoveLatestCompletedTurn_RemovesLatestTurnFromContext() {
         string repoDir = CreateTempDirectory();
         try {
@@ -233,7 +288,7 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
-    public async Task RegenerateLatestTurn_ReplacesPreviousAssistantReply() {
+    public async Task PopLatestTurn_ReturnsPoppedTurn_AndRemovesItFromRecentTurns() {
         string tempDir = CreateTempDirectory();
         try {
             var configPath = WriteConfig(
@@ -267,9 +322,66 @@ public sealed class FamilyChatServerTests {
             await LoginAsync(client, "alice", "pw1");
 
             await ReadSseAsStringAsync(client, "one");
+            await ReadSseAsStringAsync(client, "two");
 
-            var regenerate = await StartRegenerateLatestTurnAsync(client);
-            string sse = await ReadTurnEventsAsStringAsync(client, regenerate.TurnId);
+            var popped = await PopLatestTurnAsync(client);
+
+            Assert.NotNull(popped);
+            Assert.Equal("two", popped!.Turn.UserText);
+            Assert.Equal("rerolled reply", popped.Turn.Assistant.Text);
+
+            var turns = await client.GetFromJsonAsync<List<RecentTurnDto>>("/api/recent-turns");
+            Assert.NotNull(turns);
+            Assert.Single(turns!);
+            Assert.Equal("one", turns[0].UserText);
+            Assert.Equal("bad reply", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PopLatestTurn_ThenSendSameMessage_ReplacesPreviousAssistantReply() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").EnqueueText("bad reply");
+            scriptFactory.For("alice").EnqueueText("fixed reply");
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            await ReadSseAsStringAsync(client, "one");
+
+            var popped = await PopLatestTurnAsync(client);
+            Assert.NotNull(popped);
+
+            var replacement = await StartTurnAsync(client, popped!.Turn.UserText);
+            string sse = await ReadTurnEventsAsStringAsync(client, replacement.TurnId);
             await WaitForCurrentTurnIdleAsync(client);
 
             Assert.Contains("event: done", sse, StringComparison.Ordinal);
@@ -278,7 +390,7 @@ public sealed class FamilyChatServerTests {
             Assert.NotNull(turns);
             Assert.Single(turns!);
             Assert.Equal("one", turns[0].UserText);
-            Assert.Equal("rerolled reply", turns[0].Assistant.Text);
+            Assert.Equal("fixed reply", turns[0].Assistant.Text);
         }
         finally {
             Directory.Delete(tempDir, recursive: true);
@@ -286,7 +398,63 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
-    public async Task RegenerateLatestTurn_WithoutCompletedTurn_Returns409() {
+    public async Task PopLatestTurn_ThenSendEditedMessage_ReplacesLatestUserMessage() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").EnqueueText("bad reply");
+            scriptFactory.For("alice").EnqueueText("fixed reply");
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            await ReadSseAsStringAsync(client, "原始坏提示词");
+
+            var popped = await PopLatestTurnAsync(client);
+            Assert.NotNull(popped);
+
+            var replacement = await StartTurnAsync(client, "修正后的提示词");
+            string sse = await ReadTurnEventsAsStringAsync(client, replacement.TurnId);
+            await WaitForCurrentTurnIdleAsync(client);
+
+            Assert.Contains("event: done", sse, StringComparison.Ordinal);
+
+            var turns = await client.GetFromJsonAsync<List<RecentTurnDto>>("/api/recent-turns");
+            Assert.NotNull(turns);
+            Assert.Single(turns!);
+            Assert.Equal("修正后的提示词", turns[0].UserText);
+            Assert.Equal("fixed reply", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PopLatestTurn_WithoutCompletedTurn_Returns409() {
         string tempDir = CreateTempDirectory();
         try {
             var configPath = WriteConfig(
@@ -315,13 +483,13 @@ public sealed class FamilyChatServerTests {
             });
             await LoginAsync(client, "alice", "pw1");
 
-            using var response = await client.PostAsync("/api/chat/turns/regenerate-latest", content: null);
+            using var response = await client.PostAsync("/api/chat/turns/pop-latest", content: null);
 
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
             var payload = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
             Assert.NotNull(payload);
             Assert.Equal("idle", payload!.Status);
-            Assert.Contains("当前没有可重新生成", payload.Error, StringComparison.Ordinal);
+            Assert.Contains("当前没有可取出", payload.Error, StringComparison.Ordinal);
         }
         finally {
             Directory.Delete(tempDir, recursive: true);
@@ -960,13 +1128,12 @@ public sealed class FamilyChatServerTests {
         return started!;
     }
 
-    private static async Task<StartTurnResponseDto> StartRegenerateLatestTurnAsync(HttpClient client) {
-        using var response = await client.PostAsync("/api/chat/turns/regenerate-latest", content: null);
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        var started = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
-        Assert.NotNull(started);
-        Assert.False(string.IsNullOrWhiteSpace(started!.TurnId));
-        return started!;
+    private static async Task<PopLatestTurnResponseDto> PopLatestTurnAsync(HttpClient client) {
+        using var response = await client.PostAsync("/api/chat/turns/pop-latest", content: null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var popped = await response.Content.ReadFromJsonAsync<PopLatestTurnResponseDto>();
+        Assert.NotNull(popped);
+        return popped!;
     }
 
     private static async Task<HttpResponseMessage> OpenTurnEventsAsync(HttpClient client, string turnId) {
