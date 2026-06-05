@@ -21,10 +21,14 @@ public sealed record FamilyChatUserConfig(
     string SessionDir,
     string ModelId,
     string CompletionSurfaceId,
-    string SystemPrompt,
     ulong CompactionThresholdTokens,
     string CompactionSystemPrompt,
-    string CompactionPrompt
+    string CompactionPrompt,
+    string SystemPrompt = "",
+    // Optional path to a markdown (or plain text) file whose content overrides
+    // the inline SystemPrompt. Resolved relative to the config file's directory
+    // when not absolute. Convenient for authoring long system prompts.
+    string? SystemPromptFile = null
 );
 
 public sealed record FamilyChatMeDto(

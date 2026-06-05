@@ -468,8 +468,36 @@ internal static class FamilyChatConfigLoader {
             throw new InvalidOperationException("FamilyChat config must contain at least one user.");
         }
 
+        config = ResolveSystemPromptFiles(config, resolvedPath);
+
         Validate(config);
         return config;
+    }
+
+    private static FamilyChatConfig ResolveSystemPromptFiles(FamilyChatConfig config, string configPath) {
+        string configDir = Path.GetDirectoryName(configPath)
+            ?? throw new InvalidOperationException($"Cannot determine config directory for: {configPath}");
+
+        var resolvedUsers = new List<FamilyChatUserConfig>(config.Users.Count);
+        foreach (var user in config.Users) {
+            if (string.IsNullOrWhiteSpace(user.SystemPromptFile)) {
+                resolvedUsers.Add(user);
+                continue;
+            }
+
+            string promptPath = Path.GetFullPath(user.SystemPromptFile, configDir);
+            if (!File.Exists(promptPath)) {
+                throw new FileNotFoundException(
+                    $"FamilyChat user '{user.UserId}' systemPromptFile was not found: {promptPath}",
+                    promptPath
+                );
+            }
+
+            string promptText = File.ReadAllText(promptPath).Trim();
+            resolvedUsers.Add(user with { SystemPrompt = promptText });
+        }
+
+        return config with { Users = resolvedUsers };
     }
 
     private static void Validate(FamilyChatConfig config) {
@@ -490,6 +518,13 @@ internal static class FamilyChatConfigLoader {
 
             if (string.IsNullOrWhiteSpace(user.SessionDir)) {
                 throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty sessionDir.");
+            }
+
+            if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {
+                throw new InvalidOperationException(
+                    $"FamilyChat config user '{user.UserId}' must provide a non-empty systemPrompt "
+                    + "(either inline via 'systemPrompt' or by pointing 'systemPromptFile' at a non-empty file)."
+                );
             }
         }
 

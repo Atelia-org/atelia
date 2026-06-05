@@ -79,6 +79,24 @@ http://0.0.0.0:3510
 }
 ```
 
+## 用 Markdown 文件撰写系统提示词
+
+系统提示词通常很长，写在 `config.json` 的 `systemPrompt` 字符串里需要转义换行、难以编辑。为此每个用户支持一个 `systemPromptFile` 字段，指向一个 Markdown（或纯文本）文件，其内容会覆盖内联的 `systemPrompt`：
+
+```json
+{
+  "userId": "alice",
+  "systemPromptFile": "prompts/alice.md"
+}
+```
+
+规则：
+
+- `systemPromptFile` 为相对路径时，相对于 `config.json` 所在目录解析（绝对路径也可）。
+- 文件内容加载后会 `Trim()` 首尾空白，整体作为该用户的系统提示词。
+- 设置了 `systemPromptFile` 时无需再写 `systemPrompt`；若两者都给，文件内容优先。
+- 文件不存在会在启动时报错并退出；最终系统提示词为空也会报错。
+
 ## 使用约束
 
 - 每个账号只有一个固定会话，不提供新建会话。
