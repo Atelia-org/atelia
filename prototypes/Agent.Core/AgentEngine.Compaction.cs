@@ -355,7 +355,10 @@ public partial class AgentEngine {
     }
 
     private static string BuildToolResultsPreview(ToolResultsEntry toolResults) {
-        if (!string.IsNullOrWhiteSpace(toolResults.ExecuteError)) { return "工具执行失败: " + toolResults.ExecuteError; }
+        var failed = toolResults.Results.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
+        if (failed is not null) {
+            return "工具执行失败: " + failed.ExecuteResult.GetFlattenedText();
+        }
 
         if (toolResults.Results.Count > 0) {
             var names = new List<string>(capacity: Math.Min(toolResults.Results.Count, 3));

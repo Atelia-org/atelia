@@ -27,7 +27,6 @@ public sealed class EnginePanelApp : IApp {
     private readonly Func<string, string, string> _buildSystemPrompt;
     private readonly string _summarizePrompt;
     private readonly ITool _compressTool;
-    private bool _isCompressToolVisible;
 
     public EnginePanelApp(
         AgentEngine engine,
@@ -40,9 +39,6 @@ public sealed class EnginePanelApp : IApp {
         _summarizePrompt = summarizePrompt ?? ContextCompressionPrompts.DefaultSummarizePrompt;
 
         _compressTool = MethodToolWrapper.FromDelegate<CompressToolInput>(CompressAsync);
-        // 工具初始对 LLM 不可见；RenderWindow 会更新显隐状态，
-        // 引擎随后把该状态投影到 ToolAccessPolicy，保证工具出现时机与提示窗口完全对齐。
-        _isCompressToolVisible = false;
         Tools = new ITool[] { _compressTool };
     }
 
@@ -58,11 +54,14 @@ public sealed class EnginePanelApp : IApp {
 
     public IReadOnlyList<ITool> Tools { get; }
 
-    public IReadOnlyList<string> HiddenToolNames => _isCompressToolVisible ? [] : [_compressTool.Definition.Name];
-
-    public string? RenderWindow(AppRenderContext context) {
+    public AppProjection Render(AppRenderContext context) {
         var profile = context.CurrentProfile;
-        if (profile is null) { return null; }
+        if (profile is null) {
+            return new AppProjection(
+                Window: null,
+                HiddenToolNames: [_compressTool.Definition.Name]
+            );
+        }
 
         var tokens = context.EstimatedContextTokens;
         var capValue = (ulong)profile.SoftContextTokenCap;
@@ -71,13 +70,17 @@ public sealed class EnginePanelApp : IApp {
         var profileName = profile.Name;
 
         if (percentage < 85.0) {
-            _isCompressToolVisible = false;
-            return null;
+            return new AppProjection(
+                Window: null,
+                HiddenToolNames: [_compressTool.Definition.Name]
+            );
         }
 
-        _isCompressToolVisible = true;
         DebugUtil.Info(DebugCategory, $"[ctx_compress] Window visible. tokens={tokens}/{capValue} ({percentage:F1}%) remaining={remaining} profile={profileName}");
-        return BuildActionWindow(tokens, capValue, percentage, remaining, profileName, context.EstimatedCompactionPreview);
+        return new AppProjection(
+            Window: BuildActionWindow(tokens, capValue, percentage, remaining, profileName, context.EstimatedCompactionPreview),
+            HiddenToolNames: Array.Empty<string>()
+        );
     }
 
     [Tool("ctx_compress",

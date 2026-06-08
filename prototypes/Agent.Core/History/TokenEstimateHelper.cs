@@ -125,8 +125,6 @@ public sealed class TokenEstimateHelper {
                 // total += EstimateElapsed(result.Elapsed); 元信息，不会单独序列化到LLM调用上下文中，已包含在result.Result.Detail中
             }
         }
-        // ExecuteError 是 History 层为预览/诊断保留的摘要字段；当前不会额外序列化到 ToolResultsMessage。
-        // 失败细节已经包含在对应 ToolResult 的 blocks 中，这里不再重复计入，避免高估上下文占用。
 
         return total;
     }

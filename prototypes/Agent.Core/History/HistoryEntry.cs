@@ -207,13 +207,8 @@ public sealed record class ToolResultsEntry : ObservationEntry {
     /// 初始化工具结果条目。
     /// </summary>
     /// <param name="results">工具调用结果列表。</param>
-    /// <param name="executeError">工具执行过程中产生的错误信息。</param>
-    public ToolResultsEntry(
-        IReadOnlyList<ToolCallExecutionResult> results,
-        string? executeError
-    ) {
+    public ToolResultsEntry(IReadOnlyList<ToolCallExecutionResult> results) {
         Results = results ?? throw new ArgumentNullException(nameof(results));
-        ExecuteError = executeError;
     }
 
     /// <inheritdoc />
@@ -223,11 +218,6 @@ public sealed record class ToolResultsEntry : ObservationEntry {
     /// 获取工具调用结果列表。
     /// </summary>
     public IReadOnlyList<ToolCallExecutionResult> Results { get; init; }
-
-    /// <summary>
-    /// 获取工具执行错误信息。
-    /// </summary>
-    public string? ExecuteError { get; init; }
 
     /// <summary>
     /// 将此条目投影为 <see cref="ToolResultsMessage"/>。

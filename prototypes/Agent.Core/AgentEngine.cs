@@ -182,44 +182,25 @@ public partial class AgentEngine {
         _activeToolExecutor = null;
         _toolsDirty = false;
 
-        // Capture a snapshot for diagnostics so日志能体现当前可见工具数量。
-        var visibleDefinitions = new ToolSessionState(toolAccess: BuildCurrentToolAccessPolicy()).GetVisibleToolDefinitions(registry);
         DebugUtil.Info(
             StateMachineDebugCategory,
-            $"[Engine] Tool cache rebuilt all={registry.AllDefinitions.Length} visible={visibleDefinitions.Length}"
+            $"[Engine] Tool cache rebuilt all={registry.AllDefinitions.Length}"
         );
         return registry;
     }
 
     private ToolExecutor CreateToolExecutor() {
+        return CreateToolExecutor(ToolAccessPolicy.AllowAll);
+    }
+
+    private ToolExecutor CreateToolExecutor(ToolAccessPolicy toolAccessPolicy) {
         var executor = new ToolExecutor(
             ToolRegistry,
-            new ToolSessionState(toolAccess: BuildCurrentToolAccessPolicy())
+            new ToolSessionState(toolAccess: toolAccessPolicy)
         );
 
         _activeToolExecutor = executor;
         return executor;
-    }
-
-    private ToolAccessPolicy BuildCurrentToolAccessPolicy() {
-        if (_appHost.Apps.IsDefaultOrEmpty) { return ToolAccessPolicy.AllowAll; }
-
-        HashSet<string>? hiddenToolNames = null;
-
-        foreach (var app in _appHost.Apps) {
-            if (app.HiddenToolNames is not { Count: > 0 }) { continue; }
-
-            hiddenToolNames ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var toolName in app.HiddenToolNames) {
-                if (!string.IsNullOrWhiteSpace(toolName)) {
-                    hiddenToolNames.Add(toolName);
-                }
-            }
-        }
-
-        return hiddenToolNames is null || hiddenToolNames.Count == 0
-            ? ToolAccessPolicy.AllowAll
-            : new ToolAccessPolicy(hiddenToolNames);
     }
 
     /// <summary>
@@ -561,16 +542,17 @@ public partial class AgentEngine {
             EstimatedContextTokens: estimatedContextTokens,
             EstimatedCompactionPreview: compactionPreview
         );
+        var appProjection = _appHost.Project(renderContext);
         var projection = _state.ProjectInvocationContext(
             new ContextProjectionOptions(
                 TargetInvocation: invocation,
-                Windows: _appHost.RenderWindows(renderContext)
+                Windows: appProjection.Windows
             )
         );
         var liveContext = projection.ToFlat();
         DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
-        var toolExecutor = CreateToolExecutor();
+        var toolExecutor = CreateToolExecutor(appProjection.ToolAccessPolicy);
         var toolDefinitions = toolExecutor.VisibleToolDefinitions;
 
         var request = new CompletionRequest(resolvedProfile.ModelId, SystemPrompt, liveContext, toolDefinitions);
@@ -632,18 +614,14 @@ public partial class AgentEngine {
             collectedResults.Add(result);
         }
 
-        var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
-        var executeError = failure is null
-            ? null
-            : failure.ExecuteResult.GetFlattenedText();
-
         var results = collectedResults.ToArray();
-        var entry = new ToolResultsEntry(results, executeError);
+        var entry = new ToolResultsEntry(results);
 
         var appended = AppendToolResultsWithSummary(entry);
         _pendingToolResults.Clear();
         _activeToolExecutor = null;
 
+        var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
         var failureCallId = failure?.ToolCallId ?? "none";
         DebugUtil.Info(StateMachineDebugCategory, $"[Engine] Tool results appended count={results.Length} failure={failureCallId}");
 

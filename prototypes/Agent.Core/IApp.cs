@@ -34,12 +34,21 @@ public readonly record struct AppRenderContext(
     CompactionPreview? EstimatedCompactionPreview
 );
 
+public readonly record struct AppProjection(
+    string? Window,
+    IReadOnlyList<string>? HiddenToolNames = null
+);
+
+public readonly record struct AppHostProjection(
+    string? Windows,
+    ToolAccessPolicy ToolAccessPolicy
+);
+
 public interface IApp {
     string Name { get; }
     string Description { get; }
     IReadOnlyList<ITool> Tools { get; }
-    IReadOnlyList<string> HiddenToolNames => Array.Empty<string>();
-    string? RenderWindow(AppRenderContext context);
+    AppProjection Render(AppRenderContext context);
 }
 
 internal interface IAppHost {
@@ -49,5 +58,5 @@ internal interface IAppHost {
     void RegisterApp(IApp app);
     bool RemoveApp(string name);
 
-    string? RenderWindows(AppRenderContext context);
+    AppHostProjection Project(AppRenderContext context);
 }

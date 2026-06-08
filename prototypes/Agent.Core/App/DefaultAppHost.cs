@@ -56,33 +56,56 @@ internal sealed class DefaultAppHost : IAppHost {
         return true;
     }
 
-    public string? RenderWindows(AppRenderContext context) {
-        if (_apps.IsDefaultOrEmpty) { return null; }
+    public AppHostProjection Project(AppRenderContext context) {
+        if (_apps.IsDefaultOrEmpty) {
+            return new AppHostProjection(
+                Windows: null,
+                ToolAccessPolicy: ToolAccessPolicy.AllowAll
+            );
+        }
 
         var fragments = new List<string>();
+        HashSet<string>? hiddenToolNames = null;
 
         foreach (var app in _apps) {
-            var fragment = app.RenderWindow(context);
-            if (!string.IsNullOrWhiteSpace(fragment)) {
-                fragments.Add(fragment.TrimEnd());
+            var projection = app.Render(context);
+            if (!string.IsNullOrWhiteSpace(projection.Window)) {
+                fragments.Add(projection.Window.TrimEnd());
+            }
+
+            if (projection.HiddenToolNames is not { Count: > 0 }) { continue; }
+
+            hiddenToolNames ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var toolName in projection.HiddenToolNames) {
+                if (!string.IsNullOrWhiteSpace(toolName)) {
+                    hiddenToolNames.Add(toolName);
+                }
             }
         }
 
-        if (fragments.Count == 0) { return null; }
+        string? windows = null;
+        if (fragments.Count > 0) {
+            var builder = new StringBuilder();
+            builder.AppendLine("# [Window]");
+            builder.AppendLine();
 
-        var builder = new StringBuilder();
-        builder.AppendLine("# [Window]");
-        builder.AppendLine();
+            for (var index = 0; index < fragments.Count; index++) {
+                builder.AppendLine(fragments[index]);
 
-        for (var index = 0; index < fragments.Count; index++) {
-            builder.AppendLine(fragments[index]);
-
-            if (index < fragments.Count - 1) {
-                builder.AppendLine();
+                if (index < fragments.Count - 1) {
+                    builder.AppendLine();
+                }
             }
+
+            windows = builder.ToString().TrimEnd();
         }
 
-        return builder.ToString().TrimEnd();
+        return new AppHostProjection(
+            Windows: windows,
+            ToolAccessPolicy: hiddenToolNames is null || hiddenToolNames.Count == 0
+                ? ToolAccessPolicy.AllowAll
+                : new ToolAccessPolicy(hiddenToolNames)
+        );
     }
 
     private int FindAppIndex(string name) {
