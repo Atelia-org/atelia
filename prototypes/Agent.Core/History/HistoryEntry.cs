@@ -237,9 +237,8 @@ public sealed record class ToolResultsEntry : ObservationEntry {
         IReadOnlyList<ToolResult> projectedResults = ProjectResults(Results);
 
         return new ToolResultsMessage(
-            Content: MergeContent(Notifications, windows),
-            Results: projectedResults,
-            ExecuteError: ExecuteError
+            content: MergeContent(Notifications, windows),
+            results: projectedResults
         );
     }
 
@@ -255,14 +254,7 @@ public sealed record class ToolResultsEntry : ObservationEntry {
 
         for (int i = 0; i < source.Count; i++) {
             ToolCallExecutionResult item = source[i];
-            builder.Add(
-                new ToolResult(
-                    item.ToolName,
-                    item.ToolCallId,
-                    item.ExecuteResult.Status,
-                    item.ExecuteResult.Content
-                )
-            );
+            builder.Add(item.ToToolResult());
         }
 
         return builder.MoveToImmutable();

@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.ComponentModel;
 using System.Text;
+using System.Text.Json.Serialization;
 using Atelia.Agent.Core.Apps;
 using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
@@ -25,6 +27,7 @@ public sealed class EnginePanelApp : IApp {
     private readonly Func<string, string, string> _buildSystemPrompt;
     private readonly string _summarizePrompt;
     private readonly ITool _compressTool;
+    private bool _isCompressToolVisible;
 
     public EnginePanelApp(
         AgentEngine engine,
@@ -36,10 +39,10 @@ public sealed class EnginePanelApp : IApp {
         _buildSystemPrompt = BuildSystemPromptFactory(systemPromptTemplate);
         _summarizePrompt = summarizePrompt ?? ContextCompressionPrompts.DefaultSummarizePrompt;
 
-        _compressTool = MethodToolWrapper.FromDelegate<string?, string?>(CompressAsync);
-        // 工具初始对 LLM 不可见；在 RenderWindow 计算阈值后再决定是否可见，
-        // 保证工具出现时机与提示窗口完全对齐，避免模型在低 token 占比时被不必要地分心。
-        _compressTool.Visible = false;
+        _compressTool = MethodToolWrapper.FromDelegate<CompressToolInput>(CompressAsync);
+        // 工具初始对 LLM 不可见；RenderWindow 会更新显隐状态，
+        // 引擎随后把该状态投影到 ToolAccessPolicy，保证工具出现时机与提示窗口完全对齐。
+        _isCompressToolVisible = false;
         Tools = new ITool[] { _compressTool };
     }
 
@@ -55,6 +58,8 @@ public sealed class EnginePanelApp : IApp {
 
     public IReadOnlyList<ITool> Tools { get; }
 
+    public IReadOnlyList<string> HiddenToolNames => _isCompressToolVisible ? [] : [_compressTool.Definition.Name];
+
     public string? RenderWindow(AppRenderContext context) {
         var profile = context.CurrentProfile;
         if (profile is null) { return null; }
@@ -66,11 +71,11 @@ public sealed class EnginePanelApp : IApp {
         var profileName = profile.Name;
 
         if (percentage < 85.0) {
-            _compressTool.Visible = false;
+            _isCompressToolVisible = false;
             return null;
         }
 
-        _compressTool.Visible = true;
+        _isCompressToolVisible = true;
         DebugUtil.Info(DebugCategory, $"[ctx_compress] Window visible. tokens={tokens}/{capValue} ({percentage:F1}%) remaining={remaining} profile={profileName}");
         return BuildActionWindow(tokens, capValue, percentage, remaining, profileName, context.EstimatedCompactionPreview);
     }
@@ -85,19 +90,11 @@ public sealed class EnginePanelApp : IApp {
         "为简化执行语义，本轮若存在多个工具调用，当前实现仍按模型给出的原始顺序依次执行。"
     )]
     private async ValueTask<ToolExecuteResult> CompressAsync(
-        [ToolParam(
-            "希望摘要中重点保留的内容（自然语言描述）。例如：" +
-            "\"用户的核心目标与未完成的子任务、所有数字结论、文件路径与 blockId 引用\"。" +
-            "若当前上下文已给出预计压缩范围，请优先说明那段旧历史里哪些信息虽然现在不显眼、但对当前目标仍关键。" +
-            "留空则使用通用保留策略（核心目标、决策、未解决项）。"
-        )] string? keep_hints = null,
-        [ToolParam(
-            "希望摘要中主动遗忘或淡化的内容（自然语言描述）。例如：" +
-            "\"已废弃的探索分支、已被覆盖的中间假设、冗长的工具原始输出\"。" +
-            "留空则使用通用淡化策略（重复试错、已修正的错误推理）。"
-        )] string? forget_hints = null,
+        CompressToolInput input,
+        ToolExecutionContext context,
         CancellationToken cancellationToken = default
     ) {
+        _ = context;
         cancellationToken.ThrowIfCancellationRequested();
 
         if (Engine.HasPendingCompaction) {
@@ -105,13 +102,13 @@ public sealed class EnginePanelApp : IApp {
             return Fail("当前已有待执行的上下文压缩请求，请先让引擎完成该请求后再试。");
         }
 
-        var keep = string.IsNullOrWhiteSpace(keep_hints)
+        var keep = string.IsNullOrWhiteSpace(input.KeepHints)
             ? ContextCompressionPrompts.DefaultKeepHint
-            : keep_hints!;
+            : input.KeepHints!;
 
-        var forget = string.IsNullOrWhiteSpace(forget_hints)
+        var forget = string.IsNullOrWhiteSpace(input.ForgetHints)
             ? ContextCompressionPrompts.DefaultForgetHint
-            : forget_hints!;
+            : input.ForgetHints!;
 
         var systemPrompt = _buildSystemPrompt(keep, forget);
 
@@ -129,6 +126,25 @@ public sealed class EnginePanelApp : IApp {
         DebugUtil.Info(DebugCategory, $"[ctx_compress] Succeeded. before={FormatPercent(outcome.BeforeCapacityRatio)} after={FormatPercent(outcome.AfterCapacityRatio)} released={FormatPercent(outcome.ReleasedCapacityRatio)} history={outcome.HistoryCountBefore}→{outcome.HistoryCountAfter} summaryLen={outcome.SummaryLength}");
         return Ok(BuildCompactionSuccessMessage(outcome));
     }
+
+    [Description("Input for ctx_compress.")]
+    private sealed record class CompressToolInput(
+        [property: Description(
+            "希望摘要中重点保留的内容（自然语言描述）。例如：" +
+            "\"用户的核心目标与未完成的子任务、所有数字结论、文件路径与 blockId 引用\"。" +
+            "若当前上下文已给出预计压缩范围，请优先说明那段旧历史里哪些信息虽然现在不显眼、但对当前目标仍关键。" +
+            "留空则使用通用保留策略（核心目标、决策、未解决项）。"
+        )]
+        [property: JsonPropertyName("keep_hints")]
+        string? KeepHints = null,
+        [property: Description(
+            "希望摘要中主动遗忘或淡化的内容（自然语言描述）。例如：" +
+            "\"已废弃的探索分支、已被覆盖的中间假设、冗长的工具原始输出\"。" +
+            "留空则使用通用淡化策略（重复试错、已修正的错误推理）。"
+        )]
+        [property: JsonPropertyName("forget_hints")]
+        string? ForgetHints = null
+    );
 
     private static string? BuildActionWindow(
         ulong tokens,
@@ -173,16 +189,10 @@ public sealed class EnginePanelApp : IApp {
     }
 
     private static ToolExecuteResult Ok(string message)
-        => new(
-            ToolExecutionStatus.Success,
-            message
-        );
+        => ToolExecuteResult.FromText(ToolExecutionStatus.Success, message);
 
     private static ToolExecuteResult Fail(string message)
-        => new(
-            ToolExecutionStatus.Failed,
-            message
-        );
+        => ToolExecuteResult.FromText(ToolExecutionStatus.Failed, message);
 
     private static string BuildCompactionSuccessMessage(AgentEngine.CompactionExecutionResult outcome) {
         return "上下文压缩成功：估算占用从 "

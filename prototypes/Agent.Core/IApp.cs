@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
@@ -37,6 +38,7 @@ public interface IApp {
     string Name { get; }
     string Description { get; }
     IReadOnlyList<ITool> Tools { get; }
+    IReadOnlyList<string> HiddenToolNames => Array.Empty<string>();
     string? RenderWindow(AppRenderContext context);
 }
 

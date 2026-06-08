@@ -26,8 +26,9 @@ public partial class AgentEngine {
     private readonly Func<DateTimeOffset> _utcNowProvider;
     private readonly AutoCompactionOptions? _autoCompactionOptions;
 
-    private ToolExecutor? _toolExecutor;
-    private ToolExecutor ToolExecutor => EnsureToolsBuilt();
+    private ToolRegistry? _toolRegistry;
+    private ToolExecutor? _activeToolExecutor;
+    private ToolRegistry ToolRegistry => EnsureToolsBuilt();
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
     private readonly TurnRuntimeState _turnRuntime = new();
@@ -159,8 +160,8 @@ public partial class AgentEngine {
         return true;
     }
 
-    private ToolExecutor EnsureToolsBuilt() {
-        if (!_toolsDirty && _toolExecutor is not null) { return _toolExecutor; }
+    private ToolRegistry EnsureToolsBuilt() {
+        if (!_toolsDirty && _toolRegistry is not null) { return _toolRegistry; }
 
         var aggregate = new List<ITool>();
 
@@ -176,17 +177,49 @@ public partial class AgentEngine {
             aggregate.AddRange(_standaloneTools.Values);
         }
 
-        var executor = new ToolExecutor(aggregate);
-        _toolExecutor = executor;
+        var registry = new ToolRegistry(aggregate);
+        _toolRegistry = registry;
+        _activeToolExecutor = null;
         _toolsDirty = false;
 
         // Capture a snapshot for diagnostics so日志能体现当前可见工具数量。
-        var visibleDefinitions = executor.GetVisibleToolDefinitions();
+        var visibleDefinitions = new ToolSessionState(toolAccess: BuildCurrentToolAccessPolicy()).GetVisibleToolDefinitions(registry);
         DebugUtil.Info(
             StateMachineDebugCategory,
-            $"[Engine] Tool cache rebuilt all={executor.AllToolDefinitions.Length} visible={visibleDefinitions.Length}"
+            $"[Engine] Tool cache rebuilt all={registry.AllDefinitions.Length} visible={visibleDefinitions.Length}"
         );
+        return registry;
+    }
+
+    private ToolExecutor CreateToolExecutor() {
+        var executor = new ToolExecutor(
+            ToolRegistry,
+            new ToolSessionState(toolAccess: BuildCurrentToolAccessPolicy())
+        );
+
+        _activeToolExecutor = executor;
         return executor;
+    }
+
+    private ToolAccessPolicy BuildCurrentToolAccessPolicy() {
+        if (_appHost.Apps.IsDefaultOrEmpty) { return ToolAccessPolicy.AllowAll; }
+
+        HashSet<string>? hiddenToolNames = null;
+
+        foreach (var app in _appHost.Apps) {
+            if (app.HiddenToolNames is not { Count: > 0 }) { continue; }
+
+            hiddenToolNames ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var toolName in app.HiddenToolNames) {
+                if (!string.IsNullOrWhiteSpace(toolName)) {
+                    hiddenToolNames.Add(toolName);
+                }
+            }
+        }
+
+        return hiddenToolNames is null || hiddenToolNames.Count == 0
+            ? ToolAccessPolicy.AllowAll
+            : new ToolAccessPolicy(hiddenToolNames);
     }
 
     /// <summary>
@@ -537,8 +570,8 @@ public partial class AgentEngine {
         var liveContext = projection.ToFlat();
         DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
-        var toolExecutor = ToolExecutor;
-        var toolDefinitions = toolExecutor.GetVisibleToolDefinitions();
+        var toolExecutor = CreateToolExecutor();
+        var toolDefinitions = toolExecutor.VisibleToolDefinitions;
 
         var request = new CompletionRequest(resolvedProfile.ModelId, SystemPrompt, liveContext, toolDefinitions);
 
@@ -573,7 +606,7 @@ public partial class AgentEngine {
         var nextCall = FindNextPendingToolCall(outputEntry);
         if (nextCall is null) { return StepOutcome.NoProgress; }
 
-        var toolExecutor = ToolExecutor;
+        var toolExecutor = _activeToolExecutor ?? CreateToolExecutor();
         var result = await toolExecutor.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         _pendingToolResults[nextCall.ToolCallId] = result;
 
@@ -602,13 +635,14 @@ public partial class AgentEngine {
         var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
         var executeError = failure is null
             ? null
-            : failure.ExecuteResult.Content;
+            : failure.ExecuteResult.GetFlattenedText();
 
         var results = collectedResults.ToArray();
         var entry = new ToolResultsEntry(results, executeError);
 
         var appended = AppendToolResultsWithSummary(entry);
         _pendingToolResults.Clear();
+        _activeToolExecutor = null;
 
         var failureCallId = failure?.ToolCallId ?? "none";
         DebugUtil.Info(StateMachineDebugCategory, $"[Engine] Tool results appended count={results.Length} failure={failureCallId}");
