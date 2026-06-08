@@ -2,13 +2,11 @@ using System.Globalization;
 using System.ComponentModel;
 using System.Text;
 using System.Text.Json.Serialization;
-using Atelia.Agent.Core.Apps;
-using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.Diagnostics;
 
-namespace Atelia.Agent.Core.App;
+namespace Atelia.Agent.Core.Apps;
 
 /// <summary>
 /// 由 <see cref="AgentEngine"/> 自身创建并托管的运行时控制面板 App。

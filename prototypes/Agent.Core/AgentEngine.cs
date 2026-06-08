@@ -1,4 +1,5 @@
 using Atelia.Agent.Core.App;
+using Atelia.Agent.Core.Apps;
 using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
