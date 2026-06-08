@@ -18,8 +18,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
             var runtime = new ChatSessionRuntime(
                 CompletionClient: completionClient,
                 CompletionSurfaceId: "openai-chat/strict",
-                ToolRegistry: new ToolRegistry(Array.Empty<ITool>()),
-                ToolSessionState: new ToolSessionState()
+                ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
             );
 
             using (var engine = await ChatSessionEngine.CreateAsync(
@@ -44,8 +43,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
                 new ChatSessionRuntime(
                     CompletionClient: new ScriptedCompletionClient("openai-chat-v1"),
                     CompletionSurfaceId: "openai-chat/strict",
-                    ToolRegistry: new ToolRegistry(Array.Empty<ITool>()),
-                    ToolSessionState: new ToolSessionState()
+                    ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
 
@@ -111,8 +109,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
             var runtime = new ChatSessionRuntime(
                 CompletionClient: completionClient,
                 CompletionSurfaceId: "openai-chat/strict",
-                ToolRegistry: new ToolRegistry([echoTool]),
-                ToolSessionState: new ToolSessionState(
+                ToolSession: new ToolRegistry([echoTool]).CreateSession(
                     items: new Dictionary<string, object?> { ["scope"] = "demo" }
                 )
             );

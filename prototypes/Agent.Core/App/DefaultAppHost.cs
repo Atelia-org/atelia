@@ -60,7 +60,7 @@ internal sealed class DefaultAppHost : IAppHost {
         if (_apps.IsDefaultOrEmpty) {
             return new AppHostProjection(
                 Windows: null,
-                ToolAccessPolicy: ToolAccessPolicy.AllowAll
+                ToolAccessSnapshot: ToolAccessSnapshot.AllowAll
             );
         }
 
@@ -102,9 +102,9 @@ internal sealed class DefaultAppHost : IAppHost {
 
         return new AppHostProjection(
             Windows: windows,
-            ToolAccessPolicy: hiddenToolNames is null || hiddenToolNames.Count == 0
-                ? ToolAccessPolicy.AllowAll
-                : new ToolAccessPolicy(hiddenToolNames)
+            ToolAccessSnapshot: hiddenToolNames is null || hiddenToolNames.Count == 0
+                ? ToolAccessSnapshot.AllowAll
+                : new ToolAccessSnapshot(hiddenToolNames)
         );
     }
 

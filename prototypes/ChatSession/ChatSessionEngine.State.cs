@@ -137,16 +137,12 @@ public sealed partial class ChatSessionEngine : IDisposable {
         }
 
         if (runtime.CompletionClient.ApiSpecId == GeminiApiSpecId
-            && runtime.ToolSessionState.GetVisibleToolDefinitions(runtime.ToolRegistry).Length > 0) {
-            throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1.");
-        }
+            && runtime.ToolSession.VisibleDefinitions.Length > 0) { throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1."); }
     }
 
     private static void ValidateRuntimeCompatibility(ChatSessionRuntime runtime) {
         if (runtime.CompletionClient.ApiSpecId == GeminiApiSpecId
-            && runtime.ToolSessionState.GetVisibleToolDefinitions(runtime.ToolRegistry).Length > 0) {
-            throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1.");
-        }
+            && runtime.ToolSession.VisibleDefinitions.Length > 0) { throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1."); }
     }
 
     private static void ValidateRoot(DurableDict<string> root) {

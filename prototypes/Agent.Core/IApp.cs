@@ -41,7 +41,7 @@ public readonly record struct AppProjection(
 
 public readonly record struct AppHostProjection(
     string? Windows,
-    ToolAccessPolicy ToolAccessPolicy
+    ToolAccessSnapshot ToolAccessSnapshot
 );
 
 public interface IApp {

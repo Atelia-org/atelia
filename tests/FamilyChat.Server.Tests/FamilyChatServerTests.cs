@@ -55,8 +55,7 @@ public sealed class FamilyChatServerTests {
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
-                    new ToolRegistry([new EchoTool()]),
-                    new ToolSessionState()
+                    new ToolRegistry([new EchoTool()]).CreateSession()
                 )
             );
 
@@ -211,8 +210,7 @@ public sealed class FamilyChatServerTests {
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
-                    new ToolRegistry(Array.Empty<ITool>()),
-                    new ToolSessionState()
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
 
@@ -267,8 +265,7 @@ public sealed class FamilyChatServerTests {
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
-                    new ToolRegistry([new EchoTool()]),
-                    new ToolSessionState()
+                    new ToolRegistry([new EchoTool()]).CreateSession()
                 )
             );
 
@@ -1213,8 +1210,7 @@ public sealed class FamilyChatServerTests {
         var runtime = new ChatSessionRuntime(
             scriptedClient,
             completionSurfaceId,
-            new ToolRegistry(Array.Empty<ITool>()),
-            new ToolSessionState()
+            new ToolRegistry(Array.Empty<ITool>()).CreateSession()
         );
         var engine = await ChatSessionEngine.CreateAsync(
             sessionDir,

@@ -18,8 +18,8 @@ public sealed partial class ChatSessionEngine {
         ThrowIfDisposed();
         ValidateRuntimeSurfaceIdentity();
 
-        var toolExecutor = new ToolExecutor(_runtime.ToolRegistry, _runtime.ToolSessionState);
-        var tools = toolExecutor.VisibleToolDefinitions;
+        var session = _runtime.ToolSession;
+        var tools = session.VisibleDefinitions;
 
         MessageRecord.AppendObservation(_messages, message);
         Commit();
@@ -61,7 +61,7 @@ public sealed partial class ChatSessionEngine {
             int executed = 0;
             for (int i = 0; i < toolCalls.Count; i++) {
                 ct.ThrowIfCancellationRequested();
-                var callResult = await toolExecutor.ExecuteAsync(toolCalls[i], ct).ConfigureAwait(false);
+                var callResult = await session.ExecuteAsync(toolCalls[i], ct).ConfigureAwait(false);
                 toolResults[i] = callResult.ToToolResult();
                 executed++;
             }

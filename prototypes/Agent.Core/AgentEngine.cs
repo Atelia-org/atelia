@@ -27,7 +27,7 @@ public partial class AgentEngine {
     private readonly AutoCompactionOptions? _autoCompactionOptions;
 
     private ToolRegistry? _toolRegistry;
-    private ToolExecutor? _activeToolExecutor;
+    private ToolSession? _toolSession;
     private ToolRegistry ToolRegistry => EnsureToolsBuilt();
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
@@ -136,9 +136,7 @@ public partial class AgentEngine {
 
         var definitionName = GetDefinitionName(tool);
 
-        if (_standaloneTools.ContainsKey(definitionName)) {
-            throw new InvalidOperationException($"Duplicate tool registration detected for '{definitionName}'.");
-        }
+        if (_standaloneTools.ContainsKey(definitionName)) { throw new InvalidOperationException($"Duplicate tool registration detected for '{definitionName}'."); }
 
         EnsureToolNameAvailable(definitionName);
         _standaloneTools[definitionName] = tool;
@@ -179,7 +177,6 @@ public partial class AgentEngine {
 
         var registry = new ToolRegistry(aggregate);
         _toolRegistry = registry;
-        _activeToolExecutor = null;
         _toolsDirty = false;
 
         DebugUtil.Info(
@@ -189,18 +186,17 @@ public partial class AgentEngine {
         return registry;
     }
 
-    private ToolExecutor CreateToolExecutor() {
-        return CreateToolExecutor(ToolAccessPolicy.AllowAll);
-    }
+    private ToolSession EnsureSession() {
+        var registry = ToolRegistry;
+        if (_toolSession is null) {
+            _toolSession = registry.CreateSession();
+        }
+        else if (!ReferenceEquals(_toolSession.Registry, registry)) {
+            // 工具集动态变化时 rebind 注册表，但保留同一会话的执行序号。
+            _toolSession.Registry = registry;
+        }
 
-    private ToolExecutor CreateToolExecutor(ToolAccessPolicy toolAccessPolicy) {
-        var executor = new ToolExecutor(
-            ToolRegistry,
-            new ToolSessionState(toolAccess: toolAccessPolicy)
-        );
-
-        _activeToolExecutor = executor;
-        return executor;
+        return _toolSession;
     }
 
     /// <summary>
@@ -232,13 +228,9 @@ public partial class AgentEngine {
 
             var definitionName = GetDefinitionName(tool);
 
-            if (!newNames.Add(definitionName)) {
-                throw new InvalidOperationException($"App '{replacingAppName ?? "<unknown>"}' attempted to register duplicate tool name '{definitionName}'.");
-            }
+            if (!newNames.Add(definitionName)) { throw new InvalidOperationException($"App '{replacingAppName ?? "<unknown>"}' attempted to register duplicate tool name '{definitionName}'."); }
 
-            if (existingNames.Contains(definitionName)) {
-                throw new InvalidOperationException($"Tool name conflict detected for '{definitionName}'.");
-            }
+            if (existingNames.Contains(definitionName)) { throw new InvalidOperationException($"Tool name conflict detected for '{definitionName}'."); }
         }
     }
 
@@ -552,8 +544,9 @@ public partial class AgentEngine {
         var liveContext = projection.ToFlat();
         DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
-        var toolExecutor = CreateToolExecutor(appProjection.ToolAccessPolicy);
-        var toolDefinitions = toolExecutor.VisibleToolDefinitions;
+        var session = EnsureSession();
+        session.Access = appProjection.ToolAccessSnapshot;
+        var toolDefinitions = session.VisibleDefinitions;
 
         var request = new CompletionRequest(resolvedProfile.ModelId, SystemPrompt, liveContext, toolDefinitions);
 
@@ -588,8 +581,8 @@ public partial class AgentEngine {
         var nextCall = FindNextPendingToolCall(outputEntry);
         if (nextCall is null) { return StepOutcome.NoProgress; }
 
-        var toolExecutor = _activeToolExecutor ?? CreateToolExecutor();
-        var result = await toolExecutor.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
+        var session = EnsureSession();
+        var result = await session.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         _pendingToolResults[nextCall.ToolCallId] = result;
 
         var toolName = result.ToolName ?? nextCall.ToolName;
@@ -619,7 +612,6 @@ public partial class AgentEngine {
 
         var appended = AppendToolResultsWithSummary(entry);
         _pendingToolResults.Clear();
-        _activeToolExecutor = null;
 
         var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
         var failureCallId = failure?.ToolCallId ?? "none";

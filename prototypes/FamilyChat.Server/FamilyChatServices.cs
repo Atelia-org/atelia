@@ -30,7 +30,7 @@ public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatComple
                 apiKey: backend.ApiKey,
                 httpClient: httpClient,
                 dialect: ResolveOpenAiChatDialect(user.CompletionSurfaceId)
-                // , options: OpenAIChatClientOptions.QwenThinkingDisabled()
+            // , options: OpenAIChatClientOptions.QwenThinkingDisabled()
             ),
             "openai-responses" => new OpenAIResponsesClient(
                 apiKey: backend.ApiKey,
@@ -105,13 +105,9 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         AssistantMessageDto? latestAssistant = null;
 
         foreach (var message in engine.Context) {
-            if (message is RecapMessage) {
-                continue;
-            }
+            if (message is RecapMessage) { continue; }
 
-            if (message is ToolResultsMessage) {
-                continue;
-            }
+            if (message is ToolResultsMessage) { continue; }
 
             if (message is ObservationMessage observation) {
                 if (pendingUserText is not null && latestAssistant is not null) {
@@ -159,9 +155,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
 
         var previousLatestTurn = BuildRecentTurns(host.Engine, maxTurns: 1).FirstOrDefault();
-        if (!host.Engine.TryRemoveLatestCompletedTurn(out var removedTurn) || removedTurn is null) {
-            return null;
-        }
+        if (!host.Engine.TryRemoveLatestCompletedTurn(out var removedTurn) || removedTurn is null) { return null; }
 
         return previousLatestTurn;
     }
@@ -236,9 +230,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
                     thinkClosed = true;
                     if (string.IsNullOrEmpty(delta)) { return; }
                 }
-                else {
-                    return;
-                }
+                else { return; }
             }
 
             liveTurn.Publish(new StreamEventDto("text-delta", new { delta }));
@@ -305,8 +297,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         var runtime = new ChatSessionRuntime(
             CompletionClient: completionClient,
             CompletionSurfaceId: user.CompletionSurfaceId,
-            ToolRegistry: new ToolRegistry(Array.Empty<ITool>()),
-            ToolSessionState: new ToolSessionState()
+            ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
         );
         var createOptions = new ChatSessionCreateOptions(
             ModelId: user.ModelId,
@@ -342,9 +333,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             }
         }
 
-        if (textBuilder.Length == 0 && reasoningBuilder.Length == 0) {
-            return null;
-        }
+        if (textBuilder.Length == 0 && reasoningBuilder.Length == 0) { return null; }
 
         var cleanedText = StripThinkPrefix(textBuilder.ToString());
         string? reasoningText = reasoningBuilder.Length == 0 ? null : reasoningBuilder.ToString();
@@ -420,13 +409,9 @@ public sealed class UserSessionHost : IAsyncDisposable {
         ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
 
         lock (_turnStateGate) {
-            if (string.Equals(_currentTurn?.TurnId, turnId, StringComparison.Ordinal)) {
-                return _currentTurn;
-            }
+            if (string.Equals(_currentTurn?.TurnId, turnId, StringComparison.Ordinal)) { return _currentTurn; }
 
-            if (string.Equals(_lastTurn?.TurnId, turnId, StringComparison.Ordinal)) {
-                return _lastTurn;
-            }
+            if (string.Equals(_lastTurn?.TurnId, turnId, StringComparison.Ordinal)) { return _lastTurn; }
 
             return null;
         }
@@ -457,9 +442,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
 internal static class FamilyChatConfigLoader {
     public static FamilyChatConfig Load(string configPath) {
-        if (string.IsNullOrWhiteSpace(configPath)) {
-            throw new InvalidOperationException("FamilyChat config path must not be blank.");
-        }
+        if (string.IsNullOrWhiteSpace(configPath)) { throw new InvalidOperationException("FamilyChat config path must not be blank."); }
 
         string resolvedPath = Path.GetFullPath(configPath);
         if (!File.Exists(resolvedPath)) {
@@ -471,13 +454,9 @@ internal static class FamilyChatConfigLoader {
 
         var json = File.ReadAllText(resolvedPath);
         var config = JsonSerializer.Deserialize(json, FamilyChatJsonContext.Default.FamilyChatConfig);
-        if (config is null) {
-            throw new InvalidOperationException($"Failed to deserialize FamilyChat config: {resolvedPath}");
-        }
+        if (config is null) { throw new InvalidOperationException($"Failed to deserialize FamilyChat config: {resolvedPath}"); }
 
-        if (config.Users.Count == 0) {
-            throw new InvalidOperationException("FamilyChat config must contain at least one user.");
-        }
+        if (config.Users.Count == 0) { throw new InvalidOperationException("FamilyChat config must contain at least one user."); }
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
 
@@ -515,21 +494,13 @@ internal static class FamilyChatConfigLoader {
         var userIds = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < config.Users.Count; i++) {
             var user = config.Users[i];
-            if (string.IsNullOrWhiteSpace(user.UserId)) {
-                throw new InvalidOperationException($"FamilyChat config user[{i}] must have a non-empty userId.");
-            }
+            if (string.IsNullOrWhiteSpace(user.UserId)) { throw new InvalidOperationException($"FamilyChat config user[{i}] must have a non-empty userId."); }
 
-            if (!userIds.Add(user.UserId)) {
-                throw new InvalidOperationException($"FamilyChat config contains duplicate userId '{user.UserId}'.");
-            }
+            if (!userIds.Add(user.UserId)) { throw new InvalidOperationException($"FamilyChat config contains duplicate userId '{user.UserId}'."); }
 
-            if (string.IsNullOrWhiteSpace(user.Password)) {
-                throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty password.");
-            }
+            if (string.IsNullOrWhiteSpace(user.Password)) { throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty password."); }
 
-            if (string.IsNullOrWhiteSpace(user.SessionDir)) {
-                throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty sessionDir.");
-            }
+            if (string.IsNullOrWhiteSpace(user.SessionDir)) { throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty sessionDir."); }
 
             if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {
                 throw new InvalidOperationException(
@@ -542,26 +513,20 @@ internal static class FamilyChatConfigLoader {
         if (config.ListenUrls is null) { return; }
 
         for (int i = 0; i < config.ListenUrls.Count; i++) {
-            if (string.IsNullOrWhiteSpace(config.ListenUrls[i])) {
-                throw new InvalidOperationException($"FamilyChat config listenUrls[{i}] must not be blank.");
-            }
+            if (string.IsNullOrWhiteSpace(config.ListenUrls[i])) { throw new InvalidOperationException($"FamilyChat config listenUrls[{i}] must not be blank."); }
         }
     }
 }
 
 internal static class FamilyChatConfigBootstrapper {
     public static void EnsureExistsOrBootstrap(string configPath) {
-        if (string.IsNullOrWhiteSpace(configPath)) {
-            throw new InvalidOperationException("FamilyChat config path must not be blank.");
-        }
+        if (string.IsNullOrWhiteSpace(configPath)) { throw new InvalidOperationException("FamilyChat config path must not be blank."); }
 
         string resolvedPath = Path.GetFullPath(configPath);
         if (File.Exists(resolvedPath)) { return; }
 
         string? parentDir = Path.GetDirectoryName(resolvedPath);
-        if (string.IsNullOrWhiteSpace(parentDir)) {
-            throw new InvalidOperationException($"Cannot determine parent directory for FamilyChat config path: {resolvedPath}");
-        }
+        if (string.IsNullOrWhiteSpace(parentDir)) { throw new InvalidOperationException($"Cannot determine parent directory for FamilyChat config path: {resolvedPath}"); }
 
         Directory.CreateDirectory(parentDir);
 

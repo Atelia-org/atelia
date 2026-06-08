@@ -45,7 +45,7 @@ Completion client + ToolRegistry + durable history + tool loop
 |---|---|
 | `ChatSessionEngine` | 会话引擎。负责持久化 history、自动 tool loop、rewind、compaction |
 | `ChatSessionCreateOptions` | 只在首次创建会话时使用，定义 `ModelId`、`SystemPrompt`、`CompletionSurfaceId`、分支名 |
-| `ChatSessionRuntime` | 每次打开 / 创建时提供的运行时依赖：`ICompletionClient`、工具注册表、session 级工具状态 |
+| `ChatSessionRuntime` | 每次打开 / 创建时提供的运行时依赖：`ICompletionClient`、工具会话 `ToolSession` |
 | `ChatSessionTurnResult` | 一次 `SendMessageAsync(...)` 的最终结果，含最终 assistant message、invocation、errors、执行过多少次工具 |
 
 ### 2.1 `ChatSessionRuntime` 是什么
@@ -54,15 +54,14 @@ Completion client + ToolRegistry + durable history + tool loop
 public sealed record ChatSessionRuntime(
     ICompletionClient CompletionClient,
     string CompletionSurfaceId,
-    ToolRegistry ToolRegistry,
-    ToolSessionState ToolSessionState
+    ToolSession ToolSession
 );
 ```
 
 这意味着：
 
 - 聊天模型来自 `CompletionClient`
-- 工具可见性与执行策略来自 `ToolRegistry + ToolSessionState`
+- 工具可见性与执行策略来自 `ToolSession`（由 `registry.CreateSession(...)` 产出）
 - `CompletionSurfaceId` 是你给这条 prompt/tool surface 起的稳定身份标识
 
 `CompletionSurfaceId` 不等于 `ApiSpecId`，也不由框架自动推导。它更像“我这条持久化会话对应哪套上层交互表面”的人工标签。创建和重开时都必须一致。
@@ -96,8 +95,7 @@ using var completionClient = new OpenAIChatClient(
 var runtime = new ChatSessionRuntime(
     CompletionClient: completionClient,
     CompletionSurfaceId: "openai-chat/strict",
-    ToolRegistry: new ToolRegistry(Array.Empty<ITool>()),
-    ToolSessionState: new ToolSessionState()
+    ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
 );
 ```
 
@@ -199,8 +197,7 @@ var echoTool = MethodToolWrapper.FromMethod(
 var runtime = new ChatSessionRuntime(
     CompletionClient: completionClient,
     CompletionSurfaceId: "openai-chat/strict",
-    ToolRegistry: new ToolRegistry([echoTool]),
-    ToolSessionState: new ToolSessionState(
+    ToolSession: new ToolRegistry([echoTool]).CreateSession(
         items: new Dictionary<string, object?> { ["scope"] = "demo" }
     )
 );
