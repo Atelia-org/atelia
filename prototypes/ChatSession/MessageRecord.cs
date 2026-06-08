@@ -35,8 +35,7 @@ internal static class MessageRecord {
 
     public static DurableDict<string> AppendAction(DurableDeque messages, ActionMessage message) {
         var record = CreateRecord(messages.Revision, KindAction);
-        var blockDtos = BlocksToDtos(message.Blocks);
-        record.Upsert(KeyActionBlocksJson, JsonSerializer.Serialize(blockDtos, JsonOptions));
+        record.Upsert(KeyActionBlocksJson, ActionMessageSerialization.SerializeBlocks(message.Blocks));
         messages.PushBack<DurableObject>(record);
         return record;
     }
@@ -98,9 +97,7 @@ internal static class MessageRecord {
     private static ActionMessage BuildAction(DurableDict<string> record) {
         if (!record.TryGet<string>(KeyActionBlocksJson, out var json) || string.IsNullOrEmpty(json)) { return new ActionMessage(Array.Empty<ActionBlock>()); }
 
-        var dtos = JsonSerializer.Deserialize<ActionBlockDto[]>(json, JsonOptions)
-                   ?? Array.Empty<ActionBlockDto>();
-        var blocks = DtosToBlocks(dtos);
+        var blocks = ActionMessageSerialization.DeserializeBlocks(json);
         return new ActionMessage(blocks);
     }
 
@@ -112,78 +109,6 @@ internal static class MessageRecord {
                    ?? Array.Empty<ToolResultDto>();
         var results = DtosToResults(dtos);
         return new ToolResultsMessage(content, results);
-    }
-
-    private static ActionBlockDto[] BlocksToDtos(IReadOnlyList<ActionBlock> blocks) {
-        var dtos = new List<ActionBlockDto>(blocks.Count);
-        for (int i = 0; i < blocks.Count; i++) {
-            switch (blocks[i]) {
-                case ActionBlock.Text text:
-                    dtos.Add(new ActionBlockDto(BlockKindText, text.Content, null, null, null, null, null, null));
-                    break;
-                case ActionBlock.ToolCall toolCall:
-                    dtos.Add(
-                        new ActionBlockDto(
-                            BlockKindToolCall,
-                            null,
-                            toolCall.Call.ToolName,
-                            toolCall.Call.ToolCallId,
-                            toolCall.Call.RawArgumentsJson,
-                            null, null, null
-                        )
-                    );
-                    break;
-                case ActionBlock.TextReasoningBlock reasoning:
-                    dtos.Add(
-                        new ActionBlockDto(
-                            BlockKindReasoningText,
-                            reasoning.Content,
-                            null, null, null,
-                            reasoning.Origin.ProviderId,
-                            reasoning.Origin.ApiSpecId,
-                            reasoning.Origin.Model
-                        )
-                    );
-                    break;
-            }
-        }
-        return dtos.ToArray();
-    }
-
-    private static ActionBlock[] DtosToBlocks(ActionBlockDto[] dtos) {
-        var blocks = new List<ActionBlock>(dtos.Length);
-        for (int i = 0; i < dtos.Length; i++) {
-            var dto = dtos[i];
-            switch (dto.Kind) {
-                case BlockKindText when dto.Content is not null:
-                    blocks.Add(new ActionBlock.Text(dto.Content));
-                    break;
-                case BlockKindToolCall when dto.ToolName is not null && dto.ToolCallId is not null:
-                    blocks.Add(
-                        new ActionBlock.ToolCall(
-                            new RawToolCall(
-                                dto.ToolName,
-                                dto.ToolCallId,
-                                dto.RawArgumentsJson ?? "{}"
-                            )
-                        )
-                    );
-                    break;
-                case BlockKindReasoningText when dto.Content is not null:
-                    blocks.Add(
-                        new ActionBlock.TextReasoningBlock(
-                            dto.Content,
-                            new CompletionDescriptor(
-                                dto.OriginProviderId ?? "unknown",
-                                dto.OriginApiSpecId ?? "unknown",
-                                dto.OriginModel ?? "unknown"
-                            )
-                        )
-                    );
-                    break;
-            }
-        }
-        return blocks.ToArray();
     }
 
     private static ToolResultDto[] ResultsToDtos(IReadOnlyList<ToolResult> results) {
@@ -203,17 +128,6 @@ internal static class MessageRecord {
         }
         return results;
     }
-
-    private sealed record ActionBlockDto(
-        string Kind,
-        string? Content,
-        string? ToolName,
-        string? ToolCallId,
-        string? RawArgumentsJson,
-        string? OriginProviderId,
-        string? OriginApiSpecId,
-        string? OriginModel
-    );
 
     private sealed record ToolResultDto(
         string ToolName,

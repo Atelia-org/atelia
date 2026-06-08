@@ -30,6 +30,7 @@ public partial class AgentEngine {
     private ToolRegistry? _toolRegistry;
     private ToolSession? _toolSession;
     private ToolRegistry ToolRegistry => EnsureToolsBuilt();
+    private AttachedPersistenceSession? _attachedPersistence;
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
     private readonly TurnRuntimeState _turnRuntime = new();
@@ -353,6 +354,12 @@ public partial class AgentEngine {
 
         var stateAfter = DetermineState();
         LogStateIfChanged(stateAfter);
+
+        // repo-backed 模式下，把一次 Step 内已经稳定完成的状态变更先落盘再向外报告。
+        // 这样若 commit 失败，宿主不会先收到成功的状态转换事件或返回值。
+        if (outcome.ProgressMade || stateAfter != stateBefore) {
+            PersistStableBoundaryIfAttached();
+        }
 
         if (stateAfter != stateBefore) {
             OnStateTransition(stateBefore, stateAfter);

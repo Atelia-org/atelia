@@ -27,7 +27,7 @@ namespace Atelia.Agent.Core.History;
 /// - 持久化协调：明确 RecentHistory 与持久层的同步点，确保 RecapEntry 插入后历史序列的一致性与可恢复性。
 /// 本设计遵循"短期记忆（内存）+ 中期摘要（Recap）+ 长期归档（磁盘）"的分层记忆架构。
 /// </remarks>
-public sealed class AgentState {
+public sealed partial class AgentState {
     /// <summary>
     /// 内存中的 Recent History 列表，仅保留最近的活跃条目。
     /// </summary>
