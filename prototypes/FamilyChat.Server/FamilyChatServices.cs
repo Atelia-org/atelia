@@ -97,7 +97,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         return await lazy.Value.ConfigureAwait(false);
     }
 
-    public IReadOnlyList<RecentTurnDto> BuildRecentTurns(ChatSessionEngine engine, int maxTurns = 6) {
+    public IReadOnlyList<RecentTurnDto> BuildRecentTurns(ChatSessionEngine engine, int maxTurns = 12) {
         ArgumentNullException.ThrowIfNull(engine);
 
         var turns = new List<RecentTurnDto>();
@@ -389,7 +389,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     internal FamilyChatLiveTurn StartTurn(string userMessage) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
-
+        userMessage = $"玩家角色试图采取如下动作：\n```\n{userMessage}\n```\n";
         var liveTurn = new FamilyChatLiveTurn(userMessage);
         lock (_turnStateGate) {
             _lastTurn = null;
