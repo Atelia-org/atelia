@@ -1,4 +1,5 @@
 using Atelia.Completion.Abstractions;
+using Atelia.Diagnostics;
 using Atelia.StateJournal;
 
 namespace Atelia.ChatSession;
@@ -59,6 +60,8 @@ public sealed partial class ChatSessionEngine : IDisposable {
     public string BranchName => _branchName;
     public string ModelId => _modelId;
     public string SystemPrompt => _systemPrompt;
+    public CommitAddress? PersistedHeadAddress => TryGetPersistedHeadAddress();
+    public int DurableMessageCount => _messages.Count;
 
     public static Task<ChatSessionEngine> CreateAsync(
         string repoDir,
@@ -86,6 +89,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
             repo.Commit(root).Unwrap();
 
             var engine = new ChatSessionEngine(repo, root, messages, runtime, repoDir, options.BranchName);
+            DebugUtil.Info("ChatSession.Persistence", $"CreateAsync: {engine.GetDebugStateSummary()}");
             return Task.FromResult(engine);
         }
         catch {
@@ -121,6 +125,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
             }
 
             var engine = new ChatSessionEngine(repo, root, messages, runtime, repoDir, branchName);
+            DebugUtil.Info("ChatSession.Persistence", $"OpenAsync: {engine.GetDebugStateSummary()}");
             return Task.FromResult(engine);
         }
         catch {
@@ -169,7 +174,16 @@ public sealed partial class ChatSessionEngine : IDisposable {
 
     private void Commit() {
         ThrowIfDisposed();
+        var beforeHead = PersistedHeadAddress;
+        DebugUtil.Info(
+            "ChatSession.Persistence",
+            $"Commit before: branch={_branchName}, head={FormatCommitAddress(beforeHead)}, durableMessages={_messages.Count}"
+        );
         _repo.Commit(_root).Unwrap();
+        DebugUtil.Info(
+            "ChatSession.Persistence",
+            $"Commit after: branch={_branchName}, head={FormatCommitAddress(PersistedHeadAddress)}, durableMessages={_messages.Count}"
+        );
     }
 
     public IReadOnlyList<IHistoryMessage> Context => MessageRecord.ToHistoryMessages(_messages);
@@ -217,6 +231,19 @@ public sealed partial class ChatSessionEngine : IDisposable {
         _disposed = true;
         _repo.Dispose();
     }
+
+    public string GetDebugStateSummary() {
+        var stats = GetStatistics();
+        return $"repoDir={_repoDir}, branch={_branchName}, head={FormatCommitAddress(PersistedHeadAddress)}, durableMessages={_messages.Count}, context={stats.MessageCount}, obs={stats.ObservationCount}, action={stats.ActionCount}, tool={stats.ToolResultsCount}, recap={stats.RecapCount}, tokens={stats.EstimatedTokens}";
+    }
+
+    private CommitAddress? TryGetPersistedHeadAddress() {
+        ThrowIfDisposed();
+        return _repo.TryGetBranchHeadAddress(_branchName, out var headAddress) ? headAddress : null;
+    }
+
+    private static string FormatCommitAddress(CommitAddress? address)
+        => address?.ToString() ?? "<unborn>";
 }
 
 internal static class ChatSessionTokenEstimator {

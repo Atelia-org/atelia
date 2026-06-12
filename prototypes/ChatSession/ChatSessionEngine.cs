@@ -20,9 +20,14 @@ public sealed partial class ChatSessionEngine {
 
         var session = _runtime.ToolSession;
         var tools = session.VisibleDefinitions;
+        var persistedContext = MessageRecord.ToHistoryMessages(_messages);
+        var workingContext = new List<IHistoryMessage>(persistedContext.Count + 8);
+        workingContext.AddRange(persistedContext);
 
-        MessageRecord.AppendObservation(_messages, message);
-        Commit();
+        var turnMessages = new List<IHistoryMessage>(capacity: 4);
+        var userObservation = new ObservationMessage(message);
+        turnMessages.Add(userObservation);
+        workingContext.Add(userObservation);
 
         var totalToolCallsExecuted = 0;
         ActionMessage finalMessage = null!;
@@ -32,11 +37,10 @@ public sealed partial class ChatSessionEngine {
         for (int iteration = 0; iteration < MaxToolLoopIterations; iteration++) {
             ct.ThrowIfCancellationRequested();
 
-            var context = MessageRecord.ToHistoryMessages(_messages);
             var request = new CompletionRequest(
                 ModelId: _modelId,
                 SystemPrompt: _systemPrompt,
-                Context: context,
+                Context: workingContext,
                 Tools: tools
             );
 
@@ -44,15 +48,22 @@ public sealed partial class ChatSessionEngine {
                 .ConfigureAwait(false);
 
             invocation = result.Invocation;
-            finalMessage = SanitizeForPersistence(result.Message);
-
             if (result.Errors is { Count: > 0 }) {
                 errors ??= new List<string>();
                 errors.AddRange(result.Errors);
             }
 
-            MessageRecord.AppendAction(_messages, finalMessage);
-            Commit();
+            if (!result.Termination.IsSuccess) {
+                throw new ChatSessionTurnAbortedException(
+                    BuildTurnAbortMessage(result.Termination),
+                    result.Termination,
+                    result.Errors
+                );
+            }
+
+            finalMessage = SanitizeForPersistence(result.Message);
+            turnMessages.Add(finalMessage);
+            workingContext.Add(finalMessage);
 
             var toolCalls = finalMessage.ToolCalls;
             if (toolCalls.Count == 0) { break; }
@@ -72,8 +83,8 @@ public sealed partial class ChatSessionEngine {
                 content: null,
                 results: toolResults
             );
-            MessageRecord.AppendToolResults(_messages, toolResultsMessage);
-            Commit();
+            turnMessages.Add(toolResultsMessage);
+            workingContext.Add(toolResultsMessage);
         }
 
         if (finalMessage is not null && finalMessage.ToolCalls.Count > 0) {
@@ -83,6 +94,8 @@ public sealed partial class ChatSessionEngine {
         }
 
         finalMessage ??= new ActionMessage(Array.Empty<ActionBlock>());
+        PersistTurnMessages(turnMessages);
+        Commit();
 
         return new ChatSessionTurnResult(
             Message: finalMessage,
@@ -128,5 +141,36 @@ public sealed partial class ChatSessionEngine {
         }
 
         return new ActionMessage(persistedBlocks);
+    }
+
+    private void PersistTurnMessages(IReadOnlyList<IHistoryMessage> turnMessages) {
+        for (int i = 0; i < turnMessages.Count; i++) {
+            switch (turnMessages[i]) {
+                case ToolResultsMessage toolResults:
+                    MessageRecord.AppendToolResults(_messages, toolResults);
+                    break;
+                case ObservationMessage observation:
+                    MessageRecord.AppendObservation(_messages, observation.Content);
+                    break;
+                case ActionMessage action:
+                    MessageRecord.AppendAction(_messages, action);
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unsupported turn message type '{turnMessages[i].GetType()}'.");
+            }
+        }
+    }
+
+    private static string BuildTurnAbortMessage(CompletionTermination termination) {
+        ArgumentNullException.ThrowIfNull(termination);
+
+        return termination.Kind switch {
+            CompletionTerminationKind.Incomplete =>
+                $"Completion ended incompletely and was not persisted. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
+            CompletionTerminationKind.Failed =>
+                $"Completion failed and was not persisted. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
+            _ =>
+                $"Completion was aborted and was not persisted. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}"
+        };
     }
 }

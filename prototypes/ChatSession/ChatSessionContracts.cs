@@ -9,6 +9,21 @@ public sealed record ChatSessionTurnResult(
     int ToolCallsExecuted
 );
 
+public sealed class ChatSessionTurnAbortedException : Exception {
+    public ChatSessionTurnAbortedException(
+        string message,
+        CompletionTermination termination,
+        IReadOnlyList<string>? errors = null
+    ) : base(message) {
+        Termination = termination ?? throw new ArgumentNullException(nameof(termination));
+        Errors = errors;
+    }
+
+    public CompletionTermination Termination { get; }
+
+    public IReadOnlyList<string>? Errors { get; }
+}
+
 public sealed record RecapMessage(string? Content) : ObservationMessage(Content);
 
 public sealed record CompactionResult(

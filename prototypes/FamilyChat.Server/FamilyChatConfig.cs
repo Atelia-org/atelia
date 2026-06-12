@@ -38,7 +38,12 @@ public sealed record FamilyChatMeDto(
 
 public sealed record RecentTurnDto(
     string UserText,
-    AssistantMessageDto Assistant
+    AssistantMessageDto Assistant,
+    bool IsRecap = false
+);
+
+public sealed record RecentTurnsResponseDto(
+    IReadOnlyList<RecentTurnDto> Turns
 );
 
 public sealed record AssistantMessageDto(

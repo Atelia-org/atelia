@@ -10,15 +10,18 @@ internal sealed class FamilyChatLiveTurn {
     private long _nextSubscriberId;
     private bool _streamCompleted;
 
-    public FamilyChatLiveTurn(string userMessage) {
+    public FamilyChatLiveTurn(string userMessage, string promptedUserMessage) {
         TurnId = Guid.NewGuid().ToString("N");
         UserMessage = userMessage;
+        PromptedUserMessage = promptedUserMessage;
         Status = "running";
     }
 
     public string TurnId { get; }
 
     public string UserMessage { get; }
+
+    public string PromptedUserMessage { get; }
 
     public string Status { get; private set; }
 
@@ -74,9 +77,7 @@ internal sealed class FamilyChatLiveTurn {
             subscriber.Writer.TryWrite(streamEvent);
         }
 
-        if (!completeSubscribers) {
-            return;
-        }
+        if (!completeSubscribers) { return; }
 
         foreach (var subscriber in subscribers) {
             subscriber.Writer.TryComplete();
@@ -87,9 +88,7 @@ internal sealed class FamilyChatLiveTurn {
         Channel<StreamEventDto>[] subscribers;
 
         lock (_gate) {
-            if (_streamCompleted) {
-                return;
-            }
+            if (_streamCompleted) { return; }
 
             _streamCompleted = true;
             subscribers = _subscribers.Values.ToArray();
@@ -130,9 +129,7 @@ internal sealed class FamilyChatTurnSubscription : IDisposable {
     public ChannelReader<StreamEventDto> Reader { get; }
 
     public void Dispose() {
-        if (_disposed) {
-            return;
-        }
+        if (_disposed) { return; }
 
         _disposed = true;
         _owner.Unsubscribe(_subscriberId);

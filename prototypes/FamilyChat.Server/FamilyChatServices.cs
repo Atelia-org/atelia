@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Atelia.ChatSession;
+using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Atelia.Completion.OpenAI;
@@ -55,6 +56,9 @@ public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatComple
 }
 
 public sealed class FamilyChatHostService : IAsyncDisposable {
+    private const string UserMessagePrefix = "玩家角色试图采取如下动作：\n```\n";
+    private const string UserMessageSuffix = "\n```\n";
+
     private readonly FamilyChatConfig _config;
     private readonly IFamilyChatCompletionClientFactory _completionClientFactory;
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
@@ -94,7 +98,9 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             (Service: this, User: user)
         );
 
-        return await lazy.Value.ConfigureAwait(false);
+        var session = await lazy.Value.ConfigureAwait(false);
+        DebugUtil.Info("FamilyChat.Session", $"GetSessionAsync: user={userId}, {session.Engine.GetDebugStateSummary()}");
+        return session;
     }
 
     public IReadOnlyList<RecentTurnDto> BuildRecentTurns(ChatSessionEngine engine, int maxTurns = 12) {
@@ -105,7 +111,22 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         AssistantMessageDto? latestAssistant = null;
 
         foreach (var message in engine.Context) {
-            if (message is RecapMessage) { continue; }
+            if (message is RecapMessage recap) {
+                if (pendingUserText is not null && latestAssistant is not null) {
+                    turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
+                }
+
+                pendingUserText = null;
+                latestAssistant = null;
+                turns.Add(
+                    new RecentTurnDto(
+                        string.Empty,
+                        new AssistantMessageDto(recap.Content ?? string.Empty, null, HasReasoning: false),
+                        IsRecap: true
+                    )
+                );
+                continue;
+            }
 
             if (message is ToolResultsMessage) { continue; }
 
@@ -114,7 +135,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
                     turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
                 }
 
-                pendingUserText = observation.Content ?? string.Empty;
+                pendingUserText = NormalizeUserMessageForDisplay(observation.Content);
                 latestAssistant = null;
                 continue;
             }
@@ -132,17 +153,33 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         }
 
         turns.Reverse();
-        if (turns.Count <= maxTurns) { return turns; }
-        return turns.Take(maxTurns).ToArray();
+        IReadOnlyList<RecentTurnDto> projectedTurns = turns.Count <= maxTurns ? turns : turns.Take(maxTurns).ToArray();
+        DebugUtil.Info(
+            "FamilyChat.Session",
+            $"BuildRecentTurns: {engine.GetDebugStateSummary()}, projectedTurns={projectedTurns.Count}, firstTurn={DescribeTurn(projectedTurns.FirstOrDefault())}"
+        );
+        return projectedTurns;
+    }
+
+    public RecentTurnsResponseDto BuildRecentTurnsResponse(ChatSessionEngine engine, int maxTurns = 12) {
+        ArgumentNullException.ThrowIfNull(engine);
+
+        var turns = BuildRecentTurns(engine, maxTurns);
+        return new RecentTurnsResponseDto(turns);
     }
 
     public CurrentTurnDto BuildCurrentTurn(UserSessionHost host) {
         ArgumentNullException.ThrowIfNull(host);
 
         var currentTurn = host.GetCurrentTurn();
-        return currentTurn is null
+        var result = currentTurn is null
             ? new CurrentTurnDto("idle")
             : new CurrentTurnDto("running", currentTurn.TurnId, currentTurn.UserMessage, currentTurn.Phase);
+        DebugUtil.Info(
+            "FamilyChat.Session",
+            $"BuildCurrentTurn: user={host.User.UserId}, status={result.Status}, turnId={result.TurnId ?? "<none>"}, phase={result.Phase ?? "<none>"}, head={host.Engine.PersistedHeadAddress}"
+        );
+        return result;
     }
 
     internal FamilyChatLiveTurn StartTurn(UserSessionHost host, string userMessage) {
@@ -155,9 +192,31 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
 
         var previousLatestTurn = BuildRecentTurns(host.Engine, maxTurns: 1).FirstOrDefault();
+        DebugUtil.Info(
+            "FamilyChat.Session",
+            $"PopLatestTurn before remove: user={host.User.UserId}, head={host.Engine.PersistedHeadAddress}, latestVisible={DescribeTurn(previousLatestTurn)}"
+        );
         if (!host.Engine.TryRemoveLatestCompletedTurn(out var removedTurn) || removedTurn is null) { return null; }
+        string removedUserText = NormalizeUserMessageForDisplay(removedTurn.UserMessage);
 
-        return previousLatestTurn;
+        if (previousLatestTurn is not null
+            && !previousLatestTurn.IsRecap
+            && string.Equals(previousLatestTurn.UserText, removedUserText, StringComparison.Ordinal)) {
+            DebugUtil.Info(
+                "FamilyChat.Session",
+                $"PopLatestTurn matched visible turn: user={host.User.UserId}, removedCount={removedTurn.RemovedMessageCount}, head={host.Engine.PersistedHeadAddress}"
+            );
+            return previousLatestTurn;
+        }
+
+        DebugUtil.Warning(
+            "FamilyChat.Session",
+            $"PopLatestTurn fallback DTO: user={host.User.UserId}, removedCount={removedTurn.RemovedMessageCount}, removedUser={Preview(removedUserText)}, previousVisible={DescribeTurn(previousLatestTurn)}, head={host.Engine.PersistedHeadAddress}"
+        );
+        return new RecentTurnDto(
+            removedUserText,
+            new AssistantMessageDto(string.Empty, null, HasReasoning: false)
+        );
     }
 
     internal FamilyChatLiveTurn? FindTurn(UserSessionHost host, string turnId) {
@@ -181,6 +240,11 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(liveTurn);
 
         liveTurn.Publish(new StreamEventDto("meta", new { phase = "turn-start" }), phase: "turn-start");
+        DebugUtil.Info(
+            "FamilyChat.Session",
+            $"RunTurnAsync start: user={host.User.UserId}, turnId={liveTurn.TurnId}, input={Preview(liveTurn.UserMessage)}, {host.Engine.GetDebugStateSummary()}",
+            eventKind: DebugEventKind.Start
+        );
 
         // Failsafe: if the previous turn's post-generation compaction didn't happen
         // or failed, try once more before generating.  Otherwise the user would wait
@@ -214,26 +278,11 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             phase: "reasoning-end"
         );
         observer.ReceivedReasoningDelta += delta => liveTurn.Publish(new StreamEventDto("reasoning-delta", new { delta }));
-        var thinkClosed = false;
-        var firstTextDelta = true;
-        var suppressUntilThinkClose = false;
+        var textFilter = new InlineThinkTextFilter();
         observer.ReceivedTextDelta += delta => {
-            if (firstTextDelta) {
-                firstTextDelta = false;
-                suppressUntilThinkClose = delta.Contains("<think>", StringComparison.Ordinal);
-            }
-
-            if (suppressUntilThinkClose && !thinkClosed) {
-                int closeIdx = delta.IndexOf("</think>", StringComparison.Ordinal);
-                if (closeIdx >= 0) {
-                    delta = delta.Substring(closeIdx + "</think>".Length);
-                    thinkClosed = true;
-                    if (string.IsNullOrEmpty(delta)) { return; }
-                }
-                else { return; }
-            }
-
-            liveTurn.Publish(new StreamEventDto("text-delta", new { delta }));
+            var visibleText = textFilter.Filter(delta);
+            if (string.IsNullOrEmpty(visibleText)) { return; }
+            liveTurn.Publish(new StreamEventDto("text-delta", new { delta = visibleText }));
         };
         observer.ReceivedToolCall += call => {
             if (Interlocked.Exchange(ref toolLoopStarted, 1) == 0) {
@@ -246,8 +295,25 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             );
         };
 
-        var turnResult = await host.Engine.SendMessageAsync(liveTurn.UserMessage, observer, ct).ConfigureAwait(false);
-        var snapshot = BuildRecentTurns(host.Engine);
+        ChatSessionTurnResult turnResult;
+        try {
+            turnResult = await host.Engine.SendMessageAsync(liveTurn.PromptedUserMessage, observer, ct).ConfigureAwait(false);
+        }
+        catch (ChatSessionTurnAbortedException ex) {
+            DebugUtil.Warning(
+                "FamilyChat.Session",
+                $"RunTurnAsync completion aborted: user={host.User.UserId}, turnId={liveTurn.TurnId}, termination={ex.Termination.Kind}, providerReason={ex.Termination.ProviderReason ?? "<none>"}, detail={ex.Termination.Detail ?? "<none>"}"
+            );
+            throw new FamilyChatTurnException(
+                "模型本次输出未正常结束，本轮结果已放弃写入历史。请刷新页面后重试。",
+                ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
+            );
+        }
+        var snapshot = BuildRecentTurnsResponse(host.Engine);
+        DebugUtil.Info(
+            "FamilyChat.Session",
+            $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={turnResult.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, recapVisible={snapshot.Turns.Any(static x => x.IsRecap)}, head={host.Engine.PersistedHeadAddress}"
+        );
 
         if (Volatile.Read(ref toolLoopStarted) == 1) {
             liveTurn.Publish(new StreamEventDto("meta", new { phase = "tool-loop-finish" }), phase: "tool-loop-finish");
@@ -257,7 +323,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             new StreamEventDto(
                 "done",
                 new {
-                    recentTurns = snapshot,
+                    recentTurns = snapshot.Turns,
                     toolCallsExecuted = turnResult.ToolCallsExecuted,
                     errors = turnResult.Errors
                 }
@@ -270,11 +336,13 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         // reading / typing time waiting, not the generation latency.
         if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
             using var compactCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            DebugUtil.Info("FamilyChat.Session", $"RunTurnAsync post-compaction trigger: user={host.User.UserId}, turnId={liveTurn.TurnId}, head={host.Engine.PersistedHeadAddress}");
             await host.Engine.CompactAsync(
                 host.User.CompactionSystemPrompt,
                 host.User.CompactionPrompt,
                 compactCts.Token
             ).ConfigureAwait(false);
+            DebugUtil.Info("FamilyChat.Session", $"RunTurnAsync post-compaction done: user={host.User.UserId}, turnId={liveTurn.TurnId}, {host.Engine.GetDebugStateSummary()}");
         }
     }
 
@@ -315,6 +383,8 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             engine = await ChatSessionEngine.CreateAsync(sessionDir, createOptions, runtime, ct).ConfigureAwait(false);
         }
 
+        DebugUtil.Info("FamilyChat.Session", $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, {engine.GetDebugStateSummary()}");
+
         return new UserSessionHost(user, engine, completionClient);
     }
 
@@ -335,7 +405,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 
         if (textBuilder.Length == 0 && reasoningBuilder.Length == 0) { return null; }
 
-        var cleanedText = StripThinkPrefix(textBuilder.ToString());
+        var cleanedText = StripInlineThinkBlocks(textBuilder.ToString());
         string? reasoningText = reasoningBuilder.Length == 0 ? null : reasoningBuilder.ToString();
         return new AssistantMessageDto(
             Text: cleanedText,
@@ -345,23 +415,125 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
     }
 
     /// <summary>
-    /// Strips a leading <c>&lt;think&gt;...&lt;/think&gt;</c> block from the text.
-    /// Qwen models embed reasoning in inline XML tags that are not separated by
-    /// the OpenAI-compatible API into a <c>reasoning_content</c> field;
-    /// this method removes them so the frontend only sees the actual response.
+    /// Removes inline <c>&lt;think&gt;...&lt;/think&gt;</c> blocks from the text.
+    /// If the closing tag is missing, the text from <c>&lt;think&gt;</c> onward is dropped.
     /// </summary>
-    private static string StripThinkPrefix(string text) {
+    private static string StripInlineThinkBlocks(string text) {
         if (string.IsNullOrEmpty(text)) { return text; }
 
-        const string closeTag = "</think>";
-        int closeIdx = text.IndexOf(closeTag, StringComparison.Ordinal);
-        if (closeIdx < 0) { return text; }
+        var filter = new InlineThinkTextFilter();
+        string visibleText = filter.Filter(text);
+        return visibleText + filter.FlushVisibleRemainder();
+    }
 
-        // Only strip if an opening <think> appears before the closing tag.
-        int openIdx = text.IndexOf("<think>", 0, closeIdx, StringComparison.Ordinal);
-        if (openIdx < 0) { return text; }
+    internal static string WrapUserMessageForEngine(string userMessage) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
+        return UserMessagePrefix + userMessage + UserMessageSuffix;
+    }
 
-        return text.Substring(closeIdx + closeTag.Length);
+    internal static string NormalizeUserMessageForDisplay(string? storedUserMessage) {
+        if (string.IsNullOrEmpty(storedUserMessage)) { return string.Empty; }
+
+        if (storedUserMessage.StartsWith(UserMessagePrefix, StringComparison.Ordinal)
+            && storedUserMessage.EndsWith(UserMessageSuffix, StringComparison.Ordinal)) {
+            return storedUserMessage.Substring(
+                UserMessagePrefix.Length,
+                storedUserMessage.Length - UserMessagePrefix.Length - UserMessageSuffix.Length
+            );
+        }
+
+        return storedUserMessage;
+    }
+
+    private static string DescribeTurn(RecentTurnDto? turn) {
+        if (turn is null) { return "<null>"; }
+        if (turn.IsRecap) { return $"recap={Preview(turn.Assistant.Text)}"; }
+        return $"user={Preview(turn.UserText)}, assistant={Preview(turn.Assistant.Text)}";
+    }
+
+    private static string Preview(string? text) {
+        if (string.IsNullOrWhiteSpace(text)) { return "<null>"; }
+        string normalized = text.Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal);
+        return normalized.Length <= 120 ? normalized : normalized[..120] + "...";
+    }
+}
+
+internal sealed class InlineThinkTextFilter {
+    private const string OpenTag = "<think>";
+    private const string CloseTag = "</think>";
+
+    private string _pending = string.Empty;
+    private bool _insideThink;
+
+    public string Filter(string delta) {
+        if (string.IsNullOrEmpty(delta)) { return string.Empty; }
+
+        _pending += delta;
+        return DrainPending(flushTrailingSafeText: false);
+    }
+
+    public string FlushVisibleRemainder() {
+        return DrainPending(flushTrailingSafeText: true);
+    }
+
+    private string DrainPending(bool flushTrailingSafeText) {
+        if (_pending.Length == 0) { return string.Empty; }
+
+        var output = new StringBuilder();
+        while (_pending.Length > 0) {
+            if (_insideThink) {
+                int closeIdx = _pending.IndexOf(CloseTag, StringComparison.Ordinal);
+                if (closeIdx < 0) {
+                    _pending = RetainTagPrefixSuffix(_pending, CloseTag, flushTrailingSafeText);
+                    break;
+                }
+
+                _pending = _pending.Substring(closeIdx + CloseTag.Length);
+                _insideThink = false;
+                continue;
+            }
+
+            int openIdx = _pending.IndexOf(OpenTag, StringComparison.Ordinal);
+            if (openIdx < 0) {
+                if (flushTrailingSafeText) {
+                    output.Append(_pending);
+                    _pending = string.Empty;
+                }
+                else {
+                    int keepLength = FindLongestPrefixSuffix(_pending, OpenTag);
+                    output.Append(_pending.AsSpan(0, _pending.Length - keepLength));
+                    _pending = keepLength == 0 ? string.Empty : _pending.Substring(_pending.Length - keepLength);
+                }
+
+                break;
+            }
+
+            if (openIdx > 0) {
+                output.Append(_pending.AsSpan(0, openIdx));
+            }
+
+            _pending = _pending.Substring(openIdx + OpenTag.Length);
+            _insideThink = true;
+        }
+
+        return output.ToString();
+    }
+
+    private static string RetainTagPrefixSuffix(string text, string tag, bool flushTrailingSafeText) {
+        if (flushTrailingSafeText) { return string.Empty; }
+
+        int keepLength = FindLongestPrefixSuffix(text, tag);
+        return keepLength == 0 ? string.Empty : text.Substring(text.Length - keepLength);
+    }
+
+    private static int FindLongestPrefixSuffix(string text, string tag) {
+        int maxLength = Math.Min(text.Length, tag.Length - 1);
+        for (int length = maxLength; length > 0; length--) {
+            if (text.EndsWith(tag.AsSpan(0, length), StringComparison.Ordinal)) { return length; }
+        }
+
+        return 0;
     }
 }
 
@@ -389,8 +561,10 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     internal FamilyChatLiveTurn StartTurn(string userMessage) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
-        userMessage = $"玩家角色试图采取如下动作：\n```\n{userMessage}\n```\n";
-        var liveTurn = new FamilyChatLiveTurn(userMessage);
+        var liveTurn = new FamilyChatLiveTurn(
+            userMessage,
+            FamilyChatHostService.WrapUserMessageForEngine(userMessage)
+        );
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
@@ -646,9 +820,7 @@ internal static class FamilyChatHtml {
             <span id="status-text" class="status-text"></span>
           </div>
           <div class="composer-buttons">
-            <button id="edit-latest-button" type="button" class="ghost-button">编辑上一条消息</button>
-            <button id="cancel-edit-button" type="button" class="ghost-button hidden">退出编辑</button>
-            <button id="regenerate-button" type="button" class="ghost-button">重抽最近回复</button>
+            <button id="undo-last-button" type="button" class="ghost-button">撤销上一轮</button>
             <button id="send-button" type="submit">发送</button>
           </div>
         </div>

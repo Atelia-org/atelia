@@ -162,6 +162,11 @@ button:disabled {
   background: rgba(255, 252, 247, 0.92);
 }
 
+.turn-card.recap-card {
+  background: rgba(241, 236, 222, 0.92);
+  border-style: dashed;
+}
+
 .turn-card header {
   font-size: 12px;
   letter-spacing: 0.08em;

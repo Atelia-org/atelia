@@ -1,4 +1,5 @@
 using Atelia.Completion.Abstractions;
+using Atelia.Diagnostics;
 using Atelia.StateJournal;
 
 namespace Atelia.ChatSession;
@@ -14,6 +15,10 @@ public sealed partial class ChatSessionEngine {
 
         var messages = MessageRecord.ToHistoryMessages(_messages);
         int splitIndex = FindHalfContextSplitPoint(messages);
+        DebugUtil.Info(
+            "ChatSession.Compaction",
+            $"CompactAsync start: head={PersistedHeadAddress}, messages={messages.Count}, splitIndex={splitIndex}, firstKinds={DescribeLeadingKinds(messages)}"
+        );
         if (splitIndex < 0) {
             return new CompactionResult(
                 Applied: false,
@@ -58,10 +63,9 @@ public sealed partial class ChatSessionEngine {
             cumulativeTokens += ChatSessionTokenEstimator.Estimate(messages[i]);
 
             if (IsObservationLike(messages[i]) && messages[i + 1].Kind == HistoryMessageKind.Action) {
-                int suffixStart = i + 1;
-                if (suffixStart == 1 && messages[0] is RecapMessage) {
-                    continue;
-                }
+                int suffixStart = i;
+                if (suffixStart == 0) { continue; }
+                if (suffixStart == 1 && messages[0] is RecapMessage) { continue; }
 
                 lastValidSuffixStart = suffixStart;
 
@@ -74,9 +78,9 @@ public sealed partial class ChatSessionEngine {
 
     private static bool IsValidSplitPoint(IReadOnlyList<IHistoryMessage> messages, int splitIndex) {
         return splitIndex >= 1
-               && splitIndex < messages.Count
-               && IsObservationLike(messages[splitIndex - 1])
-               && messages[splitIndex].Kind == HistoryMessageKind.Action;
+               && splitIndex < messages.Count - 1
+               && IsObservationLike(messages[splitIndex])
+               && messages[splitIndex + 1].Kind == HistoryMessageKind.Action;
     }
 
     private static bool IsObservationLike(IHistoryMessage message) {
@@ -169,6 +173,10 @@ public sealed partial class ChatSessionEngine {
 
         var remaining = MessageRecord.ToHistoryMessages(_messages);
         var tokensAfter = ChatSessionTokenEstimator.Estimate(remaining);
+        DebugUtil.Info(
+            "ChatSession.Compaction",
+            $"CompactAsync applied: head={PersistedHeadAddress}, splitIndex={splitIndex}, before={historyCountBefore}, after={remaining.Count}, leadingKinds={DescribeLeadingKinds(remaining)}"
+        );
 
         return new CompactionResult(
             Applied: true,
@@ -180,5 +188,10 @@ public sealed partial class ChatSessionEngine {
             TokensBefore: tokensBefore,
             TokensAfter: tokensAfter
         );
+    }
+
+    private static string DescribeLeadingKinds(IReadOnlyList<IHistoryMessage> messages) {
+        if (messages.Count == 0) { return "<empty>"; }
+        return string.Join(",", messages.Take(4).Select(x => x.Kind.ToString()));
     }
 }

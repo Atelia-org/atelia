@@ -7,18 +7,13 @@
     streaming: false,
     activeTurnId: null,
     streamGeneration: 0,
-    editingLatest: false,
-    editOriginalUserText: "",
-    draftBeforeEdit: "",
   };
 
   const turnList = document.getElementById("turn-list");
   const form = document.getElementById("chat-form");
   const input = document.getElementById("message-input");
   const sendButton = document.getElementById("send-button");
-  const editLatestButton = document.getElementById("edit-latest-button");
-  const cancelEditButton = document.getElementById("cancel-edit-button");
-  const regenerateButton = document.getElementById("regenerate-button");
+  const undoLastButton = document.getElementById("undo-last-button");
   const composerModeHint = document.getElementById("composer-mode-hint");
   const statusText = document.getElementById("status-text");
   const liveTurn = document.getElementById("live-turn");
@@ -53,10 +48,18 @@
   function renderTurns() {
     turnList.innerHTML = state.recentTurns.map(renderTurn).join("");
     refreshComposerMode();
-    refreshRegenerateButton();
   }
 
   function renderTurn(turn) {
+    if (turn.isRecap) {
+      return `
+        <article class="turn-card recap-card">
+          <header>Earlier Summary</header>
+          <pre>${escapeHtml(turn.assistant.text ?? "")}</pre>
+        </article>
+      `;
+    }
+
     const reasoning = turn.assistant.hasReasoning
       ? `<details class="reasoning-panel"><summary>Reasoning</summary><pre>${escapeHtml(turn.assistant.reasoningText ?? "")}</pre></details>`
       : "";
@@ -80,16 +83,12 @@
     input.disabled = streaming;
     statusText.textContent = status || "";
     refreshComposerMode();
-    refreshRegenerateButton();
   }
 
   function refreshComposerMode() {
     if (composerModeHint) {
-      if (state.pendingPoppedTurn && state.editingLatest) {
-        composerModeHint.textContent = "最近一轮已取出。修改后发送会用新消息替换它。";
-        composerModeHint.classList.remove("hidden");
-      } else if (state.pendingPoppedTurn) {
-        composerModeHint.textContent = "最近一轮已取出。可编辑后发送，或直接重抽按原消息重发。";
+      if (state.pendingPoppedTurn) {
+        composerModeHint.textContent = "最近一轮已撤销。修改后重新发送即可。";
         composerModeHint.classList.remove("hidden");
       } else {
         composerModeHint.textContent = "";
@@ -97,78 +96,18 @@
       }
     }
 
-    if (editLatestButton) {
-      editLatestButton.disabled = state.streaming || (!state.pendingPoppedTurn && state.recentTurns.length === 0) || state.editingLatest;
+    if (undoLastButton) {
+      undoLastButton.disabled = state.streaming || state.pendingPoppedTurn !== null || !hasUndoableTurn();
     }
-
-    if (cancelEditButton) {
-      cancelEditButton.classList.toggle("hidden", !state.editingLatest);
-      cancelEditButton.disabled = state.streaming;
-    }
-
-    sendButton.textContent = state.pendingPoppedTurn ? "发送替换消息" : "发送";
   }
 
-  function refreshRegenerateButton() {
-    if (!regenerateButton) {
-      return;
-    }
-
-    regenerateButton.disabled = state.streaming || (!state.pendingPoppedTurn && state.recentTurns.length === 0);
-  }
-
-  function removeLatestTurnFromView() {
-    if (state.recentTurns.length === 0) {
-      return;
-    }
-
-    state.recentTurns = state.recentTurns.slice(1);
-    renderTurns();
-  }
-
-  function enterEditLatestMode() {
-    if (!state.pendingPoppedTurn || state.streaming) {
-      return;
-    }
-
-    state.draftBeforeEdit = input.value;
-    state.editOriginalUserText = state.pendingPoppedTurn.userText ?? "";
-    state.editingLatest = true;
-    input.value = state.editOriginalUserText;
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-    refreshComposerMode();
-    refreshRegenerateButton();
+  function hasUndoableTurn() {
+    return state.recentTurns.some((turn) => !turn.isRecap);
   }
 
   function clearPendingPoppedTurn() {
     state.pendingPoppedTurn = null;
-    state.editOriginalUserText = "";
-    state.draftBeforeEdit = "";
-    state.editingLatest = false;
     refreshComposerMode();
-    refreshRegenerateButton();
-  }
-
-  function leaveEditLatestMode(options = {}) {
-    const { restoreDraft = false, clearDraft = false } = options;
-    if (!state.editingLatest) {
-      return;
-    }
-
-    state.editingLatest = false;
-    state.editOriginalUserText = "";
-
-    if (restoreDraft) {
-      input.value = state.draftBeforeEdit;
-    }
-
-    if (clearDraft) {
-      state.draftBeforeEdit = "";
-    }
-
-    refreshComposerMode();
-    refreshRegenerateButton();
   }
 
   function resetLive() {
@@ -195,8 +134,12 @@
   }
 
   async function loadRecentTurns() {
-    state.recentTurns = await fetchJson("/api/recent-turns");
+    applyRecentTurnsPayload(await fetchJson("/api/recent-turns"));
     renderTurns();
+  }
+
+  function applyRecentTurnsPayload(payload) {
+    state.recentTurns = payload?.turns ?? [];
   }
 
   async function loadCurrentTurn() {
@@ -283,7 +226,9 @@
         liveText.textContent = state.liveText;
         break;
       case "done":
-        state.recentTurns = payload?.recentTurns ?? [];
+        applyRecentTurnsPayload({
+          turns: payload?.recentTurns ?? [],
+        });
         clearPendingPoppedTurn();
         renderTurns();
         clearActiveTurn();
@@ -334,7 +279,17 @@
       return null;
     }
 
-    removeLatestTurnFromView();
+    const firstUndoableTurnIndex = state.recentTurns.findIndex((turn) => !turn.isRecap);
+    if (firstUndoableTurnIndex >= 0) {
+      state.recentTurns = [
+        ...state.recentTurns.slice(0, firstUndoableTurnIndex),
+        ...state.recentTurns.slice(firstUndoableTurnIndex + 1),
+      ];
+    }
+    input.value = state.pendingPoppedTurn.userText ?? "";
+    renderTurns();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
     setStreaming(false, "");
     return state.pendingPoppedTurn;
   }
@@ -410,7 +365,7 @@
     }
 
     const replacingPoppedTurn = state.pendingPoppedTurn !== null;
-    setStreaming(true, replacingPoppedTurn ? "正在生成替换消息…" : "正在发送…");
+    setStreaming(true, replacingPoppedTurn ? "正在重新生成…" : "正在发送…");
 
     const response = await fetch("/api/chat/turns", {
       method: "POST",
@@ -439,41 +394,19 @@
     }
 
     if (replacingPoppedTurn) {
-      leaveEditLatestMode({ clearDraft: true });
-      await attachToTurn(payload?.turnId, "正在生成替换消息…");
+      await attachToTurn(payload?.turnId, "正在重新生成…");
       return;
     }
 
     await attachToTurn(payload?.turnId, "正在生成…");
   });
 
-  editLatestButton?.addEventListener("click", () => {
-    popLatestTurn("正在取出最近一轮以便编辑…").then((poppedTurn) => {
-      if (!poppedTurn) {
-        return;
-      }
-
-      enterEditLatestMode();
-    });
-  });
-
-  cancelEditButton?.addEventListener("click", () => {
-    leaveEditLatestMode({ restoreDraft: true, clearDraft: true });
-  });
-
-  regenerateButton?.addEventListener("click", async () => {
-    if (state.streaming || (!state.pendingPoppedTurn && state.recentTurns.length === 0)) {
+  undoLastButton?.addEventListener("click", async () => {
+    if (state.streaming || state.pendingPoppedTurn || !hasUndoableTurn()) {
       return;
     }
 
-    const poppedTurn = await popLatestTurn("正在取出最近一轮…");
-    if (!poppedTurn) {
-      return;
-    }
-
-    leaveEditLatestMode({ clearDraft: true });
-    input.value = poppedTurn.userText ?? "";
-    form.requestSubmit();
+    await popLatestTurn("正在撤销最近一轮…");
   });
 
   async function bootstrap() {
