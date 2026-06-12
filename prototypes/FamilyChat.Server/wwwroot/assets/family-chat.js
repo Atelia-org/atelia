@@ -208,6 +208,14 @@
       case "meta":
         if (payload?.phase === "turn-start") {
           setStreaming(true, "正在生成…");
+        } else if (payload?.phase === "input-normalization-start") {
+          setStreaming(true, "正在清洗输入…");
+        } else if (payload?.phase === "input-normalization-finish") {
+          if (payload?.changed) {
+            setStreaming(true, "已纠正输入，继续生成…");
+          } else {
+            setStreaming(true, "输入清洗完成，继续生成…");
+          }
         } else if (payload?.phase === "compaction-start") {
           setStreaming(true, "正在压缩上下文…");
         } else if (payload?.phase === "compaction-finish") {

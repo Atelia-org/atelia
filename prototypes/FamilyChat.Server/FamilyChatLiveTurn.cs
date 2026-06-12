@@ -10,18 +10,15 @@ internal sealed class FamilyChatLiveTurn {
     private long _nextSubscriberId;
     private bool _streamCompleted;
 
-    public FamilyChatLiveTurn(string userMessage, string promptedUserMessage) {
+    public FamilyChatLiveTurn(string userMessage) {
         TurnId = Guid.NewGuid().ToString("N");
         UserMessage = userMessage;
-        PromptedUserMessage = promptedUserMessage;
         Status = "running";
     }
 
     public string TurnId { get; }
 
     public string UserMessage { get; }
-
-    public string PromptedUserMessage { get; }
 
     public string Status { get; private set; }
 

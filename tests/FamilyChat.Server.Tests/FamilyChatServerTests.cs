@@ -222,6 +222,218 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task UserMessageNormalizer_RewritesInputBeforeMainModel_AndPersistsRewrittenText() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    var lastObservation = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                    Assert.Contains("麦林炮手", lastObservation.Content, StringComparison.Ordinal);
+                    Assert.DoesNotContain("买林炮手", lastObservation.Content, StringComparison.Ordinal);
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("明白了，小炮登场。")]),
+                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            var normalizer = new ScriptedUserMessageNormalizer();
+            normalizer.Enqueue("我想玩麦林炮手。");
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory, normalizer);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+
+            await LoginAsync(client, "alice", "pw1");
+            string sse = await ReadSseAsStringAsync(client, "我想玩买林炮手。");
+
+            Assert.Contains("event: done", sse, StringComparison.Ordinal);
+
+            var turns = await GetRecentTurnsAsync(client);
+            Assert.NotNull(turns);
+            Assert.Single(turns!);
+            Assert.Equal("我想玩麦林炮手。", turns[0].UserText);
+            Assert.Equal("明白了，小炮登场。", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task UserMessageNormalizer_FailureFallsBackToOriginalInput() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    var lastObservation = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                    Assert.Contains("买林炮手", lastObservation.Content, StringComparison.Ordinal);
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("按原文继续。")]),
+                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            await using var factory = new FamilyChatServerFactory(
+                configPath,
+                scriptFactory,
+                new ThrowingUserMessageNormalizer()
+            );
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+
+            await LoginAsync(client, "alice", "pw1");
+            string sse = await ReadSseAsStringAsync(client, "我想玩买林炮手。");
+
+            Assert.Contains("event: done", sse, StringComparison.Ordinal);
+
+            var turns = await GetRecentTurnsAsync(client);
+            Assert.NotNull(turns);
+            Assert.Single(turns!);
+            Assert.Equal("我想玩买林炮手。", turns[0].UserText);
+            Assert.Equal("按原文继续。", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task UserMessageNormalizer_WhitespaceResultFallsBackToOriginalInput_AndDoesNotReportChanged() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    var lastObservation = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                    Assert.Contains("买林炮手", lastObservation.Content, StringComparison.Ordinal);
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("按原文继续。")]),
+                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            var normalizer = new ScriptedUserMessageNormalizer();
+            normalizer.Enqueue("   ");
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory, normalizer);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+
+            await LoginAsync(client, "alice", "pw1");
+            string sse = await ReadSseAsStringAsync(client, "我想玩买林炮手。");
+
+            Assert.Contains("event: done", sse, StringComparison.Ordinal);
+            Assert.Contains("\"phase\":\"input-normalization-finish\",\"changed\":false", sse, StringComparison.Ordinal);
+
+            var turns = await GetRecentTurnsAsync(client);
+            Assert.NotNull(turns);
+            Assert.Single(turns!);
+            Assert.Equal("我想玩买林炮手。", turns[0].UserText);
+            Assert.Equal("按原文继续。", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("<cleaned>修正后文本</cleaned>", "修正后文本")]
+    [InlineData("prefix<cleaned>修正后文本</cleaned>suffix", "修正后文本")]
+    [InlineData("<think>hidden</think><cleaned>修正后文本</cleaned>", "修正后文本")]
+    [InlineData("修正后文本", "")]
+    [InlineData("修正后：<cleaned-missing>", "")]
+    public void DeepSeekUserMessageNormalizer_ExtractNormalizedText_RequiresCleanedTag(string rawText, string expected) {
+        Assert.Equal(expected, DeepSeekFamilyChatUserMessageNormalizer.ExtractNormalizedText(rawText));
+    }
+
+    [Fact]
+    public void DeepSeekUserMessageNormalizer_BuildNormalizationPrompt_EscapesXmlSensitiveCharacters() {
+        string prompt = DeepSeekFamilyChatUserMessageNormalizer.BuildNormalizationPrompt("A < B && x </player-input> y");
+
+        Assert.Contains("&lt;", prompt, StringComparison.Ordinal);
+        Assert.Contains("&amp;&amp;", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("A < B", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("</player-input> y\n</player-input>", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExistingSession_ReopenServer_StillReturnsRecentTurns() {
         string tempDir = CreateTempDirectory();
         try {
@@ -1893,13 +2105,17 @@ public sealed class FamilyChatServerTests {
 
     private sealed class FamilyChatServerFactory(
         string configPath,
-        ScriptedCompletionClientFactory scriptedFactory
+        ScriptedCompletionClientFactory scriptedFactory,
+        IFamilyChatUserMessageNormalizer? userMessageNormalizer = null
     ) : WebApplicationFactory<Program> {
         protected override void ConfigureWebHost(IWebHostBuilder builder) {
             builder.UseSetting("FamilyChat:ConfigPath", configPath);
             builder.ConfigureTestServices(
                 services => {
                     services.AddSingleton<IFamilyChatCompletionClientFactory>(scriptedFactory);
+                    services.AddSingleton<IFamilyChatUserMessageNormalizer>(
+                        userMessageNormalizer ?? DisabledFamilyChatUserMessageNormalizer.Instance
+                    );
                 }
             );
         }
@@ -1950,6 +2166,35 @@ public sealed class FamilyChatServerTests {
 
             var next = _responses.Dequeue();
             return next(request, observer, cancellationToken);
+        }
+    }
+
+    private sealed class ScriptedUserMessageNormalizer : IFamilyChatUserMessageNormalizer {
+        private readonly Queue<Func<string, CancellationToken, Task<string>>> _responses = new();
+
+        public bool ShouldNormalize(string userMessage) => true;
+
+        public void Enqueue(string normalizedText) {
+            _responses.Enqueue(
+                (userMessage, ct) => Task.FromResult(normalizedText)
+            );
+        }
+
+        public ValueTask<string> NormalizeAsync(string userMessage, CancellationToken ct) {
+            if (_responses.Count == 0) {
+                throw new InvalidOperationException("No scripted user-message-normalizer response remaining.");
+            }
+
+            var next = _responses.Dequeue();
+            return new ValueTask<string>(next(userMessage, ct));
+        }
+    }
+
+    private sealed class ThrowingUserMessageNormalizer : IFamilyChatUserMessageNormalizer {
+        public bool ShouldNormalize(string userMessage) => true;
+
+        public ValueTask<string> NormalizeAsync(string userMessage, CancellationToken ct) {
+            throw new InvalidOperationException("scripted normalizer failure");
         }
     }
 

@@ -21,6 +21,7 @@ if (config.ListenUrls is { Count: > 0 }) {
 
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<IFamilyChatCompletionClientFactory, DefaultFamilyChatCompletionClientFactory>();
+builder.Services.AddSingleton<IFamilyChatUserMessageNormalizer>(_ => FamilyChatUserMessageNormalizerFactory.CreateFromEnvironment());
 builder.Services.AddSingleton<FamilyChatHostService>();
 builder.Services.AddAuthentication(CookieScheme)
     .AddCookie(

@@ -61,15 +61,18 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 
     private readonly FamilyChatConfig _config;
     private readonly IFamilyChatCompletionClientFactory _completionClientFactory;
+    private readonly IFamilyChatUserMessageNormalizer _userMessageNormalizer;
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, FamilyChatUserConfig> _users;
 
     public FamilyChatHostService(
         FamilyChatConfig config,
-        IFamilyChatCompletionClientFactory completionClientFactory
+        IFamilyChatCompletionClientFactory completionClientFactory,
+        IFamilyChatUserMessageNormalizer userMessageNormalizer
     ) {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _completionClientFactory = completionClientFactory ?? throw new ArgumentNullException(nameof(completionClientFactory));
+        _userMessageNormalizer = userMessageNormalizer ?? throw new ArgumentNullException(nameof(userMessageNormalizer));
         _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
     }
 
@@ -246,6 +249,9 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             eventKind: DebugEventKind.Start
         );
 
+        string effectiveUserMessage = await NormalizeUserMessageAsync(liveTurn, ct).ConfigureAwait(false);
+        string promptedUserMessage = WrapUserMessageForEngine(effectiveUserMessage);
+
         // Failsafe: if the previous turn's post-generation compaction didn't happen
         // or failed, try once more before generating.  Otherwise the user would wait
         // for compaction *plus* generation in a single turn.
@@ -297,7 +303,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 
         ChatSessionTurnResult turnResult;
         try {
-            turnResult = await host.Engine.SendMessageAsync(liveTurn.PromptedUserMessage, observer, ct).ConfigureAwait(false);
+            turnResult = await host.Engine.SendMessageAsync(promptedUserMessage, observer, ct).ConfigureAwait(false);
         }
         catch (ChatSessionTurnAbortedException ex) {
             DebugUtil.Warning(
@@ -386,6 +392,45 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         DebugUtil.Info("FamilyChat.Session", $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, {engine.GetDebugStateSummary()}");
 
         return new UserSessionHost(user, engine, completionClient);
+    }
+
+    private async Task<string> NormalizeUserMessageAsync(FamilyChatLiveTurn liveTurn, CancellationToken ct) {
+        string original = liveTurn.UserMessage;
+        if (!_userMessageNormalizer.ShouldNormalize(original)) {
+            return original;
+        }
+
+        liveTurn.Publish(
+            new StreamEventDto("meta", new { phase = "input-normalization-start" }),
+            phase: "input-normalization-start"
+        );
+
+        try {
+            string effective = await _userMessageNormalizer.NormalizeAsync(original, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(effective)) {
+                effective = original;
+            }
+            bool changed = !string.Equals(original, effective, StringComparison.Ordinal);
+            liveTurn.Publish(
+                new StreamEventDto("meta", new { phase = "input-normalization-finish", changed }),
+                phase: "input-normalization-finish"
+            );
+            return effective;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            throw;
+        }
+        catch (Exception ex) {
+            DebugUtil.Warning(
+                "FamilyChat.Session",
+                $"NormalizeUserMessageAsync fallback to original: turnId={liveTurn.TurnId}, input={Preview(original)}, error={ex.Message}"
+            );
+            liveTurn.Publish(
+                new StreamEventDto("meta", new { phase = "input-normalization-finish", changed = false, fallback = true }),
+                phase: "input-normalization-finish"
+            );
+            return original;
+        }
     }
 
     private static AssistantMessageDto? ProjectAssistant(ActionMessage action) {
@@ -479,10 +524,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     internal FamilyChatLiveTurn StartTurn(string userMessage) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
-        var liveTurn = new FamilyChatLiveTurn(
-            userMessage,
-            FamilyChatHostService.WrapUserMessageForEngine(userMessage)
-        );
+        var liveTurn = new FamilyChatLiveTurn(userMessage);
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
