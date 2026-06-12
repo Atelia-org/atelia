@@ -75,6 +75,46 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ChatSession_SendMessageAsync_StripsInlineThinkFromPersistedAssistantText() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.Enqueue(
+                async (request, observer, ct) => {
+                    observer?.OnTextDelta("<think>secret</think>visible");
+                    return new CompletionResult(
+                        new ActionMessage([
+                            new ActionBlock.Text("<think>secret</think>visible"),
+                        ]),
+                        new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                    );
+                }
+            );
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            await engine.SendMessageAsync("hello");
+
+            Assert.Collection(
+                engine.Context,
+                message => Assert.Equal("hello", Assert.IsType<ObservationMessage>(message).Content),
+                message => Assert.Equal("visible", Assert.IsType<ActionMessage>(message).GetFlattenedText())
+            );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ChatSession_SendMessageAsync_WhenCompletionIsIncomplete_DoesNotPersistPartialTurn() {
         string repoDir = CreateTempDirectory();
         try {
@@ -351,6 +391,43 @@ public sealed class FamilyChatServerTests {
                 engine.Context,
                 message => Assert.IsType<ObservationMessage>(message),
                 message => Assert.IsType<ActionMessage>(message)
+            );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSession_CompactAsync_StripsInlineThinkFromRecapSummary() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("<think>hidden</think>summary");
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            await engine.SendMessageAsync("first");
+            await engine.SendMessageAsync("second");
+
+            var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+
+            Assert.True(compaction.Applied);
+            Assert.Collection(
+                engine.Context,
+                message => Assert.Equal("summary", Assert.IsType<RecapMessage>(message).Content),
+                message => Assert.Equal("second", Assert.IsType<ObservationMessage>(message).Content),
+                message => Assert.Equal("keep", Assert.IsType<ActionMessage>(message).GetFlattenedText())
             );
         }
         finally {
@@ -900,6 +977,152 @@ public sealed class FamilyChatServerTests {
 
             Assert.NotNull(exception);
             Assert.Contains("duplicate userId 'alice'", FlattenExceptionMessages(exception!), StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ConfigWithoutCompactionPrompts_FallsBackToBuiltInDefaults() {
+        string tempDir = CreateTempDirectory();
+        try {
+            string sessionDir = Path.Combine(tempDir, "alice-session");
+            await SeedSessionAsync(
+                sessionDir,
+                "model-a",
+                "openai-chat/strict",
+                [
+                    ("one", new string('A', 180)),
+                    ("two", new string('B', 180)),
+                ]
+            );
+
+            var (defaultCompactionSystemPrompt, defaultCompactionPrompt) = GetGeneratedTemplateCompactionPrompts();
+            string configPath = WriteRawConfig(
+                tempDir,
+                new {
+                    backend = new {
+                        kind = "openai-chat",
+                        baseAddress = "http://localhost:8000/",
+                        apiKey = (string?)null,
+                    },
+                    users = new[] {
+                        new {
+                            userId = "alice",
+                            displayName = "Alice",
+                            password = "pw1",
+                            sessionDir,
+                            modelId = "model-a",
+                            completionSurfaceId = "openai-chat/strict",
+                            compactionThresholdTokens = 120UL,
+                            systemPrompt = "system",
+                        }
+                    }
+                }
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    Assert.Equal(defaultCompactionSystemPrompt, request.SystemPrompt);
+                    var summarizePrompt = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                    Assert.Equal(defaultCompactionPrompt, summarizePrompt.Content);
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("summary")]),
+                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+            scriptFactory.For("alice").EnqueueText("after compact");
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+
+            await LoginAsync(client, "alice", "pw1");
+            string sse = await ReadSseAsStringAsync(client, "three");
+
+            Assert.Contains("event: done", sse, StringComparison.Ordinal);
+
+            var turns = await GetRecentTurnsAsync(client);
+            Assert.NotNull(turns);
+            Assert.Equal("three", turns![0].UserText);
+            Assert.Equal("after compact", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ConfigWithCompactionPromptOverrides_UsesConfiguredValues() {
+        string tempDir = CreateTempDirectory();
+        try {
+            string sessionDir = Path.Combine(tempDir, "alice-session");
+            await SeedSessionAsync(
+                sessionDir,
+                "model-a",
+                "openai-chat/strict",
+                [
+                    ("one", new string('A', 180)),
+                    ("two", new string('B', 180)),
+                ]
+            );
+
+            const string customCompactionSystemPrompt = "custom-compaction-system";
+            const string customCompactionPrompt = "custom-compaction-prompt";
+            string configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 120,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        sessionDir,
+                        "model-a",
+                        "openai-chat/strict",
+                        120,
+                        customCompactionSystemPrompt,
+                        customCompactionPrompt,
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    Assert.Equal(customCompactionSystemPrompt, request.SystemPrompt);
+                    var summarizePrompt = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                    Assert.Equal(customCompactionPrompt, summarizePrompt.Content);
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("summary")]),
+                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+            scriptFactory.For("alice").EnqueueText("after compact");
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+
+            await LoginAsync(client, "alice", "pw1");
+            string sse = await ReadSseAsStringAsync(client, "three");
+
+            Assert.Contains("event: done", sse, StringComparison.Ordinal);
         }
         finally {
             Directory.Delete(tempDir, recursive: true);
@@ -1608,6 +1831,14 @@ public sealed class FamilyChatServerTests {
         return path;
     }
 
+    private static string WriteRawConfig(string tempDir, object config) {
+        string configDir = Path.Combine(tempDir, ".atelia", "family-chat");
+        Directory.CreateDirectory(configDir);
+        string path = Path.Combine(configDir, "config.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(config, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        return path;
+    }
+
     private static void WriteConfigFile(string path, FamilyChatConfig config) {
         File.WriteAllText(path, JsonSerializer.Serialize(config, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
     }
@@ -1628,6 +1859,21 @@ public sealed class FamilyChatServerTests {
         Assert.NotNull(exception);
         Assert.True(File.Exists(configPath));
         return configPath;
+    }
+
+    private static (string CompactionSystemPrompt, string CompactionPrompt) GetGeneratedTemplateCompactionPrompts() {
+        string tempDir = CreateTempDirectory();
+        try {
+            string configPath = BootstrapTemplate(tempDir);
+            var config = ReadConfig(configPath);
+            var user = config.Users[0];
+            Assert.NotNull(user.CompactionSystemPrompt);
+            Assert.NotNull(user.CompactionPrompt);
+            return (user.CompactionSystemPrompt!, user.CompactionPrompt!);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     private static string FlattenExceptionMessages(Exception exception) {

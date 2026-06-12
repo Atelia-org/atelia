@@ -22,8 +22,8 @@ public sealed record FamilyChatUserConfig(
     string ModelId,
     string CompletionSurfaceId,
     ulong CompactionThresholdTokens,
-    string CompactionSystemPrompt,
-    string CompactionPrompt,
+    string? CompactionSystemPrompt,
+    string? CompactionPrompt,
     string SystemPrompt = "",
     // Optional path to a markdown (or plain text) file whose content overrides
     // the inline SystemPrompt. Resolved relative to the config file's directory

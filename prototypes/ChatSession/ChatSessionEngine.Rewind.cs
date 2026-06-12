@@ -27,11 +27,11 @@ public sealed partial class ChatSessionEngine {
         }
 
         var observation = MessageRecord.ToHistoryMessage(record) as ObservationMessage;
-        if (observation is null || !LatestTurnContainsAssistantOutput(latestObservationIndex)) {
+        if (observation is null || !LatestTurnContainsAssistantAction(latestObservationIndex)) {
             removedTurn = null;
             DebugUtil.Info(
                 "ChatSession.Rewind",
-                $"TryRemoveLatestCompletedTurn skipped: observation={observation is not null}, hasAssistant={LatestTurnContainsAssistantOutput(latestObservationIndex)}.",
+                $"TryRemoveLatestCompletedTurn skipped: observation={observation is not null}, hasAssistantAction={LatestTurnContainsAssistantAction(latestObservationIndex)}.",
                 eventKind: DebugEventKind.Skip
             );
             return false;
@@ -71,19 +71,11 @@ public sealed partial class ChatSessionEngine {
         return -1;
     }
 
-    private bool LatestTurnContainsAssistantOutput(int latestObservationIndex) {
+    private bool LatestTurnContainsAssistantAction(int latestObservationIndex) {
         for (int i = latestObservationIndex + 1; i < _messages.Count; i++) {
             if (!_messages.TryGetAt<DurableDict<string>>(i, out var record) || record is null) { continue; }
 
-            if (MessageRecord.ToHistoryMessage(record) is ActionMessage action && HasAssistantContent(action)) { return true; }
-        }
-
-        return false;
-    }
-
-    private static bool HasAssistantContent(ActionMessage action) {
-        for (int i = 0; i < action.Blocks.Count; i++) {
-            if (action.Blocks[i] is ActionBlock.Text or ActionBlock.TextReasoningBlock) { return true; }
+            if (MessageRecord.ToHistoryMessage(record) is ActionMessage) { return true; }
         }
 
         return false;

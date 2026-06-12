@@ -5,7 +5,6 @@ namespace Atelia.ChatSession;
 
 public sealed partial class ChatSessionEngine {
     private const int MaxToolLoopIterations = 16;
-    private const string OpenAIChatApiSpecId = "openai-chat-v1";
 
     public Task<ChatSessionTurnResult> SendMessageAsync(string message, CancellationToken ct = default)
         => SendMessageAsync(message, observer: null, ct);
@@ -121,20 +120,17 @@ public sealed partial class ChatSessionEngine {
 
     private ActionMessage SanitizeForPersistence(ActionMessage message) {
         var persistedBlocks = new List<ActionBlock>(message.Blocks.Count);
-        bool allowPlaintextReasoning = string.Equals(
-            _runtime.CompletionClient.ApiSpecId,
-            OpenAIChatApiSpecId,
-            StringComparison.Ordinal
-        );
 
         for (int i = 0; i < message.Blocks.Count; i++) {
             var block = message.Blocks[i];
             switch (block) {
-                case ActionBlock.Text:
-                case ActionBlock.ToolCall:
-                    persistedBlocks.Add(block);
+                case ActionBlock.Text text:
+                    var visibleText = InlineThinkTextFilter.StripInlineThinkBlocks(text.Content);
+                    if (!string.IsNullOrEmpty(visibleText)) {
+                        persistedBlocks.Add(new ActionBlock.Text(visibleText));
+                    }
                     break;
-                case ActionBlock.TextReasoningBlock when allowPlaintextReasoning:
+                case ActionBlock.ToolCall:
                     persistedBlocks.Add(block);
                     break;
             }

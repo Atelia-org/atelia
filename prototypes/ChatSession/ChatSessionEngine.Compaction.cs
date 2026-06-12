@@ -118,8 +118,16 @@ public sealed partial class ChatSessionEngine {
     private static ActionMessage StripReasoningBlocks(ActionMessage action) {
         var filtered = new List<ActionBlock>(action.Blocks.Count);
         for (int i = 0; i < action.Blocks.Count; i++) {
-            if (action.Blocks[i] is ActionBlock.Text or ActionBlock.ToolCall) {
-                filtered.Add(action.Blocks[i]);
+            switch (action.Blocks[i]) {
+                case ActionBlock.Text text:
+                    var visibleText = InlineThinkTextFilter.StripInlineThinkBlocks(text.Content);
+                    if (!string.IsNullOrEmpty(visibleText)) {
+                        filtered.Add(new ActionBlock.Text(visibleText));
+                    }
+                    break;
+                case ActionBlock.ToolCall:
+                    filtered.Add(action.Blocks[i]);
+                    break;
             }
         }
         return new ActionMessage(filtered);
@@ -150,7 +158,7 @@ public sealed partial class ChatSessionEngine {
         var result = await _runtime.CompletionClient.StreamCompletionAsync(completionRequest, null, ct)
             .ConfigureAwait(false);
 
-        var summary = result.Message.GetFlattenedText();
+        var summary = InlineThinkTextFilter.StripInlineThinkBlocks(result.Message.GetFlattenedText()).Trim();
         if (string.IsNullOrEmpty(summary)) {
             return new CompactionResult(
                 Applied: false,

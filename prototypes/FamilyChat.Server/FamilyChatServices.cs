@@ -252,8 +252,8 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
             liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-start" }), phase: "compaction-start");
             var emergency = await host.Engine.CompactAsync(
-                host.User.CompactionSystemPrompt,
-                host.User.CompactionPrompt,
+                host.User.CompactionSystemPrompt!,
+                host.User.CompactionPrompt!,
                 ct
             ).ConfigureAwait(false);
 
@@ -338,8 +338,8 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             using var compactCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
             DebugUtil.Info("FamilyChat.Session", $"RunTurnAsync post-compaction trigger: user={host.User.UserId}, turnId={liveTurn.TurnId}, head={host.Engine.PersistedHeadAddress}");
             await host.Engine.CompactAsync(
-                host.User.CompactionSystemPrompt,
-                host.User.CompactionPrompt,
+                host.User.CompactionSystemPrompt!,
+                host.User.CompactionPrompt!,
                 compactCts.Token
             ).ConfigureAwait(false);
             DebugUtil.Info("FamilyChat.Session", $"RunTurnAsync post-compaction done: user={host.User.UserId}, turnId={liveTurn.TurnId}, {host.Engine.GetDebugStateSummary()}");
@@ -419,11 +419,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
     /// If the closing tag is missing, the text from <c>&lt;think&gt;</c> onward is dropped.
     /// </summary>
     private static string StripInlineThinkBlocks(string text) {
-        if (string.IsNullOrEmpty(text)) { return text; }
-
-        var filter = new InlineThinkTextFilter();
-        string visibleText = filter.Filter(text);
-        return visibleText + filter.FlushVisibleRemainder();
+        return InlineThinkTextFilter.StripInlineThinkBlocks(text);
     }
 
     internal static string WrapUserMessageForEngine(string userMessage) {
@@ -456,84 +452,6 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         string normalized = text.Replace("\r", string.Empty, StringComparison.Ordinal)
             .Replace("\n", "\\n", StringComparison.Ordinal);
         return normalized.Length <= 120 ? normalized : normalized[..120] + "...";
-    }
-}
-
-internal sealed class InlineThinkTextFilter {
-    private const string OpenTag = "<think>";
-    private const string CloseTag = "</think>";
-
-    private string _pending = string.Empty;
-    private bool _insideThink;
-
-    public string Filter(string delta) {
-        if (string.IsNullOrEmpty(delta)) { return string.Empty; }
-
-        _pending += delta;
-        return DrainPending(flushTrailingSafeText: false);
-    }
-
-    public string FlushVisibleRemainder() {
-        return DrainPending(flushTrailingSafeText: true);
-    }
-
-    private string DrainPending(bool flushTrailingSafeText) {
-        if (_pending.Length == 0) { return string.Empty; }
-
-        var output = new StringBuilder();
-        while (_pending.Length > 0) {
-            if (_insideThink) {
-                int closeIdx = _pending.IndexOf(CloseTag, StringComparison.Ordinal);
-                if (closeIdx < 0) {
-                    _pending = RetainTagPrefixSuffix(_pending, CloseTag, flushTrailingSafeText);
-                    break;
-                }
-
-                _pending = _pending.Substring(closeIdx + CloseTag.Length);
-                _insideThink = false;
-                continue;
-            }
-
-            int openIdx = _pending.IndexOf(OpenTag, StringComparison.Ordinal);
-            if (openIdx < 0) {
-                if (flushTrailingSafeText) {
-                    output.Append(_pending);
-                    _pending = string.Empty;
-                }
-                else {
-                    int keepLength = FindLongestPrefixSuffix(_pending, OpenTag);
-                    output.Append(_pending.AsSpan(0, _pending.Length - keepLength));
-                    _pending = keepLength == 0 ? string.Empty : _pending.Substring(_pending.Length - keepLength);
-                }
-
-                break;
-            }
-
-            if (openIdx > 0) {
-                output.Append(_pending.AsSpan(0, openIdx));
-            }
-
-            _pending = _pending.Substring(openIdx + OpenTag.Length);
-            _insideThink = true;
-        }
-
-        return output.ToString();
-    }
-
-    private static string RetainTagPrefixSuffix(string text, string tag, bool flushTrailingSafeText) {
-        if (flushTrailingSafeText) { return string.Empty; }
-
-        int keepLength = FindLongestPrefixSuffix(text, tag);
-        return keepLength == 0 ? string.Empty : text.Substring(text.Length - keepLength);
-    }
-
-    private static int FindLongestPrefixSuffix(string text, string tag) {
-        int maxLength = Math.Min(text.Length, tag.Length - 1);
-        for (int length = maxLength; length > 0; length--) {
-            if (text.EndsWith(tag.AsSpan(0, length), StringComparison.Ordinal)) { return length; }
-        }
-
-        return 0;
     }
 }
 
@@ -633,6 +551,7 @@ internal static class FamilyChatConfigLoader {
         if (config.Users.Count == 0) { throw new InvalidOperationException("FamilyChat config must contain at least one user."); }
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
+        config = ApplyDefaultCompactionPrompts(config);
 
         Validate(config);
         return config;
@@ -664,6 +583,20 @@ internal static class FamilyChatConfigLoader {
         return config with { Users = resolvedUsers };
     }
 
+    private static FamilyChatConfig ApplyDefaultCompactionPrompts(FamilyChatConfig config) {
+        var normalizedUsers = new List<FamilyChatUserConfig>(config.Users.Count);
+        foreach (var user in config.Users) {
+            normalizedUsers.Add(
+                user with {
+                    CompactionSystemPrompt = user.CompactionSystemPrompt ?? FamilyChatDefaults.CompactionSystemPrompt,
+                    CompactionPrompt = user.CompactionPrompt ?? FamilyChatDefaults.CompactionPrompt,
+                }
+            );
+        }
+
+        return config with { Users = normalizedUsers };
+    }
+
     private static void Validate(FamilyChatConfig config) {
         var userIds = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < config.Users.Count; i++) {
@@ -681,6 +614,14 @@ internal static class FamilyChatConfigLoader {
                     $"FamilyChat config user '{user.UserId}' must provide a non-empty systemPrompt "
                     + "(either inline via 'systemPrompt' or by pointing 'systemPromptFile' at a non-empty file)."
                 );
+            }
+
+            if (string.IsNullOrWhiteSpace(user.CompactionSystemPrompt)) {
+                throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty compactionSystemPrompt.");
+            }
+
+            if (string.IsNullOrWhiteSpace(user.CompactionPrompt)) {
+                throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty compactionPrompt.");
             }
         }
 
@@ -719,20 +660,29 @@ internal static class FamilyChatConfigBootstrapper {
     }
 }
 
-internal static class FamilyChatConfigTemplateFactory {
-    public const string PlaceholderModelId = "REPLACE_WITH_YOUR_LOCAL_MODEL_ID";
-
-    public const string DefaultSystemPrompt =
+internal static class FamilyChatDefaults {
+    public const string SystemPrompt =
         "你是家庭局域网里的私人助手。优先用简洁、直接、可信的中文回答。"
         + "不确定时明确说明不确定，不编造细节。";
 
-    public const string DefaultCompactionSystemPrompt =
-        "你负责压缩长期对话上下文。请保留用户偏好、未完成事项、关键事实、约定、限制与后续行动线索。"
-        + "输出简洁中文摘要，避免虚构。";
+    public const string CompactionSystemPrompt = @"你是一位专业的游戏书吏（Game Scribe），负责将漫长的冒险历程提炼成引人入胜的“前情提要”。你的任务不是简单地压缩文本，而是要捕捉故事的核心戏剧性：
+  1. **聚焦动机与冲突**：识别并强调每个主要角色的核心目标、他们遇到的阻碍，以及角色之间的内在或外在冲突。
+  2. **保留关键“变化”**：记录世界状态、人物关系或角色心境发生的关键转折点。
+  3. **提炼悬念**：清晰地列出当前故事中悬而未决的问题、未解的谜团或迫在眉睫的危机。
+  4. **使用第三人称**：始终使用角色的名字进行叙述，保持客观的史官视角。";
 
-    public const string DefaultCompactionPrompt =
-        "请把以上较早的对话压缩成一段可供后续继续聊天的中文 recap。"
-        + "保留人物偏好、进行中的任务、重要事实、未决问题与明确约定。";
+    public const string CompactionPrompt = @"请根据以上对话历史，撰写一段承前启后的中文剧情摘要。摘要需要清晰且充满张力，并至少包括以下结构：
+  1. **【当前局势】**：概括主要角色们目前所处的地点、时间和核心情境。
+  2. **【角色动态与内心驱动】**：分点阐述每个主要角色：
+      * 他们最新的状态是怎样的？
+      * 他们当前正在做什么？
+      * 他们内心最迫切的目标或欲望是什么？
+      * 他们与其他角色的关系（如信任、怀疑、联盟、敌对）的状态与最新变化？
+  3. **【悬念与线索】**：分点列出故事中所有待解决的谜题、未完成的任务、隐藏的线索或潜在的威胁。这些是推动故事继续发展的关键。";
+}
+
+internal static class FamilyChatConfigTemplateFactory {
+    public const string PlaceholderModelId = "REPLACE_WITH_YOUR_LOCAL_MODEL_ID";
 
     public static FamilyChatConfig Create(string configPath) {
         return new FamilyChatConfig(
@@ -757,10 +707,10 @@ internal static class FamilyChatConfigTemplateFactory {
             SessionDir: sessionDir,
             ModelId: PlaceholderModelId,
             CompletionSurfaceId: "openai-chat/sglang-compatible",
-            SystemPrompt: DefaultSystemPrompt,
+            SystemPrompt: FamilyChatDefaults.SystemPrompt,
             CompactionThresholdTokens: 32000,
-            CompactionSystemPrompt: DefaultCompactionSystemPrompt,
-            CompactionPrompt: DefaultCompactionPrompt
+            CompactionSystemPrompt: FamilyChatDefaults.CompactionSystemPrompt,
+            CompactionPrompt: FamilyChatDefaults.CompactionPrompt
         );
     }
 }
