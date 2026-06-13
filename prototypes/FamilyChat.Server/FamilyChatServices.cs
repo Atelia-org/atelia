@@ -167,7 +167,12 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
     public RecentTurnsResponseDto BuildRecentTurnsResponse(ChatSessionEngine engine, int maxTurns = 12) {
         ArgumentNullException.ThrowIfNull(engine);
 
-        var turns = BuildRecentTurns(engine, maxTurns);
+        var allTurns = BuildRecentTurns(engine, int.MaxValue);
+        var turns = ProjectRecentTurnsResponse(allTurns, maxTurns);
+        DebugUtil.Info(
+            "FamilyChat.Session",
+            $"BuildRecentTurnsResponse: {engine.GetDebugStateSummary()}, responseTurns={turns.Count}, recapVisible={turns.Any(static x => x.IsRecap)}, firstTurn={DescribeTurn(turns.FirstOrDefault())}"
+        );
         return new RecentTurnsResponseDto(turns);
     }
 
@@ -490,6 +495,36 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         if (turn is null) { return "<null>"; }
         if (turn.IsRecap) { return $"recap={Preview(turn.Assistant.Text)}"; }
         return $"user={Preview(turn.UserText)}, assistant={Preview(turn.Assistant.Text)}";
+    }
+
+    private static IReadOnlyList<RecentTurnDto> ProjectRecentTurnsResponse(IReadOnlyList<RecentTurnDto> allTurns, int maxTurns) {
+        ArgumentNullException.ThrowIfNull(allTurns);
+
+        var projectedTurns = allTurns.Count <= maxTurns
+            ? new List<RecentTurnDto>(allTurns)
+            : allTurns.Take(maxTurns).ToList();
+
+        int recapIndex = FindRecapIndex(allTurns);
+        if (recapIndex < 0 || recapIndex < maxTurns) {
+            return projectedTurns;
+        }
+
+        // Optional boundary hint: include the first turn immediately after the recap
+        // if it fell outside maxTurns, so the UI can see where the uncompressed range starts.
+        if (recapIndex > 0 && recapIndex - 1 >= maxTurns) {
+            projectedTurns.Add(allTurns[recapIndex - 1]);
+        }
+
+        projectedTurns.Add(allTurns[recapIndex]);
+        return projectedTurns;
+    }
+
+    private static int FindRecapIndex(IReadOnlyList<RecentTurnDto> turns) {
+        for (int i = 0; i < turns.Count; i++) {
+            if (turns[i].IsRecap) { return i; }
+        }
+
+        return -1;
     }
 
     private static string Preview(string? text) {

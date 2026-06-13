@@ -951,6 +951,125 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task BuildRecentTurnsResponse_WhenRecapFallsOutsideMaxTurns_StillIncludesRecapAndBoundaryTurn() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("reply-second");
+            client.EnqueueText("summary");
+            client.EnqueueText("reply-third");
+            client.EnqueueText("reply-fourth");
+            client.EnqueueText("reply-fifth");
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            await engine.SendMessageAsync("first");
+            await engine.SendMessageAsync("second");
+            var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+            Assert.True(compaction.Applied);
+            await engine.SendMessageAsync("third");
+            await engine.SendMessageAsync("fourth");
+            await engine.SendMessageAsync("fifth");
+
+            var hostService = new FamilyChatHostService(
+                new FamilyChatConfig(new FamilyChatBackendConfig("openai-chat", "http://localhost:8000/"), []),
+                new ScriptedCompletionClientFactory(),
+                DisabledFamilyChatUserMessageNormalizer.Instance
+            );
+
+            var response = hostService.BuildRecentTurnsResponse(engine, maxTurns: 2);
+
+            Assert.Collection(
+                response.Turns,
+                turn => {
+                    Assert.Equal("fifth", turn.UserText);
+                    Assert.Equal("reply-fifth", turn.Assistant.Text);
+                    Assert.False(turn.IsRecap);
+                },
+                turn => {
+                    Assert.Equal("fourth", turn.UserText);
+                    Assert.Equal("reply-fourth", turn.Assistant.Text);
+                    Assert.False(turn.IsRecap);
+                },
+                turn => {
+                    Assert.Equal("second", turn.UserText);
+                    Assert.Equal("reply-second", turn.Assistant.Text);
+                    Assert.False(turn.IsRecap);
+                },
+                turn => {
+                    Assert.True(turn.IsRecap);
+                    Assert.Equal("summary", turn.Assistant.Text);
+                }
+            );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildRecentTurnsResponse_WhenBoundaryTurnAlreadyVisible_DoesNotDuplicateIt() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("reply-second");
+            client.EnqueueText("summary");
+            client.EnqueueText("reply-third");
+            client.EnqueueText("reply-fourth");
+            client.EnqueueText("reply-fifth");
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            await engine.SendMessageAsync("first");
+            await engine.SendMessageAsync("second");
+            var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+            Assert.True(compaction.Applied);
+            await engine.SendMessageAsync("third");
+            await engine.SendMessageAsync("fourth");
+            await engine.SendMessageAsync("fifth");
+
+            var hostService = new FamilyChatHostService(
+                new FamilyChatConfig(new FamilyChatBackendConfig("openai-chat", "http://localhost:8000/"), []),
+                new ScriptedCompletionClientFactory(),
+                DisabledFamilyChatUserMessageNormalizer.Instance
+            );
+
+            var response = hostService.BuildRecentTurnsResponse(engine, maxTurns: 4);
+
+            Assert.Collection(
+                response.Turns,
+                turn => Assert.Equal("fifth", turn.UserText),
+                turn => Assert.Equal("fourth", turn.UserText),
+                turn => Assert.Equal("third", turn.UserText),
+                turn => Assert.Equal("second", turn.UserText),
+                turn => Assert.True(turn.IsRecap)
+            );
+            Assert.Single(response.Turns, static turn => turn.UserText == "second");
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task PopLatestTurn_WithoutCompletedTurn_Returns409() {
         string tempDir = CreateTempDirectory();
         try {
