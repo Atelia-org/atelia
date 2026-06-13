@@ -81,6 +81,55 @@ public sealed class GameSimulationNotebookEditTests : IDisposable {
         Assert.Equal("TextAdv.NotebookEdit.AnchorMustTargetLiveBlock", result.Error.ErrorCode);
     }
 
+    [Fact]
+    public void PreparePreviewAndActualApply_ShouldRenderSameAfterView_ForSplitOperation() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+
+        ApplyAcceptedNotebookEdit(root, "<insert side=\"after\" anchor=\"tail\">abcdef</insert>");
+        ApplyAcceptedNotebookEdit(root, "<insert side=\"after\" anchor=\"tail\">tail</insert>");
+
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var before = perception.NotebookBlocks;
+        var proposal = AssertSuccess(
+            GameNotebookEditService.Prepare(
+                before,
+                "<split anchor=\"head\" offset=\"2\" />"
+            )
+        );
+
+        var previewAfter = NotebookBlockViewRenderer.RenderPreviewBlockView(before, proposal.PredictedAfterSnapshot);
+        var actualAfter = GameSimulation.ApplyNotebookEdit(root, proposal, "把长块拆成更容易单独编辑的两段。", "通过");
+        var actualAfterView = NotebookBlockViewRenderer.RenderPreviewBlockView(before, actualAfter.NotebookBlocks);
+
+        Assert.Equal(previewAfter, actualAfterView);
+    }
+
+    [Fact]
+    public void PreparePreviewAndActualApply_ShouldRenderSameAfterView_ForMergeOperation() {
+        using var repo = CreateRepository();
+        var root = GameSimulation.CreateNewWorld(repo);
+
+        ApplyAcceptedNotebookEdit(root, "<insert side=\"after\" anchor=\"tail\">hello</insert>");
+        ApplyAcceptedNotebookEdit(root, "<insert side=\"after\" anchor=\"tail\"> world</insert>");
+        ApplyAcceptedNotebookEdit(root, "<insert side=\"after\" anchor=\"tail\">tail</insert>");
+
+        var perception = GameSimulation.DescribeCurrentPerception(root);
+        var before = perception.NotebookBlocks;
+        var proposal = AssertSuccess(
+            GameNotebookEditService.Prepare(
+                before,
+                "<merge anchor=\"head\" />"
+            )
+        );
+
+        var previewAfter = NotebookBlockViewRenderer.RenderPreviewBlockView(before, proposal.PredictedAfterSnapshot);
+        var actualAfter = GameSimulation.ApplyNotebookEdit(root, proposal, "把两个相邻短句并回一个块。", "通过");
+        var actualAfterView = NotebookBlockViewRenderer.RenderPreviewBlockView(before, actualAfter.NotebookBlocks);
+
+        Assert.Equal(previewAfter, actualAfterView);
+    }
+
     private Repository CreateRepository() {
         var createResult = Repository.Create(_repoDir);
         return AssertSuccess(createResult);

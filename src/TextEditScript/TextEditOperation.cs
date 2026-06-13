@@ -13,3 +13,10 @@ public sealed record ReplaceTextEdit(
 
 public sealed record DeleteTextEdit(
     TextAnchor Anchor) : TextEditOperation;
+
+public sealed record SplitTextEdit(
+    TextAnchor Anchor,
+    int Offset) : TextEditOperation;
+
+public sealed record MergeTextEdit(
+    TextAnchor Anchor) : TextEditOperation;

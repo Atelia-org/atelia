@@ -115,4 +115,117 @@ public class TextEditScriptApplyTests {
         Assert.NotNull(result.Error);
         Assert.Contains("duplicate block id", result.Error.Message);
     }
+
+    [Fact]
+    public void ApplyTo_ShouldSplitBlock_AndAllocateNewRightBlockId() {
+        var before = new TextBlockSnapshotDocument([
+            new TextBlockSnapshot(10, "abcdef"),
+            new TextBlockSnapshot(20, "tail"),
+        ]);
+        var script = new TextEditScriptDocument([
+            new SplitTextEdit(TextAnchor.ForBlockId(10), 2),
+        ]);
+
+        var result = script.ApplyTo(before);
+
+        Assert.True(result.IsSuccess);
+        Assert.Collection(
+            result.Value.Blocks,
+            block => {
+                Assert.Equal((uint)10, block.BlockId);
+                Assert.Equal("ab", block.Content);
+            },
+            block => {
+                Assert.Equal((uint)21, block.BlockId);
+                Assert.Equal("cdef", block.Content);
+            },
+            block => {
+                Assert.Equal((uint)20, block.BlockId);
+                Assert.Equal("tail", block.Content);
+            });
+    }
+
+    [Fact]
+    public void ApplyTo_ShouldMergeAnchorWithNext_AndPreserveAnchorBlockId() {
+        var before = new TextBlockSnapshotDocument([
+            new TextBlockSnapshot(10, "hello"),
+            new TextBlockSnapshot(20, " world"),
+            new TextBlockSnapshot(30, "tail"),
+        ]);
+        var script = new TextEditScriptDocument([
+            new MergeTextEdit(TextAnchor.ForBlockId(10)),
+        ]);
+
+        var result = script.ApplyTo(before);
+
+        Assert.True(result.IsSuccess);
+        Assert.Collection(
+            result.Value.Blocks,
+            block => {
+                Assert.Equal((uint)10, block.BlockId);
+                Assert.Equal("hello world", block.Content);
+            },
+            block => {
+                Assert.Equal((uint)30, block.BlockId);
+                Assert.Equal("tail", block.Content);
+            });
+    }
+
+    [Fact]
+    public void ApplyTo_ShouldApplySplitThenMergeSequentiallyAgainstUpdatedSnapshot() {
+        var before = new TextBlockSnapshotDocument([
+            new TextBlockSnapshot(10, "abcd"),
+            new TextBlockSnapshot(20, "Z"),
+        ]);
+        var script = new TextEditScriptDocument([
+            new SplitTextEdit(TextAnchor.Head, 2),
+            new MergeTextEdit(TextAnchor.Head),
+        ]);
+
+        var result = script.ApplyTo(before);
+
+        Assert.True(result.IsSuccess);
+        Assert.Collection(
+            result.Value.Blocks,
+            block => {
+                Assert.Equal((uint)10, block.BlockId);
+                Assert.Equal("abcd", block.Content);
+            },
+            block => {
+                Assert.Equal((uint)20, block.BlockId);
+                Assert.Equal("Z", block.Content);
+            });
+    }
+
+    [Fact]
+    public void ApplyTo_ShouldRejectMergeWhenAnchorHasNoNextBlock() {
+        var before = new TextBlockSnapshotDocument([
+            new TextBlockSnapshot(10, "only"),
+        ]);
+        var script = new TextEditScriptDocument([
+            new MergeTextEdit(TextAnchor.Tail),
+        ]);
+
+        var result = script.ApplyTo(before);
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Error);
+        Assert.Contains("no next block", result.Error.Message);
+    }
+
+    [Fact]
+    public void ApplyTo_ShouldRejectSplitOutsideBlockInterior() {
+        var before = new TextBlockSnapshotDocument([
+            new TextBlockSnapshot(10, "abc"),
+        ]);
+        var script = new TextEditScriptDocument([
+            new SplitTextEdit(TextAnchor.Head, 3),
+        ]);
+
+        var result = script.ApplyTo(before);
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Error);
+        Assert.Contains("block interior", result.Error.Message);
+    }
 }

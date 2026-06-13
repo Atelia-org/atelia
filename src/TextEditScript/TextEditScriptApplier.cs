@@ -80,6 +80,8 @@ public static class TextEditScriptApplier {
                 InsertTextEdit insert => ApplyInsert(insert),
                 ReplaceTextEdit replace => ApplyReplace(replace),
                 DeleteTextEdit delete => ApplyDelete(delete),
+                SplitTextEdit split => ApplySplit(split),
+                MergeTextEdit merge => ApplyMerge(merge),
                 _ => AteliaResult<Unit>.Failure(
                     new TextEditScriptApplyError($"Unsupported operation type: {operation.GetType().FullName}"))
             };
@@ -122,6 +124,52 @@ public static class TextEditScriptApplier {
             }
 
             _blocks.RemoveAt(targetIndex);
+            RebuildIndex();
+            return Unit.Value;
+        }
+
+        private AteliaResult<Unit> ApplySplit(SplitTextEdit operation) {
+            var targetIndexResult = ResolveTargetIndex(operation.Anchor, operationName: "split");
+            if (!targetIndexResult.TryGetValue(out var targetIndex)) {
+                return AteliaResult<Unit>.Failure(targetIndexResult.Error!);
+            }
+
+            var current = _blocks[targetIndex];
+            if (operation.Offset <= 0 || operation.Offset >= current.Content.Length) {
+                return AteliaResult<Unit>.Failure(
+                    new TextEditScriptApplyError(
+                        $"Cannot split block id {current.BlockId} at offset {operation.Offset} because the offset must stay within the block interior.",
+                        "Choose an offset greater than 0 and smaller than the current block content length."));
+            }
+
+            var newBlockIdResult = AllocateInsertedBlockId();
+            if (!newBlockIdResult.TryGetValue(out var newBlockId)) {
+                return AteliaResult<Unit>.Failure(newBlockIdResult.Error!);
+            }
+
+            _blocks[targetIndex] = current with { Content = current.Content[..operation.Offset] };
+            _blocks.Insert(targetIndex + 1, new TextBlockSnapshot(newBlockId, current.Content[operation.Offset..]));
+            RebuildIndex();
+            return Unit.Value;
+        }
+
+        private AteliaResult<Unit> ApplyMerge(MergeTextEdit operation) {
+            var targetIndexResult = ResolveTargetIndex(operation.Anchor, operationName: "merge");
+            if (!targetIndexResult.TryGetValue(out var targetIndex)) {
+                return AteliaResult<Unit>.Failure(targetIndexResult.Error!);
+            }
+
+            if (targetIndex >= _blocks.Count - 1) {
+                return AteliaResult<Unit>.Failure(
+                    new TextEditScriptApplyError(
+                        $"Cannot merge anchor '{operation.Anchor}' because it has no next block in the current snapshot.",
+                        "Target a block that still has a following neighbor, or split the block first if you need a new neighbor."));
+            }
+
+            var current = _blocks[targetIndex];
+            var next = _blocks[targetIndex + 1];
+            _blocks[targetIndex] = current with { Content = string.Concat(current.Content, next.Content) };
+            _blocks.RemoveAt(targetIndex + 1);
             RebuildIndex();
             return Unit.Value;
         }

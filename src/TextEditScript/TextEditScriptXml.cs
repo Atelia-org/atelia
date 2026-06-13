@@ -9,6 +9,8 @@ internal static class TextEditScriptXml {
     private const string InsertName = "insert";
     private const string ReplaceName = "replace";
     private const string DeleteName = "delete";
+    private const string SplitName = "split";
+    private const string MergeName = "merge";
 
     public static AteliaResult<TextEditScriptDocument> Parse(string xml) {
         if (string.IsNullOrWhiteSpace(xml)) {
@@ -69,7 +71,7 @@ internal static class TextEditScriptXml {
                 default:
                     return AteliaResult<TextEditScriptDocument>.Failure(
                         CreateParseError(
-                            $"Only <{InsertName}>, <{ReplaceName}>, and <{DeleteName}> elements are allowed under <{RootName}>.",
+                            $"Only <{InsertName}>, <{ReplaceName}>, <{DeleteName}>, <{SplitName}>, and <{MergeName}> elements are allowed under <{RootName}>.",
                             node));
             }
         }
@@ -95,6 +97,13 @@ internal static class TextEditScriptXml {
                 DeleteTextEdit delete => new XElement(
                     DeleteName,
                     new XAttribute("anchor", delete.Anchor.ToString())),
+                SplitTextEdit split => new XElement(
+                    SplitName,
+                    new XAttribute("anchor", split.Anchor.ToString()),
+                    new XAttribute("offset", split.Offset.ToString(CultureInfo.InvariantCulture))),
+                MergeTextEdit merge => new XElement(
+                    MergeName,
+                    new XAttribute("anchor", merge.Anchor.ToString())),
                 _ => throw new InvalidOperationException($"Unsupported {nameof(TextEditOperation)} type: {operation.GetType().FullName}")
             });
         }
@@ -107,11 +116,13 @@ internal static class TextEditScriptXml {
             InsertName => ParseInsert(element),
             ReplaceName => ParseReplace(element),
             DeleteName => ParseDelete(element),
+            SplitName => ParseSplit(element),
+            MergeName => ParseMerge(element),
             _ => AteliaResult<TextEditOperation>.Failure(
                 CreateParseError(
                     $"Unexpected operation element <{element.Name.LocalName}>.",
                     element,
-                    $"Allowed elements are <{InsertName}>, <{ReplaceName}>, and <{DeleteName}>."))
+                    $"Allowed elements are <{InsertName}>, <{ReplaceName}>, <{DeleteName}>, <{SplitName}>, and <{MergeName}>."))
         };
     }
 
@@ -182,6 +193,53 @@ internal static class TextEditScriptXml {
         return new DeleteTextEdit(anchor);
     }
 
+    private static AteliaResult<TextEditOperation> ParseSplit(XElement element) {
+        if (EnsureOnlyAttributes(element, "anchor", "offset") is { } attributeError) {
+            return AteliaResult<TextEditOperation>.Failure(attributeError);
+        }
+
+        var anchorResult = ParseRequiredAnchor(element);
+        if (!anchorResult.TryGetValue(out var anchor)) {
+            return AteliaResult<TextEditOperation>.Failure(anchorResult.Error!);
+        }
+
+        var offsetResult = ParseRequiredPositiveIntAttribute(element, "offset", SplitName);
+        if (!offsetResult.TryGetValue(out var offset)) {
+            return AteliaResult<TextEditOperation>.Failure(offsetResult.Error!);
+        }
+
+        if (HasNonWhitespaceContent(element)) {
+            return AteliaResult<TextEditOperation>.Failure(
+                CreateParseError(
+                    $"<{SplitName}> must be empty.",
+                    element,
+                    $"Use <{SplitName} anchor=\"123\" offset=\"5\" /> without inner text."));
+        }
+
+        return new SplitTextEdit(anchor, offset);
+    }
+
+    private static AteliaResult<TextEditOperation> ParseMerge(XElement element) {
+        if (EnsureOnlyAttributes(element, "anchor") is { } attributeError) {
+            return AteliaResult<TextEditOperation>.Failure(attributeError);
+        }
+
+        var anchorResult = ParseRequiredAnchor(element);
+        if (!anchorResult.TryGetValue(out var anchor)) {
+            return AteliaResult<TextEditOperation>.Failure(anchorResult.Error!);
+        }
+
+        if (HasNonWhitespaceContent(element)) {
+            return AteliaResult<TextEditOperation>.Failure(
+                CreateParseError(
+                    $"<{MergeName}> must be empty.",
+                    element,
+                    $"Use <{MergeName} anchor=\"123\" /> without inner text."));
+        }
+
+        return new MergeTextEdit(anchor);
+    }
+
     private static AteliaResult<TextInsertSide> ParseSide(string rawSide) {
         return rawSide.Trim().ToLowerInvariant() switch {
             "before" => TextInsertSide.BeforeAnchor,
@@ -218,6 +276,25 @@ internal static class TextEditScriptXml {
         }
 
         return attribute.Value.Trim();
+    }
+
+    private static AteliaResult<int> ParseRequiredPositiveIntAttribute(
+        XElement element,
+        string attributeName,
+        string operationName) {
+        var rawResult = GetRequiredAttribute(element, attributeName);
+        if (!rawResult.TryGetValue(out var rawValue)) {
+            return AteliaResult<int>.Failure(rawResult.Error!);
+        }
+
+        if (!int.TryParse(rawValue, NumberStyles.None, CultureInfo.InvariantCulture, out var value) || value <= 0) {
+            return AteliaResult<int>.Failure(
+                CreateParseError(
+                    $"<{operationName}> attribute '{attributeName}' must be a positive integer.",
+                    element));
+        }
+
+        return value;
     }
 
     private static AteliaResult<string> ParseContent(XElement element, string operationName, bool allowEmpty) {

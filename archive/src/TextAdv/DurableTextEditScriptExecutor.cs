@@ -43,6 +43,8 @@ internal static class DurableTextEditScriptExecutor {
                 InsertTextEdit insert => ExecuteInsert(target, currentBlockIds, insert),
                 ReplaceTextEdit replace => ExecuteReplace(target, currentBlockIds, replace),
                 DeleteTextEdit delete => ExecuteDelete(target, currentBlockIds, delete),
+                SplitTextEdit split => ExecuteSplit(target, currentBlockIds, split),
+                MergeTextEdit merge => ExecuteMerge(target, currentBlockIds, merge),
                 _ => AteliaResult<Unit>.Failure(
                     new TextAdvError(
                         "TextAdv.NotebookEdit.UnsupportedOperation",
@@ -150,6 +152,55 @@ internal static class DurableTextEditScriptExecutor {
         return new Unit();
     }
 
+    private static AteliaResult<Unit> ExecuteSplit(
+        INotebookEditTarget target,
+        List<uint> currentBlockIds,
+        SplitTextEdit split
+    ) {
+        var targetIndexResult = ResolveCurrentAnchorIndex(currentBlockIds, split.Anchor, operationName: "split");
+        if (!targetIndexResult.TryGetValue(out var targetIndex)) { return AteliaResult<Unit>.Failure(targetIndexResult.Error!); }
+
+        var anchorBlockId = currentBlockIds[targetIndex];
+        var content = target.GetContent(anchorBlockId);
+        if (split.Offset <= 0 || split.Offset >= content.Length) {
+            return AteliaResult<Unit>.Failure(
+                new TextAdvError(
+                    "TextAdv.NotebookEdit.InvalidSplitOffset",
+                    $"Cannot split block id {anchorBlockId} at offset {split.Offset} because the offset must stay within the block interior.",
+                    "Choose an offset greater than 0 and smaller than the current block content length."
+                )
+            );
+        }
+
+        var newBlockId = target.SplitBlock(anchorBlockId, split.Offset);
+        currentBlockIds.Insert(targetIndex + 1, newBlockId);
+        return new Unit();
+    }
+
+    private static AteliaResult<Unit> ExecuteMerge(
+        INotebookEditTarget target,
+        List<uint> currentBlockIds,
+        MergeTextEdit merge
+    ) {
+        var targetIndexResult = ResolveCurrentAnchorIndex(currentBlockIds, merge.Anchor, operationName: "merge");
+        if (!targetIndexResult.TryGetValue(out var targetIndex)) { return AteliaResult<Unit>.Failure(targetIndexResult.Error!); }
+
+        if (targetIndex >= currentBlockIds.Count - 1) {
+            return AteliaResult<Unit>.Failure(
+                new TextAdvError(
+                    "TextAdv.NotebookEdit.MergeRequiresNextBlock",
+                    $"Cannot merge anchor '{merge.Anchor}' because it has no following block in the current notebook state.",
+                    "Target a block that still has a following neighbor."
+                )
+            );
+        }
+
+        var anchorBlockId = currentBlockIds[targetIndex];
+        target.MergeWithNext(anchorBlockId);
+        currentBlockIds.RemoveAt(targetIndex + 1);
+        return new Unit();
+    }
+
     private static AteliaResult<int> ResolveCurrentAnchorIndex(
         List<uint> currentBlockIds,
         TextAnchor anchor,
@@ -202,6 +253,12 @@ internal static class DurableTextEditScriptExecutor {
 
         uint Append(string content);
 
+        uint SplitBlock(uint blockId, int splitOffset);
+
+        void MergeWithNext(uint blockId);
+
+        string GetContent(uint blockId);
+
         void SetContent(uint blockId, string content);
 
         void Delete(uint blockId);
@@ -213,6 +270,12 @@ internal static class DurableTextEditScriptExecutor {
         public uint InsertAfter(uint afterBlockId, string content) => notebook.InsertAfter(afterBlockId, content);
 
         public uint Append(string content) => notebook.Append(content);
+
+        public uint SplitBlock(uint blockId, int splitOffset) => notebook.SplitBlock(blockId, splitOffset);
+
+        public void MergeWithNext(uint blockId) => notebook.MergeWithNext(blockId);
+
+        public string GetContent(uint blockId) => notebook.GetBlock(blockId).Content;
 
         public void SetContent(uint blockId, string content) => notebook.SetContent(blockId, content);
 
@@ -246,6 +309,39 @@ internal static class DurableTextEditScriptExecutor {
             var newBlockId = AllocatePreviewBlockId();
             _blocks.Add(new TextBlockSnapshot(newBlockId, content));
             return newBlockId;
+        }
+
+        public uint SplitBlock(uint blockId, int splitOffset) {
+            var index = FindBlockIndex(blockId);
+            var current = _blocks[index];
+            if (splitOffset <= 0 || splitOffset >= current.Content.Length) {
+                throw new ArgumentOutOfRangeException(
+                    nameof(splitOffset),
+                    splitOffset,
+                    "Split offset must stay within the block interior so neither side becomes empty.");
+            }
+
+            var newBlockId = AllocatePreviewBlockId();
+            _blocks[index] = current with { Content = current.Content[..splitOffset] };
+            _blocks.Insert(index + 1, new TextBlockSnapshot(newBlockId, current.Content[splitOffset..]));
+            return newBlockId;
+        }
+
+        public void MergeWithNext(uint blockId) {
+            var index = FindBlockIndex(blockId);
+            if (index >= _blocks.Count - 1) {
+                throw new InvalidOperationException($"Preview target cannot merge block id {blockId} because it has no next block.");
+            }
+
+            var current = _blocks[index];
+            var next = _blocks[index + 1];
+            _blocks[index] = current with { Content = string.Concat(current.Content, next.Content) };
+            _blocks.RemoveAt(index + 1);
+        }
+
+        public string GetContent(uint blockId) {
+            var index = FindBlockIndex(blockId);
+            return _blocks[index].Content;
         }
 
         public void SetContent(uint blockId, string content) {

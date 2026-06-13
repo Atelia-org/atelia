@@ -57,6 +57,8 @@ internal static class GameNotebookEditService {
                 InsertTextEdit insert => $"insert notebook entry {DurableTextEditScriptExecutor.FormatInsertSide(insert.Side)} {insert.Anchor}",
                 ReplaceTextEdit replace => $"replace notebook entry at {replace.Anchor}",
                 DeleteTextEdit delete => $"delete notebook entry at {delete.Anchor}",
+                SplitTextEdit split => $"split notebook entry at {split.Anchor} offset {split.Offset}",
+                MergeTextEdit merge => $"merge notebook entry at {merge.Anchor} with next block",
                 _ => "apply notebook text-edit-script (1 op)",
             };
         }
@@ -102,6 +104,8 @@ internal static class GameNotebookEditService {
                 InsertTextEdit insert => insert.Anchor,
                 ReplaceTextEdit replace => replace.Anchor,
                 DeleteTextEdit delete => delete.Anchor,
+                SplitTextEdit split => split.Anchor,
+                MergeTextEdit merge => merge.Anchor,
                 _ => null,
             };
 

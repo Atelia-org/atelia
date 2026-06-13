@@ -72,6 +72,18 @@ public sealed class DurableText : DurableObject {
         _core.SetContent(blockId, newContent);
     }
 
+    /// <summary>在指定位置拆分一个 block。原 block 保留左半内容与原 blockId，右半成为新的后继 block。</summary>
+    public uint SplitBlock(uint blockId, int splitOffset) {
+        ThrowIfDetached();
+        return _core.SplitBlock(blockId, splitOffset);
+    }
+
+    /// <summary>把指定 block 与它的当前后继 block 合并。当前 block 保留 blockId，后继 block 被删除。</summary>
+    public void MergeWithNext(uint blockId) {
+        ThrowIfDetached();
+        _core.MergeWithNext(blockId);
+    }
+
     /// <summary>删除指定 block。</summary>
     public void Delete(uint blockId) {
         ThrowIfDetached();

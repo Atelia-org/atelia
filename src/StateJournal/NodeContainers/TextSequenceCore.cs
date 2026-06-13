@@ -140,6 +140,29 @@ internal struct TextSequenceCore {
         _arena.SetValue(ref handle, newContent);
     }
 
+    /// <summary>在指定位置拆分一个块。原块保留左半内容并维持原 nodeId，右半内容成为新的后继块。</summary>
+    public uint SplitBlock(uint nodeId, int splitOffset) {
+        var handle = RequireLiveHandle(nodeId);
+        var content = _arena.GetValue(ref handle);
+        ValidateSplitOffset(content, splitOffset);
+
+        _arena.SetValue(ref handle, content[..splitOffset]);
+        return InsertAfter(nodeId, content[splitOffset..]);
+    }
+
+    /// <summary>把指定节点与它的当前后继块合并。当前节点保留 nodeId，后继块被删除。</summary>
+    public void MergeWithNext(uint nodeId) {
+        var handle = RequireLiveHandle(nodeId);
+        var next = _arena.GetNext(ref handle);
+        if (next.IsNull) {
+            throw new InvalidOperationException($"Node {nodeId} has no next block to merge.");
+        }
+
+        var mergedContent = string.Concat(_arena.GetValue(ref handle), _arena.GetValue(ref next));
+        _arena.SetValue(ref handle, mergedContent);
+        Delete(next.Sequence);
+    }
+
     /// <summary>删除指定节点。</summary>
     public void Delete(uint nodeId) {
         if (!_prevByNodeId.TryGetValue(nodeId, out uint predSeq)) {
@@ -325,6 +348,15 @@ internal struct TextSequenceCore {
             throw new KeyNotFoundException($"Node {nodeId} is not a live node in the current text.");
         }
         return new LeafHandle(nodeId);
+    }
+
+    private static void ValidateSplitOffset(string content, int splitOffset) {
+        if (splitOffset <= 0 || splitOffset >= content.Length) {
+            throw new ArgumentOutOfRangeException(
+                nameof(splitOffset),
+                splitOffset,
+                "Split offset must stay within the block interior so neither side becomes empty.");
+        }
     }
 
     private void RebuildPredecessorIndexAndTail() {

@@ -65,11 +65,34 @@ public class TextEditScriptXmlTests {
     }
 
     [Fact]
+    public void ParseXml_ShouldParseSplitAndMergeWithAnchors() {
+        var xml = """
+<text-edit-script>
+  <split anchor="head" offset="5" />
+  <merge anchor="123" />
+</text-edit-script>
+""";
+
+        var result = TextEditScriptDocument.ParseXml(xml);
+
+        Assert.True(result.IsSuccess);
+        var script = result.Value;
+        var split = Assert.IsType<SplitTextEdit>(script.Operations[0]);
+        var merge = Assert.IsType<MergeTextEdit>(script.Operations[1]);
+        Assert.Equal(TextAnchorKind.Head, split.Anchor.Kind);
+        Assert.Equal(5, split.Offset);
+        Assert.Equal(TextAnchorKind.BlockId, merge.Anchor.Kind);
+        Assert.Equal((uint)123, merge.Anchor.BlockId);
+    }
+
+    [Fact]
     public void ToXml_ShouldRoundTrip() {
         var script = new TextEditScriptDocument([
             new InsertTextEdit(TextInsertSide.AfterAnchor, TextAnchor.Tail, "记住：沙滩 north 通往密林。"),
-          new ReplaceTextEdit(TextAnchor.ForBlockId(3), "怀疑密林里有淡水。"),
-          new DeleteTextEdit(TextAnchor.Head),
+            new ReplaceTextEdit(TextAnchor.ForBlockId(3), "怀疑密林里有淡水。"),
+            new DeleteTextEdit(TextAnchor.Head),
+            new SplitTextEdit(TextAnchor.Tail, 4),
+            new MergeTextEdit(TextAnchor.ForBlockId(7)),
         ]);
 
         var xml = script.ToXml();
@@ -145,6 +168,36 @@ public class TextEditScriptXmlTests {
         var xml = """
 <text-edit-script>
   <delete anchor="7">不允许</delete>
+</text-edit-script>
+""";
+
+        var result = TextEditScriptDocument.ParseXml(xml);
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Error);
+        Assert.Contains("must be empty", result.Error.Message);
+    }
+
+    [Fact]
+    public void ParseXml_ShouldRejectInvalidSplitOffset() {
+        var xml = """
+<text-edit-script>
+  <split anchor="7" offset="0" />
+</text-edit-script>
+""";
+
+        var result = TextEditScriptDocument.ParseXml(xml);
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Error);
+        Assert.Contains("positive integer", result.Error.Message);
+    }
+
+    [Fact]
+    public void ParseXml_ShouldRejectMergeWithContent() {
+        var xml = """
+<text-edit-script>
+  <merge anchor="7">不允许</merge>
 </text-edit-script>
 """;
 

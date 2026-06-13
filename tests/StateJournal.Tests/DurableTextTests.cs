@@ -153,6 +153,82 @@ public class DurableTextTests : IDisposable {
     }
 
     [Fact]
+    public void SplitBlock_SplitsContent_AndPreservesLeftBlockId() {
+        var rev = CreateRevision();
+        var text = rev.CreateText();
+
+        var id1 = text.Append("abcdef");
+        var id2 = text.Append("tail");
+
+        var newId = text.SplitBlock(id1, 2);
+
+        Assert.Equal(3, text.BlockCount);
+        Assert.Collection(
+            text.GetAllBlocks(),
+            block => {
+                Assert.Equal(id1, block.Id);
+                Assert.Equal("ab", block.Content);
+            },
+            block => {
+                Assert.Equal(newId, block.Id);
+                Assert.Equal("cdef", block.Content);
+            },
+            block => {
+                Assert.Equal(id2, block.Id);
+                Assert.Equal("tail", block.Content);
+            });
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(-1)]
+    public void SplitBlock_RejectsOffsetsOutsideBlockInterior(int splitOffset) {
+        var rev = CreateRevision();
+        var text = rev.CreateText();
+
+        var id = text.Append("abcdef");
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => text.SplitBlock(id, splitOffset));
+    }
+
+    [Fact]
+    public void MergeWithNext_MergesAdjacentBlocks_AndPreservesLeftBlockId() {
+        var rev = CreateRevision();
+        var text = rev.CreateText();
+
+        var id1 = text.Append("hello");
+        var id2 = text.Append(" world");
+        var id3 = text.Append("tail");
+
+        text.MergeWithNext(id1);
+
+        Assert.Equal(2, text.BlockCount);
+        Assert.Collection(
+            text.GetAllBlocks(),
+            block => {
+                Assert.Equal(id1, block.Id);
+                Assert.Equal("hello world", block.Content);
+            },
+            block => {
+                Assert.Equal(id3, block.Id);
+                Assert.Equal("tail", block.Content);
+            });
+        Assert.Throws<KeyNotFoundException>(() => text.GetBlock(id2));
+    }
+
+    [Fact]
+    public void MergeWithNext_OnTail_Throws() {
+        var rev = CreateRevision();
+        var text = rev.CreateText();
+
+        var id = text.Append("tail");
+
+        Assert.Throws<InvalidOperationException>(() => text.MergeWithNext(id));
+    }
+
+    [Fact]
     public void DeleteNode_Head() {
         var rev = CreateRevision();
         var text = rev.CreateText();
