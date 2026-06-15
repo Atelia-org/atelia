@@ -3,6 +3,10 @@
 状态：draft v0
 定位：把 Micro-Wizard 从单点实验机制提升为 Agent 运行时基础设施，用于承载受控的短时临时过程。
 
+配套文档：
+- 运行时定位与分层：本文
+- DSL / IR 草图：`docs/Agent/micro-wizard-dsl-sketch.md`
+
 ## 1. 核心判断
 
 长寿命 Agent 不应该只有两种运行模式：
