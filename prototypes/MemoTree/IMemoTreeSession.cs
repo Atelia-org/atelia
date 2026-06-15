@@ -47,6 +47,8 @@ public interface IMemoTreeSession {
 
     void SetPinned(MemoNodeId nodeId, bool isPinned);
 
+    MemoNodeCollapseResult CollapseNode(MemoNodeCollapseRequest request);
+
     void SetBodyText(MemoNodeId nodeId, string markdown);
 
     MemoBlockId AppendBodyBlock(MemoNodeId nodeId, string content);

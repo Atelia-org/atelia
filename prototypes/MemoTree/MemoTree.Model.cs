@@ -33,9 +33,17 @@ public enum MemoHeadingLevel {
 /// 节点在 Window 中的展开层级。
 /// </summary>
 public enum MemoNodeViewLevel {
-    TitleAndImpression,
+    Gist,
     Summary,
     Full,
+}
+
+/// <summary>
+/// 节点从 <c>Full</c> 收起时的目标层级。
+/// </summary>
+public enum MemoNodeCollapseLevel {
+    Summary,
+    Gist,
 }
 
 /// <summary>
@@ -61,6 +69,10 @@ public sealed record MemoTreeSnapshot(
 /// <summary>
 /// 单节点概要快照。
 /// </summary>
+/// <remarks>
+/// <paramref name="Impression"/> 表示该节点在 <see cref="MemoNodeViewLevel.Gist"/> 下保留的一句话印象。
+/// <paramref name="Summary"/> 只概括本节点自己的正文内容，不包含子节点内容。
+/// </remarks>
 public sealed record MemoNodeSnapshot(
     MemoNodeId Id,
     MemoNodeId? ParentId,
@@ -89,6 +101,32 @@ public sealed record MemoNodePath(
 /// 正文块快照。
 /// </summary>
 public sealed record MemoBodyBlockSnapshot(MemoBlockId Id, string Content);
+
+/// <summary>
+/// 一次显式的节点收起与记忆维护请求。
+/// </summary>
+/// <remarks>
+/// 推荐语义是：调用方刚看过该节点的 <c>Full</c> 内容，现在准备把它收起到较低 LOD，
+/// 因而顺手提交新的 <c>Gist</c> 与 <c>Summary</c>。
+/// </remarks>
+public sealed record MemoNodeCollapseRequest(
+    MemoNodeId NodeId,
+    MemoNodeCollapseLevel TargetLevel,
+    string Gist,
+    string Summary,
+    long BasedOnContentVersion,
+    string? Notes = null
+);
+
+/// <summary>
+/// 节点收起与记忆维护的结果。
+/// </summary>
+public sealed record MemoNodeCollapseResult(
+    MemoNodeId NodeId,
+    MemoNodeCollapseLevel TargetLevel,
+    long AppliedContentVersion,
+    MemoNodeSnapshot Node
+);
 
 /// <summary>
 /// 搜索请求。
@@ -127,6 +165,9 @@ public sealed record MemoTreeRenderRequest(
 /// <summary>
 /// 单个渲染节点的结果。
 /// </summary>
+/// <remarks>
+/// 当节点已出现在 Window 中时，推荐实现优先压缩正文 LOD，而不是先丢掉结构骨架。
+/// </remarks>
 public sealed record MemoTreeRenderedNode(
     MemoNodeId NodeId,
     MemoNodeViewLevel ViewLevel,

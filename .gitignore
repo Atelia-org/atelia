@@ -17,7 +17,6 @@ docs/qwen3coder_tool_parser.py
 docs/CodeCortex/
 docs/MemoFileProto/
 docs/MemoDomProto/
-docs/MemoTree/
 docs/Nexus/
 temp_review.md
 discussion_examples/
@@ -42,7 +41,6 @@ src/CodeCortex.Workspace/
 src/CodeCortexV2/
 src/CodeCortexV2.DevCli/
 src/MemoDomProto/
-src/MemoTree/
 src/MemoTree.Cli/
 src/MemoTree.Core/
 src/MemoTree.Services/
