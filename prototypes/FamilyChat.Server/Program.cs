@@ -108,7 +108,7 @@ app.MapGet(
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
 
-        return Results.Content(FamilyChatHtml.RenderAppPage(configUser.DisplayName), "text/html; charset=utf-8");
+        return Results.Content(FamilyChatHtml.RenderAppPage(configUser), "text/html; charset=utf-8");
     }
 ).RequireAuthorization();
 
@@ -157,7 +157,13 @@ api.MapPost(
 
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
 
-        var liveTurn = hostService.StartTurn(session, request.Message);
+        bool autoPrefillThinkOpenTag = request.AutoPrefillThinkOpenTag
+            ?? FamilyChatThinkRepairDefaults.ShouldEnableForModel(session.User.ModelId);
+        var liveTurn = hostService.StartTurn(
+            session,
+            request.Message,
+            new FamilyChatTurnOptions(autoPrefillThinkOpenTag)
+        );
         DebugUtil.Info("FamilyChat.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, head={session.Engine.PersistedHeadAddress}");
         return StartAcceptedTurn(session, liveTurn, hostService, applicationLifetime);
     }
@@ -204,6 +210,19 @@ api.MapGet(
         var currentTurn = hostService.BuildCurrentTurn(session);
         DebugUtil.Info("FamilyChat.Api", $"GET /api/chat/turns/current user={userId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}, head={session.Engine.PersistedHeadAddress}");
         return Results.Ok(currentTurn);
+    }
+);
+
+api.MapPost(
+    "/chat/turns/{turnId}/stop",
+    async (HttpContext httpContext, ClaimsPrincipal user, FamilyChatHostService hostService, string turnId) => {
+        string userId = user.FindFirstValue(FamilyChatClaimTypes.UserId)
+            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
+        var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
+        if (!hostService.RequestStop(session, turnId)) { return Results.NotFound(new { error = "turn not found or already finished." }); }
+
+        DebugUtil.Warning("FamilyChat.Api", $"POST /api/chat/turns/{turnId}/stop user={userId}, head={session.Engine.PersistedHeadAddress}");
+        return Results.Ok(new { status = "stopping", turnId });
     }
 );
 

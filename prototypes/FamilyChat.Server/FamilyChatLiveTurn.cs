@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.FamilyChat.Server;
 
@@ -9,10 +10,13 @@ internal sealed class FamilyChatLiveTurn {
     private readonly List<StreamEventDto> _replayEvents = new();
     private long _nextSubscriberId;
     private bool _streamCompleted;
+    private CompletionStreamObserver? _observer;
+    private bool _stopRequested;
 
-    public FamilyChatLiveTurn(string userMessage) {
+    public FamilyChatLiveTurn(string userMessage, FamilyChatTurnOptions options) {
         TurnId = Guid.NewGuid().ToString("N");
         UserMessage = userMessage;
+        Options = options ?? throw new ArgumentNullException(nameof(options));
         Status = "running";
     }
 
@@ -20,11 +24,21 @@ internal sealed class FamilyChatLiveTurn {
 
     public string UserMessage { get; }
 
+    public FamilyChatTurnOptions Options { get; }
+
     public string Status { get; private set; }
 
     public string? Phase { get; private set; }
 
     public Task? RunTask { get; set; }
+
+    public bool StopRequested {
+        get {
+            lock (_gate) {
+                return _stopRequested;
+            }
+        }
+    }
 
     public FamilyChatTurnSubscription Subscribe() {
         lock (_gate) {
@@ -101,6 +115,37 @@ internal sealed class FamilyChatLiveTurn {
         if (_subscribers.TryRemove(subscriberId, out var subscriber)) {
             subscriber.Writer.TryComplete();
         }
+    }
+
+    public void AttachObserver(CompletionStreamObserver observer) {
+        ArgumentNullException.ThrowIfNull(observer);
+
+        bool shouldStop;
+        lock (_gate) {
+            _observer = observer;
+            shouldStop = _stopRequested;
+        }
+
+        if (shouldStop) {
+            observer.ShouldStop = true;
+        }
+    }
+
+    public bool RequestStop() {
+        CompletionStreamObserver? observer;
+
+        lock (_gate) {
+            if (_streamCompleted) { return false; }
+
+            _stopRequested = true;
+            observer = _observer;
+        }
+
+        if (observer is not null) {
+            observer.ShouldStop = true;
+        }
+
+        return true;
     }
 }
 

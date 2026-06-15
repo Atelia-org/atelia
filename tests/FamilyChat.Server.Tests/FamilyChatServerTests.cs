@@ -155,6 +155,129 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task FamilyChat_AutoPrefillThinkOpenTag_DefaultsOnForUnslothQwen36() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "unsloth/qwen3.6",
+                        "openai-chat/sglang-compatible",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    Assert.Collection(
+                        request.Context,
+                        message => Assert.Equal("玩家角色试图采取如下动作：\n```\none\n```\n", Assert.IsType<ObservationMessage>(message).Content),
+                        message => Assert.Equal("<think>", Assert.IsType<ActionMessage>(message).GetFlattenedText())
+                    );
+
+                    observer?.OnTextDelta("先想一想</think>正式回答");
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("先想一想</think>正式回答")]),
+                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            string sse = await ReadSseAsStringAsync(client, "one");
+
+            var turns = await GetRecentTurnsAsync(client);
+            Assert.Single(turns);
+            Assert.Equal("正式回答", turns[0].Assistant.Text);
+            Assert.DoesNotContain("先想一想", sse, StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task FamilyChat_AutoPrefillThinkOpenTag_CanBeDisabledPerRequest() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "unsloth/qwen3.6",
+                        "openai-chat/sglang-compatible",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    Assert.Single(request.Context);
+                    Assert.Equal(
+                        "玩家角色试图采取如下动作：\n```\none\n```\n",
+                        Assert.IsType<ObservationMessage>(request.Context[0]).Content
+                    );
+
+                    observer?.OnTextDelta("先想一想</think>正式回答");
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("先想一想</think>正式回答")]),
+                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            var started = await StartTurnAsync(client, "one", autoPrefillThinkOpenTag: false);
+            _ = await ReadTurnEventsAsStringAsync(client, started.TurnId);
+            await WaitForCurrentTurnIdleAsync(client);
+
+            var turns = await GetRecentTurnsAsync(client);
+            Assert.Single(turns);
+            Assert.Equal("先想一想</think>正式回答", turns[0].Assistant.Text);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Login_And_RecentTurns_Work() {
         string tempDir = CreateTempDirectory();
         try {
@@ -1997,6 +2120,72 @@ public sealed class FamilyChatServerTests {
         }
     }
 
+    [Fact]
+    public async Task StopTurnEndpoint_StopsRunningTurn_AndDoesNotPersistPartialTurn() {
+        string tempDir = CreateTempDirectory();
+        try {
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 200,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "Alice",
+                        "pw1",
+                        Path.Combine(tempDir, "alice-session"),
+                        "model-a",
+                        "openai-chat/strict",
+                        200,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var startedStreaming = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            scriptFactory.For("alice").Enqueue(
+                async (request, observer, ct) => {
+                    observer?.OnTextDelta("partial");
+                    startedStreaming.TrySetResult();
+
+                    while (observer?.ShouldStop != true) {
+                        await Task.Delay(20, ct);
+                    }
+
+                    return new CompletionResult(
+                        new ActionMessage([new ActionBlock.Text("partial")]),
+                        new CompletionDescriptor("test", "openai-chat-v1", request.ModelId),
+                        termination: CompletionTermination.Incomplete(
+                            detail: "Streaming observer stopped scripted completion early."
+                        )
+                    );
+                }
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            var started = await StartTurnAsync(client, "one");
+            await startedStreaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            using var stopResponse = await client.PostAsync($"/api/chat/turns/{started.TurnId}/stop", content: null);
+            Assert.Equal(HttpStatusCode.OK, stopResponse.StatusCode);
+
+            await WaitForCurrentTurnIdleAsync(client);
+            var turns = await GetRecentTurnsAsync(client);
+            Assert.Empty(turns);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static async Task LoginAsync(HttpClient client, string userId, string password) {
         var response = await client.PostAsync(
             "/login",
@@ -2015,8 +2204,15 @@ public sealed class FamilyChatServerTests {
         return sse;
     }
 
-    private static async Task<StartTurnResponseDto> StartTurnAsync(HttpClient client, string message) {
-        using var response = await client.PostAsJsonAsync("/api/chat/turns", new ChatStreamRequest(message));
+    private static async Task<StartTurnResponseDto> StartTurnAsync(
+        HttpClient client,
+        string message,
+        bool? autoPrefillThinkOpenTag = null
+    ) {
+        using var response = await client.PostAsJsonAsync(
+            "/api/chat/turns",
+            new ChatStreamRequest(message, autoPrefillThinkOpenTag)
+        );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var started = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
         Assert.NotNull(started);

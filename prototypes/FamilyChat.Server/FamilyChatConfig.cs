@@ -53,7 +53,8 @@ public sealed record AssistantMessageDto(
 );
 
 public sealed record ChatStreamRequest(
-    [property: JsonPropertyName("message")] string Message
+    [property: JsonPropertyName("message")] string Message,
+    [property: JsonPropertyName("autoPrefillThinkOpenTag")] bool? AutoPrefillThinkOpenTag = null
 );
 
 public sealed record PopLatestTurnResponseDto(
@@ -70,7 +71,8 @@ public sealed record CurrentTurnDto(
     string Status,
     string? TurnId = null,
     string? UserMessage = null,
-    string? Phase = null
+    string? Phase = null,
+    bool? AutoPrefillThinkOpenTag = null
 );
 
 public sealed record StreamEventDto(

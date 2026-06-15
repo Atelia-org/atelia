@@ -25,7 +25,6 @@ public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatComple
         ArgumentNullException.ThrowIfNull(user);
 
         var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(backend.BaseAddress, UriKind.Absolute));
-
         return backend.Kind.Trim().ToLowerInvariant() switch {
             "openai-chat" => new OpenAIChatClient(
                 apiKey: backend.ApiKey,
@@ -182,7 +181,13 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         var currentTurn = host.GetCurrentTurn();
         var result = currentTurn is null
             ? new CurrentTurnDto("idle")
-            : new CurrentTurnDto("running", currentTurn.TurnId, currentTurn.UserMessage, currentTurn.Phase);
+            : new CurrentTurnDto(
+                "running",
+                currentTurn.TurnId,
+                currentTurn.UserMessage,
+                currentTurn.Phase,
+                currentTurn.Options.AutoPrefillThinkOpenTag
+            );
         DebugUtil.Info(
             "FamilyChat.Session",
             $"BuildCurrentTurn: user={host.User.UserId}, status={result.Status}, turnId={result.TurnId ?? "<none>"}, phase={result.Phase ?? "<none>"}, head={host.Engine.PersistedHeadAddress}"
@@ -190,10 +195,11 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         return result;
     }
 
-    internal FamilyChatLiveTurn StartTurn(UserSessionHost host, string userMessage) {
+    internal FamilyChatLiveTurn StartTurn(UserSessionHost host, string userMessage, FamilyChatTurnOptions options) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
-        return host.StartTurn(userMessage);
+        ArgumentNullException.ThrowIfNull(options);
+        return host.StartTurn(userMessage, options);
     }
 
     internal RecentTurnDto? PopLatestTurn(UserSessionHost host) {
@@ -239,6 +245,14 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         host.FinishTurn(turn);
     }
 
+    internal bool RequestStop(UserSessionHost host, string turnId) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
+
+        var turn = host.FindTurn(turnId);
+        return turn?.RequestStop() == true;
+    }
+
     internal async Task RunTurnAsync(
         UserSessionHost host,
         FamilyChatLiveTurn liveTurn,
@@ -279,6 +293,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         }
 
         var observer = new CompletionStreamObserver();
+        liveTurn.AttachObserver(observer);
         var toolLoopStarted = 0;
         observer.ReceivedThinkingBegin += () => liveTurn.Publish(
             new StreamEventDto("meta", new { phase = "reasoning-start" }),
@@ -289,7 +304,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             phase: "reasoning-end"
         );
         observer.ReceivedReasoningDelta += delta => liveTurn.Publish(new StreamEventDto("reasoning-delta", new { delta }));
-        var textFilter = new InlineThinkTextFilter();
+        var textFilter = new InlineThinkTextFilter(startInsideThink: liveTurn.Options.AutoPrefillThinkOpenTag);
         observer.ReceivedTextDelta += delta => {
             var visibleText = textFilter.Filter(delta);
             if (string.IsNullOrEmpty(visibleText)) { return; }
@@ -308,6 +323,9 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 
         ChatSessionTurnResult turnResult;
         try {
+            using var behaviorScope = FamilyChatCompletionExecutionContext.Push(
+                FamilyChatTurnBehavior.FromUserAndTurn(host.User, liveTurn.Options)
+            );
             turnResult = await host.Engine.SendMessageAsync(promptedUserMessage, observer, ct).ConfigureAwait(false);
         }
         catch (ChatSessionTurnAbortedException ex) {
@@ -315,6 +333,13 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
                 "FamilyChat.Session",
                 $"RunTurnAsync completion aborted: user={host.User.UserId}, turnId={liveTurn.TurnId}, termination={ex.Termination.Kind}, providerReason={ex.Termination.ProviderReason ?? "<none>"}, detail={ex.Termination.Detail ?? "<none>"}"
             );
+            if (liveTurn.StopRequested && WasStoppedByObserver(ex.Termination)) {
+                throw new FamilyChatTurnException(
+                    "已停止生成，本轮结果未写入历史。你可以调整开关或修改输入后重试。",
+                    "stopped-by-user"
+                );
+            }
+
             throw new FamilyChatTurnException(
                 "模型本次输出未正常结束，本轮结果已放弃写入历史。请刷新页面后重试。",
                 ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
@@ -372,7 +397,9 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
     }
 
     private async Task<UserSessionHost> CreateSessionAsync(FamilyChatUserConfig user, CancellationToken ct) {
-        var completionClient = _completionClientFactory.Create(_config.Backend, user);
+        var completionClient = new FamilyChatCompletionClientDecorator(
+            _completionClientFactory.Create(_config.Backend, user)
+        );
         var runtime = new ChatSessionRuntime(
             CompletionClient: completionClient,
             CompletionSurfaceId: user.CompletionSurfaceId,
@@ -401,9 +428,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 
     private async Task<string> NormalizeUserMessageAsync(FamilyChatLiveTurn liveTurn, CancellationToken ct) {
         string original = liveTurn.UserMessage;
-        if (!_userMessageNormalizer.ShouldNormalize(original)) {
-            return original;
-        }
+        if (!_userMessageNormalizer.ShouldNormalize(original)) { return original; }
 
         liveTurn.Publish(
             new StreamEventDto("meta", new { phase = "input-normalization-start" }),
@@ -472,6 +497,14 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         return InlineThinkTextFilter.StripInlineThinkBlocks(text);
     }
 
+    private static bool WasStoppedByObserver(CompletionTermination termination) {
+        ArgumentNullException.ThrowIfNull(termination);
+
+        if (termination.Kind is not CompletionTerminationKind.Incomplete) { return false; }
+
+        return termination.Detail?.Contains("Streaming observer stopped", StringComparison.Ordinal) == true;
+    }
+
     internal static string WrapUserMessageForEngine(string userMessage) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
         return UserMessagePrefix + userMessage + UserMessageSuffix;
@@ -505,9 +538,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             : allTurns.Take(maxTurns).ToList();
 
         int recapIndex = FindRecapIndex(allTurns);
-        if (recapIndex < 0 || recapIndex < maxTurns) {
-            return projectedTurns;
-        }
+        if (recapIndex < 0 || recapIndex < maxTurns) { return projectedTurns; }
 
         // Optional boundary hint: include the first turn immediately after the recap
         // if it fell outside maxTurns, so the UI can see where the uncompressed range starts.
@@ -557,9 +588,9 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
-    internal FamilyChatLiveTurn StartTurn(string userMessage) {
+    internal FamilyChatLiveTurn StartTurn(string userMessage, FamilyChatTurnOptions options) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
-        var liveTurn = new FamilyChatLiveTurn(userMessage);
+        var liveTurn = new FamilyChatLiveTurn(userMessage, options);
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
@@ -693,13 +724,9 @@ internal static class FamilyChatConfigLoader {
                 );
             }
 
-            if (string.IsNullOrWhiteSpace(user.CompactionSystemPrompt)) {
-                throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty compactionSystemPrompt.");
-            }
+            if (string.IsNullOrWhiteSpace(user.CompactionSystemPrompt)) { throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty compactionSystemPrompt."); }
 
-            if (string.IsNullOrWhiteSpace(user.CompactionPrompt)) {
-                throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty compactionPrompt.");
-            }
+            if (string.IsNullOrWhiteSpace(user.CompactionPrompt)) { throw new InvalidOperationException($"FamilyChat config user '{user.UserId}' must have a non-empty compactionPrompt."); }
         }
 
         if (config.ListenUrls is null) { return; }
@@ -825,8 +852,8 @@ internal static class FamilyChatHtml {
 """;
     }
 
-    public static string RenderAppPage(string displayName) {
-        string safeDisplayName = System.Net.WebUtility.HtmlEncode(displayName);
+    public static string RenderAppPage(FamilyChatUserConfig user) {
+        ArgumentNullException.ThrowIfNull(user);
         return $$"""
 <!doctype html>
 <html lang="zh-CN">
@@ -842,6 +869,10 @@ internal static class FamilyChatHtml {
     <section class="composer">
       <form id="chat-form">
         <textarea id="message-input" rows="3" placeholder="说点什么……" required></textarea>
+        <label class="composer-option">
+          <input id="auto-repair-missing-think-open-tag" type="checkbox">
+          <span>强制以 <code>&lt;think&gt;</code> 续写思考模式</span>
+        </label>
         <div class="composer-actions">
           <div class="composer-status">
             <span id="composer-mode-hint" class="eyebrow hidden"></span>
@@ -849,6 +880,7 @@ internal static class FamilyChatHtml {
           </div>
           <div class="composer-buttons">
             <button id="undo-last-button" type="button" class="ghost-button">撤销上一轮</button>
+            <button id="stop-button" type="button" class="ghost-button">停止</button>
             <button id="send-button" type="submit">发送</button>
           </div>
         </div>
@@ -874,7 +906,12 @@ internal static class FamilyChatHtml {
   </main>
 
   <script>
-    window.familyChatBootstrap = { displayName: {{JsonSerializer.Serialize(displayName, FamilyChatJson.Options)}} };
+    window.familyChatBootstrap = {
+      displayName: {{JsonSerializer.Serialize(user.DisplayName, FamilyChatJson.Options)}},
+      userId: {{JsonSerializer.Serialize(user.UserId, FamilyChatJson.Options)}},
+      modelId: {{JsonSerializer.Serialize(user.ModelId, FamilyChatJson.Options)}},
+      defaultAutoPrefillThinkOpenTag: {{JsonSerializer.Serialize(FamilyChatThinkRepairDefaults.ShouldEnableForModel(user.ModelId), FamilyChatJson.Options)}}
+    };
   </script>
   <script src="/assets/family-chat.js"></script>
 </body>

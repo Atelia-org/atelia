@@ -55,6 +55,23 @@ body {
   padding: 16px;
 }
 
+.composer-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: #4d4639;
+}
+
+.composer-option input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.composer-option code {
+  font-family: "IBM Plex Mono", "Maple Mono", monospace;
+}
+
 .login-form {
   display: grid;
   gap: 12px;

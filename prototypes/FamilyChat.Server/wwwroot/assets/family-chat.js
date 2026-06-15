@@ -5,15 +5,25 @@
     liveText: "",
     liveReasoning: "",
     streaming: false,
+    stopRequested: false,
     activeTurnId: null,
     streamGeneration: 0,
   };
+  const bootstrapConfig = window.familyChatBootstrap ?? {};
+  const autoPrefillStorageKey = [
+    "family-chat",
+    "auto-prefill-think-open-tag",
+    bootstrapConfig.userId ?? "anonymous",
+    bootstrapConfig.modelId ?? "unknown",
+  ].join(":");
 
   const turnList = document.getElementById("turn-list");
   const form = document.getElementById("chat-form");
   const input = document.getElementById("message-input");
   const sendButton = document.getElementById("send-button");
   const undoLastButton = document.getElementById("undo-last-button");
+  const stopButton = document.getElementById("stop-button");
+  const autoPrefillThinkOpenTagCheckbox = document.getElementById("auto-repair-missing-think-open-tag");
   const composerModeHint = document.getElementById("composer-mode-hint");
   const statusText = document.getElementById("status-text");
   const liveTurn = document.getElementById("live-turn");
@@ -81,6 +91,12 @@
     state.streaming = streaming;
     sendButton.disabled = streaming;
     input.disabled = streaming;
+    if (stopButton) {
+      stopButton.disabled = !streaming;
+    }
+    if (autoPrefillThinkOpenTagCheckbox) {
+      autoPrefillThinkOpenTagCheckbox.disabled = streaming;
+    }
     statusText.textContent = status || "";
     refreshComposerMode();
   }
@@ -130,7 +146,32 @@
 
   function clearActiveTurn() {
     state.activeTurnId = null;
+    state.stopRequested = false;
     state.streamGeneration += 1;
+  }
+
+  function loadAutoPrefillPreference() {
+    const stored = window.localStorage.getItem(autoPrefillStorageKey);
+    if (stored === "true") {
+      return true;
+    }
+
+    if (stored === "false") {
+      return false;
+    }
+
+    return bootstrapConfig.defaultAutoPrefillThinkOpenTag === true;
+  }
+
+  function saveAutoPrefillPreference() {
+    if (!autoPrefillThinkOpenTagCheckbox) {
+      return;
+    }
+
+    window.localStorage.setItem(
+      autoPrefillStorageKey,
+      autoPrefillThinkOpenTagCheckbox.checked ? "true" : "false"
+    );
   }
 
   async function loadRecentTurns() {
@@ -373,6 +414,7 @@
     }
 
     const replacingPoppedTurn = state.pendingPoppedTurn !== null;
+    state.stopRequested = false;
     setStreaming(true, replacingPoppedTurn ? "正在重新生成…" : "正在发送…");
 
     const response = await fetch("/api/chat/turns", {
@@ -381,7 +423,10 @@
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({
+        message,
+        autoPrefillThinkOpenTag: autoPrefillThinkOpenTagCheckbox?.checked ?? false,
+      }),
     });
 
     const payload = await response.json().catch(() => null);
@@ -417,10 +462,45 @@
     await popLatestTurn("正在撤销最近一轮…");
   });
 
-  async function bootstrap() {
+  stopButton?.addEventListener("click", async () => {
+    if (!state.streaming || !state.activeTurnId) {
+      return;
+    }
+
+    state.stopRequested = true;
+    setStreaming(true, "正在停止生成…");
+
+    const response = await fetch(`/api/chat/turns/${encodeURIComponent(state.activeTurnId)}/stop`, {
+      method: "POST",
+      credentials: "same-origin",
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      state.stopRequested = false;
+      setStreaming(true, payload?.error || "停止请求失败，继续等待生成完成…");
+      return;
+    }
+
+    setStreaming(true, "已发送停止请求，等待模型收尾…");
+  });
+
+  autoPrefillThinkOpenTagCheckbox?.addEventListener("change", saveAutoPrefillPreference);
+
+  async function initializeApp() {
+    if (autoPrefillThinkOpenTagCheckbox) {
+      autoPrefillThinkOpenTagCheckbox.checked = loadAutoPrefillPreference();
+    }
+
     await loadRecentTurns();
     const currentTurn = await loadCurrentTurn();
     if (currentTurn?.status === "running" && currentTurn.turnId) {
+      if (
+        autoPrefillThinkOpenTagCheckbox
+        && typeof currentTurn.autoPrefillThinkOpenTag === "boolean"
+      ) {
+        autoPrefillThinkOpenTagCheckbox.checked = currentTurn.autoPrefillThinkOpenTag;
+      }
       await attachToTurn(currentTurn.turnId, "正在恢复生成…");
       return;
     }
@@ -430,7 +510,7 @@
     setStreaming(false, "");
   }
 
-  bootstrap().catch((error) => {
+  initializeApp().catch((error) => {
     clearActiveTurn();
     resetLive();
     setStreaming(false, error.message || "加载失败");
