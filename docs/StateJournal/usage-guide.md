@@ -562,6 +562,10 @@ var middle = text.InsertAfter(intro, "middle");
 text.SetContent(body, "updated body");
 text.Delete(middle);
 
+// 拆分与合并
+var rightPart = text.SplitBlock(body, 4); // "upda" | "ted body"
+text.MergeWithNext(intro);                // intro + rightPart → 一个 block
+
 var blocks = text.GetAllBlocks();
 ```
 
@@ -570,12 +574,44 @@ var blocks = text.GetAllBlocks();
 - `Append(content)` / `Prepend(content)`
 - `InsertAfter(blockId, content)` / `InsertBefore(blockId, content)`
 - `SetContent(blockId, newContent)`
+- `SplitBlock(blockId, splitOffset)` → 返回新 blockId
+- `MergeWithNext(blockId)`
 - `Delete(blockId)`
 - `GetBlock(blockId)`
 - `GetAllBlocks()`
 - `GetBlocksFrom(startBlockId, maxCount)`
 - `LoadBlocks(ReadOnlySpan<string>)`
 - `LoadText(string)`
+
+### 8.1 SplitBlock
+
+`SplitBlock(uint blockId, int splitOffset)` 在指定字符偏移处将一个 block 拆分为两个：
+
+- 原 block 保留左半内容与原 `blockId`。
+- 右半内容成为新的后继 block，返回其 `blockId`。
+- `splitOffset` 必须是 block 内容内部的合法位置：`0 < splitOffset < content.Length`，否则抛出 `ArgumentOutOfRangeException`。
+
+```csharp
+var id = text.Append("abcdef");
+var newId = text.SplitBlock(id, 3);
+// id  → "abc"
+// newId → "def"（紧跟在 id 之后）
+```
+
+### 8.2 MergeWithNext
+
+`MergeWithNext(uint blockId)` 将指定 block 与其直接后继 block 合并：
+
+- 当前 block 保留其 `blockId`，内容变为当前内容 + 后继内容。
+- 后继 block 被删除，其 `blockId` 不再有效（后续查询会抛出 `KeyNotFoundException`）。
+- 若当前 block 是尾 block（没有后继），抛出 `InvalidOperationException`。
+
+```csharp
+var id1 = text.Append("hello");
+var id2 = text.Append(" world");
+text.MergeWithNext(id1);
+// id1 → "hello world"，id2 已删除
+```
 
 注意：
 

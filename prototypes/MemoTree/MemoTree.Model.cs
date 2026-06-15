@@ -18,18 +18,6 @@ public readonly record struct MemoBlockId(uint Value) {
 }
 
 /// <summary>
-/// MemoTree 中 ATX Heading 的层级。
-/// </summary>
-public enum MemoHeadingLevel {
-    H1 = 1,
-    H2 = 2,
-    H3 = 3,
-    H4 = 4,
-    H5 = 5,
-    H6 = 6,
-}
-
-/// <summary>
 /// 节点在 Window 中的展开层级。
 /// </summary>
 public enum MemoNodeViewLevel {
@@ -76,26 +64,22 @@ public sealed record MemoTreeSnapshot(
 public sealed record MemoNodeSnapshot(
     MemoNodeId Id,
     MemoNodeId? ParentId,
-    MemoHeadingLevel HeadingLevel,
     string Title,
     string? Impression,
     string? Summary,
     bool IsPinned,
-    long ContentVersion,
-    long SummaryVersion,
+    long BodyVersion,
+    long SummaryBodyVersion,
     int ChildCount,
     int BodyBlockCount
 ) {
-    public bool IsSummaryStale => SummaryVersion < ContentVersion;
+    public bool IsSummaryStale => SummaryBodyVersion < BodyVersion;
 }
 
 /// <summary>
 /// 节点路径快照。
 /// </summary>
-public sealed record MemoNodePath(
-    IReadOnlyList<MemoNodeId>? NodeIds = null,
-    IReadOnlyList<string>? Titles = null
-);
+public sealed record MemoNodePath(IReadOnlyList<MemoNodeId> NodeIds);
 
 /// <summary>
 /// 正文块快照。
@@ -114,7 +98,7 @@ public sealed record MemoNodeCollapseRequest(
     MemoNodeCollapseLevel TargetLevel,
     string Gist,
     string Summary,
-    long BasedOnContentVersion,
+    long BasedOnBodyVersion,
     string? Notes = null
 );
 
@@ -124,7 +108,7 @@ public sealed record MemoNodeCollapseRequest(
 public sealed record MemoNodeCollapseResult(
     MemoNodeId NodeId,
     MemoNodeCollapseLevel TargetLevel,
-    long AppliedContentVersion,
+    long AppliedBodyVersion,
     MemoNodeSnapshot Node
 );
 
@@ -147,8 +131,7 @@ public sealed record MemoTreeSearchHit(
     MemoNodeId NodeId,
     MemoSearchField Field,
     string Snippet,
-    MemoNodePath Path,
-    int Score
+    MemoNodePath Path
 );
 
 /// <summary>
@@ -171,7 +154,7 @@ public sealed record MemoTreeRenderRequest(
 public sealed record MemoTreeRenderedNode(
     MemoNodeId NodeId,
     MemoNodeViewLevel ViewLevel,
-    string Markdown,
+    string RenderedText,
     bool WasAutoCollapsed
 );
 

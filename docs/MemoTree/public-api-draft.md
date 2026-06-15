@@ -34,9 +34,9 @@ MemoTree 的 public API 先满足四件事：
 
 ### 1.3 Agent.Core 适配层
 
-关注把某个 Window 投影源包装成 `IApp`。
+关注把 MemoTree 的 Window 渲染函数包装成 `IApp`。
 
-核心入口：`IMemoTreeWindowSource` + `MemoTreeApp`
+核心入口：`MemoTreeApp`
 
 ## 2. 当前建议暴露的主要类型
 
@@ -44,7 +44,6 @@ MemoTree 的 public API 先满足四件事：
 |---|---|
 | `MemoNodeId` | 稳定节点 ID |
 | `MemoBlockId` | 正文 block ID |
-| `MemoHeadingLevel` | heading 层级 |
 | `MemoNodeViewLevel` | 三层展开级别 |
 | `MemoNodeCollapseLevel` | 显式收起时的目标 LOD |
 | `MemoTreeSnapshot` | 树级概要快照 |
@@ -55,7 +54,6 @@ MemoTree 的 public API 先满足四件事：
 | `MemoTreeSearchQuery` / `MemoTreeSearchHit` | 搜索模型 |
 | `MemoTreeRenderRequest` / `MemoTreeRenderResult` | 渲染模型 |
 | `IMemoTreeSession` | 树模型与查询/渲染主入口 |
-| `IMemoTreeWindowSource` | `IApp` 投影源 |
 | `MemoTreeApp` | `IApp` 包装器 |
 
 ## 3. 为什么主入口叫 IMemoTreeSession
@@ -65,6 +63,7 @@ MemoTree 的 public API 先满足四件事：
 - 它代表一份可编辑的 MemoTree 工作会话。
 - 它不承诺底层一定是文件、数据库或 StateJournal branch。
 - 它当前公开的是 durable memo graph 的 v0 `contains` 投影，而不是把 Markdown 或 StateJournal 细节暴露出去。
+- 它把树结构当唯一真相；heading level 只在渲染时由 depth 推导。
 - 它允许未来把持久化生命周期放到更外层，而不破坏当前契约。
 
 ## 4. 草案中的关键方法
@@ -94,16 +93,18 @@ MemoTree 的 public API 先满足四件事：
 - `MoveSubtree(...)`
 - `DeleteSubtree(...)`
 
+这里不再要求调用方提供 `headingLevel`。树结构是唯一真相，heading level 只在渲染时由 depth 推导。
+
 ### 4.4 节点内容编辑
 
 - `SetTitle(...)`
 - `SetImpression(...)`
-- `SetSummary(..., basedOnContentVersion)`
+- `SetSummary(..., basedOnBodyVersion)`
 - `SetPinned(...)`
 
 这里的 `Impression` 等价于节点的 `Gist` 文本；`Summary` 只概括本节点正文，不包含子节点内容。
 
-`SetSummary` 显式要求 `basedOnContentVersion`，是为了把摘要 stale 语义变成 contract，而不是实现细节。它适合作为低层更新入口。
+`SetSummary` 显式要求 `basedOnBodyVersion`，是为了把摘要 stale 语义变成 contract，而不是实现细节。它适合作为低层更新入口。
 
 ### 4.5 正文编辑
 
@@ -118,6 +119,8 @@ MemoTree 的 public API 先满足四件事：
 - 测试里常常希望快速准备样例正文
 - 真正的 agent 工具则更适合 block 级编辑
 
+但 `SetBodyText(...)` 当前只是暂存的朴素入口，不应被理解为最终推荐主线。它与稳定 `blockId` 的关系尚未完全收口，后续大概率还会继续收缩或重命名。
+
 ### 4.6 显式收起与记忆维护
 
 - `CollapseNode(request)`
@@ -128,7 +131,7 @@ MemoTree 的 public API 先满足四件事：
 
 - 它把“收起”与“记忆沉淀”绑定成一个显式动作
 - 它要求同时提交新的 `Gist` 与 `Summary`
-- 它显式带上 `basedOnContentVersion`
+- 它显式带上 `basedOnBodyVersion`
 - 它不把 renderer 的预算变化偷偷变成长期记忆写入
 
 ### 4.7 查询与渲染
@@ -156,14 +159,12 @@ MemoTree 的 public API 先满足四件事：
 IMemoTreeSession tree = /* test double or future implementation */;
 
 var project = tree.CreateRoot(
-    MemoHeadingLevel.H1,
     "Project",
     impression: "当前主线与长期目标"
 );
 
 var stateJournal = tree.CreateChild(
     project,
-    MemoHeadingLevel.H2,
     "StateJournal",
     impression: "持久化对象图与 commit 语义"
 );
@@ -171,7 +172,7 @@ var stateJournal = tree.CreateChild(
 tree.SetSummary(
     stateJournal,
     "Repository 管 branch，Revision 管可编辑对象图，commit 从 root 遍历可达对象。",
-    basedOnContentVersion: 1
+    basedOnBodyVersion: 1
 );
 
 tree.SetBodyText(stateJournal, "- Repository.Create/Open\n- Revision.Create*\n- Commit(root)");
@@ -182,7 +183,7 @@ var collapsed = tree.CollapseNode(new MemoNodeCollapseRequest(
     TargetLevel: MemoNodeCollapseLevel.Summary,
     Gist: "StateJournal 负责可持久化对象图工作态。",
     Summary: "Repository 管 branch，Revision 是工作会话，commit 从 root 遍历可达对象。",
-    BasedOnContentVersion: tree.TryGetNode(stateJournal, out var node) ? node!.ContentVersion : 0
+    BasedOnBodyVersion: tree.TryGetNode(stateJournal, out var node) ? node!.BodyVersion : 0
 ));
 
 var render = tree.Render(new MemoTreeRenderRequest(
@@ -193,7 +194,7 @@ var render = tree.Render(new MemoTreeRenderRequest(
 ));
 ```
 
-上面的 `basedOnContentVersion` 在真实使用中应来自 `TryGetNode(...).ContentVersion`。这里的示例重点只是说明调用形状。
+上面的 `basedOnBodyVersion` 在真实使用中应来自 `TryGetNode(...).BodyVersion`。这里的示例重点只是说明调用形状。
 
 `CollapseNode(...)` 是更符合 Agent 实际工作流的入口：它表示“我刚看过细节，现在准备把这个节点收起前顺手沉淀一下记忆”。
 

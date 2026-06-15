@@ -21,7 +21,6 @@ public interface IMemoTreeSession {
     IReadOnlyList<MemoBodyBlockSnapshot> GetBodyBlocks(MemoNodeId nodeId);
 
     MemoNodeId CreateRoot(
-        MemoHeadingLevel headingLevel,
         string title,
         string? impression = null,
         int? insertIndex = null
@@ -29,7 +28,6 @@ public interface IMemoTreeSession {
 
     MemoNodeId CreateChild(
         MemoNodeId parentId,
-        MemoHeadingLevel headingLevel,
         string title,
         string? impression = null,
         int? insertIndex = null
@@ -43,13 +41,13 @@ public interface IMemoTreeSession {
 
     void SetImpression(MemoNodeId nodeId, string? impression);
 
-    void SetSummary(MemoNodeId nodeId, string? summary, long basedOnContentVersion);
+    void SetSummary(MemoNodeId nodeId, string? summary, long basedOnBodyVersion);
 
     void SetPinned(MemoNodeId nodeId, bool isPinned);
 
     MemoNodeCollapseResult CollapseNode(MemoNodeCollapseRequest request);
 
-    void SetBodyText(MemoNodeId nodeId, string markdown);
+    void SetBodyText(MemoNodeId nodeId, string text);
 
     MemoBlockId AppendBodyBlock(MemoNodeId nodeId, string content);
 
