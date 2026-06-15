@@ -22,14 +22,14 @@ public interface IMemoTreeSession {
 
     MemoNodeId CreateRoot(
         string title,
-        string? impression = null,
+        string? gist = null,
         int? insertIndex = null
     );
 
     MemoNodeId CreateChild(
         MemoNodeId parentId,
         string title,
-        string? impression = null,
+        string? gist = null,
         int? insertIndex = null
     );
 
@@ -39,15 +39,24 @@ public interface IMemoTreeSession {
 
     void SetTitle(MemoNodeId nodeId, string title);
 
-    void SetImpression(MemoNodeId nodeId, string? impression);
+    void SetGist(MemoNodeId nodeId, string? gist);
 
     void SetSummary(MemoNodeId nodeId, string? summary, long basedOnBodyVersion);
+
+    void SetTags(MemoNodeId nodeId, IReadOnlyList<MemoTag> tags);
+
+    void AddTag(MemoNodeId nodeId, MemoTag tag);
+
+    bool RemoveTag(MemoNodeId nodeId, MemoTag tag);
 
     void SetPinned(MemoNodeId nodeId, bool isPinned);
 
     MemoNodeCollapseResult CollapseNode(MemoNodeCollapseRequest request);
 
-    void SetBodyText(MemoNodeId nodeId, string text);
+    /// <summary>
+    /// 危险的整段正文重写入口。实现可以选择重建正文 block。
+    /// </summary>
+    void RewriteBodyText(MemoBodyRewriteRequest request);
 
     MemoBlockId AppendBodyBlock(MemoNodeId nodeId, string content);
 

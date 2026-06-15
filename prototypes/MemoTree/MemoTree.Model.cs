@@ -18,6 +18,13 @@ public readonly record struct MemoBlockId(uint Value) {
 }
 
 /// <summary>
+/// 节点上的轻量标签。
+/// </summary>
+public readonly record struct MemoTag(string Value) {
+    public override string ToString() => Value ?? string.Empty;
+}
+
+/// <summary>
 /// 节点在 Window 中的展开层级。
 /// </summary>
 public enum MemoNodeViewLevel {
@@ -39,9 +46,10 @@ public enum MemoNodeCollapseLevel {
 /// </summary>
 public enum MemoSearchField {
     Title,
-    Impression,
+    Gist,
     Summary,
     Body,
+    Tags,
 }
 
 /// <summary>
@@ -58,15 +66,17 @@ public sealed record MemoTreeSnapshot(
 /// 单节点概要快照。
 /// </summary>
 /// <remarks>
-/// <paramref name="Impression"/> 表示该节点在 <see cref="MemoNodeViewLevel.Gist"/> 下保留的一句话印象。
+/// <paramref name="Gist"/> 表示该节点在 <see cref="MemoNodeViewLevel.Gist"/> 下保留的一句话印象。
 /// <paramref name="Summary"/> 只概括本节点自己的正文内容，不包含子节点内容。
+/// 统一节点既可以同时拥有正文，也可以同时拥有子节点；不区分 directory/file 两类本体。
 /// </remarks>
 public sealed record MemoNodeSnapshot(
     MemoNodeId Id,
     MemoNodeId? ParentId,
     string Title,
-    string? Impression,
+    string? Gist,
     string? Summary,
+    IReadOnlyList<MemoTag>? Tags,
     bool IsPinned,
     long BodyVersion,
     long SummaryBodyVersion,
@@ -85,6 +95,38 @@ public sealed record MemoNodePath(IReadOnlyList<MemoNodeId> NodeIds);
 /// 正文块快照。
 /// </summary>
 public sealed record MemoBodyBlockSnapshot(MemoBlockId Id, string Content);
+
+/// <summary>
+/// 一次整段正文重写请求。
+/// </summary>
+/// <remarks>
+/// 这是危险度较高的全量入口。实现可以选择重建正文 block，因此旧 <see cref="MemoBlockId"/> 引用不一定保留。
+/// 推荐仅用于初始化、导入、测试夹具或明确接受“整段重写”后果的场景。
+/// </remarks>
+public sealed record MemoBodyRewriteRequest(
+    MemoNodeId NodeId,
+    string Text,
+    string? Reason = null
+);
+
+/// <summary>
+/// Window index 区中的一项结构条目。
+/// </summary>
+public sealed record MemoTreeIndexEntry(
+    MemoNodeId NodeId,
+    int Depth,
+    string Title,
+    bool IsPinned = false,
+    bool IsExpanded = false
+);
+
+/// <summary>
+/// Window 的 index 区。
+/// </summary>
+public sealed record MemoTreeIndexSection(
+    string Text,
+    IReadOnlyList<MemoTreeIndexEntry>? Entries = null
+);
 
 /// <summary>
 /// 一次显式的节点收起与记忆维护请求。
@@ -118,9 +160,10 @@ public sealed record MemoNodeCollapseResult(
 public sealed record MemoTreeSearchQuery(
     string Text,
     bool SearchTitle = true,
-    bool SearchImpression = true,
+    bool SearchGist = true,
     bool SearchSummary = true,
     bool SearchBody = true,
+    bool SearchTags = true,
     int MaxResults = 20
 );
 
@@ -137,6 +180,9 @@ public sealed record MemoTreeSearchHit(
 /// <summary>
 /// Window 渲染请求。
 /// </summary>
+/// <remarks>
+/// 推荐把 Window 渲染成“index + flatten 节点卡片”的纯文本投影，而不是一整篇扁平大文档。
+/// </remarks>
 public sealed record MemoTreeRenderRequest(
     int VisibleCharacterBudget,
     IReadOnlyList<MemoNodeId>? PreferredNodeIds = null,
@@ -146,13 +192,15 @@ public sealed record MemoTreeRenderRequest(
 );
 
 /// <summary>
-/// 单个渲染节点的结果。
+/// Window 中平铺展示的单个节点卡片。
 /// </summary>
 /// <remarks>
-/// 当节点已出现在 Window 中时，推荐实现优先压缩正文 LOD，而不是先丢掉结构骨架。
+/// 推荐呈现为一个低噪音的节点卡片：标题、gist/summary、状态与必要的子节点骨架。
+/// 当节点已出现在 Window 中时，应优先压缩正文 LOD，而不是先丢掉结构骨架。
 /// </remarks>
-public sealed record MemoTreeRenderedNode(
+public sealed record MemoTreeNodeCard(
     MemoNodeId NodeId,
+    MemoNodePath Path,
     MemoNodeViewLevel ViewLevel,
     string RenderedText,
     bool WasAutoCollapsed
@@ -165,6 +213,7 @@ public sealed record MemoTreeRenderResult(
     string Window,
     int UsedCharacters,
     int BudgetCharacters,
-    IReadOnlyList<MemoTreeRenderedNode>? RenderedNodes = null,
+    MemoTreeIndexSection? IndexSection = null,
+    IReadOnlyList<MemoTreeNodeCard>? FlattenCards = null,
     IReadOnlyList<MemoNodeId>? HiddenNodeIds = null
 );

@@ -1,0 +1,465 @@
+MemoTree LLM Window UI Draft
+Status: draft v0
+Purpose: compare concrete text layouts for MemoTree's index+flatten window
+Terminology baseline: docs/MemoTree/concepts-and-terminology.md
+
+============================================================
+0. Context
+============================================================
+
+This draft is about the last-mile rendering from MemoTree's data model into
+LLM context.
+
+Current agreed direction:
+
+- data model truth: durable memo graph
+- node shape: unified node
+- visible layout: index + flatten
+- primary navigation: contains tree
+- optional secondary index: tags
+- MVP transport: still one IApp Window string
+- implementation split: index renderer + node card renderer
+
+Main question:
+
+What text layout is easiest for an LLM to scan, navigate, and reuse during a
+long-running task?
+
+
+============================================================
+1. Design Goals
+============================================================
+
+We want a layout that helps the model do four things well:
+
+1. Notice the global structure quickly.
+2. Jump from a structure item to the corresponding expanded card reliably.
+3. Read a card without being drowned by deep nesting noise.
+4. Keep stable references like nodeId and breadcrumb mentally bound to the
+   body content.
+
+Working assumptions:
+
+- LLM reads a linear token stream, not a real tree UI.
+- repeated stable labels are often better than pure indentation.
+- local adjacency matters: title, breadcrumb, gist, summary, body blocks should
+  stay near each other.
+- over-deep nesting is expensive and noisy.
+
+
+============================================================
+2. Shared Vocabulary
+============================================================
+
+For all candidates below, assume:
+
+- nodeId is stable and always shown on expanded cards
+- breadcrumb is repeated on expanded cards
+- index is compact and structure-first
+- node cards are not nested inside each other; together they form a flatten list
+- tags may appear on cards as optional secondary hints, not as a replacement for
+  the tree index
+
+Sample memory content:
+
+- root: Self
+- child: Current Quest
+- child: World Facts
+- grandchild: Harbor Town
+- grandchild: Captain Mira
+
+
+============================================================
+3. Candidate A
+Compact Index + Section Cards
+============================================================
+
+This is the current leading candidate.
+
+---------------- SAMPLE START ----------------
+[MemoTree Index]
+- self :: Self
+  - quest :: Current Quest
+  - facts :: World Facts
+    - harbor :: Harbor Town
+    - mira :: Captain Mira
+
+[MemoTree Cards]
+
+=== CARD self ===
+Path: Self
+Title: Self
+Gist: Traveling archivist currently based near Harbor Town.
+Summary: Long-term identity anchors, standing goals, and operating constraints.
+Children: quest, facts
+
+=== CARD quest ===
+Path: Self > Current Quest
+Title: Current Quest
+State: pinned
+Gist: Recover the tide map before the next moonless night.
+Summary: Need to reach Captain Mira, confirm the dock schedule, and recover the
+missing map fragment from the customs ledger trail.
+Body:
+[b17] Last confirmed clue points to the east warehouse ledger.
+[b18] Avoid alerting the harbor guards before meeting Mira.
+
+=== CARD mira ===
+Path: Self > World Facts > Captain Mira
+Title: Captain Mira
+Gist: Smuggler captain with mixed loyalty.
+Summary: Trusts direct bargains more than formal authority.
+Body:
+[b44] Favors payment in repair parts and sealed navigation charts.
+[b45] Dislikes mention of the old lighthouse mutiny.
+----------------- SAMPLE END -----------------
+
+Pros:
+
+- easy to implement
+- index and cards are visually distinct
+- card boundaries are obvious
+- nodeId and path stay close to the content
+
+Cons:
+
+- card headers are a little heavy
+- repeated "Title:" labels cost tokens
+
+Assessment:
+
+- strong MVP candidate
+- probably best balance between readability and implementation simplicity
+
+
+============================================================
+4. Candidate B
+Compact Index + Tab-Like Doc Blocks
+============================================================
+
+This tries to feel more like "navigation + open documents".
+
+---------------- SAMPLE START ----------------
+[Index]
+- self Self
+  - quest Current Quest
+  - facts World Facts
+    - harbor Harbor Town
+    - mira Captain Mira
+
+[Open Docs]
+
+--- doc: quest | Self > Current Quest | Summary ---
+gist: Recover the tide map before the next moonless night.
+summary: Need to reach Captain Mira, confirm the dock schedule, and recover the
+missing map fragment from the customs ledger trail.
+blocks:
+- b17 Last confirmed clue points to the east warehouse ledger.
+- b18 Avoid alerting the harbor guards before meeting Mira.
+
+--- doc: mira | Self > World Facts > Captain Mira | Full ---
+gist: Smuggler captain with mixed loyalty.
+summary: Trusts direct bargains more than formal authority.
+blocks:
+- b44 Favors payment in repair parts and sealed navigation charts.
+- b45 Dislikes mention of the old lighthouse mutiny.
+----------------- SAMPLE END -----------------
+
+Pros:
+
+- very compact
+- "doc" metaphor matches the mental model of tabs
+- easy to sort by pinned/active/preferred
+
+Cons:
+
+- lighter boundaries may make cards blur together
+- slightly more fragile if many cards are expanded
+
+Assessment:
+
+- good if token pressure is high
+- slightly less glanceable than Candidate A
+
+
+============================================================
+5. Candidate C
+Indented Tree Index + Rich Card Headers
+============================================================
+
+This makes the index slightly richer and more status-oriented.
+
+---------------- SAMPLE START ----------------
+[Index]
+- self  Self
+  - quest  Current Quest  [PINNED] [EXPANDED]
+  - facts  World Facts
+    - harbor  Harbor Town
+    - mira  Captain Mira  [EXPANDED]
+
+[Cards]
+
+=== quest ===
+breadcrumb: Self > Current Quest
+lod: Summary
+flags: pinned
+gist:
+Recover the tide map before the next moonless night.
+summary:
+Need to reach Captain Mira, confirm the dock schedule, and recover the
+missing map fragment from the customs ledger trail.
+body blocks:
+- [b17] Last confirmed clue points to the east warehouse ledger.
+- [b18] Avoid alerting the harbor guards before meeting Mira.
+
+=== mira ===
+breadcrumb: Self > World Facts > Captain Mira
+lod: Full
+flags: none
+gist:
+Smuggler captain with mixed loyalty.
+summary:
+Trusts direct bargains more than formal authority.
+body blocks:
+- [b44] Favors payment in repair parts and sealed navigation charts.
+- [b45] Dislikes mention of the old lighthouse mutiny.
+----------------- SAMPLE END -----------------
+
+Pros:
+
+- explicit labels reduce ambiguity
+- better for debugging and early evaluation
+
+Cons:
+
+- verbose
+- more token-heavy
+- can start feeling like logs rather than a usable memory page
+
+Assessment:
+
+- useful as a debug view
+- probably too heavy as default agent window
+
+
+============================================================
+6. Candidate D
+Pseudo-XML or Tag-Like Layout
+============================================================
+
+This is included as a contrast case.
+
+---------------- SAMPLE START ----------------
+<memotree-index>
+  <node id="self" depth="0">Self</node>
+  <node id="quest" depth="1">Current Quest</node>
+  <node id="facts" depth="1">World Facts</node>
+  <node id="harbor" depth="2">Harbor Town</node>
+  <node id="mira" depth="2">Captain Mira</node>
+</memotree-index>
+
+<memotree-card id="quest" lod="summary" pinned="true">
+  <path>Self > Current Quest</path>
+  <gist>Recover the tide map before the next moonless night.</gist>
+  <summary>Need to reach Captain Mira...</summary>
+  <block id="b17">Last confirmed clue points to the east warehouse ledger.</block>
+</memotree-card>
+----------------- SAMPLE END -----------------
+
+Pros:
+
+- mechanically parseable
+- clear field boundaries
+
+Cons:
+
+- ugly and high-noise
+- encourages "parse format" thinking instead of "read memory" thinking
+- too much delimiter overhead
+
+Assessment:
+
+- not recommended as default LLM-facing UI
+- maybe acceptable for machine-oriented debug dumps only
+
+
+============================================================
+7. Recommended MVP Choice
+============================================================
+
+Recommended default:
+
+- Candidate A as the main human/LLM-facing layout
+- Candidate C as an optional debug or instrumentation layout
+
+Reason:
+
+- Candidate A preserves the strongest "memory page" feeling.
+- It gives card boundaries that are easy for the model to recover.
+- It is simple enough to render now.
+- It leaves room to compact toward Candidate B later if token pressure becomes
+  dominant.
+
+
+============================================================
+8. Recommended Text Conventions
+============================================================
+
+8.1 Index line format
+
+Recommended:
+
+- indentation with two spaces per depth
+- each line shows nodeId first, then title
+- expanded state may be shown only when useful
+
+Example:
+
+- self :: Self
+  - quest :: Current Quest
+  - facts :: World Facts
+
+Why:
+
+- nodeId-first helps stable reference matching
+- title still remains easy to read
+
+
+8.2 Card header format
+
+Recommended:
+
+=== CARD quest ===
+Path: Self > Current Quest
+Title: Current Quest
+
+Why:
+
+- a strong delimiter helps cards stay separated in a long linear context
+- repeating nodeId and path helps re-bind the card to the index
+
+
+8.3 Field order inside a card
+
+Recommended order:
+
+1. Path
+2. Title
+3. State or flags if any
+4. Gist
+5. Summary
+6. Body
+
+Why:
+
+- identity first
+- interpretation second
+- details last
+
+
+8.4 Body block format
+
+Recommended:
+
+Body:
+[b17] Last confirmed clue points to the east warehouse ledger.
+[b18] Avoid alerting the harbor guards before meeting Mira.
+
+Do not over-format with bullets unless needed.
+
+Why:
+
+- simple blockId prefix is cheap and reference-friendly
+- keeps body readable as normal prose or note fragments
+
+
+8.5 Card separators
+
+Recommended:
+
+=== CARD <nodeId> ===
+
+Avoid:
+
+- too many punctuation characters
+- triple nesting markers
+- decorative ASCII art
+
+Why:
+
+- stable and searchable
+- visually distinct without too much token waste
+
+
+============================================================
+9. Sorting Strategy for Flatten Cards
+============================================================
+
+Current recommendation:
+
+Sort node cards in the flatten list by a combined priority, for example:
+
+1. explicitly preferred nodes
+2. pinned nodes
+3. active path nodes
+4. strong topical matches
+5. remaining contextually useful nodes
+
+This keeps pinned/active as an ordering strategy, not a separate layout region.
+
+
+============================================================
+10. Content Block Alternative
+============================================================
+
+If a future API surface allows multiple higher-level content blocks instead of
+one plain string Window, a better transport may be:
+
+- block 1: MemoTree index
+- block 2..N: one block per node card
+
+Example conceptual structure:
+
+Block 1:
+"[MemoTree Index]\n- self :: Self\n  - quest :: Current Quest\n..."
+
+Block 2:
+"[MemoTree Card quest]\nPath: Self > Current Quest\n..."
+
+Block 3:
+"[MemoTree Card mira]\nPath: Self > World Facts > Captain Mira\n..."
+
+Why this may help:
+
+- stronger separation between cards
+- less need for heavy textual delimiters
+- closer to an actual UI region model
+
+But for now:
+
+- current MVP should stay plain text in one IApp Window
+- layout should not depend on Content Block support
+
+
+============================================================
+11. Open Questions
+============================================================
+
+1. Should index lines show stale-summary markers like [STALE]?
+2. Should cards include child lists explicitly, or rely on the index only?
+3. Should Full cards always repeat Summary, or can they omit Summary and show
+   Body directly?
+4. How much of breadcrumb should be repeated when paths become long?
+5. Should the index include only visible branches, or a broader skeleton?
+
+
+============================================================
+12. Practical Next Step
+============================================================
+
+Suggested next implementation target:
+
+1. implement one concrete index renderer using Candidate A
+2. implement one concrete node card renderer using Candidate A
+3. add snapshot-style tests with a few sample trees
+4. compare output size and readability against Candidate B
