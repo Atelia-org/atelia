@@ -110,6 +110,83 @@ public sealed record MemoBodyRewriteRequest(
 );
 
 /// <summary>
+/// 基于块内文本提示，在某个正文块中创建新的块边界。
+/// </summary>
+/// <remarks>
+/// 这是面向 LLM 更友好的正文切分 helper。
+/// 它属于文本层便利能力：先把块内切分点稳定化为新的 <see cref="MemoBlockId"/> 边界，
+/// 再由节点层的 <c>SplitNode</c> 使用这些块边界做结构切分。
+/// </remarks>
+public sealed record MemoBodyBlockSplitByTextRequest(
+    MemoNodeId NodeId,
+    MemoBlockId BlockId,
+    string? AfterText = null,
+    string? BeforeText = null,
+    string? Notes = null
+);
+
+/// <summary>
+/// 正文块按文本提示切分后的结果。
+/// </summary>
+public sealed record MemoBodyBlockSplitResult(
+    MemoNodeId NodeId,
+    MemoBlockId LeftBlockId,
+    MemoBlockId RightBlockId
+);
+
+/// <summary>
+/// 节点切分请求。
+/// </summary>
+/// <remarks>
+/// 节点层切分只处理结构边界，不直接暴露 char offset。
+/// 推荐先通过正文块切分 helper 建立新的块边界，再用 <paramref name="AfterBodyBlockId"/> /
+/// <paramref name="BeforeChildId"/> 表达节点切分位置。
+/// </remarks>
+public sealed record MemoNodeSplitRequest(
+    MemoNodeId NodeId,
+    string RightTitle,
+    MemoBlockId? AfterBodyBlockId = null,
+    MemoNodeId? BeforeChildId = null,
+    string? RightGist = null,
+    string? RightSummary = null,
+    bool CopyTagsToRight = true,
+    bool InvalidateDerivedMemory = true,
+    string? Notes = null
+);
+
+/// <summary>
+/// 节点切分结果。左节点保留原 <see cref="MemoNodeId"/>，右节点获得新 ID。
+/// </summary>
+public sealed record MemoNodeSplitResult(
+    MemoNodeId LeftNodeId,
+    MemoNodeId RightNodeId,
+    MemoNodeSnapshot LeftNode,
+    MemoNodeSnapshot RightNode
+);
+
+/// <summary>
+/// 把一个节点与它的下一个 sibling 合并。
+/// </summary>
+public sealed record MemoNodeMergeWithNextRequest(
+    MemoNodeId NodeId,
+    string? MergedTitle = null,
+    string? MergedGist = null,
+    string? MergedSummary = null,
+    bool UnionTags = true,
+    bool InvalidateDerivedMemory = true,
+    string? Notes = null
+);
+
+/// <summary>
+/// 节点与下一个 sibling 合并后的结果。左节点保留原 ID，右节点被删除。
+/// </summary>
+public sealed record MemoNodeMergeWithNextResult(
+    MemoNodeId NodeId,
+    MemoNodeId RemovedNodeId,
+    MemoNodeSnapshot Node
+);
+
+/// <summary>
 /// Window index 区中的一项结构条目。
 /// </summary>
 public sealed record MemoTreeIndexEntry(

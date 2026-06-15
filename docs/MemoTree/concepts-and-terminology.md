@@ -17,10 +17,13 @@ MemoTree 当前推荐使用这组核心术语：
 | Node Title | `title` | 节点标题；主要可读名称 |
 | Node Body | `body` | 节点正文；节点内部的主内容载体 |
 | Body Block | `block` | Node Body 中可稳定寻址的最小正文单元 |
+| Body Split Helper | `SplitBodyBlockByText` | 用前后文本提示把块内切分点稳定化为新的 block 边界 |
 | Gist | `gist` | 节点在 `Gist` LOD 下保留的一句话印象 |
 | Summary | `summary` | 节点自身正文的摘要，不含子节点内容 |
 | Tags | `tags` | 节点上的轻量次索引，不替代主树导航 |
 | Pinned Set | `pinned` | 需要优先保留或优先排序的一小组节点 |
+| Node Split | `SplitNode` | 把一个节点切成两个相邻 sibling 的结构原语 |
+| Node Merge | `MergeNodeWithNextSibling` | 把一个节点与下一个 sibling 合并的结构原语 |
 | Window | `Window` | 在 LLM 调用时动态生成的上下文投影视图 |
 | Index | `index` | Window 中展示主结构骨架的区域 |
 | Node Card | `node card` | Window flatten 区中平铺展示的单节点卡片 |
@@ -144,6 +147,31 @@ Tags 是可选次索引，用于：
 - 它可能导致 Body Block 重建
 - 因而可能使旧 block 引用失效
 
+### 3.6 SplitBodyBlockByText
+
+`SplitBodyBlockByText` 是文本层 helper：
+
+- 它不直接改变节点结构
+- 它的作用是把“前后文本描述的切分点”变成新的 block 边界
+- 后续 `SplitNode` 再消费这些 block 边界
+
+### 3.7 SplitNode
+
+`SplitNode` 是节点层结构原语：
+
+- 它只认结构边界
+- 典型边界是 `AfterBodyBlockId` / `BeforeChildId`
+- 左节点保留原 `nodeId`
+- 右节点获得新 `nodeId`
+
+### 3.8 MergeNodeWithNextSibling
+
+`MergeNodeWithNextSibling` 是节点层结构原语：
+
+- 当前节点保留原 `nodeId`
+- 下一个 sibling 被吸收并删除
+- 默认应视为对 `gist` / `summary` 有失效风险的重组操作
+
 ## 4. 关系图
 
 可用下面这段简化图理解：
@@ -159,6 +187,7 @@ MemoTree
       -> Summary
       -> Tags
       -> Children
+      -> Node Split / Node Merge
   -> Contains Tree
   -> Window
     -> Index

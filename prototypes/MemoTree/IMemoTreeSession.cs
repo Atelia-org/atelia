@@ -58,6 +58,10 @@ public interface IMemoTreeSession {
     /// </summary>
     void RewriteBodyText(MemoBodyRewriteRequest request);
 
+    MemoBodyBlockSplitResult SplitBodyBlockByText(MemoBodyBlockSplitByTextRequest request);
+
+    void MergeBodyBlockWithNext(MemoNodeId nodeId, MemoBlockId blockId);
+
     MemoBlockId AppendBodyBlock(MemoNodeId nodeId, string content);
 
     MemoBlockId InsertBodyBlockAfter(MemoNodeId nodeId, MemoBlockId afterBlockId, string content);
@@ -65,6 +69,10 @@ public interface IMemoTreeSession {
     void SetBodyBlockContent(MemoNodeId nodeId, MemoBlockId blockId, string content);
 
     void DeleteBodyBlock(MemoNodeId nodeId, MemoBlockId blockId);
+
+    MemoNodeSplitResult SplitNode(MemoNodeSplitRequest request);
+
+    MemoNodeMergeWithNextResult MergeNodeWithNextSibling(MemoNodeMergeWithNextRequest request);
 
     IReadOnlyList<MemoTreeSearchHit> Search(MemoTreeSearchQuery query);
 

@@ -61,11 +61,14 @@ MemoTree 的 public API 先满足四件事：
 | `MemoNodeSnapshot` | 单节点概要快照 |
 | `MemoBodyBlockSnapshot` | 正文块快照 |
 | `MemoBodyRewriteRequest` | 危险的整段正文重写请求 |
+| `MemoBodyBlockSplitByTextRequest` / `MemoBodyBlockSplitResult` | 面向 LLM 的正文块切分 helper |
 | `MemoNodePath` | 节点路径 |
 | `MemoTreeIndexEntry` / `MemoTreeIndexSection` | Window 的 index 区 |
 | `MemoTreeNodeCard` | Window 中平铺展示的单节点卡片 |
 | `IMemoTreeIndexRenderer` | index 区渲染器 |
 | `IMemoTreeNodeCardRenderer` | 单节点卡片渲染器 |
+| `MemoNodeSplitRequest` / `MemoNodeSplitResult` | 节点切分原语 |
+| `MemoNodeMergeWithNextRequest` / `MemoNodeMergeWithNextResult` | 节点合并原语 |
 | `MemoNodeCollapseRequest` / `MemoNodeCollapseResult` | 记忆维护与收起模型 |
 | `MemoTreeSearchQuery` / `MemoTreeSearchHit` | 搜索模型 |
 | `MemoTreeRenderRequest` / `MemoTreeRenderResult` | 渲染模型 |
@@ -137,6 +140,8 @@ tags 当前只应被理解为轻量次索引：
 ### 4.5 正文编辑
 
 - `RewriteBodyText(request)`
+- `SplitBodyBlockByText(request)`
+- `MergeBodyBlockWithNext(...)`
 - `AppendBodyBlock(...)`
 - `InsertBodyBlockAfter(...)`
 - `SetBodyBlockContent(...)`
@@ -155,7 +160,29 @@ tags 当前只应被理解为轻量次索引：
 
 因此，它更适合初始化、导入、测试夹具与人工确认后的场景，不适合作为长期记忆维护主线。
 
-### 4.6 显式收起与记忆维护
+`SplitBodyBlockByText(...)` 则是另一条更适合 LLM 的便利路径：
+
+- 它不要求调用方提供 char offset
+- 而是让调用方用 `AfterText` / `BeforeText` 描述块内切分点
+- 成功后得到新的左右 block 边界
+
+这一步属于文本层 helper，而不是节点结构层操作。
+
+### 4.6 节点结构重组
+
+- `SplitNode(request)`
+- `MergeNodeWithNextSibling(request)`
+
+推荐语义是：
+
+- `SplitNode` 只认结构边界，不认 char offset
+- `SplitNode` 用 `AfterBodyBlockId` / `BeforeChildId` 表达切分位置
+- `SplitNode` 左节点保留原 `nodeId`，右节点获得新 `nodeId`
+- `MergeNodeWithNextSibling` 左节点保留原 `nodeId`，右节点被吸收并删除
+
+这组原语适合承载“长节点拆分”和“零散短节点聚合”这类结构整理动作。
+
+### 4.7 显式收起与记忆维护
 
 - `CollapseNode(request)`
 
@@ -168,7 +195,7 @@ tags 当前只应被理解为轻量次索引：
 - 它显式带上 `basedOnBodyVersion`
 - 它不把 renderer 的预算变化偷偷变成长期记忆写入
 
-### 4.7 查询与渲染
+### 4.8 查询与渲染
 
 - `Search(query)`
 - `Render(request)`
@@ -233,6 +260,23 @@ tree.RewriteBodyText(new MemoBodyRewriteRequest(
     "- Repository.Create/Open\n- Revision.Create*\n- Commit(root)",
     Reason: "seed sample body for an early prototype"
 ));
+
+var bodySplit = tree.SplitBodyBlockByText(new MemoBodyBlockSplitByTextRequest(
+    NodeId: stateJournal,
+    BlockId: tree.GetBodyBlocks(stateJournal)[0].Id,
+    AfterText: "Repository.Create/Open",
+    BeforeText: "- Revision.Create*",
+    Notes: "create a stable cut before splitting the node"
+));
+
+var nodeSplit = tree.SplitNode(new MemoNodeSplitRequest(
+    NodeId: stateJournal,
+    RightTitle: "StateJournal Commit Flow",
+    AfterBodyBlockId: bodySplit.LeftBlockId,
+    RightGist: "commit 从 root 遍历可达对象。",
+    RightSummary: "聚焦 commit 时的可达对象遍历与保存语义。"
+));
+
 tree.SetPinned(stateJournal, true);
 
 var collapsed = tree.CollapseNode(new MemoNodeCollapseRequest(
@@ -262,14 +306,17 @@ var render = tree.Render(new MemoTreeRenderRequest(
 3. Unified Node 允许同一节点同时拥有正文与子节点
 4. move subtree 后路径变化
 5. body block 增量编辑
-6. `RewriteBodyText` 被明确当作危险入口，而不是默认维护动作
-7. `SetSummary` 与 `IsSummaryStale`
-8. `tags` 只作为轻量次索引，不影响主结构稳定性
-9. `CollapseNode` 同时更新 `Gist`、`Summary` 与可见目标 LOD
-10. `Render` 先生成紧凑 index，再平铺 node cards
-11. `Render` 在预算不足时优先压正文 LOD，而不是先抹掉结构骨架
-12. `Pinned` 节点在紧预算下仍被优先保留，并主要体现在 node card 排序
-13. `MemoTreeApp` 只做薄适配，不篡改 `Window` 与 `HiddenToolNames`
+6. `SplitBodyBlockByText` 能把前后文本提示稳定化为新的 block 边界
+7. `SplitNode` 只认 `AfterBodyBlockId` / `BeforeChildId` 这类结构边界
+8. `MergeNodeWithNextSibling` 保持左节点 ID，吸收右节点内容
+9. `RewriteBodyText` 被明确当作危险入口，而不是默认维护动作
+10. `SetSummary` 与 `IsSummaryStale`
+11. `tags` 只作为轻量次索引，不影响主结构稳定性
+12. `CollapseNode` 同时更新 `Gist`、`Summary` 与可见目标 LOD
+13. `Render` 先生成紧凑 index，再平铺 node cards
+14. `Render` 在预算不足时优先压正文 LOD，而不是先抹掉结构骨架
+15. `Pinned` 节点在紧预算下仍被优先保留，并主要体现在 node card 排序
+16. `MemoTreeApp` 只做薄适配，不篡改 `Window` 与 `HiddenToolNames`
 
 ## 8. 对应源码位置
 
