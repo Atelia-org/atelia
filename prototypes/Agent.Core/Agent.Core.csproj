@@ -19,7 +19,7 @@
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
-      <_Parameter1>Atelia.LiveContextProto.Tests</_Parameter1>
+      <_Parameter1>Atelia.Agent.Core.Tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
 

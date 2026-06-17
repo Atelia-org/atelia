@@ -95,7 +95,7 @@ public partial class AgentEngine {
     /// 清除时机：
     /// <list type="bullet">
     /// <item><see cref="ProcessCompactingAsync"/> 成功调用 <see cref="AgentState.ReplacePrefixWithRecap"/> 后清除（正常完成）；</item>
-    /// <item>stale 校验失败（splitIndex 越界或不再满足 Observation→Action 边界不变式）时清除；</item>
+    /// <item>stale 校验失败（splitIndex 越界或不再满足 observation-like → actor-side 边界不变式）时清除；</item>
     /// <item>LLM 摘要返回空字符串时清除。</item>
     /// </list>
     /// LLM 调用抛出异常或 cancellation 时<em>不</em>清除，允许下一次 <see cref="StepAsync"/> 自动重试。
@@ -288,28 +288,53 @@ public partial class AgentEngine {
         IReadOnlyList<HistoryEntry> entries,
         string summarizePrompt
     ) {
-        var messages = new List<IHistoryMessage>(entries.Count + 1);
+        var messages = HistoryRunProjector.Project(
+            entries,
+            startIndex: 0,
+            endExclusive: entries.Count,
+            projectObservationLike: index => ProjectObservationLikeForSummarization(entries[index]),
+            projectActorRun: (runStart, runEnd) => ProjectActorRunForSummarization(entries, runStart, runEnd)
+        );
 
-        foreach (var entry in entries) {
-            switch (entry) {
-                case ActionEntry action:
-                    messages.Add(action.Message);
+        messages.Add(new ObservationMessage(summarizePrompt));
+        return messages;
+    }
+
+    private static IHistoryMessage ProjectObservationLikeForSummarization(HistoryEntry entry) {
+        return entry switch {
+            ObservationEntry observation => observation.GetMessage(windows: null),
+            RecapEntry recap => new ObservationMessage(recap.Content),
+            _ => throw new InvalidOperationException(
+                $"Unsupported observation-like HistoryEntry type: {entry.GetType().Name} (Kind={entry.Kind})"
+            )
+        };
+    }
+
+    private static ActionMessage ProjectActorRunForSummarization(
+        IReadOnlyList<HistoryEntry> entries,
+        int startIndex,
+        int endExclusive
+    ) {
+        var blocks = new List<ActionBlock>();
+
+        for (var index = startIndex; index < endExclusive; index++) {
+            switch (entries[index]) {
+                case ActionEntry actionEntry:
+                    blocks.AddRange(actionEntry.Message.Blocks);
                     break;
-                case ObservationEntry observation:
-                    messages.Add(observation.GetMessage(windows: null));
-                    break;
-                case RecapEntry recap:
-                    messages.Add(new ObservationMessage(recap.Content));
+                case InjectionEntry injectionEntry:
+                    // Summarization only needs semantic content, not replay metadata.
+                    // Thinking injections are therefore flattened to plain assistant text.
+                    blocks.Add(new ActionBlock.Text(injectionEntry.Content));
                     break;
                 default:
                     throw new InvalidOperationException(
-                        $"Unsupported HistoryEntry type: {entry.GetType().Name} (Kind={entry.Kind})"
+                        $"Unsupported actor-like HistoryEntry type: {entries[index].GetType().Name} (Kind={entries[index].Kind})"
                     );
             }
         }
 
-        messages.Add(new ObservationMessage(summarizePrompt));
-        return messages;
+        return new ActionMessage(blocks);
     }
 
     private static string BuildHistoryEntryPreview(HistoryEntry entry) {
@@ -445,7 +470,7 @@ public partial class AgentEngine {
 
         if (splitIndex < 1 || splitIndex >= snapshot.Count
             || !snapshot[splitIndex - 1].IsObservationLike
-            || snapshot[splitIndex] is not ActionEntry) {
+            || !snapshot[splitIndex].IsActorLike) {
             DebugUtil.Warning(
                 StateMachineDebugCategory,
                 $"[Compacting] splitIndex={splitIndex} no longer valid for current history (count={snapshot.Count}); aborting."

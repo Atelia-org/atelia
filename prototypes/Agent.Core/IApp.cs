@@ -36,7 +36,7 @@ public readonly record struct AppRenderContext(
 
 public readonly record struct AppProjection(
     string? Window,
-    IReadOnlyList<string>? HiddenToolNames = null
+    ToolAccessSnapshot? ToolAccessSnapshot = null
 );
 
 public readonly record struct AppHostProjection(

@@ -43,6 +43,7 @@ public sealed partial class AgentState {
 
         HistoryEntry cloned = entry switch {
             ActionEntry actionEntry => CloneActionEntry(actionEntry),
+            InjectionEntry injectionEntry => CloneInjectionEntry(injectionEntry),
             ToolResultsEntry toolResultsEntry => CloneToolResultsEntry(toolResultsEntry),
             ObservationEntry observationEntry => CloneObservationEntry(observationEntry),
             RecapEntry recapEntry => CloneRecapEntry(recapEntry),
@@ -58,6 +59,16 @@ public sealed partial class AgentState {
         return new ActionEntry(
             Message: new ActionMessage(entry.Message.Blocks.ToArray()),
             Invocation: entry.Invocation
+        ) {
+            Timestamp = entry.Timestamp
+        };
+    }
+
+    private static InjectionEntry CloneInjectionEntry(InjectionEntry entry) {
+        return new InjectionEntry(
+            content: entry.Content,
+            blockKind: entry.BlockKind,
+            source: entry.Source
         ) {
             Timestamp = entry.Timestamp
         };

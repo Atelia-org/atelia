@@ -71,6 +71,7 @@ public sealed class TokenEstimateHelper {
 
         return entry switch {
             ActionEntry action => EstimateAction(action),
+            InjectionEntry injection => EstimateInjection(injection),
             ToolResultsEntry toolResults => EstimateToolResults(toolResults),
             ObservationEntry observation => EstimateObservation(observation),
             RecapEntry recap => EstimateRecap(recap),
@@ -94,13 +95,24 @@ public sealed class TokenEstimateHelper {
     }
 
     private uint EstimateAction(ActionEntry action) {
+        return EstimateActionBlocks(action.Message.Blocks);
+    }
+
+    private uint EstimateInjection(InjectionEntry injection) {
+        return EstimateString(injection.Content);
+    }
+
+    private uint EstimateActionBlocks(IReadOnlyList<ActionBlock> blocks) {
         uint total = 0;
 
-        foreach (var textBlock in action.Message.Blocks.OfType<ActionBlock.Text>()) {
+        foreach (var textBlock in blocks.OfType<ActionBlock.Text>()) {
             total += EstimateString(textBlock.Content);
         }
-        total += EstimateToolCalls(action.Message.ToolCalls);
-        // total += EstimateCompletionDescriptor(action.Invocation); action.Invocation是History层元信息，不会序列化到LLM调用上下文中
+        total += EstimateToolCalls(
+            blocks.OfType<ActionBlock.ToolCall>()
+                .Select(static block => block.Call)
+                .ToArray()
+        );
 
         return total;
     }

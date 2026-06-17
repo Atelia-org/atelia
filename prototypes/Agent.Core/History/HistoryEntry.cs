@@ -5,8 +5,9 @@ using Atelia.Completion.Tools;
 namespace Atelia.Agent.Core.History;
 
 /// <summary>
-/// 定义历史条目的类型。此枚举与 <see cref="HistoryEntry"/> 及 <see cref="IHistoryMessage"/> 的分类保持一致，
-/// 以强化学习（RL）术语为核心进行命名，具体的转换逻辑由各提供商（Provider）的适配层负责。
+/// 定义 RecentHistory 事件账本中的条目类型。
+/// 命名以强化学习（RL）术语为核心；其中一部分会直接投影为 <see cref="IHistoryMessage"/>，
+/// 也允许存在仅在运行时内部可见、需要在投影阶段合并掉的类型（如 <see cref="HistoryEntryKind.Injection"/>）。
 /// </summary>
 public enum HistoryEntryKind {
     /// <summary>
@@ -18,6 +19,10 @@ public enum HistoryEntryKind {
     /// </summary>
     Action,
     /// <summary>
+    /// 表示 Agent-OS / runtime 注入到 Agent 当前心智流中的 actor-side 内容。
+    /// </summary>
+    Injection,
+    /// <summary>
     /// 表示工具执行后的补充观测。
     /// </summary>
     ToolResults,
@@ -25,8 +30,10 @@ public enum HistoryEntryKind {
 }
 
 /// <summary>
-/// Agent 历史条目的抽象基类。它为强化学习（RL）序列中的所有事件提供了统一的元数据，
-/// 并为派生类定义了时间戳和类型等基本属性。静态历史记录与流式回放均通过此类型与 <see cref="IHistoryMessage"/> 接口进行交互。
+/// Agent 历史条目的抽象基类。
+/// 它描述的是 RecentHistory 中的事件账本条目，而不是 provider 原生 message。
+/// 真正发给 <see cref="ICompletionClient"/> 的 <see cref="IHistoryMessage"/> 序列，
+/// 由 <see cref="AgentState.ProjectInvocationContext"/> 在调用前动态投影得到。
 /// </summary>
 public abstract record class HistoryEntry : ITokenEstimateSource {
     /// <summary>
@@ -87,6 +94,11 @@ public abstract record class HistoryEntry : ITokenEstimateSource {
     /// 用于检查历史交替不变量与上下文切分的合法性。
     /// </summary>
     public bool IsObservationLike => Kind is HistoryEntryKind.Observation or HistoryEntryKind.ToolResults or HistoryEntryKind.Recap;
+
+    /// <summary>
+    /// 判断当前条目是否为 actor-side（Action / Injection）。
+    /// </summary>
+    public bool IsActorLike => Kind is HistoryEntryKind.Action or HistoryEntryKind.Injection;
 }
 
 /// <summary>
@@ -106,6 +118,58 @@ public sealed record ActionEntry(
 ) : HistoryEntry {
     /// <inheritdoc />
     public override HistoryEntryKind Kind => HistoryEntryKind.Action;
+}
+
+public enum InjectionSourceKind {
+    AgentOsTrigger,
+    Wizard,
+    MemoryRecall,
+    Emotion,
+    KnowledgeRecall,
+    HostOverride,
+    Other
+}
+
+public sealed record InjectionSource(
+    InjectionSourceKind Kind,
+    string? SourceId = null,
+    string? Notes = null
+);
+
+/// <summary>
+/// 表示一段由 Agent-OS / runtime 注入的 actor-side 内容。
+/// </summary>
+/// <remarks>
+/// 与 <see cref="ActionEntry"/> 不同，本类型不表示“模型在一次 completion 中真实输出了什么”，
+/// 而表示“外部运行时希望作为 Agent 当前心智流的一部分继续被模型续写的内容”。
+/// RecentHistory 中只记录与 provider 无关的注入语义（文本内容 + 注入为正文还是 thinking），
+/// 真正发给模型的 assistant/action message 由投影层在调用前按目标 invocation 动态构造。
+/// </remarks>
+public sealed record InjectionEntry : HistoryEntry {
+    public InjectionEntry(
+        string content,
+        ActionBlockKind blockKind,
+        InjectionSource source
+    ) {
+        if (string.IsNullOrWhiteSpace(content)) {
+            throw new ArgumentException("Injection content must not be null or whitespace.", nameof(content));
+        }
+        if (blockKind is not (ActionBlockKind.Text or ActionBlockKind.Thinking)) {
+            throw new ArgumentOutOfRangeException(nameof(blockKind), blockKind, "Injection block kind must be Text or Thinking.");
+        }
+
+        Content = content;
+        BlockKind = blockKind;
+        Source = source ?? throw new ArgumentNullException(nameof(source));
+    }
+
+    public string Content { get; }
+
+    public ActionBlockKind BlockKind { get; }
+
+    public InjectionSource Source { get; }
+
+    public override HistoryEntryKind Kind => HistoryEntryKind.Injection;
 }
 
 
@@ -179,7 +243,7 @@ public record class ObservationEntry : HistoryEntry {
     /// <param name="notifications">可选的通知内容。</param>
     /// <param name="windows">可选的窗口内容。</param>
     /// <returns>合并后的内容字符串；若两者均为空，则返回其中一个原值（可能为 <c>null</c>）。</returns>
-    protected static string? MergeContent(string? notifications, string? windows) {
+    internal static string? MergeContent(string? notifications, string? windows) {
         List<string>? parts = null;
 
         if (!string.IsNullOrWhiteSpace(notifications)) {

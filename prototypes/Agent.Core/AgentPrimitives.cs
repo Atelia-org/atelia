@@ -5,6 +5,11 @@ namespace Atelia.Agent.Core;
 public enum AgentRunState {
     WaitingInput,
     PendingInput,
+    /// <summary>
+    /// RecentHistory 尾部存在待续写的 <see cref="InjectionEntry"/>，
+    /// 下一次模型调用应把它作为 actor-side prefix 继续补完。
+    /// </summary>
+    PendingActionContinuation,
     WaitingToolResults,
     ToolResultsReady,
     PendingToolResults,

@@ -1,5 +1,6 @@
 using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 
 namespace Atelia.Agent.Core;
 
@@ -94,6 +95,14 @@ public sealed class PrepareInvocationEventArgs : EventArgs {
     public ulong EstimatedContextTokens { get; }
 
     /// <summary>
+    /// 获取或设置本次真实模型调用的附加工具可见性限制。
+    /// 若设置该值，引擎会将其与 AppHost 投影出的默认可见性求交集；
+    /// 因此本属性只能进一步收紧工具暴露范围，不能放宽默认限制。
+    /// <c>null</c> 表示沿用 AppHost 投影出的默认可见性。
+    /// </summary>
+    public ToolAccessSnapshot? ToolAccessOverride { get; set; }
+
+    /// <summary>
     /// 获取或设置一个值，指示是否取消本次模型调用。
     /// </summary>
     public bool Cancel { get; set; }
@@ -148,4 +157,39 @@ public sealed class StateTransitionEventArgs : EventArgs {
     /// 获取转换后的状态。
     /// </summary>
     public AgentRunState ToState { get; }
+}
+
+/// <summary>
+/// <see cref="AgentEngine.ActionProduced"/> 事件的参数。
+/// </summary>
+public sealed class ActionProducedEventArgs : EventArgs {
+    internal ActionProducedEventArgs(ActionEntry action, LlmProfile profile) {
+        Action = action ?? throw new ArgumentNullException(nameof(action));
+        Profile = profile ?? throw new ArgumentNullException(nameof(profile));
+    }
+
+    public ActionEntry Action { get; }
+
+    public LlmProfile Profile { get; }
+
+    public bool HasToolCalls => Action.Message.ToolCalls is { Count: > 0 };
+}
+
+/// <summary>
+/// <see cref="AgentEngine.ToolExecutionCompleted"/> 事件的参数。
+/// </summary>
+public sealed class ToolExecutionCompletedEventArgs : EventArgs {
+    internal ToolExecutionCompletedEventArgs(RawToolCall toolCall, ToolCallExecutionResult result, LlmProfile profile) {
+        ToolCall = toolCall ?? throw new ArgumentNullException(nameof(toolCall));
+        Result = result ?? throw new ArgumentNullException(nameof(result));
+        Profile = profile ?? throw new ArgumentNullException(nameof(profile));
+    }
+
+    public RawToolCall ToolCall { get; }
+
+    public ToolCallExecutionResult Result { get; }
+
+    public LlmProfile Profile { get; }
+
+    public ToolExecutionStatus Status => Result.ExecuteResult.Status;
 }

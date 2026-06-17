@@ -57,7 +57,7 @@ public sealed class EnginePanelApp : IApp {
         if (profile is null) {
             return new AppProjection(
                 Window: null,
-                HiddenToolNames: [_compressTool.Definition.Name]
+                ToolAccessSnapshot: ToolAccessSnapshot.Hide([_compressTool.Definition.Name])
             );
         }
 
@@ -70,19 +70,19 @@ public sealed class EnginePanelApp : IApp {
         if (percentage < 85.0) {
             return new AppProjection(
                 Window: null,
-                HiddenToolNames: [_compressTool.Definition.Name]
+                ToolAccessSnapshot: ToolAccessSnapshot.Hide([_compressTool.Definition.Name])
             );
         }
 
         DebugUtil.Info(DebugCategory, $"[ctx_compress] Window visible. tokens={tokens}/{capValue} ({percentage:F1}%) remaining={remaining} profile={profileName}");
         return new AppProjection(
             Window: BuildActionWindow(tokens, capValue, percentage, remaining, profileName, context.EstimatedCompactionPreview),
-            HiddenToolNames: Array.Empty<string>()
+            ToolAccessSnapshot: ToolAccessSnapshot.AllowAll
         );
     }
 
     [Tool("ctx_compress",
-        "压缩当前上下文最旧的约一半（仅在 Observation→Action 边界处切分）。" +
+        "压缩当前上下文最旧的约一半（仅在 observation-like → actor-side 边界处切分）。" +
         "若当前上下文已给出预计压缩范围，请先阅读，再用 keep_hints 说明这段旧历史里哪些信息即使暂时看似普通也必须保留。" +
         "若你在当前模型输出中调用本工具，引擎会复用该次决策参考的边界执行，保证所见即所得。" +
         "本工具会在当前工具执行阶段立即完成压缩，" +
@@ -214,7 +214,7 @@ public sealed class EnginePanelApp : IApp {
 
     private static string BuildCompactionFailureMessage(AgentEngine.CompactionExecutionResult outcome) {
         return outcome.FailureReason switch {
-            AgentEngine.CompactionFailureReason.NoValidSplitPoint => "无法压缩：当前历史不足以形成合法切分点（至少需要 Observation→Action 边界）。请继续工作后再试。",
+            AgentEngine.CompactionFailureReason.NoValidSplitPoint => "无法压缩：当前历史不足以形成合法切分点（至少需要 observation-like → actor-side 边界）。请继续工作后再试。",
             AgentEngine.CompactionFailureReason.InvalidSplitPoint => "无法压缩：本次锁定的压缩边界在执行时已不再合法，请稍后重试。",
             AgentEngine.CompactionFailureReason.EmptySummary => "无法压缩：摘要模型返回了空结果，请稍后重试。",
             _ => "无法压缩：内部压缩执行失败，请稍后重试。"

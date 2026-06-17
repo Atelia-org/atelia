@@ -65,7 +65,7 @@ internal sealed class DefaultAppHost : IAppHost {
         }
 
         var fragments = new List<string>();
-        HashSet<string>? hiddenToolNames = null;
+        var combinedAccess = ToolAccessSnapshot.AllowAll;
 
         foreach (var app in _apps) {
             var projection = app.Render(context);
@@ -73,13 +73,8 @@ internal sealed class DefaultAppHost : IAppHost {
                 fragments.Add(projection.Window.TrimEnd());
             }
 
-            if (projection.HiddenToolNames is not { Count: > 0 }) { continue; }
-
-            hiddenToolNames ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var toolName in projection.HiddenToolNames) {
-                if (!string.IsNullOrWhiteSpace(toolName)) {
-                    hiddenToolNames.Add(toolName);
-                }
+            if (projection.ToolAccessSnapshot is { } toolAccess) {
+                combinedAccess = ToolAccessSnapshot.Intersect(combinedAccess, toolAccess);
             }
         }
 
@@ -102,9 +97,7 @@ internal sealed class DefaultAppHost : IAppHost {
 
         return new AppHostProjection(
             Windows: windows,
-            ToolAccessSnapshot: hiddenToolNames is null || hiddenToolNames.Count == 0
-                ? ToolAccessSnapshot.AllowAll
-                : new ToolAccessSnapshot(hiddenToolNames)
+            ToolAccessSnapshot: combinedAccess
         );
     }
 

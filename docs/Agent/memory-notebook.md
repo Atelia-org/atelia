@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `prototypes/Agent.Core` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-04-22
+> **最后更新**：2026-06-17
 
 ---
 
@@ -11,7 +11,7 @@
 Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 
 - 维护一个内存中的工作记忆（`AgentState.RecentHistory`）
-- 把 LLM 流式输出累积成 `ActionEntry`、把工具调用结果包装成 `ToolResultsEntry`
+- 把 LLM 流式输出累积成 `ActionEntry`、把 Agent-OS 注入内容记录成 `InjectionEntry`、把工具调用结果包装成 `ToolResultsEntry`
 - 通过 `IApp` / `ITool` 把外部能力挂载到 LLM 可见的工具集
 - 自身不持有持久化机制，定位是"内存级状态机 + 可被 host 驱动的单步推理引擎"
 
@@ -26,11 +26,15 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 `AgentEngine.StepAsync()` 的核心是按当前 `AgentRunState` 决定下一步：
 
 - `WaitingInput` → 触发事件，由宿主 push 一条 `ObservationEntry`
-- `PendingInput` / `PendingToolResults` → 调 LLM，累积 `ActionEntry`
+- `PendingInput` / `PendingActionContinuation` / `PendingToolResults` → 调 LLM，累积 `ActionEntry`
 - `WaitingToolResults` → 逐个跑 ToolCall，攒进 `_pendingToolResults`
 - `ToolResultsReady` → 把缓存合成一条 `ToolResultsEntry`，回到 PendingToolResults
 
-不变量：**Observation/Action/ToolResults 必须严格交替**，由 `AgentState.ValidateAppendOrder()` 在追加时拦截。
+不变量：`RecentHistory` 是**事件账本**，不是 provider message log。合法转移由 `AgentState.ValidateAppendOrder()` 拦截，核心规则是：
+
+- observation-like（`ObservationEntry` / `ToolResultsEntry` / `RecapEntry`）后面只能接 actor-side（`ActionEntry` / `InjectionEntry`）
+- actor-side 之后允许继续接 actor-side（典型是 `ActionEntry -> InjectionEntry` 或 `InjectionEntry -> ActionEntry`）
+- 真正发给 provider 的 assistant/action message 由 `ProjectInvocationContext()` 在调用前动态拼接
 
 ### 2. AgentState 是纯内存模型，没有持久化
 
@@ -40,7 +44,7 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 - `_pendingNotifications: Queue<...>` — 待附加到下条 Observation 的通知
 - `_pendingToolResults: Dictionary<...>` — 还没收齐的工具结果
 
-`HistoryEntry` 派生类按 `Kind` 分（Observation / Action / ToolResults / Recap），每条带 `Serial`（递增编号）和 `EstimatedTokens`，但**没有任何 disk-backing**。重启即丢失。
+`HistoryEntry` 派生类按 `Kind` 分（Observation / Action / Injection / ToolResults / Recap），每条带 `Serial`（递增编号）和 `EstimatedTokens`，但**没有任何 disk-backing**。重启即丢失。
 
 > **集成 StateJournal 的关键挑战在这里**：`HistoryEntry` 是 sealed 派生类多态，需要先把它建模为可序列化的形态（如 enum kind + DurableDict<int, ValueBox>）才能落到 StateJournal。
 
@@ -76,10 +80,12 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 
 - `WaitingInput` — 当前状态为等待输入，宿主应决议本轮的 `IncomingObservation`
 - `ResolveProfile` — 在构造模型请求前决议本次调用的最终 `LlmProfile`
-- `PrepareInvocationAsync` — 在最终 profile 已确定后、请求构造前刷新本轮所需的外部状态
+- `PrepareInvocationAsync` — 在最终 profile 已确定后、请求构造前刷新本轮所需的外部状态；当前更适合做 tool visibility / app snapshot 类准备，不负责“想法注入”
+- `ActionProduced` — 模型输出 `ActionEntry` 追加到历史后触发
+- `ToolExecutionCompleted` — 单个工具调用完成后触发（成功/失败/skipped 都会触发）
 - `StateTransition` — `AgentRunState` 变更时触发
 
-设计契约已按阶段收紧：profile 只能在 `ResolveProfile` 阶段决议；`PrepareInvocationAsync` 是唯一正式的 awaited freshness gate；其余模型调用与工具执行细节重新收回为引擎内部实现。
+设计契约已按阶段收紧：profile 只能在 `ResolveProfile` 阶段决议；`PrepareInvocationAsync` 是唯一正式的 awaited freshness gate；工具可见性临时附加限制走 `PrepareInvocationEventArgs.ToolAccessOverride`（与 AppHost 默认可见性取交集，只会进一步收紧）；“给模型脑海里塞一个可续写念头”则走 `InjectActionContent(...)` 这类 history primitive，而不是请求级 overlay。
 
 ---
 
@@ -90,13 +96,14 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
    ├─ 状态 = WaitingInput → 触发 WaitingInput 事件
    └─ 宿主提交 `IncomingObservation`（显式 ObservationEntry 或 recent events 草案）
 
-2. 状态 = PendingInput → 准备 LLM 调用
+2. 状态 = PendingInput / PendingActionContinuation / PendingToolResults → 准备 LLM 调用
    ├─ 触发 ResolveProfile（宿主可决议最终 profile）
    ├─ 按最终 profile 做 soft cap 判定
    ├─ `await PrepareInvocationAsync(...)` 刷新本轮所需 snapshot / tool visibility
-   ├─ ProjectInvocationContext(options) 把 RecentHistory 投影成 IHistoryMessage 序列
+   ├─ ProjectInvocationContext(options) 把 RecentHistory 事件账本投影成 IHistoryMessage 序列
    │    · 拆分为 StablePrefix + ActiveTurnTail（以最近一条 Observation 为分界）
-   │    · ActionEntry 的有序内容以 `Blocks: IReadOnlyList<ActionBlock>` 为唯一真相
+   │    · 连续 actor-side entries 会在这里动态合并成单条 ActionMessage
+   │    · ActionEntry / InjectionEntry 的有序内容以 `Blocks: IReadOnlyList<ActionBlock>` 为唯一真相
    │    · `ActionBlock.Thinking` 仅在 ActiveTurnTail 内、`Origin == TargetInvocation`、
    │      且存在显式 Turn 起点与 `ThinkingMode == CurrentTurnOnly` 同时成立时保留
    ├─ 拼上 DefaultAppHost.RenderWindows() 生成的窗口块
@@ -106,7 +113,9 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 3. `await ICompletionClient.StreamCompletionAsync(request)`
    ├─ Completion 层内部消费 provider 流并聚合
    ├─ 产出 `CompletionResult`（Message.Blocks + Invocation + Errors）
-   └─ AgentEngine 包装为 ActionEntry → AppendAction()
+   └─ AgentEngine 将结果统一追加为一条新的 `ActionEntry`
+        · 若此前存在 `InjectionEntry`，它仍保留在账本里
+        · 真正的“续写感”来自下一轮投影时把 `ActionEntry + InjectionEntry + ActionEntry` 拼成连续 actor stream
 
 4. 若 ToolCalls 空 → 状态回 WaitingInput
    否则 → 状态 = WaitingToolResults
@@ -137,8 +146,8 @@ prototypes/Agent.Core/
 │  └─ DefaultAppHost.cs        App 注册容器 + RenderWindows 拼装
 │
 ├─ History/
-│  ├─ AgentState.cs            ⭐ 工作记忆主体
-│  ├─ HistoryEntry.cs          抽象基类 + 4 种派生（ObservationEntry 非 sealed，可被扩展；其余均为 sealed）
+│  ├─ AgentState.cs            ⭐ 工作记忆主体（事件账本 + 调用前投影）
+│  ├─ HistoryEntry.cs          抽象基类 + 5 种派生（ObservationEntry 非 sealed，可被扩展；其余均为 sealed）
 │  ├─ AgentEngine.cs / ICompletionClient.StreamCompletionAsync 聚合结果 → CompletionResult / ActionEntry
 │  ├─ RecapBuilder.cs          摘要工作面（流程未闭环）
 │  ├─ TokenEstimateHelper.cs   Token 估算（硬编码系数）

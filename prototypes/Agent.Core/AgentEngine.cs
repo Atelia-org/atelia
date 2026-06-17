@@ -301,6 +301,18 @@ public partial class AgentEngine {
     public PrepareInvocationAsyncHandler? PrepareInvocationAsync { get; set; }
 
     /// <summary>
+    /// 当一次模型输出被追加到历史，且本 Step 的稳定边界已成功持久化（若启用 repo-backed 模式）后触发。
+    /// 宿主可在这里观察 tool call、文本产出等结果，并决定是否启动更高层运行时流程。
+    /// </summary>
+    public event EventHandler<ActionProducedEventArgs>? ActionProduced;
+
+    /// <summary>
+    /// 当单个工具调用完成，且本 Step 的稳定边界已成功持久化（若启用 repo-backed 模式）后触发。
+    /// 无论工具成功、失败或 skipped，都会在结果入缓存后触发一次。
+    /// </summary>
+    public event EventHandler<ToolExecutionCompletedEventArgs>? ToolExecutionCompleted;
+
+    /// <summary>
     /// 当 Agent 状态发生转换时触发。
     /// </summary>
     public event EventHandler<StateTransitionEventArgs>? StateTransition;
@@ -349,8 +361,9 @@ public partial class AgentEngine {
 
         var stateBefore = DetermineState();
         LogStateIfChanged(stateBefore);
+        var deferredEvents = new DeferredStepEvents();
 
-        var outcome = await ExecuteStateAsync(stateBefore, profile, completionObserver, cancellationToken).ConfigureAwait(false);
+        var outcome = await ExecuteStateAsync(stateBefore, profile, completionObserver, deferredEvents, cancellationToken).ConfigureAwait(false);
 
         var stateAfter = DetermineState();
         LogStateIfChanged(stateAfter);
@@ -360,6 +373,8 @@ public partial class AgentEngine {
         if (outcome.ProgressMade || stateAfter != stateBefore) {
             PersistStableBoundaryIfAttached();
         }
+
+        deferredEvents.Dispatch(this);
 
         if (stateAfter != stateBefore) {
             OnStateTransition(stateBefore, stateAfter);
@@ -386,13 +401,31 @@ public partial class AgentEngine {
             : Task.CompletedTask;
     }
 
+    protected virtual void OnActionProduced(ActionProducedEventArgs e) {
+        ActionProduced?.Invoke(this, e);
+    }
+
+    protected virtual void OnToolExecutionCompleted(ToolExecutionCompletedEventArgs e) {
+        ToolExecutionCompleted?.Invoke(this, e);
+    }
+
     protected virtual void OnStateTransition(AgentRunState from, AgentRunState to) {
         StateTransition?.Invoke(this, new StateTransitionEventArgs(from, to));
+    }
+
+    /// <summary>
+    /// 向历史尾部注入一段 assistant/action prefix，使下一次 completion 继续补完它。
+    /// </summary>
+    public ActionInjectionResult InjectActionContent(ActionInjectionRequest request) {
+        return _state.InjectActionContent(request);
     }
 
     private AgentRunState DetermineState() {
         if (_compactionRequest.HasValue) { return AgentRunState.Compacting; }
         if (_state.RecentHistory.Count == 0) { return AgentRunState.WaitingInput; }
+        if (_state.HasPendingActionContinuation) {
+            return AgentRunState.PendingActionContinuation;
+        }
 
         var last = _state.RecentHistory[^1];
         return last switch {
@@ -414,20 +447,22 @@ public partial class AgentEngine {
         AgentRunState state,
         LlmProfile profile,
         CompletionStreamObserver? completionObserver,
+        DeferredStepEvents deferredEvents,
         CancellationToken cancellationToken
     ) {
         switch (state) {
             case AgentRunState.WaitingInput:
                 return ProcessWaitingInput();
             case AgentRunState.PendingInput:
+            case AgentRunState.PendingActionContinuation:
             case AgentRunState.PendingToolResults:
-                return await ProcessPendingModelCallAsync(state, profile, completionObserver, cancellationToken).ConfigureAwait(false);
+                return await ProcessPendingModelCallAsync(state, profile, completionObserver, deferredEvents, cancellationToken).ConfigureAwait(false);
             case AgentRunState.WaitingToolResults:
                 _turnRuntime.BeginToolExecution(ResolveProfileForToolExecution(profile));
                 try {
                     // TODO: If we later add engine-owned tool priorities, ctx_compress may want a dedicated "execute last in batch" rule.
                     // For now we preserve the model-emitted tool order for simplicity and predictability.
-                    return await ProcessWaitingToolResultsAsync(cancellationToken).ConfigureAwait(false);
+                    return await ProcessWaitingToolResultsAsync(cancellationToken, deferredEvents).ConfigureAwait(false);
                 }
                 finally {
                     _turnRuntime.EndToolExecution();
@@ -488,6 +523,7 @@ public partial class AgentEngine {
         AgentRunState state,
         LlmProfile profile,
         CompletionStreamObserver? completionObserver,
+        DeferredStepEvents deferredEvents,
         CancellationToken cancellationToken
     ) {
         var resolveArgs = new ResolveProfileEventArgs(state, profile);
@@ -553,7 +589,10 @@ public partial class AgentEngine {
         DebugUtil.Trace(ProviderDebugCategory, $"[Engine] Rendering context count={liveContext.Count}");
 
         var session = EnsureSession();
-        session.Access = appProjection.ToolAccessSnapshot;
+        session.Access = ResolveEffectiveToolAccess(
+            appProjection.ToolAccessSnapshot,
+            prepareArgs.ToolAccessOverride
+        );
         var toolDefinitions = session.VisibleDefinitions;
 
         var request = new CompletionRequest(resolvedProfile.ModelId, SystemPrompt, liveContext, toolDefinitions);
@@ -572,6 +611,7 @@ public partial class AgentEngine {
         var appended = _state.AppendAction(aggregatedOutput);
         _turnRuntime.RememberResolvedProfile(resolvedProfile);
         _turnRuntime.RememberCompactionSplitIndex(compactionPreview?.SplitIndex);
+        deferredEvents.Add(engine => engine.OnActionProduced(new ActionProducedEventArgs(appended, resolvedProfile)));
 
         var toolCallCount = appended.Message.ToolCalls?.Count ?? 0;
         var textLen = appended.Message.Blocks.OfType<ActionBlock.Text>().Sum(b => b.Content.Length);
@@ -580,7 +620,10 @@ public partial class AgentEngine {
         return StepOutcome.FromOutput(appended);
     }
 
-    private async Task<StepOutcome> ProcessWaitingToolResultsAsync(CancellationToken cancellationToken) {
+    private async Task<StepOutcome> ProcessWaitingToolResultsAsync(
+        CancellationToken cancellationToken,
+        DeferredStepEvents deferredEvents
+    ) {
         if (_state.RecentHistory.Count == 0 || _state.RecentHistory[^1] is not ActionEntry outputEntry) {
             DebugUtil.Warning(StateMachineDebugCategory, "[Engine] WaitingToolResults but no model output available");
             return StepOutcome.NoProgress;
@@ -592,6 +635,17 @@ public partial class AgentEngine {
         var session = EnsureSession();
         var result = await session.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         _pendingToolResults[nextCall.ToolCallId] = result;
+        var activeProfile = _turnRuntime.ActiveToolExecutionProfile
+            ?? throw new InvalidOperationException("Tool execution completed without an active tool-execution profile.");
+        deferredEvents.Add(
+            engine => engine.OnToolExecutionCompleted(
+                new ToolExecutionCompletedEventArgs(
+                    nextCall,
+                    result,
+                    activeProfile
+                )
+            )
+        );
 
         var toolName = result.ToolName ?? nextCall.ToolName;
         DebugUtil.Info(StateMachineDebugCategory, $"[Engine] Tool executed toolName={toolName} callId={result.ToolCallId} status={result.ExecuteResult.Status}");
@@ -655,6 +709,17 @@ public partial class AgentEngine {
 
     private void ResetStateLogging() {
         _lastLoggedState = null;
+    }
+
+    private static ToolAccessSnapshot ResolveEffectiveToolAccess(
+        ToolAccessSnapshot defaultAccess,
+        ToolAccessSnapshot? additionalRestriction
+    ) {
+        ArgumentNullException.ThrowIfNull(defaultAccess);
+
+        return additionalRestriction is null
+            ? defaultAccess
+            : ToolAccessSnapshot.Intersect(defaultAccess, additionalRestriction);
     }
 
     /// <summary>
@@ -778,6 +843,23 @@ public partial class AgentEngine {
 
     private static AgentStepResult CreateStepResult(AgentRunState before, AgentRunState after, StepOutcome outcome)
         => new(outcome.ProgressMade, before, after, outcome.Input, outcome.Output, outcome.ToolResults);
+
+    private sealed class DeferredStepEvents {
+        private readonly List<Action<AgentEngine>> _dispatchers = new();
+
+        public void Add(Action<AgentEngine> dispatch) {
+            ArgumentNullException.ThrowIfNull(dispatch);
+            _dispatchers.Add(dispatch);
+        }
+
+        public void Dispatch(AgentEngine engine) {
+            ArgumentNullException.ThrowIfNull(engine);
+
+            foreach (var dispatch in _dispatchers) {
+                dispatch(engine);
+            }
+        }
+    }
 
     private readonly record struct StepOutcome(
         bool ProgressMade,

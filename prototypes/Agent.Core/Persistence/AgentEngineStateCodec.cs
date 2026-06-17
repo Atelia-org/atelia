@@ -20,7 +20,7 @@ internal static class AgentEngineStateCodec {
     public const string KeyToolSessionExecutionSequence = "toolSessionExecutionSequence";
 
     public const string KindValue = "agent-engine-state";
-    public const long SchemaVersion = 1L;
+    public const long SchemaVersion = 2L;
 
     private const string KeyTimestampUtcTicks = "timestampUtcTicks";
     private const string KeySerial = "serial";
@@ -29,6 +29,10 @@ internal static class AgentEngineStateCodec {
     private const string KeyContent = "content";
     private const string KeyInsteadSerial = "insteadSerial";
     private const string KeyActionBlocksJson = "actionBlocksJson";
+    private const string KeyInjectionBlockKind = "injectionBlockKind";
+    private const string KeyInjectionSourceKind = "injectionSourceKind";
+    private const string KeyInjectionSourceId = "injectionSourceId";
+    private const string KeyInjectionSourceNotes = "injectionSourceNotes";
     private const string KeyResultsJson = "resultsJson";
     private const string KeyInvocationProviderId = "invocationProviderId";
     private const string KeyInvocationApiSpecId = "invocationApiSpecId";
@@ -36,6 +40,7 @@ internal static class AgentEngineStateCodec {
 
     private const string KindObservation = "observation";
     private const string KindAction = "action";
+    private const string KindInjection = "injection";
     private const string KindToolResults = "tool-results";
     private const string KindRecap = "recap";
     private const string KindPendingToolResult = "pending-tool-result";
@@ -79,6 +84,17 @@ internal static class AgentEngineStateCodec {
                 record.Upsert(KeyInvocationApiSpecId, actionEntry.Invocation.ApiSpecId);
                 record.Upsert(KeyInvocationModel, actionEntry.Invocation.Model);
                 record.Upsert(KeyActionBlocksJson, ActionMessageSerialization.SerializeBlocks(actionEntry.Message.Blocks));
+                break;
+            case InjectionEntry injectionEntry:
+                record.Upsert(KeyContent, injectionEntry.Content);
+                record.Upsert(KeyInjectionBlockKind, injectionEntry.BlockKind.ToString());
+                record.Upsert(KeyInjectionSourceKind, injectionEntry.Source.Kind.ToString());
+                if (!string.IsNullOrWhiteSpace(injectionEntry.Source.SourceId)) {
+                    record.Upsert(KeyInjectionSourceId, injectionEntry.Source.SourceId);
+                }
+                if (!string.IsNullOrWhiteSpace(injectionEntry.Source.Notes)) {
+                    record.Upsert(KeyInjectionSourceNotes, injectionEntry.Source.Notes);
+                }
                 break;
             case ToolResultsEntry toolResultsEntry:
                 if (toolResultsEntry.Notifications is not null) {
@@ -125,6 +141,7 @@ internal static class AgentEngineStateCodec {
 
         HistoryEntry entry = kind switch {
             KindAction => ReadActionEntry(record, timestamp),
+            KindInjection => ReadInjectionEntry(record, timestamp),
             KindObservation => ReadObservationEntry(record, timestamp),
             KindToolResults => ReadToolResultsEntry(record, timestamp),
             KindRecap => ReadRecapEntry(record, timestamp),
@@ -283,6 +300,37 @@ internal static class AgentEngineStateCodec {
         return entry;
     }
 
+    private static InjectionEntry ReadInjectionEntry(DurableDict<string> record, DateTimeOffset timestamp) {
+        string content = record.Get<string>(KeyContent, out var injectionContent) == GetIssue.None
+            ? injectionContent!
+            : throw new InvalidDataException("Injection record is missing content.");
+
+        var blockKindText = record.Get<string>(KeyInjectionBlockKind, out var injectionBlockKind) == GetIssue.None
+            ? injectionBlockKind
+            : throw new InvalidDataException("Injection record is missing injectionBlockKind.");
+        if (!Enum.TryParse<ActionBlockKind>(blockKindText, ignoreCase: true, out var blockKind)) {
+            throw new InvalidDataException($"Unsupported injection block kind '{blockKindText}'.");
+        }
+
+        var sourceKindText = record.Get<string>(KeyInjectionSourceKind, out var sourceKindValue) == GetIssue.None
+            ? sourceKindValue
+            : throw new InvalidDataException("Injection record is missing injectionSourceKind.");
+        if (!Enum.TryParse<InjectionSourceKind>(sourceKindText, ignoreCase: true, out var sourceKind)) {
+            throw new InvalidDataException($"Unsupported injection source kind '{sourceKindText}'.");
+        }
+
+        string? sourceId = record.TryGet<string>(KeyInjectionSourceId, out var sourceIdValue) ? sourceIdValue : null;
+        string? sourceNotes = record.TryGet<string>(KeyInjectionSourceNotes, out var sourceNotesValue) ? sourceNotesValue : null;
+
+        return new InjectionEntry(
+            content: content,
+            blockKind: blockKind,
+            source: new InjectionSource(sourceKind, sourceId, sourceNotes)
+        ) {
+            Timestamp = timestamp
+        };
+    }
+
     private static ToolResultsEntry ReadToolResultsEntry(DurableDict<string> record, DateTimeOffset timestamp) {
         var results = Array.Empty<ToolCallExecutionResult>();
         if (record.TryGet<string>(KeyResultsJson, out var resultsJson) && !string.IsNullOrWhiteSpace(resultsJson)) {
@@ -371,6 +419,7 @@ internal static class AgentEngineStateCodec {
         return kind switch {
             HistoryEntryKind.Observation => KindObservation,
             HistoryEntryKind.Action => KindAction,
+            HistoryEntryKind.Injection => KindInjection,
             HistoryEntryKind.ToolResults => KindToolResults,
             HistoryEntryKind.Recap => KindRecap,
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unsupported history entry kind.")
