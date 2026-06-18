@@ -277,6 +277,38 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void StateRoot_LiveTurnRuntimeFieldClears_KeepDurableDictIdentity() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-turn-runtime-live-clear-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+            var turnRuntime = GetTurnRuntimeMap(workspaceRoot);
+
+            stateRoot.SetResolvedProfile(new LlmProfileCheckpoint("provider-a", "spec-a", "model-a", "profile-a", 4096));
+            stateRoot.SetLockedCompactionSplitIndex(3);
+            Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
+
+            stateRoot.ClearResolvedProfile();
+            Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
+
+            stateRoot.ClearLockedCompactionSplitIndex();
+            Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
+
+            var runtimeState = stateRoot.LoadRuntimeState();
+            Assert.Null(runtimeState.ResolvedProfile);
+            Assert.Null(runtimeState.LockedCompactionSplitIndex);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_StateCoreMutationsUpdateWorkspaceBeforeCommit() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-working-state-{Guid.NewGuid():N}");
 

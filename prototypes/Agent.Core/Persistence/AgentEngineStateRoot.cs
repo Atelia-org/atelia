@@ -162,6 +162,11 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.RuntimeState.ReplaceTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
     }
 
+    internal void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+    }
+
     internal void SetResolvedProfile(LlmProfileCheckpoint resolvedProfile) {
         ArgumentNullException.ThrowIfNull(resolvedProfile);
         _workspaceRoot.Meta.Stamp();

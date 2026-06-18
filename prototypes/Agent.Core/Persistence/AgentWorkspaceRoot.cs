@@ -305,6 +305,23 @@ internal sealed class AgentWorkspaceRoot {
             _workspaceRoot.SetTurnRuntime(turnRuntime);
         }
 
+        public void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
+            var turnRuntime = _workspaceRoot.GetRequiredTurnRuntime();
+            if (resolvedProfile is null) {
+                AgentEngineStateCodec.ClearResolvedProfile(turnRuntime);
+            }
+            else {
+                AgentEngineStateCodec.WriteResolvedProfile(turnRuntime, resolvedProfile);
+            }
+
+            if (lockedCompactionSplitIndex.HasValue) {
+                AgentEngineStateCodec.WriteLockedCompactionSplitIndex(turnRuntime, lockedCompactionSplitIndex.Value);
+            }
+            else {
+                AgentEngineStateCodec.ClearLockedCompactionSplitIndex(turnRuntime);
+            }
+        }
+
         public void SetResolvedProfile(LlmProfileCheckpoint resolvedProfile) {
             ArgumentNullException.ThrowIfNull(resolvedProfile);
             AgentEngineStateCodec.WriteResolvedProfile(_workspaceRoot.GetRequiredTurnRuntime(), resolvedProfile);

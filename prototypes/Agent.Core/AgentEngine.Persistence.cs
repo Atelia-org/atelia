@@ -385,21 +385,12 @@ public partial class AgentEngine {
     private void PersistTurnRuntimeIfAttached() {
         if (_repositoryPersistence is null) { return; }
 
-        if (_turnRuntime.ResolvedProfile is null) {
-            _repositoryPersistence.ClearResolvedProfile();
-        }
-        else {
-            _repositoryPersistence.SetResolvedProfile(
-                LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile)
-            );
-        }
-
-        if (_turnRuntime.LockedCompactionSplitIndex.HasValue) {
-            _repositoryPersistence.SetLockedCompactionSplitIndex(_turnRuntime.LockedCompactionSplitIndex.Value);
-        }
-        else {
-            _repositoryPersistence.ClearLockedCompactionSplitIndex();
-        }
+        _repositoryPersistence.UpdateTurnRuntime(
+            _turnRuntime.ResolvedProfile is null
+                ? null
+                : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile),
+            _turnRuntime.LockedCompactionSplitIndex
+        );
     }
 
     private void PersistPendingCompactionIfAttached() {
@@ -438,6 +429,9 @@ public partial class AgentEngine {
 
         public void UpsertPendingToolResult(ToolCallExecutionResult pendingResult)
             => _stateRoot.UpsertPendingToolResult(pendingResult);
+
+        public void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex)
+            => _stateRoot.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
 
         public void SetResolvedProfile(LlmProfileCheckpoint resolvedProfile)
             => _stateRoot.SetResolvedProfile(resolvedProfile);
