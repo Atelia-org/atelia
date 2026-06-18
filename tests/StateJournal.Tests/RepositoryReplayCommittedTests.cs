@@ -228,39 +228,76 @@ public class RepositoryReplayCommittedTests : IDisposable {
     }
 
     [Fact]
-    public void ReplayCommitted_TypedOrderedDict_ForceFrozen_FailsClearly() {
+    public void ReplayCommitted_TypedOrderedDict_ForceFrozen_PersistsFrozenClone() {
         var dir = GetTempDir();
-        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
 
-        var root = main.CreateDict<int, DurableOrderedDict<int, int>>();
-        var source = main.CreateOrderedDict<int, int>();
-        source.Upsert(1, 10);
-        root.Upsert(1, source);
-        AssertSuccess(repo.Commit(root));
+        using (var repo = CreateRepositoryWithBranch(dir, "main", out var main)) {
+            var root = main.CreateDict<int, DurableOrderedDict<int, int>>();
+            var source = main.CreateOrderedDict<int, int>();
+            source.Upsert(1, 10);
+            root.Upsert(1, source);
+            AssertSuccess(repo.Commit(root));
 
-        var result = repo.ReplayCommitted(source, LoadMaterializationMode.ForceFrozen);
-        Assert.True(result.IsFailure);
-        Assert.IsType<SjStateError>(result.Error);
-        Assert.Contains("Frozen OrderedDict is not supported", result.Error!.Message);
-        Assert.Contains("Choose a different LoadMaterializationMode", result.Error!.RecoveryHint);
+            var clone = AssertSuccess(repo.ReplayCommitted(source, LoadMaterializationMode.ForceFrozen));
+            Assert.True(clone.IsFrozen);
+            Assert.False(clone.HasChanges);
+            Assert.Equal(DurableState.Clean, clone.State);
+            Assert.True(clone.TryGet(1, out int value));
+            Assert.Equal(10, value);
+            Assert.Throws<ObjectFrozenException>(() => clone.Upsert(2, 20));
+
+            root.Upsert(2, clone);
+            AssertSuccess(repo.Commit(root));
+        }
+
+        using var reopened = AssertSuccess(Repository.Open(dir));
+        var mainAgain = AssertSuccess(reopened.CheckoutBranch("main"));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableOrderedDict<int, int>>>(mainAgain.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableOrderedDict<int, int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableOrderedDict<int, int>? loadedClone));
+        Assert.False(loadedSource!.IsFrozen);
+        Assert.True(loadedClone!.IsFrozen);
+        Assert.True(loadedClone.TryGet(1, out int loadedValue));
+        Assert.Equal(10, loadedValue);
     }
 
     [Fact]
-    public void ReplayCommitted_MixedOrderedDict_ForceFrozen_FailsClearly() {
+    public void ReplayCommitted_MixedOrderedDict_ForceFrozen_PersistsFrozenClone() {
         var dir = GetTempDir();
-        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
 
-        var root = main.CreateDict<int, DurableOrderedDict<int>>();
-        var source = main.CreateOrderedDict<int>();
-        source.Upsert(1, "alpha");
-        root.Upsert(1, source);
-        AssertSuccess(repo.Commit(root));
+        using (var repo = CreateRepositoryWithBranch(dir, "main", out var main)) {
+            var root = main.CreateDict<int, DurableOrderedDict<int>>();
+            var source = main.CreateOrderedDict<int>();
+            source.Upsert(1, "alpha");
+            source.OfSymbol.Upsert(2, "kept");
+            root.Upsert(1, source);
+            AssertSuccess(repo.Commit(root));
 
-        var result = repo.ReplayCommitted(source, LoadMaterializationMode.ForceFrozen);
-        Assert.True(result.IsFailure);
-        Assert.IsType<SjStateError>(result.Error);
-        Assert.Contains("Frozen OrderedDict is not supported", result.Error!.Message);
-        Assert.Contains("Choose a different LoadMaterializationMode", result.Error!.RecoveryHint);
+            var clone = AssertSuccess(repo.ReplayCommitted(source, LoadMaterializationMode.ForceFrozen));
+            Assert.True(clone.IsFrozen);
+            Assert.False(clone.HasChanges);
+            Assert.Equal(DurableState.Clean, clone.State);
+            Assert.True(clone.TryGet<string>(1, out var value));
+            Assert.Equal("alpha", value);
+            Assert.Equal(GetIssue.None, clone.Get(2, out Symbol label));
+            Assert.Equal("kept", label.Value);
+            Assert.Throws<ObjectFrozenException>(() => clone.Upsert(3, "beta"));
+
+            root.Upsert(2, clone);
+            AssertSuccess(repo.Commit(root));
+        }
+
+        using var reopened = AssertSuccess(Repository.Open(dir));
+        var mainAgain = AssertSuccess(reopened.CheckoutBranch("main"));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableOrderedDict<int>>>(mainAgain.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableOrderedDict<int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableOrderedDict<int>? loadedClone));
+        Assert.False(loadedSource!.IsFrozen);
+        Assert.True(loadedClone!.IsFrozen);
+        Assert.True(loadedClone.TryGet<string>(1, out var loadedValue));
+        Assert.Equal("alpha", loadedValue);
+        Assert.Equal(GetIssue.None, loadedClone.Get(2, out Symbol loadedLabel));
+        Assert.Equal("kept", loadedLabel.Value);
     }
 
     private static T AssertSuccess<T>(AteliaResult<T> result) where T : notnull {
