@@ -40,6 +40,15 @@ public sealed class LlmProfileRegistry {
             );
         }
 
+        if (_profiles.TryGetValue(descriptor, out existing)
+            && existing.SoftContextTokenCap == profile.SoftContextTokenCap
+            && !Equals(existing.EffectiveCapabilities, profile.EffectiveCapabilities)) {
+            throw new InvalidOperationException(
+                $"LlmProfileRegistry already contains descriptor {DescribeDescriptor(descriptor)} with a different CapabilityProfile. " +
+                "Registering multiple capability variants for the same descriptor+soft-cap is not allowed."
+            );
+        }
+
         _profiles[descriptor] = profile;
     }
 

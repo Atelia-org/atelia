@@ -91,6 +91,13 @@ public partial class AgentEngine {
     /// </summary>
     public string SystemPrompt => _state.SystemPrompt;
 
+    /// <summary>
+    /// 获取当前 turn 是否已启用 full-feature 认知层。
+    /// <c>null</c> 表示当前 turn 尚未决议出实际 profile。
+    /// 当前运行时只接受 full-feature profile，因此一旦本 turn 完成 profile 决议，此值应为 <c>true</c>。
+    /// </summary>
+    public bool? CurrentTurnFullFeatureEnabled => _turnRuntime.CurrentTurnFullFeatureEnabled;
+
     private void RegisterDefaultEnginePanels() {
         RegisterApp(new EnginePanelApp(this));
     }
@@ -358,6 +365,7 @@ public partial class AgentEngine {
         CancellationToken cancellationToken = default
     ) {
         if (profile is null) { throw new ArgumentNullException(nameof(profile)); }
+        EnsureProfileSupportsAgentCoreFullFeatures(profile, source: "StepAsync input profile");
 
         var stateBefore = DetermineState();
         LogStateIfChanged(stateBefore);
@@ -417,6 +425,7 @@ public partial class AgentEngine {
     /// 向历史尾部注入一段 assistant/action prefix，使下一次 completion 继续补完它。
     /// </summary>
     public ActionInjectionResult InjectActionContent(ActionInjectionRequest request) {
+        EnsureActionInjectionAllowedForCurrentTurn();
         return _state.InjectActionContent(request);
     }
 
@@ -533,9 +542,13 @@ public partial class AgentEngine {
         if (resolveArgs.Profile is null) { throw new InvalidOperationException("ResolveProfile handlers must not set Profile to null."); }
 
         var resolvedProfile = resolveArgs.Profile;
+        EnsureProfileSupportsAgentCoreFullFeatures(resolvedProfile, source: "ResolveProfile result");
 
         // Turn 锁定校验：ResolveProfile 阶段给出本次实际要调用的 profile 后，仅对最终结果做一次校验。
         EnsureProfileMatchesCurrentTurnLock(resolvedProfile);
+        EnsureResolvedProfileMatchesCurrentTurnCapabilities(resolvedProfile);
+        _turnRuntime.RememberCurrentTurnFullFeatureEnabled(resolvedProfile.SupportsAgentCoreFullFeatures);
+        EnsurePendingActionContinuationIsSupported(state, resolvedProfile);
 
         var estimatedContextTokens = EstimateCurrentContextTokens();
 
@@ -774,6 +787,51 @@ public partial class AgentEngine {
         );
     }
 
+    private void EnsureResolvedProfileMatchesCurrentTurnCapabilities(LlmProfile profile) {
+        if (_turnRuntime.ResolvedProfile is null) { return; }
+
+        if (Equals(_turnRuntime.ResolvedProfile.EffectiveCapabilities, profile.EffectiveCapabilities)) { return; }
+
+        throw new InvalidOperationException(
+            "LlmProfile capability switch is not allowed within an active Turn. " +
+            $"Current Turn already resolved to fullFeature={_turnRuntime.ResolvedProfile.SupportsAgentCoreFullFeatures}, " +
+            $"but received fullFeature={profile.SupportsAgentCoreFullFeatures}. " +
+            $"{DescribeCurrentTurn(AnalyzeCurrentTurn())}."
+        );
+    }
+
+    private static void EnsureProfileSupportsAgentCoreFullFeatures(LlmProfile profile, string source) {
+        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+
+        if (profile.SupportsAgentCoreFullFeatures) { return; }
+
+        throw new InvalidOperationException(
+            "Agent.Core currently requires SupportsAgentCoreFullFeatures == true. " +
+            $"{source} resolved to profile '{profile.Name}' ({DescribeDescriptor(profile.ToCompletionDescriptor())}), " +
+            "which is not full-feature compatible."
+        );
+    }
+
+    private static void EnsurePendingActionContinuationIsSupported(AgentRunState state, LlmProfile profile) {
+        if (state != AgentRunState.PendingActionContinuation) { return; }
+        if (profile.SupportsAgentCoreFullFeatures) { return; }
+
+        throw new InvalidOperationException(
+            "Current turn profile does not support Agent.Core full-feature cognition, " +
+            "so a pending action continuation created by InjectActionContent cannot be completed."
+        );
+    }
+
+    private void EnsureActionInjectionAllowedForCurrentTurn() {
+        if (_turnRuntime.CurrentTurnFullFeatureEnabled is not false) { return; }
+
+        throw new InvalidOperationException(
+            "Current turn profile does not support Agent.Core full-feature cognition, " +
+            "so InjectActionContent is not available in this turn."
+        );
+    }
+
     /// <summary>
     /// 在工具执行阶段解析本 Turn 实际应复用的 resolved profile。
     /// </summary>
@@ -811,14 +869,21 @@ public partial class AgentEngine {
 
         public int? LockedCompactionSplitIndex { get; private set; }
 
+        public bool? CurrentTurnFullFeatureEnabled { get; private set; }
+
         public void BeginNewTurn() {
             ResolvedProfile = null;
             ActiveToolExecutionProfile = null;
             LockedCompactionSplitIndex = null;
+            CurrentTurnFullFeatureEnabled = null;
         }
 
         public void RememberResolvedProfile(LlmProfile profile) {
             ResolvedProfile = profile ?? throw new ArgumentNullException(nameof(profile));
+        }
+
+        public void RememberCurrentTurnFullFeatureEnabled(bool enabled) {
+            CurrentTurnFullFeatureEnabled = enabled;
         }
 
         public void RememberCompactionSplitIndex(int? splitIndex) {

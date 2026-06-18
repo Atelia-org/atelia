@@ -24,6 +24,17 @@
 这并不构成问题。  
 就像你说的，算盘、草稿纸、心算、门电路都能做真正的加法；这里关键不在实现介质，而在**能否稳定地产生那种行为模式**。
 
+但这里也要先写清一个前提：
+
+- **第一系统式 injection 不应再被视为所有 surface 都应兼容的普适能力**
+- **它默认应建立在 `Agent.Core` 当前 full-feature-only runtime 之上**
+- **也就是说，当前 `Agent.Core` 只接受 `SupportsAgentCoreFullFeatures == true` 的 profile**
+
+换句话说：
+
+- non-full-feature surface 不属于当前 `Agent.Core` 的实施范围
+- “运行时心智调制”这条更强语义主路径，当前只在 full-feature surface 上推进
+
 ## 1. 为什么它像“第一系统”
 
 如果把一个长寿命 Agent 粗略分成两层：

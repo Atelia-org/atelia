@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `prototypes/Agent.Core` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-06-17
+> **最后更新**：2026-06-18
 
 ---
 
@@ -86,6 +86,20 @@ Agent.Core 是 Atelia 智能体的**推理循环编排器**：
 - `StateTransition` — `AgentRunState` 变更时触发
 
 设计契约已按阶段收紧：profile 只能在 `ResolveProfile` 阶段决议；`PrepareInvocationAsync` 是唯一正式的 awaited freshness gate；工具可见性临时附加限制走 `PrepareInvocationEventArgs.ToolAccessOverride`（与 AppHost 默认可见性取交集，只会进一步收紧）；“给模型脑海里塞一个可续写念头”则走 `InjectActionContent(...)` 这类 history primitive，而不是请求级 overlay。
+
+### 8. 当前运行时边界：只接受 full-feature profile
+
+当前主线已经进一步收紧：
+
+- `Agent.Core` 运行时只接受 `SupportsAgentCoreFullFeatures == true` 的 profile
+- `InjectActionContent(...)`
+- Micro-Wizard
+- 第一系统式 thought injection
+
+都默认建立在这条前提上。
+
+因此当前不再把 `Agent.Core` 描述成“更宽基础执行内核 + 更窄高级认知层”的双路径 runtime。  
+对 non-full-feature surface 的更宽兼容性，如果未来真的需要，再另行设计与实现。
 
 ---
 
@@ -243,7 +257,11 @@ Completion + Completion.Abstractions
 - **违反后果**：抛 `InvalidOperationException`，错误消息包含锁定信息与传入信息，便于排查。
 
 **为何如此设计**：
-- 主流闭源模型（GPT-5、Gemini 2.5/3.0）的 thinking/reasoning 内容是**加密**的，跨模型不可解码。Turn 锁定保证后续在 Turn 范围内注入加密 thinking 时，下一次调用仍在同一 model，可以原样回灌。
+- turn lock 最核心的作用，是保护 **active-turn replay safety**：
+  - 同一次工具往返中的 replay 连续性
+  - 当前 turn 内 thinking origin 与投影目标的一致性
+- 对 opaque / 加密 reasoning surface 来说，这尤其重要，因为跨模型不可解码；turn 锁定保证它们在 turn 范围内仍可原样回灌。
+- 对 transparent / full-feature surface 来说，这条约束仍然有价值，因为 replay 与投影规则本来就是按 `CompletionDescriptor` 对齐的。
 - 切 profile 的语义被收敛到"开新 Turn"——也就是必须先有新的 `ObservationEntry`（用户输入或工具结果之外的环境观测）。
 - **不**提供 escape hatch：远程故障时宁可让调用方显式开新 Turn 重启，也不引入"尽力而为解码 + 模型兼容性矩阵"的隐式复杂性（详见 `gitignore/` 或后续 PR 讨论）。
 

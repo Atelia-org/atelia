@@ -1,468 +1,279 @@
 # Micro-Wizard Runtime Draft
 
-状态：draft v0
-定位：把 Micro-Wizard 从单点实验机制提升为 Agent 运行时基础设施，用于承载受控的短时临时过程。
+状态：draft v1  
+定位：把 Micro-Wizard 从单点实验机制提升为 `Agent.Core` 上的受控短流程运行时。
 
 配套文档：
 - 运行时定位与分层：本文
 - DSL / IR 草图：`docs/Agent/micro-wizard-dsl-sketch.md`
-- Agent.Core 施工前审阅：`docs/Agent/agent-core-micro-wizard-readiness-review.md`
-- Role-Play / 第一系统延展草稿：`docs/Agent/role-play-agent-first-system-draft.md`
+- capability 收口：`docs/Agent/agent-core-capability-system-draft.md`
+- 施工前审阅：`docs/Agent/agent-core-micro-wizard-readiness-review.md`
 
-## 1. 核心判断
+## 0. 一句话结论
+
+Micro-Wizard 的目标设计是合理的，而且值得推进实施。  
+但它的**目标设计**与**阶段化落地**应分开理解：
+
+- 目标设计上，Micro-Wizard 是一种事件驱动、可编排、可清理的短时认知运行时
+- 阶段落地上，v0 不应直接追求完整 durable workflow engine
+
+当前最重要的前提是：
+
+- **`Agent.Core` 当前只接受 `SupportsAgentCoreFullFeatures == true` 的 profile**
+- **因此 Micro-Wizard 可以直接建立在 full-feature 语义上，而不必再背 non-full-feature 兼容分叉**
+
+---
+
+## 1. 为什么需要 Micro-Wizard
 
 长寿命 Agent 不应该只有两种运行模式：
 
-- 主会话正常思考
-- 工具直接单步执行
+- 主会话正常推进
+- 工具单步执行
 
-现实中还存在第三类过程：
+现实里还存在第三类过程：
 
 - 多步
 - 有阶段
-- 需要临时上下文
-- 需要中间清理
-- 结果要固化，但过程最好不要长期堆在主上下文里
+- 需要临时目标
+- 需要中间修复
+- 结果要固化
+- 过程最好不要长期污染主上下文
 
-Micro-Wizard 就是为这第三类过程准备的运行时机制。
+Micro-Wizard 就是为这第三类过程准备的运行时基础设施。
 
-它不是“另一个花哨工具层”，而更像：
+典型例子包括：
 
-- Agent 的短时过程调度器
-- 主会话外的受控临时执行腔室
-- 一组可声明、可触发、可清理的认知微流程
-
-## 2. 直觉类比
-
-可以把 LLM 理解成 AI 系统里的 CPU。
-
-CPU 很强，但如果没有：
-
-- 外设
-- 中断
-- 驱动
-- 任务调度
-- 操作系统
-
-就只能做非常原始的串行计算。
-
-今天很多 Agent 系统的上下文使用方式，仍然像没有外围软件栈的早期计算环境：
-
-- 用户输入直接喂给模型
-- 工具调用过程原样堆积
-- 所有中间步骤都长期残留
-- 所有修复与整理都靠主会话显式承担
-
-Micro-Wizard 解决的正是这类“外围软件栈缺失”的问题。
-
-## 3. 这类机制为什么重要
-
-有很多操作都不适合直接在主会话里裸跑：
-
+- MemoTree split 后的 gist/summary repair
 - context compression
-- memory summary maintenance
 - risky edit preflight
-- node split 后的 gist/summary 重建
 - dirty derived memory repair
-- dependency invalidation 后的受影响节点扫描
 
-这些动作有共同点：
+---
 
-- 它们有清晰过程
-- 过程本身常常不值得长期留在主上下文里
-- 但结果必须可靠地固化
+## 2. 当前边界
 
-如果没有 Micro-Wizard，就容易出现两种极端：
+### 2.1 `Agent.Core` 的运行时边界
 
-- 要么把所有步骤都堆进主会话，噪音越来越大
-- 要么把它们塞成一个超级工具，单次调用过重、不可审计、难失败恢复
+这一轮最关键的收口是：
 
-Micro-Wizard 走的是中间路线：
+- `Agent.Core` 不再尝试同时服务 full-feature surface 和 non-full-feature surface
+- 它当前就是一个 **full-feature-only runtime**
 
-- 原语保持小
-- 过程由运行时托管
-- 结果在退出时固化
-- 中间痕迹按规则清理
+这意味着 Micro-Wizard 的文档和实现都可以直接假定：
 
-## 4. 基本定义
+- thinking 对 runtime 是透明的
+- actor-side continuation 可以被 runtime 注入与续写
+- assistant prefix continuation 可以被正式依赖
 
-### 4.1 Main Session
+### 2.2 这不等于“一步到位实现所有野心”
 
-主会话。
+运行时边界收紧，不等于实现范围要同时膨胀。
 
-负责用户任务的连续推进，是 Agent 的默认认知线程。
+当前不应在 v0 里一起追求：
 
-### 4.2 Wizard
+- non-full-feature 兼容层
+- 多实例并发调度
+- 独立 wizard timeline
+- 完整 durable recipe/instance schema
+- 丰富的模型语义分类事件
 
-一个受控的临时执行过程。
+---
 
-它有：
+## 3. 目标设计
 
-- 触发条件
-- 临时上下文
-- 允许工具集
-- 阶段目标
-- 完成条件
-- 退出后的固化与清理规则
+从目标设计上，Micro-Wizard 应被理解为：
 
-### 4.3 Wizard Runtime
+- 一个宿主可编排的局部流程 runtime
+- 一套围绕 trigger / phase / commit / cleanup 组织起来的执行协议
+- 一层建立在 `Agent.Core` 原语之上的 runtime middleware
 
-负责托管 wizard 生命周期的运行时层。
+它像：
 
-### 4.4 Wizard Recipe
+- 迷你工作流
+- 会话态状态机
+- 受控短流程调度器
 
-一个声明式定义，描述某类 wizard 应如何运行。
+它不像：
 
-### 4.5 Trigger
+- 超重工具
+- 后台线程
+- 仅靠 prompt engineering 拼出来的技巧
 
-触发器。
+---
 
-用于监听主会话或系统状态中的某个事件，并决定是否进入某个 wizard。
+## 4. v0 真实可施工的 shape
 
-## 5. 核心设计主张
+### 4.1 不做独立执行腔室
 
-### 5.1 原语和 Wizard 必须分层
+v0 最自洽的落地，不是另造一个“主会话外的独立小房间”，而是：
 
-底层工具应保持小而明确，例如：
+- 仍然运行在同一份 `RecentHistory` 账本之上
+- 用 `InjectionEntry` 建立可续写的 actor-side continuation
+- 用请求级 tool gating 暂时收紧本阶段工具可见性
+- 用宿主侧对象维护当前 active wizard 的 phase / scratchpad / cleanup
+
+也就是说：
+
+- **目标设计上**可以继续讨论更强的“临时执行腔室”直觉
+- **v0 实现上**先不要把它实现成第二条时间线
+
+### 4.2 v0 的核心原语
+
+当前代码里真正已经到位、适合直接开工的原语是：
+
+- `ActionProduced`
+- `ToolExecutionCompleted`
+- `PrepareInvocationAsync.ToolAccessOverride`
+- `ToolAccessSnapshot.AllowOnly(...)`
+- `InjectActionContent(...)`
+- `InjectionEntry`
+
+这足以支撑第一版宿主侧 `WizardOrchestrator`。
+
+### 4.3 v0 的调度纪律
+
+Micro-Wizard 第一版应顺着 `AgentEngine.StepAsync()` 的单步纪律来：
+
+- 同时最多一个 active wizard
+- wizard 只是主会话旁边的受控局部流程
+- phase 切换、tool gating、repair、cleanup 都由宿主侧 orchestrator 负责
+
+---
+
+## 5. v0 可依赖的事件面
+
+这里要显式区分：
+
+- **目标设计里可以想象的事件**
+- **当前 runtime 真正稳定提供的事件**
+
+v0 应优先建立在后者上。
+
+### 5.1 当前稳定可用的硬事件
+
+- `ActionProduced`
+- `ToolExecutionCompleted`
+- `StateTransition`
+- `WaitingInput`
+- 宿主自己的外部领域事件
+
+### 5.2 当前不应写成内建 runtime 合同的事件
+
+下面这些概念可以保留为未来扩展方向，但不应在 v0 里假装它们已经是引擎原生事件：
+
+- `AssistantProducedIrrelevantResponse`
+- `AssistantNoProgress`
+- 细粒度“模型动作语义分类”
+- 复杂的自动 completion condition 语义
+
+如果某个 recipe 需要这类判断，v0 更诚实的做法是：
+
+- 把它放在宿主 heuristic 层
+- 或绑定到具体业务场景
+
+而不是把它硬写成引擎级真相。
+
+---
+
+## 6. v0 运行时分层
+
+### 6.1 Primitive Layer
+
+底层保持小原语：
 
 - `SplitBodyBlockByText`
 - `SplitNode`
 - `SetGist`
 - `SetSummary`
 
-Wizard 负责把这些原语编排成受控过程。
+### 6.2 Recipe Layer
 
-不要把整个流程揉进一个超重工具。
-
-### 5.2 Wizard 过程应默认是临时的
-
-Wizard 不是为了制造更多上下文，而是为了减少主上下文噪音。
-
-因此默认预期应是：
-
-- 过程可审计
-- 结果固化
-- 中间过程尽量不污染主上下文
-
-### 5.3 Wizard 应是可声明的
-
-上层逻辑最好只声明：
+声明：
 
 - 何时触发
-- 允许哪些工具
-- 分几步
-- 什么算完成
-- 如何清理
+- 有哪些 phase
+- 每个 phase 允许哪些工具
+- 成功后如何 commit
+- 退出时如何 cleanup
 
-而不是每次手写一套 ad-hoc 流程控制。
+### 6.3 Host-Side Orchestrator Layer
 
-### 5.4 Trigger 数量应受控
+第一版不塞进 `AgentEngine` 核心。  
+宿主侧 orchestrator 负责：
 
-触发器是非常强的机制，过多会让系统变成噪音工厂。
+- 订阅事件
+- 决定是否启动某个 wizard
+- 管理单个 active wizard 的 phase / scratchpad
+- 在 `PrepareInvocationAsync` 中施加 tool gating
+- 在适当时机调用 `InjectActionContent(...)`
 
-因此应该允许：
+### 6.4 Audit / Summary Layer
 
-- 限制总数量
-- 限制同时激活数量
-- 限制某类触发器在一定时间内的频率
+v0 可以先保留轻量的：
 
-这也与你提到的“先少量练习一种美德，再逐步内化”的思路很一致。
+- 主时间线结果性痕迹
+- wizard 摘要痕迹
+- 必要的调试审计
 
-## 6. 推荐的运行时分层
+但不急着把完整 durable wizard timeline 先制度化。
 
-推荐把系统拆成四层：
+---
 
-### 6.1 Primitive Layer
+## 7. 一个典型场景：MemoTree Split Repair
 
-最底层原语：
+一个自然的第一版真实场景是：
 
-- 小
-- 单步
-- 可审计
-- 无隐藏流程
+1. 触发 split 相关操作
+2. Gather phase 确认切分边界
+3. Act phase 调 `SplitBodyBlockByText`
+4. Act phase 调 `SplitNode`
+5. Repair / Finalize phase 重建左右节点 gist/summary
+6. Commit 结果
+7. Cleanup 中间痕迹
 
-### 6.2 Wizard Recipe Layer
+这个场景非常合适，因为它同时需要：
 
-声明式描述某种流程：
+- 局部 phase 目标
+- 工具范围收紧
+- 失败后 repair
+- 结果固化
 
-- 名称
-- 目标
-- 输入绑定
-- 允许工具
-- 阶段列表
-- 完成条件
-- 失败恢复
-- 退出清理
+而且不需要先发明并发调度器。
 
-### 6.3 Wizard Runtime Layer
+---
 
-负责：
+## 8. 分阶段落地建议
 
-- 启动 wizard
-- 构造临时上下文
-- 推进阶段
-- 记录中间结果
-- 判定成功/失败/放弃
-- 执行结果固化
-- 清理临时痕迹
+### 阶段 A：先做 host-side `WizardOrchestrator`
 
-### 6.4 Trigger Layer
+只做单实例。  
+不要先把 recipe/instance durable schema 烧进核心。
 
-负责：
+### 阶段 B：只落一个真实业务场景
 
-- 监听事件
-- 过滤条件
-- 节流
-- 决定是否进入 wizard
+推荐优先做：
 
-## 7. 事件来源
+- MemoTree split 后 gist/summary repair
 
-触发器不应只盯着“用户发消息”。
+### 阶段 C：等 shape 稳定后，再下沉 durable 对象
 
-更有价值的事件来源包括：
+例如未来再正式建模：
 
-- 某工具刚调用完成
-- 某对象进入 dirty state
-- 某节点被 split / merge
-- 某次编辑被标记为 risky
-- token 用量接近阈值
-- 某类依赖 invalidation 发生
+- `WizardRecipeRef`
+- `WizardInstance`
+- `WizardStatus`
+- `WizardPhaseState`
 
-也就是说，Agent 运行时的很多“经验”本质上都可以抽象成：
+### 阶段 D：最后再谈 richer trigger / telemetry / training loop
 
-`event -> trigger -> wizard`
+这些都值得做，但不应抢跑。
 
-这与你说的“很多经验本质是触发器形式的”高度一致。
+---
 
-## 8. 一个典型案例：MemoTree Node Split Wizard
+## 9. 一句话总结
 
-这是当前最直接的例子。
+Micro-Wizard 的目标设计并不是问题。  
+当前真正要做的是：
 
-### 8.1 触发
-
-用户或主会话表达：
-
-- 希望拆分某个长节点
-
-或：
-
-- 某节点被检测为“正文过长且子节点较多”
-
-### 8.2 Wizard 阶段
-
-阶段 1：确认切分意图
-
-- 目标：明确要把哪个节点拆成什么主题
-
-阶段 2：建立文本边界
-
-- 调用 `SplitBodyBlockByText`
-- 若失败则要求更具体的前后文本
-
-阶段 3：执行结构切分
-
-- 调用 `SplitNode`
-
-阶段 4：补全左右节点的 `gist/summary`
-
-- 读取左右节点
-- 生成新的派生记忆
-
-阶段 5：固化与清理
-
-- 写回结果
-- 退出 wizard
-- 主会话只保留结果性痕迹
-
-### 8.3 优点
-
-- 主会话不需要长期背着整个多步过程
-- Split 原语本身保持干净
-- 失败时可控
-- 成功后可把“脏节点”修到干净
-
-## 9. Dirty State 与 Wizard 的关系
-
-Micro-Wizard 和 dirty state 天然是一对。
-
-推荐理解：
-
-- dirty state 负责显式表达“哪里不干净了”
-- wizard runtime 负责承载“怎么把它修回来”
-
-比如：
-
-- `SplitNode` 之后左右节点的 `summary_state = Invalidated`
-- 触发器监测到存在 invalidated summary
-- 启动 `RepairDerivedMemoryWizard`
-- wizard 生成新 `gist/summary`
-- 退出时固化
-
-这比要求 `SplitNode` 一次性完成所有事情更稳。
-
-## 10. 临时上下文与主上下文的关系
-
-Wizard 最大的价值之一，是允许中间过程在临时上下文里运行。
-
-推荐目标不是完全隐藏所有过程，而是：
-
-- 主会话默认不背中间垃圾
-- 运行时仍保留审计能力
-
-这里的“临时上下文”不应狭义理解成“请求前临时拼一段 window 文本”。
-对某些流程，更自然的机制其实是：
-
-- 在 RecentHistory 尾部注入一段可续写的 actor-side prefix
-- 让下一次 completion 继续补完它
-
-也就是说，wizard 的“注入一个念头”很多时候更接近 **history-level action injection**，
-而不是普通的 request overlay。
-
-所以推荐保留三层痕迹：
-
-1. 主会话痕迹  
-   只保留高价值结果
-
-2. Wizard 摘要痕迹  
-   用于必要时解释发生过什么
-
-3. 完整审计日志  
-   用于调试、复盘、微调数据收集
-
-## 11. 建议的 Recipe 形状
-
-不必拘泥于最终 API，先给一个概念形状：
-
-```text
-WizardRecipe
-  id
-  trigger
-  goal
-  allowed_tools
-  phases[]
-  completion_condition
-  abort_condition
-  commit_strategy
-  cleanup_strategy
-  telemetry_policy
-```
-
-Phase 可进一步有：
-
-```text
-WizardPhase
-  id
-  instruction
-  success_condition
-  retry_policy
-  on_success
-  on_failure
-```
-
-## 12. 建议的触发器形状
-
-同样先给概念形状：
-
-```text
-WizardTrigger
-  id
-  event_kind
-  predicate
-  cooldown
-  max_concurrent
-  priority
-  recipe_id
-```
-
-这层非常重要，因为它决定了系统是“会形成经验的运行时”，还是“偶尔能跑个临时流程的拼装玩具”。
-
-## 13. 关于“训练内化”的思路
-
-我很认同一个方向：
-
-- 前期先限制触发器数量
-- 把某些关键流程反复稳定执行
-- 记录轨迹
-- 用轨迹做后续模型微调或策略蒸馏
-
-这会形成一种很有意思的演进链：
-
-1. 起初，能力靠外部 wizard runtime 提供
-2. 反复执行后，轨迹变成训练数据
-3. 模型逐步把这些模式内化成本能
-4. 运行时再把更高阶、更罕见的过程留给 wizard
-
-也就是说：
-
-- Wizard 是当前阶段的外围软件栈
-- 微调是把高频外围软件栈逐步“烧进芯片”
-
-这非常像计算机发展史里：
-
-- 先有外部工具与操作系统
-- 后来某些能力再被更底层地吸收与优化
-
-## 14. 为什么这值得放进 Agent.Core
-
-如果 Micro-Wizard 只是某个 prototype 的一次性技巧，它的价值很有限。
-
-但如果它升格为 `Agent.Core` 基础设施，应用面会一下子变大：
-
-- MemoTree 派生记忆修复
-- context compression
-- editing preflight
-- dependency invalidation repair
-- multi-step tool orchestration
-- 低频但重要的经验性“反射动作”
-
-这时它不再是“一个特殊功能”，而变成：
-
-Agent 的 runtime middleware
-
-## 15. 推荐的最小落地路线
-
-### 阶段 1
-
-把现有 micro-wizard 实验抽象成：
-
-- recipe
-- runtime
-- trigger
-
-三块独立概念。
-
-### 阶段 2
-
-支持一个最小的单实例 wizard 生命周期：
-
-- 启动
-- 运行
-- 成功
-- 放弃
-- 清理
-
-### 阶段 3
-
-接入第一个真实业务场景：
-
-- MemoTree split 后的派生记忆修复
-
-### 阶段 4
-
-再扩展到：
-
-- dirty node repair
-- compression wizard
-- risky edit wizard
-
-### 阶段 5
-
-再考虑更丰富的触发器治理、并发策略与训练闭环。
-
-## 16. 一句话结论
-
-Micro-Wizard 不该继续只是“在主会话旁边临时开个小房间”的实验技巧。
-
-它更适合被正式提升为：
-
-一种围绕事件触发、临时过程、结果固化与痕迹清理而设计的 Agent 运行时基础设施。
+> **在 full-feature-only 的 `Agent.Core` 上，先用现有事件、injection 与 tool gating 原语，做出一个宿主侧、单实例、可运行的第一版 orchestrator。**

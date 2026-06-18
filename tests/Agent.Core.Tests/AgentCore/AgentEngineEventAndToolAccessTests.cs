@@ -17,7 +17,8 @@ public sealed class AgentEngineEventAndToolAccessTests {
                 new RecordingCompletionClient(new ActionMessage([new ActionBlock.Text("assistant-output")])),
                 "model-a",
                 "test-profile",
-                4096
+                4096,
+                CapabilityProfile.FullFeature
             );
 
             host.Engine.WaitingInput += static (_, args) => {
@@ -49,7 +50,7 @@ public sealed class AgentEngineEventAndToolAccessTests {
     [Fact]
     public async Task StepAsync_AppToolAccessSnapshotsComposeByIntersection() {
         var client = new RecordingCompletionClient(new ActionMessage([new ActionBlock.Text("assistant-output")]));
-        var profile = new LlmProfile(client, "model-a", "test-profile", 4096);
+        var profile = new LlmProfile(client, "model-a", "test-profile", 4096, CapabilityProfile.FullFeature);
         var engine = new AgentEngine(
             initialApps: [
                 new StaticProjectionApp("allow-only-app", ToolAccessSnapshot.AllowOnly(["alpha", "beta"])),
@@ -74,7 +75,7 @@ public sealed class AgentEngineEventAndToolAccessTests {
     [Fact]
     public async Task StepAsync_PrepareInvocationToolAccessOverride_CannotWidenAppProjection() {
         var client = new RecordingCompletionClient(new ActionMessage([new ActionBlock.Text("assistant-output")]));
-        var profile = new LlmProfile(client, "model-a", "test-profile", 4096);
+        var profile = new LlmProfile(client, "model-a", "test-profile", 4096, CapabilityProfile.FullFeature);
         var engine = new AgentEngine(
             initialApps: [
                 new StaticProjectionApp("hide-beta-app", ToolAccessSnapshot.Hide(["beta"]))

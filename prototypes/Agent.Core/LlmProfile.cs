@@ -10,6 +10,8 @@ namespace Atelia.Agent.Core;
 /// 一同写入 <see cref="CompletionDescriptor"/>。</param>
 /// <param name="Name">用于在UI中显示，以及区分不同的LlmProfile实例。</param>
 /// <param name="SoftContextTokenCap">此 Provider-Model 组合的有效上下文窗口软上限（token 估算值）。应传入大于 0 的合理预算值，用于在接近物理窗口前提前触发上下文管理。</param>
+/// <param name="Capabilities">该 profile 对 Agent.Core 高级认知能力的支持事实。省略时按不满足
+/// <c>SupportsAgentCoreFullFeatures</c> 处理；当前 `Agent.Core` 运行时会拒绝使用这类 profile。</param>
 /// <remarks>
 /// <b>切换时机约束</b>：profile 切换仅允许在 Turn 起点发生，即历史末尾不存在 <see cref="Atelia.Agent.Core.History.ActionEntry"/>
 /// 跨越当前 <see cref="Atelia.Agent.Core.History.ObservationEntry"/> 之后的情况。
@@ -21,5 +23,16 @@ public sealed record LlmProfile(
     ICompletionClient Client,
     string ModelId,
     string Name,
-    uint SoftContextTokenCap
-);
+    uint SoftContextTokenCap,
+    CapabilityProfile? Capabilities = null
+) {
+    /// <summary>
+    /// 获取当前 profile 的有效能力描述；未显式提供时按不满足 full-feature 准入处理。
+    /// </summary>
+    public CapabilityProfile EffectiveCapabilities => Capabilities ?? CapabilityProfile.BasicExecutionOnly;
+
+    /// <summary>
+    /// 获取一个值，指示当前 profile 是否支持 Agent.Core 的 full-feature 认知层。
+    /// </summary>
+    public bool SupportsAgentCoreFullFeatures => EffectiveCapabilities.SupportsAgentCoreFullFeatures;
+}

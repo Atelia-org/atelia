@@ -5,6 +5,9 @@
 **前置**：[Turn 内 LlmProfile 锁定](./memory-notebook.md#turn-与-llmprofile-锁定硬约束) 已落地
 **适用范围**：Atelia Agent.Core / Completion / Completion.Abstractions
 
+> **与 capability system 的关系**：本文描述的是 `Agent.Core` 内部使用的 **history / projection / replay substrate**。  
+> 但底层能表达 reasoning replay，不自动等于某个 surface 就能进入当前 `Agent.Core` runtime。当前实现阶段，`Agent.Core` 只接受 `SupportsAgentCoreFullFeatures == true` 的 profile；其他 surface 即便未来能复用本文某些底层设计，也不属于当前主链范围。
+
 ---
 
 ## 0. TL;DR
@@ -24,6 +27,11 @@
 - **Recap 主动 GC `OpaquePayload`**：v1 不做；待真实场景出现内存压力时再设计
 
 v1 **承诺交付**的是：`ActionEntry.Message.Blocks` 存储重构 + invocation-specific projection 接口 + Anthropic extended thinking 端到端 replay。其他 provider 在此基础上增量接入。
+
+这里的 Anthropic replay 承诺，应理解为：
+
+- `Agent.Core` 主链内部已具备承载 reasoning replay 的底层结构
+- 而不是在产品边界上承诺“所有能 replay 的 surface 都会被当前 runtime 接纳”
 
 ---
 

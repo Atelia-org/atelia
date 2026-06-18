@@ -11,7 +11,7 @@ public sealed class AgentEngineCompactionInjectionTests {
         var client = new RecordingCompletionClient(
             new ActionMessage([new ActionBlock.Text("summary from compaction")])
         );
-        var profile = new LlmProfile(client, "model-a", "test-profile", SoftContextTokenCap: 4096);
+        var profile = new LlmProfile(client, "model-a", "test-profile", SoftContextTokenCap: 4096, Capabilities: CapabilityProfile.FullFeature);
         var engine = new AgentEngine();
 
         engine.State.AppendObservation(new ObservationEntry());
@@ -42,7 +42,7 @@ public sealed class AgentEngineCompactionInjectionTests {
         var client = new RecordingCompletionClient(
             new ActionMessage([new ActionBlock.Text("summary from compaction")])
         );
-        var profile = new LlmProfile(client, "model-a", "test-profile", SoftContextTokenCap: 4096);
+        var profile = new LlmProfile(client, "model-a", "test-profile", SoftContextTokenCap: 4096, Capabilities: CapabilityProfile.FullFeature);
         var engine = new AgentEngine();
 
         engine.State.AppendObservation(new ObservationEntry());
