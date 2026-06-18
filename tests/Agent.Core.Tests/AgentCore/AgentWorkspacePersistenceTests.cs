@@ -10,38 +10,26 @@ namespace Agent.Core.Tests;
 
 public sealed class AgentWorkspacePersistenceTests {
     [Fact]
-    public void StateRoot_Create_PreservesWorkspaceDefaultShape() {
+    public void WorkspaceRoot_Create_SeedsMinimalShapeAndCanSelfRead() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-shape-{Guid.NewGuid():N}");
 
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
-            var stateRoot = AgentEngineStateRoot.Create(revision, "shape-system");
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
 
-            Assert.Equal(GetIssue.None, stateRoot.Root.Get<string>("kind", out var kind));
+            Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<string>("kind", out var kind));
             Assert.Equal("agent-engine-state", kind);
-            Assert.Equal(GetIssue.None, stateRoot.Root.Get<long>("schemaVersion", out var schemaVersion));
+            Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<long>("schemaVersion", out var schemaVersion));
             Assert.Equal(2L, schemaVersion);
-            Assert.Equal(GetIssue.None, stateRoot.Root.Get<string>("systemPrompt", out var systemPrompt));
-            Assert.Equal("shape-system", systemPrompt);
 
-            Assert.Equal(GetIssue.None, stateRoot.Root.Get<DurableDeque>("history", out var history));
-            Assert.NotNull(history);
-            Assert.Equal(0, history!.Count);
-
-            Assert.Equal(GetIssue.None, stateRoot.Root.Get<DurableDeque>("pendingNotifications", out var pendingNotifications));
-            Assert.NotNull(pendingNotifications);
-            Assert.Equal(0, pendingNotifications!.Count);
-
-            Assert.Equal(GetIssue.None, stateRoot.Root.Get<DurableDict<string>>("pendingToolResults", out var pendingToolResults));
-            Assert.NotNull(pendingToolResults);
-            Assert.Equal(0, pendingToolResults!.Count);
-
-            Assert.Equal(GetIssue.None, stateRoot.Root.Get<DurableDict<string>>("turnRuntime", out var turnRuntime));
-            Assert.NotNull(turnRuntime);
-            Assert.Equal(0, turnRuntime!.Count);
-
-            Assert.NotEqual(GetIssue.None, stateRoot.Root.Get<DurableDict<string>>("pendingCompaction", out _));
+            Assert.Empty(workspaceRoot.LoadHistory());
+            Assert.Empty(workspaceRoot.LoadPendingNotifications());
+            Assert.Empty(workspaceRoot.LoadPendingToolResults());
+            Assert.Equal((ResolvedProfile: null, LockedCompactionSplitIndex: null), workspaceRoot.LoadTurnRuntime());
+            Assert.Null(workspaceRoot.LoadPendingCompaction());
+            Assert.Equal(0UL, workspaceRoot.GetRequiredLastSerial());
+            Assert.Equal(0L, workspaceRoot.GetToolSessionExecutionSequenceOrDefault());
         }
         finally {
             if (Directory.Exists(repoDir)) {

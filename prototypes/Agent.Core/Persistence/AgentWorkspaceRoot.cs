@@ -38,7 +38,9 @@ internal sealed class AgentWorkspaceRoot {
 
         var root = revision.CreateDict<string>();
         StampMetadata(root);
-        return new AgentWorkspaceRoot(root);
+        var workspaceRoot = new AgentWorkspaceRoot(root);
+        workspaceRoot.InitializeDefaultShape();
+        return workspaceRoot;
     }
 
     public static AgentWorkspaceRoot FromRoot(DurableDict<string> root) => new(root);
@@ -228,6 +230,16 @@ internal sealed class AgentWorkspaceRoot {
     }
 
     public void StampMetadata() => StampMetadata(_root);
+
+    private void InitializeDefaultShape() {
+        SetLastSerial(0);
+        SetToolSessionExecutionSequence(0);
+        SaveHistory(Array.Empty<HistoryEntry>());
+        SavePendingNotifications(Array.Empty<string>());
+        SavePendingToolResults(Array.Empty<ToolCallExecutionResult>());
+        SaveTurnRuntime(null, null);
+        SavePendingCompaction(null);
+    }
 
     private static void StampMetadata(DurableDict<string> root) {
         root.Upsert(KeyKind, KindValue);
