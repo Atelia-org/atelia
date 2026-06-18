@@ -19,13 +19,17 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes();
 
+    internal override void FreezeCore(bool forceRebase) => RecountRefs();
+
     private protected override void CommitCore() => _core.Commit();
     private protected override void SyncCurrentFromCommittedCore() {
         _core.SyncCurrentFromCommitted();
         RecountRefs();
     }
-    private protected override void EnsureForceFrozenMaterializationSupported() => throw new NotSupportedException("Frozen OrderedDict is not supported by this implementation.");
-    private protected override void SyncFrozenCurrentFromCommittedCore() => throw new InvalidDataException("Frozen OrderedDict is not supported by this implementation.");
+    private protected override void SyncFrozenCurrentFromCommittedCore() {
+        _core.SyncCurrentFromCommitted();
+        RecountRefs();
+    }
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) =>
         _core.WriteRebase(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) =>
@@ -34,6 +38,13 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
         _core.ApplyDelta(ref reader);
 
     internal override void DiscardChanges() {
+        ThrowIfPendingObjectMapRegistration();
+        if (IsFrozen) {
+            ThrowIfCannotDiscardFrozenChanges();
+            ClearDiscardedFreeze();
+            RecountRefs();
+            return;
+        }
         _core.Revert();
         RecountRefs();
     }
@@ -42,6 +53,7 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
     public override bool ContainsKey(TKey key) => _core.ContainsKey(key);
     public override int Count => _core.Count;
     public override bool Remove(TKey key) {
+        ThrowIfDetachedOrFrozen();
         if (!_core.TryRemove(key, out var oldBox)) { return false; }
         OnCurrentValueRemoved(oldBox);
         return true;

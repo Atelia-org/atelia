@@ -24,10 +24,11 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes();
 
+    internal override void FreezeCore(bool forceRebase) { }
+
     private protected override void CommitCore() => _core.Commit();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted();
-    private protected override void EnsureForceFrozenMaterializationSupported() => throw new NotSupportedException("Frozen OrderedDict is not supported by this implementation.");
-    private protected override void SyncFrozenCurrentFromCommittedCore() => throw new InvalidDataException("Frozen OrderedDict is not supported by this implementation.");
+    private protected override void SyncFrozenCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted();
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta(ref reader);
@@ -53,13 +54,17 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
     }
 
     public override UpsertStatus Upsert(TKey key, TDurObj? value) {
+        ThrowIfDetachedOrFrozen();
         if (value is not null) { Revision.EnsureCanReference(value); }
         var localId = value?.LocalId ?? LocalId.Null;
         bool inserted = _core.Upsert(key, localId);
         return inserted ? UpsertStatus.Inserted : UpsertStatus.Updated;
     }
 
-    public override bool Remove(TKey key) => _core.Remove(key);
+    public override bool Remove(TKey key) {
+        ThrowIfDetachedOrFrozen();
+        return _core.Remove(key);
+    }
 
     public override IReadOnlyList<TKey> GetKeys() => _core.GetAllKeys();
 
@@ -89,7 +94,15 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
 
     #endregion
 
-    internal override void DiscardChanges() => _core.Revert();
+    internal override void DiscardChanges() {
+        ThrowIfPendingObjectMapRegistration();
+        if (IsFrozen) {
+            ThrowIfCannotDiscardFrozenChanges();
+            ClearDiscardedFreeze();
+            return;
+        }
+        _core.Revert();
+    }
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
         _core.AcceptChildRefVisitor(Revision, ref visitor);

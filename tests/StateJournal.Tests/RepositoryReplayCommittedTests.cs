@@ -196,21 +196,35 @@ public class RepositoryReplayCommittedTests : IDisposable {
     }
 
     [Fact]
-    public void ReplayCommitted_DurableText_ForceFrozen_FailsClearly() {
+    public void ReplayCommitted_DurableText_ForceFrozen_PersistsFrozenClone() {
         var dir = GetTempDir();
-        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
 
-        var root = main.CreateDict<int, DurableText>();
-        var source = main.CreateText();
-        source.Append("line");
-        root.Upsert(1, source);
-        AssertSuccess(repo.Commit(root));
+        using (var repo = CreateRepositoryWithBranch(dir, "main", out var main)) {
+            var root = main.CreateDict<int, DurableText>();
+            var source = main.CreateText();
+            source.Append("line");
+            root.Upsert(1, source);
+            AssertSuccess(repo.Commit(root));
 
-        var result = repo.ReplayCommitted(source, LoadMaterializationMode.ForceFrozen);
-        Assert.True(result.IsFailure);
-        Assert.IsType<SjStateError>(result.Error);
-        Assert.Contains("Frozen DurableText is not supported", result.Error!.Message);
-        Assert.Contains("Choose a different LoadMaterializationMode", result.Error!.RecoveryHint);
+            var clone = AssertSuccess(repo.ReplayCommitted(source, LoadMaterializationMode.ForceFrozen));
+            Assert.True(clone.IsFrozen);
+            Assert.False(clone.HasChanges);
+            Assert.Equal(DurableState.Clean, clone.State);
+            Assert.Equal(["line"], clone.GetAllBlocks().Select(static block => block.Content).ToArray());
+            Assert.Throws<ObjectFrozenException>(() => clone.Append("line2"));
+
+            root.Upsert(2, clone);
+            AssertSuccess(repo.Commit(root));
+        }
+
+        using var reopened = AssertSuccess(Repository.Open(dir));
+        var mainAgain = AssertSuccess(reopened.CheckoutBranch("main"));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableText>>(mainAgain.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableText? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableText? loadedClone));
+        Assert.False(loadedSource!.IsFrozen);
+        Assert.True(loadedClone!.IsFrozen);
+        Assert.Equal(["line"], loadedClone.GetAllBlocks().Select(static block => block.Content).ToArray());
     }
 
     [Fact]
@@ -221,6 +235,24 @@ public class RepositoryReplayCommittedTests : IDisposable {
         var root = main.CreateDict<int, DurableOrderedDict<int, int>>();
         var source = main.CreateOrderedDict<int, int>();
         source.Upsert(1, 10);
+        root.Upsert(1, source);
+        AssertSuccess(repo.Commit(root));
+
+        var result = repo.ReplayCommitted(source, LoadMaterializationMode.ForceFrozen);
+        Assert.True(result.IsFailure);
+        Assert.IsType<SjStateError>(result.Error);
+        Assert.Contains("Frozen OrderedDict is not supported", result.Error!.Message);
+        Assert.Contains("Choose a different LoadMaterializationMode", result.Error!.RecoveryHint);
+    }
+
+    [Fact]
+    public void ReplayCommitted_MixedOrderedDict_ForceFrozen_FailsClearly() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
+
+        var root = main.CreateDict<int, DurableOrderedDict<int>>();
+        var source = main.CreateOrderedDict<int>();
+        source.Upsert(1, "alpha");
         root.Upsert(1, source);
         AssertSuccess(repo.Commit(root));
 
