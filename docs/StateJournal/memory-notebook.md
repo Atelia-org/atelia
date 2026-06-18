@@ -118,7 +118,7 @@ private T[]?[] _slabs;
 
 - `DurableDict<TKey, TValue>` / `DurableDict<TKey>`：已完整支持 fork + freeze
 - `DurableHashSet<T>`：已完整支持 fork + freeze；当前只有 typed 路线，没有 mixed / durable-object-element 特化
-- `DurableDeque<T>` / `DurableDeque`：已完整支持 freeze，但当前仍不支持 public fork
+- `DurableDeque<T>` / `DurableDeque`：已完整支持 fork + freeze
 - `DurableOrderedDict<...>` / `DurableText`：
   - 当前不支持 public fork
   - `Freeze()` 默认抛 `NotSupportedException`
@@ -768,7 +768,7 @@ Load ObjectMap frame chain
 | NodeContainers（LeafChainStore / SkipListCore） | ✅ 已完成 | 叶链共享节点仓库 + 跳表核心 |
 | DurableOrderedDict（Typed / Mixed / DurObj） | ✅ 已完成 | 基于 SkipListCore，typed + mixed + DurObj |
 | DurableDict fork / freeze | ✅ 已完成 | typed + mixed 都已支持；flags 持久化已打通 |
-| DurableDeque freeze | ✅ 已完成 | typed + mixed 都已支持；当前仍不支持 public fork |
+| DurableDeque fork / freeze | ✅ 已完成 | typed + mixed 都已支持；flags 持久化已打通 |
 | OrderedDict / Text freeze 与其他 fork | 🟡 预留中 | 当前以 `NotSupportedException` / fail-fast 为主 |
 | typed Symbol staging-in-ChangeTracker | 🟡 储备方案 | 尚未落地，见专项文档 |
 
@@ -816,7 +816,7 @@ mixed：
 
 不应覆盖本文件作为“当前主线事实地图”的角色。
 
-### 5. 当前 DurableDict / DurableHashSet 已支持 fork + freeze，DurableDeque 已支持 freeze
+### 5. 当前 DurableDict / DurableHashSet / DurableDeque 已支持 fork + freeze
 
 不要把“基类已有 `Freeze()` / `IsFrozen` / object flags”误读成“所有容器都已支持 readonly / mutable fork”。
 
@@ -824,7 +824,7 @@ mixed：
 
 - dict：正式支持 fork + freeze，并已有 roundtrip / retry / fork matrix 测试
 - hash set：正式支持 fork + freeze，并已有 roundtrip / discard / tuple-key / symbol / freeze / fork 测试
-- deque：正式支持 freeze，并已有 roundtrip / discard / child-ref 测试；public fork 仍未开放
+- deque：正式支持 fork + freeze，并已有 roundtrip / discard / child-ref / fork matrix 测试
 - ordered dict / text：仍待后续 PR 推进
 - 设计推进应以 `frozen-durable-object-design.md` 为基线，而不是从基类表面 API 反推“应该已经可用”
 

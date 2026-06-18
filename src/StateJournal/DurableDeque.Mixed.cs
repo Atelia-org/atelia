@@ -9,7 +9,8 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     IDeque<bool>, IDeque<Symbol>, IDeque<string>, IDeque<ByteString>, IDeque<DurableObject>,
     IDeque<double>, IDeque<float>, IDeque<Half>,
     IDeque<ulong>, IDeque<uint>, IDeque<ushort>, IDeque<byte>,
-    IDeque<long>, IDeque<int>, IDeque<short>, IDeque<sbyte> {
+    IDeque<long>, IDeque<int>, IDeque<short>, IDeque<sbyte>,
+    ICommittedMutableForkable<DurableDeque> {
 
     private protected DequeChangeTracker<ValueBox> _core;
 
@@ -102,6 +103,13 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
         kind = back.GetValueKind();
         return true;
     }
+
+    /// <summary>
+    /// Fork this object's committed state into a new mutable object with a fresh LocalId.
+    /// Pending working changes on the source are ignored. DurableObject elements are shallow-copied.
+    /// </summary>
+    public DurableDeque ForkCommittedAsMutable() =>
+        Revision.ForkCommittedAsMutable(this);
 
     #endregion
 

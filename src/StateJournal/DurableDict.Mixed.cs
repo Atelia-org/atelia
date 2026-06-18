@@ -11,7 +11,8 @@ public abstract partial class DurableDict<TKey> : DurableDictBase<TKey>, IDict<T
     IDict<TKey, bool>, IDict<TKey, Symbol>, IDict<TKey, string>, IDict<TKey, ByteString>, IDict<TKey, DurableObject>,
     IDict<TKey, double>, IDict<TKey, float>, IDict<TKey, Half>,
     IDict<TKey, ulong>, IDict<TKey, uint>, IDict<TKey, ushort>, IDict<TKey, byte>,
-    IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>
+    IDict<TKey, long>, IDict<TKey, int>, IDict<TKey, short>, IDict<TKey, sbyte>,
+    ICommittedMutableForkable<DurableDict<TKey>>
 where TKey : notnull {
 
     private protected DictChangeTracker<TKey, ValueBox> _core;

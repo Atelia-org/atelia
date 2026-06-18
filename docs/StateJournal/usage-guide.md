@@ -231,7 +231,7 @@ setDraft.Add(2);
 
 当前不支持：
 
-- `DurableDeque` / `DurableOrderedDict` / `DurableText` 没有 public `ForkCommittedAsMutable()`。
+- `DurableOrderedDict` / `DurableText` 没有 public `ForkCommittedAsMutable()`。
 
 ### 3.2 Freeze / frozen
 
@@ -262,7 +262,6 @@ set.Add(2); // ObjectFrozenException
 当前不支持：
 
 - `DurableOrderedDict<...>` / `DurableText` 上调用 `Freeze()` 会抛 `NotSupportedException`。
-- `DurableDeque<T>` / `DurableDeque` 当前仍不支持 public `ForkCommittedAsMutable()`。
 
 ---
 
@@ -775,8 +774,8 @@ repo.Commit(root).Value;
 - 不要跨 `Revision` 存 DurableObject。
 - 不要继续使用被 GC sweep 后的 detached 对象。
 - `Commit(root)` 的 root 决定可达性；没挂在 root 下的对象不会保留。
-- 当前 `DurableDict` 与 `DurableHashSet` 正式支持 `ForkCommittedAsMutable()`。
-- 当前 `DurableDict`、`DurableHashSet` 与 `DurableDeque` 正式支持 `Freeze()` / `IsFrozen`；`DurableDeque` 仍未暴露 public fork，`OrderedDict` / `DurableText` 仍不支持 freeze。
+- 当前 `DurableDict`、`DurableHashSet` 与 `DurableDeque` 正式支持 `ForkCommittedAsMutable()`。
+- 当前 `DurableDict`、`DurableHashSet` 与 `DurableDeque` 正式支持 `Freeze()` / `IsFrozen`；`OrderedDict` / `DurableText` 仍不支持 freeze。
 - `ForkCommittedAsMutable()` 复制 committed state，不复制 source 的未提交 working state。
 - `Freeze()` 后的修改会抛 `ObjectFrozenException`。
 - dirty frozen source 不能直接 fork；先 commit 让 frozen snapshot 落盘。

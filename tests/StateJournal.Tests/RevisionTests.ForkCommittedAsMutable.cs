@@ -239,6 +239,214 @@ partial class RevisionTests {
     }
 
     [Fact]
+    public void ForkCommittedAsMutable_TypedDeque_CleanSource_RegistersForkWithoutWritingDequePayload() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque<int>>();
+        var source = rev.CreateDeque<int>();
+        source.PushBack(10);
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+        int typedDequeFramesBefore = CountUserPayloadFrames(file, DurableObjectKind.TypedDeque);
+
+        var fork = source.ForkCommittedAsMutable();
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        int typedDequeFramesAfter = CountUserPayloadFrames(file, DurableObjectKind.TypedDeque);
+        Assert.Equal(typedDequeFramesBefore, typedDequeFramesAfter);
+        Assert.NotEqual(source.LocalId, fork.LocalId);
+        Assert.False(fork.HasChanges);
+        Assert.Equal(DurableState.Clean, fork.State);
+
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque<int>>>(opened.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque<int>? loadedFork));
+        Assert.NotNull(loadedFork);
+        Assert.Equal(fork.LocalId, loadedFork!.LocalId);
+        Assert.Equal(GetIssue.None, loadedFork.PeekFront(out int value));
+        Assert.Equal(10, value);
+    }
+
+    [Fact]
+    public void ForkCommittedAsMutable_TypedDeque_DirtySource_CopiesCommittedStateOnly() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque<int>>();
+        var source = rev.CreateDeque<int>();
+        source.PushBack(10);
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        source.PushBack(20);
+        var fork = source.ForkCommittedAsMutable();
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque<int>>>(opened.GraphRoot);
+
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDeque<int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque<int>? loadedFork));
+        Assert.Equal(2, loadedSource!.Count);
+        Assert.Equal(1, loadedFork!.Count);
+        Assert.Equal(GetIssue.None, loadedSource.GetAt(0, out int source0));
+        Assert.Equal(GetIssue.None, loadedSource.GetAt(1, out int source1));
+        Assert.Equal(GetIssue.None, loadedFork.GetAt(0, out int fork0));
+        Assert.Equal(10, source0);
+        Assert.Equal(20, source1);
+        Assert.Equal(10, fork0);
+    }
+
+    [Fact]
+    public void ForkCommittedAsMutable_TypedDeque_ModifyingFork_DoesNotModifySource() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque<int>>();
+        var source = rev.CreateDeque<int>();
+        source.PushBack(10);
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        var fork = source.ForkCommittedAsMutable();
+        fork.PushBack(30);
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque<int>>>(opened.GraphRoot);
+
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDeque<int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque<int>? loadedFork));
+        Assert.Equal(1, loadedSource!.Count);
+        Assert.Equal(2, loadedFork!.Count);
+        Assert.Equal(GetIssue.None, loadedSource.GetAt(0, out int source0));
+        Assert.Equal(GetIssue.None, loadedFork.GetAt(0, out int fork0));
+        Assert.Equal(GetIssue.None, loadedFork.GetAt(1, out int fork1));
+        Assert.Equal(10, source0);
+        Assert.Equal(10, fork0);
+        Assert.Equal(30, fork1);
+    }
+
+    [Fact]
+    public void ForkCommittedAsMutable_MixedDeque_HeapValue_UsesIndependentOwnedSlot() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque>();
+        var source = rev.CreateDeque();
+        source.PushBack(ulong.MaxValue);
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        var fork = source.ForkCommittedAsMutable();
+        Assert.True(fork.TrySetFront<ulong>(42UL));
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        Assert.Equal(GetIssue.None, source.PeekFront<ulong>(out ulong sourceValueBeforeOpen));
+        Assert.Equal(ulong.MaxValue, sourceValueBeforeOpen);
+
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque>>(opened.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDeque? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque? loadedFork));
+        Assert.Equal(GetIssue.None, loadedSource!.PeekFront<ulong>(out ulong sourceValue));
+        Assert.Equal(GetIssue.None, loadedFork!.PeekFront<ulong>(out ulong forkValue));
+        Assert.Equal(ulong.MaxValue, sourceValue);
+        Assert.Equal(42UL, forkValue);
+    }
+
+    [Fact]
+    public void ForkCommittedAsMutable_TypedDeque_DurableObjectElements_AreShallowReferences() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque<DurableDict<int, int>>>();
+        var source = rev.CreateDeque<DurableDict<int, int>>();
+        var child = rev.CreateDict<int, int>();
+        child.Upsert(1, 10);
+        source.PushBack(child);
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        var fork = source.ForkCommittedAsMutable();
+        root.Remove(1);
+        root.Upsert(2, fork);
+        Assert.Equal(GetIssue.None, fork.PeekFront(out DurableDict<int, int>? forkChild));
+        Assert.Same(child, forkChild);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        Assert.Equal(DurableState.Detached, source.State);
+        Assert.NotEqual(DurableState.Detached, child.State);
+
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque<DurableDict<int, int>>>>(opened.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque<DurableDict<int, int>>? loadedFork));
+        Assert.Equal(GetIssue.None, loadedFork!.PeekFront(out DurableDict<int, int>? loadedChild));
+        Assert.Equal(child.LocalId, loadedChild!.LocalId);
+        Assert.Equal(GetIssue.None, loadedChild.Get(1, out int value));
+        Assert.Equal(10, value);
+    }
+
+    [Fact]
+    public void ForkCommittedAsMutable_TypedDeque_AllowsConsecutiveForksBeforeCommit() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque<int>>();
+        var source = rev.CreateDeque<int>();
+        source.PushBack(10);
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        var fork1 = source.ForkCommittedAsMutable();
+        var fork2 = fork1.ForkCommittedAsMutable();
+        root.Upsert(2, fork1);
+        root.Upsert(3, fork2);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque<int>>>(opened.GraphRoot);
+
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque<int>? loadedFork1));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(3, out DurableDeque<int>? loadedFork2));
+        Assert.Equal(GetIssue.None, loadedFork1!.PeekFront(out int fork1Value));
+        Assert.Equal(GetIssue.None, loadedFork2!.PeekFront(out int fork2Value));
+        Assert.Equal(10, fork1Value);
+        Assert.Equal(10, fork2Value);
+        Assert.NotEqual(fork1.LocalId, fork2.LocalId);
+    }
+
+    [Fact]
+    public void ForkCommittedAsMutable_TypedDeque_UnreachablePendingFork_IsSwept() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque<int>>();
+        var source = rev.CreateDeque<int>();
+        source.PushBack(10);
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        var fork = source.ForkCommittedAsMutable();
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+
+        Assert.Equal(DurableState.Detached, fork.State);
+        Assert.True(rev.Load(fork.LocalId).IsFailure);
+    }
+
+    [Fact]
     public void ForkCommittedAsMutable_SaveAsWritesForkAndClearsPendingRegistration() {
         var srcPath = GetTempFilePath();
         var dstPath = GetTempFilePath();

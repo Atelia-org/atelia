@@ -2,7 +2,8 @@ using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
 
-public abstract class DurableDict<TKey, TValue> : DurableDictBase<TKey>, IDict<TKey>, IDict<TKey, TValue>
+public abstract class DurableDict<TKey, TValue> : DurableDictBase<TKey>, IDict<TKey>, IDict<TKey, TValue>,
+    ICommittedMutableForkable<DurableDict<TKey, TValue>>
 where TKey : notnull where TValue : notnull {
     /// <summary>由<see cref="TypedDictFactory{TKey, TValue}"/>初始化。</summary>
     internal static byte[]? s_typeCode;

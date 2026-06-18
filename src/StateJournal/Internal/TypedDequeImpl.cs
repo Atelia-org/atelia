@@ -99,6 +99,13 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
 
     private protected override void DiscardChangesCore() => _core.Revert<VHelper>();
 
+    internal override DurableObject ForkAsMutableCore() {
+        var fork = new TypedDequeImpl<T, VHelper>();
+        fork._core = _core.ForkMutableFromCommitted<VHelper>();
+        fork._versionStatus = _versionStatus.ForkForNewObject();
+        return fork;
+    }
+
     internal override void FreezeCore(bool forceRebase) {
         if (!forceRebase) { return; }
 

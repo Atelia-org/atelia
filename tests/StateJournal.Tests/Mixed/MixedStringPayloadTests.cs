@@ -230,6 +230,37 @@ partial class RevisionTests {
     }
 
     [Fact]
+    public void MixedDeque_String_ForkCommittedAsMutable_RoundTripsIndependentStrings() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque>();
+        var source = rev.CreateDeque();
+        source.OfString.PushBack("source");
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        int ownedBeforeFork = ValuePools.OfOwnedString.Count;
+        var fork = source.ForkCommittedAsMutable();
+        Assert.Equal(ownedBeforeFork + 1, ValuePools.OfOwnedString.Count);
+
+        Assert.True(fork.OfString.TrySetFront("fork"));
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque>>(opened.GraphRoot);
+
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDeque? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque? loadedFork));
+        Assert.Equal(GetIssue.None, loadedSource!.OfString.PeekFront(out string? sourceValue));
+        Assert.Equal(GetIssue.None, loadedFork!.OfString.PeekFront(out string? forkValue));
+        Assert.Equal("source", sourceValue);
+        Assert.Equal("fork", forkValue);
+    }
+
+    [Fact]
     public void MixedDict_String_Commit_Open_RoundTrip() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);

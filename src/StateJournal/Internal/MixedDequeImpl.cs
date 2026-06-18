@@ -16,6 +16,14 @@ internal class MixedDequeImpl : DurableDeque {
         RecountRefs();
     }
 
+    internal override DurableObject ForkAsMutableCore() {
+        var fork = new MixedDequeImpl();
+        fork._core = _core.ForkMutableFromCommitted<ValueBoxHelper>();
+        fork._versionStatus = _versionStatus.ForkForNewObject();
+        fork.RecountRefs();
+        return fork;
+    }
+
     internal override void FreezeCore(bool forceRebase) {
         if (!forceRebase) { return; }
 
@@ -103,7 +111,8 @@ internal class MixedDequeImpl : DurableDeque {
     private void AssertRefCountConsistency() {
         var (durCount, symCount) = ComputeRefCounts();
         Debug.Assert(_durableRefCount == durCount && _symbolRefCount == symCount,
-            $"MixedDeque refcount drift: durable={_durableRefCount}(expect {durCount}), symbol={_symbolRefCount}(expect {symCount})");
+            $"MixedDeque refcount drift: durable={_durableRefCount}(expect {durCount}), symbol={_symbolRefCount}(expect {symCount})"
+        );
     }
 
     private static void CountRefs(Span<ValueBox> segment, ref int durCount, ref int symCount) {

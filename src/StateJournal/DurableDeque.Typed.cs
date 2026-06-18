@@ -2,7 +2,8 @@ using Atelia.StateJournal.Internal;
 
 namespace Atelia.StateJournal;
 
-public abstract class DurableDeque<T> : DurableDequeBase, IDeque<T> where T : notnull {
+public abstract class DurableDeque<T> : DurableDequeBase, IDeque<T>, ICommittedMutableForkable<DurableDeque<T>>
+    where T : notnull {
     /// <summary>由<see cref="TypedDequeFactory{T}"/>初始化。</summary>
     internal static byte[]? s_typeCode;
     private protected override ReadOnlySpan<byte> TypeCode => s_typeCode;
@@ -25,4 +26,11 @@ public abstract class DurableDeque<T> : DurableDequeBase, IDeque<T> where T : no
     public abstract bool TrySetBack(T? value);
     public abstract GetIssue PopFront(out T? value);
     public abstract GetIssue PopBack(out T? value);
+
+    /// <summary>
+    /// Fork this object's committed state into a new mutable object with a fresh LocalId.
+    /// Pending working changes on the source are ignored. DurableObject elements are shallow-copied.
+    /// </summary>
+    public DurableDeque<T> ForkCommittedAsMutable() =>
+        Revision.ForkCommittedAsMutable(this);
 }

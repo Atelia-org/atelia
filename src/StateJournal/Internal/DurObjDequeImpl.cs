@@ -77,6 +77,13 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
 
     private protected override void DiscardChangesCore() => _core.Revert<LocalIdAsRefHelper>();
 
+    internal override DurableObject ForkAsMutableCore() {
+        var fork = new DurObjDequeImpl<T>();
+        fork._core = _core.ForkMutableFromCommitted<LocalIdAsRefHelper>();
+        fork._versionStatus = _versionStatus.ForkForNewObject();
+        return fork;
+    }
+
     internal override void FreezeCore(bool forceRebase) {
         // LocalId 是纯值 ID，逐槽 freeze 无意义；
         // DequeChangeTracker 目前也没有 FreezeFromCurrent/FreezeFromClean，

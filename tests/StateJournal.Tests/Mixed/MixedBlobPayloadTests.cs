@@ -255,6 +255,37 @@ partial class RevisionTests {
     }
 
     [Fact]
+    public void MixedDeque_Blob_ForkCommittedAsMutable_RoundTripsIndependentBlobs() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, DurableDeque>();
+        var source = rev.CreateDeque();
+        source.OfBlob.PushBack(Bs(0x11, 0x22, 0x33));
+        root.Upsert(1, source);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        int ownedBeforeFork = ValuePools.OfOwnedBlob.Count;
+        var fork = source.ForkCommittedAsMutable();
+        Assert.Equal(ownedBeforeFork + 1, ValuePools.OfOwnedBlob.Count);
+
+        Assert.True(fork.OfBlob.TrySetFront(Bs(0xAA, 0xBB, 0xCC, 0xDD)));
+        root.Upsert(2, fork);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit2");
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque>>(opened.GraphRoot);
+
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDeque? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque? loadedFork));
+        Assert.Equal(GetIssue.None, loadedSource!.OfBlob.PeekFront(out ByteString sourceValue));
+        Assert.Equal(GetIssue.None, loadedFork!.OfBlob.PeekFront(out ByteString forkValue));
+        Assert.Equal(Bs(0x11, 0x22, 0x33), sourceValue);
+        Assert.Equal(Bs(0xAA, 0xBB, 0xCC, 0xDD), forkValue);
+    }
+
+    [Fact]
     public void MixedDict_Blob_ForkCommittedAsMutable_LargeBlob_RoundTripsIndependently() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);

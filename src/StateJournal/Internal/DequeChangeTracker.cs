@@ -107,6 +107,16 @@ internal struct DequeChangeTracker<TValue>
         _dirtyKeepIndexBytesCacheValid = true;
     }
 
+    public DequeChangeTracker<TValue> ForkMutableFromCommitted<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        var fork = new DequeChangeTracker<TValue>();
+        _committed.GetSegments(out Span<TValue?> first, out Span<TValue?> second);
+        AppendForkedSegment<VHelper>(ref fork, first);
+        AppendForkedSegment<VHelper>(ref fork, second);
+        fork.ResetTrackedWindow<VHelper>();
+        return fork;
+    }
+
     public void PushFront<VHelper>(TValue? value)
         where VHelper : unmanaged, ITypeHelper<TValue> {
         if (_newKeepLo == 0 && _oldKeepLo > 0) {
@@ -617,6 +627,32 @@ internal struct DequeChangeTracker<TValue>
 
     private static uint EstimateValueBytes<VHelper>(TValue? value)
         where VHelper : ITypeHelper<TValue> => VHelper.EstimateBareSize(value, asKey: false);
+
+    private static void AppendForkedSegment<VHelper>(ref DequeChangeTracker<TValue> fork, Span<TValue?> source)
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (source.Length == 0) { return; }
+
+        fork._committed.ReserveBack(source.Length, out Span<TValue?> committedFirst, out Span<TValue?> committedSecond);
+        fork._current.ReserveBack(source.Length, out Span<TValue?> currentFirst, out Span<TValue?> currentSecond);
+        AppendForkedSlice<VHelper>(ref fork, source, committedFirst, currentFirst);
+        AppendForkedSlice<VHelper>(ref fork, source[committedFirst.Length..], committedSecond, currentSecond);
+    }
+
+    private static void AppendForkedSlice<VHelper>(
+        ref DequeChangeTracker<TValue> fork,
+        Span<TValue?> source,
+        Span<TValue?> committedDest,
+        Span<TValue?> currentDest
+    )
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        Debug.Assert(source.Length == committedDest.Length && committedDest.Length == currentDest.Length);
+        for (int i = 0; i < source.Length; ++i) {
+            TValue? forkValue = VHelper.ForkFrozenForNewOwner(source[i]);
+            committedDest[i] = forkValue;
+            currentDest[i] = forkValue;
+            fork._currentValueBytes += EstimateValueBytes<VHelper>(forkValue);
+        }
+    }
 
     private uint GetDirtyKeepIndexBytes() {
         if (_dirtyKeepIndexBytesCacheValid) { return _dirtyKeepIndexBytesCache; }

@@ -347,6 +347,66 @@ public class DequeChangeTrackerValueBoxTests {
     }
 
     [Fact]
+    public void EstimatedBytes_ValueBoxRemainInSync_AfterForkMutableFromCommitted() {
+        var tracker = new DequeChangeTracker<ValueBox>();
+        var fork = new DequeChangeTracker<ValueBox>();
+
+        try {
+            SeedCommitted(ref tracker, Heap(11), Heap(22), Heap(33));
+            int countAfterCommit = Bits64Count;
+
+            fork = tracker.ForkMutableFromCommitted<ValueBoxHelper>();
+
+            Assert.Equal(countAfterCommit + 3, Bits64Count);
+            AssertEstimateMatchesSerializedBody(fork);
+            Assert.False(fork.HasChanges);
+            AssertDequeEqual(fork.Current, HeapValue(11), HeapValue(22), HeapValue(33));
+            AssertDequeEqual(fork.Committed, HeapValue(11), HeapValue(22), HeapValue(33));
+        }
+        finally {
+            Cleanup(ref fork);
+            Cleanup(ref tracker);
+        }
+    }
+
+    [Fact]
+    public void ForkMutableFromCommitted_PreservesWrappedCommittedOrder_AndOwnerIsolation() {
+        var tracker = new DequeChangeTracker<ValueBox>();
+        var fork = new DequeChangeTracker<ValueBox>();
+
+        try {
+            SeedCommitted(ref tracker, Heap(11), Heap(22), Heap(33), Heap(44));
+            int countAfterFirstCommit = Bits64Count;
+
+            ValueBox removed = PopFront(ref tracker, out bool callerOwned);
+            Assert.False(callerOwned);
+            AssertBoxEquals(removed, HeapValue(11));
+
+            tracker.PushBack<ValueBoxHelper>(Heap(55));
+            tracker.Commit<ValueBoxHelper>();
+
+            Assert.Equal(countAfterFirstCommit, Bits64Count);
+            AssertDequeEqual(tracker.Committed, HeapValue(22), HeapValue(33), HeapValue(44), HeapValue(55));
+
+            fork = tracker.ForkMutableFromCommitted<ValueBoxHelper>();
+
+            Assert.Equal(countAfterFirstCommit + 4, Bits64Count);
+            AssertEstimateMatchesSerializedBody(fork);
+            Assert.False(fork.HasChanges);
+            AssertDequeEqual(fork.Current, HeapValue(22), HeapValue(33), HeapValue(44), HeapValue(55));
+            AssertDequeEqual(fork.Committed, HeapValue(22), HeapValue(33), HeapValue(44), HeapValue(55));
+
+            Assert.True(UpdateAtInt64(ref fork, 0, HeapValue(222)));
+            AssertBoxEquals(tracker.Current[0], HeapValue(22));
+            AssertBoxEquals(fork.Current[0], HeapValue(222));
+        }
+        finally {
+            Cleanup(ref fork);
+            Cleanup(ref tracker);
+        }
+    }
+
+    [Fact]
     public void SetBack_ThenSetFront_WithEmptyKeepAndBothDirtySides_ReleasesBothExclusiveSlots() {
         var tracker = new DequeChangeTracker<ValueBox>();
 

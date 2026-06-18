@@ -6,7 +6,8 @@ using Atelia.StateJournal.Serialization;
 namespace Atelia.StateJournal;
 
 /// <summary>类型化可持久化哈希集合。key 支持矩阵与 dict key 保持一致。</summary>
-public abstract class DurableHashSet<T> : DurableObject where T : notnull {
+public abstract class DurableHashSet<T> : DurableObject, ICommittedMutableForkable<DurableHashSet<T>>
+    where T : notnull {
     private protected VersionChainStatus _versionStatus;
 
     /// <summary>由 <see cref="TypedHashSetFactory{TKey}"/> 初始化。</summary>
