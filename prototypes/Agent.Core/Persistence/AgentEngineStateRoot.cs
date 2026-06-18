@@ -86,7 +86,7 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.History.SetLastSerial(snapshot.AgentState.LastSerial);
         _workspaceRoot.History.ReplaceRecent(snapshot.AgentState.RecentHistory);
         _workspaceRoot.History.ReplacePendingNotifications(snapshot.AgentState.PendingNotifications);
-        SaveRuntimeState(ToRuntimeStateSnapshot(snapshot));
+        ReplaceRuntimeState(ToRuntimeStateSnapshot(snapshot));
     }
 
     public AgentEngineStateSnapshot Load() {
@@ -111,16 +111,16 @@ public sealed class AgentEngineStateRoot {
         );
     }
 
-    internal void SaveRuntimeState(AgentEngine engine) {
+    internal void ReplaceRuntimeState(AgentEngine engine) {
         ArgumentNullException.ThrowIfNull(engine);
-        SaveRuntimeState(engine.ExportRuntimeStateSnapshot());
+        ReplaceRuntimeState(engine.ExportRuntimeStateSnapshot());
     }
 
-    internal void SaveRuntimeStateAndCommit(Repository repo, AgentEngine engine) {
+    internal void ReplaceRuntimeStateAndCommit(Repository repo, AgentEngine engine) {
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(engine);
 
-        SaveRuntimeState(engine);
+        ReplaceRuntimeState(engine);
         repo.Commit(Root).Unwrap();
     }
 
@@ -154,7 +154,7 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(executionSequence);
     }
 
-    internal void SaveRuntimeState(AgentEngineRuntimeStateSnapshot snapshot) {
+    internal void ReplaceRuntimeState(AgentEngineRuntimeStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
         _workspaceRoot.Meta.Stamp();
