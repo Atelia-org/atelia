@@ -30,7 +30,7 @@ public partial class AgentEngine {
     private ToolRegistry? _toolRegistry;
     private ToolSession? _toolSession;
     private ToolRegistry ToolRegistry => EnsureToolsBuilt();
-    private AttachedPersistenceSession? _attachedPersistence;
+    private RepositoryPersistenceBinding? _repositoryPersistence;
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
     private readonly TurnRuntimeState _turnRuntime = new();
@@ -205,7 +205,7 @@ public partial class AgentEngine {
             _toolSession.Registry = registry;
         }
 
-        _toolSession.ExecutionSequenceAllocated = _attachedPersistence is null
+        _toolSession.ExecutionSequenceAllocated = _repositoryPersistence is null
             ? null
             : PersistToolSessionExecutionSequenceIfAttached;
 

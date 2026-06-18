@@ -344,13 +344,13 @@ public partial class AgentEngine {
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(stateRoot);
 
-        if (_attachedPersistence is not null) { throw new InvalidOperationException("AgentEngine persistence session is already attached."); }
+        if (_repositoryPersistence is not null) { throw new InvalidOperationException("AgentEngine repository persistence is already bound."); }
 
         if (!_state.IsAttachedToWorkspaceRoot(stateRoot.WorkspaceRoot)) {
             _state.AttachWorkspaceRoot(stateRoot.WorkspaceRoot);
         }
 
-        _attachedPersistence = new AttachedPersistenceSession(repo, stateRoot);
+        _repositoryPersistence = new RepositoryPersistenceBinding(repo, stateRoot);
         _toolsDirty = true;
     }
 
@@ -359,15 +359,15 @@ public partial class AgentEngine {
         if (_toolSession is not null) {
             _toolSession.ExecutionSequenceAllocated = null;
         }
-        _attachedPersistence = null;
+        _repositoryPersistence = null;
     }
 
     internal void PersistStableBoundaryIfAttached() {
-        _attachedPersistence?.CommitRoot();
+        _repositoryPersistence?.CommitRoot();
     }
 
     private void PersistPendingToolResultsIfAttached() {
-        _attachedPersistence?.SavePendingToolResults(_pendingToolResults.Values
+        _repositoryPersistence?.SavePendingToolResults(_pendingToolResults.Values
             .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
             .Select(AgentState.CloneToolCallExecutionResult)
             .ToArray());
@@ -378,7 +378,7 @@ public partial class AgentEngine {
             ? null
             : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile);
 
-        _attachedPersistence?.SaveTurnRuntime(resolvedProfile, _turnRuntime.LockedCompactionSplitIndex);
+        _repositoryPersistence?.SaveTurnRuntime(resolvedProfile, _turnRuntime.LockedCompactionSplitIndex);
     }
 
     private void PersistPendingCompactionIfAttached() {
@@ -390,22 +390,22 @@ public partial class AgentEngine {
             )
             : null;
 
-        _attachedPersistence?.SavePendingCompaction(pendingCompaction);
+        _repositoryPersistence?.SavePendingCompaction(pendingCompaction);
     }
 
     private void PersistToolSessionExecutionSequenceIfAttached() {
-        _attachedPersistence?.SetToolSessionExecutionSequence(_toolSession?.LastIssuedExecutionSequence ?? 0);
+        _repositoryPersistence?.SetToolSessionExecutionSequence(_toolSession?.LastIssuedExecutionSequence ?? 0);
     }
 
     private void PersistToolSessionExecutionSequenceIfAttached(long executionSequence) {
-        _attachedPersistence?.SetToolSessionExecutionSequence(executionSequence);
+        _repositoryPersistence?.SetToolSessionExecutionSequence(executionSequence);
     }
 
-    private sealed class AttachedPersistenceSession {
+    private sealed class RepositoryPersistenceBinding {
         private readonly Repository _repo;
         private readonly AgentEngineStateRoot _stateRoot;
 
-        public AttachedPersistenceSession(Repository repo, AgentEngineStateRoot stateRoot) {
+        public RepositoryPersistenceBinding(Repository repo, AgentEngineStateRoot stateRoot) {
             _repo = repo ?? throw new ArgumentNullException(nameof(repo));
             _stateRoot = stateRoot ?? throw new ArgumentNullException(nameof(stateRoot));
         }
