@@ -1,6 +1,6 @@
 # Agent.Core Live Durable Workspace Migration Draft
 
-状态：draft v0  
+状态：draft v0
 定位：讨论 `Agent.Core` 如何从当前的 snapshot persistence 模式，迁移到以 StateJournal 为主真相的 live durable workspace 模式。
 
 相关文档：
@@ -27,12 +27,12 @@
 - 再把 snapshot 编码进 StateJournal
 - 恢复时从 snapshot 重建新引擎
 
-这在早期探索阶段是合理的，但如果把 `Agent.Core` 视为一个可能持续运行几十年的 Agent 内核，这个模式并不够好。  
+这在早期探索阶段是合理的，但如果把 `Agent.Core` 视为一个可能持续运行几十年的 Agent 内核，这个模式并不够好。
 更合适的长期方向应是：
 
 > **把 `Agent.Core` 升级为“围绕 live durable workspace 工作的运行时”，让 StateJournal 承担 durable working state 的主真相，而不是继续只扮演 snapshot 落盘容器。**
 
-这不等于“一切都 durable 化”。  
+这不等于“一切都 durable 化”。
 更准确的边界是：
 
 - **必须跨重启连续存在的工作态**：直接建模在 StateJournal 中
@@ -50,6 +50,7 @@
    - 业务语义首先活在内存对象里
    - durable 侧只是它的编码投影
    - 一旦两边边界漂移，就容易出现“到底谁是真相”的问题
+   - 注意：迁移到 live durable workspace 后，若采用 §11.2 的 read-through cache，内存镜像与 durable object 仍是两份表示。真正消除的不是“双表示”，而是“真相位置不明确”——迁移后真相唯一锚定在 durable object，cache 只是带明确失效边界的从属副本（参见 §11.2）。
 2. **branch / fork 吃不满 StateJournal 红利**
    - 底层对象即使会 fork / replay
    - `Agent.Core` 仍先把自己拍扁成 snapshot，再重建
@@ -125,7 +126,7 @@ runtime overlay
   = 进程内短命调度现场
 ```
 
-这和 [LlmSession-Execution-Kernel-Draft.md](/repos/focus/atelia/docs/Agent/LlmSession-Execution-Kernel-Draft.md:1) 里“durable model + runtime overlay”的取向是一致的。
+这和 [LlmSession-Execution-Kernel-Draft.md](LlmSession-Execution-Kernel-Draft.md) 里“durable model + runtime overlay”的取向是一致的。
 
 ---
 
@@ -163,13 +164,15 @@ runtime overlay
 - app window render cache
 - debug observer / telemetry sink handle
 
+> 说明：上表中 `ready queue membership` / `active dispatch / active lease` / `timer / timeout object` 等属于 kernel-forward 概念（来自 [LlmSession-Execution-Kernel-Draft.md](LlmSession-Execution-Kernel-Draft.md)），当前 `Agent.Core` 尚未实现。列在此处是为了预先确定它们未来归属 runtime overlay，而不是描述现状。
+
 ### 4.3 一条核心原则
 
 判断某个状态是否该 durable 化，可以问一句：
 
 - **如果进程现在崩溃，我是否希望重启后仍然能诚实地知道它处于什么工作语义位置？**
 
-若答案是“希望”，它更应该进入 durable truth。  
+若答案是“希望”，它更应该进入 durable truth。
 若答案是“重建即可”，它更适合保留在 runtime overlay。
 
 ---
@@ -192,6 +195,8 @@ runtime overlay
 - 但停止“先导出 snapshot，再整体重写 durable graph”的路径
 - 改为直接在这些 durable object 上进行 live mutation
 
+> 澄清：这里的 live mutation 指直接修改 durable object（StateJournal 语义下只是把对象标脏，停留在内存 working state），**不等于每次改动都落盘**。真正的磁盘写入仍发生在显式 `Repository.Commit(root)` 边界，commit 节奏可与现在的 stable-boundary 提交保持一致。这次迁移改变的是“谁是真相”，不是“多频繁写盘”。
+
 ### 5.2 推荐引入 workspace façade，而不是让业务层到处摸 string-key dict
 
 即使底层 root 暂时仍是 `DurableDict<string>`，也建议尽快引入一层强语义 façade，例如：
@@ -207,7 +212,7 @@ AgentWorkspaceRoot
   FrameState
 ```
 
-它不一定一开始就必须是新的 `DurableObject` 子类。  
+它不一定一开始就必须是新的 `DurableObject` 子类。
 更实际的第一步可以是：
 
 - 一个包裹 `DurableDict<string>` 的 typed façade
@@ -246,6 +251,7 @@ AgentWorkspaceRoot
   - resolved profile checkpoint
   - locked compaction split index
   - pending compaction
+  - tool session execution sequence
 - `BranchingRoot`
   - context frames
   - active frame id
@@ -276,7 +282,7 @@ AgentWorkspaceRoot
 - `_pendingNotifications`
 - `_lastSerial`
 
-仅仅看成普通内存字段。  
+仅仅看成普通内存字段。
 它应逐步变成：
 
 - 直接面向 durable history root 的操作层
@@ -303,7 +309,7 @@ AgentWorkspaceRoot
 - 先有 `AgentEngine`
 - 再 attach 一个 persistence session
 
-长期看，这个方向是反着的。  
+长期看，这个方向是反着的。
 更合理的关系应是：
 
 - 先打开 `AgentWorkspaceRoot`
@@ -384,7 +390,7 @@ AgentWorkspaceRoot
 
 ### 阶段 B：引入 `AgentWorkspaceRoot` façade
 
-先不急着推翻现有 StateJournal graph shape。  
+先不急着推翻现有 StateJournal graph shape。
 先引入一层强语义 façade，包住当前 root：
 
 - history
@@ -411,6 +417,8 @@ AgentWorkspaceRoot
 
 此阶段完成后，`RecentHistory` 才算真正进入 live durable workspace 模式。
 
+> 主要风险：当前 `HistoryEntry` 是富 C# 对象（`ActionEntry.Message.Blocks` 等），让 `AgentState` 直接面向 durable history root 后，cache（C# 对象）与 durable history deque 必须在 append / inject / **recap / tail-rewrite** 等所有路径上保持一致。recap 替换、尾部回写这类非追加操作尤其容易让两者漂移，应在本阶段就明确 cache 失效与重建策略，这是阶段 C 的首要工程难点（与 §11.2 呼应）。
+
 ### 阶段 D：把 pending tool results / turn runtime / compaction state 迁入 live durable model
 
 这一步把目前 snapshot record 里另外几块关键工作态也转过去：
@@ -419,6 +427,7 @@ AgentWorkspaceRoot
 - resolved profile checkpoint
 - locked compaction split index
 - pending compaction
+- tool session execution sequence（当前已由 `AgentEngineStateSnapshot.ToolSessionExecutionSequence` 持久化，迁移时不要遗漏）
 - future frame metadata
 
 完成后，`AgentEngineStateSnapshot` 的存在价值会明显下降。
@@ -488,7 +497,7 @@ AgentWorkspaceRoot
 
 ### 11.2 live durable mutation 的性能与 cache 怎么做
 
-长期主真相在 durable object 上，不等于每次都要无缓存地从 durable graph 生读。  
+长期主真相在 durable object 上，不等于每次都要无缓存地从 durable graph 生读。
 更合理的做法是：
 
 - write-through durable truth
@@ -498,6 +507,7 @@ AgentWorkspaceRoot
 也就是说可以有内存镜像，但必须承认：
 
 - cache is not truth
+- 因此 §1 所说的“消除双真源”应理解为“真相位置唯一、优先级明确”，而不是“内存里不再有第二份表示”。cache 与 durable object 仍是两份数据，迁移真正消灭的是“谁是真相不清楚”；cache↔durable 的一致性维护成本依然存在，需要明确失效边界（尤其是 recap / tail-rewrite 路径，见阶段 C）。
 
 ### 11.3 branch workspace 是 fork root，还是 fork subgraph
 
@@ -513,7 +523,7 @@ AgentWorkspaceRoot
 
 ### 11.4 app/tool participation contract 何时并入
 
-这次迁移不必第一天就把所有 app/tool 也 durable 化。  
+这次迁移不必第一天就把所有 app/tool 也 durable 化。
 但至少要预留：
 
 - 哪些 app state 未来会进入 branch/durable workspace
@@ -526,7 +536,7 @@ AgentWorkspaceRoot
 
 ## 12. 最终判断
 
-如果把 `Agent.Core` 当成一个可能连续运行几十年的 Agent 内核来看，  
+如果把 `Agent.Core` 当成一个可能连续运行几十年的 Agent 内核来看，
 我不认为当前的 snapshot persistence 形态应该继续被当作长期主骨架。
 
 更好的长期方向是：
