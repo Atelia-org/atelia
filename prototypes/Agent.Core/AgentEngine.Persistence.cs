@@ -165,8 +165,9 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(root);
 
+        var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
         return CreateFromStateSnapshot(
-            AgentEngineStateRoot.FromRoot(root).Load(),
+            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).Load(),
             profileRegistry,
             initialApps,
             initialTools,
@@ -191,8 +192,9 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(root);
 
+        var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
         return CreateFromStateSnapshot(
-            AgentEngineStateRoot.FromRoot(root).Load(),
+            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).Load(),
             resolvedProfileResolver,
             initialApps,
             initialTools,

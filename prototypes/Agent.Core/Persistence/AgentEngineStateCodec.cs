@@ -9,18 +9,7 @@ namespace Atelia.Agent.Core.Persistence;
 
 internal static class AgentEngineStateCodec {
     public const string KeyKind = "kind";
-    public const string KeySchemaVersion = "schemaVersion";
     public const string KeySystemPrompt = "systemPrompt";
-    public const string KeyLastSerial = "lastSerial";
-    public const string KeyHistory = "history";
-    public const string KeyPendingNotifications = "pendingNotifications";
-    public const string KeyPendingToolResults = "pendingToolResults";
-    public const string KeyTurnRuntime = "turnRuntime";
-    public const string KeyPendingCompaction = "pendingCompaction";
-    public const string KeyToolSessionExecutionSequence = "toolSessionExecutionSequence";
-
-    public const string KindValue = "agent-engine-state";
-    public const long SchemaVersion = 2L;
 
     private const string KeyTimestampUtcTicks = "timestampUtcTicks";
     private const string KeySerial = "serial";

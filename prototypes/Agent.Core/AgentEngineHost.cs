@@ -84,10 +84,11 @@ public sealed class AgentEngineHost : IDisposable {
         var repo = Repository.Create(repoDir).Unwrap();
         try {
             var revision = repo.CreateBranch(options.BranchName).Unwrap();
-            var stateRoot = AgentEngineStateRoot.Create(revision, options.SystemPrompt);
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            var stateRoot = AgentEngineStateRoot.Create(workspaceRoot, options.SystemPrompt);
             repo.Commit(stateRoot.Root).Unwrap();
 
-            var engine = runtime.BuildEngineFromRoot(stateRoot.Root);
+            var engine = runtime.BuildEngineFromWorkspaceRoot(workspaceRoot);
             return new AgentEngineHost(repoDir, options.BranchName, repo, stateRoot, engine, runtime);
         }
         catch {
@@ -111,8 +112,9 @@ public sealed class AgentEngineHost : IDisposable {
             var revision = repo.CheckoutBranch(branchName).Unwrap();
             if (revision.GraphRoot is not DurableDict<string> root) { throw new InvalidDataException("Repository graph root is not a valid agent-engine-state."); }
 
-            var stateRoot = AgentEngineStateRoot.FromRoot(root);
-            var engine = runtime.BuildEngineFromRoot(root);
+            var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
+            var stateRoot = AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot);
+            var engine = runtime.BuildEngineFromWorkspaceRoot(workspaceRoot);
             return new AgentEngineHost(repoDir, branchName, repo, stateRoot, engine, runtime);
         }
         catch {
@@ -195,8 +197,14 @@ public sealed class AgentEngineHostRuntime {
     internal AgentEngine BuildEngineFromRoot(DurableDict<string> root) {
         ArgumentNullException.ThrowIfNull(root);
 
+        return BuildEngineFromWorkspaceRoot(AgentWorkspaceRoot.FromRoot(root));
+    }
+
+    internal AgentEngine BuildEngineFromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
+
         return AgentEngine.CreateFromRoot(
-            root,
+            workspaceRoot.Root,
             ProfileRegistry,
             InitialApps,
             InitialTools,
