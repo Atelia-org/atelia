@@ -421,6 +421,13 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             engine = await ChatSessionEngine.CreateAsync(sessionDir, createOptions, runtime, ct).ConfigureAwait(false);
         }
 
+        // Reflect config-level prompt changes into the persisted session so that
+        // editing config.json / prompts/*.md and restarting the server is enough
+        // to update the system prompt for existing sessions.
+        if (engine.TrySyncSystemPrompt(user.SystemPrompt)) {
+            DebugUtil.Info("FamilyChat.Session", $"CreateSessionAsync: system prompt synced from config for user={user.UserId}");
+        }
+
         DebugUtil.Info("FamilyChat.Session", $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, {engine.GetDebugStateSummary()}");
 
         return new UserSessionHost(user, engine, completionClient);

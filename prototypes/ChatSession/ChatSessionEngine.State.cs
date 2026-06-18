@@ -26,7 +26,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
     private readonly string _branchName;
     private readonly string _apiSpecId;
     private readonly string _modelId;
-    private readonly string _systemPrompt;
+    private string _systemPrompt;
     private readonly string _completionSurfaceId;
 
     private bool _disposed;
@@ -62,6 +62,31 @@ public sealed partial class ChatSessionEngine : IDisposable {
     public string SystemPrompt => _systemPrompt;
     public CommitAddress? PersistedHeadAddress => TryGetPersistedHeadAddress();
     public int DurableMessageCount => _messages.Count;
+
+    /// <summary>
+    /// If <paramref name="configSystemPrompt"/> differs from the currently persisted
+    /// system prompt, updates the StateJournal root and the in-memory field so that
+    /// future turns use the new prompt.  Returns <see langword="true"/> when a change
+    /// was applied.
+    /// </summary>
+    public bool TrySyncSystemPrompt(string configSystemPrompt) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(configSystemPrompt);
+
+        if (string.Equals(_systemPrompt, configSystemPrompt, StringComparison.Ordinal)) {
+            return false;
+        }
+
+        DebugUtil.Info(
+            "ChatSession.Persistence",
+            $"TrySyncSystemPrompt: updating systemPrompt for branch={_branchName}, head={FormatCommitAddress(PersistedHeadAddress)}, oldLen={_systemPrompt.Length}, newLen={configSystemPrompt.Length}"
+        );
+
+        _root.Upsert(KeySystemPrompt, configSystemPrompt);
+        _repo.Commit(_root).Unwrap();
+        _systemPrompt = configSystemPrompt;
+        return true;
+    }
 
     public static Task<ChatSessionEngine> CreateAsync(
         string repoDir,
