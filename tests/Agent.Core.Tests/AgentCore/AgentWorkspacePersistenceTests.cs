@@ -84,12 +84,16 @@ public sealed class AgentWorkspacePersistenceTests {
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
             workspaceRoot.Meta.SetSystemPrompt("workspace-born-system");
+            var initialPendingNotificationsDeque = GetPendingNotificationsDeque(workspaceRoot);
 
             var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
             state.AttachWorkspaceRoot(workspaceRoot, syncExistingState: false);
 
             state.SetSystemPrompt("updated-system");
             state.AppendNotification("queued-notification");
+            Assert.Same(initialPendingNotificationsDeque, GetPendingNotificationsDeque(workspaceRoot));
+            Assert.Equal(["queued-notification"], workspaceRoot.History.LoadPendingNotifications());
+
             var observation = state.AppendObservation(new ObservationEntry(), "recent-events");
             state.AppendAction(
                 new ActionEntry(
@@ -100,6 +104,7 @@ public sealed class AgentWorkspacePersistenceTests {
             state.ReplacePrefixWithRecap(1, "summary-text");
 
             Assert.Equal("updated-system", workspaceRoot.Meta.GetRequiredSystemPrompt());
+            Assert.NotSame(initialPendingNotificationsDeque, GetPendingNotificationsDeque(workspaceRoot));
             Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
             Assert.Equal("queued-notification\nrecent-events", observation.Notifications);
 
@@ -183,6 +188,8 @@ public sealed class AgentWorkspacePersistenceTests {
             state.AttachWorkspaceRoot(workspaceRoot, syncExistingState: false);
             state.AppendObservation(new ObservationEntry(), "live-append");
             var liveAppendDeque = GetHistoryDeque(workspaceRoot);
+            state.AppendNotification("live-pending");
+            var livePendingNotificationsDeque = GetPendingNotificationsDeque(workspaceRoot);
             var snapshot = CreateSnapshotFixture();
             var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
 
@@ -195,6 +202,9 @@ public sealed class AgentWorkspacePersistenceTests {
             for (int i = 0; i < snapshot.AgentState.RecentHistory.Count; i++) {
                 AssertHistoryEntry(snapshot.AgentState.RecentHistory[i], actual.AgentState.RecentHistory[i]);
             }
+
+            Assert.NotSame(livePendingNotificationsDeque, GetPendingNotificationsDeque(workspaceRoot));
+            Assert.Equal(snapshot.AgentState.PendingNotifications, workspaceRoot.History.LoadPendingNotifications());
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -630,6 +640,12 @@ public sealed class AgentWorkspacePersistenceTests {
         return workspaceRoot.Root.Get<DurableDeque>("history", out var history) == GetIssue.None
             ? history!
             : throw new InvalidOperationException("Workspace root is missing history deque.");
+    }
+
+    private static DurableDeque GetPendingNotificationsDeque(AgentWorkspaceRoot workspaceRoot) {
+        return workspaceRoot.Root.Get<DurableDeque>("pendingNotifications", out var pendingNotifications) == GetIssue.None
+            ? pendingNotifications!
+            : throw new InvalidOperationException("Workspace root is missing pendingNotifications deque.");
     }
 
     private sealed class RecordingTool : ITool {

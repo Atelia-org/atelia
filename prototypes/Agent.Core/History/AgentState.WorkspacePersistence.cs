@@ -68,6 +68,12 @@ public sealed partial class AgentState {
         _attachedWorkspaceRoot?.History.SavePendingNotifications(_pendingNotifications.ToArray());
     }
 
+    private void SyncAttachedWorkspaceAppendedNotification(string item) {
+        if (_attachedWorkspaceRoot is null) { return; }
+
+        _attachedWorkspaceRoot.History.AppendPendingNotification(item);
+    }
+
     private void SyncAttachedWorkspaceSystemPrompt() {
         if (_attachedWorkspaceRoot is null) { return; }
 

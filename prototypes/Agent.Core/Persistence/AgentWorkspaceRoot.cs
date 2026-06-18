@@ -226,6 +226,12 @@ internal sealed class AgentWorkspaceRoot {
             _workspaceRoot.SetPendingNotifications(pendingNotifications);
         }
 
+        public void AppendPendingNotification(string notification) {
+            ArgumentNullException.ThrowIfNull(notification);
+
+            _workspaceRoot.GetRequiredPendingNotifications().PushBack(notification);
+        }
+
         public IReadOnlyList<string> LoadPendingNotifications() {
             var notificationsContainer = _workspaceRoot.GetRequiredPendingNotifications();
             var pendingNotifications = new List<string>(notificationsContainer.Count);
