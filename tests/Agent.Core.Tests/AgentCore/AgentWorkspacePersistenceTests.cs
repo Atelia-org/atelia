@@ -76,6 +76,73 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceBornState_RestoreAndWriteThroughsNotificationDrainAndRecap() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-born-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            workspaceRoot.SetSystemPrompt("workspace-born-system");
+
+            var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
+            state.AttachWorkspaceRoot(workspaceRoot);
+
+            state.SetSystemPrompt("updated-system");
+            state.AppendNotification("queued-notification");
+            var observation = state.AppendObservation(new ObservationEntry(), "recent-events");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("assistant-turn")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.ReplacePrefixWithRecap(1, "summary-text");
+
+            Assert.Equal("updated-system", workspaceRoot.GetRequiredSystemPrompt());
+            Assert.Empty(workspaceRoot.LoadPendingNotifications());
+            Assert.Equal("queued-notification\nrecent-events", observation.Notifications);
+
+            var history = workspaceRoot.LoadHistory();
+            Assert.Equal(2, history.Count);
+            var recap = Assert.IsType<RecapEntry>(history[0]);
+            Assert.Equal("summary-text", recap.Content);
+            Assert.Equal(1UL, recap.InsteadSerial);
+            Assert.IsType<ActionEntry>(history[1]);
+            Assert.Equal(3UL, workspaceRoot.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_StateCoreMutationsUpdateWorkspaceBeforeCommit() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-working-state-{Guid.NewGuid():N}");
+
+        try {
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            host.Engine.State.SetSystemPrompt("updated-before-commit");
+            host.Engine.AppendNotification("queued-notification");
+            host.Engine.State.AppendObservation(new ObservationEntry(), "recent-events");
+
+            var snapshot = host.StateRoot.Load();
+
+            Assert.Equal("updated-before-commit", snapshot.AgentState.SystemPrompt);
+            Assert.Empty(snapshot.AgentState.PendingNotifications);
+            var observation = Assert.IsType<ObservationEntry>(Assert.Single(snapshot.AgentState.RecentHistory));
+            Assert.Equal("queued-notification\nrecent-events", observation.Notifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_CreateNewThenOpenExisting_RestoresPersistedStateThroughExistingPath() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-open-{Guid.NewGuid():N}");
 
@@ -116,6 +183,106 @@ public sealed class AgentWorkspacePersistenceTests {
                 entry => Assert.IsType<InjectionEntry>(entry)
             );
             Assert.Equal(["queued-notification"], snapshot.AgentState.PendingNotifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_NotificationDrain_PersistsAcrossReopen() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-drain-{Guid.NewGuid():N}");
+
+        try {
+            using (var host = AgentEngineHost.CreateNew(repoDir)) {
+                host.Engine.AppendNotification("queued-notification");
+                host.Engine.State.AppendObservation(new ObservationEntry(), "recent-events");
+                host.SaveAndCommit();
+            }
+
+            using var reopened = AgentEngineHost.OpenExisting(repoDir);
+            var snapshot = reopened.StateRoot.Load();
+
+            Assert.Empty(snapshot.AgentState.PendingNotifications);
+            var observation = Assert.IsType<ObservationEntry>(Assert.Single(snapshot.AgentState.RecentHistory));
+            Assert.Equal("queued-notification\nrecent-events", observation.Notifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_Recap_PersistsAcrossReopen() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-recap-{Guid.NewGuid():N}");
+
+        try {
+            using (var host = AgentEngineHost.CreateNew(repoDir)) {
+                host.Engine.State.AppendObservation(new ObservationEntry(), "recent-events");
+                host.Engine.State.AppendAction(
+                    new ActionEntry(
+                        new ActionMessage([new ActionBlock.Text("assistant-turn")]),
+                        new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                    )
+                );
+                host.Engine.State.ReplacePrefixWithRecap(1, "summary-text");
+                host.SaveAndCommit();
+            }
+
+            using var reopened = AgentEngineHost.OpenExisting(repoDir);
+            var snapshot = reopened.StateRoot.Load();
+
+            Assert.Equal(2, snapshot.AgentState.RecentHistory.Count);
+            var recap = Assert.IsType<RecapEntry>(snapshot.AgentState.RecentHistory[0]);
+            Assert.Equal("summary-text", recap.Content);
+            Assert.Equal(1UL, recap.InsteadSerial);
+            Assert.IsType<ActionEntry>(snapshot.AgentState.RecentHistory[1]);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_OpenExisting_RestoresRuntimeOnlyFieldsFromSnapshotCompatibilityLayer() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-runtime-reopen-{Guid.NewGuid():N}");
+
+        try {
+            var expected = CreateSnapshotFixture();
+            var restoredProfile = new LlmProfile(
+                new NoopCompletionClient("provider-b", "spec-b"),
+                "model-b",
+                "profile-b",
+                8192,
+                CapabilityProfile.FullFeature
+            );
+
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var stateRoot = AgentEngineStateRoot.Create(revision, "seed-system");
+                stateRoot.SaveAndCommit(repo, expected);
+            }
+
+            using var reopened = AgentEngineHost.OpenExisting(
+                repoDir,
+                new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([restoredProfile]))
+            );
+            var actual = reopened.Engine.ExportStateSnapshot();
+
+            Assert.Equal(expected.AgentState.SystemPrompt, actual.AgentState.SystemPrompt);
+            Assert.Equal(expected.AgentState.RecentHistory.Count, actual.AgentState.RecentHistory.Count);
+            Assert.Equal(expected.PendingToolResults.Count, actual.PendingToolResults.Count);
+            AssertToolCallExecutionResult(expected.PendingToolResults[0], actual.PendingToolResults[0]);
+            Assert.Equal(expected.ResolvedProfile, actual.ResolvedProfile);
+            Assert.Equal(expected.LockedCompactionSplitIndex, actual.LockedCompactionSplitIndex);
+            Assert.Equal(expected.PendingCompaction, actual.PendingCompaction);
+            Assert.Equal(expected.ToolSessionExecutionSequence, actual.ToolSessionExecutionSequence);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -205,5 +372,27 @@ public sealed class AgentWorkspacePersistenceTests {
         Assert.Equal(expected.ExecuteResult.Status, actual.ExecuteResult.Status);
         Assert.Equal(expected.ExecuteResult.GetFlattenedText(), actual.ExecuteResult.GetFlattenedText());
         Assert.Equal(expected.Elapsed, actual.Elapsed);
+    }
+
+    private sealed class NoopCompletionClient : ICompletionClient {
+        public NoopCompletionClient(string name, string apiSpecId) {
+            Name = name;
+            ApiSpecId = apiSpecId;
+        }
+
+        public string Name { get; }
+
+        public string ApiSpecId { get; }
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = request;
+            _ = observer;
+            _ = cancellationToken;
+            throw new NotSupportedException("This test client should not be invoked.");
+        }
     }
 }

@@ -203,8 +203,8 @@ public sealed class AgentEngineHostRuntime {
     internal AgentEngine BuildEngineFromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
-        return AgentEngine.CreateFromRoot(
-            workspaceRoot.Root,
+        return AgentEngine.CreateFromWorkspaceRoot(
+            workspaceRoot,
             ProfileRegistry,
             InitialApps,
             InitialTools,

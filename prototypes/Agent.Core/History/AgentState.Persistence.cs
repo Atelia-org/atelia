@@ -17,10 +17,39 @@ public sealed partial class AgentState {
     internal static AgentState RestoreSnapshot(AgentStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        var state = new AgentState(snapshot.SystemPrompt);
+        return RestoreCore(
+            snapshot.SystemPrompt,
+            snapshot.RecentHistory,
+            snapshot.PendingNotifications,
+            snapshot.LastSerial
+        );
+    }
+
+    internal static AgentState RestoreFromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
+
+        return RestoreCore(
+            workspaceRoot.GetRequiredSystemPrompt(),
+            workspaceRoot.LoadHistory(),
+            workspaceRoot.LoadPendingNotifications(),
+            workspaceRoot.GetRequiredLastSerial()
+        );
+    }
+
+    private static AgentState RestoreCore(
+        string systemPrompt,
+        IReadOnlyList<HistoryEntry> recentHistory,
+        IReadOnlyList<string> pendingNotifications,
+        ulong lastSerial
+    ) {
+        ArgumentNullException.ThrowIfNull(systemPrompt);
+        ArgumentNullException.ThrowIfNull(recentHistory);
+        ArgumentNullException.ThrowIfNull(pendingNotifications);
+
+        var state = new AgentState(systemPrompt);
         ulong maxSerial = 0;
 
-        foreach (var sourceEntry in snapshot.RecentHistory) {
+        foreach (var sourceEntry in recentHistory) {
             ArgumentNullException.ThrowIfNull(sourceEntry);
 
             var restoredEntry = CloneHistoryEntry(sourceEntry);
@@ -28,13 +57,13 @@ public sealed partial class AgentState {
             maxSerial = Math.Max(maxSerial, restoredEntry.Serial);
         }
 
-        foreach (var notification in snapshot.PendingNotifications) {
+        foreach (var notification in pendingNotifications) {
             if (notification is null) { throw new InvalidOperationException("Pending notifications must not contain null values."); }
 
             state._pendingNotifications.Enqueue(notification);
         }
 
-        state._lastSerial = Math.Max(snapshot.LastSerial, maxSerial);
+        state._lastSerial = Math.Max(lastSerial, maxSerial);
         return state;
     }
 

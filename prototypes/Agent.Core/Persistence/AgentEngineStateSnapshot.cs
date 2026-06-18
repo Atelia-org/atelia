@@ -49,6 +49,17 @@ public sealed record CompactionCheckpoint(
 );
 
 /// <summary>
+/// AgentEngine 中仍通过 snapshot adapter 读写的 runtime-only 可持久化状态。
+/// </summary>
+internal sealed record AgentEngineRuntimeStateSnapshot(
+    IReadOnlyList<ToolCallExecutionResult> PendingToolResults,
+    LlmProfileCheckpoint? ResolvedProfile,
+    int? LockedCompactionSplitIndex,
+    CompactionCheckpoint? PendingCompaction,
+    long ToolSessionExecutionSequence
+);
+
+/// <summary>
 /// AgentEngine 的完整可持久化快照。
 /// </summary>
 public sealed record AgentEngineStateSnapshot(

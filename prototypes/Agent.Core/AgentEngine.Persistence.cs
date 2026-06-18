@@ -7,10 +7,7 @@ using Atelia.StateJournal;
 namespace Atelia.Agent.Core;
 
 public partial class AgentEngine {
-    /// <summary>
-    /// 导出当前引擎的完整可持久化状态快照。
-    /// </summary>
-    public AgentEngineStateSnapshot ExportStateSnapshot() {
+    internal AgentEngineRuntimeStateSnapshot ExportRuntimeStateSnapshot() {
         var pendingToolResults = _pendingToolResults.Values
             .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
             .Select(AgentState.CloneToolCallExecutionResult)
@@ -28,13 +25,28 @@ public partial class AgentEngine {
             )
             : null;
 
-        return new AgentEngineStateSnapshot(
-            AgentState: _state.ExportSnapshot(),
+        return new AgentEngineRuntimeStateSnapshot(
             PendingToolResults: pendingToolResults,
             ResolvedProfile: resolvedProfile,
             LockedCompactionSplitIndex: _turnRuntime.LockedCompactionSplitIndex,
             PendingCompaction: pendingCompaction,
             ToolSessionExecutionSequence: _toolSession?.LastIssuedExecutionSequence ?? 0
+        );
+    }
+
+    /// <summary>
+    /// 导出当前引擎的完整可持久化状态快照。
+    /// </summary>
+    public AgentEngineStateSnapshot ExportStateSnapshot() {
+        var runtimeSnapshot = ExportRuntimeStateSnapshot();
+
+        return new AgentEngineStateSnapshot(
+            AgentState: _state.ExportSnapshot(),
+            PendingToolResults: runtimeSnapshot.PendingToolResults,
+            ResolvedProfile: runtimeSnapshot.ResolvedProfile,
+            LockedCompactionSplitIndex: runtimeSnapshot.LockedCompactionSplitIndex,
+            PendingCompaction: runtimeSnapshot.PendingCompaction,
+            ToolSessionExecutionSequence: runtimeSnapshot.ToolSessionExecutionSequence
         );
     }
 
@@ -97,7 +109,37 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        var state = AgentState.RestoreSnapshot(snapshot.AgentState);
+        return CreateFromPersistedStateCore(
+            AgentState.RestoreSnapshot(snapshot.AgentState),
+            new AgentEngineRuntimeStateSnapshot(
+                PendingToolResults: snapshot.PendingToolResults,
+                ResolvedProfile: snapshot.ResolvedProfile,
+                LockedCompactionSplitIndex: snapshot.LockedCompactionSplitIndex,
+                PendingCompaction: snapshot.PendingCompaction,
+                ToolSessionExecutionSequence: snapshot.ToolSessionExecutionSequence
+            ),
+            resolvedProfileResolver,
+            initialApps,
+            initialTools,
+            idleProvider,
+            utcNowProvider,
+            autoCompaction
+        );
+    }
+
+    private static AgentEngine CreateFromPersistedStateCore(
+        AgentState state,
+        AgentEngineRuntimeStateSnapshot runtimeState,
+        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
+        IEnumerable<IApp>? initialApps,
+        IEnumerable<ITool>? initialTools,
+        IIdleObservationProvider? idleProvider,
+        Func<DateTimeOffset>? utcNowProvider,
+        AutoCompactionOptions? autoCompaction
+    ) {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(runtimeState);
+
         var engine = new AgentEngine(
             state: state,
             initialApps: initialApps,
@@ -107,23 +149,23 @@ public partial class AgentEngine {
             autoCompaction: autoCompaction
         );
 
-        foreach (var pendingToolResult in snapshot.PendingToolResults) {
+        foreach (var pendingToolResult in runtimeState.PendingToolResults) {
             engine._pendingToolResults[pendingToolResult.ToolCallId] = AgentState.CloneToolCallExecutionResult(pendingToolResult);
         }
 
-        if (snapshot.ResolvedProfile is not null) {
+        if (runtimeState.ResolvedProfile is not null) {
             if (resolvedProfileResolver is null) {
                 throw new InvalidOperationException(
                     "State snapshot contains a resolved LlmProfile checkpoint, but no resolver was supplied."
                 );
             }
 
-            var resolvedProfile = resolvedProfileResolver(snapshot.ResolvedProfile)
+            var resolvedProfile = resolvedProfileResolver(runtimeState.ResolvedProfile)
                 ?? throw new InvalidOperationException(
-                    $"Resolved profile checkpoint could not be restored: {snapshot.ResolvedProfile.ProviderId}/{snapshot.ResolvedProfile.ApiSpecId}/{snapshot.ResolvedProfile.ModelId}."
+                    $"Resolved profile checkpoint could not be restored: {runtimeState.ResolvedProfile.ProviderId}/{runtimeState.ResolvedProfile.ApiSpecId}/{runtimeState.ResolvedProfile.ModelId}."
                 );
 
-            if (!Equals(resolvedProfile.ToCompletionDescriptor(), snapshot.ResolvedProfile.ToCompletionDescriptor())) {
+            if (!Equals(resolvedProfile.ToCompletionDescriptor(), runtimeState.ResolvedProfile.ToCompletionDescriptor())) {
                 throw new InvalidOperationException(
                     "Resolved profile checkpoint did not round-trip to the same invocation identity."
                 );
@@ -132,23 +174,69 @@ public partial class AgentEngine {
             engine._turnRuntime.RememberResolvedProfile(resolvedProfile);
         }
 
-        if (snapshot.LockedCompactionSplitIndex.HasValue) {
-            engine._turnRuntime.RememberCompactionSplitIndex(snapshot.LockedCompactionSplitIndex.Value);
+        if (runtimeState.LockedCompactionSplitIndex.HasValue) {
+            engine._turnRuntime.RememberCompactionSplitIndex(runtimeState.LockedCompactionSplitIndex.Value);
         }
 
-        if (snapshot.PendingCompaction is not null) {
+        if (runtimeState.PendingCompaction is not null) {
             engine._compactionRequest = new CompactionRequest(
-                snapshot.PendingCompaction.SplitIndex,
-                snapshot.PendingCompaction.SystemPrompt,
-                snapshot.PendingCompaction.SummarizePrompt
+                runtimeState.PendingCompaction.SplitIndex,
+                runtimeState.PendingCompaction.SystemPrompt,
+                runtimeState.PendingCompaction.SummarizePrompt
             );
         }
 
-        if (snapshot.ToolSessionExecutionSequence > 0) {
-            engine.EnsureSession().RestoreExecutionSequence(snapshot.ToolSessionExecutionSequence);
+        if (runtimeState.ToolSessionExecutionSequence > 0) {
+            engine.EnsureSession().RestoreExecutionSequence(runtimeState.ToolSessionExecutionSequence);
         }
 
         return engine;
+    }
+
+    internal static AgentEngine CreateFromWorkspaceRoot(
+        AgentWorkspaceRoot workspaceRoot,
+        LlmProfileRegistry? profileRegistry = null,
+        IEnumerable<IApp>? initialApps = null,
+        IEnumerable<ITool>? initialTools = null,
+        IIdleObservationProvider? idleProvider = null,
+        Func<DateTimeOffset>? utcNowProvider = null,
+        AutoCompactionOptions? autoCompaction = null
+    ) {
+        return CreateFromWorkspaceRoot(
+            workspaceRoot,
+            profileRegistry is null ? null : checkpoint => profileRegistry.ResolveOrNull(checkpoint),
+            initialApps,
+            initialTools,
+            idleProvider,
+            utcNowProvider,
+            autoCompaction
+        );
+    }
+
+    internal static AgentEngine CreateFromWorkspaceRoot(
+        AgentWorkspaceRoot workspaceRoot,
+        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
+        IEnumerable<IApp>? initialApps = null,
+        IEnumerable<ITool>? initialTools = null,
+        IIdleObservationProvider? idleProvider = null,
+        Func<DateTimeOffset>? utcNowProvider = null,
+        AutoCompactionOptions? autoCompaction = null
+    ) {
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
+
+        var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
+        state.AttachWorkspaceRoot(workspaceRoot);
+
+        return CreateFromPersistedStateCore(
+            state,
+            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).LoadRuntimeState(),
+            resolvedProfileResolver,
+            initialApps,
+            initialTools,
+            idleProvider,
+            utcNowProvider,
+            autoCompaction
+        );
     }
 
     /// <summary>
@@ -165,9 +253,8 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(root);
 
-        var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
-        return CreateFromStateSnapshot(
-            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).Load(),
+        return CreateFromWorkspaceRoot(
+            AgentWorkspaceRoot.FromRoot(root),
             profileRegistry,
             initialApps,
             initialTools,
@@ -192,9 +279,8 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(root);
 
-        var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
-        return CreateFromStateSnapshot(
-            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).Load(),
+        return CreateFromWorkspaceRoot(
+            AgentWorkspaceRoot.FromRoot(root),
             resolvedProfileResolver,
             initialApps,
             initialTools,
@@ -210,10 +296,15 @@ public partial class AgentEngine {
 
         if (_attachedPersistence is not null) { throw new InvalidOperationException("AgentEngine persistence session is already attached."); }
 
+        if (!_state.IsAttachedToWorkspaceRoot(stateRoot.WorkspaceRoot)) {
+            _state.AttachWorkspaceRoot(stateRoot.WorkspaceRoot);
+        }
+
         _attachedPersistence = new AttachedPersistenceSession(repo, stateRoot);
     }
 
     internal void DetachPersistenceSession() {
+        _state.DetachWorkspaceRoot();
         _attachedPersistence = null;
     }
 
@@ -232,7 +323,7 @@ public partial class AgentEngine {
 
         public void SaveAndCommit(AgentEngine engine) {
             ArgumentNullException.ThrowIfNull(engine);
-            _stateRoot.SaveAndCommit(_repo, engine);
+            _stateRoot.SaveRuntimeStateAndCommit(_repo, engine);
         }
     }
 }

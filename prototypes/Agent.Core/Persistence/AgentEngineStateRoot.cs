@@ -84,24 +84,17 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.StampMetadata();
         _workspaceRoot.SetSystemPrompt(snapshot.AgentState.SystemPrompt);
         _workspaceRoot.SetLastSerial(snapshot.AgentState.LastSerial);
-        _workspaceRoot.SetToolSessionExecutionSequence(snapshot.ToolSessionExecutionSequence);
-
         _workspaceRoot.SaveHistory(snapshot.AgentState.RecentHistory);
         _workspaceRoot.SavePendingNotifications(snapshot.AgentState.PendingNotifications);
-        _workspaceRoot.SavePendingToolResults(snapshot.PendingToolResults);
-        _workspaceRoot.SaveTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
-        _workspaceRoot.SavePendingCompaction(snapshot.PendingCompaction);
+        SaveRuntimeState(ToRuntimeStateSnapshot(snapshot));
     }
 
     public AgentEngineStateSnapshot Load() {
         string systemPrompt = _workspaceRoot.GetRequiredSystemPrompt();
         ulong lastSerial = _workspaceRoot.GetRequiredLastSerial();
-        long toolSessionExecutionSequence = _workspaceRoot.GetToolSessionExecutionSequenceOrDefault();
         var recentHistory = _workspaceRoot.LoadHistory();
         var pendingNotifications = _workspaceRoot.LoadPendingNotifications();
-        var pendingToolResults = _workspaceRoot.LoadPendingToolResults();
-        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.LoadTurnRuntime();
-        var pendingCompaction = _workspaceRoot.LoadPendingCompaction();
+        var runtimeState = LoadRuntimeState();
 
         return new AgentEngineStateSnapshot(
             AgentState: new AgentStateSnapshot(
@@ -110,11 +103,59 @@ public sealed class AgentEngineStateRoot {
                 PendingNotifications: pendingNotifications,
                 LastSerial: lastSerial
             ),
+            PendingToolResults: runtimeState.PendingToolResults,
+            ResolvedProfile: runtimeState.ResolvedProfile,
+            LockedCompactionSplitIndex: runtimeState.LockedCompactionSplitIndex,
+            PendingCompaction: runtimeState.PendingCompaction,
+            ToolSessionExecutionSequence: runtimeState.ToolSessionExecutionSequence
+        );
+    }
+
+    internal void SaveRuntimeState(AgentEngine engine) {
+        ArgumentNullException.ThrowIfNull(engine);
+        SaveRuntimeState(engine.ExportRuntimeStateSnapshot());
+    }
+
+    internal void SaveRuntimeStateAndCommit(Repository repo, AgentEngine engine) {
+        ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(engine);
+
+        SaveRuntimeState(engine);
+        repo.Commit(Root).Unwrap();
+    }
+
+    internal void SaveRuntimeState(AgentEngineRuntimeStateSnapshot snapshot) {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        _workspaceRoot.StampMetadata();
+        _workspaceRoot.SetToolSessionExecutionSequence(snapshot.ToolSessionExecutionSequence);
+        _workspaceRoot.SavePendingToolResults(snapshot.PendingToolResults);
+        _workspaceRoot.SaveTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
+        _workspaceRoot.SavePendingCompaction(snapshot.PendingCompaction);
+    }
+
+    internal AgentEngineRuntimeStateSnapshot LoadRuntimeState() {
+        var pendingToolResults = _workspaceRoot.LoadPendingToolResults();
+        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.LoadTurnRuntime();
+        var pendingCompaction = _workspaceRoot.LoadPendingCompaction();
+        var toolSessionExecutionSequence = _workspaceRoot.GetToolSessionExecutionSequenceOrDefault();
+
+        return new AgentEngineRuntimeStateSnapshot(
             PendingToolResults: pendingToolResults,
             ResolvedProfile: resolvedProfile,
             LockedCompactionSplitIndex: lockedCompactionSplitIndex,
             PendingCompaction: pendingCompaction,
             ToolSessionExecutionSequence: toolSessionExecutionSequence
+        );
+    }
+
+    private static AgentEngineRuntimeStateSnapshot ToRuntimeStateSnapshot(AgentEngineStateSnapshot snapshot) {
+        return new AgentEngineRuntimeStateSnapshot(
+            PendingToolResults: snapshot.PendingToolResults,
+            ResolvedProfile: snapshot.ResolvedProfile,
+            LockedCompactionSplitIndex: snapshot.LockedCompactionSplitIndex,
+            PendingCompaction: snapshot.PendingCompaction,
+            ToolSessionExecutionSequence: snapshot.ToolSessionExecutionSequence
         );
     }
 }

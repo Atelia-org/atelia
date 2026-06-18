@@ -58,6 +58,12 @@ internal sealed class AgentWorkspaceRoot {
 
     public void SetLastSerial(ulong lastSerial) => _root.Upsert(KeyLastSerial, lastSerial);
 
+    public ulong AllocateNextHistorySerial() {
+        var nextSerial = checked(GetRequiredLastSerial() + 1);
+        SetLastSerial(nextSerial);
+        return nextSerial;
+    }
+
     public ulong GetRequiredLastSerial() {
         return _root.Get<ulong>(KeyLastSerial, out var serial) == GetIssue.None
             ? serial
