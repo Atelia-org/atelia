@@ -295,15 +295,11 @@ public sealed partial class Repository : IDisposable {
             );
         }
 
-        if (!Directory.Exists(fullPath) || DirectoryIsEmpty(fullPath)) {
-            return Create(fullPath);
-        }
+        if (!Directory.Exists(fullPath) || DirectoryIsEmpty(fullPath)) { return Create(fullPath); }
 
         // 已有内容：必须看起来像一个 repo 才走 Open，否则明确失败，避免误覆盖。
         var lockPath = Path.Combine(fullPath, LockFileName);
-        if (File.Exists(lockPath)) {
-            return Open(fullPath);
-        }
+        if (File.Exists(lockPath)) { return Open(fullPath); }
 
         return new SjRepositoryError(
             $"Directory '{fullPath}' is not empty and not a StateJournal repository.",
@@ -315,6 +311,14 @@ public sealed partial class Repository : IDisposable {
     /// 对外的简洁提交入口。从 <paramref name="graphRoot"/> 反查所属 Revision，再映射到对应 branch。
     /// </summary>
     public AteliaResult<CommitAddress> Commit(DurableObject graphRoot) {
+        return Commit(graphRoot, note: null);
+    }
+
+    /// <summary>
+    /// 对外的简洁提交入口。从 <paramref name="graphRoot"/> 反查所属 Revision，再映射到对应 branch。
+    /// 可选的 <paramref name="note"/> 会写入 branch ref 的最近一次说明，以及 branch reflog。
+    /// </summary>
+    public AteliaResult<CommitAddress> Commit(DurableObject graphRoot, string? note) {
         using var scope = _gate.EnterScope();
         if (!EnsureUsable(out var err)) { return err; }
         ArgumentNullException.ThrowIfNull(graphRoot);
@@ -327,17 +331,24 @@ public sealed partial class Repository : IDisposable {
             );
         }
 
-        return CommitCore(branchName, graphRoot);
+        return CommitCore(branchName, graphRoot, note);
     }
 
     /// <summary>
     /// 内部入口：推进指定 branch。
     /// </summary>
     internal AteliaResult<CommitAddress> Commit(string branchName, DurableObject graphRoot) {
+        return Commit(branchName, graphRoot, note: null);
+    }
+
+    /// <summary>
+    /// 内部入口：推进指定 branch，并可记录一条 branch-local note。
+    /// </summary>
+    internal AteliaResult<CommitAddress> Commit(string branchName, DurableObject graphRoot, string? note) {
         using var scope = _gate.EnterScope();
         if (!EnsureUsable(out var err)) { return err; }
         ArgumentNullException.ThrowIfNull(graphRoot);
-        return CommitCore(branchName, graphRoot);
+        return CommitCore(branchName, graphRoot, note);
     }
 
     /// <summary>
@@ -395,9 +406,7 @@ public sealed partial class Repository : IDisposable {
         if (!EnsureUsable(out var err)) { return err; }
         ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
 
-        if (_branches.ContainsKey(branchName)) {
-            return GetOrCheckoutBranchCore(branchName);
-        }
+        if (_branches.ContainsKey(branchName)) { return GetOrCheckoutBranchCore(branchName); }
         return CreateBranchCore(branchName, sourceAddress: null, sourceDescription: null);
     }
 
@@ -449,7 +458,7 @@ public sealed partial class Repository : IDisposable {
         return CreateBranchCore(branchName, sourceAddress: fromCommit, sourceDescription: $"commit {fromCommit}");
     }
 
-    private AteliaResult<CommitAddress> CommitCore(string branchName, DurableObject graphRoot) {
+    private AteliaResult<CommitAddress> CommitCore(string branchName, DurableObject graphRoot, string? note) {
         ArgumentNullException.ThrowIfNull(graphRoot);
 
         if (!_branches.TryGetValue(branchName, out var branchState) || branchState.LoadedRevision is null) {
@@ -479,7 +488,7 @@ public sealed partial class Repository : IDisposable {
         var newHead = CommitAddress.Create(writePlan.TargetSegmentNumber, commitResult.Value.HeadCommitTicket);
 
         try {
-            CompareAndSwapBranchAtomically(DirectoryPath, branchName, expectedHead, newHead);
+            CompareAndSwapBranchAtomically(DirectoryPath, branchName, expectedHead, newHead, note);
         }
         catch (Exception ex) {
             _isPoisoned = true;
@@ -643,9 +652,7 @@ public sealed partial class Repository : IDisposable {
 
     private AteliaResult<Revision> CreateDetachedRevisionAtAddress(CommitAddress address, string targetDescription) {
         try {
-            if (address.SegmentNumber == _segments.ActiveSegmentNumber) {
-                return Revision.Open(address.CommitTicket, _segments.ActiveFile, address.SegmentNumber);
-            }
+            if (address.SegmentNumber == _segments.ActiveSegmentNumber) { return Revision.Open(address.CommitTicket, _segments.ActiveFile, address.SegmentNumber); }
 
             using var file = _segments.OpenHistoricalFile(address.SegmentNumber);
             return Revision.Open(address.CommitTicket, file, address.SegmentNumber);

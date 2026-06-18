@@ -97,12 +97,14 @@ root.Upsert("count", root.GetOrThrow<int>("count") + 1);
 root.Remove("enabled");
 
 repo.Commit(root).Value;
+repo.Commit(root, "before risky migration").Value; // 可选 branch-local note
 ```
 
 要点：
 
 - 修改发生在内存中的 `Revision` 工作态里。
 - 成功 commit 后，dirty 对象变为 clean，branch head 前进。
+- `Repository.Commit(root, note)` 可额外把一条 branch-local note 写入 branch ref 的 `lastNote` 与 reflog，便于故障恢复时人工辨认。
 - 失败时常见结果是 `AteliaResult` failure；不要假设异常是唯一错误通道。
 
 ---
@@ -142,6 +144,9 @@ var replay = repo.CreateBranch("replay", head).Value;
 - 可用 `Repository.ValidateBranchName(name)` 预检。
 - `TryGetBranchHeadAddress(branch, out head)` 读取该 branch 当前 HEAD 的完整 `CommitAddress`；成功返回 `true`，失败时 `head` 为 `default`。
 - `Repository.Commit(root)` 也直接返回新的 `CommitAddress`，用于后续展示、记录或派生新 branch。
+- branch ref 当前主格式是 `version: 2`：`head` 保存当前权威 `CommitAddress`，`recentHeads` 保留最近若干个 HEAD，`lastNote` 保存最近一次 note。
+- 每个 branch 还会维护 `*.json.last` backup 和 `*.reflog.jsonl` 追加日志；`Repository.Open` 会在主 ref 损坏时尝试从 backup / reflog 恢复。
+- 如果需要从较早提交继续演化，通常做法是先从 branch ref 的 `recentHeads` 或 reflog 找到旧 `CommitAddress`，再调用 `CreateBranch(name, fromCommitAddress)`。
 
 ### 2.3 Segment
 
@@ -150,7 +155,9 @@ Repository 会维护：
 ```text
 {repoDir}/
   state-journal.lock
-  refs/branches/*.json
+  refs/branches/{branch}.json
+  refs/branches/{branch}.json.last
+  refs/branches/{branch}.reflog.jsonl
   recent/*.sj.rbf
   archive/*/*.sj.rbf
 ```
@@ -160,6 +167,7 @@ Repository 会维护：
 - 默认 rotation threshold 是 2GB。
 - `SetRotationThreshold(long)` 可调整阈值；测试中常设极小值触发轮换。
 - `MaintainSegmentLayout()` 是 best-effort 归档旧 recent segment，不是 commit 事务的一部分。
+- branch reflog 是 branch 元数据恢复辅助，不是 commit 事务日志；真正的数据内容仍以 segment 文件中的 committed snapshot 为准。
 
 ---
 

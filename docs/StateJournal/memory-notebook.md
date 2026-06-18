@@ -258,6 +258,35 @@ load / 历史回放完成后：
 - 原因是 `CapturedOriginal.Index` 与 dirty bit 都绑定物理槽位；一旦 committed 槽位被压缩，索引就会失效
 - `CollectDraft` 只移动 draft 窗口，不会破坏 committed dirty tracking，因此不受这条约束
 
+### 10. branch metadata 已升级为 `v2 ref + backup + reflog`
+
+当前 branch 落盘不再只是单个 `{segmentNumber,ticket}` 指针。
+
+主格式：
+
+- `refs/branches/{branch}.json`
+- `version: 2`
+- `generation`：单调递增的 branch metadata 代次
+- `head`：当前权威 `CommitAddress` 字符串（如 `seg:1:00000000088fd32f`）
+- `recentHeads`：最近若干个 HEAD 的定长近历史，用于人工恢复
+- `lastNote`：最近一次 `Repository.Commit(root, note)` 写入的 branch-local note
+
+配套恢复文件：
+
+- `refs/branches/{branch}.json.last`：上一版 ref backup
+- `refs/branches/{branch}.reflog.jsonl`：append-only 的 ref 变更日志
+
+当前恢复策略：
+
+- 读取 branch 时，会在 `primary ref / backup ref / reflog` 中挑选**最高 generation 的有效记录**
+- 因此单个 `main.json` 损坏或被回退时，`Repository.Open` 仍可能通过 backup / reflog 恢复
+- 只有当全部 authority 都被回退/破坏时，branch CAS 才会按“metadata divergence”失败并 poison 当前 `Repository`
+
+兼容性边界：
+
+- 仍兼容读取旧的 `version: 1` branch 文件（`segmentNumber + ticket`）
+- 但新写入统一落 `version: 2`
+
 当前 `SkipListCore.Commit` 的时序已经按这条不变量调整为：
 
 - 先 `arena.Commit()` 结束 dirty tracking

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -29,24 +30,31 @@ public sealed partial class Repository {
     }
 
     private static void WriteJsonAtomically<T>(string filePath, T data, JsonTypeInfo<T> typeInfo, bool overwrite = true) {
-        var json = JsonSerializer.Serialize(data, typeInfo);
         var tmpPath = filePath + ".tmp";
-        File.WriteAllText(tmpPath, json);
+        var json = JsonSerializer.Serialize(data, typeInfo);
+        var utf8 = Encoding.UTF8.GetBytes(json);
+        using (var stream = new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None)) {
+            stream.Write(utf8);
+            stream.Flush(flushToDisk: true);
+        }
         File.Move(tmpPath, filePath, overwrite: overwrite);
     }
 
     private static Dictionary<string, BranchState> BuildBranchStates(IEnumerable<LoadedBranch> loadedBranches) {
         var branches = new Dictionary<string, BranchState>(StringComparer.Ordinal);
         foreach (var branch in loadedBranches) {
-            branches.Add(branch.BranchName, new BranchState {
-                BranchName = branch.BranchName,
-                Head = branch.Head,
-                LoadedRevision = null,
-            });
+            branches.Add(branch.BranchName,
+                new BranchState {
+                    BranchName = branch.BranchName,
+                    Head = branch.Head,
+                    LoadedRevision = null,
+                }
+            );
         }
         return branches;
     }
 
     [JsonSerializable(typeof(BranchData))]
+    [JsonSerializable(typeof(BranchReflogEntry))]
     internal sealed partial class RepositoryJsonContext : JsonSerializerContext { }
 }

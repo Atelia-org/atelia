@@ -183,7 +183,7 @@ public class RepositoryTests : IDisposable {
     }
 
     [Fact]
-    public void Commit_WritesBranchAndSequenceFiles() {
+    public void Commit_WritesBranchRefBackupAndReflogFiles() {
         var dir = GetTempDir();
         using var repo = CreateRepositoryWithBranch(dir, "main", out var main);
         var root = main.CreateDict<int, int>();
@@ -191,10 +191,15 @@ public class RepositoryTests : IDisposable {
         AssertSuccess(repo.Commit(root));
 
         var branchPath = Path.Combine(dir, "refs", "branches", "main.json");
+        var backupPath = Path.Combine(dir, "refs", "branches", "main.json.last");
+        var reflogPath = Path.Combine(dir, "refs", "branches", "main.reflog.jsonl");
         Assert.True(File.Exists(branchPath));
+        Assert.True(File.Exists(backupPath));
+        Assert.True(File.Exists(reflogPath));
         var branchContent = File.ReadAllText(branchPath);
-        Assert.Contains("segmentNumber", branchContent);
-        Assert.Contains("ticket", branchContent);
+        Assert.Contains("\"generation\"", branchContent);
+        Assert.Contains("\"head\"", branchContent);
+        Assert.Contains("\"recentHeads\"", branchContent);
     }
 
 
@@ -369,13 +374,17 @@ public class RepositoryTests : IDisposable {
         AssertSuccess(repo.Commit(root));
 
         var mainBranchPath = Path.Combine(dir, "refs", "branches", "main.json");
+        var mainBranchBackupPath = Path.Combine(dir, "refs", "branches", "main.json.last");
+        var mainReflogPath = Path.Combine(dir, "refs", "branches", "main.reflog.jsonl");
         var branchAfterCommit1 = File.ReadAllText(mainBranchPath);
 
         root.Upsert(2, 20);
         AssertSuccess(repo.Commit(root));
 
-        // 模拟外部把 branch 回退到旧值，触发 CAS 失败。
+        // 模拟外部把全部 branch metadata authority 回退到旧值，触发 CAS 失败。
         File.WriteAllText(mainBranchPath, branchAfterCommit1);
+        File.WriteAllText(mainBranchBackupPath, branchAfterCommit1);
+        File.Delete(mainReflogPath);
 
         root.Upsert(3, 30);
         var failed = repo.Commit(root);
@@ -399,6 +408,8 @@ public class RepositoryTests : IDisposable {
         Assert.Equal(1u, main.HeadSegmentNumber);
 
         var mainBranchPath = Path.Combine(dir, "refs", "branches", "main.json");
+        var mainBranchBackupPath = Path.Combine(dir, "refs", "branches", "main.json.last");
+        var mainReflogPath = Path.Combine(dir, "refs", "branches", "main.reflog.jsonl");
         var branchAfterCommit1 = File.ReadAllText(mainBranchPath);
 
         root.Upsert(2, 20);
@@ -406,6 +417,8 @@ public class RepositoryTests : IDisposable {
         Assert.Equal(2u, main.HeadSegmentNumber);
 
         File.WriteAllText(mainBranchPath, branchAfterCommit1);
+        File.WriteAllText(mainBranchBackupPath, branchAfterCommit1);
+        File.Delete(mainReflogPath);
 
         root.Upsert(3, 30);
         var failed = repo.Commit(root);

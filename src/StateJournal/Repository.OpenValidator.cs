@@ -20,19 +20,13 @@ public sealed partial class Repository {
     private static class RepositoryOpenValidator {
         public static OpenLayout Validate(string repoFullPath) {
             var branchesFullDir = GetBranchesDirectoryPath(repoFullPath);
-            if (!Directory.Exists(branchesFullDir)) {
-                throw new InvalidDataException($"Repository '{repoFullPath}' is missing required branches directory '{branchesFullDir}'.");
-            }
+            if (!Directory.Exists(branchesFullDir)) { throw new InvalidDataException($"Repository '{repoFullPath}' is missing required branches directory '{branchesFullDir}'."); }
 
             var recentDir = Path.Combine(repoFullPath, RecentDirName);
-            if (!Directory.Exists(recentDir)) {
-                throw new InvalidDataException($"Repository '{repoFullPath}' is missing required segment directory '{recentDir}'.");
-            }
+            if (!Directory.Exists(recentDir)) { throw new InvalidDataException($"Repository '{repoFullPath}' is missing required segment directory '{recentDir}'."); }
 
             var recentSegments = ScanRecentSegments(recentDir);
-            if (recentSegments.Count == 0) {
-                throw new InvalidDataException($"Repository '{repoFullPath}' does not contain any segment files under '{recentDir}'.");
-            }
+            if (recentSegments.Count == 0) { throw new InvalidDataException($"Repository '{repoFullPath}' does not contain any segment files under '{recentDir}'."); }
 
             var archiveDir = Path.Combine(repoFullPath, ArchiveDirName);
             var archivedSegments = ScanArchivedSegments(repoFullPath, archiveDir);
@@ -47,23 +41,24 @@ public sealed partial class Repository {
             uint maxSegmentNumber
         ) {
             var branches = new List<LoadedBranch>();
+            var branchNames = DiscoverBranchNames(branchesFullDir);
 
-            foreach (var filePath in Directory.GetFiles(branchesFullDir, "*.json", SearchOption.AllDirectories)) {
-                var relPath = Path.GetRelativePath(branchesFullDir, filePath);
-                var branchName = Path.ChangeExtension(relPath, null)!
-                    .Replace(Path.DirectorySeparatorChar, '/')
-                    .Replace(Path.AltDirectorySeparatorChar, '/');
+            foreach (var branchName in branchNames) {
                 var nameError = ValidateBranchName(branchName);
                 if (nameError is not null) {
                     throw new InvalidDataException(
-                        $"Branch file '{filePath}' resolved to invalid branch name '{branchName}': {nameError}"
+                        $"Branch metadata resolved to invalid branch name '{branchName}': {nameError}"
                     );
                 }
 
-                var head = ReadBranchAddress(filePath);
+                var branchRef = ReadBestBranchRefOrDefault(repoFullPath, branchName)
+                    ?? throw new InvalidDataException(
+                        $"Branch '{branchName}' has no readable metadata in primary ref, backup ref, or reflog."
+                    );
+                var head = branchRef.Head;
                 if (head is { } address && (address.SegmentNumber == 0 || address.SegmentNumber > maxSegmentNumber)) {
                     throw new InvalidDataException(
-                        $"Branch '{branchName}' points to missing segment {address.SegmentNumber} (from '{filePath}')."
+                        $"Branch '{branchName}' points to missing segment {address.SegmentNumber} (from '{branchRef.SourcePath}')."
                     );
                 }
 
@@ -73,16 +68,44 @@ public sealed partial class Repository {
             return branches;
         }
 
+        private static SortedSet<string> DiscoverBranchNames(string branchesFullDir) {
+            var branchNames = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (var filePath in Directory.EnumerateFiles(branchesFullDir, "*", SearchOption.AllDirectories)) {
+                var relPath = Path.GetRelativePath(branchesFullDir, filePath)
+                    .Replace(Path.DirectorySeparatorChar, '/')
+                    .Replace(Path.AltDirectorySeparatorChar, '/');
+
+                var branchName = TryResolveBranchName(relPath);
+                if (branchName is not null) {
+                    branchNames.Add(branchName);
+                }
+            }
+
+            return branchNames;
+        }
+
+        private static string? TryResolveBranchName(string relativePath) {
+            if (relativePath.EndsWith(".json.last", StringComparison.Ordinal)) { return relativePath[..^".json.last".Length]; }
+
+            if (relativePath.EndsWith(".reflog.jsonl", StringComparison.Ordinal)) { return relativePath[..^".reflog.jsonl".Length]; }
+
+            if (relativePath.EndsWith(".json", StringComparison.Ordinal)) { return relativePath[..^".json".Length]; }
+
+            return null;
+        }
+
         private static List<ExistingSegment> ScanRecentSegments(string recentDir) {
             var segments = new List<ExistingSegment>();
 
             foreach (var file in Directory.GetFiles(recentDir, "*.sj.rbf")) {
                 var fileName = Path.GetFileName(file);
-                segments.Add(new ExistingSegment(
-                    SegmentNumber: ParseSegmentNumber(fileName),
-                    AbsolutePath: file,
-                    RelativePath: Path.Combine(RecentDirName, fileName)
-                ));
+                segments.Add(
+                    new ExistingSegment(
+                        SegmentNumber: ParseSegmentNumber(fileName),
+                        AbsolutePath: file,
+                        RelativePath: Path.Combine(RecentDirName, fileName)
+                    )
+                );
             }
 
             segments.Sort((a, b) => a.SegmentNumber.CompareTo(b.SegmentNumber));
@@ -104,11 +127,13 @@ public sealed partial class Repository {
                     );
                 }
 
-                segments.Add(new ExistingSegment(
-                    SegmentNumber: segmentNumber,
-                    AbsolutePath: file,
-                    RelativePath: relativePath
-                ));
+                segments.Add(
+                    new ExistingSegment(
+                        SegmentNumber: segmentNumber,
+                        AbsolutePath: file,
+                        RelativePath: relativePath
+                    )
+                );
             }
 
             segments.Sort((a, b) => a.SegmentNumber.CompareTo(b.SegmentNumber));
@@ -146,9 +171,7 @@ public sealed partial class Repository {
         private static uint ParseSegmentNumber(string fileName) {
             const string suffix = ".sj.rbf";
             var name = fileName[..^suffix.Length];
-            if (!uint.TryParse(name, System.Globalization.NumberStyles.HexNumber, null, out var segmentNumber)) {
-                throw new InvalidDataException($"Segment file '{fileName}' does not use the expected hex segment number format.");
-            }
+            if (!uint.TryParse(name, System.Globalization.NumberStyles.HexNumber, null, out var segmentNumber)) { throw new InvalidDataException($"Segment file '{fileName}' does not use the expected hex segment number format."); }
 
             return segmentNumber;
         }
