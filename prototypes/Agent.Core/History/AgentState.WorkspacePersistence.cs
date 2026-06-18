@@ -4,9 +4,11 @@ namespace Atelia.Agent.Core.History;
 
 public sealed partial class AgentState {
     private AgentWorkspaceRoot? _attachedWorkspaceRoot;
+    private bool _workspaceSessionClosed;
 
     internal void AttachRestoredWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
+        EnsureWorkspaceSessionOpen();
 
         if (_attachedWorkspaceRoot is not null) {
             if (ReferenceEquals(_attachedWorkspaceRoot.Root, workspaceRoot.Root)) {
@@ -19,8 +21,15 @@ public sealed partial class AgentState {
         _attachedWorkspaceRoot = workspaceRoot;
     }
 
-    internal void DetachWorkspaceRoot() {
+    internal void CloseWorkspaceSession() {
         _attachedWorkspaceRoot = null;
+        _workspaceSessionClosed = true;
+    }
+
+    private void EnsureWorkspaceSessionOpen() {
+        if (_workspaceSessionClosed) {
+            throw new InvalidOperationException("AgentState workspace session has been closed.");
+        }
     }
 
     private ulong AllocateNextSerial() {

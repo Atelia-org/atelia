@@ -783,6 +783,36 @@ public sealed class AgentWorkspacePersistenceTests {
         }
     }
 
+    [Fact]
+    public async Task Host_Dispose_ClosesRetainedEngineSessionInsteadOfSilentlyDetaching() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-dispose-session-{Guid.NewGuid():N}");
+
+        try {
+            var host = AgentEngineHost.CreateNew(repoDir);
+            var engine = host.Engine;
+            var profile = CreateFullFeatureProfile(
+                new QueueCompletionClient(new ActionMessage([new ActionBlock.Text("unused")])),
+                "model-closed"
+            );
+
+            host.Dispose();
+
+            var stateException = Assert.Throws<InvalidOperationException>(() => engine.State.SetSystemPrompt("should-fail"));
+            Assert.Equal("AgentState workspace session has been closed.", stateException.Message);
+
+            var engineException = Assert.Throws<InvalidOperationException>(() => engine.AppendNotification("should-fail"));
+            Assert.Equal("AgentEngine repository session has been closed.", engineException.Message);
+
+            var stepException = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.StepAsync(profile));
+            Assert.Equal("AgentEngine repository session has been closed.", stepException.Message);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {
         var invocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
         var state = AgentState.CreateDefault("roundtrip-system");

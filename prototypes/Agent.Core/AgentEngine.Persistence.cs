@@ -197,49 +197,6 @@ public partial class AgentEngine {
         return engine;
     }
 
-    internal static AgentEngine CreateFromWorkspaceRoot(
-        AgentWorkspaceRoot workspaceRoot,
-        LlmProfileRegistry? profileRegistry = null,
-        IEnumerable<IApp>? initialApps = null,
-        IEnumerable<ITool>? initialTools = null,
-        IIdleObservationProvider? idleProvider = null,
-        Func<DateTimeOffset>? utcNowProvider = null,
-        AutoCompactionOptions? autoCompaction = null
-    ) {
-        return CreateFromWorkspaceRoot(
-            workspaceRoot,
-            profileRegistry is null ? null : checkpoint => profileRegistry.ResolveOrNull(checkpoint),
-            initialApps,
-            initialTools,
-            idleProvider,
-            utcNowProvider,
-            autoCompaction
-        );
-    }
-
-    internal static AgentEngine CreateFromWorkspaceRoot(
-        AgentWorkspaceRoot workspaceRoot,
-        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
-        IEnumerable<IApp>? initialApps = null,
-        IEnumerable<ITool>? initialTools = null,
-        IIdleObservationProvider? idleProvider = null,
-        Func<DateTimeOffset>? utcNowProvider = null,
-        AutoCompactionOptions? autoCompaction = null
-    ) {
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
-
-        return CreateFromPersistedStateCore(
-            AgentState.RestoreAttachedFromWorkspaceRoot(workspaceRoot),
-            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).LoadRuntimeState(),
-            resolvedProfileResolver,
-            initialApps,
-            initialTools,
-            idleProvider,
-            utcNowProvider,
-            autoCompaction
-        );
-    }
-
     internal static AgentEngine CreateForRepository(
         Repository repo,
         AgentEngineStateRoot stateRoot,
@@ -342,12 +299,13 @@ public partial class AgentEngine {
         );
     }
 
-    internal void DetachPersistenceSession() {
-        _state.DetachWorkspaceRoot();
+    internal void ClosePersistenceSession() {
+        _state.CloseWorkspaceSession();
         if (_toolSession is not null) {
             _toolSession.ExecutionSequenceAllocated = null;
         }
         _repositoryPersistence = null;
+        _repositorySessionClosed = true;
     }
 
     internal void PersistStableBoundaryIfAttached() {

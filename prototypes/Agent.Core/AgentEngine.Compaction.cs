@@ -125,6 +125,7 @@ public partial class AgentEngine {
     /// </para>
     /// </remarks>
     public bool RequestCompaction(string systemPrompt, string summarizePrompt) {
+        EnsureRepositorySessionOpen();
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
         if (summarizePrompt is null) { throw new ArgumentNullException(nameof(summarizePrompt)); }
 

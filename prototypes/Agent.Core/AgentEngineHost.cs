@@ -144,7 +144,7 @@ public sealed class AgentEngineHost : IDisposable {
     public void Dispose() {
         if (_disposed) { return; }
         _disposed = true;
-        _engine.DetachPersistenceSession();
+        _engine.ClosePersistenceSession();
         _repo.Dispose();
     }
 

@@ -31,6 +31,7 @@ public partial class AgentEngine {
     private ToolSession? _toolSession;
     private ToolRegistry ToolRegistry => EnsureToolsBuilt();
     private RepositoryPersistenceBinding? _repositoryPersistence;
+    private bool _repositorySessionClosed;
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
     private readonly TurnRuntimeState _turnRuntime = new();
@@ -130,6 +131,7 @@ public partial class AgentEngine {
     /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public void RegisterApp(IApp app) {
         if (app is null) { throw new ArgumentNullException(nameof(app)); }
+        EnsureRepositorySessionOpen();
 
         EnsureNoToolConflicts(app.Tools, replacingAppName: app.Name);
         _appHost.RegisterApp(app);
@@ -143,6 +145,7 @@ public partial class AgentEngine {
     /// <returns>如成功移除返回 <c>true</c>；否则返回 <c>false</c>。</returns>
     /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public bool RemoveApp(string name) {
+        EnsureRepositorySessionOpen();
         if (string.IsNullOrWhiteSpace(name)) { return false; }
 
         var removed = _appHost.RemoveApp(name);
@@ -161,6 +164,7 @@ public partial class AgentEngine {
     /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public void RegisterTool(ITool tool) {
         if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
+        EnsureRepositorySessionOpen();
 
         var definitionName = GetDefinitionName(tool);
 
@@ -178,6 +182,7 @@ public partial class AgentEngine {
     /// <returns>如成功移除返回 <c>true</c>；否则返回 <c>false</c>。</returns>
     /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public bool RemoveTool(string name) {
+        EnsureRepositorySessionOpen();
         if (string.IsNullOrWhiteSpace(name)) { return false; }
 
         if (!_standaloneTools.Remove(name)) { return false; }
@@ -215,6 +220,7 @@ public partial class AgentEngine {
     }
 
     private ToolSession EnsureSession() {
+        EnsureRepositorySessionOpen();
         var registry = ToolRegistry;
         if (_toolSession is null) {
             _toolSession = registry.CreateSession();
@@ -238,9 +244,16 @@ public partial class AgentEngine {
     /// <exception cref="ArgumentNullException"><paramref name="notificationContent"/> 为 <c>null</c>。</exception>
     /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
     public void AppendNotification(string notificationContent) {
+        EnsureRepositorySessionOpen();
         if (notificationContent is null) { throw new ArgumentNullException(nameof(notificationContent)); }
         _state.AppendNotification(notificationContent);
         DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Host notification appended length={notificationContent.Length}");
+    }
+
+    private void EnsureRepositorySessionOpen() {
+        if (_repositorySessionClosed) {
+            throw new InvalidOperationException("AgentEngine repository session has been closed.");
+        }
     }
 
     private void EnsureToolNameAvailable(string toolName) {
@@ -368,6 +381,7 @@ public partial class AgentEngine {
     /// </para>
     /// </remarks>
     public Task<AgentStepResult> StepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
+        EnsureRepositorySessionOpen();
         return StepAsync(profile, completionObserver: null, cancellationToken);
     }
 
@@ -387,6 +401,7 @@ public partial class AgentEngine {
         CompletionStreamObserver? completionObserver,
         CancellationToken cancellationToken = default
     ) {
+        EnsureRepositorySessionOpen();
         if (profile is null) { throw new ArgumentNullException(nameof(profile)); }
         EnsureProfileSupportsAgentCoreFullFeatures(profile, source: "StepAsync input profile");
 
@@ -448,6 +463,7 @@ public partial class AgentEngine {
     /// 向历史尾部注入一段 assistant/action prefix，使下一次 completion 继续补完它。
     /// </summary>
     public ActionInjectionResult InjectActionContent(ActionInjectionRequest request) {
+        EnsureRepositorySessionOpen();
         EnsureActionInjectionAllowedForCurrentTurn();
         return _state.InjectActionContent(request);
     }
