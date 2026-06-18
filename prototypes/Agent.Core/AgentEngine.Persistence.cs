@@ -373,6 +373,12 @@ public partial class AgentEngine {
             .ToArray());
     }
 
+    private void UpsertPendingToolResultIfAttached(ToolCallExecutionResult pendingResult) {
+        if (_repositoryPersistence is null) { return; }
+
+        _repositoryPersistence.UpsertPendingToolResult(pendingResult);
+    }
+
     private void PersistTurnRuntimeIfAttached() {
         var resolvedProfile = _turnRuntime.ResolvedProfile is null
             ? null
@@ -414,6 +420,9 @@ public partial class AgentEngine {
 
         public void SavePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults)
             => _stateRoot.SavePendingToolResults(pendingResults);
+
+        public void UpsertPendingToolResult(ToolCallExecutionResult pendingResult)
+            => _stateRoot.UpsertPendingToolResult(pendingResult);
 
         public void SaveTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex)
             => _stateRoot.SaveTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);

@@ -134,6 +134,11 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.RuntimeState.SavePendingToolResults(pendingResults);
     }
 
+    internal void UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.UpsertPendingToolResult(pendingResult);
+    }
+
     internal void SaveTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.SaveTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);

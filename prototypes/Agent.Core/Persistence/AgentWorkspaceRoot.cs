@@ -278,6 +278,15 @@ internal sealed class AgentWorkspaceRoot {
             _workspaceRoot.SetPendingToolResults(pendingToolResults);
         }
 
+        public void UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
+            ArgumentNullException.ThrowIfNull(pendingResult);
+
+            _workspaceRoot.GetRequiredPendingToolResults().Upsert(
+                pendingResult.ToolCallId,
+                AgentEngineStateCodec.WritePendingToolResult(_workspaceRoot.Revision, pendingResult)
+            );
+        }
+
         public IReadOnlyList<ToolCallExecutionResult> LoadPendingToolResults() {
             var pendingToolResultsContainer = _workspaceRoot.GetRequiredPendingToolResults();
             var pendingToolResults = new List<ToolCallExecutionResult>(pendingToolResultsContainer.Count);

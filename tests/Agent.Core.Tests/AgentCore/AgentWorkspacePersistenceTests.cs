@@ -465,12 +465,14 @@ public sealed class AgentWorkspacePersistenceTests {
 
                 await host.StepAsync(profile);
                 var afterModelOutput = host.StateRoot.Load();
+                var afterModelOutputPendingMap = GetPendingToolResultsMap(host.StateRoot);
                 Assert.Empty(afterModelOutput.PendingToolResults);
                 Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), afterModelOutput.ResolvedProfile);
                 Assert.Equal(1, afterModelOutput.LockedCompactionSplitIndex);
 
                 await host.StepAsync(profile);
                 Assert.Equal(1L, sequenceSeenInsideTool);
+                Assert.Same(afterModelOutputPendingMap, GetPendingToolResultsMap(host.StateRoot));
                 var afterToolExecution = host.StateRoot.Load();
                 var pendingResult = Assert.Single(afterToolExecution.PendingToolResults);
                 Assert.Equal("call-1", pendingResult.ToolCallId);
@@ -481,6 +483,7 @@ public sealed class AgentWorkspacePersistenceTests {
                        repoDir,
                        new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([profile])))) {
                 var reopenedAfterToolExecution = reopened.StateRoot.Load();
+                var pendingMapBeforeClear = GetPendingToolResultsMap(reopened.StateRoot);
                 var reopenedPendingResult = Assert.Single(reopenedAfterToolExecution.PendingToolResults);
                 Assert.Equal("call-1", reopenedPendingResult.ToolCallId);
                 Assert.Equal(1L, reopenedAfterToolExecution.ToolSessionExecutionSequence);
@@ -492,6 +495,7 @@ public sealed class AgentWorkspacePersistenceTests {
 
                 await reopened.StepAsync(profile);
                 var afterToolResults = reopened.StateRoot.Load();
+                Assert.NotSame(pendingMapBeforeClear, GetPendingToolResultsMap(reopened.StateRoot));
                 Assert.Empty(afterToolResults.PendingToolResults);
                 Assert.IsType<ToolResultsEntry>(afterToolResults.AgentState.RecentHistory[^1]);
                 Assert.Equal(1L, afterToolResults.ToolSessionExecutionSequence);
@@ -646,6 +650,16 @@ public sealed class AgentWorkspacePersistenceTests {
         return workspaceRoot.Root.Get<DurableDeque>("pendingNotifications", out var pendingNotifications) == GetIssue.None
             ? pendingNotifications!
             : throw new InvalidOperationException("Workspace root is missing pendingNotifications deque.");
+    }
+
+    private static DurableDict<string> GetPendingToolResultsMap(AgentEngineStateRoot stateRoot) {
+        return GetPendingToolResultsMap(stateRoot.WorkspaceRoot);
+    }
+
+    private static DurableDict<string> GetPendingToolResultsMap(AgentWorkspaceRoot workspaceRoot) {
+        return workspaceRoot.Root.Get<DurableDict<string>>("pendingToolResults", out var pendingToolResults) == GetIssue.None
+            ? pendingToolResults!
+            : throw new InvalidOperationException("Workspace root is missing pendingToolResults map.");
     }
 
     private sealed class RecordingTool : ITool {
