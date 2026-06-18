@@ -428,21 +428,28 @@ public sealed class AgentWorkspacePersistenceTests {
         try {
             var client = new QueueCompletionClient(
                 new ActionMessage([
-                    new ActionBlock.ToolCall(new RawToolCall("alpha", "call-1", "{}"))
+                    new ActionBlock.ToolCall(new RawToolCall("alpha", "call-1", "{}")),
+                    new ActionBlock.ToolCall(new RawToolCall("beta", "call-2", "{}"))
                 ])
             );
             var profile = CreateFullFeatureProfile(client, "model-live");
-            long? sequenceSeenInsideTool = null;
+            var sequencesSeenInsideTools = new List<long?>();
             AgentEngineHost? liveHost = null;
             RecordingTool? alphaTool = null;
+            RecordingTool? betaTool = null;
 
             using (var host = AgentEngineHost.CreateNew(
                        repoDir,
                        runtime: new AgentEngineHostRuntime(initialTools: [
                            alphaTool = new RecordingTool("alpha", context => {
-                               sequenceSeenInsideTool = liveHost!.StateRoot.Load().ToolSessionExecutionSequence;
+                               sequencesSeenInsideTools.Add(liveHost!.StateRoot.Load().ToolSessionExecutionSequence);
                                Assert.True(context.Session.TryGetTool("alpha", out var sessionTool));
                                Assert.Same(alphaTool, sessionTool);
+                           }),
+                           betaTool = new RecordingTool("beta", context => {
+                               sequencesSeenInsideTools.Add(liveHost!.StateRoot.Load().ToolSessionExecutionSequence);
+                               Assert.True(context.Session.TryGetTool("beta", out var sessionTool));
+                               Assert.Same(betaTool, sessionTool);
                            })
                        ]))) {
                 liveHost = host;
@@ -471,12 +478,21 @@ public sealed class AgentWorkspacePersistenceTests {
                 Assert.Equal(1, afterModelOutput.LockedCompactionSplitIndex);
 
                 await host.StepAsync(profile);
-                Assert.Equal(1L, sequenceSeenInsideTool);
+                Assert.Equal([1L], sequencesSeenInsideTools);
                 Assert.Same(afterModelOutputPendingMap, GetPendingToolResultsMap(host.StateRoot));
-                var afterToolExecution = host.StateRoot.Load();
-                var pendingResult = Assert.Single(afterToolExecution.PendingToolResults);
-                Assert.Equal("call-1", pendingResult.ToolCallId);
-                Assert.Equal(1L, afterToolExecution.ToolSessionExecutionSequence);
+                var afterFirstToolExecution = host.StateRoot.Load();
+                var firstPendingResult = Assert.Single(afterFirstToolExecution.PendingToolResults);
+                Assert.Equal("call-1", firstPendingResult.ToolCallId);
+                Assert.Equal(1L, afterFirstToolExecution.ToolSessionExecutionSequence);
+
+                await host.StepAsync(profile);
+                Assert.Equal([1L, 2L], sequencesSeenInsideTools);
+                Assert.Same(afterModelOutputPendingMap, GetPendingToolResultsMap(host.StateRoot));
+                var afterSecondToolExecution = host.StateRoot.Load();
+                Assert.Equal(["call-1", "call-2"], afterSecondToolExecution.PendingToolResults
+                    .Select(static result => result.ToolCallId)
+                    .OrderBy(static toolCallId => toolCallId, StringComparer.Ordinal));
+                Assert.Equal(2L, afterSecondToolExecution.ToolSessionExecutionSequence);
             }
 
             using (var reopened = AgentEngineHost.OpenExisting(
@@ -484,9 +500,10 @@ public sealed class AgentWorkspacePersistenceTests {
                        new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([profile])))) {
                 var reopenedAfterToolExecution = reopened.StateRoot.Load();
                 var pendingMapBeforeClear = GetPendingToolResultsMap(reopened.StateRoot);
-                var reopenedPendingResult = Assert.Single(reopenedAfterToolExecution.PendingToolResults);
-                Assert.Equal("call-1", reopenedPendingResult.ToolCallId);
-                Assert.Equal(1L, reopenedAfterToolExecution.ToolSessionExecutionSequence);
+                Assert.Equal(["call-1", "call-2"], reopenedAfterToolExecution.PendingToolResults
+                    .Select(static result => result.ToolCallId)
+                    .OrderBy(static toolCallId => toolCallId, StringComparer.Ordinal));
+                Assert.Equal(2L, reopenedAfterToolExecution.ToolSessionExecutionSequence);
 
                 reopened.Engine.WaitingInput += static (_, args) => {
                     args.ShouldContinue = true;
@@ -498,7 +515,7 @@ public sealed class AgentWorkspacePersistenceTests {
                 Assert.NotSame(pendingMapBeforeClear, GetPendingToolResultsMap(reopened.StateRoot));
                 Assert.Empty(afterToolResults.PendingToolResults);
                 Assert.IsType<ToolResultsEntry>(afterToolResults.AgentState.RecentHistory[^1]);
-                Assert.Equal(1L, afterToolResults.ToolSessionExecutionSequence);
+                Assert.Equal(2L, afterToolResults.ToolSessionExecutionSequence);
 
                 await reopened.StepAsync(profile);
                 var afterFinalModelOutput = reopened.StateRoot.Load();
