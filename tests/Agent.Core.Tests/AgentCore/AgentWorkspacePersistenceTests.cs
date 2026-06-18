@@ -214,6 +214,69 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void StateRoot_SaveSnapshot_ReplacesTurnRuntimeDurableDictAfterLiveMutation() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-turn-runtime-snapshot-replace-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+            var liveTurnRuntime = GetTurnRuntimeMap(workspaceRoot);
+
+            stateRoot.SetResolvedProfile(new LlmProfileCheckpoint("provider-live", "spec-live", "model-live", "profile-live", 4096));
+            stateRoot.SetLockedCompactionSplitIndex(7);
+
+            Assert.Same(liveTurnRuntime, GetTurnRuntimeMap(workspaceRoot));
+
+            stateRoot.Save(CreateSnapshotFixture());
+
+            Assert.NotSame(liveTurnRuntime, GetTurnRuntimeMap(workspaceRoot));
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void StateRoot_LiveTurnRuntimeFieldUpdates_KeepDurableDictIdentity() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-turn-runtime-live-update-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+            var turnRuntime = GetTurnRuntimeMap(workspaceRoot);
+            var firstProfile = new LlmProfileCheckpoint("provider-a", "spec-a", "model-a", "profile-a", 4096);
+            var secondProfile = new LlmProfileCheckpoint("provider-b", "spec-b", "model-b", "profile-b", 8192);
+
+            stateRoot.SetResolvedProfile(firstProfile);
+            Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
+
+            stateRoot.SetLockedCompactionSplitIndex(3);
+            Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
+
+            stateRoot.SetResolvedProfile(secondProfile);
+            Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
+
+            stateRoot.SetLockedCompactionSplitIndex(5);
+            Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
+
+            var runtimeState = stateRoot.LoadRuntimeState();
+            Assert.Equal(secondProfile, runtimeState.ResolvedProfile);
+            Assert.Equal(5, runtimeState.LockedCompactionSplitIndex);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_StateCoreMutationsUpdateWorkspaceBeforeCommit() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-working-state-{Guid.NewGuid():N}");
 
@@ -535,6 +598,57 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public async Task Host_BeginNewTurn_ClearsTurnRuntimeWithoutReplacingDurableDict() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-turn-runtime-identity-{Guid.NewGuid():N}");
+
+        try {
+            var client = new QueueCompletionClient(
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            var profile = CreateFullFeatureProfile(client, "model-live-identity");
+            var incomingObservationIndex = 0;
+
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation");
+            host.Engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action")]),
+                    profile.ToCompletionDescriptor()
+                )
+            );
+            host.Engine.WaitingInput += (_, args) => {
+                args.ShouldContinue = true;
+                args.Observation = IncomingObservation.FromRecentEvents($"fresh-observation-{++incomingObservationIndex}");
+            };
+
+            var initialTurnRuntime = GetTurnRuntimeMap(host.StateRoot);
+
+            await host.StepAsync(profile);
+            var afterTurnStart = host.StateRoot.Load();
+            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.StateRoot));
+            Assert.Null(afterTurnStart.ResolvedProfile);
+            Assert.Null(afterTurnStart.LockedCompactionSplitIndex);
+
+            await host.StepAsync(profile);
+            var afterModelOutput = host.StateRoot.Load();
+            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.StateRoot));
+            Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), afterModelOutput.ResolvedProfile);
+            Assert.NotNull(afterModelOutput.LockedCompactionSplitIndex);
+
+            await host.StepAsync(profile);
+            var afterNextTurnStart = host.StateRoot.Load();
+            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.StateRoot));
+            Assert.Null(afterNextTurnStart.ResolvedProfile);
+            Assert.Null(afterNextTurnStart.LockedCompactionSplitIndex);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Host_PendingCompactionWriteThroughsRequestAndClear() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-compaction-live-{Guid.NewGuid():N}");
 
@@ -677,6 +791,16 @@ public sealed class AgentWorkspacePersistenceTests {
         return workspaceRoot.Root.Get<DurableDict<string>>("pendingToolResults", out var pendingToolResults) == GetIssue.None
             ? pendingToolResults!
             : throw new InvalidOperationException("Workspace root is missing pendingToolResults map.");
+    }
+
+    private static DurableDict<string> GetTurnRuntimeMap(AgentEngineStateRoot stateRoot) {
+        return GetTurnRuntimeMap(stateRoot.WorkspaceRoot);
+    }
+
+    private static DurableDict<string> GetTurnRuntimeMap(AgentWorkspaceRoot workspaceRoot) {
+        return workspaceRoot.Root.Get<DurableDict<string>>("turnRuntime", out var turnRuntime) == GetIssue.None
+            ? turnRuntime!
+            : throw new InvalidOperationException("Workspace root is missing turnRuntime map.");
     }
 
     private sealed class RecordingTool : ITool {

@@ -162,6 +162,27 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.RuntimeState.ReplaceTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
     }
 
+    internal void SetResolvedProfile(LlmProfileCheckpoint resolvedProfile) {
+        ArgumentNullException.ThrowIfNull(resolvedProfile);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SetResolvedProfile(resolvedProfile);
+    }
+
+    internal void ClearResolvedProfile() {
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.ClearResolvedProfile();
+    }
+
+    internal void SetLockedCompactionSplitIndex(int lockedCompactionSplitIndex) {
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SetLockedCompactionSplitIndex(lockedCompactionSplitIndex);
+    }
+
+    internal void ClearLockedCompactionSplitIndex() {
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.ClearLockedCompactionSplitIndex();
+    }
+
     internal void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction) {
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.ReplacePendingCompaction(pendingCompaction);

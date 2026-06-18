@@ -383,11 +383,23 @@ public partial class AgentEngine {
     }
 
     private void PersistTurnRuntimeIfAttached() {
-        var resolvedProfile = _turnRuntime.ResolvedProfile is null
-            ? null
-            : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile);
+        if (_repositoryPersistence is null) { return; }
 
-        _repositoryPersistence?.ReplaceTurnRuntime(resolvedProfile, _turnRuntime.LockedCompactionSplitIndex);
+        if (_turnRuntime.ResolvedProfile is null) {
+            _repositoryPersistence.ClearResolvedProfile();
+        }
+        else {
+            _repositoryPersistence.SetResolvedProfile(
+                LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile)
+            );
+        }
+
+        if (_turnRuntime.LockedCompactionSplitIndex.HasValue) {
+            _repositoryPersistence.SetLockedCompactionSplitIndex(_turnRuntime.LockedCompactionSplitIndex.Value);
+        }
+        else {
+            _repositoryPersistence.ClearLockedCompactionSplitIndex();
+        }
     }
 
     private void PersistPendingCompactionIfAttached() {
@@ -427,8 +439,17 @@ public partial class AgentEngine {
         public void UpsertPendingToolResult(ToolCallExecutionResult pendingResult)
             => _stateRoot.UpsertPendingToolResult(pendingResult);
 
-        public void ReplaceTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex)
-            => _stateRoot.ReplaceTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+        public void SetResolvedProfile(LlmProfileCheckpoint resolvedProfile)
+            => _stateRoot.SetResolvedProfile(resolvedProfile);
+
+        public void ClearResolvedProfile()
+            => _stateRoot.ClearResolvedProfile();
+
+        public void SetLockedCompactionSplitIndex(int lockedCompactionSplitIndex)
+            => _stateRoot.SetLockedCompactionSplitIndex(lockedCompactionSplitIndex);
+
+        public void ClearLockedCompactionSplitIndex()
+            => _stateRoot.ClearLockedCompactionSplitIndex();
 
         public void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction)
             => _stateRoot.ReplacePendingCompaction(pendingCompaction);

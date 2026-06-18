@@ -175,18 +175,40 @@ internal static class AgentEngineStateCodec {
         ArgumentNullException.ThrowIfNull(turnRuntime);
 
         if (resolvedProfile is not null) {
-            var profileRecord = turnRuntime.Revision.CreateDict<string>();
-            profileRecord.Upsert(KeyProviderId, resolvedProfile.ProviderId);
-            profileRecord.Upsert(KeyApiSpecId, resolvedProfile.ApiSpecId);
-            profileRecord.Upsert(KeyModelId, resolvedProfile.ModelId);
-            profileRecord.Upsert(KeyName, resolvedProfile.Name);
-            profileRecord.Upsert(KeySoftContextTokenCap, (long)resolvedProfile.SoftContextTokenCap);
-            turnRuntime.Upsert<DurableObject>(KeyResolvedProfile, profileRecord);
+            WriteResolvedProfile(turnRuntime, resolvedProfile);
         }
 
         if (lockedCompactionSplitIndex.HasValue) {
-            turnRuntime.Upsert(KeyLockedCompactionSplitIndex, lockedCompactionSplitIndex.Value);
+            WriteLockedCompactionSplitIndex(turnRuntime, lockedCompactionSplitIndex.Value);
         }
+    }
+
+    public static void WriteResolvedProfile(DurableDict<string> turnRuntime, LlmProfileCheckpoint resolvedProfile) {
+        ArgumentNullException.ThrowIfNull(turnRuntime);
+        ArgumentNullException.ThrowIfNull(resolvedProfile);
+
+        var profileRecord = turnRuntime.Revision.CreateDict<string>();
+        profileRecord.Upsert(KeyProviderId, resolvedProfile.ProviderId);
+        profileRecord.Upsert(KeyApiSpecId, resolvedProfile.ApiSpecId);
+        profileRecord.Upsert(KeyModelId, resolvedProfile.ModelId);
+        profileRecord.Upsert(KeyName, resolvedProfile.Name);
+        profileRecord.Upsert(KeySoftContextTokenCap, (long)resolvedProfile.SoftContextTokenCap);
+        turnRuntime.Upsert<DurableObject>(KeyResolvedProfile, profileRecord);
+    }
+
+    public static void ClearResolvedProfile(DurableDict<string> turnRuntime) {
+        ArgumentNullException.ThrowIfNull(turnRuntime);
+        turnRuntime.Remove(KeyResolvedProfile);
+    }
+
+    public static void WriteLockedCompactionSplitIndex(DurableDict<string> turnRuntime, int lockedCompactionSplitIndex) {
+        ArgumentNullException.ThrowIfNull(turnRuntime);
+        turnRuntime.Upsert(KeyLockedCompactionSplitIndex, lockedCompactionSplitIndex);
+    }
+
+    public static void ClearLockedCompactionSplitIndex(DurableDict<string> turnRuntime) {
+        ArgumentNullException.ThrowIfNull(turnRuntime);
+        turnRuntime.Remove(KeyLockedCompactionSplitIndex);
     }
 
     public static (LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex) ReadTurnRuntime(DurableDict<string> turnRuntime) {
