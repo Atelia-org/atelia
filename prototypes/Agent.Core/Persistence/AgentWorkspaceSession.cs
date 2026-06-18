@@ -6,21 +6,19 @@ namespace Atelia.Agent.Core.Persistence;
 
 internal sealed class AgentWorkspaceSession : IDisposable {
     private readonly AgentWorkspaceRoot _workspaceRoot;
-    private readonly AgentEngineStateRoot _stateRoot;
     private readonly Repository? _repo;
     private bool _closed;
 
-    private AgentWorkspaceSession(AgentEngineStateRoot stateRoot, Repository? repo) {
-        _stateRoot = stateRoot ?? throw new ArgumentNullException(nameof(stateRoot));
-        _workspaceRoot = stateRoot.WorkspaceRoot;
+    private AgentWorkspaceSession(AgentWorkspaceRoot workspaceRoot, Repository? repo) {
+        _workspaceRoot = workspaceRoot ?? throw new ArgumentNullException(nameof(workspaceRoot));
         _repo = repo;
     }
 
-    internal static AgentWorkspaceSession Open(AgentEngineStateRoot stateRoot, Repository? repo = null) {
-        return new AgentWorkspaceSession(stateRoot, repo);
+    internal static AgentWorkspaceSession Open(AgentWorkspaceRoot workspaceRoot, Repository? repo = null) {
+        return new AgentWorkspaceSession(workspaceRoot, repo);
     }
 
-    internal AgentEngineStateRoot StateRoot => _stateRoot;
+    internal AgentWorkspaceRoot WorkspaceRoot => _workspaceRoot;
 
     internal AgentState RestoreState() {
         EnsureOpenForState();
@@ -123,49 +121,67 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
     internal AgentEngineRuntimeStateSnapshot LoadRuntimeState() {
         EnsureOpenForEngine();
-        return _stateRoot.LoadRuntimeState();
+
+        var pendingToolResults = _workspaceRoot.RuntimeState.LoadPendingToolResults();
+        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.RuntimeState.LoadTurnRuntime();
+        var pendingCompaction = _workspaceRoot.RuntimeState.LoadPendingCompaction();
+        var toolSessionExecutionSequence = _workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
+
+        return new AgentEngineRuntimeStateSnapshot(
+            PendingToolResults: pendingToolResults,
+            ResolvedProfile: resolvedProfile,
+            LockedCompactionSplitIndex: lockedCompactionSplitIndex,
+            PendingCompaction: pendingCompaction,
+            ToolSessionExecutionSequence: toolSessionExecutionSequence
+        );
     }
 
     internal void Commit() {
         EnsureOpenForEngine();
         if (_repo is null) { return; }
 
-        _stateRoot.Commit(_repo);
+        _repo.Commit(_workspaceRoot.Root).Unwrap();
     }
 
     internal void ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
         ArgumentNullException.ThrowIfNull(pendingResults);
 
         EnsureOpenForEngine();
-        _stateRoot.ReplacePendingToolResults(pendingResults);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.ReplacePendingToolResults(pendingResults);
     }
 
     internal void UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
         ArgumentNullException.ThrowIfNull(pendingResult);
 
         EnsureOpenForEngine();
-        _stateRoot.UpsertPendingToolResult(pendingResult);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.UpsertPendingToolResult(pendingResult);
     }
 
     internal void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
         EnsureOpenForEngine();
-        _stateRoot.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
     }
 
     internal void SetPendingCompaction(CompactionCheckpoint pendingCompaction) {
         ArgumentNullException.ThrowIfNull(pendingCompaction);
 
         EnsureOpenForEngine();
-        _stateRoot.SetPendingCompaction(pendingCompaction);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SetPendingCompaction(pendingCompaction);
     }
 
     internal void ClearPendingCompaction() {
         EnsureOpenForEngine();
-        _stateRoot.ClearPendingCompaction();
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.ClearPendingCompaction();
     }
 
     internal void SetToolSessionExecutionSequence(long executionSequence) {
         EnsureOpenForEngine();
-        _stateRoot.SetToolSessionExecutionSequence(executionSequence);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(executionSequence);
     }
 }

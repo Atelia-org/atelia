@@ -86,7 +86,7 @@ public sealed class AgentWorkspacePersistenceTests {
             workspaceRoot.Meta.SetSystemPrompt("workspace-born-system");
             var initialPendingNotificationsDeque = GetPendingNotificationsDeque(workspaceRoot);
 
-            using var session = AgentWorkspaceSession.Open(AgentEngineStateRoot.FromRoot(workspaceRoot.Root));
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
             var state = session.RestoreState();
 
             state.SetSystemPrompt("updated-system");
@@ -134,7 +134,7 @@ public sealed class AgentWorkspacePersistenceTests {
             workspaceRoot.Meta.SetSystemPrompt("workspace-append-system");
             var initialHistoryDeque = GetHistoryDeque(workspaceRoot);
 
-            using var session = AgentWorkspaceSession.Open(AgentEngineStateRoot.FromRoot(workspaceRoot.Root));
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
             var state = session.RestoreState();
 
             state.AppendObservation(new ObservationEntry(), "recent-events");
@@ -184,7 +184,7 @@ public sealed class AgentWorkspacePersistenceTests {
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
             workspaceRoot.Meta.SetSystemPrompt("workspace-append-system");
-            using var session = AgentWorkspaceSession.Open(AgentEngineStateRoot.FromRoot(workspaceRoot.Root));
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
             var state = session.RestoreState();
             state.AppendObservation(new ObservationEntry(), "live-append");
             var liveAppendDeque = GetHistoryDeque(workspaceRoot);
@@ -221,15 +221,15 @@ public sealed class AgentWorkspacePersistenceTests {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
-            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
             var liveTurnRuntime = GetTurnRuntimeMap(workspaceRoot);
 
-            stateRoot.SetResolvedProfile(new LlmProfileCheckpoint("provider-live", "spec-live", "model-live", "profile-live", 4096));
-            stateRoot.SetLockedCompactionSplitIndex(7);
+            session.UpdateTurnRuntime(new LlmProfileCheckpoint("provider-live", "spec-live", "model-live", "profile-live", 4096), null);
+            session.UpdateTurnRuntime(new LlmProfileCheckpoint("provider-live", "spec-live", "model-live", "profile-live", 4096), 7);
 
             Assert.Same(liveTurnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            stateRoot.Save(CreateSnapshotFixture());
+            AgentEngineStateRoot.FromRoot(workspaceRoot.Root).Save(CreateSnapshotFixture());
 
             Assert.NotSame(liveTurnRuntime, GetTurnRuntimeMap(workspaceRoot));
         }
@@ -248,24 +248,24 @@ public sealed class AgentWorkspacePersistenceTests {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
-            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
             var turnRuntime = GetTurnRuntimeMap(workspaceRoot);
             var firstProfile = new LlmProfileCheckpoint("provider-a", "spec-a", "model-a", "profile-a", 4096);
             var secondProfile = new LlmProfileCheckpoint("provider-b", "spec-b", "model-b", "profile-b", 8192);
 
-            stateRoot.SetResolvedProfile(firstProfile);
+            session.UpdateTurnRuntime(firstProfile, null);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            stateRoot.SetLockedCompactionSplitIndex(3);
+            session.UpdateTurnRuntime(firstProfile, 3);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            stateRoot.SetResolvedProfile(secondProfile);
+            session.UpdateTurnRuntime(secondProfile, 3);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            stateRoot.SetLockedCompactionSplitIndex(5);
+            session.UpdateTurnRuntime(secondProfile, 5);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            var runtimeState = stateRoot.LoadRuntimeState();
+            var runtimeState = session.LoadRuntimeState();
             Assert.Equal(secondProfile, runtimeState.ResolvedProfile);
             Assert.Equal(5, runtimeState.LockedCompactionSplitIndex);
         }
@@ -284,20 +284,19 @@ public sealed class AgentWorkspacePersistenceTests {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
-            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
             var turnRuntime = GetTurnRuntimeMap(workspaceRoot);
 
-            stateRoot.SetResolvedProfile(new LlmProfileCheckpoint("provider-a", "spec-a", "model-a", "profile-a", 4096));
-            stateRoot.SetLockedCompactionSplitIndex(3);
+            session.UpdateTurnRuntime(new LlmProfileCheckpoint("provider-a", "spec-a", "model-a", "profile-a", 4096), 3);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            stateRoot.ClearResolvedProfile();
+            session.UpdateTurnRuntime(null, 3);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            stateRoot.ClearLockedCompactionSplitIndex();
+            session.UpdateTurnRuntime(null, null);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            var runtimeState = stateRoot.LoadRuntimeState();
+            var runtimeState = session.LoadRuntimeState();
             Assert.Null(runtimeState.ResolvedProfile);
             Assert.Null(runtimeState.LockedCompactionSplitIndex);
         }
@@ -316,14 +315,20 @@ public sealed class AgentWorkspacePersistenceTests {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
-            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
             var livePendingCompaction = GetPendingCompactionRecord(workspaceRoot);
 
-            stateRoot.SetPendingCompaction(new CompactionCheckpoint(2, "live-system", "live-prompt"));
+            session.SetPendingCompaction(new CompactionCheckpoint(2, "live-system", "live-prompt"));
             Assert.Same(livePendingCompaction, GetPendingCompactionRecord(workspaceRoot));
 
-            stateRoot.ReplaceRuntimeState(
-                new AgentEngineRuntimeStateSnapshot(
+            AgentEngineStateRoot.FromRoot(workspaceRoot.Root).Save(
+                new AgentEngineStateSnapshot(
+                    AgentState: new AgentStateSnapshot(
+                        SystemPrompt: workspaceRoot.Meta.GetRequiredSystemPrompt(),
+                        RecentHistory: workspaceRoot.History.LoadRecent(),
+                        PendingNotifications: workspaceRoot.History.LoadPendingNotifications(),
+                        LastSerial: workspaceRoot.History.GetRequiredLastSerial()
+                    ),
                     PendingToolResults: Array.Empty<ToolCallExecutionResult>(),
                     ResolvedProfile: null,
                     LockedCompactionSplitIndex: null,
@@ -335,7 +340,7 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.NotSame(livePendingCompaction, GetPendingCompactionRecord(workspaceRoot));
             Assert.Equal(
                 new CompactionCheckpoint(4, "snapshot-system", "snapshot-prompt"),
-                stateRoot.LoadRuntimeState().PendingCompaction
+                AgentEngineStateRoot.FromRoot(workspaceRoot.Root).Load().PendingCompaction
             );
         }
         finally {

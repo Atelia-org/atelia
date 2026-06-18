@@ -54,6 +54,20 @@ internal sealed class AgentWorkspaceRoot {
 
     public static AgentWorkspaceRoot FromRoot(DurableDict<string> root) => new(root);
 
+    internal void SeedDefaultState(string? systemPrompt = null) {
+        Meta.Stamp();
+        Meta.SetSystemPrompt(string.IsNullOrWhiteSpace(systemPrompt)
+            ? AgentState.DefaultSystemPrompt
+            : systemPrompt);
+        History.SetLastSerial(0);
+        History.ReplaceRecent(Array.Empty<HistoryEntry>());
+        History.ReplacePendingNotifications(Array.Empty<string>());
+        RuntimeState.SetToolSessionExecutionSequence(0);
+        RuntimeState.ReplacePendingToolResults(Array.Empty<ToolCallExecutionResult>());
+        RuntimeState.ReplaceTurnRuntime(null, null);
+        RuntimeState.ReplacePendingCompaction(null);
+    }
+
     private void SetHistory(DurableDeque history) {
         ArgumentNullException.ThrowIfNull(history);
         _root.Upsert<DurableObject>(KeyHistory, history);
@@ -107,13 +121,7 @@ internal sealed class AgentWorkspaceRoot {
     }
 
     private void InitializeDefaultShape() {
-        History.SetLastSerial(0);
-        RuntimeState.SetToolSessionExecutionSequence(0);
-        History.ReplaceRecent(Array.Empty<HistoryEntry>());
-        History.ReplacePendingNotifications(Array.Empty<string>());
-        RuntimeState.ReplacePendingToolResults(Array.Empty<ToolCallExecutionResult>());
-        RuntimeState.ReplaceTurnRuntime(null, null);
-        RuntimeState.ReplacePendingCompaction(null);
+        SeedDefaultState();
     }
 
     private static void StampMetadata(DurableDict<string> root) {

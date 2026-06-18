@@ -31,20 +31,8 @@ public sealed class AgentEngineStateRoot {
     internal static AgentEngineStateRoot Create(AgentWorkspaceRoot workspaceRoot, string? systemPrompt = null) {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
-        var stateRoot = new AgentEngineStateRoot(workspaceRoot);
-        var defaultState = AgentState.CreateDefault(systemPrompt);
-        stateRoot.Save(
-            new AgentEngineStateSnapshot(
-                AgentState: defaultState.ExportSnapshot(),
-                PendingToolResults: Array.Empty<ToolCallExecutionResult>(),
-                ResolvedProfile: null,
-                LockedCompactionSplitIndex: null,
-                PendingCompaction: null,
-                ToolSessionExecutionSequence: 0
-            )
-        );
-
-        return stateRoot;
+        workspaceRoot.SeedDefaultState(systemPrompt);
+        return new AgentEngineStateRoot(workspaceRoot);
     }
 
     public static AgentEngineStateRoot Create(Revision revision, AgentEngine engine) {
@@ -62,8 +50,6 @@ public sealed class AgentEngineStateRoot {
     public static AgentEngineStateRoot FromRoot(DurableDict<string> root) => FromWorkspaceRoot(AgentWorkspaceRoot.FromRoot(root));
 
     internal static AgentEngineStateRoot FromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) => new(workspaceRoot);
-
-    internal AgentWorkspaceSession OpenSession(Repository? repo = null) => AgentWorkspaceSession.Open(this, repo);
 
     /// <summary>
     /// 把当前 <see cref="AgentEngine"/> 导出为 snapshot，再写回 workspace。
@@ -131,87 +117,7 @@ public sealed class AgentEngineStateRoot {
         );
     }
 
-    internal void ReplaceRuntimeState(AgentEngine engine) {
-        ArgumentNullException.ThrowIfNull(engine);
-        ReplaceRuntimeState(engine.ExportRuntimeStateSnapshot());
-    }
-
-    internal void ReplaceRuntimeStateAndCommit(Repository repo, AgentEngine engine) {
-        ArgumentNullException.ThrowIfNull(repo);
-        ArgumentNullException.ThrowIfNull(engine);
-
-        ReplaceRuntimeState(engine);
-        repo.Commit(Root).Unwrap();
-    }
-
-    internal void Commit(Repository repo) {
-        ArgumentNullException.ThrowIfNull(repo);
-        repo.Commit(Root).Unwrap();
-    }
-
-    internal void ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.ReplacePendingToolResults(pendingResults);
-    }
-
-    internal void UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.UpsertPendingToolResult(pendingResult);
-    }
-
-    internal void ReplaceTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.ReplaceTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
-    }
-
-    internal void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
-    }
-
-    internal void SetResolvedProfile(LlmProfileCheckpoint resolvedProfile) {
-        ArgumentNullException.ThrowIfNull(resolvedProfile);
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SetResolvedProfile(resolvedProfile);
-    }
-
-    internal void ClearResolvedProfile() {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.ClearResolvedProfile();
-    }
-
-    internal void SetLockedCompactionSplitIndex(int lockedCompactionSplitIndex) {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SetLockedCompactionSplitIndex(lockedCompactionSplitIndex);
-    }
-
-    internal void ClearLockedCompactionSplitIndex() {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.ClearLockedCompactionSplitIndex();
-    }
-
-    internal void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction) {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.ReplacePendingCompaction(pendingCompaction);
-    }
-
-    internal void SetPendingCompaction(CompactionCheckpoint pendingCompaction) {
-        ArgumentNullException.ThrowIfNull(pendingCompaction);
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SetPendingCompaction(pendingCompaction);
-    }
-
-    internal void ClearPendingCompaction() {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.ClearPendingCompaction();
-    }
-
-    internal void SetToolSessionExecutionSequence(long executionSequence) {
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(executionSequence);
-    }
-
-    internal void ReplaceRuntimeState(AgentEngineRuntimeStateSnapshot snapshot) {
+    private void ReplaceRuntimeState(AgentEngineRuntimeStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
         _workspaceRoot.Meta.Stamp();
@@ -221,7 +127,7 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.RuntimeState.ReplacePendingCompaction(snapshot.PendingCompaction);
     }
 
-    internal AgentEngineRuntimeStateSnapshot LoadRuntimeState() {
+    private AgentEngineRuntimeStateSnapshot LoadRuntimeState() {
         var pendingToolResults = _workspaceRoot.RuntimeState.LoadPendingToolResults();
         var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.RuntimeState.LoadTurnRuntime();
         var pendingCompaction = _workspaceRoot.RuntimeState.LoadPendingCompaction();

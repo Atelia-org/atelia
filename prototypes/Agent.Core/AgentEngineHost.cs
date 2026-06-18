@@ -56,7 +56,7 @@ public sealed class AgentEngineHost : IDisposable {
     public AgentEngineStateRoot StateRoot {
         get {
             EnsureNotDisposed();
-            return _workspaceSession.StateRoot;
+            return AgentEngineStateRoot.FromWorkspaceRoot(_workspaceSession.WorkspaceRoot);
         }
     }
 
@@ -81,10 +81,10 @@ public sealed class AgentEngineHost : IDisposable {
         try {
             var revision = repo.CreateBranch(options.BranchName).Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
-            var stateRoot = AgentEngineStateRoot.Create(workspaceRoot, options.SystemPrompt);
-            repo.Commit(stateRoot.Root).Unwrap();
+            workspaceRoot.SeedDefaultState(options.SystemPrompt);
+            repo.Commit(workspaceRoot.Root).Unwrap();
 
-            workspaceSession = AgentWorkspaceSession.Open(stateRoot, repo);
+            workspaceSession = AgentWorkspaceSession.Open(workspaceRoot, repo);
             var engine = runtime.CreateLiveWorkspaceEngine(workspaceSession);
             return new AgentEngineHost(repoDir, options.BranchName, workspaceSession, engine, runtime);
         }
@@ -116,8 +116,7 @@ public sealed class AgentEngineHost : IDisposable {
             if (revision.GraphRoot is not DurableDict<string> root) { throw new InvalidDataException("Repository graph root is not a valid agent-engine-state."); }
 
             var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
-            var stateRoot = AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot);
-            workspaceSession = AgentWorkspaceSession.Open(stateRoot, repo);
+            workspaceSession = AgentWorkspaceSession.Open(workspaceRoot, repo);
             var engine = runtime.CreateLiveWorkspaceEngine(workspaceSession);
             return new AgentEngineHost(repoDir, branchName, workspaceSession, engine, runtime);
         }
