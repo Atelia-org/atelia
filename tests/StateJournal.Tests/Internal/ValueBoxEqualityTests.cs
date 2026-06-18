@@ -30,7 +30,7 @@ public class ValueBoxEqualityTests {
         internal override void DiscardChanges() => throw new NotSupportedException();
 
         internal override void ApplyDelta(ref BinaryDiffReader reader, SizedPtr previousVersion) => throw new NotSupportedException();
-        internal override void OnLoadCompleted(SizedPtr versionTicket) => throw new NotSupportedException();
+        internal override void OnLoadCompleted(SizedPtr versionTicket, LoadMaterializationMode materializationMode) => throw new NotSupportedException();
 
         internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) { }
 

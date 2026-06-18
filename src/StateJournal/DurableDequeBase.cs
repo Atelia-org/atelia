@@ -21,6 +21,7 @@ public abstract class DurableDequeBase : DurableObject {
 
     private protected abstract void CommitCore();
     private protected abstract void SyncCurrentFromCommittedCore();
+    private protected virtual void SyncMutableCurrentFromCommittedCore() => SyncCurrentFromCommittedCore();
     // frozen load 路径默认与 non-frozen 相同；子类若需区分（如 tracker-level 内存释放）可 override。
     private protected virtual void SyncFrozenCurrentFromCommittedCore() => SyncCurrentFromCommittedCore();
     private protected abstract void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context);
@@ -91,14 +92,28 @@ public abstract class DurableDequeBase : DurableObject {
         ApplyDeltaCore(ref reader);
     }
 
-    internal sealed override void OnLoadCompleted(SizedPtr versionTicket) {
+    internal sealed override void OnLoadCompleted(SizedPtr versionTicket, LoadMaterializationMode materializationMode) {
         _versionStatus.SetHead(versionTicket);
         ApplyLoadedObjectFlags(_versionStatus.ObjectFlags);
-        if (IsFrozen) {
-            SyncFrozenCurrentFromCommittedCore();
-        }
-        else {
-            SyncCurrentFromCommittedCore();
+        switch (materializationMode) {
+            case LoadMaterializationMode.Normal:
+                if (IsFrozen) {
+                    SyncFrozenCurrentFromCommittedCore();
+                }
+                else {
+                    SyncCurrentFromCommittedCore();
+                }
+                break;
+            case LoadMaterializationMode.ForceMutable:
+                SyncMutableCurrentFromCommittedCore();
+                OverrideCurrentObjectFlagsAfterLoad(ObjectVersionFlags.None);
+                break;
+            case LoadMaterializationMode.ForceFrozen:
+                SyncFrozenCurrentFromCommittedCore();
+                OverrideCurrentObjectFlagsAfterLoad(ObjectVersionFlags.Frozen);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(materializationMode), materializationMode, null);
         }
         SetState(DurableState.Clean);
     }

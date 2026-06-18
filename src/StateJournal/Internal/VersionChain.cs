@@ -150,9 +150,10 @@ internal static class VersionChain {
         SizedPtr versionTicket,
         FrameUsage? expectUsage = null,
         DurableObjectKind? expectObject = null,
-        StringPool? symbolPool = null
+        StringPool? symbolPool = null,
+        LoadMaterializationMode materializationMode = LoadMaterializationMode.Normal
     ) {
-        var result = LoadFull(file, versionTicket, expectUsage, expectObject, symbolPool);
+        var result = LoadFull(file, versionTicket, expectUsage, expectObject, symbolPool, materializationMode);
         if (result.IsFailure) { return result.Error!; }
         return result.Value.Object;
     }
@@ -169,7 +170,8 @@ internal static class VersionChain {
         SizedPtr versionTicket,
         FrameUsage? expectUsage = null,
         DurableObjectKind? expectObject = null,
-        StringPool? symbolPool = null
+        StringPool? symbolPool = null,
+        LoadMaterializationMode materializationMode = LoadMaterializationMode.Normal
     ) {
         Stack<(RbfPooledFrame Frame, int ConsumedCount, int TailMetaLength, SizedPtr ParentTicket)> deltaChain = new(256);
         HashSet<SizedPtr> visitedTickets = new();
@@ -285,7 +287,7 @@ internal static class VersionChain {
             if ((placeholderTracker is not null || symbolPool is not null) &&
                 result.ValidateReconstructed(placeholderTracker, symbolPool) is { } placeholderError) { return placeholderError; }
 
-            result.OnLoadCompleted(versionTicket);
+            result.OnLoadCompleted(versionTicket, materializationMode);
             return new VersionChainLoadResult(result, headParentTicket, headTailMeta);
         }
         catch (InvalidDataException ex) {

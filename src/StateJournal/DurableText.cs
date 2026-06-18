@@ -149,11 +149,23 @@ public sealed class DurableText : DurableObject {
         _core.ApplyDelta(ref reader);
     }
 
-    internal override void OnLoadCompleted(SizedPtr versionTicket) {
+    internal override void OnLoadCompleted(SizedPtr versionTicket, LoadMaterializationMode materializationMode) {
         _versionStatus.SetHead(versionTicket);
         ApplyLoadedObjectFlags(_versionStatus.ObjectFlags);
-        if (IsFrozen) { throw new InvalidDataException("Frozen DurableText is not supported by this implementation."); }
-        _core.SyncCurrentFromCommitted();
+        switch (materializationMode) {
+            case LoadMaterializationMode.Normal:
+                if (IsFrozen) { throw new InvalidDataException("Frozen DurableText is not supported by this implementation."); }
+                _core.SyncCurrentFromCommitted();
+                break;
+            case LoadMaterializationMode.ForceMutable:
+                _core.SyncCurrentFromCommitted();
+                OverrideCurrentObjectFlagsAfterLoad(ObjectVersionFlags.None);
+                break;
+            case LoadMaterializationMode.ForceFrozen:
+                throw new NotSupportedException("Frozen DurableText is not supported by this implementation.");
+            default:
+                throw new ArgumentOutOfRangeException(nameof(materializationMode), materializationMode, null);
+        }
         SetState(DurableState.Clean);
     }
 
@@ -164,7 +176,8 @@ public sealed class DurableText : DurableObject {
     }
 
     internal override AteliaError? ValidateReconstructed(
-        LoadPlaceholderTracker? tracker, Pools.StringPool? _) {
+        LoadPlaceholderTracker? tracker, Pools.StringPool? _
+    ) {
         if (tracker is null) { return null; }
         return _core.ValidateReconstructed(tracker, "DurableText");
     }

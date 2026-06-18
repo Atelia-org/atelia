@@ -203,7 +203,12 @@ root.Upsert("bad", foreign); // InvalidOperationException
 
 ### 3.1 Fork committed state
 
-当前 `DurableDict` 与 `DurableHashSet` 路线公开支持 fork：
+当前 committed clone 有两条公开可用路线：
+
+- 实例级快路径：`source.ForkCommittedAsMutable()`
+- repository 级 replay fallback：`repo.ReplayCommitted(source, mode)`
+
+其中，实例快路径当前由 `DurableDict`、`DurableHashSet` 与 `DurableDeque` 正式支持：
 
 ```csharp
 var template = rev.CreateDict<string, int>();
@@ -219,6 +224,13 @@ repo.Commit(setTemplate).Value;
 
 var setDraft = setTemplate.ForkCommittedAsMutable();
 setDraft.Add(2);
+
+var dequeTemplate = rev.CreateDeque<string>();
+dequeTemplate.PushBack("alpha");
+repo.Commit(dequeTemplate).Value;
+
+var dequeDraft = dequeTemplate.ForkCommittedAsMutable();
+dequeDraft.PushBack("beta");
 ```
 
 语义要点：
@@ -229,9 +241,43 @@ setDraft.Add(2);
 - `DurableObject` 子引用是浅拷贝；fork parent 不会深拷贝整棵子图。
 - fork 后如果对象还没挂到 root，可在后续 commit 中被 sweep 掉。
 
-当前不支持：
+### 3.1.1 Repository replay committed clone
 
-- `DurableOrderedDict` / `DurableText` 没有 public `ForkCommittedAsMutable()`。
+对还没有实例快路径 fork 的类型，或者当你明确想要“从磁盘上的 committed snapshot 重新物化一个新身份”时，可用 repository replay 路线：
+
+```csharp
+var ordered = rev.CreateOrderedDict<int, string>();
+ordered.Upsert(1, "alpha");
+repo.Commit(ordered).Value;
+
+ordered.Upsert(1, "beta"); // 未提交 working change
+
+var replay = repo.ReplayCommitted(ordered, LoadMaterializationMode.ForceMutable).Value;
+replay.Upsert(2, "gamma");
+```
+
+这条路线当前特别适合：
+
+- `DurableOrderedDict<TKey, TValue>`
+- `DurableOrderedDict<TKey>`
+- `DurableText`
+
+语义要点：
+
+- replay 结果仍然绑定到 **同一个 `Revision`**，只是拿到新的 `LocalId`。
+- replay 只看 `source.HeadTicket` 对应的 committed snapshot，不看 source 当前未提交 working state。
+- 因此 dirty source 也能 replay；dirty frozen source 也能 replay committed clone。
+- `LoadMaterializationMode.ForceMutable` 是最常用模式，表示“无论源 committed flags 是否 frozen，都把 replay 结果物化成 mutable working view”。
+- `LoadMaterializationMode.ForceFrozen` 目前只对已支持 frozen 物化的类型有意义；`DurableOrderedDict` / `DurableText` 当前会明确返回 unsupported 错误。
+
+当前能力矩阵：
+
+- `DurableDict` / `DurableHashSet` / `DurableDeque`
+  - 已支持实例快路径 `ForkCommittedAsMutable()`
+  - 也可用 repository replay
+- `DurableOrderedDict` / `DurableText`
+  - 没有 public `ForkCommittedAsMutable()`
+  - 当前应使用 `Repository.ReplayCommitted(..., LoadMaterializationMode.ForceMutable)`
 
 ### 3.2 Freeze / frozen
 
@@ -775,10 +821,13 @@ repo.Commit(root).Value;
 - 不要继续使用被 GC sweep 后的 detached 对象。
 - `Commit(root)` 的 root 决定可达性；没挂在 root 下的对象不会保留。
 - 当前 `DurableDict`、`DurableHashSet` 与 `DurableDeque` 正式支持 `ForkCommittedAsMutable()`。
+- 当前 `Repository.ReplayCommitted(source, LoadMaterializationMode.ForceMutable)` 也已可用于 committed clone；尤其适用于 `DurableOrderedDict` / `DurableText`。
 - 当前 `DurableDict`、`DurableHashSet` 与 `DurableDeque` 正式支持 `Freeze()` / `IsFrozen`；`OrderedDict` / `DurableText` 仍不支持 freeze。
 - `ForkCommittedAsMutable()` 复制 committed state，不复制 source 的未提交 working state。
+- `Repository.ReplayCommitted(...)` 也复制 committed state，不复制 source 的未提交 working state；但它不要求 source 当前 working state 处于可快路径 fork 的形态。
 - `Freeze()` 后的修改会抛 `ObjectFrozenException`。
 - dirty frozen source 不能直接 fork；先 commit 让 frozen snapshot 落盘。
+- dirty frozen source 若只是想拿 committed clone，可改用 `Repository.ReplayCommitted(source, LoadMaterializationMode.ForceMutable)`。
 - `DurableHashSet<T>` 当前只有 typed 版本；若需求是异构集合，当前没有 mixed hash set，通常改用 mixed dict 模拟 membership。
 - mixed 容器里的 `double` 默认可能采用紧凑编码；需要精确保存所有 double bit 时使用 `UpsertExactDouble` 或 exact double helpers。
 - typed `string` 和 mixed `string` 都走值语义 payload 路线；typed/mixed `Symbol` 才走 intern 池。注意 typed `string` 的 `null` 规范化为空字符串，而 mixed `string` 的 `null` 存为 `ValueBox.Null`。

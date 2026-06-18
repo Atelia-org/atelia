@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-05-29
+> **最后更新**：2026-06-18
 
 > **使用者入口**：面向实际接入与 API 调用的高密度手册见 [`usage-guide.md`](usage-guide.md)。
 
@@ -113,6 +113,7 @@ private T[]?[] _slabs;
 
 - `Freeze()` / `IsFrozen`
 - object-level `ForkCommittedAsMutable()`
+- repository-level `ReplayCommitted(source, mode)`
 
 但当前落地范围是**有选择的**：
 
@@ -120,9 +121,11 @@ private T[]?[] _slabs;
 - `DurableHashSet<T>`：已完整支持 fork + freeze；当前只有 typed 路线，没有 mixed / durable-object-element 特化
 - `DurableDeque<T>` / `DurableDeque`：已完整支持 fork + freeze
 - `DurableOrderedDict<...>` / `DurableText`：
-  - 当前不支持 public fork
+  - 当前没有 public `ForkCommittedAsMutable()`
+  - 已可通过 `Repository.ReplayCommitted(..., LoadMaterializationMode.ForceMutable)` 做 committed clone
   - `Freeze()` 默认抛 `NotSupportedException`
-  - load 路径若遇到 frozen flag 会 fail-fast，避免“被加载成 frozen 但仍可变”
+  - `ReplayCommitted(..., ForceFrozen)` 当前会明确返回“不支持该 materialization”的状态错误
+  - 普通 `Open` / `Load` 路径若遇到 frozen flag 仍会 fail-fast，避免“被加载成 frozen 但仍可变”
 
 dict 路线需要牢记的当前语义：
 
@@ -130,6 +133,51 @@ dict 路线需要牢记的当前语义：
 - source 有普通未提交修改时，fork 仍取上次 committed 内容
 - source 若处于 dirty frozen 且该 frozen snapshot 尚未提交，则 fork 会被拒绝
 - frozen source fork 出来的新对象默认是 mutable；若其当前 flags 与继承的 committed flags 不同，首次 commit 需要写 frame 同步 object flags
+
+当前需要明确区分两条 committed-clone 路线：
+
+- `source.ForkCommittedAsMutable()`
+  - 实例级快路径
+  - 基于内存中的 committed view
+  - 当前只给已实现专用 clone 逻辑的类型挂上
+- `repo.ReplayCommitted(source, mode)`
+  - `Repository` 提供 segment file，`Revision` 在 **source 所属的同一个 Revision** 内 replay `source.HeadTicket`
+  - 返回同 revision 下的新 `LocalId`
+  - 是统一 fallback，不依赖具体类型暴露 committed-tracker clone
+
+这两条路的合同不同：
+
+- 快路径 fork 会拒绝 dirty frozen 且尚未提交的 source
+- replay clone 只看 `source.HeadTicket` 对应的 committed snapshot，因此 dirty frozen source 仍可 replay 出 committed clone
+
+### 4.1 replay clone 的实现收口点
+
+新加的 replay 路线当前已经有一条清晰主链：
+
+```text
+Repository.ReplayCommitted(source, mode)
+  -> ownership / loaded-revision 校验
+  -> 按 revision.HeadSegmentNumber 选择 ActiveFile 或 HistoricalFile
+  -> Revision.ReplayCommittedCore(...)
+  -> VersionChain.Load(..., materializationMode)
+  -> DurableObject.OnLoadCompleted(versionTicket, mode)
+  -> BindForkedObject(...) 绑定成同一 Revision 下的新对象身份
+```
+
+实现上需要记住：
+
+- 这里**没有第二个 target revision**；结果总是回绑到 `source.Revision`
+- `Repository` 只负责 file/segment 选择，不负责对象 bind
+- 真正决定 replay 后 current working 视图怎么物化的是对象层 `OnLoadCompleted(..., LoadMaterializationMode)`
+- `LoadMaterializationMode` 当前是：
+  - `Normal`
+  - `ForceMutable`
+  - `ForceFrozen`
+
+其中：
+
+- `ForceMutable` 是 committed frozen source -> mutable clone 的关键支撑
+- `ForceFrozen` 是统一骨架的一部分，但 `OrderedDict` / `DurableText` 当前仍明确不支持
 
 ### 5. typed Symbol load 采用 placeholder 过渡方案
 
@@ -769,7 +817,9 @@ Load ObjectMap frame chain
 | DurableOrderedDict（Typed / Mixed / DurObj） | ✅ 已完成 | 基于 SkipListCore，typed + mixed + DurObj |
 | DurableDict fork / freeze | ✅ 已完成 | typed + mixed 都已支持；flags 持久化已打通 |
 | DurableDeque fork / freeze | ✅ 已完成 | typed + mixed 都已支持；flags 持久化已打通 |
-| OrderedDict / Text freeze 与其他 fork | 🟡 预留中 | 当前以 `NotSupportedException` / fail-fast 为主 |
+| Repository replay committed clone | ✅ 已完成首版 | `LoadMaterializationMode` + `Repository.ReplayCommitted(...)` 已接通 |
+| OrderedDict / Text replay mutable clone | ✅ 已完成首版 | 通过 repository replay 支持 committed mutable clone |
+| OrderedDict / Text freeze 与 replay-frozen | 🟡 预留中 | 当前仍以 fail-fast / unsupported 为主 |
 | typed Symbol staging-in-ChangeTracker | 🟡 储备方案 | 尚未落地，见专项文档 |
 
 ---
@@ -816,17 +866,20 @@ mixed：
 
 不应覆盖本文件作为“当前主线事实地图”的角色。
 
-### 5. 当前 DurableDict / DurableHashSet / DurableDeque 已支持 fork + freeze
+### 5. 当前 committed clone 已分成“实例快路径”和“repository replay fallback”
 
-不要把“基类已有 `Freeze()` / `IsFrozen` / object flags”误读成“所有容器都已支持 readonly / mutable fork”。
+不要把“基类已有 `Freeze()` / `IsFrozen` / object flags”误读成“所有容器都已支持同一套 fork API”。
 
 当前事实是：
 
-- dict：正式支持 fork + freeze，并已有 roundtrip / retry / fork matrix 测试
-- hash set：正式支持 fork + freeze，并已有 roundtrip / discard / tuple-key / symbol / freeze / fork 测试
-- deque：正式支持 fork + freeze，并已有 roundtrip / discard / child-ref / fork matrix 测试
-- ordered dict / text：仍待后续 PR 推进
-- 设计推进应以 `frozen-durable-object-design.md` 为基线，而不是从基类表面 API 反推“应该已经可用”
+- dict：实例快路径 fork + freeze 均正式支持
+- hash set：实例快路径 fork + freeze 均正式支持
+- deque：实例快路径 fork + freeze 均正式支持
+- ordered dict / text：无实例快路径 fork；但已支持 repository replay-based committed mutable clone
+- ordered dict / text：freeze 与 replay-frozen 仍待后续 PR 推进
+- 因此阅读代码时要先分清自己看到的是：
+  - `ForkCommittedAsMutable()` 快路径
+  - 还是 `Repository.ReplayCommitted(...)` fallback
 
 ---
 
@@ -836,16 +889,20 @@ mixed：
 src/StateJournal/
 ├── DurableObject.cs
 ├── DurableState.cs
+├── LoadMaterializationMode.cs
 ├── DurableDict.Typed.cs
 ├── DurableDict.Mixed.cs
 ├── DurableDeque.Typed.cs
 ├── DurableDeque.Mixed.cs
 ├── DurableHashSet.cs
 ├── DurableOrderedDict.cs
+├── DurableText.cs
 ├── Revision.cs
+├── Revision.Replay.cs
 ├── Revision.Commit.cs
 ├── Revision.Symbol.cs
 ├── Repository.cs
+├── Repository.Replay.cs
 ├── CommitOutcome.cs
 ├── Internal/
 │   ├── ValueBox.cs + ValueBox.*.cs

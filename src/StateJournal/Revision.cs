@@ -391,6 +391,10 @@ public partial class Revision {
         obj.MarkPendingObjectMapRegistration();
     }
 
+    /// <summary>
+    /// 基于已在内存中的 committed view 执行快路径 fork。
+    /// 这是实例级优化路径；通用 replay/load fallback 见 <see cref="Repository.ReplayCommitted{TDurable}(TDurable, LoadMaterializationMode)"/>.
+    /// </summary>
     internal TFork ForkCommittedAsMutable<TFork>(TFork source)
         where TFork : DurableObject {
         ArgumentNullException.ThrowIfNull(source);

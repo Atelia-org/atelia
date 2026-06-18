@@ -65,8 +65,8 @@ public abstract class DurableObject {
 
     internal abstract void ApplyDelta(ref BinaryDiffReader reader, SizedPtr parentTicket);
 
-    /// <summary>Load 完成后调用，修正 _previousVersion 并将 _committed 数据同步到 _current。</summary>
-    internal abstract void OnLoadCompleted(SizedPtr versionTicket);
+    /// <summary>Load 完成后调用，修正 _previousVersion 并将 reconstructed committed 数据物化到 current。</summary>
+    internal abstract void OnLoadCompleted(SizedPtr versionTicket, LoadMaterializationMode materializationMode);
 
     internal abstract void DiscardChanges();
 
@@ -132,6 +132,12 @@ public abstract class DurableObject {
     internal void ApplyLoadedObjectFlags(ObjectVersionFlags objectFlags) {
         _isFrozen = (objectFlags & ObjectVersionFlags.Frozen) != 0;
         _mutabilityDirty = false;
+        _forceRebaseForFrozenSnapshot = false;
+    }
+
+    internal void OverrideCurrentObjectFlagsAfterLoad(ObjectVersionFlags currentObjectFlags) {
+        _isFrozen = (currentObjectFlags & ObjectVersionFlags.Frozen) != 0;
+        _mutabilityDirty = currentObjectFlags != VersionObjectFlags;
         _forceRebaseForFrozenSnapshot = false;
     }
 
