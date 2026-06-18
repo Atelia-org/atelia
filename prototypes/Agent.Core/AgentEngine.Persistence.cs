@@ -197,9 +197,8 @@ public partial class AgentEngine {
         return engine;
     }
 
-    internal static AgentEngine CreateForRepository(
-        Repository repo,
-        AgentEngineStateRoot stateRoot,
+    internal static AgentEngine CreateFromWorkspaceSession(
+        AgentWorkspaceSession workspaceSession,
         LlmProfileRegistry? profileRegistry = null,
         IEnumerable<IApp>? initialApps = null,
         IEnumerable<ITool>? initialTools = null,
@@ -207,9 +206,8 @@ public partial class AgentEngine {
         Func<DateTimeOffset>? utcNowProvider = null,
         AutoCompactionOptions? autoCompaction = null
     ) {
-        return CreateForRepository(
-            repo,
-            stateRoot,
+        return CreateFromWorkspaceSession(
+            workspaceSession,
             profileRegistry is null ? null : checkpoint => profileRegistry.ResolveOrNull(checkpoint),
             initialApps,
             initialTools,
@@ -219,9 +217,8 @@ public partial class AgentEngine {
         );
     }
 
-    internal static AgentEngine CreateForRepository(
-        Repository repo,
-        AgentEngineStateRoot stateRoot,
+    internal static AgentEngine CreateFromWorkspaceSession(
+        AgentWorkspaceSession workspaceSession,
         Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
         IEnumerable<IApp>? initialApps = null,
         IEnumerable<ITool>? initialTools = null,
@@ -229,13 +226,10 @@ public partial class AgentEngine {
         Func<DateTimeOffset>? utcNowProvider = null,
         AutoCompactionOptions? autoCompaction = null
     ) {
-        ArgumentNullException.ThrowIfNull(repo);
-        ArgumentNullException.ThrowIfNull(stateRoot);
-
-        var workspaceSession = stateRoot.OpenSession(repo);
+        ArgumentNullException.ThrowIfNull(workspaceSession);
 
         return CreateFromPersistedStateCore(
-            AgentState.RestoreFromWorkspaceSession(workspaceSession),
+            workspaceSession.RestoreState(),
             workspaceSession.LoadRuntimeState(),
             resolvedProfileResolver,
             initialApps,
@@ -299,14 +293,6 @@ public partial class AgentEngine {
             utcNowProvider,
             autoCompaction
         );
-    }
-
-    internal void CloseWorkspaceSession() {
-        _state.CloseWorkspaceSession();
-        if (_toolSession is not null) {
-            _toolSession.ExecutionSequenceAllocated = null;
-        }
-        _workspaceSession?.Close();
     }
 
     internal void CommitStableBoundary() {

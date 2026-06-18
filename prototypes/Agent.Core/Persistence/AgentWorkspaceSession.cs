@@ -4,7 +4,7 @@ using Atelia.StateJournal;
 
 namespace Atelia.Agent.Core.Persistence;
 
-internal sealed class AgentWorkspaceSession {
+internal sealed class AgentWorkspaceSession : IDisposable {
     private readonly AgentWorkspaceRoot _workspaceRoot;
     private readonly AgentEngineStateRoot _stateRoot;
     private readonly Repository? _repo;
@@ -16,12 +16,36 @@ internal sealed class AgentWorkspaceSession {
         _repo = repo;
     }
 
-    internal static AgentWorkspaceSession Create(AgentEngineStateRoot stateRoot, Repository? repo = null) {
+    internal static AgentWorkspaceSession Open(AgentEngineStateRoot stateRoot, Repository? repo = null) {
         return new AgentWorkspaceSession(stateRoot, repo);
     }
 
+    internal AgentEngineStateRoot StateRoot => _stateRoot;
+
+    internal AgentState RestoreState() {
+        EnsureOpenForState();
+
+        var state = AgentState.RestoreCore(
+            LoadSystemPrompt(),
+            LoadRecentHistory(),
+            LoadPendingNotifications(),
+            LoadLastSerial()
+        );
+        state.BindWorkspaceSession(this);
+        return state;
+    }
+
     internal void Close() {
+        if (_closed) {
+            return;
+        }
+
         _closed = true;
+        _repo?.Dispose();
+    }
+
+    public void Dispose() {
+        Close();
     }
 
     internal void EnsureOpenForState() {
@@ -32,7 +56,7 @@ internal sealed class AgentWorkspaceSession {
 
     internal void EnsureOpenForEngine() {
         if (_closed) {
-            throw new InvalidOperationException("AgentEngine repository session has been closed.");
+            throw new InvalidOperationException("AgentEngine workspace session has been closed.");
         }
     }
 
@@ -126,11 +150,6 @@ internal sealed class AgentWorkspaceSession {
     internal void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
         EnsureOpenForEngine();
         _stateRoot.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
-    }
-
-    internal void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction) {
-        EnsureOpenForEngine();
-        _stateRoot.ReplacePendingCompaction(pendingCompaction);
     }
 
     internal void SetPendingCompaction(CompactionCheckpoint pendingCompaction) {

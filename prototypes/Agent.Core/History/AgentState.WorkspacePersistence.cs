@@ -5,7 +5,7 @@ namespace Atelia.Agent.Core.History;
 public sealed partial class AgentState {
     private AgentWorkspaceSession? _workspaceSession;
 
-    internal void AttachWorkspaceSession(AgentWorkspaceSession workspaceSession) {
+    internal void BindWorkspaceSession(AgentWorkspaceSession workspaceSession) {
         ArgumentNullException.ThrowIfNull(workspaceSession);
         EnsureWorkspaceSessionOpen();
 
@@ -18,10 +18,6 @@ public sealed partial class AgentState {
         }
 
         _workspaceSession = workspaceSession;
-    }
-
-    internal void CloseWorkspaceSession() {
-        _workspaceSession?.Close();
     }
 
     private void EnsureWorkspaceSessionOpen() {

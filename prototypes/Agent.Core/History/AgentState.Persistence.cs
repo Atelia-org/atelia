@@ -25,31 +25,7 @@ public sealed partial class AgentState {
         );
     }
 
-    internal static AgentState RestoreFromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
-
-        return RestoreCore(
-            workspaceRoot.Meta.GetRequiredSystemPrompt(),
-            workspaceRoot.History.LoadRecent(),
-            workspaceRoot.History.LoadPendingNotifications(),
-            workspaceRoot.History.GetRequiredLastSerial()
-        );
-    }
-
-    internal static AgentState RestoreFromWorkspaceSession(AgentWorkspaceSession workspaceSession) {
-        ArgumentNullException.ThrowIfNull(workspaceSession);
-
-        var state = RestoreCore(
-            workspaceSession.LoadSystemPrompt(),
-            workspaceSession.LoadRecentHistory(),
-            workspaceSession.LoadPendingNotifications(),
-            workspaceSession.LoadLastSerial()
-        );
-        state.AttachWorkspaceSession(workspaceSession);
-        return state;
-    }
-
-    private static AgentState RestoreCore(
+    internal static AgentState RestoreCore(
         string systemPrompt,
         IReadOnlyList<HistoryEntry> recentHistory,
         IReadOnlyList<string> pendingNotifications,

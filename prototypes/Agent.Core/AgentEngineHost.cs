@@ -16,31 +16,27 @@ namespace Atelia.Agent.Core;
 public sealed class AgentEngineHost : IDisposable {
     private const string DefaultBranchName = "main";
 
-    private readonly Repository _repo;
-    private readonly AgentEngineStateRoot _stateRoot;
+    private readonly AgentWorkspaceSession _workspaceSession;
     private readonly AgentEngine _engine;
     private bool _disposed;
 
     private AgentEngineHost(
         string repoDir,
         string branchName,
-        Repository repo,
-        AgentEngineStateRoot stateRoot,
+        AgentWorkspaceSession workspaceSession,
         AgentEngine engine,
         AgentEngineHostRuntime runtime
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
         ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
-        ArgumentNullException.ThrowIfNull(repo);
-        ArgumentNullException.ThrowIfNull(stateRoot);
+        ArgumentNullException.ThrowIfNull(workspaceSession);
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(runtime);
 
         RepoDir = repoDir;
         BranchName = branchName;
         Runtime = runtime;
-        _repo = repo;
-        _stateRoot = stateRoot;
+        _workspaceSession = workspaceSession;
         _engine = engine;
     }
 
@@ -60,7 +56,7 @@ public sealed class AgentEngineHost : IDisposable {
     public AgentEngineStateRoot StateRoot {
         get {
             EnsureNotDisposed();
-            return _stateRoot;
+            return _workspaceSession.StateRoot;
         }
     }
 
@@ -81,17 +77,24 @@ public sealed class AgentEngineHost : IDisposable {
         }
 
         var repo = Repository.Create(repoDir).Unwrap();
+        AgentWorkspaceSession? workspaceSession = null;
         try {
             var revision = repo.CreateBranch(options.BranchName).Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
             var stateRoot = AgentEngineStateRoot.Create(workspaceRoot, options.SystemPrompt);
             repo.Commit(stateRoot.Root).Unwrap();
 
-            var engine = runtime.BuildRepositoryBackedEngine(repo, stateRoot);
-            return new AgentEngineHost(repoDir, options.BranchName, repo, stateRoot, engine, runtime);
+            workspaceSession = AgentWorkspaceSession.Open(stateRoot, repo);
+            var engine = runtime.CreateLiveWorkspaceEngine(workspaceSession);
+            return new AgentEngineHost(repoDir, options.BranchName, workspaceSession, engine, runtime);
         }
         catch {
-            repo.Dispose();
+            if (workspaceSession is not null) {
+                workspaceSession.Dispose();
+            }
+            else {
+                repo.Dispose();
+            }
             throw;
         }
     }
@@ -107,17 +110,24 @@ public sealed class AgentEngineHost : IDisposable {
         runtime ??= new AgentEngineHostRuntime();
 
         var repo = Repository.Open(repoDir).Unwrap();
+        AgentWorkspaceSession? workspaceSession = null;
         try {
             var revision = repo.CheckoutBranch(branchName).Unwrap();
             if (revision.GraphRoot is not DurableDict<string> root) { throw new InvalidDataException("Repository graph root is not a valid agent-engine-state."); }
 
             var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
             var stateRoot = AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot);
-            var engine = runtime.BuildRepositoryBackedEngine(repo, stateRoot);
-            return new AgentEngineHost(repoDir, branchName, repo, stateRoot, engine, runtime);
+            workspaceSession = AgentWorkspaceSession.Open(stateRoot, repo);
+            var engine = runtime.CreateLiveWorkspaceEngine(workspaceSession);
+            return new AgentEngineHost(repoDir, branchName, workspaceSession, engine, runtime);
         }
         catch {
-            repo.Dispose();
+            if (workspaceSession is not null) {
+                workspaceSession.Dispose();
+            }
+            else {
+                repo.Dispose();
+            }
             throw;
         }
     }
@@ -144,8 +154,7 @@ public sealed class AgentEngineHost : IDisposable {
     public void Dispose() {
         if (_disposed) { return; }
         _disposed = true;
-        _engine.CloseWorkspaceSession();
-        _repo.Dispose();
+        _workspaceSession.Dispose();
     }
 
     private void EnsureNotDisposed() {
@@ -193,13 +202,11 @@ public sealed class AgentEngineHostRuntime {
 
     public AutoCompactionOptions? AutoCompaction { get; }
 
-    internal AgentEngine BuildRepositoryBackedEngine(Repository repo, AgentEngineStateRoot stateRoot) {
-        ArgumentNullException.ThrowIfNull(repo);
-        ArgumentNullException.ThrowIfNull(stateRoot);
+    internal AgentEngine CreateLiveWorkspaceEngine(AgentWorkspaceSession workspaceSession) {
+        ArgumentNullException.ThrowIfNull(workspaceSession);
 
-        return AgentEngine.CreateForRepository(
-            repo,
-            stateRoot,
+        return AgentEngine.CreateFromWorkspaceSession(
+            workspaceSession,
             ProfileRegistry,
             InitialApps,
             InitialTools,

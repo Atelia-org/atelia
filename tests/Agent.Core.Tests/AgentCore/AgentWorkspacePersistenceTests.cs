@@ -86,7 +86,8 @@ public sealed class AgentWorkspacePersistenceTests {
             workspaceRoot.Meta.SetSystemPrompt("workspace-born-system");
             var initialPendingNotificationsDeque = GetPendingNotificationsDeque(workspaceRoot);
 
-            var state = AgentState.RestoreFromWorkspaceSession(AgentEngineStateRoot.FromRoot(workspaceRoot.Root).OpenSession());
+            using var session = AgentWorkspaceSession.Open(AgentEngineStateRoot.FromRoot(workspaceRoot.Root));
+            var state = session.RestoreState();
 
             state.SetSystemPrompt("updated-system");
             state.AppendNotification("queued-notification");
@@ -133,7 +134,8 @@ public sealed class AgentWorkspacePersistenceTests {
             workspaceRoot.Meta.SetSystemPrompt("workspace-append-system");
             var initialHistoryDeque = GetHistoryDeque(workspaceRoot);
 
-            var state = AgentState.RestoreFromWorkspaceSession(AgentEngineStateRoot.FromRoot(workspaceRoot.Root).OpenSession());
+            using var session = AgentWorkspaceSession.Open(AgentEngineStateRoot.FromRoot(workspaceRoot.Root));
+            var state = session.RestoreState();
 
             state.AppendObservation(new ObservationEntry(), "recent-events");
             var afterObservationDeque = GetHistoryDeque(workspaceRoot);
@@ -182,7 +184,8 @@ public sealed class AgentWorkspacePersistenceTests {
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
             workspaceRoot.Meta.SetSystemPrompt("workspace-append-system");
-            var state = AgentState.RestoreFromWorkspaceSession(AgentEngineStateRoot.FromRoot(workspaceRoot.Root).OpenSession());
+            using var session = AgentWorkspaceSession.Open(AgentEngineStateRoot.FromRoot(workspaceRoot.Root));
+            var state = session.RestoreState();
             state.AppendObservation(new ObservationEntry(), "live-append");
             var liveAppendDeque = GetHistoryDeque(workspaceRoot);
             state.AppendNotification("live-pending");
@@ -411,6 +414,42 @@ public sealed class AgentWorkspacePersistenceTests {
             var persisted = stateRoot.Load();
 
             Assert.Equal("public-root-system", persisted.AgentState.SystemPrompt);
+            Assert.Empty(persisted.AgentState.RecentHistory);
+            Assert.Empty(persisted.AgentState.PendingNotifications);
+            Assert.Null(persisted.PendingCompaction);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void PublicCreateFromStateSnapshot_RemainsNonLiveAndDoesNotWriteThrough() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-public-snapshot-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var stateRoot = AgentEngineStateRoot.Create(revision, "public-snapshot-system");
+            var snapshot = stateRoot.Load();
+
+            var engine = AgentEngine.CreateFromStateSnapshot(snapshot);
+            engine.State.SetSystemPrompt("updated-in-memory-only");
+            engine.AppendNotification("queued-notification");
+            engine.State.AppendObservation(new ObservationEntry(), "recent-events");
+            engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("assistant-turn")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            Assert.True(engine.RequestCompaction("compact-system", "compact-now"));
+
+            var persisted = stateRoot.Load();
+
+            Assert.Equal("public-snapshot-system", persisted.AgentState.SystemPrompt);
             Assert.Empty(persisted.AgentState.RecentHistory);
             Assert.Empty(persisted.AgentState.PendingNotifications);
             Assert.Null(persisted.PendingCompaction);
@@ -790,6 +829,8 @@ public sealed class AgentWorkspacePersistenceTests {
         try {
             var host = AgentEngineHost.CreateNew(repoDir);
             var engine = host.Engine;
+            var disposableApp = new StaticApp("late-app", new RecordingTool("late-app.tool"));
+            var disposableTool = new RecordingTool("late-tool");
             var profile = CreateFullFeatureProfile(
                 new QueueCompletionClient(new ActionMessage([new ActionBlock.Text("unused")])),
                 "model-closed"
@@ -801,10 +842,38 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal("AgentState workspace session has been closed.", stateException.Message);
 
             var engineException = Assert.Throws<InvalidOperationException>(() => engine.AppendNotification("should-fail"));
-            Assert.Equal("AgentEngine repository session has been closed.", engineException.Message);
+            Assert.Equal("AgentEngine workspace session has been closed.", engineException.Message);
+
+            var registerAppException = Assert.Throws<InvalidOperationException>(() => engine.RegisterApp(disposableApp));
+            Assert.Equal("AgentEngine workspace session has been closed.", registerAppException.Message);
+
+            var removeAppException = Assert.Throws<InvalidOperationException>(() => engine.RemoveApp(disposableApp.Name));
+            Assert.Equal("AgentEngine workspace session has been closed.", removeAppException.Message);
+
+            var registerToolException = Assert.Throws<InvalidOperationException>(() => engine.RegisterTool(disposableTool));
+            Assert.Equal("AgentEngine workspace session has been closed.", registerToolException.Message);
+
+            var removeToolException = Assert.Throws<InvalidOperationException>(() => engine.RemoveTool(disposableTool.Definition.Name));
+            Assert.Equal("AgentEngine workspace session has been closed.", removeToolException.Message);
+
+            var injectException = Assert.Throws<InvalidOperationException>(
+                () => engine.InjectActionContent(
+                    new ActionInjectionRequest(
+                        "should-fail",
+                        new InjectionSource(InjectionSourceKind.HostOverride),
+                        InjectedActionContentMode.Text
+                    )
+                )
+            );
+            Assert.Equal("AgentEngine workspace session has been closed.", injectException.Message);
+
+            var requestCompactionException = Assert.Throws<InvalidOperationException>(
+                () => engine.RequestCompaction("compact-system", "compact-now")
+            );
+            Assert.Equal("AgentEngine workspace session has been closed.", requestCompactionException.Message);
 
             var stepException = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.StepAsync(profile));
-            Assert.Equal("AgentEngine repository session has been closed.", stepException.Message);
+            Assert.Equal("AgentEngine workspace session has been closed.", stepException.Message);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -956,6 +1025,25 @@ public sealed class AgentWorkspacePersistenceTests {
             _ = cancellationToken;
             _onExecute?.Invoke(context);
             return ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, "ok"));
+        }
+    }
+
+    private sealed class StaticApp : IApp {
+        public StaticApp(string name, params ITool[] tools) {
+            Name = name;
+            Description = $"App {name}.";
+            Tools = tools;
+        }
+
+        public string Name { get; }
+
+        public string Description { get; }
+
+        public IReadOnlyList<ITool> Tools { get; }
+
+        public AppProjection Render(AppRenderContext context) {
+            _ = context;
+            return new AppProjection(Window: null);
         }
     }
 

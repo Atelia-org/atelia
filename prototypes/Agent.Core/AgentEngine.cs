@@ -78,7 +78,7 @@ public partial class AgentEngine {
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
         _workspaceSession = workspaceSession;
         if (_workspaceSession is not null) {
-            _state.AttachWorkspaceSession(_workspaceSession);
+            _state.BindWorkspaceSession(_workspaceSession);
         }
         _toolsDirty = true;
         _idleProvider = idleProvider ?? new TimestampHeartbeatObservationProvider();
@@ -134,7 +134,7 @@ public partial class AgentEngine {
     /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public void RegisterApp(IApp app) {
         if (app is null) { throw new ArgumentNullException(nameof(app)); }
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
 
         EnsureNoToolConflicts(app.Tools, replacingAppName: app.Name);
         _appHost.RegisterApp(app);
@@ -148,7 +148,7 @@ public partial class AgentEngine {
     /// <returns>如成功移除返回 <c>true</c>；否则返回 <c>false</c>。</returns>
     /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public bool RemoveApp(string name) {
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
         if (string.IsNullOrWhiteSpace(name)) { return false; }
 
         var removed = _appHost.RemoveApp(name);
@@ -167,7 +167,7 @@ public partial class AgentEngine {
     /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public void RegisterTool(ITool tool) {
         if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
 
         var definitionName = GetDefinitionName(tool);
 
@@ -185,7 +185,7 @@ public partial class AgentEngine {
     /// <returns>如成功移除返回 <c>true</c>；否则返回 <c>false</c>。</returns>
     /// <remarks>此操作非线程安全，不应与其他方法并发调用。</remarks>
     public bool RemoveTool(string name) {
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
         if (string.IsNullOrWhiteSpace(name)) { return false; }
 
         if (!_standaloneTools.Remove(name)) { return false; }
@@ -223,7 +223,7 @@ public partial class AgentEngine {
     }
 
     private ToolSession EnsureSession() {
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
         var registry = ToolRegistry;
         if (_toolSession is null) {
             _toolSession = registry.CreateSession();
@@ -247,13 +247,13 @@ public partial class AgentEngine {
     /// <exception cref="ArgumentNullException"><paramref name="notificationContent"/> 为 <c>null</c>。</exception>
     /// <remarks>此方法非线程安全，不应与其他方法并发调用。</remarks>
     public void AppendNotification(string notificationContent) {
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
         if (notificationContent is null) { throw new ArgumentNullException(nameof(notificationContent)); }
         _state.AppendNotification(notificationContent);
         DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Host notification appended length={notificationContent.Length}");
     }
 
-    private void EnsureRepositorySessionOpen() {
+    private void EnsureWorkspaceSessionOpen() {
         _workspaceSession?.EnsureOpenForEngine();
     }
 
@@ -382,7 +382,7 @@ public partial class AgentEngine {
     /// </para>
     /// </remarks>
     public Task<AgentStepResult> StepAsync(LlmProfile profile, CancellationToken cancellationToken = default) {
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
         return StepAsync(profile, completionObserver: null, cancellationToken);
     }
 
@@ -402,7 +402,7 @@ public partial class AgentEngine {
         CompletionStreamObserver? completionObserver,
         CancellationToken cancellationToken = default
     ) {
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
         if (profile is null) { throw new ArgumentNullException(nameof(profile)); }
         EnsureProfileSupportsAgentCoreFullFeatures(profile, source: "StepAsync input profile");
 
@@ -464,7 +464,7 @@ public partial class AgentEngine {
     /// 向历史尾部注入一段 assistant/action prefix，使下一次 completion 继续补完它。
     /// </summary>
     public ActionInjectionResult InjectActionContent(ActionInjectionRequest request) {
-        EnsureRepositorySessionOpen();
+        EnsureWorkspaceSessionOpen();
         EnsureActionInjectionAllowedForCurrentTurn();
         return _state.InjectActionContent(request);
     }
