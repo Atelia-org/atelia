@@ -29,10 +29,10 @@ public sealed partial class AgentState {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
         return RestoreCore(
-            workspaceRoot.GetRequiredSystemPrompt(),
-            workspaceRoot.LoadHistory(),
-            workspaceRoot.LoadPendingNotifications(),
-            workspaceRoot.GetRequiredLastSerial()
+            workspaceRoot.Meta.GetRequiredSystemPrompt(),
+            workspaceRoot.History.LoadRecent(),
+            workspaceRoot.History.LoadPendingNotifications(),
+            workspaceRoot.Meta.GetRequiredLastSerial()
         );
     }
 

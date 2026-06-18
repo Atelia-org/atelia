@@ -81,19 +81,19 @@ public sealed class AgentEngineStateRoot {
     public void Save(AgentEngineStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        _workspaceRoot.StampMetadata();
-        _workspaceRoot.SetSystemPrompt(snapshot.AgentState.SystemPrompt);
-        _workspaceRoot.SetLastSerial(snapshot.AgentState.LastSerial);
-        _workspaceRoot.SaveHistory(snapshot.AgentState.RecentHistory);
-        _workspaceRoot.SavePendingNotifications(snapshot.AgentState.PendingNotifications);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.Meta.SetSystemPrompt(snapshot.AgentState.SystemPrompt);
+        _workspaceRoot.Meta.SetLastSerial(snapshot.AgentState.LastSerial);
+        _workspaceRoot.History.SaveRecent(snapshot.AgentState.RecentHistory);
+        _workspaceRoot.History.SavePendingNotifications(snapshot.AgentState.PendingNotifications);
         SaveRuntimeState(ToRuntimeStateSnapshot(snapshot));
     }
 
     public AgentEngineStateSnapshot Load() {
-        string systemPrompt = _workspaceRoot.GetRequiredSystemPrompt();
-        ulong lastSerial = _workspaceRoot.GetRequiredLastSerial();
-        var recentHistory = _workspaceRoot.LoadHistory();
-        var pendingNotifications = _workspaceRoot.LoadPendingNotifications();
+        string systemPrompt = _workspaceRoot.Meta.GetRequiredSystemPrompt();
+        ulong lastSerial = _workspaceRoot.Meta.GetRequiredLastSerial();
+        var recentHistory = _workspaceRoot.History.LoadRecent();
+        var pendingNotifications = _workspaceRoot.History.LoadPendingNotifications();
         var runtimeState = LoadRuntimeState();
 
         return new AgentEngineStateSnapshot(
@@ -130,40 +130,40 @@ public sealed class AgentEngineStateRoot {
     }
 
     internal void SavePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
-        _workspaceRoot.StampMetadata();
-        _workspaceRoot.SavePendingToolResults(pendingResults);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SavePendingToolResults(pendingResults);
     }
 
     internal void SaveTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
-        _workspaceRoot.StampMetadata();
-        _workspaceRoot.SaveTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SaveTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
     }
 
     internal void SavePendingCompaction(CompactionCheckpoint? pendingCompaction) {
-        _workspaceRoot.StampMetadata();
-        _workspaceRoot.SavePendingCompaction(pendingCompaction);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SavePendingCompaction(pendingCompaction);
     }
 
     internal void SetToolSessionExecutionSequence(long executionSequence) {
-        _workspaceRoot.StampMetadata();
-        _workspaceRoot.SetToolSessionExecutionSequence(executionSequence);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(executionSequence);
     }
 
     internal void SaveRuntimeState(AgentEngineRuntimeStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        _workspaceRoot.StampMetadata();
-        _workspaceRoot.SetToolSessionExecutionSequence(snapshot.ToolSessionExecutionSequence);
-        _workspaceRoot.SavePendingToolResults(snapshot.PendingToolResults);
-        _workspaceRoot.SaveTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
-        _workspaceRoot.SavePendingCompaction(snapshot.PendingCompaction);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(snapshot.ToolSessionExecutionSequence);
+        _workspaceRoot.RuntimeState.SavePendingToolResults(snapshot.PendingToolResults);
+        _workspaceRoot.RuntimeState.SaveTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
+        _workspaceRoot.RuntimeState.SavePendingCompaction(snapshot.PendingCompaction);
     }
 
     internal AgentEngineRuntimeStateSnapshot LoadRuntimeState() {
-        var pendingToolResults = _workspaceRoot.LoadPendingToolResults();
-        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.LoadTurnRuntime();
-        var pendingCompaction = _workspaceRoot.LoadPendingCompaction();
-        var toolSessionExecutionSequence = _workspaceRoot.GetToolSessionExecutionSequenceOrDefault();
+        var pendingToolResults = _workspaceRoot.RuntimeState.LoadPendingToolResults();
+        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.RuntimeState.LoadTurnRuntime();
+        var pendingCompaction = _workspaceRoot.RuntimeState.LoadPendingCompaction();
+        var toolSessionExecutionSequence = _workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
 
         return new AgentEngineRuntimeStateSnapshot(
             PendingToolResults: pendingToolResults,

@@ -23,13 +23,13 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<long>("schemaVersion", out var schemaVersion));
             Assert.Equal(2L, schemaVersion);
 
-            Assert.Empty(workspaceRoot.LoadHistory());
-            Assert.Empty(workspaceRoot.LoadPendingNotifications());
-            Assert.Empty(workspaceRoot.LoadPendingToolResults());
-            Assert.Equal((ResolvedProfile: null, LockedCompactionSplitIndex: null), workspaceRoot.LoadTurnRuntime());
-            Assert.Null(workspaceRoot.LoadPendingCompaction());
-            Assert.Equal(0UL, workspaceRoot.GetRequiredLastSerial());
-            Assert.Equal(0L, workspaceRoot.GetToolSessionExecutionSequenceOrDefault());
+            Assert.Empty(workspaceRoot.History.LoadRecent());
+            Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
+            Assert.Empty(workspaceRoot.RuntimeState.LoadPendingToolResults());
+            Assert.Equal((ResolvedProfile: null, LockedCompactionSplitIndex: null), workspaceRoot.RuntimeState.LoadTurnRuntime());
+            Assert.Null(workspaceRoot.RuntimeState.LoadPendingCompaction());
+            Assert.Equal(0UL, workspaceRoot.Meta.GetRequiredLastSerial());
+            Assert.Equal(0L, workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault());
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -83,7 +83,7 @@ public sealed class AgentWorkspacePersistenceTests {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
-            workspaceRoot.SetSystemPrompt("workspace-born-system");
+            workspaceRoot.Meta.SetSystemPrompt("workspace-born-system");
 
             var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
             state.AttachWorkspaceRoot(workspaceRoot, syncExistingState: false);
@@ -99,17 +99,17 @@ public sealed class AgentWorkspacePersistenceTests {
             );
             state.ReplacePrefixWithRecap(1, "summary-text");
 
-            Assert.Equal("updated-system", workspaceRoot.GetRequiredSystemPrompt());
-            Assert.Empty(workspaceRoot.LoadPendingNotifications());
+            Assert.Equal("updated-system", workspaceRoot.Meta.GetRequiredSystemPrompt());
+            Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
             Assert.Equal("queued-notification\nrecent-events", observation.Notifications);
 
-            var history = workspaceRoot.LoadHistory();
+            var history = workspaceRoot.History.LoadRecent();
             Assert.Equal(2, history.Count);
             var recap = Assert.IsType<RecapEntry>(history[0]);
             Assert.Equal("summary-text", recap.Content);
             Assert.Equal(1UL, recap.InsteadSerial);
             Assert.IsType<ActionEntry>(history[1]);
-            Assert.Equal(3UL, workspaceRoot.GetRequiredLastSerial());
+            Assert.Equal(3UL, workspaceRoot.Meta.GetRequiredLastSerial());
         }
         finally {
             if (Directory.Exists(repoDir)) {

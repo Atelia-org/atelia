@@ -36,7 +36,7 @@ public sealed partial class AgentState {
             return ++_lastSerial;
         }
 
-        var nextSerial = _attachedWorkspaceRoot.AllocateNextHistorySerial();
+        var nextSerial = _attachedWorkspaceRoot.Meta.AllocateNextHistorySerial();
         _lastSerial = nextSerial;
         return nextSerial;
     }
@@ -44,27 +44,27 @@ public sealed partial class AgentState {
     private void SyncAttachedWorkspaceAll() {
         if (_attachedWorkspaceRoot is null) { return; }
 
-        _attachedWorkspaceRoot.StampMetadata();
-        _attachedWorkspaceRoot.SetSystemPrompt(SystemPrompt);
-        _attachedWorkspaceRoot.SetLastSerial(_lastSerial);
-        _attachedWorkspaceRoot.SaveHistory(_recentHistory);
-        _attachedWorkspaceRoot.SavePendingNotifications(_pendingNotifications.ToArray());
+        _attachedWorkspaceRoot.Meta.Stamp();
+        _attachedWorkspaceRoot.Meta.SetSystemPrompt(SystemPrompt);
+        _attachedWorkspaceRoot.Meta.SetLastSerial(_lastSerial);
+        _attachedWorkspaceRoot.History.SaveRecent(_recentHistory);
+        _attachedWorkspaceRoot.History.SavePendingNotifications(_pendingNotifications.ToArray());
     }
 
     private void SyncAttachedWorkspaceHistoryAndSerial() {
         if (_attachedWorkspaceRoot is null) { return; }
 
-        _attachedWorkspaceRoot.SaveHistory(_recentHistory);
-        _attachedWorkspaceRoot.SetLastSerial(_lastSerial);
+        _attachedWorkspaceRoot.History.SaveRecent(_recentHistory);
+        _attachedWorkspaceRoot.Meta.SetLastSerial(_lastSerial);
     }
 
     private void SyncAttachedWorkspacePendingNotifications() {
-        _attachedWorkspaceRoot?.SavePendingNotifications(_pendingNotifications.ToArray());
+        _attachedWorkspaceRoot?.History.SavePendingNotifications(_pendingNotifications.ToArray());
     }
 
     private void SyncAttachedWorkspaceSystemPrompt() {
         if (_attachedWorkspaceRoot is null) { return; }
 
-        _attachedWorkspaceRoot.SetSystemPrompt(SystemPrompt);
+        _attachedWorkspaceRoot.Meta.SetSystemPrompt(SystemPrompt);
     }
 }
