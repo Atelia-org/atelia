@@ -41,6 +41,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     private int _committedCount;
     private int _currentCount;
     private uint _nextAllocSequence; // monotonic: only increases, never reuses
+    private bool _isFrozen;
 
     #region Dirty Tracking
     private BitVector _dirtyValues;
@@ -65,7 +66,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
             _capturedOriginals.Add(
                 new CapturedOriginal {
                     Index = index,
-                    Value = _values[index],
+                    Value = VHelper.NeedRelease ? VHelper.ForkFrozenForNewOwner(_values[index])! : _values[index],
                     NextSequence = _nextSequences[index]
                 }
             );
@@ -74,7 +75,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
 
     private void RevertDirty() {
         while (_capturedOriginals.TryPop(out var orig)) {
-            if (VHelper.NeedRelease && _dirtyValues.TestBit(orig.Index)) {
+            if (VHelper.NeedRelease) {
                 VHelper.ReleaseSlot(_values[orig.Index]);
             }
             _values[orig.Index] = orig.Value;
@@ -88,9 +89,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     private void CommitDirty() {
         if (VHelper.NeedRelease) {
             while (_capturedOriginals.TryPop(out var orig)) {
-                if (_dirtyValues.TestBit(orig.Index)) {
-                    VHelper.ReleaseSlot(orig.Value);
-                }
+                VHelper.ReleaseSlot(orig.Value);
             }
         }
         else {
@@ -117,6 +116,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     internal int CommittedNodeCount => _committedCount;
     internal int DirtyValueCount => _dirtyValues.PopCount;
     internal int DirtyLinkCount => _dirtyLinks.PopCount;
+    internal bool IsFrozen => _isFrozen;
     private int AppendedCount => _currentCount - _committedCount;
 
     public LeafChainStore() {
@@ -130,7 +130,13 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
         _dirtyLinks = new();
         _capturedNodes = new();
         _capturedOriginals = new();
+        _isFrozen = false;
         ResetDirtyTracking();
+    }
+
+    private void ThrowIfFrozen(string operation) {
+        if (!_isFrozen) { return; }
+        throw new InvalidOperationException($"{operation} cannot mutate a frozen LeafChainStore.");
     }
 
     private int FindIndex(uint sequence) =>
@@ -235,6 +241,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     }
 
     public LeafHandle AllocNode(TKey key, TValue value, uint nextSequence = 0) {
+        ThrowIfFrozen(nameof(AllocNode));
         int allocedIndex = _currentCount;
         EnsureCapacity(allocedIndex + 1);
 
@@ -269,6 +276,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
 
     /// <summary>按物理 index 更新节点的 value。语义同 <see cref="SetValue(ref LeafHandle, TValue)"/>。</summary>
     internal void SetValueByIndex(int index, TValue newValue) {
+        ThrowIfFrozen(nameof(SetValueByIndex));
         if (IsCommittedIndex(index)) {
             bool isRepeatMutation = _dirtyValues.TestBit(index);
             CaptureIfNeeded(index);
@@ -290,6 +298,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     /// 应调用 <see cref="CancelPreparedValueUpdate"/> 撤销本次 provisional capture，实现零副作用。
     /// </summary>
     internal ref TValue PrepareValueSlotForUpdate(int index, out bool capturedNow) {
+        ThrowIfFrozen(nameof(PrepareValueSlotForUpdate));
         capturedNow = false;
         if (IsCommittedIndex(index) && !IsCaptured(index)) {
             CaptureIfNeeded(index);
@@ -300,6 +309,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
 
     /// <summary>配合 <see cref="PrepareValueSlotForUpdate"/> 使用：确认值已改变，标记 dirty。对 draft 节点无操作。</summary>
     internal void ConfirmValueDirty(int index) {
+        ThrowIfFrozen(nameof(ConfirmValueDirty));
         if (IsCommittedIndex(index)) {
             _dirtyValues.SetBit(index);
         }
@@ -310,6 +320,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     /// 仅在 <c>capturedNow == true</c> 且值未实际改变时调用。
     /// </summary>
     internal void CancelPreparedValueUpdate(int index) {
+        ThrowIfFrozen(nameof(CancelPreparedValueUpdate));
         Debug.Assert(IsCaptured(index), "CancelPreparedValueUpdate called on un-captured index.");
         Debug.Assert(!_dirtyValues.TestBit(index), "CancelPreparedValueUpdate called on already-dirty index.");
         _capturedNodes.ClearBit(index);
@@ -322,6 +333,7 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
     }
 
     public void SetNextSequence(ref LeafHandle handle, uint newNextSequence) {
+        ThrowIfFrozen(nameof(SetNextSequence));
         int index = ResolveIndex(ref handle);
 
         if (IsCommittedIndex(index)) {
@@ -335,12 +347,17 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
 
     #region Lifecycle
     public void Commit() {
+        if (_isFrozen) {
+            _committedCount = _currentCount;
+            return;
+        }
         CommitDirty();
         _committedCount = _currentCount;
         ResetDirtyTracking();
     }
 
     public void Revert() {
+        ThrowIfFrozen(nameof(Revert));
         RevertDirty();
 
         if (!VHelper.NeedRelease) {
@@ -358,6 +375,39 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
             _sequences[tailIndex] = 0;
         }
         ResetDirtyTracking();
+    }
+
+    public void FreezeFromClean<THelper>()
+        where THelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen(nameof(FreezeFromClean));
+        if (HasActiveDirtyTracking || _currentCount != _committedCount) {
+            throw new InvalidOperationException("Cannot FreezeFromClean while LeafChainStore has pending changes.");
+        }
+
+        FreezeValuesInRange<THelper>(0, _currentCount);
+        ReleaseDirtyTrackingForFrozen();
+        _isFrozen = true;
+    }
+
+    public void FreezeFromCurrent<THelper>()
+        where THelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen(nameof(FreezeFromCurrent));
+        Commit();
+        FreezeFromClean<THelper>();
+    }
+
+    public void UnfreezeToMutableClean() {
+        if (!_isFrozen) { throw new InvalidOperationException("LeafChainStore is not frozen."); }
+        _isFrozen = false;
+        ResetDirtyTracking();
+    }
+
+    public void MaterializeFrozenFromReconstructedCommitted<THelper>()
+        where THelper : unmanaged, ITypeHelper<TValue> {
+        FreezeValuesInRange<THelper>(0, _committedCount);
+        _currentCount = _committedCount;
+        ReleaseDirtyTrackingForFrozen();
+        _isFrozen = true;
     }
     #endregion
 
@@ -495,11 +545,13 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
         }
 
         _currentCount = _committedCount;
+        _isFrozen = false;
         ResetDirtyTracking();
     }
 
     public void SyncCurrentFromCommitted() {
         _currentCount = _committedCount;
+        _isFrozen = false;
         ResetDirtyTracking();
     }
     #endregion
@@ -600,6 +652,20 @@ internal struct LeafChainStore<TKey, TValue, KHelper, VHelper>
         _capturedNodes.Clear();
         _capturedNodes.SetLength(_committedCount);
         _capturedOriginals.Clear();
+    }
+
+    private void ReleaseDirtyTrackingForFrozen() {
+        _dirtyValues = default;
+        _dirtyLinks = default;
+        _capturedNodes = default;
+        _capturedOriginals = default;
+    }
+
+    private void FreezeValuesInRange<THelper>(int startIndex, int endIndex)
+        where THelper : unmanaged, ITypeHelper<TValue> {
+        for (int i = startIndex; i < endIndex; i++) {
+            _values[i] = THelper.Freeze(_values[i])!;
+        }
     }
 
     private void ClearTailRange(int startIndex, int endIndex) {

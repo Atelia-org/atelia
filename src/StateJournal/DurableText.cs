@@ -109,8 +109,12 @@ public sealed class DurableText : DurableObject {
     internal override ObjectVersionFlags VersionObjectFlags => _versionStatus.ObjectFlags;
 
     internal override void FreezeCore(bool forceRebase) {
-        // 近期路线对 DurableText 采用 soft frozen：
-        // 不引入第二套 text core，只持久化 frozen object flag，并复用现有 core 承担读路径。
+        if (forceRebase) {
+            _core.FreezeFromCurrent();
+        }
+        else {
+            _core.FreezeFromClean();
+        }
     }
 
     internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) {
@@ -159,14 +163,19 @@ public sealed class DurableText : DurableObject {
         ApplyLoadedObjectFlags(_versionStatus.ObjectFlags);
         switch (materializationMode) {
             case LoadMaterializationMode.Normal:
-                _core.SyncCurrentFromCommitted();
+                if (IsFrozen) {
+                    _core.MaterializeFrozenFromReconstructedCommitted();
+                }
+                else {
+                    _core.SyncCurrentFromCommitted();
+                }
                 break;
             case LoadMaterializationMode.ForceMutable:
                 _core.SyncCurrentFromCommitted();
                 OverrideCurrentObjectFlagsAfterLoad(ObjectVersionFlags.None);
                 break;
             case LoadMaterializationMode.ForceFrozen:
-                _core.SyncCurrentFromCommitted();
+                _core.MaterializeFrozenFromReconstructedCommitted();
                 OverrideCurrentObjectFlagsAfterLoad(ObjectVersionFlags.Frozen);
                 break;
             default:
@@ -178,6 +187,7 @@ public sealed class DurableText : DurableObject {
     internal override void DiscardChanges() {
         if (IsFrozen) {
             ThrowIfCannotDiscardFrozenChanges();
+            _core.UnfreezeToMutableClean();
             ClearDiscardedFreeze();
             return;
         }

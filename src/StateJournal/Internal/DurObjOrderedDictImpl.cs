@@ -24,11 +24,18 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes();
 
-    internal override void FreezeCore(bool forceRebase) { }
+    internal override void FreezeCore(bool forceRebase) {
+        if (forceRebase) {
+            _core.FreezeFromCurrent();
+        }
+        else {
+            _core.FreezeFromClean();
+        }
+    }
 
     private protected override void CommitCore() => _core.Commit();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted();
-    private protected override void SyncFrozenCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted();
+    private protected override void SyncFrozenCurrentFromCommittedCore() => _core.MaterializeFrozenFromReconstructedCommitted();
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta(ref reader);
@@ -98,6 +105,7 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
         ThrowIfPendingObjectMapRegistration();
         if (IsFrozen) {
             ThrowIfCannotDiscardFrozenChanges();
+            _core.UnfreezeToMutableClean();
             ClearDiscardedFreeze();
             return;
         }

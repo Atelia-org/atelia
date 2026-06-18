@@ -285,6 +285,7 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
     #region Lifecycle
 
     public void Commit() {
+        bool keepFrozen = _arena.IsFrozen;
         _arena.Commit();
         _arena.CollectCommitted(_head.Sequence);
         if (_arena.CommittedNodeCount != _count) {
@@ -292,7 +293,12 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
                 $"SkipList committed count mismatch after commit canonicalization: expected {_count}, actual {_arena.CommittedNodeCount}."
             );
         }
-        _arena.SyncCurrentFromCommitted();
+        if (keepFrozen) {
+            _arena.MaterializeFrozenFromReconstructedCommitted<VHelper>();
+        }
+        else {
+            _arena.SyncCurrentFromCommitted();
+        }
         _committedHead = _head;
         _committedHead.ClearCachedIndex();
         _head.ClearCachedIndex();
@@ -313,6 +319,28 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
         || _head.Sequence != _committedHead.Sequence
         || _arena.DirtyValueCount > 0
         || _arena.DirtyLinkCount > 0;
+
+    public void FreezeFromClean() =>
+        _arena.FreezeFromClean<VHelper>();
+
+    public void FreezeFromCurrent() {
+        _arena.Commit();
+        _arena.CollectCommitted(_head.Sequence);
+        if (_arena.CommittedNodeCount != _count) {
+            throw new InvalidOperationException(
+                $"SkipList committed count mismatch after freeze canonicalization: expected {_count}, actual {_arena.CommittedNodeCount}."
+            );
+        }
+        _arena.SyncCurrentFromCommitted();
+        _arena.FreezeFromClean<VHelper>();
+        _committedHead = _head;
+        _committedHead.ClearCachedIndex();
+        _head.ClearCachedIndex();
+        _committedCount = _count;
+        RebuildIndex();
+    }
+
+    public void UnfreezeToMutableClean() => _arena.UnfreezeToMutableClean();
 
     #endregion
 
@@ -350,6 +378,14 @@ internal struct SkipListCore<TKey, TValue, KHelper, VHelper>
 
     public void SyncCurrentFromCommitted() {
         _arena.SyncCurrentFromCommitted();
+        _head = _committedHead;
+        _head.ClearCachedIndex();
+        _count = _committedCount;
+        RebuildIndex();
+    }
+
+    public void MaterializeFrozenFromReconstructedCommitted() {
+        _arena.MaterializeFrozenFromReconstructedCommitted<VHelper>();
         _head = _committedHead;
         _head.ClearCachedIndex();
         _count = _committedCount;

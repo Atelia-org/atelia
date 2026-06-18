@@ -224,6 +224,7 @@ internal struct TextSequenceCore {
     #region Lifecycle
 
     public void Commit() {
+        bool keepFrozen = _arena.IsFrozen;
         _arena.Commit();
         _arena.CollectCommitted(_head.Sequence);
         if (_arena.CommittedNodeCount != _count) {
@@ -231,7 +232,12 @@ internal struct TextSequenceCore {
                 $"Text committed count mismatch after commit canonicalization: expected {_count}, actual {_arena.CommittedNodeCount}."
             );
         }
-        _arena.SyncCurrentFromCommitted();
+        if (keepFrozen) {
+            _arena.MaterializeFrozenFromReconstructedCommitted<StringHelper>();
+        }
+        else {
+            _arena.SyncCurrentFromCommitted();
+        }
         _head.ClearCachedIndex();
         _committedCount = _count;
         RebuildPredecessorIndexAndTail();
@@ -246,6 +252,27 @@ internal struct TextSequenceCore {
         _count = _committedCount;
         RebuildPredecessorIndexAndTail();
     }
+
+    public void FreezeFromClean() => _arena.FreezeFromClean<StringHelper>();
+
+    public void FreezeFromCurrent() {
+        _arena.Commit();
+        _arena.CollectCommitted(_head.Sequence);
+        if (_arena.CommittedNodeCount != _count) {
+            throw new InvalidOperationException(
+                $"Text committed count mismatch after freeze canonicalization: expected {_count}, actual {_arena.CommittedNodeCount}."
+            );
+        }
+        _arena.SyncCurrentFromCommitted();
+        _arena.FreezeFromClean<StringHelper>();
+        _head.ClearCachedIndex();
+        _committedCount = _count;
+        RebuildPredecessorIndexAndTail();
+        _committedHead = _head;
+        _committedHead.ClearCachedIndex();
+    }
+
+    public void UnfreezeToMutableClean() => _arena.UnfreezeToMutableClean();
 
     #endregion
 
@@ -277,6 +304,14 @@ internal struct TextSequenceCore {
 
     public void SyncCurrentFromCommitted() {
         _arena.SyncCurrentFromCommitted();
+        _head = _committedHead;
+        _head.ClearCachedIndex();
+        _count = _committedCount;
+        RebuildPredecessorIndexAndTail();
+    }
+
+    public void MaterializeFrozenFromReconstructedCommitted() {
+        _arena.MaterializeFrozenFromReconstructedCommitted<StringHelper>();
         _head = _committedHead;
         _head.ClearCachedIndex();
         _count = _committedCount;

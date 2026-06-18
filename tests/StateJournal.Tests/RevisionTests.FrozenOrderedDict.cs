@@ -133,6 +133,34 @@ partial class RevisionTests {
     }
 
     [Fact]
+    public void FrozenTypedOrderedDict_DirtyFreeze_CanRetryCommitAfterPersistenceFailure() {
+        var path = GetTempFilePath();
+        var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateOrderedDict<int, int>();
+        root.Upsert(1, 10);
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        root.Upsert(1, 20);
+        root.Freeze();
+        file.Dispose();
+
+        var failed = CommitToFile(rev, root, file);
+        Assert.True(failed.IsFailure);
+        Assert.True(root.IsFrozen);
+
+        using var retryFile = RbfFile.OpenExisting(path);
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, retryFile), "Commit2Retry");
+
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, retryFile));
+        var loaded = Assert.IsAssignableFrom<DurableOrderedDict<int, int>>(opened.GraphRoot);
+        Assert.True(loaded.IsFrozen);
+        Assert.Equal(GetIssue.None, loaded.Get(1, out int value));
+        Assert.Equal(20, value);
+    }
+
+    [Fact]
     public void FrozenMixedOrderedDict_KeepsChildAndSymbolReferencesReachable() {
         var path = GetTempFilePath();
         using var file = RbfFile.CreateNew(path);
@@ -157,6 +185,34 @@ partial class RevisionTests {
         var loadedChildDict = Assert.IsAssignableFrom<DurableDict<int, int>>(loadedChild);
         Assert.Equal(GetIssue.None, loadedChildDict.Get(1, out int value));
         Assert.Equal(10, value);
+    }
+
+    [Fact]
+    public void FrozenMixedOrderedDict_DirtyFreeze_CanRetryCommitAfterPersistenceFailure() {
+        var path = GetTempFilePath();
+        var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateOrderedDict<int>();
+        root.Upsert(1, "alpha");
+        _ = AssertCommitSucceeded(CommitToFile(rev, root, file), "Commit1");
+
+        root.Upsert(1, "beta");
+        root.Freeze();
+        file.Dispose();
+
+        var failed = CommitToFile(rev, root, file);
+        Assert.True(failed.IsFailure);
+        Assert.True(root.IsFrozen);
+
+        using var retryFile = RbfFile.OpenExisting(path);
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, retryFile), "Commit2Retry");
+
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, retryFile));
+        var loaded = Assert.IsAssignableFrom<DurableOrderedDict<int>>(opened.GraphRoot);
+        Assert.True(loaded.IsFrozen);
+        Assert.True(loaded.TryGet<string>(1, out var value));
+        Assert.Equal("beta", value);
     }
 
     [Fact]

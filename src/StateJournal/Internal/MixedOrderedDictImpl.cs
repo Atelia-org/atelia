@@ -19,7 +19,15 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes();
 
-    internal override void FreezeCore(bool forceRebase) => RecountRefs();
+    internal override void FreezeCore(bool forceRebase) {
+        if (forceRebase) {
+            _core.FreezeFromCurrent();
+        }
+        else {
+            _core.FreezeFromClean();
+        }
+        RecountRefs();
+    }
 
     private protected override void CommitCore() => _core.Commit();
     private protected override void SyncCurrentFromCommittedCore() {
@@ -27,7 +35,7 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
         RecountRefs();
     }
     private protected override void SyncFrozenCurrentFromCommittedCore() {
-        _core.SyncCurrentFromCommitted();
+        _core.MaterializeFrozenFromReconstructedCommitted();
         RecountRefs();
     }
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) =>
@@ -41,6 +49,7 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
         ThrowIfPendingObjectMapRegistration();
         if (IsFrozen) {
             ThrowIfCannotDiscardFrozenChanges();
+            _core.UnfreezeToMutableClean();
             ClearDiscardedFreeze();
             RecountRefs();
             return;
