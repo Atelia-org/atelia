@@ -62,7 +62,6 @@ public sealed partial class AgentState {
         if (_attachedWorkspaceRoot is null) { return; }
 
         _attachedWorkspaceRoot.History.AppendRecent(entry);
-        _attachedWorkspaceRoot.History.SetLastSerial(_lastSerial);
     }
 
     private void SyncAttachedWorkspacePendingNotifications() {

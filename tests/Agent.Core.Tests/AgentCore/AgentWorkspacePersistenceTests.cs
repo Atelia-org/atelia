@@ -171,6 +171,39 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void StateRoot_SaveSnapshot_ReplacesDurableHistoryDequeAfterLiveAppend() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-snapshot-replace-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            workspaceRoot.Meta.SetSystemPrompt("workspace-append-system");
+            var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
+            state.AttachWorkspaceRoot(workspaceRoot, syncExistingState: false);
+            state.AppendObservation(new ObservationEntry(), "live-append");
+            var liveAppendDeque = GetHistoryDeque(workspaceRoot);
+            var snapshot = CreateSnapshotFixture();
+            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+
+            stateRoot.Save(snapshot);
+
+            Assert.NotSame(liveAppendDeque, GetHistoryDeque(workspaceRoot));
+            var actual = stateRoot.Load();
+            Assert.Equal(snapshot.AgentState.RecentHistory.Count, actual.AgentState.RecentHistory.Count);
+            Assert.Equal(snapshot.AgentState.LastSerial, actual.AgentState.LastSerial);
+            for (int i = 0; i < snapshot.AgentState.RecentHistory.Count; i++) {
+                AssertHistoryEntry(snapshot.AgentState.RecentHistory[i], actual.AgentState.RecentHistory[i]);
+            }
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_StateCoreMutationsUpdateWorkspaceBeforeCommit() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-working-state-{Guid.NewGuid():N}");
 
