@@ -175,13 +175,13 @@ public partial class AgentEngine {
         if (!_appHost.Tools.IsDefaultOrEmpty) {
             foreach (var tool in _appHost.Tools) {
                 if (tool is not null) {
-                    aggregate.Add(CreateRuntimeWriteThroughTool(tool));
+                    aggregate.Add(tool);
                 }
             }
         }
 
         if (_standaloneTools.Count > 0) {
-            aggregate.AddRange(_standaloneTools.Values.Select(CreateRuntimeWriteThroughTool));
+            aggregate.AddRange(_standaloneTools.Values);
         }
 
         var registry = new ToolRegistry(aggregate);
@@ -205,13 +205,11 @@ public partial class AgentEngine {
             _toolSession.Registry = registry;
         }
 
-        return _toolSession;
-    }
+        _toolSession.ExecutionSequenceAllocated = _attachedPersistence is null
+            ? null
+            : PersistToolSessionExecutionSequenceIfAttached;
 
-    private ITool CreateRuntimeWriteThroughTool(ITool tool) {
-        return _attachedPersistence is null
-            ? tool
-            : new RuntimeWriteThroughTool(tool, PersistToolSessionExecutionSequenceIfAttached);
+        return _toolSession;
     }
 
     /// <summary>
@@ -294,25 +292,6 @@ public partial class AgentEngine {
 
     private static string GetDefinitionName(ITool tool) {
         return ToolContracts.GetValidatedDefinition(tool).Name;
-    }
-
-    private sealed class RuntimeWriteThroughTool : ITool {
-        private readonly ITool _inner;
-        private readonly Action<long> _persistExecutionSequence;
-
-        public RuntimeWriteThroughTool(ITool inner, Action<long> persistExecutionSequence) {
-            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            _persistExecutionSequence = persistExecutionSequence ?? throw new ArgumentNullException(nameof(persistExecutionSequence));
-            Definition = ToolContracts.GetValidatedDefinition(inner);
-        }
-
-        public ToolDefinition Definition { get; }
-
-        public ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken) {
-            ArgumentNullException.ThrowIfNull(context);
-            _persistExecutionSequence(context.ExecutionSequence);
-            return _inner.ExecuteAsync(context, cancellationToken);
-        }
     }
 
     /// <summary>

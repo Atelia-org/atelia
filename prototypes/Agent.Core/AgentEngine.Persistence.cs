@@ -308,6 +308,9 @@ public partial class AgentEngine {
 
     internal void DetachPersistenceSession() {
         _state.DetachWorkspaceRoot();
+        if (_toolSession is not null) {
+            _toolSession.ExecutionSequenceAllocated = null;
+        }
         _attachedPersistence = null;
     }
 

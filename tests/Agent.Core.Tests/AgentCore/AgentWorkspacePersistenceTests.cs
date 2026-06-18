@@ -339,11 +339,16 @@ public sealed class AgentWorkspacePersistenceTests {
             var profile = CreateFullFeatureProfile(client, "model-live");
             long? sequenceSeenInsideTool = null;
             AgentEngineHost? liveHost = null;
+            RecordingTool? alphaTool = null;
 
             using (var host = AgentEngineHost.CreateNew(
                        repoDir,
                        runtime: new AgentEngineHostRuntime(initialTools: [
-                           new RecordingTool("alpha", context => sequenceSeenInsideTool = liveHost!.StateRoot.Load().ToolSessionExecutionSequence)
+                           alphaTool = new RecordingTool("alpha", context => {
+                               sequenceSeenInsideTool = liveHost!.StateRoot.Load().ToolSessionExecutionSequence;
+                               Assert.True(context.Session.TryGetTool("alpha", out var sessionTool));
+                               Assert.Same(alphaTool, sessionTool);
+                           })
                        ]))) {
                 liveHost = host;
                 host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation");
