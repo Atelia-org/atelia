@@ -42,7 +42,6 @@ public sealed class AgentEngineHost : IDisposable {
         _repo = repo;
         _stateRoot = stateRoot;
         _engine = engine;
-        _engine.AttachPersistenceSession(repo, stateRoot);
     }
 
     public string RepoDir { get; }
@@ -88,7 +87,7 @@ public sealed class AgentEngineHost : IDisposable {
             var stateRoot = AgentEngineStateRoot.Create(workspaceRoot, options.SystemPrompt);
             repo.Commit(stateRoot.Root).Unwrap();
 
-            var engine = runtime.BuildEngineFromWorkspaceRoot(workspaceRoot);
+            var engine = runtime.BuildRepositoryBackedEngine(repo, stateRoot);
             return new AgentEngineHost(repoDir, options.BranchName, repo, stateRoot, engine, runtime);
         }
         catch {
@@ -114,7 +113,7 @@ public sealed class AgentEngineHost : IDisposable {
 
             var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
             var stateRoot = AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot);
-            var engine = runtime.BuildEngineFromWorkspaceRoot(workspaceRoot);
+            var engine = runtime.BuildRepositoryBackedEngine(repo, stateRoot);
             return new AgentEngineHost(repoDir, branchName, repo, stateRoot, engine, runtime);
         }
         catch {
@@ -194,17 +193,13 @@ public sealed class AgentEngineHostRuntime {
 
     public AutoCompactionOptions? AutoCompaction { get; }
 
-    internal AgentEngine BuildEngineFromRoot(DurableDict<string> root) {
-        ArgumentNullException.ThrowIfNull(root);
+    internal AgentEngine BuildRepositoryBackedEngine(Repository repo, AgentEngineStateRoot stateRoot) {
+        ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(stateRoot);
 
-        return BuildEngineFromWorkspaceRoot(AgentWorkspaceRoot.FromRoot(root));
-    }
-
-    internal AgentEngine BuildEngineFromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
-
-        return AgentEngine.CreateFromWorkspaceRoot(
-            workspaceRoot,
+        return AgentEngine.CreateForRepository(
+            repo,
+            stateRoot,
             ProfileRegistry,
             InitialApps,
             InitialTools,

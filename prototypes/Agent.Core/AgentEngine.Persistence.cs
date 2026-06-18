@@ -239,6 +239,54 @@ public partial class AgentEngine {
         );
     }
 
+    internal static AgentEngine CreateForRepository(
+        Repository repo,
+        AgentEngineStateRoot stateRoot,
+        LlmProfileRegistry? profileRegistry = null,
+        IEnumerable<IApp>? initialApps = null,
+        IEnumerable<ITool>? initialTools = null,
+        IIdleObservationProvider? idleProvider = null,
+        Func<DateTimeOffset>? utcNowProvider = null,
+        AutoCompactionOptions? autoCompaction = null
+    ) {
+        return CreateForRepository(
+            repo,
+            stateRoot,
+            profileRegistry is null ? null : checkpoint => profileRegistry.ResolveOrNull(checkpoint),
+            initialApps,
+            initialTools,
+            idleProvider,
+            utcNowProvider,
+            autoCompaction
+        );
+    }
+
+    internal static AgentEngine CreateForRepository(
+        Repository repo,
+        AgentEngineStateRoot stateRoot,
+        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
+        IEnumerable<IApp>? initialApps = null,
+        IEnumerable<ITool>? initialTools = null,
+        IIdleObservationProvider? idleProvider = null,
+        Func<DateTimeOffset>? utcNowProvider = null,
+        AutoCompactionOptions? autoCompaction = null
+    ) {
+        ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(stateRoot);
+
+        var engine = CreateFromWorkspaceRoot(
+            stateRoot.WorkspaceRoot,
+            resolvedProfileResolver,
+            initialApps,
+            initialTools,
+            idleProvider,
+            utcNowProvider,
+            autoCompaction
+        );
+        engine.AttachRepositoryPersistence(repo, stateRoot);
+        return engine;
+    }
+
     /// <summary>
     /// 从一个 <see cref="AgentEngineStateRoot"/> 的 graph root 重建 <see cref="AgentEngine"/>。
     /// </summary>
@@ -292,7 +340,7 @@ public partial class AgentEngine {
         );
     }
 
-    internal void AttachPersistenceSession(Repository repo, AgentEngineStateRoot stateRoot) {
+    private void AttachRepositoryPersistence(Repository repo, AgentEngineStateRoot stateRoot) {
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(stateRoot);
 
