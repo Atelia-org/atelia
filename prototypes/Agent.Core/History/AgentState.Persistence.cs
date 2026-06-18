@@ -32,7 +32,7 @@ public sealed partial class AgentState {
             workspaceRoot.Meta.GetRequiredSystemPrompt(),
             workspaceRoot.History.LoadRecent(),
             workspaceRoot.History.LoadPendingNotifications(),
-            workspaceRoot.Meta.GetRequiredLastSerial()
+            workspaceRoot.History.GetRequiredLastSerial()
         );
     }
 

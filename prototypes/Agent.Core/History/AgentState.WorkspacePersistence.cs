@@ -36,7 +36,7 @@ public sealed partial class AgentState {
             return ++_lastSerial;
         }
 
-        var nextSerial = _attachedWorkspaceRoot.Meta.AllocateNextHistorySerial();
+        var nextSerial = _attachedWorkspaceRoot.History.AllocateNextSerial();
         _lastSerial = nextSerial;
         return nextSerial;
     }
@@ -46,7 +46,7 @@ public sealed partial class AgentState {
 
         _attachedWorkspaceRoot.Meta.Stamp();
         _attachedWorkspaceRoot.Meta.SetSystemPrompt(SystemPrompt);
-        _attachedWorkspaceRoot.Meta.SetLastSerial(_lastSerial);
+        _attachedWorkspaceRoot.History.SetLastSerial(_lastSerial);
         _attachedWorkspaceRoot.History.SaveRecent(_recentHistory);
         _attachedWorkspaceRoot.History.SavePendingNotifications(_pendingNotifications.ToArray());
     }
@@ -55,7 +55,7 @@ public sealed partial class AgentState {
         if (_attachedWorkspaceRoot is null) { return; }
 
         _attachedWorkspaceRoot.History.SaveRecent(_recentHistory);
-        _attachedWorkspaceRoot.Meta.SetLastSerial(_lastSerial);
+        _attachedWorkspaceRoot.History.SetLastSerial(_lastSerial);
     }
 
     private void SyncAttachedWorkspacePendingNotifications() {

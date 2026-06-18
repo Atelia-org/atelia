@@ -110,7 +110,7 @@ internal sealed class AgentWorkspaceRoot {
     }
 
     private void InitializeDefaultShape() {
-        Meta.SetLastSerial(0);
+        History.SetLastSerial(0);
         RuntimeState.SetToolSessionExecutionSequence(0);
         History.SaveRecent(Array.Empty<HistoryEntry>());
         History.SavePendingNotifications(Array.Empty<string>());
@@ -157,9 +157,18 @@ internal sealed class AgentWorkspaceRoot {
                 : throw new InvalidDataException("Agent state root is missing systemPrompt.");
         }
 
+    }
+
+    public sealed class HistoryBlock {
+        private readonly AgentWorkspaceRoot _workspaceRoot;
+
+        internal HistoryBlock(AgentWorkspaceRoot workspaceRoot) {
+            _workspaceRoot = workspaceRoot;
+        }
+
         public void SetLastSerial(ulong lastSerial) => _workspaceRoot._root.Upsert(KeyLastSerial, lastSerial);
 
-        public ulong AllocateNextHistorySerial() {
+        public ulong AllocateNextSerial() {
             var nextSerial = checked(GetRequiredLastSerial() + 1);
             SetLastSerial(nextSerial);
             return nextSerial;
@@ -169,14 +178,6 @@ internal sealed class AgentWorkspaceRoot {
             return _workspaceRoot._root.Get<ulong>(KeyLastSerial, out var serial) == GetIssue.None
                 ? serial
                 : throw new InvalidDataException("Agent state root is missing lastSerial.");
-        }
-    }
-
-    public sealed class HistoryBlock {
-        private readonly AgentWorkspaceRoot _workspaceRoot;
-
-        internal HistoryBlock(AgentWorkspaceRoot workspaceRoot) {
-            _workspaceRoot = workspaceRoot;
         }
 
         public void SaveRecent(IReadOnlyList<HistoryEntry> recentHistory) {

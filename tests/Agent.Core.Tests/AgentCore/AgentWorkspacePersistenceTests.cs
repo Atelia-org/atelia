@@ -28,7 +28,7 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Empty(workspaceRoot.RuntimeState.LoadPendingToolResults());
             Assert.Equal((ResolvedProfile: null, LockedCompactionSplitIndex: null), workspaceRoot.RuntimeState.LoadTurnRuntime());
             Assert.Null(workspaceRoot.RuntimeState.LoadPendingCompaction());
-            Assert.Equal(0UL, workspaceRoot.Meta.GetRequiredLastSerial());
+            Assert.Equal(0UL, workspaceRoot.History.GetRequiredLastSerial());
             Assert.Equal(0L, workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault());
         }
         finally {
@@ -109,7 +109,7 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal("summary-text", recap.Content);
             Assert.Equal(1UL, recap.InsteadSerial);
             Assert.IsType<ActionEntry>(history[1]);
-            Assert.Equal(3UL, workspaceRoot.Meta.GetRequiredLastSerial());
+            Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
         }
         finally {
             if (Directory.Exists(repoDir)) {

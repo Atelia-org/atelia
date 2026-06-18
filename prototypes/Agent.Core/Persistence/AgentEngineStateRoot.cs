@@ -83,7 +83,7 @@ public sealed class AgentEngineStateRoot {
 
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.Meta.SetSystemPrompt(snapshot.AgentState.SystemPrompt);
-        _workspaceRoot.Meta.SetLastSerial(snapshot.AgentState.LastSerial);
+        _workspaceRoot.History.SetLastSerial(snapshot.AgentState.LastSerial);
         _workspaceRoot.History.SaveRecent(snapshot.AgentState.RecentHistory);
         _workspaceRoot.History.SavePendingNotifications(snapshot.AgentState.PendingNotifications);
         SaveRuntimeState(ToRuntimeStateSnapshot(snapshot));
@@ -91,7 +91,7 @@ public sealed class AgentEngineStateRoot {
 
     public AgentEngineStateSnapshot Load() {
         string systemPrompt = _workspaceRoot.Meta.GetRequiredSystemPrompt();
-        ulong lastSerial = _workspaceRoot.Meta.GetRequiredLastSerial();
+        ulong lastSerial = _workspaceRoot.History.GetRequiredLastSerial();
         var recentHistory = _workspaceRoot.History.LoadRecent();
         var pendingNotifications = _workspaceRoot.History.LoadPendingNotifications();
         var runtimeState = LoadRuntimeState();
