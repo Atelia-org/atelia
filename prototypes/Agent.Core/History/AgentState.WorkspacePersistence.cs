@@ -5,7 +5,7 @@ namespace Atelia.Agent.Core.History;
 public sealed partial class AgentState {
     private AgentWorkspaceRoot? _attachedWorkspaceRoot;
 
-    internal void AttachWorkspaceRoot(AgentWorkspaceRoot workspaceRoot, bool syncExistingState = true) {
+    internal void AttachRestoredWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
         if (_attachedWorkspaceRoot is not null) {
@@ -17,18 +17,10 @@ public sealed partial class AgentState {
         }
 
         _attachedWorkspaceRoot = workspaceRoot;
-        if (syncExistingState) {
-            SyncAttachedWorkspaceAll();
-        }
     }
 
     internal void DetachWorkspaceRoot() {
         _attachedWorkspaceRoot = null;
-    }
-
-    internal bool IsAttachedToWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
-        return ReferenceEquals(_attachedWorkspaceRoot?.Root, workspaceRoot.Root);
     }
 
     private ulong AllocateNextSerial() {
@@ -39,16 +31,6 @@ public sealed partial class AgentState {
         var nextSerial = _attachedWorkspaceRoot.History.AllocateNextSerial();
         _lastSerial = nextSerial;
         return nextSerial;
-    }
-
-    private void SyncAttachedWorkspaceAll() {
-        if (_attachedWorkspaceRoot is null) { return; }
-
-        _attachedWorkspaceRoot.Meta.Stamp();
-        _attachedWorkspaceRoot.Meta.SetSystemPrompt(SystemPrompt);
-        _attachedWorkspaceRoot.History.SetLastSerial(_lastSerial);
-        _attachedWorkspaceRoot.History.ReplaceRecent(_recentHistory);
-        _attachedWorkspaceRoot.History.ReplacePendingNotifications(_pendingNotifications.ToArray());
     }
 
     private void SyncAttachedWorkspaceHistoryAndSerial() {

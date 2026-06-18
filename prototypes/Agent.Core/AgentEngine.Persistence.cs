@@ -137,7 +137,8 @@ public partial class AgentEngine {
         IEnumerable<ITool>? initialTools,
         IIdleObservationProvider? idleProvider,
         Func<DateTimeOffset>? utcNowProvider,
-        AutoCompactionOptions? autoCompaction
+        AutoCompactionOptions? autoCompaction,
+        RepositoryPersistenceBinding? repositoryPersistence = null
     ) {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(runtimeState);
@@ -148,7 +149,8 @@ public partial class AgentEngine {
             initialTools: initialTools,
             idleProvider: idleProvider,
             utcNowProvider: utcNowProvider,
-            autoCompaction: autoCompaction
+            autoCompaction: autoCompaction,
+            repositoryPersistence: repositoryPersistence
         );
 
         foreach (var pendingToolResult in runtimeState.PendingToolResults) {
@@ -226,11 +228,8 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
-        var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
-        state.AttachWorkspaceRoot(workspaceRoot, syncExistingState: false);
-
         return CreateFromPersistedStateCore(
-            state,
+            AgentState.RestoreAttachedFromWorkspaceRoot(workspaceRoot),
             AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).LoadRuntimeState(),
             resolvedProfileResolver,
             initialApps,
@@ -276,17 +275,17 @@ public partial class AgentEngine {
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(stateRoot);
 
-        var engine = CreateFromWorkspaceRoot(
-            stateRoot.WorkspaceRoot,
+        return CreateFromPersistedStateCore(
+            AgentState.RestoreAttachedFromWorkspaceRoot(stateRoot.WorkspaceRoot),
+            stateRoot.LoadRuntimeState(),
             resolvedProfileResolver,
             initialApps,
             initialTools,
             idleProvider,
             utcNowProvider,
-            autoCompaction
+            autoCompaction,
+            new RepositoryPersistenceBinding(repo, stateRoot)
         );
-        engine.AttachRepositoryPersistence(repo, stateRoot);
-        return engine;
     }
 
     /// <summary>
@@ -341,20 +340,6 @@ public partial class AgentEngine {
             utcNowProvider,
             autoCompaction
         );
-    }
-
-    private void AttachRepositoryPersistence(Repository repo, AgentEngineStateRoot stateRoot) {
-        ArgumentNullException.ThrowIfNull(repo);
-        ArgumentNullException.ThrowIfNull(stateRoot);
-
-        if (_repositoryPersistence is not null) { throw new InvalidOperationException("AgentEngine repository persistence is already bound."); }
-
-        if (!_state.IsAttachedToWorkspaceRoot(stateRoot.WorkspaceRoot)) {
-            _state.AttachWorkspaceRoot(stateRoot.WorkspaceRoot);
-        }
-
-        _repositoryPersistence = new RepositoryPersistenceBinding(repo, stateRoot);
-        _toolsDirty = true;
     }
 
     internal void DetachPersistenceSession() {

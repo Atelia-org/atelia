@@ -53,10 +53,29 @@ public partial class AgentEngine {
         IIdleObservationProvider? idleProvider = null,
         Func<DateTimeOffset>? utcNowProvider = null,
         AutoCompactionOptions? autoCompaction = null
+    ) : this(
+        state,
+        initialApps,
+        initialTools,
+        idleProvider,
+        utcNowProvider,
+        autoCompaction,
+        repositoryPersistence: null
+    ) { }
+
+    private AgentEngine(
+        AgentState? state,
+        IEnumerable<IApp>? initialApps,
+        IEnumerable<ITool>? initialTools,
+        IIdleObservationProvider? idleProvider,
+        Func<DateTimeOffset>? utcNowProvider,
+        AutoCompactionOptions? autoCompaction,
+        RepositoryPersistenceBinding? repositoryPersistence
     ) {
         _state = state ?? AgentState.CreateDefault();
         _appHost = new DefaultAppHost();
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
+        _repositoryPersistence = repositoryPersistence;
         _toolsDirty = true;
         _idleProvider = idleProvider ?? new TimestampHeartbeatObservationProvider();
         _utcNowProvider = utcNowProvider ?? (() => DateTimeOffset.UtcNow);

@@ -36,6 +36,14 @@ public sealed partial class AgentState {
         );
     }
 
+    internal static AgentState RestoreAttachedFromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
+
+        var state = RestoreFromWorkspaceRoot(workspaceRoot);
+        state.AttachRestoredWorkspaceRoot(workspaceRoot);
+        return state;
+    }
+
     private static AgentState RestoreCore(
         string systemPrompt,
         IReadOnlyList<HistoryEntry> recentHistory,
