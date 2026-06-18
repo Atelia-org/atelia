@@ -112,11 +112,11 @@ internal sealed class AgentWorkspaceRoot {
     private void InitializeDefaultShape() {
         History.SetLastSerial(0);
         RuntimeState.SetToolSessionExecutionSequence(0);
-        History.SaveRecent(Array.Empty<HistoryEntry>());
-        History.SavePendingNotifications(Array.Empty<string>());
-        RuntimeState.SavePendingToolResults(Array.Empty<ToolCallExecutionResult>());
-        RuntimeState.SaveTurnRuntime(null, null);
-        RuntimeState.SavePendingCompaction(null);
+        History.ReplaceRecent(Array.Empty<HistoryEntry>());
+        History.ReplacePendingNotifications(Array.Empty<string>());
+        RuntimeState.ReplacePendingToolResults(Array.Empty<ToolCallExecutionResult>());
+        RuntimeState.ReplaceTurnRuntime(null, null);
+        RuntimeState.ReplacePendingCompaction(null);
     }
 
     private static void StampMetadata(DurableDict<string> root) {
@@ -180,7 +180,7 @@ internal sealed class AgentWorkspaceRoot {
                 : throw new InvalidDataException("Agent state root is missing lastSerial.");
         }
 
-        public void SaveRecent(IReadOnlyList<HistoryEntry> recentHistory) {
+        public void ReplaceRecent(IReadOnlyList<HistoryEntry> recentHistory) {
             ArgumentNullException.ThrowIfNull(recentHistory);
 
             var history = _workspaceRoot.Revision.CreateDeque();
@@ -215,7 +215,7 @@ internal sealed class AgentWorkspaceRoot {
             return recentHistory;
         }
 
-        public void SavePendingNotifications(IReadOnlyList<string> notifications) {
+        public void ReplacePendingNotifications(IReadOnlyList<string> notifications) {
             ArgumentNullException.ThrowIfNull(notifications);
 
             var pendingNotifications = _workspaceRoot.Revision.CreateDeque();
@@ -264,7 +264,7 @@ internal sealed class AgentWorkspaceRoot {
                 : 0L;
         }
 
-        public void SavePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
+        public void ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
             ArgumentNullException.ThrowIfNull(pendingResults);
 
             var pendingToolResults = _workspaceRoot.Revision.CreateDict<string>();
@@ -299,7 +299,7 @@ internal sealed class AgentWorkspaceRoot {
             return pendingToolResults;
         }
 
-        public void SaveTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
+        public void ReplaceTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
             var turnRuntime = _workspaceRoot.Revision.CreateDict<string>();
             AgentEngineStateCodec.WriteTurnRuntime(turnRuntime, resolvedProfile, lockedCompactionSplitIndex);
             _workspaceRoot.SetTurnRuntime(turnRuntime);
@@ -309,7 +309,7 @@ internal sealed class AgentWorkspaceRoot {
             return AgentEngineStateCodec.ReadTurnRuntime(_workspaceRoot.GetRequiredTurnRuntime());
         }
 
-        public void SavePendingCompaction(CompactionCheckpoint? pendingCompaction) {
+        public void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction) {
             _workspaceRoot.SetPendingCompactionRecord(
                 pendingCompaction is null
                     ? null

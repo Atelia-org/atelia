@@ -367,7 +367,7 @@ public partial class AgentEngine {
     }
 
     private void PersistPendingToolResultsIfAttached() {
-        _repositoryPersistence?.SavePendingToolResults(_pendingToolResults.Values
+        _repositoryPersistence?.ReplacePendingToolResults(_pendingToolResults.Values
             .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
             .Select(AgentState.CloneToolCallExecutionResult)
             .ToArray());
@@ -384,7 +384,7 @@ public partial class AgentEngine {
             ? null
             : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile);
 
-        _repositoryPersistence?.SaveTurnRuntime(resolvedProfile, _turnRuntime.LockedCompactionSplitIndex);
+        _repositoryPersistence?.ReplaceTurnRuntime(resolvedProfile, _turnRuntime.LockedCompactionSplitIndex);
     }
 
     private void PersistPendingCompactionIfAttached() {
@@ -396,7 +396,7 @@ public partial class AgentEngine {
             )
             : null;
 
-        _repositoryPersistence?.SavePendingCompaction(pendingCompaction);
+        _repositoryPersistence?.ReplacePendingCompaction(pendingCompaction);
     }
 
     private void PersistToolSessionExecutionSequenceIfAttached() {
@@ -418,17 +418,17 @@ public partial class AgentEngine {
 
         public void CommitRoot() => _stateRoot.Commit(_repo);
 
-        public void SavePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults)
-            => _stateRoot.SavePendingToolResults(pendingResults);
+        public void ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults)
+            => _stateRoot.ReplacePendingToolResults(pendingResults);
 
         public void UpsertPendingToolResult(ToolCallExecutionResult pendingResult)
             => _stateRoot.UpsertPendingToolResult(pendingResult);
 
-        public void SaveTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex)
-            => _stateRoot.SaveTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+        public void ReplaceTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex)
+            => _stateRoot.ReplaceTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
 
-        public void SavePendingCompaction(CompactionCheckpoint? pendingCompaction)
-            => _stateRoot.SavePendingCompaction(pendingCompaction);
+        public void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction)
+            => _stateRoot.ReplacePendingCompaction(pendingCompaction);
 
         public void SetToolSessionExecutionSequence(long executionSequence)
             => _stateRoot.SetToolSessionExecutionSequence(executionSequence);

@@ -84,8 +84,8 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.Meta.SetSystemPrompt(snapshot.AgentState.SystemPrompt);
         _workspaceRoot.History.SetLastSerial(snapshot.AgentState.LastSerial);
-        _workspaceRoot.History.SaveRecent(snapshot.AgentState.RecentHistory);
-        _workspaceRoot.History.SavePendingNotifications(snapshot.AgentState.PendingNotifications);
+        _workspaceRoot.History.ReplaceRecent(snapshot.AgentState.RecentHistory);
+        _workspaceRoot.History.ReplacePendingNotifications(snapshot.AgentState.PendingNotifications);
         SaveRuntimeState(ToRuntimeStateSnapshot(snapshot));
     }
 
@@ -129,9 +129,9 @@ public sealed class AgentEngineStateRoot {
         repo.Commit(Root).Unwrap();
     }
 
-    internal void SavePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
+    internal void ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
         _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SavePendingToolResults(pendingResults);
+        _workspaceRoot.RuntimeState.ReplacePendingToolResults(pendingResults);
     }
 
     internal void UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
@@ -139,14 +139,14 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.RuntimeState.UpsertPendingToolResult(pendingResult);
     }
 
-    internal void SaveTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
+    internal void ReplaceTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
         _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SaveTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+        _workspaceRoot.RuntimeState.ReplaceTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
     }
 
-    internal void SavePendingCompaction(CompactionCheckpoint? pendingCompaction) {
+    internal void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction) {
         _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SavePendingCompaction(pendingCompaction);
+        _workspaceRoot.RuntimeState.ReplacePendingCompaction(pendingCompaction);
     }
 
     internal void SetToolSessionExecutionSequence(long executionSequence) {
@@ -159,9 +159,9 @@ public sealed class AgentEngineStateRoot {
 
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(snapshot.ToolSessionExecutionSequence);
-        _workspaceRoot.RuntimeState.SavePendingToolResults(snapshot.PendingToolResults);
-        _workspaceRoot.RuntimeState.SaveTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
-        _workspaceRoot.RuntimeState.SavePendingCompaction(snapshot.PendingCompaction);
+        _workspaceRoot.RuntimeState.ReplacePendingToolResults(snapshot.PendingToolResults);
+        _workspaceRoot.RuntimeState.ReplaceTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
+        _workspaceRoot.RuntimeState.ReplacePendingCompaction(snapshot.PendingCompaction);
     }
 
     internal AgentEngineRuntimeStateSnapshot LoadRuntimeState() {
