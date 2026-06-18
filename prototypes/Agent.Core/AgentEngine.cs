@@ -175,13 +175,13 @@ public partial class AgentEngine {
         if (!_appHost.Tools.IsDefaultOrEmpty) {
             foreach (var tool in _appHost.Tools) {
                 if (tool is not null) {
-                    aggregate.Add(tool);
+                    aggregate.Add(CreateRuntimeWriteThroughTool(tool));
                 }
             }
         }
 
         if (_standaloneTools.Count > 0) {
-            aggregate.AddRange(_standaloneTools.Values);
+            aggregate.AddRange(_standaloneTools.Values.Select(CreateRuntimeWriteThroughTool));
         }
 
         var registry = new ToolRegistry(aggregate);
@@ -206,6 +206,12 @@ public partial class AgentEngine {
         }
 
         return _toolSession;
+    }
+
+    private ITool CreateRuntimeWriteThroughTool(ITool tool) {
+        return _attachedPersistence is null
+            ? tool
+            : new RuntimeWriteThroughTool(tool, PersistToolSessionExecutionSequenceIfAttached);
     }
 
     /// <summary>
@@ -288,6 +294,25 @@ public partial class AgentEngine {
 
     private static string GetDefinitionName(ITool tool) {
         return ToolContracts.GetValidatedDefinition(tool).Name;
+    }
+
+    private sealed class RuntimeWriteThroughTool : ITool {
+        private readonly ITool _inner;
+        private readonly Action<long> _persistExecutionSequence;
+
+        public RuntimeWriteThroughTool(ITool inner, Action<long> persistExecutionSequence) {
+            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+            _persistExecutionSequence = persistExecutionSequence ?? throw new ArgumentNullException(nameof(persistExecutionSequence));
+            Definition = ToolContracts.GetValidatedDefinition(inner);
+        }
+
+        public ToolDefinition Definition { get; }
+
+        public ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken) {
+            ArgumentNullException.ThrowIfNull(context);
+            _persistExecutionSequence(context.ExecutionSequence);
+            return _inner.ExecuteAsync(context, cancellationToken);
+        }
     }
 
     /// <summary>
@@ -522,6 +547,7 @@ public partial class AgentEngine {
 
         var appended = _state.AppendObservation(inputEntry, recentEvents);
         _turnRuntime.BeginNewTurn();
+        PersistTurnRuntimeIfAttached();
 
         DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
 
@@ -620,10 +646,12 @@ public partial class AgentEngine {
         );
 
         _pendingToolResults.Clear();
+        PersistPendingToolResultsIfAttached();
 
         var appended = _state.AppendAction(aggregatedOutput);
         _turnRuntime.RememberResolvedProfile(resolvedProfile);
         _turnRuntime.RememberCompactionSplitIndex(compactionPreview?.SplitIndex);
+        PersistTurnRuntimeIfAttached();
         deferredEvents.Add(engine => engine.OnActionProduced(new ActionProducedEventArgs(appended, resolvedProfile)));
 
         var toolCallCount = appended.Message.ToolCalls?.Count ?? 0;
@@ -648,6 +676,8 @@ public partial class AgentEngine {
         var session = EnsureSession();
         var result = await session.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         _pendingToolResults[nextCall.ToolCallId] = result;
+        PersistPendingToolResultsIfAttached();
+        PersistToolSessionExecutionSequenceIfAttached();
         var activeProfile = _turnRuntime.ActiveToolExecutionProfile
             ?? throw new InvalidOperationException("Tool execution completed without an active tool-execution profile.");
         deferredEvents.Add(
@@ -687,6 +717,7 @@ public partial class AgentEngine {
 
         var appended = AppendToolResultsWithSummary(entry);
         _pendingToolResults.Clear();
+        PersistPendingToolResultsIfAttached();
 
         var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
         var failureCallId = failure?.ToolCallId ?? "none";

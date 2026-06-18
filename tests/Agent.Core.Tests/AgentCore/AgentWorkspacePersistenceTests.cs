@@ -155,12 +155,20 @@ public sealed class AgentWorkspacePersistenceTests {
             engine.State.SetSystemPrompt("updated-in-memory-only");
             engine.AppendNotification("queued-notification");
             engine.State.AppendObservation(new ObservationEntry(), "recent-events");
+            engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("assistant-turn")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            Assert.True(engine.RequestCompaction("compact-system", "compact-now"));
 
             var persisted = stateRoot.Load();
 
             Assert.Equal("public-root-system", persisted.AgentState.SystemPrompt);
             Assert.Empty(persisted.AgentState.RecentHistory);
             Assert.Empty(persisted.AgentState.PendingNotifications);
+            Assert.Null(persisted.PendingCompaction);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -318,6 +326,129 @@ public sealed class AgentWorkspacePersistenceTests {
         }
     }
 
+    [Fact]
+    public async Task Host_RuntimeFieldsWriteThroughDuringStepWithoutSnapshotSaveAtBoundary() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-runtime-live-{Guid.NewGuid():N}");
+
+        try {
+            var client = new QueueCompletionClient(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall("alpha", "call-1", "{}"))
+                ])
+            );
+            var profile = CreateFullFeatureProfile(client, "model-live");
+            long? sequenceSeenInsideTool = null;
+            AgentEngineHost? liveHost = null;
+
+            using (var host = AgentEngineHost.CreateNew(
+                       repoDir,
+                       runtime: new AgentEngineHostRuntime(initialTools: [
+                           new RecordingTool("alpha", context => sequenceSeenInsideTool = liveHost!.StateRoot.Load().ToolSessionExecutionSequence)
+                       ]))) {
+                liveHost = host;
+                host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation");
+                host.Engine.State.AppendAction(
+                    new ActionEntry(
+                        new ActionMessage([new ActionBlock.Text("seed-action")]),
+                        profile.ToCompletionDescriptor()
+                    )
+                );
+                host.Engine.WaitingInput += static (_, args) => {
+                    args.ShouldContinue = true;
+                    args.Observation = IncomingObservation.FromRecentEvents("fresh-observation");
+                };
+
+                await host.StepAsync(profile);
+                var afterInitialTurnStart = host.StateRoot.Load();
+                Assert.Null(afterInitialTurnStart.ResolvedProfile);
+                Assert.Null(afterInitialTurnStart.LockedCompactionSplitIndex);
+
+                await host.StepAsync(profile);
+                var afterModelOutput = host.StateRoot.Load();
+                Assert.Empty(afterModelOutput.PendingToolResults);
+                Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), afterModelOutput.ResolvedProfile);
+                Assert.Equal(1, afterModelOutput.LockedCompactionSplitIndex);
+
+                await host.StepAsync(profile);
+                Assert.Equal(1L, sequenceSeenInsideTool);
+                var afterToolExecution = host.StateRoot.Load();
+                var pendingResult = Assert.Single(afterToolExecution.PendingToolResults);
+                Assert.Equal("call-1", pendingResult.ToolCallId);
+                Assert.Equal(1L, afterToolExecution.ToolSessionExecutionSequence);
+            }
+
+            using (var reopened = AgentEngineHost.OpenExisting(
+                       repoDir,
+                       new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([profile])))) {
+                var reopenedAfterToolExecution = reopened.StateRoot.Load();
+                var reopenedPendingResult = Assert.Single(reopenedAfterToolExecution.PendingToolResults);
+                Assert.Equal("call-1", reopenedPendingResult.ToolCallId);
+                Assert.Equal(1L, reopenedAfterToolExecution.ToolSessionExecutionSequence);
+
+                reopened.Engine.WaitingInput += static (_, args) => {
+                    args.ShouldContinue = true;
+                    args.Observation = IncomingObservation.FromRecentEvents("next-turn-observation");
+                };
+
+                await reopened.StepAsync(profile);
+                var afterToolResults = reopened.StateRoot.Load();
+                Assert.Empty(afterToolResults.PendingToolResults);
+                Assert.IsType<ToolResultsEntry>(afterToolResults.AgentState.RecentHistory[^1]);
+                Assert.Equal(1L, afterToolResults.ToolSessionExecutionSequence);
+
+                await reopened.StepAsync(profile);
+                var afterFinalModelOutput = reopened.StateRoot.Load();
+                Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), afterFinalModelOutput.ResolvedProfile);
+
+                await reopened.StepAsync(profile);
+                var afterNewTurn = reopened.StateRoot.Load();
+                Assert.Null(afterNewTurn.ResolvedProfile);
+                Assert.Null(afterNewTurn.LockedCompactionSplitIndex);
+            }
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Host_PendingCompactionWriteThroughsRequestAndClear() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-compaction-live-{Guid.NewGuid():N}");
+
+        try {
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            var client = new QueueCompletionClient(
+                new ActionMessage([new ActionBlock.Text("summary from live compaction")])
+            );
+            var profile = CreateFullFeatureProfile(client, "model-compact");
+
+            host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation");
+            host.Engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action")]),
+                    profile.ToCompletionDescriptor()
+                )
+            );
+
+            Assert.True(host.Engine.RequestCompaction("compact-system", "compact-now"));
+            var requested = host.StateRoot.Load();
+            Assert.Equal(new CompactionCheckpoint(1, "compact-system", "compact-now"), requested.PendingCompaction);
+
+            await host.StepAsync(profile);
+            var afterCompaction = host.StateRoot.Load();
+            Assert.Null(afterCompaction.PendingCompaction);
+            var recap = Assert.IsType<RecapEntry>(afterCompaction.AgentState.RecentHistory[0]);
+            Assert.Equal("summary from live compaction", recap.Content);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {
         var invocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
         var state = AgentState.CreateDefault("roundtrip-system");
@@ -399,6 +530,59 @@ public sealed class AgentWorkspacePersistenceTests {
         Assert.Equal(expected.ExecuteResult.Status, actual.ExecuteResult.Status);
         Assert.Equal(expected.ExecuteResult.GetFlattenedText(), actual.ExecuteResult.GetFlattenedText());
         Assert.Equal(expected.Elapsed, actual.Elapsed);
+    }
+
+    private static LlmProfile CreateFullFeatureProfile(ICompletionClient client, string modelId) {
+        return new LlmProfile(client, modelId, $"{modelId}-profile", 4096, CapabilityProfile.FullFeature);
+    }
+
+    private sealed class RecordingTool : ITool {
+        private readonly Action<ToolExecutionContext>? _onExecute;
+
+        public RecordingTool(string name, Action<ToolExecutionContext>? onExecute = null) {
+            _onExecute = onExecute;
+            Definition = new ToolDefinition(name, $"Tool {name}.", new ToolSchema.Object());
+        }
+
+        public ToolDefinition Definition { get; }
+
+        public ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken) {
+            _ = cancellationToken;
+            _onExecute?.Invoke(context);
+            return ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, "ok"));
+        }
+    }
+
+    private sealed class QueueCompletionClient : ICompletionClient {
+        private readonly Queue<ActionMessage> _messages;
+
+        public QueueCompletionClient(params ActionMessage[] messages) {
+            _messages = new Queue<ActionMessage>(messages);
+        }
+
+        public string Name => "test-provider";
+
+        public string ApiSpecId => "test-spec";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = observer;
+            _ = cancellationToken;
+
+            var message = _messages.Count > 0
+                ? _messages.Dequeue()
+                : new ActionMessage([new ActionBlock.Text("default-output")]);
+
+            return Task.FromResult(
+                new CompletionResult(
+                    message,
+                    new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
+                )
+            );
+        }
     }
 
     private sealed class NoopCompletionClient : ICompletionClient {

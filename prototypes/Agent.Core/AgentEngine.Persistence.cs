@@ -303,6 +303,7 @@ public partial class AgentEngine {
         }
 
         _attachedPersistence = new AttachedPersistenceSession(repo, stateRoot);
+        _toolsDirty = true;
     }
 
     internal void DetachPersistenceSession() {
@@ -311,7 +312,42 @@ public partial class AgentEngine {
     }
 
     internal void PersistStableBoundaryIfAttached() {
-        _attachedPersistence?.SaveAndCommit(this);
+        _attachedPersistence?.CommitRoot();
+    }
+
+    private void PersistPendingToolResultsIfAttached() {
+        _attachedPersistence?.SavePendingToolResults(_pendingToolResults.Values
+            .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
+            .Select(AgentState.CloneToolCallExecutionResult)
+            .ToArray());
+    }
+
+    private void PersistTurnRuntimeIfAttached() {
+        var resolvedProfile = _turnRuntime.ResolvedProfile is null
+            ? null
+            : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile);
+
+        _attachedPersistence?.SaveTurnRuntime(resolvedProfile, _turnRuntime.LockedCompactionSplitIndex);
+    }
+
+    private void PersistPendingCompactionIfAttached() {
+        var pendingCompaction = _compactionRequest.HasValue
+            ? new CompactionCheckpoint(
+                _compactionRequest.Value.SplitIndex,
+                _compactionRequest.Value.SystemPrompt,
+                _compactionRequest.Value.SummarizePrompt
+            )
+            : null;
+
+        _attachedPersistence?.SavePendingCompaction(pendingCompaction);
+    }
+
+    private void PersistToolSessionExecutionSequenceIfAttached() {
+        _attachedPersistence?.SetToolSessionExecutionSequence(_toolSession?.LastIssuedExecutionSequence ?? 0);
+    }
+
+    private void PersistToolSessionExecutionSequenceIfAttached(long executionSequence) {
+        _attachedPersistence?.SetToolSessionExecutionSequence(executionSequence);
     }
 
     private sealed class AttachedPersistenceSession {
@@ -323,9 +359,18 @@ public partial class AgentEngine {
             _stateRoot = stateRoot ?? throw new ArgumentNullException(nameof(stateRoot));
         }
 
-        public void SaveAndCommit(AgentEngine engine) {
-            ArgumentNullException.ThrowIfNull(engine);
-            _stateRoot.SaveRuntimeStateAndCommit(_repo, engine);
-        }
+        public void CommitRoot() => _stateRoot.Commit(_repo);
+
+        public void SavePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults)
+            => _stateRoot.SavePendingToolResults(pendingResults);
+
+        public void SaveTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex)
+            => _stateRoot.SaveTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+
+        public void SavePendingCompaction(CompactionCheckpoint? pendingCompaction)
+            => _stateRoot.SavePendingCompaction(pendingCompaction);
+
+        public void SetToolSessionExecutionSequence(long executionSequence)
+            => _stateRoot.SetToolSessionExecutionSequence(executionSequence);
     }
 }

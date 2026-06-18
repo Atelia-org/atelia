@@ -136,6 +136,7 @@ public partial class AgentEngine {
         }
 
         _compactionRequest = new CompactionRequest(splitIndex, systemPrompt, summarizePrompt);
+        PersistPendingCompactionIfAttached();
         DebugUtil.Trace(StateMachineDebugCategory, $"[Compacting] RequestCompaction: splitIndex={splitIndex} historyCount={snapshot.Count}");
         return true;
     }
@@ -541,11 +542,13 @@ public partial class AgentEngine {
         var outcome = await ExecuteCompactionCoreAsync(profile, request, cancellationToken).ConfigureAwait(false);
         if (!outcome.Applied) {
             _compactionRequest = null;
+            PersistPendingCompactionIfAttached();
             DebugUtil.Warning(StateMachineDebugCategory, $"[Compacting] Compaction aborted reason={outcome.FailureReason?.ToString() ?? "unknown"}.");
             return StepOutcome.NoProgress;
         }
 
         _compactionRequest = null;
+        PersistPendingCompactionIfAttached();
         DebugUtil.Info(
             StateMachineDebugCategory,
             $"[Compacting] Done. splitIndex={outcome.SplitIndex} summaryLen={outcome.SummaryLength} remaining={outcome.HistoryCountAfter} releasedTokens={outcome.TokensReleased}"

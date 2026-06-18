@@ -124,6 +124,31 @@ public sealed class AgentEngineStateRoot {
         repo.Commit(Root).Unwrap();
     }
 
+    internal void Commit(Repository repo) {
+        ArgumentNullException.ThrowIfNull(repo);
+        repo.Commit(Root).Unwrap();
+    }
+
+    internal void SavePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
+        _workspaceRoot.StampMetadata();
+        _workspaceRoot.SavePendingToolResults(pendingResults);
+    }
+
+    internal void SaveTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
+        _workspaceRoot.StampMetadata();
+        _workspaceRoot.SaveTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+    }
+
+    internal void SavePendingCompaction(CompactionCheckpoint? pendingCompaction) {
+        _workspaceRoot.StampMetadata();
+        _workspaceRoot.SavePendingCompaction(pendingCompaction);
+    }
+
+    internal void SetToolSessionExecutionSequence(long executionSequence) {
+        _workspaceRoot.StampMetadata();
+        _workspaceRoot.SetToolSessionExecutionSequence(executionSequence);
+    }
+
     internal void SaveRuntimeState(AgentEngineRuntimeStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
