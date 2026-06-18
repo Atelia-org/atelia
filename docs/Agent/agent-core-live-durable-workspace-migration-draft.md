@@ -6,7 +6,7 @@
 > Progress note
 > - 阶段 B 已基本完成：`AgentState` / `AgentWorkspaceRoot` 已能围绕 repo-backed workspace 作为主持久化载体工作。
 > - 阶段 C / D 已部分落地：history append、pending notifications、pending tool results、turn runtime 的 live mutation 路径已经存在。
-> - `pendingCompaction` live path 已收口到稳定 durable slot 内的字段级 mutation；snapshot / full-runtime replace 仍保留 whole-replace 语义。
+> - `pendingCompaction` live path 已收口到稳定 durable slot 内的字段级 mutation；新 schema 要求预先 seed `pendingCompaction` record，不再兼容缺 key 读取或懒创建；snapshot / full-runtime replace 仍保留 whole-replace 语义。
 > - 当前 public snapshot path 仍保留，但定位应视为 compatibility / diagnostic / import-export 边界，不再是推荐主路径。
 
 相关文档：

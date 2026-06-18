@@ -21,7 +21,7 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<string>("kind", out var kind));
             Assert.Equal("agent-engine-state", kind);
             Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<long>("schemaVersion", out var schemaVersion));
-            Assert.Equal(2L, schemaVersion);
+            Assert.Equal(3L, schemaVersion);
 
             Assert.Empty(workspaceRoot.History.LoadRecent());
             Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
@@ -337,6 +337,27 @@ public sealed class AgentWorkspacePersistenceTests {
                 new CompactionCheckpoint(4, "snapshot-system", "snapshot-prompt"),
                 stateRoot.LoadRuntimeState().PendingCompaction
             );
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceRoot_PendingCompactionLoad_RequiresSeededRecord() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-compaction-required-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            workspaceRoot.Root.Remove("pendingCompaction");
+
+            var exception = Assert.Throws<InvalidDataException>(() => workspaceRoot.RuntimeState.LoadPendingCompaction());
+            Assert.Equal("Agent state root is missing pendingCompaction record.", exception.Message);
         }
         finally {
             if (Directory.Exists(repoDir)) {
