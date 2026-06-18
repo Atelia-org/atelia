@@ -5,7 +5,7 @@ namespace Atelia.Agent.Core.History;
 public sealed partial class AgentState {
     private AgentWorkspaceRoot? _attachedWorkspaceRoot;
 
-    internal void AttachWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
+    internal void AttachWorkspaceRoot(AgentWorkspaceRoot workspaceRoot, bool syncExistingState = true) {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
         if (_attachedWorkspaceRoot is not null) {
@@ -17,7 +17,9 @@ public sealed partial class AgentState {
         }
 
         _attachedWorkspaceRoot = workspaceRoot;
-        SyncAttachedWorkspaceAll();
+        if (syncExistingState) {
+            SyncAttachedWorkspaceAll();
+        }
     }
 
     internal void DetachWorkspaceRoot() {

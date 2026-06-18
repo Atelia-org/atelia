@@ -225,7 +225,7 @@ public partial class AgentEngine {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
         var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
-        state.AttachWorkspaceRoot(workspaceRoot);
+        state.AttachWorkspaceRoot(workspaceRoot, syncExistingState: false);
 
         return CreateFromPersistedStateCore(
             state,
@@ -253,8 +253,9 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(root);
 
-        return CreateFromWorkspaceRoot(
-            AgentWorkspaceRoot.FromRoot(root),
+        var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
+        return CreateFromStateSnapshot(
+            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).Load(),
             profileRegistry,
             initialApps,
             initialTools,
@@ -279,8 +280,9 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(root);
 
-        return CreateFromWorkspaceRoot(
-            AgentWorkspaceRoot.FromRoot(root),
+        var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
+        return CreateFromStateSnapshot(
+            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).Load(),
             resolvedProfileResolver,
             initialApps,
             initialTools,

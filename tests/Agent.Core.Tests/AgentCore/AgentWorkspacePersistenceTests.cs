@@ -86,7 +86,7 @@ public sealed class AgentWorkspacePersistenceTests {
             workspaceRoot.SetSystemPrompt("workspace-born-system");
 
             var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
-            state.AttachWorkspaceRoot(workspaceRoot);
+            state.AttachWorkspaceRoot(workspaceRoot, syncExistingState: false);
 
             state.SetSystemPrompt("updated-system");
             state.AppendNotification("queued-notification");
@@ -134,6 +134,33 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Empty(snapshot.AgentState.PendingNotifications);
             var observation = Assert.IsType<ObservationEntry>(Assert.Single(snapshot.AgentState.RecentHistory));
             Assert.Equal("queued-notification\nrecent-events", observation.Notifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void PublicCreateFromRoot_RemainsSnapshotBasedAndDoesNotLiveWriteThrough() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-public-root-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var stateRoot = AgentEngineStateRoot.Create(revision, "public-root-system");
+
+            var engine = AgentEngine.CreateFromRoot(stateRoot.Root);
+            engine.State.SetSystemPrompt("updated-in-memory-only");
+            engine.AppendNotification("queued-notification");
+            engine.State.AppendObservation(new ObservationEntry(), "recent-events");
+
+            var persisted = stateRoot.Load();
+
+            Assert.Equal("public-root-system", persisted.AgentState.SystemPrompt);
+            Assert.Empty(persisted.AgentState.RecentHistory);
+            Assert.Empty(persisted.AgentState.PendingNotifications);
         }
         finally {
             if (Directory.Exists(repoDir)) {
