@@ -309,6 +309,43 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void StateRoot_ReplaceRuntimeState_ReplacesPendingCompactionDurableRecordAfterLiveMutation() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-compaction-runtime-replace-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
+            var livePendingCompaction = GetPendingCompactionRecord(workspaceRoot);
+
+            stateRoot.SetPendingCompaction(new CompactionCheckpoint(2, "live-system", "live-prompt"));
+            Assert.Same(livePendingCompaction, GetPendingCompactionRecord(workspaceRoot));
+
+            stateRoot.ReplaceRuntimeState(
+                new AgentEngineRuntimeStateSnapshot(
+                    PendingToolResults: Array.Empty<ToolCallExecutionResult>(),
+                    ResolvedProfile: null,
+                    LockedCompactionSplitIndex: null,
+                    PendingCompaction: new CompactionCheckpoint(4, "snapshot-system", "snapshot-prompt"),
+                    ToolSessionExecutionSequence: 0
+                )
+            );
+
+            Assert.NotSame(livePendingCompaction, GetPendingCompactionRecord(workspaceRoot));
+            Assert.Equal(
+                new CompactionCheckpoint(4, "snapshot-system", "snapshot-prompt"),
+                stateRoot.LoadRuntimeState().PendingCompaction
+            );
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_StateCoreMutationsUpdateWorkspaceBeforeCommit() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-working-state-{Guid.NewGuid():N}");
 
@@ -681,7 +718,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public async Task Host_PendingCompactionWriteThroughsRequestAndClear() {
+    public async Task Host_PendingCompactionLiveMutations_KeepDurableRecordIdentity() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-compaction-live-{Guid.NewGuid():N}");
 
         try {
@@ -699,12 +736,24 @@ public sealed class AgentWorkspacePersistenceTests {
                 )
             );
 
+            var pendingCompactionRecord = GetPendingCompactionRecord(host.StateRoot);
+
             Assert.True(host.Engine.RequestCompaction("compact-system", "compact-now"));
             var requested = host.StateRoot.Load();
+            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.StateRoot));
             Assert.Equal(new CompactionCheckpoint(1, "compact-system", "compact-now"), requested.PendingCompaction);
+
+            Assert.True(host.Engine.RequestCompaction("compact-system-updated", "compact-now-updated"));
+            var updated = host.StateRoot.Load();
+            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.StateRoot));
+            Assert.Equal(
+                new CompactionCheckpoint(1, "compact-system-updated", "compact-now-updated"),
+                updated.PendingCompaction
+            );
 
             await host.StepAsync(profile);
             var afterCompaction = host.StateRoot.Load();
+            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.StateRoot));
             Assert.Null(afterCompaction.PendingCompaction);
             var recap = Assert.IsType<RecapEntry>(afterCompaction.AgentState.RecentHistory[0]);
             Assert.Equal("summary from live compaction", recap.Content);
@@ -833,6 +882,16 @@ public sealed class AgentWorkspacePersistenceTests {
         return workspaceRoot.Root.Get<DurableDict<string>>("turnRuntime", out var turnRuntime) == GetIssue.None
             ? turnRuntime!
             : throw new InvalidOperationException("Workspace root is missing turnRuntime map.");
+    }
+
+    private static DurableDict<string> GetPendingCompactionRecord(AgentEngineStateRoot stateRoot) {
+        return GetPendingCompactionRecord(stateRoot.WorkspaceRoot);
+    }
+
+    private static DurableDict<string> GetPendingCompactionRecord(AgentWorkspaceRoot workspaceRoot) {
+        return workspaceRoot.Root.Get<DurableDict<string>>("pendingCompaction", out var pendingCompaction) == GetIssue.None
+            ? pendingCompaction!
+            : throw new InvalidOperationException("Workspace root is missing pendingCompaction record.");
     }
 
     private sealed class RecordingTool : ITool {

@@ -253,18 +253,36 @@ internal static class AgentEngineStateCodec {
         ArgumentNullException.ThrowIfNull(checkpoint);
 
         var record = revision.CreateDict<string>();
-        record.Upsert(KeySplitIndex, checkpoint.SplitIndex);
-        record.Upsert(KeySystemPrompt, checkpoint.SystemPrompt);
-        record.Upsert(KeySummarizePrompt, checkpoint.SummarizePrompt);
+        WriteCompactionCheckpointFields(record, checkpoint);
         return record;
     }
 
-    public static CompactionCheckpoint ReadCompactionCheckpoint(DurableDict<string> record) {
+    public static void WriteCompactionCheckpointFields(DurableDict<string> record, CompactionCheckpoint checkpoint) {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(checkpoint);
+
+        record.Upsert(KeySplitIndex, checkpoint.SplitIndex);
+        record.Upsert(KeySystemPrompt, checkpoint.SystemPrompt);
+        record.Upsert(KeySummarizePrompt, checkpoint.SummarizePrompt);
+    }
+
+    public static void ClearCompactionCheckpointFields(DurableDict<string> record) {
+        ArgumentNullException.ThrowIfNull(record);
+        record.Remove(KeySplitIndex);
+        record.Remove(KeySystemPrompt);
+        record.Remove(KeySummarizePrompt);
+    }
+
+    public static CompactionCheckpoint? ReadCompactionCheckpointOrNull(DurableDict<string> record) {
         ArgumentNullException.ThrowIfNull(record);
 
-        int splitIndex = record.Get<int>(KeySplitIndex, out var split) == GetIssue.None
-            ? split
-            : throw new InvalidDataException("Compaction checkpoint is missing splitIndex.");
+        bool hasSplitIndex = record.Get<int>(KeySplitIndex, out var split) == GetIssue.None;
+        bool hasSystemPrompt = record.TryGet<string>(KeySystemPrompt, out _);
+        bool hasSummarizePrompt = record.TryGet<string>(KeySummarizePrompt, out _);
+
+        if (!hasSplitIndex && !hasSystemPrompt && !hasSummarizePrompt) { return null; }
+        if (!hasSplitIndex) { throw new InvalidDataException("Compaction checkpoint is missing splitIndex."); }
+
         string systemPrompt = record.Get<string>(KeySystemPrompt, out var storedSystemPrompt) == GetIssue.None
             ? storedSystemPrompt!
             : throw new InvalidDataException("Compaction checkpoint is missing systemPrompt.");
@@ -272,7 +290,7 @@ internal static class AgentEngineStateCodec {
             ? storedSummarizePrompt!
             : throw new InvalidDataException("Compaction checkpoint is missing summarizePrompt.");
 
-        return new CompactionCheckpoint(splitIndex, systemPrompt, summarizePrompt);
+        return new CompactionCheckpoint(split, systemPrompt, summarizePrompt);
     }
 
     private static ActionEntry ReadActionEntry(DurableDict<string> record, DateTimeOffset timestamp) {

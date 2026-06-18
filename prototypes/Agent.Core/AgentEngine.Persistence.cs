@@ -394,15 +394,20 @@ public partial class AgentEngine {
     }
 
     private void PersistPendingCompactionIfAttached() {
-        var pendingCompaction = _compactionRequest.HasValue
-            ? new CompactionCheckpoint(
-                _compactionRequest.Value.SplitIndex,
-                _compactionRequest.Value.SystemPrompt,
-                _compactionRequest.Value.SummarizePrompt
-            )
-            : null;
+        if (_repositoryPersistence is null) { return; }
 
-        _repositoryPersistence?.ReplacePendingCompaction(pendingCompaction);
+        if (_compactionRequest.HasValue) {
+            _repositoryPersistence.SetPendingCompaction(
+                new CompactionCheckpoint(
+                    _compactionRequest.Value.SplitIndex,
+                    _compactionRequest.Value.SystemPrompt,
+                    _compactionRequest.Value.SummarizePrompt
+                )
+            );
+            return;
+        }
+
+        _repositoryPersistence.ClearPendingCompaction();
     }
 
     private void PersistToolSessionExecutionSequenceIfAttached() {
@@ -444,6 +449,12 @@ public partial class AgentEngine {
 
         public void ClearLockedCompactionSplitIndex()
             => _stateRoot.ClearLockedCompactionSplitIndex();
+
+        public void SetPendingCompaction(CompactionCheckpoint pendingCompaction)
+            => _stateRoot.SetPendingCompaction(pendingCompaction);
+
+        public void ClearPendingCompaction()
+            => _stateRoot.ClearPendingCompaction();
 
         public void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction)
             => _stateRoot.ReplacePendingCompaction(pendingCompaction);

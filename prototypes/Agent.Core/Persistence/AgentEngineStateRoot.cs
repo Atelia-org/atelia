@@ -193,6 +193,17 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.RuntimeState.ReplacePendingCompaction(pendingCompaction);
     }
 
+    internal void SetPendingCompaction(CompactionCheckpoint pendingCompaction) {
+        ArgumentNullException.ThrowIfNull(pendingCompaction);
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.SetPendingCompaction(pendingCompaction);
+    }
+
+    internal void ClearPendingCompaction() {
+        _workspaceRoot.Meta.Stamp();
+        _workspaceRoot.RuntimeState.ClearPendingCompaction();
+    }
+
     internal void SetToolSessionExecutionSequence(long executionSequence) {
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(executionSequence);

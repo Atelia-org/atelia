@@ -94,12 +94,8 @@ internal sealed class AgentWorkspaceRoot {
                ?? throw new InvalidDataException("Agent state root is missing turnRuntime record.");
     }
 
-    private void SetPendingCompactionRecord(DurableDict<string>? pendingCompaction) {
-        if (pendingCompaction is null) {
-            _root.Remove(KeyPendingCompaction);
-            return;
-        }
-
+    private void SetPendingCompactionRecord(DurableDict<string> pendingCompaction) {
+        ArgumentNullException.ThrowIfNull(pendingCompaction);
         _root.Upsert<DurableObject>(KeyPendingCompaction, pendingCompaction);
     }
 
@@ -107,6 +103,16 @@ internal sealed class AgentWorkspaceRoot {
         return _root.TryGet<DurableDict<string>>(KeyPendingCompaction, out var pendingCompaction)
             ? pendingCompaction
             : null;
+    }
+
+    private DurableDict<string> GetOrCreatePendingCompactionRecord() {
+        if (GetPendingCompactionRecordOrNull() is { } pendingCompaction) {
+            return pendingCompaction;
+        }
+
+        var pendingCompactionRecord = Revision.CreateDict<string>();
+        SetPendingCompactionRecord(pendingCompactionRecord);
+        return pendingCompactionRecord;
     }
 
     private void InitializeDefaultShape() {
@@ -347,16 +353,31 @@ internal sealed class AgentWorkspaceRoot {
         }
 
         public void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction) {
-            _workspaceRoot.SetPendingCompactionRecord(
-                pendingCompaction is null
-                    ? null
-                    : AgentEngineStateCodec.WriteCompactionCheckpoint(_workspaceRoot.Revision, pendingCompaction)
+            var pendingCompactionRecord = _workspaceRoot.Revision.CreateDict<string>();
+            if (pendingCompaction is not null) {
+                AgentEngineStateCodec.WriteCompactionCheckpointFields(pendingCompactionRecord, pendingCompaction);
+            }
+
+            _workspaceRoot.SetPendingCompactionRecord(pendingCompactionRecord);
+        }
+
+        public void SetPendingCompaction(CompactionCheckpoint pendingCompaction) {
+            ArgumentNullException.ThrowIfNull(pendingCompaction);
+            AgentEngineStateCodec.WriteCompactionCheckpointFields(
+                _workspaceRoot.GetOrCreatePendingCompactionRecord(),
+                pendingCompaction
+            );
+        }
+
+        public void ClearPendingCompaction() {
+            AgentEngineStateCodec.ClearCompactionCheckpointFields(
+                _workspaceRoot.GetOrCreatePendingCompactionRecord()
             );
         }
 
         public CompactionCheckpoint? LoadPendingCompaction() {
             return _workspaceRoot.GetPendingCompactionRecordOrNull() is { } pendingCompaction
-                ? AgentEngineStateCodec.ReadCompactionCheckpoint(pendingCompaction)
+                ? AgentEngineStateCodec.ReadCompactionCheckpointOrNull(pendingCompaction)
                 : null;
         }
     }
