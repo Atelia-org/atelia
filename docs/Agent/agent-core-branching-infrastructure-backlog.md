@@ -1,6 +1,6 @@
 # Agent.Core Branching Infrastructure Backlog
 
-状态：draft v0  
+状态：draft v1  
 定位：整理一批**无论最终偏向 `fork-context route` 还是 `same-context pop route`，都值得补齐**的基础设施与运行时能力。它们不仅服务 Micro-Wizard，也服务 Thinking-Stack、fork agent、旁路推演、选择性保留结果、以及更强的运行时审计与恢复。
 
 相关文档：
@@ -31,6 +31,19 @@
 
 那么会发现有一批基础设施几乎是**路线无关的公共投资**。  
 它们越早补齐，设计空间越大，后续选路越从容。
+
+补充一个和上一轮判断相比的重要变化：
+
+- `DurableDeque<T>` / `DurableDeque` 现在已经支持 `ForkCommittedAsMutable()`
+- `Repository.ReplayCommitted(..., LoadMaterializationMode.ForceMutable)` 已经提供了更通用的 committed clone fallback
+
+这意味着 backlog 的重心已经明显从：
+
+- “底层容器先补不补得出来”
+
+上移到了：
+
+- “`Agent.Core` 上层是否已经具备 branch-aware runtime 语义”
 
 ---
 
@@ -260,7 +273,7 @@ AbandonBranch(...)
 - 导出 `AgentEngineStateSnapshot`
 - 重新编码整套 durable 对象图
 
-这让 StateJournal fork 即使补齐了容器能力，也暂时吃不满红利。
+这让 StateJournal 现有的 fork / replay 能力仍然暂时吃不满红利。
 
 长期更理想的方向是：
 
@@ -351,7 +364,8 @@ RewriteRecentHistoryTail(anchorSerial, replacementEntries)
 - `_compactionRequest`
 - `ToolSessionExecutionSequence`
 
-它们已经能被 snapshot 保存，但还没有一个更直接的“branchable runtime bundle”抽象。
+它们已经能被 snapshot 保存，底层 durable clone 能力也比之前更接近可用，  
+但还没有一个更直接的“branchable runtime bundle”抽象。
 
 建议重构出一层更明确的对象，例如：
 
@@ -462,7 +476,8 @@ RewriteRecentHistoryTail(anchorSerial, replacementEntries)
 - crash recovery metadata
 - 宿主侧 branch manager
 
-到这里，第一版 fork agent 就已经很近了。
+到这里，第一版 fork agent 就已经很近了。  
+而且由于 StateJournal 现有能力已经明显增强，这一步之后继续往 durable branch workspace 推进的阻力会比之前小很多。
 
 ### 阶段 4：先落一个语义级 fork agent
 
@@ -473,12 +488,18 @@ RewriteRecentHistoryTail(anchorSerial, replacementEntries)
 - branch-local tool gating
 - result merge protocol
 
+若某些分支已经明显受益于更强持久层，也可以局部引入：
+
+- `DurableDeque` 的实例级 fork 快路径
+- `Repository.ReplayCommitted(...)` 的通用 fallback
+
 做出一个真正可用的 fork agent / branch workspace。
 
 ### 阶段 5：最后再把持久层推进到真正的 branch workspace 正形
 
 当上层 shape 稳定后，再投入到：
 
+- 把现有 `ForkCommittedAsMutable()` / `ReplayCommitted(...)` 更深地接进 `Agent.Core`
 - StateJournal sibling fork
 - app-local durable branch participation
 - 更 branch-friendly 的 durable root shape

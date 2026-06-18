@@ -1,6 +1,6 @@
 # Micro-Wizard History Pop Route Analysis
 
-状态：draft v1  
+状态：draft v2  
 范围：专门分析“在同一份上下文上运行 Wizard，记录进入 Wizard 时的刻度/游标，退出时 pop 掉 Wizard 区间详细步骤，只把最终结果留在主上下文中”这一技术路线。  
 非目标：本文**不**分析“创建临时上下文后再拼接回主上下文”的路线。
 
@@ -13,14 +13,18 @@
 
 ## 0. 一句话结论
 
-这条路线在当前阶段**可接受，但不是最轻松的那条路**。  
+这条路线在当前阶段**可接受，而且在短流程场景下仍然是更轻、更快的一条路**。  
 它与“`Agent.Core` 以同一份 `RecentHistory` 事件账本为核心”的设计方向是相容的，但真正的复杂点不在“记录一个游标”，而在：
 
 - 如何让 `RecentHistory` 的回退与引擎短生命周期状态一起恢复
 - 如何避免 Wizard 中间步骤被 context compression 提前吃进摘要
 - 如何处理 Wizard 期间工具与运行时对外部状态产生的副作用
 
-如果愿意接受一组明确收紧的 v0 纪律，这条路线是能做的；如果想把它做成宽松、通用、自动恢复很强的机制，复杂度会迅速上升。
+如果愿意接受一组明确收紧的 v0 纪律，这条路线是能做的；  
+但在 StateJournal 的 fork / replay 基础能力明显增强之后，它更应该被理解为：
+
+- **短流程、低摩擦、快速落地的路线**
+- 而不是未来所有 branch / wizard / thinking stack 统一共用的唯一终局底座
 
 ## 1. 这条路线的核心机制
 
@@ -270,6 +274,25 @@ RewriteRecentHistoryTail(
 
 它不是最优雅的最终方案，但很适合当前“先做创新点、先做一条稳主链”的收口。
 
+### 6.5 与当前 StateJournal 新能力结合后的判断
+
+当底层已经具备：
+
+- `DurableDeque<T>` / `DurableDeque` 的 `ForkCommittedAsMutable()`
+- `Repository.ReplayCommitted(..., ForceMutable)` 这条 committed clone fallback
+
+之后，`pop-route` 的优势就更清楚地收敛为：
+
+- 不需要额外 branch workspace
+- 初始实现切口更小
+- 对短流程 selective remember / repair 非常顺手
+
+而它的劣势也更清楚地暴露为：
+
+- 长轨迹期间很难与 compaction 优雅协作
+- 嵌套 / 递归 frame 会快速抬高复杂度
+- 它不擅长承载“局部分支自己也可能跑很久、甚至反复压缩”的工作区语义
+
 ## 7. 对 tool / session / runtime state 的影响
 
 ### 7.1 Tool/session 层本身不难共享
@@ -410,8 +433,8 @@ Wizard exit 不是单纯的 append，而是：
 - compaction suppression 的嵌套计数
 - 外部副作用的作用域
 
-所以我不建议把这条路线直接设计成面向并发/嵌套的通用机制。  
-它更像一条适合 v0 的受控主线。
+所以我不建议把这条路线直接设计成面向并发/嵌套/长轨迹的通用机制。  
+它更像一条适合 v0 以及短流程场景的受控主线。
 
 ## 11. 主要风险与容易踩坑处
 
@@ -458,11 +481,18 @@ Wizard exit 不是单纯的 append，而是：
 
 ## 14. 简洁结论
 
-在当前阶段，这条路线的结论是：**可接受**。  
+在当前阶段，这条路线的结论是：**可接受，而且对短流程仍然很有吸引力**。  
 它与当前 `Agent.Core` 的同账本设计是相容的，也有机会比“复制一份临时上下文”更直接；但前提是要接受一组收紧纪律，尤其是：
 
 - Wizard 期间禁用上下文压缩
 - 只做单实例短流程
 - 明确区分“上下文折叠”和“外部副作用回滚”不是一回事
 
-如果不愿意接受这些纪律，这条路线会比表面上复杂得多。
+如果不愿意接受这些纪律，或者目标场景本身是：
+
+- 很长的局部分支轨迹
+- 会经历多次局部压缩
+- 递归 push / pop 很重
+- 需要更强的 branch recovery / audit
+
+那么此时更值得认真考虑 `fork-context route`。

@@ -1,6 +1,6 @@
 # Micro-Wizard History Route Comparison
 
-状态：draft v1  
+状态：draft v2  
 范围：综合比较两条“进入 Micro-Wizard 后保留最终结果、忘掉详细中间过程”的技术路线，并给出当前阶段推荐。
 
 相关文档：
@@ -13,13 +13,22 @@
 
 ## 0. 一句话结论
 
-如果讨论的是**目标设计的语义纯度**，我更偏向“fork 临时上下文，结束后只把结果拼回主上下文”。  
-如果讨论的是**当前阶段最值得先落地的首步实现路线**，我更推荐“同一份上下文内运行 Wizard，记录 savepoint，退出时 pop 掉细节并只留下结果”。
+如果讨论的是**目标设计的语义纯度**，我仍更偏向“fork 临时上下文，结束后只把结果拼回主上下文”。  
+但在 StateJournal 新增：
+
+- `DurableDeque<T>` / `DurableDeque` 的 `ForkCommittedAsMutable()`
+- `Repository.ReplayCommitted(..., LoadMaterializationMode.ForceMutable)` 这条通用 committed clone fallback
+
+之后，问题已经不再是“fork-context 还差关键容器能力”，而更像是：
+
+- **短流程、低摩擦落地**时，`same-context pop route` 更轻、更快
+- **长流程、递归分支、需要本地压缩/恢复**时，`forked-context route` 更正形、更强大
 
 也就是说：
 
-- **长期目标设计**：更偏向 forked-context route
-- **当前第一步施工**：更偏向 same-context pop route
+- **目标设计与长程能力**：更偏向 forked-context route
+- **短流程首步落地**：更偏向 same-context pop route
+- **当前更合理的态度**：按场景分工，而不是强行二选一
 
 ---
 
@@ -76,7 +85,8 @@
 
 ## 3. 从当前代码现实看，哪条更顺着地基
 
-从当前 `Agent.Core` 现实看，same-context pop route 更顺着地基。
+从当前 `Agent.Core` 现实看，same-context pop route 仍更顺着现有地基，  
+但它对 forked-context route 的领先幅度已经明显缩小。
 
 当前已经明确的事实是：
 
@@ -93,14 +103,18 @@
 - Wizard 期间的 compaction suppression
 - 退出时 retained result contract
 
-而 forked-context route 一旦认真做，就会立刻碰到：
+而 forked-context route 一旦认真做，当前主要会碰到：
 
 - 除 `RecentHistory` 外还要复制哪些运行态
 - `ToolSession` / app state 如何隔离
-- 是否先用 snapshot clone，还是直接上 StateJournal sibling fork
+- 是否先用 snapshot clone，还是把现有 StateJournal fork/replay 能力更深地接进 `Agent.Core`
 - durable wizard checkpoint 长什么样
 
-因此在“下一项基础功能增强”这个节奏下，我认为首步不该直接跳到 forked-context route。
+因此当前真正的差距，已经从“底层容器会不会 fork”转移到：
+
+- `Agent.Core` 有没有 branch-aware runtime API
+- app/tool 有没有 branch participation contract
+- 结果如何并回父时间线
 
 ---
 
@@ -143,19 +157,24 @@
 - 共享 committed 前序历史
 - 临时工作区演化
 
-但问题在于当前 `AgentEngine` 的 durable state 还是 snapshot codec 形状，且 `history` / `pending notifications` 现在都落在 `DurableDeque` 上，而 `DurableDeque` 还没有 public `ForkCommittedAsMutable()`。
+而且现在底层已经明显前进了一步：
+
+- `DurableDeque<T>` / `DurableDeque` 已支持实例级 `ForkCommittedAsMutable()`
+- `DurableOrderedDict` / `DurableText` 虽然还没有实例快路径，但已可走 `Repository.ReplayCommitted(..., ForceMutable)` fallback
+
+因此“容器能力不够”已经不再是 forked-context route 的主要阻碍。
 
 所以：
 
-- **它与 StateJournal 的理念契合**
-- **但不等于今天就能靠现成 public fork API 顺手做完**
+- **它与 StateJournal 的理念契合，而且底层可用性已明显提升**
+- **但不等于今天就能自动得到完整的 branch workspace runtime**
 
 ### 5.2 Same-context pop route
 
-它对 StateJournal 的要求更低。  
+它对 StateJournal 的要求仍更低。  
 第一阶段甚至可以先不引入新的 durable fork 语义，只要把 savepoint / active wizard metadata 正式纳入宿主持久化边界即可。
 
-因此从“尽快施工”角度看，它对当前持久层缺口更宽容。
+因此从“尽快施工”角度看，它对当前持久层与宿主协议缺口仍更宽容。
 
 ---
 
@@ -211,9 +230,16 @@
 
 我的推荐是一个分层答案，不是单选题式的一刀切。
 
-### 8.1 首步实现推荐
+### 8.1 短流程首步推荐
 
-当前第一步我更推荐：
+如果目标是尽快做出一个：
+
+- 单 active wizard
+- 短流程
+- 中间步骤较少
+- 退出后只留一条结果
+
+的第一版能力，我仍更推荐：
 
 - **same-context pop route**
 
@@ -226,22 +252,33 @@
 5. savepoint 必须覆盖引擎运行态边界，而不只是 `RecentHistory.Count`。
 6. 退出时必须走一个正式的 tail rewrite primitive，而不是宿主散拼内部 API。
 
-### 8.2 中期演进推荐
+### 8.2 长流程 / 强分支场景推荐
 
-当以下条件成立后，再把系统推进到 forked-context route 会更自然：
+如果目标更接近下面这些形态，我现在更推荐直接认真考虑 forked-context route：
+
+- 分支轨迹可能很长
+- 可能经历多轮局部 compaction
+- 需要递归 push / pop 或兄弟分支
+- 需要更强的 branch audit / recovery
+- 需要把“过程不污染父上下文”做成强语义
+
+此时它的优势会明显超过额外复杂度。
+
+### 8.3 两条路线的共同前置
+
+无论最后优先落哪条路线，下面这些前置都值得先补：
 
 - 已有稳定的 `WizardResultEnvelope`
-- 已有一两个真实 wizard 场景跑通
+- 已有 route-neutral 的 `ContextFrame` / `ContextSavepoint`
 - 已清楚区分哪些 tool/app state 可隔离、哪些不可隔离
-- 持久化层愿意为 wizard checkpoint 或 sibling fork 付工程成本
-
-到那个阶段，forked-context route 会更像系统的“长期正形”。
+- 已有“结果进入父时间线前”的正式拦截/并回协议
+- 已有 branch trace / recovery metadata
 
 ---
 
 ## 9. 若同时考虑 Thinking-Stack，推荐是否变化
 
-把 Thinking-Stack 也放进来后，我的推荐不会反转，但表达要更精细一些。
+把 Thinking-Stack 也放进来后，我的推荐会进一步偏向“按场景双路线并存”。
 
 Thinking-Stack 的特点是：
 
@@ -256,14 +293,15 @@ Thinking-Stack 的特点是：
 
 因此综合 Micro-Wizard 与 Thinking-Stack 后，我的判断是：
 
-- **共享首步原语**：仍优先 same-context pop route
-- **长期总设计方向**：更明确地保留向 forked-context / branch-workspace 演进的空间
+- **共享基础原语**：仍应优先 route-neutral 的 `ContextFrame` / `ContextSavepoint` / `RetainedResultEnvelope`
+- **短流程首步**：same-context pop route 仍然有优势
+- **长流程与递归分支**：forked-context / branch-workspace 的优势现在更明确
 - **命名与抽象层次**：不要只围绕 `WizardSavepoint` 命名，应优先抽 `ContextFrame` / `ContextSavepoint` / `RetainedResultEnvelope`
 
 也就是说：
 
-- Thinking-Stack 不会推翻当前首步推荐
-- 但它会进一步要求我们不要把首步实现误写成终局
+- Thinking-Stack 不要求所有事情一开始都用 fork-context
+- 但它会更强烈地提醒我们：`pop-route` 不是长期唯一底座
 
 ---
 
@@ -271,20 +309,31 @@ Thinking-Stack 的特点是：
 
 ### 阶段 1
 
-先在当前 `Agent.Core` 上实现：
+先在当前 `Agent.Core` 上实现 route-neutral 前置：
 
 - `ContextFrame`
 - `ContextSavepoint`
-- tail rewrite primitive
-- Wizard active 期间 suppress compaction
 - retained result contract
+- branch-aware audit metadata
 
 ### 阶段 2
 
-只落一个真实场景，例如：
+并行选择一个真实场景压 shape。  
+若场景是短流程 selective remember / repair，可先走：
+
+- tail rewrite primitive
+- Wizard active 期间 suppress compaction
+
+若场景是长流程 branch workspace / recursive branch，可先走：
+
+- forked snapshot workspace
+- branch checkpoint / resume
+
+例如：
 
 - `view_file` selective remember
-- 或 MemoTree split 后 gist/summary repair
+- `MemoTree` split 后 gist/summary repair
+- Thinking-Stack 风格的局部分类讨论
 
 ### 阶段 3
 
@@ -296,10 +345,9 @@ Thinking-Stack 的特点是：
 
 ### 阶段 4
 
-等行为 shape 稳定后，再评估是否升级到：
+等行为 shape 稳定后，再把底层进一步优化到：
 
-- forked snapshot workspace
-- durable wizard checkpoint
+- 更深接入现有 StateJournal fork/replay 能力的 branch workspace
 - 最终的 StateJournal sibling fork 形态
 
 ---
@@ -308,11 +356,12 @@ Thinking-Stack 的特点是：
 
 如果你现在就要决定“下一项基础功能增强先做什么”，我的推荐是：
 
-> **先做 same-context pop route，但把它明确设计成通往 forked-context route 的阶段性实现，而不是终局。**
+> **先补 route-neutral 的 frame/savepoint/result/branch-merge 基础设施；然后按场景选路：短流程优先 `same-context pop route`，长流程与递归分支优先 `forked-context route`。**
 
 更具体地说：
 
-- **当前首步实现**：savepoint + 同账本受控尾部折叠
-- **长期目标设计**：临时工作区 / forked context / 结果回拼
+- **轻量短流程**：savepoint + 同账本受控尾部折叠
+- **重型长流程**：临时工作区 / forked context / 结果回拼
+- **共同主线**：不要再把“底层容器能否 fork”当作主要瓶颈，应把重心转向 branch runtime API、app/tool participation contract、以及结果并回协议
 
-这样既顺着当前 `Agent.Core` 的施工地基，也不会把长期设计方向锁死在“主账本里写进去再删出来”的语义上。
+这样既保留了 `pop-route` 的轻量优势，也承认了 `fork-context` 在长轨迹、递归分支、局部压缩与恢复上的明显优势。

@@ -1,6 +1,6 @@
 # Micro-Wizard History Forked-Context Route Analysis
 
-状态：draft v1  
+状态：draft v2  
 范围：仅分析“进入 Micro-Wizard 时保存主上下文，Wizard 在临时上下文中运行，退出时恢复主上下文并只留下最终结果”这一路线。  
 不包含：同一份上下文内记录游标并在退出时 pop 回退的路线。
 
@@ -14,11 +14,19 @@
 ## 0. 一句话结论
 
 这条路线在**目标语义**上很强，也与“Wizard 过程不长期污染主 Context”的设计目标高度一致。  
-但按当前代码现实看，它更适合作为**第二阶段增强路线**，而不适合直接当作第一步最低成本实现。
+在 StateJournal 新增：
+
+- `DurableDeque<T>` / `DurableDeque` 的实例级 `ForkCommittedAsMutable()`
+- `Repository.ReplayCommitted(..., LoadMaterializationMode.ForceMutable)` 这条较慢但更通用的 committed clone fallback
+
+之后，它已经不再只是“第二阶段增强路线”的抽象设想，而是：
+
+- 对长流程、递归分支、branch workspace 场景**完全可以认真采用**的一条正式路线
+- 但它仍然**不是最低成本的第一步落地路径**
 
 如果要用一句最简短的话概括我的判断：
 
-**当前阶段结论：可接受。**
+**当前阶段结论：可接受，而且吸引力明显上升。**
 
 不是不推荐；但也不应误判为“最短施工路径”。
 
@@ -82,8 +90,8 @@
 
 如果采用这条路线，应明确把它定位成：
 
-- Wizard runtime 的中期增强形态
-- 或某些“强隔离型 wizard”的专用运行模式
+- Wizard runtime 的强隔离 / 长轨迹运行模式
+- 或某些 branch-workspace / 递归分支场景的直接主路线
 
 而不应把它误写成“所有 wizard 都必须先这样实现”。
 
@@ -96,7 +104,7 @@
 | 层次 | 当前可行性 | 复杂度判断 |
 |---|---|---|
 | 内存级临时分支 | 已有相当基础 | 中等 |
-| Durable / StateJournal 级共享前序历史的兄弟分支 | 还需补基础设施 | 中高 |
+| Durable / StateJournal 级共享前序历史的兄弟分支 | 底层门槛已明显下降 | 中高 |
 
 ### 3.1 内存级临时分支并不难
 
@@ -118,7 +126,7 @@
 - host-side orchestrator
 - 哪些 tool / app state 需要一起复制
 
-### 3.2 Durable fork 不是“顺手就有”
+### 3.2 Durable fork 现在“够用了，但还没自动变成 branch runtime”
 
 如果进一步要求：
 
@@ -130,28 +138,30 @@
 
 原因是当前 `AgentEngineStateRoot.Save(...)` 的持久化方式仍是“把快照重新编码成一套新的 Durable 对象图”，而不是直接把 `RecentHistory` 维护为天然可 fork 的 durable 主结构。
 
-尤其要注意当前 StateJournal 的公开 fork 能力边界：
+尤其要注意当前 StateJournal 的能力边界已经变化为：
 
 - `DurableDict` 支持 `ForkCommittedAsMutable()`
 - `DurableHashSet` 支持 `ForkCommittedAsMutable()`
-- `DurableDeque` 当前**没有** public `ForkCommittedAsMutable()`
-- `DurableOrderedDict` / `DurableText` 当前也没有 public `ForkCommittedAsMutable()`
+- `DurableDeque<T>` / `DurableDeque` 现在也支持 `ForkCommittedAsMutable()`
+- `DurableOrderedDict` / `DurableText` 当前仍没有实例快路径，但可通过 `Repository.ReplayCommitted(..., ForceMutable)` 做 committed clone
 
-而 `AgentEngineStateRoot` 当前恰好把 history 和 pending notifications 写进 `DurableDeque`。  
-这意味着“直接依赖现成 Durable fork 能力，把整个 AgentEngine durable root 顺手 fork 出去”并不成立。
+这意味着：
+
+- `history` / `pending notifications` 落在 `DurableDeque` 上，本身已经不再是 forked-context route 的主要阻碍
+- 即使 `OrderedDict` / `DurableText` 还没补实例快路径，也不再会把设计卡死，因为已有 replay fallback
 
 因此需要明确区分两个概念：
 
 - **路线语义本身可行**
-- **立刻靠现有 StateJournal public fork API 实现整条路线**，目前还不够顺手
+- **立刻靠现有 StateJournal 能力自动得到一个完整 branch workspace runtime**，目前还不成立
 
 ## 4. 与 StateJournal fork 能力的契合度
 
-这条路线与 StateJournal 的设计理念总体是契合的，但契合点更多在“未来方向”，而不是“今天直接调用两个 API 就结束”。
+这条路线与 StateJournal 的设计理念总体是契合的，而且现在已经不只是“未来方向”。
 
 ### 4.1 契合点
 
-StateJournal 的 fork 语义很适合这类场景：
+StateJournal 的 fork / replay 语义很适合这类场景：
 
 - 共享 committed 前序历史
 - 派生可编辑兄弟对象
@@ -162,7 +172,7 @@ StateJournal 的 fork 语义很适合这类场景：
 
 ### 4.2 当前不契合的点
 
-真正的阻力在于 `Agent.Core` 现在还没有把自己的持久状态形状设计成“天然适配 fork 的 durable 对象图”。
+真正的阻力现在主要不再是容器能力，而在于 `Agent.Core` 还没有把自己的持久状态形状设计成“天然适配 branch workspace 的 durable 对象图”。
 
 当前现实更像：
 
@@ -170,20 +180,22 @@ StateJournal 的 fork 语义很适合这类场景：
 - 持久层是 snapshot codec
 - `Save(...)` 每次重新写出 history deque / notifications deque / pendingToolResults map / turnRuntime record
 
-这意味着如果现在强行走 durable fork 路线，会很快碰到三个问题：
+这意味着如果现在认真走 durable fork 路线，会很快碰到三个问题：
 
-1. 需要补齐 `DurableDeque` 一类容器的 fork 能力，或者改写状态布局。
-2. 需要决定 Wizard 分支的 graph root 长什么样。
-3. 需要决定“最终结果拼回主上下文”是回写 delta，还是重新物化为主上下文的一条结果性历史。
+1. 需要决定 Wizard / branch workspace 的 graph root 长什么样。
+2. 需要决定“最终结果拼回主上下文”是回写 delta，还是重新物化为主上下文的一条结果性历史。
+3. 需要决定 app/tool/session 如何参与 branch 语义，而不只是 history 被 fork。
 
 ### 4.3 最现实的收口
 
 因此最合理的理解应是：
 
 - **短期**：先用 `AgentEngineStateSnapshot` 完成“语义级 fork”
-- **中期**：再让持久层演进到更像真正的 StateJournal sibling fork
+- **中期**：把现有 StateJournal fork/replay 能力更深接入 `Agent.Core`
+- **长期**：让持久层演进到更像真正的 StateJournal sibling fork / branch workspace
 
-也就是说，StateJournal fork 更适合作为这条路线的**优化与 durable 化方向**，而不是第一步就压上的前置条件。
+也就是说，StateJournal fork 不再只是“以后再说”的优化方向，  
+但它仍需要 `Agent.Core` 上层 runtime 语义一起到位，才能发挥真正价值。
 
 ## 5. 与 tool / session / runtime state 的协作
 
@@ -370,10 +382,14 @@ StateJournal 的 fork 语义很适合这类场景：
 这条路线只能天然回滚“上下文与某些可控局部状态”。  
 对真实外部副作用没有自动事务保证。
 
-### 10.3 容易过早押宝 DurableObject fork
+### 10.3 容易把“已有 durable fork 能力”误当成“branch runtime 已完成”
 
-路线本身不等于“第一天就必须用 StateJournal sibling fork 实现”。  
-如果过早把 Durable fork 当作前提，当前 `DurableDeque` 等缺口会直接拖慢整体推进。
+路线本身不等于“只要底层对象会 fork / replay，branch workspace 就自然成型”。  
+现在底层能力已经前进很多，但上层仍然缺：
+
+- branch runtime API
+- app/tool participation contract
+- retained result merge contract
 
 ### 10.4 Merge contract 很容易设计得太弱
 
@@ -436,7 +452,7 @@ StateJournal 的 fork 语义很适合这类场景：
 - 可在局部 durable 数据上试算型
 - 不可回滚的外部副作用型
 
-### 阶段 4：为 Wizard 加独立 checkpoint
+### 阶段 4：为 Wizard / branch 加独立 checkpoint
 
 当语义稳定后，再补：
 
@@ -444,12 +460,12 @@ StateJournal 的 fork 语义很适合这类场景：
 - crash / restart 恢复
 - 审计保留策略
 
-### 阶段 5：最后才考虑真正的 StateJournal durable fork 优化
+### 阶段 5：最后把 `Agent.Core` durable shape 更深地对接现有 StateJournal fork/replay 能力
 
 等前面都跑顺以后，再决定是：
 
-- 给 `DurableDeque` 等容器补 fork 能力
-- 还是重构 `AgentEngine` durable state 形状，使其更天然适配 fork
+- 继续补 `DurableOrderedDict` / `DurableText` 的实例级快路径
+- 还是重构 `AgentEngine` durable state 形状，使其更天然适配 branch workspace
 
 这是优化层与 durability 增强层，不应倒置成第一步前提。
 
@@ -462,11 +478,11 @@ StateJournal 的 fork 语义很适合这类场景：
 - 与上下文压缩的冲突较少
 - 审计与调试体验很好
 
-但从当前 `Agent.Core` 代码现实看，它还不是最低成本的第一步施工路径。  
-最合理的态度应是：
+但从当前 `Agent.Core` 代码现实看，它仍不是最低成本的第一步施工路径。  
+更合理的态度应是：
 
-- 先把它当作**中期增强目标**
-- 先用 snapshot clone 落语义
-- 再视需要演进到真正的 StateJournal durable fork
+- 对短流程不要勉强一律上它
+- 对长流程、递归分支、需要局部压缩/恢复的场景，已经可以认真优先采用它
+- 先用 snapshot clone 落语义，再把现有 StateJournal fork/replay 能力逐步接进来
 
-**简洁结论：当前阶段，这条路线“可接受”。**
+**简洁结论：当前阶段，这条路线“可接受，而且对重型分支场景已相当有吸引力”。**
