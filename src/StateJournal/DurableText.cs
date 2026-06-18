@@ -44,55 +44,55 @@ public sealed class DurableText : DurableObject {
 
     /// <summary>在指定 block 之后插入，返回新 blockId。</summary>
     public uint InsertAfter(uint afterBlockId, string content) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         return _core.InsertAfter(afterBlockId, content);
     }
 
     /// <summary>在指定 block 之前插入，返回新 blockId。</summary>
     public uint InsertBefore(uint beforeBlockId, string content) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         return _core.InsertBefore(beforeBlockId, content);
     }
 
     /// <summary>在队首插入一个 block，返回新 blockId。</summary>
     public uint Prepend(string content) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         return _core.Prepend(content);
     }
 
     /// <summary>在队尾插入一个 block，返回新 blockId。</summary>
     public uint Append(string content) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         return _core.Append(content);
     }
 
     /// <summary>替换指定 block 的内容。</summary>
     public void SetContent(uint blockId, string newContent) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         _core.SetContent(blockId, newContent);
     }
 
     /// <summary>在指定位置拆分一个 block。原 block 保留左半内容与原 blockId，右半成为新的后继 block。</summary>
     public uint SplitBlock(uint blockId, int splitOffset) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         return _core.SplitBlock(blockId, splitOffset);
     }
 
     /// <summary>把指定 block 与它的当前后继 block 合并。当前 block 保留 blockId，后继 block 被删除。</summary>
     public void MergeWithNext(uint blockId) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         _core.MergeWithNext(blockId);
     }
 
     /// <summary>删除指定 block。</summary>
     public void Delete(uint blockId) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         _core.Delete(blockId);
     }
 
     /// <summary>批量加载 block。仅空文本可用。</summary>
     public void LoadBlocks(ReadOnlySpan<string> lines) {
-        ThrowIfDetached();
+        ThrowIfDetachedOrFrozen();
         _core.LoadBlocks(lines);
     }
 
@@ -107,6 +107,11 @@ public sealed class DurableText : DurableObject {
     internal override SizedPtr HeadTicket => _versionStatus.Head;
     internal override bool IsTracked => _versionStatus.IsTracked;
     internal override ObjectVersionFlags VersionObjectFlags => _versionStatus.ObjectFlags;
+
+    internal override void FreezeCore(bool forceRebase) {
+        // 近期路线对 DurableText 采用 soft frozen：
+        // 不引入第二套 text core，只持久化 frozen object flag，并复用现有 core 承担读路径。
+    }
 
     internal override void OnCommitSucceeded(SizedPtr versionTicket, DiffWriteContext context) {
         ObjectVersionFlags objectFlags = CurrentObjectFlags;
@@ -127,7 +132,7 @@ public sealed class DurableText : DurableObject {
         // rebase frame 写 WriteBytes(TypeCode)，deltify frame 写 WriteBytes(null)；二者实际写出的字节都包含 VarUInt 长度前缀。
         uint rebaseSize = checked(_core.EstimatedRebaseBytes() + CostEstimateUtil.WriteBytesSize(TypeCode));
         uint deltifySize = checked(_core.EstimatedDeltifyBytes() + CostEstimateUtil.WriteBytesSize(default));
-        bool doRebase = context.ForceRebase || _versionStatus.ShouldRebase(rebaseSize, deltifySize);
+        bool doRebase = context.ForceRebase || ForceRebaseForFrozenSnapshot || _versionStatus.ShouldRebase(rebaseSize, deltifySize);
         if (doRebase) {
             context.SetOutcome(wasRebase: true, rebaseSize, deltifySize);
             writer.WriteBytes(TypeCode);
@@ -154,7 +159,6 @@ public sealed class DurableText : DurableObject {
         ApplyLoadedObjectFlags(_versionStatus.ObjectFlags);
         switch (materializationMode) {
             case LoadMaterializationMode.Normal:
-                if (IsFrozen) { throw new InvalidDataException("Frozen DurableText is not supported by this implementation."); }
                 _core.SyncCurrentFromCommitted();
                 break;
             case LoadMaterializationMode.ForceMutable:
@@ -162,14 +166,23 @@ public sealed class DurableText : DurableObject {
                 OverrideCurrentObjectFlagsAfterLoad(ObjectVersionFlags.None);
                 break;
             case LoadMaterializationMode.ForceFrozen:
-                throw new NotSupportedException("Frozen DurableText is not supported by this implementation.");
+                _core.SyncCurrentFromCommitted();
+                OverrideCurrentObjectFlagsAfterLoad(ObjectVersionFlags.Frozen);
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(materializationMode), materializationMode, null);
         }
         SetState(DurableState.Clean);
     }
 
-    internal override void DiscardChanges() => _core.Revert();
+    internal override void DiscardChanges() {
+        if (IsFrozen) {
+            ThrowIfCannotDiscardFrozenChanges();
+            ClearDiscardedFreeze();
+            return;
+        }
+        _core.Revert();
+    }
 
     internal override void AcceptChildRefVisitor<TVisitor>(ref TVisitor visitor) {
         _core.AcceptChildRefVisitor(Revision, ref visitor);
