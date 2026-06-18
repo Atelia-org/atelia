@@ -3,6 +3,11 @@
 状态：draft v0
 定位：讨论 `Agent.Core` 如何从当前的 snapshot persistence 模式，迁移到以 StateJournal 为主真相的 live durable workspace 模式。
 
+> Progress note
+> - 阶段 B 已基本完成：`AgentState` / `AgentWorkspaceRoot` 已能围绕 repo-backed workspace 作为主持久化载体工作。
+> - 阶段 C / D 已部分落地：history append、pending notifications、pending tool results 的 live mutation 路径已经存在。
+> - 当前 public snapshot path 仍保留，但定位应视为 compatibility / diagnostic / import-export 边界，不再是推荐主路径。
+
 相关文档：
 - `docs/Agent/agent-core-branching-infrastructure-backlog.md`
 - `docs/Agent/micro-wizard-history-route-comparison.md`

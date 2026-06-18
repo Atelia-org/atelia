@@ -5,7 +5,9 @@ using Atelia.StateJournal;
 namespace Atelia.Agent.Core.Persistence;
 
 /// <summary>
-/// 以 <see cref="DurableDict{TKey}"/> 为 graph root 的 AgentEngine 持久化 façade。
+/// 以 <see cref="DurableDict{TKey}"/> 为 graph root 的 AgentEngine workspace adapter。
+/// 当前 repo-backed host / internal path 以 live durable workspace 为主；
+/// 本类型仍保留 snapshot save/load 入口，主要用于 compatibility、diagnostic 和 import/export。
 /// </summary>
 public sealed class AgentEngineStateRoot {
     private readonly AgentWorkspaceRoot _workspaceRoot;
@@ -53,10 +55,18 @@ public sealed class AgentEngineStateRoot {
         return stateRoot;
     }
 
+    /// <summary>
+    /// 从已有 graph root 包装出 workspace adapter。
+    /// public 调用方若随后走 <see cref="Load"/>，得到的是 snapshot compatibility 视图，而不是绑定 live host 的运行时会话。
+    /// </summary>
     public static AgentEngineStateRoot FromRoot(DurableDict<string> root) => FromWorkspaceRoot(AgentWorkspaceRoot.FromRoot(root));
 
     internal static AgentEngineStateRoot FromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) => new(workspaceRoot);
 
+    /// <summary>
+    /// 把当前 <see cref="AgentEngine"/> 导出为 snapshot，再写回 workspace。
+    /// 保留该入口主要是为了 compatibility/import-export；repo-backed live host 的主路径应优先直接做 workspace mutation。
+    /// </summary>
     public void Save(AgentEngine engine) {
         ArgumentNullException.ThrowIfNull(engine);
         Save(engine.ExportStateSnapshot());
@@ -78,6 +88,10 @@ public sealed class AgentEngineStateRoot {
         repo.Commit(Root).Unwrap();
     }
 
+    /// <summary>
+    /// 把一个完整 snapshot 投影进 workspace root。
+    /// 这是 compatibility adapter 入口，不表示 snapshot 是 runtime 的主真相。
+    /// </summary>
     public void Save(AgentEngineStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -89,6 +103,10 @@ public sealed class AgentEngineStateRoot {
         ReplaceRuntimeState(ToRuntimeStateSnapshot(snapshot));
     }
 
+    /// <summary>
+    /// 从当前 workspace materialize 一个 <see cref="AgentEngineStateSnapshot"/>。
+    /// 该入口服务于 public compatibility / diagnostic / import-export 场景；internal live host 应直接围绕 workspaceRoot 恢复。
+    /// </summary>
     public AgentEngineStateSnapshot Load() {
         string systemPrompt = _workspaceRoot.Meta.GetRequiredSystemPrompt();
         ulong lastSerial = _workspaceRoot.History.GetRequiredLastSerial();

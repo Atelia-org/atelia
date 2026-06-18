@@ -35,7 +35,8 @@ public partial class AgentEngine {
     }
 
     /// <summary>
-    /// 导出当前引擎的完整可持久化状态快照。
+    /// 导出当前引擎的完整状态快照。
+    /// 该 public snapshot 主要用于 compatibility、diagnostic 和 import/export；repo-backed live durable host 不是靠它驱动主持久化。
     /// </summary>
     public AgentEngineStateSnapshot ExportStateSnapshot() {
         var runtimeSnapshot = ExportRuntimeStateSnapshot();
@@ -51,7 +52,8 @@ public partial class AgentEngine {
     }
 
     /// <summary>
-    /// 从持久化快照重建一个新的 <see cref="AgentEngine"/>。
+    /// 从状态快照重建一个新的、未绑定 live durable host 的 <see cref="AgentEngine"/>。
+    /// 该入口保留给 compatibility/import-export/public non-live 场景。
     /// </summary>
     /// <param name="snapshot">完整状态快照。</param>
     public static AgentEngine CreateFromStateSnapshot(
@@ -75,8 +77,8 @@ public partial class AgentEngine {
     }
 
     /// <summary>
-    /// 从持久化快照重建一个新的 <see cref="AgentEngine"/>。
-    /// 低层重载保留显式 resolver 逃生口，用于不想引入 <see cref="LlmProfileRegistry"/> 的宿主。
+    /// 从状态快照重建一个新的、未绑定 live durable host 的 <see cref="AgentEngine"/>。
+    /// 低层重载保留显式 resolver 逃生口，用于 compatibility/import-export/public non-live 宿主不想引入 <see cref="LlmProfileRegistry"/> 的场景。
     /// </summary>
     public static AgentEngine CreateFromStateSnapshot(
         AgentEngineStateSnapshot snapshot,
@@ -289,6 +291,7 @@ public partial class AgentEngine {
 
     /// <summary>
     /// 从一个 <see cref="AgentEngineStateRoot"/> 的 graph root 重建 <see cref="AgentEngine"/>。
+    /// public 入口会先 materialize snapshot 再恢复，因此属于 compatibility/import-export/public non-live 路径，而非 internal live workspace host path。
     /// </summary>
     public static AgentEngine CreateFromRoot(
         DurableDict<string> root,
@@ -315,7 +318,7 @@ public partial class AgentEngine {
 
     /// <summary>
     /// 从一个 <see cref="AgentEngineStateRoot"/> 的 graph root 重建 <see cref="AgentEngine"/>。
-    /// 低层重载保留显式 resolver 逃生口，用于不想引入 <see cref="LlmProfileRegistry"/> 的宿主。
+    /// public 入口会先 materialize snapshot 再恢复；低层重载保留显式 resolver 逃生口，用于 compatibility/import-export/public non-live 宿主不想引入 <see cref="LlmProfileRegistry"/> 的场景。
     /// </summary>
     public static AgentEngine CreateFromRoot(
         DurableDict<string> root,
