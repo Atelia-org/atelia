@@ -316,6 +316,13 @@ AgentWorkspaceRoot
 - 先有 `AgentEngine`
 - 再 attach 一个 persistence session
 
+当前实现已经往前收了一步：
+
+- 引入了 internal `AgentWorkspaceSession`
+- `AgentState` 的 durable history / system prompt / notifications 写链与 `AgentEngine` 的 runtime / commit 写链已统一挂到同一个 session 宿主
+- repo-backed born-bound live engine 持有真实 session
+- public `CreateFromRoot(...)` / `CreateFromStateSnapshot(...)` 仍明确走 snapshot / non-live 路径，不持有 session
+
 长期看，这个方向是反着的。
 更合理的关系应是：
 

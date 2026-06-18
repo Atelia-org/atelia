@@ -86,7 +86,7 @@ public sealed class AgentWorkspacePersistenceTests {
             workspaceRoot.Meta.SetSystemPrompt("workspace-born-system");
             var initialPendingNotificationsDeque = GetPendingNotificationsDeque(workspaceRoot);
 
-            var state = AgentState.RestoreAttachedFromWorkspaceRoot(workspaceRoot);
+            var state = AgentState.RestoreFromWorkspaceSession(AgentEngineStateRoot.FromRoot(workspaceRoot.Root).OpenSession());
 
             state.SetSystemPrompt("updated-system");
             state.AppendNotification("queued-notification");
@@ -133,7 +133,7 @@ public sealed class AgentWorkspacePersistenceTests {
             workspaceRoot.Meta.SetSystemPrompt("workspace-append-system");
             var initialHistoryDeque = GetHistoryDeque(workspaceRoot);
 
-            var state = AgentState.RestoreAttachedFromWorkspaceRoot(workspaceRoot);
+            var state = AgentState.RestoreFromWorkspaceSession(AgentEngineStateRoot.FromRoot(workspaceRoot.Root).OpenSession());
 
             state.AppendObservation(new ObservationEntry(), "recent-events");
             var afterObservationDeque = GetHistoryDeque(workspaceRoot);
@@ -182,7 +182,7 @@ public sealed class AgentWorkspacePersistenceTests {
             var revision = repo.CreateBranch("main").Unwrap();
             var workspaceRoot = AgentWorkspaceRoot.Create(revision);
             workspaceRoot.Meta.SetSystemPrompt("workspace-append-system");
-            var state = AgentState.RestoreAttachedFromWorkspaceRoot(workspaceRoot);
+            var state = AgentState.RestoreFromWorkspaceSession(AgentEngineStateRoot.FromRoot(workspaceRoot.Root).OpenSession());
             state.AppendObservation(new ObservationEntry(), "live-append");
             var liveAppendDeque = GetHistoryDeque(workspaceRoot);
             state.AppendNotification("live-pending");

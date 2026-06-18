@@ -138,7 +138,7 @@ public partial class AgentEngine {
         IIdleObservationProvider? idleProvider,
         Func<DateTimeOffset>? utcNowProvider,
         AutoCompactionOptions? autoCompaction,
-        RepositoryPersistenceBinding? repositoryPersistence = null
+        AgentWorkspaceSession? workspaceSession = null
     ) {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(runtimeState);
@@ -150,7 +150,7 @@ public partial class AgentEngine {
             idleProvider: idleProvider,
             utcNowProvider: utcNowProvider,
             autoCompaction: autoCompaction,
-            repositoryPersistence: repositoryPersistence
+            workspaceSession: workspaceSession
         );
 
         foreach (var pendingToolResult in runtimeState.PendingToolResults) {
@@ -232,16 +232,18 @@ public partial class AgentEngine {
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(stateRoot);
 
+        var workspaceSession = stateRoot.OpenSession(repo);
+
         return CreateFromPersistedStateCore(
-            AgentState.RestoreAttachedFromWorkspaceRoot(stateRoot.WorkspaceRoot),
-            stateRoot.LoadRuntimeState(),
+            AgentState.RestoreFromWorkspaceSession(workspaceSession),
+            workspaceSession.LoadRuntimeState(),
             resolvedProfileResolver,
             initialApps,
             initialTools,
             idleProvider,
             utcNowProvider,
             autoCompaction,
-            new RepositoryPersistenceBinding(repo, stateRoot)
+            workspaceSession
         );
     }
 
@@ -299,36 +301,35 @@ public partial class AgentEngine {
         );
     }
 
-    internal void ClosePersistenceSession() {
+    internal void CloseWorkspaceSession() {
         _state.CloseWorkspaceSession();
         if (_toolSession is not null) {
             _toolSession.ExecutionSequenceAllocated = null;
         }
-        _repositoryPersistence = null;
-        _repositorySessionClosed = true;
+        _workspaceSession?.Close();
     }
 
-    internal void PersistStableBoundaryIfAttached() {
-        _repositoryPersistence?.CommitRoot();
+    internal void CommitStableBoundary() {
+        _workspaceSession?.Commit();
     }
 
-    private void PersistPendingToolResultsIfAttached() {
-        _repositoryPersistence?.ReplacePendingToolResults(_pendingToolResults.Values
+    private void PersistPendingToolResults() {
+        _workspaceSession?.ReplacePendingToolResults(_pendingToolResults.Values
             .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
             .Select(AgentState.CloneToolCallExecutionResult)
             .ToArray());
     }
 
-    private void UpsertPendingToolResultIfAttached(ToolCallExecutionResult pendingResult) {
-        if (_repositoryPersistence is null) { return; }
+    private void UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
+        if (_workspaceSession is null) { return; }
 
-        _repositoryPersistence.UpsertPendingToolResult(pendingResult);
+        _workspaceSession.UpsertPendingToolResult(pendingResult);
     }
 
-    private void PersistTurnRuntimeIfAttached() {
-        if (_repositoryPersistence is null) { return; }
+    private void PersistTurnRuntime() {
+        if (_workspaceSession is null) { return; }
 
-        _repositoryPersistence.UpdateTurnRuntime(
+        _workspaceSession.UpdateTurnRuntime(
             _turnRuntime.ResolvedProfile is null
                 ? null
                 : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile),
@@ -336,11 +337,11 @@ public partial class AgentEngine {
         );
     }
 
-    private void PersistPendingCompactionIfAttached() {
-        if (_repositoryPersistence is null) { return; }
+    private void PersistPendingCompaction() {
+        if (_workspaceSession is null) { return; }
 
         if (_compactionRequest.HasValue) {
-            _repositoryPersistence.SetPendingCompaction(
+            _workspaceSession.SetPendingCompaction(
                 new CompactionCheckpoint(
                     _compactionRequest.Value.SplitIndex,
                     _compactionRequest.Value.SystemPrompt,
@@ -350,59 +351,14 @@ public partial class AgentEngine {
             return;
         }
 
-        _repositoryPersistence.ClearPendingCompaction();
+        _workspaceSession.ClearPendingCompaction();
     }
 
-    private void PersistToolSessionExecutionSequenceIfAttached() {
-        _repositoryPersistence?.SetToolSessionExecutionSequence(_toolSession?.LastIssuedExecutionSequence ?? 0);
+    private void PersistToolSessionExecutionSequence() {
+        _workspaceSession?.SetToolSessionExecutionSequence(_toolSession?.LastIssuedExecutionSequence ?? 0);
     }
 
-    private void PersistToolSessionExecutionSequenceIfAttached(long executionSequence) {
-        _repositoryPersistence?.SetToolSessionExecutionSequence(executionSequence);
-    }
-
-    private sealed class RepositoryPersistenceBinding {
-        private readonly Repository _repo;
-        private readonly AgentEngineStateRoot _stateRoot;
-
-        public RepositoryPersistenceBinding(Repository repo, AgentEngineStateRoot stateRoot) {
-            _repo = repo ?? throw new ArgumentNullException(nameof(repo));
-            _stateRoot = stateRoot ?? throw new ArgumentNullException(nameof(stateRoot));
-        }
-
-        public void CommitRoot() => _stateRoot.Commit(_repo);
-
-        public void ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults)
-            => _stateRoot.ReplacePendingToolResults(pendingResults);
-
-        public void UpsertPendingToolResult(ToolCallExecutionResult pendingResult)
-            => _stateRoot.UpsertPendingToolResult(pendingResult);
-
-        public void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex)
-            => _stateRoot.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
-
-        public void SetResolvedProfile(LlmProfileCheckpoint resolvedProfile)
-            => _stateRoot.SetResolvedProfile(resolvedProfile);
-
-        public void ClearResolvedProfile()
-            => _stateRoot.ClearResolvedProfile();
-
-        public void SetLockedCompactionSplitIndex(int lockedCompactionSplitIndex)
-            => _stateRoot.SetLockedCompactionSplitIndex(lockedCompactionSplitIndex);
-
-        public void ClearLockedCompactionSplitIndex()
-            => _stateRoot.ClearLockedCompactionSplitIndex();
-
-        public void SetPendingCompaction(CompactionCheckpoint pendingCompaction)
-            => _stateRoot.SetPendingCompaction(pendingCompaction);
-
-        public void ClearPendingCompaction()
-            => _stateRoot.ClearPendingCompaction();
-
-        public void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction)
-            => _stateRoot.ReplacePendingCompaction(pendingCompaction);
-
-        public void SetToolSessionExecutionSequence(long executionSequence)
-            => _stateRoot.SetToolSessionExecutionSequence(executionSequence);
+    private void PersistToolSessionExecutionSequence(long executionSequence) {
+        _workspaceSession?.SetToolSessionExecutionSequence(executionSequence);
     }
 }

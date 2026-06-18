@@ -1,6 +1,7 @@
 using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.Apps;
 using Atelia.Agent.Core.History;
+using Atelia.Agent.Core.Persistence;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.Diagnostics;
@@ -30,8 +31,7 @@ public partial class AgentEngine {
     private ToolRegistry? _toolRegistry;
     private ToolSession? _toolSession;
     private ToolRegistry ToolRegistry => EnsureToolsBuilt();
-    private RepositoryPersistenceBinding? _repositoryPersistence;
-    private bool _repositorySessionClosed;
+    private readonly AgentWorkspaceSession? _workspaceSession;
     private bool _toolsDirty;
     private AgentRunState? _lastLoggedState;
     private readonly TurnRuntimeState _turnRuntime = new();
@@ -61,7 +61,7 @@ public partial class AgentEngine {
         idleProvider,
         utcNowProvider,
         autoCompaction,
-        repositoryPersistence: null
+        workspaceSession: null
     ) { }
 
     private AgentEngine(
@@ -71,12 +71,15 @@ public partial class AgentEngine {
         IIdleObservationProvider? idleProvider,
         Func<DateTimeOffset>? utcNowProvider,
         AutoCompactionOptions? autoCompaction,
-        RepositoryPersistenceBinding? repositoryPersistence
+        AgentWorkspaceSession? workspaceSession
     ) {
         _state = state ?? AgentState.CreateDefault();
         _appHost = new DefaultAppHost();
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
-        _repositoryPersistence = repositoryPersistence;
+        _workspaceSession = workspaceSession;
+        if (_workspaceSession is not null) {
+            _state.AttachWorkspaceSession(_workspaceSession);
+        }
         _toolsDirty = true;
         _idleProvider = idleProvider ?? new TimestampHeartbeatObservationProvider();
         _utcNowProvider = utcNowProvider ?? (() => DateTimeOffset.UtcNow);
@@ -230,9 +233,9 @@ public partial class AgentEngine {
             _toolSession.Registry = registry;
         }
 
-        _toolSession.ExecutionSequenceAllocated = _repositoryPersistence is null
+        _toolSession.ExecutionSequenceAllocated = _workspaceSession is null
             ? null
-            : PersistToolSessionExecutionSequenceIfAttached;
+            : PersistToolSessionExecutionSequence;
 
         return _toolSession;
     }
@@ -251,9 +254,7 @@ public partial class AgentEngine {
     }
 
     private void EnsureRepositorySessionOpen() {
-        if (_repositorySessionClosed) {
-            throw new InvalidOperationException("AgentEngine repository session has been closed.");
-        }
+        _workspaceSession?.EnsureOpenForEngine();
     }
 
     private void EnsureToolNameAvailable(string toolName) {
@@ -417,7 +418,7 @@ public partial class AgentEngine {
         // repo-backed 模式下，把一次 Step 内已经稳定完成的状态变更先落盘再向外报告。
         // 这样若 commit 失败，宿主不会先收到成功的状态转换事件或返回值。
         if (outcome.ProgressMade || stateAfter != stateBefore) {
-            PersistStableBoundaryIfAttached();
+            CommitStableBoundary();
         }
 
         deferredEvents.Dispatch(this);
@@ -561,7 +562,7 @@ public partial class AgentEngine {
 
         var appended = _state.AppendObservation(inputEntry, recentEvents);
         _turnRuntime.BeginNewTurn();
-        PersistTurnRuntimeIfAttached();
+        PersistTurnRuntime();
 
         DebugUtil.Trace(StateMachineDebugCategory, $"[Engine] Inputs {appended}");
 
@@ -660,12 +661,12 @@ public partial class AgentEngine {
         );
 
         _pendingToolResults.Clear();
-        PersistPendingToolResultsIfAttached();
+        PersistPendingToolResults();
 
         var appended = _state.AppendAction(aggregatedOutput);
         _turnRuntime.RememberResolvedProfile(resolvedProfile);
         _turnRuntime.RememberCompactionSplitIndex(compactionPreview?.SplitIndex);
-        PersistTurnRuntimeIfAttached();
+        PersistTurnRuntime();
         deferredEvents.Add(engine => engine.OnActionProduced(new ActionProducedEventArgs(appended, resolvedProfile)));
 
         var toolCallCount = appended.Message.ToolCalls?.Count ?? 0;
@@ -689,9 +690,9 @@ public partial class AgentEngine {
 
         var session = EnsureSession();
         var result = await session.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
-        UpsertPendingToolResultIfAttached(result);
+        UpsertPendingToolResult(result);
         _pendingToolResults[nextCall.ToolCallId] = result;
-        PersistToolSessionExecutionSequenceIfAttached();
+        PersistToolSessionExecutionSequence();
         var activeProfile = _turnRuntime.ActiveToolExecutionProfile
             ?? throw new InvalidOperationException("Tool execution completed without an active tool-execution profile.");
         deferredEvents.Add(
@@ -731,7 +732,7 @@ public partial class AgentEngine {
 
         var appended = AppendToolResultsWithSummary(entry);
         _pendingToolResults.Clear();
-        PersistPendingToolResultsIfAttached();
+        PersistPendingToolResults();
 
         var failure = collectedResults.FirstOrDefault(static result => result.ExecuteResult.Status == ToolExecutionStatus.Failed);
         var failureCallId = failure?.ToolCallId ?? "none";

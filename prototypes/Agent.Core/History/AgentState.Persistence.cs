@@ -36,11 +36,16 @@ public sealed partial class AgentState {
         );
     }
 
-    internal static AgentState RestoreAttachedFromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
+    internal static AgentState RestoreFromWorkspaceSession(AgentWorkspaceSession workspaceSession) {
+        ArgumentNullException.ThrowIfNull(workspaceSession);
 
-        var state = RestoreFromWorkspaceRoot(workspaceRoot);
-        state.AttachRestoredWorkspaceRoot(workspaceRoot);
+        var state = RestoreCore(
+            workspaceSession.LoadSystemPrompt(),
+            workspaceSession.LoadRecentHistory(),
+            workspaceSession.LoadPendingNotifications(),
+            workspaceSession.LoadLastSerial()
+        );
+        state.AttachWorkspaceSession(workspaceSession);
         return state;
     }
 

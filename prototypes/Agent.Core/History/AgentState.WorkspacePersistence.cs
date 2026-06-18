@@ -3,71 +3,66 @@ using Atelia.Agent.Core.Persistence;
 namespace Atelia.Agent.Core.History;
 
 public sealed partial class AgentState {
-    private AgentWorkspaceRoot? _attachedWorkspaceRoot;
-    private bool _workspaceSessionClosed;
+    private AgentWorkspaceSession? _workspaceSession;
 
-    internal void AttachRestoredWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) {
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
+    internal void AttachWorkspaceSession(AgentWorkspaceSession workspaceSession) {
+        ArgumentNullException.ThrowIfNull(workspaceSession);
         EnsureWorkspaceSessionOpen();
 
-        if (_attachedWorkspaceRoot is not null) {
-            if (ReferenceEquals(_attachedWorkspaceRoot.Root, workspaceRoot.Root)) {
+        if (_workspaceSession is not null) {
+            if (ReferenceEquals(_workspaceSession, workspaceSession)) {
                 return;
             }
 
-            throw new InvalidOperationException("AgentState workspace root is already attached.");
+            throw new InvalidOperationException("AgentState workspace session is already attached.");
         }
 
-        _attachedWorkspaceRoot = workspaceRoot;
+        _workspaceSession = workspaceSession;
     }
 
     internal void CloseWorkspaceSession() {
-        _attachedWorkspaceRoot = null;
-        _workspaceSessionClosed = true;
+        _workspaceSession?.Close();
     }
 
     private void EnsureWorkspaceSessionOpen() {
-        if (_workspaceSessionClosed) {
-            throw new InvalidOperationException("AgentState workspace session has been closed.");
-        }
+        _workspaceSession?.EnsureOpenForState();
     }
 
     private ulong AllocateNextSerial() {
-        if (_attachedWorkspaceRoot is null) {
+        if (_workspaceSession is null) {
             return ++_lastSerial;
         }
 
-        var nextSerial = _attachedWorkspaceRoot.History.AllocateNextSerial();
+        var nextSerial = _workspaceSession.AllocateNextSerial();
         _lastSerial = nextSerial;
         return nextSerial;
     }
 
-    private void SyncAttachedWorkspaceHistoryAndSerial() {
-        if (_attachedWorkspaceRoot is null) { return; }
+    private void SyncSessionHistoryAndSerial() {
+        if (_workspaceSession is null) { return; }
 
-        _attachedWorkspaceRoot.History.ReplaceRecent(_recentHistory);
-        _attachedWorkspaceRoot.History.SetLastSerial(_lastSerial);
+        _workspaceSession.ReplaceRecentHistory(_recentHistory, _lastSerial);
     }
 
-    private void SyncAttachedWorkspaceAppendedHistoryEntry(HistoryEntry entry) {
-        if (_attachedWorkspaceRoot is null) { return; }
+    private void SyncSessionAppendedHistoryEntry(HistoryEntry entry) {
+        if (_workspaceSession is null) { return; }
 
-        _attachedWorkspaceRoot.History.AppendRecent(entry);
+        _workspaceSession.AppendHistoryEntry(entry);
     }
 
-    private void SyncAttachedWorkspacePendingNotifications() {
-        _attachedWorkspaceRoot?.History.ReplacePendingNotifications(_pendingNotifications.ToArray());
+    private void SyncSessionPendingNotifications() {
+        _workspaceSession?.ReplacePendingNotifications(_pendingNotifications.ToArray());
     }
 
-    private void SyncAttachedWorkspaceAppendedNotification(string item) {
-        if (_attachedWorkspaceRoot is null) { return; }
+    private void SyncSessionAppendedNotification(string item) {
+        if (_workspaceSession is null) { return; }
 
-        _attachedWorkspaceRoot.History.AppendPendingNotification(item);
+        _workspaceSession.AppendPendingNotification(item);
     }
 
-    private void SyncAttachedWorkspaceSystemPrompt() {
-        if (_attachedWorkspaceRoot is null) { return; }
+    private void SyncSessionSystemPrompt() {
+        if (_workspaceSession is null) { return; }
 
-        _attachedWorkspaceRoot.Meta.SetSystemPrompt(SystemPrompt);
+        _workspaceSession.SetSystemPrompt(SystemPrompt);
     }
 }

@@ -63,6 +63,8 @@ public sealed class AgentEngineStateRoot {
 
     internal static AgentEngineStateRoot FromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) => new(workspaceRoot);
 
+    internal AgentWorkspaceSession OpenSession(Repository? repo = null) => AgentWorkspaceSession.Create(this, repo);
+
     /// <summary>
     /// 把当前 <see cref="AgentEngine"/> 导出为 snapshot，再写回 workspace。
     /// 保留该入口主要是为了 compatibility/import-export；repo-backed live host 的主路径应优先直接做 workspace mutation。

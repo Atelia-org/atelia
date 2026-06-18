@@ -138,13 +138,13 @@ public sealed class AgentEngineHost : IDisposable {
 
     public void SaveAndCommit() {
         EnsureNotDisposed();
-        _engine.PersistStableBoundaryIfAttached();
+        _engine.CommitStableBoundary();
     }
 
     public void Dispose() {
         if (_disposed) { return; }
         _disposed = true;
-        _engine.ClosePersistenceSession();
+        _engine.CloseWorkspaceSession();
         _repo.Dispose();
     }
 
